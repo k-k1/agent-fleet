@@ -154,7 +154,11 @@ type engineRuntimeState struct {
 	// inline table: nothing is reading the parameter there.
 	ssm         engineSSMWriteAPI
 	activeParam string
-	served      engineServed
+	// pending is the other direction of the same conversation: what the INSTANCE says it has
+	// not synced yet (ADR 0072 P2 欠落 7). nil on a CP with no AWS, and nil is "unknown",
+	// which never holds a request.
+	pending *enginePending
+	served  engineServed
 	// classes is the GPU ladder (ADR 0074). Empty on every deployment that declares none, and
 	// then nothing in engine_class.go ever runs. capacity and cluster are how a rung reaches
 	// the capacity provider; capacity is nil on a CP with no AWS.
@@ -437,6 +441,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			catalog:     newEngineCatalog(models, d.Key),
 			ssm:         ssmc,
 			activeParam: engineActiveParamName(name, d.Key),
+			pending:     newEnginePending(ssmc, name, d.Key),
 			classes:     parseEngineClasses(d.Classes),
 			cluster:     cluster,
 		}

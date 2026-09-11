@@ -429,6 +429,21 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 	// on the very tick somebody is waiting for it.
 	eng.demand.record(r.Context(), 1)
 
+	// 🔴 And the model may not be ON the instance yet. The sidecar releases the engine once the
+	// START model is down and keeps fetching the rest, so there is a window — measured at ~270
+	// seconds for 12 files / 48 GB — in which the engine is up, health passes, and a request
+	// for one of the other models gets ComfyUI's bare `Value not in list: …` 400 (ADR 0072 P2
+	// 欠落 7). Answered here as `engine_waking`, which is the same retryable refusal the
+	// caller already handles for a cold start, because that is what it is.
+	//
+	// After the demand mark on purpose: somebody IS waiting for this engine, and a controller
+	// that stopped it mid-sync would make the wait permanent.
+	if aerr := g.pendingGuard(r.Context(), eng, body, r); aerr != nil {
+		w.Header().Set("Retry-After", strconv.Itoa(int(engineReadyPoll.Seconds()*2)))
+		writeAPIErr(w, aerr)
+		return
+	}
+
 	if engineWantsStream(body) {
 		g.streamed(w, r, eng, claims, mv, askForStreamUsage(body))
 		return
@@ -481,6 +496,57 @@ func engineRequestModel(body []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(probe.Model)
+}
+
+// pendingGuard refuses — retryably — a request for a model whose files the instance is still
+// downloading (ADR 0072 P2 欠落 7).
+//
+// It answers nil for everything it cannot establish: no pending parameter (a deployment whose
+// engine stack predates it), a request that names no model, an id the catalogue does not hold
+// (the 404 above is that request's answer), and a row with no declared files. Each of those is
+// the behaviour the fleet had before this check, which is the only safe direction — a guard
+// that guesses "still syncing" holds requests an engine could have served.
+func (g engineGateway) pendingGuard(ctx context.Context, eng *engineRuntimeState, body []byte,
+	r *http.Request) *apiError {
+
+	if eng.pending == nil {
+		return nil
+	}
+	id := engineRequestedModelID(eng, body, r)
+	if id == "" {
+		return nil
+	}
+	for _, m := range eng.catalog.enabled(ctx) {
+		if m.ID != id || engineModelIsLora(m) {
+			continue
+		}
+		missing := eng.pending.missing(ctx, m)
+		if len(missing) == 0 {
+			return nil
+		}
+		// The count, not the keys: the caller cannot act on a bucket path, and the operator
+		// reads the sidecar's own log. What the sentence has to carry is that waiting is the
+		// right thing to do, which "still being synced" says and a 400 never could.
+		return &apiError{http.StatusServiceUnavailable, "engine_waking", fmt.Sprintf(
+			"%s is still being synced onto this engine's instance (%d file(s) to go); retry",
+			id, len(missing))}
+	}
+	return nil
+}
+
+// engineRequestedModelID is which catalogue row this request is for.
+//
+// Two sources because the two roles ask differently: a chat request names its model in the
+// body, and an image request does not name one at all — ComfyUI's native API has no such field
+// — so the Agent states it in `X-AF-Model`, which is the same header the usage accounting
+// reads to know which model answered.
+func engineRequestedModelID(eng *engineRuntimeState, body []byte, r *http.Request) string {
+	if eng.def.api() == engineAPIChat {
+		if m := engineRequestModel(body); m != "" {
+			return m
+		}
+	}
+	return strings.TrimSpace(r.Header.Get("X-AF-Model"))
 }
 
 // engineCatalogHolds reports whether one of the enabled models answers to this id. LoRAs are
