@@ -517,9 +517,9 @@ export function App() {
             {workspaceRunning ? (
               <>
                 <AssistantSection />
+                {schedulerEnabled && <SchedulesSection />}
                 <WorkItemsSection />
                 <MemoQueueSection />
-                {schedulerEnabled && <SchedulesSection />}
                 <ProjectTree />
                 <OtherSessionsSection />
                 <SharedSessionsSection />
@@ -528,11 +528,11 @@ export function App() {
             ) : (
               <>
                 <StoppedRailSection id="assistant" title={tr("ui.assistant")} icon="comment-discussion" />
+                {schedulerEnabled && <SchedulesSection />}
                 {/* The stopped state is the point (docs/log/80): this reads the CP's cache,
                     which is what makes waking a stopped Workspace from a ticket work. */}
                 <WorkItemsSection />
                 <MemoQueueSection />
-                {schedulerEnabled && <SchedulesSection />}
                 <StoppedRailSection id="repos" title={tr("ui.repositories")} icon="repo" />
                 <StoppedSessionsSection />
                 <SharedSessionsSection />
