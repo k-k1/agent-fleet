@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -65,8 +66,7 @@ type engineECS struct {
 	// consulted (measured during the 0074 rename: `box: null` while the panel said the engine was
 	// up on an l4).
 	spotProvider string
-	cachBox      engineBox
-	cachBoxOn    bool
+	cachBoxes    []engineBox
 	cachBoxAt    time.Time
 	now          func() time.Time // test seam
 }
@@ -111,7 +111,7 @@ func (t *engineECS) setProviders(onDemand, spot string) bool {
 		return false
 	}
 	t.capacityProvider, t.spotProvider = onDemand, spot
-	t.cachBox, t.cachBoxOn, t.cachBoxAt = engineBox{}, false, time.Time{}
+	t.cachBoxes, t.cachBoxAt = nil, time.Time{}
 	return true
 }
 
@@ -187,6 +187,10 @@ type engineServiceView struct {
 	// on-demand — the shape of the lie the 0074 rename produced (`box: null`, "starting on l4").
 	// Empty for a service that declares a launch type instead of a strategy.
 	provider string
+	// deployment is the PRIMARY deployment's id. A forced deployment replaces it, so a CHANGED
+	// id is the evidence that a strategy write has actually landed — which is what the start
+	// waits for before it moves the desired count (ADR 0075, live run 3's two boxes).
+	deployment string
 }
 
 // engineViewTTL is the short cache in front of DescribeServices (ADR 0070 decision 10).
@@ -297,6 +301,11 @@ func (t *engineECS) describe(ctx context.Context) (engineServiceView, error) {
 			if aws.ToString(d.Status) != "PRIMARY" {
 				continue
 			}
+			// The deployment's id, which is how "ECS has taken the strategy" is told from "the
+			// call returned": forcing a deployment REPLACES the PRIMARY one, id and all
+			// (measured, ADR 0075 live test 0: `ecs-svc/0995…` → `ecs-svc/5816…`). The start
+			// splits on this — see setStrategy.
+			v.deployment = aws.ToString(d.Id)
 			v.rollout = string(d.RolloutState)
 			switch {
 			case d.UpdatedAt != nil:
@@ -342,27 +351,65 @@ func (t *engineECS) draining(ctx context.Context) bool {
 // the only caller that acts on it is the controller, and it must read an unreadable cluster
 // as "not draining" rather than as "do not start yet" — see draining above.
 func (t *engineECS) box(ctx context.Context) (engineBox, bool) {
+	return engineFirstBox(t.boxes(ctx), "")
+}
+
+// boxOn is the same lookup narrowed to ONE of the role's capacity providers. Rule 2 needs it:
+// "has this offer produced a box" is a question about the provider the offer buys from, and a
+// start that changed provider can have two boxes registered at once — the previous offer's on its
+// way out and this one's coming up. Asking `box()` would answer with whichever ECS listed first
+// (measured on the deployment: exactly that pair, 17 seconds apart).
+func (t *engineECS) boxOn(ctx context.Context, provider string) (engineBox, bool) {
+	if strings.TrimSpace(provider) == "" {
+		return engineBox{}, false
+	}
+	return engineFirstBox(t.boxes(ctx), provider)
+}
+
+// engineFirstBox picks one box out of the ones registered on this engine's providers: the first
+// ACTIVE one, and only then a draining one. Preferring ACTIVE is what keeps the panel — and rule
+// 2 — describing the box that is coming up rather than the one going away.
+func engineFirstBox(list []engineBox, provider string) (engineBox, bool) {
+	var fallback engineBox
+	found := false
+	for _, b := range list {
+		if provider != "" && b.provider != provider {
+			continue
+		}
+		if b.status == "ACTIVE" {
+			return b, true
+		}
+		if !found {
+			fallback, found = b, true
+		}
+	}
+	return fallback, found
+}
+
+// boxes is the cached container-instance lookup: every instance registered on either of this
+// engine's capacity providers.
+func (t *engineECS) boxes(ctx context.Context) []engineBox {
 	if od, spot := t.providers(); od == "" && spot == "" {
-		return engineBox{}, false // Fargate: nothing to look up, and no call to pay for
+		return nil // Fargate: nothing to look up, and no call to pay for
 	}
 	now := t.clock()
 	t.mu.Lock()
 	if !t.cachBoxAt.IsZero() && now.Sub(t.cachBoxAt) < engineBoxTTL {
-		b, ok := t.cachBox, t.cachBoxOn
+		b := t.cachBoxes
 		t.mu.Unlock()
-		return b, ok
+		return b
 	}
 	t.mu.Unlock()
 
-	b, ok := t.describeBox(ctx)
+	b := t.describeBoxes(ctx)
 	t.mu.Lock()
-	t.cachBox, t.cachBoxOn, t.cachBoxAt = b, ok, now
+	t.cachBoxes, t.cachBoxAt = b, now
 	t.mu.Unlock()
-	return b, ok
+	return b
 }
 
-// describeBox is the uncached walk of the cluster's container instances.
-func (t *engineECS) describeBox(ctx context.Context) (engineBox, bool) {
+// describeBoxes is the uncached walk of the cluster's container instances.
+func (t *engineECS) describeBoxes(ctx context.Context) []engineBox {
 	// Read once, up front: the names can be replaced under this walk by the table reloader,
 	// and matching half the pages against one name and half against another would answer
 	// "no box" on the run that happens to straddle a rename.
@@ -375,23 +422,27 @@ func (t *engineECS) describeBox(ctx context.Context) (engineBox, bool) {
 		})
 		if err != nil {
 			log.Printf("%s: listing container instances failed: %v", t.logKey(), err)
-			return engineBox{}, false
+			return nil
 		}
 		arns = append(arns, out.ContainerInstanceArns...)
 		if next = out.NextToken; next == nil {
 			break
 		}
 	}
+	var out []engineBox
 	for len(arns) > 0 {
 		n := min(len(arns), 100)
-		out, err := t.api.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
+		page, err := t.api.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
 			Cluster: aws.String(t.cluster), ContainerInstances: arns[:n],
 		})
 		if err != nil {
 			log.Printf("%s: describing container instances failed: %v", t.logKey(), err)
-			return engineBox{}, false
+			// What was found so far is dropped with the error, exactly as the single-box walk
+			// dropped it: a partial answer would read as "no box on the other provider", which is
+			// the claim this must never make cheaply.
+			return nil
 		}
-		for _, ci := range out.ContainerInstances {
+		for _, ci := range page.ContainerInstances {
 			// The capacity provider is what tells this engine's box apart from a workspace
 			// slot on the same cluster. Matching on anything looser would report the pool's
 			// m8g as the GPU that is costing $1.26 an hour.
@@ -419,11 +470,11 @@ func (t *engineECS) describeBox(ctx context.Context) (engineBox, bool) {
 					break
 				}
 			}
-			return b, true
+			out = append(out, b)
 		}
 		arns = arns[n:]
 	}
-	return engineBox{}, false
+	return out
 }
 
 func (t *engineECS) logKey() string {
@@ -505,6 +556,14 @@ func (t *engineECS) setEnabled(ctx context.Context, on bool) error {
 //     capacity provider's instance requirements changed underneath (two offers can share one
 //     provider), and the PENDING task has to be placed again for that to be asked for.
 //
+// 🔴 A START THAT ALSO CHANGES THE STRATEGY IS TWO CALLS, NOT ONE. Measured on the deployment
+// (ADR 0075 live run 3, twice): handing `desiredCount: 1` and a new strategy to ONE UpdateService
+// makes ECS place the task against the OLD strategy first, and that provider BUYS A BOX. The
+// forced deployment then places the task on the new provider, but the first box stays — 16
+// minutes 28 seconds of billing ($0.51), and while it deregisters the ADR 0074 swap wait holds
+// the NEXT start for six minutes. So the strategy goes first, on its own, and the desired count
+// follows only once ECS has replaced the PRIMARY deployment.
+//
 // Because every accepted write creates a new PRIMARY deployment, `StartDeadlineSec` and the
 // per-offer budget both re-clock themselves off `updatedAt` — the CP needs no timer of its own
 // (ADR 0075 open question 1 (c), measured).
@@ -525,26 +584,88 @@ func (t *engineECS) setStrategy(ctx context.Context, provider string, start bool
 		return fmt.Errorf("%s: refusing to write the capacity provider strategy while %d task(s) are running",
 			t.logKey(), v.running)
 	}
-	in := &ecs.UpdateServiceInput{
-		Cluster: aws.String(t.cluster),
-		Service: aws.String(t.service),
-	}
 	// "Is this a change" is answered by the service's own strategy, read back a line ago — never
 	// by what this process remembers writing. CloudFormation rewrites it on every release that
 	// touches the service (ADR 0075 decision 12).
 	if v.provider != provider {
-		in.CapacityProviderStrategy = []ecstypes.CapacityProviderStrategyItem{
-			{CapacityProvider: aws.String(provider), Weight: 1},
+		if err := t.writeStrategyOnly(ctx, provider, v.deployment); err != nil {
+			return err
 		}
-		in.ForceNewDeployment = true
+		if !start {
+			return nil // the move is done: the forced deployment places the PENDING task again
+		}
 	} else if !start {
-		in.ForceNewDeployment = true
+		// Same provider, and this is still a move to another offer: the capacity provider's
+		// instance requirements changed underneath (two offers can share one provider), so the
+		// PENDING task has to be placed again for the new ones to be asked for.
+		_, err := t.api.UpdateService(ctx, &ecs.UpdateServiceInput{
+			Cluster: aws.String(t.cluster), Service: aws.String(t.service), ForceNewDeployment: true,
+		})
+		t.invalidate()
+		t.invalidateBox()
+		return err
 	}
-	if start {
-		in.DesiredCount = aws.Int32(1)
+	if v.desired >= 1 {
+		// Already asked for. Two start paths can reach here within a second of each other — the
+		// admin toggle and the controller's next tick — and a second `desiredCount: 1` is a write
+		// that buys nothing and makes the panel show the offer being taken twice.
+		return nil
 	}
-	_, err = t.api.UpdateService(ctx, in)
+	_, err = t.api.UpdateService(ctx, &ecs.UpdateServiceInput{
+		Cluster: aws.String(t.cluster), Service: aws.String(t.service), DesiredCount: aws.Int32(1),
+	})
 	t.invalidate()
 	t.invalidateBox()
 	return err
+}
+
+// engineDeploymentSettle bounds the wait for ECS to replace the PRIMARY deployment after a forced
+// strategy write. Measured (live test 0): the new deployment exists in the SAME response — its
+// `createdAt` equals the update's timestamp — so the first read normally answers, and the wait is
+// here only so that a slow answer does not turn into the two-box start above. Variables, so a
+// test can take the sleep out.
+var (
+	engineDeploymentSettleTries = 4
+	engineDeploymentSettleWait  = 500 * time.Millisecond
+)
+
+// errEngineStrategySettling says the strategy was written and ECS has not shown the new
+// deployment yet. NOT a failed start: the strategy is now what this engine wants, so the next
+// attempt takes the short path and only moves the desired count. Counting it as a failure would
+// double a cooldown over a call that did exactly what it was asked to.
+var errEngineStrategySettling = errors.New("the capacity provider strategy was written; waiting for the new deployment")
+
+// writeStrategyOnly is the first half: the strategy, forced, with the desired count untouched.
+func (t *engineECS) writeStrategyOnly(ctx context.Context, provider, wasDeployment string) error {
+	_, err := t.api.UpdateService(ctx, &ecs.UpdateServiceInput{
+		Cluster: aws.String(t.cluster),
+		Service: aws.String(t.service),
+		CapacityProviderStrategy: []ecstypes.CapacityProviderStrategyItem{
+			{CapacityProvider: aws.String(provider), Weight: 1},
+		},
+		// Required, not optional: without it ECS answers 400 on a service that already uses a
+		// strategy (measured, both directions, at desired 0).
+		ForceNewDeployment: true,
+	})
+	t.invalidate()
+	t.invalidateBox()
+	if err != nil {
+		return err
+	}
+	for i := 0; i < engineDeploymentSettleTries; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return errEngineStrategySettling
+			case <-time.After(engineDeploymentSettleWait):
+			}
+		}
+		v, err := t.describe(ctx)
+		if err == nil && v.deployment != "" && v.deployment != wasDeployment {
+			return nil
+		}
+	}
+	log.Printf("%s: the strategy was written but ECS still reports the old deployment; leaving the desired count alone",
+		t.logKey())
+	return errEngineStrategySettling
 }

@@ -156,6 +156,14 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			log.Printf("engines: %s capacity providers re-read from %s: %s / %s (spot)",
 				d.Key, r.name, engineProviderLabel(od), engineProviderLabel(spot))
 		}
+		// The per-offer budget, live. It keys nothing and is read once per tick, so unlike the
+		// controller's intervals it can move under a running start — and it has to: the default
+		// 180 seconds is too short for a Spot box plus a ComfyUI cold start, and an operator
+		// raising it should not need a Control Plane replacement to be heard (ADR 0075 live run).
+		if e.setOfferBudget(d.offerBudget()) {
+			changed = true
+			log.Printf("engines: %s offer budget re-read from %s: %s", d.Key, r.name, d.offerBudget())
+		}
 		if why := engineDefDriftedBeyondClasses(e.def, d); why != "" {
 			log.Printf("engines: %s changed in the table in a way this process cannot take live (%s) - restart the Control Plane", d.Key, why)
 		}
@@ -207,12 +215,6 @@ func engineDefDriftedBeyondClasses(was, now engineDef) string {
 	}
 	if was.StartDeadlineSec != now.StartDeadlineSec {
 		return "start deadline"
-	}
-	// The per-offer budget is read off the row this process started with (ADR 0075 decision 5),
-	// like the two above and for the same reason: nothing re-reads the row itself, only the
-	// offer list and the provider names are carried live.
-	if was.OfferBudgetSec != now.OfferBudgetSec {
-		return "offer budget"
 	}
 	return ""
 }

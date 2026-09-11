@@ -494,6 +494,12 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 		var err error
 		if val == engineModeOn {
 			err = e.startEngine(r.Context())
+			if errors.Is(err, errEngineStrategySettling) {
+				// The strategy landed and the desired count is the controller's next tick away.
+				// Reporting a 502 here would tell the administrator the button failed when the
+				// engine is on its way up (ADR 0075: the start is two calls, not one).
+				err = nil
+			}
 		} else {
 			err = e.ecs.setEnabled(r.Context(), false)
 		}

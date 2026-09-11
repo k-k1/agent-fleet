@@ -650,7 +650,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			pending:     newEnginePending(ssmc, name, d.Key),
 			classes:     parseEngineClasses(d.offersSpec()),
 			cluster:     cluster,
-			offers:      newEngineOfferRun(),
+			offers:      newEngineOfferRun(d.offerBudget()),
 			audit:       auditor,
 		}
 		// Published at start as well as on every change: the box reads it when it starts, and a
