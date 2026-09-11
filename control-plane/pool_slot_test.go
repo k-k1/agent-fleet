@@ -25,7 +25,9 @@ type slotPoolFactory struct {
 	asked  []string
 }
 
-func (f *slotPoolFactory) New(runtime.Workspace, string, []string) runtime.Runtime { return stubRuntime{} }
+func (f *slotPoolFactory) New(runtime.Workspace, string, []string) runtime.Runtime {
+	return stubRuntime{}
+}
 
 func (f *slotPoolFactory) TerminateQuarantinedSlot(_ context.Context, instanceID string) (string, error) {
 	f.asked = append(f.asked, instanceID)
