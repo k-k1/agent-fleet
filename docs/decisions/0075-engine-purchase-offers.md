@@ -45,7 +45,7 @@ English | [日本語](0075-engine-purchase-offers.ja.md)
 (`InstanceLaunchTemplateUpdate`) — confirmed while implementing ADR 0074 decision 5. Changing it
 in place with CloudFormation ends in `UPDATE_FAILED`: `CloudFormation cannot update a stack when
 a custom-named resource requires replacing.` (ADR 0074, "Spot への切り替えは CloudFormation が
-拒む"). Changing the NAME along with it does go through as a replacement (0.18.1's
+拒む"). Changing the NAME along with it does go through as a replacement (0.19.0's
 `ImageCapacityOptionType`), but that is **a CloudFormation update of 176 seconds out and 147
 seconds back** (ADR 0074, "Spot への置き換えを live で流した") — not a way to answer "Spot was
 not available, take on-demand" **at runtime**.
@@ -83,7 +83,7 @@ counts interruptions.
   in `engines.go`). Both the `draining` test (`engine_ecs.go`) and the check for which container
   instance is this engine's box (`box()`) resolve through that single name.
 - **The service names its provider** (`60-engines.yaml`'s `CapacityProviderStrategy`). Since
-  0.18.1 that name is `!Ref ImageCapacityProvider` and therefore follows the resource
+  0.19.0 that name is `!Ref ImageCapacityProvider` and therefore follows the resource
   (`PARAMETERS-60-engines.md`, "The capacity providers" — restating it as a `!Sub` string
   **fails silently when the name moves**).
 - **The CP already has `UpdateService`** (starting and stopping move the desired count). Writing
@@ -374,7 +374,7 @@ Rule 4's exception (llm is on-demand only) is held **twice over**.
 
 - **By declaration**: no `spot` row in `LlmOffers`. The CP buys only what the list declares.
 - **By template**: `60-engines.yaml` **does not create** a Spot provider for the llm role — the
-  same stance 0.18.1 took by adding `ImageCapacityOptionType` and not its llm twin.
+  same stance 0.19.0 took by adding `ImageCapacityOptionType` and not its llm twin.
 
 The reason is already written in 0074 and `PARAMETERS-60-engines.md`: **Spot's two-minute notice
 arrives mid-conversation, and a 527-586-second cold start is what follows it.** An image request
