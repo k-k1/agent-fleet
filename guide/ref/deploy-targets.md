@@ -37,6 +37,7 @@ value instead of reverting code.
 | Role-scoped documentation in the container | ✓¹ | ✓¹ | ✓² | ✓² |
 | Browser pane | ✓ | ✓³ | ✓ | ✓ |
 | Cost attribution per member | — | — | ✓ | ✓ |
+| An image engine the deployment provides | ✓⁴ | ✓⁴ | — | ✓⁵ |
 
 ¹ Staged on the host and bind-mounted at start.
 
@@ -46,6 +47,13 @@ delivery mechanisms, one implementation of "what may this role see".
 
 ³ The lean image used by `native` does not bake Chromium; it is downloaded on demand
 the first time.
+
+⁴ A ComfyUI **already running on your own network**, pointed at with one environment
+variable ([operate/07](../operate/07-image-engine.md)).
+
+⁵ The fleet's own GPU, bought when something asks for it. There is no equivalent on
+Fargate. On every target a session can also generate images on **the member's own CLI
+plan** (Codex / Antigravity); this row is about an engine the deployment provides.
 
 ## Where the procedure lives
 
