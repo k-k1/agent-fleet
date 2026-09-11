@@ -344,6 +344,23 @@ fi
 # GHCR through this NAT runs at 12-14 MB/s, which put 178 seconds of a 527-second cold start
 # into the pull. Once it is in ECR the pull is in-region.
 if [ -n "${AF_STACK_ENGINES:-}" ]; then
+  # The engine tools image: the fetch sidecar and the two ingest steps, which used to be shell
+  # inline in 60-engines.yaml. Copied whenever engines are deployed at all, because BOTH roles
+  # and the ingest task pull it - and before the stack, for the usual reason (a service that
+  # cannot pull leaves CREATE_IN_PROGRESS with no way back).
+  #
+  # 🔴 The tag and the template are bound by a contract number: a task started against an image
+  # that speaks a different one exits 78 and says so, rather than running the previous release's
+  # script under a service that reports a steady state.
+  tools_tag="$(af_read_one_param 60-engines EngineToolsImageTag)"
+  : "${tools_tag:=2026-09-11}"
+  if "${AWS[@]}" ecr describe-images --repository-name af-engine-tools \
+      --image-ids "imageTag=$tools_tag" >/dev/null 2>&1; then
+    echo "    · af-engine-tools:$tools_tag is already in ECR"
+  else
+    echo "    · crane copy $FROM/engine-tools:$tools_tag"
+    af_run crane copy "$FROM/engine-tools:$tools_tag" "$ECR_HOST/af-engine-tools:$tools_tag"
+  fi
   llm_tag="$(af_read_one_param 60-engines LlmImageTag)"
   : "${llm_tag:=server-cuda}"
   if "${AWS[@]}" ecr describe-images --repository-name af-llamacpp \

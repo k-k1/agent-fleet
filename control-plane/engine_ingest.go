@@ -588,6 +588,11 @@ func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (st
 		ID: store.NewID(), Role: req.Role, ModelID: req.ModelID, S3Key: req.S3Key,
 		Source: req.Resolved.Source, State: store.EngineIngestPending,
 		Bytes: req.Resolved.Bytes, Spec: string(spec), StartedBy: req.AcceptedBy,
+		// Whose grant this ran under, so the panel can show one tenant its own downloads
+		// while they are still downloads (ADR 0072 open question 11). The same value lands on
+		// the catalogue row at the end, but that is minutes away and this list is what
+		// somebody is watching in the meantime.
+		TenantID: req.AcceptedTenant,
 	}
 	if err := g.store.PutEngineIngestJob(ctx, job); err != nil {
 		return job, internalErr(err)

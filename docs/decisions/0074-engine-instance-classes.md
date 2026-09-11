@@ -1067,3 +1067,121 @@ settled as **the card's physical quantity**. The `l4` rung is declared from what
 reports, `Total VRAM 22563 MB`: **8000 is simply wrong** and 21000 is only a conservative floor.
 Decision 6's gate compares `max(enabled models)` against the rung, so unless the rung is the
 card, a judgement like "20,712 against 22,563, 1.8 GB left" cannot be made at all.
+
+## Follow-up — the ladder, declared on the dev deployment (2026-09-11)
+
+The declaration the "not a phase" section asks for, actually put in. **Both roles took it, and
+applying a rung was verified to rewrite the capacity provider on hardware.**
+
+### What was declared, and why
+
+```
+LlmInstanceClasses=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|2.91
+ImageInstanceClasses=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|2.91;l40s2x|L40S 48GB 8vCPU (g6e.2xlarge)|44000|g6e.2xlarge|8|30000-65536
+```
+
+- **The first rung restates what the stack already buys** — `AllowedInstanceTypes`, `VCpu*` and
+  `Mem*` copied across (llm `g6.xlarge,g5.xlarge` / 4-8 / 15000-65536; image `g6.xlarge` / 4-8 /
+  15000-65536).
+- **The second rung is g6e.xlarge.** At 4 vCPU it fits inside the G-family quota of 8 even with
+  the image role holding a box.
+- **`vramMiB` is 22000.** The question the previous section left open — the card's physical size
+  or an operational cap — is settled as the former. Three numbers are involved: the hardware's
+  own `Total VRAM 22563 MB`, **EC2's declared 22,888 MiB**
+  (`describe-instance-types`, `GpuInfo.TotalGpuMemoryInMiB`; the same for g6.xlarge and
+  g5.xlarge), and the nominal 24 GB. 🔴 **Do not write the nominal figure**: `vramMiB` also
+  becomes `AcceleratorTotalMemoryMiB.Min`, so 24576 would match **no instance at all**. 22000
+  leaves 888 MiB against EC2's filter and sits just under the real 22,563 as a comparison
+  target — the only band that serves both jobs.
+- **The image role's l4 rung said 8000.** That was `ImageAcceleratorMemMinMiB` — a *placement
+  filter* — copied into a rung, which is exactly what the previous section described as "a
+  declared value less than half the real card tips the gate the other way". **Fixing it flipped
+  on hardware**: `GET /api/admin/engines` for the image role went `vram_fits: false` →
+  **`true`** (against `flux1-dev-fp8`'s 16,571 MiB).
+
+### `usdPerHour` comes from Cost Explorer's actuals
+
+|  | BoxUsage | ECS Managed Instances management | Total | Declared |
+|---|---|---|---|---|
+| g6.xlarge | $1.1672/h | $0.0910/h | **$1.2582/h** | 1.26 |
+| g6e.xlarge | $2.6990/h | $0.2105/h | **$2.9095/h** | 2.91 |
+
+From `ce get-cost-and-usage` over 2026-09-09..11, filtered by `INSTANCE_TYPE` and divided by
+`USAGE_TYPE` (4.2181 billed hours of g6.xlarge, 1.4978 of g6e.xlarge — the latter is P1's
+90.5 minutes). **g6.xlarge coming out at the 1.26 already declared** is the positive control for
+the method. The management fee is **7.80%** of the box on both types, which is the ~8% the
+"do not copy a list price" note in `PARAMETERS-60-engines.md` is about. `l40s2x` has no billed
+hours, so **its price was left empty** — declaring nothing is the rule.
+
+### 🔴 A ladder in CloudFormation does not reach a RUNNING Control Plane
+
+The declaration went in with one `cloudformation deploy --parameter-overrides`, and SSM's
+`/af-ws/engines` carried the new ladder within the same minute (01:14:20Z). **`GET
+/api/admin/engines` went on answering with the old one** — l4 still at 8000, the llm role still
+with an empty `classes`.
+
+The cause is that `newEngineRegistry` calls `loadEngineTable` exactly once, when the routes are
+registered, i.e. at CP start. The table describes the VESSEL, so there is no reload path. A
+`update-service --force-new-deployment` of the CP is what published it (01:15:35Z → 01:17:11Z,
+**about 100 seconds**, blue/green behind the ALB, so no downtime).
+
+This is an EXCEPTION to what ADRs 0072 and 0074 promise about changing things without a
+CloudFormation round trip. A model is the catalogue's and moves without touching the CP; **the
+ladder is the vessel's, and it costs one CloudFormation run plus one CP restart**. An operator
+who does not know that will hunt for a configuration mistake that is not there.
+
+> ✅ **Fixed (2026-09-11; implemented, not verified on hardware) — the table is re-read.** The
+> CP polls the engine table (`AF_ENGINES_SSM_PARAM`) every **10 seconds**
+> (`engine_table_reload.go`, on the same constant the pending reader uses). It compares the
+> raw TEXT first, so an unchanged parameter costs one `GetParameter` and no parsing — which is
+> what makes six calls a minute the right price for something that is almost always unchanged.
+>
+> **Only the ladder is carried live.** The rest of a row (service, url, health, provider,
+> capacity provider, idle, deadline) is baked into objects this process is using right now:
+> `engineECS`'s client, the controller's goroutine and its intervals, the capacity client that
+> is attached only when a ladder existed at start, the demand window. Swapping them means
+> rebuilding the runtime state, which throws away **what only this process knows** — the
+> demand counter the controller stops the engine on, the warm model, the rung this process
+> last applied — and starts a second controller for the same engine. So a change to any of
+> them is **logged as needing a restart**: better than half-applying it silently, because a
+> panel whose word disagrees with the deployment's behaviour is exactly this section's defect.
+>
+> **A row added or removed is logged too, and nothing else.** Unregistering a role that left
+> the table would take a GPU away from whoever is using it on the strength of one poll; the
+> operator's route out is `mode=off`, which is a decision rather than an inference. 🔴 Going
+> from NO ladder to one also needs a restart: the capacity client and the controller's start
+> gate are attached at construction only when a ladder exists, so a ladder adopted here would
+> be one the panel shows and nothing enforces — decision 4's "the gate is bypassed and it
+> lands quietly on the old card".
+>
+> The swap is behind `classesMu` (an RWMutex) and every reader — controller, gateway, admin —
+> goes through `classList()`. A `-race` test swaps the ladder 50 times while it is being read,
+> and was checked against the defect: without the lock it really does fail. Three more pin the
+> behaviour (a new ladder lands; a broken table keeps the previous one; an unchanged table
+> swaps nothing and returns the same slice). **Not verified on hardware**: the next time a
+> ladder is changed by CloudFormation, watch `GET /api/admin/engines` catch up within ten
+> seconds without the CP being replaced.
+
+### Applying a rung rewrites four fields of the provider
+
+`PUT /api/admin/engines/llm/class {"class":"l4"}`, with `describe-capacity-providers` either
+side:
+
+| Field | Before | After |
+|---|---|---|
+| `allowedInstanceTypes` | `g6.xlarge, g5.xlarge` | `g6.xlarge, g5.xlarge` |
+| `acceleratorTotalMemoryMiB.min` | **21000** | **22000** |
+| `vCpuCount` | 4-8 | 4-8 |
+| `memoryMiB` | 15000-65536 | 15000-65536 |
+
+Only the VRAM floor moved — and that is precisely the value the declaration changed. Decision
+1's "four fields are rewritten" holds on the real path. **No box was started on a higher rung**
+(GPU cost; P1 already did that).
+
+### The deployment itself
+
+`dev-deploy.sh` re-baked both the CP and the Agent image (`origin/develop` b6feea43,
+ImageTag=0.18.1-dev-b6feea43). At its 60-engines step, ADR 0072 phase P6's migration gate —
+`update.sh` reading the LIVE stack to translate `<Role>Enabled=true` — **printed nothing at
+all**: this deployment already holds `Enabled=true` and no `<Role>ModelS3Key`, so there is
+nothing to translate. A silent gate is what a deployment that is already past P6 looks like.

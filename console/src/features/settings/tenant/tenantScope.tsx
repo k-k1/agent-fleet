@@ -28,6 +28,7 @@ import { MemberView } from "./tenantMemberDetail.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
 import { CloudCostAdminView } from "../../cost/CloudCostView.tsx";
 import { McpAdminView } from "../mcp/mcpAdmin.tsx";
+import { EnginesAdminView } from "../admin/adminEngines.tsx";
 
 export interface ScopeGroup {
   key: string;
@@ -39,7 +40,7 @@ export interface ScopeGroup {
 //
 // The five under "manage" are the views where the CP returns a tenant admin their own tenant's
 // rows (GET /api/admin/{sessions,usage,audit} and /api/admin/mcp-servers).
-export function tenantScopeGroups(opts: { cost: boolean }): ScopeGroup[] {
+export function tenantScopeGroups(opts: { cost: boolean; engines?: boolean }): ScopeGroup[] {
   const manage: [string, string][] = [
     ["members", "tenant.tab_members"],
     ["sessions", "tenant.tab_sessions"],
@@ -49,6 +50,15 @@ export function tenantScopeGroups(opts: { cost: boolean }): ScopeGroup[] {
     ...(opts.cost ? ([["cost", "tenant.tab_cost"]] as [string, string][]) : []),
     ["audit", "tenant.tab_audit"],
     ["mcp", "tenant.tab_mcp"],
+    // The reduced engine panel (ADR 0072 open question 11). Created only where the operator
+    // granted this tenant `allow_engine_ingest` — like the cost item above, the item does not
+    // exist rather than existing and being hidden, because the CP answers 403 without the
+    // grant and a rail entry that leads to a refusal is worse than no entry.
+    //
+    // 🔴 It lives HERE and not in the admin modal, which is where the operator's version is:
+    // the admin modal's entry point is super_admin-only in TopBar, so a tenant_admin has no
+    // door to it at all. Tenant settings is the only surface a tenant administrator reaches.
+    ...(opts.engines ? ([["engines", "tenant.tab_engines"]] as [string, string][]) : []),
   ];
   return [
     {
@@ -81,7 +91,7 @@ export function tenantScopeGroups(opts: { cost: boolean }): ScopeGroup[] {
   ];
 }
 
-export const TENANT_SCOPE_SECTIONS = tenantScopeGroups({ cost: true }).flatMap((g) =>
+export const TENANT_SCOPE_SECTIONS = tenantScopeGroups({ cost: true, engines: true }).flatMap((g) =>
   g.items.map(([k]) => k),
 );
 
@@ -450,6 +460,10 @@ export function TenantScopeBody({
     );
   }
   if (section === "network") return <TenantNetworkView key={slug} slug={slug} />;
+  // The reduced engine panel. The SAME component the operator sees — it draws itself from the
+  // `super_admin` flag in its own answer (ADR 0072 open question 11), so there is one screen to
+  // keep working rather than a copy that drifts.
+  if (section === "engines") return <EnginesAdminView key={slug} />;
   // Not switched on isSuper: the git provider OAuth app belongs to the tenant admin, and its
   // PUT is gated by tenantAdminFor (ADR 0052 decision 3).
   if (section === "git-oauth") return <TenantGitOAuthView key={slug} slug={slug} />;

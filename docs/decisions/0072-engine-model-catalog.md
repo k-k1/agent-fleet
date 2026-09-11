@@ -2832,12 +2832,33 @@ every tenant**, so `guide/admin/04` (ja and en) gains a section and the tenant-l
 is synced on every start, a per-tenant catalogue pushes the cold start **past ten minutes at about
 five tenants, even with one model each**.
 
-**What is left.** The Console's **engines panel itself is still super_admin** (`GET
+~~**What is left.**~~ **The screen went in too (2026-09-11, the paragraph below).** What follows
+is the original text: The Console's **engines panel itself is still super_admin** (`GET
 /api/admin/engines` keeps `withSuperAdmin`). A tenant_admin of a granted tenant **can ingest
 through the API but has no screen**: opening the panel to a non-super caller needs a reduced row
 with the mode, the class and the instance's state taken out, which is wider than this pass. The
 operator's side — granting it, and reading the acceptance it produces — is complete. Hardware
 verification is also outstanding (nothing here touched a deployment).
+
+**The reduced screen (2026-09-11, not verified on hardware).** `GET /api/admin/engines` moved onto
+the **same predicate** as the ingest gate and answers a non-super caller a **subset of the row**
+(`engineTenantAdminRow` copies named keys, so the containment is true by construction and a test
+checks it against a real row). What survives is `key` / `api` / `provider` / `base_models` /
+`file_flags` and an equally trimmed `model_rows` (id, kind, enabled, description, family,
+licence). `super_admin` rides on the envelope and the Console branches on **that flag only** —
+inferring it from "did `mode` arrive" works until a field is renamed, and then it draws buttons
+that 403. The ingest job list is narrowed to the caller's tenant as well
+(`engine_ingest_jobs.tenant_id`, sqlite `0063` / postgres `0048`). 🔴 **The empty tenant is a
+value, not "no filter"**: written as "narrow when the tenant is not empty", a caller whose tenant
+did not resolve is handed every job the operator started. The reconcile stays unfiltered — a job
+nobody may see still has to be brought up to date, or a task that finished while no one with the
+right tenant was looking stays `running` for ever.
+🔴 **It lives in tenant settings, not in the Admin modal.** The Admin modal's entry point is
+super_admin-only in TopBar, so adding it there gives a tenant_admin no door at all — found by
+rendering the panel. Rendering found one more thing: **two paragraphs of explanation outlived
+their controls** ("re-selecting takes effect at the next start", "Disabled takes the engine out
+of…"). Both describe buttons that are gone, and a test that enumerates the elements which must be
+ABSENT does not look at prose.
 
 ## P6 implementation — the seed and six parameters are gone (2026-09-10)
 
@@ -3343,3 +3364,47 @@ make the gateway rewrite a request body.
 **What hardware has to confirm.** On the next start of the llm role: that `llama-server` logs
 the adapter load (that `--lora-scaled` appears in `/models`'s `status.args`), and that the
 pinned fine-tune is visible in what the model answers. That belongs to the hardware lane.
+
+
+## Follow-up — the embedded shell moved into an image (2026-09-11, option A)
+
+The last large movable block in `60-engines.yaml` — its embedded shell — is now FILES under
+`deploy/aws/ecs/engine-tools/`, baked into a small `af-engine-tools` image. Option B (fetch the
+scripts from the models bucket at start) was rejected as a change to a security boundary rather
+than a size question: the start path would execute an object a person can edit. Option C (an SSM
+parameter) does not fit — Standard holds 4 KB and the fetch script alone had grown to 6.3 KB. The
+decision was the operator's. The template-side mechanics live in
+`cfn/PARAMETERS-60-engines.md`, "The engine tools image".
+
+- 45,792 -> 39,592 bytes (-6,200; 11,608 of headroom). What moved is 7,810 bytes of shell — the
+  fetch sidecar's 6,308 and the ingest steps' 979 / 523 — and the difference is one parameter,
+  four `!Sub` image references and four `ENGINE_TOOLS_CONTRACT` lines. **That difference is the
+  price of the binding**, and it is the part that must not be optimised away.
+- 🔴 **The three idle wrappers (1,318 bytes) cannot move.** They run in the ENGINE's own
+  container (`/app/llama-server`, `/sd-server`, `/ComfyUI/main.py`), and a container runs one
+  image; two of those three images are pinned copies of third-party builds this repository does
+  not build, so baking a wrapper in would mean forking them. The brief assumed the wrappers were
+  movable; they are not.
+- **An old image against a new template does not quietly do something else.** The template
+  declares `ENGINE_TOOLS_CONTRACT`, each script compares it with the `CONTRACT` file beside it,
+  and a mismatch **exits 78 having done nothing**, with three lines in the task's own log.
+  `standup.sh` copies images one step BEFORE it deploys the stack, so that ordering is real.
+- 🔴 **`engine-sidecar-test.sh` was pointed at the file BEFORE the script moved.** It also now
+  checks that the template's number matches `CONTRACT`, that every container running a script
+  declares one, and that an unrecognised number refuses to run (three positive controls, each
+  verified to go red).
+- A side effect worth naming: two third-party `:latest` tags left the start path
+  (`aws-cli:latest` and `curlimages/curl:latest`). That is exactly the practice decision 6 forbids.
+
+**What the next deployment's hardware lane must confirm** (this cannot be finished at a desk —
+the fetch sidecar and the idle wrapper are the two places that broke on hardware while every
+bench scenario was green):
+
+1. `af-engine-tools` reaches ECR, and all four containers that use it can PULL it.
+2. The fetch sidecar logs `engine fetch: sync done` and its `WATCH_SEC` watch line — i.e.
+   `ENTRYPOINT []` plus `Command: [/opt/af/fetch-models.sh]` really does start it.
+3. The idle wrapper sees `/models/ready` and starts the engine, on both roles.
+4. One ingest through the Console: the `fetch` and `upload` containers both succeed, and
+   `MODE=delete` as well.
+5. 🔴 The contract gate does NOT fire by mistake — no `CONTRACT MISMATCH` in any container's log.
+   If one appears, the tag and the template are out of step.

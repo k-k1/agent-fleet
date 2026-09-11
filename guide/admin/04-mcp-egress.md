@@ -155,6 +155,17 @@ Who accepted which licence is kept on the row: **which tenant, which person, whe
 licence** — the same four in the audit log. A model taken in by a super_admin has no tenant against
 it, which means "the operator accepted on behalf of the whole deployment".
 
+#### What a tenant administrator sees
+
+A tenant_admin of a granted tenant gets a reduced screen under **Tenant settings → "Inference
+engine models"** (not the Admin modal — that one is super_admin only). It holds four things:
+**the model search, the ingest form, the ingest history their own tenant started, and the list of
+catalogue rows** (id, name, family, licence and on/off — **read-only**). What it does not hold:
+**the mode (disabled / on demand / always on), the GPU class, the state of the instance, enabling
+and selecting a model, forgetting a row, and the Hugging Face token** — each of those decides what
+every *other* tenant runs, or who pays for the GPU. The ingest history is **that tenant's own jobs
+only**, and a super_admin's do not appear in it (a super_admin's own screen shows all of them).
+
 ### Reading the current state
 
 Below the setting is what that engine is doing right now. **A line that is not there means "not

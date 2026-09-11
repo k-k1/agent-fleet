@@ -117,7 +117,7 @@ describe("engineJobAdvice", () => {
 
 describe("EnginesAdminView", () => {
   it("switches an engine off through the per-engine route", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     apiJSON.mockResolvedValue(row({ mode: "off", enabled: false, state: "stopping" }));
     await mount();
 
@@ -130,14 +130,14 @@ describe("EnginesAdminView", () => {
 
   it("shows the mode the admin chose, not what ECS is still doing", async () => {
     // The disagreement window: mode off, task still going away.
-    api.mockResolvedValue({ engines: [row({ mode: "off", enabled: false, state: "stopping" })] });
+    api.mockResolvedValue({ super_admin: true, engines: [row({ mode: "off", enabled: false, state: "stopping" })] });
     await mount();
     expect(seg("無効")?.className).toContain("active");
     expect(seg("常時稼働")?.className).not.toContain("active");
   });
 
   it("warns about the bill only while an engine is pinned on, and names no price of its own", async () => {
-    api.mockResolvedValue({ engines: [row({ mode: "ondemand" })] });
+    api.mockResolvedValue({ super_admin: true, engines: [row({ mode: "ondemand" })] });
     await mount();
     expect(host!.textContent).not.toContain("常時稼働は GPU");
 
@@ -164,14 +164,14 @@ describe("EnginesAdminView", () => {
     });
 
   it("offers no class control at all where no ladder is declared", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     await mount();
     // Decision 3: a deployment that declares none must not see a control that does nothing.
     expect(host!.querySelector(".engines-class")).toBeNull();
   });
 
   it("shows the rungs with their VRAM, and a price only where one was declared", async () => {
-    api.mockResolvedValue({ engines: [withClasses()] });
+    api.mockResolvedValue({ super_admin: true, engines: [withClasses()] });
     await mount();
     const opts = Array.from(host!.querySelectorAll(".engines-class option")).map((o) => o.textContent);
     expect(opts[0]).toContain("L4 24GB");
@@ -182,6 +182,7 @@ describe("EnginesAdminView", () => {
 
   it("says permanently when the engine is not on the deployment's default rung", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [withClasses({ class_is_default: false, class: { id: "l40s", label: "L40S 48GB", vram_mib: 44000, types: ["g6e.xlarge"] } })],
     });
     await mount();
@@ -192,6 +193,7 @@ describe("EnginesAdminView", () => {
 
   it("says the saved class has not reached the running box, and what replacing costs", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         withClasses({
           class: { id: "l40s", label: "L40S 48GB", vram_mib: 44000, types: ["g6e.xlarge"] },
@@ -217,7 +219,7 @@ describe("EnginesAdminView", () => {
   // 直さなかったが分かっていること).
   it("offers a retry when the class was saved but could not be applied", async () => {
     let served: Record<string, unknown> = withClasses();
-    api.mockImplementation(() => Promise.resolve({ engines: [served] }));
+    api.mockImplementation(() => Promise.resolve({ super_admin: true, engines: [served] }));
     await mount();
 
     // What the CP holds after the refusal: the new rung stored, and why it did not land.
@@ -263,13 +265,14 @@ describe("EnginesAdminView", () => {
   it("says nothing about applying when the Control Plane reports no failure", async () => {
     // Absence is "no claim", not "it was applied": the CP's note is in memory, so a restarted
     // one has nothing to say and must not be drawn as either verdict.
-    api.mockResolvedValue({ engines: [withClasses()] });
+    api.mockResolvedValue({ super_admin: true, engines: [withClasses()] });
     await mount();
     expect(host!.textContent).not.toContain("もう一度適用する");
   });
 
   it("asks before enabling a model that does not fit the chosen card, and never guesses", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         withClasses({
           model_rows: [
@@ -326,12 +329,12 @@ describe("EnginesAdminView", () => {
   // deployment with four enabled models, which is the warning nobody reads.
   it("says a per-request engine may hold several models, and says it only there", async () => {
     const enabled = { model_rows: [{ id: "sdxl", enabled: true, vram_need_mib: 7000, vram_need_source: "declared" }], vram_need_mib: 7000, vram_need_source: "declared", vram_need_model: "sdxl", vram_fits: true };
-    api.mockResolvedValue({ engines: [withClasses({ provider: "comfy", ...enabled })] });
+    api.mockResolvedValue({ super_admin: true, engines: [withClasses({ provider: "comfy", ...enabled })] });
     await mount();
     expect(host!.querySelector(".engines-class")!.textContent).toContain("複数が同時に載る");
 
     await act(async () => root!.unmount());
-    api.mockResolvedValue({ engines: [withClasses({ provider: "sdcpp", ...enabled })] });
+    api.mockResolvedValue({ super_admin: true, engines: [withClasses({ provider: "sdcpp", ...enabled })] });
     await mount();
     // sd-server holds ONE checkpoint chosen at start, so the sentence would be false there.
     expect(host!.querySelector(".engines-class")!.textContent).not.toContain("複数が同時に載る");
@@ -342,6 +345,7 @@ describe("EnginesAdminView", () => {
   // blank where every ingested row names a licence reads as "no restrictions".
   it("shows the licence, who accepted it, and says when nothing recorded one", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           model_rows: [
@@ -375,7 +379,7 @@ describe("EnginesAdminView", () => {
   });
 
   it("says so rather than showing an empty screen when nothing is deployed", async () => {
-    api.mockResolvedValue({ engines: [] });
+    api.mockResolvedValue({ super_admin: true, engines: [] });
     await mount();
     // No ENGINE control: there is no engine to switch off, on-demand or always-on. (The browse
     // below it has segments of its own — a read that needs no engine — so the count of every
@@ -394,6 +398,7 @@ describe("EnginesAdminView", () => {
   it("shows when the box started and when it will stop by itself", async () => {
     const now = Date.now();
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           state: "running",
@@ -427,6 +432,7 @@ describe("EnginesAdminView", () => {
     // Pinned on. The CP omits stop_eta, and the panel must not substitute anything for it —
     // not even the idle policy, which does not apply while the engine is pinned.
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           mode: "on",
@@ -446,6 +452,7 @@ describe("EnginesAdminView", () => {
     // Nothing to stop, so there is no countdown — but the window itself is still worth knowing,
     // and it is a different claim ("30 minutes after the last request") from a clock time.
     api.mockResolvedValue({
+      super_admin: true,
       engines: [row({ mode: "ondemand", state: "stopped", desired: 0, idle_secs: 900 })],
     });
     await mount();
@@ -459,6 +466,7 @@ describe("EnginesAdminView", () => {
   // last 5 minutes" while somebody is mid-conversation with the engine.
   it("says so when it has not been counting for a whole window", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           state: "running",
@@ -483,6 +491,7 @@ describe("EnginesAdminView", () => {
   // stuck in `starting` is exactly when somebody needs them.
   it("shows why a start is stuck, only while it is stuck", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           state: "starting",
@@ -498,7 +507,7 @@ describe("EnginesAdminView", () => {
   // <details> hides its children, it does not unmount them. Leaving the heatmap inside a closed
   // one fires a 14-day query per engine on load, for a section nobody opened.
   it("does not fetch the history until the section is opened", async () => {
-    api.mockResolvedValue({ engines: [row(), row({ key: "llm" })] });
+    api.mockResolvedValue({ super_admin: true, engines: [row(), row({ key: "llm" })] });
     await mount();
     const called = api.mock.calls.map((c) => String(c[0]));
     // The heatmap is a 14-day query per engine and nothing on screen shows it yet.
@@ -517,6 +526,7 @@ describe("EnginesAdminView", () => {
 
   it("lists every engine, each with its own control", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({ key: "llm", api: "chat", provider: "llamacpp", models: ["qwen3-coder-30b-a3b"] }),
         row(),
@@ -539,6 +549,7 @@ describe("EnginesAdminView", () => {
   // startup flag, so enabling a second one does not load it.
   it("selects a checkpoint through the model route, without restarting anything", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           has_models: true,
@@ -580,6 +591,7 @@ describe("EnginesAdminView", () => {
   // such concept and silently change nothing.
   it("sends default, not selected, for a chat engine", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           key: "llm",
@@ -604,6 +616,7 @@ describe("EnginesAdminView", () => {
   // A disabled model stays on the panel — this is the only place it can be turned back on.
   it("keeps a disabled model reachable and offers to enable it", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           has_models: true,
@@ -632,6 +645,7 @@ describe("EnginesAdminView", () => {
   // difference at all — leaving "有効にする" as the evidence for a row that is not enabled.
   it("says on or off in a badge, not only in the label of the button that would change it", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           has_models: true,
@@ -666,6 +680,7 @@ describe("EnginesAdminView", () => {
   // not offered — the check the Agent also makes when it builds the tool's enum.
   it("does not offer to start with a LoRA", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           has_models: true,
@@ -688,13 +703,14 @@ describe("EnginesAdminView", () => {
   // sentence. A blank area here reads as "still loading" and an administrator waits for a box
   // that is never coming.
   it("says why an engine with no catalogue will not start", async () => {
-    api.mockResolvedValue({ engines: [row({ has_models: false, model_rows: [] })] });
+    api.mockResolvedValue({ super_admin: true, engines: [row({ has_models: false, model_rows: [] })] });
     await mount();
     expect(host!.textContent).toContain("カタログは空です");
   });
 
   it("says when models exist but none is enabled", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({ has_models: false, model_rows: [{ id: "parked", kind: "checkpoint", enabled: false }] }),
       ],
@@ -708,6 +724,7 @@ describe("EnginesAdminView", () => {
   // to add the second. This is not P4's ingest: it writes down a file that is already staged.
   it("registers a staged file as a catalogue row, disabled", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           has_models: true,
@@ -774,7 +791,7 @@ describe("EnginesAdminView", () => {
   // reads "may this be used commercially" off the words, exactly as the ingest does, so the
   // same model does not lose its mark by coming in through this door.
   it("takes a licence with a hand-registered row, and sends it as the terms", async () => {
-    api.mockResolvedValue({ engines: [row({ has_models: true, model_rows: [] })] });
+    api.mockResolvedValue({ super_admin: true, engines: [row({ has_models: true, model_rows: [] })] });
     apiJSON.mockResolvedValue(row({ has_models: true, model_rows: [] }));
     await mount();
     await click(
@@ -829,6 +846,7 @@ describe("EnginesAdminView", () => {
       p.endsWith("/ingest")
         ? { jobs: [] }
         : {
+            super_admin: true,
             engines: [
               row({
                 key: "llm",
@@ -881,6 +899,7 @@ describe("EnginesAdminView", () => {
       p.endsWith("/ingest")
         ? { jobs: [] }
         : {
+            super_admin: true,
             engines: [
               row({ key: "llm", api: "chat", has_models: true, model_rows: [{ id: "m1", enabled: false }] }),
             ],
@@ -901,6 +920,7 @@ describe("EnginesAdminView", () => {
 
   it("forgets a row, and refuses to forget the one in use", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           has_models: true,
@@ -937,6 +957,7 @@ describe("EnginesAdminView", () => {
   // stated: "warm" alone describes a swapping engine and a settled one identically.
   it("names the model in VRAM and how often it has changed", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           key: "llm",
@@ -968,6 +989,7 @@ describe("EnginesAdminView", () => {
   // field existed). "+0 s" would be a claim; nothing is the truth.
   it("says nothing about the sync when no size was declared", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({ has_models: true, model_rows: [{ id: "sdxl-base-1.0", kind: "checkpoint", enabled: true }] }),
       ],
@@ -981,6 +1003,7 @@ describe("EnginesAdminView", () => {
   // reaches opencode as context 0 — which switches auto-compaction off.
   it("declares a window and a size when registering a model for a chat engine", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           key: "llm",
@@ -1050,6 +1073,7 @@ describe("EnginesAdminView", () => {
   // unreachable without calling the admin API by hand.
   it("registers a LoRA against the model it fine-tunes, with no window of its own", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           key: "llm",
@@ -1146,7 +1170,7 @@ describe("EnginesAdminView", () => {
       has_models: true,
       model_rows: [],
     });
-    api.mockResolvedValue({ engines: [comfy] });
+    api.mockResolvedValue({ super_admin: true, engines: [comfy] });
     apiJSON.mockResolvedValue(comfy);
     await mount();
     await click(
@@ -1227,6 +1251,7 @@ describe("EnginesAdminView", () => {
   // cannot know the vocabulary.
   it("says so on a row whose family names no workflow", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           provider: "comfy",
@@ -1275,6 +1300,7 @@ describe("EnginesAdminView", () => {
   // rows does not cost four lines each.
   it("shows the S3 keys of a row at the moment it is about to be forgotten", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           has_models: true,
@@ -1314,6 +1340,7 @@ describe("EnginesAdminView", () => {
   // flux1 template reads four other files. The row came out of the fix looking healthier.
   it("keeps saying so when a row's family reads files the row does not have", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [
         row({
           provider: "comfy",
@@ -1350,6 +1377,7 @@ describe("EnginesAdminView", () => {
   // context declared alone leaves 768 usable tokens. Both halves or neither.
   it("drops a context declared without an output cap", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })],
     });
     apiJSON.mockResolvedValue(row({ key: "llm", api: "chat", has_models: true, model_rows: [] }));
@@ -1385,6 +1413,7 @@ describe("EnginesAdminView", () => {
   // before the terms is not one.
   it("shows the licence before offering to accept it, and refuses a gated repo with no token", async () => {
     api.mockResolvedValue({
+      super_admin: true,
       engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })],
     });
     await mount();
@@ -1441,7 +1470,7 @@ describe("EnginesAdminView", () => {
     api.mockImplementation(async (p: string) =>
       p.endsWith("/ingest")
         ? { jobs: [] }
-        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+        : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await mount();
     await click(
@@ -1489,7 +1518,7 @@ describe("EnginesAdminView", () => {
     api.mockImplementation(async (p: string) =>
       p.endsWith("/ingest")
         ? { jobs: [{ id: "j1", model_id: "qwen2.5-coder-1.5b", state: "running", source: "hf:Qwen/…", bytes: 1117320768 }] }
-        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+        : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await click(
       Array.from(host!.querySelectorAll(".engines-ingest button")).find(
@@ -1526,7 +1555,7 @@ describe("EnginesAdminView", () => {
     api.mockImplementation(async (p: string) =>
       p.endsWith("/ingest")
         ? { jobs: [] }
-        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+        : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await mount();
     await click(
@@ -1587,7 +1616,7 @@ describe("EnginesAdminView", () => {
               },
             ],
           }
-        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+        : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await mount();
     // Headed as history, not as a section of the catalogue above it.
@@ -1613,7 +1642,7 @@ describe("EnginesAdminView", () => {
     api.mockImplementation(async (p: string) =>
       p.endsWith("/ingest")
         ? { jobs: [] }
-        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+        : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await mount();
     await click(
@@ -1699,7 +1728,7 @@ describe("EnginesAdminView", () => {
               },
             ],
           }
-        : { engines: [row({ key: "image", has_models: true, model_rows: [] })] },
+        : { super_admin: true, engines: [row({ key: "image", has_models: true, model_rows: [] })] },
     );
     await mount();
     const job = host!.querySelector("ul.engines-ingest-jobs li")!;
@@ -1719,7 +1748,7 @@ describe("EnginesAdminView", () => {
     api.mockImplementation(async (p: string) =>
       p.endsWith("/ingest")
         ? { jobs: [] }
-        : { engines: [row({ key: "image", has_models: true, model_rows: [] })] },
+        : { super_admin: true, engines: [row({ key: "image", has_models: true, model_rows: [] })] },
     );
     await mount();
     await click(
@@ -1772,7 +1801,7 @@ describe("EnginesAdminView", () => {
     api.mockImplementation(async (p: string) =>
       p.endsWith("/ingest")
         ? { jobs: [] }
-        : { engines: [row({ key: "image", has_models: true, model_rows: [] })] },
+        : { super_admin: true, engines: [row({ key: "image", has_models: true, model_rows: [] })] },
     );
     await mount();
     await click(
@@ -1829,6 +1858,7 @@ describe("EnginesAdminView", () => {
             ],
           }
         : {
+            super_admin: true,
             engines: [
               catalogue(finished ? [{ id: "qwen2.5-coder-0.5b", enabled: false }] : []),
             ],
@@ -1875,6 +1905,7 @@ describe("EnginesAdminView", () => {
       p.endsWith("/ingest")
         ? { jobs: [] }
         : {
+            super_admin: true,
             engines: [
               row({
                 provider: "comfy",
@@ -1964,7 +1995,7 @@ describe("EnginesAdminView", () => {
 // be a lie the deployment cannot back.
 describe("EnginesAdminView / the Hugging Face token", () => {
   const byPath = (hf: Record<string, unknown>) => (path: string) =>
-    Promise.resolve(path === "api/admin/engines/hf-token" ? hf : { engines: [row()] });
+    Promise.resolve(path === "api/admin/engines/hf-token" ? hf : { super_admin: true, engines: [row()] });
 
   // React tracks an input's value on the node, so assigning `.value` directly is invisible to
   // it — the state stays empty and the button stays disabled, which looks exactly like a
@@ -2089,7 +2120,7 @@ describe("EnginesAdminView / searching for a model", () => {
   // would be fetched was never on screen, and the file it named was not the one the picker
   // showed. Splitting it into the fields leaves one source of truth.
   it("takes a pasted model-page URL apart into the fields it names", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     await mount();
     await openIngest();
 
@@ -2118,7 +2149,7 @@ describe("EnginesAdminView / searching for a model", () => {
   // The version id, not the model id in the path next to it: an ingest takes the former and
   // the two are different numbers on the same page.
   it("turns a pasted Civitai page into its version id", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     await mount();
     await openIngest();
     await typeInto(field("リポジトリ")!, "https://civitai.com/models/133005?modelVersionId=782002");
@@ -2131,7 +2162,7 @@ describe("EnginesAdminView / searching for a model", () => {
   // hint but a wrong answer, since sd-server cannot load one and following it costs a resolve
   // and a refusal.
   it("offers examples that belong to this engine's role", async () => {
-    api.mockResolvedValue({ engines: [row()] }); // api: "images"
+    api.mockResolvedValue({ super_admin: true, engines: [row()] }); // api: "images"
     await mount();
     await openIngest();
     expect(field("探す")!.placeholder).toBe("sdxl");
@@ -2144,7 +2175,7 @@ describe("EnginesAdminView / searching for a model", () => {
   // the only thing that can verify a download nothing else describes. A label and an example
   // that still say "name.safetensors" there ask for the one value it must not be given.
   it("relabels the file box as the sha256 when the source is a plain url", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     await mount();
     await openIngest();
     await typeInto(field("リポジトリ")!, "https://example.com/some-model.safetensors");
@@ -2153,7 +2184,7 @@ describe("EnginesAdminView / searching for a model", () => {
   });
 
   it("fills the repository field from a hit, and says gated before anything is started", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     apiJSON.mockResolvedValue({
       hits: [
         {
@@ -2209,7 +2240,7 @@ describe("EnginesAdminView / searching for a model", () => {
   // 🔴 The link must not double as the pick: the card is the "choose this result" surface, and
   // an anchor that also filled the form would send somebody to the page AND start a resolve.
   it("links each hit to its page and dates it, without the link choosing the result", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     apiJSON.mockResolvedValue({
       hits: [
         {
@@ -2253,7 +2284,7 @@ describe("EnginesAdminView / searching for a model", () => {
   // somebody chose a moment ago — with the new name on screen and no error anywhere.
   it("asks about the repository just picked, not the one still in the field", async () => {
     const hits = ["a/first", "b/second"].map((ref) => ({ source: "hf", ref, name: ref }));
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     apiJSON.mockResolvedValue({ hits });
     await mount();
     await openIngest();
@@ -2278,7 +2309,7 @@ describe("EnginesAdminView / searching for a model", () => {
   // one line each — name, counts, licence, size at the same weight, wrapping into one another
   // — are a wall of text with nothing to scan by.
   it("splits a hit into a name, the numbers and the terms", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     apiJSON.mockResolvedValue({
       hits: [
         {
@@ -2313,7 +2344,7 @@ describe("EnginesAdminView / searching for a model", () => {
   });
 
   it("rounds a fractional trending score instead of printing its float noise", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     apiJSON.mockResolvedValue({
       hits: [
         {
@@ -2336,7 +2367,7 @@ describe("EnginesAdminView / searching for a model", () => {
   });
 
   it("puts a Civitai hit in as its version id, which is what an ingest takes", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     apiJSON.mockResolvedValue({
       hits: [{ source: "civitai", ref: "1759168", name: "Juggernaut XL — Ragnarok", base_model: "SDXL 1.0" }],
     });
@@ -2358,7 +2389,7 @@ describe("EnginesAdminView / searching for a model", () => {
   });
 
   it("offers Civitai to the image role only", async () => {
-    api.mockResolvedValue({ engines: [row({ key: "llm", api: "chat", provider: "llamacpp" })] });
+    api.mockResolvedValue({ super_admin: true, engines: [row({ key: "llm", api: "chat", provider: "llamacpp" })] });
     await mount();
     await openIngest();
     // The CP answers the llm role nothing from Civitai (it hosts image models), so a source
@@ -2368,7 +2399,7 @@ describe("EnginesAdminView / searching for a model", () => {
   });
 
   it("says so instead of leaving the box empty when nothing matches", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     apiJSON.mockResolvedValue({ hits: [] });
     await mount();
     await openIngest();
@@ -2379,7 +2410,7 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(field("リポジトリ")).toBeTruthy();
   });
   it("browses a ranking with no words typed, and the button says so", async () => {
-    api.mockResolvedValue({ engines: [row()] });
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
     apiJSON.mockResolvedValue({
       hits: [{ source: "hf", ref: "stabilityai/sdxl-turbo", name: "stabilityai/sdxl-turbo", downloads: 4176022 }],
     });
@@ -2415,7 +2446,7 @@ describe("EnginesAdminView / browsing with no engine deployed", () => {
       | undefined;
 
   it("still offers a look at what there is, and says it cannot take anything in", async () => {
-    api.mockResolvedValue({ engines: [] });
+    api.mockResolvedValue({ super_admin: true, engines: [] });
     apiJSON.mockResolvedValue({
       hits: [{ source: "hf", ref: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", name: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", downloads: 12623435 }],
     });
@@ -2440,7 +2471,7 @@ describe("EnginesAdminView / browsing with no engine deployed", () => {
   });
 
   it("asks for the kind, because there is no engine to derive it from", async () => {
-    api.mockResolvedValue({ engines: [] });
+    api.mockResolvedValue({ super_admin: true, engines: [] });
     apiJSON.mockResolvedValue({ hits: [] });
     await mount();
     await click(button("画像（checkpoint）"));

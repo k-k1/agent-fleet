@@ -1,0 +1,86 @@
+# Bake the engine tools image -- the fetch sidecar and the two ingest steps, which used to live
+# inline in `60-engines.yaml` -- and push it to GHCR, where `standup.sh` copies it into this
+# deployment's `af-engine-tools` ECR repository. The same crane-copy step the pinned ComfyUI
+# image already uses (comfyui-image.yml); the difference is that this one is small and changes
+# with the scripts rather than with an upstream revision.
+#
+# ⚠️ Deliberately NOT part of dev-image.yml / release.sh, for the same reason comfyui-image.yml
+# is not: those bake control-plane and workspace at the APPLICATION's version on every release,
+# and this image ships nothing user-facing and is never part of a distribution.
+#
+# 🔴 The tag is what `EngineToolsImageTag` names, and the image and the template are bound by
+# the contract number in deploy/aws/ecs/engine-tools/CONTRACT: a task started against an image
+# that speaks a different number exits 78 with a sentence in its own log rather than quietly
+# running the previous release's script. Bump the number in the file and in 60-engines.yaml in
+# the same commit -- deploy/local/engine-sidecar-test.sh fails when the two disagree.
+#
+# amd64 only: the G-family has no arm64 member, and the ingest task runs on Fargate beside it.
+name: engine-tools-image
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag pushed to GHCR (and what standup.sh reads as EngineToolsImageTag). Convention: the date of the change, e.g. 2026-09-11.'
+        required: true
+
+concurrency:
+  group: engine-tools-image-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      REG: ghcr.io/${{ github.repository }}
+    steps:
+      - name: refuse an unusable tag
+        run: |
+          set -euo pipefail
+          echo "${{ inputs.tag }}" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z._-]*$' \
+            || { echo "::error::'${{ inputs.tag }}' is not a usable image tag"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      # The scripts are what is being shipped, so they are checked before they are baked --
+      # the same run that would otherwise put a syntax error in ECR.
+      - name: the scripts run
+        run: |
+          set -euo pipefail
+          for f in deploy/aws/ecs/engine-tools/*.sh; do sh -n "$f"; done
+          deploy/local/engine-sidecar-test.sh
+
+      - name: set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: bake and push
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag "$REG/engine-tools:${{ inputs.tag }}" \
+            --push \
+            deploy/aws/ecs/engine-tools
+
+      - name: how to use it
+        run: |
+          {
+            echo "## engine-tools \`${{ inputs.tag }}\` (contract $(cat deploy/aws/ecs/engine-tools/CONTRACT))"
+            echo ""
+            d=$(docker buildx imagetools inspect "$REG/engine-tools:${{ inputs.tag }}" --format '{{.Manifest.Digest}}' 2>/dev/null) || true
+            [ -n "${d:-}" ] && echo "- \`engine-tools\` $d"
+            echo ""
+            echo '```'
+            echo "crane copy $REG/engine-tools:${{ inputs.tag }} <acct>.dkr.ecr.<region>.amazonaws.com/af-engine-tools:${{ inputs.tag }}"
+            echo '```'
+            echo ""
+            echo "standup.sh does this automatically - see EngineToolsImageTag in params/60-engines."
+          } >> "$GITHUB_STEP_SUMMARY"

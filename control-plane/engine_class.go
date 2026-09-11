@@ -469,7 +469,55 @@ func (e *engineRuntimeState) classList() []engineClass {
 	if e == nil {
 		return nil
 	}
+	// Read under the lock because the ladder is re-read from the engine table while this
+	// process runs (engine_table_reload.go): a CloudFormation update that changes a rung used
+	// to reach a running CP only through a blue/green deployment of the CP itself.
+	//
+	// The slice is REPLACED, never appended to or written through, so handing the caller the
+	// live one costs nothing and hands out nothing that can change under it.
+	e.classesMu.RLock()
+	defer e.classesMu.RUnlock()
 	return e.classes
+}
+
+// setClasses swaps the ladder for the one the table now declares, and says whether that was a
+// change. Nothing else about a row is taken live — see engine_table_reload.go for what is and
+// why the rest needs a restart.
+func (e *engineRuntimeState) setClasses(next []engineClass) bool {
+	if e == nil {
+		return false
+	}
+	e.classesMu.Lock()
+	defer e.classesMu.Unlock()
+	if engineClassesEqual(e.classes, next) {
+		return false
+	}
+	e.classes = next
+	return true
+}
+
+// engineClassesEqual compares two ladders as DECLARATIONS: same rungs, same order, same
+// numbers. Order counts because the first rung is the default (decision 1).
+func engineClassesEqual(a, b []engineClass) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		x, y := a[i], b[i]
+		if x.ID != y.ID || x.Label != y.Label || x.VramMiB != y.VramMiB || x.UsdPerHour != y.UsdPerHour ||
+			x.VCpuMin != y.VCpuMin || x.VCpuMax != y.VCpuMax || x.MemMinMiB != y.MemMinMiB || x.MemMaxMiB != y.MemMaxMiB {
+			return false
+		}
+		if len(x.Types) != len(y.Types) {
+			return false
+		}
+		for j := range x.Types {
+			if x.Types[j] != y.Types[j] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // selectedClassID is the rung an administrator chose, or "" for the stack's default. The stored
@@ -603,7 +651,7 @@ const (
 // applied. If they are the same the provider already says the right thing and refusing would
 // take the engine away over a transient API error.
 func (e *engineRuntimeState) startGate(ctx context.Context) (bool, string) {
-	if e == nil || len(e.classes) == 0 {
+	if e == nil || len(e.classList()) == 0 {
 		return true, ""
 	}
 	sel, ok := e.selectedClass(ctx)
@@ -675,7 +723,7 @@ func (e *engineRuntimeState) logVramFit(ctx context.Context, c engineClass) {
 // log, but never turns a "cannot start yet" into a failed request. The administrator's intent is
 // stored either way, and the controller acts on it as soon as the previous box has gone.
 func (e *engineRuntimeState) classStartHeld(ctx context.Context) bool {
-	if e == nil || len(e.classes) == 0 {
+	if e == nil || len(e.classList()) == 0 {
 		return false
 	}
 	ok, why := e.startGate(ctx)
