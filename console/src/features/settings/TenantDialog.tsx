@@ -30,7 +30,6 @@ export function TenantDialog() {
   // The runtime declares whether a cloud-cost surface exists. docker / native have no AWS bill,
   // so the item is not shown at all (ADR 0048 decision 9).
   const costProfile = useCostProfile();
-  const groups = tenantScopeGroups({ cost: !!costProfile?.available });
   const closeTenantSettings = useSettingsUI((s) => s.closeTenantSettings);
   const tenantSection = useSettingsUI((s) => s.tenantSection);
   const [section, setSection] = useState(
@@ -92,6 +91,13 @@ export function TenantDialog() {
   }, [load]);
 
   const tenant = tenants?.find((t) => t.slug === slug) || null;
+  // The engine item exists only for a tenant the operator granted `allow_engine_ingest`
+  // (ADR 0072 open question 11). The flag rides on the tenant row this modal already has, so
+  // this costs no extra request — and it is per tenant, which is what the grant is.
+  const groups = tenantScopeGroups({
+    cost: !!costProfile?.available,
+    engines: !!tenant?.allow_engine_ingest,
+  });
   const currentLabel = tr(
     (groups.flatMap((g) => g.items).find(([k]) => k === section)?.[1] ??
       "tenant.title") as Parameters<typeof tr>[0],

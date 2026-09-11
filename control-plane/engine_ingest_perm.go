@@ -37,6 +37,11 @@ import (
 type engineIngestGrant struct {
 	ident    store.Identity
 	tenantID string
+	// super is carried rather than derived from an empty tenantID. The two happen to coincide
+	// today, and a reader who leans on that writes `tenantID == ""` at the next call site — at
+	// which point the operator and a caller whose tenant could not be resolved become the same
+	// thing, and the wrong one of them gets the whole deployment's panel.
+	super bool
 }
 
 // ingestAdminFor resolves the caller and answers whether they may drive the ingest routes.
@@ -52,7 +57,7 @@ func (a engineAdminAPI) ingestAdminFor(w http.ResponseWriter, r *http.Request) (
 		return engineIngestGrant{}, false
 	}
 	if ident.Role == "super_admin" {
-		return engineIngestGrant{ident: ident}, true
+		return engineIngestGrant{ident: ident, super: true}, true
 	}
 	if a.mgr == nil || a.mgr.store == nil {
 		writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "super_admin required"})
@@ -110,4 +115,73 @@ func (a engineAdminAPI) auditFor(r *http.Request, g engineIngestGrant, action, t
 		ID: store.NewID(), TenantID: g.tenantID, ActorKind: "admin", ActorID: g.ident.ID,
 		Action: action, Target: target, At: store.NowTS(),
 	})
+}
+
+// --- the reduced panel (ADR 0072 open question 11, phase P5) --------------------
+//
+// `GET /api/admin/engines` answers a granted tenant_admin too, with a SUBSET of the operator's
+// row. A subset and not a second shape: the Console renders both from one component, and a field
+// the CP does not send is simply absent there — no error, no log, just a control that quietly
+// stops appearing. Building the reduced row by COPYING named keys out of the full one makes the
+// containment true by construction rather than by two lists staying in step, and
+// engine_ingest_perm_test.go asserts it against a real row.
+//
+// What is kept is exactly what the ingest form and the catalogue list need:
+//
+//   - `key` / `api` / `provider` — which engine this is, and what kind of file it takes;
+//   - `base_models` / `file_flags` — the family and per-file vocabularies the ingest form is
+//     built from. Without them a split model cannot be described at all;
+//   - `model_rows` — trimmed in turn (below), so an id is not taken in twice.
+//
+// What is dropped is everything that is about the BOX or about changing what other tenants run:
+// the mode, the GPU class ladder, the ECS state, the events, the box, the stop ETA, the demand
+// window, the VRAM verdict, `has_models`. None of them is secret; all of them are controls or
+// numbers the reader cannot act on, and a panel full of those reads as "you may do this" until
+// the button 403s.
+var engineTenantAdminFields = []string{
+	"key", "api", "provider", "base_models", "file_flags",
+}
+
+// engineTenantAdminModelFields is one catalogue row as a tenant_admin sees it: enough to know
+// which ids are taken, what each one is and under what licence — and nothing that would be a
+// control (`selected`, `default`), a bucket path (`files`, `file_rows`), a cost signal
+// (`vram_*`, `sync_secs`) or another tenant's business (`license_accepted_*`).
+var engineTenantAdminModelFields = []string{
+	"id", "kind", "enabled", "description", "base_model",
+	"license", "license_name", "license_url", "commercial_use",
+}
+
+// engineTenantAdminRow trims one full engine row. Keys absent from the full row stay absent —
+// copying a nil in would turn "the CP said nothing" into "the CP said null", which the Console
+// draws as a value.
+func engineTenantAdminRow(full map[string]any) map[string]any {
+	out := pickKeys(full, engineTenantAdminFields)
+	if rows, ok := full["model_rows"].([]map[string]any); ok {
+		trimmed := make([]map[string]any, 0, len(rows))
+		for _, m := range rows {
+			trimmed = append(trimmed, pickKeys(m, engineTenantAdminModelFields))
+		}
+		out["model_rows"] = trimmed
+	}
+	return out
+}
+
+func pickKeys(src map[string]any, keys []string) map[string]any {
+	out := make(map[string]any, len(keys))
+	for _, k := range keys {
+		if v, ok := src[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// ingestJobsFor is listIngest's read, narrowed to the caller's authority. The super_admin branch
+// is the unfiltered list, which is also the only way the operator's own jobs (no tenant) are
+// ever visible.
+func (a engineAdminAPI) ingestJobsFor(r *http.Request, g engineIngestGrant, key string) ([]store.EngineIngestJob, error) {
+	if g.super {
+		return a.mgr.store.ListEngineIngestJobs(r.Context(), key, 20)
+	}
+	return a.mgr.store.ListEngineIngestJobsByTenant(r.Context(), key, g.tenantID, 20)
 }

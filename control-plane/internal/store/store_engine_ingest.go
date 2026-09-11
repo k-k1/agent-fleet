@@ -11,6 +11,7 @@ package store
 
 import (
 	"context"
+	"strings"
 )
 
 // EngineIngestJob is one "take this file into the bucket" in flight.
@@ -26,8 +27,13 @@ type EngineIngestJob struct {
 	// Spec is the catalogue row this job will create, as JSON (the Control Plane owns the
 	// shape). Persisted so a CP replaced mid-download still writes the row when the task it
 	// never started is found finished.
-	Spec                 string
-	StartedBy            string
+	Spec      string
+	StartedBy string
+	// TenantID is the tenant whose grant this job was started under (ADR 0072 open question
+	// 11). Empty for a super_admin, who acts for the whole deployment and has no tenant to be
+	// acting for — so it is NOT a filter value anybody may pass in; see
+	// ListEngineIngestJobsByTenant.
+	TenantID             string
 	CreatedAt, UpdatedAt string
 }
 
@@ -42,7 +48,7 @@ const (
 )
 
 const engineIngestCols = `id, role, model_id, s3_key, source, task_arn, state, message,
-	bytes, spec, started_by, created_at, updated_at`
+	bytes, spec, started_by, tenant_id, created_at, updated_at`
 
 // EngineIngestStore is the job ledger. Separate from EngineModelStore because the two answer
 // different questions — "what may this engine load" versus "what is being fetched right now" —
@@ -53,6 +59,12 @@ type EngineIngestStore interface {
 	// rather than everything: this feeds a panel, and a deployment that has taken in two
 	// hundred models does not want them all in one response.
 	ListEngineIngestJobs(ctx context.Context, role string, limit int) ([]EngineIngestJob, error)
+	// ListEngineIngestJobsByTenant is the same list narrowed to ONE tenant's jobs, for the
+	// reduced panel a granted tenant_admin sees (ADR 0072 open question 11). A separate method
+	// rather than an empty-string filter on the one above, because "" is a real stored value
+	// (the operator's own jobs) and an ambiguous sentinel here would silently hand a
+	// tenant_admin every job the super_admin started.
+	ListEngineIngestJobsByTenant(ctx context.Context, role, tenantID string, limit int) ([]EngineIngestJob, error)
 	GetEngineIngestJob(ctx context.Context, id string) (EngineIngestJob, bool, error)
 	// ListActiveEngineIngestJobs is what the reconciler polls: only the jobs whose outcome is
 	// still unknown, so a CP that has been up for a week does not ask ECS about last Tuesday.
@@ -66,24 +78,44 @@ func (s *SQL) PutEngineIngestJob(ctx context.Context, j EngineIngestJob) error {
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO engine_ingest_jobs(`+engineIngestCols+`)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   task_arn=excluded.task_arn, state=excluded.state, message=excluded.message,
 		   bytes=excluded.bytes, spec=excluded.spec, updated_at=excluded.updated_at`,
 		j.ID, j.Role, j.ModelID, j.S3Key, j.Source, j.TaskArn, j.State, j.Message,
-		j.Bytes, j.Spec, j.StartedBy, j.CreatedAt, now)
+		j.Bytes, j.Spec, j.StartedBy, j.TenantID, j.CreatedAt, now)
 	return err
 }
 
 func (s *SQL) ListEngineIngestJobs(ctx context.Context, role string, limit int) ([]EngineIngestJob, error) {
+	return s.engineIngestList(ctx, role, "", false, limit)
+}
+
+func (s *SQL) ListEngineIngestJobsByTenant(ctx context.Context, role, tenantID string, limit int) ([]EngineIngestJob, error) {
+	return s.engineIngestList(ctx, role, tenantID, true, limit)
+}
+
+// engineIngestList is the body of the two above. An explicit `byTenant` flag rather than
+// "filter when tenantID is not empty" is what keeps the OPERATOR's own jobs (tenant_id is empty
+// for those) out of a tenant's list: with a non-empty test, a caller that resolved no tenant
+// would be handed exactly those.
+func (s *SQL) engineIngestList(ctx context.Context, role, tenantID string, byTenant bool, limit int) ([]EngineIngestJob, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	q := `SELECT ` + engineIngestCols + ` FROM engine_ingest_jobs`
+	var where []string
 	var args []any
 	if role != "" {
-		q += ` WHERE role=?`
+		where = append(where, `role=?`)
 		args = append(args, role)
+	}
+	if byTenant {
+		where = append(where, `tenant_id=?`)
+		args = append(args, tenantID)
+	}
+	if len(where) > 0 {
+		q += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 	q += ` ORDER BY created_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)
@@ -115,7 +147,8 @@ func (s *SQL) engineIngestRows(ctx context.Context, q string, args ...any) ([]En
 	for rows.Next() {
 		var j EngineIngestJob
 		if err := rows.Scan(&j.ID, &j.Role, &j.ModelID, &j.S3Key, &j.Source, &j.TaskArn,
-			&j.State, &j.Message, &j.Bytes, &j.Spec, &j.StartedBy, &j.CreatedAt, &j.UpdatedAt); err != nil {
+			&j.State, &j.Message, &j.Bytes, &j.Spec, &j.StartedBy, &j.TenantID,
+			&j.CreatedAt, &j.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, j)

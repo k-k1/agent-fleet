@@ -49,7 +49,11 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 		settings = cfg.mgr.store
 	}
 	a := engineAdminAPI{memberAuth{cfg.mgr}, reg, settings}
-	mux.HandleFunc("GET /api/admin/engines", a.withSuperAdmin(a.get))
+	// The engine list. NOT super_admin-only: a tenant_admin of a tenant the operator granted
+	// `allow_engine_ingest` gets a SUBSET of the same row, which is what the ingest form and the
+	// catalogue list are drawn from (ADR 0072 open question 11). Same predicate as the ingest
+	// routes below, so there is one answer to "may this person take a model in" and not two.
+	mux.HandleFunc("GET /api/admin/engines", a.withIngestAdmin(a.get))
 	mux.HandleFunc("PUT /api/admin/engines/{key}", a.withSuperAdmin(a.put))
 	mux.HandleFunc("GET /api/admin/engines/{key}/hourly", a.withSuperAdmin(a.uptime))
 	// The GPU this role buys (ADR 0074). A separate route from the mode toggle above because
@@ -98,13 +102,23 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	mux.HandleFunc("DELETE /api/admin/engines/hf-token", a.withSuperAdmin(a.deleteHfToken))
 }
 
-// get (GET /api/admin/engines) lists every engine with its mode and what ECS is doing.
-func (a engineAdminAPI) get(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+// get (GET /api/admin/engines) lists every engine with its mode and what ECS is doing — or, for
+// a granted tenant_admin, the subset of that row engineTenantAdminRow keeps.
+//
+// `super_admin` rides on the envelope rather than being left to the client to work out from
+// which fields arrived. The panel has to decide whether to draw controls, and inferring that
+// from "did `mode` turn up" is a rule that breaks silently the day a field is renamed — in the
+// direction that shows a tenant_admin buttons that 403.
+func (a engineAdminAPI) get(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
 	out := []map[string]any{}
 	for _, e := range a.reg.list() {
-		out = append(out, a.row(r.Context(), e))
+		row := a.row(r.Context(), e)
+		if !g.super {
+			row = engineTenantAdminRow(row)
+		}
+		out = append(out, row)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"engines": out})
+	writeJSON(w, http.StatusOK, map[string]any{"engines": out, "super_admin": g.super})
 }
 
 // row is one engine's status line. `ready` is deliberately NOT here: answering it means a health
@@ -1371,7 +1385,14 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 
 // listIngest (GET …/ingest) is the job list, reconciled against ECS first so that what it
 // reports is what ECS thinks rather than what this table last heard.
-func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, _ engineIngestGrant) {
+//
+// A granted tenant_admin sees THEIR TENANT's jobs only (ADR 0072 open question 11). Not a
+// privacy nicety: this list is what somebody watches for the ten minutes before a catalogue row
+// exists, and filling it with every other tenant's downloads buries the one they started. The
+// reconcile above still runs over ALL of them — the jobs a caller cannot see still have to be
+// brought up to date, or a task that finished while nobody with the right tenant was looking
+// stays `running` for ever.
+func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
 	key := strings.TrimSpace(r.PathValue("key"))
 	if a.reg.get(key) == nil {
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
@@ -1384,7 +1405,7 @@ func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, _ eng
 		writeJSON(w, http.StatusOK, map[string]any{"jobs": []any{}})
 		return
 	}
-	jobs, err := a.mgr.store.ListEngineIngestJobs(r.Context(), key, 20)
+	jobs, err := a.ingestJobsFor(r, g, key)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return

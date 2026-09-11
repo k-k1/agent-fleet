@@ -191,7 +191,7 @@ func TestEngineAdminListsEveryEngine(t *testing.T) {
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
 
 	rec := httptest.NewRecorder()
-	a.get(rec, httptest.NewRequest("GET", "/api/admin/engines", nil), store.Identity{ID: "u1"})
+	a.get(rec, httptest.NewRequest("GET", "/api/admin/engines", nil), engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get = %d", rec.Code)
 	}
@@ -767,7 +767,7 @@ func TestEngineAdminRowCanBePostedBackToRebuildIt(t *testing.T) {
 	// What a super_admin can actually read back.
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/api/admin/engines", nil)
-	a.get(rec, r, store.Identity{ID: "u1"})
+	a.get(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
 	var listed struct {
 		Engines []struct {
 			ModelRows []map[string]any `json:"model_rows"`

@@ -32,6 +32,8 @@ export const admin = {
   "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
   "admin.engines_models_label": "モデル",
   "admin.engines_always_on_note": "常時稼働は GPU のインスタンスを止めません（時間単価はインスタンスクラスによります）。用が済んだらオンデマンドへ戻してください。",
+  "admin.engines_tenant_scope":
+    "ここではモデルの取り込みと、取り込んだ行の確認ができます。モデルの有効化・エンジンの起動と停止・GPU の選択・行の削除は配備管理者（super_admin）の担当なので、この画面には出ません。カタログは配備に 1 つで、取り込んだモデルの id はどのテナントからも見えます。",
   "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけインスタンスを買い、アイドルで自分で止まります。",
   // --- エンジンの現況（features/settings/admin/adminEngines.tsx の EngineStatus）---
   // ⚠️ ここの文言は「分からないことは書かない」で通っている。CP が答えを持たない行は
@@ -780,6 +782,7 @@ export const admin = {
   "tenant.tab_usage": "稼働時間",
   "tenant.tab_audit": "監査",
   "tenant.tab_mcp": "MCP 配布",
+  "tenant.tab_engines": "推論エンジンのモデル",
   "tenant.picker": "テナント",
   "tenant.none": "管理しているテナントがありません。",
   "tenant.forbidden": "このテナントの設定を見る権限がありません。",

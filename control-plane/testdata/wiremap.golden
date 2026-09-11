@@ -24,7 +24,7 @@ egress_member.go egressAPI.propose x1 {already,entry,id,state}
 egress_member.go egressAPI.propose x1 {already,entry,state}
 egress_member.go egressAPI.propose x1 {entry,id,state}
 engine_admin.go engineAdminAPI.deleteModel x1 {api,base_models,box,class,class_apply_error,class_default,class_is_default,classes,desired,enabled,error,events,file_flags,has_models,idle_secs,key,last_demand,managed,mode,model_rows,model_swaps,models,provider,purge,service_since,state,stop_eta,vram_fits,vram_need_mib,vram_need_model,vram_need_source,warm,warm_model,window_counted_secs,window_secs,window_units} cond{base_models,box,class,class_apply_error,class_default,class_is_default,classes,error,events,file_flags,last_demand,model_swaps,purge,service_since,stop_eta,vram_fits,vram_need_mib,vram_need_model,vram_need_source,warm_model,window_counted_secs,window_units}
-engine_admin.go engineAdminAPI.get x1 {engines}
+engine_admin.go engineAdminAPI.get x1 {engines,super_admin}
 engine_admin.go engineAdminAPI.listIngest x2 {jobs}
 engine_admin.go engineAdminAPI.listIngestFiles x1 {files}
 engine_admin.go engineAdminAPI.postIngest x1 {bytes,code,created_at,id,message,model_id,s3_key,source,state} cond{bytes,code,message}

@@ -34,6 +34,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_none": "This deployment runs no self-hosted inference engines.",
   "admin.engines_models_label": "Models",
   "admin.engines_always_on_note": "Always-on keeps the GPU instance up, at whatever the instance class costs per hour. Put it back on demand when you are done.",
+  "admin.engines_tenant_scope":
+    "Here you can take models in and see the rows that produced. Enabling a model, starting and stopping the engine, choosing the GPU and forgetting a row belong to the deployment administrator (super_admin), so they are not on this screen. The catalogue is one per deployment, and the id of a model you take in is visible from every tenant.",
   "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys an instance only when something asks, and it stops itself once idle.",
   // --- engine status (adminEngines.tsx, EngineStatus) ---
   // ⚠️ Every line here follows "do not write down what you do not know". A line the CP has no
@@ -772,6 +774,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.tab_usage": "Running time",
   "tenant.tab_audit": "Audit",
   "tenant.tab_mcp": "MCP distribution",
+  "tenant.tab_engines": "Inference engine models",
   "tenant.picker": "Tenant",
   "tenant.none": "You don't administer any tenant.",
   "tenant.forbidden": "You don't have permission to view this tenant's settings.",

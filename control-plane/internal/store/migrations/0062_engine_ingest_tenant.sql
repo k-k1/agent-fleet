@@ -1,0 +1,15 @@
+-- Which tenant an ingest job was started for (ADR 0072 open question 11, phase P5).
+--
+-- The grant that lets a tenant_admin start an ingest already records the tenant on the
+-- CATALOGUE ROW it eventually produces (license_accepted_tenant, migration 0061). That is not
+-- enough for the panel: a job list is what somebody watches for the ten minutes before a row
+-- exists at all, and a tenant_admin looking at every other tenant's downloads is both noise and
+-- a disclosure the grant never offered.
+--
+-- Empty means the OPERATOR started it -- a super_admin acts for the whole deployment and has no
+-- tenant to be acting for. A super_admin's list is unfiltered and therefore sees those too.
+--
+-- ⚠️ No semicolon anywhere in a comment in this file. The migration runner splits the file on
+-- semicolons with no SQL parser, so one inside a comment cuts a statement in half and the
+-- Control Plane stops booting with "incomplete input".
+ALTER TABLE engine_ingest_jobs ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '';
