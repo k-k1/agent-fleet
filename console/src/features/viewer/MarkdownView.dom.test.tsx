@@ -362,3 +362,18 @@ describe("emphasis in Japanese prose", () => {
     expect(host.textContent).not.toContain("**");
   });
 });
+
+// A tag-shaped placeholder is raw HTML to CommonMark and the sanitizer below deletes the
+// element it names, so the words vanished from a rendered turn without a trace. The rule
+// that stops that lives in lib/markdown.ts; this is the check that it survives the view's
+// own parse → sanitize → innerHTML path, which is where the loss was reported.
+describe("angle-bracket placeholders", () => {
+  it("shows one written in prose, and still renders real markup", async () => {
+    await render("例えば、<svn repo url>/trunk をチェックアウトして、");
+    expect(host.textContent).toContain("<svn repo url>/trunk");
+
+    await render("a<br>b と <details><summary>見出し</summary>\n\n本文\n\n</details>");
+    expect(host.querySelector("br")).not.toBeNull();
+    expect(host.querySelector("summary")?.textContent).toBe("見出し");
+  });
+});
