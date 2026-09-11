@@ -152,6 +152,16 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		if missing := engineMissingFileFlags(e.def.Provider, m); len(missing) > 0 {
 			mr["files_missing"] = missing
 		}
+		// A LoRA pinned to nothing (ADR 0072 decision 5, the llm half). The adapter reaches the
+		// engine through the preset section of the model named in `base_model`, so a base that is
+		// disabled or not in this catalogue means the row does nothing at all — and it looks
+		// exactly like one that is working: enabled, its file on the box, no error anywhere.
+		//
+		// Asked of the chat role only. The image role's LoRAs name a ComfyUI FAMILY in the same
+		// column and are chosen per request, so "no row has that id" is not a fault there.
+		if e.def.api() == engineAPIChat && engineModelIsLora(m) && !engineLoraBasePresent(m, catalogue) {
+			mr["lora_base_missing"] = true
+		}
 		modelRows = append(modelRows, mr)
 	}
 	row := map[string]any{

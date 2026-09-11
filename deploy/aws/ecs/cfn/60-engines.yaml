@@ -308,7 +308,7 @@ Mappings:
         fetch_keys "$K"/keys.start
         if [ -n "$PRESET_FILE" ]; then
           mkdir -p "$(dirname "$PRESET_FILE")"
-          printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" '.models[]? as $m | ($m.a // []) as $a | (["["+$m.id+"]"] + [$m.f[]?|if type=="string" then "model = "+$d+"/"+. else (.g|ltrimstr("-")|ltrimstr("-"))+" = "+$d+"/"+.k end] + (if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end) + [$a|to_entries[]|select(.value|startswith("-"))|(.value|ltrimstr("-")|ltrimstr("-")) as $k|($a[.key+1]//"") as $v|if ($v!="" and ($v|startswith("-")|not)) then $k+" = "+$v else $k+" = true" end] + (if $m.id==$s then ["load-on-startup = true"] else [] end) + [""])[]' > "$PRESET_FILE.part"
+          printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" '.models[]? as $m | ($m.a // []) as $a | (["["+$m.id+"]"] + [$m.f[]?|if type=="string" then "model = "+$d+"/"+. else (.g|ltrimstr("-")|ltrimstr("-"))+" = "+$d+"/"+.k end] + (if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end) + [$a|to_entries[]|select(.value|startswith("-"))|(.value|ltrimstr("-")|ltrimstr("-")) as $k|($a[.key+1]//"") as $v|if ($v!="" and ($v|startswith("-")|not)) then $k+" = "+$v else $k+" = true" end] + (if (($m.lo//[])|length)>0 then ["lora-scaled = " + (($m.lo)|map($d+"/"+.)|join(","))] else [] end) + (if $m.id==$s then ["load-on-startup = true"] else [] end) + [""])[]' > "$PRESET_FILE.part"
           mv "$PRESET_FILE.part" "$PRESET_FILE"
           echo "engine fetch: preset $PRESET_FILE holds $(grep -c '^\[' "$PRESET_FILE" || true) model(s), '$START' loaded at startup"
           if [ -s "$PRESET_FILE" ]; then printf -- '--models-preset %s' "$PRESET_FILE" > "$MODELS_DIR/cmdline.part"; else : > "$MODELS_DIR/cmdline.part"; fi

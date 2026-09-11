@@ -888,6 +888,26 @@ are empty for BOTH roles now. Measured against llama.cpp b10853:
 - a section whose `model` path is missing does NOT stop the router — it starts, lists the model,
   and only a request for that one fails (`500 model name=… failed to load`).
 
+**Pinned LoRAs (ADR 0072 decision 5, the llm half).** A catalogue row of kind `lora` names the
+model it belongs to in `base_model`, and the active set carries that as `lo` on the MODEL: a list
+of `<key>:<scale>` entries. The script joins them into ONE preset key,
+`lora-scaled = /models/llm/loras/a.gguf:1,/models/llm/loras/b.gguf:0.8`. To opencode this is an
+ordinary model id that happens to include a fine-tune; choosing adapters per request is the other
+half of the decision and is deliberately later (it is the first thing that would make the gateway
+rewrite a request body).
+
+🔴 **One key with a comma-separated list, never one key per adapter.** llama.cpp parses a preset
+into `std::map<common_arg, std::string>` and its INI reader assigns `parsed[section][key] =
+value`, so a second `lora-scaled =` line OVERWRITES the first and two adapters silently become
+one. `--lora-scaled FNAME:SCALE,...` is the documented multi-adapter form and the only one that
+carries both a path and a strength (read in `common/preset.cpp` and `common/arg.cpp`,
+2026-09-11). `--lora-scaled x:1` is exactly `--lora x`, so the scale is always written and there
+is one code path rather than two.
+
+⚠️ That also makes `,` and `:` separators rather than characters: an S3 key holding either would
+move the boundary between two adapters and load a path nobody named. The Control Plane refuses
+such a key when it publishes the active set, for every role.
+
 `jq`, not a JSON-in-shell parser: `public.ecr.aws/aws-cli/aws-cli` carries `jq`, `python3` and
 `bash` (verified with `crane export`).
 

@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -291,6 +292,18 @@ type engineActiveModel struct {
 	// Ctx is the window this model is started with (llama-server's -c). Per MODEL rather than
 	// per engine, which is what ADR 0072 decision 3 turns into a router flag in P1.
 	Ctx int `json:"c,omitempty"`
+	// Lo are the LoRA adapters PINNED to this model (ADR 0072 decision 5, the llm half): each
+	// entry is `<s3 key>:<scale>`, which is llama.cpp's own `--lora-scaled FNAME:SCALE` spelling
+	// so the sidecar joins them with commas and writes ONE preset key.
+	//
+	// Pinned rather than chosen per request: to the member this is a model that happens to
+	// include a fine-tune, and opencode sees an ordinary model id. Choosing per request is the
+	// virtual-model-id half of the same decision, and it is deliberately later (P5) because it
+	// makes the gateway rewrite a request body for the first time.
+	//
+	// The scale is always written, `1` included: `--lora-scaled x:1` is exactly `--lora x`, and
+	// one spelling is one code path in the jq that builds the preset.
+	Lo []string `json:"lo,omitempty"`
 }
 
 // engineActiveFile is one part of a SPLIT model. There is no local path: the box mirrors the
@@ -323,7 +336,7 @@ func buildEngineActiveSet(key string, rows []store.EngineModel) engineActiveSet 
 			}
 			continue
 		}
-		e := engineActiveModel{ID: m.ID, Args: m.Args, Ctx: m.ContextTokens}
+		e := engineActiveModel{ID: m.ID, Args: m.Args, Ctx: m.ContextTokens, Lo: engineLorasPinnedTo(m.ID, rows)}
 		for _, f := range m.Files {
 			k := strings.TrimSpace(f.S3Key)
 			if k == "" {
@@ -351,6 +364,74 @@ func buildEngineActiveSet(key string, rows []store.EngineModel) engineActiveSet 
 		set.Start = set.Models[0].ID
 	}
 	return set
+}
+
+// engineLoraScaleArg is how a LoRA row declares the strength it is pinned at. It rides in the
+// row's `args` rather than in a column of its own because a weight is meaningful for exactly one
+// kind of row, and `args` is already the place a row says something only its engine understands.
+// Absent, unreadable or out of range means 1 — the strength llama.cpp's own `--lora` applies.
+const engineLoraScaleArg = "--scale"
+
+// engineLorasPinnedTo is the adapters a model carries, as `<key>:<scale>` entries.
+//
+// A LoRA names its base by ID in `base_model` — the llm role's vocabulary for that column, where
+// the image role puts a ComfyUI family (decision 2). Both are "what this adapter belongs to", and
+// neither is ever guessed from a name.
+//
+// A LoRA whose base is disabled or absent is pinned to NOTHING rather than to something else.
+// That case is not silent: engineAdminAPI.row marks the row `lora_base_missing`, because an
+// adapter that quietly does nothing looks exactly like one that is working.
+func engineLorasPinnedTo(base string, rows []store.EngineModel) []string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return nil
+	}
+	var out []string
+	for _, l := range rows {
+		if !l.Enabled || !engineModelIsLora(l) || strings.TrimSpace(l.BaseModel) != base {
+			continue
+		}
+		scale := engineLoraScale(l)
+		for _, f := range l.Files {
+			if k := strings.TrimSpace(f.S3Key); k != "" {
+				out = append(out, k+":"+scale)
+			}
+		}
+	}
+	return out
+}
+
+// engineLoraBasePresent answers whether this adapter has something to be pinned to: an ENABLED
+// model row (not another LoRA) whose id is its `base_model`.
+func engineLoraBasePresent(lora store.EngineModel, rows []store.EngineModel) bool {
+	base := strings.TrimSpace(lora.BaseModel)
+	if base == "" {
+		return false
+	}
+	for _, m := range rows {
+		if m.Enabled && !engineModelIsLora(m) && strings.TrimSpace(m.ID) == base {
+			return true
+		}
+	}
+	return false
+}
+
+// engineLoraScale reads `--scale <v>` out of a row's args, as the string the preset carries.
+// Rendered from the parsed float rather than echoed, so nothing an operator typed reaches a
+// command line unchecked — `--lora-scaled` splits on `:` and `,`, and a value holding either
+// would silently move the boundary between two adapters.
+func engineLoraScale(m store.EngineModel) string {
+	for i, a := range m.Args {
+		if strings.TrimSpace(a) != engineLoraScaleArg || i+1 >= len(m.Args) {
+			continue
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(m.Args[i+1]), 64)
+		if err != nil || v < 0 || v > 2 {
+			break // the same range the image side offers, and the same answer to nonsense: the default
+		}
+		return strconv.FormatFloat(v, 'g', -1, 64)
+	}
+	return "1"
 }
 
 // engineActiveSetJSON renders the document and refuses one that cannot be read back.
@@ -402,6 +483,14 @@ func engineActiveFileKey(f any) string {
 func engineActiveKeyOK(key string) error {
 	if key == "" || strings.ContainsAny(key, " \t\n\r") {
 		return fmt.Errorf("the S3 key %q has whitespace in it, which the engine's command line cannot carry", key)
+	}
+	// `,` and `:` are llama.cpp's own separators in `--lora-scaled FNAME:SCALE,...`, which is how
+	// a pinned adapter reaches the preset (decision 5). A key holding either would not fail — it
+	// would move the boundary between two adapters, and the engine would load a path nobody
+	// named. Refused for every key rather than for LoRAs alone: one rule is one thing to know,
+	// and no key this deployment writes has ever wanted them.
+	if strings.ContainsAny(key, ",:") {
+		return fmt.Errorf("the S3 key %q holds a ',' or ':', which llama.cpp reads as a separator between LoRA adapters", key)
 	}
 	return nil
 }
