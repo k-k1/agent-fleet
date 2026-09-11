@@ -735,6 +735,7 @@ Two consequences to keep in mind:
 - **A request for a model that has not landed yet fails rather than waits.** llama.cpp's router
   starts happily with preset paths that do not exist (measured, ADR 0072 P1 point 6) and errors
   only on a request for that model. The window is the sync time of the models after the first.
+  (Answered by `PENDING_PARAM` below, 2026-09-11: the caller is now told to retry instead.)
 - 🔴 **Every exit from the sidecar must leave the marker**, which is why it opens with
   `trap 'touch $MODELS_DIR/ready' EXIT`. Without it a failed fetch — or an empty catalogue —
   leaves the engine waiting out its whole hour-long loop on a box billing at $1.26/h, and the
@@ -742,6 +743,63 @@ Two consequences to keep in mind:
   which is the case everything downstream already understands.
   `deploy/local/engine-sidecar-test.sh` asserts both the ordering and the marker, and each
   assertion was checked against the defect it is meant to catch.
+
+### `PENDING_PARAM`: what this instance has NOT synced yet
+
+The window above is real and nothing outside the instance could see it, so the sidecar
+publishes it: `<EnginesSsmParamName>/<role>/pending`, beside the active set it is working from.
+
+**The contract, and it is the whole of it:**
+
+- a **JSON array of bare S3 keys** — exactly the keys as they appear in the active set, no
+  local paths — naming the files this instance still owes;
+- written **before** the first fetch (so it names everything), rewritten **after every file
+  lands**, and left as `[]` when the instance is in step. `[]` is also what an engine with
+  nothing to load writes, so a parameter left behind by a previous instance that died
+  mid-sync cannot hold requests for ever;
+- Standard tier, so **4,096 characters**. The list is trimmed from the end to fit and says so
+  in the log — an under-reported pending list lets a request through, which is the behaviour
+  the fleet had before this existed, and the opposite mistake would hold requests for files
+  that are already there;
+- a failed write is logged and **not** fatal. The sync is what matters; the parameter is an
+  optimisation of the refusal.
+
+The Control Plane reads it in `engine_pending.go` and answers `503 engine_waking` — the
+retryable refusal every caller in the fleet already handles — for a request naming a model
+whose files are on that list, instead of the engine's own bare 400 (ADR 0072 P2 欠落 7). 🔴 A
+parameter that is **absent or unreadable is UNKNOWN, never "still syncing"**: a deployment
+whose engine stack predates this behaves exactly as it did before, and so does one where SSM
+is unreachable.
+
+`EngineTaskRole` gains `ssm:PutParameter` on the path it already reads, which keeps this
+stack's IAM closed inside it (ADR 0071 decision 8).
+
+### `WATCH_SEC`: a model enabled while the instance is up
+
+The sidecar used to exit after its first sync, so a model enabled afterwards reached the
+instance only at the next cold start (ADR 0072 open question 3). On the `llm` role that is
+"wait for the next start"; on `image` it is worse, because the model appears in
+`generate_image`'s list the moment it is enabled and the request then 400s (欠落 8). Forcing
+`mode` off and on again — rebuilding the instance and re-syncing 48 GB — was the only way out.
+
+So the sidecar stays resident: every `WATCH_SEC` seconds (60 in both task definitions) it
+re-reads the active set and, when the document has CHANGED, syncs whatever is new under the
+same `SYNC_ALL` rule as the first pass. What it does not touch is `/models/cmdline`, the preset
+file or the marker — those were read by the engine at start, and changing what a running engine
+loads is still the next start's business (decision 4).
+
+- `WATCH_SEC=0`, or anything that is not a number, is "sync once and exit" — the old behaviour.
+- The files it fetches ride the same `pending` list, so the gateway's wait covers them too and
+  ends by itself when the last one lands.
+- ⚠️ **What this does NOT fix for `llm`.** A model enabled later lands on disk, but the router
+  read its preset at start, so the new section is not there and the model is still unreachable
+  until the engine restarts. What the watch buys that role is a start that no longer has to
+  download it. For `image` (ComfyUI enumerates its model directories per request) the file
+  landing IS the fix.
+- 🔴 The key lists live in `${TMPDIR:-/tmp}/engine-fetch.$$`, not in fixed `/tmp` paths. A
+  script that exits cannot collide with itself; a resident one can, and it did — a leaked
+  watcher from an earlier test run rewrote the lists under a running one and turned every
+  later assertion in `engine-sidecar-test.sh` into a different failure.
 
 ### Tuning the AWS CLI is NOT worth it — measured
 
