@@ -242,23 +242,41 @@ Mappings:
       script: |-
         set -e
         mkdir -p "$MODELS_DIR"
-        trap 'touch "$MODELS_DIR/ready" 2>/dev/null || true' EXIT
-        V=$(aws ssm get-parameter --name "$ACTIVE_PARAM" --query Parameter.Value --output text 2>/dev/null || true)
-        if [ -z "$V" ] || [ "$V" = "None" ]; then
-          echo "engine fetch: no active set at $ACTIVE_PARAM - this engine has nothing to load"
-          : > "$MODELS_DIR/cmdline"
-          exit 0
-        fi
-        START=$(printf '%s' "$V" | jq -r '.start // ""')
-        echo "engine fetch: active set for $ACTIVE_PARAM starts with '$START'"
-        if [ -n "$PRESET_FILE" ]; then
-          START=$(printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.id),(.models[0].id?)][0]//""')
-        fi
-        : > /tmp/keys.rest
-        if [ -n "$PRESET_FILE$SYNC_ALL" ]; then
-          printf '%s' "$V" | jq -r --arg s "$START" '[.models[]?|select(.id!=$s)|.f[]?|if type=="string" then . else .k end]|.[]' > /tmp/keys.rest
-        fi
-        printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > /tmp/keys.start
+        trap 'touch "$MODELS_DIR/ready" 2>/dev/null || true; rm -rf "${K:-}" 2>/dev/null || true' EXIT
+        # The key lists live under a directory of this PROCESS's own. They were fixed /tmp
+        # paths, which is invisible in a container of one process and a trap everywhere else:
+        # this script now stays resident (WATCH_SEC), so two of them - a leaked one from a
+        # previous test run, a second task on one host - rewrite each other's lists while the
+        # first is still reading them. Measured: it turned every later assertion in
+        # engine-sidecar-test.sh into a different failure.
+        K="${TMPDIR:-/tmp}/engine-fetch.$$"
+        mkdir -p "$K"
+        want_keys() {
+          : > "$K"/keys.rest
+          if [ -n "$PRESET_FILE$SYNC_ALL" ]; then
+            printf '%s' "$1" | jq -r --arg s "$2" '[.models[]?|select(.id!=$s)|.f[]?|if type=="string" then . else .k end]|.[]' > "$K"/keys.rest
+          fi
+          printf '%s' "$1" | jq -r --arg s "$2" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > "$K"/keys.start
+          cat "$K"/keys.start "$K"/keys.rest > "$K"/keys.all
+        }
+        pending_put() {
+          if [ -z "$PENDING_PARAM" ]; then return 0; fi
+          p=$(jq -R -s -c '[splits("\n")|select(length>0)]' < "$1" || printf '[]')
+          if [ -z "$p" ]; then p='[]'; fi
+          while [ ${#p} -gt 4000 ]; do p=$(printf '%s' "$p" | jq -c '.[:-1]'); done
+          aws ssm put-parameter --name "$PENDING_PARAM" --type String --overwrite --value "$p" >/dev/null 2>&1 \
+            || echo "engine fetch: could not write $PENDING_PARAM - the gateway cannot know to wait"
+        }
+        pending_sync() {
+          if [ -z "$PENDING_PARAM" ]; then return 0; fi
+          : > "$K"/keys.pending
+          while read -r k; do
+            if [ -z "$k" ]; then continue; fi
+            if [ -s "$MODELS_DIR/$k" ]; then continue; fi
+            echo "$k" >> "$K"/keys.pending
+          done < "$K"/keys.all
+          pending_put "$K"/keys.pending
+        }
         fetch_keys() {
           while read -r k; do
             [ -n "$k" ] || continue
@@ -269,9 +287,25 @@ Mappings:
             aws s3 cp "s3://$BUCKET/$k" "$dst.part" --only-show-errors
             mv "$dst.part" "$dst"
             echo "engine fetch: $k $(stat -c %s "$dst") bytes in $(( $(date +%s) - t0 ))s"
+            pending_sync
           done < "$1"
         }
-        fetch_keys /tmp/keys.start
+        V=$(aws ssm get-parameter --name "$ACTIVE_PARAM" --query Parameter.Value --output text 2>/dev/null || true)
+        if [ -z "$V" ] || [ "$V" = "None" ]; then
+          echo "engine fetch: no active set at $ACTIVE_PARAM - this engine has nothing to load"
+          : > "$MODELS_DIR/cmdline"
+          : > "$K"/keys.pending
+          pending_put "$K"/keys.pending
+          exit 0
+        fi
+        START=$(printf '%s' "$V" | jq -r '.start // ""')
+        echo "engine fetch: active set for $ACTIVE_PARAM starts with '$START'"
+        if [ -n "$PRESET_FILE" ]; then
+          START=$(printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.id),(.models[0].id?)][0]//""')
+        fi
+        want_keys "$V" "$START"
+        pending_sync
+        fetch_keys "$K"/keys.start
         if [ -n "$PRESET_FILE" ]; then
           mkdir -p "$(dirname "$PRESET_FILE")"
           printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" '.models[]? as $m | ($m.a // []) as $a | (["["+$m.id+"]"] + [$m.f[]?|if type=="string" then "model = "+$d+"/"+. else (.g|ltrimstr("-")|ltrimstr("-"))+" = "+$d+"/"+.k end] + (if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end) + [$a|to_entries[]|select(.value|startswith("-"))|(.value|ltrimstr("-")|ltrimstr("-")) as $k|($a[.key+1]//"") as $v|if ($v!="" and ($v|startswith("-")|not)) then $k+" = "+$v else $k+" = true" end] + (if $m.id==$s then ["load-on-startup = true"] else [] end) + [""])[]' > "$PRESET_FILE.part"
@@ -284,9 +318,27 @@ Mappings:
         mv "$MODELS_DIR/cmdline.part" "$MODELS_DIR/cmdline"
         echo "engine fetch: cmdline = $(cat "$MODELS_DIR/cmdline")"
         touch "$MODELS_DIR/ready"
-        echo "engine fetch: engine may start; $(grep -c . /tmp/keys.rest || true) file(s) still to sync"
-        fetch_keys /tmp/keys.rest
+        echo "engine fetch: engine may start; $(grep -c . "$K"/keys.rest || true) file(s) still to sync"
+        fetch_keys "$K"/keys.rest
+        pending_sync
         echo "engine fetch: sync done"
+        case "${WATCH_SEC:-0}" in ''|*[!0-9]*) WATCH_SEC=0 ;; esac
+        if [ "$WATCH_SEC" -gt 0 ]; then
+          echo "engine fetch: watching $ACTIVE_PARAM every ${WATCH_SEC}s for models enabled later"
+          LAST="$V"
+          while sleep "$WATCH_SEC"; do
+            N=$(aws ssm get-parameter --name "$ACTIVE_PARAM" --query Parameter.Value --output text 2>/dev/null || true)
+            if [ -z "$N" ] || [ "$N" = "None" ] || [ "$N" = "$LAST" ]; then continue; fi
+            LAST="$N"
+            S=$(printf '%s' "$N" | jq -r '.start // ""')
+            want_keys "$N" "$S"
+            pending_sync
+            echo "engine fetch: the active set changed; $(grep -c . "$K"/keys.pending || true) file(s) to add"
+            fetch_keys "$K"/keys.all
+            pending_sync
+            echo "engine fetch: this instance is in step with the active set"
+          done
+        fi
 
 Conditions:
   # Whether the ROLE exists; what it loads is the catalogue's - PARAMETERS, "The engine table".
@@ -375,6 +427,12 @@ Resources:
                 Resource: !GetAtt ModelsBucket.Arn
               - Effect: Allow
                 Action: [ ssm:GetParameter ]
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${EnginesSsmParamName}/*"
+              # !! The sidecar publishes what it has NOT synced yet, so the gateway can answer
+              # !! `engine_waking` instead of the engine's own 400 - PARAMETERS, "The fetch sidecar".
+              # !! The same path it already reads, which keeps this stack's IAM closed inside it.
+              - Effect: Allow
+                Action: [ ssm:PutParameter ]
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${EnginesSsmParamName}/*"
 
   IngestTaskRole:
@@ -700,6 +758,8 @@ Resources:
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/llm/active" }
+            - { Name: PENDING_PARAM, Value: !Sub "${EnginesSsmParamName}/llm/pending" }
+            - { Name: WATCH_SEC, Value: "60" }
             - { Name: PRESET_FILE, Value: /models/llm/presets.ini }
             - { Name: ALIAS_FLAG, Value: "" }
             - { Name: CTX_FLAG, Value: "" }
@@ -805,6 +865,8 @@ Resources:
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/image/active" }
+            - { Name: PENDING_PARAM, Value: !Sub "${EnginesSsmParamName}/image/pending" }
+            - { Name: WATCH_SEC, Value: "60" }
             - { Name: SYNC_ALL, Value: !If [ ImageIsComfy, "1", "" ] }
             - { Name: PRESET_FILE, Value: "" }
             - { Name: ALIAS_FLAG, Value: "" }

@@ -1753,6 +1753,27 @@ On the second instance, 12 files and 48 GB took about 270 s (≈180 MB/s) to syn
 is this window. Whether the requested model's files are on the instance is a fact the CP already
 knows, so making it wait as an `engine_waking` equivalent looks like the straightforward fix.
 
+> ✅ **Fixed (2026-09-11; implemented, NOT verified on hardware) — gap 7 and open question 3
+> together.** The sidecar publishes the S3 keys it has **not** fetched to
+> `<base>/<role>/pending` (a JSON array of bare keys, Standard tier's 4,096 characters, rewritten
+> as each file lands and left `[]` when the instance is in step). The gateway answers
+> `engine_waking` with a Retry-After for a request naming a model whose `files[]` are on that
+> list — and **the enum's condition stays "enabled"**: "on the instance" is a property of one
+> instance at one moment, it changes under a session that has already read the catalogue, and a
+> menu that flickers with a download is worse than a request that waits. 🔴 An **absent or
+> unreadable parameter is UNKNOWN, not "still syncing"**, and goes straight through: a
+> deployment whose sidecar predates this, and one where SSM is unreachable, behave exactly as
+> they did before the check existed. Open question 3 is the other half: the sidecar now **stays
+> resident** (`WATCH_SEC`, 60 s) and syncs what a changed active set added, which rides the same
+> pending list so the gateway's wait covers it and ends by itself. ⚠️ For the `llm` role this is
+> not the whole fix — the router read its preset at start, so a model enabled later is on disk
+> but not in the router until the next restart; what the watch buys that role is a faster next
+> start. For `image` (ComfyUI enumerates its model directories per request) the file landing IS
+> the fix. 🔴 **Not verified on hardware**: in this deployment's default shape, acquiring the
+> instance takes longer than the sync and the window never opens (observed in PR #507). Opening
+> one deliberately — enable a large second model and ask for it right after a start — is the
+> next hardware session's homework.
+
 **Gap 8 — enabling a model on a running instance never syncs it. This is not a new discovery** — it is
 open question 3 ("additional sync after the service is up") surfacing as written, a known hole
 already deferred to P5. What is measured for the first time is what it does in the image role:
@@ -1877,10 +1898,18 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
    `/v1/images/edits` (multipart), and what a `baseModel` mismatch does (silent breakage or a
    warning). The `<sd_cpp_extra_args>` path and the mismatch can be measured on the CPU SD1.5
    Q4.
-3. **Syncing into a running instance.** Can a newly enabled model be added to a running instance
-   **without waiting for the next start** — a resident sidecar re-syncing the active set, and
-   does the router rescan `--models-dir` (or is there a reload endpoint)? If not, llm also
-   swaps "at the next start" to begin with, and this is P4.
+3. ~~**Syncing into a running instance.**~~ **Half resolved (2026-09-11; implemented, not
+   verified on hardware)**: the sidecar is now resident (`WATCH_SEC`, 60 s). A changed active
+   set is synced, and while it is coming down the files are on `pending`, so the gateway makes
+   the request wait with `engine_waking` (the same change as gap 7's). ⚠️ **The router half is
+   NOT resolved** — `--models-dir` is deliberately not passed (decision 3) and the preset is
+   read at start, so a model enabled later is **on disk and still not in the router**. What the
+   llm role gains is a faster next start; the model becomes usable at that start. The image
+   role (ComfyUI enumerates per request) is resolved by it. The original text: can a newly
+   enabled model be added to a running instance **without waiting for the next start** — a
+   resident sidecar re-syncing the active set, and does the router rescan `--models-dir` (or is
+   there a reload endpoint)? If not, llm also swaps "at the next start" to begin with, and this
+   is P4.
 4. ~~**Civitai's API** (decision 6)~~ **Resolved (P4 measurement 2, 2026-09-09)**: the developer
    site is still 404, but `GET https://civitai.com/api/v1/model-versions/<id>` answers
    ANONYMOUSLY with `files[].hashes.SHA256` (upper-case hex), `files[].sizeKB` (**fractional
@@ -2080,6 +2109,14 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
 - **P5 — syncing into a running instance (open question 3), virtual model ids for llm (the second
   half of decision 5), the ComfyUI pane, sd-server's async API (open question 6), the tenant
   axis (open question 11).**
+  **Syncing into a running instance (open question 3) is implemented, not verified on
+  hardware** (2026-09-11: the sidecar stays resident, publishes the keys it has not synced to
+  `pending`, and the gateway makes a request for them wait with `engine_waking` — closed
+  together with gap 7, whose addendum carries the design and the half of it the llm role's
+  preset leaves open). **Done when: a large second model is enabled and asked for right after a
+  start, the answer is `engine_waking` rather than a 400, and the same request succeeds once
+  the sync finishes.** Measuring it needs the window opened on purpose — in this deployment's
+  default shape acquiring the instance takes longer than the sync (observed in PR #507).
   **The tenant axis (open question 11) is implemented** (2026-09-10 — "Follow-up: the tenant
   axis, implemented" at the end of this ADR; not verified on hardware): the permission gate on
   ingest, and the four-part acceptance. **Done when: a tenant_admin of a granted tenant can start
