@@ -212,6 +212,24 @@ export const admin = {
   "admin.engines_class": "インスタンスクラス: ",
   "admin.engines_class_not_default": "既定と違います",
   "admin.engines_class_reset": "既定に戻す",
+  // 提案（ADR 0075 決定 1・8）。梯子に購入形態の欄が付いたもので、**宣言順が試す順**である
+  // ——CP は価格で並べ替えないので、パネルも並べ替えない。選択は「既定と違う段」ではなく
+  // 「固定」になった: 未選択が自動（次の提案へ落ちる）で、id を選ぶとその提案だけを使う。
+  "admin.engines_class_auto": "自動（既定）",
+  "admin.engines_class_pinned": "自動ではなく固定されています",
+  "admin.engines_class_unpin": "自動に戻す",
+  "admin.engines_offers_head": "提案（宣言された順に、上から試します）",
+  "admin.engines_offer_buy_od": "オンデマンド",
+  "admin.engines_offer_buy_spot": "Spot",
+  "admin.engines_offer_now": "いまの提案: ",
+  "admin.engines_offer_trail": "試した順: ",
+  // 決定 5 の失敗コード。「要求の設定で買えず」と「在庫なし」は待ち方が違う——前者は待っても
+  // 直る形をしていないので次の提案へ即座に移り、後者は残りの予算だけ待つ。
+  "admin.engines_offer_result_active": "取れた",
+  "admin.engines_offer_result_unfulfillable": "要求の設定で買えず",
+  "admin.engines_offer_result_insufficient": "在庫なし",
+  "admin.engines_offer_result_quota": "クォータ",
+  "admin.engines_offer_result_budget": "予算切れ",
   "admin.engines_class_pending": "いま動いているのは {t} のインスタンスです。選んだクラスは次に買うインスタンスから効きます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧いインスタンスが退場するまで新しいインスタンスは起動しません。",
   "admin.engines_class_replace": "いま入れ替える",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a

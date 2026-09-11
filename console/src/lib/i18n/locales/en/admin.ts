@@ -205,6 +205,26 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_class": "Instance class: ",
   "admin.engines_class_not_default": "not the default",
   "admin.engines_class_reset": "Back to the default",
+  // Offers (ADR 0075 decisions 1 and 8): the ladder with a purchase form on each rung, tried in
+  // the order it was DECLARED — the control plane does not sort by price, so neither does this
+  // panel. Choosing one is now a PIN rather than "a rung other than the default": not choosing is
+  // automatic and falls through to the next offer, a pinned one never does.
+  "admin.engines_class_auto": "Automatic (the default)",
+  "admin.engines_class_pinned": "pinned, not automatic",
+  "admin.engines_class_unpin": "Back to automatic",
+  "admin.engines_offers_head": "Offers, tried from the top in the order they were declared",
+  "admin.engines_offer_buy_od": "On-demand",
+  "admin.engines_offer_buy_spot": "Spot",
+  "admin.engines_offer_now": "Current offer: ",
+  "admin.engines_offer_trail": "Tried, in order: ",
+  // The failure codes of decision 5. "Cannot be bought as declared" and "no capacity" are waited
+  // on differently: the first is not a shape that waiting fixes, so the next offer is tried at
+  // once, while the second gets whatever is left of the time budget.
+  "admin.engines_offer_result_active": "got it",
+  "admin.engines_offer_result_unfulfillable": "cannot be bought as declared",
+  "admin.engines_offer_result_insufficient": "no capacity",
+  "admin.engines_offer_result_quota": "quota",
+  "admin.engines_offer_result_budget": "budget spent",
   "admin.engines_class_pending": "What is running is a {t} instance. The class you chose applies to the NEXT instance. Replacing it costs one cold start (about 9 minutes for llm, 3 for image), and the new instance does not start until the old one has left.",
   "admin.engines_class_replace": "Replace it now",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a
