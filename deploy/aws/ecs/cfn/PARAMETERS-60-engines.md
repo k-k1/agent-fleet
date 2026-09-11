@@ -183,7 +183,7 @@ that jumps from a pre-catalogue Control Plane straight to this one comes up with
 catalogue: the role exists, the engine idles, and the panel is where the first model is
 registered. That is a supported state, not a broken one.
 
-### 0.18.1: the image role can be bought on Spot
+### 0.19.0: the image role can be bought on Spot
 
 New parameter, `ImageCapacityOptionType` (`ON_DEMAND` by default, so **nothing changes for a
 deployment that leaves it alone**). Set it to `SPOT` and the image role's instance is bought on Spot —
@@ -195,7 +195,7 @@ $0.45-0.58 against a $1.1672 list price (ADR 0074). Two things to know before se
   the cold start again. Details and the measurements:
   [the capacity providers](#the-capacity-providers);
 - a replacement **renames** the provider. **Put this release's Control Plane image on before
-  switching**: from 0.18.1 the running CP takes the new name off the engine table and needs no
+  switching**: from 0.19.0 the running CP takes the new name off the engine table and needs no
   restart, but a 0.18.0 CP keeps addressing the deleted one — the rung never reaches the
   instance, the panel shows no box while one is billing, and only a
   `force-new-deployment` clears it (measured 217 s; ADR 0074);
@@ -220,7 +220,7 @@ creates it.
 The `llm` role is not offered this and is not going to be: a two-minute termination notice
 mid-conversation costs a 527-586-second cold start to recover from.
 
-### 0.18.1: the first update also updates 20-platform
+### 0.19.0: the first update also updates 20-platform
 
 The release that moves the fetch and ingest steps into an image needs a new ECR repository
 (`af-engine-tools`), and that repository is 20-platform's. So the first `update.sh` run on this
@@ -1104,7 +1104,7 @@ one order that works — **ECR repository (20-platform) → image (`crane copy`)
 
 🔴 Reversed, nothing fails at the time. The stack deploys perfectly and both roles' fetch
 containers and the ingest task sit in `CannotPullContainerError` while the service reports a
-steady state — which is how this was found, on the deployment, the first time 0.18.1 was put on
+steady state — which is how this was found, on the deployment, the first time 0.19.0 was put on
 one (2026-09-11: GHCR empty, ECR empty, 20-platform not updated, three hand-run steps to get
 out of it, and none of them in a script). `deploy/local/ecs-lifecycle-stub-test.sh` case 3i
 holds the order, with the two positive controls (swap the steps, drop the copy).
@@ -1338,7 +1338,7 @@ out by measurement, and the quota was right at the time. What actually moved the
    ⚠️ g6e's Spot is ABOVE g6's on-demand $1.26: Spot is cheap for the type you got, not for
    everything you widened to.
 
-✅ **No Control Plane restart is needed — as long as the CP is 0.18.1 or newer.** The replacement
+✅ **No Control Plane restart is needed — as long as the CP is 0.19.0 or newer.** The replacement
 renames the provider, and the running CP takes that name live off the engine table, on the same
 poll the ladder rides (`engine_table_reload.go`). The rename also re-runs the `box` match under
 the new name, drops the cached lookup, and forgets the rung this process applied to the OLD
@@ -1362,7 +1362,7 @@ Plane image on first, then switch to SPOT.**
 
 The way back to `ON_DEMAND` is one more stack update (measured: 147 seconds, and the original
 provider name is reusable even though ECS keeps the retired one as `INACTIVE`). It is another
-rename, so the same rule applies to it: nothing to do on 0.18.1 or later, a restart before that.
+rename, so the same rule applies to it: nothing to do on 0.19.0 or later, a restart before that.
 
 ⚠️ **`describe-instances` can PROVE Spot, but only by id.** Filtering by instance type returns
 `[]` for Managed Instances (they run in an AWS-managed account). Asking for the id instead — the

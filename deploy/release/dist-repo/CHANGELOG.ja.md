@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.19.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.19.0) — 2026-09-11
+
+モデルの取り込みがテナント管理者にも開かれ、配備自身の ComfyUI での画像生成が
+編集・インペイント・LoRA・seed に対応し、画像エンジンを Spot で買えるようになりました。
+メンバーの home ディスクを止めずに拡張でき、課題管理で開いたプルリクエストにレビューと
+CI の状態が出ます——GitHub のプルリクエストも再び出るようになりました。
+
 ## [0.18.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.18.0) — 2026-09-10
 
 セッションが自分でセッションを起こして世話できるようになり、自前エンジンのモデルを

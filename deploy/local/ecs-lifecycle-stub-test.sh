@@ -524,7 +524,7 @@ hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # no
 
 echo "== case 3i: update.sh does repository -> image -> stack, in that order =="
 #
-# 🔴 ECR REPOSITORY (20-platform) -> IMAGE (crane copy) -> STACK (60-engines). 0.18.1 moved the
+# 🔴 ECR REPOSITORY (20-platform) -> IMAGE (crane copy) -> STACK (60-engines). 0.19.0 moved the
 # engine's fetch and ingest steps into `af-engine-tools`, and the only thing that ever copied
 # that image into ECR was `standup.sh` — which a release does not go through. What the hardware
 # lane found on 2026-09-11, before it deployed: GHCR and ECR both empty, and 20-platform (which

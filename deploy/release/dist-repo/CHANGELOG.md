@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.19.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.19.0) — 2026-09-11
+
+Model ingest opens to tenant administrators, image generation on the deployment's own
+ComfyUI now edits and inpaints, takes LoRA and a seed, and the image engine can be bought on
+Spot. A member's home disk can be grown without stopping it, and a pull request opened in
+work items shows its review and CI state — with GitHub pull requests appearing again.
+
 ## [0.18.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.18.0) — 2026-09-10
 
 A session can now start sessions of its own and look after them, models for the

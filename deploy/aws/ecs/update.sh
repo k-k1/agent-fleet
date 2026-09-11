@@ -22,7 +22,7 @@
 #     each user as the "restart required" badge on the WS bar —
 #     control-plane/runtime_ecs_stale.go).
 #  4. A release can need a NEW ECR repository and a new image in it, and CloudFormation will
-#     happily deploy the stack that names them first. 0.18.1 moved the engine's fetch and
+#     happily deploy the stack that names them first. 0.19.0 moved the engine's fetch and
 #     ingest steps into af-engine-tools; a deployment taking that release without the
 #     repository (20-platform) and the image (a crane copy from GHCR) gets a 60-engines whose
 #     fetch containers cannot pull, while the stack reports a steady state. The three steps go
@@ -103,7 +103,7 @@ export AF_DRY="$DRY"
 #   - no image and 60-engines deploys perfectly, after which both roles' fetch containers and
 #     the ingest task sit in CannotPullContainerError. The service reports a steady state.
 #
-# Measured 2026-09-11 on the hardware lane, the first time 0.18.1 was put on a deployment:
+# Measured 2026-09-11 on the hardware lane, the first time 0.19.0 was put on a deployment:
 # neither GHCR nor ECR had the image and 20-platform (which owns the repository) had not been
 # updated, so it took three hand-run steps that existed in no script. The plan is printed
 # before anything happens so that the order is readable on a --dry-run.
