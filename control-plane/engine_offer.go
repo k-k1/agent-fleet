@@ -768,10 +768,6 @@ func (e *engineRuntimeState) stepRebuild(ctx context.Context, view engineService
 	}
 	// The ledger is consumed here: without this one interruption would be detected again on
 	// every tick until the replacement registered, and each detection would begin a walk.
-	// The ledger is consumed here: without this one interruption would be detected again on
-	// every tick until the replacement registered, and each detection would begin a walk.
-	// The ledger is consumed here: without this one interruption would be detected again on
-	// every tick until the replacement registered, and each detection would begin a walk.
 	e.offers.forgetBox()
 	cur, had := e.offers.current()
 	if twice := e.offers.noteInterrupted(cur.ID); twice {
