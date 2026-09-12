@@ -868,3 +868,77 @@
   flex: 1;
   min-width: 0;
 }
+
+/* Issuing a borrowing token (ADR 0079 decision 3, adminEngineIssueToken.tsx).
+ *
+ * The panel is a form and an answer, and the answer is a CREDENTIAL — which is the only reason
+ * it has rules of its own here rather than borrowing the catalogue form's. The value sits in a
+ * boxed block so that the two red lines under it (why it cannot be revoked, and what revoking
+ * it costs) are visibly part of the same thing as the string somebody is about to copy: on the
+ * flat panel they read as two more muted paragraphs at the bottom of a long screen.
+ */
+.engines-issue-result {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.engines-issue-result p {
+  margin: 6px 0 0;
+}
+
+.engines-issue-for {
+  font-weight: 600;
+}
+
+/* The value and everything done with it on one row: reveal, the two copies, and dropping it. */
+.engines-issue-value {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.engines-issue-value button {
+  font-size: 12px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+/* Wraps rather than scrolls: the token is one long unbroken word, and a row that scrolls
+   sideways hides the half of it a reader is checking. */
+.engines-issue-token {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.engines-issue-env,
+.engines-issue-opens {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.engines-issue-revoke > .engines-fact-label {
+  margin-right: 6px;
+}
+
+/* The membership that may belong to a person (decision 3's 🔴). Marked out with the delete
+   colour rather than left as one more red sentence: it is the one thing on this panel that
+   should stop the press, and it sits ABOVE the value for the same reason. */
+.engines-issue-person {
+  margin: 8px 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--del) 40%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--del) 8%, var(--bg));
+}
+
+.engines-issue-person p {
+  margin: 4px 0 0;
+}

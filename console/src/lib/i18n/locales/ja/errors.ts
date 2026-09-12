@@ -216,6 +216,11 @@ export const errors = {
   "err.engine_class_unknown": "そのインスタンスクラスは宣言されていません",
   "err.engine_not_ours": "そのエンジンは別の配備から借りているので、この画面からは変更できません",
   "err.membership_inactive": "そのメンバーシップは有効ではないので、発行しても使えません",
+  // テナント / user_key の打ち間違いが 404 で返ってくる先（engine_issue_token.go の
+  // membershipFor・admin_stats.go も同じコード）。訳が無いと、いちばん起きやすい失敗が
+  // "unknown tenant" という英語のまま日本語の画面に出る。
+  "err.no_tenant": "そのスラッグのテナントはこの配備にありません",
+  "err.no_membership": "その user_key はそのテナントのメンバーではありません",
   "err.engine_vram_confirm": "そのモデルは選択中のインスタンスクラスの VRAM を超えます",
   "err.engine_files_missing": "そのモデルファミリーのワークフローが読むファイルが、この行に揃っていません",
   "err.gated_not_accepted": "そのアカウントはこのリポジトリの条項にまだ同意していません",
