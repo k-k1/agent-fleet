@@ -91,7 +91,9 @@ a new one in the same place. When there is no working folder, resume, handoff, a
 
 You can open the commit graph, open the folder, commit changes, switch branches, copy the branch name,
 Fast-Forward (on a worktree, **"Fast-forward from the parent"**), project settings, **Share…**, **assignment to
-a working set**, launch a session by kind, and delete the working copy. A normal click expands / collapses the row.
+a working set**, launch a session by kind, and delete the working copy. Delete opens a confirmation
+that also lists the copies nested under that row
+([02](02-sessions.md#clearing-one-finished-job-deleting-a-working-copy)). A normal click expands / collapses the row.
 Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 
 ### Files / folders

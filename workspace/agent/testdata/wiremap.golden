@@ -17,7 +17,7 @@ agent_rtk.go handleAgentRTKPut x1 {agy_rtk,codex_rtk,copilot_rtk,opencode_rtk,rt
 assistant_turn.go handleAssistantTurn x1 {conv,reply,slug}
 assistants.go handleAssistantDelete x1 {ok}
 assistants.go handleAssistantsList x1 {assistants}
-cleanup_ops.go handleDeleteBranch x1 {archive,deleted}
+cleanup_ops.go handleDeleteBranch x1 {archive,deleted,remote,remote_error}
 cleanup_ops.go handleDeleteSession x1 {archive,deleted}
 cleanup_ops.go handleDeleteSession x1 {deleted}
 cleanup_ops.go handleListCleanupArchives x1 {archives}

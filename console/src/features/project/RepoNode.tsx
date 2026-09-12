@@ -132,6 +132,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
           <RepoRowConnected
             r={r}
             ctx={ctx}
+            node={n}
             onToggle={openState.toggle}
             sess={{ alive: sessAlive, total: sessTotal }}
             stoppedCount={stoppedMine.length}
