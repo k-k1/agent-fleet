@@ -303,12 +303,19 @@ Resources:
           - Effect: Allow
             Action: [ ec2:CreateFleet, ec2:DescribeFleets, ec2:DeleteFleets ]
             Resource: "*"
+          # !! Without this CreateFleet fails top-level with SsmAccessDenied, naming neither the
+          # action nor the parameter (measured, ADR 0077 P0). The launch template's ImageId is
+          # resolved by the CALLER. The public parameter has no account id in its ARN.
+          - Effect: Allow
+            Action: [ ssm:GetParameters ]
+            Resource: !Sub "arn:aws:ssm:${AWS::Region}::parameter/aws/service/ecs/optimized-ami/*"
           - Effect: Allow
             Action: [ iam:PassRole ]
             Resource: !GetAtt EngineInstanceRole.Arn
             Condition: { StringEquals: { "iam:PassedToService": ec2.amazonaws.com } }
-          # !! Without AWSServiceRoleForEC2Fleet the FIRST CreateFleet fails; standup.sh creates
-          # it, and this is the CP's own way out on a deployment that was stood up another way.
+          # !! AWSServiceRoleForEC2Fleet: AWS asks for it, and three CreateFleet calls went
+          # through without it (measured, ADR 0077 P0 - none of them launched). standup.sh
+          # creates it anyway; this is the CP's own way out on a deployment stood up otherwise.
           - Effect: Allow
             Action: [ iam:CreateServiceLinkedRole ]
             Resource: "*"
@@ -421,6 +428,25 @@ Resources:
               #!/bin/bash
               exec > /var/log/af-userdata.log 2>&1
               set -x
+              # The instance store, when the type has one. Docker's data-root goes on it, and
+              # the models go with it: an ECS `host` volume with no sourcePath is handed to
+              # Docker as an ANONYMOUS volume, which lives under <data-root>/volumes - so the
+              # fetch sidecar writes to NVMe without the task definition knowing. Measured on
+              # the Managed Instances equivalent (2026-09-09): S3 -> disk 1.4x, disk -> VRAM
+              # 2.9x, RunTask -> model loaded 527-586 s -> 275 s.
+              # !! An EBS-only type (g6e) matches nothing here and keeps the root volume; the
+              # && chain leaves Docker where it was if any step fails, and starts it either way.
+              # !! Order: this runs from cloud-init, and ecs.service is After=cloud-final, so
+              # the agent has not started yet - the same reason writing ecs.config here works.
+              DEV=$(lsblk -dno NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1; exit}')
+              if [ -n "$DEV" ]; then
+                systemctl stop docker docker.socket
+                mkfs.xfs -f "$DEV" && mkdir -p /mnt/af-store /var/lib/docker \
+                  && mount "$DEV" /mnt/af-store \
+                  && cp -a /var/lib/docker/. /mnt/af-store/ \
+                  && umount /mnt/af-store && mount "$DEV" /var/lib/docker
+                systemctl start docker
+              fi
               cat >> /etc/ecs/ecs.config <<EOF
               ECS_CLUSTER=${Cluster}
               ECS_INSTANCE_ATTRIBUTES={"af-role":"engine-llm"}
@@ -457,6 +483,25 @@ Resources:
               #!/bin/bash
               exec > /var/log/af-userdata.log 2>&1
               set -x
+              # The instance store, when the type has one. Docker's data-root goes on it, and
+              # the models go with it: an ECS `host` volume with no sourcePath is handed to
+              # Docker as an ANONYMOUS volume, which lives under <data-root>/volumes - so the
+              # fetch sidecar writes to NVMe without the task definition knowing. Measured on
+              # the Managed Instances equivalent (2026-09-09): S3 -> disk 1.4x, disk -> VRAM
+              # 2.9x, RunTask -> model loaded 527-586 s -> 275 s.
+              # !! An EBS-only type (g6e) matches nothing here and keeps the root volume; the
+              # && chain leaves Docker where it was if any step fails, and starts it either way.
+              # !! Order: this runs from cloud-init, and ecs.service is After=cloud-final, so
+              # the agent has not started yet - the same reason writing ecs.config here works.
+              DEV=$(lsblk -dno NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1; exit}')
+              if [ -n "$DEV" ]; then
+                systemctl stop docker docker.socket
+                mkfs.xfs -f "$DEV" && mkdir -p /mnt/af-store /var/lib/docker \
+                  && mount "$DEV" /mnt/af-store \
+                  && cp -a /var/lib/docker/. /mnt/af-store/ \
+                  && umount /mnt/af-store && mount "$DEV" /var/lib/docker
+                systemctl start docker
+              fi
               cat >> /etc/ecs/ecs.config <<EOF
               ECS_CLUSTER=${Cluster}
               ECS_INSTANCE_ATTRIBUTES={"af-role":"engine-image"}

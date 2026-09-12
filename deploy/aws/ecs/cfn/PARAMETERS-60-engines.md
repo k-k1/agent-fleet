@@ -201,17 +201,17 @@ one re-meant parameter and a migration window**:
 | --- | --- |
 | Retired | `<Role>AllowedInstanceTypes` / `AcceleratorMemMinMiB` / `VCpuMin` / `VCpuMax` / `MemMinMiB` / `MemMaxMiB` / `UseLocalStorage` / `ScaleInAfter` — the offer carries all of it ([the llm role](#llmacceleratormemminmib-llmallowedinstancetypes-and-the-instance-requirement-pairs)) |
 | Re-meant | `<Role>StorageGiB` — the box's ROOT gp3 volume now, and the models land on it |
-| New prerequisite | `AWSServiceRoleForEC2Fleet` (`standup.sh` creates it; without it the first purchase fails) |
+| New prerequisite | `AWSServiceRoleForEC2Fleet` (`standup.sh` creates it — cheap insurance rather than a hard gate: [the Spot checks](#before-declaring-a-spot-offer-check-these-three)) |
 | Migration | with both roles at `mode: off` and no engine box standing — [the procedure](#migrating-a-deployment-that-is-on-managed-instances) |
 
 🔴 **Put this release's Control Plane image on before the stack**, as with the 0.19.0 rename: a
 0.19.0 CP reads `capacityProvider` out of the engine table and finds a field that is no longer
 written, so it has nothing to buy through while the stack has already dropped the providers.
 
-🔴 **The cold start is slower until the instance store is mounted.** `<Role>UseLocalStorage` is
-gone and nothing replaces it yet (ADR 0077 open question 8), so both halves of a start run on
-EBS bandwidth again — the measurement that knob was turned on for was roughly 2x
-([`LlmStorageGiB`](#llmstoragegib)).
+⚠️ **The instance store moved from a parameter to the launch template.** `<Role>UseLocalStorage`
+is gone; the user data mounts the NVMe and puts Docker's data-root on it, which is where the
+models end up ([the model volume](#the-model-volume)). Same measured benefit, no knob — and
+**unverified on hardware**: the first P1 run has to look at `df /var/lib/docker` on the box.
 
 ### 0.19.0: the image role's box comes from an offers list
 
@@ -414,13 +414,17 @@ AMI's own default is 30 GiB. A comfy deployment holding 30 GB of checkpoints fil
 fetch dies with `No space left on device`, which is what the Managed Instances era measured with
 a named `SourcePath` ([the model volume](#the-model-volume)).
 
-🔴 **The instance store is not mounted, and that costs a measured cold start.** The AL2023 ECS
-AMI does not mount the NVMe by itself (ADR 0077 open question 8), and the retired
-`<Role>UseLocalStorage` is what used to ask Managed Instances for one. On a g6.xlarge the
-instance store roughly halved a cold start (S3 -> disk 1.4x, disk -> VRAM 2.9x, RunTask -> model
-loaded 527-586 s -> 275 s, the swap 276-282 s -> 98.5 s; measured 2026-09-09). Until user data
-mounts the NVMe, an engine start is back on EBS bandwidth for both halves. Size this volume for
-the models either way: gp3's baseline is 125 MB/s, and a bigger volume does not make it faster.
+⚠️ **On a type that HAS an instance store, the models do not land here at all** — the launch
+template's user data puts Docker's data-root on the NVMe, and an anonymous `host` volume is a
+Docker volume, so it follows (see [the model volume](#the-model-volume)). This size then covers
+the root filesystem and the image layers Docker wrote before the move. On an EBS-only type
+(g6e and friends) nothing is mounted and everything is here, which is the case to size for.
+
+🔴 **The instance store is what the retired `<Role>UseLocalStorage` used to buy, and it is worth
+roughly half a cold start**: S3 -> disk 1.4x, disk -> VRAM 2.9x, RunTask -> model loaded
+527-586 s -> **275 s**, a model swap 276-282 s -> **98.5 s** (measured 2026-09-09 on a g6.xlarge
+under Managed Instances). gp3's baseline is 125 MB/s and a bigger volume does not make it faster,
+which is the whole of why the NVMe is mounted at all.
 
 ### `LlmAcceleratorMemMinMiB`, `LlmAllowedInstanceTypes` and the instance requirement pairs
 
@@ -1329,27 +1333,35 @@ box among the cluster's container instances. Deleting a capacity provider goes t
 when nothing runs on it (measured on ADR 0074's throwaway stack: `delete-capacity-provider` at
 zero boxes is `INACTIVE` at once), and the service is about to be rewritten under it.
 
-**Then one of these two, and which one is decided by a measurement that is in flight** (ADR 0077
-open question 1 — whether CloudFormation treats `CapacityProviderStrategy` -> `LaunchType: EC2`
-as an in-place update or as a replacement). **Delete the other from this file when the answer
-lands.**
+🔴 **Then the `<Role>Enabled` round trip, and it is the only path.** ADR 0077 open question 1
+measured it on 2026-09-12: CloudFormation treats `CapacityProviderStrategy` -> `LaunchType: EC2`
+as a **replacement** (the change set says `Replacement: Conditional` and `LaunchType`
+`RequiresRecreation: Conditionally` — which is exactly why 0074's lesson is to EXECUTE it), it
+creates before it deletes, and the explicit `ServiceName` collides:
 
-1. **If it updates in place** — one `update.sh` / `cloudformation deploy`, nothing else to do.
-   The providers leave, the launch templates arrive, the services keep their names.
-2. **If it is a replacement** — the update **fails and rolls back**, because both services carry
-   an explicit `ServiceName` (`af-<stack>-llm` / `-image`) and CloudFormation creates before it
-   deletes, so the new service collides with the old one's name. Use the round trip that already
-   exists in this stack:
+```
+Resource handler returned message: "Resource of type 'AWS::ECS::Service' with identifier
+'af-<stack>-llm' already exists." (HandlerErrorCode: AlreadyExists)
+```
 
-   ```
-   <Role>Enabled=false   # the condition DELETES the service (update.sh warns about exactly this)
-   cloudformation deploy ...          # this template
-   <Role>Enabled=true    # the service comes back, on the EC2 launch type
-   ```
+The update fails and rolls back. ✅ The rollback is clean — the live service was measured
+byte-identical afterwards, same PRIMARY deployment id — so attempting it the wrong way round
+costs a few minutes and nothing else. The path that works, per role:
 
-   The Cloud Map name is gone in between. At desired 0 no request is lost, and unlike the speech
-   engine nobody is waiting on a name that resolves (an image request retries; an llm
-   conversation would break, which is why the window is one where both roles are off).
+```
+<Role>Enabled=false   # the condition DELETES the service (update.sh warns about exactly this)
+cloudformation deploy ...          # this template
+<Role>Enabled=true    # the service comes back, on the EC2 launch type
+```
+
+Measured at **25 s** for the delete and **48 s** for the create, on a throwaway stack whose
+service carried an explicit name and a `ServiceRegistries` entry like the real ones.
+
+✅ **The Cloud Map name does NOT go away in between.** The `AWS::ServiceDiscovery::Service` is a
+separate resource with no condition on it, and the round trip was measured keeping the same
+registry ARN. What stops for those seconds is the ECS service registering instances into that
+name — and at desired 0 there are none, so there is nothing to lose. (ADR 0077 decision 11 says
+"the Cloud Map name is gone in between"; that is the one sentence P0 corrected.)
 
 ⚠️ **Whatever the answer, the capture drops eight parameters** (`<Role>AllowedInstanceTypes`,
 `AcceleratorMemMinMiB`, `VCpuMin`, `VCpuMax`, `MemMinMiB`, `MemMaxMiB`, `UseLocalStorage`,
@@ -1372,14 +1384,18 @@ whole of that failure). Both engine services now spell out `LaunchType: EC2`.
 bought on Spot. Two of the three checks below are unchanged by ADR 0077 (they are facts about
 EC2, not about who asked); the first gains a second role.
 
-1. 🔴 **Two service-linked roles have to exist.** `AWSServiceRoleForEC2Spot` for Spot
-   (`iam get-role` answers `NoSuchEntity` in an account that has never launched one), and
-   **`AWSServiceRoleForEC2Fleet`**, which is what `CreateFleet` itself needs — af-sandbox had
-   none on 2026-09-12. `standup.sh` creates the fleet one with the ECS one
-   (`create-service-linked-role --aws-service-name ec2fleet.amazonaws.com`, idempotent, `|| true`);
-   the Spot one is still a manual `aws iam create-service-linked-role --aws-service-name
-   spot.amazonaws.com`. Not CloudFormation resources: `AWS::IAM::ServiceLinkedRole` fails the
-   stack when the role is already there.
+1. **Two service-linked roles should exist.** `AWSServiceRoleForEC2Spot` for Spot (`iam get-role`
+   answers `NoSuchEntity` in an account that has never launched one), and
+   **`AWSServiceRoleForEC2Fleet`** for `CreateFleet`. ⚠️ **"Without it the first call fails" is
+   not what was measured**: ADR 0077's P0 run put three `CreateFleet` calls through af-sandbox
+   before the role existed — though none of them launched an instance, and the Spot SLR was
+   already there, so a *launching* call on an account with neither is still unmeasured. Treat it
+   as cheap insurance. `standup.sh` creates the fleet one with the ECS one
+   (`create-service-linked-role --aws-service-name ec2fleet.amazonaws.com`, idempotent, `|| true`
+   — and the `|| true` is mandatory because a second create answers **`InvalidInput`**, not
+   `EntityAlreadyExists`); the Spot one is still a manual `aws iam create-service-linked-role
+   --aws-service-name spot.amazonaws.com`. Not CloudFormation resources:
+   `AWS::IAM::ServiceLinkedRole` fails the stack when the role is already there.
 2. 🔴 **Ask `get-spot-placement-scores` WITH THE ROW'S OWN TYPE SET.** One type scored **1/10**
    in both AZs; the same three types scored **9/10**, and an instance arrived 42 seconds after a
    9 was recorded (measured 2026-09-11). A score for one type says nothing about a request that
@@ -1557,11 +1573,28 @@ the cluster-scoped `ecs:PutClusterCapacityProviders`, and `iam:PassRole` on the 
 `CreateTags` and the three container-instance actions are **not repeated here**: 20-platform
 grants them unconditionally, on every flavour (Sids `Ec2SlotPool` and `EcsContainerInstances`).
 
-⚠️ **`ssm:GetParameters` on `/aws/service/ecs/optimized-ami/*` may have to be added.** Whether
-the caller of `CreateFleet` must hold it for a launch template whose `ImageId` is
-`resolve:ssm:...` is published nowhere and is being measured for $0 (ADR 0077 open question 3).
-The CP's existing `ssm:GetParameter` is scoped to `/af-ws/*` and cannot read it. If the answer is
-yes, the grant goes here — the whole IAM minimum is that measurement's output.
+🔴 **`ssm:GetParameters` on `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*` is
+required of the CALLER**, and it is in the policy unconditionally. Measured 2026-09-12 (ADR 0077
+P0, open question 3): without it `CreateFleet` fails **top-level** with `SsmAccessDenied`
+("Access denied to SSM"), naming neither the action nor the parameter. The launch template's
+`ImageId` is resolved by whoever calls, not by EC2 on its own behalf. The CP's other
+`ssm:GetParameter` is scoped to `/af-ws/*` and cannot read a public parameter; note the ARN has
+**no account id** in it.
+
+✅ **Two grants that are NOT needed and should not be added** (same run): `ec2:DescribeLaunchTemplates`
+/ `DescribeLaunchTemplateVersions` — `CreateFleet` resolved the template by name with neither —
+and `ec2:CreateTags`, because the request's own `TagSpecifications` **merge** with the launch
+template's: the measured box came up with `af-pool` / `af-role` / `af-engine-offer` /
+`af-engine-buy` from the call and `af-managed-by` from the template. The slot pool needs
+`CreateTags` because it tags after `RunInstances`; this path does not.
+
+🔴 **`iam:PassRole` is checked only on a call that would otherwise launch.** With it removed, a
+`CreateFleet` that had nothing to buy still answered HTTP 200 with per-override capacity errors;
+the one that could buy answered 200 with `ErrorCode: UnauthorizedOperation` **inside `Errors[]`**.
+So an IAM hole is shaped exactly like "no capacity", and `--dry-run` does not catch it
+(`DryRunOperation`, "would have succeeded"). That is the Control Plane's problem to sort — ADR
+0077's P0 follow-up hands it to decision 8's failure-code table — but it is also why this policy
+is not something to trim by experiment.
 
 **`s3:DeleteObject` is on the INGEST task role, and on nothing else.** `MODE=delete` (ADR 0072
 decision 7) is how bytes leave the bucket, and the Control Plane does not hold the permission:
@@ -1624,17 +1657,53 @@ checkpoint ingested for sd-server is already where ComfyUI would look for it.
 
 ## The model volume
 
-Both engine task definitions mount an ANONYMOUS host volume — an empty `Host`, no `SourcePath` —
-and since ADR 0077 that directory lands on **the box's root gp3 volume**, sized by
-[`<Role>StorageGiB`](#llmstoragegib). Two things follow, and the second is the one that bites:
+Both engine task definitions mount an ANONYMOUS host volume — an empty `Host`, no `SourcePath`.
+On an ordinary EC2 box that is **a Docker anonymous volume**: ECS hands the empty `host` volume
+to Docker, and Docker puts it under its own data-root (`<data-root>/volumes/<id>/_data`). Three
+things follow, and the third is the one that bites:
 
-- **the models must fit the root volume.** The ECS-optimized AMI's own default root is 30 GiB;
-  this template asks for 120 (llm) and 60 (image) instead. A `comfy` deployment holding 30 GB of
+- **the models land wherever Docker's data-root is**, which is what lets the launch template's
+  user data move them to the instance store without the task definition knowing anything about
+  it (below). Nothing in `60-engines.yaml`'s task definitions changes for it.
+- **on a type with no instance store they are on the root gp3 volume**, sized by
+  [`<Role>StorageGiB`](#llmstoragegib). The ECS-optimized AMI's own default root is 30 GiB; this
+  template asks for 120 (llm) and 60 (image) instead. A `comfy` deployment holding 30 GB of
   checkpoints needs the image role's raised.
-- **a fresh directory per task, still.** The anonymous form puts the TASK ID in the path
-  (`/…/volumes/<TASK-ID>/volumes/models`, read out of `/proc/self/mountinfo` — a container cannot
-  see its own bind mount's host path from `df`), so a second start on the same box re-fetches
-  everything and the previous copies are never reclaimed.
+- **a fresh directory per task, still.** An anonymous volume is created per container, so a
+  second start on the same box re-fetches everything and the previous copies are not reclaimed
+  until the image/volume cleanup runs.
+
+### The instance store, mounted from user data
+
+🔴 **This is ADR 0077 open question 8, brought forward into P1 because leaving it open is a
+measured regression** (the retired `<Role>UseLocalStorage` was worth roughly half a cold start —
+[`LlmStorageGiB`](#llmstoragegib)). What the launch template's user data does, per role:
+
+```
+DEV=$(lsblk -dno NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1; exit}')
+  -> stop docker, mkfs.xfs, copy /var/lib/docker across, mount the NVMe on /var/lib/docker,
+     start docker
+```
+
+- **Only the first instance-store device is used.** A type with several (g6.12xlarge) leaves the
+  rest unmounted; a RAID0 would be the next step and nobody has needed it.
+- **An EBS-only type matches nothing and is left alone** — `g6e` sizes have no instance store, so
+  they keep the root volume and the paragraph above applies.
+- **The copy is not decoration.** The ECS AMI ships cached agent and pause images inside
+  `/var/lib/docker`; mounting an empty filesystem over them without copying first would make the
+  agent reload them, and `awsvpc` needs the pause image. Every step is chained with `&&` and
+  `docker` is started either way, so a failure anywhere leaves Docker on the root volume rather
+  than leaving the box without a container runtime.
+- **The order works because the ECS agent has not started yet.** User data runs from cloud-init,
+  and the AMI's `ecs.service` is ordered `After=cloud-final.service` — the same fact that makes
+  writing `/etc/ecs/ecs.config` in user data work at all. Docker, which starts earlier, is
+  stopped and restarted explicitly.
+
+⚠️ **Unverified on hardware.** Nothing in this repository has run a GPU box since ADR 0077, so
+the first P1 run must check, on the box: `df /var/lib/docker` (the NVMe, not `/dev/nvme0n1p*`),
+`docker info | grep "Docker Root Dir"`, and that the engine's first fetch writes at NVMe speed
+rather than 125 MB/s. **If it did not mount, the symptom is a slow start and nothing else** —
+which is exactly the shape that goes unnoticed, so look rather than assume.
 
 **Why it is still anonymous** (ADR 0077 decision 6): a named `SourcePath` now WORKS — the AL2023
 GPU AMI is not Bottlerocket — but the box goes when the engine goes idle (decision 5) or when
@@ -1643,7 +1712,9 @@ inside the idle window, which is the case ADR 0071 decision 5 already decided no
 P1 measures what it would save against the measured re-fetch (S3 -> local at 104-147 MB/s,
 6.94 GB in 65 s); if it is a minute, it is not worth having.
 
-**What the Managed Instances era proved, and why the shape above is not a regression.** Four
+### What the Managed Instances era proved
+
+Four
 measurements from 2026-09-09, about four minutes of GPU, are why `<Role>ScaleInAfter: -1` was
 never the answer there:
 

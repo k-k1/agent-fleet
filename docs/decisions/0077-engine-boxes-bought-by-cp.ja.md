@@ -680,3 +680,37 @@ CFN レーンは決定 11 を書かれたとおりに実装した（テンプレ
 冒頭に `exit 2` の門を置いた。移設は $0 では検証できず、各スクリプトの説明にある数字はすべて
 Managed Instances 時代の実測だからである。門を消すのは「測り直す」の一部であって、「読む」の
 一部ではない。
+
+### P0 の実測をこのレーンに反映した（2026-09-12・PR #576 の後）
+
+P0 の判定がこのレーンの PR が開いているあいだに出たので、4 点を CFN 側に取り込んだ。
+ブランチに積んだもの:
+
+1. **移行手順は `<役>Enabled` の往復だけになった**（未解決 1 が 🔴）。PARAMETERS には
+   「答えが出たら片方を消す」と書いて 2 案を並べていたが、その場更新の案を削除し、往復の
+   実測（25 秒 + 48 秒）を残し、逆順で試したときに気づけるよう `AlreadyExists` の文面を引用した。
+   ✅ **往復中も Cloud Map の名前は消えない**——`AWS::ServiceDiscovery::Service` は条件の付かない
+   別資源で、実測でも同じ registry ARN のままだった。決定 11 の「その間 Cloud Map の名前は消える」が
+   P0 の訂正した唯一の文で、運用者が読む場所（PARAMETERS）にそう書いた。
+2. **`ssm:GetParameters`（`arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*`）を
+   `CpIngestPolicy` に無条件で入れた。** 決定 10 の条件付きの行に答えが出た——`resolve:ssm:` を
+   解決するのは `CreateFleet` の**呼び出し側**で、無いと top-level の `SsmAccessDenied` で落ち、
+   アクション名もパラメータ名も出ない。P0 が「要らない」と示した 2 つ——
+   `ec2:DescribeLaunchTemplates(Versions)` と `ec2:CreateTags`（要求側の `TagSpecifications` は
+   テンプレートのタグと併合される）——はもともと足しておらず、「足さないこと」として記録した。
+3. **SLR の主張は消さずに弱めた。** 決定 10 の ⚠️ は「`AWSServiceRoleForEC2Fleet` が無いと最初の
+   `CreateFleet` が失敗する」と書いていたが、P0 は無い状態で 3 回通した。`standup.sh` では作り
+   続ける——安い保険であり、「SLR が両方とも無いアカウントで**実際に起動する**呼び出し」は
+   測れていない——が、テンプレートのコメント・`standup.sh`・README の前提・PARAMETERS から
+   「失敗する」という断定を外した。2 回目の作成が返すのは `EntityAlreadyExists` ではなく
+   `InvalidInput` である（＝コード一致では扱えず `|| true` が要る）ことも `standup.sh` に書いた。
+4. **未解決 8 を実装した（未検証）。** 上の追記 1 で「閉じるべき退行」と書いたものを、P1 の
+   報告に回さず launch template で閉じた: user data が最初のインスタンスストア NVMe を mount し、
+   **Docker の data-root** をそこへ置く。匿名の `host` ボリュームは Docker のボリュームそのものなので
+   モデルもそこへ落ちる——タスク定義は 1 行も変えない。EBS のみの型は何にも当たらず root のまま、
+   AMI が持つ agent と pause の像は先に複写し、各段は `&&` で繋いであるので失敗しても Docker は
+   元の場所に残る。🔴 **未計測**: P1 の初回は箱の上で `df /var/lib/docker` と
+   `docker info | grep "Docker Root Dir"` を見ること。ここが黙って失敗したときの症状は
+   「起動が遅い」だけである。
+
+反映後のテンプレートのサイズ: **40,182 バイト**（最初の push では 36,816・壁は 51,200）。

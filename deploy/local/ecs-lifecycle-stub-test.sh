@@ -504,6 +504,16 @@ done
 grep -q "ImageId: resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/gpu/recommended/image_id" \
   "$ECS/cfn/60-engines.yaml" \
   || fail "the engine AMI is no longer EC2's resolve:ssm: on the public GPU parameter (ADR 0077 decision 7)"
+# 🔴 ...and the caller of CreateFleet has to be able to READ that parameter. Measured in ADR 0077's
+# P0 run: without ssm:GetParameters the call fails top-level with SsmAccessDenied, naming neither
+# the action nor the parameter - i.e. an engine that never starts and a message nobody can act on.
+grep -q "parameter/aws/service/ecs/optimized-ami/\*" "$ECS/cfn/60-engines.yaml" \
+  || fail "CpIngestPolicy cannot read the AMI parameter (CreateFleet fails with SsmAccessDenied)"
+# 🔴 The instance store carries the models (Docker's data-root moves, the anonymous volume
+# follows), and losing this line is a start that is merely SLOW - about 2x, measured under
+# Managed Instances. Nothing else would report it.
+[ "$(grep -c "awk '/Instance Storage/" "$ECS/cfn/60-engines.yaml")" = 2 ] \
+  || fail "a launch template stopped putting Docker's data-root on the instance store (ADR 0077 open question 8)"
 if grep -q "AWS::ECS::CapacityProvider" "$ECS/cfn/60-engines.yaml"; then
   fail "60-engines still creates a capacity provider (ADR 0077 removed all three)"
 fi

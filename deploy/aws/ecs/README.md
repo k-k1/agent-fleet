@@ -59,11 +59,11 @@ for why they live outside the template).
 
 - **Service-linked roles.** A fresh account has no `AWSServiceRoleForECS`, and creating a
   cluster with a Service Connect default namespace fails with *"ECS Service Linked Role is
-  not ready"*. A deployment that runs the inference engines (`60-engines`) also needs
-  `AWSServiceRoleForEC2Fleet` — the Control Plane buys the engine box with `CreateFleet`
-  (ADR 0077) and the FIRST call fails without it, as a start that bought nothing rather than
-  as a deployment error. `standup.sh` creates both; by hand, once, idempotent (ignore the
-  "has been taken" error on re-run):
+  not ready"*. A deployment that runs the inference engines (`60-engines`) should also have
+  `AWSServiceRoleForEC2Fleet`, which is what AWS asks for before `CreateFleet` — though ADR
+  0077's P0 run put three calls through an account that did not have it, so treat it as cheap
+  insurance rather than a hard prerequisite. `standup.sh` creates both; by hand, once,
+  idempotent (ignore the "has been taken" error on re-run):
   ```bash
   aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || true
   aws iam create-service-linked-role --aws-service-name ec2fleet.amazonaws.com || true

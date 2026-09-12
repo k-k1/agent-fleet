@@ -138,10 +138,13 @@ if ! "${AWS[@]}" iam get-role --role-name AWSServiceRoleForECS >/dev/null 2>&1; 
 fi
 
 # The EC2 Fleet service-linked role, for the engine boxes the Control Plane buys itself
-# (ADR 0077 decision 10). Without it the FIRST CreateFleet fails, and it fails as a start that
-# bought nothing rather than as a deployment error - so it is created here, with the ECS one,
-# rather than found out later. Not an AWS::IAM::ServiceLinkedRole in a template: a role that
-# already exists fails the stack. Creating it costs nothing on a deployment with no engines.
+# (ADR 0077 decision 10). AWS asks for it; ADR 0077's P0 run then got three CreateFleet calls
+# through an account that did not have it (none of them launched an instance, so a LAUNCHING
+# call on an account with neither this nor AWSServiceRoleForEC2Spot is still unmeasured).
+# Cheap insurance, created here with the ECS one rather than found out on a GPU. Not an
+# AWS::IAM::ServiceLinkedRole in a template: a role that already exists fails the stack - and
+# the error from a second create is InvalidInput, not EntityAlreadyExists, so the `|| true`
+# below is what handles it rather than a code match.
 if ! "${AWS[@]}" iam get-role --role-name AWSServiceRoleForEC2Fleet >/dev/null 2>&1; then
   echo "    · creating AWSServiceRoleForEC2Fleet (once per account)"
   af_run "${AWS[@]}" iam create-service-linked-role --aws-service-name ec2fleet.amazonaws.com >/dev/null 2>&1 || true

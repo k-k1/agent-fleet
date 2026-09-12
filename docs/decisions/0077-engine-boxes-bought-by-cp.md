@@ -792,3 +792,41 @@ Instances-era"; they were mechanically moved (task definition `EC2`, `run-task` 
 type and `attribute:af-role == engine-<role>`) **and** gated with an `exit 2` at the top, because
 the move cannot be verified at $0 and every number in their headers is a Managed Instances
 measurement. Deleting the gate is part of re-measuring, not part of reading.
+
+### What P0 changed in this lane (2026-09-12, after PR #576)
+
+P0's verdicts landed while this lane's PR was open, and four of them are the CFN lane's to carry.
+What was pushed on top of the branch:
+
+1. **The migration is the `<Role>Enabled` round trip, and only that** (open question 1 is 🔴).
+   PARAMETERS carried both shapes with "delete the other when the answer lands"; the in-place
+   shape is deleted, the round trip keeps its measured 25 s + 48 s, and the `AlreadyExists`
+   message is quoted so the failure is recognisable if somebody tries it the other way round.
+   ✅ **And the Cloud Map name does not disappear during it** — the `AWS::ServiceDiscovery::Service`
+   is a separate resource with no condition, measured keeping the same registry ARN. Decision 11's
+   "the Cloud Map name is gone in between" is the one sentence of this ADR that P0 corrected, and
+   PARAMETERS now says so where an operator reads it.
+2. **`ssm:GetParameters` on `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*` is
+   in `CpIngestPolicy`, unconditionally.** Decision 10's conditional row is answered: the CALLER
+   of `CreateFleet` resolves `resolve:ssm:`, and without the grant the call fails top-level with
+   `SsmAccessDenied` naming neither action nor parameter. The two grants P0 proved unnecessary —
+   `ec2:DescribeLaunchTemplates(Versions)` and `ec2:CreateTags` (the request's `TagSpecifications`
+   merge with the template's) — were never added and are now recorded as "do not add".
+3. **The service-linked-role claim is weakened, not removed.** Decision 10's ⚠️ said the first
+   `CreateFleet` fails without `AWSServiceRoleForEC2Fleet`; P0 put three calls through without it.
+   `standup.sh` still creates it — cheap insurance, and a *launching* call on an account with
+   neither SLR was not measured — but the template comment, `standup.sh`, the README prerequisite
+   and PARAMETERS no longer assert a failure. `standup.sh`'s comment also records that a second
+   create answers `InvalidInput`, not `EntityAlreadyExists`, which is why the `|| true` cannot be
+   replaced by a code match.
+4. **Open question 8 is implemented, unverified.** Follow-up item 1 above called the loss of
+   `<Role>UseLocalStorage` a regression to close, and it is closed in the launch template rather
+   than left to P1's report: the user data mounts the first instance-store NVMe and puts **Docker's
+   data-root** on it, which carries the models because an anonymous `host` volume IS a Docker
+   volume — no task-definition change. An EBS-only type matches nothing and keeps the root volume;
+   the AMI's cached agent and pause images are copied across first; every step is chained so a
+   failure leaves Docker where it was. 🔴 **Not measured**: the first P1 run checks
+   `df /var/lib/docker` and `docker info | grep "Docker Root Dir"` on the box, because the symptom
+   of a silent failure here is only "the start is slow".
+
+Template size after all of it: **40,182 bytes** (was 36,816 in the first push; the wall is 51,200).
