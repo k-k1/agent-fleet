@@ -243,6 +243,95 @@ attributed to it.
 The reader-facing version of all of this, including the network caveat, is
 [guide/operate/07-image-engine.md](../../guide/operate/07-image-engine.md).
 
+## Borrowing another deployment's engines — optional
+
+If you already run an Agent Fleet on **AWS** with GPU engines, this native
+deployment can use them instead of running anything locally. That deployment goes
+on doing the work — deciding a GPU is wanted, buying the box, loading the model,
+letting it go — and this CP relays. Both roles are available (`llm` and `image`),
+and nothing has to be installed or opened on the far side.
+
+### Pointing the CP at the far fleet
+
+```bash
+AF_REMOTE_ENGINE_URL=https://af.example.com \
+AF_REMOTE_ENGINE_TOKEN=afei_... \
+  af start
+```
+
+- `AF_REMOTE_ENGINE_URL` — the far fleet's base URL, **with no path**. Setting it
+  is what turns borrowing on; unset, nothing about this deployment changes.
+- `AF_REMOTE_ENGINE_TOKEN` — an `afei_…` issuing token from the far deployment
+  (below). **Both or neither**: a URL with no token borrows nothing and says which
+  half is missing at boot.
+- `AF_REMOTE_ENGINE_KEYS` — optional, comma-separated role names (`image` for just
+  that one). Empty borrows every role the far fleet offers.
+
+Under systemd, add them as `Environment=` lines in the unit's `[Service]` section.
+All three are read **once at startup**, so changing one is a restart.
+
+🔴 **Do not point `AF_COMFY_URL` at the far fleet's image route instead.** That row
+is health-checked from here; the check lands on the far gateway, **records demand
+and buys a GPU box**, and then fails anyway — it allows five seconds against a cold
+start of minutes.
+
+### The token
+
+The far deployment mints a per-membership **issuing token** that opens two routes
+over there and nothing else: buy a session-scoped engine token, and list the
+engines on offer. No git, no MCP, no memos, no API.
+
+🔴 **Never use a person's issuing token, your own included.** It is derived
+deterministically from the far deployment's signing master, so a single one cannot
+be invalidated — revoking it means rotating that master, which is shared with the
+git, memo and schedule tokens and therefore logs out that entire fleet.
+
+Use a membership that exists for nothing else. Today, reading its token is:
+
+1. On the far deployment, invite a member with a real address its sign-in provider
+   will authenticate, used only for this.
+2. Sign in as that member once and open a terminal in its workspace.
+3. Read `AF_ENGINE_ISSUE_TOKEN` from the container's environment.
+4. Stop that workspace; it never needs to run again.
+
+There is no shortcut: the value exists only inside that membership's own container,
+and no administrative route starts another member's workspace or opens a session in
+one. **Revoking the borrower is deleting that membership** — it is resolved live on
+every request, so access stops at the next one.
+
+### What you can and cannot do from here
+
+Which engines exist and which models they offer is read from the far deployment's
+catalogue every 10 minutes, so the rows appear on the first fetch that **succeeds**
+rather than at boot. A far fleet that is unreachable when the CP starts leaves the
+launch menu without those models, and the only signal is a CP log line
+(`is borrowed from …` on success, `reading the borrowed catalogue from … failed`
+otherwise). A role this CP already serves is not borrowed.
+
+The catalogue is **read-only** here. Enabling or disabling a model, registering
+one, forgetting one, ingesting one and editing "excluded from every image" all
+answer `400 engine_not_ours`; they are done in the far deployment's own Admin
+panel. This side keeps **on / off** only — "off" closes the route here and does
+nothing to the far fleet's box — and "on demand" is refused.
+
+### The first request is a cold start over there
+
+The far deployment buys the box on demand, so the first request after that pays
+for the whole start. Its own measured cold starts are 527 s for `llm` and 165 s
+for `image` (ADR 0071); **the borrowed figure has not been measured** — two holds,
+two retry loops and an internet round trip sit in between.
+
+While that runs, a non-streaming request is held about 45 s by the far side, which
+then answers `503 engine_waking` with a `Retry-After`; this CP holds a borrowed row
+for 75 s and, if its own hold expires first, still answers `engine_waking` rather
+than `engine_unavailable` — the image tool retries the first for up to 16 minutes
+and never retries the second. Streaming requests are covered by a heartbeat every
+10 s, bounded by `AF_ENGINE_WAKE_TIMEOUT` (900 s).
+
+The reader-facing version — the panel's fields, who pays, and what is recorded for
+a borrowed picture — is
+[guide/operate/08-borrowed-engine.md](../../guide/operate/08-borrowed-engine.md).
+
 ## systemd user unit (run as a service; systemd is on by default in WSL2)
 
 Instead of keeping `af start` in the foreground, run it as a systemd **user**

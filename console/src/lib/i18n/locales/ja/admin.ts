@@ -55,6 +55,63 @@ export const admin = {
   "admin.engines_external": "（外部管理: この配備は起動も停止もしません）",
   "admin.engines_url_label": "接続先",
   "admin.engines_note_external": "外部管理のエンジンは、この配備が指している URL です。「無効」は経路を閉じるだけで、向こう側の停止はしません（起動も停止もこの配備は持ちません）。URL の変更は Control Plane の再起動です。",
+  // --- 借用エンジン（ADR 0079）---
+  // 🔴 「外部管理」を流用しない。向こうが LAN の箱なら「誰も起こさない」で合っているが、
+  // 借用行の向こうに居るのは自分の管理画面を持った別の Agent Fleet で、起動も停止も
+  // カタログの編集もそちらの仕事である（決定 10）。「外部管理」は正しいが、運用者が
+  // 次に何をすればよいかを一つも言わない。
+  "admin.engines_remote": "（借用: 別のフリートが起動します）",
+  // 接続先ではなく「借用元」。値は向こうのフリートのベース URL で、これがこの画面で
+  // 「このモデルはどこの GPU で動いているのか」に答える唯一の情報である。
+  "admin.engines_remote_url_label": "借用元",
+  // 🔴 借用行の warm は、この配備の観測ではなく向こうのカタログが公開している観測の写しで
+  // ある（決定 10）。RUNNING のような状態はそもそも来ないので、無条件の「読み込み済」は
+  // 持っていない箱について断定することになる。
+  "admin.engines_remote_model_loaded": "（借用元が最後に見た時点で読み込み済）",
+  "admin.engines_remote_model_declared": "（宣言。借用元はまだ読み込みを見ていません）",
+  "admin.engines_note_remote": "借用エンジンは、別の Agent Fleet のゲートウェイ越しに使っています。起動と停止・GPU の選択・カタログの編集は、いずれも借用元の配備の管理画面で行います。「無効」はこちら側の経路を閉じるだけで、向こうの箱は止めません。",
+  "admin.engines_remote_catalog": "このカタログは借用元の配備のものを写したものです。この画面からは変更できません（取り込み・有効化・削除は借用元で）。借用元:",
+  // --- 借用トークンの発行（ADR 0079 決定 3・貸す側）---
+  // エンジンを持っている側の super_admin が、借りる配備の要る発行トークン 1 本を見せる導線。
+  // これが無かったときの手順は「向こうの IdP に専用アカウントを招く → 一度サインインする →
+  // そのワークスペースの環境変数を読む → 止める」の 4 手で、未解決 6 はこの重さの話だった。
+  //
+  // 🔴 ここの文言は飾りではない。値は署名マスタから決定的に導出されるので「1 本だけ無効に
+  // する」という操作がそもそも存在せず、CP 側もそれを拒めない（「このメンバーシップは人か」に
+  // 正直に答えられる列が無い）。だから警告と失効方法を落とすと、運用者が自分のトークンを
+  // 使い回してフリート全体を人質に取る事故になる。
+  //
+  // ⚠️ サーバは warning / revoke を英語の生文でも返すが、この画面はそれを出さず、
+  // deterministic / has_workspace / env_var / opens という構造から描いている。いちばん
+  // 読まれなければならない 2 文が、日本語の画面の中の英語の段落になってはいけない。
+  "admin.engines_issue_head": "借用トークンを発行して見せる",
+  "admin.engines_issue_intro": "別の Agent Fleet がこの配備のエンジンを借りるとき、向こうは発行トークン（afei_…）を 1 本だけ必要とします。借用用のメンバーシップのテナントと user_key を入れて押すと、そのトークンをこの画面に表示します。",
+  "admin.engines_issue_before": "押すと出るのは、そのメンバーシップ自身のエンジン資格情報です。ここで新しく作るのではなく、この配備の署名マスタから決定的に導出された同じ値が、何度押しても出てきます。借りる側ごとに違う値を出すことはできません。",
+  "admin.engines_issue_before_only": "⚠️ 他に何にも使っていないメンバーシップにだけ発行してください。人（あなた自身を含む）のメンバーシップのトークンは貸さないこと。",
+  "admin.engines_issue_tenant": "テナント",
+  "admin.engines_issue_tenant_ph": "テナントのスラッグ",
+  "admin.engines_issue_user_key": "user_key",
+  "admin.engines_issue_user_key_ph": "借用用メンバーシップの user_key",
+  "admin.engines_issue_submit": "発行して表示する",
+  "admin.engines_issue_working": "発行中…",
+  "admin.engines_issue_for": "対象: {t}/{k}（役割 {role}・メンバーシップ {id}）",
+  "admin.engines_issue_reveal": "表示する",
+  "admin.engines_issue_hide": "隠す",
+  "admin.engines_issue_copy": "トークンをコピー",
+  "admin.engines_issue_copy_env": "{v}= の形でコピー",
+  "admin.engines_issue_copied": "コピーしました",
+  "admin.engines_issue_clear": "画面から消す",
+  "admin.engines_issue_autoclear": "この値は {m} 分で画面から自動的に消えます。読み終わったら「画面から消す」を押してください。同じ値はもう一度発行すればまた出ます。",
+  "admin.engines_issue_env_label": "借りる側で入れる環境変数",
+  "admin.engines_issue_opens_label": "このトークンが開ける経路",
+  "admin.engines_issue_opens_only": "開くのはこの経路だけです。git・MCP・メモ・API は、このトークンでは開きません。",
+  "admin.engines_issue_deterministic": "⚠️ この値は署名マスタから決定的に導出されるため、何度発行しても同じ値です。1 本だけ無効にすることはできません。",
+  "admin.engines_issue_revoke_label": "失効のしかた",
+  "admin.engines_issue_revoke": "{t}/{k} のメンバーシップを削除してください。メンバーシップは要求ごとに解決されているので、次の要求から 401 になります。",
+  "admin.engines_issue_revoke_only": "⚠️ これ以外の失効手段は署名マスタの回転だけです。git・メモ・スケジュールのトークンも同じマスタから出ているので、回すとこの配備の全員がログアウトします。",
+  "admin.engines_issue_has_workspace_tag": "ワークスペースあり",
+  "admin.engines_issue_has_workspace": "⚠️ このメンバーシップにはワークスペースがあります ＝ 人が使っているメンバーシップの形です。人の発行トークンを貸すと、取り消す手段は「この配備の全員がログアウトする」署名マスタの回転しか残りません。借用専用のメンバーシップを別に作ってから発行してください。",
+  "admin.engines_issue_no_workspace": "このメンバーシップにワークスペースはありません（借用専用のメンバーシップとして期待される形です）。",
   // --- エンジンの現況（features/settings/admin/adminEngines.tsx の EngineStatus）---
   // ⚠️ ここの文言は「分からないことは書かない」で通っている。CP が答えを持たない行は
   // そもそも出さないので、「不明」「0」「予定なし」といった穴埋めの語を足さないこと。

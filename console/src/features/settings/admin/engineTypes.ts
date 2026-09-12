@@ -306,12 +306,15 @@ export type EngineRow = {
   enabled?: boolean;
   managed?: boolean;
   /** Why this deployment does not own the engine's lifecycle: `external` is a URL an operator
-   *  pointed the control plane at — a ComfyUI on the LAN (ADR 0076 decision 1). DECLARED by
-   *  whoever wrote the engine table, never derived from "the ECS fields are missing". */
+   *  pointed the control plane at — a ComfyUI on the LAN (ADR 0076 decision 1) — and `remote`
+   *  is another Agent Fleet's gateway, which will start the engine for us (ADR 0079 decision 1).
+   *  DECLARED by whoever wrote the engine table, never derived from "the ECS fields are
+   *  missing". */
   lifecycle?: string;
-  /** Where an external row points. Shown because it is the only answer to "which box is this",
-   *  and on a LAN nothing else on this screen names the machine. Absent on a managed row: the
-   *  upstream there is an ECS service the operator never typed. */
+  /** Where a row this deployment does not own points. Shown because it is the only answer to
+   *  "which box is this": on a LAN nothing else on this screen names the machine, and for a
+   *  borrowed row it is the only answer to "whose GPU is this model running on". Absent on a
+   *  managed row: the upstream there is an ECS service the operator never typed. */
   url?: string;
   state?: string;
   desired?: number;
@@ -385,6 +388,28 @@ export type EngineRow = {
  * requests" or "no ladder" reads as a measurement of a machine nobody here owns. */
 export function engineIsExternal(e: EngineRow): boolean {
   return e.managed === false;
+}
+
+/** A row borrowed from another Agent Fleet: its gateway relays, and ITS control plane buys and
+ *  stops the box (ADR 0079 decision 1). A strict subset of `engineIsExternal` — everything that
+ *  hangs off "this deployment owns no box" is already right for it — and this predicate is only
+ *  for the three places where "somebody is on the other end" changes the answer:
+ *
+ *    - the badge. "Externally managed" is true and useless when the far end is a fleet with an
+ *      admin panel of its own; the operator's next act is over THERE (decision 10).
+ *    - the URL beside it, which is the only thing on this screen that names which deployment.
+ *    - the catalogue, which is the far administrator's document mirrored read-only here
+ *      (decision 7). Every write route answers 400 `engine_not_ours`, so the controls are not
+ *      drawn at all — the same reason the reduced tenant_admin panel omits rather than disables.
+ *
+ * 🔴 DECLARED: `lifecycle` is the row's own field, which the CP emits verbatim (`engine_admin.go`
+ * `row()`). Never inferred from the URL's shape — a URL that happens to contain `/engine/` must
+ * not silently change what a row means (ADR 0053). `managed === false` is required alongside it
+ * for the same reason `engineIsExternal` reads the explicit flag: a row that claims to be
+ * borrowed while this deployment holds its service is a contradiction, and the half that decides
+ * whether ECS controls are drawn must not be the guessed half. */
+export function engineIsRemote(e: EngineRow): boolean {
+  return e.managed === false && e.lifecycle === "remote";
 }
 
 /** The modes this row can actually be put in. Two for an external engine, three for a managed

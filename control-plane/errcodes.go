@@ -39,6 +39,12 @@ const (
 	errCodeEngineECSError      = "engine_ecs_error"
 	errCodeEnginePublishFailed = "engine_publish_failed"
 	errCodeEngineClassUnknown  = "engine_class_unknown"
+	// The membership a borrowing token was asked for is not active, so the engine gateway would
+	// refuse the token this route would hand out (ADR 0079 decision 3). DECLARED rather than left
+	// a literal like admin_stats.go's siblings: this one is read by a super_admin on a screen that
+	// may be Japanese, and an untranslated developer sentence there is the defect the note at the
+	// top of this block records.
+	errCodeMembershipInactive = "membership_inactive"
 	// The catalogue of a BORROWED engine is the far administrator's document, so it is not
 	// editable from this panel (ADR 0079 decision 7). Its own code rather than bad_body because
 	// nothing about the request was malformed — it arrived at the wrong deployment, and the

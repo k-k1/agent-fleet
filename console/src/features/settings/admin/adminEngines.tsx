@@ -3,10 +3,12 @@ import type { ReactNode } from "react";
 import { apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { EngineIssueTokenPanel } from "./adminEngineIssueToken.tsx";
 import { EngineUptimePanel, Sep, useDuration } from "./EngineUptime.tsx";
 import { secsUntil, windowIsPartial } from "./engineUptime.ts";
 import {
   engineIsExternal,
+  engineIsRemote,
   engineModes,
   engineTitle,
   useEngineRows,
@@ -205,12 +207,18 @@ export function EnginesAdminView() {
           {isSuper && (
           <div className="engines-state">
             <span className={"engines-model-tag " + engineStateTone(e)}>{engineStateLabel(e, tr)}</span>
-            {/* Where an external engine points. The one fact this panel can give about a machine
-                it does not own — and without it "externally managed" names nothing an operator
-                could go and look at. Printed verbatim, as the CP composed it. */}
+            {/* Where an engine this deployment does not own points. The one fact this panel can
+                give about a machine it does not own — and without it "externally managed" names
+                nothing an operator could go and look at. Printed verbatim, as the CP composed it.
+                For a borrowed row the label is different because the answer is: it is the far
+                FLEET's base URL, so it names the deployment whose panel the operator wants next,
+                and it is the only answer on this screen to "whose GPU is this model on"
+                (ADR 0079 decision 10). */}
             {engineIsExternal(e) && e.url ? (
               <>
-                <span className="engines-fact-label">{tr("admin.engines_url_label")}</span>
+                <span className="engines-fact-label">
+                  {tr(engineIsRemote(e) ? "admin.engines_remote_url_label" : "admin.engines_url_label")}
+                </span>
                 <span className="mono engines-model-tag">{e.url}</span>
               </>
             ) : null}
@@ -222,8 +230,21 @@ export function EnginesAdminView() {
                     {m}
                   </span>
                 ))}
+                {/* 🔴 `warm` means a different thing on a borrowed row and the word has to move
+                    with it: here it is not this deployment's observation but the far catalogue's
+                    own `"warm"` flag, mirrored (ADR 0079 decision 10). "Loaded" unqualified would
+                    be this panel claiming a box it neither probes nor pays for — and the state it
+                    would be read beside, RUNNING, never arrives for such a row. */}
                 <span className="muted">
-                  {tr(e.warm ? "admin.engines_model_loaded" : "admin.engines_model_declared")}
+                  {tr(
+                    engineIsRemote(e)
+                      ? e.warm
+                        ? "admin.engines_remote_model_loaded"
+                        : "admin.engines_remote_model_declared"
+                      : e.warm
+                        ? "admin.engines_model_loaded"
+                        : "admin.engines_model_declared",
+                  )}
                 </span>
               </>
             ) : null}
@@ -243,7 +264,12 @@ export function EnginesAdminView() {
           {/* What this deployment will not draw. On the MACHINE panel rather than with the
               catalogue because it is one answer for the whole engine, and super-admin like the
               mode and the rung: it is a statement about the deployment. */}
-          {isSuper && e.api === "images" && e.negative_always !== undefined && (
+          {/* 🔴 Not for a borrowed row: `negative_always` arrives on it, read off the mirror, but
+              the route that would save it answers 400 `engine_not_ours` (ADR 0079 decision 7).
+              A textbox with a save button that cannot save is the one shape this panel must not
+              have — the declaration belongs to the far administrator, like the rest of that
+              catalogue, and the models screen says where to go and edit it. */}
+          {isSuper && !engineIsRemote(e) && e.api === "images" && e.negative_always !== undefined && (
             <EngineNegative
               row={e}
               busy={busy === e.key + "/negative"}
@@ -279,9 +305,27 @@ export function EnginesAdminView() {
       {isSuper && rows.some((e) => !engineIsExternal(e)) && (
         <p className="muted pad">{tr("admin.engines_note")}</p>
       )}
-      {isSuper && rows.some(engineIsExternal) && (
+      {/* Each kind of row this deployment does not own gets its own sentence, and a borrowed row
+          is not given the external one: "a URL this deployment points at, change it by restarting
+          the Control Plane" describes a LAN box nobody wakes. What an operator needs to read about
+          a borrowed row is the opposite — there IS somebody on the other end, they are the ones
+          who start it and hold the catalogue, and this screen's off still only closes the local
+          route (ADR 0079 decision 10). */}
+      {isSuper && rows.some((e) => engineIsExternal(e) && !engineIsRemote(e)) && (
         <p className="muted pad">{tr("admin.engines_note_external")}</p>
       )}
+      {isSuper && rows.some(engineIsRemote) && (
+        <p className="muted pad">{tr("admin.engines_note_remote")}</p>
+      )}
+      {/* Lending THIS deployment's engines to another Agent Fleet (ADR 0079 decision 3): the
+          issuing token a borrowing deployment needs, minted and shown.
+          🔴 super_admin only, and for a stronger reason than the rest of this screen: the
+          credential opens the engines of the whole DEPLOYMENT, so it is not a tenant's to hand
+          out. Last on the page because it is an occasional act — standing up a borrower — while
+          everything above it is why somebody opened this screen.
+          It is unconditional otherwise: a deployment with no engine row yet still has a
+          membership to mint for, and the borrowing side is stood up before the engines are. */}
+      {isSuper && <EngineIssueTokenPanel />}
     </div>
   );
 }
@@ -824,6 +868,12 @@ function engineStateTone(e: EngineRow): string {
 }
 
 function engineStateLabel(e: EngineRow, tr: (k: never) => string): string {
+  // 🔴 A borrowed row is checked FIRST, because "externally managed" is true of it and unhelpful:
+  // there is a fleet on the other end with an admin panel of its own, and that panel is where the
+  // operator's next act is (ADR 0079 decision 10). The badge is also the one place a state would
+  // otherwise be claimed — `state` never arrives for such a row, so neither "running" nor
+  // "stopped" may be implied by what stands in its place.
+  if (engineIsRemote(e)) return tr("admin.engines_remote" as never);
   // Not the TTS panel's wording: that one names a standalone docker container, which is what
   // VOICEVOX is and what a ComfyUI on somebody's LAN is not. The claim both share is the one
   // worth making — this deployment neither starts nor stops it (ADR 0076 decision 1).

@@ -58,6 +58,66 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_external": " (externally managed: this deployment neither starts nor stops it)",
   "admin.engines_url_label": "Endpoint",
   "admin.engines_note_external": "An externally managed engine is a URL this deployment points at. Disabled only closes the route — it does not stop the other side, which this deployment neither starts nor stops. Changing the URL means restarting the Control Plane.",
+  // --- borrowed engines (ADR 0079) ---
+  // 🔴 Do not reuse "externally managed". For a LAN box "nobody starts it" is right; on the other
+  // end of a borrowed row is another Agent Fleet with an admin panel of its own, and starting it,
+  // stopping it and editing its catalogue are all its job (decision 10). "Externally managed" is
+  // true of it and tells the operator nothing about what to do next.
+  "admin.engines_remote": " (borrowed: another fleet starts it)",
+  // "Borrowed from", not "Endpoint": the value is the far fleet's base URL, and it is the only
+  // thing on this screen that answers "whose GPU is this model running on".
+  "admin.engines_remote_url_label": "Borrowed from",
+  // 🔴 A borrowed row's warm is not this deployment's observation but a mirror of the one the far
+  // catalogue publishes (decision 10). No state such as RUNNING arrives for such a row, so an
+  // unqualified "loaded" would be this panel asserting something about a box it does not hold.
+  "admin.engines_remote_model_loaded": "(loaded, as the lending deployment last saw it)",
+  "admin.engines_remote_model_declared": "(declared; the lending deployment has not seen it loaded)",
+  "admin.engines_note_remote": "A borrowed engine is reached through another Agent Fleet's gateway. Starting and stopping it, choosing its GPU and editing its catalogue all happen on that deployment's admin panel. Disabled closes the route on this side only — it does not stop their box.",
+  "admin.engines_remote_catalog": "This catalogue is a mirror of the lending deployment's. It cannot be changed from here — ingest, enable and forget all happen over there. Lending deployment:",
+  // --- issuing a borrowing token (ADR 0079 decision 3, the LENDING side) ---
+  // The super_admin of the deployment that owns the engines mints the one issuing token a
+  // borrowing deployment needs. Without this panel the procedure was four steps — invite a
+  // dedicated account to the far IdP, sign in as it once, read an environment variable out of
+  // its workspace, stop that workspace — which is what open question 6 was about.
+  //
+  // 🔴 None of this wording is decoration. The value is derived deterministically from the
+  // signing master, so "invalidate this one token" is not an operation that exists, and the CP
+  // cannot refuse the request either ("is this membership a person?" has no truthful column).
+  // Drop the warning or the revocation instruction and an operator lends their own token and
+  // holds the whole fleet hostage with it.
+  //
+  // ⚠️ The server also answers with `warning` and `revoke` as English prose. This screen does
+  // not print them: it draws from `deterministic`, `has_workspace`, `env_var` and `opens`
+  // instead, so that the two sentences that must be read are never an English paragraph in the
+  // middle of a Japanese screen.
+  "admin.engines_issue_head": "Issue a borrowing token and show it",
+  "admin.engines_issue_intro": "A deployment borrowing this one's engines needs exactly one issuing token (afei_…). Name the tenant and the user_key of the membership kept for borrowing, and this screen shows its token.",
+  "admin.engines_issue_before": "What appears is that membership's own engine credential. Nothing is created here: the value is derived deterministically from this deployment's signing master, so every press returns the same string. There is no way to give each borrower a different one.",
+  "admin.engines_issue_before_only": "⚠️ Issue this only for a membership that is used for nothing else. Never lend a person's token, including your own.",
+  "admin.engines_issue_tenant": "Tenant",
+  "admin.engines_issue_tenant_ph": "tenant slug",
+  "admin.engines_issue_user_key": "user_key",
+  "admin.engines_issue_user_key_ph": "user_key of the borrowing membership",
+  "admin.engines_issue_submit": "Issue and show",
+  "admin.engines_issue_working": "Issuing…",
+  "admin.engines_issue_for": "For {t}/{k} (role {role}, membership {id})",
+  "admin.engines_issue_reveal": "Show",
+  "admin.engines_issue_hide": "Hide",
+  "admin.engines_issue_copy": "Copy the token",
+  "admin.engines_issue_copy_env": "Copy as {v}=",
+  "admin.engines_issue_copied": "Copied",
+  "admin.engines_issue_clear": "Clear it from the screen",
+  "admin.engines_issue_autoclear": "This value clears itself from the screen after {m} minutes. Press \"Clear it from the screen\" when you are done with it — issuing again returns the same value.",
+  "admin.engines_issue_env_label": "Where the borrower puts it",
+  "admin.engines_issue_opens_label": "What this token opens",
+  "admin.engines_issue_opens_only": "Those routes and nothing else. This token opens no git, no MCP, no memos and no API.",
+  "admin.engines_issue_deterministic": "⚠️ This value is derived deterministically from the signing master, so every issue returns the same string. There is no way to invalidate one copy of it.",
+  "admin.engines_issue_revoke_label": "How to revoke it",
+  "admin.engines_issue_revoke": "Remove the membership {t}/{k}. It is resolved on every single request, so access stops at the next one.",
+  "admin.engines_issue_revoke_only": "⚠️ The only other way to revoke it is rotating the signing master — and the git, memo and schedule tokens come from that same master, so rotating it logs out everyone on this deployment.",
+  "admin.engines_issue_has_workspace_tag": "has a workspace",
+  "admin.engines_issue_has_workspace": "⚠️ This membership has a workspace, which is what a person's membership looks like. Lend a person's issuing token and the only way to take it back is the signing-master rotation that logs out everyone on this deployment. Make a separate membership for borrowing and issue for that one.",
+  "admin.engines_issue_no_workspace": "This membership has no workspace, which is what a membership kept only for borrowing should look like.",
   // --- engine status (adminEngines.tsx, EngineStatus) ---
   // ⚠️ Every line here follows "do not write down what you do not know". A line the CP has no
   // answer for is omitted entirely, so do not add filler like "unknown", "0" or "not
