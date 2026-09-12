@@ -354,9 +354,10 @@ colour the whole card, so they can be spotted from across the room.
   ([Icons, badges, and menus](badges-and-menus.md)).
 - By default only running sessions are shown. **"Show stopped"** in the pane header adds the
   stopped ones, dimmed; the choice is remembered per pane.
-- Cards are ordered by what needs you: sessions waiting on an answer first, then the rest of the
-  running ones newest first, then stopped ones. Inside those groups the order does not change
-  while you watch.
+- Cards are ordered by what needs you, but **the unit is the family, not the card** (above): the
+  family holding a session that waits on an answer comes first, then the remaining running
+  families newest first, then families that are only stopped. While you watch, the order changes
+  only when a family enters or leaves a wait.
 - The active working set (below) narrows the grid the same way it narrows the left pane.
 
 ## Narrowing the view with working sets
