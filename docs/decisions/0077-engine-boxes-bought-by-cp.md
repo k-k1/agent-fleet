@@ -1477,6 +1477,52 @@ There is no Managed Instances fee in any of these figures any more (decision 8).
 not measured. They need one more run of roughly ten GPU minutes, after items 1 and 2 are in
 develop.
 
+## Follow-up — what the second CP pass handed back (2026-09-12, PR #584)
+
+P1's hardware run (#583) found three red points on the CP side. All three are fixed here; two of
+them say something the text above does not, and this section is the record. **No decision is
+edited.** The three are not equal: the first is #577 failing to implement decision 5, the second
+and third are the ADR's migration meeting a state it does not describe.
+
+- 🔴 **Decision 5's departure never ran once, and the text is not at fault — the code was.** The
+  hardware run's own diagnosis stands ("Why the departure never happens", above): the sweep stands
+  down while a start is in flight, which is right — a box bought seconds ago has no task on it BY
+  CONSTRUCTION, and sweeping there would terminate every start — but nothing cleared the flag on a
+  start that SUCCEEDED, so after the first one the sweep returned at its first line for ever
+  (`mode=off` at 06:19:13, the task gone in 76 s, and then nothing; terminated by hand four
+  minutes later). The start now forgets the box the moment it writes the desired count. **What the
+  text should carry from this**: the departure has two preconditions that are the same fact from
+  two sides — no start in flight, and the desired count already written — and an implementation
+  that keeps only the first has no departure at all.
+- **A start needed a second guard as a consequence: "the service already wants a task".** The
+  admin toggle calls the start unconditionally on `mode=on`, and with the box no longer
+  remembered a press on a RUNNING engine would begin the walk again and buy a second GPU. The
+  start now reads the service first and returns when `desired >= 1`. This is the successor of the
+  same guard ADR 0075 had inside `setStrategy`, which went with it.
+- 🔴 **A table with NO ROWS is a state this ADR's own migration creates, and the CP could not
+  come back from it.** The `<Role>Enabled` round trip drops the conditional half of 60-engines
+  for a minute or two — the engine table among it — and a Control Plane that started inside that
+  window read zero rows, built no registry, started no reloader, and answered `{"engines":[]}`
+  for the rest of its life. Measured: 86 s of force-new-deployment to recover an engine that
+  nothing was wrong with. The registry is now built EMPTY, the reloader runs, and a role that
+  appears is adopted through the same function boot builds with; the deployment-wide ingest
+  runner comes back the same way (a zero-row table carries no `ingest` block either, so without
+  it such a CP could serve every engine and still not take a model in). ⚠️ This overturns the
+  reasoning in `engine_table_reload.go`'s header, inherited from ADR 0074 — "registering a role
+  from inside a poll would build a controller with none of the state the process assumes". That
+  was true while construction lived in the boot loop; it is one function now, so an adopted role
+  is built exactly as a boot-time one is. **What the text should carry**: decision 11's migration
+  section asks for a window in which no box stands, and it should also say that the CP must
+  survive a table with no rows — because the round trip is what produces one.
+- **`<Role>Enabled=true` leaves the service at desired 1 with no box.** CloudFormation creates a
+  service that omits `DesiredCount` at 1, so the second half of the round trip sits in
+  stabilisation until somebody writes 0 (on hardware, another shell did). The controller already
+  writes desired 0 whenever the mode is `off`, whoever set the count — that behaviour was there
+  and is now pinned by a test. **It did not fire on hardware because of the point above**: that
+  CP had no registry, so it had no controller to fire. Nothing new is needed, but the migration
+  section's "both roles `mode: off`" is now load-bearing for a second reason: it is what takes
+  the stray desired 1 back down without a human.
+
 ## Follow-up — the CFN lane's answer to P1's items 1, 3, 4 and 6 (2026-09-12, PR #585)
 
 Items 2 (the CP's `startInFlight`) and 5 and 7 (the two PARAMETERS sentences the P1 PR corrected

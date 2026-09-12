@@ -348,3 +348,103 @@ func TestEngineTableReloadIsSafeWhileTheLadderIsBeingRead(t *testing.T) {
 		t.Errorf("launch template = %q, want the last table's", tpl)
 	}
 }
+
+// --- a role that appears (ADR 0077 P1 hardware run) ------------------------------------
+
+// 🔴 The window the migration opens: `<Role>Enabled=false` → apply → `true` drops the whole
+// conditional half of the 60-engines stack for a minute or two, the engine TABLE among it. A
+// Control Plane that starts inside that window reads a table with NO ROWS — and until this it
+// answered `{"engines":[]}` for the rest of its life, because a registry was never built and no
+// reloader was ever created. Measured on hardware: 86 seconds of force-new-deployment to get an
+// engine back that nothing was wrong with.
+//
+// The registry here is the shape newEngineRegistry now leaves behind at zero rows: empty, with
+// the builder boot itself uses.
+func TestEngineTableReloadAdoptsARoleThatAppears(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLog(&buf)()
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}}
+	built := 0
+	reg.build = func(d engineDef) *engineRuntimeState {
+		built++
+		// The controller is built with no interval, so nothing here starts a goroutine; what is
+		// being pinned is that the role becomes SERVED, by the one function boot uses.
+		return &engineRuntimeState{def: d, classes: parseEngineOffers(d.Key, d.offersSpec())}
+	}
+	ssmc := &fakePendingSSM{value: tableFixture(ladderBefore)}
+	r := newEngineTableReloader(ssmc, "/af-ws/engines", reg, "")
+
+	if reg.get("image") != nil {
+		t.Fatal("the fixture already serves the role")
+	}
+	if !r.tick(t.Context()) {
+		t.Fatal("a table that declares a role this process does not serve reported no change")
+	}
+	e := reg.get("image")
+	if e == nil {
+		t.Fatalf("the role never appeared; the log said:\n%s", buf.String())
+	}
+	if built != 1 || e.def.Service != "af-image" || len(e.classList()) != 1 {
+		t.Fatalf("the adopted role was not built the way boot builds one: built=%d def=%+v", built, e.def)
+	}
+	if strings.Contains(buf.String(), "restart the Control Plane") {
+		t.Errorf("a role that appeared still asks for a restart:\n%s", buf.String())
+	}
+	// Idempotent: the same table again neither rebuilds nor reports a change.
+	if r.tick(t.Context()) {
+		t.Error("re-reading the same table reported a change")
+	}
+	if built != 1 {
+		t.Errorf("the role was built %d times", built)
+	}
+
+	// 🔴 The positive control, and it is the defect: the identical table against a registry with
+	// no builder — a CP whose table is an inline AF_ENGINES_JSON, which cannot change under it —
+	// adopts nothing and says so.
+	var buf2 bytes.Buffer
+	defer captureLog(&buf2)()
+	reg2 := &engineRegistry{byKey: map[string]*engineRuntimeState{}}
+	r2 := newEngineTableReloader(&fakePendingSSM{value: tableFixture(ladderBefore)}, "/af-ws/engines", reg2, "")
+	r2.tick(t.Context())
+	if reg2.get("image") != nil {
+		t.Fatal("a registry with no builder adopted a role anyway — the assertion above proves nothing")
+	}
+	if !strings.Contains(buf2.String(), "restart the Control Plane") {
+		t.Errorf("nothing was said about the role it cannot take on:\n%s", buf2.String())
+	}
+}
+
+// The deployment-wide ingest runner comes back through the same window: a table with no rows
+// carries no `ingest` block either, so a CP that booted inside the migration could serve every
+// engine and still not be able to take a model in.
+func TestEngineTableReloadAttachesTheIngestRunnerThatAppears(t *testing.T) {
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}}
+	attached := 0
+	reg.startIngest = func(def engineIngestDef) bool {
+		if !def.ok() || reg.ing != nil {
+			return false
+		}
+		attached++
+		reg.ing = &engineIngester{def: def}
+		return true
+	}
+	raw := `{"engines":[],"ingest":{"taskDef":"af-ingest:3","subnets":["subnet-a"],"logGroup":"/af/ingest"}}`
+	ssmc := &fakePendingSSM{value: raw}
+	r := newEngineTableReloader(ssmc, "/af-ws/engines", reg, "")
+
+	if reg.ingester() != nil {
+		t.Fatal("the fixture already has an ingest runner")
+	}
+	if !r.tick(t.Context()) {
+		t.Fatal("a table that declares an ingest task reported no change")
+	}
+	if reg.ingester() == nil || reg.ingestDef().TaskDef != "af-ingest:3" {
+		t.Fatalf("ingest = %+v", reg.ingestDef())
+	}
+	// Once attached it is never replaced: a running reconcile loop owns the jobs it started.
+	ssmc.value = strings.Replace(raw, "af-ingest:3", "af-ingest:4", 1)
+	r.tick(t.Context())
+	if attached != 1 || reg.ingestDef().TaskDef != "af-ingest:3" {
+		t.Errorf("the ingest runner was rebuilt (%d) / replaced (%s)", attached, reg.ingestDef().TaskDef)
+	}
+}
