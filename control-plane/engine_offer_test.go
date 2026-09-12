@@ -1418,3 +1418,62 @@ func TestModeOffTakesTheDesiredCountDownWhoeverWroteIt(t *testing.T) {
 		t.Fatalf("desired writes = %v with the mode on, want none", got)
 	}
 }
+
+// 🔴 A `mode: on` pressed on an engine that is ALREADY RUNNING must not touch the trail.
+//
+// It never bought a box — the start's own "already asked for" guard holds (P1 hardware run 2
+// confirmed that on the deployment) — but the admin toggle presses the start GATE first, and the
+// gate's first act is `begin()`, which empties the trail. So the panel lost `offer_trail` for the
+// demand it was serving: the operator's own click deleted the answer to "why is it on this box".
+//
+// The fix is an ordering one, so the positive control has to be about the order: the same press
+// on a STOPPED engine does begin a new walk, which is what proves the gate still reaches begin().
+func TestModeOnWhileRunningKeepsTheTrail(t *testing.T) {
+	st := testSettingsStore(t)
+	fleet := &fakeFleet{instance: "i-77"}
+	api := &offerECS{}
+	e := newOfferTestEngine(t, api, fleet, twoOffers, st)
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}, st}
+
+	// A start that got its box and its task.
+	tickIntoAStart(t, e, st)
+	api.register("i-77", "engine-image", "g6.xlarge")
+	e.ecs.invalidateBox()
+	tickIntoAStart(t, e, st)
+	api.mu.Lock()
+	api.running = 1
+	api.boxes["i-77"] = offerBox{role: "engine-image", tasks: 1}
+	api.mu.Unlock()
+	e.ecs.invalidate()
+	if got := offerTrailResults(e); got != "l4=active" {
+		t.Fatalf("trail = %q before the press", got)
+	}
+
+	if code, out := adminPut(t, a, "image", `{"mode":"on"}`); code != http.StatusOK {
+		t.Fatalf("on = %d (%v)", code, out)
+	}
+
+	if got := offerTrailResults(e); got != "l4=active" {
+		t.Fatalf("trail = %q after pressing ON on a running engine — the panel lost the walk it is serving", got)
+	}
+	if row := a.row(t.Context(), e); row["offer_trail"] == nil {
+		t.Errorf("offer_trail is absent from the panel row: %v", row)
+	}
+	if len(fleet.creates) != 1 {
+		t.Errorf("%d purchases, want the one from the start", len(fleet.creates))
+	}
+
+	// Positive control: the engine is stopped, and the same press DOES begin a new walk. Without
+	// this, a gate that had simply stopped calling begin() would pass the assertion above.
+	api.mu.Lock()
+	api.desired, api.running = 0, 0
+	api.mu.Unlock()
+	e.ecs.invalidate()
+	e.offers.dropBox()
+	if ok, why := e.startGate(t.Context()); !ok {
+		t.Fatalf("the gate refused a start on a stopped engine (%s)", why)
+	}
+	if got := offerTrailResults(e); got != "" {
+		t.Fatalf("trail = %q after the gate began a new walk, want it emptied", got)
+	}
+}

@@ -504,21 +504,36 @@ const (
 // read-modify-write. A rung is now the set of instance types in the `CreateFleet` overrides: the
 // declaration IS the request, so "declared and actual drift apart" has no structure to happen in
 // and a misspelt type is refused on the spot rather than three minutes later by a box that never
-// came. What is left is the two gates that are about hardware, not about ECS:
+// came. What is left is the gates that are about hardware, not about ECS:
 //
 //  1. a start already in flight is not re-judged. The offer is chosen, the box is bought, and
 //     re-running the gate every five seconds would begin the walk again and buy a second one;
-//  2. a box of a DIFFERENT rung still registered means the previous one has not gone. Starting
+//  2. NEITHER IS A START ON AN ENGINE THAT IS ALREADY UP. The admin toggle presses this gate on
+//     every `mode: on`, including one pressed while the engine is running, and the walk it would
+//     begin is a walk for a demand that is already being served;
+//  3. a box of a DIFFERENT rung still registered means the previous one has not gone. Starting
 //     now either exceeds the vCPU quota or places the task straight back onto the old card
 //     (ADR 0071 decision 7's drain wait, inherited by ADR 0077 decision 5);
-//  3. and then the one line of evidence: what is about to be loaded against what the card holds,
+//  4. and then the one line of evidence: what is about to be loaded against what the card holds,
 //     written to the log BEFORE the start. CUDA does not fail in a diagnosable shape, so the one
 //     place this can be recorded is in front of it.
+//
+// 🔴 (1) and (2) are BEFORE begin(), and that ordering is the whole of ADR 0077 P1 hardware run
+// 2's one red point. `begin()` empties the trail, so a gate that reached it and only then found
+// out the start was redundant left the panel with no `offer_trail` for the demand it is serving:
+// measured on hardware — `mode: on` pressed on a running engine bought nothing (the start's own
+// guard held) and blanked the trail anyway.
 func (e *engineRuntimeState) startGate(ctx context.Context) (bool, string) {
 	if e == nil || len(e.classList()) == 0 {
 		return true, ""
 	}
 	if e.offers.startInFlight() {
+		return true, ""
+	}
+	// Already up, or on its way. Read from the service rather than from what this process
+	// remembers, for the same reason everything else here is: a CP replaced mid-demand knows
+	// nothing, and the desired count is the one fact that says whether a start is needed.
+	if v, err := e.ecs.view(ctx); err == nil && v.desired >= 1 {
 		return true, ""
 	}
 	// Which offers this start may buy from, in the order they will be tried (ADR 0075 decisions
