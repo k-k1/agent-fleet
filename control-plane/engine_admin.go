@@ -125,6 +125,10 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	mux.HandleFunc("GET /api/admin/engines/hf-token", a.withSuperAdmin(a.getHfToken))
 	mux.HandleFunc("PUT /api/admin/engines/hf-token", a.withSuperAdmin(a.putHfToken))
 	mux.HandleFunc("DELETE /api/admin/engines/hf-token", a.withSuperAdmin(a.deleteHfToken))
+	// The credential another deployment borrows these engines with (ADR 0079 decision 3, P1).
+	// Super_admin only and never GET — it opens every engine here, so a tenant-scoped role is
+	// not in proportion, and a credential does not belong in a URL. engine_issue_token.go.
+	mux.HandleFunc("POST /api/admin/engines/issue-token", a.withSuperAdmin(a.postIssueToken))
 }
 
 // get (GET /api/admin/engines) lists every engine with its mode and what ECS is doing — or, for
