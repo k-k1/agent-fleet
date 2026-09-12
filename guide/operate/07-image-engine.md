@@ -22,6 +22,12 @@ credential for it.
 It is two environment variables and a manually-kept model list. **The engine stays
 yours**: the Control Plane never starts it, never stops it, and never bills for it.
 
+There is a fourth possibility, and it is a different chapter: if you already run an
+Agent Fleet on AWS, this deployment can **borrow that one's engines** —
+[08 Borrowing another deployment's engines](08-borrowed-engine.md). That covers the
+chat engine as well as the image one, and the far fleet does the waking and the
+paying.
+
 ## The two variables
 
 Both are read by the Control Plane **once at startup**. Changing either one is a CP

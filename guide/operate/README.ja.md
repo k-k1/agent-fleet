@@ -21,6 +21,7 @@ updated: "2026-08"
 5. [サインイン方式](05-signin.ja.md) — Google / Entra ID / GitHub / 他の OIDC で何を作り、どの値をどこに入れ、どう確認するか
 6. [切り分ける](06-diagnose.ja.md) — 障害対応と FAQ。**黙って壊れる 3 つの制約**を含む
 7. [自前の ComfyUI で画像を生成する](07-image-engine.ja.md) — 自分の網の中の ComfyUI をセッションから使わせる。そのとき網を閉じるのは誰の仕事か
+8. [別の配備のエンジンを借りる](08-borrowed-engine.ja.md) — 自分のホストの配備から AWS のフリートの llm / image エンジンを使う。2 人の管理者の境目はどこにあるか
 
 各形態が何に対応しているかは [ref/deploy-targets.md](../ref/deploy-targets.ja.md)、
 誰が何をできるかは [ref/roles.md](../ref/roles.ja.md)。
