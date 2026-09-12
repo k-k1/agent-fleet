@@ -640,3 +640,383 @@ R12）。本文は上で直してある**——この ADR はまだ「提案」�
   触る前に `pgrep -af dev-deploy.sh`。
 
 P2（決定 4・6）と P3（llm 役）は P1 の実機の判定を待ち、ここでは分けない。
+
+## 追記 — P1 の CFN レーンが本文に返したもの（2026-09-12・PR #575）
+
+CFN レーンは決定 11 を書かれたとおりに実装した（テンプレート・スクリプト・PARAMETERS・
+0071 / 0074 / 0075 への補遺）。配備はしていないし、何も測っていない。AWS への呼び出しは
+`validate-template` の 1 回だけで、それは読み取りである。実装が本文に返したものは 4 つ。
+**上の決定は 1 つも書き換えていない**——この節が記録で、形は 0075 の追記に倣った。
+
+1. 🔴 **`<Role>UseLocalStorage` を退役させると実測の cold start を失う。決定 11 はそれを言っていない。**
+   削除一覧は 8 つを「梯子の写し」と呼び、7 つはそのとおりである。これだけは違う——EBS のデータ
+   ボリュームではなく**インスタンスストア**を要求する唯一の口で、入れた効果は実測済みだった
+   （2026-09-09・ADR 0071 の数字: S3 → ディスク 1.4 倍、ディスク → VRAM **2.9 倍**、
+   RunTask → モデル読込 527-586 秒 → **275 秒**、モデルの入れ替え 276-282 秒 → **98.5 秒**）。
+   このレーンが書いた launch template は NVMe を**マウントしない**（未解決 8 は P1）ので、
+   起動の両半分が EBS 帯域に戻る。パラメータ自体は外すしかない——訊く相手の MI provider が無い——
+   が、対価は実在し、PARAMETERS の `LlmStorageGiB` に記録した。
+   **未解決 8 は「やれたらやる」ではなく、閉じるべき退行である。**
+2. **決定 10 の `role/af-*-engine` への `iam:PassRole` は、テンプレートには要らない約束事だった。**
+   20-platform がスロットのロールを名前で書くのはスタックの循環参照を避けるためで、エンジンの
+   インスタンスロールは 60-engines 自身が作るので `!GetAtt EngineInstanceRole.Arn` で書いた——
+   同じ形のまま、1 資源ぶん狭い。（ロール名は `af-<stack>-engine` のままなので、約束事でも当たる。
+   `EngineTaskRole` は `af-<stack>-engine-task` なので当たらない。）
+3. **`teardown.sh` は既にエンジンの箱を terminate していた。足りなかったのは言葉のほう。**
+   決定 11 は「スロットと同じ形で `af-pool` ＋ `af-role=engine-*` のタグで terminate する段」を
+   求めている。`list_slots` は `af-pool` **単独**で絞る——レビュー R3 が `sweepSlotOwnerTags` の
+   バグとして挙げたのと同じ「1 フィルタ」の形——ので、CP が買った箱は段 3 が terminate する一覧に
+   もう入っている。見えなかったのは MI の箱だけ（AWS 管理アカウント・列挙不可）で、だから段が
+   「スロット」と書かれていた。レーンがやったのは段の名前と数え方を実態に合わせ、エンジンの箱を
+   別に数えて理由を書いたことで、2 度目の terminate は足していない。
+4. **launch template は無条件に作る**（capacity provider がそうだったように）。決定 11 は何も
+   言っておらず、`<Role>Enabled` を条件にするのが素直に見える——が `check-cfn-exports.py` は
+   空文字を export しうるテンプレートを落とすし、`*LaunchTemplateId` の 2 本は export である。
+   起動しないあいだ launch template は 1 円もかからない。
+
+もう 1 つ、後から探す人のために書いておく。**harness 6 本は両方やった。** 決定 11 は
+「新しい名前へ移す**か**、MI 時代のものと明記する」と選ばせているが、機械的に移した
+（タスク定義を `EC2`、`run-task` を launch type ＋ `attribute:af-role == engine-<役>`）**うえで**
+冒頭に `exit 2` の門を置いた。移設は $0 では検証できず、各スクリプトの説明にある数字はすべて
+Managed Instances 時代の実測だからである。門を消すのは「測り直す」の一部であって、「読む」の
+一部ではない。
+
+### P0 の実測をこのレーンに反映した（2026-09-12・PR #576 の後）
+
+P0 の判定がこのレーンの PR が開いているあいだに出たので、4 点を CFN 側に取り込んだ。
+ブランチに積んだもの:
+
+1. **移行手順は `<役>Enabled` の往復だけになった**（未解決 1 が 🔴）。PARAMETERS には
+   「答えが出たら片方を消す」と書いて 2 案を並べていたが、その場更新の案を削除し、往復の
+   実測（25 秒 + 48 秒）を残し、逆順で試したときに気づけるよう `AlreadyExists` の文面を引用した。
+   ✅ **往復中も Cloud Map の名前は消えない**——`AWS::ServiceDiscovery::Service` は条件の付かない
+   別資源で、実測でも同じ registry ARN のままだった。決定 11 の「その間 Cloud Map の名前は消える」が
+   P0 の訂正した唯一の文で、運用者が読む場所（PARAMETERS）にそう書いた。
+2. **`ssm:GetParameters`（`arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*`）を
+   `CpIngestPolicy` に無条件で入れた。** 決定 10 の条件付きの行に答えが出た——`resolve:ssm:` を
+   解決するのは `CreateFleet` の**呼び出し側**で、無いと top-level の `SsmAccessDenied` で落ち、
+   アクション名もパラメータ名も出ない。P0 が「要らない」と示した 2 つ——
+   `ec2:DescribeLaunchTemplates(Versions)` と `ec2:CreateTags`（要求側の `TagSpecifications` は
+   テンプレートのタグと併合される）——はもともと足しておらず、「足さないこと」として記録した。
+3. **SLR の主張は消さずに弱めた。** 決定 10 の ⚠️ は「`AWSServiceRoleForEC2Fleet` が無いと最初の
+   `CreateFleet` が失敗する」と書いていたが、P0 は無い状態で 3 回通した。`standup.sh` では作り
+   続ける——安い保険であり、「SLR が両方とも無いアカウントで**実際に起動する**呼び出し」は
+   測れていない——が、テンプレートのコメント・`standup.sh`・README の前提・PARAMETERS から
+   「失敗する」という断定を外した。2 回目の作成が返すのは `EntityAlreadyExists` ではなく
+   `InvalidInput` である（＝コード一致では扱えず `|| true` が要る）ことも `standup.sh` に書いた。
+4. **未解決 8 を実装した（未検証）。** 上の追記 1 で「閉じるべき退行」と書いたものを、P1 の
+   報告に回さず launch template で閉じた: user data が最初のインスタンスストア NVMe を mount し、
+   **Docker の data-root** をそこへ置く。匿名の `host` ボリュームは Docker のボリュームそのものなので
+   モデルもそこへ落ちる——タスク定義は 1 行も変えない。EBS のみの型は何にも当たらず root のまま、
+   AMI が持つ agent と pause の像は先に複写し、各段は `&&` で繋いであるので失敗しても Docker は
+   元の場所に残る。🔴 **未計測**: P1 の初回は箱の上で `df /var/lib/docker` と
+   `docker info | grep "Docker Root Dir"` を見ること。ここが黙って失敗したときの症状は
+   「起動が遅い」だけである。
+
+反映後のテンプレートのサイズ: **40,182 バイト**（最初の push では 36,816・壁は 51,200）。
+
+### CP レーン（PR #577）からの 1 点——予算の意味と既定値
+
+契約 A でこの ADR が動かす欄は `launchTemplate` のほかに `<役>OfferBudgetSec` だけで、CP レーンが
+意味を確定させた: これは**買えた箱が ECS に登録されるまでの上限**であって、提案ごとの購入の時計では
+ない（購入は呼び出しの中で答える）。CP の既定は決定 1 の数字である **300 秒**。よってテンプレートの
+`Default` を両役とも 300 にし、`Description` の 2 行を新しい意味に書き換えた。
+
+🔴 **0.19.0 の捕捉は `180` を持っている。** これは旧い意味の既定値で、放っておくと新しい上限が
+ADR の選んだ数字より短くなる——しかも黙って。`standup.sh` は **180 ちょうど**だけを落として
+テンプレートの 300 を効かせ、落としたことを stdout に出す。それ以外の値は運用者の選択として
+そのまま渡す。古い既定値と意図した 180 は区別できない——だから規則が「旧い既定値だけ、他は触らない」
+なのである。スタブ試験は両方向を、それぞれの陽性対照つきで固定した。
+
+## 追記 — P0 未解決 1〜4 の実測（2026-09-12・af-sandbox・$0.01 未満）
+
+$0 の前提 4 件を、コードを 1 行も書く前に、**使い捨ての ECS クラスタと Cloud Map namespace を自前で
+持つ**使い捨て CloudFormation スタックの上で測った。この実測が打ったコマンドのうち、本物のスタック・
+本物のクラスタ・本物の service・本物の capacity provider を名指したものは 1 つも無い。書き込みは
+すべて `af-adr0077-p0-` で始まる資源が対象。**GPU は 1 台も買っていない。** 所要
+**16 分 45 秒**（11:50:02〜12:06:47 JST）。
+
+非 GPU の箱は 1 台ではなく 2 台上げた。未解決 2 の `t3.small`（3 分 6 秒）と、意図して足した
+**成功する `CreateFleet`** が候補 IAM 集合の下で買った `t3.small` 1 台（1 分 6 秒）である。2 台目を
+上げた理由は、そうしないと IAM 集合が「何も起動しない呼び出し」に対してしか検証されないからで、
+下の実測が示すとおり `iam:PassRole` が**検査されないのはまさにその経路**だった。合計で約 4.2
+インスタンス分、未解決 2 に認められた $0.05 の枠の内側。
+
+**判定: 1 は 🔴 赤・2 は 🟢 緑・3 は緑だが決定 1・8・10 に 🔴 の訂正が 3 件・4 は 🟢 緑。**
+未解決 1 が赤でも骨格は書き直さない——決定 11 の移行が、本文がすでに ⚠️ の分岐として持っている
+`<役>Enabled` の往復に確定するだけである。他のレーンが待っていたのは未解決 2 で、それが緑なので
+**CP と CFN のレーンは始めてよい。**
+
+| # | 判定 | 一行で |
+|---|---|---|
+| 1 | 🔴 | CloudFormation は service を**置き換え**、明示した `ServiceName` が衝突する——`AlreadyExists`・ロールバック。`<役>Enabled=false` → 当てる → `true` の往復は通る（25 秒 + 48 秒） |
+| 2 | 🟢 | `ECS_INSTANCE_ATTRIBUTES` で付けた属性に EC2 launch type の service の placement constraint が効く。desired 1 の 28 秒後に RUNNING。陽性対照: 合わない属性を要求した側は 0 のまま「MemberOf placement constraint unsatisfied」 |
+| 3 | 🟢/🔴 | 語彙は **200** の応答の中に override ごとに 5 種——`UnauthorizedOperation` を含む。`resolve:ssm:` は呼び手の `ssm:GetParameters` を**要る**。fleet は**残る**うえ、instant fleet に `DeleteFleets(TerminateInstances=false)` は拒まれる。`Priority` は効き、記録される |
+| 4 | 🟢 | 条件付きの `iam:CreateServiceLinkedRole` で `AWSServiceRoleForEC2Fleet` は作れる。ただし `CreateFleet` は**それが無くても通った**——役が存在する前に 3 回通っている |
+
+### 未解決 1 — service は置き換えられ、名前が衝突する
+
+使い捨ての service は本物と同じ形にした。`ServiceName` を明示（`af-adr0077-p0-svc`）、使い捨ての
+Cloud Map の A レコード service を指す `ServiceRegistries`、`awsvpc`、`MinimumHealthyPercent: 0`、
+`DesiredCount: 0`。2 つの形はテンプレートのパラメータと `!If` で切り替えており、資源の差分としては
+テンプレートを書き換えたのと同じものになる。
+
+| 時刻（JST） | やったこと | 返ってきたもの |
+|---|---|---|
+| 11:50:02 | `create-stack`・`Mode=capacity-provider` | 11:51:29 に `CREATE_COMPLETE`。`capacityProviderStrategy: [{FARGATE, weight 1, base 0}]`・`launchType: null`・`placementConstraints: []`・PRIMARY `ecs-svc/3919890012809245997` |
+| 11:51:51 | `LaunchType: EC2` ＋ `PlacementConstraints` への `create-change-set` | `Replacement: Conditional`。プロパティ別には `CapacityProviderStrategy` が `RequiresRecreation: Never`・**`LaunchType` が `Conditionally`**・`PlacementConstraints` が `Never` |
+| 11:52:20 | **`execute-change-set`**（0074 の教訓: change set は答えではない） | 11:52:26 `Service UPDATE_IN_PROGRESS`——**「Requested update requires the creation of a new physical resource; hence creating one.」** 11:52:27 `UPDATE_FAILED`（全文は下）。11:52:32 `UPDATE_ROLLBACK_COMPLETE` |
+| 11:52:41 | ロールバック後の `describe-services` | `status: ACTIVE`・strategy は FARGATE のまま・`desiredCount` 0・**PRIMARY も同じ `ecs-svc/3919890012809245997`**——元の service は一切動いていない |
+| 11:52:55 | `ServiceEnabled=false` で `update-stack`（条件が service を消す） | **25 秒**で `UPDATE_COMPLETE`。`describe-services` は `INACTIVE`・`list-services` は `[]` |
+| 11:53:30 | `Mode=launch-type`・`ServiceEnabled=true` で `update-stack` | **48 秒**で `UPDATE_COMPLETE`。`launchType: EC2`・`capacityProviderStrategy: null`・`placementConstraints: [{memberOf, "attribute:af-role == engine-image"}]`・**`serviceRegistries` の ARN は同じ `srv-5grs42msyxunj3f5`** |
+
+```
+Service UPDATE_FAILED
+Resource handler returned message: "Resource of type 'AWS::ECS::Service' with identifier
+'af-adr0077-p0-svc' already exists." (HandlerErrorCode: AlreadyExists)
+```
+
+**判定 🔴。** 置き換えであり、CloudFormation は消す前に作り、明示した名前がレビュー R6 の予想どおり
+衝突する。したがって決定 11 の ⚠️ の分岐は**代替路ではなく唯一の移行経路**である:
+`<役>Enabled=false` → 新テンプレートを当てる → `true`。
+
+本文への訂正が 1 つ。この往復で **Cloud Map の名前は消えない**。`AWS::ServiceDiscovery::Service` は
+条件の付いていない別資源なので、DNS 名も ARN も残る。その数十秒のあいだ消えるのは「ECS service が
+そこにインスタンスを登録している」ことだけで、desired 0 なら登録は元より無い。決定 11 の
+「あいだ Cloud Map の名前は消える。desired 0 なので要求は失われない」は安全側だが言い過ぎである。
+
+**影響——依存: 決定 11。** 決定 11 の 🔁 が発火した。結果は決定 11 自身の本文がすでに書いている。
+それ以外は動かない。失敗した更新は生きている service を 1 欄も変えなかったので、順序を間違えても
+戻れる。
+
+### 未解決 2 — 属性は効く
+
+使い捨ての launch template 1 本（`ImageId` は
+`resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id`——
+`ami-0f57b5b58b68248a3` に解決された・`HttpTokens: required`・user data が `/etc/ecs/ecs.config` に
+`ECS_CLUSTER` と `ECS_INSTANCE_ATTRIBUTES={"af-role":"engine-image"}` を書く）、`t3.small` 1 台、
+そしてスタックがすでに持っているタスク定義（`awsvpc`・256/512・GPU 要求無し）。
+
+| 時刻（JST） | やったこと | 返ってきたもの |
+|---|---|---|
+| 11:54:56 | `run-instances`・`t3.small` 1 台・1a の private subnet | `i-05375bcf612c7ec74`・`pending` |
+| 11:55:20 | `describe-container-instances` | 起動の **24 秒後**に登録。`agentConnected: true`・属性に **`{"name": "af-role", "value": "engine-image"}`**・そして **`capacityProviderName` は無い** |
+| 11:55:45 | **陽性対照**: 同じタスク定義で `attribute:af-role == engine-llm` を要求する EC2 launch type の service をもう 1 本・desired 1 | 11:56:00 に `runningCount` 0・`pendingCount` 0。イベントは *"was unable to place a task because no container instance met all of its requirements. The closest matching (container-instance fb2ddff7…) encountered error `"MemberOf placement constraint unsatisfied."`"* |
+| 11:55:47 | 測る側の service（`== engine-image`）を desired 1 に | 11:55:53「has started 1 tasks」・**11:56:15 に `RUNNING`（呼び出しの 28 秒後）**。`launchType: EC2`・`attachments: [(ElasticNetworkInterface, ATTACHED)]` |
+| 11:56:57 | desired 0 のあと `terminate-instances` | 11:58:02 に EC2 が `terminated`。container instance は**約 30 秒で自分から `INACTIVE`** になった——手で deregister はしていない |
+
+**判定 🟢。** AL2023 の ECS AMI 上でエージェントは `ECS_INSTANCE_ATTRIBUTES` を尊重し、その属性を読む
+*service* の placement constraint が EC2 launch type で効く。陽性対照は、制約が無視されているのでは
+なく本当に評価されていることを示す——同じ箱・同じタスク定義で、式を 1 語変えるとタスクは置かれない。
+
+**影響——依存: 決定 2 と 3。** どちらも本文どおりで立つ。決定 2 の 🔁（タスク定義に `ec2InstanceId` を
+書き、起動ごとに revision を切る）は**不要**。決定 3 の 🔁（登録直後の `PutAttributes`）も**不要**。
+決定 3 の前提 2 つが副産物として確認された。CP が買った EC2 の箱は **`capacityProviderName` を
+持たない**（＝背景の言うとおり `isPoolContainerInstance` は崩れ、属性の節が要る）ことと、EC2 launch
+type の `awsvpc` はエージェントの設定を何も足さずにタスク ENI を付けること。決定 4 の 1 項目も裏付けを
+得た。ECS は**自分で**終了したインスタンスの container instance を deregister する——ここでは
+`t3.small` で約 30 秒。本文ではこれは (c) だった。
+
+### 未解決 3 — `CreateFleet` の語彙・IAM の最小集合・残る fleet・`Priority`
+
+以下の呼び出しはすべて、使い捨ての IAM ロール（`af-adr0077-p0-fleet`。信頼はこのセッション自身の
+プリンシパル）として実行した。決定 10 の表をそのまま権限に持たせ、`AccessDenied` が「表に足りない
+もの」を名指すようにしてある。探りの 4 呼び出しはどれも 1 台も起動していない。
+
+| 時刻（JST） | 呼び出し | `Errors[].ErrorCode` / 結果 |
+|---|---|---|
+| 11:58:49 | Spot `g6.4xlarge` × subnet 2 つ・`price-capacity-optimized`・決定 10 の表そのまま | **`Errors[]` すら無い最上位の失敗**: `SsmAccessDenied`・*「Access denied to SSM」* |
+| 11:59:16 | `parameter/aws/service/ecs/optimized-ami/*` への `ssm:GetParameters` を足して同じ呼び出し | **HTTP 200**・`Instances: []`・override ごとに 1 件ずつ **`MaxSpotInstanceCountExceeded`** / *「Max spot instance count exceeded」*・`Lifecycle: spot`（この口座の G/VT Spot クォータは 8 vCPU・`g6.4xlarge` は 16） |
+| 12:00:54 | Spot `g6.xxlarge`（綴り違い） | **`InvalidFleetConfiguration`** / *「Your requested instance type (g6.xxlarge) is not supported in your requested Availability Zone (ap-northeast-1a).」* |
+| 12:00:57 | Spot `g6.xlarge` × subnet 2 つ・`MaxPrice: "0.001"` | **`SpotMaxPriceTooLow`** / *「Your Spot request price of 0.001 is lower than the minimum required Spot request fulfillment price of 0.5762.」*（もう一方の AZ は 0.5633） |
+| 12:01:03 | On-demand `g6.48xlarge`（Priority 1）と `g6.24xlarge`（Priority 2）・`OnDemandOptions.AllocationStrategy: prioritized` | **`VcpuLimitExceeded`** / *「You have requested more vCPU capacity than your current vCPU limit of 8 allows for the instance bucket…」*・`Lifecycle: on-demand`。各エラーは override を **`Priority: 1.0` / `2.0` 込みで**反響する |
+| 12:03:34 | On-demand `t3.small`（Priority 1）/ 別 subnet の `t3.small`（Priority 2）・要求側の `TagSpecifications` 付き | **`Errors: []`**・箱はちょうど 1 台・取られたのは **Priority 1** の override: `i-05bfc8ee328b5a232`・`Lifecycle: on-demand` |
+
+🔴 **このうち 3 つが本文に効く。**
+
+1. **`UnauthorizedOperation` は 200 の `Errors[]` の中に override ごとに来る。** ロールから
+   `iam:PassRole` を外して同じ `SpotMaxPriceTooLow` の呼び出しをすると、200 で
+   `ErrorCode: UnauthorizedOperation`・*「is not authorized to perform: iam:PassRole on resource:
+   …/af-adr0077-p0-instance」* が返る。**IAM の穴は「在庫が無い」と寸分違わぬ形をしている。**
+   決定 8 の失敗コードの表は `UnauthorizedOperation`（および最上位で来る `SsmAccessDenied`）を
+   **周回を止める硬い失敗**に分類しなければならない。「次の提案へ」にしてはいけない——さもないと
+   設定を誤った配備が黙って提案リストを最後まで歩き、「どこにも在庫が無い」と報告する。
+2. **`--dry-run` はこれを捕まえられない。** `iam:PassRole` を外したまま同じ呼び出しに `--dry-run` を
+   付けると `DryRunOperation`——*「Request would have succeeded, but DryRun flag is set.」*が返る。
+   dry run は override ごとの認可を通らない。事前検査には使えない。
+3. **綴り違いと「その AZ ではその型が提供されていない」は同じコード・同じ文である。** 決定 8 の
+   「綴りを間違えた型は `CreateFleet` が**その場で**拒む」は真だが、応答は「綴り違い」とは言わない。
+   `<役>Offers` の打ち間違いは在庫の事実として読まれ、次の需要でも永遠に再試行される。コードを
+   読むより、テンプレート側で型の綴りを検査するほうが価値がある。
+
+⚠️ **測れなかったもの**: 本物の在庫切れの拒否。`SpotMaxPriceTooLow` はその代役の価格拒否であって、
+本物のコード（`InsufficientInstanceCapacity` か EC2 Fleet が何と呼ぶか）はいまだ不明である。それを
+引き出すには「届くかもしれない容量」を要求するしかないため。
+
+#### (a) IAM の最小集合
+
+決定 10 の表から始め、拒否が名指したものだけを足した。足す必要があったのは **1 つだけ**で、表に
+すでにあった 1 つは苦い形で必要性が証明された。
+
+| 文（Sid） | アクション | 資源 / 条件 | 根拠 |
+|---|---|---|---|
+| Fleet | `ec2:CreateFleet`・`ec2:DescribeFleets`・`ec2:DeleteFleets` | `*` | `CreateFleet` と `DescribeFleets` は実行済み。`DeleteFleets` は片付けで実行済み |
+| Ec2SlotPool（部分集合。全フレーバーで既に付与済み） | `ec2:RunInstances`・`ec2:TerminateInstances`・`ec2:DescribeInstances`・`ec2:DescribeSubnets`・`ec2:CreateTags` | `*` | `TerminateInstances` と `DescribeInstances` はこのロールで実行済み。`RunInstances` / `DescribeSubnets` / `CreateTags` は**必要だと示せていない**——名指した拒否が無い |
+| PassEngineRole | `iam:PassRole` | `role/af-*`・`iam:PassedToService: ec2.amazonaws.com` | **証明済み。** 外すと全 override が `UnauthorizedOperation` になる——ただし**起動するはずだった呼び出しでのみ** |
+| SsmPublicAmi | **`ssm:GetParameters`** | `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*` | **証明済み。** 無いと `CreateFleet` は最上位で `SsmAccessDenied` になり、アクションもパラメータも名指さない |
+| Slr | `iam:CreateServiceLinkedRole` | `iam:AWSServiceName` が `[spot.amazonaws.com, ec2fleet.amazonaws.com]` | **証明済み**（未解決 4）・陰性対照つき |
+
+**つまり決定 10 の条件付きの行は無条件になる**。公開 AMI パラメータへの `ssm:GetParameters` は
+`CreateFleet` の**呼び手**に必要で、(c) の疑いどおりだった。逆に**要らないので足すべきでない**もの
+が 2 つ。`ec2:DescribeLaunchTemplates` / `ec2:DescribeLaunchTemplateVersions`（ロールはどちらも
+持たず、`CreateFleet` は名前でテンプレートを解決した）と、箱のタグのための `ec2:CreateTags`——(d) 参照。
+
+#### (b) instant fleet は残り、`DeleteFleets(TerminateInstances=false)` は拒まれる
+
+- **1 台も起動しなかった**呼び出しのあとでも、`describe-fleets --fleet-ids <id>` は
+  `FleetState: active`・`ActivityStatus: fulfilled`・`FulfilledCapacity: 0.0` で、記録された設定
+  一式を付けて返す。
+- 成功した呼び出しの箱を terminate したあとも、fleet は **`active` / `fulfilled` /
+  `FulfilledCapacity: 1.0`**——もはや嘘の数——のまま、さらに 30 秒見ても変わらなかった。**自分では
+  消えない。** 公開仕様 (c) は消えると言うが、この配備では消えない。
+- 🔴 `delete-fleets --no-terminate-instances`——決定 1 が名指しているまさにその呼び出し——は拒まれる:
+  `NoTerminateInstancesNotSupported`・*「NoTerminateInstances option is not supported for instant
+  fleet」*。通るのは `--terminate-instances` だけ（`deleted_terminating` → `deleted`）で、CP に
+  とっては「もう失うと決めた箱の fleet にしか安全に打てない」ということになる。
+- 🟢 **ただし CP が歩く経路には何も溜まらない。** 絞り込まない `describe-fleets` は終始
+  `{"Fleets": []}` を返し、同じ秒に打った id 指定の呼び出しは fleet を返した——その id 指定こそが
+  空リストの陽性対照である。instant fleet はそもそも列挙されない。
+
+**よって決定 1 の一文は、書かれている理由とは別の理由で生き残る。**「CP は fleet の id を覚えない」は
+正しく、`DeleteFleets` の後追いも要らない——fleet が消えるからではなく、どの列挙からも見えず容量も
+持たないからである。`ec2:DeleteFleets` は付けておく価値があるが、本文が約束する
+`TerminateInstances=false` の形は存在しない。
+
+#### (c) `prioritized` と `Priority`
+
+🟢 記録され、効く。on-demand の fleet の `describe-fleets` は
+`OnDemandOptions.AllocationStrategy: prioritized` と `Overrides[].Priority` の `1.0` / `2.0` を持ち、
+エラーも override ごとに `Priority` を反響し、成功した唯一の on-demand 呼び出しは **Priority 1** の
+override（1a の `t3.small`）を取り、Priority 2 は手つかずだった。完了 6 はこの形に対して書ける。
+
+#### (d) 呼び出しが返してきた、本文に無い 2 つ（＋1）
+
+- **タグ一式は `CreateFleet` の 1 回で載る。** 要求側の `TagSpecifications`（`ResourceType: instance`）
+  は launch template 自身のタグと**併合**される。箱は要求側から `af-pool`・`af-role=engine-image`・
+  `af-engine-offer`・`af-engine-buy` を、テンプレートから `af-managed-by=agent-fleet` を持って
+  上がってきた。決定 3 のタグ集合に別途 `CreateTags` は要らない——`RunInstances` の時点でタグを付ける
+  スロットプールとは違う。
+- **EC2 は `aws:ec2:fleet-id` を自分で箱に書く。** つまり CP は記憶ゼロで箱から fleet に到達できる。
+  決定 3 が求める 0045 決定 29 の形が、ただで手に入る。
+- `InstanceLifecycle` は on-demand の箱では **無い**（Spot では `spot`——0075 の実測）。完了 7 の
+  「`InstanceLifecycle`」の確認は、「無い」を「データが取れなかった」ではなく「on-demand」と
+  読まなければならない。
+
+**影響——依存: 決定 1・8・10。** 決定 10 は `ssm:GetParameters` を無条件で得て、要らなかった Describe
+2 つを落とせる。決定 8 の失敗コードの表は、いま持っていない分類——***`Errors[]` の中の認可失敗***——を
+足す必要があり、それを容量として扱ってはならない。決定 1 の
+`DeleteFleets(TerminateInstances=false)` の一文は「後追いは要らない。instant fleet は id で名指さない
+限り `describe-fleets` から見えない」に書き直す必要がある。**3 つとも決定の前提を覆すものではない。**
+本文は親が判断するために書かれたままにしてある。
+
+### 未解決 4 — CP は service-linked role を自分で作れる
+
+| 時刻（JST） | やったこと | 返ってきたもの |
+|---|---|---|
+| 11:58:49〜12:01:03 | 上の `CreateFleet` 4 回を、**口座に `AWSServiceRoleForEC2Fleet` が無い状態で** | どれも普通に振る舞った（SSM の拒否、次いで override ごとのエラーを持つ 200 が 3 回）。**SLR 由来のエラーは一切無く、役が自動で作られることも無かった** |
+| 12:02:46 | 条件付きの権限の下で `create-service-linked-role --aws-service-name ec2fleet.amazonaws.com` | **200。** `AWSServiceRoleForEC2Fleet`・`arn:aws:iam::<account>:role/aws-service-role/ec2fleet.amazonaws.com/AWSServiceRoleForEC2Fleet` |
+| 12:02:50 | **陰性対照**: 同じ呼び出しを `--aws-service-name autoscaling.amazonaws.com` で | `AccessDenied`——*「not authorized to perform: iam:CreateServiceLinkedRole on resource: …/AWSServiceRoleForAutoScaling」*。`iam:AWSServiceName` の条件は本当に効いている |
+| 12:02:52 | 同じ呼び出しをもう 1 度 | `InvalidInput`——*「Service role name AWSServiceRoleForEC2Fleet has been taken in this account, please try a different suffix.」* |
+
+**問い自体への判定は 🟢。** 限定した `iam:CreateServiceLinkedRole` は通り、条件はそれを限定し続ける。
+ただし 2 点。
+
+- ⚠️ **`standup.sh` の `|| true` は必須で、コードは `InvalidInput`** である——`EntityAlreadyExists`
+  ではない。コードで照合するスクリプトはこれを認識できない。
+- 🔴 **決定 10 の ⚠️「`AWSServiceRoleForEC2Fleet` の無い口座では最初の `CreateFleet` が失敗する」は
+  確認されなかった。** 役が存在する前に `CreateFleet` は 3 回通っている。**正直な限界**:
+  `AWSServiceRoleForEC2Spot` は既にあり（0074 が作った）、その 3 回はどれも 1 台も起動していない。
+  実際に起動した 1 回は SLR ができたあとである。つまり「どちらの SLR も無い口座で*起動する*
+  `CreateFleet`」は**測れていない**し、`standup.sh` で役を作るのは引き続き正しい。言えるのは、
+  この口座では失敗が API の入口では起きない、ということだけである。
+
+**影響——依存: 決定 10。** `standup.sh` の行はそのまま。その ⚠️ の根拠は本文が主張するより弱く、
+「最初の呼び出しが失敗する」ではなく「安い保険」と書き直すのがよい。
+
+### 片付け
+
+この実測で作ったものは全部消し、消えたことを「道具なら見つけられたはずのものが同じ出力に写っている」
+形（＝陽性対照が同じ出力の中にある）で確かめた。
+
+- `describe-stacks` → **本物の 7 本だけ**（`af-ecs-network` 〜 `af-ecs-engines`。すべて
+  `CREATE_COMPLETE` / `UPDATE_COMPLETE`）。`af-adr0077-p0-oq1` は消えている（12:06:47）。
+- `describe-instances --filters Name=tag-key,Values=af-adr0077-p0` を**状態で絞らずに** → 探りの箱
+  2 台がどちらも `terminated`。（ここが空で返っていたら、それこそ曖昧な答えだった。）
+- `describe-launch-templates` → `af-af-ecs-pool-slot` だけ。
+- `af-*` の `list-roles` → 本物の 8 本だけ。使い捨てのロール 2 本と instance profile は消えている。
+- `list-clusters` → `af-af-ecs-platform` だけ。`list-namespaces` → `af.internal` だけ。
+- instant fleet 4 本は削除済み（`deleted_terminating`）。インスタンスは持っていなかった。
+
+**意図して残したもの: `AWSServiceRoleForEC2Fleet`。** ADR は `standup.sh` にこれを作らせる前提なので、
+未解決 4 が許すとおり残した。それ以外にこの実測が残したものは無い。
+
+**費用**: `t3.small` 約 4.2 分 ≒ **$0.002**。Cloud Map の private DNS namespace は同じ時間内に作って
+消した（12 時間以内に削除した hosted zone は課金されない）。それ以外——CloudFormation・ECS・IAM・
+`CreateFleet` 6 回——はすべて無料。
+
+生の応答は、これを測ったセッションの `~/.cache/adr0077-p0/` にある。
+
+## 追記 — P1 の CP レーンが本文に返したもの（2026-09-12・PR #577）
+
+P1 の CP 側（決定 1・2・3・5・8・9・11、契約 A の CP 端）は #577 として入った。完了 1〜6 は
+`engine_offer_test.go` と `internal/runtime/runtime_ecs_ec2_engine_test.go` に陽性対照つきで固定し
+てある——手で走らせて戻した変異 2 件を含む: `registered()` の番人を外すと完了 3 が落ち、`af-role` の
+絞り込みを外すと完了 5 が落ちる。完了 7 は実機レーンで、これには入っていない。実装が本文に返したもの:
+
+- **EC2 のポートは 5 本ではなく 3 本。** P0 の実測で `CreateTags` は不要（`CreateFleet` の
+  `TagSpecifications`（ResourceType `instance`）が launch template 側のタグと併合して起動時に付く）、
+  `DeleteFleets` は決定 1 の形では使えない（instant fleet に `TerminateInstances=false` は
+  `NoTerminateInstancesNotSupported` で拒まれる）。fleet 自体は残る（P0 (b)）ので、決定 1 の
+  「CP は fleet id を覚えない」が生き残る理由は本文の言うものとは別だ——instant fleet は絞り込まない
+  `describe-fleets` に列挙されず、容量も持たないので、CP が歩く経路には何も溜まらない。ポートは
+  `CreateFleet` / `DescribeInstances` / `TerminateInstances`。
+- 🔴 **失敗コードの表に 4 つめの答えが要る。決定 8 が想定していなかった `refused`。** `iam:PassRole`
+  の欠落は **200 の `Errors[]` の中に** `UnauthorizedOperation` として来る——「在庫が無かった」と同じ形・
+  同じ場所（P0 実測）。これを「次へ」と読むと、1 台も起動できない配備に対して需要のたびに一覧を丸ごと歩き、
+  ログのどこにも欠けている権限の名が出ない。だから歩きをその場で止め、失敗 1 回として数え、原文をログに出す。
+  top-level の `SsmAccessDenied` も同じ答えに畳む。「次へ」ではないことを試験で固定し、同じ仕掛けで
+  `InsufficientInstanceCapacity` を返す陽性対照を隣に置いた。
+- **`InvalidFleetConfiguration` は意味ではなく「位置」で読む。** `Errors[]` は override ごとに 1 件で、
+  P0 では型の綴り違いと「その AZ で提供されていない型」を区別できなかった——どちらも同じコード・同じ文面。
+  よって **全 override がこれのときだけ** その行を `unusable` とし、一部なら他の override はまだ訊く価値が
+  あるので次の行へ進む。
+- **`<role>OfferBudgetSec` の既定は意味と一緒に 180 秒から 300 秒へ**（決定 1）。⚠️ **旧い意味で 180 を
+  書いた配備では、箱の ECS 登録に 180 秒しか与えないことになる**。ADR 0045 決定 22 の実測（21 秒、自前
+  AMI で 77 秒）の内側ではあるが、起動が遅い日には余裕がない。この裏返しは CFN レーンが独立に決めていて
+  両者は一致する: `standup.sh` は捕捉値の **180 ちょうどだけ**を落とし、テンプレートの 300 を効かせる
+  （上のその節）。
+- **契約 B から 1 欄だけ抜ける: `class_apply_error`。** 「段は保存されたが capacity provider に拒まれた」
+  を伝える欄で、宣言そのものが要求になった以上（決定 8）起こり得ない——保存した瞬間からその選択が効いて
+  いる。Console はこの欄があるときだけ読み、無ければ再試行の帯を出さないので決定 8 の「Console は変え
+  ない」は成り立つ。ただし契約 B は「不変」ではなく「起こり得なくなった 1 欄を除いて不変」。
+- **決定 3 が `sweepSlotOwnerTags` に足す絞り込みは `af-role = slot` ではなく `af-role ∈ {slot,
+  quarantined}`。** 隔離された箱は（解放ではなく停止なので）まだ人の `af-membership` を持ち得るし、まさに
+  それを直すのがこの掃除の役目である。`slot` だけに狭めると、持っていない箱の代金を誰かに付け続ける古い
+  タグが残る——この絞り込みを足した理由と同じ欠陥の裏返し。
+- **`draining` は ECS ではなく EC2 に、アダプタへ渡した関数で訊く。** 決定 5 は terminate を CP に渡し、
+  順序を deregister → terminate と決めた。つまりこの状態が名指している窓のあいだ、ECS はその箱を知らない。
+  そこで `engineECS` は EC2 クライアントもタグも持たず、提案の配線時に `fleet.live` を受け取る。Fargate の
+  エンジンには何も渡らず、何も払わない。
+- **決定 5 の掃除には猶予が 2 種類要る。CP は自分の `ghostAfter` を持たないから**（それはスロットプールの
+  設定で、別パッケージにある）。desired 0 のときはタスクの無い箱を 2 分で終わらせる——これが通常の退場で、
+  タスクが消えた次のティックにあたる——。サービスが上がっているときは、タスクの無い 2 台目を 15 分で終わら
+  せる。これが ADR 0075 の「箱 2 台」の漏れで、置き付け中のタスクには手を触れない。
+- **決定 9 の拒否は解析時に役で分岐する**（`parseEngineOffers(key, spec)`）。呼び出し側ごとの条件では
+  なく 1 つの関数にした。再読み込みも同じものを使う。
+- **`startGate` には 4 つめの門が要った: 「すでに購入済みの起動」。** 決定 8 は門に「候補無しの拒否」と
+  「入れ替え待ち」を残したが、3 つめが必要だった。管理トグルは自分で門を呼ぶので、これが無いと箱が登録待ち
+  のあいだにトグルの呼び出しが歩きをやり直し、2 台目を買う——ADR 0075 が 3 回中 3 回出した失敗。
+- **CFN レーンに渡す契約 A の最終形**: `launchTemplate`（launch template の id `lt-…` または名前）が
+  `capacityProvider` / `spotCapacityProvider` を置き換える。古い 2 欄は、まだ書いている配備でも**無視**する。
+  `offers` / `offerBudgetSec` / `classes` ほかは不変。`launchTemplate` の無い行は箱を買わず、箱を見分けも
+  しない——そのまま給仕を続け、素の経路でエンジンを起動する。スタックより先に CP が上がった配備がこれ。

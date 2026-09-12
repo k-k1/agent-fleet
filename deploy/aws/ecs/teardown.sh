@@ -19,8 +19,9 @@
 #     demand — a running CP recreates what was just deleted.
 #  2. Workspace services (`delete-service --force` removes the Cloud Map entry too;
 #     deleting that by hand gives ServiceNotFound)
-#  3. Terminate the slots. The home EBS volumes do not go with them (deferred release, by
-#     design — they stay and keep costing money)
+#  3. Terminate the pool's instances — the slots, and the engine boxes the CP buys (ADR
+#     0077). The home EBS volumes do not go with them (deferred release, by design — they
+#     stay and keep costing money)
 #  4. Deregister the container instances (leftovers make the cluster deletion fail;
 #     measured: 3 of 4)
 #  5. EFS access points (forget them and the 10-data deletion stalls)
@@ -120,8 +121,19 @@ echo "    stacks   : $AF_STACK_INGRESS${AF_STACK_ENGINES:+ / $AF_STACK_ENGINES}$
 echo "    cluster  : $CLUSTER   persistence=$AF_PERSISTENCE   runtime=$AF_WS_RUNTIME"
 
 list_ws_svcs() { "${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null | txt | grep '/af-ws-' || true; }
+# Every instance the pool owns: the slots, and since ADR 0077 the engine boxes the Control
+# Plane buys with EC2 Fleet. One filter on af-pool covers both, because both carry it. A
+# Managed Instances box never appeared here at all (it ran in an AWS-managed account and
+# nothing in the calling account could enumerate it), which is why step 3 could be about
+# slots alone until now.
 list_slots() { "${AWS[@]}" ec2 describe-instances \
   --filters "Name=tag:af-pool,Values=$CLUSTER" \
+    "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+  --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null | txt || true; }
+# The engine boxes on their own, for the counter and for the line step 3 prints. They are a
+# SUBSET of the above; nothing here terminates them twice.
+list_engine_boxes() { "${AWS[@]}" ec2 describe-instances \
+  --filters "Name=tag:af-pool,Values=$CLUSTER" "Name=tag:af-role,Values=engine-*" \
     "Name=instance-state-name,Values=pending,running,stopping,stopped" \
   --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null | txt || true; }
 list_homes() { "${AWS[@]}" ec2 describe-volumes --filters "Name=tag:af-pool,Values=$CLUSTER" \
@@ -134,10 +146,11 @@ list_aps() {
     --query 'AccessPoints[].AccessPointId' --output text 2>/dev/null | txt || true
 }
 WS_SVCS="$(list_ws_svcs)"; SLOTS="$(list_slots)"; HOMES="$(list_homes)"; SNAPS="$(list_snaps)"; APS="$(list_aps)"
+ENGINE_BOXES="$(list_engine_boxes)"
 count() {
   if [ -z "${1// /}" ]; then echo 0; else printf '%s\n' "$1" | wc -l | tr -d ' '; fi
 }
-echo "    runtime residue: workspaces=$(count "$WS_SVCS") slots=$(count "$SLOTS") volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
+echo "    runtime residue: workspaces=$(count "$WS_SVCS") pool-instances=$(count "$SLOTS") (engine boxes=$(count "$ENGINE_BOXES")) volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
 echo "    keeping        : hosted zone $HOSTED_ZONE / $SSM_PREFIX/* $([ "$PURGE_SECRETS" = 1 ] && echo '(NO — --purge-secrets)')"
 if [ "$AF_PERSISTENCE" = retain ]; then
   echo "    retain         : RDS final snapshot + EFS $EFS_ID are kept $([ "$PURGE_RETAINED" = 1 ] && echo '(NO — --purge-retained)')"
@@ -207,7 +220,8 @@ if [ "$AF_DRY" != 1 ]; then
   done
   echo "==> 1b. re-reading the residue now that the CP is down"
   WS_SVCS="$(list_ws_svcs)"; SLOTS="$(list_slots)"; HOMES="$(list_homes)"; SNAPS="$(list_snaps)"; APS="$(list_aps)"
-  echo "    workspaces=$(count "$WS_SVCS") slots=$(count "$SLOTS") volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
+  ENGINE_BOXES="$(list_engine_boxes)"
+  echo "    workspaces=$(count "$WS_SVCS") pool-instances=$(count "$SLOTS") (engine boxes=$(count "$ENGINE_BOXES")) volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
 fi
 
 # --- 1c) the speech engine (ADR 0070) ----------------------------------------
@@ -226,9 +240,9 @@ fi
 
 # --- 1d) the inference engines (ADR 0071) ------------------------------------
 # Same Cloud Map race as the speech engine, and a GPU box on top: an engine left running
-# keeps billing $1.26/hour through however long the rest of this teardown takes, and its
-# Managed Instances box does not go away until several minutes AFTER the task does
-# (measured drain: 427-463 s). Stop it first and let the drain overlap the stack deletions.
+# keeps billing $1.26/hour through however long the rest of this teardown takes. Stop the
+# task first so its box is idle by the time step 3 terminates it - since ADR 0077 the box is
+# an ordinary EC2 instance this script owns, not one Managed Instances drains away for us.
 #
 # ⚠️ What this does NOT delete is the models bucket — it is Retain, deliberately. Re-fetching
 # a 17 GB model from Hugging Face measured 31 minutes at the speed it happened to serve that
@@ -254,7 +268,11 @@ done
 
 # --- 3) slots and home volumes -----------------------------------------------
 if [ -n "$SLOTS" ]; then
-  echo "==> 3. terminating slots"
+  # Slots AND engine boxes. ADR 0077 gave the terminate to whoever owns the box: Managed
+  # Instances used to drain an engine box away on its own some minutes after the task went
+  # (427-463 s measured), and nothing does that now - the Control Plane would, and it was
+  # stopped in step 1. A box left behind is a GPU billing at $1.26/hour with no one watching.
+  echo "==> 3. terminating pool instances ($(count "$SLOTS"), of which $(count "$ENGINE_BOXES") engine boxes)"
   # shellcheck disable=SC2086
   af_run "${AWS[@]}" ec2 terminate-instances --instance-ids $SLOTS >/dev/null
   # shellcheck disable=SC2086

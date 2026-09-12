@@ -285,10 +285,6 @@ const (
 	engineReasonDraining   = "draining"       // stopped, but the box has not gone yet
 	engineReasonNoModel    = "no_model"       // the catalogue is empty: nothing to serve at any price
 	engineReasonUnwarmed   = "unwarmed"       // RUNNING for longer than a start takes, and still not answering
-	// engineReasonOffersSpent is rule 2 having gone round the whole offer list without a box
-	// (ADR 0075 decision 5). It is ONE failed start — the cooldown doubles once, not once per
-	// offer — and the next demand starts again from the top of the list.
-	engineReasonOffersSpent = "offers_spent"
 )
 
 // engineControlCfg is the controller's tuning, all of it from the environment.
@@ -503,23 +499,24 @@ type engineController struct {
 	// snapshot: it calls AWS — it re-applies the chosen instance class — and that function is
 	// deliberately pure. nil = no gate, which is every engine without a GPU ladder.
 	startGate func(ctx context.Context) (bool, string)
-	// startWith replaces the plain desired 0 → 1 for an engine that chooses its box from an offer
-	// list: the capacity provider and the desired count go to ECS in one call (ADR 0075 decision
-	// 4 (a)). nil = every engine without offers, which keeps exactly the start path it had.
+	// startWith replaces the plain desired 0 → 1 for an engine that buys its own box: it walks
+	// the offer list, buys one instant fleet per offer, and writes the desired count only once
+	// the box has registered with the cluster (ADR 0077 decisions 1 and 2). nil = every engine
+	// without offers, which keeps exactly the start path it had.
 	startWith func(ctx context.Context) error
-	// offerStep is rule 2 (ADR 0075 decision 5), asked on every tick while a start is in flight.
-	// It returns true when the whole offer list has been tried, which is ONE failed start — the
-	// controller counts it as such and the existing cooldown takes over. nil = no offers.
-	offerStep func(ctx context.Context, view engineServiceView) bool
-	// startSettling reports whether a start is between its two halves — the strategy written, the
-	// desired count waiting for the deployment it replaced to go (ADR 0075, measured 2 m 35 s).
-	// It suppresses the start gate on the retries: the gate has already chosen the offer and
-	// written its rung, and re-running it every five seconds would re-write the capacity provider
-	// thirty times for one start and print the VRAM line as often. nil = no offers.
+	// startSettling reports whether a start is in flight — a box is bought and the desired count
+	// is waiting for it to register. It suppresses the start gate on the retries: the gate has
+	// already chosen the offer and the money is already spent, so re-running it every five
+	// seconds would begin the walk again and buy a second GPU. nil = no offers.
 	startSettling func() bool
-	demand        *engineDemand
-	settings      store.SettingsStore
-	audit         engineAuditor
+	// boxStep is ADR 0077 decision 5, asked on every tick: the box goes when the service does,
+	// and a ghost either side of that is repaired. It is the controller's because the idle window
+	// is — nothing else knows the engine has been asked for nothing for half an hour. nil = an
+	// engine that owns no box.
+	boxStep  func(ctx context.Context, view engineServiceView)
+	demand   *engineDemand
+	settings store.SettingsStore
+	audit    engineAuditor
 	// uptime is where each tick's observation is recorded (engine_uptime.go). nil = not
 	// recorded, which is what the VOICEVOX engine does: its panel has no heatmap, and an
 	// INSERT every 30 seconds for a series nothing reads is a cost with no reader.
@@ -675,6 +672,12 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 	// Deliberately above the first-pass return below — that tick observed the engine just as
 	// well as any other, it merely has nothing to decide.
 	c.recordUptime(ctx, now, view.state)
+	// The box's own lifecycle, before any decision is taken about the service: a box with no
+	// task on it is costing money whatever the mode says, and the ordinary departure is exactly
+	// this — the tick after the one that wrote desired 0 (ADR 0077 decision 5).
+	if c.boxStep != nil {
+		c.boxStep(ctx, view)
+	}
 	mode := engineMode(c.setting(ctx, c.keys.mode), true)
 	lastDemand := c.demand.lastAt(ctx)
 	if lastDemand.IsZero() {
@@ -717,29 +720,16 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 			return engineControlBusyInterval
 		}
 	}
-	// Rule 2, while a start is in flight (ADR 0075 decision 5). Only when the controller itself
-	// has decided to do nothing: if it is about to stop the engine — the start deadline, the idle
-	// window, an administrator's OFF — moving to another offer would buy a box for a service that
-	// is about to go to desired 0.
-	if action == engineActionNone && c.offerStep != nil &&
-		view.state == "starting" && view.desired >= 1 && view.running == 0 {
-		if c.offerStep(ctx, view) {
-			// The list has been gone round once: ONE failed start, counted here so the existing
-			// cooldown (doubling, capped at 16x) governs when the next demand may try again.
-			c.mu.Lock()
-			c.failures, c.lastFailure = c.failures+1, now
-			c.mu.Unlock()
-			_ = c.apply(ctx, false, engineReasonOffersSpent, strings.Join(view.eventMessages(), " | "))
-			return engineControlBusyInterval
-		}
-	}
 	switch action {
 	case engineActionStart:
-		if errors.Is(c.apply(ctx, true, reason, ""), errEngineStrategySettling) {
-			// The strategy is written and the desired count is waiting for the deployment it
-			// replaced to go (measured 2 m 35 s). Come back at the busy interval rather than at
-			// the quiet one: somebody is waiting for this engine, and the next attempt is one
-			// short call.
+		// 🔴 Rule 2 lives inside this call now (ADR 0077 decision 1). Under ADR 0075 the start
+		// asked ECS for a box and a separate step read the service's events to find out what had
+		// happened; a `CreateFleet` answers in the same breath, so walking the offer list is what
+		// one start DOES rather than something the controller has to drive tick by tick.
+		if err := c.apply(ctx, true, reason, ""); errors.Is(err, errEngineBoxRegistering) {
+			// The box is bought and joining the cluster. Come back at the busy interval rather
+			// than at the quiet one: somebody is waiting for this engine, and the next attempt is
+			// one short call.
 			return engineControlBusyInterval
 		}
 	case engineActionStop:
@@ -827,11 +817,11 @@ func (c *engineController) apply(ctx context.Context, on bool, reason, detail st
 		target = "start"
 	}
 	if err := c.setDesired(ctx, on); err != nil {
-		if errors.Is(err, errEngineStrategySettling) {
-			// Not a failed start: the capacity provider strategy is now what this engine wants,
-			// and only the desired count is outstanding. The next tick takes the short path and
-			// writes it. Counting this would double a cooldown over a call that did its half.
-			log.Printf("%s: %s (%s) waits for the deployment it replaced to go before the desired count",
+		if errors.Is(err, errEngineBoxRegistering) {
+			// Not a failed start: the box is bought and only the desired count is outstanding.
+			// The next tick takes the short path and writes it. Counting this would double a
+			// cooldown over a call that did the expensive half.
+			log.Printf("%s: %s (%s) waits for its box to register before the desired count",
 				c.eng.logKey(), target, reason)
 			return err
 		}
@@ -871,11 +861,12 @@ func (c *engineController) isSettling() bool {
 }
 
 // setDesired moves the desired count the way this engine starts. An engine with offers goes
-// through startWith, which hands ECS the chosen capacity provider and the count together (ADR
-// 0075 decision 4 (a)); everything else moves the count alone, exactly as before.
+// through startWith, which buys the box and writes the count once it has registered (ADR 0077
+// decisions 1 and 2); everything else moves the count alone, exactly as before.
 //
-// A STOP is always the plain call: it takes the desired count to 0 and touches no strategy,
-// which is what keeps the strategy writes down to the two cases decision 4 allows.
+// A STOP is always the plain call. What follows it — the task going, the container instance being
+// deregistered, the instance terminated — is boxStep's, on the next tick: the desired count is
+// what ECS is told, and the box is what the CP owns.
 func (c *engineController) setDesired(ctx context.Context, on bool) error {
 	if on && c.startWith != nil {
 		return c.startWith(ctx)

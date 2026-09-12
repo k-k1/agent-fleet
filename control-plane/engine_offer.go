@@ -1,25 +1,31 @@
 package main
 
-// engine_offer.go — which box this role buys, out of a list of OFFERS (ADR 0075 P0).
+// engine_offer.go — which box this role buys, out of a list of OFFERS (ADR 0075 P0, rebuilt on
+// ADR 0077 P1).
 //
-// ADR 0074 gave the role a ladder of rungs and let an administrator pick one. ADR 0075 keeps the
-// ladder and changes what the CP does with it: the rungs become offers, each with a purchase
+// ADR 0074 gave the role a ladder of rungs and let an administrator pick one. ADR 0075 kept the
+// ladder and changed what the CP does with it: the rungs became offers, each with a purchase
 // option, and a start walks them from the top until a box actually arrives. Three rules the
 // operator asked for, and everything in this file is one of them:
 //
 //  1. buy what fits the VRAM, cheapest first, without caring whether it is Spot or on-demand —
 //     "cheapest first" is the DECLARATION ORDER, because the CP knows no prices (decision 1);
-//  2. if Spot cannot be had, take on-demand. ECS will not do this by itself: a
-//     capacityProviderStrategy is a weighting, not an ordered fallback, and a request it cannot
-//     place simply stays unplaced with a reason in the service events (measured: 17 minutes, four
-//     attempts, `UnfulfillableCapacity` every time);
-//  3. a Spot box may be taken away; rebuild from the top of the list (P1, not here).
+//  2. if Spot cannot be had, take on-demand;
+//  3. a Spot box may be taken away; rebuild from the top of the list (P2, not here).
+//
+// 🔴 ADR 0077 changed WHO BUYS, and that is what this file now reads like. Under 0075 the CP
+// moved the service's capacity provider strategy and ECS went shopping; the outcome had to be
+// inferred from service events minutes later, which bought two boxes, read one offer's echo as
+// the next offer's answer, and could not declare an offer unbuyable (three hardware rounds,
+// about $2.2). Now one offer row is one synchronous `CreateFleet` (engine_fleet.go) and the
+// ORDER IS REVERSED: buy the box, wait for it to register with the cluster, and only then move
+// the desired count. There is no interval in which desired is 1 and no box exists.
 //
 // 🔴 The two invariants that keep this from being expensive:
 //
 //   - nothing in this file runs for a deployment that declares no offer. The hooks are attached
-//     in newEngineRegistry only when the list is non-empty, so a deployment that never configures
-//     this makes not one extra ECS call (ADR 0074 decision 3, inherited);
+//     in newEngineRegistry only when the list is non-empty AND a launch template is declared, so
+//     such a deployment makes not one extra ECS or EC2 call (ADR 0074 decision 3, inherited);
 //   - going round the whole list once is ONE failure, not one per offer. The controller's
 //     cooldown doubles per consecutive failure up to 16x, and counting per offer would make a
 //     three-row list reach the four-hour cooldown three times as fast.
@@ -36,43 +42,47 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// The failure codes ECS writes into the service events. All four have been seen on this
-// deployment (ADR 0074 P1, ADR 0071, ADR 0075 live run 4), which is the only reason it is
-// defensible to branch on strings at all — and why the default below is "wait", never "give up".
-//
-// 🔴 They are matched as SUBSTRINGS because ECS wraps them. The Spot quota arrives inside another
-// error entirely (measured): "…was unable to place a task. Reason: ResourceInitializationError:
-// Unable to launch instance(s) for capacity provider af-…-image-spot.
-// MaxSpotInstanceCountExceeded: Max spot instance count exceeded." Anchoring on the start of the
-// message would have read that as "no known code" and waited out the whole budget, which is what
-// the deployment did.
-const (
-	engineEventUnfulfillable = "UnfulfillableCapacity"
-	engineEventInsufficient  = "InsufficientInstanceCapacity"
-	engineEventVcpuLimit     = "VcpuLimitExceeded"
-	// engineEventSpotQuota is the Spot side of the same wall as engineEventVcpuLimit. Managed
-	// Instances reports it with this word and not with `VcpuLimitExceeded` — on this deployment
-	// the latter never fired for Spot at all — so a table holding only the vCPU one leaves the
-	// quota case as the one branch of decision 5 that does not work.
-	engineEventSpotQuota = "MaxSpotInstanceCountExceeded"
-)
-
-// What one offer came to, as the panel reads it (contract B). `active` is the one that is not an
-// outcome yet: it is the offer the service's strategy is pointing at right now.
+// What one offer came to, as the panel reads it (contract B, unchanged — the Console is not
+// touched by ADR 0077). `active` is the one that is not an outcome yet: it is the offer whose box
+// this engine is on, or is waiting for.
 const (
 	engineOfferActive        = "active"
 	engineOfferUnfulfillable = "unfulfillable"
 	engineOfferInsufficient  = "insufficient"
 	engineOfferQuota         = "quota"
-	engineOfferBudget        = "budget"
-	// engineOfferUnusable is the offer that could not even be ASKED for: writing its rung to the
-	// capacity provider was refused, so the provider still holds the previous offer's
-	// requirements. Measured (ADR 0075 live run, the positive control that could not be built):
-	// `UpdateCapacityProvider` answers 400 "No instance types satisfy the instance requirements",
-	// and the CP used to log that and start anyway — buying a box against a declaration nobody
-	// had managed to apply.
+	// engineOfferBudget is the offer whose box was bought and never joined the cluster inside
+	// `<role>OfferBudgetSec`. 🔴 That is ALL the budget means now (ADR 0077 decision 1): under
+	// ADR 0075 it timed "did this provider produce a box", which is the question `CreateFleet`
+	// answers in one call, so what is left to time is the box's own boot → ECS registration.
+	engineOfferBudget = "budget"
+	// engineOfferUnusable is the offer that could not even be ASKED for. Under ADR 0075 that was
+	// `UpdateCapacityProvider` refusing a rung (400, "No instance types satisfy the instance
+	// requirements") while the provider still held the PREVIOUS offer's declaration; here a
+	// misspelt type is refused by `CreateFleet` on the spot, which is the same verdict arriving
+	// in the response to its own request.
 	engineOfferUnusable = "unusable"
 )
+
+// errEngineBoxRegistering says the box for this offer is bought and has not joined the cluster
+// yet. NOT a failed start: the expensive half has succeeded, and the next attempt is one
+// ListContainerInstances away from writing the desired count. Counting it would double a cooldown
+// over a call that did exactly what it was asked to.
+//
+// ⚠️ The wait it stands for is tens of seconds to minutes (ADR 0045 decision 22 measured boot →
+// ECS registration at 21 s for a CPU slot), so it is answered by coming back on the next tick
+// rather than by sleeping inside this one — the admin toggle shares this path and it answers an
+// HTTP request.
+var errEngineBoxRegistering = errors.New("the box is bought; waiting for it to register with the cluster")
+
+// errEngineOffersSpent says every candidate offer was tried and none produced a box. ONE failed
+// start, which is what the controller's cooldown counts.
+var errEngineOffersSpent = errors.New("every offer was tried and none produced a box")
+
+// errEngineFleetRefused says EC2 refused the request for a reason that is about the DEPLOYMENT
+// and not about the offer: a grant the CP does not hold. Every other row would be refused the
+// same way, so the walk stops where it is — and the cooldown, not a busy loop, decides when the
+// next demand may try again.
+var errEngineFleetRefused = errors.New("EC2 refused to launch for this deployment")
 
 // engineOfferAttempt is one row of the trail: which offer was tried, how it was bought, and what
 // came of it.
@@ -83,46 +93,36 @@ type engineOfferAttempt struct {
 }
 
 // engineOfferRun is rule 2's state for ONE demand: the candidate list this start was judged on,
-// where in it we are, when we got there, and what every earlier offer answered.
+// where in it we are, which box the current offer bought, when, and what every earlier offer
+// answered.
 //
 // In memory and nowhere else. A CP replaced mid-start adopts nothing — it reports no trail and
-// does not move the strategy — because the alternative is inferring somebody else's attempt from
-// a service it did not write, and the cost of doing nothing is bounded by the start deadline
-// that was already there.
+// waits for no box it did not buy — because the alternative is inferring somebody else's attempt
+// from a cluster it did not write. What makes that safe is decision 3: a box it forgot is still
+// findable by TAG, and the sweep (decision 5) is what collects it.
 type engineOfferRun struct {
 	mu    sync.Mutex
 	list  []engineClass
 	idx   int
 	trail []engineOfferAttempt
-	// since is when the strategy was written for the current offer, i.e. when its budget started.
+	// box is the EC2 instance the current offer bought, "" before the purchase. It is also the
+	// flag for "a start is in flight": the gate has chosen the offer, the money is being spent,
+	// and no second path may choose again.
+	box string
+	// since is when that box was bought, i.e. when the registration ceiling started.
 	since time.Time
 	// skipBuy holds the purchase options a quota error has taken off the table for this demand
-	// (decision 5). The quotas are SEPARATE (`L-DB2E81BA` on-demand, `L-3819A6DF` Spot), so
+	// (decision 8). The quotas are SEPARATE (`L-DB2E81BA` on-demand, `L-3819A6DF` Spot), so
 	// "on-demand is full" says nothing about Spot and vice versa — which is exactly why the
 	// answer to a quota error is to change purchase option rather than to wait.
 	skipBuy map[string]bool
-	// noted is whether the "no code matched" line has been written for the current offer. Once
-	// per offer, because the whole value of that line is that somebody reads it after AWS has
-	// changed a message and this table has silently stopped matching.
-	noted bool
 	// noOffer is whether the refusal of decision 2 has already been recorded. Without it, an
 	// engine whose models outgrew every offer would audit a line every tick.
 	noOffer bool
-	// arrived is whether a box has appeared on the current offer's capacity provider. 🔴 It ENDS
-	// the budget: what the budget buys is "was this offer able to produce a box", and everything
-	// after the box is the cold start, which `StartDeadlineSec` governs (decision 5, and the
-	// reason it is not a second deadline). Measured, ADR 0075 live run 3: the box arrived in 26
-	// seconds and the engine still moved on at 180, because the clock was reading the TASK.
-	arrived bool
-	// settling is true between the two halves of a start: the strategy is written and the desired
-	// count is waiting for the deployment it replaced to go (measured 2 m 35 s). Every start path
-	// reads it — the controller, the admin toggle's follow-up tick and the gateway's wait loop —
-	// so that the offer is chosen and its rung written ONCE per start rather than once per poll.
-	settling bool
-	// budgetSec is how long one offer is given, live. Carried here rather than read off the row
-	// this process started with, because the engine table is re-read while the CP runs and an
-	// operator raising the budget must not need a Control Plane replacement to be heard (measured
-	// gap: "changed in the table in a way this process cannot take live (offer budget)").
+	// budgetSec is how long one offer's box is given to register, live. Carried here rather than
+	// read off the row this process started with, because the engine table is re-read while the
+	// CP runs and an operator raising the budget must not need a Control Plane replacement to be
+	// heard.
 	budgetSec int
 	now       func() time.Time // test seam
 }
@@ -133,7 +133,7 @@ func newEngineOfferRun(budget time.Duration) *engineOfferRun {
 	return r
 }
 
-// budget is the per-offer budget, live.
+// budget is the per-offer registration ceiling, live.
 func (r *engineOfferRun) budget() time.Duration {
 	if r == nil {
 		return engineOfferBudgetDefault
@@ -148,7 +148,7 @@ func (r *engineOfferRun) budget() time.Duration {
 
 // setBudget takes a new budget from the table, reporting whether it changed. It keys nothing and
 // is read once per tick, so unlike the controller's own intervals it can move under a running
-// start — the offer being waited on simply gets the new figure.
+// start — the box being waited on simply gets the new figure.
 func (r *engineOfferRun) setBudget(d time.Duration) bool {
 	if r == nil {
 		return false
@@ -174,7 +174,8 @@ func (r *engineOfferRun) clock() time.Time {
 }
 
 // begin starts a fresh walk down the candidate list. Called by the start gate, which is the one
-// place that knows the start is actually about to happen.
+// place that knows the start is actually about to happen — and which refuses to run at all while
+// a box is already bought (see startGate), so this can never throw one away.
 func (r *engineOfferRun) begin(list []engineClass) {
 	if r == nil {
 		return
@@ -182,12 +183,12 @@ func (r *engineOfferRun) begin(list []engineClass) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.list = append([]engineClass(nil), list...)
-	r.idx, r.trail, r.noted, r.noOffer, r.arrived = 0, nil, false, false, false
+	r.idx, r.trail, r.noOffer = 0, nil, false
 	r.skipBuy = map[string]bool{}
-	r.since = time.Time{}
+	r.box, r.since = "", time.Time{}
 }
 
-// current is the offer the service's strategy was last written to by this process.
+// current is the offer this walk is on.
 func (r *engineOfferRun) current() (engineClass, bool) {
 	if r == nil {
 		return engineClass{}, false
@@ -200,102 +201,49 @@ func (r *engineOfferRun) current() (engineClass, bool) {
 	return r.list[r.idx], true
 }
 
-// took records that the strategy now points at the current offer, and starts its budget. It
-// reports whether that was new.
-//
-// 🔴 Taking the SAME offer twice is not a second attempt. Two start paths can fire within a second
-// of each other — the admin toggle starts the box itself and the controller's next tick agrees —
-// and the deployment showed what that costs: `offer_trail` said `[spot3 active, spot3 active]`,
-// which is a lie about the walk, and the budget clock was drawn again from the second one, giving
-// the offer a longer run than it had.
-func (r *engineOfferRun) took(c engineClass) bool {
-	if r == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if n := len(r.trail); n > 0 && r.trail[n-1].ID == c.ID && r.trail[n-1].Result == engineOfferActive {
-		// The clock is restored rather than left alone: the other start path called begin() a
-		// moment ago, which cleared it, and an offer whose budget never starts is an offer rule 2
-		// waits on for ever.
-		if r.since.IsZero() {
-			r.since = r.clock()
-		}
-		return false
-	}
-	r.since = r.clock()
-	r.noted, r.arrived = false, false
-	r.trail = append(r.trail, engineOfferAttempt{ID: c.ID, Buy: c.buy(), Result: engineOfferActive})
-	return true
-}
-
-// noteArrived records that a box has appeared on this offer's provider, and reports whether that
-// is news. From here the budget is over and the start deadline owns the clock.
-func (r *engineOfferRun) noteArrived() bool {
-	if r == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.arrived {
-		return false
-	}
-	r.arrived = true
-	return true
-}
-
-// isSettling reports whether a start is between its two halves.
-func (r *engineOfferRun) isSettling() bool {
-	if r == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.settling
-}
-
-func (r *engineOfferRun) noteSettling(v bool) {
+// took records the box this offer bought and starts its registration ceiling.
+func (r *engineOfferRun) took(c engineClass, instanceID string) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
-	r.settling = v
+	defer r.mu.Unlock()
+	r.box, r.since = instanceID, r.clock()
+	r.trail = append(r.trail, engineOfferAttempt{ID: c.ID, Buy: c.buy(), Result: engineOfferActive})
+}
+
+// boxID is the instance the current offer bought, "" when nothing has been bought yet.
+func (r *engineOfferRun) boxID() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.box
+}
+
+// startInFlight reports whether money has already been spent on this demand: a box is bought and
+// the desired count has not been written yet.
+//
+// 🔴 It is what keeps the two start paths — the admin toggle, which starts the box itself because
+// somebody is watching, and the controller's next tick a second later — from buying two boxes.
+// On the ADR 0075 deployment those two raced and `offer_trail` read `[spot3 active, spot3
+// active]`, which is a lie about the walk; here the second one would be a second GPU.
+func (r *engineOfferRun) startInFlight() bool { return r.boxID() != "" }
+
+// dropBox forgets the current offer's box, for a walk that has just terminated it.
+func (r *engineOfferRun) dropBox() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.box, r.since = "", time.Time{}
 	r.mu.Unlock()
 }
 
-// takenAt is when the strategy was written for the current offer. It is the line an event has to
-// be on the far side of to be evidence about this attempt (see engineEventIsAbout).
-func (r *engineOfferRun) takenAt() time.Time {
-	if r == nil {
-		return time.Time{}
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.since
-}
-
-// boxArrived reports whether this offer has already produced a box.
-func (r *engineOfferRun) boxArrived() bool {
-	if r == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.arrived
-}
-
-// waited is how long the current offer has had, and whether it has had anything at all (a zero
-// `since` is a CP that did not write this strategy).
-//
-// 🔴 The clock runs from the NEW PRIMARY DEPLOYMENT, not from the moment the strategy was
-// written. Every accepted strategy write forces a deployment (see setStrategy), and a deployment
-// takes about 89 seconds to complete even with no task to replace (measured, ADR 0075 live test
-// 0). Measuring from our own write would spend half of a 180-second budget on ECS's own
-// bookkeeping and move to the next offer before this one had been asked for capacity.
-//
-// The LATER of the two is used: `deploymentAt` before our write belongs to the previous offer,
-// and trusting it would shorten this offer's budget by however long the last one ran.
-func (r *engineOfferRun) waited(deploymentAt time.Time) (time.Duration, bool) {
+// waitedForBox is how long the current offer's box has had to register, and whether it has been
+// bought at all.
+func (r *engineOfferRun) waitedForBox() (time.Duration, bool) {
 	if r == nil {
 		return 0, false
 	}
@@ -304,22 +252,31 @@ func (r *engineOfferRun) waited(deploymentAt time.Time) (time.Duration, bool) {
 	if r.since.IsZero() {
 		return 0, false
 	}
-	from := r.since
-	if deploymentAt.After(from) {
-		from = deploymentAt
-	}
-	return r.clock().Sub(from), true
+	return r.clock().Sub(r.since), true
 }
 
 // settle closes the current offer with its outcome.
+//
+// 🔴 It APPENDS when the offer has no row yet, because most outcomes now happen before anything
+// is bought: `CreateFleet` answers in the same breath as the request, so an offer that was tried
+// and refused never reaches took(). A trail that only held the purchases would answer the panel's
+// question — "why is it on this box" — by hiding every row that was asked for and could not be
+// had.
 func (r *engineOfferRun) settle(result string) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if n := len(r.trail); n > 0 {
+	cur, ok := engineClass{}, r.idx >= 0 && r.idx < len(r.list)
+	if ok {
+		cur = r.list[r.idx]
+	}
+	switch n := len(r.trail); {
+	case n > 0 && r.trail[n-1].ID == cur.ID && r.trail[n-1].Result == engineOfferActive:
 		r.trail[n-1].Result = result
+	case ok:
+		r.trail = append(r.trail, engineOfferAttempt{ID: cur.ID, Buy: cur.buy(), Result: result})
 	}
 	if result == engineOfferQuota {
 		if cur := r.idx; cur >= 0 && cur < len(r.list) {
@@ -347,46 +304,7 @@ func (r *engineOfferRun) advance() (engineClass, bool) {
 	return engineClass{}, false
 }
 
-// useIndex puts the walk on one offer of the candidate list, for a start that had to skip past
-// offers whose rung the capacity provider refused.
-func (r *engineOfferRun) useIndex(i int) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.idx = i
-	r.mu.Unlock()
-}
-
-// noteUnusable writes an offer into the trail that was never asked for, because its rung could not
-// be written to the capacity provider. It is in the trail rather than only in the log because the
-// panel's question is "why is it on this box", and "the one above could not be applied" is the
-// answer.
-func (r *engineOfferRun) noteUnusable(c engineClass) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.trail = append(r.trail, engineOfferAttempt{ID: c.ID, Buy: c.buy(), Result: engineOfferUnusable})
-	r.mu.Unlock()
-}
-
-// noteOnce reports whether the "none of the known codes matched" line still has to be written for
-// the current offer.
-func (r *engineOfferRun) noteOnce() bool {
-	if r == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.noted {
-		return false
-	}
-	r.noted = true
-	return true
-}
-
-// noteNoOfferOnce is the same guard for decision 2's refusal.
+// noteNoOfferOnce is the guard on decision 2's refusal: once per demand, not once per tick.
 func (r *engineOfferRun) noteNoOfferOnce() bool {
 	if r == nil {
 		return false
@@ -410,102 +328,44 @@ func (r *engineOfferRun) attempts() []engineOfferAttempt {
 	return append([]engineOfferAttempt(nil), r.trail...)
 }
 
-// engineOfferVerdict is decision 5's table, as a pure function over the service events: what the
-// current offer is to be recorded as, and whether to move on now.
-//
-// 🔴 ONLY THIS OFFER'S EVENTS COUNT, and that is not a refinement — it is what keeps one
-// misreading from throwing the whole list away. The event list is the newest three of the SERVICE,
-// so right after a move it still holds the previous offer's failure; measured (ADR 0075 re-run 4),
-// `l4` was judged five seconds after the move on a Spot quota event from twenty seconds before it,
-// and because a quota takes a whole purchase option off the table the engine gave up on a list
-// that had a working offer left in it. An event belongs to this offer when it NAMES this offer's
-// capacity provider (ECS writes "…for capacity provider af-<stack>-image-spot" into every one of
-// these, measured for all three codes) and is NEWER than the moment the offer was taken.
-//
-// ⚠️ The DEFAULT is to wait out the budget and to say that nothing matched — and an event that
-// names no provider at all (an ordinary placement failure) falls into it. AWS may reword an event
-// at any time, and a table that fell through to "give up" would turn a reworded message into an
-// engine that walks its whole offer list in seconds and cools down for four hours.
-//
-// The events are newest first (ECS's own order), so the FIRST recognised code wins: a service
-// that hit the quota and then, once a box left, hit plain capacity shortage is on the second
-// problem now.
-func engineOfferVerdict(events []engineServiceEvent, provider string, since time.Time, waited, budget time.Duration) (result string, move, matched bool) {
-	for _, ev := range events {
-		if !engineEventIsAbout(ev, provider, since) {
-			continue
-		}
-		e := ev.message
-		switch {
-		case strings.Contains(e, engineEventUnfulfillable):
-			// "Your request's configuration cannot be fulfilled" — no AZ hint, no "try later".
-			// Measured: four attempts over 17 minutes, the same answer every time. Waiting out a
-			// budget here buys nothing at all.
-			return engineOfferUnfulfillable, true, true
-		case strings.Contains(e, engineEventVcpuLimit), strings.Contains(e, engineEventSpotQuota):
-			// A quota, and the quotas are per purchase option. Moving to another offer of the
-			// SAME option would hit the same wall, so settle() takes that option off the table.
-			//
-			// TWO words for one wall: on-demand says `VcpuLimitExceeded`, Spot says
-			// `MaxSpotInstanceCountExceeded` wrapped in a `ResourceInitializationError` (measured
-			// — the vCPU word never appeared for Spot on this deployment at all).
-			return engineOfferQuota, true, true
-		case strings.Contains(e, engineEventInsufficient):
-			// The one code that is a function of the clock: that type, that AZ, right now. It is
-			// worth the rest of the budget and not a second more.
-			return engineOfferInsufficient, waited >= budget, true
-		}
-	}
-	return engineOfferBudget, waited >= budget, false
-}
-
-// engineEventIsAbout reports whether one service event is evidence about THIS offer: it names the
-// capacity provider the offer buys from, and ECS wrote it after the offer was taken.
-//
-// Both halves are needed. The name alone would let the previous attempt on the SAME provider —
-// two offers can share one — answer for this one; the time alone would let a stray event from the
-// other provider through in the seconds after a move, which is the failure this exists for. An
-// event with no timestamp is not evidence either: it cannot be placed on either side of the move.
-func engineEventIsAbout(ev engineServiceEvent, provider string, since time.Time) bool {
-	if provider == "" || since.IsZero() || ev.at.IsZero() {
-		return false
-	}
-	if !strings.Contains(ev.message, provider) {
-		return false
-	}
-	return ev.at.After(since)
-}
-
 // --- the engine's side ---------------------------------------------------------------
 
-// wireOffers attaches everything that can reach ECS about a box, and attaches it ONLY when this
-// role declares at least one offer.
+// wireOffers attaches everything that can buy, wait for or end a box, and attaches it ONLY when
+// this role declares at least one offer AND a launch template to buy from.
 //
-// 🔴 This is ADR 0074 decision 3, inherited: a deployment that configures none of this has no
-// path from its start to DescribeCapacityProviders or to a strategy write, so it cannot log an
-// AccessDenied for a feature it does not use and cannot pay for a call it did not ask for. It is
-// one function because the four wirings are one claim — a test can hold this whole rule by
-// calling it with an empty list and counting zero.
+// 🔴 This is ADR 0074 decision 3, inherited twice: a deployment that configures none of this has
+// no path from its start to `CreateFleet`, so it cannot log an AccessDenied for a feature it does
+// not use and cannot pay for a call it did not ask for. It is one function because the wirings
+// are one claim — a test can hold the whole rule by calling it with an empty list and counting
+// zero.
 //
-// The three hooks also stand or fall together. startGate CHOOSES the offer, startWith writes it
-// to the service together with the desired count (decision 4 (a)), and offerStep is rule 2. A
-// gate with no start path would pick an offer nobody addresses; a start path with no step would
-// sit on the first offer until the start deadline, which is the failure this ADR removes.
-func (e *engineRuntimeState) wireOffers(capacity engineCapacityAPI) {
-	if e == nil || len(e.classList()) == 0 {
+// The hooks also stand or fall together. startGate CHOOSES the offer, startWith is decision 1
+// and 2 (buy, wait, then desired 1), and boxStep is decision 5 (the box goes when the service
+// does). A gate with no start path would pick an offer nobody buys; a start path with no
+// departure would leave a GPU running after the idle window closed.
+func (e *engineRuntimeState) wireOffers(fleet *engineFleet) {
+	if e == nil || len(e.classList()) == 0 || fleet == nil {
 		return
 	}
-	e.capacity = capacity
+	e.fleet = fleet
+	// `draining` is an EC2 fact now (ADR 0077 decision 5): the container instance is
+	// deregistered before the terminate, so between those two steps only EC2 knows the box is
+	// still there.
+	if e.ecs != nil {
+		e.ecs.mu.Lock()
+		e.ecs.boxLive = fleet.live
+		e.ecs.mu.Unlock()
+	}
 	if e.ctrl == nil {
 		return
 	}
 	e.ctrl.startGate = e.startGate
 	e.ctrl.startWith = e.startOnOffer
-	e.ctrl.offerStep = e.stepOffers
-	e.ctrl.startSettling = e.offers.isSettling
+	e.ctrl.startSettling = e.offers.startInFlight
+	e.ctrl.boxStep = e.sweepBoxes
 }
 
-// setOfferBudget takes a new per-offer budget from the table, reporting whether it changed.
+// setOfferBudget takes a new registration ceiling from the table, reporting whether it changed.
 func (e *engineRuntimeState) setOfferBudget(d time.Duration) bool {
 	if e == nil {
 		return false
@@ -519,29 +379,25 @@ func (e *engineRuntimeState) setOfferBudget(d time.Duration) bool {
 func (e *engineRuntimeState) offerList() []engineClass { return e.classList() }
 
 // candidateOffers is what this start may buy from, in the order it will try them (decisions 2
-// and 8).
+// and 8 of ADR 0075, inherited by 0077 decision 8).
 //
 //   - an administrator's stored choice is a PIN: that offer and nothing else, and no falling
 //     through to the next one. Somebody who said "try it on the 48 GB card" must not be quietly
 //     put on a 24 GB one — ADR 0074 decision 4 called that the most expensive kind of lie;
 //   - no stored choice is AUTOMATIC: every offer whose declared VRAM covers the largest enabled
-//     model, in declaration order. An `unknown` demand filters nothing (decision 2: refusing to
-//     start because nobody measured a model would take the engine away from a deployment that
-//     merely has not been measured);
-//   - an offer whose capacity provider this deployment does not declare is dropped. It cannot be
-//     addressed, so offering to try it would be a wait with no request behind it.
+//     model, in declaration order. An `unknown` demand filters nothing (refusing to start because
+//     nobody measured a model would take the engine away from a deployment that merely has not
+//     been measured);
+//   - with no launch template there is nothing to buy from, so there are no candidates at all.
+//     That is the deployment whose CP was upgraded before its stack: it keeps serving, and it
+//     keeps starting the engine the plain way, because the offer hooks were never attached.
 func (e *engineRuntimeState) candidateOffers(ctx context.Context) []engineClass {
 	list := e.offerList()
-	if len(list) == 0 {
+	if len(list) == 0 || e.fleet == nil {
 		return nil
 	}
 	if id := e.selectedClassID(ctx); id != "" {
 		if c, ok := engineClassByID(list, id); ok && id == c.ID {
-			if e.providerForOffer(c) == "" {
-				log.Printf("engines: %s: the pinned offer %s buys %s and this deployment declares no %s capacity provider",
-					e.def.Key, c.ID, c.buy(), c.buy())
-				return nil
-			}
 			return []engineClass{c}
 		}
 		// A pin nobody declares any more. Falling back to AUTOMATIC rather than to the first
@@ -555,208 +411,255 @@ func (e *engineRuntimeState) candidateOffers(ctx context.Context) []engineClass 
 		if !engineClassFits(c, need) {
 			continue
 		}
-		if e.providerForOffer(c) == "" {
-			log.Printf("engines: %s: skipping the offer %s: no %s capacity provider is declared",
-				e.def.Key, c.ID, c.buy())
-			continue
-		}
 		out = append(out, c)
 	}
 	return out
 }
 
-// applyFirstUsableOffer writes rungs down the candidate list until one lands, and answers with the
-// offer the start is to be made on.
+// startOnOffer is the start itself (ADR 0077 decisions 1 and 2), and the order in it is the whole
+// point of the ADR:
 //
-// 🔴 An offer whose rung the capacity provider REFUSES is not an offer this engine can be started
-// on. Measured (ADR 0075, building the live positive control): `UpdateCapacityProvider` answers
-// 400 `ClientException: No instance types satisfy the instance requirements specified in the
-// Managed Instances capacity provider` for a misspelt type or requirements nothing matches — and
-// the CP used to log that and start anyway, so the provider still held the PREVIOUS offer's
-// requirements and bought a box against a declaration that had never been applied. Skipping to the
-// next offer is the only reading under which the panel and the bill agree.
+//	buy the box → wait for it to REGISTER with the cluster → desired 1.
 //
-// The ADR 0074 exception stays: a failure on the rung THIS PROCESS already applied is a transient
-// API error in front of a provider that already says the right thing, and taking the engine away
-// over it would be an outage caused by a check.
-func (e *engineRuntimeState) applyFirstUsableOffer(ctx context.Context, cands []engineClass) (engineClass, bool) {
-	for i, c := range cands {
-		err := e.applyClass(ctx, c)
-		if err == nil || e.lastAppliedClass() == c.ID {
-			if err != nil {
-				log.Printf("engines: %s: re-applying the instance class %s failed (already applied by this process): %v",
-					e.def.Key, c.ID, err)
-			}
-			e.offers.useIndex(i)
-			return c, true
-		}
-		log.Printf("engines: %s: the offer %s could not be applied to its capacity provider, skipping it: %v",
-			e.def.Key, c.ID, err)
-		e.offers.noteUnusable(c)
-	}
-	log.Printf("engines: %s: not starting — no offer's instance class could be applied", e.def.Key)
-	return engineClass{}, false
-}
-
-// startOnOffer is the start itself (decision 4 (a)): the chosen offer's capacity provider, then
-// the desired count — two calls inside setStrategy, because one call buys two boxes.
+// 🔴 THE ONLY `desiredCount: 1` IN THIS FILE IS BEHIND `registered()`. Under ADR 0075 the desired
+// count is what sent ECS shopping, so a start was "ask, then find out what happened from the
+// service's events"; every defect three hardware rounds found lives in that gap. Here nothing is
+// asked for until the hardware is in the cluster, and a test states it as a negative (ADR 0077
+// done item 3).
 //
-// The offer was chosen by startGate a moment ago, in the same tick, and is read back from the run
-// rather than re-derived: re-deriving it here would let a catalogue edit between the two calls
-// start the engine on an offer the gate never applied a rung to.
+// Each iteration either returns or moves the walk on by one, so the loop is bounded by the
+// candidate list.
 func (e *engineRuntimeState) startOnOffer(ctx context.Context) error {
 	c, ok := e.offers.current()
 	if !ok {
 		// No walk in progress. The only way here is a start that did not come through the gate,
-		// and starting with the strategy the service already has is the same behaviour as every
-		// deployment without offers.
+		// and starting the plain way is the same behaviour as every deployment without offers.
 		return e.ecs.setEnabled(ctx, true)
 	}
-	provider := e.providerForOffer(c)
-	if err := e.ecs.setStrategy(ctx, provider, true); err != nil {
-		// The strategy landed and the desired count is waiting for the old deployment: remember
-		// that, so the next attempt is the one short call rather than the whole gate again.
-		e.offers.noteSettling(errors.Is(err, errEngineStrategySettling))
-		return err
+	// One buyer at a time. The admin toggle and the controller's tick can reach this within a
+	// second of each other (measured on the ADR 0075 deployment), and two `CreateFleet` calls a
+	// second apart are two GPUs.
+	e.startMu.Lock()
+	defer e.startMu.Unlock()
+	after := ""
+	for {
+		if id := e.offers.boxID(); id != "" {
+			b, known := e.ecs.boxFor(ctx, id)
+			if known && b.registered() {
+				// The box is in the cluster and ECS will place on it. This is the only line that
+				// asks for a task, and it carries the desired count alone — no strategy, no
+				// forced deployment, nothing that could replace a running one.
+				log.Printf("engines: %s: the box %s registered; asking for the task", e.def.Key, id)
+				return e.ecs.setEnabled(ctx, true)
+			}
+			waited, started := e.offers.waitedForBox()
+			if !started || waited < e.offers.budget() {
+				return errEngineBoxRegistering
+			}
+			// Past the ceiling. The box is ours and it is billing, so it goes before the next
+			// offer is tried — this is the one place ADR 0075's "two boxes" could still happen.
+			log.Printf("engines: %s: the box %s for offer %s did not register within %s; ending it",
+				e.def.Key, id, c.ID, e.offers.budget().Round(time.Second))
+			e.endBox(ctx, id, "it never registered with the cluster")
+			e.offers.dropBox()
+			next, ok := e.nextOffer(ctx, engineOfferBudget)
+			if !ok {
+				return errEngineOffersSpent
+			}
+			c, after = next, engineOfferBudget
+			continue
+		}
+		id, verdict := e.fleet.buy(ctx, c)
+		if id != "" {
+			e.offers.took(c, id)
+			e.noteOffer(ctx, c, id, after)
+			// Deliberately not "wait for it here": the caller may be an HTTP request, and the
+			// next tick is five seconds away.
+			return errEngineBoxRegistering
+		}
+		if verdict.action == engineFleetRefused {
+			// 🔴 Not "try the next offer". The response said the deployment cannot launch
+			// anything — a missing `iam:PassRole` arrives as `UnauthorizedOperation` INSIDE a
+			// 200, in the same shape as "there was no stock" (measured, ADR 0077 P0) — so
+			// walking the list would ask the same impossible question once per row, every time
+			// demand appears. One failed start, and the cooldown holds it off.
+			e.offers.settle(verdict.result)
+			return fmt.Errorf("%w: %s", errEngineFleetRefused, c.ID)
+		}
+		next, ok := e.nextOffer(ctx, verdict.result)
+		if !ok {
+			return errEngineOffersSpent
+		}
+		c, after = next, verdict.result
 	}
-	e.offers.noteSettling(false)
-	// Only the FIRST start of this demand writes a trail row and an audit line. The admin toggle
-	// and the controller's next tick both come through here, one second apart (measured), and the
-	// second one is the same offer being started again — not a second attempt at it.
-	if e.offers.took(c) {
-		e.noteOffer(ctx, c, provider, engineOfferActive)
+}
+
+// nextOffer closes the current offer with `result` and answers with the next candidate worth
+// trying. false means the list has been gone round once — ONE failed start, which is what the
+// controller's cooldown counts.
+func (e *engineRuntimeState) nextOffer(ctx context.Context, result string) (engineClass, bool) {
+	e.offers.settle(result)
+	next, ok := e.offers.advance()
+	if !ok {
+		log.Printf("engines: %s: every offer was tried (%s); giving up on this start",
+			e.def.Key, e.offerTrailLine())
+		e.noteNoBox(ctx)
+		return engineClass{}, false
 	}
-	return nil
+	log.Printf("engines: %s: trying the offer %s (%s) after %s", e.def.Key, next.ID, next.buy(), result)
+	return next, true
 }
 
 // startEngine is the start, for a caller that is not the controller — the admin toggle, which
 // starts the box itself because somebody is watching. It routes through exactly the same place
-// the controller's does: a second start path that moved the desired count without the strategy
-// would be a way round decision 4 (a), and the box it bought would be whatever provider the
-// service was last pointed at.
+// the controller's does: a second start path that moved the desired count on its own would be a
+// way round decision 2, and it would ask for a task on a cluster with no box in it.
 func (e *engineRuntimeState) startEngine(ctx context.Context) error {
-	if len(e.offerList()) > 0 {
+	if len(e.offerList()) > 0 && e.fleet != nil {
 		return e.startOnOffer(ctx)
 	}
 	return e.ecs.setEnabled(ctx, true)
 }
 
-// stepOffers is rule 2 (decision 5), asked on every tick while a start is in flight. It reports
-// whether the whole list has now been tried — the controller turns that into ONE failed start,
-// which is what the existing cooldown counts.
-func (e *engineRuntimeState) stepOffers(ctx context.Context, view engineServiceView) bool {
-	cur, ok := e.offers.current()
-	if !ok {
-		return false
-	}
-	// 🔴 THE BUDGET ENDS WHEN THE BOX ARRIVES, not when the task is running. What one offer is
-	// given time for is "can this provider produce a box"; everything after that is the cold start
-	// (measured 165-197 s for image, plus the model sync), and `StartDeadlineSec` is what governs
-	// it. Judging on the task instead made the deployment walk its whole list with a perfectly
-	// good Spot box already registered — 26 seconds to arrive, moved on at 180, two boxes bought
-	// and nothing started (ADR 0075 live run 3).
-	if e.offers.boxArrived() {
-		return false
-	}
-	if e.offerBoxIsUp(ctx, cur) {
-		if e.offers.noteArrived() {
-			log.Printf("engines: %s: offer %s produced a box; the start deadline owns the clock from here",
-				e.def.Key, cur.ID)
-		}
-		return false
-	}
-	waited, started := e.offers.waited(view.lastStart)
-	if !started {
-		return false
-	}
-	// The events are filtered to THIS offer: its provider's name, and after the moment it was
-	// taken. `takenAt` is that moment — the offer's own clock, not the deployment's, because what
-	// is being asked is "did ECS say this about the attempt we are waiting on".
-	result, move, matched := engineOfferVerdict(view.events, e.providerForOffer(cur), e.offers.takenAt(), waited, e.offers.budget())
-	if !matched && e.offers.noteOnce() {
-		// The one line that makes a reworded AWS message findable. Without it, the table in ADR
-		// 0075 stops matching and the only symptom is that every offer waits its full budget.
-		log.Printf("engines: %s: offer %s has no event matching a known capacity failure code yet: %s",
-			e.def.Key, cur.ID, strings.Join(view.eventMessages(), " | "))
-	}
-	if !move {
-		return false
-	}
-	log.Printf("engines: %s: offer %s answered %s after %s", e.def.Key, cur.ID, result, waited.Round(time.Second))
-	return e.moveToNextOffer(ctx, result)
-}
+// --- decision 5: the box leaves when the service does -----------------------------------
 
-// offerBoxIsUp reports whether a container instance is registered on this offer's own capacity
-// provider. The read is the cached one every Managed Instances engine already makes (20 s), so a
-// start that is going well costs three of them.
-func (e *engineRuntimeState) offerBoxIsUp(ctx context.Context, c engineClass) bool {
-	provider := e.providerForOffer(c)
-	if provider == "" {
-		return false
-	}
-	// Narrowed to THIS offer's provider: a start that changed provider can have two boxes at once
-	// — the previous offer's leaving and this one's arriving — and the unnarrowed read answers
-	// with whichever ECS listed first.
-	b, ok := e.ecs.boxOn(ctx, provider)
-	// ACTIVE only. A DRAINING box is the PREVIOUS offer's going away, and reading that as an
-	// arrival would hand the start deadline a clock for a box that is leaving.
-	return ok && b.status == "ACTIVE"
-}
+// engineBoxDepartGrace is how old a box has to be before a sweep at desired 0 may end it. It
+// guards the seconds between `CreateFleet` returning and this process recording the purchase —
+// and, on a deployment running two Control Planes, the box the OTHER one has just bought.
+const engineBoxDepartGrace = 2 * time.Minute
 
-// moveToNextOffer closes the current offer with `result` and points the service at the next
-// candidate. It reports whether the list has been gone round once — ONE failed start, which is
-// what the controller's cooldown counts.
+// engineBoxStrayAfter is the same guard for a box found while the engine is up: one role runs one
+// box, so a second one with no task on it is a leak (ADR 0075 bought two, three times out of
+// three), but it is only called a leak after long enough that it cannot be a start in progress.
+const engineBoxStrayAfter = 15 * time.Minute
+
+// sweepBoxes is decision 5, in both directions, on every controller tick.
 //
-// It loops rather than moving once, because an offer can be unusable before it is ever asked for:
-// `UpdateCapacityProvider` refuses requirements that no instance type satisfies (measured, 400
-// "No instance types satisfy the instance requirements"), and pointing the service at a provider
-// that still holds the PREVIOUS offer's requirements would buy a box nobody declared.
-func (e *engineRuntimeState) moveToNextOffer(ctx context.Context, result string) bool {
-	for {
-		e.offers.settle(result)
-		next, ok := e.offers.advance()
-		if !ok {
-			log.Printf("engines: %s: every offer was tried (%s); giving up on this start", e.def.Key, e.offerTrailLine())
-			return true
-		}
-		// The rung goes to the NEXT offer's provider before the service is pointed at it: the
-		// provider the box will come from has to hold the right instance requirements first,
-		// exactly as it does for a start (ADR 0074 decision 5).
-		if err := e.applyClass(ctx, next); err != nil && e.lastAppliedClass() != next.ID {
-			log.Printf("engines: %s: the offer %s cannot be applied to its capacity provider, skipping it: %v",
-				e.def.Key, next.ID, err)
-			e.offers.took(next)
-			result = engineOfferUnusable
+// 🔴 Neither direction consults the CP's memory, and that is ADR 0045 decision 29 applied to a
+// GPU: "when the thing is in AWS and its name is in the DB, a cleanup that can only be reached
+// from the DB turns 'the row is gone' into a permanent leak". A CP that restarted mid-start still
+// finds the box, because the box carries the tags.
+//
+//	(a) an instance tagged for this role, with no task on its container instance, while the
+//	    service wants nothing — deregistered and terminated. That IS the ordinary departure: the
+//	    idle window closes, the controller writes desired 0, the task goes, and the next tick
+//	    ends the box. It is also the repair for a terminate this process forgot;
+//	(b) a container instance carrying this role's attribute whose EC2 instance is gone —
+//	    deregistered. The slot pool's own ghost sweep no longer sees these (decision 3), and a
+//	    ghost that looks ACTIVE still satisfies placement constraints, so ECS aims the next task
+//	    at a box that is not there (ADR 0045 decision 3-2).
+func (e *engineRuntimeState) sweepBoxes(ctx context.Context, view engineServiceView) {
+	if e == nil || e.fleet == nil {
+		return
+	}
+	if e.offers.startInFlight() {
+		// A box we bought seconds ago has no task on it BY CONSTRUCTION — the desired count is
+		// what comes after it registers. Sweeping here would terminate every start.
+		return
+	}
+	registered := map[string]engineBox{}
+	for _, b := range e.ecs.boxes(ctx) {
+		registered[b.instanceID] = b
+	}
+	live := map[string]bool{}
+	for _, fb := range e.fleet.boxes(ctx) {
+		if !fb.alive() {
 			continue
 		}
-		provider := e.providerForOffer(next)
-		if err := e.ecs.setStrategy(ctx, provider, false); err != nil {
-			// Not a reason to keep walking: either the service came up between the two reads (the
-			// running guard, which is the correct refusal) or ECS is refusing, and both are
-			// answered by leaving the start where it is and letting the start deadline judge it.
-			log.Printf("engines: %s: moving to the offer %s failed: %v", e.def.Key, next.ID, err)
-			return false
+		live[fb.instanceID] = true
+		ci, inCluster := registered[fb.instanceID]
+		if inCluster && ci.tasks > 0 {
+			continue
 		}
-		e.offers.took(next)
-		log.Printf("engines: %s: trying the offer %s (%s)", e.def.Key, next.ID, next.buy())
-		e.noteOffer(ctx, next, provider, result)
-		return false
+		grace, why := engineBoxDepartGrace, "the engine is stopped and nothing is running on it"
+		if view.desired >= 1 {
+			// The engine wants a box, and one of them is presumably running its task. A second
+			// one with nothing on it is the two-box failure, but only after long enough that it
+			// cannot be a task still being placed.
+			grace, why = engineBoxStrayAfter, "it is a second box with no task on it"
+		}
+		if !fb.launchedAt.IsZero() && time.Since(fb.launchedAt) < grace {
+			continue
+		}
+		e.endBox(ctx, fb.instanceID, why)
+	}
+	for id, ci := range registered {
+		if live[id] {
+			continue
+		}
+		log.Printf("engines: %s: deregistering the ghost container instance %s (ec2 %s is gone)",
+			e.def.Key, ci.arn, id)
+		if err := e.ecs.deregisterBox(ctx, ci.arn); err != nil {
+			log.Printf("engines: %s: deregistering %s failed: %v", e.def.Key, id, err)
+			continue
+		}
+		e.noteBoxAction(ctx, id, "deregistered a ghost container instance")
 	}
 }
 
-// noteOffer writes the one audit line per move (decision 5). "Why is this engine running on the
-// expensive box" is a question somebody asks a day later, with only the ledger to answer it.
-func (e *engineRuntimeState) noteOffer(ctx context.Context, c engineClass, provider, after string) {
+// endBox takes one box out of the cluster and then out of EC2, in that order (decision 5, the
+// slot pool's `terminateSlot`).
+//
+// ⚠️ The ECS half is not optional and not automatic. A terminated instance stays registered as
+// ACTIVE with agentConnected false, and a ghost that looks ACTIVE still satisfies placement
+// constraints (ADR 0045 decision 3-2). Deregistering first also means a failed terminate degrades
+// into direction (b) of the sweep rather than into a live box ECS will not place on.
+func (e *engineRuntimeState) endBox(ctx context.Context, instanceID, why string) {
+	if b, ok := e.ecs.boxFor(ctx, instanceID); ok {
+		if err := e.ecs.deregisterBox(ctx, b.arn); err != nil {
+			log.Printf("engines: %s: deregistering %s before terminating it failed: %v", e.def.Key, instanceID, err)
+		}
+	}
+	if err := e.fleet.terminate(ctx, instanceID); err != nil {
+		log.Printf("engines: %s: terminating the box %s (%s) failed: %v", e.def.Key, instanceID, why, err)
+		return
+	}
+	log.Printf("engines: %s: terminated the box %s (%s)", e.def.Key, instanceID, why)
+	e.noteBoxAction(ctx, instanceID, "terminated: "+why)
+}
+
+// --- the ledger -------------------------------------------------------------------------
+
+// noteOffer writes the one audit line per purchase (decision 8, inherited from ADR 0075 decision
+// 5). "Why is this engine running on the expensive box" is a question somebody asks a day later,
+// with only the ledger to answer it.
+func (e *engineRuntimeState) noteOffer(ctx context.Context, c engineClass, instanceID, after string) {
 	if e == nil || e.audit == nil {
 		return
 	}
-	detail := fmt.Sprintf("buy=%s provider=%s", c.buy(), provider)
+	detail := fmt.Sprintf("buy=%s instance=%s", c.buy(), instanceID)
 	if after != "" && after != engineOfferActive {
 		detail += " after=" + after
 	}
 	_ = e.audit.InsertAudit(context.WithoutCancel(ctx), store.AuditLog{
 		ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "engine-" + e.def.Key + "-controller",
 		Action: "engine." + e.def.Key + ".offer", Target: c.ID, Detail: detail, At: store.NowTS(),
+	})
+}
+
+// noteBoxAction records what the CP did to a box it owns. The sweep is the one thing here that
+// spends — or stops spending — money without anybody asking, so it is audited rather than logged
+// (ADR 0077 decision 5).
+func (e *engineRuntimeState) noteBoxAction(ctx context.Context, instanceID, what string) {
+	if e == nil || e.audit == nil {
+		return
+	}
+	_ = e.audit.InsertAudit(context.WithoutCancel(ctx), store.AuditLog{
+		ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "engine-" + e.def.Key + "-controller",
+		Action: "engine." + e.def.Key + ".box", Target: instanceID, Detail: what, At: store.NowTS(),
+	})
+}
+
+// noteNoBox records a walk that ended with nothing bought, with the trail that says what each
+// offer answered.
+func (e *engineRuntimeState) noteNoBox(ctx context.Context) {
+	if e == nil || e.audit == nil {
+		return
+	}
+	_ = e.audit.InsertAudit(context.WithoutCancel(ctx), store.AuditLog{
+		ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "engine-" + e.def.Key + "-controller",
+		Action: "engine." + e.def.Key + ".offer", Target: "none",
+		Detail: "no offer produced a box: " + e.offerTrailLine(), At: store.NowTS(),
 	})
 }
 
@@ -807,37 +710,24 @@ func (e *engineRuntimeState) offerTrailLine() string {
 	return strings.Join(parts, " ")
 }
 
-// offerFromStrategy is decision 11: which offer the SERVICE says it is on, read back from
-// DescribeServices rather than from what this process remembers choosing.
+// offerOnBox is decision 8's replacement for ADR 0075 decision 11: which offer this engine is
+// running on, read off THE BOX'S OWN TAGS rather than off the service.
 //
-// A provider name answers the purchase option exactly; it answers WHICH ROW only when one row of
-// that option exists. With several, the offer this process is on wins if it agrees with the
-// service, and otherwise the first declared row of that purchase option is named — the honest
-// approximation, and the reason the purchase option is reported alongside rather than folded in.
-func (e *engineRuntimeState) offerFromStrategy(provider string) (engineClass, bool) {
-	provider = strings.TrimSpace(provider)
-	if provider == "" {
-		return engineClass{}, false
+// The service can no longer answer it — it declares a launch type and has no strategy to read
+// (decision 2) — and the box is the better source anyway: `af-engine-offer` and `af-engine-buy`
+// were written by the call that bought it, so they name the row that was actually paid for even
+// after the table has been edited underneath.
+func (e *engineRuntimeState) offerOnBox(ctx context.Context) (string, string, bool) {
+	if e == nil || e.fleet == nil {
+		return "", "", false
 	}
-	od, spot := e.ecs.providers()
-	buy := ""
-	switch {
-	case spot != "" && provider == spot:
-		buy = engineBuySpot
-	case od != "" && provider == od:
+	b, ok := e.fleet.current(ctx)
+	if !ok || b.offerID == "" {
+		return "", "", false
+	}
+	buy := b.buy
+	if buy != engineBuySpot {
 		buy = engineBuyOnDemand
-	default:
-		// CloudFormation, or somebody, pointed the service at a provider this role does not
-		// declare. Saying nothing is the only truthful answer.
-		return engineClass{}, false
 	}
-	if cur, ok := e.offers.current(); ok && cur.buy() == buy {
-		return cur, true
-	}
-	for _, c := range e.offerList() {
-		if c.buy() == buy {
-			return c, true
-		}
-	}
-	return engineClass{}, false
+	return b.offerID, buy, true
 }

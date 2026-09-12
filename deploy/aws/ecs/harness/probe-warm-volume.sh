@@ -97,16 +97,27 @@ say() { printf '==> %s\n' "$*" >&2; }
 out() { "${AWS[@]}" cloudformation describe-stacks --stack-name "$1" --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text; }
 
 case "$ROLE" in
-  llm)   CP_OUT=LlmCapacityProviderName;   SVC_OUT=LlmServiceName ;;
-  image) CP_OUT=ImageCapacityProviderName; SVC_OUT=ImageServiceName ;;
+  llm)   SVC_OUT=LlmServiceName ;;
+  image) SVC_OUT=ImageServiceName ;;
   *) echo "--role must be llm or image" >&2; exit 2 ;;
 esac
 
 BUCKET="$(out "$STACK" ModelsBucket)"
-CP="$(out "$STACK" "$CP_OUT")"
+# 🔴 Managed Instances era. The engine roles lost their capacity provider in ADR 0077 - the
+# Control Plane buys the box itself with EC2 Fleet - so the run-task below was rewritten to
+# place the probe on a box that already exists, and the task definition now asks for EC2.
+# 🔴 NOTHING BELOW HAS BEEN RE-MEASURED since that rewrite: it is mechanical, and the numbers
+# in the header came from the Managed Instances shape. This guard is what stops a stale probe
+# being read as a measurement - delete it when you re-run the thing and record what came out.
+cat >&2 <<MIERA
+probe-warm-volume.sh has not been run since ADR 0077 moved the engine off Managed Instances.
+Start the $ROLE role first (the Control Plane buys the box; this script no longer does), then
+delete the guard at this line and re-measure. The numbers in the header are pre-0077.
+MIERA
+exit 2
 SERVICE="$(out "$STACK" "$SVC_OUT")"
 CLUSTER="$("${AWS[@]}" cloudformation list-exports --query "Exports[?Name=='$PLATFORM_STACK-ClusterName'].Value" --output text)"
-[ -n "$BUCKET" ] && [ -n "$CP" ] && [ -n "$CLUSTER" ] || { echo "missing coordinates: bucket=$BUCKET cp=$CP cluster=$CLUSTER" >&2; exit 1; }
+[ -n "$BUCKET" ] && [ -n "$CLUSTER" ] || { echo "missing coordinates: bucket=$BUCKET cluster=$CLUSTER" >&2; exit 1; }
 
 # The smallest object under the role's prefix, so the probe is about persistence and not about
 # throughput. Picked from the bucket rather than hard-coded: which models are staged is the
@@ -126,7 +137,7 @@ EXEC_ROLE="$(jq -r '.executionRoleArn' <<<"$TD_JSON")"
 TASK_ROLE="$(jq -r '.taskRoleArn' <<<"$TD_JSON")"
 LOG_GROUP="$(jq -r '.containerDefinitions[0].logConfiguration.options["awslogs-group"]' <<<"$TD_JSON")"
 
-say "cluster=$CLUSTER cp=$CP bucket=$BUCKET key=$KEY sourcePath=$SOURCE_PATH runs=$RUNS"
+say "cluster=$CLUSTER bucket=$BUCKET key=$KEY sourcePath=$SOURCE_PATH runs=$RUNS"
 
 # HIT/MISS is decided on SIZE, not on the name alone: a half-written file from a task that was
 # killed mid-fetch is not a warm start, and reporting it as one is how this question got its
@@ -138,7 +149,7 @@ TASKDEF="$(jq -n --arg exec "$EXEC_ROLE" --arg task "$TASK_ROLE" --arg cmd "$PRO
   --arg sp "$SOURCE_PATH" --arg g "$LOG_GROUP" --arg r "$REGION" '
 {
   family: "af-engprobe-warmvol",
-  requiresCompatibilities: ["MANAGED_INSTANCES"],
+  requiresCompatibilities: ["EC2"],
   networkMode: "awsvpc",
   cpu: "512", memory: "1024",
   executionRoleArn: $exec, taskRoleArn: $task,
@@ -160,7 +171,7 @@ say "registered $TD_ARN"
 for run in $(seq 1 "$RUNS"); do
   T0=$(date +%s)
   TASK="$("${AWS[@]}" ecs run-task --cluster "$CLUSTER" --task-definition "$TD_ARN" \
-    --capacity-provider-strategy "capacityProvider=$CP,weight=1" \
+    --launch-type EC2 --placement-constraints "type=memberOf,expression=attribute:af-role == engine-$ROLE" \
     --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
     --query 'tasks[0].taskArn' --output text)"
   ID="${TASK##*/}"

@@ -5,14 +5,13 @@
 // engine costs nothing. Addressing is a fixed Cloud Map DNS name, which leaves every caller
 // (the synthesis handler, the /engine/* gateway) pointing at one URL. The service, task
 // definition and Cloud Map entry are owned by IaC (deploy/aws); CP only calls
-// DescribeServices and UpdateService, plus — for a Managed Instances engine — the
-// container-instance reads it already has. A small adapter independent of the workspace ECS
+// DescribeServices and UpdateService, plus — for an engine that runs on a box of its own
+// (ADR 0077) — the container-instance calls. A small adapter independent of the workspace ECS
 // adapter (runtime_ecs.go).
 package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -26,14 +25,20 @@ import (
 )
 
 // engineECSAPI is the narrow ECS port, so tests can pass a fake. The real *ecs.Client
-// satisfies it. The two container-instance calls are only ever made for an engine that
-// declares a capacity provider, i.e. an ADR 0071 Managed Instances engine; a Fargate engine
-// leaves them unused.
+// satisfies it. The three container-instance calls are only ever made for an engine that runs on
+// a box of its own, i.e. one whose table row declares a launch template; a Fargate engine leaves
+// them unused.
 type engineECSAPI interface {
 	DescribeServices(context.Context, *ecs.DescribeServicesInput, ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error)
 	UpdateService(context.Context, *ecs.UpdateServiceInput, ...func(*ecs.Options)) (*ecs.UpdateServiceOutput, error)
 	ListContainerInstances(context.Context, *ecs.ListContainerInstancesInput, ...func(*ecs.Options)) (*ecs.ListContainerInstancesOutput, error)
 	DescribeContainerInstances(context.Context, *ecs.DescribeContainerInstancesInput, ...func(*ecs.Options)) (*ecs.DescribeContainerInstancesOutput, error)
+	// DeregisterContainerInstance is the first half of a departure (ADR 0077 decision 5). The
+	// CP is the one that terminates the box now, so it is also the one that has to take it out
+	// of the cluster: a terminated instance stays registered as ACTIVE with agentConnected
+	// false, and a ghost that looks ACTIVE still satisfies placement constraints (ADR 0045
+	// decision 3-2, measured again on this deployment).
+	DeregisterContainerInstance(context.Context, *ecs.DeregisterContainerInstanceInput, ...func(*ecs.Options)) (*ecs.DeregisterContainerInstanceOutput, error)
 }
 
 type engineECS struct {
@@ -45,77 +50,37 @@ type engineECS struct {
 	cached  engineServiceView
 	cachAt  time.Time
 	cachEr  error
-	// capacityProvider is set only for a Managed Instances engine. It is what makes
-	// `draining` observable: with desired 0 the service says "stopped" the moment the task
-	// goes, while the EC2 instance behind it lives on for several more minutes (measured:
-	// 427 and 463 seconds on a GPU box, 93 on a CPU one) and bills the whole time. Empty =
-	// Fargate, where there is no such state.
+	// roleAttr is the `af-role` value this engine's boxes carry — "engine-image" — and it is
+	// what tells one of them from a workspace slot, from the other role's GPU and from a
+	// Managed Instances box left over from ADR 0071. Empty = this engine runs on Fargate (or on
+	// a table row written before ADR 0077), and then no container instance is ever this
+	// engine's and no call is made to find out.
 	//
-	// 🔴 Under the mutex, and read through provider(): replacing a capacity provider renames
-	// it, and the engine table the Control Plane re-reads carries the new name (ADR 0074, the
-	// gap #536 measured on the Spot swap). It is a destination string and a match string —
-	// it keys nothing this process holds — so it moves live rather than needing a restart.
-	capacityProvider string
-	// spotProvider is the Spot half of the pair (ADR 0075 decision 3). Empty on every deployment
-	// that declares none, and then this engine behaves exactly as it did with one name.
-	//
-	// 🔴 The two are held TOGETHER, under the same mutex, and every read that asks "is this my
-	// box" asks about BOTH. #542 narrowed the copy to one field so that the destination and the
-	// match could not disagree; widening it to a pair keeps that property — what must never
-	// happen is a box bought on one of them being invisible because the other was the one
-	// consulted (measured during the 0074 rename: `box: null` while the panel said the engine was
-	// up on an l4).
-	spotProvider string
-	cachBoxes    []engineBox
-	cachBoxAt    time.Time
-	now          func() time.Time // test seam
+	// 🔴 Under the mutex, and read through role(): a launch template can be replaced by a
+	// CloudFormation update and the table the CP re-reads carries the new one, but the ROLE
+	// never changes under a running process — it is derived from the row's key. It is here
+	// rather than computed at each call site so that "whose box is this" has exactly one
+	// answer.
+	roleAttr string
+	// boxLive answers `draining` — "is there still an instance behind this stopped service".
+	// It is a function rather than a field because the fact is EC2's now (ADR 0077 decision 5:
+	// draining runs from the CP's terminate until EC2 reports `terminated`), and this type has
+	// no EC2 client. nil = nothing to ask, which reads as "not draining" — the safe direction,
+	// since the other one would leave the controller refusing to start for ever.
+	boxLive   func(context.Context) bool
+	cachBoxes []engineBox
+	cachBoxAt time.Time
+	now       func() time.Time // test seam
 }
 
-// provider is the ON-DEMAND capacity provider name, now. It is also the historical single name:
-// a role that declares no Spot provider has this one and nothing else.
-func (t *engineECS) provider() string {
+// role is the `af-role` attribute value this engine's boxes carry, "" for Fargate.
+func (t *engineECS) role() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.capacityProvider
+	return t.roleAttr
 }
 
-// providerFor is the capacity provider one offer is bought from (ADR 0075 decision 3). "" means
-// this deployment declares none for that purchase option, and an offer nobody can address is an
-// offer that cannot be tried.
-func (t *engineECS) providerFor(buy string) string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if buy == engineBuySpot {
-		return t.spotProvider
-	}
-	return t.capacityProvider
-}
-
-// providers is the pair, for the callers that have to match a box against either of them.
-func (t *engineECS) providers() (onDemand, spot string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.capacityProvider, t.spotProvider
-}
-
-// setProviders replaces the pair, reporting whether either name actually changed.
-//
-// 🔴 It drops the cached box as well. That entry was matched against the OLD names, so
-// keeping it would report the previous provider's instance as this engine's for the rest of
-// engineBoxTTL — which is the panel telling the operator a box is up on a card it is not on,
-// the failure shape ADR 0074 decision 4 is about.
-func (t *engineECS) setProviders(onDemand, spot string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.capacityProvider == onDemand && t.spotProvider == spot {
-		return false
-	}
-	t.capacityProvider, t.spotProvider = onDemand, spot
-	t.cachBoxes, t.cachBoxAt = nil, time.Time{}
-	return true
-}
-
-// engineBox is the EC2 instance a Managed Instances engine is running on, as ECS sees it.
+// engineBox is the EC2 instance this engine is running on, as ECS sees it.
 //
 // It exists because the service's own timestamps answer a different question. `lastStart` is
 // when the primary deployment last changed state — a fact about the service — and after a
@@ -123,44 +88,44 @@ func (t *engineECS) setProviders(onDemand, spot string) bool {
 // What an operator looking at a $1.26/hour GPU wants is when THE BOX started, and the only
 // place that is written down is the container instance's registeredAt.
 //
-// ⚠️ Do not reach for `ec2 describe-instances` to answer this. A Managed Instances box does
-// NOT appear in an unfiltered listing — measured on af-sandbox while the task was RUNNING:
-// the listing returned three unrelated instances and not the engine's, while
-// `--instance-ids i-08a9…` returned it as a running g6.xlarge (ADR 0071, P1 の実測 2). ECS is
-// the source that can be enumerated.
+// The EC2 side of the same box (which offer bought it, whether it was Spot) is `engineFleetBox`:
+// a box the CP bought with EC2 Fleet IS enumerable by `describe-instances`, which a Managed
+// Instances box was not (ADR 0071 P1 measurement 2, the limit ADR 0077 removes).
 type engineBox struct {
 	instanceID string    // i-08a9… — the id `describe-instances --instance-ids` will accept
 	arn        string    // the container instance ARN
 	status     string    // ACTIVE while it can take tasks, DRAINING once it is going away
 	since      time.Time // registeredAt: when the box joined the cluster
+	// connected is the agent's own connection. A box is not "registered" until ECS will place
+	// on it, and that is ACTIVE **and** agentConnected — the slot pool's waitSlotRegistered
+	// waits for exactly this pair, and the desired count must not go to 1 a moment early.
+	connected bool
+	// tasks is running + pending tasks on the box. Departure (decision 5) waits for it to
+	// reach 0 before the box is taken out of the cluster.
+	tasks int
 	// instanceType is the box's EC2 type, read from the container instance's own
-	// `ecs.instance-type` attribute (ADR 0074). It answers a question the capacity provider
-	// cannot: the provider says what the NEXT box will be, and after a rung change the two
-	// differ for as long as the old box lives. Empty when ECS did not report the attribute,
-	// and empty must never be read as "it matches" — see startGate.
+	// `ecs.instance-type` attribute (ADR 0074). It is what a start's swap wait compares against
+	// the offer it is about to buy. Empty when ECS did not report the attribute, and empty must
+	// never be read as "it matches" — see startGate.
 	instanceType string
-	// provider is which of the role's two capacity providers this box was bought from (ADR 0075
-	// decision 3). It is the honest answer to "on-demand or Spot" the CP can give without
-	// `ec2:DescribeInstances` — the `InstanceLifecycle` that would PROVE it is reachable by
-	// instance id only, and ADR 0045 decision 21 keeps that call out of the CP.
-	provider string
 }
 
-// engineProviderMatches reports whether a container instance's capacity provider is one of this
-// engine's. An empty declared name never matches: a role with no Spot provider must not adopt
-// every instance ECS reports without one.
-func engineProviderMatches(got, onDemand, spot string) bool {
-	if got == "" {
-		return false
-	}
-	return (onDemand != "" && got == onDemand) || (spot != "" && got == spot)
-}
+// registered reports whether ECS will place this engine's task on the box.
+func (b engineBox) registered() bool { return b.status == "ACTIVE" && b.connected }
 
 // engineBoxTypeAttr is the container-instance attribute holding the EC2 instance type. ECS
-// registers it on every instance; it is the only place the CP can read the type of a Managed
-// Instances box, which does not appear in an unfiltered `ec2 describe-instances` at all
-// (measured, ADR 0071).
+// registers it on every instance.
 const engineBoxTypeAttr = "ecs.instance-type"
+
+// engineBoxRoleAttr is the container-instance attribute that says which role's box this is
+// (ADR 0077 decision 3). The launch template's user data writes it into `/etc/ecs/ecs.config`
+// as `ECS_INSTANCE_ATTRIBUTES={"af-role":"engine-<role>"}`, where a slot's user data writes
+// `ECS_CLUSTER`.
+//
+// 🔴 The same word as the EC2 tag (`runtime.EC2TagRole`), on purpose. The service's placement
+// constraint names this attribute, the slot pool's `isPoolContainerInstance` reads it to know
+// the box is not a slot, and the CP's own sweep reads the tag — one vocabulary, three readers.
+const engineBoxRoleAttr = "af-role"
 
 // engineBoxTTL is the cache in front of the two container-instance calls. Longer than
 // engineViewTTL because it answers a slower question: a box takes minutes to appear and 427-477
@@ -180,24 +145,11 @@ type engineServiceView struct {
 	// a start failed ("no container instances met the placement constraints", a pull
 	// failure). Reading them needs no permission the CP role does not already have.
 	//
-	// 🔴 Each one carries its TIME, and rule 2 needs it. The list is the newest three of the
-	// whole SERVICE, so after a move to another offer it still holds the previous offer's
-	// failure — measured: `l4` was judged five seconds after the move, on a Spot quota event
-	// from twenty seconds before it, and the engine gave up on a list that had one working
-	// offer left in it (ADR 0075, re-run 4).
+	// ⚠️ They are EVIDENCE FOR A PERSON now, not an input to a decision. ADR 0075 had to read
+	// the capacity verdict out of them because ECS was the buyer; under ADR 0077 the verdict is
+	// `CreateFleet`'s own response, and one misread event can no longer throw away an offer list
+	// that had a working row left in it (ADR 0075 re-run 4).
 	events []engineServiceEvent
-	// provider is the capacity provider the SERVICE's own strategy names right now (ADR 0075
-	// decision 11). The panel says what the engine is running on from this and never from what
-	// the CP remembers choosing: CloudFormation rewrites the strategy on every release that
-	// touches the service, and a remembered choice would go on claiming Spot while the box is
-	// on-demand — the shape of the lie the 0074 rename produced (`box: null`, "starting on l4").
-	// Empty for a service that declares a launch type instead of a strategy.
-	provider string
-	// deployment is the PRIMARY deployment's id, and deployments is how many the service has at
-	// all. Both are about the same fact: a forced deployment makes a NEW PRIMARY while the old
-	// one stays `ACTIVE` for minutes, and during that window the service has two.
-	deployment  string
-	deployments int
 }
 
 // engineServiceEvent is one line ECS wrote about this service, with the moment it wrote it.
@@ -213,19 +165,6 @@ func (v engineServiceView) eventMessages() []string {
 		out = append(out, e.message)
 	}
 	return out
-}
-
-// settled reports whether ECS has finished with the last deployment: ONE deployment, and it is
-// not still rolling.
-//
-// 🔴 This is the gate on the desired count, and "a new PRIMARY exists" is NOT the same question.
-// Measured (ADR 0075 re-run 3): eight seconds after the forced deployment appeared, a
-// `desiredCount: 1` was placed by the OLD deployment — `describe-tasks` named it in `startedBy` —
-// and the old strategy's provider bought a second box. The old deployment was still `ACTIVE` two
-// minutes 35 seconds later, so waiting for it costs that much start latency. That is the price;
-// the box it saves is $0.28 of the $0.35 that run spent.
-func (v engineServiceView) settled() bool {
-	return v.deployments <= 1 && v.rollout != "IN_PROGRESS"
 }
 
 // engineViewTTL is the short cache in front of DescribeServices (ADR 0070 decision 10).
@@ -290,16 +229,6 @@ func (t *engineECS) describe(ctx context.Context) (engineServiceView, error) {
 	}
 	for _, s := range out.Services {
 		v := engineServiceView{desired: s.DesiredCount, running: s.RunningCount}
-		// The FIRST entry of the strategy, not a weighted reading of all of them: this CP writes
-		// exactly one provider at weight 1 (setStrategy) and 60-engines declares one, so a second
-		// entry would be somebody else's edit and reporting the first is then the honest "this is
-		// what the service says" rather than a computed guess.
-		for _, cp := range s.CapacityProviderStrategy {
-			if name := strings.TrimSpace(aws.ToString(cp.CapacityProvider)); name != "" {
-				v.provider = name
-				break
-			}
-		}
 		if aws.ToString(s.Status) == "INACTIVE" {
 			v.state = "none"
 			v.desired = 0
@@ -313,11 +242,13 @@ func (t *engineECS) describe(ctx context.Context) (engineServiceView, error) {
 		default:
 			v.state = "stopped"
 			// `draining` is stopped-but-still-billing. ECS reports the service as stopped the
-			// moment the task goes; Managed Instances then keeps the EC2 instance for minutes
-			// more. Two things need it: an idle window shortened below the drain buys nothing
-			// (the money is already spent), and a start landing on a box that is still there is
-			// warm — the image layers and the model file are on its disk, so it skips the S3
-			// fetch entirely (ADR 0071 decision 7).
+			// moment the task goes, while the instance behind it lives on — under ADR 0071 that
+			// was Managed Instances draining it out of our hands, and under ADR 0077 decision 5
+			// it is the window between the CP issuing the terminate and EC2 reporting
+			// `terminated`. Two things need it: an idle window shortened below the drain buys
+			// nothing (the money is already spent), and a start landing on a box that is still
+			// there is warm — the image layers and the model file are on its disk (ADR 0071
+			// decision 7).
 			if t.draining(ctx) {
 				v.state = "draining"
 			}
@@ -332,18 +263,10 @@ func (t *engineECS) describe(ctx context.Context) (engineServiceView, error) {
 		// start deadline by it means every start on a service older than the deadline is
 		// declared failed the instant it begins, and the engine can never come up at all.
 		// `updatedAt` moves with the scale-up (and with a task ECS replaces underneath).
-		// How many deployments the service has. More than one means an older one is still going
-		// away, and a desired count written now is placed by BOTH (measured — see settled()).
-		v.deployments = len(s.Deployments)
 		for _, d := range s.Deployments {
 			if aws.ToString(d.Status) != "PRIMARY" {
 				continue
 			}
-			// The deployment's id, which is how "ECS has taken the strategy" is told from "the
-			// call returned": forcing a deployment REPLACES the PRIMARY one, id and all
-			// (measured, ADR 0075 live test 0: `ecs-svc/0995…` → `ecs-svc/5816…`). The start
-			// splits on this — see setStrategy.
-			v.deployment = aws.ToString(d.Id)
 			v.rollout = string(d.RolloutState)
 			switch {
 			case d.UpdatedAt != nil:
@@ -373,51 +296,52 @@ func (t *engineECS) describe(ctx context.Context) (engineServiceView, error) {
 // the newest first and only the last few say anything about the start that just failed.
 const engineServiceEventsKept = 3
 
-// draining reports whether this engine's capacity provider still has a container instance
-// registered. Only asked when the service is at desired 0 and only for an engine that
-// declares a provider, so a Fargate engine and a running engine both cost nothing here.
+// draining reports whether a box of this engine's is still in existence behind a stopped
+// service. Only asked when the service is at desired 0 and only for an engine that has boxes at
+// all, so a Fargate engine and a running engine both cost nothing here.
 //
-// A failure answers false. The alternative — treating an unreadable cluster as "draining" —
-// would keep an engine in a state the controller reads as "do not start yet", i.e. an
-// AccessDenied would silently turn the whole feature off.
+// 🔴 It asks EC2, not ECS (ADR 0077 decision 5). Departure now DEREGISTERS the container instance
+// before terminating the instance, so between those two steps ECS knows nothing about a box that
+// is still billing — and `draining` is precisely that window.
+//
+// A failure answers false. The alternative — treating an unreadable answer as "draining" — would
+// keep an engine in a state the controller reads as "do not start yet", i.e. one AccessDenied
+// would silently turn the whole feature off.
 func (t *engineECS) draining(ctx context.Context) bool {
-	_, ok := t.box(ctx)
-	return ok
+	t.mu.Lock()
+	live := t.boxLive
+	t.mu.Unlock()
+	return live != nil && live(ctx)
 }
 
-// box is the cached container-instance lookup. Two callers with two reasons: `draining`
-// (stopped-but-still-billing, ADR 0071 decision 7) and the admin panel, which wants the
-// registeredAt this is the only source of.
-//
-// Not found and not readable both answer false, and the difference is deliberately dropped:
-// the only caller that acts on it is the controller, and it must read an unreadable cluster
-// as "not draining" rather than as "do not start yet" — see draining above.
+// box is the cached container-instance lookup: what the CLUSTER knows about this engine's box,
+// which is the registeredAt, the status and the instance type. The admin panel and the start
+// gate are its callers.
 func (t *engineECS) box(ctx context.Context) (engineBox, bool) {
-	return engineFirstBox(t.boxes(ctx), "")
+	return engineFirstBox(t.boxes(ctx))
 }
 
-// boxOn is the same lookup narrowed to ONE of the role's capacity providers. Rule 2 needs it:
-// "has this offer produced a box" is a question about the provider the offer buys from, and a
-// start that changed provider can have two boxes registered at once — the previous offer's on its
-// way out and this one's coming up. Asking `box()` would answer with whichever ECS listed first
-// (measured on the deployment: exactly that pair, 17 seconds apart).
-func (t *engineECS) boxOn(ctx context.Context, provider string) (engineBox, bool) {
-	if strings.TrimSpace(provider) == "" {
+// boxFor is the same lookup narrowed to one EC2 instance id: "has the box we just bought joined
+// the cluster yet" (ADR 0077 decision 2). It is the one question the desired count waits on.
+func (t *engineECS) boxFor(ctx context.Context, instanceID string) (engineBox, bool) {
+	if strings.TrimSpace(instanceID) == "" {
 		return engineBox{}, false
 	}
-	return engineFirstBox(t.boxes(ctx), provider)
+	for _, b := range t.boxes(ctx) {
+		if b.instanceID == instanceID {
+			return b, true
+		}
+	}
+	return engineBox{}, false
 }
 
-// engineFirstBox picks one box out of the ones registered on this engine's providers: the first
-// ACTIVE one, and only then a draining one. Preferring ACTIVE is what keeps the panel — and rule
-// 2 — describing the box that is coming up rather than the one going away.
-func engineFirstBox(list []engineBox, provider string) (engineBox, bool) {
+// engineFirstBox picks one box out of this engine's: the first ACTIVE one, and only then a
+// draining one. Preferring ACTIVE is what keeps the panel describing the box that is coming up
+// rather than the one going away.
+func engineFirstBox(list []engineBox) (engineBox, bool) {
 	var fallback engineBox
 	found := false
 	for _, b := range list {
-		if provider != "" && b.provider != provider {
-			continue
-		}
 		if b.status == "ACTIVE" {
 			return b, true
 		}
@@ -428,10 +352,27 @@ func engineFirstBox(list []engineBox, provider string) (engineBox, bool) {
 	return fallback, found
 }
 
-// boxes is the cached container-instance lookup: every instance registered on either of this
-// engine's capacity providers.
+// deregisterBox takes one box out of the cluster, by ARN, forced (ADR 0077 decision 5).
+//
+// 🔴 It deliberately does NOT go through the slot pool's deregisterSlot: that applies the pool
+// test, which an engine box fails by construction (decision 3), so it would refuse exactly the
+// box this is for. Force, because the point of the call is that nothing may be placed here again
+// — by the time it is made the box is about to stop existing.
+func (t *engineECS) deregisterBox(ctx context.Context, arn string) error {
+	if strings.TrimSpace(arn) == "" {
+		return nil
+	}
+	_, err := t.api.DeregisterContainerInstance(ctx, &ecs.DeregisterContainerInstanceInput{
+		Cluster: aws.String(t.cluster), ContainerInstance: aws.String(arn), Force: aws.Bool(true),
+	})
+	t.invalidateBox()
+	return err
+}
+
+// boxes is the cached container-instance lookup: every instance in the cluster carrying this
+// role's `af-role` attribute.
 func (t *engineECS) boxes(ctx context.Context) []engineBox {
-	if od, spot := t.providers(); od == "" && spot == "" {
+	if t.role() == "" {
 		return nil // Fargate: nothing to look up, and no call to pay for
 	}
 	now := t.clock()
@@ -452,10 +393,7 @@ func (t *engineECS) boxes(ctx context.Context) []engineBox {
 
 // describeBoxes is the uncached walk of the cluster's container instances.
 func (t *engineECS) describeBoxes(ctx context.Context) []engineBox {
-	// Read once, up front: the names can be replaced under this walk by the table reloader,
-	// and matching half the pages against one name and half against another would answer
-	// "no box" on the run that happens to straddle a rename.
-	wantOD, wantSpot := t.providers()
+	want := t.role()
 	var arns []string
 	var next *string
 	for {
@@ -485,38 +423,42 @@ func (t *engineECS) describeBoxes(ctx context.Context) []engineBox {
 			return nil
 		}
 		for _, ci := range page.ContainerInstances {
-			// The capacity provider is what tells this engine's box apart from a workspace
-			// slot on the same cluster. Matching on anything looser would report the pool's
-			// m8g as the GPU that is costing $1.26 an hour.
-			//
-			// EITHER name counts (ADR 0075 decision 3). The two providers are one role's two
-			// wallets, so a box bought on the Spot one is this engine's box in every sense that
-			// matters here — it is what `draining` is about to bill for, and it is what the start
-			// gate compares an instance type against.
-			cp := aws.ToString(ci.CapacityProviderName)
-			if !engineProviderMatches(cp, wantOD, wantSpot) {
+			// 🔴 The `af-role` ATTRIBUTE is what tells this engine's box apart from a workspace
+			// slot on the same cluster, from the other role's GPU, and from a Managed Instances
+			// box left over from ADR 0071 (which carries a capacity provider name and no
+			// attribute at all). Matching on anything looser would report the pool's m8g as the
+			// card that is costing $1.26 an hour — the shape of the lie ADR 0074 decision 4 is
+			// about.
+			if engineInstanceAttr(ci, engineBoxRoleAttr) != want {
 				continue
 			}
 			b := engineBox{
 				instanceID: aws.ToString(ci.Ec2InstanceId),
 				arn:        aws.ToString(ci.ContainerInstanceArn),
 				status:     aws.ToString(ci.Status),
-				provider:   cp,
+				connected:  ci.AgentConnected,
+				tasks:      int(ci.RunningTasksCount + ci.PendingTasksCount),
 			}
 			if ci.RegisteredAt != nil {
 				b.since = *ci.RegisteredAt
 			}
-			for _, at := range ci.Attributes {
-				if aws.ToString(at.Name) == engineBoxTypeAttr {
-					b.instanceType = strings.TrimSpace(aws.ToString(at.Value))
-					break
-				}
-			}
+			b.instanceType = engineInstanceAttr(ci, engineBoxTypeAttr)
 			out = append(out, b)
 		}
 		arns = arns[n:]
 	}
 	return out
+}
+
+// engineInstanceAttr reads one container-instance attribute, "" when it is not there. An absent
+// attribute is a real answer — a slot has no `af-role` — and it must never be read as a match.
+func engineInstanceAttr(ci ecstypes.ContainerInstance, name string) string {
+	for _, at := range ci.Attributes {
+		if aws.ToString(at.Name) == name {
+			return strings.TrimSpace(aws.ToString(at.Value))
+		}
+	}
+	return ""
 }
 
 func (t *engineECS) logKey() string {
@@ -573,131 +515,10 @@ func (t *engineECS) setEnabled(ctx context.Context, on bool) error {
 	return err
 }
 
-// setStrategy is THE ONLY PLACE the Control Plane writes a service's capacityProviderStrategy,
-// and the whole safety of ADR 0075 is the guard three lines into it (decisions 4 and 12).
-//
-// ADR 0074 refused to let the CP touch a service's strategy at all, because re-applying a choice
-// idempotently in front of every start would kill whatever the engine was generating. That
-// reason holds for exactly as long as there is a task to kill, so the rule is not "be careful"
-// — it is RUNNING == 0, checked here, on a reading taken now.
-//
-// 🔴 CHANGING A STRATEGY REQUIRES `forceNewDeployment`, EVEN AT DESIRED 0. Measured on a throwaway
-// Managed Instances provider (ADR 0075 live test 0, $0): without the flag ECS answers HTTP 400
-// `InvalidParameterException` — "…on a service that is already using one, you must force a new
-// deployment" — in both directions, and it says nothing about the desired count. With the flag the
-// call is accepted, a new PRIMARY deployment appears, and its `updatedAt` always moves. So:
-//
-//   - the provider is DIFFERENT from what the service names: send the strategy AND
-//     `forceNewDeployment: true`, whether this is the 0 → 1 start or a move to the next offer.
-//     There is nothing running to kill — that is what the guard above is for, and it is now the
-//     only thing standing between this call and a killed generation;
-//   - the provider is THE SAME: do not send a strategy at all. Sending one that changes nothing
-//     is how a start would pay for a refused call, and it is also the ordinary shape of the first
-//     offer after a release, where CloudFormation has already pointed the service at the
-//     on-demand provider. A move that stays on the same provider still forces a deployment: the
-//     capacity provider's instance requirements changed underneath (two offers can share one
-//     provider), and the PENDING task has to be placed again for that to be asked for.
-//
-// 🔴 A START THAT ALSO CHANGES THE STRATEGY IS TWO CALLS, NOT ONE, AND THE SECOND ONE WAITS FOR
-// THE OLD DEPLOYMENT TO GO. Measured twice (ADR 0075 live run 3): handing `desiredCount: 1` and a
-// new strategy to ONE UpdateService makes ECS place the task against the OLD strategy first, and
-// that provider BUYS A BOX. Splitting the calls was not enough — the re-run put the desired count
-// in eight seconds after the new PRIMARY appeared, and `describe-tasks` showed the first task
-// `startedBy` the OLD deployment, which was still `ACTIVE`. So the gate is `settled()`: one
-// deployment, not rolling. The old one lived 2 minutes 35 seconds, and the start is that much
-// slower — against $0.28 of a $0.35 run spent on the box nobody used.
-//
-// Because every accepted write creates a new PRIMARY deployment, `StartDeadlineSec` and the
-// per-offer budget both re-clock themselves off `updatedAt` — the CP needs no timer of its own
-// (ADR 0075 open question 1 (c), measured).
-//
-// 🔴 The reading is UNCACHED on purpose. view()'s three seconds are the right price for a panel
-// and the wrong one for the only check standing between this function and a killed generation.
-func (t *engineECS) setStrategy(ctx context.Context, provider string, start bool) error {
-	if strings.TrimSpace(provider) == "" {
-		return fmt.Errorf("%s: no capacity provider to start on", t.logKey())
-	}
-	v, err := t.describe(ctx)
-	if err != nil {
-		return fmt.Errorf("%s: reading the service before writing its capacity provider: %w", t.logKey(), err)
-	}
-	if v.running >= 1 {
-		// Not a retry and not a warning: the caller asked for something this ADR forbids, and the
-		// answer is the refusal. The offer a running engine is on stays until it stops.
-		return fmt.Errorf("%s: refusing to write the capacity provider strategy while %d task(s) are running",
-			t.logKey(), v.running)
-	}
-	// "Is this a change" is answered by the service's own strategy, read back a line ago — never
-	// by what this process remembers writing. CloudFormation rewrites it on every release that
-	// touches the service (ADR 0075 decision 12).
-	if v.provider != provider {
-		if err := t.writeStrategyOnly(ctx, provider); err != nil {
-			return err
-		}
-		if !start {
-			return nil // the move is done: the forced deployment places the PENDING task again
-		}
-		// The service now has two deployments — the one just forced and the one going away — so
-		// the desired count cannot go in yet. Re-read once in case ECS has already finished, and
-		// otherwise leave it to the next attempt.
-		if v, err = t.describe(ctx); err != nil {
-			return errEngineStrategySettling
-		}
-	} else if !start {
-		// Same provider, and this is still a move to another offer: the capacity provider's
-		// instance requirements changed underneath (two offers can share one provider), so the
-		// PENDING task has to be placed again for the new ones to be asked for.
-		_, err := t.api.UpdateService(ctx, &ecs.UpdateServiceInput{
-			Cluster: aws.String(t.cluster), Service: aws.String(t.service), ForceNewDeployment: true,
-		})
-		t.invalidate()
-		t.invalidateBox()
-		return err
-	}
-	if v.desired >= 1 {
-		// Already asked for. Two start paths can reach here within a second of each other — the
-		// admin toggle and the controller's next tick — and a second `desiredCount: 1` is a write
-		// that buys nothing and makes the panel show the offer being taken twice.
-		return nil
-	}
-	if !v.settled() {
-		// 🔴 The gate the two-box start needed: an older deployment is still ACTIVE, and a desired
-		// count written now is placed by IT as well, on the provider this engine has just moved
-		// away from. Not an error — the strategy is already what this engine wants, so the next
-		// attempt is one short call.
-		return errEngineStrategySettling
-	}
-	_, err = t.api.UpdateService(ctx, &ecs.UpdateServiceInput{
-		Cluster: aws.String(t.cluster), Service: aws.String(t.service), DesiredCount: aws.Int32(1),
-	})
-	t.invalidate()
-	t.invalidateBox()
-	return err
-}
-
-// errEngineStrategySettling says the strategy is written and the service has not finished with
-// the deployment it replaced. NOT a failed start: the strategy is now what this engine wants, so
-// the next attempt is one short call that only moves the desired count. Counting it as a failure
-// would double a cooldown over a call that did exactly what it was asked to.
-//
-// ⚠️ The wait it stands for is minutes, not milliseconds (2 m 35 s measured), so it is answered by
-// coming back on the next tick rather than by sleeping inside this one.
-var errEngineStrategySettling = errors.New("the capacity provider strategy was written; waiting for the previous deployment to go")
-
-// writeStrategyOnly is the first half of a start, and the whole of a move: the strategy, forced,
-// with the desired count untouched.
-func (t *engineECS) writeStrategyOnly(ctx context.Context, provider string) error {
-	_, err := t.api.UpdateService(ctx, &ecs.UpdateServiceInput{
-		Cluster: aws.String(t.cluster),
-		Service: aws.String(t.service),
-		CapacityProviderStrategy: []ecstypes.CapacityProviderStrategyItem{
-			{CapacityProvider: aws.String(provider), Weight: 1},
-		},
-		// Required, not optional: without it ECS answers 400 on a service that already uses a
-		// strategy (measured, both directions, at desired 0).
-		ForceNewDeployment: true,
-	})
-	t.invalidate()
-	t.invalidateBox()
-	return err
-}
+// 🔴 There is NO strategy write here any more, and that is ADR 0077 decision 2. The service
+// declares `LaunchType: EC2` and nothing else, the CP buys the box itself (engine_fleet.go), and
+// the desired count above is the whole of what it says to ECS. Everything ADR 0075 had to build
+// around `UpdateService` carrying a `capacityProviderStrategy` — the forced deployment, the
+// running==0 guard on it, the wait for the deployment it replaced, the two-call split — went
+// with it. What protected a generation in flight is now structural: there is nothing to write
+// that could replace a running task.
