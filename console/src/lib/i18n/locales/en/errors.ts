@@ -217,6 +217,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.engine_ecs_error": "The ECS update failed.",
   "err.engine_publish_failed": "The catalogue could not be published to the deployment.",
   "err.engine_class_unknown": "No such instance class is declared for this engine.",
+  "err.engine_not_ours": "That engine is borrowed from another deployment, so this is not the panel that changes it.",
   "err.engine_vram_confirm": "That model wants more VRAM than the chosen instance class has.",
   "err.engine_files_missing": "This row does not hold the files its family's workflow reads.",
   "err.gated_not_accepted": "That account has not accepted this repository's terms yet.",

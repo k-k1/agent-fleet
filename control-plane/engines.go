@@ -983,6 +983,13 @@ type engineWarmCache struct {
 // panel, and the Agent's own catalogue cache is what bounds how often it is asked for (10
 // minutes) — the same TTL that already bounds a model being enabled.
 func (e *engineRuntimeState) negativeAlways(ctx context.Context) string {
+	// A borrowed engine's exclusion list is the FAR administrator's, and it rides on the catalogue
+	// this row mirrors (ADR 0079 decision 7). Reading the local setting instead would answer with
+	// something nobody on the deployment that owns the engine can see — and writing one is refused
+	// for the same reason.
+	if e.def.remote() {
+		return e.remote.negativeAlways()
+	}
 	keys := engineSettingsFor(e.def.Key)
 	if e.settings == nil || keys.negative == "" {
 		return ""

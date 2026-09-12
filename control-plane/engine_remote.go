@@ -75,6 +75,12 @@ type engineRemote struct {
 	// composed here, because composing it would be this deployment asserting the far side's route
 	// layout (decision 4).
 	basePath string
+	// negAlways is what the FAR administrator excludes from every image on this engine. It is a
+	// deployment-wide setting over there rather than a model row, so it does not go in the mirror
+	// — but it still has to reach the Workspace, and the local setting this would otherwise read is
+	// one nobody over there can see. Writing it locally is refused for the same reason
+	// (engine_admin.go's refuseBorrowedWrite).
+	negAlways string
 	// tokens are the far session tokens, per LOCAL session name (decision 8). The far usage rows
 	// then carry the borrower's session, which is the only way an operator there can tell one
 	// borrower's spending from another's.
@@ -239,6 +245,27 @@ func (r *engineRemotes) refreshAll(ctx context.Context, reg *engineRegistry) {
 		if !r.wants(row.Key) {
 			continue
 		}
+		r.forKey(row.Key).setNegativeAlways(row.NegativeAlways)
 		r.applyCatalogRow(ctx, reg, row)
 	}
+}
+
+// setNegativeAlways records the far administrator's exclusion list for this role.
+func (e *engineRemote) setNegativeAlways(v string) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.negAlways = strings.TrimSpace(v)
+	e.mu.Unlock()
+}
+
+// negativeAlways is that list, or "" when the far side declares none.
+func (e *engineRemote) negativeAlways() string {
+	if e == nil {
+		return ""
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.negAlways
 }
