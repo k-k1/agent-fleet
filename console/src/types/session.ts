@@ -105,6 +105,13 @@ export interface Session {
   // it is a fragment of an answer with no turn boundary and no timestamp, so nothing may
   // decide anything from it.
   lastSay?: string;
+  // Each recent REPLY's newly-consumed tokens (uncached input + newly-cached + output),
+  // oldest first, capped at the newest two dozen by the Agent — the trend the overview card
+  // draws beside its context gauge (ADR 0078 decision 13). One point per reply, folded the
+  // same way the mirror's groupTurns folds one, so a session's card and its chat show the
+  // same shape. Absent for every kind but claude, and while fewer than two replies are known
+  // (two is the minimum the Sparkline can draw). Display only.
+  tokenSpends?: number[];
   // Deletion lock (docs/log/45): while true, the Agent answers 403 to anything that deletes
   // (delete = forget the metadata, purge, the 7-day auto-prune of stopped sessions, and
   // removal as a side effect of deleting the working copy). Stop and archive are reversible

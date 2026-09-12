@@ -262,9 +262,12 @@
   `DeregisterContainerInstance(Force)` → `TerminateInstances`（スロットの `terminateSlot` と同じ順。
   0045 決定 23 が「自分で消すときに ACTIVE のゴーストを残さない」と決めた理由もそのまま当たる）。
 - `draining`（0071 決定 7）の意味は「MI が管理外で 427〜463 秒かけて消す」から「**CP が terminate を
-  発行し、EC2 が `terminated` になるまで**」へ変わる。スロットの実測（0045 決定 22: 停止→terminated
-  93 秒は CPU の値）から、GPU でも分単位で収まるはずだが**未測**（未解決 6）。0071 決定 7 の
-  「退場待ち」（0074 決定 4）は継承する——古い箱が `running` のうちに新しい箱を買わない。
+  発行し、EC2 が `terminated` になるまで**」へ変わる。**実測（P1 実機 1 回目と 2 回目・3 周）: 4 分 8 秒〜
+  5 分 45 秒**——g6e で 5 分 28 秒〜5 分 45 秒、g5 で 4 分 8 秒〜4 分 30 秒が 2 回。スロットの値（0045 決定 22:
+  93 秒・CPU）は GPU の箱には当てはまらない。0071 決定 7 の「退場待ち」（0074 決定 4）は継承する——古い箱が
+  `running` のうちに新しい箱を買わない——が、**その窓は数字ではなく幅（4〜6 分）で持つ**: 窓の内側に来た
+  需要は、古い箱が消えるまで最長 6 分待ってから次の箱を買う。「5 分」のどちら側に置いても 3 回に 1 回は
+  外れる。
 - 🔴 **MI の `scaleInAfter` の罠は消える。** 0071 P0 実測 3 の「`-1` で残した箱は後から値を変えても
   回収されず、`terminate-instances` は MI のポリシーが拒む」は、CP が terminate の主体になった時点で
   存在しない。代わりに**CP が terminate を忘れると箱が永久に残る**——0045 決定 29 の形の走査を掃除
@@ -278,8 +281,10 @@
   「インスタンスが消えた」であって、タスク数ではない。タスク 0 の慎重さは free slot の走査のもの）。
   どちらの向きも CP の記憶は見ない——0045 決定 29 が求めるとおり、タグと属性で足りる。
 
-🔁 **反証されたら変える条件**: terminate から `terminated` までが GPU で 5 分を超える実測が出たら、
-0071 決定 7 の窓の計算を書き直す。
+🔁 **反証されたら変える条件**: 3 周のうち 1 周（5 分 45 秒）で成立し、残り 2 周では成立しなかったので、
+上の窓は数字でなく幅で書いた。いま変えるとしたら、6 分を超える周が出たとき、または 4〜6 分の待ちが稀では
+なく普通になる需要の形が出たとき——そのときは退場待ちを「古い箱が `shutting-down` のうちに次を買う」に
+変えることになるが、決定 5 はいまそれを禁じている。
 
 ### 6. モデルの置き場は host volume にできる。P0 では匿名のまま、P1 で測る
 
@@ -494,7 +499,8 @@ ADR は追記型・不変である（`docs/CONVENTIONS.ja.md` §5）。既存の
    で通るか）。$0。依存: 決定 10。
 5. **`awsvpc` の EC2 launch type で、g6.xlarge の ENI 上限とタスク ENI**。1 台 1 タスクなら上限 4 で
    十分なはずだが、`ECS_AWSVPC_BLOCK_IMDS` などの agent 設定を含めて (c)。依存: 決定 2。P1 の実機。
-6. **terminate から `terminated` までの GPU の実測**（決定 5 の `draining` の長さ）。P1 の実機。
+6. **terminate から `terminated` までの GPU の実測**（決定 5 の `draining` の長さ）。**実測**: 3 周で
+   4 分 8 秒〜5 分 45 秒（P1 実機 1 回目・2 回目）。決定 5 は幅で持つ。
 7. **AMI を起動時に解決するか（`resolve:ssm:`）、スタック更新時に解決するか（CFN の型）。** 前者は
    最新に追随し、後者は配備が世代を固定する。0045 のスロットは後者。依存: 決定 7。
 8. **ローカル NVMe の mount。** AL2023 の ECS AMI は instance store を自動では mount しない (c)。
@@ -1377,3 +1383,379 @@ P1 の実機（#583）は CP 側に赤を 3 件出した。3 件ともここで�
 要らなくなる——が、それはタスク定義を変えるたびに desired を戻すという罠でもあり、
 [the engine services](../../deploy/aws/ecs/cfn/PARAMETERS-60-engines.md) がその理由で
 このプロパティを書いていない。別シェルのほうが安い。
+
+## 追記 — P1 実機 2 回目: warm・画像 1 枚・CP 主導の退場（2026-09-12・開発配備・約 $0.15）
+
+1 回目が届かなかった 3 つ。af-sandbox で、#583・#584・#585 がすべて develop に入った状態、
+Control Plane は `dev-deploy.sh` が載せた `0.19.1-dev-3d4cb9e9`。**3 つとも届き、購入側で新しく
+赤になったものは無い——完了の定義 7 は達成された。** Spot の箱 2 台・GPU **11 分 58 秒**・
+約 **$0.15**（門は 15 分と $0.60）。
+
+**今回は移行をしていない。** 開発配備は 1 回目の実機以降ずっと EC2 起動タイプなので
+`<役>Enabled` の往復は走らせていない。つまり 1 回目の項目 3・4・5 と、#584 の「行 0 のエンジン表
+から戻る」修正は、**直っているが実機では未測定**のままである。下の表に入れていないのはそのため
+で、ここには何の確認も無い。
+
+以下はすべて生の戻り値・Control Plane のログ・CloudTrail の記録である。測れなかったものは
+測れなかったと書く。
+
+### 配備そのものが言ったこと
+
+`dev-deploy.sh --profile … --region …` を普通に実行。端から端まで 40 分（うち 20 分ほどは
+2 アーキテクチャの QEMU ビルド。`workspace/` が動いていたため）。CP 自身の行:
+
+```
+control-plane 0.19.1-dev-3d4cb9e9 on 0.0.0.0:8099 (console=…, ws image=…:0.19.1-dev-3d4cb9e9, auth=oauth, runtime=ecs-ec2)
+```
+
+🟢 **1 回目の項目 6 が、こちらが何もしないのに実機で発火した**——`update.sh` は直したものを
+stdout に書き、スタックのパラメータも一緒に動いた:
+
+```
+==> cloudformation deploy af-ecs-engines (60-engines, parameters unchanged)
+    · LlmOfferBudgetSec=300 (ADR 0077 re-meant it; 180 was the OLD meaning's default)
+    · ImageOfferBudgetSec=300 (ADR 0077 re-meant it; 180 was the OLD meaning's default)
+```
+
+`describe-stacks` は前が両方 `180`、後が両方 `300`、そして**他のパラメータは 1 つも動いていない**
+（2 つの応答をキー単位で突き合わせた。`ImageOffers` は 242 バイトでバイト一致）。今回効いていた
+登録の上限は 1 回目の黙った 180 ではなくテンプレートの 300 である。
+
+🟢 新しい CP が上がった直後の `GET /api/admin/engines` は `{"engines":[]}` ではなく**行が 2 つ**
+返した。これは 1 回目の項目 4 の修正を測ったのではなく、**項目 4 の状況が起きていない**という
+だけである——`60-engines` の条件付きの半分を消すものが無く、エンジン表は行を失っていない。
+
+### 1 巡目 — 通しの 1 巡（09:15:41 → 09:25:11 UTC）
+
+宣言した `ImageOffers` は 1 回目と同じ: `spot3`（spot・g6/g5/g6e）／`l4`（od）／`l40s`（od）。
+先頭の行が埋まったので歩きは 1 行で終わった（`offer_trail` は `[spot3 active]`）。
+
+| 検査項目 | 判定 | 証拠 |
+|---|---|---|
+| **箱は 1 台だけ** | 🟢 | 09:15 UTC 以降の CloudTrail で `CreateFleet` は**ちょうど 2 回**、1 巡につき 1 回。どの標本でも `af-role=engine-image` の生きた箱は 1 台を超えない。クラスタの container instance は 4 → 5 → 4 を 2 度 |
+| 購入 → 箱の登録 | 🟢 **45 秒** | `CreateFleet` 09:15:43、`engines: image: the box i-00fc158ca3f562466 registered; asking for the task` 09:16:28。2 巡目は **44 秒**。効いていた上限は 300 秒 |
+| 登録と同じ秒に desired が上がる | 🟢 | CloudTrail の `UpdateService` は上のログ行と同じ **09:16:28**。1 回目の実測の再現であり、0075 の 2 分 35 秒の落ち着き待ちは相変わらず形を持たない |
+| Spot の行が埋まる | 🟢 | `spot3` が **`g5.xlarge`**（`InstanceLifecycle: spot`・ap-northeast-1a）を 2 巡とも買った。g6e は一度も無い。1 回目はこの行が成功する所を見ていない——launch template を直す前に、Spot の箱は 2 台とも登録の上限で死んでいた |
+| パネルが箱から答える | 🟢 | 登録後の最初の標本から箱が消えるまで `box: {id: i-00fc158c…, status: ACTIVE}`・`offer: {id: spot3, buy: spot}`。`class` は `spot3`・`class_is_default: true` |
+| **`state: running` / `warm: true`** | 🟢 desired 1 から **5 分 40 秒〜5 分 53 秒** | 下の冷間起動の表。`running` の初見が 09:22:08、`warm: true` の初見が 09:22:21（13 秒間隔の poll）。ComfyUI の `Starting server` が 09:22:08 なので真の値はこの帯の中。`mode: on` からは **6 分 40 秒** |
+| **画像を 1 枚生成して 200** | 🟢 | `provider: comfy`・モデル `sd35-medium`・`warnings: []`・1024×1024・1,011,661 バイト。ComfyUI 自身の行は `Prompt executed in 73.12 seconds` |
+| **退場: desired 0 → deregister → terminate を CP が** | 🟢 | `mode: off` 09:24:21 → タスクが消えたのが 09:24:31（**10 秒**）→ `DeregisterContainerInstance` 09:25:10 → `TerminateInstances` 09:25:11。**2 巡とも手では何も終わらせていない。** 1 回目の項目 2 は閉じた |
+| terminate → `terminated` | 実測 **4 分 14 秒〜4 分 30 秒** | 最後の `shutting-down` が 09:29:25、`terminated` が 09:29:41（15 秒間隔の poll）。2 巡目は **4 分 8 秒〜4 分 25 秒**。⚠️ 1 回目は 5 分 28 秒〜5 分 45 秒だった——後述 |
+| 走行中に掃除が誤発火していない | 🟢 | CloudTrail の `TerminateInstances` は 2 回だけで、どちらも自分の `mode: off` の後。画像を出した箱は 9 分 28 秒生き、その間 1 度も触られていない |
+| **`df /var/lib/docker` は g5 でもインスタンスストアか** | 🟢 | 2 巡目で実測——後述 |
+
+#### 冷間起動を 1 行ずつ（desired 1 の 09:16:28 から）
+
+| 経過 | 何が |
+|---|---|
+| 33 秒 | `engine fetch: active set for /af-ws/engines/image/active starts with 'sd35-medium'` |
+| 2 分 39 秒 | `engine fetch: engine may start; 9 file(s) still to sync`＝既定のモデル一式がディスクに（`sd3.5_medium 5,107,104,286 bytes in 50s`・`clip_l … in 3s`・`clip_g … in 12s`・`t5xxl 4,893,934,904 in 56s`） |
+| 5 分 26 秒 | `Total VRAM 22588 MB, total RAM 15791 MB` … `Device: cuda:0 NVIDIA A10G : cudaMallocAsync` |
+| 5 分 40 秒 | `Starting server` / `To see the GUI go to: http://0.0.0.0:8080` |
+| 5 分 53 秒 | パネルが `warm: true`（最初の標本） |
+
+同じものの他の実測と並べると:
+
+| 走行 | 箱 | `warm: true` まで |
+|---|---|---|
+| 0074（Managed Instances） | g6e.xlarge spot | `mode: on` から 307 秒（画像 1 枚は 403 秒） |
+| 0075 の再走（Managed Instances） | g6.xlarge spot | `mode: on` から 5 分 30 秒 |
+| 0077 実機 1 回目（EC2 Fleet） | g6e.xlarge オンデマンド | 届かず。ComfyUI が GPU に乗ったのが desired から 3 分 49 秒 |
+| **今回**（EC2 Fleet） | **g5.xlarge spot** | **desired から 5 分 53 秒・`mode: on` から 6 分 40 秒** |
+
+⚠️ **正直に読むこと: 速くなったのは箱の購入で、冷間起動は速くなっていない。** 2 秒で買って
+45 秒で登録するのは Managed Instances とは別世界だが、登録から先はモデルのバイト列と CUDA で
+あり、A10G は L40S より遅い——同じ行まで今回 5 分 26 秒、1 回目 3 分 49 秒。fetch の速度も同じ
+ことを言う: 今回の箱は 102 / 87 / 103 / 173 / 158 / 140 MB/s、1 回目の g6e.xlarge が 104-209、
+ADR 0071 の Managed Instances が 104-147。**範囲が重なるので、この走行は「NVMe の data-root が
+速い」の証拠にはならない**——g5.xlarge では上限は網であってディスクではない。決定 6 の証拠は
+`df` であって速度ではない。
+
+#### 画像と、その叩き方
+
+ADR 0075 は「エンジンのゲートウェイには外から入る道が無い（トークンは Workspace 内部の
+`/internal/engine/token`）」として画像を出せなかったと記録している。**その配備の上のセッションが
+その道**であり、トークンは要らない: Workspace を起こし、`POST /api/sessions` でセッションを作り、
+`POST /api/sessions/{name}/input` でプロンプトを渡した。⚠️ 繰り返す人が先に知るべきことが 1 つ:
+**`claude` のセッションに `driver: "managed"` は拒まれる**（`400 driver_unsupported`・ADR 0015）。
+ドライバは `tui` で、駆動は同じ REST の経路で変わらない。
+
+| 時刻（UTC） | 何が |
+|---|---|
+| 09:22:36 | セッションにプロンプトを渡す（`202 {"queued":…}`） |
+| 09:22:46 | ComfyUI: `got prompt` |
+| 09:23:59 | ComfyUI: `Prompt executed in 73.12 seconds` |
+| 09:24:03 | セッションの報告: 成功・`provider: comfy`・モデル `sd35-medium`・`warnings: []`（空）・エラー無し・1024×1024・1,011,661 バイト |
+
+⚠️ 所要秒数を訊いたところ、エージェントは推測せず**「結果に含まれていない・そのフィールドが無い」**
+と答えた。上の 73.12 秒は ComfyUI 自身のログで、ツールの戻り値は時間を持っていない。
+
+#### 退場を、決定 5 が言う順で
+
+```
+09:24:21  engines: image set to off by …
+09:25:11  engines: image: terminated the box i-00fc158ca3f562466 (the engine is stopped and nothing is running on it)
+```
+
+CloudTrail の同じ巡、Control Plane 自身のタスクロールから: `UpdateService` 09:24:21 →
+`DeregisterContainerInstance` **09:25:10** → `TerminateInstances` **09:25:11**。ECS は 10 秒で
+タスクを外し、残りは走査の次の tick が——トグルから **50 秒**。2 巡目（タスクがまだ `pending` の
+うちに切った側）は同じ経路で **65 秒**（`mode: off` 09:32:24・ECS の `stopped 1 pending tasks`
+09:32:32・deregister 09:33:28・terminate 09:33:29）。どちらも人手は要らず、CP が忘れた箱が
+`describe-instances` に出ることも無かった。
+
+### 2 巡目 — 箱は要るが warm は要らない 2 つの検査（09:30:57 → 09:33:29 UTC）
+
+GPU 2 分 30 秒。fetch が効いてくる前に意図して切った。
+
+- 🟢 **NVMe の data-root は `g5.xlarge` にもある。** 生きた箱に SSM で:
+
+  ```
+  df -h /var/lib/docker   →  /dev/nvme1n1  233G  2.6G  231G   2% /var/lib/docker
+  lsblk                   →  nvme0n1 60G（/ と /boot/efi）, nvme1n1 232.8G  /var/lib/docker
+  docker info             →  Docker Root Dir: /var/lib/docker
+  systemctl is-active ecs docker  →  active / active
+  ```
+
+  1 回目は `g6e.xlarge` で測った。インスタンスストアは型ごとの性質なので、2 つ目の型は持って
+  おく価値がある。root は `ImageStorageGiB` が言う 60 GiB の gp3 で、`ecs` が `active` なのは
+  誰も触っていない箱で launch template の修正（`systemctl start --no-block ecs`）が効いている
+  ということである。
+
+- 🟢 **すでに走っている engine で `mode: on` を押しても何も買わない**——#584 の 2 つ目の門で、
+  これまで単体試験しか見ていなかったもの。09:31:49、箱が登録され desired が書かれた 11 秒後に
+  押した: 管理 `PUT` は **200 を 0.28 秒**で返し（本物の起動は 2.6 秒）、CloudTrail に
+  **3 回目の `CreateFleet` は無く**、`describe-instances` は前も後も 1 台。CP のログには起動の
+  最初の行（`starting on spot3 (22000 MiB VRAM declared); largest model sd35-medium wants
+  11097 MiB (floor)`）だけが出て、門で止まっている。
+
+  ⚠️ **ただしこの押下でパネルの `offer_trail` が `null` に消えた。** 歩きの `begin()` は
+  `startOnOffer` がロックを取って `desired >= 1` を見つけるより前に走るので、**いま現に生きて
+  いる走行の履歴が消え、代わりの行も書かれない**。`offer` は `{id: spot3, buy: spot}` のままで
+  箱は危険に晒されていない。失われるのはパネルの上の証跡で、しかも運用者がボタンを押している
+  まさにその瞬間である。
+
+### 費用と後始末
+
+| 箱 | 型 | 購入 | 起動（UTC） | 終了 | 生存 | $/h | 概算 |
+|---|---|---|---|---|---|---|---|
+| `i-00fc158ca3f562466` | g5.xlarge | spot | 09:15:43 | 09:25:11 | 9m28s | 0.7391 | $0.117 |
+| `i-0566a8943c902d524` | g5.xlarge | spot | 09:30:59 | 09:33:29 | 2m30s | 0.7391 | $0.031 |
+
+**11 分 58 秒・約 $0.15**（`describe-spot-price-history` の同じ時間帯・g5.xlarge・Linux・
+ap-northeast-1a が $0.7391、1c が $0.7893）。門は GPU 15 分と $0.60 で、どちらにも届いていない。
+⚠️ 1 回目の $1.02 との差はそっくりそのまま「Spot の行が埋まるようになった」ことである——
+$2.699 の `g6e.xlarge` まで落ちなかった。提案の一覧は 2 回のあいだ変えていない。
+
+- `af-role` が `{engine-image, engine-llm}` の `describe-instances` を**状態フィルタ無し**で:
+  2 台、どちらも `terminated`。（陽性対照は同じ出力の中——`tag-key=af-role` だけなら
+  スロットの 4 台を含めて 6 を返す。）
+- container instance は **4 台**に戻り、すべてスロットの箱。`describe-fleets` を絞らずに引くと
+  空——P0 (b) の実測どおり。
+- **手順 1 で控えた値に戻した**: `image` は `mode: off`、`llm` は `mode: ondemand`、`ImageOffers`
+  はバイト一致、`ImageInstanceClasses` は無変更、両 `<役>Enabled=true`。画像のために起こした
+  Workspace は `stopped` へ戻し、ツールを呼ぶために作ったセッションは削除した（前も後も 16 本）。
+- ⚠️ **意図して変えたまま残したもの**: `ImageOfferBudgetSec` と `LlmOfferBudgetSec` は **300** に
+  なっている。`update.sh` が途中で直したからで、これは #585 が働いた結果であって残骸ではない。
+- 生の戻り値は測ったセッションの `~/.cache/adr0077-p1b/` にある。
+
+### 本文に返すもの
+
+| # | 判定 | 決定 | 何を言っているか |
+|---|---|---|---|
+| 1 | 🟢 | 5 | 退場は CP 主導で 2 回とも走り、順序も決定のとおり（desired 0 → deregister → terminate、トグルから 50 秒と 65 秒）。手で終わらせたものは無い。1 回目の項目 2 は閉じた |
+| 2 | 🟢 | 1・2・6・7 | 1 巡につき箱 1 台・登録まで 44〜45 秒・desired は同じ秒・Spot の行が安い型で埋まる・誰も触っていない箱で `ecs` と `docker` が `active`。launch template の修正は保っている |
+| 3 | 🟢 | 6 | NVMe の data-root は `g6e.xlarge` だけでなく `g5.xlarge` にもある。⚠️ ただし fetch の速度はその証明にならない——今回の 87-173 MB/s は ADR 0071 の Managed Instances の範囲と重なる。この型では上限は網である |
+| 4 | 🟢 | — | 1 回目の項目 6 が実機で確認された: `update.sh` は両役の `OfferBudgetSec` を 180 から 300 へ動かし、他のパラメータには触っていない |
+| 5 | ⚠️ | 5 | **terminate → `terminated` は「約 5 分」ではなく 4〜6 分である。** 今日は 2 回とも 4 分 8 秒〜4 分 30 秒、1 回目は g6e で 5 分 28 秒〜5 分 45 秒。決定 5 の 🔁 は 1 回目では成立し、この 2 回では成立しない。ADR 0071 決定 7 の窓の算術を書き直す人は、1 つの数ではなく**幅**を持っていくこと。5 分のどちら側を仮定しても 3 回に 1 回は外れる |
+| 6 | ⚠️ | — | 走っている engine への `mode: on` は、ハードウェアに対しては正しく何もしないが、パネルの `offer_trail` を消す。`begin()` が門より前に走っている。動かす行は 1 つで、この走行で #584 より前より悪くなっているのはここだけ |
+| 7 | — | 11 | **測っていない。そして怠ったのではない**: `<役>Enabled` の往復（項目 3・4・5）と #584 の「行 0 のエンジン表から戻る」は、まだ Managed Instances に乗っている配備が要る。この配備はもう乗っておらず、証明のために逆向きに移行し直すのは得より高くつく。#585 / #584 で直っており、実機では未検証のまま |
+
+**完了の定義 7 は達成された**: 箱は 1 台・落ち着き待ち無し・Spot の行が渡した型・タグと
+`InstanceLifecycle`・5 分 53 秒で `state: running` / `warm: true`・画像 1 枚が 200・NVMe の
+data-root、そして Control Plane 自身が駆動した退場——移行そのものの手（項目 3・4・5）は
+「直っているが未測定」として持ち越す。
+
+## P1 実機の後の改訂（2026-09-12）
+
+P1 は完了した（完了の定義 1〜7。実機 1 回目・2 回目＝#583・#588）。決定 1 つの 🔁 が成立し、上の本文をこれまでと
+同じ作法でその場で改訂した。それ以外の本文は動いていない。
+
+| 決定 | 変えたこと | 出所 |
+|---|---|---|
+| 5 | `draining` は「未測」ではなく実測: terminate → `terminated` は 3 周で **4 分 8 秒〜5 分 45 秒**。退場待ちの窓は、🔁 が 3 周のうち 1 周だけ成立したので、**数字でなく 4〜6 分の幅**で持つ。🔁 自体を「6 分を超える周が出たとき、または待ちが普通になる需要の形」に書き直した | P1 実機 1 回目・2 回目 |
+| 未解決 6 | 同じ幅で答えた | 同上 |
+
+実機で未測のまま残るもの（実機の追記自身の記述による）: `<役>Enabled` の往復移行と #584 の「0 行の表から戻る」
+（開発配備はもう MI に乗っておらず、証明のために逆向きに移行し直す費用は得るものより大きい）。走っている
+engine への `mode: on` がパネルの `offer_trail` を消す件（CP レーンの 1 行の順序修正——#584 の門を `begin()` より前に）。
+P2（決定 4・6）と P3（llm 役）は未着手。
+
+## 追記 — P2 の CP レーンが本文に返したもの（2026-09-12・PR #591）
+
+決定 4——中断と立て直し——を実装した。ADR 0075 決定 6 から**設計として**継いだもので、コードには
+`noteReplacement` のログと監査行しか無かったので、存在するのはこれが初めてである。決定 6（モデル置き場の
+host volume）はこれには入っていない——P2 の後半として残る。**決定の本文は書き換えていない。** 実装が
+返したのは 4 つ。
+
+- **立て直しにはティック上の駆動役が要る。本文は誰が駆動するかを言っていない。** 決定 4 は立て直しを
+  「一覧の先頭から決定 1 の呼び出しをもう一度」と言う。呼び出しについては正しく、その後の数十秒について
+  は黙っている。**起動**は controller の `start` 判断が駆動するが、それは desired 0 のときだけ起きる。
+  立て直しは desired **1** で起きる——タスクは PENDING で、controller 自身の判断は「何もしない」——ので、
+  登録上限にも次の提案への移動にも気づく者がいなかった。歩きが進行中のあいだ毎ティック訊く段を置いた。
+  停止で見捨てられた立て直しの箱を終わらせるのも同じ段である。
+- 🔴 **決定 4 の 2 つめの条件が、#577 が勇み足で実装した決定 5 の掃除を正した。** 「タスクは置き換わった
+  が箱はある」は中断ではない（本文がそう言っており、OOM kill はまさにこの形）——ところが #577 の迷子の
+  規則「サービスがタスクを欲しがっているのにタスクの無い箱を 15 分後に終わらせる」は**まさにその箱**に
+  当たる: エンジンのただ 1 台の箱が、ECS がタスクを置き直す数秒のあいだ空になっている。これを terminate
+  すると、ECS が既に面倒を見ていた再起動が箱の購入に化ける——そして決定 4 の立て直しが代わりを買う。
+  迷子の規則に 2 つめの条件を足した——**この役の別の箱がタスクを担いでいること**——。これが「**2 台目**の
+  タスクの無い箱」の元々の意味である。見つけたのは「中断ではない」側のテストだった。
+- **見捨てられた歩きは誰かが終わらせねばならず、`startInFlight` だけでは足りない。** 退場の掃除は歩きが
+  進行中のあいだ引き下がる——これは P1 実機の赤を裏返しに見たもので、箱が起動しているあいだにエンジンを
+  切ると、その歩きを駆動する者が二度と現れず、旗が永久に立ったままになる。答えは 2 つで、両方要る:
+  立て直しの段は desired が消えていたら自分の箱を終わらせる（前提はサービスが欲しがるタスクなのだから）。
+  そして掃除は「進行中の歩きなら」ではなく**登録上限＋退場の猶予の内側にいるあいだだけ**引き下がる。
+  後者は停止で見捨てられた**起動**も覆う——誰もまだ踏んでいなかった形の、同じ漏れ。
+- **契約 B に値が 1 つ増え（`interrupted`）、Console には 3 行要った。** 未知の結果はそのまま文字で出る
+  ので壊れてはいなかった。いまは両言語にラベルがあり、#577 が足して誰も名づけていなかった `unusable`
+  にもある。中断された需要の `offer_trail` は `l4=interrupted, l4=active`——同じ提案が 2 回、これが
+  「先頭から立て直す」の意味である——で、2 連続の飛ばしが効いた後は
+  `l4=interrupted, l4=interrupted, l40s=active` になる。「連続」は需要単位ではなく提案 id 単位で数える:
+  取り上げられ、別のものに替わってそれも取り上げられた提案には、2 度目の機会がある。
+
+## 追記 — P3 実機: llm 役を EC2 Fleet で（2026-09-12・開発配備・約 $0.13）
+
+P3 の全面積は、P1 が触っていない 2 つだけである——**llm 役自身の launch template**（#575 の
+`LlmLaunchTemplateId`）と、**決定 9 の「`LlmOffers` の `spot` 行を拒む」**（#577）。どちらもここで
+測った。拒否は $0 で、残りはオンデマンドの箱 1 台・GPU **6 分 46 秒**・約 **$0.13**（門は 15 分と
+$0.60）。
+
+**この走行が挙げた項目はすべて緑。ただし段階としての P3 は完了していない**——本文が P3 を P2
+（決定 4 と 6・中断と host volume）の後ろに置いており、P2 は着手されていないからである。
+
+配備し直す必要は無かった: Control Plane は PR #588 が測ったもの（`0.19.1-dev-3d4cb9e9`）のままで、
+起動行から読んだ。⚠️ つまり **#589 の `offer_trail` 修正はこの配備に載っていない**し、ここでは
+何も検証していない。下の `mode: on` は 1 回しか押していないので、その欠陥が出る機会は無かった。
+
+### 決定 9 の拒否を $0 で（10:05:28 → 10:06:52 UTC）
+
+`LlmOffers` に 2 行——`spot` 1 行と `od` 1 行——を
+`update-stack --use-previous-template` で当てた。パラメータ以外は動きようがない:
+
+```
+spotl4|L4 Spot (g6/g5)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|0.60|spot;l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|od
+```
+
+`UPDATE_COMPLETE` まで **18 秒**、そして**呼び出しの 14 秒後**に Control Plane は表を読み直して
+こう言った:
+
+```
+10:05:42 engines: llm: ignoring the offer spotl4: the llm role is on-demand only (a lost conversation is not a retry)
+10:05:42 engines: llm instance classes re-read from /af-ws/engines: l4
+```
+
+| 検査項目 | 判定 | 証拠 |
+|---|---|---|
+| `spot` の行が落ちる | 🟢 | 上のログ行。SSM への書き込みから reloader の 1 tick（10 秒）後 |
+| **同じ一覧の残りは生きている**（陽性対照） | 🟢 | パネルの `offers` はちょうど `[{id: l4, buy: od}]` になった——*同じ*宣言の od 行である。一覧ごと捨てる parse でも、これが無ければ見分けがつかない |
+| 何も買っていない | 🟢 | 10:05〜10:12 の CloudTrail に `CreateFleet` は無く、インスタンスも無い。$0 |
+
+⚠️ 途中で見えた、運用者が知っておくべきこと: **`LlmOffers` が宣言されているあいだ、パネルの
+`classes` は offers の一覧そのもの**で、この 84 秒のあいだ梯子の `l40s` の段は表示されなかった。
+これは仕様どおりの優先順位（`offersSpec()` は `Offers` を `Classes` より優先する）であって欠陥
+ではないが、**「段が消えた」のか「上書きされた」のかをパネルは何も言わない**。10:06:52 に戻し、
+`offers` は `l4` と `l40s` に復帰した。
+
+### ⚠️ この走行は意図して小さいモデルに固定した
+
+この役の既定は `qwen3-coder-30b-a3b`（**18,556,689,568 バイト**）で、llm 役はこの配備で
+**一度も走ったことが無く**（`llm/…` のログストリームがそもそも存在しなかった）、
+`LlmTaskMemory` は 14 GiB、`LlmExtraArgs` には `--no-mmap` がある。そのモデルが 22 GB の箱に
+載るかは本物の問いだが、**P3 の問いではない**——15 分の予算をそれに溶かしても EC2 Fleet について
+何も測れない。走行のあいだだけ `qwen2.5-coder-1.5b` をこの役の既定にし、終わってから 30B に
+戻した。ただし期待したほどは効かなかった。後述の冷間起動を見ること。
+
+### 1 巡（10:12:19 → 10:19:06 UTC）
+
+| 検査項目 | 判定 | 証拠 |
+|---|---|---|
+| **箱は 1 台だけ** | 🟢 | 10:10 UTC 以降の CloudTrail に `CreateFleet` は **1 回**（10:12:21）。container instance は 4 → 5 → 4 |
+| 購入 → 箱の登録 | 🟢 **41 秒** | 10:12:20 購入、`engines: llm: the box i-0ddc67d973d10325a registered; asking for the task` が 10:13:01。P1 の image 役は 44〜48 秒 |
+| 登録と同じ秒に desired が上がる | 🟢 | CloudTrail の `UpdateService` が 10:13:01 |
+| 埋まった提案 | 🟢 | `l4`・`buy: od`・ap-northeast-1a の **`g6.xlarge`**・`InstanceLifecycle` は**欠落**（P0 (d) の「無い＝オンデマンド」）。`offer_trail` は `[l4 active]` の 1 行で落ちていない |
+| **買ったのは llm の launch template** | 🟢 | 箱は `aws:ec2launchtemplate:id = lt-087eee2a966d767a0`——エンジン表の llm 行の `LlmLaunchTemplateId`——を **version 3** で持つ。これは `systemctl start --no-block ecs` の修正が入った版である。加えて `af-role=engine-llm`・`af-engine-offer=l4`・`af-engine-buy=od`・`af-pool`・`af-managed-by`・`Name=af-engine-llm`・EC2 自身の `aws:ec2:fleet-id`。`CreateFleet` 1 回で、`CreateTags` は無い |
+| パネルが箱から答える | 🟢 | 登録後の最初の標本から消えるまで `box: {…, status: ACTIVE}` |
+| **`df /var/lib/docker` はインスタンスストア** | 🟢 | `/dev/nvme1n1 233G 25G 208G 11% /var/lib/docker`・`Docker Root Dir: /var/lib/docker`・`du -sh …/volumes` は **19G**（GGUF 2 つ）・`systemctl is-active ecs docker` は active / active・`nvidia-smi` は `NVIDIA L4, 23034 MiB`。root は **120 G**＝`LlmStorageGiB`（image 役は 60） |
+| **`state: running` / `warm: true`** | 🟢 desired 1 から **2 分 47 秒〜3 分 14 秒** | 13 秒間隔の poll で `warm: false` が 10:15:48、`warm: true` が 10:16:15。llama-server の `listening` が 10:15:42 なので真の値はこの帯の中。`mode: on` からは 3 分 29 秒〜3 分 56 秒 |
+| **補完 1 回が 200** | 🟢 | クライアントの言葉ではなく**エンジン自身のログ**から: 10:16:44 に `prompt eval time = 2033.35 ms / 17492 tokens (8602.54 tokens per second)`・`eval time = 11.90 ms / 2 tokens`・`total time = 2045.25 ms` |
+| **退場: desired 0 → deregister → terminate を CP が** | 🟢 **43 秒** | `mode: off` 10:18:22 → タスクが消えたのが 10:18:31（**9 秒**）→ `DeregisterContainerInstance` 10:19:06 → `TerminateInstances` 10:19:06。手では何も終わらせていない |
+| terminate → `terminated` | **5 分 43 秒〜5 分 59 秒** | 最後の `shutting-down` が 10:24:49、`terminated` が 10:25:05（15 秒間隔の poll）。この ADR が持つ 4〜6 分の幅の中で、しかも **5 分を超えた側**——3 巡目にして 2 回目 |
+| 掃除が誤発火していない | 🟢 | 窓全体で `CreateFleet` 1 回・`TerminateInstances` 1 回、しかも terminate は自分の `mode: off` の後 |
+
+#### 冷間起動と、時間が実際にどこへ行くか（desired 1 の 10:13:01 から）
+
+| 経過 | 何が |
+|---|---|
+| 3 秒 | タスクが作られる（`createdAt` 10:13:04） |
+| 19 秒〜1 分 27 秒 | ECS がイメージを pull（`pullStartedAt` 10:13:20・`pullStoppedAt` 10:14:28） |
+| 27 秒 | `engine fetch: active set for /af-ws/engines/llm/active starts with 'qwen2.5-coder-1.5b'` |
+| 33 秒 | 起動用モデルがディスクに——`llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf 1,117,320,768 bytes in 6s`（186 MB/s）——そして `engine may start; 1 file(s) still to sync` |
+| 2 分 27 秒 | `llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf 18,556,689,568 bytes in 114s`（163 MB/s）、10:15:29 に `sync done` |
+| 2 分 41 秒 | llama-server が `starting server in router mode`・`listening on http://0.0.0.0:8080`・`(startup) loading model qwen2.5-coder-1.5b` |
+| 3 分 14 秒 | パネルが `warm: true`（最初の標本） |
+
+⚠️ **エンジンの process は「engine may start」の 2 分 8 秒後、18.5 GB の同期が終わった 13 秒後に
+現れた。** 候補のうち 2 つは上の実測で消える: イメージの pull は **74 秒前**に終わっており、
+コンテナの依存は両役とも `condition: START`（`describe-task-definition`）＝ECS 側で待っているものは
+無い。残る読み——**未測定であり、有効なモデルを 1 つにした 1 巡で決着する**——は、llama-server の
+router が起動時に `presets.ini` を列挙し（どちらを読み込むより前にログが 2 つとも並べている）、
+起動に使う 1 つではなく**全部のファイル**を要るということである。image 役はこう振る舞わない:
+2 回目の走行で ComfyUI は自分の `sync done` より **2 分 47 秒前**に GPU に乗っていた。
+
+原因がどちらであれ運用者にとっての意味は 1 つ: **`LlmModelsMax` が縛るのは「提供する数」であって
+「取ってくる数」ではない。** ただ `enabled` なだけの 2 本目の大きいモデルは、この役の冷間起動の
+たびに支払われる。小さい方を既定に固定しても——この走行がやったように——避けられない。
+
+⚠️ もう 1 行、起動時のものを残しておく価値がある:
+
+```
+engines: llm: starting on l4 (22000 MiB VRAM declared); no model declares what it needs
+```
+
+llm のどの行も `vram_need_mib` を持たないので、決定 6 の適合検査は**この役では効いていない**——
+image 役の同じ行はモデル名と数字を挙げる。22 GB の箱に 30B を既定で置いている配備にとって、
+これは「運用者が読める拒否」と「自分で診断するしかない CUDA の死」の差である。
+
+### 費用と後始末
+
+| 箱 | 型 | 購入 | 起動（UTC） | 終了 | 生存 | $/h | 概算 |
+|---|---|---|---|---|---|---|---|
+| `i-0ddc67d973d10325a` | g6.xlarge | オンデマンド | 10:12:20 | 10:19:06 | 6m46s | 1.1672 | $0.132 |
+
+**6 分 46 秒・約 $0.13**（オンデマンド価格は pricing API の ap-northeast-1 / Linux / shared）。
+この走行の $0 の側は本当に $0 だった。
+
+- `af-role` が `{engine-image, engine-llm}` の `describe-instances` を**状態フィルタ無し**で:
+  3 台、すべて `terminated`（今回の 1 台と PR #588 の 2 台）。陽性対照は同じ出力の中——
+  `tag-key=af-role` だけならスロットの 4 台を含めて 7 を返す。
+- container instance は **4 台**に戻り、すべてスロットの箱。`describe-fleets` を絞らずに引くと空。
+- **手順 1 で控えた値に戻した**: `llm` は `mode: ondemand`、`LlmOffers` は空に戻し（パネルは梯子の
+  `l4` と `l40s` を再び読む）、`qwen3-coder-30b-a3b` を再びこの役の既定に、`LlmOfferBudgetSec` は
+  300 のまま、`image` は `mode: off` のまま。補完を叩くために起こした Workspace は `stopped` へ
+  戻し、そのために作ったセッション 2 本は削除した（前も後も 16 本）。
+- 生の戻り値は測ったセッションの `~/.cache/adr0077-p3/` にある。
+
+### 本文に返すもの
+
+| # | 判定 | 決定 | 何を言っているか |
+|---|---|---|---|
+| 1 | 🟢 | 9 | 拒否は実在し、読める: 行は parse の時点で名指しのログ付きで落ち、同じ宣言の od 行は陽性対照として生き残る。パラメータが着いてから reloader の 1 tick |
+| 2 | 🟢 | 1・2・3・5・6・7 | llm 役の launch template は image 役とまったく同じに買い・登録し（41 秒）・置き・提供し・退場する。`lt-…` の version 3 を持って。P1 の実測に役に固有のものは無い |
+| 3 | 🟢 | 5 | terminate → `terminated` が 5 分 43 秒〜5 分 59 秒＝4〜6 分の幅の中の 3 巡目で、5 分超は 2 回目。1 つの数ではなく幅を持たせた判断は正しかった |
+| 4 | ⚠️ | 6 | llm の冷間起動は、起動に使わないモデルを待つ——「engine may start」の 2 分 8 秒後、18.5 GB の同期の 13 秒後、pull はとうに終わり、コンテナの依存は `START`。`LlmModelsMax` が縛るのは**提供する数**であって**取ってくる数**ではない。原因は未測定で、次の巡で有効なモデルを 1 つにすれば決着する |
+| 5 | ⚠️ | 6 | llm のどのモデル行も `vram_need_mib` を宣言しないので、image 役を守っている適合検査はここでは効かない。起動行はそう言っているが、誰もそこを見ていない |
+| 6 | — | — | 本文は P3 を P2 の後ろに置いており、P2（決定 4 と 6）は着手されていない。この走行は P3 の 2 つの差分を測ったのであって、中断については何も測っていない |
+
+**P3 の実機の判定は、この走行が挙げた項目すべてで緑**。段階としての P3 は、本文が定めた順序
+——先に P2——の点で開いたままである。

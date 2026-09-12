@@ -550,8 +550,6 @@ export const sessions = {
   "ovw.waiting_hint": "この状態（質問・プラン・権限）になってからの経過時間。通知台帳とこの端末の観測から求めるため、どちらにも記録が無いときは表示しません",
   "ovw.since_wait": "応答から {d}",
   "ovw.since_wait_hint": "最後に入力待ちになってからの経過時間（＝あなたが答えてから動いている時間）",
-  "ovw.ctx": "コンテキスト {pct}%",
-  "ovw.ctx_hint": "コンテキストウィンドウの使用率",
   "ovw.started": "開始 {ago}",
   "ovw.last_say_hint": "エージェントが最後に言ったことの冒頭（claude のみ・表示専用）",
 };

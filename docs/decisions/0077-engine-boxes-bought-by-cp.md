@@ -310,10 +310,14 @@ skip is not needed).
   the slot pool's `terminateSlot`; 0045 decision 23's reason — never leave an ACTIVE ghost behind
   when it is you who removes the box — applies as written).
 - `draining` (0071 decision 7) changes meaning from "Managed Instances drains it out of our hands
-  in 427-463 s" to "**from the CP issuing the terminate until EC2 reports `terminated`**". The
-  slot measurement (0045 decision 22: stop → terminated in 93 s, a CPU figure) suggests minutes
-  on a GPU too, but it is **unmeasured** (open question 6). 0071 decision 7's drain wait (0074
-  decision 4) is inherited — no new box while the old one is still `running`.
+  in 427-463 s" to "**from the CP issuing the terminate until EC2 reports `terminated`**".
+  **Measured (P1 hardware runs 1 and 2, three laps): 4 min 8 s to 5 min 45 s** — 5 min 28 s to
+  5 min 45 s on a g6e, 4 min 8 s to 4 min 30 s twice on a g5. The slot figure (0045 decision 22:
+  93 s, CPU) does not carry to a GPU box. 0071 decision 7's drain wait (0074 decision 4) is
+  inherited — no new box while the old one is still `running` — and **its window is carried as
+  the range, four to six minutes, not as a number**: a demand that arrives inside it waits up to
+  six minutes for the old box to be gone before a new one is bought, and either side of "five
+  minutes" is wrong about a third of the time.
 - 🔴 **The Managed Instances `scaleInAfter` trap disappears.** 0071 P0 measurement 3's "a box left
   under `-1` is never reclaimed even after the value changes, and `terminate-instances` is refused
   by the MI policy" cannot exist once the CP is the terminator. In its place, **a terminate the CP
@@ -332,8 +336,11 @@ skip is not needed).
   Neither direction consults the CP's memory: tags and attributes are enough, as 0045 decision 29
   demands.
 
-🔁 **What would change this**: a measured terminate → `terminated` above five minutes on a GPU.
-Then 0071 decision 7's window arithmetic is rewritten.
+🔁 **What would change this**: fired on one lap of three (5 min 45 s) and not on the other two, so
+the window above is written as the range instead of a number. What would change it now is a lap
+above six minutes, or a demand pattern where the four-to-six-minute wait is the common case
+rather than the rare one — then the drain wait becomes "buy the next box while the old one is
+`shutting-down`", which decision 5 forbids today.
 
 ### 6. The model directory can be a host volume. P0 keeps it anonymous; P1 measures
 
@@ -578,8 +585,9 @@ slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box
 5. **`awsvpc` on the EC2 launch type: the g6.xlarge ENI limit and the task ENI.** One task per
    box should fit under a limit of 4, but agent settings such as `ECS_AWSVPC_BLOCK_IMDS` are (c).
    Depends on: decision 2. P1's hardware run.
-6. **Measured terminate → `terminated` on a GPU** (the length of decision 5's `draining`). P1's
-   hardware run.
+6. **Measured terminate → `terminated` on a GPU** (the length of decision 5's `draining`).
+   **Measured**: 4 min 8 s to 5 min 45 s over three laps (P1 hardware runs 1 and 2); decision 5
+   carries the range.
 7. **Resolve the AMI at launch (`resolve:ssm:`) or at stack update (the CloudFormation type).** The
    former tracks the newest; the latter pins a generation per deployment. 0045's slots do the
    latter. Depends on: decision 7.
@@ -1550,3 +1558,397 @@ because the code change was already in the P1 PR:
 step 3's second shell — but it would also reset the count on every task-definition change, which
 is the trap [the engine services](../../deploy/aws/ecs/cfn/PARAMETERS-60-engines.md) documents
 and the reason the property is absent. The second shell is the cheaper of the two.
+
+## Follow-up — P1 hardware run 2: warm, one image, the CP's own departure (2026-09-12, the dev deployment, about $0.15)
+
+The three things run 1 could not reach. On af-sandbox, with #583, #584 and #585 all in develop and
+the Control Plane put on by `dev-deploy.sh` at `0.19.1-dev-3d4cb9e9`. **All three were reached and
+nothing new went red on the purchase side: done item 7 is complete.** Two Spot boxes, **11 minutes
+58 seconds** of GPU, about **$0.15** against a gate of fifteen minutes and $0.60.
+
+**No migration this time.** The deployment has been on the EC2 launch type since run 1, so the
+`<Role>Enabled` round trip was not run again — which means run 1's items 3, 4 and 5, and #584's
+recovery from a zero-row engine table, are fixed but **still unmeasured on hardware**. They are
+not in the table below for that reason, and nothing here confirms them.
+
+Everything below is a raw return value, a Control Plane log line or a CloudTrail record. Where
+something was not measured, it says so.
+
+### What the deploy itself said
+
+`dev-deploy.sh --profile … --region …`, the ordinary way, 40 minutes end to end (about 20 of them
+the two-architecture QEMU bake, because `workspace/` had moved). The Control Plane's own line:
+
+```
+control-plane 0.19.1-dev-3d4cb9e9 on 0.0.0.0:8099 (console=…, ws image=…:0.19.1-dev-3d4cb9e9, auth=oauth, runtime=ecs-ec2)
+```
+
+🟢 **Run 1's item 6 fired, live and unprompted** — `update.sh` printed what it repaired, and the
+stack parameters moved with it:
+
+```
+==> cloudformation deploy af-ecs-engines (60-engines, parameters unchanged)
+    · LlmOfferBudgetSec=300 (ADR 0077 re-meant it; 180 was the OLD meaning's default)
+    · ImageOfferBudgetSec=300 (ADR 0077 re-meant it; 180 was the OLD meaning's default)
+```
+
+`describe-stacks` before: both `180`. After: both `300`, and **no other parameter moved** (a
+key-by-key diff of the two responses; `ImageOffers` byte-identical at 242 bytes). So the
+registration ceiling in force for this run was the template's 300, not run 1's silent 180.
+
+🟢 `GET /api/admin/engines` answered with **two rows** as soon as the new CP was up, not
+`{"engines":[]}`. That is the absence of run 1's item 4 rather than a measurement of its fix: the
+engine table never lost its rows, because nothing deleted the conditional half of `60-engines`.
+
+### Lap 1 — the full lap (09:15:41 → 09:25:11 UTC)
+
+Declared `ImageOffers` unchanged from run 1: `spot3` (spot, g6/g5/g6e) / `l4` (od) / `l40s` (od).
+The first row filled, so the walk was one row long: `offer_trail` `[spot3 active]`.
+
+| Check | Result | Evidence |
+|---|---|---|
+| **exactly one box** | 🟢 | CloudTrail from 09:15 UTC has exactly **two `CreateFleet` calls**, one per lap. At no sample was more than one `af-role=engine-image` instance alive; the cluster's container instances went 4 → 5 → 4 twice |
+| buy → box registered | 🟢 **45 s** | `CreateFleet` 09:15:43, `engines: image: the box i-00fc158ca3f562466 registered; asking for the task` 09:16:28. Lap 2: **44 s**. The ceiling in force was 300 s |
+| the desired count goes up in the same second as the registration | 🟢 | the `UpdateService` in CloudTrail is at **09:16:28**, the second of the log line above. Run 1's finding reproduced, and 0075's 2 min 35 s settle wait still has no shape to take |
+| the Spot row is the one that fills | 🟢 | `spot3` bought a **`g5.xlarge`**, `InstanceLifecycle: spot`, ap-northeast-1a, on both laps — never a g6e. Run 1 never saw this row succeed: both of its Spot boxes died at the registration ceiling before the launch template was fixed |
+| the panel answers from the box | 🟢 | `box: {id: i-00fc158c…, status: ACTIVE}` and `offer: {id: spot3, buy: spot}` from the first sample after registration until the box went. `class` reads `spot3`, `class_is_default: true` |
+| **`state: running` / `warm: true`** | 🟢 **5 min 40 s - 5 min 53 s** from desired 1 | see the cold start below. `running` first seen 09:22:08, `warm: true` first seen 09:22:21, at 13-second polling; ComfyUI's `Starting server` is 09:22:08, so the true figure is inside that band. From `mode: on` it is **6 min 40 s** |
+| **one image, 200** | 🟢 | `provider: comfy`, model `sd35-medium`, `warnings: []`, 1024×1024, 1,011,661 bytes. ComfyUI's own line: `Prompt executed in 73.12 seconds` |
+| **departure: desired 0 → deregister → terminate, by the CP** | 🟢 | `mode: off` 09:24:21 → the task gone 09:24:31 (**10 s**) → `DeregisterContainerInstance` 09:25:10 → `TerminateInstances` 09:25:11. **Nothing was terminated by hand on either lap.** Run 1's item 2 is closed |
+| terminate → `terminated` | measured **4 min 14 s - 4 min 30 s** | last `shutting-down` 09:29:25, `terminated` 09:29:41 (15-second polling). Lap 2: **4 min 8 s - 4 min 25 s**. ⚠️ Run 1 measured 5 min 28 s - 5 min 45 s — see below |
+| the sweep did not misfire while the engine was up | 🟢 | CloudTrail's only two `TerminateInstances` are the two departures, both after their `mode: off`. The box that served the image lived 9 min 28 s and was never touched |
+| **`df /var/lib/docker` is the instance store on a g5 too** | 🟢 | measured on lap 2 — see below |
+
+#### The cold start, line by line (from desired 1 at 09:16:28)
+
+| Elapsed | What |
+|---|---|
+| 33 s | `engine fetch: active set for /af-ws/engines/image/active starts with 'sd35-medium'` |
+| 2 min 39 s | `engine fetch: engine may start; 9 file(s) still to sync` — the default set is on disk (`sd3.5_medium 5,107,104,286 bytes in 50s`, `clip_l … in 3s`, `clip_g … in 12s`, `t5xxl 4,893,934,904 in 56s`) |
+| 5 min 26 s | `Total VRAM 22588 MB, total RAM 15791 MB` … `Device: cuda:0 NVIDIA A10G : cudaMallocAsync` |
+| 5 min 40 s | `Starting server` / `To see the GUI go to: http://0.0.0.0:8080` |
+| 5 min 53 s | `warm: true` on the panel (first sample) |
+
+Beside the other measurements of the same thing:
+
+| Run | Box | To `warm: true` |
+|---|---|---|
+| 0074 (Managed Instances) | g6e.xlarge spot | 307 s from `mode: on` (one image at 403 s) |
+| 0075 re-run (Managed Instances) | g6.xlarge spot | 5 min 30 s from `mode: on` |
+| 0077 run 1 (EC2 Fleet) | g6e.xlarge on-demand | not reached; ComfyUI on the GPU at 3 min 49 s from desired 1 |
+| **this run** (EC2 Fleet) | **g5.xlarge spot** | **5 min 53 s from desired 1, 6 min 40 s from `mode: on`** |
+
+⚠️ **Read that honestly: buying the box got much faster and the cold start did not.** Two seconds
+to buy and 45 to register is a different world from Managed Instances, but everything after
+registration is model bytes and CUDA, and an A10G loads them more slowly than an L40S — 5 min 26 s
+here against run 1's 3 min 49 s to the same line. The fetch throughput says the same:
+102 / 87 / 103 / 173 / 158 / 140 MB/s on this box, against 104-209 on run 1's g6e.xlarge and
+ADR 0071's 104-147 on Managed Instances. **The ranges overlap, so this run is no evidence that the
+NVMe data-root is faster** — on a g5.xlarge the network is the ceiling, not the disk. The `df` is
+the evidence for decision 6, not the throughput.
+
+#### The image, and how it was driven
+
+ADR 0075 recorded that no image could be generated because "there is no way in from outside to the
+engine gateway (its token is the Workspace-internal `/internal/engine/token`)". **A session on that
+same deployment is the way in**, and it needs no token: the Workspace was started, a session
+created over `POST /api/sessions`, and the prompt delivered with
+`POST /api/sessions/{name}/input`. ⚠️ One thing to know before repeating it: **`driver: "managed"`
+is refused for a `claude` session** (`400 driver_unsupported`, ADR 0015) — `tui` is the driver, and
+it is driven over the same REST route regardless.
+
+| Time (UTC) | What |
+|---|---|
+| 09:22:36 | the prompt handed to the session (`202 {"queued":…}`) |
+| 09:22:46 | ComfyUI: `got prompt` |
+| 09:23:59 | ComfyUI: `Prompt executed in 73.12 seconds` |
+| 09:24:03 | the session reported: success, `provider: comfy`, model `sd35-medium`, `warnings: []` (empty), no error, 1024×1024, 1,011,661 bytes |
+
+⚠️ The agent was asked for the elapsed seconds and answered **"not in the result — there is no such
+field"** rather than estimating. The 73.12 s above is ComfyUI's own log; the tool's own return
+carries no timing.
+
+#### The departure, in the order decision 5 asks for
+
+```
+09:24:21  engines: image set to off by …
+09:25:11  engines: image: terminated the box i-00fc158ca3f562466 (the engine is stopped and nothing is running on it)
+```
+
+CloudTrail, the same lap, from the Control Plane's own task role: `UpdateService` 09:24:21 →
+`DeregisterContainerInstance` **09:25:10** → `TerminateInstances` **09:25:11**. ECS took the task
+off in ten seconds; the sweep's next tick did the rest, **50 s** after the toggle. Lap 2, where the
+task was still `pending` when the engine was turned off, took **65 s** by the same route
+(`mode: off` 09:32:24, ECS `stopped 1 pending tasks` 09:32:32, deregister 09:33:28, terminate
+09:33:29). Neither needed a human, and `describe-instances` never showed a box the CP had
+forgotten.
+
+### Lap 2 — the two checks that needed a box but not a warm one (09:30:57 → 09:33:29 UTC)
+
+Two and a half minutes of GPU, deliberately ended before the fetch mattered.
+
+- 🟢 **The NVMe data-root is there on a `g5.xlarge` as well.** Over SSM on the live box:
+
+  ```
+  df -h /var/lib/docker   →  /dev/nvme1n1  233G  2.6G  231G   2% /var/lib/docker
+  lsblk                   →  nvme0n1 60G (/ and /boot/efi), nvme1n1 232.8G  /var/lib/docker
+  docker info             →  Docker Root Dir: /var/lib/docker
+  systemctl is-active ecs docker  →  active / active
+  ```
+
+  Run 1 measured this on a `g6e.xlarge`; the instance store is a per-type property, so the second
+  type is worth having. The root volume is the 60 GiB gp3 `ImageStorageGiB` asks for, and `ecs`
+  being `active` is the launch template fix (`systemctl start --no-block ecs`) holding on a box
+  nobody touched.
+
+- 🟢 **Pressing `mode: on` on an engine that is already running buys nothing** — #584's second
+  guard, which until now only a unit test had seen. At 09:31:49, eleven seconds ago, the box was
+  registered and the desired count written; the admin `PUT` returned **200 in 0.28 s** (a real
+  start takes 2.6 s), CloudTrail records **no third `CreateFleet`**, and `describe-instances` had
+  one instance before and after. The Control Plane logged the start's opening line
+  (`starting on spot3 (22000 MiB VRAM declared); largest model sd35-medium wants 11097 MiB
+  (floor)`) and then stopped at the guard.
+
+  ⚠️ **but the press wiped the panel's `offer_trail` to `null`.** The walk's `begin()` runs before
+  `startOnOffer` takes the lock and finds `desired >= 1`, so the trail of the run that is actually
+  live is cleared and no row replaces it. `offer` still read `{id: spot3, buy: spot}` and the box
+  was never in danger; what is lost is the audit trail on the panel, at exactly the moment an
+  operator is pressing buttons.
+
+### Cost and cleanup
+
+| Box | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
+|---|---|---|---|---|---|---|---|
+| `i-00fc158ca3f562466` | g5.xlarge | spot | 09:15:43 | 09:25:11 | 9m28s | 0.7391 | $0.117 |
+| `i-0566a8943c902d524` | g5.xlarge | spot | 09:30:59 | 09:33:29 | 2m30s | 0.7391 | $0.031 |
+
+**11 minutes 58 seconds, about $0.15** (`describe-spot-price-history` for g5.xlarge / Linux in
+ap-northeast-1a in the same hour: $0.7391; 1c was $0.7893). The gate was fifteen GPU minutes and
+$0.60, and neither half was reached. ⚠️ For comparison with run 1's $1.02: the whole difference is
+that the Spot row now fills, so nothing fell through to a `g6e.xlarge` at $2.699 — the offer list
+did not change between the two runs.
+
+- `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**: two
+  instances, both `terminated`. (Positive control in the same output: `tag-key=af-role` alone
+  returns 6, the four slot boxes included.)
+- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → empty, as
+  P0 (b) measured.
+- **Restored to what step 1 recorded**: `image` `mode: off`, `llm` `mode: ondemand`, `ImageOffers`
+  byte-identical, `ImageInstanceClasses` untouched, both `<Role>Enabled=true`. The Workspace that
+  was started to generate the image was put back to `stopped`, and the session created to call the
+  tool was deleted (sixteen sessions before, sixteen after).
+- ⚠️ **Left changed on purpose**: `ImageOfferBudgetSec` and `LlmOfferBudgetSec` are **300** now,
+  because `update.sh` repaired them on the way in. That is #585 working, not a residue.
+- The raw responses are in `~/.cache/adr0077-p1b/` of the session that measured this.
+
+### What this hands back
+
+| # | Verdict | Decision | What it says |
+|---|---|---|---|
+| 1 | 🟢 | 5 | The departure is CP-driven, twice, in the order the decision states: desired 0 → deregister → terminate, 50 s and 65 s after the toggle, nothing ended by hand. Run 1's item 2 is closed |
+| 2 | 🟢 | 1, 2, 6, 7 | One box per lap, 44-45 s to registration, the desired count in the same second, the Spot row filling with the cheap type, `ecs` and `docker` both active on a box nobody touched. The launch template fix holds |
+| 3 | 🟢 | 6 | The NVMe data-root is there on `g5.xlarge` as well as `g6e.xlarge`. ⚠️ But the fetch throughput does **not** prove it: 87-173 MB/s here overlaps ADR 0071's Managed Instances range, because on this type the network is the ceiling |
+| 4 | 🟢 | — | Run 1's item 6 is confirmed live: `update.sh` moved both roles' `OfferBudgetSec` from 180 to 300 and touched no other parameter |
+| 5 | ⚠️ | 5 | **terminate → `terminated` is 4-6 minutes, not "about five".** Measured 4 min 8 s - 4 min 30 s twice today against run 1's 5 min 28 s - 5 min 45 s on a g6e. Decision 5's 🔁 fired on one run and would not have fired on these two, so whoever rewrites ADR 0071 decision 7's window arithmetic should carry **the range**, not a number: assuming either side of five minutes is wrong about a third of the time |
+| 6 | ⚠️ | — | A `mode: on` press on a running engine is correctly a no-op for the hardware but clears the panel's `offer_trail`. `begin()` runs before the guard returns. One line to move, and it is the only thing on this run that behaves worse than before #584 |
+| 7 | — | 11 | **Not measured, and not by omission**: the `<Role>Enabled` round trip (items 3, 4, 5) and #584's recovery from a zero-row engine table need a deployment that is still on Managed Instances. This one is not, and re-migrating it backwards to prove the point costs more than it returns. They are fixed in #585 / #584 and stand unverified on hardware |
+
+**Done item 7 is complete**: exactly one box, no settle wait, the Spot row's type, the tags and
+`InstanceLifecycle`, `state: running` / `warm: true` in 5 min 53 s, one image at 200, the NVMe
+data-root, and a departure the Control Plane drove itself — with the migration's own steps
+(items 3, 4, 5) carried over as fixed-but-unmeasured.
+
+## Revision after P1's hardware runs (2026-09-12)
+
+P1 is complete (done items 1-7; runs 1 and 2, #583 and #588). One decision's 🔁 fired and the
+text above was revised in place, as before; nothing else in the body moved.
+
+| Decision | What changed | Source |
+|---|---|---|
+| 5 | `draining` is measured, not "unmeasured": terminate → `terminated` is **4 min 8 s to 5 min 45 s** over three laps; the drain wait's window is carried as **the range, four to six minutes**, because the 🔁 fired on one lap of three and not on the other two. The 🔁 itself is rewritten to "a lap above six minutes, or a demand pattern where the wait is the common case" | P1 hardware runs 1 and 2 |
+| Open question 6 | answered with the same range | same |
+
+Left open on hardware, by the runs' own account: the `<Role>Enabled` round trip and #584's
+recovery from a zero-row engine table (the dev deployment is no longer on Managed Instances, and
+migrating it backwards to prove the point costs more than it returns); a `mode: on` press on a
+running engine clearing the panel's `offer_trail` (a one-line order fix on the CP lane, #584's
+guard before `begin()`). P2 (decisions 4 and 6) and P3 (the llm role) have not started.
+
+## Follow-up — what P2's CP lane handed back (2026-09-12, PR #591)
+
+Decision 4 — the interruption and the rebuild — is implemented. It was inherited from ADR 0075
+decision 6 as a DESIGN (the code had `noteReplacement`'s log and audit row and nothing else), so
+this is the first time it exists. Decision 6 (the host volume for the model directory) is not in
+this; it is still P2's second half. **No decision's text is edited.** Four things the
+implementation says back:
+
+- **The rebuild needed its own driver on the tick, and the text does not say who drives it.**
+  Decision 4 says the rebuild is "decision 1's call again from the top of the list", which is
+  right about the call and silent about the seconds after it. A START is driven by the
+  controller's `start` action, which only happens at desired 0; a rebuild happens at desired **1**
+  — the task is PENDING and the controller's own decision is "do nothing" — so nothing would have
+  noticed the registration ceiling or moved to the next offer. There is now a step asked on every
+  tick while a walk is in flight, and it is also what ends a rebuild abandoned by a stop.
+- 🔴 **Decision 4's second condition corrected decision 5's sweep, which #577 had implemented too
+  eagerly.** "The task was replaced but the box is still there" is not an interruption (the ADR
+  says so, and an OOM kill produces exactly that shape) — but #577's stray rule, "a box with no
+  task on it while the service wants one, after fifteen minutes", fires on *precisely* that box:
+  the engine's only one, empty for the seconds ECS takes to re-place the task. Terminating it
+  turns a restart ECS was already handling into a box purchase, and decision 4's rebuild would
+  then buy the replacement. The stray rule gained a second condition — **another box of this role
+  must be carrying the task** — which is what "a SECOND box with no task" always meant. The test
+  for the not-an-interruption case is what found it.
+- **An abandoned walk has to be ended by somebody, and `startInFlight` is not enough.** The
+  departure sweep stands down while a walk is in flight, which is the P1 hardware run's red seen
+  from the other side: switch the engine off while a box is still booting and nothing drives that
+  walk again, so the flag would stand for ever. Two answers, and both are needed: the rebuild step
+  ends its own box when the desired count has gone (its premise is a task the service wants), and
+  the sweep now stands down **only inside the registration ceiling plus the departure grace**
+  rather than for any walk in flight. The second one also covers a START abandoned by a stop,
+  which had no cover at all — the same leak in a shape nobody had walked into yet.
+- **Contract B gains one value, `interrupted`, and the Console needed three lines.** It prints an
+  unknown result verbatim, so nothing was broken; it now has a label in both locales, and so does
+  `unusable`, which #577 added and nobody named. The `offer_trail` of an interrupted demand reads
+  `l4=interrupted, l4=active` — the same offer twice, which is what "rebuild from the top" means
+  — and `l4=interrupted, l4=interrupted, l40s=active` once the two-in-a-row skip has fired.
+  "In a row" is counted per offer id, not per demand: an offer reclaimed, replaced by another that
+  was also reclaimed, gets its second chance.
+
+## Follow-up — P3 hardware run: the llm role on EC2 Fleet (2026-09-12, the dev deployment, about $0.13)
+
+P3's whole surface is two things P1 did not touch: **the llm role's own launch template** (#575's
+`LlmLaunchTemplateId`) and **decision 9's refusal of a `spot` row in `LlmOffers`** (#577). Both are
+measured here — the refusal for $0, the rest on one on-demand box, **6 minutes 46 seconds** of GPU,
+about **$0.13** against a gate of fifteen minutes and $0.60.
+
+**Every item this run names is green. P3 as a phase is not complete**, because its own text puts it
+after P2 (decisions 4 and 6, interruption and the host volume) and P2 has not started.
+
+No deploy was needed: the Control Plane is the one PR #588 measured, `0.19.1-dev-3d4cb9e9`, read
+from its own start line. ⚠️ That means **#589's `offer_trail` fix is not on this deployment** and
+nothing here exercises it; the `mode: on` press below was made once, so the defect it fixes had no
+opportunity to show.
+
+### Decision 9's refusal, measured for $0 (10:05:28 → 10:06:52 UTC)
+
+`LlmOffers` was set to a two-row list — one `spot`, one `od` — with
+`update-stack --use-previous-template`, so nothing but the parameter could move:
+
+```
+spotl4|L4 Spot (g6/g5)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|0.60|spot;l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|od
+```
+
+`UPDATE_COMPLETE` in **18 s**, and **14 s after the call** the Control Plane had re-read the table
+and said so:
+
+```
+10:05:42 engines: llm: ignoring the offer spotl4: the llm role is on-demand only (a lost conversation is not a retry)
+10:05:42 engines: llm instance classes re-read from /af-ws/engines: l4
+```
+
+| Check | Result | Evidence |
+|---|---|---|
+| the `spot` row is dropped | 🟢 | the log line above, one reloader tick (10 s) after the SSM write |
+| **the rest of the same list survives** (the positive control) | 🟢 | the panel's `offers` became exactly `[{id: l4, buy: od}]` — the od row from the *same* declaration. A parse that had thrown the list away would look identical without it |
+| nothing was bought | 🟢 | no `CreateFleet` in CloudTrail between 10:05 and 10:12, no instance, $0 |
+
+⚠️ One thing an operator should know, seen on the way through: **while `LlmOffers` is declared, the
+panel's `classes` IS the offers list** — the ladder's `l40s` rung was not shown for those 84
+seconds. That is the documented precedence (`offersSpec()` prefers `Offers` over `Classes`), not a
+defect, but the panel gives no hint that a rung was superseded rather than removed. Reverted at
+10:06:52; `offers` back to `l4` and `l40s`.
+
+### ⚠️ The run was pinned to the small model on purpose
+
+The role's default is `qwen3-coder-30b-a3b` (**18,556,689,568 bytes**), the llm role had **never
+run on this deployment** (no `llm/…` log stream existed at all), `LlmTaskMemory` is 14 GiB and
+`LlmExtraArgs` carries `--no-mmap`. Whether that model fits a 22 GB box is a real question and it
+is **not P3's** — losing a fifteen-minute budget to it would have measured nothing about EC2 Fleet.
+`qwen2.5-coder-1.5b` was made the role's default for the lap and the 30B put back afterwards. It
+did not spare the run as much as expected; see the cold start below.
+
+### The lap (10:12:19 → 10:19:06 UTC)
+
+| Check | Result | Evidence |
+|---|---|---|
+| **exactly one box** | 🟢 | CloudTrail from 10:10 UTC has **one `CreateFleet`**, at 10:12:21. Container instances 4 → 5 → 4 |
+| buy → box registered | 🟢 **41 s** | bought 10:12:20, `engines: llm: the box i-0ddc67d973d10325a registered; asking for the task` 10:13:01. P1's image laps were 44-48 s |
+| the desired count goes up in the same second | 🟢 | the `UpdateService` in CloudTrail is at 10:13:01 |
+| the offer that filled | 🟢 | `l4`, `buy: od`, a **`g6.xlarge`** in ap-northeast-1a, `InstanceLifecycle` **absent** (P0 (d): absent means on-demand). `offer_trail` `[l4 active]` — one row, no fall-through |
+| **the llm launch template is the one that bought** | 🟢 | the box carries `aws:ec2launchtemplate:id = lt-087eee2a966d767a0` — the `LlmLaunchTemplateId` in the engine table's llm row — at **version 3**, which is the `systemctl start --no-block ecs` fix. `af-role=engine-llm`, `af-engine-offer=l4`, `af-engine-buy=od`, `af-pool`, `af-managed-by`, `Name=af-engine-llm`, plus EC2's `aws:ec2:fleet-id`. One `CreateFleet`, no `CreateTags` |
+| the panel answers from the box | 🟢 | `box: {…, status: ACTIVE}` from the first sample after registration until it went |
+| **`df /var/lib/docker` is the instance store** | 🟢 | `/dev/nvme1n1 233G 25G 208G 11% /var/lib/docker`, `Docker Root Dir: /var/lib/docker`, `du -sh …/volumes` **19G** (the two GGUFs), `systemctl is-active ecs docker` → active / active, `nvidia-smi` → `NVIDIA L4, 23034 MiB`. The ROOT volume is **120 G** here, which is `LlmStorageGiB` — the image role's is 60 |
+| **`state: running` / `warm: true`** | 🟢 **2 min 47 s - 3 min 14 s** from desired 1 | 13-second polling: `warm: false` at 10:15:48, `warm: true` at 10:16:15; llama-server logged `listening` at 10:15:42, so the true figure is inside that band. From `mode: on`: 3 min 29 s - 3 min 56 s |
+| **one completion, 200** | 🟢 | from the **engine's own log**, not the client's word: `prompt eval time = 2033.35 ms / 17492 tokens (8602.54 tokens per second)`, `eval time = 11.90 ms / 2 tokens`, `total time = 2045.25 ms` at 10:16:44 |
+| **departure: desired 0 → deregister → terminate, by the CP** | 🟢 **43 s** | `mode: off` 10:18:22 → the task gone 10:18:31 (**9 s**) → `DeregisterContainerInstance` 10:19:06 → `TerminateInstances` 10:19:06. Nothing ended by hand |
+| terminate → `terminated` | **5 min 43 s - 5 min 59 s** | last `shutting-down` 10:24:49, `terminated` 10:25:05 (15-second polling). Inside the four-to-six-minute range this ADR now carries, and **above five** — a third lap, and the second one on that side |
+| the sweep did not misfire | 🟢 | one `CreateFleet` and one `TerminateInstances` in the whole window, the terminate after its own `mode: off` |
+
+#### The cold start, and where it actually goes (from desired 1 at 10:13:01)
+
+| Elapsed | What |
+|---|---|
+| 3 s | the task is created (`createdAt` 10:13:04) |
+| 19 s - 1 min 27 s | ECS pulls the images (`pullStartedAt` 10:13:20, `pullStoppedAt` 10:14:28) |
+| 27 s | `engine fetch: active set for /af-ws/engines/llm/active starts with 'qwen2.5-coder-1.5b'` |
+| 33 s | the start model is on disk — `llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf 1,117,320,768 bytes in 6s` (186 MB/s) — and the sidecar says `engine may start; 1 file(s) still to sync` |
+| 2 min 27 s | `llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf 18,556,689,568 bytes in 114s` (163 MB/s), `sync done` at 10:15:29 |
+| 2 min 41 s | llama-server: `starting server in router mode`, `listening on http://0.0.0.0:8080`, `(startup) loading model qwen2.5-coder-1.5b` |
+| 3 min 14 s | `warm: true` on the panel (first sample) |
+
+⚠️ **The engine process appeared 2 min 8 s after "engine may start", and 13 seconds after the whole
+18.5 GB sync finished.** Two candidate explanations are ruled out by the measurements above: the
+image pull had finished **74 seconds earlier**, and the container dependency is `condition: START`
+on both roles (`describe-task-definition`), so nothing in ECS was waiting. The remaining reading —
+**not measured, and a lap with one enabled model would settle it** — is that llama-server's router
+enumerates `presets.ini` at start (its log lists both models before it loads either) and so needs
+every file, not only the one it starts with. The image role does not behave this way: in run 2
+ComfyUI was on the GPU **2 min 47 s before** its own `sync done`.
+
+What that is worth to an operator, whichever the cause: **`LlmModelsMax` bounds what is served, not
+what is fetched.** A second, larger model that is merely `enabled` is paid for on every cold start
+of this role, and pinning the small one as default — as this run did — does not avoid it.
+
+⚠️ And one line from the start is worth keeping:
+
+```
+engines: llm: starting on l4 (22000 MiB VRAM declared); no model declares what it needs
+```
+
+No llm row carries a `vram_need_mib`, so decision 6's fit check is **inert for this role** — the
+same line on the image role names the model and its figure. For the 30B default on a 22 GB box that
+is the difference between a refusal an operator can read and a CUDA death they have to diagnose.
+
+### Cost and cleanup
+
+| Box | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
+|---|---|---|---|---|---|---|---|
+| `i-0ddc67d973d10325a` | g6.xlarge | on-demand | 10:12:20 | 10:19:06 | 6m46s | 1.1672 | $0.132 |
+
+**6 minutes 46 seconds, about $0.13** (the on-demand price from the pricing API for
+ap-northeast-1 / Linux / shared). The $0 half of this run really was $0.
+
+- `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**:
+  three instances, all `terminated` (this one and PR #588's two). Positive control in the same
+  output: `tag-key=af-role` alone returns 7, the four slot boxes included.
+- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → empty.
+- **Restored to what step 1 recorded**: `llm` `mode: ondemand`, `LlmOffers` back to empty (so the
+  panel reads the ladder's `l4` and `l40s` again), `qwen3-coder-30b-a3b` the role's default once
+  more, `LlmOfferBudgetSec` untouched at 300, `image` still `mode: off`. The Workspace that was
+  started to drive the completion is `stopped`, and both sessions created for it were deleted
+  (sixteen sessions before, sixteen after).
+- The raw responses are in `~/.cache/adr0077-p3/` of the session that measured this.
+
+### What this hands back
+
+| # | Verdict | Decision | What it says |
+|---|---|---|---|
+| 1 | 🟢 | 9 | The refusal is real and legible: the row is dropped at parse time with a log line naming it, and the od row of the same declaration survives as the positive control. One reloader tick after the parameter lands |
+| 2 | 🟢 | 1, 2, 3, 5, 6, 7 | The llm role's launch template buys, registers (41 s), places, serves and departs exactly as the image one, carrying `lt-…` version 3. Nothing in P1's findings is role-specific |
+| 3 | 🟢 | 5 | terminate → `terminated` in 5 min 43 s - 5 min 59 s: a third lap inside the four-to-six-minute range, and the second above five. Carrying the range rather than a number was the right call |
+| 4 | ⚠️ | 6 | The llm cold start waits for models it will not start with — 2 min 8 s after "engine may start", 13 s after an 18.5 GB sync, with the pull long finished and the container dependency `START`. `LlmModelsMax` bounds what is SERVED, not what is FETCHED. The cause is unmeasured; one enabled model on the next lap settles it |
+| 5 | ⚠️ | 6 | No llm model row declares `vram_need_mib`, so the fit check that protects the image role is inert here, and the start line says so in words nobody is looking at |
+| 6 | — | — | P3's own text puts it after P2, and P2 (decisions 4 and 6) has not started. This run measures P3's two differences and nothing about interruption |
+
+**P3's hardware verdicts are green on every item this run names**, and P3 as a phase stays open on
+its stated ordering: P2 first.

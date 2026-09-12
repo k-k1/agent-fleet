@@ -1,6 +1,6 @@
 # 50. ミラーのスキルピッカー — セッションのスキル/コマンドを認識して 1 操作で呼ぶ
 
-- 状態: **✅ 実装済み**（v1 claude 2026-07-28 / **v2 クロスエージェント同日** — codex・opencode・cursor 追加、実測記録は §7 / **v6 claude 同梱スキル＋2 段表示 2026-09-08** — §9）。意思決定は [decisions/0034](../decisions/0034-mirror-skill-picker.ja.md)。
+- 状態: **✅ 実装済み**（v1 claude 2026-07-28 / **v2 クロスエージェント同日** — codex・opencode・cursor 追加、実測記録は §7 / **v6 claude 同梱スキル＋2 段表示 2026-09-08** — §9 / **v7 列挙の起点を CWD へ 2026-09-12** — §10）。意思決定は [decisions/0034](../decisions/0034-mirror-skill-picker.ja.md)。
 - 関連: [29](29-keyboard-system.md)（キーボード体系 — sel-index リストの流儀）/ [27](27-agent-managed-driver.md)（turn 経路）/ [40](40-cursor-agent-kind.md)・[43](43-kiro-agent-kind.md)（ACP）/ 起動モーダルのテンプレ集約（`workspace/agent/repo_prompts.go`）
 
 ---
@@ -348,3 +348,50 @@ cursor / kiro / copilot / agy のミラーでピッカーに `proofread`（`.cla
   「/」ボタンが disabled（最初の走行は全状態が空＝道具の陰性）。`.click()` で開くと
   **textarea にフォーカスが無く** ↓/Enter が届かない（利用者はタイプで開くか、ボタンの
   あとに入力欄へ戻る）。どちらも「0 件」を先に疑って判明（[[null-result-needs-positive-control]]）。
+
+---
+
+## 10. 列挙の起点を CWD へ（v7・2026-09-12）
+
+### 10.1 きっかけ
+
+「SVN をチェックアウトして配下のフォルダで claude を起動したとき、スキルはどこに置けば
+認識されるか」を実測したところ、**ピッカーの列挙が CLI の探索規則と食い違っている**ことが
+分かった。列挙は `meta.Dir`（作業コピーのルート）固定で組まれていて、セッションの実 CWD
+＝ `Meta.CWD()`（= `Dir/Subdir`）を見ていない。`session_skills.go` に `Subdir` の語が
+1 つも無かった。同じ「subdir 起動で相対パスの基準がズレる」形の穴は
+[68 §検証](68-session-changed-files.md) でも見ている。
+
+### 10.2 実測（2026-09-12・カナリアのツリーを階層別に置いて CLI に列挙させる）
+
+| CLI | プロジェクト側スキルの探索範囲 |
+|---|---|
+| claude 2.1.267 | CWD と**全祖先**の `.claude/skills`・`.claude/commands`。**`$HOME` は境界**（`$HOME/.claude` はパーソナル層＝AF では `CLAUDE_CONFIG_DIR` に差し替え。HOME を動かすと境界も動くのを確認）。`.claude/commands` も祖先から拾えることを `/canary-parent` の実行で確認 |
+| codex 0.154.0 | CWD から **git root まで**。`.git` が無ければ **CWD の 1 枚だけ**（`git init` を陽性対照に確認） |
+
+指示ファイル（`CLAUDE.md`）の探索とは**範囲が違う**ことに注意（そちらは `$HOME` を越えて
+`/` の直前まで遡る）。スキルだけが `$HOME` で止まる。
+
+### 10.3 食い違いの 3 件と対処
+
+1. **claude＝偽陰性**: `Dir/<subdir>/.claude/...`、途中の階層、`Dir` より上（`~/repos/.claude/...`）が
+   出なかった。CLI は拾うので、手で `/name` と打てば動くのにピッカーには無い状態。
+   → `claudeSkillDirs(cwd, dir)` で CWD から `$HOME` の手前まで**深い順**に積む（近い方が勝つ）。
+   作業コピーより上の階層は実在するが「このレポのもの」ではないので `source: user` で出す
+   （`project|user|cli` の 3 値は変えない＝Console 側の変更不要）。
+2. **codex＝偽陽性**: SVN（`.git` 無し）や subdir 起動で `Dir/.codex/skills` を `$name` として
+   出しても codex が解決できない。→ `codexSkillDirs(cwd)` は git root まで、無ければ CWD のみ。
+3. **外来スキルのパス**: `Path` が `Dir` 相対のまま「`{path}` を読んで…」に埋まるので、subdir
+   起動だと解決しない。→ CWD 直下なら従来どおり相対、上の階層なら**絶対パス**で返す。
+
+`opencode` / `cursor` は `meta.Dir` のまま据え置き（subdir 起動での探索を未計測。当てずっぽうで
+変えると別の誤りに置き換わるだけ）。**積み残し**: opencode の `.opencode/command(s)` が CWD 基準か
+リポジトリルート基準かの実測。
+
+### 10.4 検証
+
+- `TestClaudeSkillsFollowsTheCWDChain`（CWD／途中の階層／作業コピー直下／`~/repos` 相当が出る・
+  `$HOME/.claude` は出ない・同名は近い方が勝つ）、`TestCodexSkillsStopsAtTheGitRoot`（`.git` 無しで
+  CWD のみ→`git init` で両段）、`TestForeignSkillPathResolvesFromTheCWD`（相対／絶対の出し分け）。
+- 変異試験: 「`[]string{dir}` 固定に戻す」「git root へ登らない」「常に相対パス」の 3 変異が
+  それぞれ対応するテストを落とすことを確認（`-count=1`）。

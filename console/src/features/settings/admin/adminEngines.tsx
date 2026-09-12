@@ -551,12 +551,22 @@ function engineOfferName(id: string, offers: EngineOffer[]): string {
 
 /** How one attempt ended, as a message key — or "" for a code this Console does not know.
  *
- * 🔴 The codes come from matching ECS service-event STRINGS (ADR 0075 decision 5 names the three
- * measured ones), so AWS rewording a message adds a value here rather than removing one. Unknown
- * is shown verbatim by the caller instead of being dropped: the raw word is the only clue the
- * next person gets that the table stopped matching. */
+ * 🔴 The codes are the CP's reading of `CreateFleet`'s own response (ADR 0077 decision 8; under
+ * ADR 0075 they came from matching ECS service-event strings), so a vocabulary the CP learns adds
+ * a value here rather than removing one. Unknown is shown verbatim by the caller instead of being
+ * dropped: the raw word is the only clue the next person gets that the table stopped matching. */
 export function engineOfferResultKey(result: string | undefined): string {
-  const known = ["active", "unfulfillable", "insufficient", "quota", "budget"];
+  const known = [
+    "active",
+    "unfulfillable",
+    "insufficient",
+    "quota",
+    "budget",
+    // ADR 0077: a row `CreateFleet` refuses outright (decision 8), and a box taken away while
+    // the service still wanted its task (decision 4 — not a failure, the CP rebuilds).
+    "unusable",
+    "interrupted",
+  ];
   return result && known.includes(result) ? "admin.engines_offer_result_" + result : "";
 }
 

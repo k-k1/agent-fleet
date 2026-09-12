@@ -20,6 +20,7 @@ const { useReposStore } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { PaneHoverProvider } = await import("../../lib/panehover.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
+const { kindLabel } = await import("../../lib/sessionkind.ts");
 type SessionActions = import("../sessions/useSessionActions.tsx").SessionActions;
 
 let root: Root | null = null;
@@ -64,6 +65,50 @@ describe("SessionCard", () => {
     // A card has room, so the chip keeps its text even for the calm states.
     expect(host.querySelector(".session-state")?.textContent?.trim()).toBe(t("state.working"));
     expect(host.querySelector(".session-state")?.className).not.toContain("mini");
+  });
+
+  // ADR 0078 decision 13. The kind is the coloured square, not a word repeated down the grid;
+  // the model that ANSWERED is what varies and what the meta row now leads with.
+  it("names the model that last answered, and does not spell out the kind", async () => {
+    await render({ model: "claude-opus-5", context: { read: 1000, create: 10, fresh: 5, model: "claude-fable-5-1" } });
+    const meta = host.querySelector(".ovw-meta")!;
+    expect(meta.textContent).toContain("claude-fable-5-1");
+    // The launch model is NOT what is shown once a turn has answered with another.
+    expect(meta.textContent).not.toContain("claude-opus-5");
+    expect(meta.textContent).not.toContain(kindLabel("claude"));
+    // The kind is still readable — as the square's tooltip, as in the rail.
+    expect(host.querySelector(".sess-kic")?.getAttribute("title")).toBe(kindLabel("claude"));
+  });
+
+  it("falls back to the launch model until the session has answered once", async () => {
+    await render({ model: "claude-opus-5" });
+    expect(host.querySelector(".ovw-meta")?.textContent).toContain("claude-opus-5");
+  });
+
+  // The gauge is the mirror's own ContextBar (decision 13), so a card and its chat can never
+  // disagree about how full a session is.
+  it("draws the mirror's context gauge, and the token trend when there is one", async () => {
+    await render({
+      context: { read: 120000, create: 8000, fresh: 2000, model: "claude-opus-5" },
+      tokenSpends: [1200, 800, 4300],
+    });
+    expect(host.querySelector(".ovw-ctx .mirror-ctxbar")).not.toBeNull();
+    // Segments sized against the window, exactly as the chat sizes them.
+    expect(host.querySelector<HTMLElement>(".ovw-ctx .cb-read")?.style.width).toBe("12%");
+    expect(host.querySelector(".ovw-ctx .cb-label")?.textContent).toContain("13%");
+    // The trend: one polyline over the series the Agent sent.
+    expect(host.querySelector(".ovw-ctx .cb-trend .spark polyline")).not.toBeNull();
+  });
+
+  it("shows no gauge before the first turn, and no trend under two points", async () => {
+    await render({});
+    expect(host.querySelector(".ovw-ctx")).toBeNull();
+    await render({ context: { read: 0, create: 0, fresh: 0, model: "claude-opus-5" } });
+    expect(host.querySelector(".ovw-ctx")).toBeNull();
+    // A gauge with no trend beside it: the sparkline needs two points to mean anything.
+    await render({ context: { read: 1000, create: 0, fresh: 0, model: "claude-opus-5" }, tokenSpends: [1200] });
+    expect(host.querySelector(".ovw-ctx .mirror-ctxbar")).not.toBeNull();
+    expect(host.querySelector(".ovw-ctx .cb-trend")).toBeNull();
   });
 
   it("puts the state chip in the head (top-right), not in a row of its own", async () => {

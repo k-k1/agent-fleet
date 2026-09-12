@@ -34,7 +34,7 @@ import { openSessionFromList } from "../sessions/open.ts";
 import { elapsedShort } from "./overview.ts";
 import { SessionMenu } from "../sessions/SessionMenu.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
-import { contextWindow } from "../mirror/ContextBar.tsx";
+import { ContextBar } from "../mirror/ContextBar.tsx";
 import type { SessionActions } from "../sessions/useSessionActions.tsx";
 import type { Session } from "../../types/session.ts";
 
@@ -76,10 +76,16 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions 
   const ex = !s.alive ? exitLabel(s) : null;
   const open = opens.length > 0;
   const hl = open && hover?.session === s.name;
-  // Context fill, claude only: the same arithmetic as the ContextBar gauge, shown as a
-  // percentage because a card has no room for the segmented bar.
+  // Which model actually ANSWERED, not which one the session was launched with (ADR 0078
+  // decision 13): `context.model` is read off the newest assistant turn, so it follows a
+  // model switched mid-conversation — and on a grid the question is always "what is running
+  // in here now". Falls back to the launch model until the session has answered once.
+  const model = s.context?.model || s.model;
+  // Context fill, claude only. The gauge is the mirror's own ContextBar, so one session's
+  // card and its chat can never disagree about how full it is.
   const used = s.context ? s.context.read + s.context.create + s.context.fresh : 0;
-  const ctxPct = s.context && used > 0 ? Math.min(100, Math.round((used / contextWindow(s.context.model || s.model, used)) * 100)) : null;
+  const ctx = s.context && used > 0 ? s.context : null;
+  const spends = s.tokenSpends;
   const started = relTime(s.createdAt);
   // How long this has been waiting for a person — the number the card is watched for. While it
   // is still waiting the clock runs on the wait itself; once answered, the same instant reads
@@ -220,10 +226,29 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions 
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
       </div>
       )}
+      {/* The context gauge and the token-spend trend, the mirror's own strip (ADR 0078
+          decision 13). Borrowed rather than reimplemented for the same reason as stateInfo
+          and SessionMenu: a second arithmetic for "how full is it" would drift from the one
+          the chat shows. What the card changes is only its scale — the labels fold to their
+          short forms and the row wraps at a card's width (overview.css). */}
+      {ctx && (
+        <div className="ovw-ctx">
+          <ContextBar
+            read={ctx.read}
+            create={ctx.create}
+            fresh={ctx.fresh}
+            model={ctx.model || s.model}
+            spends={spends}
+            maxSpend={spends && spends.length ? Math.max(...spends) : 0}
+          />
+        </div>
+      )}
       <div className="ovw-meta">
-        <span>{kindLabel(s.kind)}</span>
-        {s.model && <span title={s.model}>{s.model}</span>}
-        {ctxPct != null && <span title={tr("ovw.ctx_hint")}>{tr("ovw.ctx", { pct: ctxPct })}</span>}
+        {/* The KIND is not spelled out here (the user's call, 2026-09-12): the coloured square
+            in the head already says which agent this is, and the word repeated on every card
+            was a column of "Claude". What the row leads with instead is the model that
+            answered last, which is the part that actually varies. */}
+        {model && <span title={model}>{model}</span>}
         {started && <span>{tr("ovw.started", { ago: started })}</span>}
         {waited && (
           <span className={waitingNow ? "ovw-waited on" : "ovw-waited"} title={tr(waitingNow ? "ovw.waiting_hint" : "ovw.since_wait_hint")}>
