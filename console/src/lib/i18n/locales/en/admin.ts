@@ -31,7 +31,21 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.brand_pwa_note": "Saving applies to this tab at once. Other tabs pick it up on reload, and a PWA already installed keeps its icon and name until it is reinstalled.",
   "admin.mode_pool": "Slots",
   "admin.mode_engines": "Inference engines",
+  // Two screens: the machine and what it loads. The rail follows that order. The same models
+  // screen in tenant settings is tenant.tab_engines.
+  "admin.mode_engine_models": "Inference engine models",
   "admin.engines_none": "This deployment runs no self-hosted inference engines.",
+  "admin.engines_none_models_hint": "What there is to run can be browsed under \"Inference engine models\" — it needs no engine and no token.",
+  "admin.engines_ops_super_only": "Starting and stopping engines and choosing the GPU are the deployment administrator's (super_admin). Taking models in and reading the catalogue is under \"Inference engine models\".",
+  // The role tabs. A deployment with one engine gets its name and no tab strip.
+  "admin.engines_role_llm": "Text",
+  "admin.engines_role_image": "Image",
+  "admin.engines_tab_models": "Models",
+  "admin.engines_tab_loras": "LoRAs",
+  // No LoRA is an ordinary state. In red it would look broken on every deployment that never
+  // wanted one.
+  "admin.engines_loras_empty": "This engine has no LoRAs.",
+  "admin.engines_lora_no_family": "no family declared",
   "admin.engines_models_label": "Models",
   "admin.engines_always_on_note": "Always-on keeps the GPU instance up, at whatever the instance class costs per hour. Put it back on demand when you are done.",
   "admin.engines_tenant_scope":
@@ -86,6 +100,20 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_id": "id",
   "admin.engines_model_add_key": "key",
   "admin.engines_model_add_family": "family",
+  // ADR 0072 follow-up, negative prompts. Three places get a say in what a picture keeps out —
+  // this row, the request, and the deployment — and they are ADDED, so none of the labels may
+  // read as "the" negative prompt.
+  "admin.engines_model_negative": "never draw",
+  "admin.engines_model_negative_placeholder": "what this checkpoint should keep out",
+  "admin.engines_negative_label": "excluded from every image",
+  "admin.engines_negative_placeholder": "keywords, separated by commas",
+  "admin.engines_negative_save": "Save",
+  // 🔴 The sentence that keeps this from being read as a content filter. It is a negative
+  // prompt: a nudge to the sampler, absent altogether on the distilled checkpoint families,
+  // and no guarantee about what comes out.
+  "admin.engines_negative_note":
+    "Added to the negative prompt of every image this engine makes, on top of the model's own and the request's. It is guidance, not a filter — two checkpoint families sample without a negative prompt at all, and those requests say so in their warnings.",
+  "admin.engines_negative_too_long": "Too long — this is a keyword list, not a policy document.",
   // ADR 0072 decision 5, the llm half. A LoRA is not a model: it is pinned to one, travels in
   // that model's preset section, and is invisible to the member — who sees an ordinary model id
   // that happens to include the fine-tune.
@@ -142,6 +170,29 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_hit_likes": " likes",
   "admin.engines_ingest_hit_trending": " trending",
   "admin.engines_ingest_hit_gated": "gated",
+  // 🔴 What the source says you may not do, before anything is downloaded. The codes are a
+  // closed set the CP decides and the words exist only here (engineRestrictLabel).
+  // "Login required" is not in Civitai's metadata at all — the CP has to HEAD the download to
+  // learn it — so "could not tell" is blank, and is not the same answer as "anyone may".
+  "admin.engines_hit_login_required": "login required",
+  "admin.engines_hit_login_note": "Civitai hands this file only to a logged-in account. This deployment holds no Civitai credentials, so the ingest would fail with 401.",
+  "admin.engines_limit_gated_auto": "gated (accept the terms)",
+  "admin.engines_limit_gated_manual": "gated (the author approves)",
+  "admin.engines_limit_noncommercial": "non-commercial",
+  "admin.engines_limit_credit": "credit required",
+  "admin.engines_limit_no_derivatives": "no derivatives",
+  "admin.engines_limit_same_license": "same licence only",
+  "admin.engines_limit_paid": "paid",
+  "admin.engines_limit_early_access": "early access (paid until a date)",
+  "admin.engines_limit_private": "not public",
+  "admin.engines_limit_generate_only": "on-site generation only (no download)",
+  "admin.engines_limit_nsfw": "NSFW",
+  "admin.engines_limit_poi": "real person",
+  "admin.engines_limit_minor": "minor",
+  "admin.engines_limit_unscanned": "virus scan not clean",
+  "admin.engines_limit_pickle": "pickle warning",
+  // A LoRA's trigger words. Used without them, the adapter loads and nothing changes.
+  "admin.engines_hit_trigger": "trigger",
   // Published and updated answer different questions ("is this new" and "is it still being
   // worked on"), so both ride, each labelled. One alone cannot tell a model published a year
   // ago and touched last week from one published last week.
@@ -168,6 +219,32 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // 🔴 The MODEL's ceiling, not the window this deployment can run. The 30B declares 262144 and
   // does not fit an L4, so it runs at 32768. Never shown without saying whose number it is.
   "admin.engines_ingest_ctx_max": "the model's maximum is {n}",
+  // --- generation parameters, read out of the author's own description ---
+  // 🔴 A regular expression's guess about somebody else's prose, which is why the sentence it
+  // came from is always beside it and a person edits the field before pressing anything.
+  "admin.engines_params": "Generation parameters",
+  "admin.engines_params_note": "An empty field keeps the family's own recipe. Only what is filled in is replaced for this model.",
+  "admin.engines_params_hint_found": "Read out of the author's description (unverified):",
+  "admin.engines_params_hint_apply": "Use these",
+  "admin.engines_params_none": "Generation parameters: none declared (the family's own recipe)",
+  "admin.engines_params_steps": "Steps",
+  "admin.engines_params_cfg": "CFG",
+  "admin.engines_params_sampler": "Sampler",
+  "admin.engines_params_scheduler": "Scheduler",
+  "admin.engines_params_clip_skip": "Clip skip",
+  "admin.engines_params_weight": "Default strength",
+  // A display name ("DPM++ 2M Karras") is accepted: the CP translates it into ComfyUI's own
+  // vocabulary and drops what it cannot translate.
+  "admin.engines_params_name_ph": "dpmpp_2m",
+  "admin.engines_params_clear": "Clear",
+  "admin.engines_params_edit": "Parameters",
+  "admin.engines_params_save": "Save",
+  // 🔴 flux1 / klein fold guidance into the conditioning, so a card's "CFG" is a different knob.
+  "admin.engines_params_cfg_ignored": "This family does not use CFG (guidance is a different input).",
+  "admin.engines_params_clip_skip_note": "Clip skip is recorded only; no workflow here reads it yet.",
+  // The family suggestion. Decision 2 keeps the declaration with the operator, so it is filled
+  // in and can be changed.
+  "admin.engines_family_suggested": "Guessed from \"{n}\". Pick another if that is wrong.",
   "admin.engines_ingest_go": "Take it in",
   // A split model is not one download (FLUX.1 is a unet, a clip_l, a t5 and a vae). The CP
   // refuses a plain ingest onto an id it already has — that would upsert the row's files,

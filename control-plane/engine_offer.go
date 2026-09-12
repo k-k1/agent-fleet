@@ -26,6 +26,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -113,6 +114,11 @@ type engineOfferRun struct {
 	// reason it is not a second deadline). Measured, ADR 0075 live run 3: the box arrived in 26
 	// seconds and the engine still moved on at 180, because the clock was reading the TASK.
 	arrived bool
+	// settling is true between the two halves of a start: the strategy is written and the desired
+	// count is waiting for the deployment it replaced to go (measured 2 m 35 s). Every start path
+	// reads it — the controller, the admin toggle's follow-up tick and the gateway's wait loop —
+	// so that the offer is chosen and its rung written ONCE per start rather than once per poll.
+	settling bool
 	// budgetSec is how long one offer is given, live. Carried here rather than read off the row
 	// this process started with, because the engine table is re-read while the CP runs and an
 	// operator raising the budget must not need a Control Plane replacement to be heard (measured
@@ -236,6 +242,36 @@ func (r *engineOfferRun) noteArrived() bool {
 	}
 	r.arrived = true
 	return true
+}
+
+// isSettling reports whether a start is between its two halves.
+func (r *engineOfferRun) isSettling() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.settling
+}
+
+func (r *engineOfferRun) noteSettling(v bool) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.settling = v
+	r.mu.Unlock()
+}
+
+// takenAt is when the strategy was written for the current offer. It is the line an event has to
+// be on the far side of to be evidence about this attempt (see engineEventIsAbout).
+func (r *engineOfferRun) takenAt() time.Time {
+	if r == nil {
+		return time.Time{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.since
 }
 
 // boxArrived reports whether this offer has already produced a box.
@@ -377,15 +413,29 @@ func (r *engineOfferRun) attempts() []engineOfferAttempt {
 // engineOfferVerdict is decision 5's table, as a pure function over the service events: what the
 // current offer is to be recorded as, and whether to move on now.
 //
-// ⚠️ The DEFAULT is to wait out the budget and to say that nothing matched. AWS may reword an
-// event at any time, and a table that fell through to "give up" would turn a reworded message
-// into an engine that walks its whole offer list in seconds and cools down for four hours.
+// 🔴 ONLY THIS OFFER'S EVENTS COUNT, and that is not a refinement — it is what keeps one
+// misreading from throwing the whole list away. The event list is the newest three of the SERVICE,
+// so right after a move it still holds the previous offer's failure; measured (ADR 0075 re-run 4),
+// `l4` was judged five seconds after the move on a Spot quota event from twenty seconds before it,
+// and because a quota takes a whole purchase option off the table the engine gave up on a list
+// that had a working offer left in it. An event belongs to this offer when it NAMES this offer's
+// capacity provider (ECS writes "…for capacity provider af-<stack>-image-spot" into every one of
+// these, measured for all three codes) and is NEWER than the moment the offer was taken.
+//
+// ⚠️ The DEFAULT is to wait out the budget and to say that nothing matched — and an event that
+// names no provider at all (an ordinary placement failure) falls into it. AWS may reword an event
+// at any time, and a table that fell through to "give up" would turn a reworded message into an
+// engine that walks its whole offer list in seconds and cools down for four hours.
 //
 // The events are newest first (ECS's own order), so the FIRST recognised code wins: a service
 // that hit the quota and then, once a box left, hit plain capacity shortage is on the second
 // problem now.
-func engineOfferVerdict(events []string, waited, budget time.Duration) (result string, move, matched bool) {
-	for _, e := range events {
+func engineOfferVerdict(events []engineServiceEvent, provider string, since time.Time, waited, budget time.Duration) (result string, move, matched bool) {
+	for _, ev := range events {
+		if !engineEventIsAbout(ev, provider, since) {
+			continue
+		}
+		e := ev.message
 		switch {
 		case strings.Contains(e, engineEventUnfulfillable):
 			// "Your request's configuration cannot be fulfilled" — no AZ hint, no "try later".
@@ -407,6 +457,23 @@ func engineOfferVerdict(events []string, waited, budget time.Duration) (result s
 		}
 	}
 	return engineOfferBudget, waited >= budget, false
+}
+
+// engineEventIsAbout reports whether one service event is evidence about THIS offer: it names the
+// capacity provider the offer buys from, and ECS wrote it after the offer was taken.
+//
+// Both halves are needed. The name alone would let the previous attempt on the SAME provider —
+// two offers can share one — answer for this one; the time alone would let a stray event from the
+// other provider through in the seconds after a move, which is the failure this exists for. An
+// event with no timestamp is not evidence either: it cannot be placed on either side of the move.
+func engineEventIsAbout(ev engineServiceEvent, provider string, since time.Time) bool {
+	if provider == "" || since.IsZero() || ev.at.IsZero() {
+		return false
+	}
+	if !strings.Contains(ev.message, provider) {
+		return false
+	}
+	return ev.at.After(since)
 }
 
 // --- the engine's side ---------------------------------------------------------------
@@ -435,6 +502,7 @@ func (e *engineRuntimeState) wireOffers(capacity engineCapacityAPI) {
 	e.ctrl.startGate = e.startGate
 	e.ctrl.startWith = e.startOnOffer
 	e.ctrl.offerStep = e.stepOffers
+	e.ctrl.startSettling = e.offers.isSettling
 }
 
 // setOfferBudget takes a new per-offer budget from the table, reporting whether it changed.
@@ -546,8 +614,12 @@ func (e *engineRuntimeState) startOnOffer(ctx context.Context) error {
 	}
 	provider := e.providerForOffer(c)
 	if err := e.ecs.setStrategy(ctx, provider, true); err != nil {
+		// The strategy landed and the desired count is waiting for the old deployment: remember
+		// that, so the next attempt is the one short call rather than the whole gate again.
+		e.offers.noteSettling(errors.Is(err, errEngineStrategySettling))
 		return err
 	}
+	e.offers.noteSettling(false)
 	// Only the FIRST start of this demand writes a trail row and an audit line. The admin toggle
 	// and the controller's next tick both come through here, one second apart (measured), and the
 	// second one is the same offer being started again — not a second attempt at it.
@@ -597,12 +669,15 @@ func (e *engineRuntimeState) stepOffers(ctx context.Context, view engineServiceV
 	if !started {
 		return false
 	}
-	result, move, matched := engineOfferVerdict(view.events, waited, e.offers.budget())
+	// The events are filtered to THIS offer: its provider's name, and after the moment it was
+	// taken. `takenAt` is that moment — the offer's own clock, not the deployment's, because what
+	// is being asked is "did ECS say this about the attempt we are waiting on".
+	result, move, matched := engineOfferVerdict(view.events, e.providerForOffer(cur), e.offers.takenAt(), waited, e.offers.budget())
 	if !matched && e.offers.noteOnce() {
 		// The one line that makes a reworded AWS message findable. Without it, the table in ADR
 		// 0075 stops matching and the only symptom is that every offer waits its full budget.
 		log.Printf("engines: %s: offer %s has no event matching a known capacity failure code yet: %s",
-			e.def.Key, cur.ID, strings.Join(view.events, " | "))
+			e.def.Key, cur.ID, strings.Join(view.eventMessages(), " | "))
 	}
 	if !move {
 		return false

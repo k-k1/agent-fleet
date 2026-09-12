@@ -52,7 +52,7 @@ const hfSearchBody = `[
 // and this list is drawn 20 rows at a time.
 func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 	_, q := hfSearchStub(t, hfSearchBody)
-	hits, aerr := engineSearchHF(t.Context(), "qwen", "gguf", "")
+	hits, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "qwen", kind: "gguf", sort: ""})
 	if aerr != nil {
 		t.Fatalf("search: %v", aerr.message)
 	}
@@ -102,7 +102,7 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 // date-ordered page is bulk automated re-quantisations), and this must not become one.
 func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 	_, q := hfSearchStub(t, hfSearchBody)
-	hits, aerr := engineSearchHF(t.Context(), "qwen", "gguf", "")
+	hits, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "qwen", kind: "gguf", sort: ""})
 	if aerr != nil {
 		t.Fatalf("search: %v", aerr.message)
 	}
@@ -138,7 +138,7 @@ func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 	engineCivitaiBase = srv.URL
 	defer func() { engineCivitaiBase = old }()
 
-	civ, aerr := engineSearchCivitai(t.Context(), "juggernaut", "checkpoint", "")
+	civ, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "checkpoint", sort: ""})
 	if aerr != nil || len(civ) != 1 {
 		t.Fatalf("civitai search: %v %v", civ, aerr)
 	}
@@ -176,7 +176,7 @@ func TestCivitaiModelURLFallsBackToTheVersion(t *testing.T) {
 // cannot load is a dead end that `resolve` refuses a moment later.
 func TestSearchFiltersByWhatTheEngineCanLoad(t *testing.T) {
 	_, q := hfSearchStub(t, `[]`)
-	if _, aerr := engineSearchHF(t.Context(), "qwen", "gguf", ""); aerr != nil {
+	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "qwen", kind: "gguf", sort: ""}); aerr != nil {
 		t.Fatalf("gguf: %v", aerr.message)
 	}
 	if q.Get("filter") != "gguf" || q.Get("pipeline_tag") != "" {
@@ -185,7 +185,7 @@ func TestSearchFiltersByWhatTheEngineCanLoad(t *testing.T) {
 	if q.Get("sort") != "downloads" || q.Get("direction") != "-1" {
 		t.Errorf("not ordered by downloads: %v", *q)
 	}
-	if _, aerr := engineSearchHF(t.Context(), "sdxl", "checkpoint", ""); aerr != nil {
+	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "sdxl", kind: "checkpoint", sort: ""}); aerr != nil {
 		t.Fatalf("checkpoint: %v", aerr.message)
 	}
 	if q.Get("pipeline_tag") != "text-to-image" || q.Get("filter") != "" {
@@ -219,7 +219,7 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 	engineCivitaiBase = srv.URL
 	defer func() { engineCivitaiBase = old }()
 
-	hits, aerr := engineSearchCivitai(t.Context(), "juggernaut", "checkpoint", "")
+	hits, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "checkpoint", sort: ""})
 	if aerr != nil {
 		t.Fatalf("search: %v", aerr.message)
 	}
@@ -236,7 +236,7 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 	}
 	// Civitai is not asked for GGUFs at all: it hosts image models, and llama.cpp can load none
 	// of them.
-	if hits, aerr := engineSearchCivitai(t.Context(), "juggernaut", "gguf", ""); aerr != nil || len(hits) != 0 {
+	if hits, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "gguf", sort: ""}); aerr != nil || len(hits) != 0 {
 		t.Errorf("civitai for the llm role = %v %v, want nothing", hits, aerr)
 	}
 }
@@ -244,6 +244,11 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 // Non-commercial is on screen BEFORE the acceptance, which is decision 10's rule. Civitai has
 // no licence field in Hugging Face's sense, so the one thing it does say about terms is the
 // empty `allowCommercialUse`.
+//
+// 🔴 It rides as a RESTRICTION CODE now, not as a synthesised licence name. The panel drew both
+// and they said the same thing, which on a real render was two tags on one card — and the code
+// is the one with a word in the locale catalogue. What must not change is that the fact reaches
+// the card at all, which is what this test pins.
 func TestCivitaiSearchMarksNonCommercial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"items":[{"name":"X","allowCommercialUse":[],
@@ -254,12 +259,17 @@ func TestCivitaiSearchMarksNonCommercial(t *testing.T) {
 	engineCivitaiBase = srv.URL
 	defer func() { engineCivitaiBase = old }()
 
-	hits, aerr := engineSearchCivitai(t.Context(), "x", "checkpoint", "")
+	hits, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "x", kind: "checkpoint", sort: ""})
 	if aerr != nil || len(hits) != 1 {
 		t.Fatalf("search: %v %v", hits, aerr)
 	}
-	if hits[0].LicenseName != "non-commercial" {
-		t.Errorf("license_name = %q, want the non-commercial mark", hits[0].LicenseName)
+	if !hasCode(hits[0].Restrictions, engineRestrictNonCommercial) {
+		t.Errorf("restrictions = %v, want the non-commercial mark", hits[0].Restrictions)
+	}
+	// And not twice: the licence name is left as the source gave it (nothing), because a
+	// synthesised one would be a second tag saying what the code above already says.
+	if hits[0].LicenseName != "" {
+		t.Errorf("license_name = %q — the restriction code is where this fact lives now", hits[0].LicenseName)
 	}
 }
 
@@ -312,7 +322,7 @@ func TestSearchRanksWithoutAQuery(t *testing.T) {
 		{engineSortTrending, "trendingScore"},
 		{engineSortLikes, "likes"},
 	} {
-		if _, aerr := engineSearchHF(t.Context(), "", "gguf", tc.sort); aerr != nil {
+		if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "", kind: "gguf", sort: tc.sort}); aerr != nil {
 			t.Fatalf("%q: %v", tc.sort, aerr.message)
 		}
 		if q.Get("sort") != tc.want {
@@ -324,7 +334,7 @@ func TestSearchRanksWithoutAQuery(t *testing.T) {
 			t.Errorf("a wordless ranking still sent search=%q", q.Get("search"))
 		}
 	}
-	if _, aerr := engineSearchHF(t.Context(), "", "gguf", "newest"); aerr == nil {
+	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "", kind: "gguf", sort: "newest"}); aerr == nil {
 		t.Error("an unknown ranking was passed to the upstream, which ignores it silently")
 	}
 }
@@ -342,20 +352,20 @@ func TestCivitaiRankingUsesThePeriodForTrending(t *testing.T) {
 	engineCivitaiBase = srv.URL
 	defer func() { engineCivitaiBase = old }()
 
-	if _, aerr := engineSearchCivitai(t.Context(), "", "checkpoint", engineSortTrending); aerr != nil {
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "", kind: "checkpoint", sort: engineSortTrending}); aerr != nil {
 		t.Fatalf("trending: %v", aerr.message)
 	}
 	if got.Get("sort") != "Most Downloaded" || got.Get("period") != "Month" {
 		t.Errorf("trending asked %v, want sort=Most Downloaded&period=Month", got)
 	}
-	if _, aerr := engineSearchCivitai(t.Context(), "", "checkpoint", engineSortLikes); aerr != nil {
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "", kind: "checkpoint", sort: engineSortLikes}); aerr != nil {
 		t.Fatalf("likes: %v", aerr.message)
 	}
 	if got.Get("sort") != "Highest Rated" || got.Get("period") != "" {
 		t.Errorf("likes asked %v, want sort=Highest Rated with no period", got)
 	}
 	// 🔴 Not passed through: this API answers 400 to a sort it does not know (measured).
-	if _, aerr := engineSearchCivitai(t.Context(), "", "checkpoint", "newest"); aerr == nil {
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "", kind: "checkpoint", sort: "newest"}); aerr == nil {
 		t.Error("an unknown ranking reached Civitai, which answers 400")
 	}
 }
@@ -448,7 +458,7 @@ func TestSearchSurvivesAFractionalTrendingScore(t *testing.T) {
 	  {"id":"martineux/waiIllustriousSDXL_v160","downloads":3134,"likes":5,"trendingScore":1,
 	   "gated":false,"cardData":null}]`)
 
-	hits, aerr := engineSearchHF(t.Context(), "WAI", "checkpoint", engineSortDownloads)
+	hits, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "WAI", kind: "checkpoint", sort: engineSortDownloads})
 	if aerr != nil {
 		t.Fatalf("a fractional score lost the whole page: %s", aerr.message)
 	}
@@ -478,7 +488,7 @@ func TestUnreadableAnswerLogsWhichFieldItWas(t *testing.T) {
 	var logged bytes.Buffer
 	defer captureLog(&logged)()
 
-	hits, aerr := engineSearchHF(t.Context(), "qwen", "gguf", engineSortDownloads)
+	hits, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "qwen", kind: "gguf", sort: engineSortDownloads})
 	if aerr == nil {
 		t.Fatalf("a string where a count belongs was accepted: %+v", hits)
 	}

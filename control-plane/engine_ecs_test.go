@@ -258,8 +258,8 @@ func TestTTSEngineViewDetail(t *testing.T) {
 	if v.rollout != string(ecstypes.DeploymentRolloutStateInProgress) {
 		t.Errorf("rollout = %q, want IN_PROGRESS", v.rollout)
 	}
-	if len(v.events) != 2 || v.events[0] != "unable to place a task" {
-		t.Errorf("events = %v, want the newest few, blanks dropped", v.events)
+	if got := v.eventMessages(); len(got) != 2 || got[0] != "unable to place a task" {
+		t.Errorf("events = %v, want the newest few, blanks dropped", got)
 	}
 }
 

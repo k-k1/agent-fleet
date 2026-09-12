@@ -1,5 +1,5 @@
 // English カタログ / ドメイン: sessions
-// キー接頭辞: session, sess, srow, launch, start, arch, agent, sx, mgr, wsbar, handoff
+// キー接頭辞: session, sess, srow, launch, start, arch, agent, sx, mgr, wsbar, handoff, ovw
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
@@ -102,6 +102,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.split_down_title": "Split down (active pane)",
   "wsbar.close_all": "Close all",
   "wsbar.close_all_title": "Close all panes",
+  "wsbar.overview": "Sessions",
+  "wsbar.overview_title": "See every running session as a card",
   "wsbar.more_title": "Resource info / opencode web / preview",
   "wsbar.preview": "Preview",
   "wsbar.preview_title": "Open opencode web / an in-container service",
@@ -523,4 +525,16 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "handoff.row_badge": "A handoff is waiting",
   "handoff.banner_title": "A handoff for this conversation is waiting",
   "handoff.banner_open": "Review and take it over",
+  // --- sessions overview pane (ADR 0078) ---
+  "ovw.count_alive": "{n} running",
+  "ovw.count_hint": "Running sessions on this grid (after the working-set filter)",
+  "ovw.show_stopped": "Show stopped",
+  "ovw.show_stopped_hint": "Also lay out stopped sessions as cards (remembered per pane)",
+  "ovw.empty": "No session is running",
+  "ovw.empty_in_set": "No session in working set \"{set}\" is running",
+  "ovw.empty_hint": "Start one from the bar at the top, or turn on \"Show stopped\" to see stopped sessions",
+  "ovw.open_hint": "Click to open beside this grid (right-click for the menu)",
+  "ovw.ctx": "context {pct}%",
+  "ovw.ctx_hint": "Context-window usage",
+  "ovw.started": "started {ago}",
 };

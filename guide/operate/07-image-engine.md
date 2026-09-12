@@ -77,11 +77,45 @@ A row missing a file for one of the roles it needs is marked **files missing**. 
 check reads your declaration only — it is not evidence that the file is on the disk.
 If you declare a name that is not there, the failure arrives at generation time.
 
+🔴 **A checkpoint published without a VAE needs one declared next to it.** Plenty
+of SDXL-family checkpoints on the model sites ship the UNet and the text encoders
+alone. A row naming that file alone passes every check there is, switches the
+engine's checkpoint (1–2.5 minutes) and then fails **every** request with `VAE is
+invalid: None` — in the decode for a plain generate, in the encode for an edit.
+There is nothing a member can do about it from their side: the tool has no VAE
+argument. Declare the family's standalone VAE as a **second file on the same row,
+with the flag `--vae`** (an SDXL-family checkpoint takes an `sdxl_vae`); that file
+is then what the workflow encodes and decodes with, in place of the checkpoint's
+own. Until you do, **disable the row** — it is offered to every session, and each
+attempt costs a checkpoint switch before it fails.
+
 🔴 **Put the files directly under ComfyUI's type folders** — `checkpoints/`,
 `diffusion_models/`, `clip/`, `vae/`, `loras/`. Only the part after the last `/` is
 handed to the loader, so a file in a subfolder (`checkpoints/sdxl/x.safetensors`)
 arrives as `x.safetensors` and fails with `Value not in list`. Subfolders are not
 supported yet.
+
+## What a picture keeps out
+
+Three places say what should NOT be drawn, and they are added together rather than overriding
+one another:
+
+- **the model row's own** — what this checkpoint's publisher recommends keeping out. Register it
+  in the same panel, on the row.
+- **the member's**, per request (`negative_prompt` on the image tool).
+- **yours, for the whole engine** — the box labelled "excluded from every image". Applied to
+  every request, whoever made it and whichever checkpoint answers.
+
+When all three are empty, a fixed default is used (`blurry, lowres, deformed, watermark, text`).
+A row that declares its own replaces that default rather than being added to it.
+
+🔴 **This is a negative prompt, not a content filter.** The words are handed to the sampler as
+something to steer away from. They are not a gate, a determined prompt outweighs them, and — most
+importantly — **three of the five checkpoint families ignore them completely**: Z-Image and
+FLUX.2 klein sample at cfg 1, where the negative branch cancels out exactly, and FLUX.1 has no
+negative input at all. Only SDXL and SD3.5 are steered by what you type. A request answered by one of them **says so in its warnings**,
+naming the family. If a deployment needs a guarantee about what can be produced, this is not
+where it lives.
 
 ## The network is yours to close
 

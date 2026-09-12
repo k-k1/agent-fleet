@@ -86,6 +86,12 @@ var comfyFamilyFixtures = []comfyFamilyFixture{
 	{"flux1", ComfyFamilyFlux1, comfyFiles{
 		DiffusionModel: "flux1-dev.safetensors", ClipL: "clip_l.safetensors", T5xxl: "t5xxl_fp8.safetensors", Vae: "ae.safetensors"},
 		[]string{"guider.model", "scheduler.model"}, []string{"pos.clip"}, "sca.latent_image", "scheduler.denoise"},
+	// The same family with a VAE declared separately, which is the only shape a checkpoint
+	// published without VAE tensors can be used in (comfyCheckpointVAE): one VAELoader that both
+	// the encode and the decode read, and a graph otherwise identical to the fixture above.
+	{"sdxl_external_vae", ComfyFamilySDXL, comfyFiles{
+		Checkpoint: "illustrious_xl_v3.safetensors", Vae: "sdxl_vae.safetensors"},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 	{"sd35", ComfyFamilySD35, comfyFiles{Checkpoint: "sd3.5_large.safetensors",
 		ClipL: "clip_l.safetensors", ClipG: "clip_g.safetensors", T5xxl: "t5xxl_fp16.safetensors"},
 		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
@@ -385,6 +391,59 @@ func TestComfyWorkflowsRefuseMissingFiles(t *testing.T) {
 	}
 }
 
+// The checkpoint families read the catalogue's `--vae` file when the row declares one, and the
+// checkpoint's own VAE when it does not. That is the whole difference between a row that
+// generates and one that dies in ComfyUI with `ERROR: VAE is invalid: None`, which is what a
+// checkpoint published with no VAE tensors does on every op (measured 2026-09-11 on this
+// deployment, an Illustrious/SDXL row: generate in VAEDecode, edit in VAEEncode). A caller
+// cannot work around it — `generate_image` has no VAE argument — so the declaration is the fix,
+// and the encode and the decode have to take the SAME one or the picture returns as noise.
+func TestComfyCheckpointFamiliesTakeADeclaredVae(t *testing.T) {
+	for _, fam := range []comfyFamily{ComfyFamilySDXL, ComfyFamilySD35} {
+		// clip_l / clip_g / t5xxl are what sd35 additionally requires; sdxl ignores them.
+		base := comfyFiles{Checkpoint: "c.safetensors",
+			ClipL: "l.safetensors", ClipG: "g.safetensors", T5xxl: "t.safetensors"}
+		p := comfyGoldenParams
+		p.Op, p.Image = OpEdit, "af-photo.png"
+
+		t.Run(string(fam)+" without one", func(t *testing.T) {
+			g, err := comfyBuildGraph(fam, base, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, has := g["vae"]; has {
+				t.Error("a VAELoader was added for a row that declares no --vae file")
+			}
+			for _, ref := range []string{"dec.vae", "enc.vae"} {
+				if got := comfyLinkAt(t, g, ref); got[0] != "ckpt" || got[1] != 2 {
+					t.Errorf("%s reads %v, want the checkpoint's own VAE [ckpt 2]", ref, got)
+				}
+			}
+		})
+
+		t.Run(string(fam)+" with one", func(t *testing.T) {
+			files := base
+			files.Vae = "sdxl_vae.safetensors"
+			g, err := comfyBuildGraph(fam, files, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			loader, ok := g["vae"]
+			if !ok || loader.ClassType != "VAELoader" {
+				t.Fatalf("no VAELoader node: %+v", g["vae"])
+			}
+			if got := loader.Inputs["vae_name"]; got != "sdxl_vae.safetensors" {
+				t.Errorf("vae_name = %v, want the declared file's basename", got)
+			}
+			for _, ref := range []string{"dec.vae", "enc.vae"} {
+				if got := comfyLinkAt(t, g, ref); got[0] != "vae" || got[1] != 0 {
+					t.Errorf("%s reads %v, want the declared VAE [vae 0]", ref, got)
+				}
+			}
+		})
+	}
+}
+
 func TestComfyBuildGraphRefusesAnUnknownFamily(t *testing.T) {
 	if _, err := comfyBuildGraph("made-up-family", comfyFiles{Checkpoint: "x"}, comfyGoldenParams); err == nil {
 		t.Error("expected an error for an unrecognised family, got none")
@@ -436,5 +495,122 @@ func TestComfyFileFlagsAllResolve(t *testing.T) {
 	// Positive control for the check above: the assertion must be able to fail.
 	if got := resolveComfyFiles([]EngineFile{{Flag: "--vae", Name: "v.safetensors"}}); got.Vae != "v.safetensors" {
 		t.Fatalf("--vae did not resolve (%+v) — the comparison above proves nothing", got)
+	}
+}
+
+// The catalogue row's declared settings, reaching the graph (ADR 0072 decision 4, widened).
+//
+// Per FIELD, and that is the whole test: a row that declares only `steps` has to keep its
+// family's sampler, scheduler and cfg. Folding the two into "the declaration or the recipe"
+// would mean naming one number silently reset the other three.
+func TestComfyRecipeTakesTheRowsDeclarationFieldByField(t *testing.T) {
+	base, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "x.safetensors"}, comfyGoldenParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The family's own recipe, read off the template rather than restated here.
+	wantSampler, wantScheduler, wantCFG := base["ks"].Inputs["sampler_name"], base["ks"].Inputs["scheduler"], base["ks"].Inputs["cfg"]
+
+	p := comfyGoldenParams
+	p.Params = EngineParams{Steps: 30}
+	g, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "x.safetensors"}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g["ks"].Inputs["steps"]; got != 30 {
+		t.Errorf("steps = %v, want the row's 30", got)
+	}
+	if got := g["ks"].Inputs["sampler_name"]; got != wantSampler {
+		t.Errorf("sampler_name = %v, want the family's %v — declaring steps must not clear it", got, wantSampler)
+	}
+	if got := g["ks"].Inputs["scheduler"]; got != wantScheduler {
+		t.Errorf("scheduler = %v, want the family's %v", got, wantScheduler)
+	}
+	if got := g["ks"].Inputs["cfg"]; got != wantCFG {
+		t.Errorf("cfg = %v, want the family's %v", got, wantCFG)
+	}
+
+	// And all four together, which is the ordinary case: an author's published settings.
+	p.Params = EngineParams{Steps: 24, CFG: 3.5, Sampler: "euler_ancestral", Scheduler: "sgm_uniform"}
+	g, err = comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "x.safetensors"}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for in, want := range map[string]any{
+		"steps": 24, "cfg": 3.5, "sampler_name": "euler_ancestral", "scheduler": "sgm_uniform",
+	} {
+		if got := g["ks"].Inputs[in]; got != want {
+			t.Errorf("%s = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// 🔴 A name this Agent does not recognise is IGNORED and the family's own is kept. ComfyUI's
+// sampler input is an enumeration and an unknown value fails the whole prompt with `Value not
+// in list` — after the cold start somebody waited through — so the two outcomes are "a picture
+// made with the family's sampler" and "no picture at all".
+func TestComfyRecipeRefusesToForwardANameItDoesNotKnow(t *testing.T) {
+	p := comfyGoldenParams
+	p.Params = EngineParams{Sampler: "not_a_sampler", Scheduler: "not_a_scheduler", Steps: 12}
+	g, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "x.safetensors"}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g["ks"].Inputs["sampler_name"]; got == "not_a_sampler" {
+		t.Error("an unknown sampler name reached the graph — ComfyUI answers Value not in list")
+	}
+	if got := g["ks"].Inputs["scheduler"]; got == "not_a_scheduler" {
+		t.Error("an unknown scheduler name reached the graph")
+	}
+	// The positive control: the rest of the same declaration DID apply, so this is not passing
+	// because the whole merge was skipped.
+	if got := g["ks"].Inputs["steps"]; got != 12 {
+		t.Errorf("steps = %v, want 12 — the valid half of the declaration must still apply", got)
+	}
+}
+
+// The two families whose "cfg" is a different knob. FLUX.1 folds guidance into the conditioning
+// (FluxGuidance + BasicGuider) and klein's CFGGuider runs the distilled path at a fixed 1, so
+// the number a model card calls "CFG" is not this one — applying it would be a silently wrong
+// picture rather than a refusal.
+func TestComfyRecipeLeavesGuidanceAloneWhereCfgMeansSomethingElse(t *testing.T) {
+	for _, c := range comfyFamilyFixtures {
+		if c.family != ComfyFamilyFlux1 && c.family != ComfyFamilyFlux2Klein {
+			continue
+		}
+		t.Run(c.name, func(t *testing.T) {
+			before, err := comfyBuildGraph(c.family, c.files, comfyGoldenParams)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := comfyGoldenParams
+			p.Params = EngineParams{CFG: 9, Steps: 6}
+			after, err := comfyBuildGraph(c.family, c.files, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, node := range []string{"guider", "guidance"} {
+				b, ok := before[node]
+				if !ok {
+					continue
+				}
+				for in, want := range b.Inputs {
+					if in != "cfg" && in != "guidance" {
+						continue
+					}
+					if got := after[node].Inputs[in]; got != want {
+						t.Errorf("%s.%s = %v, want the family's %v", node, in, got, want)
+					}
+				}
+			}
+			// The positive control again: steps, which these families DO take, moved.
+			if c.family == ComfyFamilyFlux1 {
+				if got := after["scheduler"].Inputs["steps"]; got != 6 {
+					t.Errorf("flux1 steps = %v, want 6", got)
+				}
+			} else if got := after["sigmas"].Inputs["steps"]; got != 6 {
+				t.Errorf("klein steps = %v, want 6", got)
+			}
+		})
 	}
 }

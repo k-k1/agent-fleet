@@ -80,6 +80,10 @@ type providerStatus struct {
 	// Seed is whether this route lets the caller pin the sampler's seed. Only the fleet's own
 	// ComfyUI route does, so the tool offers the argument only where it reaches something.
 	Seed bool `json:"seed,omitempty"`
+	// Negative is whether ANY model on this route samples with a negative branch — a union, not
+	// the default model's answer, because the argument is offered per route while the capability
+	// is per model (see HandleStatus).
+	Negative bool `json:"negative,omitempty"`
 }
 
 // modelStatus is one entry of providerStatus.Models — see imagegen.ModelInfo, which this rides
@@ -132,15 +136,28 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 			st.Loras = append(st.Loras, loraStatus{Name: l.Name, Description: l.Description, BaseModel: l.BaseModel})
 		}
 		st.Seed = caps.Seed
+		st.Negative = caps.Negative
 		// Only when there is a REAL choice (ADR 0072 decision 5's own rule for `model`, the
 		// same one `provider` already follows) — a list of zero or one is not something a
 		// caller can meaningfully pick between, and advertising it anyway would put an enum in
 		// the tool schema that never has more than its own default in it.
 		if ml, ok := p.(ModelLister); ok {
-			if models := ml.Models(r.Context()); len(models) > 1 {
+			models := ml.Models(r.Context())
+			if len(models) > 1 {
 				st.Models = make([]modelStatus, 0, len(models))
 				for _, m := range models {
 					st.Models = append(st.Models, modelStatus{ID: m.ID, Description: m.Description, Warm: m.Warm})
+				}
+			}
+			// A UNION over the models, unlike everything else here, because `negative_prompt` is
+			// offered per ROUTE while Caps.Negative is per model: on comfy the warm default may
+			// be a distilled family that cannot take one while an SDXL checkpoint next to it can.
+			// Asking caps.Negative alone would take the argument away from a session that can use
+			// it by naming the other model. A model that cannot still warns (requestWarnings).
+			for _, m := range models {
+				if p.Caps(m.ID).Negative {
+					st.Negative = true
+					break
 				}
 			}
 		}
@@ -218,6 +235,9 @@ type generateRequest struct {
 	Inputs      []string `json:"inputs"`
 	Mask        string   `json:"mask"`
 	Model       string   `json:"model"`
+	// NegativePrompt is what to keep OUT. It is added to the catalogue row's own negative and to
+	// the engine's administrator list rather than replacing either (comfyNegativeFor).
+	NegativePrompt string `json:"negativePrompt"`
 	// Loras are the fine-tunes to apply (ADR 0072 decision 5, phase P3). Whether they fit the
 	// chosen checkpoint is the PROVIDER's call, not this layer's — see comfyResolveLoras.
 	Loras []loraRequest `json:"loras"`
@@ -294,7 +314,8 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 		SID:     session.UUID(meta.Dir, body.Session),
 		Pref:    body.Provider,
 		Request: Request{
-			Op: op, Prompt: body.Prompt, Size: body.Size, AspectRatio: body.AspectRatio,
+			Op: op, Prompt: body.Prompt, NegativePrompt: body.NegativePrompt,
+			Size: body.Size, AspectRatio: body.AspectRatio,
 			Background: body.Background, Count: body.Count, Inputs: body.Inputs,
 			Mask: body.Mask, Model: body.Model, Loras: loras, Seed: body.Seed,
 		},
