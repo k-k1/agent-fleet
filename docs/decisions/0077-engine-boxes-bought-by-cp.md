@@ -1092,3 +1092,72 @@ created and deleted inside the same hour (a hosted zone deleted within 12 hours 
 Everything else — CloudFormation, ECS, IAM, the six `CreateFleet` calls — is free.
 
 The raw responses are in `~/.cache/adr0077-p0/` of the session that measured this.
+
+## Follow-up — what P1's CP lane handed back to the text (2026-09-12, PR #577)
+
+The CP side of P1 (decisions 1, 2, 3, 5, 8, 9 and 11; the CP end of contract A) landed as #577.
+Done items 1-6 are pinned in `engine_offer_test.go` and
+`internal/runtime/runtime_ecs_ec2_engine_test.go`, each with its positive control — including two
+mutations run by hand and reverted: removing the `registered()` guard makes done item 3 fail, and
+removing the `af-role` filter makes done item 5 fail. Done item 7 is the hardware lane and is not
+in this. What the implementation handed back:
+
+- **The EC2 port is three calls, not five.** P0 measured `CreateTags` to be unnecessary —
+  `CreateFleet`'s `TagSpecifications` (ResourceType `instance`) merges with the launch template's
+  own tags and lands at launch — and `DeleteFleets` to be unusable in the shape decision 1 names:
+  `TerminateInstances=false` is refused for an instant fleet with `NoTerminateInstancesNotSupported`.
+  The fleet does linger (P0 (b)), so the reason decision 1's "the CP does not remember the fleet
+  id" survives is not the one the text gives — it is that an instant fleet is not enumerated by an
+  unfiltered `describe-fleets` and holds no capacity, so nothing accumulates on a path the CP
+  walks. The port is `CreateFleet` / `DescribeInstances` / `TerminateInstances`.
+- 🔴 **The failure-code table has a FOURTH answer, and it is the one decision 8 did not
+  anticipate: `refused`.** A missing `iam:PassRole` comes back as `UnauthorizedOperation`
+  **inside a 200**, in `Errors[]`, in the same shape and the same place as "there was no stock"
+  (P0). Read as "next", it walks the whole offer list against a deployment that cannot launch
+  anything — once per demand, for ever, with nothing in the log naming the grant. So it stops the
+  walk where it is, counts as ONE failed start, and logs the message verbatim; the top-level
+  `SsmAccessDenied` is folded into the same answer. A test pins that it is not "next", with the
+  identical fixture answering `InsufficientInstanceCapacity` as its positive control.
+- **`InvalidFleetConfiguration` is read POSITIONALLY, not semantically.** `Errors[]` carries one
+  entry per override, and P0 could not tell a misspelt instance type from a type that is simply
+  not offered in that Availability Zone — both produce that code and that message. So the row is
+  `unusable` only when EVERY override said it; a minority means the other overrides are still
+  worth asking for, and the walk takes the next row instead.
+- **`<role>OfferBudgetSec`'s default moves from 180 to 300 seconds** with its meaning (decision 1).
+  ⚠️ **A deployment that wrote 180 for the old meaning would give a box 180 seconds to register**,
+  which is inside ADR 0045 decision 22's measurement (21 s, 77 s with a home-baked AMI) but leaves
+  little room on a slow boot. The CFN lane settled the other half of this independently and the
+  two agree: `standup.sh` drops a captured **180 and nothing else**, so the template's 300 stands
+  (its own follow-up, above).
+- **One field leaves contract B: `class_apply_error`.** It reported "the rung was stored and the
+  capacity provider refused it", which cannot happen once the declaration IS the request
+  (decision 8): a stored choice is in force the moment it is written. The Console reads the field
+  only when present and shows no retry banner without it, so decision 8's "the Console does not
+  change" holds — but contract B is "unchanged minus one field that can no longer occur", not
+  "unchanged".
+- **Decision 3's new filter on `sweepSlotOwnerTags` is `af-role ∈ {slot, quarantined}`, not
+  `= slot`.** A quarantined box can still carry a person's `af-membership` (it is stopped, not
+  released), and repairing exactly that is what the sweep exists for; narrowing to `slot` alone
+  would leave a stale owner tag billing somebody for a box they do not have — the same defect the
+  filter was added to prevent, in the other direction.
+- **`draining` is answered from EC2 through a function handed to the ECS adapter.** Decision 5
+  gives the terminate to the CP and orders it deregister-then-terminate, which means ECS knows
+  nothing about the box during the very window the state names. `engineECS` therefore holds no
+  EC2 client and no tags: it is given `fleet.live` when the offers are wired, and a Fargate engine
+  is given nothing and pays for nothing.
+- **Decision 5's sweep needs TWO graces, because the CP has no `ghostAfter` of its own** (that is
+  the slot pool's configuration, in another package). At desired 0 a box with no task is ended
+  after 2 minutes — that is the ordinary departure, one tick after the task goes — and while the
+  service is up a second box with no task is ended after 15 minutes, which is the "two boxes"
+  leak of ADR 0075 without ever touching a task that is merely still being placed.
+- **Decision 9's refusal is keyed by the ROLE at parse time** (`parseEngineOffers(key, spec)`), so
+  it is one function and not a condition at each call site; the reloader uses the same one.
+- **A start already in flight is a fourth gate on `startGate`.** Decision 8 leaves the gate with
+  the no-candidate refusal and the swap wait; a third was needed. The admin toggle calls the gate
+  itself, so without this the toggle's own call would begin the walk again while a box was
+  registering and buy a second one — the failure ADR 0075 produced three times out of three.
+- **Contract A's final shape, for the CFN lane**: `launchTemplate` (a launch template id `lt-…`
+  or a name) replaces `capacityProvider` and `spotCapacityProvider`, which are **ignored** wherever
+  a stack still emits them. `offers`, `offerBudgetSec`, `classes` and every other field are
+  unchanged. A row with no `launchTemplate` buys no box and recognises none: it keeps serving and
+  starts the engine the plain way, which is what a CP upgraded before its stack does.

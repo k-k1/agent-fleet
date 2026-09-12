@@ -281,14 +281,12 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 			// CP replaced mid-start reports none at all rather than somebody else's walk.
 			row["offer_trail"] = rows
 		}
-		// The rung above is what was CHOSEN; this is why the capacity provider does not hold it.
-		// Omitted whenever this process has nothing to report, which is what the panel reads as
-		// "no claim" — never as "it was applied" (see classApplyError). It is what turns the
-		// picker's dead end into a retry: without it, re-selecting the stored rung is "no change"
-		// and the Console sends nothing at all.
-		if msg := e.classApplyError(); msg != "" {
-			row["class_apply_error"] = msg
-		}
+		// 🔴 `class_apply_error` is gone from this row, and it is gone because the failure it
+		// reported cannot happen any more (ADR 0077 decision 8). It said "the rung was stored and
+		// the capacity provider refused it", which left the picker showing a card nobody had
+		// managed to apply; there is no apply now — a rung is the type set in the next purchase's
+		// overrides — so a stored choice is in force the moment it is written. The Console reads
+		// the field when it is there and shows no retry banner when it is not.
 		if need, source, id := engineVramDemand(catalogue); source != engineVramUnknown {
 			// What the largest enabled model wants, and how well that is known. A maximum,
 			// not a sum: one model is in VRAM at a time (`--models-max 1`, one checkpoint).
@@ -326,13 +324,13 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	}
 	row["state"] = engineDisplayState(v.state, mode)
 	row["desired"] = v.desired
-	// Which offer the SERVICE is on, read out of its own capacityProviderStrategy (ADR 0075
-	// decision 11). Deliberately not "the offer this process chose": CloudFormation rewrites the
-	// strategy on every release that touches the service, and a remembered choice would keep
-	// claiming Spot while the box is on-demand. Absent when the service names a provider this
-	// role does not declare, which is a real answer and not a gap.
-	if off, ok := e.offerFromStrategy(v.provider); ok {
-		row["offer"] = map[string]any{"id": off.ID, "buy": off.buy()}
+	// Which offer the engine is on, read off THE BOX'S OWN TAGS (ADR 0077 decision 8, replacing
+	// ADR 0075 decision 11's read of the service's strategy — there is no strategy now).
+	// Deliberately not "the offer this process chose": a CP replaced mid-start remembers nothing,
+	// and `af-engine-offer` was written by the call that paid for the hardware. Absent when no
+	// box is up, which is a real answer and not a gap.
+	if id, buy, ok := e.offerOnBox(ctx); ok {
+		row["offer"] = map[string]any{"id": id, "buy": buy}
 	}
 	// `running` and `rollout` are deliberately NOT added here even though the view carries
 	// them. Nothing renders them, and a field on the wire with no reader is a shape the next
@@ -499,16 +497,17 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	}
 	if e.ecs != nil && (val == engineModeOn || val == engineModeOff) {
 		// ON goes through the engine's own start, so this route buys the same box the controller
-		// would (ADR 0075 decision 4 (a)): the offer the gate just chose, written to the service
-		// together with the desired count. OFF is the plain desired 0 — a stop touches no
-		// strategy, which is what keeps the writes down to the two cases decision 4 allows.
+		// would (ADR 0077 decisions 1 and 2): the offer the gate just chose, bought as one
+		// instant fleet, with the desired count following once it has registered. OFF is the
+		// plain desired 0 — what happens to the box after that is the controller's next tick
+		// (decision 5).
 		var err error
 		if val == engineModeOn {
 			err = e.startEngine(r.Context())
-			if errors.Is(err, errEngineStrategySettling) {
-				// The strategy landed and the desired count is the controller's next tick away.
+			if errors.Is(err, errEngineBoxRegistering) {
+				// The box is bought and the desired count is the controller's next tick away.
 				// Reporting a 502 here would tell the administrator the button failed when the
-				// engine is on its way up (ADR 0075: the start is two calls, not one).
+				// engine is on its way up.
 				err = nil
 			}
 		} else {
@@ -610,12 +609,10 @@ func (a engineAdminAPI) putClass(w http.ResponseWriter, r *http.Request, ident s
 			return
 		}
 	}
-	if err := e.applyClass(ctx, c); err != nil {
-		// Reported, not logged: the setting was written, so a panel that showed success would
-		// promise a card the next start will not buy.
-		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineECSError, err.Error()})
-		return
-	}
+	// 🔴 Nothing is written to AWS here any more (ADR 0077 decision 8). The stored choice IS the
+	// declaration: the next purchase puts this offer's instance types into the fleet's overrides,
+	// so there is no second copy of it to keep in step and no window in which the panel shows a
+	// rung the hardware does not hold.
 	a.audit(ctx, ident, "engine."+key+".class", c.ID)
 	log.Printf("engines: %s instance class set to %s by %s", key, c.ID, ident.ID)
 	row := a.row(ctx, e)
@@ -635,22 +632,13 @@ func (a engineAdminAPI) putClass(w http.ResponseWriter, r *http.Request, ident s
 // unpinClass is `{"class": ""}`: the stored choice is removed and the role goes back to choosing
 // automatically (ADR 0075 decision 8) — VRAM-filtered offers, tried in declaration order.
 //
-// The rung of the offer that would be chosen NOW is applied straight away, for the same reason
-// putClass applies the pinned one: a missing IAM grant discovered at the next cold start is
-// discovered on the wrong card. When nothing qualifies — every offer is smaller than the models
-// need — there is nothing to apply and the unpin still succeeds, because refusing it would trap
-// the operator on the pin that is the reason they came here.
+// It takes effect on the next purchase, like a pin: the offer list is walked from the top,
+// VRAM-filtered, the next time this engine starts. Nothing reaches AWS here (ADR 0077 decision 8).
 func (a engineAdminAPI) unpinClass(w http.ResponseWriter, r *http.Request, ident store.Identity, key string, e *engineRuntimeState) {
 	ctx := r.Context()
 	if a.settings != nil {
 		if err := a.settings.SetSetting(ctx, engineClassSettingKey(key), ""); err != nil {
 			writeAPIErr(w, internalErr(err))
-			return
-		}
-	}
-	if cands := e.candidateOffers(ctx); len(cands) > 0 {
-		if err := e.applyClass(ctx, cands[0]); err != nil {
-			writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineECSError, err.Error()})
 			return
 		}
 	}
@@ -734,8 +722,9 @@ func (a engineAdminAPI) putNegative(w http.ResponseWriter, r *http.Request, iden
 //
 // It moves the desired count and NOTHING else — in particular it does not touch the mode, which
 // is the whole difference from pressing "off": an engine pinned `on` must come back by itself,
-// and an on-demand one must come back with the next request. What holds the restart until the
-// old box has actually left the cluster is the start gate, not this handler.
+// and an on-demand one must come back with the next request. The box itself is ended by the
+// controller's next tick, once the task has gone (ADR 0077 decision 5), and what holds the
+// restart until it has actually left the cluster is the start gate, not this handler.
 //
 // ⚠️ This buys a cold start (measured 527-586 s for llm, 165-197 s for image) and the panel says
 // so before the press. It is the price ADR 0071's `offGrace: 0` already charges for changing
