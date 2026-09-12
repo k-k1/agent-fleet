@@ -188,7 +188,7 @@ git も MCP もメモも API も開かない。
 
 - 後ろに人のいないメンバーシップは**作れる**: `AddMembership` は
   `UpsertIdentity(ctx, email, key, "")` で identity を先に作るので
-  （`internal/tenantsrv/tenants.go:588`）、`user_key` だけを書いた招待はアドレスの無いものを
+  （`internal/tenantsrv/tenants.go:587`）、`user_key` だけを書いた招待はアドレスの無いものを
   1 つ作る。`checkInviteDomain` が効くのはテナントが `allowed_domains` を設定したときだけで、
   そのときはアドレスを要求する。
 - しかしトークンは**そのメンバーシップ自身のワークスペースのコンテナの中にしか存在しない**
@@ -221,7 +221,7 @@ remote 行の上流は `<AF_REMOTE_ENGINE_URL>` ＋ 向こうが自分で名乗�
 ゲートウェイの持ち物**であり、2 度掛けると `/v1/v1/chat/completions` になる。
 
 向こうの `/internal/engine/token` の答えは `base_url`（`/engine/<key>/v1`、
-`engine_gateway.go:236`）を載せてくるので、その中間の区間は**組み立てるのではなく読む**。
+`engine_gateway.go:215`）を載せてくるので、その中間の区間は**組み立てるのではなく読む**。
 ここで組み立てることは、この文書が向こうの経路の配置を主張することであり、Workspace が
 意図的にやっていないこと——`AF_CP_BASE_URL` ＋ 返ってきた `base_url` を叩く
 （`workspace/agent/engines.go:185`）——と同じである。同じ規則を 1 段上でも使う。
@@ -325,10 +325,10 @@ knob にしてあり、だから未解決 2 がある。
   同じ形である（決定 10）。借りたカタログは向こうの管理者の文書であり、このパネルはそれを
   編集する場所ではない。
 - **鏡は空のリストであり、ソースの不在ではない。** `hasModels` はストアがまったく無いとき
-  **true** を返す（`engine_catalog.go:116-118`）——false の側が GPU を止めるので意図的に
+  **true** を返す（`engine_catalog.go:122-124`）——false の側が GPU を止めるので意図的に
   そうしてある。ソースが単に無い remote 行は、したがって `serve` の「モデル無し」の門を通り、
   そのあとモデル名を書いたチャット要求すべてに 404 `model_unknown` を返す
-  （`engine_gateway.go:454-460`）。最初の取得より前ですら、nil として見せてはならない。
+  （`engine_gateway.go:435-440`）。最初の取得より前ですら、nil として見せてはならない。
 
 手元で手入力する案——LAN の ComfyUI に対する ADR 0076 の答え——は**ここでは却下する**。
 
@@ -426,7 +426,7 @@ ADR 0076 決定 5 が external 行に書いた契約と同じである（`contro
   まさに決定 5 が拒んだプローブである。そして「手元のゲートウェイが最後に答えを見た」ものは
   コードに存在しない。いちばん近いのは `noteServed` で、それは warm なモデルの *id* である。
   **remote 行の `warm` は鏡から読む**: 向こうのカタログは、向こうの CP が最後に答えを見た
-  モデルに既に印を付けている（`"warm": true`、`engine_catalog.go:590-592`）。それが向こうの
+  モデルに既に印を付けている（`"warm": true`、`engine_catalog.go:591-594`）。それが向こうの
   配備自身の観測であり、ここで得られる唯一正直なものである。
 
 `ondemand` は remote 行に対して 400 で拒む。external で既にそうしているのと同じ
@@ -556,8 +556,9 @@ docker・ec2-single が外部の llm エンジンを持てるようになる—�
 
 ## 確認した出典（2026-09-12・このリポジトリのコード）
 
-下のレビューで 1 行ずつ引き直した（`61042381` に対して）。4 か所が行または範囲でずれていたので
-ここで直した。残りは起草時の記述どおりの場所に在った。
+下のレビューで 1 行ずつ引き直した（`61042381` に対して。さらに `origin/develop` の `f71c7c4d` を
+取り込んだ後に再確認した）——**引用 88 件・ずれ 0**。スクリプトで通した。7 か所が行または範囲で
+ずれていたのでここで直した。残りは起草時の記述どおりの場所に在った。
 
 | 主張 | どこ |
 |---|---|
@@ -565,15 +566,15 @@ docker・ec2-single が外部の llm エンジンを持てるようになる—�
 | エンジンの経路は全フレーバで登録され、セッション免除——レジストリが nil なら 1 つも登録されない | `control-plane/routes.go:33`、`control-plane/engine_gateway.go:168-177` |
 | 発行トークンでセッショントークンを買う。カタログには発行トークンが要る | `engine_gateway.go:187`、`:224` |
 | セッション名は言われたとおりに受け取り、検証しない | `engine_gateway.go:182-186` |
-| トークンの答えが自分の `base_url` を名乗る | `engine_gateway.go:236` |
+| トークンの答えが自分の `base_url` を名乗る | `engine_gateway.go:215` |
 | メンバーシップは毎要求で解決されるので、削除が即座に失効になる | `engine_gateway.go:340-352` |
-| アドレス無しでメンバーシップを作れる（`user_key` での招待） | `control-plane/internal/tenantsrv/tenants.go:588` |
+| アドレス無しでメンバーシップを作れる（`user_key` での招待） | `control-plane/internal/tenantsrv/tenants.go:587` |
 | 他のメンバーのワークスペースを起動する管理経路も、その中にセッションを開く経路も無い | `control-plane/tenant_wiring.go:80-100`、`control-plane/admin_sessions.go:39` |
 | メンバーシップ id が現れる super_admin の応答は 1 つだけ | `control-plane/cloudcost.go:734` |
 | セッショントークンの TTL は 30 日 | `control-plane/engine_token.go:85` |
 | 発行トークンは決定的で、その署名マスタは git/memo/schedule と共有 | `engine_token.go:47`、`control-plane/git_http.go:88` |
 | 署名マスタは `SHA-256(AF_MASTER_KEY)` | `control-plane/main.go:128-129`、`engine_token.go:39-49` |
-| 発行トークンはワークスペース起動時に注入され、`PUBLIC_BASE_URL` が在るときだけ | `control-plane/workspace_lifecycle.go:375,401` |
+| 発行トークンはワークスペース起動時に注入され、`PUBLIC_BASE_URL` が在るときだけ | `control-plane/workspace_lifecycle.go:376,401` |
 | `dial` は URL ＋ provider 接頭辞 ＋ パスを組み、Content-Type と Accept だけを転送し、固定の `apiKey` を 1 本提示する | `engine_gateway.go:754-800`、`:789-791`、`:811` |
 | `engineClient` は自前のタイムアウトを設定しない | `engine_gateway.go:135-144` |
 | 非ストリーミングのホールドは 45 秒・プロセス全体で 1 つ・ALB の 60 の下 | `engine_gateway.go:100-107`、`deploy/aws/ecs/cfn/30-ingress.yaml:452` |
@@ -591,7 +592,7 @@ docker・ec2-single が外部の llm エンジンを持てるようになる—�
 | `apiKey` が埋まるのは合成された comfy の行だけ | `engines.go:767-769` |
 | 表の行は external でない限り `service` が要る | `engines.go:511-513` |
 | カタログは `store.EngineModelStore` の上のキャッシュ——読み 1・書き 9 | `control-plane/engine_catalog.go:58`、`:74-88`、`control-plane/internal/store/store.go:363-391` |
-| `hasModels` はストアがまったく無いとき true を返す | `engine_catalog.go:116-118` |
+| `hasModels` はストアがまったく無いとき true を返す | `engine_catalog.go:122-124` |
 | カタログへの書き込みは `engineCatalog` を通らない | `engine_admin.go:865,868,876,882,885,888`、`:1132`、`:1177`、`engine_ingest.go:820,869` |
 | カタログの行は files・params・base_model・sizes・negative・warm・窓を載せる | `engine_catalog.go:556-604` |
 | LoRA は自分の配列に乗り、`kind` は線の上に無い | `engine_gateway.go:270-286` |
@@ -619,7 +620,9 @@ ADR 0076・0077 のレビューと同じ型で、「決定 → 根拠 → 現状
 この ADR はまだ「提案」で 1 行も実装していないので、この訂正は「実装が本文を直す」段を前倒し
 したものであり、何がどう変わったかと理由をここに残す。**この節のために新しく測ったものは無く、
 お金も使っていない**——コードを読めば足りた。それは起草時の予告どおりである。「確認した出典」の
-`file:line` は `61042381` に対して全行引き直し、4 か所ずれていたのでそちらで直した。
+`file:line` は `61042381` に対して全行引き直し、さらに `origin/develop`（`f71c7c4d`。動いたのは
+このレビューが引用していない `engine_offer.go` だけ）を取り込んだ後に再確認した——**引用 88 件・
+ずれ 0**（スクリプトで通した）。その過程で 7 か所がずれていたので直した。
 
 ### レビューが当てたこと
 
@@ -645,7 +648,7 @@ ADR 0076・0077 のレビューと同じ型で、「決定 → 根拠 → 現状
   キャッシュの後ろの能動的な `engineHealthy` 呼び出しで（`:893-896,935-944`）、管理パネルを
   開くたびに走る——生成の経路ではなくパネルの経路から、決定 5 が禁じたプローブが出る。
   「手元のゲートウェイが最後に答えを見た」に相当するものはコードに無い。いまは鏡から来る——
-  向こうの CP が自分の `"warm": true` を publish している（`engine_catalog.go:590-592`）。
+  向こうの CP が自分の `"warm": true` を publish している（`engine_catalog.go:591-594`）。
   別件で、`row["lifecycle"]` は定数 `engineLifecycleExternal` の literal なので
   （`engine_admin.go:210`）、remote 行は自分を `external` と名乗り、P1 の表示は読む先を持たない。
 - **R4. 決定 7 の拒否は何も拒んでいなかった。** 行のカタログに渡した
@@ -658,7 +661,7 @@ ADR 0076・0077 のレビューと同じ型で、「決定 → 根拠 → 現状
   だけ）——をそのまま決定にし、拒否は実際に起こせる管理の書き込み経路へ移した。併せて記録:
   `hasModels` はストアが無いとき **true** を返すので（`:116-118`）、ソースが単に無い鏡は
   `serve` の「モデル無し」の門を通り、そのあと名前付きのモデルすべてに 404 を返す
-  （`engine_gateway.go:454-460`）。空のリストでなければならず、nil ではだめである。
+  （`engine_gateway.go:435-440`）。空のリストでなければならず、nil ではだめである。
 - **R5. 鏡は成立し、2 つの欄は線の上を渡らない。** `/internal/engine/catalog` は実際に
   `files`・`params`・`base_model`・`sizes`・`negative`・`selected`・`default`・`warm`・窓を
   載せている（`engine_catalog.go:556-604`）——決定 7 の前提は健全である。しかし `kind` が無く
@@ -696,7 +699,7 @@ ADR 0076・0077 のレビューと同じ型で、「決定 → 根拠 → 現状
   未解決 7 になった。
 - **R9. 決定 3 の手順は閉じず、これは起草時が疑っていたとおりの 1 件である。** 3 本の脚のうち
   2 本は保つ: 後ろに人のいないメンバーシップは作れる（`AddMembership` が identity を先に作る。
-  `internal/tenantsrv/tenants.go:588`）し、削除は即座に失効になる（`engine_gateway.go:340-352`）。
+  `internal/tenantsrv/tenants.go:587`）し、削除は即座に失効になる（`engine_gateway.go:340-352`）。
   3 本目が保たない。トークンはそのメンバーシップ自身のコンテナの中にしか存在せず
   （`workspace_lifecycle.go:401`。それ自体 `PUBLIC_BASE_URL` の後ろ）、そして**他のメンバーの
   ワークスペースを起動するものも、その中にセッションを開くものも無い**——管理側にあるのは停止・

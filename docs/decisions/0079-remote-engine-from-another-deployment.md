@@ -197,7 +197,7 @@ no API.
 without a person who can sign in.** Three facts, all read from the code:
 
 - A membership with nobody behind it *can* be created: `AddMembership` pre-creates the identity
-  with `UpsertIdentity(ctx, email, key, "")` (`internal/tenantsrv/tenants.go:588`), so an invite
+  with `UpsertIdentity(ctx, email, key, "")` (`internal/tenantsrv/tenants.go:587`), so an invite
   naming only a `user_key` makes one with no address at all. `checkInviteDomain` only bites when
   the tenant set `allowed_domains`, and then it demands an address.
 - But the token exists **only inside that membership's own workspace container**
@@ -231,7 +231,7 @@ the path after the local `/engine/<key>/v1/`, with the query string. No provider
 applying it twice is how `/v1/v1/chat/completions` happens.
 
 The far side's own `/internal/engine/token` answer carries `base_url` (`/engine/<key>/v1`,
-`engine_gateway.go:236`), so that middle segment is **read, not composed**. Composing it here
+`engine_gateway.go:215`), so that middle segment is **read, not composed**. Composing it here
 would be this document asserting the far side's route layout, which is the thing the Workspace
 deliberately does not do either — it dials `AF_CP_BASE_URL` plus whatever `base_url` came back
 (`workspace/agent/engines.go:185`). Same rule, one level up.
@@ -337,10 +337,10 @@ no effect. The refusal belongs where the writes are:
   `ondemand` is refused with (decision 10). A borrowed catalogue is the far administrator's
   document and this panel is not where it is edited.
 - **The mirror is an empty list, never an absent source.** `hasModels` answers **true** when it
-  has no store at all (`engine_catalog.go:116-118`) — deliberately, since the false direction
+  has no store at all (`engine_catalog.go:122-124`) — deliberately, since the false direction
   stops a GPU. A remote row whose source were merely missing would therefore pass `serve`'s
   no-models gate and then 404 `model_unknown` on every chat request that names a model
-  (`engine_gateway.go:454-460`). Nothing, not even before the first fetch, may present as nil.
+  (`engine_gateway.go:435-440`). Nothing, not even before the first fetch, may present as nil.
 
 Hand-typing the catalogue locally — ADR 0076's answer for a LAN ComfyUI — is **rejected here**:
 
@@ -441,7 +441,7 @@ Two things the draft got wrong here, and the review found both:
   is precisely the probe decision 5 refuses. Nor is it "what the gateway last saw answer" — no
   such record exists; the nearest thing is `noteServed`, which is a warm model *id*.
   **A remote row's `warm` is read off the mirror**: the far catalogue already marks the model the
-  far CP last saw answer with (`"warm": true`, `engine_catalog.go:590-592`), which is the far
+  far CP last saw answer with (`"warm": true`, `engine_catalog.go:591-594`), which is the far
   deployment's own observation and the only honest one available here.
 
 `ondemand` is refused with 400 for a remote row, as it already is for external
@@ -578,8 +578,9 @@ reachable.
 
 ## Sources checked (2026-09-12, this repository's code)
 
-Every line re-drawn during the review below, against `61042381`. Four were off by a line or a
-range and are corrected here; the rest landed where the draft said.
+Every line re-drawn during the review below, against `61042381`, then re-checked after merging
+`origin/develop` at `f71c7c4d`: **88 citations, 0 drifted** on a scripted pass. Seven were off by a
+line or a range and are corrected here; the rest landed where the draft said.
 
 | Claim | Where |
 |---|---|
@@ -587,15 +588,15 @@ range and are corrected here; the rest landed where the draft said.
 | The engine routes are registered on every flavour, session-exempt — and not at all when the registry is nil | `control-plane/routes.go:33`, `control-plane/engine_gateway.go:168-177` |
 | The issuing token buys a session token; the catalogue needs the issuing token | `engine_gateway.go:187`, `:224` |
 | The session name is taken as stated, never verified | `engine_gateway.go:182-186` |
-| The token answer states its own `base_url` | `engine_gateway.go:236` |
+| The token answer states its own `base_url` | `engine_gateway.go:215` |
 | The membership is resolved live, so removal revokes at once | `engine_gateway.go:340-352` |
-| A membership can be created with no address (invite by `user_key`) | `control-plane/internal/tenantsrv/tenants.go:588` |
+| A membership can be created with no address (invite by `user_key`) | `control-plane/internal/tenantsrv/tenants.go:587` |
 | No admin route starts another member's workspace, or opens a session in one | `control-plane/tenant_wiring.go:80-100`, `control-plane/admin_sessions.go:39` |
 | A membership id surfaces in one super_admin response only | `control-plane/cloudcost.go:734` |
 | Session token TTL is 30 days | `control-plane/engine_token.go:85` |
 | The issuing token is deterministic, and its signing master is shared with git/memo/schedule | `engine_token.go:47`, `control-plane/git_http.go:88` |
 | The signing master is `SHA-256(AF_MASTER_KEY)` | `control-plane/main.go:128-129`, `engine_token.go:39-49` |
-| The issuing token is injected at workspace start, only when `PUBLIC_BASE_URL` is set | `control-plane/workspace_lifecycle.go:375,401` |
+| The issuing token is injected at workspace start, only when `PUBLIC_BASE_URL` is set | `control-plane/workspace_lifecycle.go:376,401` |
 | `dial` composes URL + provider prefix + path, forwards only Content-Type and Accept, and presents one fixed `apiKey` | `engine_gateway.go:754-800`, `:789-791`, `:811` |
 | `engineClient` sets no timeout of its own | `engine_gateway.go:135-144` |
 | The non-streaming hold is 45 s, global, bounded below the ALB's 60 | `engine_gateway.go:100-107`, `deploy/aws/ecs/cfn/30-ingress.yaml:452` |
@@ -613,7 +614,7 @@ range and are corrected here; the rest landed where the draft said.
 | `apiKey` is filled only for the synthesised comfy row | `engines.go:767-769` |
 | A table row needs a `service` unless it is external | `engines.go:511-513` |
 | The catalogue is a cache over `store.EngineModelStore` — one reader, nine writers | `control-plane/engine_catalog.go:58`, `:74-88`, `control-plane/internal/store/store.go:363-391` |
-| `hasModels` answers true when there is no store at all | `engine_catalog.go:116-118` |
+| `hasModels` answers true when there is no store at all | `engine_catalog.go:122-124` |
 | Catalogue writes never travel through `engineCatalog` | `engine_admin.go:865,868,876,882,885,888`, `:1132`, `:1177`, `engine_ingest.go:820,869` |
 | The catalogue row carries files, params, base_model, sizes, negative, warm and the window | `engine_catalog.go:556-604` |
 | LoRAs ride their own array, and `kind` is not on the wire | `engine_gateway.go:270-286` |
@@ -643,8 +644,10 @@ open question (R9). The text above has been corrected accordingly** — this ADR
 "proposed" with not one line implemented, so the correction is the "implementation corrects the
 text" stage brought forward, with what changed and why kept here. **Nothing was measured for this
 section and no money was spent**; reading the code was enough, which is what the draft predicted.
-Every `file:line` in "Sources checked" was re-drawn against `61042381`; four were off and are
-fixed there.
+Every `file:line` in "Sources checked" was re-drawn against `61042381` and re-checked after
+merging `origin/develop` at `f71c7c4d` (where only `engine_offer.go` moved, which this review does
+not cite); **88 citations, 0 drifted** on a scripted pass. Seven were off before that pass and are
+fixed.
 
 ### What the review checked
 
@@ -671,7 +674,7 @@ fixed there.
   call behind a 10-second cache (`:893-896,935-944`) fired on every admin panel load — the probe
   decision 5 forbids, reached from the panel rather than from a generation. "What the local
   gateway last saw answer" describes nothing in the code. It now comes off the mirror, where the
-  far CP publishes its own `"warm": true` (`engine_catalog.go:590-592`). Separately,
+  far CP publishes its own `"warm": true` (`engine_catalog.go:591-594`). Separately,
   `row["lifecycle"]` is the literal constant `engineLifecycleExternal` (`engine_admin.go:210`), so
   a remote row would call itself `external` and P1's label would have nothing to read.
 - **R4. Decision 7's refusal refused nothing.** An implementation of `store.EngineModelStore`
@@ -684,7 +687,7 @@ fixed there.
   (`engine_catalog.go:74-88`, the only reader) — is now the decision, with the refusal moved to
   the admin write routes where it can actually happen. Also recorded: `hasModels` answers **true**
   when there is no store (`:116-118`), so a mirror that is merely absent would pass `serve`'s
-  no-models gate and then 404 every named model (`engine_gateway.go:454-460`). It must be an empty
+  no-models gate and then 404 every named model (`engine_gateway.go:435-440`). It must be an empty
   list, never nil.
 - **R5. The mirror is feasible, and two fields do not survive the wire.** `/internal/engine/catalog`
   does carry `files`, `params`, `base_model`, `sizes`, `negative`, `selected`, `default`, `warm`
@@ -725,7 +728,7 @@ fixed there.
   half through a chat completion; and attributing borrowed image spend becomes open question 7.
 - **R9. Decision 3's procedure does not close, and this is the one open question the draft
   suspected.** Two of its three legs hold: a membership with no address at all can be created
-  (`AddMembership` pre-creates the identity, `internal/tenantsrv/tenants.go:588`), and removal
+  (`AddMembership` pre-creates the identity, `internal/tenantsrv/tenants.go:587`), and removal
   revokes at once (`engine_gateway.go:340-352`). The third does not. The token exists only inside
   that membership's own container (`workspace_lifecycle.go:401`, itself behind `PUBLIC_BASE_URL`),
   and **nothing starts another member's workspace or opens a session in one** — the admin surface
