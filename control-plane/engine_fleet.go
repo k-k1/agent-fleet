@@ -56,11 +56,11 @@ type engineFleetAPI interface {
 //   - `CreateTags` is not needed. `CreateFleet`'s `TagSpecifications` (ResourceType `instance`)
 //     MERGES with the launch template's own tags and lands on the box, so the repair write the
 //     draft wanted would be a second call that can only ever say the same thing;
-//   - `DeleteFleets` / `DescribeFleets` cannot be used and do not need to be. An instant fleet
-//     that launched nothing is refused with `NoTerminateInstancesNotSupported` when asked to be
-//     deleted without terminating, and it does not appear in an unfiltered `describe-fleets`
-//     either — so nothing accumulates on the CP's path and decision 1's "the CP does not
-//     remember the fleet id" stands as written.
+//   - `DeleteFleets` / `DescribeFleets` cannot be used in the shape the ADR named, and do not
+//     need to be. `DeleteFleets(TerminateInstances=false)` is refused for an instant fleet
+//     (`NoTerminateInstancesNotSupported`), and the fleet DOES linger — but an instant fleet is
+//     not enumerated by an unfiltered `describe-fleets` and holds no capacity, so nothing
+//     accumulates on a path this code walks and there is no fleet id worth remembering.
 
 // The tags every engine box carries (decision 3). The first two are the slot pool's own words,
 // imported rather than re-spelt: one vocabulary means one `describe-instances` answers "whose box
@@ -198,9 +198,9 @@ type engineFleetOutcome struct {
 //
 // 🔴 MEASURED on hardware by ADR 0077's P0 pass, not estimated: `CreateFleet` answers HTTP 200
 // and puts one entry in `Errors[]` PER OVERRIDE, with `Instances[]` empty when nothing launched.
-// Two entries are unmeasured and marked as such — `SpotMaxPriceTooLow` was never provoked, and
-// "no stock" was measured through a stand-in — but both sit in the branch that costs the least
-// if wrong (try the next row).
+// Five of the six codes were provoked on hardware. The sixth, `InsufficientInstanceCapacity`, was
+// not — a real stock-out cannot be asked for — and it is marked as such; it sits in the branch
+// that costs the least if wrong (try the next row).
 //
 // The shape is inherited and was itself measured (ADR 0075 decision 5): no stock is worth moving
 // on for, a quota is a wall every row of that purchase option shares — the two quotas are
@@ -215,9 +215,12 @@ var engineFleetErrorCodes = map[string]engineFleetOutcome{
 	// semantic — see engineFleetResponseVerdict: every override refused this way means the row
 	// itself cannot be asked for, while some of them means the others are still worth having.
 	"InvalidFleetConfiguration": {engineFleetUnusable, engineOfferUnusable},
-	// Unmeasured (P0 could not provoke it); the cheapest branch to be wrong in.
+	// Measured: a `MaxPrice` under the pool's own minimum ("your Spot request price of 0.001 is
+	// lower than the minimum required … of 0.5762").
 	"SpotMaxPriceTooLow": {engineFleetNext, engineOfferUnfulfillable},
-	// Measured through a stand-in rather than a real stock-out.
+	// 🔴 The one code in this table nobody has seen from EC2: a real stock-out cannot be asked
+	// for. It is here because it is the answer ADR 0075 measured on the ECS side of the same
+	// wall, and because "try the next row" is the cheapest branch to be wrong in.
 	"InsufficientInstanceCapacity": {engineFleetNext, engineOfferInsufficient},
 	// 🔴 A MISSING GRANT ARRIVES INSIDE A 200. P0 measured `iam:PassRole` absent from the CP's
 	// role: `CreateFleet` succeeds at the HTTP layer and writes `UnauthorizedOperation` into
