@@ -803,6 +803,18 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		// to publish its active set because a startup context had ended would be a box that
 		// loads nothing.
 		ctx := context.WithoutCancel(ctx)
+		// 🔴 A remote row with nothing to borrow FROM is refused rather than served. The shape that
+		// reaches here is a hand-written `lifecycle:"remote"` table row on a deployment where
+		// AF_REMOTE_ENGINE_URL / _TOKEN are unset: without the handle there is no catalogue source,
+		// and a catalogue that cannot be read at all answers hasModels TRUE (engine_catalog.go) — so
+		// the row would pass serve's no-models gate and then 404 `model_unknown` on every request
+		// that names a model. That is precisely the failure ADR 0079 decision 7 exists to prevent,
+		// and it is quieter than the row simply not being there.
+		if d.remote() && rem == nil {
+			log.Printf("engines: %s declares lifecycle %q but AF_REMOTE_ENGINE_URL / AF_REMOTE_ENGINE_TOKEN are unset, so there is nothing to borrow from - the role is not served",
+				d.Key, engineLifecycleRemote)
+			return nil
+		}
 		if d.notManagedHere() {
 			// Everything a row this deployment does not own does NOT get (ADR 0076 decision 1,
 			// ADR 0079 decision 1): no ECS adapter, no controller, no demand counter, no active

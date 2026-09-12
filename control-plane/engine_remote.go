@@ -157,13 +157,20 @@ func (r *engineRemotes) forKey(key string) *engineRemote {
 // failed one. engineCatalog.hasModels answers true when it has no source at all — deliberately,
 // since the false direction stops a GPU — so a row whose mirror were merely absent would pass
 // serve's no-models gate and then 404 every named model.
+// It is also never nil ITSELF, for the same reason one level up: a nil handle here would leave the
+// row reading the local database — or nothing — and `hasModels` would answer true for a catalogue
+// that holds nothing. newEngineRegistry refuses such a row outright; this is the second lock, so
+// that a future call site cannot reintroduce the failure by forgetting.
 func (e *engineRemote) catalogSource() func(context.Context) ([]store.EngineModel, error) {
 	if e == nil {
-		return nil
+		return func(context.Context) ([]store.EngineModel, error) { return []store.EngineModel{}, nil }
 	}
 	return func(context.Context) ([]store.EngineModel, error) {
 		e.mu.Lock()
 		defer e.mu.Unlock()
+		if e.rows == nil {
+			return []store.EngineModel{}, nil
+		}
 		return e.rows, nil
 	}
 }

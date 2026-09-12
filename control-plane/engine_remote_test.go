@@ -388,3 +388,49 @@ func TestBorrowedCatalogueWritesAreRefused(t *testing.T) {
 		t.Errorf("ondemand on a borrowed engine = %d, want 400", rec.Code)
 	}
 }
+
+// 🔴 A `lifecycle:"remote"` row with no borrowing declaration is the quiet version of the failure
+// decision 7 exists to prevent, and it was found by the session that wrote the mirror: with no
+// handle there is no catalogue source, and a catalogue that cannot be read at all answers hasModels
+// TRUE — so the row passes serve's no-models gate and then 404s `model_unknown` on every request
+// that names a model. Refusing the row is louder and correct.
+func TestARemoteRowWithNothingToBorrowFromIsNotServed(t *testing.T) {
+	t.Setenv("AF_ENGINES_SSM_PARAM", "")
+	t.Setenv("AF_COMFY_URL", "")
+	t.Setenv("AF_REMOTE_ENGINE_URL", "")
+	t.Setenv("AF_REMOTE_ENGINE_TOKEN", "")
+	t.Setenv("AF_ENGINES_JSON", `{"engines":[
+	 {"key":"llm","api":"chat","provider":"llamacpp","lifecycle":"remote","url":"https://af.example.invalid"},
+	 {"key":"image","api":"images","provider":"comfy","lifecycle":"external","url":"http://192.0.2.20:8188"}]}`)
+
+	reg := newEngineRegistry(context.Background(), nil)
+	if reg == nil {
+		t.Fatal("the table produced no registry at all")
+	}
+	if e := reg.get("llm"); e != nil {
+		t.Errorf("the borrowed row is served with no far deployment to borrow from: %+v", e.def)
+	}
+	// The external row beside it is untouched: one unusable row must not take the other with it.
+	if reg.get("image") == nil {
+		t.Error("the external row went away with the unusable remote one")
+	}
+}
+
+// The second lock on the same failure: even handed a nil handle, the source answers an empty list
+// rather than nil, so hasModels reports a definite "nothing enabled" instead of "cannot read".
+func TestABorrowedCatalogSourceIsNeverNil(t *testing.T) {
+	var none *engineRemote
+	src := none.catalogSource()
+	if src == nil {
+		t.Fatal("catalogSource() on a nil handle returned nil — the row would read the local database")
+	}
+	rows, err := src(t.Context())
+	if err != nil || rows == nil || len(rows) != 0 {
+		t.Fatalf("source() = (%v, %v), want an empty non-nil list", rows, err)
+	}
+	c := newEngineCatalog(nil, "llm")
+	c.source = src
+	if c.hasModels(t.Context()) {
+		t.Error("hasModels() = true through a nil handle — serve's no-models gate would be passed")
+	}
+}
