@@ -97,8 +97,35 @@ func engineWakeTimeout() time.Duration {
 //
 // It never RAISES the wait: the effective bound is the smaller of this and the wake timeout,
 // so setting AF_ENGINE_WAKE_TIMEOUT low still means what it says.
-func enginePlainHold() time.Duration {
-	hold := time.Duration(runtime.EnvInt("AF_ENGINE_PLAIN_HOLD", 45)) * time.Second
+const engineManagedPlainHoldSeconds = 45
+
+// engineRemotePlainHoldSeconds is that same bound for a BORROWED row (ADR 0079 decision 6). The
+// far deployment's own plain path holds for 45 s before answering `engine_waking`, and a local
+// hold of 45 s expires first every time — so the answer a borrower gets would always be this
+// side's, one round trip before the far side had said anything. A little more than the far
+// default lets the far sentence through, and there is no ALB in the way of it: the number that
+// has to stay under an ingress idle timeout is the one a MANAGED row uses, which is why this is
+// a second default rather than a new one.
+//
+// 🔴 Comfort, not correctness. The far side's 45 s is AF_ENGINE_PLAIN_HOLD *over there*, a knob
+// this process cannot read: a far operator who raised theirs puts the local expiry first again
+// whatever is chosen here. What makes a borrowed cold start work is the engine_waking mapping
+// below, not this number.
+const engineRemotePlainHoldSeconds = 75
+
+// enginePlainHoldFor is the hold for ONE row. Per row rather than per process because 75 s as a
+// global default would raise managed rows above the ecs-ec2 ingress ALB's 60-second idle timeout
+// (deploy/aws/ecs/cfn/30-ingress.yaml) and reintroduce exactly the 504 the 45 s exists to avoid.
+func enginePlainHoldFor(eng *engineRuntimeState) time.Duration {
+	if eng != nil && eng.def.remote() {
+		return enginePlainHoldOf(engineRemotePlainHoldSeconds)
+	}
+	return enginePlainHoldOf(engineManagedPlainHoldSeconds)
+}
+
+// enginePlainHoldOf applies the operator's override and the wake-timeout cap to one default.
+func enginePlainHoldOf(def int) time.Duration {
+	hold := time.Duration(runtime.EnvInt("AF_ENGINE_PLAIN_HOLD", def)) * time.Second
 	if wake := engineWakeTimeout(); hold > wake {
 		return wake
 	}
@@ -631,7 +658,7 @@ func (g engineGateway) streamed(w http.ResponseWriter, r *http.Request, eng *eng
 	ctx, cancel := context.WithTimeout(r.Context(), engineWakeTimeout())
 	defer cancel()
 	ch := make(chan upstreamStart, 1)
-	go func() { ch <- g.dial(ctx, eng, r, body) }()
+	go func() { ch <- g.dial(ctx, eng, r, body, claims) }()
 
 	tick := time.NewTicker(engineHeartbeatInterval)
 	defer tick.Stop()
@@ -655,7 +682,7 @@ func (g engineGateway) streamed(w http.ResponseWriter, r *http.Request, eng *eng
 		// the OpenAI error object every client of this API already knows how to surface, and
 		// the text is written to be read by a person AND by the model that will see it.
 		log.Printf("%s: waking for session %s failed after %s: %v",
-			eng.ecs.logKey(), claims.Session, time.Since(started).Truncate(time.Second), start.err)
+			eng.logKey(), claims.Session, time.Since(started).Truncate(time.Second), start.err)
 		writeEngineStreamError(w, flusher, start.err)
 		return
 	}
@@ -689,7 +716,7 @@ func (g engineGateway) streamed(w http.ResponseWriter, r *http.Request, eng *eng
 		}
 		if rerr != nil {
 			if !errors.Is(rerr, io.EOF) {
-				log.Printf("%s: the stream ended early: %v", eng.ecs.logKey(), rerr)
+				log.Printf("%s: the stream ended early: %v", eng.logKey(), rerr)
 			}
 			break
 		}
@@ -717,9 +744,9 @@ func (g engineGateway) plain(w http.ResponseWriter, r *http.Request, eng *engine
 	claims engineSessionClaims, mv store.MembershipView, body []byte) {
 
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(r.Context(), enginePlainHold())
+	ctx, cancel := context.WithTimeout(r.Context(), enginePlainHoldFor(eng))
 	defer cancel()
-	start := g.dial(ctx, eng, r, body)
+	start := g.dial(ctx, eng, r, body, claims)
 	if start.err != nil {
 		// Two different facts behind one status. "Still waking" is the ordinary answer on this
 		// path and says come back; anything else is a failure the caller should surface.
@@ -751,21 +778,28 @@ func (g engineGateway) plain(w http.ResponseWriter, r *http.Request, eng *engine
 
 // dial waits for the engine and sends the request, returning once its first byte is in hand.
 // Everything slow lives in here so the caller can spend the wait writing heartbeats.
-func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *http.Request, body []byte) upstreamStart {
+func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *http.Request, body []byte,
+	claims engineSessionClaims) upstreamStart {
+
 	if err := g.ensureReady(ctx, eng); err != nil {
 		return upstreamStart{err: err}
 	}
-	// The path after /engine/<key>/v1/ is passed through verbatim, so /v1/chat/completions,
-	// /v1/models and llama.cpp's /v1/messages all work without this file knowing about them —
-	// PROVIDED the upstream engine's own API actually lives under /v1, which llama-server and
-	// sd-server's OpenAI-compatible faces do. ComfyUI's native API (ADR 0072 decision 4, phase
-	// P2) does not: /prompt, /history/<id> and /view live at the engine's root. The route's own
-	// literal `/v1/` stays fixed either way — only what gets prepended to the UPSTREAM path
-	// differs — so a comfy provider's request still arrives at /engine/<key>/v1/prompt and the
-	// Workspace side never needs to know this distinction exists.
-	target := strings.TrimRight(eng.def.URL, "/") + engineUpstreamPrefix(eng.def.Provider) + r.PathValue("path")
-	if q := r.URL.RawQuery; q != "" {
-		target += "?" + q
+	// The bearer. Two of the three lifecycles present one string fixed when the row was built;
+	// a BORROWED row presents a far session token bought per (engine key, local session name),
+	// which is what puts this deployment's session on the far side's usage rows (ADR 0079
+	// decisions 4 and 8). Bought first, because the far gateway states its own base path in the
+	// same answer and the URL below is built from it.
+	bearer := eng.apiKey
+	if eng.def.remote() {
+		tok, err := eng.remote.sessionToken(ctx, claims.Session)
+		if err != nil {
+			return upstreamStart{err: engineRelayErr(ctx, eng, err)}
+		}
+		bearer = tok
+	}
+	target, err := engineUpstreamTarget(eng, r)
+	if err != nil {
+		return upstreamStart{err: err}
 	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, target, bytes.NewReader(body))
 	if err != nil {
@@ -784,14 +818,21 @@ func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *htt
 	if v := r.Header.Get("Accept"); v != "" {
 		req.Header.Set("Accept", v)
 	}
+	// Which catalogue row this request is for. The engines in this deployment ignore it, but a
+	// FAR gateway reads it twice — its usage accounting, and the pending guard that answers
+	// `engine_waking` while a model is still being synced onto its instance (ADR 0072 P2 欠落 7).
+	// Dropping it fails nothing and silently degrades both, which is the worst shape a bug has.
+	if v := strings.TrimSpace(r.Header.Get("X-AF-Model")); v != "" {
+		req.Header.Set("X-AF-Model", v)
+	}
 	// The Workspace's token never goes upstream: it authenticates to the CP, and the CP
 	// presents the engine's own key. Two different secrets, so one leaking is not the other.
-	if eng.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+eng.apiKey)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	resp, err := engineClient.Do(req)
 	if err != nil {
-		return upstreamStart{err: err}
+		return upstreamStart{err: engineRelayErr(ctx, eng, err)}
 	}
 	// Read until there is at least one byte, so the caller's heartbeat covers the prefill
 	// silence too — measured at 12.1 seconds to the first token for a 23k-token prompt on an
@@ -800,9 +841,95 @@ func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *htt
 	n, rerr := resp.Body.Read(first)
 	if n == 0 && rerr != nil && !errors.Is(rerr, io.EOF) {
 		resp.Body.Close()
-		return upstreamStart{err: rerr}
+		return upstreamStart{err: engineRelayErr(ctx, eng, rerr)}
 	}
 	return upstreamStart{resp: resp, first: first[:n]}
+}
+
+// engineUpstreamTarget is where one request goes upstream.
+//
+// The path after /engine/<key>/v1/ is passed through verbatim, so /v1/chat/completions,
+// /v1/models and llama.cpp's /v1/messages all work without this file knowing about them —
+// PROVIDED the upstream engine's own API actually lives under /v1, which llama-server and
+// sd-server's OpenAI-compatible faces do. ComfyUI's native API (ADR 0072 decision 4, phase
+// P2) does not: /prompt, /history/<id> and /view live at the engine's root. The route's own
+// literal `/v1/` stays fixed either way — only what gets prepended to the UPSTREAM path
+// differs — so a comfy provider's request still arrives at /engine/<key>/v1/prompt and the
+// Workspace side never needs to know this distinction exists.
+//
+// 🔴 A BORROWED row is the one case where that prefix must NOT be applied (ADR 0079 decision 4).
+// What is upstream there is another fleet's gateway, not an engine, and it does this same rewrite
+// itself when the request reaches it — applying it twice is how /v1/v1/chat/completions happens.
+// Its middle segment is the far side's own `base_url`, READ from the token answer and never
+// composed here: guessing `/engine/<key>/v1` would be this deployment asserting the other one's
+// route layout. So an unknown one is an error rather than a guess — the far side has not yet been
+// asked, or answered without it, and a URL invented from that reaches whatever happens to live
+// there.
+func engineUpstreamTarget(eng *engineRuntimeState, r *http.Request) (string, error) {
+	base := strings.TrimRight(eng.def.URL, "/")
+	middle := engineUpstreamPrefix(eng.def.Provider)
+	if eng.def.remote() {
+		far := strings.TrimRight(eng.remote.upstreamBase(), "/")
+		if far == "" {
+			return "", fmt.Errorf("%s has not said where its %s engine lives (no base_url on its token answer)",
+				base, eng.def.Key)
+		}
+		middle = far + "/"
+	}
+	target := base + middle + r.PathValue("path")
+	if q := r.URL.RawQuery; q != "" {
+		target += "?" + q
+	}
+	return target, nil
+}
+
+// engineRelayErr maps the LOCAL hold running out while relaying to a borrowed engine onto
+// `engine_waking` (ADR 0079 decision 6).
+//
+// 🔴 This, and not the longer hold, is what makes a borrowed cold start work. Without it the
+// deadline fires inside engineClient.Do and `plain` reports `engine_unavailable` — which both
+// image providers refuse to retry (workspace/agent/internal/imagegen/sdcpp.go's sdcppRetryable,
+// shared with comfy), while they retry `engine_waking` for sixteen minutes. A GPU on its way up
+// over there would be a permanent failure over here, reported as a start that failed.
+//
+// ⚠️ The caller hanging up is NOT that, and the two arrive as errors on the SAME context. Asking
+// about the deadline specifically is already enough to tell them apart — a cancelled request never
+// produces context.DeadlineExceeded — so the first branch is belt-and-braces against the obvious
+// loosening of the second ("the context ended, so it must be waking"), which is the shape this
+// mapping would take if somebody wrote it quickly. Measured with both mutations: the loosening
+// alone stays correct, the loosening without this branch answers `engine_waking` to a caller who
+// is no longer there.
+func engineRelayErr(ctx context.Context, eng *engineRuntimeState, err error) error {
+	if err == nil || eng == nil || !eng.def.remote() {
+		return err
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%s did not answer for %s within this deployment's own hold: %w",
+			strings.TrimRight(eng.def.URL, "/"), eng.def.Key, errEngineWaking)
+	}
+	return err
+}
+
+// logKey names one engine in a log line, for every lifecycle.
+//
+// 🔴 eng.ecs.logKey() is nil-safe but ANONYMOUS: a row with no ECS adapter — external, and every
+// borrowed row — prints as the bare word "engine", so two roles borrowed from the same fleet
+// cannot be told apart in the one place an operator learns that a borrowed role is misbehaving
+// (ADR 0079 review R11).
+func (e *engineRuntimeState) logKey() string {
+	if e == nil {
+		return "engine"
+	}
+	if e.ecs != nil {
+		return e.ecs.logKey()
+	}
+	if k := strings.TrimSpace(e.def.Key); k != "" {
+		return "engine " + k
+	}
+	return "engine"
 }
 
 // engineUpstreamPrefix is what dial prepends to the path after /engine/<key>/v1/ before
@@ -819,6 +946,18 @@ func engineUpstreamPrefix(provider string) string {
 // endpoint. Returns as soon as it is up, and only errors when the wake timeout or the
 // caller's own deadline runs out.
 func (g engineGateway) ensureReady(ctx context.Context, eng *engineRuntimeState) error {
+	// 🔴 A BORROWED row is ready by definition: there is nobody here to start it and nothing to
+	// probe (ADR 0079 decision 5). engineHealthy would ask the row's URL plus /health, and what is
+	// at that URL is another fleet's Control Plane, which publishes nothing there about an engine.
+	//
+	// 🔥 And on one shape the probe is not merely useless but expensive. A row whose URL already
+	// contains the engine path — AF_COMFY_URL=https://<far>/engine/image/v1, the no-code-change
+	// way an operator reaches for this first — puts the probe on the far GATEWAY as
+	// /engine/image/v1/health, which records demand over there and buys a GPU box. Before
+	// engineHealthy, therefore, and not inside it.
+	if eng.def.remote() {
+		return nil
+	}
 	waitStarted := time.Now()
 	for {
 		if engineHealthy(ctx, eng) {

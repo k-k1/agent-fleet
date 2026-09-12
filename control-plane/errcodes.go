@@ -39,6 +39,11 @@ const (
 	errCodeEngineECSError      = "engine_ecs_error"
 	errCodeEnginePublishFailed = "engine_publish_failed"
 	errCodeEngineClassUnknown  = "engine_class_unknown"
+	// The catalogue of a BORROWED engine is the far administrator's document, so it is not
+	// editable from this panel (ADR 0079 decision 7). Its own code rather than bad_body because
+	// nothing about the request was malformed — it arrived at the wrong deployment, and the
+	// message says which one to go to.
+	errCodeEngineNotOurs = "engine_not_ours"
 	// The model wants more VRAM than the chosen instance class declares, and the request did
 	// not say it knew that (ADR 0074 decision 6). A REFUSAL TO GUESS, not a refusal: repeating
 	// the call with confirm_vram succeeds, because quantisation and offloading are real and the

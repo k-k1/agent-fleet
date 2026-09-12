@@ -2,7 +2,10 @@
 
 English | [日本語](0079-remote-engine-from-another-deployment.ja.md)
 
-- Status: **proposed** (2026-09-12). Nothing is implemented.
+- Status: **accepted** (2026-09-12). P0 is implemented behind a declaration nothing sets yet: a
+  deployment that does not set `AF_REMOTE_ENGINE_URL` takes exactly the path it took before. The
+  live half of P0's completion test, and therefore open questions 1, 3, 4 and 6, are still
+  unmeasured — no deployment has borrowed anything.
 - **Nothing was measured for this document.** Every claim says where it comes from —
   (a) measurements in ADR 0071, 0072, 0074, 0075 and 0077, (b) facts read out of this
   repository's code on 2026-09-12 (listed file:line under "Sources checked"), (c) things known
@@ -803,3 +806,46 @@ replaces it; `mode` (`engines.go:877`), the admin row's `managed` (`engine_admin
 | Open questions | 1 narrowed (what actually turns on the default) / 6 the credential / 7 borrowed image attribution | R6, R9, R8 |
 | Phases | P0 items 1-8 restated with the gates, the threading, the mirror's two fields and the admin refusal / "Done when" proves the usage row through chat | R1, R4, R5, R7, R8 |
 | Sources checked | four ranges corrected, twenty-four lines added | R11 and the re-draw |
+
+## P0 as built (2026-09-12)
+
+The code landed in four commits across three sessions — the foundation and the refusals, the
+catalogue mirror, and the gateway — and `AF_REMOTE_ENGINE_URL` is the whole switch: unset, every
+branch added here is unreachable and `notManagedHere()` is exactly the old `external()`. **Nothing
+was measured on any deployment**; what follows is what building it corrected in the decisions above,
+which is the ordinary "implementation corrects the text" stage and not a second review.
+
+- **Two things the review's own count still missed, and both were caught by writing the code.**
+  (a) A `lifecycle:"remote"` row declared while `AF_REMOTE_ENGINE_URL` is unset has no handle, so
+  its catalogue has no source — and a catalogue that cannot be read at all answers `hasModels` TRUE,
+  so the row passes `serve`'s no-models gate and then 404s `model_unknown` on every request that
+  names a model. That is decision 7's own failure arriving by a route decision 7 did not name. Such
+  a row is now refused at build with a line saying why, and `catalogSource()` answers an empty list
+  even on a nil handle as the second lock. (b) **Absence is how the far side says "off".** A role
+  whose mode is `off`, or whose last enabled model is removed, is *skipped* by the far catalogue
+  handler rather than reported empty, so a mirror refreshed only from the rows that are present
+  keeps offering a role that stopped being offered. The poll now synthesises an empty row for every
+  borrowed role the answer does not mention, and drops that row's ten-second cache so the change is
+  not held for another window.
+- **Decision 4 grew a signature.** `dial` takes the session claims (`dial(ctx, eng, r, body,
+  claims)`), because the bearer is per (engine key, session) and the function had no way to know
+  which session was asking. The far side's `base_url` is read from the token answer as the decision
+  says, and an unknown one is an error rather than a guessed `/engine/<key>/v1`.
+- **Decision 6 is a second default, not a new one.** `enginePlainHoldFor(eng)` replaced
+  `enginePlainHold()`; the managed default stays 45 s and the test that pins it under the ALB's
+  60 s now also pins that a borrowed row is longer and that the two cannot be collapsed. The
+  `engine_waking` mapping wraps all three places a relay can fail, and refuses to fire on a
+  cancelled request — the loosening "the context ended, so it must be waking" would answer
+  `engine_waking` to a caller who has already hung up.
+- **Decision 7's refusal moved once more, to five routes.** `putModel`, `postModel`, `deleteModel`,
+  `putNegative` and `postIngest` answer 400 `engine_not_ours` for a borrowed role, and the message
+  names the far deployment because the operator's next act is over there. `negative_always` is read
+  from the mirror for the same reason it cannot be written here. A new error code needs a Console
+  catalogue entry or `TestCPEmittedErrCodesHaveConsoleCatalogEntry` fails — which it did.
+- **Unchanged and worth saying:** no Agent change, no Workspace change, no CloudFormation change,
+  and no new IAM. The Console needed one i18n line and nothing else, as decision 10 predicted.
+
+**Still not done, and not P0's:** the live run and its timings (open question 3), the far side's
+super-admin button (decision 3 / open question 6), the Console's "another fleet" label, the operator
+chapter, and `AF_ENGINE_API_KEY_<KEY>` (decision 11, P2). Borrowed image spend is still attributed
+nowhere on the far side (open question 7).

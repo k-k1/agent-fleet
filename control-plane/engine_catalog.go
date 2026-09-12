@@ -58,6 +58,15 @@ const engineCatalogCacheTTL = 10 * time.Second
 type engineCatalog struct {
 	store store.EngineModelStore
 	role  string
+	// source replaces `store` as where this role's rows come from, for a row whose catalogue is
+	// somebody else's (ADR 0079 decision 7 — a borrowed engine's declaration belongs to the far
+	// administrator). nil for every ordinary row, which then reads the database as before.
+	//
+	// 🔴 A SOURCE, not a store: ADR 0079's review found that handing this type a
+	// store.EngineModelStore whose writes refuse would refuse nothing at all, because no write ever
+	// travels through here — every one of them addresses mgr.store directly, keyed by the role in
+	// the request path. Refusing a write is engine_admin.go's job; this is only the read.
+	source func(context.Context) ([]store.EngineModel, error)
 
 	mu     sync.Mutex
 	rows   []store.EngineModel
@@ -71,7 +80,7 @@ func newEngineCatalog(st store.EngineModelStore, role string) *engineCatalog {
 
 // list returns this role's rows, refreshing at most once per TTL.
 func (c *engineCatalog) list(ctx context.Context) []store.EngineModel {
-	if c == nil || c.store == nil {
+	if c == nil || (c.store == nil && c.source == nil) {
 		return nil
 	}
 	c.mu.Lock()
@@ -79,7 +88,13 @@ func (c *engineCatalog) list(ctx context.Context) []store.EngineModel {
 	if c.loaded && time.Since(c.at) < engineCatalogCacheTTL {
 		return c.rows
 	}
-	rows, err := c.store.ListEngineModels(ctx, c.role)
+	read := c.source
+	if read == nil {
+		read = func(ctx context.Context) ([]store.EngineModel, error) {
+			return c.store.ListEngineModels(ctx, c.role)
+		}
+	}
+	rows, err := read(ctx)
 	if err != nil {
 		log.Printf("engines: reading the %s catalogue failed: %v", c.role, err)
 		return c.rows // see the type comment: never turn a DB error into "no models"
@@ -119,7 +134,7 @@ func (c *engineCatalog) enabled(ctx context.Context) []store.EngineModel {
 // than this table. The false direction stops a GPU and refuses every request, so it is only
 // ever returned on a definite empty answer.
 func (c *engineCatalog) hasModels(ctx context.Context) bool {
-	if c == nil || c.store == nil {
+	if c == nil || (c.store == nil && c.source == nil) {
 		return true
 	}
 	for _, m := range c.enabled(ctx) {

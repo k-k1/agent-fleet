@@ -261,19 +261,30 @@ func engineErrCode(t *testing.T, body []byte) string {
 // while the image engine came up in 165 s.
 func TestEnginePlainHoldStaysUnderTheIngressIdleTimeout(t *testing.T) {
 	const albIdleTimeout = 60 * time.Second // deploy/aws/ecs/cfn/30-ingress.yaml
-	if got := enginePlainHold(); got >= albIdleTimeout {
+	managed := &engineRuntimeState{}
+	if got := enginePlainHoldFor(managed); got >= albIdleTimeout {
 		t.Errorf("plain hold = %s, want less than the ingress idle timeout %s", got, albIdleTimeout)
+	}
+	// 🔴 And a BORROWED row raises it without taking the managed one with it (ADR 0079 decision 6).
+	// A 75-second global default is the regression that review warned about: it puts every managed
+	// row on an ecs-ec2 deployment above this timeout and brings back the 504 the 45 s prevents.
+	borrowed := &engineRuntimeState{def: engineDef{Lifecycle: engineLifecycleRemote}}
+	if got := enginePlainHoldFor(borrowed); got <= albIdleTimeout {
+		t.Errorf("borrowed plain hold = %s, want longer than the far side's own 45 s hold", got)
+	}
+	if enginePlainHoldFor(managed) >= enginePlainHoldFor(borrowed) {
+		t.Error("the managed hold is not shorter than the borrowed one — the raise was made global")
 	}
 	// It bounds the wait; it must never extend one that was deliberately made shorter.
 	t.Setenv("AF_ENGINE_WAKE_TIMEOUT", "5")
 	t.Setenv("AF_ENGINE_PLAIN_HOLD", "45")
-	if got, want := enginePlainHold(), 5*time.Second; got != want {
+	if got, want := enginePlainHoldFor(managed), 5*time.Second; got != want {
 		t.Errorf("plain hold = %s with a 5 s wake timeout, want %s", got, want)
 	}
 	// And a deployment behind a stricter proxy can say so.
 	t.Setenv("AF_ENGINE_WAKE_TIMEOUT", "900")
 	t.Setenv("AF_ENGINE_PLAIN_HOLD", "20")
-	if got, want := enginePlainHold(), 20*time.Second; got != want {
+	if got, want := enginePlainHoldFor(managed), 20*time.Second; got != want {
 		t.Errorf("plain hold = %s, want the configured %s", got, want)
 	}
 }

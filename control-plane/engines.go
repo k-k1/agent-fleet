@@ -111,13 +111,49 @@ type engineDef struct {
 	Mode             string `json:"mode"` // the DEFAULT mode; a stored setting wins
 }
 
-// engineLifecycleExternal is the one lifecycle that is not this deployment's (ADR 0076
-// decision 1): the engine is reachable and nothing here may start or stop it.
-const engineLifecycleExternal = "external"
+// The two lifecycles that are not this deployment's, and they are NOT the same question
+// (ADR 0076 decision 1, ADR 0079 decision 1):
+//
+//   - external — the engine is reachable and NOBODY starts it: a ComfyUI on the operator's own
+//     network. A request arriving while it is down fails at once, because waiting cannot help.
+//   - remote — the engine belongs to another Agent Fleet, and THAT fleet starts it. The row is
+//     otherwise identical; what differs is that waiting is now the right thing to do.
+//
+// Both are DECLARED and never inferred from the URL's shape (ADR 0053): a URL that happens to
+// contain /engine/ must not silently change what a row means.
+const (
+	engineLifecycleExternal = "external"
+	engineLifecycleRemote   = "remote"
+)
 
-// external reports whether this row's lifecycle belongs to somebody else.
+// lifecycle is the declared lifecycle, folded. "" is this deployment's own ECS service.
+func (d engineDef) lifecycle() string {
+	return strings.ToLower(strings.TrimSpace(d.Lifecycle))
+}
+
+// external reports whether this row is reachable and nothing here can start it.
+//
+// 🔴 This is the NARROW of the two questions and the only one that produces an immediate failure.
+// A remote row must answer FALSE here: the far fleet is what starts that engine, so the request is
+// worth holding, and an answer of true would make a borrowed cold start fail every time
+// (ADR 0076 decision 4 is about an engine nothing can start — see ensureStarted).
 func (d engineDef) external() bool {
-	return strings.EqualFold(strings.TrimSpace(d.Lifecycle), engineLifecycleExternal)
+	return d.lifecycle() == engineLifecycleExternal
+}
+
+// remote reports whether this row is another Agent Fleet's gateway (ADR 0079 decision 1).
+func (d engineDef) remote() bool {
+	return d.lifecycle() == engineLifecycleRemote
+}
+
+// notManagedHere reports whether the vessel is somebody else's: no ECS service to move a desired
+// count on, no controller, no ladder, nothing here to start or stop.
+//
+// 🔴 This is the predicate almost every branch actually wants, and getting it wrong is silent.
+// ADR 0079's review counted nine call sites of the single `external()` this replaces: eight of
+// them meant THIS one, and the ninth (warm) meant neither.
+func (d engineDef) notManagedHere() bool {
+	return d.external() || d.remote()
 }
 
 // offersSpec is the offer list this role declares. `offers` when the stack writes one, and the
@@ -259,6 +295,11 @@ type engineRuntimeState struct {
 	// extWarm is the cached health answer an externally managed engine's panel row reports as
 	// `warm` (ADR 0076 decision 8). Inert for every engine that has a controller.
 	extWarm engineWarmCache
+	// remote is the far deployment this row borrows from (ADR 0079). Non-nil ONLY for a row whose
+	// lifecycle is `remote`; every method on it is nil-safe, so the branches that reach it do not
+	// each need a guard. It owns the three things that differ from an external row: the token
+	// exchange, the mirrored catalogue, and the warmth the far side reports.
+	remote *engineRemote
 	// swapWaitSince is when this process first refused to start because a box of the previous
 	// rung was still registered. It bounds that wait (engineClassSwapWaitMax): the end of the
 	// wait belongs to AWS, and `scaleInAfter: -1` would otherwise make it never end.
@@ -508,8 +549,9 @@ func parseEngineTable(raw string) (engineTable, error) {
 		// manages owes one (ADR 0076 decision 1). It stays required for every other row: an
 		// empty service name would leave the controller driving nothing while the launch menu
 		// still offered the model.
-		if d.Service == "" && !d.external() {
-			return engineTable{}, fmt.Errorf("engine %d: service is required unless lifecycle is %q", i, engineLifecycleExternal)
+		if d.Service == "" && !d.notManagedHere() {
+			return engineTable{}, fmt.Errorf("engine %d: service is required unless lifecycle is %q or %q",
+				i, engineLifecycleExternal, engineLifecycleRemote)
 		}
 	}
 	return t, nil
@@ -603,7 +645,7 @@ func engineTableWithEnvRow(rows []engineDef, env engineDef) []engineDef {
 		if d.Key != env.Key {
 			continue
 		}
-		if !d.external() {
+		if !d.notManagedHere() {
 			log.Printf("engines: %s is a managed row in the engine table, so AF_COMFY_URL is ignored (take the role out of the stack to move it onto the network)", d.Key)
 			return rows
 		}
@@ -621,7 +663,7 @@ func engineTableWithEnvRow(rows []engineDef, env engineDef) []engineDef {
 // region — from loading an AWS config for a feature it is not using (ADR 0076 decision 3).
 func engineTableNeedsAWS(t engineTable) bool {
 	for _, d := range t.Engines {
-		if !d.external() {
+		if !d.notManagedHere() {
 			return true
 		}
 	}
@@ -636,7 +678,12 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	name := strings.TrimSpace(envx.Or("AF_ENGINES_SSM_PARAM", ""))
 	inline := strings.TrimSpace(envx.Or("AF_ENGINES_JSON", ""))
 	envRow, envAPIKey, hasEnvRow := engineComfyEnvRow()
-	if name == "" && inline == "" && !hasEnvRow {
+	// Borrowing is the fourth way a deployment can have engines (ADR 0079 decision 2), and it has
+	// to be on this gate: a CP that declares nothing but AF_REMOTE_ENGINE_URL used to return here
+	// with no registry at all — and registerEngineRoutes then skips the gateway routes entirely,
+	// so `/engine/…` would not even be routed.
+	rem := newEngineRemotes(mgr)
+	if name == "" && inline == "" && !hasEnvRow && rem == nil {
 		return nil
 	}
 	// The inline table is parsed BEFORE any AWS client exists, because whether a single row
@@ -693,7 +740,12 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	//
 	// A deployment that declares no table at all still gets nothing: `name` and `inline` are both
 	// empty and this function returned nil long before here.
-	if len(table.Engines) == 0 && !haveAWS {
+	//
+	// 🔴 `rem != nil` belongs here for the same reason `haveAWS` does, and it is the gate ADR 0079's
+	// review found: a borrowing native or docker CP has NO rows at boot — they arrive with the first
+	// catalogue fetch (decision 2) — and no AWS either, so it used to fall out here and serve
+	// nothing for the rest of its life.
+	if len(table.Engines) == 0 && !haveAWS && rem == nil {
 		return nil
 	}
 
@@ -751,25 +803,46 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		// to publish its active set because a startup context had ended would be a box that
 		// loads nothing.
 		ctx := context.WithoutCancel(ctx)
-		if d.external() {
-			// Everything an external row does NOT get (ADR 0076 decision 1): no ECS adapter, no
-			// controller, no demand counter, no active set, no pending reader, no GPU ladder and
-			// no uptime sampler. The catalogue and the settings store stay, because what may be
-			// generated and whether the route is open are still this deployment's answers.
+		// 🔴 A remote row with nothing to borrow FROM is refused rather than served. The shape that
+		// reaches here is a hand-written `lifecycle:"remote"` table row on a deployment where
+		// AF_REMOTE_ENGINE_URL / _TOKEN are unset: without the handle there is no catalogue source,
+		// and a catalogue that cannot be read at all answers hasModels TRUE (engine_catalog.go) — so
+		// the row would pass serve's no-models gate and then 404 `model_unknown` on every request
+		// that names a model. That is precisely the failure ADR 0079 decision 7 exists to prevent,
+		// and it is quieter than the row simply not being there.
+		if d.remote() && rem == nil {
+			log.Printf("engines: %s declares lifecycle %q but AF_REMOTE_ENGINE_URL / AF_REMOTE_ENGINE_TOKEN are unset, so there is nothing to borrow from - the role is not served",
+				d.Key, engineLifecycleRemote)
+			return nil
+		}
+		if d.notManagedHere() {
+			// Everything a row this deployment does not own does NOT get (ADR 0076 decision 1,
+			// ADR 0079 decision 1): no ECS adapter, no controller, no demand counter, no active
+			// set, no pending reader, no GPU ladder and no uptime sampler. The catalogue and the
+			// settings store stay, because what may be generated and whether the route is open are
+			// still this deployment's answers.
 			st := &engineRuntimeState{
 				def:      d,
 				settings: settings,
 				catalog:  newEngineCatalog(models, d.Key),
 			}
-			// The bearer the reverse proxy in front of ComfyUI checks (decision 7). Same field a
-			// managed row fills from SSM, so dial and engineHealthy already present it; SSM is
-			// never read for an external row, which is the point of the whole lane.
+			// The bearer the reverse proxy in front of ComfyUI checks (ADR 0076 decision 7). Same
+			// field a managed row fills from SSM, so dial and engineHealthy already present it;
+			// SSM is never read for either of these lifecycles, which is the point of the lane.
 			if hasEnvRow && d == envRow {
 				st.apiKey = envAPIKey
 			}
+			// A remote row's catalogue is the FAR deployment's, mirrored read-only, and its
+			// credential is minted per (key, session) rather than held in apiKey (ADR 0079
+			// decisions 7 and 4). Both hang off this one handle so that nothing else in the
+			// process has to know which flavour of "somebody else's" a row is.
+			if d.remote() {
+				st.remote = rem.forKey(d.Key)
+				st.catalog.source = st.remote.catalogSource()
+			}
 			// No `service=`: there is none, and printing an empty one reads as a truncated line.
-			log.Printf("engines: %s (%s) -> %s (external, health=%s models=%s)",
-				d.Key, d.api(), d.URL, engineHealthPath(d), strings.Join(st.modelIDs(ctx), ","))
+			log.Printf("engines: %s (%s) -> %s (%s, health=%s models=%s)",
+				d.Key, d.api(), d.URL, d.lifecycle(), engineHealthPath(d), strings.Join(st.modelIDs(ctx), ","))
 			return st
 		}
 		st := &engineRuntimeState{
@@ -820,10 +893,11 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			strings.Join(st.modelIDs(ctx), ","))
 		return st
 	}
-	// The reloader adopts a role with this, and only where there is a table to re-read: an
-	// inline AF_ENGINES_JSON cannot change under a running process, so a builder there would be
-	// a closure nobody calls.
-	if haveAWS {
+	// Whoever adopts a role later needs this, and there are two such pollers now: the table
+	// reloader (ADR 0077 P1, AWS only) and the remote catalogue mirror (ADR 0079 decision 2). An
+	// inline AF_ENGINES_JSON table with neither cannot change under a running process, so a
+	// builder there would be a closure nobody calls.
+	if haveAWS || rem != nil {
 		reg.build = build
 	}
 	for _, d := range table.Engines {
@@ -844,6 +918,10 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	if haveAWS {
 		go newEngineTableReloader(ssmc, name, reg, "").run(context.Background())
 	}
+	// The borrowed rows arrive the same way a rung does, on their own poll: the far catalogue is
+	// what declares which engines exist, so there is nothing to read at boot (ADR 0079 decision 2).
+	// It also refreshes the mirror every row already reads through.
+	rem.run(context.Background(), reg)
 	return reg
 }
 
@@ -917,6 +995,13 @@ type engineWarmCache struct {
 // panel, and the Agent's own catalogue cache is what bounds how often it is asked for (10
 // minutes) — the same TTL that already bounds a model being enabled.
 func (e *engineRuntimeState) negativeAlways(ctx context.Context) string {
+	// A borrowed engine's exclusion list is the FAR administrator's, and it rides on the catalogue
+	// this row mirrors (ADR 0079 decision 7). Reading the local setting instead would answer with
+	// something nobody on the deployment that owns the engine can see — and writing one is refused
+	// for the same reason.
+	if e.def.remote() {
+		return e.remote.negativeAlways()
+	}
 	keys := engineSettingsFor(e.def.Key)
 	if e.settings == nil || keys.negative == "" {
 		return ""
@@ -928,6 +1013,14 @@ func (e *engineRuntimeState) negativeAlways(ctx context.Context) string {
 func (e *engineRuntimeState) warm(ctx context.Context) bool {
 	if e.ctrl != nil {
 		return e.ctrl.warmed()
+	}
+	// 🔴 A REMOTE row is neither of the other two answers, and this is the site ADR 0079's review
+	// found broken: probing it would be the health call decision 5 refuses — from the admin panel,
+	// on every load — and answering false would report every borrowed engine cold for ever. The
+	// far deployment already publishes its own observation in the catalogue this row mirrors
+	// (ADR 0079 decision 10), so warmth is READ rather than asked for.
+	if e.def.remote() {
+		return e.remote.warm()
 	}
 	if !e.def.external() {
 		return false

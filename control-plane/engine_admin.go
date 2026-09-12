@@ -43,6 +43,27 @@ type engineAdminAPI struct {
 	settings store.SettingsStore // may be nil (tests)
 }
 
+// refuseBorrowedWrite answers 400 and reports true when this engine's catalogue is somebody
+// else's to edit (ADR 0079 decision 7).
+//
+// 🔴 This is where the refusal HAS to live, and ADR 0079's review is why the draft had it in the
+// wrong place. The plan was to hand a borrowed row an implementation of store.EngineModelStore
+// whose writes refuse — which would refuse nothing, because no write travels through a row's
+// catalogue at all: every one of them addresses `a.mgr.store` directly, keyed by the role in the
+// request path. The read is redirected (engineCatalog.source); the write is stopped here.
+//
+// The message names the far deployment rather than saying "not allowed": the operator's next act
+// is to go and do it over there, and a refusal that does not say where is a dead end.
+func (a engineAdminAPI) refuseBorrowedWrite(w http.ResponseWriter, e *engineRuntimeState, what string) bool {
+	if e == nil || !e.def.remote() {
+		return false
+	}
+	writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineNotOurs,
+		"engine " + e.def.Key + " is borrowed from " + e.def.URL + ", so " + what +
+			" is that deployment's to change — this panel mirrors its catalogue read-only"})
+	return true
+}
+
 func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegistry) {
 	var settings store.SettingsStore
 	if cfg.mgr != nil && cfg.mgr.store != nil {
@@ -206,8 +227,12 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	// `state`, `desired`, `box`, `stop_eta`, `idle_secs` and the window. Omitted rather than
 	// zeroed: an idle window of 0 is configured to mean "never stops", which is a claim nothing
 	// here is entitled to make about somebody else's box.
-	if e.def.external() {
-		row["lifecycle"] = engineLifecycleExternal
+	if e.def.notManagedHere() {
+		// The row's OWN lifecycle, not the constant this branch used to write: a remote row that
+		// announced itself as `external` would leave the Console's "another fleet" label nothing
+		// to branch on, and "externally managed" is true but unhelpful when there is a fleet with
+		// a panel of its own on the other end (ADR 0079 decision 10).
+		row["lifecycle"] = e.def.lifecycle()
 		row["url"] = e.def.URL
 	} else {
 		// The demand window, always reported as the length it actually is. A client that
@@ -460,7 +485,7 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	// engine has no box here to stop (ADR 0076 decision 5). Refused rather than silently stored
 	// as `on`: the setting outlives this row's lifecycle, so a stored `ondemand` would come back
 	// as a real mode the day the role moves into the stack.
-	if val == engineModeOnDemand && e.def.external() {
+	if val == engineModeOnDemand && e.def.notManagedHere() {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
 			"engine " + key + " is externally managed: it is on or off, never on-demand"})
 		return
@@ -671,6 +696,11 @@ func (a engineAdminAPI) putNegative(w http.ResponseWriter, r *http.Request, iden
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
+	// The far administrator's exclusion list rides on the catalogue this row mirrors, so a local
+	// one would be a second answer to the same question that only this deployment can see.
+	if a.refuseBorrowedWrite(w, e, "what every image excludes") {
+		return
+	}
 	if a.settings == nil {
 		writeAPIErr(w, internalErr(errors.New("no settings store")))
 		return
@@ -776,6 +806,9 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	e := a.reg.get(key)
 	if e == nil {
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	if a.refuseBorrowedWrite(w, e, "what this engine may load") {
 		return
 	}
 	if a.mgr == nil || a.mgr.store == nil {
@@ -1041,6 +1074,9 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
+	if a.refuseBorrowedWrite(w, e, "registering a model") {
+		return
+	}
 	if a.mgr == nil || a.mgr.store == nil {
 		writeAPIErr(w, internalErr(errors.New("no store")))
 		return
@@ -1151,6 +1187,9 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 	e := a.reg.get(key)
 	if e == nil {
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	if a.refuseBorrowedWrite(w, e, "forgetting a model") {
 		return
 	}
 	if a.mgr == nil || a.mgr.store == nil {
@@ -1486,6 +1525,11 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	e := a.reg.get(key)
 	if e == nil {
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	// There is no bucket and no active set on this side for a borrowed role, so an ingest here
+	// would stage a file for an engine that will never read it.
+	if a.refuseBorrowedWrite(w, e, "taking a model in") {
 		return
 	}
 	ing := a.reg.ingester()

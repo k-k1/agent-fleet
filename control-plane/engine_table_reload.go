@@ -145,12 +145,12 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			log.Printf("engines: the table now declares %s, which this process cannot take on - restart the Control Plane to pick it up", d.Key)
 			continue
 		}
-		if e.def.external() {
+		if e.def.notManagedHere() {
 			// An engine somebody else runs has no ladder to carry, no capacity provider to
 			// rename and no service to ask for a restart over (ADR 0076 decision 2). Silently:
-			// the synthesised AF_COMFY_URL row is not in this table at all, so every branch
-			// below would fire on every change of any OTHER row and write a restart request
-			// about a row the table never mentioned.
+			// neither the synthesised AF_COMFY_URL row nor a borrowed one is in this table at
+			// all, so every branch below would fire on every change of any OTHER row and write a
+			// restart request about a row the table never mentioned.
 			continue
 		}
 		next := parseEngineOffers(d.Key, d.offersSpec())
@@ -189,9 +189,9 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 		}
 	}
 	for _, e := range r.reg.list() {
-		if e.def.external() {
-			// It was never IN this table — an external row comes from the environment — so its
-			// absence says nothing (ADR 0076 decision 2).
+		if e.def.notManagedHere() {
+			// It was never IN this table — such a row comes from the environment, or from the far
+			// deployment's catalogue — so its absence says nothing (ADR 0076 decision 2).
 			continue
 		}
 		if !seen[e.def.Key] {
