@@ -1814,6 +1814,298 @@ implementation says back:
   "In a row" is counted per offer id, not per demand: an offer reclaimed, replaced by another that
   was also reclaimed, gets its second chance.
 
+## Follow-up — P3 hardware run: the llm role on EC2 Fleet (2026-09-12, the dev deployment, about $0.13)
+
+P3's whole surface is two things P1 did not touch: **the llm role's own launch template** (#575's
+`LlmLaunchTemplateId`) and **decision 9's refusal of a `spot` row in `LlmOffers`** (#577). Both are
+measured here — the refusal for $0, the rest on one on-demand box, **6 minutes 46 seconds** of GPU,
+about **$0.13** against a gate of fifteen minutes and $0.60.
+
+**Every item this run names is green. P3 as a phase is not complete**, because its own text puts it
+after P2 (decisions 4 and 6, interruption and the host volume) and P2 has not started.
+
+No deploy was needed: the Control Plane is the one PR #588 measured, `0.19.1-dev-3d4cb9e9`, read
+from its own start line. ⚠️ That means **#589's `offer_trail` fix is not on this deployment** and
+nothing here exercises it; the `mode: on` press below was made once, so the defect it fixes had no
+opportunity to show.
+
+### Decision 9's refusal, measured for $0 (10:05:28 → 10:06:52 UTC)
+
+`LlmOffers` was set to a two-row list — one `spot`, one `od` — with
+`update-stack --use-previous-template`, so nothing but the parameter could move:
+
+```
+spotl4|L4 Spot (g6/g5)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|0.60|spot;l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|od
+```
+
+`UPDATE_COMPLETE` in **18 s**, and **14 s after the call** the Control Plane had re-read the table
+and said so:
+
+```
+10:05:42 engines: llm: ignoring the offer spotl4: the llm role is on-demand only (a lost conversation is not a retry)
+10:05:42 engines: llm instance classes re-read from /af-ws/engines: l4
+```
+
+| Check | Result | Evidence |
+|---|---|---|
+| the `spot` row is dropped | 🟢 | the log line above, one reloader tick (10 s) after the SSM write |
+| **the rest of the same list survives** (the positive control) | 🟢 | the panel's `offers` became exactly `[{id: l4, buy: od}]` — the od row from the *same* declaration. A parse that had thrown the list away would look identical without it |
+| nothing was bought | 🟢 | no `CreateFleet` in CloudTrail between 10:05 and 10:12, no instance, $0 |
+
+⚠️ One thing an operator should know, seen on the way through: **while `LlmOffers` is declared, the
+panel's `classes` IS the offers list** — the ladder's `l40s` rung was not shown for those 84
+seconds. That is the documented precedence (`offersSpec()` prefers `Offers` over `Classes`), not a
+defect, but the panel gives no hint that a rung was superseded rather than removed. Reverted at
+10:06:52; `offers` back to `l4` and `l40s`.
+
+### ⚠️ The run was pinned to the small model on purpose
+
+The role's default is `qwen3-coder-30b-a3b` (**18,556,689,568 bytes**), the llm role had **never
+run on this deployment** (no `llm/…` log stream existed at all), `LlmTaskMemory` is 14 GiB and
+`LlmExtraArgs` carries `--no-mmap`. Whether that model fits a 22 GB box is a real question and it
+is **not P3's** — losing a fifteen-minute budget to it would have measured nothing about EC2 Fleet.
+`qwen2.5-coder-1.5b` was made the role's default for the lap and the 30B put back afterwards. It
+did not spare the run as much as expected; see the cold start below.
+
+### The lap (10:12:19 → 10:19:06 UTC)
+
+| Check | Result | Evidence |
+|---|---|---|
+| **exactly one box** | 🟢 | CloudTrail from 10:10 UTC has **one `CreateFleet`**, at 10:12:21. Container instances 4 → 5 → 4 |
+| buy → box registered | 🟢 **41 s** | bought 10:12:20, `engines: llm: the box i-0ddc67d973d10325a registered; asking for the task` 10:13:01. P1's image laps were 44-48 s |
+| the desired count goes up in the same second | 🟢 | the `UpdateService` in CloudTrail is at 10:13:01 |
+| the offer that filled | 🟢 | `l4`, `buy: od`, a **`g6.xlarge`** in ap-northeast-1a, `InstanceLifecycle` **absent** (P0 (d): absent means on-demand). `offer_trail` `[l4 active]` — one row, no fall-through |
+| **the llm launch template is the one that bought** | 🟢 | the box carries `aws:ec2launchtemplate:id = lt-087eee2a966d767a0` — the `LlmLaunchTemplateId` in the engine table's llm row — at **version 3**, which is the `systemctl start --no-block ecs` fix. `af-role=engine-llm`, `af-engine-offer=l4`, `af-engine-buy=od`, `af-pool`, `af-managed-by`, `Name=af-engine-llm`, plus EC2's `aws:ec2:fleet-id`. One `CreateFleet`, no `CreateTags` |
+| the panel answers from the box | 🟢 | `box: {…, status: ACTIVE}` from the first sample after registration until it went |
+| **`df /var/lib/docker` is the instance store** | 🟢 | `/dev/nvme1n1 233G 25G 208G 11% /var/lib/docker`, `Docker Root Dir: /var/lib/docker`, `du -sh …/volumes` **19G** (the two GGUFs), `systemctl is-active ecs docker` → active / active, `nvidia-smi` → `NVIDIA L4, 23034 MiB`. The ROOT volume is **120 G** here, which is `LlmStorageGiB` — the image role's is 60 |
+| **`state: running` / `warm: true`** | 🟢 **2 min 47 s - 3 min 14 s** from desired 1 | 13-second polling: `warm: false` at 10:15:48, `warm: true` at 10:16:15; llama-server logged `listening` at 10:15:42, so the true figure is inside that band. From `mode: on`: 3 min 29 s - 3 min 56 s |
+| **one completion, 200** | 🟢 | from the **engine's own log**, not the client's word: `prompt eval time = 2033.35 ms / 17492 tokens (8602.54 tokens per second)`, `eval time = 11.90 ms / 2 tokens`, `total time = 2045.25 ms` at 10:16:44 |
+| **departure: desired 0 → deregister → terminate, by the CP** | 🟢 **43 s** | `mode: off` 10:18:22 → the task gone 10:18:31 (**9 s**) → `DeregisterContainerInstance` 10:19:06 → `TerminateInstances` 10:19:06. Nothing ended by hand |
+| terminate → `terminated` | **5 min 43 s - 5 min 59 s** | last `shutting-down` 10:24:49, `terminated` 10:25:05 (15-second polling). Inside the four-to-six-minute range this ADR now carries, and **above five** — a third lap, and the second one on that side |
+| the sweep did not misfire | 🟢 | one `CreateFleet` and one `TerminateInstances` in the whole window, the terminate after its own `mode: off` |
+
+#### The cold start, and where it actually goes (from desired 1 at 10:13:01)
+
+| Elapsed | What |
+|---|---|
+| 3 s | the task is created (`createdAt` 10:13:04) |
+| 19 s - 1 min 27 s | ECS pulls the images (`pullStartedAt` 10:13:20, `pullStoppedAt` 10:14:28) |
+| 27 s | `engine fetch: active set for /af-ws/engines/llm/active starts with 'qwen2.5-coder-1.5b'` |
+| 33 s | the start model is on disk — `llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf 1,117,320,768 bytes in 6s` (186 MB/s) — and the sidecar says `engine may start; 1 file(s) still to sync` |
+| 2 min 27 s | `llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf 18,556,689,568 bytes in 114s` (163 MB/s), `sync done` at 10:15:29 |
+| 2 min 41 s | llama-server: `starting server in router mode`, `listening on http://0.0.0.0:8080`, `(startup) loading model qwen2.5-coder-1.5b` |
+| 3 min 14 s | `warm: true` on the panel (first sample) |
+
+⚠️ **The engine process appeared 2 min 8 s after "engine may start", and 13 seconds after the whole
+18.5 GB sync finished.** Two candidate explanations are ruled out by the measurements above: the
+image pull had finished **74 seconds earlier**, and the container dependency is `condition: START`
+on both roles (`describe-task-definition`), so nothing in ECS was waiting. The remaining reading —
+**not measured, and a lap with one enabled model would settle it** — is that llama-server's router
+enumerates `presets.ini` at start (its log lists both models before it loads either) and so needs
+every file, not only the one it starts with. The image role does not behave this way: in run 2
+ComfyUI was on the GPU **2 min 47 s before** its own `sync done`.
+
+What that is worth to an operator, whichever the cause: **`LlmModelsMax` bounds what is served, not
+what is fetched.** A second, larger model that is merely `enabled` is paid for on every cold start
+of this role, and pinning the small one as default — as this run did — does not avoid it.
+
+⚠️ And one line from the start is worth keeping:
+
+```
+engines: llm: starting on l4 (22000 MiB VRAM declared); no model declares what it needs
+```
+
+No llm row carries a `vram_need_mib`, so decision 6's fit check is **inert for this role** — the
+same line on the image role names the model and its figure. For the 30B default on a 22 GB box that
+is the difference between a refusal an operator can read and a CUDA death they have to diagnose.
+
+### Cost and cleanup
+
+| Box | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
+|---|---|---|---|---|---|---|---|
+| `i-0ddc67d973d10325a` | g6.xlarge | on-demand | 10:12:20 | 10:19:06 | 6m46s | 1.1672 | $0.132 |
+
+**6 minutes 46 seconds, about $0.13** (the on-demand price from the pricing API for
+ap-northeast-1 / Linux / shared). The $0 half of this run really was $0.
+
+- `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**:
+  three instances, all `terminated` (this one and PR #588's two). Positive control in the same
+  output: `tag-key=af-role` alone returns 7, the four slot boxes included.
+- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → empty.
+- **Restored to what step 1 recorded**: `llm` `mode: ondemand`, `LlmOffers` back to empty (so the
+  panel reads the ladder's `l4` and `l40s` again), `qwen3-coder-30b-a3b` the role's default once
+  more, `LlmOfferBudgetSec` untouched at 300, `image` still `mode: off`. The Workspace that was
+  started to drive the completion is `stopped`, and both sessions created for it were deleted
+  (sixteen sessions before, sixteen after).
+- The raw responses are in `~/.cache/adr0077-p3/` of the session that measured this.
+
+### What this hands back
+
+| # | Verdict | Decision | What it says |
+|---|---|---|---|
+| 1 | 🟢 | 9 | The refusal is real and legible: the row is dropped at parse time with a log line naming it, and the od row of the same declaration survives as the positive control. One reloader tick after the parameter lands |
+| 2 | 🟢 | 1, 2, 3, 5, 6, 7 | The llm role's launch template buys, registers (41 s), places, serves and departs exactly as the image one, carrying `lt-…` version 3. Nothing in P1's findings is role-specific |
+| 3 | 🟢 | 5 | terminate → `terminated` in 5 min 43 s - 5 min 59 s: a third lap inside the four-to-six-minute range, and the second above five. Carrying the range rather than a number was the right call |
+| 4 | ⚠️ | 6 | The llm cold start waits for models it will not start with — 2 min 8 s after "engine may start", 13 s after an 18.5 GB sync, with the pull long finished and the container dependency `START`. `LlmModelsMax` bounds what is SERVED, not what is FETCHED. The cause is unmeasured; one enabled model on the next lap settles it |
+| 5 | ⚠️ | 6 | No llm model row declares `vram_need_mib`, so the fit check that protects the image role is inert here, and the start line says so in words nobody is looking at |
+| 6 | — | — | P3's own text puts it after P2, and P2 (decisions 4 and 6) has not started. This run measures P3's two differences and nothing about interruption |
+
+**P3's hardware verdicts are green on every item this run names**, and P3 as a phase stays open on
+its stated ordering: P2 first.
+
+## Follow-up — the `<Role>Enabled` round trip on the real template shape, measured (2026-09-12, throwaway, $0)
+
+P1's hardware run left three of its findings resting on a single pass through the migration, and
+the previous section closed by calling the round trip "left open on hardware": the dev deployment
+is no longer on Managed Instances, so it cannot be replayed there. It was replayed instead on a
+**throwaway stack of the real template's shape** — the old (Managed Instances) `60-engines.yaml`
+at `66983c96`, migrated to develop's by **#585's four steps**, with its own throwaway ECS cluster
+and Cloud Map namespace. Nothing of `af-ecs-*` was named by any command. **Not one instance was
+bought** (`describe-instances` on the throwaway tag is empty in every state, while the same query
+shape lists the five real boxes). Elapsed for the four steps: **11 minutes 49 seconds**
+(19:32:44 → 19:44:33 JST). Cost: **$0**.
+
+**Verdict: the round trip works, and all three of P1's findings reproduce.** 3 🔴 confirmed (and
+its cause is one step older than P1 thought), 4 🔴 confirmed on the CloudFormation half and **not
+measurable** on the Control Plane half, 5 🔴 confirmed and strengthened with the evidence P1 had
+to infer. No step hit `AlreadyExists`, and the end state is what decision 11 asks for.
+
+### What the throwaway is, and what it is not
+
+Kept verbatim from both real templates: the conditional trio per role (`Has<Role>Model` on the
+Service, the Discovery and the `EnginesParam` row), the explicit `ServiceName`, `ServiceRegistries`,
+`DependsOn: Associations`, `Associations` itself, the three Managed Instances capacity providers
+with `InfraRole` / `InstanceRole` / `InstanceProfile` (old), and the two launch templates with
+`EngineInstanceRole` / `EngineInstanceProfile` (new).
+
+Changed or dropped, none of it on the measured path — the imports of 00-network and 20-platform
+became in-stack resources or parameters (so the throwaway takes **no cross-stack dependency** on a
+live stack, and cannot block anyone's deploy); the ingest subsystem went (S3 bucket, HF secret,
+ingest task definition, `CpIngestPolicy`), because no migration step touches it and a
+Secrets Manager secret leaves a scheduled deletion behind; the two engine task definitions were
+replaced by a GPU-less minimal pair keeping only the family, `awsvpc` and the
+`RequiresCompatibilities` value that differs between generations; and the Managed Instances
+providers were given a CPU-only shape (`m6i.large`, `GpuCount=0`) so that a stray desired 1 could
+not buy a GPU. **Both roles were enabled**, not the image role alone as the task asked — the
+finding under test is that *both* services stall, and the second role costs nothing.
+
+⚠️ Three things it took to stand the baseline up at all. None is a finding about the migration,
+but a fresh stand-up meets them:
+
+1. **`CreateCapacityProvider` refuses instance requirements that match nothing** — *"No instance
+   types satisfy the instance requirements specified in the Managed Instances capacity provider"*.
+   So a provider cannot be made deliberately unbuyable; the CPU-only shape above is the way to keep
+   a Managed Instances baseline at $0.
+2. **`AWS::ECS::Cluster` must not declare `CapacityProviders` when `Associations` exists** — the
+   association fails with *"The cluster already contains capacity provider associations"*. The real
+   20-platform cluster does not declare one, which is why 60-engines' `Associations` can own the list.
+3. 🔴 **A freshly created `InfraRole` races IAM propagation**: `CreateCapacityProvider` came back
+   *"AWS was not able to validate the provided access credentials (Service: Ec2, Status Code: 401)"*
+   twice, on two different providers, and rolled the stack back. It only succeeded once the first
+   provider was made to wait behind the Cloud Map namespace (about a minute). This is invisible on
+   an existing deployment because the role is already there — but it is the shape a brand-new
+   `standup.sh` on a fresh account would hit. It dies with the Managed Instances providers
+   themselves; the launch templates the new template creates do not assume `EngineInstanceRole`.
+
+### The four steps
+
+| Step (#585's procedure) | Elapsed | What came back |
+|---|---|---|
+| 1. Both services at desired 0 | — (a state, not a wait) | Both `desiredCount` 0, `capacityProviderStrategy` naming the Managed Instances providers, `launchType: null`. ⚠️ Reaching it needed the second shell **at stack creation too** (19:31:15 / 19:31:20) — see below |
+| 2. `<Role>Enabled=false`, still the OLD template | **30 s** (19:32:44 → 19:33:14) | `LlmService` / `ImageService` `DELETE_COMPLETE` at 10:33:07, `LlmDiscovery` / `ImageDiscovery` at 10:33:08, both task definitions with them. P0's 25 s and P1's 24.8 s reproduced a third time |
+| 3. Apply the NEW template, roles still off | **220 s** (19:33:49 → 19:37:29) | `LlmLaunchTemplate` / `ImageLaunchTemplate` `CREATE_COMPLETE`; the three providers, `InfraRole`, `InstanceRole` and `InstanceProfile` `DELETE_COMPLETE`. The cluster's list is back to `FARGATE FARGATE_SPOT` |
+| 4. `<Role>Enabled=true` | **374 s** (19:38:19 → 19:44:33), of which **317 s stalled** | Both services created at **desired 1**, `LaunchType: EC2`, 0 running, 0 pending. Nothing moved for 5 min 17 s. The second shell scaled both to 0 at 19:43:39 / 19:43:42, and both reached `CREATE_COMPLETE` **41 seconds later** (10:44:23), `EnginesParam` updated, stack complete at 10:44:29 |
+
+End state, checked: both services `LaunchType: EC2`, `capacityProviderStrategy: null`,
+`placementConstraints: [{memberOf, "attribute:af-role == engine-<role>"}]`, `desiredCount` 0; the
+engine table carries `"launchTemplate":"lt-…"` on both rows and no `capacityProvider` field; the
+cluster's providers are `FARGATE` and `FARGATE_SPOT`. **`AlreadyExists` appears zero times in the
+stack's entire event history** — and the same grep over the same output finds
+`Resource creation Initiated` 29 times, so it is a real zero.
+
+### Item 3 — 🔴 confirmed, and the cause is one step older than P1 thought
+
+The stall reproduced exactly, on an empty cluster:
+
+```
+(service af-af-adr0077-p1x-image) was unable to place a task because no container instance met all
+of its requirements. The reason for failure is No Container Instances were found in your cluster.
+```
+
+(P1 saw the same refusal worded against the dev deployment's slot boxes — *"The closest matching …
+doesn't have the agent connected"* — because that cluster is not empty. Same stall, different
+nearest miss.) The second shell is what clears it, and the cost of clearing it is **41 seconds**.
+Left alone the update runs to the resource timeout, exactly as P1 predicted.
+
+**New, and it corrects the P1 text's framing.** P1 wrote that the absent `DesiredCount` "was
+harmless under Managed Instances". The throwaway shows the property is the **template's**, not the
+launch type's: creating the *old*, Managed-Instances services put **both of them at desired 1 too**
+(19:31:15 / 19:31:20, the second shell's log), and CloudFormation would have waited there just the
+same. What differs is only who satisfies the 1 — under Managed Instances a box is bought and the
+service stabilises (at GPU cost, which is why this run held them at 0 instead), and on the EC2
+launch type nothing can ever satisfy it. So the second shell is not a fix for a new EC2-side
+problem; it is the same hand `standup.sh` already applies to a fresh service, now needed on the one
+other path that creates these services. #585's four steps are right, and the reason to state in
+PARAMETERS is "a new service defaults to desired 1, whoever creates it", not "the EC2 launch type
+cannot place".
+
+### Item 4 — 🔴 confirmed on the CloudFormation half; the Control Plane half stays unmeasured
+
+Read inside the window, between step 2 and step 4:
+
+```
+$ aws ssm get-parameter --name <the throwaway engine table> --query Parameter.Value
+{"engines":[],"ingest":{}}
+```
+
+Zero rows for the whole window, which here was **5 minutes 21 seconds** (10:33:07 → 10:38:28) —
+against P1's 34 minutes, because nothing was being baked in between. `EnginesParam` itself is
+**not** conditional; what empties it is the two `!If [Has<Role>Model, …, ""]` rows, so the
+parameter exists throughout with an empty array. That is the input `newEngineRegistry` turns into
+a `nil` registry and no reloader.
+
+🔵 **Not measured here, and it cannot be**: whether a Control Plane started inside that window
+recovers once the rows come back. A throwaway stack has no Control Plane. That half is #584's, and
+it is pinned by its own test rather than by hardware. The migration's fourth step (force a new CP
+deployment) therefore stands on P1's single measurement (86 s) plus that test — this run neither
+adds to it nor takes anything away.
+
+### Item 5 — 🔴 confirmed, and the ARN curiosity is now evidence rather than inference
+
+Both discovery resources are deleted with their services and recreated with them:
+
+```
+LlmDiscovery    DELETE_COMPLETE  10:33:08.657   →  CREATE_COMPLETE  10:38:28.107
+ImageDiscovery  DELETE_COMPLETE  10:33:08.618   →  CREATE_COMPLETE  10:38:27.997
+```
+
+`list-services` on the throwaway namespace returns `[]` for the whole window. P0's ✅ — measured on
+a throwaway whose `AWS::ServiceDiscovery::Service` carried no condition — does not hold on the real
+shape, which P1 already said; this confirms it on the real shape without touching a deployment.
+
+**And the curiosity is settled.** P1 read the ids out of CloudTrail and concluded that Cloud Map
+re-issues the same `srv-` id for the same namespace-and-name pair, rather than the resource
+surviving. Here both readings are available at once: the ids are **identical** before and after
+(`srv-56rlhf2r6ervdz5a` for llm, `srv-m2zek2752vvwiyjf` for image) **and** their `CreateDate` is
+the recreation time, `2026-09-12T19:38:27`. Same id, new resource. P1's inference was right, and
+PARAMETERS' ✅ should say "Cloud Map re-issues the id", not "the resource survived".
+
+### The cleanup
+
+`delete-stack` at 19:45:26, gone at 19:46:29 (63 s). Checked afterwards, each listing carrying its
+own positive control:
+
+- `describe-stacks` → the **seven real stacks only**; `af-adr0077-p1x` is gone.
+- `list-clusters` → `af-af-ecs-platform` only. `list-namespaces` → `af.internal` only.
+- `describe-launch-templates` → the three real ones only.
+- `list-roles` for `af-*` → the seven real roles only.
+- `describe-parameters` → no `/af-ws/adr0077-p1x-engines`; the real `/af-ws/engines` untouched.
+- `describe-instances` on the throwaway tag, **with no state filter** → empty, while the same query
+  shape on `af-pool` lists the five real boxes. Not one instance was ever bought.
+
+Nothing was left behind. The raw responses and the two generated templates are in
+`~/.cache/adr0077-p1x/` of the session that measured this.
+
 ## Follow-up — P2 hardware run: interruption and the re-fetch (2026-09-12, the dev deployment, about $0.13)
 
 Decision 4 on hardware, with #591 in develop and the Control Plane put on by `dev-deploy.sh` at

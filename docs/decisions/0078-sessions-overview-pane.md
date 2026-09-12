@@ -2,10 +2,11 @@
 
 English | [日本語](0078-sessions-overview-pane.ja.md)
 
-- Status: **adopted, P0 and P1① implemented** (2026-09-12). The same day, on the user's feedback,
+- Status: **adopted, P0 and P1①② implemented** (2026-09-12). The same day, on the user's feedback,
   **decision 3 was revised** (phones), **decision 6 was revised** and **decisions 9–11 added**
-  (repository headings, family order, the card's shape, waiting elapsed), then **decision 12
-  added** (the card's last utterance, across Agent → control plane → Console). The study and the
+  (repository headings, family order, the card's shape, waiting elapsed), then **decisions 12 and
+  13 added** (the card's last utterance; the meta row rebuilt around the mirror's gauge and token
+  trend — both across Agent → control plane → Console). The study and the
   measurements are [docs/96](../log/96-sessions-overview.md).
 - See also: [0049](0049-session-changed-files.md) decision 4 (**do not mint a PaneKind lightly** — this ADR argues the exception) /
   [0036](0036-working-sets.md) (a working set is a display filter; this view follows it) /
@@ -194,12 +195,11 @@ reused (the max of `waitingAtFromNotifications` and `observedWaitingAt`):
 
 The state chip only says what a session is doing. **What it is doing about is nowhere on the
 card** — and that is exactly what the grid is read for. The opening line of the **last assistant
-utterance** in the transcript goes **below** the meta row (kind, model, context, started,
-waiting elapsed).
+utterance** in the transcript goes **below** the meta row, at the foot of the card.
 
 - **The Agent is the source.** The `Session` DTO holds no last utterance (the same check as
-  decision 11). `LastSay(sid)` builds it from claude's transcript onto the DTO, and it reaches
-  the Console through the control plane's `sessionWire`. **A field missing from that relay is
+  decision 11). `claude.TailFacts` (`tailfacts.go`) builds it from claude's transcript onto the
+  DTO, and it reaches the Console through the control plane's `sessionWire`. **A field missing from that relay is
   dropped silently**, so it went into four places (the struct, the contract table, the relay
   round-trip test, the golden — docs/94 §94.10).
 - **The capping is on the Agent's side** (one line, whitespace collapsed, **120 runes**). A card
@@ -228,6 +228,40 @@ waiting elapsed).
   (376px) — per decision 4 and §96.7. A grid row sizes to its tallest card, so what grows is not
   one card but **that row**.
 
+### Decision 13 — the meta row names the model that ANSWERED, and the context and token figures are the mirror's own parts (added 2026-09-12, the user's call)
+
+The **kind is dropped from the meta row** and replaced by **the model that last answered**. The
+context percentage stops being text: the card carries **the mirror's own `ContextBar`** — the
+gauge plus the token-spend sparkline.
+
+- **The kind does not need spelling out.** The coloured square in the head already says which
+  agent this is, and on a grid the word was a column of "Claude". The kind stays as the square's
+  tooltip.
+- **"The model that answered" is `context.model`**, read off the newest assistant turn, not the
+  `model` the session was launched with. A session whose model was switched mid-conversation has
+  to read on the grid as **what is running in it now**. It falls back to the launch model only
+  until the session has answered once.
+- **The gauge is borrowed, not rebuilt** — the same reason as decisions 5 and 7. Two arithmetics
+  for "how full is it" would drift apart, and the card would contradict the chat. The card
+  changes only the **scale**: the labels are always the short forms (`ctx` / `token`) and the row
+  wraps into two (overview.css). A card is **never wide** — the grid's floor is 240px — so the
+  pane-width `@container paneview` fold the mirror uses is not enough here.
+- **The trend had no source in the DTO.** The mirror's sparkline is built from per-turn spend in
+  the transcript, and the list holds no transcript. **`tokenSpends` was added to the Agent** (the
+  same four relay points as decision 12).
+- **One point per REPLY.** claude writes one reply as several rows — the text, each tool call,
+  the follow-ups — and the mirror's `groupTurns` folds that run into one block. The Agent folds
+  it the same way (output sums; input and newly-cached come from the **last** row; cache READS
+  are not spend), or one session's card and its chat would draw different shapes.
+- **A reply the window cut in half is dropped** (only one tail window is read — decision 12): a
+  truncated reply would draw as a small turn, which is a lie. Under two points the known series
+  is kept, since the sparkline cannot draw fewer either.
+- **Capped at 24 points.** The card's sparkline is about 120px wide; beyond that they are pixels
+  nobody can tell apart, carried per session every 4 seconds.
+- **The card grows from 97px to 160px** (measured, the same at all three widths). **Fewer cards
+  fit on screen** — about six or seven down to four on a phone. That is the trade the user asked
+  for, written down here.
+
 ## Options rejected
 
 - **A modal** (the shape of Cleanup / Archived): cheap, wrong for watching (decision 1).
@@ -242,6 +276,16 @@ waiting elapsed).
   one line, so the cut is only worth anything **before** the wire (decision 12).
 - **Wrapping the last utterance to two lines**: the card would grow and shrink with how much was
   said and the grid's rows would jump. Pinned to one ellipsized line (decision 12).
+- **Leaving the context as text ("context 12%")**: the first version judged that a card had no
+  room for the segmented bar. Measured, it fits at 274px. Replaced with `ContextBar` on the
+  user's instruction (decision 13).
+- **Drawing a card-sized gauge of our own**: a second arithmetic for "how full is it", which
+  would drift (the reason behind decisions 5 and 7; decision 13).
+- **Building the token trend in the Console from the transcript**: the list holds no transcript,
+  and a `/messages` call per card is a 4-second poll times the number of sessions — the shape
+  this ADR avoids above all (decision 13).
+- **One trend point per transcript row**: simpler, but the mirror folds a run of rows into one
+  block, so the same conversation would be drawn two different ways (decision 13).
 - **The newest tool call ("editing foo.ts") / the question text while waiting** (P1's ② and ③):
   the user chose ①. ② says what a session is doing more directly, but it is only filled in when
   the tail of the transcript IS a run of tool records, and it competes with ① for the same single
@@ -263,11 +307,13 @@ waiting elapsed).
 - Almost Console-only. The **Agent gains one field** (`gitx.Repo.RemotePath`, decision 9), and
   since the control plane passes `GET /api/repos` through, no relay point was added. Still no
   additional polling.
-- **Decision 12 is the one that crosses all three legs** (Agent → control plane → Console): the
-  Agent gains `session.Session.LastSay` and `claude.LastSay` (new), the control plane one
-  `sessionWire` field (plus the contract table, the round-trip test and the golden), the Console
-  one type key and one line on the card. **Still no additional polling** — it rides the existing
-  4 s sessions list, and an unchanged transcript costs one stat (decision 12).
+- **Decisions 12 and 13 cross all three legs** (Agent → control plane → Console): the Agent gains
+  `session.Session.LastSay` and `TokenSpends` plus `claude.TailFacts` (new, `tailfacts.go`), the
+  control plane two `sessionWire` fields (plus the contract table, the round-trip test and the
+  golden), the Console two type keys and two rows on the card. **Still no additional polling** —
+  they ride the existing 4 s sessions list, both facts come out of **one scan** of the
+  transcript's tail, and an unchanged transcript costs one stat (decision 12).
+- **The card is taller** (97px → 160px, measured), so fewer of them fit on screen at once.
 - Touched: `layout/{types,migrate,ops}.ts`, `features/panes/{Pane,LayoutMap,paneTitle}`,
   `features/overview/` (new: view, card, pure functions, CSS, opener), `app/WsBar.tsx`,
   `features/keys/commands.ts`, `features/repos/{store,parentSync,RepoRow}`, i18n (ja/en),
@@ -284,6 +330,8 @@ waiting elapsed).
 - **P0.1 (done, this revision)**: decisions 9–11 — repository headings, family order, the card's
   shape, waiting elapsed.
 - **P1① (done, this revision)**: the card's last utterance — decision 12. claude only.
+- **P1② (done, this revision)**: the meta row rebuilt, with the mirror's gauge and token trend —
+  decision 13.
 - **P1.1**: the last utterance for the other kinds (codex's rollout, opencode's SQLite, …; their
   transcripts live in different places, so each needs its own measurement). The rest of P1 — ②
   the newest tool call and ③ the question text while waiting (decision 12's rejected options).

@@ -669,6 +669,13 @@ type sessionWire struct {
 	// read it from, and a stale copy would age silently on a card that offers no other clue
 	// to how old it is.
 	LastSay string `json:"lastSay,omitempty"`
+	// TokenSpends: each recent reply's newly-consumed tokens, the trend the overview card
+	// draws beside its context gauge (ADR 0078 decision 13). Relayed as the plain number
+	// series it is; absent here it is silently dropped and every card loses its sparkline
+	// while the gauge beside it keeps working — the kind of half-working display that reads
+	// as "this session has no token history" rather than as a missing field. No DB-mirror
+	// column, for the same reason as lastSay: it is read out of the live transcript.
+	TokenSpends []int `json:"tokenSpends,omitempty"`
 	// OriginSession: the session this one came from (ADR 0073). The left rail derives its
 	// whole worktree hierarchy and its family colours from this one key (docs/log/94), and
 	// it is the only link there is — a worktree's folder and branch carry a random slug.

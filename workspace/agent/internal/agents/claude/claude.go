@@ -132,8 +132,9 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	li.RemoteURL = RemoteSessionURL(sid)
 	li.Context = latestContext(sid)
 	// Read for a stopped session too: on a card the last thing it said is the only clue to
-	// what it was doing, and that is most needed for the ones nobody has reopened.
-	li.LastSay = LastSay(sid)
+	// what it was doing, and that is most needed for the ones nobody has reopened. Both facts
+	// come out of one memoized read of the transcript's tail.
+	li.LastSay, li.TokenSpends = TailFacts(sid)
 	if alive {
 		// Default a live claude with no recorded event yet to idle (it sits at the
 		// prompt waiting for input). Hook events refine it.
