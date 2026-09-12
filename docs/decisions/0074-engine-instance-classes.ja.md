@@ -1409,3 +1409,20 @@ image 役は `mode: off`（元の値）へ戻し、**provider は `SPOT` のま�
 `cloudformation deploy --parameter-overrides` で live のスタックに入れたもので、
 `update.sh` / `dev-deploy.sh` は live のパラメータを読むので保たれるが、
 **捕捉から `standup.sh` で建て直すと `g6.xlarge` / `ON_DEMAND` に戻る。**
+
+## 追記 — ADR 0077 がこの決定を覆した（2026-09-12）
+
+[ADR 0077](0077-engine-boxes-bought-by-cp.ja.md) は、エンジンの箱を買う役を ECS Managed
+Instances からコントロールプレーンへ移した（launch template に対する `CreateFleet(type=instant)`
+で買い、サービスは EC2 の launch type で走る）。上の本文は 1 文字も変えていない。以下は 0077 の
+「上書きする既存の決定」の表のうち、この ADR の決定の行そのものである。表に無いものは覆っていない。
+
+| 決定 | 何が変わるか | 変わらないもの |
+|---|---|---|
+| 決定 5「Describe → 写す → Update」 | **消える**。段は `CreateFleet` の overrides の型の組そのもの | 段の宣言・保存された選択が勝つ規則 |
+| 決定 9「IAM は 2 つの capacity provider に限定」 | **置き換わる**（0077 決定 10 の表: `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets`、エンジン用インスタンスロールへの `iam:PassRole`、`iam:CreateServiceLinkedRole`） | 資源に限定できないものはタグを柵にする |
+
+決定 1・2・3・6・7・10・11 は立つ。段の再適用が消えることで、この ADR の追記が扱っていた失敗の
+型ごと無くなる——宣言がそのまま要求なので「宣言」と「実際」がずれようがなく、綴り違いの型は
+「来ない箱」ではなく呼び出し自身が拒む。`usdPerHour` は表示専用のままだが、ここで実測した
+Managed Instances の管理料 7.80% は provider ごと消えるので、**EC2 の価格そのもの**になる。

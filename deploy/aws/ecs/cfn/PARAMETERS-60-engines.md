@@ -25,7 +25,7 @@ Order matches the template.
 - [Editing this template](#editing-this-template)
 - [The task roles](#the-task-roles)
 - [The models bucket](#the-models-bucket)
-- [The capacity providers](#the-capacity-providers)
+- [The engine boxes](#the-engine-boxes)
 - [The engine services](#the-engine-services)
 - [The G-family quota](#the-g-family-quota)
 - [Ingest](#ingest)
@@ -64,30 +64,35 @@ Japanese belongs in `docs/`. `deploy/local/cfn-ascii-test.sh` enforces this per 
 the 281 characters it was written for also freed 454 bytes, which matters here: this template
 is the one that lives closest to the 51,200-byte inline limit `af_cfn_deploy` measures.
 
-**Why Managed Instances and not Fargate.** Fargate has no GPU (AWS Fargate FAQ;
-containers-roadmap #88, open since 2019), so ADR 0070's shape — "an ECS service whose desired
-count is 0 while nobody wants it" — is bought here from ECS Managed Instances instead: AWS owns
-the instance, the AMI and the NVIDIA driver, and terminates the instance once the task is gone.
+**Why not Fargate.** Fargate has no GPU (AWS Fargate FAQ; containers-roadmap #88, open since
+2019), so ADR 0070's shape — "an ECS service whose desired count is 0 while nobody wants it" —
+has to be bought on an instance. It was bought from **ECS Managed Instances** until ADR 0077 and
+is bought **by the Control Plane, with EC2 Fleet** since: AWS owning the AMI was the reason, and
+the AWS-maintained ECS-optimized GPU AMI gives that without delegating the purchase
+([the engine boxes](#the-engine-boxes)).
 
-All measured on a real cluster on 2026-09-07 through `deploy/aws/ecs/harness/engprobe.yaml`.
+What the Managed Instances era measured on a real cluster on 2026-09-07 through
+`deploy/aws/ecs/harness/engprobe.yaml`, kept because two of the four are about this template
+rather than about who buys:
 
-- a Managed Instances capacity provider is CLUSTER-SCOPED: `ClusterName` is mandatory, and
-  without it ECS answers "The cluster provided is invalid";
-- `AmazonECSInfrastructureRolePolicyForManagedInstances` passes only roles named
-  `ecsInstanceRole*`, so the fleet-named instance role needs an explicit `iam:PassRole`
-  (measured: `UnauthorizedOperation` otherwise, visible only in CloudTrail);
 - `ClusterCapacityProviderAssociations` REPLACES the cluster's provider list and requires
   `DefaultCapacityProviderStrategy` — so the full list is named in the template and the default
   strategy is deliberately EMPTY. Put anything in it and a service that forgot its `LaunchType`
   lands on the GPU instance (ADR 0070 decision 1, ADR 0071 decision 1);
-- `InstanceRequirements` refuses `InstanceGenerations` together with generation-bearing type
-  names, and `AcceleratorCount` needs `AcceleratorTypes` alongside it;
 - `DesiredCount` on an `ECS::Service` returns to its declared value on EVERY service update —
-  see [The engine services](#the-engine-services).
+  see [The engine services](#the-engine-services);
+- (historic) a Managed Instances capacity provider was CLUSTER-SCOPED, and
+  `AmazonECSInfrastructureRolePolicyForManagedInstances` passed only roles named
+  `ecsInstanceRole*`, so the fleet-named instance role needed an explicit `iam:PassRole`
+  (`UnauthorizedOperation` otherwise, visible only in CloudTrail);
+- (historic) `InstanceRequirements` refused `InstanceGenerations` together with generation-bearing
+  type names, and `AcceleratorCount` needed `AcceleratorTypes` alongside it. The equivalent
+  constraints on `CreateFleet`'s overrides are ADR 0077 open question 3.
 
 ⚠️ **Exactly one stack in a deployment may own the cluster's capacity-provider associations**,
-because the API replaces the list rather than adding to it. That stack is this one. The
-measurement harness (`harness/engprobe.yaml`) owns the same list, so take it down first:
+because the API replaces the list rather than adding to it. That stack is this one, even now that
+the list is `[FARGATE, FARGATE_SPOT]`. The measurement harness (`harness/engprobe.yaml`) owns the
+same list, so take it down first:
 `deploy/aws/ecs/harness/probe-managed-instances.sh down`.
 
 ## Shared
@@ -185,6 +190,30 @@ that jumps from a pre-catalogue Control Plane straight to this one comes up with
 catalogue: the role exists, the engine idles, and the panel is where the first model is
 registered. That is a supported state, not a broken one.
 
+### 0.20.0: the Control Plane buys the box, and the capacity providers are gone
+
+ADR 0077. The offers list, the VRAM filter, pin/automatic and the panel are unchanged — what
+changes is who buys: a `CreateFleet(type=instant)` per offer against a launch template, instead
+of a desired count that sent ECS out shopping. For an operator it is **eight retired parameters,
+one re-meant parameter and a migration window**:
+
+| | |
+| --- | --- |
+| Retired | `<Role>AllowedInstanceTypes` / `AcceleratorMemMinMiB` / `VCpuMin` / `VCpuMax` / `MemMinMiB` / `MemMaxMiB` / `UseLocalStorage` / `ScaleInAfter` — the offer carries all of it ([the llm role](#llmacceleratormemminmib-llmallowedinstancetypes-and-the-instance-requirement-pairs)) |
+| Re-meant | `<Role>StorageGiB` — the box's ROOT gp3 volume now (and the models land on the instance store when the type has one) |
+| Re-meant | `<Role>OfferBudgetSec` — **the ECS registration ceiling** for the box that was bought, not a per-offer purchase clock. Default 180 -> **300**; a captured 180 is dropped by `standup.sh` ([`<Role>OfferBudgetSec`](#roleofferbudgetsec)) |
+| New prerequisite | `AWSServiceRoleForEC2Fleet` (`standup.sh` creates it — cheap insurance rather than a hard gate: [the Spot checks](#before-declaring-a-spot-offer-check-these-three)) |
+| Migration | with both roles at `mode: off` and no engine box standing — [the procedure](#migrating-a-deployment-that-is-on-managed-instances) |
+
+🔴 **Put this release's Control Plane image on before the stack**, as with the 0.19.0 rename: a
+0.19.0 CP reads `capacityProvider` out of the engine table and finds a field that is no longer
+written, so it has nothing to buy through while the stack has already dropped the providers.
+
+⚠️ **The instance store moved from a parameter to the launch template.** `<Role>UseLocalStorage`
+is gone; the user data mounts the NVMe and puts Docker's data-root on it, which is where the
+models end up ([the model volume](#the-model-volume)). Same measured benefit, no knob — and
+**unverified on hardware**: the first P1 run has to look at `df /var/lib/docker` on the box.
+
 ### 0.19.0: the image role's box comes from an offers list
 
 Three new parameters — `ImageOffers` / `LlmOffers` and `ImageOfferBudgetSec` /
@@ -196,8 +225,8 @@ not ask ECS about capacity at all.
 What the list buys is the failure this replaces: a role whose Spot request finds no stock used to
 be a role that did not start, with `UnfulfillableCapacity` in the service events and a human in
 the loop. Now the Control Plane tries the offers in the order written, gives each one
-`<Role>OfferBudgetSec` (180 s by default), and lands on the on-demand one when the Spot one
-cannot be filled. The saving is secondary and small — in ap-northeast-1 Spot ran 30 days without
+`<Role>OfferBudgetSec` (180 s by default at that release — ADR 0077 re-meant and re-defaulted
+it), and lands on the on-demand one when the Spot one cannot be filled. The saving is secondary and small — in ap-northeast-1 Spot ran 30 days without
 one on-demand hour, `g6.xlarge` at $0.45-0.58 (ADR 0074), against a total GPU spend of $0.58 for
 those 30 days on acrt. **The point is that the engine starts.**
 
@@ -207,9 +236,10 @@ Three things to do, in this order:
    the template it is still running, and only then this one. The Spot provider is a new resource
    asking for the name the old one currently holds, and CloudFormation creates before it deletes
    — skip the step and the update fails on the name collision and rolls back. The round trip was
-   measured at 147 seconds. Full procedure:
-   [migrating off `ImageCapacityOptionType`](#migrating-off-imagecapacityoptiontype).
-   A deployment on the default (`ON_DEMAND`) needs none of this: one update, one `Add`.
+   measured at 147 seconds. A deployment on the default (`ON_DEMAND`) needs none of this.
+   ⚠️ **This step is for an upgrade that lands on 0.19.0.** Going straight to 0.20.0 there is no
+   collision to avoid: every provider is deleted, so no name is asked for twice (ADR 0077
+   decision 11). The capture still has to lose the parameter, which `standup.sh` does for you.
 2. **Put this release's Control Plane image on before the stack**, as with any provider rename:
    a 0.18.0 CP addresses the deleted name, so the rung never reaches the instance and the panel
    shows no box while one is billing (measured; `force-new-deployment` clears it in 217 s).
@@ -220,7 +250,7 @@ Three things to do, in this order:
    happily without the quota and then never buys anything) and create
    `AWSServiceRoleForEC2Spot` if the account has never launched a Spot instance. Both, and the
    type-set rule that moved a placement score from 1/10 to 9/10, are under
-   [before declaring a `spot` offer](#before-declaring-a-spot-offer-check-these-three-all-measured-2026-09-11-adr-0074).
+   [before declaring a `spot` offer](#before-declaring-a-spot-offer-check-these-three).
 
 🔴 **The quota being right is not enough, and neither is the price.** Rehearsed on the dev
 deployment 2026-09-11 with the quota at 8: the first attempt bought **nothing** for seventeen
@@ -369,115 +399,53 @@ Task vCPU units and memory (MiB). 4096 fills a g6.xlarge; keep it under the inst
 is below the instance's 16 GiB by enough for the ECS agent — a task that asks for all of it never
 places, which reads as a capacity problem.
 
-### `LlmAllowedInstanceTypes`
+### `LlmGpuCount`
 
-Instance types the llm capacity provider may buy. DECLARED per role (ADR 0071 decision 2),
-because the floor is a VRAM number and VRAM is not derivable from vCPU or memory:
-Qwen3-Coder-30B-A3B Q4_K_M measured 20,943 MiB, which needs the L4's 22,888 and does not fit
-anything smaller in the family.
-
-Default `g6.xlarge,g5.xlarge` — two types, because one type has nowhere to go when EC2 answers
-`InsufficientInstanceCapacity: We currently do not have sufficient g6.xlarge capacity in the
-Availability Zone you requested`. That is a fact about a type in an AZ, and the VPC that
-00-network builds has only two AZs, so the advice attached to the message ("get capacity by not
-specifying an Availability Zone") has nothing left to offer: the provider is already handed
-both private subnets and has already tried both.
-
-⚠️ **The list is a filter, not an order of preference, and there is no way to make it one.**
-Managed Instances has no allocation-strategy field — `aws ecs create-capacity-provider
---generate-cli-skeleton` shows `managedInstancesProvider` carrying nothing but
-`instanceRequirements` and the price-protection knobs
-(`onDemandMaxPricePercentageOverLowestPrice`), which is also the tell for what selection does
-honour. So express the priority as price and let the intended instance be the cheapest member:
-with the ADR's table (Tokyo, on-demand + MI management fee per hour) g6.xlarge is $1.258 and
-g5.xlarge $1.573, and the L4 instance is what you get while it exists. **A cheaper type added here
-becomes the default rather than the fallback** — g4dn.xlarge at $0.765 would win every
-placement, and its T4 is half the VRAM and unmeasured for this role. A fallback belongs above
-the intended instance, never below it.
-
-Second reason the default holds to 4-vCPU types: a `g6.2xlarge` fills the whole default
-8-vCPU G-family quota by itself, and then the other role cannot launch at all.
-
-⚠️ **When that quota bites, the instances spending it are invisible where you would look for them.**
-Measured 2026-09-09, chasing a `VcpuLimitExceeded` on a deployment that appeared to have no GPU
-instances at all: **Managed Instances runs its instances in an AWS-managed account**, so
-`aws ec2 describe-instances --filters Name=instance-type,Values=g6.*` returns **nothing** while
-the quota is fully spent. (They cannot be ENUMERATED; they can be DESCRIBED — re-measured
-2026-09-11, `describe-instances --instance-ids` on the id ECS reports answers in full, which is
-the only way to read `InstanceLifecycle` for a Spot one.) The count that matters is
-`aws ecs list-container-instances`/`describe-container-instances` (which does report
-`ec2InstanceId` and `ecs.instance-type`). And the quota is not freed the moment a task stops:
-a terminating instance holds its vCPUs for a while, so `VcpuLimitExceeded` keeps answering for
-minutes after the cluster looks idle. Wait for the container instance to leave the cluster
-rather than for the task to stop.
-
-⚠️ `InstanceRequirements` refuses this alongside `InstanceGenerations`.
-
-### `LlmAcceleratorMemMinMiB`
-
-VRAM floor (MiB) written as an instance requirement instead of a sentence in a comment: ADR
-0071 decision 2 puts this role at >= 20 GB and the 30B measured 20,943 MiB, so the default is
-21,000. Running out of VRAM does not slow CUDA down, it crashes it, which is why the floor
-travels with the type list — widen `LlmAllowedInstanceTypes` and this is what still refuses a
-card the model cannot load. `0` = do not ask (which is also what `LlmGpuCount: 0` does).
-
-The requirement is `AcceleratorTotalMemoryMiB`, i.e. the total across the accelerators asked
-for; with `LlmGpuCount: 1` that is the one card.
-
-### `LlmGpuCount`, `LlmVCpuMin` / `LlmVCpuMax`, `LlmMemMinMiB` / `LlmMemMaxMiB`
-
-GPUs per instance (and the task's GPU resource requirement; 0 = a CPU instance, test only) and the bounds
-of the instance requirement.
+GPUs per instance, and the task's GPU resource requirement (`ResourceRequirements`). `0` is a
+CPU instance, for tests only. How many cards the BOX has is the offer's business now
+([the offers](#the-offers)); this is what the task asks the agent for once it is on the box.
 
 ### `LlmStorageGiB`
 
-EBS data volume per instance, when `LlmUseLocalStorage` is off. It has to hold the image layers plus
-every model the role pulls from S3. MI exposes only the SIZE — throughput and IOPS cannot be
-asked for (measured against the API), which is why `UseLocalStorage` exists.
+**The root gp3 volume of the box the Control Plane buys** (ADR 0077 decision 11). It was the
+Managed Instances data volume until then, and the number is deliberately unchanged so a
+deployment capture carries over — but what it sizes moved, and the reason is the model
+directory: the task's anonymous host volume lands on the root filesystem, where the ECS-optimized
+AMI's own default is 30 GiB. A comfy deployment holding 30 GB of checkpoints fills that and the
+fetch dies with `No space left on device`, which is what the Managed Instances era measured with
+a named `SourcePath` ([the model volume](#the-model-volume)).
 
-### `LlmUseLocalStorage`
+⚠️ **On a type that HAS an instance store, the models do not land here at all** — the launch
+template's user data puts Docker's data-root on the NVMe, and an anonymous `host` volume is a
+Docker volume, so it follows (see [the model volume](#the-model-volume)). This size then covers
+the root filesystem and the image layers Docker wrote before the move. On an EBS-only type
+(g6e and friends) nothing is mounted and everything is here, which is the case to size for.
 
-Use the instance store instead of an EBS data volume. **On by default since 2026-09-09, when the
-measurement ADR 0071 open question 1 asked for was finally taken.** The premise held: on
-g6.xlarge the EBS baseline of 125 MB/s bounded both halves of a cold start, and taking it away
-roughly halves the whole thing. Measured on the deployment's own `llm` role, same instance, same two
-models, against the numbers recorded for the EBS setting:
+🔴 **The instance store is what the retired `<Role>UseLocalStorage` used to buy, and it is worth
+roughly half a cold start**: S3 -> disk 1.4x, disk -> VRAM 2.9x, RunTask -> model loaded
+527-586 s -> **275 s**, a model swap 276-282 s -> **98.5 s** (measured 2026-09-09 on a g6.xlarge
+under Managed Instances). gp3's baseline is 125 MB/s and a bigger volume does not make it faster,
+which is the whole of why the NVMe is mounted at all.
 
-| | EBS (recorded) | instance store | |
-|---|---|---|---|
-| S3 → disk, 1.1 GB | 8 s (140 MB/s) | **5 s (223 MB/s)** | 1.6× |
-| S3 → disk, 18.5 GB | 159 s (117 MB/s) | **117 s (159 MB/s)** | 1.4× |
-| disk → VRAM, 18.5 GB | 267 s | **91 s** | **2.9×** |
-| RunTask → model loaded | 527-586 s | **275 s** | ~2× |
-| swap to the 1.1 GB model | 10.0-10.1 s | **3.3 s** | 3.0× |
-| swap back to the 18.5 GB model | 276-282 s | **98.5 s** | **2.8×** |
+### `LlmAcceleratorMemMinMiB`, `LlmAllowedInstanceTypes` and the instance requirement pairs
 
-Two things worth reading off that table rather than the headline. **The win is the VRAM load,
-not the fetch**: taking the EBS write cap away only moved the 18.5 GB fetch 1.4×, because the
-next limit — S3 and the CLI, around 160 MB/s — was right behind it. And the swap is where a user
-actually feels it: ADR 0072 decision 3 priced "one model per instance, swap on demand" at 276-282
-seconds, and it now costs 98.5.
+**Gone in ADR 0077** (0.20.0), with `<Role>UseLocalStorage` and `<Role>ScaleInAfter`. The box is
+bought by the Control Plane with one `CreateFleet` per offer, and the offer already carries the
+type set and the VRAM floor — the Managed Instances requirement block was a second copy of the
+ladder. What each one meant, and where it went:
 
-The costs are unchanged and both are real: an instance store is wiped with the instance (so every
-cold start still pays a fresh S3 fetch — but so did the EBS data volume, which MI also deletes),
-and `LlmStorageGiB` stops meaning anything while this is on. The instance gets whatever the instance
-type carries, which on g6.xlarge is 250 GB — measured as a 245 GB ext4 filesystem, i.e. MORE
-than the 120 GiB the EBS setting asked for, which is why the disk ceiling on how many models can
-be enabled at once went up rather than down (ADR 0072 open question 11).
+| Retired | Where the decision lives now |
+| --- | --- |
+| `<Role>AllowedInstanceTypes` | the offer's `type[,type...]` field ([the offers](#the-offers)) |
+| `<Role>AcceleratorMemMinMiB` | the offer's `vramMiB` |
+| `<Role>VCpuMin` / `<Role>VCpuMax` / `<Role>MemMinMiB` / `<Role>MemMaxMiB` | the offer's `vcpuMin-vcpuMax` and `memMinMiB-memMaxMiB` |
+| `<Role>UseLocalStorage` | nothing yet — see `LlmStorageGiB` above and ADR 0077 open question 8 |
+| `<Role>ScaleInAfter` | nothing: the Control Plane terminates the box itself (ADR 0077 decision 5), so there is no "AWS tidies it up after N seconds" to tune. The trap it carried (`-1` keeps a box that re-fetches anyway) goes with it |
 
-⚠️ It follows that `*AllowedInstanceTypes` may only name types that HAVE an instance store. Every
-g6 and g5 size does; a type without one cannot satisfy the capacity provider.
-
-### `LlmScaleInAfter`
-
-`infrastructureOptimization.scaleInAfter`, in seconds: how long MI leaves an idle instance before
-terminating it. `-2` = do not set it, i.e. AWS's default (measured drain: 427 and 463 seconds on
-a GPU instance, 93 on a CPU instance). `-1` = never tidy up. `0`-`3600` = that many seconds. It was worth
-having as a knob while an instance kept a little longer might have been a warm start; since 2026-09-09
-it is not, because a kept instance cannot hold its models at all — see [The model
-volume](#the-model-volume), where decision 7(c) is disproven rather than merely unproven. Keeping
-a GPU instance past its work now buys the image layers and nothing else, at $1.26/hour, so the AWS
-default is the right setting and `-1` is a way to spend money on nothing.
+`standup.sh` drops all eight from a capture (`af_param_drop`); `update.sh` and a hand-run
+`cloudformation deploy` pass no parameters at all, so they simply fall away.
+⚠️ **`<Role>TaskMemory`, `<Role>GpuCount` and `<Role>StorageGiB` are NOT in that list** even
+though their names look like the block's. They feed the task definition and the root volume.
 
 ### `LlmIdleSec`
 
@@ -573,42 +541,22 @@ no authentication option at all (upstream `examples/server/api.md` documents non
 security group — port 8080 from the CP and nothing else — is the whole of this engine's access
 control. The llm role's `--api-key` is a second lock that does not exist here.
 
-### `ImageAllowedInstanceTypes` / `ImageAcceleratorMemMinMiB`
-
-Instance types the image capacity provider may buy. The measured floor is 7,379 MiB of VRAM for
-SDXL fp16, so g6f.2xlarge's 5,722 MiB does not fit it in that form — but `--offload-to-cpu` and
-quantisation are UNMEASURED (ADR 0071 decision 2, P4), so this is a default rather than a proof
-that nothing smaller works.
-
-Default `g6.xlarge,g5.xlarge`, for the reason under `LlmAllowedInstanceTypes`: this is the role
-the capacity shortfall was actually observed on, the list is a filter and not a preference
-order, and the cheapest member is the one that normally gets bought.
-
-`ImageAcceleratorMemMinMiB` defaults to 8,000 — decision 2's ">= 8 GB", above the 7,379 MiB
-measurement. Note what that does NOT do: a 16 GB T4 clears it, while every image measurement
-there is (SDXL 8.0 s, Z-Image 10.5 s, klein 4B 4.0 s — ADR 0072) was taken on a 24 GB L4. The
-type list is what holds the role to measured hardware; the floor only keeps a card too small to
-load the checkpoint out.
-
 ### `ImageStorageGiB`
 
-EBS data volume per instance, when `ImageUseLocalStorage` is off. Smaller than the llm role's 120
+The box's root gp3 volume, as [`LlmStorageGiB`](#llmstoragegib). Smaller than the llm role's 120
 because the whole role is a 2.3 GB image and a 6.5 GB checkpoint — but not much smaller: the
-anonymous host volume is re-allocated per task and never reclaimed (see the llm task definition),
-so an instance that MI keeps accumulates one copy per start.
+anonymous host volume is re-allocated per task and never reclaimed, so several starts on one box
+each cost a copy. A `comfy` deployment that has enabled 30 GB of checkpoints needs this raised.
 
-### `ImageUseLocalStorage`
+### `ImageAllowedInstanceTypes` / `ImageAcceleratorMemMinMiB` and the rest of the requirement block
 
-Use the instance store instead of an EBS data volume. Same knob and same open question as the llm
-role (ADR 0071 open question 1), and less pressing here: 6.5 GB from S3 at 115-147 MB/s is under
-a minute either way.
-
-### `ImageScaleInAfter`
-
-`infrastructureOptimization.scaleInAfter`, in seconds. `-2` = do not set it (AWS's default). `-1`
-= never tidy up, which P0 measured to be a trap with an anonymous model volume: the instance is kept
-but the next task gets a FRESH empty directory and re-fetches anyway, while the old copies are
-never reclaimed. Left at the default until decision 7(c) has a proven warm-instance shape.
+Gone in ADR 0077, exactly as on the llm role — the offers carry the type set and the VRAM floor
+now. See [the llm role's table](#llmacceleratormemminmib-llmallowedinstancetypes-and-the-instance-requirement-pairs).
+The measured floor that used to live here is still worth having when writing an offer: SDXL fp16
+measured 7,379 MiB, and decision 2's ">= 8 GB" was the default. Note what that does NOT do — a
+16 GB T4 clears it, while every image measurement there is (SDXL 8.0 s, Z-Image 10.5 s, klein 4B
+4.0 s — ADR 0072) was taken on a 24 GB L4. The type set is what holds the role to measured
+hardware; the floor only keeps a card too small to load the checkpoint out.
 
 ### `ImageIdleSec`
 
@@ -635,9 +583,9 @@ As `LlmMode`: the initial mode, a default the stored setting overrides — inclu
 
 `LlmInstanceClasses` / `ImageInstanceClasses` (ADR 0074) are the ladder of GPU rungs an
 administrator may switch a role between from the Console, without a stack update. **Both default
-to empty, and empty means the feature does not exist**: the instance is whatever the parameters above
-bought, and the Control Plane never calls `DescribeCapacityProviders` or `UpdateCapacityProvider`
-at all.
+to empty, and empty means the feature does not exist**: with neither a ladder nor an offer list
+declared the Control Plane never asks EC2 for a box at all, and the role has no way to start
+(ADR 0074 decision 3, inherited by ADR 0077).
 
 One rung per `;`, seven `|`-separated fields, the last optional:
 
@@ -649,15 +597,15 @@ id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB[|usdPerHour]
 LlmInstanceClasses=l4|L4 24GB|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536
 ```
 
-- **The FIRST rung is the default**, and it should restate `LlmAllowedInstanceTypes`,
-  `LlmAcceleratorMemMinMiB`, `LlmVCpu*` and `LlmMem*`. Nothing checks that it does — the two
-  are separate declarations, and the first is what the Console offers as "back to the default".
+- **The FIRST rung is the default**, and since ADR 0077 it is the only place the box's shape is
+  declared at all (the template's requirement block is gone). It is what the Console offers as
+  "back to the default", and what a role with no saved choice starts on.
 - **`vramMiB` is both the floor asked of the card (`AcceleratorTotalMemoryMiB.Min`) and what a
   model's demand is compared against** — and it is **the card's physical size**, not an
   operational cap. 🔴 Declare it from what the hardware reports: an L4 says
-  `Total VRAM 22563 MB`, so **22000 is the number**. The nearby `LlmAcceleratorMemMinMiB` of
-  8000 is a *placement filter* and copying it into a rung is a real bug — measured 2026-09-11
-  on the dev deployment, a rung declaring 8000 made the panel say `vram_fits: false` for a model
+  `Total VRAM 22563 MB`, so **22000 is the number**. Copying a placement floor into it (the
+  retired `<Role>AcceleratorMemMinMiB` was 8000) is a real bug — measured 2026-09-11 on the dev
+  deployment, a rung declaring 8000 made the panel say `vram_fits: false` for a model
   that then generated perfectly well on that very card. Shading it downward is just as wrong in
   the other direction once the demand includes the KV cache: a 30B at 32k context really
   occupies 20,712 MiB, which fits 22,563 with 1.8 GB to spare and does NOT fit a declared
@@ -665,63 +613,47 @@ LlmInstanceClasses=l4|L4 24GB|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40
 - **`usdPerHour` is display-only and optional.** Nothing computes with it and neither EC2 nor
   the Pricing API is asked (ADR 0045 decision 21). Leave it out and the panel names no price,
   which beats naming a wrong one.
-  ⚠️ **Do not copy a list price into it.** The Pricing API's Tokyo on-demand figure for a
-  g6.xlarge is $1.1672, while the bill measured in ADR 0071 was **$1.26** — ECS Managed
-  Instances charges a management fee on top of EC2, so a list price makes the panel about 8%
-  cheaper than reality (measured 2026-09-10, ADR 0074 P1). Declare what was billed, or nothing.
+  **It is the EC2 price itself since ADR 0077** — the 7.80% ECS Managed Instances management
+  fee is gone with the providers, so the g6.xlarge figure that used to be declared as $1.26
+  (billed, against the Pricing API's $1.1672) is now the EC2 one. The rule that survives is the
+  rule that mattered: **declare what the bill said, never a list price**, and rewrite it when
+  Cost Explorer has a final figure.
 - A malformed rung is dropped with a log line; a malformed PRICE only drops the price.
-- ⚠️ The ladder is not checked against the account's **G-family vCPU quota**, and it cannot be:
-  the CP has no `service-quotas` permission and the quota differs per deployment (96 in
-  production, 8 on a fresh account). A rung above it is selectable and simply never places —
-  which surfaces as `VcpuLimitExceeded` in the service events, where the panel shows it.
 
-**What changing a rung does.** The Control Plane rewrites four fields of the capacity provider's
-instance requirements (`AllowedInstanceTypes`, `AcceleratorTotalMemoryMiB.Min`, `VCpuCount`,
-`MemoryMiB`) and hands everything else back exactly as it read it. It applies the choice when it
-is saved and again immediately before every start, because a stack update puts this template's
-declaration back and nothing tells the CP that happened.
+**What changing a rung does.** A rung IS the request: the Control Plane puts its type set,
+VRAM floor, vCPU and memory bounds into the `CreateFleet` overrides for the next box it buys
+(ADR 0077 decision 8). Nothing is written to AWS when the choice is saved, and nothing has to be
+re-applied before a start — the four-field read-modify-write of `UpdateCapacityProvider` (ADR
+0074 decision 5) is gone with the capacity providers, and so is the whole class of failure where
+"declared" and "actual" drift apart. A misspelled type is refused **by the `CreateFleet` call
+itself**, not by a box that never arrives.
 
-⚠️ **It reaches the NEXT instance only** — the API's own words are "These changes only apply to new
-Amazon ECS Managed Instances". So a running engine keeps its card until it is replaced, and the
-Control Plane will not start a new task while an instance of another rung is still registered: that is
-the `VcpuLimitExceeded` above, and it is also how a task would land straight back on the old
-card. The wait is bounded at 20 minutes, because `scaleInAfter: -1` would otherwise make it
-never end.
+⚠️ **It still reaches the NEXT box only.** A running engine keeps its card until the box is
+replaced, and the Control Plane will not buy a new one while the old one is still `running`
+(the drain wait, ADR 0071 decision 7 / ADR 0074 decision 4). What changed is why: it is now the
+CP's own terminate that has to finish, not an AWS-side scale-in whose clock nobody could see.
 
-**Permissions.** `ecs:DescribeCapacityProviders` + `ecs:UpdateCapacityProvider` on this stack's
-own capacity providers, `ecs:PutClusterCapacityProviders` on the cluster, and `iam:PassRole` on
-`InfraRole` and `InstanceRole` — the update re-declares the launch template, which names both.
-The resource scope IS the boundary: that API can also move subnets and security groups, so it is
-pinned to `af-<stack>-*` and the CP only ever sends values that came out of the ladder above.
+⚠️ **The ladder is not checked against the account's G-family vCPU quota**, and it cannot be:
+the CP has no `service-quotas` permission and the quota differs per deployment (96 in production,
+8 on a fresh account). A rung above it is selectable and simply never buys — which now surfaces
+as an error code in the `CreateFleet` response instead of a service event, and the panel shows
+it the same way.
 
-🔴 **`PutClusterCapacityProviders` is an API the Control Plane never calls.** ECS authorizes an
-update of a **Managed Instances** provider as that action **on the cluster**, so without the
-grant the update fails with an `AccessDeniedException` naming an action that appears nowhere in
-the code:
-
-```
-AccessDeniedException: User: …/af-<stack>-cp-task/… is not authorized to perform:
-ecs:PutClusterCapacityProviders on resource: …:cluster/af-<platform-stack>
-```
-
-Neither the API reference nor the SDK says so; it was measured on a deployment (ADR 0074 P1),
-and it is the reason a rung change cannot be proven to work by unit tests. Note what it widens:
-that action is also how the cluster's whole provider ASSOCIATION list is replaced, so the grant
-is cluster-scoped where the other three are provider-scoped. It is on the same cluster this
-stack already owns the associations of (README, "60-engines").
-
-⚠️ **`DescribeCapacityProviders` takes a cluster or a list of names — never both.** A request
-carrying both is refused with `InvalidParameterException: Cannot specify both capacity providers
-and cluster in the same request`, which is documented nowhere. The CP asks by name and checks
-the cluster on the ANSWER instead (`applyEngineClass`); a provider that answered with another
-cluster is not written to.
+**Permissions.** `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets` and `iam:PassRole` on the
+engine instance role, all in this stack's own `CpIngestPolicy`
+([the ingest permissions](#the-ingest-permissions)). The three ECS capacity-provider grants the
+ladder used to need — `DescribeCapacityProviders`, `UpdateCapacityProvider` and the
+cluster-scoped `PutClusterCapacityProviders` nobody could find in the code — are **gone**.
 
 ## The offers
 
 `LlmOffers` / `ImageOffers` (ADR 0075) are the ladder above with an eighth field: **how the box
 is bought**. The Control Plane narrows the list to the offers whose `vramMiB` covers the demand
-of the enabled models and then tries what is left **in the order written**, giving each one
-[`<Role>OfferBudgetSec`](#roleofferbudgetsec) to produce an instance before it moves to the next.
+of the enabled models and then tries what is left **in the order written**. Since ADR 0077
+"trying" one is a single `CreateFleet(type=instant, TotalTargetCapacity=1)`: the row's type set
+goes into the overrides, `buy` decides on-demand or Spot, and **the answer comes back in that
+one call** — a box id, or an error code. What
+[`<Role>OfferBudgetSec`](#roleofferbudgetsec) bounds is the wait after that.
 
 ```
 id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB|usdPerHour|buy
@@ -742,23 +674,31 @@ had, and the same reason a deployment capture is one `key=value` per line.
   them, and a deployment that declares neither never calls ECS about capacity at all (ADR 0074
   decision 3, inherited).
 - 🔴 **`spot` belongs to the `image` role only.** `LlmOffers` takes the field because the format
-  is one format, but there is no Spot provider for the llm role to buy through
-  ([the capacity providers](#the-capacity-providers)), and a `spot` row there is an offer that
-  can never be filled.
+  is one format, but a two-minute termination notice mid-conversation costs a 527-586-second
+  cold start to recover from (ADR 0075 decision 9, inherited). There is no longer a "no Spot
+  provider exists" safeguard behind that rule — the Control Plane **drops a `spot` row in
+  `LlmOffers` at parse time**, with a log line (ADR 0077 decision 9).
 - 🔴 **The list is tried in the order WRITTEN — the Control Plane does not sort by price.**
   Cheapest-first is an operator convention, not a mechanism. Three reasons it stays that way, and
   all three are reasons a sort would hurt: a row with no price would sort last exactly when it is
   the row most worth trying (a Spot row's billed price is by definition unknown at first); the
   order and the prices are written by the same person, so a sort lets one number silently
-  overrule a deliberate order; and **one row does not have one price** — Managed Instances has no
-  allocation strategy and buys the cheapest member that fits (ADR 0071), so the three-type Spot
-  row above is $0.67-ish on a g6.xlarge and $1.36 on a g6e.xlarge.
-- **`usdPerHour` is therefore declared as the price of the DEAREST type the row can buy**, all-in
-  (the ECS Managed Instances management fee included, measured at 7.80% over EC2 — never a list
-  price; the rule is under [the instance classes](#the-instance-classes)). Understating it makes
-  the panel's comparison useless in the direction that costs money. ⚠️ The `1.57` above is
-  arithmetic, not a bill: the only Spot box this deployment ever bought ran for 403 seconds, so
-  Cost Explorer has nothing final yet. **Rewrite it from the bill when there is one.**
+  overrule a deliberate order; and **one row does not have one price** — a multi-type row is
+  whatever the allocation strategy picks, so the three-type Spot row above is $0.67-ish on a
+  g6.xlarge and $1.36 on a g6e.xlarge.
+- ✅ **A multi-type row is no longer a lottery, though.** Managed Instances had no allocation
+  strategy at all, which is how ADR 0075 run 3's three-type Spot row delivered a **g6e.xlarge**
+  rather than the cheapest g6. A `CreateFleet` says it: `price-capacity-optimized` for `spot`
+  (the most available pools, then the cheapest of those) and `prioritized` for `od`, where the
+  Control Plane writes the override `Priority` in the order the types are declared (ADR 0077
+  decision 1). **Keep the intended type first.**
+- **`usdPerHour` is therefore declared as the price of the DEAREST type the row can buy** —
+  **the EC2 price itself since ADR 0077**, because the 7.80% Managed Instances management fee is
+  gone with the providers. Never a list price (the rule is under
+  [the instance classes](#the-instance-classes)); understating it makes the panel's comparison
+  useless in the direction that costs money. ⚠️ The `1.57` above is arithmetic, not a bill: the
+  only Spot box this deployment ever bought ran for 403 seconds, so Cost Explorer has nothing
+  final yet. **Rewrite it from the bill when there is one.**
 - **The id is what an administrator's saved choice names.** Keep ids stable across a migration
   from `<Role>InstanceClasses` and nothing moves for the deployments that had already chosen one;
   an unsaved choice now means *automatic*, and a saved one means *pinned to that offer, with no
@@ -767,17 +707,35 @@ had, and the same reason a deployment capture is one `key=value` per line.
 
 ### `<Role>OfferBudgetSec`
 
-How long one offer may wait for an instance before the Control Plane tries the next, default
-**180 seconds**, counted from the moment desired goes to 1. It is not the whole wait: with three
-offers the worst case is three budgets plus a cold start, and the bound a caller actually sees is
-the gateway's `AF_ENGINE_WAKE_TIMEOUT` (900 s, ADR 0071 decision 5) — a deployment that falls to
-its third offer has already given the first request up, and the next request finds a warm box.
+🔴 **What this bounds changed in ADR 0077, and the default with it.** It used to be "how long
+one offer may wait for an instance before the next is tried", counted from the moment desired
+went to 1 — because under Managed Instances nothing said whether a box was coming. A
+`CreateFleet` answers in the call, so **moving to the next offer needs no clock at all**; what is
+left to wait for is the box this call DID buy **registering with the ECS cluster**. Past that,
+the Control Plane terminates it and moves on.
 
-⚠️ **The budget is not always spent.** The service event decides: `UnfulfillableCapacity` is a
-verdict on the request's own configuration and is not worth waiting out, so the CP moves on at
-once; `VcpuLimitExceeded` skips the rest of that purchase option (the quotas are separate, so the
-other option's offers are still worth trying); `InsufficientInstanceCapacity` is the hour's
-answer and waits out the budget. No event at all means wait. The table is in ADR 0075.
+**The default is 300 seconds**, in this template and in the Control Plane, which is ADR 0077
+decision 1's number: the slot pool measured boot to ECS registration at 21 s (77 s with a
+home-baked AMI), so 300 is more than ten times a healthy registration — and a GPU AMI is not a
+slot's AMI, so the margin is deliberate rather than measured. Raise it if a start is ever
+recorded as failed with a box that turned out to be fine; past it the box is terminated and the
+next offer is tried, so a ceiling that is too low spends money and finds nothing.
+
+🔴 **A deployment captured before 0.20.0 carries `180`, which is the OLD meaning's default.**
+`standup.sh` drops exactly that value so the stack falls to the 300 above, and says on stdout
+that it did; any other value is treated as a choice and passed on untouched. A deployment that
+really wants 180 as a registration ceiling has to set it again after a stand-up — that is the
+price of not being able to tell a stale default from a deliberate one.
+
+It is not the whole wait either: with three offers the worst case is three failed purchases plus
+a registration plus a cold start, and the bound a caller actually sees is the gateway's
+`AF_ENGINE_WAKE_TIMEOUT` (900 s, ADR 0071 decision 5).
+
+⚠️ **The failure codes moved with it.** `UnfulfillableCapacity` / `VcpuLimitExceeded` /
+`InsufficientInstanceCapacity` were read out of SERVICE EVENTS, with a wait attached to each;
+they are now `Errors[].ErrorCode` in the `CreateFleet` response, read at once. No stock means
+the next offer; a quota refusal skips the rest of that purchase type (on-demand and Spot are
+separate quotas). The vocabulary is being measured — ADR 0077 open question 3.
 
 ## The fetch sidecar
 
@@ -1285,7 +1243,8 @@ cannot see is the image, the pull, the entry point and the contract gate meeting
 ## The task roles
 
 **Engine tasks READ the model catalogue; the ingest task WRITES it and holds the Hugging Face
-token.** Two roles on purpose: the credential that can overwrite a model file must not sit on a
+token.** (A third, `EngineInstanceRole`, belongs to the BOX rather than to a task —
+[the engine boxes](#the-engine-boxes).) Two task roles on purpose: the credential that can overwrite a model file must not sit on a
 instance running a network service, and the operator's HF token must not either.
 
 ⚠️ **No `ssmmessages:*` on either.** The measurement harness has it — the only way to reach a
@@ -1305,10 +1264,9 @@ touches the NAT). **Versioning is off deliberately**: a 17 GB model kept in dupl
 re-ingest is a bill nobody meant to sign, and the sha256 identifies a file (ADR 0071 decision 10).
 The layout is ComfyUI's, so all three engines read one tree (ADR 0072 decision 2).
 
-The image role's capacity provider is created even when no image model is staged: a provider
-costs nothing while nothing runs on it, it is named in the association list (which is replaced
-wholesale, so it cannot be added conditionally without churning the list), and deleting one a
-service used is a stack update that has to wait for the service to go first.
+Both launch templates are created even when the role is off and nothing is staged: a launch
+template costs nothing while nothing launches from it, and an Output that is missing is an empty
+export the stack refuses to create at all ([the engine table](#the-engine-table)).
 
 ## The engine security group
 
@@ -1317,191 +1275,155 @@ Plane's security group and from nothing else. sd-server has no authentication of
 for the image role this is the whole of it; the llm role adds `--api-key` on top
 ([`LlmApiKeySsmParam`](#llmapikeyssmparam)).
 
-## The capacity providers
+## The engine boxes
 
-**The two roles never share an instance, and the image role has two providers rather than one.**
-CUDA does not slow down when VRAM runs out, it crashes, and the two measured footprints (20.9 GB
-for the 30B, 7.4 GB for SDXL) do not both fit on one L4's 22,888 MiB (ADR 0071 decision 2).
-A provider per role is also what makes `draining` observable per role — and what makes the
-deployment want 16 of the G-family quota, see below.
+**The Control Plane buys the box itself** (ADR 0077): one `CreateFleet(type=instant,
+TotalTargetCapacity=1)` per offer, against **one launch template per role**. There are no
+capacity providers in this stack any more — the three that stood here (`af-<stack>-llm`,
+`-image`, `-image-spot`), the `InfraRole`, the Managed Instances instance role and the three
+`*CapacityProviderName` outputs are all gone. What this template owns now:
 
-| Provider | Bought on | Used by |
-| --- | --- | --- |
-| `af-<stack>-llm` | on demand | the `llm` role, always |
-| `af-<stack>-image` | on demand | the `image` role — **what the template declares** |
-| `af-<stack>-image-spot` | Spot | the `image` role, when the Control Plane picks a `spot` offer |
+| Resource | What it is |
+| --- | --- |
+| `LlmLaunchTemplate` / `ImageLaunchTemplate` | `af-<stack>-engine-llm` / `-engine-image`: AMI, instance profile, `EngineSg`, root volume, and the user data that joins the cluster |
+| `EngineInstanceRole` / `EngineInstanceProfile` | `af-<stack>-engine`: `AmazonEC2ContainerServiceforEC2Role` + `AmazonSSMManagedInstanceCore`, the slot role's pair |
+| `LlmLaunchTemplateId` / `ImageLaunchTemplateId` | the outputs, and the `launchTemplate` field of the engine table row |
 
-**Why two wallets and not one that switches.** `CapacityOptionType` is **create-only** — the
-measurements are under [the migration below](#migrating-off-imagecapacityoptiontype) — so the
-only way to choose the purchase option at run time is to have both providers standing and move
-the *service's* strategy between them. That is ADR 0075 decision 3; it overrides ADR 0071
-decision 2 in COUNT only, not in the rule that the two roles stay on separate instances. The two
-are one role's two wallets, and only one of them ever appears in the service's strategy.
+**The two roles still never share a box.** The reason is unchanged (CUDA does not slow down when
+VRAM runs out, it crashes; 20.9 GB for the 30B against 7.4 GB for SDXL, ADR 0071 decision 2) and
+so is the mechanism's effect — what enforces it is now the service's placement constraint rather
+than a provider per role.
 
-**The `llm` role gets no Spot provider, deliberately** (ADR 0075 decision 9). Spot's two-minute
-termination notice arrives mid-conversation and a 527-586-second cold start is what follows it.
-An image request is one call that can be made again; a conversation is not. The guard is doubled:
-no `spot` row belongs in `LlmOffers` either, and the Control Plane only buys what the list names.
+### How a box is marked, and why that is three separate things
 
-⚠️ **A provider costs nothing while nothing runs on it** (measured, ADR 0074: creating one buys
-no instance), which is why the Spot one is created even in a deployment that declares no offers
-at all. What it needs before it can buy anything is [its own quota](#the-g-family-quota).
+- **`ECS_INSTANCE_ATTRIBUTES={"af-role":"engine-<role>"}`**, written into `/etc/ecs/ecs.config`
+  by the launch template's user data. The service's
+  `PlacementConstraints: memberOf(attribute:af-role == engine-<role>)` binds to it, so the engine
+  task lands on that box and on no other.
+- **EC2 tags**, written by the Control Plane at `CreateFleet` (the template's only tag is
+  `af-managed-by`, exactly as `40-ec2-pool.yaml` leaves the slot tags to `RunInstances`):
+  `af-pool=<cluster>`, `af-role=engine-<role>`, `af-engine-offer=<offer id>`,
+  `af-engine-buy=spot|od`. The panel reads the last two — which offer the box came from is a fact
+  about the BOX now, not about the service's strategy (ADR 0077 decision 8).
+- **The slot pool's own test**, `isPoolContainerInstance`, which gained "the `af-role` attribute
+  is absent or `slot`" alongside the capacity-provider test it already had. Both are needed
+  while any deployment still has a Managed Instances box standing.
 
-🔴 **The declared strategy is the ON-DEMAND provider, and CloudFormation puts it back.** The
-service's `CapacityProviderStrategy` is this template's property, so every update that touches
-`ImageService` — every release with a new task definition — rewrites it to
-`af-<stack>-image` and starts a new deployment. A box running on Spot is replaced by an
-on-demand box, and the Control Plane does not participate. **One release runs on demand once**;
-the next time the engine goes from desired 0 to 1 the CP picks from the offers again (ADR 0075
-decision 12, review R7). The panel reads the live strategy rather than remembering the choice,
-so it says so correctly while that is true.
+✅ **A box the CP bought is enumerable.** `describe-instances` filtered by tag returns it — the
+reverse of the Managed Instances era, where instances ran in an AWS-managed account and
+`describe-instances --filters Name=instance-type,Values=g6.*` answered `[]` while the quota was
+fully spent. That is what lets `teardown.sh` terminate engine boxes by tag, and the Control
+Plane's sweep find a box no ledger remembers (ADR 0045 decision 29's rule, ADR 0077 decision 5).
 
-**The Control Plane's IAM does not grow for the second provider** (ADR 0075 review R4).
-`ecs:DescribeCapacityProviders` / `ecs:UpdateCapacityProvider` are scoped to
-`capacity-provider/af-${AWS::StackName}-*` — a prefix, not the two ARNs — and
-`af-<stack>-image-spot` is inside it. `ecs:PutClusterCapacityProviders` is cluster-scoped and
-`iam:PassRole` names the two roles the launch template names; neither changes.
-
-⚠️ **`ClusterCapacityProviderAssociations` REPLACES the cluster's provider list** — the API is
-not additive — so `FARGATE` and `FARGATE_SPOT` have to be named alongside ours or every Fargate
-service in the deployment loses its provider. The list is **five** names since the image role
-gained its Spot wallet, and a provider missing from it cannot be named by any service's
-strategy. `DefaultCapacityProviderStrategy` is a REQUIRED
-property and is deliberately EMPTY: with a default strategy in place, a service that does not
-spell out `LaunchType: FARGATE` lands on the GPU instance instead (ADR 0070 decision 1 — one missing
-line is the whole of that failure).
-
-⚠️ **Creating a Managed Instances provider ADDS it to the cluster's list by itself.** Measured
-2026-09-11: a throwaway stack holding nothing but one provider (no
-`ClusterCapacityProviderAssociations` anywhere in it) put its provider into
-`DescribeClusters.capacityProviders`, and deleting the stack took it back out. So "one stack
-owns the associations" is a rule about who REPLACES the list, not a fence around it — a second
-stack that creates a provider against this cluster is visible in the list until the next time
-this stack's `Associations` resource is updated, which silently drops it.
-
-### Migrating off `ImageCapacityOptionType`
-
-**The parameter is gone.** It was one switch that moved the single provider between purchase
-options; the offers list decides per start now, against two providers that both stand
-([`ImageOffers`](#the-offers)). Nothing to set, and **the default deployment updates in one
-pass** — `Add ImageSpotCapacityProvider`, no replacement (measured on the throwaway stack of ADR
-0074 open question 1).
-
-🔴 **A stack currently running `ImageCapacityOptionType=SPOT` needs TWO updates, in this order.**
-There, the logical resource `ImageCapacityProvider` is already *named* `af-<stack>-image-spot`
-(that is what the switch did), and the new template asks for that same name on a **different**
-resource. CloudFormation creates before it deletes, so the second one cannot be created, and the
-update fails and rolls back.
-
-1. **Set `ImageCapacityOptionType=ON_DEMAND` on the template it is still running** and deploy
-   that. It is a replacement back to `af-<stack>-image` — measured at **147 seconds** — and the
-   name is reusable even though ECS keeps the retired provider as an `INACTIVE` record.
-2. **Then deploy this template.** Now `af-<stack>-image-spot` is free and arrives as an `Add`.
-
-Do step 1 with the image role stopped: a replacement moves the service's strategy, which is a
-new deployment, so an instance that is up drains and the next request pays the cold start again
-(about 195 s plus the model sync). Nothing is lost but a generation in flight.
-
-⚠️ **Rebuilding the deployment capture (`params/60-engines`) drops the line too** — a captured
-`ImageCapacityOptionType=` is a parameter this template does not declare, and
-`cloudformation deploy` refuses a key it is given and does not know. `standup.sh` drops it for
-you (`af_param_drop`, as it does for the parameters ADR 0072 P6 retired); a hand-run `deploy`
-needs the line removed.
-
-**The measurements that made the parameter a dead end** are worth keeping, because they are the
-whole reason two providers stand instead of one that switches. From 2026-09-11, a throwaway
-stack holding a copy of this resource (`deploy/aws/ecs/harness/probe-capacity-option.yaml`):
-
-- 🔴 **changing the field alone fails.** The change set reads `Modify` /
-  `Replacement: Conditional`, which looks survivable, and then execution stops on
-  `CloudFormation cannot update a stack when a custom-named resource requires replacing. Rename
-  af-<stack>-image and update the stack again.` -> `UPDATE_ROLLBACK_COMPLETE`. The field is
-  create-only (`UpdateCapacityProvider`'s `InstanceLaunchTemplateUpdate` has no such member) and
-  a provider's ARN is derived from its `Name`, so a replacement is a same-name collision;
-- ✅ **changing the field AND the name works.** `Replacement: True`, `Name` /
-  `RequiresRecreation: Always`, and the update creates `af-<stack>-image-spot`, moves everything
-  that points at it, then deletes the old one in the cleanup phase (`UPDATE_COMPLETE`). The
-  round trip back to `ON_DEMAND` works the same way, reusing the original name even though ECS
-  still holds the retired provider as an `INACTIVE` record.
-
-A name is therefore a create-time decision, which is why the two providers carry **fixed**
-names now: `af-<stack>-image` and `af-<stack>-image-spot`, neither of them computed from a
-parameter. Nothing replaces either of them again.
-
-**Both names travel in the engine table as `!Ref`** — the service's strategy, the cluster
-associations and the row's `capacityProvider` / `spotCapacityProvider` pair all point at the
-resources. 🔴 **Keep it that way.** A table that restates a name as a `!Sub` string fails
-SILENTLY: the Control Plane goes on watching a provider nobody uses, and that is where both
-`draining` and the ADR 0074 rung application read from. Watching only ONE of the pair has the
-same shape — a box bought through the other provider reads as `box: null`, which is exactly what
-the 2026-09-11 rename produced while it was wrong.
-
-⚠️ Spot capacity is a SEPARATE quota, and it bites at launch and not at configuration: a `SPOT`
-provider is created happily with the quota at 0 (measured, ADR 0074) and then never buys an instance,
-which reads exactly like an engine that will not start. `L-3819A6DF` ("All G and VT Spot
-Instance Requests", default 0) is the one to hold — acrt has 64, af-sandbox 8.
-`L-DB2E81BB` does not exist; do not look for it.
-
-### Before declaring a `spot` offer, check these three (all measured 2026-09-11, ADR 0074)
-
-**Declaring one is not done when the stack update succeeds** — it is done when an instance has
-been bought through the Spot provider. Until then the offer is a row the Control Plane tries,
-waits [its budget](#the-offers) on, and falls past, on every wake. Its failure has an error code
-of its own:
+### The AMI is a parameter NAME, resolved at launch
 
 ```
-UnfulfillableCapacity: Unable to fulfill capacity due to your request configuration.
+ImageId: resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/gpu/recommended/image_id
 ```
 
-**Neither `VcpuLimitExceeded` nor `InsufficientInstanceCapacity`**, and it blames the request
-rather than the hour, so it does not read as something to wait out. Price protection was ruled
-out by measurement, and the quota was right at the time. What actually moved the outcome:
+🔴 **That is EC2's `resolve:ssm:`, not CloudFormation's `{{resolve:ssm:…}}` and not an AMI id.**
+The string travels to EC2 untouched and is resolved **when the instance launches**, so a box
+always gets the current ECS-optimized GPU AMI without a stack update — unlike the slots, whose
+`SlotAmiId` is an `AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>` resolved at stack update
+(ADR 0045 decision 7). Instant fleets are the only launch path that supports the form. Which of
+the two is right for engines is ADR 0077 open question 7; nothing is baked either way, because
+ADR 0045 decision 19 measured a home-baked AMI as slow (144 s -> 192 s for a new user's start).
 
-1. 🔴 **The Spot service-linked role has to exist.** `AWSServiceRoleForEC2Spot` is absent in an
-   account that has never launched a Spot instance (`iam get-role` answers `NoSuchEntity`), and
-   nothing here creates it. `aws iam create-service-linked-role --aws-service-name
-   spot.amazonaws.com`.
-2. 🔴 **Ask `get-spot-placement-scores` WITH THE PROVIDER'S OWN TYPE SET.** One type scored
-   **1/10** in both AZs; the same three types the provider was then given scored **9/10**, and an
-   instance arrived 42 seconds after a 9 was recorded. A score for one type says nothing about a
-   provider that buys from three. The score also reads low for a whole account, so read the
-   *difference* a type set makes rather than the absolute number.
-3. 🔴 **Write the WHOLE type set into the offer, not one type.** The Control Plane overwrites the
-   provider's four instance-requirement fields from the offer it picked before every start, so
-   widening `<Role>AllowedInstanceTypes` alone snaps back at start — the offer is the declaration
-   that reaches the box. Keep the intended type the cheapest member (the rule under
-   [`LlmAllowedInstanceTypes`](#llmallowedinstancetypes)) — measured Spot prices in Tokyo were
-   g6.xlarge $0.563-0.577, g5.xlarge $0.74-0.79, g6e.xlarge $1.35, so g6 stays the default pick.
+⚠️ **On 2026-09-12 that parameter resolved in ap-northeast-1 to
+`al2023-ami-ecs-gpu-hvm-2023.0.20260901-kernel-6.1-x86_64-ebs`** (ECS agent 1.106.2, Docker
+25.0.16). It is **not Bottlerocket** — which is what makes a named `SourcePath` host volume
+possible at all ([the model volume](#the-model-volume)).
+
+### Migrating a deployment that is on Managed Instances
+
+🔴 **Do it with not one box standing**: both roles at `mode: off` in the Console, and no engine
+box among the cluster's container instances. Deleting a capacity provider goes through cleanly
+when nothing runs on it (measured on ADR 0074's throwaway stack: `delete-capacity-provider` at
+zero boxes is `INACTIVE` at once), and the service is about to be rewritten under it.
+
+🔴 **Then the `<Role>Enabled` round trip, and it is the only path.** ADR 0077 open question 1
+measured it on 2026-09-12: CloudFormation treats `CapacityProviderStrategy` -> `LaunchType: EC2`
+as a **replacement** (the change set says `Replacement: Conditional` and `LaunchType`
+`RequiresRecreation: Conditionally` — which is exactly why 0074's lesson is to EXECUTE it), it
+creates before it deletes, and the explicit `ServiceName` collides:
+
+```
+Resource handler returned message: "Resource of type 'AWS::ECS::Service' with identifier
+'af-<stack>-llm' already exists." (HandlerErrorCode: AlreadyExists)
+```
+
+The update fails and rolls back. ✅ The rollback is clean — the live service was measured
+byte-identical afterwards, same PRIMARY deployment id — so attempting it the wrong way round
+costs a few minutes and nothing else. The path that works, per role:
+
+```
+<Role>Enabled=false   # the condition DELETES the service (update.sh warns about exactly this)
+cloudformation deploy ...          # this template
+<Role>Enabled=true    # the service comes back, on the EC2 launch type
+```
+
+Measured at **25 s** for the delete and **48 s** for the create, on a throwaway stack whose
+service carried an explicit name and a `ServiceRegistries` entry like the real ones.
+
+✅ **The Cloud Map name does NOT go away in between.** The `AWS::ServiceDiscovery::Service` is a
+separate resource with no condition on it, and the round trip was measured keeping the same
+registry ARN. What stops for those seconds is the ECS service registering instances into that
+name — and at desired 0 there are none, so there is nothing to lose. (ADR 0077 decision 11 says
+"the Cloud Map name is gone in between"; that is the one sentence P0 corrected.)
+
+⚠️ **Whatever the answer, the capture drops eight parameters** (`<Role>AllowedInstanceTypes`,
+`AcceleratorMemMinMiB`, `VCpuMin`, `VCpuMax`, `MemMinMiB`, `MemMaxMiB`, `UseLocalStorage`,
+`ScaleInAfter`). `standup.sh` does it for you with `af_param_drop`; a hand-run
+`cloudformation deploy` needs them removed from `params/60-engines`, because the CLI refuses a
+key the template does not declare. **`<Role>StorageGiB` is not one of them** — it stays, and its
+value now sizes the box's root volume.
+
+⚠️ **`Associations` stays, holding `[FARGATE, FARGATE_SPOT]`.** The cluster's provider list is
+owned by this stack and the API REPLACES it rather than adding to it, so dropping the resource
+would take `FARGATE_SPOT` away from 50-tts, which reaches it through its own strategy and
+declares no associations of its own (ADR 0070). `DefaultCapacityProviderStrategy` stays
+deliberately EMPTY: with a default strategy in place, a service that does not spell out its
+launch type lands wherever the default points (ADR 0070 decision 1 — one missing line is the
+whole of that failure). Both engine services now spell out `LaunchType: EC2`.
+
+### Before declaring a `spot` offer, check these three
+
+**Declaring one is not done when the stack update succeeds** — it is done when a box has been
+bought on Spot. Two of the three checks below are unchanged by ADR 0077 (they are facts about
+EC2, not about who asked); the first gains a second role.
+
+1. **Two service-linked roles should exist.** `AWSServiceRoleForEC2Spot` for Spot (`iam get-role`
+   answers `NoSuchEntity` in an account that has never launched one), and
+   **`AWSServiceRoleForEC2Fleet`** for `CreateFleet`. ⚠️ **"Without it the first call fails" is
+   not what was measured**: ADR 0077's P0 run put three `CreateFleet` calls through af-sandbox
+   before the role existed — though none of them launched an instance, and the Spot SLR was
+   already there, so a *launching* call on an account with neither is still unmeasured. Treat it
+   as cheap insurance. `standup.sh` creates the fleet one with the ECS one
+   (`create-service-linked-role --aws-service-name ec2fleet.amazonaws.com`, idempotent, `|| true`
+   — and the `|| true` is mandatory because a second create answers **`InvalidInput`**, not
+   `EntityAlreadyExists`); the Spot one is still a manual `aws iam create-service-linked-role
+   --aws-service-name spot.amazonaws.com`. Not CloudFormation resources:
+   `AWS::IAM::ServiceLinkedRole` fails the stack when the role is already there.
+2. 🔴 **Ask `get-spot-placement-scores` WITH THE ROW'S OWN TYPE SET.** One type scored **1/10**
+   in both AZs; the same three types scored **9/10**, and an instance arrived 42 seconds after a
+   9 was recorded (measured 2026-09-11). A score for one type says nothing about a request that
+   names three. Read the *difference* a type set makes rather than the absolute number.
+3. 🔴 **Check `L-3819A6DF`** ("All G and VT Spot Instance Requests", default **0**) — see
+   [the G-family quota](#the-g-family-quota). Measured Spot prices in Tokyo were g6.xlarge
+   $0.563-0.577, g5.xlarge $0.74-0.79, g6e.xlarge $1.35, so g6 stays the intended pick.
    ⚠️ g6e's Spot is ABOVE g6's on-demand $1.26: Spot is cheap for the type you got, not for
-   everything you widened to. That is also why an offer's declared `usdPerHour` is the price of
-   the **dearest** type it can buy ([the offers](#the-offers)).
+   everything you widened to.
 
-✅ **Declaring an offer needs no Control Plane restart**, and neither does the migration above,
-as long as the CP is 0.19.0 or newer: both provider names ride the engine table and the running
-CP takes them live on the same poll the ladder rides (`engine_table_reload.go`), re-running the
-`box` match and dropping the rung it had applied to the old name. 🔴 **On 0.18.0 or earlier a
-rename is still a PAIR with `update-service --force-new-deployment`** (blue/green, no outage,
-measured 217 s) — the old process bakes the name in at start, and then the rung application 400s
-against the deleted name, the `box` lookup finds nothing while an instance is billing, and the
-panel says the rung is in force. It logs `changed in the table in a way this process cannot take
-live (capacity provider) - restart the Control Plane` and surfaces `class_apply_error`, and
-neither stops anything. **Order it: the new Control Plane image first, the stack second.**
+✅ **Declaring an offer needs no Control Plane restart**, as long as the CP is 0.20.0 or newer:
+the offers ride the engine table and the running CP takes them live on the same poll
+(`engine_table_reload.go`). What is no longer a pair with a `force-new-deployment` is a provider
+rename — there are no provider names left to rename, which removes the whole class of failure
+where the CP watched a provider nobody used and the panel reported `box: null` for a box that was
+billing (measured 2026-09-11).
 
-⚠️ **A deployment that had no ladder at all and declares offers for the first time needs the
-same `force-new-deployment`.** The rung gate is built at construction, so going from 0 rungs to N
-only logs that a restart is required (`engine_table_reload.go`; ADR 0075's migration note). A
-deployment that already declares `<Role>InstanceClasses` carries the change live.
-
-⚠️ **`describe-instances` can PROVE Spot, but only by id.** Filtering by instance type returns
-`[]` for Managed Instances (they run in an AWS-managed account). Asking for the id instead — the
-`ec2InstanceId` that `ecs describe-container-instances` reports — returns the whole instance,
-`InstanceLifecycle: spot` and `SpotInstanceRequestId` included. That is the only route from the
-calling account to a proof.
-
-⚠️ **A replacement rebuilds the provider from the TEMPLATE** — which the migration above is
-one of — so a deployment that declares a ladder loses the rung the Control Plane had applied:
-`AcceleratorTotalMemoryMiB.Min` comes back as `<Role>AcceleratorMemMinMiB`. The CP re-applies it
-before every start, so it heals — but not until then.
+⚠️ **`describe-instances` proves Spot directly now**: `InstanceLifecycle: spot` on an instance
+this account owns and can enumerate by tag. The Managed Instances detour — filter returns `[]`,
+ask by the `ec2InstanceId` that `describe-container-instances` reports — is no longer needed.
 
 ## The engine services
 
@@ -1521,9 +1443,18 @@ the template. Declaring `0` instead would reset the count on every task-definiti
 change, i.e. kill a GPU instance mid-answer. `standup.sh` scales the new service to 0 straight after
 creation.
 
-⚠️ **And no `LaunchType` either**: a capacity provider strategy and a launch type are mutually
-exclusive. These are the ONE pair of services in the deployment allowed to omit `LaunchType`,
-and only because they name their provider explicitly.
+⚠️ **`LaunchType: EC2` IS spelled out** (ADR 0077 decision 2). These were the one pair of
+services in the deployment allowed to omit it, because a capacity provider strategy and a launch
+type are mutually exclusive and they named a provider instead; with the providers gone, ADR 0070
+decision 1's invariant — the placement is always declared, never defaulted — is satisfied the
+ordinary way. **There is no `CapacityProviderStrategy` left for a release to put back**, which
+is the whole of ADR 0075 decision 12's problem gone.
+
+⚠️ **The placement constraint is on the SERVICE, not on the task definition.** A Workspace pins
+a task to a box with `memberOf(ec2InstanceId == ...)` on the task definition, because "this user
+on this box" is the point there. An engine changes boxes, and a task-definition revision per
+start is what that shape would cost — `memberOf(attribute:af-role == engine-<role>)` on the
+service never changes.
 
 **`DeploymentConfiguration` is `MinimumHealthyPercent: 0` / `MaximumPercent: 100`** so a
 redeploy stops the old task BEFORE starting the new one. One engine has one DNS name, and two
@@ -1542,26 +1473,27 @@ that was just stopped holds its 4 vCPU for the 7–8 minutes it spends draining,
 role while the other is on its way out needs 12. A deployment that uses both roles should hold
 16 or more (quota `L-DB2E81BA`, which is a support case and not auto-approved).
 
-🔴 **On-demand and Spot are SEPARATE quotas**, and the three image providers being two does not
-change the arithmetic above: a role runs one box, on one side or the other.
+🔴 **On-demand and Spot are SEPARATE quotas**, and which side an offer buys on does not change
+the arithmetic above: a role runs one box, on one side or the other.
 
 | What is bought | Quota | Default | Held by |
 | --- | --- | --- | --- |
 | on demand | `L-DB2E81BA` "Running On-Demand G and VT instances" | 8 in a fresh account | acrt 64, af-sandbox 8 |
 | Spot | `L-3819A6DF` "All G and VT Spot Instance Requests" | **0** | acrt 64, af-sandbox 8 |
 
-⚠️ **A deployment that declares a `spot` offer must check `L-3819A6DF` first.** The provider is
-created happily with it at 0 and then simply never buys anything (measured, ADR 0074) — which
-reads as an engine that will not start, with the offer falling through on every wake and nothing
-in the stack to point at. `L-DB2E81BB` does not exist; do not look for it.
+⚠️ **A deployment that declares a `spot` offer must check `L-3819A6DF` first.** The stack
+deploys perfectly happily with it at 0 and the offer then simply never buys anything (measured,
+ADR 0074) — which reads as an engine that will not start. Since ADR 0077 the refusal at least
+arrives as an error code in the purchase's own response rather than as a service event nobody
+was looking at. `L-DB2E81BB` does not exist; do not look for it.
 
 ```
 aws service-quotas get-service-quota --service-code ec2 --quota-code L-3819A6DF
 ```
 
 ✅ The separation is also what makes the fall-through real rather than cosmetic: on-demand vCPU
-held by a box that is still draining (measured at over five minutes of `VcpuLimitExceeded` after
-ECS deregistered it, ADR 0074 P1) does not touch the Spot side, and the other way round.
+held by a box that is still shutting down (measured at over five minutes of `VcpuLimitExceeded`
+after ECS deregistered it, ADR 0074 P1) does not touch the Spot side, and the other way round.
 
 ## Ingest
 
@@ -1639,6 +1571,38 @@ stack so that a deployment which does not adopt 60-engines gains nothing:
 | `iam:PassRole` | `IngestTaskRole` only | a task cannot be started without passing its role |
 | `logs:GetLogEvents` / `DescribeLogStreams` | this stack's log group | WHY a job failed |
 | `secretsmanager:PutSecretValue` | `HfTokenSecret` only | carrying a registered token to the ingest task |
+| `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets` | `*` | buying the engine box (ADR 0077 decision 10). A fleet has no ARN to scope to; the fence is the launch template the call may name and the `iam:PassRole` below |
+| `iam:PassRole` | `EngineInstanceRole` only, `PassedToService: ec2.amazonaws.com` | the launch template carries the instance profile, so the purchase passes that role — the shape of 20-platform's `PassSlotRole` |
+| `iam:CreateServiceLinkedRole` | `iam:AWSServiceName` in `[spot.amazonaws.com, ec2fleet.amazonaws.com]` | the CP's own way out on an account where `standup.sh` never ran |
+
+**What left this policy in ADR 0077**: `ecs:DescribeCapacityProviders`, `ecs:UpdateCapacityProvider`,
+the cluster-scoped `ecs:PutClusterCapacityProviders`, and `iam:PassRole` on the Managed Instances
+`InfraRole` / `InstanceRole`. `ec2:RunInstances` / `TerminateInstances` / `DescribeInstances` /
+`CreateTags` and the three container-instance actions are **not repeated here**: 20-platform
+grants them unconditionally, on every flavour (Sids `Ec2SlotPool` and `EcsContainerInstances`).
+
+🔴 **`ssm:GetParameters` on `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*` is
+required of the CALLER**, and it is in the policy unconditionally. Measured 2026-09-12 (ADR 0077
+P0, open question 3): without it `CreateFleet` fails **top-level** with `SsmAccessDenied`
+("Access denied to SSM"), naming neither the action nor the parameter. The launch template's
+`ImageId` is resolved by whoever calls, not by EC2 on its own behalf. The CP's other
+`ssm:GetParameter` is scoped to `/af-ws/*` and cannot read a public parameter; note the ARN has
+**no account id** in it.
+
+✅ **Two grants that are NOT needed and should not be added** (same run): `ec2:DescribeLaunchTemplates`
+/ `DescribeLaunchTemplateVersions` — `CreateFleet` resolved the template by name with neither —
+and `ec2:CreateTags`, because the request's own `TagSpecifications` **merge** with the launch
+template's: the measured box came up with `af-pool` / `af-role` / `af-engine-offer` /
+`af-engine-buy` from the call and `af-managed-by` from the template. The slot pool needs
+`CreateTags` because it tags after `RunInstances`; this path does not.
+
+🔴 **`iam:PassRole` is checked only on a call that would otherwise launch.** With it removed, a
+`CreateFleet` that had nothing to buy still answered HTTP 200 with per-override capacity errors;
+the one that could buy answered 200 with `ErrorCode: UnauthorizedOperation` **inside `Errors[]`**.
+So an IAM hole is shaped exactly like "no capacity", and `--dry-run` does not catch it
+(`DryRunOperation`, "would have succeeded"). That is the Control Plane's problem to sort — ADR
+0077's P0 follow-up hands it to decision 8's failure-code table — but it is also why this policy
+is not something to trim by experiment.
 
 **`s3:DeleteObject` is on the INGEST task role, and on nothing else.** `MODE=delete` (ADR 0072
 decision 7) is how bytes leave the bucket, and the Control Plane does not hold the permission:
@@ -1702,46 +1666,80 @@ checkpoint ingested for sd-server is already where ComfyUI would look for it.
 ## The model volume
 
 Both engine task definitions mount an ANONYMOUS host volume — an empty `Host`, no `SourcePath`.
-Both halves of that are measured, and both are counter-intuitive:
+On an ordinary EC2 box that is **a Docker anonymous volume**: ECS hands the empty `host` volume
+to Docker, and Docker puts it under its own data-root (`<data-root>/volumes/<id>/_data`). Three
+things follow, and the third is the one that bites:
 
-- **a named `SourcePath` does NOT work.** `StorageConfiguration.storageSizeGiB` sizes the DATA
-  volume Managed Instances attaches (what the container runtime uses); an arbitrary host path
-  like `/var/lib/…` lands on the ROOT filesystem, which is much smaller. Measured: with
-  `SourcePath` the fetch died with "No space left on device" on a brand-new 120 GiB instance, every
-  time, and the service never started at all.
-- **the price of the anonymous form is a fresh directory per task.** An instance that MI keeps
-  (`scaleInAfter -1`) does NOT skip the S3 fetch on the next start — measured, a restart onto the
-  very same instance re-fetched all 18.5 GB (126 s) — and the previous tasks' directories are
-  never reclaimed, so four starts on one kept instance filled the disk.
+- **the models land wherever Docker's data-root is**, which is what lets the launch template's
+  user data move them to the instance store without the task definition knowing anything about
+  it (below). Nothing in `60-engines.yaml`'s task definitions changes for it.
+- **on a type with no instance store they are on the root gp3 volume**, sized by
+  [`<Role>StorageGiB`](#llmstoragegib). The ECS-optimized AMI's own default root is 30 GiB; this
+  template asks for 120 (llm) and 60 (image) instead. A `comfy` deployment holding 30 GB of
+  checkpoints needs the image role's raised.
+- **a fresh directory per task, still.** An anonymous volume is created per container, so a
+  second start on the same box re-fetches everything and the previous copies are not reclaimed
+  until the image/volume cleanup runs.
 
-**2026-09-09: decision 7(c)'s "warm instance" is no longer unproven — it is DISPROVEN**, and
-`*ScaleInAfter` stays at the AWS default rather than `-1` for a reason that can now be stated
-instead of suspected. Four measurements, about four minutes of GPU:
+### The instance store, mounted from user data
 
-- **why the anonymous form re-fetches**, which used to be an observation without a mechanism. A
-  container cannot see the host path of its own bind mount from `df`, but `/proc/self/mountinfo`
-  can, and it says: `/._mnt_task/volumes/<TASK-ID>/volumes/models → /models  ext4 /dev/nvme1n1`.
-  **The task id is IN the path.** Every task gets a new empty directory by construction; no
-  setting changes that, and only a NAMED volume could.
-- **a named `SourcePath` does persist.** Two tasks in a row on the same instance, mounting
-  `/var/lib/af-warm-models`: run 1 MISS and fetched, run 2 **HIT** with the same mtime. The half
-  of decision 7(c) everyone assumed was the hard half works fine.
-- **but it lands on 3.1 GB.** That same mount is `/dev/nvme0n1p8`, a small partition on the ROOT
-  volume — not `/dev/nvme1n1`, the 245 GB data volume where the anonymous volumes live. The
-  1.1 GB probe object fit at 38% full; an 18.5 GB model reproduces the "No space left" above
-  exactly. Persistence without capacity is what this question kept mistaking for progress.
-- **and the data volume has no nameable path.** The AMI is Bottlerocket: mounting the host root
-  gives a 2.7 GB, 100%-full, read-only dm-verity image, and EVERY top-level directory a
-  `SourcePath` could name — `/local`, `/mnt`, `/data`, `/opt`, `/var` — resolves inside that
-  image rather than into the live host's mounts. `/._mnt_task` cannot even be created
-  ("read-only file system"). `useLocalStorage`, which was where this was to be picked up, does
-  not change it: it changes what the data volume IS, not where a `SourcePath` may point.
+🔴 **This is ADR 0077 open question 8, brought forward into P1 because leaving it open is a
+measured regression** (the retired `<Role>UseLocalStorage` was worth roughly half a cold start —
+[`LlmStorageGiB`](#llmstoragegib)). What the launch template's user data does, per role:
 
-So on Managed Instances a warm model volume cannot be built out of host volumes at all, and
-keeping an instance buys only the image layers. The harness is `harness/probe-warm-volume.sh`, which
-prints the DEVICE as well as HIT/MISS so the distinction that took three sessions to see is the
-first thing the next reader gets. What DID pay off is the other half of ADR 0072 open question
-10 — see `LlmUseLocalStorage`.
+```
+DEV=$(lsblk -dno NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1; exit}')
+  -> stop docker, mkfs.xfs, copy /var/lib/docker across, mount the NVMe on /var/lib/docker,
+     start docker
+```
+
+- **Only the first instance-store device is used.** A type with several (g6.12xlarge) leaves the
+  rest unmounted; a RAID0 would be the next step and nobody has needed it.
+- **An EBS-only type matches nothing and is left alone** — `g6e` sizes have no instance store, so
+  they keep the root volume and the paragraph above applies.
+- **The copy is not decoration.** The ECS AMI ships cached agent and pause images inside
+  `/var/lib/docker`; mounting an empty filesystem over them without copying first would make the
+  agent reload them, and `awsvpc` needs the pause image. Every step is chained with `&&` and
+  `docker` is started either way, so a failure anywhere leaves Docker on the root volume rather
+  than leaving the box without a container runtime.
+- **The order works because the ECS agent has not started yet.** User data runs from cloud-init,
+  and the AMI's `ecs.service` is ordered `After=cloud-final.service` — the same fact that makes
+  writing `/etc/ecs/ecs.config` in user data work at all. Docker, which starts earlier, is
+  stopped and restarted explicitly.
+
+⚠️ **Unverified on hardware.** Nothing in this repository has run a GPU box since ADR 0077, so
+the first P1 run must check, on the box: `df /var/lib/docker` (the NVMe, not `/dev/nvme0n1p*`),
+`docker info | grep "Docker Root Dir"`, and that the engine's first fetch writes at NVMe speed
+rather than 125 MB/s. **If it did not mount, the symptom is a slow start and nothing else** —
+which is exactly the shape that goes unnoticed, so look rather than assume.
+
+**Why it is still anonymous** (ADR 0077 decision 6): a named `SourcePath` now WORKS — the AL2023
+GPU AMI is not Bottlerocket — but the box goes when the engine goes idle (decision 5) or when
+Spot takes it (decision 4), so the only case a warm directory would serve is desired 0 -> 1
+inside the idle window, which is the case ADR 0071 decision 5 already decided not to stop in.
+P1 measures what it would save against the measured re-fetch (S3 -> local at 104-147 MB/s,
+6.94 GB in 65 s); if it is a minute, it is not worth having.
+
+### What the Managed Instances era proved
+
+Four
+measurements from 2026-09-09, about four minutes of GPU, are why `<Role>ScaleInAfter: -1` was
+never the answer there:
+
+- a named `SourcePath` DID persist across two tasks on the same instance (run 1 MISS, run 2 HIT,
+  same mtime) — the half everyone assumed was hard;
+- **but it landed on 3.1 GB.** `/dev/nvme0n1p8`, a small partition of the ROOT volume, not the
+  245 GB data volume the anonymous volumes lived on. An 18.5 GB model reproduced
+  `No space left on device` exactly;
+- **and the data volume had no nameable path**: the AMI was Bottlerocket, so every top-level
+  directory a `SourcePath` could name resolved inside a 2.7 GB read-only dm-verity image, and
+  `/._mnt_task` could not even be created. `useLocalStorage` changed what the data volume IS,
+  not where a `SourcePath` may point.
+
+So on Managed Instances a warm model volume could not be built out of host volumes at all. On an
+EC2 box it can — the root volume is one filesystem and `/var/lib/af-engine-models` is a real
+path — which is why ADR 0077 reopens the question instead of inheriting the verdict. The harness
+is `harness/probe-warm-volume.sh` (Managed Instances-era, gated: see its header).
 
 ## The engine table
 
@@ -1760,24 +1758,28 @@ or 2 rows (each role is staged independently), which the Control Plane reads onc
 
 **`health` and `provider` on the image row follow `ImageEngine`** (ADR 0072 decision 4): `comfy`
 writes `/system_stats` and `comfy`, `sdcpp` writes `/v1/models` and `sdcpp`. Nothing else in the
-row changes — `url`, `capacityProvider` and `service` are the same regardless, because it is
+row changes — `url`, `launchTemplate` and `service` are the same regardless, because it is
 still one role, one service.
 
-**Three fields carry ADR 0075's offers** (the contract between this template and the Control
-Plane; the existing fields are untouched, so a CP that predates them reads the table it always
-did):
+**Three fields carry how the box is bought** (the contract between this template and the
+Control Plane):
 
 | Field | Value | Empty means |
 | --- | --- | --- |
-| `spotCapacityProvider` | `!Ref ImageSpotCapacityProvider` on the image row, `""` on the llm row | this role has no Spot wallet — it buys on demand or not at all |
+| `launchTemplate` | `!Ref <Role>LaunchTemplate`, i.e. the `lt-...` id | the role cannot buy a box at all |
 | `offers` | `<Role>Offers` verbatim | read `classes` as the offer list, every row on demand |
 | `offerBudgetSec` | `<Role>OfferBudgetSec` | — (a number, never empty) |
 
-🔴 **`capacityProvider` and `spotCapacityProvider` are a PAIR and are read as one.** The box the
-role is running on is behind whichever of the two the service's strategy currently names, so the
-`draining` watch and the `box` match have to accept both — a match against one name only reports
-`box: null` for a box that exists and is billing, which is the shape the 2026-09-11 rename
-produced ([the capacity providers](#the-capacity-providers)).
+🔴 **`launchTemplate` replaced the `capacityProvider` / `spotCapacityProvider` pair** in ADR 0077,
+and it is the seam between this template and the Control Plane: a CP that predates the change
+looks for the two old names, finds neither, and has nothing to buy through. **Deploy the Control
+Plane first.** Written as a `!Ref` and never restated as a `!Sub` string, for the reason the pair
+was: a table naming a template that does not exist fails at the first purchase and nowhere else.
+
+The pair's own trap is worth keeping in mind, because it is what this shape removes: two names
+travelled together, the box was behind whichever the service's strategy currently named, and a
+watch against one of them reported `box: null` for a box that existed and was billing (measured
+2026-09-11). There is one name now, and the box is found by its tags rather than by a provider.
 
 **`api`** tells the reader what KIND of endpoint a row is, and it decides two things that would
 otherwise be guessed from the key: whether the Agent writes an opencode chat provider for it — an
@@ -1803,8 +1805,8 @@ an autoload nor resets the router's idle timer (upstream README), so polling it 
 `modelS3Key` were written here until ADR 0072 phase P6 retired them
 ([above](#upgrading-the-model-parameters-are-gone)); the Control Plane still parses a table that
 carries them, because the CP is upgraded before the stack is, and ignores what they say. What is
-left is the vessel (service, URL, health path, warm path, the two capacity providers, classes,
-offers, idle window, start deadline, mode), which really is the stack's to declare.
+left is the vessel (service, URL, health path, warm path, the launch template, classes, offers,
+idle window, start deadline, mode), which really is the stack's to declare.
 
 **The `ingest` object in the same value** is what the Control Plane needs to START an ingest
 and to read why one failed: the task-definition family, the subnets, the security group, the log
@@ -1832,15 +1834,16 @@ and switching a key on is not retroactive, which is why the tags go on before th
 
 | Resource | `af-role` | How it reaches the bill |
 |---|---|---|
-| `LlmCapacityProvider` / `ImageCapacityProvider` | `engine-llm` / `engine-image` | `PropagateTags: CAPACITY_PROVIDER` — the MI instance is the billed unit |
-| `LlmService` / `ImageService` | `engine-llm` / `engine-image` | `PropagateTags: SERVICE` — the MI management fee is billed against the task |
+| the engine box | `engine-llm` / `engine-image` | the Control Plane writes `af-role` / `af-pool` at `CreateFleet`, as it does for a slot at `RunInstances` — the instance and its root volume are the billed unit |
+| `LlmService` / `ImageService` | `engine-llm` / `engine-image` | `PropagateTags: SERVICE` — the task carries the role for anything billed against it |
 | `ModelsBucket` | `engine-models` | bucket tags; S3 storage for the staged GGUF / checkpoints |
 | `LogGroup` | `engine-logs` | log group tags; CloudWatch ingestion and storage |
 
 Measured on af-sandbox over 2026-09-01..08 (one Cost Explorer request, grouped by `af-role` and
-SERVICE): `engine-llm` $5.18, `engine-image` $0.73 — of which $0.37 and $0.05 arrive as "Amazon
-Elastic Container Service" rather than EC2, i.e. the Managed Instances fee DOES inherit the
-service's tags, and $0.08 as "EC2 - Other" for the data volume. None of it carries
+SERVICE): `engine-llm` $5.18, `engine-image` $0.73 — of which $0.37 and $0.05 arrived as "Amazon
+Elastic Container Service" rather than EC2, i.e. the Managed Instances fee DID inherit the
+service's tags (that fee is gone with ADR 0077, and the same spend now arrives as EC2), and
+$0.08 as "EC2 - Other" for the data volume. None of it carries
 `af-membership`, so all of it lands in the shared bucket and none of it is ever charged to a
 person.
 

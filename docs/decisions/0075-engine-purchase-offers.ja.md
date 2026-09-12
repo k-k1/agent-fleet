@@ -1216,3 +1216,24 @@ for capacity provider af-<stack>-image-spot. MaxSpotInstanceCountExceeded: …
 - **settling 中は開始の門（0074 決定 5 の再適用）を再実行しない。** 5 秒ごとに回すと 1 起動で
   `UpdateCapacityProvider` が 30 回・VRAM のログが 30 行になる。状態は提案の run が持ち、コントローラ・
   管理トグル・ゲートウェイの待ち合わせが同じ 1 か所を見る。
+
+## 追記 — ADR 0077 がこの決定を覆した（2026-09-12）
+
+[ADR 0077](0077-engine-boxes-bought-by-cp.ja.md) は、エンジンの箱を買う役を ECS Managed
+Instances からコントロールプレーンへ移した（launch template に対する `CreateFleet(type=instant)`
+で買い、サービスは EC2 の launch type で走る）。上の本文は 1 文字も変えていない。以下は 0077 の
+「上書きする既存の決定」の表のうち、この ADR の決定の行そのものである。表に無いものは覆っていない。
+
+| 決定 | 何が変わるか | 変わらないもの |
+|---|---|---|
+| 決定 3「役ごとに provider を 2 本」 | **消える** | 提案一覧の書式・`buy` 欄 |
+| 決定 4「strategy は running 0 のときだけ」 | **消える**（strategy が無い） | running 1 以上で箱を替えない（0077 決定 5 の退場待ち） |
+| 決定 5「予算と失敗コード」 | 予算は**登録待ちの上限**へ縮み、失敗コードは `CreateFleet` の応答へ移る | 一周したら cooldown／監査 1 行 |
+| 決定 6「中断」 | 検出に `describe-instances` を使える（箱を列挙できる） | 中断は失敗に数えない／2 回続けば飛ばす |
+| 決定 11「パネルは service の strategy から言う」 | **箱のタグから言う**（`af-engine-offer` / `af-engine-buy`） | EC2 の価格には訊かない（`describe-instances` は読む） |
+| 決定 12「再適用は provider に限る／CFN が strategy を戻す」 | **消える** | — |
+
+決定 1・2・7・8・9・10 は立ち、上の実機の実測もすべて残る。0077 が在るのは、この ADR 自身の
+見直し条件が成立したから——却下案「EC2 Fleet / Auto Scaling group へ移す」に書いた
+「規則 2 の実装が『AWS も再試行し、その上で CP も再試行する』形になったら、この却下を見直す」が、
+実機 3 巡でそのままの形で出た。運用者の 3 つの規則は一字も変わっていない。変わったのは買う人だけ。
