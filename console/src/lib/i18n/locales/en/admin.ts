@@ -314,6 +314,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_offer_result_insufficient": "no capacity",
   "admin.engines_offer_result_quota": "quota",
   "admin.engines_offer_result_budget": "budget spent",
+  "admin.engines_offer_result_unusable": "cannot be asked for",
+  "admin.engines_offer_result_interrupted": "taken away",
   "admin.engines_class_pending": "What is running is a {t} instance. The class you chose applies to the NEXT instance. Replacing it costs one cold start (about 9 minutes for llm, 3 for image), and the new instance does not start until the old one has left.",
   "admin.engines_class_replace": "Replace it now",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a

@@ -55,6 +55,12 @@ const (
 	// ADR 0075 it timed "did this provider produce a box", which is the question `CreateFleet`
 	// answers in one call, so what is left to time is the box's own boot → ECS registration.
 	engineOfferBudget = "budget"
+	// engineOfferInterrupted is the offer whose box was TAKEN AWAY (ADR 0077 decision 4): a Spot
+	// reclaim, or anything else that ends the instance while the service still wants a task. It
+	// is not a failure — rule 3 of what the operator asked for is "a Spot box dying suddenly is
+	// acceptable, and the rebuild handles it" — and it is in the trail because "why is it on this
+	// box" has to be answerable after one.
+	engineOfferInterrupted = "interrupted"
 	// engineOfferUnusable is the offer that could not even be ASKED for. Under ADR 0075 that was
 	// `UpdateCapacityProvider` refusing a rung (400, "No instance types satisfy the instance
 	// requirements") while the provider still held the PREVIOUS offer's declaration; here a
@@ -119,6 +125,16 @@ type engineOfferRun struct {
 	// noOffer is whether the refusal of decision 2 has already been recorded. Without it, an
 	// engine whose models outgrew every offer would audit a line every tick.
 	noOffer bool
+	// rebuild is true while this walk is decision 4's REBUILD rather than a start: the desired
+	// count is already 1 and the task is PENDING, so the walk buys a box and writes nothing.
+	// Told apart from a start because the two end differently, and because the departure sweep
+	// has to stand down for both.
+	rebuild bool
+	// skipOffer holds the offers an interruption has taken off the table for this demand: an
+	// offer interrupted TWICE IN A ROW is skipped for the rest of it (decision 4, inherited from
+	// ADR 0075 decision 6). lastInterrupted is what "in a row" is measured against.
+	skipOffer       map[string]bool
+	lastInterrupted string
 	// budgetSec is how long one offer's box is given to register, live. Carried here rather than
 	// read off the row this process started with, because the engine table is re-read while the
 	// CP runs and an operator raising the budget must not need a Control Plane replacement to be
@@ -184,8 +200,75 @@ func (r *engineOfferRun) begin(list []engineClass) {
 	defer r.mu.Unlock()
 	r.list = append([]engineClass(nil), list...)
 	r.idx, r.trail, r.noOffer = 0, nil, false
-	r.skipBuy = map[string]bool{}
-	r.box, r.since = "", time.Time{}
+	r.skipBuy, r.skipOffer = map[string]bool{}, map[string]bool{}
+	r.box, r.since, r.rebuild, r.lastInterrupted = "", time.Time{}, false, ""
+}
+
+// restart puts the walk back at the top of the list after an interruption (decision 4).
+//
+// 🔴 It is NOT begin(): the demand has not changed, so the trail and both skip lists are KEPT. A
+// trail that forgot the interruption would answer "why is this engine on this box" with the box
+// that was taken away, and a skip list that forgot would buy the same reclaimed offer for ever.
+// It reports the offer to try, and false when every candidate has been skipped.
+func (r *engineOfferRun) restart(list []engineClass) (engineClass, bool) {
+	if r == nil {
+		return engineClass{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.list = append([]engineClass(nil), list...)
+	r.box, r.since, r.rebuild = "", time.Time{}, true
+	for i := range r.list {
+		if r.skipBuy[r.list[i].buy()] || r.skipOffer[r.list[i].ID] {
+			continue
+		}
+		r.idx = i
+		return r.list[i], true
+	}
+	r.idx = len(r.list)
+	return engineClass{}, false
+}
+
+// rebuildAbandoned reports whether a rebuild is in flight for a service that no longer wants a
+// task. Its box has to be ended by the caller: nothing would drive the walk again.
+func (r *engineOfferRun) rebuildAbandoned(desired int32) bool {
+	if r == nil || desired >= 1 {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rebuild && r.box != ""
+}
+
+// rebuilding reports whether the walk in flight is a rebuild.
+func (r *engineOfferRun) rebuilding() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rebuild && r.box != ""
+}
+
+// noteInterrupted records that the current offer's box was taken away, and reports whether that
+// was the SECOND in a row for this offer — which takes it off the table for the rest of this
+// demand (decision 4). "In a row" is per offer and not per demand: an offer that was reclaimed,
+// then replaced by another that was also reclaimed, gets its second chance.
+func (r *engineOfferRun) noteInterrupted(id string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.skipOffer == nil {
+		r.skipOffer = map[string]bool{}
+	}
+	twice := r.lastInterrupted == id && id != ""
+	r.lastInterrupted = id
+	if twice {
+		r.skipOffer[id] = true
+	}
+	return twice
 }
 
 // current is the offer this walk is on.
@@ -237,7 +320,7 @@ func (r *engineOfferRun) dropBox() {
 		return
 	}
 	r.mu.Lock()
-	r.box, r.since = "", time.Time{}
+	r.box, r.since, r.rebuild = "", time.Time{}, false
 	r.mu.Unlock()
 }
 
@@ -294,7 +377,7 @@ func (r *engineOfferRun) advance() (engineClass, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i := r.idx + 1; i < len(r.list); i++ {
-		if r.skipBuy[r.list[i].buy()] {
+		if r.skipBuy[r.list[i].buy()] || r.skipOffer[r.list[i].ID] {
 			continue
 		}
 		r.idx = i
@@ -340,9 +423,11 @@ func (r *engineOfferRun) attempts() []engineOfferAttempt {
 // zero.
 //
 // The hooks also stand or fall together. startGate CHOOSES the offer, startWith is decision 1
-// and 2 (buy, wait, then desired 1), and boxStep is decision 5 (the box goes when the service
-// does). A gate with no start path would pick an offer nobody buys; a start path with no
-// departure would leave a GPU running after the idle window closed.
+// and 2 (buy, wait, then desired 1), boxStep is decision 5 (the box goes when the service does)
+// and rebuildStep is decision 4 (the box was taken away). A gate with no start path would pick an
+// offer nobody buys; a start path with no departure would leave a GPU running after the idle
+// window closed; a departure with no rebuild would leave a reclaimed Spot box as an engine that
+// is `starting` for ever.
 func (e *engineRuntimeState) wireOffers(fleet *engineFleet) {
 	if e == nil || len(e.classList()) == 0 || fleet == nil {
 		return
@@ -363,6 +448,7 @@ func (e *engineRuntimeState) wireOffers(fleet *engineFleet) {
 	e.ctrl.startWith = e.startOnOffer
 	e.ctrl.startSettling = e.offers.startInFlight
 	e.ctrl.boxStep = e.sweepBoxes
+	e.ctrl.rebuildStep = e.stepRebuild
 }
 
 // setOfferBudget takes a new registration ceiling from the table, reporting whether it changed.
@@ -430,8 +516,7 @@ func (e *engineRuntimeState) candidateOffers(ctx context.Context) []engineClass 
 // Each iteration either returns or moves the walk on by one, so the loop is bounded by the
 // candidate list.
 func (e *engineRuntimeState) startOnOffer(ctx context.Context) error {
-	c, ok := e.offers.current()
-	if !ok {
+	if _, ok := e.offers.current(); !ok {
 		// No walk in progress. The only way here is a start that did not come through the gate,
 		// and starting the plain way is the same behaviour as every deployment without offers.
 		return e.ecs.setEnabled(ctx, true)
@@ -448,6 +533,24 @@ func (e *engineRuntimeState) startOnOffer(ctx context.Context) error {
 	if v, err := e.ecs.view(ctx); err == nil && v.desired >= 1 {
 		return nil
 	}
+	return e.walkOffers(ctx, true)
+}
+
+// walkOffers is the purchase walk itself, and both a start and a REBUILD (decision 4) are it.
+//
+// `ask` is the one difference: a start writes the desired count once its box has registered, and
+// a rebuild does not — the count is already 1 and the task is PENDING, so ECS places it on the
+// new box by itself the moment it registers. Writing it again would be a call that buys nothing;
+// NOT writing it is what makes the rebuild synchronous and free of ADR 0075 decision 6's
+// restriction ("write only when the first candidate differs from the current provider", which
+// existed to avoid racing ECS's own re-placement — ECS buys nothing here).
+//
+// The caller holds startMu.
+func (e *engineRuntimeState) walkOffers(ctx context.Context, ask bool) error {
+	c, ok := e.offers.current()
+	if !ok {
+		return nil
+	}
 	after := ""
 	for {
 		if id := e.offers.boxID(); id != "" {
@@ -456,17 +559,21 @@ func (e *engineRuntimeState) startOnOffer(ctx context.Context) error {
 				// The box is in the cluster and ECS will place on it. This is the only line that
 				// asks for a task, and it carries the desired count alone — no strategy, no
 				// forced deployment, nothing that could replace a running one.
-				log.Printf("engines: %s: the box %s registered; asking for the task", e.def.Key, id)
-				if err := e.ecs.setEnabled(ctx, true); err != nil {
-					return err
+				log.Printf("engines: %s: the box %s registered (%s)", e.def.Key, id,
+					map[bool]string{true: "asking for the task", false: "the pending task goes to it"}[ask])
+				if ask {
+					if err := e.ecs.setEnabled(ctx, true); err != nil {
+						return err
+					}
 				}
-				// 🔴 THE START IS OVER, AND FORGETTING THE BOX IS WHAT ENDS IT. `startInFlight`
+				// 🔴 THE WALK IS OVER, AND FORGETTING THE BOX IS WHAT ENDS IT. `startInFlight`
 				// means "bought and the desired count not written yet", and the departure sweep
 				// stands down while it is true; until this line the only things that cleared it
 				// were the registration ceiling and the next start, so a start that SUCCEEDED
 				// left it true for ever and decision 5's departure never ran once. Measured on
-				// hardware twice (ADR 0077 P1 run): `mode=off`, the task gone, and the box still
-				// running four minutes later — terminated by hand.
+				// hardware (ADR 0077 P1 run): `mode=off`, the task gone, and the box still
+				// running four minutes later — terminated by hand. A rebuild ends here the same
+				// way, which is what lets the sweep collect the box after the NEXT idle window.
 				e.offers.dropBox()
 				return nil
 			}
@@ -539,6 +646,101 @@ func (e *engineRuntimeState) startEngine(ctx context.Context) error {
 	return e.ecs.setEnabled(ctx, true)
 }
 
+// --- decision 4: the box was taken away -------------------------------------------------
+
+// stepRebuild is decision 4, asked on every tick while the service still wants a task.
+//
+// 🔴 An interruption is read as an EC2 FACT, and that is the whole of what ADR 0077 could change
+// about ADR 0075 decision 6's design. Under Managed Instances a box could not be enumerated at
+// all, so "was it taken away" had to be guessed from the service's own states; a box the CP
+// bought answers `describe-instances` by tag, so the two conditions the ADR names can both be
+// read: the service went `running` → `starting` with the desired count still 1, and NO box
+// tagged for this role is `pending` or `running` any more.
+//
+// ⚠️ THE SECOND CONDITION IS WHAT KEEPS THIS FROM FIRING ON AN ORDINARY REPLACEMENT. A task that
+// was OOM-killed or failed its health check (measured in ADR 0071 P0) produces exactly the same
+// service transition with the box still there — and rebuilding then would buy a second GPU for a
+// task ECS is already placing on the first one.
+//
+// It returns the walk's error, which the controller turns into a failure or not: an interruption
+// is NOT a failure (rule 3: a Spot box dying suddenly is acceptable), a rebuild that cannot get a
+// box by the registration ceiling is.
+func (e *engineRuntimeState) stepRebuild(ctx context.Context, view engineServiceView, replaced bool) error {
+	if e == nil || e.fleet == nil {
+		return nil
+	}
+	e.startMu.Lock()
+	defer e.startMu.Unlock()
+	// 🔴 Abandoned BEFORE walked, because the two conditions overlap and this one wins: the
+	// engine was switched off while its replacement box was still booting. A rebuild exists to
+	// put a PENDING task back on hardware; with the task withdrawn there is nothing to put
+	// anywhere, and the box is ours and billing. Nothing would drive this walk again either —
+	// the rebuild's premise is a task the service wants — so the box goes here rather than
+	// waiting for the sweep's ceiling backstop.
+	if e.offers.rebuildAbandoned(view.desired) {
+		if id := e.offers.boxID(); id != "" {
+			e.endBox(ctx, id, "the engine stopped while its replacement box was still registering")
+		}
+		e.offers.dropBox()
+		return nil
+	}
+	if e.offers.rebuilding() {
+		// A rebuild is already under way: keep walking it. This is the tick that notices the
+		// registration ceiling and moves to the next offer — nothing else drives the walk once
+		// the desired count is 1, because the controller's own decision is "do nothing" then.
+		return e.walkOffers(ctx, false)
+	}
+	if view.desired < 1 || !replaced || e.offers.startInFlight() {
+		return nil
+	}
+	if b, ok := e.fleet.current(ctx); ok {
+		log.Printf("engines: %s: the task was replaced but the box %s is still here; not a rebuild",
+			e.def.Key, b.instanceID)
+		return nil
+	}
+	cur, had := e.offers.current()
+	if twice := e.offers.noteInterrupted(cur.ID); twice {
+		log.Printf("engines: %s: the offer %s has been interrupted twice in a row; skipping it for this demand",
+			e.def.Key, cur.ID)
+	}
+	if had {
+		e.offers.settle(engineOfferInterrupted)
+	}
+	e.noteInterrupted(ctx, cur)
+	// From the TOP of the list, as decision 4 says: the cheapest offer that fits is the one the
+	// operator asked for, and an interruption says nothing about the offers above the one that
+	// was reclaimed. The candidates are re-derived because the catalogue may have moved since
+	// this demand began; the skip lists are what the restart keeps.
+	next, ok := e.offers.restart(e.candidateOffers(ctx))
+	if !ok {
+		log.Printf("engines: %s: the box was taken away and every offer has been skipped (%s)",
+			e.def.Key, e.offerTrailLine())
+		return errEngineOffersSpent
+	}
+	log.Printf("engines: %s: the box was taken away; rebuilding from %s (%s)", e.def.Key, next.ID, next.buy())
+	return e.walkOffers(ctx, false)
+}
+
+// noteInterrupted is the one audit line per interruption (decision 4). It is not a charge anybody
+// decided to make, and it is the only place the operator can see that a box they are paying for
+// was taken away and replaced.
+func (e *engineRuntimeState) noteInterrupted(ctx context.Context, c engineClass) {
+	if e == nil || e.audit == nil {
+		return
+	}
+	target := c.ID
+	if target == "" {
+		// A CP replaced mid-demand remembers no offer. The interruption is still worth a line:
+		// the box is gone either way, and the tags on the next one say what replaced it.
+		target = "none"
+	}
+	_ = e.audit.InsertAudit(context.WithoutCancel(ctx), store.AuditLog{
+		ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "engine-" + e.def.Key + "-controller",
+		Action: "engine." + e.def.Key + ".interrupted", Target: target,
+		Detail: "the box was taken away while the service still wanted a task", At: store.NowTS(),
+	})
+}
+
 // --- decision 5: the box leaves when the service does -----------------------------------
 
 // engineBoxDepartGrace is how old a box has to be before a sweep at desired 0 may end it. It
@@ -570,14 +772,23 @@ func (e *engineRuntimeState) sweepBoxes(ctx context.Context, view engineServiceV
 	if e == nil || e.fleet == nil {
 		return
 	}
-	if e.offers.startInFlight() {
-		// A box we bought seconds ago has no task on it BY CONSTRUCTION — the desired count is
-		// what comes after it registers. Sweeping here would terminate every start.
+	// A box bought seconds ago has no task on it BY CONSTRUCTION — the desired count is what
+	// comes after it registers — so the sweep stands down for a walk in flight. But only INSIDE
+	// THE REGISTRATION CEILING, with the walk's own slack on top: past that the walk itself would
+	// have ended the box, and a box that is neither registered nor claimed by a walk anybody is
+	// driving is exactly a stray. That is what covers the walk nobody drives any more — a start
+	// or a rebuild whose engine was switched off while its box was still booting, which has no
+	// path back into walkOffers at all.
+	if waited, inFlight := e.offers.waitedForBox(); inFlight && waited < e.offers.budget()+engineBoxDepartGrace {
 		return
 	}
 	registered := map[string]engineBox{}
+	busy := 0
 	for _, b := range e.ecs.boxes(ctx) {
 		registered[b.instanceID] = b
+		if b.tasks > 0 {
+			busy++
+		}
 	}
 	live := map[string]bool{}
 	for _, fb := range e.fleet.boxes(ctx) {
@@ -591,9 +802,18 @@ func (e *engineRuntimeState) sweepBoxes(ctx context.Context, view engineServiceV
 		}
 		grace, why := engineBoxDepartGrace, "the engine is stopped and nothing is running on it"
 		if view.desired >= 1 {
-			// The engine wants a box, and one of them is presumably running its task. A second
-			// one with nothing on it is the two-box failure, but only after long enough that it
-			// cannot be a task still being placed.
+			// The engine wants a box. A second one with nothing on it is the two-box failure —
+			// but only when ANOTHER box is actually carrying the task, and only after long
+			// enough that it cannot be one still being placed.
+			//
+			// 🔴 Both halves are needed. Without the "another box is busy" half, an ordinary task
+			// REPLACEMENT — the OOM kill ADR 0071 P0 measured, a failed health check — shows up
+			// here as the engine's only box with zero tasks on it, and terminating that turns a
+			// restart ECS was already handling into a box purchase (decision 4's rebuild would
+			// then buy one, so the cost is real).
+			if busy == 0 {
+				continue
+			}
 			grace, why = engineBoxStrayAfter, "it is a second box with no task on it"
 		}
 		if !fb.launchedAt.IsZero() && time.Since(fb.launchedAt) < grace {
