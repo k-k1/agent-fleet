@@ -408,15 +408,23 @@ there is none, the post-back is a no-op, and **no unrelated workspace's ledger i
 Two ledgers recording the same conversation is correct: one deployment consumed it, the other
 paid for it.
 
-🔴 **The image role writes no ledger row on either side, and the draft said otherwise.**
+🔴 **The image role writes no ENGINE usage row on either side, and the draft said otherwise.**
 `engineUsageRowFor` refuses any row whose `api` is not `chat` (`engine_usage.go:170-172`), so
 `recordUsage` stops at `noteServed` — the in-memory warm-model note — and returns. This is
-pre-existing and deliberate (an image answer carries no token counts), but it has two consequences
-this ADR has to own:
+pre-existing and deliberate (an image answer carries no token counts), but it has consequences this
+ADR has to own:
 
-- The far operator gets **no per-borrower record of a borrowed generation at all**: a demand mark,
-  a warm-model note in one process's memory, and nothing durable. Attributing borrowed image spend
-  is therefore an open question (7), not something decision 8 already solved.
+- The borrower's own record survives: the Agent writes the picture into its own ledger as
+  `tool.imagegen`, with a count and a pixel figure rather than tokens
+  (`workspace/agent/engines.go:403`, ADR 0069). So a borrowed generation is not invisible HERE.
+- 🔴 The far operator, on the other hand, gets **no durable record of a borrowed generation at
+  all**: a demand mark and a warm-model note in one process's memory. Attributing borrowed image
+  spend is therefore an open question (7), not something decision 8 already solved.
+- ⚠️ And for the image role there is no session name to pass on in the first place. The Agent asks
+  the local CP for a WORKSPACE-scoped engine token there (an empty session, deliberately — that
+  credential never leaves the Agent's process, and the usage row is written Agent-side anyway,
+  `workspace/agent/engines.go:399-405`), so the claims the far token is bought with carry no
+  session. Decision 8 is a statement about the llm role twice over.
 - P0's completion test has to change. "The far side's usage row carries the local session's name"
   is provable through the borrowed **llm** role and not through `generate_image`.
 
