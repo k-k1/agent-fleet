@@ -1426,7 +1426,7 @@ stdout に書き、スタックのパラメータも一緒に動いた:
 
 | 検査項目 | 判定 | 証拠 |
 |---|---|---|
-| **箱は 1 台だけ** | 🟢 | CloudTrail の `CreateFleet` はこの午後**ちょうど 2 回**、1 巡につき 1 回。どの標本でも `af-role=engine-image` の生きた箱は 1 台を超えない。クラスタの container instance は 4 → 5 → 4 を 2 度 |
+| **箱は 1 台だけ** | 🟢 | 09:15 UTC 以降の CloudTrail で `CreateFleet` は**ちょうど 2 回**、1 巡につき 1 回。どの標本でも `af-role=engine-image` の生きた箱は 1 台を超えない。クラスタの container instance は 4 → 5 → 4 を 2 度 |
 | 購入 → 箱の登録 | 🟢 **45 秒** | `CreateFleet` 09:15:43、`engines: image: the box i-00fc158ca3f562466 registered; asking for the task` 09:16:28。2 巡目は **44 秒**。効いていた上限は 300 秒 |
 | 登録と同じ秒に desired が上がる | 🟢 | CloudTrail の `UpdateService` は上のログ行と同じ **09:16:28**。1 回目の実測の再現であり、0075 の 2 分 35 秒の落ち着き待ちは相変わらず形を持たない |
 | Spot の行が埋まる | 🟢 | `spot3` が **`g5.xlarge`**（`InstanceLifecycle: spot`・ap-northeast-1a）を 2 巡とも買った。g6e は一度も無い。1 回目はこの行が成功する所を見ていない——launch template を直す前に、Spot の箱は 2 台とも登録の上限で死んでいた |

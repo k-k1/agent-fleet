@@ -1599,7 +1599,7 @@ The first row filled, so the walk was one row long: `offer_trail` `[spot3 active
 
 | Check | Result | Evidence |
 |---|---|---|
-| **exactly one box** | 🟢 | CloudTrail has exactly **two `CreateFleet` calls** all afternoon, one per lap. At no sample was more than one `af-role=engine-image` instance alive; the cluster's container instances went 4 → 5 → 4 twice |
+| **exactly one box** | 🟢 | CloudTrail from 09:15 UTC has exactly **two `CreateFleet` calls**, one per lap. At no sample was more than one `af-role=engine-image` instance alive; the cluster's container instances went 4 → 5 → 4 twice |
 | buy → box registered | 🟢 **45 s** | `CreateFleet` 09:15:43, `engines: image: the box i-00fc158ca3f562466 registered; asking for the task` 09:16:28. Lap 2: **44 s**. The ceiling in force was 300 s |
 | the desired count goes up in the same second as the registration | 🟢 | the `UpdateService` in CloudTrail is at **09:16:28**, the second of the log line above. Run 1's finding reproduced, and 0075's 2 min 35 s settle wait still has no shape to take |
 | the Spot row is the one that fills | 🟢 | `spot3` bought a **`g5.xlarge`**, `InstanceLifecycle: spot`, ap-northeast-1a, on both laps — never a g6e. Run 1 never saw this row succeed: both of its Spot boxes died at the registration ceiling before the launch template was fixed |
