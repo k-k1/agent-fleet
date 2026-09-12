@@ -204,6 +204,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // Fills the ingest form from a search card. Not "ingest": it fills, and resolve → accept →
   // ingest still runs from there unchanged.
   "admin.engines_ingest_hit_pick": "Use this",
+  // Heads the card the form was filled from, kept after the results list is gone. The link to
+  // the page, the trigger words and the licence are on that card and nowhere else, and the
+  // repository field below is an id like `civitai:1759168` — so dropping it left no way to
+  // check what is about to be taken in.
+  "admin.engines_ingest_picked": "Chosen result",
   "admin.engines_ingest_repo": "repository",
   "admin.engines_ingest_file": "file name",
   // With a plain https URL pasted above, this field is the sha256 rather than a file name
