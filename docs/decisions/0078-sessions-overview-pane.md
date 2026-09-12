@@ -243,9 +243,20 @@ gauge plus the token-spend sparkline.
   until the session has answered once.
 - **The gauge is borrowed, not rebuilt** — the same reason as decisions 5 and 7. Two arithmetics
   for "how full is it" would drift apart, and the card would contradict the chat. The card
-  changes only the **scale**: the labels are always the short forms (`ctx` / `token`) and the row
-  wraps into two (overview.css). A card is **never wide** — the grid's floor is 240px — so the
-  pane-width `@container paneview` fold the mirror uses is not enough here.
+  changes only the **scale** (overview.css).
+- **ctx and token sit side by side on one row** (the user's call, 2026-09-12), as they do in the
+  mirror — but **not the mirror's even 50/50**: the gauge's own label and figure
+  (`ctx … 216k / 1M・97%`) are wider than the trend's, and an even split starves the bar. **3:2**
+  (4:2 on a narrow card) is what measured clear at every width.
+- **Always the short labels** (`ctx` / `token`): a card is **never wide** — the grid's floor is
+  240px — so the pane-width `@container paneview` fold the mirror uses is not enough here. On a
+  **narrow card** (`@container ovwcard (max-width: 320px)`, the state chip's own breakpoint) the
+  words go entirely. What gives way is the WORDS, not the figures: a segmented bar and a
+  sparkline do not look alike and the tooltip names both, while the figure is the very thing the
+  gauge is read for.
+- **The peak figure ("peak 9.9k") is dropped.** That is the seat the side-by-side row was paid
+  for. A sparkline is read for its SHAPE — which turns were heavy — and the exact peak is in the
+  tooltip.
 - **The trend had no source in the DTO.** The mirror's sparkline is built from per-turn spend in
   the transcript, and the list holds no transcript. **`tokenSpends` was added to the Agent** (the
   same four relay points as decision 12).
@@ -258,9 +269,9 @@ gauge plus the token-spend sparkline.
   is kept, since the sparkline cannot draw fewer either.
 - **Capped at 24 points.** The card's sparkline is about 120px wide; beyond that they are pixels
   nobody can tell apart, carried per session every 4 seconds.
-- **The card grows from 97px to 160px** (measured, the same at all three widths). **Fewer cards
-  fit on screen** — about six or seven down to four on a phone. That is the trade the user asked
-  for, written down here.
+- **The card grows from 97px to 140px** (measured, the same at all four widths; the first
+  version, which stacked the two, was 160px). **Fewer cards fit on screen** — about six or seven
+  down to four or five on a phone. That is the trade the user asked for, written down here.
 
 ## Options rejected
 

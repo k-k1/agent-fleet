@@ -264,15 +264,20 @@
   padding: 0;
   border-bottom: 0;
   background: none;
-  gap: 4px 8px;
+  gap: 6px;
   font-size: 10.5px;
-  /* The gauge and the trend take a line each. Side by side they would each get half of a
-     240px card, which is narrower than either one's own label plus its figure. */
-  flex-wrap: wrap;
 }
-.ovw-ctx .cb-ctx,
+/* Gauge and trend sit on ONE row, as they do in the mirror (the user's call, 2026-09-12).
+   NOT the mirror's even 50/50 though: at a card's width an even split starves the gauge,
+   whose own label and figure ("ctx … 216k / 1M・22%") are wider than the trend's. 3:2 is what
+   measured clear of overflow at every width a card can take, down to the grid's 240px floor. */
+.ovw-ctx .cb-ctx {
+  flex: 3 1 0;
+  gap: 5px;
+}
 .ovw-ctx .cb-trend {
-  flex: 1 1 100%;
+  flex: 2 1 0;
+  gap: 5px;
 }
 /* Always the short labels ("ctx" / "token"): a card is never wide — the grid's floor is
    240px — so the full wording never fits, whatever the PANE's width says. The tooltip keeps
@@ -283,15 +288,36 @@
 .ovw-ctx .cb-lbl-short {
   display: inline;
 }
-/* A divider between two rows that are stacked, not side by side, is just a dash. */
-.ovw-ctx .cb-div {
+/* The peak figure is what gives way to put the two side by side. The sparkline is read for
+   its SHAPE — which turns were heavy — and the exact peak is in the tooltip. */
+.ovw-ctx .cb-trend-peak {
   display: none;
 }
+/* Both floors come down from the mirror's 40px: on the narrowest card the room left after the
+   labels and the gauge's figure is less than that, and a bar or a line 24px wide still reads. */
 .ovw-ctx .cb-track {
   height: 5px;
+  min-width: 24px;
 }
 .ovw-ctx .cb-trend .spark {
   height: 12px;
+  min-width: 24px;
+}
+/* A narrow card cannot have the words AND the figures on one row: measured at the grid's 240px
+   floor, "ctx" + the bar + "970k / 1M・97%" (with its warning icon) runs 31px past the half it
+   is given. The WORDS give way, because a segmented bar and a sparkline do not look alike and
+   the tooltip names both — where dropping the figure would take the one number the gauge is
+   read for. The gauge also takes a larger share here, its figure being the wider of the two.
+   Same breakpoint as the state chip's fold above: a card should not have two vocabularies for
+   "narrow". */
+@container ovwcard (max-width: 320px) {
+  .ovw-ctx .cb-ctx-label,
+  .ovw-ctx .cb-trend-label {
+    display: none;
+  }
+  .ovw-ctx .cb-ctx {
+    flex: 4 1 0;
+  }
 }
 /* The agent's newest utterance (ADR 0078 decision 12). ONE line, ellipsized: the text arrives
    already folded and capped by the Agent, so this only has to refuse to wrap — a card that
