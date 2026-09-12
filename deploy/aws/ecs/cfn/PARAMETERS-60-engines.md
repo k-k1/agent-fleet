@@ -721,11 +721,20 @@ slot's AMI, so the margin is deliberate rather than measured. Raise it if a star
 recorded as failed with a box that turned out to be fine; past it the box is terminated and the
 next offer is tried, so a ceiling that is too low spends money and finds nothing.
 
-🔴 **A deployment captured before 0.20.0 carries `180`, which is the OLD meaning's default.**
-`standup.sh` drops exactly that value so the stack falls to the 300 above, and says on stdout
-that it did; any other value is treated as a choice and passed on untouched. A deployment that
-really wants 180 as a registration ceiling has to set it again after a stand-up — that is the
-price of not being able to tell a stale default from a deliberate one.
+🔴 **A deployment that predates 0.20.0 carries `180`, which is the OLD meaning's default**, and
+`cloudformation deploy` keeps an unnamed parameter at its previous value for ever — so nothing
+would ever move it. Both routes repair exactly that value and leave any other alone:
+
+| Route | What it does |
+| --- | --- |
+| `standup.sh` (rebuild from the capture) | drops a captured `180` with `af_param_drop`, so the stack takes the template's default |
+| `update.sh` (the route an existing deployment takes) | reads the LIVE stack and passes `<Role>OfferBudgetSec=<the template's default>` when, and only when, it is `180` |
+| a hand-run `cloudformation deploy` | neither — **set it yourself**: `--parameter-overrides LlmOfferBudgetSec=300 ImageOfferBudgetSec=300` |
+
+Both say on stdout what they did, and both take the new value from this template so the number
+lives in one place. ⚠️ A deployment that really wants 180 as a *registration* ceiling has to set
+it again afterwards: a stale default and a deliberate 180 cannot be told apart, which is why the
+rule is "the old default, and nothing else".
 
 It is not the whole wait either: with three offers the worst case is three failed purchases plus
 a registration plus a cold start, and the bound a caller actually sees is the gateway's
@@ -1357,10 +1366,25 @@ byte-identical afterwards, same PRIMARY deployment id — so attempting it the w
 costs a few minutes and nothing else. The path that works, per role:
 
 ```
-<Role>Enabled=false   # the condition DELETES the service (update.sh warns about exactly this)
-cloudformation deploy ...          # this template
-<Role>Enabled=true    # the service comes back, on the EC2 launch type
+# 1. take the services away (the condition deletes them; update.sh warns about exactly this)
+cloudformation deploy ... --parameter-overrides LlmEnabled=false ImageEnabled=false
+
+# 2. apply this template with them gone
+cloudformation deploy ...
+
+# 3. bring them back - and from a SECOND shell, the moment this is submitted, hold both at 0:
+cloudformation deploy ... --parameter-overrides LlmEnabled=true ImageEnabled=true
+   aws ecs update-service --cluster <cluster> --service af-<stack>-llm   --desired-count 0
+   aws ecs update-service --cluster <cluster> --service af-<stack>-image --desired-count 0
+
+# 4. and force the Control Plane to redeploy, whatever its version
+aws ecs update-service --cluster <cluster> --service af-<ingress-stack>-cp --force-new-deployment
 ```
+
+**Four steps, not three.** Steps 3's second shell and step 4 are what the P1 hardware run added
+(2026-09-12) and both are explained under the two 🔴 below: a service CloudFormation creates
+starts at desired 1 with no box to place it on, and a Control Plane that started inside the
+window holds an engine table with no rows and cannot get back to one.
 
 Measured at **25 s** for the delete and **48 s** for the create on a throwaway stack, and the
 delete reproduced at **24.8 s** on the real one (ADR 0077's P1 run, 2026-09-12). Two things that
@@ -1372,16 +1396,20 @@ CloudFormation creates comes up at desired 1 — and on the EC2 launch type ther
 place it on, so the stack sits on the stabilisation wait until it times out and rolls back. The
 throwaway had `DesiredCount: 0` and finished in 48 s; the real pair sat for ten minutes and only
 completed once `aws ecs update-service --cluster <cluster> --service <svc> --desired-count 0` was
-run on BOTH from another shell while the update was in flight. Do that as soon as
-`<Role>Enabled=true` is submitted; `standup.sh` does the same thing after a create.
+run on BOTH from another shell while the update was in flight — which is step 3's second shell
+above. Do it as soon as `<Role>Enabled=true` is submitted, and have the two commands ready
+BEFORE submitting: the stabilisation wait is what you are racing. `standup.sh` does the same
+thing after a create, for the same reason.
 
 🔴 **Force a new Control Plane deployment afterwards.** `EnginesParam` is under the same
 condition, so between the two halves the engine table has no rows — and a Control Plane that
 starts in that window builds no engine registry at all and no table reloader with it, so it never
 picks the rows up. The symptom is `GET /api/admin/engines` answering `{"engines":[]}` on a
 deployment whose stack is complete, with nothing in the log. `aws ecs update-service --service
-<cp> --force-new-deployment` fixed it in 86 s (measured). This bites every time, because
-`dev-deploy.sh` and `update.sh` put the Control Plane image on BETWEEN the two halves.
+<cp> --force-new-deployment` fixed it in 86 s (measured) — step 4 above. This bites every time,
+because `dev-deploy.sh` and `update.sh` put the Control Plane image on BETWEEN the two halves, so
+do it even when nothing looks wrong: the panel's `{"engines":[]}` is the only symptom, and an
+engine nobody can start reads as a broken deployment rather than as a stale process.
 
 ⚠️ **The Cloud Map name DOES go away in between.** `LlmDiscovery` / `ImageDiscovery` carry the
 same `HasLlmModel` / `HasImageModel` condition as the services, so the round trip deletes and
@@ -1724,10 +1752,15 @@ DEV=$(lsblk -dno NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1; exit}')
   agent reload them, and `awsvpc` needs the pause image. Every step is chained with `&&` and
   `docker` is started either way, so a failure anywhere leaves Docker on the root volume rather
   than leaving the box without a container runtime.
-- **The order works because the ECS agent has not started yet.** User data runs from cloud-init,
-  and the AMI's `ecs.service` is ordered `After=cloud-final.service` — the same fact that makes
-  writing `/etc/ecs/ecs.config` in user data work at all. Docker, which starts earlier, is
-  stopped and restarted explicitly.
+- **The order works because the ECS agent has not started yet** — and then it has to be started
+  by hand. User data runs from cloud-init, and the AMI's `ecs.service` is ordered
+  `After=cloud-final.service`, which is the same fact that makes writing `/etc/ecs/ecs.config`
+  in user data work at all. 🔴 **The other half of that fact is `PartOf=docker.service`**:
+  stopping Docker here CANCELS the start job systemd has queued for the agent, and starting
+  Docker again does not queue it back — so the script ends with `systemctl start --no-block ecs`,
+  after `ecs.config` is written (the agent reads it at start) and with `--no-block` because a
+  blocking start would wait for the cloud-final job that is running this very script. Measured
+  both ways on 2026-09-12; the paragraph below is what the boxes did.
 
 ✅ **Verified on hardware** (ADR 0077's P1 run, 2026-09-12, `g6e.xlarge`): `df /var/lib/docker`
 is `/dev/nvme1n1 233G`, `docker info` reports `Docker Root Dir: /var/lib/docker`, the anonymous

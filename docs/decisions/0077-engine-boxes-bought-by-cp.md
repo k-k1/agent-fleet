@@ -1522,3 +1522,31 @@ and third are the ADR's migration meeting a state it does not describe.
   CP had no registry, so it had no controller to fire. Nothing new is needed, but the migration
   section's "both roles `mode: off`" is now load-bearing for a second reason: it is what takes
   the stray desired 1 back down without a human.
+
+## Follow-up — the CFN lane's answer to P1's items 1, 3, 4 and 6 (2026-09-12, PR #585)
+
+Items 2 (the CP's `startInFlight`) and 5 and 7 (the two PARAMETERS sentences the P1 PR corrected
+where it stood) are not this lane's. The other four are, and three of them are documentation
+because the code change was already in the P1 PR:
+
+- **Item 1 — the ordering paragraph.** PARAMETERS' "the order works because the ECS agent has not
+  started yet" now carries the other half of the same fact: `ecs.service` is
+  `PartOf=docker.service`, so stopping Docker cancels the agent's queued start job and starting
+  Docker does not queue it back — which is why the user data ends by starting the agent itself,
+  with `--no-block` because a blocking start waits for the cloud-final job running the script.
+- **Items 3 and 4 — the migration is four steps.** The procedure block was three
+  (`false` -> apply -> `true`); it now shows the second shell that holds both services at desired
+  0 while the `true` half runs, and the Control Plane `force-new-deployment` that follows it. Both
+  were measured in the P1 run and both are silent when skipped: the stack sits on a stabilisation
+  wait it cannot win, and the panel answers `{"engines":[]}` with nothing in the log.
+- **Item 6 — `update.sh` repairs the budget too.** `standup.sh` drops a captured
+  `<Role>OfferBudgetSec=180` (the old meaning's default), but an existing deployment upgrades
+  through `update.sh`, which passes no parameters — so the repair went there as well, in the
+  shape the ADR 0072 P6 repair already has in that file: read the LIVE stack, and pass the
+  template's own default **only when the live value is exactly 180**. Any other value is
+  somebody's choice. A hand-run `cloudformation deploy` has neither and is told so in PARAMETERS.
+
+🔁 **What would change this**: an explicit `DesiredCount: 0` on the engine services would remove
+step 3's second shell — but it would also reset the count on every task-definition change, which
+is the trap [the engine services](../../deploy/aws/ecs/cfn/PARAMETERS-60-engines.md) documents
+and the reason the property is absent. The second shell is the cheaper of the two.
