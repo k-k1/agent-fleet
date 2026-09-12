@@ -310,10 +310,14 @@ skip is not needed).
   the slot pool's `terminateSlot`; 0045 decision 23's reason — never leave an ACTIVE ghost behind
   when it is you who removes the box — applies as written).
 - `draining` (0071 decision 7) changes meaning from "Managed Instances drains it out of our hands
-  in 427-463 s" to "**from the CP issuing the terminate until EC2 reports `terminated`**". The
-  slot measurement (0045 decision 22: stop → terminated in 93 s, a CPU figure) suggests minutes
-  on a GPU too, but it is **unmeasured** (open question 6). 0071 decision 7's drain wait (0074
-  decision 4) is inherited — no new box while the old one is still `running`.
+  in 427-463 s" to "**from the CP issuing the terminate until EC2 reports `terminated`**".
+  **Measured (P1 hardware runs 1 and 2, three laps): 4 min 8 s to 5 min 45 s** — 5 min 28 s to
+  5 min 45 s on a g6e, 4 min 8 s to 4 min 30 s twice on a g5. The slot figure (0045 decision 22:
+  93 s, CPU) does not carry to a GPU box. 0071 decision 7's drain wait (0074 decision 4) is
+  inherited — no new box while the old one is still `running` — and **its window is carried as
+  the range, four to six minutes, not as a number**: a demand that arrives inside it waits up to
+  six minutes for the old box to be gone before a new one is bought, and either side of "five
+  minutes" is wrong about a third of the time.
 - 🔴 **The Managed Instances `scaleInAfter` trap disappears.** 0071 P0 measurement 3's "a box left
   under `-1` is never reclaimed even after the value changes, and `terminate-instances` is refused
   by the MI policy" cannot exist once the CP is the terminator. In its place, **a terminate the CP
@@ -332,8 +336,11 @@ skip is not needed).
   Neither direction consults the CP's memory: tags and attributes are enough, as 0045 decision 29
   demands.
 
-🔁 **What would change this**: a measured terminate → `terminated` above five minutes on a GPU.
-Then 0071 decision 7's window arithmetic is rewritten.
+🔁 **What would change this**: fired on one lap of three (5 min 45 s) and not on the other two, so
+the window above is written as the range instead of a number. What would change it now is a lap
+above six minutes, or a demand pattern where the four-to-six-minute wait is the common case
+rather than the rare one — then the drain wait becomes "buy the next box while the old one is
+`shutting-down`", which decision 5 forbids today.
 
 ### 6. The model directory can be a host volume. P0 keeps it anonymous; P1 measures
 
@@ -578,8 +585,9 @@ slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box
 5. **`awsvpc` on the EC2 launch type: the g6.xlarge ENI limit and the task ENI.** One task per
    box should fit under a limit of 4, but agent settings such as `ECS_AWSVPC_BLOCK_IMDS` are (c).
    Depends on: decision 2. P1's hardware run.
-6. **Measured terminate → `terminated` on a GPU** (the length of decision 5's `draining`). P1's
-   hardware run.
+6. **Measured terminate → `terminated` on a GPU** (the length of decision 5's `draining`).
+   **Measured**: 4 min 8 s to 5 min 45 s over three laps (P1 hardware runs 1 and 2); decision 5
+   carries the range.
 7. **Resolve the AMI at launch (`resolve:ssm:`) or at stack update (the CloudFormation type).** The
    former tracks the newest; the latter pins a generation per deployment. 0045's slots do the
    latter. Depends on: decision 7.
@@ -1749,3 +1757,19 @@ did not change between the two runs.
 `InstanceLifecycle`, `state: running` / `warm: true` in 5 min 53 s, one image at 200, the NVMe
 data-root, and a departure the Control Plane drove itself — with the migration's own steps
 (items 3, 4, 5) carried over as fixed-but-unmeasured.
+
+## Revision after P1's hardware runs (2026-09-12)
+
+P1 is complete (done items 1-7; runs 1 and 2, #583 and #588). One decision's 🔁 fired and the
+text above was revised in place, as before; nothing else in the body moved.
+
+| Decision | What changed | Source |
+|---|---|---|
+| 5 | `draining` is measured, not "unmeasured": terminate → `terminated` is **4 min 8 s to 5 min 45 s** over three laps; the drain wait's window is carried as **the range, four to six minutes**, because the 🔁 fired on one lap of three and not on the other two. The 🔁 itself is rewritten to "a lap above six minutes, or a demand pattern where the wait is the common case" | P1 hardware runs 1 and 2 |
+| Open question 6 | answered with the same range | same |
+
+Left open on hardware, by the runs' own account: the `<Role>Enabled` round trip and #584's
+recovery from a zero-row engine table (the dev deployment is no longer on Managed Instances, and
+migrating it backwards to prove the point costs more than it returns); a `mode: on` press on a
+running engine clearing the panel's `offer_trail` (a one-line order fix on the CP lane, #584's
+guard before `begin()`). P2 (decisions 4 and 6) and P3 (the llm role) have not started.
