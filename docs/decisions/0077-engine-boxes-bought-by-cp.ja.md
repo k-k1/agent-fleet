@@ -1623,3 +1623,139 @@ host volume）はこれには入っていない——P2 の後半として残る
   「先頭から立て直す」の意味である——で、2 連続の飛ばしが効いた後は
   `l4=interrupted, l4=interrupted, l40s=active` になる。「連続」は需要単位ではなく提案 id 単位で数える:
   取り上げられ、別のものに替わってそれも取り上げられた提案には、2 度目の機会がある。
+
+## 追記 — P3 実機: llm 役を EC2 Fleet で（2026-09-12・開発配備・約 $0.13）
+
+P3 の全面積は、P1 が触っていない 2 つだけである——**llm 役自身の launch template**（#575 の
+`LlmLaunchTemplateId`）と、**決定 9 の「`LlmOffers` の `spot` 行を拒む」**（#577）。どちらもここで
+測った。拒否は $0 で、残りはオンデマンドの箱 1 台・GPU **6 分 46 秒**・約 **$0.13**（門は 15 分と
+$0.60）。
+
+**この走行が挙げた項目はすべて緑。ただし段階としての P3 は完了していない**——本文が P3 を P2
+（決定 4 と 6・中断と host volume）の後ろに置いており、P2 は着手されていないからである。
+
+配備し直す必要は無かった: Control Plane は PR #588 が測ったもの（`0.19.1-dev-3d4cb9e9`）のままで、
+起動行から読んだ。⚠️ つまり **#589 の `offer_trail` 修正はこの配備に載っていない**し、ここでは
+何も検証していない。下の `mode: on` は 1 回しか押していないので、その欠陥が出る機会は無かった。
+
+### 決定 9 の拒否を $0 で（10:05:28 → 10:06:52 UTC）
+
+`LlmOffers` に 2 行——`spot` 1 行と `od` 1 行——を
+`update-stack --use-previous-template` で当てた。パラメータ以外は動きようがない:
+
+```
+spotl4|L4 Spot (g6/g5)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|0.60|spot;l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|od
+```
+
+`UPDATE_COMPLETE` まで **18 秒**、そして**呼び出しの 14 秒後**に Control Plane は表を読み直して
+こう言った:
+
+```
+10:05:42 engines: llm: ignoring the offer spotl4: the llm role is on-demand only (a lost conversation is not a retry)
+10:05:42 engines: llm instance classes re-read from /af-ws/engines: l4
+```
+
+| 検査項目 | 判定 | 証拠 |
+|---|---|---|
+| `spot` の行が落ちる | 🟢 | 上のログ行。SSM への書き込みから reloader の 1 tick（10 秒）後 |
+| **同じ一覧の残りは生きている**（陽性対照） | 🟢 | パネルの `offers` はちょうど `[{id: l4, buy: od}]` になった——*同じ*宣言の od 行である。一覧ごと捨てる parse でも、これが無ければ見分けがつかない |
+| 何も買っていない | 🟢 | 10:05〜10:12 の CloudTrail に `CreateFleet` は無く、インスタンスも無い。$0 |
+
+⚠️ 途中で見えた、運用者が知っておくべきこと: **`LlmOffers` が宣言されているあいだ、パネルの
+`classes` は offers の一覧そのもの**で、この 84 秒のあいだ梯子の `l40s` の段は表示されなかった。
+これは仕様どおりの優先順位（`offersSpec()` は `Offers` を `Classes` より優先する）であって欠陥
+ではないが、**「段が消えた」のか「上書きされた」のかをパネルは何も言わない**。10:06:52 に戻し、
+`offers` は `l4` と `l40s` に復帰した。
+
+### ⚠️ この走行は意図して小さいモデルに固定した
+
+この役の既定は `qwen3-coder-30b-a3b`（**18,556,689,568 バイト**）で、llm 役はこの配備で
+**一度も走ったことが無く**（`llm/…` のログストリームがそもそも存在しなかった）、
+`LlmTaskMemory` は 14 GiB、`LlmExtraArgs` には `--no-mmap` がある。そのモデルが 22 GB の箱に
+載るかは本物の問いだが、**P3 の問いではない**——15 分の予算をそれに溶かしても EC2 Fleet について
+何も測れない。走行のあいだだけ `qwen2.5-coder-1.5b` をこの役の既定にし、終わってから 30B に
+戻した。ただし期待したほどは効かなかった。後述の冷間起動を見ること。
+
+### 1 巡（10:12:19 → 10:19:06 UTC）
+
+| 検査項目 | 判定 | 証拠 |
+|---|---|---|
+| **箱は 1 台だけ** | 🟢 | 10:10 UTC 以降の CloudTrail に `CreateFleet` は **1 回**（10:12:21）。container instance は 4 → 5 → 4 |
+| 購入 → 箱の登録 | 🟢 **41 秒** | 10:12:20 購入、`engines: llm: the box i-0ddc67d973d10325a registered; asking for the task` が 10:13:01。P1 の image 役は 44〜48 秒 |
+| 登録と同じ秒に desired が上がる | 🟢 | CloudTrail の `UpdateService` が 10:13:01 |
+| 埋まった提案 | 🟢 | `l4`・`buy: od`・ap-northeast-1a の **`g6.xlarge`**・`InstanceLifecycle` は**欠落**（P0 (d) の「無い＝オンデマンド」）。`offer_trail` は `[l4 active]` の 1 行で落ちていない |
+| **買ったのは llm の launch template** | 🟢 | 箱は `aws:ec2launchtemplate:id = lt-087eee2a966d767a0`——エンジン表の llm 行の `LlmLaunchTemplateId`——を **version 3** で持つ。これは `systemctl start --no-block ecs` の修正が入った版である。加えて `af-role=engine-llm`・`af-engine-offer=l4`・`af-engine-buy=od`・`af-pool`・`af-managed-by`・`Name=af-engine-llm`・EC2 自身の `aws:ec2:fleet-id`。`CreateFleet` 1 回で、`CreateTags` は無い |
+| パネルが箱から答える | 🟢 | 登録後の最初の標本から消えるまで `box: {…, status: ACTIVE}` |
+| **`df /var/lib/docker` はインスタンスストア** | 🟢 | `/dev/nvme1n1 233G 25G 208G 11% /var/lib/docker`・`Docker Root Dir: /var/lib/docker`・`du -sh …/volumes` は **19G**（GGUF 2 つ）・`systemctl is-active ecs docker` は active / active・`nvidia-smi` は `NVIDIA L4, 23034 MiB`。root は **120 G**＝`LlmStorageGiB`（image 役は 60） |
+| **`state: running` / `warm: true`** | 🟢 desired 1 から **2 分 47 秒〜3 分 14 秒** | 13 秒間隔の poll で `warm: false` が 10:15:48、`warm: true` が 10:16:15。llama-server の `listening` が 10:15:42 なので真の値はこの帯の中。`mode: on` からは 3 分 29 秒〜3 分 56 秒 |
+| **補完 1 回が 200** | 🟢 | クライアントの言葉ではなく**エンジン自身のログ**から: 10:16:44 に `prompt eval time = 2033.35 ms / 17492 tokens (8602.54 tokens per second)`・`eval time = 11.90 ms / 2 tokens`・`total time = 2045.25 ms` |
+| **退場: desired 0 → deregister → terminate を CP が** | 🟢 **43 秒** | `mode: off` 10:18:22 → タスクが消えたのが 10:18:31（**9 秒**）→ `DeregisterContainerInstance` 10:19:06 → `TerminateInstances` 10:19:06。手では何も終わらせていない |
+| terminate → `terminated` | **5 分 43 秒〜5 分 59 秒** | 最後の `shutting-down` が 10:24:49、`terminated` が 10:25:05（15 秒間隔の poll）。この ADR が持つ 4〜6 分の幅の中で、しかも **5 分を超えた側**——3 巡目にして 2 回目 |
+| 掃除が誤発火していない | 🟢 | 窓全体で `CreateFleet` 1 回・`TerminateInstances` 1 回、しかも terminate は自分の `mode: off` の後 |
+
+#### 冷間起動と、時間が実際にどこへ行くか（desired 1 の 10:13:01 から）
+
+| 経過 | 何が |
+|---|---|
+| 3 秒 | タスクが作られる（`createdAt` 10:13:04） |
+| 19 秒〜1 分 27 秒 | ECS がイメージを pull（`pullStartedAt` 10:13:20・`pullStoppedAt` 10:14:28） |
+| 27 秒 | `engine fetch: active set for /af-ws/engines/llm/active starts with 'qwen2.5-coder-1.5b'` |
+| 33 秒 | 起動用モデルがディスクに——`llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf 1,117,320,768 bytes in 6s`（186 MB/s）——そして `engine may start; 1 file(s) still to sync` |
+| 2 分 27 秒 | `llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf 18,556,689,568 bytes in 114s`（163 MB/s）、10:15:29 に `sync done` |
+| 2 分 41 秒 | llama-server が `starting server in router mode`・`listening on http://0.0.0.0:8080`・`(startup) loading model qwen2.5-coder-1.5b` |
+| 3 分 14 秒 | パネルが `warm: true`（最初の標本） |
+
+⚠️ **エンジンの process は「engine may start」の 2 分 8 秒後、18.5 GB の同期が終わった 13 秒後に
+現れた。** 候補のうち 2 つは上の実測で消える: イメージの pull は **74 秒前**に終わっており、
+コンテナの依存は両役とも `condition: START`（`describe-task-definition`）＝ECS 側で待っているものは
+無い。残る読み——**未測定であり、有効なモデルを 1 つにした 1 巡で決着する**——は、llama-server の
+router が起動時に `presets.ini` を列挙し（どちらを読み込むより前にログが 2 つとも並べている）、
+起動に使う 1 つではなく**全部のファイル**を要るということである。image 役はこう振る舞わない:
+2 回目の走行で ComfyUI は自分の `sync done` より **2 分 47 秒前**に GPU に乗っていた。
+
+原因がどちらであれ運用者にとっての意味は 1 つ: **`LlmModelsMax` が縛るのは「提供する数」であって
+「取ってくる数」ではない。** ただ `enabled` なだけの 2 本目の大きいモデルは、この役の冷間起動の
+たびに支払われる。小さい方を既定に固定しても——この走行がやったように——避けられない。
+
+⚠️ もう 1 行、起動時のものを残しておく価値がある:
+
+```
+engines: llm: starting on l4 (22000 MiB VRAM declared); no model declares what it needs
+```
+
+llm のどの行も `vram_need_mib` を持たないので、決定 6 の適合検査は**この役では効いていない**——
+image 役の同じ行はモデル名と数字を挙げる。22 GB の箱に 30B を既定で置いている配備にとって、
+これは「運用者が読める拒否」と「自分で診断するしかない CUDA の死」の差である。
+
+### 費用と後始末
+
+| 箱 | 型 | 購入 | 起動（UTC） | 終了 | 生存 | $/h | 概算 |
+|---|---|---|---|---|---|---|---|
+| `i-0ddc67d973d10325a` | g6.xlarge | オンデマンド | 10:12:20 | 10:19:06 | 6m46s | 1.1672 | $0.132 |
+
+**6 分 46 秒・約 $0.13**（オンデマンド価格は pricing API の ap-northeast-1 / Linux / shared）。
+この走行の $0 の側は本当に $0 だった。
+
+- `af-role` が `{engine-image, engine-llm}` の `describe-instances` を**状態フィルタ無し**で:
+  3 台、すべて `terminated`（今回の 1 台と PR #588 の 2 台）。陽性対照は同じ出力の中——
+  `tag-key=af-role` だけならスロットの 4 台を含めて 7 を返す。
+- container instance は **4 台**に戻り、すべてスロットの箱。`describe-fleets` を絞らずに引くと空。
+- **手順 1 で控えた値に戻した**: `llm` は `mode: ondemand`、`LlmOffers` は空に戻し（パネルは梯子の
+  `l4` と `l40s` を再び読む）、`qwen3-coder-30b-a3b` を再びこの役の既定に、`LlmOfferBudgetSec` は
+  300 のまま、`image` は `mode: off` のまま。補完を叩くために起こした Workspace は `stopped` へ
+  戻し、そのために作ったセッション 2 本は削除した（前も後も 16 本）。
+- 生の戻り値は測ったセッションの `~/.cache/adr0077-p3/` にある。
+
+### 本文に返すもの
+
+| # | 判定 | 決定 | 何を言っているか |
+|---|---|---|---|
+| 1 | 🟢 | 9 | 拒否は実在し、読める: 行は parse の時点で名指しのログ付きで落ち、同じ宣言の od 行は陽性対照として生き残る。パラメータが着いてから reloader の 1 tick |
+| 2 | 🟢 | 1・2・3・5・6・7 | llm 役の launch template は image 役とまったく同じに買い・登録し（41 秒）・置き・提供し・退場する。`lt-…` の version 3 を持って。P1 の実測に役に固有のものは無い |
+| 3 | 🟢 | 5 | terminate → `terminated` が 5 分 43 秒〜5 分 59 秒＝4〜6 分の幅の中の 3 巡目で、5 分超は 2 回目。1 つの数ではなく幅を持たせた判断は正しかった |
+| 4 | ⚠️ | 6 | llm の冷間起動は、起動に使わないモデルを待つ——「engine may start」の 2 分 8 秒後、18.5 GB の同期の 13 秒後、pull はとうに終わり、コンテナの依存は `START`。`LlmModelsMax` が縛るのは**提供する数**であって**取ってくる数**ではない。原因は未測定で、次の巡で有効なモデルを 1 つにすれば決着する |
+| 5 | ⚠️ | 6 | llm のどのモデル行も `vram_need_mib` を宣言しないので、image 役を守っている適合検査はここでは効かない。起動行はそう言っているが、誰もそこを見ていない |
+| 6 | — | — | 本文は P3 を P2 の後ろに置いており、P2（決定 4 と 6）は着手されていない。この走行は P3 の 2 つの差分を測ったのであって、中断については何も測っていない |
+
+**P3 の実機の判定は、この走行が挙げた項目すべてで緑**。段階としての P3 は、本文が定めた順序
+——先に P2——の点で開いたままである。
