@@ -206,8 +206,12 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	// `state`, `desired`, `box`, `stop_eta`, `idle_secs` and the window. Omitted rather than
 	// zeroed: an idle window of 0 is configured to mean "never stops", which is a claim nothing
 	// here is entitled to make about somebody else's box.
-	if e.def.external() {
-		row["lifecycle"] = engineLifecycleExternal
+	if e.def.notManagedHere() {
+		// The row's OWN lifecycle, not the constant this branch used to write: a remote row that
+		// announced itself as `external` would leave the Console's "another fleet" label nothing
+		// to branch on, and "externally managed" is true but unhelpful when there is a fleet with
+		// a panel of its own on the other end (ADR 0079 decision 10).
+		row["lifecycle"] = e.def.lifecycle()
 		row["url"] = e.def.URL
 	} else {
 		// The demand window, always reported as the length it actually is. A client that
@@ -460,7 +464,7 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	// engine has no box here to stop (ADR 0076 decision 5). Refused rather than silently stored
 	// as `on`: the setting outlives this row's lifecycle, so a stored `ondemand` would come back
 	// as a real mode the day the role moves into the stack.
-	if val == engineModeOnDemand && e.def.external() {
+	if val == engineModeOnDemand && e.def.notManagedHere() {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
 			"engine " + key + " is externally managed: it is on or off, never on-demand"})
 		return
