@@ -2,7 +2,8 @@
 
 English | [日本語](0077-engine-boxes-bought-by-cp.ja.md)
 
-- Status: **proposed** (2026-09-12). Nothing is implemented.
+- Status: **accepted** (2026-09-12). P0's premises are measured, P1-P3 are implemented and have run
+  on hardware (#573-#598); two items stay unmeasured, and the last revision section names them.
 - **Not one GPU was bought for this document.** Every number says where it comes from —
   (a) measurements in ADR 0045, 0070, 0071, 0074 and 0075, (b) facts read on 2026-09-12 out of this
   repository's code and templates and out of af-sandbox's read-only APIs, (c) things known only as
@@ -282,23 +283,41 @@ AL2023 GPU AMI (open question 2), the CP calls `PutAttributes` right after regis
 - 0075 decision 6's detection (`running` → `starting` at desired 1, and the box gone) is inherited
   **as a design**: in the code it exists only as `noteReplacement`'s log and audit row; the rebuild
   and the skip were 0075 P1 and were never written (Background). P2 builds them here, once.
-  "The box is gone" can be stated from **`describe-instances` state (`shutting-down` /
-  `terminated`) and from no box tagged `af-role=engine-<role>` being `running`**. The Managed
-  Instances "cannot enumerate" limit does not apply.
-- ECS deregisters a terminated instance's container instance by itself (c). If it does not, the
-  ghost is a registered container instance with the engine attribute and no EC2 behind it — the
-  pool's `sweepGhostInstances` no longer sees it (decision 3), so decision 5's sweep covers it.
+  "The box is gone" can be stated from **`describe-instances`: no box tagged
+  `af-role=engine-<role>` is `pending` or `running`**. The Managed Instances "cannot enumerate"
+  limit does not apply.
+- 🔴 **That second condition is sufficient on its own**, and the transition is the other half of an
+  OR rather than a precondition: at desired ≥ 1, with a box **on the CP's books** (this demand's
+  walk saw one register) and no `af-role=engine-<role>` instance alive, it is an interruption
+  whether or not the service ever left `running`. **Measured (P2 hardware run)**: a box taken away
+  102 s after it registered, with its task still PENDING, produces no transition at all — there is
+  no `running` to leave — and the engine sat at desired 1 with no box, no walk, no log line and no
+  clock, its only automatic way out being the idle window throwing the demand away 900 s later.
+  The window in which that happens is the **whole cold start, 4 min 45 s on that same run**, so it
+  is not a corner case. What keeps the rebuild from firing on an ordinary replacement (an OOM kill,
+  a failed health check — 0071 P0) is unchanged and is the other clause: **the box is still there**.
+  The ledger is consumed at detection, or the same loss would be detected every tick and buy a box
+  every tick; it lives in the CP's memory, so a Control Plane replaced mid-demand detects nothing —
+  the same limit the transition's own `prevState` already had (#598).
+- ECS deregisters a terminated instance's container instance by itself — **measured (P2 hardware
+  run): within 90 s, with no `DeregisterContainerInstance` from any principal**, so this is no
+  longer (c). If it ever does not, the ghost is a registered container instance with the engine
+  attribute and no EC2 behind it — the pool's `sweepGhostInstances` no longer sees it (decision 3),
+  so decision 5's sweep covers it.
 - The ECS agent's Spot draining (c) is enabled in the launch template. If the two-minute notice
   puts the instance into DRAINING, the service's task stops first and `noteReplacement` (0075
-  Background, point 4) records "a replacement nobody asked for". If it does not work, detection
-  still holds on the two conditions above.
+  Background, point 4) records "a replacement nobody asked for". **Still (c) after P2** (open
+  question 9): the interruption was made with `terminate-instances`, which gives no notice, so
+  draining was never exercised. Nothing depends on it — detection holds on "no box alive" alone.
 - The rebuild is decision 1's call again from the top of the list. Being synchronous, 0075
   decision 6's restriction ("write only when the first candidate differs from the current
   provider", to avoid racing ECS's own re-placement) is unnecessary — ECS buys nothing.
 - An interruption is not a failure (0075 decision 6 inherited). A rebuild that gets no box by the
   registration ceiling is.
 - **An offer interrupted twice in a row is skipped for the rest of that demand** (0075 decision 6
-  inherited).
+  inherited). Implemented (#591) and **unmeasured on hardware**: two *detected* interruptions need
+  two full cold starts and their rebuilds, which does not fit the P2 run's twenty-minute gate, and
+  `begin()` clears `lastInterrupted` so one interruption cannot be carried into a later demand.
 
 🔁 **What would change this**: the same as 0075 open question 9 (if interruptions are rare, the
 skip is not needed).
@@ -333,6 +352,10 @@ skip is not needed).
   (b) a container instance carrying the engine attribute whose EC2 instance is gone —
   deregistered (the shape of 0045's `sweepGhostInstances`, which checks registration age and
   "instance gone", not task counts; the zero-task caution belongs to the free-slot sweeps).
+  **(b) is insurance, measured as such**: on the P2 hardware run ECS deregistered the dead box's
+  container instance itself within 90 s and the CP's own direction had nothing left to do (the (c)
+  decision 4 rested on, now confirmed). It stays as the backstop it was written to be — for the day
+  ECS does not — and is still unexercised.
   Neither direction consults the CP's memory: tags and attributes are enough, as 0045 decision 29
   demands.
 
@@ -352,11 +375,18 @@ rather than the rare one — then the drain wait becomes "buy the next box while
   (decision 4). It is warm only when desired goes 0 → 1 inside the idle window — the very case
   0071 decision 5 already decided not to stop in. **So P0 keeps the anonymous `Host: {}`**
   (nothing changes).
-- P1 measures: against the measured re-fetch (0071: S3 → local at 104-147 MB/s, 6.94 GB in 65 s),
-  how many seconds a host volume saves. If it is a minute, it is not needed.
+- **The re-fetch is measured (P2 hardware run, this deployment's own catalogue): eleven files,
+  52.1 GiB, `sync done` in 5 min 47 s at 154 MB/s** (S3 is the ceiling, not the NVMe data-root),
+  with **the engine free to start after 1 min 42 s** — the default model set — and `warm: true`
+  4 min 59 s after the desired count. The remaining four minutes of the sync happen behind a
+  serving engine. A host volume saves none of that on the two events that actually end a box:
+  measured on the same run, an interruption cost 53 s to a registered replacement **and then a full
+  cold start on empty hardware**, because the volume died with the box.
 
-🔁 **What would change this**: a measured re-fetch above five minutes on a comfy deployment
-holding 30 GB (0075's computed "what an interruption costs"). Then P1 moves forward.
+🔁 **What would change this**: not the size of the re-fetch — that number prices an interruption,
+and an interruption always lands on new hardware. What would change it is **how often desired goes
+0 → 1 inside the idle window on a real deployment**, which nothing in this repository records
+today. Measure that frequency first; build the named `SourcePath` only if it is common.
 
 ### 7. No AMI is owned. The launch template's `ImageId` is `resolve:ssm:` on the SSM public parameter
 
@@ -594,8 +624,11 @@ slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box
 8. **Mounting the local NVMe.** The AL2023 ECS AMI does not mount the instance store by itself (c).
    If user data mounts it, is it Docker's data-root or the models' host volume? Depends on:
    decision 6. P1.
-9. **Whether the ECS agent's Spot draining works on the AL2023 GPU AMI** (c). P2 (the
-   interruption run).
+9. **Whether the ECS agent's Spot draining works on the AL2023 GPU AMI** (c). **Unmeasured after
+   P2**: the interruption was made with `terminate-instances` — decision 4's "the box is gone" with
+   nothing simulated — which gives no two-minute notice, so draining never had an occasion to run.
+   Nothing waits on the answer any more: detection is "no box of this role alive" on its own
+   (decision 4).
 10. **Whether `price-capacity-optimized` actually picks a g6** (Managed Instances bought a g6e in
     0075 run 3). P1's hardware run.
 
@@ -2291,3 +2324,40 @@ and the run stopped short of the two-in-a-row skip rather than of the money.
 | 3 | ⚠️ | 4 | Direction (b) of decision 5's sweep was **not needed**: ECS deregistered the dead box's container instance itself within 90 s, confirming the `(c)` the text marked unconfirmed. The sweep stays as the backstop it was written to be, still unexercised |
 | 4 | 🔴/⚠️ | 6 | The 🔁 fired (5 min 47 s for 52.1 GiB) but on a number the host volume cannot improve — an interruption always lands on a new box. Restate the 🔁 around "desired 0 → 1 inside the idle window", and measure how often that happens before building anything |
 | 5 | 🟢 | 4, 5 | Detection, the `interrupted` trail row, the rebuild from the top, one box, no `UpdateService`, no cooldown, no misfiring sweep, and the CP's own departure at 61 s |
+
+## Revision after P2 and P3 (2026-09-12)
+
+The last two follow-ups (the P3 hardware run, and P2's own with the fix #598 that came out of it)
+left the decisions standing and handed their findings back. This section is that revision, applied
+**in the decision text above** in the manner of the two before it — no premise of any decision
+moved; what moved is the wording P2 measured to be wrong or (c), and one condition that P2 proved
+too narrow.
+
+| Decision | What changed | Source |
+|---|---|---|
+| 4 | the detection's second condition ("no box tagged `af-role=engine-<role>` is `pending` or `running`") is **sufficient on its own** at desired ≥ 1 with a box on the CP's books; the `running` → `starting` transition becomes the other half of an OR instead of a precondition. The guard against an ordinary replacement is unchanged (the box is still there), and the ledger is consumed at detection | P2 hardware run (#597), the fix #598 |
+| 4 | ECS deregistering the dead box's container instance itself moves from (c) to **measured: within 90 s**, with no `DeregisterContainerInstance` from any principal | P2 hardware run |
+| 4 | the Spot-draining bullet is marked **still (c)**, and the last bullet — the two-in-a-row skip — is marked implemented (#591) and **unmeasured on hardware**, with the reason it could not be reached | P2 hardware run |
+| 5 | direction (b) of the departure sweep is written as **insurance**: ECS does the deregistration itself, so the CP's own direction had nothing to do. It stays as the backstop, still unexercised | P2 hardware run |
+| 6 | "P1 measures" becomes the measurement: 52.1 GiB in **5 min 47 s** at 154 MB/s, the engine free to start at 1 min 42 s, `warm: true` at 4 min 59 s. The 🔁 is **restated**: the number that crossed its old threshold prices an interruption, which always lands on new hardware, so the trigger is now "how often desired goes 0 → 1 inside the idle window" — to be measured before anything is built | P2 hardware run |
+| Open question 9 | **unmeasured, and no longer load-bearing**: the interruption was made with `terminate-instances`, which gives no two-minute notice | P2 hardware run |
+| Status | `proposed` → `accepted`. P0-P3 are in develop (#573-#598) and every phase has been on hardware | this revision |
+
+**P2 is complete**, with two things it could not reach, both named above and neither of them a
+premise: the two-in-a-row skip (it needs two *detected* interruptions, i.e. two full cold starts,
+which does not fit a twenty-minute gate) and **#598's own detection on hardware** — the fix is
+tested against the fake and its defect was measured live, but no box has yet been taken away before
+its task reached RUNNING with #598 running. One run of about twenty-five GPU minutes closes both:
+kill a box while its task is still PENDING, then kill its replacement the same way, and watch
+`spot3` be skipped for an `od` row.
+
+**P3 is complete.** Its run (#592) was green on every item it named and stayed open only on its own
+ordering — "P3 comes after P2", and P2 had not started. P2 has now run. P3's two ⚠️ observations
+about the llm role stand where its own table left them, neither of them a premise of a decision
+here: a cold start that waits for models the run will not serve (cause unmeasured; one enabled
+model on a later lap settles it), and no `vram_need_mib` on any llm model row, which leaves
+decision 6's fit check inert for that role.
+
+Also still unmeasured on hardware, from the earlier phases and unchanged by this revision: the
+`<Role>Enabled` round trip's Control Plane half (the CloudFormation half was measured on a throwaway
+stack, #593) and #584's recovery from a zero-row engine table.
