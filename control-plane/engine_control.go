@@ -513,10 +513,16 @@ type engineController struct {
 	// and a ghost either side of that is repaired. It is the controller's because the idle window
 	// is — nothing else knows the engine has been asked for nothing for half an hour. nil = an
 	// engine that owns no box.
-	boxStep  func(ctx context.Context, view engineServiceView)
-	demand   *engineDemand
-	settings store.SettingsStore
-	audit    engineAuditor
+	boxStep func(ctx context.Context, view engineServiceView)
+	// rebuildStep is ADR 0077 decision 4, asked on every tick while the service wants a task. It
+	// is given whether THIS tick saw the replacement transition (see noteReplacement), because
+	// that is a fact about two consecutive observations and only the controller holds them. It
+	// answers with the rebuild walk's error: an interruption is not a failure, a rebuild that
+	// cannot get a box is. nil = an engine that owns no box.
+	rebuildStep func(ctx context.Context, view engineServiceView, replaced bool) error
+	demand      *engineDemand
+	settings    store.SettingsStore
+	audit       engineAuditor
 	// uptime is where each tick's observation is recorded (engine_uptime.go). nil = not
 	// recorded, which is what the VOICEVOX engine does: its panel has no heatmap, and an
 	// INSERT every 30 seconds for a series nothing reads is a cost with no reader.
@@ -666,7 +672,7 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 		return c.cfg.interval
 	}
 	now := c.now()
-	c.noteReplacement(ctx, view)
+	replaced := c.noteReplacement(ctx, view)
 	// The RAW state, not engineDisplayState's: the heatmap records what the hardware did,
 	// and the display state is a statement about the button that was just pressed.
 	// Deliberately above the first-pass return below — that tick observed the engine just as
@@ -677,6 +683,21 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 	// this — the tick after the one that wrote desired 0 (ADR 0077 decision 5).
 	if c.boxStep != nil {
 		c.boxStep(ctx, view)
+	}
+	// The box was taken away, or a rebuild is already walking (ADR 0077 decision 4). Above the
+	// mode and the demand on purpose: what this answers is "the hardware under a task the service
+	// still wants has gone", which is true whatever the operator has since asked for — and a
+	// rebuild left un-walked is an engine `starting` for ever. Called at every desired count,
+	// because a rebuild the operator switched off mid-flight has a box to end.
+	if c.rebuildStep != nil {
+		if err := c.rebuildStep(ctx, view, replaced); err != nil && !errors.Is(err, errEngineBoxRegistering) {
+			// A rebuild that could not get a box IS a failed start (decision 4), so the cooldown
+			// governs when the next one may try. An interruption itself never reaches here.
+			log.Printf("%s: the rebuild after an interruption failed: %v", c.eng.logKey(), err)
+			c.mu.Lock()
+			c.failures, c.lastFailure = c.failures+1, now
+			c.mu.Unlock()
+		}
 	}
 	mode := engineMode(c.setting(ctx, c.keys.mode), true)
 	lastDemand := c.demand.lastAt(ctx)
@@ -787,23 +808,29 @@ func latestTime(ts ...time.Time) time.Time {
 //
 // The transition is judged from this process's previous observation, so a CP that restarted
 // in between says nothing rather than inventing an event.
-func (c *engineController) noteReplacement(ctx context.Context, view engineServiceView) {
+//
+// It REPORTS the transition as well as recording it: ADR 0077 decision 4's rebuild needs the
+// same two consecutive observations, and they exist nowhere else. Whether the box went with the
+// task — a Spot reclaim — or only the task did — an OOM kill, a health check — is the engine's
+// question and not this one's (stepRebuild).
+func (c *engineController) noteReplacement(ctx context.Context, view engineServiceView) bool {
 	c.mu.Lock()
 	prev := c.prevState
 	c.prevState = view.state
 	c.mu.Unlock()
 	if prev != "running" || view.state != "starting" || view.desired < 1 {
-		return
+		return false
 	}
 	detail := strings.TrimSpace(view.rollout + " " + strings.Join(view.eventMessages(), " | "))
 	log.Printf("%s: the engine task was replaced without being asked: %s", c.eng.logKey(), detail)
 	if c.audit == nil {
-		return
+		return true
 	}
 	_ = c.audit.InsertAudit(context.WithoutCancel(ctx), store.AuditLog{
 		ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: c.actorID(),
 		Action: c.auditAction("replaced"), Target: "restart", Detail: detail, At: store.NowTS(),
 	})
+	return true
 }
 
 // apply moves the desired count and records why. Every automatic movement is audited:

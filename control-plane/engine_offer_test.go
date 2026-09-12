@@ -1477,3 +1477,416 @@ func TestModeOnWhileRunningKeepsTheTrail(t *testing.T) {
 		t.Fatalf("trail = %q after the gate began a new walk, want it emptied", got)
 	}
 }
+
+// --- ADR 0077 decision 4: the box was taken away -------------------------------------------
+
+// interruptedEngine is an engine whose start succeeded: a box bought, registered, the task
+// running, and the controller's previous observation recorded as `running`.
+func interruptedEngine(t *testing.T, st store.Store, offers string) (*engineRuntimeState, *offerECS, *fakeFleet) {
+	t.Helper()
+	fleet := &fakeFleet{}
+	api := &offerECS{}
+	e := newOfferTestEngine(t, api, fleet, offers, st)
+	tickIntoAStart(t, e, st)
+	api.register("i-1", "engine-image", "g6.xlarge")
+	e.ecs.invalidateBox()
+	tickIntoAStart(t, e, st)
+	api.mu.Lock()
+	api.running = 1
+	api.boxes["i-1"] = offerBox{role: "engine-image", tasks: 1}
+	api.mu.Unlock()
+	e.ecs.invalidate()
+	e.ecs.invalidateBox()
+	// The controller's previous observation. `running` → `starting` is the transition decision 4
+	// is read from, and it exists nowhere but between two ticks.
+	e.ctrl.tick(t.Context())
+	return e, api, fleet
+}
+
+// interrupt takes the box away the way EC2 does: the instance goes, and the service falls back to
+// `starting` with the desired count still 1.
+func interrupt(t *testing.T, e *engineRuntimeState, api *offerECS, fleet *fakeFleet, id string) {
+	t.Helper()
+	fleet.mu.Lock()
+	if inst := fleet.instances[id]; inst != nil {
+		inst.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameTerminated}
+	}
+	fleet.mu.Unlock()
+	api.mu.Lock()
+	api.running = 0
+	delete(api.boxes, id)
+	api.mu.Unlock()
+	e.ecs.invalidate()
+	e.ecs.invalidateBox()
+	e.fleet.invalidate()
+}
+
+// offerBought is the offer id the nth purchase carried, read off the tags the call asked for —
+// which is also what the box will be found by afterwards.
+func offerBought(t *testing.T, fleet *fakeFleet, n int) string {
+	t.Helper()
+	fleet.mu.Lock()
+	defer fleet.mu.Unlock()
+	if n >= len(fleet.creates) {
+		t.Fatalf("only %d purchase(s)", len(fleet.creates))
+	}
+	return engineTagValue(fleet.creates[n].TagSpecifications[0].Tags, engineTagOffer)
+}
+
+// 🔴 (i) The rebuild: the box is gone, the task is PENDING, and the CP buys again FROM THE TOP of
+// the list without touching the desired count. ECS places the pending task on the new box the
+// moment it registers, which is why the count must not be written: it is already 1, and ADR 0075
+// decision 6's "write only when the first candidate differs" restriction existed to avoid racing
+// ECS's own re-placement — and ECS buys nothing here.
+func TestAnInterruptionRebuildsFromTheTopWithoutWritingTheDesiredCount(t *testing.T) {
+	st := testSettingsStore(t)
+	e, api, fleet := interruptedEngine(t, st, twoOffers)
+	writes := len(api.desiredWrites())
+	if got := offerTrailResults(e); got != "l4=active" {
+		t.Fatalf("trail = %q before the interruption", got)
+	}
+
+	interrupt(t, e, api, fleet, "i-1")
+	e.ctrl.tick(t.Context())
+
+	if len(fleet.creates) != 2 {
+		t.Fatalf("%d purchases, want a second one for the rebuild", len(fleet.creates))
+	}
+	// From the TOP: the first offer is what the operator asked for, and an interruption says
+	// nothing about the offers above the one that was reclaimed.
+	if got := offerBought(t, fleet, 1); got != "l4" {
+		t.Errorf("the rebuild bought offer %q, want the top of the list", got)
+	}
+	if got := api.desiredWrites(); len(got) != writes {
+		t.Fatalf("the rebuild wrote the desired count (%v); the task is already asked for", got)
+	}
+	if got := offerTrailResults(e); got != "l4=interrupted,l4=active" {
+		t.Fatalf("trail = %q, want the interruption recorded and the rebuild in flight", got)
+	}
+	// Not a failure (rule 3: a Spot box dying suddenly is acceptable).
+	e.ctrl.mu.Lock()
+	failures := e.ctrl.failures
+	e.ctrl.mu.Unlock()
+	if failures != 0 {
+		t.Errorf("failures = %d after an interruption, want 0", failures)
+	}
+	// And the new box finishes the walk without a desired write, so the departure sweep can
+	// collect it after the next idle window (the #584 shape).
+	api.register("i-2", "engine-image", "g6.xlarge")
+	e.ecs.invalidateBox()
+	e.ctrl.tick(t.Context())
+	if e.offers.startInFlight() {
+		t.Error("the rebuild's walk never ended; the departure sweep would stand down for ever")
+	}
+	if got := api.desiredWrites(); len(got) != writes {
+		t.Errorf("desired writes = %v, want the count untouched throughout the rebuild", got)
+	}
+}
+
+// 🔴 (ii) The positive control that matters most: a task replaced WITH THE BOX STILL THERE is not
+// an interruption. An OOM kill and a failed health check produce the identical service transition
+// (measured, ADR 0071 P0), and rebuilding then would buy a second GPU for a task ECS is already
+// placing on the first one.
+func TestATaskReplacedOnALiveBoxIsNotAnInterruption(t *testing.T) {
+	st := testSettingsStore(t)
+	e, api, fleet := interruptedEngine(t, st, twoOffers)
+
+	// The task goes; the box does not.
+	api.mu.Lock()
+	api.running = 0
+	api.boxes["i-1"] = offerBox{role: "engine-image"}
+	api.mu.Unlock()
+	e.ecs.invalidate()
+	e.ecs.invalidateBox()
+	e.fleet.invalidate()
+
+	e.ctrl.tick(t.Context())
+
+	if n := len(fleet.creates); n != 1 {
+		t.Fatalf("%d purchases, want no rebuild while the box is still here", n)
+	}
+	if got := offerTrailResults(e); got != "l4=active" {
+		t.Fatalf("trail = %q, want the walk untouched", got)
+	}
+}
+
+// (iii) An offer interrupted TWICE IN A ROW is skipped for the rest of the demand: a Spot pool
+// that is reclaiming this shape now will reclaim it again in a minute, and the operator's list
+// has another row for exactly this.
+func TestAnOfferInterruptedTwiceInARowIsSkipped(t *testing.T) {
+	st := testSettingsStore(t)
+	e, api, fleet := interruptedEngine(t, st, twoOffers)
+
+	// First interruption: rebuilt on the same (top) offer.
+	interrupt(t, e, api, fleet, "i-1")
+	e.ctrl.tick(t.Context())
+	if got := offerBought(t, fleet, 1); got != "l4" {
+		t.Fatalf("the first rebuild bought %q", got)
+	}
+	api.register("i-2", "engine-image", "g6.xlarge")
+	e.ecs.invalidateBox()
+	e.ctrl.tick(t.Context())
+	// The task comes up on it, so the controller sees running → starting again.
+	api.mu.Lock()
+	api.running = 1
+	api.boxes["i-2"] = offerBox{role: "engine-image", tasks: 1}
+	api.mu.Unlock()
+	e.ecs.invalidate()
+	e.ctrl.tick(t.Context())
+
+	// Second interruption of the same offer.
+	interrupt(t, e, api, fleet, "i-2")
+	e.ctrl.tick(t.Context())
+
+	if len(fleet.creates) != 3 {
+		t.Fatalf("%d purchases, want a third", len(fleet.creates))
+	}
+	if got := offerBought(t, fleet, 2); got != "l40s" {
+		t.Errorf("the second rebuild bought %q, want the NEXT offer — the top one has been taken twice", got)
+	}
+	if got := offerTrailResults(e); got != "l4=interrupted,l4=interrupted,l40s=active" {
+		t.Fatalf("trail = %q", got)
+	}
+}
+
+// (iv) An interruption is not a failure; a rebuild that cannot get a box is. The cooldown is what
+// stands between "the Spot pool is empty right now" and a CreateFleet per tick for ever.
+func TestARebuildThatGetsNoBoxIsAFailedStart(t *testing.T) {
+	st := testSettingsStore(t)
+	e, api, fleet := interruptedEngine(t, st, twoOffers)
+	// Every purchase from here answers "no stock", so the rebuild walks the list and spends it.
+	fleet.mu.Lock()
+	fleet.answers = []fleetAnswer{{codes: []string{"InsufficientInstanceCapacity"}}}
+	fleet.next = 0
+	fleet.mu.Unlock()
+
+	interrupt(t, e, api, fleet, "i-1")
+	e.ctrl.tick(t.Context())
+
+	e.ctrl.mu.Lock()
+	failures := e.ctrl.failures
+	e.ctrl.mu.Unlock()
+	if failures != 1 {
+		t.Fatalf("failures = %d after a rebuild that got no box, want exactly 1", failures)
+	}
+	if got := offerTrailResults(e); got != "l4=interrupted,l4=insufficient,l40s=insufficient" {
+		t.Fatalf("trail = %q", got)
+	}
+	// The desired count is still 1 throughout: the rebuild never writes it, and giving up on the
+	// list is the start deadline's business (it stops the service), not the rebuild's.
+	if api.desiredCount() != 1 {
+		t.Errorf("desired = %d", api.desiredCount())
+	}
+	// 🔴 And the interruption is not detected a SECOND time. The ledger was consumed when it
+	// fired, so a rebuild that spent the whole list leaves nothing for the next tick to act on —
+	// otherwise the detection would begin a walk every thirty seconds against a pool that has
+	// just said no three times, which is exactly what the cooldown exists to stop.
+	spent := len(fleet.creates)
+	e.ctrl.tick(t.Context())
+	e.ctrl.tick(t.Context())
+	if len(fleet.creates) != spent {
+		t.Fatalf("%d purchases after two more ticks, want %d — the interruption was detected again",
+			len(fleet.creates), spent)
+	}
+}
+
+// A rebuild the operator switched off mid-flight has a box to end. Nothing would drive that walk
+// again — the rebuild's premise is a task the service wants — so it is ended here rather than
+// left for the sweep's ceiling backstop.
+func TestARebuildAbandonedByAStopEndsItsBox(t *testing.T) {
+	st := testSettingsStore(t)
+	e, api, fleet := interruptedEngine(t, st, twoOffers)
+
+	interrupt(t, e, api, fleet, "i-1")
+	e.ctrl.tick(t.Context())
+	if len(fleet.creates) != 2 || !e.offers.rebuilding() {
+		t.Fatalf("the rebuild did not start: %d purchase(s)", len(fleet.creates))
+	}
+
+	// The engine is switched off while the replacement box is still booting.
+	if err := st.SetSetting(t.Context(), engineSettingsFor("image").mode, engineModeOff); err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	api.desired, api.running = 0, 0
+	api.mu.Unlock()
+	e.ecs.invalidate()
+
+	e.ctrl.tick(t.Context())
+
+	if len(fleet.terminated) != 1 || fleet.terminated[0] != "i-2" {
+		t.Fatalf("terminated = %v, want the replacement box ended", fleet.terminated)
+	}
+	if e.offers.startInFlight() {
+		t.Error("the abandoned walk is still in flight; the departure sweep would stand down")
+	}
+}
+
+// A second box with no task on it, next to one that IS carrying the task, is the two-box leak ADR
+// 0075 produced three times out of three — and the sweep collects it while the engine runs.
+//
+// 🔴 The second condition ("another box is busy") is what separates it from an ordinary task
+// replacement, where the engine's ONLY box has zero tasks for a few seconds. The positive control
+// is that shape: the same sweep, the same ages, one box, and nothing is terminated.
+func TestASecondIdleBoxIsSweptWhileTheEngineRuns(t *testing.T) {
+	st := testSettingsStore(t)
+	fleet := &fakeFleet{}
+	fleet.addForeignBox("i-busy", "engine-image")
+	fleet.addForeignBox("i-idle", "engine-image")
+	api := &offerECS{
+		desired: 1, running: 1,
+		boxes: map[string]offerBox{
+			"i-busy": {role: "engine-image", tasks: 1},
+			"i-idle": {role: "engine-image"},
+		},
+	}
+	e := newOfferTestEngine(t, api, fleet, twoOffers, st)
+
+	e.sweepBoxes(t.Context(), engineServiceView{state: "running", desired: 1, running: 1})
+
+	if len(fleet.terminated) != 1 || fleet.terminated[0] != "i-idle" {
+		t.Fatalf("terminated = %v, want the idle second box and only it", fleet.terminated)
+	}
+
+	// The positive control: no box is carrying the task (a replacement in flight), so the idle
+	// one is the engine's own and must be left for ECS to place on.
+	fleet2 := &fakeFleet{}
+	fleet2.addForeignBox("i-only", "engine-image")
+	api2 := &offerECS{desired: 1, boxes: map[string]offerBox{"i-only": {role: "engine-image"}}}
+	e2 := newOfferTestEngine(t, api2, fleet2, twoOffers, st)
+	e2.sweepBoxes(t.Context(), engineServiceView{state: "starting", desired: 1})
+	if len(fleet2.terminated) != 0 {
+		t.Fatalf("terminated %v — a task being re-placed is not a stray box", fleet2.terminated)
+	}
+}
+
+// 🔴 The interruption that has NO state transition to be read from, measured on hardware (ADR
+// 0077 P2 run): the box is taken away while its task is still PENDING, so the service was
+// `starting` and stays `starting`. ADR 0075 decision 6's `running` → `starting` never happens,
+// `startInFlight` is already down because the box had registered, and nothing else holds a clock
+// — the engine sat at desired 1 with no box and no log line, and its only automatic way out was
+// throwing the demand away after the 900-second idle window. Against a measured cold start of
+// 4 min 45 s that window is anything but rare.
+//
+// So "no box of this role is alive while the ledger holds one" is sufficient on its own.
+func TestABoxLostBeforeItsTaskRanIsStillAnInterruption(t *testing.T) {
+	st := testSettingsStore(t)
+	fleet := &fakeFleet{}
+	api := &offerECS{}
+	e := newOfferTestEngine(t, api, fleet, twoOffers, st)
+
+	// A start that got its box and asked for the task — and the task is still coming up.
+	tickIntoAStart(t, e, st)
+	api.register("i-1", "engine-image", "g6.xlarge")
+	e.ecs.invalidateBox()
+	tickIntoAStart(t, e, st)
+	if api.desiredCount() != 1 || len(fleet.creates) != 1 {
+		t.Fatalf("the fixture did not start: desired=%d purchases=%d", api.desiredCount(), len(fleet.creates))
+	}
+	// Two ticks of `starting`, so there is no `running` anywhere in this process's memory.
+	e.ctrl.tick(t.Context())
+	e.ctrl.tick(t.Context())
+
+	// The box goes. The service is `starting` before and after.
+	interrupt(t, e, api, fleet, "i-1")
+	writes := len(api.desiredWrites())
+	e.ctrl.tick(t.Context())
+
+	if len(fleet.creates) != 2 {
+		t.Fatalf("%d purchases, want the rebuild — nothing else would ever notice", len(fleet.creates))
+	}
+	if got := offerBought(t, fleet, 1); got != "l4" {
+		t.Errorf("the rebuild bought %q, want the top of the list", got)
+	}
+	if got := api.desiredWrites(); len(got) != writes {
+		t.Errorf("the rebuild wrote the desired count (%v); the task is already asked for", got)
+	}
+	e.ctrl.mu.Lock()
+	failures := e.ctrl.failures
+	e.ctrl.mu.Unlock()
+	if failures != 0 {
+		t.Errorf("failures = %d after an interruption, want 0", failures)
+	}
+	// Detected ONCE: the ledger is consumed, so the next tick walks the rebuild instead of
+	// beginning a second one.
+	e.ctrl.tick(t.Context())
+	if len(fleet.creates) != 2 {
+		t.Fatalf("%d purchases after a second tick — the detection fired again", len(fleet.creates))
+	}
+	if got := offerTrailResults(e); got != "l4=interrupted,l4=active" {
+		t.Fatalf("trail = %q", got)
+	}
+}
+
+// The positive control for the same rule, and the shape it must never fire on: the box is ALIVE
+// and the start is merely slow (the measured cold start is 4 min 45 s, most of which looks like
+// this). Nothing is bought.
+func TestASlowStartOnALiveBoxIsNotAnInterruption(t *testing.T) {
+	st := testSettingsStore(t)
+	fleet := &fakeFleet{}
+	api := &offerECS{}
+	e := newOfferTestEngine(t, api, fleet, twoOffers, st)
+
+	tickIntoAStart(t, e, st)
+	api.register("i-1", "engine-image", "g6.xlarge")
+	e.ecs.invalidateBox()
+	tickIntoAStart(t, e, st)
+	// The box is up and the task is pending on it, tick after tick.
+	api.mu.Lock()
+	api.boxes["i-1"] = offerBox{role: "engine-image", tasks: 1}
+	api.mu.Unlock()
+	e.ecs.invalidateBox()
+	for range 3 {
+		e.ctrl.tick(t.Context())
+	}
+
+	if len(fleet.creates) != 1 {
+		t.Fatalf("%d purchases, want the one — a slow start is not a loss", len(fleet.creates))
+	}
+	if got := offerTrailResults(e); got != "l4=active" {
+		t.Fatalf("trail = %q, want the walk untouched", got)
+	}
+	if len(fleet.terminated) != 0 {
+		t.Errorf("terminated %v while the task was being placed", fleet.terminated)
+	}
+}
+
+// And the other side of the ledger: at desired 0 a box that is gone is a DEPARTURE, not an
+// interruption. Nothing is rebuilt — which is what keeps an engine the operator switched off
+// from buying a box every thirty seconds for ever.
+func TestABoxGoneAtDesiredZeroIsNotAnInterruption(t *testing.T) {
+	st := testSettingsStore(t)
+	fleet := &fakeFleet{}
+	api := &offerECS{}
+	e := newOfferTestEngine(t, api, fleet, twoOffers, st)
+
+	tickIntoAStart(t, e, st)
+	api.register("i-1", "engine-image", "g6.xlarge")
+	e.ecs.invalidateBox()
+	tickIntoAStart(t, e, st)
+	// Switched off; the task and then the box go (the ordinary departure).
+	if err := st.SetSetting(t.Context(), engineSettingsFor("image").mode, engineModeOff); err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	api.desired, api.running = 0, 0
+	api.mu.Unlock()
+	interrupt(t, e, api, fleet, "i-1")
+
+	for range 3 {
+		e.ctrl.tick(t.Context())
+	}
+
+	if len(fleet.creates) != 1 {
+		t.Fatalf("%d purchases, want the one — a stopped engine rebuilds nothing", len(fleet.creates))
+	}
+	// Positive control that the fixture could have rebuilt: the same engine with the demand back
+	// and the desired count at 1 does buy again.
+	if err := st.SetSetting(t.Context(), engineSettingsFor("image").mode, engineModeOn); err != nil {
+		t.Fatal(err)
+	}
+	e.ctrl.tick(t.Context())
+	if len(fleet.creates) != 2 {
+		t.Fatalf("%d purchases after the engine was asked for again", len(fleet.creates))
+	}
+}

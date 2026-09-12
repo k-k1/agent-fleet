@@ -91,6 +91,8 @@ describe("engineOfferResultKey", () => {
     expect(engineOfferResultKey("insufficient")).toBe("admin.engines_offer_result_insufficient");
     expect(engineOfferResultKey("quota")).toBe("admin.engines_offer_result_quota");
     expect(engineOfferResultKey("budget")).toBe("admin.engines_offer_result_budget");
+    expect(engineOfferResultKey("unusable")).toBe("admin.engines_offer_result_unusable");
+    expect(engineOfferResultKey("interrupted")).toBe("admin.engines_offer_result_interrupted");
     // The two that are waited on differently must not collapse into one wording (decision 5).
     expect(engineOfferResultKey("unfulfillable")).not.toBe(engineOfferResultKey("insufficient"));
     expect(engineOfferResultKey("something_new")).toBe("");
