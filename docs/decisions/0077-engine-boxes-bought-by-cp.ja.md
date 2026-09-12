@@ -262,9 +262,12 @@
   `DeregisterContainerInstance(Force)` → `TerminateInstances`（スロットの `terminateSlot` と同じ順。
   0045 決定 23 が「自分で消すときに ACTIVE のゴーストを残さない」と決めた理由もそのまま当たる）。
 - `draining`（0071 決定 7）の意味は「MI が管理外で 427〜463 秒かけて消す」から「**CP が terminate を
-  発行し、EC2 が `terminated` になるまで**」へ変わる。スロットの実測（0045 決定 22: 停止→terminated
-  93 秒は CPU の値）から、GPU でも分単位で収まるはずだが**未測**（未解決 6）。0071 決定 7 の
-  「退場待ち」（0074 決定 4）は継承する——古い箱が `running` のうちに新しい箱を買わない。
+  発行し、EC2 が `terminated` になるまで**」へ変わる。**実測（P1 実機 1 回目と 2 回目・3 周）: 4 分 8 秒〜
+  5 分 45 秒**——g6e で 5 分 28 秒〜5 分 45 秒、g5 で 4 分 8 秒〜4 分 30 秒が 2 回。スロットの値（0045 決定 22:
+  93 秒・CPU）は GPU の箱には当てはまらない。0071 決定 7 の「退場待ち」（0074 決定 4）は継承する——古い箱が
+  `running` のうちに新しい箱を買わない——が、**その窓は数字ではなく幅（4〜6 分）で持つ**: 窓の内側に来た
+  需要は、古い箱が消えるまで最長 6 分待ってから次の箱を買う。「5 分」のどちら側に置いても 3 回に 1 回は
+  外れる。
 - 🔴 **MI の `scaleInAfter` の罠は消える。** 0071 P0 実測 3 の「`-1` で残した箱は後から値を変えても
   回収されず、`terminate-instances` は MI のポリシーが拒む」は、CP が terminate の主体になった時点で
   存在しない。代わりに**CP が terminate を忘れると箱が永久に残る**——0045 決定 29 の形の走査を掃除
@@ -278,8 +281,10 @@
   「インスタンスが消えた」であって、タスク数ではない。タスク 0 の慎重さは free slot の走査のもの）。
   どちらの向きも CP の記憶は見ない——0045 決定 29 が求めるとおり、タグと属性で足りる。
 
-🔁 **反証されたら変える条件**: terminate から `terminated` までが GPU で 5 分を超える実測が出たら、
-0071 決定 7 の窓の計算を書き直す。
+🔁 **反証されたら変える条件**: 3 周のうち 1 周（5 分 45 秒）で成立し、残り 2 周では成立しなかったので、
+上の窓は数字でなく幅で書いた。いま変えるとしたら、6 分を超える周が出たとき、または 4〜6 分の待ちが稀では
+なく普通になる需要の形が出たとき——そのときは退場待ちを「古い箱が `shutting-down` のうちに次を買う」に
+変えることになるが、決定 5 はいまそれを禁じている。
 
 ### 6. モデルの置き場は host volume にできる。P0 では匿名のまま、P1 で測る
 
@@ -494,7 +499,8 @@ ADR は追記型・不変である（`docs/CONVENTIONS.ja.md` §5）。既存の
    で通るか）。$0。依存: 決定 10。
 5. **`awsvpc` の EC2 launch type で、g6.xlarge の ENI 上限とタスク ENI**。1 台 1 タスクなら上限 4 で
    十分なはずだが、`ECS_AWSVPC_BLOCK_IMDS` などの agent 設定を含めて (c)。依存: 決定 2。P1 の実機。
-6. **terminate から `terminated` までの GPU の実測**（決定 5 の `draining` の長さ）。P1 の実機。
+6. **terminate から `terminated` までの GPU の実測**（決定 5 の `draining` の長さ）。**実測**: 3 周で
+   4 分 8 秒〜5 分 45 秒（P1 実機 1 回目・2 回目）。決定 5 は幅で持つ。
 7. **AMI を起動時に解決するか（`resolve:ssm:`）、スタック更新時に解決するか（CFN の型）。** 前者は
    最新に追随し、後者は配備が世代を固定する。0045 のスロットは後者。依存: 決定 7。
 8. **ローカル NVMe の mount。** AL2023 の ECS AMI は instance store を自動では mount しない (c)。
@@ -1058,3 +1064,529 @@ P1 の CP 側（決定 1・2・3・5・8・9・11、契約 A の CP 端）は #5
 未解決 8（インスタンスストアの mount）は、CFN レーンの発見（`<役>UseLocalStorage` の退役で cold start の
 実測 2 倍を失う）により P1 の「測る」から P1 の範囲へ繰り上げた。#575 が user data で NVMe を Docker の
 data-root にし、P1 実機が `df /var/lib/docker` を読む。
+
+## 追記 — P1 実機: image 役を EC2 Fleet で（2026-09-12・開発配備・約 $1.02）
+
+完了の定義 7 を af-sandbox で。CP と CFN の 2 レーン（#575・#577）は develop 入り済み、Control
+Plane は `0.19.1-dev-07f95ee0`。**移行は通り、購入側は緑。箱の側が 2 段で赤、退場はいまも赤。**
+GPU の箱 6 台・**30 分 24 秒**・約 **$1.02**——予算を 2% 超えた理由は費用の表にある。6 台のうち
+4 台は成功しようのない起動が買ったもので、**launch template が買った箱は 1 台もクラスタに
+参加できなかった**。原因は実機で突き止め、テンプレートを直し、直った箱が 48 秒で登録するところ
+まで測った。そのあと予算の門が切ったのが `warm: true` と画像生成である。
+
+以下はすべて生の戻り値か Control Plane のログ行。届かなかったものは「届かなかった」と書く。
+
+### 移行（決定 11・`<役>Enabled` の往復）
+
+| 手順 | 所要 | 戻り |
+|---|---|---|
+| 両役 `mode: off`・container instance にエンジンの箱なし | — | `describe-container-instances` はスロットの箱 4 台、`capacityProviderName: null`、`af-role` 属性なし。`image` は既に `off`、`llm` は `ondemand` だったので落とした |
+| `update-stack --use-previous-template`・`LlmEnabled=false ImageEnabled=false`（**旧**テンプレート） | **24.8 秒**（04:53:40.692 → 04:54:05.454 UTC） | 両 service が 04:54:03 に `DELETE_COMPLETE`。P0 の 25 秒をそのまま再現 |
+| `dev-deploy.sh --profile af-sandbox --region ap-northeast-1` | **約 31 分**（13:56 → 14:26:49 JST）、うち約 20 分は 2 アーキテクチャの QEMU ビルド | 60-engines 自体は **189 秒**（05:17:56.559 → 05:21:05.407）。`LlmCapacityProvider` / `ImageCapacityProvider` / `ImageSpotCapacityProvider` / `InfraRole` / `InstanceRole` / `InstanceProfile` が `DELETE_COMPLETE`、`LlmLaunchTemplate` / `ImageLaunchTemplate` / `EngineInstanceRole` / `EngineInstanceProfile` が `CREATE_COMPLETE`、`CpIngestPolicy` と `Associations` は更新。20-platform は「No changes to deploy」＝Fleet の権限は本当に 60-engines だけのもの（R1） |
+| `cloudformation deploy … --parameter-overrides LlmEnabled=true ImageEnabled=true` | 🔴 **691 秒**（05:28:39.986 → 05:40:10.996）、しかも手を入れたから終わった（下記） | `launchType: EC2`・`capacityProviderStrategy: null`・`placementConstraints: [{memberOf, "attribute:af-role == engine-image"}]` |
+
+そのあと確認したこと: `describe-capacity-providers` は **`FARGATE` と `FARGATE_SPOT` だけ**
+（Managed Instances の 3 本は `INACTIVE` ではなく消えた）、`/af-ws/engines` は両行に
+`"launchTemplate":"lt-…"` を持ち `capacityProvider` フィールドは無い。
+
+#### 🔴 `<役>Enabled=true` の側は止まる。`DesiredCount` を書いていないから
+
+`AWS::ECS::Service` にこのテンプレートが `DesiredCount` を書かないのは意図的である（「新規
+service で未指定なら 1」。PARAMETERS「エンジンの service」）。Managed Instances では無害だった
+——desired 1 が ECS を買い物に行かせ、service は落ち着いた。EC2 起動タイプでは**箱が無い**ので、
+両 service は desired 1 で作られ、載せる先が無いまま CloudFormation が安定化待ちに座り込んだ。
+
+```
+(service af-af-ecs-engines-image) was unable to place a task because no container instance met all
+of its requirements. The closest matching (container-instance 28509d40…) doesn't have the agent
+connected.
+```
+
+10 分後、別のシェルから両 service に `aws ecs update-service --desired-count 0`（05:38:56）を
+当てると steady state に達し、スタックは 05:40:10 に完了した。**放っておけばリソースの
+タイムアウトまで走ってロールバックしていた。** `standup.sh` は新しい service を作った直後に 0 へ
+落としている。`<役>Enabled` の往復はこの service を作るもう 1 つの経路であり、決定 11 も
+PARAMETERS も同じことが要ると書いていない。直す人は「更新中に別シェルから 0 へ落とす」（今回
+やったこと）か、リソースに `DesiredCount: 0` を明記するかを選ぶことになる。後者はテンプレートの
+コメントが反対している選択で、その理由は消えていない。
+
+**影響 — 決定 11。** 順序が 1 手足りず、その 1 手は省けない。
+
+#### 🔴 Control Plane はエンジン表が空のまま起動し、そこから戻れない
+
+`EnginesParam` は同じ `<役>Enabled` の条件下にあるので、往復のあいだエンジン表は**行が無い**。
+そして `dev-deploy.sh` は新しい Control Plane イメージをまさにその窓の中で載せる（CP の起動は
+05:22:37）。`newEngineRegistry` は行 0 で `nil` を返すため、表の再読み込み（reloader）も起動
+されず、行が戻っても CP は気づかない。
+
+```
+GET /api/admin/engines  →  {"engines":[],"super_admin":true}      （05:41・Enabled=true の 1 分後）
+```
+
+ログには何も出ない。`engine_table_reload.go` のヘッダは「この process が持たない役が表に現れたら
+再起動を要求する」と約束していて、その分岐は実在する——が、行 0 の起動が構築しない reloader の
+中にある。CP service の `force-new-deployment` で **86 秒**で直った（05:42:47 →
+`engines: image (images) -> http://image.af.internal:8080 …` が 05:43:35）。
+
+**影響 — 決定 11。** 移行は 2 手ではなく 3 手である: `false` → 当てる → `true` → **CP を強制
+再配備**。CP イメージを往復の*後*に回しても単独では効かない。すでに走っている CP もその前に
+起動しているからである。
+
+#### 🔴 Cloud Map の名前は消える。P0 の訂正は実テンプレートでは成り立たない
+
+P0 は `AWS::ServiceDiscovery::Service` に条件が無い使い捨てスタックで往復を測り、決定 11 の
+「あいだ Cloud Map の名前は消える」は言い過ぎだと結論した。`60-engines.yaml` の discovery
+リソースは service と同じ `Condition: HasLlmModel` / `HasImageModel` を持っており、一緒に消えた。
+
+```
+LlmDiscovery    DELETE_COMPLETE  2026-09-12T04:54:04.621Z
+ImageDiscovery  DELETE_COMPLETE  2026-09-12T04:54:04.879Z
+```
+
+名前が無い時間は窓の全体、今回は数秒ではなく **34 分**だった（`dev-deploy.sh` のビルドが往復の
+あいだに挟まるため）。✅ desired 0 なので失うものは無く、決定 11 自身の理屈は保つ。保たないのは
+「言い過ぎだ」と言った P0 の理由のほうである。
+
+もう 1 つ、後の読み手が導き直さずに済むように書いておく: レジストリの **ARN は同一で戻ってきた**
+（llm が `srv-myk…`、image が `srv-lge…`。CloudTrail の `DeleteService` リクエストと
+`CreateService` レスポンスから読んだ）。Cloud Map が同じ名前空間＋名前に同じ id を振り直した
+のであって、リソースが生き残った証拠ではない。PARAMETERS の ✅ は後者を言っているので、前者に
+直す必要がある。
+
+### $0 の陽性対照（05:47:38-42・4 秒・箱は上がらない）
+
+宣言: `bad`（spot・`g6.xxlarge`）/ `q4x`（spot・`g6.4xlarge`）/ `q4xb`（spot・`g6.4xlarge`）/
+`od48`（od・`g6.48xlarge`）。
+
+| 検査 | 結果 | 証拠 |
+|---|---|---|
+| (a) 綴り違いの型は `unusable` になり次へ進む | 🟢 | `offer bad (spot) bought nothing: InvalidFleetConfiguration: Your requested instance type (g6.xxlarge) is not supported in your requested Availability Zone (ap-northeast-1a). \| … (ap-northeast-1c).` → `trying the offer q4x (spot) after unusable`。両 override が言ったので位置による読み（#577）が行を unusable と宣言した |
+| (b) クォータ超の Spot 行は `quota` になり、同じ購入形態を table から外す | 🟢 | `offer q4x (spot) bought nothing: MaxSpotInstanceCountExceeded: Max spot instance count exceeded \| …` のあと **`q4xb` は一度も現れない**——次に試されたのは `od48`。`offer_trail` は 4 行の一覧に対して `[bad unusable, q4x quota, od48 quota]` の 3 行 |
+| (c) オンデマンドのクォータは別の壁 | 🟢 | `offer od48 (od) bought nothing: VcpuLimitExceeded: You have requested more vCPU capacity than your current vCPU limit of 8 allows …` |
+| (d) 何も買っていない | 🟢 | `af-role=engine-image` を状態フィルタ無しで `describe-instances`——新しいものは無し。一周は **4 秒** |
+
+⚠️ **一覧を使い切ると管理 API は 502 を返す**——`PUT /api/admin/engines/image 502 4.607s`、
+mode は既に `on` として保存済み。これは `errEngineOffersSpent` がハンドラまで届いたもので proxy の
+タイムアウトではなく、今日たまたま在庫が無い配備で運用者が見るのと同じ 502 である。もう少し
+親切なコードにする価値はあるが、間違ってはいない。
+
+### 🔴 箱の側: 1 台もクラスタに入れず、原因は 2 段
+
+| 走行 | 箱 | 起きたこと |
+|---|---|---|
+| A（05:50-06:05） | `i-0b8c…` g6.xlarge spot・`i-0d42…` g6.xlarge od・`i-0a96…` g6e.xlarge od | いずれも `the box … for offer <id> did not register within 3m0s; ending it` → 次の提案へ。一覧を使い切った |
+| B（06:07-06:13）・修正 1 の後 | `i-0779…` g5.xlarge spot・`i-0225…` g6.xlarge od | 同じ |
+| C（06:14-06:23）・修正 2 の後 | `i-0353…` g6e.xlarge od | **48 秒で登録** |
+
+**診断は生きている箱に SSM で入って行った**（`EngineInstanceRole` に
+`AmazonSSMManagedInstanceCore` があり、エージェントは `Online` だった——つまり箱には最初から
+ネットワークも資格情報も AWS への経路もあった）。
+
+```
+systemctl is-active ecs docker   →  inactive / active
+systemctl status ecs             →  ○ ecs.service … enabled; Active: inactive (dead)
+journalctl -u ecs                →  -- No entries --
+df -h /var/lib/docker            →  /dev/nvme1n1  233G  1.7G  232G   1% /var/lib/docker
+```
+
+user data は仕事を全部終えていた——NVMe は Docker の data-root として mount され、
+`/etc/ecs/ecs.config` には `ECS_CLUSTER` と `ECS_INSTANCE_ATTRIBUTES` が入っていた——そして
+**エージェントがただ起動されていなかった**。手で `systemctl start ecs` を叩くと箱は **3 秒**で
+登録された（`Websocket connection established … containerInstanceArn=…/a0694593…`）。これが
+「鎖の残りは全部正しい」ことの陽性対照である。
+
+1. 🔴 **`ecs.service` は `PartOf=docker.service`。** user data は data-root を移すために docker を
+   止める。すると systemd は `multi-user.target` のために積んでいた `ecs.service` の起動ジョブを
+   取り消し、`systemctl start docker` はそれを積み直さない。エージェントは journal が空のまま
+   `inactive (dead)` で残る——**どこにもエラーは出ず**、症状は「箱が登録されない」だけである。
+   決定 6 も PARAMETERS の「ecs.service は After=cloud-final なのでエージェントはまだ起動して
+   いない、だから順序は成り立つ」も、これを見ていない。エージェントは起動していないが、
+   *ジョブが待っていた*。docker を止めたのがそのジョブを奪ったのである。
+2. 🔴 **user data の末尾に素の `systemctl start ecs` を足すと固まる。** `ecs.service` は
+   `After=cloud-final.service` で、user data 自身が cloud-final なので、ジョブの完了を待つ
+   start は自分を待つ呼び出しを待つ。次の箱で実測:
+
+   ```
+   JOB UNIT                  TYPE  STATE
+   871 ecs.service           start waiting
+   263 cloud-final.service   start running
+   cloud-init status: running
+   ```
+
+   箱は登録の上限に終了されるまでそこに座っていた。
+
+**修正は `systemctl start --no-block ecs` を、`ecs.config` を書いたあと最後に置くこと**
+（エージェントは起動時に設定を読む）。この PR に両役の launch template ぶん入れ、2 つの実測を
+コメントに書いた。⚠️ これが箱に届くのは、CP が launch template の **`$Latest`** を指定して
+いるからである。CloudFormation は version 2・3 を作りながら `DefaultVersionNumber` を **1** の
+まま残した。動いた箱は `aws:ec2launchtemplate:version = 3` を持っている。
+
+**影響 — 決定 6・7 と CFN レーンの追記 4。** どの決定の前提も動かない。user data が 1 行足りず、
+順序が安全だという ADR の理由が話の半分だった。
+
+### 走行 C・完了の定義 7 が求める検査
+
+箱（`i-0353a9e56cba02b2f`・`g6e.xlarge`・オンデマンド・提案 `l40s`）は 06:14:15 に買われ、走行は
+06:19:13 に予算の門で止めた。
+
+| 検査 | 結果 | 証拠 |
+|---|---|---|
+| **箱は 1 台だけ**（ADR 0075 は 3 回中 3 回とも 2 台） | 🟢 | どの標本でも `af-role=engine-image` の `running` は 1 台以下。クラスタの container instance は 4 → 5 → 4。`offer_trail` の `active` は 1 行。0075 の形は起こりようがない——desired は登録の後に書かれるので、ECS が自分で置きにいく窓が無い |
+| **起動が deployment の落ち着きを待たない** | 🟢 | `06:15:03 engines: image: the box i-0353… registered; asking for the task`——desired が上がるのは**箱が登録したのと同じ秒**。0075 の再走はここで古い deployment の退場に 2 分 35 秒を払った。その待ちは形を取りようがなく、ログにも現れない |
+| 購入 → 箱の登録 | 🟢 **48 秒** | 06:14:15 購入・06:15:03 登録。効いていた上限は **180 秒**（後述） |
+| Spot の行で来た型（0075 実機 3 は g6e） | 🟢 | Spot の購入は 2 回、**`g6.xlarge`**（走行 A）と **`g5.xlarge`**（走行 B）。g6e は一度も無い。`price-capacity-optimized` は Managed Instances に頼めなかったことをしている——当時の Spot 価格は g6.xlarge $0.563-0.576・g5.xlarge $0.739-0.790・g6e.xlarge $1.353 |
+| `af-engine-buy` / `af-engine-offer` タグ | 🟢 | 1 回の `CreateFleet` から箱に: `af-pool=af-af-ecs-platform`・`af-role=engine-image`・`af-engine-offer=l40s`・`af-engine-buy=od`・`af-managed-by=agent-fleet`・`Name=af-engine-image`、加えて EC2 自身の `aws:ec2:fleet-id` と `aws:ec2launchtemplate:{id,version}`。`CreateTags` の呼び出しは無い（P0 (d) のとおり） |
+| `InstanceLifecycle` | 🟢 | Spot の 2 台は `spot`、オンデマンドの 4 台は**欠落**。P0 (d) の読み（「無い＝オンデマンド」）が読み手に要るもの |
+| パネルが箱から答える | 🟢 | `box: {id: i-0353…, instance_type: g6e.xlarge, since: 06:14:48Z, status: ACTIVE}`・`offer: {id: l40s, buy: od}`・`offer_trail` は `[spot3 budget, l4 budget, l40s active]`。箱があるあいだ `null` にはならない |
+| **`df /var/lib/docker` はインスタンスストアか**（未解決 8・ここまで未検証） | 🟢 | `/dev/nvme1n1 233G … /var/lib/docker`・`Docker Root Dir: /var/lib/docker`、fetch 中の `du -sh /var/lib/docker/volumes` は **24G**。匿名の `host` ボリュームは設計どおり NVMe に落ち、タスク定義は何も変わっていない |
+| fetch が 125 MB/s ではなく NVMe の速度で書くか | 🟢 | fetch サイドカー自身のログから: `sd3.5_medium 5,107,104,286 bytes in 27s`（189 MB/s）・`t5xxl 4,893,934,904 in 47s`（104 MB/s）・`neoAnime 7,105,352,134 in 34s`（209 MB/s）・`sd_xl_base 6,938,078,334 in 34s`（204 MB/s）・`z_image_turbo 12,309,866,400 in 60s`（205 MB/s）。ADR 0071 の Managed Instances の数字は 104-147 MB/s |
+| `state: running` / `warm: true` | 🔴 **届かず** | desired 1 が 06:15:03 → fetch 開始 06:15:31 → 既定のモデル一式がディスクに 06:17:04 → ComfyUI の process が GPU に乗ったのが **06:18:52**（`Total VRAM 45458 MB … Device: cuda:0 NVIDIA L40S`）＝ desired から **3 分 49 秒**。予算の門が 06:19:13 に閉じ、warm の判定まで 30〜90 秒ほど足りなかった。比較: ADR 0075 の再走は Managed Instances の g6.xlarge Spot で `warm: true` まで 5 分 11 秒 |
+| 画像を 1 枚生成して 200 | 🔴 **届かず** | 同じ門 |
+| **退場**: desired 0 → deregister → terminate | 🔴 | 06:19:13 に `mode: off` → `desiredCount` は即 0、タスクは 06:20:29 までに消えた（**76 秒**）——そこから**何も起きない**。4 分後も箱は `running`、パネルは `box: {…, status: ACTIVE}` / `state: draining` のまま、CP のログは 1 行も出ていない。06:23:39 に手で terminate |
+| terminate → `terminated`（未解決 6） | 実測 **5 分 28 秒〜5 分 45 秒** | 06:23:39 に `terminate-instances`、最後に `shutting-down` を見たのが 06:29:07、`terminated` が 06:29:24（15 秒間隔の poll）。🔴 決定 5 の 🔁 が言う**5 分を超えている**ので、0071 決定 7 の窓の算術は書き直しが要る |
+
+#### 🔴 退場が起きない理由: `startInFlight()` が二度と下りない
+
+`sweepBoxes`（決定 5・両方向）は `e.offers.startInFlight()` が真のあいだ早期に return する。
+それ自体は正しい——買ったばかりの箱にタスクが無いのは構造上あたりまえだからである。しかし
+`startInFlight()` は `boxID() != ""` であり、箱の id を消すのは登録上限の経路の `dropBox()` と
+*次の*起動の `begin()` の 2 つだけである。**成功した起動は id を立てたまま残す。** つまり箱が
+登録した瞬間から、その engine について決定 5 の走査は切られる——それが行うはずの通常の退場、
+すなわち desired 0 を書いた次の tick も含めて。
+
+`startInFlight` のコメントは意図を正確に書いている——「箱は買われ、desired はまだ書かれて
+いない」——そして後半を書き戻すものが無い。今日 2 回測った: 一度は mode off と登録しなかった箱で
+（9 分後も `running`）、一度は成功した起動の後の mode off で（4 分後も `running`、手で terminate）。
+
+**影響 — 決定 5。** 前提は無傷で、実装が自分の走査を切っている。修正は CP レーンのもの:
+`registered()` の後に `setEnabled(ctx, true)` を呼ぶ場所で箱の id を消し、「立てたままだと退場の
+走査が一度も走らない」を陽性対照にした試験で留める。
+
+#### ⚠️ 登録の上限は 300 ではなく 180 秒で動いていた
+
+この配備の `ImageOfferBudgetSec` は **180**——0.19.0 の既定、古い意味のものである。CFN レーンの
+追記は `standup.sh` にちょうど 180 を落とさせてテンプレートの 300 を立てるが、この配備を更新した
+のは **`update.sh`** で、こちらは live のスタックのパラメータを `UsePreviousValue` で通し、何も
+落とさない。つまり普通に上げた配備は短い上限を黙って抱えたままになる。今回は差が出なかったが
+（48 秒）、既定を動かした理由はまさにその「余裕の無さ」である。
+
+### 費用と後始末
+
+| 箱 | 型 | 購入 | 起動（UTC） | 終了 | 生存 | $/h | 概算 |
+|---|---|---|---|---|---|---|---|
+| `i-0b8c04c29851f88fa` | g6.xlarge | spot | 05:50:11 | 05:53:16 | 3m05s | 0.576 | $0.030 |
+| `i-0d428939322e54519` | g6.xlarge | オンデマンド | 05:53:17 | 05:56:22 | 3m05s | 1.167 | $0.060 |
+| `i-0a96425b7edf037bb` | g6e.xlarge | オンデマンド | 05:56:23 | 06:05:43 | 9m20s | 2.699 | $0.420 |
+| `i-0779f939b8309f373` | g5.xlarge | spot | 06:07:42 | 06:10:47 | 3m05s | 0.739 | $0.038 |
+| `i-02258932d93e27f7d` | g6.xlarge | オンデマンド | 06:10:49 | 06:13:14 | 2m25s | 1.167 | $0.047 |
+| `i-0353a9e56cba02b2f` | g6e.xlarge | オンデマンド | 06:14:15 | 06:23:39 | 9m24s | 2.699 | $0.423 |
+
+**30 分 24 秒・約 $1.02**（オンデマンドは pricing API の ap-northeast-1/Linux、Spot は同じ時間帯の
+`describe-spot-price-history`）。予算は $1 で、最後の箱から `df` と fetch の数字を読んでいる
+あいだに 2% 超えた。⚠️ **g6e の 2 台が支出の 82%** ——どちらも、安い 2 行が登録の上限で終了された
+あと提案の一覧が `l40s` まで落ちてきたから買われ、どちらも上記の退場の欠陥のせいで手で終わらせる
+まで生き延びた。どの数字にも Managed Instances の手数料はもう乗っていない（決定 8）。
+
+- Spot の購入 2 回はどちらも G/VT Spot クォータ（`L-3819A6DF`）8 vCPU のまま通った。
+  `AWSServiceRoleForEC2Fleet` も `AWSServiceRoleForEC2Spot` も既にあった。
+- `af-role` が `{engine-image, engine-llm}` の `describe-instances` を**状態フィルタ無し**で:
+  6 台、すべて `terminated`。（陽性対照は同じ出力の中にある——`tag-key=af-role` だけの問い合わせは
+  スロットの 4 台を含めて 10 を返すので、空の答えのほうが曖昧だったはずである。）
+- container instance は **4 台**に戻り、すべてスロットの箱。`describe-fleets` を絞らずに引くと
+  `[]`——P0 (b) の実測どおり、instant fleet は列挙されない。
+- **手順 1 で控えた値に戻した**: `image` は `mode: off`、`llm` は `mode: ondemand`、`ImageOffers`
+  は走行前に読んだ値とバイト一致、`ImageOfferBudgetSec` は 180、`ImageInstanceClasses` は無変更、
+  両 `<役>Enabled=true`。
+- ⚠️ **意図して変えたまま残したもの**: 開発配備は launch template の 2 つの修正を載せて動いて
+  いる。これはこの PR にあり、develop にはまだ無い。それ以外でスタックがブランチから遅れている
+  ものは無い。
+- 生の戻り値は測ったセッションの `~/.cache/adr0077-p1/` にある。
+
+### 本文に返すもの
+
+| # | 判定 | 決定 | 直すこと |
+|---|---|---|---|
+| 1 | 🔴 | 6・7 | launch template が ECS エージェントを自分で、`--no-block` で、`ecs.config` の後に起動すること。この PR で修正・実測済み。PARAMETERS の「ecs.service は After=cloud-final だから順序は成り立つ」に `PartOf=docker.service` の半分を足す必要がある |
+| 2 | 🔴 | 5 | 成功した起動のあと `startInFlight()` が下りないので退場の走査が一度も走らず、誰かが気づくまで箱が課金され続ける。CP レーン |
+| 3 | 🔴 | 11 | `<役>Enabled=true` の側が「箱の無い desired 1」の安定化待ちで止まる。移行に「更新中に両 service を 0 へ落とす」か明示の `DesiredCount` が要る |
+| 4 | 🔴 | 11 | 往復のあとに CP を強制再配備する必要がある。CP は行 0 のエンジン表で起動し、`newEngineRegistry` はそこで `nil` を返すので reloader すら無い |
+| 5 | 🔴 | 11 | 実テンプレートでは Cloud Map の service も役の条件を持ち、service と一緒に消える。P0 の ✅ は条件の無い使い捨てで測ったもので、PARAMETERS は運用者が読む場所で違うことを言っている |
+| 6 | ⚠️ | — | `update.sh` は捕まった `<役>OfferBudgetSec=180` を落とさない（落とすのは `standup.sh` だけ）ので、普通に上げた配備は古い上限を抱える |
+| 7 | ⚠️ | 6 | PARAMETERS の「EBS だけの型（g6e）は何にも当たらない」は誤り——`g6e.xlarge` は 232.8 GB の インスタンスストアを持ち、実際に使った |
+| 8 | 🟢 | 1・2・3・8 | 箱は 1 台・落ち着き待ち無し・安いほうの Spot 型・タグ・箱から答えるパネル・NVMe の data-root。購入側に直すところは無い |
+
+**完了の定義 7 は未達である**: `warm: true`・画像生成・CP が駆動する退場は測れていない。項目 1 と
+2 が develop に入ったあと、GPU 約 10 分の走行がもう 1 回要る。
+
+## 追記 — CP の 2 巡目が本文に返したもの（2026-09-12・PR #584）
+
+P1 の実機（#583）は CP 側に赤を 3 件出した。3 件ともここで直した。うち 2 件は本文に無いことを
+言っているので、この節が記録である。**決定の本文は書き換えていない。** 3 件は同格ではない: 1 件目は
+#577 が決定 5 を実装しそこねたもので、2 件目と 3 件目はこの ADR の移行が本文に無い状態に出会ったもの。
+
+- 🔴 **決定 5 の退場が一度も走らなかった。本文は正しく、コードが間違っていた。** 実機の診断
+  （上の「退場が起きない理由: `startInFlight()` が二度と下りない」）はそのまま当たっている。起動が
+  進行中のあいだ掃除が引き下がるのは正しい——買ったばかりの箱にタスクが無いのは**構造上**そうなの
+  だから、そこで掃除をすればあらゆる起動を終わらせてしまう——が、**成功した**起動でその旗を消す者が
+  誰もいなかったので、最初の起動の後は永久に 1 行目で戻っていた（06:19:13 に `mode=off`、タスクは
+  76 秒で消え、あとは何も起きず、4 分後に手で terminate）。起動は desired を書いた時点で箱を忘れる
+  ようにした。**本文が持ち帰るべきこと**: 退場の前提条件は 2 つあり、それは同じ事実の裏表である
+  （起動が進行中でない・desired が既に書かれている）。片方だけを持つ実装には退場が無い。
+- **その帰結として起動に 2 つめの番人が要った: 「サービスは既にタスクを欲しがっている」。**
+  管理トグルは `mode=on` で無条件に起動を呼ぶので、箱を覚えなくなった以上、**動いている**エンジンで
+  押すと一覧をもう一度歩いて 2 台目の GPU を買ってしまう。起動は先にサービスを読み、`desired >= 1`
+  なら何もしないようにした。ADR 0075 が `setStrategy` の中に持っていた同じ番人の後継である。
+- 🔴 **「行が 0 の表」はこの ADR 自身の移行が作る状態で、CP はそこから戻れなかった。**
+  `<役>Enabled` の往復は 60-engines の条件付きの半分を 1〜2 分落とす——エンジンの表もその中にある——
+  そしてその窓で起動した Control Plane は 0 行を読み、レジストリを作らず、リローダも作らず、残りの
+  一生 `{"engines":[]}` と答えていた（上の「Control Plane はエンジン表が空のまま起動し、そこから
+  戻れない」: 何も壊れていないエンジンを取り戻すのに force-new-deployment 86 秒）。レジストリは**空でも作り**、リローダを走らせ、現れた役は boot と同じ
+  関数で組み立てて迎え入れる。配備ぜんたいの ingest 走者も同じ経路で戻る（0 行の表には `ingest` 欄も
+  無いので、これが無いとその CP は全エンジンを給仕できてモデルを 1 つも取り込めない）。⚠️ これは
+  `engine_table_reload.go` の冒頭の理屈——ADR 0074 から継いだ「poll の中で役を登録すると、この process
+  が前提にする状態を何も持たないコントローラを組むことになる」——を覆す。組み立てが boot のループの中に
+  あったあいだは正しかったが、いまは 1 つの関数なので、迎え入れた役は boot のものとまったく同じに
+  組み上がる。**本文が持ち帰るべきこと**: 決定 11 の移行の節は「箱が 1 台も立っていない窓」を求めて
+  いるが、**CP が 0 行の表を生き延びられること**も要る——往復がまさにそれを作るのだから。
+- **`<役>Enabled=true` はサービスを「箱の無い desired 1」で作る。** CloudFormation は
+  `DesiredCount` を省いた service を 1 で作るので、往復の後半は誰かが 0 を書くまで安定化待ちで止まる
+  （実機では別シェルが書いた）。CP の controller は mode が `off` なら誰が数を書いたかによらず
+  desired 0 を書く——その振る舞いは元からあり、いまはテストで固定した。**実機で効かなかったのは上の
+  点のせい**で、その CP にはレジストリが無く、したがって動く controller も無かった。新しく要るものは
+  無いが、移行の節の「両役を `mode: off`」はもう 1 つの理由で効いている: 迷子の desired 1 を人手なしで
+  下げるのがそれである。
+
+## 追記 — P1 の項目 1・3・4・6 に対する CFN レーンの答え（2026-09-12・PR #585）
+
+項目 2（CP の `startInFlight`）と、P1 の PR がその場で直した PARAMETERS の 2 文（項目 5・7）は
+このレーンのものではない。残りの 4 件がこのレーンで、うち 3 件はコードの修正が P1 の PR に
+入っているので文書だけである:
+
+- **項目 1 — 順序の段落。** PARAMETERS の「この順序が効くのは ECS エージェントがまだ起動して
+  いないから」に、同じ事実のもう半分を足した: `ecs.service` は `PartOf=docker.service` なので、
+  docker を止めるとエージェントに積まれていた起動ジョブが消え、docker を起こし直しても積み直され
+  ない——だから user data は自分でエージェントを起こし、ブロックする start は自分を走らせている
+  cloud-final のジョブを待ってしまうので `--no-block` を付ける。
+- **項目 3・4 — 移行は 4 手になった。** 手順は 3 手（`false` → 当てる → `true`）だったが、
+  `true` の半分が走っているあいだ両 service を desired 0 に保つ**別シェル**と、そのあとの
+  コントロールプレーンの `force-new-deployment` を書き足した。どちらも P1 実機の実測で、
+  どちらも飛ばすと黙って壊れる——スタックは勝てない安定化待ちに座り、パネルは
+  `{"engines":[]}` と答えてログには何も出ない。
+- **項目 6 — `update.sh` でも予算を直す。** `standup.sh` は捕捉された
+  `<役>OfferBudgetSec=180`（旧い意味の既定値）を落とすが、既存の配備が上がる道は `update.sh` で、
+  そちらはパラメータを渡さない。そこで、そのファイルに既にある ADR 0072 P6 の修復と同じ形で
+  ——live のスタックを読み、**値がちょうど 180 のときだけ**テンプレートの既定値を渡す——修復を
+  足した。それ以外の値は運用者の選択として触らない。手で `cloudformation deploy` を走らせる道は
+  どちらでもないので、PARAMETERS にそう書いた。
+
+🔁 **これが変わるとき**: エンジンの service に `DesiredCount: 0` を明示すれば項目 3 の別シェルは
+要らなくなる——が、それはタスク定義を変えるたびに desired を戻すという罠でもあり、
+[the engine services](../../deploy/aws/ecs/cfn/PARAMETERS-60-engines.md) がその理由で
+このプロパティを書いていない。別シェルのほうが安い。
+
+## 追記 — P1 実機 2 回目: warm・画像 1 枚・CP 主導の退場（2026-09-12・開発配備・約 $0.15）
+
+1 回目が届かなかった 3 つ。af-sandbox で、#583・#584・#585 がすべて develop に入った状態、
+Control Plane は `dev-deploy.sh` が載せた `0.19.1-dev-3d4cb9e9`。**3 つとも届き、購入側で新しく
+赤になったものは無い——完了の定義 7 は達成された。** Spot の箱 2 台・GPU **11 分 58 秒**・
+約 **$0.15**（門は 15 分と $0.60）。
+
+**今回は移行をしていない。** 開発配備は 1 回目の実機以降ずっと EC2 起動タイプなので
+`<役>Enabled` の往復は走らせていない。つまり 1 回目の項目 3・4・5 と、#584 の「行 0 のエンジン表
+から戻る」修正は、**直っているが実機では未測定**のままである。下の表に入れていないのはそのため
+で、ここには何の確認も無い。
+
+以下はすべて生の戻り値・Control Plane のログ・CloudTrail の記録である。測れなかったものは
+測れなかったと書く。
+
+### 配備そのものが言ったこと
+
+`dev-deploy.sh --profile … --region …` を普通に実行。端から端まで 40 分（うち 20 分ほどは
+2 アーキテクチャの QEMU ビルド。`workspace/` が動いていたため）。CP 自身の行:
+
+```
+control-plane 0.19.1-dev-3d4cb9e9 on 0.0.0.0:8099 (console=…, ws image=…:0.19.1-dev-3d4cb9e9, auth=oauth, runtime=ecs-ec2)
+```
+
+🟢 **1 回目の項目 6 が、こちらが何もしないのに実機で発火した**——`update.sh` は直したものを
+stdout に書き、スタックのパラメータも一緒に動いた:
+
+```
+==> cloudformation deploy af-ecs-engines (60-engines, parameters unchanged)
+    · LlmOfferBudgetSec=300 (ADR 0077 re-meant it; 180 was the OLD meaning's default)
+    · ImageOfferBudgetSec=300 (ADR 0077 re-meant it; 180 was the OLD meaning's default)
+```
+
+`describe-stacks` は前が両方 `180`、後が両方 `300`、そして**他のパラメータは 1 つも動いていない**
+（2 つの応答をキー単位で突き合わせた。`ImageOffers` は 242 バイトでバイト一致）。今回効いていた
+登録の上限は 1 回目の黙った 180 ではなくテンプレートの 300 である。
+
+🟢 新しい CP が上がった直後の `GET /api/admin/engines` は `{"engines":[]}` ではなく**行が 2 つ**
+返した。これは 1 回目の項目 4 の修正を測ったのではなく、**項目 4 の状況が起きていない**という
+だけである——`60-engines` の条件付きの半分を消すものが無く、エンジン表は行を失っていない。
+
+### 1 巡目 — 通しの 1 巡（09:15:41 → 09:25:11 UTC）
+
+宣言した `ImageOffers` は 1 回目と同じ: `spot3`（spot・g6/g5/g6e）／`l4`（od）／`l40s`（od）。
+先頭の行が埋まったので歩きは 1 行で終わった（`offer_trail` は `[spot3 active]`）。
+
+| 検査項目 | 判定 | 証拠 |
+|---|---|---|
+| **箱は 1 台だけ** | 🟢 | 09:15 UTC 以降の CloudTrail で `CreateFleet` は**ちょうど 2 回**、1 巡につき 1 回。どの標本でも `af-role=engine-image` の生きた箱は 1 台を超えない。クラスタの container instance は 4 → 5 → 4 を 2 度 |
+| 購入 → 箱の登録 | 🟢 **45 秒** | `CreateFleet` 09:15:43、`engines: image: the box i-00fc158ca3f562466 registered; asking for the task` 09:16:28。2 巡目は **44 秒**。効いていた上限は 300 秒 |
+| 登録と同じ秒に desired が上がる | 🟢 | CloudTrail の `UpdateService` は上のログ行と同じ **09:16:28**。1 回目の実測の再現であり、0075 の 2 分 35 秒の落ち着き待ちは相変わらず形を持たない |
+| Spot の行が埋まる | 🟢 | `spot3` が **`g5.xlarge`**（`InstanceLifecycle: spot`・ap-northeast-1a）を 2 巡とも買った。g6e は一度も無い。1 回目はこの行が成功する所を見ていない——launch template を直す前に、Spot の箱は 2 台とも登録の上限で死んでいた |
+| パネルが箱から答える | 🟢 | 登録後の最初の標本から箱が消えるまで `box: {id: i-00fc158c…, status: ACTIVE}`・`offer: {id: spot3, buy: spot}`。`class` は `spot3`・`class_is_default: true` |
+| **`state: running` / `warm: true`** | 🟢 desired 1 から **5 分 40 秒〜5 分 53 秒** | 下の冷間起動の表。`running` の初見が 09:22:08、`warm: true` の初見が 09:22:21（13 秒間隔の poll）。ComfyUI の `Starting server` が 09:22:08 なので真の値はこの帯の中。`mode: on` からは **6 分 40 秒** |
+| **画像を 1 枚生成して 200** | 🟢 | `provider: comfy`・モデル `sd35-medium`・`warnings: []`・1024×1024・1,011,661 バイト。ComfyUI 自身の行は `Prompt executed in 73.12 seconds` |
+| **退場: desired 0 → deregister → terminate を CP が** | 🟢 | `mode: off` 09:24:21 → タスクが消えたのが 09:24:31（**10 秒**）→ `DeregisterContainerInstance` 09:25:10 → `TerminateInstances` 09:25:11。**2 巡とも手では何も終わらせていない。** 1 回目の項目 2 は閉じた |
+| terminate → `terminated` | 実測 **4 分 14 秒〜4 分 30 秒** | 最後の `shutting-down` が 09:29:25、`terminated` が 09:29:41（15 秒間隔の poll）。2 巡目は **4 分 8 秒〜4 分 25 秒**。⚠️ 1 回目は 5 分 28 秒〜5 分 45 秒だった——後述 |
+| 走行中に掃除が誤発火していない | 🟢 | CloudTrail の `TerminateInstances` は 2 回だけで、どちらも自分の `mode: off` の後。画像を出した箱は 9 分 28 秒生き、その間 1 度も触られていない |
+| **`df /var/lib/docker` は g5 でもインスタンスストアか** | 🟢 | 2 巡目で実測——後述 |
+
+#### 冷間起動を 1 行ずつ（desired 1 の 09:16:28 から）
+
+| 経過 | 何が |
+|---|---|
+| 33 秒 | `engine fetch: active set for /af-ws/engines/image/active starts with 'sd35-medium'` |
+| 2 分 39 秒 | `engine fetch: engine may start; 9 file(s) still to sync`＝既定のモデル一式がディスクに（`sd3.5_medium 5,107,104,286 bytes in 50s`・`clip_l … in 3s`・`clip_g … in 12s`・`t5xxl 4,893,934,904 in 56s`） |
+| 5 分 26 秒 | `Total VRAM 22588 MB, total RAM 15791 MB` … `Device: cuda:0 NVIDIA A10G : cudaMallocAsync` |
+| 5 分 40 秒 | `Starting server` / `To see the GUI go to: http://0.0.0.0:8080` |
+| 5 分 53 秒 | パネルが `warm: true`（最初の標本） |
+
+同じものの他の実測と並べると:
+
+| 走行 | 箱 | `warm: true` まで |
+|---|---|---|
+| 0074（Managed Instances） | g6e.xlarge spot | `mode: on` から 307 秒（画像 1 枚は 403 秒） |
+| 0075 の再走（Managed Instances） | g6.xlarge spot | `mode: on` から 5 分 30 秒 |
+| 0077 実機 1 回目（EC2 Fleet） | g6e.xlarge オンデマンド | 届かず。ComfyUI が GPU に乗ったのが desired から 3 分 49 秒 |
+| **今回**（EC2 Fleet） | **g5.xlarge spot** | **desired から 5 分 53 秒・`mode: on` から 6 分 40 秒** |
+
+⚠️ **正直に読むこと: 速くなったのは箱の購入で、冷間起動は速くなっていない。** 2 秒で買って
+45 秒で登録するのは Managed Instances とは別世界だが、登録から先はモデルのバイト列と CUDA で
+あり、A10G は L40S より遅い——同じ行まで今回 5 分 26 秒、1 回目 3 分 49 秒。fetch の速度も同じ
+ことを言う: 今回の箱は 102 / 87 / 103 / 173 / 158 / 140 MB/s、1 回目の g6e.xlarge が 104-209、
+ADR 0071 の Managed Instances が 104-147。**範囲が重なるので、この走行は「NVMe の data-root が
+速い」の証拠にはならない**——g5.xlarge では上限は網であってディスクではない。決定 6 の証拠は
+`df` であって速度ではない。
+
+#### 画像と、その叩き方
+
+ADR 0075 は「エンジンのゲートウェイには外から入る道が無い（トークンは Workspace 内部の
+`/internal/engine/token`）」として画像を出せなかったと記録している。**その配備の上のセッションが
+その道**であり、トークンは要らない: Workspace を起こし、`POST /api/sessions` でセッションを作り、
+`POST /api/sessions/{name}/input` でプロンプトを渡した。⚠️ 繰り返す人が先に知るべきことが 1 つ:
+**`claude` のセッションに `driver: "managed"` は拒まれる**（`400 driver_unsupported`・ADR 0015）。
+ドライバは `tui` で、駆動は同じ REST の経路で変わらない。
+
+| 時刻（UTC） | 何が |
+|---|---|
+| 09:22:36 | セッションにプロンプトを渡す（`202 {"queued":…}`） |
+| 09:22:46 | ComfyUI: `got prompt` |
+| 09:23:59 | ComfyUI: `Prompt executed in 73.12 seconds` |
+| 09:24:03 | セッションの報告: 成功・`provider: comfy`・モデル `sd35-medium`・`warnings: []`（空）・エラー無し・1024×1024・1,011,661 バイト |
+
+⚠️ 所要秒数を訊いたところ、エージェントは推測せず**「結果に含まれていない・そのフィールドが無い」**
+と答えた。上の 73.12 秒は ComfyUI 自身のログで、ツールの戻り値は時間を持っていない。
+
+#### 退場を、決定 5 が言う順で
+
+```
+09:24:21  engines: image set to off by …
+09:25:11  engines: image: terminated the box i-00fc158ca3f562466 (the engine is stopped and nothing is running on it)
+```
+
+CloudTrail の同じ巡、Control Plane 自身のタスクロールから: `UpdateService` 09:24:21 →
+`DeregisterContainerInstance` **09:25:10** → `TerminateInstances` **09:25:11**。ECS は 10 秒で
+タスクを外し、残りは走査の次の tick が——トグルから **50 秒**。2 巡目（タスクがまだ `pending` の
+うちに切った側）は同じ経路で **65 秒**（`mode: off` 09:32:24・ECS の `stopped 1 pending tasks`
+09:32:32・deregister 09:33:28・terminate 09:33:29）。どちらも人手は要らず、CP が忘れた箱が
+`describe-instances` に出ることも無かった。
+
+### 2 巡目 — 箱は要るが warm は要らない 2 つの検査（09:30:57 → 09:33:29 UTC）
+
+GPU 2 分 30 秒。fetch が効いてくる前に意図して切った。
+
+- 🟢 **NVMe の data-root は `g5.xlarge` にもある。** 生きた箱に SSM で:
+
+  ```
+  df -h /var/lib/docker   →  /dev/nvme1n1  233G  2.6G  231G   2% /var/lib/docker
+  lsblk                   →  nvme0n1 60G（/ と /boot/efi）, nvme1n1 232.8G  /var/lib/docker
+  docker info             →  Docker Root Dir: /var/lib/docker
+  systemctl is-active ecs docker  →  active / active
+  ```
+
+  1 回目は `g6e.xlarge` で測った。インスタンスストアは型ごとの性質なので、2 つ目の型は持って
+  おく価値がある。root は `ImageStorageGiB` が言う 60 GiB の gp3 で、`ecs` が `active` なのは
+  誰も触っていない箱で launch template の修正（`systemctl start --no-block ecs`）が効いている
+  ということである。
+
+- 🟢 **すでに走っている engine で `mode: on` を押しても何も買わない**——#584 の 2 つ目の門で、
+  これまで単体試験しか見ていなかったもの。09:31:49、箱が登録され desired が書かれた 11 秒後に
+  押した: 管理 `PUT` は **200 を 0.28 秒**で返し（本物の起動は 2.6 秒）、CloudTrail に
+  **3 回目の `CreateFleet` は無く**、`describe-instances` は前も後も 1 台。CP のログには起動の
+  最初の行（`starting on spot3 (22000 MiB VRAM declared); largest model sd35-medium wants
+  11097 MiB (floor)`）だけが出て、門で止まっている。
+
+  ⚠️ **ただしこの押下でパネルの `offer_trail` が `null` に消えた。** 歩きの `begin()` は
+  `startOnOffer` がロックを取って `desired >= 1` を見つけるより前に走るので、**いま現に生きて
+  いる走行の履歴が消え、代わりの行も書かれない**。`offer` は `{id: spot3, buy: spot}` のままで
+  箱は危険に晒されていない。失われるのはパネルの上の証跡で、しかも運用者がボタンを押している
+  まさにその瞬間である。
+
+### 費用と後始末
+
+| 箱 | 型 | 購入 | 起動（UTC） | 終了 | 生存 | $/h | 概算 |
+|---|---|---|---|---|---|---|---|
+| `i-00fc158ca3f562466` | g5.xlarge | spot | 09:15:43 | 09:25:11 | 9m28s | 0.7391 | $0.117 |
+| `i-0566a8943c902d524` | g5.xlarge | spot | 09:30:59 | 09:33:29 | 2m30s | 0.7391 | $0.031 |
+
+**11 分 58 秒・約 $0.15**（`describe-spot-price-history` の同じ時間帯・g5.xlarge・Linux・
+ap-northeast-1a が $0.7391、1c が $0.7893）。門は GPU 15 分と $0.60 で、どちらにも届いていない。
+⚠️ 1 回目の $1.02 との差はそっくりそのまま「Spot の行が埋まるようになった」ことである——
+$2.699 の `g6e.xlarge` まで落ちなかった。提案の一覧は 2 回のあいだ変えていない。
+
+- `af-role` が `{engine-image, engine-llm}` の `describe-instances` を**状態フィルタ無し**で:
+  2 台、どちらも `terminated`。（陽性対照は同じ出力の中——`tag-key=af-role` だけなら
+  スロットの 4 台を含めて 6 を返す。）
+- container instance は **4 台**に戻り、すべてスロットの箱。`describe-fleets` を絞らずに引くと
+  空——P0 (b) の実測どおり。
+- **手順 1 で控えた値に戻した**: `image` は `mode: off`、`llm` は `mode: ondemand`、`ImageOffers`
+  はバイト一致、`ImageInstanceClasses` は無変更、両 `<役>Enabled=true`。画像のために起こした
+  Workspace は `stopped` へ戻し、ツールを呼ぶために作ったセッションは削除した（前も後も 16 本）。
+- ⚠️ **意図して変えたまま残したもの**: `ImageOfferBudgetSec` と `LlmOfferBudgetSec` は **300** に
+  なっている。`update.sh` が途中で直したからで、これは #585 が働いた結果であって残骸ではない。
+- 生の戻り値は測ったセッションの `~/.cache/adr0077-p1b/` にある。
+
+### 本文に返すもの
+
+| # | 判定 | 決定 | 何を言っているか |
+|---|---|---|---|
+| 1 | 🟢 | 5 | 退場は CP 主導で 2 回とも走り、順序も決定のとおり（desired 0 → deregister → terminate、トグルから 50 秒と 65 秒）。手で終わらせたものは無い。1 回目の項目 2 は閉じた |
+| 2 | 🟢 | 1・2・6・7 | 1 巡につき箱 1 台・登録まで 44〜45 秒・desired は同じ秒・Spot の行が安い型で埋まる・誰も触っていない箱で `ecs` と `docker` が `active`。launch template の修正は保っている |
+| 3 | 🟢 | 6 | NVMe の data-root は `g6e.xlarge` だけでなく `g5.xlarge` にもある。⚠️ ただし fetch の速度はその証明にならない——今回の 87-173 MB/s は ADR 0071 の Managed Instances の範囲と重なる。この型では上限は網である |
+| 4 | 🟢 | — | 1 回目の項目 6 が実機で確認された: `update.sh` は両役の `OfferBudgetSec` を 180 から 300 へ動かし、他のパラメータには触っていない |
+| 5 | ⚠️ | 5 | **terminate → `terminated` は「約 5 分」ではなく 4〜6 分である。** 今日は 2 回とも 4 分 8 秒〜4 分 30 秒、1 回目は g6e で 5 分 28 秒〜5 分 45 秒。決定 5 の 🔁 は 1 回目では成立し、この 2 回では成立しない。ADR 0071 決定 7 の窓の算術を書き直す人は、1 つの数ではなく**幅**を持っていくこと。5 分のどちら側を仮定しても 3 回に 1 回は外れる |
+| 6 | ⚠️ | — | 走っている engine への `mode: on` は、ハードウェアに対しては正しく何もしないが、パネルの `offer_trail` を消す。`begin()` が門より前に走っている。動かす行は 1 つで、この走行で #584 より前より悪くなっているのはここだけ |
+| 7 | — | 11 | **測っていない。そして怠ったのではない**: `<役>Enabled` の往復（項目 3・4・5）と #584 の「行 0 のエンジン表から戻る」は、まだ Managed Instances に乗っている配備が要る。この配備はもう乗っておらず、証明のために逆向きに移行し直すのは得より高くつく。#585 / #584 で直っており、実機では未検証のまま |
+
+**完了の定義 7 は達成された**: 箱は 1 台・落ち着き待ち無し・Spot の行が渡した型・タグと
+`InstanceLifecycle`・5 分 53 秒で `state: running` / `warm: true`・画像 1 枚が 200・NVMe の
+data-root、そして Control Plane 自身が駆動した退場——移行そのものの手（項目 3・4・5）は
+「直っているが未測定」として持ち越す。
+
+## P1 実機の後の改訂（2026-09-12）
+
+P1 は完了した（完了の定義 1〜7。実機 1 回目・2 回目＝#583・#588）。決定 1 つの 🔁 が成立し、上の本文をこれまでと
+同じ作法でその場で改訂した。それ以外の本文は動いていない。
+
+| 決定 | 変えたこと | 出所 |
+|---|---|---|
+| 5 | `draining` は「未測」ではなく実測: terminate → `terminated` は 3 周で **4 分 8 秒〜5 分 45 秒**。退場待ちの窓は、🔁 が 3 周のうち 1 周だけ成立したので、**数字でなく 4〜6 分の幅**で持つ。🔁 自体を「6 分を超える周が出たとき、または待ちが普通になる需要の形」に書き直した | P1 実機 1 回目・2 回目 |
+| 未解決 6 | 同じ幅で答えた | 同上 |
+
+実機で未測のまま残るもの（実機の追記自身の記述による）: `<役>Enabled` の往復移行と #584 の「0 行の表から戻る」
+（開発配備はもう MI に乗っておらず、証明のために逆向きに移行し直す費用は得るものより大きい）。走っている
+engine への `mode: on` がパネルの `offer_trail` を消す件（CP レーンの 1 行の順序修正——#584 の門を `begin()` より前に）。
+P2（決定 4・6）と P3（llm 役）は未着手。

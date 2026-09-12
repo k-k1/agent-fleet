@@ -114,14 +114,35 @@ func (r *engineTableReloader) tick(ctx context.Context) bool {
 func (r *engineTableReloader) apply(table engineTable) bool {
 	changed := false
 	seen := map[string]bool{}
+	// The ingest runner, for a process that came up while the table had no rows and therefore no
+	// `ingest` block either. Once attached it is never replaced: the task definition is the
+	// stack's and a running reconcile loop owns the jobs it started.
+	if r.reg.startIngest != nil && r.reg.ingester() == nil && r.reg.startIngest(table.Ingest) {
+		changed = true
+		log.Printf("engines: the table now declares an ingest task; taking models in is available from here on")
+	}
 	for _, d := range table.Engines {
 		seen[d.Key] = true
 		e := r.reg.get(d.Key)
 		if e == nil {
-			// A role added by a CloudFormation update. Registering it here would mean building
-			// an ECS client, a controller and its goroutine from inside a poll, and the engine
-			// would come up with none of the state the rest of this process assumes.
-			log.Printf("engines: the table now declares %s, which this process does not serve - restart the Control Plane to pick it up", d.Key)
+			// 🔴 A role the table now declares and this process does not serve. It used to be a
+			// line asking for a restart, on the reasoning that building a controller from inside
+			// a poll would leave an engine with none of the state the rest of the process
+			// assumes. That reasoning was right and the conclusion was wrong: the construction is
+			// now ONE function (engineRegistry.build), so an adopted role is built exactly as a
+			// boot-time one is.
+			//
+			// What made it worth changing is a window ADR 0077's migration opens: the
+			// `<Role>Enabled` round trip drops the engine table itself for a minute or two, and a
+			// CP that started inside it read NO ROWS and stayed that way — `{"engines":[]}` for
+			// the rest of its life, recovered only by a force-new-deployment of the CP (measured,
+			// 86 s, ADR 0077 P1 hardware run).
+			if r.reg.adopt(d) {
+				changed = true
+				log.Printf("engines: the table now declares %s; it is served from here on (re-read from %s)", d.Key, r.name)
+				continue
+			}
+			log.Printf("engines: the table now declares %s, which this process cannot take on - restart the Control Plane to pick it up", d.Key)
 			continue
 		}
 		if e.def.external() {

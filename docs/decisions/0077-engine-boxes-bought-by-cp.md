@@ -310,10 +310,14 @@ skip is not needed).
   the slot pool's `terminateSlot`; 0045 decision 23's reason — never leave an ACTIVE ghost behind
   when it is you who removes the box — applies as written).
 - `draining` (0071 decision 7) changes meaning from "Managed Instances drains it out of our hands
-  in 427-463 s" to "**from the CP issuing the terminate until EC2 reports `terminated`**". The
-  slot measurement (0045 decision 22: stop → terminated in 93 s, a CPU figure) suggests minutes
-  on a GPU too, but it is **unmeasured** (open question 6). 0071 decision 7's drain wait (0074
-  decision 4) is inherited — no new box while the old one is still `running`.
+  in 427-463 s" to "**from the CP issuing the terminate until EC2 reports `terminated`**".
+  **Measured (P1 hardware runs 1 and 2, three laps): 4 min 8 s to 5 min 45 s** — 5 min 28 s to
+  5 min 45 s on a g6e, 4 min 8 s to 4 min 30 s twice on a g5. The slot figure (0045 decision 22:
+  93 s, CPU) does not carry to a GPU box. 0071 decision 7's drain wait (0074 decision 4) is
+  inherited — no new box while the old one is still `running` — and **its window is carried as
+  the range, four to six minutes, not as a number**: a demand that arrives inside it waits up to
+  six minutes for the old box to be gone before a new one is bought, and either side of "five
+  minutes" is wrong about a third of the time.
 - 🔴 **The Managed Instances `scaleInAfter` trap disappears.** 0071 P0 measurement 3's "a box left
   under `-1` is never reclaimed even after the value changes, and `terminate-instances` is refused
   by the MI policy" cannot exist once the CP is the terminator. In its place, **a terminate the CP
@@ -332,8 +336,11 @@ skip is not needed).
   Neither direction consults the CP's memory: tags and attributes are enough, as 0045 decision 29
   demands.
 
-🔁 **What would change this**: a measured terminate → `terminated` above five minutes on a GPU.
-Then 0071 decision 7's window arithmetic is rewritten.
+🔁 **What would change this**: fired on one lap of three (5 min 45 s) and not on the other two, so
+the window above is written as the range instead of a number. What would change it now is a lap
+above six minutes, or a demand pattern where the four-to-six-minute wait is the common case
+rather than the rare one — then the drain wait becomes "buy the next box while the old one is
+`shutting-down`", which decision 5 forbids today.
 
 ### 6. The model directory can be a host volume. P0 keeps it anonymous; P1 measures
 
@@ -578,8 +585,9 @@ slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box
 5. **`awsvpc` on the EC2 launch type: the g6.xlarge ENI limit and the task ENI.** One task per
    box should fit under a limit of 4, but agent settings such as `ECS_AWSVPC_BLOCK_IMDS` are (c).
    Depends on: decision 2. P1's hardware run.
-6. **Measured terminate → `terminated` on a GPU** (the length of decision 5's `draining`). P1's
-   hardware run.
+6. **Measured terminate → `terminated` on a GPU** (the length of decision 5's `draining`).
+   **Measured**: 4 min 8 s to 5 min 45 s over three laps (P1 hardware runs 1 and 2); decision 5
+   carries the range.
 7. **Resolve the AMI at launch (`resolve:ssm:`) or at stack update (the CloudFormation type).** The
    former tracks the newest; the latter pins a generation per deployment. 0045's slots do the
    latter. Depends on: decision 7.
@@ -1207,3 +1215,561 @@ Open question 8 (mounting the instance store) moved from P1's "measure" to P1's 
 CFN lane's finding that retiring `<Role>UseLocalStorage` loses a measured 2× on cold start; #575
 mounts the NVMe as Docker's data-root from user data, and the P1 hardware run reads
 `df /var/lib/docker`.
+
+## Follow-up — P1 hardware run: the image role on EC2 Fleet (2026-09-12, the dev deployment, about $1.02)
+
+Done item 7, on af-sandbox, with the CP and CFN lanes (#575, #577) in develop and the Control
+Plane at `0.19.1-dev-07f95ee0`. **The migration went through and the purchase side is green; the
+box side was red twice and the departure is still red.** Six GPU boxes, **30 minutes 24 seconds**
+of GPU, about **$1.02** — the budget was one and a half cents over, and the reason is in the cost
+table: four of the six boxes were bought by a start that could never succeed, because **not one
+box the launch template bought could join the cluster**. The cause was found on hardware, fixed in
+the template, and the fix was measured (a box registered in 48 s); what the budget gate then cut
+short is `warm: true` and the image generation.
+
+Everything below is a raw return value or a Control Plane log line. Where something was not
+reached, it says so rather than being estimated.
+
+### The migration (decision 11, the `<Role>Enabled` round trip)
+
+| Step | Elapsed | What came back |
+|---|---|---|
+| Both roles `mode: off`, no engine box among the container instances | — | `describe-container-instances` → four slot boxes, `capacityProviderName: null`, no `af-role` attribute. `image` was already `off`, `llm` was `ondemand` and was turned off |
+| `update-stack --use-previous-template`, `LlmEnabled=false ImageEnabled=false` (the OLD template) | **24.8 s** (04:53:40.692 → 04:54:05.454 UTC) | Both services `DELETE_COMPLETE` at 04:54:03. P0's 25 s reproduced exactly |
+| `dev-deploy.sh --profile af-sandbox --region ap-northeast-1` | **≈31 min** (13:56 → 14:26:49 JST), about 20 of them the two-architecture QEMU bake | 60-engines itself: **189 s** (05:17:56.559 → 05:21:05.407). `LlmCapacityProvider` / `ImageCapacityProvider` / `ImageSpotCapacityProvider` / `InfraRole` / `InstanceRole` / `InstanceProfile` `DELETE_COMPLETE`; `LlmLaunchTemplate` / `ImageLaunchTemplate` / `EngineInstanceRole` / `EngineInstanceProfile` `CREATE_COMPLETE`; `CpIngestPolicy` and `Associations` updated. 20-platform: "No changes to deploy" — the Fleet grants really are 60-engines' alone (R1) |
+| `cloudformation deploy … --parameter-overrides LlmEnabled=true ImageEnabled=true` | 🔴 **691 s** (05:28:39.986 → 05:40:10.996), and it only finished because of a hand intervention — see below | `launchType: EC2`, `capacityProviderStrategy: null`, `placementConstraints: [{memberOf, "attribute:af-role == engine-image"}]` |
+
+Verified after it: `describe-capacity-providers` → **`FARGATE` and `FARGATE_SPOT` only** (the three
+Managed Instances providers are gone outright, not `INACTIVE`), and `/af-ws/engines` carries
+`"launchTemplate":"lt-…"` on both rows with no `capacityProvider` field.
+
+#### 🔴 The `<Role>Enabled=true` half blocks, because `DesiredCount` is absent
+
+`AWS::ECS::Service` has no `DesiredCount` in this template deliberately ("for a NEW service an
+unspecified desired count defaults to 1", PARAMETERS, "The engine services"). Under Managed
+Instances that was harmless: desired 1 sent ECS shopping and the service stabilised. On the EC2
+launch type **there is no box**, so both services were created at desired 1 with nothing to place
+on, and CloudFormation sat on the stabilisation wait:
+
+```
+(service af-af-ecs-engines-image) was unable to place a task because no container instance met all
+of its requirements. The closest matching (container-instance 28509d40…) doesn't have the agent
+connected.
+```
+
+Ten minutes in, `aws ecs update-service --desired-count 0` on both services from another shell
+(05:38:56) let them reach steady state and the stack completed at 05:40:10. **Left alone it would
+have run to the resource timeout and rolled back.** `standup.sh` already scales a new service to 0
+straight after creation; the `<Role>Enabled` round trip is the other path that creates these
+services, and neither decision 11 nor PARAMETERS says the same thing has to happen there. Whoever
+writes the fix has a choice between "scale to 0 from a second shell while the update runs" (what
+was done) and giving the resource an explicit `DesiredCount: 0` — the latter is what the template
+comment argues against, for a reason that has not gone away.
+
+**Impact — decision 11.** One step is missing from its order, and the step cannot be skipped.
+
+#### 🔴 The Control Plane comes up with an EMPTY engine table and never recovers
+
+`EnginesParam` is conditional on the same `<Role>Enabled`, so between the two halves the engine
+table has **no rows** — and `dev-deploy.sh` puts the new Control Plane image on inside exactly that
+window (the CP started at 05:22:37). `newEngineRegistry` returns `nil` at zero rows, which means
+the table reloader is never started either, so the CP does not notice when the rows come back:
+
+```
+GET /api/admin/engines  →  {"engines":[],"super_admin":true}      (05:41, a minute after Enabled=true)
+```
+
+Nothing is logged. `engine_table_reload.go`'s header promises a restart request for a role the
+process does not serve, and that branch is real — but it is inside a reloader that a zero-row
+start never constructs. A `force-new-deployment` of the CP service fixed it in **86 s**
+(05:42:47 → `engines: image (images) -> http://image.af.internal:8080 …` at 05:43:35).
+
+**Impact — decision 11.** The migration is three steps, not two: `false` → apply → `true` →
+**force a new CP deployment**. Ordering the CP image *after* the round trip would not help on its
+own — the CP that is already running was started before it too.
+
+#### 🔴 The Cloud Map name DOES go away, and P0's correction does not hold on the real template
+
+P0 measured the round trip on a throwaway stack whose `AWS::ServiceDiscovery::Service` carried no
+condition, and concluded that decision 11's "the Cloud Map name is gone in between" was
+overstated. On `60-engines.yaml` the discovery resources carry `Condition: HasLlmModel` /
+`HasImageModel` — the same condition as the services — and they were deleted with them:
+
+```
+LlmDiscovery    DELETE_COMPLETE  2026-09-12T04:54:04.621Z
+ImageDiscovery  DELETE_COMPLETE  2026-09-12T04:54:04.879Z
+```
+
+The name was absent for the whole window, which here was **34 minutes**, not seconds, because
+`dev-deploy.sh`'s bake sits between the two halves. ✅ At desired 0 nothing was lost, so
+decision 11's own reasoning holds; what does not hold is P0's reason for saying it was overstated.
+
+One curiosity worth writing down so nobody re-derives it: the registry **ARNs came back
+identical** (`srv-myk…` for llm, `srv-lge…` for image, read out of CloudTrail's `DeleteService`
+request and `CreateService` response). Cloud Map re-issued the same id for the same
+namespace-and-name pair. That is a property of Cloud Map, not evidence that the resource survived
+— PARAMETERS' ✅ says the second thing and has to be corrected to the first.
+
+### The $0 positive controls (05:47:38-42, four seconds, no box)
+
+Declared: `bad` (spot, `g6.xxlarge`) / `q4x` (spot, `g6.4xlarge`) / `q4xb` (spot, `g6.4xlarge`) /
+`od48` (od, `g6.48xlarge`).
+
+| Check | Result | Evidence |
+|---|---|---|
+| (a) a misspelt type answers `unusable` and the walk moves on | 🟢 | `offer bad (spot) bought nothing: InvalidFleetConfiguration: Your requested instance type (g6.xxlarge) is not supported in your requested Availability Zone (ap-northeast-1a). \| … (ap-northeast-1c).` → `trying the offer q4x (spot) after unusable`. Both overrides said it, so the positional reading (#577) declared the row unusable |
+| (b) a Spot row above the quota answers `quota` and takes the purchase option off the table | 🟢 | `offer q4x (spot) bought nothing: MaxSpotInstanceCountExceeded: Max spot instance count exceeded \| …` and then **`q4xb` never appears** — the next row tried is `od48`. `offer_trail` is `[bad unusable, q4x quota, od48 quota]`, three rows for a four-row list |
+| (c) the on-demand quota is a separate wall | 🟢 | `offer od48 (od) bought nothing: VcpuLimitExceeded: You have requested more vCPU capacity than your current vCPU limit of 8 allows …` |
+| (d) nothing was bought | 🟢 | `describe-instances` for `af-role=engine-image` with no state filter: nothing new. The whole walk was **4 seconds** |
+
+⚠️ **The admin route answers 502 when the list is spent** — `PUT /api/admin/engines/image 502
+4.607s`, with the mode already stored as `on`. That is `errEngineOffersSpent` reaching the handler,
+not a proxy timeout, and it is the same 502 an operator will see on a deployment that simply has
+no capacity today. Worth a friendlier code, but it is not wrong.
+
+### 🔴 The box side: not one box could join the cluster, in two layers
+
+| Run | Boxes | What happened |
+|---|---|---|
+| A (05:50-06:05) | `i-0b8c…` g6.xlarge spot, `i-0d42…` g6.xlarge od, `i-0a96…` g6e.xlarge od | Each: `the box … for offer <id> did not register within 3m0s; ending it` → the next offer. The whole list spent |
+| B (06:07-06:13), after fix 1 | `i-0779…` g5.xlarge spot, `i-0225…` g6.xlarge od | Same |
+| C (06:14-06:23), after fix 2 | `i-0353…` g6e.xlarge od | **registered in 48 s** |
+
+**The diagnosis was made on a live box over SSM** (`AmazonSSMManagedInstanceCore` is on
+`EngineInstanceRole`, and the agent was `Online` — so the box had network, credentials and a route
+to AWS all along):
+
+```
+systemctl is-active ecs docker   →  inactive / active
+systemctl status ecs             →  ○ ecs.service … enabled; Active: inactive (dead)
+journalctl -u ecs                →  -- No entries --
+df -h /var/lib/docker            →  /dev/nvme1n1  233G  1.7G  232G   1% /var/lib/docker
+```
+
+So the user data had done its whole job — the NVMe was mounted as Docker's data-root and
+`/etc/ecs/ecs.config` held `ECS_CLUSTER` and `ECS_INSTANCE_ATTRIBUTES` — and **the agent had simply
+never been started**. `systemctl start ecs` by hand registered the box in **three seconds**
+(`Websocket connection established … containerInstanceArn=…/a0694593…`). That is the positive
+control for everything else in the chain being right.
+
+1. 🔴 **`ecs.service` is `PartOf=docker.service`.** The user data stops docker to move the
+   data-root; systemd cancels the start job it had queued for `ecs.service` from
+   `multi-user.target`, and `systemctl start docker` does not queue it again. The agent is left
+   `inactive (dead)` with an empty journal — **there is no error anywhere**, and the only symptom
+   is a box that never registers. Neither decision 6 nor PARAMETERS' "the order works because the
+   ECS agent has not started yet" anticipates it: the agent has not started, but it *had a job
+   waiting*, and stopping docker took that job away.
+2. 🔴 **A plain `systemctl start ecs` at the end of the user data deadlocks.** `ecs.service` is
+   `After=cloud-final.service` and the user data *is* cloud-final, so a blocking start waits for a
+   job that waits for the caller. Measured on the next box, live:
+
+   ```
+   JOB UNIT                  TYPE  STATE
+   871 ecs.service           start waiting
+   263 cloud-final.service   start running
+   cloud-init status: running
+   ```
+
+   The box sat there until the registration ceiling terminated it.
+
+**The fix is `systemctl start --no-block ecs`, last, after `ecs.config` is written** (the agent
+reads the file at start). It is in this PR, in both roles' launch templates, with the two
+measurements as the comment. ⚠️ It reaches a box only because the CP asks for the launch
+template's **`$Latest`** version: CloudFormation created version 2 and then 3 and left
+`DefaultVersionNumber` at **1** throughout. The box that worked carries
+`aws:ec2launchtemplate:version = 3`.
+
+**Impact — decisions 6 and 7 and the CFN lane's follow-up item 4.** No decision's premise moves;
+the user data was one line short and the ADR's stated reason for why the ordering is safe was
+half of the story.
+
+### Run C, the checks done item 7 asks for
+
+The box (`i-0353a9e56cba02b2f`, `g6e.xlarge`, on-demand, offer `l40s`) was bought at 06:14:15 and
+the run was stopped by the budget gate at 06:19:13.
+
+| Check | Result | Evidence |
+|---|---|---|
+| **exactly one box** (ADR 0075 bought two, three times out of three) | 🟢 | At no sample was more than one `af-role=engine-image` instance `running`; the cluster's container instances went 4 → 5 → 4. `offer_trail` has one `active` row. The 0075 shape cannot occur: the desired count is written after registration, so there is no window in which ECS places anything itself |
+| **the start does not wait for the deployment to settle** | 🟢 | `06:15:03 engines: image: the box i-0353… registered; asking for the task` — the desired count goes up **in the same second the box registers**. 0075's re-run paid 2 min 35 s here, waiting for the old deployment to leave; that wait has no shape to take and does not appear in the log |
+| buy → box registered | 🟢 **48 s** | bought 06:14:15, registered 06:15:03. The ceiling in force was **180 s** (see below) |
+| the Spot row's type (0075 run 3 got a g6e) | 🟢 | Two Spot purchases: **`g6.xlarge`** (run A) and **`g5.xlarge`** (run B). Never g6e. `price-capacity-optimized` is doing what Managed Instances could not be asked to do — the spot prices at the time were g6.xlarge $0.563-0.576, g5.xlarge $0.739-0.790, g6e.xlarge $1.353 |
+| `af-engine-buy` / `af-engine-offer` tags | 🟢 | On the box from the one `CreateFleet`: `af-pool=af-af-ecs-platform`, `af-role=engine-image`, `af-engine-offer=l40s`, `af-engine-buy=od`, `af-managed-by=agent-fleet`, `Name=af-engine-image`, plus EC2's own `aws:ec2:fleet-id` and `aws:ec2launchtemplate:{id,version}`. No `CreateTags` call, as P0 (d) said |
+| `InstanceLifecycle` | 🟢 | `spot` on both Spot boxes, **absent** on all four on-demand ones — P0 (d)'s reading ("absent means on-demand") is what a reader needs |
+| the panel answers from the box | 🟢 | `box: {id: i-0353…, instance_type: g6e.xlarge, since: 06:14:48Z, status: ACTIVE}` and `offer: {id: l40s, buy: od}`, with `offer_trail` `[spot3 budget, l4 budget, l40s active]`. Never `null` while the box was up |
+| **`df /var/lib/docker` is the instance store** (open question 8, unverified until now) | 🟢 | `/dev/nvme1n1 233G … /var/lib/docker`, `Docker Root Dir: /var/lib/docker`, and `du -sh /var/lib/docker/volumes` → **24G** while the fetch ran. The anonymous `host` volume lands on the NVMe exactly as designed, with no task-definition change |
+| the fetch runs at NVMe speed, not 125 MB/s | 🟢 | From the fetch sidecar's own log: `sd3.5_medium 5,107,104,286 bytes in 27s` (189 MB/s), `t5xxl 4,893,934,904 in 47s` (104 MB/s), `neoAnime 7,105,352,134 in 34s` (209 MB/s), `sd_xl_base 6,938,078,334 in 34s` (204 MB/s), `z_image_turbo 12,309,866,400 in 60s` (205 MB/s). ADR 0071's Managed Instances figure was 104-147 MB/s |
+| `state: running` / `warm: true` | 🔴 **not reached** | desired 1 at 06:15:03 → fetch started 06:15:31 → the default model set on disk 06:17:04 → the ComfyUI process up on the GPU at **06:18:52** (`Total VRAM 45458 MB … Device: cuda:0 NVIDIA L40S`), i.e. **3 min 49 s** from the desired count. The budget gate closed at 06:19:13, ~30-90 s short of the warm probe. For comparison: ADR 0075's re-run reached `warm: true` in 5 min 11 s on a g6.xlarge Spot box under Managed Instances |
+| one image generated, 200 | 🔴 **not reached** | Same gate |
+| **departure**: desired 0 → deregister → terminate | 🔴 | `mode: off` at 06:19:13 → `desiredCount` 0 immediately, the task gone by 06:20:29 (**76 s**) — and then **nothing**. Four minutes later the box was still `running`, the panel still read `box: {…, status: ACTIVE}` / `state: draining`, and the CP had logged not one line. Terminated by hand at 06:23:39 |
+| terminate → `terminated` (open question 6) | measured **5 min 28 s - 5 min 45 s** | `terminate-instances` at 06:23:39, last seen `shutting-down` at 06:29:07, `terminated` at 06:29:24 (15 s polling). 🔴 That is **above the five minutes** decision 5's 🔁 names, so 0071 decision 7's window arithmetic is due a rewrite |
+
+#### 🔴 Why the departure never happens: `startInFlight()` is never cleared
+
+`sweepBoxes` (decision 5, both directions) returns early while `e.offers.startInFlight()` is true,
+and that is right — a box bought seconds ago has no task on it by construction. But
+`startInFlight()` is `boxID() != ""`, and the only two things that clear the box id are
+`dropBox()` on the registration-ceiling path and `begin()` at the *next* start. **A start that
+succeeds leaves it set for ever.** So from the moment a box registers, decision 5's sweep is
+switched off for that engine — including the ordinary departure it exists to perform, which is
+exactly the tick after the one that wrote desired 0.
+
+The comment on `startInFlight` states the intent precisely — "a box is bought and the desired
+count has not been written yet" — and nothing writes the second half back. Measured twice today:
+once with mode off and a box that never registered (still `running` 9 minutes later), once with
+mode off after a successful start (still `running` 4 minutes later, terminated by hand).
+
+**Impact — decision 5.** Its premise is untouched; the implementation switches its own sweep off.
+The fix belongs to the CP lane: clear the box id where `setEnabled(ctx, true)` is called after
+`registered()`, and pin it with a test whose positive control is that leaving it set makes the
+departure sweep never fire.
+
+#### ⚠️ The registration ceiling ran at 180 s, not 300
+
+`ImageOfferBudgetSec` on this deployment is **180** — the 0.19.0 default, under the old meaning.
+The CFN lane's follow-up has `standup.sh` drop exactly 180 so the template's 300 stands, but this
+deployment was updated by **`update.sh`**, which passes the live stack's parameters through
+`UsePreviousValue` and drops nothing. So a deployment that upgrades the ordinary way keeps the
+short ceiling silently. It made no difference here (48 s), but the whole reason the default moved
+is the slow boot it does not leave room for.
+
+### Cost and cleanup
+
+| Box | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
+|---|---|---|---|---|---|---|---|
+| `i-0b8c04c29851f88fa` | g6.xlarge | spot | 05:50:11 | 05:53:16 | 3m05s | 0.576 | $0.030 |
+| `i-0d428939322e54519` | g6.xlarge | on-demand | 05:53:17 | 05:56:22 | 3m05s | 1.167 | $0.060 |
+| `i-0a96425b7edf037bb` | g6e.xlarge | on-demand | 05:56:23 | 06:05:43 | 9m20s | 2.699 | $0.420 |
+| `i-0779f939b8309f373` | g5.xlarge | spot | 06:07:42 | 06:10:47 | 3m05s | 0.739 | $0.038 |
+| `i-02258932d93e27f7d` | g6.xlarge | on-demand | 06:10:49 | 06:13:14 | 2m25s | 1.167 | $0.047 |
+| `i-0353a9e56cba02b2f` | g6e.xlarge | on-demand | 06:14:15 | 06:23:39 | 9m24s | 2.699 | $0.423 |
+
+**30 minutes 24 seconds, about $1.02** (on-demand prices from the pricing API for
+ap-northeast-1/Linux; Spot from `describe-spot-price-history` in the same hour). The budget was
+$1, and it went 2% over while the last box was being read for the `df` and fetch numbers. ⚠️ **The
+two g6e boxes are 82% of the spend** — both were reached because the offer walk fell through to
+`l40s` after the two cheaper rows had been terminated at the registration ceiling, and both
+outlived their purpose because the departure defect above meant they had to be ended by hand.
+There is no Managed Instances fee in any of these figures any more (decision 8).
+
+- Both Spot purchases went through with the G/VT Spot quota (`L-3819A6DF`) at 8 vCPU;
+  `AWSServiceRoleForEC2Fleet` and `AWSServiceRoleForEC2Spot` both already existed.
+- `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**: six
+  instances, all `terminated`. (The positive control is in the same output — the query with
+  `tag-key=af-role` alone returns 10, the four slot boxes included, so an empty answer would have
+  been the ambiguous one.)
+- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → `[]`, as
+  P0 (b) measured: instant fleets are not enumerated.
+- **Restored to what step 1 recorded**: `image` `mode: off`, `llm` `mode: ondemand`, `ImageOffers`
+  byte-identical to the value read before the run, `ImageOfferBudgetSec` 180, `ImageInstanceClasses`
+  untouched, both `<Role>Enabled=true`.
+- ⚠️ **Left changed on purpose**: the dev deployment is running the two launch-template fixes,
+  which are in this PR and not yet in develop. The stack is one `cloudformation deploy` behind the
+  branch in nothing else.
+- The raw responses are in `~/.cache/adr0077-p1/` of the session that measured this.
+
+### What this hands back
+
+| # | Verdict | Decision | What has to change |
+|---|---|---|---|
+| 1 | 🔴 | 6, 7 | The launch template must start the ECS agent itself, `--no-block`, after `ecs.config`. Fixed in this PR and measured; PARAMETERS' "the order works because the ECS agent has not started yet" needs the `PartOf=docker.service` half added |
+| 2 | 🔴 | 5 | `startInFlight()` is never cleared after a successful start, so the departure sweep never runs and a box bills until somebody notices. CP lane |
+| 3 | 🔴 | 11 | The `<Role>Enabled=true` half blocks on service stabilisation at desired 1 with no box; the migration needs "scale both services to 0 while the update runs" or an explicit `DesiredCount` |
+| 4 | 🔴 | 11 | The CP must be force-redeployed after the round trip: it booted against a zero-row engine table and `newEngineRegistry` returns `nil` there, so even the reloader is absent |
+| 5 | 🔴 | 11 | The Cloud Map services DO carry the role condition on the real template and are deleted with the services. P0's ✅ was measured on a throwaway that had no condition; PARAMETERS says the wrong thing where an operator reads it |
+| 6 | ⚠️ | — | `update.sh` does not drop a captured `<Role>OfferBudgetSec=180`; only `standup.sh` does, so an ordinary upgrade keeps the old ceiling |
+| 7 | ⚠️ | 6 | PARAMETERS' "an EBS-only type (g6e) matches nothing here" is wrong — `g6e.xlarge` has a 232.8 GB instance store and used it |
+| 8 | 🟢 | 1, 2, 3, 8 | Exactly one box, no settle wait, the cheap Spot type, the tags, the panel from the box, the NVMe data-root. Nothing in the purchase side needs changing |
+
+**Done item 7 is not complete**: `warm: true`, the image generation and a CP-driven departure were
+not measured. They need one more run of roughly ten GPU minutes, after items 1 and 2 are in
+develop.
+
+## Follow-up — what the second CP pass handed back (2026-09-12, PR #584)
+
+P1's hardware run (#583) found three red points on the CP side. All three are fixed here; two of
+them say something the text above does not, and this section is the record. **No decision is
+edited.** The three are not equal: the first is #577 failing to implement decision 5, the second
+and third are the ADR's migration meeting a state it does not describe.
+
+- 🔴 **Decision 5's departure never ran once, and the text is not at fault — the code was.** The
+  hardware run's own diagnosis stands ("Why the departure never happens", above): the sweep stands
+  down while a start is in flight, which is right — a box bought seconds ago has no task on it BY
+  CONSTRUCTION, and sweeping there would terminate every start — but nothing cleared the flag on a
+  start that SUCCEEDED, so after the first one the sweep returned at its first line for ever
+  (`mode=off` at 06:19:13, the task gone in 76 s, and then nothing; terminated by hand four
+  minutes later). The start now forgets the box the moment it writes the desired count. **What the
+  text should carry from this**: the departure has two preconditions that are the same fact from
+  two sides — no start in flight, and the desired count already written — and an implementation
+  that keeps only the first has no departure at all.
+- **A start needed a second guard as a consequence: "the service already wants a task".** The
+  admin toggle calls the start unconditionally on `mode=on`, and with the box no longer
+  remembered a press on a RUNNING engine would begin the walk again and buy a second GPU. The
+  start now reads the service first and returns when `desired >= 1`. This is the successor of the
+  same guard ADR 0075 had inside `setStrategy`, which went with it.
+- 🔴 **A table with NO ROWS is a state this ADR's own migration creates, and the CP could not
+  come back from it.** The `<Role>Enabled` round trip drops the conditional half of 60-engines
+  for a minute or two — the engine table among it — and a Control Plane that started inside that
+  window read zero rows, built no registry, started no reloader, and answered `{"engines":[]}`
+  for the rest of its life. Measured: 86 s of force-new-deployment to recover an engine that
+  nothing was wrong with. The registry is now built EMPTY, the reloader runs, and a role that
+  appears is adopted through the same function boot builds with; the deployment-wide ingest
+  runner comes back the same way (a zero-row table carries no `ingest` block either, so without
+  it such a CP could serve every engine and still not take a model in). ⚠️ This overturns the
+  reasoning in `engine_table_reload.go`'s header, inherited from ADR 0074 — "registering a role
+  from inside a poll would build a controller with none of the state the process assumes". That
+  was true while construction lived in the boot loop; it is one function now, so an adopted role
+  is built exactly as a boot-time one is. **What the text should carry**: decision 11's migration
+  section asks for a window in which no box stands, and it should also say that the CP must
+  survive a table with no rows — because the round trip is what produces one.
+- **`<Role>Enabled=true` leaves the service at desired 1 with no box.** CloudFormation creates a
+  service that omits `DesiredCount` at 1, so the second half of the round trip sits in
+  stabilisation until somebody writes 0 (on hardware, another shell did). The controller already
+  writes desired 0 whenever the mode is `off`, whoever set the count — that behaviour was there
+  and is now pinned by a test. **It did not fire on hardware because of the point above**: that
+  CP had no registry, so it had no controller to fire. Nothing new is needed, but the migration
+  section's "both roles `mode: off`" is now load-bearing for a second reason: it is what takes
+  the stray desired 1 back down without a human.
+
+## Follow-up — the CFN lane's answer to P1's items 1, 3, 4 and 6 (2026-09-12, PR #585)
+
+Items 2 (the CP's `startInFlight`) and 5 and 7 (the two PARAMETERS sentences the P1 PR corrected
+where it stood) are not this lane's. The other four are, and three of them are documentation
+because the code change was already in the P1 PR:
+
+- **Item 1 — the ordering paragraph.** PARAMETERS' "the order works because the ECS agent has not
+  started yet" now carries the other half of the same fact: `ecs.service` is
+  `PartOf=docker.service`, so stopping Docker cancels the agent's queued start job and starting
+  Docker does not queue it back — which is why the user data ends by starting the agent itself,
+  with `--no-block` because a blocking start waits for the cloud-final job running the script.
+- **Items 3 and 4 — the migration is four steps.** The procedure block was three
+  (`false` -> apply -> `true`); it now shows the second shell that holds both services at desired
+  0 while the `true` half runs, and the Control Plane `force-new-deployment` that follows it. Both
+  were measured in the P1 run and both are silent when skipped: the stack sits on a stabilisation
+  wait it cannot win, and the panel answers `{"engines":[]}` with nothing in the log.
+- **Item 6 — `update.sh` repairs the budget too.** `standup.sh` drops a captured
+  `<Role>OfferBudgetSec=180` (the old meaning's default), but an existing deployment upgrades
+  through `update.sh`, which passes no parameters — so the repair went there as well, in the
+  shape the ADR 0072 P6 repair already has in that file: read the LIVE stack, and pass the
+  template's own default **only when the live value is exactly 180**. Any other value is
+  somebody's choice. A hand-run `cloudformation deploy` has neither and is told so in PARAMETERS.
+
+🔁 **What would change this**: an explicit `DesiredCount: 0` on the engine services would remove
+step 3's second shell — but it would also reset the count on every task-definition change, which
+is the trap [the engine services](../../deploy/aws/ecs/cfn/PARAMETERS-60-engines.md) documents
+and the reason the property is absent. The second shell is the cheaper of the two.
+
+## Follow-up — P1 hardware run 2: warm, one image, the CP's own departure (2026-09-12, the dev deployment, about $0.15)
+
+The three things run 1 could not reach. On af-sandbox, with #583, #584 and #585 all in develop and
+the Control Plane put on by `dev-deploy.sh` at `0.19.1-dev-3d4cb9e9`. **All three were reached and
+nothing new went red on the purchase side: done item 7 is complete.** Two Spot boxes, **11 minutes
+58 seconds** of GPU, about **$0.15** against a gate of fifteen minutes and $0.60.
+
+**No migration this time.** The deployment has been on the EC2 launch type since run 1, so the
+`<Role>Enabled` round trip was not run again — which means run 1's items 3, 4 and 5, and #584's
+recovery from a zero-row engine table, are fixed but **still unmeasured on hardware**. They are
+not in the table below for that reason, and nothing here confirms them.
+
+Everything below is a raw return value, a Control Plane log line or a CloudTrail record. Where
+something was not measured, it says so.
+
+### What the deploy itself said
+
+`dev-deploy.sh --profile … --region …`, the ordinary way, 40 minutes end to end (about 20 of them
+the two-architecture QEMU bake, because `workspace/` had moved). The Control Plane's own line:
+
+```
+control-plane 0.19.1-dev-3d4cb9e9 on 0.0.0.0:8099 (console=…, ws image=…:0.19.1-dev-3d4cb9e9, auth=oauth, runtime=ecs-ec2)
+```
+
+🟢 **Run 1's item 6 fired, live and unprompted** — `update.sh` printed what it repaired, and the
+stack parameters moved with it:
+
+```
+==> cloudformation deploy af-ecs-engines (60-engines, parameters unchanged)
+    · LlmOfferBudgetSec=300 (ADR 0077 re-meant it; 180 was the OLD meaning's default)
+    · ImageOfferBudgetSec=300 (ADR 0077 re-meant it; 180 was the OLD meaning's default)
+```
+
+`describe-stacks` before: both `180`. After: both `300`, and **no other parameter moved** (a
+key-by-key diff of the two responses; `ImageOffers` byte-identical at 242 bytes). So the
+registration ceiling in force for this run was the template's 300, not run 1's silent 180.
+
+🟢 `GET /api/admin/engines` answered with **two rows** as soon as the new CP was up, not
+`{"engines":[]}`. That is the absence of run 1's item 4 rather than a measurement of its fix: the
+engine table never lost its rows, because nothing deleted the conditional half of `60-engines`.
+
+### Lap 1 — the full lap (09:15:41 → 09:25:11 UTC)
+
+Declared `ImageOffers` unchanged from run 1: `spot3` (spot, g6/g5/g6e) / `l4` (od) / `l40s` (od).
+The first row filled, so the walk was one row long: `offer_trail` `[spot3 active]`.
+
+| Check | Result | Evidence |
+|---|---|---|
+| **exactly one box** | 🟢 | CloudTrail from 09:15 UTC has exactly **two `CreateFleet` calls**, one per lap. At no sample was more than one `af-role=engine-image` instance alive; the cluster's container instances went 4 → 5 → 4 twice |
+| buy → box registered | 🟢 **45 s** | `CreateFleet` 09:15:43, `engines: image: the box i-00fc158ca3f562466 registered; asking for the task` 09:16:28. Lap 2: **44 s**. The ceiling in force was 300 s |
+| the desired count goes up in the same second as the registration | 🟢 | the `UpdateService` in CloudTrail is at **09:16:28**, the second of the log line above. Run 1's finding reproduced, and 0075's 2 min 35 s settle wait still has no shape to take |
+| the Spot row is the one that fills | 🟢 | `spot3` bought a **`g5.xlarge`**, `InstanceLifecycle: spot`, ap-northeast-1a, on both laps — never a g6e. Run 1 never saw this row succeed: both of its Spot boxes died at the registration ceiling before the launch template was fixed |
+| the panel answers from the box | 🟢 | `box: {id: i-00fc158c…, status: ACTIVE}` and `offer: {id: spot3, buy: spot}` from the first sample after registration until the box went. `class` reads `spot3`, `class_is_default: true` |
+| **`state: running` / `warm: true`** | 🟢 **5 min 40 s - 5 min 53 s** from desired 1 | see the cold start below. `running` first seen 09:22:08, `warm: true` first seen 09:22:21, at 13-second polling; ComfyUI's `Starting server` is 09:22:08, so the true figure is inside that band. From `mode: on` it is **6 min 40 s** |
+| **one image, 200** | 🟢 | `provider: comfy`, model `sd35-medium`, `warnings: []`, 1024×1024, 1,011,661 bytes. ComfyUI's own line: `Prompt executed in 73.12 seconds` |
+| **departure: desired 0 → deregister → terminate, by the CP** | 🟢 | `mode: off` 09:24:21 → the task gone 09:24:31 (**10 s**) → `DeregisterContainerInstance` 09:25:10 → `TerminateInstances` 09:25:11. **Nothing was terminated by hand on either lap.** Run 1's item 2 is closed |
+| terminate → `terminated` | measured **4 min 14 s - 4 min 30 s** | last `shutting-down` 09:29:25, `terminated` 09:29:41 (15-second polling). Lap 2: **4 min 8 s - 4 min 25 s**. ⚠️ Run 1 measured 5 min 28 s - 5 min 45 s — see below |
+| the sweep did not misfire while the engine was up | 🟢 | CloudTrail's only two `TerminateInstances` are the two departures, both after their `mode: off`. The box that served the image lived 9 min 28 s and was never touched |
+| **`df /var/lib/docker` is the instance store on a g5 too** | 🟢 | measured on lap 2 — see below |
+
+#### The cold start, line by line (from desired 1 at 09:16:28)
+
+| Elapsed | What |
+|---|---|
+| 33 s | `engine fetch: active set for /af-ws/engines/image/active starts with 'sd35-medium'` |
+| 2 min 39 s | `engine fetch: engine may start; 9 file(s) still to sync` — the default set is on disk (`sd3.5_medium 5,107,104,286 bytes in 50s`, `clip_l … in 3s`, `clip_g … in 12s`, `t5xxl 4,893,934,904 in 56s`) |
+| 5 min 26 s | `Total VRAM 22588 MB, total RAM 15791 MB` … `Device: cuda:0 NVIDIA A10G : cudaMallocAsync` |
+| 5 min 40 s | `Starting server` / `To see the GUI go to: http://0.0.0.0:8080` |
+| 5 min 53 s | `warm: true` on the panel (first sample) |
+
+Beside the other measurements of the same thing:
+
+| Run | Box | To `warm: true` |
+|---|---|---|
+| 0074 (Managed Instances) | g6e.xlarge spot | 307 s from `mode: on` (one image at 403 s) |
+| 0075 re-run (Managed Instances) | g6.xlarge spot | 5 min 30 s from `mode: on` |
+| 0077 run 1 (EC2 Fleet) | g6e.xlarge on-demand | not reached; ComfyUI on the GPU at 3 min 49 s from desired 1 |
+| **this run** (EC2 Fleet) | **g5.xlarge spot** | **5 min 53 s from desired 1, 6 min 40 s from `mode: on`** |
+
+⚠️ **Read that honestly: buying the box got much faster and the cold start did not.** Two seconds
+to buy and 45 to register is a different world from Managed Instances, but everything after
+registration is model bytes and CUDA, and an A10G loads them more slowly than an L40S — 5 min 26 s
+here against run 1's 3 min 49 s to the same line. The fetch throughput says the same:
+102 / 87 / 103 / 173 / 158 / 140 MB/s on this box, against 104-209 on run 1's g6e.xlarge and
+ADR 0071's 104-147 on Managed Instances. **The ranges overlap, so this run is no evidence that the
+NVMe data-root is faster** — on a g5.xlarge the network is the ceiling, not the disk. The `df` is
+the evidence for decision 6, not the throughput.
+
+#### The image, and how it was driven
+
+ADR 0075 recorded that no image could be generated because "there is no way in from outside to the
+engine gateway (its token is the Workspace-internal `/internal/engine/token`)". **A session on that
+same deployment is the way in**, and it needs no token: the Workspace was started, a session
+created over `POST /api/sessions`, and the prompt delivered with
+`POST /api/sessions/{name}/input`. ⚠️ One thing to know before repeating it: **`driver: "managed"`
+is refused for a `claude` session** (`400 driver_unsupported`, ADR 0015) — `tui` is the driver, and
+it is driven over the same REST route regardless.
+
+| Time (UTC) | What |
+|---|---|
+| 09:22:36 | the prompt handed to the session (`202 {"queued":…}`) |
+| 09:22:46 | ComfyUI: `got prompt` |
+| 09:23:59 | ComfyUI: `Prompt executed in 73.12 seconds` |
+| 09:24:03 | the session reported: success, `provider: comfy`, model `sd35-medium`, `warnings: []` (empty), no error, 1024×1024, 1,011,661 bytes |
+
+⚠️ The agent was asked for the elapsed seconds and answered **"not in the result — there is no such
+field"** rather than estimating. The 73.12 s above is ComfyUI's own log; the tool's own return
+carries no timing.
+
+#### The departure, in the order decision 5 asks for
+
+```
+09:24:21  engines: image set to off by …
+09:25:11  engines: image: terminated the box i-00fc158ca3f562466 (the engine is stopped and nothing is running on it)
+```
+
+CloudTrail, the same lap, from the Control Plane's own task role: `UpdateService` 09:24:21 →
+`DeregisterContainerInstance` **09:25:10** → `TerminateInstances` **09:25:11**. ECS took the task
+off in ten seconds; the sweep's next tick did the rest, **50 s** after the toggle. Lap 2, where the
+task was still `pending` when the engine was turned off, took **65 s** by the same route
+(`mode: off` 09:32:24, ECS `stopped 1 pending tasks` 09:32:32, deregister 09:33:28, terminate
+09:33:29). Neither needed a human, and `describe-instances` never showed a box the CP had
+forgotten.
+
+### Lap 2 — the two checks that needed a box but not a warm one (09:30:57 → 09:33:29 UTC)
+
+Two and a half minutes of GPU, deliberately ended before the fetch mattered.
+
+- 🟢 **The NVMe data-root is there on a `g5.xlarge` as well.** Over SSM on the live box:
+
+  ```
+  df -h /var/lib/docker   →  /dev/nvme1n1  233G  2.6G  231G   2% /var/lib/docker
+  lsblk                   →  nvme0n1 60G (/ and /boot/efi), nvme1n1 232.8G  /var/lib/docker
+  docker info             →  Docker Root Dir: /var/lib/docker
+  systemctl is-active ecs docker  →  active / active
+  ```
+
+  Run 1 measured this on a `g6e.xlarge`; the instance store is a per-type property, so the second
+  type is worth having. The root volume is the 60 GiB gp3 `ImageStorageGiB` asks for, and `ecs`
+  being `active` is the launch template fix (`systemctl start --no-block ecs`) holding on a box
+  nobody touched.
+
+- 🟢 **Pressing `mode: on` on an engine that is already running buys nothing** — #584's second
+  guard, which until now only a unit test had seen. At 09:31:49, eleven seconds ago, the box was
+  registered and the desired count written; the admin `PUT` returned **200 in 0.28 s** (a real
+  start takes 2.6 s), CloudTrail records **no third `CreateFleet`**, and `describe-instances` had
+  one instance before and after. The Control Plane logged the start's opening line
+  (`starting on spot3 (22000 MiB VRAM declared); largest model sd35-medium wants 11097 MiB
+  (floor)`) and then stopped at the guard.
+
+  ⚠️ **but the press wiped the panel's `offer_trail` to `null`.** The walk's `begin()` runs before
+  `startOnOffer` takes the lock and finds `desired >= 1`, so the trail of the run that is actually
+  live is cleared and no row replaces it. `offer` still read `{id: spot3, buy: spot}` and the box
+  was never in danger; what is lost is the audit trail on the panel, at exactly the moment an
+  operator is pressing buttons.
+
+### Cost and cleanup
+
+| Box | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
+|---|---|---|---|---|---|---|---|
+| `i-00fc158ca3f562466` | g5.xlarge | spot | 09:15:43 | 09:25:11 | 9m28s | 0.7391 | $0.117 |
+| `i-0566a8943c902d524` | g5.xlarge | spot | 09:30:59 | 09:33:29 | 2m30s | 0.7391 | $0.031 |
+
+**11 minutes 58 seconds, about $0.15** (`describe-spot-price-history` for g5.xlarge / Linux in
+ap-northeast-1a in the same hour: $0.7391; 1c was $0.7893). The gate was fifteen GPU minutes and
+$0.60, and neither half was reached. ⚠️ For comparison with run 1's $1.02: the whole difference is
+that the Spot row now fills, so nothing fell through to a `g6e.xlarge` at $2.699 — the offer list
+did not change between the two runs.
+
+- `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**: two
+  instances, both `terminated`. (Positive control in the same output: `tag-key=af-role` alone
+  returns 6, the four slot boxes included.)
+- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → empty, as
+  P0 (b) measured.
+- **Restored to what step 1 recorded**: `image` `mode: off`, `llm` `mode: ondemand`, `ImageOffers`
+  byte-identical, `ImageInstanceClasses` untouched, both `<Role>Enabled=true`. The Workspace that
+  was started to generate the image was put back to `stopped`, and the session created to call the
+  tool was deleted (sixteen sessions before, sixteen after).
+- ⚠️ **Left changed on purpose**: `ImageOfferBudgetSec` and `LlmOfferBudgetSec` are **300** now,
+  because `update.sh` repaired them on the way in. That is #585 working, not a residue.
+- The raw responses are in `~/.cache/adr0077-p1b/` of the session that measured this.
+
+### What this hands back
+
+| # | Verdict | Decision | What it says |
+|---|---|---|---|
+| 1 | 🟢 | 5 | The departure is CP-driven, twice, in the order the decision states: desired 0 → deregister → terminate, 50 s and 65 s after the toggle, nothing ended by hand. Run 1's item 2 is closed |
+| 2 | 🟢 | 1, 2, 6, 7 | One box per lap, 44-45 s to registration, the desired count in the same second, the Spot row filling with the cheap type, `ecs` and `docker` both active on a box nobody touched. The launch template fix holds |
+| 3 | 🟢 | 6 | The NVMe data-root is there on `g5.xlarge` as well as `g6e.xlarge`. ⚠️ But the fetch throughput does **not** prove it: 87-173 MB/s here overlaps ADR 0071's Managed Instances range, because on this type the network is the ceiling |
+| 4 | 🟢 | — | Run 1's item 6 is confirmed live: `update.sh` moved both roles' `OfferBudgetSec` from 180 to 300 and touched no other parameter |
+| 5 | ⚠️ | 5 | **terminate → `terminated` is 4-6 minutes, not "about five".** Measured 4 min 8 s - 4 min 30 s twice today against run 1's 5 min 28 s - 5 min 45 s on a g6e. Decision 5's 🔁 fired on one run and would not have fired on these two, so whoever rewrites ADR 0071 decision 7's window arithmetic should carry **the range**, not a number: assuming either side of five minutes is wrong about a third of the time |
+| 6 | ⚠️ | — | A `mode: on` press on a running engine is correctly a no-op for the hardware but clears the panel's `offer_trail`. `begin()` runs before the guard returns. One line to move, and it is the only thing on this run that behaves worse than before #584 |
+| 7 | — | 11 | **Not measured, and not by omission**: the `<Role>Enabled` round trip (items 3, 4, 5) and #584's recovery from a zero-row engine table need a deployment that is still on Managed Instances. This one is not, and re-migrating it backwards to prove the point costs more than it returns. They are fixed in #585 / #584 and stand unverified on hardware |
+
+**Done item 7 is complete**: exactly one box, no settle wait, the Spot row's type, the tags and
+`InstanceLifecycle`, `state: running` / `warm: true` in 5 min 53 s, one image at 200, the NVMe
+data-root, and a departure the Control Plane drove itself — with the migration's own steps
+(items 3, 4, 5) carried over as fixed-but-unmeasured.
+
+## Revision after P1's hardware runs (2026-09-12)
+
+P1 is complete (done items 1-7; runs 1 and 2, #583 and #588). One decision's 🔁 fired and the
+text above was revised in place, as before; nothing else in the body moved.
+
+| Decision | What changed | Source |
+|---|---|---|
+| 5 | `draining` is measured, not "unmeasured": terminate → `terminated` is **4 min 8 s to 5 min 45 s** over three laps; the drain wait's window is carried as **the range, four to six minutes**, because the 🔁 fired on one lap of three and not on the other two. The 🔁 itself is rewritten to "a lap above six minutes, or a demand pattern where the wait is the common case" | P1 hardware runs 1 and 2 |
+| Open question 6 | answered with the same range | same |
+
+Left open on hardware, by the runs' own account: the `<Role>Enabled` round trip and #584's
+recovery from a zero-row engine table (the dev deployment is no longer on Managed Instances, and
+migrating it backwards to prove the point costs more than it returns); a `mode: on` press on a
+running engine clearing the panel's `offer_trail` (a one-line order fix on the CP lane, #584's
+guard before `begin()`). P2 (decisions 4 and 6) and P3 (the llm role) have not started.

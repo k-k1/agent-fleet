@@ -317,6 +317,18 @@ type engineRegistry struct {
 	mu      sync.RWMutex
 	byKey   map[string]*engineRuntimeState
 	signKey []byte
+	// build constructs one row's runtime with everything a boot-time engine gets: the clients,
+	// the stores, the cluster, the controller and its goroutine. It is held here so that the
+	// table reloader can adopt a role this process does not serve yet — see adopt().
+	//
+	// nil on a CP with no AWS (an inline AF_ENGINES_JSON table, a dev process): such a table
+	// changes only when the process is restarted, so there is nothing to adopt.
+	build func(engineDef) *engineRuntimeState
+	// startIngest attaches the deployment-wide ingest runner, for the same window: the table
+	// that came back with no rows carried no `ingest` block either, and without this a CP that
+	// booted inside the migration could serve every engine and still not be able to take a model
+	// in until it was replaced. nil for the same deployments build is nil for.
+	startIngest func(engineIngestDef) bool
 	// ingest is deployment-wide (one task definition serves both roles), so it hangs off the
 	// registry rather than off an engine. Nil when the stack declares none — a deployment
 	// running an ADR 0071 table, or one whose CP has no AWS at all.
@@ -324,20 +336,65 @@ type engineRegistry struct {
 }
 
 // ingester is the ingest runner, or nil when this deployment has none.
+//
+// Under the lock because it can now be attached AFTER boot, by the table reloader's goroutine
+// (see startIngest), while a request is reading it.
 func (r *engineRegistry) ingester() *engineIngester {
 	if r == nil {
 		return nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.ing
 }
 
 // ingestDef is what the stack declared about taking models in. The zero value is a complete
 // answer: `hasToken` false and `ok()` false mean "no gated repositories, no ingest".
 func (r *engineRegistry) ingestDef() engineIngestDef {
-	if r == nil || r.ing == nil {
+	ing := r.ingester()
+	if ing == nil {
 		return engineIngestDef{}
 	}
-	return r.ing.def
+	return ing.def
+}
+
+// adopt registers a role the table now declares and this process does not serve.
+//
+// 🔴 It exists because of a window the ADR 0077 migration opens and hardware walked into: the
+// `<Role>Enabled` round trip drops the whole 60-engines stack's conditional resources for a
+// minute or two, the engine TABLE among them, and a Control Plane that starts inside that window
+// reads a table with NO ROWS. Before this it answered `{"engines":[]}` for the rest of its life —
+// no reloader was even created — and the only way back was a force-new-deployment of the CP
+// (measured: 86 s, ADR 0077 P1 hardware run). A row appearing is now the ordinary case it always
+// was for a rung or a launch template.
+//
+// It reports whether the role was taken on. The construction is the SAME function boot uses, so
+// an adopted engine has the state the rest of this process assumes — which is what
+// engine_table_reload.go's header says the alternative could not have.
+func (r *engineRegistry) adopt(d engineDef) bool {
+	if r == nil || r.build == nil {
+		return false
+	}
+	st := r.build(d)
+	if st == nil {
+		return false
+	}
+	r.mu.Lock()
+	if r.byKey[d.Key] != nil {
+		// Somebody else got there first (two ticks, or a boot that raced the poll). Whatever was
+		// built here has no controller running yet and is simply dropped.
+		r.mu.Unlock()
+		return false
+	}
+	r.byKey[d.Key] = st
+	r.mu.Unlock()
+	// Registered FIRST, then driven: the controller reads the registry through the engine it was
+	// given, and a loop that started before the role was visible would be a box nothing on the
+	// admin side can see.
+	if st.ctrl != nil && st.ctrl.cfg.interval > 0 {
+		go st.ctrl.run(context.Background())
+	}
+	return true
 }
 
 func (r *engineRegistry) get(key string) *engineRuntimeState {
@@ -627,7 +684,16 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	if hasEnvRow {
 		table.Engines = engineTableWithEnvRow(table.Engines, envRow)
 	}
-	if len(table.Engines) == 0 {
+	// 🔴 NOT "return nil" any more (ADR 0077 P1 hardware run). A table with no rows is a real
+	// state of a deployment that is mid-migration — the `<Role>Enabled` round trip drops the
+	// conditional resources, the engine table among them — and a CP that started in that window
+	// used to answer `{"engines":[]}` for the rest of its life, with no reloader to notice the
+	// rows coming back. Measured: 86 seconds of force-new-deployment to recover. The registry is
+	// now built empty and the poll below adopts what appears.
+	//
+	// A deployment that declares no table at all still gets nothing: `name` and `inline` are both
+	// empty and this function returned nil long before here.
+	if len(table.Engines) == 0 && !haveAWS {
 		return nil
 	}
 
@@ -648,25 +714,43 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// AND there is somewhere to keep the jobs: without either, the panel says so and the manual
 	// route stays. The reconcile loop is started here rather than per engine — one task
 	// definition serves both roles.
-	if haveAWS && mgr != nil && mgr.store != nil && table.Ingest.ok() {
-		reg.ing = &engineIngester{
-			def: table.Ingest, cluster: cluster, ecs: ecsc,
-			logs:   newEngineIngestLogs(ac),
-			store:  mgr.store,
-			models: mgr.store,
-			tokens: newEngineHfTokens(table.Ingest, mgr.store, mgr, secretsmanager.NewFromConfig(ac)),
-			onDone: func(role string) {
-				if e := reg.get(role); e != nil {
-					e.catalog.invalidate()
-					if err := e.publishActiveSet(context.Background()); err != nil {
-						log.Printf("engines: %v", err)
+	if haveAWS && mgr != nil && mgr.store != nil {
+		reg.startIngest = func(def engineIngestDef) bool {
+			if !def.ok() || reg.ingester() != nil {
+				return false
+			}
+			ing := &engineIngester{
+				def: def, cluster: cluster, ecs: ecsc,
+				logs:   newEngineIngestLogs(ac),
+				store:  mgr.store,
+				models: mgr.store,
+				tokens: newEngineHfTokens(def, mgr.store, mgr, secretsmanager.NewFromConfig(ac)),
+				onDone: func(role string) {
+					if e := reg.get(role); e != nil {
+						e.catalog.invalidate()
+						if err := e.publishActiveSet(context.Background()); err != nil {
+							log.Printf("engines: %v", err)
+						}
 					}
-				}
-			},
+				},
+			}
+			reg.mu.Lock()
+			reg.ing = ing
+			reg.mu.Unlock()
+			go ing.run(context.Background())
+			return true
 		}
-		go reg.ing.run(context.Background())
+		reg.startIngest(table.Ingest)
 	}
-	for _, d := range table.Engines {
+	// One row's runtime, built the same way whether this process found it in the table at boot
+	// or the reloader met it later (adopt). Everything it needs is captured here rather than
+	// passed: the clients, the stores, the cluster and the parameter name.
+	build := func(d engineDef) *engineRuntimeState {
+		// Detached from the caller's context on purpose. At boot this is the server's startup
+		// context; an adopted row is built from a poll minutes later, and an engine that failed
+		// to publish its active set because a startup context had ended would be a box that
+		// loads nothing.
+		ctx := context.WithoutCancel(ctx)
 		if d.external() {
 			// Everything an external row does NOT get (ADR 0076 decision 1): no ECS adapter, no
 			// controller, no demand counter, no active set, no pending reader, no GPU ladder and
@@ -683,11 +767,10 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			if hasEnvRow && d == envRow {
 				st.apiKey = envAPIKey
 			}
-			reg.byKey[d.Key] = st
 			// No `service=`: there is none, and printing an empty one reads as a truncated line.
 			log.Printf("engines: %s (%s) -> %s (external, health=%s models=%s)",
 				d.Key, d.api(), d.URL, engineHealthPath(d), strings.Join(st.modelIDs(ctx), ","))
-			continue
+			return st
 		}
 		st := &engineRuntimeState{
 			def: d,
@@ -732,11 +815,24 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		if mgr != nil && mgr.store != nil {
 			st.ctrl.uptime = mgr.store
 		}
-		reg.byKey[d.Key] = st
 		log.Printf("engines: %s (%s) -> %s (service=%s idle=%s deadline=%s models=%s)",
 			d.Key, d.api(), d.URL, d.Service, cfg.idle, cfg.deadline,
 			strings.Join(st.modelIDs(ctx), ","))
-		if cfg.interval > 0 {
+		return st
+	}
+	// The reloader adopts a role with this, and only where there is a table to re-read: an
+	// inline AF_ENGINES_JSON cannot change under a running process, so a builder there would be
+	// a closure nobody calls.
+	if haveAWS {
+		reg.build = build
+	}
+	for _, d := range table.Engines {
+		st := build(d)
+		if st == nil {
+			continue
+		}
+		reg.byKey[d.Key] = st
+		if st.ctrl != nil && st.ctrl.cfg.interval > 0 {
 			go st.ctrl.run(context.Background())
 		}
 	}

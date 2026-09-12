@@ -1293,3 +1293,187 @@ func TestTheOfferBudgetIsCarriedLive(t *testing.T) {
 		t.Error("an unchanged table reported a change")
 	}
 }
+
+// --- the second CP pass: what the P1 hardware run found ------------------------------------
+
+// 🔴 Decision 5's departure never ran once, and this is the line that let it.
+//
+// `startInFlight` means "a box is bought and the desired count is not written yet", and the
+// sweep stands down while it is true — a box we bought seconds ago has no task on it by
+// construction. But until the fix the only things that cleared it were the registration ceiling
+// and the NEXT start, so a start that SUCCEEDED left it true for the rest of the demand: the idle
+// window closed, the task went, and the sweep returned at its first line. Measured twice on
+// hardware (ADR 0077 P1 run): `mode=off`, no task, and the box still running four minutes later.
+func TestASuccessfulStartEndsTheWalkSoTheBoxCanLeave(t *testing.T) {
+	st := testSettingsStore(t)
+	fleet := &fakeFleet{instance: "i-77"}
+	api := &offerECS{}
+	e := newOfferTestEngine(t, api, fleet, twoOffers, st)
+
+	tickIntoAStart(t, e, st)
+	api.register("i-77", "engine-image", "g6.xlarge")
+	e.ecs.invalidateBox()
+	tickIntoAStart(t, e, st)
+	if got := api.desiredWrites(); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("desired writes = %v, want the start to have finished", got)
+	}
+	// 🔴 The claim: the walk is over the moment the count is written.
+	if e.offers.startInFlight() {
+		t.Fatal("the run still says a start is in flight after the desired count was written")
+	}
+
+	// The engine is switched off and the task goes. The very next sweep must end the box.
+	api.mu.Lock()
+	api.desired, api.running = 0, 0
+	api.boxes["i-77"] = offerBox{role: "engine-image"}
+	api.mu.Unlock()
+	e.ecs.invalidateBox()
+	e.fleet.invalidate()
+
+	e.sweepBoxes(t.Context(), engineServiceView{state: "stopped"})
+	if len(fleet.terminated) != 1 || fleet.terminated[0] != "i-77" {
+		t.Fatalf("terminated = %v, want the box ended once the engine stopped", fleet.terminated)
+	}
+
+	// The positive control is the defect itself: with the box still remembered — which is what a
+	// start that never cleared it leaves behind — the identical sweep does nothing at all.
+	fleet2 := &fakeFleet{instance: "i-78"}
+	api2 := &offerECS{boxes: map[string]offerBox{"i-78": {role: "engine-image"}}}
+	e2 := newOfferTestEngine(t, api2, fleet2, twoOffers, st)
+	tickIntoAStart(t, e2, st)
+	if !e2.offers.startInFlight() {
+		t.Fatal("the control fixture has no box in flight")
+	}
+	e2.sweepBoxes(t.Context(), engineServiceView{state: "stopped"})
+	if len(fleet2.terminated) != 0 {
+		t.Fatalf("terminated %v while a start was in flight — the sweep would end the box it just bought", fleet2.terminated)
+	}
+}
+
+// The other half of forgetting the box: the admin toggle calls the start unconditionally on
+// `mode=on`, so a press while the engine is ALREADY RUNNING must not begin the walk again. Under
+// the fix above the run no longer says "in flight", so this is the guard that stops the second
+// purchase — and a second purchase is a second GPU.
+func TestAStartOnAnEngineThatIsAlreadyUpBuysNothing(t *testing.T) {
+	st := testSettingsStore(t)
+	fleet := &fakeFleet{instance: "i-77"}
+	api := &offerECS{}
+	e := newOfferTestEngine(t, api, fleet, twoOffers, st)
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}, st}
+
+	tickIntoAStart(t, e, st)
+	api.register("i-77", "engine-image", "g6.xlarge")
+	e.ecs.invalidateBox()
+	tickIntoAStart(t, e, st)
+	api.mu.Lock()
+	api.running = 1
+	api.boxes["i-77"] = offerBox{role: "engine-image", tasks: 1}
+	api.mu.Unlock()
+	e.ecs.invalidate()
+
+	if code, out := adminPut(t, a, "image", `{"mode":"on"}`); code != http.StatusOK {
+		t.Fatalf("on = %d (%v)", code, out)
+	}
+	if len(fleet.creates) != 1 {
+		t.Fatalf("%d purchases after pressing ON on a running engine, want the one from the start", len(fleet.creates))
+	}
+}
+
+// 🔴 `<Role>Enabled=true` recreates the service, and CloudFormation creates it at **desired 1**
+// with no box to place on (measured: the stack update sits in stabilisation until somebody
+// writes desired 0). The controller has to be the one that writes it — whoever set the count —
+// or the migration's second half needs a human with a shell.
+func TestModeOffTakesTheDesiredCountDownWhoeverWroteIt(t *testing.T) {
+	st := testSettingsStore(t)
+	fleet := &fakeFleet{}
+	// desired 1, nothing running, no box anywhere: exactly what CloudFormation leaves behind.
+	api := &offerECS{desired: 1}
+	e := newOfferTestEngine(t, api, fleet, twoOffers, st)
+	if err := st.SetSetting(t.Context(), engineSettingsFor("image").mode, engineModeOff); err != nil {
+		t.Fatal(err)
+	}
+	e.demand.stamp(t.Context())
+
+	e.ctrl.tick(t.Context())
+
+	if got := api.desiredWrites(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf("desired writes = %v, want the count taken down to 0", got)
+	}
+	if len(fleet.creates) != 0 {
+		t.Errorf("%d purchases while the mode is off", len(fleet.creates))
+	}
+	// Positive control: the same fixture with the mode ON leaves the count alone (it is already
+	// where it wants it), so the assertion above is about `off` and not about a tick that always
+	// writes 0.
+	st2 := testSettingsStore(t)
+	api2 := &offerECS{desired: 1}
+	e2 := newOfferTestEngine(t, &offerECS{}, &fakeFleet{}, twoOffers, st2)
+	e2.ecs.api = api2
+	if err := st2.SetSetting(t.Context(), engineSettingsFor("image").mode, engineModeOn); err != nil {
+		t.Fatal(err)
+	}
+	e2.demand.stamp(t.Context())
+	e2.ctrl.tick(t.Context())
+	if got := api2.desiredWrites(); len(got) != 0 {
+		t.Fatalf("desired writes = %v with the mode on, want none", got)
+	}
+}
+
+// 🔴 A `mode: on` pressed on an engine that is ALREADY RUNNING must not touch the trail.
+//
+// It never bought a box — the start's own "already asked for" guard holds (P1 hardware run 2
+// confirmed that on the deployment) — but the admin toggle presses the start GATE first, and the
+// gate's first act is `begin()`, which empties the trail. So the panel lost `offer_trail` for the
+// demand it was serving: the operator's own click deleted the answer to "why is it on this box".
+//
+// The fix is an ordering one, so the positive control has to be about the order: the same press
+// on a STOPPED engine does begin a new walk, which is what proves the gate still reaches begin().
+func TestModeOnWhileRunningKeepsTheTrail(t *testing.T) {
+	st := testSettingsStore(t)
+	fleet := &fakeFleet{instance: "i-77"}
+	api := &offerECS{}
+	e := newOfferTestEngine(t, api, fleet, twoOffers, st)
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}, st}
+
+	// A start that got its box and its task.
+	tickIntoAStart(t, e, st)
+	api.register("i-77", "engine-image", "g6.xlarge")
+	e.ecs.invalidateBox()
+	tickIntoAStart(t, e, st)
+	api.mu.Lock()
+	api.running = 1
+	api.boxes["i-77"] = offerBox{role: "engine-image", tasks: 1}
+	api.mu.Unlock()
+	e.ecs.invalidate()
+	if got := offerTrailResults(e); got != "l4=active" {
+		t.Fatalf("trail = %q before the press", got)
+	}
+
+	if code, out := adminPut(t, a, "image", `{"mode":"on"}`); code != http.StatusOK {
+		t.Fatalf("on = %d (%v)", code, out)
+	}
+
+	if got := offerTrailResults(e); got != "l4=active" {
+		t.Fatalf("trail = %q after pressing ON on a running engine — the panel lost the walk it is serving", got)
+	}
+	if row := a.row(t.Context(), e); row["offer_trail"] == nil {
+		t.Errorf("offer_trail is absent from the panel row: %v", row)
+	}
+	if len(fleet.creates) != 1 {
+		t.Errorf("%d purchases, want the one from the start", len(fleet.creates))
+	}
+
+	// Positive control: the engine is stopped, and the same press DOES begin a new walk. Without
+	// this, a gate that had simply stopped calling begin() would pass the assertion above.
+	api.mu.Lock()
+	api.desired, api.running = 0, 0
+	api.mu.Unlock()
+	e.ecs.invalidate()
+	e.offers.dropBox()
+	if ok, why := e.startGate(t.Context()); !ok {
+		t.Fatalf("the gate refused a start on a stopped engine (%s)", why)
+	}
+	if got := offerTrailResults(e); got != "" {
+		t.Fatalf("trail = %q after the gate began a new walk, want it emptied", got)
+	}
+}
