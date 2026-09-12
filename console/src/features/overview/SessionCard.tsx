@@ -25,8 +25,6 @@ import { relTime } from "../../lib/intl.ts";
 import { displayName, stateInfo, exitLabel, remainingShort } from "../../lib/sessionview.ts";
 import { sessionFolder, lineageColorOf, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
 import { agentOf } from "../../agents/registry.ts";
-import { useLayoutStore } from "../../layout/store.ts";
-import { ordClass } from "../../layout/badges.ts";
 import { isContextMenuKey, menuAnchor } from "../project/contextMenuKey.ts";
 import { useReposStore } from "../repos/store.ts";
 import { parentSyncLabel, parentSyncTitle } from "../repos/parentSync.ts";
@@ -44,8 +42,6 @@ interface SessionCardProps {
   s: Session;
   /** Panes showing this session (ordinal badges); empty when unsplit. */
   opens: { ordinal: number; id: string }[];
-  /** True when the layout is split (badges/cross-highlight are dormant otherwise). */
-  multi: boolean;
   /** Where a plain click leads: beside the grid (wide screens) or into this pane (phone). */
   beside: boolean;
   running: boolean;
@@ -58,9 +54,8 @@ interface SessionCardProps {
 // Where the menu was asked for: at the pointer (right-click / Menu key) or under the ⋯.
 type MenuAt = { x: number; y: number } | "button" | null;
 
-export function SessionCard({ s, opens, multi, beside, running, waitingAt = 0, actions }: SessionCardProps) {
+export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions }: SessionCardProps) {
   const tr = useT();
-  const setActive = useLayoutStore((st) => st.setActive);
   const { hover, setHover } = usePaneHover();
   const [menuAt, setMenuAt] = useState<MenuAt>(null);
   const menuWrapRef = useRef<HTMLSpanElement>(null);
@@ -94,7 +89,7 @@ export function SessionCard({ s, opens, multi, beside, running, waitingAt = 0, a
   const waited = s.alive ? elapsedShort(waitingAt) : "";
   const waitingNow = isWaiting(s);
   const awake = remainingShort(s.keepAwakeUntil);
-  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || isShared || (multi && opens.length > 0));
+  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || isShared);
 
   // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
   // the screen. Without it, `beside` decides.
@@ -210,8 +205,11 @@ export function SessionCard({ s, opens, multi, beside, running, waitingAt = 0, a
         )}
       </div>
       {/* The badge row carries only what SOME cards have (lock / keep-awake / stop-armed /
-          shared / pane ordinals). With the state chip moved into the head it is empty on an
-          ordinary card, and an empty flex row would still spend the card's row gap. */}
+          shared). With the state chip moved into the head it is empty on an ordinary card, and
+          an empty flex row would still spend the card's row gap. Pane ordinals are deliberately
+          NOT here (ADR 0078 decision 10): which pane holds a session is the rail's job, and on a
+          grid the numbers were noise. `opens` still marks the card as open and drives the
+          cross-highlight. */}
       {badges && (
       <div className="ovw-row">
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
@@ -220,26 +218,6 @@ export function SessionCard({ s, opens, multi, beside, running, waitingAt = 0, a
         )}
         {s.alive && s.stopAfterTurnAt && <Icon name="debug-stop" className="sess-stoparm" title={tr("srow.stop_after_turn_badge")} />}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
-        {multi && opens.length > 0 && (
-          <span className="sess-ords">
-            {opens.map((o) => (
-              <button
-                key={o.id}
-                type="button"
-                className={"rail-ord " + ordClass(o.ordinal)}
-                title={tr("common.focus_pane", { ordinal: o.ordinal })}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setActive(o.id);
-                }}
-                onMouseEnter={() => setHover({ session: s.name, paneId: o.id })}
-                onMouseLeave={() => setHover(null)}
-              >
-                {o.ordinal}
-              </button>
-            ))}
-          </span>
-        )}
       </div>
       )}
       <div className="ovw-meta">

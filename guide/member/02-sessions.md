@@ -336,8 +336,7 @@ colour the whole card, so they can be spotted from across the room.
   and **a stopped child stays under its parent** too. The family holding a session that waits
   for you leads the heading, but **a family is never split apart**.
 - **Clicking a card opens that session beside the grid**, never in its place, so the grid stays
-  put while you look. If the session is already open, that pane is focused instead. A badge on
-  the card shows which pane holds it while the layout is split.
+  put while you look. If the session is already open, that pane is focused instead.
 - **On a phone there is no "beside", so a tap opens the session in that pane** (two half-height
   panes would help nobody). Your device's **Back button** returns to the grid, "Show stopped"
   and all. **Ctrl (⌘) + click and middle-click open another pane at any width.** In the tabbed
