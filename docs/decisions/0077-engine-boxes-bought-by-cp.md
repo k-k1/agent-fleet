@@ -1477,7 +1477,7 @@ There is no Managed Instances fee in any of these figures any more (decision 8).
 not measured. They need one more run of roughly ten GPU minutes, after items 1 and 2 are in
 develop.
 
-## Follow-up — the CFN lane's answer to P1's items 1, 3, 4 and 6 (2026-09-12, PR #NNN)
+## Follow-up — the CFN lane's answer to P1's items 1, 3, 4 and 6 (2026-09-12, PR #585)
 
 Items 2 (the CP's `startInFlight`) and 5 and 7 (the two PARAMETERS sentences the P1 PR corrected
 where it stood) are not this lane's. The other four are, and three of them are documentation
