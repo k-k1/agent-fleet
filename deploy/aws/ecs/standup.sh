@@ -137,6 +137,19 @@ if ! "${AWS[@]}" iam get-role --role-name AWSServiceRoleForECS >/dev/null 2>&1; 
   af_run "${AWS[@]}" iam create-service-linked-role --aws-service-name ecs.amazonaws.com >/dev/null 2>&1 || true
 fi
 
+# The EC2 Fleet service-linked role, for the engine boxes the Control Plane buys itself
+# (ADR 0077 decision 10). AWS asks for it; ADR 0077's P0 run then got three CreateFleet calls
+# through an account that did not have it (none of them launched an instance, so a LAUNCHING
+# call on an account with neither this nor AWSServiceRoleForEC2Spot is still unmeasured).
+# Cheap insurance, created here with the ECS one rather than found out on a GPU. Not an
+# AWS::IAM::ServiceLinkedRole in a template: a role that already exists fails the stack - and
+# the error from a second create is InvalidInput, not EntityAlreadyExists, so the `|| true`
+# below is what handles it rather than a code match.
+if ! "${AWS[@]}" iam get-role --role-name AWSServiceRoleForEC2Fleet >/dev/null 2>&1; then
+  echo "    · creating AWSServiceRoleForEC2Fleet (once per account)"
+  af_run "${AWS[@]}" iam create-service-linked-role --aws-service-name ec2fleet.amazonaws.com >/dev/null 2>&1 || true
+fi
+
 af_read_params 30-ingress
 p30() { local p; for p in ${AF_PARAMS[@]+"${AF_PARAMS[@]}"}; do case "$p" in "$1"=*) echo "${p#*=}"; return ;; esac; done; }
 SSM_PREFIX="$(p30 SsmPrefix)"; : "${SSM_PREFIX:=/af-cp}"
@@ -553,10 +566,36 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
   # Retired in ADR 0075: the purchase option is not a switch on one provider any more, it is the
   # `buy` field of an offer against two providers that both stand. A capture taken before that
   # still carries the line, and `deploy` refuses a parameter the template does not declare.
-  # 🔴 Dropping it is right for a STAND-UP (a new stack has no provider to collide with); an
-  # existing stack sitting on SPOT needs the two-update migration in
-  # cfn/PARAMETERS-60-engines.md, "Migrating off ImageCapacityOptionType".
+  # 🔴 Dropping it is right for a STAND-UP (a new stack has no provider to collide with). An
+  # existing stack sitting on SPOT needed a two-update migration to reach 0.19.0; to 0.20.0 it
+  # does not - ADR 0077 deletes every provider, so no name is asked for twice.
   af_param_drop ImageCapacityOptionType
+
+  # Retired in ADR 0077: the box is bought with EC2 Fleet from the offer's own type set, so the
+  # Managed Instances requirement block has nothing left to describe. `<Role>StorageGiB` is NOT
+  # in this list - it stays and now sizes the box's root volume, which is why a capture keeps
+  # its value instead of falling back to the default.
+  for af_role in Llm Image; do
+    for af_key in AllowedInstanceTypes AcceleratorMemMinMiB VCpuMin VCpuMax MemMinMiB MemMaxMiB \
+                  UseLocalStorage ScaleInAfter; do
+      af_param_drop "${af_role}${af_key}"
+    done
+  done
+
+  # ADR 0077 RE-MEANT one parameter instead of retiring it, which the drops above cannot express.
+  # `<Role>OfferBudgetSec` used to bound "how long this offer may wait for a box before the next
+  # one is tried"; the purchase answers in the call now, so it bounds "how long the box that WAS
+  # bought may take to register with ECS". The old default of 180 was eight minutes of slack for
+  # a wait that no longer exists and is thin for the one that does (the Control Plane's own
+  # default is 300), so a capture still carrying the OLD DEFAULT is dropped and falls to the
+  # template's new one. Any other value is left alone - a deliberate 180 cannot be told apart
+  # from a stale one, which is why this says on stdout what it did.
+  for af_role in Llm Image; do
+    if [ "$(af_read_one_param 60-engines "${af_role}OfferBudgetSec")" = "180" ]; then
+      echo "    · dropping ${af_role}OfferBudgetSec=180 (ADR 0077 re-meant it; taking the template's 300)"
+      af_param_drop "${af_role}OfferBudgetSec"
+    fi
+  done
 
   echo "==> deploy $AF_STACK_ENGINES (60-engines)"
   if [ "$AF_DRY" = 1 ]; then

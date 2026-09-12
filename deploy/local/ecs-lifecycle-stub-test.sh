@@ -473,17 +473,68 @@ if grep -q "deploy --stack-name af-ecs-engines .*ImageCapacityOptionType=" "$LOG
 fi
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
 
-# 🔴 In the template the two wallets stand side by side with FIXED names. The option type is
-# create-only, so it cannot be switched on one provider (measured 2026-09-11: `cannot update a
-# stack when a custom-named resource requires replacing`) — which is why there are two, and why
-# a name here must never go back to being computed from a parameter. Lose either resource and
-# the Control Plane has nowhere to send a `spot` offer, silently.
-grep -q 'Name: !Sub "af-${AWS::StackName}-image"' "$ECS/cfn/60-engines.yaml" \
-  || fail "the on-demand image provider lost its historic fixed name"
-grep -q 'Name: !Sub "af-${AWS::StackName}-image-spot"' "$ECS/cfn/60-engines.yaml" \
-  || fail "the image role's Spot capacity provider is gone (a spot offer can never be filled)"
-grep -q '!Ref ImageSpotCapacityProvider' "$ECS/cfn/60-engines.yaml" \
-  || fail "nothing references ImageSpotCapacityProvider (the cluster list or the table lost it)"
+# 🔴 Same again for the Managed Instances requirement block, retired in ADR 0077 (the offer's
+# own type set is the requirement now). A deployment that has been running since ADR 0071 has
+# every one of these in its capture, and one of them reaching `deploy` stops the stand-up.
+: > "$LOG"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\nLlmAllowedInstanceTypes=g6.xlarge,g5.xlarge\nLlmAcceleratorMemMinMiB=21000\nLlmVCpuMin=4\nLlmVCpuMax=8\nLlmMemMinMiB=15000\nLlmMemMaxMiB=65536\nLlmUseLocalStorage=true\nLlmScaleInAfter=-2\nImageAllowedInstanceTypes=g6.xlarge\nImageUseLocalStorage=true\nLlmStorageGiB=120\n' > "$STATE4/params/60-engines"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+if grep -qE "deploy --stack-name af-ecs-engines .*(AllowedInstanceTypes|AcceleratorMemMinMiB|VCpuMin|VCpuMax|MemMinMiB|MemMaxMiB|UseLocalStorage|ScaleInAfter)=" "$LOG"; then
+  fail "a parameter retired in ADR 0077 was passed to deploy (the CLI refuses it)"
+fi
+# ...and the one that survived the cull must still get through: <Role>StorageGiB stayed and
+# changed meaning (the box's root volume), so dropping it with its neighbours would silently
+# put every deployment back on the AMI's 30 GiB default.
+grep -q "deploy --stack-name af-ecs-engines .*LlmStorageGiB=120" "$LOG" \
+  || fail "LlmStorageGiB was dropped with the ADR 0077 parameters (it sizes the root volume now)"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+
+# 🔴 And the parameter ADR 0077 RE-MEANT is dropped only when it still holds the OLD default.
+# `<Role>OfferBudgetSec` stopped bounding "how long to wait for this offer's box" and started
+# bounding "how long the box that was bought may take to register"; a captured 180 is the old
+# meaning's default and would silently halve the new ceiling, while a value somebody chose must
+# survive a stand-up like any other.
+: > "$LOG"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\nLlmOfferBudgetSec=180\nImageOfferBudgetSec=600\n' > "$STATE4/params/60-engines"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+if grep -q "deploy --stack-name af-ecs-engines .*LlmOfferBudgetSec=" "$LOG"; then
+  fail "a captured LlmOfferBudgetSec=180 was passed on (it means something else since ADR 0077)"
+fi
+grep -q "deploy --stack-name af-ecs-engines .*ImageOfferBudgetSec=600" "$LOG" \
+  || fail "a chosen ImageOfferBudgetSec was dropped (only the old DEFAULT may be dropped)"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+
+# 🔴 The box is the Control Plane's to buy now (ADR 0077): one launch template per role, the
+# role's name written into the ECS agent's attributes, and the service placed by that attribute.
+# Each of the three is load-bearing on its own - a template without the attribute gives a box
+# nothing will be placed on, and a service without the constraint places the engine on a slot.
+for role in llm image; do
+  grep -q "LaunchTemplateName: !Sub \"af-\${AWS::StackName}-engine-$role\"" "$ECS/cfn/60-engines.yaml" \
+    || fail "the $role role has no launch template (the CP has nothing to buy a box from)"
+  grep -q "ECS_INSTANCE_ATTRIBUTES={\"af-role\":\"engine-$role\"}" "$ECS/cfn/60-engines.yaml" \
+    || fail "the $role launch template does not write af-role into /etc/ecs/ecs.config"
+  grep -q "attribute:af-role == engine-$role" "$ECS/cfn/60-engines.yaml" \
+    || fail "the $role service lost its placement constraint (it could land on a slot)"
+done
+grep -q "ImageId: resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/gpu/recommended/image_id" \
+  "$ECS/cfn/60-engines.yaml" \
+  || fail "the engine AMI is no longer EC2's resolve:ssm: on the public GPU parameter (ADR 0077 decision 7)"
+# 🔴 ...and the caller of CreateFleet has to be able to READ that parameter. Measured in ADR 0077's
+# P0 run: without ssm:GetParameters the call fails top-level with SsmAccessDenied, naming neither
+# the action nor the parameter - i.e. an engine that never starts and a message nobody can act on.
+grep -q "parameter/aws/service/ecs/optimized-ami/\*" "$ECS/cfn/60-engines.yaml" \
+  || fail "CpIngestPolicy cannot read the AMI parameter (CreateFleet fails with SsmAccessDenied)"
+# 🔴 The instance store carries the models (Docker's data-root moves, the anonymous volume
+# follows), and losing this line is a start that is merely SLOW - about 2x, measured under
+# Managed Instances. Nothing else would report it.
+[ "$(grep -c "awk '/Instance Storage/" "$ECS/cfn/60-engines.yaml")" = 2 ] \
+  || fail "a launch template stopped putting Docker's data-root on the instance store (ADR 0077 open question 8)"
+if grep -q "AWS::ECS::CapacityProvider" "$ECS/cfn/60-engines.yaml"; then
+  fail "60-engines still creates a capacity provider (ADR 0077 removed all three)"
+fi
+if grep -q "MANAGED_INSTANCES" "$ECS/cfn/60-engines.yaml"; then
+  fail "a task definition still requires MANAGED_INSTANCES (it cannot be placed on an EC2 box)"
+fi
 
 echo "== case 3h: update.sh carries a pre-P6 role over instead of deleting it =="
 #

@@ -30,6 +30,20 @@ AF_HARNESS_REPO_DIR=$PWD AF_HARNESS_NAT=1 ~/af-ec2c/setup.sh   # 基盤を作る
 - 失敗して作り直すときは **`AF_ECS_EC2_LIVE_SUFFIX=b`** を付ける。ECS は削除直後の同名サービス
   作成を `Create service is not idempotent` で拒む。
 
+## 🔴 Managed Instances 時代のプローブは、いま止めてある（ADR 0077）
+
+[ADR 0077](../../../../docs/decisions/0077-engine-boxes-bought-by-cp.ja.md) で
+エンジン役の capacity provider は無くなった（箱はコントロールプレーンが EC2 Fleet で買い、
+サービスは `LaunchType: EC2` ＋ `attribute:af-role == engine-<役>` で置かれる）。
+`<役>CapacityProviderName` という出力を読んでいた 6 本
+——`bench-image-engine.sh`・`probe-fetch-client.sh`・`probe-llm-mount-load.sh`・
+`probe-s3-fetch-tuning.sh`・`probe-s3-mount.sh`・`probe-warm-volume.sh`——は、
+タスク定義を `EC2` に、`run-task` を launch type ＋配置制約に**機械的に**書き換えたうえで、
+冒頭で `exit 2` して止めてある。**書き換えは実機で 1 度も走らせていない**からで、
+各スクリプトの説明にある数字はすべて Managed Instances 時代のもの。
+再開するときは、先にその役のエンジンを起動して（箱を買うのはもうこのスクリプトではない）、
+その行の門を消し、**測り直した値で説明を書き換える**こと。
+
 ## `bench-tts-engine.sh` —— VOICEVOX エンジンのサイズを、同じ文章で比べる
 
 [ADR 0070](../../../../docs/decisions/0070-tts-ondemand-engine.ja.md) P3 の実測に使ったもの。

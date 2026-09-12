@@ -1334,3 +1334,27 @@ left as written.
   Polling it every five seconds made one start cost 30 `UpdateCapacityProvider` calls and 30
   VRAM log lines. The offer run owns the state; the controller, the admin toggle and the
   gateway's wait all look at that one place.
+
+## Appendix — ADR 0077 overrode this decision (2026-09-12)
+
+[ADR 0077](0077-engine-boxes-bought-by-cp.md) moves the purchase of the engine box from ECS
+Managed Instances to the Control Plane, which buys it with `CreateFleet(type=instant)` against a
+launch template and runs the service on the EC2 launch type. Nothing above is edited; the rows
+below are 0077's own "Which existing decisions this overrides" table, for the decisions of this
+ADR. What is NOT in the table is not overridden.
+
+| Decision | What changes | What does not |
+|---|---|---|
+| decision 3, "two providers per role" | **goes** | the offer format and the `buy` column |
+| decision 4, "the strategy only while running is 0" | **goes** (there is no strategy) | no box swap while running >= 1 (0077 decision 5's drain wait) |
+| decision 5, "budget and failure codes" | the budget shrinks to **the registration ceiling**; the codes move to `CreateFleet`'s response | one lap then cooldown / one audit line |
+| decision 6, "interruption" | detection may use `describe-instances` (the box is enumerable) | not a failure / skip after two in a row |
+| decision 11, "the panel answers from the service's strategy" | **from the box's tags** (`af-engine-offer` / `af-engine-buy`) | EC2 is not asked for prices (`describe-instances` is read) |
+| decision 12, "re-application is for the provider / CFN puts the strategy back" | **goes** | — |
+
+Decisions 1, 2, 7, 8, 9 and 10 stand, and so does everything the hardware runs above measured —
+0077 exists **because** this ADR's own revisit condition was met: "if rule 2's implementation
+turns into 'AWS retries and the CP retries on top of it', revisit this rejection", under the
+rejected alternative "move to EC2 Fleet / an Auto Scaling group". Three rounds on hardware
+produced exactly that shape. The operator's three rules are unchanged to the letter; only the
+buyer changed.

@@ -73,10 +73,21 @@ say() { printf '==> %s\n' "$*" >&2; }
 out() { "${AWS[@]}" cloudformation describe-stacks --stack-name "$1" --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text; }
 
 BUCKET="$(out "$STACK" ModelsBucket)"
-CP="$(out "$STACK" LlmCapacityProviderName)"
+# 🔴 Managed Instances era. The engine roles lost their capacity provider in ADR 0077 - the
+# Control Plane buys the box itself with EC2 Fleet - so the run-task below was rewritten to
+# place the probe on a box that already exists, and the task definition now asks for EC2.
+# 🔴 NOTHING BELOW HAS BEEN RE-MEASURED since that rewrite: it is mechanical, and the numbers
+# in the header came from the Managed Instances shape. This guard is what stops a stale probe
+# being read as a measurement - delete it when you re-run the thing and record what came out.
+cat >&2 <<'MIERA'
+probe-llm-mount-load.sh has not been run since ADR 0077 moved the engine off Managed Instances.
+Start the llm role first (the Control Plane buys the box; this script no longer does), then
+delete the guard at this line and re-measure. The numbers in the header are pre-0077.
+MIERA
+exit 2
 SERVICE="$(out "$STACK" LlmServiceName)"
 CLUSTER="$("${AWS[@]}" cloudformation list-exports --query "Exports[?Name=='$PLATFORM_STACK-ClusterName'].Value" --output text)"
-[ -n "$BUCKET" ] && [ -n "$CP" ] && [ -n "$CLUSTER" ] || { echo "missing coordinates" >&2; exit 1; }
+[ -n "$BUCKET" ] && [ -n "$CLUSTER" ] || { echo "missing coordinates" >&2; exit 1; }
 
 if [ -z "$KEY" ]; then
   KEY="$("${AWS[@]}" s3api list-objects-v2 --bucket "$BUCKET" --prefix "llm/" \
@@ -94,7 +105,7 @@ LOG_GROUP="$(jq -r '.containerDefinitions[0].logConfiguration.options["awslogs-g
 LLAMA_IMAGE="$(jq -r '.containerDefinitions[]|select(.name=="llama")|.image' <<<"$TD_JSON")"
 CPU="$(jq -r '.cpu' <<<"$TD_JSON")"; MEM="$(jq -r '.memory' <<<"$TD_JSON")"
 
-say "cluster=$CLUSTER cp=$CP bucket=$BUCKET key=$KEY size=$SZ image=$LLAMA_IMAGE"
+say "cluster=$CLUSTER bucket=$BUCKET key=$KEY size=$SZ image=$LLAMA_IMAGE"
 
 FETCH_CMD="set -e; mkdir -p /models/llm; t0=\$(date +%s); aws s3 cp s3://$BUCKET/$KEY /models/local.gguf --only-show-errors; echo \"mload: COPY \$(stat -c %s /models/local.gguf) bytes in \$(( \$(date +%s) - t0 ))s\""
 
@@ -155,7 +166,7 @@ TASKDEF="$(jq -n --arg exec "$EXEC_ROLE" --arg task "$TASK_ROLE" --arg img "$LLA
   --arg sz "$SZ" --arg cpu "$CPU" --arg mem "$MEM" --arg g "$LOG_GROUP" --arg r "$REGION" '
 {
   family: "af-engprobe-mountload",
-  requiresCompatibilities: ["MANAGED_INSTANCES"],
+  requiresCompatibilities: ["EC2"],
   networkMode: "awsvpc",
   cpu: $cpu, memory: $mem,
   executionRoleArn: $exec, taskRoleArn: $task,
@@ -186,7 +197,7 @@ say "registered $TD_ARN"
 
 T0=$(date +%s)
 TASK="$("${AWS[@]}" ecs run-task --cluster "$CLUSTER" --task-definition "$TD_ARN" \
-  --capacity-provider-strategy "capacityProvider=$CP,weight=1" \
+  --launch-type EC2 --placement-constraints "type=memberOf,expression=attribute:af-role == engine-llm" \
   --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
   --query 'tasks[0].taskArn' --output text)"
 say "task ${TASK##*/}"

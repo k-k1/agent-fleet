@@ -158,6 +158,11 @@ ECS では SG が「CP からだけ」を保証した。LAN ではそれに相�
 egress 統制を enforce にする（RFC1918 は allowlist に無ければ落ちる）、または ComfyUI の前に
 reverse proxy を置いて bearer を検査し、その鍵を `AF_COMFY_API_KEY` で CP にだけ渡す。
 
+🔴 このうち今日使えるのは reverse proxy だけである。`guide/operate/04-secure.md` は egress proxy の
+出荷済みの範囲を「観測と許可リスト管理まで」とし、遮断（enforce）とコンテナ側の常時配線は
+後続の作業と明記している。よって文書は enforce を「方向」、proxy を「答え」として書き、存在
+しない防御を約束してはならない（文書レーンが書きながら見つけた）。
+
 ### 8. 使用量は `tool.imagegen` の provider `comfy` のまま。費用は付けない。パネルの `warm` は生存確認
 
 Agent が枚数とピクセルを数える経路は変えない（ADR 0069 決定 9・0071 決定 9）。LAN の箱に
@@ -227,12 +232,18 @@ Agent が枚数とピクセルを数える経路は変えない（ADR 0069 決�
     `comfy` の case が無く、ツール説明文に経路名とモデルが出ない（ECS でも同じ）。
   - *文書*: `deploy/compose/.env.example`、`deploy/native/README.md`（VOICEVOX の節の隣）、
     二言語の新ページ `guide/operate/07-image-engine.md` とその棚の README からのリンク、
-    `guide/ref/deploy-targets.md` の対応表に「画像生成」の行、`guide/ref/features.md` の
-    「推論エンジンの GPU クラス」が MCP / egress のページを指している行の訂正。
+    `guide/ref/deploy-targets.md` の対応表に「画像生成」の行、`guide/ref/features.md` に自前
+    ComfyUI の行を新設。（草稿もレビューも同ページの既存の「GPU クラス」の行を誤参照と呼んだが、
+    誤りではない——`guide/admin/04-mcp-egress.md` に「GPU インスタンスクラス」の節が実在する——
+    ので据え置く。）
   **完了条件は「LAN の ComfyUI 相手に `generate_image` が 1 枚返る」の実機 1 回**——ベンチが
   緑でも配線は測れていない前例がある（ADR 0072 P2）。この 1 回は ComfyUI のある網が要り、
   それを持つのは運用者だけである——セッションの仕事ではなく運用者の手順。
-- **P1**: basename 規則の改定、health の prober と稼働ヒートマップ、`/object_info` からの候補
+- **P1**: 先頭に管理画面からの URL と鍵の入力——文書レーンは「入力欄は無い・CP を再起動」を
+  2 ページに書く羽目になり、それは決定 2 が「変数で困り始めたら」と言った当の瞬間である。次に
+  メンバー向けの節（`guide/member/02-sessions.md` は CLI プランの経路しか説明せず、配備が提供
+  するエンジン——ECS でも LAN でも——がセッションからどう見えるかは guide のどこにも無い）。
+  そのあと basename 規則の改定、health の prober と稼働ヒートマップ、`/object_info` からの候補
   提示、`AF_COMFY_API_KEY` の reverse proxy 手順の文書。
 - **P2**: docker 配備の GPU ホストで pinned イメージを起こすスクリプト（未解決 4）。
 - **P3**: 同じ機構で `AF_LLM_URL`（LAN の llama-server / Ollama、chat 役）。`warmPath` の
@@ -267,7 +278,9 @@ Agent が枚数とピクセルを数える経路は変えない（ADR 0069 決�
 - 罠: `workspace/agent/engines.go:481`（basename 化）、
   `workspace/agent/internal/imagegen/http.go:165-196`（`comfy` の case 無し）。
 - health のパス: `deploy/aws/ecs/cfn/60-engines.yaml:943`（comfy は `/system_stats`）。
-- 誤った参照先: `guide/ref/features.md:124`。
+- `guide/ref/features.md:124` は `guide/admin/04-mcp-egress.md:93`（「GPU インスタンスクラス」）を
+  指しており、それは正しいページである——草稿とレビューの初回はそうでないと書いた。
+- egress の遮断は未出荷: `guide/operate/04-secure.ja.md:78-81`（範囲の注記）。
 
 ## レビュー（2026-09-11・P0 の前）
 
@@ -310,3 +323,15 @@ ECS を生やす）はコードのとおりで、VOICEVOX の前例も主張ど�
   正しいのは「転送経路はそのまま」なので、そう改めた。
 - **完了条件には運用者の網が要る。** フェーズに明記した: セッションは LAN の ComfyUI を用意
   できないので、実機 1 回は 4 レーンのマージ後の運用者の手順である。
+
+文書レーンが P0 を書きながら見つけたもの（同日 2026-09-11）:
+
+- 🔴 **レビューの「誤った参照先」がそれ自体誤りだった。** `guide/ref/features.md:124` は「推論
+  エンジンの GPU クラス」を `guide/admin/04-mcp-egress.md` に送っており、そのページには
+  ADR 0074 の内容を持つ「GPU インスタンスクラス」の節がある。レビューは参照先を開かずに草稿の
+  主張を繰り返した——誰も確かめなかった出典と同じ過ち。上で撤回し、レーンは代わりに自前
+  ComfyUI の行を足した。
+- 🔴 **決定 7 の 1 つ目の手はまだ存在しない。** egress の遮断は後続の作業と文書化されており、
+  今日運用者が組める防御は reverse proxy だけである。決定 7 に注記した。
+- **P1 の項目が 2 つ浮かんだ**: 管理画面の URL 入力欄を P1 の先頭へ、配備が提供するエンジンの
+  メンバー向けの節（ECS でも guide に無い）。
