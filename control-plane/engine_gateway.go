@@ -97,7 +97,7 @@ func engineWakeTimeout() time.Duration {
 //
 // It never RAISES the wait: the effective bound is the smaller of this and the wake timeout,
 // so setting AF_ENGINE_WAKE_TIMEOUT low still means what it says.
-func enginePlainHold() time.Duration { return enginePlainHoldOf(45) }
+const engineManagedPlainHoldSeconds = 45
 
 // engineRemotePlainHoldSeconds is that same bound for a BORROWED row (ADR 0079 decision 6). The
 // far deployment's own plain path holds for 45 s before answering `engine_waking`, and a local
@@ -120,7 +120,7 @@ func enginePlainHoldFor(eng *engineRuntimeState) time.Duration {
 	if eng != nil && eng.def.remote() {
 		return enginePlainHoldOf(engineRemotePlainHoldSeconds)
 	}
-	return enginePlainHold()
+	return enginePlainHoldOf(engineManagedPlainHoldSeconds)
 }
 
 // enginePlainHoldOf applies the operator's override and the wake-timeout cap to one default.
