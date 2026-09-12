@@ -220,6 +220,12 @@ has no authentication of its own, so this is only worth anything with a reverse
 proxy in front of it that checks the value, and **that proxy must let
 `/system_stats` through with the same bearer** or the engine never looks healthy.
 
+For an external engine declared some other way than `AF_COMFY_URL`, the same bearer
+is `AF_ENGINE_API_KEY_<KEY>` — the row's key upper-cased, e.g.
+`AF_ENGINE_API_KEY_LLM` (ADR 0079 decision 11). It is read for external rows only:
+an engine this deployment runs keeps its key in SSM, and a borrowed one buys its
+own per session. On the row `AF_COMFY_URL` creates, `AF_COMFY_API_KEY` wins.
+
 ### Registering the models by hand
 
 There is no ingest job here — nothing copies files for you or reads them back.

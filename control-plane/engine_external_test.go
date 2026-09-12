@@ -456,3 +456,164 @@ func TestExternalEngineGoesThroughEveryHandler(t *testing.T) {
 		t.Errorf("serve against a dead engine = %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// --- ADR 0079 decision 11: AF_ENGINE_API_KEY_<KEY> ------------------------------
+//
+// The bearer an external row presents upstream, for every row that is not the one AF_COMFY_URL
+// synthesises. Until this, `apiKey` was filled on that one row alone, so a deployment with no
+// AWS could have an external IMAGE engine and no external CHAT engine whatsoever: an inline
+// AF_ENGINES_JSON row is the only way to declare one, and it had nowhere to carry a credential.
+
+// bearerStub is an engine behind something that checks a bearer — a reverse proxy in front of a
+// llama-server, which is the only shape that makes an engine on somebody's network safe to reach.
+// It checks the header on the HEALTH path too, because engineHealthy presents it as well and a
+// proxy that does not let that through leaves the engine permanently unhealthy (ADR 0076
+// decision 7).
+func bearerStub(want string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+want {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"unauthorized"}}`))
+			return
+		}
+		if r.URL.Path == "/health" {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"seen": r.URL.Path})
+	})
+}
+
+// A table key is free text (parseEngineTable demands only that it is non-empty); an environment
+// variable name is not.
+func TestEngineAPIKeyEnvName(t *testing.T) {
+	for _, c := range []struct{ key, want string }{
+		{"llm", "AF_ENGINE_API_KEY_LLM"},
+		{"image", "AF_ENGINE_API_KEY_IMAGE"},
+		{"  llm  ", "AF_ENGINE_API_KEY_LLM"},
+		{"image-2", "AF_ENGINE_API_KEY_IMAGE_2"},
+	} {
+		if got := engineAPIKeyEnvName(c.key); got != c.want {
+			t.Errorf("engineAPIKeyEnvName(%q) = %q, want %q", c.key, got, c.want)
+		}
+	}
+}
+
+// Which lifecycles read it — and the pairing here is deliberate.
+//
+// The row that must NOT take a static bearer is the BORROWED one: it mints its own per (engine
+// key, session) and dial never reads apiKey for it (ADR 0079 decision 4), so a value here would
+// be a second, staler answer. The positive control next to it therefore has to be an EXTERNAL
+// row with the same key and the same variable set. Pairing "remote takes none" against a MANAGED
+// row instead would pass for an implementation that read nothing at all.
+func TestEngineEnvAPIKeyIsExternalOnly(t *testing.T) {
+	t.Setenv("AF_ENGINE_API_KEY_LLM", "llm-bearer")
+
+	ext := engineDef{Key: "llm", URL: "http://192.0.2.30:8080", Lifecycle: engineLifecycleExternal}
+	if got := engineEnvAPIKey(ext); got != "llm-bearer" {
+		t.Errorf("external row: %q, want the value of AF_ENGINE_API_KEY_LLM", got)
+	}
+	rem := ext
+	rem.Lifecycle = engineLifecycleRemote
+	if got := engineEnvAPIKey(rem); got != "" {
+		t.Errorf("borrowed row: %q, want none — it buys its own token per session", got)
+	}
+	managed := engineDef{Key: "llm", Service: "af-llm", URL: "http://llm.af.internal:8080"}
+	if got := engineEnvAPIKey(managed); got != "" {
+		t.Errorf("managed row: %q, want none — SSM is where a managed row's key lives", got)
+	}
+}
+
+// The capability in one test: an inline table, no AWS anywhere, and a chat completion that
+// reaches an engine which checks the bearer. Before decision 11 the same table produced a row
+// with an empty apiKey and this ended 401.
+func TestEngineRegistryGivesAnExternalChatRowItsBearer(t *testing.T) {
+	up := httptest.NewServer(bearerStub("llm-bearer"))
+	defer up.Close()
+
+	t.Setenv("AF_ENGINES_SSM_PARAM", "")
+	t.Setenv("AF_COMFY_URL", "")
+	t.Setenv("AF_COMFY_API_KEY", "")
+	t.Setenv("AF_REMOTE_ENGINE_URL", "")
+	t.Setenv("AF_REMOTE_ENGINE_TOKEN", "")
+	t.Setenv("AF_ENGINE_API_KEY_LLM", "llm-bearer")
+	t.Setenv("AF_ENGINE_API_KEY_IMAGE", "")
+	t.Setenv("AF_ENGINES_JSON", `{"engines":[
+	  {"key":"llm","api":"chat","provider":"llamacpp","lifecycle":"external",
+	   "url":"`+up.URL+`","health":"/health"},
+	  {"key":"image","api":"images","provider":"comfy","lifecycle":"external",
+	   "url":"http://192.0.2.20:8188","health":"/system_stats"}]}`)
+
+	reg := newEngineRegistry(context.Background(), nil)
+	if reg == nil {
+		t.Fatal("an inline external table produced no registry")
+	}
+	e := reg.get("llm")
+	if e == nil {
+		t.Fatalf("no llm engine: %+v", reg.byKey)
+	}
+	if e.apiKey != "llm-bearer" {
+		t.Errorf("apiKey = %q, want the value of AF_ENGINE_API_KEY_LLM", e.apiKey)
+	}
+	// Still the external lane: reading a variable must not have bought the row any of the
+	// machinery a deployment without credentials cannot have.
+	if e.ecs != nil || e.ctrl != nil || e.ssm != nil || e.activeParam != "" {
+		t.Error("the external chat row was wired to AWS")
+	}
+	// One variable per row. The image row declared none of its own, so it carries none — the
+	// alternative, one bearer shared by every external row, would present the llm proxy's
+	// credential to a ComfyUI on the same network.
+	if img := reg.get("image"); img == nil || img.apiKey != "" {
+		t.Errorf("image row apiKey = %+v, want an engine with no bearer", img)
+	}
+
+	g := engineGateway{reg: reg}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/engine/llm/v1/chat/completions", strings.NewReader(`{}`))
+	r.SetPathValue("path", "chat/completions")
+	g.plain(rec, r, e, engineSessionClaims{Key: "llm"}, testMembership(), []byte(`{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chat completion = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"seen":"/v1/chat/completions"`) {
+		t.Errorf("body = %s, want the request forwarded with the bearer accepted", rec.Body.String())
+	}
+}
+
+// Precedence on the one key both variables can name. AF_COMFY_API_KEY is the more specific of the
+// two and what every ADR 0076 deployment already sets, so it wins — and the generic one is the
+// fallback rather than dead, because an operator who declared the row inline instead has no
+// AF_COMFY_API_KEY to set.
+func TestEngineComfyBearerWinsOverTheGenericVariable(t *testing.T) {
+	build := func(t *testing.T, comfyKey, genericKey string) *engineRuntimeState {
+		t.Helper()
+		t.Setenv("AF_ENGINES_SSM_PARAM", "")
+		t.Setenv("AF_ENGINES_JSON", "")
+		t.Setenv("AF_REMOTE_ENGINE_URL", "")
+		t.Setenv("AF_REMOTE_ENGINE_TOKEN", "")
+		t.Setenv("AF_COMFY_URL", "http://192.0.2.20:8188")
+		t.Setenv("AF_COMFY_API_KEY", comfyKey)
+		t.Setenv("AF_ENGINE_API_KEY_IMAGE", genericKey)
+		reg := newEngineRegistry(context.Background(), nil)
+		if reg == nil || reg.get("image") == nil {
+			t.Fatal("AF_COMFY_URL produced no image engine")
+		}
+		return reg.get("image")
+	}
+
+	var buf bytes.Buffer
+	done := captureLog(&buf)
+	if got := build(t, "comfy-bearer", "generic-bearer").apiKey; got != "comfy-bearer" {
+		t.Errorf("apiKey = %q, want AF_COMFY_API_KEY to win", got)
+	}
+	done()
+	// Silently losing the variable the operator just edited is a 401 with nothing to read, so
+	// both names are on one line.
+	if !strings.Contains(buf.String(), "AF_COMFY_API_KEY") || !strings.Contains(buf.String(), "AF_ENGINE_API_KEY_IMAGE") {
+		t.Errorf("log = %q, want one line naming both variables", buf.String())
+	}
+
+	if got := build(t, "", "generic-bearer").apiKey; got != "generic-bearer" {
+		t.Errorf("apiKey = %q, want the generic variable when AF_COMFY_API_KEY is unset", got)
+	}
+}

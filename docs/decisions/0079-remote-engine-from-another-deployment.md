@@ -864,3 +864,34 @@ which is the ordinary "implementation corrects the text" stage and not a second 
 super-admin button (decision 3 / open question 6), the Console's "another fleet" label, the operator
 chapter, and `AF_ENGINE_API_KEY_<KEY>` (decision 11, P2). Borrowed image spend is still attributed
 nowhere on the far side (open question 7).
+
+## P2 as built (2026-09-13)
+
+Decision 11 alone, in the Control Plane and nowhere else: `AF_ENGINE_API_KEY_<KEY>`, read at
+registry build for an EXTERNAL row, into the same `apiKey` field `dial` and `engineHealthy`
+already present upstream. Unset, nothing changes. What building it settled, beyond what the
+decision says:
+
+- **The name is folded, because a table key is free text and an environment variable name is
+  not.** `engineAPIKeyEnvName` upper-cases the key and writes every character outside `[A-Z0-9]`
+  as `_`, so `image-2` is `AF_ENGINE_API_KEY_IMAGE_2`. Two keys can fold together; that is a
+  table nobody writes, and the alternative is a key whose bearer cannot be declared at all.
+- **One variable per ROW, not one per deployment.** A single shared bearer would present the
+  credential of the proxy in front of the llm engine to a ComfyUI on the same network — the two
+  are different boxes belonging to different reverse proxies, and ADR 0076's whole threat model
+  is that reachability is the access control.
+- **`AF_COMFY_API_KEY` wins on the row `AF_COMFY_URL` synthesises**, and the generic variable is
+  its fallback rather than dead: an operator who declared that row inline instead has no
+  `AF_COMFY_API_KEY` to set. One log line names both when both are declared, because a bearer
+  that is silently not the one the operator just edited is a 401 with nothing to read.
+- **The predicate is `external()`, and this is the one place in the whole ADR where the NARROW
+  one is right.** A managed row's key is an SSM SecureString; a borrowed row buys its own per
+  (engine key, session) and `dial` never reads `apiKey` for it (decision 4), so a static value
+  there would be a second, staler answer to a question that already has one. The test that pins
+  this pairs the borrowed row against an EXTERNAL row with the same key and the same variable
+  set — pairing it against a MANAGED row would pass for an implementation that read nothing.
+- **Four tests**, on `engine_external_test.go`: the name folding, the lifecycle pairing above,
+  the precedence both ways, and the capability itself — an inline table with no AWS anywhere, and
+  a chat completion that reaches an engine behind something which checks the bearer on the health
+  path as well as on the request. Before this, that table produced a row with an empty `apiKey`
+  and the health probe alone ended it in `engine_unavailable`.
