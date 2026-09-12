@@ -273,6 +273,68 @@ func TestComfyAwaitHistorySurfacesAnExecutionError(t *testing.T) {
 	}
 }
 
+// comfyExecutionError runs one generate against an engine whose /history reports the given
+// execution_error payload, and answers with the error the caller is handed.
+func comfyExecutionError(t *testing.T, payload map[string]any) error {
+	t.Helper()
+	const promptID = "af-test-prompt"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/engine/image/v1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": promptID})
+	})
+	mux.HandleFunc("/engine/image/v1/history/"+promptID, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			promptID: map[string]any{
+				"status": map[string]any{"completed": true, "status_str": "error",
+					"messages": []any{[]any{"execution_error", payload}}},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	p := &comfyProvider{
+		client: srv.Client(),
+		lookup: func(context.Context) (EngineConn, bool) {
+			c := sdxlConn()
+			c.BaseURL = srv.URL + "/engine/image/v1"
+			c.Token = "afe_test"
+			return c, true
+		},
+	}
+	_, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	return err
+}
+
+// The one execution error whose cause a session cannot act on gets a sentence saying what to do
+// about it. A checkpoint published with no VAE tensors dies inside ComfyUI on every op, and the
+// answer is a Python traceback ending in `VAE is invalid: None` — `generate_image` has no VAE
+// argument, so a caller's only reading of that is "retry", and every retry pays the 1-2.5 minute
+// checkpoint switch again (measured 2026-09-11 on this deployment).
+//
+// The traceback is long on purpose: the exception message sorts BEFORE it in ComfyUI's own error
+// dict, so this also pins that the hint reads the whole message list rather than the
+// 800-character tail the error text shows.
+func TestComfyExecutionErrorExplainsACheckpointWithNoVae(t *testing.T) {
+	err := comfyExecutionError(t, map[string]any{
+		"node_type":         "VAEDecode",
+		"exception_message": "ERROR: VAE is invalid: None",
+		"traceback":         strings.Repeat("  File \"/ComfyUI/execution.py\", line 306, in execute\n", 40),
+	})
+	if !strings.Contains(err.Error(), "--vae") {
+		t.Errorf("error = %v, want it to name the file the catalogue row is missing", err)
+	}
+	// The negative control: an unrelated failure must not collect the hint, or it stops meaning
+	// anything. It is also proof the check above can fail.
+	other := comfyExecutionError(t, map[string]any{
+		"node_type": "CheckpointLoaderSimple", "exception_message": "Value not in list: ckpt_name"})
+	if strings.Contains(other.Error(), "--vae") {
+		t.Errorf("error = %v, want no VAE hint on an unrelated failure", other)
+	}
+}
+
 // awaitHistory polls until completed=true — a still-running prompt must not be read as done.
 func TestComfyAwaitHistoryPollsUntilComplete(t *testing.T) {
 	oldPoll := comfyPollEvery

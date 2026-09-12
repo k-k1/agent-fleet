@@ -60,7 +60,11 @@ type comfyFiles struct {
 	// `Value not in list: clip_name1` (measured on af-sandbox, ADR 0072 P2 残作業 5).
 	ClipG string
 	T5xxl string // --t5xxl
-	Vae   string // --vae
+	// Vae is `--vae`. The split families require it — they have no other source of one — and for
+	// the single-checkpoint families (sdxl, sd35) it is OPTIONAL and overrides what the checkpoint
+	// carries, which is the only way to use a checkpoint published without VAE tensors at all.
+	// See comfyCheckpointVAE.
+	Vae string
 }
 
 // resolveComfyFiles turns the catalogue's flat, sd.cpp-flavoured file list into the named roles
@@ -357,6 +361,27 @@ func comfyBuildGraph(family comfyFamily, files comfyFiles, p comfyParams) (comfy
 	}
 }
 
+// comfyCheckpointVAE answers with the VAE a single-checkpoint family (sdxl, sd35) encodes and
+// decodes with: the catalogue's own `--vae` file when the row declares one, and the checkpoint's
+// third output otherwise. Adding the loader node here rather than in each template keeps "which
+// VAE" one answer for the encode and the decode, which is what keeps them the same model.
+//
+// 🔴 CheckpointLoaderSimple's VAE output is None when the checkpoint carries no VAE tensors, and
+// nothing on the way there refuses it: the graph validates, the box pays the 1-2.5 minute
+// checkpoint switch, and then every op dies inside ComfyUI with `ERROR: VAE is invalid: None` —
+// generate in VAEDecode, edit already in VAEEncode. Measured 2026-09-11 on this deployment with
+// an Illustrious/SDXL checkpoint published without one, against another SDXL row that generated
+// fine minutes later. A caller cannot act on that: `generate_image` has no VAE argument, so the
+// declaration is the only place the fact can live. The default stays the checkpoint's own VAE,
+// which is what every bundled checkpoint has and what the golden fixtures pin.
+func comfyCheckpointVAE(g comfyGraph, f comfyFiles) []any {
+	if f.Vae == "" {
+		return comfyLink("ckpt", 2)
+	}
+	g["vae"] = comfyNode{ClassType: "VAELoader", Inputs: map[string]any{"vae_name": f.Vae}}
+	return comfyLink("vae", 0)
+}
+
 // --- SDXL — ported from bench-image-engine.py's g_sdxl (GPU-verified, ADR 0072) -------------
 
 func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
@@ -366,14 +391,15 @@ func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	g := comfyGraph{
 		"ckpt": {ClassType: "CheckpointLoaderSimple", Inputs: map[string]any{"ckpt_name": f.Checkpoint}},
 	}
+	vae := comfyCheckpointVAE(g, f)
 	// CheckpointLoaderSimple returns (MODEL, CLIP, VAE), so the LoRA chain hangs off slots 0
-	// and 1 and the VAE keeps coming straight from the checkpoint — a LoRA never touches it.
+	// and 1 and the VAE is never part of it — a LoRA never touches it.
 	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("ckpt", 0), comfyLink("ckpt", 1))
 	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": p.Prompt, "clip": clip}}
 	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": comfyNegativePrompt, "clip": clip}}
-	lat, err := comfyRequestLatent(g, p, comfyLink("ckpt", 2), "EmptyLatentImage")
+	lat, err := comfyRequestLatent(g, p, vae, "EmptyLatentImage")
 	if err != nil {
 		return nil, err
 	}
@@ -383,7 +409,7 @@ func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"denoise": comfyDenoiseFor(p.Op),
 		"model":   model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
 		"latent_image": lat}}
-	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("ckpt", 2)}}
+	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": vae}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
 		"filename_prefix": "af-sdxl", "images": comfyLink("dec", 0)}}
 	return g, nil
@@ -578,6 +604,7 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 			// recipe is what makes this graph comparable to one a person would build by hand.
 			"clip_name1": f.ClipG, "clip_name2": f.ClipL, "clip_name3": f.T5xxl}},
 	}
+	vae := comfyCheckpointVAE(g, f)
 	// The MODEL comes from the checkpoint and the CLIP from TripleCLIPLoader — this is the one
 	// family where the two halves LoraLoader wants come from different nodes.
 	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("ckpt", 0), comfyLink("clip", 0))
@@ -585,7 +612,7 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"text": p.Prompt, "clip": clip}}
 	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": comfyNegativePrompt, "clip": clip}}
-	lat, err := comfyRequestLatent(g, p, comfyLink("ckpt", 2), "EmptySD3LatentImage")
+	lat, err := comfyRequestLatent(g, p, vae, "EmptySD3LatentImage")
 	if err != nil {
 		return nil, err
 	}
@@ -595,7 +622,7 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"denoise": comfyDenoiseFor(p.Op),
 		"model":   model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
 		"latent_image": lat}}
-	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("ckpt", 2)}}
+	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": vae}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
 		"filename_prefix": "af-sd35", "images": comfyLink("dec", 0)}}
 	return g, nil

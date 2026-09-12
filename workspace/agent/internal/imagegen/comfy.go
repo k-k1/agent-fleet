@@ -755,7 +755,8 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, promp
 			hist, known := byID[promptID]
 			if known {
 				if hist.Status.StatusStr == "error" {
-					return comfyHistory{}, fmt.Errorf("the image engine failed the request: %s", comfyErrorMessages(hist))
+					return comfyHistory{}, fmt.Errorf("the image engine failed the request: %s%s",
+						comfyErrorMessages(hist), comfyErrorHint(hist))
 				}
 				if hist.Status.Completed {
 					return hist, nil
@@ -795,6 +796,27 @@ func comfyErrorMessages(hist comfyHistory) string {
 		return "unknown error"
 	}
 	return tail(string(b), 800)
+}
+
+// comfyErrorHint translates the one execution error whose cause is a CATALOGUE fact rather than
+// anything the caller did: a checkpoint published with no VAE tensors. ComfyUI answers it with a
+// Python traceback ending in `ERROR: VAE is invalid: None`, which tells a session nothing it can
+// act on — `generate_image` has no VAE argument, so retrying, changing the op or changing the
+// size all fail the same way, each after the 1-2.5 minute checkpoint switch (measured 2026-09-11
+// on this deployment: generate died in VAEDecode, edit in VAEEncode, same model).
+//
+// It reads the WHOLE message list rather than the tail comfyErrorMessages shows: the exception
+// message sorts before the traceback in ComfyUI's own error dict, so on a long traceback the one
+// line this matches on is the first thing the 800-character cap drops.
+func comfyErrorHint(hist comfyHistory) string {
+	b, err := json.Marshal(hist.Status.Messages)
+	if err != nil || !strings.Contains(string(b), "VAE is invalid") {
+		return ""
+	}
+	return " — this checkpoint carries no VAE of its own, so nothing could encode or decode the" +
+		" picture. Every op fails the same way until the catalogue row for this model declares its" +
+		" family's VAE as a separate file (`--vae`, an SDXL-family checkpoint takes an sdxl_vae);" +
+		" until then, ask for another model"
 }
 
 // comfySaveNode is the id every template gives its SaveImage node. It is the graph's terminal

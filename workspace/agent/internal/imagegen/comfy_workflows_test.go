@@ -86,6 +86,12 @@ var comfyFamilyFixtures = []comfyFamilyFixture{
 	{"flux1", ComfyFamilyFlux1, comfyFiles{
 		DiffusionModel: "flux1-dev.safetensors", ClipL: "clip_l.safetensors", T5xxl: "t5xxl_fp8.safetensors", Vae: "ae.safetensors"},
 		[]string{"guider.model", "scheduler.model"}, []string{"pos.clip"}, "sca.latent_image", "scheduler.denoise"},
+	// The same family with a VAE declared separately, which is the only shape a checkpoint
+	// published without VAE tensors can be used in (comfyCheckpointVAE): one VAELoader that both
+	// the encode and the decode read, and a graph otherwise identical to the fixture above.
+	{"sdxl_external_vae", ComfyFamilySDXL, comfyFiles{
+		Checkpoint: "illustrious_xl_v3.safetensors", Vae: "sdxl_vae.safetensors"},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 	{"sd35", ComfyFamilySD35, comfyFiles{Checkpoint: "sd3.5_large.safetensors",
 		ClipL: "clip_l.safetensors", ClipG: "clip_g.safetensors", T5xxl: "t5xxl_fp16.safetensors"},
 		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
@@ -380,6 +386,59 @@ func TestComfyWorkflowsRefuseMissingFiles(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if _, err := comfyBuildGraph(c.family, c.files, comfyGoldenParams); err == nil {
 				t.Error("expected an error, got none")
+			}
+		})
+	}
+}
+
+// The checkpoint families read the catalogue's `--vae` file when the row declares one, and the
+// checkpoint's own VAE when it does not. That is the whole difference between a row that
+// generates and one that dies in ComfyUI with `ERROR: VAE is invalid: None`, which is what a
+// checkpoint published with no VAE tensors does on every op (measured 2026-09-11 on this
+// deployment, an Illustrious/SDXL row: generate in VAEDecode, edit in VAEEncode). A caller
+// cannot work around it — `generate_image` has no VAE argument — so the declaration is the fix,
+// and the encode and the decode have to take the SAME one or the picture returns as noise.
+func TestComfyCheckpointFamiliesTakeADeclaredVae(t *testing.T) {
+	for _, fam := range []comfyFamily{ComfyFamilySDXL, ComfyFamilySD35} {
+		// clip_l / clip_g / t5xxl are what sd35 additionally requires; sdxl ignores them.
+		base := comfyFiles{Checkpoint: "c.safetensors",
+			ClipL: "l.safetensors", ClipG: "g.safetensors", T5xxl: "t.safetensors"}
+		p := comfyGoldenParams
+		p.Op, p.Image = OpEdit, "af-photo.png"
+
+		t.Run(string(fam)+" without one", func(t *testing.T) {
+			g, err := comfyBuildGraph(fam, base, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, has := g["vae"]; has {
+				t.Error("a VAELoader was added for a row that declares no --vae file")
+			}
+			for _, ref := range []string{"dec.vae", "enc.vae"} {
+				if got := comfyLinkAt(t, g, ref); got[0] != "ckpt" || got[1] != 2 {
+					t.Errorf("%s reads %v, want the checkpoint's own VAE [ckpt 2]", ref, got)
+				}
+			}
+		})
+
+		t.Run(string(fam)+" with one", func(t *testing.T) {
+			files := base
+			files.Vae = "sdxl_vae.safetensors"
+			g, err := comfyBuildGraph(fam, files, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			loader, ok := g["vae"]
+			if !ok || loader.ClassType != "VAELoader" {
+				t.Fatalf("no VAELoader node: %+v", g["vae"])
+			}
+			if got := loader.Inputs["vae_name"]; got != "sdxl_vae.safetensors" {
+				t.Errorf("vae_name = %v, want the declared file's basename", got)
+			}
+			for _, ref := range []string{"dec.vae", "enc.vae"} {
+				if got := comfyLinkAt(t, g, ref); got[0] != "vae" || got[1] != 0 {
+					t.Errorf("%s reads %v, want the declared VAE [vae 0]", ref, got)
+				}
 			}
 		})
 	}
