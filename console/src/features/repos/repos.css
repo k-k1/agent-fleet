@@ -1096,3 +1096,130 @@
 .svn-auth-err {
   color: var(--danger, #d33);
 }
+
+/* Working-copy delete plan (DeleteCopyModal). The list is the dialog's argument: each row
+   says what goes and what it costs, so the layout keeps name / branch / sessions / grade on
+   one line and gives the "why" its own, where it is read rather than squeezed. */
+.wcdel-modal {
+  width: min(680px, 94vw);
+}
+.wcdel-intro {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wcdel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(48vh, 420px);
+  overflow: auto;
+}
+.wcdel-row {
+  /* The indent mirrors the rail's nesting so the plan and the tree read as the same
+     picture; --wcdel-depth is capped by the component, as the rail caps its own. */
+  padding: 4px 0 4px calc(var(--wcdel-depth, 0) * 16px);
+  border-bottom: 1px solid var(--border2);
+}
+.wcdel-row:last-child {
+  border-bottom: 0;
+}
+.wcdel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+.wcdel-blocked .wcdel-head {
+  cursor: default;
+  opacity: 0.75;
+}
+.wcdel-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wcdel-branch {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wcdel-sess {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.wcdel-grade {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  white-space: nowrap;
+}
+.wcdel-grade-safe {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+.wcdel-grade-review {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+.wcdel-grade-blocked {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+}
+.wcdel-why,
+.wcdel-result {
+  margin: 2px 0 0 26px;
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.wcdel-result.is-failed {
+  color: var(--del);
+}
+.wcdel-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.wcdel-opt-sub {
+  margin-top: 4px;
+  padding-left: 20px;
+}
+.wcdel-opt-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.wcdel-opt-hint.is-warn {
+  color: var(--warn);
+}
+.wcdel-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.wcdel-summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.wcdel-warn {
+  display: block;
+  color: var(--del);
+}
+.wcdel-foot-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}

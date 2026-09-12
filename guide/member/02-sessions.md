@@ -272,6 +272,23 @@ browser). "Delete old ones" in the archive list removes items older than 30 days
 You can also ask the fleet operator to do the same survey and tidy-up from chat
 ([11](08-organising.md)).
 
+### Clearing one finished job (deleting a working copy)
+
+Cleanup surveys the **whole workspace**. When what you want to clear is **one finished job** — a
+parent worktree and the worktrees of the child sessions it spawned — right-click that row and
+choose **"Delete the working copy"**. The copies the left pane nests under that row are listed as
+they are, so **archiving the sessions and deleting the copies happen in one go**.
+
+- **Only rows that lose nothing are ticked for you** (already in the parent, nothing uncommitted,
+  nobody working in them). A row with uncommitted or unmerged work stays empty, so **ticking it is
+  the "delete it anyway" confirmation**.
+- **Rows with a running session, and rows locked against deletion, cannot be ticked.** The reason
+  is shown under the row — stop the session or remove the lock first.
+- Ticking **"Delete the merged branches too"** also removes the throwaway `temp/…` branches (the
+  trash can restore them). Adding **"Delete the branch on the remote (origin) too"** removes it on
+  origin as well — **that one cannot be undone**. A branch that is not in the parent's history
+  cannot be deleted through this route at all.
+
 ## When you can — and can't — resume
 
 Stopped sessions can be opened and resumed with a click. However, claude / codex / cursor / copilot / kiro / agy / opencode

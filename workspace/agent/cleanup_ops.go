@@ -8,6 +8,7 @@ package main
 //   GET/POST/DELETE /cleanup/archives*  → list / restore / purge the safety net
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -144,10 +145,27 @@ func archiveSessionForDelete(m session.Meta) (string, error) {
 	return man.ID, nil
 }
 
-// handleDeleteBranch (DELETE /repos/{name}/branch?branch=<name>) deletes a MERGED local
-// branch, recording its name+SHA in a cleanup archive first. Unmerged branches are
-// refused (git branch -d fails; we never -D) — the commits would be orphaned. The
-// branch is a query param, not a path segment, because branch names contain "/".
+// handleDeleteBranch (DELETE /repos/{name}/branch?branch=<name>[&remote=1]) deletes a
+// MERGED local branch, recording its name+SHA in a cleanup archive first. Unmerged
+// branches are refused (git branch -d fails; we never -D) — the commits would be
+// orphaned. The branch is a query param, not a path segment, because branch names
+// contain "/".
+//
+// remote=1 additionally removes the branch from origin, and it needs a STRICTER merged
+// test of its own, run before anything is deleted:
+//
+//	`git branch -d` accepts a branch that is merged into its UPSTREAM, not only one merged
+//	into HEAD — measured: a pushed, never-merged temp branch deletes locally without a
+//	murmur. For a local-only delete that is fine (the commits are still on origin, which is
+//	why git allows it), but combined with a push --delete it is precisely how the commits
+//	get orphaned — the safety net one step relies on is the thing the next step removes.
+//
+// So remote=1 additionally requires the branch to be an ancestor of this working copy's
+// HEAD, and refuses the whole request otherwise: both sides survive a refusal. The push
+// then runs last, because it is the one step nothing here can undo — the gz archive can
+// re-create a local ref from its SHA, no archive can re-create a ref on someone else's
+// server. A push that fails leaves the local delete standing and is reported in the body
+// rather than as an error status.
 func handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 	dir, ok := gitx.RepoDirFromPath(w, r)
 	if !ok {
@@ -160,6 +178,12 @@ func handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	if !gitx.GitBranchExists(dir, branch) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such branch: "+branch)
+		return
+	}
+	wantRemote := r.URL.Query().Get("remote") == "1" || r.URL.Query().Get("remote") == "true"
+	if wantRemote && !gitx.OK(dir, "merge-base", "--is-ancestor", branch, "HEAD") {
+		httpx.WriteErr(w, http.StatusConflict, "branch_not_in_head",
+			"branch is not contained in this working copy's HEAD; deleting it on origin too would orphan its commits")
 		return
 	}
 	sha := gitx.GitBranchSHA(dir, branch)
@@ -179,7 +203,57 @@ func handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 			"branch is not fully merged; not deleted (push/merge it, or delete in the Console): "+strings.TrimSpace(out))
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": branch, "archive": man.ID})
+	// remote / remote_error are always on the wire ("" = the flag was not passed), and the
+	// payload stays ONE map literal at the write site: wiremap_golden_test.go goldens the key
+	// set by parsing this literal, and a map built up over several statements leaves the
+	// response with no coverage at all.
+	remote, remoteErr := "", ""
+	if wantRemote {
+		state, err := deleteRemoteBranch(dir, branch)
+		remote = state
+		if err != nil {
+			remote, remoteErr = "failed", err.Error()
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"deleted": branch, "archive": man.ID, "remote": remote, "remote_error": remoteErr,
+	})
+}
+
+// remotePushTimeout bounds the one network round trip in this package. GIT_TERMINAL_PROMPT=0
+// only stops git asking for a password — an unreachable or slow host still hangs, and this
+// handler is called in a loop while a modal waits on it.
+const remotePushTimeout = 60 * time.Second
+
+// deleteRemoteBranch removes branch from origin and reports WHICH of the three ordinary
+// outcomes happened, because the caller has to tell them apart in what it shows:
+//
+//	"deleted"  — the remote ref was there and is gone
+//	"absent"   — nothing to delete: no origin, or the branch was never pushed. A worktree
+//	             branch that stayed local is the common case, and calling that a failure
+//	             would put an error in front of the user on the ordinary path.
+//	error      — git's own message, verbatim; the credential helper's refusal reads here.
+func deleteRemoteBranch(dir, branch string) (string, error) {
+	if url, err := gitx.Run(dir, "remote", "get-url", "origin"); err != nil || url == "" {
+		return "absent", nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), remotePushTimeout)
+	defer cancel()
+	raw, err := gitx.CmdContext(ctx, dir, "push", "origin", "--delete", branch).CombinedOutput()
+	msg := strings.TrimSpace(string(raw))
+	if err == nil {
+		return "deleted", nil
+	}
+	if strings.Contains(msg, "remote ref does not exist") {
+		return "absent", nil
+	}
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("origin did not answer within %s", remotePushTimeout)
+	}
+	if msg == "" {
+		return "", err
+	}
+	return "", fmt.Errorf("%s", msg)
 }
 
 func handleListCleanupArchives(w http.ResponseWriter, r *http.Request) {
