@@ -96,6 +96,12 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   `warm_model` to decision 7, `license_name`, acceptance records and a commercial-use axis to
   decision 10. **The review settled open question 1 entirely on a CPU** (R1). The status became
   adopted.
+- 2026-09-12, **the panel was split into "the machine" and "the models", and the upstream's
+  restrictions, family guesses and suggested parameters were taken in** (the closing addendum).
+  A widening of decisions 2, 4, 10 and 11, not a replacement. 🔴 Civitai's "login required" is
+  not in the metadata at all: **13 of the top 20** answer 401 to an anonymous HEAD (the rest
+  307), and no field predicts it, so the search probes all twenty. The catalogue row gained
+  `params`, which comfy's five templates merge field by field. **Not put on a GPU.**
 
 ## Context
 
@@ -3983,3 +3989,131 @@ Not verified on hardware. The shape of the new graph is pinned by a golden fixtu
 pinned by a test — which is the same claim that was true of SD3.5's template before it turned out
 not to generate at all. What a GPU still owes this section is one generation from an SDXL row
 with a separately declared VAE.
+
+## Addendum — the panel split in two, and the upstream's restrictions, families and suggested parameters (2026-09-12)
+
+A WIDENING of decisions 2, 4, 10 and 11, not a replacement for any of them. Five things went in.
+Every measurement below is from anonymous access on 2026-09-12.
+
+### 1. The panel is two screens: the machine, and what it loads
+
+One rail item held 2,991 lines: the GPU's mode, its box, its rung and its uptime, stacked above
+the catalogue, the ingest, the upstream search and the Hugging Face token. Two questions are
+mixed there ("is the GPU costing me money right now" and "what should this engine load"), and
+**the permission boundary is in exactly the same place** — open question 11's granted
+tenant_admin may fill the catalogue and may never buy a GPU. So the rail has two items,
+"Inference engines" and "Inference engine models", and tenant settings' `tenant.tab_engines`
+(whose label has always said "models") draws the second.
+
+Inside the models screen: role tabs (text / image), then models / LoRAs. The role strip appears
+only where there is more than one engine — a single tab is a control that cannot be operated.
+
+🔴 **The kind selector is gone; the tab decides it.** Both forms carried "this row is a model /
+a LoRA adapter" while the search above them always sent `types=Checkpoint` — so a form that knew
+it was registering an adapter sat under twenty checkpoints. The two halves of one screen can no
+longer disagree.
+
+### 2. What the source forbids, on the search list
+
+**Civitai's "login required" cannot be read out of the metadata.** An anonymous HEAD of the
+`downloadUrl` of the top 20 monthly checkpoints:
+
+| answer | rows |
+|---|---|
+| 401 (login required) | **13 / 20** |
+| 307 (redirect to the CDN = anonymous is fine) | 7 / 20 |
+
+All 20 carry `availability: "Public"`, `flags: 0`, `status: "Published"` and
+`usageControl: "Download"`, and **no field predicts the 401** (the three with a non-null
+`paidAccess` were always 401, but ten more 401s carry no mark at all). So the search probes all
+twenty: eight at a time, one budget of 8 seconds for the page. **401/403 only is yes, 2xx/3xx
+only is no, and anything else is empty** ("nobody could tell") — stricter than the resolve's
+`engineCivitaiAnonymous`, which fails open to "no" because it must not block an ingest that
+would have worked. Here the answer is drawn as a fact beside nineteen others, and a rate-limited
+429 read as "anyone may download this" is worse than a gap.
+
+The restrictions that ride on the same read are drawn too, as a closed set of codes (the words
+live in the Console's locale catalogue): the licence matrix (non-commercial, credit required, no
+derivatives, same licence only), paid / early access, not public, on-site generation only
+(`usageControl` is **on the version document only**, so the list leaves it empty and the resolve
+is where it bites), NSFW / real person / minor, and the scan verdicts.
+
+🔴 **Every permission flag Civitai publishes is a negative.** `allowNoCredit: false` means
+credit is required, so a model document that could not be read — the resolve's extra read is
+best-effort — would announce **four restrictions nobody published**. A `known` gate gates them,
+pinned by a test with its positive control.
+
+Hugging Face's `gated` is `false` / `"auto"` / `"manual"` (measured: `google/gemma-3-1b-it`
+answers `"manual"`) and was being folded into a bool. "Accept the terms" and "wait for the
+author" are different amounts of work, so they are now two marks.
+
+### 3. The family is suggested (decision 2 stands)
+
+Decision 2 — the operator declares it, and an upstream display name is never stored as one —
+stands. A normalisation table in the CP adds `base_model_suggest` to the resolve and the search
+answers; the Console fills **only an untouched picker** with it and says where it came from
+("guessed from SDXL 1.0"). Pony, Illustrious and NoobAI are SDXL fine-tunes and map to `sdxl`.
+
+🔴 **Anything less than confident stays empty.** Of the same 20 rows, `Anima`, `Krea 2`,
+`LTXV 2.5` and `SD 1.5` have no template on this deployment. A wrong family silences
+`base_model_missing`, which is the row's only mark that it cannot generate, so it is worse than
+none. The guess only ever returns a member of the provider's own vocabulary.
+
+### 4. Generation parameters on the row, reaching the provider
+
+**The structured generation settings are not readable anonymously.** `/api/v1/models` carries no
+`meta` on its example images (only `hasMeta`), and `/api/v1/images?modelVersionId=…` answered
+`meta: null` for all five sampled. What is readable is the author's description (HTML, measured
+at 11,906 characters) and, for a LoRA, `trainedWords`.
+
+So they are read **out of prose**: steps, cfg, sampler, scheduler, clip skip and strength, by
+regular expression, with out-of-range values **dropped rather than clamped** (so that "trained
+for 25000 steps" does not become a sampler's step count). What is found fills the ingest form
+**beside the sentence it came from**, and nothing is stored until a person presses the button —
+it is a guess about a stranger's paragraph, so it is put in front of somebody who can judge it.
+
+The catalogue row gains a `params` column (one JSON column), and comfy's five templates merge it
+over the family's recipe **field by field**: a row that declares only `steps` keeps the family's
+sampler. A sampler or scheduler name the Agent does not recognise is **ignored in favour of the
+family's** — a value outside ComfyUI's enumeration fails the whole prompt with `Value not in
+list` after the cold start, so between "a picture made with the family's sampler" and "no
+picture", the first is the right answer.
+
+🔴 **flux1 and klein do not take a declared cfg.** Those two families fold guidance into the
+conditioning (FluxGuidance, BasicGuider) and a model card's "CFG" is a different knob; applying
+it would be a silently wrong picture. `clip_skip` is recorded only — none of the five graphs has
+a `CLIPSetLastLayer` node — and the panel says so.
+
+### 5. LoRAs are their own list
+
+The tag that used to say "LoRA" on a row is now said by the LIST, and what the row carries
+instead is the family it was trained against (or "no family declared") — the one fact that
+decides whether it can be paired with anything was one item in a "·"-joined meta line. The
+search follows the same tab with `types=LORA`.
+
+🔴 **Hugging Face drops the connection on `filter=lora` with no pipeline tag** (measured, curl
+exit 56; `filter=gguf&filter=lora` behaves the same). Paired with a `pipeline_tag` it answers
+200. The pipeline tag is load-bearing, not extra precision.
+
+### Four things only a real render found
+
+The real bundle plus a stub Control Plane plus headless Chromium (`~/af-shots-engines/`, outside
+the repository) drew seven scenes in dark and light. All 112 DOM tests were green throughout,
+and these four were on the screen:
+
+- a row that declares nothing showed the **form's help sentence** ("an empty field keeps the
+  family's recipe…") as its summary;
+- the "parameters" button had no edge and read as one more word of the summary line;
+- the LoRA tab still carried "re-selecting takes effect at the next start", which explains a
+  control that tab does not offer;
+- the parameter labels were clipped at a fixed `7ch` column.
+
+And the `license_name: "non-commercial"` the Civitai search used to synthesise sat on the same
+card as the `noncommercial` restriction code, saying one thing twice. The synthesis is gone.
+
+### What is left for hardware
+
+This round was not put on a GPU. **Only hardware can say that `params` reaches the picture** —
+the completion definition is "the same prompt and seed produce a different image from a row that
+declares `steps` than from one that does not". The golden test pins the graph's SHAPE, which is
+the same claim it was making while SD3.5 could not produce a single image.

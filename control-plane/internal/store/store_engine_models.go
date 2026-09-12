@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 )
 
 const engineModelCols = `role, id, kind, files, enabled, selected, is_default, args,
@@ -21,7 +22,7 @@ const engineModelCols = `role, id, kind, files, enabled, selected, is_default, a
 	license, license_name, license_url, model_precision, base_model,
 	license_accepted_by, license_accepted_at, license_accepted_tenant, license_accepted_license,
 	commercial_use, source, kv_layers, kv_heads_kv, kv_key_len, kv_value_len,
-	created_at, updated_at`
+	params, created_at, updated_at`
 
 func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel, error) {
 	q := `SELECT ` + engineModelCols + ` FROM engine_models`
@@ -41,6 +42,7 @@ func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel,
 		var (
 			m                        EngineModel
 			files, argsJSON, sizes   string
+			params                   string
 			enabled, selected, isDef int
 		)
 		if err := rows.Scan(&m.Role, &m.ID, &m.Kind, &files, &enabled, &selected, &isDef, &argsJSON,
@@ -50,7 +52,7 @@ func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel,
 			&m.LicenseAcceptedTenant, &m.LicenseAcceptedLicense,
 			&m.CommercialUse, &m.Source,
 			&m.KVLayers, &m.KVHeadsKV, &m.KVKeyLen, &m.KVValueLen,
-			&m.CreatedAt, &m.UpdatedAt); err != nil {
+			&params, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		m.Enabled, m.Selected, m.Default = enabled != 0, selected != 0, isDef != 0
@@ -60,6 +62,16 @@ func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel,
 		_ = json.Unmarshal([]byte(files), &m.Files)
 		_ = json.Unmarshal([]byte(argsJSON), &m.Args)
 		_ = json.Unmarshal([]byte(sizes), &m.Sizes)
+		// Absent rather than zeroed when the column is empty or unreadable: a row that declares
+		// no parameters must reach the provider as "use the family's recipe", and an
+		// EngineParams full of zeros says the same thing only as long as nobody adds a field
+		// whose zero value means something.
+		if strings.TrimSpace(params) != "" {
+			var p EngineParams
+			if json.Unmarshal([]byte(params), &p) == nil && p != (EngineParams{}) {
+				m.Params = &p
+			}
+		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -73,9 +85,15 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 	files := jsonList(m.Files)
 	args := jsonList(m.Args)
 	sizes := jsonList(m.Sizes)
+	params := ""
+	if m.Params != nil && *m.Params != (EngineParams{}) {
+		if b, err := json.Marshal(m.Params); err == nil {
+			params = string(b)
+		}
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO engine_models(`+engineModelCols+`)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(role, id) DO UPDATE SET
 		   kind=excluded.kind, files=excluded.files, enabled=excluded.enabled,
 		   selected=excluded.selected, is_default=excluded.is_default, args=excluded.args,
@@ -90,14 +108,14 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 		   commercial_use=excluded.commercial_use, source=excluded.source,
 		   kv_layers=excluded.kv_layers, kv_heads_kv=excluded.kv_heads_kv,
 		   kv_key_len=excluded.kv_key_len, kv_value_len=excluded.kv_value_len,
-		   updated_at=excluded.updated_at`,
+		   params=excluded.params, updated_at=excluded.updated_at`,
 		m.Role, m.ID, m.Kind, files, boolInt(m.Enabled), boolInt(m.Selected), boolInt(m.Default), args,
 		m.ContextTokens, m.MaxOutputTokens, sizes, m.Description, m.VramMiB,
 		m.License, m.LicenseName, m.LicenseURL, m.Precision, m.BaseModel,
 		m.LicenseAcceptedBy, m.LicenseAcceptedAt, m.LicenseAcceptedTenant, m.LicenseAcceptedLicense,
 		m.CommercialUse, m.Source,
 		m.KVLayers, m.KVHeadsKV, m.KVKeyLen, m.KVValueLen,
-		m.CreatedAt, now)
+		params, m.CreatedAt, now)
 	return err
 }
 
@@ -159,6 +177,24 @@ func (s *SQL) SetEngineModelEnabled(ctx context.Context, role, id string, enable
 // than a read-modify-write through PutEngineModel: the row carries a licence acceptance, a
 // source and a sha256 that nothing else in this request knows, and a round trip would have to
 // carry them back out and in again to change one word.
+// SetEngineModelParams writes the same one column, and is targeted for the same reason as the
+// base model next door: the row carries a licence acceptance and a sha256 that a request
+// changing two numbers knows nothing about.
+func (s *SQL) SetEngineModelParams(ctx context.Context, role, id string, p *EngineParams) (bool, error) {
+	raw := ""
+	if p != nil && *p != (EngineParams{}) {
+		b, err := json.Marshal(p)
+		if err != nil {
+			return false, err
+		}
+		raw = string(b)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engine_models SET params=?, updated_at=? WHERE role=? AND id=?`,
+		raw, NowTS(), role, id)
+	return affected(res, err)
+}
+
 func (s *SQL) SetEngineModelBaseModel(ctx context.Context, role, id, baseModel string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE engine_models SET base_model=?, updated_at=? WHERE role=? AND id=?`,

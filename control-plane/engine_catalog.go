@@ -570,6 +570,13 @@ func engineCatalogModelRow(m store.EngineModel, warm string) map[string]any {
 	if m.BaseModel != "" {
 		row["base_model"] = m.BaseModel
 	}
+	// What this model asks to be run at, when its row says (store.EngineParams). The provider
+	// reads it field by field over its family's own recipe, so a row that declares two numbers
+	// changes two numbers — which is why it rides as the whole object and not as a flattened
+	// set of scalars that cannot tell "declared 0" from "did not say".
+	if m.Params != nil {
+		row["params"] = m.Params
+	}
 	if m.Selected {
 		row["selected"] = true
 	}
@@ -656,6 +663,12 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	}
 	if m.BaseModel != "" {
 		row["base_model"] = m.BaseModel
+	}
+	// The generation defaults this row declares (store.EngineParams). Absent when it declares
+	// none, which is what the panel draws as "the family's own recipe" — an object of zeros
+	// would read as "this model runs at 0 steps".
+	if m.Params != nil {
+		row["params"] = m.Params
 	}
 	// Which vendor's model of that name this is. Absent for a seeded row, which came from the
 	// stack rather than from anywhere with a URL — and absent rather than "unknown", so the

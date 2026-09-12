@@ -16,9 +16,12 @@ package imagegen
 //
 // Every template takes comfyFiles (the on-disk basenames ADR 0072 decision 2 declares, resolved
 // from the catalogue's Flag vocabulary — see EngineFile) and comfyParams (the request-shaped
-// knobs: prompt, seed, size, batch count, and the LoRAs to chain in). Nothing else varies:
-// sampler, steps, cfg and scheduler are the family's own fixed recipe, not a caller's choice
-// (P2 scope decision — a future phase may widen this, ADR 0072 phase P2 note).
+// knobs: prompt, seed, size, batch count, and the LoRAs to chain in). Sampler, steps, cfg and
+// scheduler are still not a CALLER's choice — ADR 0069's vocabulary has no such fields — but
+// they are no longer fixed either: each template states its family's recipe and a catalogue row
+// may replace it field by field (comfyRecipe.with). Which fields a family accepts differs, and
+// each says why where it differs: flux1 and klein refuse a declared cfg because the number a
+// model card calls "CFG" is a different knob in those graphs.
 //
 // 🔴 None of the LoRA chains (P3) has been run on a GPU. The golden test pins their shape, which
 // is the same claim it made about SD3.5 before that family turned out not to generate at all —
@@ -114,10 +117,78 @@ type comfyParams struct {
 	// Loras are already resolved against the catalogue and checked against this model's family
 	// (comfyResolveLoras) — a template applies them, it does not decide whether they fit.
 	Loras []comfyLora
+	// Params is what the CATALOGUE row for the chosen model declares, zero-valued when it
+	// declares nothing. Not request-shaped like everything else here: ADR 0069's vocabulary has
+	// no steps or cfg field, so this is the administrator's declaration reaching the graph, not
+	// a caller's.
+	Params EngineParams
 }
 
 // isImageToImage is "the sampler starts from the caller's picture rather than from noise".
 func (p comfyParams) isImageToImage() bool { return p.Op == OpEdit || p.Op == OpInpaint }
+
+// comfyRecipe is one family's sampler settings: the four numbers and names that used to be
+// literals inside each template.
+//
+// They are still the DEFAULT — every template states its own, and every one of those has been
+// run on a GPU. What changed is that a catalogue row may now replace them field by field
+// (ADR 0072 decision 4, widened): a checkpoint's author publishes "Steps 30, CFG 4" and the
+// deployment had no way to honour it short of editing this file.
+type comfyRecipe struct {
+	Steps     int
+	CFG       float64
+	Sampler   string
+	Scheduler string
+}
+
+// with is the merge, and it is per FIELD. A row that declares only `steps` keeps this family's
+// sampler, scheduler and cfg — anything else would mean declaring one number silently reset the
+// other three to whatever a zero value happens to be.
+//
+// 🔴 A sampler or scheduler name this Agent does not recognise is IGNORED, and the family's own
+// is kept. The input is an enumeration in ComfyUI and an unknown value fails the whole prompt
+// with `Value not in list` — after the cold start somebody waited through — so the two outcomes
+// are "a picture made with the family's sampler" and "no picture at all". The first is a far
+// better answer to a name that may simply be newer than this binary.
+func (r comfyRecipe) with(p EngineParams) comfyRecipe {
+	if p.Steps > 0 {
+		r.Steps = p.Steps
+	}
+	if p.CFG > 0 {
+		r.CFG = p.CFG
+	}
+	if comfyKnownSampler(p.Sampler) {
+		r.Sampler = strings.TrimSpace(p.Sampler)
+	}
+	if comfyKnownScheduler(p.Scheduler) {
+		r.Scheduler = strings.TrimSpace(p.Scheduler)
+	}
+	return r
+}
+
+// comfySamplerNames and comfySchedulerNames are the names this Agent is willing to send.
+//
+// NOT a copy of ComfyUI's whole list, and deliberately not presented as one: it is the set that
+// has a known meaning here, and everything outside it falls back rather than being forwarded on
+// the chance that the engine knows it. The five templates' own choices are all in it by
+// construction — they are the first five entries a reader should be able to find.
+var comfySamplerNames = map[string]bool{
+	"euler": true, "euler_ancestral": true, "heun": true, "lms": true,
+	"dpmpp_2m": true, "dpmpp_2m_sde": true, "dpmpp_3m_sde": true,
+	"dpmpp_sde": true, "dpmpp_2s_ancestral": true,
+	"res_multistep": true, "ddim": true, "uni_pc": true, "lcm": true,
+}
+
+var comfySchedulerNames = map[string]bool{
+	"normal": true, "karras": true, "exponential": true, "sgm_uniform": true,
+	"simple": true, "ddim_uniform": true, "beta": true,
+}
+
+func comfyKnownSampler(s string) bool   { return comfySamplerNames[strings.TrimSpace(s)] }
+func comfyKnownScheduler(s string) bool { return comfySchedulerNames[strings.TrimSpace(s)] }
+
+// recipe is the family default with this request's model declaration merged over it.
+func (p comfyParams) recipe(base comfyRecipe) comfyRecipe { return base.with(p.Params) }
 
 // comfyEditDenoise is how much of the caller's picture an edit keeps. A fixed part of the recipe,
 // like steps and cfg: ADR 0069's vocabulary has no strength field, so there is nothing for a
@@ -332,8 +403,9 @@ func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
+	r := p.recipe(comfyRecipe{Steps: 20, CFG: 7, Sampler: "dpmpp_2m", Scheduler: "karras"})
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
-		"seed": p.Seed, "steps": 20, "cfg": 7, "sampler_name": "dpmpp_2m", "scheduler": "karras",
+		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": comfyDenoiseFor(p.Op),
 		"model":   model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
 		"latent_image": lat}}
@@ -372,8 +444,9 @@ func comfyGraphZImage(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
+	r := p.recipe(comfyRecipe{Steps: 8, CFG: 1, Sampler: "res_multistep", Scheduler: "simple"})
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
-		"seed": p.Seed, "steps": 8, "cfg": 1, "sampler_name": "res_multistep", "scheduler": "simple",
+		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": comfyDenoiseFor(p.Op),
 		"model":   comfyLink("ms", 0), "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
 		"latent_image": lat}}
@@ -406,9 +479,13 @@ func comfyGraphFlux2Klein(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	g["zero"] = comfyNode{ClassType: "ConditioningZeroOut", Inputs: map[string]any{"conditioning": comfyLink("pos", 0)}}
 	g["guider"] = comfyNode{ClassType: "CFGGuider", Inputs: map[string]any{
 		"model": model, "positive": comfyLink("pos", 0), "negative": comfyLink("zero", 0), "cfg": 1}}
-	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": "euler"}}
+	// 🔴 Steps and the sampler only. The `cfg: 1` above is the DISTILLED path's fixed value, not
+	// a guidance scale a model card is talking about when it prints "CFG 4" — and this family
+	// has no scheduler name to set at all (Flux2Scheduler takes a size, not a schedule name).
+	r := p.recipe(comfyRecipe{Steps: 4, Sampler: "euler"})
+	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": r.Sampler}}
 	g["sigmas"] = comfyNode{ClassType: "Flux2Scheduler", Inputs: map[string]any{
-		"steps": 4, "width": p.Width, "height": p.Height}}
+		"steps": r.Steps, "width": p.Width, "height": p.Height}}
 	// Flux2Scheduler has no denoise of its own — it takes steps and a size and nothing else
 	// (comfy_extras/nodes_flux.py, v0.34.0) — so an edit's partial denoise is a TAIL of that
 	// schedule, cut by SplitSigmasDenoise. Its second output (low_sigmas) is the tail; taking
@@ -470,12 +547,17 @@ func comfyGraphFlux1(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": "euler"}}
+	// 🔴 No cfg. FLUX.1 folds guidance into the conditioning (FluxGuidance above, and the guider
+	// is BasicGuider rather than CFGGuider), so the number a model card calls "CFG" for this
+	// family is FluxGuidance's `guidance` and not a sampler cfg — two different knobs with one
+	// name. Applying the declared cfg here would turn "CFG 4" into a silently wrong picture.
+	r := p.recipe(comfyRecipe{Steps: 20, Sampler: "euler", Scheduler: "simple"})
+	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": r.Sampler}}
 	// BasicScheduler DOES have a denoise (unlike klein's Flux2Scheduler), and it cuts the tail
 	// itself: total_steps = steps/denoise, then the last steps+1 sigmas. So an edit needs no
 	// extra node here.
 	g["scheduler"] = comfyNode{ClassType: "BasicScheduler", Inputs: map[string]any{
-		"model": model, "scheduler": "simple", "steps": 20, "denoise": comfyDenoiseFor(p.Op)}}
+		"model": model, "scheduler": r.Scheduler, "steps": r.Steps, "denoise": comfyDenoiseFor(p.Op)}}
 	g["noise"] = comfyNode{ClassType: "RandomNoise", Inputs: map[string]any{"noise_seed": p.Seed}}
 	g["guider"] = comfyNode{ClassType: "BasicGuider", Inputs: map[string]any{
 		"model": model, "conditioning": comfyLink("guidance", 0)}}
@@ -534,8 +616,9 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
+	r := p.recipe(comfyRecipe{Steps: 28, CFG: 4.5, Sampler: "dpmpp_2m", Scheduler: "sgm_uniform"})
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
-		"seed": p.Seed, "steps": 28, "cfg": 4.5, "sampler_name": "dpmpp_2m", "scheduler": "sgm_uniform",
+		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": comfyDenoiseFor(p.Op),
 		"model":   model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
 		"latent_image": lat}}

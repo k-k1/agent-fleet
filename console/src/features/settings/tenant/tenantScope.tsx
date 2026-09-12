@@ -28,7 +28,7 @@ import { MemberView } from "./tenantMemberDetail.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
 import { CloudCostAdminView } from "../../cost/CloudCostView.tsx";
 import { McpAdminView } from "../mcp/mcpAdmin.tsx";
-import { EnginesAdminView } from "../admin/adminEngines.tsx";
+import { EngineModelsAdminView } from "../admin/adminEngineModels.tsx";
 
 export interface ScopeGroup {
   key: string;
@@ -460,10 +460,12 @@ export function TenantScopeBody({
     );
   }
   if (section === "network") return <TenantNetworkView key={slug} slug={slug} />;
-  // The reduced engine panel. The SAME component the operator sees — it draws itself from the
-  // `super_admin` flag in its own answer (ADR 0072 open question 11), so there is one screen to
-  // keep working rather than a copy that drifts.
-  if (section === "engines") return <EnginesAdminView key={slug} />;
+  // The reduced engine panel, which since the panel was split in two is the MODELS screen and
+  // only that — the other half buys and stops a GPU, which a tenant admin may never do. Still
+  // the same component the operator sees: it draws itself from the `super_admin` flag in its
+  // own answer (ADR 0072 open question 11), so there is one screen to keep working rather than
+  // a copy that drifts. The rail's own label has always said "models" (tenant.tab_engines).
+  if (section === "engines") return <EngineModelsAdminView key={slug} />;
   // Not switched on isSuper: the git provider OAuth app belongs to the tenant admin, and its
   // PUT is gated by tenantAdminFor (ADR 0052 decision 3).
   if (section === "git-oauth") return <TenantGitOAuthView key={slug} slug={slug} />;

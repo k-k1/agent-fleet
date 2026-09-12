@@ -497,3 +497,120 @@ func TestComfyFileFlagsAllResolve(t *testing.T) {
 		t.Fatalf("--vae did not resolve (%+v) — the comparison above proves nothing", got)
 	}
 }
+
+// The catalogue row's declared settings, reaching the graph (ADR 0072 decision 4, widened).
+//
+// Per FIELD, and that is the whole test: a row that declares only `steps` has to keep its
+// family's sampler, scheduler and cfg. Folding the two into "the declaration or the recipe"
+// would mean naming one number silently reset the other three.
+func TestComfyRecipeTakesTheRowsDeclarationFieldByField(t *testing.T) {
+	base, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "x.safetensors"}, comfyGoldenParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The family's own recipe, read off the template rather than restated here.
+	wantSampler, wantScheduler, wantCFG := base["ks"].Inputs["sampler_name"], base["ks"].Inputs["scheduler"], base["ks"].Inputs["cfg"]
+
+	p := comfyGoldenParams
+	p.Params = EngineParams{Steps: 30}
+	g, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "x.safetensors"}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g["ks"].Inputs["steps"]; got != 30 {
+		t.Errorf("steps = %v, want the row's 30", got)
+	}
+	if got := g["ks"].Inputs["sampler_name"]; got != wantSampler {
+		t.Errorf("sampler_name = %v, want the family's %v — declaring steps must not clear it", got, wantSampler)
+	}
+	if got := g["ks"].Inputs["scheduler"]; got != wantScheduler {
+		t.Errorf("scheduler = %v, want the family's %v", got, wantScheduler)
+	}
+	if got := g["ks"].Inputs["cfg"]; got != wantCFG {
+		t.Errorf("cfg = %v, want the family's %v", got, wantCFG)
+	}
+
+	// And all four together, which is the ordinary case: an author's published settings.
+	p.Params = EngineParams{Steps: 24, CFG: 3.5, Sampler: "euler_ancestral", Scheduler: "sgm_uniform"}
+	g, err = comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "x.safetensors"}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for in, want := range map[string]any{
+		"steps": 24, "cfg": 3.5, "sampler_name": "euler_ancestral", "scheduler": "sgm_uniform",
+	} {
+		if got := g["ks"].Inputs[in]; got != want {
+			t.Errorf("%s = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// 🔴 A name this Agent does not recognise is IGNORED and the family's own is kept. ComfyUI's
+// sampler input is an enumeration and an unknown value fails the whole prompt with `Value not
+// in list` — after the cold start somebody waited through — so the two outcomes are "a picture
+// made with the family's sampler" and "no picture at all".
+func TestComfyRecipeRefusesToForwardANameItDoesNotKnow(t *testing.T) {
+	p := comfyGoldenParams
+	p.Params = EngineParams{Sampler: "not_a_sampler", Scheduler: "not_a_scheduler", Steps: 12}
+	g, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "x.safetensors"}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g["ks"].Inputs["sampler_name"]; got == "not_a_sampler" {
+		t.Error("an unknown sampler name reached the graph — ComfyUI answers Value not in list")
+	}
+	if got := g["ks"].Inputs["scheduler"]; got == "not_a_scheduler" {
+		t.Error("an unknown scheduler name reached the graph")
+	}
+	// The positive control: the rest of the same declaration DID apply, so this is not passing
+	// because the whole merge was skipped.
+	if got := g["ks"].Inputs["steps"]; got != 12 {
+		t.Errorf("steps = %v, want 12 — the valid half of the declaration must still apply", got)
+	}
+}
+
+// The two families whose "cfg" is a different knob. FLUX.1 folds guidance into the conditioning
+// (FluxGuidance + BasicGuider) and klein's CFGGuider runs the distilled path at a fixed 1, so
+// the number a model card calls "CFG" is not this one — applying it would be a silently wrong
+// picture rather than a refusal.
+func TestComfyRecipeLeavesGuidanceAloneWhereCfgMeansSomethingElse(t *testing.T) {
+	for _, c := range comfyFamilyFixtures {
+		if c.family != ComfyFamilyFlux1 && c.family != ComfyFamilyFlux2Klein {
+			continue
+		}
+		t.Run(c.name, func(t *testing.T) {
+			before, err := comfyBuildGraph(c.family, c.files, comfyGoldenParams)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := comfyGoldenParams
+			p.Params = EngineParams{CFG: 9, Steps: 6}
+			after, err := comfyBuildGraph(c.family, c.files, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, node := range []string{"guider", "guidance"} {
+				b, ok := before[node]
+				if !ok {
+					continue
+				}
+				for in, want := range b.Inputs {
+					if in != "cfg" && in != "guidance" {
+						continue
+					}
+					if got := after[node].Inputs[in]; got != want {
+						t.Errorf("%s.%s = %v, want the family's %v", node, in, got, want)
+					}
+				}
+			}
+			// The positive control again: steps, which these families DO take, moved.
+			if c.family == ComfyFamilyFlux1 {
+				if got := after["scheduler"].Inputs["steps"]; got != 6 {
+					t.Errorf("flux1 steps = %v, want 6", got)
+				}
+			} else if got := after["sigmas"].Inputs["steps"]; got != 6 {
+				t.Errorf("klein steps = %v, want 6", got)
+			}
+		})
+	}
+}
