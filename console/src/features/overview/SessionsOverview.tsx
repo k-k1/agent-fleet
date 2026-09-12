@@ -18,7 +18,7 @@ import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useLayoutStore } from "../../layout/store.ts";
-import { paneOrdinals, sessionPanes } from "../../layout/badges.ts";
+import { sessionPanes } from "../../layout/badges.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
@@ -75,7 +75,6 @@ export function SessionsOverview({ paneId, showStopped, headerActions }: Session
   const alive = groups.reduce((n, g) => n + g.alive, 0);
   const empty = groups.length === 0;
   const sPanes = sessionPanes(layout);
-  const multi = paneOrdinals(layout).size > 1;
 
   const toggleStopped = () => setPaneTarget(paneId, { content: { kind: "sessions", showStopped: !showStopped } });
 
@@ -128,7 +127,6 @@ export function SessionsOverview({ paneId, showStopped, headerActions }: Session
                     key={s.name}
                     s={s}
                     opens={sPanes.get(s.name) || []}
-                    multi={multi}
                     beside={beside}
                     running={running}
                     waitingAt={waitingAt(s.name)}

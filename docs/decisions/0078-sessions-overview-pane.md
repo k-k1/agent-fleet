@@ -163,8 +163,11 @@ The cards sit under one heading per project, and the identity is **`remote` (the
   the very same wording as the rail's repo row (`parentSyncLabel` / `parentSyncTitle` in
   `features/repos/parentSync.ts`, lifted out of `RepoRow` for this). "親+2・FF可" must not mean
   two things in one Console.
-- The remaining badges (lock, keep-awake, stop-armed, shared, pane ordinals) stay on a row of
-  their own, rendered **only on the cards that have one**.
+- The remaining badges (lock, keep-awake, stop-armed, shared) stay on a row of their own,
+  rendered **only on the cards that have one**.
+- **The pane-ordinal badges are not shown** (the user's call, 2026-09-12). Which pane holds a
+  session is the rail row's job; on a grid it is a row of numbers. That a card IS open still
+  reads from its frame (`.open`) and the hover cross-highlight.
 
 ### Decision 11 — "waiting for" comes from the two existing ledgers; when they do not know, show nothing (added 2026-09-12)
 
