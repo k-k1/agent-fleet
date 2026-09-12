@@ -313,6 +313,8 @@ export const admin = {
   "admin.engines_offer_result_insufficient": "在庫なし",
   "admin.engines_offer_result_quota": "クォータ",
   "admin.engines_offer_result_budget": "予算切れ",
+  "admin.engines_offer_result_unusable": "要求できない",
+  "admin.engines_offer_result_interrupted": "取り上げられた",
   "admin.engines_class_pending": "いま動いているのは {t} のインスタンスです。選んだクラスは次に買うインスタンスから効きます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧いインスタンスが退場するまで新しいインスタンスは起動しません。",
   "admin.engines_class_replace": "いま入れ替える",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a
