@@ -90,12 +90,49 @@ type engineRemoteCatalogFile struct {
 // fetchCatalog asks the far deployment which engines it offers. The issuing token is the only
 // credential it needs, and this call reaches no engine at all — the whole point of the far side's
 // catalogue route is that the launch menu can be drawn while every engine is asleep.
+//
+// What comes back is the far side's answer plus one empty row per role that has GONE from it —
+// see withVanishedRoles, without which a role the far administrator switches off keeps serving
+// its last mirror here for as long as this process runs.
 func (r *engineRemotes) fetchCatalog(ctx context.Context) ([]engineRemoteCatalogRow, error) {
 	var out engineRemoteCatalog
 	if err := r.call(ctx, http.MethodGet, "/internal/engine/catalog", nil, &out); err != nil {
 		return nil, err
 	}
-	return out.Engines, nil
+	return r.withVanishedRoles(out.Engines), nil
+}
+
+// withVanishedRoles appends an empty row for every role already borrowed that this answer does
+// not mention.
+//
+// 🔴 Absence is the far side's way of saying "off". A role its administrator switches off, or
+// whose last enabled model it removes, is skipped by the far catalogue handler rather than
+// reported empty (engine_gateway.go:224, and engineCatalogRowFor answers nil for a role with no
+// models). A mirror refreshed only from the rows that ARE present would therefore keep offering
+// the models of a role that stopped being offered — and every request to them would be relayed
+// to a far gateway that now refuses.
+//
+// The row itself stays in the registry. ADR 0079 decision 7: rows are added but never removed
+// while the process runs, so what an absent role collapses to is an EMPTY catalogue, which
+// serve already refuses with `engine_unavailable` and a sentence saying the engine has no
+// enabled model. The empty row carries no `api`, which is what applyCatalogRow refuses to adopt
+// a row on: an absent role is never evidence that a role exists.
+func (r *engineRemotes) withVanishedRoles(rows []engineRemoteCatalogRow) []engineRemoteCatalogRow {
+	if r == nil {
+		return rows
+	}
+	offered := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		offered[row.Key] = true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key := range r.byKey {
+		if !offered[key] {
+			rows = append(rows, engineRemoteCatalogRow{Key: key})
+		}
+	}
+	return rows
 }
 
 // call is the one HTTP shape both far-side calls share: the issuing token in, JSON out.
@@ -159,19 +196,37 @@ func tailLine(s string) string {
 // the far administrator's to state, `url` is the far fleet's base, and `lifecycle` is what makes
 // every other branch in the process treat it as somebody else's (decision 1).
 func (r *engineRemotes) applyCatalogRow(ctx context.Context, reg *engineRegistry, row engineRemoteCatalogRow) {
-	rem := r.forKey(row.Key)
-	rem.setMirror(row)
-	if e := reg.get(row.Key); e != nil {
-		// Already served. The mirror above is the whole update: engineCatalog reads through it, so
-		// a model enabled on the far side appears here within its own cache TTL.
-		//
-		// 🔴 A key a LOCAL row already holds is not borrowed. The registry is one map keyed by
-		// role, and quietly replacing a managed row would leave its ECS service with nobody to stop
-		// it — the same reasoning engineTableWithEnvRow already applies to AF_COMFY_URL.
-		if !e.def.remote() {
-			log.Printf("engines: %s is already served by a %s row, so it is not borrowed from %s",
-				row.Key, lifecycleLabel(e.def), r.base)
-		}
+	if r == nil || reg == nil || row.Key == "" {
+		return
+	}
+	e := reg.get(row.Key)
+	if e != nil && !e.def.remote() {
+		// 🔴 A key a LOCAL row already holds is not borrowed, and the far declaration is not even
+		// mirrored: the registry is one map keyed by role, and quietly replacing a managed row
+		// would leave its ECS service with nobody to stop it at $1.26/hour — the same reasoning
+		// engineTableWithEnvRow already applies to AF_COMFY_URL. The line repeats once per poll on
+		// purpose: the local table and the far catalogue go on disagreeing until an operator
+		// changes one of them.
+		log.Printf("engines: %s is already served by a %s row, so it is not borrowed from %s",
+			row.Key, lifecycleLabel(e.def), r.base)
+		return
+	}
+	// The mirror is replaced before the row is adopted, so that the row build's own log line —
+	// and the first request to reach it — see the models rather than an empty catalogue.
+	r.forKey(row.Key).setMirror(row)
+	if e != nil {
+		// Already borrowed. The mirror above is the whole update — engineCatalog reads through
+		// it — and dropping the row's ten-second cache is what stops a role the far side has just
+		// switched off from being offered for ten seconds more. The re-read costs a mutex and a
+		// slice, not a database round trip, because the source is the mirror in memory.
+		e.catalog.invalidate()
+		return
+	}
+	if row.API == "" {
+		// Decision 2: `api` and `provider` are the far administrator's to state and must never be
+		// guessed here, because the Workspace composes a completely different request for an
+		// images role than for a chat one. A row without one is a vanished role (withVanishedRoles)
+		// or a wrong URL answering — neither is an engine to take on.
 		return
 	}
 	def := engineDef{
@@ -208,6 +263,9 @@ func (e *engineRemote) setMirror(row engineRemoteCatalogRow) {
 		return
 	}
 	rows := make([]store.EngineModel, 0, len(row.Models)+len(row.Loras))
+	// Warmth is read off the model the far side says its engine last answered with, and only off
+	// a MODEL: the far catalogue stamps `warm` on whichever row carries that id, and a LoRA that
+	// happened to share it would make this deployment call a sleeping engine warm.
 	warm := ""
 	for _, m := range row.Models {
 		rows = append(rows, e.mirrorRow(m, ""))
