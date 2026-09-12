@@ -16,6 +16,7 @@
     "panes:heads": "node scripts/pane-heads/check.mjs",
     "mirror:scroll": "node scripts/mirror-scroll/check.mjs",
     "mirror:handoff": "node scripts/mirror-handoff/check.mjs",
+    "mirror:poll": "node scripts/mirror-poll/check.mjs",
     "viewer:scroll": "node scripts/viewer-scroll/check.mjs",
     "viewer:font": "node scripts/viewer-font/check.mjs",
     "drawio:check": "node scripts/drawio/check.mjs",
