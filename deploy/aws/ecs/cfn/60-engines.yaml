@@ -438,6 +438,18 @@ Resources:
               # && chain leaves Docker where it was if any step fails, and starts it either way.
               # !! Order: this runs from cloud-init, and ecs.service is After=cloud-final, so
               # the agent has not started yet - the same reason writing ecs.config here works.
+              # !! ecs.service is PartOf=docker.service, so stopping docker CANCELS the start job
+              # systemd has queued for it and starting docker does not queue it again: the agent
+              # then sits `inactive (dead)` with an empty journal and the box never registers.
+              # Measured on af-sandbox 2026-09-12 (ADR 0077 P1): three boxes in a row were
+              # terminated at the registration ceiling, and `systemctl start ecs` by hand
+              # registered one in 3 seconds. So the start below is explicit, and last - after
+              # ecs.config is written, because the agent reads it at start.
+              # !! --no-block is not decoration either: ecs.service is After=cloud-final.service
+              # and this script IS cloud-final, so a blocking start waits for a job that waits
+              # for this script. Measured the same day: `systemctl list-jobs` showed
+              # `ecs.service start waiting` behind `cloud-final.service start running` and the
+              # box hung there until the registration ceiling terminated it.
               DEV=$(lsblk -dno NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1; exit}')
               if [ -n "$DEV" ]; then
                 systemctl stop docker docker.socket
@@ -456,6 +468,7 @@ Resources:
               ECS_IMAGE_CLEANUP_INTERVAL=30m
               ECS_IMAGE_MINIMUM_CLEANUP_AGE=24h
               EOF
+              systemctl start --no-block ecs
             - Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
 
   ImageLaunchTemplate:
@@ -493,6 +506,18 @@ Resources:
               # && chain leaves Docker where it was if any step fails, and starts it either way.
               # !! Order: this runs from cloud-init, and ecs.service is After=cloud-final, so
               # the agent has not started yet - the same reason writing ecs.config here works.
+              # !! ecs.service is PartOf=docker.service, so stopping docker CANCELS the start job
+              # systemd has queued for it and starting docker does not queue it again: the agent
+              # then sits `inactive (dead)` with an empty journal and the box never registers.
+              # Measured on af-sandbox 2026-09-12 (ADR 0077 P1): three boxes in a row were
+              # terminated at the registration ceiling, and `systemctl start ecs` by hand
+              # registered one in 3 seconds. So the start below is explicit, and last - after
+              # ecs.config is written, because the agent reads it at start.
+              # !! --no-block is not decoration either: ecs.service is After=cloud-final.service
+              # and this script IS cloud-final, so a blocking start waits for a job that waits
+              # for this script. Measured the same day: `systemctl list-jobs` showed
+              # `ecs.service start waiting` behind `cloud-final.service start running` and the
+              # box hung there until the registration ceiling terminated it.
               DEV=$(lsblk -dno NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1; exit}')
               if [ -n "$DEV" ]; then
                 systemctl stop docker docker.socket
@@ -511,6 +536,7 @@ Resources:
               ECS_IMAGE_CLEANUP_INTERVAL=30m
               ECS_IMAGE_MINIMUM_CLEANUP_AGE=24h
               EOF
+              systemctl start --no-block ecs
             - Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
 
   # !! REPLACES the cluster's list, and the empty default strategy is load-bearing. The engines
