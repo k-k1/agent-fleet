@@ -3609,3 +3609,54 @@ Python プロセスの中で完結させ、トークンを標準出力にもデ�
 `VcpuLimitExceeded` で静かに置かれなくなる**——今回は作り直しを 1 回に抑え、前後を相手に
 通告して避けた。GPU は 1 台を約 9 分（`mode: on` 05:00:14〜`mode: off` 05:11:55、うち箱が
 動いていたのは約 9 分）。
+
+## 追記 — VAE を同梱しないチェックポイント（2026-09-12）
+
+セッションからの報告。稼働中の comfy エンジンに対する実測で、有効化されている SDXL 系の
+モデル 1 つ（Illustrious 派生）が `generate_image` の**すべての**呼び出しで失敗し、同じ
+エンジンの別の SDXL 行は数分後に正常に応答した。
+
+- `op=edit`・1536x1024・入力画像 1 枚 → 画像は返らず、`nodes.py:391 in encode` を経て
+  `/ComfyUI/comfy/sd.py:1103 RuntimeError: ERROR: VAE is invalid: None / If the VAE is from a
+  checkpoint loader node your checkpoint does not contain a valid VAE` で終わるトレース。
+- 同じモデルで `op=generate` → 同じ RuntimeError。今度は `nodes.py:338 in decode` 経由。
+- `neoanimensfwlmpanda_v13` に `op=edit` で同条件 → 1536x1024 の PNG が返り、警告は
+  チェックポイント切り替えの通知だけ。
+
+**サンプラーの両側で落ちることが、ワークフローを容疑から外す。** VAEEncode と VAEDecode は
+別のノードで、別の要求から到達する。共通しているのは VAE のリンクだけで、SDXL の
+テンプレートではそれが無条件に `CheckpointLoaderSimple` の 3 番目の出力だった。この出力は
+チェックポイントが VAE のテンソルを持たないとき `None` になる——公開されている SDXL 系
+チェックポイントには珍しくない——のに、GPU に届く前に誰も拒まない。行は検証を通り、
+`base_model` も正しく、ファイルもディスクにあり、箱は 1〜2.5 分のチェックポイント切り替えを
+払い、そこでグラフが死ぬ。利用者の側にも手立てはない。`generate_image` に VAE を指す引数が
+無いからである（ADR 0069 の語彙は意図的にプロバイダ非依存）。
+
+### 変えたこと
+
+`--vae` は元からファイル語彙にあり、分割 3 族では必須だった。これを単一チェックポイントの
+2 族（sdxl・sd35）でも読むようにした。ここでは**任意かつ上書き**で、宣言すれば 1 つの
+`VAELoader` が encode と decode の両方を賄い、宣言しなければグラフはゴールデンが
+ずっと固定してきたものとバイト単位で同じになる（`comfyCheckpointVAE`）。VAE 非同梱の
+チェックポイントが「組めない行」ではなく「組める行」になり、ツールのスキーマは変わらない。
+
+実行エラーには、その直し方を名指しする 1 文を足した。ComfyUI 自身の答えは Python の
+トレースで、セッションにはそれが「リトライしろ」としか読めず、リトライのたびに
+チェックポイント切り替えを払うからである。判定はエラー本文の末尾 800 文字ではなく
+メッセージ一覧全体に対して行う——ComfyUI のエラー辞書では exception message が traceback
+より前に並ぶためである。
+
+### あえてやらなかったこと 2 つ
+
+- **既知の名前の VAE への自動フォールバック**。`VAELoader` の `vae_name` は `models/vae` の
+  列挙で、SD3.5 の `clip_name1` を拒んだのと同じ形（P2 残作業 5）。箱が持っていない
+  `sdxl_vae` を名指しすれば、今動いている族が全行 `Value not in list` になる。
+- **「この行には VAE が無い」というカタログ側の検査**。CP はファイルを読まない——決定 2 が
+  カタログを宣言と定めている——うえ、SDXL のチェックポイントは多くが VAE を同梱するので、
+  `engineComfyRequiredFlags["sdxl"]` に `--vae` を足すと、今動いている行が全部「ファイル
+  未設定」になる。運用者の手は元のまま——VAE を宣言するか、行を無効にするか。
+
+実機未検証。新しいグラフの形はゴールデン（`comfy_sdxl_external_vae.golden.json`）が、
+encode と decode が同じ宣言 VAE を読むことは試験が固定している——これは SD3.5 の
+テンプレートが「1 枚も生成できない」と判明する前に成り立っていたのと同じ種類の主張である。
+GPU がまだ返していないのは、VAE を別宣言した SDXL 行からの生成 1 枚。

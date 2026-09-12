@@ -77,6 +77,18 @@ A row missing a file for one of the roles it needs is marked **files missing**. 
 check reads your declaration only — it is not evidence that the file is on the disk.
 If you declare a name that is not there, the failure arrives at generation time.
 
+🔴 **A checkpoint published without a VAE needs one declared next to it.** Plenty
+of SDXL-family checkpoints on the model sites ship the UNet and the text encoders
+alone. A row naming that file alone passes every check there is, switches the
+engine's checkpoint (1–2.5 minutes) and then fails **every** request with `VAE is
+invalid: None` — in the decode for a plain generate, in the encode for an edit.
+There is nothing a member can do about it from their side: the tool has no VAE
+argument. Declare the family's standalone VAE as a **second file on the same row,
+with the flag `--vae`** (an SDXL-family checkpoint takes an `sdxl_vae`); that file
+is then what the workflow encodes and decodes with, in place of the checkpoint's
+own. Until you do, **disable the row** — it is offered to every session, and each
+attempt costs a checkpoint switch before it fails.
+
 🔴 **Put the files directly under ComfyUI's type folders** — `checkpoints/`,
 `diffusion_models/`, `clip/`, `vae/`, `loras/`. Only the part after the last `/` is
 handed to the loader, so a file in a subfolder (`checkpoints/sdxl/x.safetensors`)
