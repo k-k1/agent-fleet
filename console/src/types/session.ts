@@ -99,6 +99,12 @@ export interface Session {
   // notification, so without this the row of a session that handed its next step on is the row
   // of one with nothing left to do.
   handoffPending?: boolean;
+  // The opening line of the agent's newest utterance — one line, already whitespace-collapsed
+  // and capped at 120 runes by the Agent (ADR 0078 decision 12). Absent until the session has
+  // said something, and for every kind but claude (P1.1). Display only, on the overview card:
+  // it is a fragment of an answer with no turn boundary and no timestamp, so nothing may
+  // decide anything from it.
+  lastSay?: string;
   // Deletion lock (docs/log/45): while true, the Agent answers 403 to anything that deletes
   // (delete = forget the metadata, purge, the 7-day auto-prune of stopped sessions, and
   // removal as a side effect of deleting the working copy). Stop and archive are reversible
