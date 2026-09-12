@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -298,19 +298,29 @@ export function useMirrorTts({
     announce(text, label, { ...(sessionVoiceOpts(session) ?? {}), paneId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, pending, pendingPlan, pendingPerm]);
-  const ttsWiring: TurnTtsWiring = {
-    reading: ttsReading,
-    start: ttsStart,
-    pause: () => {
-      ttsHandleRef.current?.pause();
-      setTtsReading((c) => (c ? { ...c, paused: true } : c));
-    },
-    resume: () => {
-      ttsHandleRef.current?.resume();
-      setTtsReading((c) => (c ? { ...c, paused: false } : c));
-    },
-    stop: () => ttsHandleRef.current?.stop(), // the cleanup happens in onEnd
-  };
+  // `start` closes over this render's transcript, so it is routed through a ref rather than
+  // rebuilt into the object: the wiring is a capability every turn holds, and a new identity on
+  // every render would defeat the transcript's memoization (TranscriptTurn) and re-render the
+  // whole conversation on each keystroke in the composer. `reading` is the one field a turn
+  // READS while rendering, so it stays the memo's dependency.
+  const ttsStartRef = useRef(ttsStart);
+  ttsStartRef.current = ttsStart;
+  const ttsWiring: TurnTtsWiring = useMemo(
+    () => ({
+      reading: ttsReading,
+      start: (idx: number, body: HTMLElement, fromBlock = 0) => ttsStartRef.current(idx, body, fromBlock),
+      pause: () => {
+        ttsHandleRef.current?.pause();
+        setTtsReading((c) => (c ? { ...c, paused: true } : c));
+      },
+      resume: () => {
+        ttsHandleRef.current?.resume();
+        setTtsReading((c) => (c ? { ...c, paused: false } : c));
+      },
+      stop: () => ttsHandleRef.current?.stop(), // the cleanup happens in onEnd
+    }),
+    [ttsReading],
+  );
   // Stop on a session switch, because the body DOM is replaced with it. Do NOT stop on unmount
   // (switching to the terminal, closing the pane): playback is a single global stream that does
   // not depend on the view, so it keeps running and the TopBar stop is control enough. The

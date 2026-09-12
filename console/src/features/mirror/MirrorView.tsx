@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, ReactNode } from "react";
 import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, downloadURL } from "../../core/api/client.ts";
@@ -32,6 +32,7 @@ import { useBackClose } from "../../lib/backClose.ts";
 import { prettyModel } from "../../lib/modelName.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
+import { MIRROR_POLL_FAST, pollDelay } from "./pollCadence.ts";
 import { MirrorBanners } from "./parts/MirrorBanners.tsx";
 import { useMirrorTts } from "./parts/useMirrorTts.tsx";
 import { useMirrorScroll } from "./parts/useMirrorScroll.ts";
@@ -241,6 +242,16 @@ export function MirrorView({
   // "rejected" immediately, before the interrupt tool_result (its real signal) lands a poll
   // or two later — otherwise it sits at the neutral "decided" until then.
   const rejectedPlansRef = useRef<Set<string>>(new Set());
+  // Bumped whenever that set is written. The badge is READ while a turn renders, and the turns are
+  // memoized, so a silent mutation would not reach the card until the next transcript change —
+  // which is exactly the poll or two this optimism exists to cover. markRejected is the only
+  // writer, the session reset aside — that one changes `session`, which rebuilds caps anyway.
+  const [rejectedGen, setRejectedGen] = useState(0);
+  const markRejected = (plan: string, rejected: boolean) => {
+    if (rejected) rejectedPlansRef.current.add(plan.trim());
+    else rejectedPlansRef.current.delete(plan.trim());
+    setRejectedGen((n) => n + 1);
+  };
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
   // The last non-plan mode name the terminal reported, used as the optimistic label when
   // leaving plan mode (docs/log/76).
@@ -298,6 +309,12 @@ export function MirrorView({
   const diagRef = useRef(""); // last transcript-diagnostic signature (warn once per change)
   const statusRef = useRef("");
   const bgBusyRef = useRef(false); // mirrors bgBusy for the poll-cadence closure (fast-poll while BG runs)
+  // Last transcript payload, verbatim, and how many polls in a row have returned exactly it.
+  // Together they are the "nothing moved" signal: it suppresses a re-render that would change
+  // nothing (see the poll) and it drives the cadence ladder (pollCadence.ts).
+  const lastPayloadRef = useRef("");
+  const unchangedRef = useRef(0);
+  const lastPollAtRef = useRef(0);
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // All transcript scroll positioning (bottom follow, scroll-to-top of a finished turn,
@@ -356,6 +373,8 @@ export function MirrorView({
     setLoadingOlder(false);
     diagRef.current = "";
     statusRef.current = "";
+    lastPayloadRef.current = ""; // another session's payload must never read as "unchanged"
+    unchangedRef.current = 0;
     setTurns([]);
     setPendingSends(echoStore.get(session) ?? []); // restore this session's un-landed echoes
     pendingSendsRef.current = echoStore.get(session) ?? [];
@@ -398,7 +417,8 @@ export function MirrorView({
   }, [session]);
 
   // Poll the transcript since our cursor while this view is mounted (Pane only mounts
-  // it while visible). Faster while claude is working, slower at rest. New turns are
+  // it while visible). Faster while claude is working, slower at rest, and easing off
+  // further the longer the payload repeats itself (pollCadence.ts). New turns are
   // appended; the cursor advances by the transcript's line count.
   useEffect(() => {
     if (!session) return;
@@ -411,6 +431,7 @@ export function MirrorView({
         timer = setTimeout(tick, 15000);
         return;
       }
+      lastPollAtRef.current = Date.now(); // gap the reader's bump measures against
       try {
         // First poll: fetch only the TAIL window (fast on huge transcripts); the server
         // returns firstLine/hasMore so we can page older history in on scroll. Subsequent
@@ -425,124 +446,139 @@ export function MirrorView({
         // useMarksController throttles the actual round trips.
         marksReloadRef.current();
         if (d && !d.error) {
-          if (typeof d.cursor === "number") cursorRef.current = d.cursor;
-          // reset: the server's jsonl shrank or was replaced (compaction, or a
-          // different <sid>.jsonl became live), so our line cursor was stale and it
-          // re-sent from the top — replace, don't append. Otherwise append new turns.
-          // Late interaction answers (AskUserQuestion/ExitPlanMode/Agent), keyed by
-          // tool_use id — see patchAnswers. Sent every poll; applied to whatever turns we
-          // hold after the append/reset below.
-          const answers =
-            d.answers && typeof d.answers === "object" ? (d.answers as Record<string, InteractionAnswerWire>) : null;
-          if (d.reset) {
-            setTurns(patchAnswers(Array.isArray(d.messages) ? d.messages : [], answers));
-            // Servers now resend a TAIL window on reset and set firstLine/hasMore
-            // (handled by the shared block below); 0/false is the fallback for a
-            // whole-file reset from an older server (fork preview still sends one).
-            firstLineRef.current = 0;
-            setHasMore(false);
-            tts.resetForTranscript(); // body DOM was replaced: re-baseline without stopping playback
-          } else if (Array.isArray(d.messages) && d.messages.length) {
-            // Idempotent merge: normally a poll only appends turns. Store-backed agents
-            // (notably OpenCode) also update the parts of their current assistant turn
-            // while its stable idx stays the same, so replace that overlapping turn.
-            // A quick re-poll after sending can likewise overlap safely.
-            setTurns((t) => {
-              const byIdx = new Map<number, number>();
-              for (let i = 0; i < t.length; i++) {
-                if (t[i].idx !== undefined) byIdx.set(t[i].idx as number, i);
-              }
-              let next = t;
-              for (const incoming of d.messages as Turn[]) {
-                const at = incoming.idx === undefined ? undefined : byIdx.get(incoming.idx);
-                if (at === undefined) {
-                  if (next === t) next = [...t];
-                  next.push(incoming);
-                  if (incoming.idx !== undefined) byIdx.set(incoming.idx, next.length - 1);
-                } else if (JSON.stringify(next[at]) !== JSON.stringify(incoming)) {
-                  if (next === t) next = [...t];
-                  next[at] = incoming;
+          // Nothing moved since the last poll. Applying the payload anyway is what made a
+          // mirror re-render once a second while the agent merely thought: setTasks/setFiles/
+          // setQueuedPrompts hand React a NEW array every time, so the state always "changes"
+          // and the whole conversation is regrouped and re-rendered for no difference at all.
+          // Comparing the payload verbatim is what makes the skip safe — the block below is
+          // pure state application, so replaying identical bytes cannot produce a different
+          // result. The liveness self-heal after it is time-based, so it stays outside.
+          const payload = JSON.stringify(d);
+          if (payload === lastPayloadRef.current) {
+            unchangedRef.current++; // eases the cadence off (pollCadence.ts)
+          } else {
+            lastPayloadRef.current = payload;
+            unchangedRef.current = 0;
+            if (typeof d.cursor === "number") cursorRef.current = d.cursor;
+            // reset: the server's jsonl shrank or was replaced (compaction, or a
+            // different <sid>.jsonl became live), so our line cursor was stale and it
+            // re-sent from the top — replace, don't append. Otherwise append new turns.
+            // Late interaction answers (AskUserQuestion/ExitPlanMode/Agent), keyed by
+            // tool_use id — see patchAnswers. Sent every poll; applied to whatever turns we
+            // hold after the append/reset below.
+            const answers =
+              d.answers && typeof d.answers === "object" ? (d.answers as Record<string, InteractionAnswerWire>) : null;
+            if (d.reset) {
+              setTurns(patchAnswers(Array.isArray(d.messages) ? d.messages : [], answers));
+              // Servers now resend a TAIL window on reset and set firstLine/hasMore
+              // (handled by the shared block below); 0/false is the fallback for a
+              // whole-file reset from an older server (fork preview still sends one).
+              firstLineRef.current = 0;
+              setHasMore(false);
+              tts.resetForTranscript(); // body DOM was replaced: re-baseline without stopping playback
+            } else if (Array.isArray(d.messages) && d.messages.length) {
+              // Idempotent merge: normally a poll only appends turns. Store-backed agents
+              // (notably OpenCode) also update the parts of their current assistant turn
+              // while its stable idx stays the same, so replace that overlapping turn.
+              // A quick re-poll after sending can likewise overlap safely.
+              setTurns((t) => {
+                const byIdx = new Map<number, number>();
+                for (let i = 0; i < t.length; i++) {
+                  if (t[i].idx !== undefined) byIdx.set(t[i].idx as number, i);
                 }
-              }
-              return patchAnswers(next, answers);
-            });
-          } else if (answers) {
-            // No new turns this poll, but an answer may have just landed for a question/plan/
-            // delegation turn we already hold (its tool_result line carries no displayable turn
-            // of its own). Patch in place; patchAnswers no-ops when nothing changed.
-            setTurns((t) => patchAnswers(t, answers));
-          }
-          // Windowed (initial tail) response carries the oldest line we now hold.
-          if (typeof d.firstLine === "number") {
-            firstLineRef.current = d.firstLine;
-            setHasMore(!!d.hasMore);
-          }
-          // Diagnostic: surface the anomalies behind "sent but nothing shows" — no
-          // jsonl found, multiple <sid>.jsonl siblings (a stub may shadow the real
-          // log), or a cursor reset. Logged once per distinct situation (not every
-          // poll) so it's quiet in the normal case.
-          if (d.reset || d.jsonlMatches > 1 || (d.alive && !d.jsonlPath)) {
-            const sig = `${d.reset ? 1 : 0}|${d.jsonlPath || ""}|${d.jsonlMatches || 0}`;
-            if (sig !== diagRef.current) {
-              diagRef.current = sig;
-              // eslint-disable-next-line no-console
-              console.warn("[mirror] transcript diagnostic", {
-                session,
-                reset: !!d.reset,
-                jsonlPath: d.jsonlPath,
-                jsonlLines: d.jsonlLines,
-                jsonlMtime: d.jsonlMtime,
-                jsonlMatches: d.jsonlMatches,
+                let next = t;
+                for (const incoming of d.messages as Turn[]) {
+                  const at = incoming.idx === undefined ? undefined : byIdx.get(incoming.idx);
+                  if (at === undefined) {
+                    if (next === t) next = [...t];
+                    next.push(incoming);
+                    if (incoming.idx !== undefined) byIdx.set(incoming.idx, next.length - 1);
+                  } else if (JSON.stringify(next[at]) !== JSON.stringify(incoming)) {
+                    if (next === t) next = [...t];
+                    next[at] = incoming;
+                  }
+                }
+                return patchAnswers(next, answers);
               });
+            } else if (answers) {
+              // No new turns this poll, but an answer may have just landed for a question/plan/
+              // delegation turn we already hold (its tool_result line carries no displayable turn
+              // of its own). Patch in place; patchAnswers no-ops when nothing changed.
+              setTurns((t) => patchAnswers(t, answers));
             }
+            // Windowed (initial tail) response carries the oldest line we now hold.
+            if (typeof d.firstLine === "number") {
+              firstLineRef.current = d.firstLine;
+              setHasMore(!!d.hasMore);
+            }
+            // Diagnostic: surface the anomalies behind "sent but nothing shows" — no
+            // jsonl found, multiple <sid>.jsonl siblings (a stub may shadow the real
+            // log), or a cursor reset. Logged once per distinct situation (not every
+            // poll) so it's quiet in the normal case.
+            if (d.reset || d.jsonlMatches > 1 || (d.alive && !d.jsonlPath)) {
+              const sig = `${d.reset ? 1 : 0}|${d.jsonlPath || ""}|${d.jsonlMatches || 0}`;
+              if (sig !== diagRef.current) {
+                diagRef.current = sig;
+                // eslint-disable-next-line no-console
+                console.warn("[mirror] transcript diagnostic", {
+                  session,
+                  reset: !!d.reset,
+                  jsonlPath: d.jsonlPath,
+                  jsonlLines: d.jsonlLines,
+                  jsonlMtime: d.jsonlMtime,
+                  jsonlMatches: d.jsonlMatches,
+                });
+              }
+            }
+            if (d.status) {
+              statusRef.current = d.status;
+              setStatus(d.status);
+            }
+            // Track liveness so a read-only (history) view can enable its composer the
+            // moment a background resume brings the session up.
+            setAlive(!!d.alive);
+            bgBusyRef.current = !!d.backgroundBusy;
+            setBgBusy(!!d.backgroundBusy);
+            setBgBusyReason(typeof d.backgroundBusyReason === "string" ? d.backgroundBusyReason : "");
+            setTasks(Array.isArray(d.tasks) ? d.tasks : []);
+            setFiles(Array.isArray(d.files) ? d.files : []);
+            setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
+            setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
+            setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
+            setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
+            setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
+            setCarried(d.carried && typeof d.carried === "object" ? (d.carried as CarriedInteraction) : null);
+            // Mode comes from the terminal (paneMode) in real time, so trust every poll —
+            // the optimistic set on click just gives instant feedback until this confirms.
+            const nextMode = typeof d.mode === "string" ? d.mode : "";
+            // Remember the real non-plan mode name for the optimistic label when plan mode is
+            // left. Using the kind's default label instead shows "Bypass" for a claude started
+            // with permission prompts on (docs/log/76); the terminal-reported value cannot make
+            // that mistake.
+            if (nextMode && nextMode.toLowerCase() !== "plan") lastNonPlanMode.current = nextMode;
+            setMode(nextMode);
+            setAgentCtx(
+              d.context && typeof d.context.tokens === "number" && typeof d.context.window === "number" && d.context.window > 0
+                ? { tokens: d.context.tokens, window: d.context.window }
+                : null,
+            );
+            setTermState(typeof d.terminalState === "string" ? d.terminalState : "");
+            setCompactProg(
+              d.compactProgress && typeof d.compactProgress.pct === "number"
+                ? { pct: d.compactProgress.pct, elapsed: d.compactProgress.elapsed }
+                : null,
+            );
+            setSuggestedTitle(typeof d.suggestedTitle === "string" ? d.suggestedTitle : "");
+            setLoaded(true); // first (and every) successful fetch: drop the loading spinner
           }
-          if (d.status) {
-            statusRef.current = d.status;
-            setStatus(d.status);
-          }
-          // Track liveness so a read-only (history) view can enable its composer the
-          // moment a background resume brings the session up.
-          setAlive(!!d.alive);
-          bgBusyRef.current = !!d.backgroundBusy;
-          setBgBusy(!!d.backgroundBusy);
-          setBgBusyReason(typeof d.backgroundBusyReason === "string" ? d.backgroundBusyReason : "");
-          setTasks(Array.isArray(d.tasks) ? d.tasks : []);
-          setFiles(Array.isArray(d.files) ? d.files : []);
-          setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
-          setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
-          setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
-          setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
-          setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
-          setCarried(d.carried && typeof d.carried === "object" ? (d.carried as CarriedInteraction) : null);
-          // Mode comes from the terminal (paneMode) in real time, so trust every poll —
-          // the optimistic set on click just gives instant feedback until this confirms.
-          const nextMode = typeof d.mode === "string" ? d.mode : "";
-          // Remember the real non-plan mode name for the optimistic label when plan mode is
-          // left. Using the kind's default label instead shows "Bypass" for a claude started
-          // with permission prompts on (docs/log/76); the terminal-reported value cannot make
-          // that mistake.
-          if (nextMode && nextMode.toLowerCase() !== "plan") lastNonPlanMode.current = nextMode;
-          setMode(nextMode);
-          setAgentCtx(
-            d.context && typeof d.context.tokens === "number" && typeof d.context.window === "number" && d.context.window > 0
-              ? { tokens: d.context.tokens, window: d.context.window }
-              : null,
-          );
-          setTermState(typeof d.terminalState === "string" ? d.terminalState : "");
-          setCompactProg(
-            d.compactProgress && typeof d.compactProgress.pct === "number"
-              ? { pct: d.compactProgress.pct, elapsed: d.compactProgress.elapsed }
-              : null,
-          );
-          setSuggestedTitle(typeof d.suggestedTitle === "string" ? d.suggestedTitle : "");
-          setLoaded(true); // first (and every) successful fetch: drop the loading spinner
           // Self-heal an unreconciled echo that can no longer land because the turn it
           // should match never reached us (a cursor handed out past a turn we then never
           // asked for again). Only while the session is at rest — a pending echo is
           // normal and expected mid-turn — and once per echo: rewind the cursor so the
           // next tick re-reads the tail window from scratch, which fills the hole and lets
           // the echo land. If the prompt genuinely never arrived, nothing changes and the
-          // badge keeps telling the truth.
+          // badge keeps telling the truth. Runs on an unchanged poll too: the condition is
+          // elapsed time, and an echo stuck behind a hole is exactly a payload that repeats.
           const stuck = pendingSendsRef.current[0];
           if (
             stuck &&
@@ -560,7 +596,13 @@ export function MirrorView({
         /* transient; retry on the next tick */
       }
       if (!alive) return;
-      timer = setTimeout(tick, statusRef.current === "working" || bgBusyRef.current || finalizingRef.current ? 1200 : 3000);
+      timer = setTimeout(
+        tick,
+        pollDelay({
+          working: statusRef.current === "working" || bgBusyRef.current || finalizingRef.current,
+          unchanged: unchangedRef.current,
+        }),
+      );
     };
     tickRef.current = () => {
       if (timer) clearTimeout(timer);
@@ -569,13 +611,30 @@ export function MirrorView({
     const onVisible = () => {
       if (!document.hidden) tickRef.current?.();
     };
+    // Someone touching the pane is the one signal the payload cannot give: they are watching
+    // THIS session now, so drop back to the fast rung and re-read immediately. Guarded by a
+    // minimum gap so a scroll or a burst of typing cannot turn into a request per event, and
+    // by the streak so the common case (already fast) costs nothing.
+    const bump = () => {
+      if (unchangedRef.current === 0) return;
+      if (Date.now() - lastPollAtRef.current < MIRROR_POLL_FAST) return;
+      unchangedRef.current = 0;
+      tickRef.current?.();
+    };
+    const root = scroll.mirrorRef.current;
     document.addEventListener("visibilitychange", onVisible);
+    root?.addEventListener("pointerdown", bump, { passive: true });
+    root?.addEventListener("keydown", bump);
+    root?.addEventListener("scroll", bump, { passive: true, capture: true });
     tick();
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
       tickRef.current = null;
       document.removeEventListener("visibilitychange", onVisible);
+      root?.removeEventListener("pointerdown", bump);
+      root?.removeEventListener("keydown", bump);
+      root?.removeEventListener("scroll", bump, { capture: true });
     };
   }, [session]);
 
@@ -1161,7 +1220,7 @@ export function MirrorView({
       // awaiting-reply state up front. (sendPrompt manages `sending` itself, so the
       // speak-only route leaves it alone.)
       setSending(true);
-      rejectedPlansRef.current.add(plan.trim()); // optimistic "rejected" badge; planOutcome reconciles it
+      markRejected(plan, true); // optimistic "rejected" badge; planOutcome reconciles it
       wasWorkingRef.current = false; // as with an interrupt: no reply is being waited for
       finalizingRef.current = false;
       setFinalizing(false);
@@ -1340,34 +1399,42 @@ export function MirrorView({
   // A queued prompt that matches a pending echo upgrades that echo's badge to "queued"
   // (no second bubble); whatever remains was typed straight into the terminal, so it gets
   // its own synthetic queued bubble. Multiset take: duplicate texts consume one entry each.
-  const queuedLeft = [...queuedPrompts];
-  const takeQueued = (text: string): boolean => {
-    const i = queuedLeft.findIndex((q) => q.trim() === text);
-    if (i < 0) return false;
-    queuedLeft.splice(i, 1);
-    return true;
-  };
-  const echoTurns: Turn[] = pendingSends
-    .filter((e) => !echoLanded(e, turns, isNoise)) // hide at render the instant the real turn lands
-    .map((e) => ({
+  //
+  // Memoized on the three states it reads: this walks every turn in the window and rebuilds every
+  // block, and MirrorView re-renders for reasons that have nothing to do with the conversation —
+  // a keystroke in the composer, a scroll flag, a chip. Recomputing then also hands every block a
+  // new identity, which is what makes the memoized TranscriptTurn below actually skip.
+  const grouped = useMemo(() => {
+    const queuedLeft = [...queuedPrompts];
+    const takeQueued = (text: string): boolean => {
+      const i = queuedLeft.findIndex((q) => q.trim() === text);
+      if (i < 0) return false;
+      queuedLeft.splice(i, 1);
+      return true;
+    };
+    const echoTurns: Turn[] = pendingSends
+      .filter((e) => !echoLanded(e, turns, isNoise)) // hide at render the instant the real turn lands
+      .map((e) => ({
+        role: "user",
+        text: e.text,
+        idx: 1e9 + e.id,
+        pending: true,
+        queued: takeQueued(e.text),
+      }));
+    const queuedTurns: Turn[] = queuedLeft.map((q, i) => ({
       role: "user",
-      text: e.text,
-      idx: 1e9 + e.id,
-      pending: true,
-      queued: takeQueued(e.text),
+      text: q,
+      idx: 2e9 + i,
+      queued: true,
     }));
-  const queuedTurns: Turn[] = queuedLeft.map((q, i) => ({
-    role: "user",
-    text: q,
-    idx: 2e9 + i,
-    queued: true,
-  }));
-  const extras = [...queuedTurns, ...echoTurns];
-  const baseTurns = coalesceUserActions(turns);
+    const extras = [...queuedTurns, ...echoTurns];
+    const baseTurns = coalesceUserActions(turns);
+    return groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
+  }, [turns, pendingSends, queuedPrompts]);
   // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
   // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
   // under them when it does. See blockIdentity.ts.
-  const groups = useStableBlockIds(groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns), session);
+  const groups = useStableBlockIds(grouped, session);
 
   // replyPending: the newest user prompt has no assistant reply after it yet — i.e. the
   // answer to the latest turn hasn't rendered. This is the signal that the mirror is still
@@ -1485,12 +1552,13 @@ export function MirrorView({
   const spends = groups.filter((g) => g.role !== "user").map(spendOf).filter((n) => n > 0);
   const maxSpend = spends.length ? Math.max(...spends) : 0;
 
-  // What this reader may DO with the transcript. The mirror is the session's owner inside
-  // its own Workspace, so it supplies every capability — the shared-session view supplies
-  // almost none and the same blocks quietly drop those affordances (transcript/capabilities.ts).
-  const caps: TranscriptCaps = {
+  const thinkingOpen = expandThinking(settings, sessionMeta?.kind);
+  // Everything the transcript CALLS. These close over this render's state, so they cannot be
+  // memoized — but a block only ever invokes them from a click, so they are routed through a ref
+  // and `caps` below keeps its identity without any block ever holding a stale handler.
+  const actsRef = useRef<TranscriptCaps>(null as unknown as TranscriptCaps);
+  actsRef.current = {
     agentName,
-    repo: sessionMeta?.repo ?? null,
     loadPastedImage: (name) =>
       raw(`api/sessions/${q(session)}/pasted/${encodeURIComponent(name)}`).then((r) => (r.ok ? r.blob() : null)),
     fileURL: downloadURL,
@@ -1500,22 +1568,64 @@ export function MirrorView({
     openImage: setLightbox,
     openDiff,
     openPlan,
-    session,
     sendPlanComments: (plan: string) => void sendPlanComments(plan),
-    planSendDisabled: planSendBlocked,
-    forkAt: canForkAt ? openForkAt : undefined,
+    forkAt: openForkAt,
     onReauth: () => useSettingsUI.getState().openSettings("agents"),
-    // Lets an auth error block see that the login was renewed after the turn it killed, so it
-    // reports that instead of asking for a re-authentication that has already happened. Polled
-    // with the rest of the meta, so the card flips on its own once the user comes back from
-    // Settings > Agents — no reload, and it survives one (docs/log/47 §4-11).
-    authOkAt: sessionMeta?.authOkAt,
-    tts: tts.wiring,
-    expandThinking: expandThinking(settings, sessionMeta?.kind),
     isRejectedPlan: (p: string) => rejectedPlansRef.current.has(p.trim()),
-    maxSpend,
-    marks,
   };
+
+  // What this reader may DO with the transcript. The mirror is the session's owner inside
+  // its own Workspace, so it supplies every capability — the shared-session view supplies
+  // almost none and the same blocks quietly drop those affordances (transcript/capabilities.ts).
+  //
+  // Memoized because every turn holds this object: a fresh one per render would re-render the
+  // whole conversation on every keystroke in the composer, whatever TranscriptTurn does. So what
+  // a block READS while rendering is a dependency here, and what it CALLS goes through actsRef.
+  const caps: TranscriptCaps = useMemo(
+    (): TranscriptCaps => ({
+      agentName,
+      repo: sessionMeta?.repo ?? null,
+      loadPastedImage: (name) => actsRef.current.loadPastedImage!(name),
+      fileURL: (p) => actsRef.current.fileURL!(p),
+      thumbURL: (p) => actsRef.current.thumbURL!(p),
+      openFile: (p, line, column) => actsRef.current.openFile!(p, line, column),
+      openImage: (url) => actsRef.current.openImage!(url),
+      openDiff: (p) => actsRef.current.openDiff!(p),
+      openPlan: (plan) => actsRef.current.openPlan!(plan),
+      session,
+      sendPlanComments: (plan) => actsRef.current.sendPlanComments!(plan),
+      planSendDisabled: planSendBlocked,
+      // Presence is what decides whether the affordance renders at all, so it stays reactive;
+      // only the call behind it is routed.
+      forkAt: canForkAt ? (turn) => actsRef.current.forkAt!(turn) : undefined,
+      onReauth: () => actsRef.current.onReauth!(),
+      // Lets an auth error block see that the login was renewed after the turn it killed, so it
+      // reports that instead of asking for a re-authentication that has already happened. Polled
+      // with the rest of the meta, so the card flips on its own once the user comes back from
+      // Settings > Agents — no reload, and it survives one (docs/log/47 §4-11).
+      authOkAt: sessionMeta?.authOkAt,
+      tts: tts.wiring,
+      expandThinking: thinkingOpen,
+      // Read while a turn renders, so its backing set cannot change silently: every write goes
+      // through markRejected, which bumps rejectedGen below.
+      isRejectedPlan: (p) => actsRef.current.isRejectedPlan!(p),
+      maxSpend,
+      marks,
+    }),
+    [
+      rejectedGen,
+      agentName,
+      sessionMeta?.repo,
+      sessionMeta?.authOkAt,
+      session,
+      planSendBlocked,
+      canForkAt,
+      tts.wiring,
+      thinkingOpen,
+      maxSpend,
+      marks,
+    ],
+  );
 
   // Whether the session is in Plan mode. Case-insensitive so it holds against either the
   // labeled agent ("Plan") or an older one ("plan") — so the toggle direction (enter vs
@@ -1742,7 +1852,7 @@ export function MirrorView({
               // no tool-use id), so it belongs only until the next decision. Clear it
               // before approving the new presentation; its real tool_result still keeps
               // the older historical card correctly badged as rejected.
-              rejectedPlansRef.current.delete(pendingPlan.trim());
+              markRejected(pendingPlan, false);
               void sendKeys([...PLAN_APPROVE_KEYS]);
             }}
             // Reject = interrupt (Escape), which falls back to keep-planning. The number and
@@ -1754,7 +1864,7 @@ export function MirrorView({
             // tool_result becomes an interrupt, which planDecision.isRejected picks up. See
             // planDecision.ts.
             onReject={() => {
-              rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic "rejected" badge; planOutcome reconciles it
+              markRejected(pendingPlan, true); // optimistic "rejected" badge; planOutcome reconciles it
               void sendInterrupt();
             }}
           />

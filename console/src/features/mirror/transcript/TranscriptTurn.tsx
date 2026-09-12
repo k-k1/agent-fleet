@@ -8,7 +8,7 @@
 // types.ts, and the two only coexisted before because a value and a type can share a
 // name inside one file. Split across modules that overlap would be a trap.
 
-import { useEffect, useReducer, useRef } from "react";
+import { memo, useEffect, useReducer, useRef } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import FileIcon from "../../../ui/FileIcon.tsx";
 import { fmtTok } from "../../../lib/fmttok.ts";
@@ -42,7 +42,7 @@ import {
   formatTS,
 } from "./blocks.tsx";
 
-export function TranscriptTurn({
+function TranscriptTurnImpl({
   turn,
   caps,
   foldWork,
@@ -487,3 +487,14 @@ export function TranscriptTurn({
     </div>
   );
 }
+
+/**
+ * A block re-renders only when its own inputs move. Rendering one is not cheap — Markdown, the
+ * tool trace, highlighting — and the mirror re-renders for reasons that have nothing to do with
+ * the conversation: a keystroke in the composer, a poll that changed nothing, a scroll flag. The
+ * default (shallow) comparison is enough BECAUSE the caller keeps the props stable: in MirrorView
+ * `turn` comes from a memoized groupTurns and `caps` from a memoized capability object whose
+ * handlers are routed through a ref. Hand either one a fresh object per render and this quietly
+ * does nothing — which is still the case in SharedSessionView, whose caps is rebuilt each render.
+ */
+export const TranscriptTurn = memo(TranscriptTurnImpl);
