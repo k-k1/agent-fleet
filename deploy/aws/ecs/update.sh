@@ -365,6 +365,23 @@ if [ -n "$ENGINES_STACK" ]; then
       eng_params+=("${eng_role}Enabled=true")
     fi
   done
+  # 🔴 A second one-off repair, for the opposite reason: ADR 0077 RE-MEANT a parameter rather
+  # than retiring it. `<Role>OfferBudgetSec` used to bound "how long this offer may wait for a
+  # box before the next is tried"; the purchase answers in the call now, so it bounds "how long
+  # the box that WAS bought may take to register with ECS". Every deployment that predates
+  # 0.20.0 carries the old meaning's default of 180, `deploy` keeps an unnamed parameter at its
+  # previous value for ever, and a registration ceiling of 180 reads as "the engine did not
+  # start" rather than as a setting. standup.sh drops the same value from the CAPTURE; this is
+  # the same repair on the route an existing deployment actually takes. Only the OLD DEFAULT is
+  # touched - any other value is somebody's choice - and the new value is read from the
+  # template so the two cannot drift.
+  for eng_role in Llm Image; do
+    [ "$(af_stack_param "$ENGINES_STACK" "${eng_role}OfferBudgetSec")" = "180" ] || continue
+    eng_budget="$(af_cfn_param_default "$HERE/cfn/60-engines.yaml" "${eng_role}OfferBudgetSec")"
+    case "$eng_budget" in ""|180) continue ;; esac
+    echo "    · ${eng_role}OfferBudgetSec=$eng_budget (ADR 0077 re-meant it; 180 was the OLD meaning's default)"
+    eng_params+=("${eng_role}OfferBudgetSec=$eng_budget")
+  done
   eng_deploy=(--capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset)
   eng_shown=""
   if [ "${#eng_params[@]}" -gt 0 ]; then

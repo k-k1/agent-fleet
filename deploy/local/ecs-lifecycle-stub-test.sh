@@ -129,6 +129,12 @@ case "$args" in
   # stack is about to take is cfn/60-engines.yaml's own Default.
   *"ParameterKey=='EngineToolsImageTag'"*) echo "${STUB_ET_WANT-2026-09-11}" ;;
   *"ParameterKey=='LlmApiKeySsmParam'"*) echo "/af-ws/engine-llm-key" ;;
+  # `<Role>OfferBudgetSec` on the LIVE stack. 180 is the OLD meaning's default (a per-offer
+  # purchase clock); since ADR 0077 the parameter bounds the box's ECS registration instead and
+  # the template's default is 300. The flag has to be able to say "already 300", or the branch
+  # that leaves a migrated deployment alone cannot be tested.
+  *"ParameterKey=='LlmOfferBudgetSec'"*|*"ParameterKey=='ImageOfferBudgetSec'"*)
+    [ "${STUB_ENGINES_OLD_BUDGET:-0}" = 1 ] && echo "180" || echo "300" ;;
   *"ParameterKey=='EnginesSsmParam'"*)
     [ "${STUB_ENGINES_LIVE:-0}" = 1 ] && echo "/af-ws/engines" || echo "" ;;
   # A LIVE engine stack from before ADR 0072 P6: both roles were switched on by naming a model
@@ -584,6 +590,32 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 
 grep -q "DRY: aws cloudformation deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$WORK/out3h3" \
   || fail "--dry-run did not show the planned translation"
 hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # nothing was run
+
+echo "== case 3h-2: update.sh repairs an OfferBudgetSec left on the OLD meaning's default =="
+#
+# ADR 0077 re-meant the parameter instead of retiring it: 180 used to be "how long this offer may
+# wait for a box" and now means "how long the box that WAS bought may take to register with ECS".
+# `cloudformation deploy` keeps an unnamed parameter at its previous value for ever, and
+# standup.sh's drop only reaches a deployment that is REBUILT from its capture — so without this
+# every deployment that updates in place keeps a registration ceiling shorter than the one the
+# ADR chose, and the symptom is an engine that "does not start".
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_OLD_BUDGET=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3h2" 2>&1 \
+  || { cat "$WORK/out3h2"; fail "update.sh failed against an engine stack on the old budget"; }
+grep -q "deploy --stack-name af-ecs-engines .*LlmOfferBudgetSec=300" "$LOG" \
+  || fail "update.sh left LlmOfferBudgetSec at the old meaning's 180"
+grep -q "deploy --stack-name af-ecs-engines .*ImageOfferBudgetSec=300" "$LOG" \
+  || fail "update.sh left ImageOfferBudgetSec at the old meaning's 180"
+# And a deployment that is already on the new default is not given the parameter at all — an
+# override is what stops `deploy` from keeping a value somebody chose later.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3h3" 2>&1 \
+  || { cat "$WORK/out3h3"; fail "update.sh failed against a migrated engine stack"; }
+if grep -q "deploy --stack-name af-ecs-engines .*OfferBudgetSec=" "$LOG"; then
+  fail "update.sh overrode an OfferBudgetSec that was not the old default"
+fi
 
 echo "== case 3i: update.sh does repository -> image -> stack, in that order =="
 #
