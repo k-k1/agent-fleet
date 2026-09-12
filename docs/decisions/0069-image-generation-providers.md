@@ -862,3 +862,56 @@ setting, and it consults no network.
 The refusal's wording changed too. The reason is "that name was not in `tools/list`", not "you
 lack permission", and the two call for opposite responses: the old sentence sent a model looking
 for a settings page when it had merely named something this server never offered.
+
+## Follow-up — `negative_prompt` joins the vocabulary (2026-09-12)
+
+The second word this ADR said it would not add, added for the same kind of reason as `seed`: not
+because it changes how a picture looks, but because **a caller cannot express it any other way**.
+
+The "how it looks" knobs — steps, cfg, sampler — stay out, and the argument for keeping them out
+is unchanged: they differ too much between providers to become shared words, and a caller who
+turns one and sees nothing move has learned the wrong thing about the system. A negative prompt
+is not one of them. It is not a phrasing of `prompt` that a determined caller could write out:
+the words reach the sampler through the **unconditional branch** of classifier-free guidance,
+which is the opposite of what putting them in `prompt` does. "no text in the picture" conditions
+ON text. There is no workaround on the caller's side, which is the test this vocabulary uses.
+
+**The shape.** `Request.NegativePrompt string` and `Caps.Negative bool`, alongside
+`Request.Seed` / `Caps.Seed`, and the tool offers the argument only where some model on the route
+has a negative branch. A plain string rather than a pointer, unlike the seed: here the empty
+string and "not given" really are the same request, because what an empty negative prompt would
+mean — "exclude nothing, not even what the catalogue declares" — is a thing no caller has ever
+wanted and the one thing an administrator must not be able to be talked out of (ADR 0072's
+follow-up, where the composing happens).
+
+**Which routes take it.** comfy alone, and there **not on every model**:
+
+- the two guided families (SDXL, SD3.5) sample at cfg 7 and 4.5, where the negative branch is
+  what guidance is computed against;
+- the three distilled ones do not. zimage and klein run at **cfg 1**, where
+  `uncond + 1*(cond - uncond)` is `cond` exactly — the words would ride in the graph, cost a text
+  encode and change no pixel — and FLUX.1 folds guidance into the conditioning (`BasicGuider`) and
+  has no negative input at all;
+- agy and codex have no such parameter.
+
+So `Caps.Negative` is the first capability in this package that is genuinely **per model on one
+running engine**, which is the case decision 5 made Caps per (provider, model) for in the first
+place. Reporting the provider's answer for all of its models would either hide the argument from
+a session that can use it by naming another checkpoint, or promise one that does nothing.
+
+**Never a silent downgrade**, and here that rule earns its keep more than anywhere else it has
+been applied. A dropped aspect ratio produces a picture of the wrong shape and a dropped seed is
+found out on the second call; a dropped negative prompt produces a picture that **looks like a
+success** and contains the one thing the caller was trying to keep out of it. That is why the
+capability is not rounded up, and why a family that cannot exclude says so even when the caller
+asked for nothing — see 0072.
+
+It also retires one line of the `seed` follow-up above: "this ADR's vocabulary has no negative
+prompt, no steps and no cfg" is now true of steps and cfg only. The cache warning it explains is
+unaffected — a negative prompt is part of the graph, so changing it changes the picture rather
+than returning a cached one.
+
+Not on hardware. Every claim above about which family has a negative branch is read off the
+graphs this repository sends (`comfy_workflows.go`) and ComfyUI v0.34.0's own node definitions,
+which is the same kind of claim that was true of SD3.5's template before it turned out not to
+generate at all.

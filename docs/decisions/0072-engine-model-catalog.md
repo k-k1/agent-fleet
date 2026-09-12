@@ -3983,3 +3983,76 @@ Not verified on hardware. The shape of the new graph is pinned by a golden fixtu
 pinned by a test — which is the same claim that was true of SD3.5's template before it turned out
 not to generate at all. What a GPU still owes this section is one generation from an SDXL row
 with a separately declared VAE.
+
+## Follow-up — negative prompts: three declare, one composes (2026-09-12)
+
+Until now the only negative prompt in the deployment was **one line compiled into the Agent**,
+identical for every checkpoint on every engine: `blurry, lowres, deformed, watermark, text`,
+which is what `bench-image-engine.py` measured with. Nobody could change it, and three different
+people had a reason to.
+
+- **The member**, per request — the vocabulary half of this is ADR 0069's own follow-up.
+- **The catalogue row**, because a checkpoint's publisher states what to keep OUT as often as
+  what to put in, and an SDXL fine-tune's sample pictures were made with that list. The one fixed
+  line was a poor stand-in for every model at once.
+- **The deployment's administrator**, for the words this deployment does not want drawn at all.
+
+They are **added**, in that order, and none may drop another (`comfyNegativeFor`). A member
+naming one thing to exclude does not mean "and stop excluding what the publisher recommends", and
+the administrator's list is last because it is the part no request may remove. When all three are
+silent the Agent's own measured line is used — a **fallback, not a floor**: a row that declares
+its own replaces it rather than being appended to boilerplate its publisher never asked for.
+
+### Where each lives
+
+| Who | Where | Route |
+|---|---|---|
+| the member | `negative_prompt` on `generate_image` | the tool, per request |
+| the catalogue row | `engine_models.negative_prompt` (migration 0065 / pg 0050) | `PUT …/models/{id}` |
+| the administrator | setting `engine_<key>_negative` | `PUT …/engines/{key}/negative` |
+
+The administrator's list is per ENGINE rather than per deployment or per tenant. That is where it
+can actually be applied — a negative prompt reaches the sampler only on an engine whose graphs
+this repository builds — so the place it is configured and the place it works are the same place.
+It rides on the catalogue answer the Agent already fetches, so it takes effect on that cache's
+own TTL (10 minutes) or at the next push, and it is bounded (500 characters) because that string
+is paid for by every workspace on every refresh.
+
+### 🔴 It is not a content filter, and the panel says so
+
+A negative prompt is a **nudge to the sampler, not a gate**. On top of that, only two of the five
+families have one at all:
+
+- **sdxl and sd35** sample at cfg 7 and 4.5, where the negative branch is what guidance is
+  computed against;
+- **zimage and flux2-klein** run at **cfg 1**, where `uncond + 1*(cond - uncond)` is `cond`
+  exactly. The words would be encoded and change nothing;
+- **flux1** folds guidance into the conditioning (`BasicGuider`) and has no negative input.
+
+So the administrator's list silently not applying is a real state, and it is reported: a request
+answered by one of those three carries a warning saying the model's own negative prompt and the
+deployment's exclusions were not applied, and naming the family. It is said even though nobody is
+at fault and nothing failed, because that silence is the exact failure this path exists to
+prevent. The member's own `negative_prompt` is reported separately by the core against
+`Caps.Negative`, so the two never say the same thing twice.
+
+Wiring the words into the distilled families' graphs anyway was considered and rejected. It would
+make `Caps.Negative` true everywhere, which reads to a caller as "honoured" — the most expensive
+kind of wrong here, because the picture looks right and contains what was meant to be excluded.
+
+### What was deliberately not done
+
+- **No steps / cfg / sampler.** They are the "how it looks" knobs ADR 0069 keeps out, and a knob
+  that moves nothing on four routes out of five teaches the wrong thing about the system. The
+  negative prompt is in because a caller cannot express it any other way (0069's follow-up).
+- **No second home for model defaults.** A column of its own rather than a key in a JSON blob of
+  recommended parameters: this is prose typed into a text box, the panel shows it on the row, and
+  it is the one recommended value with no range to validate.
+- **No tenant axis.** The engine is the unit that can apply it. A tenant-scoped list would need a
+  second application point in a layer that does not build the graph.
+
+Not verified on hardware. What is pinned is that the composed string reaches the graph's negative
+`CLIPTextEncode`, that an empty composition leaves the graph byte-for-byte as the golden fixtures
+have it, and that the families without a branch report the drop. What a GPU still owes this
+section is one pair of pictures, same prompt and same seed, that differ by a declared negative
+prompt and nothing else.
