@@ -221,10 +221,14 @@ So P0's credential is **a dedicated account the far IdP will really log in** —
 used for nothing else, signed in once to read one environment variable. That is a cost the
 operator chapter has to state, and it is what open question 6 asks about.
 
-P1 adds the far side's super-admin a button that mints and shows this token, so that borrowing
-does not require an account and a sign-in at all. It is ~30 lines and it is deliberately **not**
-in P0: P0 must be provable without deploying new code to the deployment that owns the engines,
-and its fake-far-gateway half (phase P0 item 8) needs no credential of any kind.
+**P1 built that route, and it is what closes this** (`POST /api/admin/engines/issue-token`,
+super_admin only, `control-plane/engine_issue_token.go`): the far side's operator names a
+membership and gets its issuing token back, so borrowing needs no account and no sign-in at all.
+There is no `GET` — a credential must not land in a URL, a browser history or a proxy log — the
+answer states what the token opens and how to revoke it, and a membership the gateway would refuse
+is refused here too (409) rather than handed out as a string that answers 401. It was deliberately
+**not** in P0: P0 had to be provable without deploying new code to the deployment that owns the
+engines, and its fake-far-gateway half (phase P0 item 8) needs no credential of any kind.
 
 ### 4. The path is passed through verbatim, and `X-AF-Model` goes with it
 
@@ -530,12 +534,15 @@ depends on it: a remote row mints its own credential (decision 3).
    It means a far fleet that is down at boot leaves the local launch menu without those models,
    and the operator's only signal is a log line. The alternative — declaring `api` and
    `provider` locally — is what decision 2 rejects.
-6. **Does P0's credential really need a dedicated account at the far IdP?** Decision 3 found no
-   way to read a membership's `AF_ENGINE_ISSUE_TOKEN` without signing in as it: no admin route
-   starts another member's workspace or opens a session in one, and the offline mint needs a
-   membership id no API reliably exposes. The two ways out are that account, or moving P1's
-   super-admin button into P0 — which costs P0 its "no new code on the far deployment", the
-   property that makes it cheap to prove. Decide before P0's live half, not before its tests.
+6. ~~**Does P0's credential really need a dedicated account at the far IdP?**~~ **Answered by
+   building the route instead (P1).** The question was real — no admin route starts another
+   member's workspace or opens a session in one, and the offline mint needs a membership id no API
+   reliably exposes — so a borrower would have had to create an account at the far IdP and sign in
+   once. `POST /api/admin/engines/issue-token` removes that, and the cost it was weighed against
+   (P0 losing "no new code on the far deployment") was never paid: P0 shipped without it, and the
+   route is P1. What remains is the ordinary consequence, which is that **the far deployment must be
+   running a Control Plane new enough to have it** — a borrower facing an older one is back to the
+   account and the sign-in, and chapter 08 says so.
 7. **How is a borrowed IMAGE generation attributed on the far side?** It writes no usage row
    there (decision 9), so the far operator sees a GPU that was bought and no record of who for.
    The cheapest answer is probably to let `engineUsageRowFor` emit a zero-token row for image

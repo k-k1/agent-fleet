@@ -86,7 +86,7 @@ The consequence is operational:
   exists, the far one is ignored and the log says so once per poll, until you change
   one side or the other.
 
-## The credential, and why getting it is heavier than it should be
+## The credential
 
 The far deployment already mints, for every membership, an **issuing token**
 (`afei_…`). It opens exactly two routes over there — "give me a session-scoped engine
@@ -99,22 +99,25 @@ invalidate one of them. Invalidating it means rotating that master — and the s
 master is behind the git, memo and schedule tokens, so **every member of that fleet
 is logged out**. One borrower you wanted to cut off costs you the whole fleet.
 
-So the token must belong to **a membership used for nothing else**. Today, reading it
-once is the awkward part:
+So the token must belong to **a membership used for nothing else**. Invite one on the
+far deployment — it needs no workspace and never has to run anything — and then ask
+that deployment for its token.
 
-1. On the far deployment, invite a member with **a real address that the far sign-in
-   provider will actually authenticate**, used for nothing but this.
-2. Sign in as it, once, and open a terminal in its workspace.
-3. Read `AF_ENGINE_ISSUE_TOKEN` out of that container's environment. That is the
-   value for `AF_REMOTE_ENGINE_TOKEN`.
-4. Stop that workspace. It never needs to run again.
+**The far deployment's super-admin issues it.** The route is
+`POST /api/admin/engines/issue-token` with `{"tenant_slug": "...", "user_key": "..."}`,
+and it answers with the token, the variable to put it in, what the token opens, and how
+to revoke it. There is no `GET`: a credential must not end up in a URL, a browser
+history or a proxy log. A membership that is not active is refused (409) rather than
+handed a token that would only ever answer 401.
 
-🔴 **There is no shortcut, and the reason is worth knowing before you go looking for
-one.** The token exists only inside that membership's own workspace container, and no
+⚠️ **An older far deployment may not have that route.** If it answers 404, the
+credential is still reachable the long way, and it is worth knowing why that way is so
+awkward: the token exists only inside that membership's own workspace container, and no
 administrative route starts another member's workspace or opens a session in one — the
-admin surface offers stop, clean-home, destroy and read-only lists. Deriving it
-offline needs the membership's internal id, which no routine screen shows. So a real
-account and one sign-in is the procedure.
+admin surface offers stop, clean-home, destroy and read-only lists. So on an older far
+deployment the procedure is to invite a member with **a real address that the far
+sign-in provider will actually authenticate**, sign in as it once, read
+`AF_ENGINE_ISSUE_TOKEN` out of its container's environment, and stop that workspace.
 
 **Revoking a borrower is removing that membership** on the far deployment. The
 membership is resolved live on every single request, so access stops at the next
