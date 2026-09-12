@@ -52,13 +52,27 @@ The point is "see what is running", so stopped rows stay out by default and draw
 toggle adds them. Mixed in permanently, ten stopped sessions and three running ones carry the
 same weight and bury what you came to see.
 
-### Decision 3 — a card opens its session **beside** the grid, never in its place
+### Decision 3 — a card opens its session **beside** the grid, and **in this pane** on a phone, where there is no beside
 
 A click goes through `openSessionFromList(s, split, running)` (the single entry the row and the
-palette use) with **split always true**. The grid is the thing being watched; if a click replaced
-it, every click would need a "back". An already-open pane is focused instead (`sameTarget`
-dedupes), and in the tabbed layout the session becomes a new tab in the same cell. Ctrl and
-middle-click do the same — there is nothing to distinguish.
+palette use); what decides `split` is whether there is room beside. The grid is the thing being
+watched, and on a wide screen a click that replaced it would need a "back" every time.
+
+- **Wide screens**: a plain click opens beside (`split=true`) and the grid stays put.
+- **Phones** (`max-width: 760px`, `MOBILE_QUERY` in `lib/device.ts`): there is no beside.
+  `openInNew` splits the column into two stacked cells there, so the click yields **two
+  half-height panes** — the last thing anyone wants on a phone. A plain tap opens the session
+  **in this pane**, and the device's **Back button** returns to the grid: every layout commit
+  pushes a history entry (`layout/store.ts`), so back restores the snapshot that still holds the
+  grid. `showStopped` lives in the pane's content (decision 1), so the toggle comes back with it.
+- **Ctrl / ⌘ / middle-click mean "open in another pane" at every width**, the meaning they carry
+  everywhere else in the Console (rail rows, repo rows, chat). On a desktop that is the same
+  result as a plain click, but a modifier whose meaning flips with the viewport is worse to learn
+  than one that is redundant.
+- **The tabbed layout is not a second branch.** `openInTab` collapses `split` either way into "a
+  new tab in the same cell", so on a phone in tab mode this already reads as "opens full screen,
+  the grid one tab away". The card looks only at the width; the mode is `layout/ops.ts`' business.
+- An already-open pane is focused instead (`sameTarget` dedupes).
 
 ### Decision 4 — CSS Grid `auto-fill, minmax(240px, 1fr)`; narrow widths through a container query
 
@@ -120,8 +134,9 @@ button sits with "Split right / Split down / Close all" on the action bar — th
 - Touched: `layout/{types,migrate,ops}.ts`, `features/panes/{Pane,LayoutMap,paneTitle}`,
   `features/overview/` (new: view, card, pure functions, CSS, opener), `app/WsBar.tsx`,
   `features/keys/commands.ts`, i18n (ja/en).
-- Tests: pure (filter, stages, stability) and DOM (opens beside / three menu routes / a dead
-  session does not open). The look was measured in headless Chromium against the README stub
+- Tests: pure (filter, stages, stability) and DOM (opens beside / in this pane on a phone, with
+  the modifier and the wheel still opening another / three menu routes / a dead session does not
+  open). The look was measured in headless Chromium against the README stub
   (docs/96).
 
 ## Phases

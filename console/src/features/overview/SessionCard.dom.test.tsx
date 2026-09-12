@@ -1,6 +1,7 @@
 // Render test for the overview card (ADR 0078): the two contracts the grid is built on.
 //
-//   1. A card opens its session BESIDE the grid, never in its place — whatever the click.
+//   1. Where a card leads: beside the grid on a wide screen, in this pane on a phone
+//      (`beside={false}`), and in another pane whenever Ctrl/⌘ or the wheel is used.
 //   2. Right-click, ⋯ and the Menu key open the same SessionMenu as the rail row and the tab.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
@@ -24,13 +25,13 @@ let root: Root | null = null;
 let host: HTMLDivElement;
 const actions = {} as SessionActions;
 
-const render = async (over: Partial<Session>): Promise<void> => {
+const render = async (over: Partial<Session>, beside = true): Promise<void> => {
   const s: Session = { name: "s1", kind: "claude", alive: true, state: "working", title: "決済の修正", ...over };
   await act(async () => {
     root!.render(
       <ToastProvider>
         <PaneHoverProvider>
-          <SessionCard s={s} opens={[]} multi={false} running actions={actions} />
+          <SessionCard s={s} opens={[]} multi={false} beside={beside} running actions={actions} />
         </PaneHoverProvider>
       </ToastProvider>,
     );
@@ -64,7 +65,7 @@ describe("SessionCard", () => {
     expect(host.querySelector(".session-state")?.className).not.toContain("mini");
   });
 
-  it("opens the session beside the grid on click, Enter and middle-click", async () => {
+  it("opens the session beside the grid on click, Enter and middle-click when there is room beside", async () => {
     await render({});
     await act(async () => card().click());
     expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), true, true);
@@ -76,6 +77,29 @@ describe("SessionCard", () => {
     });
     expect(openSessionFromList).toHaveBeenCalledTimes(3);
     expect(openSessionFromList.mock.calls.every((c) => c[1] === true)).toBe(true);
+  });
+
+  it("on a phone a plain tap opens in this pane, and the modifier or the wheel still opens another", async () => {
+    await render({}, false);
+    await act(async () => card().click());
+    expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), false, true);
+    await act(async () => {
+      card().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), false, true);
+    await act(async () => {
+      card().dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+    });
+    expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), true, true);
+    await act(async () => {
+      card().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
+    });
+    expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), true, true);
+    await act(async () => {
+      card().dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
+    });
+    expect(openSessionFromList).toHaveBeenLastCalledWith(expect.objectContaining({ name: "s1" }), true, true);
+    expect(openSessionFromList).toHaveBeenCalledTimes(5);
   });
 
   it("does not try to open a session whose folder is gone and has no transcript", async () => {

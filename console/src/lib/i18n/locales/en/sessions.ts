@@ -534,6 +534,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "ovw.empty_in_set": "No session in working set \"{set}\" is running",
   "ovw.empty_hint": "Start one from the bar at the top, or turn on \"Show stopped\" to see stopped sessions",
   "ovw.open_hint": "Click to open beside this grid (right-click for the menu)",
+  "ovw.open_hint_here": "Tap to open in this pane (Back returns to the grid; Ctrl-click opens another pane)",
   "ovw.ctx": "context {pct}%",
   "ovw.ctx_hint": "Context-window usage",
   "ovw.started": "started {ago}",
