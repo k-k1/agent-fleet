@@ -2,7 +2,8 @@
 
 [English](0077-engine-boxes-bought-by-cp.md) | 日本語
 
-- 状態: **提案**（2026-09-12）。実装はしていない。
+- 状態: **承認**（2026-09-12）。P0 の前提は実測済み、P1〜P3 は実装して実機にも出した（#573〜#598）。
+  未測のまま残るのは 2 件で、最後の改訂節が名指ししている。
 - **この文書のために GPU は 1 台も買っていない。** 数字はすべて出所を書き分けてある——
   (a) ADR 0045・0070・0071・0074・0075 の実測、(b) 2026-09-12 にこのリポジトリのコードとテンプレート、
   および af-sandbox の読み取り専用 API から読んだ事実、(c) AWS の公開仕様として知っているだけで
@@ -240,19 +241,34 @@
 
 - 0075 決定 6 の検出（desired 1 のまま running → starting、かつ箱が消えた）は**設計として**継承する:
   コードには `noteReplacement` のログと監査行しか無く、立て直しと飛ばす規則は 0075 の P1 で書かれて
-  いない（背景）。P2 でここに 1 回だけ作る。箱の消失は **`describe-instances` の state（`shutting-down` /
-  `terminated`）と、タグ `af-role=engine-<役>` の箱が 1 台も `running` でないこと**で言える。MI の
+  いない（背景）。P2 でここに 1 回だけ作る。箱の消失は **`describe-instances` で、タグ
+  `af-role=engine-<役>` の箱が 1 台も `pending`／`running` でないこと**として言える。MI の
   「列挙できない」制約が無い。
-- terminate されたインスタンスの container instance は ECS が自分で deregister する (c)。しなければ、
-  エンジンの属性を持ち EC2 の実体が無い container instance がゴーストとして残る——プールの
+- 🔴 **この 2 条件目は単独で十分**であり、遷移は前提ではなく OR のもう半分である: `desired ≥ 1` で、
+  **CP の帳簿に箱がある**（この需要の歩きが箱の登録を見た）のに `af-role=engine-<役>` の生きた
+  インスタンスが 0 台なら、service が `running` を離れたかどうかに関わらず中断である。**実測（P2 実機）**:
+  登録から 102 秒後、タスクがまだ PENDING の箱を取り上げると遷移は起きない——離れる `running` が無い
+  ——ので、エンジンは desired 1・箱無し・歩き無し・ログ 0 行・時計無しのまま座り、自動の出口は
+  900 秒後にアイドル窓が需要を捨てることだけだった。その窓は**冷間起動の全部（同じ走行で 4 分 45 秒）**で、
+  隅の話ではない。通常の置き換え（OOM kill・ヘルスチェック失敗——0071 P0）で立て直しが暴発しないための
+  番人は変わらず、もう一方の節である: **箱がまだそこにある**こと。帳簿は検出したところで消す——消さないと
+  同じ損失を毎ティック検出して毎ティック箱を買う。帳簿は CP の在メモリなので、需要の途中で入れ替わった
+  CP は何も検出しない（遷移側の `prevState` が元から持っていた限界と同じ。#598）。
+- terminate されたインスタンスの container instance は ECS が自分で deregister する——**実測（P2 実機）:
+  90 秒以内に、どの principal からも `DeregisterContainerInstance` を出さずに**。もう (c) ではない。
+  それでも残ればエンジンの属性を持ち EC2 の実体が無い container instance がゴーストになる——プールの
   `sweepGhostInstances` はもう見ない（決定 3）ので、決定 5 の走査が拾う。
 - ECS agent の Spot 排水 (c) を launch template で有効にする。2 分前予告で DRAINING になれば、
   service のタスクは先に止まり、`noteReplacement`（0075 背景 4）が「頼んでいない置き換え」を記録する。
-  効かなくても検出は上の 2 条件で成立する。
+  **P2 の後も (c) のまま**（未解決 9）: 中断は予告の無い `terminate-instances` で作ったので、排水は
+  一度も走る機会が無かった。依存するものは無い——検出は「箱が 1 台も生きていない」だけで成立する。
 - 立て直しは決定 1 の呼び出しを一覧の先頭からやり直す。同期なので、「ECS 自身の置き直しと競合する」
   0075 決定 6 の限定（先頭の候補がいまの provider と違うときだけ書く）は要らない——ECS は箱を買わない。
 - 中断は失敗に数えない（0075 決定 6 継承）。立て直しが登録期限まで箱を得られなければ失敗として数える。
-- **同じ提案で 2 回続けて中断されたら、その需要のあいだだけ飛ばす**（0075 決定 6 継承）。
+- **同じ提案で 2 回続けて中断されたら、その需要のあいだだけ飛ばす**（0075 決定 6 継承）。実装済み
+  （#591）で、**実機では未測**: *検出された*中断が 2 回要り、それは冷間起動 2 回とその立て直しを意味して
+  P2 実機の 20 分の門に収まらない。`begin()` が `lastInterrupted` を消すので、1 回分を後の需要へ持ち越す
+  こともできない。
 
 🔁 **反証されたら変える条件**: 0075 未解決 9 と同じ（中断が稀なら飛ばす規則は要らない）。
 
@@ -279,6 +295,9 @@
   いるあいだは 15 分**（0075 の「箱 2 台」の漏れを、置かれる途中のタスクに触らずに閉じる）——CP レーンの形・#577。(b) エンジンの属性を持つ container instance で EC2 の
   実体が消えているもの——deregister する（0045 `sweepGhostInstances` の形。あちらが見るのは登録の古さと
   「インスタンスが消えた」であって、タスク数ではない。タスク 0 の慎重さは free slot の走査のもの）。
+  **(b) は保険であり、そう実測された**: P2 実機では ECS が 90 秒以内に自分で dead な箱の container
+  instance を deregister し、CP 側の向きには何も残らなかった（決定 4 が頼っていた (c) がここで確認された）。
+  ECS がやらない日のための後詰めとして残し、いまだ一度も発火していない。
   どちらの向きも CP の記憶は見ない——0045 決定 29 が求めるとおり、タグと属性で足りる。
 
 🔁 **反証されたら変える条件**: 3 周のうち 1 周（5 分 45 秒）で成立し、残り 2 周では成立しなかったので、
@@ -294,11 +313,17 @@
 - ただし価値は限定的である: 箱は退場（決定 5）で消え、中断（決定 4）で消える。温かいのは「アイドル窓の
   内側で desired を 0 → 1 した」ときだけで、それは 0071 決定 5 が既に「窓の内側では止めない」と
   決めている場面である。**したがって P0 は匿名の `Host: {}` のまま**（何も変えない）。
-- P1 で測ること: 取り直しの実測（0071: S3 → ローカル 104〜147 MB/s、6.94 GB を 65 秒）に対し、
-  host volume で何秒縮むか。縮むのが 1 分なら要らない。
+- **取り直しは実測した（P2 実機・この配備の実カタログ）: 11 ファイル・52.1 GiB を、`sync done` まで
+  5 分 47 秒・154 MB/s**（天井は NVMe の data-root ではなく S3）。**エンジン自体は 1 分 42 秒で起動を
+  許される**（既定のモデル集合）し、`warm: true` は desired から 4 分 59 秒。残り 4 分の同期は給仕して
+  いるエンジンの後ろで進む。箱を実際に終わらせる 2 つの出来事では host volume はこの秒数を 1 秒も
+  縮めない: 同じ走行の実測で、中断は**登録済みの代替まで 53 秒、そのあと空の箱で冷間起動 1 回分**で
+  あり、volume は箱と一緒に死んだからである。
 
-🔁 **反証されたら変える条件**: 30 GB を抱える comfy の配備で取り直しが 5 分を超えることが実測で出たら
-（0075「中断の実費」の計算値）、P1 を前倒す。
+🔁 **反証されたら変える条件**: 取り直しの大きさではない——あの数字は中断の実費であり、中断は必ず
+新しい箱に降りる。変える条件は**実配備でアイドル窓の内側の desired 0 → 1 がどれくらいの頻度で起きるか**
+であり、それを記録するものはこのリポジトリに今日 1 つも無い。まず頻度を測り、よくある形だったときにだけ
+`SourcePath` を名前付きにする。
 
 ### 7. AMI は所有しない。launch template の `ImageId` は `resolve:ssm:` で SSM 公開パラメータを指す
 
@@ -505,7 +530,10 @@ ADR は追記型・不変である（`docs/CONVENTIONS.ja.md` §5）。既存の
    最新に追随し、後者は配備が世代を固定する。0045 のスロットは後者。依存: 決定 7。
 8. **ローカル NVMe の mount。** AL2023 の ECS AMI は instance store を自動では mount しない (c)。
    user data で mount するなら、Docker の data-root かモデルの host volume か。依存: 決定 6。P1。
-9. **ECS agent の Spot 排水が AL2023 GPU AMI で効くか** (c)。P2（中断の実機）。
+9. **ECS agent の Spot 排水が AL2023 GPU AMI で効くか** (c)。**P2 の後も未測**: 中断は
+   `terminate-instances`——決定 4 の「箱が消えた」を何も模擬せずに作る方法——で起こしたので 2 分前予告が
+   無く、排水が走る機会そのものが無かった。もうこの答えを待っているものは無い。検出は「その役の箱が
+   1 台も生きていない」だけで成立する（決定 4）。
 10. **`price-capacity-optimized` が実際に g6 を選ぶか**（0075 実機 3 で MI は g6e を買った）。P1 の実機。
 
 ## フェーズと完了の定義
@@ -1759,3 +1787,356 @@ image 役の同じ行はモデル名と数字を挙げる。22 GB の箱に 30B 
 
 **P3 の実機の判定は、この走行が挙げた項目すべてで緑**。段階としての P3 は、本文が定めた順序
 ——先に P2——の点で開いたままである。
+
+## 追記 — 本物のテンプレートの形での `<役>Enabled` 往復移行の実測（2026-09-12・使い捨て・$0）
+
+P1 実機は 3 つの発見を移行 1 回分の観測に載せたままで、直前の節は往復移行を「実機で未測のまま残る」と
+締めていた——開発配備はもう MI に乗っておらず、そこでは再演できない。そこで**本物のテンプレートの形の
+使い捨てスタック**で再演した。旧（Managed Instances）の `60-engines.yaml`（`66983c96`）を、**#585 の
+4 手**で develop の形へ移す。ECS クラスタと Cloud Map namespace は使い捨ての自前。`af-ecs-*` を名指した
+コマンドは 1 つも無い。**インスタンスは 1 台も買っていない**（使い捨てのタグでの `describe-instances` は
+どの状態でも空で、同じ形の問い合わせは本物の箱 5 台を列挙する）。4 手の所要は **11 分 49 秒**
+（19:32:44 → 19:44:33 JST）。費用 **$0**。
+
+**判定: 往復移行は通り、P1 の 3 件はすべて再現した。** 3 は 🔴 確認（しかも原因は P1 が考えたより 1 段
+古い）、4 は CloudFormation 側が 🔴 確認で Control Plane 側は**測れない**、5 は 🔴 確認で、P1 が推論に
+頼った部分の証拠が付いた。`AlreadyExists` はどの手でも踏まず、最終状態は決定 11 が求めるとおり。
+
+### この使い捨てが何であって何でないか
+
+新旧どちらの本物のテンプレートからも**そのまま**持ってきたもの: 役ごとの条件付きの三点セット
+（Service・Discovery・`EnginesParam` の行に付く `Has<役>Model`）、`ServiceName` の明示、
+`ServiceRegistries`、`DependsOn: Associations`、`Associations` 自身、`InfraRole` /
+`InstanceRole` / `InstanceProfile` を伴う MI の capacity provider 3 本（旧）、
+`EngineInstanceRole` / `EngineInstanceProfile` を伴う launch template 2 本（新）。
+
+変えた・落としたもの（どれも測る経路の上には無い）——00-network と 20-platform への import は
+スタック内の資源かパラメータにした（＝使い捨ては生きたスタックへの**クロススタック依存を持たず**、
+他人の deploy を塞げない）。ingest 一式（S3 バケット・HF シークレット・ingest タスク定義・
+`CpIngestPolicy`）は落とした。移行のどの手も触らないうえ、Secrets Manager のシークレットは削除予定を
+残すため。エンジンのタスク定義 2 本は、family・`awsvpc`・世代で異なる `RequiresCompatibilities` だけを
+残した GPU 要求無しの最小版に差し替えた。MI の provider には CPU だけの形（`m6i.large`・`GpuCount=0`）を
+与え、うっかりの desired 1 が GPU を買えないようにした。**両方の役を有効にした**——依頼は image 役だけ
+だったが、試すのは「*両方*の service が止まる」という発見であり、2 本目の役は費用ゼロで済む。
+
+⚠️ 基準状態を立てるまでに 3 つ躓いた。移行についての発見ではないが、新規の stand-up はこれに出会う:
+
+1. **`CreateCapacityProvider` は「何にも当たらない instance requirements」を拒む**——
+   *「No instance types satisfy the instance requirements specified in the Managed Instances
+   capacity provider」*。つまり provider をわざと「買えない」状態にはできない。MI の基準状態を $0 に
+   保つ道は、上の CPU だけの形のほうである。
+2. **`Associations` があるとき `AWS::ECS::Cluster` に `CapacityProviders` を書いてはいけない**——
+   *「The cluster already contains capacity provider associations」*で association が落ちる。本物の
+   20-platform のクラスタが書いていないからこそ、60-engines の `Associations` が一覧を所有できる。
+3. 🔴 **作りたての `InfraRole` は IAM の伝播と競合する**: `CreateCapacityProvider` が
+   *「AWS was not able to validate the provided access credentials (Service: Ec2, Status Code: 401)」*
+   を、別々の provider で 2 度返してスタックをロールバックさせた。最初の provider を Cloud Map の
+   namespace の後ろ（約 1 分）に待たせて初めて通った。既存の配備では役がすでに在るので見えないが、
+   まっさらな口座での `standup.sh` が踏む形そのものである。MI の provider と一緒に消える問題ではある
+   ——新テンプレートが作る launch template は `EngineInstanceRole` を assume しない。
+
+### 4 手
+
+| 手（#585 の手順） | 所要 | 返ってきたもの |
+|---|---|---|
+| 1. 両 service を desired 0 | —（待ちではなく状態） | 両方 `desiredCount` 0・`capacityProviderStrategy` は MI の provider を指し・`launchType: null`。⚠️ ここへ至るには**スタック作成時にも**別シェルが要った（19:31:15 / 19:31:20）——下記 |
+| 2. 旧テンプレートのまま `<役>Enabled=false` | **30 秒**（19:32:44 → 19:33:14） | `LlmService` / `ImageService` が 10:33:07 に `DELETE_COMPLETE`・`LlmDiscovery` / `ImageDiscovery` が 10:33:08・タスク定義 2 本も一緒。P0 の 25 秒・P1 の 24.8 秒がこれで 3 度目の再現 |
+| 3. 新テンプレートを当てる（役はまだ off） | **220 秒**（19:33:49 → 19:37:29） | `LlmLaunchTemplate` / `ImageLaunchTemplate` が `CREATE_COMPLETE`。provider 3 本・`InfraRole`・`InstanceRole`・`InstanceProfile` が `DELETE_COMPLETE`。クラスタの一覧は `FARGATE FARGATE_SPOT` に戻る |
+| 4. `<役>Enabled=true` | **374 秒**（19:38:19 → 19:44:33）・うち **317 秒は停止** | 両 service が **desired 1** で作られ・`LaunchType: EC2`・running 0・pending 0。5 分 17 秒のあいだ何も動かない。別シェルが 19:43:39 / 19:43:42 に両方を 0 にし、その **41 秒後**（10:44:23）に両方 `CREATE_COMPLETE`・`EnginesParam` 更新・10:44:29 にスタック完了 |
+
+確認した最終状態: 両 service が `LaunchType: EC2`・`capacityProviderStrategy: null`・
+`placementConstraints: [{memberOf, "attribute:af-role == engine-<役>"}]`・`desiredCount` 0。エンジン表は
+両行に `"launchTemplate":"lt-…"` を持ち `capacityProvider` 欄は無い。クラスタの provider は `FARGATE` と
+`FARGATE_SPOT`。**`AlreadyExists` はこのスタックの全イベント履歴に 0 回**——同じ出力に同じ grep をかけると
+`Resource creation Initiated` が 29 回当たるので、これは本物の 0 である。
+
+### 項目 3 — 🔴 確認。しかも原因は P1 が考えたより 1 段古い
+
+空のクラスタで、停止はそのまま再現した:
+
+```
+(service af-af-adr0077-p1x-image) was unable to place a task because no container instance met all
+of its requirements. The reason for failure is No Container Instances were found in your cluster.
+```
+
+（P1 が見たのは同じ拒否を開発配備のスロットの箱に対して言った版——*「The closest matching … doesn't
+have the agent connected」*——で、あちらのクラスタが空でないからである。同じ停止、惜しい相手が違うだけ。）
+これを解くのは別シェルで、解くのにかかるのは **41 秒**。放っておけば更新は資源のタイムアウトまで走る。
+P1 の予想どおりである。
+
+**新しく分かったことがあり、P1 本文の枠組みを訂正する。** P1 は `DesiredCount` を書かない設計を
+「Managed Instances では無害だった」と書いた。使い捨てが示したのは、この性質が起動タイプではなく
+**テンプレート**のものだということである。*旧*の MI の service を作ったときも**両方が desired 1 で
+作られ**（19:31:15 / 19:31:20・別シェルのログ）、CloudFormation は同じように待ったはずだった。違うのは
+その 1 を誰が満たすかだけで——MI では箱が買われて service が落ち着き（GPU の費用がかかる。だからこの
+実測では 0 に抑えた）、EC2 起動タイプでは誰も満たせない。つまり別シェルは EC2 側の新しい問題への対処
+ではなく、`standup.sh` が新しい service にすでに当てているのと同じ手を、これらの service を作る
+もう 1 つの経路にも当てるということである。#585 の 4 手は正しく、PARAMETERS に書くべき理由は
+「EC2 起動タイプは置けない」ではなく「**誰が作ろうと**新しい service の既定は desired 1」である。
+
+### 項目 4 — CloudFormation 側は 🔴 確認。Control Plane 側は未測のまま
+
+手 2 と手 4 のあいだの窓で読んだもの:
+
+```
+$ aws ssm get-parameter --name <使い捨てのエンジン表> --query Parameter.Value
+{"engines":[],"ingest":{}}
+```
+
+窓のあいだずっと 0 行。ここでの窓は **5 分 21 秒**（10:33:07 → 10:38:28）で、P1 の 34 分に対して短いのは
+あいだにビルドが入らないからである。`EnginesParam` 自身は条件付きでは**なく**、空にするのは
+`!If [Has<役>Model, …, ""]` の 2 行のほう——パラメータは窓のあいだも空の配列を持って存在する。これが
+`newEngineRegistry` が `nil` のレジストリと reloader 無しに変える入力である。
+
+🔵 **ここでは測れないし、測りようがない**: その窓で起動した Control Plane が、行が戻ったあとに回復する
+かどうか。使い捨てスタックに Control Plane は無い。その半分は #584 のもので、実機ではなく #584 自身の
+テストで固定されている。よって移行の 4 手目（CP の強制再配備）は P1 の 1 回の実測（86 秒）とそのテストに
+立ったままで、この実測はそれに足しも引きもしない。
+
+### 項目 5 — 🔴 確認。ARN の件は推論から証拠になった
+
+Discovery は 2 本とも service と一緒に消え、一緒に作り直される:
+
+```
+LlmDiscovery    DELETE_COMPLETE  10:33:08.657   →  CREATE_COMPLETE  10:38:28.107
+ImageDiscovery  DELETE_COMPLETE  10:33:08.618   →  CREATE_COMPLETE  10:38:27.997
+```
+
+使い捨ての namespace への `list-services` は窓のあいだ `[]` を返す。P0 の ✅——条件の付かない
+`AWS::ServiceDiscovery::Service` を持つ使い捨てで測ったもの——は本物の形では成り立たない。P1 がすでに
+言ったことだが、これで配備に触れずに本物の形で確認できた。
+
+**そして件の疑問は決着した。** P1 は CloudTrail から id を読み、「資源が生き残ったのではなく Cloud Map が
+同じ namespace＋名前に同じ `srv-` id を振り直す」と結論した。ここでは両方が同時に読める。id は前後で
+**同一**（llm が `srv-56rlhf2r6ervdz5a`・image が `srv-m2zek2752vvwiyjf`）で、**かつ** その `CreateDate` は
+作り直した時刻 `2026-09-12T19:38:27` である。同じ id、新しい資源。P1 の推論は正しく、PARAMETERS の ✅ は
+「資源が生き残る」ではなく「Cloud Map が id を振り直す」と書くべきである。
+
+### 片付け
+
+19:45:26 に `delete-stack`、19:46:29 に消滅（63 秒）。そのあと、それぞれの列挙が自分の陽性対照を
+連れた形で確認した:
+
+- `describe-stacks` → **本物の 7 本だけ**。`af-adr0077-p1x` は消えている。
+- `list-clusters` → `af-af-ecs-platform` だけ。`list-namespaces` → `af.internal` だけ。
+- `describe-launch-templates` → 本物の 3 本だけ。
+- `af-*` の `list-roles` → 本物の 7 本だけ。
+- `describe-parameters` → `/af-ws/adr0077-p1x-engines` は無い。本物の `/af-ws/engines` は無傷。
+- 使い捨てタグでの `describe-instances` を**状態で絞らずに** → 空。同じ形の問い合わせを `af-pool` に
+  かけると本物の箱 5 台が出る。インスタンスは 1 台も買われていない。
+
+残したものは無い。生の応答と生成した 2 つのテンプレートは、これを測ったセッションの
+`~/.cache/adr0077-p1x/` にある。
+
+## 追記 — P2 実機: 中断と取り直し（2026-09-12・開発配備・約 $0.13）
+
+決定 4 を実機で。#591 は develop 入り済み、Control Plane は `dev-deploy.sh` が載せた
+`0.19.1-dev-72d0af07`。中断は素朴に——エンジンの箱そのものに `terminate-instances`。決定 4 の
+「箱が消えた」を何も模擬せずに作る。Spot の箱 3 台・**13 分 54 秒**・約 **$0.13**（門は 20 分・$0.80）。
+
+**P2 の達否を 1 行で: 1 回目の中断は全部緑——検出・trail の `interrupted`・先頭からの立て直し・
+箱 1 台・`UpdateService` 無し・失敗数え上げ無し——だが 2 回目の中断は**まったく検出されなかった**。
+まだ RUNNING に達していないタスクに当たったからで、エンジンは `desired 1`・箱無し・ログ 1 行も無しの
+まま人が止めるまで固まった。よって 2 連続の飛ばし（決定 4 の最後の箇条）は**未実測**であり、決定 6 の
+🔁 は文面上は成立した（52.1 GiB の取り直しに 5 分 47 秒）が、その理由づけのほうを書き直す必要がある。**
+
+以下はすべて生の戻り値・Control Plane のログ行・監査行・CloudTrail の記録である。測れなかったものは
+「測れなかった」と書く。
+
+### 中断 1 回目——検査は全部、そして全部緑
+
+流れ: `mode: on` 11:28:05 UTC → `spot3` が `i-0dd6877b4148871f6`（g6.xlarge・Spot・
+ap-northeast-1a）を 11:28:07 に購入 → 11:28:43 に登録（**36 秒**）→ `state: running` 11:33:28・
+`warm: true` 11:33:42（desired から **4 分 45 秒 / 4 分 59 秒**）。**11:37:15** にその箱を
+Control Plane の足元から terminate した。
+
+```
+11:37:30  engine image: the engine task was replaced without being asked: COMPLETED (service …)
+          has reached a steady state. | (service …) has started 1 tasks: (task 45974ded…). | …
+11:37:30  engines: image: the box was taken away; rebuilding from spot3 (spot)
+11:37:32  engine image: offer spot3 (spot) bought i-024627c199338ca2f
+11:38:08  engines: image: the box i-024627c199338ca2f registered (the pending task goes to it)
+```
+
+| 検査 | 結果 | 証拠 |
+|---|---|---|
+| 中断の検出（desired 1・タスクが差し替わった・箱が消えた） | 🟢 **15 秒** | terminate 11:37:15 → `replaced without being asked` の行が 11:37:30。監査には両方ある: 同じ秒に `engine.image.replaced / restart` と `engine.image.interrupted / spot3`——*"the box was taken away while the service still wanted a task"* |
+| `offer_trail` に `interrupted` が載る | 🟢 | `[{spot3, spot, interrupted}, {spot3, spot, active}]`——同じ提案が 2 回、#591 が書いた形そのもの |
+| 立て直しは一覧の**先頭から** | 🟢 | `rebuilding from spot3 (spot)`。`spot3` は 3 行のうちの 1 行目。飛ばしも引き継ぎも無い |
+| **箱は 1 台だけ** | 🟢 | この走行全体で CloudTrail の `CreateFleet` は **3 回**、箱 1 台につき 1 回（11:28:07 / 11:37:32 / 11:46:29）。13 秒間隔のどの標本でも `af-role=engine-image` の生存は 1 台以下 |
+| **desired は書き直されない** | 🟢 | CloudTrail に **11:33:44 から 11:46:12 まで `UpdateService` が 1 件も無い**——中断も立て直しも 2 回目の中断もこの空白の中にある。登録のログ行も言葉で言っている: `(the pending task goes to it)`。起動なら `(asking for the task)` である |
+| 失敗に数えない・cooldown に入らない | 🟢 | パネルの `failures` は前後とも `null`。中断は失敗ではない（決定 4）。立て直しは検出の 2 秒後に始まっており、cooldown を挟んでいない |
+| 立て直した箱が登録する | 🟢 **36 秒** | 11:37:32 → 11:38:08。**terminate から登録済みの代替まで 53 秒** |
+| 掃除 (a) が「タスク 0」で新しい箱を消さない | 🟢 | この窓の `TerminateInstances` は**私のもの 1 件だけ**（`agent-fleet-aws-deployer`・11:37:16）。Control Plane は走行末尾の退場まで何も terminate していない |
+| 掃除 (b) が消えた箱の container instance を deregister する | ⚠️ **働いていない** | 90 秒以内にクラスタはエンジンの container instance 1 台（新しい箱・`pending: 1`）に戻っていた——が、**`deregistering the ghost container instance` の行も、どの principal の `DeregisterContainerInstance` も CloudTrail に無い**。ECS が自分で外した。決定 4 の `(c)`——ここまで公開仕様だったもの——が確認されたわけで、CP 側の (b) には仕事が残らず、いまも未実測である |
+
+### 🔴 中断 2 回目——検出されず、エンジンが固まる
+
+`i-024627c199338ca2f` を登録の 102 秒後、**11:39:50** に terminate した。そのタスクはまだ PENDING
+だった。新しい箱では fetch サイドカーがエンジンのコンテナを起動させるまでに 1 分 42 秒かかる（後述）
+ので、まだ何も RUNNING に達していない。
+
+何も起きなかった。すぐにも、見ていた 6 分のあいだにも。
+
+| 時刻（UTC） | 状態 |
+|---|---|
+| 11:39:50 | `terminate-instances` |
+| 11:40:18 | パネル: `state: starting`・`desired: 1`・`box: null`・`offer: null`・`offer_trail` は `[spot3 interrupted, spot3 active]` のまま |
+| 11:43:55 | `describe-services` → desired 1・running 0・**pending 0**。service 自身の最新イベントは *"was unable to place a task because no container instance met all of its requirements"* |
+| 11:45:56 | この窓の Control Plane のログ: **52 行、うちエンジンに触れる行は 0**。（同じ問い合わせを中断 1 回目の窓に当てると 4 行返る——それが空の結果の陽性対照である） |
+| 11:45:56 | この窓の監査: **`engine.image.interrupted` の行が無い**。中断 1 回目のものはある |
+| 11:46:12 | 手で `mode: off` にして終わらせた |
+
+**なぜか。** 決定 4 の検出は ADR 0075 決定 6 から「desired 1 で `running` → `starting`、かつ箱が
+消えた」として受け継いだもので、`stepRebuild` はこの `replaced` が立たないと走らない。13 秒間隔で
+採ったパネルの状態は、この箱について一度も `starting` を出なかった。
+
+```
+20:38:18 JST  state=starting d=1 svc=1,0,0  box=i-024627c199338ca2f     （登録）
+20:38:45      state=starting d=1 svc=1,0,1  box=i-024627c199338ca2f     （タスク PENDING）
+20:39:51      state=starting d=1 svc=1,0,0  box=i-024627c199338ca2f     （手で terminate）
+20:40:18      state=starting d=1 svc=1,0,0  box=null
+```
+
+出るべき `running` が無い＝遷移が無い＝中断も無い。そして決定 4 のもう半分の条件「箱が消えた」は
+単独では一度も参照されない。`startInFlight` は箱が登録した時点で下りている（#584）ので、気づく
+歩みも走っていない。**エンジンは desired 1・箱無し・歩み無し・時計無しで残され**、自動で出る道は
+アイドル窓（ここでは `ImageIdleSec` 900 秒）がやがてエンジンを止めて需要を捨てることだけである。
+そこまでは待っていないので未実測。
+
+⚠️ **これは稀な隅ではない。** この走行で測った冷間起動は desired から `running` まで **4 分 45 秒**
+であり、中断が見えない窓はその全部である。52.1 GiB を取りながら箱が立ち上がる 6 分のあいだに Spot が
+取り上げられる確率は、動いているあいだと少なくとも同じだけある。
+
+**影響 — 決定 4。** 前提は無傷で、検出が条件 1 つぶん足りない。「箱が消えた」は
+`describe-instances` が単独で言える事実であり（決定 4 は遷移を受け継ぐ 2 文前にまさにそう書いて
+いる）、直し方は 2 つ目の条件だけで十分にすること: **desired ≥ 1 で、箱を取った提案があり、
+`af-role=engine-<役>` の生存が無いなら、タスクが RUNNING だったかに関わらず立て直す。**
+OOM kill が GPU を買わないようにしている `not a rebuild` の門は「箱がまだそこにある」ことなので、
+この変更では動かない。
+
+**P2 の残りへの影響**: 2 連続の飛ばしには届かなかった。同じ提案の**検出された**中断が 2 回要り、
+その 1 回ごとに RUNNING に達したタスクが要る。冷間起動 2 回とその立て直しは GPU 20 分に入らない。
+`begin()` は `lastInterrupted` を消すので、すでに記録した 1 回を後の需要へ持ち越すこともできない。
+**決定 4 の最後の箇条は実装済み（#591）で実機では未実測である。**
+
+### 退場の再確認
+
+3 台目、わざと短く。中断が何も壊していないことを確かめるために。
+
+```
+11:46:29  engine image: offer spot3 (spot) bought i-0653b21fd06393519
+11:47:04  engines: image: the box i-0653b21fd06393519 registered (asking for the task)
+11:47:55  engines: image set to off by …
+11:48:56  engines: image: terminated the box i-0653b21fd06393519 (the engine is stopped and nothing is running on it)
+```
+
+🟢 CloudTrail、Control Plane 自身のタスクロールから: `UpdateService` 11:47:55 →
+`DeregisterContainerInstance` **11:48:56** → `TerminateInstances` **11:48:56**。決定 5 の順序どおり、
+トグルから **61 秒**（2 回目の実機は 50 秒と 65 秒）。`terminate` → `terminated` は 22 秒間隔の
+poll で **5 分 37 秒〜5 分 59 秒**——決定 5 の窓の 4 周目で、書き直した「4〜6 分」の上端、まだ内側。
+
+### 決定 6——取り直しは実際いくらか
+
+1 台目の fetch サイドカー自身のログから。この配備のカタログは **11 ファイル・55,974,977,974 バイト
+= 52.1 GiB**——決定 6 の 🔁 が挙げる 30 GB をゆうに超える。
+
+| 経過 | 何が |
+|---|---|
+| 0 秒 | `engine fetch: active set for /af-ws/engines/image/active starts with 'sd35-medium'` |
+| **1 分 42 秒** | `engine fetch: engine may start; 9 file(s) still to sync`——既定の一式がディスクに（`sd3.5_medium 5,107,104,286 bytes in 37s`・`clip_l … 3s`・`clip_g … 11s`・`t5xxl 4,893,934,904 … 47s`） |
+| **5 分 47 秒** | `engine fetch: sync done`——11 ファイル全部 |
+
+ファイルごとの速度は 82 / 104 / 126 / 127 / 138 / 168 / 168 / 198 / 199 / 209 / 225 MB/s、
+**52.1 GiB 全体で 154 MB/s**——ADR 0071 の Managed Instances 104〜147 MB/s、2 回目の実機の
+g5.xlarge 87〜173 に対して。NVMe の data-root は天井ではない。S3 が天井である。
+
+🔴 **🔁 は文面上は成立する。** 「30 GB を抱える comfy 配備で取り直しが 5 分を超えたら」はまさに
+52.1 GiB で 5 分 47 秒であり、決定 6 自身の引き金でいえば P1——名前付き `SourcePath` の host
+volume——が前倒しになる。
+
+⚠️ **だがその引き金は違うものを予言していて、それを示したのがこの走行である。** 決定 6 はすでに
+「host volume が温かいのは desired が**同じ箱の上で** 0 → 1 になるときだけ」と書いており、箱を
+終わらせる 2 つの出来事はどちらもそれを作らない: 退場は terminate し（決定 5）、中断は取り上げる
+（決定 4）。ここで測った中断の代価は **登録済みの代替まで 53 秒、そのあと空のハードウェアでの
+冷間起動まるごと**であり、host volume はそのどこも縮めない——ボリュームは箱と一緒に死んだからで
+ある。5 分 47 秒が値付けしているのは、決定 6 が唯一の受益者として挙げ、ADR 0071 決定 5 がすでに
+「そこでは止めない」と決めた場合のほうである。よって:
+
+- 🔁 の条件は **成立**（🔴）。
+- それが指す作業は、**🔁 が挙げる理由では依然としてやる価値が無い**。閾値を超えた数字は中断の
+  代価であり、host volume は中断に効かないからである。
+- やる価値を決めるのは別の実測——実配備でアイドル窓の内側に desired 0 → 1 が起きる頻度——であり、
+  それはいまこのリポジトリのどこにも記録されていない。
+
+並べて残しておく数字が 2 つ: エンジンは **1 分 42 秒**で起動してよくなる（52.1 GiB 全部ではなく
+既定のモデル一式）。`warm: true` は desired から **4 分 59 秒**。残り 4 分の同期は、応答している
+エンジンの後ろで進む。
+
+### 費用と後始末
+
+| 箱 | 型 | 購入 | 起動（UTC） | 終了 | 生存 | 終わった理由 |
+|---|---|---|---|---|---|---|
+| `i-0dd6877b4148871f6` | g6.xlarge | spot | 11:28:07 | 11:37:15 | 9m08s | 中断 1 回目・手で |
+| `i-024627c199338ca2f` | g6.xlarge | spot | 11:37:32 | 11:39:50 | 2m18s | 中断 2 回目・手で |
+| `i-0653b21fd06393519` | g6.xlarge | spot | 11:46:28 | 11:48:56 | 2m28s | CP 自身の退場 |
+
+**13 分 54 秒・約 $0.13**（その時間帯の Spot 価格 ap-northeast-1a $0.5759/h・
+`describe-spot-price-history`）。門は 20 分・$0.80 でどちらも保った。走行が 2 連続の飛ばしに
+届かなかったのは金ではなく時間の理由である。
+
+- `af-role` が `{engine-image, engine-llm}` の `describe-instances` を**状態フィルタ無し**で:
+  3 台、すべて `terminated`。（陽性対照は同じ問い合わせを `tag-key=af-role` だけにしたもので、
+  スロットの箱を含め 7 を返す。）
+- container instance は **4 台**に戻り、すべてスロットの箱。`describe-fleets` を絞らずに引くと `[]`。
+- **手順 1 で控えた値に戻した**: `image` は `mode: off`、`llm` は `mode: ondemand`、`ImageOffers`
+  はバイト一致（そもそも変えていない——P2 に要るのは本番の宣言だった）、`ImageOfferBudgetSec` は
+  300、service は desired 0。配備に変えたまま残したものは無く、この走行のためにテンプレートも
+  触っていない。
+- この走行の箱はすべて develop にあるままの launch template で上がり、すべて登録した——P1 の
+  user data の 2 件の欠陥は直ったままである。
+- 生の戻り値は測ったセッションの `~/.cache/adr0077-p2/` にある。
+
+### 本文に返すもの
+
+| # | 判定 | 決定 | 直すこと |
+|---|---|---|---|
+| 1 | 🔴 | 4 | タスクが RUNNING に達する前の中断は見えず、エンジンは desired 1・箱無し・ログ無しで固まる。`running` → `starting` の遷移抜きで、「desired ≥ 1 で、帳簿に箱があり、`af-role=engine-<役>` の生存が無い」だけで十分にする |
+| 2 | ⚠️ | 4 | 2 連続の飛ばしは実装済みで**未実測**。検出された中断 2 回には冷間起動 2 回が要り、20 分の門に入らない。専用の走行か、カタログの小さい配備が要る |
+| 3 | ⚠️ | 4 | 決定 5 の掃除の (b) は**要らなかった**: ECS が 90 秒以内に自分で消えた箱の container instance を外し、本文が未確認としていた `(c)` が確認された。掃除は書かれたとおりの控えのまま、いまも働いていない |
+| 4 | 🔴/⚠️ | 6 | 🔁 は成立した（52.1 GiB に 5 分 47 秒）が、host volume が縮められない数字の上でである——中断は必ず新しい箱に降りる。🔁 を「アイドル窓の内側の desired 0 → 1」で書き直し、何かを作る前にその頻度を測ること |
+| 5 | 🟢 | 4・5 | 検出・trail の `interrupted` 行・先頭からの立て直し・箱 1 台・`UpdateService` 無し・cooldown 無し・掃除の誤爆無し、そして CP 自身の退場 61 秒 |
+
+## P2・P3 の後の改訂（2026-09-12）
+
+最後の 2 本の追記（P3 実機と、そこから出た修正 #598 を含む P2 実機）は決定の本文を書き換えず、発見を
+改訂の判断に差し戻した。この節がその改訂で、前の 2 回と同じ作法で**上の決定の本文に反映済み**——決定の
+前提は 1 つも動かしていない。動いたのは、P2 が誤りか (c) だと測った文言と、P2 が狭すぎると示した条件
+1 つである。
+
+| 決定 | 変えたこと | 出所 |
+|---|---|---|
+| 4 | 検出の 2 条件目（タグ `af-role=engine-<役>` の箱が 1 台も `pending`／`running` でない）は、`desired ≥ 1` で CP の帳簿に箱があるとき**単独で十分**。`running` → `starting` の遷移は前提ではなく OR のもう半分になった。通常の置き換えに対する番人（箱がまだある）はそのままで、帳簿は検出したところで消す | P2 実機（#597）・修正 #598 |
+| 4 | 死んだ箱の container instance を ECS が自分で deregister する件は (c) から**実測 90 秒以内**へ（どの principal からも `DeregisterContainerInstance` 無し） | P2 実機 |
+| 4 | Spot 排水の項に**まだ (c)** と明記。最後の項（2 連続で飛ばす規則）は実装済み（#591）で**実機未測**と、到達できなかった理由つきで明記 | P2 実機 |
+| 5 | 退場の走査の向き (b) を**保険**として書いた: ECS が自分で deregister するので CP 側の向きには何も残らない。後詰めとして残し、いまだ未発火 | P2 実機 |
+| 6 | 「P1 で測る」が実測になった: 52.1 GiB を **5 分 47 秒**・154 MB/s、エンジンは 1 分 42 秒で起動可、`warm: true` は 4 分 59 秒。🔁 は**書き直した**——旧しきい値を超えた数字は中断の実費であり、中断は必ず新しい箱に降りるので、条件は「アイドル窓の内側の desired 0 → 1 の頻度」になった（作る前にそれを測る） | P2 実機 |
+| 未解決 9 | **未測、かつもう何も依存しない**: 中断は予告の無い `terminate-instances` で作った | P2 実機 |
+| 状態 | 提案 → **承認**。P0〜P3 は develop 入り（#573〜#598）で、どのフェーズも実機に出た | この改訂 |
+
+**P2 は完了**。到達できなかったものが 2 つあり、どちらも上に名指ししてあって、どちらも決定の前提では
+ない: 2 連続で飛ばす規則（*検出された*中断が 2 回＝冷間起動 2 回が要り、20 分の門に収まらない）と、
+**#598 の検出そのものの実機確認**——修正は fake に対する試験があり、直した欠陥は実機で測られているが、
+#598 が載った状態で「タスクが RUNNING に達する前の箱」を取り上げた実機はまだ無い。GPU 25 分ほどの
+実機 1 本で両方が閉じる: タスクが PENDING のうちに箱を落とし、代替も同じやり方で落として、`spot3` が
+飛ばされて `od` の行へ移るのを見ればよい。
+
+**P3 も完了。** 実機（#592）は名指しした項目すべてが緑で、開いていたのは自分の順序だけ——「P3 は P2 の
+後」で、その P2 が未着手だった。P2 は走った。llm 役についての P3 の ⚠️ 2 件は、この ADR のどの決定の
+前提でもなく、あちらの表に置いたまま残る: その走行が給仕しないモデルまで待つ冷間起動（原因は未測。
+次の周で enabled のモデルを 1 つにすれば決まる）と、llm のモデル行に `vram_need_mib` が 1 つも無いため
+決定 6 の適合検査がこの役では効かないこと。
+
+以前のフェーズから実機で未測のまま残り、この改訂でも変わらないもの: `<役>Enabled` の往復移行の
+Control Plane 側（CloudFormation 側は使い捨てスタックで実測済み・#593）と、#584 の「0 行のエンジン表
+から戻る」。

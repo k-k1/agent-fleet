@@ -2,7 +2,8 @@
 
 English | [日本語](0077-engine-boxes-bought-by-cp.ja.md)
 
-- Status: **proposed** (2026-09-12). Nothing is implemented.
+- Status: **accepted** (2026-09-12). P0's premises are measured, P1-P3 are implemented and have run
+  on hardware (#573-#598); two items stay unmeasured, and the last revision section names them.
 - **Not one GPU was bought for this document.** Every number says where it comes from —
   (a) measurements in ADR 0045, 0070, 0071, 0074 and 0075, (b) facts read on 2026-09-12 out of this
   repository's code and templates and out of af-sandbox's read-only APIs, (c) things known only as
@@ -282,23 +283,41 @@ AL2023 GPU AMI (open question 2), the CP calls `PutAttributes` right after regis
 - 0075 decision 6's detection (`running` → `starting` at desired 1, and the box gone) is inherited
   **as a design**: in the code it exists only as `noteReplacement`'s log and audit row; the rebuild
   and the skip were 0075 P1 and were never written (Background). P2 builds them here, once.
-  "The box is gone" can be stated from **`describe-instances` state (`shutting-down` /
-  `terminated`) and from no box tagged `af-role=engine-<role>` being `running`**. The Managed
-  Instances "cannot enumerate" limit does not apply.
-- ECS deregisters a terminated instance's container instance by itself (c). If it does not, the
-  ghost is a registered container instance with the engine attribute and no EC2 behind it — the
-  pool's `sweepGhostInstances` no longer sees it (decision 3), so decision 5's sweep covers it.
+  "The box is gone" can be stated from **`describe-instances`: no box tagged
+  `af-role=engine-<role>` is `pending` or `running`**. The Managed Instances "cannot enumerate"
+  limit does not apply.
+- 🔴 **That second condition is sufficient on its own**, and the transition is the other half of an
+  OR rather than a precondition: at desired ≥ 1, with a box **on the CP's books** (this demand's
+  walk saw one register) and no `af-role=engine-<role>` instance alive, it is an interruption
+  whether or not the service ever left `running`. **Measured (P2 hardware run)**: a box taken away
+  102 s after it registered, with its task still PENDING, produces no transition at all — there is
+  no `running` to leave — and the engine sat at desired 1 with no box, no walk, no log line and no
+  clock, its only automatic way out being the idle window throwing the demand away 900 s later.
+  The window in which that happens is the **whole cold start, 4 min 45 s on that same run**, so it
+  is not a corner case. What keeps the rebuild from firing on an ordinary replacement (an OOM kill,
+  a failed health check — 0071 P0) is unchanged and is the other clause: **the box is still there**.
+  The ledger is consumed at detection, or the same loss would be detected every tick and buy a box
+  every tick; it lives in the CP's memory, so a Control Plane replaced mid-demand detects nothing —
+  the same limit the transition's own `prevState` already had (#598).
+- ECS deregisters a terminated instance's container instance by itself — **measured (P2 hardware
+  run): within 90 s, with no `DeregisterContainerInstance` from any principal**, so this is no
+  longer (c). If it ever does not, the ghost is a registered container instance with the engine
+  attribute and no EC2 behind it — the pool's `sweepGhostInstances` no longer sees it (decision 3),
+  so decision 5's sweep covers it.
 - The ECS agent's Spot draining (c) is enabled in the launch template. If the two-minute notice
   puts the instance into DRAINING, the service's task stops first and `noteReplacement` (0075
-  Background, point 4) records "a replacement nobody asked for". If it does not work, detection
-  still holds on the two conditions above.
+  Background, point 4) records "a replacement nobody asked for". **Still (c) after P2** (open
+  question 9): the interruption was made with `terminate-instances`, which gives no notice, so
+  draining was never exercised. Nothing depends on it — detection holds on "no box alive" alone.
 - The rebuild is decision 1's call again from the top of the list. Being synchronous, 0075
   decision 6's restriction ("write only when the first candidate differs from the current
   provider", to avoid racing ECS's own re-placement) is unnecessary — ECS buys nothing.
 - An interruption is not a failure (0075 decision 6 inherited). A rebuild that gets no box by the
   registration ceiling is.
 - **An offer interrupted twice in a row is skipped for the rest of that demand** (0075 decision 6
-  inherited).
+  inherited). Implemented (#591) and **unmeasured on hardware**: two *detected* interruptions need
+  two full cold starts and their rebuilds, which does not fit the P2 run's twenty-minute gate, and
+  `begin()` clears `lastInterrupted` so one interruption cannot be carried into a later demand.
 
 🔁 **What would change this**: the same as 0075 open question 9 (if interruptions are rare, the
 skip is not needed).
@@ -333,6 +352,10 @@ skip is not needed).
   (b) a container instance carrying the engine attribute whose EC2 instance is gone —
   deregistered (the shape of 0045's `sweepGhostInstances`, which checks registration age and
   "instance gone", not task counts; the zero-task caution belongs to the free-slot sweeps).
+  **(b) is insurance, measured as such**: on the P2 hardware run ECS deregistered the dead box's
+  container instance itself within 90 s and the CP's own direction had nothing left to do (the (c)
+  decision 4 rested on, now confirmed). It stays as the backstop it was written to be — for the day
+  ECS does not — and is still unexercised.
   Neither direction consults the CP's memory: tags and attributes are enough, as 0045 decision 29
   demands.
 
@@ -352,11 +375,18 @@ rather than the rare one — then the drain wait becomes "buy the next box while
   (decision 4). It is warm only when desired goes 0 → 1 inside the idle window — the very case
   0071 decision 5 already decided not to stop in. **So P0 keeps the anonymous `Host: {}`**
   (nothing changes).
-- P1 measures: against the measured re-fetch (0071: S3 → local at 104-147 MB/s, 6.94 GB in 65 s),
-  how many seconds a host volume saves. If it is a minute, it is not needed.
+- **The re-fetch is measured (P2 hardware run, this deployment's own catalogue): eleven files,
+  52.1 GiB, `sync done` in 5 min 47 s at 154 MB/s** (S3 is the ceiling, not the NVMe data-root),
+  with **the engine free to start after 1 min 42 s** — the default model set — and `warm: true`
+  4 min 59 s after the desired count. The remaining four minutes of the sync happen behind a
+  serving engine. A host volume saves none of that on the two events that actually end a box:
+  measured on the same run, an interruption cost 53 s to a registered replacement **and then a full
+  cold start on empty hardware**, because the volume died with the box.
 
-🔁 **What would change this**: a measured re-fetch above five minutes on a comfy deployment
-holding 30 GB (0075's computed "what an interruption costs"). Then P1 moves forward.
+🔁 **What would change this**: not the size of the re-fetch — that number prices an interruption,
+and an interruption always lands on new hardware. What would change it is **how often desired goes
+0 → 1 inside the idle window on a real deployment**, which nothing in this repository records
+today. Measure that frequency first; build the named `SourcePath` only if it is common.
 
 ### 7. No AMI is owned. The launch template's `ImageId` is `resolve:ssm:` on the SSM public parameter
 
@@ -594,8 +624,11 @@ slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box
 8. **Mounting the local NVMe.** The AL2023 ECS AMI does not mount the instance store by itself (c).
    If user data mounts it, is it Docker's data-root or the models' host volume? Depends on:
    decision 6. P1.
-9. **Whether the ECS agent's Spot draining works on the AL2023 GPU AMI** (c). P2 (the
-   interruption run).
+9. **Whether the ECS agent's Spot draining works on the AL2023 GPU AMI** (c). **Unmeasured after
+   P2**: the interruption was made with `terminate-instances` — decision 4's "the box is gone" with
+   nothing simulated — which gives no two-minute notice, so draining never had an occasion to run.
+   Nothing waits on the answer any more: detection is "no box of this role alive" on its own
+   (decision 4).
 10. **Whether `price-capacity-optimized` actually picks a g6** (Managed Instances bought a g6e in
     0075 run 3). P1's hardware run.
 
@@ -1952,3 +1985,379 @@ ap-northeast-1 / Linux / shared). The $0 half of this run really was $0.
 
 **P3's hardware verdicts are green on every item this run names**, and P3 as a phase stays open on
 its stated ordering: P2 first.
+
+## Follow-up — the `<Role>Enabled` round trip on the real template shape, measured (2026-09-12, throwaway, $0)
+
+P1's hardware run left three of its findings resting on a single pass through the migration, and
+the previous section closed by calling the round trip "left open on hardware": the dev deployment
+is no longer on Managed Instances, so it cannot be replayed there. It was replayed instead on a
+**throwaway stack of the real template's shape** — the old (Managed Instances) `60-engines.yaml`
+at `66983c96`, migrated to develop's by **#585's four steps**, with its own throwaway ECS cluster
+and Cloud Map namespace. Nothing of `af-ecs-*` was named by any command. **Not one instance was
+bought** (`describe-instances` on the throwaway tag is empty in every state, while the same query
+shape lists the five real boxes). Elapsed for the four steps: **11 minutes 49 seconds**
+(19:32:44 → 19:44:33 JST). Cost: **$0**.
+
+**Verdict: the round trip works, and all three of P1's findings reproduce.** 3 🔴 confirmed (and
+its cause is one step older than P1 thought), 4 🔴 confirmed on the CloudFormation half and **not
+measurable** on the Control Plane half, 5 🔴 confirmed and strengthened with the evidence P1 had
+to infer. No step hit `AlreadyExists`, and the end state is what decision 11 asks for.
+
+### What the throwaway is, and what it is not
+
+Kept verbatim from both real templates: the conditional trio per role (`Has<Role>Model` on the
+Service, the Discovery and the `EnginesParam` row), the explicit `ServiceName`, `ServiceRegistries`,
+`DependsOn: Associations`, `Associations` itself, the three Managed Instances capacity providers
+with `InfraRole` / `InstanceRole` / `InstanceProfile` (old), and the two launch templates with
+`EngineInstanceRole` / `EngineInstanceProfile` (new).
+
+Changed or dropped, none of it on the measured path — the imports of 00-network and 20-platform
+became in-stack resources or parameters (so the throwaway takes **no cross-stack dependency** on a
+live stack, and cannot block anyone's deploy); the ingest subsystem went (S3 bucket, HF secret,
+ingest task definition, `CpIngestPolicy`), because no migration step touches it and a
+Secrets Manager secret leaves a scheduled deletion behind; the two engine task definitions were
+replaced by a GPU-less minimal pair keeping only the family, `awsvpc` and the
+`RequiresCompatibilities` value that differs between generations; and the Managed Instances
+providers were given a CPU-only shape (`m6i.large`, `GpuCount=0`) so that a stray desired 1 could
+not buy a GPU. **Both roles were enabled**, not the image role alone as the task asked — the
+finding under test is that *both* services stall, and the second role costs nothing.
+
+⚠️ Three things it took to stand the baseline up at all. None is a finding about the migration,
+but a fresh stand-up meets them:
+
+1. **`CreateCapacityProvider` refuses instance requirements that match nothing** — *"No instance
+   types satisfy the instance requirements specified in the Managed Instances capacity provider"*.
+   So a provider cannot be made deliberately unbuyable; the CPU-only shape above is the way to keep
+   a Managed Instances baseline at $0.
+2. **`AWS::ECS::Cluster` must not declare `CapacityProviders` when `Associations` exists** — the
+   association fails with *"The cluster already contains capacity provider associations"*. The real
+   20-platform cluster does not declare one, which is why 60-engines' `Associations` can own the list.
+3. 🔴 **A freshly created `InfraRole` races IAM propagation**: `CreateCapacityProvider` came back
+   *"AWS was not able to validate the provided access credentials (Service: Ec2, Status Code: 401)"*
+   twice, on two different providers, and rolled the stack back. It only succeeded once the first
+   provider was made to wait behind the Cloud Map namespace (about a minute). This is invisible on
+   an existing deployment because the role is already there — but it is the shape a brand-new
+   `standup.sh` on a fresh account would hit. It dies with the Managed Instances providers
+   themselves; the launch templates the new template creates do not assume `EngineInstanceRole`.
+
+### The four steps
+
+| Step (#585's procedure) | Elapsed | What came back |
+|---|---|---|
+| 1. Both services at desired 0 | — (a state, not a wait) | Both `desiredCount` 0, `capacityProviderStrategy` naming the Managed Instances providers, `launchType: null`. ⚠️ Reaching it needed the second shell **at stack creation too** (19:31:15 / 19:31:20) — see below |
+| 2. `<Role>Enabled=false`, still the OLD template | **30 s** (19:32:44 → 19:33:14) | `LlmService` / `ImageService` `DELETE_COMPLETE` at 10:33:07, `LlmDiscovery` / `ImageDiscovery` at 10:33:08, both task definitions with them. P0's 25 s and P1's 24.8 s reproduced a third time |
+| 3. Apply the NEW template, roles still off | **220 s** (19:33:49 → 19:37:29) | `LlmLaunchTemplate` / `ImageLaunchTemplate` `CREATE_COMPLETE`; the three providers, `InfraRole`, `InstanceRole` and `InstanceProfile` `DELETE_COMPLETE`. The cluster's list is back to `FARGATE FARGATE_SPOT` |
+| 4. `<Role>Enabled=true` | **374 s** (19:38:19 → 19:44:33), of which **317 s stalled** | Both services created at **desired 1**, `LaunchType: EC2`, 0 running, 0 pending. Nothing moved for 5 min 17 s. The second shell scaled both to 0 at 19:43:39 / 19:43:42, and both reached `CREATE_COMPLETE` **41 seconds later** (10:44:23), `EnginesParam` updated, stack complete at 10:44:29 |
+
+End state, checked: both services `LaunchType: EC2`, `capacityProviderStrategy: null`,
+`placementConstraints: [{memberOf, "attribute:af-role == engine-<role>"}]`, `desiredCount` 0; the
+engine table carries `"launchTemplate":"lt-…"` on both rows and no `capacityProvider` field; the
+cluster's providers are `FARGATE` and `FARGATE_SPOT`. **`AlreadyExists` appears zero times in the
+stack's entire event history** — and the same grep over the same output finds
+`Resource creation Initiated` 29 times, so it is a real zero.
+
+### Item 3 — 🔴 confirmed, and the cause is one step older than P1 thought
+
+The stall reproduced exactly, on an empty cluster:
+
+```
+(service af-af-adr0077-p1x-image) was unable to place a task because no container instance met all
+of its requirements. The reason for failure is No Container Instances were found in your cluster.
+```
+
+(P1 saw the same refusal worded against the dev deployment's slot boxes — *"The closest matching …
+doesn't have the agent connected"* — because that cluster is not empty. Same stall, different
+nearest miss.) The second shell is what clears it, and the cost of clearing it is **41 seconds**.
+Left alone the update runs to the resource timeout, exactly as P1 predicted.
+
+**New, and it corrects the P1 text's framing.** P1 wrote that the absent `DesiredCount` "was
+harmless under Managed Instances". The throwaway shows the property is the **template's**, not the
+launch type's: creating the *old*, Managed-Instances services put **both of them at desired 1 too**
+(19:31:15 / 19:31:20, the second shell's log), and CloudFormation would have waited there just the
+same. What differs is only who satisfies the 1 — under Managed Instances a box is bought and the
+service stabilises (at GPU cost, which is why this run held them at 0 instead), and on the EC2
+launch type nothing can ever satisfy it. So the second shell is not a fix for a new EC2-side
+problem; it is the same hand `standup.sh` already applies to a fresh service, now needed on the one
+other path that creates these services. #585's four steps are right, and the reason to state in
+PARAMETERS is "a new service defaults to desired 1, whoever creates it", not "the EC2 launch type
+cannot place".
+
+### Item 4 — 🔴 confirmed on the CloudFormation half; the Control Plane half stays unmeasured
+
+Read inside the window, between step 2 and step 4:
+
+```
+$ aws ssm get-parameter --name <the throwaway engine table> --query Parameter.Value
+{"engines":[],"ingest":{}}
+```
+
+Zero rows for the whole window, which here was **5 minutes 21 seconds** (10:33:07 → 10:38:28) —
+against P1's 34 minutes, because nothing was being baked in between. `EnginesParam` itself is
+**not** conditional; what empties it is the two `!If [Has<Role>Model, …, ""]` rows, so the
+parameter exists throughout with an empty array. That is the input `newEngineRegistry` turns into
+a `nil` registry and no reloader.
+
+🔵 **Not measured here, and it cannot be**: whether a Control Plane started inside that window
+recovers once the rows come back. A throwaway stack has no Control Plane. That half is #584's, and
+it is pinned by its own test rather than by hardware. The migration's fourth step (force a new CP
+deployment) therefore stands on P1's single measurement (86 s) plus that test — this run neither
+adds to it nor takes anything away.
+
+### Item 5 — 🔴 confirmed, and the ARN curiosity is now evidence rather than inference
+
+Both discovery resources are deleted with their services and recreated with them:
+
+```
+LlmDiscovery    DELETE_COMPLETE  10:33:08.657   →  CREATE_COMPLETE  10:38:28.107
+ImageDiscovery  DELETE_COMPLETE  10:33:08.618   →  CREATE_COMPLETE  10:38:27.997
+```
+
+`list-services` on the throwaway namespace returns `[]` for the whole window. P0's ✅ — measured on
+a throwaway whose `AWS::ServiceDiscovery::Service` carried no condition — does not hold on the real
+shape, which P1 already said; this confirms it on the real shape without touching a deployment.
+
+**And the curiosity is settled.** P1 read the ids out of CloudTrail and concluded that Cloud Map
+re-issues the same `srv-` id for the same namespace-and-name pair, rather than the resource
+surviving. Here both readings are available at once: the ids are **identical** before and after
+(`srv-56rlhf2r6ervdz5a` for llm, `srv-m2zek2752vvwiyjf` for image) **and** their `CreateDate` is
+the recreation time, `2026-09-12T19:38:27`. Same id, new resource. P1's inference was right, and
+PARAMETERS' ✅ should say "Cloud Map re-issues the id", not "the resource survived".
+
+### The cleanup
+
+`delete-stack` at 19:45:26, gone at 19:46:29 (63 s). Checked afterwards, each listing carrying its
+own positive control:
+
+- `describe-stacks` → the **seven real stacks only**; `af-adr0077-p1x` is gone.
+- `list-clusters` → `af-af-ecs-platform` only. `list-namespaces` → `af.internal` only.
+- `describe-launch-templates` → the three real ones only.
+- `list-roles` for `af-*` → the seven real roles only.
+- `describe-parameters` → no `/af-ws/adr0077-p1x-engines`; the real `/af-ws/engines` untouched.
+- `describe-instances` on the throwaway tag, **with no state filter** → empty, while the same query
+  shape on `af-pool` lists the five real boxes. Not one instance was ever bought.
+
+Nothing was left behind. The raw responses and the two generated templates are in
+`~/.cache/adr0077-p1x/` of the session that measured this.
+
+## Follow-up — P2 hardware run: interruption and the re-fetch (2026-09-12, the dev deployment, about $0.13)
+
+Decision 4 on hardware, with #591 in develop and the Control Plane put on by `dev-deploy.sh` at
+`0.19.1-dev-72d0af07`. The interruption was made the blunt way — `terminate-instances` on the
+engine's own box, which is decision 4's "the box is gone" with nothing simulated. Three Spot boxes,
+**13 minutes 54 seconds** of GPU, about **$0.13** against a gate of twenty minutes and $0.80.
+
+**P2's verdict in one line: the first interruption is fully green — detected, `interrupted` in the
+trail, rebuilt from the top of the list, one box, no `UpdateService`, no failure counted — but the
+SECOND interruption was never detected, because it landed on a task that had not reached RUNNING
+yet, and the engine stayed wedged at `desired 1` with no box and no log line until a human turned
+it off; so the two-in-a-row skip (decision 4's last bullet) is UNMEASURED, and decision 6's 🔁 has
+fired on the letter (5 min 47 s to re-fetch 52.1 GiB) while its reasoning needs restating.**
+
+Everything below is a raw return value, a Control Plane log line, an audit row or a CloudTrail
+record. Where something was not measured, it says so.
+
+### Interruption 1 — the full set, and all of it green
+
+Lap: `mode: on` 11:28:05 UTC → `spot3` bought `i-0dd6877b4148871f6` (g6.xlarge, Spot,
+ap-northeast-1a) at 11:28:07 → registered 11:28:43 (**36 s**) → `state: running` 11:33:28,
+`warm: true` 11:33:42 (**4 min 45 s / 4 min 59 s** from the desired count). The box was terminated
+out from under the Control Plane at **11:37:15**.
+
+```
+11:37:30  engine image: the engine task was replaced without being asked: COMPLETED (service …)
+          has reached a steady state. | (service …) has started 1 tasks: (task 45974ded…). | …
+11:37:30  engines: image: the box was taken away; rebuilding from spot3 (spot)
+11:37:32  engine image: offer spot3 (spot) bought i-024627c199338ca2f
+11:38:08  engines: image: the box i-024627c199338ca2f registered (the pending task goes to it)
+```
+
+| Check | Result | Evidence |
+|---|---|---|
+| the interruption is detected (desired 1, the task replaced, the box gone) | 🟢 **15 s** | terminate 11:37:15 → the `replaced without being asked` line 11:37:30. The audit has both halves: `engine.image.replaced / restart` and `engine.image.interrupted / spot3` — *"the box was taken away while the service still wanted a task"* — at the same second |
+| `offer_trail` records `interrupted` | 🟢 | `[{spot3, spot, interrupted}, {spot3, spot, active}]` — the same offer twice, exactly the shape #591 describes |
+| the rebuild starts from the TOP of the list | 🟢 | `rebuilding from spot3 (spot)`, and `spot3` is row 1 of three. Nothing skipped, nothing carried over from the interrupted attempt |
+| **exactly one box** | 🟢 | CloudTrail's `CreateFleet` calls for the whole run are **three**, one per box, 11:28:07 / 11:37:32 / 11:46:29. At no 13-second sample was more than one `af-role=engine-image` instance alive |
+| **the desired count is NOT rewritten** | 🟢 | CloudTrail has **no `UpdateService` at all between 11:33:44 and 11:46:12** — the interruption, the rebuild and the second interruption all fall inside that gap. The registration log line says it in words too: `(the pending task goes to it)`, where a start says `(asking for the task)` |
+| no failure counted, no cooldown | 🟢 | `failures: null` on the panel before and after. An interruption is not a failure (decision 4), and the rebuild started 2 s after detection rather than after a cooldown |
+| the rebuild's own box registers | 🟢 **36 s** | 11:37:32 → 11:38:08. **53 s from the terminate to a registered replacement** |
+| sweep (a) does not terminate the new box for having no task | 🟢 | CloudTrail's only `TerminateInstances` in the window is **mine** (`agent-fleet-aws-deployer`, 11:37:16). The Control Plane terminated nothing until the departure at the end of the run |
+| sweep (b) deregisters the dead box's container instance | ⚠️ **not exercised** | Within 90 s the cluster was back to one engine container instance (the new box, `pending: 1`) — but there is **no `deregistering the ghost container instance` line and no `DeregisterContainerInstance` in CloudTrail from any principal**. ECS removed it itself, which is decision 4's `(c)` — published spec until now — confirmed. The CP's own direction (b) had nothing left to do, so it is still unmeasured |
+
+### 🔴 Interruption 2 — not detected, and the engine wedges
+
+`i-024627c199338ca2f` was terminated at **11:39:50**, 102 seconds after it registered. Its task was
+still PENDING: on a fresh box the fetch sidecar needs 1 min 42 s before the engine container may
+start (below), so nothing had reached RUNNING yet.
+
+Nothing happened. Not at once, and not in the six minutes that were watched:
+
+| Time (UTC) | State |
+|---|---|
+| 11:39:50 | `terminate-instances` |
+| 11:40:18 | panel: `state: starting`, `desired: 1`, `box: null`, `offer: null`, `offer_trail` unchanged at `[spot3 interrupted, spot3 active]` |
+| 11:43:55 | `describe-services` → desired 1, running 0, **pending 0**; the service's own newest event is *"was unable to place a task because no container instance met all of its requirements"* |
+| 11:45:56 | the Control Plane's log for the whole window: **52 lines, of which 0 mention an engine.** (The same query over the interruption-1 window returns four lines — that is the positive control for the empty result) |
+| 11:45:56 | the audit for the window: **no `engine.image.interrupted` row.** There is one for interruption 1 |
+| 11:46:12 | ended by hand with `mode: off` |
+
+**Why.** Decision 4's detection is inherited from ADR 0075 decision 6 as "`running` → `starting` at
+desired 1, and the box gone", and `stepRebuild` will not run without that `replaced` flag. The
+panel's own state trace, sampled every 13 seconds, never left `starting` for this box:
+
+```
+20:38:18 JST  state=starting d=1 svc=1,0,0  box=i-024627c199338ca2f     (registered)
+20:38:45      state=starting d=1 svc=1,0,1  box=i-024627c199338ca2f     (task PENDING)
+20:39:51      state=starting d=1 svc=1,0,0  box=i-024627c199338ca2f     (terminated by hand)
+20:40:18      state=starting d=1 svc=1,0,0  box=null
+```
+
+There is no `running` to leave, so there is no transition, so there is no interruption — and the
+other half of decision 4's condition, "the box is gone", is never consulted on its own. The
+`startInFlight` flag was dropped when the box registered (#584), so no walk was in flight to notice
+either. **The engine is left with a desired count of 1, no box, no walk and no clock**, and the
+only automatic way out is the idle window (`ImageIdleSec`, 900 s here) eventually stopping the
+engine and throwing the demand away — that was not waited for, so it is unmeasured.
+
+⚠️ **This is not a rare corner.** The cold start measured on this very run is **4 min 45 s** from
+the desired count to `running`, and the window in which an interruption is invisible is all of it.
+A Spot reclaim is at least as likely during the six minutes a box is booting and fetching 52 GiB as
+during the minutes it is serving.
+
+**Impact — decision 4.** Its premise stands; its detection is one condition short. "The box is
+gone" is a fact `describe-instances` can state on its own (decision 4 says exactly that, two
+sentences before it inherits the transition), so the fix is to make the second condition
+sufficient: **at desired ≥ 1, with an offer that took a box and no `af-role=engine-<role>` instance
+alive, rebuild — whether or not a task was ever RUNNING.** The `not a rebuild` guard that keeps an
+OOM kill from buying a GPU is the box still being there, and it is untouched by this.
+
+**Consequence for the rest of P2**: the two-in-a-row skip could not be reached. It needs two
+*detected* interruptions of the same offer, each of which needs a task that has been RUNNING, and
+two full cold starts plus their rebuilds do not fit in twenty GPU minutes. `begin()` clears
+`lastInterrupted`, so the one interruption already recorded cannot be carried into a later demand
+either. **Decision 4's last bullet is implemented (#591) and unmeasured on hardware.**
+
+### The departure, re-confirmed
+
+A third box, deliberately short, to check that the interruptions had left nothing broken:
+
+```
+11:46:29  engine image: offer spot3 (spot) bought i-0653b21fd06393519
+11:47:04  engines: image: the box i-0653b21fd06393519 registered (asking for the task)
+11:47:55  engines: image set to off by …
+11:48:56  engines: image: terminated the box i-0653b21fd06393519 (the engine is stopped and nothing is running on it)
+```
+
+🟢 CloudTrail, from the Control Plane's own task role: `UpdateService` 11:47:55 →
+`DeregisterContainerInstance` **11:48:56** → `TerminateInstances` **11:48:56**, in decision 5's
+order, **61 s** after the toggle (run 2 measured 50 s and 65 s). `terminate` → `terminated` took
+**5 min 37 s - 5 min 59 s** at 22-second polling — a fourth lap for decision 5's window, at the top
+of the four-to-six-minute range it was rewritten as, and still inside it.
+
+### Decision 6 — what a re-fetch actually costs
+
+The first box's fetch sidecar, from its own log. The catalogue on this deployment is **eleven files,
+55,974,977,974 bytes = 52.1 GiB** — well past the 30 GB decision 6's 🔁 names.
+
+| Elapsed | What |
+|---|---|
+| 0 s | `engine fetch: active set for /af-ws/engines/image/active starts with 'sd35-medium'` |
+| **1 min 42 s** | `engine fetch: engine may start; 9 file(s) still to sync` — the default set is on disk (`sd3.5_medium 5,107,104,286 bytes in 37s`, `clip_l … 3s`, `clip_g … 11s`, `t5xxl 4,893,934,904 … 47s`) |
+| **5 min 47 s** | `engine fetch: sync done` — all eleven files |
+
+Per-file throughput 82 / 104 / 126 / 127 / 138 / 168 / 168 / 198 / 199 / 209 / 225 MB/s,
+**154 MB/s over the whole 52.1 GiB** — against ADR 0071's 104-147 MB/s on Managed Instances and run
+2's 87-173 on a g5.xlarge. The NVMe data-root is not the ceiling; S3 is.
+
+🔴 **The 🔁 fires on the letter.** "A measured re-fetch above five minutes on a comfy deployment
+holding 30 GB" is exactly 5 min 47 s on 52.1 GiB, so by decision 6's own trigger P1 — the named
+`SourcePath` host volume — moves forward.
+
+⚠️ **But the trigger predicts the wrong thing, and this run is what shows it.** Decision 6 already
+says the host volume is warm only when desired goes 0 → 1 **on the same box**, and neither event
+that ends a box produces that: a departure terminates it (decision 5) and an interruption takes it
+away (decision 4). Measured here, an interruption cost **53 s to a registered replacement and then
+a full cold start on empty hardware** — a host volume saves nothing at all of it, because the
+volume died with the box. What the 5 min 47 s actually prices is the case decision 6 lists as its
+only beneficiary and ADR 0071 decision 5 has already decided not to stop in. So:
+
+- the 🔁's condition: **fired** (🔴);
+- the work it points at: **still not worth doing for the reason the 🔁 gives**, because the number
+  that crossed the threshold is an interruption cost and the host volume does not address
+  interruptions;
+- what would make it worth doing is a different measurement — how often desired goes 0 → 1 inside
+  the idle window on a real deployment — which nothing in this repository records today.
+
+Two numbers worth keeping beside it: the engine may start after **1 min 42 s** (the default model
+set, not all 52 GiB), and `warm: true` came **4 min 59 s** after the desired count. The remaining
+four minutes of the full sync happen behind a serving engine.
+
+### Cost and cleanup
+
+| Box | Type | Purchase | Up (UTC) | Ended | Alive | Why it ended |
+|---|---|---|---|---|---|---|
+| `i-0dd6877b4148871f6` | g6.xlarge | spot | 11:28:07 | 11:37:15 | 9m08s | interruption 1, by hand |
+| `i-024627c199338ca2f` | g6.xlarge | spot | 11:37:32 | 11:39:50 | 2m18s | interruption 2, by hand |
+| `i-0653b21fd06393519` | g6.xlarge | spot | 11:46:28 | 11:48:56 | 2m28s | the CP's own departure |
+
+**13 minutes 54 seconds, about $0.13** at the Spot price in force that hour ($0.5759/h in
+ap-northeast-1a, `describe-spot-price-history`). The gate was twenty minutes and $0.80; both held,
+and the run stopped short of the two-in-a-row skip rather than of the money.
+
+- `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**: three
+  instances, all `terminated`. (The positive control is the same query with `tag-key=af-role` alone,
+  which returns 7 — the slot boxes included.)
+- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → `[]`.
+- **Restored to what step 1 recorded**: `image` `mode: off`, `llm` `mode: ondemand`, `ImageOffers`
+  byte-identical (it was never changed — the production declaration was what P2 needed),
+  `ImageOfferBudgetSec` 300, service at desired 0. Nothing was left changed on the deployment, and
+  no template was edited for this run.
+- Every box in this run came up on the launch template as it stands in develop, and every one of
+  them registered — the two P1 defects in the user data stay fixed.
+- The raw responses are in `~/.cache/adr0077-p2/` of the session that measured this.
+
+### What this hands back
+
+| # | Verdict | Decision | What has to change |
+|---|---|---|---|
+| 1 | 🔴 | 4 | An interruption before the task reaches RUNNING is invisible, and the engine wedges at desired 1 with no box and no log. Make "no `af-role=engine-<role>` instance alive at desired ≥ 1 with a box on the books" sufficient on its own, without the `running` → `starting` transition |
+| 2 | ⚠️ | 4 | The two-in-a-row skip is implemented and **unmeasured**: two detected interruptions need two full cold starts, which does not fit a twenty-minute gate. It needs its own run, or a deployment with a smaller catalogue |
+| 3 | ⚠️ | 4 | Direction (b) of decision 5's sweep was **not needed**: ECS deregistered the dead box's container instance itself within 90 s, confirming the `(c)` the text marked unconfirmed. The sweep stays as the backstop it was written to be, still unexercised |
+| 4 | 🔴/⚠️ | 6 | The 🔁 fired (5 min 47 s for 52.1 GiB) but on a number the host volume cannot improve — an interruption always lands on a new box. Restate the 🔁 around "desired 0 → 1 inside the idle window", and measure how often that happens before building anything |
+| 5 | 🟢 | 4, 5 | Detection, the `interrupted` trail row, the rebuild from the top, one box, no `UpdateService`, no cooldown, no misfiring sweep, and the CP's own departure at 61 s |
+
+## Revision after P2 and P3 (2026-09-12)
+
+The last two follow-ups (the P3 hardware run, and P2's own with the fix #598 that came out of it)
+left the decisions standing and handed their findings back. This section is that revision, applied
+**in the decision text above** in the manner of the two before it — no premise of any decision
+moved; what moved is the wording P2 measured to be wrong or (c), and one condition that P2 proved
+too narrow.
+
+| Decision | What changed | Source |
+|---|---|---|
+| 4 | the detection's second condition ("no box tagged `af-role=engine-<role>` is `pending` or `running`") is **sufficient on its own** at desired ≥ 1 with a box on the CP's books; the `running` → `starting` transition becomes the other half of an OR instead of a precondition. The guard against an ordinary replacement is unchanged (the box is still there), and the ledger is consumed at detection | P2 hardware run (#597), the fix #598 |
+| 4 | ECS deregistering the dead box's container instance itself moves from (c) to **measured: within 90 s**, with no `DeregisterContainerInstance` from any principal | P2 hardware run |
+| 4 | the Spot-draining bullet is marked **still (c)**, and the last bullet — the two-in-a-row skip — is marked implemented (#591) and **unmeasured on hardware**, with the reason it could not be reached | P2 hardware run |
+| 5 | direction (b) of the departure sweep is written as **insurance**: ECS does the deregistration itself, so the CP's own direction had nothing to do. It stays as the backstop, still unexercised | P2 hardware run |
+| 6 | "P1 measures" becomes the measurement: 52.1 GiB in **5 min 47 s** at 154 MB/s, the engine free to start at 1 min 42 s, `warm: true` at 4 min 59 s. The 🔁 is **restated**: the number that crossed its old threshold prices an interruption, which always lands on new hardware, so the trigger is now "how often desired goes 0 → 1 inside the idle window" — to be measured before anything is built | P2 hardware run |
+| Open question 9 | **unmeasured, and no longer load-bearing**: the interruption was made with `terminate-instances`, which gives no two-minute notice | P2 hardware run |
+| Status | `proposed` → `accepted`. P0-P3 are in develop (#573-#598) and every phase has been on hardware | this revision |
+
+**P2 is complete**, with two things it could not reach, both named above and neither of them a
+premise: the two-in-a-row skip (it needs two *detected* interruptions, i.e. two full cold starts,
+which does not fit a twenty-minute gate) and **#598's own detection on hardware** — the fix is
+tested against the fake and its defect was measured live, but no box has yet been taken away before
+its task reached RUNNING with #598 running. One run of about twenty-five GPU minutes closes both:
+kill a box while its task is still PENDING, then kill its replacement the same way, and watch
+`spot3` be skipped for an `od` row.
+
+**P3 is complete.** Its run (#592) was green on every item it named and stayed open only on its own
+ordering — "P3 comes after P2", and P2 had not started. P2 has now run. P3's two ⚠️ observations
+about the llm role stand where its own table left them, neither of them a premise of a decision
+here: a cold start that waits for models the run will not serve (cause unmeasured; one enabled
+model on a later lap settles it), and no `vram_need_mib` on any llm model row, which leaves
+decision 6's fit check inert for that role.
+
+Also still unmeasured on hardware, from the earlier phases and unchanged by this revision: the
+`<Role>Enabled` round trip's Control Plane half (the CloudFormation half was measured on a throwaway
+stack, #593) and #584's recovery from a zero-row engine table.
