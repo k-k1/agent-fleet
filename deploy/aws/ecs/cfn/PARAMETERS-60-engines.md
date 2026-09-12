@@ -1362,14 +1362,34 @@ cloudformation deploy ...          # this template
 <Role>Enabled=true    # the service comes back, on the EC2 launch type
 ```
 
-Measured at **25 s** for the delete and **48 s** for the create, on a throwaway stack whose
-service carried an explicit name and a `ServiceRegistries` entry like the real ones.
+Measured at **25 s** for the delete and **48 s** for the create on a throwaway stack, and the
+delete reproduced at **24.8 s** on the real one (ADR 0077's P1 run, 2026-09-12). Two things that
+run did NOT reproduce, both of them because the real stack is not the throwaway:
 
-✅ **The Cloud Map name does NOT go away in between.** The `AWS::ServiceDiscovery::Service` is a
-separate resource with no condition on it, and the round trip was measured keeping the same
-registry ARN. What stops for those seconds is the ECS service registering instances into that
-name — and at desired 0 there are none, so there is nothing to lose. (ADR 0077 decision 11 says
-"the Cloud Map name is gone in between"; that is the one sentence P0 corrected.)
+🔴 **The `true` half BLOCKS, and it needs a second shell.** `AWS::ECS::Service` carries no
+`DesiredCount` here on purpose ([the engine services](#the-engine-services)), so a service
+CloudFormation creates comes up at desired 1 — and on the EC2 launch type there is no box to
+place it on, so the stack sits on the stabilisation wait until it times out and rolls back. The
+throwaway had `DesiredCount: 0` and finished in 48 s; the real pair sat for ten minutes and only
+completed once `aws ecs update-service --cluster <cluster> --service <svc> --desired-count 0` was
+run on BOTH from another shell while the update was in flight. Do that as soon as
+`<Role>Enabled=true` is submitted; `standup.sh` does the same thing after a create.
+
+🔴 **Force a new Control Plane deployment afterwards.** `EnginesParam` is under the same
+condition, so between the two halves the engine table has no rows — and a Control Plane that
+starts in that window builds no engine registry at all and no table reloader with it, so it never
+picks the rows up. The symptom is `GET /api/admin/engines` answering `{"engines":[]}` on a
+deployment whose stack is complete, with nothing in the log. `aws ecs update-service --service
+<cp> --force-new-deployment` fixed it in 86 s (measured). This bites every time, because
+`dev-deploy.sh` and `update.sh` put the Control Plane image on BETWEEN the two halves.
+
+⚠️ **The Cloud Map name DOES go away in between.** `LlmDiscovery` / `ImageDiscovery` carry the
+same `HasLlmModel` / `HasImageModel` condition as the services, so the round trip deletes and
+re-creates them — for the whole window, which is however long the deploy in the middle takes (34
+minutes when `dev-deploy.sh` bakes images). At desired 0 there is nothing registered in the name,
+so nothing is lost, which is what makes the window safe. (ADR 0077 P0 measured the opposite on a
+throwaway whose discovery resource had no condition. Its registry ARN observation still holds by
+accident: Cloud Map re-issued the SAME `srv-` id for the same namespace-and-name pair.)
 
 ⚠️ **Whatever the answer, the capture drops eight parameters** (`<Role>AllowedInstanceTypes`,
 `AcceleratorMemMinMiB`, `VCpuMin`, `VCpuMax`, `MemMinMiB`, `MemMaxMiB`, `UseLocalStorage`,
@@ -1695,8 +1715,10 @@ DEV=$(lsblk -dno NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1; exit}')
 
 - **Only the first instance-store device is used.** A type with several (g6.12xlarge) leaves the
   rest unmounted; a RAID0 would be the next step and nobody has needed it.
-- **An EBS-only type matches nothing and is left alone** — `g6e` sizes have no instance store, so
-  they keep the root volume and the paragraph above applies.
+- **An EBS-only type matches nothing and is left alone** and keeps the root volume, so the
+  paragraph above applies. ⚠️ **`g6e` is not one**: `g6e.xlarge` was measured on 2026-09-12 with a
+  232.8 GB instance store, mounted and used. Read the type's own specification rather than the
+  family's letter.
 - **The copy is not decoration.** The ECS AMI ships cached agent and pause images inside
   `/var/lib/docker`; mounting an empty filesystem over them without copying first would make the
   agent reload them, and `awsvpc` needs the pause image. Every step is chained with `&&` and
@@ -1707,11 +1729,19 @@ DEV=$(lsblk -dno NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1; exit}')
   writing `/etc/ecs/ecs.config` in user data work at all. Docker, which starts earlier, is
   stopped and restarted explicitly.
 
-⚠️ **Unverified on hardware.** Nothing in this repository has run a GPU box since ADR 0077, so
-the first P1 run must check, on the box: `df /var/lib/docker` (the NVMe, not `/dev/nvme0n1p*`),
-`docker info | grep "Docker Root Dir"`, and that the engine's first fetch writes at NVMe speed
-rather than 125 MB/s. **If it did not mount, the symptom is a slow start and nothing else** —
-which is exactly the shape that goes unnoticed, so look rather than assume.
+✅ **Verified on hardware** (ADR 0077's P1 run, 2026-09-12, `g6e.xlarge`): `df /var/lib/docker`
+is `/dev/nvme1n1 233G`, `docker info` reports `Docker Root Dir: /var/lib/docker`, the anonymous
+volume grew to 24 GB there, and the fetch ran at 104-209 MB/s against ADR 0071's 104-147.
+
+🔴 **What that run also found: stopping docker here stops the ECS agent from ever starting.**
+`ecs.service` is `PartOf=docker.service`, so `systemctl stop docker` CANCELS the start job systemd
+has queued for it, and `systemctl start docker` does not queue it again — the agent is left
+`inactive (dead)` with an empty journal, the box never registers, and there is no error anywhere.
+That is why the user data ends with `systemctl start --no-block ecs`. **`--no-block` is not
+decoration**: `ecs.service` is `After=cloud-final.service` and this script IS cloud-final, so a
+blocking start waits for a job that waits for the script (measured: `systemctl list-jobs` showed
+`ecs.service start waiting` behind `cloud-final.service start running` until the registration
+ceiling terminated the box).
 
 **Why it is still anonymous** (ADR 0077 decision 6): a named `SourcePath` now WORKS — the AL2023
 GPU AMI is not Bottlerocket — but the box goes when the engine goes idle (decision 5) or when

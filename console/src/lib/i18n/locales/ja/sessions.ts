@@ -553,4 +553,5 @@ export const sessions = {
   "ovw.ctx": "コンテキスト {pct}%",
   "ovw.ctx_hint": "コンテキストウィンドウの使用率",
   "ovw.started": "開始 {ago}",
+  "ovw.last_say_hint": "エージェントが最後に言ったことの冒頭（claude のみ・表示専用）",
 };

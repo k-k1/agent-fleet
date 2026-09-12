@@ -231,6 +231,17 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions 
           </span>
         )}
       </div>
+      {/* The last thing the agent SAID, one line (ADR 0078 decision 12). It is the bottom row
+          because it is the only part of the card whose height depends on the content: the rows
+          above keep their place whether or not a session has spoken. Blank when nothing has
+          been said yet, and for the kinds the Agent does not read a transcript for — the row
+          is then not drawn at all rather than reserved, so those cards stay as short as they
+          were. */}
+      {s.lastSay && (
+        <div className="ovw-say" title={s.lastSay + "\n" + tr("ovw.last_say_hint")}>
+          {s.lastSay}
+        </div>
+      )}
       {/* The menu is a CHILD of the card, and a React event bubbles through the component
           tree even out of a portal — so without this boundary every menu item also counted as
           a click on the card: choosing "Stop" opened the session in another pane behind the

@@ -250,6 +250,20 @@
   white-space: nowrap;
   max-width: 100%;
 }
+/* The agent's newest utterance (ADR 0078 decision 12). ONE line, ellipsized: the text arrives
+   already folded and capped by the Agent, so this only has to refuse to wrap — a card that
+   grows by two lines when a session happens to answer at length would make the grid's rows
+   jump about as sessions talk. Brighter than .ovw-meta, which it sits under: the meta line is
+   reference, this is what the card is read for. */
+.ovw-say {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
 /* The rail's caption row grows a button that opens the overview. */
 .lm-cap {
   display: flex;

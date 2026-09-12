@@ -348,6 +348,9 @@ colour the whole card, so they can be spotted from across the room.
   waiting for you** ("since your reply" once you have answered). That last one is read from
   notifications and this device's own observations, so it stays blank when neither saw the
   change.
+- **The very bottom of a card is the opening of the last thing that session said** (Claude only;
+  shown for stopped sessions too). A long line is cut off, and hovering shows it in full. On a
+  session that has not said anything yet, the line is not there at all.
 - **Right-click, the ⋯ button, or the Menu key on a card gives the same menu as the row in the
   left pane** — stop, rename, hand off, share, lock, keep awake, archive, and the rest
   ([Icons, badges, and menus](badges-and-menus.md)).

@@ -108,25 +108,41 @@ func tailThenWhole(p string) [][][]byte {
 	}
 	var out [][][]byte
 	for _, w := range windows {
-		off := fi.Size() - w
-		truncated := off > 0
-		if off < 0 {
-			off = 0
-		}
-		if _, err := f.Seek(off, io.SeekStart); err != nil {
+		lines, ok := windowLines(f, fi.Size(), w)
+		if !ok {
 			return out
-		}
-		buf, err := io.ReadAll(f)
-		if err != nil {
-			return out
-		}
-		lines := bytes.Split(buf, []byte("\n"))
-		if truncated && len(lines) > 0 {
-			lines = lines[1:]
 		}
 		out = append(out, lines)
 	}
 	return out
+}
+
+// windowLines returns the lines of f's last w bytes, dropping the half-line the window
+// cut off at its start (a window that begins mid-record would otherwise yield a fragment
+// no parser can read). ok is false when the file could not be read at all, which the
+// callers distinguish from "the window held nothing they wanted".
+//
+// Separate from tailThenWhole because a caller that must never widen to the whole file
+// (lastsay.go — it runs per session on the 4 s list poll) needs exactly this one window,
+// and two copies of the seek/split/drop-the-fragment rule would drift.
+func windowLines(f *os.File, size, w int64) ([][]byte, bool) {
+	off := size - w
+	truncated := off > 0
+	if off < 0 {
+		off = 0
+	}
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return nil, false
+	}
+	buf, err := io.ReadAll(f)
+	if err != nil {
+		return nil, false
+	}
+	lines := bytes.Split(buf, []byte("\n"))
+	if truncated && len(lines) > 0 {
+		lines = lines[1:]
+	}
+	return lines, true
 }
 
 // readJSONLLines reads a jsonl file into its non-empty raw lines, dropping a trailing
