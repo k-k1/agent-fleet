@@ -737,3 +737,38 @@
   }
 
 }
+
+/* The engine-wide exclusion list (ADR 0072 follow-up, negative prompts). It sits between the
+   box controls and the model list, and reads as one statement: a field, its save, and the note
+   that says what it is NOT. */
+.engines-negative {
+  margin-top: 10px;
+}
+
+.engines-negative input {
+  flex: 1;
+  min-width: 0;
+}
+
+.engines-negative .engines-model-add-actions {
+  margin-top: 6px;
+}
+
+/* The per-model field reads as the family picker's row — same size, same rhythm — with an input
+   that can grow: a negative prompt is a sentence, not one of five family names. */
+.engines-model-negative {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.engines-model-negative > span {
+  color: var(--dialog-muted);
+}
+
+.engines-model-negative input {
+  flex: 1;
+  min-width: 0;
+}

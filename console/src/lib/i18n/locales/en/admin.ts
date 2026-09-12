@@ -86,6 +86,20 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_id": "id",
   "admin.engines_model_add_key": "key",
   "admin.engines_model_add_family": "family",
+  // ADR 0072 follow-up, negative prompts. Three places get a say in what a picture keeps out —
+  // this row, the request, and the deployment — and they are ADDED, so none of the labels may
+  // read as "the" negative prompt.
+  "admin.engines_model_negative": "never draw",
+  "admin.engines_model_negative_placeholder": "what this checkpoint should keep out",
+  "admin.engines_negative_label": "excluded from every image",
+  "admin.engines_negative_placeholder": "keywords, separated by commas",
+  "admin.engines_negative_save": "Save",
+  // 🔴 The sentence that keeps this from being read as a content filter. It is a negative
+  // prompt: a nudge to the sampler, absent altogether on the distilled checkpoint families,
+  // and no guarantee about what comes out.
+  "admin.engines_negative_note":
+    "Added to the negative prompt of every image this engine makes, on top of the model's own and the request's. It is guidance, not a filter — two checkpoint families sample without a negative prompt at all, and those requests say so in their warnings.",
+  "admin.engines_negative_too_long": "Too long — this is a keyword list, not a policy document.",
   // ADR 0072 decision 5, the llm half. A LoRA is not a model: it is pinned to one, travels in
   // that model's preset section, and is invisible to the member — who sees an ordinary model id
   // that happens to include the fine-tune.

@@ -82,6 +82,10 @@ type engineCatalogRow struct {
 	// Loras are the accessories, never something to start the engine with. Carried for the
 	// image role so generate_image can offer them by name (ADR 0072 decision 5, phase P3).
 	Loras []engineCatalogModel `json:"loras"`
+	// NegativeAlways is what this engine's administrator excludes from every image, whoever asks
+	// and whichever model answers (ADR 0072 follow-up, negative prompts). Empty on a Control
+	// Plane older than that follow-up, which is the same as nothing being configured.
+	NegativeAlways string `json:"negative_always"`
 }
 
 // engineCatalogModel is one model as the catalogue describes it.
@@ -92,8 +96,11 @@ type engineCatalogModel struct {
 	Description     string   `json:"description"`
 	Sizes           []string `json:"sizes"`
 	BaseModel       string   `json:"base_model"`
-	Selected        bool     `json:"selected"`
-	Default         bool     `json:"default"`
+	// Negative is this row's own recommended negative prompt, added to every request that names
+	// this model. Empty for a row that declares none.
+	Negative string `json:"negative"`
+	Selected bool   `json:"selected"`
+	Default  bool   `json:"default"`
 	// Files are the on-disk basenames ADR 0072 decision 2 declares, only sent for the image
 	// role's non-LoRA models — the comfy provider (ADR 0072 P2) is the first reader; sdcpp
 	// never asked because it holds one checkpoint and never chooses which file to load.
@@ -409,7 +416,12 @@ func engineImageConn(ctx context.Context, provider string) (imagegen.EngineConn,
 			Files:        engineImageFiles(e),
 			Warm:         engineImageWarm(e),
 			Descriptions: engineImageDescriptions(e),
-			Loras:        engineImageLoras(e),
+			Negatives:    engineImageNegatives(e),
+			// Trimmed here rather than at every reader: the administrator types this into a text
+			// box, and a value of one space would otherwise compose into a negative prompt with a
+			// stray comma in it.
+			NegativeAlways: strings.TrimSpace(e.NegativeAlways),
+			Loras:          engineImageLoras(e),
 		}, true
 	}
 	return imagegen.EngineConn{}, false
@@ -458,6 +470,23 @@ func engineImageBaseModels(e engineCatalogRow) map[string]string {
 	for _, m := range e.ModelRows {
 		if m.ID != "" && m.BaseModel != "" {
 			out[m.ID] = m.BaseModel
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// engineImageNegatives is the catalogue's own negative prompt per model id (ADR 0072 follow-up,
+// negative prompts) — what a checkpoint's publisher recommends keeping out, which for the SDXL
+// fine-tunes is half of what makes the model behave as its sample pictures do. nil when no row
+// declares one, which is every catalogue written before the column existed.
+func engineImageNegatives(e engineCatalogRow) map[string]string {
+	out := map[string]string{}
+	for _, m := range e.ModelRows {
+		if m.ID != "" && strings.TrimSpace(m.Negative) != "" {
+			out[m.ID] = strings.TrimSpace(m.Negative)
 		}
 	}
 	if len(out) == 0 {

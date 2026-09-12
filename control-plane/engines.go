@@ -371,13 +371,14 @@ func (r *engineRegistry) list() []*engineRuntimeState {
 	return out
 }
 
-// engineSettingsFor names an engine's three settings rows. VOICEVOX keeps the names ADR
+// engineSettingsFor names an engine's settings rows. VOICEVOX keeps the names ADR
 // 0070 shipped (ttsEngineSettings); everything since is prefixed by its key.
 func engineSettingsFor(key string) engineSettings {
 	return engineSettings{
 		mode:     "engine_" + key + "_mode",
 		modeAt:   "engine_" + key + "_mode_at",
 		demandAt: "engine_" + key + "_demand_at",
+		negative: "engine_" + key + "_negative",
 	}
 }
 
@@ -756,6 +757,22 @@ type engineWarmCache struct {
 //
 // The lock is held ACROSS the call on purpose: two panels loading at once then cost one probe
 // rather than two, and the 2-second timeout is what makes that safe to wait behind.
+// negativeAlways is what this engine's administrator excludes from every image (ADR 0072
+// follow-up, negative prompts). "" when nothing was configured, when the settings store is
+// absent (tests), and for an engine whose settings have no such row.
+//
+// Read on the catalogue path rather than held in memory: it changes from a text box in the admin
+// panel, and the Agent's own catalogue cache is what bounds how often it is asked for (10
+// minutes) — the same TTL that already bounds a model being enabled.
+func (e *engineRuntimeState) negativeAlways(ctx context.Context) string {
+	keys := engineSettingsFor(e.def.Key)
+	if e.settings == nil || keys.negative == "" {
+		return ""
+	}
+	v, _ := e.settings.GetSetting(ctx, keys.negative)
+	return strings.TrimSpace(v)
+}
+
 func (e *engineRuntimeState) warm(ctx context.Context) bool {
 	if e.ctrl != nil {
 		return e.ctrl.warmed()

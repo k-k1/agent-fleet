@@ -253,6 +253,12 @@ type EngineModel struct {
 	// ADR's table. Keeping only the first shows them as "other" and nothing else.
 	License, LicenseName, LicenseURL string
 	Precision, BaseModel             string
+	// NegativePrompt is what this checkpoint should keep OUT of every picture, as its publisher
+	// recommends it. A DEFAULT for the model, not a policy: a request's own negative prompt is
+	// added to it, and the engine-wide exclusion list an administrator sets is added to both.
+	// Empty means undeclared, which the Agent answers with its own measured default rather than
+	// with an empty negative prompt.
+	NegativePrompt string
 	// Who accepted the licence and when (ADR 0072 decision 10). A record of a HUMAN act: a
 	// gated repository distributes only to accounts that accepted its terms, and in a
 	// multi-tenant deployment the operator accepts on behalf of every member — so the
@@ -335,6 +341,9 @@ type EngineModelStore interface {
 	// SetEngineModelBaseModel corrects the declared checkpoint family of one row, which is the
 	// one field a row can be missing while looking complete (ADR 0072 decision 2).
 	SetEngineModelBaseModel(ctx context.Context, role, id, baseModel string) (bool, error)
+	// SetEngineModelNegativePrompt corrects the row's own negative prompt — what this checkpoint
+	// should never be asked to draw (ADR 0072 follow-up, negative prompts).
+	SetEngineModelNegativePrompt(ctx context.Context, role, id, negative string) (bool, error)
 	DeleteEngineModel(ctx context.Context, role, id string) (bool, error)
 }
 

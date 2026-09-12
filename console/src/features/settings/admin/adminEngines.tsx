@@ -78,6 +78,11 @@ type EngineModel = {
   license_accepted_by?: string;
   license_accepted_at?: string;
   base_model?: string;
+  /** What this checkpoint should keep OUT of every picture, as its publisher recommends it
+   *  (ADR 0072 follow-up, negative prompts). A DEFAULT for the model: a request's own negative
+   *  prompt is added to it, and the engine's exclusion list is added to both. Empty means
+   *  undeclared, which the Agent answers with its own measured default. */
+  negative_prompt?: string;
   /** The provider dispatches on base_model and THIS row's is missing or names no workflow
    *  template (ADR 0072 decision 2). Stated by the CP, because the panel cannot know the
    *  vocabulary — and because the row looks complete without it and fails only at generation,
@@ -243,6 +248,11 @@ type EngineRow = {
    *  ask" — offering a choice that changes nothing is worse than offering none. */
   base_models?: string[];
   file_flags?: string[];
+  /** What this deployment excludes from every image this engine makes (ADR 0072 follow-up,
+   *  negative prompts), and how long that list may be. Only ever present on an image engine —
+   *  a chat engine has nothing to exclude — so the section is drawn on the field arriving. */
+  negative_always?: string;
+  negative_max?: number;
   /** 🔴 Optional because the row a granted tenant_admin receives DOES NOT CARRY THEM (ADR 0072
    *  open question 11). That row is a strict subset of the operator's, so everything the
    *  reduced panel does not draw is simply absent — which is why the panel branches on the
@@ -500,6 +510,31 @@ export function EnginesAdminView() {
     await callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "PUT", patch, key);
   };
 
+  /** What this deployment excludes from every image this engine makes. One setting, applied to
+   *  every request whoever made it and whichever checkpoint answers.
+   *
+   * 🔴 Not a content filter, and the panel says so beside the box: the words reach the sampler
+   * through the negative branch of classifier-free guidance, which two of the five checkpoint
+   * families do not have at all. It is a default, not a gate. */
+  const setNegative = async (key: string, negative: string) => {
+    setBusy(key + "/negative");
+    try {
+      const d = await apiJSON(
+        `api/admin/engines/${encodeURIComponent(key)}/negative`,
+        "PUT",
+        { negative },
+      );
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const addModel = async (key: string, body: Record<string, unknown>) => {
     await callModel(key + "/+", `api/admin/engines/${encodeURIComponent(key)}/models`, "POST", body, key);
   };
@@ -638,6 +673,16 @@ export function EnginesAdminView() {
               busy={busy === e.key}
               onPick={(cls) => setClass(e.key, cls)}
               onReplace={() => replaceBox(e.key)}
+            />
+          )}
+          {/* What this deployment will not draw. Beside the box rather than inside the model
+              list because it is one answer for the whole engine — and super-admin, like the
+              mode and the rung, because it is a statement about the deployment. */}
+          {isSuper && e.api === "images" && e.negative_always !== undefined && (
+            <EngineNegative
+              row={e}
+              busy={busy === e.key + "/negative"}
+              onSave={(v) => setNegative(e.key, v)}
             />
           )}
           <EngineModels
@@ -968,6 +1013,101 @@ function engineClassVramNote(row: EngineRow, tr: (k: never) => string): string {
  * same rows, none of the controls. Enabling a model, choosing what the engine starts with and
  * forgetting a row all decide what EVERY OTHER TENANT runs off one shared box, so they stay the
  * operator's — and the CP refuses them anyway, which is the reason not to draw them disabled. */
+/** The engine-wide exclusion list (ADR 0072 follow-up, negative prompts).
+ *
+ * A local draft with an explicit save rather than saving as you type: every keystroke would be
+ * a PUT that fans out to every running workspace, and an exclusion list half-typed is a list
+ * that excludes the wrong thing.
+ *
+ * 🔴 The note under it is not decoration. These words reach the sampler through the negative
+ * branch of classifier-free guidance — a nudge, not a gate — and two of the five checkpoint
+ * families have no such branch at all, which the generated result reports in its own warnings.
+ * A panel that let this be read as a content filter would be the most expensive kind of wrong. */
+function EngineNegative({
+  row,
+  busy,
+  onSave,
+}: {
+  row: EngineRow;
+  busy: boolean;
+  onSave: (v: string) => void;
+}) {
+  const tr = useT();
+  const saved = row.negative_always || "";
+  const [draft, setDraft] = useState(saved);
+  // The server's value wins whenever it changes under us (another admin, a reload), but only
+  // then: re-running this on every render would delete what is being typed.
+  useEffect(() => setDraft(saved), [saved]);
+  const max = row.negative_max || 500;
+  const tooLong = draft.length > max;
+  return (
+    <div className="engines-negative">
+      <label className="engines-model-add-row">
+        <span>{tr("admin.engines_negative_label")}</span>
+        <input
+          type="text"
+          value={draft}
+          maxLength={max + 1}
+          placeholder={tr("admin.engines_negative_placeholder") as string}
+          onChange={(ev) => setDraft(ev.currentTarget.value)}
+        />
+      </label>
+      <div className="engines-model-add-actions">
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={busy || tooLong || draft === saved}
+          onClick={() => onSave(draft.trim())}
+        >
+          {tr("admin.engines_negative_save")}
+        </button>
+      </div>
+      <p className="muted">{tr("admin.engines_negative_note")}</p>
+      {tooLong && <p className="form-err">{tr("admin.engines_negative_too_long")}</p>}
+    </div>
+  );
+}
+
+/** One model row's own negative prompt. Same draft-and-save shape as the engine-wide box above,
+ *  and empty is a real value: it means "stop declaring one", which the Agent answers with its
+ *  own measured default rather than with nothing excluded. */
+function ModelNegative({
+  model,
+  pending,
+  onChange,
+}: {
+  model: EngineModel;
+  pending: boolean;
+  onChange: (id: string, patch: Record<string, boolean | string>) => void;
+}) {
+  const tr = useT();
+  const saved = model.negative_prompt || "";
+  const [draft, setDraft] = useState(saved);
+  useEffect(() => setDraft(saved), [saved]);
+  return (
+    // Its own class, not the family picker's: a test counts the family rows to prove a panel
+    // offers exactly one fix for exactly one broken row, and a second element wearing that name
+    // would make that check pass for the wrong reason.
+    <div className="engines-model-negative">
+      <span>{tr("admin.engines_model_negative")}</span>
+      <input
+        type="text"
+        value={draft}
+        placeholder={tr("admin.engines_model_negative_placeholder") as string}
+        onChange={(ev) => setDraft(ev.currentTarget.value)}
+      />
+      <button
+        type="button"
+        className="btn-secondary"
+        disabled={pending || draft === saved}
+        onClick={() => onChange(model.id, { negative_prompt: draft.trim() })}
+      >
+        {tr("admin.engines_negative_save")}
+      </button>
+    </div>
+  );
+}
+
 function EngineModels({
   row,
   busy,
@@ -1140,6 +1280,12 @@ function EngineModels({
                         .join(", "),
                     )}
                 </p>
+              )}
+              {/* What THIS checkpoint should never draw, which its publisher usually states
+                  and nothing else here could know. Image rows only: a chat model has no
+                  negative prompt, and a LoRA is not what a request names. */}
+              {!readOnly && isImage && m.kind !== "lora" && (
+                <ModelNegative model={m} pending={pending} onChange={onChange} />
               )}
               {/* 🔴 The two acts, told apart. Forgetting alone leaves the bytes in the bucket
                   with nothing able to reach them (measured: a 491 MB file outlived its row);

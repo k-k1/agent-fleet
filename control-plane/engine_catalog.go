@@ -570,6 +570,12 @@ func engineCatalogModelRow(m store.EngineModel, warm string) map[string]any {
 	if m.BaseModel != "" {
 		row["base_model"] = m.BaseModel
 	}
+	// What this checkpoint's publisher says to keep out (ADR 0072 follow-up, negative prompts).
+	// It reaches the sampler only on the families that have a negative branch, which is the
+	// Agent's call to make and to report — the catalogue states the fact and nothing more.
+	if m.NegativePrompt != "" {
+		row["negative"] = m.NegativePrompt
+	}
 	if m.Selected {
 		row["selected"] = true
 	}
@@ -656,6 +662,12 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	}
 	if m.BaseModel != "" {
 		row["base_model"] = m.BaseModel
+	}
+	// The row's own negative prompt, so the panel can show and edit what this checkpoint is told
+	// to keep out. Absent rather than empty on a row that declares none — the Agent's own
+	// measured default is what such a row gets, and an empty box is how an operator says so.
+	if m.NegativePrompt != "" {
+		row["negative_prompt"] = m.NegativePrompt
 	}
 	// Which vendor's model of that name this is. Absent for a seeded row, which came from the
 	// stack rather than from anywhere with a URL — and absent rather than "unknown", so the
@@ -754,3 +766,9 @@ func engineModelFileNames(m store.EngineModel) []string {
 	}
 	return out
 }
+
+// engineNegativeMaxRunes bounds the administrator's exclusion list. It is not a storage limit —
+// the settings row would take a novel — but a wire one: this string rides on every catalogue
+// answer to every workspace, and the tool description it eventually shapes is a fixed cost every
+// session pays on every tools/list. A keyword list, not a policy document.
+const engineNegativeMaxRunes = 500

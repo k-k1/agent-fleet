@@ -16,7 +16,8 @@ package imagegen
 //
 // Every template takes comfyFiles (the on-disk basenames ADR 0072 decision 2 declares, resolved
 // from the catalogue's Flag vocabulary — see EngineFile) and comfyParams (the request-shaped
-// knobs: prompt, seed, size, batch count, and the LoRAs to chain in). Nothing else varies:
+// knobs: prompt, negative prompt, seed, size, batch count, and the LoRAs to chain in). Nothing
+// else varies:
 // sampler, steps, cfg and scheduler are the family's own fixed recipe, not a caller's choice
 // (P2 scope decision — a future phase may widen this, ADR 0072 phase P2 note).
 //
@@ -33,10 +34,23 @@ import (
 )
 
 // comfyNegativePrompt is the same negative prompt bench-image-engine.py measured with, for the
-// families that use one (SDXL, SD3.5). Never exposed to the caller: `Request` has no negative-
-// prompt field (ADR 0069's vocabulary is provider-neutral), so a fixed, reasonable default is
-// the honest answer rather than an empty string that would let every artifact through.
+// families that use one (SDXL, SD3.5). It is the DEFAULT, used when neither the catalogue row,
+// the caller nor the engine's administrator named one — an empty string there would let every
+// artifact through, which is not what a caller who said nothing meant.
 const comfyNegativePrompt = "blurry, lowres, deformed, watermark, text"
+
+// comfyNegativeText is what a guided family's negative CLIPTextEncode is given: whatever the
+// three declaring places composed (comfyNegativeFor), and this fixed default when they composed
+// nothing. The fallback is what keeps a request that says nothing identical to the graph this
+// package has always sent — and it is a fallback rather than a floor, so a catalogue row that
+// declares its own negative replaces it instead of being appended to boilerplate the publisher
+// did not ask for.
+func comfyNegativeText(p comfyParams) string {
+	if n := strings.TrimSpace(p.Negative); n != "" {
+		return n
+	}
+	return comfyNegativePrompt
+}
 
 // comfyFiles is the resolved, per-role file set for one model — see EngineFile for how the
 // catalogue's Flag maps onto these fields. A family's template reads only the fields it needs;
@@ -99,8 +113,12 @@ type comfyParams struct {
 	// Op decides what the sampler starts from: an empty latent (generate), or the caller's own
 	// picture encoded back into one (edit / inpaint). Empty means generate — the zero value has
 	// to be the operation every template was written for first.
-	Op        Op
-	Prompt    string
+	Op     Op
+	Prompt string
+	// Negative is the composed negative prompt (comfyNegativeFor). Empty means "nobody said",
+	// which is NOT the same as "exclude nothing" — see comfyNegativeText. Only the two guided
+	// families read it; the other three sample where it could not matter (Caps.Negative).
+	Negative  string
 	Seed      int64
 	Width     int
 	Height    int
@@ -327,7 +345,7 @@ func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": p.Prompt, "clip": clip}}
 	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
-		"text": comfyNegativePrompt, "clip": clip}}
+		"text": comfyNegativeText(p), "clip": clip}}
 	lat, err := comfyRequestLatent(g, p, vae, "EmptyLatentImage")
 	if err != nil {
 		return nil, err
@@ -529,7 +547,7 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": p.Prompt, "clip": clip}}
 	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
-		"text": comfyNegativePrompt, "clip": clip}}
+		"text": comfyNegativeText(p), "clip": clip}}
 	lat, err := comfyRequestLatent(g, p, vae, "EmptySD3LatentImage")
 	if err != nil {
 		return nil, err

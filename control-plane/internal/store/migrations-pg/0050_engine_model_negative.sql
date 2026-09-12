@@ -1,0 +1,12 @@
+-- The catalogue row's own negative prompt (ADR 0072 follow-up, negative prompts).
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`.
+--
+-- The sqlite counterpart is migrations/0065_engine_model_negative.sql and the reasoning is
+-- there. In short: a checkpoint's publisher recommends terms to keep OUT as often as terms to
+-- put in, and until now the only negative prompt in the system was one fixed line compiled into
+-- the Agent, the same for every checkpoint. Empty means "nobody declared one", which the Agent
+-- answers with that fixed line rather than with an empty negative prompt.
+ALTER TABLE engine_models ADD COLUMN IF NOT EXISTS negative_prompt TEXT NOT NULL DEFAULT '';

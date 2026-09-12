@@ -2641,6 +2641,118 @@ describe("EnginesAdminView / searching for a model", () => {
   });
 });
 
+// The three places that get a say in what a picture keeps OUT (ADR 0072 follow-up, negative
+// prompts). Two of them are edited here — the engine's own list and the model row's — and both
+// are drafts with an explicit save: every keystroke would otherwise be a PUT that fans out to
+// every running workspace, and a half-typed exclusion list excludes the wrong thing.
+describe("EnginesAdminView / negative prompts", () => {
+  const button = (label: string) =>
+    Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+      | HTMLButtonElement
+      | undefined;
+  const typeInto = async (el: Element, v: string) => {
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  it("saves the engine's exclusion list and the model's own, and says it is not a filter", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl"],
+          has_models: true,
+          negative_always: "",
+          negative_max: 500,
+          model_rows: [{ id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, base_model: "sdxl" }],
+        }),
+      ],
+    });
+    await mount();
+
+    // 🔴 The note is part of the control. Without it a box called "excluded from every image"
+    // reads as a content filter, which this is not: it is a negative prompt, and two of the
+    // five checkpoint families sample without one at all.
+    const note = host!.querySelector(".engines-negative .muted")!;
+    expect(note.textContent).toContain("フィルタではなく誘導");
+
+    const engineBox = host!.querySelector(".engines-negative input")!;
+    // Nothing typed yet, so there is nothing to save: the button is not a no-op waiting to be
+    // pressed.
+    expect(button("保存")!.disabled).toBe(true);
+    await typeInto(engineBox, "explicit, gore");
+    apiJSON.mockResolvedValue(row({ negative_always: "explicit, gore" }));
+    await click(button("保存"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/negative", "PUT", {
+      negative: "explicit, gore",
+    });
+
+    // The model's own is a different question with a different scope, so it is a different
+    // control — and it goes to the catalogue route, not to the engine one.
+    apiJSON.mockClear();
+    const modelBox = host!.querySelector(".engines-model-negative input")!;
+    await typeInto(modelBox, "extra fingers");
+    const save = Array.from(host!.querySelectorAll(".engines-model-negative button"))[0] as HTMLElement;
+    apiJSON.mockResolvedValue(row({}));
+    await click(save);
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/sdxl-base-1.0", "PUT", {
+      negative_prompt: "extra fingers",
+    });
+  });
+
+  // Clearing is a real edit, not a no-op: it means "stop declaring one", which the Agent answers
+  // with its own measured default rather than with nothing excluded. A save button that read
+  // "empty means unchanged" would make that unreachable from the panel.
+  it("lets a declared negative prompt be cleared", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl"],
+          has_models: true,
+          negative_always: "explicit",
+          negative_max: 500,
+          model_rows: [
+            {
+              id: "sdxl-base-1.0",
+              kind: "checkpoint",
+              enabled: true,
+              base_model: "sdxl",
+              negative_prompt: "extra fingers",
+            },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const modelBox = host!.querySelector(".engines-model-negative input") as HTMLInputElement;
+    expect(modelBox.value).toBe("extra fingers");
+    await typeInto(modelBox, "");
+    apiJSON.mockResolvedValue(row({}));
+    const save = Array.from(host!.querySelectorAll(".engines-model-negative button"))[0] as HTMLElement;
+    await click(save);
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/sdxl-base-1.0", "PUT", {
+      negative_prompt: "",
+    });
+  });
+
+  // A chat engine has nothing to exclude, and the CP says so by omitting the field. Drawing the
+  // box anyway would offer a setting that reaches nothing.
+  it("offers no exclusion list on an engine that makes no images", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [row({ key: "llm", api: "chat", provider: "llamacpp", has_models: true, model_rows: [] })],
+    });
+    await mount();
+    expect(host!.querySelector(".engines-negative")).toBeNull();
+  });
+});
+
 // 🔴 A deployment that has not adopted 60-engines has an EMPTY panel, and "there is nothing
 // here" is the worst possible answer to "what could I run?". Looking at what Hugging Face has
 // needs no engine at all — no token, no bucket, no task — so the browse stays.

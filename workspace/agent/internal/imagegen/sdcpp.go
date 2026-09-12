@@ -88,6 +88,21 @@ type EngineConn struct {
 	// for a model the catalogue says nothing about, which is not an error: the id alone is a
 	// usable, if less helpful, choice.
 	Descriptions map[string]string
+	// Negatives is the catalogue's own negative prompt per model id: the terms a checkpoint's
+	// publisher recommends keeping out, which for the SDXL fine-tunes are half of what makes
+	// the model behave as its sample pictures do. A DEFAULT, not a policy — a request's own
+	// negative prompt is added to it rather than replacing it, because a caller who names one
+	// thing to exclude does not mean "and stop excluding everything else".
+	Negatives map[string]string
+	// NegativeAlways is the deployment administrator's own exclusion list for THIS engine, added
+	// to every request no matter which model or member it came from. Separate from Negatives
+	// because it answers a different question (what this deployment will not draw, versus what
+	// this checkpoint draws badly) and is written from a different screen by a different role.
+	//
+	// It is not a content filter and must not be described as one: it reaches the sampler on the
+	// families that HAVE a negative branch and nowhere else, so a deployment that needs a
+	// guarantee needs one somewhere this cannot promise.
+	NegativeAlways string
 	// Loras are the enabled fine-tunes this engine holds (ADR 0072 decision 5, phase P3). A flat
 	// list rather than a map by model: a LoRA is not owned by a checkpoint, it declares the
 	// FAMILY it was trained against and any checkpoint of that family may use it.

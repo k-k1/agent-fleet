@@ -1169,3 +1169,93 @@ func TestEngineAdminModelReadsTheVerdictOffTheLicence(t *testing.T) {
 		}
 	}
 }
+
+// --- the negative prompt (ADR 0072 follow-up) ---------------------------------
+
+// The row's own negative prompt is edited in place, like base_model and for the same reason: a
+// split model is four S3 keys, and re-registering all of them to change one sentence is an edit
+// nobody makes twice. The empty string is a real value — "stop declaring one" — which is why the
+// field is a pointer on the wire.
+func TestEngineAdminEditsAModelNegativePrompt(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", BaseModel: "sdxl", Enabled: true,
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	code, _ := adminModel(t, a, "PUT", "image", "sdxl-base-1.0", `{"negative_prompt":"extra fingers, text"}`)
+	if code != http.StatusOK {
+		t.Fatalf("PUT negative_prompt = %d", code)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if len(rows) != 1 || rows[0].NegativePrompt != "extra fingers, text" {
+		t.Fatalf("stored row = %+v, want the negative prompt", rows)
+	}
+	// It reaches the Agent through the catalogue, which is the only path that matters: a value
+	// stored and not carried is a setting that does nothing.
+	row := engineCatalogRowFor(e.def, rows, "", "")
+	models, _ := row["model_rows"].([]map[string]any)
+	if len(models) != 1 || models[0]["negative"] != "extra fingers, text" {
+		t.Errorf("catalogue row = %v, want the negative on the wire", row["model_rows"])
+	}
+	// ...and back to nothing, which the Agent answers with its own default rather than with an
+	// empty negative prompt.
+	if code, _ := adminModel(t, a, "PUT", "image", "sdxl-base-1.0", `{"negative_prompt":""}`); code != http.StatusOK {
+		t.Fatalf("clearing it = %d", code)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].NegativePrompt != "" {
+		t.Errorf("negative prompt = %q, want it cleared", rows[0].NegativePrompt)
+	}
+}
+
+// The engine-wide exclusion list: one text box, applied to every request on this engine. Set,
+// carried on the catalogue, and cleared by the same route — there is no DELETE, because
+// "excluded: nothing" is a value typed into the box it was typed out of.
+func TestEngineAdminSetsTheEngineExclusionList(t *testing.T) {
+	a, e, _ := engineModelAdminAPI(t)
+	put := func(body string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("PUT", "/api/admin/engines/image/negative", strings.NewReader(body))
+		r.SetPathValue("key", "image")
+		a.putNegative(rec, r, store.Identity{ID: "u1"})
+		return rec.Code, rec.Body.String()
+	}
+	if code, body := put(`{"negative":"explicit, gore"}`); code != http.StatusOK {
+		t.Fatalf("PUT negative = %d (%s)", code, body)
+	}
+	if got := e.negativeAlways(t.Context()); got != "explicit, gore" {
+		t.Errorf("negativeAlways = %q, want what was just set", got)
+	}
+	row := engineCatalogRowFor(e.def, []store.EngineModel{
+		{Role: "image", ID: "sdxl-base-1.0", Enabled: true, BaseModel: "sdxl"},
+	}, "", e.negativeAlways(t.Context()))
+	if row["negative_always"] != "explicit, gore" {
+		t.Errorf("catalogue row = %v, want the exclusion list on the wire", row)
+	}
+	// A paragraph is refused rather than stored: this string rides on every catalogue answer to
+	// every workspace, so its size is a cost every session pays.
+	if code, body := put(`{"negative":"` + strings.Repeat("x", engineNegativeMaxRunes+1) + `"}`); code != http.StatusBadRequest {
+		t.Fatalf("an over-long list = %d, want 400 (%s)", code, body)
+	}
+	if got := e.negativeAlways(t.Context()); got != "explicit, gore" {
+		t.Errorf("a refused write changed the stored value to %q", got)
+	}
+	// Cleared, and then the wire says nothing at all rather than an empty string.
+	if code, _ := put(`{"negative":"  "}`); code != http.StatusOK {
+		t.Fatal("clearing the list was refused")
+	}
+	if got := e.negativeAlways(t.Context()); got != "" {
+		t.Errorf("negativeAlways = %q, want it cleared", got)
+	}
+	empty := engineCatalogRowFor(e.def, []store.EngineModel{
+		{Role: "image", ID: "sdxl-base-1.0", Enabled: true, BaseModel: "sdxl"},
+	}, "", e.negativeAlways(t.Context()))
+	if _, ok := empty["negative_always"]; ok {
+		t.Errorf("catalogue row = %v, want the key absent when nothing is excluded", empty)
+	}
+}
