@@ -1550,3 +1550,202 @@ because the code change was already in the P1 PR:
 step 3's second shell — but it would also reset the count on every task-definition change, which
 is the trap [the engine services](../../deploy/aws/ecs/cfn/PARAMETERS-60-engines.md) documents
 and the reason the property is absent. The second shell is the cheaper of the two.
+
+## Follow-up — P1 hardware run 2: warm, one image, the CP's own departure (2026-09-12, the dev deployment, about $0.15)
+
+The three things run 1 could not reach. On af-sandbox, with #583, #584 and #585 all in develop and
+the Control Plane put on by `dev-deploy.sh` at `0.19.1-dev-3d4cb9e9`. **All three were reached and
+nothing new went red on the purchase side: done item 7 is complete.** Two Spot boxes, **11 minutes
+58 seconds** of GPU, about **$0.15** against a gate of fifteen minutes and $0.60.
+
+**No migration this time.** The deployment has been on the EC2 launch type since run 1, so the
+`<Role>Enabled` round trip was not run again — which means run 1's items 3, 4 and 5, and #584's
+recovery from a zero-row engine table, are fixed but **still unmeasured on hardware**. They are
+not in the table below for that reason, and nothing here confirms them.
+
+Everything below is a raw return value, a Control Plane log line or a CloudTrail record. Where
+something was not measured, it says so.
+
+### What the deploy itself said
+
+`dev-deploy.sh --profile … --region …`, the ordinary way, 40 minutes end to end (about 20 of them
+the two-architecture QEMU bake, because `workspace/` had moved). The Control Plane's own line:
+
+```
+control-plane 0.19.1-dev-3d4cb9e9 on 0.0.0.0:8099 (console=…, ws image=…:0.19.1-dev-3d4cb9e9, auth=oauth, runtime=ecs-ec2)
+```
+
+🟢 **Run 1's item 6 fired, live and unprompted** — `update.sh` printed what it repaired, and the
+stack parameters moved with it:
+
+```
+==> cloudformation deploy af-ecs-engines (60-engines, parameters unchanged)
+    · LlmOfferBudgetSec=300 (ADR 0077 re-meant it; 180 was the OLD meaning's default)
+    · ImageOfferBudgetSec=300 (ADR 0077 re-meant it; 180 was the OLD meaning's default)
+```
+
+`describe-stacks` before: both `180`. After: both `300`, and **no other parameter moved** (a
+key-by-key diff of the two responses; `ImageOffers` byte-identical at 242 bytes). So the
+registration ceiling in force for this run was the template's 300, not run 1's silent 180.
+
+🟢 `GET /api/admin/engines` answered with **two rows** as soon as the new CP was up, not
+`{"engines":[]}`. That is the absence of run 1's item 4 rather than a measurement of its fix: the
+engine table never lost its rows, because nothing deleted the conditional half of `60-engines`.
+
+### Lap 1 — the full lap (09:15:41 → 09:25:11 UTC)
+
+Declared `ImageOffers` unchanged from run 1: `spot3` (spot, g6/g5/g6e) / `l4` (od) / `l40s` (od).
+The first row filled, so the walk was one row long: `offer_trail` `[spot3 active]`.
+
+| Check | Result | Evidence |
+|---|---|---|
+| **exactly one box** | 🟢 | CloudTrail has exactly **two `CreateFleet` calls** all afternoon, one per lap. At no sample was more than one `af-role=engine-image` instance alive; the cluster's container instances went 4 → 5 → 4 twice |
+| buy → box registered | 🟢 **45 s** | `CreateFleet` 09:15:43, `engines: image: the box i-00fc158ca3f562466 registered; asking for the task` 09:16:28. Lap 2: **44 s**. The ceiling in force was 300 s |
+| the desired count goes up in the same second as the registration | 🟢 | the `UpdateService` in CloudTrail is at **09:16:28**, the second of the log line above. Run 1's finding reproduced, and 0075's 2 min 35 s settle wait still has no shape to take |
+| the Spot row is the one that fills | 🟢 | `spot3` bought a **`g5.xlarge`**, `InstanceLifecycle: spot`, ap-northeast-1a, on both laps — never a g6e. Run 1 never saw this row succeed: both of its Spot boxes died at the registration ceiling before the launch template was fixed |
+| the panel answers from the box | 🟢 | `box: {id: i-00fc158c…, status: ACTIVE}` and `offer: {id: spot3, buy: spot}` from the first sample after registration until the box went. `class` reads `spot3`, `class_is_default: true` |
+| **`state: running` / `warm: true`** | 🟢 **5 min 40 s - 5 min 53 s** from desired 1 | see the cold start below. `running` first seen 09:22:08, `warm: true` first seen 09:22:21, at 13-second polling; ComfyUI's `Starting server` is 09:22:08, so the true figure is inside that band. From `mode: on` it is **6 min 40 s** |
+| **one image, 200** | 🟢 | `provider: comfy`, model `sd35-medium`, `warnings: []`, 1024×1024, 1,011,661 bytes. ComfyUI's own line: `Prompt executed in 73.12 seconds` |
+| **departure: desired 0 → deregister → terminate, by the CP** | 🟢 | `mode: off` 09:24:21 → the task gone 09:24:31 (**10 s**) → `DeregisterContainerInstance` 09:25:10 → `TerminateInstances` 09:25:11. **Nothing was terminated by hand on either lap.** Run 1's item 2 is closed |
+| terminate → `terminated` | measured **4 min 14 s - 4 min 30 s** | last `shutting-down` 09:29:25, `terminated` 09:29:41 (15-second polling). Lap 2: **4 min 8 s - 4 min 25 s**. ⚠️ Run 1 measured 5 min 28 s - 5 min 45 s — see below |
+| the sweep did not misfire while the engine was up | 🟢 | CloudTrail's only two `TerminateInstances` are the two departures, both after their `mode: off`. The box that served the image lived 9 min 28 s and was never touched |
+| **`df /var/lib/docker` is the instance store on a g5 too** | 🟢 | measured on lap 2 — see below |
+
+#### The cold start, line by line (from desired 1 at 09:16:28)
+
+| Elapsed | What |
+|---|---|
+| 33 s | `engine fetch: active set for /af-ws/engines/image/active starts with 'sd35-medium'` |
+| 2 min 39 s | `engine fetch: engine may start; 9 file(s) still to sync` — the default set is on disk (`sd3.5_medium 5,107,104,286 bytes in 50s`, `clip_l … in 3s`, `clip_g … in 12s`, `t5xxl 4,893,934,904 in 56s`) |
+| 5 min 26 s | `Total VRAM 22588 MB, total RAM 15791 MB` … `Device: cuda:0 NVIDIA A10G : cudaMallocAsync` |
+| 5 min 40 s | `Starting server` / `To see the GUI go to: http://0.0.0.0:8080` |
+| 5 min 53 s | `warm: true` on the panel (first sample) |
+
+Beside the other measurements of the same thing:
+
+| Run | Box | To `warm: true` |
+|---|---|---|
+| 0074 (Managed Instances) | g6e.xlarge spot | 307 s from `mode: on` (one image at 403 s) |
+| 0075 re-run (Managed Instances) | g6.xlarge spot | 5 min 30 s from `mode: on` |
+| 0077 run 1 (EC2 Fleet) | g6e.xlarge on-demand | not reached; ComfyUI on the GPU at 3 min 49 s from desired 1 |
+| **this run** (EC2 Fleet) | **g5.xlarge spot** | **5 min 53 s from desired 1, 6 min 40 s from `mode: on`** |
+
+⚠️ **Read that honestly: buying the box got much faster and the cold start did not.** Two seconds
+to buy and 45 to register is a different world from Managed Instances, but everything after
+registration is model bytes and CUDA, and an A10G loads them more slowly than an L40S — 5 min 26 s
+here against run 1's 3 min 49 s to the same line. The fetch throughput says the same:
+102 / 87 / 103 / 173 / 158 / 140 MB/s on this box, against 104-209 on run 1's g6e.xlarge and
+ADR 0071's 104-147 on Managed Instances. **The ranges overlap, so this run is no evidence that the
+NVMe data-root is faster** — on a g5.xlarge the network is the ceiling, not the disk. The `df` is
+the evidence for decision 6, not the throughput.
+
+#### The image, and how it was driven
+
+ADR 0075 recorded that no image could be generated because "there is no way in from outside to the
+engine gateway (its token is the Workspace-internal `/internal/engine/token`)". **A session on that
+same deployment is the way in**, and it needs no token: the Workspace was started, a session
+created over `POST /api/sessions`, and the prompt delivered with
+`POST /api/sessions/{name}/input`. ⚠️ One thing to know before repeating it: **`driver: "managed"`
+is refused for a `claude` session** (`400 driver_unsupported`, ADR 0015) — `tui` is the driver, and
+it is driven over the same REST route regardless.
+
+| Time (UTC) | What |
+|---|---|
+| 09:22:36 | the prompt handed to the session (`202 {"queued":…}`) |
+| 09:22:46 | ComfyUI: `got prompt` |
+| 09:23:59 | ComfyUI: `Prompt executed in 73.12 seconds` |
+| 09:24:03 | the session reported: success, `provider: comfy`, model `sd35-medium`, `warnings: []` (empty), no error, 1024×1024, 1,011,661 bytes |
+
+⚠️ The agent was asked for the elapsed seconds and answered **"not in the result — there is no such
+field"** rather than estimating. The 73.12 s above is ComfyUI's own log; the tool's own return
+carries no timing.
+
+#### The departure, in the order decision 5 asks for
+
+```
+09:24:21  engines: image set to off by …
+09:25:11  engines: image: terminated the box i-00fc158ca3f562466 (the engine is stopped and nothing is running on it)
+```
+
+CloudTrail, the same lap, from the Control Plane's own task role: `UpdateService` 09:24:21 →
+`DeregisterContainerInstance` **09:25:10** → `TerminateInstances` **09:25:11**. ECS took the task
+off in ten seconds; the sweep's next tick did the rest, **50 s** after the toggle. Lap 2, where the
+task was still `pending` when the engine was turned off, took **65 s** by the same route
+(`mode: off` 09:32:24, ECS `stopped 1 pending tasks` 09:32:32, deregister 09:33:28, terminate
+09:33:29). Neither needed a human, and `describe-instances` never showed a box the CP had
+forgotten.
+
+### Lap 2 — the two checks that needed a box but not a warm one (09:30:57 → 09:33:29 UTC)
+
+Two and a half minutes of GPU, deliberately ended before the fetch mattered.
+
+- 🟢 **The NVMe data-root is there on a `g5.xlarge` as well.** Over SSM on the live box:
+
+  ```
+  df -h /var/lib/docker   →  /dev/nvme1n1  233G  2.6G  231G   2% /var/lib/docker
+  lsblk                   →  nvme0n1 60G (/ and /boot/efi), nvme1n1 232.8G  /var/lib/docker
+  docker info             →  Docker Root Dir: /var/lib/docker
+  systemctl is-active ecs docker  →  active / active
+  ```
+
+  Run 1 measured this on a `g6e.xlarge`; the instance store is a per-type property, so the second
+  type is worth having. The root volume is the 60 GiB gp3 `ImageStorageGiB` asks for, and `ecs`
+  being `active` is the launch template fix (`systemctl start --no-block ecs`) holding on a box
+  nobody touched.
+
+- 🟢 **Pressing `mode: on` on an engine that is already running buys nothing** — #584's second
+  guard, which until now only a unit test had seen. At 09:31:49, eleven seconds ago, the box was
+  registered and the desired count written; the admin `PUT` returned **200 in 0.28 s** (a real
+  start takes 2.6 s), CloudTrail records **no third `CreateFleet`**, and `describe-instances` had
+  one instance before and after. The Control Plane logged the start's opening line
+  (`starting on spot3 (22000 MiB VRAM declared); largest model sd35-medium wants 11097 MiB
+  (floor)`) and then stopped at the guard.
+
+  ⚠️ **but the press wiped the panel's `offer_trail` to `null`.** The walk's `begin()` runs before
+  `startOnOffer` takes the lock and finds `desired >= 1`, so the trail of the run that is actually
+  live is cleared and no row replaces it. `offer` still read `{id: spot3, buy: spot}` and the box
+  was never in danger; what is lost is the audit trail on the panel, at exactly the moment an
+  operator is pressing buttons.
+
+### Cost and cleanup
+
+| Box | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
+|---|---|---|---|---|---|---|---|
+| `i-00fc158ca3f562466` | g5.xlarge | spot | 09:15:43 | 09:25:11 | 9m28s | 0.7391 | $0.117 |
+| `i-0566a8943c902d524` | g5.xlarge | spot | 09:30:59 | 09:33:29 | 2m30s | 0.7391 | $0.031 |
+
+**11 minutes 58 seconds, about $0.15** (`describe-spot-price-history` for g5.xlarge / Linux in
+ap-northeast-1a in the same hour: $0.7391; 1c was $0.7893). The gate was fifteen GPU minutes and
+$0.60, and neither half was reached. ⚠️ For comparison with run 1's $1.02: the whole difference is
+that the Spot row now fills, so nothing fell through to a `g6e.xlarge` at $2.699 — the offer list
+did not change between the two runs.
+
+- `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**: two
+  instances, both `terminated`. (Positive control in the same output: `tag-key=af-role` alone
+  returns 6, the four slot boxes included.)
+- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → empty, as
+  P0 (b) measured.
+- **Restored to what step 1 recorded**: `image` `mode: off`, `llm` `mode: ondemand`, `ImageOffers`
+  byte-identical, `ImageInstanceClasses` untouched, both `<Role>Enabled=true`. The Workspace that
+  was started to generate the image was put back to `stopped`, and the session created to call the
+  tool was deleted (sixteen sessions before, sixteen after).
+- ⚠️ **Left changed on purpose**: `ImageOfferBudgetSec` and `LlmOfferBudgetSec` are **300** now,
+  because `update.sh` repaired them on the way in. That is #585 working, not a residue.
+- The raw responses are in `~/.cache/adr0077-p1b/` of the session that measured this.
+
+### What this hands back
+
+| # | Verdict | Decision | What it says |
+|---|---|---|---|
+| 1 | 🟢 | 5 | The departure is CP-driven, twice, in the order the decision states: desired 0 → deregister → terminate, 50 s and 65 s after the toggle, nothing ended by hand. Run 1's item 2 is closed |
+| 2 | 🟢 | 1, 2, 6, 7 | One box per lap, 44-45 s to registration, the desired count in the same second, the Spot row filling with the cheap type, `ecs` and `docker` both active on a box nobody touched. The launch template fix holds |
+| 3 | 🟢 | 6 | The NVMe data-root is there on `g5.xlarge` as well as `g6e.xlarge`. ⚠️ But the fetch throughput does **not** prove it: 87-173 MB/s here overlaps ADR 0071's Managed Instances range, because on this type the network is the ceiling |
+| 4 | 🟢 | — | Run 1's item 6 is confirmed live: `update.sh` moved both roles' `OfferBudgetSec` from 180 to 300 and touched no other parameter |
+| 5 | ⚠️ | 5 | **terminate → `terminated` is 4-6 minutes, not "about five".** Measured 4 min 8 s - 4 min 30 s twice today against run 1's 5 min 28 s - 5 min 45 s on a g6e. Decision 5's 🔁 fired on one run and would not have fired on these two, so whoever rewrites ADR 0071 decision 7's window arithmetic should carry **the range**, not a number: assuming either side of five minutes is wrong about a third of the time |
+| 6 | ⚠️ | — | A `mode: on` press on a running engine is correctly a no-op for the hardware but clears the panel's `offer_trail`. `begin()` runs before the guard returns. One line to move, and it is the only thing on this run that behaves worse than before #584 |
+| 7 | — | 11 | **Not measured, and not by omission**: the `<Role>Enabled` round trip (items 3, 4, 5) and #584's recovery from a zero-row engine table need a deployment that is still on Managed Instances. This one is not, and re-migrating it backwards to prove the point costs more than it returns. They are fixed in #585 / #584 and stand unverified on hardware |
+
+**Done item 7 is complete**: exactly one box, no settle wait, the Spot row's type, the tags and
+`InstanceLifecycle`, `state: running` / `warm: true` in 5 min 53 s, one image at 200, the NVMe
+data-root, and a departure the Control Plane drove itself — with the migration's own steps
+(items 3, 4, 5) carried over as fixed-but-unmeasured.
