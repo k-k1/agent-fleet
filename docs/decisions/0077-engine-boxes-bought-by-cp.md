@@ -1774,6 +1774,46 @@ migrating it backwards to prove the point costs more than it returns); a `mode: 
 running engine clearing the panel's `offer_trail` (a one-line order fix on the CP lane, #584's
 guard before `begin()`). P2 (decisions 4 and 6) and P3 (the llm role) have not started.
 
+## Follow-up — what P2's CP lane handed back (2026-09-12, PR #591)
+
+Decision 4 — the interruption and the rebuild — is implemented. It was inherited from ADR 0075
+decision 6 as a DESIGN (the code had `noteReplacement`'s log and audit row and nothing else), so
+this is the first time it exists. Decision 6 (the host volume for the model directory) is not in
+this; it is still P2's second half. **No decision's text is edited.** Four things the
+implementation says back:
+
+- **The rebuild needed its own driver on the tick, and the text does not say who drives it.**
+  Decision 4 says the rebuild is "decision 1's call again from the top of the list", which is
+  right about the call and silent about the seconds after it. A START is driven by the
+  controller's `start` action, which only happens at desired 0; a rebuild happens at desired **1**
+  — the task is PENDING and the controller's own decision is "do nothing" — so nothing would have
+  noticed the registration ceiling or moved to the next offer. There is now a step asked on every
+  tick while a walk is in flight, and it is also what ends a rebuild abandoned by a stop.
+- 🔴 **Decision 4's second condition corrected decision 5's sweep, which #577 had implemented too
+  eagerly.** "The task was replaced but the box is still there" is not an interruption (the ADR
+  says so, and an OOM kill produces exactly that shape) — but #577's stray rule, "a box with no
+  task on it while the service wants one, after fifteen minutes", fires on *precisely* that box:
+  the engine's only one, empty for the seconds ECS takes to re-place the task. Terminating it
+  turns a restart ECS was already handling into a box purchase, and decision 4's rebuild would
+  then buy the replacement. The stray rule gained a second condition — **another box of this role
+  must be carrying the task** — which is what "a SECOND box with no task" always meant. The test
+  for the not-an-interruption case is what found it.
+- **An abandoned walk has to be ended by somebody, and `startInFlight` is not enough.** The
+  departure sweep stands down while a walk is in flight, which is the P1 hardware run's red seen
+  from the other side: switch the engine off while a box is still booting and nothing drives that
+  walk again, so the flag would stand for ever. Two answers, and both are needed: the rebuild step
+  ends its own box when the desired count has gone (its premise is a task the service wants), and
+  the sweep now stands down **only inside the registration ceiling plus the departure grace**
+  rather than for any walk in flight. The second one also covers a START abandoned by a stop,
+  which had no cover at all — the same leak in a shape nobody had walked into yet.
+- **Contract B gains one value, `interrupted`, and the Console needed three lines.** It prints an
+  unknown result verbatim, so nothing was broken; it now has a label in both locales, and so does
+  `unusable`, which #577 added and nobody named. The `offer_trail` of an interrupted demand reads
+  `l4=interrupted, l4=active` — the same offer twice, which is what "rebuild from the top" means
+  — and `l4=interrupted, l4=interrupted, l40s=active` once the two-in-a-row skip has fired.
+  "In a row" is counted per offer id, not per demand: an offer reclaimed, replaced by another that
+  was also reclaimed, gets its second chance.
+
 ## Follow-up — P3 hardware run: the llm role on EC2 Fleet (2026-09-12, the dev deployment, about $0.13)
 
 P3's whole surface is two things P1 did not touch: **the llm role's own launch template** (#575's
