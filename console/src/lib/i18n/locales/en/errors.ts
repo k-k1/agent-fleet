@@ -219,6 +219,11 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.engine_class_unknown": "No such instance class is declared for this engine.",
   "err.engine_not_ours": "That engine is borrowed from another deployment, so this is not the panel that changes it.",
   "err.membership_inactive": "That membership is not active, so a token issued for it would not work.",
+  // Where a mistyped tenant or user_key lands (engine_issue_token.go's membershipFor; admin_stats.go
+  // answers with the same codes). Without a translation the likeliest failure of the issue-token
+  // form reaches the screen as the server's bare "unknown tenant".
+  "err.no_tenant": "No tenant with that slug exists on this deployment.",
+  "err.no_membership": "That user_key is not a member of that tenant.",
   "err.engine_vram_confirm": "That model wants more VRAM than the chosen instance class has.",
   "err.engine_files_missing": "This row does not hold the files its family's workflow reads.",
   "err.gated_not_accepted": "That account has not accepted this repository's terms yet.",

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { EngineIssueTokenPanel } from "./adminEngineIssueToken.tsx";
 import { EngineUptimePanel, Sep, useDuration } from "./EngineUptime.tsx";
 import { secsUntil, windowIsPartial } from "./engineUptime.ts";
 import {
@@ -316,6 +317,15 @@ export function EnginesAdminView() {
       {isSuper && rows.some(engineIsRemote) && (
         <p className="muted pad">{tr("admin.engines_note_remote")}</p>
       )}
+      {/* Lending THIS deployment's engines to another Agent Fleet (ADR 0079 decision 3): the
+          issuing token a borrowing deployment needs, minted and shown.
+          🔴 super_admin only, and for a stronger reason than the rest of this screen: the
+          credential opens the engines of the whole DEPLOYMENT, so it is not a tenant's to hand
+          out. Last on the page because it is an occasional act — standing up a borrower — while
+          everything above it is why somebody opened this screen.
+          It is unconditional otherwise: a deployment with no engine row yet still has a
+          membership to mint for, and the borrowing side is stood up before the engines are. */}
+      {isSuper && <EngineIssueTokenPanel />}
     </div>
   );
 }

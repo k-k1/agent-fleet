@@ -146,6 +146,15 @@ const btn = (label: string) =>
 /** The captions beside the facts in the state block ("Models", "Endpoint" / "Borrowed from"). */
 const factLabels = () =>
   Array.from(host?.querySelectorAll(".engines-fact-label") || []).map((e) => e.textContent?.trim());
+/** The state badge: the first chip of the state block, which is engineStateLabel's answer.
+ *
+ * 🔴 Read off the ELEMENT, for the same reason the URL label below is — and the word here is the
+ * one with the most company on the page. "借用" now also occurs in the issuing-token panel at the
+ * foot of this screen (ADR 0079 decision 3, adminEngineIssueToken.tsx), so a whole-page
+ * includes() would report "it says borrowed" for a LAN row, and pass for a borrowed one whose
+ * badge had been left reading "外部管理". */
+const stateBadge = () =>
+  host?.querySelector(".engines-state .engines-model-tag")?.textContent?.trim() || "";
 
 afterEach(() => {
   act(() => root?.unmount());
@@ -159,7 +168,7 @@ afterEach(() => {
 describe("an engine borrowed from another fleet (ADR 0079)", () => {
   it("says it is borrowed, and not merely that it is external", async () => {
     await mount(remoteAnswer);
-    expect(text()).toContain("借用");
+    expect(stateBadge()).toContain("借用");
     // 🔴 The whole point of decision 10: "externally managed" is TRUE of this row and useless,
     // because there is a panel on the other end that the operator's next act belongs to. If both
     // labels were drawn, the operator would read the one that names nothing to do.
@@ -168,8 +177,8 @@ describe("an engine borrowed from another fleet (ADR 0079)", () => {
 
   it("still says 'externally managed' for a LAN row — the positive control", async () => {
     await mount(externalAnswer);
-    expect(text()).toContain("外部管理");
-    expect(text()).not.toContain("借用");
+    expect(stateBadge()).toContain("外部管理");
+    expect(stateBadge()).not.toContain("借用");
   });
 
   it("never claims a state this deployment cannot observe", async () => {
