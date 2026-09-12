@@ -122,6 +122,31 @@ export function EnginesAdminView() {
     }
   };
 
+  /** What this deployment excludes from every image this engine makes. One setting, applied to
+   *  every request whoever made it and whichever checkpoint answers.
+   *
+   * 🔴 Not a content filter, and the panel says so beside the box: the words reach the sampler
+   * through the negative branch of classifier-free guidance, which two of the five checkpoint
+   * families do not have at all. It is a default, not a gate. */
+  const setNegative = async (key: string, negative: string) => {
+    setBusy(key + "/negative");
+    try {
+      const d = await apiJSON(
+        `api/admin/engines/${encodeURIComponent(key)}/negative`,
+        "PUT",
+        { negative },
+      );
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+    } finally {
+      setBusy("");
+    }
+  };
+
   if (rows === null) return <p className="muted pad">{tr("common.loading")}</p>;
 
   return (
@@ -215,6 +240,16 @@ export function EnginesAdminView() {
               onReplace={() => replaceBox(e.key)}
             />
           )}
+          {/* What this deployment will not draw. On the MACHINE panel rather than with the
+              catalogue because it is one answer for the whole engine, and super-admin like the
+              mode and the rung: it is a statement about the deployment. */}
+          {isSuper && e.api === "images" && e.negative_always !== undefined && (
+            <EngineNegative
+              row={e}
+              busy={busy === e.key + "/negative"}
+              onSave={(v) => setNegative(e.key, v)}
+            />
+          )}
           {/* Always-on is a warning about an hourly bill. An external engine is always on by
               default and costs this deployment nothing, so the warning would be pure noise. */}
           {isSuper && e.mode === "on" && !engineIsExternal(e) && (
@@ -271,6 +306,62 @@ export function EnginesAdminView() {
  *     one: the choice is stored before it is applied, so after a failure this picker already
  *     shows that rung and re-picking it fires no change event at all. Recovery was a detour
  *     through another rung until this button existed (ADR 0074). */
+/** The engine-wide exclusion list (ADR 0072 follow-up, negative prompts).
+ *
+ * A local draft with an explicit save rather than saving as you type: every keystroke would be
+ * a PUT that fans out to every running workspace, and an exclusion list half-typed is a list
+ * that excludes the wrong thing.
+ *
+ * 🔴 The note under it is not decoration. These words reach the sampler through the negative
+ * branch of classifier-free guidance — a nudge, not a gate — and three of the five checkpoint
+ * families sample where it cannot matter, which the generated result reports in its own
+ * warnings. A panel that let this be read as a content filter would be the most expensive kind
+ * of wrong. */
+function EngineNegative({
+  row,
+  busy,
+  onSave,
+}: {
+  row: EngineRow;
+  busy: boolean;
+  onSave: (v: string) => void;
+}) {
+  const tr = useT();
+  const saved = row.negative_always || "";
+  const [draft, setDraft] = useState(saved);
+  // The server's value wins whenever it changes under us (another admin, a reload), but only
+  // then: re-running this on every render would delete what is being typed.
+  useEffect(() => setDraft(saved), [saved]);
+  const max = row.negative_max || 500;
+  const tooLong = draft.length > max;
+  return (
+    <div className="engines-negative">
+      <label className="engines-model-add-row">
+        <span>{tr("admin.engines_negative_label")}</span>
+        <input
+          type="text"
+          value={draft}
+          maxLength={max + 1}
+          placeholder={tr("admin.engines_negative_placeholder") as string}
+          onChange={(ev) => setDraft(ev.currentTarget.value)}
+        />
+      </label>
+      <div className="engines-model-add-actions">
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={busy || tooLong || draft === saved}
+          onClick={() => onSave(draft.trim())}
+        >
+          {tr("admin.engines_negative_save")}
+        </button>
+      </div>
+      <p className="muted">{tr("admin.engines_negative_note")}</p>
+      {tooLong && <p className="form-err">{tr("admin.engines_negative_too_long")}</p>}
+    </div>
+  );
+}
+
 function EngineClassPicker({
   row,
   busy,

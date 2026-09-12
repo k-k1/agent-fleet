@@ -1108,3 +1108,127 @@ func TestComfyCacheWarningIgnoresAPartialReuse(t *testing.T) {
 		t.Errorf("comfyCacheWarning = %q, want silence when the output node still ran", got)
 	}
 }
+
+// --- negative prompts (ADR 0072 follow-up) ---------------------------------------------------
+
+// negConn is an engine holding one guided checkpoint that declares its own negative prompt and
+// one distilled checkpoint that cannot take one, with the deployment's own exclusion list set.
+func negConn() EngineConn {
+	c := sdxlConn()
+	c.Models = []string{"sdxl-base-1.0", "klein-4b"}
+	c.BaseModel["klein-4b"] = "flux2-klein"
+	c.Files["klein-4b"] = []EngineFile{
+		{Flag: "--diffusion-model", Name: "klein.safetensors"},
+		{Flag: "--clip_l", Name: "qwen.safetensors"},
+		{Flag: "--vae", Name: "flux2-vae.safetensors"},
+	}
+	c.Negatives = map[string]string{"sdxl-base-1.0": "extra fingers"}
+	c.NegativeAlways = "explicit"
+	return c
+}
+
+// comfyPromptText reads a CLIPTextEncode's text off the graph the stub was sent, which is the
+// only place the composed negative can be observed: nothing in the result says what was excluded.
+func comfyPromptText(t *testing.T, graph map[string]any, node string) string {
+	t.Helper()
+	n, ok := graph[node].(map[string]any)
+	if !ok {
+		t.Fatalf("the graph has no node %q", node)
+	}
+	inputs, _ := n["inputs"].(map[string]any)
+	s, _ := inputs["text"].(string)
+	return s
+}
+
+// The three declaring places are ADDED, in one order, and none of them can drop another: the
+// catalogue row's default, the caller's own, then the deployment's exclusion list. A caller
+// naming one thing to keep out does not mean "and stop excluding what the publisher recommends",
+// and the administrator's list is the part no request may drop at all.
+func TestComfyNegativeAddsTheRowTheCallerAndTheDeployment(t *testing.T) {
+	var graph map[string]any
+	p, _ := comfyStub(t, negConn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		graph, _ = body["prompt"].(map[string]any)
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+	})
+	if _, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0", NegativePrompt: "watermark"}); err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if got, want := comfyPromptText(t, graph, "neg"), "extra fingers, watermark, explicit"; got != want {
+		t.Errorf("negative = %q, want %q", got, want)
+	}
+	// The positive prompt must not have collected any of it — the whole point of the separate
+	// axis is that these words are conditioned AGAINST, not FOR.
+	if got := comfyPromptText(t, graph, "pos"); got != "a fox" {
+		t.Errorf("positive = %q, want the caller's prompt alone", got)
+	}
+}
+
+// Nobody declaring anything leaves the graph exactly as it has always been, which is what keeps
+// the golden fixtures meaningful: the fixed default is a fallback, not a floor the three sources
+// are appended to.
+func TestComfyNegativeFallsBackToTheFixedDefault(t *testing.T) {
+	var graph map[string]any
+	p, _ := comfyStub(t, sdxlConn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		graph, _ = body["prompt"].(map[string]any)
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+	})
+	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"}); err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if got := comfyPromptText(t, graph, "neg"); got != comfyNegativePrompt {
+		t.Errorf("negative = %q, want the measured default %q", got, comfyNegativePrompt)
+	}
+}
+
+// Caps answers per MODEL, not per provider: on one running engine an SDXL checkpoint takes a
+// negative prompt and a distilled one cannot. Reporting the provider's answer for both would
+// either hide the argument from a session that can use it or promise one that does nothing.
+func TestComfyCapsNegativeIsPerModel(t *testing.T) {
+	p, _ := comfyStub(t, negConn(), nil)
+	if !p.Caps("sdxl-base-1.0").Negative {
+		t.Error("sdxl reports no negative prompt, and its KSampler runs at cfg 7")
+	}
+	if p.Caps("klein-4b").Negative {
+		t.Error("flux2-klein reports a negative prompt — it samples at cfg 1, where the branch cancels out")
+	}
+	// An undeclared family is refused before a graph exists, so "it would have been honoured" is
+	// not a thing to have said.
+	if p.Caps("nothing-declared").Negative {
+		t.Error("a model with no declared family reports a negative prompt")
+	}
+}
+
+// The administrator's exclusion list silently not applying is the failure this path exists to
+// prevent, so a family that cannot take one says so in the result — even though the caller asked
+// for nothing and nothing went wrong.
+func TestComfyWarnsWhenTheFamilyCannotExclude(t *testing.T) {
+	p, _ := comfyStub(t, negConn(), nil)
+	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", Model: "klein-4b"})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	var found string
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "excludes") {
+			found = w
+		}
+	}
+	if found == "" {
+		t.Fatalf("warnings = %v, want one saying the deployment's exclusions did not apply", res.Warnings)
+	}
+	if !strings.Contains(found, "flux2-klein") {
+		t.Errorf("warning = %q, want it to name the family that cannot exclude", found)
+	}
+	// The negative control: the same engine and the same lists, on a family that CAN exclude,
+	// must stay silent — a warning on every request is one nobody reads.
+	ok, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0"})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	for _, w := range ok.Warnings {
+		if strings.Contains(w, "excludes") {
+			t.Errorf("warnings = %v, want nothing about exclusions on a guided family", ok.Warnings)
+		}
+	}
+}

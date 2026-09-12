@@ -232,7 +232,7 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 			continue // an engine an admin switched off is not offered, rather than offered and refused
 		}
 		served, _ := e.servedModel()
-		row := engineCatalogRowFor(e.def, e.catalog.enabled(r.Context()), served)
+		row := engineCatalogRowFor(e.def, e.catalog.enabled(r.Context()), served, e.negativeAlways(r.Context()))
 		if row == nil {
 			continue // nothing enabled: the same as switched off, from a Workspace's point of view
 		}
@@ -259,7 +259,7 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 //
 // nil when nothing is enabled. An engine with an empty catalogue cannot serve anything, so
 // offering it would put a model in a launch menu that answers 503 (decision 1).
-func engineCatalogRowFor(d engineDef, models []store.EngineModel, warm string) map[string]any {
+func engineCatalogRowFor(d engineDef, models []store.EngineModel, warm, negativeAlways string) map[string]any {
 	ids := []string{}
 	rows := []map[string]any{}
 	loras := []map[string]any{}
@@ -284,6 +284,14 @@ func engineCatalogRowFor(d engineDef, models []store.EngineModel, warm string) m
 	}
 	if len(loras) > 0 {
 		row["loras"] = loras
+	}
+	// What this deployment excludes from every image on this engine (ADR 0072 follow-up,
+	// negative prompts). It rides with the catalogue rather than being fetched on its own
+	// because it is read at exactly the same moment and changes just as rarely — and because an
+	// Agent that failed to fetch it would compose a request WITHOUT the administrator's list and
+	// have no way to know it had.
+	if negativeAlways != "" {
+		row["negative_always"] = negativeAlways
 	}
 	// The engine-wide window, kept for an Agent that has no per-model reader yet. It is the
 	// window of whichever model the engine will start with, which for a one-model role is the

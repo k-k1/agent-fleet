@@ -63,6 +63,11 @@ export type EngineModel = {
   license_accepted_by?: string;
   license_accepted_at?: string;
   base_model?: string;
+  /** What this checkpoint should keep OUT of every picture, as its publisher recommends it
+   *  (ADR 0072 follow-up, negative prompts). A DEFAULT for the model: a request's own negative
+   *  prompt is added to it, and the engine's exclusion list is added to both. Empty means
+   *  undeclared, which the Agent answers with its own measured default. */
+  negative_prompt?: string;
   /** The provider dispatches on base_model and THIS row's is missing or names no workflow
    *  template (ADR 0072 decision 2). Stated by the CP, because the panel cannot know the
    *  vocabulary — and because the row looks complete without it and fails only at generation,
@@ -288,6 +293,11 @@ export type EngineRow = {
    *  ask" — offering a choice that changes nothing is worse than offering none. */
   base_models?: string[];
   file_flags?: string[];
+  /** What this deployment excludes from every image this engine makes (ADR 0072 follow-up,
+   *  negative prompts), and how long that list may be. Only ever present on an image engine —
+   *  a chat engine has nothing to exclude — so the section is drawn on the field arriving. */
+  negative_always?: string;
+  negative_max?: number;
   /** 🔴 Optional because the row a granted tenant_admin receives DOES NOT CARRY THEM (ADR 0072
    *  open question 11). That row is a strict subset of the operator's, so everything the
    *  reduced panel does not draw is simply absent — which is why the panel branches on the

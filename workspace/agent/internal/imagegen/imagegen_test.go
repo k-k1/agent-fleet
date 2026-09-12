@@ -228,6 +228,17 @@ func TestRequestWarnings(t *testing.T) {
 	if got := requestWarnings(seedReq, res, Caps{Seed: true}); len(got) != 0 {
 		t.Fatalf("warnings = %v, want none from a route that pins it", got)
 	}
+	// A negative prompt on a route that has no negative branch is the worst of the family: what
+	// it asks to keep out is usually the thing the caller must not show anyone, and the picture
+	// comes back looking like a success.
+	negReq := Request{Count: 1, Size: "1254x1254", NegativePrompt: "explicit"}
+	if got := requestWarnings(negReq, res, none); len(got) != 1 ||
+		!strings.Contains(got[0], "negative_prompt=\"explicit\" requested") {
+		t.Fatalf("warnings = %v, want the negative-prompt one", got)
+	}
+	if got := requestWarnings(negReq, res, Caps{Negative: true}); len(got) != 0 {
+		t.Fatalf("warnings = %v, want none from a route that samples with one", got)
+	}
 	// Seed 0 warns as loudly as any other, which it would not if the check read the value
 	// instead of whether one was given.
 	zero := int64(0)
