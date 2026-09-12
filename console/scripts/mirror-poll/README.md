@@ -11,31 +11,40 @@
 同じ内容を state に流していたので、`setTasks` / `setFiles` / `setQueuedPrompts` が毎回新しい配列を
 渡し、会話全体が `groupTurns` され再描画されていた。working 中は 1.2 秒に 1 回＝ほぼ毎秒。
 
-対処は 2 つで、この検査はその両方を見る。
+対処は 3 つで、この検査はその全部を見る。
 
 - 応答が前回と **verbatim で同一なら state 適用ごと飛ばす**（`MirrorView.tsx` のポーリング）
 - 同一が続いた回数で間隔を上げる梯子（`src/features/mirror/pollCadence.ts`）
+- 会話のグルーピングと capability オブジェクトのメモ化＋`TranscriptTurn` の `memo()`。
+  作文中は 1 打鍵ごとに MirrorView が再描画されるので、会話全体を作り直していると
+  **1 文字の値段が転写 1 本の値段**になる（`--mode typing` が測るのはこれ）。
 
 ## 何を測っているか
 
 実バンドルを headless Chromium（素の CDP・Playwright なし・API は `../mirror-scroll/stub.mjs`）で
-スマホ幅 390×844 に開き、**静止したセッション**を既定 45 秒眺めて
+スマホ幅 390×844 に開き、200 ターンのセッションで
 
 | 指標 | 取り方 |
 |---|---|
 | リクエスト数と間隔 | `Network.requestWillBeSent`＝端末が実際に送った分 |
 | メインスレッドの仕事 | `Performance.getMetrics` の `ScriptDuration` / `RecalcStyleCount` / `LayoutCount` |
 
-判定は「45 秒の予算内（梯子は 5+2+1＝8 回、固定 3 秒なら 15 回）」かつ「間隔が実際に広がった」。
-数だけだと止まっていても緑になるので、広がりの方を必ず併せて見る。
+- 既定（`--mode idle`）: **静止したセッション**を 45 秒眺める。判定は「予算内（梯子は 5+2+1＝8 回、
+  固定 3 秒なら 15 回）」かつ「間隔が実際に広がった」。数だけだと**止まっていても緑**になるので、
+  広がりの方を必ず併せて見る。
+- `--mode typing`: 作文欄に 30 文字打ち、**1 打鍵あたりの ScriptDuration** を見る（予算 12ms）。
+  打鍵数で割るので `--keys` を変えても基準は動かない。
 
 ## 効くことの確認方法
 
-`pollCadence.ts` を入れる前の bundle で走らせると赤になる。実測（2026-09-12・CPU スロットル無し）:
+修正前の bundle で走らせると赤になる。実測（2026-09-12・CPU スロットル無し・390×844）:
 
-| bundle | polls / 45s | 間隔 | ScriptDuration |
+| bundle | idle: polls / 45s | idle: 間隔 | typing: ScriptDuration |
 |---|---|---|---|
-| 修正前 | 15 | 3 秒固定 | 2.35 s |
-| 修正後 | 8 | 3/3/3/8/8/8/8 秒 | 1.41 s |
+| どちらも入れる前 | 15 | 3 秒固定 | 91.1 ms/打鍵 |
+| ポーリングだけ直した版 | 8 | 3/3/3/8/8/8/8 秒 | 91.1 ms/打鍵 |
+| 描画のメモ化まで入れた版 | 8 | 3/3/3/8/8/8/8 秒 | **9.5 ms/打鍵** |
 
-梯子そのものの単体試験は `src/features/mirror/pollCadence.test.ts`。
+メモ化は**渡す側が props を安定させている前提**で効く。`TranscriptTurn` の `memo()` は既定の浅い
+比較なので、`caps` か `turn` を毎レンダリング作り直した瞬間に黙って無効になる——この表の 3 行目が
+2 行目に戻ったら、まずそこを疑う。梯子そのものの単体試験は `src/features/mirror/pollCadence.test.ts`。

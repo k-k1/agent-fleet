@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, ReactNode } from "react";
 import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, downloadURL } from "../../core/api/client.ts";
@@ -242,6 +242,16 @@ export function MirrorView({
   // "rejected" immediately, before the interrupt tool_result (its real signal) lands a poll
   // or two later — otherwise it sits at the neutral "decided" until then.
   const rejectedPlansRef = useRef<Set<string>>(new Set());
+  // Bumped whenever that set is written. The badge is READ while a turn renders, and the turns are
+  // memoized, so a silent mutation would not reach the card until the next transcript change —
+  // which is exactly the poll or two this optimism exists to cover. markRejected is the only
+  // writer, the session reset aside — that one changes `session`, which rebuilds caps anyway.
+  const [rejectedGen, setRejectedGen] = useState(0);
+  const markRejected = (plan: string, rejected: boolean) => {
+    if (rejected) rejectedPlansRef.current.add(plan.trim());
+    else rejectedPlansRef.current.delete(plan.trim());
+    setRejectedGen((n) => n + 1);
+  };
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
   // The last non-plan mode name the terminal reported, used as the optimistic label when
   // leaving plan mode (docs/log/76).
@@ -1210,7 +1220,7 @@ export function MirrorView({
       // awaiting-reply state up front. (sendPrompt manages `sending` itself, so the
       // speak-only route leaves it alone.)
       setSending(true);
-      rejectedPlansRef.current.add(plan.trim()); // optimistic "rejected" badge; planOutcome reconciles it
+      markRejected(plan, true); // optimistic "rejected" badge; planOutcome reconciles it
       wasWorkingRef.current = false; // as with an interrupt: no reply is being waited for
       finalizingRef.current = false;
       setFinalizing(false);
@@ -1389,34 +1399,42 @@ export function MirrorView({
   // A queued prompt that matches a pending echo upgrades that echo's badge to "queued"
   // (no second bubble); whatever remains was typed straight into the terminal, so it gets
   // its own synthetic queued bubble. Multiset take: duplicate texts consume one entry each.
-  const queuedLeft = [...queuedPrompts];
-  const takeQueued = (text: string): boolean => {
-    const i = queuedLeft.findIndex((q) => q.trim() === text);
-    if (i < 0) return false;
-    queuedLeft.splice(i, 1);
-    return true;
-  };
-  const echoTurns: Turn[] = pendingSends
-    .filter((e) => !echoLanded(e, turns, isNoise)) // hide at render the instant the real turn lands
-    .map((e) => ({
+  //
+  // Memoized on the three states it reads: this walks every turn in the window and rebuilds every
+  // block, and MirrorView re-renders for reasons that have nothing to do with the conversation —
+  // a keystroke in the composer, a scroll flag, a chip. Recomputing then also hands every block a
+  // new identity, which is what makes the memoized TranscriptTurn below actually skip.
+  const grouped = useMemo(() => {
+    const queuedLeft = [...queuedPrompts];
+    const takeQueued = (text: string): boolean => {
+      const i = queuedLeft.findIndex((q) => q.trim() === text);
+      if (i < 0) return false;
+      queuedLeft.splice(i, 1);
+      return true;
+    };
+    const echoTurns: Turn[] = pendingSends
+      .filter((e) => !echoLanded(e, turns, isNoise)) // hide at render the instant the real turn lands
+      .map((e) => ({
+        role: "user",
+        text: e.text,
+        idx: 1e9 + e.id,
+        pending: true,
+        queued: takeQueued(e.text),
+      }));
+    const queuedTurns: Turn[] = queuedLeft.map((q, i) => ({
       role: "user",
-      text: e.text,
-      idx: 1e9 + e.id,
-      pending: true,
-      queued: takeQueued(e.text),
+      text: q,
+      idx: 2e9 + i,
+      queued: true,
     }));
-  const queuedTurns: Turn[] = queuedLeft.map((q, i) => ({
-    role: "user",
-    text: q,
-    idx: 2e9 + i,
-    queued: true,
-  }));
-  const extras = [...queuedTurns, ...echoTurns];
-  const baseTurns = coalesceUserActions(turns);
+    const extras = [...queuedTurns, ...echoTurns];
+    const baseTurns = coalesceUserActions(turns);
+    return groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
+  }, [turns, pendingSends, queuedPrompts]);
   // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
   // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
   // under them when it does. See blockIdentity.ts.
-  const groups = useStableBlockIds(groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns), session);
+  const groups = useStableBlockIds(grouped, session);
 
   // replyPending: the newest user prompt has no assistant reply after it yet — i.e. the
   // answer to the latest turn hasn't rendered. This is the signal that the mirror is still
@@ -1534,12 +1552,13 @@ export function MirrorView({
   const spends = groups.filter((g) => g.role !== "user").map(spendOf).filter((n) => n > 0);
   const maxSpend = spends.length ? Math.max(...spends) : 0;
 
-  // What this reader may DO with the transcript. The mirror is the session's owner inside
-  // its own Workspace, so it supplies every capability — the shared-session view supplies
-  // almost none and the same blocks quietly drop those affordances (transcript/capabilities.ts).
-  const caps: TranscriptCaps = {
+  const thinkingOpen = expandThinking(settings, sessionMeta?.kind);
+  // Everything the transcript CALLS. These close over this render's state, so they cannot be
+  // memoized — but a block only ever invokes them from a click, so they are routed through a ref
+  // and `caps` below keeps its identity without any block ever holding a stale handler.
+  const actsRef = useRef<TranscriptCaps>(null as unknown as TranscriptCaps);
+  actsRef.current = {
     agentName,
-    repo: sessionMeta?.repo ?? null,
     loadPastedImage: (name) =>
       raw(`api/sessions/${q(session)}/pasted/${encodeURIComponent(name)}`).then((r) => (r.ok ? r.blob() : null)),
     fileURL: downloadURL,
@@ -1549,22 +1568,64 @@ export function MirrorView({
     openImage: setLightbox,
     openDiff,
     openPlan,
-    session,
     sendPlanComments: (plan: string) => void sendPlanComments(plan),
-    planSendDisabled: planSendBlocked,
-    forkAt: canForkAt ? openForkAt : undefined,
+    forkAt: openForkAt,
     onReauth: () => useSettingsUI.getState().openSettings("agents"),
-    // Lets an auth error block see that the login was renewed after the turn it killed, so it
-    // reports that instead of asking for a re-authentication that has already happened. Polled
-    // with the rest of the meta, so the card flips on its own once the user comes back from
-    // Settings > Agents — no reload, and it survives one (docs/log/47 §4-11).
-    authOkAt: sessionMeta?.authOkAt,
-    tts: tts.wiring,
-    expandThinking: expandThinking(settings, sessionMeta?.kind),
     isRejectedPlan: (p: string) => rejectedPlansRef.current.has(p.trim()),
-    maxSpend,
-    marks,
   };
+
+  // What this reader may DO with the transcript. The mirror is the session's owner inside
+  // its own Workspace, so it supplies every capability — the shared-session view supplies
+  // almost none and the same blocks quietly drop those affordances (transcript/capabilities.ts).
+  //
+  // Memoized because every turn holds this object: a fresh one per render would re-render the
+  // whole conversation on every keystroke in the composer, whatever TranscriptTurn does. So what
+  // a block READS while rendering is a dependency here, and what it CALLS goes through actsRef.
+  const caps: TranscriptCaps = useMemo(
+    (): TranscriptCaps => ({
+      agentName,
+      repo: sessionMeta?.repo ?? null,
+      loadPastedImage: (name) => actsRef.current.loadPastedImage!(name),
+      fileURL: (p) => actsRef.current.fileURL!(p),
+      thumbURL: (p) => actsRef.current.thumbURL!(p),
+      openFile: (p, line, column) => actsRef.current.openFile!(p, line, column),
+      openImage: (url) => actsRef.current.openImage!(url),
+      openDiff: (p) => actsRef.current.openDiff!(p),
+      openPlan: (plan) => actsRef.current.openPlan!(plan),
+      session,
+      sendPlanComments: (plan) => actsRef.current.sendPlanComments!(plan),
+      planSendDisabled: planSendBlocked,
+      // Presence is what decides whether the affordance renders at all, so it stays reactive;
+      // only the call behind it is routed.
+      forkAt: canForkAt ? (turn) => actsRef.current.forkAt!(turn) : undefined,
+      onReauth: () => actsRef.current.onReauth!(),
+      // Lets an auth error block see that the login was renewed after the turn it killed, so it
+      // reports that instead of asking for a re-authentication that has already happened. Polled
+      // with the rest of the meta, so the card flips on its own once the user comes back from
+      // Settings > Agents — no reload, and it survives one (docs/log/47 §4-11).
+      authOkAt: sessionMeta?.authOkAt,
+      tts: tts.wiring,
+      expandThinking: thinkingOpen,
+      // Read while a turn renders, so its backing set cannot change silently: every write goes
+      // through markRejected, which bumps rejectedGen below.
+      isRejectedPlan: (p) => actsRef.current.isRejectedPlan!(p),
+      maxSpend,
+      marks,
+    }),
+    [
+      rejectedGen,
+      agentName,
+      sessionMeta?.repo,
+      sessionMeta?.authOkAt,
+      session,
+      planSendBlocked,
+      canForkAt,
+      tts.wiring,
+      thinkingOpen,
+      maxSpend,
+      marks,
+    ],
+  );
 
   // Whether the session is in Plan mode. Case-insensitive so it holds against either the
   // labeled agent ("Plan") or an older one ("plan") — so the toggle direction (enter vs
@@ -1791,7 +1852,7 @@ export function MirrorView({
               // no tool-use id), so it belongs only until the next decision. Clear it
               // before approving the new presentation; its real tool_result still keeps
               // the older historical card correctly badged as rejected.
-              rejectedPlansRef.current.delete(pendingPlan.trim());
+              markRejected(pendingPlan, false);
               void sendKeys([...PLAN_APPROVE_KEYS]);
             }}
             // Reject = interrupt (Escape), which falls back to keep-planning. The number and
@@ -1803,7 +1864,7 @@ export function MirrorView({
             // tool_result becomes an interrupt, which planDecision.isRejected picks up. See
             // planDecision.ts.
             onReject={() => {
-              rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic "rejected" badge; planOutcome reconciles it
+              markRejected(pendingPlan, true); // optimistic "rejected" badge; planOutcome reconciles it
               void sendInterrupt();
             }}
           />

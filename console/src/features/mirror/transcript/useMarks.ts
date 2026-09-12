@@ -3,7 +3,7 @@
 // How an anchor is decided lives in marks.ts (pure, no React, no I/O). This is the wiring the
 // mirror and the shared view share; they differ only in the endpoint and in who the viewer is.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, apiJSON } from "../../../core/api/client.ts";
 import { markRootKey, type NewMark, type TranscriptMark } from "./marks.ts";
 
@@ -98,6 +98,11 @@ export function useMarksController(opts: MarksControllerOptions): TranscriptMark
   const lastFetch = useRef(0);
 
   const apply = useCallback((list: TranscriptMark[]) => {
+    // A refetch that returns the same marks must not re-render the conversation. All three
+    // setStates below hand React fresh objects every time, and `byRoot` is a capability every
+    // turn holds, so an unchanged reload would otherwise regroup and re-render the whole
+    // transcript once per MARKS_REFRESH_MS for nothing.
+    if (JSON.stringify(listRef.current) === JSON.stringify(list)) return;
     listRef.current = list;
     setByRoot(byRootOf(list));
     setSlots(authorSlotsOf(list));
@@ -180,7 +185,14 @@ export function useMarksController(opts: MarksControllerOptions): TranscriptMark
   const authorSlot = useCallback((author: string | undefined) => slots.get(author || "") ?? 0, [slots]);
   const find = useCallback((id: string) => listRef.current.find((m) => m.id === id), []);
 
-  return { byRoot, all, canEdit, add, remove, canRemove, authorLabel, authorSlot, find, reload };
+  // Memoized because this object is a capability handed to every turn: a new identity on each
+  // render defeats the transcript's memoization (TranscriptTurn) and re-renders the whole
+  // conversation on a keystroke in the composer. Everything above is already state or a
+  // useCallback, so the identity changes exactly when one of them does.
+  return useMemo(
+    () => ({ byRoot, all, canEdit, add, remove, canRemove, authorLabel, authorSlot, find, reload }),
+    [byRoot, all, canEdit, add, remove, canRemove, authorLabel, authorSlot, find, reload],
+  );
 }
 
 function newMarkHex(): string {

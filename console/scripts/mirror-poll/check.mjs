@@ -35,6 +35,8 @@ const PORT = Number(arg("port", 8793));
 const CDP_PORT = Number(arg("cdp-port", 9253));
 const RUNS = Number(arg("runs", 1));
 const WINDOW = Number(arg("window", 45)) * 1000; // how long to watch a session that is at rest
+const MODE = arg("mode", "idle"); // idle | typing
+const KEYS = Number(arg("keys", 30)); // typing mode: how many characters to type
 const BASE = `http://127.0.0.1:${PORT}/`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -111,7 +113,44 @@ const OPEN_SESSION = `(() => {
 const pane = { id: "p0", session: null, content: { kind: "terminal", chat: true }, wrap: null };
 const layout = { cols: [{ id: "c0", rowRatio: 0.5, panes: [pane] }], colRatios: [1], activeId: "p0" };
 
+async function typeChar(cdp, ch) {
+  const common = { key: ch, text: ch, unmodifiedText: ch, windowsVirtualKeyCode: ch.toUpperCase().charCodeAt(0) };
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...common });
+  await cdp.send("Input.dispatchKeyEvent", { type: "char", ...common });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...common });
+}
+
+// typing: the other half of the same defect. Writing in the composer is MirrorView state, so every
+// keystroke re-renders it — and with the conversation regrouped and every block rebuilt from
+// scratch, the cost of one character is the cost of the whole transcript. Memoizing the grouping
+// and the capability object (and memo()ing TranscriptTurn) is what makes a keystroke cost a
+// keystroke. The budget is per character, so it does not depend on how many are typed.
+async function runTyping(cdp) {
+  if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
+  await sleep(9000);
+  if ((await cdp.ev(`(() => { const t = document.querySelector(".mirror-input"); if (!t) return "none"; t.focus(); return "ok"; })()`)) !== "ok")
+    throw new Error("no composer input (session not live?)");
+  const before = await cdp.metrics();
+  const t0 = Date.now();
+  for (let i = 0; i < KEYS; i++) {
+    await typeChar(cdp, "abcdefghij"[i % 10]);
+    await sleep(120);
+  }
+  await sleep(500);
+  const after = await cdp.metrics();
+  const script = after.script - before.script;
+  const per = (script * 1000) / KEYS;
+  return {
+    ok: per <= 12,
+    note:
+      `${KEYS} keystrokes in ${((Date.now() - t0) / 1000).toFixed(1)}s  ` +
+      `script ${script.toFixed(2)}s = ${per.toFixed(1)}ms/key (budget 12)  ` +
+      `style ${after.style - before.style}  layout ${after.layout - before.layout}`,
+  };
+}
+
 async function run(cdp) {
+  if (MODE === "typing") return runTyping(cdp);
   if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
   await sleep(9000); // opening round: the tail window, its markdown, images, the first polls
   const before = await cdp.metrics();
@@ -157,7 +196,11 @@ let failed = 0;
 try {
   await fetchJSON(`${BASE}api/whoami`);
   await fetchJSON(`http://127.0.0.1:${CDP_PORT}/json/version`);
-  console.log(`[mirror-poll] watching an idle session for ${WINDOW / 1000}s`);
+  console.log(
+    MODE === "typing"
+      ? `[mirror-poll] typing ${KEYS} characters into an open session`
+      : `[mirror-poll] watching an idle session for ${WINDOW / 1000}s`,
+  );
   for (let i = 0; i < RUNS; i++) {
     const target = await fetchJSON(`http://127.0.0.1:${CDP_PORT}/json/new?about:blank`, { method: "PUT" });
     const cdp = await CDP.connect(target.webSocketDebuggerUrl);
