@@ -343,11 +343,13 @@ colour the whole card, so they can be spotted from across the room.
   layout a tap opens a new tab even on a phone, and the grid stays one tab away.
 - **What one card shows**: the state at the top right (Ready / Working… / stopped), the project
   and branch on the line below with **the distance from the parent working copy** right of it
-  ("親+2・FF可", "3 unmerged" — the same chip as the repo row in the left pane), and at the
-  bottom the kind, model, context usage, time since it started and **how long it has been
-  waiting for you** ("since your reply" once you have answered). That last one is read from
-  notifications and this device's own observations, so it stays blank when neither saw the
-  change.
+  ("親+2・FF可", "3 unmerged" — the same chip as the repo row in the left pane), under that
+  **how full the context is and a graph of the tokens each reply spent** (the same strip the
+  chat view shows), and at the bottom **the model that answered last**, time since it started
+  and **how long it has been waiting for you** ("since your reply" once you have answered).
+  That last one is read from notifications and this device's own observations, so it stays blank
+  when neither saw the change. Which agent it is (Claude, Codex, …) is the coloured icon at the
+  top left.
 - **The very bottom of a card is the opening of the last thing that session said** (Claude only;
   shown for stopped sessions too). A long line is cut off, and hovering shows it in full. On a
   session that has not said anything yet, the line is not there at all.

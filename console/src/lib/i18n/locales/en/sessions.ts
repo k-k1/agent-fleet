@@ -540,8 +540,6 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "ovw.waiting_hint": "How long it has been in this state (question / plan / permission). Read from the notification ledger and this device's observations, so it stays blank when neither saw the change",
   "ovw.since_wait": "{d} since your reply",
   "ovw.since_wait_hint": "Time since it last waited for you — how long it has been working since you answered",
-  "ovw.ctx": "context {pct}%",
-  "ovw.ctx_hint": "Context-window usage",
   "ovw.started": "started {ago}",
   "ovw.last_say_hint": "The opening of the last thing the agent said (claude only; display only)",
 };

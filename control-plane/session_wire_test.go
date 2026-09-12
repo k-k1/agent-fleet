@@ -46,7 +46,7 @@ const agentSessionsPayload = `{"sessions":[{
 	"context":{"read":1000,"create":200,"fresh":30,"model":"claude-fable-5"},
 	"branch":"main","currentBranch":"dev","branchDrift":true,"worktree":true,
 	"exitReason":"oom","exitCode":137,"exitSignal":9,"handoffPending":true,
-	"originSession":"sparent","lastSay":"実装を終えて試験を回しています"
+	"originSession":"sparent","lastSay":"実装を終えて試験を回しています","tokenSpends":[1200,800,4300]
 }]}`
 
 // TestAgentSessionsRelayKeepsFields pins that the CP's decode→re-emit round trip drops none
@@ -144,6 +144,17 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 	}
 	if ctxObj["read"] != float64(1000) || ctxObj["model"] != "claude-fable-5" {
 		t.Errorf("relayed context = %v, want read=1000 model=claude-fable-5", ctxObj)
+	}
+	// The token-spend trend the overview card draws beside the gauge (ADR 0078 decision 13).
+	// Checked apart from the table above because a slice is not comparable with != — putting
+	// it in there would panic rather than fail. Dropped in the relay, every card's sparkline
+	// goes missing while the gauge next to it still works.
+	spends, ok := got["tokenSpends"].([]any)
+	if !ok || len(spends) != 3 {
+		t.Fatalf("relayed tokenSpends = %v, want a series of 3", got["tokenSpends"])
+	}
+	if spends[0] != float64(1200) || spends[2] != float64(4300) {
+		t.Errorf("relayed tokenSpends = %v, want [1200 800 4300] in order", spends)
 	}
 	// tmux is deliberately not relayed: the Console does not use it and it is derivable as
 	// "claude_"+name. If it ever shows up here, review it along with the struct's comments.

@@ -250,6 +250,49 @@
   white-space: nowrap;
   max-width: 100%;
 }
+/* The mirror's own context gauge and token-spend trend, rescaled for a card (ADR 0078
+   decision 13). The component is borrowed whole (ContextBar), so everything here is about
+   SIZE — no rule may change what it says, or the card and the chat would disagree.
+
+   Every selector is two classes deep on purpose: it has to outrank contextbar.css without
+   depending on which sheet main.tsx imports last. */
+.ovw-ctx {
+  min-width: 0;
+}
+.ovw-ctx .mirror-ctxbar {
+  /* It is a strip under the mirror's header there, a line inside a box here. */
+  padding: 0;
+  border-bottom: 0;
+  background: none;
+  gap: 4px 8px;
+  font-size: 10.5px;
+  /* The gauge and the trend take a line each. Side by side they would each get half of a
+     240px card, which is narrower than either one's own label plus its figure. */
+  flex-wrap: wrap;
+}
+.ovw-ctx .cb-ctx,
+.ovw-ctx .cb-trend {
+  flex: 1 1 100%;
+}
+/* Always the short labels ("ctx" / "token"): a card is never wide — the grid's floor is
+   240px — so the full wording never fits, whatever the PANE's width says. The tooltip keeps
+   the long form. */
+.ovw-ctx .cb-lbl-full {
+  display: none;
+}
+.ovw-ctx .cb-lbl-short {
+  display: inline;
+}
+/* A divider between two rows that are stacked, not side by side, is just a dash. */
+.ovw-ctx .cb-div {
+  display: none;
+}
+.ovw-ctx .cb-track {
+  height: 5px;
+}
+.ovw-ctx .cb-trend .spark {
+  height: 12px;
+}
 /* The agent's newest utterance (ADR 0078 decision 12). ONE line, ellipsized: the text arrives
    already folded and capped by the Agent, so this only has to refuse to wrap — a card that
    grows by two lines when a session happens to answer at length would make the grid's rows
