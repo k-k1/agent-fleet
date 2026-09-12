@@ -96,6 +96,31 @@ describe("SessionCard", () => {
     expect(host.querySelector(".ovw-waited")).toBeNull();
   });
 
+  // ADR 0078 decision 12. The text arrives folded and capped from the Agent, so the card's
+  // job is only to show it under the meta row — and to draw no row at all without one, which
+  // is what keeps a card that has said nothing the same height it has always been.
+  it("shows the agent's last utterance under the meta row, and nothing when there is none", async () => {
+    await render({ lastSay: "転写の末尾から 1 行を作るところまで実装しました" });
+    const say = host.querySelector<HTMLElement>(".ovw-say");
+    expect(say?.textContent).toBe("転写の末尾から 1 行を作るところまで実装しました");
+    // Under the meta row: the rows above must not move when a session speaks.
+    const rows = [...card().children].map((el) => el.className);
+    expect(rows.indexOf("ovw-say")).toBe(rows.indexOf("ovw-meta") + 1);
+    // The full line is readable on hover even once the card ellipsizes it.
+    expect(say?.getAttribute("title")).toContain("転写の末尾から 1 行を作るところまで実装しました");
+    expect(say?.getAttribute("title")).toContain(t("ovw.last_say_hint"));
+
+    await render({});
+    expect(host.querySelector(".ovw-say")).toBeNull();
+    await render({ lastSay: "" });
+    expect(host.querySelector(".ovw-say")).toBeNull();
+  });
+
+  it("shows it on a stopped card too — there the last word is the only clue left", async () => {
+    await render({ alive: false, state: "", lastSay: "テストが全部緑になりました" });
+    expect(host.querySelector(".ovw-say")?.textContent).toBe("テストが全部緑になりました");
+  });
+
   it("opens the session beside the grid on click, Enter and middle-click when there is room beside", async () => {
     await render({});
     await act(async () => card().click());

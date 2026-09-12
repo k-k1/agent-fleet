@@ -543,4 +543,5 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "ovw.ctx": "context {pct}%",
   "ovw.ctx_hint": "Context-window usage",
   "ovw.started": "started {ago}",
+  "ovw.last_say_hint": "The opening of the last thing the agent said (claude only; display only)",
 };

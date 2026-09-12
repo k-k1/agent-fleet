@@ -126,6 +126,10 @@ type LiveInfo struct {
 	// BackgroundBusyReason names WHAT is running (claude.BGReason*): "process" | "subagent"
 	// | "shell". "" when nothing is. Display-only — the badge lights on BackgroundBusy.
 	BackgroundBusyReason string
+	// LastSay is the opening line of the agent's newest utterance, already folded to one
+	// line and capped (claude.LastSay); "" for the kinds that do not supply one yet, which
+	// the Console renders as a card with no such line rather than an empty one.
+	LastSay string
 }
 
 // Agent is the per-kind behavior seam. Implementations are stateless value types

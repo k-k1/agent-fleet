@@ -2,9 +2,10 @@
 
 English | [日本語](0078-sessions-overview-pane.ja.md)
 
-- Status: **adopted, P0 implemented** (2026-09-12). The same day, on the user's feedback,
+- Status: **adopted, P0 and P1① implemented** (2026-09-12). The same day, on the user's feedback,
   **decision 3 was revised** (phones), **decision 6 was revised** and **decisions 9–11 added**
-  (repository headings, family order, the card's shape, waiting elapsed). The study and the
+  (repository headings, family order, the card's shape, waiting elapsed), then **decision 12
+  added** (the card's last utterance, across Agent → control plane → Console). The study and the
   measurements are [docs/96](../log/96-sessions-overview.md).
 - See also: [0049](0049-session-changed-files.md) decision 4 (**do not mint a PaneKind lightly** — this ADR argues the exception) /
   [0036](0036-working-sets.md) (a working set is a display filter; this view follows it) /
@@ -189,6 +190,44 @@ reused (the max of `waitingAtFromNotifications` and `observedWaitingAt`):
   from the control plane's `sessionWire` is dropped silently, so it lands in four places —
   docs/94 §94.10).
 
+### Decision 12 — the bottom of the card is one line of what the agent last SAID, capped by the Agent (added 2026-09-12, P1①)
+
+The state chip only says what a session is doing. **What it is doing about is nowhere on the
+card** — and that is exactly what the grid is read for. The opening line of the **last assistant
+utterance** in the transcript goes **below** the meta row (kind, model, context, started,
+waiting elapsed).
+
+- **The Agent is the source.** The `Session` DTO holds no last utterance (the same check as
+  decision 11). `LastSay(sid)` builds it from claude's transcript onto the DTO, and it reaches
+  the Console through the control plane's `sessionWire`. **A field missing from that relay is
+  dropped silently**, so it went into four places (the struct, the contract table, the relay
+  round-trip test, the golden — docs/94 §94.10).
+- **The capping is on the Agent's side** (one line, whitespace collapsed, **120 runes**). A card
+  ellipsizes one line at any width, so anything beyond that is **payload nobody reads, carried
+  for every session every 4 seconds**. The Console renders the string it is handed and neither
+  reshapes nor interprets it.
+- **Not paying for it on the poll** is the heart of this decision. It reads **one tail window**
+  of the transcript (`transcriptTailWindow` = 512 KiB) and **never widens to the whole file** the
+  way `lastLineWhere` does — widening is the same rut as re-reading codex's entire rollout on
+  every poll, and a single turn filling that window with nothing but tool records is not rare.
+  On top of that it memoizes by mtime (the arrangement `ctxCache` uses), so an unchanged
+  transcript costs **one stat**.
+- **When the window holds no utterance, the line already known is KEPT** rather than blanked. It
+  is still true — nothing newer has been said — and a card that empties itself halfway through a
+  long turn reads as "this session went quiet".
+- **claude first.** Every other kind sends "" and the row is **not drawn at all** (it takes no
+  space). Their transcripts live in different places and each needs its own measurement, so they
+  go to **P1.1**.
+- **Shown on stopped cards too.** For a stopped session the last thing it said is the only clue
+  left, and the cards that need it are the ones nobody has reopened.
+- **Display only.** It is a fragment of an answer with no turn boundary and no timestamp, so it
+  may not feed ordering, state or notifications (the same line decisions 6 and 11 draw).
+- **It grows the card by exactly one line** (measured 97px → 118px). Wrapping is forbidden: a
+  card that grows and shrinks by two lines with how much a session happened to say makes the
+  grid's rows jump. Narrowness was measured **both ways** — a thin column (318px) and a phone
+  (376px) — per decision 4 and §96.7. A grid row sizes to its tallest card, so what grows is not
+  one card but **that row**.
+
 ## Options rejected
 
 - **A modal** (the shape of Cleanup / Archived): cheap, wrong for watching (decision 1).
@@ -198,7 +237,15 @@ reused (the max of `waitingAtFromNotifications` and `observedWaitingAt`):
 - **"Last utterance" / "last updated" in v1**: not in the DTO. The transcript is heavy through
   the mirror, and a one-line summary added by the Agent has to be carried through four places in
   the control plane's relay (a field missing from `sessionWire` is dropped silently, docs/94
-  §94.10). Deferred to P1.
+  §94.10). Deferred to P1 (→ built in decision 12).
+- **Capping the last utterance on the Console's side**: it carries exactly as much. A card shows
+  one line, so the cut is only worth anything **before** the wire (decision 12).
+- **Wrapping the last utterance to two lines**: the card would grow and shrink with how much was
+  said and the grid's rows would jump. Pinned to one ellipsized line (decision 12).
+- **The newest tool call ("editing foo.ts") / the question text while waiting** (P1's ② and ③):
+  the user chose ①. ② says what a session is doing more directly, but it is only filled in when
+  the tail of the transcript IS a run of tool records, and it competes with ① for the same single
+  line. Decide once both have been measured.
 - **Reordering inside a stage by the waiting ledger**: decision 6 (display only, decision 11).
 - **Grouping projects by folder name**: the name is the user's, and a second clone of one
   repository would be split into a second project (decision 9).
@@ -216,6 +263,11 @@ reused (the max of `waitingAtFromNotifications` and `observedWaitingAt`):
 - Almost Console-only. The **Agent gains one field** (`gitx.Repo.RemotePath`, decision 9), and
   since the control plane passes `GET /api/repos` through, no relay point was added. Still no
   additional polling.
+- **Decision 12 is the one that crosses all three legs** (Agent → control plane → Console): the
+  Agent gains `session.Session.LastSay` and `claude.LastSay` (new), the control plane one
+  `sessionWire` field (plus the contract table, the round-trip test and the golden), the Console
+  one type key and one line on the card. **Still no additional polling** — it rides the existing
+  4 s sessions list, and an unchanged transcript costs one stat (decision 12).
 - Touched: `layout/{types,migrate,ops}.ts`, `features/panes/{Pane,LayoutMap,paneTitle}`,
   `features/overview/` (new: view, card, pure functions, CSS, opener), `app/WsBar.tsx`,
   `features/keys/commands.ts`, `features/repos/{store,parentSync,RepoRow}`, i18n (ja/en),
@@ -231,7 +283,10 @@ reused (the max of `waitingAtFromNotifications` and `observedWaitingAt`):
 - **P0 (done)**: decisions 1–8 (2026-09-12, #567; the revision of decision 3 in #574).
 - **P0.1 (done, this revision)**: decisions 9–11 — repository headings, family order, the card's
   shape, waiting elapsed.
-- **P1**: a "last line" on the card (the Agent adds a one-line summary to the DTO; four relay
-  points in the control plane). `waitingSince` in the DTO, if decision 11's accuracy falls
-  short. Text filtering inside the grid. A resume button directly on a stopped card.
+- **P1① (done, this revision)**: the card's last utterance — decision 12. claude only.
+- **P1.1**: the last utterance for the other kinds (codex's rollout, opencode's SQLite, …; their
+  transcripts live in different places, so each needs its own measurement). The rest of P1 — ②
+  the newest tool call and ③ the question text while waiting (decision 12's rejected options).
+  `waitingSince` in the DTO, if decision 11's accuracy falls short. Text filtering inside the
+  grid. A resume button directly on a stopped card.
 - **P2**: the relationship diagram (the docs/44 follow-up) stays outside this ADR.
