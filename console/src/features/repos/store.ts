@@ -15,6 +15,11 @@ export interface Repo {
   behind?: number;
   provider?: string; // origin host slug: github/bitbucket/gitlab, or a bare host
   remote?: string; // origin host (tooltip)
+  /** The repository's path on that host ("owner/name"), credentials stripped. `remote` +
+   * this is the identity every working copy of one repository shares — the base clone, each
+   * linked worktree, and a second clone under another folder name — which is what the
+   * sessions overview groups by (ADR 0078). Absent for a working copy with no origin. */
+  remotePath?: string;
   worktree?: boolean; // linked git worktree (not a standalone clone)
   parent?: string; // for a worktree, the parent working copy's folder name
   createdAt?: string; // for a worktree, its creation time (RFC3339); orders worktrees under a base

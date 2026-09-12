@@ -10,6 +10,25 @@ export function canFastForwardFromParent(r: Repo): boolean {
   return r.worktree === true && r.integration?.relation === "contained";
 }
 
+/** The chip's tooltip: which branch it was compared against, and what the relation means.
+ *  Shared with the sessions overview's card (ADR 0078), which shows the same chip beside the
+ *  session's branch — the wording must not fork. */
+export function parentSyncTitle(i: Integration): string {
+  const target = i.targetBranch || t("repo.parent_head");
+  switch (i.relation) {
+    case "same":
+      return t("repo.sync_title.same", { target });
+    case "contained":
+      return t("repo.sync_title.contained", { target, n: i.targetUnique });
+    case "unmerged":
+      return t("repo.sync_title.unmerged", { target, n: i.worktreeUnique });
+    case "diverged":
+      return t("repo.sync_title.diverged", { target, w: i.worktreeUnique, t: i.targetUnique });
+    case "unknown":
+      return t("repo.sync_title.unknown", { target });
+  }
+}
+
 export function parentSyncLabel(i: Integration): string {
   switch (i.relation) {
     case "same": return t("repo.sync.same");

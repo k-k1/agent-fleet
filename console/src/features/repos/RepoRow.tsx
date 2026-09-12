@@ -18,7 +18,7 @@ import { kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
-import { t, useT } from "../../lib/i18n/index.ts";
+import { useT } from "../../lib/i18n/index.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { BranchModal } from "./BranchModal.tsx";
 import { ProjectModal } from "./ProjectModal.tsx";
@@ -27,7 +27,7 @@ import { useMySharesStore } from "../sharing/store.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
-import { canFastForwardFromParent, parentSyncLabel } from "./parentSync.ts";
+import { canFastForwardFromParent, parentSyncLabel, parentSyncTitle } from "./parentSync.ts";
 import type { Repo } from "./store.ts";
 
 // Provider display: known SaaS hosts get a friendly label; unknown slugs show as-is.
@@ -37,24 +37,6 @@ const PROVIDER_LABEL: Record<string, string> = {
   gitlab: "GitLab",
 };
 const providerLabel = (p: string) => PROVIDER_LABEL[p] || p;
-
-type Integration = NonNullable<Repo["integration"]>;
-
-function integrationTitle(i: Integration): string {
-  const target = i.targetBranch || t("repo.parent_head");
-  switch (i.relation) {
-    case "same":
-      return t("repo.sync_title.same", { target });
-    case "contained":
-      return t("repo.sync_title.contained", { target, n: i.targetUnique });
-    case "unmerged":
-      return t("repo.sync_title.unmerged", { target, n: i.worktreeUnique });
-    case "diverged":
-      return t("repo.sync_title.diverged", { target, w: i.worktreeUnique, t: i.targetUnique });
-    case "unknown":
-      return t("repo.sync_title.unknown", { target });
-  }
-}
 
 export interface RepoRowProps {
   r: Repo;
@@ -234,7 +216,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               {r.integration && (
                 <span
                   className={`repo-chip integration ${r.integration.relation}`}
-                  title={integrationTitle(r.integration)}
+                  title={parentSyncTitle(r.integration)}
                 >
                   {parentSyncLabel(r.integration)}
                 </span>

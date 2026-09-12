@@ -24,7 +24,7 @@ export const USER = { email: "demo@example.com", user: "demo" };
 
 export function repos(locale) {
   return [
-    { name: "webshop", path: "/home/dev/repos/webshop", branch: "main", dirty: true, ahead: 2, provider: "github", remote: "github.com" },
+    { name: "webshop", path: "/home/dev/repos/webshop", branch: "main", dirty: true, ahead: 2, provider: "github", remote: "github.com", remotePath: "acme/webshop" },
     {
       name: "webshop@checkout-validation",
       path: "/home/dev/repos/webshop@checkout-validation",
@@ -32,13 +32,14 @@ export function repos(locale) {
       dirty: true,
       provider: "github",
       remote: "github.com",
+      remotePath: "acme/webshop",
       worktree: true,
       parent: "webshop",
       createdAt: ago(180),
       integration: { targetBranch: "main", targetUnique: 2, worktreeUnique: 3, relation: "diverged" },
     },
-    { name: "payments-api", path: "/home/dev/repos/payments-api", branch: "main", provider: "bitbucket", remote: "bitbucket.org" },
-    { name: "platform-infra", path: "/home/dev/repos/platform-infra", branch: "main", dirty: false, behind: 1, provider: "github", remote: "github.com" },
+    { name: "payments-api", path: "/home/dev/repos/payments-api", branch: "main", provider: "bitbucket", remote: "bitbucket.org", remotePath: "acme/payments-api" },
+    { name: "platform-infra", path: "/home/dev/repos/platform-infra", branch: "main", dirty: false, behind: 1, provider: "github", remote: "github.com", remotePath: "acme/platform-infra" },
     { name: "design-assets", path: "/home/dev/repos/design-assets", vcs: "svn", revision: "1482", url: "https://svn.example.com/design/trunk" },
   ];
 }
