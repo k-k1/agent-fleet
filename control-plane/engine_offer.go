@@ -441,6 +441,13 @@ func (e *engineRuntimeState) startOnOffer(ctx context.Context) error {
 	// second apart are two GPUs.
 	e.startMu.Lock()
 	defer e.startMu.Unlock()
+	// 🔴 Already asked for. This is the OTHER half of "one start buys one box", and it is what
+	// makes it safe to forget the box once the count is written (below): the admin toggle calls
+	// this unconditionally on `mode=on`, so without it a press while the engine is already
+	// running would walk the list again and buy a second GPU.
+	if v, err := e.ecs.view(ctx); err == nil && v.desired >= 1 {
+		return nil
+	}
 	after := ""
 	for {
 		if id := e.offers.boxID(); id != "" {
@@ -450,7 +457,18 @@ func (e *engineRuntimeState) startOnOffer(ctx context.Context) error {
 				// asks for a task, and it carries the desired count alone — no strategy, no
 				// forced deployment, nothing that could replace a running one.
 				log.Printf("engines: %s: the box %s registered; asking for the task", e.def.Key, id)
-				return e.ecs.setEnabled(ctx, true)
+				if err := e.ecs.setEnabled(ctx, true); err != nil {
+					return err
+				}
+				// 🔴 THE START IS OVER, AND FORGETTING THE BOX IS WHAT ENDS IT. `startInFlight`
+				// means "bought and the desired count not written yet", and the departure sweep
+				// stands down while it is true; until this line the only things that cleared it
+				// were the registration ceiling and the next start, so a start that SUCCEEDED
+				// left it true for ever and decision 5's departure never ran once. Measured on
+				// hardware twice (ADR 0077 P1 run): `mode=off`, the task gone, and the box still
+				// running four minutes later — terminated by hand.
+				e.offers.dropBox()
+				return nil
 			}
 			waited, started := e.offers.waitedForBox()
 			if !started || waited < e.offers.budget() {
