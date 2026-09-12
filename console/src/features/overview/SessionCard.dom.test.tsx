@@ -32,7 +32,7 @@ const render = async (over: Partial<Session>, beside = true, waitingAt = 0): Pro
     root!.render(
       <ToastProvider>
         <PaneHoverProvider>
-          <SessionCard s={s} opens={[]} multi={false} beside={beside} running waitingAt={waitingAt} actions={actions} />
+          <SessionCard s={s} opens={[]} beside={beside} running waitingAt={waitingAt} actions={actions} />
         </PaneHoverProvider>
       </ToastProvider>,
     );
@@ -172,7 +172,6 @@ describe("SessionCard", () => {
             <SessionCard
               s={{ name: "s1", kind: "claude", alive: true, state: "working", title: "決済の修正" }}
               opens={[]}
-              multi={false}
               beside
               running
               actions={{ ...actions, halt } as SessionActions}
