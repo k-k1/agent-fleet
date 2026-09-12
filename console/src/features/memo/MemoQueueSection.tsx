@@ -15,6 +15,7 @@ import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { copyText } from "../../lib/clipboard.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import {
@@ -948,6 +949,19 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => runMemoMenu(() => sendGroup([memoMenu.m.id]))}>
                   <Icon name="send" /> {tr("memo.send_one")}
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  onClick={() =>
+                    runMemoMenu(() =>
+                      void copyText(memoMenu.m.body).then((ok) => toast(t(ok ? "memo.copied" : "common.copy_failed"), ok ? { kind: "success" } : undefined)),
+                    )
+                  }
+                >
+                  <Icon name="copy" /> {tr("memo.copy")}
                 </button>
               </li>
               <li className="ui-menu-sep" aria-hidden="true" />

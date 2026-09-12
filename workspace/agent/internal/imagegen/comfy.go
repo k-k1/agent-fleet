@@ -254,9 +254,16 @@ func comfyResolveLoras(conn EngineConn, family comfyFamily, model string, want [
 		if got := comfyFamily(strings.TrimSpace(l.BaseModel)); got != family {
 			return nil, errComfyLoraFamilyMismatch(w.Name, l.BaseModel, model, family)
 		}
+		// Three answers, in this order: what the CALLER asked for, what the catalogue row
+		// declares for this adapter, and 1. The caller wins because they are looking at the
+		// picture; the row comes next because its author published a strength and the agent
+		// naming a LoRA has no way to know it (ADR 0072 decision 5).
 		weight := w.Weight
 		if weight == 0 {
-			weight = 1 // "not stated" — see LoraRef.Weight
+			weight = l.Weight
+		}
+		if weight == 0 {
+			weight = 1 // nobody stated one — see LoraRef.Weight
 		}
 		if weight < 0 || weight > comfyMaxLoraWeight {
 			return nil, fmt.Errorf("LoRA %q asked for at strength %g, and the range is 0-%g",
@@ -363,6 +370,9 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	params := comfyParams{
 		Op: req.Op, Prompt: req.Prompt, Seed: seed, Width: w, Height: h,
 		BatchSize: count, Loras: loras,
+		// What the catalogue row for THIS model declares. Absent for a model that declares
+		// nothing, which leaves every template at its own recipe.
+		Params: conn.Params[model],
 	}
 
 	switchWarning := comfySwitchWarning(conn, model)
@@ -745,7 +755,8 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, promp
 			hist, known := byID[promptID]
 			if known {
 				if hist.Status.StatusStr == "error" {
-					return comfyHistory{}, fmt.Errorf("the image engine failed the request: %s", comfyErrorMessages(hist))
+					return comfyHistory{}, fmt.Errorf("the image engine failed the request: %s%s",
+						comfyErrorMessages(hist), comfyErrorHint(hist))
 				}
 				if hist.Status.Completed {
 					return hist, nil
@@ -785,6 +796,27 @@ func comfyErrorMessages(hist comfyHistory) string {
 		return "unknown error"
 	}
 	return tail(string(b), 800)
+}
+
+// comfyErrorHint translates the one execution error whose cause is a CATALOGUE fact rather than
+// anything the caller did: a checkpoint published with no VAE tensors. ComfyUI answers it with a
+// Python traceback ending in `ERROR: VAE is invalid: None`, which tells a session nothing it can
+// act on — `generate_image` has no VAE argument, so retrying, changing the op or changing the
+// size all fail the same way, each after the 1-2.5 minute checkpoint switch (measured 2026-09-11
+// on this deployment: generate died in VAEDecode, edit in VAEEncode, same model).
+//
+// It reads the WHOLE message list rather than the tail comfyErrorMessages shows: the exception
+// message sorts before the traceback in ComfyUI's own error dict, so on a long traceback the one
+// line this matches on is the first thing the 800-character cap drops.
+func comfyErrorHint(hist comfyHistory) string {
+	b, err := json.Marshal(hist.Status.Messages)
+	if err != nil || !strings.Contains(string(b), "VAE is invalid") {
+		return ""
+	}
+	return " — this checkpoint carries no VAE of its own, so nothing could encode or decode the" +
+		" picture. Every op fails the same way until the catalogue row for this model declares its" +
+		" family's VAE as a separate file (`--vae`, an SDXL-family checkpoint takes an sdxl_vae);" +
+		" until then, ask for another model"
 }
 
 // comfySaveNode is the id every template gives its SaveImage node. It is the graph's terminal

@@ -93,7 +93,21 @@ type engineResolved struct {
 	// 欠落 5). Measured on af-sandbox: five assets split 200 / 401 / 403, and the metadata call
 	// that says everything else about them answers 200 for all five.
 	LoginRequired bool
-	Source        string // what a person reads in the job list
+	// Restrictions is the same closed vocabulary the search list uses (engineRestrict*). The
+	// resolve sees strictly more than the list does — the per-version document carries
+	// `usageControl`, which `/api/v1/models` does not — so a row can pick up a mark here that
+	// the card it was chosen from could not show.
+	Restrictions []string
+	// TrainedWords is a LoRA's trigger. Without it an adapter loads, changes nothing visible,
+	// and looks like a broken ingest.
+	TrainedWords []string
+	// BaseModelSuggest is BaseModel translated into the provider's family vocabulary, or "".
+	// A suggestion for the form — ADR 0072 decision 2 keeps the declaration with the operator.
+	BaseModelSuggest string
+	// ParamsHint is what the author's own description says about how to run this, read out of
+	// prose (engine_params_hint.go). Offered to the form, never stored from here.
+	ParamsHint engineParamsHint
+	Source     string // what a person reads in the job list
 	// The model's OWN maximum, straight off the GGUF header Hugging Face has already parsed
 	// (`gguf.context_length` on the same call this reads everything else from). 🔴 It is a
 	// suggestion, never the value: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF says 262144 and
@@ -178,6 +192,11 @@ type engineHFDoc struct {
 		License     any    `json:"license"` // a string, or a list on some cards
 		LicenseName string `json:"license_name"`
 		LicenseLink string `json:"license_link"`
+		// What this repository was built from — a quantisation names the model it quantised, a
+		// fine-tune the checkpoint it started from. Same shape problem as License: a string on
+		// most cards and a list on some. It is read for ONE purpose, suggesting the family in
+		// the ingest form, and is never stored as the family itself (decision 2).
+		BaseModel any `json:"base_model"`
 	} `json:"cardData"`
 	// Hugging Face parses the GGUF header itself and publishes the result here. Absent for
 	// every repository that holds no GGUF, which is why the field is optional everywhere it
@@ -234,9 +253,15 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 		LicenseName:   strings.TrimSpace(doc.CardData.LicenseName),
 		LicenseURL:    strings.TrimSpace(doc.CardData.LicenseLink),
 		Gated:         engineHFGated(doc.Gated),
+		Restrictions:  engineHFRestrictions(doc.Gated),
+		BaseModel:     engineFirstString(doc.CardData.BaseModel),
 		ContextLength: doc.GGUF.ContextLength,
 		Source:        "hf:" + repo + "/" + file,
 	}
+	// The model card, as text. It is the one place a Hugging Face author writes down how to run
+	// the thing, and reading it costs one more GET on a route that has already made two.
+	out.ParamsHint = engineParamsFromText(engineReadText(ctx,
+		engineIngestBase+"/"+repo+"/raw/"+url.PathEscape(rev)+"/README.md"))
 	for _, s := range doc.Siblings {
 		if s.Name != file {
 			continue
@@ -333,11 +358,26 @@ func engineSortCandidates(c []engineCandidate) []engineCandidate {
 // reason as the Hugging Face one.
 type engineCivitaiDoc struct {
 	BaseModel string `json:"baseModel"`
-	Model     struct {
+	// What this version costs and whether it may be fetched at all. 🔴 `usageControl` is here
+	// and NOT in `/api/v1/models` (measured 2026-09-12), so a model that Civitai will only run
+	// on its own site looks ordinary in the search list and is caught at exactly this point.
+	engineCivitaiVersionFacts
+	// ModelID is what the model's own document is read by, for the description the recommended
+	// settings are usually in — a VERSION description is a changelog ("less flat, more
+	// details"), the MODEL description is the page people write their settings on.
+	ModelID int `json:"modelId"`
+	// Description is the version's own, in HTML. Read first because when it does carry settings
+	// they are this version's, which beats the model's older ones.
+	Description  string   `json:"description"`
+	TrainedWords []string `json:"trainedWords"`
+	Model        struct {
 		Name string `json:"name"`
 		Type string `json:"type"`
+		NSFW bool   `json:"nsfw"`
+		POI  bool   `json:"poi"`
 	} `json:"model"`
 	Files []struct {
+		engineCivitaiFileFacts
 		Name        string  `json:"name"`
 		SizeKB      float64 `json:"sizeKB"`
 		Type        string  `json:"type"`
@@ -346,6 +386,13 @@ type engineCivitaiDoc struct {
 			SHA256 string `json:"SHA256"`
 		} `json:"hashes"`
 	} `json:"files"`
+}
+
+// engineCivitaiModelDoc is the model behind a version, read for one thing only: the description
+// its author wrote the recommended settings into.
+type engineCivitaiModelDoc struct {
+	Description string `json:"description"`
+	engineCivitaiLicenceFacts
 }
 
 func engineReadCivitai(ctx context.Context, versionID int) (engineCivitaiDoc, *apiError) {
@@ -383,11 +430,32 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 		if len(f.Hashes.SHA256) != 64 {
 			continue
 		}
+		// The model document, for the licence matrix and for the description the settings are
+		// written in. One more read on a route that has already made one, and a failure is
+		// silence rather than a refusal: neither of the two things it carries is worth losing
+		// an ingest over.
+		var model engineCivitaiModelDoc
+		if doc.ModelID > 0 {
+			if aerr := engineIngestGetJSON(ctx, engineCivitaiBase+"/api/v1/models/"+strconv.Itoa(doc.ModelID), &model); aerr == nil {
+				model.engineCivitaiLicenceFacts = model.with(true)
+			}
+		}
+		model.NSFW = model.NSFW || doc.Model.NSFW
+		model.POI = model.POI || doc.Model.POI
+		// The version's own description first: when it states settings they are this version's.
+		hint := engineParamsFromText(engineStripHTML(doc.Description))
+		if hint.empty() {
+			hint = engineParamsFromText(engineStripHTML(model.Description))
+		}
 		return engineResolved{
 			DownloadURL:   f.DownloadURL,
 			SHA256:        strings.ToLower(f.Hashes.SHA256),
 			Bytes:         int64(f.SizeKB * 1024),
 			LoginRequired: !engineCivitaiAnonymous(ctx, f.DownloadURL),
+			Restrictions: engineCivitaiRestrictions(model.engineCivitaiLicenceFacts,
+				doc.engineCivitaiVersionFacts, []engineCivitaiFileFacts{f.engineCivitaiFileFacts}),
+			TrainedWords: engineTrimStrings(doc.TrainedWords),
+			ParamsHint:   hint,
 			// Civitai publishes no licence field of the kind Hugging Face does — the terms are
 			// per model on the site. Saying "unknown" is the honest answer; guessing one would
 			// put a made-up licence in the panel next to the real ones.
@@ -549,6 +617,11 @@ type engineIngestRequest struct {
 	Description, BaseModel     string
 	ContextTokens, MaxOutput   int
 	Sizes                      []string
+	// Params is what the form declared about how to run this model, already cleaned. It rides
+	// through the JOB rather than being written up front because the row does not exist until
+	// the download succeeds — and a row with settings and no weights would be a model the
+	// catalogue offers and the box cannot load.
+	Params *store.EngineParams
 	// The licence acceptance, as (tenant, member, licence) — the fourth part of the tuple
 	// (the timestamp) is taken when the row is finally written. AcceptedTenant is empty for a
 	// super_admin, who acts for the deployment and has no tenant to act for.
@@ -765,7 +838,7 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 	m := store.EngineModel{
 		Role: req.Role, ID: req.ModelID, Kind: req.Kind,
 		Files:       []store.EngineModelFile{file},
-		Description: req.Description, BaseModel: req.BaseModel,
+		Description: req.Description, BaseModel: req.BaseModel, Params: req.Params,
 		ContextTokens: req.ContextTokens, MaxOutputTokens: req.MaxOutput, Sizes: req.Sizes,
 		License:     req.Resolved.License,
 		LicenseName: req.Resolved.LicenseName,
