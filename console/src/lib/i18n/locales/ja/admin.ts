@@ -29,7 +29,20 @@ export const admin = {
   "admin.brand_pwa_note": "保存するとこのタブにはすぐ反映されます。他のタブは再読み込み、インストール済みの PWA は入れ直すとアイコンと名前が変わります。",
   "admin.mode_pool": "スロット",
   "admin.mode_engines": "推論エンジン",
+  // 推論エンジンは 2 画面（運用とモデル）。レールの並びもこの順で、機械の話とモデルの話を
+  // 混ぜない。テナント設定側の同じ画面は tenant.tab_engines（=「推論エンジンのモデル」）。
+  "admin.mode_engine_models": "推論エンジンのモデル",
   "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
+  "admin.engines_none_models_hint": "何を動かせるかは「推論エンジンのモデル」で探せます（エンジンもトークンも要りません）。",
+  "admin.engines_ops_super_only": "エンジンの起動と停止・GPU の選択は配備管理者（super_admin）の担当です。モデルの取り込みと確認は「推論エンジンのモデル」にあります。",
+  // 役割のタブ。配備にエンジンが 1 本しか無ければタブは出さず、名前だけを出す。
+  "admin.engines_role_llm": "文章",
+  "admin.engines_role_image": "画像",
+  "admin.engines_tab_models": "モデル",
+  "admin.engines_tab_loras": "LoRA",
+  // LoRA が 0 件なのは普通の状態。赤くすると、要らない配備で毎回壊れて見える。
+  "admin.engines_loras_empty": "このエンジンに LoRA はありません。",
+  "admin.engines_lora_no_family": "ファミリー未宣言",
   "admin.engines_models_label": "モデル",
   "admin.engines_always_on_note": "常時稼働は GPU のインスタンスを止めません（時間単価はインスタンスクラスによります）。用が済んだらオンデマンドへ戻してください。",
   "admin.engines_tenant_scope":
@@ -84,6 +97,18 @@ export const admin = {
   "admin.engines_model_add_id": "id",
   "admin.engines_model_add_key": "キー",
   "admin.engines_model_add_family": "ファミリー",
+  // ADR 0072 追記（ネガティブプロンプト）。「何を描かせないか」には 3 か所が口を出す——この行・
+  // 要求・配備——そしてそれらは足し合わされる。どのラベルも「唯一のネガティブ」と読めてはいけない。
+  "admin.engines_model_negative": "描かせないもの",
+  "admin.engines_model_negative_placeholder": "このチェックポイントで避けたいもの",
+  "admin.engines_negative_label": "全画像から除外する語",
+  "admin.engines_negative_placeholder": "キーワードをカンマ区切りで",
+  "admin.engines_negative_save": "保存",
+  // 🔴 これをコンテンツフィルタと読ませないための 1 文。これはネガティブプロンプト——
+  // サンプラーへの傾きであって門ではなく、蒸留系のファミリーには席すら無い。
+  "admin.engines_negative_note":
+    "このエンジンが作る全画像のネガティブプロンプトに、モデル自身のものと要求のものに足して加えられます。フィルタではなく誘導です——ネガティブを持たないチェックポイントのファミリーが 2 つあり、その要求では警告にそう出ます。",
+  "admin.engines_negative_too_long": "長すぎます。ここはキーワードの列挙であって、方針の文書ではありません。",
   // ADR 0072 決定 5 の llm 側。LoRA はモデルではなく、土台のモデルに固定され、その preset の
   // 節に載る。利用者からは見えない——見えるのは「その微調整込みのモデル id」1 つだけ。
   "admin.engines_model_add_kind": "この行の種類",
@@ -143,6 +168,29 @@ export const admin = {
   "admin.engines_ingest_hit_likes": " いいね",
   "admin.engines_ingest_hit_trending": " 話題度",
   "admin.engines_ingest_hit_gated": "gated",
+  // 🔴 上流が「できない」と言っていることを、取り込む前に出す。コードは CP が決めた閉じた
+  // 集合で、語はここにしか無い（engineRestrictLabel）。
+  // ログイン必須は Civitai のメタデータからは分からず、CP が DL URL を HEAD して初めて出る
+  // 事実なので、「分からなかった」は空欄——「誰でも DL 可」とは別物として扱う。
+  "admin.engines_hit_login_required": "要ログイン",
+  "admin.engines_hit_login_note": "このファイルは Civitai のアカウントでログインした人にしか配られません。この配備は Civitai の資格情報を持たないので、取り込みは 401 で失敗します。",
+  "admin.engines_limit_gated_auto": "gated（規約に同意）",
+  "admin.engines_limit_gated_manual": "gated（作者の承認待ち）",
+  "admin.engines_limit_noncommercial": "商用不可",
+  "admin.engines_limit_credit": "要クレジット表記",
+  "admin.engines_limit_no_derivatives": "派生不可",
+  "admin.engines_limit_same_license": "同一ライセンスのみ",
+  "admin.engines_limit_paid": "有料",
+  "admin.engines_limit_early_access": "早期アクセス（期限付き有料）",
+  "admin.engines_limit_private": "非公開",
+  "admin.engines_limit_generate_only": "サイト内生成専用（DL 不可）",
+  "admin.engines_limit_nsfw": "NSFW",
+  "admin.engines_limit_poi": "実在人物",
+  "admin.engines_limit_minor": "未成年",
+  "admin.engines_limit_unscanned": "ウイルススキャン未通過",
+  "admin.engines_limit_pickle": "pickle 警告",
+  // LoRA のトリガ語。これを入れずに使うと、読み込まれてはいるのに絵が変わらない。
+  "admin.engines_hit_trigger": "トリガ語",
   // 公開日と更新日は別の問いに答える（「新しいモデルか」と「まだ手が入っているか」）ので、
   // 同じ行に両方・それぞれラベル付きで出す。片方だけだと、1 年前に公開されて先週まで
   // 更新されているモデルと、先週公開されたモデルの区別がつかない。
@@ -168,6 +216,30 @@ export const admin = {
   // 🔴 モデル側の上限であって、この配備で回せる窓ではない。30B は 262144 と申告するが
   // L4 には入らないので 32768 で走らせている。誰の数字かを言わずに出さない。
   "admin.engines_ingest_ctx_max": "モデルの上限 {n}",
+  // --- 推奨パラメータ（作者の説明文から拾ったもの）---
+  // 🔴 正規表現が他人の散文から拾った値である。だから引用した一文を必ず隣に出し、押す前に
+  // 人が読んで直せるようにする。保存されるのは押したときだけ。
+  "admin.engines_params": "生成パラメータ",
+  "admin.engines_params_note": "空欄はファミリーの既定のまま。埋めた欄だけがこのモデルで置き換わります。",
+  "admin.engines_params_hint_found": "作者の記述から拾いました（未検証）:",
+  "admin.engines_params_hint_apply": "この値を入れる",
+  "admin.engines_params_none": "生成パラメータ: 宣言なし（ファミリーの既定のまま）",
+  "admin.engines_params_steps": "ステップ数",
+  "admin.engines_params_cfg": "CFG",
+  "admin.engines_params_sampler": "サンプラー",
+  "admin.engines_params_scheduler": "スケジューラ",
+  "admin.engines_params_clip_skip": "Clip skip",
+  "admin.engines_params_weight": "既定の強さ",
+  // 表示名（"DPM++ 2M Karras"）でも入る。CP が ComfyUI の語彙へ直し、直せないものは捨てる。
+  "admin.engines_params_name_ph": "dpmpp_2m",
+  "admin.engines_params_clear": "宣言を消す",
+  "admin.engines_params_edit": "パラメータ",
+  "admin.engines_params_save": "保存",
+  // 🔴 flux1 / klein の CFG は別の摘み（FluxGuidance・蒸留パス）なので、当てても効かない。
+  "admin.engines_params_cfg_ignored": "この族では CFG は使われません（ガイダンスが別の摘みです）。",
+  "admin.engines_params_clip_skip_note": "clip skip は記録だけで、いまのワークフローでは使われません。",
+  // ファミリーの推定。決定 2 のとおり宣言するのは運用者なので、入れておくだけで、外せる。
+  "admin.engines_family_suggested": "「{n}」から推定しました。違っていれば選び直してください。",
   "admin.engines_ingest_go": "取り込む",
   // 分割モデルは 1 回の取り込みでは組み上がらない（FLUX.1 は unet + clip_l + t5 + vae の 4 本）。
   // 既にある id を指すと CP は新規作成を断る——行のファイル・ライセンス・有効状態を

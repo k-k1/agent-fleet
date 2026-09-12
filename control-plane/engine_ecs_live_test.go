@@ -48,7 +48,7 @@ func TestTTSEngineLiveView(t *testing.T) {
 		t.Fatalf("view: %v", err)
 	}
 	t.Logf("state=%q desired=%d running=%d lastStart=%s events=%q",
-		v.state, v.desired, v.running, v.lastStart.Format(time.RFC3339), v.events)
+		v.state, v.desired, v.running, v.lastStart.Format(time.RFC3339), v.eventMessages())
 	switch v.state {
 	case "running", "starting", "stopped":
 	default:

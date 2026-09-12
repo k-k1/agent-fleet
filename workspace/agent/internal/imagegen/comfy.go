@@ -124,7 +124,79 @@ func (p *comfyProvider) Caps(model string) Caps {
 		// graph, so the seed is an input this file writes rather than a field a vendor API has
 		// to expose (ADR 0069 follow-up, seed).
 		Seed: true,
+		// Per MODEL, because the answer really does differ between two checkpoints on the same
+		// running engine — which is the case Caps was made per (provider, model) for.
+		Negative: comfyModelTakesNegative(conn, model),
 	}
+}
+
+// comfyModelTakesNegative answers whether this model's template samples with a negative branch
+// at all. A model whose family is not declared answers false: the request will be refused before
+// a graph exists, and "yes it would have been honoured" is not a useful thing to have said.
+func comfyModelTakesNegative(conn EngineConn, model string) bool {
+	family, ok := comfyFamilyFor(conn, model)
+	return ok && comfyFamilyTakesNegative(family)
+}
+
+// comfyFamilyTakesNegative is which of the five templates a negative prompt can actually move.
+//
+// 🔴 Only the two GUIDED families. The other three are distilled models sampled at cfg 1 (zimage's
+// KSampler, klein's CFGGuider) or with FLUX.1's guidance folded into the conditioning
+// (BasicGuider, no negative input at all) — and at cfg 1 classifier-free guidance is
+// `uncond + 1*(cond - uncond)`, which is cond exactly. The negative words would ride in the graph,
+// cost a text encode, and change no pixel. Wiring them anyway and reporting the capability as
+// true is worse than refusing: the caller gets no warning, the picture looks right, and the thing
+// they asked to keep out is in it.
+func comfyFamilyTakesNegative(family comfyFamily) bool {
+	return family == ComfyFamilySDXL || family == ComfyFamilySD35
+}
+
+// comfyNegativeFor composes the negative prompt one request samples against, out of the three
+// places that get a say (ADR 0072 follow-up, negative prompts):
+//
+//	the catalogue row's own default  +  the caller's  +  the engine's administrator list
+//
+// ADDED, not overridden, in that order. A caller naming one thing to exclude does not mean "and
+// stop excluding everything the checkpoint's publisher recommends", and the administrator's list
+// is last because it is the one part no request may drop.
+//
+// Empty when nobody said anything, and the TEMPLATE — not this — decides what an empty negative
+// means for its family (comfyGraphSDXL keeps the fixed default it was measured with).
+func comfyNegativeFor(conn EngineConn, model string, req Request) string {
+	parts := make([]string, 0, 3)
+	for _, s := range []string{conn.Negatives[model], req.NegativePrompt, conn.NegativeAlways} {
+		if v := strings.TrimSpace(s); v != "" {
+			parts = append(parts, v)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// comfyNegativeIgnoredWarning is said when a family with no negative branch was asked to exclude
+// something that the CALLER did not type: the catalogue's default for this model, and the
+// deployment's own exclusion list. The caller's own negative_prompt is reported by the core
+// against Caps.Negative (requestWarnings), and saying the same thing twice in one result teaches
+// the reader to skim warnings.
+//
+// It is said even though nobody is at fault, because the administrator's list silently not
+// applying is precisely the failure this whole path exists to prevent.
+func comfyNegativeIgnoredWarning(conn EngineConn, model string, family comfyFamily) string {
+	if comfyFamilyTakesNegative(family) {
+		return ""
+	}
+	var what []string
+	if strings.TrimSpace(conn.Negatives[model]) != "" {
+		what = append(what, "this model's own negative prompt")
+	}
+	if strings.TrimSpace(conn.NegativeAlways) != "" {
+		what = append(what, "the keywords this deployment excludes")
+	}
+	if len(what) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s was not applied: the %s family samples without a negative branch"+
+		" (a distilled model at cfg 1), so nothing can be excluded from it",
+		strings.Join(what, " and "), family)
 }
 
 // comfyLoraInfos is every LoRA the catalogue enables for this engine (ADR 0072 decision 5, phase
@@ -254,9 +326,16 @@ func comfyResolveLoras(conn EngineConn, family comfyFamily, model string, want [
 		if got := comfyFamily(strings.TrimSpace(l.BaseModel)); got != family {
 			return nil, errComfyLoraFamilyMismatch(w.Name, l.BaseModel, model, family)
 		}
+		// Three answers, in this order: what the CALLER asked for, what the catalogue row
+		// declares for this adapter, and 1. The caller wins because they are looking at the
+		// picture; the row comes next because its author published a strength and the agent
+		// naming a LoRA has no way to know it (ADR 0072 decision 5).
 		weight := w.Weight
 		if weight == 0 {
-			weight = 1 // "not stated" — see LoraRef.Weight
+			weight = l.Weight
+		}
+		if weight == 0 {
+			weight = 1 // nobody stated one — see LoraRef.Weight
 		}
 		if weight < 0 || weight > comfyMaxLoraWeight {
 			return nil, fmt.Errorf("LoRA %q asked for at strength %g, and the range is 0-%g",
@@ -361,8 +440,12 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		return Result{}, err
 	}
 	params := comfyParams{
-		Op: req.Op, Prompt: req.Prompt, Seed: seed, Width: w, Height: h,
+		Op: req.Op, Prompt: req.Prompt, Negative: comfyNegativeFor(conn, model, req),
+		Seed: seed, Width: w, Height: h,
 		BatchSize: count, Loras: loras,
+		// What the catalogue row for THIS model declares. Absent for a model that declares
+		// nothing, which leaves every template at its own recipe.
+		Params: conn.Params[model],
 	}
 
 	switchWarning := comfySwitchWarning(conn, model)
@@ -417,6 +500,9 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	}
 
 	warnings := comfyWarnings(req)
+	if ignored := comfyNegativeIgnoredWarning(conn, model, family); ignored != "" {
+		warnings = append(warnings, ignored)
+	}
 	if switchWarning != "" {
 		warnings = append(warnings, switchWarning)
 	}
@@ -745,7 +831,8 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, promp
 			hist, known := byID[promptID]
 			if known {
 				if hist.Status.StatusStr == "error" {
-					return comfyHistory{}, fmt.Errorf("the image engine failed the request: %s", comfyErrorMessages(hist))
+					return comfyHistory{}, fmt.Errorf("the image engine failed the request: %s%s",
+						comfyErrorMessages(hist), comfyErrorHint(hist))
 				}
 				if hist.Status.Completed {
 					return hist, nil
@@ -785,6 +872,27 @@ func comfyErrorMessages(hist comfyHistory) string {
 		return "unknown error"
 	}
 	return tail(string(b), 800)
+}
+
+// comfyErrorHint translates the one execution error whose cause is a CATALOGUE fact rather than
+// anything the caller did: a checkpoint published with no VAE tensors. ComfyUI answers it with a
+// Python traceback ending in `ERROR: VAE is invalid: None`, which tells a session nothing it can
+// act on — `generate_image` has no VAE argument, so retrying, changing the op or changing the
+// size all fail the same way, each after the 1-2.5 minute checkpoint switch (measured 2026-09-11
+// on this deployment: generate died in VAEDecode, edit in VAEEncode, same model).
+//
+// It reads the WHOLE message list rather than the tail comfyErrorMessages shows: the exception
+// message sorts before the traceback in ComfyUI's own error dict, so on a long traceback the one
+// line this matches on is the first thing the 800-character cap drops.
+func comfyErrorHint(hist comfyHistory) string {
+	b, err := json.Marshal(hist.Status.Messages)
+	if err != nil || !strings.Contains(string(b), "VAE is invalid") {
+		return ""
+	}
+	return " — this checkpoint carries no VAE of its own, so nothing could encode or decode the" +
+		" picture. Every op fails the same way until the catalogue row for this model declares its" +
+		" family's VAE as a separate file (`--vae`, an SDXL-family checkpoint takes an sdxl_vae);" +
+		" until then, ask for another model"
 }
 
 // comfySaveNode is the id every template gives its SaveImage node. It is the graph's terminal

@@ -171,6 +171,12 @@ directly through NAT. Two remedies are offered to an operator who wants it close
 enforcement (an RFC1918 address not on the allowlist is refused), or a reverse proxy in front of
 ComfyUI that checks a bearer, handed to the CP alone through `AF_COMFY_API_KEY`.
 
+🔴 Of the two, only the reverse proxy works today. `guide/operate/04-secure.md` states that the
+egress proxy's shipped scope is observation and allowlist management, and that blocking
+(`enforce`) with the always-on container-side wiring is follow-up work. The documentation
+therefore presents enforcement as a direction and the proxy as the answer, and must not promise a
+defence that does not exist (found by the documentation lane while writing it).
+
 ### 8. Usage stays `tool.imagegen` / provider `comfy`; no cost is attached; `warm` on the panel is a liveness probe
 
 The Agent's counting of images and pixels is unchanged (ADR 0069 decision 9, ADR 0071 decision
@@ -252,15 +258,20 @@ seconds is P1.
     label nor its model (the same on ECS).
   - *Documentation*: `deploy/compose/.env.example`, `deploy/native/README.md` (next to the
     VOICEVOX section), a new bilingual page `guide/operate/07-image-engine.md` linked from that
-    shelf's README, an "image generation" row in `guide/ref/deploy-targets.md`'s matrix, and the
-    row in `guide/ref/features.md` that points "the inference engines' GPU class" at the MCP /
-    egress page.
+    shelf's README, an "image generation" row in `guide/ref/deploy-targets.md`'s matrix, and a
+    new row for the self-hosted ComfyUI in `guide/ref/features.md`. (The draft and the review
+    both called that page's existing "GPU class" row a wrong pointer; it is not —
+    `guide/admin/04-mcp-egress.md` holds the "GPU instance class" section — so it stays.)
   **The completion criterion is one real run — one image back from `generate_image` against a
   LAN ComfyUI**: green benches have failed to measure the wiring before (ADR 0072 P2). That run
   needs a network with a ComfyUI on it, which only the operator has; it is theirs, not a
   session's.
-- **P1**: the basename rule; a health prober and the uptime heatmap; candidates from
-  `/object_info`; the reverse-proxy procedure for `AF_COMFY_API_KEY`.
+- **P1**: entering the URL and key from the admin panel, first — the documentation lane had to
+  write "there is no field for this; restart the CP" on two pages, which is the moment decision 2
+  said the variable would start to hurt; a member-facing section (`guide/member/02-sessions.md`
+  explains only the CLI-plan routes, and nothing in the guide says how a deployment-provided
+  engine, ECS or LAN, looks from a session); the basename rule; a health prober and the uptime
+  heatmap; candidates from `/object_info`; the reverse-proxy procedure for `AF_COMFY_API_KEY`.
 - **P2**: a script that runs the pinned image on a GPU host under docker (open question 4).
 - **P3**: the same mechanism for `AF_LLM_URL` (a LAN llama-server / Ollama, the chat role).
   `warmPath` `/models` is llama.cpp-router specific and must be empty. Outside this ADR.
@@ -296,7 +307,9 @@ seconds is P1.
 - Traps: `workspace/agent/engines.go:481` (basename), `workspace/agent/internal/imagegen/http.go:165-196`
   (no `comfy` case).
 - The health path: `deploy/aws/ecs/cfn/60-engines.yaml:943` (comfy is `/system_stats`).
-- The wrong pointer: `guide/ref/features.md:124`.
+- `guide/ref/features.md:124` points at `guide/admin/04-mcp-egress.md:93` ("The GPU instance
+  class"), which is the right page — the draft and the first pass of the review said otherwise.
+- Egress enforcement is not shipped: `guide/operate/04-secure.md:92-96` (scope note).
 
 ## Review (2026-09-11, before P0)
 
@@ -345,3 +358,16 @@ above; this section records what was found and why.
 - **The completion criterion needs the operator's network.** Said so in the phases: a session
   cannot supply a LAN ComfyUI, so the one real run is the operator's step after the four lanes
   merge.
+
+What the documentation lane found while writing P0 (2026-09-11, the same day):
+
+- 🔴 **The review's "wrong pointer" was itself wrong.** `guide/ref/features.md:124` sends "the
+  inference engines' GPU class" to `guide/admin/04-mcp-egress.md`, and that page has a "The GPU
+  instance class" section with ADR 0074's content. The review repeated the draft's claim without
+  opening the target — the same mistake as a citation nobody checked. Retracted above; the lane
+  added a row for the self-hosted ComfyUI instead.
+- 🔴 **Decision 7's first remedy does not exist yet.** Egress enforcement is documented as
+  follow-up work; only the reverse proxy is a defence an operator can set up today. Noted in
+  decision 7.
+- **Two P1 items surfaced**: the admin-panel URL field moved to the top of P1, and a
+  member-facing section on deployment-provided engines, which the guide lacks for ECS as well.

@@ -579,6 +579,82 @@
   min-width: 0;
 }
 
+
+/* The generation parameters (ADR 0072 decision 4, widened). Five short numeric fields, which as
+   full-width rows made the form twice as tall for values that are two characters each — so they
+   wrap in a grid and the label column shrinks to fit a word like "Steps".
+
+   🔴 The two notes underneath (`p`) span the whole grid on purpose: one of them says the field
+   above it reaches no graph on this family, and a sentence sharing a column with a number reads
+   as that number's caption. */
+.engines-params {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px 12px;
+  margin: 6px 0;
+}
+
+.engines-params > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 11px;
+}
+
+/* 🔴 Not a fixed column like the form rows above. Measured on a real render at 7ch: the ja
+   labels「ステップ数」「サンプラー」「スケジューラ」were all CUT — a fixed basis clips rather
+   than wraps here, because the grid cell is already narrow. Sized to the word, kept on one
+   line, and the input takes what is left. */
+.engines-params > .engines-param > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.engines-params > .engines-param > input {
+  min-width: 4ch;
+}
+
+/* The sentence the numbers were read out of. It is a QUOTE — somebody else's words about their
+   own model — and it is what makes the fields above judgeable rather than trusted, so it is set
+   apart rather than folded into the muted run of form help. */
+.engines-param-quote {
+  margin: 6px 0 0;
+  font-size: 11px;
+  border-left: 2px solid var(--dialog-border, #30363d);
+  padding-left: 8px;
+}
+
+.engines-param-quote q {
+  font-style: italic;
+}
+
+/* What a catalogue row declares, with the button that edits it on the same line. Wrapping
+   matters: the summary is "Steps 30 · CFG 4 · dpmpp_2m · karras" and the button must not be
+   pushed off the row on a narrow modal. */
+.engines-model-params {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 0;
+  font-size: 11px;
+}
+
+/* 🔴 The edit button needs an edge. As a bare ghost inside a muted line it rendered as one more
+   word of the summary — seen on a real render, where "パラメータ" sat at the end of
+   "生成パラメータ: ステップ数 30 · CFG 4.5 · dpmpp_2m · karras" looking like part of it. */
+.engines-model-params > button {
+  border: 1px solid var(--dialog-border, #30363d);
+  border-radius: 5px;
+  padding: 1px 8px;
+}
+
+/* Which engine the model tabs are showing, when the tab strip says only "Image". The key is
+   what every error message and every S3 prefix uses, so it is not decoration. */
+.engines-role-name {
+  margin: 0 0 6px;
+  font-size: 11px;
+}
+
 /* One model can be several FILES — FLUX.2 klein is a diffusion model, a text encoder and a VAE
    (ADR 0072 decision 2). 🔴 A left rule was not enough: on a real render of three files the rule
    was invisible in both themes, and what the form showed was part/key/size repeated three times
@@ -736,4 +812,39 @@
     width: 100%;
   }
 
+}
+
+/* The engine-wide exclusion list (ADR 0072 follow-up, negative prompts). It sits between the
+   box controls and the model list, and reads as one statement: a field, its save, and the note
+   that says what it is NOT. */
+.engines-negative {
+  margin-top: 10px;
+}
+
+.engines-negative input {
+  flex: 1;
+  min-width: 0;
+}
+
+.engines-negative .engines-model-add-actions {
+  margin-top: 6px;
+}
+
+/* The per-model field reads as the family picker's row — same size, same rhythm — with an input
+   that can grow: a negative prompt is a sentence, not one of five family names. */
+.engines-model-negative {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.engines-model-negative > span {
+  color: var(--dialog-muted);
+}
+
+.engines-model-negative input {
+  flex: 1;
+  min-width: 0;
 }

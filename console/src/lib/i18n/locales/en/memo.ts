@@ -52,6 +52,8 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.collapse_memo": "Collapse this memo",
   "memo.edit": "Edit",
   "memo.send_one": "Send this memo",
+  "memo.copy": "Copy",
+  "memo.copied": "Copied the memo",
   "memo.save": "Save",
   "memo.moved": "Moved to “{cat}”",
   "memo.cat_added": "Category added",

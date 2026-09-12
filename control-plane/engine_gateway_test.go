@@ -800,7 +800,7 @@ func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 	row := engineCatalogRowFor(d, []store.EngineModel{{
 		Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled: true, Default: true,
 		ContextTokens: 32768, MaxOutputTokens: 4096,
-	}}, "")
+	}}, "", "")
 	if row["context_tokens"] != 32768 || row["max_output_tokens"] != 4096 {
 		t.Errorf("catalogue row = %v", row)
 	}
@@ -813,14 +813,14 @@ func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 	// Reporting the zero would make the Agent advertise a context of 0, which is what turns
 	// opencode's auto-compaction off — worse than the silence it replaced.
 	old := engineCatalogRowFor(engineDef{Key: "llm", Provider: "llamacpp"},
-		[]store.EngineModel{{Role: "llm", ID: "m", Enabled: true}}, "")
+		[]store.EngineModel{{Role: "llm", ID: "m", Enabled: true}}, "", "")
 	if _, ok := old["context_tokens"]; ok {
 		t.Errorf("an undeclared window was reported anyway: %v", old)
 	}
 
 	// Nothing enabled is not an engine with an empty model list: it is an engine that must not
 	// appear at all, or a launch menu offers a model whose every request answers 503.
-	if none := engineCatalogRowFor(d, nil, ""); none != nil {
+	if none := engineCatalogRowFor(d, nil, "", ""); none != nil {
 		t.Errorf("an engine with an empty catalogue was offered: %v", none)
 	}
 }
@@ -838,7 +838,7 @@ func TestEngineCatalogRowSeparatesLorasFromCheckpoints(t *testing.T) {
 		{Role: "image", ID: "watercolor-v2", Kind: "lora", Enabled: true, BaseModel: "sdxl",
 			Description: "soft watercolour",
 			Files:       []store.EngineModelFile{{S3Key: "image/loras/watercolor_v2.safetensors"}}},
-	}, "")
+	}, "", "")
 	if row == nil {
 		t.Fatal("no row for an engine with a checkpoint and a LoRA")
 	}
@@ -863,7 +863,7 @@ func TestEngineCatalogRowSeparatesLorasFromCheckpoints(t *testing.T) {
 	// An engine holding LoRAs and no checkpoint is still an engine with nothing to serve.
 	only := engineCatalogRowFor(d, []store.EngineModel{
 		{Role: "image", ID: "watercolor-v2", Kind: "lora", Enabled: true, BaseModel: "sdxl"},
-	}, "")
+	}, "", "")
 	if only != nil {
 		t.Errorf("an engine with only LoRAs was offered: %v", only)
 	}

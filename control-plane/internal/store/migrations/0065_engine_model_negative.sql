@@ -1,0 +1,19 @@
+-- The catalogue row's own negative prompt (ADR 0072 follow-up, negative prompts).
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`.
+--
+-- What it is for: an SDXL fine-tune's model card publishes the terms to keep OUT as often as it
+-- publishes the ones to put in, and the sample pictures everyone judges the checkpoint by were
+-- made with them. Until now the only negative prompt that existed was one fixed line compiled
+-- into the Agent, identical for every checkpoint on the engine.
+--
+-- A column of its own rather than a key inside a JSON blob of recommended parameters: this is
+-- prose a person writes and reads in a text box, the panel wants to show it on the row, and it
+-- is the one recommended value that is not a number with a range to validate.
+--
+-- Empty is the default and means "nobody declared one", which the Agent answers with the fixed
+-- line it has always used -- NOT with an empty negative prompt, which would let every artifact
+-- through on rows that never asked for that.
+ALTER TABLE engine_models ADD COLUMN negative_prompt TEXT NOT NULL DEFAULT '';

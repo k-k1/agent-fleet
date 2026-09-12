@@ -56,6 +56,13 @@ func ValidOp(op Op) bool {
 type Request struct {
 	Op     Op
 	Prompt string
+	// NegativePrompt is what to keep OUT of the picture, and it is a SEPARATE axis from Prompt
+	// rather than a phrasing of it: a diffusion sampler reaches it through the unconditional
+	// branch of classifier-free guidance, which is not a thing a positive prompt can say
+	// ("without text" in Prompt is conditioning ON text). Only a route that builds its own
+	// sampler graph has that branch — the fleet's own ComfyUI — so everywhere else this comes
+	// back as a warning rather than being folded into Prompt.
+	NegativePrompt string
 	// Size is "<w>x<h>" or "auto". Provider-checked, never enforced here: the core does not
 	// silently resample to hit an exact size, because that would trade a real dependency for
 	// a promise the provider never made.
@@ -170,6 +177,15 @@ type Caps struct {
 	// documents only prompt/n/size (checked against its own source — see the ADR 0069 follow-up
 	// for why the one undocumented channel that would carry it is deliberately not used).
 	Seed bool
+	// Negative is whether Request.NegativePrompt reaches the sampler as real conditioning.
+	//
+	// A per-MODEL answer, not a per-provider one, which is why it sits in Caps: on the fleet's
+	// own ComfyUI it is true for the guided families (SDXL, SD3.5) and FALSE for the distilled
+	// ones. Those run at cfg 1, where the guidance term is `uncond + 1*(cond-uncond)` = cond —
+	// the negative branch cancels out exactly, so a graph can carry the words and the picture
+	// cannot change. Reporting true there would be the most expensive kind of lie: the caller
+	// sees no warning, the picture looks fine, and what they asked to exclude is still in it.
+	Negative bool
 	// Loras is every fine-tune this provider will accept in Request.Loras (ADR 0072 decision 5,
 	// phase P3). Empty means the caller cannot pick, exactly as with Sizes.
 	//
@@ -555,6 +571,7 @@ func normalizeRequest(r Request) Request {
 		r.Count = 1
 	}
 	r.Prompt = strings.TrimSpace(r.Prompt)
+	r.NegativePrompt = strings.TrimSpace(r.NegativePrompt)
 	r.Size = strings.TrimSpace(r.Size)
 	r.AspectRatio = strings.TrimSpace(r.AspectRatio)
 	r.Background = strings.TrimSpace(r.Background)
@@ -593,6 +610,14 @@ func requestWarnings(req Request, res Result, caps Caps) []string {
 			names = append(names, l.Name)
 		}
 		out = append(out, fmt.Sprintf("loras=%s requested, but this route cannot apply a LoRA", strings.Join(names, ", ")))
+	}
+	// Same shape again, and the reason it matters more than the others: what a negative prompt
+	// asks to keep out is usually the thing the caller is trying to avoid SHOWING someone. A
+	// picture that still contains it looks like a success from every angle except that one.
+	if req.NegativePrompt != "" && !caps.Negative {
+		out = append(out, fmt.Sprintf(
+			"negative_prompt=%q requested, but this route has no negative conditioning — nothing was excluded",
+			req.NegativePrompt))
 	}
 	// A dropped seed is the most invisible of the three: the picture is fine, and the caller only
 	// finds out when the SECOND request — the whole point of pinning one — comes back different.

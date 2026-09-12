@@ -11,6 +11,7 @@
 // `super_admin: false` (absent) and once with `super_admin: true` (present).
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
+import type { ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const api = vi.fn();
@@ -22,6 +23,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 }));
 
 import { EnginesAdminView } from "./adminEngines.tsx";
+import { EngineModelsAdminView } from "./adminEngineModels.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -91,7 +93,12 @@ const superAnswer = {
   ],
 };
 
-async function mount(answer: unknown) {
+/** 🔴 Which SCREEN, as an argument. Since the panel was split, a granted tenant_admin reaches
+ *  the models screen and only that — the other one buys and stops a GPU — so "what a tenant
+ *  sees" is a question about this component, and the operator's half has to be asked of the
+ *  other one. Defaulting to the models screen keeps every assertion below about the screen a
+ *  tenant actually opens. */
+async function mount(answer: unknown, View: () => ReactNode = EngineModelsAdminView) {
   api.mockImplementation((p: string) =>
     String(p).endsWith("/ingest") ? Promise.resolve({ jobs: [] }) : Promise.resolve(answer),
   );
@@ -99,7 +106,7 @@ async function mount(answer: unknown) {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<EnginesAdminView />);
+    root!.render(<View />);
   });
   await act(async () => {
     await Promise.resolve();
@@ -120,35 +127,52 @@ afterEach(() => {
 });
 
 describe("the engine panel a granted tenant_admin sees", () => {
-  // The six operator-only surfaces, each named by what a reader would look for. Kept as one
-  // table so that adding a control to this panel means deciding, in one place, whether a tenant
-  // may see it.
-  const OPERATOR_ONLY: [string, () => boolean][] = [
+  // The operator-only surfaces, each named by what a reader would look for, and each with the
+  // SCREEN it belongs to. Kept as one table so that adding a control means deciding, in one
+  // place, whether a tenant may see it.
+  //
+  // 🔴 The first three are on the machine screen, which a tenant admin has no rail entry to at
+  // all. They are still asserted against the MODELS screen below, because what would go wrong
+  // is one of them appearing there — and their positive control has to be taken on the screen
+  // they actually live on, or it would be proving the absence of something from a page that
+  // never had it.
+  const OPERATOR_ONLY: [string, () => boolean, () => ReactNode][] = [
     // 1. The mode. It buys and stops a GPU for the whole deployment.
-    ["the mode buttons", () => !!btn("オンデマンド") || !!btn("常時稼働") || !!btn("無効")],
+    ["the mode buttons", () => !!btn("オンデマンド") || !!btn("常時稼働") || !!btn("無効"), EnginesAdminView],
     // 2. The GPU ladder — which card the next box is, and what it costs per hour.
-    ["the class picker", () => text().includes("L4 24GB")],
+    ["the class picker", () => text().includes("L4 24GB"), EnginesAdminView],
     // 3. What the box is doing right now.
-    ["the box state", () => text().includes("停止中") || text().includes("稼働中")],
+    ["the box state", () => text().includes("停止中") || text().includes("稼働中"), EnginesAdminView],
     // 4. Enabling / disabling a model, and choosing what the engine starts with.
-    ["the model controls", () => !!btn("有効にする") || !!btn("無効にする") || !!btn("これで起動する")],
+    ["the model controls", () => !!btn("有効にする") || !!btn("無効にする") || !!btn("これで起動する"), EngineModelsAdminView],
     // 5. Forgetting a row (and, behind it, deleting the bytes).
-    ["forget", () => !!btn("登録を消す")],
+    ["forget", () => !!btn("登録を消す"), EngineModelsAdminView],
     // 6. The deployment's Hugging Face token.
-    ["the token panel", () => text().includes("Hugging Face のトークン")],
+    ["the token panel", () => text().includes("Hugging Face のトークン"), EngineModelsAdminView],
   ];
 
+  /** Between two mounts in one test. The afterEach cannot do it: these tests mount several
+   *  times, and a left-over root goes on answering queries against a detached node. */
+  const unmount = async () => {
+    await act(async () => root?.unmount());
+    host?.remove();
+    root = null;
+    host = null;
+  };
+
   it("shows none of the six operator-only surfaces", async () => {
-    await mount(tenantAnswer);
     for (const [name, present] of OPERATOR_ONLY) {
+      await mount(tenantAnswer);
       expect(present(), `${name} must not be on a tenant_admin's panel`).toBe(false);
+      await unmount();
     }
   });
 
   it("shows all six to the operator — the positive control for the test above", async () => {
-    await mount(superAnswer);
-    for (const [name, present] of OPERATOR_ONLY) {
+    for (const [name, present, View] of OPERATOR_ONLY) {
+      await mount(superAnswer, View);
       expect(present(), `${name} is missing from the operator's panel, so its absence proves nothing`).toBe(true);
+      await unmount();
     }
   });
 
@@ -195,6 +219,10 @@ describe("the engine panel a granted tenant_admin sees", () => {
   it("keeps those sentences for the operator, whose controls they describe", async () => {
     await mount(superAnswer);
     expect(text()).toContain("選び直しは次の起動から効きます");
+    // The sentence that explains the mode segment lives with the segment, on the other screen.
+    await act(async () => root?.unmount());
+    host?.remove();
+    await mount(superAnswer, EnginesAdminView);
     expect(text()).toContain("オンデマンド");
   });
 
@@ -213,7 +241,7 @@ describe("the engine panel a granted tenant_admin sees", () => {
   it("treats a Control Plane that sends no flag as not-super, rather than guessing", async () => {
     // An older CP answers the old envelope. Drawing the operator's controls off a missing
     // field is the failure that ends in a row of buttons that 403.
-    await mount({ engines: tenantAnswer.engines });
+    await mount({ engines: tenantAnswer.engines }, EnginesAdminView);
     expect(btn("オンデマンド")).toBeFalsy();
   });
 });
