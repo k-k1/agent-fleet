@@ -1392,8 +1392,11 @@ run did NOT reproduce, both of them because the real stack is not the throwaway:
 
 🔴 **The `true` half BLOCKS, and it needs a second shell.** `AWS::ECS::Service` carries no
 `DesiredCount` here on purpose ([the engine services](#the-engine-services)), so a service
-CloudFormation creates comes up at desired 1 — and on the EC2 launch type there is no box to
-place it on, so the stack sits on the stabilisation wait until it times out and rolls back. The
+CloudFormation creates comes up at desired 1 — **whoever creates it and whatever the launch type**:
+the old Managed Instances service was created at desired 1 too (measured on a throwaway with the
+real template shape, ADR 0077's round-trip follow-up). What differs is who satisfies that 1: a
+Managed Instances provider buys a box (and bills a GPU), and on the EC2 launch type nobody can, so
+the stack sits on the stabilisation wait until it times out and rolls back. The
 throwaway had `DesiredCount: 0` and finished in 48 s; the real pair sat for ten minutes and only
 completed once `aws ecs update-service --cluster <cluster> --service <svc> --desired-count 0` was
 run on BOTH from another shell while the update was in flight — which is step 3's second shell
@@ -1416,8 +1419,10 @@ same `HasLlmModel` / `HasImageModel` condition as the services, so the round tri
 re-creates them — for the whole window, which is however long the deploy in the middle takes (34
 minutes when `dev-deploy.sh` bakes images). At desired 0 there is nothing registered in the name,
 so nothing is lost, which is what makes the window safe. (ADR 0077 P0 measured the opposite on a
-throwaway whose discovery resource had no condition. Its registry ARN observation still holds by
-accident: Cloud Map re-issued the SAME `srv-` id for the same namespace-and-name pair.)
+throwaway whose discovery resource had no condition. The registry ARN coming back unchanged is
+**not** the resource surviving: Cloud Map re-issues the SAME `srv-` id for the same
+namespace-and-name pair, and the re-created service's `CreateDate` is the re-creation time —
+same id, new resource. Measured on the round-trip throwaway.)
 
 ⚠️ **Whatever the answer, the capture drops eight parameters** (`<Role>AllowedInstanceTypes`,
 `AcceleratorMemMinMiB`, `VCpuMin`, `VCpuMax`, `MemMinMiB`, `MemMaxMiB`, `UseLocalStorage`,
