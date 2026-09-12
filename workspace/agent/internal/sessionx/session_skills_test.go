@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -11,9 +12,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-func TestScanSlashSkills(t *testing.T) {
-	project := t.TempDir()
+func TestClaudeSkills(t *testing.T) {
+	dir := t.TempDir()
+	project := filepath.Join(dir, ".claude")
 	user := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", user)
 	// project skill with complete frontmatter (argument-hint / user-invocable are read too)
 	writeFile(t, filepath.Join(project, "skills", "proofread", "SKILL.md"),
 		"---\nname: proofread\ndescription: 原稿の形式整備\nargument-hint: \"<章番号>\"\n---\nbody")
@@ -33,7 +36,7 @@ func TestScanSlashSkills(t *testing.T) {
 	// within one root, a skill beats a command
 	writeFile(t, filepath.Join(project, "commands", "proofread.md"), "command twin")
 
-	got := scanSlashSkills(project, user)
+	got := claudeSkills(dir, dir)
 	want := map[string][3]string{ // name → {source, type, description}
 		"proofread": {"project", "skill", "原稿の形式整備"},
 		"ledger":    {"project", "skill", ""},
@@ -71,6 +74,116 @@ func TestScanSlashSkills(t *testing.T) {
 	}
 }
 
+// A session launched with a Subdir runs BELOW the working copy root, and claude then reads the
+// .claude directory of the CWD, of every folder in between, and of the ancestors above the working
+// copy — stopping at $HOME (measured 2026-09-12, docs/log/50 §10). Scanning meta.Dir alone hid all
+// but one of them, so a skill the user could invoke by typing "/name" was missing from the picker.
+func TestClaudeSkillsFollowsTheCWDChain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "af-claude"))
+	repos := filepath.Join(home, "repos")
+	dir := filepath.Join(repos, "wc")
+	cwd := filepath.Join(dir, "path", "to")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skill := func(base, name, desc string) {
+		writeFile(t, filepath.Join(base, ".claude", "skills", name, "SKILL.md"),
+			"---\nname: "+name+"\ndescription: "+desc+"\n---\nbody")
+	}
+	skill(home, "personal", "$HOME/.claude はパーソナル層＝CLAUDE_CONFIG_DIR に差し替わる（出てはいけない）")
+	skill(repos, "crossrepo", "作業コピーの外・全レポ共通")
+	skill(dir, "wcroot", "作業コピー直下")
+	skill(cwd, "nearest", "CWD 直下")
+	writeFile(t, filepath.Join(dir, "path", ".claude", "commands", "mid.md"),
+		"---\ndescription: 途中の階層のコマンド\n---\nbody")
+	// same name at two levels: the nearer one is what the CLI runs, so it must win here too
+	skill(dir, "dup", "遠い方（負けるべき）")
+	skill(cwd, "dup", "近い方")
+
+	byName := map[string]sessionSkill{}
+	for _, sk := range claudeSkills(cwd, dir) {
+		byName[sk.Name] = sk
+	}
+	if _, ok := byName["personal"]; ok {
+		t.Errorf("$HOME/.claude/skills must not be scanned: %#v", byName["personal"])
+	}
+	for _, w := range []struct{ name, source, typ string }{
+		{"nearest", "project", "skill"},
+		{"mid", "project", "command"},
+		{"wcroot", "project", "skill"},
+		{"crossrepo", "user", "skill"}, // above the working copy: real, but not this repo's
+	} {
+		sk, ok := byName[w.name]
+		if !ok {
+			t.Errorf("%s missing from the chain: %#v", w.name, byName)
+			continue
+		}
+		if sk.Source != w.source || sk.Type != w.typ || sk.Invoke != "/"+w.name+" " {
+			t.Errorf("%s = %#v, want source=%s type=%s", w.name, sk, w.source, w.typ)
+		}
+	}
+	if sk := byName["dup"]; sk.Description != "近い方" {
+		t.Errorf("the nearer skill must win: %#v", sk)
+	}
+}
+
+// codex stops at the git root and, with no .git anywhere above, reads the CWD alone (measured
+// 2026-09-12 on 0.154). An SVN working copy has no .git, so offering the root's .codex/skills as
+// "$name" would offer something codex cannot resolve.
+func TestCodexSkillsStopsAtTheGitRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	dir := filepath.Join(home, "repos", "wc")
+	cwd := filepath.Join(dir, "path", "to")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for base, name := range map[string]string{dir: "wcroot", cwd: "nearest"} {
+		writeFile(t, filepath.Join(base, ".codex", "skills", name, "SKILL.md"),
+			"---\nname: "+name+"\ndescription: "+name+"\n---\nbody")
+	}
+
+	got := codexSkills(cwd, dir)
+	if len(got) != 1 || got[0].Name != "nearest" {
+		t.Fatalf("without .git codex reads the CWD alone, got %#v", got)
+	}
+	// positive control: the same tree with a git root reaches the working copy root
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got = codexSkills(cwd, dir)
+	if len(got) != 2 {
+		t.Fatalf("with a git root both levels are in scope, got %#v", got)
+	}
+}
+
+// The foreign entry's Path is pasted into a "read this path" prompt, so it has to resolve from the
+// directory the agent actually runs in: relative while the tree is right there (unchanged for a
+// session without a Subdir), absolute for a tree that sits above the CWD.
+func TestForeignSkillPathResolvesFromTheCWD(t *testing.T) {
+	dir := t.TempDir()
+	cwd := filepath.Join(dir, "path", "to")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, ".claude", "skills", "up", "SKILL.md"), "---\nname: up\n---\nbody")
+	writeFile(t, filepath.Join(cwd, ".claude", "skills", "here", "SKILL.md"), "---\nname: here\n---\nbody")
+
+	byName := map[string]sessionSkill{}
+	for _, sk := range appendForeignSkills(nil, chainUp(cwd, dir), cwd, nil) {
+		byName[sk.Name] = sk
+	}
+	if sk := byName["here"]; sk.Path != ".claude/skills/here/SKILL.md" || sk.Origin != ".claude" {
+		t.Errorf("here = %#v", sk)
+	}
+	if sk := byName["up"]; sk.Path != filepath.Join(dir, ".claude", "skills", "up", "SKILL.md") {
+		t.Errorf("a tree above the CWD needs an absolute path: %#v", sk)
+	}
+}
+
 // codex: the SKILL.md convention is claude-compatible but invocation is a "$name" mention.
 // The bundled .system entries get source "cli"; project .codex/skills wins over user
 // $CODEX_HOME/skills, first one wins.
@@ -87,7 +200,7 @@ func TestCodexSkills(t *testing.T) {
 	writeFile(t, filepath.Join(home, "skills", ".system", "imagegen", "SKILL.md"),
 		"---\nname: imagegen\ndescription: 同梱\n---\nbody")
 
-	got := codexSkills(dir)
+	got := codexSkills(dir, dir)
 	byName := map[string]sessionSkill{}
 	for _, sk := range got {
 		byName[sk.Name] = sk
