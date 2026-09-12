@@ -37,6 +37,10 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.locked_sessions":
     "This working copy hosts sessions that are locked against deletion; removing it would leave them unresumable. Unlock those sessions first.",
   "err.worktree_remove_failed": "Failed to remove the worktree.",
+  "err.branch_unmerged":
+    "This branch is not fully merged, so it was not deleted. Merge or push it first.",
+  "err.branch_not_in_head":
+    "This branch's commits are not in this working copy's current history. Deleting it on the remote too would leave them with nowhere to live — bring them in first.",
   "err.question_pending":
     "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
   "err.plan_pending":

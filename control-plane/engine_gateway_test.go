@@ -54,13 +54,18 @@ func (e *slowEngine) handler() http.Handler {
 
 // engineTestECS is an ECS that starts stopped and reports RUNNING once desired is 1.
 type engineTestECS struct {
-	desired  int32
-	running  int32
-	updates  int
-	instance string // capacity provider of the one container instance, if any
+	desired int32
+	running int32
+	updates int
+	// instance is the `af-role` attribute of the one container instance, if any ("engine-image").
+	// Empty means the cluster has none at all (ADR 0077 decision 3).
+	instance string
 	// instanceType is what that instance registers itself as (`ecs.instance-type`). Empty is a
 	// real answer too — ADR 0074's start gate must not read a missing attribute as a match.
 	instanceType string
+	// deregistered records the container instances taken out of the cluster (ADR 0077
+	// decision 5's first half).
+	deregistered []string
 }
 
 func (f *engineTestECS) DescribeServices(context.Context, *ecs.DescribeServicesInput, ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
@@ -85,12 +90,21 @@ func (f *engineTestECS) ListContainerInstances(context.Context, *ecs.ListContain
 
 func (f *engineTestECS) DescribeContainerInstances(context.Context, *ecs.DescribeContainerInstancesInput, ...func(*ecs.Options)) (*ecs.DescribeContainerInstancesOutput, error) {
 	ci := ecstypes.ContainerInstance{
-		ContainerInstanceArn: aws.String("arn:ci/i-1"), CapacityProviderName: aws.String(f.instance),
+		ContainerInstanceArn: aws.String("arn:ci/i-1"), Ec2InstanceId: aws.String("i-1"),
+		Status: aws.String("ACTIVE"), AgentConnected: true,
+		Attributes: []ecstypes.Attribute{{Name: aws.String(engineBoxRoleAttr), Value: aws.String(f.instance)}},
 	}
 	if f.instanceType != "" {
-		ci.Attributes = []ecstypes.Attribute{{Name: aws.String(engineBoxTypeAttr), Value: aws.String(f.instanceType)}}
+		ci.Attributes = append(ci.Attributes, ecstypes.Attribute{
+			Name: aws.String(engineBoxTypeAttr), Value: aws.String(f.instanceType),
+		})
 	}
 	return &ecs.DescribeContainerInstancesOutput{ContainerInstances: []ecstypes.ContainerInstance{ci}}, nil
+}
+
+func (f *engineTestECS) DeregisterContainerInstance(_ context.Context, in *ecs.DeregisterContainerInstanceInput, _ ...func(*ecs.Options)) (*ecs.DeregisterContainerInstanceOutput, error) {
+	f.deregistered = append(f.deregistered, aws.ToString(in.ContainerInstance))
+	return &ecs.DeregisterContainerInstanceOutput{}, nil
 }
 
 // newTestEngine wires a gateway around one stubbed engine, with no store behind it: the
@@ -459,7 +473,13 @@ func TestEngineAuthFailureNamesTheReason(t *testing.T) {
 // --- the table ----------------------------------------------------------------
 
 func TestParseEngineTable(t *testing.T) {
+	// 🔴 Contract A as ADR 0077 decision 1 leaves it: `launchTemplate` is what the CP buys from,
+	// and the Managed Instances columns a stack written before the migration still emits are
+	// IGNORED rather than read. The two sides are deployed separately, so a CP upgraded first
+	// meets the old spelling and a stack updated first meets the new one; neither may make a
+	// role disappear.
 	raw := `{"engines":[{"key":"llm","service":"af-llm","capacityProvider":"cp-llm",
+	 "spotCapacityProvider":"cp-llm-spot","launchTemplate":"lt-0abc",
 	 "url":"http://llm.af.internal:8080","health":"/health","provider":"llamacpp",
 	 "models":["qwen3-coder-30b-a3b"],"idleSec":1800,"startDeadlineSec":900,"mode":"ondemand"}]}`
 	tab, err := parseEngineTable(raw)
@@ -468,6 +488,21 @@ func TestParseEngineTable(t *testing.T) {
 	}
 	if len(tab.Engines) != 1 || tab.Engines[0].Key != "llm" || tab.Engines[0].StartDeadlineSec != 900 {
 		t.Fatalf("table = %+v", tab)
+	}
+	if tab.Engines[0].LaunchTemplate != "lt-0abc" {
+		t.Errorf("launchTemplate = %q — this is the seam between the CFN lane and the CP", tab.Engines[0].LaunchTemplate)
+	}
+	if engineBoxRole(tab.Engines[0]) != "engine-llm" {
+		t.Errorf("af-role = %q, want engine-llm", engineBoxRole(tab.Engines[0]))
+	}
+	// A row with no launch template buys no box, and says so by having no role to recognise
+	// one by: that is the deployment whose CP was upgraded before its stack.
+	old, err := parseEngineTable(`{"engines":[{"key":"llm","service":"s","url":"http://x","capacityProvider":"cp-llm"}]}`)
+	if err != nil {
+		t.Fatalf("a table written before ADR 0077 no longer parses: %v", err)
+	}
+	if engineBoxRole(old.Engines[0]) != "" {
+		t.Errorf("af-role = %q for a row with no launch template", engineBoxRole(old.Engines[0]))
 	}
 	// A row missing the parts the gateway cannot invent is an error, not a silently
 	// half-wired engine: an empty service name would make the controller drive nothing while

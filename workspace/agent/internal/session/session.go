@@ -297,6 +297,16 @@ type Session struct {
 	// "the turn ended" apart from "an idle we cannot explain" (status.SessionStatus.TurnEnd,
 	// docs/log/51), and a fabricated time would be read as evidence of completion.
 	LastTurnEndAt string `json:"lastTurnEndAt,omitempty"`
+	// LastSay is the opening line of the agent's newest utterance — one line, whitespace
+	// collapsed, capped at 120 runes by the agent that produced it (ADR 0078 decision 12).
+	// Empty when the session has not spoken yet, and for every kind but claude, whose
+	// transcripts this is not yet read from (P1.1).
+	//
+	// The capping is deliberately on THIS side of the wire: a card shows one ellipsized line
+	// whatever arrives, so a whole answer relayed to the Console would be payload nobody
+	// reads, multiplied by every session on a 4 s poll. Display only — nothing decides
+	// anything from this text.
+	LastSay string `json:"lastSay,omitempty"`
 	// StopAfterTurnAt mirrors Meta.StopAfterTurnAt: the session is armed to stop itself at
 	// the end of the running turn (docs/log/85). The row has to say so, because the arm is
 	// usually set from inside the conversation (the MCP tool) where the user only sees prose

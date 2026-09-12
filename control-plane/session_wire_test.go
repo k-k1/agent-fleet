@@ -46,7 +46,7 @@ const agentSessionsPayload = `{"sessions":[{
 	"context":{"read":1000,"create":200,"fresh":30,"model":"claude-fable-5"},
 	"branch":"main","currentBranch":"dev","branchDrift":true,"worktree":true,
 	"exitReason":"oom","exitCode":137,"exitSignal":9,"handoffPending":true,
-	"originSession":"sparent"
+	"originSession":"sparent","lastSay":"実装を終えて試験を回しています"
 }]}`
 
 // TestAgentSessionsRelayKeepsFields pins that the CP's decode→re-emit round trip drops none
@@ -125,6 +125,11 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		// family collapses to size 1 and neither the nesting nor the spines appear at all,
 		// while the Console's optional declaration keeps the type check quiet.
 		"originSession": "sparent",
+		// The agent's newest utterance, the one line every card in the sessions overview
+		// carries (ADR 0078 decision 12). Dropped here, that line is blank on every card and
+		// nothing else in the stack says so: the Console declares it optional, and its own
+		// tests build Session objects by hand, on the far side of this relay.
+		"lastSay": "実装を終えて試験を回しています",
 	}
 	for k, v := range want {
 		if got[k] != v {

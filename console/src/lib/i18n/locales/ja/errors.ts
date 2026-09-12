@@ -36,6 +36,10 @@ export const errors = {
   "err.locked_sessions":
     "この作業コピーには削除ロック中のセッションがあります。削除すると再開できなくなるため、先にそのセッションのロックを解除してください。",
   "err.worktree_remove_failed": "worktree の削除に失敗しました。",
+  "err.branch_unmerged":
+    "このブランチはまだマージされていないため削除しませんでした。マージか push をしてから削除してください。",
+  "err.branch_not_in_head":
+    "このブランチのコミットは、この作業コピーの現在の履歴に入っていません。リモートまで消すとコミットの行き場が無くなるため、先に取り込んでください。",
   "err.question_pending":
     "エージェントが質問への回答を待っています。質問カードから回答してから送信してください。",
   "err.plan_pending":

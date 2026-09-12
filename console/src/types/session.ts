@@ -43,7 +43,10 @@ export interface Session {
   // itself). Sessions stay grouped by `dir` (the working copy) — this is only the
   // extra "where inside it" detail.
   subdir?: string;
-  remoteUrl?: string; // clone URL (agent sessions with a repo)
+  // claude.ai Remote Control URL, set only while RC is bridged (agents/claude: RemoteSessionURL).
+  // NOT the working copy's clone URL — the repository a session runs in is identified through
+  // its working copy (repos: remote + remotePath).
+  remoteUrl?: string;
   state?: SessionState | string; // live hook/plugin state ("" = idle)
   alive?: boolean; // tmux session is running
   resumable?: boolean; // a stopped session whose dir still exists (false = archive only)
@@ -96,6 +99,12 @@ export interface Session {
   // notification, so without this the row of a session that handed its next step on is the row
   // of one with nothing left to do.
   handoffPending?: boolean;
+  // The opening line of the agent's newest utterance — one line, already whitespace-collapsed
+  // and capped at 120 runes by the Agent (ADR 0078 decision 12). Absent until the session has
+  // said something, and for every kind but claude (P1.1). Display only, on the overview card:
+  // it is a fragment of an answer with no turn boundary and no timestamp, so nothing may
+  // decide anything from it.
+  lastSay?: string;
   // Deletion lock (docs/log/45): while true, the Agent answers 403 to anything that deletes
   // (delete = forget the metadata, purge, the 7-day auto-prune of stopped sessions, and
   // removal as a side effect of deleting the working copy). Stop and archive are reversible

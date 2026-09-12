@@ -24,6 +24,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
@@ -57,23 +58,19 @@ type engineDef struct {
 	// no GPU ladder and no uptime sampler — see newEngineRegistry.
 	Lifecycle string `json:"lifecycle"`
 	Service   string `json:"service"` // ECS service whose desired count moves
-	// 🔴 On a RUNNING engine, CapacityProvider is the name the process STARTED with. Replacing a
-	// provider renames it and the reloader takes that live, so the current one is
-	// engineRuntimeState.providerName() (engine_table_reload.go).
-	CapacityProvider string `json:"capacityProvider"` // makes `draining` observable; empty = Fargate
-	// SpotCapacityProvider is the second half of the pair (ADR 0075 decision 3): a role has one
-	// provider per PURCHASE OPTION, because `capacityOptionType` is fixed when a provider is
-	// created and the only way to choose at runtime is to have both already. Empty — every
-	// deployment before this ADR, and the llm role for ever (decision 9) — means this role never
-	// buys Spot.
+	// LaunchTemplate is the EC2 launch template this role's boxes are bought from (ADR 0077
+	// decision 1), by id (lt-…) or by name. Empty = this role does not buy boxes: a Fargate
+	// engine, or a row written by a stack from before ADR 0077 — and such a row still works,
+	// it simply starts the engine the plain way and chooses no card.
 	//
-	// The two travel as a PAIR wherever they are held (engineECS): one is the destination a
-	// strategy names, the other is what a container instance is matched against, and a box bought
-	// on either of them is this engine's box. Seeing only one is how a Spot box reads as
-	// `box: null` (measured during the 0074 rename).
-	SpotCapacityProvider string `json:"spotCapacityProvider"`
-	URL                  string `json:"url"`    // http://llm.af.internal:8080
-	Health               string `json:"health"` // "/health"
+	// 🔴 It REPLACES `capacityProvider` / `spotCapacityProvider`, which are ignored wherever a
+	// stack still writes them. Those named ECS Managed Instances capacity providers, and the
+	// whole of ADR 0077 is that the CP buys the instance itself: there is no provider left to
+	// name, and a CP that went on reading them would be addressing resources the migration
+	// deletes (ADR 0077 decision 11).
+	LaunchTemplate string `json:"launchTemplate"`
+	URL            string `json:"url"`    // http://llm.af.internal:8080
+	Health         string `json:"health"` // "/health"
 	// WarmPath is where "are there weights in memory" is asked, when that is a DIFFERENT
 	// question from "is it healthy". Empty (the image role, and any ADR 0071 table) means the
 	// health check answers both. "/models" for the llm role: a llama.cpp router answers /health
@@ -84,11 +81,10 @@ type engineDef struct {
 	APIKeyParam string `json:"apiKeyParam"` // SSM SecureString the engine's own --api-key is in
 	// Classes is the ladder of GPU rungs this role may buy, as the operator declared it
 	// (ADR 0074 decision 1; the format is parseEngineClasses'). Empty — the shipped default —
-	// means the box is whatever CloudFormation put in the capacity provider and nothing here
-	// ever calls ECS about it.
+	// means this role chooses no card and nothing here ever buys one.
 	//
 	// It sits with the vessel rather than with the catalogue because a rung IS the vessel: the
-	// stack owns the capacity provider, and this only says which of the shapes the operator
+	// stack owns the launch template, and this only says which of the shapes the operator
 	// blessed may be selected. WHICH one is selected is a stored setting (decision 2).
 	Classes string `json:"classes"`
 	// Offers is the same ladder with a purchase option on each rung (ADR 0075 decision 1):
@@ -101,10 +97,14 @@ type engineDef struct {
 	// defaults to `od`. Same shape of gate as ADR 0072 P6 put in front of `<role>ModelS3Key` —
 	// a table read by a newer CP must not make a role disappear.
 	Offers string `json:"offers"`
-	// OfferBudgetSec is how long ONE offer is given to produce a box before the next one is tried
-	// (ADR 0075 decision 5). 0 = the default 180 seconds, which is four times the 42 seconds the
-	// one Spot box that was actually bought took to reach ACTIVE (ADR 0074 measurement) — a
-	// multiple of a measurement, not an AWS figure.
+	// OfferBudgetSec is how long ONE offer's box is given to REGISTER WITH THE CLUSTER before it
+	// is terminated and the next offer is tried (ADR 0077 decision 1).
+	//
+	// 🔴 The meaning shrank with the ADR. Under 0075 this timed "can this capacity provider
+	// produce a box at all", which `CreateFleet` now answers synchronously; what is left to time
+	// is the box's own boot. 0 = the default 300 seconds, which is more than ten times the 21
+	// seconds ADR 0045 decision 22 measured from launch to ECS registration (77 s with a
+	// home-baked AMI) — a multiple of a measurement, not an AWS figure.
 	OfferBudgetSec   int    `json:"offerBudgetSec"`
 	IdleSec          int    `json:"idleSec"`
 	StartDeadlineSec int    `json:"startDeadlineSec"`
@@ -129,8 +129,8 @@ func (d engineDef) offersSpec() string {
 	return d.Classes
 }
 
-// engineOfferBudgetDefault is decision 5's default per-offer budget.
-const engineOfferBudgetDefault = 180 * time.Second
+// engineOfferBudgetDefault is the default registration ceiling (ADR 0077 decision 1).
+const engineOfferBudgetDefault = 300 * time.Second
 
 // offerBudget is how long one offer is waited on.
 func (d engineDef) offerBudget() time.Duration {
@@ -226,17 +226,23 @@ type engineRuntimeState struct {
 	// which never holds a request.
 	pending *enginePending
 	served  engineServed
-	// classes is the GPU ladder (ADR 0074). Empty on every deployment that declares none, and
-	// then nothing in engine_class.go ever runs. capacity and cluster are how a rung reaches
-	// the capacity provider; capacity is nil on a CP with no AWS.
+	// classes is the GPU ladder (ADR 0074), which ADR 0075 turned into the offer list. Empty on
+	// every deployment that declares none, and then nothing in engine_class.go ever runs.
 	//
 	// 🔴 Read through classList() and written through setClasses(): this is the one part of
 	// the engine table a running CP re-reads (engine_table_reload.go), so it changes under
 	// the controller, the gateway and the admin panel while they are looking at it.
 	classesMu sync.RWMutex
 	classes   []engineClass
-	capacity  engineCapacityAPI
 	cluster   string
+	// fleet is how this role buys, finds and ends its box (ADR 0077). nil on a CP with no AWS,
+	// on a Fargate engine, and on a row whose stack has not been migrated to a launch template —
+	// and nil is what makes "not one EC2 call" structural for all three.
+	fleet *engineFleet
+	// startMu serialises the buy. Two start paths can reach it within a second of each other —
+	// the admin toggle starts the box itself because somebody is watching, and the controller's
+	// next tick agrees — and two CreateFleet calls a second apart are two GPUs.
+	startMu sync.Mutex
 	// offers is the state of rule 2 for the demand being served right now (ADR 0075 decision 5):
 	// which offer the strategy was last written to, when, and what every earlier one answered.
 	// Never nil, and inert for an engine that declares no offer — nothing consults it.
@@ -246,17 +252,10 @@ type engineRuntimeState struct {
 	// offer machinery rather than by the controller's judgement, and "why is this running on the
 	// expensive box" has to be answerable afterwards.
 	audit engineAuditor
-	// appliedClass is the rung THIS PROCESS last wrote to the capacity provider, and nothing
-	// else. It is in memory on purpose: what the provider currently holds is a fact about AWS,
-	// and a CP that restarted has not observed it — so a restarted CP re-applies once before
-	// the next start rather than trusting a note it wrote before.
-	appliedMu    sync.Mutex
-	appliedClass string
-	// classApplyErr is why the last write to the capacity provider failed, "" when the last one
-	// succeeded. In memory for the same reason appliedClass is, and the absence of one is never
-	// read as "it worked": a restarted CP has applied nothing and must not claim a failure it
-	// did not see. What makes that gap safe is that a start applies the rung again anyway.
-	classApplyErr string
+	// appliedMu guards the swap wait below. It is the last of what ADR 0074 kept in memory about
+	// the card: the rung this process had written to a capacity provider went with the provider
+	// itself (ADR 0077 decision 8 — the declaration is the request now).
+	appliedMu sync.Mutex
 	// extWarm is the cached health answer an externally managed engine's panel row reports as
 	// `warm` (ADR 0076 decision 8). Inert for every engine that has a controller.
 	extWarm engineWarmCache
@@ -459,6 +458,54 @@ func parseEngineTable(raw string) (engineTable, error) {
 	return t, nil
 }
 
+// engineBoxRole is the `af-role` attribute value this row's boxes carry, "" for a row that has
+// none (ADR 0077 decision 3). Derived from the key and the launch template together: a role that
+// buys no box has no box to recognise, and an engine that claimed container instances it never
+// bought would be reading the other role's GPU — or a workspace slot — as its own.
+func engineBoxRole(d engineDef) string {
+	if strings.TrimSpace(d.LaunchTemplate) == "" {
+		return ""
+	}
+	return engineRoleAttr(d.Key)
+}
+
+// engineSubnets is where a box may be launched: the deployment's private subnets, exactly as the
+// workspace side is given them (ADR 0077 P1 — 30-ingress passes AF_ECS_SUBNETS on every flavour,
+// so nothing new has to be declared for this).
+func engineSubnets() []string {
+	var out []string
+	for _, s := range strings.Split(envx.Or("AF_ECS_SUBNETS", ""), ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// parseEngineOffers reads one role's offer list (ADR 0075 decision 1's format), with ADR 0077
+// decision 9's refusal on top: THE LLM ROLE NEVER BUYS SPOT.
+//
+// ADR 0075 had a second safeguard — no Spot capacity provider was created for that role, so a
+// `spot` row could not be addressed even if somebody wrote one. Nothing stands in the way here:
+// one launch template serves both purchase options, and `DefaultTargetCapacityType` is a field
+// the CP fills in. So the row is dropped at parse time, with a line saying so, and an operator
+// who wanted Spot for a conversation finds out from the log rather than from a lost conversation.
+func parseEngineOffers(key, spec string) []engineClass {
+	list := parseEngineClasses(spec)
+	if key != "llm" {
+		return list
+	}
+	out := make([]engineClass, 0, len(list))
+	for _, c := range list {
+		if c.buy() == engineBuySpot {
+			log.Printf("engines: llm: ignoring the offer %s: the llm role is on-demand only (a lost conversation is not a retry)", c.ID)
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 // engineComfyEnvRow synthesises the engine table row an operator gets from AF_COMFY_URL, plus
 // the optional bearer from AF_COMFY_API_KEY (ADR 0076 decision 2).
 //
@@ -550,6 +597,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		ac      aws.Config
 		ssmc    *ssm.Client
 		ecsc    *ecs.Client
+		ec2c    *ec2.Client
 		haveAWS bool
 	)
 	if name != "" || engineTableNeedsAWS(table) {
@@ -561,6 +609,12 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		}
 		ac, haveAWS = cfg, true
 		ssmc, ecsc = ssm.NewFromConfig(ac), ecs.NewFromConfig(ac)
+		// 🔴 On EVERY flavour, not only ecs-ec2 (ADR 0077 P1): until this ADR the only EC2
+		// client in the Control Plane was the slot pool's, built by the ecs-ec2 runtime alone,
+		// and an engine runs on a deployment that has no slot pool at all. Constructing a client
+		// makes no call and costs nothing; what decides whether EC2 is ever ASKED anything is
+		// the launch template in the table row.
+		ec2c = ec2.NewFromConfig(ac)
 		if inline == "" {
 			t, err := loadEngineTable(ctx, ssmc)
 			if err != nil {
@@ -639,9 +693,8 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			def: d,
 			ecs: &engineECS{
 				api: ecsc, key: d.Key, cluster: cluster,
-				service:          d.Service,
-				capacityProvider: d.CapacityProvider,
-				spotProvider:     d.SpotCapacityProvider,
+				service:  d.Service,
+				roleAttr: engineBoxRole(d),
 			},
 			apiKey:      readEngineAPIKey(ctx, ssmc, d),
 			settings:    settings,
@@ -649,7 +702,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			ssm:         ssmc,
 			activeParam: engineActiveParamName(name, d.Key),
 			pending:     newEnginePending(ssmc, name, d.Key),
-			classes:     parseEngineClasses(d.offersSpec()),
+			classes:     parseEngineOffers(d.Key, d.offersSpec()),
 			cluster:     cluster,
 			offers:      newEngineOfferRun(d.offerBudget()),
 			audit:       auditor,
@@ -668,7 +721,10 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		// (`sleep infinity`) and the controller then watches it for ever at 5-second intervals,
 		// because `running && !warmed` is not a failure state (ADR 0072 decision 1(c)).
 		st.ctrl.hasModels = st.catalog.hasModels
-		st.wireOffers(ecsc)
+		// The purchasing side (ADR 0077). newEngineFleet answers nil for a row that declares no
+		// launch template, and wireOffers attaches nothing for a nil one — so a deployment that
+		// does not buy boxes has no path to EC2 at all.
+		st.wireOffers(newEngineFleet(ec2c, d.Key, cluster, d.LaunchTemplate, engineSubnets()))
 		// The controller doubles as the uptime sampler (engine_uptime.go). Attached here and
 		// not inside newEngineController because the VOICEVOX controller shares that
 		// constructor and has no heatmap to feed: an INSERT every 30 seconds for a series

@@ -660,6 +660,15 @@ type sessionWire struct {
 	// proposals live in the Workspace's home, so while it is stopped there is nothing to read
 	// them from and no launch can happen anyway.
 	HandoffPending bool `json:"handoffPending,omitempty"`
+	// LastSay: the opening line of the agent's newest utterance, already folded to one line
+	// and capped by the Agent (ADR 0078 decision 12). Absent here it is silently dropped and
+	// every card in the sessions overview loses the line — the whole feature, with the
+	// Console's type check and its tests both silent about it, because the field is optional
+	// and those tests build their Session objects by hand. No DB-mirror column: the text is
+	// read out of the live transcript, so while the Workspace is stopped there is nothing to
+	// read it from, and a stale copy would age silently on a card that offers no other clue
+	// to how old it is.
+	LastSay string `json:"lastSay,omitempty"`
 	// OriginSession: the session this one came from (ADR 0073). The left rail derives its
 	// whole worktree hierarchy and its family colours from this one key (docs/log/94), and
 	// it is the only link there is — a worktree's folder and branch carry a random slug.

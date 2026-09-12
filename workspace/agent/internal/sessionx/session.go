@@ -42,7 +42,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
 		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,
 		BackgroundBusy: li.BackgroundBusy, BackgroundBusyReason: li.BackgroundBusyReason,
-		Context: li.Context, Locked: m.Locked, Archived: m.Archived,
+		Context: li.Context, LastSay: li.LastSay, Locked: m.Locked, Archived: m.Archived,
 		KeepAwakeUntil: m.KeepAwakeUntil, StopAfterTurnAt: stopArmVisible(m),
 		LastTurnEndAt: lastTurnEndAt(m),
 		// Origin / OriginSession ride the wire so a caller outside this process can answer

@@ -17,22 +17,22 @@ import (
 var errTableUnreachable = errors.New("dial tcp: i/o timeout")
 
 // tableFixture is one role's row, with whatever ladder the case is about.
-func tableFixture(classes string) string { return tableRow(classes, providerBefore) }
+func tableFixture(classes string) string { return tableRow(classes, templateBefore) }
 
-// tableRow is the same row with the capacity provider spelled out, for the cases about the
-// Spot swap — which is a RENAME of that provider (#536 step 4).
-func tableRow(classes, provider string) string {
+// tableRow is the same row with the launch template spelled out, for the cases about a template
+// being REPLACED — the successor of the capacity provider rename #536 measured.
+func tableRow(classes, template string) string {
 	return `{"engines":[{"key":"image","service":"af-image","url":"http://127.0.0.1:1",` +
 		`"health":"/v1/models","provider":"sdcpp","api":"images","idleSec":900,` +
-		`"startDeadlineSec":900,"capacityProvider":"` + provider + `","classes":"` + classes + `"}]}`
+		`"startDeadlineSec":900,"launchTemplate":"` + template + `","classes":"` + classes + `"}]}`
 }
 
 const (
 	ladderBefore = "l4|L4 24GB|22000|g6.xlarge|4-8|16000-32000|1.26"
 	ladderAfter  = "l4|L4 24GB|22000|g6.xlarge|4-8|16000-32000|1.26;l40s|L40S 48GB|44000|g6e.xlarge|4-8|32000-64000|2.50"
 
-	providerBefore = "af-eng-image"
-	providerAfter  = "af-eng-image-spot"
+	templateBefore = "lt-0aaa"
+	templateAfter  = "lt-0bbb"
 )
 
 func reloadFixture(t *testing.T, classes string) (*engineTableReloader, *engineRuntimeState, *fakePendingSSM) {
@@ -40,7 +40,11 @@ func reloadFixture(t *testing.T, classes string) (*engineTableReloader, *engineR
 	e := newTestImageEngine(t, "http://127.0.0.1:1", &engineTestECS{})
 	e.ctrl = nil
 	e.classes = parseEngineClasses(ladderBefore)
-	e.def.CapacityProvider, e.ecs.capacityProvider = providerBefore, providerBefore
+	e.def.LaunchTemplate = templateBefore
+	e.ecs.roleAttr = engineBoxRole(e.def)
+	e.cluster = "cluster"
+	e.offers = newEngineOfferRun(engineOfferBudgetDefault)
+	e.fleet = newEngineFleet(&fakeFleet{}, "image", "cluster", templateBefore, []string{"subnet-a"})
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
 	ssmc := &fakePendingSSM{value: tableFixture(classes)}
 	return newEngineTableReloader(ssmc, "/af-ws/engines", reg, ""), e, ssmc
@@ -183,138 +187,89 @@ func TestEngineTableReloadLeavesTheRestToARestart(t *testing.T) {
 	}
 }
 
-// --- the capacity provider's NAME (#536 step 4) --------------------------------------
+// --- the launch template's ID (the successor of #536 step 4) --------------------------
 
-// 🔴 The defect: replacing a capacity provider RENAMES it (the Spot swap), the table carries
-// the new name, and until this the running CP only logged "restart the Control Plane". What
-// followed was measured on smkvsuu: the rung apply went to a name that no longer existed (400),
-// `box` matched nothing so the panel said the engine was up on a card it was not on, and it
-// took `update-service --force-new-deployment` — 217 seconds — to clear.
-func TestEngineTableReloadTakesARenamedCapacityProviderLive(t *testing.T) {
+// 🔴 The defect this inherits: replacing the resource a role buys from gives it a NEW NAME, the
+// table carries it, and until this the running CP only logged "restart the Control Plane". What
+// followed was measured on smkvsuu when that resource was a capacity provider: the rung apply
+// went to a name that no longer existed (400), `box` matched nothing so the panel said the engine
+// was up on a card it was not on, and it took 217 seconds of force-new-deployment to clear.
+// A launch template is replaced the same way, and the next purchase would go to a template that
+// no longer exists.
+func TestEngineTableReloadTakesAReplacedLaunchTemplateLive(t *testing.T) {
 	var buf bytes.Buffer
 	defer captureLog(&buf)()
 	r, e, ssmc := reloadFixture(t, ladderBefore)
-	ssmc.value = tableRow(ladderBefore, providerAfter)
+	ssmc.value = tableRow(ladderBefore, templateAfter)
 
-	if got := e.providerName(); got != providerBefore {
+	if got := e.fleet.launchTemplate(); got != templateBefore {
 		t.Fatalf("the fixture starts on %q", got)
 	}
 	if !r.tick(t.Context()) {
-		t.Fatal("a table with a renamed capacity provider changed nothing")
+		t.Fatal("a table with a replaced launch template changed nothing")
 	}
-	if got := e.providerName(); got != providerAfter {
-		t.Fatalf("providerName = %q, want the name the table now declares", got)
+	if got := e.fleet.launchTemplate(); got != templateAfter {
+		t.Fatalf("launch template = %q, want the one the table now declares", got)
 	}
 	// 🔴 The whole point: this must not be reported as needing a restart any more.
 	if strings.Contains(buf.String(), "restart the Control Plane") {
-		t.Errorf("a rename still asks for a restart:\n%s", buf.String())
+		t.Errorf("a replaced template still asks for a restart:\n%s", buf.String())
 	}
 	// The ladder was not touched, and nothing else in the row moved.
 	if got := e.classList(); len(got) != 1 || got[0].ID != "l4" {
-		t.Errorf("the ladder moved with the provider: %+v", got)
+		t.Errorf("the ladder moved with the template: %+v", got)
 	}
-
 	// Idempotent: the same table again is a string compare and reports nothing.
 	if r.tick(t.Context()) {
-		t.Error("re-reading the same name reported a change")
+		t.Error("re-reading the same template reported a change")
 	}
-
 	// 🔴 The positive control for the tick itself — with no reload, the same fixture keeps the
-	// old name, so the assertion above is about the reload and not about the fixture.
+	// old id, so the assertion above is about the reload and not about the fixture.
 	_, e2, _ := reloadFixture(t, ladderBefore)
-	if got := e2.providerName(); got != providerBefore {
-		t.Errorf("the name changed with no tick: %q", got)
+	if got := e2.fleet.launchTemplate(); got != templateBefore {
+		t.Errorf("the template changed with no tick: %q", got)
 	}
 }
 
-// Where the name is actually spent: the rung apply. The fake answers for ONE provider, so the
-// apply succeeds only if the Control Plane addressed the new name — the destination is pinned
-// by the fake rather than asserted about a string.
-func TestEngineTableReloadPointsTheRungApplyAtTheNewProvider(t *testing.T) {
+// Where the id is actually spent: the purchase. The destination is pinned by what the fake
+// records rather than asserted about a string.
+func TestEngineTableReloadPointsTheNextPurchaseAtTheNewTemplate(t *testing.T) {
+	st := testSettingsStore(t)
 	r, e, ssmc := reloadFixture(t, ladderBefore)
-	ssmc.value = tableRow(ladderBefore, providerAfter)
-	f := &fakeCapacityAPI{provider: testCapacityProvider(providerAfter)}
-	e.capacity, e.cluster = f, "c"
-	sel, ok := e.selectedClass(t.Context())
-	if !ok {
-		t.Fatal("the fixture has no ladder to apply")
-	}
-
-	// 🔴 The positive control, and it is the defect: before the reload the CP is still
-	// addressing the OLD name, and the provider that name resolves to is not this one.
-	if err := e.applyClass(t.Context(), sel); err == nil {
-		t.Fatal("the apply succeeded against the old name — the fake is not pinning the destination")
-	}
-	if e.lastAppliedClass() != "" || e.classApplyError() == "" {
-		t.Fatalf("a failed apply left appliedClass=%q err=%q", e.lastAppliedClass(), e.classApplyError())
-	}
+	f := &fakeFleet{}
+	e.fleet = newEngineFleet(f, "image", "cluster", templateBefore, []string{"subnet-a"})
+	e.settings, e.audit = st, st
+	ssmc.value = tableRow(ladderBefore, templateAfter)
 
 	if !r.tick(t.Context()) {
-		t.Fatal("the rename did not land")
+		t.Fatal("the replacement did not land")
 	}
-	// A start applies the rung again idempotently (startGate step 2), which is what carries the
-	// ladder onto the renamed provider before the first box is bought.
 	if ok, why := e.startGate(t.Context()); !ok {
-		t.Fatalf("the start was held after the rename: %s", why)
+		t.Fatalf("the start was held after the replacement: %s", why)
 	}
-	if len(f.updates) != 1 {
-		t.Fatalf("%d capacity-provider update(s) reached the new provider, want 1", len(f.updates))
+	if err := e.startOnOffer(t.Context()); err == nil {
+		t.Fatal("the start did not report that it is waiting for the box")
 	}
-	if got := aws.ToString(f.updates[0].Name); got != providerAfter {
-		t.Errorf("the rung was written to %q, want %q", got, providerAfter)
+	if len(f.creates) != 1 {
+		t.Fatalf("%d purchase(s)", len(f.creates))
 	}
-	if e.lastAppliedClass() != sel.ID || e.classApplyError() != "" {
-		t.Errorf("after the apply: appliedClass=%q err=%q", e.lastAppliedClass(), e.classApplyError())
-	}
-}
-
-// 🔴 The note about what THIS PROCESS applied has to go with the name. It was written to the
-// old provider; keeping it would let startGate read a failed apply against the new one as
-// "already applied by this process" and start the engine on an unconfigured card — the silent
-// landing ADR 0074 decision 4 exists to prevent.
-func TestEngineTableReloadForgetsTheRungItAppliedToTheOldProvider(t *testing.T) {
-	r, e, ssmc := reloadFixture(t, ladderBefore)
-	ssmc.value = tableRow(ladderBefore, providerAfter)
-	e.noteAppliedClass("l4")
-	if e.lastAppliedClass() != "l4" {
-		t.Fatal("the note was not taken")
-	}
-	if !r.tick(t.Context()) {
-		t.Fatal("the rename did not land")
-	}
-	if got := e.lastAppliedClass(); got != "" {
-		t.Errorf("appliedClass = %q after the provider was replaced; it was written to the old one", got)
-	}
-	if got := e.classApplyError(); got != "" {
-		t.Errorf("classApplyErr = %q after the provider was replaced; it is about the old one", got)
+	got := aws.ToString(f.creates[0].LaunchTemplateConfigs[0].LaunchTemplateSpecification.LaunchTemplateId)
+	if got != templateAfter {
+		t.Errorf("the box was bought from %q, want %q", got, templateAfter)
 	}
 }
 
-// The other half of the lie: `box` matches container instances on the provider name, so a stale
-// name reports no box and the panel falls back to saying the engine runs on the selected rung.
-// The cached answer has to go with the name too — it was matched under the old one.
-func TestEngineTableReloadRematchesTheBoxUnderTheNewProvider(t *testing.T) {
-	r, e, ssmc := reloadFixture(t, ladderBefore)
-	ssmc.value = tableRow(ladderBefore, providerAfter)
-	ecsf := &engineTestECS{desired: 1, running: 1, instance: providerAfter, instanceType: "g6.xlarge"}
-	e.ecs.api = ecsf
-
-	// Before: the box belongs to the new provider, the CP is still matching the old name, so it
-	// sees nothing — and the miss is now in the cache, which is the part a rename must clear.
-	if _, ok := e.ecs.box(t.Context()); ok {
-		t.Fatal("the old name matched a box of the new provider")
-	}
-	if !r.tick(t.Context()) {
-		t.Fatal("the rename did not land")
-	}
-	b, ok := e.ecs.box(t.Context())
-	if !ok {
-		t.Fatal("the box is still unmatched after the rename — a cached miss survived it")
-	}
-	// The instance type is what the panel prints as the card the engine is on — the value that
-	// was missing while the name was stale.
-	if b.instanceType != "g6.xlarge" || b.arn == "" {
-		t.Errorf("box = %+v", b)
+// A row that GAINS or LOSES its launch template is a different question: the fleet is attached at
+// construction, so a template appearing here would be a purchase path nothing holds — the same
+// shape as adopting a ladder. It asks for a restart rather than pretending.
+func TestEngineTableReloadAsksForARestartWhenTheTemplateAppears(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLog(&buf)()
+	r, _, ssmc := reloadFixture(t, ladderBefore)
+	ssmc.value = strings.Replace(tableFixture(ladderBefore), `"launchTemplate":"`+templateBefore+`"`, `"launchTemplate":""`, 1)
+	r.tick(t.Context())
+	if !strings.Contains(buf.String(), "restart the Control Plane") || !strings.Contains(buf.String(), "launch template") {
+		t.Errorf("dropping the launch template did not ask for a restart:\n%s", buf.String())
 	}
 }
 
@@ -353,7 +308,7 @@ func TestEngineTableReloadStillAsksForARestartForTheOtherFields(t *testing.T) {
 // swap or an RWMutex" stops being a style question.
 func TestEngineTableReloadIsSafeWhileTheLadderIsBeingRead(t *testing.T) {
 	r, e, ssmc := reloadFixture(t, ladderAfter)
-	e.ecs.api = &engineTestECS{desired: 1, running: 1, instance: providerAfter, instanceType: "g6.xlarge"}
+	e.ecs.api = &engineTestECS{desired: 1, running: 1, instance: "engine-image", instanceType: "g6.xlarge"}
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -368,28 +323,28 @@ func TestEngineTableReloadIsSafeWhileTheLadderIsBeingRead(t *testing.T) {
 			_ = len(e.classList())
 			_, _ = e.selectedClass(t.Context())
 			_ = e.classStartHeld(t.Context())
-			// And the two of the capacity provider's name: the rung apply's destination and
-			// the box match, which now moves under them for the same reason the ladder does.
-			_ = e.providerName()
+			// And the launch template, which moves under them for the same reason the ladder
+			// does — it is the destination of the next purchase.
+			_ = e.fleet.launchTemplate()
 			_, _ = e.ecs.box(t.Context())
 		}
 	}()
 	for i := 0; i < 50; i++ {
 		if i%2 == 0 {
-			ssmc.value = tableRow(ladderAfter, providerAfter)
+			ssmc.value = tableRow(ladderAfter, templateAfter)
 		} else {
-			ssmc.value = tableRow(ladderBefore, providerBefore)
+			ssmc.value = tableRow(ladderBefore, templateBefore)
 		}
 		r.tick(t.Context())
 	}
 	close(stop)
 	<-done
-	// And it ends on whichever ladder and name the table last held, not on a half-applied one.
+	// And it ends on whichever ladder and template the table last held, not on a half-applied one.
 	got := e.classList()
 	if len(got) != 1 || got[0].ID != "l4" {
 		t.Errorf("classes = %+v, want the last table's single rung", got)
 	}
-	if name := e.providerName(); name != providerBefore {
-		t.Errorf("providerName = %q, want the last table's name", name)
+	if tpl := e.fleet.launchTemplate(); tpl != templateBefore {
+		t.Errorf("launch template = %q, want the last table's", tpl)
 	}
 }

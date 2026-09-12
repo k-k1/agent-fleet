@@ -193,8 +193,9 @@ what "trying" a row means: **"put the row's type set into the overrides, make `b
   here it is controllable for the first time.
 - `buy=od`: `DefaultTargetCapacityType: on-demand`, `OnDemandOptions.AllocationStrategy:
   prioritized`. ⚠️ `prioritized` reads the **`Priority` field of each override**, not the order
-  of the list (c) — the CP writes `Priority` 1, 2, … in the declared order. A test pins that the
-  priorities follow the declaration.
+  of the list — the CP writes `Priority` 1, 2, … in the declared order. A test pins that the
+  priorities follow the declaration. **Measured (P0 open question 3)**: the priority is honoured
+  and recorded in the fleet's configuration.
 - The overrides are the product "type × private subnet". The CP does not choose an AZ (the
   slot pool's `spreadAZs` exists for home volumes' AZ affinity; an engine has no home).
 - 🔴 **The response is synchronous.** A launched box comes back as its `InstanceId`; otherwise
@@ -206,10 +207,12 @@ what "trying" a row means: **"put the row's type set into the overrides, make `b
   22 measured boot → ECS registration at 21 s, 77 s with a home-baked AMI; ten-plus times that).
   Past it, terminate the box and move to the next offer.
 - An instant fleet deletes itself once its boxes are gone (c). The CP **does not remember** the
-  fleet id. It remembers the `InstanceId` and the tags on the box (decision 3). ⚠️ Whether an
-  instant fleet really leaves no record behind is measured in open question 3 (`describe-fleets`
-  after the $0 calls); if fleets linger, the CP calls `DeleteFleets(TerminateInstances=false)`
-  right after reading the response — `ec2:DeleteFleets` is granted either way (decision 10).
+  fleet id. It remembers the `InstanceId` and the tags on the box (decision 3). **Measured (P0
+  open question 3)**: an instant fleet does linger, but it is invisible to `describe-fleets` unless
+  named by id, and `DeleteFleets(TerminateInstances=false)` is refused for an instant fleet
+  (`NoTerminateInstancesNotSupported`). So there is **no follow-up call**: the port is
+  `CreateFleet` / `DescribeInstances` / `TerminateInstances`, and nothing accumulates in any list
+  the CP reads.
 
 🔁 **What would change this**: a response on real hardware carrying neither a box nor an error
 ((c) says it is always one or the other). Then one `DescribeFleets` follow-up is added.
@@ -262,7 +265,9 @@ do and cut a revision per start.
   directly.
 - The EC2-side walks already exclude it by `af-pool` + `af-role=slot` (`slotsOfMyType`,
   `poolSize`, `sweepFreeSlots`, `makeRoom`, `PoolStatus`). **`sweepSlotOwnerTags` gains the
-  `af-role=slot` filter** it lacks (Background), with a test whose positive control is that
+  role filter** it lacks (Background) — `af-role` in `{slot, quarantined}`, not `slot` alone: a
+  quarantined box is stopped, not released, and can still carry a person's `af-membership` that
+  this sweep exists to repair (the CP lane's finding, #577). The test's positive control is that
   removing the filter makes the sweep touch an engine-tagged instance. With that, "keeping out of
   `Ec2MaxSlots`" is complete.
 - 0070 decision 1's invariant, "one non-Workspace task mixed in breaks the premise", is kept **on
@@ -316,7 +321,11 @@ skip is not needed).
   29, audited, in two directions: (a) an EC2 instance tagged `af-role=engine-*` and `running`,
   with **zero running and pending tasks** on its container instance (read from
   `DescribeContainerInstances`, the way `sweepFreeSlots` / `makeRoom` read `slotTaskCounts`),
-  registered longer ago than `ghostAfter`, and with no start in flight for its role — terminated;
+  older than a grace and with no start in flight for its role — terminated. The CP has no
+  `ghostAfter` of its own (that is the slot pool's, in another package), so the grace is **two
+  minutes at desired 0** (the ordinary departure, one tick after the task goes) and **fifteen
+  minutes while the service is up** (0075's "two boxes" leak, without touching a task still being
+  placed) — the CP lane's shape, #577;
   (b) a container instance carrying the engine attribute whose EC2 instance is gone —
   deregistered (the shape of 0045's `sweepGhostInstances`, which checks registration age and
   "instance gone", not task counts; the zero-task caution belongs to the free-slot sweeps).
@@ -369,9 +378,18 @@ the engine images do not agree with. Then a knob pinning `…/gpu/<version>` is 
   to happen in — a misspelled type is refused **on the spot** by `CreateFleet`. Of `startGate`,
   only the drain wait remains (decision 5).
 - The failure-code table (0075, "Failure codes and what they mean") moves from service-event
-  strings to **`CreateFleet`'s `Errors[].ErrorCode`**. The vocabulary is measured first (open
-  question 3). The shape of the responses is the same (no stock → next; quota → skip that purchase
-  type). **"Filter events by offer" (#564) is not needed** — a response contains only its own call.
+  strings to **`CreateFleet`'s `Errors[].ErrorCode`** — one code per override, inside an HTTP 200
+  (measured, P0 open question 3): `MaxSpotInstanceCountExceeded` / `VcpuLimitExceeded` → skip that
+  purchase type; `InvalidFleetConfiguration` → `unusable` **only when every override says it**
+  (a misspelled type and "not offered in this AZ" are the same sentence, so one override saying
+  it is a capacity fact, not a typo); `SpotMaxPriceTooLow` / `InsufficientInstanceCapacity` →
+  next; unknown → next, logged. 🔴 **And a class the service-event table never had: an
+  authorization failure is shaped exactly like "no capacity"** — `UnauthorizedOperation` arrives
+  per override inside the same array (measured with `iam:PassRole` removed), and `SsmAccessDenied`
+  top-level. Both **stop the lap**, count as a failure and log the sentence verbatim; treating
+  them as "next" would walk the whole list and report "no capacity anywhere" on a misconfigured
+  deployment. `--dry-run` does not exercise per-override authorization and is no pre-flight.
+  **"Filter events by offer" (#564) is not needed** — a response contains only its own call.
 - The `usdPerHour` convention (0074 decision 1, 0075 decision 1: the all-in price of the most
   expensive type the offer can buy) becomes "the EC2 price itself", since the 7.80% Managed
   Instances fee is gone. Writing the Cost Explorer figure stays the rule. The two places that
@@ -393,11 +411,12 @@ CP-internal), it is added by agreement with the Console lane.
 
 | Added | Removed |
 |---|---|
-| `ec2:CreateFleet`, `ec2:DescribeFleets`, `ec2:DeleteFleets` (`Resource: *`; a fleet cannot be resource-scoped) | `ecs:DescribeCapacityProviders` / `ecs:UpdateCapacityProvider` |
+| `ec2:CreateFleet` (`Resource: *`; a fleet cannot be resource-scoped). `ec2:DescribeFleets` / `ec2:DeleteFleets` are **never called** (decision 1, measured); #575 grants them anyway, harmless | `ecs:DescribeCapacityProviders` / `ecs:UpdateCapacityProvider` |
 | `ec2:CreateLaunchTemplateVersion` is **not** added (CloudFormation owns the template) | `ecs:PutClusterCapacityProviders` |
 | `iam:PassRole` on `role/af-*-engine` (`iam:PassedToService: ec2.amazonaws.com`), as its own statement in the shape of `PassSlotRole` | `iam:PassRole` on `InfraRole` / `InstanceRole` |
 | `iam:CreateServiceLinkedRole` with `iam:AWSServiceName` in `[spot.amazonaws.com, ec2fleet.amazonaws.com]` (the second is what creates `AWSServiceRoleForEC2Fleet`) | `InfraRole` itself |
-| `ssm:GetParameters` on `parameter/aws/service/ecs/optimized-ami/*` **only if open question 3 says the caller of `CreateFleet` must hold it** for `resolve:ssm:` (c). The CP's existing `ssm:GetParameter` is scoped to `/af-ws/*` and cannot read it | |
+| `ssm:GetParameters` on `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*`, **unconditionally** — measured (P0 open question 3): without it `CreateFleet` fails top-level with `SsmAccessDenied`, naming neither the action nor the parameter. The CP's existing `ssm:GetParameter` is scoped to `/af-ws/*` and cannot read it | |
+| `ec2:CreateTags` is **not** needed for the box's tags: `CreateFleet`'s `TagSpecifications` merges with the launch template's tags (measured). `ec2:DescribeLaunchTemplates` / `Versions` are not needed either | |
 
 `ec2:RunInstances` / `TerminateInstances` / `DescribeInstances` / `CreateTags` are already in
 `Ec2SlotPool`; `ecs:ListContainerInstances` / `DescribeContainerInstances` /
@@ -408,12 +427,15 @@ it, the Fleet statements enter it. The full grant set is **an output of open que
 $0 calls start with this table, and whatever `AccessDenied` names (the published example policy
 for EC2 Fleet grants `ec2:*`, which says nothing about the minimum) is added and recorded.
 
-⚠️ **On an account without `AWSServiceRoleForEC2Fleet`, the first `CreateFleet` fails** (c).
-af-sandbox has none (b). The deployment steps (`standup.sh`) run `create-service-linked-role
---aws-service-name ec2fleet.amazonaws.com` once, `|| true` (the same column as
-`AWSServiceRoleForEC2Spot`, created by hand in 0074; today `standup.sh` does this only for
-`ecs.amazonaws.com`). Not a CloudFormation `AWS::IAM::ServiceLinkedRole` — a role that already
-exists fails the stack.
+**`AWSServiceRoleForEC2Fleet` is cheap insurance, not a known failure.** The published note that
+the first `CreateFleet` fails without it was **not confirmed** (P0 open question 4): three
+non-launching calls went through before the role existed, `AWSServiceRoleForEC2Spot` was already
+there, and the one launching call ran after the role was created — so "a launching call with
+neither role" is unmeasured. The deployment steps (`standup.sh`) still run
+`create-service-linked-role --aws-service-name ec2fleet.amazonaws.com` once, `|| true` (the same
+column as `AWSServiceRoleForEC2Spot`, created by hand in 0074; before this ADR `standup.sh` did
+this only for `ecs.amazonaws.com`). Not a CloudFormation `AWS::IAM::ServiceLinkedRole` — a role
+that already exists fails the stack. On af-sandbox the role now exists (created by P0 and left).
 
 🔁 **What would change this**: if a condition key scoping `CreateFleet` to the launch template
 ARN (`ec2:LaunchTemplate`) works on real hardware, `Resource: *` is narrowed.
@@ -447,14 +469,17 @@ ARN (`ec2:LaunchTemplate`) works on real hardware, `Resource: *` is narrowed.
 - 🔴 **Order**: (1) **with not one box standing** (both roles `mode: off`, no engine box among
   the container instances), (2) apply this template. Deleting a provider goes through when it has
   no box (measured on 0074 open question 1's throwaway: `delete-capacity-provider` at zero boxes
-  is `INACTIVE` at once). Whether the service's `CapacityProviderStrategy` → `LaunchType` is a
-  replacement in CloudFormation is open question 1. ⚠️ **Both services carry an explicit
-  `ServiceName`** (`af-<stack>-llm` / `-image`) and `ServiceRegistries`. If it is a replacement,
-  CloudFormation creates the new service **before** deleting the old one, and the explicit name
-  collides — the update fails and rolls back. Then the migration is the path that already
-  exists: `<Role>Enabled=false` (the condition deletes the service; `update.sh` warns about
-  exactly this) → apply → `<Role>Enabled=true`. The Cloud Map name is gone in between; at
-  desired 0 no request is lost. The services keep `DependsOn: Associations` (it stays).
+  is `INACTIVE` at once). **Measured (P0 open question 1): the service's
+  `CapacityProviderStrategy` → `LaunchType` is a replacement in CloudFormation**, and because
+  both services carry an explicit `ServiceName` (`af-<stack>-llm` / `-image`) CloudFormation
+  creates the new service before deleting the old one, the name collides (`AlreadyExists`) and
+  the update rolls back, leaving the live service byte-identical. **So the migration is the
+  round trip, and only the round trip**: `<Role>Enabled=false` (the condition deletes the
+  service; `update.sh` warns about exactly this) → apply the new template → `<Role>Enabled=true`
+  — measured at 25 s + 48 s on a throwaway with the same shape. The Cloud Map name is **not**
+  gone in between (the `AWS::ServiceDiscovery::Service` is a separate, unconditional resource);
+  only the ECS service registering instances into it is, and at desired 0 there are none. The
+  services keep `DependsOn: Associations` (it stays).
 - Removing the providers from `Associations`: the cluster's provider list is **owned by
   60-engines**, so someone must still hold FARGATE / FARGATE_SPOT (`50-tts` uses `FARGATE_SPOT`
   through its strategy and declares no `Associations` of its own, 0070). **`Associations`
@@ -476,10 +501,10 @@ ARN (`ec2:LaunchTemplate`) works on real hardware, `Resource: *` is narrowed.
   templates arrive — **expected to shrink**, but `wc -c` before and after (wall 51,200; now 42,500;
   the CI case 3b-2 in `ecs-lifecycle-stub-test.sh` fails the build past the wall).
 
-🔁 **What would change this**: if open question 1 says "the service must be recreated", the
-migration is the `<Role>Enabled` round trip above, and the Cloud Map name is gone for some
-minutes. Unlike TTS nobody is waiting (image retries, an llm conversation breaks), so it is done
-inside a window with both roles at `mode: off`.
+🔁 **What would change this**: fired — open question 1 said "recreated", and the round trip
+above is the migration. The ECS service is gone for about a minute; unlike TTS nobody is waiting
+(image retries, an llm conversation breaks), so it is done inside a window with both roles at
+`mode: off`.
 
 ## Rejected alternatives
 
@@ -845,3 +870,609 @@ would silently make the new ceiling shorter than the number the ADR chose. `stan
 treated as an operator's choice and passed on. A stale default and a deliberate 180 cannot be
 told apart, which is the whole reason the rule is "the old default, and nothing else". The stub
 test pins both directions, each with its own positive control.
+
+## Follow-up — P0: open questions 1-4, measured (2026-09-12, af-sandbox, under $0.01)
+
+The four $0 premises were measured before a line of code, on a throwaway CloudFormation stack with
+**its own throwaway ECS cluster and Cloud Map namespace**. Not one command in this run named a real
+stack, the real cluster, a real service or a capacity provider: every write named a resource whose
+name starts with `af-adr0077-p0-`. **No GPU was bought.** Elapsed: **16 minutes 45 seconds**
+(11:50:02-12:06:47 JST).
+
+Two non-GPU boxes were run, not one: open question 2's `t3.small` (3 min 6 s) and — a deliberate
+addition — one `t3.small` bought by a *successful* `CreateFleet` under the candidate IAM set
+(1 min 6 s). The second box exists because the IAM set was otherwise proved only against calls that
+launched nothing, and the measurement below shows that is exactly where `iam:PassRole` is **not**
+checked. About 4.2 instance-minutes in total, inside open question 2's own $0.05 allowance.
+
+**Verdict: 1 is 🔴 red, 2 is 🟢 green, 3 is green with three 🔴 corrections to decisions 1, 8 and
+10, 4 is 🟢 green.** Open question 1 being red does not rewrite the skeleton — it settles decision
+11's migration onto the `<Role>Enabled` round trip the text already carries as its ⚠️ branch. Open
+question 2 being green is what the other lanes waited on, so **the CP and CFN lanes may start.**
+
+| # | Verdict | In one line |
+|---|---|---|
+| 1 | 🔴 | CloudFormation **replaces** the service, and the explicit `ServiceName` collides — `AlreadyExists`, rollback. The `<Role>Enabled=false` → apply → `true` round trip works (25 s + 48 s) |
+| 2 | 🟢 | `ECS_INSTANCE_ATTRIBUTES` binds a service placement constraint on the EC2 launch type; RUNNING 28 s after desired 1. Positive control: an unmatched attribute stays at 0 with "MemberOf placement constraint unsatisfied" |
+| 3 | 🟢/🔴 | The vocabulary is five per-override codes inside a **200** response — including `UnauthorizedOperation`. `resolve:ssm:` **does** need `ssm:GetParameters` on the caller. The fleet **lingers**, and `DeleteFleets(TerminateInstances=false)` is refused for an instant fleet. `Priority` is honoured and recorded |
+| 4 | 🟢 | The conditioned `iam:CreateServiceLinkedRole` creates `AWSServiceRoleForEC2Fleet`. But `CreateFleet` **did not need it** — three calls went through before it existed |
+
+### Open question 1 — the service is replaced, and the name collides
+
+The throwaway service mirrors the real ones: explicit `ServiceName` (`af-adr0077-p0-svc`), a
+`ServiceRegistries` entry pointing at a throwaway Cloud Map A-record service, `awsvpc`,
+`MinimumHealthyPercent: 0`, `DesiredCount: 0`. The two shapes are switched by a template parameter
+resolved through `!If`, which is the same resource-level diff a template edit would produce.
+
+| Time (JST) | What was done | What came back |
+|---|---|---|
+| 11:50:02 | `create-stack`, `Mode=capacity-provider` | `CREATE_COMPLETE` at 11:51:29. `capacityProviderStrategy: [{FARGATE, weight 1, base 0}]`, `launchType: null`, `placementConstraints: []`, PRIMARY `ecs-svc/3919890012809245997` |
+| 11:51:51 | `create-change-set` to `LaunchType: EC2` + `PlacementConstraints` | `Replacement: Conditional`. Per property: `CapacityProviderStrategy` `RequiresRecreation: Never`, **`LaunchType` `Conditionally`**, `PlacementConstraints` `Never` |
+| 11:52:20 | **`execute-change-set`** (0074's lesson: the change set is not the answer) | 11:52:26 `Service UPDATE_IN_PROGRESS` — **"Requested update requires the creation of a new physical resource; hence creating one."** 11:52:27 `UPDATE_FAILED` (full text below). 11:52:32 `UPDATE_ROLLBACK_COMPLETE` |
+| 11:52:41 | `describe-services` after the rollback | `status: ACTIVE`, strategy back to FARGATE, `desiredCount` 0, **the same PRIMARY `ecs-svc/3919890012809245997`** — the original service was never touched |
+| 11:52:55 | `update-stack` with `ServiceEnabled=false` (the condition drops the service) | `UPDATE_COMPLETE` in **25 s**. `describe-services` → `INACTIVE`; `list-services` → `[]` |
+| 11:53:30 | `update-stack` with `Mode=launch-type`, `ServiceEnabled=true` | `UPDATE_COMPLETE` in **48 s**. `launchType: EC2`, `capacityProviderStrategy: null`, `placementConstraints: [{memberOf, "attribute:af-role == engine-image"}]`, **the same `serviceRegistries` ARN `srv-5grs42msyxunj3f5`** |
+
+```
+Service UPDATE_FAILED
+Resource handler returned message: "Resource of type 'AWS::ECS::Service' with identifier
+'af-adr0077-p0-svc' already exists." (HandlerErrorCode: AlreadyExists)
+```
+
+**Verdict 🔴.** It is a replacement, CloudFormation creates before it deletes, and the explicit
+name collides exactly as review R6 predicted. Decision 11's ⚠️ branch is therefore **the only
+migration path**, not a fallback: `<Role>Enabled=false` → apply the new template → `true`.
+One correction to the text: the round trip does **not** take the Cloud Map name away. The
+`AWS::ServiceDiscovery::Service` is a separate resource with no condition on it, so the DNS name
+and its ARN survive; what disappears for those seconds is only the ECS service registering
+instances into it, and at desired 0 there are none. Decision 11's "the Cloud Map name is gone in
+between; at desired 0 no request is lost" is safe but overstated.
+
+**Impact — depends on: decision 11.** Decision 11's 🔁 has fired; its own text already names the
+consequence. Nothing else moves: the failed update left the live service byte-identical, so the
+migration is recoverable if it is attempted the wrong way round.
+
+### Open question 2 — the attribute binds
+
+One throwaway launch template (`ImageId:
+resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id`, resolved to
+`ami-0f57b5b58b68248a3`; `HttpTokens: required`; user data writing `ECS_CLUSTER` and
+`ECS_INSTANCE_ATTRIBUTES={"af-role":"engine-image"}` into `/etc/ecs/ecs.config`), one `t3.small`,
+and the task definition the stack already carries (`awsvpc`, 256/512, no GPU requirement).
+
+| Time (JST) | What was done | What came back |
+|---|---|---|
+| 11:54:56 | `run-instances`, 1 × `t3.small`, private subnet 1a | `i-05375bcf612c7ec74`, `pending` |
+| 11:55:20 | `describe-container-instances` | Registered **24 s after the launch**. `agentConnected: true`, attributes contain **`{"name": "af-role", "value": "engine-image"}`**, and **`capacityProviderName` is absent** |
+| 11:55:45 | **positive control**: a second EC2-launch-type service, same task definition, constraint `attribute:af-role == engine-llm`, desired 1 | 11:56:00 `runningCount` 0, `pendingCount` 0, event: *"was unable to place a task because no container instance met all of its requirements. The closest matching (container-instance fb2ddff7…) encountered error `"MemberOf placement constraint unsatisfied."`"* |
+| 11:55:47 | the measured service (`== engine-image`) to desired 1 | 11:55:53 "has started 1 tasks"; **`RUNNING` at 11:56:15, 28 s after the call**. `launchType: EC2`, `attachments: [(ElasticNetworkInterface, ATTACHED)]` |
+| 11:56:57 | desired 0, then `terminate-instances` | 11:58:02 EC2 `terminated`. The container instance went to **`INACTIVE` by itself within about 30 s** — nothing deregistered it by hand |
+
+**Verdict 🟢.** The agent honours `ECS_INSTANCE_ATTRIBUTES` on the AL2023 ECS AMI, and a *service*
+placement constraint reading that attribute binds on the EC2 launch type. The positive control
+shows the constraint is genuinely evaluated rather than ignored — the same box, the same task
+definition, one word different in the expression, and the task will not place.
+
+**Impact — depends on: decisions 2 and 3.** Both stand as written. Decision 2's 🔁 (write
+`ec2InstanceId` on the task definition and cut a revision per start) is **not needed**. Decision
+3's 🔁 (`PutAttributes` right after registration) is **not needed**. Two premises of decision 3
+were confirmed as side effects: an EC2 box the CP buys carries **no `capacityProviderName`**
+(so `isPoolContainerInstance` does collapse as the Background says, and does need the attribute
+clause), and `awsvpc` on the EC2 launch type attaches a task ENI without any agent setting.
+One item of decision 4 gained support it did not have: ECS **does** deregister a terminated
+instance's container instance by itself, measured here at about 30 s on a `t3.small` — that was
+(c) in the text.
+
+### Open question 3 — the `CreateFleet` vocabulary, the IAM minimum, the lingering fleet, `Priority`
+
+Every call below ran as a throwaway IAM role (`af-adr0077-p0-fleet`, trusted by this session's own
+principal) holding decision 10's table, so that an `AccessDenied` would name what the table is
+missing. Not one of the four probing calls launched anything.
+
+| Time (JST) | Call | `Errors[].ErrorCode` / result |
+|---|---|---|
+| 11:58:49 | Spot `g6.4xlarge` × 2 subnets, `price-capacity-optimized`, decision 10's table verbatim | **top-level failure, no `Errors[]`**: `SsmAccessDenied`, *"Access denied to SSM"* |
+| 11:59:16 | the same, after adding `ssm:GetParameters` on `parameter/aws/service/ecs/optimized-ami/*` | **HTTP 200**, `Instances: []`, one entry per override: **`MaxSpotInstanceCountExceeded`** / *"Max spot instance count exceeded"*, `Lifecycle: spot` (the G/VT Spot quota on this account is 8 vCPU; `g6.4xlarge` is 16) |
+| 12:00:54 | Spot `g6.xxlarge` (misspelled) | **`InvalidFleetConfiguration`** / *"Your requested instance type (g6.xxlarge) is not supported in your requested Availability Zone (ap-northeast-1a)."* |
+| 12:00:57 | Spot `g6.xlarge` × 2 subnets with `MaxPrice: "0.001"` | **`SpotMaxPriceTooLow`** / *"Your Spot request price of 0.001 is lower than the minimum required Spot request fulfillment price of 0.5762."* (0.5633 in the other AZ) |
+| 12:01:03 | On-demand `g6.48xlarge` (Priority 1) and `g6.24xlarge` (Priority 2), `OnDemandOptions.AllocationStrategy: prioritized` | **`VcpuLimitExceeded`** / *"You have requested more vCPU capacity than your current vCPU limit of 8 allows for the instance bucket…"*, `Lifecycle: on-demand`. Each error echoes its override **including `Priority: 1.0` / `2.0`** |
+| 12:03:34 | On-demand `t3.small` (Priority 1) / `t3.small` other subnet (Priority 2), request-level `TagSpecifications` | **`Errors: []`**, exactly one instance, the **Priority 1** override taken: `i-05bfc8ee328b5a232`, `Lifecycle: on-demand` |
+
+🔴 **Three of these land on the body.**
+
+1. **`UnauthorizedOperation` arrives inside `Errors[]`, per override, in a 200.** With
+   `iam:PassRole` removed from the role, the same `SpotMaxPriceTooLow` call came back 200 with
+   `ErrorCode: UnauthorizedOperation` and *"is not authorized to perform: iam:PassRole on resource:
+   …/af-adr0077-p0-instance"*. **An IAM hole is shaped exactly like "no capacity."** Decision 8's
+   failure-code table must sort `UnauthorizedOperation` (and `SsmAccessDenied`, which does arrive
+   top-level) as a **hard failure that stops the lap**, never as "try the next offer" — otherwise a
+   misconfigured deployment silently walks the whole offer list and reports "no capacity anywhere".
+2. **`--dry-run` cannot catch it.** The identical call with `--dry-run`, with `iam:PassRole`
+   removed, returned `DryRunOperation` — *"Request would have succeeded, but DryRun flag is set."*
+   Dry run does not exercise the per-override authorization. It is not a usable pre-flight for this.
+3. **A misspelled type and "this type is not offered in this AZ" are the same code and the same
+   sentence.** Decision 8's "a misspelled type is refused **on the spot** by `CreateFleet`" is true
+   — but the response does not say "misspelled", so a typo in `<role>Offers` will read as a
+   capacity fact and be retried on the next demand for ever. A template-side check on the type
+   spelling is worth more than reading the code.
+
+⚠️ **What was not measured**: a genuine out-of-stock refusal. `SpotMaxPriceTooLow` is a price
+refusal standing in for one; the real code (`InsufficientInstanceCapacity` or whatever EC2 Fleet
+calls it) is still unknown, because provoking it means asking for capacity that might arrive.
+
+#### (a) The IAM minimum
+
+Built up from decision 10's table by adding whatever a denial named. Only **one** grant had to be
+added, and one already in the table was proved necessary the hard way.
+
+| Statement | Actions | Resource / condition | Evidence |
+|---|---|---|---|
+| Fleet | `ec2:CreateFleet`, `ec2:DescribeFleets`, `ec2:DeleteFleets` | `*` | `CreateFleet` and `DescribeFleets` exercised; `DeleteFleets` exercised in cleanup |
+| Ec2SlotPool (subset, already granted on every flavour) | `ec2:RunInstances`, `ec2:TerminateInstances`, `ec2:DescribeInstances`, `ec2:DescribeSubnets`, `ec2:CreateTags` | `*` | `TerminateInstances` and `DescribeInstances` exercised under this role. `RunInstances` / `DescribeSubnets` / `CreateTags` were **not** proved necessary — no denial named them |
+| PassEngineRole | `iam:PassRole` | `role/af-*`, `iam:PassedToService: ec2.amazonaws.com` | **Proved.** Removing it turns every override into `UnauthorizedOperation` — but **only on a call that would otherwise launch** |
+| SsmPublicAmi | **`ssm:GetParameters`** | `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*` | **Proved.** Without it, `CreateFleet` fails top-level with `SsmAccessDenied`, naming neither the action nor the parameter |
+| Slr | `iam:CreateServiceLinkedRole` | `iam:AWSServiceName` in `[spot.amazonaws.com, ec2fleet.amazonaws.com]` | **Proved** (open question 4), with a negative control |
+
+**So decision 10's conditional row becomes unconditional**: `ssm:GetParameters` on the public AMI
+parameter is required of the **caller** of `CreateFleet`, exactly as (c) suspected. Two grants that
+are *not* needed and should not be added: `ec2:DescribeLaunchTemplates` /
+`ec2:DescribeLaunchTemplateVersions` (the role held neither and `CreateFleet` resolved the template
+by name), and `ec2:CreateTags` for the box's tags — see (d).
+
+#### (b) The instant fleet lingers, and `DeleteFleets(TerminateInstances=false)` is refused
+
+- After a call that launched **nothing**, `describe-fleets --fleet-ids <id>` returns the fleet as
+  `FleetState: active`, `ActivityStatus: fulfilled`, `FulfilledCapacity: 0.0`, with its whole
+  recorded configuration.
+- After the successful call's box was terminated, the fleet stayed **`active` / `fulfilled` /
+  `FulfilledCapacity: 1.0`** — a number that is now false — through a further 30 s of polling. It
+  does **not** delete itself. Published spec (c) says it does; on this deployment it does not.
+- 🔴 `delete-fleets --no-terminate-instances` — the exact call decision 1 names — is refused:
+  `NoTerminateInstancesNotSupported`, *"NoTerminateInstances option is not supported for instant
+  fleet"*. Only `--terminate-instances` works (`deleted_terminating` → `deleted`), which for the
+  CP means the call is only safe on a fleet whose box it has already decided to lose.
+- 🟢 **But nothing accumulates on a path the CP walks**: an unfiltered `describe-fleets` returned
+  `{"Fleets": []}` throughout, while the by-id calls in the same second returned the fleets — that
+  by-id call is the positive control for the empty list. Instant fleets are simply not enumerated.
+
+**So decision 1's sentence survives, for a different reason than it gives.** "The CP does not
+remember the fleet id" is right, and no `DeleteFleets` follow-up is needed — not because the fleet
+disappears, but because it is invisible to every listing and holds no capacity. `ec2:DeleteFleets`
+is still worth granting, but the `TerminateInstances=false` shape the text promises does not exist.
+
+#### (c) `prioritized` and `Priority`
+
+🟢 Recorded and honoured. The on-demand fleet's `describe-fleets` carries
+`OnDemandOptions.AllocationStrategy: prioritized` and `Overrides[].Priority` `1.0` / `2.0`, the
+errors echo `Priority` per override, and the one successful on-demand call took the **Priority 1**
+override (`t3.small` in subnet 1a) with the Priority 2 override untouched. Done item 6 can be
+written against this shape.
+
+#### (d) Two things the calls handed back that the text does not have
+
+- **The whole tag set lands in the one `CreateFleet` call.** Request-level `TagSpecifications`
+  (`ResourceType: instance`) **merges** with the launch template's own tags: the box came up
+  carrying `af-pool`, `af-role=engine-image`, `af-engine-offer`, `af-engine-buy` from the request
+  *and* `af-managed-by=agent-fleet` from the template. Decision 3's tag set needs no separate
+  `CreateTags` — unlike the slot pool, which tags at `RunInstances`.
+- **EC2 writes `aws:ec2:fleet-id` on the box by itself.** So the CP can reach the fleet from the
+  box with no memory at all, which is the 0045 decision 29 shape decision 3 asks for, for free.
+- `InstanceLifecycle` is **absent** on an on-demand box (it is `spot` on a Spot one — 0075's
+  measurement). Done item 7's "`InstanceLifecycle`" check must read "absent" as "on-demand", not
+  as missing data.
+
+**Impact — depends on: decisions 1, 8 and 10.** Decision 10 gains `ssm:GetParameters`
+unconditionally and can drop the two Describe actions it never needed. Decision 8's failure-code
+table gains a class it does not have — *authorization failures inside `Errors[]`* — and must not
+treat them as capacity. Decision 1's `DeleteFleets(TerminateInstances=false)` sentence needs
+rewriting to "no follow-up is needed; an instant fleet is invisible to `describe-fleets` unless
+named by id". **None of the three rewrites a decision's premise**; the body is left as written for
+the parent to revise.
+
+### Open question 4 — the CP can create the service-linked role
+
+| Time (JST) | What was done | What came back |
+|---|---|---|
+| 11:58:49-12:01:03 | the four `CreateFleet` calls above, **with no `AWSServiceRoleForEC2Fleet` in the account** | Every one behaved normally (the SSM denial, then three 200s with per-override errors). **No SLR error of any kind, and the role was not auto-created** |
+| 12:02:46 | `create-service-linked-role --aws-service-name ec2fleet.amazonaws.com`, under the conditioned grant | **200.** `AWSServiceRoleForEC2Fleet`, `arn:aws:iam::<account>:role/aws-service-role/ec2fleet.amazonaws.com/AWSServiceRoleForEC2Fleet` |
+| 12:02:50 | **negative control**: the same call with `--aws-service-name autoscaling.amazonaws.com` | `AccessDenied` — *"not authorized to perform: iam:CreateServiceLinkedRole on resource: …/AWSServiceRoleForAutoScaling"*. The `iam:AWSServiceName` condition really does the scoping |
+| 12:02:52 | the same call a second time | `InvalidInput` — *"Service role name AWSServiceRoleForEC2Fleet has been taken in this account, please try a different suffix."* |
+
+**Verdict 🟢** on the question as posed: the limited `iam:CreateServiceLinkedRole` goes through, and
+the condition keeps it limited. Two riders:
+
+- ⚠️ **`standup.sh`'s `|| true` is mandatory, and the error code is `InvalidInput`** — not
+  `EntityAlreadyExists`. A script that matches on the code will not recognise it.
+- 🔴 **Decision 10's ⚠️ "on an account without `AWSServiceRoleForEC2Fleet`, the first `CreateFleet`
+  fails" is not confirmed.** Three `CreateFleet` calls went through before the role existed.
+  **Honest limit**: `AWSServiceRoleForEC2Spot` was already present (0074 created it), and none of
+  those three calls launched an instance — the one that did launch ran after the SLR existed. So
+  "a *launching* `CreateFleet` on an account with neither SLR" was **not** measured, and creating
+  the role in `standup.sh` stays the right call. What can be said is that the failure is not at the
+  API's front door on this account.
+
+**Impact — depends on: decision 10.** The `standup.sh` line stays; its ⚠️ justification is weaker
+than the text claims and should be re-worded to "cheap insurance", not "the first call fails".
+
+### The cleanup
+
+Everything created for this run was deleted and the deletion checked with a listing that also
+shows the tool would have found something (the positive control is in the same output):
+
+- `describe-stacks` → the **seven real stacks only** (`af-ecs-network` … `af-ecs-engines`, all
+  `CREATE_COMPLETE` / `UPDATE_COMPLETE`); `af-adr0077-p0-oq1` is gone (12:06:47).
+- `describe-instances --filters Name=tag-key,Values=af-adr0077-p0` **with no state filter** → the
+  two probe boxes, both `terminated`. (An empty answer here would have been the ambiguous one.)
+- `describe-launch-templates` → `af-af-ecs-pool-slot` only.
+- `list-roles` for `af-*` → the eight real roles only; both throwaway roles and the instance
+  profile are gone.
+- `list-clusters` → `af-af-ecs-platform` only. `list-namespaces` → `af.internal` only.
+- The four instant fleets were deleted (`deleted_terminating`); they held no instances.
+
+**Left behind on purpose: `AWSServiceRoleForEC2Fleet`.** The ADR has `standup.sh` create it, so it
+is left in place, as open question 4 allows. Nothing else survives this run.
+
+**Cost**: about 4.2 `t3.small`-minutes ≈ **$0.002**; the Cloud Map private DNS namespace was
+created and deleted inside the same hour (a hosted zone deleted within 12 hours is not billed).
+Everything else — CloudFormation, ECS, IAM, the six `CreateFleet` calls — is free.
+
+The raw responses are in `~/.cache/adr0077-p0/` of the session that measured this.
+
+## Follow-up — what P1's CP lane handed back to the text (2026-09-12, PR #577)
+
+The CP side of P1 (decisions 1, 2, 3, 5, 8, 9 and 11; the CP end of contract A) landed as #577.
+Done items 1-6 are pinned in `engine_offer_test.go` and
+`internal/runtime/runtime_ecs_ec2_engine_test.go`, each with its positive control — including two
+mutations run by hand and reverted: removing the `registered()` guard makes done item 3 fail, and
+removing the `af-role` filter makes done item 5 fail. Done item 7 is the hardware lane and is not
+in this. What the implementation handed back:
+
+- **The EC2 port is three calls, not five.** P0 measured `CreateTags` to be unnecessary —
+  `CreateFleet`'s `TagSpecifications` (ResourceType `instance`) merges with the launch template's
+  own tags and lands at launch — and `DeleteFleets` to be unusable in the shape decision 1 names:
+  `TerminateInstances=false` is refused for an instant fleet with `NoTerminateInstancesNotSupported`.
+  The fleet does linger (P0 (b)), so the reason decision 1's "the CP does not remember the fleet
+  id" survives is not the one the text gives — it is that an instant fleet is not enumerated by an
+  unfiltered `describe-fleets` and holds no capacity, so nothing accumulates on a path the CP
+  walks. The port is `CreateFleet` / `DescribeInstances` / `TerminateInstances`.
+- 🔴 **The failure-code table has a FOURTH answer, and it is the one decision 8 did not
+  anticipate: `refused`.** A missing `iam:PassRole` comes back as `UnauthorizedOperation`
+  **inside a 200**, in `Errors[]`, in the same shape and the same place as "there was no stock"
+  (P0). Read as "next", it walks the whole offer list against a deployment that cannot launch
+  anything — once per demand, for ever, with nothing in the log naming the grant. So it stops the
+  walk where it is, counts as ONE failed start, and logs the message verbatim; the top-level
+  `SsmAccessDenied` is folded into the same answer. A test pins that it is not "next", with the
+  identical fixture answering `InsufficientInstanceCapacity` as its positive control.
+- **`InvalidFleetConfiguration` is read POSITIONALLY, not semantically.** `Errors[]` carries one
+  entry per override, and P0 could not tell a misspelt instance type from a type that is simply
+  not offered in that Availability Zone — both produce that code and that message. So the row is
+  `unusable` only when EVERY override said it; a minority means the other overrides are still
+  worth asking for, and the walk takes the next row instead.
+- **`<role>OfferBudgetSec`'s default moves from 180 to 300 seconds** with its meaning (decision 1).
+  ⚠️ **A deployment that wrote 180 for the old meaning would give a box 180 seconds to register**,
+  which is inside ADR 0045 decision 22's measurement (21 s, 77 s with a home-baked AMI) but leaves
+  little room on a slow boot. The CFN lane settled the other half of this independently and the
+  two agree: `standup.sh` drops a captured **180 and nothing else**, so the template's 300 stands
+  (its own follow-up, above).
+- **One field leaves contract B: `class_apply_error`.** It reported "the rung was stored and the
+  capacity provider refused it", which cannot happen once the declaration IS the request
+  (decision 8): a stored choice is in force the moment it is written. The Console reads the field
+  only when present and shows no retry banner without it, so decision 8's "the Console does not
+  change" holds — but contract B is "unchanged minus one field that can no longer occur", not
+  "unchanged".
+- **Decision 3's new filter on `sweepSlotOwnerTags` is `af-role ∈ {slot, quarantined}`, not
+  `= slot`.** A quarantined box can still carry a person's `af-membership` (it is stopped, not
+  released), and repairing exactly that is what the sweep exists for; narrowing to `slot` alone
+  would leave a stale owner tag billing somebody for a box they do not have — the same defect the
+  filter was added to prevent, in the other direction.
+- **`draining` is answered from EC2 through a function handed to the ECS adapter.** Decision 5
+  gives the terminate to the CP and orders it deregister-then-terminate, which means ECS knows
+  nothing about the box during the very window the state names. `engineECS` therefore holds no
+  EC2 client and no tags: it is given `fleet.live` when the offers are wired, and a Fargate engine
+  is given nothing and pays for nothing.
+- **Decision 5's sweep needs TWO graces, because the CP has no `ghostAfter` of its own** (that is
+  the slot pool's configuration, in another package). At desired 0 a box with no task is ended
+  after 2 minutes — that is the ordinary departure, one tick after the task goes — and while the
+  service is up a second box with no task is ended after 15 minutes, which is the "two boxes"
+  leak of ADR 0075 without ever touching a task that is merely still being placed.
+- **Decision 9's refusal is keyed by the ROLE at parse time** (`parseEngineOffers(key, spec)`), so
+  it is one function and not a condition at each call site; the reloader uses the same one.
+- **A start already in flight is a fourth gate on `startGate`.** Decision 8 leaves the gate with
+  the no-candidate refusal and the swap wait; a third was needed. The admin toggle calls the gate
+  itself, so without this the toggle's own call would begin the walk again while a box was
+  registering and buy a second one — the failure ADR 0075 produced three times out of three.
+- **Contract A's final shape, for the CFN lane**: `launchTemplate` (a launch template id `lt-…`
+  or a name) replaces `capacityProvider` and `spotCapacityProvider`, which are **ignored** wherever
+  a stack still emits them. `offers`, `offerBudgetSec`, `classes` and every other field are
+  unchanged. A row with no `launchTemplate` buys no box and recognises none: it keeps serving and
+  starts the engine the plain way, which is what a CP upgraded before its stack does.
+
+## Revisions after P0 and the P1 lanes (2026-09-12)
+
+The three follow-ups above (#575, #576, #577) left the decisions as written and handed their
+findings back for revision. This section is that revision, applied **in the decision text above**
+in the manner of ADR 0075's review — no premise of any decision moved; what moved is the wording
+that P0 measured to be wrong or (c).
+
+| Decision | What changed | Source |
+|---|---|---|
+| 1 | "if fleets linger, `DeleteFleets`" → measured: they linger but are invisible to `describe-fleets` unless named by id, and `DeleteFleets(TerminateInstances=false)` is refused; **no follow-up call**, the port is three calls / `Priority` is honoured and recorded | P0 open question 3 |
+| 3 | `sweepSlotOwnerTags`'s filter is `af-role` in `{slot, quarantined}`, not `slot` alone (a quarantined box still carries the owner tag the sweep repairs) | #577 |
+| 5 | the sweep's grace is not the slot pool's `ghostAfter` (another package) but two minutes at desired 0 and fifteen minutes while the service is up | #577 |
+| 8 | the failure-code table is written out with the measured vocabulary; `InvalidFleetConfiguration` is `unusable` only when every override says it; **authorization failures inside `Errors[]` are a hard failure that stops the lap**, and `--dry-run` is no pre-flight | P0 open question 3 |
+| 10 | `ssm:GetParameters` on the public AMI parameter is **unconditional**; `DescribeFleets` / `DeleteFleets` / `CreateTags` / `DescribeLaunchTemplates` are not needed; the service-linked role is "cheap insurance", the published "first call fails" was not confirmed | P0 open questions 3 and 4 |
+| 11 | the migration is the `<Role>Enabled` round trip **and only that** (CloudFormation replaces the service; the explicit name collides; 25 s + 48 s); the Cloud Map name does **not** disappear in between; the 🔁 has fired | P0 open question 1 |
+
+Open question 8 (mounting the instance store) moved from P1's "measure" to P1's scope on the
+CFN lane's finding that retiring `<Role>UseLocalStorage` loses a measured 2× on cold start; #575
+mounts the NVMe as Docker's data-root from user data, and the P1 hardware run reads
+`df /var/lib/docker`.
+
+## Follow-up — P1 hardware run: the image role on EC2 Fleet (2026-09-12, the dev deployment, about $1.02)
+
+Done item 7, on af-sandbox, with the CP and CFN lanes (#575, #577) in develop and the Control
+Plane at `0.19.1-dev-07f95ee0`. **The migration went through and the purchase side is green; the
+box side was red twice and the departure is still red.** Six GPU boxes, **30 minutes 24 seconds**
+of GPU, about **$1.02** — the budget was one and a half cents over, and the reason is in the cost
+table: four of the six boxes were bought by a start that could never succeed, because **not one
+box the launch template bought could join the cluster**. The cause was found on hardware, fixed in
+the template, and the fix was measured (a box registered in 48 s); what the budget gate then cut
+short is `warm: true` and the image generation.
+
+Everything below is a raw return value or a Control Plane log line. Where something was not
+reached, it says so rather than being estimated.
+
+### The migration (decision 11, the `<Role>Enabled` round trip)
+
+| Step | Elapsed | What came back |
+|---|---|---|
+| Both roles `mode: off`, no engine box among the container instances | — | `describe-container-instances` → four slot boxes, `capacityProviderName: null`, no `af-role` attribute. `image` was already `off`, `llm` was `ondemand` and was turned off |
+| `update-stack --use-previous-template`, `LlmEnabled=false ImageEnabled=false` (the OLD template) | **24.8 s** (04:53:40.692 → 04:54:05.454 UTC) | Both services `DELETE_COMPLETE` at 04:54:03. P0's 25 s reproduced exactly |
+| `dev-deploy.sh --profile af-sandbox --region ap-northeast-1` | **≈31 min** (13:56 → 14:26:49 JST), about 20 of them the two-architecture QEMU bake | 60-engines itself: **189 s** (05:17:56.559 → 05:21:05.407). `LlmCapacityProvider` / `ImageCapacityProvider` / `ImageSpotCapacityProvider` / `InfraRole` / `InstanceRole` / `InstanceProfile` `DELETE_COMPLETE`; `LlmLaunchTemplate` / `ImageLaunchTemplate` / `EngineInstanceRole` / `EngineInstanceProfile` `CREATE_COMPLETE`; `CpIngestPolicy` and `Associations` updated. 20-platform: "No changes to deploy" — the Fleet grants really are 60-engines' alone (R1) |
+| `cloudformation deploy … --parameter-overrides LlmEnabled=true ImageEnabled=true` | 🔴 **691 s** (05:28:39.986 → 05:40:10.996), and it only finished because of a hand intervention — see below | `launchType: EC2`, `capacityProviderStrategy: null`, `placementConstraints: [{memberOf, "attribute:af-role == engine-image"}]` |
+
+Verified after it: `describe-capacity-providers` → **`FARGATE` and `FARGATE_SPOT` only** (the three
+Managed Instances providers are gone outright, not `INACTIVE`), and `/af-ws/engines` carries
+`"launchTemplate":"lt-…"` on both rows with no `capacityProvider` field.
+
+#### 🔴 The `<Role>Enabled=true` half blocks, because `DesiredCount` is absent
+
+`AWS::ECS::Service` has no `DesiredCount` in this template deliberately ("for a NEW service an
+unspecified desired count defaults to 1", PARAMETERS, "The engine services"). Under Managed
+Instances that was harmless: desired 1 sent ECS shopping and the service stabilised. On the EC2
+launch type **there is no box**, so both services were created at desired 1 with nothing to place
+on, and CloudFormation sat on the stabilisation wait:
+
+```
+(service af-af-ecs-engines-image) was unable to place a task because no container instance met all
+of its requirements. The closest matching (container-instance 28509d40…) doesn't have the agent
+connected.
+```
+
+Ten minutes in, `aws ecs update-service --desired-count 0` on both services from another shell
+(05:38:56) let them reach steady state and the stack completed at 05:40:10. **Left alone it would
+have run to the resource timeout and rolled back.** `standup.sh` already scales a new service to 0
+straight after creation; the `<Role>Enabled` round trip is the other path that creates these
+services, and neither decision 11 nor PARAMETERS says the same thing has to happen there. Whoever
+writes the fix has a choice between "scale to 0 from a second shell while the update runs" (what
+was done) and giving the resource an explicit `DesiredCount: 0` — the latter is what the template
+comment argues against, for a reason that has not gone away.
+
+**Impact — decision 11.** One step is missing from its order, and the step cannot be skipped.
+
+#### 🔴 The Control Plane comes up with an EMPTY engine table and never recovers
+
+`EnginesParam` is conditional on the same `<Role>Enabled`, so between the two halves the engine
+table has **no rows** — and `dev-deploy.sh` puts the new Control Plane image on inside exactly that
+window (the CP started at 05:22:37). `newEngineRegistry` returns `nil` at zero rows, which means
+the table reloader is never started either, so the CP does not notice when the rows come back:
+
+```
+GET /api/admin/engines  →  {"engines":[],"super_admin":true}      (05:41, a minute after Enabled=true)
+```
+
+Nothing is logged. `engine_table_reload.go`'s header promises a restart request for a role the
+process does not serve, and that branch is real — but it is inside a reloader that a zero-row
+start never constructs. A `force-new-deployment` of the CP service fixed it in **86 s**
+(05:42:47 → `engines: image (images) -> http://image.af.internal:8080 …` at 05:43:35).
+
+**Impact — decision 11.** The migration is three steps, not two: `false` → apply → `true` →
+**force a new CP deployment**. Ordering the CP image *after* the round trip would not help on its
+own — the CP that is already running was started before it too.
+
+#### 🔴 The Cloud Map name DOES go away, and P0's correction does not hold on the real template
+
+P0 measured the round trip on a throwaway stack whose `AWS::ServiceDiscovery::Service` carried no
+condition, and concluded that decision 11's "the Cloud Map name is gone in between" was
+overstated. On `60-engines.yaml` the discovery resources carry `Condition: HasLlmModel` /
+`HasImageModel` — the same condition as the services — and they were deleted with them:
+
+```
+LlmDiscovery    DELETE_COMPLETE  2026-09-12T04:54:04.621Z
+ImageDiscovery  DELETE_COMPLETE  2026-09-12T04:54:04.879Z
+```
+
+The name was absent for the whole window, which here was **34 minutes**, not seconds, because
+`dev-deploy.sh`'s bake sits between the two halves. ✅ At desired 0 nothing was lost, so
+decision 11's own reasoning holds; what does not hold is P0's reason for saying it was overstated.
+
+One curiosity worth writing down so nobody re-derives it: the registry **ARNs came back
+identical** (`srv-myk…` for llm, `srv-lge…` for image, read out of CloudTrail's `DeleteService`
+request and `CreateService` response). Cloud Map re-issued the same id for the same
+namespace-and-name pair. That is a property of Cloud Map, not evidence that the resource survived
+— PARAMETERS' ✅ says the second thing and has to be corrected to the first.
+
+### The $0 positive controls (05:47:38-42, four seconds, no box)
+
+Declared: `bad` (spot, `g6.xxlarge`) / `q4x` (spot, `g6.4xlarge`) / `q4xb` (spot, `g6.4xlarge`) /
+`od48` (od, `g6.48xlarge`).
+
+| Check | Result | Evidence |
+|---|---|---|
+| (a) a misspelt type answers `unusable` and the walk moves on | 🟢 | `offer bad (spot) bought nothing: InvalidFleetConfiguration: Your requested instance type (g6.xxlarge) is not supported in your requested Availability Zone (ap-northeast-1a). \| … (ap-northeast-1c).` → `trying the offer q4x (spot) after unusable`. Both overrides said it, so the positional reading (#577) declared the row unusable |
+| (b) a Spot row above the quota answers `quota` and takes the purchase option off the table | 🟢 | `offer q4x (spot) bought nothing: MaxSpotInstanceCountExceeded: Max spot instance count exceeded \| …` and then **`q4xb` never appears** — the next row tried is `od48`. `offer_trail` is `[bad unusable, q4x quota, od48 quota]`, three rows for a four-row list |
+| (c) the on-demand quota is a separate wall | 🟢 | `offer od48 (od) bought nothing: VcpuLimitExceeded: You have requested more vCPU capacity than your current vCPU limit of 8 allows …` |
+| (d) nothing was bought | 🟢 | `describe-instances` for `af-role=engine-image` with no state filter: nothing new. The whole walk was **4 seconds** |
+
+⚠️ **The admin route answers 502 when the list is spent** — `PUT /api/admin/engines/image 502
+4.607s`, with the mode already stored as `on`. That is `errEngineOffersSpent` reaching the handler,
+not a proxy timeout, and it is the same 502 an operator will see on a deployment that simply has
+no capacity today. Worth a friendlier code, but it is not wrong.
+
+### 🔴 The box side: not one box could join the cluster, in two layers
+
+| Run | Boxes | What happened |
+|---|---|---|
+| A (05:50-06:05) | `i-0b8c…` g6.xlarge spot, `i-0d42…` g6.xlarge od, `i-0a96…` g6e.xlarge od | Each: `the box … for offer <id> did not register within 3m0s; ending it` → the next offer. The whole list spent |
+| B (06:07-06:13), after fix 1 | `i-0779…` g5.xlarge spot, `i-0225…` g6.xlarge od | Same |
+| C (06:14-06:23), after fix 2 | `i-0353…` g6e.xlarge od | **registered in 48 s** |
+
+**The diagnosis was made on a live box over SSM** (`AmazonSSMManagedInstanceCore` is on
+`EngineInstanceRole`, and the agent was `Online` — so the box had network, credentials and a route
+to AWS all along):
+
+```
+systemctl is-active ecs docker   →  inactive / active
+systemctl status ecs             →  ○ ecs.service … enabled; Active: inactive (dead)
+journalctl -u ecs                →  -- No entries --
+df -h /var/lib/docker            →  /dev/nvme1n1  233G  1.7G  232G   1% /var/lib/docker
+```
+
+So the user data had done its whole job — the NVMe was mounted as Docker's data-root and
+`/etc/ecs/ecs.config` held `ECS_CLUSTER` and `ECS_INSTANCE_ATTRIBUTES` — and **the agent had simply
+never been started**. `systemctl start ecs` by hand registered the box in **three seconds**
+(`Websocket connection established … containerInstanceArn=…/a0694593…`). That is the positive
+control for everything else in the chain being right.
+
+1. 🔴 **`ecs.service` is `PartOf=docker.service`.** The user data stops docker to move the
+   data-root; systemd cancels the start job it had queued for `ecs.service` from
+   `multi-user.target`, and `systemctl start docker` does not queue it again. The agent is left
+   `inactive (dead)` with an empty journal — **there is no error anywhere**, and the only symptom
+   is a box that never registers. Neither decision 6 nor PARAMETERS' "the order works because the
+   ECS agent has not started yet" anticipates it: the agent has not started, but it *had a job
+   waiting*, and stopping docker took that job away.
+2. 🔴 **A plain `systemctl start ecs` at the end of the user data deadlocks.** `ecs.service` is
+   `After=cloud-final.service` and the user data *is* cloud-final, so a blocking start waits for a
+   job that waits for the caller. Measured on the next box, live:
+
+   ```
+   JOB UNIT                  TYPE  STATE
+   871 ecs.service           start waiting
+   263 cloud-final.service   start running
+   cloud-init status: running
+   ```
+
+   The box sat there until the registration ceiling terminated it.
+
+**The fix is `systemctl start --no-block ecs`, last, after `ecs.config` is written** (the agent
+reads the file at start). It is in this PR, in both roles' launch templates, with the two
+measurements as the comment. ⚠️ It reaches a box only because the CP asks for the launch
+template's **`$Latest`** version: CloudFormation created version 2 and then 3 and left
+`DefaultVersionNumber` at **1** throughout. The box that worked carries
+`aws:ec2launchtemplate:version = 3`.
+
+**Impact — decisions 6 and 7 and the CFN lane's follow-up item 4.** No decision's premise moves;
+the user data was one line short and the ADR's stated reason for why the ordering is safe was
+half of the story.
+
+### Run C, the checks done item 7 asks for
+
+The box (`i-0353a9e56cba02b2f`, `g6e.xlarge`, on-demand, offer `l40s`) was bought at 06:14:15 and
+the run was stopped by the budget gate at 06:19:13.
+
+| Check | Result | Evidence |
+|---|---|---|
+| **exactly one box** (ADR 0075 bought two, three times out of three) | 🟢 | At no sample was more than one `af-role=engine-image` instance `running`; the cluster's container instances went 4 → 5 → 4. `offer_trail` has one `active` row. The 0075 shape cannot occur: the desired count is written after registration, so there is no window in which ECS places anything itself |
+| **the start does not wait for the deployment to settle** | 🟢 | `06:15:03 engines: image: the box i-0353… registered; asking for the task` — the desired count goes up **in the same second the box registers**. 0075's re-run paid 2 min 35 s here, waiting for the old deployment to leave; that wait has no shape to take and does not appear in the log |
+| buy → box registered | 🟢 **48 s** | bought 06:14:15, registered 06:15:03. The ceiling in force was **180 s** (see below) |
+| the Spot row's type (0075 run 3 got a g6e) | 🟢 | Two Spot purchases: **`g6.xlarge`** (run A) and **`g5.xlarge`** (run B). Never g6e. `price-capacity-optimized` is doing what Managed Instances could not be asked to do — the spot prices at the time were g6.xlarge $0.563-0.576, g5.xlarge $0.739-0.790, g6e.xlarge $1.353 |
+| `af-engine-buy` / `af-engine-offer` tags | 🟢 | On the box from the one `CreateFleet`: `af-pool=af-af-ecs-platform`, `af-role=engine-image`, `af-engine-offer=l40s`, `af-engine-buy=od`, `af-managed-by=agent-fleet`, `Name=af-engine-image`, plus EC2's own `aws:ec2:fleet-id` and `aws:ec2launchtemplate:{id,version}`. No `CreateTags` call, as P0 (d) said |
+| `InstanceLifecycle` | 🟢 | `spot` on both Spot boxes, **absent** on all four on-demand ones — P0 (d)'s reading ("absent means on-demand") is what a reader needs |
+| the panel answers from the box | 🟢 | `box: {id: i-0353…, instance_type: g6e.xlarge, since: 06:14:48Z, status: ACTIVE}` and `offer: {id: l40s, buy: od}`, with `offer_trail` `[spot3 budget, l4 budget, l40s active]`. Never `null` while the box was up |
+| **`df /var/lib/docker` is the instance store** (open question 8, unverified until now) | 🟢 | `/dev/nvme1n1 233G … /var/lib/docker`, `Docker Root Dir: /var/lib/docker`, and `du -sh /var/lib/docker/volumes` → **24G** while the fetch ran. The anonymous `host` volume lands on the NVMe exactly as designed, with no task-definition change |
+| the fetch runs at NVMe speed, not 125 MB/s | 🟢 | From the fetch sidecar's own log: `sd3.5_medium 5,107,104,286 bytes in 27s` (189 MB/s), `t5xxl 4,893,934,904 in 47s` (104 MB/s), `neoAnime 7,105,352,134 in 34s` (209 MB/s), `sd_xl_base 6,938,078,334 in 34s` (204 MB/s), `z_image_turbo 12,309,866,400 in 60s` (205 MB/s). ADR 0071's Managed Instances figure was 104-147 MB/s |
+| `state: running` / `warm: true` | 🔴 **not reached** | desired 1 at 06:15:03 → fetch started 06:15:31 → the default model set on disk 06:17:04 → the ComfyUI process up on the GPU at **06:18:52** (`Total VRAM 45458 MB … Device: cuda:0 NVIDIA L40S`), i.e. **3 min 49 s** from the desired count. The budget gate closed at 06:19:13, ~30-90 s short of the warm probe. For comparison: ADR 0075's re-run reached `warm: true` in 5 min 11 s on a g6.xlarge Spot box under Managed Instances |
+| one image generated, 200 | 🔴 **not reached** | Same gate |
+| **departure**: desired 0 → deregister → terminate | 🔴 | `mode: off` at 06:19:13 → `desiredCount` 0 immediately, the task gone by 06:20:29 (**76 s**) — and then **nothing**. Four minutes later the box was still `running`, the panel still read `box: {…, status: ACTIVE}` / `state: draining`, and the CP had logged not one line. Terminated by hand at 06:23:39 |
+| terminate → `terminated` (open question 6) | measured **5 min 28 s - 5 min 45 s** | `terminate-instances` at 06:23:39, last seen `shutting-down` at 06:29:07, `terminated` at 06:29:24 (15 s polling). 🔴 That is **above the five minutes** decision 5's 🔁 names, so 0071 decision 7's window arithmetic is due a rewrite |
+
+#### 🔴 Why the departure never happens: `startInFlight()` is never cleared
+
+`sweepBoxes` (decision 5, both directions) returns early while `e.offers.startInFlight()` is true,
+and that is right — a box bought seconds ago has no task on it by construction. But
+`startInFlight()` is `boxID() != ""`, and the only two things that clear the box id are
+`dropBox()` on the registration-ceiling path and `begin()` at the *next* start. **A start that
+succeeds leaves it set for ever.** So from the moment a box registers, decision 5's sweep is
+switched off for that engine — including the ordinary departure it exists to perform, which is
+exactly the tick after the one that wrote desired 0.
+
+The comment on `startInFlight` states the intent precisely — "a box is bought and the desired
+count has not been written yet" — and nothing writes the second half back. Measured twice today:
+once with mode off and a box that never registered (still `running` 9 minutes later), once with
+mode off after a successful start (still `running` 4 minutes later, terminated by hand).
+
+**Impact — decision 5.** Its premise is untouched; the implementation switches its own sweep off.
+The fix belongs to the CP lane: clear the box id where `setEnabled(ctx, true)` is called after
+`registered()`, and pin it with a test whose positive control is that leaving it set makes the
+departure sweep never fire.
+
+#### ⚠️ The registration ceiling ran at 180 s, not 300
+
+`ImageOfferBudgetSec` on this deployment is **180** — the 0.19.0 default, under the old meaning.
+The CFN lane's follow-up has `standup.sh` drop exactly 180 so the template's 300 stands, but this
+deployment was updated by **`update.sh`**, which passes the live stack's parameters through
+`UsePreviousValue` and drops nothing. So a deployment that upgrades the ordinary way keeps the
+short ceiling silently. It made no difference here (48 s), but the whole reason the default moved
+is the slow boot it does not leave room for.
+
+### Cost and cleanup
+
+| Box | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
+|---|---|---|---|---|---|---|---|
+| `i-0b8c04c29851f88fa` | g6.xlarge | spot | 05:50:11 | 05:53:16 | 3m05s | 0.576 | $0.030 |
+| `i-0d428939322e54519` | g6.xlarge | on-demand | 05:53:17 | 05:56:22 | 3m05s | 1.167 | $0.060 |
+| `i-0a96425b7edf037bb` | g6e.xlarge | on-demand | 05:56:23 | 06:05:43 | 9m20s | 2.699 | $0.420 |
+| `i-0779f939b8309f373` | g5.xlarge | spot | 06:07:42 | 06:10:47 | 3m05s | 0.739 | $0.038 |
+| `i-02258932d93e27f7d` | g6.xlarge | on-demand | 06:10:49 | 06:13:14 | 2m25s | 1.167 | $0.047 |
+| `i-0353a9e56cba02b2f` | g6e.xlarge | on-demand | 06:14:15 | 06:23:39 | 9m24s | 2.699 | $0.423 |
+
+**30 minutes 24 seconds, about $1.02** (on-demand prices from the pricing API for
+ap-northeast-1/Linux; Spot from `describe-spot-price-history` in the same hour). The budget was
+$1, and it went 2% over while the last box was being read for the `df` and fetch numbers. ⚠️ **The
+two g6e boxes are 82% of the spend** — both were reached because the offer walk fell through to
+`l40s` after the two cheaper rows had been terminated at the registration ceiling, and both
+outlived their purpose because the departure defect above meant they had to be ended by hand.
+There is no Managed Instances fee in any of these figures any more (decision 8).
+
+- Both Spot purchases went through with the G/VT Spot quota (`L-3819A6DF`) at 8 vCPU;
+  `AWSServiceRoleForEC2Fleet` and `AWSServiceRoleForEC2Spot` both already existed.
+- `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**: six
+  instances, all `terminated`. (The positive control is in the same output — the query with
+  `tag-key=af-role` alone returns 10, the four slot boxes included, so an empty answer would have
+  been the ambiguous one.)
+- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → `[]`, as
+  P0 (b) measured: instant fleets are not enumerated.
+- **Restored to what step 1 recorded**: `image` `mode: off`, `llm` `mode: ondemand`, `ImageOffers`
+  byte-identical to the value read before the run, `ImageOfferBudgetSec` 180, `ImageInstanceClasses`
+  untouched, both `<Role>Enabled=true`.
+- ⚠️ **Left changed on purpose**: the dev deployment is running the two launch-template fixes,
+  which are in this PR and not yet in develop. The stack is one `cloudformation deploy` behind the
+  branch in nothing else.
+- The raw responses are in `~/.cache/adr0077-p1/` of the session that measured this.
+
+### What this hands back
+
+| # | Verdict | Decision | What has to change |
+|---|---|---|---|
+| 1 | 🔴 | 6, 7 | The launch template must start the ECS agent itself, `--no-block`, after `ecs.config`. Fixed in this PR and measured; PARAMETERS' "the order works because the ECS agent has not started yet" needs the `PartOf=docker.service` half added |
+| 2 | 🔴 | 5 | `startInFlight()` is never cleared after a successful start, so the departure sweep never runs and a box bills until somebody notices. CP lane |
+| 3 | 🔴 | 11 | The `<Role>Enabled=true` half blocks on service stabilisation at desired 1 with no box; the migration needs "scale both services to 0 while the update runs" or an explicit `DesiredCount` |
+| 4 | 🔴 | 11 | The CP must be force-redeployed after the round trip: it booted against a zero-row engine table and `newEngineRegistry` returns `nil` there, so even the reloader is absent |
+| 5 | 🔴 | 11 | The Cloud Map services DO carry the role condition on the real template and are deleted with the services. P0's ✅ was measured on a throwaway that had no condition; PARAMETERS says the wrong thing where an operator reads it |
+| 6 | ⚠️ | — | `update.sh` does not drop a captured `<Role>OfferBudgetSec=180`; only `standup.sh` does, so an ordinary upgrade keeps the old ceiling |
+| 7 | ⚠️ | 6 | PARAMETERS' "an EBS-only type (g6e) matches nothing here" is wrong — `g6e.xlarge` has a 232.8 GB instance store and used it |
+| 8 | 🟢 | 1, 2, 3, 8 | Exactly one box, no settle wait, the cheap Spot type, the tags, the panel from the box, the NVMe data-root. Nothing in the purchase side needs changing |
+
+**Done item 7 is not complete**: `warm: true`, the image generation and a CP-driven departure were
+not measured. They need one more run of roughly ten GPU minutes, after items 1 and 2 are in
+develop.

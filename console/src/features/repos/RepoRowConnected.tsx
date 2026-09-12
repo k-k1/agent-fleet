@@ -4,10 +4,9 @@
 // / clone-target / delete / fast-forward / open-SCM logic that used to live inline
 // in ReposSection lives here once.
 import { useState } from "react";
-import { apiJSON, raw, errDetail, errText, repoSetLock } from "../../core/api/client.ts";
+import { apiJSON, errDetail, errText, repoSetLock } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { resolveEffort, writeRepoLast, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
@@ -20,11 +19,16 @@ import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSes
 import { RepoRow } from "./RepoRow.tsx";
 import { useStartWork } from "./useStartWork.ts";
 import { SvnAuthModal } from "./SvnAuthModal.tsx";
+import { DeleteCopyModal } from "./DeleteCopyModal.tsx";
+import type { RepoTreeNode } from "../../lib/project.ts";
 import type { RepoRailContext } from "./useRepoRail.ts";
 
 interface RepoRowConnectedProps {
   r: Repo;
   ctx: RepoRailContext;
+  /** This row's node in the rail's tree. The delete modal lists the copies nested under it,
+   * so a row rendered outside the tree (no node) simply offers the single-copy delete. */
+  node?: RepoTreeNode;
   /** Plain card click toggles the owning node's fold (SCM is on the right-click menu). */
   onToggle?: () => void;
   /** Session tally badge (see RepoRow.sess) — computed by the owning node. */
@@ -35,11 +39,10 @@ interface RepoRowConnectedProps {
   stoppedCount?: number;
 }
 
-export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
+export function RepoRowConnected({ r, ctx, node, onToggle, sess, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
   const settings = useSettings(); // default model for a claude launch
   const tr = useT();
   const toast = useToast();
-  const askConfirm = useConfirm();
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
   const setActive = useLayoutStore((s) => s.setActive);
@@ -50,6 +53,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
   // because both routes into it are here: the menu item, and an update that came back
   // svn_auth_required — the failure IS the moment to ask, and answering it retries.
   const [authOpen, setAuthOpen] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
 
   const svnUpdate = async () => {
     const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/svn-update`, "POST", {});
@@ -135,41 +139,10 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         void refreshRepos();
         toast(locked ? tr("repo.locked_on", { name: r.name }) : tr("repo.locked_off", { name: r.name }), { kind: "success" });
       }}
-      onDelete={async () => {
-        const ok = await askConfirm({
-          title: tr("rp.delete_workcopy_title"),
-          body: tr("rp.delete_workcopy_body", { name: r.name }),
-          confirmLabel: tr("rp.delete_confirm"),
-          danger: true,
-        });
-        if (!ok) return;
-        const del = (force: boolean) =>
-          raw(`api/repos/${encodeURIComponent(r.name)}${force ? "?force=true" : ""}`, { method: "DELETE" });
-        let res = await del(false);
-        // A dirty worktree is refused (worktree_dirty) — re-confirm, then force.
-        if (!res.ok) {
-          const j = await res.json().catch(() => null);
-          const code = j?.error && typeof j.error === "object" ? j.error.code : "";
-          if (code === "worktree_dirty") {
-            const force = await askConfirm({
-              title: tr("rp.unsaved_changes_title"),
-              body: tr("rp.unsaved_changes_body", { name: r.name }),
-              confirmLabel: tr("rp.force_delete"),
-              danger: true,
-            });
-            if (!force) return;
-            res = await del(true);
-          }
-        }
-        if (!res.ok) {
-          const j = await res.json().catch(() => null);
-          toast(j?.error ? tr("rp.delete_failed", { err: errText(j.error) }) : tr("rp.delete_failed_generic"));
-          return;
-        }
-        void refreshRepos();
-        useFilesStore.getState().bump();
-        toast(tr("rp.delete_success", { name: r.name }), { kind: "success", persist: true });
-      }}
+      // Delete opens the plan (DeleteCopyModal) rather than a confirm: the copies the rail
+      // nests under this one are almost always the rest of the same job, and the dirty /
+      // force question is asked per row there instead of as a second dialog.
+      onDelete={() => setDelOpen(true)}
       // Quick launch (▼ / right-click): no prompt, straight to a session.
       onLaunch={async (kind, split) => {
         const hasModel = agentOf(kind).caps.model;
@@ -220,6 +193,16 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         useFilesStore.getState().bump();
       }}
     />
+    {delOpen && (
+      <DeleteCopyModal
+        // A row outside the tree has no subtree to offer; a leaf of one is the same shape.
+        node={node || { repo: r, children: [], spine: "" }}
+        onClose={() => setDelOpen(false)}
+        // Not r.name: a run can end with the children gone and this row held back (a live
+        // session, a lock), and a toast naming this copy would then be a lie.
+        onDeleted={(count) => toast(tr("rp.del.done", { count }), { kind: "success" })}
+      />
+    )}
     {authOpen && (
       <SvnAuthModal
         repo={r.name}
