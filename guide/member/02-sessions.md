@@ -313,6 +313,10 @@ colour the whole card, so they can be spotted from across the room.
 - **Clicking a card opens that session beside the grid**, never in its place, so the grid stays
   put while you look. If the session is already open, that pane is focused instead. A badge on
   the card shows which pane holds it while the layout is split.
+- **On a phone there is no "beside", so a tap opens the session in that pane** (two half-height
+  panes would help nobody). Your device's **Back button** returns to the grid, "Show stopped"
+  and all. **Ctrl (⌘) + click and middle-click open another pane at any width.** In the tabbed
+  layout a tap opens a new tab even on a phone, and the grid stays one tab away.
 - **Right-click, the ⋯ button, or the Menu key on a card gives the same menu as the row in the
   left pane** — stop, rename, hand off, share, lock, keep awake, archive, and the rest
   ([Icons, badges, and menus](badges-and-menus.md)).

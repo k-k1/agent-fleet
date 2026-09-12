@@ -544,6 +544,7 @@ export const sessions = {
   "ovw.empty_in_set": "作業グループ「{set}」に稼働中のセッションはありません",
   "ovw.empty_hint": "上部の Start から起動するか、「停止中も表示」で停止したセッションを並べます",
   "ovw.open_hint": "クリックで隣のペインに開く（右クリックでメニュー）",
+  "ovw.open_hint_here": "タップでこのペインに開く（戻るボタンで一覧へ・Ctrl＋クリックで別ペイン）",
   "ovw.ctx": "コンテキスト {pct}%",
   "ovw.ctx_hint": "コンテキストウィンドウの使用率",
   "ovw.started": "開始 {ago}",

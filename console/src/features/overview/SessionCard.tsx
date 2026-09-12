@@ -3,9 +3,17 @@
 // through the same helpers (sessionview.ts / sessionkind.ts) so a state or a kind never
 // renders differently here than in the rail or a pane head.
 //
-// Click / Enter / Space open the session BESIDE the grid (openSessionFromList with split),
-// never in its place: the grid is the thing being watched and must stay. Right-click, the ⋯
-// button and the Menu key open SessionMenu — the very same items as the row and the tab.
+// Where a click leads depends on whether there is a "beside" to open into (ADR 0078 decision 3).
+// On a wide screen a plain click / Enter / Space opens the session BESIDE the grid, which stays
+// put — that is the point of the grid. On a phone there is no beside: openInNew stacks two
+// half-height panes, so a plain tap opens the session IN this pane and the browser Back button
+// brings the grid back (every layout commit pushes a history entry). Ctrl / ⌘ and the middle
+// click keep the meaning they have everywhere else in the Console — "open in another pane" — on
+// both. In the tabbed layout both paths land on openInTab, i.e. a new tab in the same cell with
+// the grid one tab away, so nothing here branches on the layout mode.
+//
+// Right-click, the ⋯ button and the Menu key open SessionMenu — the very same items as the row
+// and the tab.
 import { useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
@@ -35,6 +43,8 @@ interface SessionCardProps {
   opens: { ordinal: number; id: string }[];
   /** True when the layout is split (badges/cross-highlight are dormant otherwise). */
   multi: boolean;
+  /** Where a plain click leads: beside the grid (wide screens) or into this pane (phone). */
+  beside: boolean;
   running: boolean;
   actions: SessionActions;
 }
@@ -42,7 +52,7 @@ interface SessionCardProps {
 // Where the menu was asked for: at the pointer (right-click / Menu key) or under the ⋯.
 type MenuAt = { x: number; y: number } | "button" | null;
 
-export function SessionCard({ s, opens, multi, running, actions }: SessionCardProps) {
+export function SessionCard({ s, opens, multi, beside, running, actions }: SessionCardProps) {
   const tr = useT();
   const setActive = useLayoutStore((st) => st.setActive);
   const { hover, setHover } = usePaneHover();
@@ -71,15 +81,17 @@ export function SessionCard({ s, opens, multi, running, actions }: SessionCardPr
   const ctxPct = s.context && used > 0 ? Math.min(100, Math.round((used / contextWindow(s.context.model || s.model, used)) * 100)) : null;
   const started = relTime(s.createdAt);
 
-  const openIt = () => {
+  // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
+  // the screen. Without it, `beside` decides.
+  const openIt = (newPane: boolean) => {
     if (inert) return;
-    openSessionFromList(s, true, running);
+    openSessionFromList(s, newPane || beside, running);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      openIt();
+      openIt(e.ctrlKey || e.metaKey);
     } else if (isContextMenuKey(e)) {
       e.preventDefault();
       setMenuAt(menuAnchor(e.currentTarget));
@@ -109,14 +121,18 @@ export function SessionCard({ s, opens, multi, running, actions }: SessionCardPr
       title={
         displayName(s) +
         "\n" +
-        (inert ? tr("srow.cant_resume") : s.alive ? tr("ovw.open_hint") : (ex ? ex.hint + "\n" : "") + tr("srow.stopped_hint")) +
+        (inert
+          ? tr("srow.cant_resume")
+          : s.alive
+            ? tr(beside ? "ovw.open_hint" : "ovw.open_hint_here")
+            : (ex ? ex.hint + "\n" : "") + tr("srow.stopped_hint")) +
         `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
       }
-      onClick={openIt}
+      onClick={(e) => openIt(e.ctrlKey || e.metaKey)}
       onAuxClick={(e) => {
         if (e.button !== 1) return;
         e.preventDefault();
-        openIt();
+        openIt(true);
       }}
       onKeyDown={onKeyDown}
       onContextMenu={onContextMenu}
