@@ -1321,6 +1321,15 @@ function EngineIngest({
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<IngestHit[] | null>(null);
+  /** The result the form was filled from, kept after the list it came from is gone.
+   *
+   * 🔴 The card is the only place the upstream page, the trigger words and the licence are on
+   * screen at all, and the pick used to drop the whole list — so the fields below were filled
+   * in with no way back to what they describe, and checking one meant searching again. The form
+   * stores none of it: `repo` is `civitai:<versionId>`, which is not a link and is not a name.
+   *
+   * Cleared the moment the repository is typed over, because then it describes something else. */
+  const [picked, setPicked] = useState<IngestHit | null>(null);
   const [searchSource, setSearchSource] = useState("hf");
   const [sort, setSort] = useState("downloads");
   const [baseModel, setBaseModel] = useState("");
@@ -1526,6 +1535,7 @@ function EngineIngest({
     setFile("");
     setFound(null);
     setHits(null);
+    setPicked(h);
     await resolve({ repo: ref, file: "" });
   };
 
@@ -1570,6 +1580,7 @@ function EngineIngest({
     setRev("");
     setFile("");
     setFiles(null);
+    setPicked(null);
     setId("");
     setFileFlag("");
     setAttach(false);
@@ -1671,6 +1682,19 @@ function EngineIngest({
           ))}
         </ul>
       )}
+      {/* What was chosen, still on screen after the list it came from is gone (ADR 0072
+          decision 11). The same card, minus the button that has already been pressed: the
+          upstream page, the trigger words, the gate and the licence are published nowhere else
+          in this form, and `repo` below is `civitai:1759168` — an id, not a link and not a name.
+          Without it the only way back to the page being taken in was to search again. */}
+      {picked && (
+        <div className="engines-picked">
+          <span className="muted engines-picked-head">{tr("admin.engines_ingest_picked")}</span>
+          <ul className="engines-picked-hit">
+            <HitCard hit={picked} />
+          </ul>
+        </div>
+      )}
       {/* Editing the repository drops the list and the verdict with it: a filename picked out
           of the previous repository's answer would resolve against the new one.
 
@@ -1683,6 +1707,9 @@ function EngineIngest({
         setFiles(null);
         setFile("");
         setFound(null);
+        // …and the chosen card with them: it describes the repository that was picked, so over a
+        // typed-in one it would be a link and a licence belonging to another model.
+        setPicked(null);
       }, searchSource === "civitai"
         ? "civitai:782002"
         : isImage

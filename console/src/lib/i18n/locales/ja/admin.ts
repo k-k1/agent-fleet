@@ -202,6 +202,10 @@ export const admin = {
   // 検索結果のカードから取り込みフォームへ入れる操作。「取り込む」ではない——埋めるだけで、
   // 調べる・同意する・取り込む はこの後もそのまま通る。
   "admin.engines_ingest_hit_pick": "これにする",
+  // 「これにする」で埋めたあと、その結果カードを残しておく見出し。元ページへのリンクも
+  // トリガ語もライセンスもこのカードにしかなく、下のリポジトリ欄は civitai:1759168 の
+  // ような id なので、消すと取り込もうとしているものを確かめる手段がなくなる。
+  "admin.engines_ingest_picked": "選んだ結果",
   "admin.engines_ingest_repo": "リポジトリ",
   "admin.engines_ingest_file": "ファイル名",
   // 素の https URL を貼ったときだけ、この欄はファイル名ではなく sha256 になる（listable()）。

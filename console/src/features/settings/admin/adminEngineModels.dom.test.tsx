@@ -2046,6 +2046,50 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(hit.textContent).not.toContain("0.7000000000000001");
   });
 
+  // 🔴 The pick drops the results list, and everything the choice was made on went with it: the
+  // link to the page, the trigger words, the gate, the licence. The fields left behind carry
+  // none of them — `repo` is `civitai:1759168`, an id — so the only way to check what was about
+  // to be taken in was to search for it again.
+  it("keeps the chosen card, with its link, after the results list is dropped", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [row()] });
+    apiJSON.mockResolvedValue({
+      hits: [
+        {
+          source: "civitai",
+          ref: "1759168",
+          name: "Juggernaut XL — Ragnarok",
+          url: "https://civitai.com/models/133005?modelVersionId=1759168",
+          license_name: "CreativeML Open RAIL++-M",
+          trained_words: ["jugg style"],
+        },
+      ],
+    });
+    await mount();
+    await openIngest();
+    await click(button("Civitai"));
+    await typeInto(field("探す")!, "juggernaut");
+    await click(button("検索"));
+    await click(host!.querySelector(".engines-search-hits li button") as HTMLButtonElement);
+
+    // The list is gone — the choice has been made — and the one card it was made from stays.
+    expect(host!.querySelector(".engines-search-hits")).toBeNull();
+    const chosen = host!.querySelector(".engines-picked")!;
+    expect(chosen.textContent).toContain("Juggernaut XL");
+    expect(chosen.textContent).toContain("CreativeML Open RAIL++-M");
+    expect(chosen.textContent).toContain("jugg style");
+    expect((chosen.querySelector("a") as HTMLAnchorElement).getAttribute("href")).toBe(
+      "https://civitai.com/models/133005?modelVersionId=1759168",
+    );
+    // Without the button: it has already been pressed, and pressing it again would re-resolve
+    // the repository the form is already showing.
+    expect(chosen.querySelector("button")).toBeNull();
+
+    // Typed over, it describes something else — a link and a licence belonging to another model
+    // are worse than none.
+    await typeInto(field("リポジトリ")!, "civitai:999");
+    expect(host!.querySelector(".engines-picked")).toBeNull();
+  });
+
   it("puts a Civitai hit in as its version id, which is what an ingest takes", async () => {
     api.mockResolvedValue({ super_admin: true, engines: [row()] });
     apiJSON.mockResolvedValue({
