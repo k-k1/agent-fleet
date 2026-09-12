@@ -2105,3 +2105,189 @@ own positive control:
 
 Nothing was left behind. The raw responses and the two generated templates are in
 `~/.cache/adr0077-p1x/` of the session that measured this.
+
+## Follow-up — P2 hardware run: interruption and the re-fetch (2026-09-12, the dev deployment, about $0.13)
+
+Decision 4 on hardware, with #591 in develop and the Control Plane put on by `dev-deploy.sh` at
+`0.19.1-dev-72d0af07`. The interruption was made the blunt way — `terminate-instances` on the
+engine's own box, which is decision 4's "the box is gone" with nothing simulated. Three Spot boxes,
+**13 minutes 54 seconds** of GPU, about **$0.13** against a gate of twenty minutes and $0.80.
+
+**P2's verdict in one line: the first interruption is fully green — detected, `interrupted` in the
+trail, rebuilt from the top of the list, one box, no `UpdateService`, no failure counted — but the
+SECOND interruption was never detected, because it landed on a task that had not reached RUNNING
+yet, and the engine stayed wedged at `desired 1` with no box and no log line until a human turned
+it off; so the two-in-a-row skip (decision 4's last bullet) is UNMEASURED, and decision 6's 🔁 has
+fired on the letter (5 min 47 s to re-fetch 52.1 GiB) while its reasoning needs restating.**
+
+Everything below is a raw return value, a Control Plane log line, an audit row or a CloudTrail
+record. Where something was not measured, it says so.
+
+### Interruption 1 — the full set, and all of it green
+
+Lap: `mode: on` 11:28:05 UTC → `spot3` bought `i-0dd6877b4148871f6` (g6.xlarge, Spot,
+ap-northeast-1a) at 11:28:07 → registered 11:28:43 (**36 s**) → `state: running` 11:33:28,
+`warm: true` 11:33:42 (**4 min 45 s / 4 min 59 s** from the desired count). The box was terminated
+out from under the Control Plane at **11:37:15**.
+
+```
+11:37:30  engine image: the engine task was replaced without being asked: COMPLETED (service …)
+          has reached a steady state. | (service …) has started 1 tasks: (task 45974ded…). | …
+11:37:30  engines: image: the box was taken away; rebuilding from spot3 (spot)
+11:37:32  engine image: offer spot3 (spot) bought i-024627c199338ca2f
+11:38:08  engines: image: the box i-024627c199338ca2f registered (the pending task goes to it)
+```
+
+| Check | Result | Evidence |
+|---|---|---|
+| the interruption is detected (desired 1, the task replaced, the box gone) | 🟢 **15 s** | terminate 11:37:15 → the `replaced without being asked` line 11:37:30. The audit has both halves: `engine.image.replaced / restart` and `engine.image.interrupted / spot3` — *"the box was taken away while the service still wanted a task"* — at the same second |
+| `offer_trail` records `interrupted` | 🟢 | `[{spot3, spot, interrupted}, {spot3, spot, active}]` — the same offer twice, exactly the shape #591 describes |
+| the rebuild starts from the TOP of the list | 🟢 | `rebuilding from spot3 (spot)`, and `spot3` is row 1 of three. Nothing skipped, nothing carried over from the interrupted attempt |
+| **exactly one box** | 🟢 | CloudTrail's `CreateFleet` calls for the whole run are **three**, one per box, 11:28:07 / 11:37:32 / 11:46:29. At no 13-second sample was more than one `af-role=engine-image` instance alive |
+| **the desired count is NOT rewritten** | 🟢 | CloudTrail has **no `UpdateService` at all between 11:33:44 and 11:46:12** — the interruption, the rebuild and the second interruption all fall inside that gap. The registration log line says it in words too: `(the pending task goes to it)`, where a start says `(asking for the task)` |
+| no failure counted, no cooldown | 🟢 | `failures: null` on the panel before and after. An interruption is not a failure (decision 4), and the rebuild started 2 s after detection rather than after a cooldown |
+| the rebuild's own box registers | 🟢 **36 s** | 11:37:32 → 11:38:08. **53 s from the terminate to a registered replacement** |
+| sweep (a) does not terminate the new box for having no task | 🟢 | CloudTrail's only `TerminateInstances` in the window is **mine** (`agent-fleet-aws-deployer`, 11:37:16). The Control Plane terminated nothing until the departure at the end of the run |
+| sweep (b) deregisters the dead box's container instance | ⚠️ **not exercised** | Within 90 s the cluster was back to one engine container instance (the new box, `pending: 1`) — but there is **no `deregistering the ghost container instance` line and no `DeregisterContainerInstance` in CloudTrail from any principal**. ECS removed it itself, which is decision 4's `(c)` — published spec until now — confirmed. The CP's own direction (b) had nothing left to do, so it is still unmeasured |
+
+### 🔴 Interruption 2 — not detected, and the engine wedges
+
+`i-024627c199338ca2f` was terminated at **11:39:50**, 102 seconds after it registered. Its task was
+still PENDING: on a fresh box the fetch sidecar needs 1 min 42 s before the engine container may
+start (below), so nothing had reached RUNNING yet.
+
+Nothing happened. Not at once, and not in the six minutes that were watched:
+
+| Time (UTC) | State |
+|---|---|
+| 11:39:50 | `terminate-instances` |
+| 11:40:18 | panel: `state: starting`, `desired: 1`, `box: null`, `offer: null`, `offer_trail` unchanged at `[spot3 interrupted, spot3 active]` |
+| 11:43:55 | `describe-services` → desired 1, running 0, **pending 0**; the service's own newest event is *"was unable to place a task because no container instance met all of its requirements"* |
+| 11:45:56 | the Control Plane's log for the whole window: **52 lines, of which 0 mention an engine.** (The same query over the interruption-1 window returns four lines — that is the positive control for the empty result) |
+| 11:45:56 | the audit for the window: **no `engine.image.interrupted` row.** There is one for interruption 1 |
+| 11:46:12 | ended by hand with `mode: off` |
+
+**Why.** Decision 4's detection is inherited from ADR 0075 decision 6 as "`running` → `starting` at
+desired 1, and the box gone", and `stepRebuild` will not run without that `replaced` flag. The
+panel's own state trace, sampled every 13 seconds, never left `starting` for this box:
+
+```
+20:38:18 JST  state=starting d=1 svc=1,0,0  box=i-024627c199338ca2f     (registered)
+20:38:45      state=starting d=1 svc=1,0,1  box=i-024627c199338ca2f     (task PENDING)
+20:39:51      state=starting d=1 svc=1,0,0  box=i-024627c199338ca2f     (terminated by hand)
+20:40:18      state=starting d=1 svc=1,0,0  box=null
+```
+
+There is no `running` to leave, so there is no transition, so there is no interruption — and the
+other half of decision 4's condition, "the box is gone", is never consulted on its own. The
+`startInFlight` flag was dropped when the box registered (#584), so no walk was in flight to notice
+either. **The engine is left with a desired count of 1, no box, no walk and no clock**, and the
+only automatic way out is the idle window (`ImageIdleSec`, 900 s here) eventually stopping the
+engine and throwing the demand away — that was not waited for, so it is unmeasured.
+
+⚠️ **This is not a rare corner.** The cold start measured on this very run is **4 min 45 s** from
+the desired count to `running`, and the window in which an interruption is invisible is all of it.
+A Spot reclaim is at least as likely during the six minutes a box is booting and fetching 52 GiB as
+during the minutes it is serving.
+
+**Impact — decision 4.** Its premise stands; its detection is one condition short. "The box is
+gone" is a fact `describe-instances` can state on its own (decision 4 says exactly that, two
+sentences before it inherits the transition), so the fix is to make the second condition
+sufficient: **at desired ≥ 1, with an offer that took a box and no `af-role=engine-<role>` instance
+alive, rebuild — whether or not a task was ever RUNNING.** The `not a rebuild` guard that keeps an
+OOM kill from buying a GPU is the box still being there, and it is untouched by this.
+
+**Consequence for the rest of P2**: the two-in-a-row skip could not be reached. It needs two
+*detected* interruptions of the same offer, each of which needs a task that has been RUNNING, and
+two full cold starts plus their rebuilds do not fit in twenty GPU minutes. `begin()` clears
+`lastInterrupted`, so the one interruption already recorded cannot be carried into a later demand
+either. **Decision 4's last bullet is implemented (#591) and unmeasured on hardware.**
+
+### The departure, re-confirmed
+
+A third box, deliberately short, to check that the interruptions had left nothing broken:
+
+```
+11:46:29  engine image: offer spot3 (spot) bought i-0653b21fd06393519
+11:47:04  engines: image: the box i-0653b21fd06393519 registered (asking for the task)
+11:47:55  engines: image set to off by …
+11:48:56  engines: image: terminated the box i-0653b21fd06393519 (the engine is stopped and nothing is running on it)
+```
+
+🟢 CloudTrail, from the Control Plane's own task role: `UpdateService` 11:47:55 →
+`DeregisterContainerInstance` **11:48:56** → `TerminateInstances` **11:48:56**, in decision 5's
+order, **61 s** after the toggle (run 2 measured 50 s and 65 s). `terminate` → `terminated` took
+**5 min 37 s - 5 min 59 s** at 22-second polling — a fourth lap for decision 5's window, at the top
+of the four-to-six-minute range it was rewritten as, and still inside it.
+
+### Decision 6 — what a re-fetch actually costs
+
+The first box's fetch sidecar, from its own log. The catalogue on this deployment is **eleven files,
+55,974,977,974 bytes = 52.1 GiB** — well past the 30 GB decision 6's 🔁 names.
+
+| Elapsed | What |
+|---|---|
+| 0 s | `engine fetch: active set for /af-ws/engines/image/active starts with 'sd35-medium'` |
+| **1 min 42 s** | `engine fetch: engine may start; 9 file(s) still to sync` — the default set is on disk (`sd3.5_medium 5,107,104,286 bytes in 37s`, `clip_l … 3s`, `clip_g … 11s`, `t5xxl 4,893,934,904 … 47s`) |
+| **5 min 47 s** | `engine fetch: sync done` — all eleven files |
+
+Per-file throughput 82 / 104 / 126 / 127 / 138 / 168 / 168 / 198 / 199 / 209 / 225 MB/s,
+**154 MB/s over the whole 52.1 GiB** — against ADR 0071's 104-147 MB/s on Managed Instances and run
+2's 87-173 on a g5.xlarge. The NVMe data-root is not the ceiling; S3 is.
+
+🔴 **The 🔁 fires on the letter.** "A measured re-fetch above five minutes on a comfy deployment
+holding 30 GB" is exactly 5 min 47 s on 52.1 GiB, so by decision 6's own trigger P1 — the named
+`SourcePath` host volume — moves forward.
+
+⚠️ **But the trigger predicts the wrong thing, and this run is what shows it.** Decision 6 already
+says the host volume is warm only when desired goes 0 → 1 **on the same box**, and neither event
+that ends a box produces that: a departure terminates it (decision 5) and an interruption takes it
+away (decision 4). Measured here, an interruption cost **53 s to a registered replacement and then
+a full cold start on empty hardware** — a host volume saves nothing at all of it, because the
+volume died with the box. What the 5 min 47 s actually prices is the case decision 6 lists as its
+only beneficiary and ADR 0071 decision 5 has already decided not to stop in. So:
+
+- the 🔁's condition: **fired** (🔴);
+- the work it points at: **still not worth doing for the reason the 🔁 gives**, because the number
+  that crossed the threshold is an interruption cost and the host volume does not address
+  interruptions;
+- what would make it worth doing is a different measurement — how often desired goes 0 → 1 inside
+  the idle window on a real deployment — which nothing in this repository records today.
+
+Two numbers worth keeping beside it: the engine may start after **1 min 42 s** (the default model
+set, not all 52 GiB), and `warm: true` came **4 min 59 s** after the desired count. The remaining
+four minutes of the full sync happen behind a serving engine.
+
+### Cost and cleanup
+
+| Box | Type | Purchase | Up (UTC) | Ended | Alive | Why it ended |
+|---|---|---|---|---|---|---|
+| `i-0dd6877b4148871f6` | g6.xlarge | spot | 11:28:07 | 11:37:15 | 9m08s | interruption 1, by hand |
+| `i-024627c199338ca2f` | g6.xlarge | spot | 11:37:32 | 11:39:50 | 2m18s | interruption 2, by hand |
+| `i-0653b21fd06393519` | g6.xlarge | spot | 11:46:28 | 11:48:56 | 2m28s | the CP's own departure |
+
+**13 minutes 54 seconds, about $0.13** at the Spot price in force that hour ($0.5759/h in
+ap-northeast-1a, `describe-spot-price-history`). The gate was twenty minutes and $0.80; both held,
+and the run stopped short of the two-in-a-row skip rather than of the money.
+
+- `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**: three
+  instances, all `terminated`. (The positive control is the same query with `tag-key=af-role` alone,
+  which returns 7 — the slot boxes included.)
+- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → `[]`.
+- **Restored to what step 1 recorded**: `image` `mode: off`, `llm` `mode: ondemand`, `ImageOffers`
+  byte-identical (it was never changed — the production declaration was what P2 needed),
+  `ImageOfferBudgetSec` 300, service at desired 0. Nothing was left changed on the deployment, and
+  no template was edited for this run.
+- Every box in this run came up on the launch template as it stands in develop, and every one of
+  them registered — the two P1 defects in the user data stay fixed.
+- The raw responses are in `~/.cache/adr0077-p2/` of the session that measured this.
+
+### What this hands back
+
+| # | Verdict | Decision | What has to change |
+|---|---|---|---|
+| 1 | 🔴 | 4 | An interruption before the task reaches RUNNING is invisible, and the engine wedges at desired 1 with no box and no log. Make "no `af-role=engine-<role>` instance alive at desired ≥ 1 with a box on the books" sufficient on its own, without the `running` → `starting` transition |
+| 2 | ⚠️ | 4 | The two-in-a-row skip is implemented and **unmeasured**: two detected interruptions need two full cold starts, which does not fit a twenty-minute gate. It needs its own run, or a deployment with a smaller catalogue |
+| 3 | ⚠️ | 4 | Direction (b) of decision 5's sweep was **not needed**: ECS deregistered the dead box's container instance itself within 90 s, confirming the `(c)` the text marked unconfirmed. The sweep stays as the backstop it was written to be, still unexercised |
+| 4 | 🔴/⚠️ | 6 | The 🔁 fired (5 min 47 s for 52.1 GiB) but on a number the host volume cannot improve — an interruption always lands on a new box. Restate the 🔁 around "desired 0 → 1 inside the idle window", and measure how often that happens before building anything |
+| 5 | 🟢 | 4, 5 | Detection, the `interrupted` trail row, the rebuild from the top, one box, no `UpdateService`, no cooldown, no misfiring sweep, and the CP's own departure at 61 s |
