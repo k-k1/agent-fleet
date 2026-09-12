@@ -135,6 +135,14 @@ type engineOfferRun struct {
 	// ADR 0075 decision 6). lastInterrupted is what "in a row" is measured against.
 	skipOffer       map[string]bool
 	lastInterrupted string
+	// onBox is the box this engine's task is believed to be on: the one the last walk left the
+	// cluster with. 🔴 It is the LEDGER decision 4's detection needs when there is no state
+	// transition to read — a box taken away before its task ever reached RUNNING produces none
+	// (measured, ADR 0077 P2 hardware run) — and it is the difference between "no box is
+	// running, so one was taken away" and "no box is running because none was ever bought".
+	// In memory, like everything else here: a CP replaced mid-demand detects nothing and says
+	// nothing, which is the same limit the transition already had (prevState is memory too).
+	onBox string
 	// budgetSec is how long one offer's box is given to register, live. Carried here rather than
 	// read off the row this process started with, because the engine table is re-read while the
 	// CP runs and an operator raising the budget must not need a Control Plane replacement to be
@@ -201,7 +209,7 @@ func (r *engineOfferRun) begin(list []engineClass) {
 	r.list = append([]engineClass(nil), list...)
 	r.idx, r.trail, r.noOffer = 0, nil, false
 	r.skipBuy, r.skipOffer = map[string]bool{}, map[string]bool{}
-	r.box, r.since, r.rebuild, r.lastInterrupted = "", time.Time{}, false, ""
+	r.box, r.since, r.rebuild, r.lastInterrupted, r.onBox = "", time.Time{}, false, "", ""
 }
 
 // restart puts the walk back at the top of the list after an interruption (decision 4).
@@ -227,6 +235,40 @@ func (r *engineOfferRun) restart(list []engineClass) (engineClass, bool) {
 	}
 	r.idx = len(r.list)
 	return engineClass{}, false
+}
+
+// settled ends the walk on the box that registered, and remembers it: the walk is over, and from
+// here that box is what the engine is believed to be running on.
+func (r *engineOfferRun) settled(id string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.box, r.since, r.rebuild, r.onBox = "", time.Time{}, false, id
+	r.mu.Unlock()
+}
+
+// hadBox reports whether the ledger holds a box, i.e. whether "nothing of this role is running"
+// is a LOSS rather than the ordinary state of an engine that has not bought anything.
+func (r *engineOfferRun) hadBox() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.onBox != ""
+}
+
+// forgetBox clears the ledger, for a box whose loss has been acted on (or which the CP itself
+// ended). Without it one interruption would be detected on every tick until the replacement
+// registered.
+func (r *engineOfferRun) forgetBox() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.onBox = ""
+	r.mu.Unlock()
 }
 
 // rebuildAbandoned reports whether a rebuild is in flight for a service that no longer wants a
@@ -574,7 +616,11 @@ func (e *engineRuntimeState) walkOffers(ctx context.Context, ask bool) error {
 				// hardware (ADR 0077 P1 run): `mode=off`, the task gone, and the box still
 				// running four minutes later — terminated by hand. A rebuild ends here the same
 				// way, which is what lets the sweep collect the box after the NEXT idle window.
-				e.offers.dropBox()
+				//
+				// The box goes into the LEDGER as it leaves the walk: decision 4's detection has
+				// to be able to say "the box we were running on is gone" without a state
+				// transition to read (see stepRebuild).
+				e.offers.settled(id)
 				return nil
 			}
 			waited, started := e.offers.waitedForBox()
@@ -653,14 +699,25 @@ func (e *engineRuntimeState) startEngine(ctx context.Context) error {
 // 🔴 An interruption is read as an EC2 FACT, and that is the whole of what ADR 0077 could change
 // about ADR 0075 decision 6's design. Under Managed Instances a box could not be enumerated at
 // all, so "was it taken away" had to be guessed from the service's own states; a box the CP
-// bought answers `describe-instances` by tag, so the two conditions the ADR names can both be
-// read: the service went `running` → `starting` with the desired count still 1, and NO box
-// tagged for this role is `pending` or `running` any more.
+// bought answers `describe-instances` by tag.
 //
-// ⚠️ THE SECOND CONDITION IS WHAT KEEPS THIS FROM FIRING ON AN ORDINARY REPLACEMENT. A task that
-// was OOM-killed or failed its health check (measured in ADR 0071 P0) produces exactly the same
-// service transition with the box still there — and rebuilding then would buy a second GPU for a
-// task ECS is already placing on the first one.
+// Two things can say a box was lost, and it is an OR:
+//
+//   - the service went `running` → `starting` with the desired count still 1 (the transition
+//     ADR 0075 decision 6 named), AND no box of this role is alive;
+//   - 🔴 or no box of this role is alive while the LEDGER holds one — whatever the service did.
+//     The transition alone is not enough, and the P2 hardware run measured why: a box taken away
+//     BEFORE its task ever reached RUNNING produces no transition at all (the service was
+//     `starting` and stays `starting`), `startInFlight` is already down because the box had
+//     registered, and nothing else has a clock. The engine then sat at desired 1 with no box and
+//     no log line, and its only automatic way out was throwing the demand away after the
+//     900-second idle window — against a measured cold start of 4 minutes 45 seconds, i.e. a
+//     window that is anything but rare.
+//
+// ⚠️ "NO BOX IS ALIVE" IS WHAT KEEPS THIS FROM FIRING ON AN ORDINARY REPLACEMENT. A task that was
+// OOM-killed or failed its health check (measured in ADR 0071 P0) produces the same transition
+// with the box still there — and rebuilding then would buy a second GPU for a task ECS is already
+// placing on the first one.
 //
 // It returns the walk's error, which the controller turns into a failure or not: an interruption
 // is NOT a failure (rule 3: a Spot box dying suddenly is acceptable), a rebuild that cannot get a
@@ -682,6 +739,7 @@ func (e *engineRuntimeState) stepRebuild(ctx context.Context, view engineService
 			e.endBox(ctx, id, "the engine stopped while its replacement box was still registering")
 		}
 		e.offers.dropBox()
+		e.offers.forgetBox()
 		return nil
 	}
 	if e.offers.rebuilding() {
@@ -690,14 +748,31 @@ func (e *engineRuntimeState) stepRebuild(ctx context.Context, view engineService
 		// the desired count is 1, because the controller's own decision is "do nothing" then.
 		return e.walkOffers(ctx, false)
 	}
-	if view.desired < 1 || !replaced || e.offers.startInFlight() {
+	if view.desired < 1 || e.offers.startInFlight() {
+		// Nothing is asked for, or a walk is already spending money on this demand. Note that
+		// desired 0 with the box gone is not an interruption but a DEPARTURE — the sweep's
+		// business (decision 5), and it has already run this tick.
 		return nil
 	}
 	if b, ok := e.fleet.current(ctx); ok {
-		log.Printf("engines: %s: the task was replaced but the box %s is still here; not a rebuild",
-			e.def.Key, b.instanceID)
+		if replaced {
+			log.Printf("engines: %s: the task was replaced but the box %s is still here; not a rebuild",
+				e.def.Key, b.instanceID)
+		}
 		return nil
 	}
+	if !replaced && !e.offers.hadBox() {
+		// No box is running and none was ever bought for this demand: that is a start that has
+		// not happened yet, not a loss. The start path owns it.
+		return nil
+	}
+	// The ledger is consumed here: without this one interruption would be detected again on
+	// every tick until the replacement registered, and each detection would begin a walk.
+	// The ledger is consumed here: without this one interruption would be detected again on
+	// every tick until the replacement registered, and each detection would begin a walk.
+	// The ledger is consumed here: without this one interruption would be detected again on
+	// every tick until the replacement registered, and each detection would begin a walk.
+	e.offers.forgetBox()
 	cur, had := e.offers.current()
 	if twice := e.offers.noteInterrupted(cur.ID); twice {
 		log.Printf("engines: %s: the offer %s has been interrupted twice in a row; skipping it for this demand",
@@ -820,6 +895,7 @@ func (e *engineRuntimeState) sweepBoxes(ctx context.Context, view engineServiceV
 			continue
 		}
 		e.endBox(ctx, fb.instanceID, why)
+		e.offers.forgetBox()
 	}
 	for id, ci := range registered {
 		if live[id] {
@@ -837,6 +913,10 @@ func (e *engineRuntimeState) sweepBoxes(ctx context.Context, view engineServiceV
 
 // endBox takes one box out of the cluster and then out of EC2, in that order (decision 5, the
 // slot pool's `terminateSlot`).
+//
+// ⚠️ The caller clears the LEDGER (forgetBox) when the box it is ending is the one the engine was
+// believed to be on: a box the CP itself removed is not a box that was taken away, and leaving it
+// in the ledger would have decision 4 read the departure as an interruption on the next demand.
 //
 // ⚠️ The ECS half is not optional and not automatic. A terminated instance stays registered as
 // ACTIVE with agentConnected false, and a ghost that looks ACTIVE still satisfies placement
