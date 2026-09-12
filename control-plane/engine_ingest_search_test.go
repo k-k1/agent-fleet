@@ -244,6 +244,11 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 // Non-commercial is on screen BEFORE the acceptance, which is decision 10's rule. Civitai has
 // no licence field in Hugging Face's sense, so the one thing it does say about terms is the
 // empty `allowCommercialUse`.
+//
+// 🔴 It rides as a RESTRICTION CODE now, not as a synthesised licence name. The panel drew both
+// and they said the same thing, which on a real render was two tags on one card — and the code
+// is the one with a word in the locale catalogue. What must not change is that the fact reaches
+// the card at all, which is what this test pins.
 func TestCivitaiSearchMarksNonCommercial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"items":[{"name":"X","allowCommercialUse":[],
@@ -258,8 +263,13 @@ func TestCivitaiSearchMarksNonCommercial(t *testing.T) {
 	if aerr != nil || len(hits) != 1 {
 		t.Fatalf("search: %v %v", hits, aerr)
 	}
-	if hits[0].LicenseName != "non-commercial" {
-		t.Errorf("license_name = %q, want the non-commercial mark", hits[0].LicenseName)
+	if !hasCode(hits[0].Restrictions, engineRestrictNonCommercial) {
+		t.Errorf("restrictions = %v, want the non-commercial mark", hits[0].Restrictions)
+	}
+	// And not twice: the licence name is left as the source gave it (nothing), because a
+	// synthesised one would be a second tag saying what the code above already says.
+	if hits[0].LicenseName != "" {
+		t.Errorf("license_name = %q — the restriction code is where this fact lives now", hits[0].LicenseName)
 	}
 }
 
