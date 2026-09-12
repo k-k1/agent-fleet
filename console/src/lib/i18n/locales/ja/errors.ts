@@ -215,6 +215,7 @@ export const errors = {
   "err.engine_publish_failed": "カタログを配備に反映できませんでした",
   "err.engine_class_unknown": "そのインスタンスクラスは宣言されていません",
   "err.engine_not_ours": "そのエンジンは別の配備から借りているので、この画面からは変更できません",
+  "err.membership_inactive": "そのメンバーシップは有効ではないので、発行しても使えません",
   "err.engine_vram_confirm": "そのモデルは選択中のインスタンスクラスの VRAM を超えます",
   "err.engine_files_missing": "そのモデルファミリーのワークフローが読むファイルが、この行に揃っていません",
   "err.gated_not_accepted": "そのアカウントはこのリポジトリの条項にまだ同意していません",

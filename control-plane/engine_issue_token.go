@@ -107,7 +107,7 @@ func (a engineAdminAPI) postIssueToken(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusConflict, "membership_inactive",
+		writeAPIErr(w, &apiError{http.StatusConflict, errCodeMembershipInactive,
 			"this membership is not active — the engine gateway refuses its token, so there is nothing to hand out. Restore the membership first."})
 		return
 	}
