@@ -140,6 +140,11 @@ func (a engineAdminAPI) postIssueToken(w http.ResponseWriter, r *http.Request, i
 	// itself is in neither the ledger nor the log — only whose it was.
 	a.audit(r.Context(), ident, "engine.issue_token", mv.TenantSlug+"/"+key+" "+mem.ID)
 	log.Printf("engines: issuing token shown to a super_admin for membership %s (%s/%s)", mem.ID, mv.TenantSlug, key)
+	// The BODY of this response is a long-lived credential, which is not true of any other engine
+	// route. A POST answer is not normally cached, but "not normally" is the wrong standard for a
+	// value that opens another deployment's engines until somebody deletes a membership — the same
+	// reason oauth_link.go sets it on the page that carries a link code.
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, view)
 }
 

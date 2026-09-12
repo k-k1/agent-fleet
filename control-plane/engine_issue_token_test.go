@@ -97,6 +97,11 @@ func TestEngineIssueTokenMintsWhatTheGatewayAccepts(t *testing.T) {
 	if len(opens) != 2 {
 		t.Errorf("opens = %v, want the two /internal/engine routes", out["opens"])
 	}
+	// 🔴 The body IS the credential, so it must not be storable by anything between here and the
+	// operator's screen. No other engine route needs this; this one does.
+	if got := rec.Header().Get("Cache-Control"); !strings.Contains(got, "no-store") {
+		t.Errorf("Cache-Control = %q, want no-store on a response whose body is a credential", got)
+	}
 }
 
 // Decision 3's refusal, carried in the answer because no column can carry it: the value is
