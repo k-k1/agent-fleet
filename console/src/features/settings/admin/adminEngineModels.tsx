@@ -5,6 +5,7 @@ import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import {
   engineIsImage,
+  engineIsRemote,
   engineTitle,
   useEngineRows,
   type EngineModel,
@@ -167,6 +168,13 @@ export function EngineModelsAdminView() {
 
   const open = rows.find((e) => e.key === role) || rows[0];
   const isImage = engineIsImage(open);
+  /** 🔴 A borrowed catalogue is a MIRROR of the far deployment's, refreshed on a poll, and every
+   *  write route here answers 400 `engine_not_ours` (ADR 0079 decision 7). So this screen shows
+   *  the rows and offers none of the controls — the same shape, and for the same reason, as the
+   *  reduced panel a granted tenant_admin gets: a button that can only produce an error message
+   *  is worse than no button, and a disabled one invites an email asking to have it enabled.
+   *  What replaces them is the sentence below, which names the deployment to go and edit it on. */
+  const borrowed = engineIsRemote(open);
 
   return (
     <div className="admin-stage">
@@ -218,27 +226,43 @@ export function EngineModelsAdminView() {
         {/* Which engine these rows belong to, when the tabs above say only "image". The key is
             what every error message and every S3 prefix uses. */}
         {rows.length > 1 && <p className="muted engines-role-name mono">{engineTitle(open)}</p>}
+        {/* Why the controls below are missing, said before the list rather than after a 400. The
+            far fleet's base URL goes with it because "edit it over there" is not actionable
+            without naming which deployment — it is the same fact the machine screen prints, and
+            an operator arriving here may not have been on that screen. */}
+        {borrowed && (
+          <p className="admin-hint pad">
+            {tr("admin.engines_remote_catalog")}
+            {open.url ? <span className="mono"> {open.url}</span> : null}
+          </p>
+        )}
         <EngineModels
           key={open.key + "/" + kind}
           row={open}
           kind={kind}
           busy={busy}
-          readOnly={!isSuper}
+          readOnly={!isSuper || borrowed}
           onChange={(id, patch) => setModel(open.key, id, patch)}
           onForget={(id, purge) => forgetModel(open.key, id, purge)}
           onAdd={(body) => addModel(open.key, body)}
         />
-        <EngineIngest
-          key={"ingest/" + open.key + "/" + kind}
-          engineKey={open.key}
-          isImage={isImage}
-          isLora={kind === "lora"}
-          baseModels={open.base_models}
-          fileFlags={open.file_flags}
-          modelIds={(open.model_rows || []).map((m) => m.id)}
-          busy={busy === open.key + "/ingest"}
-          onStarted={() => loadJobs(open.key)}
-        />
+        {/* The ingest is a write too — `POST /ingest` is one of the five routes that answer 400
+            for a borrowed role — and it is also the one that would spend money and bucket space
+            on a file the far engine is never going to load: the box that stages files is the far
+            deployment's active set, not ours. */}
+        {!borrowed && (
+          <EngineIngest
+            key={"ingest/" + open.key + "/" + kind}
+            engineKey={open.key}
+            isImage={isImage}
+            isLora={kind === "lora"}
+            baseModels={open.base_models}
+            fileFlags={open.file_flags}
+            modelIds={(open.model_rows || []).map((m) => m.id)}
+            busy={busy === open.key + "/ingest"}
+            onStarted={() => loadJobs(open.key)}
+          />
+        )}
         <EngineIngestJobs jobs={jobs[open.key] || []} />
       </section>
       {/* The deployment's Hugging Face token. One token serves every role and every tenant, so
