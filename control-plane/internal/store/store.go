@@ -245,7 +245,10 @@ type EngineModel struct {
 	// measurement).
 	KVLayers, KVHeadsKV, KVKeyLen, KVValueLen int
 	// Sizes replaces sdcppSizes()'s guess from the model id with a declaration.
-	Sizes       []string
+	Sizes []string
+	// Params are the generation defaults this row asks for — see EngineParams. Nil for a row
+	// that declares none, which is the family template's own recipe and stays the normal case.
+	Params      *EngineParams
 	Description string
 	VramMiB     int
 	// License is HF's `cardData.license` verbatim and LicenseName is where the terms really
@@ -292,6 +295,43 @@ type EngineModel struct {
 	// Empty for a seeded row, which comes from the stack and not from anywhere with a URL.
 	Source               string
 	CreatedAt, UpdatedAt string
+}
+
+// EngineParams are the generation defaults declared for one catalogue row.
+//
+// Until this existed, sampler, steps, cfg and scheduler were the FAMILY's fixed recipe inside
+// the five workflow templates (comfy_workflows.go), and a checkpoint whose author publishes
+// different numbers had nowhere to say so. Those numbers are real — the whole of Civitai is
+// people writing "Steps: 30, CFG 4, DPM++ 2M" under their uploads — and the catalogue row is
+// where a deployment writes down what it decided about a model.
+//
+// 🔴 Every field is OPTIONAL and a zero means "not declared", never "zero steps". The provider
+// falls back to its family's own recipe field by field, so a row that declares only `steps`
+// keeps the template's sampler rather than losing it to an empty string.
+//
+// What a human put here is the authority. The ingest form can fill these in from an author's
+// prose, which is a heuristic over unstructured text — so it fills the FORM, in front of the
+// person who presses the button, and never the row behind their back.
+type EngineParams struct {
+	Steps int `json:"steps,omitempty"`
+	// CFG is the guidance scale. Fractional on purpose: 4.5 and 3.5 are ordinary values and an
+	// int field would silently floor them.
+	CFG float64 `json:"cfg,omitempty"`
+	// Sampler and Scheduler are ComfyUI's OWN spellings (`dpmpp_2m`, `karras`), not the display
+	// names a model card uses ("DPM++ 2M Karras"). 🔴 The node input is an enumeration and
+	// ComfyUI answers `Value not in list` for anything else — the same refusal SD3.5's missing
+	// clip_g file produced (ADR 0072 P2 残作業 5) — so the provider validates these against its
+	// own list and ignores what it does not recognise rather than sending a graph that cannot run.
+	Sampler   string `json:"sampler,omitempty"`
+	Scheduler string `json:"scheduler,omitempty"`
+	// ClipSkip is stored but not applied by any template today: none of the five graphs has a
+	// CLIPSetLastLayer node. It is kept because the number is published with the others and
+	// dropping it at the form would mean re-reading the model page to get it back.
+	ClipSkip int `json:"clip_skip,omitempty"`
+	// Weight is a LoRA row's recommended strength, and the one field here that is about an
+	// adapter rather than a checkpoint. The provider already defaults an unstated weight to 1
+	// (comfyResolveLoras) — this is what the catalogue puts between those two.
+	Weight float64 `json:"weight,omitempty"`
 }
 
 // EngineModelFile is one S3 object a model is made of.
@@ -341,6 +381,9 @@ type EngineModelStore interface {
 	// SetEngineModelBaseModel corrects the declared checkpoint family of one row, which is the
 	// one field a row can be missing while looking complete (ADR 0072 decision 2).
 	SetEngineModelBaseModel(ctx context.Context, role, id, baseModel string) (bool, error)
+	// SetEngineModelParams replaces one row's generation defaults. A nil p clears them, which
+	// is the only way back to "use the family's own recipe" once something has been declared.
+	SetEngineModelParams(ctx context.Context, role, id string, p *EngineParams) (bool, error)
 	// SetEngineModelNegativePrompt corrects the row's own negative prompt — what this checkpoint
 	// should never be asked to draw (ADR 0072 follow-up, negative prompts).
 	SetEngineModelNegativePrompt(ctx context.Context, role, id, negative string) (bool, error)

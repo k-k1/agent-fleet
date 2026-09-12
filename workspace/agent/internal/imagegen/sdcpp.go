@@ -107,6 +107,38 @@ type EngineConn struct {
 	// list rather than a map by model: a LoRA is not owned by a checkpoint, it declares the
 	// FAMILY it was trained against and any checkpoint of that family may use it.
 	Loras []EngineLora
+	// Params is what the catalogue declares about how to RUN each model — see EngineParams.
+	// Absent for a model whose row says nothing, which is every model until an administrator
+	// declares something and is the case the family templates were written for.
+	//
+	// sdcpp ignores this: it is handed one checkpoint and a fixed command line at startup, so
+	// there is no per-request recipe to override. comfy reads it.
+	Params map[string]EngineParams
+}
+
+// EngineParams are one model's declared generation defaults, as ADR 0072's catalogue holds them.
+//
+// 🔴 Every field is optional and a zero means UNDECLARED. The provider merges them over the
+// family's own recipe one field at a time, so a row that names only `steps` keeps the
+// template's sampler — folding this into "params or the recipe" would silently drop the other
+// three the moment anybody declared one.
+//
+// Sampler and Scheduler are ComfyUI's own spellings and are checked against the engine's list
+// before they are used: the node input is an enumeration, and the answer to a name it does not
+// know is `Value not in list` at generation time, after a cold start (the failure SD3.5's
+// missing clip_g produced, ADR 0072 P2 残作業 5).
+type EngineParams struct {
+	Steps     int     `json:"steps,omitempty"`
+	CFG       float64 `json:"cfg,omitempty"`
+	Sampler   string  `json:"sampler,omitempty"`
+	Scheduler string  `json:"scheduler,omitempty"`
+	// ClipSkip is carried but applied by no template: none of the five graphs has a
+	// CLIPSetLastLayer node. Kept on the wire so the catalogue's declaration survives a round
+	// trip rather than being dropped by the reader that does not use it yet.
+	ClipSkip int `json:"clip_skip,omitempty"`
+	// Weight is a LoRA row's declared strength — what to use when a caller names the adapter
+	// and not a number. See comfyResolveLoras for the order the three answers are tried in.
+	Weight float64 `json:"weight,omitempty"`
 }
 
 // EngineLora is one LoRA row of the catalogue as the provider needs it. File is what the engine
@@ -120,6 +152,11 @@ type EngineLora struct {
 	// vocabulary. "" when the catalogue declares none, which the comfy provider refuses to pair
 	// with anything rather than guess.
 	BaseModel string
+	// Weight is the strength the catalogue declares for this adapter, or 0 for "not declared".
+	// An adapter's usable strength is a property OF the adapter — its author publishes one and
+	// 0.6 and 1.2 are different pictures — so it belongs on the row rather than in every
+	// caller.
+	Weight float64
 }
 
 // EngineFile is one file ADR 0072 decision 2 declares for a model: the on-disk basename (the

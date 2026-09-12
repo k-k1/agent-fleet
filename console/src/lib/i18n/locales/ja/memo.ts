@@ -50,6 +50,8 @@ export const memo = {
   "memo.collapse_memo": "このメモを折りたたむ",
   "memo.edit": "編集",
   "memo.send_one": "このメモを送信",
+  "memo.copy": "コピー",
+  "memo.copied": "メモをコピーしました",
   "memo.save": "保存",
   "memo.moved": "「{cat}」へ移動しました",
   "memo.cat_added": "カテゴリを追加しました",

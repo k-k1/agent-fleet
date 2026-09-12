@@ -1,0 +1,12 @@
+-- The generation defaults declared for one catalogue row (ADR 0072 decision 4, widened).
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`. This has happened twice.
+--
+-- The sqlite counterpart is migrations/0064_engine_model_params.sql and the reasoning is there.
+-- In short: sampler, steps, cfg and scheduler used to be the family's fixed recipe inside the
+-- workflow templates, with nowhere for a checkpoint that wants different numbers to say so. One
+-- JSON column because it is read and written whole and each family reads a different subset. An
+-- empty string means the row declares nothing, which is every row that exists today.
+ALTER TABLE engine_models ADD COLUMN IF NOT EXISTS params TEXT NOT NULL DEFAULT '';

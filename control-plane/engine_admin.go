@@ -811,6 +811,12 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// The empty string is a REAL value — "stop declaring one, use the Agent's own default" —
 		// which is why it is a pointer like the rest rather than "empty means unchanged".
 		NegativePrompt *string `json:"negative_prompt"`
+		// Params replaces the row's generation defaults, and `{}` clears them — which is the way
+		// back to the family's own recipe once a number has been declared. Same reasoning as
+		// BaseModel: it is a field of a row that is otherwise fine, and re-registering the whole
+		// row to change `steps` would carry the licence acceptance and the source through a
+		// round trip to move one number.
+		Params *store.EngineParams `json:"params"`
 		// ConfirmVram is "I have read that this may not fit" (ADR 0074 decision 6). Required
 		// only when the model's declared demand exceeds the chosen instance class.
 		ConfirmVram bool `json:"confirm_vram"`
@@ -874,6 +880,15 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// The VALUE is deliberately not in the audit line: it is free text an administrator can
 		// make as long as they like, and an audit trail is not the place to carry a paragraph.
 		action = "negative_prompt"
+	case b.Params != nil:
+		// Cleaned, not refused: engineParamsClean drops what the provider could not run and
+		// keeps the rest, and a set that cleans down to nothing clears the row's declaration.
+		p := engineParamsClean(b.Params)
+		found, err = a.mgr.store.SetEngineModelParams(ctx, key, id, p)
+		action = "params"
+		if p == nil {
+			action = "params cleared"
+		}
 	case b.Selected != nil && *b.Selected:
 		found, err = a.mgr.store.SetEngineModelSelected(ctx, key, id)
 		action = "select"
@@ -890,7 +905,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// An empty body must not be read as "switch it off", for the same reason the mode
 		// route refuses one.
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
-			"enabled, selected, default, base_model or negative_prompt is required"})
+			"enabled, selected, default, base_model, negative_prompt or params is required"})
 		return
 	}
 	if err != nil {
@@ -1064,6 +1079,9 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		LicenseURL      string                `json:"license_url"`
 		Precision       string                `json:"precision"`
 		BaseModel       string                `json:"base_model"`
+		// The generation defaults, in the same shape the row answers them. A pointer so that
+		// "the body said nothing" and "the body said all zeros" stay different bodies.
+		Params *store.EngineParams `json:"params"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
@@ -1081,6 +1099,7 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		License: strings.TrimSpace(b.License), LicenseName: strings.TrimSpace(b.LicenseName),
 		LicenseURL: strings.TrimSpace(b.LicenseURL),
 		Precision:  strings.TrimSpace(b.Precision), BaseModel: strings.TrimSpace(b.BaseModel),
+		Params: engineParamsClean(b.Params),
 	}
 	// The commercial-use verdict is READ FROM the licence here exactly as the ingest reads it
 	// (ADR 0072 decision 10), rather than being a field this route accepts. Two reasons: the
@@ -1321,6 +1340,11 @@ type engineIngestBody struct {
 	ContextTokens   int      `json:"context_tokens"`
 	MaxOutputTokens int      `json:"max_output_tokens"`
 	Sizes           []string `json:"sizes"`
+	// Params is what the form says about how to run this model — the author's published
+	// settings as a person left them after reading them (engine_params_hint.go fills the form,
+	// a human presses the button). Carried through the job and written onto the row the
+	// download creates.
+	Params *store.EngineParams `json:"params"`
 	// FileFlag is what this file is WITHIN the model, from the same `file_flags` vocabulary the
 	// row already serves to the register form. Empty is a whole checkpoint, which is what every
 	// ingest used to be able to say (ADR 0072 P2 欠落 6).
@@ -1355,14 +1379,14 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ 
 		writeAPIErr(w, aerr)
 		return
 	}
-	writeJSON(w, http.StatusOK, engineResolvedRow(res, a.hfTokens().configured(r.Context())))
+	writeJSON(w, http.StatusOK, engineResolvedRow(res, a.hfTokens().configured(r.Context()), e.def.Provider))
 }
 
 // engineResolvedRow is what the panel draws before anything is started. `can_ingest` is the
 // verdict this route exists for: a gated repository on a deployment with no HF token cannot be
 // taken in, and saying so here costs nothing — finding out from a 401 costs a Fargate task and
 // a confused administrator.
-func engineResolvedRow(res engineResolved, hasToken bool) map[string]any {
+func engineResolvedRow(res engineResolved, hasToken bool, provider string) map[string]any {
 	row := map[string]any{
 		"sha256":           res.SHA256,
 		"bytes":            res.Bytes,
@@ -1399,6 +1423,28 @@ func engineResolvedRow(res engineResolved, hasToken bool) map[string]any {
 	}
 	if res.BaseModel != "" {
 		row["base_model"] = res.BaseModel
+	}
+	// The family this deployment's provider would call that, when it recognises it. A separate
+	// field from `base_model` on purpose: one is what the upstream published and the other is a
+	// suggestion for the picker, and the day they are folded together is the day an upstream
+	// display name gets stored as a family again (ADR 0072 decision 2, P2 実機検証).
+	if fam := engineFamilyGuess(provider, res.BaseModel); fam != "" {
+		row["base_model_suggest"] = fam
+	}
+	if len(res.Restrictions) > 0 {
+		row["restrictions"] = res.Restrictions
+	}
+	if len(res.TrainedWords) > 0 {
+		row["trained_words"] = res.TrainedWords
+	}
+	// What the author's own text says about running this, with the sentence it was read out of.
+	// Both halves or neither: the numbers are a guess made by a regular expression over somebody
+	// else's prose, and the quote is what lets the person at the form see that for themselves.
+	if !res.ParamsHint.empty() {
+		row["params_hint"] = res.ParamsHint.Params
+		if res.ParamsHint.Quote != "" {
+			row["params_hint_quote"] = res.ParamsHint.Quote
+		}
 	}
 	// The model's own maximum, offered so nobody reads it off a model card by hand. Sent as
 	// what it is — a ceiling, not a setting: 🔴 the 30B in this deployment publishes 262144 and
@@ -1571,6 +1617,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		Description:   strings.TrimSpace(b.Description),
 		BaseModel:     base,
 		ContextTokens: b.ContextTokens, MaxOutput: b.MaxOutputTokens, Sizes: b.Sizes,
+		Params: engineParamsClean(b.Params),
 		// The acceptance, as the tuple ADR 0072 open question 11 asks for. The licence is
 		// carried as a STRING rather than re-read from the row later: it is what was on
 		// screen when the box was ticked, and upstream relicensing must not rewrite what

@@ -326,9 +326,16 @@ func comfyResolveLoras(conn EngineConn, family comfyFamily, model string, want [
 		if got := comfyFamily(strings.TrimSpace(l.BaseModel)); got != family {
 			return nil, errComfyLoraFamilyMismatch(w.Name, l.BaseModel, model, family)
 		}
+		// Three answers, in this order: what the CALLER asked for, what the catalogue row
+		// declares for this adapter, and 1. The caller wins because they are looking at the
+		// picture; the row comes next because its author published a strength and the agent
+		// naming a LoRA has no way to know it (ADR 0072 decision 5).
 		weight := w.Weight
 		if weight == 0 {
-			weight = 1 // "not stated" — see LoraRef.Weight
+			weight = l.Weight
+		}
+		if weight == 0 {
+			weight = 1 // nobody stated one — see LoraRef.Weight
 		}
 		if weight < 0 || weight > comfyMaxLoraWeight {
 			return nil, fmt.Errorf("LoRA %q asked for at strength %g, and the range is 0-%g",
@@ -436,6 +443,9 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		Op: req.Op, Prompt: req.Prompt, Negative: comfyNegativeFor(conn, model, req),
 		Seed: seed, Width: w, Height: h,
 		BatchSize: count, Loras: loras,
+		// What the catalogue row for THIS model declares. Absent for a model that declares
+		// nothing, which leaves every template at its own recipe.
+		Params: conn.Params[model],
 	}
 
 	switchWarning := comfySwitchWarning(conn, model)

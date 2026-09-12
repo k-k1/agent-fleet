@@ -17,6 +17,7 @@ import { BrandAdminView } from "./adminBrand.tsx";
 import { EgressView } from "./adminEgress.tsx";
 import { TtsAdminView } from "./adminTts.tsx";
 import { EnginesAdminView } from "./adminEngines.tsx";
+import { EngineModelsAdminView } from "./adminEngineModels.tsx";
 import { TenantsList } from "./adminTenants.tsx";
 
 // AdminTab (the super_admin surface) — the same left rail + body two-pane shell as personal and
@@ -67,7 +68,16 @@ function rootGroups(opts: { pool: boolean; cost: boolean; engines: boolean }): R
         // engines: what there is to run, browsed straight from Hugging Face / Civitai, which is
         // exactly what somebody deciding whether to stand 60-engines up needs. So the condition
         // is now "this Control Plane serves the panel", not "it has engines".
-        ...(opts.engines ? ([["engines", "admin.mode_engines"]] as [string, string][]) : []),
+        // Two items, not one. The panel behind them used to be a single 3,000-line screen with
+        // the GPU's mode at the top and the ingest form eight sections down, which is two jobs
+        // done at different times by (since ADR 0072 open question 11) two different people:
+        // only the operator may buy a box, while a granted tenant_admin fills the catalogue.
+        ...(opts.engines
+          ? ([
+              ["engines", "admin.mode_engines"],
+              ["engine-models", "admin.mode_engine_models"],
+            ] as [string, string][])
+          : []),
         // The slot pool exists on one runtime only. An empty "slots" item on a Fargate
         // deployment reads as "my slots disappeared".
         ...(opts.pool ? ([["pool", "admin.mode_pool"]] as [string, string][]) : []),
@@ -210,6 +220,7 @@ export function AdminTab() {
     if (rootSection === "tts") return <TtsAdminView />;
     if (rootSection === "brand") return <BrandAdminView />;
     if (rootSection === "engines" && hasEngines) return <EnginesAdminView />;
+    if (rootSection === "engine-models" && hasEngines) return <EngineModelsAdminView />;
     if (rootSection === "pool" && hasPool) return <PoolView />;
     if (rootSection === "sessions") return <AllSessionsView tenants={tenants} isSuper={isSuper} />;
     if (rootSection === "usage") return <UsageView tenants={tenants} isSuper={isSuper} />;
