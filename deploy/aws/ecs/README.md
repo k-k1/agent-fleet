@@ -36,7 +36,7 @@ platform changes:
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 | `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/log/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/log/70 §70.8) |
 
-| `cfn/60-engines.yaml` | **new** (ADR 0071 P0+P1, ADR 0072 P0/P1/P4/P2-in-progress) | **Optional — only for self-hosted inference.** The fleet's own llama.cpp (`llm`) engine and an `image` role whose server is picked by `ImageEngine` (`sdcpp` = stable-diffusion.cpp, one checkpoint; `comfy` = this deployment's own ComfyUI, switches per request — ADR 0072 decision 4), on GPUs, as ECS **Managed Instances** services that are normally scaled to zero: one MI capacity provider per role, and two on the `image` role so its box can be bought on Spot or on demand at start time (never one instance for both — VRAM; ADR 0075), the three IAM roles they need, an S3 bucket for the model catalogue, a Fargate ingest task (Hugging Face → sha256 → S3), each engine's task definition, service and Cloud Map name, one SG (8080 from the CP only), and the SSM parameter holding the engine table. Each role is created only when its `<Role>Enabled` is `true` (ADR 0072 P6). Imports 00-network and 20-platform (`af-engine-tools`, which holds the fetch sidecar and the ingest steps, plus whichever of `af-llamacpp` / `af-sdcpp` / `af-comfyui` it needs — all of which must already hold their image); hands 30-ingress its `EnginesSsmParam` output. ⚠️ It owns the cluster's capacity-provider associations |
+| `cfn/60-engines.yaml` | **new** (ADR 0071 P0+P1, ADR 0072 P0/P1/P4/P2-in-progress) | **Optional — only for self-hosted inference.** The fleet's own llama.cpp (`llm`) engine and an `image` role whose server is picked by `ImageEngine` (`sdcpp` = stable-diffusion.cpp, one checkpoint; `comfy` = this deployment's own ComfyUI, switches per request — ADR 0072 decision 4), on GPUs, as ECS services on the **EC2** launch type that are normally scaled to zero: one launch template per role for the box the Control Plane buys with EC2 Fleet, on Spot or on demand as the offer says (never one instance for both roles — VRAM; ADR 0075, ADR 0077), the IAM roles they need, an S3 bucket for the model catalogue, a Fargate ingest task (Hugging Face → sha256 → S3), each engine's task definition, service and Cloud Map name, one SG (8080 from the CP only), and the SSM parameter holding the engine table. Each role is created only when its `<Role>Enabled` is `true` (ADR 0072 P6). Imports 00-network and 20-platform (`af-engine-tools`, which holds the fetch sidecar and the ingest steps, plus whichever of `af-llamacpp` / `af-sdcpp` / `af-comfyui` it needs — all of which must already hold their image); hands 30-ingress its `EnginesSsmParam` output. ⚠️ It owns the cluster's capacity-provider associations |
 | `cfn/50-tts.yaml` | **new, unproven** (ADR 0070 P0) | **Optional — only for Japanese speech.** The VOICEVOX (Zundamon) engine as a Fargate service that is normally scaled to zero, its Cloud Map DNS name, and a dedicated SG (50021 from the CP only). Imports 00-network and 20-platform (including the `af-voicevox` repository, which must already hold the image before this stack is created); hands 30-ingress its `TtsEcsService` / `VoicevoxUrl` outputs |
 
 > The first five are proven end-to-end **including teardown**: two real deployments in two
@@ -57,12 +57,18 @@ for why they live outside the template).
 
 ### Prerequisites (once per account)
 
-- **ECS service-linked role.** A fresh account has no `AWSServiceRoleForECS`, and
-  creating a cluster with a Service Connect default namespace fails with
-  *"ECS Service Linked Role is not ready"*. Create it once (idempotent — ignore the
+- **Service-linked roles.** A fresh account has no `AWSServiceRoleForECS`, and creating a
+  cluster with a Service Connect default namespace fails with *"ECS Service Linked Role is
+  not ready"*. A deployment that runs the inference engines (`60-engines`) also needs
+  `AWSServiceRoleForEC2Fleet` — the Control Plane buys the engine box with `CreateFleet`
+  (ADR 0077) and the FIRST call fails without it, as a start that bought nothing rather than
+  as a deployment error. `standup.sh` creates both; by hand, once, idempotent (ignore the
   "has been taken" error on re-run):
   ```bash
   aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || true
+  aws iam create-service-linked-role --aws-service-name ec2fleet.amazonaws.com || true
+  # and, for a deployment that declares a `spot` offer:
+  aws iam create-service-linked-role --aws-service-name spot.amazonaws.com || true
   ```
 - **Cloud cost (optional, but it cannot be backfilled — see docs/log/67).** Two account-level
   switches the templates cannot set, both in the Billing console of the **payer** account.
@@ -891,18 +897,20 @@ cheap when it is up: **g6.xlarge (NVIDIA L4, 24 GB) is $1.26/hour all in**, or $
 it never stops. ADR 0071 has the pricing, the alternatives that were rejected and every
 measurement; this section is what to type.
 
-**Why Managed Instances and not Fargate.** Fargate has no GPU and never has (AWS Fargate FAQ;
-containers-roadmap #88, open since 2019). ECS Managed Instances is the closest thing to
-"Fargate with a GPU": AWS owns the instance, the AMI and the NVIDIA driver, and terminates the
-instance once the task is gone — which is the property ADR 0070's whole design rests on.
+**Why an instance and not Fargate.** Fargate has no GPU and never has (AWS Fargate FAQ;
+containers-roadmap #88, open since 2019), so the engine runs on an EC2 box. Until ADR 0077 the
+box was bought by ECS Managed Instances; since then **the Control Plane buys it itself** with
+`CreateFleet(type=instant)` against a launch template this stack owns, and terminates it when
+the engine goes idle. The property ADR 0070's design rests on — no task, no instance — is kept
+by the Control Plane rather than delegated (ADR 0077 decisions 1 and 5).
 
 ### Before you start
 
 1. **G-family vCPU quota.** A new account has **zero**, and the increase is not
    auto-approved: it opens a support case that takes hours to days. Ask for **16**
    (`L-DB2E81BA`, "Running On-Demand G and VT instances") if you run both roles — 8 builds two
-   g6.xlarge, but an instance AWS has just retired keeps its 4 vCPU counted for the 7–8 minutes it
-   spends shutting down, so 16 is one drain's worth of headroom. The quota is a ceiling and
+   g6.xlarge, but an instance that has just been terminated keeps its 4 vCPU counted for the
+   7–8 minutes it spends shutting down, so 16 is one drain's worth of headroom. The quota is a ceiling and
    not a reservation — nothing is billed for headroom — so asking for 24 costs the same and
    covers a redeploy overlapping a drain. Check with:
    ```bash
@@ -911,7 +919,10 @@ instance once the task is gone — which is the property ADR 0070's whole design
 2. **Only one stack may own the cluster's capacity-provider associations.** The API replaces
    the list rather than adding to it, so if the measurement harness
    (`harness/engprobe.yaml`) is deployed, take it down first —
-   `deploy/aws/ecs/harness/probe-managed-instances.sh down`.
+   `deploy/aws/ecs/harness/probe-managed-instances.sh down`. 60-engines still owns that list
+   since ADR 0077, even though the engines are no longer in it: somebody has to hold `FARGATE`
+   and `FARGATE_SPOT` for the rest of the deployment.
+   **And `AWSServiceRoleForEC2Fleet` has to exist** — see the prerequisites above.
 3. **The images have to be in ECR before the stack is created**, for exactly the reason
    `50-tts` documents above (CloudFormation blocks on service stabilisation and no later step
    can rescue an empty repository). `standup.sh` does it in the images step; by hand it is
@@ -936,16 +947,16 @@ ServiceConnectNamespace=af.internal
 # Whether each role exists at all: its service, its DNS name, its row in the engine table.
 # This is the WHOLE switch since ADR 0072 P6 - nothing here says what the engine loads.
 LlmEnabled=true
-# More than one type, or a shortfall in one AZ is the whole of "the engine never arrives".
-# The list is a filter and not a preference order (MI has no allocation strategy), so the
-# cheapest member is the one normally bought: keep the intended instance cheapest and put a
-# fallback ABOVE it, never below. PARAMETERS-60-engines.md has the argument.
-LlmAllowedInstanceTypes=g6.xlarge,g5.xlarge
-# Optional (ADR 0074): the GPU rungs an administrator may switch the role between from the
-# Console, without a stack update. Leave it out and the instance is exactly what the lines above
-# bought — the Control Plane then never touches the capacity provider at all. The FIRST rung is
-# the default and has to restate them. PARAMETERS-60-engines.md, "The instance classes".
-# LlmInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536
+# What the box IS - the ladder of GPU rungs, of which the first is the default (ADR 0074), or
+# the same list with a `buy` column (ADR 0075). Since ADR 0077 this is the ONLY place the box's
+# shape is declared: the template has no instance-requirement parameters left, and a deployment
+# that declares neither has no way to start an engine at all. More than one type per rung, or a
+# shortfall in one AZ is the whole of "the engine never arrives"; keep the intended instance
+# cheapest. PARAMETERS-60-engines.md, "The instance classes" and "The offers", have the argument.
+LlmInstanceClasses=l4|L4 24GB|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.17
+# The box's root volume (GiB). The models land on it, so it has to hold every model the role
+# pulls from S3 plus the images.
+LlmStorageGiB=120
 # The image role, if you want it. Leave this out and no image service exists.
 ImageEnabled=true
 ```

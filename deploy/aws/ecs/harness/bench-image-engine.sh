@@ -98,12 +98,23 @@ export_of() { "${AWS[@]}" cloudformation list-exports --query "Exports[?Name=='$
 
 # --- coordinates, read off the stack and the real service rather than guessed ---------------
 BUCKET="$(output_of ModelsBucket)"
-CAPACITY_PROVIDER="$(output_of ImageCapacityProviderName)"
+# 🔴 Managed Instances era. The image role lost its capacity provider in ADR 0077 - the
+# Control Plane buys the box itself with EC2 Fleet - so the run-task below was rewritten to
+# place the bench on a box that already exists, and the task definition now asks for EC2.
+# 🔴 NOTHING BELOW HAS BEEN RE-MEASURED since that rewrite: it is mechanical, and every number
+# this bench has produced came from the Managed Instances shape. Delete this guard when you
+# re-run it, and say in the result which shape the numbers came from.
+cat >&2 <<'MIERA'
+bench-image-engine.sh has not been run since ADR 0077 moved the engine off Managed Instances.
+Start the image role first (the Control Plane buys the box; this script no longer does, and it
+no longer waits for one to be reclaimed either), then delete the guard at this line.
+MIERA
+exit 2
 SERVICE="$(output_of ImageServiceName)"
 INGEST_TD="$(output_of IngestTaskDefFamily)"
 CLUSTER="$(export_of "$PLATFORM_STACK-ClusterName")"
-[ -n "$BUCKET" ] && [ -n "$CAPACITY_PROVIDER" ] && [ -n "$CLUSTER" ] && [ "$SERVICE" != "-" ] || {
-  echo "missing coordinates: bucket=$BUCKET cp=$CAPACITY_PROVIDER cluster=$CLUSTER image-service=$SERVICE (is the image role staged?)" >&2
+[ -n "$BUCKET" ] && [ -n "$CLUSTER" ] && [ "$SERVICE" != "-" ] || {
+  echo "missing coordinates: bucket=$BUCKET cluster=$CLUSTER image-service=$SERVICE (is the image role staged?)" >&2
   exit 1
 }
 SVC_JSON="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0]' --output json)"
@@ -122,7 +133,7 @@ if [ -z "$IMAGE" ]; then
   IMAGE="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/af-engbench:comfyui"
 fi
 RUN="$(date +%Y%m%d-%H%M%S)"
-say "cluster=$CLUSTER cp=$CAPACITY_PROVIDER bucket=$BUCKET image=$IMAGE run=$RUN"
+say "cluster=$CLUSTER bucket=$BUCKET image=$IMAGE run=$RUN"
 
 # S3 key -> path under ComfyUI's models/. Stage them with the ingest task first.
 MODELS=(
@@ -182,7 +193,7 @@ TASKDEF="$(jq -n \
   --argjson lf "$(logcfg bench-fetch)" --argjson lc "$(logcfg bench-comfy)" --argjson lb "$(logcfg bench)" --argjson lu "$(logcfg bench-upload)" '
 {
   family: "af-engbench-comfy",
-  requiresCompatibilities: ["MANAGED_INSTANCES"],
+  requiresCompatibilities: ["EC2"],
   networkMode: "awsvpc",
   cpu: "4096",
   # The whole box: a g6.xlarge registers 15,000 MiB with ECS (measured), and ComfyUI keeps
@@ -220,17 +231,18 @@ TD_ARN="$("${AWS[@]}" ecs register-task-definition --cli-input-json "$TASKDEF" -
 say "registered $TD_ARN"
 
 # A box that ran a task before has that task's model volume still on it (see the header).
+# Since ADR 0077 an engine box is marked by the ECS attribute af-role, not by a provider name.
 gpu_boxes() {
   local arns
   arns="$("${AWS[@]}" ecs list-container-instances --cluster "$CLUSTER" --query 'containerInstanceArns' --output text)"
   [ -n "$arns" ] || return 0
   "${AWS[@]}" ecs describe-container-instances --cluster "$CLUSTER" --container-instances $arns \
-    --query "containerInstances[?capacityProviderName=='$CAPACITY_PROVIDER'].ec2InstanceId" --output text
+    --query "containerInstances[?attributes[?name=='af-role' && value=='engine-image']].ec2InstanceId" --output text
 }
 for _ in $(seq 1 40); do
   b="$(gpu_boxes)"
   [ -z "$b" ] && break
-  say "waiting for Managed Instances to reclaim $b (a used box has no room for the models)"
+  say "waiting for the Control Plane to terminate $b (a used box has no room for the models)"
   sleep 30
 done
 
@@ -242,7 +254,7 @@ trap cleanup EXIT
 
 T0=$(date +%s)
 TASK="$("${AWS[@]}" ecs run-task --cluster "$CLUSTER" --task-definition "$TD_ARN" \
-  --capacity-provider-strategy "capacityProvider=$CAPACITY_PROVIDER,weight=1" \
+  --launch-type EC2 --placement-constraints "type=memberOf,expression=attribute:af-role == engine-image" \
   --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$ENGINE_SG],assignPublicIp=DISABLED}" \
   --query 'tasks[0].taskArn' --output text)"
 say "task $TASK"

@@ -76,47 +76,14 @@ Parameters:
     Type: String
     Default: "14336"
     Description: Task memory (MiB); leave the ECS agent room.
-  LlmAllowedInstanceTypes:
-    Type: CommaDelimitedList
-    Default: "g6.xlarge,g5.xlarge"
-    Description: Instance types this role may buy. !! A FILTER, not a preference order.
-  LlmAcceleratorMemMinMiB:
-    Type: Number
-    Default: 21000
-    Description: VRAM floor (MiB). 0 = do not ask.
   LlmGpuCount:
     Type: Number
     Default: 1
     Description: GPUs per instance and per task. 0 = CPU (test only).
-  LlmVCpuMin:
-    Type: Number
-    Default: 4
-    Description: Instance requirement, vCPU minimum.
-  LlmVCpuMax:
-    Type: Number
-    Default: 8
-    Description: Instance requirement, vCPU maximum.
-  LlmMemMinMiB:
-    Type: Number
-    Default: 15000
-    Description: Instance requirement, memory minimum (MiB).
-  LlmMemMaxMiB:
-    Type: Number
-    Default: 65536
-    Description: Instance requirement, memory maximum (MiB).
   LlmStorageGiB:
     Type: Number
     Default: 120
-    Description: EBS data volume per instance when UseLocalStorage is off.
-  LlmUseLocalStorage:
-    Type: String
-    Default: "true"
-    AllowedValues: [ "true", "false" ]
-    Description: Use the instance store, not an EBS volume. On, it halved the cold start.
-  LlmScaleInAfter:
-    Type: Number
-    Default: -2
-    Description: scaleInAfter seconds. -2 = AWS default, -1 = never, 0-3600 = seconds.
+    Description: Root gp3 volume (GiB) of the box. It holds the images AND the models.
   LlmIdleSec:
     Type: Number
     Default: 1800
@@ -178,47 +145,14 @@ Parameters:
     Type: String
     Default: "14336"
     Description: Task memory (MiB); leave the ECS agent room.
-  ImageAllowedInstanceTypes:
-    Type: CommaDelimitedList
-    Default: "g6.xlarge,g5.xlarge"
-    Description: Instance types this role may buy. !! A FILTER, as on the llm role.
-  ImageAcceleratorMemMinMiB:
-    Type: Number
-    Default: 8000
-    Description: VRAM floor (MiB). 0 = do not ask.
   ImageGpuCount:
     Type: Number
     Default: 1
     Description: GPUs per instance and per task. 0 = CPU (test only).
-  ImageVCpuMin:
-    Type: Number
-    Default: 4
-    Description: Instance requirement, vCPU minimum.
-  ImageVCpuMax:
-    Type: Number
-    Default: 8
-    Description: Instance requirement, vCPU maximum.
-  ImageMemMinMiB:
-    Type: Number
-    Default: 15000
-    Description: Instance requirement, memory minimum (MiB).
-  ImageMemMaxMiB:
-    Type: Number
-    Default: 65536
-    Description: Instance requirement, memory maximum (MiB).
   ImageStorageGiB:
     Type: Number
     Default: 60
-    Description: EBS data volume per instance when ImageUseLocalStorage is off.
-  ImageUseLocalStorage:
-    Type: String
-    Default: "true"
-    AllowedValues: [ "true", "false" ]
-    Description: Use the instance store instead of an EBS data volume, as on the llm role.
-  ImageScaleInAfter:
-    Type: Number
-    Default: -2
-    Description: scaleInAfter seconds. !! -1 is a trap here.
+    Description: Root gp3 volume (GiB) of the box, as on the llm role.
   ImageIdleSec:
     Type: Number
     Default: 900
@@ -254,46 +188,19 @@ Conditions:
   # Whether the ROLE exists; what it loads is the catalogue's - PARAMETERS, "The engine table".
   HasLlmModel: !Equals [ !Ref LlmEnabled, "true" ]
   HasGpu: !Not [ !Equals [ !Ref LlmGpuCount, 0 ] ]
-  HasLlmAcceleratorMem: !And [ !Condition HasGpu, !Not [ !Equals [ !Ref LlmAcceleratorMemMinMiB, 0 ] ] ]
-  UseLocalStorage: !Equals [ !Ref LlmUseLocalStorage, "true" ]
-  HasScaleInAfter: !Not [ !Equals [ !Ref LlmScaleInAfter, -2 ] ]
   HasLlmApiKey: !Not [ !Equals [ !Ref LlmApiKeySsmParam, "" ] ]
   HasImageModel: !Equals [ !Ref ImageEnabled, "true" ]
   HasImageGpu: !Not [ !Equals [ !Ref ImageGpuCount, 0 ] ]
-  HasImageAcceleratorMem: !And [ !Condition HasImageGpu, !Not [ !Equals [ !Ref ImageAcceleratorMemMinMiB, 0 ] ] ]
-  ImageUsesLocalStorage: !Equals [ !Ref ImageUseLocalStorage, "true" ]
-  HasImageScaleInAfter: !Not [ !Equals [ !Ref ImageScaleInAfter, -2 ] ]
   HasBothModels: !And [ !Condition HasLlmModel, !Condition HasImageModel ]
   ImageIsComfy: !Equals [ !Ref ImageEngine, "comfy" ]
 
 Resources:
   # --- IAM: three roles, closed inside this stack - PARAMETERS, "The task roles" ---
-  InfraRole:
+  # !! The name must match the CP's PassRole (af-*-engine) - PARAMETERS, "The engine boxes".
+  EngineInstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "af-${AWS::StackName}-mi-infra"
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal: { Service: ecs.amazonaws.com }
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonECSInfrastructureRolePolicyForManagedInstances
-      Policies:
-        - PolicyName: pass-instance-role
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: iam:PassRole
-                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/af-${AWS::StackName}-mi-instance"
-                Condition: { StringLike: { "iam:PassedToService": "ec2.*" } }
-
-  InstanceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "af-${AWS::StackName}-mi-instance"
+      RoleName: !Sub "af-${AWS::StackName}-engine"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -301,13 +208,14 @@ Resources:
             Principal: { Service: ec2.amazonaws.com }
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonECSInstanceRolePolicyForManagedInstances
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 
-  InstanceProfile:
+  EngineInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
-      InstanceProfileName: !Sub "af-${AWS::StackName}-mi-instance"
-      Roles: [ !Ref InstanceRole ]
+      InstanceProfileName: !Sub "af-${AWS::StackName}-engine"
+      Roles: [ !Ref EngineInstanceRole ]
 
   EngineTaskRole:
     Type: AWS::IAM::Role
@@ -390,17 +298,23 @@ Resources:
           - Effect: Allow
             Action: [ secretsmanager:PutSecretValue ]
             Resource: !Ref HfTokenSecret
-          # !! The third action is one the CP never calls - PARAMETERS, "The instance classes".
+          # !! The CP buys the box itself (ADR 0077 decision 10) - PARAMETERS, "The engine boxes".
+          # A fleet has no ARN to scope to; the fence is the launch template it may pass.
           - Effect: Allow
-            Action: [ ecs:DescribeCapacityProviders, ecs:UpdateCapacityProvider ]
-            Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:capacity-provider/af-${AWS::StackName}-*"
-          - Effect: Allow
-            Action: [ ecs:PutClusterCapacityProviders ]
-            Resource: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+            Action: [ ec2:CreateFleet, ec2:DescribeFleets, ec2:DeleteFleets ]
+            Resource: "*"
           - Effect: Allow
             Action: [ iam:PassRole ]
-            Resource: [ !GetAtt InfraRole.Arn, !GetAtt InstanceRole.Arn ]
-            Condition: { StringEquals: { "iam:PassedToService": ecs.amazonaws.com } }
+            Resource: !GetAtt EngineInstanceRole.Arn
+            Condition: { StringEquals: { "iam:PassedToService": ec2.amazonaws.com } }
+          # !! Without AWSServiceRoleForEC2Fleet the FIRST CreateFleet fails; standup.sh creates
+          # it, and this is the CP's own way out on a deployment that was stood up another way.
+          - Effect: Allow
+            Action: [ iam:CreateServiceLinkedRole ]
+            Resource: "*"
+            Condition:
+              StringEquals:
+                "iam:AWSServiceName": [ spot.amazonaws.com, ec2fleet.amazonaws.com ]
 
   # !! Always created, holding a sentinel - PARAMETERS, "The Hugging Face token".
   HfTokenSecret:
@@ -472,134 +386,96 @@ Resources:
           Description: engine port from the Control Plane only
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-engine-sg" } ]
 
-  # --- capacity, one WALLET per purchase option - PARAMETERS, "The capacity providers" ---
-  LlmCapacityProvider:
-    Type: AWS::ECS::CapacityProvider
+  # --- the boxes the Control Plane buys - PARAMETERS, "The engine boxes" ---
+  #
+  # !! ImageId is EC2's `resolve:ssm:`, NOT CloudFormation's `{{resolve:ssm:...}}` and not an
+  # AMI id: the string travels to EC2 untouched and is resolved at LAUNCH, which is how a box
+  # gets the current GPU AMI without a stack update (ADR 0077 decision 7). Instant fleets are
+  # the only launch path that supports it.
+  # !! ECS_INSTANCE_ATTRIBUTES is what the service's placement constraint binds to, and what
+  # keeps this box out of the slot pool (ADR 0077 decision 3). One template per role.
+  LlmLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
     Properties:
-      Name: !Sub "af-${AWS::StackName}-llm"
-      ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
-      ManagedInstancesProvider:
-        InfrastructureRoleArn: !GetAtt InfraRole.Arn
-        PropagateTags: CAPACITY_PROVIDER
-        InfrastructureOptimization: !If
-          - HasScaleInAfter
-          - ScaleInAfter: !Ref LlmScaleInAfter
-          - !Ref "AWS::NoValue"
-        InstanceLaunchTemplate:
-          Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
-          CapacityOptionType: ON_DEMAND
-          NetworkConfiguration:
-            Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
-            SecurityGroups: [ !Ref EngineSg ]
-          StorageConfiguration: !If
-            - UseLocalStorage
-            - !Ref "AWS::NoValue"
-            - StorageSizeGiB: !Ref LlmStorageGiB
-          LocalStorageConfiguration: !If
-            - UseLocalStorage
-            - UseLocalStorage: true
-            - !Ref "AWS::NoValue"
-          InstanceRequirements:
-            VCpuCount: { Min: !Ref LlmVCpuMin, Max: !Ref LlmVCpuMax }
-            MemoryMiB: { Min: !Ref LlmMemMinMiB, Max: !Ref LlmMemMaxMiB }
-            BurstablePerformance: excluded
-            AllowedInstanceTypes: !Ref LlmAllowedInstanceTypes
-            AcceleratorCount: !If [ HasGpu, { Min: !Ref LlmGpuCount, Max: !Ref LlmGpuCount }, !Ref "AWS::NoValue" ]
-            AcceleratorTypes: !If [ HasGpu, [ gpu ], !Ref "AWS::NoValue" ]
-            AcceleratorManufacturers: !If [ HasGpu, [ nvidia ], !Ref "AWS::NoValue" ]
-            AcceleratorTotalMemoryMiB: !If [ HasLlmAcceleratorMem, { Min: !Ref LlmAcceleratorMemMinMiB }, !Ref "AWS::NoValue" ]
-      Tags:
-        - { Key: af-role, Value: engine-llm }
-        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+      LaunchTemplateName: !Sub "af-${AWS::StackName}-engine-llm"
+      LaunchTemplateData:
+        ImageId: resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/gpu/recommended/image_id
+        IamInstanceProfile: { Arn: !GetAtt EngineInstanceProfile.Arn }
+        SecurityGroupIds: [ !Ref EngineSg ]
+        MetadataOptions: { HttpTokens: required, HttpPutResponseHopLimit: 2 }
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: !Ref LlmStorageGiB
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+        # The CP writes af-pool / af-role / af-engine-offer / af-engine-buy at CreateFleet, as
+        # the slot pool does at RunInstances - PARAMETERS, "The engine boxes".
+        TagSpecifications:
+          - ResourceType: instance
+            Tags: [ { Key: af-managed-by, Value: agent-fleet } ]
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              exec > /var/log/af-userdata.log 2>&1
+              set -x
+              cat >> /etc/ecs/ecs.config <<EOF
+              ECS_CLUSTER=${Cluster}
+              ECS_INSTANCE_ATTRIBUTES={"af-role":"engine-llm"}
+              ECS_ENABLE_SPOT_INSTANCE_DRAINING=true
+              ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=5m
+              ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION_JITTER=1m
+              ECS_IMAGE_CLEANUP_INTERVAL=30m
+              ECS_IMAGE_MINIMUM_CLEANUP_AGE=24h
+              EOF
+            - Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
 
-  ImageCapacityProvider:
-    Type: AWS::ECS::CapacityProvider
+  ImageLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
     Properties:
-      Name: !Sub "af-${AWS::StackName}-image"
-      ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
-      ManagedInstancesProvider:
-        InfrastructureRoleArn: !GetAtt InfraRole.Arn
-        PropagateTags: CAPACITY_PROVIDER
-        InfrastructureOptimization: !If
-          - HasImageScaleInAfter
-          - ScaleInAfter: !Ref ImageScaleInAfter
-          - !Ref "AWS::NoValue"
-        InstanceLaunchTemplate:
-          Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
-          CapacityOptionType: ON_DEMAND
-          NetworkConfiguration:
-            Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
-            SecurityGroups: [ !Ref EngineSg ]
-          StorageConfiguration: !If
-            - ImageUsesLocalStorage
-            - !Ref "AWS::NoValue"
-            - StorageSizeGiB: !Ref ImageStorageGiB
-          LocalStorageConfiguration: !If
-            - ImageUsesLocalStorage
-            - UseLocalStorage: true
-            - !Ref "AWS::NoValue"
-          InstanceRequirements:
-            VCpuCount: { Min: !Ref ImageVCpuMin, Max: !Ref ImageVCpuMax }
-            MemoryMiB: { Min: !Ref ImageMemMinMiB, Max: !Ref ImageMemMaxMiB }
-            BurstablePerformance: excluded
-            AllowedInstanceTypes: !Ref ImageAllowedInstanceTypes
-            AcceleratorCount: !If [ HasImageGpu, { Min: !Ref ImageGpuCount, Max: !Ref ImageGpuCount }, !Ref "AWS::NoValue" ]
-            AcceleratorTypes: !If [ HasImageGpu, [ gpu ], !Ref "AWS::NoValue" ]
-            AcceleratorManufacturers: !If [ HasImageGpu, [ nvidia ], !Ref "AWS::NoValue" ]
-            AcceleratorTotalMemoryMiB: !If [ HasImageAcceleratorMem, { Min: !Ref ImageAcceleratorMemMinMiB }, !Ref "AWS::NoValue" ]
-      Tags:
-        - { Key: af-role, Value: engine-image }
-        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+      LaunchTemplateName: !Sub "af-${AWS::StackName}-engine-image"
+      LaunchTemplateData:
+        ImageId: resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/gpu/recommended/image_id
+        IamInstanceProfile: { Arn: !GetAtt EngineInstanceProfile.Arn }
+        SecurityGroupIds: [ !Ref EngineSg ]
+        MetadataOptions: { HttpTokens: required, HttpPutResponseHopLimit: 2 }
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: !Ref ImageStorageGiB
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+        TagSpecifications:
+          - ResourceType: instance
+            Tags: [ { Key: af-managed-by, Value: agent-fleet } ]
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              exec > /var/log/af-userdata.log 2>&1
+              set -x
+              cat >> /etc/ecs/ecs.config <<EOF
+              ECS_CLUSTER=${Cluster}
+              ECS_INSTANCE_ATTRIBUTES={"af-role":"engine-image"}
+              ECS_ENABLE_SPOT_INSTANCE_DRAINING=true
+              ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=5m
+              ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION_JITTER=1m
+              ECS_IMAGE_CLEANUP_INTERVAL=30m
+              ECS_IMAGE_MINIMUM_CLEANUP_AGE=24h
+              EOF
+            - Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
 
-  # !! The image role's SECOND wallet, identical but for CapacityOptionType: the option is
-  # create-only, so the only way to choose at run time is to have both standing (ADR 0075
-  # decision 3). The llm role gets none, deliberately - PARAMETERS, "The capacity providers".
-  ImageSpotCapacityProvider:
-    Type: AWS::ECS::CapacityProvider
-    Properties:
-      Name: !Sub "af-${AWS::StackName}-image-spot"
-      ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
-      ManagedInstancesProvider:
-        InfrastructureRoleArn: !GetAtt InfraRole.Arn
-        PropagateTags: CAPACITY_PROVIDER
-        InfrastructureOptimization: !If
-          - HasImageScaleInAfter
-          - ScaleInAfter: !Ref ImageScaleInAfter
-          - !Ref "AWS::NoValue"
-        InstanceLaunchTemplate:
-          Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
-          CapacityOptionType: SPOT
-          NetworkConfiguration:
-            Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
-            SecurityGroups: [ !Ref EngineSg ]
-          StorageConfiguration: !If
-            - ImageUsesLocalStorage
-            - !Ref "AWS::NoValue"
-            - StorageSizeGiB: !Ref ImageStorageGiB
-          LocalStorageConfiguration: !If
-            - ImageUsesLocalStorage
-            - UseLocalStorage: true
-            - !Ref "AWS::NoValue"
-          InstanceRequirements:
-            VCpuCount: { Min: !Ref ImageVCpuMin, Max: !Ref ImageVCpuMax }
-            MemoryMiB: { Min: !Ref ImageMemMinMiB, Max: !Ref ImageMemMaxMiB }
-            BurstablePerformance: excluded
-            AllowedInstanceTypes: !Ref ImageAllowedInstanceTypes
-            AcceleratorCount: !If [ HasImageGpu, { Min: !Ref ImageGpuCount, Max: !Ref ImageGpuCount }, !Ref "AWS::NoValue" ]
-            AcceleratorTypes: !If [ HasImageGpu, [ gpu ], !Ref "AWS::NoValue" ]
-            AcceleratorManufacturers: !If [ HasImageGpu, [ nvidia ], !Ref "AWS::NoValue" ]
-            AcceleratorTotalMemoryMiB: !If [ HasImageAcceleratorMem, { Min: !Ref ImageAcceleratorMemMinMiB }, !Ref "AWS::NoValue" ]
-      Tags:
-        - { Key: af-role, Value: engine-image }
-        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
-
-  # !! REPLACES the cluster's list, and the empty default strategy is load-bearing.
+  # !! REPLACES the cluster's list, and the empty default strategy is load-bearing. The engines
+  # have no provider of their own any more (ADR 0077), but this resource STAYS: the list is
+  # this stack's to own, and 50-tts reaches FARGATE_SPOT through it.
   Associations:
     Type: AWS::ECS::ClusterCapacityProviderAssociations
     Properties:
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
-      CapacityProviders:
-        [ FARGATE, FARGATE_SPOT, !Ref LlmCapacityProvider, !Ref ImageCapacityProvider, !Ref ImageSpotCapacityProvider ]
+      CapacityProviders: [ FARGATE, FARGATE_SPOT ]
       DefaultCapacityProviderStrategy: []
 
   # --- ingest: HF -> S3, out of the start path - PARAMETERS, "Ingest" ---
@@ -668,7 +544,7 @@ Resources:
     Condition: HasLlmModel
     Properties:
       Family: !Sub "af-${AWS::StackName}-llm"
-      RequiresCompatibilities: [ MANAGED_INSTANCES ]
+      RequiresCompatibilities: [ EC2 ]
       NetworkMode: awsvpc
       Cpu: !Ref LlmTaskCpu
       Memory: !Ref LlmTaskMemory
@@ -761,9 +637,13 @@ Resources:
       ServiceName: !Sub "af-${AWS::StackName}-llm"
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
       TaskDefinition: !Ref LlmTaskDef
-      # !! No DesiredCount and no LaunchType, both load-bearing - PARAMETERS, "The engine services".
-      CapacityProviderStrategy:
-        - { CapacityProvider: !Ref LlmCapacityProvider, Weight: 1 }
+      # !! No DesiredCount, load-bearing - PARAMETERS, "The engine services". The launch type IS
+      # spelled out (ADR 0070 decision 1): the CP buys the box, ECS only runs the task on it.
+      LaunchType: EC2
+      # !! The role's boxes and nothing else - PARAMETERS, "The engine boxes". On the SERVICE,
+      # not the task definition: an engine changes boxes and must not cut a revision each time.
+      PlacementConstraints:
+        - { Type: memberOf, Expression: "attribute:af-role == engine-llm" }
       DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -783,7 +663,7 @@ Resources:
     Condition: HasImageModel
     Properties:
       Family: !Sub "af-${AWS::StackName}-image"
-      RequiresCompatibilities: [ MANAGED_INSTANCES ]
+      RequiresCompatibilities: [ EC2 ]
       NetworkMode: awsvpc
       Cpu: !Ref ImageTaskCpu
       Memory: !Ref ImageTaskMemory
@@ -881,11 +761,11 @@ Resources:
       ServiceName: !Sub "af-${AWS::StackName}-image"
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
       TaskDefinition: !Ref ImageTaskDef
-      # !! The DECLARED wallet is the on-demand one (ADR 0075 decision 12). The CP may move the
-      # strategy to the Spot provider, but only while running is 0, and every update that touches
-      # this resource puts this line back - so a release runs on demand once.
-      CapacityProviderStrategy:
-        - { CapacityProvider: !Ref ImageCapacityProvider, Weight: 1 }
+      # !! On demand or Spot is the CP's choice at CreateFleet now, so there is no strategy here
+      # for a release to put back (ADR 0077 decision 2, overriding ADR 0075 decision 12).
+      LaunchType: EC2
+      PlacementConstraints:
+        - { Type: memberOf, Expression: "attribute:af-role == engine-image" }
       DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -912,34 +792,30 @@ Resources:
             - HasLlmModel
             - !Sub
               - >-
-                {"key":"llm","api":"chat","service":"${Service}","capacityProvider":"${Cp}",
-                "spotCapacityProvider":"",
+                {"key":"llm","api":"chat","service":"${Service}","launchTemplate":"${Lt}",
                 "url":"http://${LlmDiscoveryName}.${ServiceConnectNamespace}:8080",
                 "health":"/health","warmPath":"/models","provider":"llamacpp",
                 "apiKeyParam":"${LlmApiKeySsmParam}","classes":"${LlmInstanceClasses}","idleSec":${LlmIdleSec},
                 "offers":"${LlmOffers}","offerBudgetSec":${LlmOfferBudgetSec},
                 "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}
               - Service: !GetAtt LlmService.Name
-                Cp: !Ref LlmCapacityProvider
+                Lt: !Ref LlmLaunchTemplate
             - ""
           Image: !If
             - HasImageModel
             - !Sub
               - >-
-                {"key":"image","api":"images","service":"${Service}","capacityProvider":"${Cp}",
-                "spotCapacityProvider":"${SpotCp}",
+                {"key":"image","api":"images","service":"${Service}","launchTemplate":"${Lt}",
                 "url":"http://${ImageDiscoveryName}.${ServiceConnectNamespace}:8080",
                 "health":"${Health}","provider":"${Provider}",
                 "apiKeyParam":"","classes":"${ImageInstanceClasses}","idleSec":${ImageIdleSec},
                 "offers":"${ImageOffers}","offerBudgetSec":${ImageOfferBudgetSec},
                 "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
               - Service: !GetAtt ImageService.Name
-                # !Ref on a capacity provider is its NAME. Written this way and not restated as
-                # a !Sub because a table naming a provider nobody uses fails SILENTLY: the CP
-                # would watch the wrong one for draining and apply the ADR 0074 rungs to it.
-                # Both names travel as a PAIR - one of them is where the box actually is.
-                Cp: !Ref ImageCapacityProvider
-                SpotCp: !Ref ImageSpotCapacityProvider
+                # !Ref on a launch template is its ID (lt-...), which is what CreateFleet takes.
+                # Written this way and not restated as a !Sub: a table naming a template that
+                # does not exist fails at the first purchase, and only there.
+                Lt: !Ref ImageLaunchTemplate
                 Health: !If [ ImageIsComfy, "/system_stats", "/v1/models" ]
                 Provider: !If [ ImageIsComfy, "comfy", "sdcpp" ]
             - ""
@@ -963,22 +839,18 @@ Outputs:
     Description: The llm ECS service name, or - when the role is off (never empty).
     Value: !If [ HasLlmModel, !GetAtt LlmService.Name, "-" ]
     Export: { Name: !Sub "${AWS::StackName}-LlmServiceName" }
-  LlmCapacityProviderName:
-    Description: The llm capacity provider; what marks an instance as NOT a slot.
-    Value: !Ref LlmCapacityProvider
-    Export: { Name: !Sub "${AWS::StackName}-LlmCapacityProviderName" }
+  LlmLaunchTemplateId:
+    Description: The llm role's launch template; the CP buys its box from this.
+    Value: !Ref LlmLaunchTemplate
+    Export: { Name: !Sub "${AWS::StackName}-LlmLaunchTemplateId" }
   ImageServiceName:
     Description: The image ECS service name, or - when the role is off (never empty).
     Value: !If [ HasImageModel, !GetAtt ImageService.Name, "-" ]
     Export: { Name: !Sub "${AWS::StackName}-ImageServiceName" }
-  ImageCapacityProviderName:
-    Description: The image capacity provider, as the llm one.
-    Value: !Ref ImageCapacityProvider
-    Export: { Name: !Sub "${AWS::StackName}-ImageCapacityProviderName" }
-  ImageSpotCapacityProviderName:
-    Description: The image role's Spot capacity provider; the llm role has none.
-    Value: !Ref ImageSpotCapacityProvider
-    Export: { Name: !Sub "${AWS::StackName}-ImageSpotCapacityProviderName" }
+  ImageLaunchTemplateId:
+    Description: The image role's launch template, as the llm one.
+    Value: !Ref ImageLaunchTemplate
+    Export: { Name: !Sub "${AWS::StackName}-ImageLaunchTemplateId" }
   ModelsBucket:
     Description: S3 bucket the models are staged in.
     Value: !Ref ModelsBucket

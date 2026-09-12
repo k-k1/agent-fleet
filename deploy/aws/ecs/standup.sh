@@ -137,6 +137,16 @@ if ! "${AWS[@]}" iam get-role --role-name AWSServiceRoleForECS >/dev/null 2>&1; 
   af_run "${AWS[@]}" iam create-service-linked-role --aws-service-name ecs.amazonaws.com >/dev/null 2>&1 || true
 fi
 
+# The EC2 Fleet service-linked role, for the engine boxes the Control Plane buys itself
+# (ADR 0077 decision 10). Without it the FIRST CreateFleet fails, and it fails as a start that
+# bought nothing rather than as a deployment error - so it is created here, with the ECS one,
+# rather than found out later. Not an AWS::IAM::ServiceLinkedRole in a template: a role that
+# already exists fails the stack. Creating it costs nothing on a deployment with no engines.
+if ! "${AWS[@]}" iam get-role --role-name AWSServiceRoleForEC2Fleet >/dev/null 2>&1; then
+  echo "    · creating AWSServiceRoleForEC2Fleet (once per account)"
+  af_run "${AWS[@]}" iam create-service-linked-role --aws-service-name ec2fleet.amazonaws.com >/dev/null 2>&1 || true
+fi
+
 af_read_params 30-ingress
 p30() { local p; for p in ${AF_PARAMS[@]+"${AF_PARAMS[@]}"}; do case "$p" in "$1"=*) echo "${p#*=}"; return ;; esac; done; }
 SSM_PREFIX="$(p30 SsmPrefix)"; : "${SSM_PREFIX:=/af-cp}"
@@ -553,10 +563,21 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
   # Retired in ADR 0075: the purchase option is not a switch on one provider any more, it is the
   # `buy` field of an offer against two providers that both stand. A capture taken before that
   # still carries the line, and `deploy` refuses a parameter the template does not declare.
-  # 🔴 Dropping it is right for a STAND-UP (a new stack has no provider to collide with); an
-  # existing stack sitting on SPOT needs the two-update migration in
-  # cfn/PARAMETERS-60-engines.md, "Migrating off ImageCapacityOptionType".
+  # 🔴 Dropping it is right for a STAND-UP (a new stack has no provider to collide with). An
+  # existing stack sitting on SPOT needed a two-update migration to reach 0.19.0; to 0.20.0 it
+  # does not - ADR 0077 deletes every provider, so no name is asked for twice.
   af_param_drop ImageCapacityOptionType
+
+  # Retired in ADR 0077: the box is bought with EC2 Fleet from the offer's own type set, so the
+  # Managed Instances requirement block has nothing left to describe. `<Role>StorageGiB` is NOT
+  # in this list - it stays and now sizes the box's root volume, which is why a capture keeps
+  # its value instead of falling back to the default.
+  for af_role in Llm Image; do
+    for af_key in AllowedInstanceTypes AcceleratorMemMinMiB VCpuMin VCpuMax MemMinMiB MemMaxMiB \
+                  UseLocalStorage ScaleInAfter; do
+      af_param_drop "${af_role}${af_key}"
+    done
+  done
 
   echo "==> deploy $AF_STACK_ENGINES (60-engines)"
   if [ "$AF_DRY" = 1 ]; then
