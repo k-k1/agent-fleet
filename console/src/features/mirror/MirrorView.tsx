@@ -315,6 +315,10 @@ export function MirrorView({
   const lastPayloadRef = useRef("");
   const unchangedRef = useRef(0);
   const lastPollAtRef = useRef(0);
+  // Digest of the whole-transcript aggregates (files / tasks / answers) we already hold. Sent
+  // back on each steady-state poll so the Agent can leave them out of the response instead of
+  // rebuilding and re-sending them every tick (session_transcript_agg.go).
+  const aggSigRef = useRef("");
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // All transcript scroll positioning (bottom follow, scroll-to-top of a finished turn,
@@ -375,6 +379,7 @@ export function MirrorView({
     statusRef.current = "";
     lastPayloadRef.current = ""; // another session's payload must never read as "unchanged"
     unchangedRef.current = 0;
+    aggSigRef.current = ""; // the aggregates belong to the session being left
     setTurns([]);
     setPendingSends(echoStore.get(session) ?? []); // restore this session's un-landed echoes
     pendingSendsRef.current = echoStore.get(session) ?? [];
@@ -437,9 +442,13 @@ export function MirrorView({
         // returns firstLine/hasMore so we can page older history in on scroll. Subsequent
         // polls are plain since=<cursor> increments (unchanged).
         const first = cursorRef.current === 0;
+        // agg=<digest>: "I already hold these aggregates". Only on the incremental poll — a
+        // windowed read brings turns we have never patched with answers, and the Agent ignores
+        // the parameter there for that reason.
+        const agg = !first && aggSigRef.current ? `&agg=${encodeURIComponent(aggSigRef.current)}` : "";
         const url = first
           ? `api/sessions/${q(session)}/messages?since=0&tail=1&limit=${WINDOW}`
-          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}`;
+          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}${agg}`;
         const d = await api(url);
         if (!alive) return;
         // Refreshing marks rides the transcript poll rather than adding a cycle of its own;
@@ -540,8 +549,14 @@ export function MirrorView({
             bgBusyRef.current = !!d.backgroundBusy;
             setBgBusy(!!d.backgroundBusy);
             setBgBusyReason(typeof d.backgroundBusyReason === "string" ? d.backgroundBusyReason : "");
-            setTasks(Array.isArray(d.tasks) ? d.tasks : []);
-            setFiles(Array.isArray(d.files) ? d.files : []);
+            // aggSame: the Agent confirmed the aggregates we hold are current and sent none of
+            // them, so leaving the state alone IS applying the response. Overwriting with the
+            // absent fields would clear the file strip and the ToDo list on every poll.
+            if (typeof d.aggSig === "string") aggSigRef.current = d.aggSig;
+            if (d.aggSame !== true) {
+              setTasks(Array.isArray(d.tasks) ? d.tasks : []);
+              setFiles(Array.isArray(d.files) ? d.files : []);
+            }
             setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
             setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
             setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");

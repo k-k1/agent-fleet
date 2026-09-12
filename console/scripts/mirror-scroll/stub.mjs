@@ -154,6 +154,23 @@ const livePartsAt = (n) => {
 // Poll counter per session — the working scenario's whole point is that consecutive polls differ.
 const polls = new Map();
 
+// The whole-transcript aggregates. In production these are rebuilt from the entire transcript and
+// ride EVERY poll (measured on real sessions: 21-53 file rows), which is what `?agg=<digest>` and
+// `aggSame` exist to stop — so the stub carries a realistic list and speaks that protocol, or
+// mirror-poll's byte measurement would be measuring a session that edited nothing.
+const FILES = Array.from({ length: 40 }, (_, i) => ({
+  path: `repos/shop/src/feature/section${i}/component${i}.ts`,
+  repo: "shop",
+  rel: `src/feature/section${i}/component${i}.ts`,
+  verb: i % 3 === 0 ? "write" : "edit",
+  added: 3 + i,
+  removed: i % 5,
+  count: 1 + (i % 4),
+  lastIdx: i,
+  lastTs: `2026-09-12T10:${String(i % 60).padStart(2, "0")}:00Z`,
+}));
+const AGG_SIG = "5461676761677265"; // any stable value: only ever compared against itself
+
 function messages(session, q) {
   // A `since=0` fetch is a reader opening the session from scratch, so the count restarts there:
   // the stub outlives a scenario's runs, and without this only the first run ever saw the idle
@@ -196,11 +213,13 @@ function messages(session, q) {
   if (Number(q.get("since") || 0) !== 0) {
     // Incremental poll. An idle stub has nothing to add; a working one resends its live turn,
     // whose parts have grown (the mirror merges by idx, so this replaces rather than appends).
-    if (!WORKING) return { ...body, messages: [] };
-    return { ...body, messages: [all[all.length - 1]] };
+    const messages = WORKING ? [all[all.length - 1]] : [];
+    // A client holding the current digest is told so and sent none of the aggregates.
+    if (q.get("agg") === AGG_SIG) return { ...body, messages, aggSig: AGG_SIG, aggSame: true };
+    return { ...body, messages, aggSig: AGG_SIG, files: FILES };
   }
-  if (PAGING) return { ...body, ...window(LINES), reset: true };
-  return { ...body, messages: all, reset: true };
+  if (PAGING) return { ...body, ...window(LINES), reset: true, aggSig: AGG_SIG, files: FILES };
+  return { ...body, messages: all, reset: true, aggSig: AGG_SIG, files: FILES };
 }
 
 // ---- API surface -------------------------------------------------------------------

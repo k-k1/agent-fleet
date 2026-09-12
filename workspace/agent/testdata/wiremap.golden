@@ -169,7 +169,7 @@ internal/sessionx/session_stop_after_turn.go HandleSessionStopAfterTurn x1 {name
 internal/sessionx/session_suggest_reply.go HandleSuggestReplies x1 {suggestions}
 internal/sessionx/session_title.go HandleSessionSuggestBranch x1 {branch}
 internal/sessionx/session_title.go HandleSuggestTitle x1 {suggestedTitle}
-internal/sessionx/session_transcript.go HandleSessionMessages x1 {alive,answers,backgroundBusy,backgroundBusyReason,compactProgress,cursor,files,firstLine,hasMore,jsonlLines,jsonlMatches,jsonlMtime,jsonlPath,messages,mode,name,queuedPrompts,reset,status,suggestedTitle,tasks,terminalState} cond{answers,backgroundBusy,backgroundBusyReason,compactProgress,files,firstLine,hasMore,mode,queuedPrompts,suggestedTitle,tasks,terminalState} dyn
+internal/sessionx/session_transcript.go HandleSessionMessages x1 {aggSame,aggSig,alive,answers,backgroundBusy,backgroundBusyReason,compactProgress,cursor,files,firstLine,hasMore,jsonlLines,jsonlMatches,jsonlMtime,jsonlPath,messages,mode,name,queuedPrompts,reset,status,suggestedTitle,tasks,terminalState} cond{aggSame,answers,backgroundBusy,backgroundBusyReason,compactProgress,files,firstLine,hasMore,mode,queuedPrompts,suggestedTitle,tasks,terminalState} dyn
 internal/sessionx/session_transcript.go handleGenericMessages x1 {alive,context,cursor,files,firstLine,hasMore,jsonlLines,jsonlMatches,jsonlMtime,jsonlPath,messages,mode,name,pendingQuestions,queuedPrompts,reset,status,suggestedTitle,tasks,terminalState} cond{context,files,firstLine,hasMore,mode,pendingQuestions,queuedPrompts,suggestedTitle,tasks,terminalState}
 internal/sessionx/session_turn.go HandleSessionRespond x1 {id,responded}
 internal/sessionx/session_turn.go HandleSessionSettings x1 {effort,mode,model,updated}
