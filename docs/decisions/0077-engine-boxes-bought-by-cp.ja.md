@@ -1590,3 +1590,143 @@ P1 は完了した（完了の定義 1〜7。実機 1 回目・2 回目＝#583�
 （開発配備はもう MI に乗っておらず、証明のために逆向きに移行し直す費用は得るものより大きい）。走っている
 engine への `mode: on` がパネルの `offer_trail` を消す件（CP レーンの 1 行の順序修正——#584 の門を `begin()` より前に）。
 P2（決定 4・6）と P3（llm 役）は未着手。
+
+## 追記 — 本物のテンプレートの形での `<役>Enabled` 往復移行の実測（2026-09-12・使い捨て・$0）
+
+P1 実機は 3 つの発見を移行 1 回分の観測に載せたままで、直前の節は往復移行を「実機で未測のまま残る」と
+締めていた——開発配備はもう MI に乗っておらず、そこでは再演できない。そこで**本物のテンプレートの形の
+使い捨てスタック**で再演した。旧（Managed Instances）の `60-engines.yaml`（`66983c96`）を、**#585 の
+4 手**で develop の形へ移す。ECS クラスタと Cloud Map namespace は使い捨ての自前。`af-ecs-*` を名指した
+コマンドは 1 つも無い。**インスタンスは 1 台も買っていない**（使い捨てのタグでの `describe-instances` は
+どの状態でも空で、同じ形の問い合わせは本物の箱 5 台を列挙する）。4 手の所要は **11 分 49 秒**
+（19:32:44 → 19:44:33 JST）。費用 **$0**。
+
+**判定: 往復移行は通り、P1 の 3 件はすべて再現した。** 3 は 🔴 確認（しかも原因は P1 が考えたより 1 段
+古い）、4 は CloudFormation 側が 🔴 確認で Control Plane 側は**測れない**、5 は 🔴 確認で、P1 が推論に
+頼った部分の証拠が付いた。`AlreadyExists` はどの手でも踏まず、最終状態は決定 11 が求めるとおり。
+
+### この使い捨てが何であって何でないか
+
+新旧どちらの本物のテンプレートからも**そのまま**持ってきたもの: 役ごとの条件付きの三点セット
+（Service・Discovery・`EnginesParam` の行に付く `Has<役>Model`）、`ServiceName` の明示、
+`ServiceRegistries`、`DependsOn: Associations`、`Associations` 自身、`InfraRole` /
+`InstanceRole` / `InstanceProfile` を伴う MI の capacity provider 3 本（旧）、
+`EngineInstanceRole` / `EngineInstanceProfile` を伴う launch template 2 本（新）。
+
+変えた・落としたもの（どれも測る経路の上には無い）——00-network と 20-platform への import は
+スタック内の資源かパラメータにした（＝使い捨ては生きたスタックへの**クロススタック依存を持たず**、
+他人の deploy を塞げない）。ingest 一式（S3 バケット・HF シークレット・ingest タスク定義・
+`CpIngestPolicy`）は落とした。移行のどの手も触らないうえ、Secrets Manager のシークレットは削除予定を
+残すため。エンジンのタスク定義 2 本は、family・`awsvpc`・世代で異なる `RequiresCompatibilities` だけを
+残した GPU 要求無しの最小版に差し替えた。MI の provider には CPU だけの形（`m6i.large`・`GpuCount=0`）を
+与え、うっかりの desired 1 が GPU を買えないようにした。**両方の役を有効にした**——依頼は image 役だけ
+だったが、試すのは「*両方*の service が止まる」という発見であり、2 本目の役は費用ゼロで済む。
+
+⚠️ 基準状態を立てるまでに 3 つ躓いた。移行についての発見ではないが、新規の stand-up はこれに出会う:
+
+1. **`CreateCapacityProvider` は「何にも当たらない instance requirements」を拒む**——
+   *「No instance types satisfy the instance requirements specified in the Managed Instances
+   capacity provider」*。つまり provider をわざと「買えない」状態にはできない。MI の基準状態を $0 に
+   保つ道は、上の CPU だけの形のほうである。
+2. **`Associations` があるとき `AWS::ECS::Cluster` に `CapacityProviders` を書いてはいけない**——
+   *「The cluster already contains capacity provider associations」*で association が落ちる。本物の
+   20-platform のクラスタが書いていないからこそ、60-engines の `Associations` が一覧を所有できる。
+3. 🔴 **作りたての `InfraRole` は IAM の伝播と競合する**: `CreateCapacityProvider` が
+   *「AWS was not able to validate the provided access credentials (Service: Ec2, Status Code: 401)」*
+   を、別々の provider で 2 度返してスタックをロールバックさせた。最初の provider を Cloud Map の
+   namespace の後ろ（約 1 分）に待たせて初めて通った。既存の配備では役がすでに在るので見えないが、
+   まっさらな口座での `standup.sh` が踏む形そのものである。MI の provider と一緒に消える問題ではある
+   ——新テンプレートが作る launch template は `EngineInstanceRole` を assume しない。
+
+### 4 手
+
+| 手（#585 の手順） | 所要 | 返ってきたもの |
+|---|---|---|
+| 1. 両 service を desired 0 | —（待ちではなく状態） | 両方 `desiredCount` 0・`capacityProviderStrategy` は MI の provider を指し・`launchType: null`。⚠️ ここへ至るには**スタック作成時にも**別シェルが要った（19:31:15 / 19:31:20）——下記 |
+| 2. 旧テンプレートのまま `<役>Enabled=false` | **30 秒**（19:32:44 → 19:33:14） | `LlmService` / `ImageService` が 10:33:07 に `DELETE_COMPLETE`・`LlmDiscovery` / `ImageDiscovery` が 10:33:08・タスク定義 2 本も一緒。P0 の 25 秒・P1 の 24.8 秒がこれで 3 度目の再現 |
+| 3. 新テンプレートを当てる（役はまだ off） | **220 秒**（19:33:49 → 19:37:29） | `LlmLaunchTemplate` / `ImageLaunchTemplate` が `CREATE_COMPLETE`。provider 3 本・`InfraRole`・`InstanceRole`・`InstanceProfile` が `DELETE_COMPLETE`。クラスタの一覧は `FARGATE FARGATE_SPOT` に戻る |
+| 4. `<役>Enabled=true` | **374 秒**（19:38:19 → 19:44:33）・うち **317 秒は停止** | 両 service が **desired 1** で作られ・`LaunchType: EC2`・running 0・pending 0。5 分 17 秒のあいだ何も動かない。別シェルが 19:43:39 / 19:43:42 に両方を 0 にし、その **41 秒後**（10:44:23）に両方 `CREATE_COMPLETE`・`EnginesParam` 更新・10:44:29 にスタック完了 |
+
+確認した最終状態: 両 service が `LaunchType: EC2`・`capacityProviderStrategy: null`・
+`placementConstraints: [{memberOf, "attribute:af-role == engine-<役>"}]`・`desiredCount` 0。エンジン表は
+両行に `"launchTemplate":"lt-…"` を持ち `capacityProvider` 欄は無い。クラスタの provider は `FARGATE` と
+`FARGATE_SPOT`。**`AlreadyExists` はこのスタックの全イベント履歴に 0 回**——同じ出力に同じ grep をかけると
+`Resource creation Initiated` が 29 回当たるので、これは本物の 0 である。
+
+### 項目 3 — 🔴 確認。しかも原因は P1 が考えたより 1 段古い
+
+空のクラスタで、停止はそのまま再現した:
+
+```
+(service af-af-adr0077-p1x-image) was unable to place a task because no container instance met all
+of its requirements. The reason for failure is No Container Instances were found in your cluster.
+```
+
+（P1 が見たのは同じ拒否を開発配備のスロットの箱に対して言った版——*「The closest matching … doesn't
+have the agent connected」*——で、あちらのクラスタが空でないからである。同じ停止、惜しい相手が違うだけ。）
+これを解くのは別シェルで、解くのにかかるのは **41 秒**。放っておけば更新は資源のタイムアウトまで走る。
+P1 の予想どおりである。
+
+**新しく分かったことがあり、P1 本文の枠組みを訂正する。** P1 は `DesiredCount` を書かない設計を
+「Managed Instances では無害だった」と書いた。使い捨てが示したのは、この性質が起動タイプではなく
+**テンプレート**のものだということである。*旧*の MI の service を作ったときも**両方が desired 1 で
+作られ**（19:31:15 / 19:31:20・別シェルのログ）、CloudFormation は同じように待ったはずだった。違うのは
+その 1 を誰が満たすかだけで——MI では箱が買われて service が落ち着き（GPU の費用がかかる。だからこの
+実測では 0 に抑えた）、EC2 起動タイプでは誰も満たせない。つまり別シェルは EC2 側の新しい問題への対処
+ではなく、`standup.sh` が新しい service にすでに当てているのと同じ手を、これらの service を作る
+もう 1 つの経路にも当てるということである。#585 の 4 手は正しく、PARAMETERS に書くべき理由は
+「EC2 起動タイプは置けない」ではなく「**誰が作ろうと**新しい service の既定は desired 1」である。
+
+### 項目 4 — CloudFormation 側は 🔴 確認。Control Plane 側は未測のまま
+
+手 2 と手 4 のあいだの窓で読んだもの:
+
+```
+$ aws ssm get-parameter --name <使い捨てのエンジン表> --query Parameter.Value
+{"engines":[],"ingest":{}}
+```
+
+窓のあいだずっと 0 行。ここでの窓は **5 分 21 秒**（10:33:07 → 10:38:28）で、P1 の 34 分に対して短いのは
+あいだにビルドが入らないからである。`EnginesParam` 自身は条件付きでは**なく**、空にするのは
+`!If [Has<役>Model, …, ""]` の 2 行のほう——パラメータは窓のあいだも空の配列を持って存在する。これが
+`newEngineRegistry` が `nil` のレジストリと reloader 無しに変える入力である。
+
+🔵 **ここでは測れないし、測りようがない**: その窓で起動した Control Plane が、行が戻ったあとに回復する
+かどうか。使い捨てスタックに Control Plane は無い。その半分は #584 のもので、実機ではなく #584 自身の
+テストで固定されている。よって移行の 4 手目（CP の強制再配備）は P1 の 1 回の実測（86 秒）とそのテストに
+立ったままで、この実測はそれに足しも引きもしない。
+
+### 項目 5 — 🔴 確認。ARN の件は推論から証拠になった
+
+Discovery は 2 本とも service と一緒に消え、一緒に作り直される:
+
+```
+LlmDiscovery    DELETE_COMPLETE  10:33:08.657   →  CREATE_COMPLETE  10:38:28.107
+ImageDiscovery  DELETE_COMPLETE  10:33:08.618   →  CREATE_COMPLETE  10:38:27.997
+```
+
+使い捨ての namespace への `list-services` は窓のあいだ `[]` を返す。P0 の ✅——条件の付かない
+`AWS::ServiceDiscovery::Service` を持つ使い捨てで測ったもの——は本物の形では成り立たない。P1 がすでに
+言ったことだが、これで配備に触れずに本物の形で確認できた。
+
+**そして件の疑問は決着した。** P1 は CloudTrail から id を読み、「資源が生き残ったのではなく Cloud Map が
+同じ namespace＋名前に同じ `srv-` id を振り直す」と結論した。ここでは両方が同時に読める。id は前後で
+**同一**（llm が `srv-56rlhf2r6ervdz5a`・image が `srv-m2zek2752vvwiyjf`）で、**かつ** その `CreateDate` は
+作り直した時刻 `2026-09-12T19:38:27` である。同じ id、新しい資源。P1 の推論は正しく、PARAMETERS の ✅ は
+「資源が生き残る」ではなく「Cloud Map が id を振り直す」と書くべきである。
+
+### 片付け
+
+19:45:26 に `delete-stack`、19:46:29 に消滅（63 秒）。そのあと、それぞれの列挙が自分の陽性対照を
+連れた形で確認した:
+
+- `describe-stacks` → **本物の 7 本だけ**。`af-adr0077-p1x` は消えている。
+- `list-clusters` → `af-af-ecs-platform` だけ。`list-namespaces` → `af.internal` だけ。
+- `describe-launch-templates` → 本物の 3 本だけ。
+- `af-*` の `list-roles` → 本物の 7 本だけ。
+- `describe-parameters` → `/af-ws/adr0077-p1x-engines` は無い。本物の `/af-ws/engines` は無傷。
+- 使い捨てタグでの `describe-instances` を**状態で絞らずに** → 空。同じ形の問い合わせを `af-pool` に
+  かけると本物の箱 5 台が出る。インスタンスは 1 台も買われていない。
+
+残したものは無い。生の応答と生成した 2 つのテンプレートは、これを測ったセッションの
+`~/.cache/adr0077-p1x/` にある。
