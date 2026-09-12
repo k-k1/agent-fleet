@@ -97,6 +97,18 @@ export const admin = {
   "admin.engines_model_add_id": "id",
   "admin.engines_model_add_key": "キー",
   "admin.engines_model_add_family": "ファミリー",
+  // ADR 0072 追記（ネガティブプロンプト）。「何を描かせないか」には 3 か所が口を出す——この行・
+  // 要求・配備——そしてそれらは足し合わされる。どのラベルも「唯一のネガティブ」と読めてはいけない。
+  "admin.engines_model_negative": "描かせないもの",
+  "admin.engines_model_negative_placeholder": "このチェックポイントで避けたいもの",
+  "admin.engines_negative_label": "全画像から除外する語",
+  "admin.engines_negative_placeholder": "キーワードをカンマ区切りで",
+  "admin.engines_negative_save": "保存",
+  // 🔴 これをコンテンツフィルタと読ませないための 1 文。これはネガティブプロンプト——
+  // サンプラーへの傾きであって門ではなく、蒸留系のファミリーには席すら無い。
+  "admin.engines_negative_note":
+    "このエンジンが作る全画像のネガティブプロンプトに、モデル自身のものと要求のものに足して加えられます。フィルタではなく誘導です——ネガティブを持たないチェックポイントのファミリーが 2 つあり、その要求では警告にそう出ます。",
+  "admin.engines_negative_too_long": "長すぎます。ここはキーワードの列挙であって、方針の文書ではありません。",
   // ADR 0072 決定 5 の llm 側。LoRA はモデルではなく、土台のモデルに固定され、その preset の
   // 節に載る。利用者からは見えない——見えるのは「その微調整込みのモデル id」1 つだけ。
   "admin.engines_model_add_kind": "この行の種類",

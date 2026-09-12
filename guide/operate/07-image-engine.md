@@ -95,6 +95,28 @@ handed to the loader, so a file in a subfolder (`checkpoints/sdxl/x.safetensors`
 arrives as `x.safetensors` and fails with `Value not in list`. Subfolders are not
 supported yet.
 
+## What a picture keeps out
+
+Three places say what should NOT be drawn, and they are added together rather than overriding
+one another:
+
+- **the model row's own** — what this checkpoint's publisher recommends keeping out. Register it
+  in the same panel, on the row.
+- **the member's**, per request (`negative_prompt` on the image tool).
+- **yours, for the whole engine** — the box labelled "excluded from every image". Applied to
+  every request, whoever made it and whichever checkpoint answers.
+
+When all three are empty, a fixed default is used (`blurry, lowres, deformed, watermark, text`).
+A row that declares its own replaces that default rather than being added to it.
+
+🔴 **This is a negative prompt, not a content filter.** The words are handed to the sampler as
+something to steer away from. They are not a gate, a determined prompt outweighs them, and — most
+importantly — **three of the five checkpoint families ignore them completely**: Z-Image and
+FLUX.2 klein sample at cfg 1, where the negative branch cancels out exactly, and FLUX.1 has no
+negative input at all. Only SDXL and SD3.5 are steered by what you type. A request answered by one of them **says so in its warnings**,
+naming the family. If a deployment needs a guarantee about what can be produced, this is not
+where it lives.
+
 ## The network is yours to close
 
 On AWS the GPU engine is reachable from the Control Plane and nothing else, and a

@@ -22,7 +22,7 @@ const engineModelCols = `role, id, kind, files, enabled, selected, is_default, a
 	license, license_name, license_url, model_precision, base_model,
 	license_accepted_by, license_accepted_at, license_accepted_tenant, license_accepted_license,
 	commercial_use, source, kv_layers, kv_heads_kv, kv_key_len, kv_value_len,
-	params, created_at, updated_at`
+	negative_prompt, params, created_at, updated_at`
 
 func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel, error) {
 	q := `SELECT ` + engineModelCols + ` FROM engine_models`
@@ -52,7 +52,7 @@ func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel,
 			&m.LicenseAcceptedTenant, &m.LicenseAcceptedLicense,
 			&m.CommercialUse, &m.Source,
 			&m.KVLayers, &m.KVHeadsKV, &m.KVKeyLen, &m.KVValueLen,
-			&params, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.NegativePrompt, &params, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		m.Enabled, m.Selected, m.Default = enabled != 0, selected != 0, isDef != 0
@@ -93,7 +93,7 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO engine_models(`+engineModelCols+`)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(role, id) DO UPDATE SET
 		   kind=excluded.kind, files=excluded.files, enabled=excluded.enabled,
 		   selected=excluded.selected, is_default=excluded.is_default, args=excluded.args,
@@ -108,14 +108,15 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 		   commercial_use=excluded.commercial_use, source=excluded.source,
 		   kv_layers=excluded.kv_layers, kv_heads_kv=excluded.kv_heads_kv,
 		   kv_key_len=excluded.kv_key_len, kv_value_len=excluded.kv_value_len,
-		   params=excluded.params, updated_at=excluded.updated_at`,
+		   negative_prompt=excluded.negative_prompt, params=excluded.params,
+		   updated_at=excluded.updated_at`,
 		m.Role, m.ID, m.Kind, files, boolInt(m.Enabled), boolInt(m.Selected), boolInt(m.Default), args,
 		m.ContextTokens, m.MaxOutputTokens, sizes, m.Description, m.VramMiB,
 		m.License, m.LicenseName, m.LicenseURL, m.Precision, m.BaseModel,
 		m.LicenseAcceptedBy, m.LicenseAcceptedAt, m.LicenseAcceptedTenant, m.LicenseAcceptedLicense,
 		m.CommercialUse, m.Source,
 		m.KVLayers, m.KVHeadsKV, m.KVKeyLen, m.KVValueLen,
-		params, m.CreatedAt, now)
+		m.NegativePrompt, params, m.CreatedAt, now)
 	return err
 }
 
@@ -199,6 +200,17 @@ func (s *SQL) SetEngineModelBaseModel(ctx context.Context, role, id, baseModel s
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE engine_models SET base_model=?, updated_at=? WHERE role=? AND id=?`,
 		baseModel, NowTS(), role, id)
+	return affected(res, err)
+}
+
+// SetEngineModelNegativePrompt corrects ONE column, for the same reason SetEngineModelBaseModel
+// does: it is a field an administrator tunes after watching what the checkpoint actually draws,
+// and a read-modify-write through PutEngineModel would carry a licence acceptance, a source and
+// a sha256 back out and in again to change one sentence.
+func (s *SQL) SetEngineModelNegativePrompt(ctx context.Context, role, id, negative string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engine_models SET negative_prompt=?, updated_at=? WHERE role=? AND id=?`,
+		negative, NowTS(), role, id)
 	return affected(res, err)
 }
 

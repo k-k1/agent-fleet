@@ -2186,3 +2186,77 @@ describe("EnginesAdminView / browsing with no engine deployed", () => {
   });
 
 });
+
+// The model row's own negative prompt (ADR 0072 follow-up, negative prompts). It is edited in
+// place like base_model and for the same reason: a split model is four S3 keys, and
+// re-registering all of them to change one sentence is an edit nobody makes twice.
+describe("EngineModelsAdminView / a model's own negative prompt", () => {
+  const typeInto = async (el: Element, v: string) => {
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const saveButton = () =>
+    Array.from(host!.querySelectorAll(".engines-model-negative button"))[0] as HTMLElement;
+
+  it("saves what this checkpoint should keep out, and lets it be cleared", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl"],
+          has_models: true,
+          model_rows: [
+            {
+              id: "sdxl-base-1.0",
+              kind: "checkpoint",
+              enabled: true,
+              base_model: "sdxl",
+              negative_prompt: "extra fingers",
+            },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const box = host!.querySelector(".engines-model-negative input") as HTMLInputElement;
+    expect(box.value).toBe("extra fingers");
+
+    await typeInto(box, "extra fingers, text");
+    apiJSON.mockResolvedValue(row({}));
+    await click(saveButton());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/sdxl-base-1.0", "PUT", {
+      negative_prompt: "extra fingers, text",
+    });
+
+    // Clearing is a real edit, not a no-op: it means "stop declaring one", which the Agent
+    // answers with its own measured default rather than with nothing excluded.
+    apiJSON.mockClear();
+    apiJSON.mockResolvedValue(row({}));
+    await typeInto(host!.querySelector(".engines-model-negative input")!, "");
+    await click(saveButton());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/sdxl-base-1.0", "PUT", {
+      negative_prompt: "",
+    });
+  });
+
+  // A LoRA is not what a request names, so it has nothing to say about what a picture keeps out.
+  it("is not offered on a LoRA row", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl"],
+          has_models: true,
+          model_rows: [{ id: "watercolor-v2", kind: "lora", enabled: true, base_model: "sdxl" }],
+        }),
+      ],
+    });
+    await mount();
+    expect(host!.querySelector(".engines-model-negative")).toBeNull();
+  });
+});

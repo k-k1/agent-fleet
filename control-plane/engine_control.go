@@ -51,7 +51,10 @@ const (
 //     restart that would otherwise cancel it.
 //   - demandAt: the last demand timestamp (unix seconds). Held in memory only, a restarted
 //     CP reads "no demand" and stops an engine out from under somebody who is using it.
-type engineSettings struct{ mode, modeAt, demandAt string }
+//
+// engineSettings names the settings rows one engine owns. `negative` is empty for VOICEVOX,
+// which has nothing to exclude from a voice — a row name that is never read and never written.
+type engineSettings struct{ mode, modeAt, demandAt, negative string }
 
 // ttsEngineSettings is the VOICEVOX engine's row names. tts.go writes two of them directly
 // (the admin toggle), so they are named in one place rather than spelled out twice.

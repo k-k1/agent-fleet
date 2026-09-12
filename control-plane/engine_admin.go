@@ -60,6 +60,10 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// it is a separate act with a separate cost: the mode buys a box now, this says what the
 	// NEXT box will be.
 	mux.HandleFunc("PUT /api/admin/engines/{key}/class", a.withSuperAdmin(a.putClass))
+	// What this deployment excludes from every image this engine makes (ADR 0072 follow-up,
+	// negative prompts). Super-admin like the mode and the class: it is a statement about the
+	// whole deployment, not about one model or one member.
+	mux.HandleFunc("PUT /api/admin/engines/{key}/negative", a.withSuperAdmin(a.putNegative))
 	// Stopping the BOX without changing the mode — the second half of a class change, since a
 	// new rung reaches new instances only.
 	mux.HandleFunc("POST /api/admin/engines/{key}/replace-box", a.withSuperAdmin(a.replaceBox))
@@ -223,6 +227,13 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	// register no FLUX.2 klein and no Z-Image at all.
 	if flags := engineFileFlagsFor(e.def.Provider); flags != nil {
 		row["file_flags"] = flags
+	}
+	// What this deployment excludes from every image (ADR 0072 follow-up, negative prompts).
+	// Only offered where a negative prompt can reach anything at all: the chat role has no such
+	// thing, and a box that would draw one is a panel asking for a setting nothing reads.
+	if e.def.api() == engineAPIImages {
+		row["negative_always"] = e.negativeAlways(ctx)
+		row["negative_max"] = engineNegativeMaxRunes
 	}
 	// Which model is actually in VRAM, and how often that changed. Both are IN-MEMORY facts of
 	// this CP process (see engineServed), and `warm_model` is absent rather than stale whenever
@@ -648,6 +659,76 @@ func (a engineAdminAPI) unpinClass(w http.ResponseWriter, r *http.Request, ident
 	writeJSON(w, http.StatusOK, a.row(ctx, e))
 }
 
+// putNegative (PUT /api/admin/engines/{key}/negative) records what this deployment excludes from
+// every image this engine makes (ADR 0072 follow-up, negative prompts). One text box, one
+// setting row, applied to every request whoever made it and whichever checkpoint answers.
+//
+// 🔴 It is NOT a content filter, and the panel must not describe it as one. The words reach the
+// sampler through the negative branch of classifier-free guidance, which is a nudge and not a
+// gate: the two distilled families here have no such branch at all (the result says so in its
+// warnings), and even on a guided one a determined prompt outweighs it. A deployment that needs
+// a guarantee needs one somewhere this cannot give it.
+//
+// The empty string CLEARS it, and that is the only way back — the same shape as unpinning a
+// class. No separate DELETE route, because "excluded: nothing" is a value an operator sets from
+// the same box they typed it into.
+//
+// It takes effect on the Agent's own catalogue TTL (10 minutes) or at the next push, like a
+// model being enabled. Nothing restarts: this changes what the next graph SAYS, not what the box
+// is running.
+func (a engineAdminAPI) putNegative(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	if a.settings == nil {
+		writeAPIErr(w, internalErr(errors.New("no settings store")))
+		return
+	}
+	keys := engineSettingsFor(key)
+	if keys.negative == "" {
+		writeAPIErr(w, &apiError{http.StatusConflict, errCodeEngineBadBody,
+			"engine " + key + " has nothing to exclude"})
+		return
+	}
+	var b struct {
+		Negative string `json:"negative"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
+		return
+	}
+	// Bounded because it rides on every catalogue answer to every workspace, and a paragraph
+	// pasted in here would be paid for by every session on every refresh. Long enough for the
+	// list anyone actually writes, short enough that it cannot become a document.
+	want := strings.TrimSpace(b.Negative)
+	if len([]rune(want)) > engineNegativeMaxRunes {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
+			"the excluded keywords are %d characters, and the limit is %d — this is a keyword list, not a policy document",
+			len([]rune(want)), engineNegativeMaxRunes)})
+		return
+	}
+	ctx := r.Context()
+	if err := a.settings.SetSetting(ctx, keys.negative, want); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// The VALUE is not audited, for the same reason the model row's is not: it is free text, and
+	// what an audit trail needs is that somebody changed it and whether anything is set now.
+	state := "cleared"
+	if want != "" {
+		state = "set"
+	}
+	a.audit(ctx, ident, "engine."+key+".negative", state)
+	log.Printf("engines: %s excluded keywords %s by %s", key, state, ident.ID)
+	// The Agent caches the catalogue this rides on, so a change that nobody is told about takes
+	// up to 10 minutes to reach a running session. The same detached fan-out a model change uses.
+	go notifyEngineCatalogChanged(context.WithoutCancel(ctx), a.mgr, key)
+	writeJSON(w, http.StatusOK, a.row(ctx, e))
+}
+
 // replaceBox (POST /api/admin/engines/{key}/replace-box) stops the running box so the next one
 // is bought on the rung that is now chosen (ADR 0074 decision 4).
 //
@@ -722,6 +803,14 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// know a family — and the alternative is registering the whole row again from scratch,
 		// which for a split model means re-typing three S3 keys to change one word.
 		BaseModel *string `json:"base_model"`
+		// NegativePrompt is the row's own "never draw this", edited from the same panel and for
+		// the same reason base_model is here: it is prose an administrator tunes after seeing
+		// what the checkpoint actually produces, and re-registering a split model's four S3 keys
+		// to change one sentence is not an edit anybody makes twice.
+		//
+		// The empty string is a REAL value — "stop declaring one, use the Agent's own default" —
+		// which is why it is a pointer like the rest rather than "empty means unchanged".
+		NegativePrompt *string `json:"negative_prompt"`
 		// Params replaces the row's generation defaults, and `{}` clears them — which is the way
 		// back to the family's own recipe once a number has been declared. Same reasoning as
 		// BaseModel: it is a field of a row that is otherwise fine, and re-registering the whole
@@ -786,6 +875,11 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		}
 		found, err = a.mgr.store.SetEngineModelBaseModel(ctx, key, id, want)
 		action = "base_model " + want
+	case b.NegativePrompt != nil:
+		found, err = a.mgr.store.SetEngineModelNegativePrompt(ctx, key, id, strings.TrimSpace(*b.NegativePrompt))
+		// The VALUE is deliberately not in the audit line: it is free text an administrator can
+		// make as long as they like, and an audit trail is not the place to carry a paragraph.
+		action = "negative_prompt"
 	case b.Params != nil:
 		// Cleaned, not refused: engineParamsClean drops what the provider could not run and
 		// keeps the rest, and a set that cleans down to nothing clears the row's declaration.
@@ -810,7 +904,8 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	default:
 		// An empty body must not be read as "switch it off", for the same reason the mode
 		// route refuses one.
-		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "enabled, selected, default, base_model or params is required"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"enabled, selected, default, base_model, negative_prompt or params is required"})
 		return
 	}
 	if err != nil {

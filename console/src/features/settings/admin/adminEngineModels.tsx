@@ -488,6 +488,14 @@ function EngineModels({
                   onSave={(p) => onChange(m.id, { params: p })}
                 />
               )}
+              {/* What THIS checkpoint should never draw, which its publisher usually states and
+                  nothing else here could know. Its own control rather than a seventh field in
+                  the parameters editor above: it is a different column, saved on its own, and
+                  the two answer different questions — how to run the model, and what not to ask
+                  it for. Image rows only, and never a LoRA: a request names a checkpoint. */}
+              {!readOnly && isImage && m.kind !== "lora" && (
+                <ModelNegative model={m} pending={pending} onChange={onChange} />
+              )}
               {/* 🔴 The two acts, told apart. Forgetting alone leaves the bytes in the bucket
                   with nothing able to reach them (measured: a 491 MB file outlived its row);
                   purging starts the MODE=delete task ADR 0072 decision 7 exists for, because
@@ -608,6 +616,49 @@ function EngineModels({
  * 🔴 Saving `{}` is how a declaration is REMOVED. Without a way back, a number typed once (or
  * read out of an author's prose once) is what that model runs at for ever, and the only escape
  * would be forgetting the row and taking the file in again. */
+/** One model row's own negative prompt (ADR 0072 follow-up, negative prompts). A draft with an
+ *  explicit save, like the engine-wide box on the machine panel, and empty is a REAL value: it
+ *  means "stop declaring one", which the Agent answers with its own measured default rather than
+ *  with nothing excluded. */
+function ModelNegative({
+  model,
+  pending,
+  onChange,
+}: {
+  model: EngineModel;
+  pending: boolean;
+  onChange: (id: string, patch: Record<string, unknown>) => void;
+}) {
+  const tr = useT();
+  const saved = model.negative_prompt || "";
+  const [draft, setDraft] = useState(saved);
+  // The server's value wins when it changes under us (another admin, a reload) and only then:
+  // re-running this on every render would delete what is being typed.
+  useEffect(() => setDraft(saved), [saved]);
+  return (
+    // Its own class, not the family picker's: a test counts the family rows to prove the panel
+    // offers exactly one fix for exactly one broken row, and a second element wearing that name
+    // would make that check pass for the wrong reason.
+    <div className="engines-model-negative">
+      <span>{tr("admin.engines_model_negative")}</span>
+      <input
+        type="text"
+        value={draft}
+        placeholder={tr("admin.engines_model_negative_placeholder") as string}
+        onChange={(ev) => setDraft(ev.currentTarget.value)}
+      />
+      <button
+        type="button"
+        className="btn-secondary"
+        disabled={pending || draft === saved}
+        onClick={() => onChange(model.id, { negative_prompt: draft.trim() })}
+      >
+        {tr("admin.engines_negative_save")}
+      </button>
+    </div>
+  );
+}
+
 function EngineModelParams({
   model,
   pending,

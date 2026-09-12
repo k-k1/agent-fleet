@@ -647,3 +647,55 @@ describe("EnginesAdminView", () => {
 
 });
 
+// The engine-wide exclusion list (ADR 0072 follow-up, negative prompts): one text box on the
+// machine panel, applied to every image this engine makes. A draft with an explicit save — every
+// keystroke would otherwise be a PUT that fans out to every running workspace, and a half-typed
+// exclusion list excludes the wrong thing.
+describe("EnginesAdminView / the exclusion list", () => {
+  const button = (label: string) =>
+    Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+      | HTMLButtonElement
+      | undefined;
+  const typeInto = async (el: Element, v: string) => {
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  it("saves it, and says beside it that it is not a filter", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [row({ provider: "comfy", negative_always: "", negative_max: 500 })],
+    });
+    await mount();
+
+    // 🔴 The note is part of the control. Without it a box called "excluded from every image"
+    // reads as a content filter, which this is not: it is a negative prompt, and three of the
+    // five checkpoint families sample where it cannot matter at all.
+    const note = host!.querySelector(".engines-negative .muted")!;
+    expect(note.textContent).toContain("フィルタではなく誘導");
+
+    // Nothing typed yet, so there is nothing to save: the button is not a no-op waiting to be
+    // pressed.
+    expect(button("保存")!.disabled).toBe(true);
+    await typeInto(host!.querySelector(".engines-negative input")!, "explicit, gore");
+    apiJSON.mockResolvedValue(row({ negative_always: "explicit, gore" }));
+    await click(button("保存"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/negative", "PUT", {
+      negative: "explicit, gore",
+    });
+  });
+
+  // A chat engine has nothing to exclude, and the CP says so by omitting the field. Drawing the
+  // box anyway would offer a setting that reaches nothing.
+  it("is absent on an engine that makes no images", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [row({ key: "llm", api: "chat", provider: "llamacpp" })],
+    });
+    await mount();
+    expect(host!.querySelector(".engines-negative")).toBeNull();
+  });
+});
