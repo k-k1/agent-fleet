@@ -29,8 +29,11 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { isContextMenuKey, menuAnchor } from "../project/contextMenuKey.ts";
 import { useReposStore } from "../repos/store.ts";
+import { parentSyncLabel, parentSyncTitle } from "../repos/parentSync.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { isWaiting } from "../sessions/waiting.ts";
 import { openSessionFromList } from "../sessions/open.ts";
+import { elapsedShort } from "./overview.ts";
 import { SessionMenu } from "../sessions/SessionMenu.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
 import { contextWindow } from "../mirror/ContextBar.tsx";
@@ -46,13 +49,16 @@ interface SessionCardProps {
   /** Where a plain click leads: beside the grid (wide screens) or into this pane (phone). */
   beside: boolean;
   running: boolean;
+  /** Epoch ms this session last entered a wait for a person; 0 = this device cannot tell.
+   *  Composed by the view from the notification ledger and this tab's observations. */
+  waitingAt?: number;
   actions: SessionActions;
 }
 
 // Where the menu was asked for: at the pointer (right-click / Menu key) or under the ⋯.
 type MenuAt = { x: number; y: number } | "button" | null;
 
-export function SessionCard({ s, opens, multi, beside, running, actions }: SessionCardProps) {
+export function SessionCard({ s, opens, multi, beside, running, waitingAt = 0, actions }: SessionCardProps) {
   const tr = useT();
   const setActive = useLayoutStore((st) => st.setActive);
   const { hover, setHover } = usePaneHover();
@@ -80,6 +86,15 @@ export function SessionCard({ s, opens, multi, beside, running, actions }: Sessi
   const used = s.context ? s.context.read + s.context.create + s.context.fresh : 0;
   const ctxPct = s.context && used > 0 ? Math.min(100, Math.round((used / contextWindow(s.context.model || s.model, used)) * 100)) : null;
   const started = relTime(s.createdAt);
+  // How long this has been waiting for a person — the number the card is watched for. While it
+  // is still waiting the clock runs on the wait itself; once answered, the same instant reads
+  // as "how long it has been working since you replied". Nothing is shown when neither ledger
+  // saw the transition (no notification for this kind, or a wait older than the retention
+  // window): an invented "0m" would be worse than a blank (ADR 0078 decision 11).
+  const waited = s.alive ? elapsedShort(waitingAt) : "";
+  const waitingNow = isWaiting(s);
+  const awake = remainingShort(s.keepAwakeUntil);
+  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || isShared || (multi && opens.length > 0));
 
   // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
   // the screen. Without it, `beside` decides.
@@ -144,6 +159,15 @@ export function SessionCard({ s, opens, multi, beside, running, actions }: Sessi
           <Icon name={kindIcon(s.kind)} />
         </span>
         <span className="ovw-title">{displayName(s)}</span>
+        {/* The state reads from the top-right corner, where the eye lands first on a grid of
+            cards, and the row below is left for what only some cards carry. The label is its
+            own element so a narrow card can fold the CALM states back to their icon and give
+            the width to the title — the states that need a person keep their words (CSS). */}
+        <span className={"session-state " + st.cls} title={st.text}>
+          <Icon name={st.icon} spin={st.spin} />
+          {" "}
+          <span className="lbl">{st.text}</span>
+        </span>
         <span className="ovw-menu-wrap" ref={menuWrapRef}>
           <button
             type="button"
@@ -168,18 +192,28 @@ export function SessionCard({ s, opens, multi, beside, running, actions }: Sessi
             {wt}
           </span>
         )}
+        {/* Right of the branch: how this worktree stands against the working copy it was cut
+            from — the same chip and the same wording as the rail's repo row (parentSync.ts),
+            because "親+2・FF可" must not mean two things in one Console. */}
+        {repo?.integration && (
+          <span
+            className={"repo-chip integration " + repo.integration.relation}
+            title={parentSyncTitle(repo.integration)}
+          >
+            {parentSyncLabel(repo.integration)}
+          </span>
+        )}
         {s.branchDrift && (
           <span className="sess-drift" title={tr("srow.branch_switched", { from: s.branch ?? "", to: s.currentBranch ?? "" })}>
             <Icon name="warning" /> {s.currentBranch}
           </span>
         )}
       </div>
+      {/* The badge row carries only what SOME cards have (lock / keep-awake / stop-armed /
+          shared / pane ordinals). With the state chip moved into the head it is empty on an
+          ordinary card, and an empty flex row would still spend the card's row gap. */}
+      {badges && (
       <div className="ovw-row">
-        <span className={"session-state " + st.cls} title={st.text}>
-          <Icon name={st.icon} spin={st.spin} />
-          {" "}
-          {st.text}
-        </span>
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
         {remainingShort(s.keepAwakeUntil) && (
           <Icon name="debug-pause" className="sess-awake" title={tr("srow.keep_awake_badge", { left: remainingShort(s.keepAwakeUntil) })} />
@@ -207,12 +241,31 @@ export function SessionCard({ s, opens, multi, beside, running, actions }: Sessi
           </span>
         )}
       </div>
+      )}
       <div className="ovw-meta">
         <span>{kindLabel(s.kind)}</span>
         {s.model && <span title={s.model}>{s.model}</span>}
         {ctxPct != null && <span title={tr("ovw.ctx_hint")}>{tr("ovw.ctx", { pct: ctxPct })}</span>}
         {started && <span>{tr("ovw.started", { ago: started })}</span>}
+        {waited && (
+          <span className={waitingNow ? "ovw-waited on" : "ovw-waited"} title={tr(waitingNow ? "ovw.waiting_hint" : "ovw.since_wait_hint")}>
+            {tr(waitingNow ? "ovw.waiting_for" : "ovw.since_wait", { d: waited })}
+          </span>
+        )}
       </div>
+      {/* The menu is a CHILD of the card, and a React event bubbles through the component
+          tree even out of a portal — so without this boundary every menu item also counted as
+          a click on the card: choosing "Stop" opened the session in another pane behind the
+          confirmation dialog (reported 2026-09-12). The rail's row never had this because its
+          menu is a SIBLING of the clickable button; a card is clickable as a whole, so the
+          boundary has to be explicit. */}
+      <span
+        className="ovw-menu-host"
+        onClick={(e) => e.stopPropagation()}
+        onAuxClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+        onContextMenu={(e) => e.stopPropagation()}
+      >
       <SessionMenu
         s={s}
         actions={actions}
@@ -229,6 +282,7 @@ export function SessionCard({ s, opens, multi, beside, running, actions }: Sessi
         keepOpenRefs={[menuWrapRef]}
         onClose={() => setMenuAt(null)}
       />
+      </span>
     </article>
   );
 }

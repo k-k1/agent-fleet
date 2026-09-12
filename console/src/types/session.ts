@@ -43,7 +43,10 @@ export interface Session {
   // itself). Sessions stay grouped by `dir` (the working copy) — this is only the
   // extra "where inside it" detail.
   subdir?: string;
-  remoteUrl?: string; // clone URL (agent sessions with a repo)
+  // claude.ai Remote Control URL, set only while RC is bridged (agents/claude: RemoteSessionURL).
+  // NOT the working copy's clone URL — the repository a session runs in is identified through
+  // its working copy (repos: remote + remotePath).
+  remoteUrl?: string;
   state?: SessionState | string; // live hook/plugin state ("" = idle)
   alive?: boolean; // tmux session is running
   resumable?: boolean; // a stopped session whose dir still exists (false = archive only)

@@ -63,6 +63,12 @@ type Repo struct {
 	Behind        int    `json:"behind"`
 	Provider      string `json:"provider,omitempty"` // origin host slug: github/bitbucket/gitlab, or the bare host
 	Remote        string `json:"remote,omitempty"`   // origin host (for a tooltip); no path/token
+	// RemotePath is the repository's path on that host ("owner/name"), credentials stripped
+	// (gitRemotePath). Remote + RemotePath is the identity two clones of ONE repository
+	// share and two clones of different repositories never do — folder names cannot say
+	// either. The Console groups the sessions overview by it (ADR 0078). Empty for a remote
+	// with no path and for a working copy with no origin at all.
+	RemotePath string `json:"remotePath,omitempty"`
 	// Vcs discriminates the working-copy kind: "git" (default/omitted) or "svn"
 	// (docs/log/41). SVN copies are flat — no branches/ahead/behind/worktree — so the
 	// Console gates git-only actions on it; Revision/URL carry the svn-side facts.
@@ -177,6 +183,38 @@ type RepoIntegration struct {
 	TargetUnique   int    `json:"targetUnique"`
 	WorktreeUnique int    `json:"worktreeUnique"`
 	Relation       string `json:"relation"` // same | contained | unmerged | diverged | unknown
+}
+
+// gitRemotePath derives the repository's path on its host ("owner/name") from an origin
+// remote URL: the part after the host, with any userinfo, a trailing ".git" and surrounding
+// slashes removed. "" when the URL carries no path.
+//
+// Host + this path is the only STABLE identity a working copy has: the folder name is the
+// user's (two clones of one repository can be "app" and "app-review"), and a linked worktree
+// is a third folder again. The Console groups the sessions overview by it (ADR 0078), which
+// folder names cannot do. Deliberately no credentials: Remote above is documented as
+// carrying no token and this keeps that promise — an scp-form URL's "git@" userinfo is
+// dropped by SSHToHTTPS, and any remaining "user:pass@" is cut with the host.
+func gitRemotePath(remote string) string {
+	u := SSHToHTTPS(strings.TrimSpace(remote))
+	u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+	if i := strings.IndexByte(u, '/'); i >= 0 {
+		if strings.ContainsRune(u[:i], '@') {
+			u = u[strings.IndexByte(u, '@')+1:] // userinfo before the first slash
+		}
+	} else if strings.ContainsRune(u, '@') {
+		u = u[strings.IndexByte(u, '@')+1:]
+	}
+	i := strings.IndexAny(u, "/:")
+	if i < 0 {
+		return "" // host only, no path
+	}
+	path := strings.Trim(u[i+1:], "/")
+	path = strings.TrimSuffix(path, ".git")
+	if q := strings.IndexAny(path, "?#"); q >= 0 {
+		path = path[:q]
+	}
+	return strings.Trim(path, "/")
 }
 
 // gitProviderHost derives (provider slug, host) from an origin remote URL. Known SaaS
@@ -348,9 +386,10 @@ func HandleListRepos(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		st, _ := GitStatus(dir)
-		var provider, host string
+		var provider, host, remotePath string
 		if origin, ok := GitOriginURL(dir); ok {
 			provider, host = gitProviderHost(origin)
+			remotePath = gitRemotePath(origin)
 		}
 		var parent, createdAt string
 		wt := IsLinkedWorktree(dir)
@@ -361,7 +400,7 @@ func HandleListRepos(w http.ResponseWriter, r *http.Request) {
 		repos = append(repos, Repo{
 			Name: e.Name(), WorkingCopyID: WorkingCopyID(dir), Path: dir, Branch: st.Branch,
 			Dirty: st.Dirty, Ahead: st.Ahead, Behind: st.Behind, Unborn: st.Unborn,
-			Provider: provider, Remote: host,
+			Provider: provider, Remote: host, RemotePath: remotePath,
 			Worktree: wt, Parent: parent, CreatedAt: createdAt,
 		})
 	}

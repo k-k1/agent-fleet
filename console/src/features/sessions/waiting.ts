@@ -1,5 +1,10 @@
-// Ledger of "when this session last started waiting on a human". It exists only to order the
-// command palette's session list by most-recently-waiting; nothing else may use it.
+// Ledger of "when this session last started waiting on a human".
+//
+// Two consumers, and the difference between them is the rule: the command palette ORDERS its
+// session list by it (most-recently-waiting first), and the sessions overview only SHOWS the
+// elapsed time on a card (ADR 0078 decision 11). Nothing else may use it, and nothing else may
+// order by it — a grid that stays open must not reshuffle every time a question is answered
+// (ADR 0078 decision 6).
 //
 // Why a ledger is needed: GET /api/sessions returns the state (question / plan / permission)
 // but not when it was entered, and that timestamp is the only basis for the ordering. So the

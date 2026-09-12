@@ -327,6 +327,14 @@ colour the whole card, so they can be spotted from across the room.
   It is an ordinary pane: split it, tab it, pop it out, and it is there again after a reload.
 - **How many columns** depends on the width of the pane it is in — one column in a narrow side
   column, four or more across a wide one.
+- **Cards sit under one heading per project (repository)**. Every working copy of the same
+  repository shares a heading — the base clone, each `@wip-*` worktree, and a second clone under
+  another folder name (what is matched is where it was cloned from, not the folder name).
+  Sessions running in no working copy trail under "Other". Headings keep a fixed name order.
+- **Inside a heading the cards are grouped by family.** A session started from another one (a
+  handoff, a child session) sits **directly under its parent** in the order they were started,
+  and **a stopped child stays under its parent** too. The family holding a session that waits
+  for you leads the heading, but **a family is never split apart**.
 - **Clicking a card opens that session beside the grid**, never in its place, so the grid stays
   put while you look. If the session is already open, that pane is focused instead. A badge on
   the card shows which pane holds it while the layout is split.
@@ -334,14 +342,22 @@ colour the whole card, so they can be spotted from across the room.
   panes would help nobody). Your device's **Back button** returns to the grid, "Show stopped"
   and all. **Ctrl (⌘) + click and middle-click open another pane at any width.** In the tabbed
   layout a tap opens a new tab even on a phone, and the grid stays one tab away.
+- **What one card shows**: the state at the top right (Ready / Working… / stopped), the project
+  and branch on the line below with **the distance from the parent working copy** right of it
+  ("親+2・FF可", "3 unmerged" — the same chip as the repo row in the left pane), and at the
+  bottom the kind, model, context usage, time since it started and **how long it has been
+  waiting for you** ("since your reply" once you have answered). That last one is read from
+  notifications and this device's own observations, so it stays blank when neither saw the
+  change.
 - **Right-click, the ⋯ button, or the Menu key on a card gives the same menu as the row in the
   left pane** — stop, rename, hand off, share, lock, keep awake, archive, and the rest
   ([Icons, badges, and menus](badges-and-menus.md)).
 - By default only running sessions are shown. **"Show stopped"** in the pane header adds the
   stopped ones, dimmed; the choice is remembered per pane.
-- Cards are ordered by what needs you: sessions waiting on an answer first, then the rest of the
-  running ones newest first, then stopped ones. Inside those groups the order does not change
-  while you watch.
+- Cards are ordered by what needs you, but **the unit is the family, not the card** (above): the
+  family holding a session that waits on an answer comes first, then the remaining running
+  families newest first, then families that are only stopped. While you watch, the order changes
+  only when a family enters or leaves a wait.
 - The active working set (below) narrows the grid the same way it narrows the left pane.
 
 ## Narrowing the view with working sets

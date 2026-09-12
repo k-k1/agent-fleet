@@ -31,6 +31,48 @@
     display: none;
   }
 }
+/* One section per repository (ADR 0078 decision 9). The body scrolls, not each grid, so a
+   long project does not trap the next heading below a nested scrollbar. */
+.ovw-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ovw-body .ovw-grid {
+  overflow: visible;
+  padding: 0;
+}
+.ovw-gtitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  /* The heading stays put while its own cards scroll past, so it is always clear which
+     project the card under the cursor belongs to. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+}
+.ovw-gname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ovw-gcount {
+  color: var(--muted2);
+  font-weight: 400;
+  white-space: nowrap;
+}
 /* auto-fill + minmax is what makes the column count follow the width: a 240px card
    floor, one column in a narrow pane, as many as fit in a wide one, and every card in
    a row the same width. flex-wrap would let the last row's cards stretch to fill it,
@@ -48,6 +90,9 @@
 }
 .ovw-card {
   position: relative;
+  /* Its own container, so a card can fold its state label by the width IT got from the grid
+     (a 4-column pane and a 1-column pane hand out very different widths at the same viewport). */
+  container: ovwcard / inline-size;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -160,9 +205,36 @@
   flex-wrap: wrap;
   gap: 6px;
 }
-/* The chip is right-aligned on a rail row (margin-left: auto); here it leads the row. */
-.ovw-row .session-state {
-  margin-left: 0;
+/* The state chip sits in the head, right of the title and left of the ⋯ (ADR 0078 decision
+   10). It never shrinks: the title ellipsizes first, because "which session" is recoverable
+   from the row below while a half-drawn state is not. */
+.ovw-head .session-state {
+  flex: none;
+  margin-left: auto;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A narrow card (4 columns in a wide pane, or a phone) cannot show a full title AND a full
+   state. The calm states fold back to their icon, exactly as the rail's row does; the states
+   that need a person (question / plan / permission — all carry .question) keep their words,
+   because those are the cards the grid exists to find. */
+@container ovwcard (max-width: 320px) {
+  .ovw-head .session-state:not(.question) .lbl {
+    display: none;
+  }
+  .ovw-head .session-state:not(.question) {
+    padding: 1px 4px;
+  }
+}
+/* Parent-diff chip: the rail's own chip, one size down to sit in a card's caption line. */
+.ovw-where .repo-chip {
+  flex: none;
+  font-size: 10px;
+}
+.ovw-waited.on {
+  color: var(--warn);
 }
 .ovw-meta {
   display: flex;
