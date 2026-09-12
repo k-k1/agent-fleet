@@ -58,6 +58,22 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_external": " (externally managed: this deployment neither starts nor stops it)",
   "admin.engines_url_label": "Endpoint",
   "admin.engines_note_external": "An externally managed engine is a URL this deployment points at. Disabled only closes the route — it does not stop the other side, which this deployment neither starts nor stops. Changing the URL means restarting the Control Plane.",
+  // --- borrowed engines (ADR 0079) ---
+  // 🔴 Do not reuse "externally managed". For a LAN box "nobody starts it" is right; on the other
+  // end of a borrowed row is another Agent Fleet with an admin panel of its own, and starting it,
+  // stopping it and editing its catalogue are all its job (decision 10). "Externally managed" is
+  // true of it and tells the operator nothing about what to do next.
+  "admin.engines_remote": " (borrowed: another fleet starts it)",
+  // "Borrowed from", not "Endpoint": the value is the far fleet's base URL, and it is the only
+  // thing on this screen that answers "whose GPU is this model running on".
+  "admin.engines_remote_url_label": "Borrowed from",
+  // 🔴 A borrowed row's warm is not this deployment's observation but a mirror of the one the far
+  // catalogue publishes (decision 10). No state such as RUNNING arrives for such a row, so an
+  // unqualified "loaded" would be this panel asserting something about a box it does not hold.
+  "admin.engines_remote_model_loaded": "(loaded, as the lending deployment last saw it)",
+  "admin.engines_remote_model_declared": "(declared; the lending deployment has not seen it loaded)",
+  "admin.engines_note_remote": "A borrowed engine is reached through another Agent Fleet's gateway. Starting and stopping it, choosing its GPU and editing its catalogue all happen on that deployment's admin panel. Disabled closes the route on this side only — it does not stop their box.",
+  "admin.engines_remote_catalog": "This catalogue is a mirror of the lending deployment's. It cannot be changed from here — ingest, enable and forget all happen over there. Lending deployment:",
   // --- engine status (adminEngines.tsx, EngineStatus) ---
   // ⚠️ Every line here follows "do not write down what you do not know". A line the CP has no
   // answer for is omitted entirely, so do not add filler like "unknown", "0" or "not
