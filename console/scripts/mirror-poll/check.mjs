@@ -35,7 +35,7 @@ const PORT = Number(arg("port", 8793));
 const CDP_PORT = Number(arg("cdp-port", 9253));
 const RUNS = Number(arg("runs", 1));
 const WINDOW = Number(arg("window", 45)) * 1000; // how long to watch a session that is at rest
-const MODE = arg("mode", "idle"); // idle | typing
+const MODE = arg("mode", "idle"); // idle | typing | working
 const KEYS = Number(arg("keys", 30)); // typing mode: how many characters to type
 const BASE = `http://127.0.0.1:${PORT}/`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -51,10 +51,21 @@ class CDP {
     this.id = 0;
     this.pending = new Map();
     this.polls = []; // ms timestamps of transcript requests, for the interval report
+    this.bytes = 0; // bytes those requests brought back (encoded, i.e. what the link carried)
+    this.pollIds = new Set();
+    this.pollSeq = []; // {id, url} in order, so a mode can read the bodies back
     ws.addEventListener("message", (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.method === "Network.requestWillBeSent") {
-        if (/\/messages\?/.test(msg.params?.request?.url || "")) this.polls.push(Date.now());
+        if (/\/messages\?/.test(msg.params?.request?.url || "")) {
+          this.polls.push(Date.now());
+          this.pollIds.add(msg.params.requestId);
+          this.pollSeq.push({ id: msg.params.requestId, url: msg.params.request.url });
+        }
+        return;
+      }
+      if (msg.method === "Network.loadingFinished") {
+        if (this.pollIds.has(msg.params.requestId)) this.bytes += msg.params.encodedDataLength || 0;
         return;
       }
       const p = this.pending.get(msg.id);
@@ -149,8 +160,54 @@ async function runTyping(cdp) {
   };
 }
 
+// working: a session MID-TURN, where the Control Plane's conditional GET cannot help — the live
+// turn's parts move every tick, so the response legitimately differs and the whole-transcript
+// aggregates (files / tasks / answers) ride along inside it unchanged. What this measures is the
+// BYTES those polls bring back, i.e. what `?agg=<digest>` / `aggSame` removes.
+async function runWorkingBytes(cdp) {
+  if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
+  await sleep(9000);
+  const from = cdp.polls.length;
+  const bytes0 = cdp.bytes;
+  await sleep(WINDOW);
+  const polls = cdp.polls.length - from;
+  const bytes = cdp.bytes - bytes0;
+  const per = polls ? Math.round(bytes / polls) : 0;
+  if (!polls) throw new Error("the session did not poll at all");
+
+  // The claim is semantic, not a byte count: the stub's live turn is resent whole on every tick
+  // (that is what a mid-turn poll IS), so it dominates any budget. What must be true is that the
+  // aggregates are no longer inside those polls.
+  const recent = cdp.pollSeq.slice(-3);
+  let sameFlags = 0;
+  let carriedAggregates = 0;
+  for (const { id } of recent) {
+    let body = "";
+    try {
+      body = (await cdp.send("Network.getResponseBody", { requestId: id })).body || "";
+    } catch {
+      continue; // body already evicted; the others still decide
+    }
+    const d = JSON.parse(body);
+    if (d.aggSame === true) sameFlags++;
+    // An empty array still counts as "not carried": the aggregate is the content, and both the
+    // Agent and the stub omit a field with nothing in it anyway.
+    const size = (v) => (Array.isArray(v) ? v.length : v ? Object.keys(v).length : 0);
+    if (size(d.files) + size(d.tasks) + size(d.answers) > 0) carriedAggregates++;
+  }
+  const sentDigest = cdp.pollSeq.slice(-1)[0]?.url.includes("agg=") ?? false;
+  return {
+    ok: sentDigest && sameFlags === recent.length && carriedAggregates === 0,
+    note:
+      `${polls} polls in ${WINDOW / 1000}s  ${(bytes / 1024).toFixed(1)} KiB = ${per} B/poll  ` +
+      `digest sent=${sentDigest}  aggSame on ${sameFlags}/${recent.length}  ` +
+      `polls still carrying aggregates: ${carriedAggregates}`,
+  };
+}
+
 async function run(cdp) {
   if (MODE === "typing") return runTyping(cdp);
+  if (MODE === "working") return runWorkingBytes(cdp);
   if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
   await sleep(9000); // opening round: the tail window, its markdown, images, the first polls
   const before = await cdp.metrics();
@@ -176,7 +233,7 @@ const stub = spawn(
   process.execPath,
   [STUB, "--port", String(PORT), "--turns", "200", "--images", "0", "--imgdelay", "0",
    "--mermaid", "0", "--shared", "0", "--paging", "0", "--pagesize", "400",
-   "--working", "0", "--split", "0", "--asks", "1", "--longans", "1"],
+   "--working", MODE === "working" ? "1" : "0", "--split", "0", "--asks", "1", "--longans", "1"],
   { stdio: ["ignore", "ignore", "inherit"] },
 );
 const chrome = spawn(
@@ -199,7 +256,9 @@ try {
   console.log(
     MODE === "typing"
       ? `[mirror-poll] typing ${KEYS} characters into an open session`
-      : `[mirror-poll] watching an idle session for ${WINDOW / 1000}s`,
+      : MODE === "working"
+        ? `[mirror-poll] watching a session MID-TURN for ${WINDOW / 1000}s`
+        : `[mirror-poll] watching an idle session for ${WINDOW / 1000}s`,
   );
   for (let i = 0; i < RUNS; i++) {
     const target = await fetchJSON(`http://127.0.0.1:${CDP_PORT}/json/new?about:blank`, { method: "PUT" });

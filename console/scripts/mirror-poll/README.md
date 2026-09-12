@@ -11,13 +11,15 @@
 同じ内容を state に流していたので、`setTasks` / `setFiles` / `setQueuedPrompts` が毎回新しい配列を
 渡し、会話全体が `groupTurns` され再描画されていた。working 中は 1.2 秒に 1 回＝ほぼ毎秒。
 
-対処は 3 つで、この検査はその全部を見る。
+対処は 4 つで、この検査はその全部を見る。
 
 - 応答が前回と **verbatim で同一なら state 適用ごと飛ばす**（`MirrorView.tsx` のポーリング）
 - 同一が続いた回数で間隔を上げる梯子（`src/features/mirror/pollCadence.ts`）
-- 会話のグルーピングと capability オブジェクトのメモ化＋`TranscriptTurn` の `memo()`。
-  作文中は 1 打鍵ごとに MirrorView が再描画されるので、会話全体を作り直していると
+- 会話のグルーピングと capability オブジェクトのメモ化＋`TranscriptTurn`・`FileChangeStrip` の
+  `memo()`。作文中は 1 打鍵ごとに MirrorView が再描画されるので、会話全体を作り直していると
   **1 文字の値段が転写 1 本の値段**になる（`--mode typing` が測るのはこれ）。
+- 集計の digest（`?agg=` と `aggSame`・`session_transcript_agg.go`）。**ターン実行中**は本文が
+  毎回変わるので CP の 304 が効かず、そこだけ集計が乗り続ける（`--mode working`）。
 
 ## 何を測っているか
 
@@ -34,16 +36,20 @@
   広がりの方を必ず併せて見る。
 - `--mode typing`: 作文欄に 30 文字打ち、**1 打鍵あたりの ScriptDuration** を見る（予算 12ms）。
   打鍵数で割るので `--keys` を変えても基準は動かない。
+- `--mode working`: セッションを**ターン実行中**にして、`Network.getResponseBody` で応答の中身を
+  読む。判定は「クライアントが `agg=` を送っている」「`aggSame` が返っている」「集計が本文に
+  乗っていない」の 3 つ。バイト数は参考値として出す（stub は gzip しないので実配備より大きい）。
 
 ## 効くことの確認方法
 
 修正前の bundle で走らせると赤になる。実測（2026-09-12・CPU スロットル無し・390×844）:
 
-| bundle | idle: polls / 45s | idle: 間隔 | typing: ScriptDuration |
-|---|---|---|---|
-| どちらも入れる前 | 15 | 3 秒固定 | 91.1 ms/打鍵 |
-| ポーリングだけ直した版 | 8 | 3/3/3/8/8/8/8 秒 | 91.1 ms/打鍵 |
-| 描画のメモ化まで入れた版 | 8 | 3/3/3/8/8/8/8 秒 | **9.5 ms/打鍵** |
+| bundle | idle: polls / 45s | idle: 間隔 | typing | working: 応答 |
+|---|---|---|---|---|
+| 何も入れる前 | 15 | 3 秒固定 | 91.1 ms/打鍵 | 30,631 B/poll・集計が毎回 |
+| ポーリングだけ直した版 | 8 | 3/3/3/8/8/8/8 秒 | 91.1 ms/打鍵 | 同上 |
+| 描画のメモ化まで | 8 | 3/3/3/8/8/8/8 秒 | **9.5 ms/打鍵** | 同上 |
+| digest まで | 8 | 同上 | 9.5 ms/打鍵 | **22,279 B/poll・集計 0 回** |
 
 メモ化は**渡す側が props を安定させている前提**で効く。`TranscriptTurn` の `memo()` は既定の浅い
 比較なので、`caps` か `turn` を毎レンダリング作り直した瞬間に黙って無効になる——この表の 3 行目が

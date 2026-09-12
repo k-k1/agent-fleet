@@ -1,9 +1,13 @@
 package sessionx
 
 import (
+	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -399,5 +403,74 @@ func backdate(t *testing.T, path, ts string) {
 	}
 	if err := os.Chtimes(path, at, at); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// An unchanged poll must answer with the SAME BYTES.
+//
+// The mirror polls this route for as long as it is on screen, and the response carries
+// whole-transcript aggregates (files / tasks / answers) whether or not they moved. What keeps
+// that off a phone's radio is the Control Plane's conditional-GET layer (control-plane/etag.go):
+// it hashes the proxied body and answers a matching If-None-Match with an empty 304. That layer
+// is only ever as good as this handler's determinism — one map iterated in output order, one
+// timestamp taken at request time, and every poll becomes a full body again, silently and
+// forever (an ETag cannot tell "changed" from "differently ordered").
+func TestUnchangedPollIsByteIdentical(t *testing.T) {
+	home := withTempHome(t)
+	// The container that runs this suite has CLAUDE_CONFIG_DIR pointing at the real state tree,
+	// and HOME alone does not redirect it — without this the fixture would be written next to
+	// the user's own conversations (and read from there).
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	dir := t.TempDir()
+	const name = "poll_ident"
+	// Titled on purpose: an untitled session would reach the title-suggestion branch, whose
+	// business is precisely to change the answer between two polls.
+	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindClaude, Title: "既に題のある会話"})
+	sid := session.UUID(dir, name)
+	jsonl := filepath.Join(home, ".claude", "projects", "p", sid+".jsonl")
+	lines := []string{
+		`{"type":"user","timestamp":"2026-09-12T10:00:00Z","cwd":"/home/dev/repos/x","message":{"role":"user","content":"直して"}}`,
+		`{"type":"assistant","timestamp":"2026-09-12T10:00:05Z","cwd":"/home/dev/repos/x","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"/home/dev/repos/x/a.ts","old_string":"a","new_string":"b"}}]}}`,
+		`{"type":"assistant","timestamp":"2026-09-12T10:00:09Z","cwd":"/home/dev/repos/x","message":{"role":"assistant","content":[{"type":"text","text":"直しました"}]}}`,
+	}
+	writeFile(t, jsonl, strings.Join(lines, "\n")+"\n")
+
+	// The steady-state poll: the client's cursor is already at the end, so only the aggregates
+	// and the status fields ride along.
+	poll := func() []byte {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+name+"/messages?since=3", nil)
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		HandleSessionMessages(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		return append([]byte(nil), rec.Body.Bytes()...)
+	}
+
+	first, second := poll(), poll()
+	// Without this the test could pass on a response that carries no aggregates at all, which is
+	// the one case where determinism is free.
+	var body struct {
+		Files []map[string]any `json:"files"`
+	}
+	if err := json.Unmarshal(first, &body); err != nil {
+		t.Fatalf("the response is not JSON: %v (%s)", err, first)
+	}
+	if len(body.Files) == 0 {
+		t.Fatalf("the fixture produced no file aggregate, so this proves nothing: %s", first)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("two unchanged polls differ, so every poll is a full body over the wire:\n1: %s\n2: %s", first, second)
+	}
+
+	// …and the other half: a transcript that DID move must not be answered with the same bytes,
+	// or the 304 above would hide new turns instead of saving them.
+	writeFile(t, jsonl, strings.Join(append(lines,
+		`{"type":"user","timestamp":"2026-09-12T10:01:00Z","cwd":"/home/dev/repos/x","message":{"role":"user","content":"ありがとう"}}`,
+	), "\n")+"\n")
+	if third := poll(); bytes.Equal(second, third) {
+		t.Fatalf("a grown transcript answered identically: %s", third)
 	}
 }

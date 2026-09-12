@@ -9,7 +9,7 @@
 // What it is NOT: the rail's changes list and the SCM pane answer "what is dirty in this
 // working copy". This answers "what did THIS session do", which is a different question
 // whenever more than one session has passed through the same working copy.
-import { useState } from "react";
+import { memo, useState } from "react";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -28,7 +28,7 @@ import {
   type SessionFile,
 } from "./sessionFiles.ts";
 
-export function FileChangeStrip({ session, files }: { session: string; files: SessionFile[] }) {
+function FileChangeStripImpl({ session, files }: { session: string; files: SessionFile[] }) {
   const tr = useT();
   const filesTick = useFilesStore((s) => s.tick);
   const [changes, setChanges] = useState<FsChange[]>([]);
@@ -168,3 +168,11 @@ export function FileChangeStrip({ session, files }: { session: string; files: Se
     </section>
   );
 }
+
+/**
+ * Memoized: the strip is a row per file a session touched (dozens on a long one) and it hangs in
+ * the mirror, which re-renders on every keystroke in the composer. Both props are stable while
+ * nothing moves — `files` is only replaced when the poll actually brings a new aggregate
+ * (aggSame, session_transcript_agg.go), so the default shallow comparison is enough.
+ */
+export const FileChangeStrip = memo(FileChangeStripImpl);

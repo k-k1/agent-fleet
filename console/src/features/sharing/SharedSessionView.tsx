@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
+import { pollDelay } from "../mirror/pollCadence.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
@@ -45,10 +46,9 @@ import "./sharing.css";
 // button had to be pressed over and over. The first-paint cost that motivated 60 was
 // the per-request inventory sync, which is now throttled per owner (docs/log/59 §3).
 const WINDOW = 400;
-// Poll cadence, matching the mirror's. The server allows 120 reads/min per
-// recipient+session, so even the working cadence stays well inside the limit.
-const POLL_WORKING = 1200;
-const POLL_IDLE = 3000;
+// Poll cadence, matching the mirror's: the ladder in mirror/pollCadence.ts, which eases off while
+// the payload keeps repeating itself. The server allows 120 reads/min per recipient+session, so
+// even its fastest rung stays well inside the limit.
 // The owner's Workspace is stopped: nothing can change until they start it, so back off.
 const POLL_STOPPED = 5000;
 // Fetch interval for handoff proposals. Coarser than the transcript is fine (a proposal only
@@ -125,6 +125,12 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   const cursor = useRef(cached?.cursor ?? 0);
   const firstLine = useRef(cached?.firstLine ?? 0);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // Last transcript payload, verbatim, and how many polls in a row have returned exactly it —
+  // the same pair the mirror keeps, for the same two reasons: an identical payload must not be
+  // re-applied (every setState here hands React fresh objects), and a payload that keeps
+  // repeating is what eases the cadence off (mirror/pollCadence.ts).
+  const lastPayload = useRef("");
+  const unchanged = useRef(0);
   // Inner wrapper whose height equals the content. The ResizeObserver watches this too, because
   // the scroll container itself has the pane's dimensions and never fires as the transcript grows.
   // Same role as the mirror's .mirror-scroll.
@@ -182,6 +188,8 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     setPendingQuestions(null);
     setPendingText("");
     setPendingPlan(null);
+    lastPayload.current = ""; // another session's payload must never read as "unchanged"
+    unchanged.current = 0;
     cursor.current = entry?.cursor ?? 0;
     firstLine.current = entry?.firstLine ?? 0;
     atBottom.current = true;
@@ -210,9 +218,13 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       const url = first ? `${path}/messages?since=0&tail=1&limit=${WINDOW}` : `${path}/messages?since=${cursor.current}`;
       const d = await api(url).catch(() => ({ error: { message: tr("share.load_failed") } }));
       if (!live) return;
+      const payload = JSON.stringify(d);
+      const moved = payload !== lastPayload.current;
+      lastPayload.current = payload;
+      unchanged.current = moved ? 0 : unchanged.current + 1;
       if (d?.error) {
         setError(errText(d.error));
-      } else {
+      } else if (moved) {
         setError("");
         setLoaded(true);
         if (typeof d.cursor === "number") cursor.current = d.cursor;
@@ -238,7 +250,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
         if (d.reset) setTurns(patchAnswers(incoming, answers));
         else setTurns((old) => patchAnswers(incoming.length ? mergeTurns(old, incoming) : old, answers));
       }
-      timer = window.setTimeout(tick, d?.status === "working" ? POLL_WORKING : POLL_IDLE);
+      timer = window.setTimeout(tick, pollDelay({ working: d?.status === "working", unchanged: unchanged.current }));
     };
     void tick();
     return () => {
@@ -484,18 +496,24 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // image to fetch from someone else's Workspace, no fork, and no agent of theirs to
   // re-authenticate. The blocks drop those affordances instead of showing dead controls,
   // and fall back to self-contained renderings (tool edits and plans expand in place).
-  const caps: TranscriptCaps = {
-    agentName: agentOf(meta?.kind).assistantName,
-    // The speaker is the owner, not the reader. Left as "you", someone else's conversation would
-    // read as if the reader had written it. The name shown is the owner's login id (email
-    // address): user_key is a key normalised through sanitizeUser and tells the reader nothing.
-    userName: meta && ownerLabel(meta),
-    expandThinking: expandThinking(settings, meta?.kind),
-    // The one exception: marks are part of the conversation even on a read-only surface, and RW
-    // may draw them. They never move the agent, so they do not go through propose-then-approve
-    // (ADR 0050 decision 4).
-    marks,
-  };
+  // Memoized for the same reason as the mirror's: every turn holds this object, and TranscriptTurn
+  // skips a re-render only while its props keep their identity.
+  const thinkingOpen = expandThinking(settings, meta?.kind);
+  const caps: TranscriptCaps = useMemo(
+    () => ({
+      agentName: agentOf(meta?.kind).assistantName,
+      // The speaker is the owner, not the reader. Left as "you", someone else's conversation would
+      // read as if the reader had written it. The name shown is the owner's login id (email
+      // address): user_key is a key normalised through sanitizeUser and tells the reader nothing.
+      userName: meta && ownerLabel(meta),
+      expandThinking: thinkingOpen,
+      // The one exception: marks are part of the conversation even on a read-only surface, and RW
+      // may draw them. They never move the agent, so they do not go through propose-then-approve
+      // (ADR 0050 decision 4).
+      marks,
+    }),
+    [meta, thinkingOpen, marks],
+  );
 
   // The shared-session theme and background from the display settings (docs/log/59). Same
   // mechanism as the mirror (.mirrorview): data-theme switches the base tokens for this surface

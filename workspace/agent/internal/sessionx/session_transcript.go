@@ -218,9 +218,6 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		resp["firstLine"] = firstLine
 		resp["hasMore"] = firstLine > 0
 	}
-	if len(answers) > 0 {
-		resp["answers"] = answers
-	}
 	for k, v := range pending { // pendingQuestions / pendingText / pendingPlan / pendingPermission
 		resp[k] = v
 	}
@@ -233,9 +230,7 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Current ToDo list (reconstructed from Task tool calls) so the chat can show progress.
-	if tasks := claude.CollectTasks(lines); len(tasks) > 0 {
-		resp["tasks"] = tasks
-	}
+	tasks := claude.CollectTasks(lines)
 	// Files this session edited (docs/log/68). Whole-transcript like the ToDo list above —
 	// the turns sent alongside are a window, so anything derived from them would
 	// undercount. jsonl lines are immutable once written, so all of them are foldable.
@@ -243,10 +238,29 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if len(lines) > 0 {
 		head = lines[0]
 	}
-	if files := sessionFileTouches(name, jpath, fileAggHead(head), len(lines), len(lines),
+	files := sessionFileTouches(name, jpath, fileAggHead(head), len(lines), len(lines),
 		func(from, to int) []transcript.FileEdit { return claude.CollectFileEdits(lines[:to], from) },
-	); len(files) > 0 {
-		resp["files"] = files
+	)
+	// answers / tasks / files are the three WHOLE-TRANSCRIPT aggregates: recomputed on every poll,
+	// identical on nearly all of them, and the bulk of what a poll carries (measured on real
+	// transcripts: 21-53 file rows = 5.3-13.3 KiB raw, 0.9-2.6 KiB gzipped). While a turn runs the
+	// rest of the body moves each tick, so the Control Plane's conditional GET (etag.go) cannot
+	// help — the client instead sends the digest it already holds and an unchanged one is answered
+	// with aggSame and none of the three. Written out here rather than from the helper so the wire
+	// map still sees every key this route can emit (testdata/wiremap.golden).
+	resp["aggSig"] = aggDigest(answers, tasks, files)
+	if aggHeldIsCurrent(r, reset, resp["aggSig"].(string)) {
+		resp["aggSame"] = true
+	} else {
+		if len(answers) > 0 {
+			resp["answers"] = answers
+		}
+		if len(tasks) > 0 {
+			resp["tasks"] = tasks
+		}
+		if len(files) > 0 {
+			resp["files"] = files
+		}
 	}
 	// Prompts queued into the running turn (typed mid-run, not yet injected) so the
 	// mirror can badge them as queued like the terminal does. The queue only exists
