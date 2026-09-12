@@ -1530,3 +1530,22 @@ the positive control above, and `class_apply_error` is clear.
 the live stack through `cloudformation deploy --parameter-overrides`; `update.sh` and
 `dev-deploy.sh` read the live stack and keep them, but **rebuilding from the capture with
 `standup.sh` returns to `g6.xlarge` / `ON_DEMAND`.**
+
+## Appendix — ADR 0077 overrode this decision (2026-09-12)
+
+[ADR 0077](0077-engine-boxes-bought-by-cp.md) moves the purchase of the engine box from ECS
+Managed Instances to the Control Plane, which buys it with `CreateFleet(type=instant)` against a
+launch template and runs the service on the EC2 launch type. Nothing above is edited; the rows
+below are 0077's own "Which existing decisions this overrides" table, for the decisions of this
+ADR. What is NOT in the table is not overridden.
+
+| Decision | What changes | What does not |
+|---|---|---|
+| decision 5, "describe -> copy -> update" | **goes**; a rung is the override type set of one `CreateFleet` | the ladder; a stored choice wins |
+| decision 9, "IAM limited to two capacity providers" | **replaced** (0077 decision 10's table: `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets`, `iam:PassRole` on the engine instance role, `iam:CreateServiceLinkedRole`) | what cannot be scoped is fenced by tags |
+
+Decisions 1, 2, 3, 6, 7, 10 and 11 stand. What the rung application's disappearance takes with
+it is the whole class of failure this ADR's follow-ups were about: "declared" and "actual" cannot
+drift apart when the declaration IS the request, and a misspelled type is refused by the call
+rather than by a box that never arrives. `usdPerHour` stays display-only, but it is the EC2 price
+now — the 7.80% Managed Instances management fee measured here is gone with the providers.

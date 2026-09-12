@@ -750,3 +750,98 @@ the seam between the CP and CFN lanes. Four lanes:
 
 P2 (decisions 4 and 6) and P3 (the llm role) follow P1's hardware verdict and are not split
 further here.
+
+## Follow-up — what P1's CFN lane handed back to the text (2026-09-12, PR #575)
+
+The CFN lane implemented decision 11 as written (template, scripts, PARAMETERS, the appendices on
+0071 / 0074 / 0075). Nothing was deployed and nothing was measured; one AWS call was made,
+`validate-template`, which is a read. Four things the implementation says back to this text. **No
+decision above is edited** — this section is the record, in the shape of 0075's follow-ups.
+
+1. 🔴 **Retiring `<Role>UseLocalStorage` costs a measured cold start, and decision 11 does not say
+   so.** The removal list calls the eight parameters "a copy of the ladder", and seven of them are.
+   That one is not: it was the only way to ask for the **instance store** instead of an EBS data
+   volume, and turning it on was measured (2026-09-09, ADR 0071's own numbers) at S3 -> disk 1.4x,
+   disk -> VRAM **2.9x**, RunTask -> model loaded 527-586 s -> **275 s**, a model swap 276-282 s ->
+   **98.5 s**. The launch template this lane wrote does **not** mount the NVMe (open question 8 is
+   P1), so a start now runs both halves on EBS bandwidth. The parameter still had to go — there is
+   no Managed Instances provider left to ask — but the cost is real and is recorded in
+   PARAMETERS under `LlmStorageGiB`. **Open question 8 is not optional work; it is a regression to
+   close.**
+2. **Decision 10's `iam:PassRole` on `role/af-*-engine` is a convention the template does not
+   need.** 20-platform names the slot role by convention to avoid a circular stack import; the
+   engine instance role is created in 60-engines itself, so the statement uses
+   `!GetAtt EngineInstanceRole.Arn` — the same shape, one resource tighter. (The role is still
+   named `af-<stack>-engine`, which the convention would also have matched. `EngineTaskRole` is
+   `af-<stack>-engine-task` and would not have been.)
+3. **`teardown.sh` already terminated an engine box; what was missing was the words.** Decision 11
+   asks for a terminate "by tag `af-pool` + `af-role=engine-*`, the way it terminates slots".
+   `list_slots` filters on `af-pool` **alone** — the same one-filter shape review R3 found as a bug
+   in `sweepSlotOwnerTags` — so a CP-bought engine box is already in the list step 3 terminates.
+   Only a Managed Instances box was invisible there (an AWS-managed account, not enumerable), which
+   is why the step read "slots". The lane renamed the step, counted engine boxes separately and
+   said why; it did not add a second terminate pass.
+4. **The launch templates are created unconditionally**, as the capacity providers were. Decision
+   11 does not say, and `<Role>Enabled` would be the obvious condition — but `check-cfn-exports.py`
+   fails a template that can export an empty string, and the two `*LaunchTemplateId` Outputs are
+   exports. A launch template costs nothing while nothing launches from it.
+
+One more thing worth stating because a later reader will look for it: the **six harness scripts
+went both ways at once**. Decision 11 offers "move to the new names **or** mark them Managed
+Instances-era"; they were mechanically moved (task definition `EC2`, `run-task` with the launch
+type and `attribute:af-role == engine-<role>`) **and** gated with an `exit 2` at the top, because
+the move cannot be verified at $0 and every number in their headers is a Managed Instances
+measurement. Deleting the gate is part of re-measuring, not part of reading.
+
+### What P0 changed in this lane (2026-09-12, after PR #576)
+
+P0's verdicts landed while this lane's PR was open, and four of them are the CFN lane's to carry.
+What was pushed on top of the branch:
+
+1. **The migration is the `<Role>Enabled` round trip, and only that** (open question 1 is 🔴).
+   PARAMETERS carried both shapes with "delete the other when the answer lands"; the in-place
+   shape is deleted, the round trip keeps its measured 25 s + 48 s, and the `AlreadyExists`
+   message is quoted so the failure is recognisable if somebody tries it the other way round.
+   ✅ **And the Cloud Map name does not disappear during it** — the `AWS::ServiceDiscovery::Service`
+   is a separate resource with no condition, measured keeping the same registry ARN. Decision 11's
+   "the Cloud Map name is gone in between" is the one sentence of this ADR that P0 corrected, and
+   PARAMETERS now says so where an operator reads it.
+2. **`ssm:GetParameters` on `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*` is
+   in `CpIngestPolicy`, unconditionally.** Decision 10's conditional row is answered: the CALLER
+   of `CreateFleet` resolves `resolve:ssm:`, and without the grant the call fails top-level with
+   `SsmAccessDenied` naming neither action nor parameter. The two grants P0 proved unnecessary —
+   `ec2:DescribeLaunchTemplates(Versions)` and `ec2:CreateTags` (the request's `TagSpecifications`
+   merge with the template's) — were never added and are now recorded as "do not add".
+3. **The service-linked-role claim is weakened, not removed.** Decision 10's ⚠️ said the first
+   `CreateFleet` fails without `AWSServiceRoleForEC2Fleet`; P0 put three calls through without it.
+   `standup.sh` still creates it — cheap insurance, and a *launching* call on an account with
+   neither SLR was not measured — but the template comment, `standup.sh`, the README prerequisite
+   and PARAMETERS no longer assert a failure. `standup.sh`'s comment also records that a second
+   create answers `InvalidInput`, not `EntityAlreadyExists`, which is why the `|| true` cannot be
+   replaced by a code match.
+4. **Open question 8 is implemented, unverified.** Follow-up item 1 above called the loss of
+   `<Role>UseLocalStorage` a regression to close, and it is closed in the launch template rather
+   than left to P1's report: the user data mounts the first instance-store NVMe and puts **Docker's
+   data-root** on it, which carries the models because an anonymous `host` volume IS a Docker
+   volume — no task-definition change. An EBS-only type matches nothing and keeps the root volume;
+   the AMI's cached agent and pause images are copied across first; every step is chained so a
+   failure leaves Docker where it was. 🔴 **Not measured**: the first P1 run checks
+   `df /var/lib/docker` and `docker info | grep "Docker Root Dir"` on the box, because the symptom
+   of a silent failure here is only "the start is slow".
+
+Template size after all of it: **40,182 bytes** (was 36,816 in the first push; the wall is 51,200).
+
+### And one from the CP lane (PR #577): the budget's meaning and default
+
+`<Role>OfferBudgetSec` is the only contract-A field besides `launchTemplate` that this ADR moves,
+and the CP lane settled it: it bounds **the ECS registration wait for the box that was bought**,
+not a per-offer purchase clock — the purchase answers in the call — and the Control Plane's
+default is **300 s**, decision 1's number. So the template's `Default` is 300 on both roles, and
+the two `Description` lines say what it now bounds.
+
+🔴 **A capture from 0.19.0 carries `180`.** That is the old meaning's default, and left alone it
+would silently make the new ceiling shorter than the number the ADR chose. `standup.sh` drops
+**exactly 180** and lets the template's 300 stand, printing what it did; any other value is
+treated as an operator's choice and passed on. A stale default and a deliberate 180 cannot be
+told apart, which is the whole reason the rule is "the old default, and nothing else". The stub
+test pins both directions, each with its own positive control.

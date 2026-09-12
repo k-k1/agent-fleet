@@ -1357,3 +1357,25 @@ Once decisions 2 and 5 above are reflected in the text, change the status line t
 **"approved (P0 may start)" (reviewed 2026-09-07)**. Add to P0's definition of done: "the first
 request to a stopped engine returns an answer **within a single attempt**" — the one
 observation that verifies the replacement of decision 5.
+
+## Appendix — ADR 0077 overrode this decision (2026-09-12)
+
+[ADR 0077](0077-engine-boxes-bought-by-cp.md) moves the purchase of the engine box from ECS
+Managed Instances to the Control Plane, which buys it with `CreateFleet(type=instant)` against a
+launch template and runs the service on the EC2 launch type. Nothing above is edited; the rows
+below are 0077's own "Which existing decisions this overrides" table, for the decisions of this
+ADR. What is NOT in the table is not overridden.
+
+| Decision | What changes | What does not |
+|---|---|---|
+| decision 1, "GPUs are bought as ECS Managed Instances" | **the CP buys with EC2 Fleet**; the three objections to own EC2 dissolved as in 0077's Background table | "no task, no instance" (guaranteed by the CP in 0077 decision 5) / never on the slot pool |
+| decision 2, "one capacity provider per role" | **providers go**; one launch template per role | two roles never share an instance |
+| decision 7, `draining` | from "MI's drain out of our hands" to "the CP's terminate -> `terminated`" | the state set and the drain wait |
+
+Decision 5's wake-and-hold window and decision 8's engine table are inherited; the table's
+`capacityProvider` / `spotCapacityProvider` pair becomes one `launchTemplate` field, which is the
+seam between the template and the Control Plane. The three reasons this decision gave for
+Managed Instances were re-read on 2026-09-12 and are in 0077's Background: the AWS-maintained
+ECS-optimized GPU AMI resolves from an SSM public parameter, an engine never stops (so "EBS
+billed while stopped" has no state to bill), and keeping out of ADR 0045's sweep is done by tag
+and by one ECS attribute.
