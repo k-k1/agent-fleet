@@ -307,6 +307,15 @@ type Session struct {
 	// reads, multiplied by every session on a 4 s poll. Display only — nothing decides
 	// anything from this text.
 	LastSay string `json:"lastSay,omitempty"`
+	// TokenSpends is each recent REPLY's newly-consumed tokens (uncached input + newly-cached
+	// + output), oldest first, capped at the newest two dozen — the trend the overview card
+	// draws beside the context gauge (ADR 0078 decision 13). Empty for every kind but claude.
+	//
+	// One point per reply, not per transcript row: claude writes a reply's text and each of
+	// its tool calls as separate records, and the Console folds exactly that run into one
+	// block, so the two sides must fold it the same way or the card and the chat would draw
+	// different trends for one session. Display only.
+	TokenSpends []int `json:"tokenSpends,omitempty"`
 	// StopAfterTurnAt mirrors Meta.StopAfterTurnAt: the session is armed to stop itself at
 	// the end of the running turn (docs/log/85). The row has to say so, because the arm is
 	// usually set from inside the conversation (the MCP tool) where the user only sees prose

@@ -60,14 +60,17 @@ export function sessions(locale) {
       branch: "feat/checkout-validation",
       worktree: true,
       createdAt: ago(46),
-      // The agent's newest utterance, as the Agent folds it: one line, no more than 120 runes
-      // (ADR 0078 decision 12). claude only — the other kinds below carry none, which is what
-      // the overview card renders as "no such row".
+      // What the overview card reads off the transcript's tail (ADR 0078 decisions 12 and 13):
+      // one line of the newest utterance, folded and capped to 120 runes by the Agent, and one
+      // token-spend figure per recent reply for the card's trend. claude only — the other kinds
+      // below carry neither, which is what the card renders as "no such row".
       lastSay: L(
         locale,
         "空のカートと合計 0 円の 2 件を弾くところまで通りました。次は API 側の検証に移ります。",
         "Empty carts and zero totals are both rejected now. Moving on to the API-side checks.",
       ),
+      tokenSpends: [4200, 1800, 9100, 3400, 2600, 11800, 5200, 3100, 7400, 2200],
+      context: { read: 168000, create: 9400, fresh: 2100, model: "claude-opus-5" },
     },
     {
       name: "sc9lm3d",
