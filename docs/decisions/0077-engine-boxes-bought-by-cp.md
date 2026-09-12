@@ -750,3 +750,45 @@ the seam between the CP and CFN lanes. Four lanes:
 
 P2 (decisions 4 and 6) and P3 (the llm role) follow P1's hardware verdict and are not split
 further here.
+
+## Follow-up — what P1's CFN lane handed back to the text (2026-09-12, PR #575)
+
+The CFN lane implemented decision 11 as written (template, scripts, PARAMETERS, the appendices on
+0071 / 0074 / 0075). Nothing was deployed and nothing was measured; one AWS call was made,
+`validate-template`, which is a read. Four things the implementation says back to this text. **No
+decision above is edited** — this section is the record, in the shape of 0075's follow-ups.
+
+1. 🔴 **Retiring `<Role>UseLocalStorage` costs a measured cold start, and decision 11 does not say
+   so.** The removal list calls the eight parameters "a copy of the ladder", and seven of them are.
+   That one is not: it was the only way to ask for the **instance store** instead of an EBS data
+   volume, and turning it on was measured (2026-09-09, ADR 0071's own numbers) at S3 -> disk 1.4x,
+   disk -> VRAM **2.9x**, RunTask -> model loaded 527-586 s -> **275 s**, a model swap 276-282 s ->
+   **98.5 s**. The launch template this lane wrote does **not** mount the NVMe (open question 8 is
+   P1), so a start now runs both halves on EBS bandwidth. The parameter still had to go — there is
+   no Managed Instances provider left to ask — but the cost is real and is recorded in
+   PARAMETERS under `LlmStorageGiB`. **Open question 8 is not optional work; it is a regression to
+   close.**
+2. **Decision 10's `iam:PassRole` on `role/af-*-engine` is a convention the template does not
+   need.** 20-platform names the slot role by convention to avoid a circular stack import; the
+   engine instance role is created in 60-engines itself, so the statement uses
+   `!GetAtt EngineInstanceRole.Arn` — the same shape, one resource tighter. (The role is still
+   named `af-<stack>-engine`, which the convention would also have matched. `EngineTaskRole` is
+   `af-<stack>-engine-task` and would not have been.)
+3. **`teardown.sh` already terminated an engine box; what was missing was the words.** Decision 11
+   asks for a terminate "by tag `af-pool` + `af-role=engine-*`, the way it terminates slots".
+   `list_slots` filters on `af-pool` **alone** — the same one-filter shape review R3 found as a bug
+   in `sweepSlotOwnerTags` — so a CP-bought engine box is already in the list step 3 terminates.
+   Only a Managed Instances box was invisible there (an AWS-managed account, not enumerable), which
+   is why the step read "slots". The lane renamed the step, counted engine boxes separately and
+   said why; it did not add a second terminate pass.
+4. **The launch templates are created unconditionally**, as the capacity providers were. Decision
+   11 does not say, and `<Role>Enabled` would be the obvious condition — but `check-cfn-exports.py`
+   fails a template that can export an empty string, and the two `*LaunchTemplateId` Outputs are
+   exports. A launch template costs nothing while nothing launches from it.
+
+One more thing worth stating because a later reader will look for it: the **six harness scripts
+went both ways at once**. Decision 11 offers "move to the new names **or** mark them Managed
+Instances-era"; they were mechanically moved (task definition `EC2`, `run-task` with the launch
+type and `attribute:af-role == engine-<role>`) **and** gated with an `exit 2` at the top, because
+the move cannot be verified at $0 and every number in their headers is a Managed Instances
+measurement. Deleting the gate is part of re-measuring, not part of reading.
