@@ -226,12 +226,13 @@ func TestEngineAdminRowOmitsWhatItCannotAnswer(t *testing.T) {
 	at := time.Date(2026, 9, 8, 4, 3, 0, 0, time.UTC)
 	f := &fakeTTSECS{
 		svc:        &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1},
-		instances:  map[string]string{"arn:ci/i-08a9": "af-engines-image"},
+		instances:  map[string]string{"arn:ci/i-08a9": "engine-image"},
 		registered: at,
 	}
 	e := newTestImageEngine(t, "http://127.0.0.1:1", f)
 	e.settings = st
-	e.ecs.capacityProvider = "af-engines-image"
+	e.def.LaunchTemplate = "lt-image"
+	e.ecs.roleAttr = engineBoxRole(e.def)
 	e.demand = newEngineDemand(st, engineSettingsFor("image").demandAt, 5*time.Minute)
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
@@ -286,9 +287,9 @@ func TestEngineAdminRowOmitsWhatItCannotAnswer(t *testing.T) {
 		t.Errorf("stop_eta = %v while pinned on, want it absent", row["stop_eta"])
 	}
 
-	// The box's own clock, which is the one an operator means. It comes from ECS's
-	// registeredAt and NOT from `ec2 describe-instances`, whose unfiltered listing does not
-	// contain a Managed Instances box at all (ADR 0071, P1 の実測 2).
+	// The box's own clock, which is the one an operator means. It comes from the container
+	// instance's registeredAt — EC2 knows when the instance LAUNCHED, which is a different
+	// moment: the boot and the agent's registration sit between them.
 	box, ok := row["box"].(map[string]any)
 	if !ok {
 		t.Fatalf("box = %v, want the container instance", row["box"])

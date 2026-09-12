@@ -16,9 +16,16 @@ type fakeTTSECS struct {
 	svc      *ecstypes.Service // nil = not found
 	desired  []int32           // recorded UpdateService calls
 	describe int               // DescribeServices calls, for the TTL cache test
-	// instances are the cluster's container instances, keyed arn -> capacity provider.
-	// Only an engine that declares a capacity provider ever reads them (ADR 0071).
+	// instances are the cluster's container instances, keyed arn -> the `af-role` ATTRIBUTE the
+	// box registered itself with ("engine-llm"; "" is a workspace slot, which writes none).
+	// Only an engine that owns boxes ever reads them (ADR 0077 decision 3).
 	instances map[string]string
+	// deregistered records the container instances taken out of the cluster, which is the first
+	// half of a departure (ADR 0077 decision 5).
+	deregistered []string
+	// live answers `draining` the way the EC2 side does: is an instance of this role still in
+	// existence behind a stopped service. nil = nothing to ask, i.e. Fargate.
+	live func(context.Context) bool
 	// registered is the registeredAt the box reports, i.e. when it joined the cluster. Zero
 	// leaves it unset, which is the shape of a cluster that has no box at all.
 	registered time.Time
@@ -63,40 +70,49 @@ func (f *fakeTTSECS) DescribeContainerInstances(_ context.Context, in *ecs.Descr
 		if !f.registered.IsZero() {
 			ci.RegisteredAt = aws.Time(f.registered)
 		}
-		if cp := f.instances[arn]; cp != "" {
-			ci.CapacityProviderName = aws.String(cp)
+		ci.AgentConnected = true
+		ci.Attributes = []ecstypes.Attribute{
+			{Name: aws.String("ecs.availability-zone"), Value: aws.String("ap-northeast-1a")},
+		}
+		if role := f.instances[arn]; role != "" {
+			ci.Attributes = append(ci.Attributes, ecstypes.Attribute{
+				Name: aws.String(engineBoxRoleAttr), Value: aws.String(role),
+			})
 		}
 		if f.instanceType != "" {
-			ci.Attributes = []ecstypes.Attribute{
-				{Name: aws.String("ecs.availability-zone"), Value: aws.String("ap-northeast-1a")},
-				{Name: aws.String(engineBoxTypeAttr), Value: aws.String(f.instanceType)},
-			}
+			ci.Attributes = append(ci.Attributes, ecstypes.Attribute{
+				Name: aws.String(engineBoxTypeAttr), Value: aws.String(f.instanceType),
+			})
 		}
 		out.ContainerInstances = append(out.ContainerInstances, ci)
 	}
 	return out, nil
 }
 
+func (f *fakeTTSECS) DeregisterContainerInstance(_ context.Context, in *ecs.DeregisterContainerInstanceInput, _ ...func(*ecs.Options)) (*ecs.DeregisterContainerInstanceOutput, error) {
+	f.deregistered = append(f.deregistered, aws.ToString(in.ContainerInstance))
+	return &ecs.DeregisterContainerInstanceOutput{}, nil
+}
+
 // When the BOX started, which is the question `lastStart` cannot answer: that one is the
 // service's primary deployment timestamp and moves on a stack update or a replaced task
 // without a new box being bought. An operator looking at a $1.26/hour GPU means the box.
 //
-// ⚠️ The lookup goes through ECS and not through `ec2 describe-instances`. A Managed Instances
-// box does not appear in an unfiltered EC2 listing at all — measured on af-sandbox while the
-// task was RUNNING (ADR 0071, P1 の実測 2) — so an EC2-side implementation would report
-// "no box" for a GPU that is running and billing.
+// ⚠️ The registeredAt is the CLUSTER'S fact and there is nowhere else to read it: EC2 knows when
+// the instance launched, which is a different moment (the boot and the agent's registration sit
+// between them — 21 s measured, ADR 0045 decision 22).
 func TestEngineECSBoxReportsWhenTheInstanceStarted(t *testing.T) {
 	at := time.Date(2026, 9, 8, 4, 3, 0, 0, time.UTC)
 	f := &fakeTTSECS{
 		svc:        &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1},
-		instances:  map[string]string{"arn:ci/i-08a9": "af-engines-image"},
+		instances:  map[string]string{"arn:ci/i-08a9": "engine-image"},
 		registered: at,
 	}
-	eng := &engineECS{api: f, key: "image", cluster: "c", service: "image", capacityProvider: "af-engines-image"}
+	eng := &engineECS{api: f, key: "image", cluster: "c", service: "image", roleAttr: "engine-image"}
 
 	b, ok := eng.box(t.Context())
 	if !ok {
-		t.Fatal("no box found while one is registered under this engine's capacity provider")
+		t.Fatal("no box found while one is registered with this engine's af-role attribute")
 	}
 	if !b.since.Equal(at) || b.instanceID != "i-08a9" {
 		t.Errorf("box = %+v, want i-08a9 registered at %v", b, at)
@@ -112,7 +128,7 @@ func TestEngineECSBoxReportsWhenTheInstanceStarted(t *testing.T) {
 		t.Errorf("%d extra cluster walks inside the TTL, want 0", f.listCalls-before)
 	}
 
-	// A Fargate engine declares no capacity provider and must never pay for the lookup.
+	// A Fargate engine owns no box and must never pay for the lookup.
 	f2 := &fakeTTSECS{svc: f.svc, instances: f.instances, registered: at}
 	fargate := &engineECS{api: f2, key: "tts", cluster: "c", service: "voicevox"}
 	if _, ok := fargate.box(t.Context()); ok || f2.listCalls != 0 {
@@ -150,35 +166,50 @@ func TestTTSEngineECSState(t *testing.T) {
 	}
 }
 
-// A Managed Instances engine is "stopped" from the moment the task goes, and keeps billing
-// for the several minutes AWS then takes to terminate the box (measured 427-463 s on a GPU
-// box). The controller has to be able to see that: the idle window cannot be tuned against
-// a cost that is already spent, and a start that lands on a box still holding the model
-// file skips the whole S3 fetch (ADR 0071 decision 7). A Fargate engine declares no capacity
-// provider and must never pay for the lookup, let alone report the state.
-func TestEngineECSDrainingIsOnlyForManagedInstances(t *testing.T) {
+// An engine with a box of its own is "stopped" from the moment the task goes and keeps billing
+// until the instance is gone. The controller has to be able to see that: the idle window cannot
+// be tuned against a cost that is already spent, and a start that lands on a box still holding
+// the model file skips the whole S3 fetch (ADR 0071 decision 7).
+//
+// 🔴 The question is EC2's now (ADR 0077 decision 5). Departure deregisters the container
+// instance and then terminates the instance, so between those two steps ECS knows nothing about
+// a box that is still costing money — reading the cluster would answer `stopped` for the whole
+// of the window this state exists to name.
+func TestEngineECSDrainingAsksEC2NotTheCluster(t *testing.T) {
 	stopped := func() *ecstypes.Service {
 		return &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0, RunningCount: 0}
 	}
-	f := &fakeTTSECS{svc: stopped(), instances: map[string]string{"arn:ci/i-1": "af-engines-llm"}}
-	eng := &engineECS{api: f, key: "llm", cluster: "c", service: "llm", capacityProvider: "af-engines-llm"}
+	f := &fakeTTSECS{svc: stopped()}
+	eng := &engineECS{api: f, key: "llm", cluster: "c", service: "llm", roleAttr: "engine-llm",
+		boxLive: func(context.Context) bool { return true }}
 	v, err := eng.view(t.Context())
 	if err != nil || v.state != "draining" {
 		t.Fatalf("state=%q err=%v, want draining", v.state, err)
 	}
 
-	// Somebody else's box on the same cluster (a workspace slot) is not this engine draining.
-	f = &fakeTTSECS{svc: stopped(), instances: map[string]string{"arn:ci/i-2": ""}}
-	eng = &engineECS{api: f, key: "llm", cluster: "c", service: "llm", capacityProvider: "af-engines-llm"}
+	// The box is gone: the same service reads as plainly stopped. Positive control for the line
+	// above — an implementation that always said `draining` would pass it.
+	f = &fakeTTSECS{svc: stopped()}
+	eng = &engineECS{api: f, key: "llm", cluster: "c", service: "llm", roleAttr: "engine-llm",
+		boxLive: func(context.Context) bool { return false }}
 	if v, _ := eng.view(t.Context()); v.state != "stopped" {
-		t.Fatalf("state=%q, want stopped — a pool slot is not an engine box", v.state)
+		t.Fatalf("state=%q, want stopped once EC2 says the box is gone", v.state)
 	}
 
-	// Fargate: no provider declared, so the cluster is never walked at all.
-	f = &fakeTTSECS{svc: stopped(), instances: map[string]string{"arn:ci/i-1": "af-engines-llm"}}
-	eng = &engineECS{api: f, key: "tts", cluster: "c", service: "voicevox"}
+	// A container instance is NOT the answer: this cluster holds an engine box of this very
+	// role, and with the instance already terminated the state is stopped.
+	f = &fakeTTSECS{svc: stopped(), instances: map[string]string{"arn:ci/i-1": "engine-llm"}}
+	eng = &engineECS{api: f, key: "llm", cluster: "c", service: "llm", roleAttr: "engine-llm",
+		boxLive: func(context.Context) bool { return false }}
 	if v, _ := eng.view(t.Context()); v.state != "stopped" {
-		t.Fatalf("state=%q, want stopped — a Fargate engine has no box to drain", v.state)
+		t.Fatalf("state=%q, want stopped — a registered ghost is not a billing box", v.state)
+	}
+
+	// Fargate: nothing to ask at all.
+	f = &fakeTTSECS{svc: stopped(), instances: map[string]string{"arn:ci/i-1": "engine-llm"}}
+	eng = &engineECS{api: f, key: "tts", cluster: "c", service: "voicevox"}
+	if v, _ := eng.view(t.Context()); v.state != "stopped" || f.listCalls != 0 {
+		t.Fatalf("state=%q calls=%d, want stopped with no lookup — a Fargate engine has no box", v.state, f.listCalls)
 	}
 }
 
@@ -290,15 +321,14 @@ func TestTTSEngineFromEnvUnset(t *testing.T) {
 // box of the previous instance class to leave, so reading it from the wrong place — or reading
 // nothing and calling that a match — buys the old card for another cold start.
 //
-// ECS reports it as an ATTRIBUTE among others, never as a field, and a Managed Instances box is
-// absent from `ec2 describe-instances` altogether: this is the only source there is.
+// ECS reports it as an ATTRIBUTE among others, never as a field.
 func TestEngineECSBoxReadsTheInstanceType(t *testing.T) {
 	f := &fakeTTSECS{
 		svc:          &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1},
-		instances:    map[string]string{"arn:ci/i-08a9": "af-engines-llm"},
+		instances:    map[string]string{"arn:ci/i-08a9": "engine-llm"},
 		instanceType: "g6e.2xlarge",
 	}
-	eng := &engineECS{api: f, key: "llm", cluster: "c", service: "llm", capacityProvider: "af-engines-llm"}
+	eng := &engineECS{api: f, key: "llm", cluster: "c", service: "llm", roleAttr: "engine-llm"}
 	b, ok := eng.box(t.Context())
 	if !ok {
 		t.Fatal("no box found")
@@ -313,9 +343,9 @@ func TestEngineECSBoxReadsTheInstanceType(t *testing.T) {
 	// treat as "it matches the chosen class".
 	f2 := &fakeTTSECS{
 		svc:       &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1},
-		instances: map[string]string{"arn:ci/i-08a9": "af-engines-llm"},
+		instances: map[string]string{"arn:ci/i-08a9": "engine-llm"},
 	}
-	eng2 := &engineECS{api: f2, key: "llm", cluster: "c", service: "llm", capacityProvider: "af-engines-llm"}
+	eng2 := &engineECS{api: f2, key: "llm", cluster: "c", service: "llm", roleAttr: "engine-llm"}
 	if b2, ok := eng2.box(t.Context()); !ok || b2.instanceType != "" {
 		t.Fatalf("box = %+v %v, want a box with no type rather than an invented one", b2, ok)
 	}

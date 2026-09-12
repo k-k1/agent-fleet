@@ -2576,17 +2576,49 @@ func (e *ecsEC2Runtime) occupiedInstances(ctx context.Context) (map[string]bool,
 // isPoolContainerInstance reports whether a container instance belongs to the workspace
 // slot pool rather than to something else sharing the cluster.
 //
-// The pool's boxes are launched by the CP from a launch template and register themselves
-// through user-data, so ECS reports NO capacity provider for them. An engine box (ADR 0071
-// decision 1: ECS Managed Instances, added to the same cluster as an extra capacity
-// provider) always carries its provider's name. Every container-instance walk here is
-// written for pool members — "ACTIVE and agentConnected means a slot is ready", "no ECS
-// task means the box is idle", "the EC2 instance is gone so deregister" — and an engine box
-// satisfies none of those premises: it is not a slot, its idleness is the engine
-// controller's business, and MI owns its lifecycle. So the whole cluster walk is filtered
-// here rather than at each caller (ADR 0071 review R7(a)).
+// Every container-instance walk here is written for pool members — "ACTIVE and agentConnected
+// means a slot is ready", "no ECS task means the box is idle", "the EC2 instance is gone so
+// deregister" — and an engine box satisfies none of those premises: it is not a slot, and its
+// idleness and its lifetime are the engine controller's business. So the whole cluster walk is
+// filtered here rather than at each caller (ADR 0071 review R7(a)).
+//
+// 🔴 BOTH halves are needed, and each excludes a different kind of engine box (ADR 0077
+// decision 3):
+//
+//   - an ADR 0071 Managed Instances engine box carries its capacity provider's NAME and no
+//     attribute. The pool's own boxes are launched by the CP from a launch template and
+//     register themselves through user-data, so ECS reports no provider for them;
+//   - a box the CP bought with EC2 Fleet (ADR 0077) also has an EMPTY provider name — which is
+//     exactly why the provider test alone collapses — and is told apart by the `af-role`
+//     attribute its user-data writes: `engine-llm`, `engine-image`. A slot writes none, and an
+//     old slot that predates the attribute writes none either, so "absent" has to mean "slot".
+//
+// Dropping either half readmits one of the two. A three-kind test pins it.
 func isPoolContainerInstance(ci ecstypes.ContainerInstance) bool {
-	return strings.TrimSpace(aws.ToString(ci.CapacityProviderName)) == ""
+	if strings.TrimSpace(aws.ToString(ci.CapacityProviderName)) != "" {
+		return false
+	}
+	switch containerInstanceAttr(ci, EC2TagRole) {
+	case "", ec2RoleSlot:
+		return true
+	default:
+		return false
+	}
+}
+
+// containerInstanceAttr reads one ECS container-instance attribute, "" when it is absent.
+//
+// The attribute is written by the box itself, through `ECS_INSTANCE_ATTRIBUTES` in
+// /etc/ecs/ecs.config — the same file a slot's user-data writes `ECS_CLUSTER` into — and it
+// carries the SAME WORD as the EC2 tag (af-role) on purpose: one vocabulary, so that "whose box
+// is this" has one answer whether it is asked of EC2 or of ECS.
+func containerInstanceAttr(ci ecstypes.ContainerInstance, name string) string {
+	for _, at := range ci.Attributes {
+		if aws.ToString(at.Name) == name {
+			return strings.TrimSpace(aws.ToString(at.Value))
+		}
+	}
+	return ""
 }
 
 // registeredSlots is the set of EC2 instance ids the cluster currently accepts tasks
@@ -4651,6 +4683,13 @@ func (f *ecsEC2Factory) sweepSlotOwnerTags(ctx context.Context, homes []ec2types
 	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(EC2TagPool, f.pool.pool),
+			// 🔴 The ROLE, which the other five EC2-side walks have always paired with af-pool
+			// and this one did not (ADR 0077 review R3). Without it this sweep walks every
+			// instance in the pool — including an engine box, which carries af-pool too — and
+			// writes or strips af-membership / af-tenant on it, billing somebody's hours to a
+			// GPU they never had. Quarantined boxes stay in: they can still hold a home's
+			// owner tags, and the repair is exactly what this exists for.
+			{Name: aws.String("tag:" + EC2TagRole), Values: []string{ec2RoleSlot, ec2RoleQuarantined}},
 			// A terminated box still answers DescribeInstances for a while and cannot be
 			// tagged; excluding it keeps the log free of failures nobody can act on.
 			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},

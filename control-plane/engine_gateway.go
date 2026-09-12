@@ -869,11 +869,11 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 	// Not an error. The caller is a wait loop that polls this, so "not yet" means it comes back
 	// — and the request ends in the retryable `503 engine_waking` the provider already knows
 	// how to answer, rather than in a failure that names a class change nobody asked about.
-	if e.offers.isSettling() {
-		// The strategy for this start is written and the desired count is waiting for the
-		// deployment it replaced to go (ADR 0075). The controller finishes it; asking the gate
-		// again here would re-choose the offer and re-write its rung on every poll of this wait
-		// loop, which is every three seconds for as long as the request is held.
+	if e.offers.startInFlight() {
+		// The box for this start is bought and is joining the cluster (ADR 0077 decision 2). The
+		// controller finishes it; asking the gate again here would begin the walk again on every
+		// poll of this wait loop, which is every three seconds for as long as the request is
+		// held — and each lap of it would buy a GPU.
 		return nil
 	}
 	if ok, why := e.startGate(ctx); !ok {
@@ -881,15 +881,15 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 		return nil
 	}
 	// Through the engine's own start, like the other two: the gate above has just chosen an
-	// offer, and this is where it is written to the service along with the desired count (ADR
-	// 0075 decision 4 (a)). Moving the count alone here would start the box on whatever provider
-	// the service was last pointed at.
+	// offer, and this is where the box is bought and — once it has registered — the desired
+	// count written (ADR 0077 decisions 1 and 2). Moving the count alone here would ask for a
+	// task on a cluster with no box in it.
 	if err := e.startEngine(ctx); err != nil {
-		if errors.Is(err, errEngineStrategySettling) {
-			// Half done and not an error: the strategy is written, the desired count follows on
-			// the controller's next tick. The caller is a wait loop, so "not yet" is an answer it
+		if errors.Is(err, errEngineBoxRegistering) {
+			// Half done and not an error: the box is bought and the desired count follows on the
+			// controller's next tick. The caller is a wait loop, so "not yet" is an answer it
 			// already knows how to hold — the same shape as the start gate's refusal above.
-			log.Printf("%s: a request is waiting; the capacity provider strategy was written first", e.ecs.logKey())
+			log.Printf("%s: a request is waiting; its box is bought and registering", e.ecs.logKey())
 			return nil
 		}
 		return fmt.Errorf("could not start the engine: %w", err)

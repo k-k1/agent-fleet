@@ -7,29 +7,26 @@ package main
 // made the MODEL editable from the Console, which left the two halves out of step — a 23.8 GB
 // checkpoint can be taken in with three clicks and lands on a 24 GB card that cannot hold it.
 //
-// So the box becomes a choice from a LADDER the operator declares (decision 1). Three
-// properties are worth keeping in mind when editing this file:
+// So the box becomes a choice from a LADDER the operator declares (decision 1), which ADR 0075
+// turned into a list of OFFERS and ADR 0077 made the CP buy directly. Three properties are worth
+// keeping in mind when editing this file:
 //
 //   - the CP asks nobody what a rung means. Neither EC2 nor the Pricing API is called; the
 //     numbers are the operator's, exactly as the workspace slot ladder's are (ADR 0045
 //     decision 21). A rung nobody declared does not exist;
-//   - a change reaches the NEXT box only ("These changes only apply to new Amazon ECS Managed
-//     Instances", the API's own words), which is why a switch is stop → wait for the box to
-//     leave → start rather than an update;
+//   - a change reaches the NEXT box only, which is why a switch is stop → wait for the box to
+//     leave → start rather than an update. Under ADR 0071 that was the capacity provider's own
+//     rule ("These changes only apply to new Amazon ECS Managed Instances"); under ADR 0077 it
+//     is simply what an instance is;
 //   - with no ladder declared, nothing here calls AWS at all. A deployment that never
 //     configures this must not start logging AccessDenied for a feature it does not use.
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ecs"
-	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -37,9 +34,10 @@ import (
 // engineClass is one rung: which boxes this role may buy, and how much VRAM the operator says
 // they have.
 //
-// VramMiB does two jobs on purpose (ADR 0074 decision 1). It is the
-// `AcceleratorTotalMemoryMiB.Min` handed to the capacity provider — i.e. the filter that
-// decides which cards qualify — and it is what a model's demand is compared against. It is
+// VramMiB does two jobs on purpose (ADR 0074 decision 1). It is the filter that decides which
+// cards qualify — under ADR 0071 as the capacity provider's `AcceleratorTotalMemoryMiB.Min`, and
+// under ADR 0077 as the operator's own declaration, since a purchase names the instance types
+// outright — and it is what a model's demand is compared against. It is
 // the CARD'S PHYSICAL SIZE, read off the hardware (22000 for an L4, which reports
 // `Total VRAM 22563 MB`) rather than a placement filter or a shaded-down cap. Measured
 // 2026-09-11: a demand that includes the KV cache puts a 30B at 32k context at 20,712 MiB,
@@ -59,11 +57,15 @@ type engineClass struct {
 	// UsdPerHour is what the operator says an hour of this rung costs. 0 = undeclared.
 	//
 	// ⚠️ ADR 0075 decision 1 turned the way it is written into a convention: it is the DEAREST
-	// type the offer could buy, inclusive of the Managed Instances fee (measured 7.80%). A row
-	// widened to three types has a price RANGE, not a price — g6.xlarge at $0.58 and g6e.xlarge
-	// at $1.36 — and a figure written from the cheap end would make the number useless for the
-	// comparison it exists for. Still display-only: nothing computes with it, and the CP does not
-	// order offers by it.
+	// type the offer could buy. A row widened to three types has a price RANGE, not a price —
+	// g6.xlarge at $0.58 and g6e.xlarge at $1.36 — and a figure written from the cheap end would
+	// make the number useless for the comparison it exists for. Still display-only: nothing
+	// computes with it, and the CP does not order offers by it.
+	//
+	// 🔴 It is the EC2 PRICE ITSELF (ADR 0077 decision 8). Under ADR 0071 the box came from
+	// Managed Instances and the convention included its 7.80% management fee (measured); the CP
+	// buys the instance directly now, so that fee is not charged and a figure carrying it would
+	// overstate every offer. Writing the Cost Explorer figure stays the rule.
 	UsdPerHour float64
 	// Buy is the purchase option this offer asks for: "od" or "spot" (ADR 0075 decision 1).
 	// Empty means on-demand — which is what makes an ADR 0074 ladder readable unchanged as an
@@ -71,9 +73,9 @@ type engineClass struct {
 	Buy string
 }
 
-// The two purchase options. They are the operator's vocabulary in the engine table AND the key
-// that picks one of the role's two capacity providers (decision 3), so the strings are load
-// bearing in two places at once.
+// The two purchase options. They are the operator's vocabulary in the engine table AND what the
+// CP writes into `DefaultTargetCapacityType` (ADR 0077 decision 1), so the strings are load
+// bearing in two places at once — and the second of them is on the box, as `af-engine-buy`.
 const (
 	engineBuyOnDemand = "od"
 	engineBuySpot     = "spot"
@@ -170,10 +172,10 @@ func parseEngineClasses(spec string) []engineClass {
 				log.Printf("engines: instance class %s: ignoring the price %q", c.ID, parts[6])
 			}
 		}
-		// The purchase option, unlike the price, IS worth dropping a row over. It decides which
-		// of the two capacity providers the box is bought from, so a value nobody recognises
-		// cannot be defaulted: reading an unknown word as `od` would buy on-demand for an
-		// operator who wrote `sport` meaning Spot, and the bill is the only place that shows.
+		// The purchase option, unlike the price, IS worth dropping a row over. It decides how the
+		// box is bought, so a value nobody recognises cannot be defaulted: reading an unknown
+		// word as `od` would buy on-demand for an operator who wrote `sport` meaning Spot, and
+		// the bill is the only place that shows.
 		if len(parts) > 7 {
 			switch v := strings.ToLower(strings.TrimSpace(parts[7])); v {
 			case "", engineBuyOnDemand:
@@ -341,158 +343,6 @@ func engineClassFits(c engineClass, needMiB int) bool {
 	return c.VramMiB <= 0 || needMiB <= 0 || needMiB <= c.VramMiB
 }
 
-// engineCapacityAPI is the narrow ECS port for reading and re-declaring a Managed Instances
-// capacity provider, so a test can answer with a provider of its own.
-type engineCapacityAPI interface {
-	DescribeCapacityProviders(context.Context, *ecs.DescribeCapacityProvidersInput, ...func(*ecs.Options)) (*ecs.DescribeCapacityProvidersOutput, error)
-	UpdateCapacityProvider(context.Context, *ecs.UpdateCapacityProviderInput, ...func(*ecs.Options)) (*ecs.UpdateCapacityProviderOutput, error)
-}
-
-// applyEngineClass writes the rung into the role's capacity provider.
-//
-// A read-modify-write, and the read is not an optimisation (ADR 0074 decision 5):
-// `UpdateCapacityProvider` takes `InfrastructureRoleArn` and `InstanceLaunchTemplate` as
-// REQUIRED members, so the only way to change four numbers is to hand back everything else
-// unchanged. The CP therefore holds no design for the box — it carries the stack's design
-// across one call and edits four fields of it.
-//
-// It is idempotent by construction: writing the same rung twice sends the same values, buys
-// nothing and moves no desired count. That is what makes it safe to call again just before
-// every start, which is how a CloudFormation update that reverted the provider is undone
-// before the next box is bought.
-func applyEngineClass(ctx context.Context, api engineCapacityAPI, cluster, provider string, c engineClass) error {
-	if api == nil || strings.TrimSpace(provider) == "" {
-		return fmt.Errorf("no capacity provider to update")
-	}
-	// 🔴 NAMES ONLY. `DescribeCapacityProviders` refuses a request that carries both a cluster
-	// and a list of names ("Cannot specify both capacity providers and cluster in the same
-	// request", InvalidParameterException, measured on the deployment — ADR 0074 P1). Neither
-	// the API reference nor the SDK's own comment says so, and every unit test passed because a
-	// fake accepts anything. The cluster is checked below, on the answer, instead.
-	out, err := api.DescribeCapacityProviders(ctx, &ecs.DescribeCapacityProvidersInput{
-		CapacityProviders: []string{provider},
-	})
-	if err != nil {
-		return fmt.Errorf("describing the capacity provider %s: %w", provider, err)
-	}
-	var cur *ecstypes.CapacityProvider
-	for i := range out.CapacityProviders {
-		if aws.ToString(out.CapacityProviders[i].Name) == provider {
-			cur = &out.CapacityProviders[i]
-			break
-		}
-	}
-	if cur == nil || cur.ManagedInstancesProvider == nil {
-		// A Fargate or Auto Scaling provider has no instance requirements to move. Refusing
-		// beats writing an MI configuration onto something that is not one.
-		return fmt.Errorf("capacity provider %s is not a Managed Instances provider", provider)
-	}
-	// The name was asked for without a cluster, so the answer's own cluster is what says this is
-	// the provider this engine runs on. A name that resolved somewhere else is not written to.
-	if got := aws.ToString(cur.Cluster); cluster != "" && got != "" && !sameECSCluster(got, cluster) {
-		return fmt.Errorf("capacity provider %s belongs to cluster %s, not %s", provider, got, cluster)
-	}
-	mi := cur.ManagedInstancesProvider
-	tpl := mi.InstanceLaunchTemplate
-	if tpl == nil {
-		return fmt.Errorf("capacity provider %s declares no launch template", provider)
-	}
-	upd := instanceLaunchTemplateUpdate(tpl)
-	upd.InstanceRequirements = engineClassRequirements(tpl.InstanceRequirements, c)
-	_, err = api.UpdateCapacityProvider(ctx, &ecs.UpdateCapacityProviderInput{
-		Name:    aws.String(provider),
-		Cluster: aws.String(cluster),
-		ManagedInstancesProvider: &ecstypes.UpdateManagedInstancesProviderConfiguration{
-			InfrastructureRoleArn:      mi.InfrastructureRoleArn,
-			InstanceLaunchTemplate:     upd,
-			AutoRepairConfiguration:    mi.AutoRepairConfiguration,
-			InfrastructureOptimization: mi.InfrastructureOptimization,
-			PropagateTags:              mi.PropagateTags,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("updating the capacity provider %s: %w", provider, err)
-	}
-	return nil
-}
-
-// sameECSCluster compares two cluster references that may be a name or an ARN. ECS answers with
-// whichever form it likes, and the CP is configured with a name.
-func sameECSCluster(a, b string) bool {
-	name := func(s string) string {
-		if i := strings.LastIndex(s, "/"); i >= 0 {
-			return s[i+1:]
-		}
-		return s
-	}
-	return name(a) == name(b)
-}
-
-// instanceLaunchTemplateUpdate carries the launch template ECS returned into the shape the
-// update takes. Every field is written out by hand, and engine_class_copy_test.go walks both
-// structs by reflection so that a field the SDK grows fails a test here rather than
-// disappearing from a live capacity provider.
-//
-// ⚠️ TWO fields of the read type have NO counterpart in the update type and therefore cannot
-// be carried: `CapacityOptionType` (ON_DEMAND / SPOT) and `FipsEnabled`. ECS is not documented
-// either way, but both are now measured (ADR 0074, "Follow-up", 2026-09-10):
-//
-//   - `CapacityOptionType` IS preserved across an update. Measured against a provider created
-//     with the non-default `SPOT`, which survived two rung switches while the requirements
-//     fields moved as intended. (P1 had only ever seen the default `ON_DEMAND`, which cannot
-//     tell "preserved" apart from "reset to the default".)
-//   - `FipsEnabled` cannot be set at all in ap-northeast-1 — CreateCapacityProvider answers
-//     `Managed Instances Provider does not support FIPS in this region`. Deployments in other
-//     regions have not been measured.
-//
-// The reflection test below stays regardless: it is the guard for a field the SDK grows later.
-func instanceLaunchTemplateUpdate(in *ecstypes.InstanceLaunchTemplate) *ecstypes.InstanceLaunchTemplateUpdate {
-	if in == nil {
-		return &ecstypes.InstanceLaunchTemplateUpdate{}
-	}
-	return &ecstypes.InstanceLaunchTemplateUpdate{
-		CapacityReservations:            in.CapacityReservations,
-		Ec2InstanceProfileArn:           in.Ec2InstanceProfileArn,
-		InstanceMetadataTagsPropagation: in.InstanceMetadataTagsPropagation,
-		InstanceRequirements:            in.InstanceRequirements,
-		LocalStorageConfiguration:       in.LocalStorageConfiguration,
-		Monitoring:                      in.Monitoring,
-		NetworkConfiguration:            in.NetworkConfiguration,
-		StorageConfiguration:            in.StorageConfiguration,
-	}
-}
-
-// engineClassRequirements is the rung applied to the requirements ECS returned: four fields
-// replaced, every other one kept.
-//
-// Keeping the rest is the point. `BurstablePerformance: excluded`, the accelerator manufacturer
-// and count, the excluded types — none of them appear on this screen, and a rung change that
-// dropped one would not fail: it would buy a slightly different box, once, at some future cold
-// start.
-func engineClassRequirements(cur *ecstypes.InstanceRequirementsRequest, c engineClass) *ecstypes.InstanceRequirementsRequest {
-	out := &ecstypes.InstanceRequirementsRequest{}
-	if cur != nil {
-		v := *cur
-		out = &v
-	}
-	out.AllowedInstanceTypes = append([]string(nil), c.Types...)
-	out.VCpuCount = &ecstypes.VCpuCountRangeRequest{Min: aws.Int32(c.VCpuMin), Max: aws.Int32(c.VCpuMax)}
-	out.MemoryMiB = &ecstypes.MemoryMiBRequest{Min: aws.Int32(c.MemMinMiB), Max: aws.Int32(c.MemMaxMiB)}
-	// The VRAM floor is only expressible when the role asks for an accelerator at all: ECS
-	// refuses AcceleratorTotalMemoryMiB without the accelerator fields (measured, ADR 0071),
-	// and a CPU-only test engine has none. A rung declaring 0 clears it rather than asking for
-	// zero VRAM, which would be a filter no instance passes.
-	switch {
-	case c.VramMiB <= 0:
-		out.AcceleratorTotalMemoryMiB = nil
-	case len(out.AcceleratorTypes) == 0 && len(out.AcceleratorManufacturers) == 0 && out.AcceleratorCount == nil:
-		out.AcceleratorTotalMemoryMiB = nil
-	default:
-		out.AcceleratorTotalMemoryMiB = &ecstypes.AcceleratorTotalMemoryMiBRequest{Min: aws.Int32(int32(c.VramMiB))}
-	}
-	return out
-}
-
 // engineClassSettingKey names the row holding the rung an administrator chose. Separate from
 // engineSettings' three (mode, modeAt, demandAt) because those are the controller's and this is
 // not: the VOICEVOX engine shares that struct and has no ladder.
@@ -503,9 +353,10 @@ func engineClassSettingKey(key string) string { return "engine_" + key + "_class
 //
 // The wait itself is decision 4: a draining box and a new one exceed the G-family vCPU quota on
 // a deployment that has 8 of them, and the failure is a placement that silently never happens.
-// The BOUND is here because the wait's end condition belongs to AWS — `scaleInAfter: -1` means
-// "never tidy up", and an unbounded gate would turn that into an engine that can never start
-// again, with a log line as the only evidence. Measured drain: 427-477 s, about 8 minutes from
+// The BOUND is here because the previous box's end was AWS's to decide — `scaleInAfter: -1` meant
+// "never tidy up", and an unbounded gate turned that into an engine that could never start again.
+// ADR 0077 decision 5 gives the terminate to the CP, so the trap is gone and the bound is now
+// belt and braces. Measured drain under Managed Instances: 427-477 s, about 8 minutes from
 // desired 0 to the instance being gone, so 20 minutes waits out a slow one and still gives up.
 const engineClassSwapWaitMax = 20 * time.Minute
 
@@ -541,46 +392,18 @@ func (e *engineRuntimeState) setClasses(next []engineClass) bool {
 	return true
 }
 
-// providerName is the capacity provider this engine's rungs are written to and whose
-// container instances count as its box — the live value, not the one the process started
-// with. engineECS holds the single copy: "who we apply a rung to" and "whose boxes are ours"
-// must never be able to disagree, and they are two reads of one field.
-func (e *engineRuntimeState) providerName() string {
-	if e == nil || e.ecs == nil {
-		return ""
-	}
-	return e.ecs.provider()
-}
-
-// providerForOffer is the capacity provider one offer is bought from (ADR 0075 decision 3).
-func (e *engineRuntimeState) providerForOffer(c engineClass) string {
-	if e == nil || e.ecs == nil {
-		return ""
-	}
-	return e.ecs.providerFor(c.buy())
-}
-
-// setCapacityProviders takes a renamed capacity provider PAIR live, reporting whether it changed.
+// setLaunchTemplate takes a replaced launch template live, reporting whether it changed.
 //
-// The names are destination strings and match strings. They key nothing this process holds —
-// not the demand counter, not the warm model, not the controller — so unlike the rest of a
-// table row it can be swapped under a running engine (ADR 0074; #536 measured what happens
-// otherwise: the rung apply went to the name that no longer existed, `box` matched nothing,
-// and the panel reported a card the engine was not on).
-//
-// 🔴 The rung this process last applied is forgotten with it. It was written to the OLD
-// provider, so the new one holds whatever CloudFormation declared; keeping the note would let
-// startGate read a failed apply as "already applied by this process" and start the engine on
-// an unconfigured card — exactly the silent landing decision 4 exists to prevent. A start
-// re-applies the rung idempotently (startGate step 2), so forgetting costs one API call.
-func (e *engineRuntimeState) setCapacityProviders(onDemand, spot string) bool {
-	if e == nil || e.ecs == nil || !e.ecs.setProviders(strings.TrimSpace(onDemand), strings.TrimSpace(spot)) {
+// It travels the way the capacity provider's name used to (ADR 0074; #536 measured what happens
+// otherwise — the CP kept addressing the provider a replacement had renamed, matched no box and
+// showed a card the engine was not on). It is a destination string and nothing else: it keys
+// nothing this process holds, no object was built around it, and the next purchase simply goes to
+// the new one.
+func (e *engineRuntimeState) setLaunchTemplate(ref string) bool {
+	if e == nil || e.fleet == nil {
 		return false
 	}
-	e.appliedMu.Lock()
-	e.appliedClass, e.classApplyErr = "", ""
-	e.appliedMu.Unlock()
-	return true
+	return e.fleet.setTemplate(ref)
 }
 
 // engineClassesEqual compares two ladders as DECLARATIONS: same rungs, same order, same
@@ -652,65 +475,6 @@ func (e *engineRuntimeState) defaultClass() (engineClass, bool) {
 	return list[0], true
 }
 
-// lastAppliedClass is the rung this process last wrote to the capacity provider.
-func (e *engineRuntimeState) lastAppliedClass() string {
-	e.appliedMu.Lock()
-	defer e.appliedMu.Unlock()
-	return e.appliedClass
-}
-
-func (e *engineRuntimeState) noteAppliedClass(id string) {
-	e.appliedMu.Lock()
-	e.appliedClass = id
-	e.classApplyErr = ""
-	e.appliedMu.Unlock()
-}
-
-// classApplyError is why the last attempt to write the rung to the capacity provider failed,
-// "" when the last one succeeded or when this process has not tried.
-//
-// 🔴 The panel needs this because the ORDER in putClass is deliberate: the choice is stored
-// first, so a failed apply leaves the stored rung already changed and the picker showing the
-// rung nobody managed to apply. Selecting it again is then "no change" and the Console sends
-// nothing, which used to leave moving to another rung and back as the only way to retry
-// (ADR 0074, 直さなかったが分かっていること). Stated here, the panel can offer the retry directly.
-func (e *engineRuntimeState) classApplyError() string {
-	e.appliedMu.Lock()
-	defer e.appliedMu.Unlock()
-	return e.classApplyErr
-}
-
-func (e *engineRuntimeState) noteClassApplyError(err error) {
-	e.appliedMu.Lock()
-	e.classApplyErr = err.Error()
-	e.appliedMu.Unlock()
-}
-
-// applyClass writes the selected rung to the capacity provider THE OFFER IS BOUGHT FROM.
-// Idempotent, and cheap enough to call before every start: ECS API calls are not billed, and
-// re-sending the same requirements buys no box and moves no desired count.
-//
-// 🔴 Which of the role's two providers it lands on is the offer's own purchase option (ADR 0075
-// decision 3), and it is deliberately the ONLY provider written: the untouched one keeps whatever
-// CloudFormation declared, which is what makes "the rung reached the provider we are about to buy
-// from" checkable on the deployment (P0 live test 6).
-//
-// Both outcomes are recorded, not just the rung: every caller that could report the failure to
-// somebody goes through here, and a retry has to be able to clear the note it left.
-func (e *engineRuntimeState) applyClass(ctx context.Context, c engineClass) error {
-	if e.capacity == nil {
-		err := fmt.Errorf("no ECS client for %s", e.def.Key)
-		e.noteClassApplyError(err)
-		return err
-	}
-	if err := applyEngineClass(ctx, e.capacity, e.cluster, e.providerForOffer(c), c); err != nil {
-		e.noteClassApplyError(err)
-		return err
-	}
-	e.noteAppliedClass(c.ID)
-	return nil
-}
-
 // engineClassHasType reports whether a running box belongs to this rung.
 func engineClassHasType(c engineClass, instanceType string) bool {
 	for _, t := range c.Types {
@@ -724,8 +488,7 @@ func engineClassHasType(c engineClass, instanceType string) bool {
 // The reasons a start is held back by the class machinery. They are logged and audited beside
 // the controller's own reasons, so "why did nothing start" has one place to be answered.
 const (
-	engineReasonClassSwapWait = "class_swap_wait"    // a box of the previous rung has not gone yet
-	engineReasonClassApply    = "class_apply_failed" // the rung could not be written, and it differs
+	engineReasonClassSwapWait = "class_swap_wait" // a box of the previous rung has not gone yet
 	// engineReasonNoOffer is ADR 0075 decision 2's refusal: every declared offer is smaller than
 	// the model needs, so there is no box to buy. NOT the same as "it might not fit" (decision 6
 	// of ADR 0074, which warns and starts anyway) — this is an arithmetic contradiction between
@@ -733,27 +496,33 @@ const (
 	engineReasonNoOffer = "no_offer"
 )
 
-// startGate is what the controller asks before it buys a box (ADR 0074 decisions 4 and 5).
+// startGate is what the controller asks before it buys a box (ADR 0074 decisions 4 and 5, as ADR
+// 0077 decision 8 left them).
 //
-// Three things happen here and the order matters:
+// 🔴 ADR 0074 decision 5's third step — write the rung to the capacity provider, idempotently,
+// because CloudFormation reverts it — IS GONE, and with it the whole `UpdateCapacityProvider`
+// read-modify-write. A rung is now the set of instance types in the `CreateFleet` overrides: the
+// declaration IS the request, so "declared and actual drift apart" has no structure to happen in
+// and a misspelt type is refused on the spot rather than three minutes later by a box that never
+// came. What is left is the two gates that are about hardware, not about ECS:
 //
-//  1. a box of a DIFFERENT rung still registered means the previous one has not gone. Starting
-//     now either exceeds the vCPU quota or places the task straight back onto the old card;
-//  2. the rung is applied again, idempotently, because a CloudFormation update reverts the
-//     capacity provider to the stack's declaration and nothing tells the CP that happened;
-//  3. what is about to be loaded is compared with what the card holds, and the sentence is
-//     written to the log BEFORE the start. CUDA does not fail in a diagnosable shape, so the
-//     one place this can be recorded is in front of it.
-//
-// A failure at (2) refuses the start only when the rung DIFFERS from the one this process last
-// applied. If they are the same the provider already says the right thing and refusing would
-// take the engine away over a transient API error.
+//  1. a start already in flight is not re-judged. The offer is chosen, the box is bought, and
+//     re-running the gate every five seconds would begin the walk again and buy a second one;
+//  2. a box of a DIFFERENT rung still registered means the previous one has not gone. Starting
+//     now either exceeds the vCPU quota or places the task straight back onto the old card
+//     (ADR 0071 decision 7's drain wait, inherited by ADR 0077 decision 5);
+//  3. and then the one line of evidence: what is about to be loaded against what the card holds,
+//     written to the log BEFORE the start. CUDA does not fail in a diagnosable shape, so the one
+//     place this can be recorded is in front of it.
 func (e *engineRuntimeState) startGate(ctx context.Context) (bool, string) {
 	if e == nil || len(e.classList()) == 0 {
 		return true, ""
 	}
+	if e.offers.startInFlight() {
+		return true, ""
+	}
 	// Which offers this start may buy from, in the order they will be tried (ADR 0075 decisions
-	// 2 and 8). The FIRST of them is what everything below is about; the rest are what rule 2
+	// 2 and 8). The FIRST of them is what everything below is about; the rest are what the walk
 	// falls through to, and they are handed to the run here so that the fallback list is the one
 	// this start was judged on rather than one re-derived a minute later from a changed
 	// catalogue.
@@ -773,11 +542,7 @@ func (e *engineRuntimeState) startGate(ctx context.Context) (bool, string) {
 	} else {
 		e.clearSwapWait()
 	}
-	sel, ok := e.applyFirstUsableOffer(ctx, cands)
-	if !ok {
-		return false, engineReasonClassApply
-	}
-	e.logVramFit(ctx, sel)
+	e.logVramFit(ctx, cands[0])
 	return true, ""
 }
 

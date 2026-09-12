@@ -640,3 +640,55 @@ R12）。本文は上で直してある**——この ADR はまだ「提案」�
   触る前に `pgrep -af dev-deploy.sh`。
 
 P2（決定 4・6）と P3（llm 役）は P1 の実機の判定を待ち、ここでは分けない。
+
+## 追記 — P1 の CP レーンが本文に返したもの（2026-09-12・PR #577）
+
+P1 の CP 側（決定 1・2・3・5・8・9・11、契約 A の CP 端）は #577 として入った。完了 1〜6 は
+`engine_offer_test.go` と `internal/runtime/runtime_ecs_ec2_engine_test.go` に陽性対照つきで固定し
+てある——手で走らせて戻した変異 2 件を含む: `registered()` の番人を外すと完了 3 が落ち、`af-role` の
+絞り込みを外すと完了 5 が落ちる。完了 7 は実機レーンで、これには入っていない。実装が本文に返したもの:
+
+- **EC2 のポートは 5 本ではなく 3 本。** P0 の実測で `CreateTags` は不要（`CreateFleet` の
+  `TagSpecifications`（ResourceType `instance`）が launch template 側のタグと併合して起動時に付く）、
+  `DeleteFleets` は使えない（決定 1 の `DeleteFleets(TerminateInstances=false)` は instant fleet では
+  `NoTerminateInstancesNotSupported` で拒まれ、箱を 1 台も上げなかった fleet は絞り込まない
+  `describe-fleets` にも出ない）。決定 1 の「CP は fleet id を覚えない」はそのままで、その裏にあった 2 本
+  が消える。ポートは `CreateFleet` / `DescribeInstances` / `TerminateInstances`。
+- 🔴 **失敗コードの表に 4 つめの答えが要る。決定 8 が想定していなかった `refused`。** `iam:PassRole`
+  の欠落は **200 の `Errors[]` の中に** `UnauthorizedOperation` として来る——「在庫が無かった」と同じ形・
+  同じ場所（P0 実測）。これを「次へ」と読むと、1 台も起動できない配備に対して需要のたびに一覧を丸ごと歩き、
+  ログのどこにも欠けている権限の名が出ない。だから歩きをその場で止め、失敗 1 回として数え、原文をログに出す。
+  top-level の `SsmAccessDenied` も同じ答えに畳む。「次へ」ではないことを試験で固定し、同じ仕掛けで
+  `InsufficientInstanceCapacity` を返す陽性対照を隣に置いた。
+- **`InvalidFleetConfiguration` は意味ではなく「位置」で読む。** `Errors[]` は override ごとに 1 件で、
+  P0 では型の綴り違いと「その AZ で提供されていない型」を区別できなかった——どちらも同じコード・同じ文面。
+  よって **全 override がこれのときだけ** その行を `unusable` とし、一部なら他の override はまだ訊く価値が
+  あるので次の行へ進む。
+- **`<role>OfferBudgetSec` の既定は意味と一緒に 180 秒から 300 秒へ**（決定 1）。⚠️ **旧い意味で 180 を
+  書いた配備では、箱の ECS 登録に 180 秒しか与えないことになる**。ADR 0045 決定 22 の実測（21 秒、自前
+  AMI で 77 秒）の内側ではあるが、起動が遅い日には余裕がない。CFN レーンで捕捉値を上げるか落とすこと。
+- **契約 B から 1 欄だけ抜ける: `class_apply_error`。** 「段は保存されたが capacity provider に拒まれた」
+  を伝える欄で、宣言そのものが要求になった以上（決定 8）起こり得ない——保存した瞬間からその選択が効いて
+  いる。Console はこの欄があるときだけ読み、無ければ再試行の帯を出さないので決定 8 の「Console は変え
+  ない」は成り立つ。ただし契約 B は「不変」ではなく「起こり得なくなった 1 欄を除いて不変」。
+- **決定 3 が `sweepSlotOwnerTags` に足す絞り込みは `af-role = slot` ではなく `af-role ∈ {slot,
+  quarantined}`。** 隔離された箱は（解放ではなく停止なので）まだ人の `af-membership` を持ち得るし、まさに
+  それを直すのがこの掃除の役目である。`slot` だけに狭めると、持っていない箱の代金を誰かに付け続ける古い
+  タグが残る——この絞り込みを足した理由と同じ欠陥の裏返し。
+- **`draining` は ECS ではなく EC2 に、アダプタへ渡した関数で訊く。** 決定 5 は terminate を CP に渡し、
+  順序を deregister → terminate と決めた。つまりこの状態が名指している窓のあいだ、ECS はその箱を知らない。
+  そこで `engineECS` は EC2 クライアントもタグも持たず、提案の配線時に `fleet.live` を受け取る。Fargate の
+  エンジンには何も渡らず、何も払わない。
+- **決定 5 の掃除には猶予が 2 種類要る。CP は自分の `ghostAfter` を持たないから**（それはスロットプールの
+  設定で、別パッケージにある）。desired 0 のときはタスクの無い箱を 2 分で終わらせる——これが通常の退場で、
+  タスクが消えた次のティックにあたる——。サービスが上がっているときは、タスクの無い 2 台目を 15 分で終わら
+  せる。これが ADR 0075 の「箱 2 台」の漏れで、置き付け中のタスクには手を触れない。
+- **決定 9 の拒否は解析時に役で分岐する**（`parseEngineOffers(key, spec)`）。呼び出し側ごとの条件では
+  なく 1 つの関数にした。再読み込みも同じものを使う。
+- **`startGate` には 4 つめの門が要った: 「すでに購入済みの起動」。** 決定 8 は門に「候補無しの拒否」と
+  「入れ替え待ち」を残したが、3 つめが必要だった。管理トグルは自分で門を呼ぶので、これが無いと箱が登録待ち
+  のあいだにトグルの呼び出しが歩きをやり直し、2 台目を買う——ADR 0075 が 3 回中 3 回出した失敗。
+- **CFN レーンに渡す契約 A の最終形**: `launchTemplate`（launch template の id `lt-…` または名前）が
+  `capacityProvider` / `spotCapacityProvider` を置き換える。古い 2 欄は、まだ書いている配備でも**無視**する。
+  `offers` / `offerBudgetSec` / `classes` ほかは不変。`launchTemplate` の無い行は箱を買わず、箱を見分けも
+  しない——そのまま給仕を続け、素の経路でエンジンを起動する。スタックより先に CP が上がった配備がこれ。

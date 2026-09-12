@@ -1,31 +1,26 @@
 package main
 
-// The GPU an engine buys (ADR 0074). What is pinned here is what a reader of the panel cannot
-// check for themselves:
+// The GPU an engine buys (ADR 0074, as ADR 0077 decision 8 left it). What is pinned here is what
+// a reader of the panel cannot check for themselves:
 //
-//   - a deployment that declares no ladder never calls ECS about a capacity provider. That is
-//     decision 3, and it is the only reason it is safe to ship this without an IAM change
-//     reaching every existing deployment first;
-//   - applying a rung replaces FOUR fields and returns every other one exactly as it was read.
-//     A dropped constraint here does not fail — it buys a slightly different box, once, at some
-//     future cold start;
+//   - a deployment that declares no ladder never calls AWS about a box. That is decision 3, and
+//     it is the only reason it is safe to ship this without an IAM change reaching every
+//     existing deployment first;
 //   - the demand a class is compared against is a MAXIMUM (one model is in VRAM at a time), and
-//     "nobody measured it" never reads as "it fits".
+//     "nobody measured it" never reads as "it fits";
+//   - a stored choice is IN FORCE the moment it is stored. ADR 0074 had to write the rung into a
+//     capacity provider and could fail half-way, leaving the picker showing a card nothing held;
+//     a rung is now the type set of the next purchase, so there is no second copy to keep in
+//     step and `class_apply_error` has nothing left to report.
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ecs"
-	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -168,293 +163,59 @@ func TestEngineClassFits(t *testing.T) {
 	}
 }
 
-// --- applying a rung -----------------------------------------------------------------
-
-// fakeCapacityAPI is one Managed Instances capacity provider, described and updated.
-type fakeCapacityAPI struct {
-	provider ecstypes.CapacityProvider
-	describe int
-	updates  []*ecs.UpdateCapacityProviderInput
-	descErr  error
-	updErr   error
-}
-
-func (f *fakeCapacityAPI) DescribeCapacityProviders(_ context.Context, in *ecs.DescribeCapacityProvidersInput, _ ...func(*ecs.Options)) (*ecs.DescribeCapacityProvidersOutput, error) {
-	f.describe++
-	// The real API refuses both at once, and says so with an InvalidParameterException — which
-	// is how ADR 0074 P1 found it on the deployment, after every unit test here had passed
-	// against a fake that accepted anything. The fake now refuses what ECS refuses.
-	if in.Cluster != nil && len(in.CapacityProviders) > 0 {
-		return nil, fmt.Errorf("InvalidParameterException: Cannot specify both capacity providers and cluster in the same request")
-	}
-	if f.descErr != nil {
-		return nil, f.descErr
-	}
-	return &ecs.DescribeCapacityProvidersOutput{CapacityProviders: []ecstypes.CapacityProvider{f.provider}}, nil
-}
-
-func (f *fakeCapacityAPI) UpdateCapacityProvider(_ context.Context, in *ecs.UpdateCapacityProviderInput, _ ...func(*ecs.Options)) (*ecs.UpdateCapacityProviderOutput, error) {
-	f.updates = append(f.updates, in)
-	if f.updErr != nil {
-		return nil, f.updErr
-	}
-	return &ecs.UpdateCapacityProviderOutput{}, nil
-}
-
-// testCapacityProvider is a provider carrying the things 60-engines actually declares, so that
-// "everything else came back unchanged" is a claim about the real shape.
-func testCapacityProvider(name string) ecstypes.CapacityProvider {
-	return ecstypes.CapacityProvider{
-		Name: aws.String(name),
-		ManagedInstancesProvider: &ecstypes.ManagedInstancesProvider{
-			InfrastructureRoleArn: aws.String("arn:aws:iam::1:role/infra"),
-			PropagateTags:         ecstypes.PropagateMITagsCapacityProvider,
-			InfrastructureOptimization: &ecstypes.InfrastructureOptimization{
-				ScaleInAfter: aws.Int32(600),
-			},
-			InstanceLaunchTemplate: &ecstypes.InstanceLaunchTemplate{
-				Ec2InstanceProfileArn: aws.String("arn:aws:iam::1:instance-profile/p"),
-				CapacityOptionType:    ecstypes.CapacityOptionTypeOnDemand,
-				NetworkConfiguration: &ecstypes.ManagedInstancesNetworkConfiguration{
-					Subnets: []string{"subnet-a", "subnet-b"}, SecurityGroups: []string{"sg-1"},
-				},
-				LocalStorageConfiguration: &ecstypes.ManagedInstancesLocalStorageConfiguration{
-					UseLocalStorage: true,
-				},
-				InstanceRequirements: &ecstypes.InstanceRequirementsRequest{
-					VCpuCount:                 &ecstypes.VCpuCountRangeRequest{Min: aws.Int32(4), Max: aws.Int32(8)},
-					MemoryMiB:                 &ecstypes.MemoryMiBRequest{Min: aws.Int32(15000), Max: aws.Int32(65536)},
-					AllowedInstanceTypes:      []string{"g6.xlarge", "g5.xlarge"},
-					BurstablePerformance:      ecstypes.BurstablePerformanceExcluded,
-					AcceleratorCount:          &ecstypes.AcceleratorCountRequest{Min: aws.Int32(1), Max: aws.Int32(1)},
-					AcceleratorTypes:          []ecstypes.AcceleratorType{ecstypes.AcceleratorTypeGpu},
-					AcceleratorManufacturers:  []ecstypes.AcceleratorManufacturer{ecstypes.AcceleratorManufacturerNvidia},
-					AcceleratorTotalMemoryMiB: &ecstypes.AcceleratorTotalMemoryMiBRequest{Min: aws.Int32(21000)},
-				},
-			},
-		},
-	}
-}
-
-// The name is asked for without a cluster (the API allows only one of the two), so the cluster
-// the answer names is the only thing that says this provider is the engine's. A name that
-// resolved elsewhere must not be written to — the update re-declares subnets and security
-// groups, so writing to the wrong provider is not a read-only mistake.
-func TestApplyEngineClassRefusesAProviderInAnotherCluster(t *testing.T) {
-	p := testCapacityProvider("af-eng-llm")
-	p.Cluster = aws.String("arn:aws:ecs:ap-northeast-1:1:cluster/somebody-elses")
-	f := &fakeCapacityAPI{provider: p}
-	err := applyEngineClass(t.Context(), f, "af-af-ecs-platform", "af-eng-llm", engineClass{ID: "x", VramMiB: 1, Types: []string{"g6.xlarge"}})
-	if err == nil {
-		t.Fatal("a provider in another cluster was written to")
-	}
-	if len(f.updates) != 0 {
-		t.Errorf("refused, yet %d update(s) were sent", len(f.updates))
-	}
-}
-
-// The same provider named by ARN rather than by name is the same provider.
-func TestApplyEngineClassAcceptsTheClusterByArn(t *testing.T) {
-	p := testCapacityProvider("af-eng-llm")
-	p.Cluster = aws.String("arn:aws:ecs:ap-northeast-1:1:cluster/af-af-ecs-platform")
-	f := &fakeCapacityAPI{provider: p}
-	c := parseEngineClasses("l4|L4|21000|g6.xlarge|4-8|15000-65536")[0]
-	if err := applyEngineClass(t.Context(), f, "af-af-ecs-platform", "af-eng-llm", c); err != nil {
-		t.Fatalf("applying: %v", err)
-	}
-	if len(f.updates) != 1 {
-		t.Fatalf("updates = %d, want 1", len(f.updates))
-	}
-}
-
-func TestApplyEngineClassReplacesFourFieldsAndKeepsTheRest(t *testing.T) {
-	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-llm")}
-	c := parseEngineClasses("l40s|L40S|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536")[0]
-	if err := applyEngineClass(t.Context(), f, "cluster", "af-eng-llm", c); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-	if len(f.updates) != 1 {
-		t.Fatalf("%d updates, want 1", len(f.updates))
-	}
-	up := f.updates[0]
-	mi := up.ManagedInstancesProvider
-	if aws.ToString(up.Name) != "af-eng-llm" || aws.ToString(up.Cluster) != "cluster" {
-		t.Errorf("update addressed %v in %v", up.Name, up.Cluster)
-	}
-	// The required members, carried across rather than invented. Losing the infrastructure role
-	// is a provider that cannot launch anything.
-	if aws.ToString(mi.InfrastructureRoleArn) != "arn:aws:iam::1:role/infra" {
-		t.Errorf("infrastructure role = %v", mi.InfrastructureRoleArn)
-	}
-	if mi.PropagateTags != ecstypes.PropagateMITagsCapacityProvider || mi.InfrastructureOptimization == nil {
-		t.Errorf("provider-level fields were dropped: %+v", mi)
-	}
-	tpl := mi.InstanceLaunchTemplate
-	if tpl.NetworkConfiguration == nil || len(tpl.NetworkConfiguration.Subnets) != 2 {
-		t.Errorf("network configuration = %+v — the box would land in the wrong subnets", tpl.NetworkConfiguration)
-	}
-	if tpl.LocalStorageConfiguration == nil || !tpl.LocalStorageConfiguration.UseLocalStorage {
-		t.Errorf("local storage = %+v — losing it doubles the cold start", tpl.LocalStorageConfiguration)
-	}
-	if aws.ToString(tpl.Ec2InstanceProfileArn) != "arn:aws:iam::1:instance-profile/p" {
-		t.Errorf("instance profile = %v", tpl.Ec2InstanceProfileArn)
-	}
-	req := tpl.InstanceRequirements
-	if got := strings.Join(req.AllowedInstanceTypes, ","); got != "g6e.xlarge,g6e.2xlarge" {
-		t.Errorf("allowed types = %q", got)
-	}
-	if aws.ToInt32(req.AcceleratorTotalMemoryMiB.Min) != 44000 {
-		t.Errorf("VRAM floor = %v", req.AcceleratorTotalMemoryMiB.Min)
-	}
-	if aws.ToInt32(req.MemoryMiB.Min) != 30000 || aws.ToInt32(req.VCpuCount.Max) != 8 {
-		t.Errorf("bounds = %+v %+v", req.MemoryMiB, req.VCpuCount)
-	}
-	// 🔴 The fields nobody looks at are the ones a rewrite loses. `excluded` here is what keeps
-	// a burstable instance out of a GPU role, and its absence would never be noticed.
-	if req.BurstablePerformance != ecstypes.BurstablePerformanceExcluded {
-		t.Errorf("BurstablePerformance = %q, want it carried across", req.BurstablePerformance)
-	}
-	if len(req.AcceleratorTypes) != 1 || req.AcceleratorCount == nil {
-		t.Errorf("the GPU requirement was dropped: %+v", req)
-	}
-	// The read must not be mutated in place: the same describe answer is what the next call
-	// starts from, and editing it would make a failed update look applied.
-	if orig := f.provider.ManagedInstancesProvider.InstanceLaunchTemplate.InstanceRequirements; orig.AllowedInstanceTypes[0] != "g6.xlarge" {
-		t.Errorf("the described provider was mutated in place: %+v", orig)
-	}
-}
-
-// A rung's VRAM floor is only expressible where the role asks for an accelerator at all: ECS
-// refuses AcceleratorTotalMemoryMiB without the accelerator fields (measured, ADR 0071), so a
-// CPU-only engine must come back without one rather than with a filter no instance passes.
-func TestEngineClassRequirementsOmitsTheVramFloorWithoutAGpu(t *testing.T) {
-	cur := &ecstypes.InstanceRequirementsRequest{
-		VCpuCount: &ecstypes.VCpuCountRangeRequest{Min: aws.Int32(2), Max: aws.Int32(2)},
-	}
-	got := engineClassRequirements(cur, engineClass{VramMiB: 44000, Types: []string{"m7i.large"}, VCpuMin: 2, VCpuMax: 2, MemMinMiB: 1, MemMaxMiB: 2})
-	if got.AcceleratorTotalMemoryMiB != nil {
-		t.Fatalf("a CPU role asked for %v of VRAM", got.AcceleratorTotalMemoryMiB.Min)
-	}
-}
-
-func TestApplyEngineClassRefusesANonManagedInstancesProvider(t *testing.T) {
-	f := &fakeCapacityAPI{provider: ecstypes.CapacityProvider{Name: aws.String("af-eng-llm")}}
-	err := applyEngineClass(t.Context(), f, "c", "af-eng-llm", engineClass{ID: "x"})
-	if err == nil || len(f.updates) != 0 {
-		t.Fatalf("err = %v, updates = %d — writing an MI configuration onto something else is worse than refusing", err, len(f.updates))
-	}
-}
-
-// 🔴 The copier is written by hand, and the SDK grows fields. This walks both structs so that
-// the day a field appears the test fails here rather than the constraint disappearing from a
-// live capacity provider. The same device as wiremap_convert_test.go.
-func TestInstanceLaunchTemplateUpdateCarriesEveryFieldItCan(t *testing.T) {
-	// The two fields the UPDATE type simply does not have. Whether ECS preserves them or
-	// resets them is undocumented and unmeasured (ADR 0074 open question 1) — listing them
-	// here is how that stays a known gap instead of a silent one.
-	cannotCarry := map[string]string{
-		"CapacityOptionType": "no counterpart in InstanceLaunchTemplateUpdate (ON_DEMAND / SPOT)",
-		"FipsEnabled":        "no counterpart in InstanceLaunchTemplateUpdate",
-	}
-	in := reflect.TypeOf(ecstypes.InstanceLaunchTemplate{})
-	out := reflect.TypeOf(ecstypes.InstanceLaunchTemplateUpdate{})
-	// A populated template, so a field the copier forgot to assign shows up as a zero value.
-	src := &ecstypes.InstanceLaunchTemplate{}
-	sv := reflect.ValueOf(src).Elem()
-	for i := 0; i < in.NumField(); i++ {
-		f := in.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		fv := sv.Field(i)
-		switch f.Type.Kind() {
-		case reflect.Ptr:
-			fv.Set(reflect.New(f.Type.Elem()))
-		case reflect.String:
-			fv.SetString("x")
-		case reflect.Slice:
-			fv.Set(reflect.MakeSlice(f.Type, 1, 1))
-		}
-	}
-	got := reflect.ValueOf(instanceLaunchTemplateUpdate(src)).Elem()
-	for i := 0; i < in.NumField(); i++ {
-		f := in.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		if _, ok := out.FieldByName(f.Name); !ok {
-			if _, known := cannotCarry[f.Name]; known {
-				continue
-			}
-			t.Errorf("InstanceLaunchTemplate.%s has no counterpart in the update type and is not listed as uncarriable — decide what happens to it before it silently stops being declared", f.Name)
-			continue
-		}
-		if got.FieldByName(f.Name).IsZero() {
-			t.Errorf("instanceLaunchTemplateUpdate drops %s — a re-declared launch template would lose it", f.Name)
-		}
-	}
-	// And the other direction: a field the update type gains that the read type also has is a
-	// field this copier should be carrying.
-	for i := 0; i < out.NumField(); i++ {
-		f := out.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		if _, ok := in.FieldByName(f.Name); ok && got.FieldByName(f.Name).IsZero() {
-			t.Errorf("the update type has %s and the copier does not set it", f.Name)
-		}
-	}
-}
-
 // --- the start gate ------------------------------------------------------------------
 
-func newClassTestEngine(t *testing.T, api engineECSAPI, cap engineCapacityAPI, ladder string, st store.Store) *engineRuntimeState {
+func newClassTestEngine(t *testing.T, api engineECSAPI, fleet engineFleetAPI, ladder string, st store.Store) *engineRuntimeState {
 	t.Helper()
 	e := newTestImageEngine(t, "http://127.0.0.1:1", api)
-	e.def.CapacityProvider = "af-eng-image"
+	e.def.LaunchTemplate = "lt-image"
 	e.def.Classes = ladder
-	e.ecs.capacityProvider = "af-eng-image"
-	e.classes = parseEngineClasses(ladder)
+	e.ecs.roleAttr = engineBoxRole(e.def)
+	e.classes = parseEngineOffers("image", ladder)
 	e.cluster = "cluster"
 	e.settings = st
+	e.audit = st
+	e.offers = newEngineOfferRun(engineOfferBudgetDefault)
 	e.ctrl = nil
 	if len(e.classes) > 0 {
-		e.capacity = cap
+		e.fleet = newEngineFleet(fleet, "image", "cluster", "lt-image", []string{"subnet-a"})
 	}
 	return e
 }
 
 // Decision 3, and the reason this can ship before any deployment has the IAM grant: with no
-// ladder there is no path from the start path to a capacity provider at all.
+// ladder there is no path from the start path to EC2 at all.
 func TestStartGateIsInertWithoutALadder(t *testing.T) {
-	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-image")}
+	f := &fakeFleet{}
 	e := newClassTestEngine(t, &engineTestECS{}, f, "", testSettingsStore(t))
 	if ok, why := e.startGate(t.Context()); !ok {
 		t.Fatalf("gate refused a start with no ladder (%s)", why)
 	}
-	if f.describe != 0 || len(f.updates) != 0 {
-		t.Fatalf("ECS was called %d/%d times for a deployment that declares no classes", f.describe, len(f.updates))
+	if f.calls() != 0 {
+		t.Fatalf("EC2 was called %d time(s) for a deployment that declares no classes", f.calls())
 	}
 }
 
-// Decision 5: the rung is re-applied before every start, because a CloudFormation update puts
-// the stack's declaration back and tells nobody.
-func TestStartGateReAppliesTheChosenClass(t *testing.T) {
+// 🔴 The gate chooses; it does not buy, and it does not touch AWS at all any more (ADR 0077
+// decision 8 — the rung IS the request, so there is nothing to apply in advance). What it leaves
+// behind is the candidate list the walk will use, in declaration order, with the stored pin at
+// the head of it.
+func TestStartGateChoosesTheStoredRungAndBuysNothing(t *testing.T) {
 	st := testSettingsStore(t)
-	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-image")}
-	e := newClassTestEngine(t, &engineTestECS{}, f, "l4|L4|21000|g6.xlarge|4-8|15000-65536;l40s|L40S|44000|g6e.xlarge|4-8|30000-65536", st)
+	f := &fakeFleet{}
+	e := newClassTestEngine(t, &engineTestECS{}, f,
+		"l4|L4|21000|g6.xlarge|4-8|15000-65536;l40s|L40S|44000|g6e.xlarge|4-8|30000-65536", st)
 	if err := st.SetSetting(t.Context(), engineClassSettingKey("image"), "l40s"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, why := e.startGate(t.Context()); !ok {
 		t.Fatalf("gate refused (%s)", why)
 	}
-	if len(f.updates) != 1 {
-		t.Fatalf("%d updates, want the class written before the start", len(f.updates))
+	if cur, ok := e.offers.current(); !ok || cur.ID != "l40s" {
+		t.Fatalf("the walk starts on %+v, want the stored choice to win over the stack's first rung", cur)
 	}
-	req := f.updates[0].ManagedInstancesProvider.InstanceLaunchTemplate.InstanceRequirements
-	if req.AllowedInstanceTypes[0] != "g6e.xlarge" {
-		t.Errorf("started on %v — the stored choice must win over the stack's first rung", req.AllowedInstanceTypes)
+	if f.calls() != 0 {
+		t.Fatalf("the gate made %d EC2 call(s); buying is the start's, not the gate's", f.calls())
 	}
 }
 
@@ -462,9 +223,8 @@ func TestStartGateReAppliesTheChosenClass(t *testing.T) {
 // vCPU quota or lands the task straight back on the old card.
 func TestStartGateWaitsForTheOldBoxToLeave(t *testing.T) {
 	st := testSettingsStore(t)
-	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-image")}
-	api := &engineTestECS{instance: "af-eng-image", instanceType: "g6.xlarge"}
-	e := newClassTestEngine(t, api, f, "l40s|L40S|44000|g6e.xlarge|4-8|30000-65536", st)
+	api := &engineTestECS{instance: "engine-image", instanceType: "g6.xlarge"}
+	e := newClassTestEngine(t, api, &fakeFleet{}, "l40s|L40S|44000|g6e.xlarge|4-8|30000-65536", st)
 	ok, why := e.startGate(t.Context())
 	if ok || why != engineReasonClassSwapWait {
 		t.Fatalf("gate = %v %q, want the start held back", ok, why)
@@ -481,29 +241,37 @@ func TestStartGateWaitsForTheOldBoxToLeave(t *testing.T) {
 // stopped-but-still-draining case ADR 0071 decision 7 calls the cheap start.
 func TestStartGateDoesNotWaitForABoxOfTheSameClass(t *testing.T) {
 	st := testSettingsStore(t)
-	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-image")}
-	api := &engineTestECS{instance: "af-eng-image", instanceType: "g6.xlarge"}
-	e := newClassTestEngine(t, api, f, "l4|L4|21000|g6.xlarge,g5.xlarge|4-8|15000-65536", st)
+	api := &engineTestECS{instance: "engine-image", instanceType: "g6.xlarge"}
+	e := newClassTestEngine(t, api, &fakeFleet{}, "l4|L4|21000|g6.xlarge,g5.xlarge|4-8|15000-65536", st)
 	if ok, why := e.startGate(t.Context()); !ok {
 		t.Fatalf("gate = %v %q, want the start allowed", ok, why)
 	}
 }
 
-// Decision 5's failure rule. The distinction is the whole point: refusing when the provider may
-// still hold the wrong rung, allowing when this process already put the right one there.
-func TestStartGateRefusesOnlyWhenTheClassWasNeverApplied(t *testing.T) {
+// 🔴 A start already in flight is not re-judged (ADR 0077 decision 1). The offer is chosen, the
+// box is bought and the desired count is waiting for it to register; beginning the walk again
+// would choose an offer for the second time and buy a second GPU — which is what the three
+// hardware rounds of ADR 0075 kept producing.
+func TestStartGateDoesNotReopenAWalkThatHasAlreadyBought(t *testing.T) {
 	st := testSettingsStore(t)
-	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-image"), descErr: context.DeadlineExceeded}
-	e := newClassTestEngine(t, &engineTestECS{}, f, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
-	if ok, why := e.startGate(t.Context()); ok || why != engineReasonClassApply {
-		t.Fatalf("gate = %v %q, want a refusal: the provider may still say something else", ok, why)
+	f := &fakeFleet{instance: "i-1"}
+	e := newClassTestEngine(t, &engineTestECS{}, f,
+		"l4|L4|21000|g6.xlarge|4-8|15000-65536;l40s|L40S|44000|g6e.xlarge|4-8|30000-65536", st)
+	if ok, _ := e.startGate(t.Context()); !ok {
+		t.Fatal("gate refused the first start")
 	}
-	// Once this process HAS applied it, a later failure is a transient API error in front of a
-	// provider that already says the right thing, and taking the engine away over it would be
-	// an outage caused by a check.
-	e.noteAppliedClass("l4")
+	if err := e.startOnOffer(t.Context()); err == nil {
+		t.Fatal("the start did not report that it is waiting for the box")
+	}
+	bought := len(f.creates)
 	if ok, why := e.startGate(t.Context()); !ok {
-		t.Fatalf("gate = false %q after the class was applied", why)
+		t.Fatalf("the gate refused while a box of this very start was registering (%s)", why)
+	}
+	if err := e.startOnOffer(t.Context()); err == nil {
+		t.Fatal("the second start reported success while the box is still registering")
+	}
+	if len(f.creates) != bought {
+		t.Fatalf("%d CreateFleet call(s) for one start, want %d — every extra one is a GPU", len(f.creates), bought)
 	}
 }
 
@@ -526,10 +294,10 @@ func putClass(t *testing.T, a engineAdminAPI, body string) (int, map[string]any)
 	return rec.Code, out
 }
 
-func TestPutClassStoresAndApplies(t *testing.T) {
+func TestPutClassStoresTheChoice(t *testing.T) {
 	st := testSettingsStore(t)
-	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-image")}
-	api := &engineTestECS{instance: "af-eng-image", instanceType: "g6.xlarge"}
+	f := &fakeFleet{}
+	api := &engineTestECS{instance: "engine-image", instanceType: "g6.xlarge"}
 	e := newClassTestEngine(t, api, f, "l4|L4|21000|g6.xlarge|4-8|15000-65536;l40s|L40S 48GB|44000|g6e.xlarge|4-8|30000-65536", st)
 	a := classAdminAPI(t, e, st)
 
@@ -540,8 +308,12 @@ func TestPutClassStoresAndApplies(t *testing.T) {
 	if v, _ := st.GetSetting(t.Context(), engineClassSettingKey("image")); v != "l40s" {
 		t.Fatalf("stored class = %q — the stored setting is what wins over the stack", v)
 	}
-	if len(f.updates) != 1 {
-		t.Errorf("%d capacity provider updates, want the choice applied at once", len(f.updates))
+	// 🔴 Nothing was bought and nothing was declared to AWS (ADR 0077 decision 8): the stored id
+	// IS the declaration, and it reaches hardware at the next purchase. Under ADR 0074 this line
+	// was a `UpdateCapacityProvider`, and a failure of it left the picker showing a card nothing
+	// held.
+	if f.writes() != 0 {
+		t.Errorf("%d EC2 write(s) for a stored choice, want none", f.writes())
 	}
 	// A box of the old rung is up, so the change has not reached anything yet and the panel has
 	// to say so rather than reporting success.
@@ -554,75 +326,19 @@ func TestPutClassStoresAndApplies(t *testing.T) {
 	if out["class_is_default"] != false {
 		t.Errorf("class_is_default = %v — running on a non-default rung must be visible", out["class_is_default"])
 	}
-
-	// A rung nobody declared does not exist. This is also what keeps arbitrary instance
-	// requirements from reaching the capacity provider.
+	// A rung nobody declared does not exist. This is also what keeps arbitrary instance types
+	// from reaching a CreateFleet override.
 	if code, _ = putClass(t, a, `{"class":"h100"}`); code != http.StatusBadRequest {
 		t.Errorf("undeclared class = %d, want 400", code)
 	}
-	if len(f.updates) != 1 {
-		t.Errorf("a refused class still wrote to ECS (%d updates)", len(f.updates))
-	}
-}
-
-// 🔴 A failed apply has to leave the panel able to try again.
-//
-// putClass stores the choice BEFORE it applies it, on purpose — that is what lets the screen say
-// the card was not applied. The price is that a failed apply leaves the stored rung already
-// changed: the picker then shows the rung the capacity provider does NOT hold, and selecting it
-// again is "no change", so the Console sends nothing and the only recovery is a detour through
-// another rung (ADR 0074, 直さなかったが分かっていること). `class_apply_error` is what makes the
-// retry reachable, and a retry is the same rung a second time.
-func TestPutClassSaysWhyTheApplyFailedAndARetryClearsIt(t *testing.T) {
-	st := testSettingsStore(t)
-	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-image")}
-	e := newClassTestEngine(t, &engineTestECS{}, f,
-		"l4|L4|21000|g6.xlarge|4-8|15000-65536;l40s|L40S 48GB|44000|g6e.xlarge|4-8|30000-65536", st)
-	a := classAdminAPI(t, e, st)
-
-	// A process that has not tried claims nothing. The field is in memory, so a restarted CP
-	// reporting a failure it never saw would be worse than reporting none.
-	if _, said := a.row(t.Context(), e)["class_apply_error"]; said {
-		t.Fatalf("class_apply_error present before anything was applied: %v", a.row(t.Context(), e))
-	}
-
-	f.updErr = fmt.Errorf("AccessDeniedException: not authorized to perform ecs:UpdateCapacityProvider")
-	if code, _ := putClass(t, a, `{"class":"l40s"}`); code != http.StatusBadGateway {
-		t.Fatalf("put with a refusing capacity provider = %d, want 502", code)
-	}
 	if v, _ := st.GetSetting(t.Context(), engineClassSettingKey("image")); v != "l40s" {
-		t.Fatalf("stored class = %q — the save comes first, and that is the state the retry exists for", v)
-	}
-	row := a.row(t.Context(), e)
-	msg, _ := row["class_apply_error"].(string)
-	if !strings.Contains(msg, "ecs:UpdateCapacityProvider") {
-		t.Fatalf("class_apply_error = %q, want the provider's own words", msg)
-	}
-	// The picker shows the SAVED rung, which is precisely why "pick it again" cannot be the
-	// retry: the client sees no change to send.
-	if cls, _ := row["class"].(map[string]any); cls == nil || cls["id"] != "l40s" {
-		t.Fatalf("class in the row = %v, want the stored l40s", row["class"])
-	}
-
-	f.updErr = nil
-	code, out := putClass(t, a, `{"class":"l40s"}`)
-	if code != http.StatusOK {
-		t.Fatalf("retry of the same rung = %d (%v), want the apply to run again", code, out)
-	}
-	if _, said := out["class_apply_error"]; said {
-		t.Errorf("the answer to a successful retry still carries class_apply_error: %v", out)
-	}
-	if _, said := a.row(t.Context(), e)["class_apply_error"]; said {
-		t.Errorf("class_apply_error survived a successful apply")
-	}
-	if len(f.updates) != 2 {
-		t.Errorf("%d capacity provider updates, want the retry to have written one", len(f.updates))
+		t.Errorf("a refused class changed the stored one to %q", v)
 	}
 }
 
 func TestPutClassIsNotFoundWithoutALadder(t *testing.T) {
 	st := testSettingsStore(t)
-	e := newClassTestEngine(t, &engineTestECS{}, nil, "", st)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "", st)
 	code, _ := putClass(t, classAdminAPI(t, e, st), `{"class":"l4"}`)
 	if code != http.StatusNotFound {
 		t.Fatalf("put on a deployment with no ladder = %d, want 404", code)
@@ -633,8 +349,7 @@ func TestPutClassIsNotFoundWithoutALadder(t *testing.T) {
 // chosen card asks a question, and the same call with confirm_vram goes through.
 func TestPutModelAsksBeforeEnablingAModelThatDoesNotFit(t *testing.T) {
 	st := testSettingsStore(t)
-	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-image")}
-	e := newClassTestEngine(t, &engineTestECS{}, f, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
 	e.catalog = newEngineCatalog(st, "image")
 	ctx := t.Context()
 	var models store.EngineModelStore = st
@@ -721,9 +436,8 @@ func TestControllerHoldsTheStartBackWhenTheGateRefuses(t *testing.T) {
 // and the request ends in the retryable 503 the provider already handles.
 func TestGatewayStartPathRespectsTheClassGate(t *testing.T) {
 	st := testSettingsStore(t)
-	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-image")}
-	api := &engineTestECS{instance: "af-eng-image", instanceType: "g6.xlarge"}
-	e := newClassTestEngine(t, api, f, "l40s|L40S|44000|g6e.xlarge|4-8|30000-65536", st)
+	api := &engineTestECS{instance: "engine-image", instanceType: "g6.xlarge"}
+	e := newClassTestEngine(t, api, &fakeFleet{}, "l40s|L40S|44000|g6e.xlarge|4-8|30000-65536", st)
 	if err := e.ensureStarted(t.Context()); err != nil {
 		t.Fatalf("ensureStarted = %v, want the wait to continue rather than the request to fail", err)
 	}

@@ -132,7 +132,7 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			// about a row the table never mentioned.
 			continue
 		}
-		next := parseEngineClasses(d.offersSpec())
+		next := parseEngineOffers(d.Key, d.offersSpec())
 		// 🔴 Adopting a ladder (or dropping the last rung) is not a rung change: the capacity
 		// client and the controller's start gate are attached at construction only when a
 		// ladder exists, so a ladder that appears here would be a list the panel shows and
@@ -145,16 +145,15 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			changed = true
 			log.Printf("engines: %s instance classes re-read from %s: %s", d.Key, r.name, engineClassIDs(next))
 		}
-		// The capacity provider NAMES, live, as a pair (ADR 0075 decision 3). What a rename must
-		// not do is leave the rung this process applied to the old provider standing as a note —
-		// setCapacityProviders forgets it, and the next start re-applies the rung to the new one
-		// (startGate). The Spot name travels the same way for the same reason, and it arrives
-		// this way on every deployment that adopts ADR 0075 without replacing its CP.
-		if e.setCapacityProviders(d.CapacityProvider, d.SpotCapacityProvider) {
+		// The LAUNCH TEMPLATE, live (ADR 0077 decision 1). It is the successor of the capacity
+		// provider name that used to travel here, and it travels for the same reason: a template
+		// replaced by a CloudFormation update gets a new id, and a CP still naming the old one
+		// buys from a template that no longer exists — the shape #536 measured on the Spot swap,
+		// where the rung went to a renamed provider, `box` matched nothing, and the panel
+		// reported the card the engine was NOT on.
+		if e.setLaunchTemplate(d.LaunchTemplate) {
 			changed = true
-			od, spot := e.ecs.providers()
-			log.Printf("engines: %s capacity providers re-read from %s: %s / %s (spot)",
-				d.Key, r.name, engineProviderLabel(od), engineProviderLabel(spot))
+			log.Printf("engines: %s launch template re-read from %s: %s", d.Key, r.name, d.LaunchTemplate)
 		}
 		// The per-offer budget, live. It keys nothing and is read once per tick, so unlike the
 		// controller's intervals it can move under a running start — and it has to: the default
@@ -188,14 +187,20 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 // engineDefDriftedBeyondClasses names the first field of a row that changed and cannot be
 // carried into a running process, or "" when only the ladder and the capacity provider moved.
 //
-// 🔴 `capacityProvider` is deliberately NOT in this list. It used to be, and that is what made
-// the Spot swap need a Control Plane replacement: replacing a capacity provider renames it, the
-// table said the new name, and the running CP kept addressing the old one — the rung apply went
-// to a name that no longer existed (400), `box` matched nothing so the panel reported the card
-// the engine was NOT on, and only `update-service --force-new-deployment` (217 seconds) cleared
-// it (#536 step 4, the same shape as ADR 0074 decision 4). Unlike everything below, the name is
-// a destination string, not something an object was built around.
+// 🔴 `launchTemplate` is deliberately NOT in this list, for the reason its predecessor
+// `capacityProvider` was not: replacing the resource renames it, the table says the new name, and
+// a running CP that kept addressing the old one would buy from something that no longer exists —
+// the shape #536 measured, where only a `force-new-deployment` of the Control Plane (217 seconds)
+// cleared it. Unlike everything below, it is a destination string, not something an object was
+// built around.
+//
+// ⚠️ Going from "no launch template" to one, or back, IS beyond this: the fleet is attached at
+// construction (wireOffers), so a template that appears here would be a purchase path nothing
+// holds — the same shape as adopting a ladder, below.
 func engineDefDriftedBeyondClasses(was, now engineDef) string {
+	if (strings.TrimSpace(was.LaunchTemplate) == "") != (strings.TrimSpace(now.LaunchTemplate) == "") {
+		return "launch template"
+	}
 	for _, c := range []struct{ what, a, b string }{
 		{"service", was.Service, now.Service},
 		{"url", was.URL, now.URL},
@@ -217,15 +222,6 @@ func engineDefDriftedBeyondClasses(was, now engineDef) string {
 		return "start deadline"
 	}
 	return ""
-}
-
-// engineProviderLabel names the capacity provider for the reload log. Empty is a real value —
-// the row went to Fargate — and printing nothing there reads as a truncated line.
-func engineProviderLabel(name string) string {
-	if name == "" {
-		return "(none - Fargate)"
-	}
-	return name
 }
 
 // engineClassIDs is the ladder in one line, for the log that says a reload happened. The ids
