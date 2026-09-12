@@ -830,3 +830,18 @@ What was pushed on top of the branch:
    of a silent failure here is only "the start is slow".
 
 Template size after all of it: **40,182 bytes** (was 36,816 in the first push; the wall is 51,200).
+
+### And one from the CP lane (PR #577): the budget's meaning and default
+
+`<Role>OfferBudgetSec` is the only contract-A field besides `launchTemplate` that this ADR moves,
+and the CP lane settled it: it bounds **the ECS registration wait for the box that was bought**,
+not a per-offer purchase clock — the purchase answers in the call — and the Control Plane's
+default is **300 s**, decision 1's number. So the template's `Default` is 300 on both roles, and
+the two `Description` lines say what it now bounds.
+
+🔴 **A capture from 0.19.0 carries `180`.** That is the old meaning's default, and left alone it
+would silently make the new ceiling shorter than the number the ADR chose. `standup.sh` drops
+**exactly 180** and lets the template's 300 stand, printing what it did; any other value is
+treated as an operator's choice and passed on. A stale default and a deliberate 180 cannot be
+told apart, which is the whole reason the rule is "the old default, and nothing else". The stub
+test pins both directions, each with its own positive control.

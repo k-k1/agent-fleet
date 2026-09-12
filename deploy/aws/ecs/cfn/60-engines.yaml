@@ -62,8 +62,8 @@ Parameters:
     Description: Purchase offers, tried in the order written. EMPTY = the rungs above, all on demand.
   LlmOfferBudgetSec:
     Type: Number
-    Default: 180
-    Description: Seconds one offer may wait for a box before the next is tried.
+    Default: 300
+    Description: Seconds the box that WAS bought may take to register with ECS.
   LlmApiKeySsmParam:
     Type: String
     Default: /af-ws/engine-llm-key
@@ -135,8 +135,8 @@ Parameters:
     Description: The image role's offers, as LlmOffers. This is the role Spot is offered on.
   ImageOfferBudgetSec:
     Type: Number
-    Default: 180
-    Description: Seconds per offer, as LlmOfferBudgetSec.
+    Default: 300
+    Description: ECS registration ceiling, as LlmOfferBudgetSec.
   ImageTaskCpu:
     Type: String
     Default: "4096"

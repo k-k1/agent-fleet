@@ -582,6 +582,21 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
     done
   done
 
+  # ADR 0077 RE-MEANT one parameter instead of retiring it, which the drops above cannot express.
+  # `<Role>OfferBudgetSec` used to bound "how long this offer may wait for a box before the next
+  # one is tried"; the purchase answers in the call now, so it bounds "how long the box that WAS
+  # bought may take to register with ECS". The old default of 180 was eight minutes of slack for
+  # a wait that no longer exists and is thin for the one that does (the Control Plane's own
+  # default is 300), so a capture still carrying the OLD DEFAULT is dropped and falls to the
+  # template's new one. Any other value is left alone - a deliberate 180 cannot be told apart
+  # from a stale one, which is why this says on stdout what it did.
+  for af_role in Llm Image; do
+    if [ "$(af_read_one_param 60-engines "${af_role}OfferBudgetSec")" = "180" ]; then
+      echo "    · dropping ${af_role}OfferBudgetSec=180 (ADR 0077 re-meant it; taking the template's 300)"
+      af_param_drop "${af_role}OfferBudgetSec"
+    fi
+  done
+
   echo "==> deploy $AF_STACK_ENGINES (60-engines)"
   if [ "$AF_DRY" = 1 ]; then
     echo "DRY: cloudformation deploy --stack-name $AF_STACK_ENGINES --template-file $CFN_DIR/60-engines.yaml \\"

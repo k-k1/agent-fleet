@@ -200,7 +200,8 @@ one re-meant parameter and a migration window**:
 | | |
 | --- | --- |
 | Retired | `<Role>AllowedInstanceTypes` / `AcceleratorMemMinMiB` / `VCpuMin` / `VCpuMax` / `MemMinMiB` / `MemMaxMiB` / `UseLocalStorage` / `ScaleInAfter` — the offer carries all of it ([the llm role](#llmacceleratormemminmib-llmallowedinstancetypes-and-the-instance-requirement-pairs)) |
-| Re-meant | `<Role>StorageGiB` — the box's ROOT gp3 volume now, and the models land on it |
+| Re-meant | `<Role>StorageGiB` — the box's ROOT gp3 volume now (and the models land on the instance store when the type has one) |
+| Re-meant | `<Role>OfferBudgetSec` — **the ECS registration ceiling** for the box that was bought, not a per-offer purchase clock. Default 180 -> **300**; a captured 180 is dropped by `standup.sh` ([`<Role>OfferBudgetSec`](#roleofferbudgetsec)) |
 | New prerequisite | `AWSServiceRoleForEC2Fleet` (`standup.sh` creates it — cheap insurance rather than a hard gate: [the Spot checks](#before-declaring-a-spot-offer-check-these-three)) |
 | Migration | with both roles at `mode: off` and no engine box standing — [the procedure](#migrating-a-deployment-that-is-on-managed-instances) |
 
@@ -224,8 +225,8 @@ not ask ECS about capacity at all.
 What the list buys is the failure this replaces: a role whose Spot request finds no stock used to
 be a role that did not start, with `UnfulfillableCapacity` in the service events and a human in
 the loop. Now the Control Plane tries the offers in the order written, gives each one
-`<Role>OfferBudgetSec` (180 s by default), and lands on the on-demand one when the Spot one
-cannot be filled. The saving is secondary and small — in ap-northeast-1 Spot ran 30 days without
+`<Role>OfferBudgetSec` (180 s by default at that release — ADR 0077 re-meant and re-defaulted
+it), and lands on the on-demand one when the Spot one cannot be filled. The saving is secondary and small — in ap-northeast-1 Spot ran 30 days without
 one on-demand hour, `g6.xlarge` at $0.45-0.58 (ADR 0074), against a total GPU spend of $0.58 for
 those 30 days on acrt. **The point is that the engine starts.**
 
@@ -713,11 +714,18 @@ went to 1 — because under Managed Instances nothing said whether a box was com
 left to wait for is the box this call DID buy **registering with the ECS cluster**. Past that,
 the Control Plane terminates it and moves on.
 
-The default is still **180 seconds** in the template, and that is the low end for the new
-meaning: the slot pool measured boot to ECS registration at 21 s (77 s with a home-baked AMI),
-so 180 is roughly eight times a healthy registration — but a GPU AMI is not a slot's AMI and
-nothing has measured this one. ADR 0077 decision 1 nominates **300 s**. Raise it there if a
-start is ever recorded as failed with a box that turned out to be fine.
+**The default is 300 seconds**, in this template and in the Control Plane, which is ADR 0077
+decision 1's number: the slot pool measured boot to ECS registration at 21 s (77 s with a
+home-baked AMI), so 300 is more than ten times a healthy registration — and a GPU AMI is not a
+slot's AMI, so the margin is deliberate rather than measured. Raise it if a start is ever
+recorded as failed with a box that turned out to be fine; past it the box is terminated and the
+next offer is tried, so a ceiling that is too low spends money and finds nothing.
+
+🔴 **A deployment captured before 0.20.0 carries `180`, which is the OLD meaning's default.**
+`standup.sh` drops exactly that value so the stack falls to the 300 above, and says on stdout
+that it did; any other value is treated as a choice and passed on untouched. A deployment that
+really wants 180 as a registration ceiling has to set it again after a stand-up — that is the
+price of not being able to tell a stale default from a deliberate one.
 
 It is not the whole wait either: with three offers the worst case is three failed purchases plus
 a registration plus a cold start, and the bound a caller actually sees is the gateway's

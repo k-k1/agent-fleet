@@ -489,6 +489,21 @@ grep -q "deploy --stack-name af-ecs-engines .*LlmStorageGiB=120" "$LOG" \
   || fail "LlmStorageGiB was dropped with the ADR 0077 parameters (it sizes the root volume now)"
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
 
+# 🔴 And the parameter ADR 0077 RE-MEANT is dropped only when it still holds the OLD default.
+# `<Role>OfferBudgetSec` stopped bounding "how long to wait for this offer's box" and started
+# bounding "how long the box that was bought may take to register"; a captured 180 is the old
+# meaning's default and would silently halve the new ceiling, while a value somebody chose must
+# survive a stand-up like any other.
+: > "$LOG"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\nLlmOfferBudgetSec=180\nImageOfferBudgetSec=600\n' > "$STATE4/params/60-engines"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+if grep -q "deploy --stack-name af-ecs-engines .*LlmOfferBudgetSec=" "$LOG"; then
+  fail "a captured LlmOfferBudgetSec=180 was passed on (it means something else since ADR 0077)"
+fi
+grep -q "deploy --stack-name af-ecs-engines .*ImageOfferBudgetSec=600" "$LOG" \
+  || fail "a chosen ImageOfferBudgetSec was dropped (only the old DEFAULT may be dropped)"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+
 # 🔴 The box is the Control Plane's to buy now (ADR 0077): one launch template per role, the
 # role's name written into the ECS agent's attributes, and the service placed by that attribute.
 # Each of the three is load-bearing on its own - a template without the attribute gives a box
