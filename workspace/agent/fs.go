@@ -256,6 +256,17 @@ type fsEntry struct {
 	Name string `json:"name"`
 	Type string `json:"type"` // dir | file
 	Size int64  `json:"size"`
+	// Mtime is the entry's modification time in unix SECONDS, and rides on directories as
+	// well as files: "newest first" and "3 minutes ago" cannot be written without it
+	// (ADR 0080 decision 2). Generated images happen to sort by name because their filename
+	// carries a unixnano stamp, but that is true of generated images alone — a folder of
+	// screenshots has no such luck.
+	//
+	// An older Agent does not send it (the Agent ships separately from the Console: native
+	// installs, pinned versions). A reader that gets none falls back to name order and shows
+	// no relative time; it must not compare versions to decide, the same rule as thumb's
+	// advisory argument in fs_thumb.go.
+	Mtime int64 `json:"mtime,omitempty"`
 }
 
 func handleFSTree(w http.ResponseWriter, r *http.Request) {
@@ -278,8 +289,15 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 		fe := fsEntry{Name: e.Name(), Type: "file"}
 		if e.IsDir() {
 			fe.Type = "dir"
-		} else if fi, err := e.Info(); err == nil {
-			fe.Size = fi.Size()
+		}
+		// One Info() for both fields, and for directories too: it is a single lstat that
+		// ReadDir has usually already paid for, and Size and Mtime come out of the same
+		// call. (Size stays meaningless for a directory, as it always was.)
+		if fi, err := e.Info(); err == nil {
+			if !e.IsDir() {
+				fe.Size = fi.Size()
+			}
+			fe.Mtime = fi.ModTime().Unix()
 		}
 		out = append(out, fe)
 	}
@@ -292,33 +310,6 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 	// root: the absolute browse root, so the Console can build an absolute path for a
 	// row ("Copy path"). It's the same for every entry, so it rides on the response.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": out, "root": browseRoot()})
-}
-
-// imageContentType maps a filename to its image MIME type (mirrors the Console's
-// IMAGE_EXT in lib/filemeta.ts), or "" when it isn't a previewable image extension.
-func imageContentType(name string) string {
-	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
-	switch ext {
-	case "png":
-		return "image/png"
-	case "apng":
-		return "image/apng"
-	case "jpg", "jpeg", "jfif":
-		return "image/jpeg"
-	case "gif":
-		return "image/gif"
-	case "webp":
-		return "image/webp"
-	case "avif":
-		return "image/avif"
-	case "bmp":
-		return "image/bmp"
-	case "ico":
-		return "image/x-icon"
-	case "svg":
-		return "image/svg+xml"
-	}
-	return ""
 }
 
 const defaultMaxUpload = 64 << 20 // 64 MiB per file unless AF_UPLOAD_MAX overrides
