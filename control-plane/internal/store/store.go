@@ -727,6 +727,7 @@ type Store interface {
 	UsageStore
 	EngineModelStore
 	EngineIngestStore
+	EngineUsageAttributionStore
 	CloudCostStore
 	SSMStore
 	MemoStore

@@ -53,7 +53,7 @@
 
 | 次元 | 値 |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -76,6 +76,20 @@
 生成ツールで、Codex 経路ではチャットの一発実行と同じ要領で記録する。画像が消費するプラン枠は
 トークンで表せないので、0 で埋めず未計測のままにする（ADR 0069 決定 9）。以後の規則: `ledger.go`
 の新しい定数とこの表の新しい値は同じコミットで入れる。
+
+**追記（2026-09-13）。そして上の規則はまた破られていた。** `feature` 行に `engine.llm` を足した。
+フリート自身が動かす推論エンジンへの 1 呼び出しで、Control Plane のゲートウェイが中継する
+（[ADR 0071](0071-self-hosted-inference-engines.ja.md) 決定 9。そこには「ADR 0029 の列挙に追記する」と
+明記されており、そして追記されていなかった）。`usagex/ledger.go` には当該 ADR の出荷時から
+`FeatureEngineLLM` として在ったので、列挙は**同じ壊れ方で 2 度目のドリフト**をしていた——1 度目を
+止めるために書かれた規則の下で。[ADR 0079](0079-remote-engine-from-another-deployment.ja.md) の
+未解決 7 を決める過程で見つかった。
+
+🔴 **`engine.image` は無い。無いことは欠落ではなく決定である。** 画像の応答はトークン数を持たない。
+画像が消費するのはピクセルで、それを見られるのはファイルを保存する Agent の側であり、そこは既に
+`tool.imagegen` の行を書いている。ゲートウェイからも書けば、1 回の生成の行数が倍になるうえ、この
+列挙が持たない値が足される——Control Plane の `TestOnlyChatEnginesAreCountedByTheGateway` は、
+それを拒むために在る（ADR 0069 決定 9・ADR 0071 決定 9・ADR 0076 決定 8 が同じ線を引いている）。
 
 同じ変更で、行に初めての非トークン列 `images` / `pixels` を §1 へ足した。正直に書くと他が
 もっと悪くなるからで、画像生成の行は**駆動ターン**のトークンを正確に持つ一方、画像が消費した

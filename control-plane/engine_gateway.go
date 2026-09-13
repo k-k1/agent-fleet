@@ -470,6 +470,20 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 	// engine that is mid-start does not read as unwanted and get stopped by the controller
 	// on the very tick somebody is waiting for it.
 	eng.demand.record(r.Context(), 1)
+	// And the request is also what the box gets BOUGHT for, so this is where it is attributed
+	// (ADR 0079 decision 12).
+	//
+	// 🔴 Here and not in recordUsage, which the live run of 2026-09-13 found the hard way: three
+	// early returns never reach it — a `dial` that fails, an upstream 3xx-or-worse on the streamed
+	// path, and the plain path's refusal. Those are exactly the requests that bought a GPU and
+	// then did not succeed, which is the most expensive case and the one a lending operator most
+	// needs a name for. Measured: a borrowed request bought a g6.xlarge in 2 seconds, the model
+	// failed to load 3m53s later, and nothing was attributed to anybody.
+	//
+	// The counters split on purpose: `requests` is what was admitted (and what bought the box),
+	// while `ok_requests`, the milliseconds and the tokens are outcomes that only recordUsage
+	// knows. `requests - ok_requests` is therefore the failure count, for free.
+	g.noteEngineMembershipRequest(context.WithoutCancel(r.Context()), eng.def.Key, mv)
 
 	// 🔴 And the model may not be ON the instance yet. The sidecar releases the engine once the
 	// START model is down and keeps fetching the rest, so there is a window — measured at ~270
