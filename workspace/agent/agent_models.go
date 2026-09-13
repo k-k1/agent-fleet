@@ -90,5 +90,12 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []agents.ModelChoice{}
 	}
+	// Who made each model, for the picker's brand marks (model_provider.go). Filled here
+	// rather than in each kind's package: the answer comes from one catalog and one table, and
+	// a kind's own list carries billing routes, not makers. Best-effort — an id that cannot be
+	// placed keeps Provider empty and simply gets no mark.
+	for i := range list {
+		list[i].Provider = resolveModelProvider(r.PathValue("kind"), list[i].ID)
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"models": list})
 }

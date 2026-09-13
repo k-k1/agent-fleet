@@ -311,10 +311,8 @@ export const common = {
   "ui.files": "ファイル",
   "ui.starts_when_workspace_running": "ワークスペースを起動すると表示されます。",
   "ui.filter_models": "モデルを絞り込み…",
-  "ui.filter_kind_models": "{kind} のモデルを絞り込み",
   "ui.kind_model": "{kind} のモデル",
   "ui.claude_registered_model": "登録したモデルから選択",
-  "ui.select_from_count": "{count} 件から選択",
   "ui.no_matching_models": "一致するモデルなし",
   // 動的 kind のカタログが解決した結果、選べるモデルが 1 つも無かったとき。**原因は
   // 断定しない**: このピッカーは「まだログインしていない」「認証はあるがプロバイダへ
@@ -322,7 +320,6 @@ export const common = {
   // 全部除外した」を区別できない（Agent は理由を返さない）。**どの場合にも真である
   // 一文**にしてあるので、断定形へ書き換えないこと。
   "ui.model_default_only": "既定のモデルのみ利用できます（接続とプランをご確認ください）",
-  "ui.count_items": "{count} 件",
   "ui.cancel": "キャンセル",
   "ui.run": "実行",
   "ui.running": "実行中…",

@@ -1,15 +1,15 @@
 // ModelPicker — the launch-time model choices for an agent kind, shared by
 // LaunchModal and NewSessionModal (always inside a .ui-field, whose select styling
 // applies). claude renders as segmented buttons (four fixed tiers); codex/opencode
-// as a <select> — their catalogs are fetched live and unbounded in count and id
+// through ModelCombo — their catalogs are fetched live and unbounded in count and id
 // length. Callers gate on caps.model and re-resolve the value when the kind
 // changes (resolveModel), so this only renders and reports picks.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useT } from "../lib/i18n/index.ts";
 import { useModelOptions, useHiddenModel, useModelCatalogSettled } from "../lib/agentModels.ts";
 import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
-import { filterModelOptions } from "../lib/modelFilter.ts";
+import { ModelCombo } from "./ModelCombo.tsx";
 import { refreshUIPrefs } from "../lib/settings.ts";
 
 interface ModelPickerProps {
@@ -21,8 +21,6 @@ interface ModelPickerProps {
 export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
   const tr = useT();
   const options = useModelOptions(kind);
-  const [query, setQuery] = useState("");
-  useEffect(() => setQuery(""), [kind]);
   // A long-lived phone tab may have been foregrounded the whole time another device
   // edited this server-backed catalog. Refresh when a Claude picker actually opens as
   // well as on App foreground, so both Settings and launch modals see the latest ids.
@@ -43,50 +41,19 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
     if (hidden) return options;
     return options.some(([v]) => v === model) ? options : [...options, [model, model] as ModelOption];
   }, [kind, model, options, hidden]);
-  const filtered = useMemo(
-    () => (dynamicOptions ? filterModelOptions(dynamicOptions, query) : []),
-    [dynamicOptions, query],
-  );
 
   if (!options) return null;
   if (kind !== "claude") {
-    const selectedVisible = filtered.some(([v]) => v === model);
     // The fetch has settled and only "default" is left = this account/plan/settings offers no
     // selectable model. Silently showing just "default" is indistinguishable from still
     // loading. Do not state a cause: the Console cannot tell not-signed-in, provider
     // unreachable, a plan that only has the default (Copilot Free) and everything excluded in
     // settings apart. dynamicOptions is post-exclusion, so this is true for the last case too.
     const onlyDefault = settled && (dynamicOptions?.length ?? 0) <= 1;
-    const selectValue = selectedVisible ? model : "__filtered_selection__";
     return (
       <div className="model-picker-dynamic">
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={tr("ui.filter_models")}
-          aria-label={tr("ui.filter_kind_models", { kind })}
-        />
-        <select
-          value={selectValue}
-          disabled={filtered.length === 0}
-          onChange={(e) => onChange(e.target.value)}
-          aria-label={tr("ui.kind_model", { kind })}
-        >
-          {!selectedVisible && (
-            <option value="__filtered_selection__" disabled>
-              {filtered.length ? tr("ui.select_from_count", { count: filtered.length }) : tr("ui.no_matching_models")}
-            </option>
-          )}
-          {filtered.map(([v, label]) => (
-            <option key={v || "default"} value={v}>
-              {label}
-            </option>
-          ))}
-        </select>
-        {query.trim()
-          ? <span className="ui-field-hint">{tr("ui.count_items", { count: filtered.length })}</span>
-          : onlyDefault && <span className="ui-field-hint">{tr("ui.model_default_only")}</span>}
+        <ModelCombo kind={kind} options={dynamicOptions ?? []} value={model} onChange={onChange} />
+        {onlyDefault && <span className="ui-field-hint">{tr("ui.model_default_only")}</span>}
       </div>
     );
   }

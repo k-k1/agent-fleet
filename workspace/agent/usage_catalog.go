@@ -79,7 +79,12 @@ func usageCatalogIndexed() map[string]bool {
 
 // usageCatalog is a loaded catalog. A price key is "provider/normalized model name".
 type usageCatalog struct {
-	price   map[string]usagePrice
+	price map[string]usagePrice
+	// family is "provider/model id" -> the model's family ("glm", "kimi-k2", "gpt-codex"),
+	// for the providers in modelFamilyProviders only. It is what model_provider.go turns into
+	// the maker's brand mark; it is indexed here rather than in a second pass so the 4MB file
+	// is decoded once (this host is memory-constrained).
+	family  map[string]string
 	origin  string    // opencode | file | env (Console owns the wording; no path is exposed)
 	modTime time.Time // the source file's mtime = which point in time these prices are from
 	models  int
@@ -158,7 +163,11 @@ func loadUsageCatalog() *usageCatalog {
 // that fields upstream adds or removes elsewhere leave this working (the decoder skips them).
 type catalogFile map[string]struct {
 	Models map[string]struct {
-		Cost *struct {
+		// Family is the product line ("glm", "claude-sonnet"), which is the only field
+		// upstream carries that survives a model being re-hosted: every hoster copies the
+		// family along with the weights. model_provider.go maps it to the maker.
+		Family string `json:"family"`
+		Cost   *struct {
 			Input      *float64 `json:"input"`
 			Output     *float64 `json:"output"`
 			CacheRead  *float64 `json:"cache_read"`
@@ -178,12 +187,21 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 		return nil
 	}
 	want := usageCatalogIndexed()
+	wantFamily := modelFamilyIndexed()
 	price := map[string]usagePrice{}
+	family := map[string]string{}
 	// When normalized names collide inside one provider, take the lexicographically smaller
 	// model id, so map iteration order cannot make the result wander (measured on 3.3M: an
 	// amount that changes on every read is not acceptable).
 	winner := map[string]string{}
 	for pid, p := range f {
+		if wantFamily[pid] {
+			for mid, m := range p.Models {
+				if m.Family != "" {
+					family[pid+"/"+mid] = m.Family
+				}
+			}
+		}
 		if !want[pid] {
 			continue
 		}
@@ -205,7 +223,7 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 	if len(price) == 0 {
 		return nil
 	}
-	return &usageCatalog{price: price, origin: origin, modTime: mod, models: len(price)}
+	return &usageCatalog{price: price, family: family, origin: origin, modTime: mod, models: len(price)}
 }
 
 func derefPrice(v *float64) float64 {

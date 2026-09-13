@@ -1,7 +1,7 @@
 // Brand icons — vendored monochrome SVGs for the things the Console names by brand: the agent
-// CLIs (`agents/`) and the connected services (`services/` — GitHub, Slack, Jira, …). A third
-// set keyed by the MODEL's provider was considered and dropped, for the reason in
-// assets/brandicons/ATTRIBUTION.md. See that file for the sources and licenses.
+// CLIs (`agents/`), the connected services (`services/` — GitHub, Slack, Jira, …) and the
+// companies that make the models (`providers/` — Anthropic, Zhipu, …). See
+// assets/brandicons/ATTRIBUTION.md for the sources and licenses.
 //
 // Why vendored rather than fetched from an upstream CDN at runtime: a cross-origin
 // <use href> is refused by the SVG spec and an <img src> to a remote SVG renders it in its own
@@ -43,6 +43,19 @@ const SETS: BrandSet[] = [
     dir: "services",
     cls: "bi-service-",
     keys: ["aws", "bitbucket", "cloudwatch", "discord", "github", "grafana", "jira", "pagerduty", "slack"],
+  },
+  {
+    // The company that MADE a model, as resolved by the Agent (workspace/agent/model_provider.go)
+    // and carried in each model choice's `provider`. Named by that provider id, so the picker
+    // needs no id→icon table of its own. The set is exactly the ids that resolver can answer
+    // with; a gateway (opencode / github-copilot) is never one of them, because its mark says
+    // which CLI ran, not who built the model.
+    dir: "providers",
+    cls: "bi-provider-",
+    keys: [
+      "alibaba", "amazon-bedrock", "anthropic", "cohere", "deepseek", "google", "meta",
+      "minimax", "mistral", "moonshotai", "nvidia", "openai", "xai", "zhipuai",
+    ],
   },
 ];
 

@@ -77,3 +77,49 @@
 .bi-service-slack {
   mask-image: url("../assets/brandicons/services/slack.svg");
 }
+
+/* Model makers (the model picker's brand marks). Keyed by the provider id the Agent resolves
+   into each model choice (workspace/agent/model_provider.go), so the picker needs no id→icon
+   table: the value it was served is the key. */
+.bi-provider-alibaba {
+  mask-image: url("../assets/brandicons/providers/alibaba.svg");
+}
+.bi-provider-amazon-bedrock {
+  mask-image: url("../assets/brandicons/providers/amazon-bedrock.svg");
+}
+.bi-provider-anthropic {
+  mask-image: url("../assets/brandicons/providers/anthropic.svg");
+}
+.bi-provider-cohere {
+  mask-image: url("../assets/brandicons/providers/cohere.svg");
+}
+.bi-provider-deepseek {
+  mask-image: url("../assets/brandicons/providers/deepseek.svg");
+}
+.bi-provider-google {
+  mask-image: url("../assets/brandicons/providers/google.svg");
+}
+.bi-provider-meta {
+  mask-image: url("../assets/brandicons/providers/meta.svg");
+}
+.bi-provider-minimax {
+  mask-image: url("../assets/brandicons/providers/minimax.svg");
+}
+.bi-provider-mistral {
+  mask-image: url("../assets/brandicons/providers/mistral.svg");
+}
+.bi-provider-moonshotai {
+  mask-image: url("../assets/brandicons/providers/moonshotai.svg");
+}
+.bi-provider-nvidia {
+  mask-image: url("../assets/brandicons/providers/nvidia.svg");
+}
+.bi-provider-openai {
+  mask-image: url("../assets/brandicons/providers/openai.svg");
+}
+.bi-provider-xai {
+  mask-image: url("../assets/brandicons/providers/xai.svg");
+}
+.bi-provider-zhipuai {
+  mask-image: url("../assets/brandicons/providers/zhipuai.svg");
+}

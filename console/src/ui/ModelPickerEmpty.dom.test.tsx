@@ -35,7 +35,15 @@ let root: Root | null = null;
 let host: HTMLDivElement;
 
 const hints = () => [...host.querySelectorAll(".ui-field-hint")].map((n) => n.textContent || "");
-const optionValues = () => [...host.querySelectorAll("option")].map((o) => (o as HTMLOptionElement).value);
+
+// The choices are a popup listbox now, not <option>s, so they only exist while the combobox
+// is open — focusing the field is what opens it.
+const rowLabels = () => [...host.querySelectorAll('[role="option"]')].map((n) => n.textContent || "");
+async function openList() {
+  await act(async () => {
+    host.querySelector<HTMLInputElement>('input[role="combobox"]')!.focus();
+  });
+}
 
 async function mount(kind: string) {
   await act(async () => {
@@ -67,21 +75,24 @@ afterEach(async () => {
 describe("dynamic model picker's default-only note", () => {
   it("is not shown while fetching (default-only looks identical to loading)", async () => {
     await mount("cursor");
-    expect(optionValues()).toEqual([""]); // still only "default"
+    await openList();
+    expect(rowLabels()).toEqual([t("ui.default")]); // still only "default"
     expect(hints().join()).not.toContain(t("ui.model_default_only"));
   });
 
   it("is shown once the fetch settles on an empty catalog", async () => {
     await mount("kiro");
     await settle({ models: [] });
-    expect(optionValues()).toEqual([""]);
+    await openList();
+    expect(rowLabels()).toEqual([t("ui.default")]);
     expect(hints().join()).toContain(t("ui.model_default_only"));
   });
 
   it("is not shown once models arrive", async () => {
     await mount("agy");
     await settle({ models: [{ id: "sonnet-x", label: "Sonnet X" }] });
-    expect(optionValues()).toContain("sonnet-x");
+    await openList();
+    expect(rowLabels()).toContain("Sonnet X");
     expect(hints().join()).not.toContain(t("ui.model_default_only"));
   });
 

@@ -20,6 +20,10 @@ export type EffortOption = [string, string];
 interface ModelDescriptor {
   id: string;
   label: string;
+  /** Provider id of the company that MADE the model ("anthropic", "zhipuai"), resolved by the
+   *  Agent (workspace/agent/model_provider.go). "" when it could not be placed. Kept out of
+   *  ModelOption so the dozen call sites that destructure [value, label] stay untouched. */
+  provider: string;
   efforts: string[];
   defaultEffort: string;
 }
@@ -61,14 +65,19 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
   if (!p) {
     p = api(`api/agents/${kind}/models`)
       .then((d) => {
-        const items: { id?: string; label?: string; efforts?: unknown; defaultEffort?: unknown }[] = Array.isArray(d?.models)
-          ? d.models
-          : [];
+        const items: {
+          id?: string;
+          label?: string;
+          provider?: unknown;
+          efforts?: unknown;
+          defaultEffort?: unknown;
+        }[] = Array.isArray(d?.models) ? d.models : [];
         const desc = items
           .filter((m) => m && typeof m.id === "string" && m.id)
           .map((m): ModelDescriptor => ({
             id: m.id!,
             label: m.label || m.id!,
+            provider: typeof m.provider === "string" ? m.provider : "",
             efforts: Array.isArray(m.efforts) ? m.efforts.filter((x): x is string => typeof x === "string" && !!x) : [],
             defaultEffort: typeof m.defaultEffort === "string" ? m.defaultEffort : "",
           }));
@@ -87,6 +96,20 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
     inflight.set(kind, p);
   }
   return p;
+}
+
+// modelProviderOf answers which company made a model, for the picker's brand mark. Read
+// straight off the fetched descriptors rather than through state: fetchModels fills them
+// before it resolves the options, so any render that can see a model in the list can see its
+// provider too (the same arrangement useEffortOptions already relies on).
+//
+// "" means "say nothing" — a kind with no live catalog (claude), the Default entry, a model
+// rescued back into the list from a stored setting, or one the Agent could not place. The
+// caller must draw no mark then; there is no house default, because a wrong logo beside a
+// model someone is about to pay for is worse than a plain row.
+export function modelProviderOf(kind: string, id: string): string {
+  if (!id) return "";
+  return descriptors.get(kind)?.find((m) => m.id === id)?.provider || "";
 }
 
 const FALLBACK_EFFORTS: Record<string, string[]> = {

@@ -174,8 +174,13 @@ type GracefulStopper interface {
 // ID is what the launch command receives (`codex -m` / `opencode --model`),
 // Label what the picker shows. Served by GET /agents/{kind}/models.
 type ModelChoice struct {
-	ID            string   `json:"id"`
-	Label         string   `json:"label"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// Provider is the id of the company that MADE the model ("anthropic", "zhipuai"), which
+	// the picker draws as a brand mark. It is resolved centrally in model_provider.go, not by
+	// each kind's package, because an id says which route it is billed through and not who
+	// built it. "" means nothing could be said — the picker then draws no mark.
+	Provider      string   `json:"provider,omitempty"`
 	Efforts       []string `json:"efforts,omitempty"`
 	DefaultEffort string   `json:"defaultEffort,omitempty"`
 }
