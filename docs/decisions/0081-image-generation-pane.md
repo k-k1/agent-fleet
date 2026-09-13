@@ -120,8 +120,8 @@ stays in the loop, because it is where the graph, the credential, the disk and t
 ADR 0069 open question 1 deferred jobs because a poll from a driver model costs a turn. A browser poll
 costs nothing but bytes, and the 60-second rule makes the blocking shape unusable through the proxy.
 
-- **Routes on the Agent**, and their six lines on the control plane's list (the group and queue
-  operations are decision 12):
+- **Routes on the Agent**, and their seven lines on the control plane's list (the group and queue
+  operations are decision 12; `props` is decision 3):
   - `POST /imagegen/jobs` — body is the existing `generateRequest` plus `params` (decision 4), `label`
     (free text shown in the list) and `out_dir` (decision 3). Returns `{id, position}` at once.
     Refused with 429 when the queue holds `imagegenQueueMax` (200) pending jobs — one member cannot
@@ -180,6 +180,37 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
 - **`Result` and `StoredFile` gain `seed`** (per image: base seed for batch index 0, `seed+i` after —
   ComfyUI derives batch noise that way). The MCP tool's answer gains the same line; "it was random and I
   cannot get it back" is the single most common complaint in any image UI.
+- **Showing and copying a picture's properties is this ADR's, not 0080's** (settled 2026-09-13 with the
+  gallery lane, on the user's request "show and copy the seed and the rest"; ADR 0080 implements nothing
+  for it). Three facts measured on a live deployment — 251 files under `generated/`, walked PNG chunk by
+  chunk — fix the shape:
+  1. **comfy-route PNGs already carry a `tEXt` chunk keyed `prompt`** (1,550 bytes each): the API graph,
+     with `KSampler`'s `seed`, `steps`, `cfg`, `sampler_name`, `scheduler`, the checkpoint name in
+     `CheckpointLoaderSimple`, the size in `EmptyLatentImage`, both prompts in `CLIPTextEncode`, and the
+     `LoraLoader` nodes. It is the **only** way to recover the pictures made before the sidecar existed.
+  2. **Vendor-route PNGs (codex, agy) carry no text chunk at all** (0 of the files in those folders).
+     Their properties are unrecoverable, and the UI says so rather than showing blanks.
+  3. **The thumbnail (`fs/download?thumb=512`) is a JPEG re-encode and loses the chunk.** Properties are
+     read from the original or from a header-only route — never from the thumbnail, and never by
+     fetching 300 originals for a folder (that would break ADR 0080 decision 4's bandwidth premise).
+
+  Hence one Agent route, **`GET /imagegen/props?path=<browse-root-relative>`** (the seventh proxy line):
+  the sidecar when it exists (`source: "sidecar"`), else the PNG's `prompt` chunk parsed up to the first
+  `IDAT` — no pixel decode — and mapped into the sidecar's shape by node type (`source: "png"`; the
+  positive prompt is the `CLIPTextEncode` wired to the sampler's `positive` input, the family is
+  inferred from the loader nodes only when unambiguous, else left empty), else `source: "none"`. The
+  answer is cached by the file's mtime and carries `Last-Modified` like the thumbnail, so re-opening
+  costs a 304. It is read **on demand only**: when the shared lightbox (ADR 0080 decision 5, hoisted to
+  `viewer/ImageLightbox.tsx`) opens, and when a gallery or pane card is asked for it; never for a whole
+  folder on mount.
+
+  The surface is the **shared lightbox's bar**, the one place the gallery, the mirror's file card and this
+  pane all meet: a "properties" toggle shows the resolved fields (model, family, seed, size, steps, cfg,
+  sampler, scheduler, LoRAs with weights, positive and negative prompt, and `source`), each row with a
+  copy button, plus "copy all as JSON" and — for `source: sidecar` or `png` — "open in image generation"
+  (decision 6's entry, which loads the fields into the form). Copy is `navigator.clipboard.writeText`
+  with the toast the Console already uses; on a phone the row is a tap target. The gallery card's hover
+  (0080 P1) can show seed and model from the same route later; this ADR does not require it.
 
 ### Decision 4 — The request grows a `params` overlay in the shape the catalogue already uses; the family decides what is read, and says so
 
@@ -406,7 +437,8 @@ the thing the person submitted; the queue-wide versions are the same operations 
   minutes that follow "resume".
 - **Wire.** `GET /imagegen/jobs` gains `groups[]` (`id`, `label`, `state` ∈ `running | paused | done |
   cancelled`, the counts, `eta_ms`, `paused_at`); jobs keep `group`. `POST /imagegen/groups/{id}` and
-  `POST /imagegen/queue` are the two routes added to decision 2's list — six proxy lines, not four.
+  `POST /imagegen/queue` are the two routes added to decision 2's list — with decision 3's `props`,
+  seven proxy lines, not four.
 
 ## Options rejected
 
@@ -435,6 +467,10 @@ the thing the person submitted; the queue-wide versions are the same operations 
   fails loudly; the overlay's leniency is for an admin's old row, not a member's form (decision 4).
 - **Bare `POST /interrupt`.** Kills another workspace's picture on a shared box (decision 2).
 - **A separate pane per model / per output folder.** Not asked for (unresolved 4).
+- **Reading properties from the thumbnail, or from every original on mount.** The thumbnail is a JPEG
+  re-encode with no chunk; 300 originals is the bandwidth 0080 decision 4 refused (decision 3).
+- **A properties surface in 0080 as well.** One record, one reader, one bar — the shared lightbox is
+  already the place all three views meet (decision 3).
 - **Trial run as an ordinary job at the tail.** Behind a batch it arrives when the batch does, and the
   batch was the thing the trial was meant to decide (decision 11).
 - **Trial at a smaller size to make it faster.** A different size is a different composition; the
@@ -448,9 +484,10 @@ the thing the person submitted; the queue-wide versions are the same operations 
   cancel), `Request.Params`, `Result/StoredFile.Seed`, the sidecar in `store.go`, request validation,
   phase callbacks in `comfy.go`'s `sendWithWake` / `awaitHistory`, an optional `Canceller` interface
   implemented by comfy, the widened `statusResponse` with `knobs` / `samplers` / `schedulers` /
-  `typical_ms`, group state and the worker's pause/skip logic; six routes in `routes.go` (so `testdata/routes.golden` moves — expected here, unlike
+  `typical_ms`, group state and the worker's pause/skip logic, the `props` reader (sidecar, else PNG
+  `tEXt` up to `IDAT`); seven routes in `routes.go` (so `testdata/routes.golden` moves — expected here, unlike
   ADR 0080). `usage_series.go` folds `Images` / `Pixels`.
-- **Control plane**: six proxy lines in `routes.go`; `engine_models.trained_words` (migration in both
+- **Control plane**: seven proxy lines in `routes.go`; `engine_models.trained_words` (migration in both
   dialects), written by ingest, editable by the admin row, relayed by `engineCatalogModelRow`.
   No gateway change: cancel is two more pass-through paths.
 - **Console**: `features/imagegen/` (view, form, job list, family cards, prompt-help modal, `open.ts`,
@@ -477,10 +514,11 @@ the thing the person submitted; the queue-wide versions are the same operations 
   `params`, the widened status, the sidecar and the seed, family cards, trigger-word chips,
   "write the prompt for me" through `api/chat/ask`, edit by path or drop, `out_dir`. Three lanes that do
   not share a file:
-  - **Lane A (Agent)**: `jobs.go` (with head insertion and the trial cap), `Request.Params`, validation, seed and sidecar, phases and cancel,
+  - **Lane A (Agent)**: `jobs.go` (with head insertion and the trial cap), `Request.Params`, validation, seed and sidecar, the `props` reader, phases and cancel,
     status widening, routes and golden, usage fold.
   - **Lane B (control plane)**: proxy lines, `trained_words` column end to end.
-  - **Lane C (Console)**: pane kind and `features/imagegen/` (form, trial slot, result cards, job list), i18n, entry points, usage labels.
+  - **Lane C (Console)**: pane kind and `features/imagegen/` (form, trial slot, result cards, job list), the
+    properties bar in the shared lightbox (after 0080's hoist lands), i18n, entry points, usage labels.
     C can be built against a stub of A's wire (the shapes above are the contract) and finished after A.
 - **P1**: sweeps and the prompt matrix; gallery hooks ("open in image generation", "use as reference",
   "generate here"); presets (named parameter sets, local first); a queue journal if a restart bites;
