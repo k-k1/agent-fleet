@@ -38,11 +38,17 @@ test.afterAll(async () => {
 
 type Call = { path: string; method: string; body: Record<string, unknown> };
 
-async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light" | "dark" = "dark", withoutEngines = false) {
+async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light" | "dark" = "dark", mode: "normal" | "no-engine" | "registered" = "normal") {
   const calls: Call[] = [];
   let started = false;
   const engines = [
-    { key: "image", api: "images", provider: "comfy", base_models: ["sdxl"], file_flags: ["--vae", "--clip_l"], model_rows: [], managed: true, enabled: true, has_models: true, mode: "ondemand", state: "stopped" },
+    { key: "image", api: "images", provider: "comfy", base_models: ["sdxl"], file_flags: ["--vae", "--clip_l"], model_rows: mode === "registered" ? [
+      { id: "harbor", enabled: false, base_model: "sdxl", description: "Harbor checkpoint", file_rows: [
+        { s3Key: "image/checkpoints/harbor.safetensors", flag: "", bytes: 1024 },
+        { s3Key: "image/vae/harbor.safetensors", flag: "--vae", bytes: 512 },
+      ] },
+      { id: "meadow", enabled: false, base_model: "sdxl", description: "Meadow checkpoint", file_rows: [] },
+    ] : [], managed: true, enabled: true, has_models: true, mode: "ondemand", state: "stopped" },
     { key: "llm", api: "chat", provider: "llamacpp", model_rows: [], managed: true, enabled: true, has_models: true, mode: "ondemand", state: "stopped" },
   ];
   await page.route("**/example-preview.svg", (route) => route.fulfill({
@@ -59,8 +65,11 @@ async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light
     if (p === "/api/tenants") return answer({ tenants: [{ slug: "demo", name: "Demo", role: "tenant_admin" }], super_admin: true });
     if (p === "/api/workspace") return answer({ state: "running" });
     if (p === "/api/sessions") return answer({ sessions: [] });
-    if (p === "/api/admin/engines") return answer({ engines: withoutEngines ? [] : engines, super_admin: true });
-    if (p.endsWith("/storage")) return answer({ files: [], checked_at: "2026-09-14T00:00:00Z" });
+    if (p === "/api/admin/engines") return answer({ engines: mode === "no-engine" ? [] : engines, super_admin: true });
+    if (p.endsWith("/storage")) return answer({ files: mode === "registered" ? [
+      { s3_key: "image/checkpoints/harbor.safetensors", state: "present", model_ids: ["harbor"], reusable: false },
+      { s3_key: "image/vae/harbor.safetensors", state: "missing", model_ids: ["harbor"], reusable: false },
+    ] : [], checked_at: "2026-09-14T00:00:00Z" });
     if (p.endsWith("/models/vae-scan")) return answer({ engines });
     if (p.endsWith("/ingest") && request.method() === "POST") {
       started = true;
@@ -90,14 +99,14 @@ async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light
     if (p.includes("/hf-token")) return answer({ configured: false });
     return route.abort();
   });
-  await page.addInitScript(({ key, theme }) => {
+  await page.addInitScript(({ key, theme, registered }) => {
     localStorage.setItem("af-display-settings", JSON.stringify({ locale: "en", theme }));
     localStorage.setItem("af-tenant", "demo");
     localStorage.setItem("af.layout2.demo@example.com.demo", JSON.stringify({
-      cols: [{ id: "catalog-col", rowRatio: 0.5, panes: [{ id: "catalog", session: null, content: { kind: "engineAdd", engineKey: key, lora: false }, wrap: null }] }],
+      cols: [{ id: "catalog-col", rowRatio: 0.5, panes: [{ id: "catalog", session: null, content: { kind: "engineAdd", engineKey: key, lora: false, view: registered ? "registered" : "search" }, wrap: null }] }],
       colRatios: [1], activeId: "catalog",
     }));
-  }, { key: engineKey, theme });
+  }, { key: engineKey, theme, registered: mode === "registered" });
   await page.goto(origin);
   await expect(page.locator(".engine-catalog-pane")).toBeVisible();
   return calls;
@@ -115,7 +124,7 @@ test("restored LLM pane searches HF by last modification without offering Civita
 });
 
 test("without an engine the catalog still browses models and LoRAs without ingest actions", async ({ page }) => {
-  const calls = await openCatalog(page, "image", "dark", true);
+  const calls = await openCatalog(page, "image", "dark", "no-engine");
   const pane = page.locator(".engine-catalog-pane");
   await expect(pane.getByText("Harbor Image Model", { exact: true })).toBeVisible();
   await pane.getByRole("button", { name: "LoRAs", exact: true }).click();
@@ -123,6 +132,26 @@ test("without an engine the catalog still browses models and LoRAs without inges
   await expect(pane.getByText("Harbor Image Model", { exact: true })).toBeVisible();
   await expect(pane.getByRole("button", { name: /^Add:/ })).toHaveCount(0);
   expect(calls.filter((call) => call.path.endsWith("/ingest") && call.method === "POST")).toHaveLength(0);
+});
+
+test("registered cards show partial storage and open edits from their styled footer", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openCatalog(page, "image", "light", "registered");
+  const pane = page.locator(".engine-catalog-pane");
+  const card = pane.getByRole("listitem", { name: "harbor", exact: true });
+  await expect(card).toBeVisible();
+  await expect(card.getByText("Storage: 1/2 files present (partial)", { exact: true })).toBeVisible();
+  const edit = card.getByRole("button", { name: "Edit: harbor", exact: true });
+  await expect(edit).toHaveClass(/ui-btn/);
+  await page.screenshot({ path: testInfo.outputPath("registered-light.png") });
+  await edit.click();
+  const modal = page.getByRole("dialog");
+  await expect(modal).toBeVisible();
+  await expect(modal.getByRole("button", { name: "Save", exact: true })).toHaveClass(/ui-btn-primary/);
+  await page.screenshot({ path: testInfo.outputPath("registered-edit-light.png") });
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(modal).toHaveCount(0);
+  await expect(edit).toBeFocused();
 });
 
 test("a card starts one operation and returns to browsing with its new job visible", async ({ page }) => {
