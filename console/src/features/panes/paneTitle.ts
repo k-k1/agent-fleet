@@ -23,6 +23,7 @@ export const KIND_JA: Partial<Record<PaneKind, MsgKey>> = {
   browserAttach: "pane.kind.browser_attach",
   sharedSession: "share.shared_sessions",
   sessions: "pane.kind.sessions",
+  engineAdd: "pane.kind.engine_add",
   gallery: "pane.kind.gallery",
   imagegen: "pane.kind.imagegen",
 };
@@ -95,6 +96,8 @@ export function paneTitle(pane: Pane, session: Session | null, meta: PaneTitleMe
       return sharedSessionLabel(meta.shared);
     case "sessions":
       return jaKind("sessions");
+    case "engineAdd":
+      return jaKind("engineAdd");
     case "imagegen":
       return jaKind("imagegen");
     case "gallery":

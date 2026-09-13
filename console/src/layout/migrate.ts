@@ -137,6 +137,14 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "sessions":
       return { kind: "sessions", showStopped: p.showStopped === true };
+    case "engineAdd": {
+      // The engine key reaches API paths, so it is validated like the other opaque ids here:
+      // a corrupted layout must not become a path the pane then asks the CP about.
+      const engineKey = str(p.engineKey);
+      return engineKey && /^[A-Za-z0-9_-]{1,64}$/.test(engineKey)
+        ? { kind: "engineAdd", engineKey, lora: p.lora === true }
+        : { kind: "terminal", chat: false };
+    }
     // No field to validate: the form is a localStorage draft and the queue is the Agent's
     // (ADR 0081 decision 6). Forgetting this case is what would degrade a studio to a blank
     // terminal on every reload, which is the only way this kind can go wrong here.

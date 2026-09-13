@@ -4432,8 +4432,21 @@ does not hold breaks the families that work today), and making `--vae` mandatory
 ### The screen: four questions
 
 `EngineIngest` was twelve fields in one column whose applicability depended on state the screen
-did not show. It is now 「モデルを追加」, a screen of its own — the catalogue is hidden while it is
-open, because a wizard drawn under a list of models is a form on a page again.
+did not show. It is now 「モデルを追加」, and it is a PANE (`PaneContent.kind = "engineAdd"`), not a
+section and not a dialog.
+
+🔴 The shape was decided twice before it was right, and the reason is worth keeping. Drawn inside
+the admin panel it shared a scrollbar with the catalogue, so on a phone the question being
+answered was wherever the page happened to be scrolled to. Moved into a dialog of its own it read
+correctly — and was still the wrong container: what the last press STARTS runs for minutes, and
+the work does not end when the download does. The row an ingest creates is disabled by design, so
+"taken in" and "usable" are two states separated by an enable press that somebody then has to go
+and find. A dialog is in the way of everything else on screen, so it gets dismissed and the
+thread is lost. A pane can be left open, looked away from, popped out into its own window, and it
+can end where the work ends: it becomes the download's progress, and then offers the enable — with
+the guards (family, files, VAE, VRAM) answering in front of the person who just paid for the
+download. Opening it closes the admin dialog, because a dialog renders above the layout and a
+pane opened from inside one is a screen nobody can see.
 
 1. **What for** — add a new model, add a part to a row that exists, replace a file of one. ASKED,
    never inferred from an id collision. The target row is CHOSEN from a list, and the slots

@@ -48,6 +48,13 @@ export type PaneContent =
    *  is the pane's own toggle — part of the content so it survives a reload and a tab
    *  switch, which unmount the view. */
   | { kind: "sessions"; showStopped: boolean }
+  /** Taking a model in for an inference engine (ADR 0072 follow-up). A PANE and not a dialog:
+   *  the download it starts runs for minutes, and the question this screen exists to answer is
+   *  "can somebody use the model now" — which is one enable press AFTER that download. A modal
+   *  is dismissed and the thread is lost; a pane can be left open, looked away from, popped out,
+   *  and end where the work ends. `engineKey` is the role (`image` / `llm`); `lora` decides
+   *  which catalogue the row joins, the way the tab did. */
+  | { kind: "engineAdd"; engineKey: string; lora: boolean }
   /**
    * A folder's images as a grid of cards (ADR 0080). `galleryPath` is the first field
    * in this union that names a DIRECTORY, which is the whole reason it is a kind of its

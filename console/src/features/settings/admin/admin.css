@@ -747,8 +747,20 @@ a.engines-model-source:hover {
 .engines-model-vae {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
   margin-top: 6px;
+}
+
+/* The column would otherwise stretch the button across the whole row, which reads as a banner
+   rather than as something to press (measured headless). */
+.engines-model-vae > button,
+.engines-model-vae-plan {
+  align-self: stretch;
+}
+
+.engines-model-vae > button {
+  align-self: flex-start;
 }
 
 .engines-model-vae-plan {
@@ -791,10 +803,31 @@ a.engines-model-source:hover {
    screen did not show. The rules that keep it a screen are here: a column at every width (the
    dialog is 1100px and a phone is 390), and nothing positioned absolutely — the step's own
    content decides the height, and a fixed one would cut the search results off. */
+/* 「モデルを追加」 as a pane: its own head (the pane chrome gives the tab, this gives the
+   heading and the tab-header actions) and a body that scrolls. No fixed height — a pane already
+   has one. */
+.engines-add-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.engines-add-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 .engines-wizard {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding: 12px;
+  /* A pane can be 1,400 px wide and these are sentences: capped so a line of prose stays
+     readable and the fields do not become a single stretched row. */
+  max-width: 860px;
 }
 
 .engines-wizard-head {
@@ -802,14 +835,6 @@ a.engines-model-source:hover {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.engines-wizard-title {
-  font-weight: 600;
-}
-
-.engines-wizard-head > button {
-  margin-left: auto;
 }
 
 /* The four questions. Numbers rather than dots would need a legend; the labels ARE the legend,

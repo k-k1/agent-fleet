@@ -1,5 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { ModelVaeFix, useVaeScan } from "./adminEngineVae.tsx";
+import { openEngineAdd } from "./openEngineAdd.ts";
+import { useSettingsUI } from "../store.ts";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
@@ -46,15 +48,23 @@ type EngineModelChange = (id: string, patch: Record<string, unknown>) => Promise
 export function EngineModelsAdminView() {
   const tr = useT();
   const { rows, isSuper, err, setErr, setRows, load } = useEngineRows();
+  const closeAdmin = useSettingsUI((s) => s.closeAdmin);
   const [busy, setBusy] = useState("");
   /** Which JOB a request is in flight for. Its own state rather than `busy`: the two lists are
    *  loaded and refreshed independently, and one shared key would disable a model row because
    *  somebody pressed delete in the history below it. */
   const [busyJob, setBusyJob] = useState("");
   const [note, setNote] = useState("");
-  /** Whether 「モデルを追加」 is the screen. It lives here rather than inside that component
-   *  because the catalogue is hidden while it is open — see the note at the list below. */
-  const [adding, setAdding] = useState(false);
+  /** 「モデルを追加」 opens as a PANE and this dialog gets out of the way (ADR 0072 follow-up).
+   *
+   * 🔴 Closing the admin dialog is part of the act, not a courtesy: a dialog renders ABOVE the
+   * layout, so a pane opened from inside one is a screen nobody can see. What the operator is
+   * doing next lives in the pane — including the enable press at the end of the download. */
+  const openAdd = (v: boolean) => {
+    if (!v) return;
+    openEngineAdd(open.key, kind === "lora");
+    closeAdmin();
+  };
   const [jobs, setJobs] = useState<Record<string, IngestJob[]>>({});
   /** Which engine's catalogue is open, by key. A key rather than an index so that a reload that
    *  reorders the list does not move somebody to another engine mid-ingest. */
@@ -327,9 +337,6 @@ export function EngineModelsAdminView() {
             {open.url ? <span className="mono"> {open.url}</span> : null}
           </p>
         )}
-        {/* The catalogue, hidden while 「モデルを追加」 is open: that screen asks one question at
-            a time, and a list of models under it turns it back into a form on a page. */}
-        {!adding && (
         <EngineModels
           key={open.key + "/" + kind}
           row={open}
@@ -343,15 +350,14 @@ export function EngineModelsAdminView() {
           onReload={load}
           vaeUnreadable={vaeUnreadable}
         />
-        )}
         {/* The ingest is a write too — `POST /ingest` is one of the five routes that answer 400
             for a borrowed role — and it is also the one that would spend money and bucket space
             on a file the far engine is never going to load: the box that stages files is the far
             deployment's active set, not ours. */}
         {!borrowed && (
           <EngineIngest
-            open={adding}
-            setOpen={setAdding}
+            open={false}
+            setOpen={openAdd}
             key={"ingest/" + open.key + "/" + kind}
             engineKey={open.key}
             isImage={isImage}
@@ -1761,7 +1767,7 @@ export type EngineIngestStep = (typeof engineIngestSteps)[number];
 export const engineIngestActs = ["new", "attach", "replace"] as const;
 export type EngineIngestAct = (typeof engineIngestActs)[number];
 
-function EngineIngest({
+export function EngineIngest({
   engineKey,
   isImage,
   isLora,
@@ -1773,6 +1779,7 @@ function EngineIngest({
   onStarted,
   open,
   setOpen,
+  onJob,
 }: {
   engineKey: string;
   isImage: boolean;
@@ -1808,6 +1815,9 @@ function EngineIngest({
    *  them. A wizard drawn under a list of models is a form again. */
   open: boolean;
   setOpen: (v: boolean) => void;
+  /** Hand the started job to whoever is hosting this. The PANE uses it to stop being a form and
+   *  become the progress of the download it started — and to end at the enable press. */
+  onJob?: (job: IngestJob) => void;
 }) {
   const tr = useT();
   const [repo, setRepo] = useState("");
@@ -2084,6 +2094,35 @@ function EngineIngest({
     if (name) await resolveFile(name);
   };
 
+  /** Back to the first question. 🔴 Closing has to do this, not only a successful start: the
+   *  wizard is a dialog now, so its state outlives the press that dismissed it — and re-opening
+   *  「モデルを追加」 into the middle of an act somebody chose minutes ago, against a row they no
+   *  longer remember picking, is the same "state the screen does not show" defect this screen
+   *  was built to end. Caught by rendering two scenes in a row (headless, 2026-09-13). */
+  const reset = () => {
+    setFound(null);
+    setAccepted(false);
+    setRepo("");
+    setRev("");
+    setFile("");
+    setFiles(null);
+    setHits(null);
+    setPicked(null);
+    setId("");
+    setFileFlag("");
+    setDesc("");
+    setStep("act");
+    setAct("new");
+    setSlotChosen(false);
+    setWithVae(false);
+    setErr("");
+    setParams(engineParamsBlank);
+  };
+  const close = () => {
+    setOpen(false);
+    reset();
+  };
+
   const start = async () => {
     setErr("");
     const c = engineNumField(ctx);
@@ -2114,21 +2153,9 @@ function EngineIngest({
       setErr(errDetail(d.error));
       return;
     }
-    setOpen(false);
-    setFound(null);
-    setAccepted(false);
-    setRepo("");
-    setRev("");
-    setFile("");
-    setFiles(null);
-    setPicked(null);
-    setId("");
-    setFileFlag("");
-    setStep("act");
-    setAct("new");
-    setSlotChosen(false);
-    setWithVae(false);
-    setParams(engineParamsBlank);
+    const started = d as IngestJob;
+    reset();
+    if (onJob && started?.id) onJob(started);
     onStarted();
   };
 
@@ -2139,6 +2166,7 @@ function EngineIngest({
       </button>
     );
   }
+  void close;
   const field = (
     label: string,
     value: string,
@@ -2197,12 +2225,12 @@ function EngineIngest({
     setStep(engineIngestSteps[at + 1]);
   };
   const partLabel = fileFlag || (tr("admin.engines_model_add_part_whole") as string);
+  // The four questions. The SURFACE is the pane that hosts this (adminEngineAdd.tsx) — not a
+  // dialog: what this starts runs for minutes and ends at an enable press, and a dialog is
+  // dismissed long before either.
   return (
     <div className="engines-wizard engines-ingest">
       <div className="engines-wizard-head">
-        <span className="engines-wizard-title">
-          {tr(isLora ? "admin.engines_wizard_title_lora" : "admin.engines_wizard_title")}
-        </span>
         {/* Where this is in the four questions. A rail rather than a scrollbar: the form it
             replaced was twelve fields in one column, of which the ones that applied depended on
             state nothing on screen showed. */}
@@ -2214,9 +2242,6 @@ function EngineIngest({
             </li>
           ))}
         </ol>
-        <button type="button" className="sm" onClick={() => setOpen(false)}>
-          {tr("common.cancel")}
-        </button>
       </div>
 
       {/* ① The ACT, asked instead of inferred. It used to be decided by whether the id somebody

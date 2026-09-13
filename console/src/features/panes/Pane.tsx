@@ -40,6 +40,7 @@ import type { Session } from "../../types/session.ts";
 import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
+import { EngineAddView } from "../settings/admin/adminEngineAdd.tsx";
 import { SessionsOverview } from "../overview/SessionsOverview.tsx";
 import { GalleryView } from "../gallery/GalleryView.tsx";
 import { ImagegenView } from "../imagegen/ImagegenView.tsx";
@@ -743,6 +744,13 @@ function PopulatedPane({
       )}
       {pane.content.kind === "sessions" && (
         <SessionsOverview paneId={pane.id} showStopped={pane.content.showStopped} headerActions={tabHeaderActions} />
+      )}
+      {pane.content.kind === "engineAdd" && (
+        <EngineAddView
+          engineKey={pane.content.engineKey}
+          lora={pane.content.lora}
+          headerActions={tabHeaderActions}
+        />
       )}
       {pane.content.kind === "gallery" && (
         <GalleryView

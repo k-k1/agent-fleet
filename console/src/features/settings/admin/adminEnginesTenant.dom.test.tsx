@@ -114,8 +114,10 @@ async function mount(answer: unknown, View: () => ReactNode = EngineModelsAdminV
 }
 
 const text = () => host?.textContent || "";
+// 🔴 The DOCUMENT, not the mount point: a dialog (「モデルを追加」) is portalled to <body>, so a
+// query scoped to `host` cannot see the screen on top of the panel.
 const btn = (label: string) =>
-  Array.from(host?.querySelectorAll("button") || []).find((b) => b.textContent?.trim() === label);
+  Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.trim() === label);
 
 afterEach(() => {
   act(() => root?.unmount());
@@ -188,31 +190,19 @@ describe("the engine panel a granted tenant_admin sees", () => {
     expect(host?.querySelector(".engines-model-tag.on")).toBeTruthy();
   });
 
-  it("keeps the ingest form, which is the one thing the grant is for", async () => {
+  it("keeps the way in to taking a model in, which is the one thing the grant is for", async () => {
     await mount(tenantAnswer);
-    // The form starts collapsed, like it does for the operator. Opening it is what proves the
-    // reduced row carried enough to build it.
+    // 🔴 The button, and what it now does: 「モデルを追加」 is a PANE (the download runs for
+    // minutes and ends at an enable press), so the panel's job is to open it — the questions
+    // themselves are tested against that view in adminEngineModels.dom.test.tsx.
     const opener = btn("Hugging Face などから取り込む");
     expect(opener).toBeTruthy();
-    await act(async () => {
-      opener!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(host?.querySelector(".engines-ingest")).toBeTruthy();
-    // And the two vocabularies the form is built from survived the trim: without base_models
-    // there is no family to declare, and without file_flags a split model cannot be described
-    // at all. Read off the wizard's own selects rather than off the fixture — they live on
-    // 「どれを」, which is two answers in.
-    const next = () => btn("次へ")!;
-    await act(async () => next().dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    const repo = host!.querySelector(".engines-ingest .engines-model-add-row input") as HTMLInputElement;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(repo, "black-forest-labs/FLUX.1-dev");
-      repo.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(async () => next().dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    const options = Array.from(host?.querySelectorAll("option") || []).map((o) => o.getAttribute("value"));
-    expect(options).toContain("flux1");
-    expect(options).toContain("--diffusion-model");
+    // And the two vocabularies that view is built from survived the reduced row: without
+    // base_models there is no family to declare, and without file_flags a split model cannot be
+    // described at all. Read off the row the CP sent, which is what the pane will read too.
+    const engines = (await api.mock.results[0].value).engines;
+    expect(engines[0].base_models).toContain("flux1");
+    expect(engines[0].file_flags).toContain("--diffusion-model");
   });
 
   // 🔴 Both of these were found by RENDERING the panel, not by the table above: a sentence is

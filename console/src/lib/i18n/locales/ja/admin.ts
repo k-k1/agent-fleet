@@ -214,6 +214,14 @@ export const admin = {
   // 🔴 これが置き換えたのは、1 列に 12 項目が縦に並び、そのうちどれが効くかは画面に
   // 出ていない状態（タブ・id の衝突・役割の選択）で決まるフォーム。配備の持ち主が
   // 実際にここで詰まり、「部品として足す」のチェックに辿り着けなかった。
+  // 「モデルを追加」をペインで開く（ADR 0072 follow-up）。ダウンロードは数分かかり、
+  // 終点は「取り込めた」ではなく「使える」——その 2 つは 1 回の有効化で隔たっている。
+  "admin.engines_add_pane_gone": "このエンジンは、この配備にもう無いか、いまのあなたの権限では見えません。",
+  "admin.engines_add_pane_running": "ダウンロード中です（{id}）。この面は開いたままで構いません——終わるとここに出ます。",
+  "admin.engines_add_pane_done": "「{id}」を取り込みました。まだ無効です。有効にすると箱へ同期されます。",
+  "admin.engines_add_pane_failed": "取り込みに失敗しました（{id}）。",
+  "admin.engines_add_pane_enable": "有効にする",
+  "admin.engines_add_pane_enabled": "有効にしました。モデル一覧に出ます。",
   "admin.engines_wizard_title": "モデルを追加",
   "admin.engines_wizard_title_lora": "LoRA を追加",
   "admin.engines_wizard_step_act": "何をする？",
