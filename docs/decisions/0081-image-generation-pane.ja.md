@@ -1,0 +1,380 @@
+# 0081. LLM を挟まずに Console から画像を作る——ペイン 1 つ・Agent のジョブキュー・「まず決定論、次にモデル」のプロンプト支援
+
+[English](0081-image-generation-pane.md) | 日本語
+
+- 状態: **提案**（2026-09-13 起草、未レビュー）。
+- 関連: [0069](0069-image-generation-providers.ja.md)（このペインが駆動する provider 抽象。
+  未解決 1 でジョブ形を先送りにした——本 ADR がそれを引き取る） /
+  [0072](0072-engine-model-catalog.ja.md)（カタログ行・`params`・`negative_prompt`・comfy の 5 族） /
+  [0080](0080-image-gallery-pane.ja.md)（絵を見る場所。このペインはギャラリーが読むものを書く） /
+  [0078](0078-sessions-overview-pane.ja.md)（直近のペイン種別と、その定型） /
+  [0020](0020-chat-bridge.ja.md)（`POST api/chat/ask`——プロンプト支援が借りる一発実行の口） /
+  [0071](0071-self-hosted-inference-engines.ja.md)（エンジンの箱・コールドスタート・誰が払うか）
+
+## 背景
+
+今日、絵はエージェントに頼むことでしか作れない。セッションが `generate_image` を呼び、`af` MCP
+サーバが Agent の `POST /imagegen/generate` を叩き、Agent が ComfyUI のグラフを組み、CP の
+`/engine/image/v1/*` 素通しを経由してエンジンを駆動し、PNG を `~/.cache/agent-fleet/generated/<sid>/`
+に置き、絵は転写のファイルカードとして戻る。「この文書に挿絵を 1 枚」にはこれが正しい形である。
+**1 つのプロンプトを cfg 3 通り × チェックポイント 2 本で 40 枚**欲しい人には正しくない。往復のたびに
+モデルのターンを払い、その人が気にするパラメータ（steps・sampler・seed・LoRA の重み）は見えないか
+届かず、結果と自分の間にエージェントの言葉が挟まる。
+
+既にあるもの（`2da2bf28`・2026-09-13 のツリーで実測）:
+
+- **Agent には MCP 以外の口がある。** `GET /imagegen/status` と `POST /imagegen/generate`
+  （`workspace/agent/routes.go:121-122`・`internal/imagegen/http.go`）。ほかのルートと同じく Agent の
+  bearer の内側にあり、**CP の中継リストには載っていない**（`http.go:8-9` が意図的にそう書いている）。
+  `console/` からは誰も呼んでいない。
+- **絵を作るものは全部 `workspace/agent/internal/imagegen/` にある**: `Provider` インタフェースとコア
+  （`imagegen.go`）、ComfyUI のグラフテンプレート 5 本（`comfy_workflows.go`: `sdxl` / `sd35` /
+  `flux1` / `flux2-klein` / `zimage`）、族の検査と重み付きの LoRA 解決（`comfy.go:303-350`）、
+  ネガティブの合成（行＋呼び手＋配備全体、`comfy.go:169-178`）、seed（`comfy.go:713-725`）、
+  ストアと 30 日の掃除（`store.go`）、枚数とピクセルを数える使用量行 `tool.imagegen`
+  （`imagegen.go:706-726`）。CP はバイトを中継するだけで（`control-plane/engine_gateway.go:866-957`）、
+  image 役については使用量行を**書かない**（`engine_usage.go:180-186`）。
+- **エンジンの資格情報はワークスペースの中にしか無い。** `AF_ENGINE_ISSUE_TOKEN` はコンテナに注入され
+  （`control-plane/workspace_lifecycle.go:401`）、ブラウザは `/engine/{key}/v1/*` が受ける物を何も
+  持たない（`engine_gateway.go:417-424`）。Console が ComfyUI を直に叩くには、存在しない資格情報が要る。
+- **要求語彙**（`imagegen.go:56-115`）: `op`・`prompt`・`negative_prompt`・`size`・`count`
+  （→ ComfyUI の `batch_size`、上限 4）・`inputs`・`mask`・`model`・`seed`・`strength`・
+  `loras[{name,weight}]`。**無いもの**: `steps`・`cfg`・`sampler`・`scheduler`。これらはカタログ行の
+  `params`（ADR 0072・`EngineParams`）が族の recipe にフィールド単位で被さる（`comfy_workflows.go:174-195`）。
+  ADR 0069 はこれを意図して MCP ツールの外に置いた（「provider 差が大きすぎる／摘んでも動かない経路が
+  ある」）。その理由は**エージェントが見るツール**の話で、フリート自身の provider しか持たないペインを
+  縛らない。
+- **族が読むもの**（`comfy_workflows.go`・括弧は recipe の既定）:
+
+  | 族 | steps | cfg | sampler | scheduler | ネガティブ |
+  |---|---|---|---|---|---|
+  | `sdxl` | 読む (20) | 読む (7) | 読む (dpmpp_2m) | 読む (karras) | 効く |
+  | `sd35` | 読む (28) | 読む (4.5) | 読む (dpmpp_2m) | 読む (sgm_uniform) | 効く |
+  | `flux1` | 読む (20) | **読まない**——FluxGuidance 3.5 | 読む (euler) | 読む (simple) | 効かない |
+  | `flux2-klein` | 読む (4) | **読まない**——1 固定 | 読む (euler) | **読まない** | 効かない |
+  | `zimage` | 読む (8) | 読む (1) | 読む (res_multistep) | 読む (simple) | 効かない |
+
+  知らない sampler / scheduler 名は**黙って無視**される（`comfy_workflows.go:196-209`）。箱が知らない
+  名前はコールドスタートの後に `Value not in list` で落ちるので、Agent の許可リストが契約である。
+  蒸留族へのネガティブは警告付きで落とされる（`comfy.go:187-204`）。Console はこの表を知らない。
+- **ブロックする呼び出しと時計。** `POST /imagegen/generate` は絵がディスクに載ってから返る。鎖は、
+  CP の起床予算 900 秒（`engine_gateway.go:87`）と ALB の 60 秒 idle の内側の 45 秒ホールド
+  （`:33-52`・`:104`）、Agent の 16 分（`sdcpp.go:191`）、MCP 呼び手の 18 分（`mcp_imagegen.go:157`）。
+  Console の REST 中継（`control-plane/proxy.go:148-180`）はストリームもハートビートも無いバッファ中継で、
+  コールドスタートを待つブラウザの呼び出しは ALB 配備では 60 秒で切られる。
+- **ジョブ id も取消も進捗も seed も返らない。** `prompt_id` は `comfy.go` の外に出ない。ComfyUI の
+  `/interrupt` も `/queue` も誰も呼ばない。唯一の「進捗」は中身の無い MCP ハートビート
+  （`mcp_imagegen.go:250-298`）。`comfySeedFor` が引いた乱数 seed は `Result` に無い
+  （`imagegen.go:154-171`）——呼び手は得た絵を再現できない。
+- **ディスクに由来が無い。** Agent は PNG のバイトをそのまま書き、サイドカーは書かない（`store.go`）。
+  ComfyUI の `SaveImage` は箱が `--disable-metadata` で無い限り API グラフを `prompt` テキストチャンクに
+  埋めるが、このリポジトリで PNG テキストを読む者も書く者もいない。
+- **メンバー向けカタログが無い。** 管理画面（`console/src/features/settings/admin/adminEngines.tsx`・
+  `adminEngineModels.tsx`）は super_admin、または `allow_engine_ingest` 下の tenant_admin。メンバーの
+  ブラウザが今日持つ唯一の口は `GET /imagegen/status` で、モデル行は `{id, description, warm}` だけ
+  ——族も sizes も `params` も行のネガティブも無い（`http.go:61-91`）。
+- **トリガー語は読んで捨てている。** Civitai の `trainedWords` は `ingest/resolve` と検索で戻り
+  （`control-plane/engine_admin.go:1673-1675`・`engine_ingest.go:497`）ウィザードに出るが、保存する列が
+  無い。トリガーが要る LoRA は載っても見た目に何も変えない。
+- **Console が既に打てる LLM 一発実行がある。** `askAssistant(prompt, assistant?)`
+  （`console/src/core/api/client.ts:877-884` → `POST api/chat/ask` → `chatx/chat_handlers.go:228-261`）:
+  使い捨て・非永続の会話、ツール無し、240 秒（`chat.go:487`）、会員自身の CLI ログインで動き、
+  `assistant.ask` として記帳される。メモ整理（`MemoTidyModal.tsx:83`）と TTS 要約
+  （`useMirrorTts.tsx:160`）が既に使い、適用前に答えをプレビューしている。
+- **上流（ComfyUI の `server.py`・2026-09-13 に確認）:** `POST /interrupt` は `{"prompt_id"}` 付きなら
+  その 1 件だけ、無しなら箱全体を止める。`POST /queue {"delete":[id]}` で待機中を外せる。`GET /queue`
+  は実行中と待機中を返す。ステップ単位の進捗は **WebSocket にしか無く**、CP の中継は接続を upgrade しない。
+
+利用者の言葉は「エージェントを介さずに comfy を叩いて画像を量産する UI」。ここでの「エージェント」は
+LLM のセッションを指す。Workspace Agent——コンテナの中の Go デーモン——は経路に残る。グラフも資格情報も
+ディスクも台帳もそこにあるからである。
+
+## 決定
+
+### 決定 1 — 画素は今後も Workspace Agent が作る。Console は CP の中継リストを通して Agent に届く
+
+- 何も動かさない。Console は他の Agent 由来の画面と同じ `agentProxyAPI.rest` 中継で `/api/imagegen/*`
+  を呼び、CP の `routes.go` は行が増えるだけ（`withResolved` は既に稼働中のワークスペースを要求する。
+  それはギャラリーの条件でもある——Agent プロセスが居なければどちらにせよ絵は無い）。
+- グラフ組み立てを CP に持ち上げる案は、存在しないブラウザ側のエンジン資格情報、`engine_catalog_test.go`
+  が Agent のソースを読んで一致させている族ディスパッチの 2 つ目の写し、ギャラリーが見られない 2 つ目の
+  ストアを要る。ComfyUI 自身の Web UI をブラウザペインに埋める案は同じ資格情報の問題を持ち、
+  テナントのカタログを迂回する。
+- ここで出すのは**フリートの provider だけ**: `comfy` と `sdcpp`。CLI 駆動の provider（`codex`・`agy`）は
+  構造上エージェントであり、これらの摘みを 1 つも持たず、プラン枠を消費する——`agents.image_generation`
+  の opt-in が存在する理由である。したがってその opt-in は**このペインを門にしない**。ペインは
+  `GET /imagegen/status` が ready なフリート provider を報告するときに存在する。既存ルートが要求する
+  `session`（出力フォルダの名前になり、セッション自身の CLI と同じ provider を拒むための欄）は
+  この経路では意味を持たない（決定 3）。
+
+### 決定 2 — Agent にジョブキューを置く。Console は投入してポーリングする。既存のブロック型ルートは MCP ツールのために残す
+
+ADR 0069 の未解決 1 は、driver モデルからの 1 ポーリングが 1 ターンの費用になるためジョブを先送りにした。
+ブラウザのポーリングはバイト以外の費用が無く、60 秒の規則はブロック型を中継越しには使えなくする。
+
+- **Agent のルート**と、CP のリストに載せる 4 行:
+  - `POST /imagegen/jobs` — 本文は既存の `generateRequest` に `params`（決定 4）・`label`（一覧に出す
+    自由文）・`out_dir`（決定 3）を足したもの。即座に `{id, position}` を返す。待機ジョブが
+    `imagegenQueueMax`（200）に達したら 429 で断る——共有の箱に 1 人が 1 日分の GPU をうっかり
+    並べられないように。
+  - `GET /imagegen/jobs` — Agent がまだ覚えているジョブ全部（待機・実行中・完了の直近 500）を新しい順に。
+    `state` ∈ `queued | waking | uploading | running | fetching | done | failed | cancelled`、待機中は
+    `position`、`started_at`・`finished_at`・`elapsed_ms`、解決済みの要求（model・族・seed・実効
+    `params`・loras・size）、完了なら `StoredFile` 形の `files[]` と `warnings[]`。同じ状態には同じバイトを
+    出し、CP の ETag が変化の無いポーリングを 304 にできるようにする。
+  - `DELETE /imagegen/jobs/{id}` — 取消。待機中なら外す。実行中なら provider の任意インタフェース
+    `Canceller` に頼む。comfy では、上流でまだ待機中なら `POST /queue {"delete":[prompt_id]}`、
+    実行中なら `POST /interrupt {"prompt_id"}`——**必ず id 付き**で、素の `/interrupt` は打たない。
+    箱はワークスペース間で共有で、素の interrupt は他人の絵を殺す。`sdcpp` に取消は無い。走り切って
+    結果を捨てる。
+  - `GET /imagegen/status` — 拡張する（決定 5）。
+- **provider ごとにワーカー 1 本、ジョブは 1 つずつ。** 箱は既にサンプリングを直列化しており、先に投げても
+  キューが Agent から見えず取り消せない場所へ移るだけで、`engine_waking` を待つ要求が同時に 2 つ
+  できる。直列にしてこそ待ち順と見積りに意味が出る。
+- **状態の段階は provider から来る。** `sendWithWake` と `awaitHistory` が要求に付いたコールバックで
+  `waking`・`uploading`・`running`・`fetching` を報告し、読むのはジョブ一覧だけ。「エンジンが起動中。
+  最初の 1 枚は数分待つ」を、説明の無い 5 分間の `running` の代わりに言うためのもの。
+- **進捗バーでなく見積り。** ステップ進捗は上流で WebSocket のみ、中継は upgrade しない。Agent は完了
+  ジョブの `elapsed_ms` を (provider, model, サイズ帯) ごとに指数移動平均で持ち `typical_ms` として返す。
+  Console は「このモデルは通常 30 秒ほど」と出す。正直で安い。本物のバーは P2（未解決 1）。
+- **キューの置き場はメモリ。** Agent が再起動すると待機ジョブは消える。完了分はディスクのサイドカー
+  （決定 3）で残る。再起動が痛んだら P1 でジャーナルを足す——Agent はコンテナと共に再起動し、
+  コンテナの再起動はキューより多くを既に捨てている。
+- **Console は未完了のジョブがある間だけ 2 秒ごとにポーリングし、無ければ止める**——静止画面を
+  ポーリングしない既存方針。タブが隠れたら止める。ペインを閉じている間に着地したファイルは
+  ギャラリー自身の 20 秒の網が拾う。
+- MCP ツール `generate_image` は変えない。後で同じキューへの「投入して待つ」に置き換えられるが、
+  利用者に見える差は無く、本 ADR の範囲外。
+
+### 決定 3 — 出力はギャラリーが見る場所へ。1 枚ごとにサイドカー、答えには seed
+
+- **既定フォルダ:** `~/.cache/agent-fleet/generated/console/`——セッション別フォルダの隣、同じ 30 日の
+  掃除の下、ギャラリーの「生成した画像」の家族（ADR 0080 未解決 3）が並べる場所。ファイル名は
+  `image-<unixnano>-<n>.<ext>` を保ち、ギャラリーの新しい順が効く。
+- **`out_dir`（任意）:** 残す物のための browse-root 相対フォルダ。ADR 0080 の `galleryPath` と同じ検証に
+  加え `safeWritableBrowsePath`（アップロード経路自身の門: browse root の内側・`fsDeny` の外）を通し、
+  初回に作る。30 日で掃除が消すフォルダに終わる量産は機能の半分で、人が選んだフォルダは掃除しない。
+- **サイドカー:** 各画像の隣に Agent が `<name>.json` を書く——解決済みの要求（プロンプト・合成後の
+  ネガティブ・model id・族・実際に使った seed・実効 `params`・重み付き loras・size・op・strength・
+  入力パス）、`provider`、ジョブ id、`label`、`elapsed_ms`、`warnings`、Agent のビルド。形式に依らず
+  （webp や jpeg でも動き、PNG を書き換えない）、ギャラリーには見えず（`imageFormat()` で絞る）、
+  ギャラリーのカードのホバー・「画像生成で開く」・後の「X/Y グリッド」が読む物。ComfyUI 自身の
+  `prompt` チャンクは PNG の中に触らず残す。それは API グラフであって要求ではなく、
+  `--disable-metadata` の箱では無い。
+- **`Result` と `StoredFile` に `seed` を足す**（画像ごと: バッチの 0 番は基底 seed、以降は `seed+i`
+  ——ComfyUI がバッチのノイズをそう導く）。MCP ツールの答えにも同じ 1 行。「乱数だったので戻せない」は
+  どの画像 UI でも最多の不満である。
+
+### 決定 4 — 要求にカタログと同じ形の `params` を被せる。何を読むかは族が決め、言葉で言う
+
+- `Request.Params *EngineParams`（`steps`・`cfg`・`sampler`・`scheduler`。`clip_skip` と `weight` は要求
+  フィールドにしない——`clip_skip` はどのテンプレートも読まず、LoRA の重みは LoRA ごとに既にある）。
+  合成順は **族の recipe ← カタログ行 ← 要求**、フィールド単位、既存の `comfyRecipe.with` で。
+- **MCP ツールに `params` は付けない。** ADR 0069 の理由はエージェントに対して立つ。ペインの provider は
+  フリート自身のもので、摘みは Agent 自身が作った。
+- **Agent が検証し、コールドスタートの後に箱が不正値を見ることは無い。** sampler / scheduler は
+  `comfySamplerNames` / `comfySchedulerNames` で検査し 400 `bad_params` で断る（カタログの被せ方の
+  ように黙って無視しない——人が打った値は大きく落ちる）。steps 1〜150、cfg 0〜30、size は各辺 8 の倍数で
+  ピクセル上限（`imagegenMaxPixels`・4 M——`l4` での SDXL 2048² は 5 分待った後の OOM で、箱の 400 は
+  `engine_waking` ですらない裸の 400 で戻る）。
+- **族が無視する物は報告し、飲まない。** `flux1`・`flux2-klein` への `cfg`、`flux2-klein` への
+  `scheduler`、蒸留 3 族へのネガティブは、ネガティブが既にそうしている通りジョブに警告を出す。
+  Console **も**その欄を灰にするが、自前の表でなく Agent の言葉から（決定 5）——2 つが食い違えない形にする。
+
+### 決定 5 — メンバー向けカタログは `GET /imagegen/status` の拡張。CP に新ルートは作らない
+
+- モデルごとに `family`（行の `base_model`）、`sizes`（行か既定 5 つ）、`params`（recipe ← 行の
+  **実効**既定。フォームのプレースホルダが「実際に走る値」になる）、`negative`（行の物。利用者が外せない
+  固定チップとして出す——管理者の物であり、`negative_always` も同様に出す）、`knobs`（族が読む
+  `steps cfg sampler scheduler negative` の部分集合——テンプレートと同じ表から Agent が計算する。
+  表が在る唯一の場所）、`warm`、`description`、`license_name`、`license_url`、`source_url`。
+  LoRA ごとに `base_model`・`weight`（行の既定）・`trained_words`。エンジン単位で `samplers[]`・
+  `schedulers[]`（許可リスト。フォームが Agent の拒む名前を出せないように）・`typical_ms`。
+- 読む行は Agent が `GET /internal/engine/catalog`（`engineCatalogModelRow`）で既に受け取っている物
+  ——MCP 経路が使う口、ワークスペースの発行トークン。CP にブラウザ認証の 2 つ目のカタログを作れば同じ行の
+  2 つ目の投影を同期し続けることになる（`sessionWire` の教訓: 中継に無いフィールドは黙って消える）。
+- `base_model_missing`・`files_missing`・`vae_missing` の行は**出さない**——カタログが既に生成から
+  外している行で、ツールチップ付きの無効項目は管理者の画面であってメンバーの画面ではない。
+- **`trained_words` を `engine_models` の列にする**（JSON 配列。両方言の移行——マージ前に次の空き番号を
+  開いているレーン全部と突き合わせる。ADR 0072 の衝突の注記）。取り込みが Civitai の `trainedWords` から
+  書き、管理者の行で編集でき、`engineCatalogModelRow` が中継する。列 1 つ・場所 3 つ。これ無しでは
+  LoRA 利用者の誰もが求める 1 つのこと（決定 7）ができない。
+
+### 決定 6 — ペイン種別 1 つ `imagegen`。下書きはローカル、真実はジョブ一覧
+
+```ts
+| { kind: "imagegen" }
+```
+
+- **モーダルでなくペイン**。ADR 0080 決定 1 の理由（ギャラリーやミラーと並べる・タブ・ポップアウト・
+  レイアウト永続化・スマホの 1 ペイン）に 1 つ足す: 量産は 1 時間開けっぱなしにする画面である。
+- **的の欄は無い。** `sameTarget` は「同じ種別」。2 度開けば在る 1 枚にフォーカスする。モデル 2 本で
+  スタジオ 2 枚は、まだ出ていない要望（未解決 4）。
+- **フォームの下書きは `localStorage`**（`af.imagegen-draft.<workspace>`）。コンポーザーの下書きと同じく
+  変更のたびに書き、再読み込みで書きかけのプロンプトが残る。ペインの内容にはしない——レイアウト
+  ストアは 2 KB のプロンプトの置き場でなく、下書きはレイアウトでなくブラウザ単位の物。
+- **ジョブ一覧は Agent の物**（決定 2）。タブ切替でビューは unmount されるが、再マウントで一覧は
+  1 ポーリング先にあり何も失わない——0078 の「タブ切替を生きるものは内容に置く」規則は、サーバに
+  置くことで満たす。
+- ペイン種別の登録 8 か所（union・`migrate.ts`・`sameTarget`・描画 switch・`paneTitle` 2 か所・
+  `LayoutMap` 略号・ポップアウト・i18n）に 9 か所目: **コマンド表（ADR 0017）に `open.imagegen`
+  （`g i`）を登録する**。ADR 0080 はフォルダが要るので登録できなかった。このペインは `open.sessions`
+  と同じく引数が無い。
+- i18n の接頭辞は `imggen.*`、新しいドメインファイルの対（`ja/imggen.ts`・`en/imggen.ts`）——
+  カタログ試験が接頭辞 1 つをファイル 1 つに縛る。
+- 導線は既存の並びに 1 行ずつ: 操作バーと `LayoutMap` のボタン（「セッション」の隣）、ギャラリーの
+  ヘッダ「ここに生成」（P1・ADR 0080 が着地したら。`out_dir` をそのフォルダにしてペインを開く）、
+  ギャラリーのカード「画像生成で開く」（P1・サイドカーをフォームに読む）。
+
+### 決定 7 — プロンプト支援は 2 層。常にある決定論の層と、利用者が押したときだけのモデル 1 回
+
+**層 A——モデル無し・通信無し・常に在る。**
+
+- **族のカード。** 選んだモデルの族について折り畳み 1 行で: 方言（`sdxl` とその Pony / Illustrious /
+  NooBAI 系はタグ列、`flux1`・`flux2-klein`・`zimage`・`sd35` は自然文）、方言が期待する品質接頭辞
+  （`masterpiece, best quality` / `score_9, score_8_up`——チップとして提示し、黙って挿さない）、
+  ネガティブがこの族に届くか、推奨 steps / cfg の範囲、サイズのプリセット。族 5 つ・Console の i18n
+  内容。チェックポイントごとのカードは未解決 2。
+- **トリガー語。** LoRA を選ぶと `trained_words` がプロンプト欄のチップになる。LoRA を外すと、
+  それが足したチップだけ消える。「LoRA が効かない」の最多はトリガー不足で、モデル呼び出しでは直らない。
+- **管理者のネガティブと行の `params`** はフォームの固定部として出所付き（「管理者がこのモデルに
+  宣言」）で出し、見えないところで混ぜない。
+- **sampler と scheduler** は Agent の一覧からの select。族が読まない物は理由付きで無効表示。
+
+**層 B——モデルを 1 回、ボタンで、着地前にプレビュー。**
+
+- 「プロンプトを書いて」は Console が組んだメッセージ 1 通を `askAssistant()` に送る: 族のカード、
+  モデルの `description`、選んだ LoRA のトリガー語、行のネガティブ、利用者が打った言語のままの意図。
+  JSON `{prompt, negative, note}` を求める。答えは提案として見せ、「使う」「プロンプトだけ使う」
+  「捨てる」——勝手には当てない。同じボタンの変種: 「3 案」「このモデルの方言に書き直す」（文→タグ列、
+  またはその逆）、参照画像があるときは「画像をプロンプトとして記述」（vision——P2。アシスタント経路は
+  今日ファイルを添付できない）。
+- **なぜテナントの `llm` エンジンでなく `api/chat/ask` か。** ブラウザは `/engine/llm/*` に届かず
+  （資格情報が無い）、その役が無い配備もあり、冷えた llama.cpp の箱は一文のために数分の GPU を使う。
+  `askAssistant` は会員自身の CLI ログインで動き、メモ整理と TTS 要約が既にやっていることで、記帳される。
+  「LLM が経路に居る」のは押したときだけで、アシスタントの名前はボタンに出る。CLI ログインが無い
+  配備のために、ワークスペースのエンジントークンで `llm` を叩く Agent 側 `POST /imagegen/suggest` は
+  P1 の選択肢（未解決 3）。
+- **押さずにモデルを呼ぶことは無い。** ADR 0069 決定 8 の理由（見えないプラン消費）はそのまま当たる。
+
+### 決定 8 — 量産は「N ジョブ」であって 1 つの大バッチではない。seed の方針とグループを持つ
+
+- **フォームの「枚数」は N ジョブ**、1 枚ずつ、seed は下の方針、**グループ**として投入（全ジョブに
+  1 つの `group` id。一覧はグループを 1 行に畳み「7 / 40 完了」。取消はジョブ単位でもグループ単位でも）。
+  ComfyUI の `batch_size` > 1 は上級欄として残す（要求の `count`・上限 4）: 余裕のあるカードでは
+  1 枚あたり速く、無いカードでは 5 分待った後の OOM で、1 枚ずつの取消も無い。
+- **seed の方針:** `random`（既定）／`fixed`（全ジョブ同じ seed——「同じ絵で cfg を変える」の摘み）／
+  `sequence`（基底 + i）。全結果に seed を出し、「この seed でもう一度」「新しい seed でもう一度」が
+  結果の 2 ボタン。
+- **キャッシュ警告は機能。** ComfyUI は同一グラフに約 0.5 秒でキャッシュの絵を返す（`comfyCacheWarning`）。
+  ペインはこれを警告でなく「以前の実行と同一」として出す。`fixed` seed では「何か変わったか」への
+  期待どおりの答えだから。
+- **スイープとプロンプト行列は P1**（1 軸だけ違うジョブのグループ: cfg・steps・model・LoRA の重み、
+  またはプロンプト内の `{a|b|c}` 択一。ギャラリーの P1「X/Y」配置がサイドカーの軸フィールドを読む）。
+  グループとサイドカーは、P1 が wire フィールドを足さずに済む形にしておく。
+
+### 決定 9 — 参照画像はワークスペースのディスクから。ブラウザのメモリからではない
+
+- `edit` と `inpaint` は既に `inputs[]` を browse-root パスで取る。ペインは: ギャラリーから選ぶ
+  （ADR 0080 のカードに「参照にする」・P1）、ファイルをドロップ（既存の `POST /fs/upload` で
+  `generated/console/inputs/` に上げ、パスで参照）、パスを打つ。`strength` は既存の `Slider` が描く
+  スライダー。マスクは P2（塗るには Console に無いキャンバスが要る。パスで渡すマスクファイルは初日から動く）。
+- `edit` では入力自身の寸法が size 欄に勝ち、既存の警告が出る。フォームは size 欄を入力の寸法入りで
+  無効表示し、利用者が警告でなく規則を読めるようにする。
+
+### 決定 10 — エンジンの状態と費用は画面に、メンバーの言葉で
+
+- ヘッダは次のいずれか: **準備済み**（温かいモデルがある）／**冷えている**（「最初のジョブで
+  エンジンが起動。通常 N 分」——最後に観測した `waking` の長さを Agent が `typical_ms` と同様に持つ）／
+  **起動中**（ジョブが `waking`）／**使えない**（`engine_off`・`engine_unavailable`・フリート provider
+  無し——コード自身の文言付き）。拡張した status とジョブの段階から来る。管理者のエンジン行への
+  メンバー向けルートは無く、このペインには要らない。
+- **費用はテナントの GPU 時間で、ペインはそう言う**——`$0.00` を印字しない。comfy の `CostUSD` は
+  構造上 0 で、帰属は管理者の時間別表にある。使用量ペインは既に受け取っていて出していない 2 つの
+  カウンタ（`tool.imagegen` の `Images`・`Pixels`）を出し、メンバーが自分の量を見られるようにする。
+  `usage_series.go` の畳み込み 1 つとラベル 2 つ。「影響」に列挙。
+
+## 却下した案
+
+- **既存のブロック型 `POST /imagegen/generate` をそのまま中継する。** コールドスタートで ALB の
+  60 秒に死に、取り消せず、順番も出ず、キューをブラウザのメモリで回すことになる（決定 2）。
+- **CP でグラフを組み、ブラウザにエンジン資格情報を渡す。** 存在しない資格情報、族ディスパッチの
+  2 つ目、ギャラリーが見られない 2 つ目のストア（決定 1）。
+- **ComfyUI の Web UI をブラウザペインに埋める。** 同じ資格情報の問題、カタログの迂回、スマホで使えず、
+  テナントのネガティブと params が効かない。
+- **Console から生の ComfyUI グラフを投げさせる**（「カスタムワークフロー」）。中継は運ぶ——CP は設計上
+  本文を検閲しない——が、Agent のテンプレートこそが `base_model`・`params`・行のネガティブ・LoRA の
+  族検査に意味を与える契約である。上級者向けのワークフロー機能は方針の問いを伴う別の ADR。
+- **ジョブの置き場をペインの内容に。** レイアウトのリセットで消え、ポップアウト間で重複し、真実でない
+  ——真実は Agent（決定 6）。
+- **P0 で WebSocket の進捗バー。** 中継の upgrade と Agent 側の常時接続が要る。見積りは価値の 8 割を
+  仕事の 5 %で出す（決定 2・未解決 1）。
+- **P0 のプロンプト支援をテナントの `llm` エンジンで。** ブラウザから届かない。Agent からなら P1 の
+  選択肢（決定 7）。
+- **品質タグやトリガー語をプロンプト本文に自動挿入。** 利用者の文への黙った編集は ADR 0069 決定 7 が
+  サイズについて禁じた失敗。見えて外せるチップが形。
+- **要求の不正な sampler 名を、カタログの被せ方と同じく黙って無視。** 人が打った値は大きく落ちる。
+  被せ方の寛容さは管理者の古い行のためで、メンバーのフォームのためではない（決定 4）。
+- **素の `POST /interrupt`。** 共有の箱で他のワークスペースの絵を殺す（決定 2）。
+- **モデルごと・出力フォルダごとの別ペイン。** 要望が無い（未解決 4）。
+
+## 影響
+
+- **Agent**（`workspace/agent`）: `internal/imagegen/` に `jobs.go`（キュー・ワーカー・グループ・EMA・
+  取消）、`Request.Params`、`Result/StoredFile.Seed`、`store.go` のサイドカー、要求の検証、`comfy.go` の
+  `sendWithWake` / `awaitHistory` の段階コールバック、comfy が実装する任意インタフェース `Canceller`、
+  `knobs` / `samplers` / `schedulers` / `typical_ms` を持つ拡張 `statusResponse`。`routes.go` に 4 ルート
+  （`testdata/routes.golden` が動く——ADR 0080 と違いここでは想定内）。`usage_series.go` が
+  `Images` / `Pixels` を畳む。
+- **CP**: `routes.go` の中継 4 行。`engine_models.trained_words`（両方言の移行）を取り込みが書き、
+  管理者の行で編集でき、`engineCatalogModelRow` が中継。ゲートウェイの変更無し——取消は素通しの
+  パスが 2 つ増えるだけ。
+- **Console**: `features/imagegen/`（ビュー・フォーム・ジョブ一覧・族のカード・プロンプト支援モーダル・
+  `open.ts`・CSS・下書きとグループ畳み込みの純関数）、登録 9 か所、i18n の対 `imggen.*`、導線
+  ボタン 2 つ、`usage` の枚数とピクセルのラベル。ギャラリーの P1「画像生成で開く」「参照にする」は
+  ADR 0080 のペインが在ってから着地する。
+- **ドキュメント**: `guide/ref/features.{md,ja.md}` の行と `guide/member/` の手順、
+  `workspace/agent/knowledge/af-usage.{md,coverage.tsv}`（docs-check が両方を強制する。
+  セッションペインが踏んだとおり）。
+- **新しい依存は無い。** スライダー・select・ライトボックス・サムネイル・一発実行のアシスタント呼び出し・
+  アップロード経路は全部ある。
+- 試験: 純関数（下書きの往復・グループの畳み込み・seed 方針・族カードの選択・プロンプト支援が
+  解析する JSON）／DOM（`knobs` に無い欄が無効になる・チップが LoRA 選択に追従・提案はプレビューで
+  自動適用しない・ジョブ単位とグループ単位の取消）／Go（キューの順序・上限の 429・待機中と実行中の
+  取消と id 付き `/interrupt`・検証の拒否・サイドカーの中身・答えの seed・status のフィールド・
+  ETag が効くバイトの安定・EMA）、そして P0 を完了と呼ぶ前に GPU の箱への実機 1 回——golden が pin
+  するのはグラフの形で、走らせたことの無いグラフで緑の golden が何の価値だったかは ADR 0072 が記録している。
+
+## フェーズ
+
+- **P0**（決定 1〜10 から、各決定が P1 と名指した項目を除く）: ペイン、取消とグループ付きのキュー、
+  `params`、拡張 status、サイドカーと seed、族のカード、トリガー語のチップ、`api/chat/ask` 経由の
+  「プロンプトを書いて」、パスかドロップによる edit、`out_dir`。ファイルを共有しない 3 レーン:
+  - **レーン A（Agent）**: `jobs.go`・`Request.Params`・検証・seed とサイドカー・段階と取消・
+    status 拡張・ルートと golden・使用量の畳み込み。
+  - **レーン B（CP）**: 中継の行・`trained_words` 列を端から端まで。
+  - **レーン C（Console）**: ペイン種別と `features/imagegen/`・i18n・導線・使用量ラベル。
+    C は A の wire のスタブ（上の形が契約）に対して組み、A の後に仕上げる。
+- **P1**: スイープとプロンプト行列。ギャラリーの繋ぎ（「画像生成で開く」「参照にする」「ここに生成」）。
+  プリセット（名前付きパラメータ集合・まずローカル）。再起動が痛んだらキューのジャーナル。`llm` 役経由の
+  `POST /imagegen/suggest`。「エージェントに送る」（`chatCreate({attachPath})` は在る）。グループ完了の
+  通知。族が粗すぎたらチェックポイントごとのプロンプト注記。
+- **P2**: 進捗バーとプレビューの流れ（中継の upgrade＋Agent の WebSocket）。マスクの塗り。
+  「この画像を記述」（vision）。77 トークンの族向け CLIP トークン計数（ブラウザ内トークナイザ——
+  バンドル量を秤にかける）。op としての `upscale`（カタログにアップスケーラの行種別が要る）。
+
+## 未解決
+
+1. **見積りで足りるか、P0 でバーが要るか。** 実機の後に決める。`flux1` のコールドスタートの 1 枚が
+   「通常 40 秒ほど」のまま `running` に 90 秒座るなら、いちばん大事な場面で見積りは嘘になる。
+2. **族のカードか、チェックポイントごとのカードか。** Pony・Illustrious・素の SDXL は 1 族に 3 方言。
+   最初の本物の Pony 行で族カードが誤導するなら、行に `prompt_notes` を足す（管理者が書く。
+   取り込みが `params_hint` の正規表現が既に読む Civitai の説明から種を蒔ける）。
+3. **CLI ログインが 1 つも無い配備。** `askAssistant` はアシスタント 1 つを要る。自前エンジンしか
+   持たないフリートの会員は、P1 の Agent ルートができるまで層 A だけで層 B が無い。
+4. **スタジオを同時に複数。** P0 の答えはワークスペースに 1 枚。モデル 2 本を並べる要望が出たら
+   ペインに `slot` を足し `sameTarget` がそれを比べる。
+5. **`generated/console/` の保持。** セッションと同じ 30 日＋残す物は `out_dir`——か、人が作ると
+   決めた物だから掃除しない。最初にフォルダを失った利用者に訊く。
+6. **キューの上限と完了一覧の大きさ。** 200 と 500 は当て推量。制約は共有ホストのメモリ（完了ジョブが
+   持つのはパスでありバイトでないので一覧は小さく、サイドカーがアーカイブ）。
