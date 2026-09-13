@@ -71,6 +71,9 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 		h.License != "apache-2.0" || h.Bytes != 7615616512 || h.ContextLength != 131072 {
 		t.Errorf("hit = %+v", h)
 	}
+	if h.ModelRef != h.Ref {
+		t.Errorf("model_ref = %q, want the Hugging Face repository %q", h.ModelRef, h.Ref)
+	}
 	// All three ranking numbers ride on every row, whichever one the list was ordered by:
 	// sorting by one and showing only that one leaves "why is this here" unanswerable.
 	if h.Likes != 435 || h.Trending != 22 {
@@ -98,8 +101,8 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 // right is here: the two sources spell a page differently, and Civitai's needs the MODEL id —
 // a number the panel never otherwise sees, because `ref` is the version's.
 //
-// 🔴 The dates are DISPLAY ONLY. The vocabulary still has no "newest" (see engineSortHF: every
-// date-ordered page is bulk automated re-quantisations), and this must not become one.
+// Dates are also the explicit initial rankings: updated repositories on Hugging Face and new
+// model arrivals on Civitai remain separate meanings in the API.
 func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 	_, q := hfSearchStub(t, hfSearchBody)
 	hits, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "qwen", kind: "gguf", sort: ""})
@@ -131,7 +134,9 @@ func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 		_, _ = w.Write([]byte(`{"items":[
 		  {"id":133005,"name":"Juggernaut XL","type":"Checkpoint","allowCommercialUse":["Image"],
 		   "modelVersions":[{"id":1759168,"name":"Ragnarok","baseModel":"SDXL 1.0",
-		                     "publishedAt":"2025-05-07T21:02:16.940Z"}]}]}`))
+		                     "publishedAt":"2025-05-07T21:02:16.940Z",
+		                     "images":[{"url":"javascript:alert(1)"},
+							   {"url":"https://image.civitai.com/model.jpeg"}]}]}]}`))
 	}))
 	defer srv.Close()
 	old := engineCivitaiBase
@@ -154,6 +159,12 @@ func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 	if civ[0].UpdatedAt != "" {
 		t.Errorf("updated_at = %q — Civitai published no such date, so the row must not claim one",
 			civ[0].UpdatedAt)
+	}
+	if civ[0].PreviewURL != "https://image.civitai.com/model.jpeg" {
+		t.Errorf("preview_url = %q, want the first safe HTTP(S) image", civ[0].PreviewURL)
+	}
+	if got := engineSafePreviewURL("https://metadata.example.invalid/private.jpeg"); got != "" {
+		t.Errorf("a non-Civitai preview origin was exposed: %q", got)
 	}
 }
 
@@ -182,8 +193,8 @@ func TestSearchFiltersByWhatTheEngineCanLoad(t *testing.T) {
 	if q.Get("filter") != "gguf" || q.Get("pipeline_tag") != "" {
 		t.Errorf("llm search asked %v, want filter=gguf", *q)
 	}
-	if q.Get("sort") != "downloads" || q.Get("direction") != "-1" {
-		t.Errorf("not ordered by downloads: %v", *q)
+	if q.Get("sort") != "lastModified" || q.Get("direction") != "-1" {
+		t.Errorf("initial Hugging Face browse is not ordered by updated descending: %v", *q)
 	}
 	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "sdxl", kind: "checkpoint", sort: ""}); aerr != nil {
 		t.Fatalf("checkpoint: %v", aerr.message)
@@ -231,13 +242,16 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 	if hits[0].Ref != "1759168" {
 		t.Errorf("ref = %q, want the version id 1759168 (133005 is the MODEL id)", hits[0].Ref)
 	}
+	if hits[0].ModelRef != "133005" {
+		t.Errorf("model_ref = %q, want the model id 133005", hits[0].ModelRef)
+	}
 	if hits[0].BaseModel != "SDXL 1.0" || hits[0].Downloads != 1632949 {
 		t.Errorf("hit = %+v", hits[0])
 	}
 	// Civitai is not asked for GGUFs at all: it hosts image models, and llama.cpp can load none
 	// of them.
-	if hits, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "gguf", sort: ""}); aerr != nil || len(hits) != 0 {
-		t.Errorf("civitai for the llm role = %v %v, want nothing", hits, aerr)
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "gguf", sort: ""}); aerr == nil || aerr.status != http.StatusBadRequest {
+		t.Errorf("civitai for the llm role = %v, want a 400 refusal", aerr)
 	}
 }
 
@@ -251,7 +265,7 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 // the card at all, which is what this test pins.
 func TestCivitaiSearchMarksNonCommercial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"items":[{"name":"X","allowCommercialUse":[],
+		_, _ = w.Write([]byte(`{"items":[{"id":2,"name":"X","allowCommercialUse":[],
 		  "modelVersions":[{"id":5,"baseModel":"SDXL 1.0"}]}]}`))
 	}))
 	defer srv.Close()
@@ -317,7 +331,8 @@ func TestSearchRouteAnswersHitsAndRefusesAnEmptyQuery(t *testing.T) {
 func TestSearchRanksWithoutAQuery(t *testing.T) {
 	_, q := hfSearchStub(t, `[]`)
 	for _, tc := range []struct{ sort, want string }{
-		{"", "downloads"},
+		{"", "lastModified"},
+		{engineSortUpdated, "lastModified"},
 		{engineSortDownloads, "downloads"},
 		{engineSortTrending, "trendingScore"},
 		{engineSortLikes, "likes"},
@@ -365,8 +380,95 @@ func TestCivitaiRankingUsesThePeriodForTrending(t *testing.T) {
 		t.Errorf("likes asked %v, want sort=Highest Rated with no period", got)
 	}
 	// 🔴 Not passed through: this API answers 400 to a sort it does not know (measured).
-	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "", kind: "checkpoint", sort: "newest"}); aerr == nil {
-		t.Error("an unknown ranking reached Civitai, which answers 400")
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "", kind: "checkpoint", sort: engineSortNewest}); aerr != nil {
+		t.Errorf("new arrivals: %v", aerr)
+	}
+	if got.Get("sort") != "Newest" || got.Get("period") != "" {
+		t.Errorf("new arrivals asked %v, want sort=Newest with no period", got)
+	}
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "", kind: "checkpoint", sort: engineSortUpdated}); aerr == nil {
+		t.Error("Hugging Face's updated ranking reached Civitai")
+	}
+}
+
+// Pagination passes only the opaque token back to the fixed upstream endpoint. In particular,
+// Hugging Face's Link URL is not followed: accepting an arbitrary next URL here would turn the
+// admin route into an SSRF primitive.
+func TestSearchPaginationUsesOpaqueBoundedCursors(t *testing.T) {
+	var got url.Values
+	requests := 0
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		got = r.URL.Query()
+		w.Header().Set("Link", "<"+srv.URL+"/api/models?cursor=next%3D%3D>; rel=\"next\"")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	old := engineIngestBase
+	engineIngestBase = srv.URL
+	t.Cleanup(func() { engineIngestBase = old })
+
+	_, next, aerr := engineSearchHFPage(t.Context(), engineSearchReq{
+		q: "flux", kind: "checkpoint", sort: engineSortUpdated, cursor: "current==",
+	})
+	if aerr != nil {
+		t.Fatalf("HF page: %v", aerr.message)
+	}
+	if got.Get("cursor") != "current==" || next != "next==" {
+		t.Errorf("cursor request/answer = %q/%q, want current==/next==", got.Get("cursor"), next)
+	}
+	a, _, _ := engineModelAdminAPI(t)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest/search",
+		strings.NewReader(`{"source":"hf","sort":"updated","cursor":"current=="}`))
+	r.SetPathValue("key", "image")
+	a.searchIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	var answer map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &answer)
+	if rec.Code != http.StatusOK || answer["next_cursor"] != "next==" {
+		t.Errorf("wire pagination = %d %v", rec.Code, answer)
+	}
+
+	h := http.Header{}
+	h.Set("Link", `<https://metadata.example.invalid/api/models?cursor=secret>; rel="next"`)
+	if cursor := engineHFNextCursor(h); cursor != "" {
+		t.Errorf("a different origin supplied next cursor %q", cursor)
+	}
+
+	before := requests
+	if _, _, aerr := engineSearchHFPage(t.Context(), engineSearchReq{
+		kind: "checkpoint", cursor: "bad\ncursor",
+	}); aerr == nil || aerr.status != http.StatusBadRequest {
+		t.Errorf("control-character cursor = %v, want 400", aerr)
+	}
+	if requests != before {
+		t.Error("an invalid cursor reached the upstream")
+	}
+	if engineCursorValid(strings.Repeat("x", engineCursorMax+1)) {
+		t.Error("an unbounded cursor was accepted")
+	}
+}
+
+func TestCivitaiPaginationUsesMetadataCursor(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		_, _ = w.Write([]byte(`{"items":[],"metadata":{"nextCursor":"2026-09-13 14:37:43.239|2935601"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	old := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	t.Cleanup(func() { engineCivitaiBase = old })
+
+	_, next, aerr := engineSearchCivitaiPage(t.Context(), engineSearchReq{
+		kind: "checkpoint", sort: engineSortNewest, cursor: "2026-09-12 10:00:00|10",
+	})
+	if aerr != nil {
+		t.Fatalf("Civitai page: %v", aerr.message)
+	}
+	if got.Get("cursor") != "2026-09-12 10:00:00|10" || next != "2026-09-13 14:37:43.239|2935601" {
+		t.Errorf("cursor request/answer = %q/%q", got.Get("cursor"), next)
 	}
 }
 

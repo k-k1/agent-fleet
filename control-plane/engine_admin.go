@@ -135,6 +135,9 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// And WHICH repository, for somebody who does not already know the name (ADR 0072
 	// decision 11). Reads only, filtered to what this engine could load.
 	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/search", a.withIngestAdmin(a.searchIngest))
+	// A card identifies a repository/model; this read expands it into the versions that the
+	// single-operation file picker can choose from.
+	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/versions", a.withIngestAdmin(a.versionsIngest))
 	// The same read with no engine in the path: a deployment that has not adopted 60-engines
 	// has an EMPTY panel, and "there is nothing here" is the worst answer to "what could I
 	// run?". Browsing needs no engine because it needs no token, no bucket and no task.
@@ -1599,6 +1602,10 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ 
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
 		return
 	}
+	if aerr := engineSourceAllowedForKind(engineIngestKindFor(e), b.Source); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	res, aerr := engineIngestResolve(r.Context(), b.Source)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -1749,6 +1756,10 @@ func (a engineAdminAPI) listIngestFiles(w http.ResponseWriter, r *http.Request, 
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
 		return
 	}
+	if aerr := engineSourceAllowedForKind(engineIngestKindFor(e), b.Source); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	files, aerr := engineIngestList(r.Context(), b.Source, engineIngestKindFor(e))
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -1779,6 +1790,10 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	var b engineIngestBody
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
+		return
+	}
+	if aerr := engineSourceAllowedForKind(engineIngestKindFor(e), b.Source); aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
 	id, s3key := strings.TrimSpace(b.ID), strings.TrimSpace(b.S3Key)
