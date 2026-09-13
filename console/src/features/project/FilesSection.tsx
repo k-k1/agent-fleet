@@ -7,6 +7,7 @@
 // "open folder" on a repo row) opens the section so the target is visible — hence the
 // controlled Section + own persistence (the old console's af-section-files key,
 // so an existing collapse choice carries over).
+import { openGeneratedGallery } from "../gallery/open.ts";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -122,6 +123,11 @@ export const FilesSection = memo(function FilesSection() {
               <Icon name="git-compare" /> {tr("pj.changes")}
             </button>
           </span>
+          <IconButton
+            icon="file-media"
+            label={tr("pane.open_generated")}
+            onClick={() => openGeneratedGallery()}
+          />
           <IconButton icon="refresh" label={tr("pj.refresh")} onClick={bump} />
         </>
       }

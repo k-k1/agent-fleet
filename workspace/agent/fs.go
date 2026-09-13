@@ -301,6 +301,13 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, fe)
 	}
+	// `warm=<edge>` is the gallery saying "I am about to ask for a thumbnail of every image
+	// in here". Filling the cache in the background turns those requests from ~95 ms decodes
+	// into ~44 µs cache reads (measured; fs_thumb.go). The listing does not wait for it, and
+	// the file tree — which lists code folders constantly — never sends the parameter.
+	if edge := thumbEdge(r.URL.Query().Get("warm")); edge > 0 {
+		go warmThumbDir(full, edge)
+	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Type != out[j].Type {
 			return out[i].Type == "dir" // dirs first

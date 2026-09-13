@@ -18,6 +18,54 @@
   display: inline-flex;
   gap: 2px;
 }
+/* The breadcrumb: the way out of a folder, and the only one that survives the empty state.
+   It shrinks before the title does — the last segment is already the pane's title. */
+.gal-crumbs {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--muted);
+}
+.gal-crumb-part {
+  display: inline-flex;
+  min-width: 0;
+}
+.gal-crumb {
+  overflow: hidden;
+  padding: 0 2px;
+  color: inherit;
+  font: inherit;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gal-crumb:hover:not(:disabled) {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+/* The folder you are in: still shown, but it goes nowhere. */
+.gal-crumb:disabled {
+  cursor: default;
+}
+.gal-crumb-sep {
+  opacity: 0.6;
+}
+/* A folder has no picture, so the tile holds the icon at the size a thumbnail would be —
+   the grid keeps one rhythm whether a row is folders or images. */
+.gal-folder-icon {
+  font-size: 34px;
+  color: var(--muted);
+}
+.gal-card.folder .gal-thumb {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.gal-card.folder:hover .gal-folder-icon {
+  color: var(--accent);
+}
 .gal-sort-btn {
   font-size: 11px;
   white-space: nowrap;
@@ -67,12 +115,14 @@
    nest, so an image card is a div with two buttons (the same shape as the transcript's
    file cards). */
 .gal-zoom,
+.gal-enter,
 .gal-card {
   color: var(--fg);
   font: inherit;
   cursor: pointer;
 }
-.gal-zoom {
+.gal-zoom,
+.gal-enter {
   display: flex;
   flex-direction: column;
   gap: 4px;

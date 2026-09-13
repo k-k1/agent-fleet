@@ -19,6 +19,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
+// WarmThumb, when the Agent has installed it, is called with the path of every image this
+// package writes, so the preview a gallery is about to ask for is already in the cache.
+// Nil in tests and in any build that has no thumbnail cache: warming is an optimisation, and
+// nothing here waits for it or reports on it.
+var WarmThumb func(path string)
+
 // GeneratedDir is one session's generated-image directory.
 func GeneratedDir(sid string) string {
 	return filepath.Join(paths.HomeDir(), ".cache", "agent-fleet", "generated", sid)
@@ -90,6 +96,14 @@ func storeImagesAt(dir string, images []Image, props *ImageProps) ([]StoredFile,
 			Bytes: int64(len(img.Bytes)), Width: img.Width, Height: img.Height,
 			Seed: img.Seed,
 		})
+		// Fill the thumbnail cache while nobody is waiting. A cold thumbnail is ~95 ms of
+		// decode and a cached one ~44 µs (measured; fs_thumb.go), and the folder this just
+		// landed in is exactly the one somebody opens next — the gallery's "Generated
+		// images (N)" points straight at it. The seam is the Agent's, like EngineLookup:
+		// this package owns "make pixels", not "know how a preview is scaled".
+		if WarmThumb != nil {
+			go WarmThumb(path)
+		}
 		if props != nil {
 			one := *props
 			one.Seed = img.Seed

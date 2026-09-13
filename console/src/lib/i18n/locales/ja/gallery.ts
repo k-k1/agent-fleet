@@ -5,6 +5,11 @@
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
 // ja が正本。新しいキーはここに足し、同じキーを ../en/ の同名ファイルにも足す。
 export const gallery = {
+  "gallery.root": "ホーム",
+  "gallery.up": "上へ",
+  "gallery.breadcrumb": "今いるフォルダ",
+  "gallery.summary_folders": "{n} フォルダ",
+  "gallery.folder_images": "{n} 枚",
   "gallery.title_session": "生成した画像 — {name}",
   "gallery.empty": "このフォルダに画像はありません。",
   "gallery.failed": "フォルダを読み込めませんでした",

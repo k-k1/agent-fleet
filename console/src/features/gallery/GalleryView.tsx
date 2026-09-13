@@ -33,17 +33,21 @@ import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import {
   PAGE_SIZE,
+  breadcrumb,
   effectiveSort,
   focusIndex,
   hasTimes,
+  galleryFolders,
   galleryImages,
   galleryTotals,
+  parentPath,
   sortImages,
   visibleImages,
   type FsEntry,
   type GalleryImage,
   type GallerySort,
 } from "./gallery.ts";
+import { openGallery } from "./open.ts";
 import "./gallery.css";
 
 /** Longest edge asked of the thumbnail endpoint. The SAME number the mirror's file cards
@@ -97,6 +101,26 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
 
   const found = useMemo(() => galleryImages(entries, path), [entries, path]);
   const images = useMemo(() => sortImages(found, sort), [found, sort]);
+  const folders = useMemo(() => galleryFolders(entries, path), [entries, path]);
+  const parent = parentPath(path);
+  const crumbs = useMemo(() => breadcrumb(path), [path]);
+  // Session folders are named by a UUID, so the card would read "03603f64-9cbc-…" — the
+  // very reason the file tree is no way in (decision 8). The session list already carries
+  // each session's folder and how many pictures are in it, so a folder that matches one is
+  // labelled with the session and needs no request of its own (asking the folder itself
+  // would be one fs/tree per card).
+  //
+  // Read from the store rather than subscribed to: `sessions` is a new array on every poll,
+  // and this view would then re-render every second. Labels therefore refresh with the
+  // LISTING, which is the same beat the cards themselves arrive on.
+  const named = useMemo(() => {
+    const m = new Map<string, { label: string; count: number }>();
+    for (const s of useSessionsStore.getState().sessions) {
+      if (s.generatedImagesPath) m.set(s.generatedImagesPath, { label: displayName(s), count: s.generatedImages || 0 });
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries]);
   // What the toggle SHOWS as selected: with no times in the listing "newest" is not on
   // offer, and a highlighted button that sorts by name would be the view lying about
   // itself (decision 2 — old Agents do not send mtime).
@@ -115,7 +139,10 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
     async (signal: AbortSignal, initial: boolean): Promise<boolean> => {
       let d: { entries?: FsEntry[]; error?: { code?: string } };
       try {
-        d = await api(`api/fs/tree?path=${encodeURIComponent(path)}`);
+        // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
+        // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
+        // it the first look at a fresh folder trickles in card by card.
+        d = await api(`api/fs/tree?path=${encodeURIComponent(path)}&warm=${THUMB}`);
       } catch {
         if (!signal.aborted && initial) setFailed(true);
         return false;
@@ -245,6 +272,19 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
   // Back press jumps straight past the picture.
   useBackClose(zoomPath ? close : undefined, !!zoomPath);
 
+  /**
+   * Walk into a folder (or up out of one) IN THIS PANE. Not openGallery: that dedupes on
+   * the folder and would jump to a gallery of the same folder someone has open elsewhere,
+   * which is the opposite of navigating.
+   *
+   * `gallerySession` is dropped on the way: it titles the pane "Generated images — <name>",
+   * and carrying it into a different folder would leave the tab claiming a session whose
+   * pictures are no longer on screen. `sort` is a preference for the pane, so it stays.
+   */
+  const navigate = (to: string) => {
+    setPaneTarget(paneId, { content: { kind: "gallery", galleryPath: to, ...(sort ? { sort } : {}) } });
+  };
+
   const setSort = (next: GallerySort) => {
     setPaneTarget(paneId, {
       content: {
@@ -264,8 +304,14 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
     useLayoutStore.getState().openTargetInNew({ content: { kind: "file", filePath: img.path } }, true);
   };
 
-  const title = sessionTitle ? tr("gallery.title_session", { name: displayName(sessionTitle) }) : baseName(path);
-  const empty = entries !== null && images.length === 0;
+  const title = sessionTitle
+    ? tr("gallery.title_session", { name: displayName(sessionTitle) })
+    : path
+      ? baseName(path)
+      : tr("gallery.root");
+  // "Nothing here" means nothing to walk into either: a folder with subfolders and no
+  // pictures is a perfectly good gallery page (the generated root is exactly that).
+  const empty = entries !== null && images.length === 0 && folders.length === 0;
   // A picture that is gone from the folder (deleted between two reads) closes the lightbox
   // rather than freezing on a URL that now 404s.
   const at = zoomPath ? images.findIndex((i) => i.path === zoomPath) : -1;
@@ -284,8 +330,32 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
         <span className="view-title" title={path}>
           <Icon name="file-media" /> {title}
         </span>
+        {/* The way back out. It is in the HEAD rather than a card so it survives the empty
+            state — a folder with no pictures must not be a dead end. */}
+        <span className="gal-crumbs" aria-label={tr("gallery.breadcrumb")}>
+          <button type="button" className="gal-crumb" onClick={() => navigate("")} disabled={!path}>
+            {tr("gallery.root")}
+          </button>
+          {crumbs.map((c) => (
+            <span key={c.path} className="gal-crumb-part">
+              <span className="gal-crumb-sep" aria-hidden="true">
+                /
+              </span>
+              <button
+                type="button"
+                className="gal-crumb"
+                onClick={() => navigate(c.path)}
+                disabled={c.path === path}
+                title={c.path}
+              >
+                {c.name}
+              </button>
+            </span>
+          ))}
+        </span>
         {entries !== null && (
           <span className="gal-count">
+            {folders.length > 0 && <>{tr("gallery.summary_folders", { n: folders.length })} · </>}
             {tr("gallery.summary", { count: totals.count, size: humanSize(totals.bytes) })}
             {shown.length < totals.count && <> · {tr("gallery.shown", { shown: shown.length, count: totals.count })}</>}
           </span>
@@ -315,6 +385,25 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
       ) : (
         <div className="gal-body">
           <div className="gal-grid" role="list">
+            {parent !== null && (
+              <FolderCard
+                label={tr("gallery.up")}
+                icon="arrow-up"
+                title={tr("gallery.up")}
+                onOpen={(newPane) => (newPane ? openGallery(parent, { newPane: true }) : navigate(parent))}
+              />
+            )}
+            {folders.map((f) => (
+              <FolderCard
+                key={f.path}
+                label={named.get(f.path)?.label || f.name}
+                meta={named.has(f.path) ? tr("gallery.folder_images", { n: named.get(f.path)!.count }) : undefined}
+                icon="folder"
+                title={f.path}
+                fresh={fresh.has(f.name)}
+                onOpen={(newPane) => (newPane ? openGallery(f.path, { newPane: true }) : navigate(f.path))}
+              />
+            ))}
             {shown.map((img) => (
               <GalleryCard
                 key={img.path}
@@ -356,6 +445,50 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
 }
 
 /**
+ * A folder card: the way down into a subfolder, and the "Up" card that leaves one.
+ *
+ * One target, not two: a folder has nothing to enlarge, so the whole card navigates and the
+ * image card's corner button has no counterpart here. Ctrl/⌘ and the middle button open the
+ * folder in a second pane, the same convention every other row in the Console follows.
+ */
+function FolderCard({
+  label,
+  meta,
+  icon,
+  title,
+  fresh,
+  onOpen,
+}: {
+  label: string;
+  meta?: string;
+  icon: string;
+  title: string;
+  fresh?: boolean;
+  onOpen: (newPane: boolean) => void;
+}) {
+  return (
+    <div className={"gal-card folder" + (fresh ? " gal-new" : "")} role="listitem">
+      <button
+        type="button"
+        className="gal-enter"
+        title={title}
+        onClick={(e) => onOpen(e.ctrlKey || e.metaKey)}
+        onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+        onAuxClick={(e) => e.button === 1 && onOpen(true)}
+      >
+        <span className="gal-thumb">
+          <Icon name={icon} className="gal-folder-icon" />
+        </span>
+        <span className="gal-name" title={title}>
+          {label}
+        </span>
+        <span className="gal-meta muted">{meta || ""}</span>
+      </button>
+    </div>
+  );
+}
+
+/**
  * One card, split the way the transcript's file cards are (decision 5): the body enlarges
  * the picture, the corner button spends a pane on it. A thumbnail that failed to load
  * falls back to the whole card opening the pane — with no picture on screen there is
@@ -389,7 +522,7 @@ function GalleryCard({
           <Icon name="file-media" className="gal-thumb-none" />
         ) : (
           <img
-            src={downloadURL(img.path, THUMB)}
+            src={downloadURL(img.path, THUMB, img.mtime)}
             alt={img.name}
             loading="lazy"
             decoding="async"
