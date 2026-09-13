@@ -85,6 +85,20 @@ export type EngineModel = {
    *  made the panel go quiet about a row that still could not generate. The CP refuses to
    *  enable one of these. */
   files_missing?: string[];
+  /** The row's checkpoint was READ and carries no VAE tensors, and the row declares no `--vae`
+   *  file either (ADR 0072 follow-up). The one fault no declaration can express: an SDXL
+   *  checkpoint published without a VAE holds every file its family needs, validates, loads —
+   *  and then fails every request inside ComfyUI, after the box has paid a 1-2.5 minute
+   *  checkpoint switch. Measured twice on this deployment. The CP refuses to enable one. */
+  vae_missing?: boolean;
+  /** Which file would fix it, as `<repo>/<file>`. Absent for a family this deployment holds no
+   *  default VAE for, where the fix is a declaration somebody makes by hand. */
+  vae_fix?: string;
+  /** 🔴 Nobody has read this row's header yet, which is NOT the same as "it has no VAE" — every
+   *  row taken in before the question existed is in this state. The panel answers it with one
+   *  scan call rather than drawing a mark, because a mark on all of them would be worth
+   *  nothing. */
+  vae_unread?: boolean;
   /** Where the bytes came from (`hf:<repo>/<file>`, `civitai:<id>`, a URL). The id is short and
    *  unique only inside this deployment, so this is the only thing that says WHICH vendor's
    *  model of that name this row is. Absent for a seeded row.
@@ -201,6 +215,30 @@ export type ResolvedSource = {
    *  trusting them. Fills the form; nothing is stored until the form is submitted. */
   params_hint?: EngineParams;
   params_hint_quote?: string;
+  /** Whether THIS file carries the VAE its family decodes with, read from the safetensors
+   *  header before anything is downloaded: "yes" | "no". 🔴 Absent means the header could not be
+   *  read (a `.ckpt`, a source that refused the Range) — which is not "no" and must not be drawn
+   *  as one. Asked of a whole checkpoint on an image engine only. */
+  vae_bundled?: string;
+  /** What this deployment would do about a `"no"`: the family's own VAE, and whether it is
+   *  already in the bucket (`staged`) or would be taken in under the licence named here. It is
+   *  what lets the form offer the second download in the same press, with its terms on screen. */
+  family_vae?: FamilyVae;
+};
+
+/** The family VAE offered beside a checkpoint that carries none. */
+export type FamilyVae = {
+  repo: string;
+  file: string;
+  s3Key: string;
+  /** Already in this deployment's bucket: the fix is a declaration, nothing is downloaded and
+   *  there is no new licence to accept. */
+  staged?: boolean;
+  bytes?: number;
+  license?: string;
+  /** The file is known and the source could not be reached. Said rather than omitted — an
+   *  omission reads as "this family has no answer", which is a different and permanent thing. */
+  unreachable?: boolean;
 };
 
 /** One search result (POST …/ingest/search, ADR 0072 decision 11).

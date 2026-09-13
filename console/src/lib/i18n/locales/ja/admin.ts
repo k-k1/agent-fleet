@@ -187,6 +187,22 @@ export const admin = {
   // `image/checkpoints/` の Flag 無し 1 ファイルで、flux1 は別に 4 本を読む——どれを
   // 選んでも動かないのに、選んだ瞬間に印だけが消えていた。
   "admin.engines_model_files_missing": "この行は「{n}」のワークフローが読むファイルを持っていません（不足: {f}）。取り込みでこの行の部品として足すまで、有効にはできません。",
+  // 🔴 チェックポイント自身が VAE を持たない場合（ADR 0072 follow-up）。宣言では表せない
+  // 唯一の欠陥で、行は完全に見えるのに全要求が ComfyUI の中で落ちる——しかも箱が
+  // 切り替え 1〜2.5 分を払ったあとに。利用者側の回避手段は無い（ツールに VAE の引数が無い）。
+  "admin.engines_model_vae_missing":
+    "このチェックポイントは VAE を同梱していません。族のワークフローには復号に使えるものが無く、プロンプトや大きさを変えても全部同じところで失敗します。有効にはできません。",
+  "admin.engines_model_vae_fix": "VAE を足す",
+  // すでにバケットに置いてある場合。ダウンロードも新しいライセンス受諾も要らない、が
+  // いちばん伝える価値のある違い。
+  "admin.engines_model_vae_plan_staged": "{f} はこの配備にもう置いてあります。この行に足すだけで済みます（ダウンロードなし）。",
+  "admin.engines_model_vae_plan_ingest": "{f} を取り込んで、この行に `--vae` として足します（{n}・ライセンス {l}）。",
+  "admin.engines_model_vae_accept": "ライセンスに同意して取り込む",
+  "admin.engines_model_vae_attach": "この行に足す",
+  "admin.engines_model_vae_cancel": "やめる",
+  "admin.engines_model_vae_started": "取り込みを開始しました。終わるとこの行に付きます（履歴で進み具合が見られます）。",
+  "admin.engines_model_vae_attached": "この行に足しました。有効にできます。",
+  "admin.engines_model_vae_none": "ヘッダを読み直したところ、このチェックポイントは VAE を同梱していました。印を取り消します。",
   "admin.engines_model_add_desc": "説明",
   // 任意。この経路には読み取る出所が無いので、ライセンスを人が書く唯一の場所になる。
   // 空のままなら行は「ライセンスの記録なし」と言う（空白のままにはしない）。

@@ -742,6 +742,30 @@ a.engines-model-source:hover {
   gap: 6px;
 }
 
+/* The fault that has a fix, with the fix under it. Boxed and indented so the sentence and the
+   button read as one thing: the row's other marks are statements, and this one is an offer. */
+.engines-model-vae {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.engines-model-vae-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--dialog-border);
+  border-radius: 6px;
+}
+
+.engines-model-vae-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 /* No label column to line up with at phone width: the label goes above its input, and the
    buttons stop being two half-width boxes side by side. */
 @media (max-width: 760px) {

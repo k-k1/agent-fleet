@@ -196,6 +196,22 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // unflagged file in `image/checkpoints/` and flux1 reads four others — no answer in the
   // selector could work, and choosing one made the only mark disappear.
   "admin.engines_model_files_missing": "This row does not hold the files the \u201c{n}\u201d workflow reads (missing: {f}). It cannot be enabled until they are taken in and attached to it.",
+  // 🔴 The checkpoint file itself carries no VAE (ADR 0072 follow-up): the one fault no
+  // declaration can express. The row looks complete and every request dies inside ComfyUI —
+  // after the box has paid a 1-2.5 minute checkpoint switch — and a caller cannot act on it at
+  // all, because the image tool has no VAE argument.
+  "admin.engines_model_vae_missing":
+    "This checkpoint carries no VAE of its own. Its family's workflow has nothing to decode with, so every request fails at the same point whatever the prompt or size. It cannot be enabled.",
+  "admin.engines_model_vae_fix": "Add a VAE",
+  // The cheap case, said out loud: nothing is downloaded and there is no new licence to accept.
+  "admin.engines_model_vae_plan_staged": "{f} is already in this deployment. Adding it to this row is all it takes — nothing is downloaded.",
+  "admin.engines_model_vae_plan_ingest": "{f} will be taken in and attached to this row as `--vae` ({n}, licence {l}).",
+  "admin.engines_model_vae_accept": "Accept the licence and take it in",
+  "admin.engines_model_vae_attach": "Add it to this row",
+  "admin.engines_model_vae_cancel": "Cancel",
+  "admin.engines_model_vae_started": "The download has started. It joins this row when it finishes — the history below shows the progress.",
+  "admin.engines_model_vae_attached": "Added to this row. It can be enabled now.",
+  "admin.engines_model_vae_none": "Reading the header again says this checkpoint does bundle a VAE after all. The mark is withdrawn.",
   "admin.engines_model_add_desc": "description",
   // Optional. This route has no source to read a licence from, so it is the one place a person
   // types one. Left blank, the row says "licence not recorded" rather than showing a gap.

@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { ModelVaeFix, useVaeScan } from "./adminEngineVae.tsx";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
@@ -220,6 +221,13 @@ export function EngineModelsAdminView() {
     }
   };
 
+  // The headers nobody has read yet, read once. It runs on the panel's own load rather than
+  // behind a button because the question is not one an operator should have to know to ask:
+  // until it is answered, a checkpoint that can never generate looks exactly like one that can.
+  //
+  // ⚠️ Above the early returns below, like every other hook here: React counts them per render.
+  useVaeScan(rows || [], load);
+
   if (rows === null) return <p className="muted pad">{tr("common.loading")}</p>;
 
   // 🔴 "There is nothing here" is the worst possible answer to "what could I run?". Looking at
@@ -326,6 +334,7 @@ export function EngineModelsAdminView() {
           onChange={(id, patch) => setModel(open.key, id, patch)}
           onForget={(id, purge) => forgetModel(open.key, id, purge)}
           onAdd={(body) => addModel(open.key, body)}
+          onReload={load}
         />
         {/* The ingest is a write too — `POST /ingest` is one of the five routes that answer 400
             for a borrowed role — and it is also the one that would spend money and bucket space
@@ -406,6 +415,7 @@ function EngineModels({
   onChange,
   onForget,
   onAdd,
+  onReload,
 }: {
   row: EngineRow;
   kind: ModelKind;
@@ -418,6 +428,9 @@ function EngineModels({
   onChange: EngineModelChange;
   onForget: (id: string, purge: boolean) => void;
   onAdd: (body: Record<string, unknown>) => void;
+  /** Re-read the catalogue. Needed by the acts that change a row WITHOUT going through
+   *  `onChange` — giving a row the VAE its checkpoint lacks writes a file, not a field. */
+  onReload: () => void;
 }) {
   const tr = useT();
   const wantLora = kind === "lora";
@@ -616,7 +629,15 @@ function EngineModels({
                     )}
                 </p>
               )}
-              {/* What this row asks to be RUN at, and the way to change it. Read-only it is one
+              {/* 🔴 And the fault no declaration can express: the checkpoint file itself carries
+                no VAE, so the family's workflow has nothing to decode with. Stated with the fix
+                attached rather than as advice — by hand it is a search, an ingest under the
+                right role and a retyped id, which is the road the person who owns this
+                deployment walked once before this button existed. */}
+            {!readOnly && m.vae_missing && (
+              <ModelVaeFix engineKey={row.key} model={m} pending={pending} onDone={onReload} />
+            )}
+            {/* What this row asks to be RUN at, and the way to change it. Read-only it is one
                   line; the operator gets the same six fields the ingest form filled in, because
                   "what the author suggested" and "what this deployment decided" have to be the
                   same six questions or the second cannot correct the first. */}

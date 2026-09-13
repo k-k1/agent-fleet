@@ -3424,3 +3424,127 @@ describe("EngineModelsAdminView / registering a key from the history", () => {
     expect(reuseButton()).toBeTruthy();
   });
 });
+
+// 🔴 The fault a row cannot state about itself: the checkpoint file carries no VAE, so the
+// family's workflow has nothing to decode with. Every field on the row is filled in, the engine
+// loads it, `generate_image` offers it by name — and every request dies inside ComfyUI after the
+// box has paid a 1-2.5 minute checkpoint switch (measured twice on the real deployment).
+//
+// What this screen has to do about it is the whole of the feature: say it in a sentence, and
+// offer ONE press. By hand it was a search, an ingest under the right file role and a retyped id
+// that had to collide with an existing row before the act even appeared — walked once, in anger,
+// by the person who owns this deployment.
+describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
+  const broken = (over: Record<string, unknown> = {}) =>
+    row({
+      provider: "comfy",
+      base_models: ["sdxl", "sd35"],
+      file_flags: ["", "--vae"],
+      model_rows: [
+        {
+          id: "waimature_v30",
+          enabled: false,
+          kind: "checkpoint",
+          base_model: "sdxl",
+          vae_missing: true,
+          vae_fix: "stabilityai/sdxl-vae/sdxl_vae.safetensors",
+          file_rows: [{ s3Key: "image/checkpoints/waimature_v30.safetensors", vae_bundled: "no" }],
+          ...over,
+        },
+      ],
+    });
+  const button = (label: string) =>
+    Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+      | HTMLButtonElement
+      | undefined;
+
+  it("says what is wrong and fixes it in one press when the file is already here", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [broken()] });
+    await mount();
+    expect(host!.textContent).toContain("VAE を同梱していません");
+
+    // The plan first — what the press will do, before it does it.
+    apiJSON.mockResolvedValue({
+      vae_bundled: "no",
+      action: "attach",
+      staged: true,
+      repo: "stabilityai/sdxl-vae",
+      file: "sdxl_vae.safetensors",
+      s3Key: "image/vae/sdxl_vae.safetensors",
+    });
+    await click(button("VAE を足す"));
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/image/models/waimature_v30/vae",
+      "POST",
+      { check: true },
+    );
+    // 🔴 The cheap case has to SAY it is cheap: the bytes are already this deployment's, so
+    // there is no download, no minutes and no second licence to accept. A screen that asked for
+    // a licence acceptance here would be asking about something that is not happening.
+    expect(host!.textContent).toContain("もう置いてあります");
+    expect(button("ライセンスに同意して取り込む")).toBeFalsy();
+
+    apiJSON.mockResolvedValue({ action: "attached", vae_bundled: "no" });
+    await click(button("この行に足す"));
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/image/models/waimature_v30/vae",
+      "POST",
+      {},
+    );
+    expect(host!.textContent).toContain("有効にできます");
+  });
+
+  // The other half of the same press: the file is not here, so it is a download under a licence
+  // — and the licence and the size are on screen BEFORE the button that accepts them, which is
+  // the rule the ingest form already follows.
+  it("names the licence and the size before accepting a download", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [broken()] });
+    await mount();
+    apiJSON.mockResolvedValue({
+      vae_bundled: "no",
+      action: "ingest",
+      repo: "stabilityai/sdxl-vae",
+      file: "sdxl_vae.safetensors",
+      bytes: 334641162,
+      license: "mit",
+    });
+    await click(button("VAE を足す"));
+    expect(host!.textContent).toContain("stabilityai/sdxl-vae/sdxl_vae.safetensors");
+    expect(host!.textContent).toContain("335 MB");
+    expect(host!.textContent).toContain("mit");
+
+    apiJSON.mockResolvedValue({ action: "job_started", vae_bundled: "no" });
+    await click(button("ライセンスに同意して取り込む"));
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/image/models/waimature_v30/vae",
+      "POST",
+      { licenseAccepted: true },
+    );
+    expect(host!.textContent).toContain("取り込みを開始しました");
+  });
+
+  // 🔴 A row nobody has READ is not a broken row. Every checkpoint taken in before this existed
+  // is in that state, so the panel answers the question itself — one call for the catalogue, not
+  // one per row — and draws no mark until there is an answer.
+  it("reads the unread headers once and marks nothing until it has an answer", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        broken({ vae_missing: false, vae_unread: true, vae_fix: undefined }),
+      ],
+    });
+    apiJSON.mockResolvedValue({ read: [] });
+    await mount();
+    expect(host!.textContent).not.toContain("VAE を同梱していません");
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/vae-scan", "POST", {});
+    // Once. The rows are replaced on every load, so a scan that depended on their identity
+    // would read the upstream again for ever.
+    const scans = () =>
+      apiJSON.mock.calls.filter((c) => String(c[0]).endsWith("/models/vae-scan")).length;
+    expect(scans()).toBe(1);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(scans()).toBe(1);
+  });
+});

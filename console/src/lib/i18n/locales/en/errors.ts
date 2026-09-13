@@ -229,6 +229,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.no_membership": "That user_key is not a member of that tenant.",
   "err.engine_vram_confirm": "That model wants more VRAM than the chosen instance class has.",
   "err.engine_files_missing": "This row does not hold the files its family's workflow reads.",
+  "err.engine_vae_missing": "This checkpoint carries no VAE of its own, so every request would fail.",
+  "err.engine_vae_unreadable": "The checkpoint's header could not be read, so whether it has a VAE is unknown.",
   "err.gated_not_accepted": "That account has not accepted this repository's terms yet.",
   "err.civitai_login_required": "That asset's uploader only allows downloads from a logged-in account.",
   "err.bad_source": "The source is not a valid one.",

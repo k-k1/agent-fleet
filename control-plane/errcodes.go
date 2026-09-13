@@ -59,7 +59,17 @@ const (
 	// 0072 P2 欠落 10). Unlike the VRAM one this has no confirm: it is not a risk, it is
 	// `comfyBuildGraph` refusing before it dials anything, so enabling would only put an id in
 	// generate_image's list that every request bounces off.
-	errCodeEngineFilesMissing  = "engine_files_missing"
+	errCodeEngineFilesMissing = "engine_files_missing"
+	// The row's checkpoint was read and carries no VAE tensors, and the row declares no `--vae`
+	// file either (ADR 0072 follow-up). Like files_missing and unlike the VRAM gate it has no
+	// confirm: `generate_image` has no VAE argument and the template has no other source of one,
+	// so switching the row on offers a model whose every request dies inside ComfyUI after the
+	// checkpoint switch.
+	errCodeEngineVaeMissing = "engine_vae_missing"
+	// The question could not be ASKED: no source to re-read the header from, or an upstream that
+	// refused. Its own code because the two answers send the reader to opposite places — this one
+	// is "nobody knows", which is never a reason to distrust a row that generates today.
+	errCodeEngineVaeUnreadable = "engine_vae_unreadable"
 	errCodeIngestBadSource     = "bad_source"
 	errCodeIngestFileUnknown   = "file_unknown"
 	errCodeIngestNoChecksum    = "no_checksum"
