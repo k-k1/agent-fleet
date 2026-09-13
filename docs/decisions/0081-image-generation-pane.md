@@ -120,7 +120,8 @@ stays in the loop, because it is where the graph, the credential, the disk and t
 ADR 0069 open question 1 deferred jobs because a poll from a driver model costs a turn. A browser poll
 costs nothing but bytes, and the 60-second rule makes the blocking shape unusable through the proxy.
 
-- **Routes on the Agent**, and their four lines on the control plane's list:
+- **Routes on the Agent**, and their six lines on the control plane's list (the group and queue
+  operations are decision 12):
   - `POST /imagegen/jobs` — body is the existing `generateRequest` plus `params` (decision 4), `label`
     (free text shown in the list) and `out_dir` (decision 3). Returns `{id, position}` at once.
     Refused with 429 when the queue holds `imagegenQueueMax` (200) pending jobs — one member cannot
@@ -367,6 +368,46 @@ not bytes, and a card renders lazily like the gallery's.
 The estimate (`typical_ms`) is keyed by steps as well as model and size bucket, otherwise trials would
 teach the average that batches are fast.
 
+### Decision 12 — A batch shows its progress, and can be paused, resumed, skipped and aborted — as a group, at the job boundary
+
+Forty pictures take a quarter of an hour on a warm box. The person watching needs to know how far it
+is, and to be able to stop it — for a minute (to try something), or for good — without losing what
+has been made. All four verbs are **group** operations (decision 8's `group` id), because the group is
+the thing the person submitted; the queue-wide versions are the same operations over every group.
+
+- **Progress, P0, without the websocket.** The Agent reports per group `done`, `failed`, `total`,
+  `running` (the job in flight with its phase and `elapsed_ms`), `eta_ms` = remaining × `typical_ms`
+  for that (model, size bucket, steps) plus the observed wake time when the box is cold. The pane draws
+  one bar per group — done, failed and running as segments; the running segment fills by time against
+  `typical_ms` and stops at 95 % until the job actually ends, so the bar never claims completion it
+  has not seen. Above the bar: "12 / 40 · about 9 min left · sampling the 13th for 18 s". The
+  per-step bar inside a picture is **P1** (next bullet), not P2 as first drafted.
+- **Per-step progress, P1, through a relayed websocket.** Upstream publishes `progress` (step/total
+  per node) and preview frames only on `/ws`. The control plane already relays websockets for the
+  terminal and the browser pane (`proxy.go`'s `upgrader`), so the gateway gaining an upgrade branch
+  for `/engine/{key}/v1/ws` is new code on an existing pattern, not new infrastructure; the Agent holds
+  one socket per provider while a job runs and folds `progress` into the job's `step`/`steps`. The job
+  list's polling stays the transport to the browser — 2 s is finer than a person reads a bar.
+- **Pause and resume are queue-boundary operations.** `POST /imagegen/groups/{id}` with `{"op":
+  "pause"}` marks the group; the worker skips its jobs and runs whatever else is queued (another
+  group, a trial). The running job **finishes** — ComfyUI has no pause, and an interrupted sampling
+  cannot be resumed, only restarted from step 0 with the same seed, which is a repeat, not a resume.
+  `"resume"` clears the mark; the jobs keep their positions. `POST /imagegen/queue {"op":"pause"}` /
+  `"resume"` does the same for every group at once; trials still run while the queue is paused — that
+  is the reason to pause.
+- **Skip** (`{"op":"skip"}`) aborts the running job of that group with the targeted `/interrupt`
+  (decision 2) and lets the next one start; the skipped job is `cancelled`, not retried.
+- **Abort** (`{"op":"cancel"}`) interrupts the running job the same way and removes every queued job
+  of the group; finished pictures stay — the group is `cancelled` with "12 of 40 made" on it. The
+  per-job `DELETE` of decision 2 remains for one picture.
+- **A paused batch lets the box go cold.** The engine's idle window is the administrator's, not this
+  pane's; after it, resume means a wake. The group row says "paused 6 min — the engine may have gone
+  to sleep" from the same wake estimate decision 10 shows, so the person is not surprised by the
+  minutes that follow "resume".
+- **Wire.** `GET /imagegen/jobs` gains `groups[]` (`id`, `label`, `state` ∈ `running | paused | done |
+  cancelled`, the counts, `eta_ms`, `paused_at`); jobs keep `group`. `POST /imagegen/groups/{id}` and
+  `POST /imagegen/queue` are the two routes added to decision 2's list — six proxy lines, not four.
+
 ## Options rejected
 
 - **Proxy the existing blocking `POST /imagegen/generate` as-is.** Dies at the ALB's 60 s on a cold
@@ -382,8 +423,10 @@ teach the average that batches are fast.
   workflow feature is a different ADR with its own policy question.
 - **Job store in the pane's content.** Lost on layout reset, duplicated across pop-outs, and not the
   truth — the Agent is (decision 6).
-- **Progress bar in P0 via the websocket.** Needs the relay to upgrade connections and the Agent to
-  hold one; the estimate is 80 % of the value for 5 % of the work (decision 2, unresolved 1).
+- **Per-step progress in P0 via the websocket.** Needs the relay's upgrade branch and a held socket
+  in the Agent; the group bar and the time-filled segment give most of the value first (decision 12).
+- **Pause mid-sampling.** ComfyUI cannot; an interrupt restarts from step 0. Pause at the boundary,
+  skip when the current picture is not worth finishing (decision 12).
 - **Prompt help through the tenant's `llm` engine in P0.** Not reachable from the browser; from the
   Agent it is a P1 option (decision 7).
 - **Auto-insert quality tags or trigger words into the prompt text.** Silent edits to the user's text
@@ -396,6 +439,8 @@ teach the average that batches are fast.
   batch was the thing the trial was meant to decide (decision 11).
 - **Trial at a smaller size to make it faster.** A different size is a different composition; the
   preview would not preview anything. Fewer steps at the same size is the honest shortcut (decision 11).
+- **Pause as a per-job flag.** Forty flags to set and clear; the group is the unit the person
+  submitted and the unit they think in (decision 12).
 
 ## Consequences
 
@@ -403,9 +448,9 @@ teach the average that batches are fast.
   cancel), `Request.Params`, `Result/StoredFile.Seed`, the sidecar in `store.go`, request validation,
   phase callbacks in `comfy.go`'s `sendWithWake` / `awaitHistory`, an optional `Canceller` interface
   implemented by comfy, the widened `statusResponse` with `knobs` / `samplers` / `schedulers` /
-  `typical_ms`; four routes in `routes.go` (so `testdata/routes.golden` moves — expected here, unlike
+  `typical_ms`, group state and the worker's pause/skip logic; six routes in `routes.go` (so `testdata/routes.golden` moves — expected here, unlike
   ADR 0080). `usage_series.go` folds `Images` / `Pixels`.
-- **Control plane**: four proxy lines in `routes.go`; `engine_models.trained_words` (migration in both
+- **Control plane**: six proxy lines in `routes.go`; `engine_models.trained_words` (migration in both
   dialects), written by ingest, editable by the admin row, relayed by `engineCatalogModelRow`.
   No gateway change: cancel is two more pass-through paths.
 - **Console**: `features/imagegen/` (view, form, job list, family cards, prompt-help modal, `open.ts`,
@@ -427,7 +472,8 @@ teach the average that batches are fast.
 
 ## Phases
 
-- **P0** (decisions 1–11 minus the P1 items named in them): the pane, the queue with cancel, group and trial,
+- **P0** (decisions 1–12 minus the P1 items named in them): the pane, the queue with cancel, group, trial,
+  pause / resume / skip / abort and the group progress bar,
   `params`, the widened status, the sidecar and the seed, family cards, trigger-word chips,
   "write the prompt for me" through `api/chat/ask`, edit by path or drop, `out_dir`. Three lanes that do
   not share a file:
@@ -439,16 +485,17 @@ teach the average that batches are fast.
 - **P1**: sweeps and the prompt matrix; gallery hooks ("open in image generation", "use as reference",
   "generate here"); presets (named parameter sets, local first); a queue journal if a restart bites;
   `POST /imagegen/suggest` via the `llm` role; "send to an agent" (`chatCreate({attachPath})` exists);
-  a notification when a group finishes; per-checkpoint prompt notes if families prove too coarse.
-- **P2**: the progress bar and preview stream (relay upgrade + websocket in the Agent); mask painting;
+  a notification when a group finishes; per-checkpoint prompt notes if families prove too coarse;
+  **per-step progress and preview frames** through the relayed websocket (decision 12).
+- **P2**: mask painting;
   "describe this image" (vision); a CLIP token counter for the 77-token families (a tokenizer in the
   browser — weigh the bundle); `upscale` as an op (needs an upscaler row kind in the catalogue).
 
 ## Unresolved
 
-1. **Is the estimate enough, or is the bar needed in P0?** Decide after the live run: if a cold-start
-   picture on `flux1` sits in `running` for 90 s with only "usually ~40 s", the estimate is a lie in
-   the case that matters most.
+1. **Is the time-filled segment honest enough until P1?** Decide after the live run: if a cold-start
+   picture on `flux1` sits at 95 % for 50 s because "usually ~40 s" was measured warm, the wake
+   estimate must be added to the first job's segment, not only to the ETA.
 2. ~~Family cards or per-checkpoint cards.~~ **Settled 2026-09-13: family cards.** Pony, Illustrious
    and base SDXL are one family with three dialects; if the family card misleads on the first real Pony
    row, add `prompt_notes` to the row in P1 (the admin writes it; ingest could seed it from the Civitai
@@ -465,6 +512,6 @@ teach the average that batches are fast.
 6. **Queue cap and finished-list size.** 200 and 500 are guesses; the shared host's memory is the
    constraint (a finished job holds paths, not bytes, so the list is small; the sidecars are the
    archive).
-7. **The trial step counts** (10 / 12 / 8 / 4 / 4) and the 7-day sweep of `trial/` are guesses. The
-   steps should be the smallest number at which the composition is recognisable on the live run; if
-   the sweep of `trial/` is unwelcome, decision 3's "never" extends to it and the folder simply grows.
+7. **The trial step counts** (10 / 12 / 8 / 4 / 4) are guesses; the steps should be the smallest number
+   at which the composition is recognisable on the live run. The 7-day sweep of `trial/` is **settled**
+   (2026-09-13).
