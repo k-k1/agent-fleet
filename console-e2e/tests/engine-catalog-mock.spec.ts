@@ -95,13 +95,13 @@ async function openCatalog(page: Page, engineKey: "image" | "llm") {
     }));
   }, { key: engineKey });
   await page.goto(origin);
-  await expect(page.locator(".engines-add-pane")).toBeVisible();
+  await expect(page.locator(".engine-catalog-pane")).toBeVisible();
   return calls;
 }
 
 test("restored LLM pane searches HF by last modification without offering Civitai", async ({ page }) => {
   const calls = await openCatalog(page, "llm");
-  const pane = page.locator(".engines-add-pane");
+  const pane = page.locator(".engine-catalog-pane");
   await expect(pane.getByText("Harbor Text Model", { exact: true })).toBeVisible();
   expect(calls.filter((c) => c.path.endsWith("/ingest/search"))).toEqual(expect.arrayContaining([
     expect.objectContaining({ path: "/api/admin/engines/llm/ingest/search", body: expect.objectContaining({ source: "hf", sort: "updated" }) }),
@@ -112,7 +112,7 @@ test("restored LLM pane searches HF by last modification without offering Civita
 
 test("a card starts one operation and returns to browsing with its new job visible", async ({ page }) => {
   const calls = await openCatalog(page, "image");
-  const pane = page.locator(".engines-add-pane");
+  const pane = page.locator(".engine-catalog-pane");
   await expect(pane.getByText("Harbor Image Model", { exact: true })).toBeVisible();
   await pane.getByRole("button", { name: "Add", exact: true }).click();
   const modal = page.getByRole("dialog");
@@ -135,7 +135,7 @@ for (const width of [1400, 390]) {
   test(`Image browse keeps its small right thumbnail and restores focus after the lightbox at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const calls = await openCatalog(page, "image");
-    const pane = page.locator(".engines-add-pane");
+    const pane = page.locator(".engine-catalog-pane");
     const title = pane.getByText("Harbor Image Model", { exact: true });
     await expect(title).toBeVisible();
     expect(calls.filter((c) => c.path.endsWith("/ingest/search"))).toEqual(expect.arrayContaining([
