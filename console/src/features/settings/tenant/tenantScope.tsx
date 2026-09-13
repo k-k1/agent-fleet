@@ -28,7 +28,7 @@ import { MemberView } from "./tenantMemberDetail.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
 import { CloudCostAdminView } from "../../cost/CloudCostView.tsx";
 import { McpAdminView } from "../mcp/mcpAdmin.tsx";
-import { EngineModelsAdminView } from "../admin/adminEngineModels.tsx";
+import { EngineCatalogLauncher } from "../admin/adminEngineCatalogLauncher.tsx";
 
 export interface ScopeGroup {
   key: string;
@@ -465,7 +465,7 @@ export function TenantScopeBody({
   // the same component the operator sees: it draws itself from the `super_admin` flag in its
   // own answer (ADR 0072 open question 11), so there is one screen to keep working rather than
   // a copy that drifts. The rail's own label has always said "models" (tenant.tab_engines).
-  if (section === "engines") return <EngineModelsAdminView key={slug} />;
+  if (section === "engines") return <EngineCatalogLauncher key={slug} />;
   // Not switched on isSuper: the git provider OAuth app belongs to the tenant admin, and its
   // PUT is gated by tenantAdminFor (ADR 0052 decision 3).
   if (section === "git-oauth") return <TenantGitOAuthView key={slug} slug={slug} />;
