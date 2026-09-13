@@ -5,7 +5,14 @@
 # docs/11-phase1-plan.md / docs/09-portability.md 参照。
 
 # --- build the agent (Go) ---
-FROM golang:1.26-trixie AS agentbuild
+# Native on the builder, cross-compiling to the target — the same trick, and for the
+# same reason, as control-plane/Dockerfile's `build` stage. CGO is off, so Go needs no
+# cross toolchain for GOARCH; emulating the COMPILER under QEMU instead is the single
+# most expensive thing a two-architecture workspace build can do (docs/log/72 §72.3).
+# ⚠️ Dropping `--platform=$BUILDPLATFORM` still produces a CORRECT image — the cost
+# shows up as build minutes, not as a failure, which is how it went unnoticed here
+# while the CP had it from the start.
+FROM --platform=$BUILDPLATFORM golang:1.26-trixie AS agentbuild
 WORKDIR /src
 COPY agent/go.mod agent/go.sum ./
 RUN go mod download
@@ -13,7 +20,13 @@ COPY agent/ ./
 # VERSION stamps the binary (startup log, docs/log/35 §35.6.1); only the release
 # pipeline passes a real value — dev builds stay "dev".
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-X main.buildVersion=${VERSION}" -o /out/workspace-agent .
+# TARGETARCH is supplied by BuildKit (amd64 / arm64) and maps 1:1 onto GOARCH. It is
+# empty for a plain `docker build` on the classic builder, so fall back to the builder's
+# own GOARCH rather than to a hardcoded one — an empty GOARCH would otherwise mean
+# "amd64" on any host and quietly mis-build on an arm64 laptop.
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
+    go build -trimpath -ldflags="-X main.buildVersion=${VERSION}" -o /out/workspace-agent .
 
 # --- runtime ---
 FROM node:22-trixie-slim
