@@ -5,13 +5,24 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { Modal } from "../../../ui/Modal.tsx";
 import { ViewHead } from "../../../ui/ViewHead.tsx";
-import { EngineIngest, EngineModelsAdminView, engineIdFromFile, engineIngestPrefix, type EngineIngestAct, type ModelKind } from "./adminEngineModels.tsx";
+import {
+  EngineIngest,
+  EngineIngestJobs,
+  EngineModelAdd,
+  HfTokenPanel,
+  engineIdFromFile,
+  engineIngestPrefix,
+  type EngineIngestAct,
+  type ModelKind,
+  type ModelPrefill,
+} from "./adminEngineModels.tsx";
 import {
   engineIsImage,
   engineIsRemote,
   engineTitle,
   useEngineRows,
   type EngineParams,
+  type EngineModel,
   type EngineRow,
   type EngineStorageAnswer,
   type EngineStorageFile,
@@ -54,10 +65,7 @@ export function EngineAddView({ engineKey, lora, initialView = "search", headerA
       </ViewHead>
       {err && <p className="form-err pad">{err}</p>}
       {rows !== null && rows.length === 0 && (
-        <section className="admin-panel engine-catalog-empty">
-          <p>{tr("admin.engines_none")}</p>
-          <p className="muted">{tr("admin.engines_browse_note")}</p>
-        </section>
+        <NoEngineCatalog />
       )}
       {row && <>
         <div className="engine-catalog-nav">
@@ -86,10 +94,8 @@ export function EngineAddView({ engineKey, lora, initialView = "search", headerA
             ? <ImageCatalog row={row} kind={kind} onKind={setKind} readOnly={engineIsRemote(row)} onChanged={load} />
             : <LLMCatalog row={row} kind={kind} onKind={setKind} readOnly={engineIsRemote(row)} onChanged={load} />
         ) : (
-          <div className="engine-catalog-registered">
-            {!isSuper && <p className="admin-hint">{tr("admin.engines_tenant_scope")}</p>}
-            <EngineModelsAdminView initialEngineKey={row.key} initialKind={kind} embedded />
-          </div>
+          <RegisteredCatalog row={row} kind={kind} onKind={setKind} isSuper={isSuper}
+            readOnly={engineIsRemote(row)} onChanged={load} />
         )}
       </>}
     </div>
@@ -207,11 +213,16 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
       {storage === null && <p className="muted engine-catalog-storage-note">{tr("admin.catalog_storage_checking" as never)}</p>}
       {err && <p className="form-err">{err}</p>}
       {hits?.length === 0 && <p className="muted engine-catalog-zero">{tr("admin.engines_ingest_search_none")}</p>}
-      {!!hits?.length && <ul className="engine-catalog-grid">{hits.map((hit) => <CatalogCard
-        key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} hit={hit} image={image}
-        saved={savedFilesForHit(hit, storage?.files || [])} readOnly={readOnly}
-        canAttach={modelRows.length > 0 && (row.file_flags || []).some(Boolean)} canReplace={modelRows.length > 0}
-        onPreview={() => setPreview(hit)} onOperation={(act) => setOperation({ hit, act })} />)}</ul>}
+      {!!hits?.length && <ul className="engine-catalog-grid">{hits.map((hit) => {
+        const props: BrowseCardProps = {
+          hit, kind, saved: savedFilesForHit(hit, storage?.files || []), readOnly,
+          canAttach: modelRows.length > 0 && (row.file_flags || []).some(Boolean),
+          canReplace: modelRows.length > 0, onOperation: (act) => setOperation({ hit, act }),
+        };
+        return image
+          ? <ImageCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} onPreview={() => setPreview(hit)} />
+          : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
+      })}</ul>}
       {cursor && <button type="button" className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>{tr("admin.catalog_more" as never)}</button>}
       <CatalogJobs engineKey={row.key} />
       {operation && <CatalogOperation row={row} kind={kind} hit={operation.hit} initialAct={operation.act}
@@ -223,17 +234,26 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
   );
 }
 
-function CatalogCard({ hit, image, saved, readOnly, canAttach, canReplace, onPreview, onOperation }: {
-  hit: IngestHit; image: boolean; saved: EngineStorageFile[]; readOnly: boolean; canAttach: boolean; canReplace: boolean;
-  onPreview: () => void; onOperation: (act: EngineIngestAct) => void;
-}) {
+type BrowseCardProps = {
+  hit: IngestHit;
+  kind: ModelKind;
+  saved: EngineStorageFile[];
+  readOnly: boolean;
+  canAttach: boolean;
+  canReplace: boolean;
+  onOperation: (act: EngineIngestAct) => void;
+};
+
+function ImageCatalogCard({ hit, kind, saved, onPreview, ...actions }: BrowseCardProps & { onPreview: () => void }) {
   const tr = useT();
   const license = hit.license_name || hit.license;
   return <li className="engine-catalog-card" aria-label={hit.name}>
     <div className="engine-catalog-card-main"><div className="engine-catalog-card-copy">
-      <div className="engine-catalog-card-title"><span>{hit.name}</span><span className="engines-model-tag">{hit.source === "civitai" ? "Civitai" : "Hugging Face"}</span></div>
+      <div className="engine-catalog-card-title"><span>{hit.name}</span><span className="engines-model-tag">{kind === "lora" ? "LoRA" : tr("admin.catalog_checkpoint" as never)}</span></div>
       <div className="engine-catalog-card-tags">
-        {license && <span className="engines-model-tag">{license}</span>}{hit.base_model && <span className="engines-model-tag">{hit.base_model}</span>}
+        <span className="engines-model-tag">{hit.source === "civitai" ? "Civitai" : "Hugging Face"}</span>
+        {hit.base_model && <span className="engines-model-tag">{tr("admin.catalog_family" as never)}: {hit.base_model}</span>}
+        {license && <span className="engines-model-tag">{license}</span>}
         {hit.gated && <span className="engines-model-tag warn">{tr("admin.engines_ingest_hit_gated")}</span>}
         {hit.login_required === "yes" && <span className="engines-model-tag warn">{tr("admin.engines_hit_login_required")}</span>}
       </div>
@@ -244,18 +264,393 @@ function CatalogCard({ hit, image, saved, readOnly, canAttach, canReplace, onPre
         {hit.published_at ? ` · ${tr("admin.engines_ingest_hit_published")} ${fmtDateTime(hit.published_at)}` : ""}
       </p>
       {saved.length > 0 && <p className="engine-catalog-saved">{tr("admin.catalog_saved_count" as never, { count: saved.length } as never)}</p>}
-    </div>{image && hit.preview_url && <button type="button" className="engine-catalog-thumb" onClick={onPreview} aria-label={tr("admin.catalog_preview" as never)}><img src={hit.preview_url} alt="" loading="lazy" /></button>}</div>
-    <footer className="engine-catalog-card-footer">
-      {hit.url && <a href={hit.url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a>}
-      {!readOnly && <span><button type="button" className="primary sm" aria-label={`${tr("admin.catalog_add" as never)}: ${hit.name}`} onClick={() => onOperation("new")}>{tr("admin.catalog_add" as never)}</button>
-        {canAttach && <button type="button" className="sm" aria-label={`${tr("admin.catalog_attach" as never)}: ${hit.name}`} onClick={() => onOperation("attach")}>{tr("admin.catalog_attach" as never)}</button>}
-        {canReplace && <button type="button" className="sm" aria-label={`${tr("admin.catalog_replace" as never)}: ${hit.name}`} onClick={() => onOperation("replace")}>{tr("admin.catalog_replace" as never)}</button>}</span>}
-    </footer>
+    </div>{hit.preview_url && <button type="button" className="engine-catalog-thumb" onClick={onPreview} aria-label={`${tr("admin.catalog_preview" as never)}: ${hit.name}`}><img src={hit.preview_url} alt="" loading="lazy" /></button>}</div>
+    <BrowseCardFooter hit={hit} {...actions} />
   </li>;
 }
 
-function CatalogOperation({ row, kind, hit, initialAct, storage, onClose, onStarted }: {
+function LLMCatalogCard({ hit, kind, saved, ...actions }: BrowseCardProps) {
+  const tr = useT();
+  const license = hit.license_name || hit.license;
+  return <li className="engine-catalog-card engine-catalog-card-llm" aria-label={hit.name}>
+    <div className="engine-catalog-card-main"><div className="engine-catalog-card-copy">
+      <div className="engine-catalog-card-title"><span>{hit.name}</span><span className="engines-model-tag">{kind === "lora" ? "LoRA" : "GGUF"}</span></div>
+      <div className="engine-catalog-card-tags"><span className="engines-model-tag">Hugging Face</span>
+        {hit.bytes ? <span className="engines-model-tag">{formatBytes(hit.bytes)}</span> : null}
+        {hit.context_length ? <span className="engines-model-tag">{tr("admin.catalog_context" as never)}: {hit.context_length.toLocaleString()}</span> : null}
+        {license && <span className="engines-model-tag">{license}</span>}
+        {hit.gated && <span className="engines-model-tag warn">{tr("admin.engines_ingest_hit_gated")}</span>}
+      </div>
+      <p className="muted engine-catalog-card-stats">
+        {hit.downloads ? `${compactCount(hit.downloads)} ${tr("admin.engines_ingest_hit_downloads")}` : ""}
+        {hit.likes ? ` · ${compactCount(hit.likes)} ${tr("admin.engines_ingest_hit_likes")}` : ""}
+        {hit.updated_at ? ` · ${tr("admin.engines_ingest_hit_updated")} ${fmtDateTime(hit.updated_at)}` : ""}
+      </p>
+      {saved.length > 0 && <p className="engine-catalog-saved">{tr("admin.catalog_saved_count" as never, { count: saved.length } as never)}</p>}
+    </div></div>
+    <BrowseCardFooter hit={hit} {...actions} />
+  </li>;
+}
+
+function BrowseCardFooter({ hit, readOnly, canAttach, canReplace, onOperation }: Omit<BrowseCardProps, "kind" | "saved">) {
+  const tr = useT();
+  return <footer className="engine-catalog-card-footer">
+    {hit.url && <a href={hit.url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a>}
+    {!readOnly && <span><button type="button" className="primary sm" aria-label={`${tr("admin.catalog_add" as never)}: ${hit.name}`} onClick={() => onOperation("new")}>{tr("admin.catalog_add" as never)}</button>
+      {canAttach && <button type="button" className="sm" aria-label={`${tr("admin.catalog_attach" as never)}: ${hit.name}`} onClick={() => onOperation("attach")}>{tr("admin.catalog_attach" as never)}</button>}
+      {canReplace && <button type="button" className="sm" aria-label={`${tr("admin.catalog_replace" as never)}: ${hit.name}`} onClick={() => onOperation("replace")}>{tr("admin.catalog_replace" as never)}</button>}</span>}
+  </footer>;
+}
+
+function NoEngineCatalog() {
+  const tr = useT();
+  const [role, setRole] = useState<"image" | "llm">("image");
+  const [kind, setKind] = useState<ModelKind>("model");
+  const [source, setSource] = useState<CatalogSource>("civitai");
+  const [sort, setSort] = useState("newest");
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<IngestHit[] | null>(null);
+  const [cursor, setCursor] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [preview, setPreview] = useState<IngestHit | null>(null);
+  const requestSeq = useRef(0);
+  const image = role === "image";
+
+  const search = useCallback(async (more = false) => {
+    const seq = ++requestSeq.current;
+    setBusy(true); setErr("");
+    try {
+      const wireKind = image ? "checkpoint" : "gguf";
+      const answer = await apiJSON(`api/admin/engines/search?kind=${encodeURIComponent(wireKind)}`, "POST", {
+        q: query, source, sort, lora: kind === "lora", ...(more && cursor ? { cursor } : {}),
+      });
+      if (seq !== requestSeq.current) return;
+      if (answer?.error) { setErr(errDetail(answer.error)); if (!more) setHits(null); return; }
+      const page = answer as IngestSearchAnswer;
+      const next = Array.isArray(page?.hits) ? page.hits : [];
+      setHits((current) => more && current ? [...current, ...next] : next);
+      setCursor(page?.next_cursor || "");
+    } finally { if (seq === requestSeq.current) setBusy(false); }
+  }, [cursor, image, kind, query, sort, source]);
+
+  useEffect(() => { void search(false); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [image, kind, source, sort]);
+  const switchRole = (next: "image" | "llm") => {
+    setRole(next); setSource(next === "image" ? "civitai" : "hf"); setSort(next === "image" ? "newest" : "updated"); setHits(null); setCursor("");
+  };
+  const sortOptions = source === "civitai" ? ["newest", "downloads", "trending", "likes"] : ["updated", "downloads", "trending", "likes"];
+  const noop = () => {};
+
+  return <section className="engine-catalog-browser engine-catalog-no-engine" aria-label={tr(image ? "admin.catalog_image_title" as never : "admin.catalog_llm_title" as never)}>
+    <div className="engine-catalog-nav engine-catalog-no-engine-nav">
+      <div className="engine-catalog-role-tabs" role="tablist" aria-label={tr("admin.catalog_role_label" as never)}>
+        <button type="button" role="tab" aria-selected={image} className={image ? "active" : ""} onClick={() => switchRole("image")}><Icon name="file-media" />{tr("admin.engines_role_image")}</button>
+        <button type="button" role="tab" aria-selected={!image} className={!image ? "active" : ""} onClick={() => switchRole("llm")}><Icon name="comment" />{tr("admin.engines_role_llm")}</button>
+      </div>
+      <span className="engines-model-tag lead">{tr("admin.catalog_view_search" as never)}</span>
+    </div>
+    <p className="admin-hint">{tr("admin.engines_browse_note")}</p>
+    <div className="engine-catalog-toolbar">
+      <span className="seg sm">{(["model", "lora"] as const).map((next) => <button key={next} type="button" className={`seg-btn${kind === next ? " active" : ""}`} onClick={() => setKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</button>)}</span>
+      {image && <span className="seg sm">{(["civitai", "hf"] as const).map((next) => <button key={next} type="button" className={`seg-btn${source === next ? " active" : ""}`} onClick={() => { setSource(next); setSort(next === "civitai" ? "newest" : "updated"); }}>{next === "hf" ? "Hugging Face" : "Civitai"}</button>)}</span>}
+      <form className="engine-catalog-search" onSubmit={(event) => { event.preventDefault(); void search(false); }}><input aria-label={tr("admin.engines_ingest_search")} value={query} onChange={(event) => setQuery(event.currentTarget.value)} /><button type="submit" className="primary sm" disabled={busy}>{tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}</button></form>
+      <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span><select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>{sortOptions.map((option) => <option key={option} value={option}>{tr((`admin.engines_ingest_sort_${option}`) as never)}</option>)}</select></label>
+    </div>
+    {source === "civitai" && sort === "newest" && <p className="muted engine-catalog-sort-note">{tr("admin.catalog_civitai_newest_note" as never)}</p>}
+    {err && <p className="form-err">{err}</p>}
+    {hits?.length === 0 && <p className="muted engine-catalog-zero">{tr("admin.engines_ingest_search_none")}</p>}
+    {!!hits?.length && <ul className="engine-catalog-grid">{hits.map((hit) => {
+      const props: BrowseCardProps = { hit, kind, saved: [], readOnly: true, canAttach: false, canReplace: false, onOperation: noop };
+      return image ? <ImageCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} onPreview={() => setPreview(hit)} /> : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
+    })}</ul>}
+    {cursor && <button type="button" className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>{tr("admin.catalog_more" as never)}</button>}
+    {preview?.preview_url && <Modal title={preview.name} className="engine-catalog-lightbox" onClose={() => setPreview(null)}><img src={preview.preview_url} alt={preview.name} /></Modal>}
+  </section>;
+}
+
+function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: CatalogProps & { isSuper: boolean }) {
+  const tr = useT();
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState("name");
+  const [storage, setStorage] = useState<EngineStorageFile[] | null>(null);
+  const [jobs, setJobs] = useState<IngestJob[]>([]);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [edit, setEdit] = useState<EngineModel | null>(null);
+  const [deleting, setDeleting] = useState<EngineModel | null>(null);
+  const [purge, setPurge] = useState(false);
+  const [operation, setOperation] = useState<{ act: EngineIngestAct; modelId?: string } | null>(null);
+  const [prefill, setPrefill] = useState<ModelPrefill | null>(null);
+  const [vramAsk, setVramAsk] = useState<{ model: EngineModel; patch: Record<string, unknown>; message?: string } | null>(null);
+  const models = (row.model_rows || []).filter((model) => (model.kind === "lora") === (kind === "lora"));
+
+  const loadAux = useCallback(async () => {
+    const [stored, history] = await Promise.all([
+      api(`api/admin/engines/${encodeURIComponent(row.key)}/storage`),
+      api(`api/admin/engines/${encodeURIComponent(row.key)}/ingest`),
+    ]);
+    setStorage(stored?.error ? null : Array.isArray(stored?.files) ? stored.files : []);
+    if (!history?.error) setJobs(Array.isArray(history?.jobs) ? history.jobs : []);
+  }, [row.key]);
+  useEffect(() => { void loadAux(); }, [loadAux]);
+  const live = jobs.some((job) => job.state === "pending" || job.state === "running");
+  useEffect(() => {
+    if (!live) return;
+    const timer = setInterval(() => void loadAux(), 5000);
+    return () => clearInterval(timer);
+  }, [live, loadAux]);
+
+  const visible = [...models].filter((model) => {
+    const words = [model.id, model.description, model.base_model, model.license_name, model.license].filter(Boolean).join(" ").toLowerCase();
+    return words.includes(query.trim().toLowerCase());
+  }).sort((left, right) => {
+    if (sort === "enabled") return Number(right.enabled) - Number(left.enabled) || left.id.localeCompare(right.id);
+    if (sort === "default") return Number(!!(right.selected || right.default)) - Number(!!(left.selected || left.default)) || left.id.localeCompare(right.id);
+    return left.id.localeCompare(right.id);
+  });
+
+  const callModel = async (model: EngineModel, method: string, body?: Record<string, unknown>, purgeBytes = false) => {
+    setBusy(model.id); setErr("");
+    try {
+      const answer = await apiJSON(
+        `api/admin/engines/${encodeURIComponent(row.key)}/models/${encodeURIComponent(model.id)}${purgeBytes ? "?purge=1" : ""}`,
+        method,
+        body,
+      );
+      if (answer?.error) {
+        if (method === "PUT" && body && answer.error.code === "engine_vram_confirm") {
+          setEdit(null);
+          setVramAsk({ model, patch: body, message: answer.error.message });
+        } else {
+          setErr(errDetail(answer.error));
+        }
+        return false;
+      }
+      await onChanged();
+      await loadAux();
+      return true;
+    } finally { setBusy(""); }
+  };
+  const guardedChange = async (model: EngineModel, patch: Record<string, unknown>) => {
+    const loadsModel = !!(patch.enabled || patch.selected || patch.default);
+    const cardMiB = row.class?.vram_mib || 0;
+    if (loadsModel && model.kind !== "lora" && cardMiB > 0 && !!model.vram_need_mib && model.vram_need_mib > cardMiB) {
+      setVramAsk({ model, patch });
+      return;
+    }
+    await callModel(model, "PUT", patch);
+  };
+  const addModel = async (body: Record<string, unknown>) => {
+    setBusy("+");
+    try {
+      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/models`, "POST", body);
+      if (answer?.error) { setErr(errDetail(answer.error)); return; }
+      await onChanged();
+      await loadAux();
+    } finally { setBusy(""); }
+  };
+  const forgetJob = async (id: string) => {
+    setBusy(`job:${id}`);
+    try {
+      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/${encodeURIComponent(id)}`, "DELETE");
+      if (answer?.error) { setErr(errDetail(answer.error)); return; }
+      setJobs(Array.isArray(answer?.jobs) ? answer.jobs : []);
+    } finally { setBusy(""); }
+  };
+
+  return <section className="engine-catalog-registered" aria-label={tr("admin.catalog_registered_title" as never)}>
+    {!isSuper && <p className="admin-hint">{tr("admin.engines_tenant_scope")}</p>}
+    <div className="engine-catalog-toolbar">
+      <span className="seg sm">{(["model", "lora"] as const).map((next) => <button key={next} type="button"
+        className={"seg-btn" + (kind === next ? " active" : "")} onClick={() => onKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</button>)}</span>
+      <label className="engine-registered-search"><span>{tr("admin.catalog_registered_search" as never)}</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
+      <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span><select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>
+        <option value="name">{tr("admin.catalog_sort_name" as never)}</option><option value="enabled">{tr("admin.catalog_sort_enabled" as never)}</option><option value="default">{tr("admin.catalog_sort_default" as never)}</option>
+      </select></label>
+      <button type="button" className="ghost sm" onClick={() => void loadAux()}>{tr("admin.refresh")}</button>
+    </div>
+    {err && <p className="form-err">{err}</p>}
+    {!visible.length && <p className="muted">{tr(kind === "lora" ? "admin.engines_loras_empty" : "admin.engines_catalog_empty")}</p>}
+    <ul className="engine-registered-grid">{visible.map((model) => {
+      const status = registeredStorage(model, storage);
+      const started = !!(model.selected || model.default);
+      const pending = busy === model.id;
+      return <li key={model.id} className="engine-registered-card" aria-label={model.id}>
+        <header><strong className="mono">{model.id}</strong><span className={`engines-model-tag ${model.enabled ? "on" : "off"}`}>{tr(model.enabled ? "admin.engines_model_is_on" : "admin.engines_model_is_off")}</span>
+          {started && <span className="engines-model-tag lead">{tr("admin.engines_model_started")}</span>}
+          <span className={`engines-model-tag ${status.tone}`}>{tr((`admin.catalog_registered_${status.state}`) as never, { present: status.present, total: status.total } as never)}</span></header>
+        {engineIsImage(row) ? <ImageRegisteredCardBody model={model} /> : <LLMRegisteredCardBody model={model} />}
+        <RegisteredParts model={model} storage={storage} />
+        <footer>
+          {isSuper && !readOnly && <button type="button" aria-label={`${tr("admin.catalog_edit" as never)}: ${model.id}`} onClick={() => setEdit(model)}>{tr("admin.catalog_edit" as never)}</button>}
+          {isSuper && !readOnly && <button type="button" aria-label={`${tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, { enabled: !model.enabled })}>{tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}</button>}
+          {isSuper && !readOnly && model.kind !== "lora" && !started && <button type="button" aria-label={`${tr("admin.engines_model_select")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, engineIsImage(row) ? { selected: true } : { default: true })}>{tr("admin.engines_model_select")}</button>}
+          {!readOnly && <button type="button" aria-label={`${tr("admin.catalog_parts" as never)}: ${model.id}`} onClick={() => setOperation({ act: (row.file_flags || []).length ? "attach" : "replace", modelId: model.id })}>{tr("admin.catalog_parts" as never)}</button>}
+          {isSuper && !readOnly && <button type="button" className="danger" aria-label={`${tr("admin.engines_model_forget")}: ${model.id}`} disabled={pending || started} onClick={() => { setDeleting(model); setPurge(false); }}>{tr("admin.engines_model_forget")}</button>}
+        </footer>
+      </li>;
+    })}</ul>
+    {isSuper && !readOnly && <details className="engine-registered-tools"><summary>{tr("admin.catalog_manual_s3" as never)}</summary>
+      <EngineModelAdd busy={busy === "+"} isImage={engineIsImage(row)} isLora={kind === "lora"}
+        baseModels={row.base_models} fileFlags={row.file_flags} modelIds={(row.model_rows || []).map((model) => model.id)}
+        prefill={prefill} onAdd={(body) => void addModel(body)} />
+    </details>}
+    <EngineIngestJobs jobs={jobs} busy={busy.replace(/^job:/, "")} readOnly={readOnly}
+      onForget={(id) => void forgetJob(id)} onReuse={isSuper && !readOnly ? (job) => {
+        onKind(job.kind === "lora" ? "lora" : "model");
+        setPrefill({ id: job.model_id, s3Key: job.s3_key || "", flag: job.file_flag || "", source: job.source || "", usedBy: job.key_used_by || "" });
+      } : undefined} />
+    {isSuper && <HfTokenPanel />}
+    {operation && <CatalogOperation row={row} kind={kind} initialAct={operation.act} initialTarget={operation.modelId} storage={storage || []}
+      onClose={() => setOperation(null)} onStarted={() => { setOperation(null); void loadAux(); onChanged(); }} />}
+    {edit && <RegisteredEditDialog row={row} model={edit} error={err} onClose={() => setEdit(null)} onSave={async (body) => {
+      if (await callModel(edit, "PUT", body)) setEdit(null);
+    }} />}
+    {deleting && <Modal title={`${tr("admin.engines_model_forget")} — ${deleting.id}`} className="engine-registered-confirm" onClose={() => setDeleting(null)} lockClose={busy === deleting.id}>
+      <div className="engine-operation-body"><p>{tr(purge ? "admin.engines_model_forget_purge_note" : "admin.engines_model_forget_note")}</p><label className="engine-operation-check"><input type="checkbox" checked={purge} onChange={(event) => setPurge(event.currentTarget.checked)} /><span>{tr("admin.engines_model_forget_purge")}</span></label>
+        <footer className="engine-operation-footer"><button type="button" onClick={() => setDeleting(null)}>{tr("common.cancel")}</button><button type="button" className="danger" onClick={async () => { if (await callModel(deleting, "DELETE", undefined, purge)) setDeleting(null); }}>{tr("admin.engines_model_forget")}</button></footer></div>
+    </Modal>}
+    {vramAsk && <Modal title={`${tr("admin.engines_vram_confirm_go")} — ${vramAsk.model.id}`} className="engine-registered-confirm" onClose={() => setVramAsk(null)}>
+      <div className="engine-operation-body"><p className="form-err">{vramAsk.message || (tr("admin.engines_vram_confirm" as never) as string)
+        .replace("{id}", vramAsk.model.id)
+        .replace("{n}", String(vramAsk.model.vram_need_mib || 0))
+        .replace("{m}", String(row.class?.vram_mib || 0))
+        .replace("{src}", tr((`admin.engines_vram_src_${vramAsk.model.vram_need_source || "unknown"}`) as never) as string)}</p>
+        <footer className="engine-operation-footer"><button type="button" onClick={() => setVramAsk(null)}>{tr("common.cancel")}</button><button type="button" className="primary" onClick={async () => {
+          const ask = vramAsk;
+          setVramAsk(null);
+          await callModel(ask.model, "PUT", { ...ask.patch, confirm_vram: true });
+        }}>{tr("admin.engines_vram_confirm_go")}</button></footer></div>
+    </Modal>}
+  </section>;
+}
+
+function ImageRegisteredCardBody({ model }: { model: EngineModel }) {
+  const tr = useT();
+  return <div className="engine-registered-body"><p>{model.description || tr("admin.catalog_no_description" as never)}</p><div className="engine-catalog-card-tags">
+    <span className="engines-model-tag">{model.kind === "lora" ? "LoRA" : tr("admin.catalog_checkpoint" as never)}</span>
+    {model.base_model && <span className="engines-model-tag">{tr("admin.catalog_family" as never)}: {model.base_model}</span>}
+    {model.precision && <span className="engines-model-tag">{model.precision}</span>}
+    {model.vram_need_mib && <span className="engines-model-tag">VRAM {model.vram_need_mib} MiB</span>}
+    {(model.license_name || model.license) && <span className="engines-model-tag">{model.license_name || model.license}</span>}
+    {model.vae_missing && <span className="engines-model-tag warn">VAE</span>}
+    {model.commercial_use === "no" && <span className="engines-model-tag warn">{tr("admin.engines_model_noncommercial")}</span>}
+  </div></div>;
+}
+
+function LLMRegisteredCardBody({ model }: { model: EngineModel }) {
+  const tr = useT();
+  const bytes = (model.file_rows || []).reduce((sum, file) => sum + (file.bytes || 0), 0);
+  return <div className="engine-registered-body"><p>{model.description || tr("admin.catalog_no_description" as never)}</p><div className="engine-catalog-card-tags">
+    <span className="engines-model-tag">{model.kind === "lora" ? "LoRA" : "GGUF"}</span>
+    {bytes > 0 && <span className="engines-model-tag">{formatBytes(bytes)}</span>}
+    {model.context_tokens && <span className="engines-model-tag">{tr("admin.catalog_context" as never)}: {model.context_tokens.toLocaleString()}</span>}
+    {model.max_output_tokens && <span className="engines-model-tag">{tr("admin.catalog_output" as never)}: {model.max_output_tokens.toLocaleString()}</span>}
+    {model.precision && <span className="engines-model-tag">{model.precision}</span>}
+    {model.vram_need_mib && <span className="engines-model-tag">VRAM {model.vram_need_mib} MiB</span>}
+    {(model.license_name || model.license) && <span className="engines-model-tag">{model.license_name || model.license}</span>}
+  </div></div>;
+}
+
+type RegisteredStorage = {
+  state: "present" | "partial" | "missing" | "unknown";
+  tone: "on" | "warn" | "bad" | "";
+  present: number;
+  total: number;
+};
+
+function registeredStorage(model: EngineModel, storage: EngineStorageFile[] | null): RegisteredStorage {
+  const keys = (model.file_rows || []).map((file) => file.s3Key).filter(Boolean);
+  if (!keys.length || storage === null) return { state: "unknown", tone: "", present: 0, total: keys.length };
+  const states = keys.map((key) => storage.find((file) => file.s3_key === key)?.state || "unknown");
+  const present = states.filter((state) => state === "present").length;
+  if (present === keys.length) return { state: "present", tone: "on", present, total: keys.length };
+  if (states.every((state) => state === "missing")) return { state: "missing", tone: "bad", present, total: keys.length };
+  if (states.every((state) => state !== "unknown") && present > 0) return { state: "partial", tone: "warn", present, total: keys.length };
+  return { state: "unknown", tone: "", present, total: keys.length };
+}
+
+function RegisteredParts({ model, storage }: { model: EngineModel; storage: EngineStorageFile[] | null }) {
+  const tr = useT();
+  const rows = model.file_rows || [];
+  if (!rows.length) return <p className="muted engine-registered-no-parts">{tr("admin.catalog_parts_unknown" as never)}</p>;
+  return <ul className="engine-registered-parts" aria-label={`${tr("admin.catalog_parts" as never)}: ${model.id}`}>{rows.map((part) => {
+    const known = storage?.find((candidate) => candidate.s3_key === part.s3Key);
+    const state = known?.state || "unknown";
+    return <li key={`${part.flag || "whole"}:${part.s3Key}`}><span className="mono">{part.flag || tr("admin.engines_model_add_part_whole")}</span><span className="mono engine-registered-key">{part.s3Key}</span>
+      {part.bytes ? <span>{formatBytes(part.bytes)}</span> : null}
+      <span className={`engines-model-tag ${state === "present" ? "on" : state === "missing" ? "bad" : ""}`}>{tr((`admin.catalog_file_${state}`) as never)}</span>
+      {part.source_url ? <a href={part.source_url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a> : part.source ? <span className="muted mono">{part.source}</span> : null}</li>;
+  })}</ul>;
+}
+
+function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
+  row: EngineRow;
+  model: EngineModel;
+  error: string;
+  onClose: () => void;
+  onSave: (body: Record<string, unknown>) => Promise<void>;
+}) {
+  const tr = useT();
+  const image = engineIsImage(row);
+  const lora = model.kind === "lora";
+  const [description, setDescription] = useState(model.description || "");
+  const [baseModel, setBaseModel] = useState(model.base_model || "");
+  const [context, setContext] = useState(String(model.context_tokens || 0));
+  const [output, setOutput] = useState(String(model.max_output_tokens || 0));
+  const [vram, setVram] = useState(String(model.vram_mib || 0));
+  const [negative, setNegative] = useState(model.negative_prompt || "");
+  const [trainedWords, setTrainedWords] = useState((model.trained_words || []).join(", "));
+  const [params, setParams] = useState<Record<keyof EngineParams, string>>({
+    steps: String(model.params?.steps || ""), cfg: String(model.params?.cfg || ""), sampler: model.params?.sampler || "",
+    scheduler: model.params?.scheduler || "", clip_skip: String(model.params?.clip_skip || ""), weight: String(model.params?.weight || ""),
+  });
+  const [busy, setBusy] = useState(false);
+  const whole = (value: string) => /^\d+$/.test(value.trim()) ? Number(value.trim()) : null;
+  const contextNumber = whole(context);
+  const outputNumber = whole(output);
+  const vramNumber = whole(vram);
+  const invalidWindow = !image && !lora && (contextNumber === null || outputNumber === null || (!!contextNumber !== !!outputNumber));
+  const invalidVram = vramNumber === null;
+  const validation = invalidWindow ? tr("admin.catalog_edit_window_invalid" as never) : invalidVram ? tr("admin.catalog_edit_vram_invalid" as never) : "";
+  const save = async () => {
+    if (validation) return;
+    const number = (value: string) => { const parsed = Number(value.trim()); return Number.isFinite(parsed) && parsed > 0 ? parsed : 0; };
+    const paramsBody = Object.fromEntries(Object.entries(params).flatMap(([key, value]) => value.trim()
+      ? [[key, key === "sampler" || key === "scheduler" ? value.trim() : number(value)]] : []));
+    setBusy(true);
+    try {
+      await onSave({
+        description: description.trim(), base_model: baseModel, vram_mib: vramNumber || 0,
+        ...(!image && !lora ? { context_tokens: contextNumber || 0, max_output_tokens: outputNumber || 0 } : {}),
+        ...(image && !lora ? { negative_prompt: negative.trim() } : {}),
+        ...(image && lora ? { trained_words: trainedWords.split(/[\n,]/).map((word) => word.trim()).filter(Boolean) } : {}),
+        ...(image ? { params: paramsBody } : {}),
+      });
+    } finally { setBusy(false); }
+  };
+
+  return <Modal title={`${tr("admin.catalog_edit" as never)} — ${model.id}`} className="engine-registered-edit" onClose={onClose} lockClose={busy}>
+    <div className="engine-operation-body"><div className="engine-operation-grid">
+      <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
+      {(image || lora) && <label><span>{tr(image && !lora ? "admin.engines_model_add_family" : "admin.engines_model_add_lora_base")}</span>{image && !lora && (row.base_models || []).length
+        ? <select value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)}><option value="">—</option>{row.base_models!.map((base) => <option key={base} value={base}>{base}</option>)}</select>
+        : <input value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)} />}</label>}
+      {!image && !lora && <><label><span>{tr("admin.engines_model_window_context")}</span><input inputMode="numeric" value={context} onChange={(event) => setContext(event.currentTarget.value)} /></label><label><span>{tr("admin.engines_model_window_output")}</span><input inputMode="numeric" value={output} onChange={(event) => setOutput(event.currentTarget.value)} /></label></>}
+      <label><span>{tr("admin.engines_model_vram_edit")}</span><input inputMode="numeric" value={vram} onChange={(event) => setVram(event.currentTarget.value)} /></label>
+      {image && !lora && <label><span>{tr("admin.engines_model_negative")}</span><input value={negative} onChange={(event) => setNegative(event.currentTarget.value)} /></label>}
+      {image && lora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
+    </div>
+    {image && <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">{(Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{key}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}</div></details>}
+    {validation && <p className="form-err">{validation}</p>}
+    {error && <p className="form-err">{error}</p>}
+    <footer className="engine-operation-footer"><button type="button" onClick={onClose} disabled={busy}>{tr("common.cancel")}</button><button type="button" className="primary" disabled={busy || !!validation} onClick={() => void save()}>{tr("common.save")}</button></footer></div>
+  </Modal>;
+}
+
+function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, onClose, onStarted }: {
   row: EngineRow; kind: ModelKind; hit?: IngestHit; initialAct: EngineIngestAct;
+  initialTarget?: string;
   storage: EngineStorageFile[]; onClose: () => void; onStarted: () => void;
 }) {
   const tr = useT();
@@ -269,7 +664,7 @@ function CatalogOperation({ row, kind, hit, initialAct, storage, onClose, onStar
   const [files, setFiles] = useState<IngestCandidate[]>([]);
   const [file, setFile] = useState("");
   const [resolved, setResolved] = useState<ResolvedSource | null>(null);
-  const [targetId, setTargetId] = useState("");
+  const [targetId, setTargetId] = useState(initialTarget || "");
   const [fileFlag, setFileFlag] = useState("");
   const [partChosen, setPartChosen] = useState(false);
   const [id, setId] = useState("");
@@ -525,4 +920,11 @@ function compactCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
   if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
   return String(Math.round(value));
+}
+
+function formatBytes(value: number): string {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
+  if (value >= 1_000_000) return `${Math.round(value / 1_000_000)} MB`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)} kB`;
+  return `${value} B`;
 }

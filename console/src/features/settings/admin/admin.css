@@ -1388,6 +1388,120 @@ a.engines-model-source:hover {
   margin: 14px auto;
 }
 
+.engine-catalog-no-engine {
+  padding-top: 0;
+}
+
+.engine-catalog-no-engine-nav {
+  margin: 0 -14px 10px;
+  grid-template-columns: auto 1fr;
+}
+
+.engine-registered-search {
+  display: flex;
+  align-items: center;
+  flex: 1 1 300px;
+  min-width: 220px;
+  gap: 6px;
+  color: var(--dialog-muted);
+  font-size: 12px;
+}
+
+.engine-registered-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.engine-registered-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.engine-registered-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel2);
+}
+
+.engine-registered-card > header,
+.engine-registered-card > footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.engine-registered-card > header {
+  border-bottom: 1px solid var(--border);
+}
+
+.engine-registered-card > header strong {
+  margin-inline-end: auto;
+  overflow-wrap: anywhere;
+}
+
+.engine-registered-card > footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+}
+
+.engine-registered-body {
+  padding: 10px 12px;
+}
+
+.engine-registered-body > p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.engine-registered-parts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0 12px 10px;
+  list-style: none;
+  font-size: 11px;
+}
+
+.engine-registered-parts li {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(160px, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.engine-registered-key {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.engine-registered-no-parts {
+  margin: 0;
+  padding: 0 12px 10px;
+  font-size: 11px;
+}
+
+.engine-registered-tools {
+  margin-top: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.engine-registered-tools > summary {
+  cursor: pointer;
+}
+
 .engine-catalog-jobs {
   margin-top: 14px;
   border: 1px solid var(--border);
@@ -1401,6 +1515,8 @@ a.engines-model-source:hover {
 .engine-catalog-jobs li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 0; }
 
 .engine-catalog-operation { width: min(760px, calc(100vw - 24px)); max-height: min(820px, calc(100vh - 24px)); }
+.engine-registered-edit { width: min(680px, calc(100vw - 24px)); }
+.engine-registered-confirm { width: min(560px, calc(100vw - 24px)); }
 .engine-operation-body { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; padding: 14px; }
 .engine-operation-choice { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .engine-operation-choice label { display: flex; align-items: center; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 7px; }
@@ -1430,6 +1546,8 @@ a.engines-model-source:hover {
   .engine-catalog-view-tabs button { flex: 1 1 0; }
   .engine-catalog-toolbar { position: static; }
   .engine-operation-choice, .engine-operation-grid, .engine-operation-manual { grid-template-columns: 1fr; }
+  .engine-registered-parts li { grid-template-columns: 1fr auto; }
+  .engine-registered-key { grid-column: 1 / -1; }
   .engine-catalog-card-main { min-height: 0; }
   .engine-catalog-thumb { flex-basis: 76px; width: 76px; height: 90px; }
 }

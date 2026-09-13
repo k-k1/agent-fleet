@@ -1214,7 +1214,7 @@ export type ModelPrefill = {
  *     is read as 32,000, so a context alone leaves 768 usable tokens);
  *   - the SIZE, because the control plane cannot look in S3 (ADR 0072 review R3) and this is the
  *     only place the "sync +N s" estimate can come from. Optional: no size, no estimate. */
-function EngineModelAdd({
+export function EngineModelAdd({
   busy,
   isImage,
   isLora,
@@ -1549,7 +1549,7 @@ type HfTokenStatus = {
  * can actually do. The CP holds `PutSecretValue` on one secret and never `GetSecretValue`, so
  * "show the current token" is not something it could offer even if a screen wanted it. What
  * can be shown is that one is registered, by whom and when. */
-function HfTokenPanel() {
+export function HfTokenPanel() {
   const tr = useT();
   const [st, setSt] = useState<HfTokenStatus | null>(null);
   const [token, setToken] = useState("");
@@ -3268,7 +3268,7 @@ export function engineJobAdvice(code?: string): string {
   }
 }
 
-function EngineIngestJobs({
+export function EngineIngestJobs({
   jobs,
   busy,
   readOnly,
