@@ -13,10 +13,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // engineSearchLimit is how many hits are asked for and returned. Twenty is a screen; the
@@ -34,16 +38,18 @@ const (
 	engineSortDownloads = "downloads"
 	engineSortTrending  = "trending"
 	engineSortLikes     = "likes"
+	engineSortUpdated   = "updated"
+	engineSortNewest    = "newest"
 )
 
-// 🔴 There is deliberately no "newest". Measured 2026-09-09: `sort=lastModified` and
-// `sort=createdAt` on `filter=gguf` return nothing but bulk automated re-quantisations
-// (mradermacher/*-i1-GGUF), every one of them at 0 downloads and 0 likes. A ranking whose first
-// screen is always the same uploader's robot is not a way in, and "trending" already answers
-// what somebody reaching for "new" wants.
+// Hugging Face's initial browse is recently updated. Its model list exposes lastModified as a
+// sortable field; direction=-1 below makes the mapping explicit instead of depending on an
+// upstream default that may differ between rankings.
 func engineSortHF(sort string) (string, bool) {
 	switch sort {
-	case "", engineSortDownloads:
+	case "", engineSortUpdated:
+		return "lastModified", true
+	case engineSortDownloads:
 		return "downloads", true
 	case engineSortTrending:
 		return "trendingScore", true
@@ -53,12 +59,15 @@ func engineSortHF(sort string) (string, bool) {
 	return "", false
 }
 
-// engineSortCivitai maps the same three. Civitai has no trending score, so "trending" is
+// engineSortCivitai maps its explicit new-arrivals default and the three shared rankings.
+// Civitai has no trending score, so "trending" is
 // "most downloaded THIS MONTH" — the period is what makes it a different list (measured: it
 // answers different models from the all-time one).
 func engineSortCivitai(sort string) (value, period string, ok bool) {
 	switch sort {
-	case "", engineSortDownloads:
+	case "", engineSortNewest:
+		return "Newest", "", true
+	case engineSortDownloads:
 		return "Most Downloaded", "", true
 	case engineSortTrending:
 		return "Most Downloaded", "Month", true
@@ -77,6 +86,9 @@ type engineSearchHit struct {
 	// Civitai. 🔴 Civitai's ingest takes a version id, not the model id, and the two are
 	// different numbers on the same page.
 	Ref string `json:"ref"`
+	// ModelRef is the stable repository/model identifier above the version selection. It is the
+	// repository for Hugging Face and the numeric model id for Civitai.
+	ModelRef string `json:"model_ref"`
 	// Name is what a person reads. Same as Ref for HF, the model's title for Civitai.
 	Name string `json:"name"`
 	// The three numbers a ranking is built on, all three on every row: sorting by one of them
@@ -139,6 +151,7 @@ type engineSearchHit struct {
 	// id, which is not Ref (that is the version's) and reaches the panel nowhere else. A third
 	// source then costs one change in one place.
 	URL           string `json:"url,omitempty"`
+	PreviewURL    string `json:"preview_url,omitempty"`
 	Bytes         int64  `json:"bytes,omitempty"`
 	ContextLength int    `json:"context_length,omitempty"`
 }
@@ -210,6 +223,9 @@ type engineCivitaiSearchDoc struct {
 				Type    string `json:"type"`
 				Primary bool   `json:"primary"`
 			} `json:"files"`
+			Images []struct {
+				URL string `json:"url"`
+			} `json:"images"`
 			// The version's own dates. 🔴 Measured live 2026-09-11 on `/api/v1/models`: a
 			// version answers `publishedAt` and nothing else — no `updatedAt`, no `createdAt`.
 			// Both are still decoded, because a version fetched by id does carry more and this
@@ -218,6 +234,9 @@ type engineCivitaiSearchDoc struct {
 			UpdatedAt   string `json:"updatedAt"`
 		} `json:"modelVersions"`
 	} `json:"items"`
+	Metadata struct {
+		NextCursor json.RawMessage `json:"nextCursor"`
+	} `json:"metadata"`
 }
 
 // engineSearchFilter is the per-role narrowing, measured against the live API on 2026-09-09.
@@ -253,10 +272,18 @@ func engineSearchFilter(kind string, lora bool) url.Values {
 // engineSearchHF asks Hugging Face. An empty q is a RANKING rather than a mistake: the API
 // answers the filter's top rows, which is the "what do people use" half of the picker.
 func engineSearchHF(ctx context.Context, req engineSearchReq) ([]engineSearchHit, *apiError) {
+	hits, _, aerr := engineSearchHFPage(ctx, req)
+	return hits, aerr
+}
+
+func engineSearchHFPage(ctx context.Context, req engineSearchReq) ([]engineSearchHit, string, *apiError) {
 	q, kind := req.q, req.kind
 	sortBy, ok := engineSortHF(req.sort)
 	if !ok {
-		return nil, engineBadSort(req.sort)
+		return nil, "", engineBadSort(req.sort)
+	}
+	if !engineCursorValid(req.cursor) {
+		return nil, "", engineBadCursor()
 	}
 	v := engineSearchFilter(kind, req.lora)
 	if q != "" {
@@ -265,6 +292,9 @@ func engineSearchHF(ctx context.Context, req engineSearchReq) ([]engineSearchHit
 	v.Set("sort", sortBy)
 	v.Set("direction", "-1")
 	v.Set("limit", strconv.Itoa(engineSearchLimit))
+	if req.cursor != "" {
+		v.Set("cursor", req.cursor)
+	}
 	// `expand[]` is what makes one read enough: without it the rows carry neither the gating
 	// flag nor the licence, and the panel would have to resolve 20 repositories to draw a list.
 	expand := []string{"gated", "downloads", "likes", "trendingScore", "cardData", "lastModified", "createdAt"}
@@ -275,8 +305,10 @@ func engineSearchHF(ctx context.Context, req engineSearchReq) ([]engineSearchHit
 		v.Add("expand[]", e)
 	}
 	var rows []engineHFSearchRow
-	if aerr := engineIngestGetJSON(ctx, engineIngestBase+"/api/models?"+v.Encode(), &rows); aerr != nil {
-		return nil, aerr
+	target := engineIngestBase + "/api/models?" + v.Encode()
+	head, aerr := engineSearchGetJSON(ctx, target, &rows)
+	if aerr != nil {
+		return nil, "", aerr
 	}
 	out := make([]engineSearchHit, 0, len(rows))
 	for _, r := range rows {
@@ -284,7 +316,7 @@ func engineSearchHF(ctx context.Context, req engineSearchReq) ([]engineSearchHit
 			continue
 		}
 		out = append(out, engineSearchHit{
-			Source: "hf", Ref: r.ID, Name: r.ID,
+			Source: "hf", Ref: r.ID, ModelRef: r.ID, Name: r.ID,
 			Downloads: r.Downloads, Likes: r.Likes, Trending: r.TrendingScore,
 			Gated:        engineHFGated(r.Gated),
 			GatedKind:    engineHFGatedKind(r.Gated),
@@ -301,7 +333,7 @@ func engineSearchHF(ctx context.Context, req engineSearchReq) ([]engineSearchHit
 			ContextLength: r.GGUF.ContextLength,
 		})
 	}
-	return out, nil
+	return out, engineHFNextCursor(head), nil
 }
 
 // engineCivitaiModelURL is the page a person opens for a hit: the MODEL's page, pointed at the
@@ -322,14 +354,23 @@ func engineCivitaiModelURL(modelID, versionID int) string {
 // what an ingest takes — `civitai.com/models/<model>` and the version behind its download
 // button are different numbers, and the model id is the one on the page's URL.
 func engineSearchCivitai(ctx context.Context, req engineSearchReq) ([]engineSearchHit, *apiError) {
+	hits, _, aerr := engineSearchCivitaiPage(ctx, req)
+	return hits, aerr
+}
+
+func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq) ([]engineSearchHit, string, *apiError) {
 	sortBy, period, ok := engineSortCivitai(req.sort)
 	if !ok {
-		return nil, engineBadSort(req.sort)
+		return nil, "", engineBadSort(req.sort)
+	}
+	if !engineCursorValid(req.cursor) {
+		return nil, "", engineBadCursor()
 	}
 	if req.kind == "gguf" {
 		// Civitai hosts image models. Offering it to the llm role would return checkpoints
 		// llama.cpp cannot load, which is the dead end this filter exists to prevent.
-		return []engineSearchHit{}, nil
+		return nil, "", &apiError{http.StatusBadRequest, errCodeIngestBadSource,
+			"Civitai cannot be used with an LLM engine"}
 	}
 	v := url.Values{}
 	if req.q != "" {
@@ -347,9 +388,12 @@ func engineSearchCivitai(ctx context.Context, req engineSearchReq) ([]engineSear
 		v.Set("period", period)
 	}
 	v.Set("limit", strconv.Itoa(engineSearchLimit))
+	if req.cursor != "" {
+		v.Set("cursor", req.cursor)
+	}
 	var doc engineCivitaiSearchDoc
 	if aerr := engineIngestGetJSON(ctx, engineCivitaiBase+"/api/v1/models?"+v.Encode(), &doc); aerr != nil {
-		return nil, aerr
+		return nil, "", aerr
 	}
 	out := make([]engineSearchHit, 0, len(doc.Items))
 	// The URL each hit's login probe HEADs, at the same index. Kept beside the list rather than
@@ -357,8 +401,9 @@ func engineSearchCivitai(ctx context.Context, req engineSearchReq) ([]engineSear
 	// it — the whole point of the probe is that the bytes are the ingest task's business.
 	probe := make([]string, 0, len(doc.Items))
 	for _, m := range doc.Items {
-		if len(m.ModelVersions) == 0 {
-			// Nothing to take in: a model page with no published version has no file behind it.
+		if m.ID <= 0 || len(m.ModelVersions) == 0 {
+			// Nothing selectable: versionless models have no file, and an id-less model cannot
+			// be expanded into the versions endpoint without guessing its identity.
 			continue
 		}
 		ver := m.ModelVersions[0]
@@ -375,7 +420,7 @@ func engineSearchCivitai(ctx context.Context, req engineSearchReq) ([]engineSear
 			}
 		}
 		hit := engineSearchHit{
-			Source: "civitai", Ref: strconv.Itoa(ver.ID), Name: name,
+			Source: "civitai", Ref: strconv.Itoa(ver.ID), ModelRef: strconv.Itoa(m.ID), Name: name,
 			Downloads: m.Stats.DownloadCount, Likes: m.Stats.ThumbsUpCount,
 			BaseModel:        strings.TrimSpace(ver.BaseModel),
 			BaseModelSuggest: engineFamilyGuess(req.provider, ver.BaseModel),
@@ -389,6 +434,12 @@ func engineSearchCivitai(ctx context.Context, req engineSearchReq) ([]engineSear
 			PublishedAt: engineFirstNonEmpty(ver.PublishedAt, m.CreatedAt),
 			URL:         engineCivitaiModelURL(m.ID, ver.ID),
 		}
+		for _, image := range ver.Images {
+			if preview := engineSafePreviewURL(image.URL); preview != "" {
+				hit.PreviewURL = preview
+				break
+			}
+		}
 		// 🔴 The licence name this used to synthesise ("non-commercial", from an empty
 		// allowCommercialUse) is GONE, and nothing was lost: the same fact now rides as the
 		// `noncommercial` restriction code, which the panel draws in its own vocabulary. Keeping
@@ -398,7 +449,7 @@ func engineSearchCivitai(ctx context.Context, req engineSearchReq) ([]engineSear
 	}
 	// The one fact on this list that no amount of reading the metadata produces.
 	engineProbeCivitaiLogins(ctx, out, probe)
-	return out, nil
+	return out, engineCursorFromJSON(doc.Metadata.NextCursor), nil
 }
 
 // engineTrimStrings drops the blanks and the surrounding space from a list a source published.
@@ -411,6 +462,128 @@ func engineTrimStrings(in []string) []string {
 		}
 	}
 	return out
+}
+
+const engineCursorMax = 4096
+
+// engineCursorValid keeps an upstream cursor opaque while bounding what can be reflected into
+// a request. A cursor is only ever added to a fixed upstream URL; it is never followed as one.
+func engineCursorValid(cursor string) bool {
+	if len(cursor) > engineCursorMax || !utf8.ValidString(cursor) {
+		return false
+	}
+	for _, r := range cursor {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func engineBadCursor() *apiError {
+	return &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid search cursor"}
+}
+
+// engineCursorFromJSON accepts the string used by the current Civitai API and the numeric shape
+// older responses documented. json.Number preserves a large cursor without float rounding.
+func engineCursorFromJSON(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil && engineCursorValid(s) {
+		return s
+	}
+	var n json.Number
+	if json.Unmarshal(raw, &n) == nil {
+		s = n.String()
+		if engineCursorValid(s) {
+			return s
+		}
+	}
+	return ""
+}
+
+// engineHFNextCursor extracts only the opaque cursor from Hugging Face's RFC 8288-style next
+// link. The link itself is never requested, and a different origin/path is ignored.
+func engineHFNextCursor(header http.Header) string {
+	base, err := url.Parse(engineIngestBase)
+	if err != nil {
+		return ""
+	}
+	for _, value := range header.Values("Link") {
+		for _, part := range strings.Split(value, ",") {
+			pieces := strings.Split(part, ";")
+			if len(pieces) < 2 {
+				continue
+			}
+			next := false
+			for _, p := range pieces[1:] {
+				if strings.TrimSpace(p) == `rel="next"` {
+					next = true
+					break
+				}
+			}
+			raw := strings.TrimSpace(pieces[0])
+			if !next || len(raw) < 3 || raw[0] != '<' || raw[len(raw)-1] != '>' {
+				continue
+			}
+			u, err := url.Parse(raw[1 : len(raw)-1])
+			if err != nil || u.Scheme != base.Scheme || u.Host != base.Host || u.Path != "/api/models" {
+				continue
+			}
+			cursor := u.Query().Get("cursor")
+			if cursor != "" && engineCursorValid(cursor) {
+				return cursor
+			}
+		}
+	}
+	return ""
+}
+
+func engineSafePreviewURL(raw string) string {
+	s := strings.TrimSpace(raw)
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	base, _ := url.Parse(engineCivitaiBase)
+	baseHost := strings.ToLower(base.Hostname())
+	if host != baseHost && host != "civitai.com" && !strings.HasSuffix(host, ".civitai.com") {
+		return ""
+	}
+	return s
+}
+
+// engineSearchGetJSON is the search-only variant that retains response headers for Hugging
+// Face pagination. It applies the same bounded body and error mapping as metadata resolution.
+func engineSearchGetJSON(ctx context.Context, target string, out any) (http.Header, *apiError) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, &apiError{http.StatusBadRequest, errCodeIngestBadSource, err.Error()}
+	}
+	resp, err := engineIngestHTTP.Do(req)
+	if err != nil {
+		return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceUnreach,
+			"could not reach " + engineIngestHost(target) + ": " + err.Error()}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceForbid,
+			engineIngestHost(target) + " refused the lookup (" + resp.Status + ")"}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceError,
+			engineIngestHost(target) + " answered " + resp.Status}
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		log.Printf("engines: unreadable answer from %s: %v", target, err)
+		return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceError,
+			"unreadable answer from " + engineIngestHost(target)}
+	}
+	return resp.Header, nil
 }
 
 // searchIngest (POST …/{key}/ingest/search) is the repository picker behind one engine's
@@ -464,7 +637,7 @@ func (a engineAdminAPI) browseSearch(w http.ResponseWriter, r *http.Request, _ e
 // take the same five things and a fifth positional string is where the kind and the sort start
 // swapping places.
 type engineSearchReq struct {
-	q, kind, sort string
+	q, kind, sort, cursor string
 	// lora narrows the list to adapters. It is NOT a kind: a LoRA for the llm role is still a
 	// GGUF and for the image role still a safetensors, so the file vocabulary is unchanged and
 	// only the upstream filter moves.
@@ -480,6 +653,7 @@ func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kin
 		Q      string `json:"q"`
 		Source string `json:"source"`
 		Sort   string `json:"sort"`
+		Cursor string `json:"cursor"`
 		Lora   bool   `json:"lora"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&b); err != nil {
@@ -492,18 +666,20 @@ func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kin
 		q:        strings.TrimSpace(b.Q),
 		kind:     kind,
 		sort:     strings.TrimSpace(b.Sort),
+		cursor:   b.Cursor,
 		lora:     b.Lora,
 		provider: provider,
 	}
 	var (
-		hits []engineSearchHit
-		aerr *apiError
+		hits       []engineSearchHit
+		nextCursor string
+		aerr       *apiError
 	)
 	switch strings.TrimSpace(b.Source) {
 	case "civitai":
-		hits, aerr = engineSearchCivitai(r.Context(), req)
+		hits, nextCursor, aerr = engineSearchCivitaiPage(r.Context(), req)
 	case "", "hf":
-		hits, aerr = engineSearchHF(r.Context(), req)
+		hits, nextCursor, aerr = engineSearchHFPage(r.Context(), req)
 	default:
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestBadSource,
 			"source has to be hf or civitai"})
@@ -513,16 +689,17 @@ func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kin
 		writeAPIErr(w, aerr)
 		return
 	}
-	writeJSON(w, http.StatusOK, engineSearchAnswer{Hits: hits})
+	writeJSON(w, http.StatusOK, engineSearchAnswer{Hits: hits, NextCursor: nextCursor})
 }
 
 // engineSearchAnswer wraps the list. An object rather than a bare array so the answer has room
 // to say something about itself later without every client changing shape.
 type engineSearchAnswer struct {
-	Hits []engineSearchHit `json:"hits"`
+	Hits       []engineSearchHit `json:"hits"`
+	NextCursor string            `json:"next_cursor,omitempty"`
 }
 
 func engineBadSort(sort string) *apiError {
 	return &apiError{http.StatusBadRequest, errCodeEngineBadBody,
-		"unknown sort " + sort + " (downloads, trending or likes)"}
+		"unknown sort " + sort + " (downloads, trending, likes, updated or newest)"}
 }
