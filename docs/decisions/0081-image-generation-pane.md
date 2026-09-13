@@ -159,14 +159,16 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
 
 ### Decision 3 — Output goes where the gallery looks, with a sidecar per picture and the seed in the answer
 
-- **Default folder:** `~/.cache/agent-fleet/generated/console/` — a sibling of the per-session folders,
-  under the same 30-day sweep, and the folder the gallery's "generated images" family (ADR 0080
-  unresolved 3) will list. Files keep the `image-<unixnano>-<n>.<ext>` name so the gallery's newest-first
-  order holds.
+- **Default folder:** `~/.cache/agent-fleet/generated/console/` — a sibling of the per-session folders
+  and the folder the gallery's "generated images" family (ADR 0080 unresolved 3) will list. Files keep
+  the `image-<unixnano>-<n>.<ext>` name so the gallery's newest-first order holds.
+  **It is never swept** (decided 2026-09-13): the 30-day sweep in `store.go` exists because an agent's
+  pictures are by-products of a conversation nobody asked to keep; these are the product, and a person
+  pressed the button for each of them. The sweep skips the `console` subtree by name, and the pane
+  shows the folder's size so the cost of keeping is visible.
 - **`out_dir` (optional):** a browse-root-relative folder for keepers, validated like `galleryPath` in
   ADR 0080 and passed through `safeWritableBrowsePath` (the upload route's own gate: inside the browse root, not under `fsDeny`), created on first
-  use. Mass production that ends in a folder the sweep deletes in 30 days is half a feature; a folder
-  the user chose is not swept.
+  use. It exists for sorting, not for survival — a folder the user names, next to the work it is for.
 - **Sidecar:** next to every picture the Agent writes `<name>.json` — the resolved request (prompt,
   negative as composed, model id, family, seed actually used, effective `params`, loras with weights,
   size, op, strength, input paths), `provider`, `job id`, `label`, `elapsed_ms`, `warnings`, and the
@@ -403,16 +405,19 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
 1. **Is the estimate enough, or is the bar needed in P0?** Decide after the live run: if a cold-start
    picture on `flux1` sits in `running` for 90 s with only "usually ~40 s", the estimate is a lie in
    the case that matters most.
-2. **Family cards or per-checkpoint cards.** Pony, Illustrious and base SDXL are one family with three
-   dialects. If the family card misleads on the first real Pony row, add `prompt_notes` to the row
-   (the admin writes it; ingest could seed it from the Civitai description the `params_hint` regex
-   already reads).
-3. **A deployment with no CLI login at all.** `askAssistant` needs one assistant; a fleet whose members
-   only have the self-hosted engines gets Layer A and no Layer B until the P1 Agent route exists.
+2. ~~Family cards or per-checkpoint cards.~~ **Settled 2026-09-13: family cards.** Pony, Illustrious
+   and base SDXL are one family with three dialects; if the family card misleads on the first real Pony
+   row, add `prompt_notes` to the row in P1 (the admin writes it; ingest could seed it from the Civitai
+   description the `params_hint` regex already reads).
+3. **A member with no CLI login.** Layer B runs on `api/chat/ask`, which executes one of the member's
+   own CLIs headless inside the workspace (`claude -p`, `codex exec`, opencode, agy, cursor — whichever
+   the chosen assistant is bound to) under the login that CLI already holds. A member who has never
+   signed in to any of them, or a fleet whose members only ever use the self-hosted engines, has no
+   assistant to run and gets Layer A alone until the P1 Agent route through the `llm` role exists.
+   Whether that route is P0 depends on whether such a fleet is real.
 4. **Several studios at once.** One pane per workspace is the P0 answer; if two models side by side is
    asked for, the pane gains a `slot` and `sameTarget` compares it.
-5. **Retention of `generated/console/`.** 30 days like the sessions', with `out_dir` for keepers — or
-   never swept, because a person chose to make these. Ask the first user who loses a folder.
+5. ~~Retention of `generated/console/`.~~ **Settled 2026-09-13: never swept** (decision 3).
 6. **Queue cap and finished-list size.** 200 and 500 are guesses; the shared host's memory is the
    constraint (a finished job holds paths, not bytes, so the list is small; the sidecars are the
    archive).
