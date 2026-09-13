@@ -38,7 +38,7 @@ test.afterAll(async () => {
 
 type Call = { path: string; method: string; body: Record<string, unknown> };
 
-async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light" | "dark" = "dark") {
+async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light" | "dark" = "dark", withoutEngines = false) {
   const calls: Call[] = [];
   let started = false;
   const engines = [
@@ -59,7 +59,7 @@ async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light
     if (p === "/api/tenants") return answer({ tenants: [{ slug: "demo", name: "Demo", role: "tenant_admin" }], super_admin: true });
     if (p === "/api/workspace") return answer({ state: "running" });
     if (p === "/api/sessions") return answer({ sessions: [] });
-    if (p === "/api/admin/engines") return answer({ engines, super_admin: true });
+    if (p === "/api/admin/engines") return answer({ engines: withoutEngines ? [] : engines, super_admin: true });
     if (p.endsWith("/storage")) return answer({ files: [], checked_at: "2026-09-14T00:00:00Z" });
     if (p.endsWith("/models/vae-scan")) return answer({ engines });
     if (p.endsWith("/ingest") && request.method() === "POST") {
@@ -69,8 +69,12 @@ async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light
     if (p.endsWith("/ingest") && request.method() === "GET") return answer({ jobs: started
       ? [{ id: "harbor-download", model_id: "harbor", state: "running", source: "civitai:101", s3_key: "image/checkpoints/harbor.safetensors" }]
       : [] });
-    if (p.endsWith("/ingest/search")) {
-      const image = p.includes("/image/");
+    if (p.endsWith("/ingest/search") || p === "/api/admin/engines/search") {
+      const kind = new URL(request.url()).searchParams.get("kind");
+      if (p === "/api/admin/engines/search" && !["checkpoint", "gguf"].includes(kind || "")) {
+        return route.fulfill({ status: 400, json: { error: { code: "engine_bad_body", message: "kind must be checkpoint or gguf" } } });
+      }
+      const image = p.includes("/image/") || kind === "checkpoint";
       const civitai = body.source === "civitai";
       return answer({ hits: [{
         source: civitai ? "civitai" : "hf", model_ref: civitai ? "100" : "demo/Model", ref: civitai ? "101" : "demo/Model",
@@ -108,6 +112,17 @@ test("restored LLM pane searches HF by last modification without offering Civita
   ]));
   await expect(pane.getByRole("button", { name: "Civitai", exact: true })).toHaveCount(0);
   await expect(pane.locator(".engines-wizard-rail")).toHaveCount(0);
+});
+
+test("without an engine the catalog still browses models and LoRAs without ingest actions", async ({ page }) => {
+  const calls = await openCatalog(page, "image", "dark", true);
+  const pane = page.locator(".engine-catalog-pane");
+  await expect(pane.getByText("Harbor Image Model", { exact: true })).toBeVisible();
+  await pane.getByRole("button", { name: "LoRAs", exact: true }).click();
+  await expect.poll(() => calls.some((call) => call.path === "/api/admin/engines/search" && call.body.lora === true)).toBe(true);
+  await expect(pane.getByText("Harbor Image Model", { exact: true })).toBeVisible();
+  await expect(pane.getByRole("button", { name: /^Add:/ })).toHaveCount(0);
+  expect(calls.filter((call) => call.path.endsWith("/ingest") && call.method === "POST")).toHaveLength(0);
 });
 
 test("a card starts one operation and returns to browsing with its new job visible", async ({ page }) => {
