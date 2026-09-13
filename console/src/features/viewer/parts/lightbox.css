@@ -1,0 +1,92 @@
+/* The enlarged-image overlay (features/viewer/ImageLightbox.tsx), shared by the mirror's
+   transcript cards and the image gallery (ADR 0080 decision 5).
+
+   The rules are unchanged from when they lived in features/mirror/parts/ (attachments.css
+   and the phone-width slice of responsive.css) — class names included, so the overlay looks
+   the same as before the component moved. They are HERE because the gallery must be able to
+   open a lightbox in a pop-out that never mounts the mirror; the phone override rides along
+   in the same file so it can never end up on the wrong side of the base rule. */
+.mirror-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  /* stretch, not center: the zoom surface (.imgview) has to be the whole overlay, or a
+     zoomed image would be clipped to the rectangle its fitted size happened to occupy. */
+  align-items: stretch;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, #000 72%, transparent);
+  cursor: zoom-out;
+}
+.mirror-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+/* At fit a click on the image does nothing (it starts the double-click that zooms), so it
+   must not offer the backdrop's zoom-out cursor; while zoomed .imgview.zoomed says grab. */
+.mirror-lightbox .imgview:not(.zoomed) .imgview-img {
+  cursor: zoom-in;
+}
+.mirror-lightbox-bar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: default;
+}
+.mirror-lightbox-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  font: 11px var(--mono);
+  color: var(--fg);
+  background: var(--bar);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  opacity: 0.85;
+  cursor: pointer;
+}
+.mirror-lightbox-bar button:hover {
+  opacity: 1;
+}
+.mirror-lightbox-bar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.mirror-lightbox-level {
+  min-width: 52px;
+}
+/* Paging (gallery only — the mirror passes no list, so none of this renders there).
+   The position reads between the two arrows and is not a control, so it is a span: the
+   bar's buttons stay a list of actions. */
+.mirror-lightbox-pos {
+  min-width: 52px;
+  padding: 0 2px;
+  font: 11px var(--mono);
+  color: var(--fg);
+  text-align: center;
+  opacity: 0.85;
+}
+/* Separate the paging group from the zoom group without a divider element. */
+.mirror-lightbox-next {
+  margin-right: 8px;
+}
+
+@media (max-width: 760px) {
+  /* A tap on the image pans/zooms it, so ✕ (and Back) are the way out of the lightbox on a
+     phone — give the controls a finger-sized target. */
+  .mirror-lightbox-bar button {
+    min-width: 38px;
+    height: 38px;
+  }
+}

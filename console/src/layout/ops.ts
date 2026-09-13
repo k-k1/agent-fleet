@@ -122,6 +122,10 @@ export function sameTarget(view: View, target: OpenTarget): boolean {
     case "browserAttach": return c.kind === "browserAttach" && c.attachmentId === t.attachmentId;
     case "sharedSession": return c.kind === "sharedSession" && c.sharedSessionId === t.sharedSessionId;
     case "sessions": return c.kind === "sessions";
+    // The FOLDER alone. sort / galleryFocus / gallerySession are state of the same
+    // surface, so opening the same folder twice focuses the pane that has it instead
+    // of laying a second copy beside it (ADR 0080 decision 1).
+    case "gallery": return c.kind === "gallery" && c.galleryPath === t.galleryPath;
   }
 }
 
