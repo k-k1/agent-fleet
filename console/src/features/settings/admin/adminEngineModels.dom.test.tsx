@@ -2437,6 +2437,12 @@ describe("EngineModelsAdminView / a model's own negative prompt", () => {
       ],
     });
     await mount();
+    // 🔥 Onto the adapter tab first. This assertion used to be made on the MODEL tab, where a
+    // LoRA row is not rendered at all — so it passed with the guard that omits this editor
+    // deleted, and would have gone on passing for ever. Found while adding the window editor
+    // next door, which needed the same guard and the same pairing.
+    await click(tab("LoRA"));
+    expect(host!.querySelector(".engines-model-id")?.textContent).toBe("watercolor-v2");
     expect(host!.querySelector(".engines-model-negative")).toBeNull();
   });
 });
