@@ -36,6 +36,32 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   } as unknown as typeof ResizeObserver;
 }
 
+// jsdom has no IntersectionObserver either. Default: report every observed element as
+// intersecting on the next microtask, so a component gating on "has this been near the
+// viewport" (the gallery's thumbnail arming — GalleryView.tsx's useArmed) renders as if
+// everything is already visible, same tradeoff as ResizeObserver above (no real layout, so
+// the gating ITSELF cannot be verified here). A test that cares about the gating replaces this
+// with `vi.stubGlobal("IntersectionObserver", ...)` and drives the callback by hand (the
+// pattern BrowserSurface.dom.test.tsx already uses).
+if (typeof globalThis.IntersectionObserver === "undefined") {
+  globalThis.IntersectionObserver = class {
+    #cb: IntersectionObserverCallback;
+    constructor(cb: IntersectionObserverCallback) {
+      this.#cb = cb;
+    }
+    observe(target: Element): void {
+      queueMicrotask(() =>
+        this.#cb([{ isIntersecting: true, target } as IntersectionObserverEntry], this as unknown as IntersectionObserver),
+      );
+    }
+    unobserve(): void {}
+    disconnect(): void {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+}
+
 // jsdom cannot make Blob URLs (URL.createObjectURL is unimplemented). The composer that holds
 // attachments calls it the moment something is pasted, so without this the mount itself dies.
 // The shell only hands out countable URLs: they resolve to nothing, so whether an image
