@@ -42,10 +42,15 @@ export type EngineModel = {
   vram_mib?: number;
   /** What this model would want on the card, and how well that is known (ADR 0074 decision 6):
    *  "declared" = the operator measured it, "floor" = the weight files' size and nothing else
-   *  (no KV cache, no context), "unknown" = nobody said. 🔴 `unknown` must never be drawn as a
-   *  comfortable zero — it means the question was not answered. */
+   *  (no KV cache, no context), "weights_kv" = that plus the KV cache this row's context window
+   *  needs, "unknown" = nobody said. 🔴 `unknown` must never be drawn as a comfortable zero — it
+   *  means the question was not answered.
+   *
+   *  🔴 `weights_kv` was missing from this union while the CP was already answering it, so it
+   *  arrived typed as the two the panel knew and was drawn with the MEASURED wording. Both
+   *  floors have to stay distinguishable from a measurement here. */
   vram_need_mib?: number;
-  vram_need_source?: "declared" | "floor" | "unknown";
+  vram_need_source?: "declared" | "floor" | "weights_kv" | "unknown";
   /** BOTH are kept and both are shown: Hugging Face reports `other` for the two
    *  non-commercial models in ADR 0072's table, with the real terms in license_name. */
   license?: string;

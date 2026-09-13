@@ -203,6 +203,32 @@ func (s *SQL) SetEngineModelBaseModel(ctx context.Context, role, id, baseModel s
 	return affected(res, err)
 }
 
+// SetEngineModelWindow corrects the declared window, and writes BOTH columns because they are
+// one declaration: the catalogue only carries max_output_tokens when context_tokens is above
+// zero, so a row that moved one of them alone is a row the panel cannot explain.
+//
+// It exists because the window is what a wrong row costs money to discover: measured on a
+// borrowed llm engine, a 17 GB model whose context_tokens still said 262144 allocated a 16 GiB
+// KV cache and died with `cudaMalloc failed: out of memory` — four minutes after a GPU box had
+// been bought. Re-registering the row to change one number would carry its licence acceptance,
+// its source and its sha256 back out and in again.
+func (s *SQL) SetEngineModelWindow(ctx context.Context, role, id string, contextTokens, maxOutputTokens int) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engine_models SET context_tokens=?, max_output_tokens=?, updated_at=? WHERE role=? AND id=?`,
+		contextTokens, maxOutputTokens, NowTS(), role, id)
+	return affected(res, err)
+}
+
+// SetEngineModelVram writes the operator's own VRAM measurement, and 0 withdraws it — which
+// puts the row back on the floor derived from its files rather than on a number nobody stands
+// behind any more.
+func (s *SQL) SetEngineModelVram(ctx context.Context, role, id string, vramMiB int) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engine_models SET vram_mib=?, updated_at=? WHERE role=? AND id=?`,
+		vramMiB, NowTS(), role, id)
+	return affected(res, err)
+}
+
 // SetEngineModelNegativePrompt corrects ONE column, for the same reason SetEngineModelBaseModel
 // does: it is a field an administrator tunes after watching what the checkpoint actually draws,
 // and a read-modify-write through PutEngineModel would carry a licence acceptance, a source and

@@ -393,11 +393,31 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_class_vram_many": "This engine chooses a checkpoint per request and keeps loaded ones in VRAM, so several can be resident at once — the figure above is the largest ONE of them.",
   "admin.engines_vram_src_declared": "measured",
   "admin.engines_vram_src_floor": "a weights-only floor",
+  // The CP answers this source too (engine_class.go), and until now neither catalogue had a word
+  // for it — the confirmation dialog built its key by concatenation and drew a missing one.
+  "admin.engines_vram_src_weights_kv": "a floor of the weights plus the KV cache",
   "admin.engines_vram_src_unknown": "unknown",
   "admin.engines_vram_confirm": "{id} wants {n} MiB ({src}) and the class you have chosen has {m} MiB. Short VRAM does not slow CUDA down, it crashes it. Quantisation or offloading may still fit it — continue if you know that.",
   "admin.engines_vram_confirm_go": "Enable it anyway",
   "admin.engines_model_vram": "VRAM {n} MiB",
   "admin.engines_model_vram_floor": "VRAM at least {n} MiB (a weights-only floor)",
+  // 🔴 A floor, said as one. Drawn with the measured wording instead, a number the CP DERIVED
+  // reads as one an operator stood behind — and this is the row where that matters most, because
+  // it is the only source that moves when the context window is edited.
+  "admin.engines_model_vram_weights_kv": "VRAM at least {n} MiB (weights + KV cache)",
+  // The window an llm row declares, and the editor for it. The context window is what a wrong
+  // value bills for: a row left at 262144 asked for a 16 GiB KV cache and killed the engine four
+  // minutes into a cold start somebody had already paid for.
+  "admin.engines_model_window_edit": "Window",
+  "admin.engines_model_window_context": "Context",
+  "admin.engines_model_window_output": "Max output",
+  "admin.engines_model_vram_edit": "Measured VRAM (MiB)",
+  // What the panel thinks this row needs right now, and WHERE that number came from. Shown
+  // beside the fields because editing either of them moves it — and because "measured" and
+  // "derived from the files" are not the same claim.
+  "admin.engines_model_need_now": "now: {n} MiB ({src})",
+  "admin.engines_model_need_unknown": "now: not known",
+  "admin.engines_model_window_save": "Save",
   // The licence facts a row can carry (ADR 0072 decision 10). "Not recorded" is stated rather
   // than left blank: a seeded row cannot know a licence and the hand-registration form does not
   // ask, and a gap where every ingested row names one reads as "no restrictions".

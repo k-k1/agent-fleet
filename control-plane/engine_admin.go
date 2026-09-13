@@ -848,6 +848,21 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// row to change `steps` would carry the licence acceptance and the source through a
 		// round trip to move one number.
 		Params *store.EngineParams `json:"params"`
+		// ContextTokens and MaxOutputTokens are ONE declaration and travel together: the row
+		// answers max_output_tokens only when context_tokens is above zero (engineAdminModelRow),
+		// so moving one alone leaves a row the panel cannot explain. A missing half is read from
+		// the stored row, which is what makes "raise the cap" a one-field request.
+		//
+		// This is the field a wrong value bills for. Measured on a borrowed llm engine: a row
+		// still declaring 262144 made llama.cpp ask for a 16 GiB KV cache on top of 17 GB of
+		// weights, and the L4 it had just bought answered `cudaMalloc failed: out of memory`
+		// four minutes into the cold start. There was no way to correct it from the panel.
+		ContextTokens   *int `json:"context_tokens"`
+		MaxOutputTokens *int `json:"max_output_tokens"`
+		// VramMiB is the operator's own measurement, and 0 WITHDRAWS it — putting the row back on
+		// the floor its files imply rather than on a number nobody stands behind any more. A
+		// pointer like the rest, so that "said nothing" and "said zero" stay different bodies.
+		VramMiB *int `json:"vram_mib"`
 		// ConfirmVram is "I have read that this may not fit" (ADR 0074 decision 6). Required
 		// only when the model's declared demand exceeds the chosen instance class.
 		ConfirmVram bool `json:"confirm_vram"`
@@ -920,6 +935,53 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		if p == nil {
 			action = "params cleared"
 		}
+	case b.ContextTokens != nil || b.MaxOutputTokens != nil:
+		cur, ok := engineCatalogModel(ctx, e, id)
+		if !ok {
+			break // found stays false, and the 404 below is the answer
+		}
+		next := cur
+		if b.ContextTokens != nil {
+			next.ContextTokens = *b.ContextTokens
+		}
+		if b.MaxOutputTokens != nil {
+			next.MaxOutputTokens = *b.MaxOutputTokens
+		}
+		if next.ContextTokens < 0 || next.MaxOutputTokens < 0 {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+				"context_tokens and max_output_tokens cannot be negative; 0 means undeclared"})
+			return
+		}
+		// Clearing the window clears the cap with it. The row answers a cap only alongside a
+		// window, so one left behind would be stored, invisible and still read by whatever
+		// starts the engine.
+		if next.ContextTokens == 0 {
+			next.MaxOutputTokens = 0
+		}
+		if aerr := engineVramGuardEdit(ctx, e, cur, next, b.ConfirmVram); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		found, err = a.mgr.store.SetEngineModelWindow(ctx, key, id, next.ContextTokens, next.MaxOutputTokens)
+		action = fmt.Sprintf("window %d/%d", next.ContextTokens, next.MaxOutputTokens)
+	case b.VramMiB != nil:
+		cur, ok := engineCatalogModel(ctx, e, id)
+		if !ok {
+			break
+		}
+		if *b.VramMiB < 0 {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+				"vram_mib cannot be negative; 0 withdraws the measurement"})
+			return
+		}
+		next := cur
+		next.VramMiB = *b.VramMiB
+		if aerr := engineVramGuardEdit(ctx, e, cur, next, b.ConfirmVram); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		found, err = a.mgr.store.SetEngineModelVram(ctx, key, id, next.VramMiB)
+		action = fmt.Sprintf("vram_mib %d", next.VramMiB)
 	case b.Selected != nil && *b.Selected:
 		found, err = a.mgr.store.SetEngineModelSelected(ctx, key, id)
 		action = "select"
@@ -936,7 +998,8 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// An empty body must not be read as "switch it off", for the same reason the mode
 		// route refuses one.
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
-			"enabled, selected, default, base_model, negative_prompt or params is required"})
+			"enabled, selected, default, base_model, negative_prompt, params, context_tokens," +
+				" max_output_tokens or vram_mib is required"})
 		return
 	}
 	if err != nil {
@@ -978,27 +1041,59 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 //   - it does not run at all where there is no ladder, because then there is no rung to compare
 //     against and the box is whatever CloudFormation bought.
 func engineVramGuard(ctx context.Context, e *engineRuntimeState, id string) *apiError {
-	sel, ok := e.selectedClass(ctx)
-	if !ok || sel.VramMiB <= 0 {
+	m, ok := engineCatalogModel(ctx, e, id)
+	if !ok {
 		return nil
 	}
-	for _, m := range e.catalog.list(ctx) {
-		if m.ID != id || engineModelIsLora(m) {
-			continue
-		}
-		need, source := engineModelVramNeed(m)
-		if source == engineVramUnknown || engineClassFits(sel, need) {
-			return nil
-		}
-		at := "at least "
-		if source == engineVramDeclared {
-			at = ""
-		}
-		return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
-			"%s wants %s%d MiB of VRAM and the %s class declares %d MiB; repeat with confirm_vram to enable it anyway",
-			m.ID, at, need, sel.ID, sel.VramMiB)}
+	return engineVramGuardRow(ctx, e, m)
+}
+
+// engineVramGuardEdit is the same question asked FORWARD: not "may this row be switched on" but
+// "may this row go on being loaded once the value in front of me is written".
+//
+// It exists because the guard above only ever ran on the way in. A row that was already enabled
+// could have its context window raised to anything and nobody looked — which is precisely the
+// shape that failed on a borrowed llm engine: 262144 tokens, a 16 GiB KV cache, `cudaMalloc
+// failed: out of memory`, four minutes after the GPU box was bought. The check is on the
+// CANDIDATE row, never the stored one, because the stored one still fits.
+//
+// A row nothing would load is not asked about: `enabled`, `selected` and `default` are the three
+// states that put weights on the card, and editing a disabled row costs nothing to get wrong.
+func engineVramGuardEdit(ctx context.Context, e *engineRuntimeState, cur, next store.EngineModel, confirmed bool) *apiError {
+	if confirmed || !(cur.Enabled || cur.Selected || cur.Default) {
+		return nil
 	}
-	return nil
+	return engineVramGuardRow(ctx, e, next)
+}
+
+// engineVramGuardRow judges one row VALUE against the chosen rung. Taking the row rather than an
+// id is what lets an edit be judged on the numbers it is about to write.
+func engineVramGuardRow(ctx context.Context, e *engineRuntimeState, m store.EngineModel) *apiError {
+	sel, ok := e.selectedClass(ctx)
+	if !ok || sel.VramMiB <= 0 || engineModelIsLora(m) {
+		return nil
+	}
+	need, source := engineModelVramNeed(m)
+	if source == engineVramUnknown || engineClassFits(sel, need) {
+		return nil
+	}
+	at := "at least "
+	if source == engineVramDeclared {
+		at = ""
+	}
+	return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
+		"%s wants %s%d MiB of VRAM and the %s class declares %d MiB; repeat with confirm_vram to enable it anyway",
+		m.ID, at, need, sel.ID, sel.VramMiB)}
+}
+
+// engineCatalogModel finds one row of an engine's catalogue by id.
+func engineCatalogModel(ctx context.Context, e *engineRuntimeState, id string) (store.EngineModel, bool) {
+	for _, m := range e.catalog.list(ctx) {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return store.EngineModel{}, false
 }
 
 // engineFilesGuard refuses to switch on a row whose declared family reads files it does not

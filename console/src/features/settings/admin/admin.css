@@ -869,6 +869,39 @@
   min-width: 0;
 }
 
+/* The window and the measured VRAM of one catalogue row. Wraps, unlike the negative prompt next
+ * door: an llm row carries five controls here and a narrow settings pane would otherwise push
+ * the demand figure — the one thing being read while deciding — off the end of the line. */
+.engines-model-window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.engines-model-window label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dialog-muted);
+}
+
+/* Sized to the value, not to the row: a context window is six digits at most, and an input that
+ * grows to fill the line reads as free text. Monospace here rather than through the shared
+ * `.mono` class — a test reads the catalogue's ids by that class, and three numeric boxes
+ * wearing it made a row answer four ids. */
+.engines-model-window input {
+  width: 8ch;
+  min-width: 0;
+  font-family: var(--mono);
+}
+
+.engines-model-need {
+  margin-left: auto;
+}
+
 /* Issuing a borrowing token (ADR 0079 decision 3, adminEngineIssueToken.tsx).
  *
  * The panel is a form and an answer, and the answer is a CREDENTIAL — which is the only reason

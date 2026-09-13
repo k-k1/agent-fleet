@@ -1260,3 +1260,217 @@ func TestEngineAdminSetsTheEngineExclusionList(t *testing.T) {
 		t.Errorf("catalogue row = %v, want the key absent when nothing is excluded", empty)
 	}
 }
+
+// --- the window and the VRAM measurement (ADR 0079 live run, 2026-09-13) ------
+
+// engineWindowTestEngine is an engine with a ladder, so the VRAM guard has a rung to compare
+// against, and a real store, so the edit can be read back.
+func engineWindowTestEngine(t *testing.T) (engineAdminAPI, *engineRuntimeState, store.Store) {
+	t.Helper()
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e.catalog = newEngineCatalog(st, "image")
+	return classAdminAPI(t, e, st), e, st
+}
+
+// The numbers are the ones the live run produced. A 17 GiB model with this geometry wants a
+// 1024 MiB KV cache at 16384 tokens (18432 MiB in all, which the 21000 MiB rung holds) and a
+// 16384 MiB one at 262144 (33792 MiB, which it does not) — the difference between an engine that
+// starts and `ggml_backend_cuda_buffer_type_alloc_buffer: cudaMalloc failed: out of memory`.
+const engineWindowTestBytes = 17 << 30 // 17 GiB of weights = 17408 MiB
+
+func engineWindowTestRow(id string, enabled bool, ctxTokens int) store.EngineModel {
+	return store.EngineModel{
+		Role: "image", ID: id, Kind: "checkpoint", Enabled: enabled,
+		Files:         []store.EngineModelFile{{S3Key: "image/checkpoints/" + id + ".gguf", Bytes: engineWindowTestBytes}},
+		ContextTokens: ctxTokens, MaxOutputTokens: 4096,
+		KVLayers: 64, KVHeadsKV: 2, KVKeyLen: 128, KVValueLen: 128,
+		Source: "hf:vendor/" + id, LicenseName: "apache-2.0", LicenseAcceptedBy: "u0",
+	}
+}
+
+// The window is editable in place, and the pair moves together. Before this the only way to
+// correct a context_tokens was to register the whole row again — which lands it disabled and
+// drops the licence acceptance the ingest recorded.
+func TestEngineAdminEditsAModelWindow(t *testing.T) {
+	a, e, st := engineWindowTestEngine(t)
+	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("qwen3", false, 262144)); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	code, out := putModelReq(t, a, "qwen3", `{"context_tokens":16384,"max_output_tokens":2048}`)
+	if code != http.StatusOK {
+		t.Fatalf("PUT context_tokens = %d (%v), want 200", code, out)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if len(rows) != 1 || rows[0].ContextTokens != 16384 || rows[0].MaxOutputTokens != 2048 {
+		t.Fatalf("stored row = %+v, want the window written", rows)
+	}
+	// ⚠️ Nothing else may move: that is the whole reason this is a targeted column write rather
+	// than a round trip through the register route.
+	if rows[0].Source != "hf:vendor/qwen3" || rows[0].LicenseAcceptedBy != "u0" || len(rows[0].Files) != 1 {
+		t.Errorf("the ingest's own fields were lost: %+v", rows[0])
+	}
+
+	// Half a body is a real edit: the cap is raised against the window already declared.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"max_output_tokens":8192}`); code != http.StatusOK {
+		t.Fatalf("PUT max_output_tokens alone = %d (%v), want 200", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].ContextTokens != 16384 || rows[0].MaxOutputTokens != 8192 {
+		t.Fatalf("stored row = %+v, want the window kept and the cap raised", rows[0])
+	}
+
+	// 🔴 Clearing the window clears the cap with it. The row answers a cap only alongside a
+	// window (engineAdminModelRow), so one left behind is stored, invisible, and still read by
+	// whatever starts the engine.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"context_tokens":0}`); code != http.StatusOK {
+		t.Fatalf("clearing the window = %d (%v)", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].ContextTokens != 0 || rows[0].MaxOutputTokens != 0 {
+		t.Errorf("stored row = %+v, want both cleared", rows[0])
+	}
+
+	e.catalog.invalidate()
+	if code, _ = putModelReq(t, a, "qwen3", `{"context_tokens":-1}`); code != http.StatusBadRequest {
+		t.Errorf("a negative window = %d, want 400", code)
+	}
+	if code, _ = putModelReq(t, a, "nope", `{"context_tokens":4096}`); code != http.StatusNotFound {
+		t.Errorf("a window on a row that does not exist = %d, want 404", code)
+	}
+}
+
+// 🔥 The gap the live run fell into. engineVramGuard only ever ran on the way IN — enabling a
+// model — so an ALREADY enabled row's context window could be raised to anything and nobody
+// looked. That is the exact operation that bought an L4 and then died four minutes later.
+func TestEngineAdminAsksBeforeRaisingTheWindowOfALoadedModel(t *testing.T) {
+	a, e, st := engineWindowTestEngine(t)
+	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("qwen3", true, 16384)); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	code, out := putModelReq(t, a, "qwen3", `{"context_tokens":262144,"max_output_tokens":8192}`)
+	if code != http.StatusConflict {
+		t.Fatalf("raising an enabled row's window past the card = %d (%v), want 409", code, out)
+	}
+	// The refusal must leave the catalogue as it was, like the one on the way in.
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].ContextTokens != 16384 {
+		t.Fatalf("the window was written by the call that refused it: %+v", rows[0])
+	}
+	if err, _ := out["error"].(map[string]any); err == nil || err["code"] != errCodeEngineVramConfirm {
+		t.Fatalf("error = %v, want %s", out["error"], errCodeEngineVramConfirm)
+	}
+
+	// This warns, it does not forbid: quantisation and --offload-to-cpu are real (ADR 0074
+	// decision 6), and the same call with the confirmation goes through.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"context_tokens":262144,"max_output_tokens":8192,"confirm_vram":true}`); code != http.StatusOK {
+		t.Fatalf("the confirmed edit = %d (%v), want 200", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].ContextTokens != 262144 {
+		t.Fatalf("stored row = %+v, want the confirmed window", rows[0])
+	}
+	// And the way back is never asked about: a window that fits again is not a question.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"context_tokens":16384,"max_output_tokens":4096}`); code != http.StatusOK {
+		t.Fatalf("lowering it again = %d (%v), want 200", code, out)
+	}
+
+	// A row nothing would load costs nothing to get wrong, and asking about it teaches people to
+	// click through the question that matters.
+	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("shelf", false, 16384)); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "shelf", `{"context_tokens":262144,"max_output_tokens":8192}`); code != http.StatusOK {
+		t.Fatalf("raising a DISABLED row's window = %d (%v), want 200", code, out)
+	}
+}
+
+// The operator's own measurement, written and withdrawn — and guarded forward like the window,
+// because declaring 40 GB on a row the engine is already loading is the same act.
+func TestEngineAdminEditsAModelVram(t *testing.T) {
+	a, e, st := engineWindowTestEngine(t)
+	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("qwen3", true, 16384)); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	if code, out := putModelReq(t, a, "qwen3", `{"vram_mib":19000}`); code != http.StatusOK {
+		t.Fatalf("PUT vram_mib = %d (%v), want 200", code, out)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].VramMiB != 19000 {
+		t.Fatalf("stored row = %+v, want the measurement", rows[0])
+	}
+	// A declared number OUTRANKS the floor, so the answer the panel reads changes with it.
+	if need, src := engineModelVramNeed(rows[0]); need != 19000 || src != engineVramDeclared {
+		t.Errorf("need = %d/%s, want 19000/declared", need, src)
+	}
+
+	e.catalog.invalidate()
+	code, out := putModelReq(t, a, "qwen3", `{"vram_mib":40000}`)
+	if code != http.StatusConflict {
+		t.Fatalf("declaring more than the card holds on a loaded row = %d (%v), want 409", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].VramMiB != 19000 {
+		t.Fatalf("the refused call wrote anyway: %+v", rows[0])
+	}
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"vram_mib":40000,"confirm_vram":true}`); code != http.StatusOK {
+		t.Fatalf("the confirmed measurement = %d (%v), want 200", code, out)
+	}
+
+	// 0 WITHDRAWS it and puts the row back on the floor its files imply — which here is the
+	// weights plus the KV cache the declared window needs.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"vram_mib":0}`); code != http.StatusOK {
+		t.Fatalf("withdrawing the measurement = %d (%v), want 200", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].VramMiB != 0 {
+		t.Fatalf("stored row = %+v, want the measurement withdrawn", rows[0])
+	}
+	if need, src := engineModelVramNeed(rows[0]); src != engineVramWeightsKV || need != 17408+1024 {
+		t.Errorf("need = %d/%s, want 18432/weights_kv", need, src)
+	}
+	e.catalog.invalidate()
+	if code, _ = putModelReq(t, a, "qwen3", `{"vram_mib":-1}`); code != http.StatusBadRequest {
+		t.Errorf("a negative measurement = %d, want 400", code)
+	}
+}
+
+// A borrowed catalogue is a MIRROR of the far deployment's (ADR 0079 decision 7), so the new
+// fields are refused with the rest — before the body is even read.
+func TestEngineAdminRefusesAWindowEditOnABorrowedRow(t *testing.T) {
+	st := testSettingsStore(t)
+	rem := &engineRemote{key: "image", tokens: map[string]engineRemoteToken{}}
+	e := &engineRuntimeState{
+		def: engineDef{Key: "image", API: engineAPIImages, Provider: "comfy",
+			URL: "https://af.example.invalid", Lifecycle: engineLifecycleRemote},
+		settings: st,
+		catalog:  newEngineCatalog(nil, "image"),
+		remote:   rem,
+	}
+	e.catalog.source = rem.catalogSource()
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}, st}
+
+	for _, body := range []string{`{"context_tokens":4096,"max_output_tokens":1024}`, `{"vram_mib":19000}`} {
+		code, out := putModelReq(t, a, "m1", body)
+		if code != http.StatusBadRequest {
+			t.Fatalf("%s on a borrowed engine = %d (%v), want 400", body, code, out)
+		}
+		err, _ := out["error"].(map[string]any)
+		if err == nil || err["code"] != errCodeEngineNotOurs {
+			t.Errorf("%s code = %v, want %s", body, out["error"], errCodeEngineNotOurs)
+		}
+	}
+}
