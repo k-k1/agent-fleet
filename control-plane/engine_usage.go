@@ -251,11 +251,14 @@ func (g engineGateway) noteEngineMembershipHour(ctx context.Context, key string,
 	if g.mgr == nil || g.mgr.store == nil || strings.TrimSpace(mv.MembershipID) == "" {
 		return
 	}
+	// No Requests here: the gateway already counted the request where it was ADMITTED, which is
+	// also where the box is bought (engine_gateway.go's demand mark). Counting it again would
+	// double every successful call — and counting it ONLY here would miss every call that never
+	// got an answer, which is what the live run of 2026-09-13 found.
 	c := store.EngineMembershipHourCounters{
-		Requests: 1,
-		MS:       int(took.Milliseconds()),
-		In:       u.PromptTokens,
-		Out:      u.CompletionTokens,
+		MS:  int(took.Milliseconds()),
+		In:  u.PromptTokens,
+		Out: u.CompletionTokens,
 	}
 	if ok {
 		c.OKRequests = 1
@@ -268,6 +271,27 @@ func (g engineGateway) noteEngineMembershipHour(ctx context.Context, key string,
 	if err := g.mgr.store.AddEngineMembershipHour(ctx, key, mv.MembershipID, mv.TenantID, hour, c); err != nil {
 		log.Printf("engine usage: attributing %s to membership %s: %v", key, mv.MembershipID, err)
 	}
+}
+
+// noteEngineMembershipRequest counts one ADMITTED request against (engine, membership, hour).
+//
+// Separate from noteEngineMembershipHour because the two happen at different moments and only
+// one of them is guaranteed to happen at all: a request that never gets an answer — the far
+// engine never came up, the upstream answered 5xx — still bought a GPU box for this membership,
+// and that is precisely the spend a lending operator cannot otherwise attribute.
+func (g engineGateway) noteEngineMembershipRequest(ctx context.Context, key string, mv store.MembershipView) {
+	if g.mgr == nil || g.mgr.store == nil || strings.TrimSpace(mv.MembershipID) == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		hour := time.Now().UTC().Format(usageHourFmt)
+		if err := g.mgr.store.AddEngineMembershipHour(ctx, key, mv.MembershipID, mv.TenantID, hour,
+			store.EngineMembershipHourCounters{Requests: 1}); err != nil {
+			log.Printf("engine usage: attributing a %s request to membership %s: %v", key, mv.MembershipID, err)
+		}
+	}()
 }
 
 // keepUndelivered stores a row the Agent never got, instead of dropping it (ADR 0079 open

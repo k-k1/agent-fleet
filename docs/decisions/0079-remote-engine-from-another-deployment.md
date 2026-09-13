@@ -960,3 +960,45 @@ decision says:
   a chat completion that reaches an engine behind something which checks the bearer on the health
   path as well as on the request. Before this, that table produced a row with an empty `apiKey`
   and the health probe alone ended it in `engine_unavailable`.
+
+## The live run (2026-09-13)
+
+The first time any of this touched real hardware. **Lender**: the ecs-ec2 deployment, put on this
+branch's build first so that decision 12 was actually deployed. **Borrower**: a throwaway Control
+Plane built from the same tree and started inside a workspace container — `AUTH=dev`, SQLite under
+`$HOME`, `AF_REMOTE_ENGINE_KEYS=llm` so that no image request could buy a second box. Cost: **one
+g6.xlarge for about 14 minutes, ≈ $0.29.**
+
+**The borrowing lane worked end to end, and added nothing measurable to the cold start.**
+
+| Elapsed | What |
+|---|---|
+| — | `engines: llm (chat/llamacpp) is borrowed from <far> (1 model(s))` at boot; the admin row came back `managed:false`, `lifecycle:"remote"`, `warm:false`, with none of the managed-only fields |
+| 0.02 s | the borrower answered 200 + `text/event-stream` and began holding |
+| 2 s | the far side minted the session token and **bought the box**: `engine llm: offer l4 (od) bought i-…` |
+| 55 s | `the box i-… registered (asking for the task)`, desired moved |
+| every 10 s | `: af-engine waking` relayed to the caller, **not once interrupted**, through the whole wait |
+| 233.6 s | the far side's answer arrived — carrying the engine's own failure |
+
+So the local 900-second hold covered the entire far cold start on ONE connection, which is what
+decision 6's streaming path exists to do. Open question 3 is **partly** answered: the borrowing
+round trip costs ~2 seconds on top of the far side's own timeline. The warm-to-answer figure is
+still unmeasured, because the model never loaded.
+
+🔴 **What it found in decision 12, which the unit tests could not.** The attribution tables were
+EMPTY afterwards, for a request that had bought a GPU. `recordUsage` is reached only once a relay
+returns, and three paths return before it: `dial` failing, the streamed path's upstream 3xx-or-
+worse, and the plain path's refusal. Those are exactly the requests that bought a box and did not
+succeed — the most expensive case, and the one a lending operator most needs a name for. The tests
+written for decision 12 called `recordUsage` directly and never crossed those returns. Fixed by
+counting the request where it is ADMITTED, next to the demand mark that buys the box, and
+splitting the counters: `requests` at admission, `ok_requests` / milliseconds / tokens at the
+outcome — so `requests - ok_requests` is the failure count for free.
+
+🔴 **And a finding that is not this ADR's.** The far engine died with
+`cudaMalloc failed: out of memory` allocating a **16384 MiB KV cache** on a 24 GB L4, while the CP
+had chosen that card saying `largest model … wants 17093 MiB (floor)`. `engineVramFor`
+(`engine_class.go`) adds the KV cache only when the row carries GGUF geometry; without it the
+estimate is the weights alone, and the floor **silently buys a card the model cannot load on**.
+The failure surfaces four minutes later, on a box already paid for. That belongs to ADR 0072/0074,
+not here, but it is what stopped this run from producing a successful completion.

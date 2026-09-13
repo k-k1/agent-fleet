@@ -246,7 +246,9 @@ GET /api/admin/engines/<key>/attribution?from=YYYY-MM-DD&to=YYYY-MM-DD
 
 - `memberships` — requests, successes, milliseconds and tokens per membership per hour,
   for **both roles**. This is the only count the image role has, and it is what answers
-  "whose work was that box doing".
+  "whose work was that box doing". 🔴 A request is counted when it is **admitted**, which
+  is also when the box is bought — so a request that bought a GPU and then failed still
+  appears, and `requests` minus `ok_requests` is the failure count.
 - `undelivered` — the chat rows kept whole, each with the borrowing session's name and
   the reason it could not be delivered (`no_workspace` is the ordinary borrowing case).
 
