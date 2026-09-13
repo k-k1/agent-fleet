@@ -749,6 +749,7 @@ function PopulatedPane({
         <EngineAddView
           engineKey={pane.content.engineKey}
           lora={pane.content.lora}
+          initialView={pane.content.view}
           headerActions={tabHeaderActions}
         />
       )}

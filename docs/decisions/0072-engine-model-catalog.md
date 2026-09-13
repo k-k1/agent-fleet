@@ -4480,3 +4480,74 @@ and both tests fail.
 The panels were rendered headless in both themes and at 390 px before this was called done —
 the rail wraps, the acts stack with their sentences, and the reason the next button is grey is
 still beside it.
+
+## Revision — browse models first, act from their cards (2026-09-14)
+
+Status: approved for implementation. This decision supersedes the four-question wizard above,
+the deliberate exclusion of date sorting, and the prohibition on Control Plane S3 reads. The
+earlier verification describes the earlier implementation, not acceptance of this revision.
+
+### Model management belongs in the pane
+
+Image and LLM have separate views and card bodies. Both use the pane's full available width,
+with search and registered-model tabs and a header containing search, sorting and model/LoRA
+selection. The settings entry opens this pane; machine operation stays in the operations screen.
+Saved `engineAdd` pane entries remain readable, including their engine and LoRA selection.
+
+Image starts on Civitai, with a Hugging Face switch. Its initial ordering is Civitai's `Newest`,
+labelled new arrivals rather than last updated. Hugging Face starts on descending `lastModified`
+for both Image and LLM; LLM offers no Civitai choice. Automated quantisation repositories are not
+excluded from date ordering. Other supported upstream rankings remain selectable, and subsequent
+pages continue the upstream ranking rather than sorting a downloaded popularity page locally.
+Publication and update dates remain separate facts; a missing update date is not manufactured.
+
+A search card represents one HF repository or Civitai model. Versions and files are selected in
+the operation dialog. Image cards show family and model type; LLM cards show available file,
+quantisation and context information. An available example image is a **small thumbnail on the
+right**, opening a lightbox on activation. No image means no reserved image box. Narrow panes
+use one column and wrap footer buttons. The lightbox supports keyboard activation, Escape and
+focus restoration.
+
+### The button chooses the operation
+
+Add, add as a part and replace live in the card footer. Each opens a single dialog for that
+operation: source version/file, destination, required settings, and optional advanced settings.
+There is no next/back rail. Attach offers an empty compatible slot; replace names the occupied
+slot and its current file. Registration, enable/disable, default selection, editing, part
+management and deletion are reachable from registered cards. Manual URL and staged-key entry,
+token management and ingest history remain available as secondary actions.
+
+Starting a job returns to browsing. Progress is attached to the relevant card and an accessible
+job list, and is restored from the server when the pane is reopened. Dismissing the dialog does
+not cancel the job. Completion does not enable a model automatically. Licence acceptance,
+family/VAE/VRAM checks and borrowed-engine read-only restrictions still apply. A replacement
+installs only after success and retains the previous object; failed downloads leave the previous
+catalogue declaration intact.
+
+### Storage is observed, not inferred from history
+
+The Control Plane may read model-object metadata through a deployment-neutral port. The AWS
+implementation receives only the model storage read permissions needed for existence checks,
+including scoped bucket listing where required to distinguish absence from denial. Upload and
+deletion remain worker operations; this revision does not give the Control Plane S3 writes.
+
+An engine-scoped storage endpoint enumerates only server-known catalogue, part and ingest keys.
+Callers cannot name an arbitrary bucket or object. Reads are bounded and briefly cached. An
+unconfigured reader, permission denial or failed check is unknown, not missing. The API carries
+present/missing/unknown per file and the observation time. The UI separately shows checking,
+partial presence for multipart models, registration and enabled state.
+
+Search cards report saved-file counts, not that an entire upstream repository is downloaded.
+Reuse requires an existing object and an exact immutable source-file identity; matching a model
+name, mutable branch or old completed job is insufficient. New ingests persist the identity
+needed for that decision. Ambiguous legacy provenance stays unverified. Reuse applies the same
+registration, attach and replace validation as a download and never silently overwrites a row.
+
+### Acceptance and rollout
+
+Acceptance covers role-specific browsing, upstream date order and pagination, single-operation
+dialogs, small right-side images and lightboxes, persisted-pane/job restoration, exact file reuse,
+all storage verdicts, and the existing licence/VAE/VRAM/permission guards. Console tests and a
+production build, focused Control Plane tests, and headless wide/narrow pane checks are required.
+AWS existence checks need the corresponding IAM deployment; local mocks do not constitute that
+live verification. Deployment and merging into the shared base are separate from implementation.

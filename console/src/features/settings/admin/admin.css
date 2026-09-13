@@ -1179,3 +1179,257 @@ a.engines-model-source:hover {
 .engines-issue-person p {
   margin: 4px 0 0;
 }
+
+/* Model catalogue pane (ADR 0072). Browsing is the durable surface; an operation is a short
+   modal over it, so changing a file never destroys the search context that led to it. */
+.engine-catalog-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.engine-catalog-nav {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.engine-catalog-role-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.engine-catalog-role-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 7px;
+  color: var(--dialog-muted);
+}
+
+.engine-catalog-role-tabs button.active {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel2));
+}
+
+.engine-catalog-engine-name {
+  justify-self: end;
+  font-size: 11px;
+}
+
+.engine-catalog-browser,
+.engine-catalog-registered {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.engine-catalog-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  position: sticky;
+  top: -14px;
+  z-index: 2;
+  padding: 10px 0;
+  background: var(--bg);
+}
+
+.engine-catalog-search {
+  display: flex;
+  flex: 1 1 320px;
+  min-width: 220px;
+  gap: 6px;
+}
+
+.engine-catalog-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.engine-catalog-sort {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dialog-muted);
+}
+
+.engine-catalog-sort-note,
+.engine-catalog-storage-note,
+.engine-catalog-zero {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.engine-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  align-items: stretch;
+  gap: 12px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.engine-catalog-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel2);
+  overflow: hidden;
+}
+
+.engine-catalog-card-main {
+  display: flex;
+  min-height: 132px;
+  gap: 12px;
+  padding: 12px;
+}
+
+.engine-catalog-card-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.engine-catalog-card-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.engine-catalog-card-title > span:first-child {
+  flex: 1 1 auto;
+}
+
+.engine-catalog-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.engine-catalog-card-stats,
+.engine-catalog-saved {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.engine-catalog-saved {
+  color: var(--ok, #1a7f37);
+}
+
+.engines-model-storage {
+  margin: 5px 0 0;
+  font-size: 11px;
+  color: var(--dialog-muted);
+}
+
+.engines-model-storage.present { color: var(--ok, #1a7f37); }
+.engines-model-storage.partial { color: var(--warn, #d29922); }
+.engines-model-storage.missing { color: var(--del); }
+
+/* Example art is deliberately a small trailing thumbnail, not a card background. A missing
+   preview creates no box and no placeholder, so text cards keep their natural width. */
+.engine-catalog-thumb {
+  flex: 0 0 92px;
+  width: 92px;
+  height: 108px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 7px;
+  align-self: flex-start;
+  background: var(--bg);
+}
+
+.engine-catalog-thumb img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.engine-catalog-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.engine-catalog-card-footer > span {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-inline-start: auto;
+}
+
+.engine-catalog-more {
+  display: block;
+  margin: 14px auto;
+}
+
+.engine-catalog-jobs {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.engine-catalog-jobs summary { cursor: pointer; }
+.engine-catalog-jobs ul { list-style: none; padding: 6px 0 0; margin: 0; }
+.engine-catalog-jobs li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 0; }
+
+.engine-catalog-operation { width: min(760px, calc(100vw - 24px)); max-height: min(820px, calc(100vh - 24px)); }
+.engine-operation-body { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; padding: 14px; }
+.engine-operation-choice { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.engine-operation-choice label { display: flex; align-items: center; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 7px; }
+.engine-operation-manual { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; }
+.engine-operation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.engine-operation-grid label { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; color: var(--dialog-muted); }
+.engine-operation-grid input, .engine-operation-grid select { width: 100%; min-width: 0; color: var(--fg); }
+.engine-operation-facts { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border-radius: 7px; background: var(--panel2); font-size: 12px; }
+.engine-operation-facts span { padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; }
+.engine-operation-facts .warn, .engine-operation-check.warn { color: var(--warn, #d29922); }
+.engine-operation-facts .ok { color: var(--ok, #1a7f37); }
+.engine-operation-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
+.engine-operation-advanced { border-top: 1px solid var(--border); padding-top: 8px; }
+.engine-operation-advanced summary { cursor: pointer; font-size: 12px; }
+.engine-operation-advanced .engine-operation-grid { margin-top: 10px; }
+.engine-operation-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.engine-operation-footer > span { flex: 1 1 auto; font-size: 11px; }
+
+.engine-catalog-lightbox { width: min(1100px, calc(100vw - 24px)); max-height: calc(100vh - 24px); }
+.engine-catalog-lightbox > img { display: block; max-width: 100%; max-height: calc(100vh - 100px); margin: auto; object-fit: contain; }
+
+@media (max-width: 700px) {
+  .engine-catalog-nav { grid-template-columns: 1fr; gap: 7px; }
+  .engine-catalog-engine-name { justify-self: start; }
+  .engine-catalog-role-tabs button { flex: 1 1 0; justify-content: center; }
+  .engine-catalog-view-tabs { width: 100%; }
+  .engine-catalog-view-tabs button { flex: 1 1 0; }
+  .engine-catalog-toolbar { position: static; }
+  .engine-operation-choice, .engine-operation-grid, .engine-operation-manual { grid-template-columns: 1fr; }
+  .engine-catalog-card-main { min-height: 0; }
+  .engine-catalog-thumb { flex-basis: 76px; width: 76px; height: 90px; }
+}
