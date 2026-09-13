@@ -25,8 +25,8 @@ const FLUX: ImagegenModel = { id: "flux1-dev", family: "flux1", knobs: ["steps",
 const OLD: ImagegenModel = { id: "legacy", family: "sdxl" };
 
 const LORAS: ImagegenLora[] = [
-  { name: "detail", base_model: "sdxl", trained_words: ["add_detail"] },
-  { name: "neon", base_model: "sdxl", trained_words: ["neon_glow", "night"] },
+  { name: "detail", baseModel: "sdxl", trained_words: ["add_detail"], weight: 0.7 },
+  { name: "neon", baseModel: "sdxl", trained_words: ["neon_glow", "night"] },
 ];
 
 function Harness({ model, initial }: { model: ImagegenModel; initial?: Partial<ImagegenDraft> }) {
@@ -43,6 +43,8 @@ function Harness({ model, initial }: { model: ImagegenModel; initial?: Partial<I
       loraWeightMax={2}
       alwaysNegative="nsfw"
       busy={false}
+      trialFull={false}
+      queueFull={false}
       onTrial={() => {}}
       onEnqueue={() => {}}
       onPromptHelp={() => {}}

@@ -165,12 +165,15 @@ export function draftFromProperties(base: ImagegenDraft, props: ImageProperties)
   const next: ImagegenDraft = { ...base };
   if (props.model) next.model = props.model;
   if (props.prompt) next.prompt = props.prompt;
-  if (props.negative_prompt) next.negative = props.negative_prompt;
+  if (props.negative) next.negative = props.negative;
   if (props.size) next.size = props.size;
-  if (props.steps != null) next.steps = String(props.steps);
-  if (props.cfg != null) next.cfg = String(props.cfg);
-  if (props.sampler) next.sampler = props.sampler;
-  if (props.scheduler) next.scheduler = props.scheduler;
+  // The sampler knobs are nested in `params` on this route, the same shape the request
+  // carries them in — not flattened alongside model and seed.
+  const pm = props.params;
+  if (pm?.steps != null) next.steps = String(pm.steps);
+  if (pm?.cfg != null) next.cfg = String(pm.cfg);
+  if (pm?.sampler) next.sampler = pm.sampler;
+  if (pm?.scheduler) next.scheduler = pm.scheduler;
   if (props.loras?.length) next.loras = props.loras.map((l) => ({ name: l.name, ...(l.weight != null ? { weight: l.weight } : {}) }));
   if (props.op) next.op = OPS.includes(props.op) ? props.op : base.op;
   if (props.strength != null) next.strength = props.strength;

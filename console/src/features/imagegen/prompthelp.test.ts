@@ -15,7 +15,7 @@ const sdxl: ImagegenModel = {
   negative: "worst quality",
 };
 
-const lora: ImagegenLora = { name: "detail", base_model: "sdxl", trained_words: ["add_detail"] };
+const lora: ImagegenLora = { name: "detail", baseModel: "sdxl", trained_words: ["add_detail"] };
 
 describe("送る 1 通", () => {
   it("族の書き方・説明・トリガー語・行ネガティブ・利用者の意図が入る", () => {

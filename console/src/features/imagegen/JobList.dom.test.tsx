@@ -34,6 +34,8 @@ const render = async (paused = false) => {
       <JobList
         rows={foldGroups(JOBS, groups)}
         queuePaused={false}
+        queued={3}
+        queueMax={200}
         now={Date.parse("2026-09-13T00:00:15Z")}
         onGroupOp={(id, op) => groupOps.push([id, op])}
         onQueueOp={(op) => queueOps.push(op)}

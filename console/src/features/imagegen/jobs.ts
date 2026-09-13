@@ -7,7 +7,7 @@
 // counted into a batch's progress, a `params.steps` dropped from a trial so the sidecar
 // cannot say what the batch would have run.
 import type { EnqueueRequest, ImagegenModel, ImagegenStatus, Job, JobGroup, SeedPolicy } from "./wire.ts";
-import { fleetProvider } from "./wire.ts";
+import { fleetProvider, jobElapsedMs } from "./wire.ts";
 import { draftParams, type ImagegenDraft } from "./draft.ts";
 
 /** States that are still going to change. The poller runs only while one of these exists. */
@@ -31,15 +31,12 @@ export interface JobRow {
   running: Job | null;
   done: number;
   failed: number;
+  /** Separate from `failed`: "12 of 40 made" and "12 of 40, 3 refused" are different. */
+  cancelled: number;
   total: number;
   label: string;
   trial: boolean;
 }
-
-const startedMs = (j: Job): number => {
-  const t = Date.parse(j.started_at || j.finished_at || "");
-  return Number.isFinite(t) ? t : 0;
-};
 
 /**
  * Fold jobs into rows, newest first.
@@ -65,6 +62,7 @@ export function foldGroups(jobs: Job[] | undefined, groups: JobGroup[] | undefin
         running: null,
         done: 0,
         failed: 0,
+        cancelled: 0,
         total: 0,
         label: j.label || g?.label || "",
         trial: !!j.trial,
@@ -76,6 +74,7 @@ export function foldGroups(jobs: Job[] | undefined, groups: JobGroup[] | undefin
     row.total++;
     if (j.state === "done") row.done++;
     else if (j.state === "failed") row.failed++;
+    else if (j.state === "cancelled") row.cancelled++;
     if (isLive(j) && j.state !== "queued") row.running = j;
     if (!row.label && j.label) row.label = j.label;
   }
@@ -87,6 +86,7 @@ export function foldGroups(jobs: Job[] | undefined, groups: JobGroup[] | undefin
     if (typeof g.total === "number" && g.total > row.total) row.total = g.total;
     if (typeof g.done === "number" && g.done > row.done) row.done = g.done;
     if (typeof g.failed === "number" && g.failed > row.failed) row.failed = g.failed;
+    if (typeof g.cancelled === "number" && g.cancelled > row.cancelled) row.cancelled = g.cancelled;
   }
   return order.map((k) => rows.get(k)!);
 }
@@ -132,14 +132,16 @@ export const RUNNING_CAP = 0.95;
 export function barSegments(row: JobRow, now: number): BarSegments {
   const total = Math.max(1, row.total);
   const done = Math.min(1, row.done / total);
-  const failed = Math.min(1 - done, row.failed / total);
+  const failed = Math.min(1 - done, (row.failed + row.cancelled) / total);
   let running = 0;
   const r = row.running;
   if (r && r.state === "running") {
     const typical = r.typical_ms || 0;
-    const started = startedMs(r);
-    if (typical > 0 && started > 0) {
-      const frac = Math.max(0, Math.min(RUNNING_CAP, (now - started) / typical));
+    // A running job carries no `elapsed_ms` — the Agent leaves it off so the poll's bytes stay
+    // identical between ticks and the CP's ETag can answer 304 (lane A, deviation 1).
+    const elapsed = jobElapsedMs(r, now);
+    if (typical > 0 && elapsed != null) {
+      const frac = Math.max(0, Math.min(RUNNING_CAP, elapsed / typical));
       running = frac / total;
     }
   }
@@ -155,7 +157,7 @@ export function etaMs(row: JobRow): number | null {
   if (row.group?.eta_ms != null && row.group.eta_ms >= 0) return row.group.eta_ms;
   const typical = row.running?.typical_ms || row.jobs.find((j) => j.typical_ms)?.typical_ms || 0;
   if (!typical) return null;
-  const left = Math.max(0, row.total - row.done - row.failed);
+  const left = Math.max(0, row.total - row.done - row.failed - row.cancelled);
   return left * typical;
 }
 
@@ -194,12 +196,14 @@ export function buildRequest(d: ImagegenDraft, opts: { trial?: boolean; provider
     prompt: d.prompt,
     ...(opts.provider ? { provider: opts.provider } : {}),
     ...(d.model ? { model: d.model } : {}),
-    ...(d.negative.trim() ? { negative_prompt: d.negative } : {}),
+    ...(d.negative.trim() ? { negativePrompt: d.negative } : {}),
     ...(d.size ? { size: d.size } : {}),
     ...(d.op && d.op !== "generate" ? { op: d.op } : {}),
     ...(d.op !== "generate" && d.inputs.length ? { inputs: d.inputs } : {}),
     ...(d.op !== "generate" ? { strength: d.strength } : {}),
     ...(d.loras.length ? { loras: d.loras } : {}),
+    // Ignored on a trial: those always land in `generated/console/trial/` (lane A,
+    // deviation 5). Sent anyway, so one draft describes one run.
     ...(d.outDir.trim() ? { out_dir: d.outDir.trim() } : {}),
     ...(d.label.trim() ? { label: d.label.trim() } : {}),
     jobs: trial ? 1 : Math.max(1, d.jobs),
@@ -207,7 +211,7 @@ export function buildRequest(d: ImagegenDraft, opts: { trial?: boolean; provider
     seed_policy: trial ? (hasSeed ? "fixed" : "random") : d.seedPolicy,
     ...(hasSeed && (trial || d.seedPolicy !== "random") ? { seed } : {}),
     ...(trial ? { trial: true } : {}),
-    ...(trial && d.fullSteps ? { trial_full_steps: true } : {}),
+    ...(trial && d.fullSteps ? { full_steps: true } : {}),
   };
   const params = draftParams(d);
   if (params) body.params = params;

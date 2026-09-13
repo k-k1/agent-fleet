@@ -1,18 +1,16 @@
 // features/imagegen/wire — the wire of ADR 0081, as TypeScript, and the pure readers of it.
 //
-// Split from `api.ts` (which holds the fetch calls) for one concrete reason: `api.ts`
-// imports the shared client, which touches `localStorage` at module scope, and the node test
-// project has no DOM. Every pure module here — jobs, draft, prompthelp — needs these shapes
-// and none of them needs a fetch, so the types and the two spelling-tolerant readers live in
-// a module with no imports at all.
+// Split from `api.ts` (which holds the fetch calls) for one concrete reason: `api.ts` imports
+// the shared client, which touches `localStorage` at module scope, and the node test project
+// has no DOM. Every pure module here — jobs, draft, prompthelp — needs these shapes and none
+// of them needs a fetch, so the types live in a module with no runtime imports at all.
 //
-// Every shape is the ADR's (decisions 2, 3, 5, 11, 12), not the Agent's source: this lane was
-// built alongside the Agent lane, so the ADR is the contract both sides read. Where the
-// Agent's EXISTING `/imagegen/status` already names a field in camelCase (`aspectRatios`, a
-// LoRA's `baseModel`) and the ADR's new text names it in snake_case, both spellings are
-// accepted on the way in — one relay renaming a field it already ships would be a silent
-// regression for the MCP path, and guessing which way it lands would make this file wrong
-// half the time. `loraBaseModel` / `loraTriggers` are the only place that ambiguity lives.
+// **These names are the Agent's JSON tags** (`workspace/agent/internal/imagegen/{jobs.go,
+// jobs_http.go,http.go,props.go}` on lane A), not the ADR's prose, wherever the two differ.
+// The seven places they differ are listed in lane A's PR (#626) and each one is marked below.
+// The general rule the Agent followed: a key the MCP path already ships keeps its existing
+// camelCase spelling (`negativePrompt`, `aspectRatio`, a LoRA's `baseModel`), and only NEW
+// keys are snake_case. Renaming an old one would be a wire break for the shared shape.
 import type { ApiError } from "../../core/api/client.ts";
 
 /** Where a job is. `waking` is the engine box starting, and is the reason the pane exists
@@ -40,14 +38,18 @@ export type Knob = "steps" | "cfg" | "sampler" | "scheduler" | "negative";
  *  something else still renders — the family card is the only thing that goes missing. */
 export type Family = "sdxl" | "sd35" | "flux1" | "flux2-klein" | "zimage";
 
-/** The `params` overlay of decision 4, in the shape the catalogue row already uses. */
+/** The `params` overlay of decision 4, in the shape the catalogue row already uses.
+ *  `clip_skip` and `weight` ride along on the catalogue's side; the form sends neither. */
 export interface EngineParams {
   steps?: number;
   cfg?: number;
   sampler?: string;
   scheduler?: string;
+  clip_skip?: number;
+  weight?: number;
 }
 
+/** `weight` 0 means "not stated" on this wire, and the Agent then uses 1 (decision 5). */
 export interface LoraRef {
   name: string;
   weight?: number;
@@ -70,18 +72,27 @@ export interface ImagegenModel {
   license_name?: string;
   license_url?: string;
   source_url?: string;
+  typical_ms?: number;
 }
 
 export interface ImagegenLora {
   name: string;
   description?: string;
-  /** snake_case is the ADR's; camelCase is what `loraStatus` ships today. */
-  base_model?: string;
+  /** camelCase, deliberately: the same fact already rides this route under this key, and lane
+   *  A refused to add a second spelling of it (#626, deviation 2). `trained_words` is new and
+   *  therefore snake_case. */
   baseModel?: string;
   trained_words?: string[];
-  trainedWords?: string[];
+  /** The strength the catalogue declares for this adapter. 0 / absent = not declared, and the
+   *  Agent then uses 1. */
+  weight?: number;
 }
 
+/**
+ * One ready provider. The engine-level fields of decision 5 (`samplers`, `schedulers`,
+ * `typical_ms`, `wake_ms`, `lora_weight_max`, `negative_always`) live HERE, not on the status
+ * root — they are per provider, and a fleet with both comfy and sdcpp has two answers.
+ */
 export interface ImagegenProvider {
   id: string;
   service?: string;
@@ -93,12 +104,14 @@ export interface ImagegenProvider {
   seed?: boolean;
   negative?: boolean;
   strength?: boolean;
-  /** Engine-level allow-lists (decision 5). Per-provider is the fallback reading; the
-   *  top-level one on the status is what the ADR's text describes. */
   samplers?: string[];
   schedulers?: string[];
-  typical_ms?: number;
+  negative_always?: string;
   lora_weight_max?: number;
+  typical_ms?: number;
+  /** The observed cold start, as a moving average. 0 / absent = nothing measured yet, which
+   *  is a different statement from "the engine starts instantly" (#626, deviation 3). */
+  wake_ms?: number;
 }
 
 export interface ImagegenStatus {
@@ -108,58 +121,41 @@ export interface ImagegenStatus {
   kind?: string;
   ops?: string[];
   providers?: ImagegenProvider[];
-  /** The Agent's allow-lists: the form must not be able to offer a name the Agent refuses. */
-  samplers?: string[];
-  schedulers?: string[];
-  /** Rolling average of a finished job, per (provider, model, size bucket, steps). */
-  typical_ms?: number;
-  /** `comfyMaxLoraWeight`. No column holds a DEFAULT weight — the Agent uses 1 (decision 5). */
-  lora_weight_max?: number;
-  /** The deployment-wide negative, shown next to the row's and equally unremovable. */
-  negative_always?: string;
-  /** Last observed wake, so "cold" can say how many minutes the first picture costs. */
-  cold_ms?: number;
   error?: ApiError;
 }
 
-/** The body of `POST /imagegen/jobs` — decision 2's one list: the existing generateRequest
- *  minus `session`, plus `params`, `label`, `out_dir`, `jobs`, `seed_policy` and `trial`. */
+/**
+ * The body of `POST /imagegen/jobs` — decision 2's one list: the existing generateRequest
+ * minus `session`, plus `params`, `label`, `out_dir`, `jobs`, `seed_policy`, `trial` and
+ * `full_steps`. Inherited keys keep their camelCase; the new ones are snake_case.
+ */
 export interface EnqueueRequest {
+  provider?: string;
   op?: string;
   prompt: string;
-  negative_prompt?: string;
+  negativePrompt?: string;
   size?: string;
-  aspect_ratio?: string;
+  aspectRatio?: string;
   background?: string;
-  /** ComfyUI `batch_size`, ceiling 4. NOT the number of pictures — that is `jobs`. */
+  /** ComfyUI `batch_size`. Above 4 the Agent answers 400 `bad_count` (#626, deviation 4). */
   count?: number;
   inputs?: string[];
   mask?: string;
   model?: string;
-  provider?: string;
+  loras?: LoraRef[];
   seed?: number;
   strength?: number;
-  loras?: LoraRef[];
   params?: EngineParams;
   label?: string;
+  /** Ignored on a trial: those always go to `generated/console/trial/` (#626, deviation 5). */
   out_dir?: string;
   /** N ≥ 1: how many jobs the group expands into (decision 8). */
   jobs?: number;
   seed_policy?: SeedPolicy;
   /** Head of the queue, family trial steps, `generated/console/trial/` (decision 11). */
   trial?: boolean;
-  /**
-   * Decision 11's "full steps" checkbox: keep the trial's head-of-queue position and its
-   * folder, but run the form's steps instead of the family's reduced ones — the case where
-   * the trial IS the picture.
-   *
-   * NOT in the ADR's field list for this body (decision 2 enumerates the other seven). The
-   * checkbox is in decision 11's text with no wire named for it, and every alternative the
-   * existing fields allow changes something else as well: dropping `trial` moves the job to
-   * the tail and to the main folder. Lane A owes this one field, or the ADR owes a sentence
-   * saying how else the checkbox reaches the Agent.
-   */
-  trial_full_steps?: boolean;
+  /** Keep the trial's position and folder but run the form's steps (decision 11). */
+  full_steps?: boolean;
 }
 
 export interface EnqueueResult {
@@ -172,7 +168,8 @@ export interface EnqueueResult {
 export interface StoredFile {
   path: string;
   name?: string;
-  size?: number;
+  mime?: string;
+  bytes?: number;
   width?: number;
   height?: number;
   seed?: number;
@@ -181,27 +178,41 @@ export interface StoredFile {
 export interface Job {
   id: string;
   group?: string;
+  label?: string;
   state: JobState;
-  /** Only while queued. */
+  /** 1-based, and only while queued. */
   position?: number;
   trial?: boolean;
-  label?: string;
-  started_at?: string;
-  finished_at?: string;
-  elapsed_ms?: number;
-  /** The estimate for THIS job's (model, size bucket, steps), so a trial's fast average
-   *  never colours a batch's bar (decision 11). */
-  typical_ms?: number;
+  provider?: string;
   model?: string;
   family?: string;
+  op?: string;
+  prompt?: string;
+  /** `negative`, not `negative_prompt`: the job wire is the sidecar's spelling. */
+  negative?: string;
+  /** What was PINNED, absent when the provider drew one — the seed a picture actually came
+   *  out at is `files[].seed`, because a batch of four is four seeds. */
   seed?: number;
   size?: string;
+  count?: number;
   params?: EngineParams;
   loras?: LoraRef[];
-  prompt?: string;
-  negative_prompt?: string;
-  op?: string;
+  strength?: number;
+  inputs?: string[];
+  /** What the BATCH would run at, on a trial whose steps were reduced (decision 11). */
+  full_steps?: number;
   out_dir?: string;
+  created_at?: string;
+  started_at?: string;
+  /**
+   * FINISHED jobs only, both of them. A live `elapsed_ms` would move on every poll and break
+   * the control plane's ETag for the life of the batch — the mirror measured what that costs
+   * a phone — so a running job's elapsed time is `now − started_at`, computed here (#626,
+   * deviation 1). `jobElapsedMs` is the one place that does it.
+   */
+  finished_at?: string;
+  elapsed_ms?: number;
+  typical_ms?: number;
   files?: StoredFile[];
   warnings?: string[];
   error?: string;
@@ -211,11 +222,14 @@ export interface JobGroup {
   id: string;
   label?: string;
   state: GroupState;
-  done: number;
-  failed: number;
   total: number;
-  /** Jobs of this group in flight — serial, so 0 or 1 (decision 2). */
-  running?: number;
+  done: number;
+  /** Separate counts: "12 of 40 made" and "12 of 40, 3 refused" are different things. */
+  failed: number;
+  cancelled?: number;
+  /** The id of the job in flight, or absent. A STRING, not a count — the queue is serial. */
+  running?: string;
+  trial?: boolean;
   eta_ms?: number;
   paused_at?: string;
 }
@@ -223,34 +237,46 @@ export interface JobGroup {
 export interface JobsResponse {
   jobs?: Job[];
   groups?: JobGroup[];
-  queue_paused?: boolean;
+  /** The queue-wide pause, not a group's. */
+  paused?: boolean;
+  /** The caps, so the form can say "full" before the Agent has to answer 429 (#626, 3). */
+  queued?: number;
+  queue_max?: number;
+  trial_pending?: number;
+  trial_max?: number;
+  wake_ms?: number;
   error?: ApiError;
 }
 
 export type PropsSource = "sidecar" | "png" | "none";
 
 /** What `GET /imagegen/props` recovers for one picture (decision 3). `source: "none"` means
- *  the UI says so rather than drawing a table of blanks. */
+ *  the UI says so rather than drawing a table of blanks. The sampler knobs are nested in
+ *  `params`, the same shape the request carries them in — not flattened. */
 export interface ImageProperties {
   source: PropsSource;
+  provider?: string;
   model?: string;
   family?: string;
+  op?: string;
+  prompt?: string;
+  negative?: string;
   seed?: number;
   size?: string;
-  steps?: number;
-  cfg?: number;
-  sampler?: string;
-  scheduler?: string;
+  params?: EngineParams;
+  full_steps?: number;
   loras?: LoraRef[];
-  prompt?: string;
-  negative_prompt?: string;
-  op?: string;
   strength?: number;
-  provider?: string;
+  inputs?: string[];
+  mask?: string;
   job?: string;
+  group?: string;
   label?: string;
+  trial?: boolean;
   elapsed_ms?: number;
   warnings?: string[];
+  agent?: string;
+  created_at?: string;
   error?: ApiError;
 }
 
@@ -260,11 +286,26 @@ export type GroupOp = "pause" | "resume" | "skip" | "cancel";
 
 export type QueueOp = "pause" | "resume";
 
-/** A LoRA's family, whichever spelling the Agent used. */
-export const loraBaseModel = (l: ImagegenLora): string => l.base_model || l.baseModel || "";
+/**
+ * How long a job has been going, in ms, or null.
+ *
+ * A finished job carries `elapsed_ms`; a running one carries only `started_at`, on purpose
+ * (see `Job.finished_at`). Every reader goes through here so the two cases cannot drift, and
+ * so no view invents a duration for a job that has not started.
+ */
+export function jobElapsedMs(j: Job | null | undefined, now: number): number | null {
+  if (!j) return null;
+  if (j.elapsed_ms != null) return j.elapsed_ms;
+  if (!j.started_at) return null;
+  const t = Date.parse(j.started_at);
+  return Number.isFinite(t) ? Math.max(0, now - t) : null;
+}
 
-/** A LoRA's trigger words, whichever spelling the Agent used. */
-export const loraTriggers = (l: ImagegenLora): string[] => l.trained_words || l.trainedWords || [];
+/** A LoRA's trigger words. */
+export const loraTriggers = (l: ImagegenLora): string[] => l.trained_words || [];
+
+/** A LoRA's declared weight, or the Agent's default of 1 when the row declares none. */
+export const loraWeight = (l: ImagegenLora): number => (l.weight && l.weight > 0 ? l.weight : 1);
 
 /**
  * The provider this pane drives: the first FLEET provider (comfy / sdcpp) that is ready.

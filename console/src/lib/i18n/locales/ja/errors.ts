@@ -249,4 +249,22 @@ export const errors = {
   "err.hf_token_empty": "トークンが空です",
   "err.hf_token_store_failed": "トークンを保存できませんでした",
   "err.hf_token_put_failed": "トークンを配備の秘密に書き込めませんでした",
+  // --- 画像生成の待ち行列（ADR 0081 レーン A）。これまで proxy されていなかった経路なので、
+  // 符号はここが初出になる。Agent の message は英語なので、目録に無いと英語がそのまま出る。
+  "err.queue_full": "画像の待ち行列がいっぱいです。今の分が捌けてから投入してください。",
+  "err.trial_pending": "試走が既に待っています。1 枚見てから次を頼んでください。",
+  "err.bad_params": "steps / cfg / sampler / scheduler のどれかがこのエンジンで使えない値です。",
+  "err.bad_prompt": "プロンプトが空です。",
+  "err.bad_op": "その操作はできません。",
+  "err.bad_strength": "元画像をどれだけ変えるかの値が範囲外です。",
+  "err.bad_count": "1 ジョブで同時に描ける枚数は 4 枚までです。",
+  "err.bad_jobs": "枚数が範囲外です。",
+  "err.bad_seed_policy": "seed の決め方が不正です。",
+  "err.no_job": "そのジョブはもうありません。",
+  "err.no_group": "そのグループはもうありません。",
+  "err.cancel_failed": "エンジンに取消が届きませんでした。",
+  "err.no_browse_root": "ワークスペースのファイル領域を読めませんでした。",
+  "err.not_found": "見つかりませんでした。",
+  "err.imagegen_no_provider": "この要求を捌ける画像エンジンがありません。",
+  "err.imagegen_unknown_provider": "その画像エンジンはこの配備にありません。",
 };

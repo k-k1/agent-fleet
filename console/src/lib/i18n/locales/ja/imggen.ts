@@ -130,6 +130,9 @@ export const imggen = {
   // ── 待ち行列（決定 12）
   "imggen.queue": "待ち行列",
   "imggen.queue_empty": "待っているジョブはありません。",
+  "imggen.queue_cap": "{n} / {max} 待機",
+  "imggen.queue_full": "待ち行列がいっぱいです",
+  "imggen.trial_full": "試走が既に上限まで待っています",
   "imggen.queue_paused": "待ち行列を止めています（試走だけは走ります）",
   "imggen.pause_all": "すべて一時停止",
   "imggen.resume_all": "すべて再開",

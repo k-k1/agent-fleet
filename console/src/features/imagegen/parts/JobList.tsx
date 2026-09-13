@@ -10,7 +10,8 @@
 import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { IconButton } from "../../../ui/Button.tsx";
-import type { GroupOp, Job } from "../api.ts";
+import type { GroupOp, Job } from "../wire.ts";
+import { jobElapsedMs } from "../wire.ts";
 import { barSegments, etaBucket, etaMs, type JobRow } from "../jobs.ts";
 
 const STATE_KEY = {
@@ -27,18 +28,22 @@ const STATE_KEY = {
 interface Props {
   rows: JobRow[];
   queuePaused: boolean;
+  /** The Agent's cap and how much of it is used. 0 = an Agent that does not report one. */
+  queued: number;
+  queueMax: number;
   now: number;
   onGroupOp: (id: string, op: GroupOp) => void;
   onQueueOp: (op: "pause" | "resume") => void;
   onCancelJob: (id: string) => void;
 }
 
-export function JobList({ rows, queuePaused, now, onGroupOp, onQueueOp, onCancelJob }: Props) {
+export function JobList({ rows, queuePaused, queued, queueMax, now, onGroupOp, onQueueOp, onCancelJob }: Props) {
   const tr = useT();
   return (
     <section className="igen-queue">
       <header className="igen-queue-head">
         <h3>{tr("imggen.queue")}</h3>
+        {queueMax > 0 && <span className="igen-hint">{tr("imggen.queue_cap", { n: queued, max: queueMax })}</span>}
         {queuePaused && <span className="igen-badge paused">{tr("imggen.queue_paused")}</span>}
         <span className="igen-spacer" />
         <button
@@ -78,7 +83,7 @@ function QueueRow({
   const running = row.running;
   const gid = row.group?.id || null;
   const paused = row.group?.state === "paused";
-  const finished = row.done + row.failed >= row.total && !running;
+  const finished = row.done + row.failed + row.cancelled >= row.total && !running;
   const pausedMin = row.group?.paused_at ? Math.floor((now - Date.parse(row.group.paused_at)) / 60_000) : 0;
 
   return (
@@ -108,9 +113,11 @@ function QueueRow({
         )}
         {running && (
           <span className="igen-phase">
+            {/* A running job carries no elapsed_ms on the wire — jobElapsedMs subtracts
+                started_at instead (lane A, deviation 1). */}
             {tr("imggen.running_now", {
               phase: tr(STATE_KEY[running.state]),
-              sec: Math.max(0, Math.round((running.elapsed_ms ?? now - Date.parse(running.started_at || "")) / 1000)) || 0,
+              sec: Math.round((jobElapsedMs(running, now) ?? 0) / 1000),
             })}
           </span>
         )}

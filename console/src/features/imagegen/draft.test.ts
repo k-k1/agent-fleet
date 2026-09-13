@@ -104,7 +104,8 @@ describe("絵のプロパティを下書きへ読み込む", () => {
       prompt: "1girl",
       seed: 42,
       size: "1024x1024",
-      steps: 28,
+      // The sampler knobs arrive NESTED, in the request's own `params` shape.
+      params: { steps: 28 },
       loras: [{ name: "detail", weight: 0.7 }],
     };
     const out = draftFromProperties(base, props);

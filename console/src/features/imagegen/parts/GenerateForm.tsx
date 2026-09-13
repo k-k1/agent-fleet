@@ -16,13 +16,7 @@ import type { KeyboardEvent as RKeyboardEvent } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { Slider } from "../../settings/parts/controls.tsx";
-import {
-  loraBaseModel,
-  loraTriggers,
-  type ImagegenLora,
-  type ImagegenModel,
-  type Knob,
-} from "../api.ts";
+import { loraTriggers, loraWeight, type ImagegenLora, type ImagegenModel, type Knob } from "../wire.ts";
 import { familyCard, sizeOptions } from "../families.ts";
 import { MAX_BATCH, MAX_JOBS, OPS, type ImagegenDraft } from "../draft.ts";
 import { InputPicker } from "./InputPicker.tsx";
@@ -38,6 +32,10 @@ interface Props {
   loraWeightMax: number;
   alwaysNegative: string;
   busy: boolean;
+  /** The Agent's caps, already evaluated. Pressing anyway is a 429 the person cannot act on,
+   *  so the button says why instead (lane A, deviation 3). */
+  trialFull: boolean;
+  queueFull: boolean;
   onTrial: () => void;
   onEnqueue: () => void;
   onPromptHelp: () => void;
@@ -54,6 +52,8 @@ export function GenerateForm({
   loraWeightMax,
   alwaysNegative,
   busy,
+  trialFull,
+  queueFull,
   onTrial,
   onEnqueue,
   onPromptHelp,
@@ -70,10 +70,11 @@ export function GenerateForm({
   // A LoRA only loads on a checkpoint of its own family; offering the rest would be a form
   // that produces a 400 the person cannot read.
   const usable = useMemo(
-    () => loras.filter((l) => !family || !loraBaseModel(l) || loraBaseModel(l) === family),
+    () => loras.filter((l) => !family || !l.baseModel || l.baseModel === family),
     [loras, family],
   );
   const picked = useMemo(() => new Set(draft.loras.map((l) => l.name)), [draft.loras]);
+  const byName = useMemo(() => new Map(usable.map((l) => [l.name, l] as const)), [usable]);
   // The chips follow the SELECTION, so removing a LoRA removes the words it brought and
   // nothing else — they are derived, never stored.
   const triggers = useMemo(
@@ -92,7 +93,9 @@ export function GenerateForm({
     patch(
       picked.has(name)
         ? { loras: draft.loras.filter((l) => l.name !== name) }
-        : { loras: [...draft.loras, { name, weight: 1 }] },
+        : // The starting weight is the catalogue row's when it declares one, else the Agent's
+          // default of 1 — a row that publishes 0.6 means 0.6, and 1 is a different picture.
+          { loras: [...draft.loras, { name, weight: loraWeight(byName.get(name)!) }] },
     );
   };
 
@@ -106,8 +109,9 @@ export function GenerateForm({
   const onKeyDown = (e: RKeyboardEvent) => {
     if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || busy) return;
     e.preventDefault();
-    if (e.shiftKey) onEnqueue();
-    else onTrial();
+    if (e.shiftKey) {
+      if (!queueFull) onEnqueue();
+    } else if (!trialFull) onTrial();
   };
 
   const stepsPh = model?.params?.steps != null ? tr("imggen.default_ph", { v: model.params.steps }) : tr("imggen.default_ph_none");
@@ -316,7 +320,7 @@ export function GenerateForm({
         ) : (
           usable.map((l) => {
             const on = picked.has(l.name);
-            const w = draft.loras.find((x) => x.name === l.name)?.weight ?? 1;
+            const w = draft.loras.find((x) => x.name === l.name)?.weight ?? loraWeight(l);
             return (
               <div className="igen-lora" key={l.name}>
                 <label className="igen-lora-pick">
@@ -402,8 +406,12 @@ export function GenerateForm({
         <button
           type="button"
           className="ui-btn"
-          disabled={busy}
-          title={tr("imggen.trial_title") + (card ? ` (${tr("imggen.family_trial", { n: card.trialSteps })})` : "")}
+          disabled={busy || trialFull}
+          title={
+            trialFull
+              ? tr("imggen.trial_full")
+              : tr("imggen.trial_title") + (card ? ` (${tr("imggen.family_trial", { n: card.trialSteps })})` : "")
+          }
           onClick={onTrial}
         >
           <Icon name="beaker" /> {tr("imggen.trial")}
@@ -415,8 +423,8 @@ export function GenerateForm({
         <button
           type="button"
           className="ui-btn ui-btn-primary"
-          disabled={busy}
-          title={tr("imggen.enqueue_title", { n: draft.jobs })}
+          disabled={busy || queueFull}
+          title={queueFull ? tr("imggen.queue_full") : tr("imggen.enqueue_title", { n: draft.jobs })}
           onClick={onEnqueue}
         >
           <Icon name="play" /> {tr("imggen.enqueue", { n: draft.jobs })}

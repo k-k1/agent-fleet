@@ -38,15 +38,16 @@ function rowsOf(p: ImageProperties, tr: (k: string, v?: Record<string, unknown>)
   add("family", tr("imggen.props_family"), p.family);
   add("seed", tr("imggen.props_seed"), p.seed);
   add("size", tr("imggen.props_size"), p.size);
-  add("steps", tr("imggen.props_steps"), p.steps);
-  add("cfg", tr("imggen.props_cfg"), p.cfg);
-  add("sampler", tr("imggen.props_sampler"), p.sampler);
-  add("scheduler", tr("imggen.props_scheduler"), p.scheduler);
+  // The sampler knobs arrive nested, in the same `params` shape the request carries them in.
+  add("steps", tr("imggen.props_steps"), p.params?.steps);
+  add("cfg", tr("imggen.props_cfg"), p.params?.cfg);
+  add("sampler", tr("imggen.props_sampler"), p.params?.sampler);
+  add("scheduler", tr("imggen.props_scheduler"), p.params?.scheduler);
   if (p.loras?.length) {
     add("loras", tr("imggen.props_loras"), p.loras.map((l) => `${l.name}${l.weight != null ? ` @${l.weight}` : ""}`).join(", "));
   }
   add("prompt", tr("imggen.props_prompt"), p.prompt);
-  add("negative", tr("imggen.props_negative"), p.negative_prompt);
+  add("negative", tr("imggen.props_negative"), p.negative);
   return out;
 }
 

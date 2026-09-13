@@ -129,6 +129,9 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
 
   "imggen.queue": "Queue",
   "imggen.queue_empty": "Nothing is waiting.",
+  "imggen.queue_cap": "{n} / {max} waiting",
+  "imggen.queue_full": "The queue is full",
+  "imggen.trial_full": "As many trials as the queue allows are already waiting",
   "imggen.queue_paused": "The queue is paused (trials still run)",
   "imggen.pause_all": "Pause everything",
   "imggen.resume_all": "Resume everything",

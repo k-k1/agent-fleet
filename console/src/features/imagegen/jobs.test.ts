@@ -58,6 +58,7 @@ describe("進捗バー", () => {
     running: null,
     done: 0,
     failed: 0,
+    cancelled: 0,
     total: 10,
     label: "",
     trial: false,
@@ -94,7 +95,18 @@ describe("進捗バー", () => {
 });
 
 describe("残り時間", () => {
-  const base = { key: "g", group: null, jobs: [], running: null, done: 0, failed: 0, total: 10, label: "", trial: false };
+  const base = {
+    key: "g",
+    group: null,
+    jobs: [],
+    running: null,
+    done: 0,
+    failed: 0,
+    cancelled: 0,
+    total: 10,
+    label: "",
+    trial: false,
+  };
 
   it("Agent の eta_ms が優先される", () => {
     const g: JobGroup = { id: "g", state: "running", done: 0, failed: 0, total: 10, eta_ms: 1234 };
@@ -178,9 +190,13 @@ describe("投入する本文", () => {
     expect(b.size).toBe("1024x1024");
   });
 
-  it("試走の「steps を減らさない」は明示的に伝える", () => {
-    expect(buildRequest({ ...d, fullSteps: true }, { trial: true }).trial_full_steps).toBe(true);
-    expect(buildRequest({ ...d, fullSteps: true }).trial_full_steps).toBeUndefined();
+  it("試走の「steps を減らさない」は full_steps で伝える（本番には付けない）", () => {
+    expect(buildRequest({ ...d, fullSteps: true }, { trial: true }).full_steps).toBe(true);
+    expect(buildRequest({ ...d, fullSteps: true }).full_steps).toBeUndefined();
+  });
+
+  it("ネガティブは既存の綴り negativePrompt で送る（MCP と同じ経路の鍵）", () => {
+    expect(buildRequest({ ...d, negative: "blurry" }).negativePrompt).toBe("blurry");
   });
 
   it("random のときは seed を送らない", () => {

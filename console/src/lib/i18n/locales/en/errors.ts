@@ -252,4 +252,22 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.hf_token_empty": "The token is empty.",
   "err.hf_token_store_failed": "The token could not be saved.",
   "err.hf_token_put_failed": "The token could not be written into the deployment's secret.",
+  // --- The image queue (ADR 0081 lane A). This route was not proxied before, so these codes
+  // appear here for the first time; without them the Agent's English message shows through.
+  "err.queue_full": "The image queue is full. Wait for what is in it before adding more.",
+  "err.trial_pending": "A trial run is already waiting. Look at that one before asking for another.",
+  "err.bad_params": "One of steps / cfg / sampler / scheduler is a value this engine cannot use.",
+  "err.bad_prompt": "The prompt is empty.",
+  "err.bad_op": "That operation is not available.",
+  "err.bad_strength": "How much of the input to change is out of range.",
+  "err.bad_count": "One job can sample at most 4 pictures together.",
+  "err.bad_jobs": "The number of pictures is out of range.",
+  "err.bad_seed_policy": "That is not a seed policy.",
+  "err.no_job": "That job is gone.",
+  "err.no_group": "That group is gone.",
+  "err.cancel_failed": "The cancel did not reach the engine.",
+  "err.no_browse_root": "The workspace's file area could not be read.",
+  "err.not_found": "Not found.",
+  "err.imagegen_no_provider": "No image engine can serve this request.",
+  "err.imagegen_unknown_provider": "This deployment has no such image engine.",
 };

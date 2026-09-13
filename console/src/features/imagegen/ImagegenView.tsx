@@ -57,6 +57,13 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [groups, setGroups] = useState<JobGroup[]>([]);
   const [queuePaused, setQueuePaused] = useState(false);
+  // The last observed cold start, as the Agent's moving average. It rides on the JOB list,
+  // not the status, so a workspace that has never woken the box reports 0 — which is "not
+  // measured", not "instant" (lane A, deviation 3).
+  const [wakeMs, setWakeMs] = useState(0);
+  // The Agent's own caps, reported on every job list so the form can say "full" instead of
+  // letting the person press a button that answers 429 (lane A, deviation 3).
+  const [caps, setCaps] = useState({ queued: 0, queueMax: 0, trialPending: 0, trialMax: 0 });
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -104,7 +111,14 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
       if (!r || isTransientErr(r)) return;
       setJobs(Array.isArray(r.jobs) ? r.jobs : []);
       setGroups(Array.isArray(r.groups) ? r.groups : []);
-      setQueuePaused(!!r.queue_paused);
+      setQueuePaused(!!r.paused);
+      setWakeMs(r.wake_ms || 0);
+      setCaps({
+        queued: r.queued || 0,
+        queueMax: r.queue_max || 0,
+        trialPending: r.trial_pending || 0,
+        trialMax: r.trial_max || 0,
+      });
       setNow(Date.now());
     } catch {
       /* a transient 502 while the agent restarts keeps the list on screen */
@@ -144,12 +158,20 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
   const models = provider?.models || [];
   const loras = provider?.loras || [];
   const model = models.find((m) => m.id === draft.model) || null;
-  const samplers = status?.samplers || provider?.samplers || [];
-  const schedulers = status?.schedulers || provider?.schedulers || [];
-  const loraWeightMax = status?.lora_weight_max || provider?.lora_weight_max || 2;
-  const alwaysNegative = status?.negative_always || "";
+  // Engine-level fields live on the PROVIDER, not the status root: a fleet with both comfy
+  // and sdcpp has two answers, and reading the root would silently mix them.
+  const samplers = provider?.samplers || [];
+  const schedulers = provider?.schedulers || [];
+  const loraWeightMax = provider?.lora_weight_max || 2;
+  const alwaysNegative = provider?.negative_always || "";
   const negativeReaches = !model?.knobs || model.knobs.includes("negative" as Knob);
   const state = engineState(status, jobs, model);
+  // 0 on either side means "nothing measured", so the hint falls back to "several minutes"
+  // rather than claiming the engine starts instantly.
+  const coldMs = wakeMs || provider?.wake_ms || 0;
+  // A cap of 0 means the Agent did not report one (an older build): never block on it.
+  const trialFull = caps.trialMax > 0 && caps.trialPending >= caps.trialMax;
+  const queueFull = caps.queueMax > 0 && caps.queued + draft.jobs > caps.queueMax;
 
   const rows = useMemo(() => foldGroups(jobs, groups), [jobs, groups]);
   const results = useMemo(() => resultsOf(jobs.filter((j) => !j.trial)), [jobs]);
@@ -226,8 +248,8 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
       : state === "starting"
         ? tr("imggen.engine_starting")
         : state === "cold"
-          ? status?.cold_ms
-            ? tr("imggen.engine_cold_hint", { min: Math.max(1, Math.round(status.cold_ms / 60_000)) })
+          ? coldMs
+            ? tr("imggen.engine_cold_hint", { min: Math.max(1, Math.round(coldMs / 60_000)) })
             : tr("imggen.engine_cold_hint_unknown")
           : tr("imggen.engine_ready");
 
@@ -261,7 +283,9 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
                 ? tr("imggen.engine_starting")
                 : tr("imggen.engine_unavailable")}
         </span>
-        <span className="igen-engine-hint muted">{engineLine}</span>
+        {/* Only when it says something the chip does not: "ready" twice is noise, while the
+            cold start's minutes and the unavailable code's reason are the point. */}
+        {state !== "ready" && <span className="igen-engine-hint muted">{engineLine}</span>}
         {/* Never "$0.00": comfy's CostUSD is 0 by construction and the attribution lives in
             the administrator's hourly table (decision 10). */}
         <span className="igen-cost muted">{tr("imggen.cost_note")}</span>
@@ -282,6 +306,8 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
               loraWeightMax={loraWeightMax}
               alwaysNegative={alwaysNegative}
               busy={busy || state === "unavailable"}
+              trialFull={trialFull}
+              queueFull={queueFull}
               onTrial={() => void submit(true)}
               onEnqueue={() => void submit(false)}
               onPromptHelp={() => setHelpOpen(true)}
@@ -292,6 +318,8 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
             <JobList
               rows={rows}
               queuePaused={queuePaused}
+              queued={caps.queued}
+              queueMax={caps.queueMax}
               now={now}
               onGroupOp={(id, op) => void groupOp(id, op)}
               onQueueOp={(op) => void queueOp(op)}

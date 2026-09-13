@@ -139,6 +139,18 @@
   gap: 8px;
 }
 
+/* A native select sizes itself to its widest option and ignores the track's 1fr without
+   this, so the last column of the knob grid spills past the pane's edge (seen in the
+   headless shot: `scheduler` ran under the results column). */
+.igen-grid .ds-select,
+.igen-grid .ds-input,
+.igen-form .ds-select,
+.igen-form .ds-input {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .igen-row {
   display: flex;
   align-items: center;
