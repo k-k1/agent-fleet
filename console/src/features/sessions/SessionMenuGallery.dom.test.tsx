@@ -67,12 +67,14 @@ describe("セッションメニューの「生成した画像」", () => {
     await act(async () => {
       btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    // The session travels for the pane title only: the folder's own name is a UUID, so the
-    // title has to come from somewhere a reader recognises.
+    // The session travels for the pane title only — the folder's own name is a UUID — and it
+    // travels as the SLUG: the pane resolves it back to a Session and applies displayName
+    // itself, and layout/migrate.ts drops a stored gallerySession that is not slug-shaped,
+    // which would silently cost the title on the next reload.
     expect(opened).toEqual([
       {
         path: ".cache/agent-fleet/generated/uuid-1",
-        opts: { session: "絵を描く", newPane: false },
+        opts: { session: "sk7f3q9", newPane: false },
       },
     ]);
   });

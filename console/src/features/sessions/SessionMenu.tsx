@@ -99,10 +99,11 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
     s.generatedImages && s.generatedImagesPath ? { n: s.generatedImages, path: s.generatedImagesPath } : null;
   const openGeneratedImages = (e: RMouseEvent) => {
     onClose();
-    // gallerySession is display-only; the pane title needs a name a reader recognises,
-    // and the folder's own name is a UUID.
+    // The slug, not displayName(s): paneTitle takes the Session it resolves from this name
+    // and titles the pane itself (Pane.tsx), and migrate.ts only keeps a stored value that
+    // still looks like a session name — a title would be dropped on the next reload.
     openGallery(generated!.path, {
-      session: displayName(s),
+      session: s.name,
       newPane: e.ctrlKey || e.metaKey || e.button === 1,
     });
   };
