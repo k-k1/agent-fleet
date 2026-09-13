@@ -378,6 +378,7 @@ export const settings = {
   "keys.cmd.openUsageAgy": "Antigravity 使用量を開く",
   "keys.cmd.openResources": "リソース使用量を開く",
   "keys.cmd.openSessions": "セッション一覧を開く",
+  "keys.cmd.openImagegen": "画像生成を開く",
   "keys.cmd.ttsToggle": "音声読み上げ ON/OFF",
   "keys.cmd.ttsSessionToggle": "セッション音声通知 ON/OFF",
   "keys.cmd.usageResetToggle": "制限リセット通知 ON/OFF",

@@ -42,6 +42,7 @@ import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
 import { SessionsOverview } from "../overview/SessionsOverview.tsx";
 import { GalleryView } from "../gallery/GalleryView.tsx";
+import { ImagegenView } from "../imagegen/ImagegenView.tsx";
 import { SharedSessionView } from "../sharing/SharedSessionView.tsx";
 import { useSharedSessionsStore } from "../sharing/store.ts";
 import { canPopout, openPanePopout } from "./popout.ts";
@@ -753,6 +754,7 @@ function PopulatedPane({
           headerActions={tabHeaderActions}
         />
       )}
+      {pane.content.kind === "imagegen" && <ImagegenView headerActions={tabHeaderActions} />}
     </div>
   );
 }

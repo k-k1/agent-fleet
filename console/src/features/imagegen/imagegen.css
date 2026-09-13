@@ -1,0 +1,536 @@
+/* Image-generation studio (ADR 0081). Class prefix `igen-`. The properties panel's
+   `imgprops-` rules are in viewer/parts/lightbox.css instead: the lightbox is opened from
+   the gallery and the mirror too, where this file is not loaded. */
+
+.igen {
+  /* The two-column split is decided by the PANE's width, not the window's: a studio in one
+     of four columns is narrow on a desktop. Every other pane view declares the same
+     container so `@container paneview` means the same thing everywhere. */
+  container: paneview / inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.igen-body {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(280px, 1fr);
+  gap: 12px;
+  padding: 10px 12px 16px;
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+@container paneview (max-width: 720px) {
+  .igen-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.igen-col-form,
+.igen-col-out {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* ── header ─────────────────────────────────────────────────────────── */
+
+.igen-engine {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.igen-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.igen-engine-ready .igen-dot {
+  background: var(--ok, #3fb950);
+}
+.igen-engine-cold .igen-dot {
+  background: var(--muted);
+}
+.igen-engine-starting .igen-dot {
+  background: var(--warn, #d29922);
+}
+.igen-engine-unavailable .igen-dot {
+  background: var(--err, #f85149);
+}
+
+.igen-engine-hint,
+.igen-cost {
+  font-size: 11px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── form ───────────────────────────────────────────────────────────── */
+
+.igen-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.igen-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.igen-field.off {
+  opacity: 0.55;
+}
+
+.igen-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.igen-hint {
+  font-size: 11px;
+  color: var(--muted);
+  /* Reasons ("flux1 does not read this", the batch_size warning) run long; they wrap rather
+     than truncate, because a truncated reason is the same as no reason. */
+  white-space: normal;
+}
+
+.igen-err {
+  font-size: 11px;
+  color: var(--err, #f85149);
+}
+
+.igen-warn {
+  font-size: 11px;
+  color: var(--warn, #d29922);
+}
+
+.igen-prompt,
+.igen-negative {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg, var(--bg));
+  color: var(--fg);
+}
+
+.igen-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+/* A native select sizes itself to its widest option and ignores the track's 1fr without
+   this, so the last column of the knob grid spills past the pane's edge (seen in the
+   headless shot: `scheduler` ran under the results column). */
+.igen-grid .ds-select,
+.igen-grid .ds-input,
+.igen-form .ds-select,
+.igen-form .ds-input {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.igen-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.igen-spacer {
+  flex: 1;
+}
+
+/* ── chips (quality prefixes, trigger words, the administrator's negative) ── */
+
+.igen-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.igen-chips-cap {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.igen-chip {
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--chip-bg, transparent);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.igen-chip:hover {
+  border-color: var(--accent, var(--fg));
+}
+
+/* A fixed chip is the administrator's word, not a control: no pointer, no hover affordance,
+   and the lock glyph says why it cannot be removed. */
+.igen-chip.fixed {
+  cursor: default;
+  opacity: 0.85;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.igen-family {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.igen-family > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.igen-family p {
+  margin: 4px 0;
+}
+
+.igen-family-desc {
+  white-space: pre-wrap;
+}
+
+.igen-loras {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.igen-lora {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.igen-lora-pick {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.igen-lora-pick > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.igen-lora-weight {
+  margin-left: auto;
+}
+
+.igen-advanced > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.igen-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.igen-input-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.igen-input-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.igen-input-list li > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.igen-drop {
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.igen-drop.over {
+  border-color: var(--accent, var(--fg));
+}
+
+.igen-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.igen-fullsteps {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── trial slot and results ─────────────────────────────────────────── */
+
+.igen-trial h3,
+.igen-results h3,
+.igen-queue-head h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.igen-trial-body {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.igen-trial-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.igen-thumb {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.igen-thumb img {
+  max-width: 180px;
+  max-height: 180px;
+  object-fit: contain;
+}
+
+.igen-grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.igen-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.igen-card .igen-thumb img {
+  max-width: 100%;
+  max-height: 130px;
+}
+
+.igen-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+}
+
+.igen-seed {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+}
+
+/* ── queue ──────────────────────────────────────────────────────────── */
+
+.igen-queue-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.igen-badge {
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.igen-badge.failed {
+  color: var(--err, #f85149);
+  border-color: currentColor;
+}
+
+.igen-badge.paused,
+.igen-badge.trial {
+  color: var(--muted);
+}
+
+.igen-qrow {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.igen-qrow.paused {
+  opacity: 0.75;
+}
+
+.igen-qrow-head,
+.igen-qrow-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.igen-qrow-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.igen-qrow-counts {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Three segments in source order (done, failed, running) laid side by side. Widths are
+   fractions of the whole bar and never sum above 1 — see barSegments. */
+.igen-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.igen-bar-done {
+  background: var(--ok, #3fb950);
+}
+
+.igen-bar-failed {
+  background: var(--err, #f85149);
+}
+
+.igen-bar-running {
+  background: var(--accent, #58a6ff);
+  opacity: 0.7;
+}
+
+.igen-eta,
+.igen-phase {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.igen-jobs {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.igen-job {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.igen-job-state {
+  color: var(--muted);
+  min-width: 6em;
+}
+
+.igen-job-failed .igen-job-state {
+  color: var(--err, #f85149);
+}
+
+.igen-job-pos {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── prompt help ────────────────────────────────────────────────────── */
+
+.igen-proposal {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.igen-proposal h4 {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.igen-proposal-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font: inherit;
+  font-size: 12px;
+  background: var(--code-bg, rgba(127, 127, 127, 0.08));
+  padding: 6px 8px;
+  border-radius: 4px;
+}

@@ -24,6 +24,7 @@ export const KIND_JA: Partial<Record<PaneKind, MsgKey>> = {
   sharedSession: "share.shared_sessions",
   sessions: "pane.kind.sessions",
   gallery: "pane.kind.gallery",
+  imagegen: "pane.kind.imagegen",
 };
 
 // Resolve a non-session pane kind to its localized label (falls back to the raw kind).
@@ -94,6 +95,8 @@ export function paneTitle(pane: Pane, session: Session | null, meta: PaneTitleMe
       return sharedSessionLabel(meta.shared);
     case "sessions":
       return jaKind("sessions");
+    case "imagegen":
+      return jaKind("imagegen");
     case "gallery":
       // A generated-images folder is named by a session UUID, so its basename says
       // nothing; name the session instead when the caller could resolve it.

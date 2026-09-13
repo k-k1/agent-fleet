@@ -137,6 +137,11 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "sessions":
       return { kind: "sessions", showStopped: p.showStopped === true };
+    // No field to validate: the form is a localStorage draft and the queue is the Agent's
+    // (ADR 0081 decision 6). Forgetting this case is what would degrade a studio to a blank
+    // terminal on every reload, which is the only way this kind can go wrong here.
+    case "imagegen":
+      return { kind: "imagegen" };
     case "gallery": {
       // A stored value is untrusted input and this one is a PATH that the view hands
       // straight to api/fs/tree, so it gets the `browser` kind's stance: reject rather

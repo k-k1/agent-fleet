@@ -48,6 +48,7 @@ updated: "2026-08"
 | Markdown / コードの編集 | メンバー | ファイル → 各ファイル | [04 ファイル](../member/04-files.ja.md) |
 | `.drawio` の図 | メンバー | ファイル → `.drawio` | [04 ファイル](../member/04-files.ja.md) |
 | PDF・Office 文書のプレビュー | メンバー | ファイル → その文書 | [04 ファイル](../member/04-files.ja.md) |
+| 画像生成 — エージェントを介さずに絵をまとめて作る | メンバー | 操作バー → 画像生成、またはリーダー `g i` | [04 ファイル](../member/04-files.ja.md) |
 | ローカル Web アプリのブラウザペイン | メンバー | ワークスペース操作バー → プレビュー | [10 応用](../member/10-integrations.ja.md)。契約は [browser-pane.md](browser-pane.ja.md) |
 | プレビュー用サブドメイン（起動ごとに発行）| メンバー | ワークスペース操作バー → プレビュー | [10 応用](../member/10-integrations.ja.md) |
 | エージェントが持つ Chromium への接続 | メンバー | エージェントが渡すリンク | [10 応用](../member/10-integrations.ja.md) |
