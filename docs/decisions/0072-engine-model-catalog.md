@@ -4340,3 +4340,22 @@ And three traps in the TESTS, which is where this screen has been bitten before:
 - **A positive control can be silently void.** Breaking a request body by adding a duplicate key
   to an object literal does nothing: JavaScript keeps the last one. Break such a body by REMOVING
   the key.
+
+And what the history itself turned out to be made of:
+
+- 🔴 **`engine_ingest_jobs.spec` is a raw `json.Marshal` of the ingest request, with Go's own
+  field names** (`Kind`, `FileFlag`) because that struct carries no json tags. The panel now reads
+  it to offer a registration, so renaming a field there empties that offer silently. What the job
+  row answers is therefore stated explicitly (`kind`, `file_flag`) rather than left to the spec's
+  shape.
+- **A change to the shared job row surfaces in the wire golden under `postIngest`, not
+  `listIngest`** — `engineIngestJobRow` is one function behind both, and the golden names the
+  site that happens to hold its first occurrence. Easy to read as "the wrong route changed".
+- **Deleting a history row is two different questions, and the panel asks whichever one is
+  true.** With a catalogue row pointing at that key, the delete is housekeeping — plain text,
+  one press. With nothing pointing at it, the row is the only record this deployment has that
+  the file is in the bucket, so it takes a deliberate acknowledgement. 🔴 Neither wording claims
+  the file is THERE: a purge deletes the object and leaves the job `done`, and the CP cannot
+  look. When the catalogue read fails, every row falls back to the stronger warning.
+- 🔥 **A background test wrapper reported exit 0 while its output file held a golden FAIL.** Twice
+  now in this repository's history, and once again here. Read the output, not the exit code.
