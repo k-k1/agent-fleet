@@ -58,7 +58,7 @@ async function mount() {
  *  A helper because the LoRA half of every form is now reached by pressing one — the kind is no
  *  longer a field inside the form, which is what stopped the list and the form disagreeing. */
 const tab = (label: string) =>
-  Array.from(host!.querySelectorAll(".seg-btn")).find((b) => b.textContent === label) as
+  Array.from(ui().querySelectorAll(".seg-btn")).find((b) => b.textContent === label) as
     | HTMLButtonElement
     | undefined;
 
@@ -72,9 +72,15 @@ const click = async (el: HTMLElement | undefined) => {
   });
 };
 
+/** What the tests read. 🔴 The document and not the mount point: 「モデルを追加」 is a DIALOG,
+ *  and React portals a dialog to <body> (a transformed ancestor would otherwise become the
+ *  containing block for its fixed position). A query scoped to `host` sees the panel and not the
+ *  screen on top of it. */
+const ui = () => document.body;
+
 /** Every button of the screen, by its label. */
 const btn = (label: string) =>
-  Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+  Array.from(ui().querySelectorAll("button")).find((b) => b.textContent === label) as
     | HTMLButtonElement
     | undefined;
 
@@ -88,7 +94,7 @@ const type = async (el: Element, v: string) => {
 
 /** The text inputs of the step on screen, in the order they are drawn. */
 const wizInputs = () =>
-  Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
+  Array.from(ui().querySelectorAll(".engines-ingest .engines-model-add-row input"));
 
 /** Open 「モデルを追加」 and answer the first question with the default act — a new row — which
  *  is what every test that is not about the OTHER two acts wants.
@@ -106,7 +112,7 @@ const openWizard = async () => {
  *  by index: which fields exist now depends on the question being answered, and the filename row
  *  turns from an input into a select the moment a listing arrives. */
 const byLabel = (label: string) =>
-  Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row"))
+  Array.from(ui().querySelectorAll(".engines-ingest .engines-model-add-row"))
     .find((l) => l.querySelector("span")?.textContent === label)
     ?.querySelector("input") as HTMLInputElement | undefined;
 
@@ -207,7 +213,7 @@ describe("EngineModelsAdminView", () => {
     // helper silently tested that button instead the moment the order changed.
     const enable = (id: string) =>
       Array.from(
-        Array.from(host!.querySelectorAll(".engines-model"))
+        Array.from(ui().querySelectorAll(".engines-model"))
           .find((li) => li.textContent?.includes(id))
           ?.querySelectorAll("button") ?? [],
       ).find((b) => b.textContent === "有効にする") as HTMLButtonElement | undefined;
@@ -215,12 +221,12 @@ describe("EngineModelsAdminView", () => {
     await click(enable("flux-dev"));
     // Nothing was sent: the question comes first, with both numbers in it.
     expect(apiJSON).not.toHaveBeenCalled();
-    expect(host!.textContent).toContain("40000");
-    expect(host!.textContent).toContain("21000");
+    expect(ui().textContent).toContain("40000");
+    expect(ui().textContent).toContain("21000");
 
     apiJSON.mockResolvedValue(withClasses());
     await click(
-      Array.from(host!.querySelectorAll("button")).find(
+      Array.from(ui().querySelectorAll("button")).find(
         (b) => b.textContent === "承知のうえで有効にする",
       ) as HTMLButtonElement,
     );
@@ -268,7 +274,7 @@ describe("EngineModelsAdminView", () => {
     });
     await mount();
     const li = (id: string) =>
-      Array.from(host!.querySelectorAll(".engines-model")).find((e) =>
+      Array.from(ui().querySelectorAll(".engines-model")).find((e) =>
         e.textContent?.includes(id),
       ) as HTMLElement;
     // 🔴 In the head next to the state, not buried in the meta line: this is the one fact that
@@ -308,7 +314,7 @@ describe("EngineModelsAdminView", () => {
     );
     await mount();
     // Only the model that is NOT already the one started with offers the control.
-    const select = Array.from(host!.querySelectorAll(".engines-model button")).filter(
+    const select = Array.from(ui().querySelectorAll(".engines-model button")).filter(
       (b) => b.textContent === "これで起動する",
     );
     expect(select.length).toBe(1);
@@ -320,7 +326,7 @@ describe("EngineModelsAdminView", () => {
     );
     // ⚠️ The panel must say that a running engine is not swapped. Without it an administrator
     // presses this mid-generation expecting an immediate change (ADR 0072 decision 4).
-    expect(host!.textContent).toContain("次の起動から効きます");
+    expect(ui().textContent).toContain("次の起動から効きます");
   });
 
   // The llm role's equivalent is the model a request that named none gets, so the same button
@@ -341,7 +347,7 @@ describe("EngineModelsAdminView", () => {
     });
     apiJSON.mockResolvedValue(row({ key: "llm", api: "chat", has_models: true, model_rows: [] }));
     await mount();
-    const select = Array.from(host!.querySelectorAll(".engines-model button")).find(
+    const select = Array.from(ui().querySelectorAll(".engines-model button")).find(
       (b) => b.textContent === "これで起動する",
     );
     await click(select as HTMLElement);
@@ -366,8 +372,8 @@ describe("EngineModelsAdminView", () => {
     });
     apiJSON.mockResolvedValue(row({ has_models: true, model_rows: [] }));
     await mount();
-    expect(host!.textContent).toContain("parked");
-    const enable = Array.from(host!.querySelectorAll(".engines-model button")).find(
+    expect(ui().textContent).toContain("parked");
+    const enable = Array.from(ui().querySelectorAll(".engines-model button")).find(
       (b) => b.textContent === "有効にする",
     );
     await click(enable as HTMLElement);
@@ -395,7 +401,7 @@ describe("EngineModelsAdminView", () => {
     });
     await mount();
     const badge = (id: string) =>
-      Array.from(host!.querySelectorAll(".engines-model"))
+      Array.from(ui().querySelectorAll(".engines-model"))
         .find((li) => li.querySelector(".engines-model-id")?.textContent === id)
         ?.querySelector(".engines-model-tag");
     expect(badge("sdxl-base-1.0")?.textContent).toBe("有効");
@@ -405,7 +411,7 @@ describe("EngineModelsAdminView", () => {
 
     // "Start with this one" leads: it is what somebody came to this list to do, and enabling
     // is implied by it. Forgetting the row is last.
-    const row0 = Array.from(host!.querySelectorAll(".engines-model")).find(
+    const row0 = Array.from(ui().querySelectorAll(".engines-model")).find(
       (li) => li.querySelector(".engines-model-id")?.textContent === "parked",
     )!;
     expect(
@@ -429,11 +435,11 @@ describe("EngineModelsAdminView", () => {
       ],
     });
     await mount();
-    const select = Array.from(host!.querySelectorAll(".engines-model button")).filter(
+    const select = Array.from(ui().querySelectorAll(".engines-model button")).filter(
       (b) => b.textContent === "これで起動する",
     );
     expect(select.length).toBe(0);
-    expect(host!.textContent).toContain("LoRA");
+    expect(ui().textContent).toContain("LoRA");
   });
 
   // An empty catalogue is the reason the controller refuses to start the engine, so it gets a
@@ -442,7 +448,7 @@ describe("EngineModelsAdminView", () => {
   it("says why an engine with no catalogue will not start", async () => {
     api.mockResolvedValue({ super_admin: true, engines: [row({ has_models: false, model_rows: [] })] });
     await mount();
-    expect(host!.textContent).toContain("カタログは空です");
+    expect(ui().textContent).toContain("カタログは空です");
   });
 
   it("says when models exist but none is enabled", async () => {
@@ -453,7 +459,7 @@ describe("EngineModelsAdminView", () => {
       ],
     });
     await mount();
-    expect(host!.textContent).toContain("有効なモデルがありません");
+    expect(ui().textContent).toContain("有効なモデルがありません");
   });
 
   // P0's definition of done is "switch the image checkpoint to another one without touching
@@ -471,14 +477,14 @@ describe("EngineModelsAdminView", () => {
     });
     apiJSON.mockResolvedValue(row({ has_models: true, model_rows: [] }));
     await mount();
-    const open = Array.from(host!.querySelectorAll("button")).find(
+    const open = Array.from(ui().querySelectorAll("button")).find(
       (b) => b.textContent === "バケットのファイルを登録する",
     );
     await click(open as HTMLElement);
 
     // id, key, size, description, licence, licence URL. The WINDOW fields are chat-only, and
     // this is the image role.
-    const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    const inputs = Array.from(ui().querySelectorAll(".engines-model-add input"));
     expect(inputs.length).toBe(6);
     const type = async (el: Element, v: string) => {
       await act(async () => {
@@ -500,9 +506,9 @@ describe("EngineModelsAdminView", () => {
     // ⚠️ The form must not imply the key was checked. The CP holds no S3 permission at all
     // (ADR 0072 review R3), so a typo only surfaces at the next cold start. Asserted while the
     // form is open, because submitting closes it.
-    expect(host!.textContent).toContain("CP は S3 を見ません");
+    expect(ui().textContent).toContain("CP は S3 を見ません");
 
-    const go = Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+    const go = Array.from(ui().querySelectorAll(".engines-model-add button")).find(
       (b) => b.textContent === "登録する",
     );
     await click(go as HTMLElement);
@@ -532,11 +538,11 @@ describe("EngineModelsAdminView", () => {
     apiJSON.mockResolvedValue(row({ has_models: true, model_rows: [] }));
     await mount();
     await click(
-      Array.from(host!.querySelectorAll("button")).find(
+      Array.from(ui().querySelectorAll("button")).find(
         (b) => b.textContent === "バケットのファイルを登録する",
       ) as HTMLElement,
     );
-    const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    const inputs = Array.from(ui().querySelectorAll(".engines-model-add input"));
     const type = async (el: Element, v: string) => {
       await act(async () => {
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -549,7 +555,7 @@ describe("EngineModelsAdminView", () => {
     await type(inputs[4], "flux-1-dev-non-commercial-license");
     await type(inputs[5], "https://example.com/LICENSE.md");
     await click(
-      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+      Array.from(ui().querySelectorAll(".engines-model-add button")).find(
         (b) => b.textContent === "登録する",
       ) as HTMLElement,
     );
@@ -598,23 +604,23 @@ describe("EngineModelsAdminView", () => {
 
     // Pressing "forget" asks rather than acting: nothing has been sent yet.
     await click(
-      Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === "登録を消す") as HTMLElement,
+      Array.from(ui().querySelectorAll("button")).find((b) => b.textContent === "登録を消す") as HTMLElement,
     );
     expect(apiJSON).not.toHaveBeenCalled();
     // The default is the SAFE one, and it says what it leaves behind.
-    const box = host!.querySelector(".engines-model-confirm input") as HTMLInputElement;
+    const box = ui().querySelector(".engines-model-confirm input") as HTMLInputElement;
     expect(box.checked).toBe(false);
-    expect(host!.textContent).toContain("バケットのファイルはそのまま残り");
+    expect(ui().textContent).toContain("バケットのファイルはそのまま残り");
 
     await act(async () => {
       box.click();
     });
     // Ticking it changes what the sentence promises, because the act is now destructive.
-    expect(host!.textContent).toContain("バイト列を削除するタスクを起こします");
+    expect(ui().textContent).toContain("バイト列を削除するタスクを起こします");
 
     apiJSON.mockResolvedValueOnce({ purge: "deleting llm/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" });
     await click(
-      Array.from(host!.querySelectorAll(".engines-model-confirm button")).find(
+      Array.from(ui().querySelectorAll(".engines-model-confirm button")).find(
         (b) => b.textContent === "消す",
       ) as HTMLElement,
     );
@@ -627,7 +633,7 @@ describe("EngineModelsAdminView", () => {
     });
     // The CP's own words: the deletion is a task that has been LAUNCHED, not a thing that has
     // already happened, and a row that just vanished would not say so.
-    expect(host!.textContent).toContain("deleting llm/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf");
+    expect(ui().textContent).toContain("deleting llm/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf");
   });
 
   // Leaving the box unticked must send NO purge — the destructive half has to be opt-in.
@@ -644,11 +650,11 @@ describe("EngineModelsAdminView", () => {
     );
     await mount();
     await click(
-      Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === "登録を消す") as HTMLElement,
+      Array.from(ui().querySelectorAll("button")).find((b) => b.textContent === "登録を消す") as HTMLElement,
     );
     apiJSON.mockResolvedValueOnce({});
     await click(
-      Array.from(host!.querySelectorAll(".engines-model-confirm button")).find(
+      Array.from(ui().querySelectorAll(".engines-model-confirm button")).find(
         (b) => b.textContent === "消す",
       ) as HTMLElement,
     );
@@ -670,7 +676,7 @@ describe("EngineModelsAdminView", () => {
     });
     apiJSON.mockResolvedValue(row({ has_models: true, model_rows: [] }));
     await mount();
-    const forget = Array.from(host!.querySelectorAll(".engines-model")).map((li) =>
+    const forget = Array.from(ui().querySelectorAll(".engines-model")).map((li) =>
       Array.from(li.querySelectorAll("button")).find((b) => b.textContent === "登録を消す"),
     );
     expect((forget[0] as HTMLButtonElement).disabled).toBe(true);
@@ -678,7 +684,7 @@ describe("EngineModelsAdminView", () => {
     await click(forget[1] as HTMLElement);
     // Forgetting now asks first (see the purge test above), and the default leaves the bytes.
     await click(
-      Array.from(host!.querySelectorAll(".engines-model-confirm button")).find(
+      Array.from(ui().querySelectorAll(".engines-model-confirm button")).find(
         (b) => b.textContent === "消す",
       ) as HTMLElement,
     );
@@ -710,8 +716,8 @@ describe("EngineModelsAdminView", () => {
       ],
     });
     await mount();
-    expect(host!.textContent).toContain("同期 +179 秒（推定）");
-    expect(host!.textContent).toContain("同期 +11 秒（推定）");
+    expect(ui().textContent).toContain("同期 +179 秒（推定）");
+    expect(ui().textContent).toContain("同期 +11 秒（推定）");
   });
 
   it("says nothing about the sync when no size was declared", async () => {
@@ -722,7 +728,7 @@ describe("EngineModelsAdminView", () => {
       ],
     });
     await mount();
-    expect(host!.textContent).not.toContain("同期 +");
+    expect(ui().textContent).not.toContain("同期 +");
   });
 
   // ADR 0072 P1: a chat engine's row carries its OWN window, and this form is the only way to
@@ -744,7 +750,7 @@ describe("EngineModelsAdminView", () => {
     apiJSON.mockResolvedValue(row({ key: "llm", api: "chat", has_models: true, model_rows: [] }));
     await mount();
     await click(
-      Array.from(host!.querySelectorAll("button")).find(
+      Array.from(ui().querySelectorAll("button")).find(
         (b) => b.textContent === "バケットのファイルを登録する",
       ) as HTMLElement,
     );
@@ -752,12 +758,12 @@ describe("EngineModelsAdminView", () => {
     // boxes whose placeholder captions vanish as soon as somebody types into them. 🔴 The kind
     // (model or LoRA) is NOT among them any more — it is the tab this form is under, so the
     // list beside it and the row it would register cannot disagree about which is being added.
-    const rows = Array.from(host!.querySelectorAll(".engines-model-add-row"));
+    const rows = Array.from(ui().querySelectorAll(".engines-model-add-row"));
     expect(rows.length).toBe(8);
     expect(
       rows.every((r) => r.querySelector("span") && (r.querySelector("input") || r.querySelector("select"))),
     ).toBe(true);
-    const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    const inputs = Array.from(ui().querySelectorAll(".engines-model-add input"));
     expect(inputs.length).toBe(8);
     const type = async (el: Element, v: string) => {
       await act(async () => {
@@ -774,7 +780,7 @@ describe("EngineModelsAdminView", () => {
     await type(inputs[6], "32768");
     await type(inputs[7], "4096");
     await click(
-      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+      Array.from(ui().querySelectorAll(".engines-model-add button")).find(
         (b) => b.textContent === "登録する",
       ) as HTMLElement,
     );
@@ -822,7 +828,7 @@ describe("EngineModelsAdminView", () => {
     // what was being added, and the search above them always asked for checkpoints.
     await click(tab("LoRA"));
     await click(
-      Array.from(host!.querySelectorAll("button")).find(
+      Array.from(ui().querySelectorAll("button")).find(
         (b) => b.textContent === "バケットのファイルを登録する",
       ) as HTMLElement,
     );
@@ -840,7 +846,7 @@ describe("EngineModelsAdminView", () => {
         el.dispatchEvent(new Event("change", { bubbles: true }));
       });
     };
-    const selects = () => Array.from(host!.querySelectorAll(".engines-model-add select"));
+    const selects = () => Array.from(ui().querySelectorAll(".engines-model-add select"));
 
     // The base is a CHOICE over this catalogue's own model ids — a typed name that matches
     // nothing is an adapter that loads nowhere and says so nowhere.
@@ -850,10 +856,10 @@ describe("EngineModelsAdminView", () => {
     expect(offered).not.toContain("an-old-adapter"); // a LoRA is not a base for another LoRA
 
     const go = () =>
-      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+      Array.from(ui().querySelectorAll(".engines-model-add button")).find(
         (b) => b.textContent === "登録する",
       ) as HTMLButtonElement;
-    let inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    let inputs = Array.from(ui().querySelectorAll(".engines-model-add input"));
     await type(inputs[0], "house-style");
     await type(inputs[1], "llm/loras/house-style.gguf");
     // Required, and the form says so by refusing rather than by letting the CP answer later.
@@ -863,8 +869,8 @@ describe("EngineModelsAdminView", () => {
 
     // The window is gone — an adapter has none, it is loaded with the model that does — and a
     // strength has taken its place.
-    inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
-    const labels = Array.from(host!.querySelectorAll(".engines-model-add-row span")).map(
+    inputs = Array.from(ui().querySelectorAll(".engines-model-add input"));
+    const labels = Array.from(ui().querySelectorAll(".engines-model-add-row span")).map(
       (l) => l.textContent,
     );
     expect(labels).not.toContain("コンテキストウィンドウ");
@@ -905,7 +911,7 @@ describe("EngineModelsAdminView", () => {
     apiJSON.mockResolvedValue(comfy);
     await mount();
     await click(
-      Array.from(host!.querySelectorAll("button")).find(
+      Array.from(ui().querySelectorAll("button")).find(
         (b) => b.textContent === "バケットのファイルを登録する",
       ) as HTMLElement,
     );
@@ -925,11 +931,11 @@ describe("EngineModelsAdminView", () => {
       });
     };
     const go = () =>
-      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+      Array.from(ui().querySelectorAll(".engines-model-add button")).find(
         (b) => b.textContent === "登録する",
       ) as HTMLButtonElement;
 
-    let inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    let inputs = Array.from(ui().querySelectorAll(".engines-model-add input"));
     await type(inputs[0], "flux2-klein-4b");
     await type(inputs[1], "image/diffusion_models/flux-2-klein-4b.safetensors");
 
@@ -938,19 +944,19 @@ describe("EngineModelsAdminView", () => {
     expect(go().disabled).toBe(true);
 
     // [0] is the family; one part per file follows it.
-    const selects = () => Array.from(host!.querySelectorAll(".engines-model-add select"));
+    const selects = () => Array.from(ui().querySelectorAll(".engines-model-add select"));
     await pick(selects()[0], "flux2-klein");
     expect(go().disabled).toBe(false);
     // The first file's part, then two more files with their own.
     await pick(selects()[1], "--diffusion-model");
 
     const more = () =>
-      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+      Array.from(ui().querySelectorAll(".engines-model-add button")).find(
         (b) => b.textContent === "ファイルを追加する",
       ) as HTMLElement;
     await click(more());
     await click(more());
-    inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    inputs = Array.from(ui().querySelectorAll(".engines-model-add input"));
     // id, then (key, size) per file, then the description and the optional licence pair: three
     // files is ten inputs.
     expect(inputs.length).toBe(10);
@@ -1055,7 +1061,7 @@ describe("EngineModelsAdminView", () => {
     });
     await mount();
     const provenance = (id: string) => {
-      const li = Array.from(host!.querySelectorAll("li.engines-model")).find(
+      const li = Array.from(ui().querySelectorAll("li.engines-model")).find(
         (el) => el.querySelector(".engines-model-id")?.textContent === id,
       );
       expect(li, `no row for ${id}`).toBeTruthy();
@@ -1132,14 +1138,14 @@ describe("EngineModelsAdminView", () => {
       ],
     });
     await mount();
-    const warnings = Array.from(host!.querySelectorAll(".form-err")).filter((e) =>
+    const warnings = Array.from(ui().querySelectorAll(".form-err")).filter((e) =>
       e.textContent?.includes("モデルファミリー"),
     );
     expect(warnings.length).toBe(1);
 
     // The FIX sits under the warning it answers, and only there — the row that already declares
     // one shows it in its meta line and needs no control.
-    const pickers = Array.from(host!.querySelectorAll(".engines-model-family"));
+    const pickers = Array.from(ui().querySelectorAll(".engines-model-family"));
     expect(pickers.length).toBe(1);
 
     // 🔴 One field, not the whole row. Before this the only way to give a row a family was to
@@ -1188,15 +1194,15 @@ describe("EngineModelsAdminView", () => {
     });
     await mount();
     // Not on the row itself: base names are what a person chooses between.
-    expect(host!.querySelector(".engines-model-keys")).toBe(null);
-    expect(host!.textContent).not.toContain("image/text_encoders/clip_l.safetensors");
+    expect(ui().querySelector(".engines-model-keys")).toBe(null);
+    expect(ui().textContent).not.toContain("image/text_encoders/clip_l.safetensors");
 
     await click(
-      Array.from(host!.querySelectorAll("li.engines-model button")).find(
+      Array.from(ui().querySelectorAll("li.engines-model button")).find(
         (b) => b.textContent === "登録を消す",
       ) as HTMLElement,
     );
-    const keys = host!.querySelector(".engines-model-keys")!;
+    const keys = ui().querySelector(".engines-model-keys")!;
     expect(keys.textContent).toContain("image/diffusion_models/flux1-dev-fp8.safetensors");
     // With the flag, because a key alone does not say which loader the part was for.
     expect(keys.textContent).toContain("--clip_l");
@@ -1226,7 +1232,7 @@ describe("EngineModelsAdminView", () => {
       ],
     });
     await mount();
-    const li = Array.from(host!.querySelectorAll("li.engines-model")).find(
+    const li = Array.from(ui().querySelectorAll("li.engines-model")).find(
       (n) => n.querySelector(".mono")?.textContent === "flux1-dev",
     )!;
     const said = li.querySelector(".form-err")!.textContent!;
@@ -1234,7 +1240,7 @@ describe("EngineModelsAdminView", () => {
     expect(said).toContain("flux1");
     expect(said).toContain("--t5xxl");
     // The row that holds what its family reads says nothing: a mark on every row is no mark.
-    const ok = Array.from(host!.querySelectorAll("li.engines-model")).find(
+    const ok = Array.from(ui().querySelectorAll("li.engines-model")).find(
       (n) => n.querySelector(".mono")?.textContent === "sdxl-base-1.0",
     )!;
     expect(ok.querySelector(".form-err")).toBe(null);
@@ -1250,11 +1256,11 @@ describe("EngineModelsAdminView", () => {
     apiJSON.mockResolvedValue(row({ key: "llm", api: "chat", has_models: true, model_rows: [] }));
     await mount();
     await click(
-      Array.from(host!.querySelectorAll("button")).find(
+      Array.from(ui().querySelectorAll("button")).find(
         (b) => b.textContent === "バケットのファイルを登録する",
       ) as HTMLElement,
     );
-    const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    const inputs = Array.from(ui().querySelectorAll(".engines-model-add input"));
     const type = async (el: Element, v: string) => {
       await act(async () => {
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -1266,7 +1272,7 @@ describe("EngineModelsAdminView", () => {
     await type(inputs[1], "llm/x.gguf");
     await type(inputs[3], "32768");
     await click(
-      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+      Array.from(ui().querySelectorAll(".engines-model-add button")).find(
         (b) => b.textContent === "登録する",
       ) as HTMLElement,
     );
@@ -1287,7 +1293,7 @@ describe("EngineModelsAdminView", () => {
     await openWizard();
     // Nothing to accept yet: the source has not been read, and the question that offers the
     // acceptance is one step further on.
-    expect(host!.querySelector(".engines-ingest-accept")).toBe(null);
+    expect(ui().querySelector(".engines-ingest-accept")).toBe(null);
 
     await wizSource("black-forest-labs/FLUX.1-dev", "flux1-dev.safetensors", {
       sha256: "4610115bb0c89560703c892c59ac2742fa821e60ef5871b33493ba544683abd7",
@@ -1300,14 +1306,14 @@ describe("EngineModelsAdminView", () => {
     });
     // The two licence fields, the size and both warnings — the non-commercial one because the
     // deployment may be charging, the gated one because it cannot be fetched at all here.
-    expect(host!.textContent).toContain("flux-1-dev-non-commercial-license");
-    expect(host!.textContent).toContain("23.8 GB");
-    expect(host!.textContent).toContain("非商用ライセンス");
-    expect(host!.textContent).toContain("トークンがありません");
+    expect(ui().textContent).toContain("flux-1-dev-non-commercial-license");
+    expect(ui().textContent).toContain("23.8 GB");
+    expect(ui().textContent).toContain("非商用ライセンス");
+    expect(ui().textContent).toContain("トークンがありません");
     // 🔴 And there is no way on: a file this deployment cannot fetch would spend a Fargate task
     // to earn a 401, so the step says so beside the button instead of letting it be pressed.
     expect(btn("次へ")!.disabled).toBe(true);
-    expect(host!.textContent).toContain("取り込めません");
+    expect(ui().textContent).toContain("取り込めません");
   });
 
   it("starts an ingest once the licence is accepted, and shows the job", async () => {
@@ -1332,7 +1338,7 @@ describe("EngineModelsAdminView", () => {
       // By what it OFFERS rather than by position: this step holds several selects (the family,
       // the per-file part) and an index here would have gone on passing while setting the wrong
       // control.
-      const sel = Array.from(host!.querySelectorAll(".engines-ingest select")).find((el) =>
+      const sel = Array.from(ui().querySelectorAll(".engines-ingest select")).find((el) =>
         Array.from((el as HTMLSelectElement).options).some((o) => o.value === "4096"),
       ) as HTMLSelectElement;
       sel.value = "4096";
@@ -1340,7 +1346,7 @@ describe("EngineModelsAdminView", () => {
     });
     await click(btn("次へ")); // ④ confirm
     await act(async () => {
-      const box = host!.querySelector(".engines-ingest-accept input") as HTMLInputElement;
+      const box = ui().querySelector(".engines-ingest-accept input") as HTMLInputElement;
       box.click();
     });
     apiJSON.mockResolvedValueOnce({ id: "j1", model_id: "qwen2.5-coder-1.5b", state: "running" });
@@ -1362,7 +1368,7 @@ describe("EngineModelsAdminView", () => {
       license_accepted: true,
       source: { hf: { repo: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", file: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", revision: "" } },
     });
-    expect(host!.textContent).toContain("取り込み中");
+    expect(ui().textContent).toContain("取り込み中");
   });
 
   /** The input of the form row with this label. By label rather than by index, because the
@@ -1401,7 +1407,7 @@ describe("EngineModelsAdminView", () => {
     const pickFile = async (name: string) => {
       apiJSON.mockResolvedValueOnce(resolved);
       await act(async () => {
-        const sel = Array.from(host!.querySelectorAll(".engines-ingest select")).find((el) =>
+        const sel = Array.from(ui().querySelectorAll(".engines-ingest select")).find((el) =>
           Array.from((el as HTMLSelectElement).options).some((o) => o.value === name),
         ) as HTMLSelectElement;
         sel.value = name;
@@ -1417,7 +1423,7 @@ describe("EngineModelsAdminView", () => {
 
     expect(byLabel("コンテキストウィンドウ")!.value).toBe("32768");
     // Still SAID, because it is a fact worth knowing — just not one that overwrites a decision.
-    expect(host!.textContent).toContain("モデルの上限 262144");
+    expect(ui().textContent).toContain("モデルの上限 262144");
   });
 
   // 🔴 Observed on the dev deployment (2026-09-09): after a model was forgotten AND its bytes
@@ -1444,13 +1450,13 @@ describe("EngineModelsAdminView", () => {
     );
     await mount();
     // Headed as history, not as a section of the catalogue above it.
-    expect(host!.textContent).toContain("取り込みの履歴");
-    const when = host!.querySelector(".engines-ingest-when");
+    expect(ui().textContent).toContain("取り込みの履歴");
+    const when = ui().querySelector(".engines-ingest-when");
     expect(when).toBeTruthy();
     expect(when!.textContent).toBeTruthy();
     // The job survives a model that is not in the catalogue at all — that IS the case this
     // dating exists for, so the row has to still be here.
-    expect(host!.textContent).toContain("qwen2.5-coder-0.5b-instruct");
+    expect(ui().textContent).toContain("qwen2.5-coder-0.5b-instruct");
   });
 
   // 🔴 Measured on the dev deployment (2026-09-09): the filename was free text, and one letter
@@ -1481,7 +1487,7 @@ describe("EngineModelsAdminView", () => {
     });
     await click(btn("次へ"));
     expect(String(apiJSON.mock.calls.at(-1)![0])).toBe("api/admin/engines/llm/ingest/files");
-    const picker = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+    const picker = ui().querySelector(".engines-ingest select") as HTMLSelectElement;
     expect(Array.from(picker.options).map((o) => o.value)).toEqual([
       "",
       "qwen2.5-coder-0.5b-instruct-q2_k.gguf",
@@ -1513,12 +1519,12 @@ describe("EngineModelsAdminView", () => {
       source: { hf: { file: "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" } },
     });
     // Attributed as the MODEL's number, never presented as the window this deployment chose.
-    expect(host!.textContent).toContain("モデルの上限 32768");
+    expect(ui().textContent).toContain("モデルの上限 32768");
 
-    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input")) as HTMLInputElement[];
+    const inputs = Array.from(ui().querySelectorAll(".engines-ingest .engines-model-add-row input")) as HTMLInputElement[];
     const ctxField = inputs.find((i) => i.value === "32768");
     expect(ctxField).toBeTruthy();
-    const caps = Array.from(host!.querySelectorAll(".engines-ingest select")) as HTMLSelectElement[];
+    const caps = Array.from(ui().querySelectorAll(".engines-ingest select")) as HTMLSelectElement[];
     expect(caps[caps.length - 1].value).toBe("4096"); // 1/8 of 32768
   });
 
@@ -1542,7 +1548,7 @@ describe("EngineModelsAdminView", () => {
         : { super_admin: true, engines: [row({ key: "image", has_models: true, model_rows: [] })] },
     );
     await mount();
-    const job = host!.querySelector("ul.engines-ingest-jobs li")!;
+    const job = ui().querySelector("ul.engines-ingest-jobs li")!;
     expect(job.textContent).toContain("error: 403");
     expect(job.textContent).toContain("条項にまだ同意していません");
     // Not the token sentence: registering one again fixes nothing here.
@@ -1572,12 +1578,12 @@ describe("EngineModelsAdminView", () => {
       license_name: "see civitai model page",
       commercial_use: "unknown",
     });
-    expect(host!.textContent).toContain("ログイン済みのアカウント");
+    expect(ui().textContent).toContain("ログイン済みのアカウント");
     // Not the token sentence: a token cannot open this one.
-    expect(host!.textContent).not.toContain("トークンがありません");
+    expect(ui().textContent).not.toContain("トークンがありません");
     // And there is no way on to the acceptance at all — the step says why instead.
     expect(btn("次へ")!.disabled).toBe(true);
-    expect(host!.textContent).toContain("取り込めません");
+    expect(ui().textContent).toContain("取り込めません");
   });
 
   // 🔴 Measured on the dev deployment (2026-09-09): a filename typed one letter short answered
@@ -1602,7 +1608,7 @@ describe("EngineModelsAdminView", () => {
       error: { code: "file_unknown", message: "the repository does not list flux1-dev.safetensor" },
     });
     await click(btn("次へ"));
-    const shown = host!.querySelector(".engines-ingest .form-err")!.textContent!;
+    const shown = ui().querySelector(".engines-ingest .form-err")!.textContent!;
     expect(shown).toContain("そのリポジトリにそのファイルがありません");
     expect(shown).toContain("flux1-dev.safetensor");
   });
@@ -1649,21 +1655,21 @@ describe("EngineModelsAdminView", () => {
     // asserting on the panel's whole text would pass with the bug still in place.
     const catalogueIds = () =>
       Array.from(
-        host!.querySelectorAll("ul.engines-model-list:not(.engines-ingest-jobs) .mono"),
+        ui().querySelectorAll("ul.engines-model-list:not(.engines-ingest-jobs) .mono"),
       ).map((n) => n.textContent);
     expect(catalogueIds()).toEqual(["qwen2.5-coder-1.5b"]);
-    expect(host!.textContent).toContain("取り込み中");
+    expect(ui().textContent).toContain("取り込み中");
 
     finished = true;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10000);
     });
 
-    expect(host!.textContent).toContain("完了");
+    expect(ui().textContent).toContain("完了");
     expect(catalogueIds()).toEqual(["qwen2.5-coder-1.5b", "qwen2.5-coder-0.5b"]);
     // Disabled, so what it offers is the switch-on — decision 6: taken in is not the same as
     // on offer.
-    const fresh = Array.from(host!.querySelectorAll("li.engines-model")).find(
+    const fresh = Array.from(ui().querySelectorAll("li.engines-model")).find(
       (li) => li.querySelector(".mono")?.textContent === "qwen2.5-coder-0.5b",
     )!;
     expect(fresh.className).not.toContain("on");
@@ -1703,17 +1709,17 @@ describe("EngineModelsAdminView", () => {
     // by typing an id that happened to collide with a row — and then by finding a checkbox that
     // stayed disabled until a file role three fields below it was set.
     await act(async () => {
-      const radio = Array.from(host!.querySelectorAll("input[type=radio]"))[1] as HTMLInputElement;
+      const radio = Array.from(ui().querySelectorAll("input[type=radio]"))[1] as HTMLInputElement;
       radio.click();
     });
     // Cannot go on yet, and the screen says what is missing rather than greying a button in
     // silence.
     expect(btn("次へ")!.disabled).toBe(true);
-    expect(host!.textContent).toContain("足す先の行を選んでください");
+    expect(ui().textContent).toContain("足す先の行を選んでください");
 
     const selectByOption = async (value: string) => {
       await act(async () => {
-        const sel = Array.from(host!.querySelectorAll(".engines-ingest select")).find((el) =>
+        const sel = Array.from(ui().querySelectorAll(".engines-ingest select")).find((el) =>
           Array.from((el as HTMLSelectElement).options).some((o) => o.value === value),
         ) as HTMLSelectElement;
         sel.value = value;
@@ -1723,7 +1729,7 @@ describe("EngineModelsAdminView", () => {
     await selectByOption("flux1-dev-fp8"); // the row it joins, PICKED
     // …and the slot, offered as the ones that are FREE. The unlabelled one — the row's own
     // checkpoint — is not among them, which is the CP's own refusal said by not offering it.
-    const slot = Array.from(host!.querySelectorAll(".engines-wizard-slots li")).find(
+    const slot = Array.from(ui().querySelectorAll(".engines-wizard-slots li")).find(
       (el) => el.querySelector("span")?.textContent === "--clip_l",
     );
     await act(async () => (slot!.querySelector("input") as HTMLInputElement).click());
@@ -1739,7 +1745,7 @@ describe("EngineModelsAdminView", () => {
     });
     await click(btn("次へ")); // ④ confirm
     await act(async () => {
-      const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
+      const boxes = Array.from(ui().querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
       boxes[boxes.length - 1].click(); // the licence
     });
 
@@ -1780,10 +1786,10 @@ describe("EnginesAdminView / the Hugging Face token", () => {
   };
 
   const tokenInput = () =>
-    host!.querySelector('input[type="password"]') as HTMLInputElement | null;
+    ui().querySelector('input[type="password"]') as HTMLInputElement | null;
 
   const button = (label: string) =>
-    Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+    Array.from(ui().querySelectorAll("button")).find((b) => b.textContent === label) as
       | HTMLButtonElement
       | undefined;
   it("registers a token and reports who and when, never the value", async () => {
@@ -1798,7 +1804,7 @@ describe("EnginesAdminView / the Hugging Face token", () => {
 
     const input = tokenInput()!;
     expect(input).toBeTruthy();
-    expect(host!.textContent).toContain("未登録");
+    expect(ui().textContent).toContain("未登録");
     // Empty is not a removal: the register button stays disabled until something is typed.
     expect(button("登録する")?.disabled).toBe(true);
 
@@ -1808,8 +1814,8 @@ describe("EnginesAdminView / the Hugging Face token", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/hf-token", "PUT", {
       token: "hf_typed_value",
     });
-    expect(host!.textContent).toContain("登録済み");
-    expect(host!.textContent).toContain("admin1");
+    expect(ui().textContent).toContain("登録済み");
+    expect(ui().textContent).toContain("admin1");
     // 🔴 The token is not on the screen afterwards, in any field: the CP cannot read it back,
     // so anything the panel showed would be its own copy of a secret.
     expect(host!.innerHTML).not.toContain("hf_typed_value");
@@ -1822,8 +1828,8 @@ describe("EnginesAdminView / the Hugging Face token", () => {
     expect(tokenInput()).toBeNull();
     // Not "no token": this deployment HAS one, from a CloudFormation parameter. Reading as
     // "unregistered" would send somebody to fix what is not broken.
-    expect(host!.textContent).toContain("CloudFormation");
-    expect(host!.textContent).not.toContain("未登録");
+    expect(ui().textContent).toContain("CloudFormation");
+    expect(ui().textContent).not.toContain("未登録");
   });
 
   it("says which half failed, in Japanese, when the secret refuses the write", async () => {
@@ -1838,11 +1844,11 @@ describe("EnginesAdminView / the Hugging Face token", () => {
 
     // Scoped to the token panel: the engine panels above carry their own .form-err (an empty
     // catalogue), and an unscoped query would pass while this panel said nothing at all.
-    const panel = Array.from(host!.querySelectorAll(".admin-panel")).at(-1)!;
+    const panel = Array.from(ui().querySelectorAll(".admin-panel")).at(-1)!;
     expect(panel.querySelector(".form-err")?.textContent).toContain("配備の秘密");
     // Still not registered, and the typed value is kept so it can be tried again rather than
     // retyped from wherever it came from.
-    expect(host!.textContent).toContain("未登録");
+    expect(ui().textContent).toContain("未登録");
     expect(tokenInput()!.value).toBe("hf_typed_value");
   });
 
@@ -1867,12 +1873,12 @@ describe("EnginesAdminView / searching for a model", () => {
   };
 
   const field = (label: string) =>
-    (Array.from(host!.querySelectorAll("label.engines-model-add-row, label.engines-search-row")).find(
+    (Array.from(ui().querySelectorAll("label.engines-model-add-row, label.engines-search-row")).find(
       (l) => l.querySelector("span")?.textContent === label,
     )?.querySelector("input") || null) as HTMLInputElement | null;
 
   const button = (label: string) =>
-    Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+    Array.from(ui().querySelectorAll("button")).find((b) => b.textContent === label) as
       | HTMLButtonElement
       | undefined;
 
@@ -1899,7 +1905,7 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(field("リポジトリ")!.value).toBe("stabilityai/stable-diffusion-xl-base-1.0");
     // The filename it named lives on the NEXT question, so this step says what was understood
     // rather than leaving the paste looking like it did nothing.
-    expect(host!.textContent).toContain("sd_xl_base_1.0.safetensors");
+    expect(ui().textContent).toContain("sd_xl_base_1.0.safetensors");
 
     // The file is named, so leaving this step resolves it rather than asking what the repo
     // holds — and the revision the URL carried survives the split (dropping it resolves `main`,
@@ -1998,7 +2004,7 @@ describe("EnginesAdminView / searching for a model", () => {
     });
     // The verdict rides with the row: gated and the real licence name, so the choice is made
     // before a resolve, not after a refusal.
-    const hit = host!.querySelector(".engines-search-hits li")!;
+    const hit = ui().querySelector(".engines-search-hits li")!;
     expect(hit.textContent).toContain("gated");
     expect(hit.textContent).toContain("flux-1-dev-non-commercial-license");
     expect(hit.textContent).toContain("791k");
@@ -2012,7 +2018,7 @@ describe("EnginesAdminView / searching for a model", () => {
     // made, so 「調べる」 was a second confirmation of it. Nothing is STARTED — this is the
     // same read-only listing the button ran.
     expect(field("リポジトリ")!.value).toBe("black-forest-labs/FLUX.1-dev");
-    expect(host!.querySelector(".engines-search-hits")).toBeNull();
+    expect(ui().querySelector(".engines-search-hits")).toBeNull();
     expect(apiJSON).toHaveBeenCalledTimes(2);
     expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/files", "POST", {
       source: { hf: { repo: "black-forest-labs/FLUX.1-dev", file: "", revision: "" } },
@@ -2044,7 +2050,7 @@ describe("EnginesAdminView / searching for a model", () => {
     await typeInto(field("探す")!, "juggernaut");
     await click(button("検索"));
 
-    const hit = host!.querySelector(".engines-search-hits li")!;
+    const hit = ui().querySelector(".engines-search-hits li")!;
     const link = hit.querySelector("a") as HTMLAnchorElement;
     // The CP's string verbatim — the panel never builds one, because Civitai's needs the model
     // id and `ref` is the version's.
@@ -2077,13 +2083,13 @@ describe("EnginesAdminView / searching for a model", () => {
 
     await typeInto(field("探す")!, "x");
     await click(button("検索"));
-    await click(host!.querySelector(".engines-search-hits li button") as HTMLButtonElement);
+    await click(ui().querySelector(".engines-search-hits li button") as HTMLButtonElement);
     expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/files", "POST", {
       source: { hf: { repo: "a/first", file: "", revision: "" } },
     });
 
     await click(button("検索"));
-    const second = host!.querySelectorAll(".engines-search-hits li")[1];
+    const second = ui().querySelectorAll(".engines-search-hits li")[1];
     await click(second.querySelector("button") as HTMLButtonElement);
     expect(field("リポジトリ")!.value).toBe("b/second");
     expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/files", "POST", {
@@ -2113,7 +2119,7 @@ describe("EnginesAdminView / searching for a model", () => {
     await openIngest();
     await click(button("人気を見る"));
 
-    const hit = host!.querySelector(".engines-hit")!;
+    const hit = ui().querySelector(".engines-hit")!;
     expect(hit.querySelector(".engines-hit-name")!.textContent).toBe(
       "stabilityai/stable-diffusion-xl-base-1.0",
     );
@@ -2147,7 +2153,7 @@ describe("EnginesAdminView / searching for a model", () => {
     await openIngest();
     await typeInto(field("探す")!, "WAI");
     await click(button("検索"));
-    const hit = host!.querySelector(".engines-search-hits li")!;
+    const hit = ui().querySelector(".engines-search-hits li")!;
     expect(hit.textContent).toContain("0.7");
     expect(hit.textContent).not.toContain("0.7000000000000001");
   });
@@ -2175,11 +2181,11 @@ describe("EnginesAdminView / searching for a model", () => {
     await click(button("Civitai"));
     await typeInto(field("探す")!, "juggernaut");
     await click(button("検索"));
-    await click(host!.querySelector(".engines-search-hits li button") as HTMLButtonElement);
+    await click(ui().querySelector(".engines-search-hits li button") as HTMLButtonElement);
 
     // The list is gone — the choice has been made — and the one card it was made from stays.
-    expect(host!.querySelector(".engines-search-hits")).toBeNull();
-    const chosen = host!.querySelector(".engines-picked")!;
+    expect(ui().querySelector(".engines-search-hits")).toBeNull();
+    const chosen = ui().querySelector(".engines-picked")!;
     expect(chosen.textContent).toContain("Juggernaut XL");
     expect(chosen.textContent).toContain("CreativeML Open RAIL++-M");
     expect(chosen.textContent).toContain("jugg style");
@@ -2193,7 +2199,7 @@ describe("EnginesAdminView / searching for a model", () => {
     // Typed over, it describes something else — a link and a licence belonging to another model
     // are worse than none.
     await typeInto(field("リポジトリ")!, "civitai:999");
-    expect(host!.querySelector(".engines-picked")).toBeNull();
+    expect(ui().querySelector(".engines-picked")).toBeNull();
   });
 
   it("puts a Civitai hit in as its version id, which is what an ingest takes", async () => {
@@ -2213,7 +2219,7 @@ describe("EnginesAdminView / searching for a model", () => {
       lora: false,
     });
 
-    await click(host!.querySelector(".engines-search-hits li button") as HTMLButtonElement);
+    await click(ui().querySelector(".engines-search-hits li button") as HTMLButtonElement);
     // 🔴 `civitai:<versionId>`, the form the source parser reads. The model id on the page's
     // URL is a different number and resolves to nothing.
     expect(field("リポジトリ")!.value).toBe("civitai:1759168");
@@ -2236,7 +2242,7 @@ describe("EnginesAdminView / searching for a model", () => {
     await openIngest();
     await typeInto(field("探す")!, "zzzz");
     await click(button("検索"));
-    expect(host!.textContent).toContain("見つかりませんでした");
+    expect(ui().textContent).toContain("見つかりませんでした");
     // And the way in that never needed a search is still there.
     expect(field("リポジトリ")).toBeTruthy();
   });
@@ -2262,7 +2268,7 @@ describe("EnginesAdminView / searching for a model", () => {
       sort: "trending",
       lora: false,
     });
-    expect(host!.querySelector(".engines-search-hits li")!.textContent).toContain("stabilityai/sdxl-turbo");
+    expect(ui().querySelector(".engines-search-hits li")!.textContent).toContain("stabilityai/sdxl-turbo");
     // Pressing a ranking searches at once — it is a question, not a setting that waits for a
     // second click somewhere else.
     expect(apiJSON).toHaveBeenCalledTimes(1);
@@ -2275,7 +2281,7 @@ describe("EnginesAdminView / searching for a model", () => {
 // needs no engine at all — no token, no bucket, no task — so the browse stays.
 describe("EnginesAdminView / browsing with no engine deployed", () => {
   const button = (label: string) =>
-    Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+    Array.from(ui().querySelectorAll("button")).find((b) => b.textContent === label) as
       | HTMLButtonElement
       | undefined;
   it("still offers a look at what there is, and says it cannot take anything in", async () => {
@@ -2285,7 +2291,7 @@ describe("EnginesAdminView / browsing with no engine deployed", () => {
     });
     await mount();
     // The "nothing deployed" sentence stays — the browse is added beside it, not instead of it.
-    expect(host!.textContent).toContain("動かしていません");
+    expect(ui().textContent).toContain("動かしていません");
 
     await click(button("人気を見る"));
     // The keyless route, with the kind stated rather than derived: there is no engine to
@@ -2295,12 +2301,12 @@ describe("EnginesAdminView / browsing with no engine deployed", () => {
       source: "hf",
       sort: "downloads",
     });
-    expect(host!.querySelector(".engines-search-hits")!.textContent).toContain("Qwen3-Coder-30B");
-    expect(host!.textContent).toContain("12.6M");
+    expect(ui().querySelector(".engines-search-hits")!.textContent).toContain("Qwen3-Coder-30B");
+    expect(ui().textContent).toContain("12.6M");
     // 🔴 A hit is NOT clickable here: picking one fills an ingest form, and this deployment has
     // no role to ingest into. The note says so instead of offering a button that cannot work.
-    expect(host!.querySelector(".engines-search-hits li button")).toBeNull();
-    expect(host!.textContent).toContain("閲覧だけです");
+    expect(ui().querySelector(".engines-search-hits li button")).toBeNull();
+    expect(ui().textContent).toContain("閲覧だけです");
   });
 
   it("asks for the kind, because there is no engine to derive it from", async () => {
@@ -2349,7 +2355,7 @@ describe("EngineModelsAdminView / a model's own negative prompt", () => {
     });
   };
   const saveButton = () =>
-    Array.from(host!.querySelectorAll(".engines-model-negative button"))[0] as HTMLElement;
+    Array.from(ui().querySelectorAll(".engines-model-negative button"))[0] as HTMLElement;
 
   it("saves what this checkpoint should keep out, and lets it be cleared", async () => {
     api.mockResolvedValue({
@@ -2372,7 +2378,7 @@ describe("EngineModelsAdminView / a model's own negative prompt", () => {
       ],
     });
     await mount();
-    const box = host!.querySelector(".engines-model-negative input") as HTMLInputElement;
+    const box = ui().querySelector(".engines-model-negative input") as HTMLInputElement;
     expect(box.value).toBe("extra fingers");
 
     await typeInto(box, "extra fingers, text");
@@ -2386,7 +2392,7 @@ describe("EngineModelsAdminView / a model's own negative prompt", () => {
     // answers with its own measured default rather than with nothing excluded.
     apiJSON.mockClear();
     apiJSON.mockResolvedValue(row({}));
-    await typeInto(host!.querySelector(".engines-model-negative input")!, "");
+    await typeInto(ui().querySelector(".engines-model-negative input")!, "");
     await click(saveButton());
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/sdxl-base-1.0", "PUT", {
       negative_prompt: "",
@@ -2412,8 +2418,8 @@ describe("EngineModelsAdminView / a model's own negative prompt", () => {
     // deleted, and would have gone on passing for ever. Found while adding the window editor
     // next door, which needed the same guard and the same pairing.
     await click(tab("LoRA"));
-    expect(host!.querySelector(".engines-model-id")?.textContent).toBe("watercolor-v2");
-    expect(host!.querySelector(".engines-model-negative")).toBeNull();
+    expect(ui().querySelector(".engines-model-id")?.textContent).toBe("watercolor-v2");
+    expect(ui().querySelector(".engines-model-negative")).toBeNull();
   });
 });
 
@@ -2428,7 +2434,7 @@ describe("the window and the VRAM measurement", () => {
    *  assertion over the whole screen goes on passing when this block disappears and something
    *  else on a long panel happens to carry the number. */
   const windowBox = (id: string) =>
-    Array.from(host!.querySelectorAll(".engines-model"))
+    Array.from(ui().querySelectorAll(".engines-model"))
       .find((li) => li.querySelector(".engines-model-id")?.textContent === id)
       ?.querySelector(".engines-model-window") as HTMLElement | null;
 
@@ -2517,7 +2523,7 @@ describe("the window and the VRAM measurement", () => {
     });
     await mount();
     const meta = (id: string) =>
-      Array.from(host!.querySelectorAll(".engines-model"))
+      Array.from(ui().querySelectorAll(".engines-model"))
         .find((li) => li.querySelector(".engines-model-id")?.textContent === id)!
         .querySelector(".engines-model-meta")!.textContent!;
     expect(meta("qwen3")).toContain("VRAM 少なくとも 33792 MiB（重み＋KV キャッシュ）");
@@ -2582,7 +2588,7 @@ describe("the window and the VRAM measurement", () => {
 
     // The CP's sentence, not one rebuilt here: it names the demand of the row as EDITED, which
     // nothing on this row knows — `vram_need_mib` still describes the stored window.
-    const ask = host!.querySelector(".engines-model-confirm")!;
+    const ask = ui().querySelector(".engines-model-confirm")!;
     expect(ask.textContent).toContain("33792");
 
     apiJSON.mockClear();
@@ -2632,7 +2638,7 @@ describe("the window and the VRAM measurement", () => {
     // Onto the adapter tab first: an assertion made on the model tab would pass because the row
     // is not rendered at all, which is not what is being claimed.
     await click(tab("LoRA"));
-    expect(host!.querySelector(".engines-model-id")?.textContent).toBe("watercolor-v2");
+    expect(ui().querySelector(".engines-model-id")?.textContent).toBe("watercolor-v2");
     expect(windowBox("watercolor-v2")).toBeFalsy();
   });
 
@@ -2685,7 +2691,7 @@ describe("EnginesAdminView / will this file fit the card", () => {
   };
 
   const field = (label: string) =>
-    (Array.from(host!.querySelectorAll("label.engines-model-add-row, label.engines-search-row")).find(
+    (Array.from(ui().querySelectorAll("label.engines-model-add-row, label.engines-search-row")).find(
       (l) => l.querySelector("span")?.textContent === label,
     )?.querySelector("input") || null) as HTMLInputElement | null;
 
@@ -2693,11 +2699,11 @@ describe("EnginesAdminView / will this file fit the card", () => {
    *  the page: this form grows a sentence a release and a `textContent.includes` over the whole
    *  screen has twice gone on passing here while the thing it names moved elsewhere. */
   const candidate = (name: string) =>
-    Array.from(host!.querySelectorAll(".engines-ingest select option")).find(
+    Array.from(ui().querySelectorAll(".engines-ingest select option")).find(
       (o) => (o as HTMLOptionElement).value === name,
     ) as HTMLOptionElement | undefined;
 
-  const fitLine = () => host!.querySelector(".engines-ingest-fit");
+  const fitLine = () => ui().querySelector(".engines-ingest-fit");
 
   const llm = (over: Record<string, unknown> = {}) =>
     row({ key: "llm", api: "chat", provider: "llamacpp", has_models: true, model_rows: [], ...over });
@@ -2750,7 +2756,7 @@ describe("EnginesAdminView / will this file fit the card", () => {
       kv_mib_per_1k_tokens: 96,
     });
     await act(async () => {
-      const picker = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+      const picker = ui().querySelector(".engines-ingest select") as HTMLSelectElement;
       picker.value = "Q4_K_M.gguf";
       picker.dispatchEvent(new Event("change", { bubbles: true }));
     });
@@ -2804,7 +2810,7 @@ describe("EnginesAdminView / will this file fit the card", () => {
       // No kv_mib_per_1k_tokens: the range GET over the GGUF header did not answer.
     });
     await act(async () => {
-      const picker = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+      const picker = ui().querySelector(".engines-ingest select") as HTMLSelectElement;
       picker.value = "Q4_K_M.gguf";
       picker.dispatchEvent(new Event("change", { bubbles: true }));
     });
@@ -2837,13 +2843,13 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
    * impossible: the form this replaced showed both acts as checkboxes that disabled each other,
    * with no sentence anywhere saying which was which. */
   const chooseAct = async (word: string, target?: string, slot?: string) => {
-    const label = Array.from(host!.querySelectorAll(".engines-wizard-acts label")).find((l) =>
+    const label = Array.from(ui().querySelectorAll(".engines-wizard-acts label")).find((l) =>
       l.textContent?.includes(word),
     ) as HTMLLabelElement | undefined;
     await act(async () => (label!.querySelector("input") as HTMLInputElement).click());
     const selectByOption = async (value: string) => {
       await act(async () => {
-        const sel = Array.from(host!.querySelectorAll(".engines-ingest select")).find((el) =>
+        const sel = Array.from(ui().querySelectorAll(".engines-ingest select")).find((el) =>
           Array.from((el as HTMLSelectElement).options).some((o) => o.value === value),
         ) as HTMLSelectElement | undefined;
         if (!sel) throw new Error("no select offers " + JSON.stringify(value));
@@ -2854,7 +2860,7 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
     if (target) await selectByOption(target);
     if (slot !== undefined) {
       const want = slot === "" ? "チェックポイント（単一ファイル）" : slot;
-      const li = Array.from(host!.querySelectorAll(".engines-wizard-slots li")).find(
+      const li = Array.from(ui().querySelectorAll(".engines-wizard-slots li")).find(
         (el) => el.querySelector("span")?.textContent === want,
       );
       if (!li) throw new Error("no slot offered for " + JSON.stringify(slot));
@@ -2864,7 +2870,7 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
   /** Which slots that act offers at all — the assertion that used to be "is the checkbox grey".
    *  Read off the LABELS, because the empty flag is a real answer and has no text of its own. */
   const slotOptions = () =>
-    Array.from(host!.querySelectorAll(".engines-wizard-slots li span")).map((el) => el.textContent);
+    Array.from(ui().querySelectorAll(".engines-wizard-slots li span")).map((el) => el.textContent);
 
   const flux = (files: { s3Key: string; flag?: string }[]) =>
     row({
@@ -2899,7 +2905,7 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
     await chooseAct("差し替える", undefined, "--t5xxl");
     // And it says what "replace" does not say by itself: the old object stays, because the CP
     // has no s3:DeleteObject and the keys are shared between rows.
-    expect(host!.querySelector(".engines-ingest")!.textContent).toContain("バケットに残ります");
+    expect(ui().querySelector(".engines-ingest")!.textContent).toContain("バケットに残ります");
     await click(btn("次へ"));
 
     await wizSource("comfyanonymous/flux_text_encoders", "t5xxl_fp8_e4m3fn.safetensors", {
@@ -2912,7 +2918,7 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
     });
     await click(btn("次へ"));
     await act(async () => {
-      const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
+      const boxes = Array.from(ui().querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
       boxes[boxes.length - 1].click(); // the licence
     });
 
@@ -2952,12 +2958,12 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
       commercial_use: "yes",
       can_ingest: true,
     });
-    const labels = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row span"));
+    const labels = Array.from(ui().querySelectorAll(".engines-ingest .engines-model-add-row span"));
     expect(labels.map((l) => l.textContent)).not.toContain("モデル族");
 
     await click(btn("次へ"));
     await act(async () => {
-      const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
+      const boxes = Array.from(ui().querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
       boxes[boxes.length - 1].click();
     });
     apiJSON.mockResolvedValueOnce({ id: "j10", model_id: "flux1-dev-fp8", state: "running" });
@@ -2980,7 +2986,7 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
   it("offers the form to an external engine and not to a borrowed one", async () => {
     /** The way IN to every act this form offers. Collapsed until pressed, so this — not the
      *  open form — is what "the ingest is offered here" looks like on a freshly loaded panel. */
-    const opener = () => host!.querySelector(".engines-open");
+    const opener = () => ui().querySelector(".engines-open");
 
     const remount = async (over: Record<string, unknown>) => {
       act(() => root?.unmount());
@@ -3024,7 +3030,7 @@ describe("EngineModelsAdminView / forgetting an ingest job", () => {
    *  text: this screen holds two lists that both print model ids, and an assertion on the page
    *  passes while the wrong one carries the control. */
   const jobLi = (modelID: string) =>
-    Array.from(host!.querySelectorAll("ul.engines-ingest-jobs li")).find(
+    Array.from(ui().querySelectorAll("ul.engines-ingest-jobs li")).find(
       (li) => li.querySelector(".engines-model-id")?.textContent === modelID,
     ) as HTMLElement;
   const forgetButton = (li: HTMLElement) =>
@@ -3093,7 +3099,7 @@ describe("EngineModelsAdminView / forgetting an ingest job", () => {
     expect(go.disabled).toBe(false);
     await click(go);
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/j-done", "DELETE");
-    expect(host!.querySelector("ul.engines-ingest-jobs")).toBeNull();
+    expect(ui().querySelector("ul.engines-ingest-jobs")).toBeNull();
   });
 
   // 🔴 The one job that is harder to forget: nothing in the catalogue points at its key, so
@@ -3198,11 +3204,11 @@ describe("EngineModelsAdminView / registering a key from the history", () => {
     );
   };
   const reuseButton = () =>
-    host!.querySelector(".engines-ingest-job-reuse") as HTMLButtonElement | null;
+    ui().querySelector(".engines-ingest-job-reuse") as HTMLButtonElement | null;
   /** The input of the add form's row with this label — the form is a column of labelled rows,
    *  and reading it by index breaks the moment a field is added above. */
   const addField = (label: string) =>
-    (Array.from(host!.querySelectorAll(".engines-model-add .engines-model-add-row")).find(
+    (Array.from(ui().querySelectorAll(".engines-model-add .engines-model-add-row")).find(
       (l) => l.querySelector("span")?.textContent === label,
     ) as HTMLElement)?.querySelector("input, select") as HTMLInputElement | HTMLSelectElement;
 
@@ -3219,14 +3225,14 @@ describe("EngineModelsAdminView / registering a key from the history", () => {
     expect(apiJSON).not.toHaveBeenCalled();
     // Where it came from, shown rather than hidden — it is the one thing that will land on the
     // row and has no field of its own.
-    expect(host!.querySelector(".engines-model-add-from-job")?.textContent).toContain(
+    expect(ui().querySelector(".engines-model-add-from-job")?.textContent).toContain(
       "hf:stabilityai/stable-diffusion-3.5-medium",
     );
     // 🔴 The FAMILY is not filled in, and the button is off until somebody picks one. A display
     // name from a repository produced rows that looked complete and refused to generate (ADR
     // 0072 P2 実機検証), so it is the one answer this form will not guess from a job.
     const goButton = () =>
-      Array.from(host!.querySelectorAll(".engines-model-add-actions button")).find(
+      Array.from(ui().querySelectorAll(".engines-model-add-actions button")).find(
         (b) => b.textContent === "登録する",
       ) as HTMLButtonElement;
     expect((addField("ファミリー") as HTMLSelectElement).value).toBe("");
@@ -3274,7 +3280,7 @@ describe("EngineModelsAdminView / registering a key from the history", () => {
     expect((addField("役割") as HTMLSelectElement).value).toBe("--clip_l");
     // Not a refusal: SD3.5 and FLUX.1 read the same text encoders, so a shared key is normal
     // and the form says who has it instead of blocking.
-    expect(host!.querySelector(".engines-model-add-from-job")?.textContent).toContain(
+    expect(ui().querySelector(".engines-model-add-from-job")?.textContent).toContain(
       "image/flux1-dev-fp8",
     );
     expect(reuseButton()).toBeTruthy();
@@ -3287,8 +3293,8 @@ describe("EngineModelsAdminView / registering a key from the history", () => {
     await mount();
     // Starts on the model tab, as the screen always does.
     const active = () =>
-      (host!.querySelector(".seg-btn.active + .seg-btn.active, .seg-btn.active") &&
-        Array.from(host!.querySelectorAll(".seg-btn.active")).map((b) => b.textContent)) || [];
+      (ui().querySelector(".seg-btn.active + .seg-btn.active, .seg-btn.active") &&
+        Array.from(ui().querySelectorAll(".seg-btn.active")).map((b) => b.textContent)) || [];
     expect(active()).toContain("モデル");
     await click(reuseButton()!);
     expect(active()).toContain("LoRA");
@@ -3297,11 +3303,11 @@ describe("EngineModelsAdminView / registering a key from the history", () => {
     // And a tab pressed BY HAND drops the prefill: without that, coming back to the model list
     // later reopens the form still holding a key nobody chose there.
     await click(
-      Array.from(host!.querySelectorAll(".seg-btn")).find(
+      Array.from(ui().querySelectorAll(".seg-btn")).find(
         (b) => b.textContent === "モデル",
       ) as HTMLElement,
     );
-    expect(host!.querySelector(".engines-model-add")).toBeNull();
+    expect(ui().querySelector(".engines-model-add")).toBeNull();
   });
 
   // A failed job left part of a file at best, so registering its key would produce a row that
@@ -3313,7 +3319,7 @@ describe("EngineModelsAdminView / registering a key from the history", () => {
     ]);
     await mount();
     const li = (modelID: string) =>
-      Array.from(host!.querySelectorAll("ul.engines-ingest-jobs li")).find(
+      Array.from(ui().querySelectorAll("ul.engines-ingest-jobs li")).find(
         (n) => n.querySelector(".engines-model-id")?.textContent === modelID,
       ) as HTMLElement;
     expect(li("sd35-large").querySelector(".engines-ingest-job-reuse")).toBeNull();
@@ -3334,12 +3340,12 @@ describe("EngineModelsAdminView / registering a key from the history", () => {
     );
     await mount();
     expect(reuseButton()).toBeNull();
-    expect(host!.querySelector(".engines-ingest-job-forget")).toBeTruthy();
+    expect(ui().querySelector(".engines-ingest-job-forget")).toBeTruthy();
     // And the form the button would have filled is not on their screen either. By its own
     // label: `.engines-open` is worn by the INGEST opener too, which a granted tenant_admin
     // does get, so the class alone would have asserted nothing.
     expect(
-      Array.from(host!.querySelectorAll("button")).find(
+      Array.from(ui().querySelectorAll("button")).find(
         (b) => b.textContent === "バケットのファイルを登録する",
       ),
     ).toBeUndefined();
@@ -3361,6 +3367,44 @@ describe("EngineModelsAdminView / registering a key from the history", () => {
     answer([done()], { managed: false, lifecycle: "external", url: "http://192.168.0.2:8188" });
     await mount();
     expect(reuseButton()).toBeTruthy();
+  });
+});
+
+// 🔴 Closing the dialog puts it back at the first question. Found by RENDERING two scenes in a
+// row (headless, 2026-09-13): the second opened 「モデルを追加」 and landed in the middle of the
+// act the first had chosen, against a row nobody had picked this time — with the next button
+// greyed for a reason that belonged to a previous visit.
+describe("EngineModelsAdminView / re-opening the wizard", () => {
+  it("starts from the first question again after it is closed", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl"],
+          file_flags: ["", "--vae"],
+          has_models: true,
+          model_rows: [{ id: "sdxl-base-1.0", enabled: true, base_model: "sdxl" }],
+        }),
+      ],
+    });
+    await mount();
+    const open = () =>
+      Array.from(ui().querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLButtonElement;
+    await click(open());
+    // Answer ① with the act that needs a target, and leave it half-answered.
+    await act(async () => {
+      (Array.from(ui().querySelectorAll("input[type=radio]"))[1] as HTMLInputElement).click();
+    });
+    expect(ui().textContent).toContain("どの行に？");
+
+    await click(ui().querySelector(".engines-wizard-modal .ui-modal-head button") as HTMLButtonElement);
+    await click(open());
+    // The first question, on the default act — not the one from the previous visit.
+    expect(ui().textContent).not.toContain("どの行に？");
+    expect((Array.from(ui().querySelectorAll("input[type=radio]"))[0] as HTMLInputElement).checked).toBe(true);
   });
 });
 
@@ -3393,14 +3437,14 @@ describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
       ],
     });
   const button = (label: string) =>
-    Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+    Array.from(ui().querySelectorAll("button")).find((b) => b.textContent === label) as
       | HTMLButtonElement
       | undefined;
 
   it("says what is wrong and fixes it in one press when the file is already here", async () => {
     api.mockResolvedValue({ super_admin: true, engines: [broken()] });
     await mount();
-    expect(host!.textContent).toContain("VAE を同梱していません");
+    expect(ui().textContent).toContain("VAE を同梱していません");
 
     // The plan first — what the press will do, before it does it.
     apiJSON.mockResolvedValue({
@@ -3420,7 +3464,7 @@ describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
     // 🔴 The cheap case has to SAY it is cheap: the bytes are already this deployment's, so
     // there is no download, no minutes and no second licence to accept. A screen that asked for
     // a licence acceptance here would be asking about something that is not happening.
-    expect(host!.textContent).toContain("もう置いてあります");
+    expect(ui().textContent).toContain("もう置いてあります");
     expect(button("ライセンスに同意して取り込む")).toBeFalsy();
 
     apiJSON.mockResolvedValue({ action: "attached", vae_bundled: "no" });
@@ -3430,7 +3474,7 @@ describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
       "POST",
       {},
     );
-    expect(host!.textContent).toContain("有効にできます");
+    expect(ui().textContent).toContain("有効にできます");
   });
 
   // The other half of the same press: the file is not here, so it is a download under a licence
@@ -3448,9 +3492,9 @@ describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
       license: "mit",
     });
     await click(button("VAE を足す"));
-    expect(host!.textContent).toContain("stabilityai/sdxl-vae/sdxl_vae.safetensors");
-    expect(host!.textContent).toContain("335 MB");
-    expect(host!.textContent).toContain("mit");
+    expect(ui().textContent).toContain("stabilityai/sdxl-vae/sdxl_vae.safetensors");
+    expect(ui().textContent).toContain("335 MB");
+    expect(ui().textContent).toContain("mit");
 
     apiJSON.mockResolvedValue({ action: "job_started", vae_bundled: "no" });
     await click(button("ライセンスに同意して取り込む"));
@@ -3459,7 +3503,7 @@ describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
       "POST",
       { licenseAccepted: true },
     );
-    expect(host!.textContent).toContain("取り込みを開始しました");
+    expect(ui().textContent).toContain("取り込みを開始しました");
   });
 
   // 🔴 Measured on af-sandbox (2026-09-13): the row's source is a Civitai version, Civitai
@@ -3477,8 +3521,8 @@ describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
       recheck_failed: "civitai.com answered 503 Service Unavailable",
     });
     await click(button("VAE を足す"));
-    expect(host!.textContent).toContain("もう一度読めませんでした");
-    expect(host!.textContent).toContain("503");
+    expect(ui().textContent).toContain("もう一度読めませんでした");
+    expect(ui().textContent).toContain("503");
     // …and the press still goes through, carrying the operator's "I know" so the CP does not
     // refuse the same thing twice.
     apiJSON.mockResolvedValue({ action: "attached", vae_bundled: "no" });
@@ -3499,7 +3543,7 @@ describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
       error: { code: "engine_vae_unreadable", message: "civitai.com answered 503 Service Unavailable" },
     });
     await click(button("VAE を足す"));
-    expect(host!.textContent).toContain("503");
+    expect(ui().textContent).toContain("503");
     const forceBtn = button("上流が答えないので、承知のうえで足す");
     expect(forceBtn).toBeTruthy();
 
@@ -3527,8 +3571,8 @@ describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
       read: [{ id: "waimature_v30", vae_bundled: "", unreadable: "civitai.com answered 503 Service Unavailable" }],
     });
     await mount();
-    expect(host!.textContent).toContain("確認できませんでした");
-    expect(host!.textContent).toContain("503");
+    expect(ui().textContent).toContain("確認できませんでした");
+    expect(ui().textContent).toContain("503");
     // The plain "add a VAE" press is not offered: it would be one more request to the host that
     // just refused. What is offered is the deliberate one.
     expect(button("VAE を足す")).toBeFalsy();
@@ -3547,7 +3591,7 @@ describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
     });
     apiJSON.mockResolvedValue({ read: [] });
     await mount();
-    expect(host!.textContent).not.toContain("VAE を同梱していません");
+    expect(ui().textContent).not.toContain("VAE を同梱していません");
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/vae-scan", "POST", {});
     // Once. The rows are replaced on every load, so a scan that depended on their identity
     // would read the upstream again for ever.

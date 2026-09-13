@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { ModelVaeFix, useVaeScan } from "./adminEngineVae.tsx";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
+import { Modal } from "../../../ui/Modal.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import {
@@ -327,9 +328,6 @@ export function EngineModelsAdminView() {
             {open.url ? <span className="mono"> {open.url}</span> : null}
           </p>
         )}
-        {/* The catalogue, hidden while 「モデルを追加」 is open: that screen asks one question at
-            a time, and a list of models under it turns it back into a form on a page. */}
-        {!adding && (
         <EngineModels
           key={open.key + "/" + kind}
           row={open}
@@ -343,7 +341,6 @@ export function EngineModelsAdminView() {
           onReload={load}
           vaeUnreadable={vaeUnreadable}
         />
-        )}
         {/* The ingest is a write too — `POST /ingest` is one of the five routes that answer 400
             for a borrowed role — and it is also the one that would spend money and bucket space
             on a file the far engine is never going to load: the box that stages files is the far
@@ -2018,6 +2015,35 @@ function EngineIngest({
     if (name) await resolveFile(name);
   };
 
+  /** Back to the first question. 🔴 Closing has to do this, not only a successful start: the
+   *  wizard is a dialog now, so its state outlives the press that dismissed it — and re-opening
+   *  「モデルを追加」 into the middle of an act somebody chose minutes ago, against a row they no
+   *  longer remember picking, is the same "state the screen does not show" defect this screen
+   *  was built to end. Caught by rendering two scenes in a row (headless, 2026-09-13). */
+  const reset = () => {
+    setFound(null);
+    setAccepted(false);
+    setRepo("");
+    setRev("");
+    setFile("");
+    setFiles(null);
+    setHits(null);
+    setPicked(null);
+    setId("");
+    setFileFlag("");
+    setDesc("");
+    setStep("act");
+    setAct("new");
+    setSlotChosen(false);
+    setWithVae(false);
+    setErr("");
+    setParams(engineParamsBlank);
+  };
+  const close = () => {
+    setOpen(false);
+    reset();
+  };
+
   const start = async () => {
     setErr("");
     const c = engineNumField(ctx);
@@ -2048,21 +2074,7 @@ function EngineIngest({
       setErr(errDetail(d.error));
       return;
     }
-    setOpen(false);
-    setFound(null);
-    setAccepted(false);
-    setRepo("");
-    setRev("");
-    setFile("");
-    setFiles(null);
-    setPicked(null);
-    setId("");
-    setFileFlag("");
-    setStep("act");
-    setAct("new");
-    setSlotChosen(false);
-    setWithVae(false);
-    setParams(engineParamsBlank);
+    close();
     onStarted();
   };
 
@@ -2131,12 +2143,20 @@ function EngineIngest({
     setStep(engineIngestSteps[at + 1]);
   };
   const partLabel = fileFlag || (tr("admin.engines_model_add_part_whole") as string);
+  // 🔴 Its own dialog, ABOVE the admin one. Drawn inside the panel it was a long section that
+  // shared a scrollbar with the catalogue, and on a phone the question being answered was
+  // wherever the page happened to be scrolled to. The shell brings what a screen needs and this
+  // component should not reinvent: a title, a close, Esc and the device back button peeled one
+  // layer at a time (useEscLayer / useBackClose), a focus trap, and a portal to <body> so no
+  // transformed ancestor becomes its containing block.
   return (
-    <div className="engines-wizard engines-ingest">
+    <Modal
+      title={tr(isLora ? "admin.engines_wizard_title_lora" : "admin.engines_wizard_title")}
+      onClose={close}
+      className="settings-modal engines-wizard-modal"
+    >
+    <div className="engines-wizard engines-ingest ui-modal-body">
       <div className="engines-wizard-head">
-        <span className="engines-wizard-title">
-          {tr(isLora ? "admin.engines_wizard_title_lora" : "admin.engines_wizard_title")}
-        </span>
         {/* Where this is in the four questions. A rail rather than a scrollbar: the form it
             replaced was twelve fields in one column, of which the ones that applied depended on
             state nothing on screen showed. */}
@@ -2148,9 +2168,6 @@ function EngineIngest({
             </li>
           ))}
         </ol>
-        <button type="button" className="sm" onClick={() => setOpen(false)}>
-          {tr("common.cancel")}
-        </button>
       </div>
 
       {/* ① The ACT, asked instead of inferred. It used to be decided by whether the id somebody
@@ -2593,6 +2610,7 @@ function EngineIngest({
           the question about which act to perform. */}
       {(step === "find" || step === "confirm") && <p className="muted">{tr("admin.engines_ingest_note")}</p>}
     </div>
+    </Modal>
   );
 }
 
