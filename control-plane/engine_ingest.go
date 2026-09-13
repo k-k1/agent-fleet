@@ -689,6 +689,15 @@ type engineIngestRequest struct {
 	// Zero means it could not be read — a gated repository with no token, a file that is not a
 	// GGUF, an upstream that refused the Range — and the row keeps the floor it always had.
 	KVGeom engineKVGeometry
+	// VaeBundled is the same kind of fact for the image role, read from the safetensors header
+	// before the job started (engine_safetensors.go): does this checkpoint carry the VAE its
+	// family decodes with. Written onto the FILE, so it survives the row being edited and moves
+	// with a replacement.
+	VaeBundled string
+	// VaeFollowUp is the second file this ingest promised: the family's own VAE, attached to the
+	// row this job creates. Decided while somebody was still at the form — the job finishes in
+	// the reconciler, where a resolve failure has nobody to report itself to.
+	VaeFollowUp *engineVaeFollowUp
 }
 
 // start creates the job row and launches the task. The row is written FIRST: a RunTask that
@@ -865,6 +874,12 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 	// (see store.EngineModelFile.Source).
 	file := store.EngineModelFile{
 		Flag: req.FileFlag, S3Key: req.S3Key, Bytes: req.Resolved.Bytes, Source: req.Resolved.Source,
+		// What the header said before the download started. A file taken in AS a VAE answers the
+		// question by being one, which is what keeps the scan from ever asking about it again.
+		VaeBundled: req.VaeBundled,
+	}
+	if strings.TrimSpace(req.FileFlag) == "--vae" {
+		file.VaeBundled = engineVaeYes
 	}
 	if req.Replace {
 		// 🔴 The geometry is written again, and only for the slot it describes. The row holds ONE
@@ -964,6 +979,51 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 	if g.onDone != nil {
 		g.onDone(req.Role)
 	}
+	g.followUpVae(ctx, req)
+}
+
+// followUpVae gives a row that was just created the VAE its checkpoint does not carry, either by
+// declaring a file this deployment already holds or by starting a second download.
+//
+// It runs HERE, after the row exists, because an attach needs something to attach to. Everything
+// that could have been decided earlier was: the plan was resolved while the operator was at the
+// form, so this path makes no judgement and can report nothing — a failure is a log line and a
+// row that keeps its `vae_missing` mark, which is the state the panel's own button fixes.
+func (g *engineIngester) followUpVae(ctx context.Context, req engineIngestRequest) {
+	fu := req.VaeFollowUp
+	if fu == nil || g.models == nil {
+		return
+	}
+	if fu.Staged {
+		file := store.EngineModelFile{
+			Flag: "--vae", S3Key: fu.S3Key, Bytes: fu.Bytes, Source: fu.Source, VaeBundled: engineVaeYes,
+		}
+		found, err := g.models.AppendEngineModelFile(ctx, req.Role, req.ModelID, file)
+		if err != nil || !found {
+			log.Printf("engines: %s/%s did not take the family VAE %s (found=%v): attach it from the panel",
+				req.Role, req.ModelID, fu.S3Key, found)
+			return
+		}
+		log.Printf("engines: %s/%s declared %s, which this deployment already held", req.Role, req.ModelID, fu.S3Key)
+		if g.onDone != nil {
+			g.onDone(req.Role)
+		}
+		return
+	}
+	// 🔴 The licence tuple is the one the operator accepted at the form, carried rather than
+	// re-read: they saw this file's terms beside the checkpoint's own (`family_vae` on the
+	// resolve), and an acceptance recorded against anybody else would be a fiction.
+	if _, aerr := g.start(ctx, engineIngestRequest{
+		Role: req.Role, ModelID: req.ModelID, S3Key: fu.S3Key,
+		AcceptedBy: req.AcceptedBy, AcceptedTenant: req.AcceptedTenant,
+		AcceptedLicense: engineLicenceLabel(fu.Resolved),
+		Resolved:        fu.Resolved, FileFlag: "--vae", Attach: true,
+	}); aerr != nil {
+		log.Printf("engines: %s/%s could not start the family VAE ingest (%s): attach it from the panel",
+			req.Role, req.ModelID, aerr.message)
+		return
+	}
+	log.Printf("engines: %s/%s is taking its family VAE in (%s)", req.Role, req.ModelID, fu.S3Key)
 }
 
 // engineIngestFailureCode reads the ONE actionable thing out of a failed task's own words: the

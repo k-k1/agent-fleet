@@ -187,6 +187,66 @@ export const admin = {
   // `image/checkpoints/` の Flag 無し 1 ファイルで、flux1 は別に 4 本を読む——どれを
   // 選んでも動かないのに、選んだ瞬間に印だけが消えていた。
   "admin.engines_model_files_missing": "この行は「{n}」のワークフローが読むファイルを持っていません（不足: {f}）。取り込みでこの行の部品として足すまで、有効にはできません。",
+  // 🔴 チェックポイント自身が VAE を持たない場合（ADR 0072 follow-up）。宣言では表せない
+  // 唯一の欠陥で、行は完全に見えるのに全要求が ComfyUI の中で落ちる——しかも箱が
+  // 切り替え 1〜2.5 分を払ったあとに。利用者側の回避手段は無い（ツールに VAE の引数が無い）。
+  "admin.engines_model_vae_missing":
+    "このチェックポイントは VAE を同梱していません。族のワークフローには復号に使えるものが無く、プロンプトや大きさを変えても全部同じところで失敗します。有効にはできません。",
+  "admin.engines_model_vae_fix": "VAE を足す",
+  // すでにバケットに置いてある場合。ダウンロードも新しいライセンス受諾も要らない、が
+  // いちばん伝える価値のある違い。
+  "admin.engines_model_vae_plan_staged": "{f} はこの配備にもう置いてあります。この行に足すだけで済みます（ダウンロードなし）。",
+  "admin.engines_model_vae_plan_ingest": "{f} を取り込んで、この行に `--vae` として足します（{n}・ライセンス {l}）。",
+  "admin.engines_model_vae_accept": "ライセンスに同意して取り込む",
+  "admin.engines_model_vae_attach": "この行に足す",
+  "admin.engines_model_vae_cancel": "やめる",
+  "admin.engines_model_vae_started": "取り込みを開始しました。終わるとこの行に付きます（履歴で進み具合が見られます）。",
+  "admin.engines_model_vae_attached": "この行に足しました。有効にできます。",
+  "admin.engines_model_vae_none": "ヘッダを読み直したところ、このチェックポイントは VAE を同梱していました。印を取り消します。",
+  // --- 「モデルを追加」ウィザード（4 問）--------------------------------------
+  // 🔴 これが置き換えたのは、1 列に 12 項目が縦に並び、そのうちどれが効くかは画面に
+  // 出ていない状態（タブ・id の衝突・役割の選択）で決まるフォーム。配備の持ち主が
+  // 実際にここで詰まり、「部品として足す」のチェックに辿り着けなかった。
+  "admin.engines_wizard_title": "モデルを追加",
+  "admin.engines_wizard_title_lora": "LoRA を追加",
+  "admin.engines_wizard_step_act": "何をする？",
+  "admin.engines_wizard_step_find": "どこから",
+  "admin.engines_wizard_step_file": "どれを",
+  "admin.engines_wizard_step_confirm": "確認",
+  "admin.engines_wizard_act_new": "新しいモデルを追加",
+  "admin.engines_wizard_act_new_why": "この一覧に新しい行を作ります。",
+  "admin.engines_wizard_act_attach": "既存の行に部品を足す",
+  "admin.engines_wizard_act_attach_why": "VAE やテキストエンコーダなど。行の他の欄（ファミリー・ライセンス・有効状態）は触りません。",
+  "admin.engines_wizard_act_replace": "既存の行のファイルを差し替える",
+  "admin.engines_wizard_act_replace_why": "同じ枠のファイルだけを入れ替えます。量子化を変えるときなど。",
+  "admin.engines_wizard_target": "どの行に？",
+  "admin.engines_wizard_target_pick": "行を選んでください",
+  "admin.engines_wizard_role": "この行のどの枠に？",
+  "admin.engines_wizard_role_pick": "枠を選んでください",
+  "admin.engines_wizard_no_rows": "この一覧にはまだ行がありません。「新しいモデルを追加」から始めてください。",
+  "admin.engines_wizard_need_target": "足す先の行を選んでください。",
+  "admin.engines_wizard_need_role": "どの枠に入れるかを選んでください。",
+  // 空いている枠が無い／埋まっている枠が無い。押せない理由をボタンの横で言う。
+  "admin.engines_wizard_no_slots_attach": "この行には空いている枠がありません。入れ替えるなら「差し替える」を選んでください。",
+  "admin.engines_wizard_no_slots_replace": "この行にはまだファイルがありません。「部品を足す」を選んでください。",
+  "admin.engines_wizard_need_repo": "リポジトリ名か URL を入れるか、上の検索から選んでください。",
+  "admin.engines_wizard_repo_note": "`owner/name`、モデルページの URL、`civitai:<versionId>` のどれでも構いません。検索は入口で、必須ではありません。",
+  "admin.engines_wizard_need_file": "ファイルを選んでください。",
+  "admin.engines_wizard_cannot": "この配備ではこのファイルを取り込めません（上の理由）。",
+  "admin.engines_wizard_need_id": "id を入れてください。",
+  "admin.engines_wizard_need_family": "ファミリーを選んでください。このエンジンはファミリーでワークフローを選び、推測はしません。",
+  // 🔴 ADR 0072 follow-up。ヘッダを読んで「VAE 非同梱」と分かったときだけ出る。
+  "admin.engines_wizard_vae_take": "このチェックポイントは VAE を同梱していないので、{f} も一緒に取り込んで `--vae` として足します（{n}・ライセンス {l}）",
+  "admin.engines_wizard_vae_staged": "このチェックポイントは VAE を同梱していないので、すでにこの配備にある {f} を `--vae` として足します（ダウンロードなし）",
+  "admin.engines_wizard_vae_none": "このチェックポイントは VAE を同梱しておらず、この族の既定 VAE もこの配備にはありません。取り込んだあと、単体の VAE を `--vae` として足すまで生成できません。",
+  "admin.engines_wizard_plan_new": "新しい行「{id}」を作ります。",
+  "admin.engines_wizard_plan_attach": "「{id}」の {part} として足します。行の他の欄は変わりません。",
+  "admin.engines_wizard_plan_replace": "「{id}」の {part} を差し替えます。行の他の欄は変わりません。",
+  "admin.engines_wizard_plan_from": "{r} の {f}（{n}）をダウンロードします。",
+  "admin.engines_wizard_plan_after": "終わると、この一覧に無効の行として現れます。有効にすると箱へ同期されます。",
+  "admin.engines_wizard_named_file": "この URL は {f} を指しています。次へ進むとこのファイルを調べます。",
+  "admin.engines_wizard_back": "戻る",
+  "admin.engines_wizard_next": "次へ",
   "admin.engines_model_add_desc": "説明",
   // 任意。この経路には読み取る出所が無いので、ライセンスを人が書く唯一の場所になる。
   // 空のままなら行は「ライセンスの記録なし」と言う（空白のままにはしない）。

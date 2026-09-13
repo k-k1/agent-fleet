@@ -83,17 +83,30 @@ A row missing a file for one of the roles it needs is marked **files missing**. 
 check reads your declaration only — it is not evidence that the file is on the disk.
 If you declare a name that is not there, the failure arrives at generation time.
 
-🔴 **A checkpoint published without a VAE needs one declared next to it.** Plenty
-of SDXL-family checkpoints on the model sites ship the UNet and the text encoders
-alone. A row naming that file alone passes every check there is, switches the
-engine's checkpoint (1–2.5 minutes) and then fails **every** request with `VAE is
-invalid: None` — in the decode for a plain generate, in the encode for an edit.
-There is nothing a member can do about it from their side: the tool has no VAE
-argument. Declare the family's standalone VAE as a **second file on the same row,
-with the flag `--vae`** (an SDXL-family checkpoint takes an `sdxl_vae`); that file
-is then what the workflow encodes and decodes with, in place of the checkpoint's
-own. Until you do, **disable the row** — it is offered to every session, and each
-attempt costs a checkpoint switch before it fails.
+🔴 **Some checkpoints are published without a VAE, and the panel now tells you
+which.** Plenty of SDXL-family checkpoints on the model sites ship the UNet and the
+text encoders alone. Such a row passes every declaration check there is, switches
+the engine's checkpoint (1–2.5 minutes) and then fails **every** request with `VAE
+is invalid: None` — in the decode for a plain generate, in the encode for an edit.
+There is nothing a member can do about it: the tool has no VAE argument.
+
+The deployment reads the checkpoint's own header and says so:
+
+- a row whose file carries no VAE is marked, and **cannot be enabled** until it has
+  one;
+- the row's own button takes the family's standalone VAE in and attaches it under
+  the flag `--vae` — one press. If this deployment already holds that file, it is
+  attached without downloading anything;
+- when you take a new checkpoint in, the form offers the same second file, already
+  ticked, with its licence beside the checkpoint's own.
+
+What it does **not** do is guess. If the header could not be read — a `.ckpt`, a
+source that has gone away, an asset that refuses to be read anonymously — the row
+is left alone rather than marked: "nobody looked" is not "it has none". A family
+this deployment holds no default VAE for (SD3.5, whose stock autoencoder is in a
+gated repository) is marked and not offered a fix; there, declare the VAE yourself
+as a **second file on the same row, with the flag `--vae`**. That file is then what
+the workflow encodes and decodes with, in place of the checkpoint's own.
 
 🔴 **Put the files directly under ComfyUI's type folders** — `checkpoints/`,
 `diffusion_models/`, `clip/`, `vae/`, `loras/`. Only the part after the last `/` is

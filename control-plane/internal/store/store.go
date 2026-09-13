@@ -373,6 +373,15 @@ type EngineModelFile struct {
 	// per-file source. Absent for a seeded row, for one registered by hand, and for everything
 	// taken in before this existed — which is why nothing reads it as "unknown vendor".
 	Source string `json:"source,omitempty"`
+	// VaeBundled is whether THIS file carries the VAE tensors its family decodes with — "yes",
+	// "no", or absent for "nobody read the header" (engine_safetensors.go). It decides the one
+	// fault that otherwise costs a checkpoint switch to discover: an SDXL checkpoint published
+	// without a VAE validates, loads, and then fails every request inside ComfyUI.
+	//
+	// Per FILE and not per row, for the same reason Source above is: a row's checkpoint can be
+	// replaced under everything else it holds, and the fact belongs to the bytes that were read.
+	// Absent is load-bearing — a row is only ever marked broken on an explicit "no".
+	VaeBundled string `json:"vaeBundled,omitempty"`
 }
 
 // EngineModelKV is the attention geometry a row's VRAM estimate is computed from, as the one

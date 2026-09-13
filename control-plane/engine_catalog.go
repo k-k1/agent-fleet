@@ -795,6 +795,12 @@ func engineModelFileRows(m store.EngineModel) []map[string]any {
 				row["source_url"] = u
 			}
 		}
+		// Whether this file bundles the VAE its family decodes with, as it was read from the
+		// file's own header. Absent for everything nobody has read, which the panel draws as a
+		// question not yet asked rather than as a fault.
+		if v := strings.TrimSpace(f.VaeBundled); v != "" {
+			row["vae_bundled"] = v
+		}
 		out = append(out, row)
 	}
 	return out

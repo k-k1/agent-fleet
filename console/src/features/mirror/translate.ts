@@ -118,8 +118,9 @@ export function looksForeign(text: string, lang: TranslateLang): boolean {
 export interface TranslatePartReply {
   hash: string;
   text: string;
+  /** true = it was already held, so the press cost nothing. The reply says nothing about WHICH
+   *  model ran: only the Agent's ledger knows that (session_translate.go explains why). */
   cached: boolean;
-  model?: string;
 }
 
 export interface TranslateReply {
