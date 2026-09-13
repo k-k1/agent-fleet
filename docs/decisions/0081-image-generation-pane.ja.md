@@ -6,6 +6,7 @@
   主張を、ADR 0080 のレーン B（#622）が着地した後の `d164739a` で 1 つずつ grep して裏取りした。直した
   箇所には *（レビュー）* と記す——決定 5 の中継フィールド 4 つ、列の無い LoRA の重み、決定 2 の wire 本文、
   PNG チャンクが実際に与える族と seed、サムネイルの小ファイル例外、ライトボックスの `path`、行番号 5 件）。
+  **P0 は同日に #625 / #626 / #627 で実装**（GPU 無し）。実装後の wire は末尾の「P0 の実装」、実機 1 回はまだ負っている。
 - 関連: [0069](0069-image-generation-providers.ja.md)（このペインが駆動する provider 抽象。
   未解決 1 でジョブ形を先送りにした——本 ADR がそれを引き取る） /
   [0072](0072-engine-model-catalog.ja.md)（カタログ行・`params`・`negative_prompt`・comfy の 5 族） /
@@ -545,3 +546,47 @@ ADR 0069 の未解決 1 は、driver モデルからの 1 ポーリングが 1 �
    持つのはパスでありバイトでないので一覧は小さく、サイドカーがアーカイブ）。
 7. **試走の steps（10 / 12 / 8 / 4 / 4）は当て推量。** 実機で構図が分かる最小の数にする。`trial/` の
    7 日掃除は**決着**（2026-09-13）。
+
+## P0 の実装（2026-09-13）
+
+3 レーン・3 本の PR。互いのファイルには触っていない: **A**（Agent）#626 `feat/0081-agent-jobs`、**B**（CP）#625
+`feat/0081-cp-relay`、**C**（Console と docs）#627 `feat/0081-console-pane`。3 本とも GPU 無しで組んで試験した。
+P0 の完了条件にある実機 1 回はまだ負っている。**契約は今やコードである**: Console が読むのは
+`workspace/agent/internal/imagegen/{jobs.go,http.go}` の JSON タグで、上の決定と食い違う所はこの節が勝つ。
+
+決定 2・3・5・11・12 に書いた wire から実装がずれた所と、その理由:
+
+1. **走行中のジョブに `elapsed_ms` は無い**。`started_at` だけで、完了したジョブには `elapsed_ms` が載る。本文の中で
+   動く数字はバッチが走っている間ずっと CP の ETag を外す——ミラーの電池の教訓。ブラウザが引き算する。
+2. **LoRA の族は `baseModel` のまま**（camelCase・status が既に持っていた欄）。隣に `base_model` を足せば同じ事実の
+   2 つ目の綴りになる。`trained_words` は書いたとおり snake_case。
+3. **足したフィールド**: `wake_ms`（ジョブと status——決定 10 が欲しかった観測済みの冷間起動の置き場）、
+   `full_steps`（ジョブとサイドカー——試走で steps を落としたときの本番の steps。`params.steps` に両方は入らない）、
+   `GET /imagegen/jobs` の `queued` / `queue_max` / `trial_pending` / `trial_max`（429 の後でなく前にフォームがボタンを止める）。
+4. **`count` が 4 を超えたら 400 `bad_count`**。決定は上限を書き、拒み方を書いていなかった。
+5. **試走は `out_dir` を無視**して常に `generated/console/trial/` に置く。決定 11 のフォルダと決定 3 の欄が
+   出会い、掃除される方が勝った。
+6. **エンジン単位の欄**（`samplers[]`・`schedulers[]`・`typical_ms`・`wake_ms`・`lora_weight_max`）は status の
+   根でなく provider の項に載る——status はもともと provider ごとである。
+7. **`props`** は摘みを `params` に入れ子にし、ネガティブは `negative`。投入本文のネガティブは既存の
+   `generateRequest` どおり `negativePrompt`。グループの `running` は件数でなく走っているジョブの id。
+   止まったグループは `paused` と言う。
+8. **「出さない行」**は Agent では「グラフが組めない行」（族の宣言が無い、または族が要る宣言済みファイルが
+   足りない）。管理者の 3 フラグは Agent に届かず、`vae_missing` は宣言からは判別できない——フラグを中継する
+   なら CP の変更で、今回はしていない。
+9. **`source_url` は URL か無し**（B）: `civitai:<id>` は version id で `/models/<id>` は別モデルなので、CP だけが
+   知る事実でリンクを組む。`url:` の出所は意図的に非リンク（その click は 22 GB の取得）。
+10. **新しい誤り符号 17 個**を Console の `err.<code>` 目録に足した（`queue_full`・`trial_pending`・`bad_params`・
+    `bad_count`・`no_job`・`no_group`・`cancel_failed`・`imagegen_no_provider`……）——この経路は中継されたことが
+    無く、1 つも無かった。
+11. **使用量ペインの `Images` / `Pixels` ラベルは未着手**（決定 10 の最後の項）: C を組んだ時点で A の
+    `usage_series.go` の畳み込みが `develop` に無く、series にその欄が無かった。#626 が入った後に `UsageAgg` の
+    2 欄とラベル 2 つ。
+
+使った移行番号: `0067`（sqlite）と `0052`（pg）——マージ時に開いているレーンと再確認する。
+
+実機だけが答える物（3 本の PR 本文から）: 試走の steps（未解決 7）。冷間起動を跨ぐ段階遷移・`wake_ms`・バーが
+95 % に座る時間（未解決 1）。実行中の取消が本当に prompt を止めるか、そのとき `/history` が何と言うか。上流
+`GET /queue` の要素配置（`server.py` 読み・実機では未見）。待機 200・保持 500 を抱えたときのメモリ（未解決 6）。
+実応答に対する `knobs` と族カード。走行中バッチでの 304 の連鎖。サイドカーが無い過去の絵での `source: "png"`。
+`generated/console/inputs/` への `POST /fs/upload`。

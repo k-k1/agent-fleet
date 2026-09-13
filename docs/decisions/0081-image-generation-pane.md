@@ -7,7 +7,8 @@ English | [日本語](0081-image-generation-pane.ja.md)
   `d164739a`, after ADR 0080's lane B (#622) had landed; what it changed is marked *(review)* where it
   sits — the four relay fields of decision 5, the LoRA weight that has no column, the wire body of
   decision 2, the family and the seed the PNG chunk really gives, the thumbnail's small-file exception,
-  the lightbox's `path`, and five line anchors).
+  the lightbox's `path`, and five line anchors). **P0 built the same day** in #625 / #626 / #627 without a
+  GPU; the wire as built is in "P0 as built" below, and the live run is still owed.
 - See also: [0069](0069-image-generation-providers.md) (the provider abstraction this pane drives;
   open question 1 deferred the job shape — this ADR takes it up) /
   [0072](0072-engine-model-catalog.md) (the catalogue rows, `params`, `negative_prompt`, the five comfy families) /
@@ -600,3 +601,52 @@ the thing the person submitted; the queue-wide versions are the same operations 
 7. **The trial step counts** (10 / 12 / 8 / 4 / 4) are guesses; the steps should be the smallest number
    at which the composition is recognisable on the live run. The 7-day sweep of `trial/` is **settled**
    (2026-09-13).
+
+## P0 as built (2026-09-13)
+
+Three lanes, three PRs, none touching another's files: **A** (Agent) #626 `feat/0081-agent-jobs`, **B**
+(control plane) #625 `feat/0081-cp-relay`, **C** (Console and docs) #627 `feat/0081-console-pane`. All
+three were built and tested without a GPU; the live run that P0's definition of done asks for is still
+owed. **The code is now the contract**: the JSON tags in `workspace/agent/internal/imagegen/{jobs.go,http.go}`
+are what the Console reads, and where they differ from the decisions above, this section wins.
+
+Where the build left the wire written in decisions 2, 3, 5, 11 and 12, and why:
+
+1. **A running job carries no `elapsed_ms`**, only `started_at`; a finished one has `elapsed_ms`. A
+   ticking number in the body defeats the control plane's ETag for the whole run of a batch — the
+   mirror's battery lesson. The browser subtracts.
+2. **A LoRA's family stays `baseModel`** (camelCase, the field the status already had); adding
+   `base_model` beside it would be a second spelling of one fact. `trained_words` is snake_case as written.
+3. **Fields added**: `wake_ms` (job and status — the observed cold start decision 10 wanted a place for),
+   `full_steps` (job and sidecar — the batch's steps when a trial ran with fewer; `params.steps` cannot
+   hold both), and `queued` / `queue_max` / `trial_pending` / `trial_max` on `GET /imagegen/jobs`, so the
+   form disables the button before a 429 rather than after.
+4. **`count` above 4 is a 400 `bad_count`**; the decision named the ceiling, not the refusal.
+5. **A trial ignores `out_dir`** and always lands in `generated/console/trial/`; decision 11's folder and
+   decision 3's field met, and the one that is swept won.
+6. **The engine-level fields** (`samplers[]`, `schedulers[]`, `typical_ms`, `wake_ms`, `lora_weight_max`)
+   ride on the provider entry of the status, not on its root — the status is per provider already.
+7. **`props`** nests the knobs under `params` and calls the negative `negative`; the jobs body spells the
+   negative `negativePrompt`, as the existing `generateRequest` does; a group's `running` is the running
+   job's id, not a count; a paused group says `paused`.
+8. **"Not listed" rows** are, on the Agent, "rows whose graph cannot be built" (no family declared, or a
+   declared file the family needs missing). The three admin flags never reach the Agent, and `vae_missing`
+   cannot be told from a declaration — relaying the flags would be a control-plane change, not made.
+9. **`source_url` is a URL or absent** (B): `civitai:<id>` is a version id, and `/models/<id>` is a
+   different model, so the control plane builds the link with what only it knows; a `url:` source stays
+   unlinked on purpose (that click is a 22 GB download).
+10. **Seventeen new error codes** join the Console's `err.<code>` catalogue (`queue_full`, `trial_pending`,
+    `bad_params`, `bad_count`, `no_job`, `no_group`, `cancel_failed`, `imagegen_no_provider`, …) — the route
+    had never been proxied, so none existed.
+11. **The usage pane's `Images` / `Pixels` labels are not in** (decision 10's last bullet): A's fold in
+    `usage_series.go` had not reached `develop` when C was built, so the series carried no such fields.
+    Two columns on `UsageAgg` and two labels, after #626 lands.
+
+Migration numbers used: `0067` (sqlite) and `0052` (pg) — re-check against open lanes at merge time.
+
+What only the live run can answer (from the three PR bodies): the trial step counts (unresolved 7); the
+phase transitions across a cold start, `wake_ms`, and how long the bar sits at 95 % (unresolved 1); whether a
+running-job cancel really stops the prompt and what `/history` then says; the element layout of upstream
+`GET /queue` (read from `server.py`, never seen live); memory with 200 queued and 500 kept (unresolved 6);
+`knobs` and the family card against a real status; the 304 chain on a running batch; `source: "png"` on a
+picture made before the sidecar existed; `POST /fs/upload` into `generated/console/inputs/`.
