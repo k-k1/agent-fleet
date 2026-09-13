@@ -111,6 +111,48 @@ the original from **Download** in the info bar.
 - When it cannot be shown, **you are told why**: password-protected, corrupt, **pages that are
   images only** (reading the text would need OCR, which is not done here), or too large (over 40 MB).
 
+## Image gallery
+
+A pane that lays the images in a folder out as cards, so you can compare them without opening one
+at a time — and see at a glance what a folder actually holds.
+
+**Five ways in**, each of them one item in a menu that is already there:
+
+- **Right-click a folder** in the file tree → "Open in gallery"
+- **Right-click an image file** in the file tree → "Open in gallery" (its parent folder opens with
+  that image enlarged; the item does not appear for non-image files)
+- **"Gallery"** in the image viewer's header
+- **"Open folder"** in the enlarged view of a shared-file card in the mirror
+- **"Generated images (N)"** in a session's context menu (below)
+
+A plain click uses the current pane; Ctrl/⌘-click and middle-click open another one. A phone has no
+"beside", so it opens in place.
+
+**What you see, and what you can do**
+
+- **Sort** — "Newest" or "By name". The choice is remembered per pane, so moving between tabs does
+  not reset it. When the workspace's Agent is old enough not to send modification times, the
+  gallery falls back to name order and shows no relative time ("3 minutes ago") either.
+- **Count and size** — the header carries the totals for the whole folder. A big folder stops at
+  **300 images**, with "Show more" for the rest (each card is one thumbnail request).
+- **Cards** — click the card to **enlarge** (← / → move through the folder, and "3 / 12" tells you
+  where you are); the button in the corner **opens it in the file pane**. Just looking never costs
+  you a pane.
+- **Refresh** — on open, on returning to the tab, and every 20 seconds while a session is running.
+  New arrivals get the same highlight as the file tree, so you see a generation land. "Refresh" in
+  the header re-reads at any time.
+- Cards show a **downscaled copy**; the original bytes are fetched only when you enlarge.
+
+**Images a session generated**
+
+Images made with `generate_image` stay in a per-session folder for 30 days. That folder is named
+after the session's internal id, so the file tree is no way in. **"Generated images (N)" in the
+session's context menu** is the way, and it appears **only for sessions that have generated
+something** (N is how many). It is absent while the workspace is stopped — reading the images is
+the Agent's job, and the Agent lives in the workspace.
+
+The gallery lists one folder level; it does not descend into subfolders.
+
 ## Editing a file
 
 Switch to editing with **View / Edit / Split** at the top of the viewer and you can fix the file

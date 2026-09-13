@@ -84,6 +84,8 @@ rename, rename the branch, hand the conversation off, **Share…**, **set / clea
 archive / delete, and recreate. For a session that doesn't belong to a repository, **assignment to a working
 set** appears here too (an item shown ticked but unclickable is one that follows its repository or conversation
 automatically).
+If the session has made images with `generate_image`, **"Generated images (N)"** appears too (N is how many;
+absent for sessions that have not, and while the workspace is stopped — [04](04-files.md#image-gallery)).
 Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
 a new one in the same place. When there is no working folder, resume, handoff, and recreate are not shown.
 
@@ -99,7 +101,9 @@ Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 ### Files / folders
 
 You can create a new file, create a new folder, copy the name, copy the relative path, rename, and delete.
-Files additionally show "Open in reader" and "Download". To hand a file to a session or an assistant, open the
+Files additionally show "Open in reader" and "Download". Folders and **image files** also show
+**"Open in gallery"** (never other file types; from an image it opens the parent folder's gallery with that
+image enlarged — [04](04-files.md#image-gallery)). To hand a file to a session or an assistant, open the
 file and use "Send" in the viewer.
 
 ### Assistants

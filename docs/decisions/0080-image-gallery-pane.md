@@ -11,6 +11,8 @@ English | [日本語](0080-image-gallery-pane.ja.md)
   [0069](0069-image-generation-providers.md) (where generated images live, and for how long) /
   [0063](0063-document-preview.md) (`api/fs/download` is the one endpoint that returns raw bytes) /
   [0017](0017-keyboard-system.md) (the command table — why nothing is registered is decision 1)
+- The review and the three parallel implementation lanes are recorded in
+  [docs/98](../log/98-image-gallery.md) (Japanese).
 
 ## Context
 
