@@ -48,7 +48,7 @@ export function EngineAddView({ engineKey, lora, initialView = "search", headerA
   }, [rows, selectedKey]);
 
   return (
-    <div className="engine-catalog-pane admin-stage">
+    <div className="engines-add-pane engine-catalog-pane admin-stage">
       <ViewHead actions={headerActions}>
         <span className="view-title"><Icon name="download" /> {tr("admin.catalog_title" as never)}</span>
       </ViewHead>
@@ -176,7 +176,10 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
   const modelRows = (row.model_rows || []).filter((model) => (model.kind === "lora") === (kind === "lora"));
 
   return (
-    <section className="engine-catalog-browser">
+    <section
+      className="engine-catalog-browser"
+      aria-label={tr(image ? "admin.catalog_image_title" as never : "admin.catalog_llm_title" as never)}
+    >
       <div className="engine-catalog-toolbar">
         <span className="seg sm">
           {(["model", "lora"] as const).map((next) => <button key={next} type="button"
@@ -226,7 +229,7 @@ function CatalogCard({ hit, image, saved, readOnly, canAttach, canReplace, onPre
 }) {
   const tr = useT();
   const license = hit.license_name || hit.license;
-  return <li className="engine-catalog-card">
+  return <li className="engine-catalog-card" aria-label={hit.name}>
     <div className="engine-catalog-card-main"><div className="engine-catalog-card-copy">
       <div className="engine-catalog-card-title"><span>{hit.name}</span><span className="engines-model-tag">{hit.source === "civitai" ? "Civitai" : "Hugging Face"}</span></div>
       <div className="engine-catalog-card-tags">
@@ -244,9 +247,9 @@ function CatalogCard({ hit, image, saved, readOnly, canAttach, canReplace, onPre
     </div>{image && hit.preview_url && <button type="button" className="engine-catalog-thumb" onClick={onPreview} aria-label={tr("admin.catalog_preview" as never)}><img src={hit.preview_url} alt="" loading="lazy" /></button>}</div>
     <footer className="engine-catalog-card-footer">
       {hit.url && <a href={hit.url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a>}
-      {!readOnly && <span><button type="button" className="primary sm" onClick={() => onOperation("new")}>{tr("admin.catalog_add" as never)}</button>
-        {canAttach && <button type="button" className="sm" onClick={() => onOperation("attach")}>{tr("admin.catalog_attach" as never)}</button>}
-        {canReplace && <button type="button" className="sm" onClick={() => onOperation("replace")}>{tr("admin.catalog_replace" as never)}</button>}</span>}
+      {!readOnly && <span><button type="button" className="primary sm" aria-label={`${tr("admin.catalog_add" as never)}: ${hit.name}`} onClick={() => onOperation("new")}>{tr("admin.catalog_add" as never)}</button>
+        {canAttach && <button type="button" className="sm" aria-label={`${tr("admin.catalog_attach" as never)}: ${hit.name}`} onClick={() => onOperation("attach")}>{tr("admin.catalog_attach" as never)}</button>}
+        {canReplace && <button type="button" className="sm" aria-label={`${tr("admin.catalog_replace" as never)}: ${hit.name}`} onClick={() => onOperation("replace")}>{tr("admin.catalog_replace" as never)}</button>}</span>}
     </footer>
   </li>;
 }
@@ -410,7 +413,10 @@ function CatalogOperation({ row, kind, hit, initialAct, storage, onClose, onStar
     } finally { setBusy(false); }
   };
 
-  return <Modal title={tr("admin.catalog_operation_title" as never)} className="engine-catalog-operation" onClose={onClose} lockClose={busy}>
+  const operationTitle = hit?.name
+    ? `${tr("admin.catalog_operation_title" as never)} — ${hit.name}`
+    : tr("admin.catalog_operation_title" as never);
+  return <Modal title={operationTitle} className="engine-catalog-operation" onClose={onClose} lockClose={busy}>
     <div className="engine-operation-body">
       <div className="engine-operation-choice">{(["new", "attach", "replace"] as const).map((next) => <label key={next}>
         <input type="radio" name="catalog-act" checked={act === next} onChange={() => setAct(next)} />

@@ -69,6 +69,8 @@ describe("model catalogue pane", () => {
     });
     apiJSON.mockResolvedValue({ hits: [] });
     await mount();
+    expect(document.querySelector(".engine-catalog-pane")?.classList.contains("engines-add-pane")).toBe(true);
+    expect(document.querySelector(".engine-catalog-browser")?.getAttribute("aria-label")).toBe("画像モデルカタログ");
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/search", "POST", {
       q: "", source: "civitai", sort: "newest", lora: false,
     });
@@ -116,6 +118,9 @@ describe("model catalogue pane", () => {
       return Promise.resolve({});
     });
     await mount();
+    const card = document.querySelector(".engine-catalog-card")!;
+    expect(card.getAttribute("aria-label")).toBe("Example");
+    expect(button("追加")?.getAttribute("aria-label")).toBe("追加: Example");
     await click(button("追加"));
     await act(async () => { await Promise.resolve(); });
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/versions", "POST", {
@@ -125,6 +130,8 @@ describe("model catalogue pane", () => {
       source: { civitai: { versionId: 22, file: "" } },
     });
     expect(document.querySelector(".engines-wizard-rail")).toBeNull();
+    expect(document.querySelector(".engine-catalog-operation")?.getAttribute("aria-labelledby")).toBeTruthy();
+    expect(document.querySelector(".engine-catalog-operation .ui-modal-title")?.textContent).toContain("Example");
     expect(document.querySelectorAll(".engine-operation-grid select").length).toBeGreaterThan(1);
   });
 

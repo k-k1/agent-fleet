@@ -299,6 +299,8 @@ export const admin = {
   "admin.engines_ingest_sort_updated": "更新が新しい",
   "admin.engines_ingest_sort_newest": "新着",
   "admin.catalog_title": "モデルカタログ",
+  "admin.catalog_image_title": "画像モデルカタログ",
+  "admin.catalog_llm_title": "文章モデルカタログ",
   "admin.catalog_opening": "モデルカタログを開いています…",
   "admin.catalog_role_label": "エンジンの役割",
   "admin.catalog_view_label": "カタログ表示",
