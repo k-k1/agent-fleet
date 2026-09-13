@@ -379,6 +379,81 @@ func TestImageGenSeedOfferedOnlyWhereARouteTakesOne(t *testing.T) {
 	}
 }
 
+// strength follows the same union rule as seed, and one more of its own: it is what an EDIT does
+// to the caller's picture, so a route that cannot edit must not carry the argument. inpaint does
+// not count — that op repaints its masked area in full, and an argument the graph is obliged to
+// ignore is exactly what this schema keeps out.
+func TestImageGenStrengthOfferedOnlyWithEdit(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		status       mcpImageGenStatus
+		wantOffer    bool
+		wantInSchema bool
+	}{
+		{
+			name: "a route that edits and varies it",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate", "edit"}, Strength: true}}},
+			wantOffer: true, wantInSchema: true,
+		},
+		{
+			name: "a route that edits but cannot vary it",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "agy", Ops: []string{"generate", "edit"}}}},
+		},
+		{
+			name: "inpaint alone is not a reason to offer it",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate", "inpaint"}, Strength: true}}},
+			wantOffer: true,
+		},
+		{
+			name: "one of two varies it",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{
+					{ID: "agy", Ops: []string{"generate", "edit"}},
+					{ID: "comfy", Ops: []string{"generate", "edit"}, Strength: true},
+				}},
+			wantOffer: true, wantInSchema: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withImageGen(t, true)
+			stubImageGenStatus(t, tc.status)
+			offer, ok := mcpImageGenAdvertise()
+			if !ok {
+				t.Fatal("expected the tool to be advertised")
+			}
+			if offer.Strength != tc.wantOffer {
+				t.Fatalf("offer.Strength = %v, want %v", offer.Strength, tc.wantOffer)
+			}
+			props := imageGenSchemaProps(mcpStdioImageGenTools(offer))
+			strength, has := props["strength"].(map[string]any)
+			if has != tc.wantInSchema {
+				t.Fatalf("strength in schema = %v, want %v", has, tc.wantInSchema)
+			}
+			if !has {
+				return
+			}
+			if strength["type"] != "number" {
+				t.Errorf("strength type = %v, want number", strength["type"])
+			}
+			// 0 is excluded by the schema as well as refused by the Agent: at denoise 0 the
+			// sampler hands the latent straight back, so it would wake a GPU box for nothing.
+			if strength["exclusiveMinimum"] != 0 || strength["maximum"] != 1 {
+				t.Errorf("strength range = (%v, %v], want (0, 1]", strength["exclusiveMinimum"], strength["maximum"])
+			}
+			// The direction has to be in the text: upstream is not consistent about it (diffusers'
+			// `strength` and Stability's `image_strength` run opposite ways), so a caller that
+			// infers it from the name has a 50% chance of asking for the opposite picture.
+			desc, _ := strength["description"].(string)
+			if !strings.Contains(desc, "op=edit") || !strings.Contains(desc, "0.6 when omitted") {
+				t.Errorf("description does not say which op it belongs to or what the default is: %s", desc)
+			}
+		})
+	}
+}
+
 func TestImageGenNotAdvertisedWhenAgentUnreachable(t *testing.T) {
 	withImageGen(t, true)
 	t.Setenv("AGENT_ADDR", ":1") // nothing listens
@@ -546,6 +621,36 @@ func TestGenerateImageForwardsTheSeed(t *testing.T) {
 			callGenerateImage(t, tc.args)
 			if got["seed"] != tc.want {
 				t.Fatalf("forwarded seed = %v (%T), want %v", got["seed"], got["seed"], tc.want)
+			}
+		})
+	}
+}
+
+// strength rides the same wire with the same distinction, and here it is what lets the Agent
+// refuse 0 by value: folded into "not given" at this layer, `"strength": 0` would arrive as a
+// request to edit at the full default amount — the opposite of what was asked for.
+func TestGenerateImageForwardsTheStrength(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want any
+	}{
+		{"a gentle edit", map[string]any{"prompt": "a cat", "op": "edit", "strength": 0.25}, 0.25},
+		{"zero reaches the Agent to be refused", map[string]any{"prompt": "a cat", "op": "edit", "strength": 0}, float64(0)},
+		{"none is absent", map[string]any{"prompt": "a cat", "op": "edit"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withImageGen(t, true)
+			var got map[string]any
+			stubAgentForImageGen(t,
+				mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate", "edit"}},
+				func(w http.ResponseWriter, r *http.Request) {
+					_ = json.NewDecoder(r.Body).Decode(&got)
+					_, _ = w.Write([]byte(`{"files":[{"path":"/tmp/i.png","name":"i.png","mime":"image/png","bytes":1}],"provider":"comfy"}`))
+				})
+			callGenerateImage(t, tc.args)
+			if got["strength"] != tc.want {
+				t.Fatalf("forwarded strength = %v (%T), want %v", got["strength"], got["strength"], tc.want)
 			}
 		})
 	}

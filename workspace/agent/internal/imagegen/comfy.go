@@ -127,6 +127,10 @@ func (p *comfyProvider) Caps(model string) Caps {
 		// Per MODEL, because the answer really does differ between two checkpoints on the same
 		// running engine — which is the case Caps was made per (provider, model) for.
 		Negative: comfyModelTakesNegative(conn, model),
+		// True for every family, unlike Negative: an edit starts from the caller's picture on all
+		// five, and the amount is a number in the graph this package writes rather than a field a
+		// vendor API has to expose (ADR 0069 follow-up, strength).
+		Strength: true,
 	}
 }
 
@@ -442,7 +446,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	params := comfyParams{
 		Op: req.Op, Prompt: req.Prompt, Negative: comfyNegativeFor(conn, model, req),
 		Seed: seed, Width: w, Height: h,
-		BatchSize: count, Loras: loras,
+		BatchSize: count, Loras: loras, Strength: req.Strength,
 		// What the catalogue row for THIS model declares. Absent for a model that declares
 		// nothing, which leaves every template at its own recipe.
 		Params: conn.Params[model],

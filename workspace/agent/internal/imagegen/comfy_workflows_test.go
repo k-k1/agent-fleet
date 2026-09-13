@@ -13,6 +13,7 @@ package imagegen
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -294,6 +295,120 @@ func TestComfyWorkflowsKleinEditSplitsTheSigmas(t *testing.T) {
 		if link := comfyLinkAt(t, full, "sca.sigmas"); link[0] != "sigmas" {
 			t.Errorf("%s: sca.sigmas = %v, want the scheduler directly", op, link)
 		}
+	}
+}
+
+// --- strength (ADR 0069 follow-up, 2026-09-13) -----------------------------------------------
+
+// The caller's own strength has to reach the number each family expresses a partial denoise
+// with, and nothing else may move: an argument that lands on four families and is quietly
+// dropped by the fifth is the failure the vocabulary's per-family templates invite.
+func TestComfyWorkflowsEditStrengthReachesTheSampler(t *testing.T) {
+	const want = 0.25
+	for _, c := range comfyFamilyFixtures {
+		t.Run(c.name, func(t *testing.T) {
+			s := want
+			p := comfyGoldenParams
+			p.Op, p.Image, p.Strength = OpEdit, "af-photo.png", &s
+			g, err := comfyBuildGraph(c.family, c.files, p)
+			if err != nil {
+				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
+			}
+			at := c.denoiseAt
+			if at == "" {
+				// klein expresses it on the extra node instead of on a sampler input.
+				at = "split.denoise"
+			}
+			parts := strings.SplitN(at, ".", 2)
+			if got := g[parts[0]].Inputs[parts[1]]; got != want {
+				t.Errorf("%s = %v, want the caller's strength %v", at, got, want)
+			}
+		})
+	}
+}
+
+// A strength outside (0,1] falls back to the recipe's own rather than reaching the graph. The
+// edge refuses one by value (HandleGenerate), so this is the other half of that pair — and 0 in
+// particular would divide by zero in klein's stretch.
+func TestComfyWorkflowsEditStrengthOutOfRangeFallsBack(t *testing.T) {
+	for _, bad := range []float64{0, -0.5, 1.5} {
+		s := bad
+		p := comfyGoldenParams
+		p.Op, p.Image, p.Strength = OpEdit, "af-photo.png", &s
+		g, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "sd_xl_base_1.0.safetensors"}, p)
+		if err != nil {
+			t.Fatalf("strength=%v: %v", bad, err)
+		}
+		if got := g["ks"].Inputs["denoise"]; got != comfyEditDenoise {
+			t.Errorf("strength=%v: ks.denoise = %v, want the recipe's %v", bad, got, comfyEditDenoise)
+		}
+	}
+}
+
+// Inpaint repaints its masked area in full whatever the caller asked for: the noise mask is what
+// preserves everything outside it, so a partial denoise there dulls the repaint instead of
+// protecting anything. The caller hears about it in warnings (requestWarnings), not by having the
+// number applied to something it does not mean.
+func TestComfyWorkflowsInpaintIgnoresStrength(t *testing.T) {
+	for _, c := range comfyFamilyFixtures {
+		t.Run(c.name, func(t *testing.T) {
+			s := 0.2
+			p := comfyGoldenParams
+			p.Op, p.Image, p.Mask, p.Strength = OpInpaint, "af-photo.png", "af-mask.png", &s
+			g, err := comfyBuildGraph(c.family, c.files, p)
+			if err != nil {
+				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
+			}
+			if _, has := g["split"]; has {
+				t.Error("inpaint cut the schedule — it repaints the masked area in full")
+			}
+			if c.denoiseAt != "" {
+				parts := strings.SplitN(c.denoiseAt, ".", 2)
+				if got := g[parts[0]].Inputs[parts[1]]; got != 1.0 {
+					t.Errorf("%s = %v, want a full denoise", c.denoiseAt, got)
+				}
+			}
+		})
+	}
+}
+
+// klein's schedule is STRETCHED before SplitSigmasDenoise cuts it, and this is the one place
+// that can be checked without a GPU. Its tail is round(len(sigmas)*denoise) steps of whatever it
+// was handed, so cutting the unstretched 4-step schedule would buy fewer sampling steps the
+// gentler the edit — the other four families keep their step count at every denoise because
+// their samplers stretch it themselves (comfy/samplers.py, KSampler.set_steps).
+func TestComfyWorkflowsKleinStretchesTheScheduleBeforeCutting(t *testing.T) {
+	files := comfyFiles{DiffusionModel: "k.safetensors", ClipL: "q.safetensors", Vae: "v.safetensors"}
+	// steps asked of Flux2Scheduler, and the tail SplitSigmasDenoise then returns from it.
+	for _, c := range []struct{ strength, schedule, tail float64 }{
+		{0.6, 6, 4}, // int(4/0.6) = 6, round(6*0.6) = 4
+		{0.25, 16, 4},
+		{0.9, 4, 4},
+	} {
+		s := c.strength
+		p := comfyGoldenParams
+		p.Op, p.Image, p.Strength = OpEdit, "af-photo.png", &s
+		g, err := comfyBuildGraph(ComfyFamilyFlux2Klein, files, p)
+		if err != nil {
+			t.Fatalf("strength=%v: %v", c.strength, err)
+		}
+		if got := g["sigmas"].Inputs["steps"]; got != int(c.schedule) {
+			t.Errorf("strength=%v: Flux2Scheduler.steps = %v, want %v", c.strength, got, int(c.schedule))
+		}
+		// What the engine will actually sample, by the node's own formula. The recipe asks for 4
+		// and the caller's strength must not change it.
+		if tail := math.Round(c.schedule * c.strength); tail != c.tail {
+			t.Errorf("strength=%v: the tail is %v steps, want %v", c.strength, tail, c.tail)
+		}
+	}
+	// generate runs the whole schedule and pays for no stretch.
+	q := comfyGoldenParams
+	g, err := comfyBuildGraph(ComfyFamilyFlux2Klein, files, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g["sigmas"].Inputs["steps"]; got != 4 {
+		t.Errorf("generate: Flux2Scheduler.steps = %v, want the recipe's 4", got)
 	}
 }
 

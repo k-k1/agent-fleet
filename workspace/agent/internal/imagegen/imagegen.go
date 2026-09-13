@@ -91,6 +91,23 @@ type Request struct {
 	// pins it deserves to get it rather than a random one. nil is the default and keeps the old
 	// behaviour: every route that has a seed at all picks a fresh one per request.
 	Seed *int64
+	// Strength is how much of the caller's own picture an edit changes: 0 keeps it, 1 ignores it
+	// entirely. It is the ONE degree of freedom op=edit has, and it was a constant until the
+	// 2026-09-13 follow-up — "correct this slightly" and "borrow the composition and draw the
+	// rest again" were the same request, and no phrasing of Prompt, no seed and no negative
+	// prompt could tell them apart.
+	//
+	// The direction is spelled out because upstream disagrees about it: diffusers' img2img
+	// `strength` and ComfyUI's `denoise` run this way round, Stability's `image_strength` runs
+	// the other.
+	//
+	// A POINTER, and unlike Seed not because 0 is usable — it is refused. It is so that 0 can be
+	// refused BY VALUE: a caller who sends it means something ("change nothing"), and a plain
+	// float64 would read that as "not given" and hand back a picture edited at the full default
+	// amount, which is the opposite of what was asked for. nil is the only "not given" there is.
+	//
+	// Only op=edit reads it — see Caps.Strength for why inpaint must not.
+	Strength *float64
 	// Loras are the fine-tunes to apply on top of Model, in the order given (ADR 0072 decision
 	// 5, phase P3). Only the fleet's own engines have any; a route with none reports the request
 	// back as a warning rather than dropping it silently.
@@ -186,6 +203,13 @@ type Caps struct {
 	// cannot change. Reporting true there would be the most expensive kind of lie: the caller
 	// sees no warning, the picture looks fine, and what they asked to exclude is still in it.
 	Negative bool
+	// Strength is whether Request.Strength reaches the sampler on an EDIT.
+	//
+	// Inpaint is excluded even where this is true, and that is not an omission: what preserves
+	// the area OUTSIDE an inpaint mask is the noise mask, not a partial denoise. Lowering it
+	// there protects nothing and makes the repainted area a weak echo of what it replaced, so
+	// the request is reported back in warnings rather than honoured.
+	Strength bool
 	// Loras is every fine-tune this provider will accept in Request.Loras (ADR 0072 decision 5,
 	// phase P3). Empty means the caller cannot pick, exactly as with Sizes.
 	//
@@ -624,6 +648,21 @@ func requestWarnings(req Request, res Result, caps Caps) []string {
 	if req.Seed != nil && !caps.Seed {
 		out = append(out, fmt.Sprintf(
 			"seed=%d requested, but this route cannot pin a seed — two calls with the same seed will not match", *req.Seed))
+	}
+	// Invisible in the same way, and with one fewer chance of being noticed than the seed: the
+	// picture is a perfectly good edit, and the only thing wrong with it is HOW MUCH of the input
+	// survived — which nobody can see without the version they asked for to hold it against.
+	if req.Strength != nil {
+		switch {
+		case req.Op != OpEdit:
+			out = append(out, fmt.Sprintf(
+				"strength=%g requested, but only op=edit starts from your picture — %s ran a full denoise and ignored it",
+				*req.Strength, req.Op))
+		case !caps.Strength:
+			out = append(out, fmt.Sprintf(
+				"strength=%g requested, but this route cannot vary how much of the input it keeps — it edited at its own fixed amount",
+				*req.Strength))
+		}
 	}
 	if n := len(res.Images); req.Count > 0 && n != req.Count {
 		out = append(out, fmt.Sprintf("count=%d requested, %d produced", req.Count, n))
