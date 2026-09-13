@@ -1260,3 +1260,455 @@ func TestEngineAdminSetsTheEngineExclusionList(t *testing.T) {
 		t.Errorf("catalogue row = %v, want the key absent when nothing is excluded", empty)
 	}
 }
+
+// --- the window and the VRAM measurement (ADR 0079 live run, 2026-09-13) ------
+
+// engineWindowTestEngine is an engine with a ladder, so the VRAM guard has a rung to compare
+// against, and a real store, so the edit can be read back.
+func engineWindowTestEngine(t *testing.T) (engineAdminAPI, *engineRuntimeState, store.Store) {
+	t.Helper()
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e.catalog = newEngineCatalog(st, "image")
+	return classAdminAPI(t, e, st), e, st
+}
+
+// The numbers are the ones the live run produced. A 17 GiB model with this geometry wants a
+// 1024 MiB KV cache at 16384 tokens (18432 MiB in all, which the 21000 MiB rung holds) and a
+// 16384 MiB one at 262144 (33792 MiB, which it does not) — the difference between an engine that
+// starts and `ggml_backend_cuda_buffer_type_alloc_buffer: cudaMalloc failed: out of memory`.
+const engineWindowTestBytes = 17 << 30 // 17 GiB of weights = 17408 MiB
+
+func engineWindowTestRow(id string, enabled bool, ctxTokens int) store.EngineModel {
+	return store.EngineModel{
+		Role: "image", ID: id, Kind: "checkpoint", Enabled: enabled,
+		Files:         []store.EngineModelFile{{S3Key: "image/checkpoints/" + id + ".gguf", Bytes: engineWindowTestBytes}},
+		ContextTokens: ctxTokens, MaxOutputTokens: 4096,
+		KVLayers: 64, KVHeadsKV: 2, KVKeyLen: 128, KVValueLen: 128,
+		Source: "hf:vendor/" + id, LicenseName: "apache-2.0", LicenseAcceptedBy: "u0",
+	}
+}
+
+// The window is editable in place, and the pair moves together. Before this the only way to
+// correct a context_tokens was to register the whole row again — which lands it disabled and
+// drops the licence acceptance the ingest recorded.
+func TestEngineAdminEditsAModelWindow(t *testing.T) {
+	a, e, st := engineWindowTestEngine(t)
+	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("qwen3", false, 262144)); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	code, out := putModelReq(t, a, "qwen3", `{"context_tokens":16384,"max_output_tokens":2048}`)
+	if code != http.StatusOK {
+		t.Fatalf("PUT context_tokens = %d (%v), want 200", code, out)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if len(rows) != 1 || rows[0].ContextTokens != 16384 || rows[0].MaxOutputTokens != 2048 {
+		t.Fatalf("stored row = %+v, want the window written", rows)
+	}
+	// ⚠️ Nothing else may move: that is the whole reason this is a targeted column write rather
+	// than a round trip through the register route.
+	if rows[0].Source != "hf:vendor/qwen3" || rows[0].LicenseAcceptedBy != "u0" || len(rows[0].Files) != 1 {
+		t.Errorf("the ingest's own fields were lost: %+v", rows[0])
+	}
+
+	// Half a body is a real edit: the cap is raised against the window already declared.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"max_output_tokens":8192}`); code != http.StatusOK {
+		t.Fatalf("PUT max_output_tokens alone = %d (%v), want 200", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].ContextTokens != 16384 || rows[0].MaxOutputTokens != 8192 {
+		t.Fatalf("stored row = %+v, want the window kept and the cap raised", rows[0])
+	}
+
+	// 🔴 Clearing the window clears the cap with it. The row answers a cap only alongside a
+	// window (engineAdminModelRow), so one left behind is stored, invisible, and still read by
+	// whatever starts the engine.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"context_tokens":0}`); code != http.StatusOK {
+		t.Fatalf("clearing the window = %d (%v)", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].ContextTokens != 0 || rows[0].MaxOutputTokens != 0 {
+		t.Errorf("stored row = %+v, want both cleared", rows[0])
+	}
+
+	e.catalog.invalidate()
+	if code, _ = putModelReq(t, a, "qwen3", `{"context_tokens":-1}`); code != http.StatusBadRequest {
+		t.Errorf("a negative window = %d, want 400", code)
+	}
+	if code, _ = putModelReq(t, a, "nope", `{"context_tokens":4096}`); code != http.StatusNotFound {
+		t.Errorf("a window on a row that does not exist = %d, want 404", code)
+	}
+}
+
+// 🔥 The gap the live run fell into. engineVramGuard only ever ran on the way IN — enabling a
+// model — so an ALREADY enabled row's context window could be raised to anything and nobody
+// looked. That is the exact operation that bought an L4 and then died four minutes later.
+func TestEngineAdminAsksBeforeRaisingTheWindowOfALoadedModel(t *testing.T) {
+	a, e, st := engineWindowTestEngine(t)
+	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("qwen3", true, 16384)); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	code, out := putModelReq(t, a, "qwen3", `{"context_tokens":262144,"max_output_tokens":8192}`)
+	if code != http.StatusConflict {
+		t.Fatalf("raising an enabled row's window past the card = %d (%v), want 409", code, out)
+	}
+	// The refusal must leave the catalogue as it was, like the one on the way in.
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].ContextTokens != 16384 {
+		t.Fatalf("the window was written by the call that refused it: %+v", rows[0])
+	}
+	if err, _ := out["error"].(map[string]any); err == nil || err["code"] != errCodeEngineVramConfirm {
+		t.Fatalf("error = %v, want %s", out["error"], errCodeEngineVramConfirm)
+	}
+
+	// This warns, it does not forbid: quantisation and --offload-to-cpu are real (ADR 0074
+	// decision 6), and the same call with the confirmation goes through.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"context_tokens":262144,"max_output_tokens":8192,"confirm_vram":true}`); code != http.StatusOK {
+		t.Fatalf("the confirmed edit = %d (%v), want 200", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].ContextTokens != 262144 {
+		t.Fatalf("stored row = %+v, want the confirmed window", rows[0])
+	}
+	// And the way back is never asked about: a window that fits again is not a question.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"context_tokens":16384,"max_output_tokens":4096}`); code != http.StatusOK {
+		t.Fatalf("lowering it again = %d (%v), want 200", code, out)
+	}
+
+	// A row nothing would load costs nothing to get wrong, and asking about it teaches people to
+	// click through the question that matters.
+	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("shelf", false, 16384)); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "shelf", `{"context_tokens":262144,"max_output_tokens":8192}`); code != http.StatusOK {
+		t.Fatalf("raising a DISABLED row's window = %d (%v), want 200", code, out)
+	}
+}
+
+// The operator's own measurement, written and withdrawn — and guarded forward like the window,
+// because declaring 40 GB on a row the engine is already loading is the same act.
+func TestEngineAdminEditsAModelVram(t *testing.T) {
+	a, e, st := engineWindowTestEngine(t)
+	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("qwen3", true, 16384)); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	if code, out := putModelReq(t, a, "qwen3", `{"vram_mib":19000}`); code != http.StatusOK {
+		t.Fatalf("PUT vram_mib = %d (%v), want 200", code, out)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].VramMiB != 19000 {
+		t.Fatalf("stored row = %+v, want the measurement", rows[0])
+	}
+	// A declared number OUTRANKS the floor, so the answer the panel reads changes with it.
+	if need, src := engineModelVramNeed(rows[0]); need != 19000 || src != engineVramDeclared {
+		t.Errorf("need = %d/%s, want 19000/declared", need, src)
+	}
+
+	e.catalog.invalidate()
+	code, out := putModelReq(t, a, "qwen3", `{"vram_mib":40000}`)
+	if code != http.StatusConflict {
+		t.Fatalf("declaring more than the card holds on a loaded row = %d (%v), want 409", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].VramMiB != 19000 {
+		t.Fatalf("the refused call wrote anyway: %+v", rows[0])
+	}
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"vram_mib":40000,"confirm_vram":true}`); code != http.StatusOK {
+		t.Fatalf("the confirmed measurement = %d (%v), want 200", code, out)
+	}
+
+	// 0 WITHDRAWS it and puts the row back on the floor its files imply — which here is the
+	// weights plus the KV cache the declared window needs.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"vram_mib":0}`); code != http.StatusOK {
+		t.Fatalf("withdrawing the measurement = %d (%v), want 200", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].VramMiB != 0 {
+		t.Fatalf("stored row = %+v, want the measurement withdrawn", rows[0])
+	}
+	if need, src := engineModelVramNeed(rows[0]); src != engineVramWeightsKV || need != 17408+1024 {
+		t.Errorf("need = %d/%s, want 18432/weights_kv", need, src)
+	}
+	e.catalog.invalidate()
+	if code, _ = putModelReq(t, a, "qwen3", `{"vram_mib":-1}`); code != http.StatusBadRequest {
+		t.Errorf("a negative measurement = %d, want 400", code)
+	}
+}
+
+// A borrowed catalogue is a MIRROR of the far deployment's (ADR 0079 decision 7), so the new
+// fields are refused with the rest — before the body is even read.
+func TestEngineAdminRefusesAWindowEditOnABorrowedRow(t *testing.T) {
+	st := testSettingsStore(t)
+	rem := &engineRemote{key: "image", tokens: map[string]engineRemoteToken{}}
+	e := &engineRuntimeState{
+		def: engineDef{Key: "image", API: engineAPIImages, Provider: "comfy",
+			URL: "https://af.example.invalid", Lifecycle: engineLifecycleRemote},
+		settings: st,
+		catalog:  newEngineCatalog(nil, "image"),
+		remote:   rem,
+	}
+	e.catalog.source = rem.catalogSource()
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}, st}
+
+	for _, body := range []string{`{"context_tokens":4096,"max_output_tokens":1024}`, `{"vram_mib":19000}`} {
+		code, out := putModelReq(t, a, "m1", body)
+		if code != http.StatusBadRequest {
+			t.Fatalf("%s on a borrowed engine = %d (%v), want 400", body, code, out)
+		}
+		err, _ := out["error"].(map[string]any)
+		if err == nil || err["code"] != errCodeEngineNotOurs {
+			t.Errorf("%s code = %v, want %s", body, out["error"], errCodeEngineNotOurs)
+		}
+	}
+}
+
+// 🔴 The other half of ADR 0072 P2 欠落 6, and the one the code confessed to in its own refusal:
+// `engineAttachAllowed` answers "forget the row, or take this in as its own" to a file whose
+// flag is already filled. Wanting a t5xxl at another quantisation is not a reason to lose a
+// row's licence acceptance, family, params, enabled state and provenance — and the row's own
+// CHECKPOINT could not be changed by any ingest at all, because an attach requires a flag.
+//
+// Everything here is decided before RunTask, for the same reason the attach gate is: nine
+// minutes of Fargate is a bad place to learn that a slot was empty.
+func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	ctx := t.Context()
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "flux1-dev-fp8", Kind: "checkpoint", BaseModel: "flux1", Enabled: true,
+		Files: []store.EngineModelFile{
+			{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1.safetensors"},
+			{Flag: "--t5xxl", S3Key: "image/text_encoders/t5xxl_fp16.safetensors"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A row whose one file is UNLABELLED — the whole checkpoint, the slot no attach can reach.
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+	}
+
+	post := func(id, extra string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/text_encoders/t5xxl_fp8.safetensors",
+		  "license_accepted":true,"source":{"url":"https://example.invalid/t5xxl_fp8.safetensors",
+		  "sha256":"` + strings.Repeat("c", 64) + `"}` + extra + `}`
+		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
+		r.SetPathValue("key", "image")
+		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+		return rec.Code, rec.Body.String()
+	}
+
+	// A slot the row does not fill is NOT quietly created: that is the other act, and turning one
+	// into the other is how a mistyped flag becomes a row with two checkpoints. The refusal names
+	// the act that was meant.
+	code, body := post("flux1-dev-fp8", `,"replace":true,"file_flag":"--clip_l"`)
+	if code != http.StatusBadRequest || !strings.Contains(body, "as a part") {
+		t.Fatalf("replacing an empty slot = %d, and the refusal does not point at the other act: %s", code, body)
+	}
+	// Both at once is not a request the CP may pick a winner for: their preconditions are
+	// opposite — one needs the slot free, the other needs it filled.
+	if code, body := post("flux1-dev-fp8", `,"replace":true,"attach":true,"file_flag":"--t5xxl"`); code != http.StatusBadRequest {
+		t.Fatalf("attach and replace together = %d, want 400 (%s)", code, body)
+	}
+	// An id nothing holds, same as the attach gate: a typo must not write a row.
+	if code, body := post("typo", `,"replace":true,"file_flag":"--t5xxl"`); code != http.StatusNotFound {
+		t.Fatalf("replacing in an id nothing holds = %d, want 404 (%s)", code, body)
+	}
+	// 🔴 The asymmetry that is the whole point. An attach with no flag is refused — the
+	// unlabelled slot is THE checkpoint and a row has one — and a replace with no flag is the
+	// only way that file has ever been changeable.
+	if code, body := post("sdxl-base-1.0", `,"attach":true`); code != http.StatusBadRequest {
+		t.Fatalf("an attach with no file_flag = %d, want 400 (%s)", code, body)
+	}
+	if code, body := post("sdxl-base-1.0", `,"replace":true`); code != http.StatusOK {
+		t.Fatalf("replacing a row's own checkpoint = %d, want 200 (%s)", code, body)
+	}
+	// And the flagged one, with no family declared: the row settled that when it was created.
+	if code, body := post("flux1-dev-fp8", `,"replace":true,"file_flag":"--t5xxl"`); code != http.StatusOK {
+		t.Fatalf("the replace = %d, want 200 (%s)", code, body)
+	}
+	jobs, err := st.ListEngineIngestJobs(ctx, "image", 10)
+	if err != nil || len(jobs) != 2 {
+		t.Fatalf("jobs = %d (%v) — the refusals above must not have left one", len(jobs), err)
+	}
+	// Nothing about either row changed at the door: the swap happens when the download finishes.
+	rows, _ := st.ListEngineModels(ctx, "image")
+	for _, m := range rows {
+		if m.ID == "flux1-dev-fp8" && (!m.Enabled || len(m.Files) != 2) {
+			t.Errorf("the row was touched before the download: enabled=%v files=%+v", m.Enabled, m.Files)
+		}
+	}
+}
+
+// --- registering a key the ingest history still holds -------------------------
+
+// 🔴 `POST /models` is how a file that is ALREADY in the bucket is registered, and the panel now
+// offers it on a finished ingest job's key — the bytes are staged, so "take it in again" would
+// be an ingest of something that is already here (forgetting a row without ?purge=1 leaves the
+// object: measured on the dev deployment 2026-09-09, 491 MB outlived its row).
+//
+// What this pins is the field that makes the rebuilt row equal to the one the ingest wrote:
+// WHERE it came from. Without it the round trip loses exactly what migration
+// 0060_engine_model_source.sql exists to keep — an id is short and readable and does not say
+// which vendor published the model, and once the job row is gone nothing else does.
+func TestRegisteringAModelRecordsWhereItCameFrom(t *testing.T) {
+	a, _, st := engineModelAdminAPI(t)
+	code, out := adminModel(t, a, "POST", "image", "", `{
+	  "id":"sd35-medium","kind":"checkpoint","base_model":"sd35",
+	  "files":[{"s3Key":"image/checkpoints/sd3.5_medium.safetensors"}],
+	  "source":"hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors",
+	  "license_name":"stabilityai-ai-community"}`)
+	if code != http.StatusOK {
+		t.Fatalf("register = %d (%v)", code, out)
+	}
+	rows, err := st.ListEngineModels(t.Context(), "image")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %v (err %v)", rows, err)
+	}
+	m := rows[0]
+	if m.Source != "hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors" {
+		t.Errorf("source = %q — the rebuilt row lost which repository it came from", m.Source)
+	}
+	// 🔴 And the ACCEPTANCE is not rebuilt with it. It is the record of a human act on the row
+	// the ingest created (ADR 0072 decision 10); the person registering this key may be
+	// somebody else entirely, and writing their id here would forge a signature. The licence
+	// TEXT is theirs to state and the verdict is still read OFF it, exactly as the ingest does.
+	if m.LicenseAcceptedBy != "" || m.LicenseAcceptedAt != "" || m.LicenseAcceptedTenant != "" {
+		t.Errorf("a registration invented a licence acceptance: by=%q at=%q tenant=%q",
+			m.LicenseAcceptedBy, m.LicenseAcceptedAt, m.LicenseAcceptedTenant)
+	}
+	if m.CommercialUse == "" {
+		t.Error("the commercial-use verdict was not read off the licence, so this door loses the mark the other one records")
+	}
+	if m.Enabled {
+		t.Error("a registered row arrived enabled")
+	}
+	// A row registered with no source says nothing rather than something: the seed and every
+	// row that predates the column are in exactly that state.
+	if code, out := adminModel(t, a, "POST", "image", "", `{
+	  "id":"sdxl-base-1.0","kind":"checkpoint","base_model":"sdxl",
+	  "files":[{"s3Key":"image/checkpoints/sd_xl_base_1.0.safetensors"}]}`); code != http.StatusOK {
+		t.Fatalf("register without a source = %d (%v)", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	for _, m := range rows {
+		if m.ID == "sdxl-base-1.0" && m.Source != "" {
+			t.Errorf("a row registered with no source claims %q", m.Source)
+		}
+	}
+}
+
+// A borrowed role has no bucket and no active set on this side (ADR 0079), so a replace here
+// would stage bytes for an engine that will never read them — and the row it would rewrite is
+// the far deployment's to change.
+//
+// 🔴 The control is an EXTERNAL row, not a managed one. Paired with a managed row this passes
+// for an implementation that refuses every unmanaged engine, which is exactly the LAN ComfyUI
+// of ADR 0076: `managed:false` with a lifecycle that is not `remote`, and it takes models in
+// like any other.
+func TestEngineIngestReplaceIsRefusedForABorrowedRoleAndAllowedForAnExternalOne(t *testing.T) {
+	body := func() string {
+		return `{"id":"m1","kind":"gguf","s3Key":"llm/new.gguf","replace":true,"license_accepted":true,
+		  "source":{"url":"https://example.invalid/new.gguf","sha256":"` + strings.Repeat("d", 64) + `"}}`
+	}
+	call := func(t *testing.T, e *engineRuntimeState, st store.Store) (int, string) {
+		t.Helper()
+		reg := &engineRegistry{byKey: map[string]*engineRuntimeState{e.def.Key: e}}
+		a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+		reg.ing = &engineIngester{
+			def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+			cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		}
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/admin/engines/"+e.def.Key+"/ingest", strings.NewReader(body()))
+		r.SetPathValue("key", e.def.Key)
+		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+		return rec.Code, rec.Body.String()
+	}
+
+	// Borrowed: refused, and it says which deployment owns the catalogue.
+	st := testSettingsStore(t)
+	borrowed := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	borrowed.settings, borrowed.ctrl = st, nil
+	borrowed.def.Key = "image"
+	borrowed.def.Lifecycle = engineLifecycleRemote
+	borrowed.def.URL = "https://far.invalid"
+	borrowed.catalog = newEngineCatalog(st, "image")
+	if code, msg := call(t, borrowed, st); code != http.StatusBadRequest || !strings.Contains(msg, errCodeEngineNotOurs) {
+		t.Fatalf("replace on a borrowed role = %d (%s), want 400 engine_not_ours", code, msg)
+	}
+
+	// 🔴 The pair. An external engine — the LAN ComfyUI an operator runs on their own box — is
+	// also `managed:false`, and it stages files in this deployment's bucket like any other. It
+	// must get past this gate; what it fails on next is its own business (no such row).
+	st2 := testSettingsStore(t)
+	external := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	external.settings, external.ctrl = st2, nil
+	external.def.Key = "image"
+	external.def.Lifecycle = engineLifecycleExternal
+	external.catalog = newEngineCatalog(st2, "image")
+	if code, msg := call(t, external, st2); strings.Contains(msg, errCodeEngineNotOurs) {
+		t.Fatalf("an external engine was refused as borrowed = %d (%s)", code, msg)
+	}
+}
+
+// The panel builds that registration from a job row, so the job row has to say what the file
+// was taken in AS. Both halves are silent failures if guessed: a LoRA registered as a checkpoint
+// is a row the engine can be told to start with and cannot load, and a text encoder registered
+// with no flag becomes the checkpoint of its own row.
+func TestIngestJobRowSaysWhatTheFileWasTakenInAs(t *testing.T) {
+	job := store.EngineIngestJob{
+		ID: "j1", Role: "image", ModelID: "clip-l", S3Key: "image/text_encoders/clip_l.safetensors",
+		State: store.EngineIngestDone,
+	}
+	spec, _ := json.Marshal(engineIngestRequest{Kind: "checkpoint", FileFlag: "--clip_l"})
+	job.Spec = string(spec)
+	row := engineIngestJobRow(job)
+	if row["kind"] != "checkpoint" || row["file_flag"] != "--clip_l" {
+		t.Errorf("row = %v, want the kind and the file's role", row)
+	}
+	// 🔴 And nothing ELSE of the spec reaches the wire. It carries the licence acceptance and
+	// the resolved download URL, neither of which a job list is the place for.
+	for _, k := range []string{"spec", "AcceptedBy", "accepted_by", "Resolved", "license"} {
+		if _, ok := row[k]; ok {
+			t.Errorf("the job row leaked %q: %v", k, row)
+		}
+	}
+	// A job taken in before these fields existed decodes with them empty, and says nothing
+	// rather than guessing — the form then opens with one fewer answer filled in.
+	job.Spec = `{"Role":"image","ModelID":"clip-l"}`
+	if row := engineIngestJobRow(job); row["kind"] != nil || row["file_flag"] != nil {
+		t.Errorf("an old job invented an answer: %v", row)
+	}
+	job.Spec = "not json at all"
+	if row := engineIngestJobRow(job); row["kind"] != nil || row["file_flag"] != nil {
+		t.Errorf("an unreadable spec invented an answer: %v", row)
+	}
+}

@@ -164,6 +164,69 @@ func (s *SQL) AppendEngineModelFile(ctx context.Context, role, id string, f Engi
 	return true, tx.Commit()
 }
 
+// ReplaceEngineModelFile swaps the file a row holds under one flag, leaving the rest of the row
+// exactly as it is — which is the whole point of it existing.
+//
+// 🔴 The gap it closes: AppendEngineModelFile refuses a flag the row already declares, and the
+// unlabelled slot is THE checkpoint, which cannot be appended to at all. So until this, changing
+// which file a model reads meant forgetting the row and taking it in again — and the row is
+// where the licence acceptance (a record of a human act), the family, the params, the enabled
+// flag and the provenance live. Swapping a t5xxl for another quantisation threw all of them away.
+//
+// The same read-modify-write inside a transaction as the append above, and for the same reason:
+// an upsert through PutEngineModel would have to carry every one of those columns back out and
+// in again to change one entry of a JSON list.
+//
+// A flag the row does not declare is NOT created here. "Replace what is there" and "add a part"
+// are different acts with different refusals, and silently turning one into the other is how a
+// typo in a flag becomes a row with two checkpoints.
+func (s *SQL) ReplaceEngineModelFile(ctx context.Context, role, id string, f EngineModelFile, kv *EngineModelKV) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var raw string
+	switch err := tx.QueryRowContext(ctx,
+		`SELECT files FROM engine_models WHERE role=? AND id=?`, role, id).Scan(&raw); {
+	case err == sql.ErrNoRows:
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	var files []EngineModelFile
+	_ = json.Unmarshal([]byte(raw), &files)
+	at := -1
+	for i, e := range files {
+		if strings.TrimSpace(e.Flag) == strings.TrimSpace(f.Flag) {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return false, nil
+	}
+	files[at] = f
+	if kv == nil {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE engine_models SET files=?, updated_at=? WHERE role=? AND id=?`,
+			jsonList(files), NowTS(), role, id); err != nil {
+			return false, err
+		}
+		return true, tx.Commit()
+	}
+	// Written even when it is all zeros: an unreadable header means the row's geometry is now
+	// UNKNOWN, and the estimate falling back to the weights floor is the honest outcome. Keeping
+	// the previous file's numbers would be a KV estimate for a file that is no longer there.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE engine_models SET files=?, kv_layers=?, kv_heads_kv=?, kv_key_len=?, kv_value_len=?,
+		   updated_at=? WHERE role=? AND id=?`,
+		jsonList(files), kv.Layers, kv.HeadsKV, kv.KeyLen, kv.ValueLen, NowTS(), role, id); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
 func (s *SQL) SetEngineModelEnabled(ctx context.Context, role, id string, enabled bool) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE engine_models SET enabled=?, updated_at=? WHERE role=? AND id=?`,
@@ -200,6 +263,32 @@ func (s *SQL) SetEngineModelBaseModel(ctx context.Context, role, id, baseModel s
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE engine_models SET base_model=?, updated_at=? WHERE role=? AND id=?`,
 		baseModel, NowTS(), role, id)
+	return affected(res, err)
+}
+
+// SetEngineModelWindow corrects the declared window, and writes BOTH columns because they are
+// one declaration: the catalogue only carries max_output_tokens when context_tokens is above
+// zero, so a row that moved one of them alone is a row the panel cannot explain.
+//
+// It exists because the window is what a wrong row costs money to discover: measured on a
+// borrowed llm engine, a 17 GB model whose context_tokens still said 262144 allocated a 16 GiB
+// KV cache and died with `cudaMalloc failed: out of memory` — four minutes after a GPU box had
+// been bought. Re-registering the row to change one number would carry its licence acceptance,
+// its source and its sha256 back out and in again.
+func (s *SQL) SetEngineModelWindow(ctx context.Context, role, id string, contextTokens, maxOutputTokens int) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engine_models SET context_tokens=?, max_output_tokens=?, updated_at=? WHERE role=? AND id=?`,
+		contextTokens, maxOutputTokens, NowTS(), role, id)
+	return affected(res, err)
+}
+
+// SetEngineModelVram writes the operator's own VRAM measurement, and 0 withdraws it — which
+// puts the row back on the floor derived from its files rather than on a number nobody stands
+// behind any more.
+func (s *SQL) SetEngineModelVram(ctx context.Context, role, id string, vramMiB int) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engine_models SET vram_mib=?, updated_at=? WHERE role=? AND id=?`,
+		vramMiB, NowTS(), role, id)
 	return affected(res, err)
 }
 

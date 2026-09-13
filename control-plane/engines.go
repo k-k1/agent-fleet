@@ -784,6 +784,12 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 							log.Printf("engines: %v", err)
 						}
 					}
+					// …and the same push putModel and deleteModel make. An ingest that CREATES a
+					// row changes nothing a workspace can see — the row arrives disabled — but one
+					// that replaces a file under an enabled row changes what the box loads, and a
+					// session holding a catalogue from before the swap would go on naming the file
+					// that is gone until its own 10-minute TTL.
+					go notifyEngineCatalogChanged(context.Background(), mgr, role)
 				},
 			}
 			reg.mu.Lock()

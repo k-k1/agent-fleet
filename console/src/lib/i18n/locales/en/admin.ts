@@ -315,7 +315,32 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // refuses a plain ingest onto an id it already has — that would upsert the row's files,
   // licence and enabled flag away — so the other act is offered here instead.
   "admin.engines_ingest_attach": "Add it to “{id}” as a part (no new row)",
-  "admin.engines_ingest_id_taken": "That id is taken. Choose another, or tick “add it as a part” above.",
+  // 🔴 The other destination. A slot that is filled cannot be added to (the CP answers 409), and
+  // the unlabelled file — the checkpoint itself — cannot be added to at all, so changing a
+  // quantisation meant forgetting the row and building it again: licence acceptance, family,
+  // params, enabled state and provenance all went with it.
+  "admin.engines_ingest_replace": "Put this file in place of “{id}”'s {part} (the row stays as it is)",
+  // The CP has no s3:DeleteObject (ADR 0072 decision 7), the swap lands minutes later inside the
+  // job reconciler where there is nobody to report a refused deletion to, and the keys are
+  // shared (`text_encoders/` is pointed at from more than one row) — so deleting here breaks a
+  // model nobody touched.
+  "admin.engines_ingest_replace_keeps_bytes": "The previous file stays in the bucket. Deleting bytes is “delete the files too” when a row is forgotten.",
+  "admin.engines_ingest_id_taken": "That id is taken. Choose another, or tick “add it as a part” or “put this file in its place” above.",
+  // 🔴 Whether it fits, said before the press. Measured on a borrowed llm engine: an L4 (24 GB)
+  // took 17 GB of weights and then died on `cudaMalloc failed: out of memory … failed to
+  // allocate buffer for kv cache` for the 16 GB the window wanted — four minutes and one
+  // purchased GPU after the button, and the panel had shown a filename and a size.
+  // A candidate over the card on WEIGHTS ALONE is marked in the list; the cache is not known
+  // until the file is resolved, so an unmarked one is "not ruled out here", never "it fits".
+  "admin.engines_ingest_over_card": "⚠ over the card",
+  "admin.engines_ingest_fit_weights": "weights {n} MiB",
+  // 🔴 The cache's element type cannot be read at all: -ctk/-ctv are CloudFormation parameters
+  // that never reach the engine table. f16 is assumed and said so — a deployment running a
+  // quantised cache is over-estimated, which is the safe direction for "will this fit".
+  "admin.engines_ingest_fit_kv": "KV cache {n} MiB (at {c} tokens, assuming f16)",
+  "admin.engines_ingest_fit_kv_unread": "the KV cache could not be read — this is the weights alone",
+  "admin.engines_ingest_fit_card": "{n} MiB in total, against a {c} MiB card",
+  "admin.engines_ingest_fit_over": "It does not fit this card. Pick a smaller quantisation, or a narrower window.",
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
   "admin.engines_ingest_gated": "A gated repository. It is fetched with the operator's token, which has accepted its terms.",
   "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Register the operator's token under \u201cHugging Face token\u201d below — it is read by the ingest task only.",
@@ -345,6 +370,27 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // ran and finished" goes on being true), so it is headed and dated and reads as history.
   // Undated, a "done" beside a deleted model's id reads as that model's current state.
   "admin.engines_ingest_jobs_head": "Ingest history",
+  // Forgetting one row of the history — the delete this table never had. There is still no TTL
+  // and no bulk sweep: while nothing in the catalogue points at it, a `done` row is the only
+  // written record that the file is in the bucket, and the CP cannot look in the bucket (review
+  // R3). So the confirmation says which of the two cases this row is.
+  // 🔴 NOT "take it in again". The bytes are in the bucket already — forgetting a row without a
+  // purge leaves them there (measured on the dev deployment, 2026-09-09: a 491 MB object outlived
+  // its row) — so this is a registration, and the only thing that was missing was the list of
+  // keys. It fills the form and stops: the id and the family are a person's to confirm.
+  "admin.engines_ingest_job_reuse": "Register this key",
+  "admin.engines_model_add_from_job": "From the ingest history: {s}",
+  // More than one row pointing at one key is normal — SD3.5 and FLUX.1 read the same text
+  // encoders — so this names who has it instead of refusing.
+  "admin.engines_model_add_from_job_used": "{who} also points at this key. One file used by several rows is normal.",
+  "admin.engines_ingest_job_forget": "Forget this",
+  "admin.engines_ingest_job_forget_go": "Forget it",
+  "admin.engines_ingest_job_forget_live": "A running ingest cannot have its history forgotten. Deleting the row does not stop the task, which finishes and writes a catalogue row nobody is waiting for.",
+  "admin.engines_ingest_job_forget_used": "{who} points at this key. Forgetting the history leaves that row and its file alone.",
+  // 🔴 Never "the file is still there". A purge deletes the bytes and leaves the job `done`, and
+  // the CP cannot look in the bucket. All that can be said is that no catalogue row names it.
+  "admin.engines_ingest_job_forget_last": "No catalogue row points at this key. Forgetting the history also removes the only place it can be picked from to register it again. (The Control Plane cannot look in the bucket, so whether the file is still there is not known here.)",
+  "admin.engines_ingest_job_forget_ack": "Forget it anyway",
   "admin.engines_ingest_state_pending": "starting",
   "admin.engines_ingest_state_running": "fetching",
   "admin.engines_ingest_state_done": "done",
@@ -393,11 +439,31 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_class_vram_many": "This engine chooses a checkpoint per request and keeps loaded ones in VRAM, so several can be resident at once — the figure above is the largest ONE of them.",
   "admin.engines_vram_src_declared": "measured",
   "admin.engines_vram_src_floor": "a weights-only floor",
+  // The CP answers this source too (engine_class.go), and until now neither catalogue had a word
+  // for it — the confirmation dialog built its key by concatenation and drew a missing one.
+  "admin.engines_vram_src_weights_kv": "a floor of the weights plus the KV cache",
   "admin.engines_vram_src_unknown": "unknown",
   "admin.engines_vram_confirm": "{id} wants {n} MiB ({src}) and the class you have chosen has {m} MiB. Short VRAM does not slow CUDA down, it crashes it. Quantisation or offloading may still fit it — continue if you know that.",
   "admin.engines_vram_confirm_go": "Enable it anyway",
   "admin.engines_model_vram": "VRAM {n} MiB",
   "admin.engines_model_vram_floor": "VRAM at least {n} MiB (a weights-only floor)",
+  // 🔴 A floor, said as one. Drawn with the measured wording instead, a number the CP DERIVED
+  // reads as one an operator stood behind — and this is the row where that matters most, because
+  // it is the only source that moves when the context window is edited.
+  "admin.engines_model_vram_weights_kv": "VRAM at least {n} MiB (weights + KV cache)",
+  // The window an llm row declares, and the editor for it. The context window is what a wrong
+  // value bills for: a row left at 262144 asked for a 16 GiB KV cache and killed the engine four
+  // minutes into a cold start somebody had already paid for.
+  "admin.engines_model_window_edit": "Window",
+  "admin.engines_model_window_context": "Context",
+  "admin.engines_model_window_output": "Max output",
+  "admin.engines_model_vram_edit": "Measured VRAM (MiB)",
+  // What the panel thinks this row needs right now, and WHERE that number came from. Shown
+  // beside the fields because editing either of them moves it — and because "measured" and
+  // "derived from the files" are not the same claim.
+  "admin.engines_model_need_now": "now: {n} MiB ({src})",
+  "admin.engines_model_need_unknown": "now: not known",
+  "admin.engines_model_window_save": "Save",
   // The licence facts a row can carry (ADR 0072 decision 10). "Not recorded" is stated rather
   // than left blank: a seeded row cannot know a licence and the hand-registration form does not
   // ask, and a gap where every ingested row names one reads as "no restrictions".

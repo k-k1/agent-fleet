@@ -42,10 +42,15 @@ export type EngineModel = {
   vram_mib?: number;
   /** What this model would want on the card, and how well that is known (ADR 0074 decision 6):
    *  "declared" = the operator measured it, "floor" = the weight files' size and nothing else
-   *  (no KV cache, no context), "unknown" = nobody said. 🔴 `unknown` must never be drawn as a
-   *  comfortable zero — it means the question was not answered. */
+   *  (no KV cache, no context), "weights_kv" = that plus the KV cache this row's context window
+   *  needs, "unknown" = nobody said. 🔴 `unknown` must never be drawn as a comfortable zero — it
+   *  means the question was not answered.
+   *
+   *  🔴 `weights_kv` was missing from this union while the CP was already answering it, so it
+   *  arrived typed as the two the panel knew and was drawn with the MEASURED wording. Both
+   *  floors have to stay distinguishable from a measurement here. */
   vram_need_mib?: number;
-  vram_need_source?: "declared" | "floor" | "unknown";
+  vram_need_source?: "declared" | "floor" | "weights_kv" | "unknown";
   /** BOTH are kept and both are shown: Hugging Face reports `other` for the two
    *  non-commercial models in ADR 0072's table, with the real terms in license_name. */
   license?: string;
@@ -82,8 +87,16 @@ export type EngineModel = {
   files_missing?: string[];
   /** Where the bytes came from (`hf:<repo>/<file>`, `civitai:<id>`, a URL). The id is short and
    *  unique only inside this deployment, so this is the only thing that says WHICH vendor's
-   *  model of that name this row is. Absent for a seeded row. */
+   *  model of that name this row is. Absent for a seeded row.
+   *
+   *  🔴 For a SPLIT model this describes the file that created the row and nothing else — the
+   *  parts carry their own (`file_rows[].source`). */
   source?: string;
+  /** The page `source` names, composed by the CP (engineSourceURL). Absent when it could not be
+   *  composed, and the panel branches on THAT rather than parsing the string a second time:
+   *  `civitai:<id>` is a model VERSION id and `/models/<id>` opens a different model, and a
+   *  `url:` source is the direct download of the weights rather than a page. */
+  source_url?: string;
   precision?: string;
   sizes?: string[];
   files?: string[];
@@ -91,7 +104,15 @@ export type EngineModel = {
    *  `POST …/models` reads back (ADR 0072 P6 R2). `files` above is base names to read; these
    *  are what a forgotten row is rebuilt from, and since P6 the catalogue is the only place
    *  the declaration exists at all. Super-admin only, like the rest of this row. */
-  file_rows?: { s3Key: string; flag?: string; bytes?: number }[];
+  file_rows?: {
+    s3Key: string;
+    flag?: string;
+    bytes?: number;
+    /** Where THIS part came from, and its page. Absent on a file staged by hand and on every
+     *  file taken in before the field existed — which stays "nobody recorded", never "unknown". */
+    source?: string;
+    source_url?: string;
+  }[];
   args?: string[];
   /** What enabling this model adds to the next cold start, in seconds, from the file sizes
    *  whoever staged them declared. Absent when nobody declared one — the CP cannot look in S3
@@ -151,6 +172,16 @@ export type ResolvedSource = {
    *  this deployment publishes 262144 and is run at 32768, because what the architecture
    *  allows and what fits in the GPU are different questions. Offered, never applied. */
   context_length?: number;
+  /** What the KV cache costs per 1024 tokens of window, off this file's own GGUF header. The
+   *  cache is LINEAR in the context length, so the panel multiplies this by the window in the
+   *  form — 🔴 the formula itself stays in the CP (engineKVCacheMiB); a second copy here would
+   *  be a second thing to correct the day a model declares different key and value widths.
+   *
+   *  🔴 Absent, NEVER 0, when the header could not be read: the CP's read is best-effort and
+   *  silent, and "nobody measured it" is not "it costs nothing". The element type is assumed to
+   *  be f16 and cannot be read at all (`-ctk`/`-ctv` are CloudFormation parameters that never
+   *  reach the engine table), which is why the sentence that shows it says so. */
+  kv_mib_per_1k_tokens?: number;
   /** `base_model` translated into the family vocabulary this provider dispatches on, or absent
    *  when the CP would not name one. The picker's initial value — never the stored family, and
    *  never silently: ADR 0072 decision 2 keeps the declaration with the operator, because an
@@ -243,6 +274,22 @@ export type IngestJob = {
   code?: string;
   bytes?: number;
   created_at?: string;
+  /** What the file was taken in AS — `checkpoint`, `gguf`, `lora` — and what it is within the
+   *  model (`--vae`, `--t5xxl`; absent for a whole checkpoint). Read by the CP out of the job's
+   *  own spec, and here for one reason: registering this key again is a `POST /models`, and a
+   *  form that guessed either one would produce a row that loads nothing and says nothing about
+   *  it until the next cold start. Absent on a job taken in before the field existed. */
+  kind?: string;
+  file_flag?: string;
+  /** The catalogue row that already points at this job's `s3_key`, as `role/id`, or absent when
+   *  none does.
+   *
+   *  🔴 It is NOT "the file is still in the bucket": the CP has no S3 permission at all (ADR
+   *  0072 review R3) and `deleteModel?purge=1` deletes bytes while leaving the job `done` for
+   *  ever. What it answers is who would still be broken by losing the file — which is why a
+   *  job with nothing pointing at it is the one that is HARDER to forget: that row is then the
+   *  last written record of the key. */
+  key_used_by?: string;
 };
 
 /** One rung of the GPU ladder the operator declared (ADR 0074 decision 1). The CP asks neither

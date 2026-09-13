@@ -4189,3 +4189,173 @@ Not verified on hardware. What is pinned is that the composed string reaches the
 have it, and that the families without a branch report the drop. What a GPU still owes this
 section is one pair of pictures, same prompt and same seed, that differ by a declared negative
 prompt and nothing else.
+
+## Follow-up — a catalogue row could not be corrected (2026-09-13)
+
+ADR 0079's live run borrowed another deployment's llm engine and measured its cold start. The
+engine died loading the model:
+
+```
+ggml_backend_cuda_buffer_type_alloc_buffer: allocating 16384.00 MiB on device 0: cudaMalloc failed: out of memory
+failed to allocate buffer for kv cache
+```
+
+The row's `context_tokens` was still the 262144 off the model's own header, and an L4 holds
+neither 17 GB of weights nor the 16 GB of KV cache that window asks for. **The Console has no
+field for it.** The box is bought, the weights are synced, and the failure arrives four minutes
+later, so the price of an uncorrectable row is paid in GPU-hours.
+
+Three gaps were found around it, and two more the operator named:
+
+1. the row's numbers could not be edited at all — `putModel` takes `enabled` / `selected` /
+   `default` / `base_model` / `negative_prompt` / `params`, and anything else in the body is
+   dropped silently by `encoding/json`;
+2. the provenance was stored and never linked (below);
+3. a split model could not say where its parts came from (below);
+4. the file picker says a name and a size, and nothing about whether the file fits the card;
+5. one file of a row could not be exchanged for another — `engineAttachAllowed` answers
+   *"forget the row, or take this in as its own"*, which throws away the licence acceptance;
+6. the ingest history has no delete at all — there is no route, no store method and no TTL, so
+   `engine_ingest_jobs` grows for the life of the deployment;
+7. a file left in the bucket by a forgotten row cannot be re-registered by choosing it.
+
+### Decisions
+
+- **`putModel` grows POINTER FIELDS, it does not become a re-registration.** The route already
+  edits three fields that way and the reason is written next to them: a row can be wrong in one
+  value while being right in every other, and re-posting the whole row to fix one number carries
+  the licence acceptance and the S3 keys through a round trip. What it takes is
+  `context_tokens` + `max_output_tokens` (as a PAIR — the row answers the second only alongside
+  the first, so one without the other is a row this panel has no sentence for) and `vram_mib`.
+- **`kind` and the three licence fields stay out.** `kind` moves a row between the model list and
+  the LoRA list and changes which controls apply to it — that is a re-registration wearing an
+  edit's clothes. The licence fields are EVIDENCE of a human act and `commercial_use` is derived
+  from them (decision 10); a licence somebody can retype is a forged snapshot in the record an
+  audit reads.
+- **The VRAM gate is asked of the value about to be WRITTEN.** `engineVramGuard` ran only when a
+  model was switched on, and it read the row as stored — so raising the window on a row that is
+  already enabled was checked by nothing, which is the exact shape of the failure above.
+- **The source is turned into a URL by the control plane, never by the panel.** `civitai:<id>`
+  is a model VERSION id: `civitai.com/models/<id>` opens A DIFFERENT MODEL, and the form that
+  resolves is the one this file already hands to `LicenseURL`. The panel branches on the URL
+  arriving rather than parsing the string a second time — the same rule the search hit's `url`
+  has followed since decision 11.
+- **A `url:` source is not linked.** It is the direct download of the weights (22 GB for the
+  first row in this ADR's table), and a line that says "where this came from" must not be a
+  click that starts one. It stays readable text, as does any prefix this deployment's control
+  plane does not know: in an operator's console a broken link is worse than a string.
+- **Every FILE records its own source.** The row's `source` is written only by the ingest that
+  CREATED the row; an attach writes the file and nothing else, so a four-file FLUX.1 row carried
+  one `hf:black-forest-labs/FLUX.1-dev/…` line that reads as the provenance of all four. The
+  parts are routinely from other repositories — the text encoders in this ADR's own table are
+  not published by whoever published the diffusion model — and `engine_ingest_jobs.source` holds
+  that only while the job row lives. **No migration was needed:** `files` has been a JSON column
+  since migration 0057, so an old row simply has no per-file source, which stays "nobody
+  recorded" rather than being drawn as unknown.
+- **Re-registering from the bucket reads the ingest HISTORY, not S3.** Review R3's "the control
+  plane cannot look in the bucket" is still true and was re-measured on 2026-09-13: the CP task
+  role has no S3 action at all, `aws-sdk-go-v2/service/s3` is not a dependency of the control
+  plane, and the CP does not even know the bucket's NAME — `BUCKET` reaches the ingest and engine
+  task definitions, and the bucket is declared in the engines stack while the CP's task
+  definition is in the platform stack, which the engines stack imports FROM. A listing would
+  therefore cost a new IAM statement, a new dependency, a cross-stack wiring and a deployment.
+  Against that: `engine_ingest_jobs` is never pruned, so it already holds every file this
+  deployment has ever put in that bucket. That is what the picker reads.
+- **The history's delete and that picker are one piece of work**, because deleting the job is
+  what erases the knowledge of the file.
+
+### Still open
+
+- **Replacing a file does not pass the VRAM gate.** The gate now asks about the value an EDIT is
+  about to write, and about a model being switched on — but exchanging the checkpoint of an
+  already-enabled row for a larger quantisation changes the same number silently. It was left
+  out deliberately: the refusal would have to happen at the ingest START (the write lands minutes
+  later in the job reconciler, where nobody is waiting for an answer), which means a
+  `confirm_vram` on that route and a confirmation in the ingest form. What softens it is that the
+  form now shows weights, KV cache and the card's own figure BEFORE the press, which is the
+  question the gate would be asking.
+- **A real `ListObjects` would see what the history cannot**: files staged by hand, and whether
+  the bytes are still there at all (a purge deletes the object and leaves the job row `done`).
+  The panel therefore says what it read — a finished download — and never asserts that the file
+  exists, which is the same posture `postModel` has always taken about a typed S3 key. Whether
+  to buy the listing with the IAM statement above is the operator's call, and it is a reversal
+  of review R3 rather than an implementation detail.
+
+### What was deliberately not done
+
+- **No new error code.** An edit that would no longer fit the card answers the existing
+  `engine_vram_confirm` with the existing `confirm_vram` escape (ADR 0074 decision 6), because
+  it is the same question about the same card.
+- **The estimate is not recomputed in the Console.** The KV geometry is not on the wire and is
+  not going on it: a second copy of `engineKVCacheMiB` in TypeScript would drift from the one
+  the gate uses, and the number an operator reads has to be the number that refuses them.
+- **The row's own source is not removed now that the files carry one.** It is what the licence
+  acceptance belongs to; a file whose source is the row's is simply not repeated beside it.
+
+### What building it measured (2026-09-13)
+
+The numbers the live failure is made of, so a reader can check the arithmetic rather than trust
+it: 17 GiB of weights is 17408 MiB, and the KV cache is
+`layers × heads_kv × (key_len + value_len) × tokens × 2` — for that model 1024 MiB at 16384
+tokens (18432 in all, which the L4 rung's 21000 holds) and 16384 MiB at 262144 (33792, which it
+does not). The panel is given the KV cost per 1024 tokens (96 MiB for the 30B) and multiplies,
+because the cache is linear in the window and the formula stays in one place.
+
+- 🔴 **`vram_need_source: "weights_kv"` was already on the wire and the Console's union did not
+  have it.** Two consequences, both silent: the confirmation dialog rendered a message key that
+  does not exist, and the meta line drew that figure with the MEASURED wording — a derived number
+  reading as somebody's measurement, which is the one thing ADR 0074 decision 6 is written to
+  prevent. A union that lists the values it knows does not fail when the server learns a new one.
+- **"Does it fit" is only answerable in one direction at the picker.** Weights larger than the
+  card is a definite no; weights smaller is *not yet a yes*, because the KV cache is unknown
+  until the file is resolved. The mark on the list keeps that asymmetry rather than reporting a
+  green tick it cannot support.
+- **A replacement rewrites the KV geometry, and only for the slot that has one.** The row holds
+  ONE set of attention numbers and only the create path ever wrote them, so a GGUF exchanged for
+  another quantisation kept the old file's geometry and went on estimating VRAM from a file that
+  no longer exists. A text encoder's replacement says nothing about the checkpoint's attention,
+  so it leaves them alone — and a header that cannot be read writes zeros, putting the row back
+  on its floor, because the previous file's numbers are the one answer that is certainly wrong.
+- **A replacement does not purge the old object, and that is not a limitation to fix later.**
+  The write lands in the job reconciler minutes after the press, where a refused delete has
+  nobody to be reported to — and the keys are shared: `text_encoders/` is pointed at from more
+  than one row (measured on af-sandbox: `clip_l.safetensors` from two). Deleting there is how a
+  model nobody touched stops loading. The panel says the bytes stay.
+- **The catalogue push was missing from the ingest's completion.** `publishActiveSet` ran;
+  `notifyEngineCatalogChanged` did not, so every workspace kept a stale catalogue until its own
+  ten-minute TTL. Attaching a part had the same hole.
+
+And three traps in the TESTS, which is where this screen has been bitten before:
+
+- **A shared class name is somebody else's selector.** Adding `className="mono"` to a number
+  field turned an existing test's `ul.engines-model-list .mono` count from one into four. The
+  styling moved into the stylesheet instead.
+- 🔥 **An "it is not offered here" assertion made on the wrong tab passes for ever.** The check
+  that a LoRA row has no negative-prompt editor was made on the MODEL tab, where a LoRA row is
+  not rendered at all — so it passed with the guard deleted. It now switches tabs and asserts the
+  row is on screen first. Its sibling for the window editor was written the same way from the
+  start, and the same pairing rule applies to the borrowed row: the control it must be compared
+  against is an EXTERNAL row, and that is not theory — replacing `refuseBorrowedWrite` with a
+  plain "not managed here" makes the external case fail, which is ADR 0076's LAN ComfyUI.
+- **A positive control can be silently void.** Breaking a request body by adding a duplicate key
+  to an object literal does nothing: JavaScript keeps the last one. Break such a body by REMOVING
+  the key.
+
+And what the history itself turned out to be made of:
+
+- 🔴 **`engine_ingest_jobs.spec` is a raw `json.Marshal` of the ingest request, with Go's own
+  field names** (`Kind`, `FileFlag`) because that struct carries no json tags. The panel now reads
+  it to offer a registration, so renaming a field there empties that offer silently. What the job
+  row answers is therefore stated explicitly (`kind`, `file_flag`) rather than left to the spec's
+  shape.
+- **A change to the shared job row surfaces in the wire golden under `postIngest`, not
+  `listIngest`** — `engineIngestJobRow` is one function behind both, and the golden names the
+  site that happens to hold its first occurrence. Easy to read as "the wrong route changed".
+- **Deleting a history row is two different questions, and the panel asks whichever one is
+  true.** With a catalogue row pointing at that key, the delete is housekeeping — plain text,
+  one press. With nothing pointing at it, the row is the only record this deployment has that
+  the file is in the bucket, so it takes a deliberate acknowledgement. 🔴 Neither wording claims
+  the file is THERE: a purge deletes the object and leaves the job `done`, and the CP cannot
+  look. When the catalogue read fails, every row falls back to the stronger warning.
+- 🔥 **A background test wrapper reported exit 0 while its output file held a golden FAIL.** Twice
+  now in this repository's history, and once again here. Read the output, not the exit code.

@@ -69,6 +69,21 @@ type EngineIngestStore interface {
 	// ListActiveEngineIngestJobs is what the reconciler polls: only the jobs whose outcome is
 	// still unknown, so a CP that has been up for a week does not ask ECS about last Tuesday.
 	ListActiveEngineIngestJobs(ctx context.Context) ([]EngineIngestJob, error)
+	// DeleteEngineIngestJob forgets ONE job by id, reporting found=false when it was already
+	// gone. Deliberately the only removal there is: no TTL, no prune, no "delete everything
+	// finished before X".
+	//
+	// 🔴 The reason there is no timer is that this table is not only a progress display. While
+	// nothing in the catalogue points at the S3 key a `done` job wrote, this row is the
+	// deployment's ONLY written record that those bytes exist — the Control Plane cannot list
+	// the bucket, having no S3 permission at all (ADR 0072 review R3). Ageing rows out would
+	// quietly delete the address of files that keep being paid for.
+	//
+	// It also does NOT filter by state. A `running` job must not be deleted (the ECS task
+	// outlives the row and still writes a catalogue row nobody is waiting for), but that
+	// refusal belongs to the route, which can say why: filtered here, "still running" and "no
+	// such job" would arrive as the same found=false.
+	DeleteEngineIngestJob(ctx context.Context, id string) (bool, error)
 }
 
 func (s *SQL) PutEngineIngestJob(ctx context.Context, j EngineIngestJob) error {
@@ -135,6 +150,11 @@ func (s *SQL) GetEngineIngestJob(ctx context.Context, id string) (EngineIngestJo
 		return EngineIngestJob{}, false, err
 	}
 	return rows[0], true, nil
+}
+
+func (s *SQL) DeleteEngineIngestJob(ctx context.Context, id string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM engine_ingest_jobs WHERE id=?`, id)
+	return affected(res, err)
 }
 
 func (s *SQL) engineIngestRows(ctx context.Context, q string, args ...any) ([]EngineIngestJob, error) {
