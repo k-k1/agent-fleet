@@ -33,6 +33,7 @@ const KIND_ABBR: Partial<Record<PaneKind, string>> = {
   browser: "web",
   browserAttach: "web",
   sessions: "sess",
+  gallery: "img",
 };
 
 export const LayoutMap = memo(function LayoutMap() {

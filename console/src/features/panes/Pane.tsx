@@ -310,7 +310,11 @@ function PopulatedPane({
       view.content.kind === "chat" && view.content.conversationId
         ? chatTitles.get(view.content.conversationId)
         : undefined;
-    return paneTitle(view, session, { shared, chatTitle });
+    const gallerySession =
+      view.content.kind === "gallery" && view.content.gallerySession
+        ? sessionByName.get(view.content.gallerySession)
+        : undefined;
+    return paneTitle(view, session, { shared, chatTitle, gallerySession });
   };
   const tabState = (view: PaneView) => {
     if (view.content.kind !== "terminal" || !view.session) return null;

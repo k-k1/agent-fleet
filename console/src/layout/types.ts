@@ -47,7 +47,19 @@ export type PaneContent =
   /** The sessions overview: every running session as a card (ADR 0078). `showStopped`
    *  is the pane's own toggle — part of the content so it survives a reload and a tab
    *  switch, which unmount the view. */
-  | { kind: "sessions"; showStopped: boolean };
+  | { kind: "sessions"; showStopped: boolean }
+  /**
+   * A folder's images as a grid of cards (ADR 0080). `galleryPath` is the first field
+   * in this union that names a DIRECTORY, which is the whole reason it is a kind of its
+   * own rather than a mode of `file` — see the ADR's decision 1.
+   *
+   * `sort` lives here rather than in React state for the same reason `showStopped` does:
+   * a tab switch unmounts the view. `galleryFocus` is the image to enlarge on open (a
+   * file name, or a browse-root-relative path — the view matches either). `gallerySession`
+   * is DISPLAY-ONLY: the generated-images folder is named by a UUID, so the title needs
+   * the session the pictures came from to read as anything.
+   */
+  | { kind: "gallery"; galleryPath: string; sort?: "new" | "name"; galleryFocus?: string; gallerySession?: string };
 
 export type PaneKind = PaneContent["kind"];
 

@@ -40,7 +40,7 @@ import { useSkillPicker } from "./parts/useSkillPicker.ts";
 import { useReplySuggest } from "./parts/useReplySuggest.ts";
 import { JumpPills } from "./parts/JumpPills.tsx";
 import { AttachChips } from "./parts/AttachChips.tsx";
-import { ImageLightbox } from "./parts/ImageLightbox.tsx";
+import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
 import { HistoryNav, HistorySearchButton } from "./parts/HistoryNav.tsx";
 import { HistorySearchBar } from "./parts/HistorySearchBar.tsx";
 import { useHistorySearch } from "./parts/useHistorySearch.ts";

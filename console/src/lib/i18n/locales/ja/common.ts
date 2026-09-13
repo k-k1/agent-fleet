@@ -222,6 +222,7 @@ export const common = {
   "pane.kind.browser": "ブラウザ",
   "pane.kind.browser_attach": "Chromium操作画面",
   "pane.kind.sessions": "セッション一覧",
+  "pane.kind.gallery": "画像ギャラリー",
 
   // === P2 共通（追加）===
   "common.approx": "約{v}",

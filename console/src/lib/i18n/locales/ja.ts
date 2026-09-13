@@ -16,6 +16,7 @@ import { assistant } from "./ja/assistant.ts";
 import { chat } from "./ja/chat.ts";
 import { common } from "./ja/common.ts";
 import { errors } from "./ja/errors.ts";
+import { gallery } from "./ja/gallery.ts";
 import { memo } from "./ja/memo.ts";
 import { mirror } from "./ja/mirror.ts";
 import { notifications } from "./ja/notifications.ts";
@@ -50,4 +51,5 @@ export const ja = {
   ...sharing,
   ...schedules,
   ...memo,
+  ...gallery,
 };
