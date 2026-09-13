@@ -17,6 +17,7 @@ import { IconButton } from "../../ui/Button.tsx";
 import { openSessionsOverview } from "../overview/open.ts";
 import { openImagegen } from "../imagegen/open.ts";
 import { openGeneratedGallery } from "../gallery/open.ts";
+import { useImagegenAvailable } from "../imagegen/available.ts";
 import { jaKind } from "./paneTitle.ts";
 import { selectedView } from "../../layout/ops.ts";
 
@@ -55,6 +56,8 @@ export const LayoutMap = memo(function LayoutMap() {
   const ordOf = new Map(rows.map((r) => [r.id, r.ordinal] as const));
   // Cells get narrow with 3+ columns — abbreviate the kind then.
   const shortKind = layout.cols.length >= 3;
+  // Same rule as the ops bar: no engine, no button (ADR 0081 decision 1).
+  const imagegenAvailable = useImagegenAvailable();
 
   return (
     <div className="layoutmap" role="group" aria-label={tr("pane.map_aria")}>
@@ -62,7 +65,12 @@ export const LayoutMap = memo(function LayoutMap() {
         {tr("pane.layout")}
         {/* The overview's one on-screen entry (the other is the leader key, g s). */}
         <IconButton icon="dashboard" label={tr("pane.open_sessions")} onClick={() => openSessionsOverview()} />
-        <IconButton icon="wand" label={tr("pane.open_imagegen")} onClick={() => openImagegen()} />
+        {imagegenAvailable && (
+          <IconButton icon="wand" label={tr("pane.open_imagegen")} onClick={() => openImagegen()} />
+        )}
+        {/* Not behind `imagegenAvailable`: the folder holds what the SESSIONS generated too
+            (the codex / agy routes), which exist whether or not this deployment runs an
+            image engine of its own. */}
         <IconButton icon="file-media" label={tr("pane.open_generated")} onClick={() => openGeneratedGallery()} />
       </div>
       <div className="lm-cols">
