@@ -200,7 +200,16 @@ describe("the engine panel a granted tenant_admin sees", () => {
     expect(host?.querySelector(".engines-ingest")).toBeTruthy();
     // And the two vocabularies the form is built from survived the trim: without base_models
     // there is no family to declare, and without file_flags a split model cannot be described
-    // at all. Read off the form's own selects rather than off the fixture.
+    // at all. Read off the wizard's own selects rather than off the fixture — they live on
+    // 「どれを」, which is two answers in.
+    const next = () => btn("次へ")!;
+    await act(async () => next().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const repo = host!.querySelector(".engines-ingest .engines-model-add-row input") as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(repo, "black-forest-labs/FLUX.1-dev");
+      repo.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => next().dispatchEvent(new MouseEvent("click", { bubbles: true })));
     const options = Array.from(host?.querySelectorAll("option") || []).map((o) => o.getAttribute("value"));
     expect(options).toContain("flux1");
     expect(options).toContain("--diffusion-model");

@@ -756,8 +756,9 @@ a.engines-model-source:hover {
   flex-direction: column;
   gap: 6px;
   padding: 8px;
-  border: 1px solid var(--dialog-border);
+  border: 1px solid var(--border);
   border-radius: 6px;
+  background: var(--panel2);
 }
 
 .engines-model-vae-actions {
@@ -782,6 +783,133 @@ a.engines-model-source:hover {
 
 /* The ingest form sits inside the same bordered block as the register one; what it adds is a
    place for the resolved facts and the acceptance, which have to be READ rather than skimmed. */
+/* 「モデルを追加」 — a screen, not a section. The catalogue is hidden while it is open, so this
+   is what fills the panel: one question at a time, the rail saying which one, and the reason the
+   next button is grey standing beside it.
+
+   🔴 What it replaced was twelve fields in one column whose applicability depended on state the
+   screen did not show. The rules that keep it a screen are here: a column at every width (the
+   dialog is 1100px and a phone is 390), and nothing positioned absolutely — the step's own
+   content decides the height, and a fixed one would cut the search results off. */
+.engines-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.engines-wizard-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.engines-wizard-title {
+  font-weight: 600;
+}
+
+.engines-wizard-head > button {
+  margin-left: auto;
+}
+
+/* The four questions. Numbers rather than dots would need a legend; the labels ARE the legend,
+   so the dot is decoration and the word is the content. */
+.engines-wizard-rail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.engines-wizard-rail li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.engines-wizard-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+}
+
+.engines-wizard-rail li.on {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.engines-wizard-rail li.on .engines-wizard-dot,
+.engines-wizard-rail li.done .engines-wizard-dot {
+  background: var(--accent, #4a7);
+  border-color: transparent;
+}
+
+.engines-wizard-step {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The acts, and the slots inside a row. Each answer carries its own sentence, because "add a
+   part" and "replace a file" are one word apart and opposite in what they need. */
+.engines-wizard-acts,
+.engines-wizard-slots ul {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.engines-wizard-acts label,
+.engines-wizard-slots label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.engines-wizard-acts p {
+  margin: 2px 0 0 22px;
+  font-size: 12px;
+}
+
+.engines-wizard-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.engines-wizard-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.engines-wizard-nav {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 🔴 Beside the button, never a tooltip and never an error after the press. The screen this
+   replaced had three controls that disabled each other in silence. */
+.engines-wizard-stop {
+  font-size: 12px;
+}
+
 .engines-ingest-accept {
   display: flex;
   align-items: flex-start;

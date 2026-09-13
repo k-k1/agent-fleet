@@ -52,6 +52,9 @@ export function EngineModelsAdminView() {
    *  somebody pressed delete in the history below it. */
   const [busyJob, setBusyJob] = useState("");
   const [note, setNote] = useState("");
+  /** Whether 「モデルを追加」 is the screen. It lives here rather than inside that component
+   *  because the catalogue is hidden while it is open — see the note at the list below. */
+  const [adding, setAdding] = useState(false);
   const [jobs, setJobs] = useState<Record<string, IngestJob[]>>({});
   /** Which engine's catalogue is open, by key. A key rather than an index so that a reload that
    *  reorders the list does not move somebody to another engine mid-ingest. */
@@ -324,6 +327,9 @@ export function EngineModelsAdminView() {
             {open.url ? <span className="mono"> {open.url}</span> : null}
           </p>
         )}
+        {/* The catalogue, hidden while 「モデルを追加」 is open: that screen asks one question at
+            a time, and a list of models under it turns it back into a form on a page. */}
+        {!adding && (
         <EngineModels
           key={open.key + "/" + kind}
           row={open}
@@ -336,12 +342,15 @@ export function EngineModelsAdminView() {
           onAdd={(body) => addModel(open.key, body)}
           onReload={load}
         />
+        )}
         {/* The ingest is a write too — `POST /ingest` is one of the five routes that answer 400
             for a borrowed role — and it is also the one that would spend money and bucket space
             on a file the far engine is never going to load: the box that stages files is the far
             deployment's active set, not ours. */}
         {!borrowed && (
           <EngineIngest
+            open={adding}
+            setOpen={setAdding}
             key={"ingest/" + open.key + "/" + kind}
             engineKey={open.key}
             isImage={isImage}
@@ -1658,6 +1667,22 @@ function EngineParamsFields({
   );
 }
 
+/** The four questions, in order. They exist as a list because the rail, the "which step am I
+ *  on" arithmetic and the Back button are all the same sequence, and a second spelling of it is
+ *  how a rail comes to disagree with what is on screen. */
+export const engineIngestSteps = ["act", "find", "file", "confirm"] as const;
+export type EngineIngestStep = (typeof engineIngestSteps)[number];
+
+/** What somebody came here to do, ASKED rather than inferred.
+ *
+ * 🔴 This is the fix for the defect that cost an operator of this deployment an evening. The
+ * three acts used to be told apart by whether the id they typed happened to collide with a row
+ * that already existed — so "add this VAE to that model" was something you discovered by typing
+ * a name you had to already know, and the checkbox that offered it stayed disabled until a file
+ * role three fields below it was set, with nothing on screen saying so. */
+export const engineIngestActs = ["new", "attach", "replace"] as const;
+export type EngineIngestAct = (typeof engineIngestActs)[number];
+
 function EngineIngest({
   engineKey,
   isImage,
@@ -1668,6 +1693,8 @@ function EngineIngest({
   cardMiB,
   busy,
   onStarted,
+  open,
+  setOpen,
 }: {
   engineKey: string;
   isImage: boolean;
@@ -1698,9 +1725,13 @@ function EngineIngest({
   cardMiB?: number;
   busy: boolean;
   onStarted: () => void;
+  /** 🔴 Held by the PANEL, because opening this is a change of screen: the catalogue below is
+   *  hidden while it is open, so that what somebody is answering is the only thing in front of
+   *  them. A wizard drawn under a list of models is a form again. */
+  open: boolean;
+  setOpen: (v: boolean) => void;
 }) {
   const tr = useT();
-  const [open, setOpen] = useState(false);
   const [repo, setRepo] = useState("");
   /** The revision a pasted `/blob/<rev>/…` URL named. Held here because splitting the URL into
    *  the fields leaves nowhere else for it, and dropping it would silently resolve `main`. */
@@ -1731,13 +1762,22 @@ function EngineIngest({
   /** What this file is within the model, and — when the id names a row that already exists —
    *  whether it JOINS that row instead of making a new one. */
   const [fileFlag, setFileFlag] = useState("");
-  const [attach, setAttach] = useState(false);
-  /** …or TAKES THE PLACE OF what that slot already holds. The third act, and the one the form
-   *  could not ask for: attaching refuses a flag that is filled, and the unlabelled slot — the
-   *  checkpoint itself — cannot be attached to at all, so moving a model to another
-   *  quantisation meant forgetting the row and building it again. That throws away the licence
-   *  acceptance, the family, the params, the enabled state and the provenance. */
-  const [replace, setReplace] = useState(false);
+  /** Which of the four questions is on screen, and which act is being performed. `attach` and
+   *  `replace` are derived from the act rather than held: they used to be two checkboxes that
+   *  disabled each other, which is a state a screen can be in and a person cannot read. */
+  const [step, setStep] = useState<EngineIngestStep>("act");
+  const [act, setAct] = useState<EngineIngestAct>("new");
+  const attach = act === "attach";
+  const replace = act === "replace";
+  /** Take the family's VAE in with this checkpoint (ADR 0072 follow-up). Ticked by the RESOLVE,
+   *  and only when the header said the file carries none — an answer to a fact, never a setting
+   *  somebody has to know about. */
+  const [withVae, setWithVae] = useState(false);
+  /** 🔴 Whether a slot has been CHOSEN, which the flag itself cannot say: the empty string is a
+   *  real answer — a row's own checkpoint — and a placeholder that also carried it would make
+   *  "not answered yet" and "the checkpoint" the same value. That collision is how a picker ends
+   *  up offering an option nothing can be done with. */
+  const [slotChosen, setSlotChosen] = useState(false);
   const families = baseModels || [];
   const flags = fileFlags || [];
   /** What this model should be RUN at, as text — the fields are typed into, so they are strings
@@ -1876,6 +1916,10 @@ function EngineIngest({
     // next to the sentence they were read out of and can be corrected or cleared before
     // anything is stored (engine_params_hint.go: this is a regular expression over prose).
     if (res.params_hint) setParams((cur) => engineParamsMerge(cur, res.params_hint as EngineParams));
+    // 🔴 Ticked by the ANSWER. The offer appears only where the header was read and said "no
+    // VAE in this file", so the default is not a preference — it is the only way the row that
+    // is about to be created can ever generate a picture.
+    setWithVae(res.vae_bundled === "no" && !!res.family_vae && !res.family_vae.unreachable);
   };
 
   /** 「調べる」. With no file named yet this ASKS WHAT THERE IS, because a filename retyped from
@@ -1984,6 +2028,9 @@ function EngineIngest({
       max_output_tokens: isLora ? 0 : c && o ? o : 0,
       params: engineParamsBody(params),
       license_accepted: true,
+      // The second file, asked for in the same press and under the same acceptance — its
+      // licence was on screen beside the checkpoint's own (`family_vae` on the resolve).
+      with_family_vae: withVae,
     });
     if (d?.error) {
       setErr(errDetail(d.error));
@@ -1999,8 +2046,10 @@ function EngineIngest({
     setPicked(null);
     setId("");
     setFileFlag("");
-    setAttach(false);
-    setReplace(false);
+    setStep("act");
+    setAct("new");
+    setSlotChosen(false);
+    setWithVae(false);
     setParams(engineParamsBlank);
     onStarted();
   };
@@ -2029,359 +2078,508 @@ function EngineIngest({
       />
     </label>
   );
+  const at = engineIngestSteps.indexOf(step);
+  /** Which of that row's slots this act can even address. It is the whole of the old
+   *  "why is the checkbox grey" problem, answered by not offering the impossible: attaching
+   *  needs a slot that is FREE and can never take the unlabelled one (a row's own checkpoint is
+   *  filled by definition), and replacing needs one that is TAKEN. */
+  const slots = flags.filter((fl) => (act === "replace" ? taken.has(fl) : fl !== "" && !taken.has(fl)));
+  /** What is still missing before this step can be left, as the sentence that says so. A
+   *  disabled button that does not say why is the defect this whole screen was rebuilt for. */
+  const blocking = (): string => {
+    if (step === "act") {
+      if (act === "new") return "";
+      if (!(models || []).length) return tr("admin.engines_wizard_no_rows") as string;
+      if (!id.trim()) return tr("admin.engines_wizard_need_target") as string;
+      if (!slots.length) return tr(("admin.engines_wizard_no_slots_" + act) as never) as string;
+      if (!slotChosen) return tr("admin.engines_wizard_need_role") as string;
+      return "";
+    }
+    if (step === "find") return repo.trim() ? "" : (tr("admin.engines_wizard_need_repo") as string);
+    if (step === "file") {
+      if (!found) return tr("admin.engines_wizard_need_file") as string;
+      if (found.can_ingest === false) return tr("admin.engines_wizard_cannot") as string;
+      if (!id.trim()) return tr("admin.engines_wizard_need_id") as string;
+      if (act === "new" && !basePicksAModel && families.length > 0 && !baseModel) {
+        return tr("admin.engines_wizard_need_family") as string;
+      }
+      return "";
+    }
+    return "";
+  };
+  const stop = blocking();
+  const next = async () => {
+    // Leaving 「どこから」 IS the resolve: the button that used to have to be found and pressed
+    // ("調べる") was a second confirmation of a decision already made by naming the repository.
+    if (step === "find") {
+      await resolve();
+      setStep("file");
+      return;
+    }
+    setStep(engineIngestSteps[at + 1]);
+  };
+  const partLabel = fileFlag || (tr("admin.engines_model_add_part_whole") as string);
   return (
-    <div className="engines-model-add engines-ingest">
-      {/* The repository picker (ADR 0072 decision 11). It sits ABOVE the field it fills, and
-          the field stays typeable: search is a way in, never a precondition — a deployment with
-          closed egress loses the search and keeps the ingest. */}
-      <label className="engines-search-row">
-        <span>{tr("admin.engines_ingest_search")}</span>
-        <input
-          value={q}
-          placeholder={isImage ? "sdxl" : "qwen2.5 coder"}
-          onChange={(ev) => setQ(ev.currentTarget.value)}
-          onKeyDown={(ev) => {
-            if (ev.key === "Enter" && q.trim()) {
-              ev.preventDefault();
-              search();
-            }
-          }}
-        />
-      </label>
-      <div className="engines-model-add-actions">
-        {/* Civitai is only offered to the image role: it hosts image models, and the CP answers
-            the llm role nothing at all rather than checkpoints llama.cpp cannot load. */}
-        {isImage && (
-          <span className="seg sm">
-            {(["hf", "civitai"] as const).map((sr) => (
-              <button
-                key={sr}
-                type="button"
-                className={"seg-btn" + (searchSource === sr ? " active" : "")}
-                onClick={() => {
-                  setSearchSource(sr);
-                  setHits(null);
-                }}
-              >
-                {tr(("admin.engines_ingest_source_" + sr) as never)}
-              </button>
-            ))}
-          </span>
-        )}
-        {/* The ranking, which is also what an empty box asks for. Pressing one searches
-            immediately: a ranking that needed a second click on another button would read as a
-            setting rather than as the question it is. */}
-        <span className="seg sm">
-          {(["downloads", "trending", "likes"] as const).map((sr) => (
-            <button
-              key={sr}
-              type="button"
-              className={"seg-btn" + (sort === sr ? " active" : "")}
-              onClick={() => {
-                setSort(sr);
-                search({ sort: sr });
-              }}
-            >
-              {tr(("admin.engines_ingest_sort_" + sr) as never)}
-            </button>
-          ))}
+    <div className="engines-wizard engines-ingest">
+      <div className="engines-wizard-head">
+        <span className="engines-wizard-title">
+          {tr(isLora ? "admin.engines_wizard_title_lora" : "admin.engines_wizard_title")}
         </span>
-        {/* Enabled with an empty box on purpose — that is the ranking. */}
-        <button type="button" className="primary sm" onClick={() => search()} disabled={busy}>
-          {q.trim() ? tr("admin.engines_ingest_search_go") : tr("admin.engines_ingest_browse_go")}
-        </button>
-      </div>
-      {hits && hits.length === 0 && <p className="muted">{tr("admin.engines_ingest_search_none")}</p>}
-      {hits && hits.length > 0 && (
-        <ul className="engines-search-hits">
-          {hits.map((h) => (
-            <HitCard key={h.source + ":" + h.ref} hit={h} onPick={() => pickHit(h)} />
+        {/* Where this is in the four questions. A rail rather than a scrollbar: the form it
+            replaced was twelve fields in one column, of which the ones that applied depended on
+            state nothing on screen showed. */}
+        <ol className="engines-wizard-rail">
+          {engineIngestSteps.map((s, i) => (
+            <li key={s} className={i === at ? "on" : i < at ? "done" : ""}>
+              <span className="engines-wizard-dot" aria-hidden="true" />
+              {tr(("admin.engines_wizard_step_" + s) as never)}
+            </li>
           ))}
-        </ul>
-      )}
-      {/* What was chosen, still on screen after the list it came from is gone (ADR 0072
-          decision 11). The same card, minus the button that has already been pressed: the
-          upstream page, the trigger words, the gate and the licence are published nowhere else
-          in this form, and `repo` below is `civitai:1759168` — an id, not a link and not a name.
-          Without it the only way back to the page being taken in was to search again. */}
-      {picked && (
-        <div className="engines-picked">
-          <span className="muted engines-picked-head">{tr("admin.engines_ingest_picked")}</span>
-          <ul className="engines-picked-hit">
-            <HitCard hit={picked} />
-          </ul>
-        </div>
-      )}
-      {/* Editing the repository drops the list and the verdict with it: a filename picked out
-          of the previous repository's answer would resolve against the new one.
-
-          The example follows the ROLE and the source that is selected. A GGUF repository
-          offered to the image engine is not a hint, it is a wrong answer: llama.cpp's files
-          are not what sd-server loads, and following it costs a resolve and a refusal. */}
-      {field(tr("admin.engines_ingest_repo"), repo, (v) => {
-        setRepo(v);
-        setRev("");
-        setFiles(null);
-        setFile("");
-        setFound(null);
-        // …and the chosen card with them: it describes the repository that was picked, so over a
-        // typed-in one it would be a link and a licence belonging to another model.
-        setPicked(null);
-      }, searchSource === "civitai"
-        ? "civitai:782002"
-        : isImage
-          ? "stabilityai/stable-diffusion-xl-base-1.0"
-          : "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
-      splitRepoField)}
-      {/* The filename is a picker as soon as the repository has been asked what it holds. The
-          text field stays underneath it: a plain url has no listing, and there the field
-          carries the SHA256 instead — so it is labelled as one. Offering "name.safetensors"
-          there asks for the one thing that field must not be given. */}
-      {files && files.length > 0 && (
-        <label className="engines-model-add-row">
-          <span>{tr("admin.engines_ingest_file")}</span>
-          <select value={file} onChange={(ev) => pick(ev.currentTarget.value)}>
-            <option value="">{tr("admin.engines_ingest_pick")}</option>
-            {/* 🔴 The mark is one-directional on purpose: WEIGHTS ALONE over the card is a
-                definite no, and it is the only verdict this list can reach — the KV cache is
-                not known until the file has been resolved, and it is the half that killed a
-                cold start on an L4 (17 GB of weights, 16 GB of cache, 24 GB of card). So a
-                candidate with no mark is "not ruled out here", never "it fits". */}
-            {files.map((f) => (
-              <option key={f.name} value={f.name}>
-                {f.name}
-                {f.bytes ? " · " + fmtBytes(f.bytes) : ""}
-                {engineFitsCard(engineWeightsMiB(f.bytes), cardMiB) === false
-                  ? " · " + tr("admin.engines_ingest_over_card")
-                  : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {files && files.length === 0 && <p className="form-err">{tr("admin.engines_ingest_no_files")}</p>}
-      {!files &&
-        (listable()
-          ? field(
-              tr("admin.engines_ingest_file"),
-              file,
-              setFile,
-              isImage ? "name.safetensors" : "name.gguf",
-            )
-          : field(tr("admin.engines_ingest_sha256"), file, setFile, tr("admin.engines_ingest_sha256_ph")))}
-      {field(
-        tr("admin.engines_model_add_id"),
-        id,
-        setId,
-        isImage ? "sdxl-base-1.0" : "qwen2.5-coder-1.5b",
-      )}
-      {/* What this file IS within the model. Until this existed every ingest wrote one
-          unlabelled file, so a split model could not be assembled by taking its parts in — the
-          three components of a FLUX.1 row had to be staged as throwaway rows and the real row
-          re-typed key by key (ADR 0072 P2 欠落 6). It also decides the bucket directory, which
-          is what makes the file visible to the right loader at all. */}
-      {flags.length > 0 && (
-        <label className="engines-model-add-row">
-          <span>{tr("admin.engines_model_add_part")}</span>
-          <select
-            value={fileFlag}
-            onChange={(ev) => {
-              setFileFlag(ev.currentTarget.value);
-              // Which act is possible depends on whether THAT slot is filled, so choosing a
-              // different one asks the question again rather than carrying an answer that was
-              // given about another file.
-              setAttach(false);
-              setReplace(false);
-            }}
-          >
-            {flags.map((fl) => (
-              <option key={fl} value={fl}>
-                {fl === "" ? (tr("admin.engines_model_add_part_whole") as string) : fl}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {/* The id names a row that is already there. The CP refuses a plain ingest onto it — it
-          would upsert that row's files, licence and enabled flag away — so the choice is made
-          here, before the download: a new id, or this file as one more part of that row. */}
-      {known && (
-        <label className="engines-ingest-accept">
-          <input
-            type="checkbox"
-            checked={attach}
-            // A slot that is already filled cannot be attached to — that is the CP's 409, said
-            // one press earlier — and the unlabelled slot is filled by definition.
-            disabled={!fileFlag || taken.has(fileFlag)}
-            onChange={(ev) => {
-              setAttach(ev.currentTarget.checked);
-              if (ev.currentTarget.checked) setReplace(false);
-            }}
-          />
-          <span>{(tr("admin.engines_ingest_attach") as string).replace("{id}", id.trim())}</span>
-        </label>
-      )}
-      {/* The other act, and the mirror of the one above: this slot is FILLED, and the file in it
-          is what changes. Everything else about the row stays — which is the whole reason it
-          exists, because the road that was there (forget the row, take it in again) silently
-          discarded the licence acceptance, the family, the params and the enabled state. */}
-      {known && (
-        <label className="engines-ingest-accept">
-          <input
-            type="checkbox"
-            checked={replace}
-            disabled={!taken.has(fileFlag)}
-            onChange={(ev) => {
-              setReplace(ev.currentTarget.checked);
-              if (ev.currentTarget.checked) setAttach(false);
-            }}
-          />
-          <span>
-            {(tr("admin.engines_ingest_replace") as string)
-              .replace("{id}", id.trim())
-              .replace("{part}", fileFlag || (tr("admin.engines_model_add_part_whole") as string))}
-          </span>
-        </label>
-      )}
-      {/* 🔴 Said because it is not what "replace" sounds like. The CP has no s3:DeleteObject at
-          all (ADR 0072 decision 7) and the swap finishes minutes later inside the job reconciler,
-          where there is nobody to report a refused deletion to — and the keys are shared
-          (`text_encoders/` is pointed at from more than one row), so deleting here would break a
-          model nobody touched. Forgetting a row with 「ファイルも消す」 is what deletes bytes. */}
-      {replace && <p className="muted">{tr("admin.engines_ingest_replace_keeps_bytes")}</p>}
-      {known && !attach && !replace && <p className="form-err">{tr("admin.engines_ingest_id_taken")}</p>}
-      {/* ⚠️ Declared by the OPERATOR (ADR 0072 decision 2), which is why the repository's own
-          answer rides BESIDE the picker instead of into it: "SDXL 1.0" and "Flux.1 D" are what
-          Hugging Face and Civitai publish, and storing one of those as the family produced rows
-          that looked complete and refused to generate (P2 実機検証). */}
-      {!attach && !replace && baseOptions.length > 0 && (
-        <label className="engines-model-add-row">
-          <span>
-            {tr(basePicksAModel ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}
-          </span>
-          <select value={baseModel} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
-            <option value="">
-              {tr(
-                basePicksAModel
-                  ? "admin.engines_model_add_lora_base_pick"
-                  : "admin.engines_model_add_family_pick",
-              )}
-            </option>
-            {baseOptions.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {/* What the repository itself calls this, beside the picker rather than in it. When the CP
-          could translate it the picker above is already filled in, and this line is then the
-          PROVENANCE of that choice — which is what makes it correctable rather than magic. */}
-      {!attach && !replace && !isLora && families.length > 0 && found?.base_model && (
-        <p className="muted">
-          {(tr(
-            found.base_model_suggest && baseModel === found.base_model_suggest
-              ? "admin.engines_family_suggested"
-              : "admin.engines_ingest_family_hint",
-          ) as string).replace("{n}", found.base_model)}
-        </p>
-      )}
-      {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
-      {/* How to RUN it, filled in from the author's own description and editable before
-          anything is stored. 🔴 The quote is not decoration: these numbers were found by a
-          regular expression in somebody's paragraph, and the sentence is what lets a person
-          tell "Steps: 30" from "trained for 30 epochs" without opening the model page. */}
-      {!attach && !replace && isImage && found?.params_hint && found.params_hint_quote && (
-        <p className="muted engines-param-quote">
-          {tr("admin.engines_params_hint_found")} <q>{found.params_hint_quote}</q>
-        </p>
-      )}
-      {/* 🔴 The image role only. Steps, cfg and a sampler are what a DIFFUSION graph takes; the
-          llm role's equivalents are the window and the output cap two lines below, and an
-          adapter's strength there is `--scale`, which the register form has always had. Five
-          fields that reach nothing would be five fields somebody fills in. */}
-      {!attach && !replace && isImage && (
-        <EngineParamsFields
-          value={params}
-          onChange={setParams}
-          isLora={isLora}
-          family={isLora ? undefined : baseModel}
-        />
-      )}
-      {/* The window and its cap belong to the ROW, and neither of the two acts that land on an
-          existing row carries them: the CP reads them only where a row is CREATED. Asking again
-          would offer to overwrite a decision this download knows nothing about — the same rule
-          the family above follows. */}
-      {!attach && !replace && !isImage && !isLora && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
-      {/* The output cap is a FRACTION of the window, never a free number. It is not published
-          anywhere — it is a deployment's policy for how much of the window one reply may eat —
-          and 🔴 ADR 0072 decision 3: left at 0 opencode reads it as 32,000 and a 32k model ends
-          up with 768 usable tokens. Offering computed values makes the pair impossible to
-          half-fill. */}
-      {!attach && !replace && !isImage && !isLora && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
-      <div className="engines-model-add-actions">
-        <button type="button" className="sm" onClick={() => resolve()} disabled={busy || !repo.trim()}>
-          {tr("admin.engines_ingest_resolve")}
-        </button>
+        </ol>
         <button type="button" className="sm" onClick={() => setOpen(false)}>
           {tr("common.cancel")}
         </button>
       </div>
-      {/* Everything below appears only once the source has been read: the licence to accept,
-          the size that becomes the cold start, and — for a gated repository — whether this
-          deployment can take it in at all. */}
-      {found && <ResolvedNote found={found} />}
-      {/* …and what pressing it would ask the card to hold. The window is read out of the FIELD
-          rather than out of the model's own ceiling, because that field is what the engine will
-          be started with and the two differ by 8x on the model already running here — and where
-          the row already exists it is the ROW's window, for the same reason: the field is not
-          drawn, because neither act changes it. */}
-      {found && (
-        <IngestFit
-          bytes={found.bytes}
-          kvPerThousand={found.kv_mib_per_1k_tokens}
-          contextTokens={attach || replace ? target?.context_tokens || 0 : engineNumField(ctx)}
-          cardMiB={cardMiB}
-          wantsKV={!isImage && !isLora}
-        />
+
+      {/* ① The ACT, asked instead of inferred. It used to be decided by whether the id somebody
+          typed happened to collide with an existing row — so "add this file to that model" was
+          an act you discovered by accident, and the checkbox that offered it was disabled until
+          a file role was chosen three fields further down, with nothing saying so. */}
+      {step === "act" && (
+        <div className="engines-wizard-step">
+          <ul className="engines-wizard-acts">
+            {engineIngestActs.map((a) => (
+              <li key={a}>
+                <label>
+                  <input
+                    type="radio"
+                    name="engines-wizard-act"
+                    checked={act === a}
+                    onChange={() => {
+                      setAct(a);
+                      // The id means opposite things in the two directions: a NEW row's name is
+                      // proposed from the file, and the other two acts address a row that is
+                      // already there. Carrying one into the other is how an ingest lands on a
+                      // working row.
+                      setId("");
+                      setFileFlag("");
+                      setSlotChosen(false);
+                    }}
+                  />
+                  <span className="engines-wizard-act-name">
+                    {tr(("admin.engines_wizard_act_" + a) as never)}
+                  </span>
+                </label>
+                <p className="muted">{tr(("admin.engines_wizard_act_" + a + "_why") as never)}</p>
+              </li>
+            ))}
+          </ul>
+          {/* The target is CHOSEN, never typed. Typing it was the only way to reach the other
+              two acts, and it had to match an existing id exactly before the panel would admit
+              they existed. */}
+          {act !== "new" && !!(models || []).length && (
+            <label className="engines-model-add-row">
+              <span>{tr("admin.engines_wizard_target")}</span>
+              <select
+                value={id}
+                onChange={(ev) => {
+                  setId(ev.currentTarget.value);
+                  setFileFlag("");
+                  setSlotChosen(false);
+                }}
+              >
+                <option value="">{tr("admin.engines_wizard_target_pick")}</option>
+                {(models || []).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {/* And the slot, offered as the ones this act can actually use. Nothing here can be
+              grey for a reason the screen does not state. */}
+          {act !== "new" && !!id.trim() && (
+            <div className="engines-wizard-slots">
+              <span className="muted">{tr("admin.engines_wizard_role")}</span>
+              {/* Radios and not a select, because one of the answers IS the empty string (a
+                  row's own checkpoint) and a select needs a placeholder that would carry the
+                  same value. Every option here is one this act can perform. */}
+              <ul>
+                {slots.map((fl) => (
+                  <li key={fl}>
+                    <label>
+                      <input
+                        type="radio"
+                        name="engines-wizard-slot"
+                        checked={slotChosen && fileFlag === fl}
+                        onChange={() => {
+                          setFileFlag(fl);
+                          setSlotChosen(true);
+                        }}
+                      />
+                      <span>{fl === "" ? (tr("admin.engines_model_add_part_whole") as string) : fl}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {act === "replace" && <p className="muted">{tr("admin.engines_ingest_replace_keeps_bytes")}</p>}
+        </div>
       )}
-      {found && (
-        <label className="engines-ingest-accept">
-          <input
-            type="checkbox"
-            checked={accepted}
-            disabled={found.can_ingest === false}
-            onChange={(ev) => setAccepted(ev.currentTarget.checked)}
-          />
-          <span>{tr("admin.engines_ingest_accept")}</span>
-        </label>
+
+      {/* ② WHERE FROM. The search and the field it fills, in that order and on one screen —
+          and the field stays typeable, because a deployment with closed egress loses the search
+          and keeps the ingest (ADR 0072 decision 11). */}
+      {step === "find" && (
+        <div className="engines-wizard-step">
+          <label className="engines-search-row">
+            <span>{tr("admin.engines_ingest_search")}</span>
+            <input
+              value={q}
+              placeholder={isImage ? "sdxl" : "qwen2.5 coder"}
+              onChange={(ev) => setQ(ev.currentTarget.value)}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter" && q.trim()) {
+                  ev.preventDefault();
+                  search();
+                }
+              }}
+            />
+          </label>
+          <div className="engines-model-add-actions">
+            {/* Civitai is only offered to the image role: it hosts image models, and the CP
+                answers the llm role nothing at all rather than checkpoints llama.cpp cannot
+                load. */}
+            {isImage && (
+              <span className="seg sm">
+                {(["hf", "civitai"] as const).map((sr) => (
+                  <button
+                    key={sr}
+                    type="button"
+                    className={"seg-btn" + (searchSource === sr ? " active" : "")}
+                    onClick={() => {
+                      setSearchSource(sr);
+                      setHits(null);
+                    }}
+                  >
+                    {tr(("admin.engines_ingest_source_" + sr) as never)}
+                  </button>
+                ))}
+              </span>
+            )}
+            <span className="seg sm">
+              {(["downloads", "trending", "likes"] as const).map((sr) => (
+                <button
+                  key={sr}
+                  type="button"
+                  className={"seg-btn" + (sort === sr ? " active" : "")}
+                  onClick={() => {
+                    setSort(sr);
+                    search({ sort: sr });
+                  }}
+                >
+                  {tr(("admin.engines_ingest_sort_" + sr) as never)}
+                </button>
+              ))}
+            </span>
+            {/* Enabled with an empty box on purpose — that is the ranking. */}
+            <button type="button" className="primary sm" onClick={() => search()} disabled={busy}>
+              {q.trim() ? tr("admin.engines_ingest_search_go") : tr("admin.engines_ingest_browse_go")}
+            </button>
+          </div>
+          {hits && hits.length === 0 && <p className="muted">{tr("admin.engines_ingest_search_none")}</p>}
+          {hits && hits.length > 0 && (
+            <ul className="engines-search-hits">
+              {hits.map((h) => (
+                <HitCard key={h.source + ":" + h.ref} hit={h} onPick={() => pickHit(h)} />
+              ))}
+            </ul>
+          )}
+          {/* What was chosen, still on screen after the list it came from is gone: `repo` below
+              is `civitai:1759168` — an id, not a link and not a name — and the upstream page,
+              the trigger words, the gate and the licence are published nowhere else here. */}
+          {picked && (
+            <div className="engines-picked">
+              <span className="muted engines-picked-head">{tr("admin.engines_ingest_picked")}</span>
+              <ul className="engines-picked-hit">
+                <HitCard hit={picked} />
+              </ul>
+            </div>
+          )}
+          {field(
+            tr("admin.engines_ingest_repo"),
+            repo,
+            (v) => {
+              setRepo(v);
+              setRev("");
+              setFiles(null);
+              setFile("");
+              setFound(null);
+              setPicked(null);
+            },
+            searchSource === "civitai"
+              ? "civitai:782002"
+              : isImage
+                ? "stabilityai/stable-diffusion-xl-base-1.0"
+                : "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+            splitRepoField,
+          )}
+          {/* What a pasted address turned out to name. The URL is taken apart into the fields
+              the moment the box is left, and those fields are on the NEXT question — so without
+              this line the screen would look as if nothing had happened to what was pasted. */}
+          {!!file.trim() && (
+            <p className="muted">
+              {(tr("admin.engines_wizard_named_file") as string).replace("{f}", file.trim())}
+            </p>
+          )}
+          <p className="muted">{tr("admin.engines_wizard_repo_note")}</p>
+        </div>
       )}
-      {found && (
-        <div className="engines-model-add-actions">
+
+      {/* ③ WHICH FILE, and everything this deployment could learn about it before spending
+          anything: the licence, the size, what it would ask of the card, the family, the
+          author's own settings — and whether the checkpoint can decode a picture at all. */}
+      {step === "file" && (
+        <div className="engines-wizard-step">
+          {files && files.length > 0 && (
+            <label className="engines-model-add-row">
+              <span>{tr("admin.engines_ingest_file")}</span>
+              <select value={file} onChange={(ev) => pick(ev.currentTarget.value)}>
+                <option value="">{tr("admin.engines_ingest_pick")}</option>
+                {/* 🔴 The mark is one-directional: WEIGHTS ALONE over the card is a definite no
+                    and the only verdict this list can reach — the KV cache is not known until
+                    the file is resolved. A candidate with no mark is "not ruled out here". */}
+                {files.map((f) => (
+                  <option key={f.name} value={f.name}>
+                    {f.name}
+                    {f.bytes ? " · " + fmtBytes(f.bytes) : ""}
+                    {engineFitsCard(engineWeightsMiB(f.bytes), cardMiB) === false
+                      ? " · " + tr("admin.engines_ingest_over_card")
+                      : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {/* 🔴 A listing with nothing in it is not a dead end. The repository may hold the file
+              under a name this filter did not recognise, and the text box below is the way
+              through — the screen that printed the sentence and no field left somebody with a
+              repository they could see and no way to name a file in it. */}
+          {files && files.length === 0 && <p className="form-err">{tr("admin.engines_ingest_no_files")}</p>}
+          {(!files || files.length === 0) &&
+            (listable()
+              ? field(
+                  tr("admin.engines_ingest_file"),
+                  file,
+                  (v) => setFile(v),
+                  isImage ? "name.safetensors" : "name.gguf",
+                  () => {
+                    if (file.trim()) resolve();
+                  },
+                )
+              : field(
+                  tr("admin.engines_ingest_sha256"),
+                  file,
+                  setFile,
+                  tr("admin.engines_ingest_sha256_ph"),
+                  () => {
+                    if (file.trim()) resolve();
+                  },
+                ))}
+          {found && <ResolvedNote found={found} />}
+          {found && (
+            <IngestFit
+              bytes={found.bytes}
+              kvPerThousand={found.kv_mib_per_1k_tokens}
+              contextTokens={act !== "new" ? target?.context_tokens || 0 : engineNumField(ctx)}
+              cardMiB={cardMiB}
+              wantsKV={!isImage && !isLora}
+            />
+          )}
+          {/* 🔴 The one fault the file itself can be asked about (ADR 0072 follow-up). An SDXL
+              checkpoint published with no VAE tensors passes every check this deployment has and
+              then fails every request inside the engine, after a 1-2.5 minute checkpoint switch.
+              Offered here, already ticked, because this is the moment it costs one more download
+              instead of a support thread. */}
+          {found?.vae_bundled === "no" && found.family_vae && (
+            <label className="engines-ingest-accept">
+              <input
+                type="checkbox"
+                checked={withVae}
+                disabled={!!found.family_vae.unreachable}
+                onChange={(ev) => setWithVae(ev.currentTarget.checked)}
+              />
+              <span>
+                {(tr(
+                  found.family_vae.staged
+                    ? "admin.engines_wizard_vae_staged"
+                    : "admin.engines_wizard_vae_take",
+                ) as string)
+                  .replace("{f}", found.family_vae.repo + "/" + found.family_vae.file)
+                  .replace("{n}", found.family_vae.bytes ? fmtBytes(found.family_vae.bytes) : "?")
+                  .replace("{l}", found.family_vae.license || "?")}
+              </span>
+            </label>
+          )}
+          {found?.vae_bundled === "no" && !found.family_vae && (
+            <p className="form-err">{tr("admin.engines_wizard_vae_none")}</p>
+          )}
+          {/* What this file IS within the model, for a row being CREATED — it decides the bucket
+              directory, which is what makes the file visible to the right loader at all. For the
+              other two acts it was answered in ①, as a slot of the row it joins. */}
+          {act === "new" && flags.length > 0 && (
+            <label className="engines-model-add-row">
+              <span>{tr("admin.engines_model_add_part")}</span>
+              <select value={fileFlag} onChange={(ev) => setFileFlag(ev.currentTarget.value)}>
+                {flags.map((fl) => (
+                  <option key={fl} value={fl}>
+                    {fl === "" ? (tr("admin.engines_model_add_part_whole") as string) : fl}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {/* The id is what a member sees in the launch menu. Only ever asked for a NEW row:
+              the other two acts address a row that has one. */}
+          {act === "new" &&
+            field(
+              tr("admin.engines_model_add_id"),
+              id,
+              setId,
+              isImage ? "sdxl-base-1.0" : "qwen2.5-coder-1.5b",
+            )}
+          {/* ⚠️ Declared by the OPERATOR (ADR 0072 decision 2): "SDXL 1.0" and "Flux.1 D" are
+              display names, and storing one as the family produced rows that looked complete and
+              refused to generate. The CP's translation fills the picker; the upstream string
+              rides beside it as the provenance of that choice. */}
+          {act === "new" && baseOptions.length > 0 && (
+            <label className="engines-model-add-row">
+              <span>
+                {tr(basePicksAModel ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}
+              </span>
+              <select value={baseModel} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
+                <option value="">
+                  {tr(
+                    basePicksAModel
+                      ? "admin.engines_model_add_lora_base_pick"
+                      : "admin.engines_model_add_family_pick",
+                  )}
+                </option>
+                {baseOptions.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {act === "new" && !isLora && families.length > 0 && found?.base_model && (
+            <p className="muted">
+              {(tr(
+                found.base_model_suggest && baseModel === found.base_model_suggest
+                  ? "admin.engines_family_suggested"
+                  : "admin.engines_ingest_family_hint",
+              ) as string).replace("{n}", found.base_model)}
+            </p>
+          )}
+          {act === "new" && field(tr("admin.engines_model_add_desc"), desc, setDesc)}
+          {act === "new" && isImage && found?.params_hint && found.params_hint_quote && (
+            <p className="muted engines-param-quote">
+              {tr("admin.engines_params_hint_found")} <q>{found.params_hint_quote}</q>
+            </p>
+          )}
+          {act === "new" && isImage && (
+            <EngineParamsFields
+              value={params}
+              onChange={setParams}
+              isLora={isLora}
+              family={isLora ? undefined : baseModel}
+            />
+          )}
+          {act === "new" && !isImage && !isLora && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
+          {act === "new" && !isImage && !isLora && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
+        </div>
+      )}
+
+      {/* ④ WHAT WILL HAPPEN, in sentences, with the licence beside the box that accepts it —
+          and then what the row will still need before anybody can use it. "Taken in" and
+          "usable" are two different states, and the screen that ends at the first one is the
+          screen somebody has to be told how to finish. */}
+      {step === "confirm" && (
+        <div className="engines-wizard-step">
+          <ul className="engines-wizard-plan">
+            <li>
+              {(tr(("admin.engines_wizard_plan_" + act) as never) as string)
+                .replace("{id}", id.trim())
+                .replace("{part}", partLabel)}
+            </li>
+            <li>
+              {(tr("admin.engines_wizard_plan_from") as string)
+                .replace("{r}", repo.trim())
+                .replace("{f}", file.trim() || "?")
+                .replace("{n}", found?.bytes ? fmtBytes(found.bytes) : "?")}
+            </li>
+            {withVae && found?.family_vae && (
+              <li>
+                {(tr(
+                  found.family_vae.staged
+                    ? "admin.engines_wizard_vae_staged"
+                    : "admin.engines_wizard_vae_take",
+                ) as string)
+                  .replace("{f}", found.family_vae.repo + "/" + found.family_vae.file)
+                  .replace("{n}", found.family_vae.bytes ? fmtBytes(found.family_vae.bytes) : "?")
+                  .replace("{l}", found.family_vae.license || "?")}
+              </li>
+            )}
+            <li>{tr("admin.engines_wizard_plan_after")}</li>
+          </ul>
+          {found && <ResolvedNote found={found} />}
+          {found && (
+            <label className="engines-ingest-accept">
+              <input
+                type="checkbox"
+                checked={accepted}
+                disabled={found.can_ingest === false}
+                onChange={(ev) => setAccepted(ev.currentTarget.checked)}
+              />
+              <span>{tr("admin.engines_ingest_accept")}</span>
+            </label>
+          )}
+        </div>
+      )}
+
+      {err && <p className="form-err">{err}</p>}
+      <div className="engines-wizard-nav">
+        {at > 0 && (
+          <button type="button" className="sm" onClick={() => setStep(engineIngestSteps[at - 1])}>
+            {tr("admin.engines_wizard_back")}
+          </button>
+        )}
+        {step === "confirm" ? (
           <button
             type="button"
             className="primary sm"
-            disabled={
-              busy ||
-              !accepted ||
-              !id.trim() ||
-              found.can_ingest === false ||
-              // An id the catalogue already holds goes in as a PART, or in place of the part
-              // that is there, or not at all; the CP refuses all of these too, and a button that
-              // let the press happen would spend a resolve and a refusal to say so.
-              (known && !attach && !replace) ||
-              (attach && (!fileFlag || taken.has(fileFlag))) ||
-              (replace && !taken.has(fileFlag))
-            }
+            disabled={busy || !accepted || !id.trim() || found?.can_ingest === false}
             onClick={start}
           >
             {tr("admin.engines_ingest_go")}
           </button>
-        </div>
-      )}
-      {err && <p className="form-err">{err}</p>}
-      <p className="muted">{tr("admin.engines_ingest_note")}</p>
+        ) : (
+          <button type="button" className="primary sm" disabled={busy || !!stop} onClick={next}>
+            {tr("admin.engines_wizard_next")}
+          </button>
+        )}
+        {/* 🔴 The reason the button is grey, beside the button. Not a tooltip and not an error
+            after the press: the form this replaced had three controls that disabled each other
+            and said nothing, which is where an operator of this deployment lost an evening. */}
+        {!!stop && step !== "confirm" && <span className="muted engines-wizard-stop">{stop}</span>}
+      </div>
+      {/* What this route is and is not — the CP touches neither S3 nor the token, and the row it
+          creates lands disabled. It belongs where a source is being named or accepted, not over
+          the question about which act to perform. */}
+      {(step === "find" || step === "confirm") && <p className="muted">{tr("admin.engines_ingest_note")}</p>}
     </div>
   );
 }

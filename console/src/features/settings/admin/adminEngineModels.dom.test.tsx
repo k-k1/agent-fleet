@@ -72,6 +72,61 @@ const click = async (el: HTMLElement | undefined) => {
   });
 };
 
+/** Every button of the screen, by its label. */
+const btn = (label: string) =>
+  Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+    | HTMLButtonElement
+    | undefined;
+
+const type = async (el: Element, v: string) => {
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(el, v);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+};
+
+/** The text inputs of the step on screen, in the order they are drawn. */
+const wizInputs = () =>
+  Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
+
+/** Open 「モデルを追加」 and answer the first question with the default act — a new row — which
+ *  is what every test that is not about the OTHER two acts wants.
+ *
+ * 🔴 The four questions are the point of the screen, so the helper walks them rather than
+ * hiding them: what used to be three inputs on one page is now "what for", "where from",
+ * "which file", "confirm", and a test that pretended otherwise would be testing a form that no
+ * longer exists. */
+const openWizard = async () => {
+  await click(btn("Hugging Face などから取り込む"));
+  await click(btn("次へ")); // ① what for → default: a new model
+};
+
+/** The input of the field with this label on the step that is on screen. By label rather than
+ *  by index: which fields exist now depends on the question being answered, and the filename row
+ *  turns from an input into a select the moment a listing arrives. */
+const byLabel = (label: string) =>
+  Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row"))
+    .find((l) => l.querySelector("span")?.textContent === label)
+    ?.querySelector("input") as HTMLInputElement | undefined;
+
+/** The ordinary path through ② and ③: a repository whose listing holds exactly one loadable
+ *  file. The wizard lists, sees one candidate and resolves it — a picker over one option is a
+ *  question with one answer — so the two answers are queued in that order. */
+const wizSource = async (repo: string, file: string, resolved: Record<string, unknown>) => {
+  apiJSON.mockResolvedValueOnce({ files: [{ name: file }] });
+  apiJSON.mockResolvedValueOnce(resolved);
+  await type(wizInputs()[0], repo);
+  await click(btn("次へ"));
+};
+
+/** ② and ③ for a test that has already answered ① — the act steps do not include the "next"
+ *  that leaves the first question. */
+const wizSourceAfterAct = async (repo: string, file: string, resolved: Record<string, unknown>) => {
+  await click(btn("次へ"));
+  await wizSource(repo, file, resolved);
+};
+
 afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
@@ -1229,27 +1284,12 @@ describe("EngineModelsAdminView", () => {
       engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })],
     });
     await mount();
-    await click(
-      Array.from(host!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLElement,
-    );
-    const type = async (el: Element, v: string) => {
-      await act(async () => {
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-        setter.call(el, v);
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-    };
-    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
-    await type(inputs[0], "black-forest-labs/FLUX.1-dev");
-    await type(inputs[1], "flux1-dev.safetensors");
-    await type(inputs[2], "flux1-dev");
-
-    // Nothing to accept yet: the source has not been read.
+    await openWizard();
+    // Nothing to accept yet: the source has not been read, and the question that offers the
+    // acceptance is one step further on.
     expect(host!.querySelector(".engines-ingest-accept")).toBe(null);
 
-    apiJSON.mockResolvedValueOnce({
+    await wizSource("black-forest-labs/FLUX.1-dev", "flux1-dev.safetensors", {
       sha256: "4610115bb0c89560703c892c59ac2742fa821e60ef5871b33493ba544683abd7",
       bytes: 23802932552,
       gated: true,
@@ -1258,24 +1298,16 @@ describe("EngineModelsAdminView", () => {
       commercial_use: "no",
       can_ingest: false,
     });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "調べる",
-      ) as HTMLElement,
-    );
     // The two licence fields, the size and both warnings — the non-commercial one because the
     // deployment may be charging, the gated one because it cannot be fetched at all here.
     expect(host!.textContent).toContain("flux-1-dev-non-commercial-license");
     expect(host!.textContent).toContain("23.8 GB");
     expect(host!.textContent).toContain("非商用ライセンス");
     expect(host!.textContent).toContain("トークンがありません");
-    // 🔴 And the acceptance is unusable: pressing on would spend a Fargate task to earn a 401.
-    const box = host!.querySelector(".engines-ingest-accept input") as HTMLInputElement;
-    expect(box.disabled).toBe(true);
-    const go = Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-      (b) => b.textContent === "取り込む",
-    ) as HTMLButtonElement;
-    expect(go.disabled).toBe(true);
+    // 🔴 And there is no way on: a file this deployment cannot fetch would spend a Fargate task
+    // to earn a 401, so the step says so beside the button instead of letting it be pressed.
+    expect(btn("次へ")!.disabled).toBe(true);
+    expect(host!.textContent).toContain("取り込めません");
   });
 
   it("starts an ingest once the licence is accepted, and shows the job", async () => {
@@ -1285,27 +1317,19 @@ describe("EngineModelsAdminView", () => {
         : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await mount();
-    await click(
-      Array.from(host!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLElement,
-    );
-    const type = async (el: Element, v: string) => {
-      await act(async () => {
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-        setter.call(el, v);
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-    };
-    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
-    await type(inputs[0], "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF");
-    await type(inputs[1], "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf");
-    await type(inputs[2], "qwen2.5-coder-1.5b");
-    await type(inputs[4], "32768");
+    await openWizard();
+    await wizSource("Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", {
+      sha256: "cc32", bytes: 1117320768, gated: false,
+      license: "apache-2.0", commercial_use: "yes", can_ingest: true,
+    });
+    // ③ names the row and how it will be run. The id is proposed from the file and typed over
+    // here, which is the same rule it always followed.
+    await type(byLabel("id")!, "qwen2.5-coder-1.5b");
+    await type(byLabel("コンテキストウィンドウ")!, "32768");
     // The output cap is a select over fractions of the window, not a free number — 1/8 of
     // 32,768 is the 4,096 both models here were already being run at.
     await act(async () => {
-      // By what it OFFERS rather than by position: this form holds several selects (the family,
+      // By what it OFFERS rather than by position: this step holds several selects (the family,
       // the per-file part) and an index here would have gone on passing while setting the wrong
       // control.
       const sel = Array.from(host!.querySelectorAll(".engines-ingest select")).find((el) =>
@@ -1314,14 +1338,7 @@ describe("EngineModelsAdminView", () => {
       sel.value = "4096";
       sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
-
-    apiJSON.mockResolvedValueOnce({ sha256: "cc32", bytes: 1117320768, gated: false,
-      license: "apache-2.0", commercial_use: "yes", can_ingest: true });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "調べる",
-      ) as HTMLElement,
-    );
+    await click(btn("次へ")); // ④ confirm
     await act(async () => {
       const box = host!.querySelector(".engines-ingest-accept input") as HTMLInputElement;
       box.click();
@@ -1333,11 +1350,7 @@ describe("EngineModelsAdminView", () => {
         ? { jobs: [{ id: "j1", model_id: "qwen2.5-coder-1.5b", state: "running", source: "hf:Qwen/…", bytes: 1117320768 }] }
         : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "取り込む",
-      ) as HTMLElement,
-    );
+    await click(btn("取り込む"));
     const body = apiJSON.mock.calls.at(-1)!;
     expect(String(body[0])).toBe("api/admin/engines/llm/ingest");
     expect(body[2]).toMatchObject({
@@ -1354,10 +1367,6 @@ describe("EngineModelsAdminView", () => {
 
   /** The input of the form row with this label. By label rather than by index, because the
    *  filename row turns from an input into a select the moment a listing arrives. */
-  const fieldByLabel = (label: string) =>
-    Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row")).find(
-      (l) => l.querySelector("span")?.textContent === label,
-    )!;
 
   // 🔴 The context length Hugging Face publishes is the ARCHITECTURE's ceiling, and this
   // deployment already runs a model well below it: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
@@ -1371,24 +1380,16 @@ describe("EngineModelsAdminView", () => {
         : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await mount();
-    await click(
-      Array.from(host!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLElement,
-    );
-    const set = async (el: Element, v: string) => {
-      await act(async () => {
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-        setter.call(el, v);
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-    };
-    await set(fieldByLabel("リポジトリ").querySelector("input")!, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF");
-    await set(fieldByLabel("ファイル名").querySelector("input")!, "Q4_K_M.gguf");
-    // Chosen deliberately, for the GPU this deployment has.
-    await set(fieldByLabel("コンテキストウィンドウ").querySelector("input")!, "32768");
-
+    await openWizard();
+    // Two quantisations, so the file stays a CHOICE: picking the second one reads the source
+    // again, which is the moment a ceiling could overwrite a window that was already typed.
     apiJSON.mockResolvedValueOnce({
+      files: [{ name: "Q4_K_M.gguf" }, { name: "Q8_0.gguf" }],
+    });
+    await type(wizInputs()[0], "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF");
+    await click(btn("次へ"));
+
+    const resolved = {
       sha256: "a".repeat(64),
       bytes: 18556689568,
       gated: false,
@@ -1396,15 +1397,25 @@ describe("EngineModelsAdminView", () => {
       commercial_use: "yes",
       can_ingest: true,
       context_length: 262144,
-    });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "調べる",
-      ) as HTMLElement,
-    );
+    };
+    const pickFile = async (name: string) => {
+      apiJSON.mockResolvedValueOnce(resolved);
+      await act(async () => {
+        const sel = Array.from(host!.querySelectorAll(".engines-ingest select")).find((el) =>
+          Array.from((el as HTMLSelectElement).options).some((o) => o.value === name),
+        ) as HTMLSelectElement;
+        sel.value = name;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    await pickFile("Q4_K_M.gguf");
+    // Offered into the empty field, which is what it is for.
+    expect(byLabel("コンテキストウィンドウ")!.value).toBe("262144");
+    // Chosen deliberately, for the GPU this deployment has.
+    await type(byLabel("コンテキストウィンドウ")!, "32768");
+    await pickFile("Q8_0.gguf");
 
-    const ctx = fieldByLabel("コンテキストウィンドウ").querySelector("input") as HTMLInputElement;
-    expect(ctx.value).toBe("32768");
+    expect(byLabel("コンテキストウィンドウ")!.value).toBe("32768");
     // Still SAID, because it is a fact worth knowing — just not one that overwrites a decision.
     expect(host!.textContent).toContain("モデルの上限 262144");
   });
@@ -1458,30 +1469,17 @@ describe("EngineModelsAdminView", () => {
         : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await mount();
-    await click(
-      Array.from(host!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLElement,
-    );
-    await act(async () => {
-      const el = host!.querySelector(".engines-ingest .engines-model-add-row input")!;
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-      setter.call(el, "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF");
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await openWizard();
+    await type(wizInputs()[0], "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF");
 
-    // No filename yet, so the first call asks what there is — and starts nothing.
+    // No filename yet, so leaving ② asks what there is — and starts nothing.
     apiJSON.mockResolvedValueOnce({
       files: [
         { name: "qwen2.5-coder-0.5b-instruct-q2_k.gguf", bytes: 415182720 },
         { name: "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf", bytes: 491400064 },
       ],
     });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "調べる",
-      ) as HTMLElement,
-    );
+    await click(btn("次へ"));
     expect(String(apiJSON.mock.calls.at(-1)![0])).toBe("api/admin/engines/llm/ingest/files");
     const picker = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
     expect(Array.from(picker.options).map((o) => o.value)).toEqual([
@@ -1564,24 +1562,8 @@ describe("EngineModelsAdminView", () => {
         : { super_admin: true, engines: [row({ key: "image", has_models: true, model_rows: [] })] },
     );
     await mount();
-    await click(
-      Array.from(host!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLElement,
-    );
-    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
-    for (const [el, v] of [
-      [inputs[0], "civitai:128713"],
-      // Named, so the resolve goes straight at the file rather than asking for a listing first.
-      [inputs[1], "dreamshaper_8.safetensors"],
-    ] as const) {
-      await act(async () => {
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-        setter.call(el, v);
-        (el as Element).dispatchEvent(new Event("input", { bubbles: true }));
-      });
-    }
-    apiJSON.mockResolvedValueOnce({
+    await openWizard();
+    await wizSource("civitai:128713", "dreamshaper_8.safetensors", {
       sha256: "879db523c30d3b9017143d56705015e15a2cb5628762c11d086fed9538abd7fd",
       bytes: 2132625894,
       gated: false,
@@ -1590,15 +1572,12 @@ describe("EngineModelsAdminView", () => {
       license_name: "see civitai model page",
       commercial_use: "unknown",
     });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "調べる",
-      ) as HTMLElement,
-    );
     expect(host!.textContent).toContain("ログイン済みのアカウント");
     // Not the token sentence: a token cannot open this one.
     expect(host!.textContent).not.toContain("トークンがありません");
-    expect((host!.querySelector(".engines-ingest-accept input") as HTMLInputElement).disabled).toBe(true);
+    // And there is no way on to the acceptance at all — the step says why instead.
+    expect(btn("次へ")!.disabled).toBe(true);
+    expect(host!.textContent).toContain("取り込めません");
   });
 
   // 🔴 Measured on the dev deployment (2026-09-09): a filename typed one letter short answered
@@ -1617,25 +1596,12 @@ describe("EngineModelsAdminView", () => {
         : { super_admin: true, engines: [row({ key: "image", has_models: true, model_rows: [] })] },
     );
     await mount();
-    await click(
-      Array.from(host!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLElement,
-    );
-    await act(async () => {
-      const el = host!.querySelector(".engines-ingest .engines-model-add-row input")!;
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-      setter.call(el, "black-forest-labs/FLUX.1-dev");
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await openWizard();
+    await type(wizInputs()[0], "black-forest-labs/FLUX.1-dev");
     apiJSON.mockResolvedValueOnce({
       error: { code: "file_unknown", message: "the repository does not list flux1-dev.safetensor" },
     });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "調べる",
-      ) as HTMLElement,
-    );
+    await click(btn("次へ"));
     const shown = host!.querySelector(".engines-ingest .form-err")!.textContent!;
     expect(shown).toContain("そのリポジトリにそのファイルがありません");
     expect(shown).toContain("flux1-dev.safetensor");
@@ -1731,39 +1697,39 @@ describe("EngineModelsAdminView", () => {
           },
     );
     await mount();
-    await click(
-      Array.from(host!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLElement,
-    );
-    const type = async (el: Element, v: string) => {
+    await click(btn("Hugging Face などから取り込む"));
+
+    // ① The act, chosen rather than discovered. Until this screen existed it was reachable only
+    // by typing an id that happened to collide with a row — and then by finding a checkbox that
+    // stayed disabled until a file role three fields below it was set.
+    await act(async () => {
+      const radio = Array.from(host!.querySelectorAll("input[type=radio]"))[1] as HTMLInputElement;
+      radio.click();
+    });
+    // Cannot go on yet, and the screen says what is missing rather than greying a button in
+    // silence.
+    expect(btn("次へ")!.disabled).toBe(true);
+    expect(host!.textContent).toContain("足す先の行を選んでください");
+
+    const selectByOption = async (value: string) => {
       await act(async () => {
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-        setter.call(el, v);
-        el.dispatchEvent(new Event("input", { bubbles: true }));
+        const sel = Array.from(host!.querySelectorAll(".engines-ingest select")).find((el) =>
+          Array.from((el as HTMLSelectElement).options).some((o) => o.value === value),
+        ) as HTMLSelectElement;
+        sel.value = value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
       });
     };
-    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
-    await type(inputs[0], "comfyanonymous/flux_text_encoders");
-    await type(inputs[1], "clip_l.safetensors");
-    // The id of the row this part belongs to, which the catalogue already holds.
-    await type(inputs[2], "flux1-dev-fp8");
+    await selectByOption("flux1-dev-fp8"); // the row it joins, PICKED
+    // …and the slot, offered as the ones that are FREE. The unlabelled one — the row's own
+    // checkpoint — is not among them, which is the CP's own refusal said by not offering it.
+    const slot = Array.from(host!.querySelectorAll(".engines-wizard-slots li")).find(
+      (el) => el.querySelector("span")?.textContent === "--clip_l",
+    );
+    await act(async () => (slot!.querySelector("input") as HTMLInputElement).click());
+    await click(btn("次へ"));
 
-    // Said before anything is fetched: as it stands this ingest is the one the CP answers 409
-    // to, and the button is not offered.
-    expect(host!.textContent).toContain("この id はもう使われています");
-
-    const partSelect = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
-    await act(async () => {
-      partSelect.value = "--clip_l";
-      partSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await act(async () => {
-      const box = host!.querySelector(".engines-ingest-accept input") as HTMLInputElement;
-      box.click();
-    });
-
-    apiJSON.mockResolvedValueOnce({
+    await wizSource("comfyanonymous/flux_text_encoders", "clip_l.safetensors", {
       sha256: "5555555555555555555555555555555555555555555555555555555555555555",
       bytes: 246144152,
       gated: false,
@@ -1771,22 +1737,14 @@ describe("EngineModelsAdminView", () => {
       commercial_use: "yes",
       can_ingest: true,
     });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "調べる",
-      ) as HTMLElement,
-    );
+    await click(btn("次へ")); // ④ confirm
     await act(async () => {
       const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
       boxes[boxes.length - 1].click(); // the licence
     });
 
     apiJSON.mockResolvedValueOnce({ id: "j2", model_id: "flux1-dev-fp8", state: "running" });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "取り込む",
-      ) as HTMLElement,
-    );
+    await click(btn("取り込む"));
     const body = apiJSON.mock.calls.at(-1)!;
     expect(String(body[0])).toBe("api/admin/engines/image/ingest");
     expect(body[2]).toMatchObject({
@@ -1897,13 +1855,9 @@ describe("EnginesAdminView / the Hugging Face token", () => {
 // DESTINATION — picking one fills the field somebody would have typed into, and the existing
 // resolve → accept → ingest road runs unchanged.
 describe("EnginesAdminView / searching for a model", () => {
-  const openIngest = async () => {
-    await click(
-      Array.from(host!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLButtonElement,
-    );
-  };
+  // ① is "what for". Every test in here is about ② 「どこから」 — the search and the field it
+  // fills — so the default act (a new row) is answered and left straight away.
+  const openIngest = openWizard;
 
   const typeInto = async (el: HTMLInputElement, value: string) => {
     await act(async () => {
@@ -1943,13 +1897,16 @@ describe("EnginesAdminView / searching for a model", () => {
     );
     await leave(field("リポジトリ")!);
     expect(field("リポジトリ")!.value).toBe("stabilityai/stable-diffusion-xl-base-1.0");
-    expect(field("ファイル名")!.value).toBe("sd_xl_base_1.0.safetensors");
+    // The filename it named lives on the NEXT question, so this step says what was understood
+    // rather than leaving the paste looking like it did nothing.
+    expect(host!.textContent).toContain("sd_xl_base_1.0.safetensors");
 
-    // The file is named, so "look it up" resolves it rather than asking what the repo holds —
-    // and the revision the URL carried survives the split (dropping it resolves `main`, which
-    // is a different file whenever the URL pointed at anything else).
+    // The file is named, so leaving this step resolves it rather than asking what the repo
+    // holds — and the revision the URL carried survives the split (dropping it resolves `main`,
+    // which is a different file whenever the URL pointed at anything else).
     apiJSON.mockResolvedValue({ sha256: "a".repeat(64), bytes: 6_939_000_000, license: "openrail++" });
-    await click(button("調べる"));
+    await click(button("次へ"));
+    expect(field("ファイル名")!.value).toBe("sd_xl_base_1.0.safetensors");
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/resolve", "POST", {
       source: {
         hf: { repo: "stabilityai/stable-diffusion-xl-base-1.0", file: "sd_xl_base_1.0.safetensors", revision: "main" },
@@ -1983,6 +1940,12 @@ describe("EnginesAdminView / searching for a model", () => {
     await openIngest();
     expect(field("探す")!.placeholder).toBe("sdxl");
     expect(field("リポジトリ")!.placeholder).toBe("stabilityai/stable-diffusion-xl-base-1.0");
+    // ③ holds the other two. The repository is named first and answers nothing on its own, so
+    // the listing comes back empty here and the box stays typeable — which is the fallback the
+    // examples are for.
+    apiJSON.mockResolvedValueOnce({ files: [] });
+    await typeInto(field("リポジトリ")!, "stabilityai/stable-diffusion-xl-base-1.0");
+    await click(button("次へ"));
     expect(field("ファイル名")!.placeholder).toBe("name.safetensors");
     expect(field("id")!.placeholder).toBe("sdxl-base-1.0");
   });
@@ -1994,7 +1957,11 @@ describe("EnginesAdminView / searching for a model", () => {
     api.mockResolvedValue({ super_admin: true, engines: [row()] });
     await mount();
     await openIngest();
+    // A plain url has no listing at all, so leaving ② resolves nothing and lands on the box
+    // that has to carry the checksum instead.
     await typeInto(field("リポジトリ")!, "https://example.com/some-model.safetensors");
+    apiJSON.mockResolvedValueOnce({ error: { code: "no_checksum" } });
+    await click(button("次へ"));
     expect(field("ファイル名")).toBeNull();
     expect(field("sha256")!.placeholder).toBe("64 桁の 16 進");
   });
@@ -2710,13 +2677,6 @@ describe("the window and the VRAM measurement", () => {
 // the tests below spend their time — a screen that guesses "it fits" is worse than one that
 // says nothing, because it is the one somebody acts on.
 describe("EnginesAdminView / will this file fit the card", () => {
-  const openIngest = async () =>
-    click(
-      Array.from(host!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLButtonElement,
-    );
-
   const typeInto = async (el: HTMLInputElement, value: string) => {
     await act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
@@ -2725,7 +2685,7 @@ describe("EnginesAdminView / will this file fit the card", () => {
   };
 
   const field = (label: string) =>
-    (Array.from(host!.querySelectorAll("label.engines-model-add-row")).find(
+    (Array.from(host!.querySelectorAll("label.engines-model-add-row, label.engines-search-row")).find(
       (l) => l.querySelector("span")?.textContent === label,
     )?.querySelector("input") || null) as HTMLInputElement | null;
 
@@ -2747,11 +2707,11 @@ describe("EnginesAdminView / will this file fit the card", () => {
       p.endsWith("/ingest") ? { jobs: [] } : { super_admin: true, engines: [engine] },
     );
     await mount();
-    await openIngest();
+    await openWizard();
   };
 
   /** Ask the repository what it holds, with the two quantisations of the model this deployment
-   *  actually runs. */
+   *  actually runs. Leaving ② 「どこから」 is what asks. */
   const listTwoQuants = async () => {
     await typeInto(field("リポジトリ")!, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF");
     apiJSON.mockResolvedValueOnce({
@@ -2760,11 +2720,7 @@ describe("EnginesAdminView / will this file fit the card", () => {
         { name: "Q8_0.gguf", bytes: 32_000_000_000 }, // 30,517 MiB — over an L4 on weights alone
       ],
     });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "調べる",
-      ) as HTMLElement,
-    );
+    await click(btn("次へ"));
   };
 
   it("marks the candidates the card cannot hold, and adds the cache the window will cost", async () => {
@@ -2874,32 +2830,41 @@ describe("EnginesAdminView / will this file fit the card", () => {
 // licence acceptance (a record of a human act), the family, the params, the enabled state and
 // the provenance on the way.
 describe("EnginesAdminView / replacing a file of a row that exists", () => {
-  const openIngest = async () =>
-    click(
-      Array.from(host!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLButtonElement,
-    );
-
-  const typeInto = async (el: HTMLInputElement, value: string) => {
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  };
-
-  const inputs = () =>
-    Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input")) as HTMLInputElement[];
-
-  /** The two acts, by the sentence each one offers. Read from the LABEL rather than off the
-   *  page: this form has grown three checkboxes and a whole-page `includes` cannot tell which
-   *  of them is on screen. */
-  const act1 = (word: string) =>
-    Array.from(host!.querySelectorAll(".engines-ingest-accept")).find((l) =>
-      l.querySelector("span")?.textContent?.includes(word),
+  /** ① of the wizard: the act, the row it lands on and the slot inside that row.
+   *
+   * 🔴 The slots offered are the ones the act can USE — free ones for "add a part", filled ones
+   * for "replace". That is the same pair of refusals the CP answers, said by not offering the
+   * impossible: the form this replaced showed both acts as checkboxes that disabled each other,
+   * with no sentence anywhere saying which was which. */
+  const chooseAct = async (word: string, target?: string, slot?: string) => {
+    const label = Array.from(host!.querySelectorAll(".engines-wizard-acts label")).find((l) =>
+      l.textContent?.includes(word),
     ) as HTMLLabelElement | undefined;
-  const attachBox = () => act1("部品として足す")?.querySelector("input") as HTMLInputElement | undefined;
-  const replaceBox = () => act1("差し替える")?.querySelector("input") as HTMLInputElement | undefined;
+    await act(async () => (label!.querySelector("input") as HTMLInputElement).click());
+    const selectByOption = async (value: string) => {
+      await act(async () => {
+        const sel = Array.from(host!.querySelectorAll(".engines-ingest select")).find((el) =>
+          Array.from((el as HTMLSelectElement).options).some((o) => o.value === value),
+        ) as HTMLSelectElement | undefined;
+        if (!sel) throw new Error("no select offers " + JSON.stringify(value));
+        sel.value = value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    if (target) await selectByOption(target);
+    if (slot !== undefined) {
+      const want = slot === "" ? "チェックポイント（単一ファイル）" : slot;
+      const li = Array.from(host!.querySelectorAll(".engines-wizard-slots li")).find(
+        (el) => el.querySelector("span")?.textContent === want,
+      );
+      if (!li) throw new Error("no slot offered for " + JSON.stringify(slot));
+      await act(async () => (li.querySelector("input") as HTMLInputElement).click());
+    }
+  };
+  /** Which slots that act offers at all — the assertion that used to be "is the checkbox grey".
+   *  Read off the LABELS, because the empty flag is a real answer and has no text of its own. */
+  const slotOptions = () =>
+    Array.from(host!.querySelectorAll(".engines-wizard-slots li span")).map((el) => el.textContent);
 
   const flux = (files: { s3Key: string; flag?: string }[]) =>
     row({
@@ -2924,27 +2889,20 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
         { s3Key: "image/text_encoders/t5xxl_fp16.safetensors", flag: "--t5xxl" },
       ]),
     );
-    await openIngest();
-    await typeInto(inputs()[0], "comfyanonymous/flux_text_encoders");
-    await typeInto(inputs()[1], "t5xxl_fp8_e4m3fn.safetensors");
-    await typeInto(inputs()[2], "flux1-dev-fp8");
-
-    const part = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
-    await act(async () => {
-      part.value = "--t5xxl";
-      part.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-
-    // 🔴 The slot is FILLED, so only one of the two acts is on offer. Adding a second --t5xxl is
-    // the CP's 409, said one press earlier instead of after a download.
-    expect(attachBox()!.disabled).toBe(true);
-    expect(replaceBox()!.disabled).toBe(false);
-    await act(async () => replaceBox()!.click());
+    await click(btn("Hugging Face などから取り込む"));
+    await chooseAct("差し替える", "flux1-dev-fp8");
+    // 🔴 Only the FILLED slots are on offer: adding a second --t5xxl is the CP's 409, said by
+    // never putting the impossible answer in the list.
+    // Exactly the two files this row holds, and nothing else: replacing needs a slot that is
+    // filled, and this row has no unlabelled one at all.
+    expect(slotOptions()).toEqual(["--diffusion-model", "--t5xxl"]);
+    await chooseAct("差し替える", undefined, "--t5xxl");
     // And it says what "replace" does not say by itself: the old object stays, because the CP
     // has no s3:DeleteObject and the keys are shared between rows.
     expect(host!.querySelector(".engines-ingest")!.textContent).toContain("バケットに残ります");
+    await click(btn("次へ"));
 
-    apiJSON.mockResolvedValueOnce({
+    await wizSource("comfyanonymous/flux_text_encoders", "t5xxl_fp8_e4m3fn.safetensors", {
       sha256: "e".repeat(64),
       bytes: 4_893_934_904,
       gated: false,
@@ -2952,22 +2910,14 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
       commercial_use: "yes",
       can_ingest: true,
     });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "調べる",
-      ) as HTMLElement,
-    );
+    await click(btn("次へ"));
     await act(async () => {
       const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
       boxes[boxes.length - 1].click(); // the licence
     });
 
     apiJSON.mockResolvedValueOnce({ id: "j9", model_id: "flux1-dev-fp8", state: "running" });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "取り込む",
-      ) as HTMLElement,
-    );
+    await click(btn("取り込む"));
     const body = apiJSON.mock.calls.at(-1)!;
     expect(String(body[0])).toBe("api/admin/engines/image/ingest");
     expect(body[2]).toMatchObject({
@@ -2985,22 +2935,16 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
   // ingest could ever change. Replacing is the only act it has.
   it("offers the row's own checkpoint to be replaced, which attaching never could", async () => {
     await mountWith(flux([{ s3Key: "image/checkpoints/flux1-dev-fp8.safetensors" }]));
-    await openIngest();
-    await typeInto(inputs()[0], "black-forest-labs/FLUX.1-dev");
-    await typeInto(inputs()[1], "flux1-dev-fp8-e5m2.safetensors");
-    await typeInto(inputs()[2], "flux1-dev-fp8");
-
-    // The part picker is left on 「まるごと」 — the unlabelled slot.
-    expect(attachBox()!.disabled).toBe(true);
-    expect(replaceBox()!.disabled).toBe(false);
-    await act(async () => replaceBox()!.click());
-    // 🔴 …and the row's own settings are not asked for again. A replace changes one file; the
+    await click(btn("Hugging Face などから取り込む"));
+    // 🔴 The asymmetry itself: the row's own checkpoint is the unlabelled slot, which attaching
+    // refuses by design — so replacing offers it and adding a part does not.
+    await chooseAct("部品を足す", "flux1-dev-fp8");
+    expect(slotOptions()).not.toContain("チェックポイント（単一ファイル）");
+    await chooseAct("差し替える", "flux1-dev-fp8", "");
+    // …and the row's own settings are not asked for again. A replace changes one file; the
     // family was decided when the row was created, and offering it here is offering to overwrite
     // an answer this download knows nothing about.
-    const labels = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row span"));
-    expect(labels.map((l) => l.textContent)).not.toContain("モデル族");
-
-    apiJSON.mockResolvedValueOnce({
+    await wizSourceAfterAct("black-forest-labs/FLUX.1-dev", "flux1-dev-fp8-e5m2.safetensors", {
       sha256: "f".repeat(64),
       bytes: 11_901_466_276,
       gated: false,
@@ -3008,21 +2952,16 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
       commercial_use: "yes",
       can_ingest: true,
     });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "調べる",
-      ) as HTMLElement,
-    );
+    const labels = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row span"));
+    expect(labels.map((l) => l.textContent)).not.toContain("モデル族");
+
+    await click(btn("次へ"));
     await act(async () => {
       const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
       boxes[boxes.length - 1].click();
     });
     apiJSON.mockResolvedValueOnce({ id: "j10", model_id: "flux1-dev-fp8", state: "running" });
-    await click(
-      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
-        (b) => b.textContent === "取り込む",
-      ) as HTMLElement,
-    );
+    await click(btn("取り込む"));
     expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({
       id: "flux1-dev-fp8",
       file_flag: "",
