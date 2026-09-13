@@ -140,9 +140,14 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
   nearest the screen first, so opening a big folder does not fetch everything at once, and
   scrolling ahead does not get stuck behind pictures you have already scrolled past.
 - **Folders** — subfolders are cards too, and opening one moves this pane into it. The first card,
-  "Up", goes back to the parent, and the **breadcrumb** in the header
+  "Up", goes back to the parent, and the **breadcrumb** in the row under the header
   (`.cache / agent-fleet / generated`) jumps to any level. Ctrl/⌘-click and middle-click open the
   folder in another pane.
+- **An always-on "Up", and the browser's Back button** — that breadcrumb row also has a
+  **permanent "Up" button** (disabled at the root), so a long folder whose "Up" card has scrolled
+  off screen is still one click from its parent. Folder navigation is retraced by the browser's
+  own **Back button** too — however you got somewhere ("Up", the breadcrumb, or a card), the same
+  number of Back presses gets you the same distance back.
 - **Cards** — click the card to **enlarge** (← / → move through the folder, and "3 / 12" tells you
   where you are; **on a phone, swipe left and right** to move — only at fit, because while you are
   zoomed in a drag pans the picture); the button in the corner **opens it in the file pane**. Just

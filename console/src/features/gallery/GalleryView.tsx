@@ -335,9 +335,16 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
    * `gallerySession` is dropped on the way: it titles the pane "Generated images — <name>",
    * and carrying it into a different folder would leave the tab claiming a session whose
    * pictures are no longer on screen. `sort` is a preference for the pane, so it stays.
+   *
+   * `push: true` is what makes the browser's own Back button retrace these steps: the layout
+   * store already keeps one history entry per pushed commit (`layout/store.ts`) and restores
+   * it on `popstate` — `setPaneTarget` just opts out of that by default (a sort toggle isn't a
+   * place to come back to), and this is the one caller that opts back in. The header's "Up"
+   * button calls this same function (with `parentPath(path)`), so it and the back button always
+   * agree — pressing one and then the other is a no-op, never a surprise.
    */
   const navigate = (to: string) => {
-    setPaneTarget(paneId, { content: { kind: "gallery", galleryPath: to, ...(sort ? { sort } : {}) } });
+    setPaneTarget(paneId, { content: { kind: "gallery", galleryPath: to, ...(sort ? { sort } : {}) } }, true);
   };
 
   const setSort = (next: GallerySort) => {
@@ -385,29 +392,6 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
         <span className="view-title" title={path}>
           <Icon name="file-media" /> {title}
         </span>
-        {/* The way back out. It is in the HEAD rather than a card so it survives the empty
-            state — a folder with no pictures must not be a dead end. */}
-        <span className="gal-crumbs" aria-label={tr("gallery.breadcrumb")}>
-          <button type="button" className="gal-crumb" onClick={() => navigate("")} disabled={!path}>
-            {tr("gallery.root")}
-          </button>
-          {crumbs.map((c) => (
-            <span key={c.path} className="gal-crumb-part">
-              <span className="gal-crumb-sep" aria-hidden="true">
-                /
-              </span>
-              <button
-                type="button"
-                className="gal-crumb"
-                onClick={() => navigate(c.path)}
-                disabled={c.path === path}
-                title={c.path}
-              >
-                {c.name}
-              </button>
-            </span>
-          ))}
-        </span>
         {entries !== null && (
           <span className="gal-count">
             {folders.length > 0 && <>{tr("gallery.summary_folders", { n: folders.length })} · </>}
@@ -433,6 +417,43 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
           ))}
         </span>
       </ViewHead>
+      {/* The way back out, in its own row: the breadcrumb has nowhere to grow when it shares a
+          row with the title, the count and the sort toggle, so a folder a few levels down had
+          nowhere left to show its trail. Outside the failed/loading/empty branches below, same
+          as the old single-row version — a folder with no pictures (or one that hasn't answered
+          yet) must not be a dead end. The "Up" button is ALWAYS drawn (disabled at the root)
+          rather than living only as a grid card: a long folder scrolled down hides that card,
+          and it goes through the same `navigate()` as the breadcrumb and the browser's own Back
+          button, so all three agree on where "up" leads. */}
+      <div className="gal-path">
+        <IconButton
+          icon="arrow-up"
+          label={tr("gallery.up")}
+          onClick={() => parent !== null && navigate(parent)}
+          disabled={parent === null}
+        />
+        <span className="gal-crumbs" aria-label={tr("gallery.breadcrumb")}>
+          <button type="button" className="gal-crumb" onClick={() => navigate("")} disabled={!path}>
+            {tr("gallery.root")}
+          </button>
+          {crumbs.map((c) => (
+            <span key={c.path} className="gal-crumb-part">
+              <span className="gal-crumb-sep" aria-hidden="true">
+                /
+              </span>
+              <button
+                type="button"
+                className="gal-crumb"
+                onClick={() => navigate(c.path)}
+                disabled={c.path === path}
+                title={c.path}
+              >
+                {c.name}
+              </button>
+            </span>
+          ))}
+        </span>
+      </div>
       {failed ? (
         <EmptyState icon="warning" title={tr("gallery.failed")} hint={path} />
       ) : entries === null ? (

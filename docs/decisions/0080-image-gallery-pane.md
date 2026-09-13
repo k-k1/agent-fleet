@@ -292,6 +292,29 @@ case that still needs it: flattening several levels into one grid (an X/Y grid, 
 - `galleryPath` can now be the **empty string (the browse root)**. "Up" has to reach the same
   place the file tree starts at, or it dead-ends in `.cache`; the stored-value validator therefore
   accepts `""` while still rejecting a missing key (a truthiness test cannot tell the two apart).
+- 🔴 **P1, user-requested (2026-09-14): the breadcrumb moves to its own row, gains an always-on
+  "Up" button, and the browser's own Back button retraces folder navigation.**
+  - The breadcrumb shared a single row with the title, the count and the sort toggle, and at a
+    few levels deep it had nowhere left to grow. It now sits in its own full-width row below the
+    head (`.gal-path`), the same pattern `TerminalView` already uses for `ContextBar` — a plain
+    sibling under `<ViewHead>`, not a feature of the head itself.
+  - **"Up" is now a persistent button in that row (disabled at the root), not only a grid card.**
+    A long folder scrolled past its top has the card off-screen; the button is always there. It
+    calls the exact same `navigate()` the breadcrumb and the grid's own "Up" card call, so all
+    three — and the browser's Back button, below — always agree on where "up" leads.
+  - **Back button integration turned out to be nearly free**: `layout/store.ts` already keeps one
+    browser-history entry per **pushed** layout commit and restores it on `popstate`
+    (`wireLayoutHistory`, predating this ADR) — `setPaneTarget` was simply one of the callers that
+    opts OUT of pushing (`push: false`, the same stance as tab selection and a divider drag: a
+    content tweak is not a place to come back to). The fix is a one-line change of stance for this
+    one caller: `setPaneTarget` gained an optional third `push` argument (default `false`,
+    every other caller unaffected), and `GalleryView.navigate()` — the function the breadcrumb,
+    the folder cards and the header's "Up" button all already funnel through — passes `true`.
+    No new history/popstate plumbing was written for the gallery at all.
+  - Verified in headless Chromium against a real folder: enter a subfolder → click the header's
+    "Up" → press Back twice → lands exactly back where the subfolder was entered, then back at
+    the folder it was entered from. `sort` survives every step (it is read live, not stored in
+    the history entry, so it is never what a Back press undoes).
 
 ## Options rejected
 
