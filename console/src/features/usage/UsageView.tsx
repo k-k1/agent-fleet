@@ -88,6 +88,9 @@ export const dimLabel = (dim: string, key: string): string => {
 // Writing 0 as "$0.0000" reads as "it ran for free", so no value shows as "—", the same as
 // unmeasured.
 const fmtUSD = (v: number): string => (v <= 0 ? "—" : v >= 1 ? "$" + v.toFixed(2) : "$" + v.toFixed(4));
+// Pixels read as megapixels once there is at least one: a 1024² picture is 1.0 MP, and the raw
+// count (1,048,576) says nothing a person compares. Below that the raw count stays.
+const fmtMP = (px: number): string => (px >= 1e6 ? (px / 1e6).toFixed(1) + " MP" : fmtNum(px));
 
 // An estimate always carries the approximation sign. Set in the same type as the measured value
 // (claude's auxiliary calls), a number derived from the price table times the tokens gets read as
@@ -723,6 +726,8 @@ function matrixTotals(s: UsageSeries | null, axis: "row" | "col"): Map<string, U
             cread: cur.cread + a.cread,
             ccreate: cur.ccreate + a.ccreate,
             calls: cur.calls + a.calls,
+            images: (cur.images || 0) + (a.images || 0),
+            pixels: (cur.pixels || 0) + (a.pixels || 0),
             cost_usd: (cur.cost_usd || 0) + (a.cost_usd || 0),
           }
         : { ...a },
@@ -760,6 +765,22 @@ function KpiRow({ totals, unmeasured }: { totals: UsageAgg | undefined; unmeasur
         <div className="ukpi-val">{fmtTok(t?.cread || 0)}</div>
         <div className="ukpi-lab muted">{tr("usage.kpi_cread")}</div>
       </div>
+      {/* The picture counters (ADR 0081 decision 10) appear only when a picture was made: most
+          members never generate one, and a permanent 0 tile would be noise in a row whose other
+          numbers are always meaningful. Their cost is the tenant's GPU hour, so they change no
+          amount here — the tooltip says so rather than the tile printing $0.00. */}
+      {(t?.images || 0) > 0 && (
+        <>
+          <div className="ukpi" title={tr("usage.kpi_images_hint")}>
+            <div className="ukpi-val">{fmtNum(t?.images || 0)}</div>
+            <div className="ukpi-lab muted">{tr("usage.kpi_images")}</div>
+          </div>
+          <div className="ukpi" title={tr("usage.kpi_images_hint")}>
+            <div className="ukpi-val">{fmtMP(t?.pixels || 0)}</div>
+            <div className="ukpi-lab muted">{tr("usage.kpi_pixels")}</div>
+          </div>
+        </>
+      )}
       <div className="ukpi" title={costTitle}>
         <div className="ukpi-val">{fmtUSDEst(t?.cost_est_usd || 0)}</div>
         <div className="ukpi-lab muted">{tr("usage.kpi_cost")}</div>

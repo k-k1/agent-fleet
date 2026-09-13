@@ -164,6 +164,12 @@ describe("metrics and ranges", () => {
     expect(sum.cost_est_usd).toBe(3.75);
   });
 
+  it("addAgg sums images and pixels and reads an absent pair as 0", () => {
+    const sum = addAgg(agg(0, 1, { images: 2, pixels: 2_097_152 }), agg(10, 1));
+    expect(sum.images).toBe(2);
+    expect(sum.pixels).toBe(2_097_152);
+  });
+
   it("perCall survives calls=0", () => {
     expect(perCall(agg(100, 4))).toBe(25);
     expect(perCall(agg(100, 0))).toBe(0);
