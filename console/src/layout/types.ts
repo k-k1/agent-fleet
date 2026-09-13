@@ -56,8 +56,11 @@ export type PaneContent =
    * `sort` lives here rather than in React state for the same reason `showStopped` does:
    * a tab switch unmounts the view. `galleryFocus` is the image to enlarge on open (a
    * file name, or a browse-root-relative path — the view matches either). `gallerySession`
-   * is DISPLAY-ONLY: the generated-images folder is named by a UUID, so the title needs
-   * the session the pictures came from to read as anything.
+   * is the session's NAME (a slug), stored for the title alone: the generated-images folder
+   * is a UUID, so the tab needs the session the pictures came from to read as anything. The
+   * user-facing title is resolved from that name per render — storing the display text
+   * instead would freeze a stale title into the layout (and the stored-layout validator,
+   * which holds this field to the name's character set, would drop it entirely).
    */
   | { kind: "gallery"; galleryPath: string; sort?: "new" | "name"; galleryFocus?: string; gallerySession?: string };
 
