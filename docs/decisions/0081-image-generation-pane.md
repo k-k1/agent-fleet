@@ -2,13 +2,19 @@
 
 English | [日本語](0081-image-generation-pane.ja.md)
 
-- Status: **proposed** (drafted 2026-09-13; not yet reviewed).
+- Status: **accepted** (drafted 2026-09-13; reviewed and accepted the same day with the review's
+  corrections folded in. The review re-checked every "exists" / "does not exist" claim below by grep on
+  `d164739a`, after ADR 0080's lane B (#622) had landed; what it changed is marked *(review)* where it
+  sits — the four relay fields of decision 5, the LoRA weight that has no column, the wire body of
+  decision 2, the family and the seed the PNG chunk really gives, the thumbnail's small-file exception,
+  the lightbox's `path`, and five line anchors).
 - See also: [0069](0069-image-generation-providers.md) (the provider abstraction this pane drives;
   open question 1 deferred the job shape — this ADR takes it up) /
   [0072](0072-engine-model-catalog.md) (the catalogue rows, `params`, `negative_prompt`, the five comfy families) /
   [0080](0080-image-gallery-pane.md) (where the pictures are looked at; this pane writes what the gallery reads) /
   [0078](0078-sessions-overview-pane.md) (the most recent pane kind, and the boilerplate) /
-  [0020](0020-chat-bridge.md) (`POST api/chat/ask`, the one-shot LLM call the prompt help reuses) /
+  [log 19](../log/19-assistant-chat.md) (`POST api/chat/ask`, the one-shot LLM call the prompt help
+  reuses — it belongs to the assistant chat, not to ADR 0020 as first drafted; *review*) /
   [0071](0071-self-hosted-inference-engines.md) (the engine box, its cold start, and who pays for it)
 
 ## Background
@@ -22,7 +28,8 @@ who wants **forty variations of one prompt at three CFG values across two checkp
 round trip costs a model turn, the parameters that matter to them (steps, sampler, seed, LoRA weight)
 are either invisible or unreachable, and the agent's own words sit between them and the result.
 
-What already exists, measured on the tree at `2da2bf28` (2026-09-13):
+What already exists, measured on the tree at `2da2bf28` and re-checked on `d164739a` (2026-09-13, after
+ADR 0080's P0 lane B, #622):
 
 - **The Agent has a non-MCP door.** `GET /imagegen/status` and `POST /imagegen/generate`
   (`workspace/agent/routes.go:121-122`, `internal/imagegen/http.go`). They are behind the Agent bearer
@@ -40,7 +47,8 @@ What already exists, measured on the tree at `2da2bf28` (2026-09-13):
   the container (`control-plane/workspace_lifecycle.go:401`); the browser holds nothing that
   `/engine/{key}/v1/*` accepts (`engine_gateway.go:417-424`). A Console that talked to ComfyUI directly
   would need a credential that does not exist.
-- **The request vocabulary** (`imagegen.go:56-115`): `op`, `prompt`, `negative_prompt`, `size`,
+- **The request vocabulary** (`imagegen.go:56-125`): `op`, `prompt`, `negative_prompt`, `size`,
+  `aspect_ratio` and `background` (the vendor routes' axes; comfy reads only `transparent`, *review*),
   `count` (→ ComfyUI `batch_size`, ceiling 4), `inputs`, `mask`, `model`, `seed`, `strength`,
   `loras[{name,weight}]`. **Not** in it: `steps`, `cfg`, `sampler`, `scheduler`. Those come from the
   catalogue row's `params` (ADR 0072, `EngineParams`) laid over the family recipe field by field
@@ -57,13 +65,14 @@ What already exists, measured on the tree at `2da2bf28` (2026-09-13):
   | `flux2-klein` | yes (4) | **no** — fixed 1 | yes (euler) | **no** | no |
   | `zimage` | yes (8) | yes (1) | yes (res_multistep) | yes (simple) | no |
 
-  Unknown sampler or scheduler names are **silently ignored** (`comfy_workflows.go:196-209`); a name the
+  Unknown sampler or scheduler names are **silently ignored** (`comfy_workflows.go:174-209` —
+  `comfyRecipe.with` keeps the recipe's name when the overlay's is not on the list); a name the
   box does not know would fail after a cold start with `Value not in list`, so the Agent's allow-list
   is the contract. A negative prompt on a distilled family is dropped with a warning
   (`comfy.go:187-204`). Nothing in the Console knows this table.
 - **The blocking call and the clocks.** `POST /imagegen/generate` returns when the picture is on disk.
   The chain is: control plane wake budget 900 s (`engine_gateway.go:87`) with a plain-request hold of
-  45 s under the ALB's 60 s idle timeout (`:33-52`, `:104`), the Agent's 16-minute bound
+  45 s under the ALB's 60 s idle timeout (`:33-52`; `engineManagedPlainHoldSeconds` at `:100`), the Agent's 16-minute bound
   (`sdcpp.go:191`), the MCP caller's 18 minutes (`mcp_imagegen.go:157`). The Console's REST proxy
   (`control-plane/proxy.go:148-180`) is a buffered relay with no streaming and no heartbeat: a browser
   call that sits for a cold start would be cut at 60 s in an ALB deployment.
@@ -77,13 +86,14 @@ What already exists, measured on the tree at `2da2bf28` (2026-09-13):
 - **No member-facing catalogue.** The admin screens (`console/src/features/settings/admin/adminEngines.tsx`,
   `adminEngineModels.tsx`) are super_admin, or tenant_admin under `allow_engine_ingest`. The only door
   a member's browser has today is `GET /imagegen/status`, and its per-model row is `{id, description,
-  warm}` — no family, no sizes, no `params`, no row negative (`http.go:61-91`).
+  warm}` — no family, no sizes, no `params`, no row negative (`http.go:61-99`).
 - **Trigger words are read and thrown away.** Civitai's `trainedWords` come back from
   `ingest/resolve` and search (`control-plane/engine_admin.go:1673-1675`, `engine_ingest.go:497`) and
   are shown in the wizard, but no column stores them. A LoRA that needs its trigger loads and changes
   nothing visible.
 - **There is a one-shot LLM call the Console can already make.** `askAssistant(prompt, assistant?)`
-  (`console/src/core/api/client.ts:877-884` → `POST api/chat/ask` → `chatx/chat_handlers.go:228-261`):
+  (`console/src/core/api/client.ts:880` → `POST api/chat/ask`, relayed by `control-plane/routes.go:467`
+  → `workspace/agent/internal/chatx/chat_handlers.go:228-261`, `HandleChatAsk`):
   an ephemeral, unpersisted conversation, no tools, 240 s bound (`chat.go:487`), run by the member's
   own CLI login, ledgered as `assistant.ask`. Memo tidy (`MemoTidyModal.tsx:83`) and the TTS summary
   (`useMirrorTts.tsx:160`) already use it and preview the answer before applying it.
@@ -122,8 +132,14 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
 
 - **Routes on the Agent**, and their seven lines on the control plane's list (the group and queue
   operations are decision 12; `props` is decision 3):
-  - `POST /imagegen/jobs` — body is the existing `generateRequest` plus `params` (decision 4), `label`
-    (free text shown in the list) and `out_dir` (decision 3). Returns `{id, position}` at once.
+  - `POST /imagegen/jobs` — body is the existing `generateRequest` **without `session`** (the pane has
+    none; the folder is decision 3's and the "not the session's own CLI" check has nothing to check)
+    plus `params` (decision 4), `label` (free text shown in the list), `out_dir` (decision 3), `jobs`
+    (N ≥ 1, decision 8), `seed_policy` (`random | fixed | sequence`, decision 8) and `trial`
+    (decision 11). The Agent expands N into N jobs under one `group` and answers
+    `{group, jobs: [{id, position}]}` at once — one request, so the cap below judges the whole batch
+    and never admits half of it *(review: the body's fields were scattered over decisions 8 and 11;
+    this is the one list)*.
     Refused with 429 when the queue holds `imagegenQueueMax` (200) pending jobs — one member cannot
     park a day of GPU on a shared box by accident.
   - `GET /imagegen/jobs` — every job the Agent still remembers (pending, running, the last 500
@@ -131,7 +147,8 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
     failed | cancelled`, `position` while queued, `started_at`, `finished_at`, `elapsed_ms`, the
     resolved request (model, family, seed, effective `params`, loras, sizes) and, when done, `files[]`
     in the `StoredFile` shape plus `warnings[]`. The handler emits the same bytes for the same state so
-    the control plane's ETag turns an unchanged poll into a 304.
+    the control plane's ETag layer (`control-plane/etag.go`, a weak ETag over every JSON GET) turns an
+    unchanged poll into a 304.
   - `DELETE /imagegen/jobs/{id}` — cancel. Queued: removed. Running: the provider's optional
     `Canceller` is asked. For comfy that is `POST /queue {"delete":[prompt_id]}` when the prompt is
     still pending upstream and `POST /interrupt {"prompt_id"}` when it is executing — **always with the
@@ -161,7 +178,7 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
 ### Decision 3 — Output goes where the gallery looks, with a sidecar per picture and the seed in the answer
 
 - **Default folder:** `~/.cache/agent-fleet/generated/console/` — a sibling of the per-session folders
-  and the folder the gallery's "generated images" family (ADR 0080 unresolved 3) will list. Files keep
+  and the folder the gallery's "generated images" family (ADR 0080 open question 3) will list. Files keep
   the `image-<unixnano>-<n>.<ext>` name so the gallery's newest-first order holds.
   **It is never swept** (decided 2026-09-13): the 30-day sweep in `store.go` exists because an agent's
   pictures are by-products of a conversation nobody asked to keep; these are the product, and a person
@@ -177,32 +194,46 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   (it filters by `imageFormat()`), and the thing the gallery's card hover, "open in image generation",
   and any later "X/Y grid" read. ComfyUI's own `prompt` chunk stays in the PNG untouched; it is the API
   graph, not the request, and is absent when the box runs with `--disable-metadata`.
-- **`Result` and `StoredFile` gain `seed`** (per image: base seed for batch index 0, `seed+i` after —
-  ComfyUI derives batch noise that way). The MCP tool's answer gains the same line; "it was random and I
+- **`Image` (what a provider returns inside `Result`) and `StoredFile` gain `seed`** (per image: base
+  seed for batch index 0, `seed+i` after — ComfyUI derives batch noise that way). The MCP tool's answer gains the same line; "it was random and I
   cannot get it back" is the single most common complaint in any image UI.
 - **Showing and copying a picture's properties is this ADR's, not 0080's** (settled 2026-09-13 with the
   gallery lane, on the user's request "show and copy the seed and the rest"; ADR 0080 implements nothing
   for it). Three facts measured on a live deployment — 251 files under `generated/`, walked PNG chunk by
   chunk — fix the shape:
-  1. **comfy-route PNGs already carry a `tEXt` chunk keyed `prompt`** (1,550 bytes each): the API graph,
-     with `KSampler`'s `seed`, `steps`, `cfg`, `sampler_name`, `scheduler`, the checkpoint name in
-     `CheckpointLoaderSimple`, the size in `EmptyLatentImage`, both prompts in `CLIPTextEncode`, and the
-     `LoraLoader` nodes. It is the **only** way to recover the pictures made before the sidecar existed.
+  1. **comfy-route PNGs already carry a `tEXt` chunk keyed `prompt`** (1,550–1,716 bytes; re-checked on
+     this container's own `generated/`, where every comfy-route PNG has it and the vendor-route one has
+     none — *review*): the API graph, with `KSampler`'s `seed`, `steps`, `cfg`, `sampler_name`,
+     `scheduler`, the checkpoint name in `CheckpointLoaderSimple`, the size in `EmptyLatentImage`, both
+     prompts in `CLIPTextEncode`, and the `LoraLoader` nodes. It is the **only** way to recover the
+     pictures made before the sidecar existed. Two things the walk showed that the draft had guessed
+     *(review)*: the graph uses the Agent's own node ids (`ckpt`, `pos`, `neg`, `ks`, `lat`, `save`) and
+     `SaveImage.filename_prefix` is `af-<family>` (`af-sdxl`, `af-sd35`, `af-flux1`, `af-klein`,
+     `af-zimage` — `comfy_workflows.go:444-671`), so the family is **read**, not inferred; and a batch
+     PNG carries the **base** seed with `batch_size`, so the picture's own seed is base + (n − 1) from
+     the `-<n>` in its file name.
   2. **Vendor-route PNGs (codex, agy) carry no text chunk at all** (0 of the files in those folders).
      Their properties are unrecoverable, and the UI says so rather than showing blanks.
-  3. **The thumbnail (`fs/download?thumb=512`) is a JPEG re-encode and loses the chunk.** Properties are
+  3. **The thumbnail (`fs/download?thumb=512`) is a re-encode and loses the chunk** — JPEG, or PNG for a
+     source with alpha (`fs_thumb.go:132-140`); either encoder writes no text chunk. A source under
+     128 KiB (`thumbMinSourceBytes`) or over 40 MP is served as the original instead, so a chunk that
+     does come back from the thumbnail route is an accident, never a contract *(review)*. Properties are
      read from the original or from a header-only route — never from the thumbnail, and never by
      fetching 300 originals for a folder (that would break ADR 0080 decision 4's bandwidth premise).
 
   Hence one Agent route, **`GET /imagegen/props?path=<browse-root-relative>`** (the seventh proxy line):
   the sidecar when it exists (`source: "sidecar"`), else the PNG's `prompt` chunk parsed up to the first
-  `IDAT` — no pixel decode — and mapped into the sidecar's shape by node type (`source: "png"`; the
-  positive prompt is the `CLIPTextEncode` wired to the sampler's `positive` input, the family is
-  inferred from the loader nodes only when unambiguous, else left empty), else `source: "none"`. The
-  answer is cached by the file's mtime and carries `Last-Modified` like the thumbnail, so re-opening
-  costs a 304. It is read **on demand only**: when the shared lightbox (ADR 0080 decision 5, hoisted to
-  `viewer/ImageLightbox.tsx`) opens, and when a gallery or pane card is asked for it; never for a whole
-  folder on mount.
+  `IDAT` — no pixel decode — and mapped into the sidecar's shape by the Agent's node ids first (`ks`,
+  `pos`, `neg`, `ckpt`, `lat`) and by class type as the fallback for a graph the Agent did not write
+  (`source: "png"`; the positive prompt is the `CLIPTextEncode` wired to the sampler's `positive`
+  input; the family is `filename_prefix` minus `af-`, empty when the prefix is not one of the five;
+  the seed is the base seed plus the file name's index), else `source: "none"`. The answer is cached by
+  the file's mtime and carries `Last-Modified` like the thumbnail, so re-opening costs a 304. It is read
+  **on demand only**: when the shared lightbox (ADR 0080 decision 5, hoisted to
+  `features/viewer/ImageLightbox.tsx` in #622) opens, and when a gallery or pane card is asked for it;
+  never for a whole folder on mount. The lightbox takes a URL (`src`), not a path *(review)*, so it
+  gains an optional `path` prop — the browse-root path the gallery, the mirror's file card and this
+  pane all hold — and the bar shows the toggle only when it is set.
 
   The surface is the **shared lightbox's bar**, the one place the gallery, the mirror's file card and this
   pane all meet: a "properties" toggle shows the resolved fields (model, family, seed, size, steps, cfg,
@@ -239,17 +270,28 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   `negative_always` is shown the same way), `knobs` (the subset of `steps cfg sampler scheduler
   negative` the family reads — computed in the Agent from the same table the templates use, the only
   place it exists), `warm`, `description`, `license_name`, `license_url`, `source_url`.
-  Per LoRA: `base_model`, `weight` (the row's default), `trained_words`. Engine-level: `samplers[]`,
+  Per LoRA: `base_model`, `trained_words` — and **no default weight** *(review)*: no column holds one,
+  the Agent uses 1 when none is given (`comfy.go:342`) and refuses above `comfyMaxLoraWeight` (2,
+  `comfy.go:292`), which the status reports once as `lora_weight_max`. Engine-level: `samplers[]`,
   `schedulers[]` (the allow-lists, so the form cannot offer a name the Agent will refuse), `typical_ms`.
 - The rows this reads are what the Agent already receives on `GET /internal/engine/catalog`
   (`engineCatalogModelRow`) — the door the MCP path uses, with the workspace's issuing token. A second,
   browser-authenticated catalogue on the control plane would be a second projection of the same rows
-  to keep in step (the `sessionWire` lesson: fields not in the relay vanish silently).
+  to keep in step (the `sessionWire` lesson: fields not in the relay vanish silently). That lesson
+  bites here already *(review)*: `engineCatalogModelRow` (`engine_catalog.go:571`) relays `id`,
+  `description`, `sizes`, `base_model`, `negative`, `params`, `selected`, `default`, `warm` and
+  `files` — **not** `LicenseName`, `LicenseURL` or `Source`, which `store.EngineModel` holds. So the
+  three join the row as `license_name`, `license_url`, `source_url`, next to `trained_words`: four
+  fields on one relay function, still no new route, and the Agent's `engineCatalogModelRow` reader
+  (`engines.go`) gains the same four.
 - Models marked `base_model_missing`, `files_missing` or `vae_missing` are **not listed** — the
   catalogue already withholds them from generation, and a disabled entry with a tooltip is the admin's
   screen, not the member's.
 - **`trained_words` becomes a column** on `engine_models` (JSON array; migration in both dialects —
-  check the next free number against every open lane before merging, see ADR 0072's collision note),
+  `0067` under `migrations/` and `0052` under `migrations-pg/` as of `d164739a`, and the number is
+  re-checked against every open lane just before merging, because git merges two files with the same
+  number without a word and every test goes red afterwards — *review*: the draft pointed at a note in
+  ADR 0072 that does not exist),
   written by ingest from Civitai's `trainedWords`, editable on the admin row, relayed by
   `engineCatalogModelRow`. One column, three places; without it the pane cannot do the one thing every
   LoRA user asks for (decision 7).
@@ -272,15 +314,16 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   one poll away and nothing is lost — the 0078 rule "what must survive a tab switch goes in the
   content" is satisfied by putting it on the server instead.
 - All eight registration points of a pane kind (union, `migrate.ts`, `sameTarget`, render switch,
-  `paneTitle` twice, `LayoutMap` abbreviation, pop-out, i18n) plus the ninth: **the command table
+  `paneTitle` twice, `LayoutMap` abbreviation — `gen`, since `img` is the gallery's since #622
+  (*review*) —, pop-out, i18n) plus the ninth: **the command table
   (ADR 0017) gets `open.imagegen` (`g i`)**. ADR 0080 could not register the gallery because it needs a
   folder; this pane has no argument, like `open.sessions`.
 - i18n prefix `imggen.*` in a new domain file pair (`ja/imggen.ts`, `en/imggen.ts`) — the catalogue
   test binds one prefix to one file.
 - Entry points, each one line in an existing row: the ops bar and `LayoutMap` button next to
-  "sessions"; the gallery header "generate here" (P1, when ADR 0080 lands — it opens the pane with
-  `out_dir` set to the gallery's folder); the gallery card "open in image generation" (P1, reads the
-  sidecar into the form).
+  "sessions"; the gallery header "generate here" (P1 of this ADR — the gallery pane exists since #622;
+  it opens the pane with `out_dir` set to the gallery's folder); the gallery card "open in image
+  generation" (P1, reads the sidecar into the form).
 
 ### Decision 7 — Prompt help is two layers: a deterministic layer that is always there, and a one-shot model call the user presses
 
@@ -488,12 +531,14 @@ the thing the person submitted; the queue-wide versions are the same operations 
   `tEXt` up to `IDAT`); seven routes in `routes.go` (so `testdata/routes.golden` moves — expected here, unlike
   ADR 0080). `usage_series.go` folds `Images` / `Pixels`.
 - **Control plane**: seven proxy lines in `routes.go`; `engine_models.trained_words` (migration in both
-  dialects), written by ingest, editable by the admin row, relayed by `engineCatalogModelRow`.
-  No gateway change: cancel is two more pass-through paths.
+  dialects), written by ingest, editable by the admin row, relayed by `engineCatalogModelRow` together
+  with `license_name` / `license_url` / `source_url`, which the store already holds and the row never
+  carried *(review)*. No gateway change: cancel is two more pass-through paths.
 - **Console**: `features/imagegen/` (view, form, job list, family cards, prompt-help modal, `open.ts`,
   CSS, pure functions for the draft and the group fold); the nine registration points; the i18n pair
-  `imggen.*`; two entry buttons; `usage` labels for images and pixels. The gallery's P1 items "open in
-  image generation" and "use as reference" land there when ADR 0080's pane exists.
+  `imggen.*`; two entry buttons; `usage` labels for images and pixels; the `path` prop and the
+  properties bar on `features/viewer/ImageLightbox.tsx`. The gallery pane exists (#622); its hooks
+  "open in image generation" and "use as reference" are this ADR's P1.
 - **Docs**: `guide/ref/features.{md,ja.md}` row + `guide/member/` procedure and
   `workspace/agent/knowledge/af-usage.{md,coverage.tsv}` (docs-check enforces both, as the sessions
   pane found).
@@ -516,9 +561,11 @@ the thing the person submitted; the queue-wide versions are the same operations 
   not share a file:
   - **Lane A (Agent)**: `jobs.go` (with head insertion and the trial cap), `Request.Params`, validation, seed and sidecar, the `props` reader, phases and cancel,
     status widening, routes and golden, usage fold.
-  - **Lane B (control plane)**: proxy lines, `trained_words` column end to end.
+  - **Lane B (control plane)**: proxy lines, `trained_words` column end to end, the three licence /
+    source fields on `engineCatalogModelRow`.
   - **Lane C (Console)**: pane kind and `features/imagegen/` (form, trial slot, result cards, job list), the
-    properties bar in the shared lightbox (after 0080's hoist lands), i18n, entry points, usage labels.
+    properties bar and `path` prop in the shared lightbox (the hoist landed in #622), i18n, entry
+    points, usage labels.
     C can be built against a stub of A's wire (the shapes above are the contract) and finished after A.
 - **P1**: sweeps and the prompt matrix; gallery hooks ("open in image generation", "use as reference",
   "generate here"); presets (named parameter sets, local first); a queue journal if a restart bites;
