@@ -341,6 +341,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
         createPortal(
           <ImageLightbox
             src={downloadURL(current.path)}
+            path={current.path}
             alt={current.name}
             onClose={close}
             index={at + 1}

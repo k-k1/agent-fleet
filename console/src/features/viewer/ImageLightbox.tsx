@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as RPointerEvent, MouseEvent as RMouseEvent } from "react";
 import { ImageView, type ImageViewHandle } from "./ImageView.tsx";
+import { ImageProps } from "./ImageProps.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useEscLayer } from "../../lib/escLayer.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -43,14 +44,27 @@ interface Props {
   /** Show this image's folder as a gallery. Absent = no button (the gallery itself
    *  is already looking at the folder). */
   onOpenFolder?: () => void;
+  /**
+   * The picture's browse-root-relative PATH, which `src` (a download URL) is not (ADR 0081
+   * decision 3). Every host holds it — the gallery, the mirror's file card, the studio — and
+   * passing it is what turns on the properties toggle. Absent = no toggle at all: without a
+   * path there is nothing to ask `GET api/imagegen/props` about.
+   */
+  path?: string;
 }
 
-export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total, onOpenFolder }: Props) {
+export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total, onOpenFolder, path }: Props) {
   const tr = useT();
   const view = useRef<ImageViewHandle>(null);
   const [scale, setScale] = useState(1);
+  const [showProps, setShowProps] = useState(false);
   const down = useRef<{ x: number; y: number } | null>(null);
   const paging = !!onPrev || !!onNext;
+
+  // Paging to another picture closes the panel: it is read on open only, and leaving it up
+  // would show the previous image's seed under the new one — the one failure a properties
+  // panel must not have.
+  useEffect(() => setShowProps(false), [path]);
 
   useEscLayer(onClose);
 
@@ -79,7 +93,7 @@ export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total,
     down.current = null;
     if (from && Math.hypot(e.clientX - from.x, e.clientY - from.y) > DRAG_SLOP) return; // a pan, not a click
     const el = e.target as HTMLElement | null;
-    if (el?.closest(".imgview-img, .mirror-lightbox-bar")) return; // the image and the controls keep their clicks
+    if (el?.closest(".imgview-img, .mirror-lightbox-bar, .imgprops")) return; // the image, the controls and the properties panel keep their clicks
     onClose();
   };
 
@@ -140,6 +154,18 @@ export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total,
         <button type="button" onClick={() => view.current?.zoomBy(STEP)} title={tr("view.zoom_in")}>
           <Icon name="add" />
         </button>
+        {path && (
+          <button
+            type="button"
+            className={"mirror-lightbox-props" + (showProps ? " on" : "")}
+            aria-pressed={showProps}
+            onClick={() => setShowProps((v) => !v)}
+            title={tr("imggen.props_toggle")}
+            aria-label={tr("imggen.props_toggle")}
+          >
+            <Icon name="info" />
+          </button>
+        )}
         {onOpenFolder && (
           <button
             type="button"
@@ -155,6 +181,7 @@ export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total,
           <Icon name="close" />
         </button>
       </div>
+      {path && showProps && <ImageProps path={path} />}
       <ImageView ref={view} src={src} alt={alt || tr("mirror.pasted_image_zoom")} onZoom={setScale} />
     </div>
   );

@@ -90,3 +90,87 @@
     height: 38px;
   }
 }
+
+/* The properties panel (ADR 0081 decision 3). It lives HERE and not in imagegen.css
+   because the lightbox is opened by the gallery and the mirror too, and a rule that only
+   loads when the studio pane is mounted would leave the panel unstyled in the two places it
+   is most often used. */
+
+.imgprops {
+  position: absolute;
+  top: 44px;
+  right: 8px;
+  z-index: 2;
+  max-width: min(420px, calc(100vw - 24px));
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  background: var(--panel-bg, rgba(20, 20, 20, 0.92));
+  color: var(--fg, #eee);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.imgprops-msg {
+  color: var(--muted);
+}
+
+.imgprops-src {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.imgprops-rows {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.imgprops-row {
+  display: grid;
+  grid-template-columns: 5.5em 1fr auto;
+  align-items: start;
+  gap: 6px;
+}
+
+.imgprops-row dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.imgprops-row dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-word;
+  /* A prompt is the long row; it wraps to four lines and then scrolls with the panel
+     rather than pushing the copy button off the edge. */
+  max-height: 6em;
+  overflow: auto;
+}
+
+.imgprops-copy {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.7;
+}
+
+.imgprops-copy:hover {
+  opacity: 1;
+}
+
+.imgprops-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.mirror-lightbox-props.on {
+  color: var(--accent, #58a6ff);
+}

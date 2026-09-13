@@ -22,6 +22,7 @@ import { useLeftRail } from "../../core/store/leftRail.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionsOverview } from "../overview/open.ts";
+import { openImagegen } from "../imagegen/open.ts";
 import { useMemoStore } from "../memo/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { getSettings, setSetting, defaultSetting } from "../../lib/settings.ts";
@@ -365,6 +366,9 @@ export const ALL_COMMANDS: Command[] = [
   { id: "open.usageAgy", title: "keys.cmd.openUsageAgy", seq: "g a", run: () => useUiOpen.getState().toggle("usage-agy") },
   { id: "open.resources", title: "keys.cmd.openResources", seq: "g r", run: () => useUiOpen.getState().toggle("resources") },
   { id: "open.sessions", title: "keys.cmd.openSessions", seq: "g s", run: () => openSessionsOverview() },
+  // The image-generation studio (ADR 0081 decision 6). It can be bound here — unlike the
+  // gallery, which needs a folder — because it takes no argument at all, like the overview.
+  { id: "open.imagegen", title: "keys.cmd.openImagegen", seq: "g i", run: () => openImagegen() },
 
   // ---- Notifications (leader n) — mute the voice read-aloud, toggle the per-session voice
   // notification / limit-reset notification, or toggle a chat-bridge service's notification

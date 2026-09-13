@@ -126,6 +126,9 @@ export function sameTarget(view: View, target: OpenTarget): boolean {
     // surface, so opening the same folder twice focuses the pane that has it instead
     // of laying a second copy beside it (ADR 0080 decision 1).
     case "gallery": return c.kind === "gallery" && c.galleryPath === t.galleryPath;
+    // The KIND alone (ADR 0081 decision 6): the studio has no target, so a second open
+    // focuses the one that exists. Two studios with two models is unresolved 4.
+    case "imagegen": return c.kind === "imagegen";
   }
 }
 

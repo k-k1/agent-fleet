@@ -2163,6 +2163,9 @@ export function MirrorView({
         createPortal(
           <ImageLightbox
             src={lightbox.src}
+            // A pasted image has no path, so it gets no properties toggle either — the
+            // same rule the folder button already follows (ADR 0081 decision 3).
+            path={lightbox.path || undefined}
             onClose={() => setLightbox(null)}
             // Only a shared FILE has a folder; a pasted image has no path and so gets no
             // item. Closing first keeps the overlay from surviving the pane change.

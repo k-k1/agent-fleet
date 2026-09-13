@@ -11,6 +11,7 @@ import { useTenantStore } from "../core/store/tenant.ts";
 import { useWorkspaceStore, wsBusy, wsPowerStops, wsStartBusy } from "../core/store/workspace.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { openSessionsOverview } from "../features/overview/open.ts";
+import { openImagegen } from "../features/imagegen/open.ts";
 import { isBlankPane, MAX_TAB_COLS } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { hintSuffix } from "../features/keys/keyHint.ts";
@@ -1540,6 +1541,17 @@ export function WsBar() {
       >
         <Icon name="dashboard" />
         <span className="lbl">{tr("wsbar.overview")}</span>
+      </button>
+      {/* The image-generation studio (ADR 0081), beside the overview for the same reason:
+          it is a pane, and the layout map's copy of this button hides itself while there is
+          only one pane. */}
+      <button
+        className="ghost ws-split ws-imagegen"
+        title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
+        onClick={() => openImagegen()}
+      >
+        <Icon name="wand" />
+        <span className="lbl">{tr("wsbar.imagegen")}</span>
       </button>
 
       <span className="ws-spacer" />

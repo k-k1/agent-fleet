@@ -62,7 +62,15 @@ export type PaneContent =
    * instead would freeze a stale title into the layout (and the stored-layout validator,
    * which holds this field to the name's character set, would drop it entirely).
    */
-  | { kind: "gallery"; galleryPath: string; sort?: "new" | "name"; galleryFocus?: string; gallerySession?: string };
+  | { kind: "gallery"; galleryPath: string; sort?: "new" | "name"; galleryFocus?: string; gallerySession?: string }
+  /**
+   * The image-generation studio (ADR 0081): a form, a queue and its results. It carries no
+   * field at all — deliberately. The form is a localStorage draft (`af.imagegen-draft.<ws>`)
+   * because the layout store is not a place for a 2 kB prompt, and the queue is the Agent's,
+   * so a tab switch that unmounts the view loses nothing that one poll does not restore.
+   * `sameTarget` is therefore "same kind": opening it twice focuses the one that exists.
+   */
+  | { kind: "imagegen" };
 
 export type PaneKind = PaneContent["kind"];
 

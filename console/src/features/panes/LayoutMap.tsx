@@ -15,6 +15,7 @@ import type { PaneKind } from "../../layout/types.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import { openSessionsOverview } from "../overview/open.ts";
+import { openImagegen } from "../imagegen/open.ts";
 import { jaKind } from "./paneTitle.ts";
 import { selectedView } from "../../layout/ops.ts";
 
@@ -34,6 +35,9 @@ const KIND_ABBR: Partial<Record<PaneKind, string>> = {
   browserAttach: "web",
   sessions: "sess",
   gallery: "img",
+  // `gen`, not `img`: the gallery took that since #622, and two panes abbreviating to the
+  // same three letters is exactly what this map exists to prevent.
+  imagegen: "gen",
 };
 
 export const LayoutMap = memo(function LayoutMap() {
@@ -57,6 +61,7 @@ export const LayoutMap = memo(function LayoutMap() {
         {tr("pane.layout")}
         {/* The overview's one on-screen entry (the other is the leader key, g s). */}
         <IconButton icon="dashboard" label={tr("pane.open_sessions")} onClick={() => openSessionsOverview()} />
+        <IconButton icon="wand" label={tr("pane.open_imagegen")} onClick={() => openImagegen()} />
       </div>
       <div className="lm-cols">
         {layout.cols.map((col) => (
