@@ -105,6 +105,18 @@ describe("画像ギャラリーのペイン", () => {
     expect(thumbs()[0].getAttribute("decoding")).toBe("async");
     expect(thumbs()[0].src).toContain("thumb=512");
     expect(thumbs()[0].src).toContain(encodeURIComponent("gen/c.png"));
+    // The listing's mtime rides in the URL, so the Agent may answer `immutable` and coming
+    // back to the tab costs no request at all (a cold thumbnail is ~95 ms, a cached one 44 µs).
+    expect(thumbs()[0].src).toContain("v=300");
+    // And the listing itself asks the Agent to decode the folder while it answers.
+    expect(String(fetchMock.mock.calls[0][0])).toContain("warm=512");
+  });
+
+  it("mtime を返さない Agent では版を URL に載せない（載せると古い絵を永久に掴む）", async () => {
+    served = [img("a.png")];
+    await render();
+    expect(thumbs()[0].src).toContain("thumb=512");
+    expect(thumbs()[0].src).not.toContain("v=");
   });
 
   it("画像が 1 枚も無ければ空状態（読み込み中の空白ではなく）", async () => {

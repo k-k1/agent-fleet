@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -224,5 +225,100 @@ func TestThumbEdgeRejectsOutOfRange(t *testing.T) {
 		if got := thumbEdge(in); got != want {
 			t.Errorf("thumbEdge(%q) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+// --- warming and the versioned URL ---------------------------------------------------
+
+// waitForCache polls for the cache entry a warm-up leaves behind. Warming is deliberately
+// asynchronous (nothing waits for it), so the test waits instead of sleeping a fixed guess.
+func waitForCache(t *testing.T, display string, edge int) bool {
+	t.Helper()
+	fi, err := os.Stat(display)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := thumbCacheKey(display, fi.Size(), fi.ModTime(), edge)
+	for i := 0; i < 200; i++ {
+		if _, _, ok := readThumbCache(key); ok {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+// The gallery's whole latency problem is the FIRST look at a folder: every picture is cold,
+// and a cold thumbnail is three orders of magnitude dearer than a cached one. `warm` is the
+// listing saying "decode these while I am here".
+func TestFSTreeWarmFillsTheThumbCache(t *testing.T) {
+	root := thumbRoots(t)
+	noisyPNG(t, filepath.Join(root, "a.png"), 800, 600, false)
+	noisyPNG(t, filepath.Join(root, "b.png"), 800, 600, false)
+
+	rec := httptest.NewRecorder()
+	handleFSTree(rec, httptest.NewRequest("GET", "/api/fs/tree?path=&warm=64", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	for _, name := range []string{"a.png", "b.png"} {
+		if !waitForCache(t, filepath.Join(root, name), 64) {
+			t.Fatalf("%s was not warmed: the listing answered but the cache is still empty", name)
+		}
+	}
+}
+
+// The tree lists code folders constantly; only the gallery asks for warming, and a listing
+// without the parameter must not spend a single decode.
+func TestFSTreeWithoutWarmDecodesNothing(t *testing.T) {
+	root := thumbRoots(t)
+	noisyPNG(t, filepath.Join(root, "a.png"), 800, 600, false)
+
+	rec := httptest.NewRecorder()
+	handleFSTree(rec, httptest.NewRequest("GET", "/api/fs/tree?path=", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	time.Sleep(50 * time.Millisecond)
+	fi, _ := os.Stat(filepath.Join(root, "a.png"))
+	if _, _, ok := readThumbCache(thumbCacheKey(filepath.Join(root, "a.png"), fi.Size(), fi.ModTime(), 64)); ok {
+		t.Fatal("a plain listing warmed the cache — the file tree would then decode every images folder it walks")
+	}
+}
+
+// A second look at a folder within the throttle window must not re-walk it: the gallery
+// re-lists every 20 seconds while a session runs.
+func TestWarmThumbDirIsThrottledPerFolder(t *testing.T) {
+	root := thumbRoots(t)
+	warmThumbDir(root, 64) // marks the folder
+	noisyPNG(t, filepath.Join(root, "late.png"), 800, 600, false)
+	warmThumbDir(root, 64) // inside warmGap: must do nothing
+	fi, _ := os.Stat(filepath.Join(root, "late.png"))
+	if _, _, ok := readThumbCache(thumbCacheKey(filepath.Join(root, "late.png"), fi.Size(), fi.ModTime(), 64)); ok {
+		t.Fatal("the second warm-up ran inside the throttle window")
+	}
+}
+
+// `v=<mtime>` puts the revision in the URL, which is the only thing that makes the bytes
+// safe to keep without asking again.
+func TestThumbIsImmutableOnlyWithTheMatchingVersion(t *testing.T) {
+	root := thumbRoots(t)
+	path := filepath.Join(root, "shot.png")
+	noisyPNG(t, path, 800, 600, false)
+	fi, _ := os.Stat(path)
+	v := fi.ModTime().Unix()
+
+	cc := download(t, "path=shot.png&thumb=64&v="+strconv.FormatInt(v, 10)).Header().Get("Cache-Control")
+	if cc != "private, max-age=604800, immutable" {
+		t.Errorf("Cache-Control with the right version = %q, want the immutable one", cc)
+	}
+	// A stale version (the file was replaced since the listing) must NOT be cached forever.
+	cc = download(t, "path=shot.png&thumb=64&v="+strconv.FormatInt(v-1, 10)).Header().Get("Cache-Control")
+	if cc != "private, max-age=60" {
+		t.Errorf("Cache-Control with a stale version = %q, want the short one", cc)
+	}
+	cc = download(t, "path=shot.png&thumb=64").Header().Get("Cache-Control")
+	if cc != "private, max-age=60" {
+		t.Errorf("Cache-Control without a version = %q, want the short one", cc)
 	}
 }

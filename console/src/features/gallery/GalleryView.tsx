@@ -139,7 +139,10 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
     async (signal: AbortSignal, initial: boolean): Promise<boolean> => {
       let d: { entries?: FsEntry[]; error?: { code?: string } };
       try {
-        d = await api(`api/fs/tree?path=${encodeURIComponent(path)}`);
+        // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
+        // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
+        // it the first look at a fresh folder trickles in card by card.
+        d = await api(`api/fs/tree?path=${encodeURIComponent(path)}&warm=${THUMB}`);
       } catch {
         if (!signal.aborted && initial) setFailed(true);
         return false;
@@ -519,7 +522,7 @@ function GalleryCard({
           <Icon name="file-media" className="gal-thumb-none" />
         ) : (
           <img
-            src={downloadURL(img.path, THUMB)}
+            src={downloadURL(img.path, THUMB, img.mtime)}
             alt={img.name}
             loading="lazy"
             decoding="async"
