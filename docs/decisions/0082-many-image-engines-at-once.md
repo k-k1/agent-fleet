@@ -8,6 +8,10 @@ English | [日本語](0082-many-image-engines-at-once.ja.md)
   measurement an earlier ADR made, cited where it is used. The one number that matters most to
   the design (what a dial to a powered-off LAN host costs) is **bounded by code and not
   measured**; it is open question 1.
+- [ADR 0083](0083-retire-sdcpp-image-engine.md) should land first. It retires sdcpp, which leaves
+  one image kind — so P0 below has one to deal with instead of two, decision 3's alias for the
+  stored `comfy` / `sdcpp` ids is not needed (0083 decision 5), and decision 8's collapse is
+  deleted rather than written twice.
 - The request, in the operator's own words: a deployment that borrows another fleet's engines
   ([ADR 0079](0079-remote-engine-from-another-deployment.md)) should **also** be able to use the
   ComfyUI on its own LAN ([ADR 0076](0076-external-image-engine-on-lan.md)) — **preferring the
