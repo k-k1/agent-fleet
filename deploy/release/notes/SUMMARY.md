@@ -47,7 +47,7 @@ Keeping it current:
 - **[sessions]** A managed Codex session resumes by itself once the usage limit resets, as a Claude one already did
 - **[image generation]** A request can carry a negative prompt, and an edit can say how far from the original it may go
 - **[mirror]** Much less battery on a phone: no redraw on an unchanged poll, a widening interval while nothing changes, no re-sending unchanged totals during a turn
-- **[gallery]** Thumbnails are prepared in advance and carry a version in their URL, so returning to a tab does not fetch them again
+- **[gallery]** Thumbnails are prepared in advance, asked for only as their cards come into view, and carry a version in their URL, so returning to a tab does not fetch them again
 - **[console]** Deleting a working copy clears what sits underneath it; a memo can be copied from its row menu
 
 **Fixed**
