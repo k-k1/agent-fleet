@@ -322,6 +322,17 @@ type Session struct {
 	// claiming it was set, and because a session that is about to fold itself away must be
 	// cancellable before it does.
 	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
+	// GeneratedImages / GeneratedImagesPath: how many images generate_image has stored for
+	// this session, and the folder they are in, browse-root relative (ADR 0080 decision 8).
+	// Both absent when there are none, which is what the Console's "Generated images (N)"
+	// menu item turns on — an entry that is only offered when there is something to open.
+	//
+	// The path rides the wire rather than being derived on the far side: the folder is named
+	// by uuidV5(dir + "|" + name), an Agent-internal rule the Console could reproduce and
+	// would then have to keep in step forever. Asking an endpoint at click time was the other
+	// option, and it decides "is there anything" AFTER the menu is already open.
+	GeneratedImages     int    `json:"generatedImages,omitempty"`
+	GeneratedImagesPath string `json:"generatedImagesPath,omitempty"`
 }
 
 // ContextUsage is a claude session's current context fill — the newest assistant

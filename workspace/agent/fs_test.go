@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestSafeBrowsePath covers path resolution for the read-only file browser. Relative paths
@@ -141,5 +142,63 @@ func TestHandleFSFileCodexGeneratedImageSharedRelativeToBrowseRoot(t *testing.T)
 	}
 	if resp.Path != rel || resp.Content != "PNG" {
 		t.Errorf("response = (%q, %q), want (%q, %q)", resp.Path, resp.Content, rel, "PNG")
+	}
+}
+
+// The tree carries each entry's mtime, on directories as well as files: "newest first" and
+// "3 minutes ago" have no other source (ADR 0080 decision 2). Directories are included
+// because the same Info() call already has the answer, and a folder-first sort is the next
+// thing anyone asks for. Denylisted names stay out of the listing, mtime or not.
+func TestFSTreeCarriesMtimeOnFilesAndDirs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AF_BROWSE_ROOT", root)
+	if err := os.MkdirAll(filepath.Join(root, "shots"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.png"), []byte("PNG"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A denylisted folder with something inside it, to prove mtime did not open a door.
+	if err := os.MkdirAll(filepath.Join(root, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Pin both entries to a known time, so the assertion is on the value and not merely on
+	// "some number showed up".
+	when := time.Date(2026, 9, 13, 10, 30, 0, 0, time.Local)
+	for _, p := range []string{filepath.Join(root, "shots"), filepath.Join(root, "a.png")} {
+		if err := os.Chtimes(p, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rr := httptest.NewRecorder()
+	handleFSTree(rr, httptest.NewRequest(http.MethodGet, "/api/fs/tree?path=", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Entries []fsEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rr.Body.String())
+	}
+	got := map[string]fsEntry{}
+	for _, e := range resp.Entries {
+		got[e.Name] = e
+	}
+	if _, denied := got[".ssh"]; denied {
+		t.Error("the listing enumerated a denylisted entry")
+	}
+	for _, name := range []string{"shots", "a.png"} {
+		e, ok := got[name]
+		if !ok {
+			t.Fatalf("entry %q missing from the listing: %#v", name, resp.Entries)
+		}
+		if e.Mtime != when.Unix() {
+			t.Errorf("%s: mtime = %d, want %d (unix seconds)", name, e.Mtime, when.Unix())
+		}
+	}
+	if got["shots"].Type != "dir" || got["a.png"].Size != 3 {
+		t.Errorf("mtime cost the entries their type/size: %#v", got)
 	}
 }
