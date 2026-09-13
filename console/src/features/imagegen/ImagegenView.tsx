@@ -37,6 +37,7 @@ import {
 } from "./api.ts";
 import { anyLive, buildRequest, engineState, foldGroups } from "./jobs.ts";
 import { draftKey, loadDraft, saveDraft, type ImagegenDraft } from "./draft.ts";
+import { noteImagegenStatus } from "./available.ts";
 import { GenerateForm } from "./parts/GenerateForm.tsx";
 import { JobList } from "./parts/JobList.tsx";
 import { PromptHelpModal } from "./parts/PromptHelpModal.tsx";
@@ -99,6 +100,7 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
       const s = await imagegenStatus();
       if (!s || isTransientErr(s)) return;
       setStatus(s);
+      noteImagegenStatus(s); // the bar's button follows the same answer
       setFailed(false);
     } catch {
       setFailed(true);

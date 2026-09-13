@@ -12,6 +12,7 @@ import { useWorkspaceStore, wsBusy, wsPowerStops, wsStartBusy } from "../core/st
 import { useLayoutStore } from "../layout/store.ts";
 import { openSessionsOverview } from "../features/overview/open.ts";
 import { openImagegen } from "../features/imagegen/open.ts";
+import { useImagegenAvailable } from "../features/imagegen/available.ts";
 import { isBlankPane, MAX_TAB_COLS } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { hintSuffix } from "../features/keys/keyHint.ts";
@@ -866,6 +867,7 @@ function tile({
 
 export function WsBar() {
   const wsState = useWorkspaceStore((s) => s.state);
+  const imagegenAvailable = useImagegenAvailable();
   const startWs = useWorkspaceStore((s) => s.start);
   const stopWs = useWorkspaceStore((s) => s.stop);
   const restartWs = useWorkspaceStore((s) => s.restart);
@@ -1544,15 +1546,19 @@ export function WsBar() {
       </button>
       {/* The image-generation studio (ADR 0081), beside the overview for the same reason:
           it is a pane, and the layout map's copy of this button hides itself while there is
-          only one pane. */}
-      <button
-        className="ghost ws-split ws-imagegen"
-        title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
-        onClick={() => openImagegen()}
-      >
-        <Icon name="wand" />
-        <span className="lbl">{tr("wsbar.imagegen")}</span>
-      </button>
+          only one pane. Shown only while the fleet has an image engine to offer (decision 1):
+          a button that opens onto "the engine cannot be used" is a promise the bar cannot
+          keep, and most fleets have no engine at all. */}
+      {imagegenAvailable && (
+        <button
+          className="ghost ws-split ws-imagegen"
+          title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
+          onClick={() => openImagegen()}
+        >
+          <Icon name="wand" />
+          <span className="lbl">{tr("wsbar.imagegen")}</span>
+        </button>
+      )}
 
       <span className="ws-spacer" />
 
