@@ -187,3 +187,88 @@ func TestWireSessionRateLimitOnlyWhileAlive(t *testing.T) {
 		t.Errorf("stopped session: state = %q / resumeAt = %q, want empty", s.State, s.RateLimitResumeAt)
 	}
 }
+
+// codexLimitProbe replaces the managed handle's "last turn was refused on the usage limit"
+// answer and counts the calls.
+func codexLimitProbe(t *testing.T, limited bool) *int {
+	t.Helper()
+	n := 0
+	orig := codexRateLimited
+	codexRateLimited = func(string) bool { n++; return limited }
+	t.Cleanup(func() { codexRateLimited = orig })
+	return &n
+}
+
+// TestWireSessionCodexRateLimitCarriesTheResumeTime (docs/log/47 §4-12): a managed codex names
+// itself limited through its own turn error, so the row already read "waiting for the limit"
+// before there was anything to wait FOR. What the episode adds is the booked instant — without
+// it the chip can only say "waiting", which is what the user sees as "no schedule exists".
+func TestWireSessionCodexRateLimitCarriesTheResumeTime(t *testing.T) {
+	isolateAgentState(t)
+	claudeCalls := atLimitProbe(t, claude.LimitWindow) // must stay untouched for a codex row
+	codexLimitProbe(t, true)
+	now := time.Now()
+	resume := now.Add(2 * time.Hour).Format(time.RFC3339)
+	m := session.Meta{Name: "rlwirecx1", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
+	session.WriteMeta(m)
+	if err := RateLimitStates.Write(m.Name, rateLimitState{
+		At: now.Format(time.RFC3339), ResumeAt: resume, ScheduleID: "sch_x",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := wireSession(m, true)
+	if s.State != agents.StateLimited {
+		t.Fatalf("state = %q, want %q", s.State, agents.StateLimited)
+	}
+	if s.RateLimitResumeAt != resume {
+		t.Errorf("rateLimitResumeAt = %q, want %q (the row cannot say when it moves again)", s.RateLimitResumeAt, resume)
+	}
+	if *claudeCalls != 0 {
+		t.Errorf("claude's transcript was read %d times for a codex session", *claudeCalls)
+	}
+}
+
+// TestWireSessionCodexRateLimitClearedByTheHandle: the episode file alone never claims the
+// wait. Once the next turn starts, codex clears the turn error, and the row must follow — the
+// same property the transcript gives the claude side.
+func TestWireSessionCodexRateLimitClearedByTheHandle(t *testing.T) {
+	isolateAgentState(t)
+	codexLimitProbe(t, false)
+	now := time.Now()
+	m := session.Meta{Name: "rlwirecx2", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
+	session.WriteMeta(m)
+	if err := RateLimitStates.Write(m.Name, rateLimitState{
+		At: now.Format(time.RFC3339), ResumeAt: now.Add(time.Hour).Format(time.RFC3339), ScheduleID: "sch_x",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if s := wireSession(m, true); s.State == agents.StateLimited || s.RateLimitResumeAt != "" {
+		t.Errorf("state = %q / resumeAt = %q — stuck on the reset wait after the limit cleared",
+			s.State, s.RateLimitResumeAt)
+	}
+}
+
+// TestWireSessionCodexTuiIsNotWatched: a codex driven through its TUI has no signal saying THIS
+// session's turn died on the limit, so nothing about it is claimed — not even with an episode
+// file left over from a managed run of the same name.
+func TestWireSessionCodexTuiIsNotWatched(t *testing.T) {
+	isolateAgentState(t)
+	calls := codexLimitProbe(t, true)
+	now := time.Now()
+	m := session.Meta{Name: "rlwirecx3", Dir: t.TempDir(), Kind: session.KindCodex}
+	session.WriteMeta(m)
+	if err := RateLimitStates.Write(m.Name, rateLimitState{
+		At: now.Format(time.RFC3339), ResumeAt: now.Add(time.Hour).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if s := wireSession(m, true); s.RateLimitResumeAt != "" {
+		t.Errorf("rateLimitResumeAt = %q, want empty for a tui codex", s.RateLimitResumeAt)
+	}
+	if *calls != 0 {
+		t.Errorf("the managed handle was probed %d times for a tui codex", *calls)
+	}
+}

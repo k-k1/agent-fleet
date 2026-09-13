@@ -256,6 +256,55 @@ func PlanExhausted(ctx context.Context) (exhausted, known bool) {
 	return u.LimitReached, true
 }
 
+// windowFullPct is the used_percent from which a window counts as the one that stopped the
+// turn. Not 100: the reading is a snapshot recorded BEFORE the turn that then ran into the
+// limit, so the last number written can sit just under the wall.
+const windowFullPct = 95
+
+// ResetAt reports when the usage limit that just stopped a codex turn lifts (docs/log/47
+// §4-12). ok=false means no instant can be named, and the caller books nothing — waking on a
+// guess only hits the same limit again.
+//
+// Unlike claude, nothing has to be read out of prose: codex records the account's own windows
+// into its rollout and the app-server pushes them, which is the same reading the WS-bar chip
+// shows (readUsage — local only, no network on this path).
+//
+// Which window: the EARLIEST reset among the windows that are full. Both can be full at once
+// (the 5-hour one inside an exhausted week), and the two ways of being wrong are not
+// symmetric. Resuming too early costs one wake that hits the limit again and re-books — and by
+// then the 5-hour window has reset, so its percentage has dropped and the weekly one is the
+// only remaining candidate, which is the answer that self-corrects. Resuming too late parks a
+// session for days when its window would have reopened in an hour, and nothing corrects that.
+//
+// A reading whose window has already reset carries pct 0 (adjustWindow), so a stale reading
+// cannot name an instant here at all: it simply falls through to ok=false.
+func ResetAt(now time.Time) (time.Time, string, bool) {
+	u := readUsage()
+	if !u.OK {
+		return time.Time{}, "", false
+	}
+	at, source := time.Time{}, ""
+	for _, c := range []struct {
+		w   *usageWindow
+		src string
+	}{{u.FiveHour, "codex:5h"}, {u.SevenDay, "codex:weekly"}} {
+		if c.w == nil || c.w.Pct < windowFullPct {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, c.w.ResetsAt)
+		if err != nil || !t.After(now) {
+			continue
+		}
+		if source == "" || t.Before(at) {
+			at, source = t, c.src
+		}
+	}
+	if source == "" {
+		return time.Time{}, "", false
+	}
+	return at, source, true
+}
+
 // accountWindow is one window as the account view spells it.
 type accountWindow struct {
 	UsedPercent float64 `json:"used_percent"`

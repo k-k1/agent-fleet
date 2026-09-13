@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -68,7 +69,12 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	// is open it names itself as waiting for the limit to lift (docs/log/47 §4-9). The check
 	// sits here rather than in WireLive because package main owns the episode; DriveState (the
 	// chat / mirror chip) needs the same reinterpretation.
-	if alive && s.State == "idle" && NormalizeKind(m.Kind) == session.KindClaude {
+	//
+	// codex managed arrives here ALREADY named limited by its own WireLive (the app-server's
+	// turn error is the evidence, and it needs no episode file), so what this adds for it is
+	// the booked instant — without it the chip could only say "waiting for the limit" with no
+	// time, which is what it did before the booking existed (§4-12).
+	if alive && (s.State == "idle" || s.State == agents.StateLimited) && rateLimitWatched(m) {
 		if state, at, waiting := rateLimitWaiting(m, time.Now()); waiting {
 			s.State = state
 			s.RateLimitResumeAt = at
