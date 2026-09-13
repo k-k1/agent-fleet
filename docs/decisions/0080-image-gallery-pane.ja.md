@@ -9,6 +9,7 @@
   カードのグリッド） / [0069](0069-image-generation-providers.ja.md)（生成画像の置き場所と保持期間） /
   [0063](0063-document-preview.ja.md)（`api/fs/download` は生バイトを返す唯一の口） /
   [0017](0017-keyboard-system.ja.md)（コマンド表——**登録しない**理由は決定 1）
+- レビューと実装（3 レーン並列）の記録は [docs/98](../log/98-image-gallery.md)。
 
 ## 背景
 
