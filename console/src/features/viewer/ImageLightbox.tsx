@@ -33,6 +33,9 @@ const SWIPE_MIN = 48; // px of touch travel that counts as "next / previous", no
 interface Props {
   src: string;
   onClose: () => void;
+  /** The card's thumbnail, shown until the original arrives (ImageView.placeholder).
+   *  Absent = a blank frame for the length of a multi-megabyte download. */
+  placeholder?: string;
   /** Alt text; defaults to the mirror's "enlarged image" wording. */
   alt?: string;
   /** Paging, when the host has an ordered list. Both the buttons and the ←/→ keys
@@ -54,7 +57,7 @@ interface Props {
   path?: string;
 }
 
-export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total, onOpenFolder, path }: Props) {
+export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, index, total, onOpenFolder, path }: Props) {
   const tr = useT();
   const view = useRef<ImageViewHandle>(null);
   const [scale, setScale] = useState(1);
@@ -213,7 +216,7 @@ export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total,
         </button>
       </div>
       {path && showProps && <ImageProps path={path} />}
-      <ImageView ref={view} src={src} alt={alt || tr("mirror.pasted_image_zoom")} onZoom={setScale} />
+      <ImageView ref={view} src={src} placeholder={placeholder} alt={alt || tr("mirror.pasted_image_zoom")} onZoom={setScale} />
     </div>
   );
 }

@@ -266,6 +266,26 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, entries]);
 
+  // With one picture open, fetch the next and previous originals in the background so ←/→
+  // and a swipe land on a picture that is already there. Held back a moment so it never
+  // competes with the one somebody is waiting for, and skipped when the browser says the
+  // connection is metered — an original averages about a megabyte here.
+  useEffect(() => {
+    const at = zoomPath ? images.findIndex((i) => i.path === zoomPath) : -1;
+    if (at < 0) return;
+    const conn = (navigator as { connection?: { saveData?: boolean } }).connection;
+    if (conn?.saveData) return;
+    const id = window.setTimeout(() => {
+      for (const near of [images[at + 1], images[at - 1]]) {
+        if (!near) continue;
+        const probe = new Image();
+        probe.decoding = "async";
+        probe.src = downloadURL(near.path, undefined, near.mtime);
+      }
+    }, 400);
+    return () => window.clearTimeout(id);
+  }, [zoomPath, images]);
+
   const close = useCallback(() => setZoomPath(null), []);
   // Back closes the lightbox instead of the pane. It is NOT inside ImageLightbox: whoever
   // opens it owns the history entry (the mirror does the same). Forget this and a phone's
@@ -429,7 +449,12 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
       {current &&
         createPortal(
           <ImageLightbox
-            src={downloadURL(current.path)}
+            // Versioned like the cards: reopening a picture already looked at costs no
+            // request at all (the Agent answers `immutable` when `v` matches).
+            src={downloadURL(current.path, undefined, current.mtime)}
+            // The card's thumbnail is already decoded in this tab, so the enlarged view
+            // paints immediately and sharpens when the original lands.
+            placeholder={downloadURL(current.path, THUMB, current.mtime)}
             path={current.path}
             alt={current.name}
             onClose={close}

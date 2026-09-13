@@ -322,3 +322,24 @@ func TestThumbIsImmutableOnlyWithTheMatchingVersion(t *testing.T) {
 		t.Errorf("Cache-Control without a version = %q, want the short one", cc)
 	}
 }
+
+// The ORIGINAL is the megabyte the lightbox waits for, so it needs the same versioned
+// caching — a picture looked at once must not be downloaded again on the way back to it.
+func TestOriginalIsImmutableWithTheMatchingVersion(t *testing.T) {
+	root := thumbRoots(t)
+	path := filepath.Join(root, "shot.png")
+	noisyPNG(t, path, 800, 600, false)
+	fi, _ := os.Stat(path)
+
+	rec := download(t, "path=shot.png&v="+strconv.FormatInt(fi.ModTime().Unix(), 10))
+	if cc := rec.Header().Get("Cache-Control"); cc != "private, max-age=604800, immutable" {
+		t.Errorf("Cache-Control on the original = %q, want the immutable one", cc)
+	}
+	if n := rec.Body.Len(); int64(n) != fi.Size() {
+		t.Errorf("served %d bytes, want the whole original (%d) — the version must not change WHAT is served", n, fi.Size())
+	}
+	rec = download(t, "path=shot.png")
+	if cc := rec.Header().Get("Cache-Control"); cc != "private, max-age=60" {
+		t.Errorf("Cache-Control without a version = %q, want the short one", cc)
+	}
+}

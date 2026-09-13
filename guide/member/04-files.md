@@ -146,7 +146,10 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
 - **Refresh** — on open, on returning to the tab, and every 20 seconds while a session is running.
   New arrivals get the same highlight as the file tree, so you see a generation land. "Refresh" in
   the header re-reads at any time.
-- Cards show a **downscaled copy**; the original bytes are fetched only when you enlarge.
+- Cards show a **downscaled copy**; the original bytes are fetched only when you enlarge. The
+  moment you do, that downscaled copy is what you see — slightly blurred — and it sharpens when
+  the original arrives (originals run to several MB each). The neighbouring picture is fetched
+  ahead, so ← / → do not wait.
 
 **Images a session generated**
 
