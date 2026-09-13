@@ -56,7 +56,7 @@ The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2
 
 | Dimension | Values |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -91,6 +91,16 @@ says in as many words that "ADR 0029's enumeration is appended" and then did not
 has been in `usagex/ledger.go` as `FeatureEngineLLM` since that ADR shipped, so the enum drifted
 a second time, in the same way, under a rule written to stop the first. Found while deciding
 [ADR 0079](0079-remote-engine-from-another-deployment.md)'s open question 7.
+
+**Amendment (2026-09-13, the second of that day).** `translate.mirror` was added to the `feature`
+row. It is the translate button a reader presses on ONE mirror answer; the generation goes
+through `OneShotHeadless` (prose tier) — the same one-shot route as titles and reply candidates —
+rather than through the session itself (docs/log/97). **This time the constant in
+`usagex/ledger.go` and this row land in the same commit, as the rule above says** — except the
+first implementation commit forgot this table anyway, and it was caught while merging `develop`
+in. If a third drift is to be prevented for real, the rule has to stop being prose and become a
+test that pins the enum against the catalogue (the shape `errcodes_catalog_test.go` already uses
+for error codes).
 
 🔴 **There is no `engine.image`, and its absence is a decision, not a gap.** An image answer
 carries no token counts; what an image spends is pixels, and the party that can see those is the
