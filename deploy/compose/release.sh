@@ -34,6 +34,10 @@
 #   VERSION=... deploy/compose/release.sh --push --only cp   # build/push ONE image only
 #                                                      #   (dev images for real-machine
 #                                                      #   verification — docs/log/72 §72.6)
+#   WS_CACHE_REF=ghcr.io/<owner>/<repo>/buildcache:workspace ... --push  # reuse/refresh a
+#                                                      #   buildx registry cache (CP_CACHE_REF
+#                                                      #   likewise). Empty by default — a
+#                                                      #   RELEASE is never built from a cache.
 #
 # Normally invoked via deploy/release/build.sh, the single entry point (docs/log/35 §35.6.2).
 set -euo pipefail
@@ -69,6 +73,30 @@ WS_PLATFORMS="${WS_PLATFORMS:-}"
 # may want to run the Fargate service itself on ARM64. A deployment can want
 # either, both, or neither.
 CP_PLATFORMS="${CP_PLATFORMS:-}"
+
+# --- build cache (opt-in, empty for every release path) ----------------------
+# A buildx registry cache, named by the caller. Empty = no --cache-from/--cache-to at
+# all, i.e. byte-for-byte the behaviour every release has had: a release is built from
+# a clean runner on purpose, and nothing it ships should depend on a mutable cache blob
+# somebody else's run wrote.
+#
+# The caller that wants this is the DEV image path (dev-image.yml → dev-deploy.sh). There,
+# a bake is a cold build every single time, so the arm64 leg re-runs apt / chromium / uv /
+# awscli / gh under QEMU even when the only thing that changed is workspace/agent — which,
+# per the layer order in workspace/Dockerfile, is copied in at the very END. Handing those
+# runs a cache turns the usual dev deploy into "re-run the last two layers".
+#
+# ⚠️ mode=max is load-bearing: the default (mode=min) exports only the final stage's
+# layers, so the `agentbuild` stage — the one that has to re-run — would never be a cache
+# hit. image-manifest/oci-mediatypes are what GHCR accepts as a cache artifact.
+CP_CACHE_REF="${CP_CACHE_REF:-}"
+WS_CACHE_REF="${WS_CACHE_REF:-}"
+cache_args() {  # $1 = cache ref ("" -> no args); prints nothing when unset
+  [ -n "${1:-}" ] || return 0
+  printf '%s\n' \
+    "--cache-from" "type=registry,ref=$1" \
+    "--cache-to" "type=registry,ref=$1,mode=max,image-manifest=true,oci-mediatypes=true"
+}
 
 # Which of the two images to build/push. Default `both` = every release ever made.
 # `cp` / `ws` exist for the dev-image path (docs/log/72 §72.6): verifying ONE image on a
@@ -109,10 +137,11 @@ if [ "$DO_BUILD" = 1 ]; then
   bash "$ROOT/deploy/release/stage-docs.sh" "$DOCS_STAGE"
 
   # Same rule as the workspace image below: a multi-platform build produces a
-  # manifest LIST, which buildx can only push. ⚠️ Unlike the workspace image, the
-  # CP Dockerfile pins its console and Go stages to $BUILDPLATFORM and cross-compiles
-  # (docs/log/72 §72.3), so the second architecture costs an emulated `apt-get install`
-  # and nothing else — do not "simplify" that away.
+  # manifest LIST, which buildx can only push. ⚠️ Both Dockerfiles pin their compiling
+  # stages to $BUILDPLATFORM and cross-compile (docs/log/72 §72.3 for the CP's console
+  # and Go stages; the workspace's `agentbuild` was brought in line later), so the second
+  # architecture costs an emulated `apt-get install` and nothing else — do not
+  # "simplify" that away.
   if ! want_cp; then
     echo "==> skip $CP_IMAGE (--only $ONLY)"
   elif [ -n "$CP_PLATFORMS" ]; then
@@ -120,12 +149,14 @@ if [ "$DO_BUILD" = 1 ]; then
       echo "ERROR: CP_PLATFORMS needs --push (a manifest list cannot be loaded into the local docker)" >&2
       exit 1
     fi
-    echo "==> buildx $CP_IMAGE (platforms=$CP_PLATFORMS, context=repo root, docs=staged) -> pushed"
+    echo "==> buildx $CP_IMAGE (platforms=$CP_PLATFORMS, context=repo root, docs=staged${CP_CACHE_REF:+, cache=$CP_CACHE_REF}) -> pushed"
+    mapfile -t cp_cache < <(cache_args "$CP_CACHE_REF")
     docker buildx build --platform "$CP_PLATFORMS" --push \
       -f "$ROOT/control-plane/Dockerfile" -t "$CP_IMAGE" \
       --build-arg "VERSION=$VERSION" \
       --build-arg "DOCS_SRC=$DOCS_STAGE_REL" \
       --provenance=false \
+      ${cp_cache[@]+"${cp_cache[@]}"} \
       "$ROOT"
   else
     echo "==> build $CP_IMAGE (context=repo root, docs=staged)"
@@ -151,12 +182,14 @@ if [ "$DO_BUILD" = 1 ]; then
       echo "ERROR: WS_PLATFORMS needs --push (a manifest list cannot be loaded into the local docker)" >&2
       exit 1
     fi
-    echo "==> buildx $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS, BAKE_OPTIONAL_TOOLS=$BAKE_OPTIONAL_TOOLS, platforms=$WS_PLATFORMS) -> pushed"
+    echo "==> buildx $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS, BAKE_OPTIONAL_TOOLS=$BAKE_OPTIONAL_TOOLS, platforms=$WS_PLATFORMS${WS_CACHE_REF:+, cache=$WS_CACHE_REF}) -> pushed"
+    mapfile -t ws_cache < <(cache_args "$WS_CACHE_REF")
     docker buildx build --platform "$WS_PLATFORMS" --push -t "$WS_IMAGE" \
       --build-arg "VERSION=$VERSION" \
       --build-arg "BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS" \
       --build-arg "BAKE_OPTIONAL_TOOLS=$BAKE_OPTIONAL_TOOLS" \
       --provenance=false \
+      ${ws_cache[@]+"${ws_cache[@]}"} \
       "$ROOT/workspace"
   else
     echo "==> build $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS, BAKE_OPTIONAL_TOOLS=$BAKE_OPTIONAL_TOOLS)"
