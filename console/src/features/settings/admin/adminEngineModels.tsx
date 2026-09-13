@@ -37,6 +37,10 @@ export function EngineModelsAdminView() {
   const tr = useT();
   const { rows, isSuper, err, setErr, setRows, load } = useEngineRows();
   const [busy, setBusy] = useState("");
+  /** Which JOB a request is in flight for. Its own state rather than `busy`: the two lists are
+   *  loaded and refreshed independently, and one shared key would disable a model row because
+   *  somebody pressed delete in the history below it. */
+  const [busyJob, setBusyJob] = useState("");
   const [note, setNote] = useState("");
   const [jobs, setJobs] = useState<Record<string, IngestJob[]>>({});
   /** Which engine's catalogue is open, by key. A key rather than an index so that a reload that
@@ -122,6 +126,32 @@ export function EngineModelsAdminView() {
       undefined,
       key,
     );
+  };
+
+  /** Forget one row of the ingest history.
+   *
+   * 🔴 The history is not only a progress display: until a catalogue row points at the key a
+   * `done` job wrote, that row is the only place this deployment records that the file is in
+   * the bucket — the CP cannot list it (ADR 0072 review R3). So the answer is taken from the
+   * SERVER's remaining list rather than by dropping the row locally: the CP refuses a job that
+   * is still running (409), and a panel that had already removed it would show the deletion it
+   * did not get. */
+  const forgetJob = async (key: string, id: string) => {
+    setBusyJob(id);
+    try {
+      const d = await apiJSON(
+        `api/admin/engines/${encodeURIComponent(key)}/ingest/${encodeURIComponent(id)}`,
+        "DELETE",
+      );
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setJobs((cur) => ({ ...cur, [key]: Array.isArray(d?.jobs) ? d.jobs : [] }));
+    } finally {
+      setBusyJob("");
+    }
   };
 
   const callModel = async (
@@ -263,7 +293,12 @@ export function EngineModelsAdminView() {
             onStarted={() => loadJobs(open.key)}
           />
         )}
-        <EngineIngestJobs jobs={jobs[open.key] || []} />
+        <EngineIngestJobs
+          jobs={jobs[open.key] || []}
+          busy={busyJob}
+          readOnly={borrowed}
+          onForget={(id) => forgetJob(open.key, id)}
+        />
       </section>
       {/* The deployment's Hugging Face token. One token serves every role and every tenant, so
           registering it is the operator's act; a tenant_admin who needs a gated repository asks
@@ -2384,14 +2419,48 @@ export function engineJobAdvice(code?: string): string {
   }
 }
 
-function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
+function EngineIngestJobs({
+  jobs,
+  busy,
+  readOnly,
+  onForget,
+}: {
+  jobs: IngestJob[];
+  /** The id of the job a request is in flight for, so one press disables one row's buttons
+   *  rather than the whole list. */
+  busy: string;
+  /** A borrowed engine's screen (ADR 0079 decision 7). The CP would in fact accept the delete —
+   *  the job ledger is THIS deployment's, not the mirror's — but this whole panel is read-only
+   *  for a borrowed role, and one live button among absent ones reads as "the rest are broken". */
+  readOnly: boolean;
+  onForget: (id: string) => void;
+}) {
   const tr = useT();
+  const [confirming, setConfirming] = useState("");
+  /** The extra press a job with nothing pointing at its file needs. Reset with the confirmation
+   *  it belongs to, so it cannot be carried from one row to the next. */
+  const [ack, setAck] = useState(false);
+  const openConfirm = (id: string) => {
+    setConfirming(id);
+    setAck(false);
+  };
   if (jobs.length === 0) return null;
   return (
     <>
     <p className="muted engines-ingest-jobs-head">{tr("admin.engines_ingest_jobs_head")}</p>
     <ul className="engines-model-list engines-ingest-jobs">
-      {jobs.map((j) => (
+      {jobs.map((j) => {
+        // 🔴 Only a job that has STOPPED may be forgotten. The row is not the task: deleting it
+        // leaves the ECS task downloading, and it still writes its catalogue row minutes later
+        // with nothing on screen that explains where the model came from. The CP refuses this
+        // too (409 ingest_job_live) — the button is absent here so that the refusal is read
+        // before the press rather than after it.
+        const live = j.state === "running" || j.state === "pending";
+        // Nothing in the catalogue points at this file, so this row is the last written record
+        // of its key: forgetting it also forgets the address of bytes that are still being paid
+        // for, and with it the only place that key can be picked from to register it again.
+        const last = !j.key_used_by;
+        return (
         <li key={j.id} className="engines-model">
           <div className="engines-model-head">
             <span className="mono engines-model-id">{j.model_id}</span>
@@ -2416,8 +2485,74 @@ function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
           {!!engineJobAdvice(j.code) && (
             <p className="form-err engines-model-meta">{tr(engineJobAdvice(j.code) as never)}</p>
           )}
+          {/* The refusal, in place of the button rather than behind it. "Why can I not delete
+              this one" is answered before the press, which is the only place it helps. */}
+          {!readOnly && live && (
+            <p className="muted engines-model-meta engines-ingest-job-live">
+              {tr("admin.engines_ingest_job_forget_live")}
+            </p>
+          )}
+          {!readOnly && !live && confirming !== j.id && (
+            <span className="engines-model-actions">
+              <button
+                type="button"
+                className="ghost sm engines-ingest-job-forget"
+                disabled={busy === j.id}
+                onClick={() => openConfirm(j.id)}
+              >
+                {tr("admin.engines_ingest_job_forget")}
+              </button>
+            </span>
+          )}
+          {confirming === j.id && !live && (
+            <div className="engines-model-confirm engines-ingest-job-confirm">
+              {/* The KEY, here and nowhere else on the row. This is the moment it matters: the
+                  row is about to stop being a record of it, and with nothing in the catalogue
+                  pointing at it this is the last time anyone can read it off a screen. */}
+              {j.s3_key && <p className="mono engines-model-keys">{j.s3_key}</p>}
+              <p className={last ? "form-err" : "muted"}>
+                {last
+                  ? tr("admin.engines_ingest_job_forget_last")
+                  : (tr("admin.engines_ingest_job_forget_used") as string).replace(
+                      "{who}",
+                      j.key_used_by || "",
+                    )}
+              </p>
+              {/* 🔴 A second, explicit act for the row whose key nothing else holds — and only
+                  for that one. Forgetting a job whose file a catalogue row already names loses
+                  nothing (the key is written down in that row), so asking twice there would
+                  train the tick out of meaning anything. */}
+              {last && (
+                <label className="engines-ingest-job-ack">
+                  <input
+                    type="checkbox"
+                    checked={ack}
+                    onChange={(ev) => setAck(ev.currentTarget.checked)}
+                  />
+                  <span>{tr("admin.engines_ingest_job_forget_ack")}</span>
+                </label>
+              )}
+              <span className="engines-model-actions">
+                <button
+                  type="button"
+                  className="sm"
+                  disabled={busy === j.id || (last && !ack)}
+                  onClick={() => {
+                    setConfirming("");
+                    onForget(j.id);
+                  }}
+                >
+                  {tr("admin.engines_ingest_job_forget_go")}
+                </button>
+                <button type="button" className="sm" onClick={() => setConfirming("")}>
+                  {tr("common.cancel")}
+                </button>
+              </span>
+            </div>
+          )}
         </li>
-      ))}
+        );
+      })}
     </ul>
     </>
   );

@@ -6,7 +6,7 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 135
+# count: 136
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
@@ -23,6 +23,7 @@ egress.go egressAPI.stats x1 {days,egress,enforce,mode}
 egress_member.go egressAPI.propose x1 {already,entry,id,state}
 egress_member.go egressAPI.propose x1 {already,entry,state}
 egress_member.go egressAPI.propose x1 {entry,id,state}
+engine_admin.go engineAdminAPI.deleteIngest x1 {jobs}
 engine_admin.go engineAdminAPI.deleteModel x1 {api,base_models,box,class,class_default,class_is_default,classes,desired,enabled,error,events,file_flags,has_models,idle_secs,key,last_demand,lifecycle,managed,mode,model_rows,model_swaps,models,negative_always,negative_max,offer,offer_trail,offers,provider,purge,service_since,state,stop_eta,url,vram_fits,vram_need_mib,vram_need_model,vram_need_source,warm,warm_model,window_counted_secs,window_secs,window_units} cond{base_models,box,class,class_default,class_is_default,classes,error,events,file_flags,idle_secs,last_demand,lifecycle,model_swaps,negative_always,negative_max,offer,offer_trail,offers,purge,service_since,stop_eta,url,vram_fits,vram_need_mib,vram_need_model,vram_need_source,warm_model,window_counted_secs,window_secs,window_units}
 engine_admin.go engineAdminAPI.get x1 {engines,super_admin}
 engine_admin.go engineAdminAPI.listIngest x2 {jobs}

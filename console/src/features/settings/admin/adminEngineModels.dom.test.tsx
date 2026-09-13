@@ -2304,3 +2304,162 @@ describe("EngineModelsAdminView / a model's own negative prompt", () => {
     expect(host!.querySelector(".engines-model-negative")).toBeNull();
   });
 });
+
+// Forgetting a row of the ingest history (the delete the table never had).
+//
+// 🔴 The history is not only a progress display. Until a catalogue row points at the key a
+// `done` job wrote, that row is the only place this deployment records that the file is in the
+// bucket — the CP cannot list it (ADR 0072 review R3) — so what the panel says before deleting
+// depends on whether anything still uses the file, and it never claims the file is there.
+describe("EngineModelsAdminView / forgetting an ingest job", () => {
+  const jobsAnswer = (jobs: Record<string, unknown>[], engine: Record<string, unknown> = {}) => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs }
+        : {
+            super_admin: true,
+            engines: [row({ has_models: true, model_rows: [], ...engine })],
+          },
+    );
+  };
+  /** One job's <li>, found by the model id it names. By element, never by the panel's whole
+   *  text: this screen holds two lists that both print model ids, and an assertion on the page
+   *  passes while the wrong one carries the control. */
+  const jobLi = (modelID: string) =>
+    Array.from(host!.querySelectorAll("ul.engines-ingest-jobs li")).find(
+      (li) => li.querySelector(".engines-model-id")?.textContent === modelID,
+    ) as HTMLElement;
+  const forgetButton = (li: HTMLElement) =>
+    li.querySelector(".engines-ingest-job-forget") as HTMLButtonElement | null;
+
+  // 🔴 A running job is not offered the button AND is told why. Deleting the row does not stop
+  // the ECS task: it finishes and writes its catalogue row minutes later, with nothing on
+  // screen that says where the model came from.
+  it("does not offer to forget a job that is still running, and says why", async () => {
+    jobsAnswer([
+      { id: "j-live", model_id: "sd35-large", state: "running", source: "hf:x/y" },
+      {
+        id: "j-done",
+        model_id: "sd35-medium",
+        state: "done",
+        source: "hf:x/z",
+        s3_key: "image/checkpoints/sd3.5_medium.safetensors",
+        key_used_by: "image/sd35-medium",
+      },
+    ]);
+    await mount();
+
+    const live = jobLi("sd35-large");
+    expect(forgetButton(live)).toBeNull();
+    expect(live.querySelector(".engines-ingest-job-live")?.textContent).toContain(
+      "タスクは止まらず",
+    );
+    // Positive control in the same fixture: a finished job in the SAME list does get it, so the
+    // absence above is the state and not a control that was never rendered at all.
+    const done = jobLi("sd35-medium");
+    expect(forgetButton(done)).toBeTruthy();
+    expect(done.querySelector(".engines-ingest-job-live")).toBeNull();
+  });
+
+  // The key is shown at the moment it stops being recorded, and the deletion goes to the CP —
+  // the panel then draws the SERVER's remaining list rather than one it edited itself, because
+  // the CP is the only side that knows whether the delete was allowed.
+  it("names the row that still uses the file, and takes the answer from the server", async () => {
+    jobsAnswer([
+      {
+        id: "j-done",
+        model_id: "clip-l",
+        state: "done",
+        source: "hf:comfyanonymous/flux_text_encoders/clip_l.safetensors",
+        s3_key: "image/text_encoders/clip_l.safetensors",
+        key_used_by: "image/flux1-dev-fp8",
+      },
+    ]);
+    await mount();
+    await click(forgetButton(jobLi("clip-l"))!);
+
+    const confirm = jobLi("clip-l").querySelector(".engines-ingest-job-confirm") as HTMLElement;
+    expect(confirm.querySelector(".engines-model-keys")?.textContent).toBe(
+      "image/text_encoders/clip_l.safetensors",
+    );
+    // Named, not "still in use": an operator cannot act on an unnamed reference.
+    expect(confirm.textContent).toContain("image/flux1-dev-fp8");
+    // 🔴 And nothing here claims the FILE is there. The CP cannot look in the bucket, and a
+    // purge deletes the bytes while leaving the job `done` for ever.
+    expect(confirm.querySelector(".engines-ingest-job-ack")).toBeNull();
+
+    apiJSON.mockResolvedValueOnce({ jobs: [] });
+    const go = Array.from(confirm.querySelectorAll("button")).find(
+      (b) => b.textContent === "消す",
+    ) as HTMLButtonElement;
+    expect(go.disabled).toBe(false);
+    await click(go);
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/j-done", "DELETE");
+    expect(host!.querySelector("ul.engines-ingest-jobs")).toBeNull();
+  });
+
+  // 🔴 The one job that is harder to forget: nothing in the catalogue points at its key, so
+  // this row is the last written record of a file that is still being paid for — and the last
+  // place that key can be picked from to register it again.
+  it("asks a second time before forgetting the only record of a key", async () => {
+    jobsAnswer([
+      {
+        id: "j-orphan",
+        model_id: "forgotten-xl",
+        state: "done",
+        source: "hf:x/forgotten",
+        s3_key: "image/checkpoints/forgotten.safetensors",
+      },
+    ]);
+    await mount();
+    await click(forgetButton(jobLi("forgotten-xl"))!);
+
+    const confirm = jobLi("forgotten-xl").querySelector(
+      ".engines-ingest-job-confirm",
+    ) as HTMLElement;
+    const go = Array.from(confirm.querySelectorAll("button")).find(
+      (b) => b.textContent === "消す",
+    ) as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+    // What it says is that no ROW points at the key — never that the file is or is not there.
+    const warn = confirm.querySelector("p.form-err")!;
+    expect(warn.textContent).toContain("カタログ行はありません");
+    expect(warn.textContent).toContain("バケットを見られない");
+
+    const ack = confirm.querySelector(".engines-ingest-job-ack input") as HTMLInputElement;
+    await act(async () => {
+      ack.click();
+    });
+    apiJSON.mockResolvedValueOnce({ jobs: [] });
+    expect(
+      (Array.from(
+        jobLi("forgotten-xl").querySelectorAll(".engines-ingest-job-confirm button"),
+      ).find((b) => b.textContent === "消す") as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  // The borrowed catalogue is a MIRROR and this whole screen is read-only for it (ADR 0079
+  // decision 7), so the new control is absent there too.
+  //
+  // 🔥 The row it is paired with is an EXTERNAL one — `managed: false` with a lifecycle that is
+  // not `remote`. Paired with a managed row instead, an implementation that hid the button on
+  // every unmanaged row would pass this test and take ADR 0076's LAN ComfyUI down with it.
+  it("offers nothing on a borrowed catalogue, and everything on an external engine", async () => {
+    const jobs = [
+      { id: "j-done", model_id: "sd35-medium", state: "done", source: "hf:x/z",
+        s3_key: "image/checkpoints/sd3.5_medium.safetensors" },
+    ];
+    jobsAnswer(jobs, { managed: false, lifecycle: "remote", url: "https://far.invalid" });
+    await mount();
+    expect(jobLi("sd35-medium")).toBeTruthy(); // the history itself is still readable
+    expect(forgetButton(jobLi("sd35-medium"))).toBeNull();
+
+    act(() => root?.unmount());
+    host?.remove();
+    // An external engine — this deployment's own ComfyUI on the LAN, not managed by ECS and not
+    // borrowed. Its ingest history is its own, so the control is there.
+    jobsAnswer(jobs, { managed: false, lifecycle: "external", url: "http://192.168.0.2:8188" });
+    await mount();
+    expect(forgetButton(jobLi("sd35-medium"))).toBeTruthy();
+  });
+});

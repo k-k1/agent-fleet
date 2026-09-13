@@ -82,6 +82,14 @@ const (
 	// repository's terms and a registered token satisfies them, while this deployment has no
 	// Civitai account at all and no field in which to put one.
 	errCodeIngestCivitaiLogin = "civitai_login_required"
+	// Forgetting a row of the job history (ADR 0072 P4, the delete the table never had). Two
+	// codes because the two refusals send the reader to opposite places: `ingest_job_unknown`
+	// is the id — and also the answer a granted tenant_admin gets for another tenant's job,
+	// which is why it must not be spelled "forbidden"; `ingest_job_live` is a job that is still
+	// downloading, where the answer is to wait, because forgetting the row does not stop the
+	// ECS task and the task still writes its catalogue row afterwards.
+	errCodeIngestJobUnknown = "ingest_job_unknown"
+	errCodeIngestJobLive    = "ingest_job_live"
 
 	// Registering the operator's Hugging Face token (ADR 0072 decision 6 as revised). The
 	// write reaches two places — the sealed setting and the stack's secret — and they fail

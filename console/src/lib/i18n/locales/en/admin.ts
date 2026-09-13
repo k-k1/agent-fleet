@@ -345,6 +345,18 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // ran and finished" goes on being true), so it is headed and dated and reads as history.
   // Undated, a "done" beside a deleted model's id reads as that model's current state.
   "admin.engines_ingest_jobs_head": "Ingest history",
+  // Forgetting one row of the history — the delete this table never had. There is still no TTL
+  // and no bulk sweep: while nothing in the catalogue points at it, a `done` row is the only
+  // written record that the file is in the bucket, and the CP cannot look in the bucket (review
+  // R3). So the confirmation says which of the two cases this row is.
+  "admin.engines_ingest_job_forget": "Forget this",
+  "admin.engines_ingest_job_forget_go": "Forget it",
+  "admin.engines_ingest_job_forget_live": "A running ingest cannot have its history forgotten. Deleting the row does not stop the task, which finishes and writes a catalogue row nobody is waiting for.",
+  "admin.engines_ingest_job_forget_used": "{who} points at this key. Forgetting the history leaves that row and its file alone.",
+  // 🔴 Never "the file is still there". A purge deletes the bytes and leaves the job `done`, and
+  // the CP cannot look in the bucket. All that can be said is that no catalogue row names it.
+  "admin.engines_ingest_job_forget_last": "No catalogue row points at this key. Forgetting the history also removes the only place it can be picked from to register it again. (The Control Plane cannot look in the bucket, so whether the file is still there is not known here.)",
+  "admin.engines_ingest_job_forget_ack": "Forget it anyway",
   "admin.engines_ingest_state_pending": "starting",
   "admin.engines_ingest_state_running": "fetching",
   "admin.engines_ingest_state_done": "done",
