@@ -316,6 +316,9 @@ export const ALL_COMMANDS: Command[] = [
 
   // ---- Session (leader s) ----
   { id: "session.new", title: "keys.cmd.sessionNew", keys: ["alt+n"], seq: "s n", when: notMinimalPopout, run: () => useSessionsStore.getState().openStart() },
+  // Same action as open.sessions (leader g s), reachable from the session group too —
+  // "s l" reads as "session list" and sits next to session.new for discoverability.
+  { id: "session.overview", title: "keys.cmd.openSessions", seq: "s l", run: () => openSessionsOverview() },
 
   // ---- Memo (leader m = memo) ----
   // The most-used quick action gets the top-level single key "m" (m = memo). The leader "n"
