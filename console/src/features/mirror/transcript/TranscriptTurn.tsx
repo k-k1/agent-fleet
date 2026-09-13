@@ -17,6 +17,7 @@ import { t as tr } from "../../../lib/i18n/index.ts";
 import { splitPastedImages } from "../../../lib/pastedImages.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
+import { looksForeign, translatableTexts, turnTranslateKey } from "../translate.ts";
 import { authResolved, footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
 import { foldParts, peerIntentOf, peerSenderOf, spawnParentOf, spendOf } from "./model.ts";
@@ -114,7 +115,23 @@ function TranscriptTurnImpl({
   }
   const workOpen = work.current.open;
   const edited = isUser ? [] : turnFiles(turn.parts);
-  const copyText = split ? textOfParts(turn.parts.slice(split.at)) : turn.text;
+  // Per-answer translation (docs/log/97). The key is derived from the prose itself rather than
+  // from turn.idx, which shifts when an older page is prepended — with an index key the reader's
+  // translation would jump to a different answer.
+  const tx = isUser ? undefined : caps.translate;
+  const txTexts = tx ? translatableTexts(turn) : [];
+  const txKey = tx ? turnTranslateKey(txTexts) : "";
+  const txShown = !!txKey && !!tx?.shown(txKey);
+  const translatedOf = (p: Part): string | undefined =>
+    txShown && p.kind === "text" && p.text ? tx?.get(p.text) : undefined;
+  // Copy follows what the reader is looking at: with the translation on screen, handing them
+  // back the English they could not read would be a surprise.
+  const copyParts = split ? turn.parts.slice(split.at) : turn.parts;
+  const copyText = txShown
+    ? textOfParts(copyParts.map((p) => ({ ...p, text: translatedOf(p) ?? p.text })))
+    : split
+      ? textOfParts(copyParts)
+      : turn.text;
   // Shared files produced BEFORE the boundary, hoisted out of the fold (see the render below).
   // Indices are the ones foldParts would hand out for the folded slice, so a lifted card keeps
   // the key it had inside the disclosure.
@@ -140,12 +157,19 @@ function TranscriptTurnImpl({
   // liftFiles: render this slice WITHOUT its shared-file panels, because the caller re-renders
   // them outside the fold. The parts array itself is never filtered — foldParts' index is what
   // keys every block and addresses turn.origins, so dropping a part would shift both.
-  const renderAssistantParts = (parts: Part[], liftFiles = false) =>
+  //
+  // base is where `parts` starts inside turn.parts, because a work split hands this function a
+  // SLICE and foldParts numbers from 0 within it. turn.origins is indexed by the position in the
+  // whole turn (model.ts originsOf), so without the offset the final answer of any tool-using
+  // turn took the FIRST part's mark root — normally a tool's, i.e. "" — and lost its anchor:
+  // no selection pill on the one paragraph readers most want to mark (measured in
+  // TranslateTurn.dom.test.tsx before the fix).
+  const renderAssistantParts = (parts: Part[], liftFiles = false, base = 0) =>
     foldParts(parts).map((item) =>
       // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
       // between paragraphs). A lone tool renders inline (ToolRun handles length 1).
       item.kind === "toolrun" ? (
-        <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={caps.openDiff} />
+        <ToolRun key={"tr" + (base + item.tools[0].i)} tools={item.tools} onOpenDiff={caps.openDiff} />
       ) : item.p.kind === "question" ? (
         // A question from the transcript is history, never clickable. "Answered" is claimed
         // only when the answer is actually here: claude writes the tool_use at ASK time,
@@ -153,7 +177,7 @@ function TranscriptTurnImpl({
         // but a shared/exported transcript has no such card to defer to). Badging it
         // answered with nothing to show was the old, hardcoded lie.
         <QuestionBlock
-          key={item.i}
+          key={base + item.i}
           questions={item.p.questions}
           answered={!!item.p.answer}
           answer={item.p.answer}
@@ -165,7 +189,7 @@ function TranscriptTurnImpl({
         // question above: "decided" only once the tool_result (or the optimistic reject mark)
         // says so, not merely because the plan reached the transcript.
         <PlanBlock
-          key={item.i}
+          key={base + item.i}
           plan={item.p.plan}
           session={caps.session}
           answered={!!item.p.answer}
@@ -176,12 +200,12 @@ function TranscriptTurnImpl({
           sendDisabled={caps.planSendDisabled}
         />
       ) : item.p.kind === "userfile" ? (
-        liftFiles ? null : renderUserFile(item.p, item.i)
+        liftFiles ? null : renderUserFile(item.p, base + item.i)
       ) : item.p.kind === "thinking" ? (
         // The agent's chain-of-thought (codex reasoning / opencode reasoning),
         // collapsed unless this agent's behaviour setting asks for it expanded.
         <ThinkingBlock
-          key={item.i}
+          key={base + item.i}
           text={item.p.text}
           defaultOpen={!!caps.expandThinking}
           baseDir={turn.cwd}
@@ -189,12 +213,12 @@ function TranscriptTurnImpl({
           onOpenFile={caps.openFile}
         />
       ) : item.p.kind === "delegation" ? (
-        <DelegationCard key={item.i} p={item.p} agentName={agentName} />
+        <DelegationCard key={base + item.i} p={item.p} agentName={agentName} />
       ) : item.p.kind === "error" ? (
         // The turn failed instead of answering (the agent's own error record, e.g.
         // auth/quota/rate-limit) — never fold it away.
         <ErrorBlock
-          key={item.i}
+          key={base + item.i}
           info={item.p.info}
           text={item.p.text}
           cause={item.p.cause}
@@ -203,18 +227,31 @@ function TranscriptTurnImpl({
           resolved={authResolved(caps.authOkAt, turn.endTs || turn.ts)}
         />
       ) : (
-        <MarkdownView
-          key={item.i}
-          source={item.p.text}
-          baseDir={turn.cwd}
-          repo={caps.repo}
-          onOpenFile={caps.openFile}
-          // Marks are counted within this one part (docs/log/69 §69.3). The root comes from the
-          // source turn rather than the block, so it points at the same place even when a
-          // recipient's tail window differs.
-          markRoot={caps.marks ? turn.origins[item.i] : undefined}
-          markKind={item.p.kind}
-        />
+        (() => {
+          // A translation shown in place of the prose (docs/log/97). It replaces the source
+          // handed to the SAME renderer, so the Markdown, the path links and the code blocks
+          // behave exactly as they do on the original — a second rendering path for translated
+          // text would be a second set of Markdown bugs.
+          const translated = translatedOf(item.p);
+          return (
+            <MarkdownView
+              key={base + item.i}
+              source={translated ?? item.p.text}
+              baseDir={turn.cwd}
+              repo={caps.repo}
+              onOpenFile={caps.openFile}
+              // Marks are counted within this one part (docs/log/69 §69.3). The root comes from
+              // the source turn rather than the block, so it points at the same place even when
+              // a recipient's tail window differs.
+              //
+              // A mark anchors by QUOTED TEXT, so it cannot land on a translation: painting it
+              // there would underline whatever happened to match, on a sentence nobody marked.
+              // Marks stay with the original, which is one click away.
+              markRoot={caps.marks && !translated ? turn.origins[base + item.i] : undefined}
+              markKind={item.p.kind}
+            />
+          );
+        })()
       ),
     );
   const fromOperator = isUser && turn.source === "operator";
@@ -417,7 +454,7 @@ function TranscriptTurnImpl({
                 folded away, in a summary that counts only tools and interim texts. Same reason
                 the edited-file chips below report the turn's writes without unfolding it. */}
             {liftedFiles.map(({ p, i }) => renderUserFile(p, i))}
-            {renderAssistantParts(turn.parts.slice(split.at))}
+            {renderAssistantParts(turn.parts.slice(split.at), false, split.at)}
           </>
         ) : (
           renderAssistantParts(turn.parts)
@@ -481,6 +518,28 @@ function TranscriptTurnImpl({
           >
             <Icon name="repo-forked" /> {tr("mirror.fork_at")}
           </button>
+        )}
+        {/* Read this answer in my language (docs/log/97). Offered only when there is something
+            to gain: the turn has prose, it is not still streaming (foldWork is false exactly for
+            the live exchange while the session works), and either the prose does not look like
+            the reader's language or a translation is already held — flipping back and forth must
+            stay possible once it exists. Pressing to show a held translation costs nothing. */}
+        {tx && txKey && !turn.pending && foldWork && (txShown || tx.get(txTexts[0]) || looksForeign(txTexts.join("\n\n"), tx.lang)) && (
+          <button
+            type="button"
+            className={"ghost xs mt-translate" + (txShown ? " on" : "")}
+            title={tr(txShown ? "mirror.translate_off_title" : "mirror.translate_title")}
+            disabled={tx.busy(txKey)}
+            onClick={() => tx.toggle(txKey, txTexts)}
+          >
+            <Icon name={tx.busy(txKey) ? "loading" : "globe"} spin={tx.busy(txKey)} />{" "}
+            {tr(txShown ? "mirror.translate_off" : "mirror.translate")}
+          </button>
+        )}
+        {tx && txKey && tx.error(txKey) && (
+          <span className="mt-translate-err" title={tx.error(txKey)}>
+            {tx.error(txKey)}
+          </span>
         )}
         <CopyButton text={copyText} />
       </div>

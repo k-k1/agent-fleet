@@ -23,6 +23,7 @@
 
 import type { Group, Part, TurnTtsWiring } from "./types.ts";
 import type { TranscriptMarksWiring } from "./useMarks.ts";
+import type { TranscriptTranslateWiring } from "../useTranslate.ts";
 
 export interface TranscriptCaps {
   /** Display name of the agent answering (registry name, e.g. "Claude"). */
@@ -96,6 +97,12 @@ export interface TranscriptCaps {
    * rendered, so that case cannot be split on the presence of this capability alone.
    */
   marks?: TranscriptMarksWiring;
+  /**
+   * Per-answer translation (docs/log/97). Absent → no translate button, which is the shared
+   * view's case on purpose: a press runs a model in the OWNER's Workspace and spends the
+   * owner's tokens, so a recipient reads the answer as it was written.
+   */
+  translate?: TranscriptTranslateWiring;
 
   // ── Display preferences ───────────────────────────────────────────────────────
   /** Show the agent's chain-of-thought expanded (per-kind behaviour setting, default off). */

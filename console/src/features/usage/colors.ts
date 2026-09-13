@@ -37,15 +37,15 @@ export const OTHER_KEY = "__other__";
 /**
  * Fixed slot table for feature (the enumeration in docs/log/46 §1-a).
  *
- * There are 13 enum values (the 12 frozen by ADR0029 plus `suggest.edit` from docs/log/44
- * Phase 4) and only 8 slots. Rule 3 forbids a ninth colour, so the 5 that overflow always land
- * in the grey "other" — a choice, not an oversight: the 8 that keep a colour are the ones that
- * can carry an order of magnitude on their own.
+ * There are 14 enum values (the 12 frozen by ADR0029 plus `suggest.edit` from docs/log/44
+ * Phase 4 and `translate.mirror` from docs/log/97) and only 8 slots. Rule 3 forbids a ninth
+ * colour, so the 6 that overflow always land in the grey "other" — a choice, not an oversight:
+ * the 8 that keep a colour are the ones that can carry an order of magnitude on their own.
  *
  * - `assistant.ask` (one-shot advisory, non-persistent) is dwarfed by `assistant.chat`.
  * - `title.chat` / `suggest.chat` fire a few times per conversation, an order of magnitude less
  *   than `title.session` / `suggest.session`, which fire automatically per session.
- * - `branch.suggest` / `suggest.edit` are manual only.
+ * - `branch.suggest` / `suggest.edit` / `translate.mirror` are manual only.
  *
  * The table is only acceptable because the folded part stays visible, which the UI guarantees
  * three ways: "other" always appears in the legend when anything folded (even for a single

@@ -53,7 +53,7 @@
 
 | 次元 | 値 |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -84,6 +84,14 @@
 `FeatureEngineLLM` として在ったので、列挙は**同じ壊れ方で 2 度目のドリフト**をしていた——1 度目を
 止めるために書かれた規則の下で。[ADR 0079](0079-remote-engine-from-another-deployment.ja.md) の
 未解決 7 を決める過程で見つかった。
+
+**追記（2026-09-13・同日 2 件目）。** `feature` 行に `translate.mirror` を足した。ミラーで利用者が
+1 つの回答に対して押す翻訳ボタンで、生成はセッション本体ではなく `OneShotHeadless`（散文ティア）
+＝タイトルや返信候補と同じワンショット経路を通る（docs/log/97）。**今回は上の規則どおり
+`usagex/ledger.go` の定数とこの行を同じコミットで入れる**——と書いたそばから、最初の実装コミットでは
+この表を忘れていた（develop を取り込む過程で気づいて直した）。3 度目のドリフトを本当に止めたいなら、
+規則を文章で持つのをやめて**列挙とカタログの一致を試験で固定する**しかない（`errcodes_catalog_test.go`
+が誤りコードに対してやっているのと同じ形）。
 
 🔴 **`engine.image` は無い。無いことは欠落ではなく決定である。** 画像の応答はトークン数を持たない。
 画像が消費するのはピクセルで、それを見られるのはファイルを保存する Agent の側であり、そこは既に

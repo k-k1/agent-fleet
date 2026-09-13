@@ -82,6 +82,10 @@ export function AiAssistTab() {
           <OnOff value={s.editSuggestEnabled} onChange={(v) => setSetting("editSuggestEnabled", v)} />
         </Row>
         <p className="muted ds-note">{tr("aiassist.note_edit_suggest")}</p>
+        <Row label={tr("aiassist.mirror_translate")}>
+          <OnOff value={s.mirrorTranslateEnabled} onChange={(v) => setSetting("mirrorTranslateEnabled", v)} />
+        </Row>
+        <p className="muted ds-note">{tr("aiassist.note_mirror_translate")}</p>
       </section>
     </>
   );

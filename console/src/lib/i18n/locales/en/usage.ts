@@ -108,6 +108,7 @@ export const usage: Record<keyof typeof jaUsage, string> = {
   "usage.val.feature.suggest.session": "Reply suggestions (session)",
   "usage.val.feature.suggest.chat": "Reply suggestions (chat)",
   "usage.val.feature.suggest.edit": "Edit suggestions (editor)",
+  "usage.val.feature.translate.mirror": "Answer translation (mirror)",
   // Image generation (ADR 0069). The tokens shown are the driving model's only: the plan
   // quota the image itself consumes is not expressible in tokens and is left unrecorded.
   "usage.val.feature.tool.imagegen": "Image generation",

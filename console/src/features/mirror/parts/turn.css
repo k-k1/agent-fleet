@@ -344,6 +344,36 @@
   color: var(--fg);
   background: var(--hover-bg);
 }
+/* Translate this answer (docs/log/97). Same weight as the fork route next to it — a footer
+   affordance, not a call to action — and `.on` says the body is showing a translation, which is
+   the only cue that the text on screen is not what the agent wrote. */
+.mt-translate {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  font-size: 12px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.mt-translate:hover,
+.mt-translate:focus-visible {
+  color: var(--fg);
+  background: var(--hover-bg);
+}
+.mt-translate.on {
+  color: var(--chat-accent);
+}
+.mt-translate-err {
+  font-size: 12px;
+  color: var(--del);
+  /* The reason a press failed belongs next to the answer it failed on, but a long backend
+     message must not push the footer's own numbers off the row. */
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Fork confirmation dialog: a preview of the fork point, and a bullet list of what will happen. */
 .mirror-fork-preview {
   margin: 0;

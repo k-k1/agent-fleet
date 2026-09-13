@@ -141,6 +141,15 @@ func EditSuggest() bool {
 	return !ok || v
 }
 
+// MirrorTranslate is the ON/OFF for the mirror's per-answer translation button (Settings > AI
+// assistance, docs/log/97). Missing/invalid ⇒ true, matching the frontend's
+// DEFAULTS.mirrorTranslateEnabled: the button costs nothing until someone presses it, so the
+// default is "offered", and a deployment that does not want the spend turns it off.
+func MirrorTranslate() bool {
+	v, ok := Read()["mirrorTranslateEnabled"].(bool)
+	return !ok || v
+}
+
 // OpencodeCatalog is how the opencode launch-model list is shaped (Settings >
 // Agents > opencode, ui-prefs opencodeCatalog). One key serves both opencode.ai
 // billing routes, so the same model can appear as opencode/… (Zen, metered) and

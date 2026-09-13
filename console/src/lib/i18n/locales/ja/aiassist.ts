@@ -38,4 +38,7 @@ export const aiassist = {
   "aiassist.edit_suggest": "ファイル編集の提案",
   "aiassist.note_edit_suggest":
     "File ペインでファイルを編集しているとき、選択範囲と指示から置換文を提案します（提案を見てから採用/破棄を選べます）。以前は設定がなく常に有効でした。",
+  "aiassist.mirror_translate": "回答の翻訳（ミラー）",
+  "aiassist.note_mirror_translate":
+    "ミラーで、表示言語と違う言語で返ってきた回答に「訳す」ボタンを出します。押したときだけトークンを消費し、セッションのターンは使いません。訳した結果はそのセッションを消すまで保持され、同じ本文なら二度目以降は無料です。",
 };

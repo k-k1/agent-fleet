@@ -412,6 +412,10 @@ export interface Settings {
   // ON/OFF for the File pane's AI edit suggestion (Settings > AI assist). Previously had no
   // setting at all and was always on; default true keeps that behaviour.
   editSuggestEnabled: boolean;
+  // ON/OFF for the mirror's per-answer translation button (Settings > AI assist, docs/log/97).
+  // Default true: the button spends nothing until it is pressed, and a deployment that does not
+  // want that spend at all turns it off here (the Agent gates on the same key).
+  mirrorTranslateEnabled: boolean;
   // Forced output language for assistant chat: "auto" = follow the input language
   // (default), "ja" / "en" = always reply in that language (even for foreign-language
   // content). The Agent reads this key from ui-prefs and injects a language rule into the
@@ -898,6 +902,7 @@ const DEFAULTS: Settings = {
   assistantTitleSuggest: true,
   branchSuggestEnabled: true,
   editSuggestEnabled: true,
+  mirrorTranslateEnabled: true,
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
   aiAssistOrder: [...ASSISTANT_AGENT_KINDS],
