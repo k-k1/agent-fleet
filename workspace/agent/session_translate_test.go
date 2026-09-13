@@ -291,7 +291,7 @@ func TestTranslationStoreEvictsOldest(t *testing.T) {
 	seedTranslateSession(t, name)
 	list := make([]*sessionTranslation, 0, translateStoreMaxEntries+5)
 	for i := 0; i < translateStoreMaxEntries+5; i++ {
-		list = append(list, &sessionTranslation{Hash: translateHash(string(rune('a' + i%26)) + string(rune(i))), Lang: "ja", Text: "t"})
+		list = append(list, &sessionTranslation{Hash: translateHash(string(rune('a'+i%26)) + string(rune(i))), Lang: "ja", Text: "t"})
 	}
 	trimmed := trimTranslations(list)
 	if len(trimmed) != translateStoreMaxEntries {

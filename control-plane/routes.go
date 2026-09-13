@@ -402,7 +402,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// translate button at all (the absent-capability rule in transcript/capabilities.ts).
 	mux.HandleFunc("POST /api/sessions/{name}/translate", rest)
 	mux.HandleFunc("GET /api/sessions/{name}/translations", rest)
-	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest)   // worktree deferred-naming: git branch -m
+	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest) // worktree deferred-naming: git branch -m
 }
 
 func registerSessionShareRoutes(mux *http.ServeMux, cfg config) {
