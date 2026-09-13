@@ -142,6 +142,30 @@ func TestTranslateCachesBySourceHash(t *testing.T) {
 	}
 }
 
+// The reply must not name a model. Which backend and model actually ran is chosen inside
+// OneShotHeadless and never returned, so anything this handler could put here is the REQUEST,
+// not the outcome — ADR 0029 §1's rule for `kind`, one level up in the display.
+//
+// Measured on a live host (2026-09-13): the reply claimed "sonnet" while the ledger recorded the
+// run as agy, because that workspace lists agy first in Settings > AI assistance.
+func TestTranslateReplyClaimsNoModel(t *testing.T) {
+	const name = "tr8"
+	seedTranslateSession(t, name)
+	stubTranslate(t, func(text, lang string) string { return "訳" })
+
+	body := translateCall(t, name, `{"to":"ja","parts":[{"text":"hello there"}]}`).Body.String()
+	if strings.Contains(body, "model") {
+		t.Fatalf("the reply names a model, which it cannot know: %s", body)
+	}
+	stored, err := os.ReadFile(sessionTranslationsPath(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), "model") || strings.Contains(string(stored), "kind") {
+		t.Fatalf("the store keeps a model/kind it cannot know: %s", stored)
+	}
+}
+
 // A turn's parts are cached one by one, so appending a paragraph and pressing again re-runs the
 // model for the new part only.
 func TestTranslateReusesUnchangedParts(t *testing.T) {
