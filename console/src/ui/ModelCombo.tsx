@@ -15,20 +15,27 @@
 //     aria-activedescendant pointing into a role=listbox of role=option rows. The input keeps
 //     focus throughout (DOM focus never moves into the list), which is what makes typing and
 //     arrowing work at the same time.
-//   - The popup is position:fixed and placed with placeFixed, because .ui-modal-body scrolls
-//     (overflow-y: auto) and would otherwise clip a list opened near the bottom of a dialog.
+//   - The popup is position:fixed and re-anchored on every scroll/resize (anchorPopup),
+//     because .ui-modal-body is a scroll container: it would otherwise clip a list opened
+//     near the bottom of a dialog, and float over the wrong row once the dialog scrolls.
 //   - Options commit on mousedown-prevented click, as in SkillList/CommandPalette, so a pick
 //     never blurs the input first and closes the list out from under the click.
 //   - Rows are sized for a thumb, and the field opens the list on tap rather than a wheel.
+//   - On a device with an on-screen keyboard the field is READ-ONLY until the reader taps
+//     "filter". A <select> never raises a keyboard, and a text field that does the moment a
+//     list appears is worse than the thing it replaced: GBoard takes half the screen, the
+//     dialog scrolls to keep the field visible, and the list has to chase it. Typing is still
+//     one tap away (startTyping), it is just no longer the default.
 //
 // The mark is decoration only (aria-hidden): the row's text is what is announced and what the
 // filter matches. A model whose maker could not be resolved shows no mark rather than a
 // placeholder — see modelProviderOf.
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./Icon.tsx";
-import { placeFixed } from "../lib/placeFixed.ts";
+import { anchorPopup } from "../lib/anchorPopup.ts";
 import { useEscLayer } from "../lib/escLayer.ts";
 import { useT } from "../lib/i18n/index.ts";
+import { primaryCoarsePointer } from "../lib/device.ts";
 import { filterModelOptions } from "../lib/modelFilter.ts";
 import { modelProviderOf } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
@@ -48,30 +55,62 @@ export function ModelCombo({ kind, options, value, onChange }: ModelComboProps) 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  // Whether the reader has ASKED to type. On a phone the field is read-only until then, so
+  // opening the list does not summon the on-screen keyboard (see the comment on the filter
+  // row below). Always true where there is no on-screen keyboard to summon.
+  const [typing, setTyping] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLDivElement>(null);
+  // Set while the field is deliberately blurred and refocused to raise the keyboard, so the
+  // blur handler does not read that as "the reader tapped elsewhere" and close the list.
+  const refocusing = useRef(false);
+
+  // Evaluated per render rather than once: a tablet can gain a keyboard mid-session, and
+  // primaryCoarsePointer is a live media query (device.ts).
+  const softKeyboard = primaryCoarsePointer();
+  const readOnly = softKeyboard && !typing;
 
   const filtered = open ? filterModelOptions(options, query) : options;
   const selectedLabel = options.find(([v]) => v === value)?.[1] ?? value;
+  // The field shows the query only while it can actually be typed into. Read-only it keeps
+  // showing the selection, so opening the list on a phone does not blank the field.
+  const showQuery = open && !readOnly;
 
   // A kind switch swaps the whole catalog underneath: a leftover query would hide everything
   // and a leftover open popup would list the previous CLI's models.
   useEffect(() => {
     setOpen(false);
     setQuery("");
+    setTyping(false);
   }, [kind]);
 
-  // Anchor under the field on every render while open — the dialog around it can scroll or
-  // resize, and a popup that stays where it was opened points at the wrong row.
-  useLayoutEffect(() => {
+  const place = useCallback(() => {
     const el = popRef.current;
     const anchor = inputRef.current;
-    if (!open || !el || !anchor) return;
-    const a = anchor.getBoundingClientRect();
-    el.style.width = a.width + "px";
-    placeFixed(el, a.left, a.bottom + 2);
-  });
+    if (el && anchor) anchorPopup(el, anchor);
+  }, []);
+
+  // Re-anchor on every render while open, and — the part a render cannot see — whenever
+  // anything MOVES the field underneath it. .ui-modal-body is a scroll container, so a
+  // dialog that scrolls (which is exactly what the keyboard opening does) used to leave the
+  // list floating over the wrong row. `true` for the capture phase because a scroll event on
+  // an inner container does not bubble to window.
+  useLayoutEffect(place);
+  useEffect(() => {
+    if (!open) return;
+    const vv = window.visualViewport;
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    vv?.addEventListener("resize", place);
+    vv?.addEventListener("scroll", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+      vv?.removeEventListener("resize", place);
+      vv?.removeEventListener("scroll", place);
+    };
+  }, [open, place]);
 
   useEffect(() => {
     if (open) activeRef.current?.scrollIntoView({ block: "nearest" });
@@ -84,6 +123,23 @@ export function ModelCombo({ kind, options, value, onChange }: ModelComboProps) 
   function close() {
     setOpen(false);
     setQuery("");
+    setTyping(false);
+  }
+
+  // Raise the on-screen keyboard, having kept it down until now. The field is already
+  // focused, and dropping `readonly` on a focused field does not open a keyboard by itself —
+  // it takes a fresh focus. Both the attribute and the blur/focus pair are done on the DOM
+  // node here rather than left to the re-render, because a browser only opens the keyboard
+  // for a focus() that is still inside the tap's own call stack.
+  function startTyping() {
+    const el = inputRef.current;
+    setTyping(true);
+    if (!el) return;
+    el.readOnly = false;
+    refocusing.current = true;
+    el.blur();
+    el.focus();
+    refocusing.current = false;
   }
 
   function openList() {
@@ -139,11 +195,15 @@ export function ModelCombo({ kind, options, value, onChange }: ModelComboProps) 
           type="text"
           role="combobox"
           className={provider ? "has-mark" : undefined}
-          // The field doubles as the filter, so it shows the query while the list is open and
-          // the selection when it is not. A placeholder repeats the selection so an empty
+          // The field doubles as the filter, so it shows the query while it is being typed
+          // into and the selection otherwise. A placeholder repeats the selection so an empty
           // query never reads as "nothing chosen".
-          value={open ? query : selectedLabel}
-          placeholder={open ? selectedLabel : tr("ui.filter_models")}
+          value={showQuery ? query : selectedLabel}
+          placeholder={showQuery ? selectedLabel : tr("ui.filter_models")}
+          // Read-only until the reader asks to type: a focused text field is what summons the
+          // on-screen keyboard, and merely opening a list should not. Focus, the arrow keys
+          // and a hardware keyboard all keep working.
+          readOnly={readOnly}
           aria-label={tr("ui.kind_model", { kind })}
           aria-expanded={open}
           aria-controls={open ? listId : undefined}
@@ -157,7 +217,9 @@ export function ModelCombo({ kind, options, value, onChange }: ModelComboProps) 
           }}
           onMouseDown={() => openList()}
           onFocus={() => openList()}
-          onBlur={() => close()}
+          onBlur={() => {
+            if (!refocusing.current) close();
+          }}
           onKeyDown={onKeyDown}
         />
         <span className="model-combo-caret" aria-hidden="true">
@@ -165,7 +227,27 @@ export function ModelCombo({ kind, options, value, onChange }: ModelComboProps) 
         </span>
       </div>
       {open && (
-        <div ref={popRef} id={listId} className="model-combo-pop" role="listbox" aria-label={tr("ui.kind_model", { kind })}>
+        // The popup is a plain box, and the listbox is the scrolling part inside it. Keeping
+        // them separate is what lets the filter row exist: a role=listbox may only contain
+        // options, and aria-activedescendant indexes into exactly those.
+        <div ref={popRef} className="model-combo-pop">
+          {/* The way back to filtering on a phone. It is a row rather than something in the
+              field because the field is deliberately inert there, and putting the keyboard
+              behind an explicit tap is the whole point: it opens when the reader asked for
+              it, not every time a list does. */}
+          {readOnly && (
+            <button
+              type="button"
+              tabIndex={-1} // the field owns the focus; Tab must leave the picker, not land here
+              className="model-combo-filter"
+              onMouseDown={(ev) => ev.preventDefault()} // keep focus in the input
+              onClick={startTyping}
+            >
+              <Icon name="search" />
+              <span>{tr("ui.filter_models")}</span>
+            </button>
+          )}
+          <div id={listId} className="model-combo-list" role="listbox" aria-label={tr("ui.kind_model", { kind })}>
           {filtered.length === 0 ? (
             <div className="model-combo-empty">{tr("ui.no_matching_models")}</div>
           ) : (
@@ -193,6 +275,7 @@ export function ModelCombo({ kind, options, value, onChange }: ModelComboProps) 
               );
             })
           )}
+          </div>
         </div>
       )}
     </div>

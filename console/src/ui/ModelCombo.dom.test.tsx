@@ -83,12 +83,25 @@ function Harness() {
   );
 }
 
-beforeEach(async () => {
-  picked = [];
-  g.IS_REACT_ACT_ENVIRONMENT = true;
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+// primaryCoarsePointer() is a live media query read at render time, so which kind of device
+// this is has to be decided before mounting. jsdom's shell always answers false (= a mouse),
+// which is what every test that does not say otherwise runs as.
+const realMatchMedia = window.matchMedia;
+function setPointer(coarse: boolean) {
+  window.matchMedia = ((q: string) => ({
+    matches: coarse && q === "(pointer: coarse)",
+    media: q,
+    onchange: null,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
+
+/** Mount, settle the catalog fetch and focus the field (which is what opens the list). */
+async function mount() {
   await act(async () => {
     root!.render(<Harness />);
   });
@@ -98,17 +111,28 @@ beforeEach(async () => {
     await Promise.resolve();
   });
   await act(async () => input().focus());
+}
+
+beforeEach(() => {
+  picked = [];
+  g.IS_REACT_ACT_ENVIRONMENT = true;
+  setPointer(false);
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
 });
 
 afterEach(async () => {
   await act(async () => root?.unmount());
   host.remove();
   root = null;
+  window.matchMedia = realMatchMedia;
   delete g.IS_REACT_ACT_ENVIRONMENT;
 });
 
 describe("ModelCombo", () => {
-  it("draws each maker's mark, and nothing at all for a model it could not place", () => {
+  it("draws each maker's mark, and nothing at all for a model it could not place", async () => {
+    await mount();
     expect(labels()).toEqual(["Default", "GLM 5.2 (Go)", "Claude Sonnet 4.6", "Big Pickle"]);
     expect(markClasses()).toEqual([
       "", // Default is not a model
@@ -119,6 +143,7 @@ describe("ModelCombo", () => {
   });
 
   it("filters on both the label and the id, so a pasted id still finds its row", async () => {
+    await mount();
     await type("sonnet");
     expect(labels()).toEqual(["Claude Sonnet 4.6"]);
     await type("opencode-go/");
@@ -129,6 +154,7 @@ describe("ModelCombo", () => {
   });
 
   it("commits the arrowed-to row on Enter", async () => {
+    await mount();
     await type("glm");
     await key("Enter"); // the first match is active from the moment the query changes
     expect(picked).toEqual(["opencode-go/glm-5.2"]);
@@ -136,6 +162,7 @@ describe("ModelCombo", () => {
   });
 
   it("moves with the arrows and wraps", async () => {
+    await mount();
     await key("ArrowUp"); // from the selected row (Default, index 0) to the last
     expect(rows()[3].className).toContain("sel");
     await key("ArrowDown");
@@ -143,6 +170,7 @@ describe("ModelCombo", () => {
   });
 
   it("wires the combobox to the listbox the way a screen reader reads it", async () => {
+    await mount();
     const list = host.querySelector('[role="listbox"]')!;
     expect(input().getAttribute("aria-expanded")).toBe("true");
     expect(input().getAttribute("aria-controls")).toBe(list.id);
@@ -154,8 +182,65 @@ describe("ModelCombo", () => {
   });
 
   it("shows the selection when closed rather than an empty box", async () => {
+    await mount();
     await type("glm");
     await key("Enter");
     expect(input().value).toBe("GLM 5.2 (Go)");
+  });
+});
+
+// Reported from a phone: opening the picker raised GBoard, GBoard scrolled the dialog to keep
+// the field visible, and the list stayed where it had been drawn.
+describe("ModelCombo on a device with an on-screen keyboard", () => {
+  const filterRow = () => host.querySelector<HTMLButtonElement>(".model-combo-filter");
+
+  it("opens the list without making the field typable, so no keyboard is summoned", async () => {
+    setPointer(true);
+    await mount();
+    expect(rows().length).toBe(4); // the list really is open
+    expect(input().readOnly).toBe(true);
+    // Read-only must not blank the field: without a query to show, it shows the selection.
+    expect(input().value).toBe("Default");
+    expect(filterRow()).not.toBeNull();
+  });
+
+  it("keeps the field typable where there is no on-screen keyboard to raise", async () => {
+    await mount(); // beforeEach set a fine pointer
+    expect(input().readOnly).toBe(false);
+    expect(filterRow()).toBeNull();
+  });
+
+  it("hands the keyboard over on an explicit tap, without closing the list", async () => {
+    setPointer(true);
+    await mount();
+    await act(async () => filterRow()!.click());
+    expect(input().readOnly).toBe(false);
+    // The tap blurs and refocuses the field to make a browser open the keyboard; the blur
+    // must not be read as "tapped elsewhere" and close the list.
+    expect(rows().length).toBe(4);
+    expect(document.activeElement).toBe(input());
+    expect(filterRow()).toBeNull(); // and the row is spent
+    await type("glm");
+    expect(labels()).toEqual(["GLM 5.2 (Go)"]);
+  });
+
+  // The defect behind the report: .ui-modal-body is a scroll container, and a scroll there
+  // does not bubble to window — only a capture-phase listener sees it. jsdom has no layout,
+  // so the anchor's rect is stubbed and what is measured is that the popup was placed from
+  // the CURRENT rect rather than the one it opened with.
+  it("re-anchors when the dialog scrolls underneath it", async () => {
+    await mount();
+    const pop = host.querySelector<HTMLElement>(".model-combo-pop")!;
+    const rect = (top: number) =>
+      ({ top, bottom: top + 28, left: 40, right: 240, width: 200, height: 28, x: 40, y: top }) as DOMRect;
+
+    input().getBoundingClientRect = () => rect(100);
+    await act(async () => window.dispatchEvent(new Event("resize")));
+    expect(pop.style.top).toBe("130px"); // 100 + 28 + the 2px gap
+
+    // A scroll of an inner container, dispatched where it really happens.
+    input().getBoundingClientRect = () => rect(300);
+    await act(async () => host.dispatchEvent(new Event("scroll")));
+    expect(pop.style.top).toBe("330px");
   });
 });
