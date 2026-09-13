@@ -678,6 +678,15 @@ function EngineModels({
               {!readOnly && isImage && m.kind !== "lora" && (
                 <ModelNegative model={m} pending={pending} onChange={onChange} />
               )}
+              {/* The words this adapter answers to (ADR 0081 decision 5). The exact mirror of
+                  the negative prompt above and on the opposite rows: a checkpoint has no
+                  trigger, and an adapter loaded without one changes nothing visible — which is
+                  indistinguishable from an ingest that failed. Ingest fills it from what
+                  Civitai published, and plenty of publishers write a word their files do not
+                  actually use, so correcting it has to be possible here. */}
+              {!readOnly && isImage && m.kind === "lora" && (
+                <ModelTriggerWords model={m} pending={pending} onChange={onChange} />
+              )}
               {/* 🔴 The window, and the measurement the VRAM answer is compared against. This is
                   the one pair on the row whose wrong value is paid for in cash: measured on a
                   borrowed llm engine (ADR 0079, 2026-09-13), a row still declaring 262144 tokens
@@ -863,6 +872,63 @@ function ModelNegative({
       </button>
     </div>
   );
+}
+
+/** One adapter's trigger words (ADR 0081 decision 5). A draft with an explicit save, like
+ *  ModelNegative next door.
+ *
+ *  Comma-separated in the box and a LIST on the wire: the column is an array because Civitai
+ *  publishes an array and the image generation pane offers one chip per word, but a person
+ *  editing three short words wants one field and not three. The split happens here, once —
+ *  blank entries are dropped on both sides, because a trailing comma is how every such box is
+ *  typed and an empty chip is a trigger nobody can remove.
+ *
+ *  An empty box is a REAL value: "this adapter has no trigger", which is the only way back from
+ *  a word the publisher recorded and the files do not use. */
+function ModelTriggerWords({
+  model,
+  pending,
+  onChange,
+}: {
+  model: EngineModel;
+  pending: boolean;
+  onChange: (id: string, patch: Record<string, unknown>) => void;
+}) {
+  const tr = useT();
+  const saved = (model.trained_words || []).join(", ");
+  const [draft, setDraft] = useState(saved);
+  // The server's value wins when it changes under us (another admin, a reload) and only then:
+  // re-running this on every render would delete what is being typed.
+  useEffect(() => setDraft(saved), [saved]);
+  return (
+    <div className="engines-model-trigger">
+      <span>{tr("admin.engines_model_trigger")}</span>
+      <input
+        type="text"
+        value={draft}
+        placeholder={tr("admin.engines_model_trigger_placeholder") as string}
+        onChange={(ev) => setDraft(ev.currentTarget.value)}
+      />
+      <button
+        type="button"
+        className="btn-secondary"
+        disabled={pending || draft === saved}
+        onClick={() => onChange(model.id, { trained_words: splitTriggerWords(draft) })}
+      >
+        {tr("admin.engines_negative_save")}
+      </button>
+    </div>
+  );
+}
+
+/** The box's text as the list the wire carries. Exported for its own test: "a, b," and "a,b"
+ *  and " a , b " all have to become the same two words, and that is the whole of what the box
+ *  promises. */
+export function splitTriggerWords(s: string): string[] {
+  return s
+    .split(",")
+    .map((w) => w.trim())
+    .filter((w) => w !== "");
 }
 
 /** A non-negative whole number, or null for "this box does not hold one". The empty box IS a
