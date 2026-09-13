@@ -26,6 +26,35 @@ Keeping it current:
 
 ---
 
+## [0.20.0](0.20.0.md) — 2026-09-13
+
+**New / Improved**
+
+- **[image generation]** An image generation pane: family, model, LoRAs and trigger words, prompt and queue, without going through an agent; the results land in the session's folder and the usage screen counts images and pixels
+- **[gallery]** An image gallery pane laying a folder's images out as cards with a paging lightbox and folder navigation, reachable from the operations bar, the layout map, the files tree and a session's menu
+- **[sessions]** A "Sessions overview" pane: every session as a card under its repository, in family order, with state, last utterance and — while it runs — the mirror's context gauge and token graph
+- **[engines]** An inference engine can be borrowed from another Agent Fleet deployment: the lending super admin issues a token and records whose GPU it is, and the borrowed row is shown as such
+- **[engines]** A ComfyUI on the LAN can serve image generation on a native / Docker deployment (`AF_COMFY_URL`), shown as an externally managed row
+- **[engines / ecs-ec2]** The image role's box comes from an offers list, one of which can be Spot, bought by the Control Plane itself and falling through to the next offer when no instance arrives; the panel shows the list, the offer in use and the order tried
+- **[engines]** Checkpoints published without a VAE are detected from the file's own header, refused for enabling, and repaired in one press by taking the family's VAE in as `--vae`
+- **[engines]** Taking a model in is four questions in a pane (what for, where from, which file, confirm), ending at the enable press
+- **[engines]** The inference-engine screen is two — "Inference engines" (mode, state, rung, uptime) and "Inference engine models" (catalogue, ingest, upstream search), with role and model / LoRA tabs
+- **[engines]** Search results show what you may not do with a model before it is taken in (login-only, non-commercial, credit, paid, NSFW, scan warnings, the kind of HF gate); searching for a LoRA lists LoRAs
+- **[engines]** The family and the author's Steps / CFG / sampler arrive filled in, quoted from the sentence they were read from, and override the family's recipe field by field
+- **[engines]** A catalogue row can be tidied after the fact: per-file ingest source links, file replacement, rebuilding a row from the bucket, editing the window and measured VRAM, LoRA trigger words, deleting an ingest history line, and a fits-this-card check before ingest
+- **[mirror]** A reply can be translated without spending a turn, and a turn that used tools can be marked on its final answer
+- **[console]** Model pickers show the vendor's brand mark and no longer raise the phone's keyboard
+- **[sessions]** A managed Codex session resumes by itself once the usage limit resets, as a Claude one already did
+- **[image generation]** A request can carry a negative prompt, and an edit can say how far from the original it may go
+- **[mirror]** Much less battery on a phone: no redraw on an unchanged poll, a widening interval while nothing changes, no re-sending unchanged totals during a turn
+- **[gallery]** Thumbnails are prepared in advance and carry a version in their URL, so returning to a tab does not fetch them again
+- **[console]** Deleting a working copy clears what sits underneath it; a memo can be copied from its row menu
+
+**Fixed**
+
+- **[skills]** The skills picker listed skills from the wrong directory instead of the session's own working directory
+- **[image generation]** `generate_image`'s description did not say which route and which checkpoint the request would take
+
 ## [0.19.0](0.19.0.md) — 2026-09-11
 
 **CLI pins** — Claude Code 2.1.268, Antigravity 1.2.1

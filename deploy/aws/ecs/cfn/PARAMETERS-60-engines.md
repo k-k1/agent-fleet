@@ -214,7 +214,10 @@ is gone; the user data mounts the NVMe and puts Docker's data-root on it, which 
 models end up ([the model volume](#the-model-volume)). Same measured benefit, no knob — and
 **unverified on hardware**: the first P1 run has to look at `df /var/lib/docker` on the box.
 
-### 0.19.0: the image role's box comes from an offers list
+### 0.20.0: the image role's box comes from an offers list
+
+ADR 0075 landed after 0.19.0 was built, so this and the section above are the same release for
+anyone upgrading: no published version ever had an offers list served by capacity providers.
 
 Three new parameters — `ImageOffers` / `LlmOffers` and `ImageOfferBudgetSec` /
 `LlmOfferBudgetSec` — and **`ImageCapacityOptionType` is gone** (ADR 0075). A deployment that
@@ -225,8 +228,8 @@ not ask ECS about capacity at all.
 What the list buys is the failure this replaces: a role whose Spot request finds no stock used to
 be a role that did not start, with `UnfulfillableCapacity` in the service events and a human in
 the loop. Now the Control Plane tries the offers in the order written, gives each one
-`<Role>OfferBudgetSec` (180 s by default at that release — ADR 0077 re-meant and re-defaulted
-it), and lands on the on-demand one when the Spot one cannot be filled. The saving is secondary and small — in ap-northeast-1 Spot ran 30 days without
+`<Role>OfferBudgetSec` (180 s by default in the ADR 0075 template — ADR 0077 re-meant and
+re-defaulted it), and lands on the on-demand one when the Spot one cannot be filled. The saving is secondary and small — in ap-northeast-1 Spot ran 30 days without
 one on-demand hour, `g6.xlarge` at $0.45-0.58 (ADR 0074), against a total GPU spend of $0.58 for
 those 30 days on acrt. **The point is that the engine starts.**
 
@@ -237,9 +240,10 @@ Three things to do, in this order:
    asking for the name the old one currently holds, and CloudFormation creates before it deletes
    — skip the step and the update fails on the name collision and rolls back. The round trip was
    measured at 147 seconds. A deployment on the default (`ON_DEMAND`) needs none of this.
-   ⚠️ **This step is for an upgrade that lands on 0.19.0.** Going straight to 0.20.0 there is no
-   collision to avoid: every provider is deleted, so no name is asked for twice (ADR 0077
-   decision 11). The capture still has to lose the parameter, which `standup.sh` does for you.
+   ⚠️ **This step is for a deployment that ran the ADR 0075 template before ADR 0077 landed** —
+   the dev deployment did. Upgrading from a released version there is no collision to avoid:
+   every provider is deleted in 0.20.0, so no name is asked for twice (ADR 0077 decision 11).
+   The capture still has to lose the parameter, which `standup.sh` does for you.
 2. **Put this release's Control Plane image on before the stack**, as with any provider rename:
    a 0.18.0 CP addresses the deleted name, so the rung never reaches the instance and the panel
    shows no box while one is billing (measured; `force-new-deployment` clears it in 217 s).
