@@ -151,14 +151,17 @@ func fnv1a32(s string, seed uint32) uint32 {
 
 // sessionTranslation is one cached translation. Source text is NOT stored: the hash is what the
 // lookup needs, and keeping a second copy of every answer on disk buys nothing.
+//
+// No "translated by" field, and that is deliberate. Which backend and model actually ran is
+// decided inside OneShotHeadless (the first AVAILABLE agent in Settings > AI assistance order,
+// with that backend's prose model), and it is not returned — it is written straight into the
+// usage ledger. Storing what we REQUESTED would repeat, one level up in the display, the exact
+// mistake ADR 0029 §1 forbids for `kind`: measured live on this host, the reply claimed sonnet
+// while the ledger recorded the run as agy, because agy is first in this workspace's order.
 type sessionTranslation struct {
-	Hash string `json:"hash"` // translateHash of the source text
-	Lang string `json:"lang"` // target language ("ja" | "en")
-	Text string `json:"text"` // the translation
-	// Model/Kind are what actually produced it, for the "translated by" hint. Kind is the
-	// backend that ran, which is not necessarily the session's own agent.
-	Model     string `json:"model,omitempty"`
-	Kind      string `json:"kind,omitempty"`
+	Hash      string `json:"hash"` // translateHash of the source text
+	Lang      string `json:"lang"` // target language ("ja" | "en")
+	Text      string `json:"text"` // the translation
 	CreatedAt int64  `json:"created_at"`
 }
 
@@ -302,9 +305,10 @@ type translatePart struct {
 	Hash string `json:"hash"`
 	Text string `json:"text"`
 	// Cached distinguishes "already had it" from "just ran a model", which is the only place the
-	// Console can honestly tell the reader whether a press cost anything.
-	Cached bool   `json:"cached"`
-	Model  string `json:"model,omitempty"`
+	// Console can honestly tell the reader whether a press cost anything. It is also the only
+	// thing this reply says about the run — see the note on sessionTranslation for why it does
+	// not name a model.
+	Cached bool `json:"cached"`
 }
 
 // translateReply answers one press: the language it resolved to (which the Console compares
@@ -369,7 +373,7 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 	for _, text := range texts {
 		hash := translateHash(text)
 		if hit := lookupTranslation(name, hash, lang); hit != nil {
-			out = append(out, translatePart{Hash: hash, Text: hit.Text, Cached: true, Model: hit.Model})
+			out = append(out, translatePart{Hash: hash, Text: hit.Text, Cached: true})
 			continue
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), translatePartTimeout)
@@ -385,12 +389,9 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "generation_failed", "translation returned no usable text")
 			return
 		}
-		e := &sessionTranslation{
-			Hash: hash, Lang: lang, Text: clean,
-			Model: translateModel(), CreatedAt: time.Now().UnixMilli(),
-		}
+		e := &sessionTranslation{Hash: hash, Lang: lang, Text: clean, CreatedAt: time.Now().UnixMilli()}
 		putTranslation(name, e)
-		out = append(out, translatePart{Hash: hash, Text: clean, Model: e.Model})
+		out = append(out, translatePart{Hash: hash, Text: clean})
 	}
 	httpx.WriteJSON(w, http.StatusOK, translateReply{Lang: lang, Parts: out})
 }

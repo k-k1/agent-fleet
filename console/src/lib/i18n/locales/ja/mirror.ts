@@ -268,7 +268,7 @@ export const mirror = {
   "mirror.token_hint": "入力(文脈)↑ / 出力↓ トークン",
   "mirror.time_span_hint": "開始 {start} — 完了 {end}",
   // Per-answer translation (docs/log/97)
-  "mirror.translate": "訳す",
+  "mirror.translate": "翻訳",
   "mirror.translate_title": "この回答を表示言語に訳します（セッションのターンは使いません）",
   "mirror.translate_off": "原文",
   "mirror.translate_off_title": "原文に戻す",
