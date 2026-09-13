@@ -915,3 +915,74 @@ Not on hardware. Every claim above about which family has a negative branch is r
 graphs this repository sends (`comfy_workflows.go`) and ComfyUI v0.34.0's own node definitions,
 which is the same kind of claim that was true of SD3.5's template before it turned out not to
 generate at all.
+
+## Follow-up — `strength` joins the vocabulary (2026-09-13)
+
+The third word, admitted by the same test as the other two: **the caller has no way to say it
+otherwise**.
+
+`op=edit` has exactly one degree of freedom — how much of the caller's own picture the operation
+keeps — and until now it was a constant, `comfyEditDenoise = 0.6`. "Correct this slightly" and
+"borrow the composition and draw the rest again" were therefore the same request and came back as
+the same picture, and nothing in the vocabulary could pull them apart: not a phrasing of `prompt`,
+not a seed, not a negative prompt. That is a sharper case than either of the words already added.
+A seed is about comparing two calls and a negative prompt is a second conditioning branch, but
+this one is the op's own parameter. Shipping `edit` with it fixed is shipping `size` with one
+value in the list.
+
+It is also not a provider-private knob, which is what keeps steps, cfg and sampler out: every
+img2img implementation has this number, under three spellings — diffusers calls it `strength`,
+A1111 calls it `denoising_strength`, ComfyUI calls it `denoise`.
+
+**The direction is part of the argument, not something to infer.** 0 keeps the caller's picture, 1
+ignores it — diffusers' orientation. Upstream does not agree on this: Stability's `image_strength`
+runs the other way, so a caller who guesses from the name has even odds of asking for the opposite
+picture. The tool's description says which end is which.
+
+**The shape.** `Request.Strength *float64` and `Caps.Strength bool`, alongside the seed and the
+negative prompt. A pointer — but not for the seed's reason. 0 is not a usable value here, it is a
+*refused* one: at denoise 0 ComfyUI's sampler hands the latent straight back, so honouring it
+would spend a GPU box on a VAE round-trip of a picture the caller already has. The pointer is what
+lets it be refused **by value**, with a reason, instead of a plain `float64` reading it as "not
+given" and quietly editing at the full 0.6 — the opposite of what was asked for. The accepted
+range is `(0, 1]`, and `HandleGenerate` answers `bad_strength` outside it rather than clamping:
+a clamped request is one no provider can report back honestly.
+
+**edit only, even where the capability is true.** Inpaint keeps its full denoise. What preserves
+the area outside an inpaint mask is `SetLatentNoiseMask`, not a partial denoise, so lowering it
+there protects nothing and turns the repainted area into a weak echo of what it replaced. A
+strength sent with `op=inpaint` (or with `generate`) is reported in warnings as ignored. For the
+same reason the tool advertises the argument only where `edit` is among the offered ops: `inpaint`
+alone is not a reason to hand a caller a number the graph is obliged to throw away.
+
+**Which routes take it.** comfy alone, and there — unlike `negative_prompt` — on **every** model:
+all five families start an edit from the caller's picture, and the amount is a number in a graph
+this package writes rather than a field a vendor API has to expose. sdcpp does not: its
+`/v1/images/edits` is given `prompt`, `n`, `size`, `image` and `mask` and nothing else. agy and
+codex drive a CLI with a prompt and have no such parameter at all. All three report it in
+warnings.
+
+### The one family where a partial denoise was not what it looked like
+
+Four of the five stretch the schedule before sampling it. `KSampler.set_steps` computes
+`new_steps = int(steps/denoise)` and keeps the last `steps+1` sigmas (`comfy/samplers.py`), and
+`BasicScheduler` does the same — so the number of steps actually sampled **does not change with
+the denoise**, only where on the schedule they begin. klein cannot: `Flux2Scheduler` has no
+denoise input, so the tail is cut with `SplitSigmasDenoise`, whose tail is
+`round(len(sigmas)*denoise)` steps of whatever it was handed
+(`comfy_extras/nodes_custom_sampler.py`, read rather than assumed).
+
+Cutting klein's unstretched 4-step schedule therefore bought **fewer sampling steps the gentler
+the edit**: 2 at the fixed 0.6, and 1 at 0.25. At a single hard-coded 0.6 nobody could see it —
+2 steps of a 4-step distilled model still produces a picture — but it is precisely the shape of
+defect a caller turning a knob would run into first, and it would look like "klein is bad at small
+edits". klein now asks `Flux2Scheduler` for `int(steps/strength)` before the split, which
+reproduces what the other four families do. This changes klein's edit graph at the existing
+default too: 4 effective steps where there were 2.
+
+**Not on hardware.** The graph shapes are pinned by `comfy_workflows_test.go` — including klein's
+stretch — and the upstream node formulas above were read off ComfyUI's own source. That is the
+same class of claim that was true of SD3.5's template before it turned out not to generate at all.
+A live check wants one model, one input picture, one seed and two strengths far apart (0.2 and
+0.8), which is two images: the distance from the input has to differ visibly. klein deserves its
+own pair for the step-count change.

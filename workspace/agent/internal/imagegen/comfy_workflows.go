@@ -134,6 +134,10 @@ type comfyParams struct {
 	// Loras are already resolved against the catalogue and checked against this model's family
 	// (comfyResolveLoras) — a template applies them, it does not decide whether they fit.
 	Loras []comfyLora
+	// Strength is the caller's own answer to "how much of my picture should change" on an edit,
+	// nil for "use the recipe's". Request-shaped, unlike Params below: ADR 0069's vocabulary
+	// gained this word on 2026-09-13 precisely because it is the caller's to turn.
+	Strength *float64
 	// Params is what the CATALOGUE row for the chosen model declares, zero-valued when it
 	// declares nothing. Not request-shaped like everything else here: ADR 0069's vocabulary has
 	// no steps or cfg field, so this is the administrator's declaration reaching the graph, not
@@ -207,20 +211,29 @@ func comfyKnownScheduler(s string) bool { return comfySchedulerNames[strings.Tri
 // recipe is the family default with this request's model declaration merged over it.
 func (p comfyParams) recipe(base comfyRecipe) comfyRecipe { return base.with(p.Params) }
 
-// comfyEditDenoise is how much of the caller's picture an edit keeps. A fixed part of the recipe,
-// like steps and cfg: ADR 0069's vocabulary has no strength field, so there is nothing for a
-// caller to turn, and a value that leaves the composition recognisable is the honest default.
+// comfyEditDenoise is how much of the caller's picture an edit changes when the caller says
+// nothing: enough to follow a new prompt, little enough to leave the composition recognisable.
 const comfyEditDenoise = 0.6
 
-// comfyDenoiseFor is the denoise every family's sampler runs at.
+// denoise is what every family's sampler runs at.
 //
-// Inpaint stays at 1: the area OUTSIDE the mask is preserved by the noise mask, not by a partial
-// denoise, so lowering it would only make the repainted area a weak echo of what was there.
-func comfyDenoiseFor(op Op) float64 {
-	if op == OpEdit {
-		return comfyEditDenoise
+// Inpaint stays at 1 even when a strength was asked for: the area OUTSIDE the mask is preserved
+// by the noise mask, not by a partial denoise, so lowering it would only make the repainted area
+// a weak echo of what was there. The caller is told so in the result's warnings (requestWarnings)
+// rather than having the number quietly applied to something it does not mean.
+//
+// A strength outside (0,1] falls back to the recipe's own. The edge rejects one by value with a
+// reason (HandleGenerate), so this is the unreachable half of the pair rather than the check —
+// but it keeps this function total, and 0 in particular would divide by zero in the klein
+// schedule below.
+func (p comfyParams) denoise() float64 {
+	if p.Op != OpEdit {
+		return 1
 	}
-	return 1
+	if s := p.Strength; s != nil && *s > 0 && *s <= 1 {
+		return *s
+	}
+	return comfyEditDenoise
 }
 
 // comfyRequestLatent builds what the sampler starts from, and is the whole of the image-to-image
@@ -423,7 +436,7 @@ func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	r := p.recipe(comfyRecipe{Steps: 20, CFG: 7, Sampler: "dpmpp_2m", Scheduler: "karras"})
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
-		"denoise": comfyDenoiseFor(p.Op),
+		"denoise": p.denoise(),
 		"model":   model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
 		"latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": vae}}
@@ -464,7 +477,7 @@ func comfyGraphZImage(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	r := p.recipe(comfyRecipe{Steps: 8, CFG: 1, Sampler: "res_multistep", Scheduler: "simple"})
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
-		"denoise": comfyDenoiseFor(p.Op),
+		"denoise": p.denoise(),
 		"model":   comfyLink("ms", 0), "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
 		"latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}}
@@ -501,14 +514,28 @@ func comfyGraphFlux2Klein(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	// has no scheduler name to set at all (Flux2Scheduler takes a size, not a schedule name).
 	r := p.recipe(comfyRecipe{Steps: 4, Sampler: "euler"})
 	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": r.Sampler}}
-	g["sigmas"] = comfyNode{ClassType: "Flux2Scheduler", Inputs: map[string]any{
-		"steps": r.Steps, "width": p.Width, "height": p.Height}}
 	// Flux2Scheduler has no denoise of its own — it takes steps and a size and nothing else
 	// (comfy_extras/nodes_flux.py, v0.34.0) — so an edit's partial denoise is a TAIL of that
 	// schedule, cut by SplitSigmasDenoise. Its second output (low_sigmas) is the tail; taking
 	// the first would sample the part an edit is meant to skip.
+	//
+	// The schedule is STRETCHED before it is cut, and that is what keeps `strength` meaning the
+	// same thing here as in the other four families. Their samplers stretch it themselves:
+	// `new_steps = int(steps/denoise)`, then the last `steps+1` sigmas (comfy/samplers.py,
+	// KSampler.set_steps — BasicScheduler does the same), so the number of steps ACTUALLY sampled
+	// does not move with the denoise, only where on the schedule they start. SplitSigmasDenoise
+	// does not: its tail is `round(len(sigmas)*denoise)` steps of whatever it was handed
+	// (comfy_extras/nodes_custom_sampler.py), so asking it to cut an unstretched 4-step schedule
+	// buys fewer sampling steps the gentler the edit — 2 at the default 0.6, and 1 at 0.25. Since
+	// that still produces a picture it is the kind of wrongness nothing reports.
+	steps, d := r.Steps, p.denoise()
+	if d < 1 {
+		steps = int(float64(r.Steps) / d)
+	}
+	g["sigmas"] = comfyNode{ClassType: "Flux2Scheduler", Inputs: map[string]any{
+		"steps": steps, "width": p.Width, "height": p.Height}}
 	sigmas := comfyLink("sigmas", 0)
-	if d := comfyDenoiseFor(p.Op); d < 1 {
+	if d < 1 {
 		g["split"] = comfyNode{ClassType: "SplitSigmasDenoise", Inputs: map[string]any{
 			"sigmas": sigmas, "denoise": d}}
 		sigmas = comfyLink("split", 1)
@@ -574,7 +601,7 @@ func comfyGraphFlux1(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	// itself: total_steps = steps/denoise, then the last steps+1 sigmas. So an edit needs no
 	// extra node here.
 	g["scheduler"] = comfyNode{ClassType: "BasicScheduler", Inputs: map[string]any{
-		"model": model, "scheduler": r.Scheduler, "steps": r.Steps, "denoise": comfyDenoiseFor(p.Op)}}
+		"model": model, "scheduler": r.Scheduler, "steps": r.Steps, "denoise": p.denoise()}}
 	g["noise"] = comfyNode{ClassType: "RandomNoise", Inputs: map[string]any{"noise_seed": p.Seed}}
 	g["guider"] = comfyNode{ClassType: "BasicGuider", Inputs: map[string]any{
 		"model": model, "conditioning": comfyLink("guidance", 0)}}
@@ -636,7 +663,7 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	r := p.recipe(comfyRecipe{Steps: 28, CFG: 4.5, Sampler: "dpmpp_2m", Scheduler: "sgm_uniform"})
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
-		"denoise": comfyDenoiseFor(p.Op),
+		"denoise": p.denoise(),
 		"model":   model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
 		"latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": vae}}

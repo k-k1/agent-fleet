@@ -10,6 +10,7 @@ package imagegen
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -84,6 +85,9 @@ type providerStatus struct {
 	// the default model's answer, because the argument is offered per route while the capability
 	// is per model (see HandleStatus).
 	Negative bool `json:"negative,omitempty"`
+	// Strength is whether this route lets the caller say how much of the input picture an edit
+	// changes. No union is needed: it is per provider, not per model.
+	Strength bool `json:"strength,omitempty"`
 }
 
 // modelStatus is one entry of providerStatus.Models — see imagegen.ModelInfo, which this rides
@@ -137,6 +141,7 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		st.Seed = caps.Seed
 		st.Negative = caps.Negative
+		st.Strength = caps.Strength
 		// Only when there is a REAL choice (ADR 0072 decision 5's own rule for `model`, the
 		// same one `provider` already follows) — a list of zero or one is not something a
 		// caller can meaningfully pick between, and advertising it anyway would put an enum in
@@ -244,6 +249,9 @@ type generateRequest struct {
 	// Seed is a POINTER on the wire too: `"seed": 0` and an absent key are different requests,
 	// and collapsing them here would make seed 0 unpinnable.
 	Seed *int64 `json:"seed"`
+	// Strength is how much of the input picture an edit changes, and a pointer for the same
+	// reason as Seed — `"strength": 0` is a request, not an absence.
+	Strength *float64 `json:"strength"`
 }
 
 type loraRequest struct {
@@ -282,6 +290,15 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "session is required")
 		return
 	}
+	// Refused by VALUE rather than clamped, which is the one place this layer narrows anything:
+	// a strength outside the range is not a request a provider could report back honestly. 0 is
+	// out too — ComfyUI's sampler returns the latent untouched at denoise 0, so it would spend a
+	// GPU box on a VAE round-trip of a picture the caller already has.
+	if s := body.Strength; s != nil && (*s <= 0 || *s > 1) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_strength",
+			fmt.Sprintf("strength must be greater than 0 and at most 1 (got %g): 1 redraws the picture from the prompt alone, and small values keep more of the input", *s))
+		return
+	}
 	meta, ok := session.ReadMeta(body.Session)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+body.Session)
@@ -318,6 +335,7 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 			Size: body.Size, AspectRatio: body.AspectRatio,
 			Background: body.Background, Count: body.Count, Inputs: body.Inputs,
 			Mask: body.Mask, Model: body.Model, Loras: loras, Seed: body.Seed,
+			Strength: body.Strength,
 		},
 	}
 	out, err := Run(r.Context(), job)
