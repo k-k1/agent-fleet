@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.20.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.20.0) — 2026-09-13
+
+Images are generated and browsed in the Console itself, every running session fits on one
+screen, and the inference engine's box is bought by the Control Plane from a list of offers —
+one of which can be Spot.
+
 ## [0.19.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.19.0) — 2026-09-11
 
 Model ingest opens to tenant administrators, image generation on the deployment's own

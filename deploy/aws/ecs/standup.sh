@@ -567,8 +567,9 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
   # `buy` field of an offer against two providers that both stand. A capture taken before that
   # still carries the line, and `deploy` refuses a parameter the template does not declare.
   # 🔴 Dropping it is right for a STAND-UP (a new stack has no provider to collide with). An
-  # existing stack sitting on SPOT needed a two-update migration to reach 0.19.0; to 0.20.0 it
-  # does not - ADR 0077 deletes every provider, so no name is asked for twice.
+  # existing stack sitting on SPOT needed a two-update migration to reach the ADR 0075 template
+  # (which no release carries); to 0.20.0 it does not - ADR 0077 deletes every provider, so no
+  # name is asked for twice.
   af_param_drop ImageCapacityOptionType
 
   # Retired in ADR 0077: the box is bought with EC2 Fleet from the offer's own type set, so the
