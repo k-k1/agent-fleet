@@ -109,6 +109,8 @@ export const sessions = {
   "wsbar.close_all_title": "全ペインを閉じる",
   "wsbar.overview": "セッション一覧",
   "wsbar.overview_title": "稼働中のセッションをカードで一望する",
+  "wsbar.imagegen": "画像生成",
+  "wsbar.imagegen_title": "エージェントを介さずに ComfyUI で絵を作る",
   // オーバーフロー／プレビュー／リソース
   "wsbar.more_title": "リソース情報 / opencode web / プレビュー",
   "wsbar.preview": "プレビュー",
@@ -259,6 +261,7 @@ export const sessions = {
   "srow.handoff": "別のエージェントへ引き継ぐ…",
   "srow.handoff_title": "{name} の引き継ぎ",
   "srow.share": "共有する…",
+  "srow.generated_images": "生成した画像 ({n})",
   "srow.shared_badge": "共有中（他のユーザーに公開しています）",
   "handoff.title": "「{name}」を引き継ぐ",
   "handoff.intro": "オペレーターアシスタントがこのセッションを読んで引き継ぎ案を提示します。新しいセッションはあなたの承認後にのみ作成されます。",

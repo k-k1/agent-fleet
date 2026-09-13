@@ -9,7 +9,9 @@ package imagegen
 // stay off the CP's agent-proxy allowlist deliberately rather than by omission.
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -84,6 +86,31 @@ type providerStatus struct {
 	// the default model's answer, because the argument is offered per route while the capability
 	// is per model (see HandleStatus).
 	Negative bool `json:"negative,omitempty"`
+	// Strength is whether this route lets the caller say how much of the input picture an edit
+	// changes. No union is needed: it is per provider, not per model.
+	Strength bool `json:"strength,omitempty"`
+	// The rest is the MEMBER-facing catalogue (ADR 0081 decision 5), present only for a provider
+	// that builds the graph — the vendor routes have no sampler list and no per-model recipe, so
+	// their entries keep the short shape they always had.
+	//
+	// It rides on this route rather than on a new, browser-authenticated one on the Control
+	// Plane. A second projection of the same rows is a second thing to keep in step, and the
+	// sessionWire lesson is that a field missing from a relay vanishes with nobody noticing.
+	Samplers   []string `json:"samplers,omitempty"`
+	Schedulers []string `json:"schedulers,omitempty"`
+	// NegativeAlways is what this deployment's administrator excludes from every picture. Shown
+	// as a fixed chip the member cannot remove, with its origin, rather than merged invisibly.
+	NegativeAlways string `json:"negative_always,omitempty"`
+	// LoraWeightMax is the ceiling one adapter may be asked for at. There is no default weight to
+	// report: no column holds one, and the Agent uses 1 when nobody states one.
+	LoraWeightMax float64 `json:"lora_weight_max,omitempty"`
+	// TypicalMS is how long a picture usually takes on this route, as a moving average of what
+	// has actually finished. 0 means nothing has been measured yet, which is a different
+	// statement from "instant".
+	TypicalMS int64 `json:"typical_ms,omitempty"`
+	// WakeMS is the last observed cold start, so the header can say "the engine starts on the
+	// first job; usually N minutes" from a measurement rather than a guess.
+	WakeMS int64 `json:"wake_ms,omitempty"`
 }
 
 // modelStatus is one entry of providerStatus.Models — see imagegen.ModelInfo, which this rides
@@ -92,6 +119,27 @@ type modelStatus struct {
 	ID          string `json:"id"`
 	Description string `json:"description,omitempty"`
 	Warm        bool   `json:"warm,omitempty"`
+	// The rest is ADR 0081 decision 5's widening, and is filled in only for a provider that
+	// implements StudioLister. An agent reading this route for the MCP tool sees the same three
+	// fields it always did; a form reading it sees what it needs to render placeholders and to
+	// grey out what the family does not read.
+	Family string   `json:"family,omitempty"`
+	Sizes  []string `json:"sizes,omitempty"`
+	// Params are the EFFECTIVE defaults (family recipe ← catalogue row), so a placeholder is
+	// what will run rather than a number from some other family's recipe.
+	Params *EngineParams `json:"params,omitempty"`
+	// Negative is the row's own recommended negative prompt, shown as the administrator's, not
+	// merged into the member's text.
+	Negative string `json:"negative,omitempty"`
+	// Knobs is the subset of `steps cfg sampler scheduler negative` this family reads. The form
+	// disables the rest on THIS word; a second table in the Console could disagree with the
+	// graphs, and the two must not be able to.
+	Knobs       []string `json:"knobs,omitempty"`
+	LicenseName string   `json:"license_name,omitempty"`
+	LicenseURL  string   `json:"license_url,omitempty"`
+	SourceURL   string   `json:"source_url,omitempty"`
+	// TypicalMS is how long a picture on THIS checkpoint usually takes, measured.
+	TypicalMS int64 `json:"typical_ms,omitempty"`
 }
 
 // loraStatus is one entry of providerStatus.Loras — see imagegen.LoraInfo. baseModel rides along
@@ -101,6 +149,17 @@ type loraStatus struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	BaseModel   string `json:"baseModel,omitempty"`
+	// TrainedWords are the trigger words the adapter's author published (ADR 0081 decision 5).
+	// The most common "the LoRA does nothing" is a missing trigger, and nothing else in this
+	// answer can fix it.
+	//
+	// The family stays on the existing `baseModel` key rather than gaining ADR 0081's
+	// `base_model` spelling: it is the same fact, already on this route, and a second key for it
+	// would be one more thing to keep in step for a consistency nothing reads.
+	TrainedWords []string `json:"trained_words,omitempty"`
+	// Weight is the strength the catalogue row declares, 0 for "not declared" — in which case the
+	// Agent applies 1. There is no default-weight column, so 0 must not be shown as a number.
+	Weight float64 `json:"weight,omitempty"`
 }
 
 // HandleStatus answers GET /imagegen/status?session=<name>.
@@ -137,6 +196,7 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		st.Seed = caps.Seed
 		st.Negative = caps.Negative
+		st.Strength = caps.Strength
 		// Only when there is a REAL choice (ADR 0072 decision 5's own rule for `model`, the
 		// same one `provider` already follows) — a list of zero or one is not something a
 		// caller can meaningfully pick between, and advertising it anyway would put an enum in
@@ -161,6 +221,12 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// The member-facing widening (ADR 0081 decision 5). It REPLACES the model list above for
+		// a provider that has one, because the studio's list is the one that withholds a model
+		// the engine could not actually run — the catalogue already refuses those at generation
+		// time, and offering a form that produces an error after a cold start is worse than not
+		// offering it.
+		applyStudio(r.Context(), p, &st)
 		out.Providers = append(out.Providers, st)
 		if !out.Ready {
 			out.Provider, out.Ready = st.ID, true
@@ -169,6 +235,41 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// applyStudio folds the member-facing catalogue into one provider's status entry, and does
+// nothing at all for a provider that does not implement StudioLister — the vendor routes keep
+// the short shape an MCP caller already reads.
+//
+// 🔴 The model list it writes is NOT the union with the one above: a model the studio withholds
+// (no declared family, or a family whose files the catalogue never declared) is one the engine
+// would refuse after paying for a cold start, and a form that offers it is a form with a button
+// that cannot work.
+func applyStudio(ctx context.Context, p Provider, st *providerStatus) {
+	s, ok := studioOf(ctx, p)
+	if !ok {
+		return
+	}
+	st.Samplers, st.Schedulers = s.Samplers, s.Schedulers
+	st.NegativeAlways, st.LoraWeightMax = s.NegativeAlways, s.LoraWeightMax
+	st.TypicalMS, st.WakeMS = jobs.typicalFor(p.ID(), ""), jobs.observedWakeMS()
+	st.Models = make([]modelStatus, 0, len(s.Models))
+	for _, m := range s.Models {
+		params := m.Params
+		st.Models = append(st.Models, modelStatus{
+			ID: m.ID, Description: m.Description, Warm: m.Warm,
+			Family: m.Family, Sizes: m.Sizes, Params: &params, Negative: m.Negative,
+			Knobs: m.Knobs, LicenseName: m.LicenseName, LicenseURL: m.LicenseURL,
+			SourceURL: m.SourceURL, TypicalMS: jobs.typicalFor(p.ID(), m.ID),
+		})
+	}
+	st.Loras = make([]loraStatus, 0, len(s.Loras))
+	for _, l := range s.Loras {
+		st.Loras = append(st.Loras, loraStatus{
+			Name: l.Name, Description: l.Description, BaseModel: l.BaseModel,
+			TrainedWords: l.TrainedWords, Weight: l.Weight,
+		})
+	}
 }
 
 // serviceLabelOf names the image SERVICE a provider reaches — not the CLI that drives it and
@@ -244,6 +345,9 @@ type generateRequest struct {
 	// Seed is a POINTER on the wire too: `"seed": 0` and an absent key are different requests,
 	// and collapsing them here would make seed 0 unpinnable.
 	Seed *int64 `json:"seed"`
+	// Strength is how much of the input picture an edit changes, and a pointer for the same
+	// reason as Seed — `"strength": 0` is a request, not an absence.
+	Strength *float64 `json:"strength"`
 }
 
 type loraRequest struct {
@@ -282,6 +386,15 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "session is required")
 		return
 	}
+	// Refused by VALUE rather than clamped, which is the one place this layer narrows anything:
+	// a strength outside the range is not a request a provider could report back honestly. 0 is
+	// out too — ComfyUI's sampler returns the latent untouched at denoise 0, so it would spend a
+	// GPU box on a VAE round-trip of a picture the caller already has.
+	if s := body.Strength; s != nil && (*s <= 0 || *s > 1) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_strength",
+			fmt.Sprintf("strength must be greater than 0 and at most 1 (got %g): 1 redraws the picture from the prompt alone, and small values keep more of the input", *s))
+		return
+	}
 	meta, ok := session.ReadMeta(body.Session)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+body.Session)
@@ -318,6 +431,7 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 			Size: body.Size, AspectRatio: body.AspectRatio,
 			Background: body.Background, Count: body.Count, Inputs: body.Inputs,
 			Mask: body.Mask, Model: body.Model, Loras: loras, Seed: body.Seed,
+			Strength: body.Strength,
 		},
 	}
 	out, err := Run(r.Context(), job)

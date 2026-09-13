@@ -15,6 +15,26 @@ import { equalRatios, MAX_COLS, MAX_TAB_COLS, MAX_TABS } from "./ops.ts";
 
 const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 
+/** Session names are slugs (the Agent's `session.ValidName`), and `gallerySession` only
+ *  ever reaches a title — anything else is a stored value pretending to be a name. */
+const SESSION_NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;
+
+/** Upper bound on a stored gallery path. Deep enough for anything under the browse root
+ *  (`.cache/agent-fleet/generated/<uuid>` is 45 characters), short enough that a corrupted
+ *  entry cannot become a multi-kilobyte query string. */
+const MAX_GALLERY_PATH = 512;
+
+/** A browse-root-relative folder (or file) path, held to what the Agent's fs endpoints
+ *  accept: relative, no parent escapes, no control characters. Repairing such a value
+ *  ("strip the ..") would hand the view a DIFFERENT folder than the one that was stored,
+ *  so an unusable path is rejected outright. */
+function validGalleryPath(p: string): boolean {
+  if (p.length > MAX_GALLERY_PATH) return false;
+  if (p.startsWith("/") || p.startsWith("\\")) return false;
+  if (/[\u0000-\u001f\u007f]/.test(p)) return false;
+  return !p.split("/").includes("..");
+}
+
 /** Old flat pane → new content union. Unknown/incomplete kinds → blank terminal. */
 function contentFromFlat(p: any): PaneContent {
   switch (p?.kind) {
@@ -123,6 +143,30 @@ function contentFromFlat(p: any): PaneContent {
       const engineKey = str(p.engineKey);
       return engineKey && /^[A-Za-z0-9_-]{1,64}$/.test(engineKey)
         ? { kind: "engineAdd", engineKey, lora: p.lora === true }
+        : { kind: "terminal", chat: false };
+    }
+    // No field to validate: the form is a localStorage draft and the queue is the Agent's
+    // (ADR 0081 decision 6). Forgetting this case is what would degrade a studio to a blank
+    // terminal on every reload, which is the only way this kind can go wrong here.
+    case "imagegen":
+      return { kind: "imagegen" };
+    case "gallery": {
+      // A stored value is untrusted input and this one is a PATH that the view hands
+      // straight to api/fs/tree, so it gets the `browser` kind's stance: reject rather
+      // than repair. Rejecting degrades to a blank terminal — forgetting the case
+      // entirely does the same thing to a perfectly good gallery on every reload.
+      const galleryPath = str(p.galleryPath);
+      const galleryFocus = str(p.galleryFocus);
+      const gallerySession = str(p.gallerySession);
+      const sort = p.sort === "new" || p.sort === "name" ? p.sort : undefined;
+      return galleryPath && validGalleryPath(galleryPath)
+        ? {
+            kind: "gallery",
+            galleryPath,
+            ...(sort ? { sort } : {}),
+            ...(galleryFocus && validGalleryPath(galleryFocus) ? { galleryFocus } : {}),
+            ...(gallerySession && SESSION_NAME_RE.test(gallerySession) ? { gallerySession } : {}),
+          }
         : { kind: "terminal", chat: false };
     }
     default:

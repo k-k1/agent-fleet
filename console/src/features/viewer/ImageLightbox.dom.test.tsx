@@ -5,6 +5,10 @@
 //
 // The bar's buttons are addressed by position, not by their title: the titles come from
 // the i18n catalogue and a test that matches on them fails the day a label is reworded.
+//
+// The component is shared with the gallery (ADR 0080 decision 5), which is why the second
+// describe below asserts what the MIRROR must keep: with no paging and no folder callback
+// its bar is the same four buttons in the same order it had before the move.
 import { afterEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -14,13 +18,15 @@ let host: HTMLDivElement;
 let root: Root;
 let closed: number;
 
-const render = async () => {
+type Extra = Partial<Parameters<typeof ImageLightbox>[0]>;
+
+const render = async (extra: Extra = {}) => {
   closed = 0;
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root.render(<ImageLightbox src="blob:shot" onClose={() => closed++} />);
+    root.render(<ImageLightbox src="blob:shot" onClose={() => closed++} {...extra} />);
   });
   return host.querySelector(".mirror-lightbox") as HTMLElement;
 };
@@ -110,5 +116,54 @@ describe("ミラーの拡大表示（ライトボックス）", () => {
   it("開いている間はスワイプでのセッション切替を見送らせる", async () => {
     const overlay = await render();
     expect(overlay.hasAttribute("data-no-swipe")).toBe(true);
+  });
+});
+
+describe("共有ライトボックスの送りとフォルダ", () => {
+  it("並びを渡さないミラーでは、送りも位置も出ず、バーは以前と同じ 4 つ", async () => {
+    await render();
+    expect(host.querySelector(".mirror-lightbox-prev")).toBeNull();
+    expect(host.querySelector(".mirror-lightbox-next")).toBeNull();
+    expect(host.querySelector(".mirror-lightbox-pos")).toBeNull();
+    expect(host.querySelector(".mirror-lightbox-folder")).toBeNull();
+    expect(bar()).toHaveLength(4);
+  });
+
+  it("←／→ のボタンと矢印キーで送る", async () => {
+    let prev = 0;
+    let next = 0;
+    await render({ onPrev: () => prev++, onNext: () => next++, index: 3, total: 12 });
+    expect(host.querySelector(".mirror-lightbox-pos")?.textContent).toBe("3 / 12");
+
+    await clickAt(host.querySelector(".mirror-lightbox-prev") as HTMLElement);
+    await clickAt(host.querySelector(".mirror-lightbox-next") as HTMLElement);
+    expect([prev, next]).toEqual([1, 1]);
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    });
+    expect([prev, next]).toEqual([2, 2]);
+    expect(closed).toBe(0); // paging is not the backdrop
+  });
+
+  it("端では渡されない側のボタンが無効になり、キーも何も起こさない", async () => {
+    let next = 0;
+    await render({ onNext: () => next++, index: 1, total: 3 });
+    expect((host.querySelector(".mirror-lightbox-prev") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+    });
+    expect(next).toBe(0);
+  });
+
+  it("「フォルダを開く」は渡されたときだけ出る", async () => {
+    let opened = 0;
+    await render({ onOpenFolder: () => opened++ });
+    const folder = host.querySelector(".mirror-lightbox-folder") as HTMLElement;
+    expect(folder).not.toBeNull();
+    await clickAt(folder);
+    expect(opened).toBe(1);
+    expect(closed).toBe(0); // the bar keeps its clicks
   });
 });

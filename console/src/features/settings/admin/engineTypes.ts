@@ -73,6 +73,11 @@ export type EngineModel = {
    *  prompt is added to it, and the engine's exclusion list is added to both. Empty means
    *  undeclared, which the Agent answers with its own measured default. */
   negative_prompt?: string;
+  /** The words an ADAPTER answers to, as its publisher records them (ADR 0081 decision 5).
+   *  Absent on a checkpoint, which has no triggers at all. The ingest reads them from Civitai
+   *  and stores them; this is where a wrong or missing one is corrected, and a LoRA loaded
+   *  without its trigger changes nothing visible. */
+  trained_words?: string[];
   /** The provider dispatches on base_model and THIS row's is missing or names no workflow
    *  template (ADR 0072 decision 2). Stated by the CP, because the panel cannot know the
    *  vocabulary — and because the row looks complete without it and fails only at generation,

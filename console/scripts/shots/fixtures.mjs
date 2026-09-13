@@ -543,6 +543,162 @@ export function fsFile(locale, p) {
   return { path: p, content: "" };
 }
 
+// Image generation (ADR 0081). The pane's whole surface comes from two routes, so the
+// stub answers both: the widened status (families, knobs, the Agent's sampler/scheduler
+// allow-lists, LoRAs with their trigger words) and a queue mid-run — one group of 40 with a
+// picture in flight, plus a finished trial, which is the state the screen is designed for.
+export function imagegenStatus(locale) {
+  const ja = locale === "ja";
+  return {
+    enabled: true,
+    ready: true,
+    provider: "comfy",
+    ops: ["generate", "edit", "inpaint"],
+    providers: [
+      {
+        id: "comfy",
+        service: "ComfyUI",
+        seed: true,
+        negative: true,
+        strength: true,
+        // Engine-level, per provider — not on the status root (workspace/agent's
+        // providerStatus).
+        samplers: ["euler", "euler_ancestral", "dpmpp_2m", "dpmpp_2m_sde", "res_multistep"],
+        schedulers: ["normal", "karras", "sgm_uniform", "simple"],
+        typical_ms: 31_000,
+        wake_ms: 300_000,
+        lora_weight_max: 2,
+        negative_always: "watermark, signature",
+        models: [
+          {
+            id: "illustrious-v2",
+            description: ja ? "イラスト向けの SDXL 系" : "An SDXL-family illustration checkpoint",
+            family: "sdxl",
+            warm: true,
+            sizes: ["1024x1024", "1152x896", "896x1152", "1216x832", "832x1216"],
+            params: { steps: 28, cfg: 6, sampler: "dpmpp_2m", scheduler: "karras" },
+            negative: "worst quality, low quality",
+            knobs: ["steps", "cfg", "sampler", "scheduler", "negative"],
+            license_name: "CreativeML Open RAIL++-M",
+            license_url: "https://example.com/license",
+            source_url: "https://example.com/model",
+          },
+          {
+            id: "flux1-dev",
+            description: ja ? "文章で指示する系統" : "Prompted in sentences",
+            family: "flux1",
+            sizes: ["1024x1024", "1216x832"],
+            params: { steps: 20, sampler: "euler", scheduler: "simple" },
+            knobs: ["steps", "sampler", "scheduler"],
+          },
+        ],
+        loras: [
+          {
+            name: "add-detail",
+            baseModel: "sdxl",
+            trained_words: ["add_detail"],
+            weight: 0.8,
+            description: ja ? "描き込みを増やす" : "More detail",
+          },
+          { name: "neon-city", baseModel: "sdxl", trained_words: ["neon_glow", "night city"] },
+        ],
+      },
+    ],
+  };
+}
+
+export function imagegenJobs(locale) {
+  const iso = (secAgo) => new Date(NOW.getTime() - secAgo * 1000).toISOString();
+  const file = (n, seed) => ({ path: `generated/console/image-17579${n}-1.png`, name: `image-17579${n}-1.png`, seed });
+  const done = (n, seed) => ({
+    id: `j${n}`,
+    group: "g1",
+    state: "done",
+    label: locale === "ja" ? "cfg 振り" : "cfg sweep",
+    model: "illustrious-v2",
+    family: "sdxl",
+    seed,
+    size: "1216x832",
+    typical_ms: 31_000,
+    elapsed_ms: 29_400,
+    started_at: iso(60 * n),
+    finished_at: iso(60 * n - 30),
+    files: [file(n, seed)],
+  });
+  return {
+    paused: false,
+    queued: 27,
+    queue_max: 200,
+    trial_pending: 0,
+    trial_max: 3,
+    wake_ms: 300_000,
+    groups: [
+      {
+        id: "g1",
+        label: locale === "ja" ? "cfg 振り" : "cfg sweep",
+        state: "running",
+        done: 12,
+        failed: 0,
+        total: 40,
+        running: "j13",
+        eta_ms: 9 * 60_000,
+      },
+    ],
+    jobs: [
+      {
+        id: "t1",
+        state: "done",
+        trial: true,
+        model: "illustrious-v2",
+        family: "sdxl",
+        seed: 815_723_004,
+        size: "1216x832",
+        elapsed_ms: 11_800,
+        started_at: iso(400),
+        finished_at: iso(388),
+        warnings: [],
+        files: [{ path: "generated/console/trial/image-1757900000-1.png", name: "image-1757900000-1.png", seed: 815_723_004 }],
+      },
+      {
+        id: "j13",
+        group: "g1",
+        state: "running",
+        label: locale === "ja" ? "cfg 振り" : "cfg sweep",
+        model: "illustrious-v2",
+        family: "sdxl",
+        seed: 815_723_016,
+        size: "1216x832",
+        typical_ms: 31_000,
+        // No elapsed_ms while it runs: the Console subtracts started_at (lane A's ETag rule).
+        started_at: iso(18),
+      },
+      { id: "j14", group: "g1", state: "queued", position: 1, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
+      { id: "j15", group: "g1", state: "queued", position: 2, label: locale === "ja" ? "cfg 振り" : "cfg sweep" },
+      done(12, 815_723_015),
+      done(11, 815_723_014),
+      done(10, 815_723_013),
+    ],
+  };
+}
+
+export function imagegenProps(locale, p) {
+  return {
+    source: "sidecar",
+    model: "illustrious-v2",
+    family: "sdxl",
+    seed: 815_723_015,
+    size: "1216x832",
+    // Nested, the same shape the request carries them in.
+    params: { steps: 28, cfg: 6, sampler: "dpmpp_2m", scheduler: "karras" },
+    loras: [{ name: "add-detail", weight: 0.8 }],
+    prompt: "1girl, harbour at dusk, masterpiece, best quality",
+    negative: "worst quality, low quality, watermark, signature",
+    provider: "comfy",
+    job: "j12",
+    elapsed_ms: 29_400,
+  };
+}
+
 export function conversations(locale) {
   const ja = locale === "ja";
   const ms = (min) => NOW.getTime() - min * 60_000;

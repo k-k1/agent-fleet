@@ -207,6 +207,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "pane.map_aria": "Pane layout",
   "pane.layout": "Layout",
   "pane.open_sessions": "Open the sessions overview",
+  "pane.open_imagegen": "Open image generation",
   "pane.pane_n": "Pane {ord}",
   "pane.no_session": "No session",
   "pane.empty": "empty",
@@ -223,6 +224,8 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "pane.kind.browser_attach": "Chromium operation view",
   "pane.kind.engine_add": "Add a model",
   "pane.kind.sessions": "Sessions overview",
+  "pane.kind.gallery": "Image gallery",
+  "pane.kind.imagegen": "Image generation",
 
   // === P2 common (added) ===
   "common.approx": "~{v}",

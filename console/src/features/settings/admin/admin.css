@@ -1050,8 +1050,11 @@ a.engines-model-source:hover {
 }
 
 /* The per-model field reads as the family picker's row — same size, same rhythm — with an input
-   that can grow: a negative prompt is a sentence, not one of five family names. */
-.engines-model-negative {
+   that can grow: a negative prompt is a sentence, not one of five family names. The trigger-word
+   box shares every rule because it is the same control on the opposite rows (a checkpoint has a
+   negative prompt, an adapter has triggers) — one declaration rather than two that drift. */
+.engines-model-negative,
+.engines-model-trigger {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1059,11 +1062,13 @@ a.engines-model-source:hover {
   margin-top: 4px;
 }
 
-.engines-model-negative > span {
+.engines-model-negative > span,
+.engines-model-trigger > span {
   color: var(--dialog-muted);
 }
 
-.engines-model-negative input {
+.engines-model-negative input,
+.engines-model-trigger input {
   flex: 1;
   min-width: 0;
 }

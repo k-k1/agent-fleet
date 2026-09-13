@@ -2441,6 +2441,93 @@ describe("EngineModelsAdminView / a model's own negative prompt", () => {
   });
 });
 
+// The adapter's counterpart (ADR 0081 decision 5). Civitai publishes the words a LoRA answers
+// to, the ingest reads them and now stores them — and publishers get them wrong often enough
+// that correcting one here is the point. A LoRA loaded without its trigger changes nothing
+// visible, which is indistinguishable from an ingest that failed.
+describe("EngineModelsAdminView / an adapter's trigger words", () => {
+  const typeInto = async (el: Element, v: string) => {
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const saveButton = () =>
+    Array.from(host!.querySelectorAll(".engines-model-trigger button"))[0] as HTMLElement;
+  const loraEngine = (trained?: string[]) => ({
+    super_admin: true,
+    engines: [
+      row({
+        provider: "comfy",
+        base_models: ["sdxl"],
+        has_models: true,
+        model_rows: [
+          {
+            id: "watercolor-v2",
+            kind: "lora",
+            enabled: true,
+            base_model: "sdxl",
+            ...(trained ? { trained_words: trained } : {}),
+          },
+        ],
+      }),
+    ],
+  });
+
+  it("shows the stored words comma separated and saves them as a list", async () => {
+    api.mockResolvedValue(loraEngine(["watercolor", "wc style"]));
+    await mount();
+    await click(tab("LoRA"));
+    const box = host!.querySelector(".engines-model-trigger input") as HTMLInputElement;
+    // One box, not three: the column is a list because the upstream publishes a list and the
+    // image generation pane draws one chip per word, but a person editing them wants a line.
+    expect(box.value).toBe("watercolor, wc style");
+
+    // A trailing comma is how every such box is typed, and the empty word it leaves must not
+    // reach the catalogue — an empty chip is a trigger nobody can remove.
+    await typeInto(box, " watercolor , wc style ,");
+    apiJSON.mockResolvedValue(row({}));
+    await click(saveButton());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/watercolor-v2", "PUT", {
+      trained_words: ["watercolor", "wc style"],
+    });
+
+    // Emptying the box is a real edit: it is the only way back from a word the publisher
+    // recorded and this adapter's files do not use.
+    apiJSON.mockClear();
+    apiJSON.mockResolvedValue(row({}));
+    await typeInto(host!.querySelector(".engines-model-trigger input")!, "");
+    await click(saveButton());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/watercolor-v2", "PUT", {
+      trained_words: [],
+    });
+  });
+
+  // A checkpoint has no trigger words at all, so the box would be one an operator can fill in
+  // and nothing would ever read. Asserted on the MODEL tab, where a checkpoint is rendered —
+  // the pairing the negative-prompt test next door had to learn.
+  it("is not offered on a checkpoint row", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl"],
+          has_models: true,
+          model_rows: [
+            { id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, base_model: "sdxl" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    expect(host!.querySelector(".engines-model-id")?.textContent).toBe("sdxl-base-1.0");
+    expect(host!.querySelector(".engines-model-negative")).not.toBeNull();
+    expect(host!.querySelector(".engines-model-trigger")).toBeNull();
+  });
+});
+
 // The window and the measured VRAM of one row (ADR 0079 live run, 2026-09-13). Editing them was
 // the one correction the panel could not make, and the value it could not correct is the one
 // that kills a GPU box four minutes into a cold start somebody paid for.

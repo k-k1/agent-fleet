@@ -165,6 +165,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // read as "the" negative prompt.
   "admin.engines_model_negative": "never draw",
   "admin.engines_model_negative_placeholder": "what this checkpoint should keep out",
+  // ADR 0081 decision 5. The adapter's counterpart to the checkpoint's "never draw" above: a
+  // LoRA loaded without its trigger changes nothing visible, which reads as a failed ingest.
+  "admin.engines_model_trigger": "trigger words",
+  "admin.engines_model_trigger_placeholder": "the words this adapter answers to, comma separated",
   "admin.engines_negative_label": "excluded from every image",
   "admin.engines_negative_placeholder": "keywords, separated by commas",
   "admin.engines_negative_save": "Save",

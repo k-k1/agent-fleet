@@ -100,6 +100,7 @@ export const repos = {
   "proj.rel_path": "相対パス",
   "proj.copy_rel_path": "相対パスをコピー",
   "proj.open_reader": "朗読で開く",
+  "proj.open_gallery": "ギャラリーで開く",
   "proj.download": "ダウンロード",
   "proj.translate": "アシスタントで翻訳",
   "proj.summarize": "アシスタントで要約",

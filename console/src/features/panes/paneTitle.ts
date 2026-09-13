@@ -24,6 +24,8 @@ export const KIND_JA: Partial<Record<PaneKind, MsgKey>> = {
   sharedSession: "share.shared_sessions",
   sessions: "pane.kind.sessions",
   engineAdd: "pane.kind.engine_add",
+  gallery: "pane.kind.gallery",
+  imagegen: "pane.kind.imagegen",
 };
 
 // Resolve a non-session pane kind to its localized label (falls back to the raw kind).
@@ -55,6 +57,10 @@ export function chatLabel(title: string | undefined): string {
 export interface PaneTitleMeta {
   shared?: SharedSession;
   chatTitle?: string;
+  /** The session a generated-images gallery belongs to (content carries its NAME; the
+   *  title wants the user-facing one). Absent — an unknown or stopped session — falls
+   *  back to the folder name rather than showing a slug. */
+  gallerySession?: Session;
 }
 
 /** Title for a pane: the bound session (name · agent) for terminal/mirror
@@ -92,5 +98,13 @@ export function paneTitle(pane: Pane, session: Session | null, meta: PaneTitleMe
       return jaKind("sessions");
     case "engineAdd":
       return jaKind("engineAdd");
+    case "imagegen":
+      return jaKind("imagegen");
+    case "gallery":
+      // A generated-images folder is named by a session UUID, so its basename says
+      // nothing; name the session instead when the caller could resolve it.
+      return meta.gallerySession
+        ? tI18n("gallery.title_session", { name: displayName(meta.gallerySession) })
+        : basename(c.galleryPath) || jaKind("gallery");
   }
 }

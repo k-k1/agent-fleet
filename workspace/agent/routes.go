@@ -115,11 +115,22 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/driver", sessionx.HandleSessionDriver)
 	mux.HandleFunc("POST /sessions/{name}/paste-image", sessionx.HandlePasteImage)
 	mux.HandleFunc("GET /sessions/{name}/pasted/{file}", sessionx.HandlePastedImage)
-	// Image generation (ADR 0069). Called only by the session-side af MCP server over the
-	// loopback, never by the Console — hence deliberately absent from the CP's agent-proxy
-	// allowlist. /generate blocks for the whole generation (P0 is synchronous).
+	// Image generation (ADR 0069). /generate is called only by the session-side af MCP server
+	// over the loopback and blocks for the whole generation, which is why it is deliberately
+	// absent from the CP's agent-proxy allowlist: a browser call that sat through a cold start
+	// would be cut at the ingress's 60 seconds.
 	mux.HandleFunc("GET /imagegen/status", imagegen.HandleStatus)
 	mux.HandleFunc("POST /imagegen/generate", imagegen.HandleGenerate)
+	// The job queue the Console's image-generation pane drives (ADR 0081). These six ARE proxied
+	// — enqueue and poll is the shape that survives the relay — and /status is widened into the
+	// member-facing catalogue the pane's form reads (decision 5).
+	mux.HandleFunc("POST /imagegen/jobs", imagegen.HandleJobs)
+	mux.HandleFunc("GET /imagegen/jobs", imagegen.HandleJobs)
+	mux.HandleFunc("DELETE /imagegen/jobs/{id}", imagegen.HandleJobCancel)
+	mux.HandleFunc("POST /imagegen/groups/{id}", imagegen.HandleGroupOp)
+	mux.HandleFunc("POST /imagegen/queue", imagegen.HandleQueueOp)
+	// What a picture was made from: the sidecar, else the PNG's own prompt chunk (decision 3).
+	mux.HandleFunc("GET /imagegen/props", imagegen.HandleProps)
 	// Memo image attachments (docs/log/21 image attachments) — membership-scoped, so keyed to the
 	// container rather than a session (memo_paste.go). CP proxies /api/memos/* here.
 	mux.HandleFunc("POST /memos/paste-image", handleMemoPasteImage)

@@ -57,6 +57,10 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		// handoff is the one nobody reopens.
 		HandoffPending: handoffPending(m.Name),
 	}
+	// What this session has generated (ADR 0080 decision 8). Read for stopped rows too: the
+	// images outlive the session by up to 30 days and the gallery reads them through the file
+	// API, which only needs the Agent to be up.
+	s.GeneratedImages, s.GeneratedImagesPath = generatedImages(m)
 	// A claude whose limit-aborted turn has been cleaned up (the menu dismisses itself, and a
 	// per-model limit never raises one) leaves its pane back at the waiting prompt, so
 	// everything up to here reads idle = waiting for input. That is indistinguishable from a

@@ -111,6 +111,125 @@ the original from **Download** in the info bar.
 - When it cannot be shown, **you are told why**: password-protected, corrupt, **pages that are
   images only** (reading the text would need OCR, which is not done here), or too large (over 40 MB).
 
+## Image gallery
+
+A pane that lays the images in a folder out as cards, so you can compare them without opening one
+at a time — and see at a glance what a folder actually holds.
+
+**Five ways in**, each of them one item in a menu that is already there:
+
+- **Right-click a folder** in the file tree → "Open in gallery"
+- **Right-click an image file** in the file tree → "Open in gallery" (its parent folder opens with
+  that image enlarged; the item does not appear for non-image files)
+- **"Gallery"** in the image viewer's header
+- **"Open folder"** in the enlarged view of a shared-file card in the mirror
+- **"Generated images (N)"** in a session's context menu (below)
+
+A plain click uses the current pane; Ctrl/⌘-click and middle-click open another one. A phone has no
+"beside", so it opens in place.
+
+**What you see, and what you can do**
+
+- **Sort** — "Newest" or "By name". The choice is remembered per pane, so moving between tabs does
+  not reset it. When the workspace's Agent is old enough not to send modification times, the
+  gallery falls back to name order and shows no relative time ("3 minutes ago") either.
+- **Count and size** — the header carries the totals for the whole folder. A big folder stops at
+  **300 images**, with "Show more" for the rest (each card is one thumbnail request).
+- **Cards** — click the card to **enlarge** (← / → move through the folder, and "3 / 12" tells you
+  where you are); the button in the corner **opens it in the file pane**. Just looking never costs
+  you a pane.
+- **Refresh** — on open, on returning to the tab, and every 20 seconds while a session is running.
+  New arrivals get the same highlight as the file tree, so you see a generation land. "Refresh" in
+  the header re-reads at any time.
+- Cards show a **downscaled copy**; the original bytes are fetched only when you enlarge.
+
+**Images a session generated**
+
+Images made with `generate_image` stay in a per-session folder for 30 days. That folder is named
+after the session's internal id, so the file tree is no way in. **"Generated images (N)" in the
+session's context menu** is the way, and it appears **only for sessions that have generated
+something** (N is how many). It is absent while the workspace is stopped — reading the images is
+the Agent's job, and the Agent lives in the workspace.
+
+The gallery lists one folder level; it does not descend into subfolders.
+
+## Image generation
+
+A pane that makes pictures on your organisation's own ComfyUI **without an agent in the loop**.
+Asking a session for a picture is right for "put an illustration in this document"; this is for
+"forty variations of one prompt at three CFG values", where every round trip through a model
+would cost a turn and the knobs that matter would be out of reach.
+
+**Two ways in:** the workspace action bar's **Images**, and the leader key **`g i`**. It is one
+pane per workspace — opening it again focuses the one you have.
+
+**Before you generate**
+
+- **Model** — the checkpoints your administrator has enabled. A dot marks one that is already
+  loaded on the engine; anything else means the first picture waits for the engine to start.
+  The header says which of the four states you are in: **ready**, **the engine is asleep**
+  (with roughly how long the first picture will take), **the engine is starting**, or **no
+  engine available**.
+- **The family card** — under the model, one line per thing that family expects: whether it
+  wants a tag list or sentences, the prefix that dialect usually opens with (offered as a chip
+  — nothing is ever written into your prompt on its own), whether a negative prompt reaches it
+  at all, and the step and cfg ranges worth staying inside.
+- **Fields a family does not read are disabled, with the reason on them.** `flux1` and
+  `flux2-klein` ignore cfg; the three distilled families ignore the negative prompt. That comes
+  from the workspace, not from a table in the browser, so it cannot disagree with what actually
+  runs.
+- **The administrator's negative** shows as a chip you cannot remove, next to the deployment-wide
+  one. It is applied on top of yours rather than mixed into your text.
+- **LoRAs** — only the ones that match the model's family are listed. Ticking one adds its
+  **trigger words** as chips over the prompt; unticking it removes those chips and nothing else.
+  A missing trigger is the usual reason a LoRA "does nothing". The weight defaults to 1.
+
+**Trial run, then the batch**
+
+- **Trial run (`Ctrl+Enter`)** puts **one** picture at the **head** of the queue, at fewer steps,
+  into `generated/console/trial/`. It appears in "Latest trial" beside the form with its seed and
+  how long it took. **"Use this seed"** pins it, which is the whole point of trying before a
+  sweep. Tick **Full steps** when the trial is meant to be the picture. Trial pictures are swept
+  after 7 days.
+- **Enqueue N (`Ctrl+Shift+Enter`)** puts N jobs — one picture each — at the tail as one group.
+  The seed follows your choice: **random each time**, **fixed** (the knob for "same picture, vary
+  the cfg"), or a **sequence**.
+- `batch_size` under **Advanced** is a different thing: pictures sampled together inside one job.
+  Faster on a card with headroom, an out-of-memory after a five-minute wait on one without, and
+  no per-picture cancel. It stays at 1 unless you know the card.
+
+**While it runs**
+
+A group is one row: "12 / 40", a bar (done, failed, and the picture in flight filling by time
+against the usual duration — it stops short of the end rather than claiming a completion nobody
+has seen), and roughly how long is left. **Pause**, **resume**, **skip the current picture** and
+**abort** all act on the group; the ✕ on a line cancels that one picture. Pausing everything
+still lets trials through — that is what pausing is for. A batch left paused long enough lets the
+engine go to sleep, and the row says so.
+
+The pane polls only while something is unfinished, and stops while the tab is in the background.
+
+**Where the pictures go, and getting the numbers back**
+
+The default folder is `generated/console/`, which the gallery lists like any other and which is
+**never swept** — you pressed the button for each of these. **Output folder** under Advanced puts
+a run somewhere of your own naming. Every picture is written with a small record beside it, so
+enlarging one anywhere in the Console (the studio, the gallery, a shared file in the mirror) and
+pressing **Properties** shows the model, seed, size, steps, cfg, sampler, scheduler, LoRAs and
+both prompts, each row with a copy button, plus **copy all as JSON** and **open in image
+generation**, which loads the fields back into the form. Pictures made by an agent before this
+existed can still be read: the graph ComfyUI embeds in the PNG carries the same numbers. Pictures
+from the vendor routes (codex, agy) carry nothing, and the panel says that rather than showing
+empty rows.
+
+**Having the prompt written for you**
+
+**"Write the prompt for me"** asks your assistant **once**, with the family's dialect, the model's
+description and your LoRAs' trigger words already in the question. The answer comes back as a
+**proposal**: use it, use the prompt only, or discard it. Nothing is applied until you press, and
+no model is called unless you press the button. A member who has never signed in to any CLI has
+no assistant to run, and everything above still works without it.
+
 ## Editing a file
 
 Switch to editing with **View / Edit / Split** at the top of the viewer and you can fix the file

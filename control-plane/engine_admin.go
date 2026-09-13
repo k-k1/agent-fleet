@@ -871,6 +871,13 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// The empty string is a REAL value — "stop declaring one, use the Agent's own default" —
 		// which is why it is a pointer like the rest rather than "empty means unchanged".
 		NegativePrompt *string `json:"negative_prompt"`
+		// TrainedWords replaces the words an adapter answers to (ADR 0081 decision 5). Ingest
+		// writes what Civitai published, and this is how a wrong or missing one is corrected —
+		// plenty of LoRAs publish none, and plenty publish a word their files do not use.
+		//
+		// An empty LIST is a real value ("this adapter has no trigger"), which is why it is a
+		// pointer to a slice: `null` is "the body said nothing" and `[]` is "there are none".
+		TrainedWords *[]string `json:"trained_words"`
 		// Params replaces the row's generation defaults, and `{}` clears them — which is the way
 		// back to the family's own recipe once a number has been declared. Same reasoning as
 		// BaseModel: it is a field of a row that is otherwise fine, and re-registering the whole
@@ -962,6 +969,11 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// The VALUE is deliberately not in the audit line: it is free text an administrator can
 		// make as long as they like, and an audit trail is not the place to carry a paragraph.
 		action = "negative_prompt"
+	case b.TrainedWords != nil:
+		// Blank entries are dropped rather than stored: a comma-separated box answers a trailing
+		// comma with an empty word, and an empty chip in the pane is a trigger nobody can remove.
+		found, err = a.mgr.store.SetEngineModelTrainedWords(ctx, key, id, engineTrimStrings(*b.TrainedWords))
+		action = "trained_words"
 	case b.Params != nil:
 		// Cleaned, not refused: engineParamsClean drops what the provider could not run and
 		// keeps the rest, and a set that cleans down to nothing clears the row's declaration.
@@ -1034,8 +1046,8 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// An empty body must not be read as "switch it off", for the same reason the mode
 		// route refuses one.
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
-			"enabled, selected, default, base_model, negative_prompt, params, context_tokens," +
-				" max_output_tokens or vram_mib is required"})
+			"enabled, selected, default, base_model, negative_prompt, trained_words, params," +
+				" context_tokens, max_output_tokens or vram_mib is required"})
 		return
 	}
 	if err != nil {
@@ -1259,6 +1271,10 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		// Free text on purpose: nothing parses it (the machine-readable half was consumed when
 		// the job was created) and inventing a shape here would make the round trip lossy.
 		Source string `json:"source"`
+		// The words an adapter answers to, accepted here for the same reason `source` is: the row
+		// ANSWERS them, and a field the answer carries but this route drops is silently erased by
+		// the one operation that exists to rebuild a forgotten row.
+		TrainedWords []string `json:"trained_words"`
 		// The generation defaults, in the same shape the row answers them. A pointer so that
 		// "the body said nothing" and "the body said all zeros" stay different bodies.
 		Params *store.EngineParams `json:"params"`
@@ -1279,8 +1295,9 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		License: strings.TrimSpace(b.License), LicenseName: strings.TrimSpace(b.LicenseName),
 		LicenseURL: strings.TrimSpace(b.LicenseURL),
 		Precision:  strings.TrimSpace(b.Precision), BaseModel: strings.TrimSpace(b.BaseModel),
-		Source: strings.TrimSpace(b.Source),
-		Params: engineParamsClean(b.Params),
+		Source:       strings.TrimSpace(b.Source),
+		TrainedWords: engineTrimStrings(b.TrainedWords),
+		Params:       engineParamsClean(b.Params),
 	}
 	// 🔴 What is NOT copied across with it: the licence ACCEPTANCE. `license_accepted_by` and
 	// its tenant and timestamp are the record of a human act (ADR 0072 decision 10), and a row

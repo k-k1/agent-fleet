@@ -158,6 +158,10 @@ export const admin = {
   // 要求・配備——そしてそれらは足し合わされる。どのラベルも「唯一のネガティブ」と読めてはいけない。
   "admin.engines_model_negative": "描かせないもの",
   "admin.engines_model_negative_placeholder": "このチェックポイントで避けたいもの",
+  // ADR 0081 決定 5。チェックポイントの「描かせないもの」と対になる、アダプタ側の 1 行。
+  // 起動語の無い LoRA は読み込んでも絵が変わらず、取り込みの失敗と見分けが付かない。
+  "admin.engines_model_trigger": "起動語",
+  "admin.engines_model_trigger_placeholder": "このアダプタが反応する語をカンマ区切りで",
   "admin.engines_negative_label": "全画像から除外する語",
   "admin.engines_negative_placeholder": "キーワードをカンマ区切りで",
   "admin.engines_negative_save": "保存",

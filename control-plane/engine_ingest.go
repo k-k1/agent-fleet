@@ -965,6 +965,11 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		// 2026-09-09: two finished jobs for a model that had been forgotten and purged). The
 		// question "which vendor is this model" has to be answerable from the model.
 		Source: req.Resolved.Source,
+		// The words this adapter answers to, kept rather than shown once and dropped (ADR 0081
+		// decision 5). The resolve has read them all along and the wizard displayed them — with
+		// no column they died with the form, and the adapter that reached the box changed
+		// nothing visible.
+		TrainedWords: req.Resolved.TrainedWords,
 		// What a KV-cache estimate is computed from, read once here and never again: the file
 		// is pinned by sha256, so its geometry cannot change under the row (ADR 0074 open
 		// question 7).

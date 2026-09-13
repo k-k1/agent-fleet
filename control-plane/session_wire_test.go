@@ -46,7 +46,8 @@ const agentSessionsPayload = `{"sessions":[{
 	"context":{"read":1000,"create":200,"fresh":30,"model":"claude-fable-5"},
 	"branch":"main","currentBranch":"dev","branchDrift":true,"worktree":true,
 	"exitReason":"oom","exitCode":137,"exitSignal":9,"handoffPending":true,
-	"originSession":"sparent","lastSay":"実装を終えて試験を回しています","tokenSpends":[1200,800,4300]
+	"originSession":"sparent","lastSay":"実装を終えて試験を回しています","tokenSpends":[1200,800,4300],
+	"generatedImages":3,"generatedImagesPath":".cache/agent-fleet/generated/2f1c0a7e-0000-5000-8000-000000000001"
 }]}`
 
 // TestAgentSessionsRelayKeepsFields pins that the CP's decode→re-emit round trip drops none
@@ -130,6 +131,13 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		// nothing else in the stack says so: the Console declares it optional, and its own
 		// tests build Session objects by hand, on the far side of this relay.
 		"lastSay": "実装を終えて試験を回しています",
+		// The session's generated images: how many, and the folder the gallery opens
+		// (ADR 0080 decision 8). Dropped here, the "Generated images (N)" entry never appears
+		// on any session — not a degraded display but a missing feature, and silent, since the
+		// Console declares both optional and builds its Session objects on the far side of
+		// this relay. The count rides as a JSON number, hence float64 after the round trip.
+		"generatedImages":     float64(3),
+		"generatedImagesPath": ".cache/agent-fleet/generated/2f1c0a7e-0000-5000-8000-000000000001",
 	}
 	for k, v := range want {
 		if got[k] != v {

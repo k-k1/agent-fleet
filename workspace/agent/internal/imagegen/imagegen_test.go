@@ -245,6 +245,28 @@ func TestRequestWarnings(t *testing.T) {
 	if got := requestWarnings(Request{Count: 1, Size: "1254x1254", Seed: &zero}, res, none); len(got) != 1 {
 		t.Fatalf("warnings = %v, want seed 0 reported too", got)
 	}
+	// A strength dropped by a route that edits at one fixed amount: the picture is a good edit
+	// and differs from the request only in how much of the input survived, which nobody can see
+	// without the version they asked for beside it.
+	strength := 0.25
+	editReq := Request{Op: OpEdit, Count: 1, Size: "1254x1254", Strength: &strength}
+	if got := requestWarnings(editReq, res, none); len(got) != 1 ||
+		!strings.Contains(got[0], "strength=0.25 requested") {
+		t.Fatalf("warnings = %v, want the strength one", got)
+	}
+	if got := requestWarnings(editReq, res, Caps{Strength: true}); len(got) != 0 {
+		t.Fatalf("warnings = %v, want none from a route that varies it", got)
+	}
+	// The op matters as much as the route: inpaint repaints its masked area in full even where
+	// the capability is true, so a strength sent with one has to be reported as ignored rather
+	// than pass silently for having reached a capable provider.
+	for _, op := range []Op{OpInpaint, OpGenerate} {
+		req := Request{Op: op, Count: 1, Size: "1254x1254", Strength: &strength}
+		if got := requestWarnings(req, res, Caps{Strength: true}); len(got) != 1 ||
+			!strings.Contains(got[0], "only op=edit") {
+			t.Fatalf("op=%s: warnings = %v, want the wrong-op one", op, got)
+		}
+	}
 }
 
 // --- the codex route ----------------------------------------------------------------------
@@ -456,7 +478,7 @@ func TestSweepGeneratedDropsOnlyExpired(t *testing.T) {
 	if err := os.Chtimes(old, past, past); err != nil {
 		t.Fatal(err)
 	}
-	sweepGeneratedNow(root, time.Now().Add(-generatedTTL))
+	sweepGeneratedNow(root, time.Now().Add(-generatedTTL), time.Now().Add(-trialTTL))
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatal("an expired image survived the sweep")
 	}
@@ -467,7 +489,7 @@ func TestSweepGeneratedDropsOnlyExpired(t *testing.T) {
 	if err := os.Remove(fresh); err != nil {
 		t.Fatal(err)
 	}
-	sweepGeneratedNow(root, time.Now().Add(-generatedTTL))
+	sweepGeneratedNow(root, time.Now().Add(-generatedTTL), time.Now().Add(-trialTTL))
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatal("an empty session directory was left behind")
 	}

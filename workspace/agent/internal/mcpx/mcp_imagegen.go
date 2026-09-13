@@ -58,6 +58,9 @@ type mcpImageGenProvider struct {
 	// Negative is whether any model on this route samples with a negative branch (ADR 0072
 	// follow-up, negative prompts).
 	Negative bool `json:"negative,omitempty"`
+	// Strength is whether this route lets the caller say how much of the input picture an edit
+	// changes (ADR 0069 follow-up, strength).
+	Strength bool `json:"strength,omitempty"`
 }
 
 // mcpImageGenModel is one checkpoint `model` may name.
@@ -119,6 +122,10 @@ type imageGenArgs struct {
 	// negativePrompt is what to keep out of the picture. Forwarded as typed: what it is added to
 	// (the catalogue row's own, the deployment's list) is the Agent's business, not this layer's.
 	negativePrompt string
+	// strength is how much of the input picture an edit changes. A POINTER so that 0 reaches the
+	// Agent as the request it is and gets refused by value there, rather than being read here as
+	// "not given" and silently becoming the default.
+	strength *float64
 }
 
 // imageGenLoraArg is one entry of the tool's `loras` argument.
@@ -162,6 +169,7 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 		"size": a.size, "aspectRatio": a.aspectRatio, "background": a.background,
 		"count": a.count, "inputs": a.inputs, "mask": a.mask, "model": a.model,
 		"loras": a.loras, "seed": a.seed, "negativePrompt": a.negativePrompt,
+		"strength": a.strength,
 	})
 
 	// The heartbeat runs for as long as the Agent is working. Without it opencode cuts the
@@ -183,6 +191,11 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 			Bytes  int64  `json:"bytes"`
 			Width  int    `json:"width"`
 			Height int    `json:"height"`
+			// Seed is the sampler noise THIS picture came from (ADR 0081 decision 3), on the one
+			// route that has one. It is relayed because "it was random and I cannot get it back"
+			// is the complaint every image tool collects: without it, an agent that made a good
+			// picture cannot make a variation of that picture, only of that prompt.
+			Seed *int64 `json:"seed"`
 		} `json:"files"`
 		Provider    string   `json:"provider"`
 		Model       string   `json:"model"`

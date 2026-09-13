@@ -7,6 +7,7 @@
 //
 //   node console/scripts/shots/server.mjs [--port 8765] [--locale ja]
 import http from "node:http";
+import zlib from "node:zlib";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -155,6 +156,10 @@ const exact = {
     ok: true, serverName: "example-mcp", serverVersion: "1.2.0", toolCount: 3,
     tools: ["search", "fetch_page", "list_spaces"], revision: "2026-07-28", elapsedMs: 214,
   }),
+  // Image generation (ADR 0081): the widened status and a queue mid-run. Without these the
+  // studio pane renders as "no engine available", which shows none of what it is for.
+  "/api/imagegen/status": () => fx.imagegenStatus(LOCALE),
+  "/api/imagegen/jobs": () => fx.imagegenJobs(LOCALE),
   "/api/browser/pages": () => ({ pages: [] }),
   "/api/tts/speakers": () => ({ speakers: [] }),
   "/api/internal-git/repos": () => ({ repos: [] }),
@@ -228,6 +233,7 @@ const re = [
   [/^\/api\/fs\/list$/, (m, q) => fx.fsList(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/tree$/, (m, q) => fx.fsTree(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/file$/, (m, q) => fx.fsFile(LOCALE, q.get("path") || "")],
+  [/^\/api\/imagegen\/props$/, (m, q) => fx.imagegenProps(LOCALE, q.get("path") || "")],
   // Egress allowlist verdicts for the MCP tab (docs/log/48 §9). This deployment HAS the
   // proxy wired and is still log-only, and the corp wiki host is not on the list — the
   // combination that renders the "works today, blocked once enforced" warning.
@@ -243,6 +249,64 @@ const re = [
     }),
   ],
 ];
+
+// A generated PNG for the thumbnail route. zlib is in Node, so this is a whole encoder in
+// twenty lines: one IHDR, one IDAT of raw scanlines, one IEND. The hue comes from the path,
+// so two cards differ and one card is stable between runs.
+function swatchPNG(key) {
+  const W = 256;
+  const H = 256;
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+  const base = [64 + (Math.abs(h) % 120), 64 + (Math.abs(h >> 8) % 120), 64 + (Math.abs(h >> 16) % 120)];
+  const raw = Buffer.alloc(H * (1 + W * 3));
+  for (let y = 0; y < H; y++) {
+    const row = y * (1 + W * 3);
+    raw[row] = 0; // filter: none
+    for (let x = 0; x < W; x++) {
+      const o = row + 1 + x * 3;
+      const t = (x + y) / (W + H);
+      raw[o] = Math.round(base[0] * (0.5 + t * 0.6));
+      raw[o + 1] = Math.round(base[1] * (0.5 + t * 0.6));
+      raw[o + 2] = Math.round(base[2] * (0.5 + t * 0.6));
+    }
+  }
+  const chunk = (type, body) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(body.length);
+    const td = Buffer.concat([Buffer.from(type, "ascii"), body]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(td) >>> 0);
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(W, 0);
+  ihdr.writeUInt32BE(H, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // colour type: truecolour
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+const CRC_TABLE = (() => {
+  const t = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c;
+  }
+  return t;
+})();
+
+function crc32(buf) {
+  let c = -1;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return c ^ -1;
+}
 
 const seenUnknown = new Set();
 
@@ -268,6 +332,15 @@ const server = http.createServer((req, res) => {
     // Not implemented — a 404 makes the Console fall back to its REST pollers,
     // which is the path this harness feeds.
     res.writeHead(404).end();
+    return;
+  }
+  // Thumbnails. The gallery and the image-generation studio draw `api/fs/download?thumb=`
+  // per card, and a JSON body there renders as a broken image in every one of them — so the
+  // stub answers a generated PNG whose colour is derived from the path (different cards look
+  // different, and the same card is stable between runs).
+  if (p === "/api/fs/download") {
+    res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" });
+    res.end(swatchPNG(url.searchParams.get("path") || ""));
     return;
   }
   if (p.startsWith("/api/")) {

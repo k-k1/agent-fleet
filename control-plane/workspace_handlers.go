@@ -687,6 +687,16 @@ type sessionWire struct {
 	// unaffected — the Agent is authoritative whenever the Workspace runs and reports them
 	// with their lineage intact.
 	OriginSession string `json:"originSession,omitempty"`
+	// GeneratedImages / GeneratedImagesPath: how many images this session has generated and
+	// the folder holding them, browse-root relative (ADR 0080 decision 8). They are what the
+	// Console's "Generated images (N)" entry turns on, so a gap here does not degrade the
+	// display — the entry never appears at all, on every session, for ever. Nothing else in
+	// the stack would say so: the Console declares both optional and its own tests build
+	// Session objects by hand, on the far side of this relay. No DB-mirror column: the gallery
+	// reads the folder through the Agent's file API, so an entry offered while the Workspace
+	// is stopped could only open a pane that cannot load.
+	GeneratedImages     int    `json:"generatedImages,omitempty"`
+	GeneratedImagesPath string `json:"generatedImagesPath,omitempty"`
 }
 
 func fmtStarted(createdAt string) string {
