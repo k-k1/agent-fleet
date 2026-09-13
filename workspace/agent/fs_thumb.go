@@ -71,7 +71,7 @@ func thumbEdge(raw string) int {
 }
 
 // thumbDecodable reports whether we have a decoder for this extension. Deliberately
-// narrower than imageContentType: webp/avif/bmp/ico have no decoder in the standard
+// narrower than filemeta.ImageContentType: webp/avif/bmp/ico have no decoder in the standard
 // library, and svg is text that the browser scales for free.
 func thumbDecodable(name string) bool {
 	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(name), ".")) {

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/filemeta"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -324,7 +325,7 @@ func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 		// the fallback test serves the whole file either way.)
 	}
 	ct := "application/octet-stream"
-	if it := imageContentType(name); it != "" {
+	if it := filemeta.ImageContentType(name); it != "" {
 		ct = it
 	}
 	w.Header().Set("Content-Type", ct)
