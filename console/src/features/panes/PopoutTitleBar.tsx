@@ -33,7 +33,9 @@ export function PopoutTitleBar() {
   const chatTitles = useChatTitles();
   const conversationId = pane && pane.content.kind === "chat" ? pane.content.conversationId : null;
   const chatTitle = conversationId ? chatTitles.get(conversationId) : undefined;
-  const title = pane ? paneTitle(pane, session, { shared, chatTitle }) : "";
+  const gallerySessionName = pane && pane.content.kind === "gallery" ? pane.content.gallerySession : null;
+  const gallerySession = gallerySessionName ? sessions.find((s) => s.name === gallerySessionName) : undefined;
+  const title = pane ? paneTitle(pane, session, { shared, chatTitle, gallerySession }) : "";
   const st = session ? stateInfo(session) : null;
 
   // The tab's browser title mirrors the pane so the tab strip stays readable

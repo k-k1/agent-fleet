@@ -1138,7 +1138,7 @@ function FileCard({
   onOpen: (path: string) => void;
   fileURL?: (path: string) => string;
   thumbURL?: (path: string) => string;
-  onZoom?: (url: string) => void;
+  onZoom?: (url: string, path?: string) => void;
 }) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const full = fileURL && imageFormat(path) ? fileURL(path) : "";
@@ -1147,7 +1147,10 @@ function FileCard({
   // every one of them before the panel could paint.
   const src = full && thumbURL ? thumbURL(path) : full;
   const showThumb = !!src && !thumbFailed;
-  const zoom = showThumb && onZoom ? () => onZoom(full) : null;
+  // The path travels with the URL so the lightbox can offer this file's folder. A third
+  // button on the card is not an option: the body enlarges and the corner opens the pane,
+  // and a third target would make that split unreadable (ADR 0080 decision 5).
+  const zoom = showThumb && onZoom ? () => onZoom(full, path) : null;
   const body = (
     <>
       {showThumb && <FileThumb path={path} src={src} onFail={() => setThumbFailed(true)} />}
@@ -1203,7 +1206,7 @@ export function UserFileBlock({
   onOpen: (path: string) => void;
   fileURL?: (path: string) => string;
   thumbURL?: (path: string) => string;
-  onZoom?: (url: string) => void;
+  onZoom?: (url: string, path?: string) => void;
 }) {
   const list = files || [];
   if (list.length === 0) return null;

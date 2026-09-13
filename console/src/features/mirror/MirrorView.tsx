@@ -29,6 +29,8 @@ import { makeAttachment, useAttachDraft } from "../../lib/attachDraft.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
+import { dirName } from "../../lib/filemeta.ts";
+import { openGallery } from "../gallery/open.ts";
 import { prettyModel } from "../../lib/modelName.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
@@ -40,7 +42,7 @@ import { useSkillPicker } from "./parts/useSkillPicker.ts";
 import { useReplySuggest } from "./parts/useReplySuggest.ts";
 import { JumpPills } from "./parts/JumpPills.tsx";
 import { AttachChips } from "./parts/AttachChips.tsx";
-import { ImageLightbox } from "./parts/ImageLightbox.tsx";
+import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
 import { HistoryNav, HistorySearchButton } from "./parts/HistoryNav.tsx";
 import { HistorySearchBar } from "./parts/HistorySearchBar.tsx";
 import { useHistorySearch } from "./parts/useHistorySearch.ts";
@@ -294,7 +296,10 @@ export function MirrorView({
   const [dragging, setDragging] = useState(false); // an OS file drag is hovering the pane
   const dragDepth = useRef(0); // dragenter/leave nesting counter (leave fires per child)
   const filePickRef = useRef<HTMLInputElement>(null); // the attach button's hidden picker
-  const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image (blob URL) or null
+  // The enlarged image: its URL (a blob for a pasted image, the download URL for a shared
+  // file) plus, when the image is a file, the path it came from — that is what lets the
+  // lightbox bar offer its folder's gallery (ADR 0080 decision 7).
+  const [lightbox, setLightbox] = useState<{ src: string; path?: string } | null>(null);
   // Close the enlarged-image lightbox with the device/browser Back button or a back gesture
   // (phones foremost): opening it pushes a throwaway history entry, so Back pops that instead
   // of navigating away from the Console; a tap on the backdrop consumes the entry on cleanup.
@@ -1591,7 +1596,7 @@ export function MirrorView({
     // 512 is twice the card's 240 px cap, so it still looks right on a HiDPI screen.
     thumbURL: (p: string) => downloadURL(p, 512),
     openFile,
-    openImage: setLightbox,
+    openImage: (url, path) => setLightbox({ src: url, path }),
     openDiff,
     openPlan,
     sendPlanComments: (plan: string) => void sendPlanComments(plan),
@@ -1615,7 +1620,7 @@ export function MirrorView({
       fileURL: (p) => actsRef.current.fileURL!(p),
       thumbURL: (p) => actsRef.current.thumbURL!(p),
       openFile: (p, line, column) => actsRef.current.openFile!(p, line, column),
-      openImage: (url) => actsRef.current.openImage!(url),
+      openImage: (url, path) => actsRef.current.openImage!(url, path),
       openDiff: (p) => actsRef.current.openDiff!(p),
       openPlan: (plan) => actsRef.current.openPlan!(plan),
       session,
@@ -2154,7 +2159,25 @@ export function MirrorView({
           />
         </div>
       )}
-      {lightbox && createPortal(<ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />, document.body)}
+      {lightbox &&
+        createPortal(
+          <ImageLightbox
+            src={lightbox.src}
+            onClose={() => setLightbox(null)}
+            // Only a shared FILE has a folder; a pasted image has no path and so gets no
+            // item. Closing first keeps the overlay from surviving the pane change.
+            onOpenFolder={
+              lightbox.path
+                ? () => {
+                    const path = lightbox.path!;
+                    setLightbox(null);
+                    openGallery(dirName(path), { focus: path });
+                  }
+                : undefined
+            }
+          />,
+          document.body,
+        )}
       {managedSettingsOpen && (
         <ManagedSettingsModal
           session={session}

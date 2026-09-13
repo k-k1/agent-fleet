@@ -129,6 +129,8 @@ export const viewer: Record<keyof typeof jaViewer, string> = {
   "view.image_display_mode": "Image display mode",
   "view.open_reader_tip": "Open in reader view (sequential read-aloud + vertical reading)",
   "view.read_aloud": "Read aloud",
+  "view.open_gallery_tip": "Open the gallery of this folder",
+  "view.gallery": "Gallery",
   "view.download": "Download",
   "view.binary": "binary",
   "view.send": "Send",

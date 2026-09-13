@@ -41,6 +41,7 @@ import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
 import { SessionsOverview } from "../overview/SessionsOverview.tsx";
+import { GalleryView } from "../gallery/GalleryView.tsx";
 import { SharedSessionView } from "../sharing/SharedSessionView.tsx";
 import { useSharedSessionsStore } from "../sharing/store.ts";
 import { canPopout, openPanePopout } from "./popout.ts";
@@ -310,7 +311,11 @@ function PopulatedPane({
       view.content.kind === "chat" && view.content.conversationId
         ? chatTitles.get(view.content.conversationId)
         : undefined;
-    return paneTitle(view, session, { shared, chatTitle });
+    const gallerySession =
+      view.content.kind === "gallery" && view.content.gallerySession
+        ? sessionByName.get(view.content.gallerySession)
+        : undefined;
+    return paneTitle(view, session, { shared, chatTitle, gallerySession });
   };
   const tabState = (view: PaneView) => {
     if (view.content.kind !== "terminal" || !view.session) return null;
@@ -737,6 +742,16 @@ function PopulatedPane({
       )}
       {pane.content.kind === "sessions" && (
         <SessionsOverview paneId={pane.id} showStopped={pane.content.showStopped} headerActions={tabHeaderActions} />
+      )}
+      {pane.content.kind === "gallery" && (
+        <GalleryView
+          paneId={pane.id}
+          path={pane.content.galleryPath}
+          sort={pane.content.sort}
+          focus={pane.content.galleryFocus}
+          sessionName={pane.content.gallerySession}
+          headerActions={tabHeaderActions}
+        />
       )}
     </div>
   );

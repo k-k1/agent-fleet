@@ -127,6 +127,8 @@ export const viewer = {
   "view.image_display_mode": "画像表示モード",
   "view.open_reader_tip": "朗読ビューで開く（順次読み上げ＋縦書き閲覧）",
   "view.read_aloud": "朗読",
+  "view.open_gallery_tip": "同じフォルダのギャラリーを開く",
+  "view.gallery": "ギャラリー",
   "view.download": "ダウンロード",
   "view.binary": "バイナリ",
   "view.send": "送る",
