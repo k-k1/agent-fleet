@@ -251,7 +251,9 @@ func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
 
 // IsRateLimited reports whether a managed codex session's last turn failed with a
 // usage-limit error. The shared live-state helper in package main uses this to
-// surface "blocked" in the sessions list.
+// surface "limited" in the sessions list, and the usage-limit watch (docs/log/47 §4-12) uses
+// the same answer to decide whether to book the resume — one source, so the row and the
+// booking can never disagree.
 func IsRateLimited(name string) bool {
 	h := handleFor(name)
 	if h == nil {

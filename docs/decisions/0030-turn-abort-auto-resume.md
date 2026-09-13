@@ -164,10 +164,34 @@ The resume prompt is a single phrase (`続けて（自動再開）`, "carry on (
 tens of seconds ago and the context is intact, so it needs none of the explanation a limit resume
 does (which arrives hours later).
 
+## Addendum (2026-09-14) — the usage-limit resume extended to codex managed
+
+The 2026-07-31 addendum started from the way claude stops, and so did the implementation. A user
+report showed **codex sessions calling themselves "waiting for the limit to reset" while holding
+no booking at all** (docs/log/47 §4-12) — the display had been brought into line ahead of the
+thing it describes.
+
+Decision: **the usage-limit resume does not belong to a kind.** Only two questions differ per
+kind — "is this session at its limit right now" and "when does the limit lift"; the episode, the
+notices, the retries and the retirement are shared.
+
+- codex (managed) answers the first with the app-server's `usageLimitExceeded` and the second
+  from the quota windows codex records for itself. **Dismissing the menu (step ①) stays
+  claude-specific** — codex has no menu.
+- **With two full windows, take the earlier reset.** Resuming too early costs one wake that hits
+  the limit again and then converges on the right window; resuming too late parks a session for
+  days and nothing corrects it.
+- **Managed only.** What a TUI codex leaves behind is the account's percentages, which is a
+  different fact from "this session stopped on the limit". Without the evidence, no extension.
+- **No new settings key.** One `rateLimitAutoResume` governs every watched kind (the same
+  standing as `claudeAbortAutoResume`). The switch itself is also shown on the Codex card.
+
 ## Left over
 
-- It covers the claude TUI only. What it discriminates on is specific to claude's jsonl format
-  (`isApiErrorMessage`), and the other TUI kinds (cursor / copilot / kiro) need different signals.
-  Managed (codex / opencode) already has a reporting path through `StateFailed`.
+- The cut-off resume (§3 / the 2026-08-05 addendum) covers the claude TUI and managed (codex /
+  opencode). The other TUI kinds (cursor / copilot / kiro) need different signals: what it
+  discriminates on is specific to claude's jsonl format (`isApiErrorMessage`). The **usage-limit**
+  resume (the 2026-07-31 / 2026-09-14 addenda) covers claude and codex managed; opencode needs
+  both a typed limit error and a window reset instant before it can join.
 - The resume prompt's language is the display language (`uiLocale`). A per-session language field
   would make it deterministic, but we do not have one yet.
