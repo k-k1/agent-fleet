@@ -229,7 +229,7 @@ export function EngineModelsAdminView() {
   // until it is answered, a checkpoint that can never generate looks exactly like one that can.
   //
   // ⚠️ Above the early returns below, like every other hook here: React counts them per render.
-  useVaeScan(rows || [], load);
+  const vaeUnreadable = useVaeScan(rows || [], load);
 
   if (rows === null) return <p className="muted pad">{tr("common.loading")}</p>;
 
@@ -341,6 +341,7 @@ export function EngineModelsAdminView() {
           onForget={(id, purge) => forgetModel(open.key, id, purge)}
           onAdd={(body) => addModel(open.key, body)}
           onReload={load}
+          vaeUnreadable={vaeUnreadable}
         />
         )}
         {/* The ingest is a write too — `POST /ingest` is one of the five routes that answer 400
@@ -425,6 +426,7 @@ function EngineModels({
   onForget,
   onAdd,
   onReload,
+  vaeUnreadable,
 }: {
   row: EngineRow;
   kind: ModelKind;
@@ -440,6 +442,10 @@ function EngineModels({
   /** Re-read the catalogue. Needed by the acts that change a row WITHOUT going through
    *  `onChange` — giving a row the VAE its checkpoint lacks writes a file, not a field. */
   onReload: () => void;
+  /** Rows whose header the scan could not read, with the upstream's own words. A row in here is
+   *  one the deployment could not ask about — said out loud, because silence there looks exactly
+   *  like a healthy row. */
+  vaeUnreadable?: Record<string, string>;
 }) {
   const tr = useT();
   const wantLora = kind === "lora";
@@ -643,8 +649,14 @@ function EngineModels({
                 attached rather than as advice — by hand it is a search, an ingest under the
                 right role and a retyped id, which is the road the person who owns this
                 deployment walked once before this button existed. */}
-            {!readOnly && m.vae_missing && (
-              <ModelVaeFix engineKey={row.key} model={m} pending={pending} onDone={onReload} />
+            {!readOnly && (m.vae_missing || !!vaeUnreadable?.[m.id]) && (
+              <ModelVaeFix
+                engineKey={row.key}
+                model={m}
+                pending={pending}
+                unreadable={vaeUnreadable?.[m.id]}
+                onDone={onReload}
+              />
             )}
             {/* What this row asks to be RUN at, and the way to change it. Read-only it is one
                   line; the operator gets the same six fields the ingest form filled in, because

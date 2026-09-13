@@ -329,6 +329,11 @@ func engineVaePlanRow(plan *engineVaeFollowUp, v engineFamilyVae) map[string]any
 // brings the next scan back to them.
 const engineVaeScanMax = 12
 
+// engineVaeScanFails is how many refusals end a scan. An upstream that is down, rate-limiting or
+// unreachable from this deployment says so on the first request and on every one after it, and
+// the rows left unread simply stay unread.
+const engineVaeScanFails = 2
+
 // scanVae (POST …/models/vae-scan) reads the headers of the checkpoints nobody has read yet and
 // writes each verdict onto its file.
 //
@@ -348,16 +353,25 @@ func (a engineAdminAPI) scanVae(w http.ResponseWriter, r *http.Request, g engine
 	}
 	ctx := r.Context()
 	results := []map[string]any{}
-	left := 0
+	left, failed := 0, 0
 	for _, m := range e.catalog.list(ctx) {
 		if !engineVaeUnread(e.def.Provider, m) {
 			continue
 		}
-		if len(results) >= engineVaeScanMax {
+		// 🔴 Stop asking an upstream that is refusing. Measured on af-sandbox (2026-09-13):
+		// Civitai answered 503, and every row whose source is a Civitai version would have been
+		// three more requests to the host that had just said no — on a screen anybody can
+		// reload. The rows that were not read keep their unread mark, which is what brings the
+		// next scan back to them once the upstream is up.
+		if len(results) >= engineVaeScanMax || failed >= engineVaeScanFails {
 			left++
 			continue
 		}
-		results = append(results, a.readVaeOnto(ctx, key, m))
+		row := a.readVaeOnto(ctx, key, m)
+		if _, bad := row["unreadable"]; bad {
+			failed++
+		}
+		results = append(results, row)
 	}
 	if len(results) > 0 {
 		e.catalog.invalidate()
@@ -441,8 +455,19 @@ func (a engineAdminAPI) fixVae(w http.ResponseWriter, r *http.Request, g engineI
 				" is a LoRA, or its family does not decode with the checkpoint's own VAE"})
 		return
 	}
-	// The verdict is taken FRESH on every press rather than read off the row. The row's copy can
-	// be minutes or months old, and this is the one call that is about to spend money on it.
+	// The verdict is taken FRESH on every press rather than read off the row: the row's copy can
+	// be minutes or months old, and this is the call that is about to spend money on it.
+	//
+	// 🔴 But a re-read that FAILS must not take the fix down with it. Measured on af-sandbox
+	// (2026-09-13): this row's source is `civitai:<id>`, Civitai answered 503, and the whole
+	// remedy — which downloads from Hugging Face and never touches Civitai — was refused because
+	// the DIAGNOSIS could not be repeated. What the deployment already knows is on the row, so a
+	// recorded "no" stands when the upstream is unreachable, and the answer says the re-read
+	// failed rather than pretending it happened.
+	stored := engineVaeUnknown
+	if f, has := engineVaeCheckpoint(m); has {
+		stored = strings.TrimSpace(f.VaeBundled)
+	}
 	verdict := engineVaeUnknown
 	unreadable := ""
 	if f, has := engineVaeCheckpoint(m); has {
@@ -457,20 +482,26 @@ func (a engineAdminAPI) fixVae(w http.ResponseWriter, r *http.Request, g engineI
 			}
 		}
 	}
-	if verdict == engineVaeYes {
-		writeJSON(w, http.StatusOK, map[string]any{"vae_bundled": verdict, "action": "none"})
+	// What this deployment KNOWS about the file: this read, or the one that marked the row.
+	known := verdict
+	if known == engineVaeUnknown {
+		known = stored
+	}
+	if known == engineVaeYes {
+		writeJSON(w, http.StatusOK, map[string]any{"vae_bundled": known, "action": "none"})
 		return
 	}
-	v, known := engineFamilyVaes[family]
-	if !known {
+	v, hasDefault := engineFamilyVaes[family]
+	if !hasDefault {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
 			"this deployment has no default VAE for the " + family + " family — take one in and attach it" +
 				" to " + id + " under `--vae`"})
 		return
 	}
-	// A header nobody could read is not evidence of a fault, so it does not buy a download on its
-	// own. The operator can still say they know (`force`), which is the case the panel cannot see.
-	if verdict != engineVaeNo && !b.Force {
+	// Nothing known and nothing readable is not evidence of a fault, so it does not buy a
+	// download on its own. The operator can still say they know (`force`) — the case no read can
+	// reach, such as a source that has been taken down.
+	if known != engineVaeNo && !b.Force {
 		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineVaeUnreadable,
 			engineFirstNonEmpty(unreadable, "the checkpoint's header could not be read") +
 				" — nothing was taken in. Repeat with force to attach " + v.Repo + "/" + v.File + " anyway"})
@@ -482,8 +513,13 @@ func (a engineAdminAPI) fixVae(w http.ResponseWriter, r *http.Request, g engineI
 		// of that answer here is a second thing to keep in step with the panel.
 		follow, _, _ := engineVaePlan(ctx, e.catalog.list(ctx), family)
 		plan := engineVaePlanRow(follow, v)
-		plan["vae_bundled"] = verdict
+		plan["vae_bundled"] = known
 		plan["action"] = "ingest"
+		// Said out loud: the plan below rests on what the row recorded earlier, because the
+		// source would not answer now. The fix itself does not go near that source.
+		if unreadable != "" {
+			plan["recheck_failed"] = unreadable
+		}
 		if follow != nil && follow.Staged {
 			// Nothing to accept and nothing to download: the bytes are already this
 			// deployment's, under a licence accepted when they were taken in.
@@ -510,7 +546,7 @@ func (a engineAdminAPI) fixVae(w http.ResponseWriter, r *http.Request, g engineI
 		}
 		e.catalog.invalidate()
 		a.auditFor(r, g, "engine."+key+".model.vae", id+" attached "+v.S3Key+" (already staged)")
-		writeJSON(w, http.StatusOK, map[string]any{"vae_bundled": verdict, "action": "attached", "s3Key": v.S3Key})
+		writeJSON(w, http.StatusOK, map[string]any{"vae_bundled": known, "action": "attached", "s3Key": v.S3Key})
 		return
 	}
 	if !b.LicenseAccepted {
@@ -524,7 +560,7 @@ func (a engineAdminAPI) fixVae(w http.ResponseWriter, r *http.Request, g engineI
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"vae_bundled": verdict, "action": "job_started", "job": engineIngestJobRow(job),
+		"vae_bundled": known, "action": "job_started", "job": engineIngestJobRow(job),
 	})
 }
 

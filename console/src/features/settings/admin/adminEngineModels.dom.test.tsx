@@ -3462,6 +3462,79 @@ describe("EngineModelsAdminView / a checkpoint with no VAE", () => {
     expect(host!.textContent).toContain("取り込みを開始しました");
   });
 
+  // 🔴 Measured on af-sandbox (2026-09-13): the row's source is a Civitai version, Civitai
+  // answered 503, and the whole fix was refused — although what it downloads comes from Hugging
+  // Face and never touches that source. The diagnosis must not take the remedy down with it.
+  it("goes on when the source will not answer again, and says the plan rests on the old reading", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [broken()] });
+    await mount();
+    apiJSON.mockResolvedValue({
+      vae_bundled: "no",
+      action: "attach",
+      staged: true,
+      repo: "stabilityai/sdxl-vae",
+      file: "sdxl_vae.safetensors",
+      recheck_failed: "civitai.com answered 503 Service Unavailable",
+    });
+    await click(button("VAE を足す"));
+    expect(host!.textContent).toContain("もう一度読めませんでした");
+    expect(host!.textContent).toContain("503");
+    // …and the press still goes through, carrying the operator's "I know" so the CP does not
+    // refuse the same thing twice.
+    apiJSON.mockResolvedValue({ action: "attached", vae_bundled: "no" });
+    await click(button("この行に足す"));
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/image/models/waimature_v30/vae",
+      "POST",
+      { force: true },
+    );
+  });
+
+  // With nothing recorded either, the deployment refuses to spend 335 MB on a guess — and offers
+  // the one escape it has, to the person who has watched the row fail in the engine.
+  it("offers the escape when nothing is known and the source is down", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [broken()] });
+    await mount();
+    apiJSON.mockResolvedValue({
+      error: { code: "engine_vae_unreadable", message: "civitai.com answered 503 Service Unavailable" },
+    });
+    await click(button("VAE を足す"));
+    expect(host!.textContent).toContain("503");
+    const forceBtn = button("上流が答えないので、承知のうえで足す");
+    expect(forceBtn).toBeTruthy();
+
+    apiJSON.mockResolvedValue({
+      vae_bundled: "", action: "ingest", repo: "stabilityai/sdxl-vae", file: "sdxl_vae.safetensors",
+      bytes: 334641162, license: "mit",
+    });
+    await click(forceBtn);
+    expect(apiJSON).toHaveBeenLastCalledWith(
+      "api/admin/engines/image/models/waimature_v30/vae",
+      "POST",
+      { check: true, force: true },
+    );
+  });
+
+  // 🔴 When the source will not answer, the scan has no verdict — and silence there looks
+  // exactly like a healthy row. The panel says what happened and offers the one escape, instead
+  // of leaving a checkpoint that cannot generate looking fine (af-sandbox, Civitai 503).
+  it("says so when the header could not be checked at all, and does not ask that source again", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [broken({ vae_missing: false, vae_unread: true, vae_fix: undefined })],
+    });
+    apiJSON.mockResolvedValue({
+      read: [{ id: "waimature_v30", vae_bundled: "", unreadable: "civitai.com answered 503 Service Unavailable" }],
+    });
+    await mount();
+    expect(host!.textContent).toContain("確認できませんでした");
+    expect(host!.textContent).toContain("503");
+    // The plain "add a VAE" press is not offered: it would be one more request to the host that
+    // just refused. What is offered is the deliberate one.
+    expect(button("VAE を足す")).toBeFalsy();
+    expect(button("上流が答えないので、承知のうえで足す")).toBeTruthy();
+  });
+
   // 🔴 A row nobody has READ is not a broken row. Every checkpoint taken in before this existed
   // is in that state, so the panel answers the question itself — one call for the catalogue, not
   // one per row — and draws no mark until there is an answer.
