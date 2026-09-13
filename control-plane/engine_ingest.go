@@ -182,6 +182,46 @@ func engineIngestResolve(ctx context.Context, src engineIngestSource) (engineRes
 	return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "one of hf, civitai or url is required"}
 }
 
+// engineSourceURL turns a recorded source back into the page a person can open, and is the
+// inverse of the two `Source:` lines above. Empty when it cannot be composed, which the panel
+// draws as plain text — a broken link in an operator's console is worse than a string.
+//
+// It is composed HERE and not in the panel for the same reason a search hit's `url` is (see
+// engineCivitaiModelURL): the two vendors spell it differently, and Civitai's needs a fact the
+// source string does not look like it carries.
+//
+// 🔴 `civitai:<id>` is a model VERSION id, NOT the model id in the page's URL. The two are
+// different numbers, so `civitai.com/models/<id>` opens A DIFFERENT MODEL. The version-only form
+// is the one Civitai resolves, and it is already what this file hands to LicenseURL.
+//
+// 🔴 A plain URL is deliberately NOT linked. `url:` sources are the direct download of the
+// weights — 22 GB in ADR 0072's table — and a text link in a panel that says "where this came
+// from" must not be a click that starts one.
+//
+// ⚠️ Hugging Face keeps no revision in the source string, so the file link is `main`: if the
+// repository moved the file, a 404 is the honest answer and the repository root is one click up.
+// A two-segment source is left unlinked rather than guessed at — `hf:gpt2/model.gguf` is
+// indistinguishable from a legacy single-segment repository whose file happens to be named like
+// a repository, and the row cannot tell which it is.
+func engineSourceURL(source string) string {
+	s := strings.TrimSpace(source)
+	switch {
+	case strings.HasPrefix(s, "hf:"):
+		parts := strings.SplitN(strings.TrimPrefix(s, "hf:"), "/", 3)
+		if len(parts) < 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			return ""
+		}
+		return engineIngestBase + "/" + parts[0] + "/" + parts[1] + "/blob/main/" + parts[2]
+	case strings.HasPrefix(s, "civitai:"):
+		id := strings.TrimPrefix(s, "civitai:")
+		if _, err := strconv.Atoi(id); err != nil {
+			return ""
+		}
+		return engineCivitaiBase + "/models/?modelVersionId=" + id
+	}
+	return ""
+}
+
 // engineHFDoc is the part of a model's API answer this file reads. One call serves both the
 // listing and the resolve, so a person who picks a file from the list is choosing from the same
 // answer the sha256 and the licence are then taken out of — the alternative is two reads that
@@ -812,7 +852,14 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 			j.ID, j.S3Key)
 		return
 	}
-	file := store.EngineModelFile{Flag: req.FileFlag, S3Key: req.S3Key, Bytes: req.Resolved.Bytes}
+	// Where THIS file came from, written on the file and not only on the row. The row's own
+	// Source is set below by the branch that CREATES it, so without this an attached part has no
+	// provenance at all once this job row ages out — and the row's single source reads as if it
+	// described every part (see store.EngineModelFile.Source).
+	file := store.EngineModelFile{
+		Flag: req.FileFlag, S3Key: req.S3Key, Bytes: req.Resolved.Bytes,
+		Source: req.Resolved.Source,
+	}
 	if req.Attach {
 		// One PART of a model that already has a row. Only the file is written: the licence
 		// acceptance, the family and the enabled flag on that row were decided when it was

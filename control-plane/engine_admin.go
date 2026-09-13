@@ -1038,6 +1038,11 @@ type engineModelFileBody struct {
 	Flag  string `json:"flag"`
 	S3Key string `json:"s3Key"`
 	Bytes int64  `json:"bytes"`
+	// Where this part came from. Here so that the round trip stays one — a row read out of
+	// `GET /api/admin/engines` and posted back rebuilds what it was, and a per-file provenance
+	// that the answer carries but the register route drops would be silently erased by the one
+	// operation that exists to restore a forgotten row (ADR 0072 P6 R2).
+	Source string `json:"source"`
 }
 
 // engineFilesFromBody reads the files out of a register body, from whichever of the two names
@@ -1156,6 +1161,7 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		if k := strings.TrimSpace(f.S3Key); k != "" {
 			m.Files = append(m.Files, store.EngineModelFile{
 				Flag: strings.TrimSpace(f.Flag), S3Key: k, Bytes: f.Bytes,
+				Source: strings.TrimSpace(f.Source),
 			})
 		}
 	}

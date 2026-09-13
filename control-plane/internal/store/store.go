@@ -355,6 +355,19 @@ type EngineModelFile struct {
 	// (S3 to EBS ran at 104-147 MB/s, so 18.5 GB is three minutes of a $1.26/hour box).
 	// Zero means undeclared, and undeclared prints nothing rather than "+0 s".
 	Bytes int64 `json:"bytes,omitempty"`
+	// Source is where THIS file came from, in the same vocabulary as EngineModel.Source
+	// (`hf:<repo>/<file>`, `civitai:<id>`, a URL).
+	//
+	// 🔴 The row's own Source describes the file that CREATED the row and nothing else: an
+	// attach writes only the file (AppendEngineModelFile), so a four-file FLUX.1 row carries one
+	// `hf:black-forest-labs/FLUX.1-dev/...` line that a reader takes for the provenance of all
+	// four. The parts are routinely from different repositories — the t5xxl in ADR 0072's table
+	// is not published by the people who published the diffusion model — and after the ingest
+	// job ages out of engine_ingest_jobs nothing else remembers.
+	//
+	// No migration: `files` is a JSON column (migration 0057), so an old row simply has no
+	// per-file source, which stays "nobody recorded" rather than "unknown".
+	Source string `json:"source,omitempty"`
 }
 
 // EngineModelStore is the catalogue. Two writers reach it — an administrator's toggle and the

@@ -270,6 +270,114 @@ func TestEngineIngestRowRemembersWhereItCameFrom(t *testing.T) {
 	}
 }
 
+// 🔴 And every PART remembers its own, which the row above cannot say for a split model.
+//
+// A FLUX.1 row is four files and they arrive as four downloads: the first creates the row, the
+// other three are attaches, and an attach writes only the file. So the row's own source
+// describes file one — while a reader takes one `hf:…/FLUX.1-dev/…` line under a four-file row
+// as the provenance of all four. The parts really do come from different repositories: the
+// text encoders in ADR 0072's table are not published by whoever published the diffusion model.
+func TestEngineIngestAttachedPartRemembersItsOwnSource(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	ctx := context.Background()
+	finish := func(req engineIngestRequest) {
+		t.Helper()
+		job, aerr := ing.start(ctx, req)
+		if aerr != nil {
+			t.Fatalf("start: %v", aerr.message)
+		}
+		api.tasks = []ecstypes.Task{{
+			TaskArn: aws.String(job.TaskArn), LastStatus: aws.String("STOPPED"),
+			Containers: []ecstypes.Container{
+				{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+				{Name: aws.String("upload"), ExitCode: aws.Int32(0)},
+			},
+		}}
+		ing.reconcile(ctx)
+	}
+	first := ingestReq()
+	first.Resolved.Source = "hf:black-forest-labs/FLUX.1-dev/flux1-dev.safetensors"
+	first.S3Key = "image/diffusion_models/flux1-dev.safetensors"
+	finish(first)
+
+	part := ingestReq()
+	part.Attach, part.FileFlag = true, "--t5xxl"
+	part.S3Key = "image/text_encoders/t5xxl_fp8_e4m3fn.safetensors"
+	part.Resolved.Source = "hf:comfyanonymous/flux_text_encoders/t5xxl_fp8_e4m3fn.safetensors"
+	finish(part)
+
+	rows, err := st.ListEngineModels(ctx, first.Role)
+	if err != nil || len(rows) != 1 || len(rows[0].Files) != 2 {
+		t.Fatalf("rows = %d (%v)", len(rows), err)
+	}
+	for i, want := range []string{first.Resolved.Source, part.Resolved.Source} {
+		if got := rows[0].Files[i].Source; got != want {
+			t.Errorf("file %d source = %q, want %q — a part taken in from another repository"+
+				" has no provenance of its own once the job row is gone", i, got, want)
+		}
+	}
+	// The row still says where IT came from: the two facts are both kept, because the licence
+	// that was accepted belongs to the repository the row was created from.
+	if rows[0].Source != first.Resolved.Source {
+		t.Errorf("the row's own source = %q, want %q", rows[0].Source, first.Resolved.Source)
+	}
+	// And the panel is told, per file. A column nothing renders is a column nobody can use.
+	fileRows, _ := engineAdminModelRow(rows[0])["file_rows"].([]map[string]any)
+	if len(fileRows) != 2 || fileRows[1]["source"] != part.Resolved.Source {
+		t.Errorf("file_rows = %+v — the per-file provenance is stored but never shown", fileRows)
+	}
+	// Absent, not empty: a file staged by hand has no upstream, and an empty string in the
+	// answer is a claim that somebody looked and found nothing.
+	bare := engineModelFileRows(store.EngineModel{Files: []store.EngineModelFile{{S3Key: "llm/x.gguf"}}})
+	if _, ok := bare[0]["source"]; ok {
+		t.Error("a hand-staged file claims a provenance nobody recorded")
+	}
+}
+
+// engineSourceURL is the inverse of the `Source:` lines the resolvers write, and the panel draws
+// a link ONLY when it answers — the rest stay text, which is what an operator can still read.
+func TestEngineSourceURL(t *testing.T) {
+	for _, c := range []struct{ what, source, want string }{
+		{"a Hugging Face file", "hf:Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+			"https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/blob/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"},
+		{"a file in a subdirectory", "hf:unsloth/Qwen3-30B-GGUF/Q4_K_M/qwen3-30b-Q4_K_M.gguf",
+			"https://huggingface.co/unsloth/Qwen3-30B-GGUF/blob/main/Q4_K_M/qwen3-30b-Q4_K_M.gguf"},
+		// 🔴 The whole reason this is composed in the Control Plane. `civitai:<id>` is a model
+		// VERSION id, and the model id in the page's URL is a different number — so
+		// `civitai.com/models/<id>` opens A DIFFERENT MODEL. This form is the one Civitai
+		// resolves, and it is already what the resolver hands to LicenseURL.
+		{"a Civitai version", "civitai:1759168", "https://civitai.com/models/?modelVersionId=1759168"},
+		// 🔴 A url source is the direct download of the weights (22 GB in ADR 0072's table).
+		// A link in a panel that says "where this came from" must not start one.
+		{"a plain url", "https://example.invalid/m.safetensors", ""},
+		// Two segments cannot be told apart: `hf:gpt2/model.gguf` is either a legacy
+		// single-segment repository plus a file, or an owner and a repository with no file.
+		{"a two-segment hf source", "hf:gpt2/model.gguf", ""},
+		{"an hf source with no file", "hf:Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/", ""},
+		{"a civitai source that is not a number", "civitai:v3", ""},
+		{"a seeded row", "", ""},
+		{"something nobody has written yet", "ollama:qwen3", ""},
+	} {
+		if got := engineSourceURL(c.source); got != c.want {
+			t.Errorf("%s (%q) = %q, want %q", c.what, c.source, got, c.want)
+		}
+	}
+	// And the row carries it beside the text, absent when it could not be composed — the panel
+	// branches on the field arriving rather than parsing the string a second time.
+	row := engineAdminModelRow(store.EngineModel{ID: "x", Source: "civitai:1759168"})
+	if row["source_url"] != "https://civitai.com/models/?modelVersionId=1759168" {
+		t.Errorf("source_url = %v", row["source_url"])
+	}
+	plain := engineAdminModelRow(store.EngineModel{ID: "x", Source: "https://example.invalid/m.safetensors"})
+	if _, ok := plain["source_url"]; ok {
+		t.Error("a url source was turned into a link — that click is a 22 GB download")
+	}
+	if plain["source"] != "https://example.invalid/m.safetensors" {
+		t.Error("the source text was dropped along with the link — the operator can read it")
+	}
+}
+
 // 🔴 The context length is a CEILING, not a setting. Hugging Face answers what the architecture
 // allows (the 30B in this deployment says 262144); what fits in an L4 is a different question
 // and the deployment runs that model at 32768. So it rides as its own field for the panel to

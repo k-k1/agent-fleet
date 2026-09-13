@@ -702,6 +702,13 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	// panel omits the line instead of asserting a provenance nobody recorded.
 	if m.Source != "" {
 		row["source"] = m.Source
+		// And the page it names, composed here because the panel cannot: `civitai:<id>` is a
+		// model VERSION id and the URL that opens the right model is not `/models/<id>` (see
+		// engineSourceURL). ABSENT when it could not be composed — the panel then prints the
+		// source as text, which is what a `url:` source and an unrecognised prefix get.
+		if u := engineSourceURL(m.Source); u != "" {
+			row["source_url"] = u
+		}
 	}
 	if m.Precision != "" {
 		row["precision"] = m.Precision
@@ -776,6 +783,17 @@ func engineModelFileRows(m store.EngineModel) []map[string]any {
 		}
 		if f.Bytes > 0 {
 			row["bytes"] = f.Bytes
+		}
+		// Where THIS part came from, and its link. The row's own `source` describes the file that
+		// created the row only (store.EngineModelFile.Source): a split model's parts are routinely
+		// from different repositories, and one line at the top of the row reads as the provenance
+		// of all four. Absent on a row taken in before this existed, which stays "nobody recorded"
+		// rather than being drawn as unknown.
+		if s := strings.TrimSpace(f.Source); s != "" {
+			row["source"] = s
+			if u := engineSourceURL(s); u != "" {
+				row["source_url"] = u
+			}
 		}
 		out = append(out, row)
 	}
