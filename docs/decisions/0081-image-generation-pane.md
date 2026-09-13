@@ -327,6 +327,46 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   `tool.imagegen`) so a member can see their own volume; that is a fold in `usage_series.go` and two
   labels, listed in Consequences.
 
+### Decision 11 — A trial run lives in the view: one quick picture, at the head of the queue, seen where the form is
+
+Mass production is decided by looking at one picture first. If that picture has to wait behind forty
+queued jobs, or be found in the gallery, the loop is broken and people queue blind. So the pane has two
+verbs, and they are not the same button:
+
+- **"Trial run"** (`Ctrl+Enter`, the frequent action): one job from the current form, marked
+  `trial: true` in `POST /imagegen/jobs`. The Agent **inserts it at the head of the queue** — after the
+  job that is already running, before every queued one — so the wait is one picture, not the batch.
+  Trials are capped at 3 waiting per workspace (a fourth is refused with 429 `trial_pending`), so the
+  head of the queue cannot itself become a queue.
+- **"Enqueue N"** (`Ctrl+Shift+Enter`): the group of decision 8, at the tail, as before.
+
+What a trial changes about the request, and only this:
+
+- **`count` 1, `batch_size` 1.** One picture is the point.
+- **Steps: the family's trial value**, not the form's — `sdxl` 10, `sd35` 12, `flux1` 8, `zimage` 4,
+  `flux2-klein` 4 (already minimal). The form's own steps are kept on the request as `params.steps`
+  so the sidecar records both what ran and what the batch would run. A checkbox "full steps" turns the
+  reduction off for the case where the trial *is* the picture.
+- **Size, seed, cfg, sampler, LoRAs, negative: exactly the form's.** Composition is fixed by seed and
+  size; a trial at another size would preview a different picture. When the seed policy is `random`,
+  the trial draws one and **shows it** — "use this seed" copies it into the form as `fixed`, which is
+  the whole reason a trial is worth doing before a sweep.
+- **Output: `generated/console/trial/`**, a subfolder the gallery lists like any other. Trial pictures
+  are disposable by definition (the batch remakes the keeper at full steps), so **`trial/` is the one
+  subtree the sweep still clears, after 7 days** — the exception to decision 3, stated here so it does
+  not read as a contradiction. "Keep" on a trial result re-enqueues the same request at full steps
+  into the main folder; it does not move the draft.
+
+Where it shows: **in the pane, next to the form** — a "latest trial" slot with the thumbnail
+(`downloadURL(path, 512)`, the same cache key as the gallery and the mirror), seed, elapsed time and the
+warnings, opening the shared lightbox on click. Below it, the job list shows every result of this pane
+as cards the same way, newest first, so the view is usable without the gallery at all; the gallery is
+for looking *across* folders and sessions, not for finding what one just made. The list holds paths,
+not bytes, and a card renders lazily like the gallery's.
+
+The estimate (`typical_ms`) is keyed by steps as well as model and size bucket, otherwise trials would
+teach the average that batches are fast.
+
 ## Options rejected
 
 - **Proxy the existing blocking `POST /imagegen/generate` as-is.** Dies at the ALB's 60 s on a cold
@@ -352,6 +392,10 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   fails loudly; the overlay's leniency is for an admin's old row, not a member's form (decision 4).
 - **Bare `POST /interrupt`.** Kills another workspace's picture on a shared box (decision 2).
 - **A separate pane per model / per output folder.** Not asked for (unresolved 4).
+- **Trial run as an ordinary job at the tail.** Behind a batch it arrives when the batch does, and the
+  batch was the thing the trial was meant to decide (decision 11).
+- **Trial at a smaller size to make it faster.** A different size is a different composition; the
+  preview would not preview anything. Fewer steps at the same size is the honest shortcut (decision 11).
 
 ## Consequences
 
@@ -383,14 +427,14 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
 
 ## Phases
 
-- **P0** (decisions 1–10 minus the P1 items named in them): the pane, the queue with cancel and group,
+- **P0** (decisions 1–11 minus the P1 items named in them): the pane, the queue with cancel, group and trial,
   `params`, the widened status, the sidecar and the seed, family cards, trigger-word chips,
   "write the prompt for me" through `api/chat/ask`, edit by path or drop, `out_dir`. Three lanes that do
   not share a file:
-  - **Lane A (Agent)**: `jobs.go`, `Request.Params`, validation, seed and sidecar, phases and cancel,
+  - **Lane A (Agent)**: `jobs.go` (with head insertion and the trial cap), `Request.Params`, validation, seed and sidecar, phases and cancel,
     status widening, routes and golden, usage fold.
   - **Lane B (control plane)**: proxy lines, `trained_words` column end to end.
-  - **Lane C (Console)**: pane kind and `features/imagegen/`, i18n, entry points, usage labels.
+  - **Lane C (Console)**: pane kind and `features/imagegen/` (form, trial slot, result cards, job list), i18n, entry points, usage labels.
     C can be built against a stub of A's wire (the shapes above are the contract) and finished after A.
 - **P1**: sweeps and the prompt matrix; gallery hooks ("open in image generation", "use as reference",
   "generate here"); presets (named parameter sets, local first); a queue journal if a restart bites;
@@ -421,3 +465,6 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
 6. **Queue cap and finished-list size.** 200 and 500 are guesses; the shared host's memory is the
    constraint (a finished job holds paths, not bytes, so the list is small; the sidecars are the
    archive).
+7. **The trial step counts** (10 / 12 / 8 / 4 / 4) and the 7-day sweep of `trial/` are guesses. The
+   steps should be the smallest number at which the composition is recognisable on the live run; if
+   the sweep of `trial/` is unwelcome, decision 3's "never" extends to it and the folder simply grows.
