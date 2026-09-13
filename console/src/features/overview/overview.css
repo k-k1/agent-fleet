@@ -340,6 +340,11 @@
   justify-content: space-between;
   gap: 4px;
 }
+.lm-cap-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 .lm-cap .ui-iconbtn {
   width: 18px;
   height: 18px;

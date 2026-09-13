@@ -50,23 +50,30 @@ export const LayoutMap = memo(function LayoutMap() {
 
   const byName = useMemo(() => new Map(sessions.map((s) => [s.name, s] as const)), [sessions]);
   const rows = useMemo(() => paneRows(layout), [layout]);
+  // Same rule as the ops bar: no engine, no button (ADR 0081 decision 1). ABOVE the early
+  // return: a hook below it runs on the second pane and not the first, and React answers the
+  // changed count with error #310 and an empty root — the whole Console went black the moment
+  // a second pane opened (measured on the screenshot harness, 2026-09-14).
+  const imagegenAvailable = useImagegenAvailable();
   if (paneCount(layout) <= 1) return null;
 
   const ordOf = new Map(rows.map((r) => [r.id, r.ordinal] as const));
   // Cells get narrow with 3+ columns — abbreviate the kind then.
   const shortKind = layout.cols.length >= 3;
-  // Same rule as the ops bar: no engine, no button (ADR 0081 decision 1).
-  const imagegenAvailable = useImagegenAvailable();
 
   return (
     <div className="layoutmap" role="group" aria-label={tr("pane.map_aria")}>
       <div className="lm-cap">
         {tr("pane.layout")}
-        {/* The overview's one on-screen entry (the other is the leader key, g s). */}
-        <IconButton icon="dashboard" label={tr("pane.open_sessions")} onClick={() => openSessionsOverview()} />
-        {imagegenAvailable && (
-          <IconButton icon="wand" label={tr("pane.open_imagegen")} onClick={() => openImagegen()} />
-        )}
+        {/* One group at the right edge, whatever its count: the caption row is
+            space-between, and two loose buttons would spread the first to the middle. */}
+        <span className="lm-cap-actions">
+          {/* The overview's one on-screen entry (the other is the leader key, g s). */}
+          <IconButton icon="dashboard" label={tr("pane.open_sessions")} onClick={() => openSessionsOverview()} />
+          {imagegenAvailable && (
+            <IconButton icon="wand" label={tr("pane.open_imagegen")} onClick={() => openImagegen()} />
+          )}
+        </span>
       </div>
       <div className="lm-cols">
         {layout.cols.map((col) => (
