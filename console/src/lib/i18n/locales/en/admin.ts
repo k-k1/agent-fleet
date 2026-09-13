@@ -315,7 +315,32 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // refuses a plain ingest onto an id it already has — that would upsert the row's files,
   // licence and enabled flag away — so the other act is offered here instead.
   "admin.engines_ingest_attach": "Add it to “{id}” as a part (no new row)",
-  "admin.engines_ingest_id_taken": "That id is taken. Choose another, or tick “add it as a part” above.",
+  // 🔴 The other destination. A slot that is filled cannot be added to (the CP answers 409), and
+  // the unlabelled file — the checkpoint itself — cannot be added to at all, so changing a
+  // quantisation meant forgetting the row and building it again: licence acceptance, family,
+  // params, enabled state and provenance all went with it.
+  "admin.engines_ingest_replace": "Put this file in place of “{id}”'s {part} (the row stays as it is)",
+  // The CP has no s3:DeleteObject (ADR 0072 decision 7), the swap lands minutes later inside the
+  // job reconciler where there is nobody to report a refused deletion to, and the keys are
+  // shared (`text_encoders/` is pointed at from more than one row) — so deleting here breaks a
+  // model nobody touched.
+  "admin.engines_ingest_replace_keeps_bytes": "The previous file stays in the bucket. Deleting bytes is “delete the files too” when a row is forgotten.",
+  "admin.engines_ingest_id_taken": "That id is taken. Choose another, or tick “add it as a part” or “put this file in its place” above.",
+  // 🔴 Whether it fits, said before the press. Measured on a borrowed llm engine: an L4 (24 GB)
+  // took 17 GB of weights and then died on `cudaMalloc failed: out of memory … failed to
+  // allocate buffer for kv cache` for the 16 GB the window wanted — four minutes and one
+  // purchased GPU after the button, and the panel had shown a filename and a size.
+  // A candidate over the card on WEIGHTS ALONE is marked in the list; the cache is not known
+  // until the file is resolved, so an unmarked one is "not ruled out here", never "it fits".
+  "admin.engines_ingest_over_card": "⚠ over the card",
+  "admin.engines_ingest_fit_weights": "weights {n} MiB",
+  // 🔴 The cache's element type cannot be read at all: -ctk/-ctv are CloudFormation parameters
+  // that never reach the engine table. f16 is assumed and said so — a deployment running a
+  // quantised cache is over-estimated, which is the safe direction for "will this fit".
+  "admin.engines_ingest_fit_kv": "KV cache {n} MiB (at {c} tokens, assuming f16)",
+  "admin.engines_ingest_fit_kv_unread": "the KV cache could not be read — this is the weights alone",
+  "admin.engines_ingest_fit_card": "{n} MiB in total, against a {c} MiB card",
+  "admin.engines_ingest_fit_over": "It does not fit this card. Pick a smaller quantisation, or a narrower window.",
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
   "admin.engines_ingest_gated": "A gated repository. It is fetched with the operator's token, which has accepted its terms.",
   "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Register the operator's token under \u201cHugging Face token\u201d below — it is read by the ingest task only.",

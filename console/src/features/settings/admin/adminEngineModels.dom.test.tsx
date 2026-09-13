@@ -1954,6 +1954,9 @@ describe("EnginesAdminView / searching for a model", () => {
       source: {
         hf: { repo: "stabilityai/stable-diffusion-xl-base-1.0", file: "sd_xl_base_1.0.safetensors", revision: "main" },
       },
+      // What is being taken in, so the resolve knows whether a GGUF header is worth reading:
+      // the KV geometry is a question about a chat model and about nothing else.
+      kind: "checkpoint",
     });
     // …and the id is proposed off that file, exactly as it is for one picked from a list.
     expect(field("id")!.value).toBe("sd_xl_base_1.0");
@@ -2692,5 +2695,371 @@ describe("the window and the VRAM measurement", () => {
     });
     await mount();
     expect(windowBox("qwen3")).toBeNull();
+  });
+});
+
+// 🔴 "Which file do I pick?" — the question the panel refused to answer until now, and the one
+// that costs real money to get wrong. Measured on a borrowed llm engine: an L4 (24 GB) took
+// 17 GB of weights onto the card and then died on `ggml_backend_cuda_buffer_type_alloc_buffer:
+// … cudaMalloc failed: out of memory` / `failed to allocate buffer for kv cache` for the 16 GB
+// its window wanted — four minutes and one purchased GPU after the button was pressed. What was
+// on screen at the moment of the press was a filename and a size.
+//
+// So: the weights against the card in the candidate list, and the cache the WINDOW will cost
+// once the file has been read. Both have a rule about what they must NOT say, which is where
+// the tests below spend their time — a screen that guesses "it fits" is worse than one that
+// says nothing, because it is the one somebody acts on.
+describe("EnginesAdminView / will this file fit the card", () => {
+  const openIngest = async () =>
+    click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLButtonElement,
+    );
+
+  const typeInto = async (el: HTMLInputElement, value: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  const field = (label: string) =>
+    (Array.from(host!.querySelectorAll("label.engines-model-add-row")).find(
+      (l) => l.querySelector("span")?.textContent === label,
+    )?.querySelector("input") || null) as HTMLInputElement | null;
+
+  /** The candidate options, by the filename each one offers. 🔴 Read from the OPTION, never off
+   *  the page: this form grows a sentence a release and a `textContent.includes` over the whole
+   *  screen has twice gone on passing here while the thing it names moved elsewhere. */
+  const candidate = (name: string) =>
+    Array.from(host!.querySelectorAll(".engines-ingest select option")).find(
+      (o) => (o as HTMLOptionElement).value === name,
+    ) as HTMLOptionElement | undefined;
+
+  const fitLine = () => host!.querySelector(".engines-ingest-fit");
+
+  const llm = (over: Record<string, unknown> = {}) =>
+    row({ key: "llm", api: "chat", provider: "llamacpp", has_models: true, model_rows: [], ...over });
+
+  const mountLLM = async (engine: Record<string, unknown>) => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest") ? { jobs: [] } : { super_admin: true, engines: [engine] },
+    );
+    await mount();
+    await openIngest();
+  };
+
+  /** Ask the repository what it holds, with the two quantisations of the model this deployment
+   *  actually runs. */
+  const listTwoQuants = async () => {
+    await typeInto(field("リポジトリ")!, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF");
+    apiJSON.mockResolvedValueOnce({
+      files: [
+        { name: "Q4_K_M.gguf", bytes: 18_556_689_568 }, // 17,697 MiB
+        { name: "Q8_0.gguf", bytes: 32_000_000_000 }, // 30,517 MiB — over an L4 on weights alone
+      ],
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+  };
+
+  it("marks the candidates the card cannot hold, and adds the cache the window will cost", async () => {
+    await mountLLM(withClasses({ key: "llm", api: "chat", provider: "llamacpp", has_models: true, model_rows: [] }));
+    await listTwoQuants();
+
+    // The q8 is over the 21,000 MiB rung on WEIGHTS ALONE, which is the one verdict a list of
+    // filenames can reach — and it is reached before anything is resolved or fetched.
+    expect(candidate("Q8_0.gguf")!.textContent).toContain("カード超過");
+    // 🔴 And the q4 is NOT marked "fits": an unmarked candidate is one this list could not rule
+    // out, because the cache is not known until the file has been read. It carries its size and
+    // no verdict.
+    expect(candidate("Q4_K_M.gguf")!.textContent).toContain("18.6 GB");
+    expect(candidate("Q4_K_M.gguf")!.textContent).not.toContain("カード超過");
+
+    // Picking it reads the file, and the read brings back what the cache costs per 1024 tokens
+    // — 96 MiB for this model (48 layers, 4 KV heads, 128/128). The window offered with it is
+    // the ARCHITECTURE's ceiling, which is exactly the number that does not fit.
+    apiJSON.mockResolvedValueOnce({
+      sha256: "b".repeat(64),
+      bytes: 18_556_689_568,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+      context_length: 262144,
+      kv_mib_per_1k_tokens: 96,
+    });
+    await act(async () => {
+      const picker = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+      picker.value = "Q4_K_M.gguf";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // 17,697 of weights + 24,576 of cache at 262,144 tokens = 42,273 on a 21,000 MiB card. This
+    // is the failure that used to be a `cudaMalloc` in a log four minutes later.
+    expect(fitLine()!.textContent).toContain("重み 17697 MiB");
+    expect(fitLine()!.textContent).toContain("KV キャッシュ 24576 MiB");
+    // 🔴 The assumption is stated. The cache's element type cannot be read at all (-ctk/-ctv are
+    // CloudFormation parameters that never reach the engine table), so a quantised-cache
+    // deployment is over-estimated and has to be able to see why.
+    expect(fitLine()!.textContent).toContain("f16");
+    expect(fitLine()!.textContent).toContain("合計 42273 MiB / このカード 21000 MiB");
+    expect(fitLine()!.className).toContain("form-err");
+
+    // …and the window is the FIELD, not the model's ceiling: narrowing it to what this
+    // deployment actually runs the model at brings the same file inside the card. The cache is
+    // linear in the window, which is why one number per 1024 tokens crosses the wire.
+    await typeInto(field("コンテキストウィンドウ")!, "32768");
+    expect(fitLine()!.textContent).toContain("KV キャッシュ 3072 MiB");
+    expect(fitLine()!.textContent).toContain("合計 20769 MiB / このカード 21000 MiB");
+    expect(fitLine()!.className).not.toContain("form-err");
+  });
+
+  // 🔴 Two silences, and neither may be filled in with a number.
+  //
+  // A deployment that declared no GPU ladder has no card — its box was bought by CloudFormation
+  // — so there is nothing to compare against and no verdict may be drawn. And a header the CP
+  // could not read (its probe is best-effort and silent by design) leaves the cache UNKNOWN,
+  // which is not the same fact as a cache that costs nothing: for a GGUF it is most of the
+  // answer, so the line says the number is the weights alone.
+  it("draws no verdict without a card, and never reports an unread cache as zero", async () => {
+    await mountLLM(llm());
+    await listTwoQuants();
+
+    // No card: the q8 that an L4 could not hold carries its size and nothing else, because
+    // nothing here knows what it would be loaded onto.
+    expect(candidate("Q8_0.gguf")!.textContent).toContain("32.0 GB");
+    expect(candidate("Q8_0.gguf")!.textContent).not.toContain("カード超過");
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "c".repeat(64),
+      bytes: 18_556_689_568,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+      // No kv_mib_per_1k_tokens: the range GET over the GGUF header did not answer.
+    });
+    await act(async () => {
+      const picker = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+      picker.value = "Q4_K_M.gguf";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await typeInto(field("コンテキストウィンドウ")!, "32768");
+
+    const line = fitLine()!;
+    expect(line.textContent).toContain("重み 17697 MiB");
+    expect(line.textContent).toContain("KV キャッシュは読めませんでした");
+    // Not "KV キャッシュ 0 MiB", and not a total presented as the whole answer.
+    expect(line.textContent).not.toContain("KV キャッシュ 0");
+    expect(line.textContent).not.toContain("このカード");
+    expect(line.className).not.toContain("form-err");
+  });
+});
+
+// 🔴 "I took the wrong file in" had no answer. The code said so itself: attaching to a slot the
+// row already fills is a 409 whose words are "forget the row, or take this in as its own", and
+// the UNLABELLED slot — the model's own checkpoint — cannot be attached to at all. So moving a
+// model to another quantisation meant forgetting the row and building it again, losing the
+// licence acceptance (a record of a human act), the family, the params, the enabled state and
+// the provenance on the way.
+describe("EnginesAdminView / replacing a file of a row that exists", () => {
+  const openIngest = async () =>
+    click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLButtonElement,
+    );
+
+  const typeInto = async (el: HTMLInputElement, value: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  const inputs = () =>
+    Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input")) as HTMLInputElement[];
+
+  /** The two acts, by the sentence each one offers. Read from the LABEL rather than off the
+   *  page: this form has grown three checkboxes and a whole-page `includes` cannot tell which
+   *  of them is on screen. */
+  const act1 = (word: string) =>
+    Array.from(host!.querySelectorAll(".engines-ingest-accept")).find((l) =>
+      l.querySelector("span")?.textContent?.includes(word),
+    ) as HTMLLabelElement | undefined;
+  const attachBox = () => act1("部品として足す")?.querySelector("input") as HTMLInputElement | undefined;
+  const replaceBox = () => act1("差し替える")?.querySelector("input") as HTMLInputElement | undefined;
+
+  const flux = (files: { s3Key: string; flag?: string }[]) =>
+    row({
+      provider: "comfy",
+      base_models: ["sdxl", "sd35", "flux1"],
+      file_flags: ["", "--diffusion-model", "--clip_l", "--t5xxl", "--vae"],
+      has_models: true,
+      model_rows: [{ id: "flux1-dev-fp8", enabled: true, base_model: "flux1", file_rows: files }],
+    });
+
+  const mountWith = async (engine: Record<string, unknown>) => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest") ? { jobs: [] } : { super_admin: true, engines: [engine] },
+    );
+    await mount();
+  };
+
+  it("swaps the file in a slot that is filled, and leaves the row alone", async () => {
+    await mountWith(
+      flux([
+        { s3Key: "image/diffusion_models/flux1-dev-fp8.safetensors", flag: "--diffusion-model" },
+        { s3Key: "image/text_encoders/t5xxl_fp16.safetensors", flag: "--t5xxl" },
+      ]),
+    );
+    await openIngest();
+    await typeInto(inputs()[0], "comfyanonymous/flux_text_encoders");
+    await typeInto(inputs()[1], "t5xxl_fp8_e4m3fn.safetensors");
+    await typeInto(inputs()[2], "flux1-dev-fp8");
+
+    const part = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+    await act(async () => {
+      part.value = "--t5xxl";
+      part.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    // 🔴 The slot is FILLED, so only one of the two acts is on offer. Adding a second --t5xxl is
+    // the CP's 409, said one press earlier instead of after a download.
+    expect(attachBox()!.disabled).toBe(true);
+    expect(replaceBox()!.disabled).toBe(false);
+    await act(async () => replaceBox()!.click());
+    // And it says what "replace" does not say by itself: the old object stays, because the CP
+    // has no s3:DeleteObject and the keys are shared between rows.
+    expect(host!.querySelector(".engines-ingest")!.textContent).toContain("バケットに残ります");
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "e".repeat(64),
+      bytes: 4_893_934_904,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
+      boxes[boxes.length - 1].click(); // the licence
+    });
+
+    apiJSON.mockResolvedValueOnce({ id: "j9", model_id: "flux1-dev-fp8", state: "running" });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "取り込む",
+      ) as HTMLElement,
+    );
+    const body = apiJSON.mock.calls.at(-1)!;
+    expect(String(body[0])).toBe("api/admin/engines/image/ingest");
+    expect(body[2]).toMatchObject({
+      id: "flux1-dev-fp8",
+      file_flag: "--t5xxl",
+      replace: true,
+      attach: false,
+      s3Key: "image/text_encoders/t5xxl_fp8_e4m3fn.safetensors",
+    });
+  });
+
+  // 🔴 The asymmetry that is the point of the whole thing. A row's own checkpoint is the
+  // unlabelled slot: `engineAttachAllowed` refuses it by design ("an unlabelled file is the
+  // checkpoint itself, and a row has one"), so it was the one file in the catalogue that no
+  // ingest could ever change. Replacing is the only act it has.
+  it("offers the row's own checkpoint to be replaced, which attaching never could", async () => {
+    await mountWith(flux([{ s3Key: "image/checkpoints/flux1-dev-fp8.safetensors" }]));
+    await openIngest();
+    await typeInto(inputs()[0], "black-forest-labs/FLUX.1-dev");
+    await typeInto(inputs()[1], "flux1-dev-fp8-e5m2.safetensors");
+    await typeInto(inputs()[2], "flux1-dev-fp8");
+
+    // The part picker is left on 「まるごと」 — the unlabelled slot.
+    expect(attachBox()!.disabled).toBe(true);
+    expect(replaceBox()!.disabled).toBe(false);
+    await act(async () => replaceBox()!.click());
+    // 🔴 …and the row's own settings are not asked for again. A replace changes one file; the
+    // family was decided when the row was created, and offering it here is offering to overwrite
+    // an answer this download knows nothing about.
+    const labels = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row span"));
+    expect(labels.map((l) => l.textContent)).not.toContain("モデル族");
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "f".repeat(64),
+      bytes: 11_901_466_276,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
+      boxes[boxes.length - 1].click();
+    });
+    apiJSON.mockResolvedValueOnce({ id: "j10", model_id: "flux1-dev-fp8", state: "running" });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "取り込む",
+      ) as HTMLElement,
+    );
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({
+      id: "flux1-dev-fp8",
+      file_flag: "",
+      replace: true,
+      s3Key: "image/checkpoints/flux1-dev-fp8-e5m2.safetensors",
+    });
+  });
+
+  // 🔴 The pair that keeps this honest, and it is NOT "managed vs not".
+  //
+  // A borrowed role (ADR 0079) mirrors another deployment's catalogue and has no bucket on this
+  // side, so nothing here may take a file in. An EXTERNAL engine — the LAN ComfyUI of ADR 0076 —
+  // is also `managed: false`, and it stages files in this deployment's bucket like any other.
+  // Pairing the borrowed row with a MANAGED one would pass for an implementation that hid the
+  // form from every unmanaged engine, taking the LAN ComfyUI with it.
+  it("offers the form to an external engine and not to a borrowed one", async () => {
+    /** The way IN to every act this form offers. Collapsed until pressed, so this — not the
+     *  open form — is what "the ingest is offered here" looks like on a freshly loaded panel. */
+    const opener = () => host!.querySelector(".engines-open");
+
+    const remount = async (over: Record<string, unknown>) => {
+      act(() => root?.unmount());
+      host?.remove();
+      await mountWith({ ...flux([{ s3Key: "image/checkpoints/flux1-dev-fp8.safetensors" }]), ...over });
+    };
+
+    // The control, first: an ordinary row has it.
+    await remount({});
+    expect(opener()).toBeTruthy();
+
+    // 🔴 The pair. `managed: false` with a lifecycle that is not `remote` is the LAN ComfyUI an
+    // operator runs on their own box, and it stages files in THIS deployment's bucket.
+    await remount({ managed: false, lifecycle: "external" });
+    expect(opener()).toBeTruthy();
+
+    // Borrowed: the catalogue is a mirror of the far fleet's and there is no bucket here.
+    await remount({ managed: false, lifecycle: "remote", url: "https://far.invalid" });
+    expect(opener()).toBeNull();
   });
 });
