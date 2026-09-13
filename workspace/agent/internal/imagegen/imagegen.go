@@ -112,17 +112,91 @@ type Request struct {
 	// 5, phase P3). Only the fleet's own engines have any; a route with none reports the request
 	// back as a warning rather than dropping it silently.
 	Loras []LoraRef
+	// Params is the caller's own sampler overlay — steps, cfg, sampler, scheduler (ADR 0081
+	// decision 4). It shares the catalogue's shape because it is merged into the SAME place the
+	// catalogue row is: family recipe ← catalogue row ← this, field by field.
+	//
+	// It reaches the Console's pane and never the MCP tool. ADR 0069 kept these out of the tool
+	// because an agent turning a knob that some provider ignores learns nothing; that reasoning
+	// is about the tool an agent sees, not about a form whose only providers are the fleet's own
+	// and whose greyed-out fields come from this Agent's own answer (Caps.Params).
+	//
+	// A POINTER so "the caller said nothing" survives: a zero-valued struct is exactly what the
+	// merge reads as "declared nothing", and the two must not be spelled the same at the edge
+	// that has to REFUSE a typed value (validateParams) rather than ignore it.
+	Params *EngineParams
+	// OnPhase is how a long provider call says where it has got to, for the job queue's list
+	// (ADR 0081 decision 2). nil on the blocking route, which has nobody to tell.
+	//
+	// It is called from the provider's own goroutine and may be called more than once with the
+	// same phase — a wake seen by the upload and then again by /prompt is two waking events, not
+	// a state machine the reader may assume is monotonic.
+	OnPhase func(Phase)
+	// OnUpstream reports the id the ENGINE gave this request (ComfyUI's prompt_id), which is the
+	// only handle a cancel has: Canceller takes it, and without it the alternative is the bare
+	// /interrupt that kills another workspace's picture on a shared box.
+	OnUpstream func(id string)
 }
+
+// Phase is how far along one generation is, in the words the job list shows. It is not a
+// progress bar and deliberately cannot become one: per-step progress exists only on ComfyUI's
+// websocket and the Control Plane's relay does not upgrade connections (ADR 0081 decision 2).
+//
+// What it buys is the difference between "the engine is starting, the first picture waits
+// several minutes" and an unexplained five-minute `running`.
+type Phase string
+
+const (
+	PhaseWaking    Phase = "waking"
+	PhaseUploading Phase = "uploading"
+	PhaseRunning   Phase = "running"
+	PhaseFetching  Phase = "fetching"
+)
+
+// reportPhase and reportUpstream are the nil-safe callers, so no provider has to write the
+// check at each of the four places it reports from.
+func (r Request) reportPhase(p Phase) {
+	if r.OnPhase != nil {
+		r.OnPhase(p)
+	}
+}
+
+func (r Request) reportUpstream(id string) {
+	if r.OnUpstream != nil && strings.TrimSpace(id) != "" {
+		r.OnUpstream(id)
+	}
+}
+
+// Canceller is an OPTIONAL capability a Provider may implement: "a request the engine has
+// already accepted can be taken back". Kept off the core Provider interface because most routes
+// have no such thing — a vendor call is in flight or it is not, and sdcpp's OpenAI-compatible
+// endpoint offers nothing to cancel with — and a required method every implementation answers
+// with "not supported" is a method with no information in it (ADR 0081 decision 2).
+//
+// upstream is whatever the provider reported through Request.OnUpstream. A provider that is
+// asked to cancel an id it never issued must refuse rather than cancel "whatever is running":
+// the engine box is shared across workspaces.
+type Canceller interface {
+	Cancel(ctx context.Context, upstream string) error
+}
+
+// Build is the Agent's own version, stamped by main at startup. It rides in the sidecar
+// (ADR 0081 decision 3) because "which Agent wrote this graph" is the one piece of provenance a
+// picture cannot carry any other way — the templates change between releases and the sidecar
+// outlives the binary that wrote it.
+var Build = "dev"
 
 // LoraRef is one LoRA a request asks for: a name out of Caps.Loras, and how strongly to apply
 // it. A LoRA whose base model does not match the chosen checkpoint is refused by the PROVIDER
 // while it assembles the request (ADR 0072 decision 5, レビュー決定 5) — the Control Plane never
 // sees it, because the pairing lives inside a workflow graph the gateway must not read.
 type LoraRef struct {
-	Name string
+	// The tags are the sidecar's (ADR 0081 decision 3) and the props route's: a picture's record
+	// holds the LoRAs it was made with in the same spelling the request names them by.
+	Name string `json:"name"`
 	// Weight is 0-2, and 0 means "not stated": a LoRA asked for at strength zero is a LoRA that
 	// does nothing, which nobody means, so the provider reads it as decision 5's default of 1.
-	Weight float64
+	Weight float64 `json:"weight,omitempty"`
 }
 
 // Image is one produced picture, in memory. A provider hands these back and never decides
@@ -132,6 +206,14 @@ type Image struct {
 	MIME   string
 	Width  int
 	Height int
+	// Seed is the sampler noise THIS picture came from — the request's base seed for batch index
+	// 0 and base+i after, which is how ComfyUI derives a batch's noise. nil on a route that has
+	// no seed to report (ADR 0081 decision 3).
+	//
+	// It rides per image rather than on Result because a batch of four is four different
+	// pictures, and "it was random and I cannot get it back" is the complaint this exists to
+	// answer.
+	Seed *int64
 }
 
 // Usage is the driver-model consumption a route incurred producing the images. It is the
@@ -203,6 +285,15 @@ type Caps struct {
 	// cannot change. Reporting true there would be the most expensive kind of lie: the caller
 	// sees no warning, the picture looks fine, and what they asked to exclude is still in it.
 	Negative bool
+	// Params is whether Request.Params reaches the sampler at all (ADR 0081 decision 4). Only a
+	// route that BUILDS the graph has these knobs to turn — the vendor routes have no steps and
+	// no sampler name, and sdcpp's command line was fixed when the box started — so a request
+	// that carries them anywhere else comes back as a warning rather than being dropped.
+	//
+	// Per provider rather than per model: which of the four a FAMILY reads differs (flux1 has no
+	// cfg), and that is reported per request as a warning, not as a capability the form could
+	// read one model at a time.
+	Params bool
 	// Strength is whether Request.Strength reaches the sampler on an EDIT.
 	//
 	// Inpaint is excluded even where this is true, and that is not an omission: what preserves
@@ -272,6 +363,83 @@ type ModelInfo struct {
 // in it. comfy (ADR 0072 P2) is the first provider for which this is ever more than one entry.
 type ModelLister interface {
 	Models(ctx context.Context) []ModelInfo
+}
+
+// Studio is the MEMBER-facing catalogue of one provider (ADR 0081 decision 5): everything a
+// person filling in a generation form has to know, from the same rows the MCP path already
+// receives, with no second projection on the Control Plane to keep in step.
+//
+// It is a different answer from Caps and from ModelInfo, and deliberately so: those exist to
+// decide what a TOOL may advertise to a model, where the honest answer is a short one. This is
+// what a form renders — placeholders, the fields to grey out, the administrator's own negative
+// with its origin shown, the licence the weights came under.
+type Studio struct {
+	Models []StudioModel
+	Loras  []StudioLora
+	// Samplers and Schedulers are the allow-lists this Agent will send, so the form cannot offer
+	// a name the jobs route would then refuse by name.
+	Samplers   []string
+	Schedulers []string
+	// NegativeAlways is the deployment administrator's own exclusion list, shown as a fixed chip
+	// the member cannot remove — it is the admin's, and merging it in invisibly is what ADR 0072
+	// already refused to do.
+	NegativeAlways string
+	// LoraWeightMax is the ceiling one adapter may be asked for at. There is no default weight:
+	// no column holds one, and the Agent uses 1 when nobody states one.
+	LoraWeightMax float64
+}
+
+// StudioModel is one checkpoint as a form needs to see it.
+type StudioModel struct {
+	ID          string
+	Description string
+	// Family is the workflow template (`sdxl`, `flux1`, …). It decides everything below it.
+	Family string
+	Sizes  []string
+	// Params are the EFFECTIVE defaults — the family recipe with the catalogue row laid over it
+	// — so the form's placeholders are what will actually run if the member types nothing.
+	Params EngineParams
+	// Negative is the row's own recommended negative prompt.
+	Negative string
+	// Knobs is the subset of `steps cfg sampler scheduler negative` this family READS. The form
+	// greys out the rest on this word rather than on a table of its own: the two must not be able
+	// to disagree, and this Agent is where the templates are.
+	Knobs []string
+	Warm  bool
+	// The licence the weights came under and where they came from, for a member who is about to
+	// publish what they make. The catalogue holds all three; they reach the Agent on
+	// engineCatalogModelRow.
+	LicenseName string
+	LicenseURL  string
+	SourceURL   string
+}
+
+// StudioLora is one fine-tune as the form needs it.
+type StudioLora struct {
+	Name        string
+	Description string
+	BaseModel   string
+	// TrainedWords are the trigger words the adapter's author published. The single most common
+	// "the LoRA does nothing" is a missing trigger, and no amount of prompt help fixes it.
+	TrainedWords []string
+	// Weight is the strength the catalogue row declares, 0 for "not declared" — in which case the
+	// provider uses 1.
+	Weight float64
+}
+
+// StudioLister is the OPTIONAL capability behind the widened GET /imagegen/status. Only the
+// route that builds the graph has any of this to report, so the vendor routes do not implement
+// it and their models go out with the short shape they always had.
+type StudioLister interface {
+	Studio(ctx context.Context) (Studio, bool)
+}
+
+func studioOf(ctx context.Context, p Provider) (Studio, bool) {
+	sl, ok := p.(StudioLister)
+	if !ok {
+		return Studio{}, false
+	}
+	return sl.Studio(ctx)
 }
 
 // Provider ids. The id is the wire value the MCP surface and the ledger both carry.
@@ -464,6 +632,10 @@ type StoredFile struct {
 	Bytes  int64  `json:"bytes"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
+	// Seed is this picture's own sampler seed — see Image.Seed. A POINTER on the wire too: 0 is
+	// a perfectly good seed, and omitting it when it is 0 would make the one route that CAN
+	// reproduce a picture look like one that cannot.
+	Seed *int64 `json:"seed,omitempty"`
 }
 
 // Stored is the core's answer: files on disk plus the provenance and the warnings.
@@ -528,7 +700,7 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 		// and produced nothing still consumed the user's plan, and a row with ok:false is what
 		// keeps that visible (ADR 0029 §3). Recording INSIDE the loop is what makes a
 		// fall-through cost two honest rows rather than one that hides the wasted attempt.
-		recordUsage(ctx, job, name, res, err == nil && len(res.Images) > 0, started)
+		recordUsage(ctx, job.Session, name, res, err == nil && len(res.Images) > 0, started)
 		if err == nil && len(res.Images) == 0 {
 			err = errors.New("the provider returned no image")
 		}
@@ -643,6 +815,13 @@ func requestWarnings(req Request, res Result, caps Caps) []string {
 			"negative_prompt=%q requested, but this route has no negative conditioning — nothing was excluded",
 			req.NegativePrompt))
 	}
+	// Same shape once more, and invisible in the same way a dropped LoRA is: a picture sampled at
+	// the route's own 20 steps when 50 were asked for looks like a picture, and only the person
+	// who asked knows it is not the one they asked for.
+	if req.Params != nil && *req.Params != (EngineParams{}) && !caps.Params {
+		out = append(out, "steps / cfg / sampler / scheduler were requested, but this route does not build"+
+			" the sampler graph — it ran at its own fixed settings")
+	}
 	// A dropped seed is the most invisible of the three: the picture is fine, and the caller only
 	// finds out when the SECOND request — the whole point of pinning one — comes back different.
 	if req.Seed != nil && !caps.Seed {
@@ -703,8 +882,12 @@ func parseSize(s string) (w, h int, ok bool) {
 // chosen is the provider Run picked. A provider only stamps its own id on a Result it actually
 // produced, so a request refused before any work started (an unsupported op, a mask on a route
 // with no mask input) would otherwise leave the row's kind column empty.
-func recordUsage(ctx context.Context, job Job, chosen string, res Result, ok bool, started time.Time) {
-	tag := usagex.Tag{Feature: usagex.FeatureToolImagegen, Trigger: usagex.TriggerUser, Ref: job.Session}
+//
+// ref is the session the picture was made for, and it is EMPTY for the Console's job queue
+// (ADR 0081): that path has no session, and naming one that does not exist would file a
+// member's own volume under a conversation nobody had.
+func recordUsage(ctx context.Context, ref string, chosen string, res Result, ok bool, started time.Time) {
+	tag := usagex.Tag{Feature: usagex.FeatureToolImagegen, Trigger: usagex.TriggerUser, Ref: ref}
 	call := usagex.Call{
 		Kind:     usageKindOf(res.Provider, chosen),
 		ModelReq: res.Model,

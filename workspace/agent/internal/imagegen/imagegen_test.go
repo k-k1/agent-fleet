@@ -478,7 +478,7 @@ func TestSweepGeneratedDropsOnlyExpired(t *testing.T) {
 	if err := os.Chtimes(old, past, past); err != nil {
 		t.Fatal(err)
 	}
-	sweepGeneratedNow(root, time.Now().Add(-generatedTTL))
+	sweepGeneratedNow(root, time.Now().Add(-generatedTTL), time.Now().Add(-trialTTL))
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatal("an expired image survived the sweep")
 	}
@@ -489,7 +489,7 @@ func TestSweepGeneratedDropsOnlyExpired(t *testing.T) {
 	if err := os.Remove(fresh); err != nil {
 		t.Fatal(err)
 	}
-	sweepGeneratedNow(root, time.Now().Add(-generatedTTL))
+	sweepGeneratedNow(root, time.Now().Add(-generatedTTL), time.Now().Add(-trialTTL))
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatal("an empty session directory was left behind")
 	}

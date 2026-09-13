@@ -191,6 +191,11 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 			Bytes  int64  `json:"bytes"`
 			Width  int    `json:"width"`
 			Height int    `json:"height"`
+			// Seed is the sampler noise THIS picture came from (ADR 0081 decision 3), on the one
+			// route that has one. It is relayed because "it was random and I cannot get it back"
+			// is the complaint every image tool collects: without it, an agent that made a good
+			// picture cannot make a variation of that picture, only of that prompt.
+			Seed *int64 `json:"seed"`
 		} `json:"files"`
 		Provider    string   `json:"provider"`
 		Model       string   `json:"model"`

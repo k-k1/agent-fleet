@@ -41,6 +41,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -118,7 +119,7 @@ func (p *comfyProvider) Caps(model string) Caps {
 		// One, like sdcpp, and for the same reason: a second reference image would need a graph
 		// that stitches or conditions on both, and no such graph has been run here.
 		MaxInputs: 1,
-		MaxCount:  4,
+		MaxCount:  comfyMaxBatch,
 		Loras:     comfyLoraInfos(conn),
 		// The one route where a seed reaches the sampler: it is this package that builds the
 		// graph, so the seed is an input this file writes rather than a field a vendor API has
@@ -131,7 +132,70 @@ func (p *comfyProvider) Caps(model string) Caps {
 		// five, and the amount is a number in the graph this package writes rather than a field a
 		// vendor API has to expose (ADR 0069 follow-up, strength).
 		Strength: true,
+		// The one route that builds the sampler graph, so the one route where steps, cfg, sampler
+		// and scheduler are real (ADR 0081 decision 4). WHICH of the four a given family reads is
+		// a per-request warning, not a capability flag — see comfyIgnoredParamWarnings.
+		Params: true,
 	}
+}
+
+// comfyFamilyKnobs is the subset of `steps cfg sampler scheduler negative` a family's template
+// actually reads. It is the single declaration of ADR 0081 decision 4's table, and the status
+// route serves it to the Console (decision 5) so the form greys a field out on the AGENT's word
+// rather than on a second copy of this table that can disagree with the graphs.
+//
+// It is derived from the templates and must be read next to them: flux1 and klein fold guidance
+// into the conditioning, so the number a model card calls "CFG" is a different knob there;
+// klein's Flux2Scheduler takes a size and not a schedule name; and the three distilled families
+// sample at cfg 1, where a negative branch cancels out exactly (comfyFamilyTakesNegative).
+func comfyFamilyKnobs(family comfyFamily) []string {
+	knobs := []string{"steps"}
+	switch family {
+	case ComfyFamilySDXL, ComfyFamilySD35:
+		knobs = append(knobs, "cfg", "sampler", "scheduler")
+	case ComfyFamilyZImage:
+		knobs = append(knobs, "cfg", "sampler", "scheduler")
+	case ComfyFamilyFlux1:
+		knobs = append(knobs, "sampler", "scheduler")
+	case ComfyFamilyFlux2Klein:
+		knobs = append(knobs, "sampler")
+	}
+	if comfyFamilyTakesNegative(family) {
+		knobs = append(knobs, "negative")
+	}
+	return knobs
+}
+
+func comfyFamilyReadsKnob(family comfyFamily, knob string) bool {
+	for _, k := range comfyFamilyKnobs(family) {
+		if k == knob {
+			return true
+		}
+	}
+	return false
+}
+
+// comfyIgnoredParamWarnings says out loud which of the caller's own knobs this family does not
+// read (ADR 0081 decision 4: "what a family ignores is reported, not swallowed").
+//
+// It reports the CALLER's values only. A catalogue row that declares a cfg for flux1 is the
+// administrator's business and was already written before this request existed; a member who
+// typed 7 into a cfg box and got a picture sampled without it has been told nothing unless this
+// says so.
+func comfyIgnoredParamWarnings(family comfyFamily, p *EngineParams) []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	if p.CFG > 0 && !comfyFamilyReadsKnob(family, "cfg") {
+		out = append(out, fmt.Sprintf("cfg=%g was not applied: the %s family folds its guidance into the conditioning"+
+			" (a distilled path sampled at a fixed 1), so a guidance scale has nowhere to go here", p.CFG, family))
+	}
+	if strings.TrimSpace(p.Scheduler) != "" && !comfyFamilyReadsKnob(family, "scheduler") {
+		out = append(out, fmt.Sprintf("scheduler=%s was not applied: the %s family's schedule is derived from the"+
+			" picture's size (Flux2Scheduler), not chosen by name", strings.TrimSpace(p.Scheduler), family))
+	}
+	return out
 }
 
 // comfyModelTakesNegative answers whether this model's template samples with a negative branch
@@ -240,6 +304,73 @@ func (p *comfyProvider) Models(ctx context.Context) []ModelInfo {
 	return out
 }
 
+// Studio implements StudioLister (ADR 0081 decision 5): the member-facing catalogue, built from
+// the rows this provider already receives on GET /internal/engine/catalog.
+//
+// 🔴 A model the engine could not actually run is NOT listed. The catalogue already withholds it
+// from generation — no declared family means no workflow template, and a family whose files are
+// not declared fails inside comfyBuildGraph — so offering it in a form would be offering a
+// button that produces an error message after a cold start. A disabled entry with a tooltip is
+// the administrator's screen, not the member's.
+func (p *comfyProvider) Studio(ctx context.Context) (Studio, bool) {
+	conn, ok := p.conn(ctx)
+	if !ok {
+		return Studio{}, false
+	}
+	out := Studio{
+		Samplers:       comfySortedNames(comfySamplerNames),
+		Schedulers:     comfySortedNames(comfySchedulerNames),
+		NegativeAlways: conn.NegativeAlways,
+		LoraWeightMax:  comfyMaxLoraWeight,
+	}
+	for _, id := range conn.Models {
+		family, ok := comfyFamilyFor(conn, id)
+		if !ok {
+			continue // no declared family: there is no template, so there is nothing to offer
+		}
+		if _, err := comfyBuildGraph(family, resolveComfyFiles(conn.Files[id]), comfyParams{Prompt: "x"}); err != nil {
+			continue // a file the family needs is not declared; the same refusal a request would get
+		}
+		lic := conn.Licenses[id]
+		out.Models = append(out.Models, StudioModel{
+			ID: id, Description: conn.Descriptions[id], Family: string(family),
+			Sizes: comfySizesFor(conn, id), Params: comfyEffectiveDefaults(conn, family, id),
+			Negative: conn.Negatives[id], Knobs: comfyFamilyKnobs(family),
+			Warm:        id != "" && id == conn.Warm,
+			LicenseName: lic.Name, LicenseURL: lic.URL, SourceURL: lic.Source,
+		})
+	}
+	for _, l := range conn.Loras {
+		if strings.TrimSpace(l.ID) == "" || strings.TrimSpace(l.File) == "" {
+			continue
+		}
+		out.Loras = append(out.Loras, StudioLora{
+			Name: l.ID, Description: l.Description, BaseModel: l.BaseModel,
+			TrainedWords: l.TrainedWords, Weight: l.Weight,
+		})
+	}
+	return out, true
+}
+
+// comfyEffectiveDefaults is what will run when the member types nothing: the family's own recipe
+// with the catalogue row laid over it, field by field — the same merge the template does, which
+// is why it is that function and not a second reading of the same two sources.
+func comfyEffectiveDefaults(conn EngineConn, family comfyFamily, model string) EngineParams {
+	r := comfyFamilyRecipes[family].with(conn.Params[model])
+	return EngineParams{Steps: r.Steps, CFG: r.CFG, Sampler: r.Sampler, Scheduler: r.Scheduler}
+}
+
+// comfySortedNames spells an allow-list for the wire. Sorted, because a map range would reorder
+// it on every read and the status answer has to be the same bytes for the same state.
+func comfySortedNames(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // comfySizesFor prefers the catalogue's own declaration (ADR 0072 decision 2) and falls back to
 // the one size every family in this template set was actually trained and measured at.
 func comfySizesFor(conn EngineConn, model string) []string {
@@ -286,6 +417,12 @@ func errUnknownComfyFamily(family comfyFamily) error {
 // four already stacks more style than anyone can steer; the cap exists so a caller cannot turn
 // one call into an unbounded pile of disk reads on a box the deployment pays for by the hour.
 const comfyMaxLoras = 4
+
+// comfyMaxBatch is how many pictures one graph may produce at once (ComfyUI's batch_size). It is
+// faster per picture on a card with headroom and an out-of-memory five minutes into a cold start
+// on one without, and nothing in a batch can be cancelled separately — which is why the pane's
+// "count" means JOBS and this stays an advanced field.
+const comfyMaxBatch = 4
 
 // comfyMaxLoraWeight is decision 5's declared range, 0-2. LoraLoader itself accepts -100 to 100,
 // which is a knob for someone watching the result, not for a model that cannot see the picture.
@@ -447,9 +584,11 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		Op: req.Op, Prompt: req.Prompt, Negative: comfyNegativeFor(conn, model, req),
 		Seed: seed, Width: w, Height: h,
 		BatchSize: count, Loras: loras, Strength: req.Strength,
-		// What the catalogue row for THIS model declares. Absent for a model that declares
-		// nothing, which leaves every template at its own recipe.
-		Params: conn.Params[model],
+		// The catalogue row for THIS model with the caller's own overlay laid over it, field by
+		// field (ADR 0081 decision 4). What the template then does with it is one more merge —
+		// family recipe ← this — so the whole order is recipe ← row ← request, and a caller who
+		// names only `steps` changes only the steps.
+		Params: comfyEffectiveParams(conn.Params[model], req.Params),
 	}
 
 	switchWarning := comfySwitchWarning(conn, model)
@@ -464,7 +603,8 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	// and an edit's size is the input picture's, not the caller's.
 	var sizeWarning string
 	if params.isImageToImage() {
-		up, err := p.uploadImage(ctx, conn, req.Inputs[0])
+		req.reportPhase(PhaseUploading)
+		up, err := p.uploadImage(ctx, conn, req, req.Inputs[0])
 		if err != nil {
 			return Result{}, err
 		}
@@ -477,7 +617,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 			params.Width, params.Height = up.width, up.height
 		}
 		if req.Op == OpInpaint {
-			mask, err := p.uploadImage(ctx, conn, req.Mask)
+			mask, err := p.uploadImage(ctx, conn, req, req.Mask)
 			if err != nil {
 				return Result{}, err
 			}
@@ -490,15 +630,20 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		return Result{}, err
 	}
 
-	promptID, err := p.submit(ctx, conn, graph, model)
+	promptID, err := p.submit(ctx, conn, req, graph, model)
 	if err != nil {
 		return Result{}, err
 	}
-	hist, err := p.awaitHistory(ctx, conn, promptID)
+	// The engine has taken the request and named it: from here a cancel has something to aim at,
+	// and the alternative — the bare /interrupt — would kill another workspace's picture.
+	req.reportUpstream(promptID)
+	req.reportPhase(PhaseRunning)
+	hist, err := p.awaitHistory(ctx, conn, req, promptID)
 	if err != nil {
 		return Result{}, err
 	}
-	images, err := p.fetchImages(ctx, conn, hist)
+	req.reportPhase(PhaseFetching)
+	images, err := p.fetchImages(ctx, conn, hist, seed)
 	if err != nil {
 		return Result{}, err
 	}
@@ -507,6 +652,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	if ignored := comfyNegativeIgnoredWarning(conn, model, family); ignored != "" {
 		warnings = append(warnings, ignored)
 	}
+	warnings = append(warnings, comfyIgnoredParamWarnings(family, req.Params)...)
 	if switchWarning != "" {
 		warnings = append(warnings, switchWarning)
 	}
@@ -573,7 +719,7 @@ type comfyUpload struct {
 // 🔴 The answer's `name` is used, never the one that was sent. They differ exactly when the server
 // decided to rename, and a graph naming the file it MEANT to upload would fail validation against
 // a directory listing that has the other one.
-func (p *comfyProvider) uploadImage(ctx context.Context, conn EngineConn, path string) (comfyUpload, error) {
+func (p *comfyProvider) uploadImage(ctx context.Context, conn EngineConn, req Request, path string) (comfyUpload, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return comfyUpload{}, fmt.Errorf("could not read %s: %w", path, err)
@@ -610,7 +756,7 @@ func (p *comfyProvider) uploadImage(ctx context.Context, conn EngineConn, path s
 	body := buf.Bytes()
 	ctype := mw.FormDataContentType()
 
-	answer, err := p.sendWithWake(ctx, conn, "/upload/image", func() (*http.Request, error) {
+	answer, err := p.sendWithWake(ctx, conn, req, "/upload/image", func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, "/upload/image"), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
@@ -664,7 +810,11 @@ func comfyUploadName(raw []byte, path string) string {
 // sendWithWake runs one request against the engine through the same retry-on-503-engine_waking
 // loop /prompt uses, remaking the request per attempt because a body reader cannot be replayed.
 // what names the call in the failure, so a refusal says which of the four endpoints refused.
-func (p *comfyProvider) sendWithWake(ctx context.Context, conn EngineConn, what string, make func() (*http.Request, error)) ([]byte, error) {
+//
+// It is also where the job list learns that the box is being STARTED (ADR 0081 decision 2): the
+// gateway's 503 is the only signal anywhere that the several minutes about to pass are a cold
+// start rather than a stall, and it is seen here and nowhere else.
+func (p *comfyProvider) sendWithWake(ctx context.Context, conn EngineConn, req Request, what string, make func() (*http.Request, error)) ([]byte, error) {
 	lastWaking := ""
 	for attempt := 1; ; attempt++ {
 		httpReq, err := make()
@@ -686,6 +836,7 @@ func (p *comfyProvider) sendWithWake(ctx context.Context, conn EngineConn, what 
 				what, status, http.StatusText(status), sdcppErrText(respBody))
 		}
 		lastWaking = sdcppErrText(respBody)
+		req.reportPhase(PhaseWaking)
 		select {
 		case <-ctx.Done():
 			return nil, sdcppGaveUp(attempt, lastWaking)
@@ -735,12 +886,12 @@ func comfyRandomSeed() (int64, error) {
 // For a plain generate it is the first call of the three and therefore the one that meets a
 // stopped engine; for edit and inpaint the uploads got there first, which is exactly why they
 // share this loop rather than each having their own.
-func (p *comfyProvider) submit(ctx context.Context, conn EngineConn, graph comfyGraph, model string) (string, error) {
+func (p *comfyProvider) submit(ctx context.Context, conn EngineConn, req Request, graph comfyGraph, model string) (string, error) {
 	body, err := json.Marshal(map[string]any{"prompt": graph, "client_id": "af-agent"})
 	if err != nil {
 		return "", err
 	}
-	respBody, err := p.sendWithWake(ctx, conn, "/prompt", func() (*http.Request, error) {
+	respBody, err := p.sendWithWake(ctx, conn, req, "/prompt", func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, "/prompt"), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
@@ -802,7 +953,7 @@ type comfyHistory struct {
 // the previous process accepted, so once a wake has been seen, a 200 that does not carry this
 // prompt means the work is gone. That is reported rather than polled for, because the alternative
 // is silence until the request's whole 16-minute budget runs out.
-func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, promptID string) (comfyHistory, error) {
+func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req Request, promptID string) (comfyHistory, error) {
 	lastWaking, sawWaking := "", false
 	for {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, sdcppURL(conn, "/history/"+url.PathEscape(promptID)), nil)
@@ -824,10 +975,18 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, promp
 				status, http.StatusText(status), sdcppErrText(body))
 		case status >= 300:
 			lastWaking, sawWaking = sdcppErrText(body), true
+			// The box was replaced under the poll: the job list goes back to saying "starting",
+			// because that is what the next several minutes are.
+			req.reportPhase(PhaseWaking)
 			// The gateway's own Retry-After, not the poll interval: it is answering for a box
 			// that is being started, and asking every second only adds requests to a wake.
 			wait = retryAfter
 		default:
+			if sawWaking {
+				// The box answered again: whatever the list said while it was starting, the
+				// picture is being made now.
+				req.reportPhase(PhaseRunning)
+			}
 			var byID map[string]comfyHistory
 			if err := json.Unmarshal(body, &byID); err != nil {
 				return comfyHistory{}, fmt.Errorf("the image engine's /history answer was not JSON: %w", err)
@@ -945,7 +1104,11 @@ func comfyCacheWarning(hist comfyHistory) string {
 // fetchImages downloads every output image GET /view names, in the order ComfyUI's own outputs
 // map iterates — a batch of N (Request.Count) all rides on the SAME node, so this is not
 // re-deriving what "count" meant, only reading off what the graph actually produced.
-func (p *comfyProvider) fetchImages(ctx context.Context, conn EngineConn, hist comfyHistory) ([]Image, error) {
+//
+// seed is the graph's own, and each picture is stamped with seed+i (ADR 0081 decision 3): that
+// is how ComfyUI derives a batch's noise from one number, so the second picture of a batch of
+// four is reproducible only under seed+1 and never under the seed the request carried.
+func (p *comfyProvider) fetchImages(ctx context.Context, conn EngineConn, hist comfyHistory, seed int64) ([]Image, error) {
 	var out []Image
 	for _, o := range hist.Outputs {
 		for _, im := range o.Images {
@@ -953,6 +1116,8 @@ func (p *comfyProvider) fetchImages(ctx context.Context, conn EngineConn, hist c
 			if err != nil {
 				return nil, err
 			}
+			s := seed + int64(len(out))
+			img.Seed = &s
 			out = append(out, img)
 		}
 	}
@@ -982,6 +1147,135 @@ func (p *comfyProvider) viewOne(ctx context.Context, conn EngineConn, filename, 
 		img.Width, img.Height = cfg.Width, cfg.Height
 	}
 	return img, nil
+}
+
+// comfyEffectiveParams lays the caller's overlay over the catalogue row's, field by field (ADR
+// 0081 decision 4). The template then lays the result over its family recipe (comfyRecipe.with),
+// so the whole order is recipe ← row ← request.
+//
+// Field by field for the same reason the other two merges are: a caller who types a step count
+// into a form and nothing else has not asked for the administrator's declared sampler to be
+// reset to whatever a zero value happens to mean.
+//
+// 🔴 An unknown sampler or scheduler name never arrives here. comfyRecipe.with would IGNORE it
+// and keep the family's own — the right answer for an administrator's old row, and the wrong one
+// for a member's form, where a typed value that silently does nothing is indistinguishable from
+// a broken feature. The jobs route refuses it by name with 400 bad_params first
+// (validateRequestParams), which is why this merge does not repeat the check.
+func comfyEffectiveParams(row EngineParams, req *EngineParams) EngineParams {
+	if req == nil {
+		return row
+	}
+	if req.Steps > 0 {
+		row.Steps = req.Steps
+	}
+	if req.CFG > 0 {
+		row.CFG = req.CFG
+	}
+	if s := strings.TrimSpace(req.Sampler); s != "" {
+		row.Sampler = s
+	}
+	if s := strings.TrimSpace(req.Scheduler); s != "" {
+		row.Scheduler = s
+	}
+	return row
+}
+
+// comfyCancelTimeout bounds a cancel. It is SHORT, and deliberately not the generation's own
+// budget: a cancel is a request against a box that is either up (in which case it answers at
+// once) or asleep (in which case there is nothing running to cancel), so waiting out a wake
+// would buy a GPU to interrupt a picture that no longer exists.
+const comfyCancelTimeout = 15 * time.Second
+
+// Cancel implements Canceller (ADR 0081 decision 2) for the fleet's own ComfyUI.
+//
+// Two upstream calls, because the engine has two places a request can be: /queue holds what has
+// not started, /interrupt stops what has. Verified against ComfyUI's server.py on 2026-09-13:
+// `POST /queue {"delete":[id]}` removes a pending item, and `POST /interrupt` with a
+// `prompt_id` interrupts THAT prompt only.
+//
+// 🔴 The bare /interrupt — the same route with no body — is what the upstream UI's stop button
+// sends, and it interrupts whatever the box happens to be executing. The box is shared across
+// every workspace of the deployment, so sending it would cancel somebody else's picture, with
+// nothing anywhere saying why theirs failed. This function therefore refuses an empty id
+// instead of falling back to it.
+func (p *comfyProvider) Cancel(ctx context.Context, upstream string) error {
+	upstream = strings.TrimSpace(upstream)
+	if upstream == "" {
+		return errors.New("this picture has not reached the engine yet, so there is no queued request to take back")
+	}
+	conn, ok := p.conn(ctx)
+	if !ok {
+		return errors.New("this deployment runs no self-hosted image engine")
+	}
+	ctx, cancel := context.WithTimeout(ctx, comfyCancelTimeout)
+	defer cancel()
+	if pending, err := p.queuePending(ctx, conn); err == nil && pending[upstream] {
+		// Still waiting its turn upstream: dropping it costs no sampling at all, and unlike an
+		// interrupt it cannot be confused with the job that is actually executing.
+		return p.postCancel(ctx, conn, "/queue", map[string]any{"delete": []string{upstream}})
+	}
+	return p.postCancel(ctx, conn, "/interrupt", map[string]any{"prompt_id": upstream})
+}
+
+// queuePending is the set of prompt ids the engine holds but has not started. GET /queue answers
+// `{"queue_running": [...], "queue_pending": [...]}`, each entry a heterogeneous array whose
+// SECOND element is the prompt id (server.py's own queue tuple); anything shaped otherwise is
+// skipped rather than guessed at.
+func (p *comfyProvider) queuePending(ctx context.Context, conn EngineConn) (map[string]bool, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, sdcppURL(conn, "/queue"), nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
+	body, status, _, err := engineHTTPAttempt(p.client, httpReq)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("the image engine's /queue answered %d %s: %s",
+			status, http.StatusText(status), sdcppErrText(body))
+	}
+	var doc struct {
+		Pending [][]any `json:"queue_pending"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, entry := range doc.Pending {
+		if len(entry) < 2 {
+			continue
+		}
+		if id, ok := entry[1].(string); ok && id != "" {
+			out[id] = true
+		}
+	}
+	return out, nil
+}
+
+// postCancel sends one cancel call. It does NOT go through sendWithWake: a 503 engine_waking
+// means the box that held this request is gone, which is the outcome a cancel was asking for.
+func (p *comfyProvider) postCancel(ctx context.Context, conn EngineConn, path string, payload map[string]any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, path), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
+	respBody, status, _, err := engineHTTPAttempt(p.client, httpReq)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("the image engine's %s answered %d %s: %s",
+			path, status, http.StatusText(status), sdcppErrText(respBody))
+	}
+	return nil
 }
 
 // comfyMIMEFor reads the extension because /view answers with the file's own bytes and no JSON

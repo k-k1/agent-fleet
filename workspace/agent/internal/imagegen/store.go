@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,11 +28,36 @@ func generatedRootDir() string {
 	return filepath.Join(paths.HomeDir(), ".cache", "agent-fleet", "generated")
 }
 
+// consoleDirName is the folder the Console's own pane writes into (ADR 0081 decision 3): a
+// sibling of the per-session folders, and the one the gallery's "generated images" family lists.
+//
+// It is NEVER swept. The 30-day window below exists because an agent's pictures are by-products
+// of a conversation nobody asked to keep; these are the product, and a person pressed the button
+// for each of them.
+const consoleDirName = "console"
+
+// trialDirName is the one subtree the sweep still clears, after seven days. A trial picture is
+// disposable by definition — the batch remakes the keeper at full steps — so the exception to
+// "never swept" is stated here, next to the rule it is an exception to.
+const trialDirName = "trial"
+
+// ConsoleDir and ConsoleTrialDir are where the job queue puts a picture when the caller named no
+// folder of their own.
+func ConsoleDir() string      { return filepath.Join(generatedRootDir(), consoleDirName) }
+func ConsoleTrialDir() string { return filepath.Join(ConsoleDir(), trialDirName) }
+
 // storeImages writes a provider's bytes into the session's directory. The name carries the
 // timestamp so a later generation never overwrites an earlier one — the user may still be
 // looking at it.
 func storeImages(sid string, images []Image) ([]StoredFile, error) {
-	dir := GeneratedDir(sid)
+	return storeImagesAt(GeneratedDir(sid), images, nil)
+}
+
+// storeImagesAt is the same, into a directory the caller names, with a sidecar per picture when
+// one is given (ADR 0081 decision 3). props is the resolved request, and the seed and the file
+// name of each individual picture are filled in here — the caller knows what it asked for, and
+// only this function knows what the pictures ended up being called.
+func storeImagesAt(dir string, images []Image, props *ImageProps) ([]StoredFile, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -62,7 +88,18 @@ func storeImages(sid string, images []Image) ([]StoredFile, error) {
 		out = append(out, StoredFile{
 			Path: path, Name: name, MIME: img.MIME,
 			Bytes: int64(len(img.Bytes)), Width: img.Width, Height: img.Height,
+			Seed: img.Seed,
 		})
+		if props != nil {
+			one := *props
+			one.Seed = img.Seed
+			if img.Width > 0 && img.Height > 0 {
+				one.Size = fmt.Sprintf("%dx%d", img.Width, img.Height)
+			}
+			if err := writeSidecar(path, one); err != nil {
+				return nil, err
+			}
+		}
 	}
 	sweepGenerated(generatedRootDir())
 	return out, nil
@@ -90,6 +127,10 @@ func extOf(mime string) string {
 const (
 	generatedTTL        = 30 * 24 * time.Hour
 	generatedSweepEvery = time.Hour
+	// trialTTL is the window for generated/console/trial alone (ADR 0081 decision 11). A trial is
+	// a cheap, few-step preview of a picture the batch then makes properly, so keeping them for a
+	// month would fill the disk with drafts of pictures that already exist next door.
+	trialTTL = 7 * 24 * time.Hour
 )
 
 var generatedSweep struct {
@@ -108,12 +149,17 @@ func sweepGenerated(root string) {
 	}
 	generatedSweep.last = time.Now()
 	generatedSweep.mu.Unlock()
-	sweepGeneratedNow(root, time.Now().Add(-generatedTTL))
+	now := time.Now()
+	sweepGeneratedNow(root, now.Add(-generatedTTL), now.Add(-trialTTL))
 }
 
 // sweepGeneratedNow is the unthrottled sweep, so a test can drive the retention rule itself
 // without depending on the clock the throttle keeps.
-func sweepGeneratedNow(root string, cutoff time.Time) {
+//
+// Two cutoffs, and the second one is the whole of ADR 0081 decision 3's exception: the
+// per-session folders age out at cutoff, the Console's own folder is skipped entirely, and only
+// its `trial` subfolder is cleared, at trialCutoff.
+func sweepGeneratedNow(root string, cutoff, trialCutoff time.Time) {
 	dirs, err := os.ReadDir(root)
 	if err != nil {
 		return
@@ -123,22 +169,39 @@ func sweepGeneratedNow(root string, cutoff time.Time) {
 			continue
 		}
 		sub := filepath.Join(root, d.Name())
-		files, err := os.ReadDir(sub)
-		if err != nil {
+		if d.Name() == consoleDirName {
+			// The keepers stay forever; the drafts next to them do not. Nothing else under this
+			// folder is touched, including a subfolder a future phase adds.
+			sweepDirFiles(filepath.Join(sub, trialDirName), trialCutoff)
 			continue
 		}
-		for _, f := range files {
-			if f.IsDir() {
-				continue
-			}
-			info, err := f.Info()
-			if err != nil || info.ModTime().After(cutoff) {
-				continue
-			}
-			_ = os.Remove(filepath.Join(sub, f.Name()))
-		}
+		sweepDirFiles(sub, cutoff)
 		// Empty only; never a recursive delete.
 		_ = os.Remove(sub)
+	}
+}
+
+// sweepDirFiles drops the files of one directory that are older than cutoff. A picture's sidecar
+// is removed with it rather than on its own age: they are written together and a record of a
+// picture that is gone is worse than neither.
+func sweepDirFiles(dir string, cutoff time.Time) {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+		info, err := f.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		path := filepath.Join(dir, f.Name())
+		_ = os.Remove(path)
+		if !strings.HasSuffix(f.Name(), sidecarExt) {
+			_ = os.Remove(sidecarPathFor(path))
+		}
 	}
 }
 

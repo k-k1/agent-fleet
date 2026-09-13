@@ -114,6 +114,21 @@ type EngineConn struct {
 	// sdcpp ignores this: it is handed one checkpoint and a fixed command line at startup, so
 	// there is no per-request recipe to override. comfy reads it.
 	Params map[string]EngineParams
+	// Licenses is what the catalogue row says about where a model's weights came from, per model
+	// id (ADR 0081 decision 5). Empty for a Control Plane that does not relay them yet, which is
+	// the normal case until lane B lands — the pane shows nothing rather than guessing, and the
+	// two lanes are deployed separately.
+	Licenses map[string]EngineLicense
+}
+
+// EngineLicense is one model's provenance as the catalogue holds it: the licence the weights are
+// published under, where to read it, and the page they came from. It is a MEMBER-facing fact,
+// not an administrative one — somebody about to publish a picture needs to know what the
+// checkpoint's licence says, and the admin screen is not a screen they can open.
+type EngineLicense struct {
+	Name   string
+	URL    string
+	Source string
 }
 
 // EngineParams are one model's declared generation defaults, as ADR 0072's catalogue holds them.
@@ -157,6 +172,12 @@ type EngineLora struct {
 	// 0.6 and 1.2 are different pictures — so it belongs on the row rather than in every
 	// caller.
 	Weight float64
+	// TrainedWords are the trigger words the adapter was trained with (ADR 0081 decision 5).
+	// Civitai publishes them and the ingest wizard has always shown them; until they became a
+	// column nothing stored them, so a LoRA that needs its trigger loaded and changed nothing
+	// visible. Empty for an adapter that declares none, and for a Control Plane older than the
+	// column.
+	TrainedWords []string
 }
 
 // EngineFile is one file ADR 0072 decision 2 declares for a model: the on-disk basename (the
