@@ -151,6 +151,16 @@ export type ResolvedSource = {
    *  this deployment publishes 262144 and is run at 32768, because what the architecture
    *  allows and what fits in the GPU are different questions. Offered, never applied. */
   context_length?: number;
+  /** What the KV cache costs per 1024 tokens of window, off this file's own GGUF header. The
+   *  cache is LINEAR in the context length, so the panel multiplies this by the window in the
+   *  form — 🔴 the formula itself stays in the CP (engineKVCacheMiB); a second copy here would
+   *  be a second thing to correct the day a model declares different key and value widths.
+   *
+   *  🔴 Absent, NEVER 0, when the header could not be read: the CP's read is best-effort and
+   *  silent, and "nobody measured it" is not "it costs nothing". The element type is assumed to
+   *  be f16 and cannot be read at all (`-ctk`/`-ctv` are CloudFormation parameters that never
+   *  reach the engine table), which is why the sentence that shows it says so. */
+  kv_mib_per_1k_tokens?: number;
   /** `base_model` translated into the family vocabulary this provider dispatches on, or absent
    *  when the CP would not name one. The picker's initial value — never the stored family, and
    *  never silently: ADR 0072 decision 2 keeps the declaration with the operator, because an

@@ -1818,6 +1818,9 @@ describe("EnginesAdminView / searching for a model", () => {
       source: {
         hf: { repo: "stabilityai/stable-diffusion-xl-base-1.0", file: "sd_xl_base_1.0.safetensors", revision: "main" },
       },
+      // What is being taken in, so the resolve knows whether a GGUF header is worth reading:
+      // the KV geometry is a question about a chat model and about nothing else.
+      kind: "checkpoint",
     });
     // …and the id is proposed off that file, exactly as it is for one picked from a list.
     expect(field("id")!.value).toBe("sd_xl_base_1.0");
@@ -2302,5 +2305,174 @@ describe("EngineModelsAdminView / a model's own negative prompt", () => {
     });
     await mount();
     expect(host!.querySelector(".engines-model-negative")).toBeNull();
+  });
+});
+
+// 🔴 "Which file do I pick?" — the question the panel refused to answer until now, and the one
+// that costs real money to get wrong. Measured on a borrowed llm engine: an L4 (24 GB) took
+// 17 GB of weights onto the card and then died on `ggml_backend_cuda_buffer_type_alloc_buffer:
+// … cudaMalloc failed: out of memory` / `failed to allocate buffer for kv cache` for the 16 GB
+// its window wanted — four minutes and one purchased GPU after the button was pressed. What was
+// on screen at the moment of the press was a filename and a size.
+//
+// So: the weights against the card in the candidate list, and the cache the WINDOW will cost
+// once the file has been read. Both have a rule about what they must NOT say, which is where
+// the tests below spend their time — a screen that guesses "it fits" is worse than one that
+// says nothing, because it is the one somebody acts on.
+describe("EnginesAdminView / will this file fit the card", () => {
+  const openIngest = async () =>
+    click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLButtonElement,
+    );
+
+  const typeInto = async (el: HTMLInputElement, value: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  const field = (label: string) =>
+    (Array.from(host!.querySelectorAll("label.engines-model-add-row")).find(
+      (l) => l.querySelector("span")?.textContent === label,
+    )?.querySelector("input") || null) as HTMLInputElement | null;
+
+  /** The candidate options, by the filename each one offers. 🔴 Read from the OPTION, never off
+   *  the page: this form grows a sentence a release and a `textContent.includes` over the whole
+   *  screen has twice gone on passing here while the thing it names moved elsewhere. */
+  const candidate = (name: string) =>
+    Array.from(host!.querySelectorAll(".engines-ingest select option")).find(
+      (o) => (o as HTMLOptionElement).value === name,
+    ) as HTMLOptionElement | undefined;
+
+  const fitLine = () => host!.querySelector(".engines-ingest-fit");
+
+  const llm = (over: Record<string, unknown> = {}) =>
+    row({ key: "llm", api: "chat", provider: "llamacpp", has_models: true, model_rows: [], ...over });
+
+  const mountLLM = async (engine: Record<string, unknown>) => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest") ? { jobs: [] } : { super_admin: true, engines: [engine] },
+    );
+    await mount();
+    await openIngest();
+  };
+
+  /** Ask the repository what it holds, with the two quantisations of the model this deployment
+   *  actually runs. */
+  const listTwoQuants = async () => {
+    await typeInto(field("リポジトリ")!, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF");
+    apiJSON.mockResolvedValueOnce({
+      files: [
+        { name: "Q4_K_M.gguf", bytes: 18_556_689_568 }, // 17,697 MiB
+        { name: "Q8_0.gguf", bytes: 32_000_000_000 }, // 30,517 MiB — over an L4 on weights alone
+      ],
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+  };
+
+  it("marks the candidates the card cannot hold, and adds the cache the window will cost", async () => {
+    await mountLLM(withClasses({ key: "llm", api: "chat", provider: "llamacpp", has_models: true, model_rows: [] }));
+    await listTwoQuants();
+
+    // The q8 is over the 21,000 MiB rung on WEIGHTS ALONE, which is the one verdict a list of
+    // filenames can reach — and it is reached before anything is resolved or fetched.
+    expect(candidate("Q8_0.gguf")!.textContent).toContain("カード超過");
+    // 🔴 And the q4 is NOT marked "fits": an unmarked candidate is one this list could not rule
+    // out, because the cache is not known until the file has been read. It carries its size and
+    // no verdict.
+    expect(candidate("Q4_K_M.gguf")!.textContent).toContain("18.6 GB");
+    expect(candidate("Q4_K_M.gguf")!.textContent).not.toContain("カード超過");
+
+    // Picking it reads the file, and the read brings back what the cache costs per 1024 tokens
+    // — 96 MiB for this model (48 layers, 4 KV heads, 128/128). The window offered with it is
+    // the ARCHITECTURE's ceiling, which is exactly the number that does not fit.
+    apiJSON.mockResolvedValueOnce({
+      sha256: "b".repeat(64),
+      bytes: 18_556_689_568,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+      context_length: 262144,
+      kv_mib_per_1k_tokens: 96,
+    });
+    await act(async () => {
+      const picker = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+      picker.value = "Q4_K_M.gguf";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // 17,697 of weights + 24,576 of cache at 262,144 tokens = 42,273 on a 21,000 MiB card. This
+    // is the failure that used to be a `cudaMalloc` in a log four minutes later.
+    expect(fitLine()!.textContent).toContain("重み 17697 MiB");
+    expect(fitLine()!.textContent).toContain("KV キャッシュ 24576 MiB");
+    // 🔴 The assumption is stated. The cache's element type cannot be read at all (-ctk/-ctv are
+    // CloudFormation parameters that never reach the engine table), so a quantised-cache
+    // deployment is over-estimated and has to be able to see why.
+    expect(fitLine()!.textContent).toContain("f16");
+    expect(fitLine()!.textContent).toContain("合計 42273 MiB / このカード 21000 MiB");
+    expect(fitLine()!.className).toContain("form-err");
+
+    // …and the window is the FIELD, not the model's ceiling: narrowing it to what this
+    // deployment actually runs the model at brings the same file inside the card. The cache is
+    // linear in the window, which is why one number per 1024 tokens crosses the wire.
+    await typeInto(field("コンテキストウィンドウ")!, "32768");
+    expect(fitLine()!.textContent).toContain("KV キャッシュ 3072 MiB");
+    expect(fitLine()!.textContent).toContain("合計 20769 MiB / このカード 21000 MiB");
+    expect(fitLine()!.className).not.toContain("form-err");
+  });
+
+  // 🔴 Two silences, and neither may be filled in with a number.
+  //
+  // A deployment that declared no GPU ladder has no card — its box was bought by CloudFormation
+  // — so there is nothing to compare against and no verdict may be drawn. And a header the CP
+  // could not read (its probe is best-effort and silent by design) leaves the cache UNKNOWN,
+  // which is not the same fact as a cache that costs nothing: for a GGUF it is most of the
+  // answer, so the line says the number is the weights alone.
+  it("draws no verdict without a card, and never reports an unread cache as zero", async () => {
+    await mountLLM(llm());
+    await listTwoQuants();
+
+    // No card: the q8 that an L4 could not hold carries its size and nothing else, because
+    // nothing here knows what it would be loaded onto.
+    expect(candidate("Q8_0.gguf")!.textContent).toContain("32.0 GB");
+    expect(candidate("Q8_0.gguf")!.textContent).not.toContain("カード超過");
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "c".repeat(64),
+      bytes: 18_556_689_568,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+      // No kv_mib_per_1k_tokens: the range GET over the GGUF header did not answer.
+    });
+    await act(async () => {
+      const picker = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+      picker.value = "Q4_K_M.gguf";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await typeInto(field("コンテキストウィンドウ")!, "32768");
+
+    const line = fitLine()!;
+    expect(line.textContent).toContain("重み 17697 MiB");
+    expect(line.textContent).toContain("KV キャッシュは読めませんでした");
+    // Not "KV キャッシュ 0 MiB", and not a total presented as the whole answer.
+    expect(line.textContent).not.toContain("KV キャッシュ 0");
+    expect(line.textContent).not.toContain("このカード");
+    expect(line.className).not.toContain("form-err");
   });
 });

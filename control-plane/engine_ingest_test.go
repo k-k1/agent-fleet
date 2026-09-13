@@ -288,7 +288,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	if got.ContextLength != 32768 {
 		t.Errorf("context_length = %d, want 32768", got.ContextLength)
 	}
-	if row := engineResolvedRow(got, false, ""); row["context_length"] != 32768 {
+	if row := engineResolvedRow(got, false, "", engineKVGeometry{}); row["context_length"] != 32768 {
 		t.Errorf("the panel is not told the context length: %v", row["context_length"])
 	}
 
@@ -299,8 +299,33 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("gated resolve: %v", aerr.message)
 	}
-	if _, ok := engineResolvedRow(flux, false, "")["context_length"]; ok {
+	if _, ok := engineResolvedRow(flux, false, "", engineKVGeometry{})["context_length"]; ok {
 		t.Error("a repository with no gguf metadata reported a context length")
+	}
+}
+
+// 🔴 The KV cache is the half of the VRAM answer that used to arrive four minutes and one
+// purchased GPU too late: a borrowed llm engine took 17 GB of weights onto an L4 (24 GB) and
+// then died with `cudaMalloc failed: out of memory ... failed to allocate buffer for kv cache`
+// for the 16 GB its window wanted. So the resolve — the answer the panel draws BEFORE the
+// button — carries what the cache costs per 1024 tokens, and the panel multiplies.
+//
+// Per 1024 tokens rather than at some assumed window, because the window is still being typed
+// when this is read; the cache is linear in it, so one number answers every value.
+func TestEngineResolvedRowCarriesTheKVCostPerThousandTokens(t *testing.T) {
+	// The 30B this deployment runs: 48 layers, 4 KV heads, 128/128 — 3072 MiB at 32768 tokens
+	// (engine_gguf_test.go), so 96 MiB per 1024.
+	row := engineResolvedRow(engineResolved{}, false, "", engineKVGeometry{48, 4, 128, 128})
+	if row["kv_mib_per_1k_tokens"] != 96 {
+		t.Errorf("kv_mib_per_1k_tokens = %v, want 96", row["kv_mib_per_1k_tokens"])
+	}
+	// 🔴 ABSENT, not zero. The header read is best-effort and silent by design, and a 0 on the
+	// wire is a model whose window is free — which is the lie this whole field exists to stop.
+	// A partial geometry is the same case: three numbers out of four answer nothing.
+	for _, g := range []engineKVGeometry{{}, {Layers: 48, HeadsKV: 4, KeyLen: 128}} {
+		if v, ok := engineResolvedRow(engineResolved{}, false, "", g)["kv_mib_per_1k_tokens"]; ok {
+			t.Errorf("geometry %+v reported a KV cost of %v — unread must not read as measured", g, v)
+		}
 	}
 }
 
@@ -356,7 +381,7 @@ func TestEngineResolveCivitai(t *testing.T) {
 	if got.LoginRequired {
 		t.Error("a downloadable asset was marked as needing an account")
 	}
-	if row := engineResolvedRow(got, false, ""); row["can_ingest"] != true {
+	if row := engineResolvedRow(got, false, "", engineKVGeometry{}); row["can_ingest"] != true {
 		t.Errorf("can_ingest = %v for an asset with no wall at all", row["can_ingest"])
 	}
 }
@@ -382,7 +407,7 @@ func TestEngineResolveCivitaiSpotsAnAssetThatNeedsAnAccount(t *testing.T) {
 		if !got.LoginRequired {
 			t.Errorf("a %d download resolved as freely fetchable", status)
 		}
-		row := engineResolvedRow(got, true, "")
+		row := engineResolvedRow(got, true, "", engineKVGeometry{})
 		if row["can_ingest"] != false || row["login_required"] != true {
 			t.Errorf("the panel is not told (%d): %v", status, row)
 		}
@@ -776,18 +801,18 @@ func TestEngineIngestRecordsARefusedRunTask(t *testing.T) {
 // with no HF token is refused at the API, before anything is started.
 func TestEngineResolvedRowRefusesGatedWithoutAToken(t *testing.T) {
 	res := engineResolved{Gated: true, LicenseName: "flux-1-dev-non-commercial-license"}
-	row := engineResolvedRow(res, false, "")
+	row := engineResolvedRow(res, false, "", engineKVGeometry{})
 	if row["can_ingest"] != false {
 		t.Error("a gated model read as ingestible with no token")
 	}
 	if row["commercial_use"] != "no" {
 		t.Errorf("commercial_use = %v", row["commercial_use"])
 	}
-	if engineResolvedRow(res, true, "")["can_ingest"] != true {
+	if engineResolvedRow(res, true, "", engineKVGeometry{})["can_ingest"] != true {
 		t.Error("a gated model with a token configured was still refused")
 	}
 	// An ungated model needs no token at all.
-	if engineResolvedRow(engineResolved{}, false, "")["can_ingest"] != true {
+	if engineResolvedRow(engineResolved{}, false, "", engineKVGeometry{})["can_ingest"] != true {
 		t.Error("an ungated model was refused")
 	}
 	b, _ := json.Marshal(row)

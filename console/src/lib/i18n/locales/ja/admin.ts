@@ -307,6 +307,19 @@ export const admin = {
   // 上書きしてしまうため——ので、「その行の部品として足す」をここで選ばせる。
   "admin.engines_ingest_attach": "「{id}」の部品として足す（新しい行は作らない）",
   "admin.engines_ingest_id_taken": "この id はもう使われています。別の id にするか、上で「部品として足す」を選んでください。",
+  // 🔴 押す前に「載るかどうか」を言う。実機で借りた llm は L4（24 GB）に重み 17 GB を載せた
+  // あと KV キャッシュ 16 GB で `cudaMalloc failed: out of memory` で落ちた——GPU を買って
+  // 4 分後、つまり実費。画面が出していたのはファイル名とサイズだけだった。
+  // 重みだけでカードを超える候補は一覧の時点で印を付ける（KV は解決するまで分からないので、
+  // 印が無いことは「載る」ではなく「ここでは否定できない」）。
+  "admin.engines_ingest_over_card": "⚠ カード超過",
+  "admin.engines_ingest_fit_weights": "重み {n} MiB",
+  // 🔴 要素型（-ctk/-ctv）は CloudFormation のパラメータでエンジンの表に届かないので読めない。
+  // f16 と仮定していることを言い切る（量子化 KV の配備では過大評価＝安全側）。
+  "admin.engines_ingest_fit_kv": "KV キャッシュ {n} MiB（{c} トークン・f16 と仮定）",
+  "admin.engines_ingest_fit_kv_unread": "KV キャッシュは読めませんでした（この数字は重みだけです）",
+  "admin.engines_ingest_fit_card": "合計 {n} MiB / このカード {c} MiB",
+  "admin.engines_ingest_fit_over": "このカードには載りません。小さい量子化を選ぶか、ウィンドウを狭めてください。",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
   "admin.engines_ingest_gated": "gated のリポジトリです。運用者のアカウントで条項に同意済みのトークンを使って取り込みます。",
   "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。下の「Hugging Face のトークン」で運用者のトークンを登録してください（読むのは取り込みタスクだけです）。",

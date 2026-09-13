@@ -258,7 +258,8 @@ export function EngineModelsAdminView() {
             isLora={kind === "lora"}
             baseModels={open.base_models}
             fileFlags={open.file_flags}
-            modelIds={(open.model_rows || []).map((m) => m.id)}
+            models={open.model_rows}
+            cardMiB={open.class?.vram_mib}
             busy={busy === open.key + "/ingest"}
             onStarted={() => loadJobs(open.key)}
           />
@@ -1302,7 +1303,8 @@ function EngineIngest({
   isLora,
   baseModels,
   fileFlags,
-  modelIds,
+  models,
+  cardMiB,
   busy,
   onStarted,
 }: {
@@ -1321,10 +1323,16 @@ function EngineIngest({
   /** What this file IS within the model, same vocabulary and same source as the register
    *  form's. Empty = this provider loads one whole checkpoint and has no parts to name. */
   fileFlags?: string[];
-  /** The ids this engine's catalogue already holds. Only used to offer "add it to that row"
-   *  when the id names one: the CP refuses a plain ingest onto an existing id, and without the
-   *  offer the only way to build a split model is three throwaway rows (ADR 0072 P2 欠落 6). */
-  modelIds?: string[];
+  /** The catalogue this engine already holds. Used to tell whether the typed id names a row:
+   *  the CP refuses a plain ingest onto one, and without the offer to join it the only way to
+   *  build a split model is three throwaway rows (ADR 0072 P2 欠落 6). The rows rather than
+   *  their ids, because what is asked of them grows with what the form can do to a row. */
+  models?: EngineModel[];
+  /** The VRAM of the rung this engine is set to buy, when the deployment declared a ladder at
+   *  all. 🔴 Absent is the normal state of a deployment whose box CloudFormation bought, and
+   *  then there is NOTHING to compare a file against — so the panel says what a file weighs and
+   *  draws no verdict. "It fits" with no card to fit into is a lie. */
+  cardMiB?: number;
   busy: boolean;
   onStarted: () => void;
 }) {
@@ -1370,11 +1378,17 @@ function EngineIngest({
   /** True when the typed id is one this engine already has. The CP refuses a plain ingest onto
    *  it (409 model_id_exists), so this is where the second act — attaching a part — is
    *  offered rather than left as an error to read. */
-  const known = (modelIds || []).includes(id.trim());
+  const modelIds = (models || []).map((m) => m.id);
+  const known = modelIds.includes(id.trim());
   /** Same two vocabularies as the register form: an llm adapter names a model id, everything
    *  else names a family. */
   const basePicksAModel = isLora && !isImage;
-  const baseOptions = basePicksAModel ? (modelIds || []).filter((m) => m !== id.trim()) : families;
+  const baseOptions = basePicksAModel ? modelIds.filter((m) => m !== id.trim()) : families;
+  /** What is being taken in, in the CP's own vocabulary. Sent on the RESOLVE as well as on the
+   *  start: the resolve reads the GGUF header for the KV geometry, and an adapter's file is not
+   *  a model's — asking for one costs a range GET over somebody else's network for a number
+   *  that would mean nothing. */
+  const kind = isLora ? "lora" : isImage ? "checkpoint" : "gguf";
   /** Which read of a source is the current one. Picking a second result before the first has
    *  answered is one click, and the two answers come back in whatever order the two APIs feel
    *  like — so the older one is dropped rather than allowed to describe the row on screen. */
@@ -1450,6 +1464,7 @@ function EngineIngest({
     const seq = ++asked.current;
     const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest/resolve`, "POST", {
       source: source(name, repoOverride),
+      kind,
     });
     // A second pick while this one was in flight: its answer is the one on screen, and this
     // late one would overwrite the licence, the sha256 and the window of a different model.
@@ -1572,16 +1587,12 @@ function EngineIngest({
 
   const start = async () => {
     setErr("");
-    const n = (v: string) => {
-      const p = Number(v.trim().replace(/[_,]/g, ""));
-      return Number.isFinite(p) && p > 0 ? Math.floor(p) : 0;
-    };
-    const c = n(ctx);
-    const o = n(out);
+    const c = engineNumField(ctx);
+    const o = engineNumField(out);
     const key = engineIngestPrefix(isImage, fileFlag, isLora) + (file.trim() || id.trim());
     const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest`, "POST", {
       id: id.trim(),
-      kind: isLora ? "lora" : isImage ? "checkpoint" : "gguf",
+      kind,
       s3Key: key,
       source: source(),
       description: desc.trim(),
@@ -1749,10 +1760,18 @@ function EngineIngest({
           <span>{tr("admin.engines_ingest_file")}</span>
           <select value={file} onChange={(ev) => pick(ev.currentTarget.value)}>
             <option value="">{tr("admin.engines_ingest_pick")}</option>
+            {/* 🔴 The mark is one-directional on purpose: WEIGHTS ALONE over the card is a
+                definite no, and it is the only verdict this list can reach — the KV cache is
+                not known until the file has been resolved, and it is the half that killed a
+                cold start on an L4 (17 GB of weights, 16 GB of cache, 24 GB of card). So a
+                candidate with no mark is "not ruled out here", never "it fits". */}
             {files.map((f) => (
               <option key={f.name} value={f.name}>
                 {f.name}
                 {f.bytes ? " · " + fmtBytes(f.bytes) : ""}
+                {engineFitsCard(engineWeightsMiB(f.bytes), cardMiB) === false
+                  ? " · " + tr("admin.engines_ingest_over_card")
+                  : ""}
               </option>
             ))}
           </select>
@@ -1891,6 +1910,18 @@ function EngineIngest({
           the size that becomes the cold start, and — for a gated repository — whether this
           deployment can take it in at all. */}
       {found && <ResolvedNote found={found} />}
+      {/* …and what pressing it would ask the card to hold. The window is read out of the FIELD
+          rather than out of the model's own ceiling, because that field is what the engine will
+          be started with and the two differ by 8x on the model already running here. */}
+      {found && (
+        <IngestFit
+          bytes={found.bytes}
+          kvPerThousand={found.kv_mib_per_1k_tokens}
+          contextTokens={engineNumField(ctx)}
+          cardMiB={cardMiB}
+          wantsKV={!isImage && !isLora}
+        />
+      )}
       {found && (
         <label className="engines-ingest-accept">
           <input
@@ -1927,6 +1958,106 @@ function EngineIngest({
       {err && <p className="form-err">{err}</p>}
       <p className="muted">{tr("admin.engines_ingest_note")}</p>
     </div>
+  );
+}
+
+/** A number out of one of this form's text fields. 0 means "nothing usable typed", which every
+ *  caller draws as "not declared" rather than as zero. */
+export function engineNumField(v: string): number {
+  const n = Number(v.trim().replace(/[_,]/g, ""));
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/** What a file's WEIGHTS would take on the card, in the unit the GPU ladder is declared in.
+ *  The same conversion the CP makes in engineModelVramNeed: bytes as whoever staged them
+ *  declared, MiB as a card is measured. */
+export function engineWeightsMiB(bytes?: number): number {
+  return bytes && bytes > 0 ? Math.round(bytes / (1024 * 1024)) : 0;
+}
+
+/** What the KV cache costs at this window, from the CP's per-1024-token number.
+ *
+ * 🔴 A MULTIPLICATION and nothing else. The cache is linear in the context length, which is why
+ * one number crosses the wire at all; the formula (`n_layer × n_head_kv × (k+v) × ctx × 2`)
+ * stays in engine_gguf.go, because a second copy here would be a second thing to fix the day a
+ * model declares different key and value widths.
+ *
+ * 0 is "no answer": either the header was never read (the field is absent, never zero) or no
+ * window has been typed yet. Both mean the caller draws no cache, not a free one. */
+export function engineKVMiB(perThousand?: number, contextTokens?: number): number {
+  if (!perThousand || !contextTokens || contextTokens <= 0) return 0;
+  return Math.round((perThousand * contextTokens) / 1024);
+}
+
+/** Does this need fit the card — and is the question answerable at all?
+ *
+ * 🔴 `undefined` is the answer on a deployment that declared no GPU ladder: its box was bought
+ * by CloudFormation, `row.class` is absent, and there is nothing to compare against. The caller
+ * must then draw NO verdict — "it fits" said with no card to fit into is a lie, and this panel
+ * is read by somebody deciding whether to spend four minutes and a GPU on a download. */
+export function engineFitsCard(needMiB: number, cardMiB?: number): boolean | undefined {
+  if (!cardMiB || cardMiB <= 0 || needMiB <= 0) return undefined;
+  return needMiB <= cardMiB;
+}
+
+/** What pressing 「取り込む」 would ask the card to hold, before it is pressed.
+ *
+ * 🔴 Measured on a borrowed llm engine: an L4 (24 GB) loaded 17 GB of weights and then died on
+ * `cudaMalloc failed: out of memory … failed to allocate buffer for kv cache` for the 16 GB the
+ * window wanted — four minutes and one purchased GPU after the button. The weights were never
+ * the question, and the panel showed nothing but a filename and a size.
+ *
+ * Two things it must not do. It must not compare against a card that does not exist (see
+ * engineFitsCard), and it must not let an UNREAD KV cache pass as a small one: for a GGUF the
+ * cache is most of the answer, so when the header could not be read the line says so and the
+ * total is labelled as the weights alone. The CP's read is best-effort and silent by design
+ * (engine_gguf.go), so "absent" is a state this screen meets in normal use. */
+function IngestFit({
+  bytes,
+  kvPerThousand,
+  contextTokens,
+  cardMiB,
+  wantsKV,
+}: {
+  bytes?: number;
+  kvPerThousand?: number;
+  contextTokens: number;
+  cardMiB?: number;
+  /** Whether a KV cache is part of this model's answer at all. A diffusion checkpoint has none
+   *  — ADR 0074's first measurement put the image role's memory in the compute buffers — and an
+   *  adapter is not loaded on its own, so for those the silence is correct rather than missing. */
+  wantsKV: boolean;
+}) {
+  const tr = useT();
+  const weights = engineWeightsMiB(bytes);
+  if (!weights) return null;
+  const kv = engineKVMiB(kvPerThousand, contextTokens);
+  const need = weights + kv;
+  const fits = engineFitsCard(need, cardMiB);
+  const bits = [(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(weights))];
+  if (wantsKV) {
+    bits.push(
+      kv > 0
+        ? (tr("admin.engines_ingest_fit_kv") as string)
+            .replace("{n}", String(kv))
+            .replace("{c}", String(contextTokens))
+        : (tr("admin.engines_ingest_fit_kv_unread") as string),
+    );
+  }
+  if (fits !== undefined) {
+    bits.push(
+      (tr("admin.engines_ingest_fit_card") as string)
+        .replace("{n}", String(need))
+        .replace("{c}", String(cardMiB)),
+    );
+  }
+  return (
+    <>
+      <p className={"engines-ingest-fit " + (fits === false ? "form-err" : "muted")}>
+        {bits.join(" · ")}
+      </p>
+      {fits === false && <p className="form-err">{tr("admin.engines_ingest_fit_over")}</p>}
+    </>
   );
 }
 

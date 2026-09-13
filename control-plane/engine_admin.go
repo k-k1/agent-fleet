@@ -1416,14 +1416,29 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ 
 		writeAPIErr(w, aerr)
 		return
 	}
-	writeJSON(w, http.StatusOK, engineResolvedRow(res, a.hfTokens().configured(r.Context()), e.def.Provider))
+	// The attention geometry, read HERE as well as at the start of an ingest — the one number
+	// this route was missing, and the expensive one to learn late. Measured on a borrowed llm
+	// engine: an L4 (24 GB) took 17 GB of weights and then died on `cudaMalloc failed: out of
+	// memory ... failed to allocate buffer for kv cache` for the 16 GB the window wanted, four
+	// minutes and one purchased GPU after the button was pressed. The weights alone were never
+	// the question.
+	//
+	// Best-effort and silent, exactly as at ingest (engine_gguf.go): a header that cannot be
+	// read leaves the field OFF the answer rather than putting a zero on the panel.
+	kind := strings.TrimSpace(b.Kind)
+	if kind == "" {
+		kind = engineIngestKindFor(e)
+	}
+	geom := engineIngestGeometry(r.Context(), kind, res, a.hfTokens())
+	writeJSON(w, http.StatusOK,
+		engineResolvedRow(res, a.hfTokens().configured(r.Context()), e.def.Provider, geom))
 }
 
 // engineResolvedRow is what the panel draws before anything is started. `can_ingest` is the
 // verdict this route exists for: a gated repository on a deployment with no HF token cannot be
 // taken in, and saying so here costs nothing — finding out from a 401 costs a Fargate task and
 // a confused administrator.
-func engineResolvedRow(res engineResolved, hasToken bool, provider string) map[string]any {
+func engineResolvedRow(res engineResolved, hasToken bool, provider string, geom engineKVGeometry) map[string]any {
 	row := map[string]any{
 		"sha256":           res.SHA256,
 		"bytes":            res.Bytes,
@@ -1489,6 +1504,19 @@ func engineResolvedRow(res engineResolved, hasToken bool, provider string) map[s
 	// questions and only one of them is Hugging Face's to answer.
 	if res.ContextLength > 0 {
 		row["context_length"] = res.ContextLength
+	}
+	// What the KV cache costs per 1024 tokens of window. The panel MULTIPLIES this by the
+	// window in the form: the cache is linear in the context length, so one number answers
+	// every value somebody can type, and the formula itself (engineKVCacheMiB) stays in one
+	// place — a second copy of `n_layer × n_head_kv × (k+v) × ctx × 2` in TypeScript is a
+	// second thing to keep in step with the day a model declares different key and value
+	// widths.
+	//
+	// 🔴 ABSENT, never 0, when the header was not readable. "Nobody measured it" and "it
+	// measured zero" are different facts and this panel draws them differently; a 0 here would
+	// be read as a model whose window costs nothing.
+	if kv := engineKVCacheMiB(geom, 1024); kv > 0 {
+		row["kv_mib_per_1k_tokens"] = kv
 	}
 	return row
 }
