@@ -38,7 +38,8 @@ func hfSearchStub(t *testing.T, body string) (*httptest.Server, *url.Values) {
 const hfSearchBody = `[
   {"id":"Qwen/Qwen2.5-Coder-7B-Instruct-GGUF","downloads":256578,"likes":435,"trendingScore":22,
    "gated":false,"lastModified":"2024-11-01T00:00:00.000Z","createdAt":"2024-09-18T09:12:03.000Z",
-   "cardData":{"license":"apache-2.0","extra_gated_prompt":"PROMPT-PADDING-PROMPT-PADDING"},
+   "cardData":{"license":"apache-2.0","thumbnail":"https://cdn-uploads.huggingface.co/model.png",
+               "extra_gated_prompt":"PROMPT-PADDING-PROMPT-PADDING"},
    "gguf":{"total":7615616512,"context_length":131072,
            "chat_template":"TEMPLATE-PADDING-TEMPLATE-PADDING"}},
   {"id":"black-forest-labs/FLUX.1-dev","downloads":790579,"likes":14538,
@@ -73,6 +74,12 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 	}
 	if h.ModelRef != h.Ref {
 		t.Errorf("model_ref = %q, want the Hugging Face repository %q", h.ModelRef, h.Ref)
+	}
+	if h.PreviewURL != "https://cdn-uploads.huggingface.co/model.png" {
+		t.Errorf("preview_url = %q, want the published model-card thumbnail", h.PreviewURL)
+	}
+	if hits[1].PreviewURL != "" {
+		t.Errorf("preview_url = %q for a card that publishes no thumbnail", hits[1].PreviewURL)
 	}
 	// All three ranking numbers ride on every row, whichever one the list was ordered by:
 	// sorting by one and showing only that one leaves "why is this here" unanswerable.
@@ -163,8 +170,16 @@ func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 	if civ[0].PreviewURL != "https://image.civitai.com/model.jpeg" {
 		t.Errorf("preview_url = %q, want the first safe HTTP(S) image", civ[0].PreviewURL)
 	}
-	if got := engineSafePreviewURL("https://metadata.example.invalid/private.jpeg"); got != "" {
+	if civ[0].Name != "Juggernaut XL" {
+		t.Errorf("name = %q, want the model title without a version suffix", civ[0].Name)
+	}
+	if got := engineSafeCivitaiPreviewURL("https://metadata.example.invalid/private.jpeg"); got != "" {
 		t.Errorf("a non-Civitai preview origin was exposed: %q", got)
+	}
+	for _, unsafe := range []string{"javascript:alert(1)", "https://user:password@example.com/x.png"} {
+		if got := engineSafeHTTPURL(unsafe); got != "" {
+			t.Errorf("unsafe HTTP thumbnail %q was exposed as %q", unsafe, got)
+		}
 	}
 }
 

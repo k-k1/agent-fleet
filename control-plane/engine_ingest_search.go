@@ -89,7 +89,8 @@ type engineSearchHit struct {
 	// ModelRef is the stable repository/model identifier above the version selection. It is the
 	// repository for Hugging Face and the numeric model id for Civitai.
 	ModelRef string `json:"model_ref"`
-	// Name is what a person reads. Same as Ref for HF, the model's title for Civitai.
+	// Name is what a person reads. Same as Ref for HF, the model's title for Civitai; versions
+	// have their own names in the selection modal and must not change the card identity.
 	Name string `json:"name"`
 	// The three numbers a ranking is built on, all three on every row: sorting by one of them
 	// and showing only that one leaves "why is this here" unanswerable, and the answer to
@@ -178,6 +179,7 @@ type engineHFSearchRow struct {
 	CardData  struct {
 		License     any    `json:"license"`
 		LicenseName string `json:"license_name"`
+		Thumbnail   string `json:"thumbnail"`
 	} `json:"cardData"`
 	GGUF struct {
 		Total         int64 `json:"total"`
@@ -326,6 +328,7 @@ func engineSearchHFPage(ctx context.Context, req engineSearchReq) ([]engineSearc
 			UpdatedAt:    strings.TrimSpace(r.LastModified),
 			PublishedAt:  strings.TrimSpace(r.CreatedAt),
 			URL:          engineIngestBase + "/" + r.ID,
+			PreviewURL:   engineSafeHTTPURL(r.CardData.Thumbnail),
 			// The GGUF numbers are the repository's, i.e. one of its files — a draft for the
 			// form, never the value. The resolve of the chosen FILE is what the row is built
 			// from (decision 11).
@@ -408,9 +411,6 @@ func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq) ([]engine
 		}
 		ver := m.ModelVersions[0]
 		name := strings.TrimSpace(m.Name)
-		if v := strings.TrimSpace(ver.Name); v != "" {
-			name += " — " + v
-		}
 		files := make([]engineCivitaiFileFacts, 0, len(ver.Files))
 		for _, f := range ver.Files {
 			// The scan verdicts of the file this row would actually take in. A preview image's
@@ -435,7 +435,7 @@ func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq) ([]engine
 			URL:         engineCivitaiModelURL(m.ID, ver.ID),
 		}
 		for _, image := range ver.Images {
-			if preview := engineSafePreviewURL(image.URL); preview != "" {
+			if preview := engineSafeCivitaiPreviewURL(image.URL); preview != "" {
 				hit.PreviewURL = preview
 				break
 			}
@@ -541,12 +541,21 @@ func engineHFNextCursor(header http.Header) string {
 	return ""
 }
 
-func engineSafePreviewURL(raw string) string {
+func engineSafeHTTPURL(raw string) string {
 	s := strings.TrimSpace(raw)
 	u, err := url.Parse(s)
 	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return ""
 	}
+	return s
+}
+
+func engineSafeCivitaiPreviewURL(raw string) string {
+	s := engineSafeHTTPURL(raw)
+	if s == "" {
+		return ""
+	}
+	u, _ := url.Parse(s)
 	host := strings.ToLower(u.Hostname())
 	base, _ := url.Parse(engineCivitaiBase)
 	baseHost := strings.ToLower(base.Hostname())
