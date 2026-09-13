@@ -4266,6 +4266,14 @@ Three gaps were found around it, and two more the operator named:
 
 ### Still open
 
+- **Replacing a file does not pass the VRAM gate.** The gate now asks about the value an EDIT is
+  about to write, and about a model being switched on — but exchanging the checkpoint of an
+  already-enabled row for a larger quantisation changes the same number silently. It was left
+  out deliberately: the refusal would have to happen at the ingest START (the write lands minutes
+  later in the job reconciler, where nobody is waiting for an answer), which means a
+  `confirm_vram` on that route and a confirmation in the ingest form. What softens it is that the
+  form now shows weights, KV cache and the card's own figure BEFORE the press, which is the
+  question the gate would be asking.
 - **A real `ListObjects` would see what the history cannot**: files staged by hand, and whether
   the bytes are still there at all (a purge deletes the object and leaves the job row `done`).
   The panel therefore says what it read — a finished download — and never asserts that the file
@@ -4283,3 +4291,52 @@ Three gaps were found around it, and two more the operator named:
   the gate uses, and the number an operator reads has to be the number that refuses them.
 - **The row's own source is not removed now that the files carry one.** It is what the licence
   acceptance belongs to; a file whose source is the row's is simply not repeated beside it.
+
+### What building it measured (2026-09-13)
+
+The numbers the live failure is made of, so a reader can check the arithmetic rather than trust
+it: 17 GiB of weights is 17408 MiB, and the KV cache is
+`layers × heads_kv × (key_len + value_len) × tokens × 2` — for that model 1024 MiB at 16384
+tokens (18432 in all, which the L4 rung's 21000 holds) and 16384 MiB at 262144 (33792, which it
+does not). The panel is given the KV cost per 1024 tokens (96 MiB for the 30B) and multiplies,
+because the cache is linear in the window and the formula stays in one place.
+
+- 🔴 **`vram_need_source: "weights_kv"` was already on the wire and the Console's union did not
+  have it.** Two consequences, both silent: the confirmation dialog rendered a message key that
+  does not exist, and the meta line drew that figure with the MEASURED wording — a derived number
+  reading as somebody's measurement, which is the one thing ADR 0074 decision 6 is written to
+  prevent. A union that lists the values it knows does not fail when the server learns a new one.
+- **"Does it fit" is only answerable in one direction at the picker.** Weights larger than the
+  card is a definite no; weights smaller is *not yet a yes*, because the KV cache is unknown
+  until the file is resolved. The mark on the list keeps that asymmetry rather than reporting a
+  green tick it cannot support.
+- **A replacement rewrites the KV geometry, and only for the slot that has one.** The row holds
+  ONE set of attention numbers and only the create path ever wrote them, so a GGUF exchanged for
+  another quantisation kept the old file's geometry and went on estimating VRAM from a file that
+  no longer exists. A text encoder's replacement says nothing about the checkpoint's attention,
+  so it leaves them alone — and a header that cannot be read writes zeros, putting the row back
+  on its floor, because the previous file's numbers are the one answer that is certainly wrong.
+- **A replacement does not purge the old object, and that is not a limitation to fix later.**
+  The write lands in the job reconciler minutes after the press, where a refused delete has
+  nobody to be reported to — and the keys are shared: `text_encoders/` is pointed at from more
+  than one row (measured on af-sandbox: `clip_l.safetensors` from two). Deleting there is how a
+  model nobody touched stops loading. The panel says the bytes stay.
+- **The catalogue push was missing from the ingest's completion.** `publishActiveSet` ran;
+  `notifyEngineCatalogChanged` did not, so every workspace kept a stale catalogue until its own
+  ten-minute TTL. Attaching a part had the same hole.
+
+And three traps in the TESTS, which is where this screen has been bitten before:
+
+- **A shared class name is somebody else's selector.** Adding `className="mono"` to a number
+  field turned an existing test's `ul.engines-model-list .mono` count from one into four. The
+  styling moved into the stylesheet instead.
+- 🔥 **An "it is not offered here" assertion made on the wrong tab passes for ever.** The check
+  that a LoRA row has no negative-prompt editor was made on the MODEL tab, where a LoRA row is
+  not rendered at all — so it passed with the guard deleted. It now switches tabs and asserts the
+  row is on screen first. Its sibling for the window editor was written the same way from the
+  start, and the same pairing rule applies to the borrowed row: the control it must be compared
+  against is an EXTERNAL row, and that is not theory — replacing `refuseBorrowedWrite` with a
+  plain "not managed here" makes the external case fail, which is ADR 0076's LAN ComfyUI.
+- **A positive control can be silently void.** Breaking a request body by adding a duplicate key
+  to an object literal does nothing: JavaScript keeps the last one. Break such a body by REMOVING
+  the key.
