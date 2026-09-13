@@ -458,7 +458,7 @@ func (q *jobQueue) run(j *jobRec) {
 		q.finish(j, nil, res.Warnings, nil)
 		return
 	}
-	props := j.propsFor(res)
+	props := q.propsFor(j, res)
 	files, storeErr := storeImagesAt(j.dir, res.Images, &props)
 	if storeErr != nil {
 		// A storage failure is OURS, not the provider's — the picture exists and was made.
@@ -473,8 +473,7 @@ func (q *jobQueue) run(j *jobRec) {
 // request — what actually ran, with the negative as composed and the params as merged — never
 // the form's own values, because the whole point of the record is to answer "what made this
 // picture" for somebody who no longer has the form.
-func (j *jobRec) propsFor(res Result) ImageProps {
-	q := jobs
+func (q *jobQueue) propsFor(j *jobRec, res Result) ImageProps {
 	q.mu.Lock()
 	elapsed := jobsNow().Sub(j.started).Milliseconds()
 	q.mu.Unlock()
