@@ -1232,3 +1232,177 @@ func TestComfyWarnsWhenTheFamilyCannotExclude(t *testing.T) {
 		}
 	}
 }
+
+// --- cancel (ADR 0081 decision 2) -------------------------------------------------------------
+
+// comfyCancelStub answers GET /queue with the given pending ids and records what POST /queue and
+// POST /interrupt were sent.
+func comfyCancelStub(t *testing.T, pending []string) (*comfyProvider, *[]string) {
+	t.Helper()
+	var sent []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /engine/image/v1/queue", func(w http.ResponseWriter, r *http.Request) {
+		entries := make([][]any, 0, len(pending))
+		for _, id := range pending {
+			entries = append(entries, []any{1, id, map[string]any{}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"queue_running": []any{}, "queue_pending": entries})
+	})
+	record := func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		b, _ := json.Marshal(body)
+		sent = append(sent, r.URL.Path+" "+string(b))
+		_ = json.NewEncoder(w).Encode(map[string]any{})
+	}
+	mux.HandleFunc("POST /engine/image/v1/queue", record)
+	mux.HandleFunc("POST /engine/image/v1/interrupt", record)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	conn := EngineConn{BaseURL: srv.URL + "/engine/image/v1", Token: "afe_test"}
+	return &comfyProvider{client: srv.Client(), lookup: func(context.Context) (EngineConn, bool) {
+		return conn, true
+	}}, &sent
+}
+
+// A prompt the engine has not started yet is DELETED from the queue: dropping it costs no
+// sampling at all, and unlike an interrupt it cannot be confused with the job that is executing.
+func TestComfyCancelDeletesAPromptThatIsStillPending(t *testing.T) {
+	p, sent := comfyCancelStub(t, []string{"af-1", "af-2"})
+	if err := p.Cancel(context.Background(), "af-2"); err != nil {
+		t.Fatalf("Cancel() = %v", err)
+	}
+	if len(*sent) != 1 || !strings.Contains((*sent)[0], "/queue") || !strings.Contains((*sent)[0], `"delete":["af-2"]`) {
+		t.Fatalf("sent %v, want one /queue delete naming the prompt", *sent)
+	}
+}
+
+// 🔴 A prompt that IS executing is interrupted BY ID. The bare /interrupt — the same route with
+// no body — interrupts whatever the box happens to be running, and the box is shared across every
+// workspace of the deployment.
+func TestComfyCancelInterruptsWithThePromptId(t *testing.T) {
+	p, sent := comfyCancelStub(t, []string{"someone-elses"})
+	if err := p.Cancel(context.Background(), "af-mine"); err != nil {
+		t.Fatalf("Cancel() = %v", err)
+	}
+	if len(*sent) != 1 || !strings.Contains((*sent)[0], "/interrupt") {
+		t.Fatalf("sent %v, want one /interrupt", *sent)
+	}
+	if !strings.Contains((*sent)[0], `"prompt_id":"af-mine"`) {
+		t.Fatalf("sent %q with no prompt_id: a bare interrupt kills another workspace's picture", (*sent)[0])
+	}
+}
+
+// An id this provider never issued is refused rather than turned into a bare interrupt.
+func TestComfyCancelRefusesAnEmptyId(t *testing.T) {
+	p, sent := comfyCancelStub(t, nil)
+	if err := p.Cancel(context.Background(), "  "); err == nil {
+		t.Fatal("an empty upstream id was accepted")
+	}
+	if len(*sent) != 0 {
+		t.Fatalf("sent %v for a request the engine never received", *sent)
+	}
+}
+
+// Every picture of a batch carries its own seed: ComfyUI derives a batch's noise as base+i, so
+// the second one is reproducible under base+1 and under nothing else.
+func TestComfyStampsEachBatchPictureWithItsOwnSeed(t *testing.T) {
+	const promptID = "af-batch"
+	png := tinyPNG(t, 2, 2)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/engine/image/v1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": promptID})
+	})
+	mux.HandleFunc("/engine/image/v1/history/"+promptID, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{promptID: map[string]any{
+			"status": map[string]any{"completed": true, "status_str": "success"},
+			"outputs": map[string]any{"save": map[string]any{"images": []map[string]any{
+				{"filename": "af-sdxl_00001_.png", "type": "output"},
+				{"filename": "af-sdxl_00002_.png", "type": "output"},
+			}}},
+		}})
+	})
+	mux.HandleFunc("/engine/image/v1/view", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(png)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	conn := sdxlConn()
+	conn.BaseURL, conn.Token = srv.URL+"/engine/image/v1", "afe_test"
+	p := &comfyProvider{client: srv.Client(), lookup: func(context.Context) (EngineConn, bool) {
+		return conn, true
+	}}
+
+	seed := int64(42)
+	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", Count: 2, Seed: &seed})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if len(res.Images) != 2 {
+		t.Fatalf("images = %d", len(res.Images))
+	}
+	for i, want := range []int64{42, 43} {
+		if res.Images[i].Seed == nil || *res.Images[i].Seed != want {
+			t.Errorf("image %d seed = %v, want %d", i, res.Images[i].Seed, want)
+		}
+	}
+}
+
+// The phases are what tell the person "the engine is starting" instead of an unexplained
+// five-minute running.
+func TestComfyReportsThePhasesAndTheEngineId(t *testing.T) {
+	const promptID = "af-phases"
+	var attempts int
+	png := tinyPNG(t, 2, 2)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/engine/image/v1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"code": "engine_waking", "message": "starting the box; retry"}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": promptID})
+	})
+	mux.HandleFunc("/engine/image/v1/history/"+promptID, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{promptID: map[string]any{
+			"status": map[string]any{"completed": true, "status_str": "success"},
+			"outputs": map[string]any{"save": map[string]any{"images": []map[string]any{
+				{"filename": "af-sdxl_00001_.png", "type": "output"}}}},
+		}})
+	})
+	mux.HandleFunc("/engine/image/v1/view", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(png)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	conn := sdxlConn()
+	conn.BaseURL, conn.Token = srv.URL+"/engine/image/v1", "afe_test"
+	p := &comfyProvider{client: srv.Client(), lookup: func(context.Context) (EngineConn, bool) {
+		return conn, true
+	}}
+
+	var phases []Phase
+	var upstream string
+	_, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox",
+		OnPhase:    func(ph Phase) { phases = append(phases, ph) },
+		OnUpstream: func(id string) { upstream = id },
+	})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if upstream != promptID {
+		t.Errorf("upstream = %q, want the engine's own id — a cancel has nothing to aim at without it", upstream)
+	}
+	got := make([]string, 0, len(phases))
+	for _, ph := range phases {
+		got = append(got, string(ph))
+	}
+	if len(phases) < 3 || phases[0] != PhaseWaking || phases[len(phases)-1] != PhaseFetching {
+		t.Fatalf("phases = %v, want waking first and fetching last", got)
+	}
+}

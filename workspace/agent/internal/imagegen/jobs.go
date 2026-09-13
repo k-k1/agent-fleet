@@ -178,6 +178,10 @@ type jobQueue struct {
 	typical map[string]float64
 	wakeEMA float64
 	seq     int64
+	// closed ends the workers. Production never closes the queue — there is one, for the life of
+	// the process — but a test that installs a fresh one would otherwise leave a goroutine per
+	// provider blocked on a wake channel nobody will ever signal again.
+	closed chan struct{}
 }
 
 var jobs = newJobQueue()
@@ -189,6 +193,18 @@ func newJobQueue() *jobQueue {
 		groups:  map[string]*groupRec{},
 		wake:    map[string]chan struct{}{},
 		typical: map[string]float64{},
+		closed:  make(chan struct{}),
+	}
+}
+
+// Close stops this queue's workers. Test-only, and the reason is stated on the field.
+func (q *jobQueue) Close() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	select {
+	case <-q.closed:
+	default:
+		close(q.closed)
 	}
 }
 
@@ -367,7 +383,11 @@ func (q *jobQueue) work(provider string, wake <-chan struct{}) {
 	for {
 		j := q.take(provider)
 		if j == nil {
-			<-wake
+			select {
+			case <-wake:
+			case <-q.closed:
+				return
+			}
 			continue
 		}
 		q.run(j)
@@ -430,6 +450,14 @@ func (q *jobQueue) run(j *jobRec) {
 		return
 	}
 
+	if q.wasCancelled(j) {
+		// Nothing is written at all. sdcpp has no cancel, so its job runs to the end and arrives
+		// here with a perfectly good picture nobody asked for any more; storing it would put a
+		// file in the gallery for a job the list says was cancelled, and the sidecar next to it
+		// would be a record of a request that was withdrawn.
+		q.finish(j, nil, res.Warnings, nil)
+		return
+	}
 	props := j.propsFor(res)
 	files, storeErr := storeImagesAt(j.dir, res.Images, &props)
 	if storeErr != nil {
@@ -502,6 +530,13 @@ func (q *jobQueue) setPhase(j *jobRec, p Phase) {
 		j.wakingSince = jobsNow()
 	}
 	j.state = next
+}
+
+// wasCancelled answers whether a cancel arrived while this job was in flight.
+func (q *jobQueue) wasCancelled(j *jobRec) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return j.cancelled
 }
 
 func (q *jobQueue) setUpstream(j *jobRec, id string) {
