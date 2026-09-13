@@ -33,6 +33,15 @@ import {
 //     the family it was trained against, and the questions asked of it (which trigger words, what
 //     strength) are asked of nothing else. Mixed into one list it was a row with a tag on it.
 
+/** What a catalogue write answers with. The panel normally takes the engine's new row out of it,
+ *  but a 409 `engine_vram_confirm` is a QUESTION rather than a failure: the same call repeated
+ *  with `confirm_vram` goes through, and only the caller knows which call that was. */
+type EngineModelAnswer = { error?: { code?: string; message?: string } } | undefined;
+
+/** Writing one field of one catalogue row. Returns the answer so the caller can see the question
+ *  above; every caller that has nothing to ask simply ignores it. */
+type EngineModelChange = (id: string, patch: Record<string, unknown>) => Promise<EngineModelAnswer>;
+
 export function EngineModelsAdminView() {
   const tr = useT();
   const { rows, isSuper, err, setErr, setRows, load } = useEngineRows();
@@ -98,7 +107,7 @@ export function EngineModelsAdminView() {
    *  and reproducing that here would be a second copy of a rule that has to be enforced in a
    *  transaction. */
   const setModel = async (key: string, id: string, patch: Record<string, unknown>) => {
-    await callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "PUT", patch, key);
+    return callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "PUT", patch, key);
   };
 
   const addModel = async (key: string, body: Record<string, unknown>) => {
@@ -130,13 +139,16 @@ export function EngineModelsAdminView() {
     method: string,
     body: unknown,
     key: string,
-  ) => {
+  ): Promise<EngineModelAnswer> => {
     setBusy(busyKey);
     try {
       const d = await apiJSON(path, method, body);
       if (d?.error) {
         setErr(errDetail(d.error));
-        return;
+        // ...and handed BACK, because one refusal is a question rather than a failure: a 409
+        // `engine_vram_confirm` is answered by repeating the same call, and only the caller
+        // knows which call that was.
+        return d;
       }
       setErr("");
       // What the CP started, in its own words ("deleting llm/x.gguf", or why it could not).
@@ -144,6 +156,7 @@ export function EngineModelsAdminView() {
       // simply vanishes while gigabytes stay behind.
       setNote(typeof d?.purge === "string" ? d.purge : "");
       setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+      return d;
     } finally {
       setBusy("");
     }
@@ -318,7 +331,7 @@ function EngineModels({
   kind: ModelKind;
   busy: string;
   readOnly?: boolean;
-  onChange: (id: string, patch: Record<string, unknown>) => void;
+  onChange: EngineModelChange;
   onForget: (id: string, purge: boolean) => void;
   onAdd: (body: Record<string, unknown>) => void;
 }) {
@@ -338,7 +351,15 @@ function EngineModels({
   // Which model is waiting on "yes, I know it may not fit" (ADR 0074 decision 6). The dialog is
   // raised HERE, before the request, because this is where the numbers are — the CP refuses the
   // unconfirmed call as well, for any other client.
-  const [vramAsk, setVramAsk] = useState<{ id: string; patch: Record<string, boolean | string> } | null>(null);
+  // `message` is the CP's own sentence, present only when the SERVER raised the question. An
+  // edit to the window cannot be judged here: the KV geometry the new demand is computed from is
+  // not on the wire, and a second copy of that formula in TypeScript would drift from the CP's
+  // the first time either changed (ADR 0074 open question 7).
+  const [vramAsk, setVramAsk] = useState<{
+    id: string;
+    patch: Record<string, unknown>;
+    message?: string;
+  } | null>(null);
   const cardMiB = row.class?.vram_mib || 0;
   /** True when this model's own demand is known AND larger than the card. `unknown` is not
    *  "too big": asking about every unmeasured model teaches people to click through the one
@@ -352,6 +373,16 @@ function EngineModels({
       return;
     }
     onChange(m.id, patch);
+  };
+  /** Save an edited FIELD, and turn the CP's "this may not fit" into the same question the
+   *  enable button asks. Asked after the request rather than before it, unlike `change` above:
+   *  what a new window costs is the CP's arithmetic, and the panel learns the answer by being
+   *  refused. */
+  const saveField = async (m: EngineModel, patch: Record<string, unknown>) => {
+    const d = await onChange(m.id, patch);
+    if (d?.error?.code === "engine_vram_confirm") {
+      setVramAsk({ id: m.id, patch, message: d.error.message });
+    }
   };
   return (
     <div className="engines-models">
@@ -521,6 +552,25 @@ function EngineModels({
               {!readOnly && isImage && m.kind !== "lora" && (
                 <ModelNegative model={m} pending={pending} onChange={onChange} />
               )}
+              {/* 🔴 The window, and the measurement the VRAM answer is compared against. This is
+                  the one pair on the row whose wrong value is paid for in cash: measured on a
+                  borrowed llm engine (ADR 0079, 2026-09-13), a row still declaring 262144 tokens
+                  made llama.cpp ask for a 16 GiB KV cache on top of 17 GB of weights and the L4
+                  that had just been bought answered `cudaMalloc failed: out of memory` — four
+                  minutes into the cold start, with no field anywhere to correct it.
+
+                  Never a LoRA (an adapter is not loaded with a window of its own), and the
+                  context fields only where a window means something. Absent read-only for the
+                  reason the rest of the controls are: every write route answers 400 for a
+                  borrowed row, and a button that can only produce an error is worse than none. */}
+              {!readOnly && !isLora && (
+                <ModelWindow
+                  model={m}
+                  pending={pending}
+                  showContext={!isImage}
+                  onSave={(patch) => saveField(m, patch)}
+                />
+              )}
               {/* 🔴 The two acts, told apart. Forgetting alone leaves the bytes in the bucket
                   with nothing able to reach them (measured: a 491 MB file outlived its row);
                   purging starts the MODE=delete task ADR 0072 decision 7 exists for, because
@@ -530,15 +580,19 @@ function EngineModels({
                   decides (the position ADR 0072 decision 10 takes on licences). */}
               {vramAsk?.id === m.id && (
                 <div className="engines-model-confirm">
+                  {/* The CP's own sentence when the CP is the one that asked. It names the demand
+                      of the row as EDITED, which the numbers on this row cannot: they describe
+                      the window that is still stored. */}
                   <p className="form-err">
-                    {(tr("admin.engines_vram_confirm" as never) as string)
-                      .replace("{id}", m.id)
-                      .replace("{n}", String(m.vram_need_mib || 0))
-                      .replace("{m}", String(cardMiB))
-                      .replace(
-                        "{src}",
-                        tr(("admin.engines_vram_src_" + (m.vram_need_source || "unknown")) as never) as string,
-                      )}
+                    {vramAsk.message ||
+                      (tr("admin.engines_vram_confirm" as never) as string)
+                        .replace("{id}", m.id)
+                        .replace("{n}", String(m.vram_need_mib || 0))
+                        .replace("{m}", String(cardMiB))
+                        .replace(
+                          "{src}",
+                          tr(("admin.engines_vram_src_" + (m.vram_need_source || "unknown")) as never) as string,
+                        )}
                   </p>
                   <span className="engines-model-actions">
                     <button
@@ -680,6 +734,122 @@ function ModelNegative({
       >
         {tr("admin.engines_negative_save")}
       </button>
+    </div>
+  );
+}
+
+/** A non-negative whole number, or null for "this box does not hold one". The empty box IS a
+ *  number — 0, i.e. undeclared — because that is the only way back from a value typed once. */
+function engineWholeNumber(s: string): number | null {
+  const t = s.trim();
+  if (t === "") return 0;
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/** The window this row asks to be run at, and the VRAM somebody measured it using.
+ *
+ * A draft with an explicit save, like ModelNegative next door, and two saves rather than one:
+ * they are two columns the CP writes separately, and the window's own two boxes go TOGETHER
+ * because the row only ever answers a cap alongside a window.
+ *
+ * 🔴 What the demand line shows comes from the server (`vram_need_mib` / `vram_need_source`) and
+ * is never recomputed here. The KV geometry it is derived from is not on the wire at all, and a
+ * second copy of that arithmetic in TypeScript would disagree with the CP's the first time
+ * either moved — on the one number a person is looking at while deciding. */
+function ModelWindow({
+  model,
+  pending,
+  showContext,
+  onSave,
+}: {
+  model: EngineModel;
+  pending: boolean;
+  showContext: boolean;
+  onSave: (patch: Record<string, unknown>) => void;
+}) {
+  const tr = useT();
+  const savedCtx = String(model.context_tokens || 0);
+  const savedOut = String(model.max_output_tokens || 0);
+  const savedVram = String(model.vram_mib || 0);
+  const [ctxDraft, setCtxDraft] = useState(savedCtx);
+  const [outDraft, setOutDraft] = useState(savedOut);
+  const [vramDraft, setVramDraft] = useState(savedVram);
+  // The server's values win when they change under us — the save answered with the whole engine,
+  // another admin, a reload — and only then: re-running this on every render would delete what is
+  // being typed.
+  useEffect(() => {
+    setCtxDraft(savedCtx);
+    setOutDraft(savedOut);
+  }, [savedCtx, savedOut]);
+  useEffect(() => setVramDraft(savedVram), [savedVram]);
+  const ctxNum = engineWholeNumber(ctxDraft);
+  const outNum = engineWholeNumber(outDraft);
+  const vramNum = engineWholeNumber(vramDraft);
+  const windowDirty = ctxDraft !== savedCtx || outDraft !== savedOut;
+  const need = model.vram_need_mib || 0;
+  return (
+    <div className="engines-model-window">
+      {showContext && (
+        <>
+          <label>
+            <span>{tr("admin.engines_model_window_context")}</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={ctxDraft}
+              onChange={(ev) => setCtxDraft(ev.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>{tr("admin.engines_model_window_output")}</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={outDraft}
+              onChange={(ev) => setOutDraft(ev.currentTarget.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={pending || !windowDirty || ctxNum === null || outNum === null}
+            onClick={() => onSave({ context_tokens: ctxNum, max_output_tokens: outNum })}
+          >
+            {tr("admin.engines_model_window_save")}
+          </button>
+        </>
+      )}
+      <label>
+        <span>{tr("admin.engines_model_vram_edit")}</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={vramDraft}
+          onChange={(ev) => setVramDraft(ev.currentTarget.value)}
+        />
+      </label>
+      <button
+        type="button"
+        className="btn-secondary"
+        disabled={pending || vramDraft === savedVram || vramNum === null}
+        onClick={() => onSave({ vram_mib: vramNum })}
+      >
+        {tr("admin.engines_model_window_save")}
+      </button>
+      {/* What the edit above moves, and where the figure comes from. Both halves are needed: the
+          number alone would read as a measurement on a row where nobody measured anything. */}
+      <span className="muted engines-model-need">
+        {need
+          ? (tr("admin.engines_model_need_now" as never) as string)
+              .replace("{n}", String(need))
+              .replace(
+                "{src}",
+                tr(("admin.engines_vram_src_" + (model.vram_need_source || "unknown")) as never) as string,
+              )
+          : tr("admin.engines_model_need_unknown")}
+      </span>
     </div>
   );
 }
@@ -2522,6 +2692,14 @@ function SourceText({ text, url, title }: { text: string; url?: string; title?: 
   );
 }
 
+/** Which sentence a derived VRAM figure gets. Shared by the meta line and the window editor so
+ *  the two cannot drift: a floor drawn as a measurement is the defect this exists to prevent. */
+function engineVramNeedKey(source: EngineModel["vram_need_source"]): string {
+  if (source === "floor") return "admin.engines_model_vram_floor";
+  if (source === "weights_kv") return "admin.engines_model_vram_weights_kv";
+  return "admin.engines_model_vram";
+}
+
 /** The one-line facts under a model, each omitted when it is not known — the same rule the
  *  status block follows. The licence is two fields on purpose: Hugging Face answers `other` for
  *  both non-commercial models in ADR 0072's table, and showing only that says nothing. */
@@ -2543,9 +2721,11 @@ function engineModelMeta(m: EngineModel, tr: (k: never) => string): string {
     // Nobody measured this one, but its files say it cannot be smaller than this. The wording
     // follows the SOURCE rather than the absence of a measurement — the confirmation dialog
     // quotes the same number, and a row that mentioned none would make it appear from nowhere.
-    const key =
-      m.vram_need_source === "floor" ? "admin.engines_model_vram_floor" : "admin.engines_model_vram";
-    bits.push((tr(key as never) as string).replace("{n}", String(m.vram_need_mib)));
+    //
+    // 🔴 BOTH floors get floor wording. `weights_kv` used to fall through to the measured
+    // sentence, so a number the CP derived from a GGUF header read as one an operator stood
+    // behind — on exactly the rows where the derivation is the only thing anyone has.
+    bits.push((tr(engineVramNeedKey(m.vram_need_source) as never) as string).replace("{n}", String(m.vram_need_mib)));
   }
   // What this model costs the next cold start. Stated as an estimate because it is one: S3 to
   // the box ran at 104–147 MB/s over four measured starts, and this uses the slow end.

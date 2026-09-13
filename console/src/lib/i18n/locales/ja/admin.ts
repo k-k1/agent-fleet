@@ -388,11 +388,28 @@ export const admin = {
   "admin.engines_class_vram_many": "このエンジンは要求ごとにチェックポイントを選び、読み込んだものを VRAM に保持します。余裕があれば複数が同時に載るので、上の数字はそのうち最大の 1 つです。",
   "admin.engines_vram_src_declared": "実測",
   "admin.engines_vram_src_floor": "重みだけの下限",
+  // CP はこの出所も返す（engine_class.go）。どちらのカタログにも語が無く、確認ダイアログは
+  // キーを連結して作るので、存在しないキーをそのまま描いていた。
+  "admin.engines_vram_src_weights_kv": "重み＋KV キャッシュの下限",
   "admin.engines_vram_src_unknown": "不明",
   "admin.engines_vram_confirm": "{id} は {n} MiB（{src}）を必要としますが、いま選んでいるクラスは {m} MiB です。CUDA は VRAM が足りないと遅くなるのではなく落ちます。量子化やオフロードで載ることもあるので、承知のうえなら続けてください。",
   "admin.engines_vram_confirm_go": "承知のうえで有効にする",
   "admin.engines_model_vram": "VRAM {n} MiB",
   "admin.engines_model_vram_floor": "VRAM 少なくとも {n} MiB（重みだけの下限）",
+  // 🔴 下限は下限として書く。実測の言い回しで描くと、CP が導出した数字が「運用者が測った」
+  // ように読める。コンテキスト窓を編集したときに動く唯一の出所なので、ここが一番効く。
+  "admin.engines_model_vram_weights_kv": "VRAM 少なくとも {n} MiB（重み＋KV キャッシュ）",
+  // llm の行が宣言する窓と、その編集欄。間違った値の代価は実費で払う——262144 のままの行は
+  // 16 GiB の KV キャッシュを要求し、既に金を払った冷間起動の 4 分後にエンジンを殺した。
+  "admin.engines_model_window_edit": "窓",
+  "admin.engines_model_window_context": "コンテキスト",
+  "admin.engines_model_window_output": "最大出力",
+  "admin.engines_model_vram_edit": "実測 VRAM（MiB）",
+  // いまこの行がどれだけ要ると見ているか、そしてその出所。どちらの欄を編集しても動くので
+  // 欄の隣に置く。「実測」と「ファイルからの導出」は同じ主張ではない。
+  "admin.engines_model_need_now": "現在 {n} MiB（{src}）",
+  "admin.engines_model_need_unknown": "現在：不明",
+  "admin.engines_model_window_save": "保存",
   // 行が持ちうるライセンスの事実（ADR 0072 決定 10）。「記録なし」は空白にせず書く——seed の
   // 行はライセンスを知りようがなく、手登録のフォームは訊いていない。取り込んだ行が必ず名前を
   // 出している中の空白は「制限なし」と読めてしまう。

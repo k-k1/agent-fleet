@@ -400,6 +400,13 @@ type EngineModelStore interface {
 	// SetEngineModelNegativePrompt corrects the row's own negative prompt — what this checkpoint
 	// should never be asked to draw (ADR 0072 follow-up, negative prompts).
 	SetEngineModelNegativePrompt(ctx context.Context, role, id, negative string) (bool, error)
+	// SetEngineModelWindow corrects the declared window. BOTH columns, because the catalogue
+	// carries max_output_tokens only when context_tokens is above zero: a row that moved one of
+	// them alone is one the panel cannot explain.
+	SetEngineModelWindow(ctx context.Context, role, id string, contextTokens, maxOutputTokens int) (bool, error)
+	// SetEngineModelVram writes the operator's own VRAM measurement; 0 withdraws it and puts the
+	// row back on the floor its files imply.
+	SetEngineModelVram(ctx context.Context, role, id string, vramMiB int) (bool, error)
 	DeleteEngineModel(ctx context.Context, role, id string) (bool, error)
 }
 

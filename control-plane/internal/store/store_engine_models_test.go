@@ -221,3 +221,54 @@ func engineModelByID(t *testing.T, st *SQL, role, id string) EngineModel {
 	t.Fatalf("no row %s/%s", role, id)
 	return EngineModel{}
 }
+
+// The window and the VRAM measurement, edited one column at a time (ADR 0079 live run). The
+// window's two columns move TOGETHER because the catalogue only ever answers the cap alongside
+// the window, so a setter that took one of them would be the API for a row nobody can explain.
+func TestEngineModelWindowAndVramAreEditedInPlace(t *testing.T) {
+	st := engineModelStore(t)
+	ctx := context.Background()
+	if err := st.PutEngineModel(ctx, EngineModel{
+		Role: "llm", ID: "qwen3", Kind: "gguf", Enabled: true,
+		ContextTokens: 262144, MaxOutputTokens: 8192, VramMiB: 40000,
+		Source: "hf:vendor/qwen3", LicenseAcceptedBy: "u0",
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	if ok, err := st.SetEngineModelWindow(ctx, "llm", "qwen3", 16384, 2048); err != nil || !ok {
+		t.Fatalf("set window: %v %v", ok, err)
+	}
+	got := engineModelByID(t, st, "llm", "qwen3")
+	if got.ContextTokens != 16384 || got.MaxOutputTokens != 2048 {
+		t.Errorf("window = %d/%d, want 16384/2048", got.ContextTokens, got.MaxOutputTokens)
+	}
+	// Nothing a licence acceptance recorded may ride along with a number being corrected — that
+	// is the reason these are targeted UPDATEs and not a read-modify-write.
+	if got.Source != "hf:vendor/qwen3" || got.LicenseAcceptedBy != "u0" || !got.Enabled {
+		t.Errorf("the row's other fields moved: %+v", got)
+	}
+
+	if ok, err := st.SetEngineModelVram(ctx, "llm", "qwen3", 19000); err != nil || !ok {
+		t.Fatalf("set vram: %v %v", ok, err)
+	}
+	if got = engineModelByID(t, st, "llm", "qwen3"); got.VramMiB != 19000 {
+		t.Errorf("vram_mib = %d, want 19000", got.VramMiB)
+	}
+	// 0 withdraws the measurement rather than being refused as "undeclared": the way back to the
+	// floor the files imply has to exist, or a number typed once is what that row claims for ever.
+	if ok, err := st.SetEngineModelVram(ctx, "llm", "qwen3", 0); err != nil || !ok {
+		t.Fatalf("withdraw: %v %v", ok, err)
+	}
+	if got = engineModelByID(t, st, "llm", "qwen3"); got.VramMiB != 0 {
+		t.Errorf("vram_mib = %d, want it withdrawn", got.VramMiB)
+	}
+
+	// A row that is not there reports false rather than pretending to have written something.
+	if ok, err := st.SetEngineModelWindow(ctx, "llm", "no-such-row", 4096, 1024); err != nil || ok {
+		t.Errorf("window on a missing row = %v %v, want false", ok, err)
+	}
+	if ok, err := st.SetEngineModelVram(ctx, "llm", "no-such-row", 4096); err != nil || ok {
+		t.Errorf("vram on a missing row = %v %v, want false", ok, err)
+	}
+}

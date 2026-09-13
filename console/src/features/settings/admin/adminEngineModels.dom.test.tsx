@@ -2440,3 +2440,251 @@ describe("EngineModelsAdminView / a model's own negative prompt", () => {
     expect(host!.querySelector(".engines-model-negative")).toBeNull();
   });
 });
+
+// The window and the measured VRAM of one row (ADR 0079 live run, 2026-09-13). Editing them was
+// the one correction the panel could not make, and the value it could not correct is the one
+// that kills a GPU box four minutes into a cold start somebody paid for.
+describe("the window and the VRAM measurement", () => {
+  const llm = (over: Record<string, unknown> = {}) =>
+    withClasses({ key: "llm", api: "chat", provider: "llama", ...over });
+
+  /** The row's own editor, read from the ELEMENT rather than from the page. A `textContent`
+   *  assertion over the whole screen goes on passing when this block disappears and something
+   *  else on a long panel happens to carry the number. */
+  const windowBox = (id: string) =>
+    Array.from(host!.querySelectorAll(".engines-model"))
+      .find((li) => li.querySelector(".engines-model-id")?.textContent === id)
+      ?.querySelector(".engines-model-window") as HTMLElement | null;
+
+  const field = (box: HTMLElement, label: string) =>
+    Array.from(box.querySelectorAll("label"))
+      .find((l) => l.querySelector("span")?.textContent === label)
+      ?.querySelector("input") as HTMLInputElement | undefined;
+
+  const type = async (input: HTMLInputElement | undefined, value: string) => {
+    expect(input).toBeTruthy();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input!, value);
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  const saveIn = (box: HTMLElement, n: number) =>
+    (Array.from(box.querySelectorAll("button")).filter(
+      (b) => b.textContent === "保存",
+    )[n] as HTMLButtonElement | undefined);
+
+  it("sends the window as a pair, and the measurement on its own", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        llm({
+          has_models: true,
+          model_rows: [
+            {
+              id: "qwen3",
+              enabled: true,
+              context_tokens: 262144,
+              max_output_tokens: 8192,
+              vram_need_mib: 33792,
+              vram_need_source: "weights_kv",
+            },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const box = windowBox("qwen3");
+    expect(box).toBeTruthy();
+    // The stored values are what the boxes open with — this is a correction, not a blank form.
+    expect(field(box!, "コンテキスト")?.value).toBe("262144");
+    expect(field(box!, "最大出力")?.value).toBe("8192");
+
+    apiJSON.mockResolvedValue(llm());
+    await type(field(box!, "コンテキスト"), "16384");
+    await click(saveIn(box!, 0));
+    // 🔴 BOTH halves travel, even though only one was touched: the row answers a cap only
+    // alongside a window, so a request that moved one alone leaves a row nothing can explain.
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/models/qwen3", "PUT", {
+      context_tokens: 16384,
+      max_output_tokens: 8192,
+    });
+
+    apiJSON.mockClear();
+    apiJSON.mockResolvedValue(llm());
+    const box2 = windowBox("qwen3")!;
+    await type(field(box2, "実測 VRAM（MiB）"), "19000");
+    await click(saveIn(box2, 1));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/models/qwen3", "PUT", {
+      vram_mib: 19000,
+    });
+  });
+
+  // 🔴 The meta line under the row, which is where the figure is read when nobody is editing.
+  // `weights_kv` used to fall through to the MEASURED sentence, so a number the CP derived from a
+  // GGUF header read as one an operator stood behind — and this is the only source that moves
+  // when the window is edited, so it is the one where that claim misleads.
+  it("words a weights-plus-KV floor as a floor in the row's meta line", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        llm({
+          has_models: true,
+          model_rows: [
+            { id: "qwen3", enabled: true, vram_need_mib: 33792, vram_need_source: "weights_kv" },
+            { id: "floored", enabled: true, vram_need_mib: 17408, vram_need_source: "floor" },
+            { id: "measured", enabled: true, vram_mib: 8000, vram_need_mib: 8000, vram_need_source: "declared" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const meta = (id: string) =>
+      Array.from(host!.querySelectorAll(".engines-model"))
+        .find((li) => li.querySelector(".engines-model-id")?.textContent === id)!
+        .querySelector(".engines-model-meta")!.textContent!;
+    expect(meta("qwen3")).toContain("VRAM 少なくとも 33792 MiB（重み＋KV キャッシュ）");
+    // The two it must not be confused with. Without both, an implementation that prints one
+    // sentence for every derived figure — or one word for every source — still passes.
+    expect(meta("floored")).toContain("VRAM 少なくとも 17408 MiB（重みだけの下限）");
+    expect(meta("measured")).toContain("VRAM 8000 MiB");
+    expect(meta("measured")).not.toContain("少なくとも");
+  });
+
+  // 🔴 The demand and its SOURCE, beside the fields that move it — and taken from the server.
+  // The KV geometry the figure is derived from is not on the wire, so a panel that recomputed it
+  // would be a second formula disagreeing with the CP's on the one number being read.
+  it("shows what the row needs now, and says a derived floor is not a measurement", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        llm({
+          has_models: true,
+          model_rows: [
+            { id: "qwen3", enabled: true, context_tokens: 262144, vram_need_mib: 33792, vram_need_source: "weights_kv" },
+            { id: "small", enabled: true, context_tokens: 4096, vram_need_mib: 8000, vram_need_source: "declared" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const need = (id: string) => windowBox(id)!.querySelector(".engines-model-need")!.textContent;
+    expect(need("qwen3")).toContain("33792");
+    expect(need("qwen3")).toContain("重み＋KV キャッシュの下限");
+    // The pair that makes the assertion mean something: the same sentence for a MEASURED row
+    // would pass an implementation that prints one word for every source.
+    expect(need("small")).toContain("実測");
+    expect(need("qwen3")).not.toContain("実測");
+  });
+
+  // 🔥 The gap the live run fell into. An already-enabled row's window was checked by nobody, and
+  // the panel cannot check it either — so the CP refuses and the panel turns that into the same
+  // question the enable button asks.
+  it("asks the CP's own question when raising the window is refused", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        llm({
+          has_models: true,
+          model_rows: [
+            { id: "qwen3", enabled: true, context_tokens: 16384, max_output_tokens: 2048, vram_need_mib: 18432, vram_need_source: "weights_kv" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    apiJSON.mockResolvedValue({
+      error: {
+        code: "engine_vram_confirm",
+        message: "qwen3 wants 33792 MiB of VRAM and the l4 class declares 21000 MiB",
+      },
+    });
+    const box = windowBox("qwen3")!;
+    await type(field(box, "コンテキスト"), "262144");
+    await click(saveIn(box, 0));
+
+    // The CP's sentence, not one rebuilt here: it names the demand of the row as EDITED, which
+    // nothing on this row knows — `vram_need_mib` still describes the stored window.
+    const ask = host!.querySelector(".engines-model-confirm")!;
+    expect(ask.textContent).toContain("33792");
+
+    apiJSON.mockClear();
+    apiJSON.mockResolvedValue(llm());
+    await click(
+      Array.from(ask.querySelectorAll("button")).find(
+        (b) => b.textContent === "承知のうえで有効にする",
+      ) as HTMLButtonElement,
+    );
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/models/qwen3", "PUT", {
+      context_tokens: 262144,
+      max_output_tokens: 2048,
+      confirm_vram: true,
+    });
+  });
+
+  // A context window is an llm fact. An image checkpoint has a size list and a family instead —
+  // but somebody can still have measured what it takes on the card.
+  it("offers a context window to an llm row only, and the measurement to both", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        withClasses({ has_models: true, model_rows: [{ id: "sdxl-base-1.0", enabled: true }] }),
+      ],
+    });
+    await mount();
+    const box = windowBox("sdxl-base-1.0")!;
+    expect(field(box, "コンテキスト")).toBeUndefined();
+    expect(field(box, "実測 VRAM（MiB）")).toBeTruthy();
+  });
+
+  // An adapter is never loaded with a window of its own, and its weights ride on the checkpoint's
+  // demand rather than declaring one.
+  it("is not offered on a LoRA row", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl"],
+          has_models: true,
+          model_rows: [{ id: "watercolor-v2", kind: "lora", enabled: true, base_model: "sdxl" }],
+        }),
+      ],
+    });
+    await mount();
+    // Onto the adapter tab first: an assertion made on the model tab would pass because the row
+    // is not rendered at all, which is not what is being claimed.
+    await click(tab("LoRA"));
+    expect(host!.querySelector(".engines-model-id")?.textContent).toBe("watercolor-v2");
+    expect(windowBox("watercolor-v2")).toBeFalsy();
+  });
+
+  // 🔥 The borrowed row is paired with an EXTERNAL one, not with a managed one. Every write route
+  // answers 400 `engine_not_ours` for a borrowed catalogue (ADR 0079 decision 7) and for nothing
+  // else — an implementation that dropped the editor from every unmanaged row would pass against
+  // a managed control and take ADR 0076's LAN ComfyUI down with it.
+  it("is absent on a borrowed row and present on an external one", async () => {
+    const rows = (over: Record<string, unknown>) =>
+      withClasses({
+        has_models: true,
+        model_rows: [{ id: "qwen3", enabled: true, context_tokens: 16384 }],
+        ...over,
+      });
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [rows({ managed: false, lifecycle: "external", url: "http://10.0.0.5:8188" })],
+    });
+    await mount();
+    expect(windowBox("qwen3")).toBeTruthy();
+
+    act(() => root?.unmount());
+    host?.remove();
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [rows({ managed: false, lifecycle: "remote", url: "https://af.example.invalid" })],
+    });
+    await mount();
+    expect(windowBox("qwen3")).toBeNull();
+  });
+});
