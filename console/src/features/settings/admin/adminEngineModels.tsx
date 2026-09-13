@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
@@ -453,6 +453,7 @@ function EngineModels({
               </div>
               {m.description && <p className="muted engines-model-desc">{m.description}</p>}
               <p className="muted engines-model-meta">{engineModelMeta(m, tr)}</p>
+              <ModelProvenance model={m} />
               {/* 🔴 The one thing wrong with this row that nothing else on it shows. Every other
                   field is filled in, the toggle works, the id appears in generate_image's model
                   list — and the request fails, because the provider will not guess a workflow
@@ -2438,6 +2439,89 @@ function fmtBytes(n: number): string {
   return n + " B";
 }
 
+/** Where this row and each of its files came from.
+ *
+ * Its own line rather than two more items in the meta string, because these are the only facts on
+ * the row that are LINKS. The id is short and unique only inside this deployment (it is what a
+ * member reads in the launch menu), so the source is the one thing that says WHICH vendor's model
+ * of that name this is — and the value was already stored, just never shown as anything but text.
+ *
+ * 🔴 Three states, drawn differently on purpose:
+ *
+ *   - a source with a `source_url` is a link. The URL is the CP's, verbatim — composing it here
+ *     would mean the panel learning both vendors' spellings, and `civitai:<id>` is a model
+ *     VERSION id whose `/models/<id>` opens a DIFFERENT model;
+ *   - a source WITHOUT one stays text. That is a plain `url:` source (the direct download of the
+ *     weights, which no "where this came from" line should start) or a prefix this deployment's
+ *     CP does not know. A broken link in an operator's console is worse than a string;
+ *   - no source at all draws NOTHING. "Nobody recorded one" and "recorded, and unreadable" are
+ *     different facts and this panel draws them apart everywhere else (the licence line above
+ *     says so out loud) — a seeded row and every row from before migration 0060 is in the first
+ *     state, and labelling those "unknown" would assert that somebody looked.
+ *
+ * A FILE whose source is the row's own is not repeated: for a single-file model the two are the
+ * same string. What is left are the parts that came from somewhere else, which is exactly the
+ * question a split model could not answer — a four-file FLUX.1 row carried one line about its
+ * diffusion model and nothing at all about the three text encoders beside it. */
+function ModelProvenance({ model }: { model: EngineModel }) {
+  // Read from `file_rows` when it is there, and from `files` otherwise. NOT matched by position
+  // against `files`: the two are emitted from the same loop today, and a rule that silently
+  // mislabels every part the day one of them starts skipping an entry is not worth the base
+  // names it saves. The base name is the last segment, which is the CP's own rule (path.Base).
+  const parts = model.file_rows?.length
+    ? model.file_rows.map((f) => ({
+        name: f.s3Key.split("/").pop() || f.s3Key,
+        source: f.source,
+        url: f.source_url,
+      }))
+    : (model.files || []).map((name) => ({ name, source: undefined, url: undefined }));
+  if (!model.source && parts.length === 0) return null;
+  const bits = [
+    ...(model.source ? [<SourceText text={model.source} url={model.source_url} />] : []),
+    ...parts.map((p) =>
+      p.source && p.source !== model.source ? (
+        <SourceText text={p.name} url={p.url} title={p.source} />
+      ) : (
+        <span className="engines-model-file">{p.name}</span>
+      ),
+    ),
+  ];
+  return (
+    <p className="muted engines-model-meta engines-model-provenance">
+      {/* Keyed by position: two parts of one model can share a base name (two directories hold
+          `model.safetensors`), and a name key would drop one of them. */}
+      {bits.map((b, i) => (
+        <Fragment key={i}>
+          {i > 0 && " · "}
+          {b}
+        </Fragment>
+      ))}
+    </p>
+  );
+}
+
+/** One provenance value: a link when the CP could compose one, the same text when it could not. */
+function SourceText({ text, url, title }: { text: string; url?: string; title?: string }) {
+  if (!url) {
+    return (
+      <span className="engines-model-source" title={title}>
+        {text}
+      </span>
+    );
+  }
+  return (
+    <a
+      className="engines-model-source"
+      href={url}
+      title={title}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      {text}
+    </a>
+  );
+}
+
 /** The one-line facts under a model, each omitted when it is not known — the same rule the
  *  status block follows. The licence is two fields on purpose: Hugging Face answers `other` for
  *  both non-commercial models in ADR 0072's table, and showing only that says nothing. */
@@ -2488,9 +2572,8 @@ function engineModelMeta(m: EngineModel, tr: (k: never) => string): string {
     // decision 6 applies to an unmeasured VRAM demand.
     bits.push(tr("admin.engines_model_license_unknown" as never) as string);
   }
-  // Next to the licence, because they are the same kind of fact: both were true of that
-  // repository at the moment somebody accepted its terms.
-  if (m.source) bits.push(m.source);
-  if (m.files?.length) bits.push(m.files.join(" "));
+  // 🔴 The source and the file names are NOT here. They are the only facts on this row that are
+  // links, and a "·"-joined string cannot hold one — see ModelProvenance, which draws them on
+  // their own line directly below this one.
   return bits.join(" · ");
 }

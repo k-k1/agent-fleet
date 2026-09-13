@@ -922,6 +922,142 @@ describe("EngineModelsAdminView", () => {
     });
   });
 
+  // Where a row and each of its files came from. The value was stored since migration 0060 and
+  // the panel printed it as one more word in a "·"-joined line, so the one question it answers —
+  // WHICH vendor's model of that name this is — took a copy of the S3 key and a search.
+  //
+  // 🔴 Read from the elements, never from the page's textContent: this screen has grown a search
+  // panel and a job list that print `hf:` strings of their own, and an `includes()` here would go
+  // on passing with the row's own line deleted (it has happened twice on this screen).
+  it("links a row and each file to where it came from, and links nothing it cannot compose", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        row({
+          has_models: true,
+          model_rows: [
+            {
+              id: "qwen2.5-coder-1.5b",
+              enabled: true,
+              source: "hf:Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+              source_url:
+                "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/blob/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+              files: ["qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"],
+              file_rows: [
+                {
+                  s3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+                  source: "hf:Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+                  source_url:
+                    "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/blob/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+                },
+              ],
+            },
+            {
+              // The case the row-level source cannot describe: four files, three of them from
+              // repositories that did not publish the diffusion model.
+              id: "flux1-dev",
+              enabled: false,
+              source: "hf:black-forest-labs/FLUX.1-dev/flux1-dev.safetensors",
+              source_url: "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/flux1-dev.safetensors",
+              files: ["flux1-dev.safetensors", "t5xxl_fp8_e4m3fn.safetensors", "ae.safetensors"],
+              file_rows: [
+                {
+                  s3Key: "image/diffusion_models/flux1-dev.safetensors",
+                  source: "hf:black-forest-labs/FLUX.1-dev/flux1-dev.safetensors",
+                  source_url:
+                    "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/flux1-dev.safetensors",
+                },
+                {
+                  s3Key: "image/text_encoders/t5xxl_fp8_e4m3fn.safetensors",
+                  source: "hf:comfyanonymous/flux_text_encoders/t5xxl_fp8_e4m3fn.safetensors",
+                  source_url:
+                    "https://huggingface.co/comfyanonymous/flux_text_encoders/blob/main/t5xxl_fp8_e4m3fn.safetensors",
+                },
+                // Staged by hand: no origin was ever recorded for this part.
+                { s3Key: "image/vae/ae.safetensors" },
+              ],
+            },
+            {
+              // A plain url source. The CP composes no link for it on purpose — that href is the
+              // direct download of the weights, not a page.
+              id: "staged-by-url",
+              enabled: false,
+              source: "https://example.invalid/m.safetensors",
+              files: ["m.safetensors"],
+              file_rows: [{ s3Key: "image/checkpoints/m.safetensors" }],
+            },
+            {
+              // The seed. Nobody recorded a source, which is a different fact from "recorded and
+              // unreadable" and must not be drawn as a value.
+              id: "seeded",
+              enabled: false,
+              files: ["sdxl.safetensors"],
+              file_rows: [{ s3Key: "image/checkpoints/sdxl.safetensors" }],
+            },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const provenance = (id: string) => {
+      const li = Array.from(host!.querySelectorAll("li.engines-model")).find(
+        (el) => el.querySelector(".engines-model-id")?.textContent === id,
+      );
+      expect(li, `no row for ${id}`).toBeTruthy();
+      return li!.querySelector(".engines-model-provenance") as HTMLElement | null;
+    };
+    const links = (id: string) =>
+      Array.from(provenance(id)?.querySelectorAll("a.engines-model-source") || []);
+
+    // One file: the row's own source is the link, and the file name beside it is NOT a second
+    // copy of it — for a single-file model the two are the same string.
+    const one = links("qwen2.5-coder-1.5b");
+    expect(one.length).toBe(1);
+    expect(one[0].getAttribute("href")).toBe(
+      "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/blob/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+    );
+    expect(one[0].getAttribute("target")).toBe("_blank");
+    expect(one[0].textContent).toBe(
+      "hf:Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+    );
+    expect(
+      Array.from(provenance("qwen2.5-coder-1.5b")!.querySelectorAll(".engines-model-file")).map(
+        (e) => e.textContent,
+      ),
+    ).toEqual(["qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"]);
+
+    // Four files, three origins: the row's, the part that came from somewhere else (by NAME,
+    // pointing at its own repository), and the part nobody recorded — which stays plain text.
+    const split = links("flux1-dev");
+    expect(split.map((a) => a.textContent)).toEqual([
+      "hf:black-forest-labs/FLUX.1-dev/flux1-dev.safetensors",
+      "t5xxl_fp8_e4m3fn.safetensors",
+    ]);
+    expect(split[1].getAttribute("href")).toBe(
+      "https://huggingface.co/comfyanonymous/flux_text_encoders/blob/main/t5xxl_fp8_e4m3fn.safetensors",
+    );
+    expect(split[1].getAttribute("title")).toBe(
+      "hf:comfyanonymous/flux_text_encoders/t5xxl_fp8_e4m3fn.safetensors",
+    );
+    expect(
+      Array.from(provenance("flux1-dev")!.querySelectorAll(".engines-model-file")).map(
+        (e) => e.textContent,
+      ),
+    ).toEqual(["flux1-dev.safetensors", "ae.safetensors"]);
+
+    // A url source is READ, not clicked: the text is there and there is no link at all.
+    expect(links("staged-by-url").length).toBe(0);
+    expect(
+      provenance("staged-by-url")!.querySelector(".engines-model-source")!.textContent,
+    ).toBe("https://example.invalid/m.safetensors");
+
+    // And the seed says nothing rather than "unknown". The line still carries its file name, so
+    // this asserts the absence of a SOURCE rather than of the whole element.
+    expect(links("seeded").length).toBe(0);
+    expect(provenance("seeded")!.querySelector(".engines-model-source")).toBeNull();
+    expect(provenance("seeded")!.textContent).toBe("sdxl.safetensors");
+  });
+
   // The row the SEED writes, and every row written before the CP validated one: complete in
   // every way this panel can see, and unable to generate. The CP states it because the panel
   // cannot know the vocabulary.

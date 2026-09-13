@@ -82,8 +82,16 @@ export type EngineModel = {
   files_missing?: string[];
   /** Where the bytes came from (`hf:<repo>/<file>`, `civitai:<id>`, a URL). The id is short and
    *  unique only inside this deployment, so this is the only thing that says WHICH vendor's
-   *  model of that name this row is. Absent for a seeded row. */
+   *  model of that name this row is. Absent for a seeded row.
+   *
+   *  🔴 For a SPLIT model this describes the file that created the row and nothing else — the
+   *  parts carry their own (`file_rows[].source`). */
   source?: string;
+  /** The page `source` names, composed by the CP (engineSourceURL). Absent when it could not be
+   *  composed, and the panel branches on THAT rather than parsing the string a second time:
+   *  `civitai:<id>` is a model VERSION id and `/models/<id>` opens a different model, and a
+   *  `url:` source is the direct download of the weights rather than a page. */
+  source_url?: string;
   precision?: string;
   sizes?: string[];
   files?: string[];
@@ -91,7 +99,15 @@ export type EngineModel = {
    *  `POST …/models` reads back (ADR 0072 P6 R2). `files` above is base names to read; these
    *  are what a forgotten row is rebuilt from, and since P6 the catalogue is the only place
    *  the declaration exists at all. Super-admin only, like the rest of this row. */
-  file_rows?: { s3Key: string; flag?: string; bytes?: number }[];
+  file_rows?: {
+    s3Key: string;
+    flag?: string;
+    bytes?: number;
+    /** Where THIS part came from, and its page. Absent on a file staged by hand and on every
+     *  file taken in before the field existed — which stays "nobody recorded", never "unknown". */
+    source?: string;
+    source_url?: string;
+  }[];
   args?: string[];
   /** What enabling this model adds to the next cold start, in seconds, from the file sizes
    *  whoever staged them declared. Absent when nobody declared one — the CP cannot look in S3

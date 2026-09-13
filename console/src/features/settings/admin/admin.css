@@ -416,6 +416,19 @@
   overflow-wrap: anywhere;
 }
 
+/* A source that could be turned into a page. Underlined rather than only tinted: the file names
+   it sits between are the same muted colour, so colour alone would make "this one opens
+   something" a hue difference inside one grey line. The ones that are NOT links are the honest
+   half of this line — a plain url source, or a file nobody recorded an origin for. */
+a.engines-model-source {
+  color: var(--dialog-muted);
+  text-decoration: underline;
+}
+
+a.engines-model-source:hover {
+  color: var(--accent);
+}
+
 /* Registering a row: ONE field per line, each with its own label.
    The fields are not interchangeable — an S3 key, a token count and a byte count look nothing
    alike, and putting one in the wrong box is silent (the control plane never reads the bucket).
