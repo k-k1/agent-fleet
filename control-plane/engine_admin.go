@@ -102,6 +102,15 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// route that needs no `ecs:RunTask` and works on a deployment whose egress is closed.
 	mux.HandleFunc("POST /api/admin/engines/{key}/models", a.withSuperAdmin(a.postModel))
 	mux.HandleFunc("DELETE /api/admin/engines/{key}/models/{id}", a.withSuperAdmin(a.deleteModel))
+	// Reading the checkpoints' own headers to find the rows whose family has nothing to decode
+	// with, and fixing one of them (ADR 0072 follow-up). Under the ingest authority rather than
+	// super_admin because the fix IS an ingest: it takes the family's VAE in and attaches it.
+	//
+	// The scan is one call for the whole catalogue instead of one per row: it runs on the panel's
+	// own load, and a fan-out of browser requests would make the number of upstream reads a
+	// property of how often somebody opens a screen.
+	mux.HandleFunc("POST /api/admin/engines/{key}/models/vae-scan", a.withIngestAdmin(a.scanVae))
+	mux.HandleFunc("POST /api/admin/engines/{key}/models/{id}/vae", a.withIngestAdmin(a.fixVae))
 	// Taking a model IN from Hugging Face / Civitai / a URL (ADR 0072 decision 6, phase P4),
 	// and watching the jobs that does.
 	//
@@ -205,6 +214,20 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		// then has to take in.
 		if missing := engineMissingFileFlags(e.def.Provider, m); len(missing) > 0 {
 			mr["files_missing"] = missing
+		}
+		// And the half of "this row cannot generate" that no declaration can express: the
+		// checkpoint file itself carries no VAE, so the family's template has nothing to decode
+		// with (ADR 0072 follow-up). Two marks rather than one, because they send the reader to
+		// opposite places — `vae_missing` is fixed by taking ONE more file in and attaching it,
+		// while `vae_unread` is a question nobody has asked yet, which the panel's scan answers
+		// without the operator deciding anything.
+		if engineVaeMissing(e.def.Provider, m) {
+			mr["vae_missing"] = true
+			if v, ok := engineFamilyVaes[strings.TrimSpace(m.BaseModel)]; ok {
+				mr["vae_fix"] = v.Repo + "/" + v.File
+			}
+		} else if engineVaeUnread(e.def.Provider, m) {
+			mr["vae_unread"] = true
 		}
 		// A LoRA pinned to nothing (ADR 0072 decision 5, the llm half). The adapter reaches the
 		// engine through the preset section of the model named in `base_model`, so a base that is
@@ -900,6 +923,13 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 			writeAPIErr(w, aerr)
 			return
 		}
+		// The same refusal for the same kind of row, read off the checkpoint's own header rather
+		// than off the declaration: an SDXL checkpoint published without VAE tensors declares
+		// everything its family needs and still cannot decode a picture (ADR 0072 follow-up).
+		if aerr := engineVaeGuard(ctx, e, id); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
 	}
 	var (
 		found  bool
@@ -1527,6 +1557,14 @@ type engineIngestBody struct {
 	// deployment the operator accepts on behalf of every member — so the answer is recorded
 	// against a person, in the row and in the audit log.
 	LicenseAccepted bool `json:"license_accepted"`
+	// WithFamilyVae asks for the second download this checkpoint needs and cannot ask for
+	// itself: an SDXL file published with no VAE tensors (ADR 0072 follow-up). The form offers
+	// it, already ticked, only when the resolve READ the header and found none — so it is an
+	// answer to a fact rather than a setting somebody has to know about.
+	//
+	// The licence checkbox beside it covers both files: the form shows the family VAE's own
+	// licence next to the offer, which is what `family_vae` on the resolve carries it for.
+	WithFamilyVae bool `json:"with_family_vae"`
 }
 
 // resolveIngest (POST …/ingest/resolve) answers "what is this file" without starting anything.
@@ -1563,8 +1601,21 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ 
 		kind = engineIngestKindFor(e)
 	}
 	geom := engineIngestGeometry(r.Context(), kind, res, a.hfTokens())
-	writeJSON(w, http.StatusOK,
-		engineResolvedRow(res, a.hfTokens().configured(r.Context()), e.def.Provider, geom))
+	row := engineResolvedRow(res, a.hfTokens().configured(r.Context()), e.def.Provider, geom)
+	// And the other header read, for the image role: does this checkpoint carry the VAE its
+	// family decodes with (ADR 0072 follow-up). Here for the same reason the licence is — the
+	// fact has to be on screen BEFORE the press, because afterwards it costs a download, a
+	// checkpoint switch and a failed generation to learn.
+	if v := engineVaeOfIngest(r.Context(), e.def.Provider, b, res, a.hfTokens()); v != engineVaeUnknown {
+		row["vae_bundled"] = v
+		if v == engineVaeNo {
+			if plan, fam, known := engineVaePlan(r.Context(), e.catalog.list(r.Context()),
+				engineVaeFamilyOf(e.def.Provider, b, res)); known {
+				row["family_vae"] = engineVaePlanRow(plan, fam)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, row)
 }
 
 // engineResolvedRow is what the panel draws before anything is started. `can_ingest` is the
@@ -1830,6 +1881,17 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	// permission at all, ADR 0072 review R3). Best-effort by design: anything that cannot be
 	// read leaves the row at its floor, which is what it would have been anyway.
 	geom := engineIngestGeometry(r.Context(), b.Kind, res, ing.tokens)
+	// The same read for the image role, and the one that decides whether this row will be able
+	// to decode a picture at all (ADR 0072 follow-up). Read again here rather than trusted from
+	// the resolve: the form's answer can be minutes old, and this is the call that spends money.
+	vae := engineVaeOfIngest(r.Context(), e.def.Provider, b, res, ing.tokens)
+	// And the second file the operator asked for at the same time. Planned only for a checkpoint
+	// the header says carries none: a "yes" or an unread header buys nothing, and a download
+	// nobody needs is 335 MB and a licence acceptance for a file that would never be read.
+	var followUp *engineVaeFollowUp
+	if b.WithFamilyVae && vae == engineVaeNo {
+		followUp, _, _ = engineVaePlan(r.Context(), e.catalog.list(r.Context()), base)
+	}
 	job, aerr := ing.start(r.Context(), engineIngestRequest{
 		Role: key, ModelID: id, Kind: strings.TrimSpace(b.Kind), S3Key: s3key,
 		KVGeom:        geom,
@@ -1845,6 +1907,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		AcceptedLicense: engineLicenceLabel(res),
 		Resolved:        res,
 		FileFlag:        flag, Attach: b.Attach, Replace: b.Replace,
+		VaeBundled: vae, VaeFollowUp: followUp,
 	})
 	if aerr != nil {
 		writeAPIErr(w, aerr)

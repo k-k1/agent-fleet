@@ -4359,3 +4359,111 @@ And what the history itself turned out to be made of:
   look. When the catalogue read fails, every row falls back to the stronger warning.
 - 🔥 **A background test wrapper reported exit 0 while its output file held a golden FAIL.** Twice
   now in this repository's history, and once again here. Read the output, not the exit code.
+
+## Follow-up — a checkpoint with no VAE, and the screen that could not fix it (2026-09-13)
+
+Two defects, found by an operator of this deployment on one evening, with one root between them.
+
+**The first is a fact nothing could state.** `waimatureillustrious_v30` is an Illustrious/SDXL
+checkpoint published without VAE tensors. The row declares its family, holds the one file that
+family requires, passes `engineMissingFileFlags`, enables, appears in `generate_image`'s `model`
+enum — and then fails EVERY request inside ComfyUI with `ERROR: VAE is invalid: None`, after the
+box has paid a 1–2.5 minute checkpoint switch. Generate dies in `VAEDecode`, edit in `VAEEncode`,
+so "it is the checkpoint, not the workflow" is diagnosable but only after the fact. A caller
+cannot act on it at all: `generate_image` has no VAE argument. The Agent has read a catalogue
+`--vae` since the 2026-09-12 fix, so the DECLARATION was possible — nothing pointed at the rows
+that needed one, and nothing refused to enable one.
+
+**The second is the screen.** Adding that `--vae` by hand meant: be on the right tab (the model /
+LoRA tab silently decides what the form registers), retype the existing row's id exactly, choose
+the file role — and only then does a checkbox appear that was, until all three were true,
+disabled with no sentence anywhere saying why. The operator's own words were "さっぱりわからない。
+使い勝手最悪", and they were right: the act was discoverable only by colliding with an id you had
+to already know.
+
+### The fact: read it from the file
+
+The verdict comes from the checkpoint's own safetensors header — an 8-byte little-endian length
+and a JSON object of tensor names — read over HTTP Range from the SOURCE (`engine_safetensors.go`).
+🔴 Never from S3: review R3 stands, the CP has no bucket permission and does not know the bucket's
+name, and this feature does not reverse that. A tensor whose name starts with `first_stage_model.`
+(the single-file layout every SD/SDXL/SD3.5 checkpoint here uses) or `vae.` (the diffusers
+spelling) is the answer. A PREFIX, not a substring: `model.diffusion_model.vae.proj.weight` would
+otherwise declare a broken checkpoint healthy, which is the direction that fails silently.
+
+🔴 **The verdict is three-valued and the third value carries the design.** "Not read" — a `.ckpt`
+with no header, a source taken down, a Civitai asset that refuses an anonymous Range, a row with
+no recorded source at all — is NOT "no VAE". Only an explicit `no` marks a row, refuses an enable
+or buys a download. Every row taken in before this existed is unread, and a mark on all of them
+would be a mark worth nothing.
+
+Stored on the FILE, in the `files` JSON column, which needs no migration (the same reason
+`EngineModelFile.Source` needed none) and moves with a replacement rather than describing a file
+the row no longer holds.
+
+### What the deployment does about a "no"
+
+- `vae_missing` on the row, beside `base_model_missing` and `files_missing`, plus `vae_fix`
+  naming the file that would end it.
+- `engineVaeGuard` refuses to enable it — `engine_vae_missing`, and like `files_missing` and
+  unlike the VRAM gate there is no `confirm` to repeat with. There is no legitimate case: no
+  argument reaches it, no template has another source of one.
+- One press on the row takes the family's VAE in and attaches it under `--vae`
+  (`POST …/models/{id}/vae`). If this deployment already holds that key — another row declares
+  it — the fix is a declaration and nothing is downloaded.
+- A new ingest offers the same thing ahead of the press, ticked, when the resolve read the header
+  and found none (`with_family_vae`). The second file's licence is on screen beside the
+  checkpoint's own, and the acceptance covers both; the follow-up job is planned while somebody is
+  still at the form, because it runs in the reconciler where a resolve failure has nobody to tell.
+- `POST …/models/vae-scan` answers the unread rows, once, on the panel's own load. One call for
+  the catalogue rather than one per row: this fires on a screen anybody can open, and a fan-out
+  would make the number of upstream reads a property of how often it is opened.
+
+🔴 **sdxl has a default family VAE (`stabilityai/sdxl-vae`) and sd35 deliberately does not.** The
+SD3.5 stock autoencoder lives in a gated repository, so an automatic second download would fail
+with a 403 inside the job reconciler. An sd35 row that really lacks one gets the mark and the
+refusal, and its fix is the manual declaration the operator guide describes.
+
+Two things that remain impossible, unchanged from the 2026-09-12 fix: a runtime fallback to a
+known VAE name (`VAELoader.vae_name` enumerates the box's own `models/vae`, so naming a file it
+does not hold breaks the families that work today), and making `--vae` mandatory in the catalogue
+(every bundled checkpoint would become "file not set").
+
+### The screen: four questions
+
+`EngineIngest` was twelve fields in one column whose applicability depended on state the screen
+did not show. It is now 「モデルを追加」, a screen of its own — the catalogue is hidden while it is
+open, because a wizard drawn under a list of models is a form on a page again.
+
+1. **What for** — add a new model, add a part to a row that exists, replace a file of one. ASKED,
+   never inferred from an id collision. The target row is CHOSEN from a list, and the slots
+   offered are the ones that act can perform: free slots for an attach, filled ones for a replace.
+   That is `engineAttachAllowed` and `engineReplaceAllowed` expressed by not offering the
+   impossible, instead of by two checkboxes that disabled each other in silence.
+2. **Where from** — search, source, repository field, on one screen. Leaving it IS the resolve:
+   the 「調べる」 button was a second confirmation of a decision already made by naming the
+   repository. A pasted URL says what it turned out to name, because the field it fills is on the
+   next question.
+3. **Which file** — the candidates, the licence, what it would ask of the card, the family with
+   the provenance of the suggestion, the author's own settings, and the VAE offer above.
+4. **Confirm** — what will happen, in sentences, with the licence beside the box that accepts it.
+
+🔴 **When the next button is grey, the reason stands beside it.** That is the rule the whole
+rebuild is for, and the one the old form broke in three places.
+
+The slot picker is radios rather than a select because one of the answers IS the empty string —
+a row's own checkpoint — and a select needs a placeholder that would carry the same value.
+
+### What this cost in tests, and what that proved
+
+26 of the panel's 79 DOM tests drove the old form and were rewritten to walk the questions. Two
+of them are worth naming: the one that pins "the model's published ceiling must not overwrite a
+window somebody typed" had to be re-staged (in the wizard the window is typed AFTER the first
+resolve, so the case is now picking a SECOND file), and it was re-checked by mutation — removing
+the `!ctx.trim()` guard turns it red. The mark's own test was mutated the same way: making
+`engineVaeMissing` answer "anything that is not yes" puts the mark and the 409 on an unread row,
+and both tests fail.
+
+The panels were rendered headless in both themes and at 390 px before this was called done —
+the rail wraps, the acts stack with their sentences, and the reason the next button is grey is
+still beside it.

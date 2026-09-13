@@ -196,6 +196,66 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // unflagged file in `image/checkpoints/` and flux1 reads four others — no answer in the
   // selector could work, and choosing one made the only mark disappear.
   "admin.engines_model_files_missing": "This row does not hold the files the \u201c{n}\u201d workflow reads (missing: {f}). It cannot be enabled until they are taken in and attached to it.",
+  // 🔴 The checkpoint file itself carries no VAE (ADR 0072 follow-up): the one fault no
+  // declaration can express. The row looks complete and every request dies inside ComfyUI —
+  // after the box has paid a 1-2.5 minute checkpoint switch — and a caller cannot act on it at
+  // all, because the image tool has no VAE argument.
+  "admin.engines_model_vae_missing":
+    "This checkpoint carries no VAE of its own. Its family's workflow has nothing to decode with, so every request fails at the same point whatever the prompt or size. It cannot be enabled.",
+  "admin.engines_model_vae_fix": "Add a VAE",
+  // The cheap case, said out loud: nothing is downloaded and there is no new licence to accept.
+  "admin.engines_model_vae_plan_staged": "{f} is already in this deployment. Adding it to this row is all it takes — nothing is downloaded.",
+  "admin.engines_model_vae_plan_ingest": "{f} will be taken in and attached to this row as `--vae` ({n}, licence {l}).",
+  "admin.engines_model_vae_accept": "Accept the licence and take it in",
+  "admin.engines_model_vae_attach": "Add it to this row",
+  "admin.engines_model_vae_cancel": "Cancel",
+  "admin.engines_model_vae_started": "The download has started. It joins this row when it finishes — the history below shows the progress.",
+  "admin.engines_model_vae_attached": "Added to this row. It can be enabled now.",
+  "admin.engines_model_vae_none": "Reading the header again says this checkpoint does bundle a VAE after all. The mark is withdrawn.",
+  // --- the "add a model" wizard (four questions) -----------------------------
+  // 🔴 What it replaced was twelve fields in one column, where which of them applied was decided
+  // by state the screen did not show (the tab, whether the typed id collided, which file role
+  // was chosen). The operator of this deployment lost an evening to it and never reached the
+  // checkbox that adds a part to an existing row.
+  "admin.engines_wizard_title": "Add a model",
+  "admin.engines_wizard_title_lora": "Add a LoRA",
+  "admin.engines_wizard_step_act": "What for?",
+  "admin.engines_wizard_step_find": "Where from",
+  "admin.engines_wizard_step_file": "Which file",
+  "admin.engines_wizard_step_confirm": "Confirm",
+  "admin.engines_wizard_act_new": "Add a new model",
+  "admin.engines_wizard_act_new_why": "Creates a new row in this list.",
+  "admin.engines_wizard_act_attach": "Add a part to a model that is here",
+  "admin.engines_wizard_act_attach_why": "A VAE, a text encoder. Nothing else about the row changes \u2014 not its family, its licence or whether it is on.",
+  "admin.engines_wizard_act_replace": "Replace a file of a model that is here",
+  "admin.engines_wizard_act_replace_why": "Swaps the file in one slot, e.g. for another quantisation. Everything else about the row stays.",
+  "admin.engines_wizard_target": "Which row?",
+  "admin.engines_wizard_target_pick": "Choose a row",
+  "admin.engines_wizard_role": "Which slot of that row?",
+  "admin.engines_wizard_role_pick": "Choose a slot",
+  "admin.engines_wizard_no_rows": "This list has no rows yet. Start with \u201cAdd a new model\u201d.",
+  "admin.engines_wizard_need_target": "Choose the row it joins.",
+  "admin.engines_wizard_need_role": "Choose which slot it goes in.",
+  "admin.engines_wizard_no_slots_attach": "That row has no free slot. To exchange one, choose \u201creplace\u201d.",
+  "admin.engines_wizard_no_slots_replace": "That row holds no file yet. Choose \u201cadd a part\u201d.",
+  "admin.engines_wizard_need_repo": "Type a repository or a URL, or pick one from the search above.",
+  "admin.engines_wizard_repo_note": "`owner/name`, a model page URL, or `civitai:<versionId>` \u2014 any of them. The search is a way in, not a precondition.",
+  "admin.engines_wizard_need_file": "Choose the file.",
+  "admin.engines_wizard_cannot": "This deployment cannot take that file in (the reason is above).",
+  "admin.engines_wizard_need_id": "Give it an id.",
+  "admin.engines_wizard_need_family": "Choose the family. This engine picks a workflow from it and will not guess one.",
+  // 🔴 ADR 0072 follow-up. Offered only where the header was read and said the file carries none.
+  "admin.engines_wizard_vae_take": "This checkpoint carries no VAE, so take {f} in as well and attach it as `--vae` ({n}, licence {l})",
+  "admin.engines_wizard_vae_staged": "This checkpoint carries no VAE, so attach {f}, which this deployment already holds, as `--vae` (nothing is downloaded)",
+  "admin.engines_wizard_vae_none": "This checkpoint carries no VAE and this deployment has no default one for its family. It cannot generate until a VAE is taken in and attached as `--vae`.",
+  "admin.engines_wizard_plan_new": "A new row \u201c{id}\u201d will be created.",
+  "admin.engines_wizard_plan_attach": "It joins \u201c{id}\u201d as its {part}. Nothing else about that row changes.",
+  "admin.engines_wizard_plan_replace": "It takes the place of \u201c{id}\u201d\u2019s {part}. Nothing else about that row changes.",
+  "admin.engines_wizard_plan_from": "{f} will be downloaded from {r} ({n}).",
+  "admin.engines_wizard_plan_after": "When it finishes it appears in this list, disabled. Enabling it syncs it onto the box.",
+  "admin.engines_wizard_named_file": "That URL names {f}. Next reads that file.",
+  "admin.engines_wizard_back": "Back",
+  "admin.engines_wizard_next": "Next",
   "admin.engines_model_add_desc": "description",
   // Optional. This route has no source to read a licence from, so it is the one place a person
   // types one. Left blank, the row says "licence not recorded" rather than showing a gap.
