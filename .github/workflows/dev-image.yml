@@ -106,6 +106,22 @@ jobs:
           REGISTRY: ghcr.io/${{ github.repository }}
           CP_PLATFORMS: ${{ (inputs.image != 'workspace') && inputs.platforms || '' }}
           WS_PLATFORMS: ${{ (inputs.image != 'control-plane') && inputs.platforms || '' }}
+          # A buildx registry cache — the DEV path only. A release still builds cold
+          # (release.sh leaves both empty by default), which is the point: nothing a user
+          # pulls may depend on a mutable cache blob. Here the trade is the other way
+          # round, because a dev bake is dispatched several times a day and its arm64 leg
+          # otherwise re-runs every apt / chromium / uv / awscli install from scratch.
+          #
+          # ⚠️ The cache lives in its own package, NOT as a tag on the image packages:
+          # a `buildcache` tag sitting next to the real tags is one `crane copy` away
+          # from being deployed by mistake, and it would show up in the public package
+          # listing as if it were a distribution.
+          #
+          # ⚠️ Keyed by the two bake flags. They change what the layers ARE, and
+          # `cache-to` replaces the whole cache manifest — one shared key would mean the
+          # lean build and the fat build evict each other every time.
+          CP_CACHE_REF: ghcr.io/${{ github.repository }}/buildcache:control-plane
+          WS_CACHE_REF: ghcr.io/${{ github.repository }}/buildcache:workspace-clis${{ inputs.bake_agent_clis && '1' || '0' }}-opt${{ inputs.bake_optional_tools && '1' || '0' }}
           BAKE_AGENT_CLIS: ${{ inputs.bake_agent_clis && '1' || '0' }}
           # ⚠️ The lean branch (0) is the one nothing else in CI builds: e2e.yml always
           # bakes with the default 1, and the only other caller is a real release
