@@ -393,9 +393,20 @@ the registry supports, and it does not need to.
 The local gateway verified a local session token, so it knows the session
 (`engineSessionClaims.Session`). It states that name when it exchanges the issuing token for a
 far session token — the far side takes it as stated and does not verify it, on purpose
-(`engine_gateway.go:182-186`). The far deployment's usage rows then carry the borrower's session
-name, which is the only way an operator there can tell one borrower's spending from another's —
-🔴 **for the llm role only.** See decision 9.
+(`engine_gateway.go:182-186`), and the far side's `recordUsage` builds a usage row carrying it.
+
+🔴 **Corrected 2026-09-13: that row is then dropped, so this decision buys the far operator
+nothing.** The draft called the name "the only way an operator there can tell one borrower's
+spending from another's", for the llm role. It is not, because there is no row on the far side to
+carry it. The ledger is a file inside a Workspace, not a table in the Control Plane
+(`engine_usage.go:6-10` — the CP's own usage tables, `0008_usage.sql`, `0053_usage_hourly.sql`
+and `0055_engine_hourly.sql`, hold occupancy seconds and have no feature column at all), so the
+only way to record a row is to POST it to a RUNNING workspace, and decision 3's purpose-made
+membership has none. Decision 9 states this two paragraphs later as a BENEFIT; the two were
+never reconciled, and decision 9 is the one that matches the code.
+
+What the name still does is real and smaller: it reaches the far side, it is what the far token
+is minted for, and it is what any durable record there would have to key on (open question 7).
 
 Tokens are cached per (engine key, session) and renewed before expiry, exactly as the Agent
 already does; the TTL is 30 days (`engine_token.go:85`), so this is cheap.
@@ -483,6 +494,38 @@ external llm engine for native, docker and ec2-single deployments, which today c
 external image engine and no external chat engine at all. It is P2 because nothing in P0
 depends on it: a remote row mints its own credential (decision 3).
 
+### 12. The lender keeps what it cannot deliver, and counts requests per membership
+
+Added 2026-09-13, and it is open question 7's answer. Decision 9 is right that the far side's
+post-back is a no-op for a purpose-made membership; what it did not follow through is that the
+no-op leaves the operator who BOUGHT THE GPU with a bill and no name, for both roles.
+
+The far Control Plane gets two small tables of its own, because a conversation and a picture are
+not the same kind of fact — the same line decision 9 draws:
+
+- **The row, kept whole.** `postUsage` already holds a complete row at the moment it drops it,
+  with the borrower's session name on it (decision 8). It is written to the CP's store instead,
+  with the reason it could not be delivered. 🔴 **Kept is not delivered**: nothing re-posts it
+  into a Workspace ledger later. A row arriving days late would land under the hour it was
+  written rather than the hour it happened, and a ledger that rewrites its own past is worse
+  than one with a hole an operator can see.
+- **Requests and milliseconds per (engine, membership, hour)**, for both roles, because that is
+  the only count the image role can have: an image answer carries no `usage` object, and
+  `engine.image` is a feature value ADR 0029 §2 does not have and must not gain (decision 9).
+
+⚠️ **Neither is a second ledger.** ADR 0029's ledger stays the file inside a Workspace, the usage
+graph still reads only that, and nothing here feeds it. These answer one operator question —
+"whose work was that box doing" — and carry no price, which ADR 0048 decision 2 and ADR 0071
+decision 9 both forbid.
+
+🔴 **And the post-back must not PROVISION.** `resolveByMembership` creates a workspace for a
+membership that has none (`resolver.go`'s `buildResolved` → `createWorkspace`: it allocates a
+port, mints an agent token and writes the row). On a lending deployment the bookkeeping would
+therefore have created a workspace for every borrowing membership — and `has_workspace` on the
+issue-token screen, which exists to warn that a membership with a workspace looks like a
+PERSON's and must not be lent (decision 3), would have been warning about a workspace this code
+had just made. The workspace is looked up directly, before the resolver is asked.
+
 ## Rejected alternatives
 
 | Rejected | Why |
@@ -543,11 +586,33 @@ depends on it: a remote row mints its own credential (decision 3).
    route is P1. What remains is the ordinary consequence, which is that **the far deployment must be
    running a Control Plane new enough to have it** — a borrower facing an older one is back to the
    account and the sign-in, and chapter 08 says so.
-7. **How is a borrowed IMAGE generation attributed on the far side?** It writes no usage row
-   there (decision 9), so the far operator sees a GPU that was bought and no record of who for.
-   The cheapest answer is probably to let `engineUsageRowFor` emit a zero-token row for image
-   engines, which is a change to the far deployment and therefore P1 or later — and it would
-   improve the far side's own bookkeeping too, borrowing or not.
+7. **How is borrowed use attributed on the far side?** ~~a borrowed IMAGE generation~~ — **the
+   question is wider than the draft put it, and its cheapest answer does not work (2026-09-13).**
+
+   **Wider**: a borrowed CONVERSATION leaves no durable record over there either. The far CP's
+   post-back resolves the borrowing membership's workspace and returns silently when there is
+   none (`engine_usage.go:226-232`), which decision 3's purpose-made membership never has — and
+   the issue-token route warns the far operator off lending a membership that *does* have one
+   (`engine_issue_token.go:54-56, 68-70`). So the far operator sees a GPU that was bought and no
+   record of who for, for BOTH roles. Decision 9 already says so; decision 8 said otherwise and
+   has been corrected above.
+
+   **The cheapest answer does not work.** A zero-token row from `engineUsageRowFor` for image
+   engines would be a row with nowhere to go: the ledger is a file inside a Workspace
+   (`engine_usage.go:6-10`), the far membership has no Workspace, and the row would be dropped by
+   the same branch that drops the chat one. Two further reasons it was the wrong shape anyway —
+   an image request's far token carries an EMPTY session, because the Agent asks the local CP for
+   a WORKSPACE-scoped engine token (`workspace/agent/engines.go:399-418`), so the row would have
+   no borrower to attribute to; and `engine.image` is a feature value ADR 0029 §2's frozen
+   enumeration does not have, written on top of the `tool.imagegen` row the borrower already
+   keeps. `TestOnlyChatEnginesAreCountedByTheGateway` (`engine_gateway_test.go:766-790`) exists
+   to refuse exactly that, and its comment gives the same two reasons.
+
+   **Answered by decision 12, built 2026-09-13.** The receiving end exists: the far Control
+   Plane keeps the row it cannot deliver and counts requests per (engine, membership, hour), so
+   both roles are attributable there. What stays deliberately undecided is re-delivery — a row
+   kept here is never posted into a Workspace ledger later — and the Console has no screen for
+   any of it yet; it is read through `GET /api/admin/engines/{key}/attribution`.
 
 ## Phases
 
@@ -864,3 +929,76 @@ which is the ordinary "implementation corrects the text" stage and not a second 
 super-admin button (decision 3 / open question 6), the Console's "another fleet" label, the operator
 chapter, and `AF_ENGINE_API_KEY_<KEY>` (decision 11, P2). Borrowed image spend is still attributed
 nowhere on the far side (open question 7).
+
+## P2 as built (2026-09-13)
+
+Decision 11 alone, in the Control Plane and nowhere else: `AF_ENGINE_API_KEY_<KEY>`, read at
+registry build for an EXTERNAL row, into the same `apiKey` field `dial` and `engineHealthy`
+already present upstream. Unset, nothing changes. What building it settled, beyond what the
+decision says:
+
+- **The name is folded, because a table key is free text and an environment variable name is
+  not.** `engineAPIKeyEnvName` upper-cases the key and writes every character outside `[A-Z0-9]`
+  as `_`, so `image-2` is `AF_ENGINE_API_KEY_IMAGE_2`. Two keys can fold together; that is a
+  table nobody writes, and the alternative is a key whose bearer cannot be declared at all.
+- **One variable per ROW, not one per deployment.** A single shared bearer would present the
+  credential of the proxy in front of the llm engine to a ComfyUI on the same network — the two
+  are different boxes belonging to different reverse proxies, and ADR 0076's whole threat model
+  is that reachability is the access control.
+- **`AF_COMFY_API_KEY` wins on the row `AF_COMFY_URL` synthesises**, and the generic variable is
+  its fallback rather than dead: an operator who declared that row inline instead has no
+  `AF_COMFY_API_KEY` to set. One log line names both when both are declared, because a bearer
+  that is silently not the one the operator just edited is a 401 with nothing to read.
+- **The predicate is `external()`, and this is the one place in the whole ADR where the NARROW
+  one is right.** A managed row's key is an SSM SecureString; a borrowed row buys its own per
+  (engine key, session) and `dial` never reads `apiKey` for it (decision 4), so a static value
+  there would be a second, staler answer to a question that already has one. The test that pins
+  this pairs the borrowed row against an EXTERNAL row with the same key and the same variable
+  set — pairing it against a MANAGED row would pass for an implementation that read nothing.
+- **Four tests**, on `engine_external_test.go`: the name folding, the lifecycle pairing above,
+  the precedence both ways, and the capability itself — an inline table with no AWS anywhere, and
+  a chat completion that reaches an engine behind something which checks the bearer on the health
+  path as well as on the request. Before this, that table produced a row with an empty `apiKey`
+  and the health probe alone ended it in `engine_unavailable`.
+
+## The live run (2026-09-13)
+
+The first time any of this touched real hardware. **Lender**: the ecs-ec2 deployment, put on this
+branch's build first so that decision 12 was actually deployed. **Borrower**: a throwaway Control
+Plane built from the same tree and started inside a workspace container — `AUTH=dev`, SQLite under
+`$HOME`, `AF_REMOTE_ENGINE_KEYS=llm` so that no image request could buy a second box. Cost: **one
+g6.xlarge for about 14 minutes, ≈ $0.29.**
+
+**The borrowing lane worked end to end, and added nothing measurable to the cold start.**
+
+| Elapsed | What |
+|---|---|
+| — | `engines: llm (chat/llamacpp) is borrowed from <far> (1 model(s))` at boot; the admin row came back `managed:false`, `lifecycle:"remote"`, `warm:false`, with none of the managed-only fields |
+| 0.02 s | the borrower answered 200 + `text/event-stream` and began holding |
+| 2 s | the far side minted the session token and **bought the box**: `engine llm: offer l4 (od) bought i-…` |
+| 55 s | `the box i-… registered (asking for the task)`, desired moved |
+| every 10 s | `: af-engine waking` relayed to the caller, **not once interrupted**, through the whole wait |
+| 233.6 s | the far side's answer arrived — carrying the engine's own failure |
+
+So the local 900-second hold covered the entire far cold start on ONE connection, which is what
+decision 6's streaming path exists to do. Open question 3 is **partly** answered: the borrowing
+round trip costs ~2 seconds on top of the far side's own timeline. The warm-to-answer figure is
+still unmeasured, because the model never loaded.
+
+🔴 **What it found in decision 12, which the unit tests could not.** The attribution tables were
+EMPTY afterwards, for a request that had bought a GPU. `recordUsage` is reached only once a relay
+returns, and three paths return before it: `dial` failing, the streamed path's upstream 3xx-or-
+worse, and the plain path's refusal. Those are exactly the requests that bought a box and did not
+succeed — the most expensive case, and the one a lending operator most needs a name for. The tests
+written for decision 12 called `recordUsage` directly and never crossed those returns. Fixed by
+counting the request where it is ADMITTED, next to the demand mark that buys the box, and
+splitting the counters: `requests` at admission, `ok_requests` / milliseconds / tokens at the
+outcome — so `requests - ok_requests` is the failure count for free.
+
+🔴 **And a finding that is not this ADR's.** The far engine died with
+`cudaMalloc failed: out of memory` allocating a **16384 MiB KV cache** on a 24 GB L4, while the CP
+had chosen that card saying `largest model … wants 17093 MiB (floor)`. `engineVramFor`
+(`engine_class.go`) adds the KV cache only when the row carries GGUF geometry; without it the
+estimate is the weights alone, and the floor **silently buys a card the model cannot load on**.
+The failure surfaces four minutes later, on a box already paid for. That belongs to ADR 0072/0074,
+not here, but it is what stopped this run from producing a successful completion.

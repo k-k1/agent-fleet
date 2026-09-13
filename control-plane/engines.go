@@ -826,11 +826,25 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 				settings: settings,
 				catalog:  newEngineCatalog(models, d.Key),
 			}
-			// The bearer the reverse proxy in front of ComfyUI checks (ADR 0076 decision 7). Same
-			// field a managed row fills from SSM, so dial and engineHealthy already present it;
-			// SSM is never read for either of these lifecycles, which is the point of the lane.
-			if hasEnvRow && d == envRow {
+			// The bearer the reverse proxy in front of ComfyUI checks (ADR 0076 decision 7), and —
+			// for every OTHER external row — the one AF_ENGINE_API_KEY_<KEY> declares (ADR 0079
+			// decision 11). Same field a managed row fills from SSM, so dial and engineHealthy
+			// already present it; SSM is never read for either of these lifecycles, which is the
+			// point of the lane.
+			//
+			// AF_COMFY_API_KEY wins on the row AF_COMFY_URL synthesised: it is the more specific of
+			// the two, and it is what every ADR 0076 deployment already sets. One line when both are
+			// declared, because a bearer that is silently not the one the operator just edited is a
+			// 401 with nothing to read.
+			if hasEnvRow && d == envRow && envAPIKey != "" {
 				st.apiKey = envAPIKey
+				if other := engineEnvAPIKey(d); other != "" && other != envAPIKey {
+					log.Printf("engines: %s has a bearer in both AF_COMFY_API_KEY and %s, and AF_COMFY_API_KEY wins",
+						d.Key, engineAPIKeyEnvName(d.Key))
+				}
+			} else if k := engineEnvAPIKey(d); k != "" {
+				st.apiKey = k
+				log.Printf("engines: %s presents the bearer from %s upstream", d.Key, engineAPIKeyEnvName(d.Key))
 			}
 			// A remote row's catalogue is the FAR deployment's, mirrored read-only, and its
 			// credential is minted per (key, session) rather than held in apiKey (ADR 0079
@@ -923,6 +937,50 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// It also refreshes the mirror every row already reads through.
 	rem.run(context.Background(), reg)
 	return reg
+}
+
+// engineEnvAPIKey is the bearer an EXTERNAL row presents upstream, declared in the environment as
+// AF_ENGINE_API_KEY_<KEY> (ADR 0079 decision 11).
+//
+// Without it, "an engine somebody else runs, behind something that checks a bearer" was open to
+// the image role alone: `apiKey` was filled only for the comfy row synthesised from AF_COMFY_URL,
+// and an inline AF_ENGINES_JSON row — the only way to declare an external LLM engine at all — had
+// nowhere to carry one, so anything checking answered it 401. A native, docker or ec2-single
+// deployment could have an external image engine and no external chat engine whatsoever.
+//
+// EXTERNAL ONLY, and the narrow predicate is the point. A MANAGED row's key is an SSM
+// SecureString (readEngineAPIKey), because a deployment that runs the engine has credentials to
+// read one with. A REMOTE row mints its own per (key, session) and keeps it in no field at all
+// (ADR 0079 decision 4) — a static bearer read here would be a second, staler answer to a
+// question that already has one, and it would be the one `dial` never asks for.
+//
+// Read once, at registry build, like every other AF_ variable: an environment variable cannot
+// change under a running process, so changing it is a Control Plane restart.
+func engineEnvAPIKey(d engineDef) string {
+	if !d.external() {
+		return ""
+	}
+	return strings.TrimSpace(envx.Or(engineAPIKeyEnvName(d.Key), ""))
+}
+
+// engineAPIKeyEnvName is the variable one row's bearer is read from.
+//
+// The key is folded to a shape a shell can export — upper case, and every character outside
+// [A-Z0-9] as `_` — because a table key is free text (`image`, `llm`, and nothing in
+// parseEngineTable stops an operator writing `image-2`) while an environment variable name is
+// not. Two keys can therefore fold together; that is a table nobody writes, and the alternative
+// is a key whose bearer cannot be declared at all.
+func engineAPIKeyEnvName(key string) string {
+	var b strings.Builder
+	b.WriteString("AF_ENGINE_API_KEY_")
+	for _, r := range strings.ToUpper(strings.TrimSpace(key)) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('_')
+	}
+	return b.String()
 }
 
 // readEngineAPIKey fetches the engine's own --api-key. Not fatal when it fails: an engine
