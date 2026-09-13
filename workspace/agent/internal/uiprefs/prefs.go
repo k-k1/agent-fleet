@@ -352,10 +352,14 @@ func ChatAutoResume() bool {
 }
 
 // RateLimitAutoResume is the ON/OFF for auto-resume after a usage limit resets (docs/log/47
-// §4-4, Settings > Agents > Claude > Behavior): when a claude session is cut off by
+// §4-4, Settings > Agents > Claude / Codex > Behavior): when a session is cut off by
 // its usage limit, book a one-shot schedule at the reset instant that tells the session
 // to continue. Missing/invalid key ⇒ TRUE, like ChatAutoResume and for the same
 // reason — the nudge re-runs work the user already asked for and carries no decision of theirs.
+//
+// One key for every watched kind (claude, and codex managed since §4-12), the same standing as
+// AbortAutoResume below: what it governs is one behaviour of the workspace, and a per-kind copy
+// would ask the user to make the same decision again for a difference they do not have.
 //
 // This toggle governs the resume booking only. The usage-limit menu is still dismissed
 // automatically while it is OFF (a pane stopped waiting for a keypress is returned to the

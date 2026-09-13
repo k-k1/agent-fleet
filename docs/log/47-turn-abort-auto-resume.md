@@ -900,6 +900,87 @@ renewed := AuthOKAt() > 失敗したターンの時刻
 `TestAuthResumeWaitsForRenewal` と `TestAuthResumeSendsOnceRenewed` が赤くなることを
 確認してから commit した（「0 件」「緑」は先に道具を疑う）。
 
+## 4-12. 追補（2026-09-14 / s4qxfmt）— codex managed も上限リセットで自動再開する
+
+利用者報告: **codex のセッション 3 本が「制限解除待ち」のまま、定時実行の一覧に予約が 1 件も
+無い**。読んでみると壊れていたのではなく、**そもそも claude にしか入っていなかった**。
+
+- `rateLimitTick` の先頭が `if NormalizeKind(m.Kind) != session.KindClaude { continue }`。
+  予約を作る経路はここ 1 本しか無いので、codex はエピソードすら開かない。
+- それでもチップが「制限解除待ち」と出るのは**別経路**だから — §4-9 で足した
+  `codex.IsRateLimited`（managed ハンドルの直近ターンの `usageLimitExceeded`）は、その場の
+  ターンエラーを読むだけでエピソードも時刻も持たない。だから**時刻なしのチップ**になる。
+  表示だけ先に揃えて中身を揃えていなかった、という取り残し。
+
+### 4-12-1. 種別ごとに違うのは 2 つの問いだけ
+
+エピソードの状態機械・通知・リトライ・畳み方は claude 固有の要素を何も含んでいなかったので、
+**種別で分けるのは次の 2 つだけ**にして残りは共有する。
+
+| 問い | claude | codex managed |
+|---|---|---|
+| いま上限で止まっているか（`atUsageLimit`） | ペインのメニュー＋転写末尾（`UsageLimitAbort`） | ハンドルの直近ターンエラー（`IsRateLimited`・ファイルを開かない） |
+| いつ解けるか（`usageLimitResetAt`） | バナー／statusline 捕捉（`claude.ResetAt`・§4-5 のバナー限定規則つき） | codex 自身が記録している利用枠の窓（`codex.ResetAt`） |
+
+- **ペインは claude でだけ読む**。メニューを出すのは claude だけなので、他種別で読んでも
+  「はい」と答えようが無い tmux 呼び出しが増えるだけ。解除（①）は codex には存在しない。
+- **codex は支出・残高の上限（§4-10）を名乗らない**。語彙が `usageLimitExceeded` の 1 つだけ
+  なので、`claude.LimitSpend` に落ちる経路が無い。
+
+### 4-12-2. `codex.ResetAt` — 窓は「使い切っている中でいちばん早いリセット」を採る
+
+claude と違って文章を読み解く必要は無い。codex は rollout に、また app-server は push で、
+アカウントの窓（5 時間 / 週次）そのものを寄越す（使用量チップと同じ `readUsage`・この経路は
+ネットワークを使わない）。判断が要るのは**どちらの窓か**だけ。
+
+- 満杯の判定は `used_percent >= 95`。100 にしないのは、記録が**上限に当たったターンの前**の
+  スナップショットだから（最後に書かれた数字は壁の少し手前で止まりうる）。
+- 満杯の窓が 2 つあるとき（週が尽きた中の 5 時間窓）は**早い方**を採る。誤りの代償が対称では
+  ないため:
+  - 早すぎた → 起きて同じ上限に当たり、もう一度予約する。そのときには 5 時間窓はリセット済みで
+    率が下がっているので、候補は週次だけになる ＝ **自力で正解に収束する**。
+  - 遅すぎた → 1 時間後に開く窓のためにセッションを数日寝かせる。**何も直さない**。
+- リセット済みの読み取りは `adjustWindow` が率を 0 にするので、**古い読みは候補に上がらない**
+  （＝過去の時刻を予約してしまう経路が原理的に無い）。読める時刻が無ければ何も予約しない
+  （当てずっぽうの時刻は §4-4 ②と同じ理由で採らない）。
+
+### 4-12-3. 予約と配達
+
+- `agent_kind` はセッションの種別を送る（定数 `claude` だった）。`missing_target_policy=fail`
+  なので CP がそれでセッションを作ることは無いが、**定時実行の一覧が別のエージェント名で並ぶ**
+  のは嘘になる。他の欄（`session_mode=reuse` / `reuse_target` / `overlap_policy=skip` /
+  `wake_policy=wake` / `report=false`）は §4-4-3 のまま。
+- **配達確認後の「自動再開しました」通知は managed 経路にも足した**。
+  `notifyRateLimitResumeDelivered` は TUI の `/input` にしか無く、managed は
+  `handleManagedInputPrompt`（`h.Send` が返った時点＝この driver の配達証拠）を通るので、
+  足さないと codex の再開だけ黙って着地する。
+- **一覧の再開時刻**: codex は自分の `WireLive` で既に `limited` と名乗っているので、
+  `wireSession` の再解釈は `idle` だけでなく `limited` も入口にし、エピソードの `ResumeAt` を
+  載せる。載らなければチップは「時刻なしの制限解除待ち」＝この追補の前の見え方に戻る。
+
+### 4-12-4. 対象は managed だけ
+
+**ターミナル（CLI）の codex は対象外**。rollout に残るのはアカウント全体の率で、それは
+「このセッションが上限で止まった」とは別のこと（同じ率は隣のセッションでも同じ値になる）。
+エピソードの起点にできる材料が無いので、`rateLimitWatched` は codex では
+`DriverKind() == managed` を要求する。opencode 他は両方の材料が無い。
+
+### 4-12-5. 設定
+
+**キーは増やさない** — `rateLimitAutoResume` 1 つが watch 対象の全種別を左右する
+（`claudeAbortAutoResume` が §4-6-8 で codex / opencode managed も左右しているのと同じ立て方）。
+ワークスペースの 1 つの振る舞いについての設定で、種別ごとに同じ判断をもう一度させる理由が無い。
+ただし**同じスイッチを Codex カードにも出す** — codex しか使わない人が Claude カードを開いて
+初めて見つける、という置き方だけは実体と合わない。注記は両カードで「同じ設定です」と書く。
+
+### 4-12-6. テスト
+
+| 対象 | 内容 |
+|---|---|
+| `internal/agents/codex/usage_test.go` | `ResetAt`: 満杯 2 つなら早い方、満杯でない窓は採らない、満杯が無ければ黙る、リセット済みの読みは候補にしない、読みが無ければ黙る |
+| `rate_limit_resume_test.go` | codex managed の予約（キーを送らない・claude の転写を読まない・`Source` が窓の名前）、時刻が無ければ予約せず試行だけ数える、`rateLimitWatched` の種別表（tui codex / opencode / copilot は偽）、`agent_kind` がセッションの種別になること、配達後の通知が codex でも出ること |
+| `session_rate_limit_wire_test.go` | codex の行が予約時刻を載せること、ハンドルが上限を下ろしたら名乗らないこと、tui codex は何も claim しないこと |
+
 ## 5. 積み残し
 
 - 対象は claude TUI のみ（`isApiErrorMessage` は claude 固有）。他 TUI 種別は別シグナルが要る。
@@ -931,6 +1012,11 @@ renewed := AuthOKAt() > 失敗したターンの時刻
   判断を含むので自動化しない。通知（`rate-limit-reached`）と失敗理由つきの完了報告までが範囲。
 - ~~`error` は文言非依存の材料だが、まだ分類には使っていない~~ → §4-6-5 で採用（ただし
   実測で見えた値だけ。`rate_limit` は両義なので何も決めない）。
+- §4-12 の対象は claude と **codex managed のみ**。ターミナル（CLI）の codex と opencode は
+  「このセッションが上限で止まった」と言える材料が無い（§4-12-4）。opencode 側に
+  `usageLimitExceeded` 相当の型付きエラーと、窓のリセット時刻の 2 つが揃えば同じ器に載る。
+- §4-12 は**実機で踏んでいない**。固めてあるのは状態機械と窓の選び方で、実際に codex を上限まで
+  使って「止まる → 予約が出る → 時刻に再開する」を通した実測はまだ無い。
 - §4-11 の対象も **claude TUI のみ**。codex / opencode managed の認証失敗は
   `Abort.Auth` を立てる材料（`isApiErrorMessage` 相当）を持っていないので、
   再認証しても止まったままになる。
