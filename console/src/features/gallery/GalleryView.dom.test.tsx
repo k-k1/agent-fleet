@@ -341,6 +341,46 @@ describe("画像ギャラリーのペイン", () => {
     expect(content).toEqual({ kind: "gallery", galleryPath: "a" });
   });
 
+  it("拡大は先にサムネイルを出し、隣の 1 枚を先読みする", async () => {
+    // jsdom は画像を読まないので、裏で作られる Image を捕まえて中身を見る。
+    const probes: { src: string }[] = [];
+    class FakeImage {
+      src = "";
+      decoding = "";
+      complete = false;
+      constructor() {
+        probes.push(this);
+      }
+      addEventListener() {}
+      removeEventListener() {}
+    }
+    // NOT vi.unstubAllGlobals() at the end: the fetch stub every test here depends on is a
+    // global stub too, and unstubbing all of them leaves the next test with no fetch at all.
+    const realImage = globalThis.Image;
+    vi.stubGlobal("Image", FakeImage);
+    vi.useFakeTimers();
+    try {
+      served = [img("a.png", 100), img("b.png", 200), img("c.png", 300)];
+      await render();
+      await click(host.querySelector(".gal-card:not(.folder) .gal-zoom"));
+
+      // 出ているのは縮小版（原寸は約 1MB あり、届くまで真っ白になるのを避ける）。
+      const shown = document.querySelector<HTMLImageElement>(".imgview-img")!;
+      expect(shown.getAttribute("src")).toContain("thumb=512");
+      expect(shown.getAttribute("src")).toContain("v=300"); // 版付き＝2 度目は無通信
+
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+      // 隣（次の 1 枚）の原寸を先読みしている＝←/→ が待たされない。
+      const prefetched = probes.map((p) => p.src).filter((u) => u.includes("a.png") || u.includes("b.png"));
+      expect(prefetched.some((u) => u.includes("b.png") && !u.includes("thumb="))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      vi.stubGlobal("Image", realImage);
+    }
+  });
+
   it("マウント時に 1 回だけ読み、常駐ポーラーにはしない", async () => {
     served = [img("a.png", 100)];
     await render();

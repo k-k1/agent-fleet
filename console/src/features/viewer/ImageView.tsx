@@ -29,6 +29,13 @@ export interface ImageViewHandle {
 interface ImageViewProps {
   src: string;
   alt?: string;
+  /**
+   * A small version of the same picture to show WHILE `src` loads — the card's thumbnail,
+   * which the browser usually already has. An original is megabytes (a generated PNG here
+   * averages ~1 MB), so without it an enlarge is a blank frame for as long as the download
+   * takes. The swap happens on the same <img>, so zoom and pan survive it.
+   */
+  placeholder?: string;
   onLoad?: (size: { w: number; h: number }) => void;
   /** Report the zoom level. Supplying it hands the readout to the host and hides the badge. */
   onZoom?: (scale: number) => void;
@@ -47,12 +54,36 @@ interface Transform {
 }
 const FIT: Transform = { scale: 1, tx: 0, ty: 0 };
 
-export function ImageView({ src, alt, onLoad, onZoom, ref }: ImageViewProps) {
+export function ImageView({ src, alt, placeholder, onLoad, onZoom, ref }: ImageViewProps) {
   const tr = useT();
   const boxRef = useRef<HTMLDivElement>(null);
   const [t, setT] = useState<Transform>(FIT);
   const { scale, tx, ty } = t;
   const [broken, setBroken] = useState(false);
+  // Which of the two is on screen. Starts false whenever there is a placeholder, so a page
+  // to the next picture shows ITS thumbnail immediately rather than holding the previous
+  // full-size one (which would read as "nothing happened").
+  const [full, setFull] = useState(!placeholder);
+  useEffect(() => {
+    if (!placeholder) {
+      setFull(true);
+      return;
+    }
+    setFull(false);
+    // Decode off-screen and swap when it is ready: assigning the big URL to the visible
+    // <img> directly would clear the frame the moment the request starts.
+    const probe = new Image();
+    probe.decoding = "async";
+    const done = () => setFull(true);
+    probe.addEventListener("load", done);
+    probe.addEventListener("error", done); // a broken original still leaves the small one up
+    probe.src = src;
+    if (probe.complete) done(); // already in the browser cache: no flash of the thumbnail
+    return () => {
+      probe.removeEventListener("load", done);
+      probe.removeEventListener("error", done);
+    };
+  }, [src, placeholder]);
 
   // Active pointers (id -> {x,y}) drive drag (one pointer) and pinch (two).
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -201,11 +232,13 @@ export function ImageView({ src, alt, onLoad, onZoom, ref }: ImageViewProps) {
       onPointerCancel={endPointer}
     >
       <img
-        className="imgview-img"
-        src={src}
+        className={"imgview-img" + (full ? "" : " placeholder")}
+        src={full ? src : placeholder}
         alt={alt}
         draggable={false}
-        onLoad={(e) => onLoad?.({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+        // Only the real picture may report its size: the placeholder's is the thumbnail's,
+        // and the file pane's info bar would show 341x512 for a 1024x1536 image.
+        onLoad={(e) => full && onLoad?.({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
         onError={() => setBroken(true)}
         style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }}
       />

@@ -135,6 +135,13 @@ webp/avif/bmp/svg come back as originals for the browser to draw.
   round trip — open question 1).
 - The original bytes are fetched only on enlarge (the lightbox). A card always shows the
   downscaled copy.
+  - 🔴 **P1 found the gap (2026-09-14)**: "on enlarge" is exactly where the waiting moved. An
+    original averages ~1 MB here, and the frame was blank until it arrived. The card's
+    thumbnail now **stands in** and the same `<img>` swaps its `src` once the original has
+    decoded (zoom and pan survive it), blurred one step so "not there yet" is legible and the
+    picture visibly sharpens. Alongside it: the **neighbour is prefetched after 400 ms**
+    (skipped when `saveData` is set), and the original's URL carries `v=<mtime>` too, so a
+    picture paged back to costs no request at all.
 
 ### Decision 5 — cards behave like the transcript's; the lightbox is shared and gains ← / →
 
