@@ -1260,3 +1260,149 @@ func TestEngineAdminSetsTheEngineExclusionList(t *testing.T) {
 		t.Errorf("catalogue row = %v, want the key absent when nothing is excluded", empty)
 	}
 }
+
+// 🔴 The other half of ADR 0072 P2 欠落 6, and the one the code confessed to in its own refusal:
+// `engineAttachAllowed` answers "forget the row, or take this in as its own" to a file whose
+// flag is already filled. Wanting a t5xxl at another quantisation is not a reason to lose a
+// row's licence acceptance, family, params, enabled state and provenance — and the row's own
+// CHECKPOINT could not be changed by any ingest at all, because an attach requires a flag.
+//
+// Everything here is decided before RunTask, for the same reason the attach gate is: nine
+// minutes of Fargate is a bad place to learn that a slot was empty.
+func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	ctx := t.Context()
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "flux1-dev-fp8", Kind: "checkpoint", BaseModel: "flux1", Enabled: true,
+		Files: []store.EngineModelFile{
+			{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1.safetensors"},
+			{Flag: "--t5xxl", S3Key: "image/text_encoders/t5xxl_fp16.safetensors"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A row whose one file is UNLABELLED — the whole checkpoint, the slot no attach can reach.
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+	}
+
+	post := func(id, extra string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/text_encoders/t5xxl_fp8.safetensors",
+		  "license_accepted":true,"source":{"url":"https://example.invalid/t5xxl_fp8.safetensors",
+		  "sha256":"` + strings.Repeat("c", 64) + `"}` + extra + `}`
+		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
+		r.SetPathValue("key", "image")
+		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+		return rec.Code, rec.Body.String()
+	}
+
+	// A slot the row does not fill is NOT quietly created: that is the other act, and turning one
+	// into the other is how a mistyped flag becomes a row with two checkpoints. The refusal names
+	// the act that was meant.
+	code, body := post("flux1-dev-fp8", `,"replace":true,"file_flag":"--clip_l"`)
+	if code != http.StatusBadRequest || !strings.Contains(body, "as a part") {
+		t.Fatalf("replacing an empty slot = %d, and the refusal does not point at the other act: %s", code, body)
+	}
+	// Both at once is not a request the CP may pick a winner for: their preconditions are
+	// opposite — one needs the slot free, the other needs it filled.
+	if code, body := post("flux1-dev-fp8", `,"replace":true,"attach":true,"file_flag":"--t5xxl"`); code != http.StatusBadRequest {
+		t.Fatalf("attach and replace together = %d, want 400 (%s)", code, body)
+	}
+	// An id nothing holds, same as the attach gate: a typo must not write a row.
+	if code, body := post("typo", `,"replace":true,"file_flag":"--t5xxl"`); code != http.StatusNotFound {
+		t.Fatalf("replacing in an id nothing holds = %d, want 404 (%s)", code, body)
+	}
+	// 🔴 The asymmetry that is the whole point. An attach with no flag is refused — the
+	// unlabelled slot is THE checkpoint and a row has one — and a replace with no flag is the
+	// only way that file has ever been changeable.
+	if code, body := post("sdxl-base-1.0", `,"attach":true`); code != http.StatusBadRequest {
+		t.Fatalf("an attach with no file_flag = %d, want 400 (%s)", code, body)
+	}
+	if code, body := post("sdxl-base-1.0", `,"replace":true`); code != http.StatusOK {
+		t.Fatalf("replacing a row's own checkpoint = %d, want 200 (%s)", code, body)
+	}
+	// And the flagged one, with no family declared: the row settled that when it was created.
+	if code, body := post("flux1-dev-fp8", `,"replace":true,"file_flag":"--t5xxl"`); code != http.StatusOK {
+		t.Fatalf("the replace = %d, want 200 (%s)", code, body)
+	}
+	jobs, err := st.ListEngineIngestJobs(ctx, "image", 10)
+	if err != nil || len(jobs) != 2 {
+		t.Fatalf("jobs = %d (%v) — the refusals above must not have left one", len(jobs), err)
+	}
+	// Nothing about either row changed at the door: the swap happens when the download finishes.
+	rows, _ := st.ListEngineModels(ctx, "image")
+	for _, m := range rows {
+		if m.ID == "flux1-dev-fp8" && (!m.Enabled || len(m.Files) != 2) {
+			t.Errorf("the row was touched before the download: enabled=%v files=%+v", m.Enabled, m.Files)
+		}
+	}
+}
+
+// A borrowed role has no bucket and no active set on this side (ADR 0079), so a replace here
+// would stage bytes for an engine that will never read them — and the row it would rewrite is
+// the far deployment's to change.
+//
+// 🔴 The control is an EXTERNAL row, not a managed one. Paired with a managed row this passes
+// for an implementation that refuses every unmanaged engine, which is exactly the LAN ComfyUI
+// of ADR 0076: `managed:false` with a lifecycle that is not `remote`, and it takes models in
+// like any other.
+func TestEngineIngestReplaceIsRefusedForABorrowedRoleAndAllowedForAnExternalOne(t *testing.T) {
+	body := func() string {
+		return `{"id":"m1","kind":"gguf","s3Key":"llm/new.gguf","replace":true,"license_accepted":true,
+		  "source":{"url":"https://example.invalid/new.gguf","sha256":"` + strings.Repeat("d", 64) + `"}}`
+	}
+	call := func(t *testing.T, e *engineRuntimeState, st store.Store) (int, string) {
+		t.Helper()
+		reg := &engineRegistry{byKey: map[string]*engineRuntimeState{e.def.Key: e}}
+		a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+		reg.ing = &engineIngester{
+			def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+			cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		}
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/admin/engines/"+e.def.Key+"/ingest", strings.NewReader(body()))
+		r.SetPathValue("key", e.def.Key)
+		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+		return rec.Code, rec.Body.String()
+	}
+
+	// Borrowed: refused, and it says which deployment owns the catalogue.
+	st := testSettingsStore(t)
+	borrowed := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	borrowed.settings, borrowed.ctrl = st, nil
+	borrowed.def.Key = "image"
+	borrowed.def.Lifecycle = engineLifecycleRemote
+	borrowed.def.URL = "https://far.invalid"
+	borrowed.catalog = newEngineCatalog(st, "image")
+	if code, msg := call(t, borrowed, st); code != http.StatusBadRequest || !strings.Contains(msg, errCodeEngineNotOurs) {
+		t.Fatalf("replace on a borrowed role = %d (%s), want 400 engine_not_ours", code, msg)
+	}
+
+	// 🔴 The pair. An external engine — the LAN ComfyUI an operator runs on their own box — is
+	// also `managed:false`, and it stages files in this deployment's bucket like any other. It
+	// must get past this gate; what it fails on next is its own business (no such row).
+	st2 := testSettingsStore(t)
+	external := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	external.settings, external.ctrl = st2, nil
+	external.def.Key = "image"
+	external.def.Lifecycle = engineLifecycleExternal
+	external.catalog = newEngineCatalog(st2, "image")
+	if code, msg := call(t, external, st2); strings.Contains(msg, errCodeEngineNotOurs) {
+		t.Fatalf("an external engine was refused as borrowed = %d (%s)", code, msg)
+	}
+}

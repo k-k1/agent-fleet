@@ -1326,7 +1326,9 @@ function EngineIngest({
   /** The catalogue this engine already holds. Used to tell whether the typed id names a row:
    *  the CP refuses a plain ingest onto one, and without the offer to join it the only way to
    *  build a split model is three throwaway rows (ADR 0072 P2 欠落 6). The rows rather than
-   *  their ids, because what is asked of them grows with what the form can do to a row. */
+   *  their ids, because the other question asked of them is which of that row's SLOTS are
+   *  already filled — which is what tells "add this part" apart from "replace the part that is
+   *  there", and the two have opposite preconditions. */
   models?: EngineModel[];
   /** The VRAM of the rung this engine is set to buy, when the deployment declared a ladder at
    *  all. 🔴 Absent is the normal state of a deployment whose box CloudFormation bought, and
@@ -1369,6 +1371,12 @@ function EngineIngest({
    *  whether it JOINS that row instead of making a new one. */
   const [fileFlag, setFileFlag] = useState("");
   const [attach, setAttach] = useState(false);
+  /** …or TAKES THE PLACE OF what that slot already holds. The third act, and the one the form
+   *  could not ask for: attaching refuses a flag that is filled, and the unlabelled slot — the
+   *  checkpoint itself — cannot be attached to at all, so moving a model to another
+   *  quantisation meant forgetting the row and building it again. That throws away the licence
+   *  acceptance, the family, the params, the enabled state and the provenance. */
+  const [replace, setReplace] = useState(false);
   const families = baseModels || [];
   const flags = fileFlags || [];
   /** What this model should be RUN at, as text — the fields are typed into, so they are strings
@@ -1379,7 +1387,15 @@ function EngineIngest({
    *  it (409 model_id_exists), so this is where the second act — attaching a part — is
    *  offered rather than left as an error to read. */
   const modelIds = (models || []).map((m) => m.id);
-  const known = modelIds.includes(id.trim());
+  const target = (models || []).find((m) => m.id === id.trim());
+  const known = !!target;
+  /** Which of that row's slots are FILLED. It decides which of the two acts is even possible:
+   *  a free slot can only be attached to, a filled one can only be replaced — the same pair of
+   *  refusals the CP answers, said here so neither costs a download to discover.
+   *
+   *  The empty flag is a slot like any other here, and it is the one that matters: a row's own
+   *  checkpoint is filled by definition, so replace is the only act it ever offers. */
+  const taken = new Set((target?.file_rows || []).map((f) => (f.flag || "").trim()));
   /** Same two vocabularies as the register form: an llm adapter names a model id, everything
    *  else names a family. */
   const basePicksAModel = isLora && !isImage;
@@ -1599,6 +1615,10 @@ function EngineIngest({
       base_model: baseModel,
       file_flag: fileFlag,
       attach: attach && known,
+      // One file changes and the row keeps everything the ingest knows nothing about — the
+      // licence acceptance, the family, the params, whether it is on. Only ever against a row
+      // that is there: anywhere else the CP would have to guess which of two acts was meant.
+      replace: replace && known,
       context_tokens: isLora ? 0 : c && o ? c : 0,
       max_output_tokens: isLora ? 0 : c && o ? o : 0,
       params: engineParamsBody(params),
@@ -1619,6 +1639,7 @@ function EngineIngest({
     setId("");
     setFileFlag("");
     setAttach(false);
+    setReplace(false);
     setParams(engineParamsBlank);
     onStarted();
   };
@@ -1805,8 +1826,11 @@ function EngineIngest({
             value={fileFlag}
             onChange={(ev) => {
               setFileFlag(ev.currentTarget.value);
-              // A whole checkpoint is never a part of another row.
-              if (!ev.currentTarget.value) setAttach(false);
+              // Which act is possible depends on whether THAT slot is filled, so choosing a
+              // different one asks the question again rather than carrying an answer that was
+              // given about another file.
+              setAttach(false);
+              setReplace(false);
             }}
           >
             {flags.map((fl) => (
@@ -1825,18 +1849,51 @@ function EngineIngest({
           <input
             type="checkbox"
             checked={attach}
-            disabled={!fileFlag}
-            onChange={(ev) => setAttach(ev.currentTarget.checked)}
+            // A slot that is already filled cannot be attached to — that is the CP's 409, said
+            // one press earlier — and the unlabelled slot is filled by definition.
+            disabled={!fileFlag || taken.has(fileFlag)}
+            onChange={(ev) => {
+              setAttach(ev.currentTarget.checked);
+              if (ev.currentTarget.checked) setReplace(false);
+            }}
           />
           <span>{(tr("admin.engines_ingest_attach") as string).replace("{id}", id.trim())}</span>
         </label>
       )}
-      {known && !attach && <p className="form-err">{tr("admin.engines_ingest_id_taken")}</p>}
+      {/* The other act, and the mirror of the one above: this slot is FILLED, and the file in it
+          is what changes. Everything else about the row stays — which is the whole reason it
+          exists, because the road that was there (forget the row, take it in again) silently
+          discarded the licence acceptance, the family, the params and the enabled state. */}
+      {known && (
+        <label className="engines-ingest-accept">
+          <input
+            type="checkbox"
+            checked={replace}
+            disabled={!taken.has(fileFlag)}
+            onChange={(ev) => {
+              setReplace(ev.currentTarget.checked);
+              if (ev.currentTarget.checked) setAttach(false);
+            }}
+          />
+          <span>
+            {(tr("admin.engines_ingest_replace") as string)
+              .replace("{id}", id.trim())
+              .replace("{part}", fileFlag || (tr("admin.engines_model_add_part_whole") as string))}
+          </span>
+        </label>
+      )}
+      {/* 🔴 Said because it is not what "replace" sounds like. The CP has no s3:DeleteObject at
+          all (ADR 0072 decision 7) and the swap finishes minutes later inside the job reconciler,
+          where there is nobody to report a refused deletion to — and the keys are shared
+          (`text_encoders/` is pointed at from more than one row), so deleting here would break a
+          model nobody touched. Forgetting a row with 「ファイルも消す」 is what deletes bytes. */}
+      {replace && <p className="muted">{tr("admin.engines_ingest_replace_keeps_bytes")}</p>}
+      {known && !attach && !replace && <p className="form-err">{tr("admin.engines_ingest_id_taken")}</p>}
       {/* ⚠️ Declared by the OPERATOR (ADR 0072 decision 2), which is why the repository's own
           answer rides BESIDE the picker instead of into it: "SDXL 1.0" and "Flux.1 D" are what
           Hugging Face and Civitai publish, and storing one of those as the family produced rows
           that looked complete and refused to generate (P2 実機検証). */}
-      {!attach && baseOptions.length > 0 && (
+      {!attach && !replace && baseOptions.length > 0 && (
         <label className="engines-model-add-row">
           <span>
             {tr(basePicksAModel ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}
@@ -1860,7 +1917,7 @@ function EngineIngest({
       {/* What the repository itself calls this, beside the picker rather than in it. When the CP
           could translate it the picker above is already filled in, and this line is then the
           PROVENANCE of that choice — which is what makes it correctable rather than magic. */}
-      {!attach && !isLora && families.length > 0 && found?.base_model && (
+      {!attach && !replace && !isLora && families.length > 0 && found?.base_model && (
         <p className="muted">
           {(tr(
             found.base_model_suggest && baseModel === found.base_model_suggest
@@ -1874,7 +1931,7 @@ function EngineIngest({
           anything is stored. 🔴 The quote is not decoration: these numbers were found by a
           regular expression in somebody's paragraph, and the sentence is what lets a person
           tell "Steps: 30" from "trained for 30 epochs" without opening the model page. */}
-      {!attach && isImage && found?.params_hint && found.params_hint_quote && (
+      {!attach && !replace && isImage && found?.params_hint && found.params_hint_quote && (
         <p className="muted engines-param-quote">
           {tr("admin.engines_params_hint_found")} <q>{found.params_hint_quote}</q>
         </p>
@@ -1883,7 +1940,7 @@ function EngineIngest({
           llm role's equivalents are the window and the output cap two lines below, and an
           adapter's strength there is `--scale`, which the register form has always had. Five
           fields that reach nothing would be five fields somebody fills in. */}
-      {!attach && isImage && (
+      {!attach && !replace && isImage && (
         <EngineParamsFields
           value={params}
           onChange={setParams}
@@ -1891,13 +1948,17 @@ function EngineIngest({
           family={isLora ? undefined : baseModel}
         />
       )}
-      {!isImage && !isLora && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
+      {/* The window and its cap belong to the ROW, and neither of the two acts that land on an
+          existing row carries them: the CP reads them only where a row is CREATED. Asking again
+          would offer to overwrite a decision this download knows nothing about — the same rule
+          the family above follows. */}
+      {!attach && !replace && !isImage && !isLora && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
       {/* The output cap is a FRACTION of the window, never a free number. It is not published
           anywhere — it is a deployment's policy for how much of the window one reply may eat —
           and 🔴 ADR 0072 decision 3: left at 0 opencode reads it as 32,000 and a 32k model ends
           up with 768 usable tokens. Offering computed values makes the pair impossible to
           half-fill. */}
-      {!isImage && !isLora && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
+      {!attach && !replace && !isImage && !isLora && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
       <div className="engines-model-add-actions">
         <button type="button" className="sm" onClick={() => resolve()} disabled={busy || !repo.trim()}>
           {tr("admin.engines_ingest_resolve")}
@@ -1912,12 +1973,14 @@ function EngineIngest({
       {found && <ResolvedNote found={found} />}
       {/* …and what pressing it would ask the card to hold. The window is read out of the FIELD
           rather than out of the model's own ceiling, because that field is what the engine will
-          be started with and the two differ by 8x on the model already running here. */}
+          be started with and the two differ by 8x on the model already running here — and where
+          the row already exists it is the ROW's window, for the same reason: the field is not
+          drawn, because neither act changes it. */}
       {found && (
         <IngestFit
           bytes={found.bytes}
           kvPerThousand={found.kv_mib_per_1k_tokens}
-          contextTokens={engineNumField(ctx)}
+          contextTokens={attach || replace ? target?.context_tokens || 0 : engineNumField(ctx)}
           cardMiB={cardMiB}
           wantsKV={!isImage && !isLora}
         />
@@ -1943,11 +2006,12 @@ function EngineIngest({
               !accepted ||
               !id.trim() ||
               found.can_ingest === false ||
-              // An id the catalogue already holds goes in as a PART or not at all; the CP
-              // refuses both of these too, and a button that let the press happen would spend
-              // a resolve and a refusal to say so.
-              (known && !attach) ||
-              (attach && !fileFlag)
+              // An id the catalogue already holds goes in as a PART, or in place of the part
+              // that is there, or not at all; the CP refuses all of these too, and a button that
+              // let the press happen would spend a resolve and a refusal to say so.
+              (known && !attach && !replace) ||
+              (attach && (!fileFlag || taken.has(fileFlag))) ||
+              (replace && !taken.has(fileFlag))
             }
             onClick={start}
           >

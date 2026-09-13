@@ -1389,6 +1389,15 @@ type engineIngestBody struct {
 	// Attach says the file joins the row `id` already names rather than creating one. It is the
 	// other half of the flag: a FLUX.1 row is four files and they arrive as four downloads.
 	Attach bool `json:"attach"`
+	// Replace says the file takes the place of the one that row holds under the SAME flag.
+	//
+	// The third act, and the one the panel had no way to ask for: attaching refuses a flag that
+	// is taken, and the unlabelled slot — the checkpoint itself — cannot be attached to at all,
+	// so changing which file a model reads meant forgetting the row and building it again. That
+	// throws away the licence acceptance (a record of a human act), the family, the params, the
+	// enabled state and the provenance, for what a person thinks of as "the same model, a
+	// smaller quantisation".
+	Replace bool `json:"replace"`
 	// LicenseAccepted is REQUIRED, and it is not a formality (ADR 0072 decision 10). A gated
 	// repository distributes only to accounts that accepted its terms, and on a multi-tenant
 	// deployment the operator accepts on behalf of every member — so the answer is recorded
@@ -1613,12 +1622,21 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	// and nothing else about the row is touched. It is what makes a split model assemblable by
 	// ingest alone (欠落 6) — until it existed, the three components of a FLUX.1 row had to be
 	// taken in as throwaway rows and the real row re-typed through `POST /models`.
+	// Attaching and replacing are different acts with opposite preconditions — one needs the
+	// slot free, the other needs it filled — so a request that claims both is not a request the
+	// CP may pick a winner for.
+	if b.Attach && b.Replace {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"attach and replace are two different acts: one adds a file to a slot that is free, the other" +
+				" swaps the file in a slot that is taken — ask for exactly one"})
+		return
+	}
 	var existing *store.EngineModel
 	for _, m := range e.catalog.list(r.Context()) {
 		if m.ID != id {
 			continue
 		}
-		if !b.Attach {
+		if !b.Attach && !b.Replace {
 			writeAPIErr(w, &apiError{http.StatusConflict, errCodeIngestIDExists,
 				"this engine already has a model called " + id + " — forget that row first, or choose another id"})
 			return
@@ -1628,6 +1646,12 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	}
 	if b.Attach {
 		if aerr := engineAttachAllowed(existing, id, key, flag); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
+	if b.Replace {
+		if aerr := engineReplaceAllowed(existing, id, key, flag); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -1667,8 +1691,9 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		base = strings.TrimSpace(res.BaseModel)
 	}
 	// An attach writes no family: the row it joins declared one when it was created, and asking
-	// for it again is asking for a second answer to a question already settled.
-	if !b.Attach && !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) && !engineBaseModelValid(e.def.Provider, base) {
+	// for it again is asking for a second answer to a question already settled. A replace is the
+	// same case — it changes one file and nothing else about the row.
+	if !b.Attach && !b.Replace && !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) && !engineBaseModelValid(e.def.Provider, base) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
 			"declare base_model as one of %s: this engine runs %s, which picks a workflow by family"+
 				" and will not guess one%s",
@@ -1695,7 +1720,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		AcceptedBy: g.ident.ID, AcceptedTenant: g.tenantID,
 		AcceptedLicense: engineLicenceLabel(res),
 		Resolved:        res,
-		FileFlag:        flag, Attach: b.Attach,
+		FileFlag:        flag, Attach: b.Attach, Replace: b.Replace,
 	})
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -1834,6 +1859,34 @@ func engineAttachAllowed(row *store.EngineModel, id, key, flag string) *apiError
 		}
 	}
 	return nil
+}
+
+// engineReplaceAllowed is the gate on swapping a file a row already holds. It is the mirror of
+// engineAttachAllowed and deliberately not a relaxation of it:
+//
+//   - no such row. Same refusal, same reason — a typo would download for minutes and then write
+//     a file nothing points at;
+//   - no file in that slot. THIS is the one that keeps the two acts apart: replacing a slot
+//     nothing occupies is attaching, and quietly doing that would turn a mistyped flag into a
+//     second checkpoint on a row that is supposed to have one. The refusal names the act that
+//     WAS meant, because from the panel the two are one press apart.
+//
+// 🔴 The empty flag is allowed here and refused by the attach gate, which is the whole point:
+// the unlabelled file is the checkpoint, a row has exactly one, and it was until now the one
+// file in the catalogue that no ingest could ever change.
+func engineReplaceAllowed(row *store.EngineModel, id, key, flag string) *apiError {
+	if row == nil {
+		return &apiError{http.StatusNotFound, errCodeEngineModelUnknown,
+			"no model " + id + " for engine " + key + " to replace a file of"}
+	}
+	for _, f := range row.Files {
+		if strings.TrimSpace(f.Flag) == flag {
+			return nil
+		}
+	}
+	return &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+		id + " declares no " + engineFlagLabel(flag) + " file, so there is nothing to replace" +
+			" — take this in as a part of that row instead"}
 }
 
 // engineBaseModelHint quotes what the repository called this model, so the refusal above ends

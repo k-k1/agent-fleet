@@ -2476,3 +2476,200 @@ describe("EnginesAdminView / will this file fit the card", () => {
     expect(line.className).not.toContain("form-err");
   });
 });
+
+// 🔴 "I took the wrong file in" had no answer. The code said so itself: attaching to a slot the
+// row already fills is a 409 whose words are "forget the row, or take this in as its own", and
+// the UNLABELLED slot — the model's own checkpoint — cannot be attached to at all. So moving a
+// model to another quantisation meant forgetting the row and building it again, losing the
+// licence acceptance (a record of a human act), the family, the params, the enabled state and
+// the provenance on the way.
+describe("EnginesAdminView / replacing a file of a row that exists", () => {
+  const openIngest = async () =>
+    click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLButtonElement,
+    );
+
+  const typeInto = async (el: HTMLInputElement, value: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  const inputs = () =>
+    Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input")) as HTMLInputElement[];
+
+  /** The two acts, by the sentence each one offers. Read from the LABEL rather than off the
+   *  page: this form has grown three checkboxes and a whole-page `includes` cannot tell which
+   *  of them is on screen. */
+  const act1 = (word: string) =>
+    Array.from(host!.querySelectorAll(".engines-ingest-accept")).find((l) =>
+      l.querySelector("span")?.textContent?.includes(word),
+    ) as HTMLLabelElement | undefined;
+  const attachBox = () => act1("部品として足す")?.querySelector("input") as HTMLInputElement | undefined;
+  const replaceBox = () => act1("差し替える")?.querySelector("input") as HTMLInputElement | undefined;
+
+  const flux = (files: { s3Key: string; flag?: string }[]) =>
+    row({
+      provider: "comfy",
+      base_models: ["sdxl", "sd35", "flux1"],
+      file_flags: ["", "--diffusion-model", "--clip_l", "--t5xxl", "--vae"],
+      has_models: true,
+      model_rows: [{ id: "flux1-dev-fp8", enabled: true, base_model: "flux1", file_rows: files }],
+    });
+
+  const mountWith = async (engine: Record<string, unknown>) => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest") ? { jobs: [] } : { super_admin: true, engines: [engine] },
+    );
+    await mount();
+  };
+
+  it("swaps the file in a slot that is filled, and leaves the row alone", async () => {
+    await mountWith(
+      flux([
+        { s3Key: "image/diffusion_models/flux1-dev-fp8.safetensors", flag: "--diffusion-model" },
+        { s3Key: "image/text_encoders/t5xxl_fp16.safetensors", flag: "--t5xxl" },
+      ]),
+    );
+    await openIngest();
+    await typeInto(inputs()[0], "comfyanonymous/flux_text_encoders");
+    await typeInto(inputs()[1], "t5xxl_fp8_e4m3fn.safetensors");
+    await typeInto(inputs()[2], "flux1-dev-fp8");
+
+    const part = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+    await act(async () => {
+      part.value = "--t5xxl";
+      part.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    // 🔴 The slot is FILLED, so only one of the two acts is on offer. Adding a second --t5xxl is
+    // the CP's 409, said one press earlier instead of after a download.
+    expect(attachBox()!.disabled).toBe(true);
+    expect(replaceBox()!.disabled).toBe(false);
+    await act(async () => replaceBox()!.click());
+    // And it says what "replace" does not say by itself: the old object stays, because the CP
+    // has no s3:DeleteObject and the keys are shared between rows.
+    expect(host!.querySelector(".engines-ingest")!.textContent).toContain("バケットに残ります");
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "e".repeat(64),
+      bytes: 4_893_934_904,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
+      boxes[boxes.length - 1].click(); // the licence
+    });
+
+    apiJSON.mockResolvedValueOnce({ id: "j9", model_id: "flux1-dev-fp8", state: "running" });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "取り込む",
+      ) as HTMLElement,
+    );
+    const body = apiJSON.mock.calls.at(-1)!;
+    expect(String(body[0])).toBe("api/admin/engines/image/ingest");
+    expect(body[2]).toMatchObject({
+      id: "flux1-dev-fp8",
+      file_flag: "--t5xxl",
+      replace: true,
+      attach: false,
+      s3Key: "image/text_encoders/t5xxl_fp8_e4m3fn.safetensors",
+    });
+  });
+
+  // 🔴 The asymmetry that is the point of the whole thing. A row's own checkpoint is the
+  // unlabelled slot: `engineAttachAllowed` refuses it by design ("an unlabelled file is the
+  // checkpoint itself, and a row has one"), so it was the one file in the catalogue that no
+  // ingest could ever change. Replacing is the only act it has.
+  it("offers the row's own checkpoint to be replaced, which attaching never could", async () => {
+    await mountWith(flux([{ s3Key: "image/checkpoints/flux1-dev-fp8.safetensors" }]));
+    await openIngest();
+    await typeInto(inputs()[0], "black-forest-labs/FLUX.1-dev");
+    await typeInto(inputs()[1], "flux1-dev-fp8-e5m2.safetensors");
+    await typeInto(inputs()[2], "flux1-dev-fp8");
+
+    // The part picker is left on 「まるごと」 — the unlabelled slot.
+    expect(attachBox()!.disabled).toBe(true);
+    expect(replaceBox()!.disabled).toBe(false);
+    await act(async () => replaceBox()!.click());
+    // 🔴 …and the row's own settings are not asked for again. A replace changes one file; the
+    // family was decided when the row was created, and offering it here is offering to overwrite
+    // an answer this download knows nothing about.
+    const labels = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row span"));
+    expect(labels.map((l) => l.textContent)).not.toContain("モデル族");
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "f".repeat(64),
+      bytes: 11_901_466_276,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
+      boxes[boxes.length - 1].click();
+    });
+    apiJSON.mockResolvedValueOnce({ id: "j10", model_id: "flux1-dev-fp8", state: "running" });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "取り込む",
+      ) as HTMLElement,
+    );
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({
+      id: "flux1-dev-fp8",
+      file_flag: "",
+      replace: true,
+      s3Key: "image/checkpoints/flux1-dev-fp8-e5m2.safetensors",
+    });
+  });
+
+  // 🔴 The pair that keeps this honest, and it is NOT "managed vs not".
+  //
+  // A borrowed role (ADR 0079) mirrors another deployment's catalogue and has no bucket on this
+  // side, so nothing here may take a file in. An EXTERNAL engine — the LAN ComfyUI of ADR 0076 —
+  // is also `managed: false`, and it stages files in this deployment's bucket like any other.
+  // Pairing the borrowed row with a MANAGED one would pass for an implementation that hid the
+  // form from every unmanaged engine, taking the LAN ComfyUI with it.
+  it("offers the form to an external engine and not to a borrowed one", async () => {
+    /** The way IN to every act this form offers. Collapsed until pressed, so this — not the
+     *  open form — is what "the ingest is offered here" looks like on a freshly loaded panel. */
+    const opener = () => host!.querySelector(".engines-open");
+
+    const remount = async (over: Record<string, unknown>) => {
+      act(() => root?.unmount());
+      host?.remove();
+      await mountWith({ ...flux([{ s3Key: "image/checkpoints/flux1-dev-fp8.safetensors" }]), ...over });
+    };
+
+    // The control, first: an ordinary row has it.
+    await remount({});
+    expect(opener()).toBeTruthy();
+
+    // 🔴 The pair. `managed: false` with a lifecycle that is not `remote` is the LAN ComfyUI an
+    // operator runs on their own box, and it stages files in THIS deployment's bucket.
+    await remount({ managed: false, lifecycle: "external" });
+    expect(opener()).toBeTruthy();
+
+    // Borrowed: the catalogue is a mirror of the far fleet's and there is no bucket here.
+    await remount({ managed: false, lifecycle: "remote", url: "https://far.invalid" });
+    expect(opener()).toBeNull();
+  });
+});

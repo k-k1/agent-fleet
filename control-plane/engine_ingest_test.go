@@ -820,3 +820,141 @@ func TestEngineResolvedRowRefusesGatedWithoutAToken(t *testing.T) {
 		t.Error("a token value reached the wire")
 	}
 }
+
+// 🔴 The act the catalogue had no word for: the SAME model, a different file.
+//
+// `attach` refuses a flag the row already declares, and the unlabelled slot — the checkpoint
+// itself — cannot be attached to at all, so moving a model to another quantisation meant
+// forgetting the row and building it again. The row is where the licence acceptance lives (a
+// record of a HUMAN act, ADR 0072 decision 10), with the family, the params, the enabled state
+// and the provenance. All of it was thrown away for what a person thinks of as one file
+// changing.
+//
+// So what this pins is what SURVIVES, plus the one thing that must NOT: the KV geometry, which
+// describes the file that just left.
+func TestEngineIngestReplaceKeepsTheRowAndRewritesTheGeometry(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	ctx := context.Background()
+
+	// The row as it stands: enabled, licence accepted by a person, and carrying the geometry of
+	// the q4 it was created from (28 layers — a 1.5B).
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "llm", ID: "qwen2.5-coder-1.5b", Kind: "gguf", Enabled: true,
+		Files: []store.EngineModelFile{{S3Key: "llm/old-q4_k_m.gguf", Bytes: 1117320768,
+			Source: "hf:x/y/old-q4_k_m.gguf"}},
+		ContextTokens: 32768, MaxOutputTokens: 4096,
+		License:       "apache-2.0", LicenseAcceptedBy: "u1", LicenseAcceptedTenant: "t-acme",
+		LicenseAcceptedLicense: "apache-2.0", BaseModel: "", Description: "the one in the menu",
+		KVLayers:               28, KVHeadsKV: 2, KVKeyLen: 128, KVValueLen: 128,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := ingestReq()
+	req.Replace = true
+	req.S3Key = "llm/new-q8_0.gguf"
+	req.Resolved.Source = "hf:x/y/new-q8_0.gguf"
+	req.Resolved.Bytes = 1_894_532_000
+	// The new file's own header, read at the start of the job exactly as a creating ingest does.
+	req.KVGeom = engineKVGeometry{48, 4, 128, 128}
+	// None of these may reach the row: a replace changes one file.
+	req.ContextTokens, req.MaxOutput = 1024, 128
+	req.AcceptedBy, req.AcceptedTenant = "u2", "t-other"
+	req.Description = "typed into a form nobody meant to edit"
+
+	job, aerr := ing.start(ctx, req)
+	if aerr != nil {
+		t.Fatalf("start: %v", aerr.message)
+	}
+	api.tasks = []ecstypes.Task{{
+		TaskArn: aws.String(job.TaskArn), LastStatus: aws.String("STOPPED"),
+		Containers: []ecstypes.Container{
+			{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+			{Name: aws.String("upload"), ExitCode: aws.Int32(0)},
+		},
+	}}
+	ing.reconcile(ctx)
+
+	rows, err := st.ListEngineModels(ctx, "llm")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %d (%v) — a replace must not create a second row", len(rows), err)
+	}
+	got := rows[0]
+	if len(got.Files) != 1 || got.Files[0].S3Key != "llm/new-q8_0.gguf" {
+		t.Fatalf("files = %+v, want the one file swapped", got.Files)
+	}
+	// 🔴 Per FILE, because the row's own source now names a file that is not there any more.
+	if got.Files[0].Source != "hf:x/y/new-q8_0.gguf" {
+		t.Errorf("file source = %q — the row points at bytes whose vendor nothing records", got.Files[0].Source)
+	}
+	if got.Files[0].Bytes != 1_894_532_000 {
+		t.Errorf("bytes = %d — the size is what the VRAM floor is computed from", got.Files[0].Bytes)
+	}
+	// What the ingest knows nothing about and must leave alone. Enabled especially: the model is
+	// in the launch menu, and an ingest that switched it off would take it out of every member's
+	// picker for a file swap.
+	if !got.Enabled {
+		t.Error("the row was switched off by a file swap")
+	}
+	if got.LicenseAcceptedBy != "u1" || got.LicenseAcceptedTenant != "t-acme" {
+		t.Errorf("the licence acceptance was rewritten: %q/%q — it records who agreed, and that person did",
+			got.LicenseAcceptedBy, got.LicenseAcceptedTenant)
+	}
+	if got.ContextTokens != 32768 || got.MaxOutputTokens != 4096 || got.Description != "the one in the menu" {
+		t.Errorf("the row's own settings were overwritten: ctx=%d out=%d desc=%q",
+			got.ContextTokens, got.MaxOutputTokens, got.Description)
+	}
+	// 🔴 And the geometry IS rewritten. The row holds one set of KV numbers and only the create
+	// path ever wrote them, so keeping the old ones would estimate this model's VRAM off a file
+	// that no longer exists — 3072 MiB at 32k rather than 448, in the panel that decides whether
+	// a GPU can hold it.
+	if got.KVLayers != 48 || got.KVHeadsKV != 4 {
+		t.Errorf("kv geometry = %d layers / %d kv heads, want the new file's 48/4",
+			got.KVLayers, got.KVHeadsKV)
+	}
+	// The OLD object stays in the bucket. The CP has no s3:DeleteObject (ADR 0072 decision 7) and
+	// this runs in the reconciler, with nobody to report a refusal to — and the keys are shared
+	// (`clip_l.safetensors` was pointed at from two rows on af-sandbox), so a purge here breaks
+	// models nobody touched. The download's own task was run; none of them is a delete.
+	if len(api.run) == 0 {
+		t.Fatal("no task was run at all, so the check below proves nothing")
+	}
+	for _, in := range api.run {
+		for _, o := range in.Overrides.ContainerOverrides {
+			for _, kv := range o.Environment {
+				if aws.ToString(kv.Name) == "MODE" && aws.ToString(kv.Value) == "delete" {
+					t.Error("a replace deleted bytes from the bucket: the keys may be shared, and nothing here could report what it refused to delete")
+				}
+			}
+		}
+	}
+}
+
+// A replace whose slot is gone by the time the download finishes. The bytes are in the bucket
+// and nothing points at them, which is the one outcome worth a log line rather than a silent
+// success — and it must NOT fall back to creating a row or appending a second checkpoint.
+func TestEngineIngestReplaceOfAForgottenRowWritesNothing(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	ctx := context.Background()
+
+	req := ingestReq()
+	req.Replace = true
+	job, aerr := ing.start(ctx, req)
+	if aerr != nil {
+		t.Fatalf("start: %v", aerr.message)
+	}
+	api.tasks = []ecstypes.Task{{
+		TaskArn: aws.String(job.TaskArn), LastStatus: aws.String("STOPPED"),
+		Containers: []ecstypes.Container{
+			{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+			{Name: aws.String("upload"), ExitCode: aws.Int32(0)},
+		},
+	}}
+	ing.reconcile(ctx)
+
+	if rows, err := st.ListEngineModels(ctx, "llm"); err != nil || len(rows) != 0 {
+		t.Fatalf("rows = %d (%v) — a replace with no row to replace in must write nothing", len(rows), err)
+	}
+}
