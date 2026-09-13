@@ -56,8 +56,13 @@ export interface TranscriptCaps {
   // ── Navigation ────────────────────────────────────────────────────────────────
   /** Open a file in its own pane. Absent → UserFileBlock is not rendered. */
   openFile?: (path: string, line?: number, column?: number) => void;
-  /** Open an image in the lightbox. */
-  openImage?: (url: string) => void;
+  /**
+   * Open an image in the lightbox. `path` is the file's browse-root-relative path when
+   * the image IS a file (a shared file card); a pasted image has only its blob URL, and
+   * the lightbox offers "open the folder" (ADR 0080 decision 7) exactly when a path came
+   * with it — so the affordance follows the thing that has a folder, not a flag.
+   */
+  openImage?: (url: string, path?: string) => void;
   /** Open an edit's before/after in a diff pane. Absent → ToolTrace expands inline. */
   openDiff?: (p: Part) => void;
   /** Open a plan's full Markdown in a pane. Absent → PlanBlock expands inline. */

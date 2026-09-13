@@ -259,6 +259,7 @@ export const sessions = {
   "srow.handoff": "別のエージェントへ引き継ぐ…",
   "srow.handoff_title": "{name} の引き継ぎ",
   "srow.share": "共有する…",
+  "srow.generated_images": "生成した画像 ({n})",
   "srow.shared_badge": "共有中（他のユーザーに公開しています）",
   "handoff.title": "「{name}」を引き継ぐ",
   "handoff.intro": "オペレーターアシスタントがこのセッションを読んで引き継ぎ案を提示します。新しいセッションはあなたの承認後にのみ作成されます。",
