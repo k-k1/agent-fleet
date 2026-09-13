@@ -304,6 +304,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_sort_updated": "Recently updated",
   "admin.engines_ingest_sort_newest": "New arrivals",
   "admin.catalog_title": "Model catalogue",
+  "admin.catalog_image_title": "Image model catalogue",
+  "admin.catalog_llm_title": "Language model catalogue",
   "admin.catalog_opening": "Opening the model catalogue…",
   "admin.catalog_role_label": "Engine role",
   "admin.catalog_view_label": "Catalogue view",
