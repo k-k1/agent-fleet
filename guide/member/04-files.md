@@ -135,6 +135,10 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
   gallery falls back to name order and shows no relative time ("3 minutes ago") either.
 - **Count and size** — the header carries the totals for the whole folder. A big folder stops at
   **300 images**, with "Show more" for the rest (each card is one thumbnail request).
+- **Loading** — right after opening a folder, while nothing has arrived yet, the pane shows a
+  loading state (it never sits there showing only "Up"). Thumbnails are requested for the cards
+  nearest the screen first, so opening a big folder does not fetch everything at once, and
+  scrolling ahead does not get stuck behind pictures you have already scrolled past.
 - **Folders** — subfolders are cards too, and opening one moves this pane into it. The first card,
   "Up", goes back to the parent, and the **breadcrumb** in the header
   (`.cache / agent-fleet / generated`) jumps to any level. Ctrl/⌘-click and middle-click open the

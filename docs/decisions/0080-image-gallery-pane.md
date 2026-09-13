@@ -142,6 +142,31 @@ webp/avif/bmp/svg come back as originals for the browser to draw.
     picture visibly sharpens. Alongside it: the **neighbour is prefetched after 400 ms**
     (skipped when `saveData` is set), and the original's URL carries `v=<mtime>` too, so a
     picture paged back to costs no request at all.
+  - 🔴 **A second P1 gap, same day (2026-09-14)**: three "feels slow" reports never measured the
+    BROWSER side — only `fs_thumb.go`'s own decode cost was (95 ms cold / 44 µs cached, 4-wide).
+    Measured in headless Chromium against a real 202-image folder
+    (`console/scripts/gallery-perf/check.mjs`: drives the real bundle against a stub whose
+    `api/fs/download` reproduces that same concurrency/latency shape, so the browser sees a
+    realistic queue without needing a live Agent):
+    - `entries === null` fell into the SAME branch as a populated folder, so only the "Up" card
+      drew while the app was still booting — measured ~1.2 s with nothing else on screen, and no
+      indication anything was happening. Fixed with its own branch (`EmptyState icon="loading"`).
+      A background refresh never shows it — `load()` keeps the prior listing on screen on
+      anything but the first read of a folder — so this is only ever the first look at one.
+    - `loading="lazy"` alone requested 54 of 202 thumbnails with **zero scrolling** (Chromium's own
+      "how far ahead is worth it" heuristic is generous, and nothing narrows a request back down
+      once its card has scrolled out of view). Scrolling to the bottom right after mount left the
+      now-visible row queued behind 50 leftover requests from cards nobody was looking at anymore,
+      arriving ~1 s late.
+    - Fixed with an `IntersectionObserver` per card (`useArmed`, `rootMargin: "480px 0px"`, rooted
+      on `.gal-body` rather than the viewport — a pane can be narrower than the window), gating
+      the `<img src>` itself rather than trusting `loading="lazy"` alone: a card outside the
+      margin never enters the browser's six-per-host queue at all, and once armed it stays armed
+      (scrolling a loaded picture away and back must not re-request it). Re-measured: 34 requests
+      at rest (down from 54), and scrolling right after mount totals 33 requests instead of
+      ballooning to 107, with 0 competing requests at the moment of scroll (was 50).
+      `fetchPriority="high"` rides along once armed, on top of a queue that is now short in the
+      first place.
 
 ### Decision 5 — cards behave like the transcript's; the lightbox is shared and gains ← / →
 
@@ -355,6 +380,12 @@ case that still needs it: flattening several levels into one grid (an X/Y grid, 
 1. **Is 300 the right cap?** It has not been measured. Count how many cards are visible at a pane
    width of 1100 px and how long two-at-a-time decoding makes that wait, then decide (and record it
    next to `fs_thumb.go`'s own measurements).
+   - **2026-09-14**: the half of this question that worried about "a re-mount queues one
+     conditional request per card" now has a different answer — decision 4's `useArmed` means 300
+     rendered cards no longer implies 300 in-flight requests; only the ones actually near the
+     scroll container's viewport ever ask at all, mount or remount alike. Whether 300 is the right
+     number of cards to draw (how many fit a 1100 px pane, whether "show more" is reached too soon
+     or too late) is still unmeasured.
 2. **Video and PDF?** This starts as a gallery of images, but a place like `docs/img` holds SVG,
    PNG and PDF together. Mixing them renames the thing to "media".
 3. ~~**Is a surface over all of `generated` wanted?**~~ **Answered (2026-09-14): no surface of its

@@ -60,6 +60,41 @@ const THUMB = 512;
  *  off mid-fade. Same value and reasoning as the files tree. */
 const FRESH_MS = 5000;
 
+/** How far outside the gallery's OWN scroll container (`.gal-body`, not the viewport — a pane
+ *  can be narrower than the window and is often split) a card must come before its thumbnail is
+ *  requested at all. `loading="lazy"` alone is not this: measured against a real 202-image
+ *  folder, Chromium requested 54 of them with zero scrolling (scripts/gallery-perf/check.mjs) —
+ *  its own "how far ahead is worth it" heuristic is generous, and once a card is unmounted
+ *  nothing narrows it back down for the ones still in flight when a reader scrolls further.
+ *  Those 50-odd leftover requests then sit ahead of the row someone just scrolled to in the
+ *  browser's six-per-host queue (measured: the newly visible row took ~1s to arrive). Bounding
+ *  what is armed at all is what keeps that queue short — not a priority hint on top of it. */
+const ARM_MARGIN = "480px 0px";
+
+/**
+ * Sticky viewport-adjacency for one card: false until this card has been within `ARM_MARGIN` of
+ * the gallery's scroll container at least once, true forever after. Never re-arms to false —
+ * scrolling a loaded picture back out of view must not re-request it, and the Agent's own cache
+ * (`Cache-Control` + `v=<mtime>`) makes a genuine re-look free anyway.
+ */
+function useArmed(ref: { current: HTMLElement | null }): boolean {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (armed) return;
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (ents) => {
+        if (ents.some((e) => e.isIntersecting)) setArmed(true);
+      },
+      { root: el.closest(".gal-body"), rootMargin: ARM_MARGIN },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [armed, ref]);
+  return armed;
+}
+
 const baseName = (p: string): string => p.split("/").filter(Boolean).pop() || p;
 
 interface GalleryViewProps {
@@ -400,6 +435,13 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
       </ViewHead>
       {failed ? (
         <EmptyState icon="warning" title={tr("gallery.failed")} hint={path} />
+      ) : entries === null ? (
+        // Nothing has arrived yet. The grid branch below would draw "Up" alone (folders and
+        // images are both empty arrays on a null listing) — a partial page that reads as stuck
+        // rather than loading. A refresh never lands here: `load()` keeps the prior listing on
+        // screen on anything but the first read of a folder (see its doc comment), so this is
+        // only the first look at a folder, never a background poll.
+        <EmptyState icon="loading" title={tr("gallery.loading")} hint={path} />
       ) : empty ? (
         <EmptyState icon="file-media" title={tr("gallery.empty")} hint={path} />
       ) : (
@@ -540,20 +582,23 @@ function GalleryCard({
   // A relative time is only shown when the Agent actually sent one — never derived from
   // the file name, however tempting the unixnano in a generated one looks.
   const meta = showTime && img.mtime ? relTime(img.mtime * 1000) : humanSize(img.size);
+  const thumbRef = useRef<HTMLSpanElement | null>(null);
+  const armed = useArmed(thumbRef);
   const body = (
     <>
-      <span className="gal-thumb">
+      <span className="gal-thumb" ref={thumbRef}>
         {broken ? (
           <Icon name="file-media" className="gal-thumb-none" />
-        ) : (
+        ) : armed ? (
           <img
             src={downloadURL(img.path, THUMB, img.mtime)}
             alt={img.name}
             loading="lazy"
             decoding="async"
+            fetchPriority="high"
             onError={onBroken}
           />
-        )}
+        ) : null}
       </span>
       <span className="gal-name" title={img.path}>
         {img.name}

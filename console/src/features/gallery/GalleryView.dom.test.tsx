@@ -381,6 +381,84 @@ describe("画像ギャラリーのペイン", () => {
     }
   });
 
+  it("読み込みが終わるまでは読み込み中を出す（「上へ」だけの半端な一覧ではない）", async () => {
+    let resolveFetch!: (v: Response) => void;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((res) => {
+          resolveFetch = res;
+        }),
+    );
+    served = [img("a.png", 100), { name: "sub", type: "dir" }];
+    const paneId = paneWithGallery("gen");
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root.render(<GalleryView paneId={paneId} path="gen" />);
+    });
+    // The grid branch would draw "Up" alone here (folders/images are both empty on a null
+    // listing) — a partial page that reads as stuck rather than loading.
+    expect(folderCards()).toHaveLength(0);
+    expect(cards()).toHaveLength(0);
+    expect(host.querySelector(".ui-empty-title")?.textContent).toBe("読み込み中…");
+
+    await act(async () => {
+      resolveFetch({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ entries: served }),
+      } as unknown as Response);
+    });
+    expect(host.querySelector(".ui-empty-title")).toBeNull();
+    expect(names()).toEqual(["a.png"]);
+  });
+
+  it("サムネイルはギャラリー自身の枠に近づくまで要求しない（一括取得しない）", async () => {
+    // The default jsdom shell (domSetup.ts) reports every observed element as intersecting
+    // right away — fine for every other test here, but this one is ABOUT the gating, so it
+    // takes manual control of the callback instead (the pattern BrowserSurface's own test uses).
+    const realIO = globalThis.IntersectionObserver;
+    const observers: { cb: IntersectionObserverCallback; el: Element }[] = [];
+    class CapturingIO {
+      #cb: IntersectionObserverCallback;
+      constructor(cb: IntersectionObserverCallback) {
+        this.#cb = cb;
+      }
+      observe(el: Element) {
+        observers.push({ cb: this.#cb, el });
+      }
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    }
+    vi.stubGlobal("IntersectionObserver", CapturingIO);
+    try {
+      served = [img("a.png", 100)];
+      await render();
+      // Not armed yet: the thumb span exists (it is the observed element) but no <img>.
+      expect(thumbs()).toHaveLength(0);
+      expect(host.querySelector(".gal-thumb")).not.toBeNull();
+      expect(observers).toHaveLength(1);
+
+      await act(async () => {
+        observers[0].cb(
+          [{ isIntersecting: true, target: observers[0].el } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+      expect(thumbs()).toHaveLength(1);
+      expect(thumbs()[0].src).toContain("thumb=512");
+      expect(thumbs()[0].getAttribute("fetchpriority")).toBe("high");
+    } finally {
+      vi.stubGlobal("IntersectionObserver", realIO);
+    }
+  });
+
   it("マウント時に 1 回だけ読み、常駐ポーラーにはしない", async () => {
     served = [img("a.png", 100)];
     await render();

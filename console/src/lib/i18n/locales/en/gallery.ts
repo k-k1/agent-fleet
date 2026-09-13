@@ -15,6 +15,7 @@ export const gallery: Record<keyof typeof jaGallery, string> = {
   "gallery.title_session": "Generated images — {name}",
   "gallery.empty": "No images in this folder.",
   "gallery.failed": "Could not load the folder",
+  "gallery.loading": "Loading…",
   "gallery.refresh": "Refresh",
   "gallery.sort": "Sort",
   "gallery.sort_new": "Newest first",
