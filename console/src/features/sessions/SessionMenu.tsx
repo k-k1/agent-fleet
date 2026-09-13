@@ -9,7 +9,7 @@
 // outlive the menu, and unmounting on close would take them down with it.
 import { createPortal } from "react-dom";
 import { useLayoutEffect, useRef, useState } from "react";
-import type { RefObject } from "react";
+import type { MouseEvent as RMouseEvent, RefObject } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
@@ -23,6 +23,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { displayName, remainingShort, KEEP_AWAKE_HOURS } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionTerminal, openSessionChat } from "./open.ts";
+import { openGallery } from "../gallery/open.ts";
 import { useSessionUI } from "./ui.ts";
 import { useSessionsStore } from "./store.ts";
 import { HandoffModal } from "./HandoffModal.tsx";
@@ -88,6 +89,23 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
     void copyText(s.name).then((ok) =>
       ok ? toast(tr("srow.id_copied", { name: s.name }), { kind: "success" }) : toast(tr("common.copy_failed")),
     );
+  };
+
+  // Generated images (ADR 0080 decision 8). The folder is named after the session's UUID,
+  // so the file tree is no way in — this item is. Count and path both ride the session wire
+  // and an older Agent sends neither, which is exactly when there is nothing to show: no
+  // capability probe, no version compare, the item simply is not rendered.
+  const generated =
+    s.generatedImages && s.generatedImagesPath ? { n: s.generatedImages, path: s.generatedImagesPath } : null;
+  const openGeneratedImages = (e: RMouseEvent) => {
+    onClose();
+    // The slug, not displayName(s): paneTitle takes the Session it resolves from this name
+    // and titles the pane itself (Pane.tsx), and migrate.ts only keeps a stored value that
+    // still looks like a session name — a title would be dropped on the next reload.
+    openGallery(generated!.path, {
+      session: s.name,
+      newPane: e.ctrlKey || e.metaKey || e.button === 1,
+    });
   };
 
   const dead = !s.alive && s.resumable === false; // dir gone → can't resume
@@ -181,6 +199,17 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 }}
               >
                 <Icon name="link-external" /> {tr("srow.open_remote")}
+              </button>
+            )}
+            {generated && (
+              <button
+                type="button"
+                className="ui-menu-item"
+                onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+                onAuxClick={(e) => e.button === 1 && openGeneratedImages(e)}
+                onClick={openGeneratedImages}
+              >
+                <Icon name="file-media" /> {tr("srow.generated_images", { n: generated.n })}
               </button>
             )}
             <button

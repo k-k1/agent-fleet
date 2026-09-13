@@ -5,7 +5,7 @@
 // The unit of splitting is the control group itself (docs/log/44 §1.1): the plain view/edit
 // tab row, the diagram pair, the Markdown triple plus renderer, and the image pair are
 // mutually exclusive — two of them must never be shown at once.
-import type { KeyboardEvent, RefObject } from "react";
+import type { KeyboardEvent, MouseEvent as RMouseEvent, RefObject } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import FileIcon from "../../../ui/FileIcon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -288,6 +288,30 @@ export function FileReaderButton({ onOpen }: { onOpen(): void }) {
     <span className="ui-seg sm md-toggle">
       <button type="button" className="seg-btn" onClick={onOpen} title={tr("view.open_reader_tip")}>
         <Icon name="book" /> {tr("view.read_aloud")}
+      </button>
+    </span>
+  );
+}
+
+/**
+ * Button that opens the gallery of the folder this image sits in (ADR 0080 decision 7).
+ * The subject is the folder, not the file, which is the same move `revealInFiles`
+ * (`onOpenDir`) already makes from this view. The handler takes the event because the
+ * modifier / middle click that opens it in another pane is decided by the caller.
+ */
+export function FileGalleryButton({ onOpen }: { onOpen(event: RMouseEvent): void }) {
+  const tr = useT();
+  return (
+    <span className="ui-seg sm md-toggle">
+      <button
+        type="button"
+        className="seg-btn"
+        title={tr("view.open_gallery_tip")}
+        onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+        onAuxClick={(e) => e.button === 1 && onOpen(e)}
+        onClick={onOpen}
+      >
+        <Icon name="file-media" /> {tr("view.gallery")}
       </button>
     </span>
   );

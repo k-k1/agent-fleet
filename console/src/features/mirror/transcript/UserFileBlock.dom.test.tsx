@@ -71,6 +71,20 @@ describe("a shared image card", () => {
     expect(sink.opened).toEqual(["out/shot.png"]);
   });
 
+  // The card cannot grow a third button (decision 5), so the way to this picture's folder is
+  // an item on the lightbox's own bar — and the lightbox can only offer it if the path comes
+  // with the URL. A URL is percent-encoded query text, not a path; dropping the second
+  // argument here would read as a bar that quietly stopped showing the item.
+  it("hands the lightbox the file's path alongside the URL", () => {
+    const zoomed: [string, string | undefined][] = [];
+    const sink = { opened: [] as string[], zoomed: [] as string[] };
+    const caps = { ...ownerCaps(sink), openImage: (u: string, p?: string) => void zoomed.push([u, p]) };
+    const el = render(turnsWith("out/shot.png"), caps);
+
+    click(el.querySelector(".mt-file-zoom"));
+    expect(zoomed).toEqual([[FULL("out/shot.png"), "out/shot.png"]]);
+  });
+
   it("paints the downscaled copy but enlarges the real file", () => {
     // A shared render is megabytes; the card displays it at ~190x240 px. Painting the
     // original here is invisible in a screenshot and only shows up as a slow panel, so

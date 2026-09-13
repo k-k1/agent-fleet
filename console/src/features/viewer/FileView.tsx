@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import type { CSSProperties, FocusEvent, KeyboardEvent, ReactNode } from "react";
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
-import { langFor, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile, documentFormat } from "../../lib/filemeta.ts";
+import { langFor, countLines, dirName, isMarpDoc, imageFormat, isDrawioFile, isPdfFile, documentFormat } from "../../lib/filemeta.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { SelectionFloat } from "../../ui/SelectionFloat.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -35,6 +35,7 @@ import {
 import {
   FileDiagramControls,
   FileEditControls,
+  FileGalleryButton,
   FileHeadMeta,
   FileHeadPath,
   FileImageModeToggle,
@@ -44,6 +45,7 @@ import {
 import { EditorResolutionPanel } from "./parts/EditorResolutionPanel.tsx";
 import { FileViewerShell } from "./parts/FileViewerShell.tsx";
 import { EditorSuggestPanel } from "./parts/EditorSuggestPanel.tsx";
+import { openGallery } from "../gallery/open.ts";
 import { CodeEditor, type CodeEditorHandle } from "../editor/CodeEditor.tsx";
 import { useFileEditor } from "../editor/useFileEditor.ts";
 import { useExternalChangeProbe } from "../editor/probe.ts";
@@ -664,6 +666,18 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
         {/* No reader button on a diagram: there is no prose to read out (only the mxfile XML),
             so pressing it could do nothing useful. No capability, no control. */}
         {isText && !huge && !isDiagram && <FileReaderButton onOpen={openReader} />}
+        {/* Only an image offers the gallery: it is the folder seen as pictures, and a
+            folder of source files has nothing to show there (ADR 0080 decision 7). */}
+        {isImage && (
+          <FileGalleryButton
+            onOpen={(e) =>
+              openGallery(dirName(filePath), {
+                focus: filePath,
+                newPane: e.ctrlKey || e.metaKey || e.button === 1,
+              })
+            }
+          />
+        )}
         <FileHeadPath filePath={filePath} />
       </ViewHead>
 

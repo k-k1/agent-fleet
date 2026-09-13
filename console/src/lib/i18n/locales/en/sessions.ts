@@ -251,6 +251,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.handoff": "Hand off to another agent…",
   "srow.handoff_title": "Handoff from {name}",
   "srow.share": "Share…",
+  "srow.generated_images": "Generated images ({n})",
   "srow.shared_badge": "Shared (visible to another user)",
   "handoff.title": "Hand off “{name}”",
   "handoff.intro": "The operator assistant reads this session and proposes a handoff summary. It only creates the new session after you approve.",

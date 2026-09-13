@@ -102,6 +102,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "proj.rel_path": "relative path",
   "proj.copy_rel_path": "Copy the relative path",
   "proj.open_reader": "Open in reader",
+  "proj.open_gallery": "Open in gallery",
   "proj.download": "Download",
   "proj.translate": "Translate with assistant",
   "proj.summarize": "Summarize with assistant",
