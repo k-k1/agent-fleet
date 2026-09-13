@@ -221,6 +221,7 @@ export const common = {
   "pane.kind.read": "朗読ビュー",
   "pane.kind.browser": "ブラウザ",
   "pane.kind.browser_attach": "Chromium操作画面",
+  "pane.kind.engine_add": "モデルを追加",
   "pane.kind.sessions": "セッション一覧",
 
   // === P2 共通（追加）===

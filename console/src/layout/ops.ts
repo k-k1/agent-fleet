@@ -122,6 +122,9 @@ export function sameTarget(view: View, target: OpenTarget): boolean {
     case "browserAttach": return c.kind === "browserAttach" && c.attachmentId === t.attachmentId;
     case "sharedSession": return c.kind === "sharedSession" && c.sharedSessionId === t.sharedSessionId;
     case "sessions": return c.kind === "sessions";
+    // One "add a model" pane per engine and catalogue: opening it again focuses the one that is
+    // already there rather than starting a second wizard against the same list.
+    case "engineAdd": return c.kind === "engineAdd" && c.engineKey === t.engineKey && c.lora === t.lora;
   }
 }
 

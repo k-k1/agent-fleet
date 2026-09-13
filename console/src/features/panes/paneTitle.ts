@@ -23,6 +23,7 @@ export const KIND_JA: Partial<Record<PaneKind, MsgKey>> = {
   browserAttach: "pane.kind.browser_attach",
   sharedSession: "share.shared_sessions",
   sessions: "pane.kind.sessions",
+  engineAdd: "pane.kind.engine_add",
 };
 
 // Resolve a non-session pane kind to its localized label (falls back to the raw kind).
@@ -89,5 +90,7 @@ export function paneTitle(pane: Pane, session: Session | null, meta: PaneTitleMe
       return sharedSessionLabel(meta.shared);
     case "sessions":
       return jaKind("sessions");
+    case "engineAdd":
+      return jaKind("engineAdd");
   }
 }

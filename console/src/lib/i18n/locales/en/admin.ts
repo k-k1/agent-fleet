@@ -220,6 +220,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // by state the screen did not show (the tab, whether the typed id collided, which file role
   // was chosen). The operator of this deployment lost an evening to it and never reached the
   // checkbox that adds a part to an existing row.
+  // 「モデルを追加」 as a pane (ADR 0072 follow-up). The download runs for minutes, and the end
+  // of the work is not "taken in" but "usable" - one enable press apart.
+  "admin.engines_add_pane_gone": "That engine is no longer on this deployment, or is not visible with your current grant.",
+  "admin.engines_add_pane_running": "Downloading ({id}). You can leave this open - it reports here when it finishes.",
+  "admin.engines_add_pane_done": "\u201c{id}\u201d was taken in. It is still disabled; enabling it syncs it onto the box.",
+  "admin.engines_add_pane_failed": "The download failed ({id}).",
+  "admin.engines_add_pane_enable": "Enable it",
+  "admin.engines_add_pane_enabled": "Enabled. It is in the model list now.",
   "admin.engines_wizard_title": "Add a model",
   "admin.engines_wizard_title_lora": "Add a LoRA",
   "admin.engines_wizard_step_act": "What for?",

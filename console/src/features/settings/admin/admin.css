@@ -803,29 +803,31 @@ a.engines-model-source:hover {
    screen did not show. The rules that keep it a screen are here: a column at every width (the
    dialog is 1100px and a phone is 390), and nothing positioned absolutely — the step's own
    content decides the height, and a fixed one would cut the search results off. */
-/* The dialog it lives in. Wider than the stock modal because ③ shows the licence, the card
-   fit and the author's own settings at once, and narrower than the admin dialog behind it so
-   it reads as a surface ON TOP rather than a replacement for it. The height is the content's,
-   capped by the shell (90dvh) — a fixed one would leave the search results scrolling inside a
-   box inside a box. */
-.engines-wizard-modal.ui-modal {
-  width: min(860px, 94vw);
-  max-width: min(860px, 94vw);
-  /* 🔴 Undo `.settings-modal`'s fixed height. That one is a fixed surface so its tab bar does
-     not reflow per tab; this one is four questions of very different lengths, and a fixed height
-     clipped the Back / Next row off the bottom of ③ (measured headless). The cap stays the
-     shell's own dvh, which is what keeps the buttons above the browser chrome on a phone. */
-  height: auto;
-  max-height: 90dvh;
+/* 「モデルを追加」 as a pane: its own head (the pane chrome gives the tab, this gives the
+   heading and the tab-header actions) and a body that scrolls. No fixed height — a pane already
+   has one. */
+.engines-add-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.engines-add-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .engines-wizard {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* The questions scroll, the dialog's own header and the rail do not. */
-  overflow: auto;
   padding: 12px;
+  /* A pane can be 1,400 px wide and these are sentences: capped so a line of prose stays
+     readable and the fields do not become a single stretched row. */
+  max-width: 860px;
 }
 
 .engines-wizard-head {

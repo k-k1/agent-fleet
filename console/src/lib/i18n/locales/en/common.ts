@@ -221,6 +221,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "pane.kind.read": "Reader view",
   "pane.kind.browser": "Browser",
   "pane.kind.browser_attach": "Chromium operation view",
+  "pane.kind.engine_add": "Add a model",
   "pane.kind.sessions": "Sessions overview",
 
   // === P2 common (added) ===

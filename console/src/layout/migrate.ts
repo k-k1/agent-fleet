@@ -117,6 +117,14 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "sessions":
       return { kind: "sessions", showStopped: p.showStopped === true };
+    case "engineAdd": {
+      // The engine key reaches API paths, so it is validated like the other opaque ids here:
+      // a corrupted layout must not become a path the pane then asks the CP about.
+      const engineKey = str(p.engineKey);
+      return engineKey && /^[A-Za-z0-9_-]{1,64}$/.test(engineKey)
+        ? { kind: "engineAdd", engineKey, lora: p.lora === true }
+        : { kind: "terminal", chat: false };
+    }
     default:
       return { kind: "terminal", chat: false };
   }

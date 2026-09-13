@@ -25,6 +25,7 @@ import {
   engineIdFromFile,
   engineJobAdvice,
 } from "./adminEngineModels.tsx";
+import { EngineAddView } from "./adminEngineAdd.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -72,6 +73,13 @@ const click = async (el: HTMLElement | undefined) => {
   });
 };
 
+/** The last POST to a given route. 🔴 Neither `calls.at(-1)` nor "the last call to this path":
+ *  once the press starts a download the pane becomes that download's progress and POLLS the job
+ *  list — same path, GET, no body — so both of those read the poll instead of the act under
+ *  test. */
+const lastCallTo = (suffix: string) =>
+  apiJSON.mock.calls.filter((c) => String(c[0]).endsWith(suffix) && c[1] === "POST").at(-1);
+
 /** What the tests read. 🔴 The document and not the mount point: 「モデルを追加」 is a DIALOG,
  *  and React portals a dialog to <body> (a transformed ancestor would otherwise become the
  *  containing block for its fixed position). A query scoped to `host` sees the panel and not the
@@ -96,15 +104,32 @@ const type = async (el: Element, v: string) => {
 const wizInputs = () =>
   Array.from(ui().querySelectorAll(".engines-ingest .engines-model-add-row input"));
 
-/** Open 「モデルを追加」 and answer the first question with the default act — a new row — which
- *  is what every test that is not about the OTHER two acts wants.
- *
- * 🔴 The four questions are the point of the screen, so the helper walks them rather than
- * hiding them: what used to be three inputs on one page is now "what for", "where from",
- * "which file", "confirm", and a test that pretended otherwise would be testing a form that no
- * longer exists. */
-const openWizard = async () => {
-  await click(btn("Hugging Face などから取り込む"));
+/** 「モデルを追加」 is a PANE, not part of the panel: the admin dialog's button opens it in the
+ *  layout and gets out of the way (the download it starts runs for minutes and ends at an enable
+ *  press, which is not a dialog's shape). So the tests that are about the four questions mount
+ *  the pane's own view, and the panel's job is only to open it. */
+async function mountAdd(engineKey = "image", lora = false) {
+  act(() => root?.unmount());
+  host?.remove();
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(<EngineAddView engineKey={engineKey} lora={lora} />);
+  });
+  // Two flushes: the view loads the catalogue itself (it outlives the dialog that opened it),
+  // so the first settles the fetch and the second renders what came back.
+  for (const _ of [0, 1]) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
+
+/** The pane, with the first question answered by its default act — a new row — which is what
+ *  every test that is not about the OTHER two acts wants. */
+const openWizard = async (engineKey = "image") => {
+  await mountAdd(engineKey);
   await click(btn("次へ")); // ① what for → default: a new model
 };
 
@@ -1290,7 +1315,7 @@ describe("EngineModelsAdminView", () => {
       engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })],
     });
     await mount();
-    await openWizard();
+    await openWizard("llm");
     // Nothing to accept yet: the source has not been read, and the question that offers the
     // acceptance is one step further on.
     expect(ui().querySelector(".engines-ingest-accept")).toBe(null);
@@ -1323,7 +1348,7 @@ describe("EngineModelsAdminView", () => {
         : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await mount();
-    await openWizard();
+    await openWizard("llm");
     await wizSource("Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", {
       sha256: "cc32", bytes: 1117320768, gated: false,
       license: "apache-2.0", commercial_use: "yes", can_ingest: true,
@@ -1350,15 +1375,8 @@ describe("EngineModelsAdminView", () => {
       box.click();
     });
     apiJSON.mockResolvedValueOnce({ id: "j1", model_id: "qwen2.5-coder-1.5b", state: "running" });
-    // After starting, the panel re-reads the job list — which is how a running download appears.
-    api.mockImplementation(async (p: string) =>
-      p.endsWith("/ingest")
-        ? { jobs: [{ id: "j1", model_id: "qwen2.5-coder-1.5b", state: "running", source: "hf:Qwen/…", bytes: 1117320768 }] }
-        : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
-    );
     await click(btn("取り込む"));
-    const body = apiJSON.mock.calls.at(-1)!;
-    expect(String(body[0])).toBe("api/admin/engines/llm/ingest");
+    const body = lastCallTo("/engines/llm/ingest")!;
     expect(body[2]).toMatchObject({
       id: "qwen2.5-coder-1.5b",
       kind: "gguf",
@@ -1368,7 +1386,10 @@ describe("EngineModelsAdminView", () => {
       license_accepted: true,
       source: { hf: { repo: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", file: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", revision: "" } },
     });
-    expect(ui().textContent).toContain("取り込み中");
+    // 🔴 The pane does not go back to being a form: it becomes the progress of the download it
+    // started, which is the half a dialog could not carry (the row is usable one enable press
+    // after this finishes, minutes from now).
+    expect(ui().textContent).toContain("ダウンロード中です");
   });
 
   /** The input of the form row with this label. By label rather than by index, because the
@@ -1386,7 +1407,7 @@ describe("EngineModelsAdminView", () => {
         : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await mount();
-    await openWizard();
+    await openWizard("llm");
     // Two quantisations, so the file stays a CHOICE: picking the second one reads the source
     // again, which is the moment a ceiling could overwrite a window that was already typed.
     apiJSON.mockResolvedValueOnce({
@@ -1475,7 +1496,7 @@ describe("EngineModelsAdminView", () => {
         : { super_admin: true, engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
     );
     await mount();
-    await openWizard();
+    await openWizard("llm");
     await type(wizInputs()[0], "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF");
 
     // No filename yet, so leaving ② asks what there is — and starts nothing.
@@ -1702,8 +1723,7 @@ describe("EngineModelsAdminView", () => {
             ],
           },
     );
-    await mount();
-    await click(btn("Hugging Face などから取り込む"));
+    await mountAdd();
 
     // ① The act, chosen rather than discovered. Until this screen existed it was reachable only
     // by typing an id that happened to collide with a row — and then by finding a checkbox that
@@ -1751,8 +1771,7 @@ describe("EngineModelsAdminView", () => {
 
     apiJSON.mockResolvedValueOnce({ id: "j2", model_id: "flux1-dev-fp8", state: "running" });
     await click(btn("取り込む"));
-    const body = apiJSON.mock.calls.at(-1)!;
-    expect(String(body[0])).toBe("api/admin/engines/image/ingest");
+    const body = lastCallTo("/engines/image/ingest")!;
     expect(body[2]).toMatchObject({
       id: "flux1-dev-fp8",
       file_flag: "--clip_l",
@@ -2227,8 +2246,7 @@ describe("EnginesAdminView / searching for a model", () => {
 
   it("offers Civitai to the image role only", async () => {
     api.mockResolvedValue({ super_admin: true, engines: [row({ key: "llm", api: "chat", provider: "llamacpp" })] });
-    await mount();
-    await openIngest();
+    await openWizard("llm");
     // The CP answers the llm role nothing from Civitai (it hosts image models), so a source
     // switch there is a button that can only disappoint.
     expect(button("Civitai")).toBeUndefined();
@@ -2713,7 +2731,7 @@ describe("EnginesAdminView / will this file fit the card", () => {
       p.endsWith("/ingest") ? { jobs: [] } : { super_admin: true, engines: [engine] },
     );
     await mount();
-    await openWizard();
+    await openWizard("llm");
   };
 
   /** Ask the repository what it holds, with the two quantisations of the model this deployment
@@ -2895,7 +2913,7 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
         { s3Key: "image/text_encoders/t5xxl_fp16.safetensors", flag: "--t5xxl" },
       ]),
     );
-    await click(btn("Hugging Face などから取り込む"));
+    await mountAdd();
     await chooseAct("差し替える", "flux1-dev-fp8");
     // 🔴 Only the FILLED slots are on offer: adding a second --t5xxl is the CP's 409, said by
     // never putting the impossible answer in the list.
@@ -2924,8 +2942,7 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
 
     apiJSON.mockResolvedValueOnce({ id: "j9", model_id: "flux1-dev-fp8", state: "running" });
     await click(btn("取り込む"));
-    const body = apiJSON.mock.calls.at(-1)!;
-    expect(String(body[0])).toBe("api/admin/engines/image/ingest");
+    const body = lastCallTo("/engines/image/ingest")!;
     expect(body[2]).toMatchObject({
       id: "flux1-dev-fp8",
       file_flag: "--t5xxl",
@@ -2941,7 +2958,7 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
   // ingest could ever change. Replacing is the only act it has.
   it("offers the row's own checkpoint to be replaced, which attaching never could", async () => {
     await mountWith(flux([{ s3Key: "image/checkpoints/flux1-dev-fp8.safetensors" }]));
-    await click(btn("Hugging Face などから取り込む"));
+    await mountAdd();
     // 🔴 The asymmetry itself: the row's own checkpoint is the unlabelled slot, which attaching
     // refuses by design — so replacing offers it and adding a part does not.
     await chooseAct("部品を足す", "flux1-dev-fp8");
@@ -2968,7 +2985,7 @@ describe("EnginesAdminView / replacing a file of a row that exists", () => {
     });
     apiJSON.mockResolvedValueOnce({ id: "j10", model_id: "flux1-dev-fp8", state: "running" });
     await click(btn("取り込む"));
-    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({
+    expect(lastCallTo("/engines/image/ingest")![2]).toMatchObject({
       id: "flux1-dev-fp8",
       file_flag: "",
       replace: true,
@@ -3388,21 +3405,16 @@ describe("EngineModelsAdminView / re-opening the wizard", () => {
         }),
       ],
     });
-    await mount();
-    const open = () =>
-      Array.from(ui().querySelectorAll("button")).find(
-        (b) => b.textContent === "Hugging Face などから取り込む",
-      ) as HTMLButtonElement;
-    await click(open());
+    await mountAdd();
     // Answer ① with the act that needs a target, and leave it half-answered.
     await act(async () => {
       (Array.from(ui().querySelectorAll("input[type=radio]"))[1] as HTMLInputElement).click();
     });
     expect(ui().textContent).toContain("どの行に？");
 
-    await click(ui().querySelector(".engines-wizard-modal .ui-modal-head button") as HTMLButtonElement);
-    await click(open());
-    // The first question, on the default act — not the one from the previous visit.
+    // Closing the pane and opening it again is a fresh mount — the questions start at the first
+    // one, against nothing chosen before.
+    await mountAdd();
     expect(ui().textContent).not.toContain("どの行に？");
     expect((Array.from(ui().querySelectorAll("input[type=radio]"))[0] as HTMLInputElement).checked).toBe(true);
   });

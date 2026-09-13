@@ -47,7 +47,14 @@ export type PaneContent =
   /** The sessions overview: every running session as a card (ADR 0078). `showStopped`
    *  is the pane's own toggle — part of the content so it survives a reload and a tab
    *  switch, which unmount the view. */
-  | { kind: "sessions"; showStopped: boolean };
+  | { kind: "sessions"; showStopped: boolean }
+  /** Taking a model in for an inference engine (ADR 0072 follow-up). A PANE and not a dialog:
+   *  the download it starts runs for minutes, and the question this screen exists to answer is
+   *  "can somebody use the model now" — which is one enable press AFTER that download. A modal
+   *  is dismissed and the thread is lost; a pane can be left open, looked away from, popped out,
+   *  and end where the work ends. `engineKey` is the role (`image` / `llm`); `lora` decides
+   *  which catalogue the row joins, the way the tab did. */
+  | { kind: "engineAdd"; engineKey: string; lora: boolean };
 
 export type PaneKind = PaneContent["kind"];
 
