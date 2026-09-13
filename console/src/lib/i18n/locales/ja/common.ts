@@ -208,6 +208,7 @@ export const common = {
   "pane.layout": "レイアウト",
   "pane.open_sessions": "セッション一覧を開く",
   "pane.open_imagegen": "画像生成を開く",
+  "pane.open_generated": "生成した画像を開く",
   "pane.pane_n": "ペイン{ord}",
   "pane.no_session": "セッション未接続",
   "pane.empty": "空き",

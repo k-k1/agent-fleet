@@ -15,6 +15,7 @@ import { downloadURL, errText, getTenant, isTransientErr } from "../../core/api/
 import { useT } from "../../lib/i18n/index.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { openGeneratedGallery } from "../gallery/open.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -258,6 +259,14 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
       <ViewHead
         actions={
           <>
+            {/* Where the pictures land. The gallery opens the generated ROOT rather than
+                this pane's out_dir: the folder cards there reach console/ in one click and
+                also the sessions' own folders, which is what "show me what we made" means. */}
+            <IconButton
+              icon="file-media"
+              label={tr("pane.open_generated")}
+              onClick={() => openGeneratedGallery()}
+            />
             <IconButton
               icon="refresh"
               label={tr("imggen.refresh")}

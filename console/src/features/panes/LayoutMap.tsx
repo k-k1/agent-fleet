@@ -16,6 +16,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import { openSessionsOverview } from "../overview/open.ts";
 import { openImagegen } from "../imagegen/open.ts";
+import { openGeneratedGallery } from "../gallery/open.ts";
 import { jaKind } from "./paneTitle.ts";
 import { selectedView } from "../../layout/ops.ts";
 
@@ -62,6 +63,7 @@ export const LayoutMap = memo(function LayoutMap() {
         {/* The overview's one on-screen entry (the other is the leader key, g s). */}
         <IconButton icon="dashboard" label={tr("pane.open_sessions")} onClick={() => openSessionsOverview()} />
         <IconButton icon="wand" label={tr("pane.open_imagegen")} onClick={() => openImagegen()} />
+        <IconButton icon="file-media" label={tr("pane.open_generated")} onClick={() => openGeneratedGallery()} />
       </div>
       <div className="lm-cols">
         {layout.cols.map((col) => (

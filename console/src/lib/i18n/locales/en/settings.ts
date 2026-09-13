@@ -379,6 +379,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "keys.cmd.openResources": "Open resource usage",
   "keys.cmd.openSessions": "Open the sessions overview",
   "keys.cmd.openImagegen": "Open image generation",
+  "keys.cmd.openGenerated": "Open generated images",
   "keys.cmd.ttsToggle": "Toggle voice read-aloud",
   "keys.cmd.ttsSessionToggle": "Toggle session voice notifications",
   "keys.cmd.usageResetToggle": "Toggle limit-reset notifications",

@@ -7,6 +7,11 @@
 import type { gallery as jaGallery } from "../ja/gallery.ts";
 
 export const gallery: Record<keyof typeof jaGallery, string> = {
+  "gallery.root": "Home",
+  "gallery.up": "Up",
+  "gallery.breadcrumb": "Current folder",
+  "gallery.summary_folders": "{n} folders",
+  "gallery.folder_images": "{n} images",
   "gallery.title_session": "Generated images — {name}",
   "gallery.empty": "No images in this folder.",
   "gallery.failed": "Could not load the folder",
