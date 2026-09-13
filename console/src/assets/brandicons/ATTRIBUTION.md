@@ -1,18 +1,20 @@
 # Brand icon attribution
 
-Logos for the things the Console names by brand: the agent CLIs (`agents/`) and the services
-a workspace connects to (`services/`). Resolved in `src/lib/brandicons.ts`; rendered as a CSS
-mask in `currentColor` (`styles/brandicons.css`), so every icon follows the theme and no
-per-icon color rule exists.
+Logos for the things the Console names by brand: the agent CLIs (`agents/`), the services a
+workspace connects to (`services/`) and the companies that make the models (`providers/`).
+Resolved in `src/lib/brandicons.ts`; rendered as a CSS mask in `currentColor`
+(`styles/brandicons.css`), so every icon follows the theme and no per-icon color rule exists.
 
 | Folder | Source | License |
 |---|---|---|
 | `agents/` | https://github.com/lobehub/lobe-icons | MIT |
 | `services/` | https://github.com/simple-icons/simple-icons | CC0-1.0 |
+| `providers/` | https://github.com/anomalyco/models.dev (`providers/<id>/logo.svg`) | MIT |
 
 **Those licenses cover the repositories, not the marks themselves.** Each logo is a trademark
 of the company it names; they are used here nominatively, to identify the CLI a session ran
-through or the service an account is connected to. simple-icons says the same of its own
+through, the service an account is connected to, or the company that made a model the user is
+choosing between. simple-icons says the same of its own
 contents. Anyone redistributing the Console under their own brand should check the vendors'
 brand guidelines rather than read the license grant as permission.
 
@@ -28,7 +30,8 @@ Notes:
   carry nothing at 16px, where the "sv" monogram at least names the thing; compared at 1:1 in
   headless Chromium. `internal` (internal repositories) is not a brand at all.
 - `agents/` uses each set's **product** icon, not its vendor's: `codex` rather than `openai`,
-  because the agent kind says which CLI ran, not who sells the model. The one exception is
+  because the agent kind says which CLI ran, not who sells the model. `providers/` is the
+  other half of that distinction and holds the vendors. The one exception is
   `claude`: upstream's `claudecode` mark is a dense pixel glyph that turns to mush at the 16px
   the session rail renders it at (measured in headless Chromium), while the Claude sunburst
   stays legible — and the label beside it already says which CLI it is.
@@ -37,17 +40,28 @@ Notes:
   only the `viewBox` matters.
 - `shell` and `ssm` are not products and keep their codicons (`terminal` / `cloud`).
 
-## Per-provider icons are deliberately absent
+## `providers/` — the model makers
 
-A second set, keyed by the model's provider (anthropic / openai / zhipuai / …), was
-evaluated and dropped in 2026-09. The source would have been models.dev
-(https://github.com/anomalyco/models.dev, MIT, `providers/<id>/logo.svg`, 200 logos), whose
-ids match the ones this repo already uses for pricing in `workspace/agent/usage_catalog.go`.
+Added 2026-09-13, after the launch model picker was rebuilt as a custom listbox
+(`ui/ModelCombo.tsx`). It had been evaluated and dropped two days earlier for exactly one
+reason: every surface that would have carried the mark was a native `<select>`, and an
+`<option>` cannot hold markup. That is now true of one surface fewer.
 
-It was dropped because the places where a provider mark would actually help — the launch
-model picker, the AI-model rows in Settings, the OpenCode provider chooser — are native
-`<select>` elements, and the one place the Console names a provider today (the unit-price
-source in the Usage view) is a `title=` tooltip. An `<option>` cannot hold markup, so those
-surfaces need a custom listbox first. What remained reachable (the excluded-model chips, the
-`oc-keys` env list) already spells the provider out in text, which is not worth vendoring
-nine more trademarked logos for. Revisit if the picker is ever rebuilt.
+- **Which ids exist here is decided by the Agent, not by this folder.** Each file is named
+  after a provider id that `workspace/agent/model_provider.go` can answer with, and the
+  Console draws `bi-provider-<that id>` without a lookup table. The Go side's
+  `TestModelVendorTablesOnlyNameMarkedProviders` and this side's `lib/brandicons.test.ts` are
+  what keep the two lists from drifting apart; add a maker to one and the other fails.
+- **The ids are makers, never gateways.** `opencode` and `github-copilot` are absent on
+  purpose although the Console has marks for both in `agents/`: those say which CLI ran, and
+  an opencode id names the billing route rather than who built the model. Reusing the mark
+  here would credit the gateway with someone else's model.
+- `google-vertex` folds onto `google.svg` (same models, different endpoint) rather than
+  getting a mark of its own.
+- The remaining surfaces the earlier note listed are still native `<select>`s and still carry
+  no mark: the AI-model rows in Settings, the OpenCode provider chooser, and the unit-price
+  source in the Usage view (a `title=` tooltip). Each would need the same treatment.
+- Makers with no logo upstream keep no mark at all — an unplaceable model shows a blank slot
+  rather than a stand-in, because a wrong logo next to a model someone is about to pay for is
+  worse than a plain row. Measured on the shipped catalog, that is 16 of opencode's 102 ids,
+  all free-tier lines from Tencent / Xiaomi / inclusionAI / Meituan.

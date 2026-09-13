@@ -511,6 +511,111 @@
   width: 100%;
   min-width: 0;
 }
+
+/* ---- ModelCombo: the live catalogs' combobox (ui/ModelCombo.tsx) ----
+   A text field that filters, plus a popup listbox whose rows carry the maker's brand mark.
+   The field inherits .ui-field's input styling, so only the mark slot, the caret and the
+   popup are described here. */
+.model-combo {
+  position: relative;
+  min-width: 0;
+}
+.model-combo-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.model-combo-field input {
+  width: 100%;
+  min-width: 0;
+  /* Room for the caret on the right, and for the selected model's mark on the left when
+     there is one (.has-mark) — the mark is absolutely positioned so it cannot be pushed out
+     by a long id. */
+  padding-right: 26px;
+}
+.model-combo-field input.has-mark {
+  padding-left: 26px;
+}
+/* In the field the mark overlays the input; in a row it is a fixed-width slot. Both are the
+   same class so the two line up horizontally. */
+.model-combo-field > .model-combo-mark {
+  position: absolute;
+  left: 7px;
+  pointer-events: none;
+  color: var(--muted);
+}
+.model-combo-caret {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  pointer-events: none; /* the field itself opens the list; the caret is an affordance */
+  color: var(--muted);
+  font-size: 12px;
+}
+.model-combo-pop {
+  position: fixed; /* .ui-modal-body scrolls, so an absolute popup would be clipped */
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: min(46vh, 320px);
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.32);
+}
+.model-combo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12.5px;
+  line-height: 1.3;
+  cursor: pointer;
+}
+/* The keyboard's position and the stored selection are different things and can sit on
+   different rows, so they read differently: a fill for where the keyboard is, a check for
+   what is currently chosen. */
+.model-combo-item.sel {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+}
+.model-combo-item.on .model-combo-label {
+  font-weight: 600;
+}
+.model-combo-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  font-size: 13px;
+}
+.model-combo-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-combo-empty {
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+/* Phones: a row has to be a thumb target, not a mouse one. */
+@media (max-width: 760px) {
+  .model-combo-item {
+    padding: 9px 8px;
+  }
+  .model-combo-pop {
+    max-height: min(50vh, 360px);
+  }
+}
 .model-picker-claude {
   display: flex;
   flex-direction: column;

@@ -309,10 +309,8 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "ui.files": "Files",
   "ui.starts_when_workspace_running": "Appears once the workspace is running.",
   "ui.filter_models": "Filter models…",
-  "ui.filter_kind_models": "Filter {kind} models",
   "ui.kind_model": "{kind} model",
   "ui.claude_registered_model": "Select a registered model",
-  "ui.select_from_count": "Select from {count}",
   "ui.no_matching_models": "No matching models",
   // Shown when a dynamic kind's catalog resolved to no selectable model. It must stay
   // true for EVERY reason that produces it — not signed in, signed in but unable to
@@ -320,7 +318,6 @@ export const common: Record<keyof typeof jaCommon, string> = {
   // where empty is correct), or everything excluded in settings. The Agent does not say
   // which, so this must not name a cause.
   "ui.model_default_only": "Only the default model is available (check this agent's connection and plan).",
-  "ui.count_items": "{count} items",
   "ui.cancel": "Cancel",
   "ui.run": "Run",
   "ui.running": "Running…",
