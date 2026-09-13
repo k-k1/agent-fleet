@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
@@ -33,10 +33,23 @@ import {
 //     the family it was trained against, and the questions asked of it (which trigger words, what
 //     strength) are asked of nothing else. Mixed into one list it was a row with a tag on it.
 
+/** What a catalogue write answers with. The panel normally takes the engine's new row out of it,
+ *  but a 409 `engine_vram_confirm` is a QUESTION rather than a failure: the same call repeated
+ *  with `confirm_vram` goes through, and only the caller knows which call that was. */
+type EngineModelAnswer = { error?: { code?: string; message?: string } } | undefined;
+
+/** Writing one field of one catalogue row. Returns the answer so the caller can see the question
+ *  above; every caller that has nothing to ask simply ignores it. */
+type EngineModelChange = (id: string, patch: Record<string, unknown>) => Promise<EngineModelAnswer>;
+
 export function EngineModelsAdminView() {
   const tr = useT();
   const { rows, isSuper, err, setErr, setRows, load } = useEngineRows();
   const [busy, setBusy] = useState("");
+  /** Which JOB a request is in flight for. Its own state rather than `busy`: the two lists are
+   *  loaded and refreshed independently, and one shared key would disable a model row because
+   *  somebody pressed delete in the history below it. */
+  const [busyJob, setBusyJob] = useState("");
   const [note, setNote] = useState("");
   const [jobs, setJobs] = useState<Record<string, IngestJob[]>>({});
   /** Which engine's catalogue is open, by key. A key rather than an index so that a reload that
@@ -47,6 +60,18 @@ export function EngineModelsAdminView() {
    *  for checkpoints, so choosing "LoRA" changed what the row would be registered as and
    *  nothing about what was on offer. */
   const [kind, setKind] = useState<ModelKind>("model");
+  /** The registration form, opened with a finished job's answers already in it.
+   *
+   * 🔴 "Take that file in again" is not an ingest: the bytes are in the bucket already (forget
+   * a row without `?purge=1` and they stay — measured on the dev deployment, 2026-09-09: a
+   * 491 MB object outlived its row), so this is `POST /models`, the route that registers a
+   * staged file. What was missing was never the route: it was the LIST OF KEYS, which lived
+   * only in the ingest history and had to be retyped from it by hand.
+   *
+   * It fills the form and stops there. The id and the family are questions for a person — one
+   * is what members read in the launch menu and the other is the dispatch key a wrong answer
+   * fails silently on — so the button opens the form rather than posting it. */
+  const [prefill, setPrefill] = useState<ModelPrefill | null>(null);
 
   /** The ingest jobs for one engine. The CP reconciles against ECS inside this call, so asking
    *  is also what moves a finished job to `done` while somebody is watching. */
@@ -98,7 +123,7 @@ export function EngineModelsAdminView() {
    *  and reproducing that here would be a second copy of a rule that has to be enforced in a
    *  transaction. */
   const setModel = async (key: string, id: string, patch: Record<string, unknown>) => {
-    await callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "PUT", patch, key);
+    return callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "PUT", patch, key);
   };
 
   const addModel = async (key: string, body: Record<string, unknown>) => {
@@ -124,19 +149,64 @@ export function EngineModelsAdminView() {
     );
   };
 
+  /** Forget one row of the ingest history.
+   *
+   * 🔴 The history is not only a progress display: until a catalogue row points at the key a
+   * `done` job wrote, that row is the only place this deployment records that the file is in
+   * the bucket — the CP cannot list it (ADR 0072 review R3). So the answer is taken from the
+   * SERVER's remaining list rather than by dropping the row locally: the CP refuses a job that
+   * is still running (409), and a panel that had already removed it would show the deletion it
+   * did not get. */
+  const forgetJob = async (key: string, id: string) => {
+    setBusyJob(id);
+    try {
+      const d = await apiJSON(
+        `api/admin/engines/${encodeURIComponent(key)}/ingest/${encodeURIComponent(id)}`,
+        "DELETE",
+      );
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setJobs((cur) => ({ ...cur, [key]: Array.isArray(d?.jobs) ? d.jobs : [] }));
+    } finally {
+      setBusyJob("");
+    }
+  };
+
+  /** Open the registration form on a finished job's key.
+   *
+   * The TAB moves with it, because model and LoRA are two lists with two forms and the job says
+   * which one it was: a LoRA prefilled into the checkpoint form would be registered as a
+   * checkpoint, which is a row the engine can be told to start with and cannot load. */
+  const reuseJobKey = (j: IngestJob) => {
+    setKind(j.kind === "lora" ? "lora" : "model");
+    setPrefill({
+      id: j.model_id,
+      s3Key: j.s3_key || "",
+      flag: j.file_flag || "",
+      source: j.source || "",
+      usedBy: j.key_used_by || "",
+    });
+  };
+
   const callModel = async (
     busyKey: string,
     path: string,
     method: string,
     body: unknown,
     key: string,
-  ) => {
+  ): Promise<EngineModelAnswer> => {
     setBusy(busyKey);
     try {
       const d = await apiJSON(path, method, body);
       if (d?.error) {
         setErr(errDetail(d.error));
-        return;
+        // ...and handed BACK, because one refusal is a question rather than a failure: a 409
+        // `engine_vram_confirm` is answered by repeating the same call, and only the caller
+        // knows which call that was.
+        return d;
       }
       setErr("");
       // What the CP started, in its own words ("deleting llm/x.gguf", or why it could not).
@@ -144,6 +214,7 @@ export function EngineModelsAdminView() {
       // simply vanishes while gigabytes stay behind.
       setNote(typeof d?.purge === "string" ? d.purge : "");
       setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+      return d;
     } finally {
       setBusy("");
     }
@@ -195,7 +266,10 @@ export function EngineModelsAdminView() {
                   key={e.key}
                   type="button"
                   className={"seg-btn" + (open.key === e.key ? " active" : "")}
-                  onClick={() => setRole(e.key)}
+                  onClick={() => {
+                    setRole(e.key);
+                    setPrefill(null);
+                  }}
                 >
                   {tr(engineIsImage(e) ? "admin.engines_role_image" : "admin.engines_role_llm")}
                 </button>
@@ -213,7 +287,13 @@ export function EngineModelsAdminView() {
                 key={k}
                 type="button"
                 className={"seg-btn" + (kind === k ? " active" : "")}
-                onClick={() => setKind(k)}
+                // A tab pressed BY HAND drops a pending prefill. Without this, switching to the
+                // LoRA list minutes later reopens the form still holding the checkpoint whose
+                // key was picked out of the history — an id and an S3 key nobody chose there.
+                onClick={() => {
+                  setKind(k);
+                  setPrefill(null);
+                }}
               >
                 {tr(k === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}
               </button>
@@ -242,6 +322,7 @@ export function EngineModelsAdminView() {
           kind={kind}
           busy={busy}
           readOnly={!isSuper || borrowed}
+          prefill={prefill}
           onChange={(id, patch) => setModel(open.key, id, patch)}
           onForget={(id, purge) => forgetModel(open.key, id, purge)}
           onAdd={(body) => addModel(open.key, body)}
@@ -258,12 +339,23 @@ export function EngineModelsAdminView() {
             isLora={kind === "lora"}
             baseModels={open.base_models}
             fileFlags={open.file_flags}
-            modelIds={(open.model_rows || []).map((m) => m.id)}
+            models={open.model_rows}
+            cardMiB={open.class?.vram_mib}
             busy={busy === open.key + "/ingest"}
             onStarted={() => loadJobs(open.key)}
           />
         )}
-        <EngineIngestJobs jobs={jobs[open.key] || []} />
+        <EngineIngestJobs
+          jobs={jobs[open.key] || []}
+          busy={busyJob}
+          readOnly={borrowed}
+          onForget={(id) => forgetJob(open.key, id)}
+          // Registering a staged file is a super_admin's act, as it always was: it names an S3
+          // key in the operator's bucket. A granted tenant_admin sees the history and may forget
+          // their own rows, and gets no button that would 403. (A borrowed engine needs no test
+          // here — `readOnly` above hides every action on that screen.)
+          onReuse={isSuper ? reuseJobKey : undefined}
+        />
       </section>
       {/* The deployment's Hugging Face token. One token serves every role and every tenant, so
           registering it is the operator's act; a tenant_admin who needs a gated repository asks
@@ -310,6 +402,7 @@ function EngineModels({
   kind,
   busy,
   readOnly,
+  prefill,
   onChange,
   onForget,
   onAdd,
@@ -318,7 +411,11 @@ function EngineModels({
   kind: ModelKind;
   busy: string;
   readOnly?: boolean;
-  onChange: (id: string, patch: Record<string, unknown>) => void;
+  /** Answers taken out of a finished ingest job, for the registration form below the list.
+   *  Passed through rather than held here: the history that produces it is a sibling of this
+   *  component, not a child. */
+  prefill?: ModelPrefill | null;
+  onChange: EngineModelChange;
   onForget: (id: string, purge: boolean) => void;
   onAdd: (body: Record<string, unknown>) => void;
 }) {
@@ -338,7 +435,15 @@ function EngineModels({
   // Which model is waiting on "yes, I know it may not fit" (ADR 0074 decision 6). The dialog is
   // raised HERE, before the request, because this is where the numbers are — the CP refuses the
   // unconfirmed call as well, for any other client.
-  const [vramAsk, setVramAsk] = useState<{ id: string; patch: Record<string, boolean | string> } | null>(null);
+  // `message` is the CP's own sentence, present only when the SERVER raised the question. An
+  // edit to the window cannot be judged here: the KV geometry the new demand is computed from is
+  // not on the wire, and a second copy of that formula in TypeScript would drift from the CP's
+  // the first time either changed (ADR 0074 open question 7).
+  const [vramAsk, setVramAsk] = useState<{
+    id: string;
+    patch: Record<string, unknown>;
+    message?: string;
+  } | null>(null);
   const cardMiB = row.class?.vram_mib || 0;
   /** True when this model's own demand is known AND larger than the card. `unknown` is not
    *  "too big": asking about every unmeasured model teaches people to click through the one
@@ -352,6 +457,16 @@ function EngineModels({
       return;
     }
     onChange(m.id, patch);
+  };
+  /** Save an edited FIELD, and turn the CP's "this may not fit" into the same question the
+   *  enable button asks. Asked after the request rather than before it, unlike `change` above:
+   *  what a new window costs is the CP's arithmetic, and the panel learns the answer by being
+   *  refused. */
+  const saveField = async (m: EngineModel, patch: Record<string, unknown>) => {
+    const d = await onChange(m.id, patch);
+    if (d?.error?.code === "engine_vram_confirm") {
+      setVramAsk({ id: m.id, patch, message: d.error.message });
+    }
   };
   return (
     <div className="engines-models">
@@ -453,6 +568,7 @@ function EngineModels({
               </div>
               {m.description && <p className="muted engines-model-desc">{m.description}</p>}
               <p className="muted engines-model-meta">{engineModelMeta(m, tr)}</p>
+              <ModelProvenance model={m} />
               {/* 🔴 The one thing wrong with this row that nothing else on it shows. Every other
                   field is filled in, the toggle works, the id appears in generate_image's model
                   list — and the request fails, because the provider will not guess a workflow
@@ -520,6 +636,25 @@ function EngineModels({
               {!readOnly && isImage && m.kind !== "lora" && (
                 <ModelNegative model={m} pending={pending} onChange={onChange} />
               )}
+              {/* 🔴 The window, and the measurement the VRAM answer is compared against. This is
+                  the one pair on the row whose wrong value is paid for in cash: measured on a
+                  borrowed llm engine (ADR 0079, 2026-09-13), a row still declaring 262144 tokens
+                  made llama.cpp ask for a 16 GiB KV cache on top of 17 GB of weights and the L4
+                  that had just been bought answered `cudaMalloc failed: out of memory` — four
+                  minutes into the cold start, with no field anywhere to correct it.
+
+                  Never a LoRA (an adapter is not loaded with a window of its own), and the
+                  context fields only where a window means something. Absent read-only for the
+                  reason the rest of the controls are: every write route answers 400 for a
+                  borrowed row, and a button that can only produce an error is worse than none. */}
+              {!readOnly && !isLora && (
+                <ModelWindow
+                  model={m}
+                  pending={pending}
+                  showContext={!isImage}
+                  onSave={(patch) => saveField(m, patch)}
+                />
+              )}
               {/* 🔴 The two acts, told apart. Forgetting alone leaves the bytes in the bucket
                   with nothing able to reach them (measured: a 491 MB file outlived its row);
                   purging starts the MODE=delete task ADR 0072 decision 7 exists for, because
@@ -529,15 +664,19 @@ function EngineModels({
                   decides (the position ADR 0072 decision 10 takes on licences). */}
               {vramAsk?.id === m.id && (
                 <div className="engines-model-confirm">
+                  {/* The CP's own sentence when the CP is the one that asked. It names the demand
+                      of the row as EDITED, which the numbers on this row cannot: they describe
+                      the window that is still stored. */}
                   <p className="form-err">
-                    {(tr("admin.engines_vram_confirm" as never) as string)
-                      .replace("{id}", m.id)
-                      .replace("{n}", String(m.vram_need_mib || 0))
-                      .replace("{m}", String(cardMiB))
-                      .replace(
-                        "{src}",
-                        tr(("admin.engines_vram_src_" + (m.vram_need_source || "unknown")) as never) as string,
-                      )}
+                    {vramAsk.message ||
+                      (tr("admin.engines_vram_confirm" as never) as string)
+                        .replace("{id}", m.id)
+                        .replace("{n}", String(m.vram_need_mib || 0))
+                        .replace("{m}", String(cardMiB))
+                        .replace(
+                          "{src}",
+                          tr(("admin.engines_vram_src_" + (m.vram_need_source || "unknown")) as never) as string,
+                        )}
                   </p>
                   <span className="engines-model-actions">
                     <button
@@ -627,6 +766,7 @@ function EngineModels({
           baseModels={row.base_models}
           fileFlags={row.file_flags}
           modelIds={(row.model_rows || []).filter((m) => m.kind !== "lora").map((m) => m.id)}
+          prefill={prefill}
           onAdd={onAdd}
         />
       )}
@@ -679,6 +819,122 @@ function ModelNegative({
       >
         {tr("admin.engines_negative_save")}
       </button>
+    </div>
+  );
+}
+
+/** A non-negative whole number, or null for "this box does not hold one". The empty box IS a
+ *  number — 0, i.e. undeclared — because that is the only way back from a value typed once. */
+function engineWholeNumber(s: string): number | null {
+  const t = s.trim();
+  if (t === "") return 0;
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/** The window this row asks to be run at, and the VRAM somebody measured it using.
+ *
+ * A draft with an explicit save, like ModelNegative next door, and two saves rather than one:
+ * they are two columns the CP writes separately, and the window's own two boxes go TOGETHER
+ * because the row only ever answers a cap alongside a window.
+ *
+ * 🔴 What the demand line shows comes from the server (`vram_need_mib` / `vram_need_source`) and
+ * is never recomputed here. The KV geometry it is derived from is not on the wire at all, and a
+ * second copy of that arithmetic in TypeScript would disagree with the CP's the first time
+ * either moved — on the one number a person is looking at while deciding. */
+function ModelWindow({
+  model,
+  pending,
+  showContext,
+  onSave,
+}: {
+  model: EngineModel;
+  pending: boolean;
+  showContext: boolean;
+  onSave: (patch: Record<string, unknown>) => void;
+}) {
+  const tr = useT();
+  const savedCtx = String(model.context_tokens || 0);
+  const savedOut = String(model.max_output_tokens || 0);
+  const savedVram = String(model.vram_mib || 0);
+  const [ctxDraft, setCtxDraft] = useState(savedCtx);
+  const [outDraft, setOutDraft] = useState(savedOut);
+  const [vramDraft, setVramDraft] = useState(savedVram);
+  // The server's values win when they change under us — the save answered with the whole engine,
+  // another admin, a reload — and only then: re-running this on every render would delete what is
+  // being typed.
+  useEffect(() => {
+    setCtxDraft(savedCtx);
+    setOutDraft(savedOut);
+  }, [savedCtx, savedOut]);
+  useEffect(() => setVramDraft(savedVram), [savedVram]);
+  const ctxNum = engineWholeNumber(ctxDraft);
+  const outNum = engineWholeNumber(outDraft);
+  const vramNum = engineWholeNumber(vramDraft);
+  const windowDirty = ctxDraft !== savedCtx || outDraft !== savedOut;
+  const need = model.vram_need_mib || 0;
+  return (
+    <div className="engines-model-window">
+      {showContext && (
+        <>
+          <label>
+            <span>{tr("admin.engines_model_window_context")}</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={ctxDraft}
+              onChange={(ev) => setCtxDraft(ev.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>{tr("admin.engines_model_window_output")}</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={outDraft}
+              onChange={(ev) => setOutDraft(ev.currentTarget.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={pending || !windowDirty || ctxNum === null || outNum === null}
+            onClick={() => onSave({ context_tokens: ctxNum, max_output_tokens: outNum })}
+          >
+            {tr("admin.engines_model_window_save")}
+          </button>
+        </>
+      )}
+      <label>
+        <span>{tr("admin.engines_model_vram_edit")}</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={vramDraft}
+          onChange={(ev) => setVramDraft(ev.currentTarget.value)}
+        />
+      </label>
+      <button
+        type="button"
+        className="btn-secondary"
+        disabled={pending || vramDraft === savedVram || vramNum === null}
+        onClick={() => onSave({ vram_mib: vramNum })}
+      >
+        {tr("admin.engines_model_window_save")}
+      </button>
+      {/* What the edit above moves, and where the figure comes from. Both halves are needed: the
+          number alone would read as a measurement on a row where nobody measured anything. */}
+      <span className="muted engines-model-need">
+        {need
+          ? (tr("admin.engines_model_need_now" as never) as string)
+              .replace("{n}", String(need))
+              .replace(
+                "{src}",
+                tr(("admin.engines_vram_src_" + (model.vram_need_source || "unknown")) as never) as string,
+              )
+          : tr("admin.engines_model_need_unknown")}
+      </span>
     </div>
   );
 }
@@ -778,6 +1034,27 @@ function engineParamsSummary(p: EngineParams | undefined, tr: ReturnType<typeof 
   return tr("admin.engines_params") + ": " + bits.join(" · ");
 }
 
+/** The answers a finished ingest job can give the form below, and the ones it must not.
+ *
+ * 🔴 There is no licence and no acceptance in here, and there must not be. The acceptance is the
+ * record of a human act (ADR 0072 decision 10) and it belongs to the row that job created — the
+ * person registering the key again may be somebody else, years later. The CP leaves
+ * `license_accepted_by` empty for everything this route writes, and the row then says "licence
+ * not recorded", which is the true state. */
+export type ModelPrefill = {
+  id: string;
+  s3Key: string;
+  /** What the file is within the model (`--vae`, `--t5xxl`), "" for a whole checkpoint. */
+  flag: string;
+  /** Where the bytes came from, as the job recorded it. Carried through to the new row rather
+   *  than shown as an editable field: it is a fact about the file, not a preference. */
+  source: string;
+  /** The catalogue row that ALREADY points at this key, if any. Not a refusal — a shared key is
+   *  normal, since SD3.5 and FLUX.1 read the same text encoders — but the form says who has it,
+   *  because the likeliest reason to be here twice is not knowing that. */
+  usedBy: string;
+};
+
 /** Registering a file that is ALREADY in the models bucket.
  *
  * This is NOT the ingest — that fetches from Hugging Face, needs `ecs:RunTask` on the Control
@@ -803,6 +1080,7 @@ function EngineModelAdd({
   baseModels,
   fileFlags,
   modelIds,
+  prefill,
   onAdd,
 }: {
   busy: boolean;
@@ -822,6 +1100,9 @@ function EngineModelAdd({
    *  that is the model whose preset section it is pinned into, so it is a CHOICE and never a
    *  typed name — a base nothing matches is an adapter that silently does nothing. */
   modelIds?: string[];
+  /** A key picked out of the ingest history, or null. A new object per press, which is what
+   *  re-opens the form on a second press of the same job. */
+  prefill?: ModelPrefill | null;
   onAdd: (body: Record<string, unknown>) => void;
 }) {
   const tr = useT();
@@ -846,6 +1127,11 @@ function EngineModelAdd({
   // encoder and a VAE, and each has to be labelled with the flag its loader reads.
   const blank = () => [{ flag: "", s3Key: "", bytes: "" }];
   const [files, setFiles] = useState(blank);
+  /** Where the file came from, when it is being registered from the ingest history. Held rather
+   *  than shown as a field: nothing about it is a choice, and the CP stores it because an id is
+   *  short and readable and does not say which vendor published the model (migration 0060). */
+  const [source, setSource] = useState("");
+  const [fromJob, setFromJob] = useState<ModelPrefill | null>(null);
   const families = baseModels || [];
   const flags = fileFlags || [];
   const reset = () => {
@@ -859,7 +1145,29 @@ function EngineModelAdd({
     setLicence("");
     setLicenceURL("");
     setFiles(blank);
+    setSource("");
+    setFromJob(null);
   };
+
+  /** A key picked out of the ingest history opens the form on it.
+   *
+   * 🔴 What is filled in is what the job KNOWS — the key, what the file is within the model,
+   * where it came from, and the id that job used. What is not filled in is the FAMILY, which is
+   * the one field a wrong answer fails silently on (a display name like "Flux.1 D" produced rows
+   * that looked complete and refused to generate, ADR 0072 P2 実機検証), so the button below
+   * stays disabled until a person picks one. The bytes are left empty too: the CP cannot look in
+   * the bucket, so a number carried over from a job row would be a size nobody re-measured.
+   *
+   * Keyed on the prefill OBJECT, so a second press of the same job re-opens the form, and a
+   * remount (the tab above changes this component's key) applies it once. */
+  useEffect(() => {
+    if (!prefill) return;
+    setOpen(true);
+    setId(prefill.id);
+    setFiles([{ flag: prefill.flag, s3Key: prefill.s3Key, bytes: "" }]);
+    setSource(prefill.source);
+    setFromJob(prefill);
+  }, [prefill]);
 
   if (!open) {
     return (
@@ -908,6 +1216,11 @@ function EngineModelAdd({
       // them. Empty stays empty — an unrecorded licence is a state the row states.
       license_name: licence.trim(),
       license_url: licenceURL.trim(),
+      // Where the bytes came from, when this row is being rebuilt on a key the ingest history
+      // still holds. 🔴 The licence ACCEPTANCE does not travel with it: that is the record of a
+      // human act on the row the job created (ADR 0072 decision 10), and the CP leaves this
+      // row's `license_accepted_by` empty. Registering a key again is not accepting anything.
+      ...(source ? { source } : {}),
     });
     reset();
   };
@@ -936,6 +1249,34 @@ function EngineModelAdd({
   );
   return (
     <div className="engines-model-add">
+      {/* Where these answers came from, when they were not typed. Three things are said and one
+          is deliberately not:
+            - the SOURCE, which is what travels onto the row and is otherwise invisible here;
+            - that the family still has to be picked, because that is why the button is off;
+            - who else already points at this key, when somebody does. A shared key is normal
+              (SD3.5 and FLUX.1 read the same text encoders), so it is not a refusal — but a
+              second row for a file that already has one is usually a mistake, and this is the
+              only moment it can be noticed.
+          🔴 What is NOT said is that the file is in the bucket. The CP has no S3 permission at
+          all (ADR 0072 review R3) and a `done` job proves only that the fetch once succeeded —
+          `deleteModel?purge=1` deletes the bytes and leaves the job `done`. A typo, or a purged
+          file, surfaces in the fetch sidecar's log at the next cold start, which is what the
+          note at the bottom of this form has always said. */}
+      {fromJob && (
+        <div className="engines-model-add-from-job">
+          <p className="muted">
+            {(tr("admin.engines_model_add_from_job") as string).replace("{s}", fromJob.source)}
+          </p>
+          {!!fromJob.usedBy && (
+            <p className="muted">
+              {(tr("admin.engines_model_add_from_job_used") as string).replace(
+                "{who}",
+                fromJob.usedBy,
+              )}
+            </p>
+          )}
+        </div>
+      )}
       {field(tr("admin.engines_model_add_id"), id, setId,
         isLora ? "house-style" : isImage ? "juggernaut-xl-v9" : "qwen2.5-coder-1.5b")}
       {/* ⚠️ A CHOICE, never a text box. What the repository calls a model — "SDXL 1.0",
@@ -1302,7 +1643,8 @@ function EngineIngest({
   isLora,
   baseModels,
   fileFlags,
-  modelIds,
+  models,
+  cardMiB,
   busy,
   onStarted,
 }: {
@@ -1321,10 +1663,18 @@ function EngineIngest({
   /** What this file IS within the model, same vocabulary and same source as the register
    *  form's. Empty = this provider loads one whole checkpoint and has no parts to name. */
   fileFlags?: string[];
-  /** The ids this engine's catalogue already holds. Only used to offer "add it to that row"
-   *  when the id names one: the CP refuses a plain ingest onto an existing id, and without the
-   *  offer the only way to build a split model is three throwaway rows (ADR 0072 P2 欠落 6). */
-  modelIds?: string[];
+  /** The catalogue this engine already holds. Used to tell whether the typed id names a row:
+   *  the CP refuses a plain ingest onto one, and without the offer to join it the only way to
+   *  build a split model is three throwaway rows (ADR 0072 P2 欠落 6). The rows rather than
+   *  their ids, because the other question asked of them is which of that row's SLOTS are
+   *  already filled — which is what tells "add this part" apart from "replace the part that is
+   *  there", and the two have opposite preconditions. */
+  models?: EngineModel[];
+  /** The VRAM of the rung this engine is set to buy, when the deployment declared a ladder at
+   *  all. 🔴 Absent is the normal state of a deployment whose box CloudFormation bought, and
+   *  then there is NOTHING to compare a file against — so the panel says what a file weighs and
+   *  draws no verdict. "It fits" with no card to fit into is a lie. */
+  cardMiB?: number;
   busy: boolean;
   onStarted: () => void;
 }) {
@@ -1361,6 +1711,12 @@ function EngineIngest({
    *  whether it JOINS that row instead of making a new one. */
   const [fileFlag, setFileFlag] = useState("");
   const [attach, setAttach] = useState(false);
+  /** …or TAKES THE PLACE OF what that slot already holds. The third act, and the one the form
+   *  could not ask for: attaching refuses a flag that is filled, and the unlabelled slot — the
+   *  checkpoint itself — cannot be attached to at all, so moving a model to another
+   *  quantisation meant forgetting the row and building it again. That throws away the licence
+   *  acceptance, the family, the params, the enabled state and the provenance. */
+  const [replace, setReplace] = useState(false);
   const families = baseModels || [];
   const flags = fileFlags || [];
   /** What this model should be RUN at, as text — the fields are typed into, so they are strings
@@ -1370,11 +1726,25 @@ function EngineIngest({
   /** True when the typed id is one this engine already has. The CP refuses a plain ingest onto
    *  it (409 model_id_exists), so this is where the second act — attaching a part — is
    *  offered rather than left as an error to read. */
-  const known = (modelIds || []).includes(id.trim());
+  const modelIds = (models || []).map((m) => m.id);
+  const target = (models || []).find((m) => m.id === id.trim());
+  const known = !!target;
+  /** Which of that row's slots are FILLED. It decides which of the two acts is even possible:
+   *  a free slot can only be attached to, a filled one can only be replaced — the same pair of
+   *  refusals the CP answers, said here so neither costs a download to discover.
+   *
+   *  The empty flag is a slot like any other here, and it is the one that matters: a row's own
+   *  checkpoint is filled by definition, so replace is the only act it ever offers. */
+  const taken = new Set((target?.file_rows || []).map((f) => (f.flag || "").trim()));
   /** Same two vocabularies as the register form: an llm adapter names a model id, everything
    *  else names a family. */
   const basePicksAModel = isLora && !isImage;
-  const baseOptions = basePicksAModel ? (modelIds || []).filter((m) => m !== id.trim()) : families;
+  const baseOptions = basePicksAModel ? modelIds.filter((m) => m !== id.trim()) : families;
+  /** What is being taken in, in the CP's own vocabulary. Sent on the RESOLVE as well as on the
+   *  start: the resolve reads the GGUF header for the KV geometry, and an adapter's file is not
+   *  a model's — asking for one costs a range GET over somebody else's network for a number
+   *  that would mean nothing. */
+  const kind = isLora ? "lora" : isImage ? "checkpoint" : "gguf";
   /** Which read of a source is the current one. Picking a second result before the first has
    *  answered is one click, and the two answers come back in whatever order the two APIs feel
    *  like — so the older one is dropped rather than allowed to describe the row on screen. */
@@ -1450,6 +1820,7 @@ function EngineIngest({
     const seq = ++asked.current;
     const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest/resolve`, "POST", {
       source: source(name, repoOverride),
+      kind,
     });
     // A second pick while this one was in flight: its answer is the one on screen, and this
     // late one would overwrite the licence, the sha256 and the window of a different model.
@@ -1572,22 +1943,22 @@ function EngineIngest({
 
   const start = async () => {
     setErr("");
-    const n = (v: string) => {
-      const p = Number(v.trim().replace(/[_,]/g, ""));
-      return Number.isFinite(p) && p > 0 ? Math.floor(p) : 0;
-    };
-    const c = n(ctx);
-    const o = n(out);
+    const c = engineNumField(ctx);
+    const o = engineNumField(out);
     const key = engineIngestPrefix(isImage, fileFlag, isLora) + (file.trim() || id.trim());
     const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest`, "POST", {
       id: id.trim(),
-      kind: isLora ? "lora" : isImage ? "checkpoint" : "gguf",
+      kind,
       s3Key: key,
       source: source(),
       description: desc.trim(),
       base_model: baseModel,
       file_flag: fileFlag,
       attach: attach && known,
+      // One file changes and the row keeps everything the ingest knows nothing about — the
+      // licence acceptance, the family, the params, whether it is on. Only ever against a row
+      // that is there: anywhere else the CP would have to guess which of two acts was meant.
+      replace: replace && known,
       context_tokens: isLora ? 0 : c && o ? c : 0,
       max_output_tokens: isLora ? 0 : c && o ? o : 0,
       params: engineParamsBody(params),
@@ -1608,6 +1979,7 @@ function EngineIngest({
     setId("");
     setFileFlag("");
     setAttach(false);
+    setReplace(false);
     setParams(engineParamsBlank);
     onStarted();
   };
@@ -1749,10 +2121,18 @@ function EngineIngest({
           <span>{tr("admin.engines_ingest_file")}</span>
           <select value={file} onChange={(ev) => pick(ev.currentTarget.value)}>
             <option value="">{tr("admin.engines_ingest_pick")}</option>
+            {/* 🔴 The mark is one-directional on purpose: WEIGHTS ALONE over the card is a
+                definite no, and it is the only verdict this list can reach — the KV cache is
+                not known until the file has been resolved, and it is the half that killed a
+                cold start on an L4 (17 GB of weights, 16 GB of cache, 24 GB of card). So a
+                candidate with no mark is "not ruled out here", never "it fits". */}
             {files.map((f) => (
               <option key={f.name} value={f.name}>
                 {f.name}
                 {f.bytes ? " · " + fmtBytes(f.bytes) : ""}
+                {engineFitsCard(engineWeightsMiB(f.bytes), cardMiB) === false
+                  ? " · " + tr("admin.engines_ingest_over_card")
+                  : ""}
               </option>
             ))}
           </select>
@@ -1786,8 +2166,11 @@ function EngineIngest({
             value={fileFlag}
             onChange={(ev) => {
               setFileFlag(ev.currentTarget.value);
-              // A whole checkpoint is never a part of another row.
-              if (!ev.currentTarget.value) setAttach(false);
+              // Which act is possible depends on whether THAT slot is filled, so choosing a
+              // different one asks the question again rather than carrying an answer that was
+              // given about another file.
+              setAttach(false);
+              setReplace(false);
             }}
           >
             {flags.map((fl) => (
@@ -1806,18 +2189,51 @@ function EngineIngest({
           <input
             type="checkbox"
             checked={attach}
-            disabled={!fileFlag}
-            onChange={(ev) => setAttach(ev.currentTarget.checked)}
+            // A slot that is already filled cannot be attached to — that is the CP's 409, said
+            // one press earlier — and the unlabelled slot is filled by definition.
+            disabled={!fileFlag || taken.has(fileFlag)}
+            onChange={(ev) => {
+              setAttach(ev.currentTarget.checked);
+              if (ev.currentTarget.checked) setReplace(false);
+            }}
           />
           <span>{(tr("admin.engines_ingest_attach") as string).replace("{id}", id.trim())}</span>
         </label>
       )}
-      {known && !attach && <p className="form-err">{tr("admin.engines_ingest_id_taken")}</p>}
+      {/* The other act, and the mirror of the one above: this slot is FILLED, and the file in it
+          is what changes. Everything else about the row stays — which is the whole reason it
+          exists, because the road that was there (forget the row, take it in again) silently
+          discarded the licence acceptance, the family, the params and the enabled state. */}
+      {known && (
+        <label className="engines-ingest-accept">
+          <input
+            type="checkbox"
+            checked={replace}
+            disabled={!taken.has(fileFlag)}
+            onChange={(ev) => {
+              setReplace(ev.currentTarget.checked);
+              if (ev.currentTarget.checked) setAttach(false);
+            }}
+          />
+          <span>
+            {(tr("admin.engines_ingest_replace") as string)
+              .replace("{id}", id.trim())
+              .replace("{part}", fileFlag || (tr("admin.engines_model_add_part_whole") as string))}
+          </span>
+        </label>
+      )}
+      {/* 🔴 Said because it is not what "replace" sounds like. The CP has no s3:DeleteObject at
+          all (ADR 0072 decision 7) and the swap finishes minutes later inside the job reconciler,
+          where there is nobody to report a refused deletion to — and the keys are shared
+          (`text_encoders/` is pointed at from more than one row), so deleting here would break a
+          model nobody touched. Forgetting a row with 「ファイルも消す」 is what deletes bytes. */}
+      {replace && <p className="muted">{tr("admin.engines_ingest_replace_keeps_bytes")}</p>}
+      {known && !attach && !replace && <p className="form-err">{tr("admin.engines_ingest_id_taken")}</p>}
       {/* ⚠️ Declared by the OPERATOR (ADR 0072 decision 2), which is why the repository's own
           answer rides BESIDE the picker instead of into it: "SDXL 1.0" and "Flux.1 D" are what
           Hugging Face and Civitai publish, and storing one of those as the family produced rows
           that looked complete and refused to generate (P2 実機検証). */}
-      {!attach && baseOptions.length > 0 && (
+      {!attach && !replace && baseOptions.length > 0 && (
         <label className="engines-model-add-row">
           <span>
             {tr(basePicksAModel ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}
@@ -1841,7 +2257,7 @@ function EngineIngest({
       {/* What the repository itself calls this, beside the picker rather than in it. When the CP
           could translate it the picker above is already filled in, and this line is then the
           PROVENANCE of that choice — which is what makes it correctable rather than magic. */}
-      {!attach && !isLora && families.length > 0 && found?.base_model && (
+      {!attach && !replace && !isLora && families.length > 0 && found?.base_model && (
         <p className="muted">
           {(tr(
             found.base_model_suggest && baseModel === found.base_model_suggest
@@ -1855,7 +2271,7 @@ function EngineIngest({
           anything is stored. 🔴 The quote is not decoration: these numbers were found by a
           regular expression in somebody's paragraph, and the sentence is what lets a person
           tell "Steps: 30" from "trained for 30 epochs" without opening the model page. */}
-      {!attach && isImage && found?.params_hint && found.params_hint_quote && (
+      {!attach && !replace && isImage && found?.params_hint && found.params_hint_quote && (
         <p className="muted engines-param-quote">
           {tr("admin.engines_params_hint_found")} <q>{found.params_hint_quote}</q>
         </p>
@@ -1864,7 +2280,7 @@ function EngineIngest({
           llm role's equivalents are the window and the output cap two lines below, and an
           adapter's strength there is `--scale`, which the register form has always had. Five
           fields that reach nothing would be five fields somebody fills in. */}
-      {!attach && isImage && (
+      {!attach && !replace && isImage && (
         <EngineParamsFields
           value={params}
           onChange={setParams}
@@ -1872,13 +2288,17 @@ function EngineIngest({
           family={isLora ? undefined : baseModel}
         />
       )}
-      {!isImage && !isLora && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
+      {/* The window and its cap belong to the ROW, and neither of the two acts that land on an
+          existing row carries them: the CP reads them only where a row is CREATED. Asking again
+          would offer to overwrite a decision this download knows nothing about — the same rule
+          the family above follows. */}
+      {!attach && !replace && !isImage && !isLora && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
       {/* The output cap is a FRACTION of the window, never a free number. It is not published
           anywhere — it is a deployment's policy for how much of the window one reply may eat —
           and 🔴 ADR 0072 decision 3: left at 0 opencode reads it as 32,000 and a 32k model ends
           up with 768 usable tokens. Offering computed values makes the pair impossible to
           half-fill. */}
-      {!isImage && !isLora && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
+      {!attach && !replace && !isImage && !isLora && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
       <div className="engines-model-add-actions">
         <button type="button" className="sm" onClick={() => resolve()} disabled={busy || !repo.trim()}>
           {tr("admin.engines_ingest_resolve")}
@@ -1891,6 +2311,20 @@ function EngineIngest({
           the size that becomes the cold start, and — for a gated repository — whether this
           deployment can take it in at all. */}
       {found && <ResolvedNote found={found} />}
+      {/* …and what pressing it would ask the card to hold. The window is read out of the FIELD
+          rather than out of the model's own ceiling, because that field is what the engine will
+          be started with and the two differ by 8x on the model already running here — and where
+          the row already exists it is the ROW's window, for the same reason: the field is not
+          drawn, because neither act changes it. */}
+      {found && (
+        <IngestFit
+          bytes={found.bytes}
+          kvPerThousand={found.kv_mib_per_1k_tokens}
+          contextTokens={attach || replace ? target?.context_tokens || 0 : engineNumField(ctx)}
+          cardMiB={cardMiB}
+          wantsKV={!isImage && !isLora}
+        />
+      )}
       {found && (
         <label className="engines-ingest-accept">
           <input
@@ -1912,11 +2346,12 @@ function EngineIngest({
               !accepted ||
               !id.trim() ||
               found.can_ingest === false ||
-              // An id the catalogue already holds goes in as a PART or not at all; the CP
-              // refuses both of these too, and a button that let the press happen would spend
-              // a resolve and a refusal to say so.
-              (known && !attach) ||
-              (attach && !fileFlag)
+              // An id the catalogue already holds goes in as a PART, or in place of the part
+              // that is there, or not at all; the CP refuses all of these too, and a button that
+              // let the press happen would spend a resolve and a refusal to say so.
+              (known && !attach && !replace) ||
+              (attach && (!fileFlag || taken.has(fileFlag))) ||
+              (replace && !taken.has(fileFlag))
             }
             onClick={start}
           >
@@ -1927,6 +2362,106 @@ function EngineIngest({
       {err && <p className="form-err">{err}</p>}
       <p className="muted">{tr("admin.engines_ingest_note")}</p>
     </div>
+  );
+}
+
+/** A number out of one of this form's text fields. 0 means "nothing usable typed", which every
+ *  caller draws as "not declared" rather than as zero. */
+export function engineNumField(v: string): number {
+  const n = Number(v.trim().replace(/[_,]/g, ""));
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/** What a file's WEIGHTS would take on the card, in the unit the GPU ladder is declared in.
+ *  The same conversion the CP makes in engineModelVramNeed: bytes as whoever staged them
+ *  declared, MiB as a card is measured. */
+export function engineWeightsMiB(bytes?: number): number {
+  return bytes && bytes > 0 ? Math.round(bytes / (1024 * 1024)) : 0;
+}
+
+/** What the KV cache costs at this window, from the CP's per-1024-token number.
+ *
+ * 🔴 A MULTIPLICATION and nothing else. The cache is linear in the context length, which is why
+ * one number crosses the wire at all; the formula (`n_layer × n_head_kv × (k+v) × ctx × 2`)
+ * stays in engine_gguf.go, because a second copy here would be a second thing to fix the day a
+ * model declares different key and value widths.
+ *
+ * 0 is "no answer": either the header was never read (the field is absent, never zero) or no
+ * window has been typed yet. Both mean the caller draws no cache, not a free one. */
+export function engineKVMiB(perThousand?: number, contextTokens?: number): number {
+  if (!perThousand || !contextTokens || contextTokens <= 0) return 0;
+  return Math.round((perThousand * contextTokens) / 1024);
+}
+
+/** Does this need fit the card — and is the question answerable at all?
+ *
+ * 🔴 `undefined` is the answer on a deployment that declared no GPU ladder: its box was bought
+ * by CloudFormation, `row.class` is absent, and there is nothing to compare against. The caller
+ * must then draw NO verdict — "it fits" said with no card to fit into is a lie, and this panel
+ * is read by somebody deciding whether to spend four minutes and a GPU on a download. */
+export function engineFitsCard(needMiB: number, cardMiB?: number): boolean | undefined {
+  if (!cardMiB || cardMiB <= 0 || needMiB <= 0) return undefined;
+  return needMiB <= cardMiB;
+}
+
+/** What pressing 「取り込む」 would ask the card to hold, before it is pressed.
+ *
+ * 🔴 Measured on a borrowed llm engine: an L4 (24 GB) loaded 17 GB of weights and then died on
+ * `cudaMalloc failed: out of memory … failed to allocate buffer for kv cache` for the 16 GB the
+ * window wanted — four minutes and one purchased GPU after the button. The weights were never
+ * the question, and the panel showed nothing but a filename and a size.
+ *
+ * Two things it must not do. It must not compare against a card that does not exist (see
+ * engineFitsCard), and it must not let an UNREAD KV cache pass as a small one: for a GGUF the
+ * cache is most of the answer, so when the header could not be read the line says so and the
+ * total is labelled as the weights alone. The CP's read is best-effort and silent by design
+ * (engine_gguf.go), so "absent" is a state this screen meets in normal use. */
+function IngestFit({
+  bytes,
+  kvPerThousand,
+  contextTokens,
+  cardMiB,
+  wantsKV,
+}: {
+  bytes?: number;
+  kvPerThousand?: number;
+  contextTokens: number;
+  cardMiB?: number;
+  /** Whether a KV cache is part of this model's answer at all. A diffusion checkpoint has none
+   *  — ADR 0074's first measurement put the image role's memory in the compute buffers — and an
+   *  adapter is not loaded on its own, so for those the silence is correct rather than missing. */
+  wantsKV: boolean;
+}) {
+  const tr = useT();
+  const weights = engineWeightsMiB(bytes);
+  if (!weights) return null;
+  const kv = engineKVMiB(kvPerThousand, contextTokens);
+  const need = weights + kv;
+  const fits = engineFitsCard(need, cardMiB);
+  const bits = [(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(weights))];
+  if (wantsKV) {
+    bits.push(
+      kv > 0
+        ? (tr("admin.engines_ingest_fit_kv") as string)
+            .replace("{n}", String(kv))
+            .replace("{c}", String(contextTokens))
+        : (tr("admin.engines_ingest_fit_kv_unread") as string),
+    );
+  }
+  if (fits !== undefined) {
+    bits.push(
+      (tr("admin.engines_ingest_fit_card") as string)
+        .replace("{n}", String(need))
+        .replace("{c}", String(cardMiB)),
+    );
+  }
+  return (
+    <>
+      <p className={"engines-ingest-fit " + (fits === false ? "form-err" : "muted")}>
+        {bits.join(" · ")}
+      </p>
+      {fits === false && <p className="form-err">{tr("admin.engines_ingest_fit_over")}</p>}
+    </>
   );
 }
 
@@ -2384,14 +2919,52 @@ export function engineJobAdvice(code?: string): string {
   }
 }
 
-function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
+function EngineIngestJobs({
+  jobs,
+  busy,
+  readOnly,
+  onForget,
+  onReuse,
+}: {
+  jobs: IngestJob[];
+  /** The id of the job a request is in flight for, so one press disables one row's buttons
+   *  rather than the whole list. */
+  busy: string;
+  /** A borrowed engine's screen (ADR 0079 decision 7). The CP would in fact accept the delete —
+   *  the job ledger is THIS deployment's, not the mirror's — but this whole panel is read-only
+   *  for a borrowed role, and one live button among absent ones reads as "the rest are broken". */
+  readOnly: boolean;
+  onForget: (id: string) => void;
+  /** Open the registration form on this job's key, or undefined for a caller who may not
+   *  register anything (a granted tenant_admin: the bucket is the operator's). */
+  onReuse?: (j: IngestJob) => void;
+}) {
   const tr = useT();
+  const [confirming, setConfirming] = useState("");
+  /** The extra press a job with nothing pointing at its file needs. Reset with the confirmation
+   *  it belongs to, so it cannot be carried from one row to the next. */
+  const [ack, setAck] = useState(false);
+  const openConfirm = (id: string) => {
+    setConfirming(id);
+    setAck(false);
+  };
   if (jobs.length === 0) return null;
   return (
     <>
     <p className="muted engines-ingest-jobs-head">{tr("admin.engines_ingest_jobs_head")}</p>
     <ul className="engines-model-list engines-ingest-jobs">
-      {jobs.map((j) => (
+      {jobs.map((j) => {
+        // 🔴 Only a job that has STOPPED may be forgotten. The row is not the task: deleting it
+        // leaves the ECS task downloading, and it still writes its catalogue row minutes later
+        // with nothing on screen that explains where the model came from. The CP refuses this
+        // too (409 ingest_job_live) — the button is absent here so that the refusal is read
+        // before the press rather than after it.
+        const live = j.state === "running" || j.state === "pending";
+        // Nothing in the catalogue points at this file, so this row is the last written record
+        // of its key: forgetting it also forgets the address of bytes that are still being paid
+        // for, and with it the only place that key can be picked from to register it again.
+        const last = !j.key_used_by;
+        return (
         <li key={j.id} className="engines-model">
           <div className="engines-model-head">
             <span className="mono engines-model-id">{j.model_id}</span>
@@ -2416,8 +2989,94 @@ function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
           {!!engineJobAdvice(j.code) && (
             <p className="form-err engines-model-meta">{tr(engineJobAdvice(j.code) as never)}</p>
           )}
+          {/* The refusal, in place of the button rather than behind it. "Why can I not delete
+              this one" is answered before the press, which is the only place it helps. */}
+          {!readOnly && live && (
+            <p className="muted engines-model-meta engines-ingest-job-live">
+              {tr("admin.engines_ingest_job_forget_live")}
+            </p>
+          )}
+          {!readOnly && !live && confirming !== j.id && (
+            <span className="engines-model-actions">
+              {/* 🔴 "Take that file in again" is not an ingest: the bytes are in the bucket
+                  already (forgetting a row without `?purge=1` leaves them — measured on the dev
+                  deployment, 2026-09-09: a 491 MB object outlived its row), so this opens the
+                  REGISTRATION form on the key. What was missing was never the route — it was
+                  the list of keys, which lives only here and had to be retyped by hand.
+
+                  Only for a job that FINISHED, and even then only as an offer: a `done` job is
+                  not proof the file is there. A purge deletes the bytes and leaves the job
+                  `done` for ever, and the CP cannot look in the bucket to check (review R3). A
+                  failed job is not offered at all — whatever it left behind is a part of a
+                  file, and registering that would produce a row that fails at load. */}
+              {j.state === "done" && !!j.s3_key && onReuse && (
+                <button
+                  type="button"
+                  className="ghost sm engines-ingest-job-reuse"
+                  onClick={() => onReuse(j)}
+                >
+                  {tr("admin.engines_ingest_job_reuse")}
+                </button>
+              )}
+              <button
+                type="button"
+                className="ghost sm engines-ingest-job-forget"
+                disabled={busy === j.id}
+                onClick={() => openConfirm(j.id)}
+              >
+                {tr("admin.engines_ingest_job_forget")}
+              </button>
+            </span>
+          )}
+          {confirming === j.id && !live && (
+            <div className="engines-model-confirm engines-ingest-job-confirm">
+              {/* The KEY, here and nowhere else on the row. This is the moment it matters: the
+                  row is about to stop being a record of it, and with nothing in the catalogue
+                  pointing at it this is the last time anyone can read it off a screen. */}
+              {j.s3_key && <p className="mono engines-model-keys">{j.s3_key}</p>}
+              <p className={last ? "form-err" : "muted"}>
+                {last
+                  ? tr("admin.engines_ingest_job_forget_last")
+                  : (tr("admin.engines_ingest_job_forget_used") as string).replace(
+                      "{who}",
+                      j.key_used_by || "",
+                    )}
+              </p>
+              {/* 🔴 A second, explicit act for the row whose key nothing else holds — and only
+                  for that one. Forgetting a job whose file a catalogue row already names loses
+                  nothing (the key is written down in that row), so asking twice there would
+                  train the tick out of meaning anything. */}
+              {last && (
+                <label className="engines-ingest-job-ack">
+                  <input
+                    type="checkbox"
+                    checked={ack}
+                    onChange={(ev) => setAck(ev.currentTarget.checked)}
+                  />
+                  <span>{tr("admin.engines_ingest_job_forget_ack")}</span>
+                </label>
+              )}
+              <span className="engines-model-actions">
+                <button
+                  type="button"
+                  className="sm"
+                  disabled={busy === j.id || (last && !ack)}
+                  onClick={() => {
+                    setConfirming("");
+                    onForget(j.id);
+                  }}
+                >
+                  {tr("admin.engines_ingest_job_forget_go")}
+                </button>
+                <button type="button" className="sm" onClick={() => setConfirming("")}>
+                  {tr("common.cancel")}
+                </button>
+              </span>
+            </div>
+          )}
         </li>
-      ))}
+        );
+      })}
     </ul>
     </>
   );
@@ -2436,6 +3095,97 @@ function fmtBytes(n: number): string {
   if (n >= 1e9) return (n / 1e9).toFixed(1) + " GB";
   if (n >= 1e6) return Math.round(n / 1e6) + " MB";
   return n + " B";
+}
+
+/** Where this row and each of its files came from.
+ *
+ * Its own line rather than two more items in the meta string, because these are the only facts on
+ * the row that are LINKS. The id is short and unique only inside this deployment (it is what a
+ * member reads in the launch menu), so the source is the one thing that says WHICH vendor's model
+ * of that name this is — and the value was already stored, just never shown as anything but text.
+ *
+ * 🔴 Three states, drawn differently on purpose:
+ *
+ *   - a source with a `source_url` is a link. The URL is the CP's, verbatim — composing it here
+ *     would mean the panel learning both vendors' spellings, and `civitai:<id>` is a model
+ *     VERSION id whose `/models/<id>` opens a DIFFERENT model;
+ *   - a source WITHOUT one stays text. That is a plain `url:` source (the direct download of the
+ *     weights, which no "where this came from" line should start) or a prefix this deployment's
+ *     CP does not know. A broken link in an operator's console is worse than a string;
+ *   - no source at all draws NOTHING. "Nobody recorded one" and "recorded, and unreadable" are
+ *     different facts and this panel draws them apart everywhere else (the licence line above
+ *     says so out loud) — a seeded row and every row from before migration 0060 is in the first
+ *     state, and labelling those "unknown" would assert that somebody looked.
+ *
+ * A FILE whose source is the row's own is not repeated: for a single-file model the two are the
+ * same string. What is left are the parts that came from somewhere else, which is exactly the
+ * question a split model could not answer — a four-file FLUX.1 row carried one line about its
+ * diffusion model and nothing at all about the three text encoders beside it. */
+function ModelProvenance({ model }: { model: EngineModel }) {
+  // Read from `file_rows` when it is there, and from `files` otherwise. NOT matched by position
+  // against `files`: the two are emitted from the same loop today, and a rule that silently
+  // mislabels every part the day one of them starts skipping an entry is not worth the base
+  // names it saves. The base name is the last segment, which is the CP's own rule (path.Base).
+  const parts = model.file_rows?.length
+    ? model.file_rows.map((f) => ({
+        name: f.s3Key.split("/").pop() || f.s3Key,
+        source: f.source,
+        url: f.source_url,
+      }))
+    : (model.files || []).map((name) => ({ name, source: undefined, url: undefined }));
+  if (!model.source && parts.length === 0) return null;
+  const bits = [
+    ...(model.source ? [<SourceText text={model.source} url={model.source_url} />] : []),
+    ...parts.map((p) =>
+      p.source && p.source !== model.source ? (
+        <SourceText text={p.name} url={p.url} title={p.source} />
+      ) : (
+        <span className="engines-model-file">{p.name}</span>
+      ),
+    ),
+  ];
+  return (
+    <p className="muted engines-model-meta engines-model-provenance">
+      {/* Keyed by position: two parts of one model can share a base name (two directories hold
+          `model.safetensors`), and a name key would drop one of them. */}
+      {bits.map((b, i) => (
+        <Fragment key={i}>
+          {i > 0 && " · "}
+          {b}
+        </Fragment>
+      ))}
+    </p>
+  );
+}
+
+/** One provenance value: a link when the CP could compose one, the same text when it could not. */
+function SourceText({ text, url, title }: { text: string; url?: string; title?: string }) {
+  if (!url) {
+    return (
+      <span className="engines-model-source" title={title}>
+        {text}
+      </span>
+    );
+  }
+  return (
+    <a
+      className="engines-model-source"
+      href={url}
+      title={title}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      {text}
+    </a>
+  );
+}
+
+/** Which sentence a derived VRAM figure gets. Shared by the meta line and the window editor so
+ *  the two cannot drift: a floor drawn as a measurement is the defect this exists to prevent. */
+function engineVramNeedKey(source: EngineModel["vram_need_source"]): string {
+  if (source === "floor") return "admin.engines_model_vram_floor";
+  if (source === "weights_kv") return "admin.engines_model_vram_weights_kv";
+  return "admin.engines_model_vram";
 }
 
 /** The one-line facts under a model, each omitted when it is not known — the same rule the
@@ -2459,9 +3209,11 @@ function engineModelMeta(m: EngineModel, tr: (k: never) => string): string {
     // Nobody measured this one, but its files say it cannot be smaller than this. The wording
     // follows the SOURCE rather than the absence of a measurement — the confirmation dialog
     // quotes the same number, and a row that mentioned none would make it appear from nowhere.
-    const key =
-      m.vram_need_source === "floor" ? "admin.engines_model_vram_floor" : "admin.engines_model_vram";
-    bits.push((tr(key as never) as string).replace("{n}", String(m.vram_need_mib)));
+    //
+    // 🔴 BOTH floors get floor wording. `weights_kv` used to fall through to the measured
+    // sentence, so a number the CP derived from a GGUF header read as one an operator stood
+    // behind — on exactly the rows where the derivation is the only thing anyone has.
+    bits.push((tr(engineVramNeedKey(m.vram_need_source) as never) as string).replace("{n}", String(m.vram_need_mib)));
   }
   // What this model costs the next cold start. Stated as an estimate because it is one: S3 to
   // the box ran at 104–147 MB/s over four measured starts, and this uses the slow end.
@@ -2488,9 +3240,8 @@ function engineModelMeta(m: EngineModel, tr: (k: never) => string): string {
     // decision 6 applies to an unmeasured VRAM demand.
     bits.push(tr("admin.engines_model_license_unknown" as never) as string);
   }
-  // Next to the licence, because they are the same kind of fact: both were true of that
-  // repository at the moment somebody accepted its terms.
-  if (m.source) bits.push(m.source);
-  if (m.files?.length) bits.push(m.files.join(" "));
+  // 🔴 The source and the file names are NOT here. They are the only facts on this row that are
+  // links, and a "·"-joined string cannot hold one — see ModelProvenance, which draws them on
+  // their own line directly below this one.
   return bits.join(" · ");
 }

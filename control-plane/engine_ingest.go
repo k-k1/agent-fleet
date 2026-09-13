@@ -182,6 +182,46 @@ func engineIngestResolve(ctx context.Context, src engineIngestSource) (engineRes
 	return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "one of hf, civitai or url is required"}
 }
 
+// engineSourceURL turns a recorded source back into the page a person can open, and is the
+// inverse of the two `Source:` lines above. Empty when it cannot be composed, which the panel
+// draws as plain text — a broken link in an operator's console is worse than a string.
+//
+// It is composed HERE and not in the panel for the same reason a search hit's `url` is (see
+// engineCivitaiModelURL): the two vendors spell it differently, and Civitai's needs a fact the
+// source string does not look like it carries.
+//
+// 🔴 `civitai:<id>` is a model VERSION id, NOT the model id in the page's URL. The two are
+// different numbers, so `civitai.com/models/<id>` opens A DIFFERENT MODEL. The version-only form
+// is the one Civitai resolves, and it is already what this file hands to LicenseURL.
+//
+// 🔴 A plain URL is deliberately NOT linked. `url:` sources are the direct download of the
+// weights — 22 GB in ADR 0072's table — and a text link in a panel that says "where this came
+// from" must not be a click that starts one.
+//
+// ⚠️ Hugging Face keeps no revision in the source string, so the file link is `main`: if the
+// repository moved the file, a 404 is the honest answer and the repository root is one click up.
+// A two-segment source is left unlinked rather than guessed at — `hf:gpt2/model.gguf` is
+// indistinguishable from a legacy single-segment repository whose file happens to be named like
+// a repository, and the row cannot tell which it is.
+func engineSourceURL(source string) string {
+	s := strings.TrimSpace(source)
+	switch {
+	case strings.HasPrefix(s, "hf:"):
+		parts := strings.SplitN(strings.TrimPrefix(s, "hf:"), "/", 3)
+		if len(parts) < 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			return ""
+		}
+		return engineIngestBase + "/" + parts[0] + "/" + parts[1] + "/blob/main/" + parts[2]
+	case strings.HasPrefix(s, "civitai:"):
+		id := strings.TrimPrefix(s, "civitai:")
+		if _, err := strconv.Atoi(id); err != nil {
+			return ""
+		}
+		return engineCivitaiBase + "/models/?modelVersionId=" + id
+	}
+	return ""
+}
+
 // engineHFDoc is the part of a model's API answer this file reads. One call serves both the
 // listing and the resolve, so a person who picks a file from the list is choosing from the same
 // answer the sha256 and the licence are then taken out of — the alternative is two reads that
@@ -639,6 +679,12 @@ type engineIngestRequest struct {
 	// are separate acts and only one of them may land on an id the catalogue already holds:
 	// creating would upsert a working row's files, licence and enabled flag away.
 	Attach bool
+	// Replace swaps the file that row holds under the SAME flag, leaving every other column
+	// alone. The third act, and the one a row's own checkpoint needs: Attach refuses a flag that
+	// is taken and cannot touch the unlabelled slot at all, so without this the only way to move
+	// a model to another quantisation was to forget the row — with its licence acceptance, its
+	// family, its params and its enabled state — and build it again.
+	Replace bool
 	// The attention geometry read from the GGUF header before the job started (engine_gguf.go).
 	// Zero means it could not be read — a gated repository with no token, a file that is not a
 	// GGUF, an upstream that refused the Range — and the row keeps the floor it always had.
@@ -812,7 +858,51 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 			j.ID, j.S3Key)
 		return
 	}
-	file := store.EngineModelFile{Flag: req.FileFlag, S3Key: req.S3Key, Bytes: req.Resolved.Bytes}
+	// Where THIS file came from, written on the file and not only on the row. The row's own
+	// Source is set by the branch that CREATES it, so without this an attached part has no
+	// provenance at all once this job row ages out — and once a file can be REPLACED under a row
+	// that keeps everything else, the row's source names a file that is no longer there
+	// (see store.EngineModelFile.Source).
+	file := store.EngineModelFile{
+		Flag: req.FileFlag, S3Key: req.S3Key, Bytes: req.Resolved.Bytes, Source: req.Resolved.Source,
+	}
+	if req.Replace {
+		// 🔴 The geometry is written again, and only for the slot it describes. The row holds ONE
+		// set of KV numbers and until now only the create path wrote them, so a gguf swapped for
+		// another quantisation kept the previous file's geometry and went on estimating VRAM off
+		// a file that no longer exists. A text encoder's replacement has no such opinion, so it
+		// passes nil and the checkpoint's numbers stand.
+		var kv *store.EngineModelKV
+		if strings.TrimSpace(req.FileFlag) == "" {
+			kv = &store.EngineModelKV{Layers: req.KVGeom.Layers, HeadsKV: req.KVGeom.HeadsKV,
+				KeyLen: req.KVGeom.KeyLen, ValueLen: req.KVGeom.ValLen}
+		}
+		found, err := g.models.ReplaceEngineModelFile(ctx, req.Role, req.ModelID, file, kv)
+		if err != nil {
+			log.Printf("engines: ingest %s finished but %s could not take the file: %v", j.ID, req.ModelID, err)
+			return
+		}
+		if !found {
+			// The row was forgotten, or that slot was, while the download ran. The bytes are in
+			// the bucket and nothing points at them, which is the one outcome worth spelling out.
+			log.Printf("engines: ingest %s finished but %s/%s no longer declares %s: register %s by hand",
+				j.ID, req.Role, req.ModelID, engineFlagLabel(req.FileFlag), j.S3Key)
+			return
+		}
+		// 🔴 The OLD object stays in the bucket. The CP has no s3:DeleteObject (ADR 0072 decision
+		// 7) and the only principal that has is the ingest task — but this runs in the job
+		// reconciler, with nobody waiting on an answer and no way to report one, and the keys it
+		// would hand over are shared: `text_encoders/` is pointed at from more than one row
+		// (measured on af-sandbox: `clip_l.safetensors` from two). A purge that cannot report
+		// what it refused to delete is how a model nobody touched stops loading. The panel says
+		// the bytes stay; deleting them is `?purge=1` on a row somebody chose to forget.
+		log.Printf("engines: ingest %s done: %s of %s/%s replaced by %s (the previous object stays in the bucket)",
+			j.ID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID, j.S3Key)
+		if g.onDone != nil {
+			g.onDone(req.Role)
+		}
+		return
+	}
 	if req.Attach {
 		// One PART of a model that already has a row. Only the file is written: the licence
 		// acceptance, the family and the enabled flag on that row were decided when it was

@@ -110,6 +110,12 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// engine_ingest_perm.go says why the axis stops here).
 	mux.HandleFunc("POST /api/admin/engines/{key}/ingest", a.withIngestAdmin(a.postIngest))
 	mux.HandleFunc("GET /api/admin/engines/{key}/ingest", a.withIngestAdmin(a.listIngest))
+	// And forgetting one of those jobs. The list had no delete and no TTL at all, so it grew
+	// for the life of the deployment — `limit` was only hiding the tail. Under the same
+	// authority as the list rather than super_admin, because the rule is "your own jobs": a
+	// granted tenant_admin sees theirs and may forget theirs, and deleteIngest narrows by the
+	// same tenant the list does.
+	mux.HandleFunc("DELETE /api/admin/engines/{key}/ingest/{id}", a.withIngestAdmin(a.deleteIngest))
 	// Resolving a source WITHOUT starting anything: what the licence is, whether the repository
 	// is gated, how big the file is. The panel calls it while somebody is typing, so that the
 	// licence they are about to accept is on screen BEFORE the button that accepts it.
@@ -848,6 +854,21 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// row to change `steps` would carry the licence acceptance and the source through a
 		// round trip to move one number.
 		Params *store.EngineParams `json:"params"`
+		// ContextTokens and MaxOutputTokens are ONE declaration and travel together: the row
+		// answers max_output_tokens only when context_tokens is above zero (engineAdminModelRow),
+		// so moving one alone leaves a row the panel cannot explain. A missing half is read from
+		// the stored row, which is what makes "raise the cap" a one-field request.
+		//
+		// This is the field a wrong value bills for. Measured on a borrowed llm engine: a row
+		// still declaring 262144 made llama.cpp ask for a 16 GiB KV cache on top of 17 GB of
+		// weights, and the L4 it had just bought answered `cudaMalloc failed: out of memory`
+		// four minutes into the cold start. There was no way to correct it from the panel.
+		ContextTokens   *int `json:"context_tokens"`
+		MaxOutputTokens *int `json:"max_output_tokens"`
+		// VramMiB is the operator's own measurement, and 0 WITHDRAWS it — putting the row back on
+		// the floor its files imply rather than on a number nobody stands behind any more. A
+		// pointer like the rest, so that "said nothing" and "said zero" stay different bodies.
+		VramMiB *int `json:"vram_mib"`
 		// ConfirmVram is "I have read that this may not fit" (ADR 0074 decision 6). Required
 		// only when the model's declared demand exceeds the chosen instance class.
 		ConfirmVram bool `json:"confirm_vram"`
@@ -920,6 +941,53 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		if p == nil {
 			action = "params cleared"
 		}
+	case b.ContextTokens != nil || b.MaxOutputTokens != nil:
+		cur, ok := engineCatalogModel(ctx, e, id)
+		if !ok {
+			break // found stays false, and the 404 below is the answer
+		}
+		next := cur
+		if b.ContextTokens != nil {
+			next.ContextTokens = *b.ContextTokens
+		}
+		if b.MaxOutputTokens != nil {
+			next.MaxOutputTokens = *b.MaxOutputTokens
+		}
+		if next.ContextTokens < 0 || next.MaxOutputTokens < 0 {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+				"context_tokens and max_output_tokens cannot be negative; 0 means undeclared"})
+			return
+		}
+		// Clearing the window clears the cap with it. The row answers a cap only alongside a
+		// window, so one left behind would be stored, invisible and still read by whatever
+		// starts the engine.
+		if next.ContextTokens == 0 {
+			next.MaxOutputTokens = 0
+		}
+		if aerr := engineVramGuardEdit(ctx, e, cur, next, b.ConfirmVram); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		found, err = a.mgr.store.SetEngineModelWindow(ctx, key, id, next.ContextTokens, next.MaxOutputTokens)
+		action = fmt.Sprintf("window %d/%d", next.ContextTokens, next.MaxOutputTokens)
+	case b.VramMiB != nil:
+		cur, ok := engineCatalogModel(ctx, e, id)
+		if !ok {
+			break
+		}
+		if *b.VramMiB < 0 {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+				"vram_mib cannot be negative; 0 withdraws the measurement"})
+			return
+		}
+		next := cur
+		next.VramMiB = *b.VramMiB
+		if aerr := engineVramGuardEdit(ctx, e, cur, next, b.ConfirmVram); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		found, err = a.mgr.store.SetEngineModelVram(ctx, key, id, next.VramMiB)
+		action = fmt.Sprintf("vram_mib %d", next.VramMiB)
 	case b.Selected != nil && *b.Selected:
 		found, err = a.mgr.store.SetEngineModelSelected(ctx, key, id)
 		action = "select"
@@ -936,7 +1004,8 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		// An empty body must not be read as "switch it off", for the same reason the mode
 		// route refuses one.
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
-			"enabled, selected, default, base_model, negative_prompt or params is required"})
+			"enabled, selected, default, base_model, negative_prompt, params, context_tokens," +
+				" max_output_tokens or vram_mib is required"})
 		return
 	}
 	if err != nil {
@@ -978,27 +1047,59 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 //   - it does not run at all where there is no ladder, because then there is no rung to compare
 //     against and the box is whatever CloudFormation bought.
 func engineVramGuard(ctx context.Context, e *engineRuntimeState, id string) *apiError {
-	sel, ok := e.selectedClass(ctx)
-	if !ok || sel.VramMiB <= 0 {
+	m, ok := engineCatalogModel(ctx, e, id)
+	if !ok {
 		return nil
 	}
-	for _, m := range e.catalog.list(ctx) {
-		if m.ID != id || engineModelIsLora(m) {
-			continue
-		}
-		need, source := engineModelVramNeed(m)
-		if source == engineVramUnknown || engineClassFits(sel, need) {
-			return nil
-		}
-		at := "at least "
-		if source == engineVramDeclared {
-			at = ""
-		}
-		return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
-			"%s wants %s%d MiB of VRAM and the %s class declares %d MiB; repeat with confirm_vram to enable it anyway",
-			m.ID, at, need, sel.ID, sel.VramMiB)}
+	return engineVramGuardRow(ctx, e, m)
+}
+
+// engineVramGuardEdit is the same question asked FORWARD: not "may this row be switched on" but
+// "may this row go on being loaded once the value in front of me is written".
+//
+// It exists because the guard above only ever ran on the way in. A row that was already enabled
+// could have its context window raised to anything and nobody looked — which is precisely the
+// shape that failed on a borrowed llm engine: 262144 tokens, a 16 GiB KV cache, `cudaMalloc
+// failed: out of memory`, four minutes after the GPU box was bought. The check is on the
+// CANDIDATE row, never the stored one, because the stored one still fits.
+//
+// A row nothing would load is not asked about: `enabled`, `selected` and `default` are the three
+// states that put weights on the card, and editing a disabled row costs nothing to get wrong.
+func engineVramGuardEdit(ctx context.Context, e *engineRuntimeState, cur, next store.EngineModel, confirmed bool) *apiError {
+	if confirmed || !(cur.Enabled || cur.Selected || cur.Default) {
+		return nil
 	}
-	return nil
+	return engineVramGuardRow(ctx, e, next)
+}
+
+// engineVramGuardRow judges one row VALUE against the chosen rung. Taking the row rather than an
+// id is what lets an edit be judged on the numbers it is about to write.
+func engineVramGuardRow(ctx context.Context, e *engineRuntimeState, m store.EngineModel) *apiError {
+	sel, ok := e.selectedClass(ctx)
+	if !ok || sel.VramMiB <= 0 || engineModelIsLora(m) {
+		return nil
+	}
+	need, source := engineModelVramNeed(m)
+	if source == engineVramUnknown || engineClassFits(sel, need) {
+		return nil
+	}
+	at := "at least "
+	if source == engineVramDeclared {
+		at = ""
+	}
+	return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
+		"%s wants %s%d MiB of VRAM and the %s class declares %d MiB; repeat with confirm_vram to enable it anyway",
+		m.ID, at, need, sel.ID, sel.VramMiB)}
+}
+
+// engineCatalogModel finds one row of an engine's catalogue by id.
+func engineCatalogModel(ctx context.Context, e *engineRuntimeState, id string) (store.EngineModel, bool) {
+	for _, m := range e.catalog.list(ctx) {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return store.EngineModel{}, false
 }
 
 // engineFilesGuard refuses to switch on a row whose declared family reads files it does not
@@ -1038,6 +1139,11 @@ type engineModelFileBody struct {
 	Flag  string `json:"flag"`
 	S3Key string `json:"s3Key"`
 	Bytes int64  `json:"bytes"`
+	// Where this part came from. Here so that the round trip stays one — a row read out of
+	// `GET /api/admin/engines` and posted back rebuilds what it was, and a per-file provenance
+	// that the answer carries but the register route drops would be silently erased by the one
+	// operation that exists to restore a forgotten row (ADR 0072 P6 R2).
+	Source string `json:"source"`
 }
 
 // engineFilesFromBody reads the files out of a register body, from whichever of the two names
@@ -1113,6 +1219,16 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		LicenseURL      string                `json:"license_url"`
 		Precision       string                `json:"precision"`
 		BaseModel       string                `json:"base_model"`
+		// WHERE the bytes came from — `hf:<repo>/<file>`, `civitai:<version>`, a URL. Accepted
+		// here and not only written by the ingest, because this route is how a file that is
+		// already in the bucket is registered AGAIN: the panel offers a finished ingest job's
+		// key, and without this field the rebuilt row loses the one fact migration
+		// 0060_engine_model_source.sql exists to keep — an id is short and readable and does
+		// not say which vendor published the model, and after the job is gone nothing else does.
+		//
+		// Free text on purpose: nothing parses it (the machine-readable half was consumed when
+		// the job was created) and inventing a shape here would make the round trip lossy.
+		Source string `json:"source"`
 		// The generation defaults, in the same shape the row answers them. A pointer so that
 		// "the body said nothing" and "the body said all zeros" stay different bodies.
 		Params *store.EngineParams `json:"params"`
@@ -1133,8 +1249,15 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		License: strings.TrimSpace(b.License), LicenseName: strings.TrimSpace(b.LicenseName),
 		LicenseURL: strings.TrimSpace(b.LicenseURL),
 		Precision:  strings.TrimSpace(b.Precision), BaseModel: strings.TrimSpace(b.BaseModel),
+		Source: strings.TrimSpace(b.Source),
 		Params: engineParamsClean(b.Params),
 	}
+	// 🔴 What is NOT copied across with it: the licence ACCEPTANCE. `license_accepted_by` and
+	// its tenant and timestamp are the record of a human act (ADR 0072 decision 10), and a row
+	// rebuilt from an old job's key is not that act — the person registering it here may not be
+	// the person who accepted anything. The licence TEXT may be re-typed (the field above), the
+	// signature may not, so the new row's acceptance stays empty and the panel says
+	// "licence not recorded".
 	// The commercial-use verdict is READ FROM the licence here exactly as the ingest reads it
 	// (ADR 0072 decision 10), rather than being a field this route accepts. Two reasons: the
 	// answer is a property of the licence and not of whoever typed it, and a row registered by
@@ -1156,6 +1279,7 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		if k := strings.TrimSpace(f.S3Key); k != "" {
 			m.Files = append(m.Files, store.EngineModelFile{
 				Flag: strings.TrimSpace(f.Flag), S3Key: k, Bytes: f.Bytes,
+				Source: strings.TrimSpace(f.Source),
 			})
 		}
 	}
@@ -1389,6 +1513,15 @@ type engineIngestBody struct {
 	// Attach says the file joins the row `id` already names rather than creating one. It is the
 	// other half of the flag: a FLUX.1 row is four files and they arrive as four downloads.
 	Attach bool `json:"attach"`
+	// Replace says the file takes the place of the one that row holds under the SAME flag.
+	//
+	// The third act, and the one the panel had no way to ask for: attaching refuses a flag that
+	// is taken, and the unlabelled slot — the checkpoint itself — cannot be attached to at all,
+	// so changing which file a model reads meant forgetting the row and building it again. That
+	// throws away the licence acceptance (a record of a human act), the family, the params, the
+	// enabled state and the provenance, for what a person thinks of as "the same model, a
+	// smaller quantisation".
+	Replace bool `json:"replace"`
 	// LicenseAccepted is REQUIRED, and it is not a formality (ADR 0072 decision 10). A gated
 	// repository distributes only to accounts that accepted its terms, and on a multi-tenant
 	// deployment the operator accepts on behalf of every member — so the answer is recorded
@@ -1416,14 +1549,29 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ 
 		writeAPIErr(w, aerr)
 		return
 	}
-	writeJSON(w, http.StatusOK, engineResolvedRow(res, a.hfTokens().configured(r.Context()), e.def.Provider))
+	// The attention geometry, read HERE as well as at the start of an ingest — the one number
+	// this route was missing, and the expensive one to learn late. Measured on a borrowed llm
+	// engine: an L4 (24 GB) took 17 GB of weights and then died on `cudaMalloc failed: out of
+	// memory ... failed to allocate buffer for kv cache` for the 16 GB the window wanted, four
+	// minutes and one purchased GPU after the button was pressed. The weights alone were never
+	// the question.
+	//
+	// Best-effort and silent, exactly as at ingest (engine_gguf.go): a header that cannot be
+	// read leaves the field OFF the answer rather than putting a zero on the panel.
+	kind := strings.TrimSpace(b.Kind)
+	if kind == "" {
+		kind = engineIngestKindFor(e)
+	}
+	geom := engineIngestGeometry(r.Context(), kind, res, a.hfTokens())
+	writeJSON(w, http.StatusOK,
+		engineResolvedRow(res, a.hfTokens().configured(r.Context()), e.def.Provider, geom))
 }
 
 // engineResolvedRow is what the panel draws before anything is started. `can_ingest` is the
 // verdict this route exists for: a gated repository on a deployment with no HF token cannot be
 // taken in, and saying so here costs nothing — finding out from a 401 costs a Fargate task and
 // a confused administrator.
-func engineResolvedRow(res engineResolved, hasToken bool, provider string) map[string]any {
+func engineResolvedRow(res engineResolved, hasToken bool, provider string, geom engineKVGeometry) map[string]any {
 	row := map[string]any{
 		"sha256":           res.SHA256,
 		"bytes":            res.Bytes,
@@ -1489,6 +1637,19 @@ func engineResolvedRow(res engineResolved, hasToken bool, provider string) map[s
 	// questions and only one of them is Hugging Face's to answer.
 	if res.ContextLength > 0 {
 		row["context_length"] = res.ContextLength
+	}
+	// What the KV cache costs per 1024 tokens of window. The panel MULTIPLIES this by the
+	// window in the form: the cache is linear in the context length, so one number answers
+	// every value somebody can type, and the formula itself (engineKVCacheMiB) stays in one
+	// place — a second copy of `n_layer × n_head_kv × (k+v) × ctx × 2` in TypeScript is a
+	// second thing to keep in step with the day a model declares different key and value
+	// widths.
+	//
+	// 🔴 ABSENT, never 0, when the header was not readable. "Nobody measured it" and "it
+	// measured zero" are different facts and this panel draws them differently; a 0 here would
+	// be read as a model whose window costs nothing.
+	if kv := engineKVCacheMiB(geom, 1024); kv > 0 {
+		row["kv_mib_per_1k_tokens"] = kv
 	}
 	return row
 }
@@ -1585,12 +1746,21 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	// and nothing else about the row is touched. It is what makes a split model assemblable by
 	// ingest alone (欠落 6) — until it existed, the three components of a FLUX.1 row had to be
 	// taken in as throwaway rows and the real row re-typed through `POST /models`.
+	// Attaching and replacing are different acts with opposite preconditions — one needs the
+	// slot free, the other needs it filled — so a request that claims both is not a request the
+	// CP may pick a winner for.
+	if b.Attach && b.Replace {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"attach and replace are two different acts: one adds a file to a slot that is free, the other" +
+				" swaps the file in a slot that is taken — ask for exactly one"})
+		return
+	}
 	var existing *store.EngineModel
 	for _, m := range e.catalog.list(r.Context()) {
 		if m.ID != id {
 			continue
 		}
-		if !b.Attach {
+		if !b.Attach && !b.Replace {
 			writeAPIErr(w, &apiError{http.StatusConflict, errCodeIngestIDExists,
 				"this engine already has a model called " + id + " — forget that row first, or choose another id"})
 			return
@@ -1600,6 +1770,12 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	}
 	if b.Attach {
 		if aerr := engineAttachAllowed(existing, id, key, flag); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
+	if b.Replace {
+		if aerr := engineReplaceAllowed(existing, id, key, flag); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -1639,8 +1815,9 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		base = strings.TrimSpace(res.BaseModel)
 	}
 	// An attach writes no family: the row it joins declared one when it was created, and asking
-	// for it again is asking for a second answer to a question already settled.
-	if !b.Attach && !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) && !engineBaseModelValid(e.def.Provider, base) {
+	// for it again is asking for a second answer to a question already settled. A replace is the
+	// same case — it changes one file and nothing else about the row.
+	if !b.Attach && !b.Replace && !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) && !engineBaseModelValid(e.def.Provider, base) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
 			"declare base_model as one of %s: this engine runs %s, which picks a workflow by family"+
 				" and will not guess one%s",
@@ -1667,7 +1844,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		AcceptedBy: g.ident.ID, AcceptedTenant: g.tenantID,
 		AcceptedLicense: engineLicenceLabel(res),
 		Resolved:        res,
-		FileFlag:        flag, Attach: b.Attach,
+		FileFlag:        flag, Attach: b.Attach, Replace: b.Replace,
 	})
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -1704,25 +1881,168 @@ func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, g eng
 		writeJSON(w, http.StatusOK, map[string]any{"jobs": []any{}})
 		return
 	}
-	jobs, err := a.ingestJobsFor(r, g, key)
+	body, err := a.ingestListBody(r, g, key)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	out := make([]map[string]any, 0, len(jobs))
-	for _, j := range jobs {
-		out = append(out, engineIngestJobRow(j))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"jobs": out})
+	writeJSON(w, http.StatusOK, body)
 }
 
-// engineIngestJobRow is one job as the panel reads it. The SPEC is not on the wire: it is this
-// process's own shape, it holds nothing the panel does not already have, and a job list is not
-// where a catalogue row should be edited.
+// deleteIngest (DELETE …/ingest/{id}) forgets ONE job of the history.
+//
+// Until this existed the table had no delete, no TTL and no prune, so it grew for the life of
+// the deployment and the list's `limit` only hid the tail. There is still no timer, and
+// store.DeleteEngineIngestJob says why: a `done` row is the only written record of an S3 key
+// until a catalogue row points at it.
+//
+// Three refusals, and they are deliberately not three sentences:
+//
+//   - `pending` / `running` → 409, and this is the one that matters. Deleting the ROW does not
+//     stop the TASK: the ECS task keeps downloading, finishes, and writes its catalogue row
+//     with nobody waiting for it — a model appearing out of nothing minutes after somebody
+//     deleted the only trace of where it came from. The reconciler would also have no row left
+//     to move to `done`, so the outcome (and a sha256 mismatch, if that is what happened) is
+//     lost;
+//   - another ROLE's job, another TENANT's job, and an id that never existed → all 404 with the
+//     same words. The list a granted tenant_admin reads is narrowed to their own tenant (ADR
+//     0072 open question 11) and the delete has to be narrowed by the same rule, or the reduced
+//     panel is a read-only view of one tenant with a delete button for every tenant. 404 and
+//     not 403 because "you may not touch job X" tells a tenant_admin that job X exists.
+//
+// 🔴 Not refused for a BORROWED role, unlike every write next door. The job ledger is this
+// deployment's own — the far catalogue is mirrored, its jobs are not — so refusing here would
+// strand the rows a role left behind when it became borrowed. The panel still offers no button
+// there, because that whole screen is read-only for a mirror.
+func (a engineAdminAPI) deleteIngest(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	id := strings.TrimSpace(r.PathValue("id"))
+	if a.reg.get(key) == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	if a.mgr == nil || a.mgr.store == nil {
+		writeAPIErr(w, internalErr(errors.New("no store")))
+		return
+	}
+	j, ok, err := a.mgr.store.GetEngineIngestJob(r.Context(), id)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok || j.Role != key || (!g.super && j.TenantID != g.tenantID) {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeIngestJobUnknown,
+			"no ingest job " + id + " for engine " + key})
+		return
+	}
+	if j.State == store.EngineIngestPending || j.State == store.EngineIngestRunning {
+		writeAPIErr(w, &apiError{http.StatusConflict, errCodeIngestJobLive,
+			"that job is still running: forgetting the row would not stop the task, which keeps" +
+				" downloading and writes its catalogue row when it finishes — wait for it to end," +
+				" and forget it then"})
+		return
+	}
+	if _, err := a.mgr.store.DeleteEngineIngestJob(r.Context(), id); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// Audited with the KEY in it, because that is the fact the deletion destroys: after this
+	// row is gone the audit line is the last place the s3 key of a file still in the bucket is
+	// written down.
+	a.auditFor(r, g, "engine."+key+".ingest",
+		"forget job "+id+" ("+j.ModelID+" "+j.S3Key+", "+j.State+")")
+	// The remaining list, so the panel does not have to ask again — and so what it draws is the
+	// server's list rather than one it edited locally.
+	body, err := a.ingestListBody(r, g, key)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// ingestListBody is the `{"jobs": …}` answer both the list and the delete give, narrowed to the
+// caller's authority. Shared so that the two cannot drift into two shapes for one list.
+func (a engineAdminAPI) ingestListBody(r *http.Request, g engineIngestGrant, key string) (map[string]any, error) {
+	jobs, err := a.ingestJobsFor(r, g, key)
+	if err != nil {
+		return nil, err
+	}
+	// EVERY role's rows, not this one's: a text encoder taken in under `image` is pointed at by
+	// rows of whatever role loads it, and "is this key written down anywhere" has to mean
+	// anywhere. A read that FAILS is not fatal to the list — the jobs are what this route is
+	// for — and leaves every row saying nothing points at it, which is the cautious half: the
+	// panel warns harder before forgetting.
+	rows, rerr := a.mgr.store.ListEngineModels(r.Context(), "")
+	if rerr != nil {
+		log.Printf("engines: ingest list could not read the catalogue (%v) — job rows will not say what still uses their files", rerr)
+		rows = nil
+	}
+	out := make([]map[string]any, 0, len(jobs))
+	for _, j := range jobs {
+		row := engineIngestJobRow(j)
+		if by := engineIngestKeyUsedBy(rows, j.S3Key); by != "" {
+			row["key_used_by"] = by
+		}
+		out = append(out, row)
+	}
+	return map[string]any{"jobs": out}, nil
+}
+
+// engineIngestKeyUsedBy names the catalogue row that already points at this job's file, or "".
+//
+// One answer to two questions the panel asks in opposite directions:
+//
+//   - registering the key AGAIN: a shared key is NORMAL and must not be refused. Decision 2
+//     says so on purpose — `text_encoders/` is one file SD3.5 and FLUX.1 both read (measured on
+//     af-sandbox: `clip_l.safetensors` pointed at by two rows) — so the panel names who has it
+//     rather than blocking;
+//   - FORGETTING the job: while nothing points at the key, this row is the last written record
+//     of it, and deleting it leaves bytes in the bucket that nothing can name again.
+//
+// 🔴 It says who POINTS at the file. It never says the file is there: the CP cannot look in the
+// bucket (ADR 0072 review R3), and `deleteModel?purge=1` deletes the bytes while leaving the job
+// `done` for ever.
+func engineIngestKeyUsedBy(rows []store.EngineModel, s3key string) string {
+	if strings.TrimSpace(s3key) == "" {
+		return ""
+	}
+	for _, m := range rows {
+		for _, f := range m.Files {
+			if f.S3Key == s3key {
+				return m.Role + "/" + m.ID
+			}
+		}
+	}
+	return ""
+}
+
+// engineIngestJobRow is one job as the panel reads it. Nearly all of the SPEC stays off the
+// wire: it is this process's own shape, and a job list is not where a catalogue row is edited.
+//
+// Two of its fields do ride along, and only because a finished job is how a file that is
+// already in the bucket gets registered again — the panel fills `POST /models` from this row
+// (the bytes are staged, so re-taking it in would be an ingest of something already here). What
+// that form cannot derive from a key is what the file was taken in AS, and both ways of getting
+// it wrong are silent until the next cold start: a LoRA registered as a checkpoint is a row
+// that starts nothing, and a text encoder registered with no flag becomes the checkpoint of its
+// own row.
 func engineIngestJobRow(j store.EngineIngestJob) map[string]any {
 	row := map[string]any{
 		"id": j.ID, "model_id": j.ModelID, "s3_key": j.S3Key,
 		"source": j.Source, "state": j.State, "created_at": j.CreatedAt,
+	}
+	// A job started before a field existed decodes with it empty, and a spec that does not
+	// parse leaves both empty. Either way the form opens with one fewer answer filled in —
+	// never with a wrong one.
+	var spec struct{ Kind, FileFlag string }
+	if json.Unmarshal([]byte(j.Spec), &spec) == nil {
+		if spec.Kind != "" {
+			row["kind"] = spec.Kind
+		}
+		if spec.FileFlag != "" {
+			row["file_flag"] = spec.FileFlag
+		}
 	}
 	if j.Message != "" {
 		row["message"] = j.Message
@@ -1806,6 +2126,34 @@ func engineAttachAllowed(row *store.EngineModel, id, key, flag string) *apiError
 		}
 	}
 	return nil
+}
+
+// engineReplaceAllowed is the gate on swapping a file a row already holds. It is the mirror of
+// engineAttachAllowed and deliberately not a relaxation of it:
+//
+//   - no such row. Same refusal, same reason — a typo would download for minutes and then write
+//     a file nothing points at;
+//   - no file in that slot. THIS is the one that keeps the two acts apart: replacing a slot
+//     nothing occupies is attaching, and quietly doing that would turn a mistyped flag into a
+//     second checkpoint on a row that is supposed to have one. The refusal names the act that
+//     WAS meant, because from the panel the two are one press apart.
+//
+// 🔴 The empty flag is allowed here and refused by the attach gate, which is the whole point:
+// the unlabelled file is the checkpoint, a row has exactly one, and it was until now the one
+// file in the catalogue that no ingest could ever change.
+func engineReplaceAllowed(row *store.EngineModel, id, key, flag string) *apiError {
+	if row == nil {
+		return &apiError{http.StatusNotFound, errCodeEngineModelUnknown,
+			"no model " + id + " for engine " + key + " to replace a file of"}
+	}
+	for _, f := range row.Files {
+		if strings.TrimSpace(f.Flag) == flag {
+			return nil
+		}
+	}
+	return &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+		id + " declares no " + engineFlagLabel(flag) + " file, so there is nothing to replace" +
+			" — take this in as a part of that row instead"}
 }
 
 // engineBaseModelHint quotes what the repository called this model, so the refusal above ends

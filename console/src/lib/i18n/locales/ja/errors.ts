@@ -239,6 +239,10 @@ export const errors = {
   "err.license_not_accepted": "ライセンスへの同意が必要です",
   "err.gated_no_token": "gated のリポジトリですが、この配備に Hugging Face のトークンがありません",
   "err.model_id_exists": "その id のモデルはこのエンジンに既にあります",
+  // 履歴から 1 行を消すときの 2 つの断り。「まだ走っています」は待てば済む話で、行を消しても
+  // ECS のタスクは止まらない（終わったらカタログ行を書く）ことがそのまま理由になる。
+  "err.ingest_job_unknown": "その取り込み履歴はこのエンジンにありません",
+  "err.ingest_job_live": "その取り込みはまだ走っているので、履歴だけを消すことはできません",
   "err.hf_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新してください",
   "err.hf_token_empty": "トークンが空です",
   "err.hf_token_store_failed": "トークンを保存できませんでした",

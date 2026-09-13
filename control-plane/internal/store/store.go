@@ -355,6 +355,34 @@ type EngineModelFile struct {
 	// (S3 to EBS ran at 104-147 MB/s, so 18.5 GB is three minutes of a $1.26/hour box).
 	// Zero means undeclared, and undeclared prints nothing rather than "+0 s".
 	Bytes int64 `json:"bytes,omitempty"`
+	// Source is where THIS file came from, in the same vocabulary as EngineModel.Source
+	// (`hf:<repo>/<file>`, `civitai:<id>`, a URL). The row carries one too, and it answers a
+	// different question — two of them, neither of which the row's own can answer:
+	//
+	//   - 🔴 the row's Source describes the file that CREATED the row and nothing else. An attach
+	//     writes only the file (AppendEngineModelFile), so a four-file FLUX.1 row carries one
+	//     `hf:black-forest-labs/FLUX.1-dev/...` line that a reader takes for the provenance of
+	//     all four. The parts are routinely from different repositories — the t5xxl in ADR 0072's
+	//     table is not published by the people who published the diffusion model — and once the
+	//     ingest job ages out of engine_ingest_jobs nothing else remembers;
+	//   - and a row is only ever as true as its last whole-row write. Now that one file can be
+	//     REPLACED under a row that keeps everything else, the row's own source names a file that
+	//     is no longer there. Per file is the only place the answer stays correct.
+	//
+	// No migration: `files` is a JSON column (migration 0057), so an old row simply has no
+	// per-file source. Absent for a seeded row, for one registered by hand, and for everything
+	// taken in before this existed — which is why nothing reads it as "unknown vendor".
+	Source string `json:"source,omitempty"`
+}
+
+// EngineModelKV is the attention geometry a row's VRAM estimate is computed from, as the one
+// thing a file replacement may have to rewrite.
+//
+// It exists as a type rather than four arguments because the reason to pass it is "this file's
+// header was read again"; passing nil says the opposite — leave what the row has alone — and a
+// replacement of a text encoder has no opinion about the checkpoint's attention heads.
+type EngineModelKV struct {
+	Layers, HeadsKV, KeyLen, ValueLen int
 }
 
 // EngineModelStore is the catalogue. Two writers reach it — an administrator's toggle and the
@@ -369,6 +397,21 @@ type EngineModelStore interface {
 	// part by part by the ingest instead of being re-typed through the register route. Reports
 	// false when there is no such row.
 	AppendEngineModelFile(ctx context.Context, role, id string, f EngineModelFile) (bool, error)
+	// ReplaceEngineModelFile puts one file in the place of the one the row holds under the same
+	// flag, and changes nothing else about the row. It is what makes a model's file correctable
+	// at all: appending refuses a flag that is taken, and the UNLABELLED slot — the checkpoint
+	// itself — can never be appended to, so before this the only way to swap a quantisation was
+	// to forget the row and build it again, losing the licence acceptance, the params, the
+	// enabled state and the provenance with it.
+	//
+	// `kv` rewrites the attention geometry when the replacement's own header was read; nil
+	// leaves it, because a row whose text encoder changed has no new answer about its
+	// checkpoint's attention heads. 🔴 Passing the geometry matters: the row carries ONE set
+	// and only the create path ever wrote it, so a gguf swapped for another quantisation would
+	// otherwise keep the old file's geometry and go on estimating VRAM off a file that is gone.
+	//
+	// Reports false when there is no such row or the row no longer declares that slot.
+	ReplaceEngineModelFile(ctx context.Context, role, id string, f EngineModelFile, kv *EngineModelKV) (bool, error)
 	// SetEngineModelEnabled toggles one row. Reports false when there is no such row, so a
 	// caller can answer 404 rather than 200 for a model that does not exist.
 	SetEngineModelEnabled(ctx context.Context, role, id string, enabled bool) (bool, error)
@@ -387,6 +430,13 @@ type EngineModelStore interface {
 	// SetEngineModelNegativePrompt corrects the row's own negative prompt — what this checkpoint
 	// should never be asked to draw (ADR 0072 follow-up, negative prompts).
 	SetEngineModelNegativePrompt(ctx context.Context, role, id, negative string) (bool, error)
+	// SetEngineModelWindow corrects the declared window. BOTH columns, because the catalogue
+	// carries max_output_tokens only when context_tokens is above zero: a row that moved one of
+	// them alone is one the panel cannot explain.
+	SetEngineModelWindow(ctx context.Context, role, id string, contextTokens, maxOutputTokens int) (bool, error)
+	// SetEngineModelVram writes the operator's own VRAM measurement; 0 withdraws it and puts the
+	// row back on the floor its files imply.
+	SetEngineModelVram(ctx context.Context, role, id string, vramMiB int) (bool, error)
 	DeleteEngineModel(ctx context.Context, role, id string) (bool, error)
 }
 

@@ -306,7 +306,28 @@ export const admin = {
   // 既にある id を指すと CP は新規作成を断る——行のファイル・ライセンス・有効状態を
   // 上書きしてしまうため——ので、「その行の部品として足す」をここで選ばせる。
   "admin.engines_ingest_attach": "「{id}」の部品として足す（新しい行は作らない）",
-  "admin.engines_ingest_id_taken": "この id はもう使われています。別の id にするか、上で「部品として足す」を選んでください。",
+  // 🔴 もう 1 つの行き先。埋まっているスロットには「足す」ことができず（CP は 409）、
+  // ラベルの無いファイル＝本体は足すこと自体ができないので、量子化を変えるには行を捨てて
+  // 作り直すしかなかった——ライセンス受諾・族・params・有効状態・取り込み元を全部失う。
+  "admin.engines_ingest_replace": "「{id}」の {part} をこのファイルに差し替える（行はそのまま）",
+  // CP に s3:DeleteObject が無く（ADR 0072 決定 7）、差し替えが終わるのは数分後の
+  // ジョブ照合の中で、断られた削除を報告する相手がいない。鍵は共有されている
+  // （text_encoders/ は複数の行から指されている）ので、ここで消すと無関係な行が壊れる。
+  "admin.engines_ingest_replace_keeps_bytes": "前のファイルはバケットに残ります（消すのは行を忘れるときの「ファイルも消す」です）。",
+  "admin.engines_ingest_id_taken": "この id はもう使われています。別の id にするか、上で「部品として足す」か「差し替える」を選んでください。",
+  // 🔴 押す前に「載るかどうか」を言う。実機で借りた llm は L4（24 GB）に重み 17 GB を載せた
+  // あと KV キャッシュ 16 GB で `cudaMalloc failed: out of memory` で落ちた——GPU を買って
+  // 4 分後、つまり実費。画面が出していたのはファイル名とサイズだけだった。
+  // 重みだけでカードを超える候補は一覧の時点で印を付ける（KV は解決するまで分からないので、
+  // 印が無いことは「載る」ではなく「ここでは否定できない」）。
+  "admin.engines_ingest_over_card": "⚠ カード超過",
+  "admin.engines_ingest_fit_weights": "重み {n} MiB",
+  // 🔴 要素型（-ctk/-ctv）は CloudFormation のパラメータでエンジンの表に届かないので読めない。
+  // f16 と仮定していることを言い切る（量子化 KV の配備では過大評価＝安全側）。
+  "admin.engines_ingest_fit_kv": "KV キャッシュ {n} MiB（{c} トークン・f16 と仮定）",
+  "admin.engines_ingest_fit_kv_unread": "KV キャッシュは読めませんでした（この数字は重みだけです）",
+  "admin.engines_ingest_fit_card": "合計 {n} MiB / このカード {c} MiB",
+  "admin.engines_ingest_fit_over": "このカードには載りません。小さい量子化を選ぶか、ウィンドウを狭めてください。",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
   "admin.engines_ingest_gated": "gated のリポジトリです。運用者のアカウントで条項に同意済みのトークンを使って取り込みます。",
   "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。下の「Hugging Face のトークン」で運用者のトークンを登録してください（読むのは取り込みタスクだけです）。",
@@ -343,6 +364,27 @@ export const admin = {
   // 走って完了した」は真であり続ける）ので、見出しと日時を付けて「履歴」と読めるようにする。
   // 日時が無いと、消えたモデルの隣の「完了」が現在の状態と読める。
   "admin.engines_ingest_jobs_head": "取り込みの履歴",
+  // 履歴を 1 行消す（ADR 0072 P4 に無かった削除）。この表には TTL も一括の掃除も無いままに
+  // する: done の行は、カタログがその鍵を指すまでのあいだ「バケットにこのファイルがある」と
+  // 書いてある唯一の場所で、CP は S3 を見られない（レビュー R3）。だから消す前に、その鍵を
+  // 使っている行がいるかどうかを言い分ける。
+  // 🔴 「取り込み直す」ではない。バイトはもうバケットにある（purge を付けずに行を消すと
+  // 残る——2026-09-09 に開発配備で 491 MB のファイルが行より長生きした）ので、これは登録
+  // （POST /models）で、足りていなかったのは鍵の一覧だけだった。押しても登録はせず、フォーム
+  // を開いて埋めるところで止まる: id とファミリーは人が確かめる欄。
+  "admin.engines_ingest_job_reuse": "この鍵で登録する",
+  "admin.engines_model_add_from_job": "取り込み履歴から: {s}",
+  // 同じ鍵を複数の行が指すのは異常ではない（SD3.5 と FLUX.1 は同じ text encoder を読む）。
+  // 拒まず、誰が使っているかだけを言う。
+  "admin.engines_model_add_from_job_used": "この鍵は {who} も使っています。同じファイルを複数の行が指すのは正常です。",
+  "admin.engines_ingest_job_forget": "履歴を消す",
+  "admin.engines_ingest_job_forget_go": "消す",
+  "admin.engines_ingest_job_forget_live": "実行中の取り込みは履歴だけを消すことはできません。行を消してもタスクは止まらず、終われば誰も待っていないカタログ行を書きます。",
+  "admin.engines_ingest_job_forget_used": "この鍵は {who} が使っています。履歴を消しても、その行と鍵は残ります。",
+  // 🔴 「ファイルは在ります」とは言わない。purge（バイトごと削除）してもジョブは done のまま
+  // 残るし、CP はバケットを見られない。言えるのは「この鍵を指すカタログ行が無い」だけ。
+  "admin.engines_ingest_job_forget_last": "この鍵を指すカタログ行はありません。履歴を消すと、この鍵をここから選んで登録し直す道も一緒に消えます（Control Plane はバケットを見られないので、ファイルがまだ在るかどうかは分かりません）。",
+  "admin.engines_ingest_job_forget_ack": "承知のうえで消す",
   "admin.engines_ingest_state_pending": "開始中",
   "admin.engines_ingest_state_running": "取り込み中",
   "admin.engines_ingest_state_done": "完了",
@@ -388,11 +430,28 @@ export const admin = {
   "admin.engines_class_vram_many": "このエンジンは要求ごとにチェックポイントを選び、読み込んだものを VRAM に保持します。余裕があれば複数が同時に載るので、上の数字はそのうち最大の 1 つです。",
   "admin.engines_vram_src_declared": "実測",
   "admin.engines_vram_src_floor": "重みだけの下限",
+  // CP はこの出所も返す（engine_class.go）。どちらのカタログにも語が無く、確認ダイアログは
+  // キーを連結して作るので、存在しないキーをそのまま描いていた。
+  "admin.engines_vram_src_weights_kv": "重み＋KV キャッシュの下限",
   "admin.engines_vram_src_unknown": "不明",
   "admin.engines_vram_confirm": "{id} は {n} MiB（{src}）を必要としますが、いま選んでいるクラスは {m} MiB です。CUDA は VRAM が足りないと遅くなるのではなく落ちます。量子化やオフロードで載ることもあるので、承知のうえなら続けてください。",
   "admin.engines_vram_confirm_go": "承知のうえで有効にする",
   "admin.engines_model_vram": "VRAM {n} MiB",
   "admin.engines_model_vram_floor": "VRAM 少なくとも {n} MiB（重みだけの下限）",
+  // 🔴 下限は下限として書く。実測の言い回しで描くと、CP が導出した数字が「運用者が測った」
+  // ように読める。コンテキスト窓を編集したときに動く唯一の出所なので、ここが一番効く。
+  "admin.engines_model_vram_weights_kv": "VRAM 少なくとも {n} MiB（重み＋KV キャッシュ）",
+  // llm の行が宣言する窓と、その編集欄。間違った値の代価は実費で払う——262144 のままの行は
+  // 16 GiB の KV キャッシュを要求し、既に金を払った冷間起動の 4 分後にエンジンを殺した。
+  "admin.engines_model_window_edit": "窓",
+  "admin.engines_model_window_context": "コンテキスト",
+  "admin.engines_model_window_output": "最大出力",
+  "admin.engines_model_vram_edit": "実測 VRAM（MiB）",
+  // いまこの行がどれだけ要ると見ているか、そしてその出所。どちらの欄を編集しても動くので
+  // 欄の隣に置く。「実測」と「ファイルからの導出」は同じ主張ではない。
+  "admin.engines_model_need_now": "現在 {n} MiB（{src}）",
+  "admin.engines_model_need_unknown": "現在：不明",
+  "admin.engines_model_window_save": "保存",
   // 行が持ちうるライセンスの事実（ADR 0072 決定 10）。「記録なし」は空白にせず書く——seed の
   // 行はライセンスを知りようがなく、手登録のフォームは訊いていない。取り込んだ行が必ず名前を
   // 出している中の空白は「制限なし」と読めてしまう。

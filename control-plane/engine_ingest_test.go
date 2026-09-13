@@ -270,6 +270,114 @@ func TestEngineIngestRowRemembersWhereItCameFrom(t *testing.T) {
 	}
 }
 
+// 🔴 And every PART remembers its own, which the row above cannot say for a split model.
+//
+// A FLUX.1 row is four files and they arrive as four downloads: the first creates the row, the
+// other three are attaches, and an attach writes only the file. So the row's own source
+// describes file one — while a reader takes one `hf:…/FLUX.1-dev/…` line under a four-file row
+// as the provenance of all four. The parts really do come from different repositories: the
+// text encoders in ADR 0072's table are not published by whoever published the diffusion model.
+func TestEngineIngestAttachedPartRemembersItsOwnSource(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	ctx := context.Background()
+	finish := func(req engineIngestRequest) {
+		t.Helper()
+		job, aerr := ing.start(ctx, req)
+		if aerr != nil {
+			t.Fatalf("start: %v", aerr.message)
+		}
+		api.tasks = []ecstypes.Task{{
+			TaskArn: aws.String(job.TaskArn), LastStatus: aws.String("STOPPED"),
+			Containers: []ecstypes.Container{
+				{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+				{Name: aws.String("upload"), ExitCode: aws.Int32(0)},
+			},
+		}}
+		ing.reconcile(ctx)
+	}
+	first := ingestReq()
+	first.Resolved.Source = "hf:black-forest-labs/FLUX.1-dev/flux1-dev.safetensors"
+	first.S3Key = "image/diffusion_models/flux1-dev.safetensors"
+	finish(first)
+
+	part := ingestReq()
+	part.Attach, part.FileFlag = true, "--t5xxl"
+	part.S3Key = "image/text_encoders/t5xxl_fp8_e4m3fn.safetensors"
+	part.Resolved.Source = "hf:comfyanonymous/flux_text_encoders/t5xxl_fp8_e4m3fn.safetensors"
+	finish(part)
+
+	rows, err := st.ListEngineModels(ctx, first.Role)
+	if err != nil || len(rows) != 1 || len(rows[0].Files) != 2 {
+		t.Fatalf("rows = %d (%v)", len(rows), err)
+	}
+	for i, want := range []string{first.Resolved.Source, part.Resolved.Source} {
+		if got := rows[0].Files[i].Source; got != want {
+			t.Errorf("file %d source = %q, want %q — a part taken in from another repository"+
+				" has no provenance of its own once the job row is gone", i, got, want)
+		}
+	}
+	// The row still says where IT came from: the two facts are both kept, because the licence
+	// that was accepted belongs to the repository the row was created from.
+	if rows[0].Source != first.Resolved.Source {
+		t.Errorf("the row's own source = %q, want %q", rows[0].Source, first.Resolved.Source)
+	}
+	// And the panel is told, per file. A column nothing renders is a column nobody can use.
+	fileRows, _ := engineAdminModelRow(rows[0])["file_rows"].([]map[string]any)
+	if len(fileRows) != 2 || fileRows[1]["source"] != part.Resolved.Source {
+		t.Errorf("file_rows = %+v — the per-file provenance is stored but never shown", fileRows)
+	}
+	// Absent, not empty: a file staged by hand has no upstream, and an empty string in the
+	// answer is a claim that somebody looked and found nothing.
+	bare := engineModelFileRows(store.EngineModel{Files: []store.EngineModelFile{{S3Key: "llm/x.gguf"}}})
+	if _, ok := bare[0]["source"]; ok {
+		t.Error("a hand-staged file claims a provenance nobody recorded")
+	}
+}
+
+// engineSourceURL is the inverse of the `Source:` lines the resolvers write, and the panel draws
+// a link ONLY when it answers — the rest stay text, which is what an operator can still read.
+func TestEngineSourceURL(t *testing.T) {
+	for _, c := range []struct{ what, source, want string }{
+		{"a Hugging Face file", "hf:Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+			"https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/blob/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"},
+		{"a file in a subdirectory", "hf:unsloth/Qwen3-30B-GGUF/Q4_K_M/qwen3-30b-Q4_K_M.gguf",
+			"https://huggingface.co/unsloth/Qwen3-30B-GGUF/blob/main/Q4_K_M/qwen3-30b-Q4_K_M.gguf"},
+		// 🔴 The whole reason this is composed in the Control Plane. `civitai:<id>` is a model
+		// VERSION id, and the model id in the page's URL is a different number — so
+		// `civitai.com/models/<id>` opens A DIFFERENT MODEL. This form is the one Civitai
+		// resolves, and it is already what the resolver hands to LicenseURL.
+		{"a Civitai version", "civitai:1759168", "https://civitai.com/models/?modelVersionId=1759168"},
+		// 🔴 A url source is the direct download of the weights (22 GB in ADR 0072's table).
+		// A link in a panel that says "where this came from" must not start one.
+		{"a plain url", "https://example.invalid/m.safetensors", ""},
+		// Two segments cannot be told apart: `hf:gpt2/model.gguf` is either a legacy
+		// single-segment repository plus a file, or an owner and a repository with no file.
+		{"a two-segment hf source", "hf:gpt2/model.gguf", ""},
+		{"an hf source with no file", "hf:Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/", ""},
+		{"a civitai source that is not a number", "civitai:v3", ""},
+		{"a seeded row", "", ""},
+		{"something nobody has written yet", "ollama:qwen3", ""},
+	} {
+		if got := engineSourceURL(c.source); got != c.want {
+			t.Errorf("%s (%q) = %q, want %q", c.what, c.source, got, c.want)
+		}
+	}
+	// And the row carries it beside the text, absent when it could not be composed — the panel
+	// branches on the field arriving rather than parsing the string a second time.
+	row := engineAdminModelRow(store.EngineModel{ID: "x", Source: "civitai:1759168"})
+	if row["source_url"] != "https://civitai.com/models/?modelVersionId=1759168" {
+		t.Errorf("source_url = %v", row["source_url"])
+	}
+	plain := engineAdminModelRow(store.EngineModel{ID: "x", Source: "https://example.invalid/m.safetensors"})
+	if _, ok := plain["source_url"]; ok {
+		t.Error("a url source was turned into a link — that click is a 22 GB download")
+	}
+	if plain["source"] != "https://example.invalid/m.safetensors" {
+		t.Error("the source text was dropped along with the link — the operator can read it")
+	}
+}
+
 // 🔴 The context length is a CEILING, not a setting. Hugging Face answers what the architecture
 // allows (the 30B in this deployment says 262144); what fits in an L4 is a different question
 // and the deployment runs that model at 32768. So it rides as its own field for the panel to
@@ -288,7 +396,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	if got.ContextLength != 32768 {
 		t.Errorf("context_length = %d, want 32768", got.ContextLength)
 	}
-	if row := engineResolvedRow(got, false, ""); row["context_length"] != 32768 {
+	if row := engineResolvedRow(got, false, "", engineKVGeometry{}); row["context_length"] != 32768 {
 		t.Errorf("the panel is not told the context length: %v", row["context_length"])
 	}
 
@@ -299,8 +407,33 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("gated resolve: %v", aerr.message)
 	}
-	if _, ok := engineResolvedRow(flux, false, "")["context_length"]; ok {
+	if _, ok := engineResolvedRow(flux, false, "", engineKVGeometry{})["context_length"]; ok {
 		t.Error("a repository with no gguf metadata reported a context length")
+	}
+}
+
+// 🔴 The KV cache is the half of the VRAM answer that used to arrive four minutes and one
+// purchased GPU too late: a borrowed llm engine took 17 GB of weights onto an L4 (24 GB) and
+// then died with `cudaMalloc failed: out of memory ... failed to allocate buffer for kv cache`
+// for the 16 GB its window wanted. So the resolve — the answer the panel draws BEFORE the
+// button — carries what the cache costs per 1024 tokens, and the panel multiplies.
+//
+// Per 1024 tokens rather than at some assumed window, because the window is still being typed
+// when this is read; the cache is linear in it, so one number answers every value.
+func TestEngineResolvedRowCarriesTheKVCostPerThousandTokens(t *testing.T) {
+	// The 30B this deployment runs: 48 layers, 4 KV heads, 128/128 — 3072 MiB at 32768 tokens
+	// (engine_gguf_test.go), so 96 MiB per 1024.
+	row := engineResolvedRow(engineResolved{}, false, "", engineKVGeometry{48, 4, 128, 128})
+	if row["kv_mib_per_1k_tokens"] != 96 {
+		t.Errorf("kv_mib_per_1k_tokens = %v, want 96", row["kv_mib_per_1k_tokens"])
+	}
+	// 🔴 ABSENT, not zero. The header read is best-effort and silent by design, and a 0 on the
+	// wire is a model whose window is free — which is the lie this whole field exists to stop.
+	// A partial geometry is the same case: three numbers out of four answer nothing.
+	for _, g := range []engineKVGeometry{{}, {Layers: 48, HeadsKV: 4, KeyLen: 128}} {
+		if v, ok := engineResolvedRow(engineResolved{}, false, "", g)["kv_mib_per_1k_tokens"]; ok {
+			t.Errorf("geometry %+v reported a KV cost of %v — unread must not read as measured", g, v)
+		}
 	}
 }
 
@@ -356,7 +489,7 @@ func TestEngineResolveCivitai(t *testing.T) {
 	if got.LoginRequired {
 		t.Error("a downloadable asset was marked as needing an account")
 	}
-	if row := engineResolvedRow(got, false, ""); row["can_ingest"] != true {
+	if row := engineResolvedRow(got, false, "", engineKVGeometry{}); row["can_ingest"] != true {
 		t.Errorf("can_ingest = %v for an asset with no wall at all", row["can_ingest"])
 	}
 }
@@ -382,7 +515,7 @@ func TestEngineResolveCivitaiSpotsAnAssetThatNeedsAnAccount(t *testing.T) {
 		if !got.LoginRequired {
 			t.Errorf("a %d download resolved as freely fetchable", status)
 		}
-		row := engineResolvedRow(got, true, "")
+		row := engineResolvedRow(got, true, "", engineKVGeometry{})
 		if row["can_ingest"] != false || row["login_required"] != true {
 			t.Errorf("the panel is not told (%d): %v", status, row)
 		}
@@ -776,22 +909,354 @@ func TestEngineIngestRecordsARefusedRunTask(t *testing.T) {
 // with no HF token is refused at the API, before anything is started.
 func TestEngineResolvedRowRefusesGatedWithoutAToken(t *testing.T) {
 	res := engineResolved{Gated: true, LicenseName: "flux-1-dev-non-commercial-license"}
-	row := engineResolvedRow(res, false, "")
+	row := engineResolvedRow(res, false, "", engineKVGeometry{})
 	if row["can_ingest"] != false {
 		t.Error("a gated model read as ingestible with no token")
 	}
 	if row["commercial_use"] != "no" {
 		t.Errorf("commercial_use = %v", row["commercial_use"])
 	}
-	if engineResolvedRow(res, true, "")["can_ingest"] != true {
+	if engineResolvedRow(res, true, "", engineKVGeometry{})["can_ingest"] != true {
 		t.Error("a gated model with a token configured was still refused")
 	}
 	// An ungated model needs no token at all.
-	if engineResolvedRow(engineResolved{}, false, "")["can_ingest"] != true {
+	if engineResolvedRow(engineResolved{}, false, "", engineKVGeometry{})["can_ingest"] != true {
 		t.Error("an ungated model was refused")
 	}
 	b, _ := json.Marshal(row)
 	if strings.Contains(string(b), "token\":\"") {
 		t.Error("a token value reached the wire")
+	}
+}
+
+// 🔴 The act the catalogue had no word for: the SAME model, a different file.
+//
+// `attach` refuses a flag the row already declares, and the unlabelled slot — the checkpoint
+// itself — cannot be attached to at all, so moving a model to another quantisation meant
+// forgetting the row and building it again. The row is where the licence acceptance lives (a
+// record of a HUMAN act, ADR 0072 decision 10), with the family, the params, the enabled state
+// and the provenance. All of it was thrown away for what a person thinks of as one file
+// changing.
+//
+// So what this pins is what SURVIVES, plus the one thing that must NOT: the KV geometry, which
+// describes the file that just left.
+func TestEngineIngestReplaceKeepsTheRowAndRewritesTheGeometry(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	ctx := context.Background()
+
+	// The row as it stands: enabled, licence accepted by a person, and carrying the geometry of
+	// the q4 it was created from (28 layers — a 1.5B).
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "llm", ID: "qwen2.5-coder-1.5b", Kind: "gguf", Enabled: true,
+		Files: []store.EngineModelFile{{S3Key: "llm/old-q4_k_m.gguf", Bytes: 1117320768,
+			Source: "hf:x/y/old-q4_k_m.gguf"}},
+		ContextTokens: 32768, MaxOutputTokens: 4096,
+		License: "apache-2.0", LicenseAcceptedBy: "u1", LicenseAcceptedTenant: "t-acme",
+		LicenseAcceptedLicense: "apache-2.0", BaseModel: "", Description: "the one in the menu",
+		KVLayers: 28, KVHeadsKV: 2, KVKeyLen: 128, KVValueLen: 128,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := ingestReq()
+	req.Replace = true
+	req.S3Key = "llm/new-q8_0.gguf"
+	req.Resolved.Source = "hf:x/y/new-q8_0.gguf"
+	req.Resolved.Bytes = 1_894_532_000
+	// The new file's own header, read at the start of the job exactly as a creating ingest does.
+	req.KVGeom = engineKVGeometry{48, 4, 128, 128}
+	// None of these may reach the row: a replace changes one file.
+	req.ContextTokens, req.MaxOutput = 1024, 128
+	req.AcceptedBy, req.AcceptedTenant = "u2", "t-other"
+	req.Description = "typed into a form nobody meant to edit"
+
+	job, aerr := ing.start(ctx, req)
+	if aerr != nil {
+		t.Fatalf("start: %v", aerr.message)
+	}
+	api.tasks = []ecstypes.Task{{
+		TaskArn: aws.String(job.TaskArn), LastStatus: aws.String("STOPPED"),
+		Containers: []ecstypes.Container{
+			{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+			{Name: aws.String("upload"), ExitCode: aws.Int32(0)},
+		},
+	}}
+	ing.reconcile(ctx)
+
+	rows, err := st.ListEngineModels(ctx, "llm")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %d (%v) — a replace must not create a second row", len(rows), err)
+	}
+	got := rows[0]
+	if len(got.Files) != 1 || got.Files[0].S3Key != "llm/new-q8_0.gguf" {
+		t.Fatalf("files = %+v, want the one file swapped", got.Files)
+	}
+	// 🔴 Per FILE, because the row's own source now names a file that is not there any more.
+	if got.Files[0].Source != "hf:x/y/new-q8_0.gguf" {
+		t.Errorf("file source = %q — the row points at bytes whose vendor nothing records", got.Files[0].Source)
+	}
+	if got.Files[0].Bytes != 1_894_532_000 {
+		t.Errorf("bytes = %d — the size is what the VRAM floor is computed from", got.Files[0].Bytes)
+	}
+	// What the ingest knows nothing about and must leave alone. Enabled especially: the model is
+	// in the launch menu, and an ingest that switched it off would take it out of every member's
+	// picker for a file swap.
+	if !got.Enabled {
+		t.Error("the row was switched off by a file swap")
+	}
+	if got.LicenseAcceptedBy != "u1" || got.LicenseAcceptedTenant != "t-acme" {
+		t.Errorf("the licence acceptance was rewritten: %q/%q — it records who agreed, and that person did",
+			got.LicenseAcceptedBy, got.LicenseAcceptedTenant)
+	}
+	if got.ContextTokens != 32768 || got.MaxOutputTokens != 4096 || got.Description != "the one in the menu" {
+		t.Errorf("the row's own settings were overwritten: ctx=%d out=%d desc=%q",
+			got.ContextTokens, got.MaxOutputTokens, got.Description)
+	}
+	// 🔴 And the geometry IS rewritten. The row holds one set of KV numbers and only the create
+	// path ever wrote them, so keeping the old ones would estimate this model's VRAM off a file
+	// that no longer exists — 3072 MiB at 32k rather than 448, in the panel that decides whether
+	// a GPU can hold it.
+	if got.KVLayers != 48 || got.KVHeadsKV != 4 {
+		t.Errorf("kv geometry = %d layers / %d kv heads, want the new file's 48/4",
+			got.KVLayers, got.KVHeadsKV)
+	}
+	// The OLD object stays in the bucket. The CP has no s3:DeleteObject (ADR 0072 decision 7) and
+	// this runs in the reconciler, with nobody to report a refusal to — and the keys are shared
+	// (`clip_l.safetensors` was pointed at from two rows on af-sandbox), so a purge here breaks
+	// models nobody touched. The download's own task was run; none of them is a delete.
+	if len(api.run) == 0 {
+		t.Fatal("no task was run at all, so the check below proves nothing")
+	}
+	for _, in := range api.run {
+		for _, o := range in.Overrides.ContainerOverrides {
+			for _, kv := range o.Environment {
+				if aws.ToString(kv.Name) == "MODE" && aws.ToString(kv.Value) == "delete" {
+					t.Error("a replace deleted bytes from the bucket: the keys may be shared, and nothing here could report what it refused to delete")
+				}
+			}
+		}
+	}
+}
+
+// --- forgetting a row of the history (the delete the table never had) ---------
+
+// adminIngestDelete drives DELETE …/ingest/{id} the way the mux does, and answers the code and
+// the body so a test can assert both the refusal and what the panel would then draw.
+func adminIngestDelete(t *testing.T, a engineAdminAPI, g engineIngestGrant, key, id string) (int, map[string]any) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/admin/engines/"+key+"/ingest/"+id, nil)
+	r.SetPathValue("key", key)
+	r.SetPathValue("id", id)
+	a.deleteIngest(rec, r, g)
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out
+}
+
+func seedIngestJob(t *testing.T, st store.Store, id, role, state, tenant, s3key string) {
+	t.Helper()
+	if err := st.PutEngineIngestJob(t.Context(), store.EngineIngestJob{
+		ID: id, Role: role, ModelID: id, S3Key: s3key, Source: "hf:x/" + id,
+		State: state, TenantID: tenant,
+	}); err != nil {
+		t.Fatalf("seed %s: %v", id, err)
+	}
+}
+
+// 🔴 A job that is still going may NOT be forgotten, and this is the reason the state is
+// checked at all: the row is not the task. Deleting it leaves the ECS task downloading, and
+// minutes later that task writes its catalogue row with nothing on screen that says where the
+// model came from — while the reconciler, which would have moved this row to `done`, finds
+// nothing to update and the outcome (a sha256 mismatch, say) is lost.
+func TestIngestHistoryKeepsAJobThatIsStillRunning(t *testing.T) {
+	a, _, st := engineModelAdminAPI(t)
+	super := engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true}
+	seedIngestJob(t, st, "j-running", "image", store.EngineIngestRunning, "", "image/a.safetensors")
+	seedIngestJob(t, st, "j-pending", "image", store.EngineIngestPending, "", "image/b.safetensors")
+
+	for _, id := range []string{"j-running", "j-pending"} {
+		code, out := adminIngestDelete(t, a, super, "image", id)
+		if code != http.StatusConflict {
+			t.Fatalf("delete %s = %d (%v), want 409 — the task outlives the row", id, code, out)
+		}
+		if err, _ := out["error"].(map[string]any); err == nil || err["code"] != errCodeIngestJobLive {
+			t.Errorf("the refusal does not name itself: %v", out)
+		}
+		if _, ok, _ := st.GetEngineIngestJob(t.Context(), id); !ok {
+			t.Errorf("%s was deleted anyway", id)
+		}
+	}
+
+	// Positive control, in the same test: the SAME row, once it has stopped, goes. Without
+	// this, an implementation that refused every delete would pass the assertions above.
+	seedIngestJob(t, st, "j-running", "image", store.EngineIngestDone, "", "image/a.safetensors")
+	code, out := adminIngestDelete(t, a, super, "image", "j-running")
+	if code != http.StatusOK {
+		t.Fatalf("delete of a finished job = %d (%v)", code, out)
+	}
+	if _, ok, _ := st.GetEngineIngestJob(t.Context(), "j-running"); ok {
+		t.Error("a finished job survived its own deletion")
+	}
+	// And the answer is the remaining list, so the panel draws the server's list rather than
+	// one it edited locally.
+	jobs, _ := out["jobs"].([]any)
+	if len(jobs) != 1 {
+		t.Fatalf("the answer's list = %v, want the one job that is left", out["jobs"])
+	}
+	if first, _ := jobs[0].(map[string]any); first["id"] != "j-pending" {
+		t.Errorf("the remaining job = %v", jobs[0])
+	}
+	// A `failed` job is forgettable too: it created no row, and the whole point of the delete
+	// is that a shelf of dead attempts can be cleared.
+	seedIngestJob(t, st, "j-failed", "image", store.EngineIngestFailed, "", "image/c.safetensors")
+	if code, out := adminIngestDelete(t, a, super, "image", "j-failed"); code != http.StatusOK {
+		t.Fatalf("delete of a failed job = %d (%v)", code, out)
+	}
+}
+
+// The delete is narrowed by the SAME rule the list is (ADR 0072 open question 11). Without it
+// the reduced panel a granted tenant_admin gets is a read-only view of one tenant's jobs with a
+// delete button for every tenant's — and the ids are in the answer they already hold.
+//
+// 🔴 The operator's own jobs carry NO tenant, so `j.TenantID != g.tenantID` has to be a
+// comparison and never "narrow only when a tenant was resolved": written the second way, a
+// tenant_admin deletes exactly the deployment-wide jobs they cannot see.
+func TestIngestHistoryDeleteIsNarrowedToTheCallersTenant(t *testing.T) {
+	a, _, st := engineModelAdminAPI(t)
+	acme := engineIngestGrant{ident: store.Identity{ID: "u-acme"}, tenantID: "t-acme"}
+	seedIngestJob(t, st, "j-acme", "image", store.EngineIngestDone, "t-acme", "image/acme.safetensors")
+	seedIngestJob(t, st, "j-beta", "image", store.EngineIngestDone, "t-beta", "image/beta.safetensors")
+	seedIngestJob(t, st, "j-operator", "image", store.EngineIngestDone, "", "image/op.safetensors")
+
+	for _, id := range []string{"j-beta", "j-operator"} {
+		code, out := adminIngestDelete(t, a, acme, "image", id)
+		if code != http.StatusNotFound {
+			t.Fatalf("acme deleting %s = %d (%v), want 404", id, code, out)
+		}
+		// 404 and not 403: "you may not touch job X" would confirm that job X exists, and the
+		// id is the only thing a caller needs to guess.
+		if err, _ := out["error"].(map[string]any); err == nil || err["code"] != errCodeIngestJobUnknown {
+			t.Errorf("the refusal names the wrong thing: %v", out)
+		}
+		if _, ok, _ := st.GetEngineIngestJob(t.Context(), id); !ok {
+			t.Errorf("%s was deleted by another tenant", id)
+		}
+	}
+	// Positive control: their own job goes, so the 404s above are the narrowing and not a
+	// delete that never works.
+	if code, out := adminIngestDelete(t, a, acme, "image", "j-acme"); code != http.StatusOK {
+		t.Fatalf("acme deleting their own job = %d (%v)", code, out)
+	}
+	if _, ok, _ := st.GetEngineIngestJob(t.Context(), "j-acme"); ok {
+		t.Error("acme's own job survived")
+	}
+	// And the operator, who has no tenant to be acting for, reaches both of the others.
+	super := engineIngestGrant{ident: store.Identity{ID: "u0"}, super: true}
+	for _, id := range []string{"j-beta", "j-operator"} {
+		if code, out := adminIngestDelete(t, a, super, "image", id); code != http.StatusOK {
+			t.Fatalf("the operator deleting %s = %d (%v)", id, code, out)
+		}
+	}
+}
+
+// A replace whose slot is gone by the time the download finishes. The bytes are in the bucket
+// and nothing points at them, which is the one outcome worth a log line rather than a silent
+// success — and it must NOT fall back to creating a row or appending a second checkpoint.
+func TestEngineIngestReplaceOfAForgottenRowWritesNothing(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	ctx := context.Background()
+
+	req := ingestReq()
+	req.Replace = true
+	job, aerr := ing.start(ctx, req)
+	if aerr != nil {
+		t.Fatalf("start: %v", aerr.message)
+	}
+	api.tasks = []ecstypes.Task{{
+		TaskArn: aws.String(job.TaskArn), LastStatus: aws.String("STOPPED"),
+		Containers: []ecstypes.Container{
+			{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+			{Name: aws.String("upload"), ExitCode: aws.Int32(0)},
+		},
+	}}
+	ing.reconcile(ctx)
+
+	if rows, err := st.ListEngineModels(ctx, "llm"); err != nil || len(rows) != 0 {
+		t.Fatalf("rows = %d (%v) — a replace with no row to replace in must write nothing", len(rows), err)
+	}
+}
+
+// A job of ANOTHER role is not this engine's to forget, and an id that never existed answers the
+// same way. Both are 404 with one sentence: the caller cannot tell them apart and must not.
+func TestIngestHistoryDeleteIsScopedToTheEngineInThePath(t *testing.T) {
+	a, _, st := engineModelAdminAPI(t)
+	super := engineIngestGrant{ident: store.Identity{ID: "u0"}, super: true}
+	seedIngestJob(t, st, "j-llm", "llm", store.EngineIngestDone, "", "llm/x.gguf")
+	if code, _ := adminIngestDelete(t, a, super, "image", "j-llm"); code != http.StatusNotFound {
+		t.Errorf("deleting another role's job through this engine = %d, want 404", code)
+	}
+	if _, ok, _ := st.GetEngineIngestJob(t.Context(), "j-llm"); !ok {
+		t.Error("the llm job was deleted through the image engine's path")
+	}
+	if code, _ := adminIngestDelete(t, a, super, "image", "j-nothing"); code != http.StatusNotFound {
+		t.Errorf("deleting an id that never existed = %d, want 404", code)
+	}
+}
+
+// 🔴 What the panel needs before it lets anybody press delete: whether the file this job took in
+// is written down ANYWHERE else. While no catalogue row points at the key, the job row is the
+// last written record of it — the CP cannot list the bucket at all (ADR 0072 review R3) — so the
+// panel asks a second time before forgetting exactly those.
+//
+// The same field answers the opposite question when a key is registered again: a SHARED key is
+// normal (decision 2 — `text_encoders/` is one file SD3.5 and FLUX.1 both read), so the panel
+// names who has it instead of refusing.
+func TestIngestHistorySaysWhichCatalogueRowStillUsesTheFile(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	ctx := t.Context()
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "sd35-medium", Kind: "checkpoint",
+		Files: []store.EngineModelFile{
+			{S3Key: "image/checkpoints/sd3.5_medium.safetensors"},
+			{Flag: "--clip_l", S3Key: "image/text_encoders/clip_l.safetensors"},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	e.catalog.invalidate()
+	// One job whose file a row points at, one whose file nothing does.
+	seedIngestJob(t, st, "j-shared", "image", store.EngineIngestDone, "", "image/text_encoders/clip_l.safetensors")
+	seedIngestJob(t, st, "j-orphan", "image", store.EngineIngestDone, "", "image/checkpoints/forgotten.safetensors")
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/admin/engines/image/ingest", nil)
+	r.SetPathValue("key", "image")
+	a.listIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u0"}, super: true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Jobs []map[string]any `json:"jobs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := map[string]any{}
+	for _, j := range out.Jobs {
+		got[j["id"].(string)] = j["key_used_by"]
+	}
+	// 🔴 The row that keeps the file alive is NAMED, because "still used" with no name is an
+	// answer nobody can act on — and it is named across roles, since the two rows that share a
+	// text encoder need not be in the same role.
+	if got["j-shared"] != "image/sd35-medium" {
+		t.Errorf("the shared key's job says key_used_by=%v, want image/sd35-medium", got["j-shared"])
+	}
+	// And the orphan says NOTHING rather than "" or "nobody": absent is what makes the panel
+	// ask twice, and it must not be produced by a row that simply forgot to look.
+	if v, ok := got["j-orphan"]; ok && v != nil {
+		t.Errorf("a key no row points at claimed a user: %v", v)
 	}
 }

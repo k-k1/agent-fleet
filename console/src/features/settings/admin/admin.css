@@ -416,6 +416,19 @@
   overflow-wrap: anywhere;
 }
 
+/* A source that could be turned into a page. Underlined rather than only tinted: the file names
+   it sits between are the same muted colour, so colour alone would make "this one opens
+   something" a hue difference inside one grey line. The ones that are NOT links are the honest
+   half of this line — a plain url source, or a file nobody recorded an origin for. */
+a.engines-model-source {
+  color: var(--dialog-muted);
+  text-decoration: underline;
+}
+
+a.engines-model-source:hover {
+  color: var(--accent);
+}
+
 /* Registering a row: ONE field per line, each with its own label.
    The fields are not interchangeable — an S3 key, a token count and a byte count look nothing
    alike, and putting one in the wrong box is silent (the control plane never reads the bucket).
@@ -429,6 +442,15 @@
   padding: 8px;
   border: 1px solid var(--dialog-border, #30363d);
   border-radius: 6px;
+}
+
+/* Where a registration's answers came from, when they were picked out of the ingest history
+   instead of typed. Above the fields and at the fields' own size: it is provenance, not a
+   control, and it is the only place the source that will land on the row is visible. */
+.engines-model-add-from-job p {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 /* The search results. Cards rather than a <select>: each hit carries the numbers and the terms
@@ -867,6 +889,39 @@
 .engines-model-negative input {
   flex: 1;
   min-width: 0;
+}
+
+/* The window and the measured VRAM of one catalogue row. Wraps, unlike the negative prompt next
+ * door: an llm row carries five controls here and a narrow settings pane would otherwise push
+ * the demand figure — the one thing being read while deciding — off the end of the line. */
+.engines-model-window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.engines-model-window label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dialog-muted);
+}
+
+/* Sized to the value, not to the row: a context window is six digits at most, and an input that
+ * grows to fill the line reads as free text. Monospace here rather than through the shared
+ * `.mono` class — a test reads the catalogue's ids by that class, and three numeric boxes
+ * wearing it made a row answer four ids. */
+.engines-model-window input {
+  width: 8ch;
+  min-width: 0;
+  font-family: var(--mono);
+}
+
+.engines-model-need {
+  margin-left: auto;
 }
 
 /* Issuing a borrowing token (ADR 0079 decision 3, adminEngineIssueToken.tsx).
