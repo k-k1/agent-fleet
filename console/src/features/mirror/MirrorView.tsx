@@ -57,7 +57,7 @@ import {
 } from "./parts/ComposerNotices.tsx";
 import { ContextBar } from "./ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { t as tr, useT } from "../../lib/i18n/index.ts";
+import { t as tr, useLocale, useT } from "../../lib/i18n/index.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
@@ -92,6 +92,8 @@ import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, 
 import { TaskChecklist, planTitle } from "./transcript/blocks.tsx";
 import { useMarksController } from "./transcript/useMarks.ts";
 import { MarkStrip } from "./transcript/MarkStrip.tsx";
+import { targetLang } from "./translate.ts";
+import { useTranslate } from "./useTranslate.ts";
 
 const q = encodeURIComponent;
 
@@ -157,6 +159,7 @@ export function MirrorView({
   const wsState = useWorkspaceStore((s) => s.state);
   const toast = useToast();
   useT(); // subscribe: a locale change re-renders MirrorView and its (unmemoized) turn subtree
+  const locale = useLocale(); // the translation target when no answer language is fixed
   const running = wsState === "running"; // WS down → resume is inert, mirror the terminal's resume
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
@@ -359,6 +362,14 @@ export function MirrorView({
   // The transcript poll effect must not re-subscribe, so hand it the latest reload via a ref.
   const marksReloadRef = useRef(marks.reload);
   marksReloadRef.current = marks.reload;
+
+  // Per-answer translation (docs/log/97). The reader's own button: nothing is fetched here
+  // except the list of translations this session already has, once per open.
+  const translate = useTranslate({
+    session: session || "",
+    lang: targetLang(settings.outputLanguage, locale),
+    enabled: settings.mirrorTranslateEnabled !== false,
+  });
 
 
   // Reset accumulated turns when the session changes (cursor is a line index into
@@ -1626,6 +1637,10 @@ export function MirrorView({
       isRejectedPlan: (p) => actsRef.current.isRejectedPlan!(p),
       maxSpend,
       marks,
+      // Read while a turn renders (which button, whose translation), so the wiring is a
+      // dependency: it only changes identity on a press or the one fetch per open, which is
+      // also the only time the conversation has to repaint for it.
+      translate,
     }),
     [
       rejectedGen,
@@ -1639,6 +1654,7 @@ export function MirrorView({
       thinkingOpen,
       maxSpend,
       marks,
+      translate,
     ],
   );
 

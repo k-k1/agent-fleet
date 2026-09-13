@@ -35,4 +35,7 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
   "aiassist.edit_suggest": "File edit suggestions",
   "aiassist.note_edit_suggest":
     "While editing a file in the File pane, proposes a replacement for the selection from your instruction (you review it before accepting or discarding). This previously had no setting and was always on.",
+  "aiassist.mirror_translate": "Answer translation (mirror)",
+  "aiassist.note_mirror_translate":
+    "Shows a \"Translate\" button on mirror answers that came back in another language. Tokens are spent only when you press it, and no session turn is used. A translation is kept until that session is deleted, so the same text is free from the second press on.",
 };

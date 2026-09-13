@@ -155,6 +155,13 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/title/set", sessionx.HandleSetTitle)
 	mux.HandleFunc("POST /sessions/{name}/suggest-branch", sessionx.HandleSessionSuggestBranch)
 	mux.HandleFunc("POST /sessions/{name}/suggest-replies", sessionx.HandleSuggestReplies) // LLM reply suggestion v2 (preview only)
+	// Per-answer translation (session_translate.go, docs/log/97). The reader's own button, so
+	// POST is what spends; GET only reports what this session already has, and is NOT folded
+	// into the /messages poll (a map of whole answers on every tick is exactly the cost this
+	// feature must not have).
+	// control-plane/routes.go needs the same paths registered: the CP is an explicit allowlist.
+	mux.HandleFunc("POST /sessions/{name}/translate", handleSessionTranslate)
+	mux.HandleFunc("GET /sessions/{name}/translations", handleSessionTranslations)
 	// Mirror skill picker (docs/log/50 / ADR0034): lists the session's worktree plus the
 	// user-level .claude/skills and commands.
 	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.

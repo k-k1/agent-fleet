@@ -38,6 +38,7 @@ const (
 	FeatureSuggestSession   = "suggest.session"    // the mirror's ✨ reply suggestions
 	FeatureSuggestChat      = "suggest.chat"       // the chat's ✨ reply suggestions
 	FeatureSuggestEdit      = "suggest.edit"       // the editor's ✨ AI edit suggestion (docs/log/44 Phase 4)
+	FeatureTranslate        = "translate.mirror"   // the mirror's per-answer translation (docs/log/97)
 	FeatureSession          = "session"            // the interactive session itself (folded in from the transcript)
 	FeatureToolImagegen     = "tool.imagegen"      // the image generation tool (ADR 0069)
 	// FeatureEngineLLM is one call to the fleet's OWN llama.cpp engine, routed through the

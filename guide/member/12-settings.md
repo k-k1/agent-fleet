@@ -166,6 +166,10 @@ the assistant conversation — they share an implementation, but they surface so
   - **AI reply suggestions (✨)** — the button on the mirror and chat composers; it spends tokens only when
     pressed. The **reply suggestions** learned from your own input history (Keys tab) use no AI and are separate.
   - **File edit suggestions** — turns a selection plus your instruction into a proposed replacement.
+  - **Answer translation (mirror)** — the "Translate" button on a mirror answer that came back in another
+    language. It spends tokens only when pressed and **uses no session turn** (the conversation does not
+    move). A translation is kept until that session is deleted, so the same text is free from the second
+    press on.
 
 ### Agent instructions
 

@@ -395,6 +395,13 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest)  // LLM branch-name suggestion (this session's convo)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-replies", rest) // LLM reply suggestion v2 (this session's convo)
 	mux.HandleFunc("GET /api/sessions/{name}/skills", rest)           // mirror skill picker (docs/log/50 / ADR0034)
+	// Per-answer translation (docs/log/97) — the OWNER's route only, deliberately with no twin
+	// in registerSessionShareRoutes: pressing it runs a model in the owner's Workspace and
+	// spends the owner's tokens, so a recipient reading a shared session must not be able to
+	// fire it. The shared view therefore shows the answer as it was written, and renders no
+	// translate button at all (the absent-capability rule in transcript/capabilities.ts).
+	mux.HandleFunc("POST /api/sessions/{name}/translate", rest)
+	mux.HandleFunc("GET /api/sessions/{name}/translations", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest)   // worktree deferred-naming: git branch -m
 }
 

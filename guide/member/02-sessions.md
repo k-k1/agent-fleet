@@ -597,3 +597,24 @@ review the content and choose **"Approve and send"** or **"Reject"**.
 
 - **Rename** — changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents; adopt it with "Use this".
 - **Rename the branch** — appears only for sessions running in a worktree. Renames that worktree's branch (the folder — that is, the session — stays as is). Buttons let you swap the `feat/` `fix/` `refactor/` `chore/` `docs/` prefixes, and **"Ask AI to suggest"** proposes a branch name from the conversation. Use it to give a meaningful name later to a session started under a provisional name (`temp/…`).
+
+## Reading an answer in your own language (translation)
+
+When an agent answers in a language you don't read, a **"Translate"** button appears under that
+answer in the conversation view (the mirror). Pressing it replaces just that answer with your
+display language (or the answer language, if you fixed one in settings); **"Original"** brings the
+agent's own text back.
+
+- **No session turn is used.** The translation is one model call made outside the session: the
+  conversation does not move and the agent's context does not grow. That is what makes it different
+  from sending "please answer in Japanese" again.
+- **Tokens are spent only when you press it.** It shows up in usage as "Answer translation (mirror)".
+- **A translation is kept until that session is deleted.** The same text is free from the second
+  press on, and the translation is still there after you re-open the pane, or open the session on
+  your phone.
+- **Only prose is translated.** Code blocks, commands, paths and tool output stay exactly as they
+  were. Marks (highlights) stay on the original, so they are hidden while the translation is shown.
+- The button appears only on an answer **written in a language other than your own**. An answer that
+  mixes both does not get one (re-saying what you can already read buys nothing), and neither does
+  someone else's shared session — a translation runs in the owner's Workspace.
+- Turn it off under Settings > AI assistance, **Answer translation (mirror)**.

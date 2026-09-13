@@ -109,6 +109,14 @@ const (
 	errCodeTitleFeatureDisabled = "title_feature_disabled"
 	errCodeTitleNoContent       = "title_no_content"
 
+	// Mirror translation (session_translate.go, docs/log/97). too_long names the answer, not
+	// the request body: the reader pressed a button on one specific reply, and "this one is too
+	// long" is the only wording that tells them which. generation_failed is shared with the
+	// suggestions above and stays out of the catalogs for the same reason (it carries detail).
+	errCodeTranslateDisabled = "translate_disabled"
+	errCodeTranslateEmpty    = "translate_empty"
+	errCodeTranslateTooLong  = "translate_too_long"
+
 	// Agent memory versioning (memory_handlers.go, docs/log/39 / ADR 0022)
 	errCodeMemoryBadRequest     = "memory_bad_request"
 	errCodeMemoryBadRev         = "memory_bad_rev"

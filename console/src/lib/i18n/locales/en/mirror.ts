@@ -243,6 +243,11 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.effort_hint": "Reasoning effort (codex reasoning_effort / opencode variant)",
   "mirror.token_hint": "Input (context) ↑ / output ↓ tokens",
   "mirror.time_span_hint": "Started {start} — finished {end}",
+  // Per-answer translation (docs/log/97)
+  "mirror.translate": "Translate",
+  "mirror.translate_title": "Translate this answer into your language (no session turn is used)",
+  "mirror.translate_off": "Original",
+  "mirror.translate_off_title": "Show the original",
   "mirror.task.requested": "Requested",
   "mirror.task.running": "Running",
   "mirror.task.completed": "Completed",

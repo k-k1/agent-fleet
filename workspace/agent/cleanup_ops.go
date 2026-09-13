@@ -101,7 +101,8 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // removeSessionSideFiles drops the per-session side files keyed by session NAME —
-// handoff proposals (session-handoffs/) and transcript marks (session-marks/).
+// handoff proposals (session-handoffs/), transcript marks (session-marks/) and the cached
+// answer translations (session-translations/).
 //
 // Session names are slot names and get REUSED. Left behind, they resurface on
 // whatever session lands in that slot next: someone else's handoff card in the middle
@@ -111,6 +112,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 func removeSessionSideFiles(name string) {
 	sessionx.RemoveHandoffProposals(name)
 	sessionx.RemoveSessionMarks(name)
+	removeSessionTranslations(name)
 }
 
 // archiveSessionForDelete bundles a session's meta + jsonl(s) into a cleanup archive
