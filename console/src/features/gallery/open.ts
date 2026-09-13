@@ -14,6 +14,14 @@
 import { useLayoutStore } from "../../layout/store.ts";
 import { allViews } from "../../layout/ops.ts";
 import type { PaneContent } from "../../layout/types.ts";
+import { useSessionsStore } from "../sessions/store.ts";
+
+/**
+ * Where `generate_image` writes, browse-root relative (imagegen/store.go). One folder per
+ * session plus the image-generation pane's own `console/`, which is why the shortcut opens
+ * the ROOT and lets the folder cards do the rest.
+ */
+export const GENERATED_ROOT = ".cache/agent-fleet/generated";
 
 export interface OpenGalleryOptions {
   /** Image to enlarge on arrival: a file name, or a browse-root-relative path. */
@@ -55,4 +63,24 @@ export function openGallery(path: string, opts: OpenGalleryOptions = {}): void {
   }
   if (opts.newPane) st.openTargetInNew({ content });
   else st.openTarget({ content });
+}
+
+/**
+ * The generated-images root as this workspace actually spells it.
+ *
+ * The constant is the answer for every normal deployment, but the browse root is not always
+ * the home directory (a scratch or staged-docs root, safeBrowsePath in the Agent), and there
+ * the constant names nothing. A session that has generated something carries the real folder
+ * on the wire (`generatedImagesPath`), so its parent is the ground truth whenever one exists
+ * — read here rather than subscribed to, since a menu click needs today's value once.
+ */
+export function generatedRoot(): string {
+  const p = useSessionsStore.getState().sessions.find((s) => s.generatedImagesPath)?.generatedImagesPath;
+  const at = p ? p.lastIndexOf("/") : -1;
+  return at > 0 ? p!.slice(0, at) : GENERATED_ROOT;
+}
+
+/** The shortcut every "generated images" button and the `g g` command share. */
+export function openGeneratedGallery(newPane = false): void {
+  openGallery(generatedRoot(), { newPane });
 }

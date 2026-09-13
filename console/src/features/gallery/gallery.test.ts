@@ -4,10 +4,13 @@
 import { describe, expect, it } from "vitest";
 import {
   PAGE_SIZE,
+  breadcrumb,
   effectiveSort,
   focusIndex,
+  galleryFolders,
   galleryImages,
   galleryTotals,
+  parentPath,
   hasTimes,
   sortImages,
   visibleImages,
@@ -188,5 +191,53 @@ describe("ペイン種別 gallery の定型", () => {
     const session = { name: "slot01", title: "絵を描く" } as Session;
     expect(paneTitle(view(content), null, { gallerySession: session })).toBe("生成した画像 — 絵を描く");
     expect(paneTitle(view(content), null)).toBe("uuid");
+  });
+});
+
+describe("フォルダと、その行き来", () => {
+  const entries: FsEntry[] = [
+    { name: "b.png", type: "file", size: 10 },
+    { name: "zz", type: "dir" },
+    { name: "img10", type: "dir" },
+    { name: "img9", type: "dir" },
+    { name: "", type: "dir" },
+  ];
+
+  it("ディレクトリだけを名前順で拾う（数字は数として比べる）", () => {
+    expect(galleryFolders(entries, "gen")).toEqual([
+      { name: "img9", path: "gen/img9" },
+      { name: "img10", path: "gen/img10" },
+      { name: "zz", path: "gen/zz" },
+    ]);
+    // ルート直下ではパスに余計な / を付けない。
+    expect(galleryFolders([{ name: "a", type: "dir" }], "")).toEqual([{ name: "a", path: "a" }]);
+    expect(galleryFolders(null, "gen")).toEqual([]);
+  });
+
+  it("画像とフォルダは互いに混ざらない", () => {
+    expect(galleryImages(entries, "gen").map((i) => i.name)).toEqual(["b.png"]);
+  });
+
+  it("上へはブラウズルート（空文字）まで戻れて、そこで止まる", () => {
+    expect(parentPath("a/b/c")).toBe("a/b");
+    expect(parentPath("a")).toBe("");
+    // ルートには親が無い＝「上へ」を出さない、が null の意味。
+    expect(parentPath("")).toBeNull();
+  });
+
+  it("パンくずは各段のパスを持ち、ルートは持たない（名前が無いため）", () => {
+    expect(breadcrumb(".cache/agent-fleet/generated")).toEqual([
+      { name: ".cache", path: ".cache" },
+      { name: "agent-fleet", path: ".cache/agent-fleet" },
+      { name: "generated", path: ".cache/agent-fleet/generated" },
+    ]);
+    expect(breadcrumb("")).toEqual([]);
+  });
+
+  it("ルート（空文字）は保存できる正しいギャラリー内容である", () => {
+    // 「上へ」でたどり着ける状態なのに再読み込みで空ターミナルに化ける、が無いこと。
+    expect(validateStoredContent({ kind: "gallery", galleryPath: "" })).toEqual({ kind: "gallery", galleryPath: "" });
+    // 鍵ごと無いのは今までどおり拒む。
+    expect(validateStoredContent({ kind: "gallery" })).toEqual({ kind: "terminal", chat: false });
   });
 });

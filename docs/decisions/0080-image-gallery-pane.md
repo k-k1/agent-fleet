@@ -152,6 +152,13 @@ webp/avif/bmp/svg come back as originals for the browser to draw.
 - **No swipe navigation on a phone** (P0). Horizontal drag already belongs to session rotation
   (the `data-no-swipe` tug of war), and touching it would break an existing gesture. Buttons and
   arrow keys navigate.
+  - 🔴 **Added in P1 (2026-09-14, at the user's request).** One premise was wrong: the lightbox's
+    overlay sets `data-no-swipe` ITSELF, so session rotation is already standing down while it is
+    open and there is no tug of war inside the overlay. The only real competitor is the PAN while
+    zoomed (`ImageView`), so the gesture is fenced twice: **touch only** (nobody drags a mouse
+    sideways meaning "next"), and **at fit only** (zoomed in, a horizontal drag is the pan). The
+    threshold is 48 px and the movement must be 1.5× more horizontal than vertical, so a vertical
+    scroll that drifted sideways does not page.
 
 ### Decision 6 — auto-refresh follows the existing policy: events pull the trigger, intervals are the safety net
 
@@ -239,6 +246,21 @@ that can ignore `.gitignore` and bound the result (`GET /fs/images?path=&depth=&
 gets built **once recursion is known to be needed**. The flat cases (generated images, `docs/img`,
 a folder of screenshots) are most of the cases, and they come first.
 
+**Revised in P1 (2026-09-14, at the user's request): let the READER do the walking.**
+Subfolders are drawn as cards, and opening one MOVES THIS PANE into it (the breadcrumb goes back;
+`galleryFocus` and `gallerySession` are dropped on the way, `sort` is carried). **The listing is
+still one level**: no recursive endpoint was built — it is one `fs/tree` here and another one
+there. That answers "let me see the subfolder", and leaves the dedicated endpoint for the only
+case that still needs it: flattening several levels into one grid (an X/Y grid, open question 2).
+
+- **A folder card shows no image count — except a session's.** The session list already carries
+  `generatedImagesPath` and `generatedImages`, so a card whose path matches one is labelled with
+  the **session's display name and its count**. Doing the same for every folder would mean one
+  `fs/tree` per card, which is exactly what decision 2 refused.
+- `galleryPath` can now be the **empty string (the browse root)**. "Up" has to reach the same
+  place the file tree starts at, or it dead-ends in `.cache`; the stored-value validator therefore
+  accepts `""` while still rejecting a missing key (a truthiness test cannot tell the two apart).
+
 ## Options rejected
 
 - **A modal gallery** (like cleanup / archive): cheap, but it throws away everything a pane gets
@@ -312,9 +334,12 @@ a folder of screenshots) are most of the cases, and they come first.
     before finishing**.
   - The only cross-lane collision is i18n keys (`gallery.*` is B; the entry-point wording is C).
     `layout/types.ts` is touched by B alone.
-- **P1**: a card's right-click menu (open in a pane, download, copy path, delete); "send" to a
-  session or an assistant; W x H (the header-reading endpoint); recursion into subfolders; a
-  surface over all sessions under `generated`; tile size (S/M/L) and the matching `thumb`.
+- **P1 (partly landed 2026-09-14)**: ✅ folder cards and breadcrumb navigation (decision 9,
+  revised); ✅ four buttons that jump to the generated root (the answer to open question 3);
+  ✅ swipe paging in the lightbox (decision 5, revised).
+  Still open: a card's right-click menu (open in a pane, download, copy path, delete); "send" to a
+  session or an assistant; W x H (the header-reading endpoint); an endpoint that flattens several
+  levels into one grid; tile size (S/M/L) and the matching `thumb`.
 - **P2**: generalizing to "media" including video and PDF (whether it is wanted is open
   question 2).
 
@@ -325,9 +350,13 @@ a folder of screenshots) are most of the cases, and they come first.
    next to `fs_thumb.go`'s own measurements).
 2. **Video and PDF?** This starts as a gallery of images, but a place like `docs/img` holds SVG,
    PNG and PDF together. Mixing them renames the thing to "media".
-3. **Is a surface over all of `generated` wanted?** It is two levels, so N+1 `fs/tree` calls would
-   build it — but mapping a folder back to a session name means reading `generatedImagesPath`
-   backwards. Wait for the ask.
+3. ~~**Is a surface over all of `generated` wanted?**~~ **Answered (2026-09-14): no surface of its
+   own is needed.** With folders as cards (decision 9, revised) the generated root is just another
+   gallery page, and mapping a folder back to a session is exactly the `generatedImagesPath`
+   lookup this question predicted — free, because the session list already carries it. Four ways
+   in: the minimap's button row, the command table's `g g` (**the one exception to decision 1's
+   "nothing is registered"**: "a gallery needs a folder" does not apply to a fixed target), the
+   Files section header, and the image-generation pane's header.
 4. **Generated images of an archived or deleted session.** The images survive 30 days, but once the
    session leaves the list so does decision 8's entry. The tree still opens it, so P0 leaves this
    alone and watches whether the `generated` surface (open question 3) is the answer.

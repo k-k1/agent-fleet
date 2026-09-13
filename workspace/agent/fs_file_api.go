@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"sync"
 	"unicode/utf8"
 
@@ -312,10 +313,19 @@ func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 		if data, ct, ok := thumbnail(opened.file, path.display, fi.Size(), fi.ModTime(), edge); ok {
 			w.Header().Set("Content-Type", ct)
 			w.Header().Set("Content-Disposition", "inline; filename*=UTF-8''"+url.PathEscape(name))
-			// Short and revalidated rather than immutable: the URL names a path, not a
-			// revision, so a regenerated file has to be able to replace what a card is
-			// already showing. ServeContent answers the revalidation with a 304.
-			w.Header().Set("Cache-Control", "private, max-age=60")
+			// A bare URL names a path, not a revision, so a regenerated file has to be
+			// able to replace what a card is already showing: short and revalidated, with
+			// ServeContent answering the revalidation with a 304.
+			//
+			// `v=<unix mtime>` changes that. The caller (the gallery, from the listing's
+			// mtime) has put the revision IN the URL, so the bytes behind it can never
+			// change and the browser may keep them without asking. That is what makes
+			// coming back to a tab instant instead of one conditional request per card.
+			if v := r.URL.Query().Get("v"); v != "" && v == strconv.FormatInt(fi.ModTime().Unix(), 10) {
+				w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "private, max-age=60")
+			}
 			http.ServeContent(w, r, name, fi.ModTime(), bytes.NewReader(data))
 			return
 		}

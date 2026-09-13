@@ -23,6 +23,7 @@ vi.mock("../imagegen/available.ts", async () => {
 });
 vi.mock("../overview/open.ts", () => ({ openSessionsOverview: () => {} }));
 vi.mock("../imagegen/open.ts", () => ({ openImagegen: () => {} }));
+vi.mock("../gallery/open.ts", () => ({ openGeneratedGallery: () => {} }));
 
 const { useLayoutStore } = await import("../../layout/store.ts");
 const { LayoutMap } = await import("./LayoutMap.tsx");
@@ -82,9 +83,9 @@ describe("LayoutMap", () => {
     await setLayout(layout(2));
     await mount();
     expect(host?.querySelectorAll(".lm-cap > .lm-cap-actions").length).toBe(1);
-    expect(buttons().length).toBe(2);
+    expect(buttons().length).toBe(3);
     imagegenAvailable = false;
     await setLayout({ ...layout(2), activeCellId: "b" });
-    expect(buttons().length).toBe(1);
+    expect(buttons().length).toBe(2);
   });
 });

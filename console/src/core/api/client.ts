@@ -293,10 +293,15 @@ export function previewURL(port: string | number, path = "/"): string {
 // an Agent too old to know the parameter — answers with the original, so a caller never
 // has to check first. Only ever pass it for an <img> that displays small: a viewer, a
 // lightbox and the download button all want the real file.
-export function downloadURL(path: string, thumb?: number): string {
+export function downloadURL(path: string, thumb?: number, version?: number): string {
   const u = new URL(rel("api/fs/download"));
   u.searchParams.set("path", path);
   if (thumb) u.searchParams.set("thumb", String(thumb));
+  // `v` is the file's unix mtime, from the listing that produced this card. With it the URL
+  // names a REVISION, so the Agent may answer `immutable` and a browser that has the picture
+  // never asks again — which is what makes returning to a tab instant instead of one
+  // conditional request per card. Without it the answer stays short-lived and revalidated.
+  if (version) u.searchParams.set("v", String(version));
   if (selectedTenant) u.searchParams.set("tenant", selectedTenant);
   return u.toString();
 }

@@ -29,6 +29,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,9 +53,14 @@ const (
 	thumbJPEGQuality = 80
 )
 
-// thumbSem caps concurrent decodes. A transcript can mount a dozen cards at once and
-// every one of them would otherwise decode in parallel on a memory-capped container.
-var thumbSem = make(chan struct{}, 2)
+// thumbSem caps concurrent decodes. A transcript can mount a dozen cards at once and every
+// one of them would otherwise decode in parallel on a memory-capped container.
+//
+// Four, not two: measured on this host over 24 real generated PNGs, 2 workers took 1.39 s,
+// 4 took 0.94 s and 8 took 0.72 s — but the heap went 21 / 20 / 62 MiB, so 8 buys a quarter
+// more speed for triple the memory on a container that is shared. A gallery opens a folder
+// of these at once (ADR 0080), which is what made the difference visible.
+var thumbSem = make(chan struct{}, 4)
 
 // thumbEdge reads the `thumb` query value: the longest edge the caller wants, or 0 when
 // it asked for none. An out-of-range or unparsable value is treated as "none" rather than
@@ -303,4 +309,107 @@ func sweepThumbCache(dir string) {
 		}
 		os.Remove(filepath.Join(dir, e.Name()))
 	}
+}
+
+// --- warming ------------------------------------------------------------------------
+//
+// A cold thumbnail costs ~95 ms of decode and a cached one ~44 µs (measured here, on the
+// generated PNGs this feature exists for). So the gallery's problem was never the cache —
+// it was that every picture is cold the first time somebody looks at a folder, and the
+// cards then trickle in behind the semaphore.
+//
+// Warming closes that gap from both ends: imagegen fills the cache the moment it writes a
+// picture (warmThumbFile, wired in main), and a listing asked for with `warm=<edge>` fills
+// it for a folder nobody generated — a screenshot directory, or images written before this
+// existed.
+
+// warmedRecently throttles per directory: the gallery re-lists every 20 seconds while a
+// session runs, and re-walking a folder that often would spend I/O to discover the same
+// cache hits.
+var warmed = struct {
+	mu sync.Mutex
+	at map[string]time.Time
+}{at: map[string]time.Time{}}
+
+const warmGap = 60 * time.Second
+
+// warmThumbLimit bounds one folder's warm-up. It matches the gallery's own first page
+// (PAGE_SIZE in gallery.ts): warming what nobody will be shown is spending a shared host's
+// CPU on a scroll that may never happen.
+const warmThumbLimit = 300
+
+// warmThumbWorkers is deliberately below thumbSem's width, so a warm-up in the background
+// can never take every decode slot away from the cards a person is actually waiting for.
+const warmThumbWorkers = 2
+
+// warmThumbFile fills the cache for one file, best effort. Safe to call from anywhere: it
+// opens, decodes and drops the bytes — the value is the cache entry left behind.
+func warmThumbFile(full string, edge int) {
+	f, err := os.Open(full)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || fi.IsDir() {
+		return
+	}
+	thumbnail(f, full, fi.Size(), fi.ModTime(), edge)
+}
+
+// warmThumbDir decodes the newest images in dir into the thumbnail cache, in the
+// background. Newest first because that is the gallery's default order — the top of the
+// grid is what somebody is looking at while this runs.
+func warmThumbDir(full string, edge int) {
+	if edge <= 0 {
+		return
+	}
+	warmed.mu.Lock()
+	if last, ok := warmed.at[full]; ok && time.Since(last) < warmGap {
+		warmed.mu.Unlock()
+		return
+	}
+	warmed.at[full] = time.Now()
+	warmed.mu.Unlock()
+
+	ents, err := os.ReadDir(full)
+	if err != nil {
+		return
+	}
+	type cand struct {
+		path string
+		mod  time.Time
+	}
+	cands := make([]cand, 0, len(ents))
+	for _, e := range ents {
+		if e.IsDir() || !thumbDecodable(e.Name()) {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil || fi.Size() < thumbMinSourceBytes {
+			continue // the original is already thumbnail-sized: nothing to cache
+		}
+		cands = append(cands, cand{filepath.Join(full, e.Name()), fi.ModTime()})
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].mod.After(cands[j].mod) })
+	if len(cands) > warmThumbLimit {
+		cands = cands[:warmThumbLimit]
+	}
+
+	work := make(chan string)
+	var wg sync.WaitGroup
+	for i := 0; i < warmThumbWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for p := range work {
+				warmThumbFile(p, edge)
+			}
+		}()
+	}
+	for _, c := range cands {
+		work <- c.path
+	}
+	close(work)
+	wg.Wait()
 }

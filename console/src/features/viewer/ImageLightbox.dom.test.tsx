@@ -47,6 +47,17 @@ const clickAt = async (el: HTMLElement, x = 10, y = 10) => {
   });
 };
 
+/** A finger (or a mouse, with pointerType) dragged from x1 to x2 and lifted. */
+const swipe = async (
+  el: HTMLElement,
+  { from = 200, to = 100, dy = 0, pointerType = "touch" as string } = {},
+) => {
+  await act(async () => {
+    el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 2, pointerType, clientX: from, clientY: 100 }));
+    el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 2, pointerType, clientX: to, clientY: 100 + dy }));
+  });
+};
+
 afterEach(async () => {
   await act(async () => root.unmount());
   document.body.innerHTML = "";
@@ -155,6 +166,48 @@ describe("共有ライトボックスの送りとフォルダ", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
     });
     expect(next).toBe(0);
+  });
+
+  it("スマホの左右スワイプで送る（左へ払う＝次、右へ払う＝前）", async () => {
+    let prev = 0;
+    let next = 0;
+    const overlay = await render({ onPrev: () => prev++, onNext: () => next++, index: 2, total: 5 });
+    await swipe(overlay, { from: 240, to: 60 });
+    expect([prev, next]).toEqual([0, 1]);
+    await swipe(overlay, { from: 60, to: 240 });
+    expect([prev, next]).toEqual([1, 1]);
+    expect(closed).toBe(0); // スワイプは背景クリックとして閉じてはいけない
+  });
+
+  it("指が少し動いただけ／縦に流れただけでは送らない", async () => {
+    let next = 0;
+    const overlay = await render({ onNext: () => next++ });
+    await swipe(overlay, { from: 200, to: 170 }); // 30px = しきい値未満
+    await swipe(overlay, { from: 200, to: 140, dy: 120 }); // 縦の方が大きい＝スクロール
+    expect(next).toBe(0);
+  });
+
+  it("マウスの横ドラッグでは送らない（パンと取り違えるため。送りはボタンと ←／→）", async () => {
+    let next = 0;
+    const overlay = await render({ onNext: () => next++ });
+    await swipe(overlay, { from: 240, to: 60, pointerType: "mouse" });
+    expect(next).toBe(0);
+  });
+
+  it("拡大しているあいだはスワイプを送りに使わない（ドラッグはパンのもの）", async () => {
+    let next = 0;
+    const overlay = await render({ onNext: () => next++ });
+    // 送りが付いたバーは並びが違うので、位置ではなく %表示の隣として拾う。
+    await clickAt(level().nextElementSibling as HTMLElement); // ＋ = 1.4 倍
+    expect(level().textContent).not.toBe("100%");
+    await swipe(overlay, { from: 240, to: 60 });
+    expect(next).toBe(0);
+  });
+
+  it("並びが渡されていなければ（ミラー）スワイプは何もしない", async () => {
+    const overlay = await render();
+    await swipe(overlay, { from: 240, to: 60 });
+    expect(closed).toBe(0);
   });
 
   it("「フォルダを開く」は渡されたときだけ出る", async () => {

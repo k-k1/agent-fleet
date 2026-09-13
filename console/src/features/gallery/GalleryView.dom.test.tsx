@@ -62,7 +62,11 @@ const render = async (props: Partial<Parameters<typeof GalleryView>[0]> = {}) =>
   return paneId;
 };
 
-const cards = () => [...host.querySelectorAll<HTMLElement>(".gal-card")];
+// Image cards only: the grid now starts with "Up" and the subfolders, and every assertion
+// below is about pictures. Folder cards have their own test.
+const cards = () => [...host.querySelectorAll<HTMLElement>(".gal-card:not(.folder)")];
+const folderCards = () => [...host.querySelectorAll<HTMLElement>(".gal-card.folder")];
+const folderNames = () => folderCards().map((c) => c.querySelector(".gal-name")?.textContent);
 const names = () => cards().map((c) => c.querySelector(".gal-name")?.textContent);
 const thumbs = () => [...host.querySelectorAll<HTMLImageElement>(".gal-thumb img")];
 const lightbox = () => document.querySelector(".mirror-lightbox");
@@ -101,6 +105,18 @@ describe("画像ギャラリーのペイン", () => {
     expect(thumbs()[0].getAttribute("decoding")).toBe("async");
     expect(thumbs()[0].src).toContain("thumb=512");
     expect(thumbs()[0].src).toContain(encodeURIComponent("gen/c.png"));
+    // The listing's mtime rides in the URL, so the Agent may answer `immutable` and coming
+    // back to the tab costs no request at all (a cold thumbnail is ~95 ms, a cached one 44 µs).
+    expect(thumbs()[0].src).toContain("v=300");
+    // And the listing itself asks the Agent to decode the folder while it answers.
+    expect(String(fetchMock.mock.calls[0][0])).toContain("warm=512");
+  });
+
+  it("mtime を返さない Agent では版を URL に載せない（載せると古い絵を永久に掴む）", async () => {
+    served = [img("a.png")];
+    await render();
+    expect(thumbs()[0].src).toContain("thumb=512");
+    expect(thumbs()[0].src).not.toContain("v=");
   });
 
   it("画像が 1 枚も無ければ空状態（読み込み中の空白ではなく）", async () => {
@@ -259,6 +275,70 @@ describe("画像ギャラリーのペイン", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("フォルダもカードで並び、押すとそのペインが中へ移動する（別ペインは開かない）", async () => {
+    served = [img("a.png", 100), { name: "console", type: "dir" }, { name: "trial", type: "dir" }];
+    const paneId = await render({ path: ".cache/agent-fleet/generated" });
+    expect(folderNames()).toEqual(["上へ", "console", "trial"]);
+
+    served = [img("x.png", 200)];
+    await click(folderCards()[1].querySelector(".gal-enter"));
+    const panes = allViews(useLayoutStore.getState().layout).filter((v) => v.content.kind === "gallery");
+    expect(panes).toHaveLength(1); // 遷移であって、開き直しではない
+    expect(panes[0].id).toBe(paneId);
+    expect(panes[0].content).toEqual({ kind: "gallery", galleryPath: ".cache/agent-fleet/generated/console" });
+  });
+
+  it("「上へ」は親へ、ルートまで戻れる", async () => {
+    served = [{ name: "console", type: "dir" }];
+    const paneId = await render({ path: "a/b" });
+    await click(folderCards()[0].querySelector(".gal-enter")); // 上へ
+    const content = () => allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content;
+    expect(content()).toEqual({ kind: "gallery", galleryPath: "a" });
+  });
+
+  it("セッションのフォルダは UUID でなくセッション名と枚数で出る（追加の問い合わせ無しで）", async () => {
+    useSessionsStore.setState({
+      sessions: [
+        { name: "slot01", kind: "claude", title: "絵を描く", generatedImages: 3, generatedImagesPath: "gen/uuid-1" } as never,
+      ],
+    });
+    served = [
+      { name: "uuid-1", type: "dir" },
+      { name: "uuid-2", type: "dir" },
+    ];
+    await render({ path: "gen" });
+    expect(folderNames()).toEqual(["上へ", "絵を描く", "uuid-2"]);
+    expect(folderCards()[1].querySelector(".gal-meta")?.textContent).toBe("3 枚");
+    expect(folderCards()[2].querySelector(".gal-meta")?.textContent).toBe("");
+    expect(listings).toBe(1); // カードごとに一覧を引いてはいない
+  });
+
+  it("画像が無くてもフォルダがあれば空状態にしない（生成物の親フォルダがまさにそれ）", async () => {
+    served = [{ name: "console", type: "dir" }];
+    await render({ path: "gen" });
+    expect(host.querySelector(".ui-empty-title")).toBeNull();
+    expect(folderCards().length).toBe(2); // 上へ ＋ console
+  });
+
+  it("セッションの題は、そのフォルダから出た時点で外れる（タブが嘘をつかない）", async () => {
+    served = [{ name: "sub", type: "dir" }];
+    const paneId = await render({ path: "gen/uuid-1", sessionName: "slot01" });
+    await click(folderCards()[1].querySelector(".gal-enter"));
+    const content = allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content;
+    expect(content).toEqual({ kind: "gallery", galleryPath: "gen/uuid-1/sub" });
+  });
+
+  it("パンくずのどの段からでも飛べる", async () => {
+    served = [img("a.png", 1)];
+    const paneId = await render({ path: "a/b/c" });
+    const crumbs = [...host.querySelectorAll<HTMLButtonElement>(".gal-crumb")];
+    expect(crumbs.map((c) => c.textContent)).toEqual(["ホーム", "a", "b", "c"]);
+    expect(crumbs[3].disabled).toBe(true); // 今いる段
+    await click(crumbs[1]);
+    const content = allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content;
+    expect(content).toEqual({ kind: "gallery", galleryPath: "a" });
   });
 
   it("マウント時に 1 回だけ読み、常駐ポーラーにはしない", async () => {

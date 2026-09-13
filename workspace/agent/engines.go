@@ -48,6 +48,10 @@ var engineHTTP = &http.Client{Timeout: 20 * time.Second}
 func init() {
 	opencode.EngineEnv = engineSessionEnv
 	imagegen.EngineLookup = engineImageConn
+	// Generated pictures land in the gallery's own folder, so pay the decode here rather
+	// than when somebody opens it (fs_thumb.go's warming notes). 512 is the edge every
+	// surface asks for — the mirror's cards, the gallery's, the studio's.
+	imagegen.WarmThumb = func(p string) { warmThumbFile(p, 512) }
 	// The path gate is the same kind of seam (ADR 0081 decision 3): the browse root, the
 	// denylist and the symlink re-check are fs.go's, and internal/imagegen owns "make pixels",
 	// not "know which folders this workspace may read and write". Re-implementing either check
