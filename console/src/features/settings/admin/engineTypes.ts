@@ -274,6 +274,22 @@ export type IngestJob = {
   code?: string;
   bytes?: number;
   created_at?: string;
+  /** What the file was taken in AS — `checkpoint`, `gguf`, `lora` — and what it is within the
+   *  model (`--vae`, `--t5xxl`; absent for a whole checkpoint). Read by the CP out of the job's
+   *  own spec, and here for one reason: registering this key again is a `POST /models`, and a
+   *  form that guessed either one would produce a row that loads nothing and says nothing about
+   *  it until the next cold start. Absent on a job taken in before the field existed. */
+  kind?: string;
+  file_flag?: string;
+  /** The catalogue row that already points at this job's `s3_key`, as `role/id`, or absent when
+   *  none does.
+   *
+   *  🔴 It is NOT "the file is still in the bucket": the CP has no S3 permission at all (ADR
+   *  0072 review R3) and `deleteModel?purge=1` deletes bytes while leaving the job `done` for
+   *  ever. What it answers is who would still be broken by losing the file — which is why a
+   *  job with nothing pointing at it is the one that is HARDER to forget: that row is then the
+   *  last written record of the key. */
+  key_used_by?: string;
 };
 
 /** One rung of the GPU ladder the operator declared (ADR 0074 decision 1). The CP asks neither

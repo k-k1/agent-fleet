@@ -1039,6 +1039,128 @@ func TestEngineIngestReplaceKeepsTheRowAndRewritesTheGeometry(t *testing.T) {
 	}
 }
 
+// --- forgetting a row of the history (the delete the table never had) ---------
+
+// adminIngestDelete drives DELETE …/ingest/{id} the way the mux does, and answers the code and
+// the body so a test can assert both the refusal and what the panel would then draw.
+func adminIngestDelete(t *testing.T, a engineAdminAPI, g engineIngestGrant, key, id string) (int, map[string]any) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/admin/engines/"+key+"/ingest/"+id, nil)
+	r.SetPathValue("key", key)
+	r.SetPathValue("id", id)
+	a.deleteIngest(rec, r, g)
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out
+}
+
+func seedIngestJob(t *testing.T, st store.Store, id, role, state, tenant, s3key string) {
+	t.Helper()
+	if err := st.PutEngineIngestJob(t.Context(), store.EngineIngestJob{
+		ID: id, Role: role, ModelID: id, S3Key: s3key, Source: "hf:x/" + id,
+		State: state, TenantID: tenant,
+	}); err != nil {
+		t.Fatalf("seed %s: %v", id, err)
+	}
+}
+
+// 🔴 A job that is still going may NOT be forgotten, and this is the reason the state is
+// checked at all: the row is not the task. Deleting it leaves the ECS task downloading, and
+// minutes later that task writes its catalogue row with nothing on screen that says where the
+// model came from — while the reconciler, which would have moved this row to `done`, finds
+// nothing to update and the outcome (a sha256 mismatch, say) is lost.
+func TestIngestHistoryKeepsAJobThatIsStillRunning(t *testing.T) {
+	a, _, st := engineModelAdminAPI(t)
+	super := engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true}
+	seedIngestJob(t, st, "j-running", "image", store.EngineIngestRunning, "", "image/a.safetensors")
+	seedIngestJob(t, st, "j-pending", "image", store.EngineIngestPending, "", "image/b.safetensors")
+
+	for _, id := range []string{"j-running", "j-pending"} {
+		code, out := adminIngestDelete(t, a, super, "image", id)
+		if code != http.StatusConflict {
+			t.Fatalf("delete %s = %d (%v), want 409 — the task outlives the row", id, code, out)
+		}
+		if err, _ := out["error"].(map[string]any); err == nil || err["code"] != errCodeIngestJobLive {
+			t.Errorf("the refusal does not name itself: %v", out)
+		}
+		if _, ok, _ := st.GetEngineIngestJob(t.Context(), id); !ok {
+			t.Errorf("%s was deleted anyway", id)
+		}
+	}
+
+	// Positive control, in the same test: the SAME row, once it has stopped, goes. Without
+	// this, an implementation that refused every delete would pass the assertions above.
+	seedIngestJob(t, st, "j-running", "image", store.EngineIngestDone, "", "image/a.safetensors")
+	code, out := adminIngestDelete(t, a, super, "image", "j-running")
+	if code != http.StatusOK {
+		t.Fatalf("delete of a finished job = %d (%v)", code, out)
+	}
+	if _, ok, _ := st.GetEngineIngestJob(t.Context(), "j-running"); ok {
+		t.Error("a finished job survived its own deletion")
+	}
+	// And the answer is the remaining list, so the panel draws the server's list rather than
+	// one it edited locally.
+	jobs, _ := out["jobs"].([]any)
+	if len(jobs) != 1 {
+		t.Fatalf("the answer's list = %v, want the one job that is left", out["jobs"])
+	}
+	if first, _ := jobs[0].(map[string]any); first["id"] != "j-pending" {
+		t.Errorf("the remaining job = %v", jobs[0])
+	}
+	// A `failed` job is forgettable too: it created no row, and the whole point of the delete
+	// is that a shelf of dead attempts can be cleared.
+	seedIngestJob(t, st, "j-failed", "image", store.EngineIngestFailed, "", "image/c.safetensors")
+	if code, out := adminIngestDelete(t, a, super, "image", "j-failed"); code != http.StatusOK {
+		t.Fatalf("delete of a failed job = %d (%v)", code, out)
+	}
+}
+
+// The delete is narrowed by the SAME rule the list is (ADR 0072 open question 11). Without it
+// the reduced panel a granted tenant_admin gets is a read-only view of one tenant's jobs with a
+// delete button for every tenant's — and the ids are in the answer they already hold.
+//
+// 🔴 The operator's own jobs carry NO tenant, so `j.TenantID != g.tenantID` has to be a
+// comparison and never "narrow only when a tenant was resolved": written the second way, a
+// tenant_admin deletes exactly the deployment-wide jobs they cannot see.
+func TestIngestHistoryDeleteIsNarrowedToTheCallersTenant(t *testing.T) {
+	a, _, st := engineModelAdminAPI(t)
+	acme := engineIngestGrant{ident: store.Identity{ID: "u-acme"}, tenantID: "t-acme"}
+	seedIngestJob(t, st, "j-acme", "image", store.EngineIngestDone, "t-acme", "image/acme.safetensors")
+	seedIngestJob(t, st, "j-beta", "image", store.EngineIngestDone, "t-beta", "image/beta.safetensors")
+	seedIngestJob(t, st, "j-operator", "image", store.EngineIngestDone, "", "image/op.safetensors")
+
+	for _, id := range []string{"j-beta", "j-operator"} {
+		code, out := adminIngestDelete(t, a, acme, "image", id)
+		if code != http.StatusNotFound {
+			t.Fatalf("acme deleting %s = %d (%v), want 404", id, code, out)
+		}
+		// 404 and not 403: "you may not touch job X" would confirm that job X exists, and the
+		// id is the only thing a caller needs to guess.
+		if err, _ := out["error"].(map[string]any); err == nil || err["code"] != errCodeIngestJobUnknown {
+			t.Errorf("the refusal names the wrong thing: %v", out)
+		}
+		if _, ok, _ := st.GetEngineIngestJob(t.Context(), id); !ok {
+			t.Errorf("%s was deleted by another tenant", id)
+		}
+	}
+	// Positive control: their own job goes, so the 404s above are the narrowing and not a
+	// delete that never works.
+	if code, out := adminIngestDelete(t, a, acme, "image", "j-acme"); code != http.StatusOK {
+		t.Fatalf("acme deleting their own job = %d (%v)", code, out)
+	}
+	if _, ok, _ := st.GetEngineIngestJob(t.Context(), "j-acme"); ok {
+		t.Error("acme's own job survived")
+	}
+	// And the operator, who has no tenant to be acting for, reaches both of the others.
+	super := engineIngestGrant{ident: store.Identity{ID: "u0"}, super: true}
+	for _, id := range []string{"j-beta", "j-operator"} {
+		if code, out := adminIngestDelete(t, a, super, "image", id); code != http.StatusOK {
+			t.Fatalf("the operator deleting %s = %d (%v)", id, code, out)
+		}
+	}
+}
+
 // A replace whose slot is gone by the time the download finishes. The bytes are in the bucket
 // and nothing points at them, which is the one outcome worth a log line rather than a silent
 // success — and it must NOT fall back to creating a row or appending a second checkpoint.
@@ -1064,5 +1186,77 @@ func TestEngineIngestReplaceOfAForgottenRowWritesNothing(t *testing.T) {
 
 	if rows, err := st.ListEngineModels(ctx, "llm"); err != nil || len(rows) != 0 {
 		t.Fatalf("rows = %d (%v) — a replace with no row to replace in must write nothing", len(rows), err)
+	}
+}
+
+// A job of ANOTHER role is not this engine's to forget, and an id that never existed answers the
+// same way. Both are 404 with one sentence: the caller cannot tell them apart and must not.
+func TestIngestHistoryDeleteIsScopedToTheEngineInThePath(t *testing.T) {
+	a, _, st := engineModelAdminAPI(t)
+	super := engineIngestGrant{ident: store.Identity{ID: "u0"}, super: true}
+	seedIngestJob(t, st, "j-llm", "llm", store.EngineIngestDone, "", "llm/x.gguf")
+	if code, _ := adminIngestDelete(t, a, super, "image", "j-llm"); code != http.StatusNotFound {
+		t.Errorf("deleting another role's job through this engine = %d, want 404", code)
+	}
+	if _, ok, _ := st.GetEngineIngestJob(t.Context(), "j-llm"); !ok {
+		t.Error("the llm job was deleted through the image engine's path")
+	}
+	if code, _ := adminIngestDelete(t, a, super, "image", "j-nothing"); code != http.StatusNotFound {
+		t.Errorf("deleting an id that never existed = %d, want 404", code)
+	}
+}
+
+// 🔴 What the panel needs before it lets anybody press delete: whether the file this job took in
+// is written down ANYWHERE else. While no catalogue row points at the key, the job row is the
+// last written record of it — the CP cannot list the bucket at all (ADR 0072 review R3) — so the
+// panel asks a second time before forgetting exactly those.
+//
+// The same field answers the opposite question when a key is registered again: a SHARED key is
+// normal (decision 2 — `text_encoders/` is one file SD3.5 and FLUX.1 both read), so the panel
+// names who has it instead of refusing.
+func TestIngestHistorySaysWhichCatalogueRowStillUsesTheFile(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	ctx := t.Context()
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "sd35-medium", Kind: "checkpoint",
+		Files: []store.EngineModelFile{
+			{S3Key: "image/checkpoints/sd3.5_medium.safetensors"},
+			{Flag: "--clip_l", S3Key: "image/text_encoders/clip_l.safetensors"},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	e.catalog.invalidate()
+	// One job whose file a row points at, one whose file nothing does.
+	seedIngestJob(t, st, "j-shared", "image", store.EngineIngestDone, "", "image/text_encoders/clip_l.safetensors")
+	seedIngestJob(t, st, "j-orphan", "image", store.EngineIngestDone, "", "image/checkpoints/forgotten.safetensors")
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/admin/engines/image/ingest", nil)
+	r.SetPathValue("key", "image")
+	a.listIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u0"}, super: true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Jobs []map[string]any `json:"jobs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := map[string]any{}
+	for _, j := range out.Jobs {
+		got[j["id"].(string)] = j["key_used_by"]
+	}
+	// 🔴 The row that keeps the file alive is NAMED, because "still used" with no name is an
+	// answer nobody can act on — and it is named across roles, since the two rows that share a
+	// text encoder need not be in the same role.
+	if got["j-shared"] != "image/sd35-medium" {
+		t.Errorf("the shared key's job says key_used_by=%v, want image/sd35-medium", got["j-shared"])
+	}
+	// And the orphan says NOTHING rather than "" or "nobody": absent is what makes the panel
+	// ask twice, and it must not be produced by a row that simply forgot to look.
+	if v, ok := got["j-orphan"]; ok && v != nil {
+		t.Errorf("a key no row points at claimed a user: %v", v)
 	}
 }

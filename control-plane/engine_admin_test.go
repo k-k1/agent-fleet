@@ -1567,6 +1567,64 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 	}
 }
 
+// --- registering a key the ingest history still holds -------------------------
+
+// 🔴 `POST /models` is how a file that is ALREADY in the bucket is registered, and the panel now
+// offers it on a finished ingest job's key — the bytes are staged, so "take it in again" would
+// be an ingest of something that is already here (forgetting a row without ?purge=1 leaves the
+// object: measured on the dev deployment 2026-09-09, 491 MB outlived its row).
+//
+// What this pins is the field that makes the rebuilt row equal to the one the ingest wrote:
+// WHERE it came from. Without it the round trip loses exactly what migration
+// 0060_engine_model_source.sql exists to keep — an id is short and readable and does not say
+// which vendor published the model, and once the job row is gone nothing else does.
+func TestRegisteringAModelRecordsWhereItCameFrom(t *testing.T) {
+	a, _, st := engineModelAdminAPI(t)
+	code, out := adminModel(t, a, "POST", "image", "", `{
+	  "id":"sd35-medium","kind":"checkpoint","base_model":"sd35",
+	  "files":[{"s3Key":"image/checkpoints/sd3.5_medium.safetensors"}],
+	  "source":"hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors",
+	  "license_name":"stabilityai-ai-community"}`)
+	if code != http.StatusOK {
+		t.Fatalf("register = %d (%v)", code, out)
+	}
+	rows, err := st.ListEngineModels(t.Context(), "image")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %v (err %v)", rows, err)
+	}
+	m := rows[0]
+	if m.Source != "hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors" {
+		t.Errorf("source = %q — the rebuilt row lost which repository it came from", m.Source)
+	}
+	// 🔴 And the ACCEPTANCE is not rebuilt with it. It is the record of a human act on the row
+	// the ingest created (ADR 0072 decision 10); the person registering this key may be
+	// somebody else entirely, and writing their id here would forge a signature. The licence
+	// TEXT is theirs to state and the verdict is still read OFF it, exactly as the ingest does.
+	if m.LicenseAcceptedBy != "" || m.LicenseAcceptedAt != "" || m.LicenseAcceptedTenant != "" {
+		t.Errorf("a registration invented a licence acceptance: by=%q at=%q tenant=%q",
+			m.LicenseAcceptedBy, m.LicenseAcceptedAt, m.LicenseAcceptedTenant)
+	}
+	if m.CommercialUse == "" {
+		t.Error("the commercial-use verdict was not read off the licence, so this door loses the mark the other one records")
+	}
+	if m.Enabled {
+		t.Error("a registered row arrived enabled")
+	}
+	// A row registered with no source says nothing rather than something: the seed and every
+	// row that predates the column are in exactly that state.
+	if code, out := adminModel(t, a, "POST", "image", "", `{
+	  "id":"sdxl-base-1.0","kind":"checkpoint","base_model":"sdxl",
+	  "files":[{"s3Key":"image/checkpoints/sd_xl_base_1.0.safetensors"}]}`); code != http.StatusOK {
+		t.Fatalf("register without a source = %d (%v)", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	for _, m := range rows {
+		if m.ID == "sdxl-base-1.0" && m.Source != "" {
+			t.Errorf("a row registered with no source claims %q", m.Source)
+		}
+	}
+}
+
 // A borrowed role has no bucket and no active set on this side (ADR 0079), so a replace here
 // would stage bytes for an engine that will never read them — and the row it would rewrite is
 // the far deployment's to change.
@@ -1618,5 +1676,39 @@ func TestEngineIngestReplaceIsRefusedForABorrowedRoleAndAllowedForAnExternalOne(
 	external.catalog = newEngineCatalog(st2, "image")
 	if code, msg := call(t, external, st2); strings.Contains(msg, errCodeEngineNotOurs) {
 		t.Fatalf("an external engine was refused as borrowed = %d (%s)", code, msg)
+	}
+}
+
+// The panel builds that registration from a job row, so the job row has to say what the file
+// was taken in AS. Both halves are silent failures if guessed: a LoRA registered as a checkpoint
+// is a row the engine can be told to start with and cannot load, and a text encoder registered
+// with no flag becomes the checkpoint of its own row.
+func TestIngestJobRowSaysWhatTheFileWasTakenInAs(t *testing.T) {
+	job := store.EngineIngestJob{
+		ID: "j1", Role: "image", ModelID: "clip-l", S3Key: "image/text_encoders/clip_l.safetensors",
+		State: store.EngineIngestDone,
+	}
+	spec, _ := json.Marshal(engineIngestRequest{Kind: "checkpoint", FileFlag: "--clip_l"})
+	job.Spec = string(spec)
+	row := engineIngestJobRow(job)
+	if row["kind"] != "checkpoint" || row["file_flag"] != "--clip_l" {
+		t.Errorf("row = %v, want the kind and the file's role", row)
+	}
+	// 🔴 And nothing ELSE of the spec reaches the wire. It carries the licence acceptance and
+	// the resolved download URL, neither of which a job list is the place for.
+	for _, k := range []string{"spec", "AcceptedBy", "accepted_by", "Resolved", "license"} {
+		if _, ok := row[k]; ok {
+			t.Errorf("the job row leaked %q: %v", k, row)
+		}
+	}
+	// A job taken in before these fields existed decodes with them empty, and says nothing
+	// rather than guessing — the form then opens with one fewer answer filled in.
+	job.Spec = `{"Role":"image","ModelID":"clip-l"}`
+	if row := engineIngestJobRow(job); row["kind"] != nil || row["file_flag"] != nil {
+		t.Errorf("an old job invented an answer: %v", row)
+	}
+	job.Spec = "not json at all"
+	if row := engineIngestJobRow(job); row["kind"] != nil || row["file_flag"] != nil {
+		t.Errorf("an unreadable spec invented an answer: %v", row)
 	}
 }

@@ -110,6 +110,12 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// engine_ingest_perm.go says why the axis stops here).
 	mux.HandleFunc("POST /api/admin/engines/{key}/ingest", a.withIngestAdmin(a.postIngest))
 	mux.HandleFunc("GET /api/admin/engines/{key}/ingest", a.withIngestAdmin(a.listIngest))
+	// And forgetting one of those jobs. The list had no delete and no TTL at all, so it grew
+	// for the life of the deployment — `limit` was only hiding the tail. Under the same
+	// authority as the list rather than super_admin, because the rule is "your own jobs": a
+	// granted tenant_admin sees theirs and may forget theirs, and deleteIngest narrows by the
+	// same tenant the list does.
+	mux.HandleFunc("DELETE /api/admin/engines/{key}/ingest/{id}", a.withIngestAdmin(a.deleteIngest))
 	// Resolving a source WITHOUT starting anything: what the licence is, whether the repository
 	// is gated, how big the file is. The panel calls it while somebody is typing, so that the
 	// licence they are about to accept is on screen BEFORE the button that accepts it.
@@ -1213,6 +1219,16 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		LicenseURL      string                `json:"license_url"`
 		Precision       string                `json:"precision"`
 		BaseModel       string                `json:"base_model"`
+		// WHERE the bytes came from — `hf:<repo>/<file>`, `civitai:<version>`, a URL. Accepted
+		// here and not only written by the ingest, because this route is how a file that is
+		// already in the bucket is registered AGAIN: the panel offers a finished ingest job's
+		// key, and without this field the rebuilt row loses the one fact migration
+		// 0060_engine_model_source.sql exists to keep — an id is short and readable and does
+		// not say which vendor published the model, and after the job is gone nothing else does.
+		//
+		// Free text on purpose: nothing parses it (the machine-readable half was consumed when
+		// the job was created) and inventing a shape here would make the round trip lossy.
+		Source string `json:"source"`
 		// The generation defaults, in the same shape the row answers them. A pointer so that
 		// "the body said nothing" and "the body said all zeros" stay different bodies.
 		Params *store.EngineParams `json:"params"`
@@ -1233,8 +1249,15 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		License: strings.TrimSpace(b.License), LicenseName: strings.TrimSpace(b.LicenseName),
 		LicenseURL: strings.TrimSpace(b.LicenseURL),
 		Precision:  strings.TrimSpace(b.Precision), BaseModel: strings.TrimSpace(b.BaseModel),
+		Source: strings.TrimSpace(b.Source),
 		Params: engineParamsClean(b.Params),
 	}
+	// 🔴 What is NOT copied across with it: the licence ACCEPTANCE. `license_accepted_by` and
+	// its tenant and timestamp are the record of a human act (ADR 0072 decision 10), and a row
+	// rebuilt from an old job's key is not that act — the person registering it here may not be
+	// the person who accepted anything. The licence TEXT may be re-typed (the field above), the
+	// signature may not, so the new row's acceptance stays empty and the panel says
+	// "licence not recorded".
 	// The commercial-use verdict is READ FROM the licence here exactly as the ingest reads it
 	// (ADR 0072 decision 10), rather than being a field this route accepts. Two reasons: the
 	// answer is a property of the licence and not of whoever typed it, and a row registered by
@@ -1858,25 +1881,168 @@ func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, g eng
 		writeJSON(w, http.StatusOK, map[string]any{"jobs": []any{}})
 		return
 	}
-	jobs, err := a.ingestJobsFor(r, g, key)
+	body, err := a.ingestListBody(r, g, key)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	out := make([]map[string]any, 0, len(jobs))
-	for _, j := range jobs {
-		out = append(out, engineIngestJobRow(j))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"jobs": out})
+	writeJSON(w, http.StatusOK, body)
 }
 
-// engineIngestJobRow is one job as the panel reads it. The SPEC is not on the wire: it is this
-// process's own shape, it holds nothing the panel does not already have, and a job list is not
-// where a catalogue row should be edited.
+// deleteIngest (DELETE …/ingest/{id}) forgets ONE job of the history.
+//
+// Until this existed the table had no delete, no TTL and no prune, so it grew for the life of
+// the deployment and the list's `limit` only hid the tail. There is still no timer, and
+// store.DeleteEngineIngestJob says why: a `done` row is the only written record of an S3 key
+// until a catalogue row points at it.
+//
+// Three refusals, and they are deliberately not three sentences:
+//
+//   - `pending` / `running` → 409, and this is the one that matters. Deleting the ROW does not
+//     stop the TASK: the ECS task keeps downloading, finishes, and writes its catalogue row
+//     with nobody waiting for it — a model appearing out of nothing minutes after somebody
+//     deleted the only trace of where it came from. The reconciler would also have no row left
+//     to move to `done`, so the outcome (and a sha256 mismatch, if that is what happened) is
+//     lost;
+//   - another ROLE's job, another TENANT's job, and an id that never existed → all 404 with the
+//     same words. The list a granted tenant_admin reads is narrowed to their own tenant (ADR
+//     0072 open question 11) and the delete has to be narrowed by the same rule, or the reduced
+//     panel is a read-only view of one tenant with a delete button for every tenant. 404 and
+//     not 403 because "you may not touch job X" tells a tenant_admin that job X exists.
+//
+// 🔴 Not refused for a BORROWED role, unlike every write next door. The job ledger is this
+// deployment's own — the far catalogue is mirrored, its jobs are not — so refusing here would
+// strand the rows a role left behind when it became borrowed. The panel still offers no button
+// there, because that whole screen is read-only for a mirror.
+func (a engineAdminAPI) deleteIngest(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	id := strings.TrimSpace(r.PathValue("id"))
+	if a.reg.get(key) == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	if a.mgr == nil || a.mgr.store == nil {
+		writeAPIErr(w, internalErr(errors.New("no store")))
+		return
+	}
+	j, ok, err := a.mgr.store.GetEngineIngestJob(r.Context(), id)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok || j.Role != key || (!g.super && j.TenantID != g.tenantID) {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeIngestJobUnknown,
+			"no ingest job " + id + " for engine " + key})
+		return
+	}
+	if j.State == store.EngineIngestPending || j.State == store.EngineIngestRunning {
+		writeAPIErr(w, &apiError{http.StatusConflict, errCodeIngestJobLive,
+			"that job is still running: forgetting the row would not stop the task, which keeps" +
+				" downloading and writes its catalogue row when it finishes — wait for it to end," +
+				" and forget it then"})
+		return
+	}
+	if _, err := a.mgr.store.DeleteEngineIngestJob(r.Context(), id); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// Audited with the KEY in it, because that is the fact the deletion destroys: after this
+	// row is gone the audit line is the last place the s3 key of a file still in the bucket is
+	// written down.
+	a.auditFor(r, g, "engine."+key+".ingest",
+		"forget job "+id+" ("+j.ModelID+" "+j.S3Key+", "+j.State+")")
+	// The remaining list, so the panel does not have to ask again — and so what it draws is the
+	// server's list rather than one it edited locally.
+	body, err := a.ingestListBody(r, g, key)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// ingestListBody is the `{"jobs": …}` answer both the list and the delete give, narrowed to the
+// caller's authority. Shared so that the two cannot drift into two shapes for one list.
+func (a engineAdminAPI) ingestListBody(r *http.Request, g engineIngestGrant, key string) (map[string]any, error) {
+	jobs, err := a.ingestJobsFor(r, g, key)
+	if err != nil {
+		return nil, err
+	}
+	// EVERY role's rows, not this one's: a text encoder taken in under `image` is pointed at by
+	// rows of whatever role loads it, and "is this key written down anywhere" has to mean
+	// anywhere. A read that FAILS is not fatal to the list — the jobs are what this route is
+	// for — and leaves every row saying nothing points at it, which is the cautious half: the
+	// panel warns harder before forgetting.
+	rows, rerr := a.mgr.store.ListEngineModels(r.Context(), "")
+	if rerr != nil {
+		log.Printf("engines: ingest list could not read the catalogue (%v) — job rows will not say what still uses their files", rerr)
+		rows = nil
+	}
+	out := make([]map[string]any, 0, len(jobs))
+	for _, j := range jobs {
+		row := engineIngestJobRow(j)
+		if by := engineIngestKeyUsedBy(rows, j.S3Key); by != "" {
+			row["key_used_by"] = by
+		}
+		out = append(out, row)
+	}
+	return map[string]any{"jobs": out}, nil
+}
+
+// engineIngestKeyUsedBy names the catalogue row that already points at this job's file, or "".
+//
+// One answer to two questions the panel asks in opposite directions:
+//
+//   - registering the key AGAIN: a shared key is NORMAL and must not be refused. Decision 2
+//     says so on purpose — `text_encoders/` is one file SD3.5 and FLUX.1 both read (measured on
+//     af-sandbox: `clip_l.safetensors` pointed at by two rows) — so the panel names who has it
+//     rather than blocking;
+//   - FORGETTING the job: while nothing points at the key, this row is the last written record
+//     of it, and deleting it leaves bytes in the bucket that nothing can name again.
+//
+// 🔴 It says who POINTS at the file. It never says the file is there: the CP cannot look in the
+// bucket (ADR 0072 review R3), and `deleteModel?purge=1` deletes the bytes while leaving the job
+// `done` for ever.
+func engineIngestKeyUsedBy(rows []store.EngineModel, s3key string) string {
+	if strings.TrimSpace(s3key) == "" {
+		return ""
+	}
+	for _, m := range rows {
+		for _, f := range m.Files {
+			if f.S3Key == s3key {
+				return m.Role + "/" + m.ID
+			}
+		}
+	}
+	return ""
+}
+
+// engineIngestJobRow is one job as the panel reads it. Nearly all of the SPEC stays off the
+// wire: it is this process's own shape, and a job list is not where a catalogue row is edited.
+//
+// Two of its fields do ride along, and only because a finished job is how a file that is
+// already in the bucket gets registered again — the panel fills `POST /models` from this row
+// (the bytes are staged, so re-taking it in would be an ingest of something already here). What
+// that form cannot derive from a key is what the file was taken in AS, and both ways of getting
+// it wrong are silent until the next cold start: a LoRA registered as a checkpoint is a row
+// that starts nothing, and a text encoder registered with no flag becomes the checkpoint of its
+// own row.
 func engineIngestJobRow(j store.EngineIngestJob) map[string]any {
 	row := map[string]any{
 		"id": j.ID, "model_id": j.ModelID, "s3_key": j.S3Key,
 		"source": j.Source, "state": j.State, "created_at": j.CreatedAt,
+	}
+	// A job started before a field existed decodes with it empty, and a spec that does not
+	// parse leaves both empty. Either way the form opens with one fewer answer filled in —
+	// never with a wrong one.
+	var spec struct{ Kind, FileFlag string }
+	if json.Unmarshal([]byte(j.Spec), &spec) == nil {
+		if spec.Kind != "" {
+			row["kind"] = spec.Kind
+		}
+		if spec.FileFlag != "" {
+			row["file_flag"] = spec.FileFlag
+		}
 	}
 	if j.Message != "" {
 		row["message"] = j.Message

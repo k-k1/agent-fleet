@@ -364,6 +364,27 @@ export const admin = {
   // 走って完了した」は真であり続ける）ので、見出しと日時を付けて「履歴」と読めるようにする。
   // 日時が無いと、消えたモデルの隣の「完了」が現在の状態と読める。
   "admin.engines_ingest_jobs_head": "取り込みの履歴",
+  // 履歴を 1 行消す（ADR 0072 P4 に無かった削除）。この表には TTL も一括の掃除も無いままに
+  // する: done の行は、カタログがその鍵を指すまでのあいだ「バケットにこのファイルがある」と
+  // 書いてある唯一の場所で、CP は S3 を見られない（レビュー R3）。だから消す前に、その鍵を
+  // 使っている行がいるかどうかを言い分ける。
+  // 🔴 「取り込み直す」ではない。バイトはもうバケットにある（purge を付けずに行を消すと
+  // 残る——2026-09-09 に開発配備で 491 MB のファイルが行より長生きした）ので、これは登録
+  // （POST /models）で、足りていなかったのは鍵の一覧だけだった。押しても登録はせず、フォーム
+  // を開いて埋めるところで止まる: id とファミリーは人が確かめる欄。
+  "admin.engines_ingest_job_reuse": "この鍵で登録する",
+  "admin.engines_model_add_from_job": "取り込み履歴から: {s}",
+  // 同じ鍵を複数の行が指すのは異常ではない（SD3.5 と FLUX.1 は同じ text encoder を読む）。
+  // 拒まず、誰が使っているかだけを言う。
+  "admin.engines_model_add_from_job_used": "この鍵は {who} も使っています。同じファイルを複数の行が指すのは正常です。",
+  "admin.engines_ingest_job_forget": "履歴を消す",
+  "admin.engines_ingest_job_forget_go": "消す",
+  "admin.engines_ingest_job_forget_live": "実行中の取り込みは履歴だけを消すことはできません。行を消してもタスクは止まらず、終われば誰も待っていないカタログ行を書きます。",
+  "admin.engines_ingest_job_forget_used": "この鍵は {who} が使っています。履歴を消しても、その行と鍵は残ります。",
+  // 🔴 「ファイルは在ります」とは言わない。purge（バイトごと削除）してもジョブは done のまま
+  // 残るし、CP はバケットを見られない。言えるのは「この鍵を指すカタログ行が無い」だけ。
+  "admin.engines_ingest_job_forget_last": "この鍵を指すカタログ行はありません。履歴を消すと、この鍵をここから選んで登録し直す道も一緒に消えます（Control Plane はバケットを見られないので、ファイルがまだ在るかどうかは分かりません）。",
+  "admin.engines_ingest_job_forget_ack": "承知のうえで消す",
   "admin.engines_ingest_state_pending": "開始中",
   "admin.engines_ingest_state_running": "取り込み中",
   "admin.engines_ingest_state_done": "完了",

@@ -46,6 +46,10 @@ export function EngineModelsAdminView() {
   const tr = useT();
   const { rows, isSuper, err, setErr, setRows, load } = useEngineRows();
   const [busy, setBusy] = useState("");
+  /** Which JOB a request is in flight for. Its own state rather than `busy`: the two lists are
+   *  loaded and refreshed independently, and one shared key would disable a model row because
+   *  somebody pressed delete in the history below it. */
+  const [busyJob, setBusyJob] = useState("");
   const [note, setNote] = useState("");
   const [jobs, setJobs] = useState<Record<string, IngestJob[]>>({});
   /** Which engine's catalogue is open, by key. A key rather than an index so that a reload that
@@ -56,6 +60,18 @@ export function EngineModelsAdminView() {
    *  for checkpoints, so choosing "LoRA" changed what the row would be registered as and
    *  nothing about what was on offer. */
   const [kind, setKind] = useState<ModelKind>("model");
+  /** The registration form, opened with a finished job's answers already in it.
+   *
+   * 🔴 "Take that file in again" is not an ingest: the bytes are in the bucket already (forget
+   * a row without `?purge=1` and they stay — measured on the dev deployment, 2026-09-09: a
+   * 491 MB object outlived its row), so this is `POST /models`, the route that registers a
+   * staged file. What was missing was never the route: it was the LIST OF KEYS, which lived
+   * only in the ingest history and had to be retyped from it by hand.
+   *
+   * It fills the form and stops there. The id and the family are questions for a person — one
+   * is what members read in the launch menu and the other is the dispatch key a wrong answer
+   * fails silently on — so the button opens the form rather than posting it. */
+  const [prefill, setPrefill] = useState<ModelPrefill | null>(null);
 
   /** The ingest jobs for one engine. The CP reconciles against ECS inside this call, so asking
    *  is also what moves a finished job to `done` while somebody is watching. */
@@ -133,6 +149,48 @@ export function EngineModelsAdminView() {
     );
   };
 
+  /** Forget one row of the ingest history.
+   *
+   * 🔴 The history is not only a progress display: until a catalogue row points at the key a
+   * `done` job wrote, that row is the only place this deployment records that the file is in
+   * the bucket — the CP cannot list it (ADR 0072 review R3). So the answer is taken from the
+   * SERVER's remaining list rather than by dropping the row locally: the CP refuses a job that
+   * is still running (409), and a panel that had already removed it would show the deletion it
+   * did not get. */
+  const forgetJob = async (key: string, id: string) => {
+    setBusyJob(id);
+    try {
+      const d = await apiJSON(
+        `api/admin/engines/${encodeURIComponent(key)}/ingest/${encodeURIComponent(id)}`,
+        "DELETE",
+      );
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setJobs((cur) => ({ ...cur, [key]: Array.isArray(d?.jobs) ? d.jobs : [] }));
+    } finally {
+      setBusyJob("");
+    }
+  };
+
+  /** Open the registration form on a finished job's key.
+   *
+   * The TAB moves with it, because model and LoRA are two lists with two forms and the job says
+   * which one it was: a LoRA prefilled into the checkpoint form would be registered as a
+   * checkpoint, which is a row the engine can be told to start with and cannot load. */
+  const reuseJobKey = (j: IngestJob) => {
+    setKind(j.kind === "lora" ? "lora" : "model");
+    setPrefill({
+      id: j.model_id,
+      s3Key: j.s3_key || "",
+      flag: j.file_flag || "",
+      source: j.source || "",
+      usedBy: j.key_used_by || "",
+    });
+  };
+
   const callModel = async (
     busyKey: string,
     path: string,
@@ -208,7 +266,10 @@ export function EngineModelsAdminView() {
                   key={e.key}
                   type="button"
                   className={"seg-btn" + (open.key === e.key ? " active" : "")}
-                  onClick={() => setRole(e.key)}
+                  onClick={() => {
+                    setRole(e.key);
+                    setPrefill(null);
+                  }}
                 >
                   {tr(engineIsImage(e) ? "admin.engines_role_image" : "admin.engines_role_llm")}
                 </button>
@@ -226,7 +287,13 @@ export function EngineModelsAdminView() {
                 key={k}
                 type="button"
                 className={"seg-btn" + (kind === k ? " active" : "")}
-                onClick={() => setKind(k)}
+                // A tab pressed BY HAND drops a pending prefill. Without this, switching to the
+                // LoRA list minutes later reopens the form still holding the checkpoint whose
+                // key was picked out of the history — an id and an S3 key nobody chose there.
+                onClick={() => {
+                  setKind(k);
+                  setPrefill(null);
+                }}
               >
                 {tr(k === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}
               </button>
@@ -255,6 +322,7 @@ export function EngineModelsAdminView() {
           kind={kind}
           busy={busy}
           readOnly={!isSuper || borrowed}
+          prefill={prefill}
           onChange={(id, patch) => setModel(open.key, id, patch)}
           onForget={(id, purge) => forgetModel(open.key, id, purge)}
           onAdd={(body) => addModel(open.key, body)}
@@ -277,7 +345,17 @@ export function EngineModelsAdminView() {
             onStarted={() => loadJobs(open.key)}
           />
         )}
-        <EngineIngestJobs jobs={jobs[open.key] || []} />
+        <EngineIngestJobs
+          jobs={jobs[open.key] || []}
+          busy={busyJob}
+          readOnly={borrowed}
+          onForget={(id) => forgetJob(open.key, id)}
+          // Registering a staged file is a super_admin's act, as it always was: it names an S3
+          // key in the operator's bucket. A granted tenant_admin sees the history and may forget
+          // their own rows, and gets no button that would 403. (A borrowed engine needs no test
+          // here — `readOnly` above hides every action on that screen.)
+          onReuse={isSuper ? reuseJobKey : undefined}
+        />
       </section>
       {/* The deployment's Hugging Face token. One token serves every role and every tenant, so
           registering it is the operator's act; a tenant_admin who needs a gated repository asks
@@ -324,6 +402,7 @@ function EngineModels({
   kind,
   busy,
   readOnly,
+  prefill,
   onChange,
   onForget,
   onAdd,
@@ -332,6 +411,10 @@ function EngineModels({
   kind: ModelKind;
   busy: string;
   readOnly?: boolean;
+  /** Answers taken out of a finished ingest job, for the registration form below the list.
+   *  Passed through rather than held here: the history that produces it is a sibling of this
+   *  component, not a child. */
+  prefill?: ModelPrefill | null;
   onChange: EngineModelChange;
   onForget: (id: string, purge: boolean) => void;
   onAdd: (body: Record<string, unknown>) => void;
@@ -683,6 +766,7 @@ function EngineModels({
           baseModels={row.base_models}
           fileFlags={row.file_flags}
           modelIds={(row.model_rows || []).filter((m) => m.kind !== "lora").map((m) => m.id)}
+          prefill={prefill}
           onAdd={onAdd}
         />
       )}
@@ -950,6 +1034,27 @@ function engineParamsSummary(p: EngineParams | undefined, tr: ReturnType<typeof 
   return tr("admin.engines_params") + ": " + bits.join(" · ");
 }
 
+/** The answers a finished ingest job can give the form below, and the ones it must not.
+ *
+ * 🔴 There is no licence and no acceptance in here, and there must not be. The acceptance is the
+ * record of a human act (ADR 0072 decision 10) and it belongs to the row that job created — the
+ * person registering the key again may be somebody else, years later. The CP leaves
+ * `license_accepted_by` empty for everything this route writes, and the row then says "licence
+ * not recorded", which is the true state. */
+export type ModelPrefill = {
+  id: string;
+  s3Key: string;
+  /** What the file is within the model (`--vae`, `--t5xxl`), "" for a whole checkpoint. */
+  flag: string;
+  /** Where the bytes came from, as the job recorded it. Carried through to the new row rather
+   *  than shown as an editable field: it is a fact about the file, not a preference. */
+  source: string;
+  /** The catalogue row that ALREADY points at this key, if any. Not a refusal — a shared key is
+   *  normal, since SD3.5 and FLUX.1 read the same text encoders — but the form says who has it,
+   *  because the likeliest reason to be here twice is not knowing that. */
+  usedBy: string;
+};
+
 /** Registering a file that is ALREADY in the models bucket.
  *
  * This is NOT the ingest — that fetches from Hugging Face, needs `ecs:RunTask` on the Control
@@ -975,6 +1080,7 @@ function EngineModelAdd({
   baseModels,
   fileFlags,
   modelIds,
+  prefill,
   onAdd,
 }: {
   busy: boolean;
@@ -994,6 +1100,9 @@ function EngineModelAdd({
    *  that is the model whose preset section it is pinned into, so it is a CHOICE and never a
    *  typed name — a base nothing matches is an adapter that silently does nothing. */
   modelIds?: string[];
+  /** A key picked out of the ingest history, or null. A new object per press, which is what
+   *  re-opens the form on a second press of the same job. */
+  prefill?: ModelPrefill | null;
   onAdd: (body: Record<string, unknown>) => void;
 }) {
   const tr = useT();
@@ -1018,6 +1127,11 @@ function EngineModelAdd({
   // encoder and a VAE, and each has to be labelled with the flag its loader reads.
   const blank = () => [{ flag: "", s3Key: "", bytes: "" }];
   const [files, setFiles] = useState(blank);
+  /** Where the file came from, when it is being registered from the ingest history. Held rather
+   *  than shown as a field: nothing about it is a choice, and the CP stores it because an id is
+   *  short and readable and does not say which vendor published the model (migration 0060). */
+  const [source, setSource] = useState("");
+  const [fromJob, setFromJob] = useState<ModelPrefill | null>(null);
   const families = baseModels || [];
   const flags = fileFlags || [];
   const reset = () => {
@@ -1031,7 +1145,29 @@ function EngineModelAdd({
     setLicence("");
     setLicenceURL("");
     setFiles(blank);
+    setSource("");
+    setFromJob(null);
   };
+
+  /** A key picked out of the ingest history opens the form on it.
+   *
+   * 🔴 What is filled in is what the job KNOWS — the key, what the file is within the model,
+   * where it came from, and the id that job used. What is not filled in is the FAMILY, which is
+   * the one field a wrong answer fails silently on (a display name like "Flux.1 D" produced rows
+   * that looked complete and refused to generate, ADR 0072 P2 実機検証), so the button below
+   * stays disabled until a person picks one. The bytes are left empty too: the CP cannot look in
+   * the bucket, so a number carried over from a job row would be a size nobody re-measured.
+   *
+   * Keyed on the prefill OBJECT, so a second press of the same job re-opens the form, and a
+   * remount (the tab above changes this component's key) applies it once. */
+  useEffect(() => {
+    if (!prefill) return;
+    setOpen(true);
+    setId(prefill.id);
+    setFiles([{ flag: prefill.flag, s3Key: prefill.s3Key, bytes: "" }]);
+    setSource(prefill.source);
+    setFromJob(prefill);
+  }, [prefill]);
 
   if (!open) {
     return (
@@ -1080,6 +1216,11 @@ function EngineModelAdd({
       // them. Empty stays empty — an unrecorded licence is a state the row states.
       license_name: licence.trim(),
       license_url: licenceURL.trim(),
+      // Where the bytes came from, when this row is being rebuilt on a key the ingest history
+      // still holds. 🔴 The licence ACCEPTANCE does not travel with it: that is the record of a
+      // human act on the row the job created (ADR 0072 decision 10), and the CP leaves this
+      // row's `license_accepted_by` empty. Registering a key again is not accepting anything.
+      ...(source ? { source } : {}),
     });
     reset();
   };
@@ -1108,6 +1249,34 @@ function EngineModelAdd({
   );
   return (
     <div className="engines-model-add">
+      {/* Where these answers came from, when they were not typed. Three things are said and one
+          is deliberately not:
+            - the SOURCE, which is what travels onto the row and is otherwise invisible here;
+            - that the family still has to be picked, because that is why the button is off;
+            - who else already points at this key, when somebody does. A shared key is normal
+              (SD3.5 and FLUX.1 read the same text encoders), so it is not a refusal — but a
+              second row for a file that already has one is usually a mistake, and this is the
+              only moment it can be noticed.
+          🔴 What is NOT said is that the file is in the bucket. The CP has no S3 permission at
+          all (ADR 0072 review R3) and a `done` job proves only that the fetch once succeeded —
+          `deleteModel?purge=1` deletes the bytes and leaves the job `done`. A typo, or a purged
+          file, surfaces in the fetch sidecar's log at the next cold start, which is what the
+          note at the bottom of this form has always said. */}
+      {fromJob && (
+        <div className="engines-model-add-from-job">
+          <p className="muted">
+            {(tr("admin.engines_model_add_from_job") as string).replace("{s}", fromJob.source)}
+          </p>
+          {!!fromJob.usedBy && (
+            <p className="muted">
+              {(tr("admin.engines_model_add_from_job_used") as string).replace(
+                "{who}",
+                fromJob.usedBy,
+              )}
+            </p>
+          )}
+        </div>
+      )}
       {field(tr("admin.engines_model_add_id"), id, setId,
         isLora ? "house-style" : isImage ? "juggernaut-xl-v9" : "qwen2.5-coder-1.5b")}
       {/* ⚠️ A CHOICE, never a text box. What the repository calls a model — "SDXL 1.0",
@@ -2750,14 +2919,52 @@ export function engineJobAdvice(code?: string): string {
   }
 }
 
-function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
+function EngineIngestJobs({
+  jobs,
+  busy,
+  readOnly,
+  onForget,
+  onReuse,
+}: {
+  jobs: IngestJob[];
+  /** The id of the job a request is in flight for, so one press disables one row's buttons
+   *  rather than the whole list. */
+  busy: string;
+  /** A borrowed engine's screen (ADR 0079 decision 7). The CP would in fact accept the delete —
+   *  the job ledger is THIS deployment's, not the mirror's — but this whole panel is read-only
+   *  for a borrowed role, and one live button among absent ones reads as "the rest are broken". */
+  readOnly: boolean;
+  onForget: (id: string) => void;
+  /** Open the registration form on this job's key, or undefined for a caller who may not
+   *  register anything (a granted tenant_admin: the bucket is the operator's). */
+  onReuse?: (j: IngestJob) => void;
+}) {
   const tr = useT();
+  const [confirming, setConfirming] = useState("");
+  /** The extra press a job with nothing pointing at its file needs. Reset with the confirmation
+   *  it belongs to, so it cannot be carried from one row to the next. */
+  const [ack, setAck] = useState(false);
+  const openConfirm = (id: string) => {
+    setConfirming(id);
+    setAck(false);
+  };
   if (jobs.length === 0) return null;
   return (
     <>
     <p className="muted engines-ingest-jobs-head">{tr("admin.engines_ingest_jobs_head")}</p>
     <ul className="engines-model-list engines-ingest-jobs">
-      {jobs.map((j) => (
+      {jobs.map((j) => {
+        // 🔴 Only a job that has STOPPED may be forgotten. The row is not the task: deleting it
+        // leaves the ECS task downloading, and it still writes its catalogue row minutes later
+        // with nothing on screen that explains where the model came from. The CP refuses this
+        // too (409 ingest_job_live) — the button is absent here so that the refusal is read
+        // before the press rather than after it.
+        const live = j.state === "running" || j.state === "pending";
+        // Nothing in the catalogue points at this file, so this row is the last written record
+        // of its key: forgetting it also forgets the address of bytes that are still being paid
+        // for, and with it the only place that key can be picked from to register it again.
+        const last = !j.key_used_by;
+        return (
         <li key={j.id} className="engines-model">
           <div className="engines-model-head">
             <span className="mono engines-model-id">{j.model_id}</span>
@@ -2782,8 +2989,94 @@ function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
           {!!engineJobAdvice(j.code) && (
             <p className="form-err engines-model-meta">{tr(engineJobAdvice(j.code) as never)}</p>
           )}
+          {/* The refusal, in place of the button rather than behind it. "Why can I not delete
+              this one" is answered before the press, which is the only place it helps. */}
+          {!readOnly && live && (
+            <p className="muted engines-model-meta engines-ingest-job-live">
+              {tr("admin.engines_ingest_job_forget_live")}
+            </p>
+          )}
+          {!readOnly && !live && confirming !== j.id && (
+            <span className="engines-model-actions">
+              {/* 🔴 "Take that file in again" is not an ingest: the bytes are in the bucket
+                  already (forgetting a row without `?purge=1` leaves them — measured on the dev
+                  deployment, 2026-09-09: a 491 MB object outlived its row), so this opens the
+                  REGISTRATION form on the key. What was missing was never the route — it was
+                  the list of keys, which lives only here and had to be retyped by hand.
+
+                  Only for a job that FINISHED, and even then only as an offer: a `done` job is
+                  not proof the file is there. A purge deletes the bytes and leaves the job
+                  `done` for ever, and the CP cannot look in the bucket to check (review R3). A
+                  failed job is not offered at all — whatever it left behind is a part of a
+                  file, and registering that would produce a row that fails at load. */}
+              {j.state === "done" && !!j.s3_key && onReuse && (
+                <button
+                  type="button"
+                  className="ghost sm engines-ingest-job-reuse"
+                  onClick={() => onReuse(j)}
+                >
+                  {tr("admin.engines_ingest_job_reuse")}
+                </button>
+              )}
+              <button
+                type="button"
+                className="ghost sm engines-ingest-job-forget"
+                disabled={busy === j.id}
+                onClick={() => openConfirm(j.id)}
+              >
+                {tr("admin.engines_ingest_job_forget")}
+              </button>
+            </span>
+          )}
+          {confirming === j.id && !live && (
+            <div className="engines-model-confirm engines-ingest-job-confirm">
+              {/* The KEY, here and nowhere else on the row. This is the moment it matters: the
+                  row is about to stop being a record of it, and with nothing in the catalogue
+                  pointing at it this is the last time anyone can read it off a screen. */}
+              {j.s3_key && <p className="mono engines-model-keys">{j.s3_key}</p>}
+              <p className={last ? "form-err" : "muted"}>
+                {last
+                  ? tr("admin.engines_ingest_job_forget_last")
+                  : (tr("admin.engines_ingest_job_forget_used") as string).replace(
+                      "{who}",
+                      j.key_used_by || "",
+                    )}
+              </p>
+              {/* 🔴 A second, explicit act for the row whose key nothing else holds — and only
+                  for that one. Forgetting a job whose file a catalogue row already names loses
+                  nothing (the key is written down in that row), so asking twice there would
+                  train the tick out of meaning anything. */}
+              {last && (
+                <label className="engines-ingest-job-ack">
+                  <input
+                    type="checkbox"
+                    checked={ack}
+                    onChange={(ev) => setAck(ev.currentTarget.checked)}
+                  />
+                  <span>{tr("admin.engines_ingest_job_forget_ack")}</span>
+                </label>
+              )}
+              <span className="engines-model-actions">
+                <button
+                  type="button"
+                  className="sm"
+                  disabled={busy === j.id || (last && !ack)}
+                  onClick={() => {
+                    setConfirming("");
+                    onForget(j.id);
+                  }}
+                >
+                  {tr("admin.engines_ingest_job_forget_go")}
+                </button>
+                <button type="button" className="sm" onClick={() => setConfirming("")}>
+                  {tr("common.cancel")}
+                </button>
+              </span>
+            </div>
+          )}
         </li>
-      ))}
+        );
+      })}
     </ul>
     </>
   );
