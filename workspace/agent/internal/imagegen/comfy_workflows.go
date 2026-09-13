@@ -208,6 +208,26 @@ var comfySchedulerNames = map[string]bool{
 func comfyKnownSampler(s string) bool   { return comfySamplerNames[strings.TrimSpace(s)] }
 func comfyKnownScheduler(s string) bool { return comfySchedulerNames[strings.TrimSpace(s)] }
 
+// comfyFamilyRecipes is every family's own sampler settings, in ONE place.
+//
+// They used to be literals inside each template, which was fine while the only reader was the
+// template itself. It stopped being fine when the member-facing catalogue had to report the
+// EFFECTIVE defaults (ADR 0081 decision 5) — the form's placeholders are what will run, and a
+// second copy of these five numbers for the status route to read is exactly the kind of pair
+// that drifts silently and shows a member a step count no picture was ever made at.
+//
+// Each entry has been run on a GPU; a catalogue row and then the request may replace any field
+// of it (comfyRecipe.with, comfyEffectiveParams). A family that leaves a field zero does not
+// read it at all — flux1 and klein have no cfg, klein no scheduler — which is the same fact
+// comfyFamilyKnobs states for the form.
+var comfyFamilyRecipes = map[comfyFamily]comfyRecipe{
+	ComfyFamilySDXL:       {Steps: 20, CFG: 7, Sampler: "dpmpp_2m", Scheduler: "karras"},
+	ComfyFamilySD35:       {Steps: 28, CFG: 4.5, Sampler: "dpmpp_2m", Scheduler: "sgm_uniform"},
+	ComfyFamilyFlux1:      {Steps: 20, Sampler: "euler", Scheduler: "simple"},
+	ComfyFamilyFlux2Klein: {Steps: 4, Sampler: "euler"},
+	ComfyFamilyZImage:     {Steps: 8, CFG: 1, Sampler: "res_multistep", Scheduler: "simple"},
+}
+
 // recipe is the family default with this request's model declaration merged over it.
 func (p comfyParams) recipe(base comfyRecipe) comfyRecipe { return base.with(p.Params) }
 
@@ -433,7 +453,7 @@ func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := p.recipe(comfyRecipe{Steps: 20, CFG: 7, Sampler: "dpmpp_2m", Scheduler: "karras"})
+	r := p.recipe(comfyFamilyRecipes[ComfyFamilySDXL])
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": p.denoise(),
@@ -474,7 +494,7 @@ func comfyGraphZImage(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := p.recipe(comfyRecipe{Steps: 8, CFG: 1, Sampler: "res_multistep", Scheduler: "simple"})
+	r := p.recipe(comfyFamilyRecipes[ComfyFamilyZImage])
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": p.denoise(),
@@ -512,7 +532,7 @@ func comfyGraphFlux2Klein(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	// 🔴 Steps and the sampler only. The `cfg: 1` above is the DISTILLED path's fixed value, not
 	// a guidance scale a model card is talking about when it prints "CFG 4" — and this family
 	// has no scheduler name to set at all (Flux2Scheduler takes a size, not a schedule name).
-	r := p.recipe(comfyRecipe{Steps: 4, Sampler: "euler"})
+	r := p.recipe(comfyFamilyRecipes[ComfyFamilyFlux2Klein])
 	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": r.Sampler}}
 	// Flux2Scheduler has no denoise of its own — it takes steps and a size and nothing else
 	// (comfy_extras/nodes_flux.py, v0.34.0) — so an edit's partial denoise is a TAIL of that
@@ -595,7 +615,7 @@ func comfyGraphFlux1(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	// is BasicGuider rather than CFGGuider), so the number a model card calls "CFG" for this
 	// family is FluxGuidance's `guidance` and not a sampler cfg — two different knobs with one
 	// name. Applying the declared cfg here would turn "CFG 4" into a silently wrong picture.
-	r := p.recipe(comfyRecipe{Steps: 20, Sampler: "euler", Scheduler: "simple"})
+	r := p.recipe(comfyFamilyRecipes[ComfyFamilyFlux1])
 	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": r.Sampler}}
 	// BasicScheduler DOES have a denoise (unlike klein's Flux2Scheduler), and it cuts the tail
 	// itself: total_steps = steps/denoise, then the last steps+1 sigmas. So an edit needs no
@@ -660,7 +680,7 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := p.recipe(comfyRecipe{Steps: 28, CFG: 4.5, Sampler: "dpmpp_2m", Scheduler: "sgm_uniform"})
+	r := p.recipe(comfyFamilyRecipes[ComfyFamilySD35])
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": p.denoise(),

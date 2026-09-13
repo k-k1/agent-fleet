@@ -57,13 +57,20 @@ type usageKey struct {
 // usageAgg is the aggregated value. The JSON tags are the series element of /usage/series
 // itself.
 type usageAgg struct {
-	Spend       int     `json:"spend"`
-	In          int     `json:"in"`
-	Out         int     `json:"out"`
-	CacheRead   int     `json:"cread"`
-	CacheCreate int     `json:"ccreate"`
-	Calls       int     `json:"calls"`
-	CostUSD     float64 `json:"cost_usd,omitempty"` // measured (only claude returns it)
+	Spend       int `json:"spend"`
+	In          int `json:"in"`
+	Out         int `json:"out"`
+	CacheRead   int `json:"cread"`
+	CacheCreate int `json:"ccreate"`
+	Calls       int `json:"calls"`
+	// Images and Pixels are the non-token dimension of feature=tool.imagegen (ADR 0069). They
+	// have been on every raw row since image generation existed and reached no aggregate, so the
+	// usage screen could show a member their tokens and never their picture count — which for
+	// this feature is the only volume there is, since a self-hosted engine's CostUSD is 0 by
+	// construction and the money lives in the tenant's GPU hour (ADR 0081 decision 10).
+	Images  int     `json:"images,omitempty"`
+	Pixels  int     `json:"pixels,omitempty"`
+	CostUSD float64 `json:"cost_usd,omitempty"` // measured (only claude returns it)
 	// CostEstUSD is the estimate derived from the price table (usage_price.go). It is a
 	// separate value from the measured cost and is never added to it. It is not written to the
 	// rollup: prices get revised, so it is recomputed with the current table on every read
@@ -78,6 +85,8 @@ func (a *usageAgg) add(b usageAgg) {
 	a.CacheRead += b.CacheRead
 	a.CacheCreate += b.CacheCreate
 	a.Calls += b.Calls
+	a.Images += b.Images
+	a.Pixels += b.Pixels
 	a.CostUSD += b.CostUSD
 	a.CostEstUSD += b.CostEstUSD
 }
@@ -228,6 +237,8 @@ func aggregateUsageRows(rows []usagex.Record, seen map[string]bool) map[usageKey
 		a.Out += r.Out
 		a.CacheRead += r.CacheRead
 		a.CacheCreate += r.CacheCreate
+		a.Images += r.Images
+		a.Pixels += r.Pixels
 		a.CostUSD += r.CostUSD
 		if r.Call == "" {
 			a.Calls++ // a row with no call id counts as one call in itself

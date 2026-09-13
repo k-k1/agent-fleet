@@ -48,6 +48,15 @@ var engineHTTP = &http.Client{Timeout: 20 * time.Second}
 func init() {
 	opencode.EngineEnv = engineSessionEnv
 	imagegen.EngineLookup = engineImageConn
+	// The path gate is the same kind of seam (ADR 0081 decision 3): the browse root, the
+	// denylist and the symlink re-check are fs.go's, and internal/imagegen owns "make pixels",
+	// not "know which folders this workspace may read and write". Re-implementing either check
+	// inside that package would be a second copy of a security decision.
+	imagegen.BrowsePath = safeBrowsePath
+	imagegen.BrowseWritablePath = safeWritableBrowsePath
+	// Which Agent wrote a graph is provenance the sidecar carries and nothing else can: the
+	// templates change between releases and the record outlives the binary.
+	imagegen.Build = buildVersion
 }
 
 // The API families the CP's catalogue reports. Chat engines become opencode providers; images
@@ -116,6 +125,18 @@ type engineCatalogModel struct {
 	// Warm is whether the Control Plane last saw the engine actually answer with THIS model
 	// (ADR 0072 decision 7's warm_model). At most one row per engine has it true.
 	Warm bool `json:"warm"`
+	// TrainedWords are a LoRA row's trigger words (ADR 0081 decision 5), and the three licence /
+	// source fields say what a checkpoint's weights were published under and where they came from.
+	//
+	// All four are ABSENT on a Control Plane that does not relay them yet, and are read as empty
+	// rather than waited for: the two images are deployed separately and this Agent must keep
+	// answering while only one of the pair has landed. That is the lesson sessionWire taught —
+	// a field missing from the relay vanishes silently — which is why these are named here, in
+	// the reader, even before the relay carries them.
+	TrainedWords []string `json:"trained_words"`
+	LicenseName  string   `json:"license_name"`
+	LicenseURL   string   `json:"license_url"`
+	SourceURL    string   `json:"source_url"`
 }
 
 // engineCatalogFile is one file of engineCatalogModel — see imagegen.EngineFile, which this is
@@ -431,6 +452,7 @@ func engineImageConn(ctx context.Context, provider string) (imagegen.EngineConn,
 			NegativeAlways: strings.TrimSpace(e.NegativeAlways),
 			Loras:          engineImageLoras(e),
 			Params:         engineImageParams(e),
+			Licenses:       engineImageLicenses(e),
 		}, true
 	}
 	return imagegen.EngineConn{}, false
@@ -567,6 +589,7 @@ func engineImageLoras(e engineCatalogRow) []imagegen.EngineLora {
 		}
 		lora := imagegen.EngineLora{
 			ID: m.ID, File: name, Description: m.Description, BaseModel: m.BaseModel,
+			TrainedWords: m.TrainedWords,
 		}
 		if m.Params != nil {
 			lora.Weight = m.Params.Weight
@@ -587,6 +610,29 @@ func engineImageParams(e engineCatalogRow) map[string]imagegen.EngineParams {
 	for _, m := range e.ModelRows {
 		if m.ID != "" && m.Params != nil && *m.Params != (imagegen.EngineParams{}) {
 			out[m.ID] = *m.Params
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// engineImageLicenses is what each model's weights were published under and where they came from
+// (ADR 0081 decision 5). nil when no row carries any of the three, which is every catalogue from
+// a Control Plane that does not relay them yet — the member-facing catalogue then shows nothing
+// rather than an empty licence, because "no licence stated" and "licence unknown to this Agent"
+// are different things to tell somebody about to publish a picture.
+func engineImageLicenses(e engineCatalogRow) map[string]imagegen.EngineLicense {
+	out := map[string]imagegen.EngineLicense{}
+	for _, m := range e.ModelRows {
+		lic := imagegen.EngineLicense{
+			Name:   strings.TrimSpace(m.LicenseName),
+			URL:    strings.TrimSpace(m.LicenseURL),
+			Source: strings.TrimSpace(m.SourceURL),
+		}
+		if m.ID != "" && lic != (imagegen.EngineLicense{}) {
+			out[m.ID] = lic
 		}
 	}
 	if len(out) == 0 {
