@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1124,6 +1125,15 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 		props["negative_prompt"] = map[string]any{"type": "string",
 			"description": "What to keep OUT of the picture, as a comma-separated list of words. It is ADDED to what the model and the deployment already exclude, never replaces them. Not every checkpoint has a negative prompt at all, and one that does not says so in warnings"}
 	}
+	// strength, on the same rule as the two above, and offered only alongside the op it belongs
+	// to: it is what an edit does to the caller's picture, and on a route with no edit it would
+	// be a knob attached to nothing. inpaint is deliberately NOT a reason to offer it — that op
+	// repaints its masked area in full by design, and a number the caller could set but the graph
+	// must ignore is the kind of argument this schema exists to keep out.
+	if offer.Strength && slices.Contains(offer.Ops, "edit") {
+		props["strength"] = map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 1,
+			"description": "How much of the input picture an edit changes, 0-1 (0.6 when omitted). Small values keep the composition and correct it; 1 redraws from the prompt alone. **Only with op=edit** — inpaint always repaints its masked area fully, and says so in warnings"}
+	}
 	// loras is offered as soon as ONE exists, unlike model: applying it or not applying it are
 	// already two different pictures, so a single-entry list is a real choice (ADR 0072
 	// decision 5, phase P3).
@@ -1258,6 +1268,9 @@ type imageGenOffer struct {
 	// Negative is true when ANY offered provider has a model that samples with a negative
 	// branch, by the same union rule as Seed.
 	Negative bool
+	// Strength is true when ANY offered provider lets the caller say how much of the input
+	// picture an edit changes, by the same union rule as Seed.
+	Strength bool
 	// Services maps a provider id to the image service it reaches, for EVERY ready provider —
 	// including the one dropped below, which the description has to be able to name.
 	Services map[string]string
@@ -1343,6 +1356,7 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 		}
 		offer.Seed = offer.Seed || p.Seed
 		offer.Negative = offer.Negative || p.Negative
+		offer.Strength = offer.Strength || p.Strength
 	}
 	if len(offer.Providers) == 0 || len(offer.Ops) == 0 {
 		return imageGenOffer{}, false
@@ -2175,6 +2189,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		Mask           string   `json:"mask"`
 		Seed           *int64   `json:"seed"`
 		NegativePrompt string   `json:"negative_prompt"`
+		// Strength is a pointer so that 0 arrives at the Agent as the request it is and is
+		// refused there by value, instead of reading here as "not given" and becoming the default.
+		Strength *float64 `json:"strength"`
 		// Loras (ADR 0072 decision 5, phase P3). Passed on as written for the same reason as the
 		// rest: the Agent refuses an unknown name or a family that does not match the checkpoint
 		// BY NAME, which is a better answer than a silently shortened list.
@@ -2210,7 +2227,7 @@ func mcpStdioCall(req mcpReq) []byte {
 			op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,
 			aspectRatio: a.AspectRatio, background: a.Background, count: a.Count,
 			inputs: a.Inputs, mask: a.Mask, model: a.Model, loras: a.Loras, seed: a.Seed,
-			negativePrompt: a.NegativePrompt,
+			negativePrompt: a.NegativePrompt, strength: a.Strength,
 		})
 	case "list_child_sessions":
 		// The only one of the nine that is NOT also an operator tool: the operator has

@@ -254,6 +254,75 @@ func TestStatusReportsWhichRoutesTakeASeed(t *testing.T) {
 	}
 }
 
+// `strength` rides the same wire and is a POINTER for the same reason the seed is — though not
+// because 0 is usable: it is refused, and it can only be refused by value if an absent key and
+// `"strength": 0` are still distinguishable when they get here.
+func TestGenerateForwardsTheStrength(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		wantStatus int
+		want       *float64
+	}{
+		{"an edit strength", `{"session":"slot01","op":"edit","prompt":"a cat","strength":0.25}`, http.StatusOK, ptrFloat64(0.25)},
+		{"a full redraw", `{"session":"slot01","op":"edit","prompt":"a cat","strength":1}`, http.StatusOK, ptrFloat64(1)},
+		{"none stays nil", `{"session":"slot01","op":"edit","prompt":"a cat"}`, http.StatusOK, nil},
+		// Refused rather than clamped: at denoise 0 the sampler hands the latent back untouched,
+		// so this would spend a GPU box on a VAE round-trip of a picture the caller already has.
+		{"zero is refused", `{"session":"slot01","op":"edit","prompt":"a cat","strength":0}`, http.StatusBadRequest, nil},
+		{"above one is refused", `{"session":"slot01","op":"edit","prompt":"a cat","strength":1.5}`, http.StatusBadRequest, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got Request
+			withImagegenSession(t, session.KindClaude, stubProvider{
+				id:     ProviderComfy,
+				gotReq: &got,
+				res:    Result{Images: []Image{{Bytes: tinyPNG(t, 1, 1), MIME: "image/png"}}, Provider: ProviderComfy},
+				caps:   &Caps{Ops: []Op{OpGenerate, OpEdit}, Strength: true},
+			})
+			rec := httptest.NewRecorder()
+			HandleGenerate(rec, httptest.NewRequest(http.MethodPost, "/imagegen/generate", strings.NewReader(tc.body)))
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.wantStatus, rec.Body)
+			}
+			if tc.wantStatus != http.StatusOK {
+				// The reason has to reach the caller by name, not as a bare 400.
+				if !strings.Contains(rec.Body.String(), "bad_strength") {
+					t.Fatalf("body = %s, want the reason on the wire", rec.Body)
+				}
+				return
+			}
+			switch {
+			case tc.want == nil && got.Strength != nil:
+				t.Errorf("strength = %v, want none", *got.Strength)
+			case tc.want != nil && got.Strength == nil:
+				t.Errorf("strength = nil, want %v", *tc.want)
+			case tc.want != nil && *got.Strength != *tc.want:
+				t.Errorf("strength = %v, want %v", *got.Strength, *tc.want)
+			}
+		})
+	}
+}
+
+func ptrFloat64(v float64) *float64 { return &v }
+
+// The status says which routes vary it, so the tool offers the argument only where it reaches
+// something — the same rule the seed follows.
+func TestStatusReportsWhichRoutesTakeAStrength(t *testing.T) {
+	withImagegenSession(t, session.KindClaude,
+		stubProvider{id: ProviderComfy, caps: &Caps{Ops: []Op{OpGenerate, OpEdit}, Strength: true}},
+		stubProvider{id: ProviderAgy, caps: &Caps{Ops: []Op{OpGenerate, OpEdit}}},
+	)
+	rec := httptest.NewRecorder()
+	HandleStatus(rec, httptest.NewRequest(http.MethodGet, "/imagegen/status?session=slot01", nil))
+	var got statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("status is not JSON: %v", err)
+	}
+	if len(got.Providers) != 2 || !got.Providers[0].Strength || got.Providers[1].Strength {
+		t.Fatalf("strength flags = %+v, want it on comfy alone", got.Providers)
+	}
+}
+
 // The other half of the same wire: `loras` in the POST body reaches the provider's Request. A
 // field the REST layer drops is a field the tool advertises and nothing applies.
 func TestGenerateForwardsLoras(t *testing.T) {

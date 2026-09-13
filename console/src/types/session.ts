@@ -125,6 +125,17 @@ export interface Session {
   // conversation (the af_stop_after_turn MCP tool), which is why the row shows it: otherwise
   // the only trace is a sentence in a transcript nobody is watching.
   stopAfterTurnAt?: string;
+  // How many images this session has generated, and the folder they are in — browse-root
+  // relative, the form the file API takes (ADR 0080 decision 8). Both absent when there are
+  // none, and that absence IS the condition: the session menu offers "Generated images (N)"
+  // only when there is something to open, so nothing here needs a capability check or a
+  // version comparison. An older Agent sends neither, and the entry stays away.
+  //
+  // The path comes off the wire rather than being derived here: the folder is named by a
+  // uuidV5 over the Agent's own inputs, and a copy of that rule on this side would drift
+  // silently the day the Agent's changes.
+  generatedImages?: number;
+  generatedImagesPath?: string;
 }
 
 // A session's current context fill — the wire shape of the Agent's

@@ -304,3 +304,111 @@ func TestEngineVaeSourceOf(t *testing.T) {
 		t.Error("a two-segment hf source was accepted — there is no file in it to read")
 	}
 }
+
+// vaeTestDown stands in for an upstream that will not answer — Civitai's 503 on af-sandbox.
+func vaeTestDown(t *testing.T) *int {
+	t.Helper()
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	restore := engineIngestBase
+	engineIngestBase = srv.URL
+	t.Cleanup(func() { engineIngestBase = restore })
+	return &hits
+}
+
+// 🔴 The diagnosis and the remedy have DIFFERENT upstreams, and the one press must not be taken
+// down by the one it does not need. Measured on af-sandbox (2026-09-13): the row's source is a
+// Civitai version, Civitai answered 503, and the fix — which downloads `stabilityai/sdxl-vae`
+// from Hugging Face — was refused because the header could not be read AGAIN.
+func TestEngineVaeFixStandsOnWhatTheRowRecorded(t *testing.T) {
+	vaeTestDown(t)
+	a, e, st := vaeComfyAPI(t)
+	// Marked by an earlier scan, when the source still answered.
+	vaeTestRow(t, st, "novae", engineVaeNo)
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "other", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{
+			{S3Key: "image/checkpoints/other.safetensors"},
+			{Flag: "--vae", S3Key: "image/vae/sdxl_vae.safetensors", Bytes: 335},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	code, out := vaePost(t, a, "/vae", "novae", `{"check":true}`)
+	if code != http.StatusOK {
+		t.Fatalf("check with the source down = %d (%v), want the plan anyway", code, out)
+	}
+	// …and it says the re-read failed rather than pretending it happened.
+	if out["recheck_failed"] == nil {
+		t.Fatalf("the answer does not say the source could not be read again: %v", out)
+	}
+	if out["action"] != "attach" {
+		t.Fatalf("action = %v, want the attach this deployment can do without that source", out["action"])
+	}
+	if code, out = vaePost(t, a, "/vae", "novae", `{}`); code != http.StatusOK || out["action"] != "attached" {
+		t.Fatalf("fix with the source down = %d %v, want it to go through", code, out)
+	}
+	rows := vaeModelRows(t, a, e)
+	if rows["novae"]["vae_missing"] == true {
+		t.Fatalf("the row is still marked after the fix: %v", rows["novae"])
+	}
+}
+
+// And the other half of that rule: with NOTHING recorded, an unreadable header still buys
+// nothing. "Nobody could look" is not a fault, and a deployment that downloaded on it would do
+// so for every row whose source has gone away.
+func TestEngineVaeFixUnknownStillRefusesWhenTheSourceIsDown(t *testing.T) {
+	vaeTestDown(t)
+	a, e, st := vaeComfyAPI(t)
+	vaeTestRow(t, st, "unread", engineVaeUnknown)
+	e.catalog.invalidate()
+
+	code, out := vaePost(t, a, "/vae", "unread", `{}`)
+	if code != http.StatusBadGateway {
+		t.Fatalf("fix on an unknown row with the source down = %d (%v), want a refusal", code, out)
+	}
+	// The escape exists and is named in the refusal, for the operator who has watched the row
+	// fail in the engine.
+	msg := out["error"].(map[string]any)["message"].(string)
+	if !strings.Contains(msg, "force") {
+		t.Errorf("the refusal does not name the way past it: %s", msg)
+	}
+	if code, out = vaePost(t, a, "/vae", "unread", `{"force":true,"licenseAccepted":true,"check":true}`); code != http.StatusOK {
+		t.Fatalf("check with force = %d (%v), want the plan", code, out)
+	}
+}
+
+// 🔴 A scan must not hammer an upstream that is refusing. This runs on a panel load, so "one
+// request per row per reload" is how a rate limit becomes permanent.
+func TestEngineVaeScanStopsOnARefusingUpstream(t *testing.T) {
+	hits := vaeTestDown(t)
+	a, e, st := vaeComfyAPI(t)
+	for _, id := range []string{"a1", "a2", "a3", "a4"} {
+		vaeTestRow(t, st, id, engineVaeUnknown)
+	}
+	e.catalog.invalidate()
+
+	code, out := vaePost(t, a, "/vae-scan", "", `{}`)
+	if code != http.StatusOK {
+		t.Fatalf("scan = %d (%v)", code, out)
+	}
+	read, _ := out["read"].([]any)
+	if len(read) != engineVaeScanFails {
+		t.Fatalf("read %d rows against a refusing upstream, want it to stop after %d", len(read), engineVaeScanFails)
+	}
+	// The rest are reported as left rather than silently skipped: an operator who sees two marks
+	// appear has to know whether that was all of them.
+	if out["left"] != float64(2) {
+		t.Fatalf("left = %v, want the two rows it did not reach", out["left"])
+	}
+	// And each attempt is ONE round trip to that host, not the three a full resolve makes.
+	if *hits > engineVaeScanFails {
+		t.Fatalf("%d requests to a host that had already refused, want at most %d", *hits, engineVaeScanFails)
+	}
+}

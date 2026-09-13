@@ -90,6 +90,8 @@ var sessionWireBinding = map[string]string{
 	"OriginSession":        "originSession",
 	"LastSay":              "lastSay",
 	"TokenSpends":          "tokenSpends",
+	"GeneratedImages":      "generatedImages",
+	"GeneratedImagesPath":  "generatedImagesPath",
 }
 
 // --- 2. exemption tables for the correspondence check (the family list itself is
@@ -139,7 +141,7 @@ func sessionContractFamily() contractFamily {
 			"backgroundBusyReason", "rateLimitResumeAt", "authOkAt", "createdAt", "model", "context", "branch",
 			"currentBranch", "branchDrift", "worktree", "exitReason", "exitCode", "exitSignal",
 			"carried", "handoffPending", "locked", "keepAwakeUntil", "stopAfterTurnAt",
-			"originSession", "lastSay", "tokenSpends"),
+			"originSession", "lastSay", "tokenSpends", "generatedImages", "generatedImagesPath"),
 		tsOnly: consoleOnlyExempt,
 		goOnly: goOnlyExempt,
 	}
