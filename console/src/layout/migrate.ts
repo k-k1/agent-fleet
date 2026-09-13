@@ -142,7 +142,12 @@ function contentFromFlat(p: any): PaneContent {
       // a corrupted layout must not become a path the pane then asks the CP about.
       const engineKey = str(p.engineKey);
       return engineKey && /^[A-Za-z0-9_-]{1,64}$/.test(engineKey)
-        ? { kind: "engineAdd", engineKey, lora: p.lora === true }
+        ? {
+            kind: "engineAdd",
+            engineKey,
+            lora: p.lora === true,
+            ...(p.view === "registered" ? { view: "registered" as const } : {}),
+          }
         : { kind: "terminal", chat: false };
     }
     // No field to validate: the form is a localStorage draft and the queue is the Agent's

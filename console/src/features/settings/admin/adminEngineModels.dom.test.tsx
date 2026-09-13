@@ -25,7 +25,7 @@ import {
   engineIdFromFile,
   engineJobAdvice,
 } from "./adminEngineModels.tsx";
-import { EngineAddView } from "./adminEngineAdd.tsx";
+import { LegacyEngineAddView as EngineAddView } from "./adminEngineAdd.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;

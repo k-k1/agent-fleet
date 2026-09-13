@@ -14,6 +14,7 @@ import {
   type EngineModel,
   type EngineParams,
   type EngineRow,
+  type EngineStorageFile,
   type IngestCandidate,
   type IngestHit,
   type IngestJob,
@@ -45,7 +46,15 @@ type EngineModelAnswer = { error?: { code?: string; message?: string } } | undef
  *  above; every caller that has nothing to ask simply ignores it. */
 type EngineModelChange = (id: string, patch: Record<string, unknown>) => Promise<EngineModelAnswer>;
 
-export function EngineModelsAdminView() {
+export function EngineModelsAdminView({
+  initialEngineKey = "",
+  initialKind = "model",
+  embedded = false,
+}: {
+  initialEngineKey?: string;
+  initialKind?: ModelKind;
+  embedded?: boolean;
+} = {}) {
   const tr = useT();
   const { rows, isSuper, err, setErr, setRows, load } = useEngineRows();
   const closeAdmin = useSettingsUI((s) => s.closeAdmin);
@@ -66,14 +75,17 @@ export function EngineModelsAdminView() {
     closeAdmin();
   };
   const [jobs, setJobs] = useState<Record<string, IngestJob[]>>({});
+  const [storage, setStorage] = useState<Record<string, EngineStorageFile[] | null>>({});
   /** Which engine's catalogue is open, by key. A key rather than an index so that a reload that
    *  reorders the list does not move somebody to another engine mid-ingest. */
-  const [role, setRole] = useState("");
+  const [role, setRole] = useState(initialEngineKey);
   /** Models or adapters. It drives the LIST and the ingest form together, which is the point:
    *  the form used to carry its own model/LoRA selector while the search above it always asked
    *  for checkpoints, so choosing "LoRA" changed what the row would be registered as and
    *  nothing about what was on offer. */
-  const [kind, setKind] = useState<ModelKind>("model");
+  const [kind, setKind] = useState<ModelKind>(initialKind);
+  useEffect(() => setRole(initialEngineKey), [initialEngineKey]);
+  useEffect(() => setKind(initialKind), [initialKind]);
   /** The registration form, opened with a finished job's answers already in it.
    *
    * 🔴 "Take that file in again" is not an ingest: the bytes are in the bucket already (forget
@@ -93,9 +105,19 @@ export function EngineModelsAdminView() {
     const d = await api(`api/admin/engines/${encodeURIComponent(key)}/ingest`);
     if (!d?.error) setJobs((cur) => ({ ...cur, [key]: Array.isArray(d?.jobs) ? d.jobs : [] }));
   }, []);
+  const loadStorage = useCallback(async (key: string) => {
+    const d = await api(`api/admin/engines/${encodeURIComponent(key)}/storage`);
+    setStorage((current) => ({
+      ...current,
+      [key]: d?.error ? null : Array.isArray(d?.files) ? d.files : [],
+    }));
+  }, []);
   useEffect(() => {
-    (rows || []).forEach((e) => loadJobs(e.key));
-  }, [rows, loadJobs]);
+    (rows || []).forEach((e) => {
+      loadJobs(e.key);
+      loadStorage(e.key);
+    });
+  }, [rows, loadJobs, loadStorage]);
   // A download runs for minutes, so the list polls itself while one is in flight — and stops
   // the moment none is, because this is a screen somebody leaves open.
   useEffect(() => {
@@ -280,7 +302,7 @@ export function EngineModelsAdminView() {
           {/* The ROLE, as tabs — but only when there is a choice to make. A deployment with one
               engine gets its name and no tab strip, because a single tab is a control that
               cannot be operated. */}
-          {rows.length > 1 ? (
+          {!embedded && rows.length > 1 ? (
             <span className="seg sm">
               {rows.map((e) => (
                 <button
@@ -296,9 +318,9 @@ export function EngineModelsAdminView() {
                 </button>
               ))}
             </span>
-          ) : (
+          ) : !embedded ? (
             <span>{engineTitle(open)}</span>
-          )}
+          ) : null}
           {/* Models or adapters. Both roles have both: an image LoRA is chosen per request by
               family, and the llm role's is pinned to a model through a preset (ADR 0072
               decision 5). */}
@@ -349,12 +371,13 @@ export function EngineModelsAdminView() {
           onAdd={(body) => addModel(open.key, body)}
           onReload={load}
           vaeUnreadable={vaeUnreadable}
+          storageFiles={storage[open.key]}
         />
         {/* The ingest is a write too — `POST /ingest` is one of the five routes that answer 400
             for a borrowed role — and it is also the one that would spend money and bucket space
             on a file the far engine is never going to load: the box that stages files is the far
             deployment's active set, not ours. */}
-        {!borrowed && (
+        {!embedded && !borrowed && (
           <EngineIngest
             open={false}
             setOpen={openAdd}
@@ -433,6 +456,7 @@ function EngineModels({
   onAdd,
   onReload,
   vaeUnreadable,
+  storageFiles,
 }: {
   row: EngineRow;
   kind: ModelKind;
@@ -452,6 +476,8 @@ function EngineModels({
    *  one the deployment could not ask about — said out loud, because silence there looks exactly
    *  like a healthy row. */
   vaeUnreadable?: Record<string, string>;
+  /** Actual S3 existence from the dedicated check. Null/undefined is unknown, never missing. */
+  storageFiles?: EngineStorageFile[] | null;
 }) {
   const tr = useT();
   const wantLora = kind === "lora";
@@ -603,6 +629,7 @@ function EngineModels({
               {m.description && <p className="muted engines-model-desc">{m.description}</p>}
               <p className="muted engines-model-meta">{engineModelMeta(m, tr)}</p>
               <ModelProvenance model={m} />
+              <ModelStorageStatus model={m} storageFiles={storageFiles} />
               {/* 🔴 The one thing wrong with this row that nothing else on it shows. Every other
                   field is filled in, the toggle works, the id appears in generate_image's model
                   list — and the request fails, because the provider will not guess a workflow
@@ -3478,6 +3505,29 @@ function ModelProvenance({ model }: { model: EngineModel }) {
       ))}
     </p>
   );
+}
+
+/** Aggregate a multipart row without hiding partial loss. The dedicated storage response is
+ * the only authority here; a finished ingest job is deliberately not consulted. */
+function ModelStorageStatus({ model, storageFiles }: {
+  model: EngineModel;
+  storageFiles?: EngineStorageFile[] | null;
+}) {
+  const tr = useT();
+  const keys = (model.file_rows || []).map((file) => file.s3Key).filter(Boolean);
+  if (!keys.length) return null;
+  if (!storageFiles) {
+    return <p className="engines-model-storage unknown">{tr("admin.catalog_registered_unknown" as never)}</p>;
+  }
+  const states = keys.map((key) => storageFiles.find((file) => file.s3_key === key)?.state || "unknown");
+  const present = states.filter((state) => state === "present").length;
+  const missing = states.filter((state) => state === "missing").length;
+  const status = present === keys.length ? "present"
+    : missing === keys.length ? "missing"
+      : present > 0 || missing > 0 ? "partial" : "unknown";
+  return <p className={`engines-model-storage ${status}`}>
+    {tr((`admin.catalog_registered_${status}`) as never, { present, total: keys.length } as never)}
+  </p>;
 }
 
 /** One provenance value: a link when the CP could compose one, the same text when it could not. */

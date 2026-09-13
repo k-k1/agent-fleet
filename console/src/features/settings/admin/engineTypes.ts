@@ -257,7 +257,13 @@ export type IngestHit = {
   source: string;
   /** The repository for HF; the VERSION id for Civitai (not the model id on the page's URL). */
   ref: string;
+  /** Stable upstream model identity. Hugging Face uses the repository and Civitai uses the
+   *  model id; `ref` keeps naming the selectable revision/version for old clients. */
+  model_ref?: string;
   name: string;
+  /** Small upstream example image. It is presentation only and is never used as an ingest
+   *  source; absence means the card has no image area at all. */
+  preview_url?: string;
   /** The three numbers a ranking is built on. All three ride on every row, whichever one the
    *  list was ordered by — sorting by one and showing only that one leaves "why is this here"
    *  unanswerable. `trending` is Hugging Face's own score; Civitai publishes none. */
@@ -300,7 +306,51 @@ export type IngestHit = {
 
 /** One file a repository offers (POST …/ingest/files), already filtered to the ones this
  *  engine could load and that carry a sha256. */
-export type IngestCandidate = { name: string; bytes?: number; sha256?: string };
+export type IngestCandidate = {
+  name: string;
+  bytes?: number;
+  sha256?: string;
+  /** Optional source-side file identity when a provider exposes more than a filename. */
+  ref?: string;
+};
+
+export type IngestVersion = {
+  ref: string;
+  name: string;
+  published_at?: string;
+  updated_at?: string;
+};
+
+export type IngestVersionsAnswer = { versions: IngestVersion[] };
+
+export type IngestSearchRequest = {
+  q: string;
+  source: string;
+  sort: string;
+  lora?: boolean;
+  cursor?: string;
+};
+
+export type IngestSearchAnswer = {
+  hits: IngestHit[];
+  next_cursor?: string;
+};
+
+/** Server-known S3 objects only. `unknown` remains distinct from `missing`: the Console must
+ *  not turn a failed or unavailable existence check into a claim that bytes are gone. */
+export type EngineStorageFile = {
+  s3_key: string;
+  source?: string;
+  state: "present" | "missing" | "unknown";
+  bytes?: number;
+  checked_at?: string;
+  model_ids: string[];
+};
+
+export type EngineStorageAnswer = {
+  files: EngineStorageFile[];
+  checked_at?: string;
+};
 
 export type IngestJob = {
   id: string;
