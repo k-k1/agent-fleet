@@ -494,6 +494,38 @@ external llm engine for native, docker and ec2-single deployments, which today c
 external image engine and no external chat engine at all. It is P2 because nothing in P0
 depends on it: a remote row mints its own credential (decision 3).
 
+### 12. The lender keeps what it cannot deliver, and counts requests per membership
+
+Added 2026-09-13, and it is open question 7's answer. Decision 9 is right that the far side's
+post-back is a no-op for a purpose-made membership; what it did not follow through is that the
+no-op leaves the operator who BOUGHT THE GPU with a bill and no name, for both roles.
+
+The far Control Plane gets two small tables of its own, because a conversation and a picture are
+not the same kind of fact — the same line decision 9 draws:
+
+- **The row, kept whole.** `postUsage` already holds a complete row at the moment it drops it,
+  with the borrower's session name on it (decision 8). It is written to the CP's store instead,
+  with the reason it could not be delivered. 🔴 **Kept is not delivered**: nothing re-posts it
+  into a Workspace ledger later. A row arriving days late would land under the hour it was
+  written rather than the hour it happened, and a ledger that rewrites its own past is worse
+  than one with a hole an operator can see.
+- **Requests and milliseconds per (engine, membership, hour)**, for both roles, because that is
+  the only count the image role can have: an image answer carries no `usage` object, and
+  `engine.image` is a feature value ADR 0029 §2 does not have and must not gain (decision 9).
+
+⚠️ **Neither is a second ledger.** ADR 0029's ledger stays the file inside a Workspace, the usage
+graph still reads only that, and nothing here feeds it. These answer one operator question —
+"whose work was that box doing" — and carry no price, which ADR 0048 decision 2 and ADR 0071
+decision 9 both forbid.
+
+🔴 **And the post-back must not PROVISION.** `resolveByMembership` creates a workspace for a
+membership that has none (`resolver.go`'s `buildResolved` → `createWorkspace`: it allocates a
+port, mints an agent token and writes the row). On a lending deployment the bookkeeping would
+therefore have created a workspace for every borrowing membership — and `has_workspace` on the
+issue-token screen, which exists to warn that a membership with a workspace looks like a
+PERSON's and must not be lent (decision 3), would have been warning about a workspace this code
+had just made. The workspace is looked up directly, before the resolver is asked.
+
 ## Rejected alternatives
 
 | Rejected | Why |
@@ -576,30 +608,11 @@ depends on it: a remote row mints its own credential (decision 3).
    keeps. `TestOnlyChatEnginesAreCountedByTheGateway` (`engine_gateway_test.go:766-790`) exists
    to refuse exactly that, and its comment gives the same two reasons.
 
-   **What is left is to build the receiving end**, on the far Control Plane, because that side is
-   the only one holding both the membership and a durable store. Two shapes, and the split is the
-   same one decision 9 draws — a conversation has rows, a picture has not:
-
-   - **For the conversation: somewhere for the row to land.** The row already exists, fully
-     formed, at the moment it is dropped: `engineUsageRowFor` built it with the borrower's session
-     name on it, and `postUsage` throws it away for want of an endpoint. A table on the far CP
-     that takes it when the membership has no running workspace needs no new counting and no new
-     enumeration value. 🔴 **And it closes a hole that is not about borrowing at all**: the same
-     branch silently drops an ordinary member's engine row whenever their workspace stopped
-     between the answer and the bookkeeping, which `engine_usage.go:226-232` admits in its own
-     comment. The cost to weigh is that ADR 0029's ledger is deliberately a file inside a
-     Workspace, and this is a second place engine rows can live.
-   - **For the picture: seconds and requests, not a row.** There are no tokens to record and no
-     session to attribute (above), so the honest unit is the one `engine_hourly`
-     (`migrations/0055_engine_hourly.sql`) already keeps — GPU seconds per engine key per hour —
-     with the membership axis it lacks. The gateway has `mv.MembershipID` in hand where it
-     records demand.
-
-   Either way this is the far deployment's OWN bookkeeping, borrowing or not, and ADR 0048
-   decision 2 and ADR 0071 decision 9 both bar putting a price on it. It is deliberately not
-   decided here. No borrower is blocked by its absence; what the absence costs is the far
-   operator's ability to answer "who was that box for", which today is answered once, at
-   `engine.issue_token` in the audit log (`engine_issue_token.go:141`), and never again.
+   **Answered by decision 12, built 2026-09-13.** The receiving end exists: the far Control
+   Plane keeps the row it cannot deliver and counts requests per (engine, membership, hour), so
+   both roles are attributable there. What stays deliberately undecided is re-delivery — a row
+   kept here is never posted into a Workspace ledger later — and the Console has no screen for
+   any of it yet; it is read through `GET /api/admin/engines/{key}/attribution`.
 
 ## Phases
 

@@ -9,9 +9,21 @@ package main
 // out and posts one row to the Agent — the same direction the CP already calls in for
 // /work-items/fetch and /notifications.
 //
-// Posting it is best-effort and asynchronous. A row that cannot be delivered is logged and
-// dropped: the alternative is either blocking somebody's answer on a bookkeeping call, or
-// keeping a queue whose loss on a CP restart would be invisible anyway.
+// Posting it is best-effort and asynchronous: nothing here may block somebody's answer on a
+// bookkeeping call.
+//
+// 🔴 A row that cannot be delivered is KEPT, in the CP's own store, and this is a change
+// (ADR 0079 open question 7). It used to be logged and dropped, on the grounds that a queue
+// whose loss on a CP restart would be invisible is no better than nothing — a durable table is
+// not that queue. What forced it is lending: a borrowing membership is purpose-made and has no
+// Workspace at all (ADR 0079 decision 3), so on a deployment that lends its engines EVERY row
+// took the undeliverable branch and the operator who paid for the GPU was left with a bill and
+// no name. The same branch was quietly losing an ordinary member's row whenever their workspace
+// stopped between the answer and the bookkeeping.
+//
+// ⚠️ Kept is not delivered. Nothing re-posts these into a Workspace ledger later — see
+// keepUndelivered — and this store is NOT a second ledger: ADR 0029's ledger stays the file in
+// the Workspace, the usage graph still reads only that, and nothing here feeds it.
 //
 // No prompt and no completion text ever leaves this file — token counts and metadata only,
 // which is the ledger's own non-negotiable.
@@ -20,6 +32,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -207,20 +220,108 @@ func (g engineGateway) recordUsage(ctx context.Context, eng *engineRuntimeState,
 	// is the visible price of --models-max 1 (ADR 0072 decision 3) — or, for comfy, simply which
 	// checkpoint is now loaded (ADR 0072 decision 7's warm_model).
 	eng.noteServed(u.Model, ok)
-	if !count || g.mgr == nil {
+	if g.mgr == nil {
 		return
 	}
 	// Detached from the request: the client's context is done the moment the answer is
 	// delivered, and a row dropped because the reader hung up is a row nobody is billed for.
-	go g.postUsage(context.WithoutCancel(ctx), mv, row)
+	bg := context.WithoutCancel(ctx)
+	go func() {
+		// Who the work was for (ADR 0079 open question 7). OUTSIDE the `count` gate on purpose:
+		// the image role never produces a ledger row at all, so requests-by-membership is the
+		// only count it can have — and an operator asking "whose box was that" must not be made
+		// to read two tables and add them up, so the counted roles land here too.
+		g.noteEngineMembershipHour(bg, eng.def.Key, mv, u, took, ok)
+		if count {
+			g.postUsage(bg, mv, row, eng.def.Key)
+		}
+	}()
 }
 
-func (g engineGateway) postUsage(ctx context.Context, mv store.MembershipView, row engineUsageRow) {
+// noteEngineMembershipHour accumulates one relayed request into (engine, membership, hour).
+//
+// This is the deployment's own bookkeeping and says nothing about price (ADR 0048 decision 2,
+// ADR 0071 decision 9). It exists because engine_hourly answers "was the GPU up" and has no
+// membership axis: until a deployment LENDS its engines there was always somewhere else to look
+// for the owner — the member's own ledger inside their Workspace — and a borrowing membership
+// has no Workspace (ADR 0079 decision 3).
+func (g engineGateway) noteEngineMembershipHour(ctx context.Context, key string, mv store.MembershipView,
+	u engineUsage, took time.Duration, ok bool) {
+
+	if g.mgr == nil || g.mgr.store == nil || strings.TrimSpace(mv.MembershipID) == "" {
+		return
+	}
+	c := store.EngineMembershipHourCounters{
+		Requests: 1,
+		MS:       int(took.Milliseconds()),
+		In:       u.PromptTokens,
+		Out:      u.CompletionTokens,
+	}
+	if ok {
+		c.OKRequests = 1
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	// UTC, like every other hourly bucket in this deployment: the client shifts to local time
+	// (usage.go's usageHourFmt, engine_uptime.go).
+	hour := time.Now().UTC().Format(usageHourFmt)
+	if err := g.mgr.store.AddEngineMembershipHour(ctx, key, mv.MembershipID, mv.TenantID, hour, c); err != nil {
+		log.Printf("engine usage: attributing %s to membership %s: %v", key, mv.MembershipID, err)
+	}
+}
+
+// keepUndelivered stores a row the Agent never got, instead of dropping it (ADR 0079 open
+// question 7).
+//
+// 🔴 It is NOT re-delivered when the Workspace comes back. A row that arrived days late would
+// land in the ledger under the hour it was written rather than the hour it happened, and a
+// ledger that quietly rewrites its own past is worse than one with a hole an operator can see.
+// What this buys is that the hole is now readable.
+func (g engineGateway) keepUndelivered(ctx context.Context, mv store.MembershipView, row engineUsageRow,
+	engineKey, reason string) {
+
+	if g.mgr == nil || g.mgr.store == nil || strings.TrimSpace(mv.MembershipID) == "" {
+		return
+	}
+	err := g.mgr.store.AddEngineUsageUndelivered(ctx, store.EngineUsageRow{
+		TS:           time.Now().UTC().Format(time.RFC3339),
+		MembershipID: mv.MembershipID,
+		TenantID:     mv.TenantID,
+		EngineKey:    engineKey,
+		Reason:       reason,
+		Feature:      row.Feature,
+		Provider:     row.Provider,
+		Session:      row.Session,
+		Model:        row.Model,
+		In:           row.In,
+		Out:          row.Out,
+		MS:           row.MS,
+		OK:           row.OK,
+		Measured:     row.Measured,
+	})
+	if err != nil {
+		log.Printf("engine usage: keeping the undelivered row for membership %s: %v", mv.MembershipID, err)
+	}
+}
+
+func (g engineGateway) postUsage(ctx context.Context, mv store.MembershipView, row engineUsageRow, engineKey string) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	identityID, ok, err := g.mgr.store.IdentityIDForMembership(ctx, mv.MembershipID)
 	if err != nil || !ok {
 		log.Printf("engine usage: no identity for membership %s (%v)", mv.MembershipID, err)
+		g.keepUndelivered(ctx, mv, row, engineKey, "no_identity")
+		return
+	}
+	// 🔴 Asked BEFORE resolveByMembership, because that function CREATES a workspace for a
+	// membership that has none (resolver.go's buildResolved -> createWorkspace) — it allocates a
+	// port, mints an agent token and writes the row. Bookkeeping must not provision anything, and
+	// on a lending deployment it would provision for every borrowing membership: the row would
+	// then flip `has_workspace` on the issue-token screen, which exists to warn the operator that
+	// a membership with a workspace looks like a PERSON's and must not be lent (decision 3). The
+	// screen would be warning about a workspace this file had just created.
+	if _, ok, err := g.mgr.store.GetWorkspaceByMembership(ctx, mv.MembershipID); err != nil || !ok {
+		g.keepUndelivered(ctx, mv, row, engineKey, "no_workspace")
 		return
 	}
 	res, aerr := g.mgr.resolveByMembership(ctx, identityID, mv.MembershipID)
@@ -228,6 +329,12 @@ func (g engineGateway) postUsage(ctx context.Context, mv store.MembershipView, r
 		// The workspace is stopped. That is not an error: the only caller that can produce
 		// engine usage is a session inside a running workspace, so this means it went away
 		// between the answer and the bookkeeping.
+		//
+		// 🔴 It is also the ORDINARY case on a deployment that lends its engines: a borrowing
+		// membership is purpose-made and never has a workspace (ADR 0079 decision 3), so every
+		// borrowed conversation used to end here and leave the lender nothing at all. The row
+		// is kept rather than dropped, which is open question 7's answer for the chat role.
+		g.keepUndelivered(ctx, mv, row, engineKey, "no_workspace")
 		return
 	}
 	body, _ := json.Marshal(row)
@@ -242,6 +349,7 @@ func (g engineGateway) postUsage(ctx context.Context, mv store.MembershipView, r
 	resp, err := engineUsageClient.Do(req)
 	if err != nil {
 		log.Printf("engine usage: posting to the agent failed: %v", err)
+		g.keepUndelivered(ctx, mv, row, engineKey, "post_failed")
 		return
 	}
 	defer resp.Body.Close()
@@ -249,6 +357,7 @@ func (g engineGateway) postUsage(ctx context.Context, mv store.MembershipView, r
 		// An older Agent has no such route. Say so once per row rather than silently losing
 		// the accounting — a CP newer than the image it launched must degrade visibly.
 		log.Printf("engine usage: the agent answered %s (an older workspace image has no /engine/usage)", resp.Status)
+		g.keepUndelivered(ctx, mv, row, engineKey, "post_failed")
 	}
 }
 
@@ -334,4 +443,71 @@ func postEngineCatalogChanged(ctx context.Context, endpoint, token, key string) 
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+}
+
+// --- reading it back (ADR 0079 open question 7) ---------------------------------
+
+// engineAttributionLimit bounds the undelivered list in one answer. A borrowing deployment
+// writes one row per conversation and the window is fourteen days by default, so the honest
+// failure is a truncated list with a total next to it rather than a multi-megabyte JSON the
+// panel cannot draw.
+const engineAttributionLimit = 500
+
+// engineAttribution is what one engine's "whose work was this" question answers with.
+//
+// Two halves because the two roles are answerable to different depths (ADR 0079 decision 9):
+// `memberships` covers BOTH roles, because requests and milliseconds are all an image answer
+// can offer; `undelivered` is the chat role's own rows, kept whole, and is empty on a
+// deployment nobody borrows from and whose members' workspaces were all running.
+type engineAttribution struct {
+	Engine      string                          `json:"engine"`
+	From        string                          `json:"from"`
+	To          string                          `json:"to"`
+	Memberships []store.EngineMembershipHourRow `json:"memberships"`
+	Undelivered []store.EngineUsageRow          `json:"undelivered"`
+	// Truncated says the list hit engineAttributionLimit, so `undelivered` is the newest page
+	// and not the whole window. Without it a capped list reads as a complete one.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// attribution (GET /api/admin/engines/{key}/attribution) answers "whose work was this engine
+// doing", which is the question a deployment that LENDS its engines could not answer at all
+// before ADR 0079 open question 7: engine_hourly says a GPU was up and has no membership axis,
+// and the per-call rows went to a Workspace the borrowing membership does not have.
+//
+// super_admin, like the uptime route next door and for the same reason: it is a statement about
+// the whole deployment's hardware, across every tenant.
+func (a engineAdminAPI) attribution(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	if a.reg.get(key) == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	if a.mgr == nil || a.mgr.store == nil {
+		writeAPIErr(w, internalErr(errors.New("no store")))
+		return
+	}
+	fromDay, toDay, fromHour, toHour, aerr := usageHourWindow(r, time.Now().UTC())
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	hours, err := a.mgr.store.ListEngineMembershipHourly(r.Context(), key, fromHour, toHour)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// The undelivered rows are timestamped to the second, not bucketed to the hour, so the
+	// window is widened to whole days at both ends rather than reusing the hour strings.
+	rows, err := a.mgr.store.ListEngineUsageUndelivered(r.Context(), "", key,
+		fromDay+"T00:00:00Z", toDay+"T23:59:59Z", engineAttributionLimit+1)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	out := engineAttribution{Engine: key, From: fromDay, To: toDay, Memberships: hours, Undelivered: rows}
+	if len(rows) > engineAttributionLimit {
+		out.Undelivered, out.Truncated = rows[:engineAttributionLimit], true
+	}
+	writeJSON(w, http.StatusOK, out)
 }

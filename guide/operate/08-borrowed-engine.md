@@ -223,21 +223,40 @@ appears under this deployment's cloud cost, because this deployment has no insta
 What is *recorded* differs by role, and the difference matters if you are the one
 being borrowed from:
 
-- **Chat (`llm`): both sides write a usage row.** This deployment counts it as it
-  counts any engine traffic. The far deployment counts it too, against the borrowing
-  membership, and the row carries **the borrowing session's name** — which is how an
-  operator there tells one borrower's spending from another's. (The name is stated by
-  this deployment and taken as given over there; it is a label, not a permission.)
-  Because the borrowing membership has no workspace running, the far side's usage
-  post-back has nowhere to deliver to and is a no-op — no unrelated member's ledger
-  is polluted.
+- **Chat (`llm`): this deployment writes a usage row**, as it does for any engine
+  traffic, into the asking member's own ledger. The far deployment builds the same row
+  — carrying **the borrowing session's name**, stated by this deployment and taken as
+  given over there; it is a label, not a permission — but it has nowhere to deliver it,
+  because a borrowing membership has no workspace. So the far side **keeps** it instead
+  (see below). No unrelated member's ledger is touched either way.
 - **Images: no engine usage row on either side.** An image answer carries no token
   counts, so nothing is written for it on the engine ledger, here or there. On this
   side a member's image generation is still visible, because the image tool writes
-  its own usage row as it stores the file — counted in pictures, not tokens. But
-  **the far operator sees a GPU that was bought and no durable record of who for**.
-  That gap is known and unsolved; if you are lending engines to several deployments,
-  images are not attributable today.
+  its own usage row as it stores the file — counted in pictures, not tokens.
+
+### If you are the one being borrowed from
+
+The far deployment's Control Plane records what it cannot deliver, so "a GPU was bought
+and I cannot tell who for" is no longer the answer. Both are read from one route, as a
+super-admin of **that** deployment:
+
+```
+GET /api/admin/engines/<key>/attribution?from=YYYY-MM-DD&to=YYYY-MM-DD
+```
+
+- `memberships` — requests, successes, milliseconds and tokens per membership per hour,
+  for **both roles**. This is the only count the image role has, and it is what answers
+  "whose work was that box doing".
+- `undelivered` — the chat rows kept whole, each with the borrowing session's name and
+  the reason it could not be delivered (`no_workspace` is the ordinary borrowing case).
+
+Two things to know about it:
+
+- 🔴 **Kept is not delivered.** These rows are never posted into anybody's ledger later,
+  so they do not appear on the usage graph. They are an operator's record, not a member's.
+- There is **no Console screen** for this yet. Call the route, or read the
+  `engine_membership_hourly` and `engine_usage_undelivered` tables. Both are pruned on
+  the same 92-day retention as every other hourly bucket.
 
 ## When it does not work
 

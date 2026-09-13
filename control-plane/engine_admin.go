@@ -77,6 +77,11 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	mux.HandleFunc("GET /api/admin/engines", a.withIngestAdmin(a.get))
 	mux.HandleFunc("PUT /api/admin/engines/{key}", a.withSuperAdmin(a.put))
 	mux.HandleFunc("GET /api/admin/engines/{key}/hourly", a.withSuperAdmin(a.uptime))
+	// Whose work the engine was doing (ADR 0079 open question 7). A separate route from
+	// /hourly next door because it answers a separate question: that one says the GPU was up,
+	// this one says who for — and on a deployment that LENDS its engines it is the only place
+	// that answer exists at all.
+	mux.HandleFunc("GET /api/admin/engines/{key}/attribution", a.withSuperAdmin(a.attribution))
 	// The GPU this role buys (ADR 0074). A separate route from the mode toggle above because
 	// it is a separate act with a separate cost: the mode buys a box now, this says what the
 	// NEXT box will be.

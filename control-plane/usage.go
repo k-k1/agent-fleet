@@ -186,6 +186,18 @@ func (u *usageSampler) prune(ctx context.Context, now time.Time) {
 	if err := u.mgr.store.PruneEngineHourly(ctx, cutoff); err != nil {
 		log.Printf("showback: prune hourly engine occupancy: %v", err)
 	}
+	// Who the engine work was for (ADR 0079 open question 7): the same retention, from the same
+	// janitor, for the same reason. The hourly buckets take the hour cutoff; the undelivered
+	// rows are timestamped RFC3339, so they take the same instant spelled the way they store it
+	// — cutting them on the hour string would delete nothing, because "2026-06-13T04" sorts
+	// before every full timestamp in that hour.
+	if err := u.mgr.store.PruneEngineMembershipHourly(ctx, cutoff); err != nil {
+		log.Printf("showback: prune hourly engine attribution: %v", err)
+	}
+	tsCutoff := now.AddDate(0, 0, -usageHourlyRetentionDays).UTC().Format(time.RFC3339)
+	if err := u.mgr.store.PruneEngineUsageUndelivered(ctx, tsCutoff); err != nil {
+		log.Printf("showback: prune undelivered engine usage: %v", err)
+	}
 }
 
 // --- admin API ---
