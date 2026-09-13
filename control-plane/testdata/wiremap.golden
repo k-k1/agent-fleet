@@ -39,7 +39,7 @@ engine_admin.go engineAdminAPI.resolveIngest x1 {base_model,base_model_suggest,b
 engine_admin.go engineAdminAPI.unpinClass x1 {api,base_models,box,class,class_default,class_is_default,classes,desired,enabled,error,events,file_flags,has_models,idle_secs,key,last_demand,lifecycle,managed,mode,model_rows,model_swaps,models,negative_always,negative_max,offer,offer_trail,offers,provider,service_since,state,stop_eta,url,vram_fits,vram_need_mib,vram_need_model,vram_need_source,warm,warm_model,window_counted_secs,window_secs,window_units} cond{base_models,box,class,class_default,class_is_default,classes,error,events,file_flags,idle_secs,last_demand,lifecycle,model_swaps,negative_always,negative_max,offer,offer_trail,offers,service_since,stop_eta,url,vram_fits,vram_need_mib,vram_need_model,vram_need_source,warm_model,window_counted_secs,window_secs,window_units}
 engine_gateway.go engineGateway.catalog x1 {engines}
 engine_gateway.go engineGateway.issueSessionToken x1 {base_url,expires_at,models,token}
-engine_vae.go engineAdminAPI.fixVae x1 {action,bytes,file,license,repo,s3Key,staged,unreachable,vae_bundled} cond{action,bytes,license,staged,unreachable,vae_bundled}
+engine_vae.go engineAdminAPI.fixVae x1 {action,bytes,file,license,recheck_failed,repo,s3Key,staged,unreachable,vae_bundled} cond{action,bytes,license,recheck_failed,staged,unreachable,vae_bundled}
 engine_vae.go engineAdminAPI.fixVae x1 {action,job,vae_bundled}
 engine_vae.go engineAdminAPI.fixVae x1 {action,s3Key,vae_bundled}
 engine_vae.go engineAdminAPI.fixVae x1 {action,vae_bundled}

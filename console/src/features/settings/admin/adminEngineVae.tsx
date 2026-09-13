@@ -23,6 +23,11 @@ type VaePlan = FamilyVae & {
   vae_bundled?: string;
   /** "attach" = the bytes are here, "ingest" = a download under the licence named. */
   action?: string;
+  /** 🔴 The header could not be READ AGAIN, and the plan rests on what the row recorded when it
+   *  was marked. Measured on af-sandbox: the row's source is a Civitai version, Civitai answered
+   *  503, and the fix — which downloads from Hugging Face and never touches that source — must
+   *  not be taken down by the diagnosis it does not need. */
+  recheck_failed?: string;
 };
 
 type VaeResult = {
@@ -39,6 +44,13 @@ type VaeResult = {
  * every load, so a dependency on them would re-scan for ever. */
 export function useVaeScan(rows: EngineRow[], onDone: () => void) {
   const done = useRef<Record<string, boolean>>({});
+  /** 🔴 The rows the scan could not READ, by id, with the upstream's own words.
+   *
+   * Without this the answer to "the source is down" was silence: no verdict, so no mark, so no
+   * button — and a row that cannot generate looks exactly like one that can. Measured on
+   * af-sandbox (2026-09-13), where Civitai answered 503. Held in memory rather than stored,
+   * because it describes an upstream at a moment and not the file. */
+  const [unread, setUnread] = useState<Record<string, string>>({});
   useEffect(() => {
     let live = true;
     (async () => {
@@ -46,20 +58,27 @@ export function useVaeScan(rows: EngineRow[], onDone: () => void) {
         if (!engineIsImage(row) || done.current[row.key]) continue;
         if (!(row.model_rows || []).some((m) => m.vae_unread)) continue;
         done.current[row.key] = true;
-        const d: { read?: unknown[] } = await apiJSON(
+        const d: { read?: { id?: string; unreadable?: string }[] } = await apiJSON(
           "api/admin/engines/" + encodeURIComponent(row.key) + "/models/vae-scan",
           "POST",
           {},
         );
+        if (!live) return;
+        const bad: Record<string, string> = {};
+        for (const r of d?.read || []) {
+          if (r?.id && r.unreadable) bad[r.id] = r.unreadable;
+        }
+        if (Object.keys(bad).length) setUnread((cur) => ({ ...cur, ...bad }));
         // A read that changed nothing must not reload the panel: the rows would be replaced
         // under whoever is reading them for no new information.
-        if (live && d?.read?.length) onDone();
+        if ((d?.read || []).some((r) => !r?.unreadable)) onDone();
       }
     })();
     return () => {
       live = false;
     };
   }, [rows, onDone]);
+  return unread;
 }
 
 /** The row's own line: what is wrong, and the button that fixes it. */
@@ -67,29 +86,43 @@ export function ModelVaeFix({
   engineKey,
   model,
   pending,
+  unreadable,
   onDone,
 }: {
   engineKey: string;
   model: EngineModel;
   pending?: boolean;
+  /** What the scan got instead of an answer for this row, when it got one. Present means the
+   *  question could not be ASKED — a different sentence from "this checkpoint has no VAE", and
+   *  one the panel has to say out loud or the row goes quiet about being unusable. */
+  unreadable?: string;
   onDone: () => void;
 }) {
   const tr = useT();
   const [plan, setPlan] = useState<VaePlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  /** The refusal that has a way past it: nothing recorded AND the source would not answer. The
+   *  operator has watched this row fail in the engine, so they are allowed to say so. */
+  const [offerForce, setOfferForce] = useState(false);
   const [note, setNote] = useState("");
   const path = "api/admin/engines/" + encodeURIComponent(engineKey) + "/models/" + encodeURIComponent(model.id) + "/vae";
 
   const call = async (body: Record<string, unknown>) => {
     setBusy(true);
     setErr("");
-    const d: (VaePlan & VaeResult & { error?: unknown }) | undefined = await apiJSON(path, "POST", body);
+    const d: (VaePlan & VaeResult & { error?: { code?: string } }) | undefined = await apiJSON(
+      path,
+      "POST",
+      body,
+    );
     setBusy(false);
     if (d && "error" in d && d.error) {
       setErr(errDetail(d.error as never));
+      setOfferForce(d.error.code === "engine_vae_unreadable");
       return null;
     }
+    setOfferForce(false);
     return d;
   };
 
@@ -98,9 +131,31 @@ export function ModelVaeFix({
   }
   return (
     <div className="engines-model-vae">
-      <p className="form-err">{tr("admin.engines_model_vae_missing")}</p>
+      <p className={model.vae_missing ? "form-err" : "muted"}>
+        {model.vae_missing
+          ? tr("admin.engines_model_vae_missing")
+          : (tr("admin.engines_model_vae_unknown") as string).replace("{e}", unreadable || "")}
+      </p>
       {err && <p className="form-err">{err}</p>}
-      {!plan && (
+      {/* The source would not answer and this deployment has nothing recorded, so it will not
+          spend 335 MB on a guess — but the person reading this has seen the row fail. */}
+      {(offerForce || (!!unreadable && !model.vae_missing)) && !plan && (
+        <button
+          type="button"
+          className="sm"
+          disabled={busy || pending}
+          onClick={async () => {
+            const d = await call({ check: true, force: true });
+            if (d) setPlan({ ...d, recheck_failed: d.recheck_failed || err });
+          }}
+        >
+          {tr("admin.engines_model_vae_force")}
+        </button>
+      )}
+      {/* The ordinary press. Skipped when the scan has ALREADY been refused by that source —
+          asking again would be one more request to a host that has just said no, and the button
+          above is the honest offer in that state. */}
+      {!plan && !(unreadable && !model.vae_missing) && (
         <button
           type="button"
           className="sm"
@@ -126,6 +181,13 @@ export function ModelVaeFix({
           {/* What the press will do, in the sentence that says which of the two it is. The
               cheap one is worth saying out loud: the bytes are already this deployment's, so
               there is no download, no minutes and no new licence to accept. */}
+          {/* Said before the plan it qualifies: what follows rests on the earlier reading, not
+              on one taken just now. */}
+          {plan.recheck_failed && (
+            <p className="muted">
+              {(tr("admin.engines_model_vae_recheck_failed") as string).replace("{e}", plan.recheck_failed)}
+            </p>
+          )}
           <p className="muted">
             {plan.staged
               ? (tr("admin.engines_model_vae_plan_staged") as string).replace("{f}", plan.file || "")
@@ -140,7 +202,13 @@ export function ModelVaeFix({
               className="sm primary"
               disabled={busy || pending || plan.unreachable}
               onClick={async () => {
-                const d = await call(plan.staged ? {} : { licenseAccepted: true });
+                // `force` rides ONLY when it is true: it is an assertion by a person, and a
+                // request that carries it as false every time makes the audit of the one that
+                // meant it unreadable.
+                const d = await call({
+                  ...(plan.staged ? {} : { licenseAccepted: true }),
+                  ...(plan.recheck_failed ? { force: true } : {}),
+                });
                 if (!d) return;
                 setNote(
                   tr(
