@@ -157,12 +157,19 @@ function TranscriptTurnImpl({
   // liftFiles: render this slice WITHOUT its shared-file panels, because the caller re-renders
   // them outside the fold. The parts array itself is never filtered — foldParts' index is what
   // keys every block and addresses turn.origins, so dropping a part would shift both.
-  const renderAssistantParts = (parts: Part[], liftFiles = false) =>
+  //
+  // base is where `parts` starts inside turn.parts, because a work split hands this function a
+  // SLICE and foldParts numbers from 0 within it. turn.origins is indexed by the position in the
+  // whole turn (model.ts originsOf), so without the offset the final answer of any tool-using
+  // turn took the FIRST part's mark root — normally a tool's, i.e. "" — and lost its anchor:
+  // no selection pill on the one paragraph readers most want to mark (measured in
+  // TranslateTurn.dom.test.tsx before the fix).
+  const renderAssistantParts = (parts: Part[], liftFiles = false, base = 0) =>
     foldParts(parts).map((item) =>
       // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
       // between paragraphs). A lone tool renders inline (ToolRun handles length 1).
       item.kind === "toolrun" ? (
-        <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={caps.openDiff} />
+        <ToolRun key={"tr" + (base + item.tools[0].i)} tools={item.tools} onOpenDiff={caps.openDiff} />
       ) : item.p.kind === "question" ? (
         // A question from the transcript is history, never clickable. "Answered" is claimed
         // only when the answer is actually here: claude writes the tool_use at ASK time,
@@ -170,7 +177,7 @@ function TranscriptTurnImpl({
         // but a shared/exported transcript has no such card to defer to). Badging it
         // answered with nothing to show was the old, hardcoded lie.
         <QuestionBlock
-          key={item.i}
+          key={base + item.i}
           questions={item.p.questions}
           answered={!!item.p.answer}
           answer={item.p.answer}
@@ -182,7 +189,7 @@ function TranscriptTurnImpl({
         // question above: "decided" only once the tool_result (or the optimistic reject mark)
         // says so, not merely because the plan reached the transcript.
         <PlanBlock
-          key={item.i}
+          key={base + item.i}
           plan={item.p.plan}
           session={caps.session}
           answered={!!item.p.answer}
@@ -193,12 +200,12 @@ function TranscriptTurnImpl({
           sendDisabled={caps.planSendDisabled}
         />
       ) : item.p.kind === "userfile" ? (
-        liftFiles ? null : renderUserFile(item.p, item.i)
+        liftFiles ? null : renderUserFile(item.p, base + item.i)
       ) : item.p.kind === "thinking" ? (
         // The agent's chain-of-thought (codex reasoning / opencode reasoning),
         // collapsed unless this agent's behaviour setting asks for it expanded.
         <ThinkingBlock
-          key={item.i}
+          key={base + item.i}
           text={item.p.text}
           defaultOpen={!!caps.expandThinking}
           baseDir={turn.cwd}
@@ -206,12 +213,12 @@ function TranscriptTurnImpl({
           onOpenFile={caps.openFile}
         />
       ) : item.p.kind === "delegation" ? (
-        <DelegationCard key={item.i} p={item.p} agentName={agentName} />
+        <DelegationCard key={base + item.i} p={item.p} agentName={agentName} />
       ) : item.p.kind === "error" ? (
         // The turn failed instead of answering (the agent's own error record, e.g.
         // auth/quota/rate-limit) — never fold it away.
         <ErrorBlock
-          key={item.i}
+          key={base + item.i}
           info={item.p.info}
           text={item.p.text}
           cause={item.p.cause}
@@ -228,7 +235,7 @@ function TranscriptTurnImpl({
           const translated = translatedOf(item.p);
           return (
             <MarkdownView
-              key={item.i}
+              key={base + item.i}
               source={translated ?? item.p.text}
               baseDir={turn.cwd}
               repo={caps.repo}
@@ -240,7 +247,7 @@ function TranscriptTurnImpl({
               // A mark anchors by QUOTED TEXT, so it cannot land on a translation: painting it
               // there would underline whatever happened to match, on a sentence nobody marked.
               // Marks stay with the original, which is one click away.
-              markRoot={caps.marks && !translated ? turn.origins[item.i] : undefined}
+              markRoot={caps.marks && !translated ? turn.origins[base + item.i] : undefined}
               markKind={item.p.kind}
             />
           );
@@ -447,7 +454,7 @@ function TranscriptTurnImpl({
                 folded away, in a summary that counts only tools and interim texts. Same reason
                 the edited-file chips below report the turn's writes without unfolding it. */}
             {liftedFiles.map(({ p, i }) => renderUserFile(p, i))}
-            {renderAssistantParts(turn.parts.slice(split.at))}
+            {renderAssistantParts(turn.parts.slice(split.at), false, split.at)}
           </>
         ) : (
           renderAssistantParts(turn.parts)

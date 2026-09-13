@@ -160,6 +160,16 @@ describe("the mirror's translate button", () => {
     expect(prose().dataset.markroot).toBe("");
   });
 
+  it("anchors marks on the final answer of a tool-using turn", () => {
+    // Regression: a work split hands renderAssistantParts a SLICE, and foldParts numbers from 0
+    // inside it, while turn.origins is indexed by the position in the whole turn. Without the
+    // offset the answer took the first part's root — a tool's, i.e. "" — and the paragraph
+    // readers most want to mark could not be marked at all.
+    const caps = { ...capsWith(undefined), marks: { byRoot: new Map(), authorSlot: () => 0 } as never };
+    render(answer(ENGLISH, true), caps);
+    expect(prose().dataset.markroot).toBe("a1#1");
+  });
+
   it("translates the prose of a tool-using turn and leaves the work trace alone", () => {
     const tx = wiring();
     const caps = capsWith(tx);
