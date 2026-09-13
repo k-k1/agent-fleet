@@ -28,6 +28,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerSessionRoutes(mux, cfg)
 	registerSessionShareRoutes(mux, cfg)
 	registerChatRoutes(mux, cfg)
+	registerImagegenRoutes(mux, cfg)
 	registerAssistantRoutes(mux, cfg)
 	registerTTSRoutes(mux, cfg)
 	registerEngineRoutes(mux, cfg)
@@ -465,6 +466,29 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", rest)
 	// One-shot advisory turn (docs/log/21 memo tidy-up) — stateless, tools off. Proxied verbatim.
 	mux.HandleFunc("POST /api/chat/ask", rest)
+}
+
+// Image generation (ADR 0081) — the pane that makes pictures without an LLM in the loop.
+//
+// Relayed verbatim to the Agent, which is where the ComfyUI graph, the engine credential, the
+// disk and the ledger already are (decision 1): a browser-side route would need an engine
+// credential that does not exist and a second copy of the family dispatch. The gateway is not
+// touched — cancel reaches ComfyUI over the pass-through the Agent already uses.
+//
+// All seven are plain REST. The queue is what makes that possible (decision 2): enqueueing
+// answers at once and the browser polls, so nothing here waits out a cold start behind the
+// ALB's 60-second idle timeout the way the blocking `POST /imagegen/generate` would. That
+// route stays off this list on purpose — it is the MCP tool's door, not the pane's.
+func registerImagegenRoutes(mux *http.ServeMux, cfg config) {
+	proxy := newAgentProxyAPI(cfg.mgr)
+	rest := proxy.withResolved(proxy.rest)
+	mux.HandleFunc("GET /api/imagegen/status", rest)       // the member-facing catalogue (decision 5)
+	mux.HandleFunc("POST /api/imagegen/jobs", rest)        // enqueue N jobs as one group
+	mux.HandleFunc("GET /api/imagegen/jobs", rest)         // the queue, polled at 2 s while anything runs
+	mux.HandleFunc("DELETE /api/imagegen/jobs/{id}", rest) // cancel one picture
+	mux.HandleFunc("GET /api/imagegen/props", rest)        // a picture's resolved request (sidecar, else PNG chunk)
+	mux.HandleFunc("POST /api/imagegen/groups/{id}", rest) // pause / resume / skip / cancel a batch (decision 12)
+	mux.HandleFunc("POST /api/imagegen/queue", rest)       // the same, over every group at once
 }
 
 // Assistant templates (docs/log/19 Q2) — configurable chat personas, proxied verbatim.

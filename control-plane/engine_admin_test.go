@@ -1712,3 +1712,106 @@ func TestIngestJobRowSaysWhatTheFileWasTakenInAs(t *testing.T) {
 		t.Errorf("an unreadable spec invented an answer: %v", row)
 	}
 }
+
+// --- the trigger words (ADR 0081 decision 5) ----------------------------------
+
+// A LoRA's trigger words travel end to end: ingest wrote them, the admin row shows them, the
+// PATCH corrects them and the CATALOGUE carries them. The last hop is the one worth a test —
+// the Agent reads nothing else, so a value stored and not relayed is a column that does nothing,
+// which is what `trainedWords` already was for as long as it had nowhere to be stored.
+func TestEngineAdminEditsAModelsTrainedWords(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	// The checkpoint the adapter rides beside: a catalogue row with no model at all answers nil,
+	// so an engine offering only a LoRA has no wire to look at.
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", BaseModel: "sdxl", Enabled: true,
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "pixel-art-xl", Kind: "lora", BaseModel: "sdxl", Enabled: true,
+		Files:        []store.EngineModelFile{{S3Key: "image/loras/pixel_art_xl.safetensors"}},
+		TrainedWords: []string{"pixel art"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	// What the panel reads back, so the box opens with what ingest recorded rather than empty.
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if words, _ := engineAdminModelRow(rows[0])["trained_words"].([]string); len(words) != 1 ||
+		words[0] != "pixel art" {
+		t.Fatalf("admin row = %v, want the trigger", engineAdminModelRow(rows[0])["trained_words"])
+	}
+
+	code, _ := adminModel(t, a, "PUT", "image", "pixel-art-xl", `{"trained_words":["pixel art"," pixelart ",""]}`)
+	if code != http.StatusOK {
+		t.Fatalf("PUT trained_words = %d", code)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	// Trimmed, and the empty one dropped: a comma-separated box answers a trailing comma with a
+	// word nobody typed, and an empty chip in the pane cannot be removed.
+	if len(rows[0].TrainedWords) != 2 ||
+		rows[0].TrainedWords[0] != "pixel art" || rows[0].TrainedWords[1] != "pixelart" {
+		t.Fatalf("stored row = %+v, want two trimmed words", rows[0].TrainedWords)
+	}
+	// And onto the wire the Agent reads. A LoRA row rides in `loras`, not `model_rows`.
+	row := engineCatalogRowFor(e.def, rows, "", "")
+	loras, _ := row["loras"].([]map[string]any)
+	if len(loras) != 1 {
+		t.Fatalf("catalogue = %v, want one adapter", row)
+	}
+	if words, _ := loras[0]["trained_words"].([]string); len(words) != 2 || words[1] != "pixelart" {
+		t.Errorf("catalogue row = %v, want the triggers on the wire", loras[0])
+	}
+	// An empty list is a REAL answer — "Civitai published a word this adapter does not use" —
+	// and the only way back once one has been recorded.
+	if code, _ := adminModel(t, a, "PUT", "image", "pixel-art-xl", `{"trained_words":[]}`); code != http.StatusOK {
+		t.Fatalf("clearing them = %d", code)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if len(rows[0].TrainedWords) != 0 {
+		t.Errorf("trained_words = %v, want them cleared", rows[0].TrainedWords)
+	}
+	row = engineCatalogRowFor(e.def, rows, "", "")
+	loras, _ = row["loras"].([]map[string]any)
+	if _, ok := loras[0]["trained_words"]; ok {
+		t.Errorf("a cleared row still relays a key: %v", loras[0])
+	}
+}
+
+// The licence and the provenance reach the Agent too (ADR 0081 decision 5). They were in
+// store.EngineModel from the start and engineCatalogModelRow never carried them, so the pane
+// that names a model's licence beside it had nothing to name — the sessionWire failure, one
+// relay function further down.
+func TestEngineCatalogRowCarriesLicenceAndSource(t *testing.T) {
+	row := engineCatalogModelRow(store.EngineModel{
+		ID: "flux1-dev", LicenseName: "FLUX.1 [dev] Non-Commercial License",
+		LicenseURL: "https://example.invalid/license", Source: "civitai:1759168",
+	}, "")
+	if row["license_name"] != "FLUX.1 [dev] Non-Commercial License" ||
+		row["license_url"] != "https://example.invalid/license" {
+		t.Errorf("row = %v, want the licence", row)
+	}
+	// Composed, not relayed raw: `civitai:<id>` is a VERSION id and the page that opens the
+	// right model is not `/models/<id>` — knowledge only this side has.
+	if row["source_url"] != "https://civitai.com/models/?modelVersionId=1759168" {
+		t.Errorf("source_url = %v, want the composed page", row["source_url"])
+	}
+	// 🔴 A `url:` source stays unlinked here exactly as it does on the admin row: that click is
+	// the weights themselves, 22 GB of them.
+	plain := engineCatalogModelRow(store.EngineModel{
+		ID: "x", Source: "https://example.invalid/m.safetensors",
+	}, "")
+	if _, ok := plain["source_url"]; ok {
+		t.Errorf("a url source became a link: %v", plain)
+	}
+	// Nothing declared, nothing on the wire — the reader draws absence, never an empty licence.
+	bare := engineCatalogModelRow(store.EngineModel{ID: "x"}, "")
+	for _, k := range []string{"trained_words", "license_name", "license_url", "source_url"} {
+		if _, ok := bare[k]; ok {
+			t.Errorf("an undeclared %q was emitted: %v", k, bare)
+		}
+	}
+}

@@ -79,6 +79,13 @@ type engineRemoteCatalogModel struct {
 	Default         bool                      `json:"default"`
 	Warm            bool                      `json:"warm"`
 	Files           []engineRemoteCatalogFile `json:"files"`
+	// What ADR 0081 decision 5 added to engineCatalogModelRow. Read here as well because this
+	// wire is the SAME answer one deployment further out: a borrowed adapter whose trigger words
+	// stop at this struct loads and changes nothing visible, and the licence of a borrowed model
+	// is the one thing a member has no other way to look up.
+	TrainedWords []string `json:"trained_words"`
+	LicenseName  string   `json:"license_name"`
+	LicenseURL   string   `json:"license_url"`
 }
 
 // engineRemoteCatalogFile is one file of a model row, in the wire's own spelling.
@@ -308,5 +315,14 @@ func (e *engineRemote) mirrorRow(m engineRemoteCatalogModel, kind string) store.
 		Description:     m.Description,
 		BaseModel:       m.BaseModel,
 		NegativePrompt:  m.Negative,
+		TrainedWords:    m.TrainedWords,
+		LicenseName:     m.LicenseName,
+		LicenseURL:      m.LicenseURL,
+		// 🔴 `source_url` is the one of ADR 0081's four fields that stops here. Source holds the
+		// token the URL is composed FROM (`civitai:<version>`), a borrowed row has none, and a
+		// composed URL put in Source would be re-composed to nothing on the way out —
+		// engineSourceURL refuses to link a bare URL on purpose. A borrowed model therefore
+		// names its licence but not the page it came from, which is the honest state: the far
+		// deployment holds that row, not this one.
 	}
 }

@@ -272,3 +272,48 @@ func TestEngineModelWindowAndVramAreEditedInPlace(t *testing.T) {
 		t.Errorf("vram on a missing row = %v %v, want false", ok, err)
 	}
 }
+
+// A LoRA's trigger words survive the round trip and can be taken back off (ADR 0081 decision 5).
+//
+// The empty list is the half worth pinning: Civitai publishes words for most adapters and wrong
+// ones for some, and a setter that treated "no words" as "say nothing" would leave the wrong
+// trigger in the catalogue with no way to remove it but forgetting the row.
+func TestEngineModelTrainedWordsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	st := engineModelStore(t)
+
+	if err := st.PutEngineModel(ctx, EngineModel{
+		Role: "image", ID: "pixel-art-xl", Kind: "lora",
+		Files:        []EngineModelFile{{S3Key: "image/loras/pixel_art_xl.safetensors"}},
+		TrainedWords: []string{"pixel art", "pixelart"},
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	got, err := st.ListEngineModels(ctx, "image")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("list: %v %+v", err, got)
+	}
+	if len(got[0].TrainedWords) != 2 || got[0].TrainedWords[1] != "pixelart" {
+		t.Fatalf("trained words did not survive: %+v", got[0].TrainedWords)
+	}
+
+	if ok, err := st.SetEngineModelTrainedWords(ctx, "image", "pixel-art-xl", []string{"pixel art"}); err != nil || !ok {
+		t.Fatalf("set: %v %v", ok, err)
+	}
+	got, _ = st.ListEngineModels(ctx, "image")
+	if len(got[0].TrainedWords) != 1 || got[0].TrainedWords[0] != "pixel art" {
+		t.Fatalf("the correction did not land: %+v", got[0].TrainedWords)
+	}
+	// Nil clears, rather than meaning "unchanged".
+	if ok, err := st.SetEngineModelTrainedWords(ctx, "image", "pixel-art-xl", nil); err != nil || !ok {
+		t.Fatalf("clear: %v %v", ok, err)
+	}
+	got, _ = st.ListEngineModels(ctx, "image")
+	if len(got[0].TrainedWords) != 0 {
+		t.Fatalf("trained words were not cleared: %+v", got[0].TrainedWords)
+	}
+	// A row that does not exist is reported as such, so the route answers 404 rather than 200.
+	if ok, err := st.SetEngineModelTrainedWords(ctx, "image", "nobody", []string{"x"}); err != nil || ok {
+		t.Fatalf("absent row: %v %v", ok, err)
+	}
+}
