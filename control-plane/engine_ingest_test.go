@@ -952,9 +952,9 @@ func TestEngineIngestReplaceKeepsTheRowAndRewritesTheGeometry(t *testing.T) {
 		Files: []store.EngineModelFile{{S3Key: "llm/old-q4_k_m.gguf", Bytes: 1117320768,
 			Source: "hf:x/y/old-q4_k_m.gguf"}},
 		ContextTokens: 32768, MaxOutputTokens: 4096,
-		License:       "apache-2.0", LicenseAcceptedBy: "u1", LicenseAcceptedTenant: "t-acme",
+		License: "apache-2.0", LicenseAcceptedBy: "u1", LicenseAcceptedTenant: "t-acme",
 		LicenseAcceptedLicense: "apache-2.0", BaseModel: "", Description: "the one in the menu",
-		KVLayers:               28, KVHeadsKV: 2, KVKeyLen: 128, KVValueLen: 128,
+		KVLayers: 28, KVHeadsKV: 2, KVKeyLen: 128, KVValueLen: 128,
 	}); err != nil {
 		t.Fatal(err)
 	}
