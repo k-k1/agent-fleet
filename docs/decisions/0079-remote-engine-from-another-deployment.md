@@ -393,9 +393,20 @@ the registry supports, and it does not need to.
 The local gateway verified a local session token, so it knows the session
 (`engineSessionClaims.Session`). It states that name when it exchanges the issuing token for a
 far session token — the far side takes it as stated and does not verify it, on purpose
-(`engine_gateway.go:182-186`). The far deployment's usage rows then carry the borrower's session
-name, which is the only way an operator there can tell one borrower's spending from another's —
-🔴 **for the llm role only.** See decision 9.
+(`engine_gateway.go:182-186`), and the far side's `recordUsage` builds a usage row carrying it.
+
+🔴 **Corrected 2026-09-13: that row is then dropped, so this decision buys the far operator
+nothing.** The draft called the name "the only way an operator there can tell one borrower's
+spending from another's", for the llm role. It is not, because there is no row on the far side to
+carry it. The ledger is a file inside a Workspace, not a table in the Control Plane
+(`engine_usage.go:6-10` — the CP's own usage tables, `0008_usage.sql`, `0053_usage_hourly.sql`
+and `0055_engine_hourly.sql`, hold occupancy seconds and have no feature column at all), so the
+only way to record a row is to POST it to a RUNNING workspace, and decision 3's purpose-made
+membership has none. Decision 9 states this two paragraphs later as a BENEFIT; the two were
+never reconciled, and decision 9 is the one that matches the code.
+
+What the name still does is real and smaller: it reaches the far side, it is what the far token
+is minted for, and it is what any durable record there would have to key on (open question 7).
 
 Tokens are cached per (engine key, session) and renewed before expiry, exactly as the Agent
 already does; the TTL is 30 days (`engine_token.go:85`), so this is cheap.
@@ -543,11 +554,52 @@ depends on it: a remote row mints its own credential (decision 3).
    route is P1. What remains is the ordinary consequence, which is that **the far deployment must be
    running a Control Plane new enough to have it** — a borrower facing an older one is back to the
    account and the sign-in, and chapter 08 says so.
-7. **How is a borrowed IMAGE generation attributed on the far side?** It writes no usage row
-   there (decision 9), so the far operator sees a GPU that was bought and no record of who for.
-   The cheapest answer is probably to let `engineUsageRowFor` emit a zero-token row for image
-   engines, which is a change to the far deployment and therefore P1 or later — and it would
-   improve the far side's own bookkeeping too, borrowing or not.
+7. **How is borrowed use attributed on the far side?** ~~a borrowed IMAGE generation~~ — **the
+   question is wider than the draft put it, and its cheapest answer does not work (2026-09-13).**
+
+   **Wider**: a borrowed CONVERSATION leaves no durable record over there either. The far CP's
+   post-back resolves the borrowing membership's workspace and returns silently when there is
+   none (`engine_usage.go:226-232`), which decision 3's purpose-made membership never has — and
+   the issue-token route warns the far operator off lending a membership that *does* have one
+   (`engine_issue_token.go:54-56, 68-70`). So the far operator sees a GPU that was bought and no
+   record of who for, for BOTH roles. Decision 9 already says so; decision 8 said otherwise and
+   has been corrected above.
+
+   **The cheapest answer does not work.** A zero-token row from `engineUsageRowFor` for image
+   engines would be a row with nowhere to go: the ledger is a file inside a Workspace
+   (`engine_usage.go:6-10`), the far membership has no Workspace, and the row would be dropped by
+   the same branch that drops the chat one. Two further reasons it was the wrong shape anyway —
+   an image request's far token carries an EMPTY session, because the Agent asks the local CP for
+   a WORKSPACE-scoped engine token (`workspace/agent/engines.go:399-418`), so the row would have
+   no borrower to attribute to; and `engine.image` is a feature value ADR 0029 §2's frozen
+   enumeration does not have, written on top of the `tool.imagegen` row the borrower already
+   keeps. `TestOnlyChatEnginesAreCountedByTheGateway` (`engine_gateway_test.go:766-790`) exists
+   to refuse exactly that, and its comment gives the same two reasons.
+
+   **What is left is to build the receiving end**, on the far Control Plane, because that side is
+   the only one holding both the membership and a durable store. Two shapes, and the split is the
+   same one decision 9 draws — a conversation has rows, a picture has not:
+
+   - **For the conversation: somewhere for the row to land.** The row already exists, fully
+     formed, at the moment it is dropped: `engineUsageRowFor` built it with the borrower's session
+     name on it, and `postUsage` throws it away for want of an endpoint. A table on the far CP
+     that takes it when the membership has no running workspace needs no new counting and no new
+     enumeration value. 🔴 **And it closes a hole that is not about borrowing at all**: the same
+     branch silently drops an ordinary member's engine row whenever their workspace stopped
+     between the answer and the bookkeeping, which `engine_usage.go:226-232` admits in its own
+     comment. The cost to weigh is that ADR 0029's ledger is deliberately a file inside a
+     Workspace, and this is a second place engine rows can live.
+   - **For the picture: seconds and requests, not a row.** There are no tokens to record and no
+     session to attribute (above), so the honest unit is the one `engine_hourly`
+     (`migrations/0055_engine_hourly.sql`) already keeps — GPU seconds per engine key per hour —
+     with the membership axis it lacks. The gateway has `mv.MembershipID` in hand where it
+     records demand.
+
+   Either way this is the far deployment's OWN bookkeeping, borrowing or not, and ADR 0048
+   decision 2 and ADR 0071 decision 9 both bar putting a price on it. It is deliberately not
+   decided here. No borrower is blocked by its absence; what the absence costs is the far
+   operator's ability to answer "who was that box for", which today is answered once, at
+   `engine.issue_token` in the audit log (`engine_issue_token.go:141`), and never again.
 
 ## Phases
 

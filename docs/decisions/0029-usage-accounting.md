@@ -56,7 +56,7 @@ The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2
 
 | Dimension | Values |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -83,6 +83,21 @@ generation tool of [ADR 0069](0069-image-generation-providers.md), recorded for 
 the way the chat's one-shot already is; the plan quota an image consumes is not expressible in
 tokens and is left unmeasured rather than zero-filled (ADR 0069 decision 9). The rule from here:
 a new constant in `ledger.go` and a new value in this table land in the same commit.
+
+**Amendment (2026-09-13), and the rule above was broken again.** `engine.llm` was added to the
+`feature` row. It is one call to an inference engine the fleet itself runs, relayed through the
+Control Plane's gateway ([ADR 0071](0071-self-hosted-inference-engines.md) decision 9, which
+says in as many words that "ADR 0029's enumeration is appended" and then did not append it). It
+has been in `usagex/ledger.go` as `FeatureEngineLLM` since that ADR shipped, so the enum drifted
+a second time, in the same way, under a rule written to stop the first. Found while deciding
+[ADR 0079](0079-remote-engine-from-another-deployment.md)'s open question 7.
+
+🔴 **There is no `engine.image`, and its absence is a decision, not a gap.** An image answer
+carries no token counts; what an image spends is pixels, and the party that can see those is the
+Agent as it stores the file, which already writes a `tool.imagegen` row. A row from the gateway
+as well would double a generation's line count while adding a value this enumeration does not
+have — `TestOnlyChatEnginesAreCountedByTheGateway` in the Control Plane exists to refuse it
+(ADR 0069 decision 9, ADR 0071 decision 9, ADR 0076 decision 8 all draw the same line).
 
 The same change added the row's first two non-token columns, `images` and `pixels` in §1. They
 exist because the honest alternative was worse: an image generation's ledger row carries the
