@@ -2,14 +2,15 @@
 
 English | [日本語](0080-image-gallery-pane.ja.md)
 
-- Status: **proposed** (2026-09-13).
+- Status: **accepted** (drafted 2026-09-13; accepted the same day with the review's corrections
+  folded in).
 - Related: [0049](0049-session-changed-files.md) decision 4 and [0046](0046-drawio-viewer.md)
   (**do not add a `PaneKind`; add one more face to an existing pane** — this ADR argues the
   exception) / [0078](0078-sessions-overview-pane.md) (the nearest precedent: one pane kind, the
   existing menu borrowed whole, a grid of cards) /
   [0069](0069-image-generation-providers.md) (where generated images live, and for how long) /
   [0063](0063-document-preview.md) (`api/fs/download` is the one endpoint that returns raw bytes) /
-  [0017](0017-keyboard-system.md) (registering in the command table)
+  [0017](0017-keyboard-system.md) (the command table — why nothing is registered is decision 1)
 
 ## Context
 
@@ -60,27 +61,49 @@ What is missing is the folder-scoped surface, and the ways in.
   directory makes every one of them a lie. The SCM pane's subject is a repository — also not a
   folder. **`galleryPath` is the first field in `PaneContent` that names a directory**, and that
   is precisely the reason for the new kind.
-- As a pane it gets splitting, tabs, pop-out, layout persistence, the phone's single-pane display
-  and `Ctrl+F` **from machinery that already exists** — including sitting next to the mirror so
-  you can watch images land.
+- As a pane it gets splitting, tabs, pop-out, layout persistence and the phone's single-pane
+  display **from machinery that already exists** — including sitting next to the mirror so you can
+  watch images land. (Find-in-pane is NOT among them: the Console has no such machinery, and
+  `Ctrl+F` is the browser's own search, which can only hit the file names the cards render.)
 - It walks all eight places (the union, the stored-value validation, the identity check, the
   render switch, the title, the minimap abbreviation, pop-out eligibility, i18n). **Forget the
   validation in `migrate.ts` and a reload turns the pane into a blank terminal.** `galleryPath` is
   a stored value, i.e. untrusted input: reject a non-string, a leading `/`, `..`, control
   characters and anything over the length cap — the same severity as the `browser` kind's `path`.
 - `sort` lives in the pane's CONTENT, not in React state. A tab switch unmounts this view, and a
-  setting that snapped back on every switch reads as broken (0078 decision 1).
-- The identity check (`sameTarget`) is `galleryPath` alone. `sort` and `galleryFocus` are state of
-  the same surface, so opening the same folder twice does not produce two panes.
+  setting that snapped back on every switch reads as broken (0078 decision 1). The default is
+  `"new"`.
+- `gallerySession` is DISPLAY ONLY. It is set only when the pane was opened from decision 8's
+  entry, and `paneTitle` uses it for "Generated images — <session display>" (the folder is named by
+  a UUID, so the tail of the path is unreadable as a title). Without it the title is the folder
+  name. `migrate.ts` validates it as a session name (`ValidName`'s character set).
+- The identity check (`sameTarget`) is `galleryPath` alone. `sort`, `galleryFocus` and
+  `gallerySession` are state of the same surface, so opening the same folder twice does not
+  produce two panes.
+- **Nothing is registered in the command table (0017)** in P0. 0078 could add `open.sessions`
+  (`g s`) to `features/keys/commands.ts` because that surface takes no argument; a gallery needs a
+  folder, and a global key has nothing to hand it. Opening is always contextual (a right-click, a
+  header, a session). If a default target ever emerges — "the gallery I had open last" — it is P1.
 
 ### Decision 2 — the listing is the existing `api/fs/tree`; the only addition is `mtime` on `fsEntry`
 
 - No new listing endpoint. One level of `{name, type, size}` is what this endpoint already returns.
-- **Add `mtime`** (`workspace/agent/fs.go`). Neither "newest first" nor "3 minutes ago" can be
-  written without it. Generated filenames carry a `unixnano`, so name order IS time order there —
-  but that is an accident of generated images and does nothing for a folder of screenshots.
-- No effect on the tree: `ProjectFiles`' `sameEntries` compares name and type only, so a moved
-  mtime causes no extra repaint.
+- **Add `mtime`** (`fsEntry` in `workspace/agent/fs.go`). Neither "newest first" nor "3 minutes
+  ago" can be written without it. Generated filenames carry a `unixnano`, so name order IS time
+  order there — but that is an accident of generated images and does nothing for a folder of
+  screenshots.
+  - The shape is an integer `mtime` in unix seconds (`omitempty`). The `e.Info()` that already
+    fills `Size` also returns `ModTime()`, so **directories get it from the same single call** —
+    today `Size` is filled for files only, and that is not the line to copy here (sorting folders
+    by recency is the obvious next ask).
+  - **An older Agent returns no `mtime`.** The Agent ships separately from the Console (native,
+    pinned versions), so this really happens. **Fall back to name order and print no relative
+    time** — the same manners as `fs_thumb.go`'s advisory parameter: no capability probe, no
+    version comparison.
+- No effect on the tree: every reader declares its own local `Entry`
+  (`features/project/ProjectFiles.tsx` and friends; there is no shared type), so one more field
+  breaks nobody, and `ProjectFiles`' `sameEntries` compares name and type only, so a moved mtime
+  causes no extra repaint.
 - **Recursion is out of P0** (decision 9, P1). `api/fs/search` must not stand in for it: it
   honours `.gitignore`, so generated and built files **vanish silently**, and its `q` is required,
   so "everything" cannot be asked for.
@@ -102,6 +125,9 @@ webp/avif/bmp/svg come back as originals for the browser to draw.
   the cost — ~100 ms and width*height*4 bytes). Show it smaller with CSS instead.
 - `loading="lazy"` plus `decoding="async"`. The first render stops at **300 images, newest first**,
   with a "show more". Without a cap, one unlucky folder queues 300 decodes behind a semaphore of 2.
+  Decoding is not the only queue: once `max-age=60` has passed, a re-mount issues **one conditional
+  request per card**, and they line up behind the browser's six-per-host limit (a 304 is still a
+  round trip — open question 1).
 - The original bytes are fetched only on enlarge (the lightbox). A card always shows the
   downscaled copy.
 
@@ -109,11 +135,15 @@ webp/avif/bmp/svg come back as originals for the browser to draw.
 
 - **Body = enlarge (lightbox), corner button = open the file pane.** `FileCard` already splits it
   this way, for the same reason: looking should not cost a pane.
-- `mirror/parts/ImageLightbox.tsx` **moves to a shared home** and gains `←`/`→` navigation and a
-  "3 / 12" position. `ImageView`'s zoom handle is used as it is. **The mirror's own appearance and
-  behaviour do not change** — navigation appears only when a list is handed in.
+- `mirror/parts/ImageLightbox.tsx` **moves to a shared home** (`features/viewer/ImageLightbox.tsx`)
+  and gains `←`/`→` navigation and a "3 / 12" position. `ImageView`'s zoom handle is used as it is.
+  **The mirror's own appearance and behaviour do not change** — navigation appears only when a list
+  is handed in.
 - Escape stays on `useEscLayer`, and the existing close rules (backdrop closes, a click on the
   image stays a zoom, a pan that ends on the backdrop does not close) carry over unchanged.
+  **Closing on the phone's Back does not**: `useBackClose` is called by `MirrorView`, not by the
+  component. Owning "close" stays with the owner after the move, so the gallery wires the same hook
+  — forget it and Back skips the lightbox and leaves the pane instead.
 - **No swipe navigation on a phone** (P0). Horizontal drag already belongs to session rotation
   (the `data-no-swipe` tug of war), and touching it would break an existing gesture. Buttons and
   arrow keys navigate.
@@ -132,15 +162,23 @@ The numbers are `features/files/refreshPolicy.ts`, unchanged.
   unchanged folder costs a 304.
 - Images that just appeared get the tree's "new row" highlight, so a generation landing is visible.
 
-### Decision 7 — every way in is one item in a menu that already exists; no new button, no new surface
+### Decision 7 — every way in is one item in a row that already exists (a menu, or the lightbox's bar); no new surface
 
 1. **Right-click a folder in the rail** → "Open gallery".
 2. **Right-click an image file in the rail** → the same item. `menuDir` already points at the
    parent, so it opens the parent's gallery positioned on that image (`galleryFocus`). Not shown
    for non-image files.
-3. **The mirror's shared-files panel** → "Open folder". It opens the **parent folder** of that
-   image, so no session resolution is involved.
-4. **The image viewer's header** → "Gallery of this folder".
+3. **The button row of the lightbox a mirror `FileCard` opens** → "Open folder". It opens the
+   **parent folder** of that image, so no session resolution is involved. There is no
+   "shared-files panel" in the mirror: there are cards inside the transcript
+   (`transcript/blocks.tsx`, `FileCard` / `UserFileBlock`), and **an image card's two targets are
+   already spoken for** — body enlarges, corner opens the pane. A third corner button would make
+   decision 5's split unreadable, so the item goes on a button row that already exists: the bar of
+   the lightbox decision 5 shares. The gallery shows the same item in the same bar.
+4. **The image viewer's header** → "Gallery of this folder". The header is
+   `viewer/parts/FileHeadControls.tsx` (the info bar `FileView` assembles);
+   `viewer/parts/FileViewerShell.tsx` is the reading surface and holds no header. The precedent
+   for a folder-scoped action there is `FileView`'s `revealInFiles` (`onOpenDir`).
 5. **A session's context menu** → "Generated images (N)". `sessions/SessionMenu.tsx` is shared by
    the rail row, the session tab and the overview card, so **one item is three ways in** (0078
    decision 7: never duplicate an item).
@@ -157,18 +195,31 @@ decision 3).
 - `generatedImagesPath` (the folder, browse-root relative, `omitempty`)
 
 - **Why the wire.** The folder is `uuidV5(dir + "|" + <session name>)`
-  (`internal/session/uuid.go`), which **the Console cannot derive**. Copying that hash into TS is
-  the kind of duplication that starts drifting silently the moment one side is fixed. Resolving it
-  on click would decide "is there anything" AFTER the menu opened, so the item would grow in late,
-  with the pointer already moving. With the path on the wire there is **no new endpoint and no CP
-  allowlist entry**, and the click opens the pane immediately.
-- **Cost.** One `ReadDir` of a small directory per session per list build (tens of µs; the list
-  already reads — and sometimes writes — a meta file per session). If it ever shows up, memoize on
-  the directory's mtime. The wire bytes are omitted at zero, so a deployment that never generates
-  pays nothing.
-- **The relay trap.** A field absent from `sessionWire` is dropped silently, and the symptom is
-  "the item never appears". Three nets watch it: `wire.golden`, the Agent→CP round-trip test, and
-  the comparison against the Console's type (`contract_session_test.go`).
+  (`internal/session/uuid.go`; the actual call is `session.UUID(meta.Dir, body.Session)` in
+  `imagegen/http.go`). Both inputs are on the wire, so this is **not something the Console is
+  unable to compute** — SHA-1 is in `crypto.subtle`. It is something it should not: copying an
+  Agent-internal derivation is the kind of duplication that starts drifting silently the moment one
+  side is fixed (and it would want an `await` in the synchronous place a menu is built). Resolving
+  it on click would decide "is there anything" AFTER the menu opened, so the item would grow in
+  late, with the pointer already moving. With the path on the wire there is **no new endpoint and
+  no CP allowlist entry**, and the click opens the pane immediately.
+- **Cost.** One `ReadDir` per session per list build (the list already reads — and sometimes
+  writes — a meta file per session). **"A small directory" is not a guarantee**: retention is 30
+  days, so a session that generates daily holds hundreds of files, and counting means reading every
+  name. So **memoize on the directory's mtime in P0** — a few lines, and nobody has to come back
+  and measure it. The wire bytes are omitted at zero, so a deployment that never generates pays
+  nothing.
+- **An older Agent sends neither field** (same reason as `mtime`), and then the item does not
+  appear. No capability probe, no version comparison: absent means not shown, which fails the
+  right way.
+- **The relay trap.** `sessionWire` (`control-plane/workspace_handlers.go`) decodes the Agent's
+  answer and re-emits it, so **a field it does not declare is dropped silently**. The Console's
+  unit and DOM tests build `Session` objects directly, never crossing the relay, and the TS field
+  is optional so typecheck stays quiet too; the symptom is "the item never appears". **Four places
+  to touch**: `sessionWire` itself; `contract_session_test.go`'s `sessionWireBinding` AND `tsKeys`;
+  `session_wire_test.go`'s Agent-shaped payload and post-relay expectation; and a regenerated
+  `testdata/wire.golden` (its `# count:` moves). Only CI's `control-plane` job catches it, i.e.
+  **it goes red only once the feature is finished**.
 - **While the workspace is stopped** both fields come from the DB mirror, i.e. absent, so the item
   disappears. That is correct: without the Agent the gallery cannot be read at all.
 - **Only af's `generate_image` output is counted.** codex's own `generated_images` lives under
@@ -221,16 +272,20 @@ a folder of screenshots) are most of the cases, and they come first.
 ## Impact
 
 - **Two touches in the Agent**: `mtime` on `fsEntry`, and two fields in `wireSession` (the count
-  and the path). No new route.
-- **Two fields in the CP's `sessionWire`** (plus the golden and the round-trip test). **No new
-  route means no allowlist entry.**
+  and the path). No new route — so **`testdata/routes.golden` must not move**; if it does, the
+  implementation has left the design.
+- **Two fields in the CP's `sessionWire`** (across the four places above:
+  `contract_session_test.go`, `session_wire_test.go`, `wire.golden`). **No new route means no
+  allowlist entry.**
 - **No additional polling**: the count rides the existing session list, and the folder is re-read
   only while somebody is looking (decision 6).
-- **Console**: a new `features/gallery/` (view, pure functions, CSS, opener);
-  `layout/{types,migrate,ops}.ts`; `features/panes/{Pane,paneTitle,LayoutMap}`; the four entry
-  points (`project/ProjectFiles.tsx`, `sessions/SessionMenu.tsx`,
-  `mirror/transcript/blocks.tsx`, `viewer/parts/FileViewerShell.tsx`); sharing
-  `mirror/parts/ImageLightbox.tsx`; i18n (ja/en).
+- **Console**: a new `features/gallery/` (view, pure functions, CSS, `open.ts`);
+  `layout/{types,migrate,ops}.ts`; `features/panes/{Pane,paneTitle,LayoutMap}`; the entry points in
+  four files (`project/ProjectFiles.tsx` for both right-click items; `sessions/SessionMenu.tsx`,
+  one item and three ways in; `viewer/parts/FileHeadControls.tsx` with `viewer/FileView.tsx`; the
+  shared lightbox's bar, which is where a mirror `FileCard` lands); moving
+  `mirror/parts/ImageLightbox.tsx` to `viewer/ImageLightbox.tsx`; two fields in `types/session.ts`
+  (the CP's `tsKeys` reads that file); i18n (ja/en).
 - **The bundle does not grow** (no new dependency: the thumbnails and the lightbox are both
   already there).
 - Tests: pure functions (image filter, ordering, cap, totals); DOM (cards render, the empty state,
@@ -240,7 +295,18 @@ a folder of screenshots) are most of the cases, and they come first.
 
 ## Phases
 
-- **P0**: decisions 1-9. One folder level, plus the five ways in.
+- **P0**: decisions 1-9. One folder level, plus the five ways in. **Started in parallel as three
+  lanes**:
+  - **Lane A (Go and the wire)**: `fsEntry.mtime`, the two `wireSession` fields, the CP's four
+    places, the two fields in `types/session.ts`. It shares not one line with the other two.
+  - **Lane B (the surface)**: the pane kind `gallery` through its eight places, and
+    `features/gallery/` (view, pure functions, CSS, `open.ts`). It fixes `openGallery()`'s
+    signature first.
+  - **Lane C (the lightbox and the ways in)**: moving `ImageLightbox`, its navigation and position,
+    the five entry points, i18n. The entry points call lane B's `open.ts`, so C **merges B's branch
+    before finishing**.
+  - The only cross-lane collision is i18n keys (`gallery.*` is B; the entry-point wording is C).
+    `layout/types.ts` is touched by B alone.
 - **P1**: a card's right-click menu (open in a pane, download, copy path, delete); "send" to a
   session or an assistant; W x H (the header-reading endpoint); recursion into subfolders; a
   surface over all sessions under `generated`; tile size (S/M/L) and the matching `thumb`.
