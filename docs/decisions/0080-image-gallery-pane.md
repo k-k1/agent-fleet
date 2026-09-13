@@ -73,10 +73,13 @@ What is missing is the folder-scoped surface, and the ways in.
 - `sort` lives in the pane's CONTENT, not in React state. A tab switch unmounts this view, and a
   setting that snapped back on every switch reads as broken (0078 decision 1). The default is
   `"new"`.
-- `gallerySession` is DISPLAY ONLY. It is set only when the pane was opened from decision 8's
-  entry, and `paneTitle` uses it for "Generated images — <session display>" (the folder is named by
-  a UUID, so the tail of the path is unreadable as a title). Without it the title is the folder
-  name. `migrate.ts` validates it as a session name (`ValidName`'s character set).
+- `gallerySession` holds the session's SLUG (`name`), not its display name. It is set only when
+  the pane was opened from decision 8's entry, and the render side resolves that name to the
+  session it currently is, titling the pane "Generated images — <session display>" (the folder is
+  named by a UUID, so the tail of the path is unreadable as a title). Without it the title is the
+  folder name. **Never bake the display name in**: a rename would leave the old title behind, and
+  `migrate.ts` validates this field as a session name (`ValidName`'s `^[A-Za-z0-9_-]{1,40}$`), so
+  **a Japanese title is dropped whole on the next reload** — walked into during implementation.
 - The identity check (`sameTarget`) is `galleryPath` alone. `sort`, `galleryFocus` and
   `gallerySession` are state of the same surface, so opening the same folder twice does not
   produce two panes.
