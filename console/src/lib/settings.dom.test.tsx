@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expandThinking, getSettings, isDeviceLocalSetting, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, normalizeImageProviderOrder, type Settings } from "./settings.ts";
+import { collapseImageProviderOrder, expandImageProviderOrder, expandThinking, getSettings, IMAGE_PROVIDER_FLEET_GROUP, imageProviderLabel, isDeviceLocalSetting, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, normalizeImageProviderOrder, type Settings } from "./settings.ts";
 
 // Pure logic, but it lives in the jsdom project (.dom.test.tsx): settings.ts touches
 // localStorage at load time through the API client, so under node the import itself fails.
@@ -72,6 +72,50 @@ describe("normalizeImageProviderOrder", () => {
 
   it("falls back to the built-in order for a broken stored value", () => {
     expect(normalizeImageProviderOrder("agy")).toEqual(["sdcpp", "comfy", "agy", "codex"]);
+  });
+});
+
+// What the member SEES is one row for the fleet's own engine, not two rows with the same label
+// (ADR 0082). The stored value still carries both ids, so the round trip is what these pin.
+describe("the fleet's own engines as one row", () => {
+  it("draws one row for them, at the rank the first of them holds", () => {
+    expect(collapseImageProviderOrder(["sdcpp", "comfy", "agy", "codex"])).toEqual([
+      IMAGE_PROVIDER_FLEET_GROUP,
+      "agy",
+      "codex",
+    ]);
+    expect(collapseImageProviderOrder(["agy", "codex", "comfy", "sdcpp"])).toEqual([
+      "agy",
+      "codex",
+      IMAGE_PROVIDER_FLEET_GROUP,
+    ]);
+  });
+
+  it("labels that row with the service, and the others with their agent name", () => {
+    expect(imageProviderLabel(IMAGE_PROVIDER_FLEET_GROUP)).toBe("Agent Fleet (self-hosted)");
+    expect(imageProviderLabel("agy")).toBe("");
+  });
+
+  it("writes back every id the setting has to carry", () => {
+    // A member who drags the group to the bottom must not drop `comfy` from the stored order:
+    // it would then be placed at the FRONT again the next time it is normalised.
+    expect(expandImageProviderOrder(["agy", "codex", IMAGE_PROVIDER_FLEET_GROUP])).toEqual([
+      "agy",
+      "codex",
+      "sdcpp",
+      "comfy",
+    ]);
+  });
+
+  it("brings ids that were stored apart back together, which is what one row promised", () => {
+    const stored = normalizeImageProviderOrder(["sdcpp", "agy", "comfy"]);
+    expect(stored).toEqual(["sdcpp", "agy", "comfy", "codex"]);
+    expect(expandImageProviderOrder(collapseImageProviderOrder(stored))).toEqual([
+      "sdcpp",
+      "comfy",
+      "agy",
+      "codex",
+    ]);
   });
 });
 

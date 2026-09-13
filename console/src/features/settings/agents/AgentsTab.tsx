@@ -6,9 +6,10 @@ import { Choice, OnOff, OrderList, Row } from "../parts/controls.tsx";
 import {
   useSettings,
   setSetting,
-  IMAGE_PROVIDERS,
   SPAWN_CHILD_LIMITS,
   normalizeImageProviderOrder,
+  collapseImageProviderOrder,
+  expandImageProviderOrder,
   imageProviderLabel,
 } from "../../../lib/settings.ts";
 import { agentOf } from "../../../agents/registry.ts";
@@ -94,6 +95,8 @@ export function AgentsTab() {
   const updateCodex = mkUpdate("api/codex/settings", setCodex);
   const updateAgents = mkUpdate("api/agents/rtk", setAgents);
 
+  const imageOrder = collapseImageProviderOrder(normalizeImageProviderOrder(s.imageProviderOrder));
+
   // Session prefs render in every state (stopped / loading / running) since they're
   // local, not container-backed.
   const sessionSettings = (
@@ -145,12 +148,13 @@ export function AgentsTab() {
       {s.imageGeneration && (
         <>
           <Row label={tr("agents.image_provider_order")}>
+            {/* Drawn collapsed: the fleet's own engines are one row, because sdcpp and comfy
+                carry the same label and only one of them is ever served (ADR 0072 decision 4).
+                The setting itself keeps every id — see IMAGE_PROVIDER_FLEET_GROUP. */}
             <OrderList
-              value={normalizeImageProviderOrder(s.imageProviderOrder)}
-              labels={Object.fromEntries(
-                IMAGE_PROVIDERS.map((p) => [p, imageProviderLabel(p) || agentOf(p).assistantName]),
-              )}
-              onChange={(v) => setSetting("imageProviderOrder", v)}
+              value={imageOrder}
+              labels={Object.fromEntries(imageOrder.map((p) => [p, imageProviderLabel(p) || agentOf(p).assistantName]))}
+              onChange={(v) => setSetting("imageProviderOrder", expandImageProviderOrder(v))}
             />
           </Row>
           <p className="muted ds-note">{tr("agents.note_image_provider_order")}</p>
