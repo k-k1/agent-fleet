@@ -61,6 +61,10 @@ export const usage = {
   "usage.kpi_spend": "消費トークン",
   "usage.kpi_calls": "呼び出し",
   "usage.kpi_cread": "キャッシュ読取",
+  "usage.kpi_images": "生成した画像",
+  "usage.kpi_pixels": "生成したピクセル",
+  "usage.kpi_images_hint":
+    "フリート自身の画像エンジンで作った絵（tool.imagegen）。費用はテナントの GPU 時間であって API の金額ではないので、推定換算額には入らない。",
   "usage.kpi_cost": "API換算相当額",
   "usage.kpi_cost_hint":
     "推定です。トークン数 × 各モデルの公表 API 単価（キャッシュ書込 ×1.25・読取 ×0.1）で起こしています。この消費を API で払っていたらいくらか、であって、サブスク定額の請求額ではありません。",

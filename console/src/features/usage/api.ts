@@ -25,6 +25,14 @@ export interface UsageAgg {
   cread: number;
   ccreate: number;
   calls: number;
+  /**
+   * The picture dimension of feature=tool.imagegen (ADR 0069 decision 9, surfaced by ADR 0081
+   * decision 10): how many images, how many pixels. Absent on every other feature. A self-hosted
+   * engine's cost_usd is 0 by construction — the money is the tenant's GPU hour — so for image
+   * generation these two are the only volume there is.
+   */
+  images?: number;
+  pixels?: number;
   /** Measured cost. Only claude's auxiliary calls report it; the session itself does not. */
   cost_usd?: number;
   /**

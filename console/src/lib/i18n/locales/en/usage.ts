@@ -62,6 +62,10 @@ export const usage: Record<keyof typeof jaUsage, string> = {
   "usage.kpi_spend": "Tokens spent",
   "usage.kpi_calls": "Calls",
   "usage.kpi_cread": "Cache read",
+  "usage.kpi_images": "Images generated",
+  "usage.kpi_pixels": "Pixels generated",
+  "usage.kpi_images_hint":
+    "Pictures made on the fleet's own image engine (tool.imagegen). Their cost is the tenant's GPU hour, not an API amount, so they add nothing to the estimate.",
   "usage.kpi_cost": "API-equivalent cost",
   "usage.kpi_cost_hint":
     "An estimate: tokens × published API list prices (cache writes ×1.25, cache reads ×0.1). What this consumption would have cost through the API — on a flat subscription it is not what you are billed.",

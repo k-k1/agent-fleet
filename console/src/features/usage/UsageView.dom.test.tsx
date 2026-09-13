@@ -230,3 +230,25 @@ it("never writes an unpriced share below 1% as 0%", async () => {
   expect(cov).not.toContain("0%");
   expect(cov).toContain("1%");
 });
+
+describe("UsageView image counters", () => {
+  it("shows no image tile when no picture was made", async () => {
+    fetchUsageSeries.mockImplementation(() => Promise.resolve(series(100, false)));
+    await mount();
+    expect(kpiText("生成した画像")).toBe("");
+    expect(kpiText("生成したピクセル")).toBe("");
+  });
+
+  it("shows the count and the megapixels once there are pictures", async () => {
+    fetchUsageSeries.mockImplementation(() =>
+      Promise.resolve(
+        series(100, false, {
+          totals: { spend: 100, in: 100, out: 0, cread: 0, ccreate: 0, calls: 1, images: 3, pixels: 3 * 1024 * 1024 },
+        }),
+      ),
+    );
+    await mount();
+    expect(kpiText("生成した画像")).toBe("3");
+    expect(kpiText("生成したピクセル")).toBe("3.1 MP");
+  });
+});

@@ -35,6 +35,8 @@ export function addAgg(a: UsageAgg, b: UsageAgg | undefined): UsageAgg {
     cread: a.cread + b.cread,
     ccreate: a.ccreate + b.ccreate,
     calls: a.calls + b.calls,
+    images: (a.images || 0) + (b.images || 0),
+    pixels: (a.pixels || 0) + (b.pixels || 0),
     cost_usd: (a.cost_usd || 0) + (b.cost_usd || 0),
     cost_est_usd: (a.cost_est_usd || 0) + (b.cost_est_usd || 0),
   };
