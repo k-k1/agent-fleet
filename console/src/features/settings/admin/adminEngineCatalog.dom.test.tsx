@@ -83,6 +83,29 @@ describe("model catalogue pane", () => {
     expect(button("Civitai")).toBeUndefined();
   });
 
+  it("renders genuinely role-specific image and LLM card facts", async () => {
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow, llmRow] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    apiJSON.mockImplementation((_path: string, _method: string, body: { source?: string }) => Promise.resolve(body.source === "civitai"
+      ? { hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Image Example", base_model: "SDXL", preview_url: "https://example.test/i.jpg" }] }
+      : { hits: [{ source: "hf", ref: "org/text", model_ref: "org/text", name: "Text Example", bytes: 4_200_000_000, context_length: 32768 }] }));
+    await mount();
+    expect(document.querySelector('[aria-label="Image Example"]')?.textContent).toContain("チェックポイント");
+    expect(document.querySelector('[aria-label="Image Example"]')?.textContent).toContain("ファミリー: SDXL");
+    expect(document.querySelector('[aria-label="Image Example"] .engine-catalog-thumb')).toBeTruthy();
+
+    await click(button("文章"));
+    for (const _ of [0, 1]) await act(async () => { await Promise.resolve(); });
+    const llm = document.querySelector('[aria-label="Text Example"]');
+    expect(llm?.textContent).toContain("4.2 GB");
+    expect(llm?.textContent).toContain("コンテキスト: 32,768");
+    expect(llm?.querySelector(".engine-catalog-thumb")).toBeNull();
+  });
+
   it("keeps a small optional preview on the card and opens it in a keyboard-closeable modal", async () => {
     api.mockImplementation((path: string) => {
       if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
@@ -153,8 +176,49 @@ describe("model catalogue pane", () => {
       return Promise.resolve({});
     });
     await mountRegistered();
-    expect(document.querySelector(".engines-model-storage.partial")?.textContent).toContain("1/2");
-    expect(document.querySelector(".engines-model-storage.partial")?.textContent).toContain("一部不足");
+    const card = document.querySelector<HTMLElement>('.engine-registered-card[aria-label="split"]')!;
+    expect(card).toBeTruthy();
+    expect(card.querySelector("header .warn")?.textContent).toContain("1/2");
+    expect(card.querySelector("header .warn")?.textContent).toContain("一部不足");
+    expect(card.querySelectorAll(".engine-registered-parts li")).toHaveLength(2);
+    expect(card.querySelector('[aria-label="編集: split"]')).toBeTruthy();
+    expect(card.querySelector('[aria-label="ファイルと部品: split"]')).toBeTruthy();
+    expect(document.querySelector(".engine-registered-search input")).toBeTruthy();
+    await click(card.querySelector<HTMLButtonElement>('[aria-label="編集: split"]') || undefined);
+    expect(document.querySelector(".engine-registered-edit .ui-modal-title")?.textContent).toContain("split");
+    expect(document.querySelectorAll(".engine-registered-edit input").length).toBeGreaterThan(1);
+  });
+
+  it("requires an explicit VRAM confirmation before enabling an oversized registered model", async () => {
+    const oversized = { ...imageRow, class: { vram_mib: 8192 }, model_rows: [{
+      id: "large", kind: "model", enabled: false, vram_need_mib: 12288, vram_need_source: "declared",
+      file_rows: [{ s3Key: "image/large.safetensors" }],
+    }] };
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [oversized] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [{ s3_key: "image/large.safetensors", state: "present", model_ids: ["large"] }] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    apiJSON.mockResolvedValue({});
+    await mountRegistered();
+    await click(document.querySelector<HTMLButtonElement>('[aria-label="有効にする: large"]') || undefined);
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(document.querySelector(".engine-registered-confirm")?.textContent).toContain("12288");
+    await click(button("承知のうえで有効にする"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/large", "PUT", { enabled: true, confirm_vram: true });
+  });
+
+  it("keeps browsing usable when no engines are registered", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [] });
+    apiJSON.mockResolvedValue({ hits: [{ source: "civitai", ref: "31", model_ref: "9", name: "Browse Only", base_model: "Flux" }] });
+    await mount();
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/search?kind=checkpoint", "POST", {
+      q: "", source: "civitai", sort: "newest", lora: false,
+    });
+    expect(document.querySelector('.engine-catalog-card[aria-label="Browse Only"]')).toBeTruthy();
+    expect(document.querySelector('.engine-catalog-card[aria-label="Browse Only"] button.primary')).toBeNull();
+    expect(document.body.textContent).toContain("閲覧だけです");
   });
 });
 
