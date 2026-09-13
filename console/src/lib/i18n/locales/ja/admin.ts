@@ -347,6 +347,15 @@ export const admin = {
   // する: done の行は、カタログがその鍵を指すまでのあいだ「バケットにこのファイルがある」と
   // 書いてある唯一の場所で、CP は S3 を見られない（レビュー R3）。だから消す前に、その鍵を
   // 使っている行がいるかどうかを言い分ける。
+  // 🔴 「取り込み直す」ではない。バイトはもうバケットにある（purge を付けずに行を消すと
+  // 残る——2026-09-09 に開発配備で 491 MB のファイルが行より長生きした）ので、これは登録
+  // （POST /models）で、足りていなかったのは鍵の一覧だけだった。押しても登録はせず、フォーム
+  // を開いて埋めるところで止まる: id とファミリーは人が確かめる欄。
+  "admin.engines_ingest_job_reuse": "この鍵で登録する",
+  "admin.engines_model_add_from_job": "取り込み履歴から: {s}",
+  // 同じ鍵を複数の行が指すのは異常ではない（SD3.5 と FLUX.1 は同じ text encoder を読む）。
+  // 拒まず、誰が使っているかだけを言う。
+  "admin.engines_model_add_from_job_used": "この鍵は {who} も使っています。同じファイルを複数の行が指すのは正常です。",
   "admin.engines_ingest_job_forget": "履歴を消す",
   "admin.engines_ingest_job_forget_go": "消す",
   "admin.engines_ingest_job_forget_live": "実行中の取り込みは履歴だけを消すことはできません。行を消してもタスクは止まらず、終われば誰も待っていないカタログ行を書きます。",

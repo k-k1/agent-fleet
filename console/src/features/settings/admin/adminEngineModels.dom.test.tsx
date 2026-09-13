@@ -2463,3 +2463,205 @@ describe("EngineModelsAdminView / forgetting an ingest job", () => {
     expect(forgetButton(jobLi("sd35-medium"))).toBeTruthy();
   });
 });
+
+// Registering a key the ingest history still holds.
+//
+// 🔴 "Take that file in again" is not an ingest. Forgetting a catalogue row leaves the object in
+// the bucket unless `?purge=1` was ticked (measured on the dev deployment 2026-09-09: a 491 MB
+// file outlived its row), so the bytes are staged and this is `POST /models`. The only thing
+// that was ever missing is the list of keys, which lives in this history and was retyped by hand.
+describe("EngineModelsAdminView / registering a key from the history", () => {
+  const done = (over: Record<string, unknown> = {}) => ({
+    id: "j-done",
+    model_id: "sd35-medium",
+    state: "done",
+    source: "hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors",
+    s3_key: "image/checkpoints/sd3.5_medium.safetensors",
+    kind: "checkpoint",
+    ...over,
+  });
+  const answer = (jobs: Record<string, unknown>[], engine: Record<string, unknown> = {}) => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs }
+        : {
+            super_admin: true,
+            engines: [
+              row({
+                provider: "comfy",
+                base_models: ["sdxl", "sd35", "flux1"],
+                file_flags: ["", "--diffusion-model", "--clip_l", "--t5xxl", "--vae"],
+                has_models: true,
+                model_rows: [],
+                ...engine,
+              }),
+            ],
+          },
+    );
+  };
+  const reuseButton = () =>
+    host!.querySelector(".engines-ingest-job-reuse") as HTMLButtonElement | null;
+  /** The input of the add form's row with this label — the form is a column of labelled rows,
+   *  and reading it by index breaks the moment a field is added above. */
+  const addField = (label: string) =>
+    (Array.from(host!.querySelectorAll(".engines-model-add .engines-model-add-row")).find(
+      (l) => l.querySelector("span")?.textContent === label,
+    ) as HTMLElement)?.querySelector("input, select") as HTMLInputElement | HTMLSelectElement;
+
+  it("fills the registration form from a finished job, and posts the source with it", async () => {
+    answer([done()]);
+    await mount();
+    await click(reuseButton()!);
+
+    // The key and the id are in the form; nothing has been posted.
+    expect((addField("キー") as HTMLInputElement).value).toBe(
+      "image/checkpoints/sd3.5_medium.safetensors",
+    );
+    expect((addField("id") as HTMLInputElement).value).toBe("sd35-medium");
+    expect(apiJSON).not.toHaveBeenCalled();
+    // Where it came from, shown rather than hidden — it is the one thing that will land on the
+    // row and has no field of its own.
+    expect(host!.querySelector(".engines-model-add-from-job")?.textContent).toContain(
+      "hf:stabilityai/stable-diffusion-3.5-medium",
+    );
+    // 🔴 The FAMILY is not filled in, and the button is off until somebody picks one. A display
+    // name from a repository produced rows that looked complete and refused to generate (ADR
+    // 0072 P2 実機検証), so it is the one answer this form will not guess from a job.
+    const goButton = () =>
+      Array.from(host!.querySelectorAll(".engines-model-add-actions button")).find(
+        (b) => b.textContent === "登録する",
+      ) as HTMLButtonElement;
+    expect((addField("ファミリー") as HTMLSelectElement).value).toBe("");
+    expect(goButton().disabled).toBe(true);
+
+    await act(async () => {
+      const sel = addField("ファミリー") as HTMLSelectElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setter.call(sel, "sd35");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    apiJSON.mockResolvedValueOnce(row({ has_models: true, model_rows: [] }));
+    await click(goButton());
+
+    const [path, method, body] = apiJSON.mock.calls.at(-1)!;
+    expect(path).toBe("api/admin/engines/image/models");
+    expect(method).toBe("POST");
+    expect(body).toMatchObject({
+      id: "sd35-medium",
+      kind: "checkpoint",
+      base_model: "sd35",
+      files: [{ flag: "", s3Key: "image/checkpoints/sd3.5_medium.safetensors", bytes: 0 }],
+      source: "hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors",
+    });
+    // 🔴 No acceptance travels with the key. It is the record of a human act on the row the
+    // ingest created (ADR 0072 decision 10), and the person registering it again may be
+    // somebody else; the CP leaves the new row's acceptance empty and the panel must not try.
+    expect(Object.keys(body as object).some((k) => k.startsWith("license_accepted"))).toBe(false);
+  });
+
+  // A part carries its file role, because the same key registered with no flag becomes the
+  // CHECKPOINT of its own row — a row that loads a text encoder as a model and fails at the
+  // next cold start, with nothing on screen connecting the two.
+  it("carries what the file is within the model, and names who else uses the key", async () => {
+    answer([
+      done({
+        model_id: "clip-l",
+        s3_key: "image/text_encoders/clip_l.safetensors",
+        file_flag: "--clip_l",
+        key_used_by: "image/flux1-dev-fp8",
+      }),
+    ]);
+    await mount();
+    await click(reuseButton()!);
+    expect((addField("役割") as HTMLSelectElement).value).toBe("--clip_l");
+    // Not a refusal: SD3.5 and FLUX.1 read the same text encoders, so a shared key is normal
+    // and the form says who has it instead of blocking.
+    expect(host!.querySelector(".engines-model-add-from-job")?.textContent).toContain(
+      "image/flux1-dev-fp8",
+    );
+    expect(reuseButton()).toBeTruthy();
+  });
+
+  // 🔴 The tab moves with the key. A LoRA prefilled into the checkpoint form would be registered
+  // as a checkpoint — a row the engine can be told to start with and cannot load.
+  it("opens the LoRA form for a job that took a LoRA in", async () => {
+    answer([done({ model_id: "watercolor-v2", kind: "lora", s3_key: "image/loras/wc2.safetensors" })]);
+    await mount();
+    // Starts on the model tab, as the screen always does.
+    const active = () =>
+      (host!.querySelector(".seg-btn.active + .seg-btn.active, .seg-btn.active") &&
+        Array.from(host!.querySelectorAll(".seg-btn.active")).map((b) => b.textContent)) || [];
+    expect(active()).toContain("モデル");
+    await click(reuseButton()!);
+    expect(active()).toContain("LoRA");
+    expect((addField("id") as HTMLInputElement).value).toBe("watercolor-v2");
+
+    // And a tab pressed BY HAND drops the prefill: without that, coming back to the model list
+    // later reopens the form still holding a key nobody chose there.
+    await click(
+      Array.from(host!.querySelectorAll(".seg-btn")).find(
+        (b) => b.textContent === "モデル",
+      ) as HTMLElement,
+    );
+    expect(host!.querySelector(".engines-model-add")).toBeNull();
+  });
+
+  // A failed job left part of a file at best, so registering its key would produce a row that
+  // fails at load. It is still forgettable — that is the other half of this list.
+  it("offers the key of a finished job only", async () => {
+    answer([
+      done({ id: "j-fail", model_id: "sd35-large", state: "failed", message: "sha256 mismatch" }),
+      done(),
+    ]);
+    await mount();
+    const li = (modelID: string) =>
+      Array.from(host!.querySelectorAll("ul.engines-ingest-jobs li")).find(
+        (n) => n.querySelector(".engines-model-id")?.textContent === modelID,
+      ) as HTMLElement;
+    expect(li("sd35-large").querySelector(".engines-ingest-job-reuse")).toBeNull();
+    expect(li("sd35-large").querySelector(".engines-ingest-job-forget")).toBeTruthy();
+    // Positive control: the finished job beside it has both.
+    expect(li("sd35-medium").querySelector(".engines-ingest-job-reuse")).toBeTruthy();
+  });
+
+  // The reduced panel a granted tenant_admin gets (ADR 0072 open question 11): they may take a
+  // model in and may forget their own history, and the bucket is the OPERATOR's — so the
+  // registration form is not theirs and neither is the button that fills it. Pinned together,
+  // because a button that only ever 403s is worse than no button.
+  it("offers a tenant_admin the forget but not the registration", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [done()] }
+        : { super_admin: false, engines: [row({ has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    expect(reuseButton()).toBeNull();
+    expect(host!.querySelector(".engines-ingest-job-forget")).toBeTruthy();
+    // And the form the button would have filled is not on their screen either. By its own
+    // label: `.engines-open` is worn by the INGEST opener too, which a granted tenant_admin
+    // does get, so the class alone would have asserted nothing.
+    expect(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "バケットのファイルを登録する",
+      ),
+    ).toBeUndefined();
+  });
+
+  // The borrowed catalogue is a MIRROR — every write route answers 400 there (ADR 0079 decision
+  // 7) — so the key of a job in this deployment's history is not registrable into it.
+  //
+  // 🔥 Paired with an EXTERNAL row (`managed: false`, lifecycle not `remote`): paired with a
+  // managed one, an implementation that hid the button on every unmanaged engine would pass and
+  // take ADR 0076's LAN ComfyUI with it.
+  it("is not offered on a borrowed catalogue, and is on an external engine", async () => {
+    answer([done()], { managed: false, lifecycle: "remote", url: "https://far.invalid" });
+    await mount();
+    expect(reuseButton()).toBeNull();
+
+    act(() => root?.unmount());
+    host?.remove();
+    answer([done()], { managed: false, lifecycle: "external", url: "http://192.168.0.2:8188" });
+    await mount();
+    expect(reuseButton()).toBeTruthy();
+  });
+});

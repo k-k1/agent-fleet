@@ -1119,6 +1119,16 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		LicenseURL      string                `json:"license_url"`
 		Precision       string                `json:"precision"`
 		BaseModel       string                `json:"base_model"`
+		// WHERE the bytes came from — `hf:<repo>/<file>`, `civitai:<version>`, a URL. Accepted
+		// here and not only written by the ingest, because this route is how a file that is
+		// already in the bucket is registered AGAIN: the panel offers a finished ingest job's
+		// key, and without this field the rebuilt row loses the one fact migration
+		// 0060_engine_model_source.sql exists to keep — an id is short and readable and does
+		// not say which vendor published the model, and after the job is gone nothing else does.
+		//
+		// Free text on purpose: nothing parses it (the machine-readable half was consumed when
+		// the job was created) and inventing a shape here would make the round trip lossy.
+		Source string `json:"source"`
 		// The generation defaults, in the same shape the row answers them. A pointer so that
 		// "the body said nothing" and "the body said all zeros" stay different bodies.
 		Params *store.EngineParams `json:"params"`
@@ -1139,8 +1149,15 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		License: strings.TrimSpace(b.License), LicenseName: strings.TrimSpace(b.LicenseName),
 		LicenseURL: strings.TrimSpace(b.LicenseURL),
 		Precision:  strings.TrimSpace(b.Precision), BaseModel: strings.TrimSpace(b.BaseModel),
+		Source: strings.TrimSpace(b.Source),
 		Params: engineParamsClean(b.Params),
 	}
+	// 🔴 What is NOT copied across with it: the licence ACCEPTANCE. `license_accepted_by` and
+	// its tenant and timestamp are the record of a human act (ADR 0072 decision 10), and a row
+	// rebuilt from an old job's key is not that act — the person registering it here may not be
+	// the person who accepted anything. The licence TEXT may be re-typed (the field above), the
+	// signature may not, so the new row's acceptance stays empty and the panel says
+	// "licence not recorded".
 	// The commercial-use verdict is READ FROM the licence here exactly as the ingest reads it
 	// (ADR 0072 decision 10), rather than being a field this route accepts. Two reasons: the
 	// answer is a property of the licence and not of whoever typed it, and a row registered by
@@ -1846,13 +1863,32 @@ func engineIngestKeyUsedBy(rows []store.EngineModel, s3key string) string {
 	return ""
 }
 
-// engineIngestJobRow is one job as the panel reads it. The SPEC is not on the wire: it is this
-// process's own shape, it holds nothing the panel does not already have, and a job list is not
-// where a catalogue row should be edited.
+// engineIngestJobRow is one job as the panel reads it. Nearly all of the SPEC stays off the
+// wire: it is this process's own shape, and a job list is not where a catalogue row is edited.
+//
+// Two of its fields do ride along, and only because a finished job is how a file that is
+// already in the bucket gets registered again — the panel fills `POST /models` from this row
+// (the bytes are staged, so re-taking it in would be an ingest of something already here). What
+// that form cannot derive from a key is what the file was taken in AS, and both ways of getting
+// it wrong are silent until the next cold start: a LoRA registered as a checkpoint is a row
+// that starts nothing, and a text encoder registered with no flag becomes the checkpoint of its
+// own row.
 func engineIngestJobRow(j store.EngineIngestJob) map[string]any {
 	row := map[string]any{
 		"id": j.ID, "model_id": j.ModelID, "s3_key": j.S3Key,
 		"source": j.Source, "state": j.State, "created_at": j.CreatedAt,
+	}
+	// A job started before a field existed decodes with it empty, and a spec that does not
+	// parse leaves both empty. Either way the form opens with one fewer answer filled in —
+	// never with a wrong one.
+	var spec struct{ Kind, FileFlag string }
+	if json.Unmarshal([]byte(j.Spec), &spec) == nil {
+		if spec.Kind != "" {
+			row["kind"] = spec.Kind
+		}
+		if spec.FileFlag != "" {
+			row["file_flag"] = spec.FileFlag
+		}
 	}
 	if j.Message != "" {
 		row["message"] = j.Message

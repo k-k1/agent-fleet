@@ -349,6 +349,15 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // and no bulk sweep: while nothing in the catalogue points at it, a `done` row is the only
   // written record that the file is in the bucket, and the CP cannot look in the bucket (review
   // R3). So the confirmation says which of the two cases this row is.
+  // 🔴 NOT "take it in again". The bytes are in the bucket already — forgetting a row without a
+  // purge leaves them there (measured on the dev deployment, 2026-09-09: a 491 MB object outlived
+  // its row) — so this is a registration, and the only thing that was missing was the list of
+  // keys. It fills the form and stops: the id and the family are a person's to confirm.
+  "admin.engines_ingest_job_reuse": "Register this key",
+  "admin.engines_model_add_from_job": "From the ingest history: {s}",
+  // More than one row pointing at one key is normal — SD3.5 and FLUX.1 read the same text
+  // encoders — so this names who has it instead of refusing.
+  "admin.engines_model_add_from_job_used": "{who} also points at this key. One file used by several rows is normal.",
   "admin.engines_ingest_job_forget": "Forget this",
   "admin.engines_ingest_job_forget_go": "Forget it",
   "admin.engines_ingest_job_forget_live": "A running ingest cannot have its history forgotten. Deleting the row does not stop the task, which finishes and writes a catalogue row nobody is waiting for.",

@@ -243,6 +243,13 @@ export type IngestJob = {
   code?: string;
   bytes?: number;
   created_at?: string;
+  /** What the file was taken in AS — `checkpoint`, `gguf`, `lora` — and what it is within the
+   *  model (`--vae`, `--t5xxl`; absent for a whole checkpoint). Read by the CP out of the job's
+   *  own spec, and here for one reason: registering this key again is a `POST /models`, and a
+   *  form that guessed either one would produce a row that loads nothing and says nothing about
+   *  it until the next cold start. Absent on a job taken in before the field existed. */
+  kind?: string;
+  file_flag?: string;
   /** The catalogue row that already points at this job's `s3_key`, as `role/id`, or absent when
    *  none does.
    *

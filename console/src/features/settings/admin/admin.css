@@ -431,6 +431,15 @@
   border-radius: 6px;
 }
 
+/* Where a registration's answers came from, when they were picked out of the ingest history
+   instead of typed. Above the fields and at the fields' own size: it is provenance, not a
+   control, and it is the only place the source that will land on the row is visible. */
+.engines-model-add-from-job p {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 /* The search results. Cards rather than a <select>: each hit carries the numbers and the terms
    that decide whether it is worth choosing, and an option element cannot hold them.
 
