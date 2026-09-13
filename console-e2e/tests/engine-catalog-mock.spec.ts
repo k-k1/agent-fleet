@@ -38,7 +38,7 @@ test.afterAll(async () => {
 
 type Call = { path: string; method: string; body: Record<string, unknown> };
 
-async function openCatalog(page: Page, engineKey: "image" | "llm") {
+async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light" | "dark" = "dark") {
   const calls: Call[] = [];
   let started = false;
   const engines = [
@@ -86,14 +86,14 @@ async function openCatalog(page: Page, engineKey: "image" | "llm") {
     if (p.includes("/hf-token")) return answer({ configured: false });
     return route.abort();
   });
-  await page.addInitScript(({ key }) => {
-    localStorage.setItem("af-display-settings", JSON.stringify({ locale: "en", theme: "dark" }));
+  await page.addInitScript(({ key, theme }) => {
+    localStorage.setItem("af-display-settings", JSON.stringify({ locale: "en", theme }));
     localStorage.setItem("af-tenant", "demo");
     localStorage.setItem("af.layout2.demo@example.com.demo", JSON.stringify({
       cols: [{ id: "catalog-col", rowRatio: 0.5, panes: [{ id: "catalog", session: null, content: { kind: "engineAdd", engineKey: key, lora: false }, wrap: null }] }],
       colRatios: [1], activeId: "catalog",
     }));
-  }, { key: engineKey });
+  }, { key: engineKey, theme });
   await page.goto(origin);
   await expect(page.locator(".engine-catalog-pane")).toBeVisible();
   return calls;
@@ -114,7 +114,7 @@ test("a card starts one operation and returns to browsing with its new job visib
   const calls = await openCatalog(page, "image");
   const pane = page.locator(".engine-catalog-pane");
   await expect(pane.getByText("Harbor Image Model", { exact: true })).toBeVisible();
-  await pane.getByRole("button", { name: "Add", exact: true }).click();
+  await pane.getByRole("button", { name: "Add: Harbor Image Model", exact: true }).click();
   const modal = page.getByRole("dialog");
   await expect(modal).toBeVisible();
   await expect(modal.getByRole("button", { name: /^(Next|Back)$/ })).toHaveCount(0);
@@ -131,10 +131,14 @@ test("a card starts one operation and returns to browsing with its new job visib
   expect(calls.filter((call) => call.method === "PUT" && call.path.includes("/models/"))).toHaveLength(0);
 });
 
-for (const width of [1400, 390]) {
-  test(`Image browse keeps its small right thumbnail and restores focus after the lightbox at ${width}px`, async ({ page }, testInfo) => {
+for (const { width, theme } of [
+  { width: 1400, theme: "dark" },
+  { width: 390, theme: "dark" },
+  { width: 1400, theme: "light" },
+] as const) {
+  test(`Image browse keeps its small right thumbnail and restores focus after the lightbox at ${width}px in ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
-    const calls = await openCatalog(page, "image");
+    const calls = await openCatalog(page, "image", theme);
     const pane = page.locator(".engine-catalog-pane");
     const title = pane.getByText("Harbor Image Model", { exact: true });
     await expect(title).toBeVisible();
@@ -148,7 +152,11 @@ for (const width of [1400, 390]) {
     expect(box!.width).toBeLessThanOrEqual(160);
     expect(box!.x).toBeGreaterThan(titleBox!.x);
     expect(await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    await page.screenshot({ path: testInfo.outputPath(`catalog-${width}.png`) });
+    const add = pane.getByRole("button", { name: "Add: Harbor Image Model", exact: true });
+    await expect(add).toHaveClass(/ui-btn-primary/);
+    await add.focus();
+    await expect(add).toBeFocused();
+    await page.screenshot({ path: testInfo.outputPath(`catalog-${width}-${theme}.png`) });
     const trigger = thumbnail.locator("xpath=ancestor::button[1]");
     await trigger.focus();
     await page.keyboard.press("Enter");
