@@ -1,0 +1,19 @@
+-- A LoRA's trigger words (ADR 0081 decision 5).
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`.
+--
+-- What it is for: an adapter trained on a style answers to the words it was trained on, and
+-- Civitai publishes them as `trainedWords` on the version. The ingest already reads them and
+-- shows them in the wizard -- and then throws them away, because no column held them. A LoRA
+-- loaded without its trigger changes nothing visible, which is indistinguishable from a broken
+-- ingest.
+--
+-- A JSON array rather than one text field, like files/args/sizes next door: the value is a LIST
+-- an upstream publishes as a list, the pane offers one chip per word, and splitting a stored
+-- sentence back into words would have to guess a separator the publisher never agreed to.
+--
+-- Empty is the default and means "nobody recorded any" -- which is the normal state of a
+-- checkpoint, since only an adapter has triggers at all.
+ALTER TABLE engine_models ADD COLUMN trained_words TEXT NOT NULL DEFAULT '[]';

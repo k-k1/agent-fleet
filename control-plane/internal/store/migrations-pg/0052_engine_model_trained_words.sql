@@ -1,0 +1,12 @@
+-- A LoRA's trigger words (ADR 0081 decision 5).
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`.
+--
+-- The sqlite counterpart is migrations/0067_engine_model_trained_words.sql and the reasoning is
+-- there. In short: an adapter answers to the words it was trained on, the ingest already reads
+-- them from Civitai and had nowhere to put them, and a LoRA loaded without its trigger changes
+-- nothing visible. A JSON array because the upstream publishes a list and the pane draws one
+-- chip per word.
+ALTER TABLE engine_models ADD COLUMN IF NOT EXISTS trained_words TEXT NOT NULL DEFAULT '[]';

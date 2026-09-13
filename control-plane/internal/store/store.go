@@ -262,6 +262,13 @@ type EngineModel struct {
 	// Empty means undeclared, which the Agent answers with its own measured default rather than
 	// with an empty negative prompt.
 	NegativePrompt string
+	// TrainedWords are the words an ADAPTER answers to, as its publisher records them
+	// (Civitai's `trainedWords`). Empty on a checkpoint, which has no triggers at all.
+	//
+	// A LoRA loaded without its trigger changes nothing visible, which reads as a broken
+	// ingest — so the words are part of what the catalogue has to carry, not a detail of the
+	// wizard that found them (ADR 0081 decision 5).
+	TrainedWords []string
 	// Who accepted the licence and when (ADR 0072 decision 10). A record of a HUMAN act: a
 	// gated repository distributes only to accounts that accepted its terms, and in a
 	// multi-tenant deployment the operator accepts on behalf of every member — so the
@@ -439,6 +446,10 @@ type EngineModelStore interface {
 	// SetEngineModelNegativePrompt corrects the row's own negative prompt — what this checkpoint
 	// should never be asked to draw (ADR 0072 follow-up, negative prompts).
 	SetEngineModelNegativePrompt(ctx context.Context, role, id, negative string) (bool, error)
+	// SetEngineModelTrainedWords replaces the words an adapter answers to. An empty list is a
+	// real value — "this row has no trigger" — so the caller passing nil clears the column
+	// rather than leaving the previous words in place (ADR 0081 decision 5).
+	SetEngineModelTrainedWords(ctx context.Context, role, id string, words []string) (bool, error)
 	// SetEngineModelWindow corrects the declared window. BOTH columns, because the catalogue
 	// carries max_output_tokens only when context_tokens is above zero: a row that moved one of
 	// them alone is one the panel cannot explain.

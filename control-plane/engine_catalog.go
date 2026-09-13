@@ -568,6 +568,13 @@ func (e *engineRuntimeState) publishActiveSet(ctx context.Context) error {
 // gets the flag. It rides on this function rather than being read off m itself because warmth is
 // an in-memory, per-CP-process fact (engineServed), never a stored column: a served model column
 // would say something is warm when it might not even be the CP process that watched it happen.
+//
+// 🔴 This is the ONLY projection of a catalogue row the Agent ever sees, and therefore the only
+// one the image generation pane can be built from (ADR 0081 decision 5 — no second,
+// browser-authenticated catalogue). A field `store.EngineModel` holds and this function does not
+// emit is a field that does not exist downstream, and nothing goes red: the same way sessionWire
+// silently dropped fields. `trained_words`, `license_name`, `license_url` and `source_url` were
+// exactly that until ADR 0081 — the store had them, the row never carried them.
 func engineCatalogModelRow(m store.EngineModel, warm string) map[string]any {
 	row := map[string]any{"id": m.ID}
 	if m.ContextTokens > 0 {
@@ -597,6 +604,32 @@ func engineCatalogModelRow(m store.EngineModel, warm string) map[string]any {
 	// set of scalars that cannot tell "declared 0" from "did not say".
 	if m.Params != nil {
 		row["params"] = m.Params
+	}
+	// The words an adapter answers to, and where the model came from (ADR 0081 decision 5). The
+	// four below are what the member-facing catalogue is built from — the pane offers a trigger
+	// as a chip and names the licence next to the model — and this is the only relay the Agent
+	// reads, so a field absent here is a field that cannot exist there.
+	//
+	// Omitted rather than emitted empty, like everything else on this row: the reader treats
+	// absence as "nothing was declared", and an empty licence name drawn as a licence is worse
+	// than no line at all.
+	if len(m.TrainedWords) > 0 {
+		row["trained_words"] = m.TrainedWords
+	}
+	if m.LicenseName != "" {
+		row["license_name"] = m.LicenseName
+	}
+	if m.LicenseURL != "" {
+		row["license_url"] = m.LicenseURL
+	}
+	// The page a person can open, composed here for the reason the admin row composes it: the
+	// stored `Source` is `civitai:<version>` or `hf:<repo>/<file>`, and turning either into a
+	// URL is knowledge only this side has (engineSourceURL, including that a Civitai source is a
+	// VERSION id). Relaying the raw token under a name ending in `_url` would make every reader
+	// reimplement it — and a `url:` source, which engineSourceURL refuses to link because the
+	// click is the weights themselves, would become a 22 GB download in a member's browser.
+	if u := engineSourceURL(m.Source); u != "" {
+		row["source_url"] = u
 	}
 	if m.Selected {
 		row["selected"] = true
@@ -690,6 +723,12 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	// measured default is what such a row gets, and an empty box is how an operator says so.
 	if m.NegativePrompt != "" {
 		row["negative_prompt"] = m.NegativePrompt
+	}
+	// The words an adapter answers to. Here so the panel can show and correct them, and so that
+	// reading a row and posting it back rebuilds it — the register route takes the same key.
+	// Absent on a row with none, which is every checkpoint.
+	if len(m.TrainedWords) > 0 {
+		row["trained_words"] = m.TrainedWords
 	}
 	// The generation defaults this row declares (store.EngineParams). Absent when it declares
 	// none, which is what the panel draws as "the family's own recipe" — an object of zeros
