@@ -30,3 +30,6 @@
 @import "./parts/pills.css";
 @import "./parts/doccomments.css";
 @import "./parts/reader.css";
+/* Appended after the byte-for-byte split above: the lightbox moved here from the mirror
+   sheet, which loads later, so its rules only ever move EARLIER in the cascade. */
+@import "./parts/lightbox.css";

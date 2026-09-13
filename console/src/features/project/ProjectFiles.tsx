@@ -31,6 +31,8 @@ import { isContextMenuKey, menuAnchor } from "./contextMenuKey.ts";
 import { stickyAncestors } from "./stickyTree.ts";
 import { chatCreate } from "../chat/api.ts";
 import { openChat } from "../chat/open.ts";
+import { openGallery } from "../gallery/open.ts";
+import { imageFormat } from "../../lib/filemeta.ts";
 
 interface Entry {
   name: string;
@@ -971,6 +973,17 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     fn();
   };
   const menuDir = menu ? (menu.row.type === "dir" ? menu.row.path : parentOf(menu.row.path)) : root;
+  // "Open in gallery" is offered for a folder and for an image file — never for anything
+  // else, and `imageFormat` is the only thing allowed to decide that (ADR 0080 decision 3):
+  // a second extension table here would make a file the viewer shows as an image invisible
+  // in the gallery. A file row opens menuDir (already its parent) focused on itself.
+  const galleryRow = menu && (menu.row.type === "dir" || !!imageFormat(menu.row.path)) ? menu.row : null;
+  const openGalleryFromMenu = (e: RMouseEvent) => {
+    // Modifier / middle click lands in another pane, the same rule the tree rows follow.
+    const newPane = e.ctrlKey || e.metaKey || e.button === 1;
+    const focus = galleryRow?.type === "file" ? galleryRow.path : undefined;
+    runMenu(() => openGallery(menuDir, { focus, newPane }));
+  };
 
   return (
     <div ref={wrapRef} className="proj-files fstree-wrap">
@@ -1174,6 +1187,19 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
                 <Icon name="copy" /> {tr("proj.copy_rel_path")}
               </button>
             </li>
+            {galleryRow && (
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+                  onAuxClick={(e) => e.button === 1 && openGalleryFromMenu(e)}
+                  onClick={openGalleryFromMenu}
+                >
+                  <Icon name="file-media" /> {tr("proj.open_gallery")}
+                </button>
+              </li>
+            )}
             {menu.row.type === "file" && (
               <li>
                 <button
