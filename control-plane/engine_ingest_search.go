@@ -152,8 +152,15 @@ type engineSearchHit struct {
 	// left to the client: the two sources spell it differently and Civitai's needs the MODEL
 	// id, which is not Ref (that is the version's) and reaches the panel nowhere else. A third
 	// source then costs one change in one place.
-	URL           string `json:"url,omitempty"`
+	URL string `json:"url,omitempty"`
+	// PreviewURL is the example image at lightbox size, ThumbURL the same one at card size. Two
+	// URLs rather than one because the card draws a 92x108 box: measured 2026-09-15, the URL
+	// Civitai publishes asks for the ORIGINAL, and a page of twenty is ~40 MB of PNG for boxes
+	// that show 10 kpx each. On a phone those loads are what fails, and a failed <img> is the
+	// broken-glyph placeholder the operator reported. ThumbURL is empty when the source offers
+	// no resizing (Hugging Face), and the panel falls back to PreviewURL.
 	PreviewURL    string `json:"preview_url,omitempty"`
+	ThumbURL      string `json:"thumb_url,omitempty"`
 	Bytes         int64  `json:"bytes,omitempty"`
 	ContextLength int    `json:"context_length,omitempty"`
 	// NsfwLevel is Civitai's own content-rating number (0 = safe, higher = more explicit),
@@ -465,7 +472,8 @@ func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq, nsfw bool
 		}
 		for _, image := range ver.Images {
 			if preview := engineSafeCivitaiPreviewURL(image.URL); preview != "" {
-				hit.PreviewURL = preview
+				hit.PreviewURL = engineCivitaiImageVariant(preview, engineCivitaiPreviewTransform)
+				hit.ThumbURL = engineCivitaiImageVariant(preview, engineCivitaiThumbTransform)
 				break
 			}
 		}
@@ -592,6 +600,45 @@ func engineSafeCivitaiPreviewURL(raw string) string {
 		return ""
 	}
 	return s
+}
+
+// The two sizes asked of Civitai's image CDN, in its own path-segment vocabulary.
+//
+// `anim=false` is not decoration: an example can be a VIDEO, and the API's `images` list says so
+// only in a `type` field beside the URL. An .mp4 in an <img> is a broken glyph and nothing else,
+// so the still frame is asked for rather than the asset — one rule instead of a second code path
+// that would have to drop those rows. Measured 2026-09-15: `anim=false,width=256` answers
+// image/jpeg for a video example, and turns a 1.3 MB PNG into 69 kB.
+const (
+	engineCivitaiPreviewTransform = "anim=false,width=1024"
+	engineCivitaiThumbTransform   = "anim=false,width=256"
+)
+
+// engineCivitaiImageVariant re-sizes a Civitai image URL by rewriting the transform segment
+// (`.../<bucket>/<uuid>/original=true/<id>.jpeg`). The segment is recognised by its `=`, and
+// inserted before the filename when the URL carries none — measured 2026-09-15, both forms
+// answer 200. An unexpected shape is returned untouched: a wrong URL shows nothing at all,
+// where the original merely shows something too large.
+func engineCivitaiImageVariant(raw, transform string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parts := strings.Split(u.Path, "/")
+	for i, part := range parts {
+		if strings.Contains(part, "=") {
+			parts[i] = transform
+			u.Path = strings.Join(parts, "/")
+			return u.String()
+		}
+	}
+	// `["", bucket, uuid, file]` is the shortest path worth rewriting; anything flatter is not
+	// the CDN layout this knows how to address.
+	if len(parts) < 4 {
+		return raw
+	}
+	u.Path = strings.Join(append(append([]string{}, parts[:len(parts)-1]...), transform, parts[len(parts)-1]), "/")
+	return u.String()
 }
 
 // engineSearchGetJSONRetries bounds how many times a single search request retries a 503.

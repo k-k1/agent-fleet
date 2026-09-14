@@ -206,4 +206,86 @@ describe("model catalogue operation regressions", () => {
     expect(button("取り込む")?.disabled).toBe(true);
     expect(document.querySelector(".engine-operation-footer")?.textContent).toContain("モデル族");
   });
+
+  // The card draws a 92x108 box and the lightbox fills the screen, so they must not load the
+  // same file. Measured 2026-09-15 against the live CDN: the URL Civitai publishes is the
+  // ORIGINAL, ~1-4 MB a row, and twenty of those is what fails to arrive on a phone — a failed
+  // <img> is exactly the broken-image glyph the operator photographed.
+  it("loads the card-sized example on the card and the large one only in the lightbox", async () => {
+    mockEngineAPI([imageRow]);
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/ingest/search")) {
+        return Promise.resolve({ hits: [{
+          source: "civitai", ref: "22", model_ref: "7", name: "Example",
+          preview_url: "https://image.civitai.com/a/b/anim=false,width=1024/1.jpeg",
+          thumb_url: "https://image.civitai.com/a/b/anim=false,width=256/1.jpeg",
+        }] });
+      }
+      return Promise.resolve({});
+    });
+
+    await mount("image");
+    const thumb = document.querySelector<HTMLImageElement>(".engine-catalog-thumb img")!;
+    expect(thumb.getAttribute("src")).toBe("https://image.civitai.com/a/b/anim=false,width=256/1.jpeg");
+
+    await click(document.querySelector<HTMLButtonElement>(".engine-catalog-thumb")!);
+    expect(document.querySelector(".engine-catalog-lightbox img")?.getAttribute("src"))
+      .toBe("https://image.civitai.com/a/b/anim=false,width=1024/1.jpeg");
+  });
+
+  // Reaching the bottom asks for the next page by itself — and stops asking when the answer
+  // brought nothing. Without that guard an upstream error that still answers a cursor turns one
+  // landing at the end of the list into an endless request loop.
+  it("loads the next page on reaching the end, and stops when a page adds no row", async () => {
+    mockEngineAPI([imageRow]);
+    let page = 0;
+    let empty = false;
+    apiJSON.mockImplementation((path: string) => {
+      if (!path.endsWith("/ingest/search")) return Promise.resolve({});
+      page += 1;
+      return Promise.resolve({
+        hits: empty ? [] : [{ source: "civitai", ref: `v${page}`, model_ref: `m${page}`, name: `Example ${page}` }],
+        next_cursor: "more",
+      });
+    });
+
+    const observers: (() => void)[] = [];
+    class FakeObserver {
+      constructor(private readonly fire: (entries: { isIntersecting: boolean }[]) => void) {
+        observers.push(() => this.fire([{ isIntersecting: true }]));
+      }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+    try {
+      await mount("image");
+      expect(page).toBe(1);
+
+      const reachTheEnd = async () => {
+        const fire = observers[observers.length - 1];
+        expect(fire).toBeTruthy();
+        await act(async () => { fire(); });
+        await flush();
+      };
+      await reachTheEnd();
+      expect(page).toBe(2);
+      expect(document.querySelectorAll(".engine-catalog-card").length).toBe(2);
+
+      // The page that answers nothing is the last automatic one, however often the end of the
+      // list comes back into view.
+      empty = true;
+      await reachTheEnd();
+      expect(page).toBe(3);
+      await reachTheEnd();
+      await reachTheEnd();
+      expect(page).toBe(3);
+
+      // The button is the deliberate way past that guard, and still works.
+      await click(button("さらに読み込む"));
+      expect(page).toBe(4);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

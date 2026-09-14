@@ -1174,6 +1174,16 @@ a.engines-model-source:hover {
   margin-top: 8px;
 }
 
+/* A LoRA's trigger words ride in one tag, and `white-space: nowrap` — right for a one-word badge
+   — makes that one 399px long inside a 362px card (measured at 390px; a 340px desktop column is
+   no wider). The card clips it, so the words that say how to use the LoRA simply end mid-letter.
+   Here, and only here, the pill wraps. */
+.engine-catalog-card-tags .engines-model-tag {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .engine-catalog-card-stats,
 .engine-catalog-saved {
   margin: 8px 0 0;
@@ -1237,6 +1247,12 @@ a.engines-model-source:hover {
 .engine-catalog-more {
   display: block;
   margin: 14px auto;
+}
+
+/* What the observer behind "load more" watches. One pixel rather than nothing: a zero-area box
+   is not reliably reported as intersecting. */
+.engine-catalog-sentinel {
+  height: 1px;
 }
 
 .engine-catalog-no-engine {
@@ -1395,7 +1411,11 @@ a.engines-model-source:hover {
   .engine-catalog-role-tabs button { flex: 1 1 0; justify-content: center; }
   .engine-catalog-view-tabs { width: 100%; }
   .engine-catalog-view-tabs button { flex: 1 1 0; }
-  .engine-catalog-toolbar { position: static; }
+  /* The filter bar stays pinned here too. It wraps to three rows at 390px (measured: 108px, a
+     fifth of the list area), which is why it used to be released — but the cost of releasing it
+     is scrolling a page of twenty cards back up to change one word, and that is the worse of
+     the two. The desktop `top: -14px` is kept: it is exactly the scroller's own padding, and
+     measured, `top: 0` pins the bar 14px lower and leaves a strip of cards scrolling above it. */
   .engine-operation-grid, .engine-operation-manual { grid-template-columns: 1fr; }
   .engine-registered-parts li { grid-template-columns: 1fr auto; }
   .engine-registered-key { grid-column: 1 / -1; }
