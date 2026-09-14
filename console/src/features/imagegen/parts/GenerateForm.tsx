@@ -356,16 +356,27 @@ export function GenerateForm({
           usable.map((l) => {
             const on = picked.has(l.name);
             const w = draft.loras.find((x) => x.name === l.name)?.weight ?? loraWeight(l);
+            const words = loraTriggers(l);
             return (
               <div className="igen-lora" key={l.name}>
                 <label className="igen-lora-pick">
                   <input type="checkbox" checked={on} onChange={() => toggleLora(l.name)} />
                   <span title={l.description}>{l.name}</span>
                 </label>
+                {/* What this row WILL bring, shown before it is ticked: the chips above answer
+                    "what did I get", and until now nothing answered "what would I get" — which is
+                    the question being asked while choosing between two adapters. Dropped once the
+                    box is ticked, because the chips then carry the same words and can be pressed;
+                    two copies of one list, one of them inert, is worse than one. */}
+                {!on && words.length > 0 && (
+                  <span className="igen-lora-trigger" title={tr("imggen.lora_triggers", { words: words.join(" / ") })}>
+                    {words.join(" / ")}
+                  </span>
+                )}
                 {on && (
                   <span className="igen-lora-weight" aria-label={tr("imggen.lora_weight", { name: l.name })}>
-                    {/* The default is 1 and the ceiling is the Agent's `comfyMaxLoraWeight`,
-                        reported once by the status: no column holds a per-LoRA default. */}
+                    {/* Starts at the row's own declared strength (loraWeight), else 1, and the
+                        ceiling is the Agent's `comfyMaxLoraWeight` as reported by the status. */}
                     <Slider
                       value={w}
                       min={0}

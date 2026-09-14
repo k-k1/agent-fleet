@@ -24,10 +24,24 @@ func stubImageGenStatus(t *testing.T, st mcpImageGenStatus) {
 
 func stubAgentForImageGen(t *testing.T, st mcpImageGenStatus, generate http.HandlerFunc) {
 	t.Helper()
+	body, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubAgentForImageGenRaw(t, string(body), generate)
+}
+
+// stubAgentForImageGenRaw answers /imagegen/status with a BODY rather than with a struct. It
+// exists for the one failure the typed helper above structurally cannot see: a field the Agent
+// really sends and mcpImageGenStatus has no home for is dropped in silence, and a test that
+// encodes the very struct it then decodes agrees with itself either way (the same blind spot
+// sessionWire had). A test that cares whether a fact SURVIVES the relay writes the JSON out.
+func stubAgentForImageGenRaw(t *testing.T, status string, generate http.HandlerFunc) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/imagegen/status":
-			_ = json.NewEncoder(w).Encode(st)
+			_, _ = w.Write([]byte(status))
 		case "/imagegen/generate":
 			if generate == nil {
 				http.Error(w, `{"error":{"code":"unexpected","message":"not stubbed"}}`, http.StatusInternalServerError)
@@ -317,6 +331,49 @@ func TestImageGenLorasOfferedWithTheirFamilies(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ADR 0081 decision 5, on the tool route. An adapter applied without the words it was trained on
+// loads, costs the whole generation and changes nothing visible — so the words have to be in
+// front of the caller WHILE it writes the prompt, which on this route means the schema.
+//
+// The status is written as JSON rather than built as a struct on purpose: what this guards is a
+// relay, and the Agent has published `trained_words` on /imagegen/status since ADR 0081 while
+// mcpImageGenLora quietly had nowhere to put them. Encoding the same struct the decoder fills
+// would have agreed with itself both before and after that fix.
+func TestImageGenLoraTriggerWordsReachTheSchema(t *testing.T) {
+	withImageGen(t, true)
+	stubAgentForImageGenRaw(t, `{"enabled":true,"ready":true,"kind":"claude","providers":[
+		{"id":"comfy","ops":["generate"],"loras":[
+			{"name":"watercolor-v2","description":"soft watercolour","baseModel":"sdxl",
+			 "trained_words":["wtrcolor style","loose wash"]},
+			{"name":"klein-lineart","baseModel":"flux2-klein"}]}]}`, nil)
+
+	offer, ok := mcpImageGenAdvertise()
+	if !ok {
+		t.Fatal("expected the tool to be advertised")
+	}
+	if got := offer.Loras[0].TrainedWords; !reflect.DeepEqual(got, []string{"wtrcolor style", "loose wash"}) {
+		t.Fatalf("trained words = %v — the Agent sent them and this layer dropped them", got)
+	}
+	props := imageGenSchemaProps(mcpStdioImageGenTools(offer))
+	loras, _ := props["loras"].(map[string]any)
+	desc, _ := loras["description"].(string)
+	for _, want := range []string{"wtrcolor style", "loose wash"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("description does not carry the trigger word %q: %s", want, desc)
+		}
+	}
+	// An adapter that publishes none must not grow an empty clause — a bare "triggers:" is worse
+	// than saying nothing, and every word here is paid for in every session's first turn.
+	if i := strings.Index(desc, "klein-lineart"); i < 0 || strings.Contains(desc[i:], "triggers:") {
+		t.Errorf("a LoRA with no trigger words should be spelled plainly: %s", desc)
+	}
+	// The word list must not use the separator that divides one adapter from the next, or the
+	// last trigger of one runs into the name of the other.
+	if strings.Contains(desc, "wtrcolor style / loose wash") {
+		t.Errorf("trigger words share the line separator, so the adapter boundary is gone: %s", desc)
 	}
 }
 

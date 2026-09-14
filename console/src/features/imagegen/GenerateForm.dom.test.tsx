@@ -145,6 +145,20 @@ describe("トリガー語のチップ", () => {
     expect(chips().sort()).toEqual(["neon_glow", "night"]);
   });
 
+  // 選ぶ前の「何が付いてくるか」。チップは選んだ後の答えで、選ぶかどうかを決めている最中には
+  // 何も答えていなかった。ticked になったらチップ側が同じ語を押せる形で持つので、行からは消す
+  // （押せない同じ一覧が 2 つ並ぶのは 1 つより悪い）。
+  it("選ぶ前に行へ出て、選んだらチップに入れ替わる", async () => {
+    await render(SDXL);
+    const rowOf = (name: string) =>
+      [...host.querySelectorAll(".igen-lora")].find((r) => r.querySelector(".igen-lora-pick")?.textContent?.includes(name))!;
+    expect(rowOf("neon").querySelector(".igen-lora-trigger")?.textContent).toContain("neon_glow");
+    expect(rowOf("neon").querySelector(".igen-lora-trigger")?.textContent).toContain("night");
+    await tick("neon");
+    expect(rowOf("neon").querySelector(".igen-lora-trigger")).toBeNull();
+    expect(chips().sort()).toEqual(["neon_glow", "night"]);
+  });
+
   it("チップは押されるまでプロンプトへ入らない（勝手に足さない）", async () => {
     await render(SDXL);
     await tick("detail");
