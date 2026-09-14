@@ -31,15 +31,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.brand_pwa_note": "Saving applies to this tab at once. Other tabs pick it up on reload, and a PWA already installed keeps its icon and name until it is reinstalled.",
   "admin.mode_pool": "Slots",
   "admin.mode_engines": "Inference engines",
-  // Two screens: the machine and what it loads. The rail follows that order. The same models
-  // screen in tenant settings is tenant.tab_engines.
-  "admin.mode_engine_models": "Inference engine models",
   // The operator's upstream account tokens (Hugging Face, Civitai) — their own rail item so
   // registering one does not require opening a model list first.
   "admin.mode_engine_tokens": "API tokens",
   "admin.engines_none": "This deployment runs no self-hosted inference engines.",
-  "admin.engines_none_models_hint": "What there is to run can be browsed under \"Inference engine models\" — it needs no engine and no token.",
-  "admin.engines_ops_super_only": "Starting and stopping engines and choosing the GPU are the deployment administrator's (super_admin). Taking models in and reading the catalogue is under \"Inference engine models\".",
+  // The button that opens one engine's model catalogue as its own pane (the same models screen
+  // tenant settings' tenant.tab_engines opens for a granted tenant_admin).
+  "admin.engines_open_catalog": "Model catalogue",
+  "admin.engines_ops_super_only": "Starting and stopping engines and choosing the GPU are the deployment administrator's (super_admin). Taking models in and reading the catalogue is behind the \"Model catalogue\" button on each row.",
   // The role tabs. A deployment with one engine gets its name and no tab strip.
   "admin.engines_role_llm": "Text",
   "admin.engines_role_image": "Image",

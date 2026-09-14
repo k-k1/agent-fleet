@@ -29,13 +29,12 @@ export const admin = {
   "admin.brand_pwa_note": "保存するとこのタブにはすぐ反映されます。他のタブは再読み込み、インストール済みの PWA は入れ直すとアイコンと名前が変わります。",
   "admin.mode_pool": "スロット",
   "admin.mode_engines": "推論エンジン",
-  // 推論エンジンは 2 画面（運用とモデル）。レールの並びもこの順で、機械の話とモデルの話を
-  // 混ぜない。テナント設定側の同じ画面は tenant.tab_engines（=「推論エンジンのモデル」）。
-  "admin.mode_engine_models": "推論エンジンのモデル",
   "admin.mode_engine_tokens": "APIトークン",
   "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
-  "admin.engines_none_models_hint": "何を動かせるかは「推論エンジンのモデル」で探せます（エンジンもトークンも要りません）。",
-  "admin.engines_ops_super_only": "エンジンの起動と停止・GPU の選択は配備管理者（super_admin）の担当です。モデルの取り込みと確認は「推論エンジンのモデル」にあります。",
+  // 各行の「モデルカタログ」ボタンで開くペイン（テナント設定側で tenant.tab_engines が
+  // 権限のあるテナント管理者に開くのと同じモデル画面）。
+  "admin.engines_open_catalog": "モデルカタログ",
+  "admin.engines_ops_super_only": "エンジンの起動と停止・GPU の選択は配備管理者（super_admin）の担当です。モデルの取り込みと確認は各行の「モデルカタログ」ボタンからできます。",
   // 役割のタブ。配備にエンジンが 1 本しか無ければタブは出さず、名前だけを出す。
   "admin.engines_role_llm": "文章",
   "admin.engines_role_image": "画像",
