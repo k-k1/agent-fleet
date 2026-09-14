@@ -302,6 +302,7 @@ export const admin = {
   "admin.engines_ingest_search_none": "見つかりませんでした。別の言葉で試すか、リポジトリ名を直接入力してください。",
   "admin.engines_ingest_source_hf": "Hugging Face",
   "admin.engines_ingest_source_civitai": "Civitai",
+  "admin.engines_ingest_source_civitai-red": "Civitai Red",
   "admin.engines_ingest_browse_go": "人気を見る",
   "admin.engines_browse_kind_gguf": "LLM（GGUF）",
   "admin.engines_browse_kind_checkpoint": "画像（checkpoint）",
@@ -420,6 +421,9 @@ export const admin = {
   // 元のページへ。CP が組み立てた URL をそのまま開く（Console 側では組まない）。
   "admin.engines_ingest_hit_open_hf": "HF で開く",
   "admin.engines_ingest_hit_open_civitai": "CivitAI で開く",
+  // Civitai 自身の年齢制限レベル。どのタブで見つかったかに関係なく全カードに出す——
+  // 「Civitai」タブの既定の検索でも 0 でない値が返ることがある（実測）。
+  "admin.engines_ingest_hit_nsfw_level": "NSFW {n}",
   // 検索結果のカードから取り込みフォームへ入れる操作。「取り込む」ではない——埋めるだけで、
   // 調べる・同意する・取り込む はこの後もそのまま通る。
   "admin.engines_ingest_hit_pick": "これにする",

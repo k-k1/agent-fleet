@@ -309,6 +309,11 @@ export type IngestHit = {
   url?: string;
   bytes?: number;
   context_length?: number;
+  /** Civitai's own content-rating number (0 = safe, higher = more explicit). Rides on every
+   *  Civitai hit regardless of which search tab found it — a nonzero level shows up under the
+   *  plain "civitai" tab's own default query too (measured 2026-09-14), so the card must not
+   *  assume "safe" just because it did not come from the civitai-red tab. Absent for HF. */
+  nsfw_level?: number;
 };
 
 /** One file a repository offers (POST …/ingest/files), already filtered to the ones this
