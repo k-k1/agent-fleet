@@ -331,7 +331,10 @@ func engineSearchHFPage(ctx context.Context, req engineSearchReq) ([]engineSearc
 	if !engineCursorValid(req.cursor) {
 		return nil, "", engineBadCursor()
 	}
-	lanes := engineSearchFilters(req.kind, req.lora)
+	lanes, aerr := engineSearchHFLanes(req)
+	if aerr != nil {
+		return nil, "", aerr
+	}
 	cursors := strings.Split(req.cursor, engineSearchLaneSep)
 	// One request per lane, and the page each asks for is the answer's size divided between
 	// them: a lane's own next-cursor then points exactly past what was shown, so paging needs no
@@ -352,9 +355,9 @@ func engineSearchHFPage(ctx context.Context, req engineSearchReq) ([]engineSearc
 		if req.cursor != "" && cursor == "" {
 			continue // this lane answered everything it had on an earlier page
 		}
-		hits, cur, key, aerr := engineSearchHFLane(ctx, req, lane, cursor, perLane)
-		if aerr != nil {
-			return nil, "", aerr
+		hits, cur, key, lerr := engineSearchHFLane(ctx, req, lane, cursor, perLane)
+		if lerr != nil {
+			return nil, "", lerr
 		}
 		sortBy = key
 		next[i] = cur
@@ -377,6 +380,30 @@ func engineSearchHFPage(ctx context.Context, req engineSearchReq) ([]engineSearc
 		return merged, "", nil
 	}
 	return merged, strings.Join(next, engineSearchLaneSep), nil
+}
+
+// engineSearchHFLanes is which filters this request asks with: the kind's own lanes normally,
+// and ONE lane when a family was named.
+//
+// One, because the family filter is `base_model:<repo>` — a tag that already implies a
+// text-to-image repository, so pairing it with the two kind lanes would ask the same narrow
+// question twice. It also cannot be split across lanes the way the kind's can: Hugging Face ANDs
+// its filters, so `base_model:a&base_model:b` answers models derived from BOTH, which is nothing.
+func engineSearchHFLanes(req engineSearchReq) ([]url.Values, *apiError) {
+	fam := strings.TrimSpace(req.family)
+	if fam == "" {
+		return engineSearchFilters(req.kind, req.lora), nil
+	}
+	base := engineFamilyUpstreams[fam].hf
+	if base == "" {
+		return nil, engineFamilyFilterUnsupported("Hugging Face", fam)
+	}
+	v := url.Values{}
+	v.Set("filter", "base_model:"+base)
+	if req.lora {
+		v.Add("filter", "lora")
+	}
+	return []url.Values{v}, nil
 }
 
 // engineSearchHFLane is one filter's page: the request this function has always made, now with
@@ -527,6 +554,18 @@ func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq, nsfw bool
 		v.Set("types", "LORA")
 	} else {
 		v.Set("types", "Checkpoint")
+	}
+	// The family filter, as the strings THIS upstream publishes. Repeatable and measured to
+	// answer the union (`baseModels=Pony&baseModels=Illustrious` returns both), which is what
+	// lets one family cover the six names its fine-tunes are published under.
+	if fam := strings.TrimSpace(req.family); fam != "" {
+		names := engineFamilyUpstreams[fam].civitai
+		if len(names) == 0 {
+			return nil, "", engineFamilyFilterUnsupported("Civitai", fam)
+		}
+		for _, name := range names {
+			v.Add("baseModels", name)
+		}
 	}
 	v.Set("sort", sortBy)
 	if period != "" {
@@ -865,6 +904,24 @@ type engineSearchReq struct {
 	// provider is whose family vocabulary a suggestion has to be a member of. Empty for the
 	// engine-less browse.
 	provider string
+	// family narrows the list to one architecture this deployment can load, as a member of that
+	// same vocabulary ("anima", "sdxl"). Empty means every family, which is what a browse was
+	// before this existed.
+	//
+	// It is the deployment's OWN word, translated per upstream by engineFamilyUpstreams — never
+	// passed through. The upstreams spell the same architecture differently and each answers an
+	// unknown value with an empty list, so a pass-through would turn one typo into "this family
+	// has no models".
+	family string
+}
+
+// engineFamilyFilterUnsupported is the refusal a source gets when it cannot narrow by the family
+// that was asked for. 🔴 It is a refusal and not an unfiltered list, and not an empty one either:
+// both would be read as an answer about the family. Measured on Civitai, sd35 and zimage have no
+// `baseModel` string at all, so this is reachable from the panel today.
+func engineFamilyFilterUnsupported(source, family string) *apiError {
+	return &apiError{http.StatusBadRequest, errCodeIngestBadSource,
+		source + " cannot filter by the " + family + " family; clear the family filter or search it by name"}
 }
 
 // answerSearch is the body both routes share.
@@ -875,6 +932,7 @@ func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kin
 		Sort   string `json:"sort"`
 		Cursor string `json:"cursor"`
 		Lora   bool   `json:"lora"`
+		Family string `json:"family"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&b); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
@@ -882,6 +940,15 @@ func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kin
 	}
 	// An empty q is allowed on purpose: with no words it is a ranking of what this engine can
 	// load, which is the only way in for somebody who does not know what to type.
+	// 🔴 Refused here rather than translated to nothing downstream: a family this deployment
+	// does not dispatch on would narrow the list to models it could never load, and the two
+	// upstreams answer an unknown value with an empty page rather than an error.
+	family := strings.TrimSpace(b.Family)
+	if !engineFamilyValidFor(provider, family) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"family has to be one of " + strings.Join(engineComfyFamilies, ", ")})
+		return
+	}
 	req := engineSearchReq{
 		q:        strings.TrimSpace(b.Q),
 		kind:     kind,
@@ -889,6 +956,7 @@ func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kin
 		cursor:   b.Cursor,
 		lora:     b.Lora,
 		provider: provider,
+		family:   family,
 	}
 	var (
 		hits       []engineSearchHit

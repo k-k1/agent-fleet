@@ -290,6 +290,7 @@ export const admin = {
   "admin.catalog_view_label": "カタログ表示",
   "admin.catalog_view_search": "検索",
   "admin.catalog_view_registered": "登録済み",
+  "admin.catalog_family_all": "すべて",
   "admin.catalog_sort": "並び順",
   "admin.catalog_checkpoint": "チェックポイント",
   "admin.catalog_family": "ファミリー",

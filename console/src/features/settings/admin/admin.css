@@ -1100,7 +1100,8 @@ a.engines-model-source:hover {
   flex: 1 1 auto;
 }
 
-.engine-catalog-sort {
+.engine-catalog-sort,
+.engine-catalog-family {
   display: flex;
   align-items: center;
   gap: 6px;

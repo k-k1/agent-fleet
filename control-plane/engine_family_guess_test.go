@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The strings are the ones the two APIs actually answered on 2026-09-12 (Civitai's top 20
 // monthly checkpoints, plus the Hugging Face card fields), not invented shapes. Half of them
@@ -16,6 +19,13 @@ func TestFamilyGuessOnlyAnswersWhatTheProviderCanRun(t *testing.T) {
 		// the SDXL graph, and without them the suggestion would be empty exactly where it is
 		// most wanted.
 		{"Pony", "sdxl"},
+		{"Pony Diffusion V6 XL", "sdxl"},
+		// 🔴 The one version the needle must NOT take. Pony V7 was rebuilt on AuraFlow — a
+		// flow-matching DiT with a UMT5 encoder — and the SDXL graph cannot load it. Civitai
+		// publishes it under exactly this string (measured 2026-09-15), so before the deny
+		// needle this answered "sdxl" and silenced the row's only mark that it cannot generate.
+		{"Pony V7", ""},
+		{"pony-v7-base", ""},
 		{"Illustrious", "sdxl"},
 		{"NoobAI", "sdxl"},
 		{"Flux.1 D", "flux1"},
@@ -86,6 +96,64 @@ func TestFamilyGuessNeverLeavesTheProvidersVocabulary(t *testing.T) {
 			if got != "" && !vocab[got] {
 				t.Errorf("rule %q suggested %q, which is not in %v", needle, got, engineBaseModelsFor("comfy"))
 			}
+		}
+	}
+}
+
+// The table read backwards, which is what a family FILTER is made of. Two properties matter and
+// neither is about any single name:
+//
+//	every family the provider dispatches on must be a key here, or the panel offers a filter
+//	that answers 400;
+//	nothing here may name a family the provider does not have — the filter would narrow a list
+//	to models this deployment cannot load.
+//
+// 🔴 A missing per-source entry is LEGITIMATE and is not a gap: measured 2026-09-15, Civitai
+// publishes no `baseModel` string for sd35 or zimage at all. It is the empty VALUE that the
+// search route turns into a refusal, rather than into an empty list that reads as an answer.
+func TestFamilyUpstreamsCoverTheVocabulary(t *testing.T) {
+	for _, family := range engineComfyFamilies {
+		up, ok := engineFamilyUpstreams[family]
+		if !ok {
+			t.Errorf("family %q has no upstream names, so browsing cannot offer it", family)
+			continue
+		}
+		if len(up.civitai) == 0 && up.hf == "" {
+			t.Errorf("family %q has neither source, so the filter can only ever refuse", family)
+		}
+	}
+	vocab := map[string]bool{}
+	for _, f := range engineComfyFamilies {
+		vocab[f] = true
+	}
+	for family := range engineFamilyUpstreams {
+		if !vocab[family] {
+			t.Errorf("upstream names for %q, which the provider has no template for", family)
+		}
+	}
+}
+
+// 🔴 The names are the UPSTREAM's, not this deployment's. A family whose Civitai entry held the
+// needle (`pony`) rather than the published string (`Pony`) would answer an empty list, because
+// both upstreams answer an unknown value with no results and no error — indistinguishable, on
+// screen, from "there are no models of this family".
+func TestFamilyUpstreamNamesAreUpstreamSpellings(t *testing.T) {
+	for family, up := range engineFamilyUpstreams {
+		for _, name := range up.civitai {
+			if name == strings.ToLower(name) && name != strings.ToUpper(name) {
+				t.Errorf("%s declares Civitai name %q in lower case; the published strings are"+
+					" capitalised (\"SD 1.5\", \"Pony\", \"Krea 2\")", family, name)
+			}
+			if engineFamilyFromUpstream(name) != family && family != "sdxl" {
+				// sdxl is the exception on purpose: its names are other products' (Illustrious,
+				// NoobAI) and the guess maps them to sdxl, which is the same answer read the
+				// other way. Every other family must round-trip.
+				t.Errorf("%s declares %q, which the guess reads as %q", family, name,
+					engineFamilyFromUpstream(name))
+			}
+		}
+		if up.hf != "" && !strings.Contains(up.hf, "/") {
+			t.Errorf("%s declares Hugging Face base %q, which is not an owner/repository", family, up.hf)
 		}
 	}
 }

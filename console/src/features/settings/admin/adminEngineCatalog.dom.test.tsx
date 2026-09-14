@@ -84,6 +84,38 @@ describe("model catalogue pane", () => {
     expect(button("Civitai")).toBeUndefined();
   });
 
+  // 🔴 The family filter sends the ENGINE's own word, from the vocabulary the CP served. The
+  // upstreams spell the same architecture differently and answer a name they do not know with an
+  // empty list, so a Console that sent "Anima" here would draw "no models" for a full family.
+  it("narrows the browse to one family without anyone typing a repository name", async () => {
+    const families = { ...imageRow, base_models: ["sdxl", "anima", "krea2"] };
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [families, llmRow] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    apiJSON.mockResolvedValue({ hits: [] });
+    await mount();
+    const select = document.querySelector<HTMLSelectElement>(".engine-catalog-family select");
+    expect(select).toBeTruthy();
+    // Every family the engine declares, plus the "all" entry a browse starts on.
+    expect(Array.from(select!.options).map((option) => option.value)).toEqual(["", "sdxl", "anima", "krea2"]);
+    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/search", "POST", {
+      q: "", source: "civitai", sort: "newest", lora: false,
+    });
+
+    apiJSON.mockClear();
+    await act(async () => {
+      select!.value = "anima";
+      select!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/search", "POST", {
+      q: "", source: "civitai", sort: "newest", lora: false, family: "anima",
+    });
+  });
+
   it("renders genuinely role-specific image and LLM card facts", async () => {
     api.mockImplementation((path: string) => {
       if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow, llmRow] });

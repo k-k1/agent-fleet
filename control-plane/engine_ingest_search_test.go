@@ -894,3 +894,99 @@ func TestUnreadableAnswerLogsWhichFieldItWas(t *testing.T) {
 		}
 	}
 }
+
+// Filtering a browse by FAMILY (the answer to "show me what this engine can load, of this
+// architecture" without typing a repository name).
+//
+// 🔴 The deployment's word is translated per upstream and never passed through. Both APIs answer
+// a name they do not know with an EMPTY LIST and no error — measured 2026-09-15, `baseModels=SD
+// 3.5` and `baseModels=Z-Image` both answer zero — so a pass-through would turn one typo into
+// "this family has no models", which reads as an answer.
+func TestSearchFiltersByFamilyInEachUpstreamsOwnWords(t *testing.T) {
+	_, q := hfSearchStub(t, `[]`)
+	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{kind: "checkpoint", family: "anima"}); aerr != nil {
+		t.Fatalf("hf: %v", aerr.message)
+	}
+	// ONE lane, not the kind's two: `base_model:` already implies an image repository, and
+	// Hugging Face ANDs its filters so two bases would answer models derived from both.
+	if len(*q) != 1 || !hfAskedFor(q, "filter", "base_model:circlestone-labs/Anima") {
+		t.Errorf("hf family filter asked %v, want one lane on the family's base repository", *q)
+	}
+	*q = nil
+	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{kind: "checkpoint", family: "anima", lora: true}); aerr != nil {
+		t.Fatalf("hf lora: %v", aerr.message)
+	}
+	if !hfAskedFor(q, "filter", "lora") || !hfAskedFor(q, "filter", "base_model:circlestone-labs/Anima") {
+		t.Errorf("a family LoRA search asked %v, want both filters", *q)
+	}
+
+	var civ url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		civ = r.URL.Query()
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	oldCiv := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	t.Cleanup(func() { engineCivitaiBase = oldCiv })
+
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{kind: "checkpoint", family: "sdxl"}); aerr != nil {
+		t.Fatalf("civitai: %v", aerr.message)
+	}
+	// Repeated, because one family is published under several names — Civitai answers the union
+	// (measured: `baseModels=Pony&baseModels=Illustrious` returns both).
+	got := civ["baseModels"]
+	if len(got) < 2 || !strings.Contains(strings.Join(got, ","), "Illustrious") {
+		t.Errorf("civitai family filter asked baseModels=%v, want the family's published names", got)
+	}
+	for _, name := range got {
+		if strings.Contains(name, "Pony V7") {
+			t.Error("Pony V7 is AuraFlow, not SDXL — the SDXL graph cannot load it")
+		}
+	}
+}
+
+// 🔴 A source that cannot narrow by this family REFUSES. Measured 2026-09-15: Civitai publishes
+// no `baseModel` string for sd35 or zimage, so an unfiltered list (wrong: it is not this family)
+// and an empty one (wrong: it reads as "none exist") are both lies the panel would draw as an
+// answer.
+func TestSearchRefusesAFamilyAnUpstreamCannotNarrow(t *testing.T) {
+	asked := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		asked++
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	old := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	t.Cleanup(func() { engineCivitaiBase = old })
+
+	_, aerr := engineSearchCivitai(t.Context(), engineSearchReq{kind: "checkpoint", family: "zimage"})
+	if aerr == nil || aerr.status != http.StatusBadRequest {
+		t.Fatalf("zimage on Civitai = %v, want 400", aerr)
+	}
+	if !strings.Contains(aerr.message, "zimage") || !strings.Contains(aerr.message, "name") {
+		t.Errorf("refusal = %q, want it to name the family and say what to do instead", aerr.message)
+	}
+	if asked != 0 {
+		t.Error("the upstream was asked anyway, which spends a request to learn nothing")
+	}
+	// The positive control: the same source, a family it does publish.
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{kind: "checkpoint", family: "anima"}); aerr != nil {
+		t.Errorf("anima on Civitai = %v, want the filter to be applied", aerr.message)
+	}
+}
+
+// The wire refuses a family this deployment has no template for, rather than narrowing a browse
+// to models it could never load.
+func TestSearchRefusesAFamilyTheProviderDoesNotHave(t *testing.T) {
+	a, _, _ := engineModelAdminAPI(t)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest/search",
+		strings.NewReader(`{"source":"hf","family":"pixart"}`))
+	r.SetPathValue("key", "image")
+	a.searchIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown family = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+}

@@ -4836,3 +4836,44 @@ What that costs, and what it does not:
 The `filter=lora` rule survives as a per-LANE invariant (it drops the connection when sent alone,
 measured 2026-09-12): it rides on the pipeline tag in one lane and on the library tag in the
 other, and `filter=diffusion-single-file&filter=lora` answers 200.
+
+## Addendum — browsing by family, and the table read backwards (2026-09-15)
+
+The picker could find a repository by name. It could not answer the question an operator
+actually has — **"show me what this engine can load, of this architecture"** — without knowing a
+repository name to type first.
+
+So the search takes a `family`: one member of the vocabulary the provider dispatches on, the same
+list the ingest form's own selector offers. 🔴 It is translated per upstream and **never passed
+through**. Both APIs answer a name they do not know with an EMPTY LIST and no error — measured
+2026-09-15, `baseModels=SD 3.5` and `baseModels=Z-Image` both answer zero — so a pass-through
+turns one typo into "this family has no models", which reads as an answer.
+
+`engineFamilyUpstreams` is that translation, and every value in it was measured against the live
+APIs on 2026-09-15:
+
+- **Civitai** publishes the family as `baseModel` strings and `baseModels=` is repeatable
+  (measured: two values answer the union). One family is usually several names — SDXL's
+  fine-tunes each publish their own, Klein publishes one per size.
+- **Hugging Face** has no such field; what it has is the `base_model:<repo>` tag other
+  repositories carry. One per family, because Hugging Face ANDs its filters and two bases would
+  answer models derived from both, which is nothing. ⚠️ It finds DERIVATIVES: the canonical
+  repository does not tag itself, so `base_model:circlestone-labs/Anima` does not return
+  `circlestone-labs/Anima`. The browse ranking and a search by name are what reach that.
+
+**A source that cannot narrow by a family refuses** (400, naming the family and what to do
+instead). sd35 and zimage have no Civitai `baseModel` string at all, so this is reachable from
+the panel today — and both alternatives would lie: an unfiltered list is not this family, and an
+empty one reads as "none exist".
+
+### The bug this found: Pony V7 is not SDXL
+
+Writing the table backwards forced every name to be checked against what it actually is, and one
+did not survive. `engineFamilyRules` matched `pony` as a substring, which was right for Pony V6 —
+an SDXL fine-tune — and **wrong for V7, which was rebuilt on AuraFlow**: a flow-matching DiT with
+a UMT5 encoder that the SDXL graph cannot load at all. Civitai publishes it as its own baseModel
+string, `Pony V7`, so the suggestion was pre-selecting sdxl for it, clearing `base_model_missing`,
+and leaving a row that could only fail at generation.
+
+`engineFamilyRule` gained a `not` list, checked before the needles, and that is what it is for: a
+product whose name outlived its architecture.
