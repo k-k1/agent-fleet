@@ -53,9 +53,6 @@ usage: standup.sh --profile <p> --region <r> [--yes] [--image-tag <tag>] [--cp-a
                (default docker.io/voicevox/voicevox_engine; only used when 50-tts is deployed)
   --llm-from   registry to copy the llama.cpp server image from
                (default ghcr.io/ggml-org/llama.cpp; only used when 60-engines is deployed)
-  --sd-from    registry to copy the stable-diffusion.cpp server image from
-               (default ghcr.io/leejet/stable-diffusion.cpp; only used when 60-engines is
-               deployed AND params/60-engines stages an image checkpoint)
   --dry-run    print every write instead of making it
 EOF
 }
@@ -64,7 +61,6 @@ PROFILE=""; REGION=""; STACK="af-ecs-ingress"; AF_YES=0; AF_DRY=0; TAG=""; CP_AR
 FROM="ghcr.io/k-k1/agent-fleet"
 TTS_ENGINE_FROM="docker.io/voicevox/voicevox_engine"
 LLM_ENGINE_FROM="ghcr.io/ggml-org/llama.cpp"
-SD_ENGINE_FROM="ghcr.io/leejet/stable-diffusion.cpp"
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)   PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -76,7 +72,6 @@ while [ $# -gt 0 ]; do
     --from)      FROM="${2:?--from needs a value}"; shift ;;
     --tts-from)  TTS_ENGINE_FROM="${2:?--tts-from needs a value}"; shift ;;
     --llm-from)  LLM_ENGINE_FROM="${2:?--llm-from needs a value}"; shift ;;
-    --sd-from)   SD_ENGINE_FROM="${2:?--sd-from needs a value}"; shift ;;
     --dry-run)   AF_DRY=1 ;;
     -h|--help)   usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
@@ -383,12 +378,13 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
     echo "    · crane copy $LLM_ENGINE_FROM:$llm_tag (about 2.5 GB)"
     af_run crane copy "$LLM_ENGINE_FROM:$llm_tag" "$ECR_HOST/af-llamacpp:$llm_tag"
   fi
-  # The sd-server image, for the `image` role (ADR 0071 P1). Copied ONLY when that role exists,
-  # which since ADR 0072 phase P6 is what ImageEnabled alone says: a deployment that only wants
-  # an LLM should not spend minutes copying 2.3 GB it will never run. When the role IS on, this
-  # runs before the stack — the ordering that matters, because a service that cannot pull leaves
-  # CREATE_IN_PROGRESS with no way back.
-  # ⚠️ amd64 only upstream; there is no arm64 G-family instance either (decision 12).
+  # The ComfyUI image, for the `image` role (ADR 0072 decision 4, phase P2; the earlier
+  # stable-diffusion.cpp engine was retired by ADR 0083 decision 1 — nothing runs `sdcpp`
+  # anymore). Copied ONLY when that role exists, which since ADR 0072 phase P6 is what
+  # ImageEnabled alone says: a deployment that only wants an LLM should not spend minutes
+  # copying an image it will never run. When the role IS on, this runs before the stack — the
+  # ordering that matters, because a service that cannot pull leaves CREATE_IN_PROGRESS with no
+  # way back.
   # Read the same way the deploy below translates a pre-P6 capture (`ImageModelS3Key` implied
   # the role): read it any other way and the role is created with no image in ECR to pull.
   image_on="$(af_read_one_param 60-engines ImageEnabled)"
@@ -396,31 +392,17 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
     image_on=true
   fi
   if [ "$image_on" = true ]; then
-    image_engine="$(af_read_one_param 60-engines ImageEngine)"
-    : "${image_engine:=sdcpp}"
-    if [ "$image_engine" = comfy ]; then
-      # Our OWN build (ADR 0072 decision 4, phase P2), baked by comfyui-image.yml to the same
-      # GHCR namespace as control-plane/workspace — not a third-party crane copy like the two
-      # engines above.
-      comfy_tag="$(af_read_one_param 60-engines ImageComfyImageTag)"
-      : "${comfy_tag:=v0.34.0}"
-      if "${AWS[@]}" ecr describe-images --repository-name af-comfyui \
-          --image-ids "imageTag=$comfy_tag" >/dev/null 2>&1; then
-        echo "    · af-comfyui:$comfy_tag is already in ECR"
-      else
-        echo "    · crane copy $FROM/comfyui:$comfy_tag"
-        af_run crane copy "$FROM/comfyui:$comfy_tag" "$ECR_HOST/af-comfyui:$comfy_tag"
-      fi
+    # Our OWN build (ADR 0072 decision 4, phase P2), baked by comfyui-image.yml to the same
+    # GHCR namespace as control-plane/workspace — not a third-party crane copy like the two
+    # engines above.
+    comfy_tag="$(af_read_one_param 60-engines ImageComfyImageTag)"
+    : "${comfy_tag:=v0.34.0}"
+    if "${AWS[@]}" ecr describe-images --repository-name af-comfyui \
+        --image-ids "imageTag=$comfy_tag" >/dev/null 2>&1; then
+      echo "    · af-comfyui:$comfy_tag is already in ECR"
     else
-      sd_tag="$(af_read_one_param 60-engines ImageImageTag)"
-      : "${sd_tag:=master-cuda}"
-      if "${AWS[@]}" ecr describe-images --repository-name af-sdcpp \
-          --image-ids "imageTag=$sd_tag" >/dev/null 2>&1; then
-        echo "    · af-sdcpp:$sd_tag is already in ECR"
-      else
-        echo "    · crane copy $SD_ENGINE_FROM:$sd_tag (about 2.3 GB)"
-        af_run crane copy "$SD_ENGINE_FROM:$sd_tag" "$ECR_HOST/af-sdcpp:$sd_tag"
-      fi
+      echo "    · crane copy $FROM/comfyui:$comfy_tag"
+      af_run crane copy "$FROM/comfyui:$comfy_tag" "$ECR_HOST/af-comfyui:$comfy_tag"
     fi
   fi
 fi
@@ -562,6 +544,19 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
   af_param_drop LlmMaxOutputTokens
   af_param_drop ImageModelS3Key
   af_param_drop ImageModelIds
+
+  # Retired in ADR 0083: the stable-diffusion.cpp engine is gone, and with it the two
+  # parameters that only ever meant something for it. `deploy` refuses a parameter the
+  # template does not declare, same as the seed parameters above.
+  af_param_drop ImageImageTag
+  af_param_drop ImageExtraArgs
+  # A capture still naming the retired engine fails CFN's AllowedValues check (the template
+  # now declares only `comfy`) rather than the friendlier "does not exist" — drop it and let
+  # the template default carry the deployment forward onto the only engine it still builds.
+  if [ "$(af_read_one_param 60-engines ImageEngine)" = "sdcpp" ]; then
+    echo "    · dropping ImageEngine=sdcpp (ADR 0083 retired the engine; taking the template's comfy)"
+    af_param_drop ImageEngine
+  fi
 
   # Retired in ADR 0075: the purchase option is not a switch on one provider any more, it is the
   # `buy` field of an offer against two providers that both stand. A capture taken before that
