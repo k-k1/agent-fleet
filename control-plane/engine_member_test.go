@@ -289,7 +289,7 @@ func TestEnginesMemberPayloadKeepsRowsSeparate(t *testing.T) {
 	b.ctrl.noteMemberSnapshot("stopped", 0, time.Now())
 
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": a, "comfy-lan": b}}
-	payload := enginesMemberPayload(ctx, reg)
+	payload := enginesMemberPayload(ctx, reg, tenantLimits{})
 	rows, _ := payload["engines"].([]map[string]any)
 	if len(rows) != 2 {
 		t.Fatalf("engines = %v, want 2 separate rows for one role with two providers", rows)
@@ -483,5 +483,123 @@ func TestEventsStreamEnginesPushesChange(t *testing.T) {
 	}
 	if second.Engines[0]["state"] != "stopped" {
 		t.Fatalf("second engines frame = %v, want state=stopped", second.Engines[0])
+	}
+}
+
+// --- ADR 0084 decision 8, gate 4: a denied role gets no row on the member-facing payload ------
+
+// TestEnginesMemberPayloadDropsTheDeniedRole is gate 4 at the unit level: `enginesMemberPayload`
+// itself must drop a role's row when the caller's tenantLimits deny it, the same "do not offer
+// and then refuse" rule gate 1 applies to the catalogue (decision 5).
+func TestEnginesMemberPayloadDropsTheDeniedRole(t *testing.T) {
+	ctx := context.Background()
+	st := testSettingsStore(t)
+	llm := newMemberTestEngine(t, &engineTestECS{desired: 1, running: 1}, st)
+	llm.def.Key, llm.def.API = "llm", engineAPIChat
+	llm.ctrl.noteMemberSnapshot("running", 1, time.Now())
+	image := newMemberTestEngine(t, &engineTestECS{desired: 0, running: 0}, st)
+	image.def.Key, image.def.API = "image", engineAPIImages
+	image.ctrl.noteMemberSnapshot("stopped", 0, time.Now())
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"llm": llm, "image": image}}
+
+	// Positive control: nothing denied (the zero value, same as a tenant nobody has touched)
+	// must show both rows — without this, an "only image" result below could just as well mean
+	// the llm row is broken as that the gate works.
+	payload := enginesMemberPayload(ctx, reg, tenantLimits{})
+	rows, _ := payload["engines"].([]map[string]any)
+	if len(rows) != 2 {
+		t.Fatalf("positive control: rows = %v, want 2", rows)
+	}
+
+	deniedLLM := false
+	payload = enginesMemberPayload(ctx, reg, tenantLimits{AllowEngineLLM: &deniedLLM})
+	rows, _ = payload["engines"].([]map[string]any)
+	if len(rows) != 1 || rows[0]["key"] != "image" {
+		t.Fatalf("rows with llm denied = %v, want only image", rows)
+	}
+}
+
+// TestTenantEngineLimitsForCachesAndInvalidates pins the shape the ADR review called out: the
+// events tick reads this once per SUBSCRIBER every 4 seconds, so a direct GetTenant here would
+// turn "how many tabs are open" into "how many tenant reads per 4 seconds" — the same
+// multiplication decision 3 forbade for e.ecs.view(). The cache has to actually hold (this test's
+// middle assertion) for that cost bound to be real, and invalidateTenantEngineLimits has to
+// actually bust it (the last assertion) or a save would stay invisible until the TTL or a
+// reconnect — the "read once per subscriber connection" shape the review rejected.
+func TestTenantEngineLimitsForCachesAndInvalidates(t *testing.T) {
+	ctx := context.Background()
+	st := p3Store(t)
+	mgr := p3Manager(t, st)
+	tn, err := st.CreateTenant(ctx, "acme-cache", "Acme")
+	if err != nil {
+		t.Fatalf("tenant: %v", err)
+	}
+
+	// Positive control: a brand-new tenant nobody has touched resolves to allowed.
+	if !tenantEngineLimitsFor(ctx, mgr, tn.ID).engineRoleAllowed(engineAPIChat) {
+		t.Fatal("positive control: an untouched tenant must resolve to allowed")
+	}
+
+	// Write the denial directly through the store, bypassing invalidateTenantEngineLimits (the
+	// same way a caller other than SetTenantLimits would). The cache must still answer the OLD
+	// value — proving it is actually a cache and not a pass-through.
+	if err := st.SetTenantLimits(ctx, tn.ID, `{"allow_engine_llm":false}`); err != nil {
+		t.Fatalf("deny: %v", err)
+	}
+	if !tenantEngineLimitsFor(ctx, mgr, tn.ID).engineRoleAllowed(engineAPIChat) {
+		t.Fatal("the cache must not have refreshed yet — the store write bypassed invalidation")
+	}
+
+	invalidateTenantEngineLimits(tn.ID)
+	if tenantEngineLimitsFor(ctx, mgr, tn.ID).engineRoleAllowed(engineAPIChat) {
+		t.Fatal("after invalidation, the fresh denial must be read")
+	}
+}
+
+// TestEventsStreamEnginesHidesADeniedRoleForThisSubscriber is the end-to-end path: a.stream
+// through tickAll, through the SAME tenantEngineLimitsFor call production uses — not
+// enginesMemberPayload called directly with a hand-built tenantLimits, which the unit test above
+// already covers.
+func TestEventsStreamEnginesHidesADeniedRoleForThisSubscriber(t *testing.T) {
+	stub := newEventsStub(`{"sessions":[]}`)
+	a, res := eventsTestEnv(t, stub)
+	ctx := context.Background()
+	tn, err := a.mgr.store.CreateTenant(ctx, "acme-stream", "Acme")
+	if err != nil {
+		t.Fatalf("tenant: %v", err)
+	}
+	res.mv.TenantID = tn.ID
+	if err := a.mgr.store.SetTenantLimits(ctx, tn.ID, `{"allow_engine_image":false}`); err != nil {
+		t.Fatalf("deny: %v", err)
+	}
+
+	st := testSettingsStore(t)
+	llm := newMemberTestEngine(t, &engineTestECS{desired: 1, running: 1}, st)
+	llm.def.Key, llm.def.API = "llm", engineAPIChat
+	llm.ctrl.noteMemberSnapshot("running", 1, time.Now())
+	image := newMemberTestEngine(t, &engineTestECS{desired: 1, running: 1}, st)
+	image.def.Key, image.def.API = "image", engineAPIImages
+	image.ctrl.noteMemberSnapshot("running", 1, time.Now())
+	a.engines = &engineRegistry{byKey: map[string]*engineRuntimeState{"llm": llm, "image": image}}
+
+	// 2 polls, not 1: the first tickAll runs concurrently with runStream's own poll-count wait,
+	// and a poll count that unblocks too early can cancel the context WHILE that very first tick
+	// is still building its payload, aborting the engines emit before it happens (the same shape
+	// TestEventsStreamEnginesPushesChange's own 6-poll count avoids further down).
+	frames, _ := runStream(t, a, res, stub, 2)
+	if len(frames["engines"]) == 0 {
+		t.Fatalf("engines frames = %d, want at least 1", len(frames["engines"]))
+	}
+	var payload struct {
+		Engines []map[string]any `json:"engines"`
+	}
+	last := frames["engines"][len(frames["engines"])-1]
+	if err := json.Unmarshal(last, &payload); err != nil {
+		t.Fatal(err)
+	}
+	// One assertion covers both directions: a broken filter that hid everything would fail this
+	// on an empty list, and a filter that did nothing would fail it by including "image".
+	if len(payload.Engines) != 1 || payload.Engines[0]["key"] != "llm" {
+		t.Fatalf("engines payload = %v, want only llm (image denied for this tenant)", payload.Engines)
 	}
 }

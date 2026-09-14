@@ -242,6 +242,18 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
 		return
 	}
+	// ADR 0084 decision 8, gate 2: a safety net for the up-to-ten-minute window the catalogue
+	// (gate 1) stays cached on the Agent side. Without this, a tenant denied mid-window could
+	// still buy a session token for the role it no longer holds.
+	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if !lim.engineRoleAllowed(eng.def.api()) {
+		writeAPIErr(w, engineForbiddenErr(eng.def.api()))
+		return
+	}
 	exp := time.Now().Add(engineSessionTokenTTL)
 	tok := mintEngineSessionToken(g.reg.signKey, mv.MembershipID, strings.TrimSpace(req.Session), key, exp)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -257,7 +269,13 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 // never touches the engines themselves — the whole point is that the launch menu can be
 // drawn while every engine is asleep.
 func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
-	if _, aerr := g.issuerMembership(r); aerr != nil {
+	mv, aerr := g.issuerMembership(r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -265,6 +283,12 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 	for _, e := range g.reg.list() {
 		if e.mode(r.Context()) == engineModeOff {
 			continue // an engine an admin switched off is not offered, rather than offered and refused
+		}
+		// ADR 0084 decision 7/8, gate 1 (the main one): a role this tenant was denied is
+		// dropped from the catalogue exactly like an engine switched off — never offered and
+		// then refused, which is the shape decision 8 rules out.
+		if !lim.engineRoleAllowed(e.def.api()) {
+			continue
 		}
 		served, _ := e.servedModel()
 		row := engineCatalogRowFor(e.def, e.catalog.enabled(r.Context()), served, e.negativeAlways(r.Context()))
@@ -361,6 +385,30 @@ func engineStartWindow(models []store.EngineModel) (int, int) {
 	return first.ContextTokens, first.MaxOutputTokens
 }
 
+// tenantLimitsFor reads and parses the caller's tenant limits (ADR 0084 decision 7). An
+// unreadable tenant is answered as an internal error rather than as allowed or forbidden —
+// GPU spend is a cost decision, and a stale or missing row here must never silently open a
+// gate the operator closed, nor silently close one they left open.
+func (g engineGateway) tenantLimitsFor(ctx context.Context, tenantID string) (tenantLimits, *apiError) {
+	if g.mgr == nil || g.mgr.store == nil {
+		return tenantLimits{}, internalErr(errors.New("no store"))
+	}
+	t, err := g.mgr.store.GetTenant(ctx, tenantID)
+	if err != nil {
+		return tenantLimits{}, internalErr(err)
+	}
+	return parseLimits(t.Limits), nil
+}
+
+// engineForbiddenErr is what gates 2 and 3 (ADR 0084 decision 8) answer when a tenant has
+// been denied the engine's role. Its own code, not `engine_off`: an operator switch and a
+// tenant grant are different axes, and the operator-facing panel (`/api/admin/engines`)
+// never changes because of this — knowing which one applies is the caller's only way to
+// tell "nobody may use this" from "you may not".
+func engineForbiddenErr(role string) *apiError {
+	return &apiError{http.StatusForbidden, "engine_forbidden", "this tenant is not allowed to use the " + role + " engine"}
+}
+
 func (g engineGateway) issuerMembership(r *http.Request) (store.MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	mid, ok := verifyEngineIssueToken(g.reg.signKey, tok)
@@ -438,6 +486,18 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 	mv, aerr := g.liveMembership(r.Context(), claims.MembershipID)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
+		return
+	}
+	// ADR 0084 decision 8, gate 3: the other safety net, for the session token's own 30-day
+	// life. mv is already in hand right after auth, so this sits next to the existing
+	// engine_off / engine_unavailable checks below rather than adding a second store round trip.
+	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if !lim.engineRoleAllowed(eng.def.api()) {
+		writeAPIErr(w, engineForbiddenErr(eng.def.api()))
 		return
 	}
 	if eng.mode(r.Context()) == engineModeOff {

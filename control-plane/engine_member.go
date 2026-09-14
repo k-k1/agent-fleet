@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,8 +38,9 @@ func registerEngineMemberRoutes(mux *http.ServeMux, cfg config, reg *engineRegis
 	mux.HandleFunc("GET /api/engines/status", a.withMembership(a.status))
 }
 
-func (a engineMemberAPI) status(w http.ResponseWriter, r *http.Request, _ store.Identity, _ store.MembershipView) {
-	writeJSON(w, http.StatusOK, enginesMemberPayload(r.Context(), a.reg))
+func (a engineMemberAPI) status(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	lim := tenantEngineLimitsFor(r.Context(), a.mgr, mv.TenantID)
+	writeJSON(w, http.StatusOK, enginesMemberPayload(r.Context(), a.reg, lim))
 }
 
 // engineMemberFields is what a member may see of one engine row (ADR 0084 decision 3): the
@@ -129,9 +131,18 @@ func (e *engineRuntimeState) queueRow() map[string]any {
 // borrowed one produces two entries here, each with its own queue count. Folding those into one
 // pill is the Console's job, not this function's — collapsing them here would throw away exactly
 // the per-row truth decision 11's popover needs.
-func enginesMemberPayload(ctx context.Context, reg *engineRegistry) map[string]any {
+//
+// lim is the CALLER's tenant limits (ADR 0084 decision 7), read once per call — not once per
+// row here — so both callers (the events tick and the REST fallback) pay exactly one tenant
+// lookup per invocation, cached or not, rather than this loop multiplying it by the row count.
+func enginesMemberPayload(ctx context.Context, reg *engineRegistry, lim tenantLimits) map[string]any {
 	out := []map[string]any{}
 	for _, e := range reg.list() {
+		// ADR 0084 decision 7/8, gate 4: a role this tenant was denied gets no row, the same
+		// "do not offer and then refuse" rule gate 1 applies to the catalogue (decision 5).
+		if !lim.engineRoleAllowed(e.def.api()) {
+			continue
+		}
 		full, ok := e.memberSourceRow(ctx)
 		if !ok {
 			continue
@@ -139,6 +150,71 @@ func enginesMemberPayload(ctx context.Context, reg *engineRegistry) map[string]a
 		out = append(out, engineMemberRow(full))
 	}
 	return map[string]any{"engines": out}
+}
+
+// --- gate 4's tenant-limits cache (ADR 0084 decision 8) -----------------------------------
+//
+// engine_gateway.go's tenantLimitsFor reads GetTenant on every call with no cache at all,
+// which is fine for its three callers — each is one request, spending one store read to
+// authorize it. This is a different shape: the events stream calls its equivalent once per
+// SUBSCRIBER every 4 seconds for as long as a tab stays open, so reading GetTenant directly
+// here would turn "how many tabs are open" into "how many tenant reads per 4 seconds" — the
+// exact multiplication decision 3 forbade for e.ecs.view() (a per-subscriber, per-tick cache
+// miss multiplying one DescribeServices into one per open tab).
+//
+// The cache is keyed by TENANT, not by subscriber: two tabs open on the same tenant share one
+// read. And it is a short TTL, not a read-once-per-connection cache — the latter was
+// considered and rejected, because a grant revoked mid-connection would then never reach an
+// already-open tab; the tenant would have to close and reopen it to see the pill disappear.
+// invalidateTenantEngineLimits (called from SetTenantLimits, tenant_wiring.go, right next to
+// the Agent-side push decision 9 already does) drops a tenant's entry the moment a super_admin
+// saves, so in practice a denial reaches an open tab on its very next tick — the TTL below is
+// only the fallback bound for whatever calls tenantEngineLimitsFor WITHOUT going through that
+// invalidation (there is none today; it exists so a future caller cannot regress to "stale
+// until reconnect" by skipping the eviction).
+var tenantEngineLimitsCache sync.Map // tenantID (string) -> *tenantEngineLimitsEntry
+
+// tenantEngineLimitsTTL matches engineViewTTL's order of magnitude (engine_ecs.go): short
+// enough that a missed invalidation still clears within about one events tick.
+const tenantEngineLimitsTTL = 3 * time.Second
+
+type tenantEngineLimitsEntry struct {
+	mu  sync.Mutex
+	at  time.Time
+	lim tenantLimits
+}
+
+// tenantEngineLimitsFor is gate 4's read, cached as described above. A read failure or a nil
+// store keeps whatever was cached before (zero value on a first failure, which resolves every
+// role as allowed) rather than treating the error as a denial — this stream is informational
+// only, and the request-time gates (engine_gateway.go) enforce access independently of what a
+// tab happens to be showing.
+func tenantEngineLimitsFor(ctx context.Context, mgr *manager, tenantID string) tenantLimits {
+	if tenantID == "" {
+		return tenantLimits{}
+	}
+	v, _ := tenantEngineLimitsCache.LoadOrStore(tenantID, &tenantEngineLimitsEntry{})
+	e := v.(*tenantEngineLimitsEntry)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.at.IsZero() && time.Since(e.at) < tenantEngineLimitsTTL {
+		return e.lim
+	}
+	if mgr == nil || mgr.store == nil {
+		return e.lim
+	}
+	t, err := mgr.store.GetTenant(ctx, tenantID)
+	if err != nil {
+		return e.lim
+	}
+	e.lim, e.at = parseLimits(t.Limits), time.Now()
+	return e.lim
+}
+
+// invalidateTenantEngineLimits drops one tenant's cached entry, so the very next tick after a
+// save reads the fresh row instead of waiting out tenantEngineLimitsTTL.
+func invalidateTenantEngineLimits(tenantID string) {
+	tenantEngineLimitsCache.Delete(tenantID)
 }
 
 // --- decision 6-A: the CP gateway's own in-flight count -----------------------------------

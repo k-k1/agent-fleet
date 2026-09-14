@@ -898,6 +898,11 @@ export const admin = {
   "admin.allow_engine_ingest": "このテナントの管理者がモデルを取り込むのを許可",
   "admin.allow_engine_ingest_hint":
     "OFF（既定）では取り込みを起動できるのは super_admin だけです。ON にすると、このテナントの tenant_admin が Hugging Face / Civitai / URL からモデルを取り込めます。有効化・選択中チェックポイントの変更・行の削除・デプロイの Hugging Face トークンは super_admin のままです。カタログはデプロイに 1 つなので、取り込まれたモデルの id はどのテナントからも見えます。",
+  "admin.engine_use_title": "推論エンジンの利用可否",
+  "admin.allow_engine_llm": "セルフホストのチャットエンジン（llm）の利用を許可",
+  "admin.allow_engine_image": "セルフホストの画像生成エンジン（image）の利用を許可",
+  "admin.engine_use_hint":
+    "GPU の箱は時間課金なので、このテナントがそれを使ってよいかという費用の判断です。役（llm / image）単位で、モデル単位ではありません——カタログはデプロイに 1 つのままです（上のモデル取り込みとは別の権限）。オフにすると、起動メニューとカタログからその役が消え、既存のセッションも次の要求で拒否されます。",
   "admin.saved": "保存しました",
   "admin.no_members": "メンバーがいません。下のフォームから追加してください。",
   "admin.add_failed": "追加に失敗: {msg}",
