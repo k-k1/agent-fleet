@@ -180,9 +180,11 @@ func (p *openaiCompatProvider) Generate(ctx context.Context, req Request) (Resul
 		// container, which is the fact that matters — and unlike the other providers, this id
 		// alone does not say to whom: the row can point at this fleet's own GPU or at a metered
 		// external service. This is a FIXED sentence, the same for every row, not a per-row
-		// answer — conn (EngineConn) carries no row identity this provider could read to name
-		// which one. Naming the actual row needs ADR 0082 P0 (provider id becomes the engine
-		// table's key), same as serviceLabelOf's case above.
+		// answer. conn.BaseURL DOES carry the row's key, embedded in the gateway's own path
+		// shape ("/engine/<key>/v1", engines.go's base_url) — but that shape is the gateway's to
+		// change, not a contract this provider may parse and depend on. Naming the actual row
+		// honestly needs ADR 0082 P0 (provider id becomes the engine table's key, declared rather
+		// than extracted), same as serviceLabelOf's case above.
 		Destination: "an OpenAI-compatible image server（宛先はエンジン表の行次第。フリート自身の GPU のこともあれば外部サービスのこともある）",
 		Warnings:    openaiCompatWarnings(req),
 		// No cost: an engine hour is a component cost the deployment pays and ADR 0048 does

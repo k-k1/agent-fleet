@@ -220,7 +220,9 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	// decision 11): `openai-compat` can be this fleet's own GPU box or a metered external
 	// service, depending on the engine table row behind it (ADR 0083), so unlike the other
 	// routes the id alone settles nothing. Destination is a fixed sentence saying only that —
-	// not a per-row answer, since the provider has no row identity to read yet (ADR 0082 P0).
+	// not a per-row answer: the row's key IS in EngineConn.BaseURL's path, but only because the
+	// gateway happens to shape it that way, not as a contract the provider may parse. A row-
+	// specific answer needs ADR 0082 P0 (provider id becomes the engine table's key).
 	if res.Destination != "" {
 		value["destination"] = res.Destination
 	}

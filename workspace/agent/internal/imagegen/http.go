@@ -296,10 +296,12 @@ func serviceLabelOf(id string) string {
 		// metered vendor endpoint paid by an API key, and the id alone cannot tell those apart.
 		// So this says only what is true of every row — not "not external", which the id can no
 		// longer make good on. Result.Destination repeats the same fixed caveat rather than
-		// naming the specific row: EngineConn carries no row identity (no key, no URL) for this
-		// provider to read, so there is nothing here to point at yet. A row-specific answer needs
-		// ADR 0082 P0 (provider id becomes the engine table's key), after which a result could
-		// name something like `provider: comfy-lan` instead of a bare `openai-compat`.
+		// naming the specific row: EngineConn's BaseURL does carry the row's key, embedded in the
+		// gateway's own path shape ("/engine/<key>/v1"), but that shape belongs to the gateway,
+		// not to a contract this provider may parse. A row-specific answer needs ADR 0082 P0
+		// (provider id becomes the engine table's key, declared rather than extracted), after
+		// which a result could name something like `provider: comfy-lan` instead of a bare
+		// `openai-compat`.
 		return "OpenAI 互換の画像サーバー（宛先はエンジン表の行次第。このフリート自身の GPU のこともあれば、鍵で払う外部サービスのこともある）"
 	case ProviderComfy:
 		// Deliberately not "this fleet's own GPU": since ADR 0076 the same route also reaches a
