@@ -1518,8 +1518,6 @@ a.engines-model-source:hover {
 .engine-registered-edit { width: min(680px, calc(100vw - 24px)); }
 .engine-registered-confirm { width: min(560px, calc(100vw - 24px)); }
 .engine-operation-body { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; padding: 14px; }
-.engine-operation-choice { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.engine-operation-choice label { display: flex; align-items: center; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 7px; }
 .engine-operation-manual { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; }
 .engine-operation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .engine-operation-grid label { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; color: var(--dialog-muted); }
@@ -1547,7 +1545,7 @@ a.engines-model-source:hover {
   .engine-catalog-view-tabs { width: 100%; }
   .engine-catalog-view-tabs button { flex: 1 1 0; }
   .engine-catalog-toolbar { position: static; }
-  .engine-operation-choice, .engine-operation-grid, .engine-operation-manual { grid-template-columns: 1fr; }
+  .engine-operation-grid, .engine-operation-manual { grid-template-columns: 1fr; }
   .engine-registered-parts li { grid-template-columns: 1fr auto; }
   .engine-registered-key { grid-column: 1 / -1; }
   .engine-catalog-card-main { min-height: 0; }

@@ -756,6 +756,13 @@ type engineIngestRequest struct {
 // succeeds and a CP that dies before recording it is a task nobody can see, which is the one
 // outcome with no way back.
 func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (store.EngineIngestJob, *apiError) {
+	// postIngest checks this before resolving the source so the normal request pays no download
+	// for a recorded key. Keep the same fence here because follow-up VAEs start from the
+	// reconciler, not that route; otherwise two completed checkpoints could upload different
+	// bytes to the family's fixed VAE key before either attachment is registered.
+	if aerr := engineIngestDestinationUnused(ctx, g.models, g.store, req.Role, req.S3Key); aerr != nil {
+		return store.EngineIngestJob{}, aerr
+	}
 	// The registered token is carried into the stack's secret before EVERY ingest. Not when it
 	// looks stale — nothing can look stale here: the CP has no `GetSecretValue`, and a stack
 	// rebuilt under a registered token holds the sentinel with no way to notice. Staged before

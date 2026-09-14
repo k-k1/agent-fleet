@@ -142,6 +142,8 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
   const [operation, setOperation] = useState<{ hit?: IngestHit; act: EngineIngestAct; source?: CatalogSource } | null>(null);
   const [preview, setPreview] = useState<IngestHit | null>(null);
   const [storage, setStorage] = useState<EngineStorageAnswer | null>(null);
+  const [storageState, setStorageState] = useState<"checking" | "ready" | "failed">("checking");
+  const [startedJob, setStartedJob] = useState<IngestJob | undefined>();
   const requestSeq = useRef(0);
 
   useEffect(() => {
@@ -152,10 +154,13 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
   }, [image, row.key]);
 
   const loadStorage = useCallback(async () => {
+    setStorageState("checking");
     try {
       const answer = await api(`api/admin/engines/${encodeURIComponent(row.key)}/storage`);
-      if (!answer?.error) setStorage({ files: Array.isArray(answer?.files) ? answer.files : [], checked_at: answer?.checked_at });
-    } catch { setStorage(null); }
+      if (answer?.error) { setStorage(null); setStorageState("failed"); return; }
+      setStorage({ files: Array.isArray(answer?.files) ? answer.files : [], checked_at: answer?.checked_at });
+      setStorageState("ready");
+    } catch { setStorage(null); setStorageState("failed"); }
   }, [row.key]);
   useEffect(() => { setStorage(null); void loadStorage(); }, [loadStorage]);
 
@@ -213,12 +218,13 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
         {!readOnly && <Button variant="ghost" small icon="link" onClick={() => setOperation({ act: "new", source })}>{tr("admin.catalog_manual" as never)}</Button>}
       </div>
       {source === "civitai" && sort === "newest" && <p className="muted engine-catalog-sort-note">{tr("admin.catalog_civitai_newest_note" as never)}</p>}
-      {storage === null && <p className="muted engine-catalog-storage-note">{tr("admin.catalog_storage_checking" as never)}</p>}
+      {storageState === "checking" && <p className="muted engine-catalog-storage-note">{tr("admin.catalog_storage_checking" as never)}</p>}
+      {storageState === "failed" && <p className="form-err engine-catalog-storage-note">{tr("admin.catalog_storage_unavailable" as never)}</p>}
       {err && <p className="form-err">{err}</p>}
       {hits?.length === 0 && <p className="muted engine-catalog-zero">{tr("admin.engines_ingest_search_none")}</p>}
       {!!hits?.length && <ul className="engine-catalog-grid">{hits.map((hit) => {
         const props: BrowseCardProps = {
-          hit, kind, saved: savedFilesForHit(hit, storage?.files || []), readOnly,
+          hit, kind, saved: savedFilesForHit(hit, storage?.files || []), storage: storage?.files || [], storageState, readOnly,
           canAttach: modelRows.length > 0 && (row.file_flags || []).some(Boolean),
           canReplace: modelRows.length > 0, onOperation: (act) => setOperation({ hit, act }),
         };
@@ -227,11 +233,11 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
           : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
       })}</ul>}
       {cursor && query === submittedQuery && <Button variant="ghost" small icon="chevron-down" className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>{tr("admin.catalog_more" as never)}</Button>}
-      <CatalogJobs engineKey={row.key} />
+      <CatalogJobs engineKey={row.key} started={startedJob} onCompleted={() => { void loadStorage(); onChanged(); }} />
       {operation && <CatalogOperation row={row} kind={kind} hit={operation.hit} initialAct={operation.act} initialSource={operation.source}
-        storage={storage?.files || []} onClose={() => setOperation(null)} onStarted={() => { setOperation(null); void loadStorage(); onChanged(); }} />}
+        storage={storage?.files || []} onClose={() => setOperation(null)} onStarted={(job) => { setStartedJob(job); setOperation(null); void loadStorage(); onChanged(); }} />}
       {preview?.preview_url && <Modal title={preview.name} className="engine-catalog-lightbox" onClose={() => setPreview(null)}>
-        <img src={preview.preview_url} alt={preview.name} />
+        <img className="ui-modal-body" src={preview.preview_url} alt={preview.name} />
       </Modal>}
     </section>
   );
@@ -241,6 +247,8 @@ type BrowseCardProps = {
   hit: IngestHit;
   kind: ModelKind;
   saved: EngineStorageFile[];
+  storage: EngineStorageFile[];
+  storageState: "checking" | "ready" | "failed";
   readOnly: boolean;
   canAttach: boolean;
   canReplace: boolean;
@@ -265,7 +273,7 @@ function ImageCatalogCard({ hit, kind, saved, onPreview, ...actions }: BrowseCar
         {hit.updated_at ? ` · ${tr("admin.engines_ingest_hit_updated")} ${fmtDateTime(hit.updated_at)}` : ""}
         {hit.published_at ? ` · ${tr("admin.engines_ingest_hit_published")} ${fmtDateTime(hit.published_at)}` : ""}
       </p>
-      {saved.length > 0 && <p className="engine-catalog-saved">{tr("admin.catalog_saved_count" as never, { count: saved.length } as never)}</p>}
+      <CatalogSavedState hit={hit} saved={saved} storage={actions.storage} storageState={actions.storageState} />
     </div>{hit.preview_url && <Button variant="ghost" className="engine-catalog-thumb" onClick={onPreview} aria-label={`${tr("admin.catalog_preview" as never)}: ${hit.name}`}><img src={hit.preview_url} alt="" loading="lazy" /></Button>}</div>
     <BrowseCardFooter hit={hit} {...actions} />
   </li>;
@@ -288,10 +296,20 @@ function LLMCatalogCard({ hit, kind, saved, ...actions }: BrowseCardProps) {
         {hit.likes ? ` · ${compactCount(hit.likes)} ${tr("admin.engines_ingest_hit_likes")}` : ""}
         {hit.updated_at ? ` · ${tr("admin.engines_ingest_hit_updated")} ${fmtDateTime(hit.updated_at)}` : ""}
       </p>
-      {saved.length > 0 && <p className="engine-catalog-saved">{tr("admin.catalog_saved_count" as never, { count: saved.length } as never)}</p>}
+      <CatalogSavedState hit={hit} saved={saved} storage={actions.storage} storageState={actions.storageState} />
     </div></div>
     <BrowseCardFooter hit={hit} {...actions} />
   </li>;
+}
+
+function CatalogSavedState({ hit, saved, storage, storageState }: Pick<BrowseCardProps, "hit" | "saved" | "storage" | "storageState">) {
+  const tr = useT();
+  if (storageState === "checking") return <p className="muted engine-catalog-saved">{tr("admin.catalog_storage_checking" as never)}</p>;
+  if (storageState === "failed") return <p className="muted engine-catalog-saved">{tr("admin.catalog_storage_unavailable" as never)}</p>;
+  const sourceFiles = sourceFilesForHit(hit, storage);
+  if (saved.length) return <p className="engine-catalog-saved">{tr("admin.catalog_saved_count" as never, { count: saved.length } as never)}</p>;
+  if (sourceFiles.some((file) => file.state === "unknown")) return <p className="muted engine-catalog-saved">{tr("admin.catalog_saved_unknown" as never)}</p>;
+  return <p className="muted engine-catalog-saved">{tr("admin.catalog_saved_none" as never)}</p>;
 }
 
 function BrowseCardFooter({ hit, readOnly, canAttach, canReplace, onOperation }: Omit<BrowseCardProps, "kind" | "saved">) {
@@ -378,11 +396,11 @@ function NoEngineCatalog() {
     {err && <p className="form-err">{err}</p>}
     {hits?.length === 0 && <p className="muted engine-catalog-zero">{tr("admin.engines_ingest_search_none")}</p>}
     {!!hits?.length && <ul className="engine-catalog-grid">{hits.map((hit) => {
-      const props: BrowseCardProps = { hit, kind, saved: [], readOnly: true, canAttach: false, canReplace: false, onOperation: noop };
+      const props: BrowseCardProps = { hit, kind, saved: [], storage: [], storageState: "ready", readOnly: true, canAttach: false, canReplace: false, onOperation: noop };
       return image ? <ImageCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} onPreview={() => setPreview(hit)} /> : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
     })}</ul>}
     {cursor && query === submittedQuery && <Button variant="ghost" small icon="chevron-down" className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>{tr("admin.catalog_more" as never)}</Button>}
-    {preview?.preview_url && <Modal title={preview.name} className="engine-catalog-lightbox" onClose={() => setPreview(null)}><img src={preview.preview_url} alt={preview.name} /></Modal>}
+    {preview?.preview_url && <Modal title={preview.name} className="engine-catalog-lightbox" onClose={() => setPreview(null)}><img className="ui-modal-body" src={preview.preview_url} alt={preview.name} /></Modal>}
   </section>;
 }
 
@@ -525,11 +543,11 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
       if (await callModel(edit, "PUT", body)) setEdit(null);
     }} />}
     {deleting && <Modal title={`${tr("admin.engines_model_forget")} — ${deleting.id}`} className="engine-registered-confirm" onClose={() => setDeleting(null)} lockClose={busy === deleting.id}>
-      <div className="engine-operation-body"><p>{tr(purge ? "admin.engines_model_forget_purge_note" : "admin.engines_model_forget_note")}</p><label className="engine-operation-check"><input type="checkbox" checked={purge} onChange={(event) => setPurge(event.currentTarget.checked)} /><span>{tr("admin.engines_model_forget_purge")}</span></label>
+      <div className="ui-modal-body engine-operation-body"><p>{tr(purge ? "admin.engines_model_forget_purge_note" : "admin.engines_model_forget_note")}</p><label className="engine-operation-check"><input type="checkbox" checked={purge} onChange={(event) => setPurge(event.currentTarget.checked)} /><span>{tr("admin.engines_model_forget_purge")}</span></label>
         <footer className="engine-operation-footer"><Button variant="ghost" onClick={() => setDeleting(null)}>{tr("common.cancel")}</Button><Button variant="danger" onClick={async () => { if (await callModel(deleting, "DELETE", undefined, purge)) setDeleting(null); }}>{tr("admin.engines_model_forget")}</Button></footer></div>
     </Modal>}
     {vramAsk && <Modal title={`${tr("admin.engines_vram_confirm_go")} — ${vramAsk.model.id}`} className="engine-registered-confirm" onClose={() => setVramAsk(null)}>
-      <div className="engine-operation-body"><p className="form-err">{vramAsk.message || (tr("admin.engines_vram_confirm" as never) as string)
+      <div className="ui-modal-body engine-operation-body"><p className="form-err">{vramAsk.message || (tr("admin.engines_vram_confirm" as never) as string)
         .replace("{id}", vramAsk.model.id)
         .replace("{n}", String(vramAsk.model.vram_need_mib || 0))
         .replace("{m}", String(row.class?.vram_mib || 0))
@@ -651,7 +669,7 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   };
 
   return <Modal title={`${tr("admin.catalog_edit" as never)} — ${model.id}`} className="engine-registered-edit" onClose={onClose} lockClose={busy}>
-    <div className="engine-operation-body"><div className="engine-operation-grid">
+    <div className="ui-modal-body engine-operation-body"><div className="engine-operation-grid">
       <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
       {(image || lora) && <label><span>{tr(!image && lora ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span>{baseChoices.length || (!image && lora)
         ? <select value={baseModel} disabled={!baseChoices.length} onChange={(event) => setBaseModel(event.currentTarget.value)}><option value="">—</option>{baseChoices.map((base) => <option key={base} value={base}>{base}</option>)}</select>
@@ -672,12 +690,12 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
   row: EngineRow; kind: ModelKind; hit?: IngestHit; initialAct: EngineIngestAct;
   initialSource?: CatalogSource;
   initialTarget?: string;
-  storage: EngineStorageFile[]; onClose: () => void; onStarted: () => void;
+  storage: EngineStorageFile[]; onClose: () => void; onStarted: (job: IngestJob) => void;
 }) {
   const tr = useT();
   const image = engineIsImage(row);
   const isLora = kind === "lora";
-  const [act, setAct] = useState(initialAct);
+  const act = initialAct;
   const [sourceType, setSourceType] = useState<CatalogSource>(hit?.source === "civitai" || initialSource === "civitai" ? "civitai" : "hf");
   const [manualRef, setManualRef] = useState(hit?.model_ref || hit?.ref || "");
   const [versions, setVersions] = useState<IngestVersion[]>([]);
@@ -820,7 +838,7 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
   }, [file, image, isLora, row.key, sourceBody]);
 
   const selectedFile = files.find((candidate) => candidate.name === file);
-  const immutableReuse = exactReusableStorage(storage, sourceType, repo, versionRef, file);
+  const immutableReuse = exactReusableStorage(storage, resolved?.artifact_identity);
   const bytes = resolved?.bytes || selectedFile?.bytes || 0;
   const contextTokens = Number(context.trim().replace(/[_,]/g, "")) || 0;
   const weightsMiB = bytes ? Math.round(bytes / 1048576) : 0;
@@ -870,7 +888,7 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
         ...(immutableReuse ? { reuse_s3_key: immutableReuse.s3_key } : {}),
       });
       if (answer?.error) { setErr(errDetail(answer.error)); return; }
-      onStarted();
+      onStarted(answer as IngestJob);
     } finally { setBusy(false); }
   };
 
@@ -878,10 +896,7 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
     ? `${tr("admin.catalog_operation_title" as never)} — ${hit.name}`
     : tr("admin.catalog_operation_title" as never);
   return <Modal title={operationTitle} className="engine-catalog-operation" onClose={onClose} lockClose={busy}>
-    <div className="engine-operation-body">
-      <div className="engine-operation-choice">{(["new", "attach", "replace"] as const).map((next) => <label key={next}>
-        <input type="radio" name="catalog-act" checked={act === next} onChange={() => setAct(next)} />
-        <span>{tr((`admin.catalog_act_${next}`) as never)}</span></label>)}</div>
+    <div className="ui-modal-body engine-operation-body">
       {!hit && <div className="engine-operation-manual">
         {image && <select value={sourceType} onChange={(event) => { setSourceType(event.currentTarget.value as CatalogSource); resetInspection(); }}><option value="civitai">Civitai</option><option value="hf">Hugging Face / URL</option></select>}
         <input value={manualRef} onChange={(event) => changeManualRef(event.currentTarget.value)} placeholder="owner/repository or https://…" />
@@ -935,15 +950,25 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
   </Modal>;
 }
 
-function CatalogJobs({ engineKey }: { engineKey: string }) {
+function CatalogJobs({ engineKey, started, onCompleted }: { engineKey: string; started?: IngestJob; onCompleted: () => void }) {
   const tr = useT();
   const [jobs, setJobs] = useState<IngestJob[]>([]);
+  const hadLive = useRef(false);
   const load = useCallback(async () => {
     const answer = await api(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest`);
     if (!answer?.error) setJobs(Array.isArray(answer?.jobs) ? answer.jobs : []);
   }, [engineKey]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!started?.id) return;
+    setJobs((current) => [started, ...current.filter((job) => job.id !== started.id)]);
+    void load();
+  }, [load, started]);
   const live = jobs.some((job) => job.state === "pending" || job.state === "running");
+  useEffect(() => {
+    if (hadLive.current && !live) onCompleted();
+    hadLive.current = live;
+  }, [live, onCompleted]);
   useEffect(() => {
     if (!live) return;
     const timer = setInterval(() => void load(), 5000);
@@ -965,6 +990,10 @@ function CatalogJobs({ engineKey }: { engineKey: string }) {
 /** Count concrete source files, never repositories. State stays visible separately and an
  * unknown check is never promoted to missing. */
 export function savedFilesForHit(hit: IngestHit, files: EngineStorageFile[]): EngineStorageFile[] {
+  return sourceFilesForHit(hit, files).filter((file) => file.state === "present");
+}
+
+function sourceFilesForHit(hit: IngestHit, files: EngineStorageFile[]): EngineStorageFile[] {
   const modelRef = hit.model_ref || (hit.source === "hf" ? hit.ref : "");
   if (!modelRef) return [];
   if (hit.source === "civitai") {
@@ -979,17 +1008,9 @@ export function savedFilesForHit(hit: IngestHit, files: EngineStorageFile[]): En
 
 /** Reuse is stricter than display: only a present object with an immutable revision/file
  * identity qualifies. Legacy `hf:repo/file` strings remain visible but are never guessed. */
-export function exactReusableStorage(files: EngineStorageFile[], source: CatalogSource,
-  modelRef: string, versionRef: string, fileName: string): EngineStorageFile | undefined {
-  if (!modelRef || !versionRef || !fileName) return undefined;
-  if (source === "civitai") {
-    return files.find((file) => file.state === "present" && file.source === `civitai:${versionRef}/${fileName}`);
-  }
-  const identities = new Set([
-    `hf:${modelRef}@${versionRef}/${fileName}`,
-    `hf:${modelRef}/${fileName}@${versionRef}`,
-  ]);
-  return files.find((file) => file.state === "present" && !!file.source && identities.has(file.source));
+export function exactReusableStorage(files: EngineStorageFile[], identity?: string): EngineStorageFile | undefined {
+  if (!identity) return undefined;
+  return files.find((file) => file.state === "present" && file.reusable === true && file.artifact_identity === identity);
 }
 
 function compactCount(value: number): string {

@@ -249,7 +249,7 @@ export const admin = {
   "admin.engines_wizard_need_file": "ファイルを選んでください。",
   "admin.engines_wizard_cannot": "この配備ではこのファイルを取り込めません（上の理由）。",
   "admin.engines_wizard_need_id": "id を入れてください。",
-  "admin.engines_wizard_need_family": "ファミリーを選んでください。このエンジンはファミリーでワークフローを選び、推測はしません。",
+  "admin.engines_wizard_need_family": "モデル族を選んでください。このエンジンはモデル族でワークフローを選び、推測はしません。",
   // 🔴 ADR 0072 follow-up。ヘッダを読んで「VAE 非同梱」と分かったときだけ出る。
   "admin.engines_wizard_vae_take": "このチェックポイントは VAE を同梱していないので、{f} も一緒に取り込んで `--vae` として足します（{n}・ライセンス {l}）",
   "admin.engines_wizard_vae_staged": "このチェックポイントは VAE を同梱していないので、すでにこの配備にある {f} を `--vae` として足します（ダウンロードなし）",
@@ -330,6 +330,9 @@ export const admin = {
   "admin.catalog_vae_unreachable": "VAE の配布元へ到達できません",
   "admin.catalog_civitai_newest_note": "Civitai の新着順です。厳密な最終更新順ではありません。",
   "admin.catalog_storage_checking": "保存済みのモデルファイルを確認しています…",
+  "admin.catalog_storage_unavailable": "保存状態を取得できませんでした。再読み込みしてください。",
+  "admin.catalog_saved_none": "この配布元の保存済みファイルはありません",
+  "admin.catalog_saved_unknown": "この配布元の保存状態を確認できません",
   "admin.catalog_manual": "URL・リポジトリを指定",
   "admin.catalog_more": "さらに読み込む",
   "admin.catalog_preview": "作例を拡大",

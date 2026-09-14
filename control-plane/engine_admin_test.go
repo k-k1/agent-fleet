@@ -1516,7 +1516,7 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 	post := func(id, extra string) (int, string) {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/text_encoders/t5xxl_fp8.safetensors",
+		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/text_encoders/` + id + `_t5xxl_fp8.safetensors",
 		  "license_accepted":true,"source":{"url":"https://example.invalid/t5xxl_fp8.safetensors",
 		  "sha256":"` + strings.Repeat("c", 64) + `"}` + extra + `}`
 		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
@@ -1576,6 +1576,66 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 		if m.ID == "flux1-dev-fp8" && (!m.Enabled || len(m.Files) != 2) {
 			t.Errorf("the row was touched before the download: enabled=%v files=%+v", m.Enabled, m.Files)
 		}
+	}
+}
+
+// A download writes S3 before the reconciler can change its catalogue row. A same filename from
+// a later version must therefore be rejected when any other catalogue row or tenant's job has
+// already recorded that key, rather than relying only on the replacement slot's current key.
+func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	ecsAPI := &fakeIngestECS{}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: ecsAPI, store: st, models: st,
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "target", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/current.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "other", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/occupied.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutEngineIngestJob(t.Context(), store.EngineIngestJob{
+		ID: "another-tenants-object", Role: "image", ModelID: "old", S3Key: "image/checkpoints/job-history.safetensors",
+		State: store.EngineIngestFailed, TenantID: "t-other",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	post := func(destination string) (int, string) {
+		t.Helper()
+		body := `{"id":"target","kind":"checkpoint","replace":true,"s3Key":"` + destination + `",` +
+			`"license_accepted":true,"source":{"url":"https://example.invalid/new-version.safetensors","sha256":"` + strings.Repeat("d", 64) + `"}}`
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/admin/engines/image/ingest", strings.NewReader(body))
+		r.SetPathValue("key", "image")
+		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, tenantID: "t-acme"})
+		return rec.Code, rec.Body.String()
+	}
+
+	for _, destination := range []string{"image/checkpoints/occupied.safetensors", "image/checkpoints/job-history.safetensors"} {
+		if code, body := post(destination); code != http.StatusConflict || !strings.Contains(body, "already recorded") {
+			t.Fatalf("destination %s = %d (%s), want a pre-upload collision", destination, code, body)
+		}
+	}
+	if len(ecsAPI.run) != 0 {
+		t.Fatalf("recorded destinations started %d ingest task(s)", len(ecsAPI.run))
+	}
+	jobs, err := st.ListEngineIngestJobs(t.Context(), "image", 10)
+	if err != nil || len(jobs) != 1 || jobs[0].ID != "another-tenants-object" {
+		t.Fatalf("collision left a new job: %+v (%v)", jobs, err)
 	}
 }
 

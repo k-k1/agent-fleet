@@ -4551,3 +4551,27 @@ all storage verdicts, and the existing licence/VAE/VRAM/permission guards. Conso
 production build, focused Control Plane tests, and headless wide/narrow pane checks are required.
 AWS existence checks need the corresponding IAM deployment; local mocks do not constitute that
 live verification. Deployment and merging into the shared base are separate from implementation.
+
+### Implementation result (2026-09-14)
+
+This revision is implemented on `temp/silzntq`. The Image and LLM catalogue panes use shared
+`Button` primitives throughout. A card-footer press fixes add, attach or replace for one flat
+dialog, with no operation selector or next/back rail. Jobs appear immediately from the POST
+response, restore from the server, and refresh rows and storage after completion. Paging stays
+bound to the submitted query; stale version/file replies are discarded; Civitai URLs preserve
+their version; and an LLM LoRA accepts only a registered non-LoRA model as its base.
+
+Storage reports server-known catalogue and job keys as present, missing or unknown. Reuse needs
+`reusable`, a present object and exact `artifact_identity`, followed by a fresh server check.
+Human `source` remains provenance, not identity. Downloads refuse a destination already recorded
+by a catalogue row or job before upload starts, preventing a later create/replace race from
+overwriting another version with the same filename. Catalogue installation failure leaves the job
+failed rather than presenting a completed download as registered.
+
+On the integrated tree, all Control Plane packages passed with bounded parallelism; the focused
+catalogue DOM suites passed 15 tests; Console typecheck, i18n lint and production build passed;
+and all seven Playwright catalogue scenarios passed against that build in local Chromium. The
+browser run covered 1400 px dark/light, 390 px dark, registered editing, immediate job display,
+the right thumbnail and lightbox focus restoration. The full Console suite additionally exposed
+and led to a fix for new dialogs bypassing the shared modal body. No AWS deployment, live-bucket
+or GPU validation, or merge into `develop` was performed.

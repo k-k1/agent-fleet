@@ -797,6 +797,27 @@ func TestEngineIngestMarksCatalogueInstallFailureAsFailed(t *testing.T) {
 	}
 }
 
+// VAE follow-ups start from the reconciler rather than postIngest, so the ingester itself has to
+// retain the destination fence. Otherwise a second task could overwrite a known object before
+// either task has a chance to install its catalogue change.
+func TestEngineIngestStartRefusesARecordedDestinationBeforeRunTask(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	req := ingestReq()
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: req.Role, ID: "already-there", Files: []store.EngineModelFile{{S3Key: req.S3Key}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, aerr := ing.start(t.Context(), req); aerr == nil || aerr.status != http.StatusConflict ||
+		!strings.Contains(aerr.message, "already recorded") {
+		t.Fatalf("recorded destination start = %#v, want conflict", aerr)
+	}
+	if len(api.run) != 0 {
+		t.Fatalf("recorded destination started %d ingest task(s)", len(api.run))
+	}
+}
+
 // 🔴 ADR 0072 P2 欠落 6. The row an ingest wrote was always `[{S3Key, Bytes}]` with no flag —
 // "one whole checkpoint" — so a SPLIT model could not be assembled by taking its parts in.
 // Measured on af-sandbox: the four files of `flux1-dev-fp8` had to be staged as three throwaway

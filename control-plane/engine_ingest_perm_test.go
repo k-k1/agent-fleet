@@ -433,6 +433,7 @@ func TestIngestJobRecordsTheGrantingTenant(t *testing.T) {
 	// tenant's list.
 	operator := ingestReq()
 	operator.AcceptedTenant = "" // a super_admin acts for the deployment, not for a tenant
+	operator.S3Key = "llm/qwen2.5-coder-1.5b-instruct-q4_k_m-operator.gguf"
 	plain, aerr := ing.start(t.Context(), operator)
 	if aerr != nil {
 		t.Fatalf("start (operator): %v", aerr.message)

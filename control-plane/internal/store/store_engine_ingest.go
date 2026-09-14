@@ -72,6 +72,10 @@ type EngineIngestStore interface {
 	// ListEngineIngestJobsForStorageByTenant preserves the same tenant-history boundary as the
 	// ordinary panel while returning every address visible through that grant.
 	ListEngineIngestJobsForStorageByTenant(ctx context.Context, role, tenantID string) ([]EngineIngestJob, error)
+	// EngineIngestS3KeyRecorded answers the write-side safety question without loading the
+	// unbounded history used by the storage panel. It spans tenants because an S3 role prefix is
+	// shared even when the job list is not.
+	EngineIngestS3KeyRecorded(ctx context.Context, role, s3Key string) (bool, error)
 	GetEngineIngestJob(ctx context.Context, id string) (EngineIngestJob, bool, error)
 	// ListActiveEngineIngestJobs is what the reconciler polls: only the jobs whose outcome is
 	// still unknown, so a CP that has been up for a week does not ask ECS about last Tuesday.
@@ -123,6 +127,13 @@ func (s *SQL) ListEngineIngestJobsForStorage(ctx context.Context, role string) (
 
 func (s *SQL) ListEngineIngestJobsForStorageByTenant(ctx context.Context, role, tenantID string) ([]EngineIngestJob, error) {
 	return s.engineIngestStorageList(ctx, role, tenantID, true)
+}
+
+func (s *SQL) EngineIngestS3KeyRecorded(ctx context.Context, role, s3Key string) (bool, error) {
+	var found int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM engine_ingest_jobs WHERE role=? AND s3_key=?)`, role, s3Key).Scan(&found)
+	return found != 0, err
 }
 
 func (s *SQL) engineIngestStorageList(ctx context.Context, role, tenantID string, byTenant bool) ([]EngineIngestJob, error) {

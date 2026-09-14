@@ -305,18 +305,18 @@ describe("model catalogue pane", () => {
 
 describe("catalogue storage identity", () => {
   const files = [
-    { s3_key: "a", source: "hf:org/repo@abc/model.gguf", state: "present" as const, model_ids: [] },
-    { s3_key: "legacy", source: "hf:org/repo/model.gguf", state: "present" as const, model_ids: [] },
-    { s3_key: "gone", source: "civitai:22", state: "missing" as const, model_ids: [] },
-    { s3_key: "ambiguous", source: "civitai:22", state: "present" as const, model_ids: [] },
-    { s3_key: "civitai-exact", source: "civitai:22/model.safetensors", state: "present" as const, model_ids: [] },
+    { s3_key: "a", source: "hf:org/repo@abc/model.gguf", artifact_identity: "hf:org/repo@abc/model.gguf#sha256:a", reusable: true, state: "present" as const, model_ids: [] },
+    { s3_key: "legacy", source: "hf:org/repo/model.gguf", reusable: false, state: "present" as const, model_ids: [] },
+    { s3_key: "gone", source: "civitai:22", reusable: false, state: "missing" as const, model_ids: [] },
+    { s3_key: "ambiguous", source: "civitai:22", reusable: false, state: "present" as const, model_ids: [] },
+    { s3_key: "civitai-exact", source: "civitai:22/model.safetensors", artifact_identity: "civitai:22/model.safetensors#sha256:b", reusable: true, state: "present" as const, model_ids: [] },
   ];
   it("counts concrete source files but reuses only present immutable identities", () => {
     expect(savedFilesForHit({ source: "hf", ref: "org/repo", model_ref: "org/repo", name: "Repo" }, files)).toHaveLength(2);
-    expect(exactReusableStorage(files, "hf", "org/repo", "abc", "model.gguf")?.s3_key).toBe("a");
-    expect(exactReusableStorage(files, "hf", "org/repo", "", "model.gguf")).toBeUndefined();
-    expect(exactReusableStorage(files, "civitai", "7", "22", "other.safetensors")).toBeUndefined();
-    expect(exactReusableStorage(files.filter((file) => file.s3_key !== "civitai-exact"), "civitai", "7", "22", "model.safetensors")).toBeUndefined();
-    expect(exactReusableStorage(files, "civitai", "7", "22", "model.safetensors")?.s3_key).toBe("civitai-exact");
+    expect(exactReusableStorage(files, "hf:org/repo@abc/model.gguf#sha256:a")?.s3_key).toBe("a");
+    expect(exactReusableStorage(files, "hf:org/repo@abc/model.gguf#sha256:other")).toBeUndefined();
+    expect(exactReusableStorage(files, "civitai:22/other.safetensors#sha256:b")).toBeUndefined();
+    expect(exactReusableStorage(files.filter((file) => file.s3_key !== "civitai-exact"), "civitai:22/model.safetensors#sha256:b")).toBeUndefined();
+    expect(exactReusableStorage(files, "civitai:22/model.safetensors#sha256:b")?.s3_key).toBe("civitai-exact");
   });
 });

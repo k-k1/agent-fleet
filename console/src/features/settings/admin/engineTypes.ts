@@ -166,6 +166,9 @@ export type EngineParams = {
 /** What POST …/ingest/resolve answered: what the file IS, before anything is started. */
 export type ResolvedSource = {
   sha256?: string;
+  /** Immutable identity of this exact resolved source file. It is the only value which may
+   * match a stored object for reuse; the human-readable source is display provenance only. */
+  artifact_identity?: string;
   bytes?: number;
   gated?: boolean;
   license?: string;
@@ -345,6 +348,10 @@ export type IngestSearchAnswer = {
 export type EngineStorageFile = {
   s3_key: string;
   source?: string;
+  /** Machine identity for exact reuse. Missing means this is legacy or ambiguous provenance. */
+  artifact_identity?: string;
+  /** The server checked this object and permits it to be reused for its identity. */
+  reusable: boolean;
   state: "present" | "missing" | "unknown";
   bytes?: number;
   checked_at?: string;

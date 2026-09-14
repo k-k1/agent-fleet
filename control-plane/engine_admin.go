@@ -1888,6 +1888,21 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 			return
 		}
 	}
+	// The upload task writes its destination before this request can install the catalogue
+	// transition. A key already named by another row or by any tenant's job is therefore not a
+	// vacant filename: uploading a later version there would destroy bytes the prior record
+	// still describes if this job later loses its create/replace race. Verified reuse has no
+	// upload and was independently checked for exact identity and fresh existence above.
+	if reuseKey == "" {
+		if a.mgr == nil || a.mgr.store == nil {
+			writeAPIErr(w, internalErr(errors.New("no store")))
+			return
+		}
+		if aerr := engineIngestDestinationUnused(r.Context(), a.mgr.store, a.mgr.store, key, s3key); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
 	res, aerr := engineIngestResolve(r.Context(), b.Source)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -2305,6 +2320,42 @@ func engineReplaceAllowed(row *store.EngineModel, id, key, s3key, flag string, r
 	return &apiError{http.StatusBadRequest, errCodeEngineBadBody,
 		id + " declares no " + engineFlagLabel(flag) + " file, so there is nothing to replace" +
 			" — take this in as a part of that row instead"}
+}
+
+// engineIngestDestinationUnused refuses an upload destination before RunTask is called. S3 has no
+// compare-and-swap with the catalogue transition, so treating a recorded key as reusable for a
+// different download would let the upload overwrite it even when the later installation fails.
+// Job rows are checked across tenants without revealing which tenant recorded the key: tenant
+// visibility applies to the panel, not to protecting a shared role prefix from an overwrite.
+func engineIngestDestinationUnused(ctx context.Context, models store.EngineModelStore, jobs store.EngineIngestStore,
+	role, s3key string) *apiError {
+	if models == nil || jobs == nil {
+		return internalErr(errors.New("no store"))
+	}
+	rows, err := models.ListEngineModels(ctx, role)
+	if err != nil {
+		return internalErr(err)
+	}
+	for _, model := range rows {
+		for _, file := range model.Files {
+			if strings.TrimSpace(file.S3Key) == s3key {
+				return ingestDestinationTaken(s3key)
+			}
+		}
+	}
+	recorded, err := jobs.EngineIngestS3KeyRecorded(ctx, role, s3key)
+	if err != nil {
+		return internalErr(err)
+	}
+	if recorded {
+		return ingestDestinationTaken(s3key)
+	}
+	return nil
+}
+
+func ingestDestinationTaken(s3key string) *apiError {
+	return &apiError{http.StatusConflict, errCodeEngineBadBody,
+		"the S3 key " + s3key + " is already recorded; choose a new destination for this download or use verified reuse"}
 }
 
 // engineBaseModelHint quotes what the repository called this model, so the refusal above ends

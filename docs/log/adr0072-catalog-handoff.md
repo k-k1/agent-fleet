@@ -169,3 +169,19 @@ build at a time. Go tests: `GOMAXPROCS=2 go test -p 1 ...` from the correct modu
 The parent `console/node_modules` is a shared symlink: never install through it.
 Read workspace skills for worktrees/build/browser procedures. Commit messages are
 Japanese conventional commits with actual model coauthor; comments are English.
+
+## Successor completion checkpoint (2026-09-14)
+
+The successor integrated UI `4bf3552f`, S3 `5e24a611`, and regression test `513208be` without
+replaying the search child's parent merge. Search versions and storage routes were both retained.
+Follow-up work completed the fixed-operation dialog, shared Button styling, immediate/restored jobs
+and completion refresh, immutable S3 reuse, storage-state distinctions, destination collision
+protection, and the LLM LoRA guard. The full Console suite exposed a shared modal-body violation
+that focused tests missed; it was fixed before completion.
+
+Verified on the integrated tree: all Control Plane packages passed with bounded parallelism;
+catalogue DOM 15/15, Console typecheck, i18n lint and production build passed; Playwright ran all
+seven catalogue tests against the fresh build in local Chromium and passed at 1400 dark/light and
+390 dark, including registered editing and immediate job display. AWS deployment, live S3/GPU
+validation and merge to `develop` remain deliberately undone. This section supersedes the paused
+status and earlier 3/1 browser checkpoint above; those remain as implementation history.
