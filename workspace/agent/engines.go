@@ -64,12 +64,34 @@ func init() {
 }
 
 // The API families the CP's catalogue reports. Chat engines become opencode providers; images
-// engines become the imagegen `sdcpp` provider. The key is NOT what decides this — an engine's
-// role is declared by the stack (ADR 0071 decision 8).
+// engines become an imagegen provider. The key is NOT what decides this — an engine's role is
+// declared by the stack (ADR 0071 decision 8).
 const (
 	engineAPIChat   = "chat"
 	engineAPIImages = "images"
 )
+
+// knownImageProviders is the images-API vocabulary this Agent build actually implements a
+// client for (ADR 0083 decision 5). A row naming anything else cannot be served no matter what
+// the catalogue says about it — imagegen.EngineLookup simply never matches it — and that used to
+// be entirely silent: generate_image just never reached tools/list, with no error and no log.
+var knownImageProviders = map[string]bool{
+	imagegen.ProviderComfy:        true,
+	imagegen.ProviderOpenAICompat: true,
+}
+
+// logUnservableImageRows says, once per fresh catalogue fetch, which images rows this build
+// cannot serve — the Agent side of decision 5's refusal. Called only when engineCatalogRows
+// actually went to the network, not on every cache hit off the 10-minute TTL, so a deployment
+// running an unserved row is not asked to read the same line every tools/list.
+func logUnservableImageRows(rows []engineCatalogRow) {
+	for _, e := range rows {
+		if e.api() != engineAPIImages || knownImageProviders[e.Provider] {
+			continue
+		}
+		log.Printf("engines: %s declares images provider %q, which this Agent build does not implement (known: comfy, openai-compat) — generate_image will not reach it", e.Key, e.Provider)
+	}
+}
 
 // engineCatalogRow is one engine as the CP describes it. It never touches an engine to
 // answer, which is what lets the launch menu be drawn — and the image tool be advertised —
@@ -200,6 +222,7 @@ func engineCatalogRows(ctx context.Context) []engineCatalogRow {
 		return engineCatalogState.rows
 	}
 	engineCatalogState.rows, engineCatalogState.ok = cat.Engines, true
+	logUnservableImageRows(cat.Engines)
 	return engineCatalogState.rows
 }
 

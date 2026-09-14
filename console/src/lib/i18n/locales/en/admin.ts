@@ -48,6 +48,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_lora_no_family": "no family declared",
   "admin.engines_models_label": "Models",
   "admin.engines_always_on_note": "Always-on keeps the GPU instance up, at whatever the instance class costs per hour. Put it back on demand when you are done.",
+  "admin.engines_provider_unserved": "This row declares images provider \"{p}\", which this build does not implement a client for. generate_image will not work here until the row is repointed at comfy or openai-compat.",
   "admin.engines_tenant_scope":
     "Here you can take models in and see the rows that produced. Enabling a model, starting and stopping the engine, choosing the GPU and forgetting a row belong to the deployment administrator (super_admin), so they are not on this screen. The catalogue is one per deployment, and the id of a model you take in is visible from every tenant.",
   "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys an instance only when something asks, and it stops itself once idle.",

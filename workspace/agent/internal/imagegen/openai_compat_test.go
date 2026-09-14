@@ -1,9 +1,11 @@
 package imagegen
 
-// The self-hosted image engine's provider (ADR 0071 P1). What is pinned here is the WIRE:
-// sd-server's OpenAI-compatible face is the contract this code was written against
-// (upstream examples/server/api.md, read 2026-09-07), and the two shapes it uses are not the
-// same — generations is JSON, edits is multipart/form-data with the mask as a file part.
+// What is pinned here is the WIRE: the OpenAI Images API is the contract this code was written
+// against (upstream examples/server/api.md, read 2026-09-07, against sd-server's implementation
+// of it — ADR 0071 P1), and the two shapes it uses are not the same — generations is JSON, edits
+// is multipart/form-data with the mask as a file part. ADR 0083 P1 generalised the client beyond
+// that one engine; these tests exercise it against a fake server standing in for "any
+// OpenAI-compatible server", not specifically sd-server.
 
 import (
 	"context"
@@ -21,13 +23,13 @@ import (
 	"time"
 )
 
-// sdcppStub stands in for the CP's engine gateway. It records what arrived and answers with
-// the OpenAI-compatible body sd-server produces.
-func sdcppStub(t *testing.T, handler func(w http.ResponseWriter, r *http.Request)) *sdcppProvider {
+// openaiCompatStub stands in for the CP's engine gateway. It records what arrived and answers
+// with the OpenAI-compatible body a real server produces.
+func openaiCompatStub(t *testing.T, handler func(w http.ResponseWriter, r *http.Request)) *openaiCompatProvider {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(handler))
 	t.Cleanup(srv.Close)
-	return &sdcppProvider{
+	return &openaiCompatProvider{
 		client: srv.Client(),
 		lookup: func(context.Context) (EngineConn, bool) {
 			return EngineConn{
@@ -39,8 +41,8 @@ func sdcppStub(t *testing.T, handler func(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// sdcppAnswer is the response body: data[].b64_json, exactly as measured on the GPU box.
-func sdcppAnswer(t *testing.T, images ...[]byte) string {
+// openaiCompatAnswer is the response body: data[].b64_json, exactly as measured on the GPU box.
+func openaiCompatAnswer(t *testing.T, images ...[]byte) string {
 	t.Helper()
 	data := make([]map[string]string, 0, len(images))
 	for _, b := range images {
@@ -53,15 +55,15 @@ func sdcppAnswer(t *testing.T, images ...[]byte) string {
 	return string(out)
 }
 
-func TestSdcppGenerateSendsTheOpenAIShapeAndDecodesTheAnswer(t *testing.T) {
+func TestOpenAICompatGenerateSendsTheOpenAIShapeAndDecodesTheAnswer(t *testing.T) {
 	var gotPath, gotAuth, gotCType, gotModelHeader string
 	var gotBody map[string]any
-	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
 		gotCType = r.Header.Get("Content-Type")
 		gotModelHeader = r.Header.Get("X-AF-Model")
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 64, 32), tinyPNG(t, 64, 32)))
+		_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 64, 32), tinyPNG(t, 64, 32)))
 	})
 
 	res, err := p.Generate(context.Background(), Request{
@@ -82,14 +84,17 @@ func TestSdcppGenerateSendsTheOpenAIShapeAndDecodesTheAnswer(t *testing.T) {
 	if gotBody["prompt"] != "a red square" || gotBody["size"] != "1024x1024" || gotBody["n"] != float64(2) {
 		t.Errorf("body = %v", gotBody)
 	}
-	// `model` is deliberately not sent: sd-server holds one checkpoint, chosen by a startup
-	// flag, and a model id on the request would suggest it could be switched.
-	if _, sent := gotBody["model"]; sent {
-		t.Error("a model id was sent to an engine that holds exactly one checkpoint")
+	// The row declared exactly one model, so it is the resolved default and rides in the body
+	// (ADR 0083 decision 2: the row's declaration is the switch).
+	if gotBody["model"] != "sdxl-base-1.0" {
+		t.Errorf("model = %v, want the row's declared checkpoint", gotBody["model"])
+	}
+	if gotBody["response_format"] != "b64_json" {
+		t.Errorf("response_format = %v, want b64_json requested explicitly", gotBody["response_format"])
 	}
 	// X-AF-Model IS sent, on the header rather than the OpenAI-shaped body — it is what lets
 	// the gateway's warm-model tracking (ADR 0072 decision 7) work for the image role at all,
-	// since sd-server's own answer carries pixels, never a model name.
+	// since the server's own answer carries pixels, never a model name.
 	if gotModelHeader != "sdxl-base-1.0" {
 		t.Errorf("X-AF-Model = %q, want the engine's started-with checkpoint", gotModelHeader)
 	}
@@ -100,11 +105,11 @@ func TestSdcppGenerateSendsTheOpenAIShapeAndDecodesTheAnswer(t *testing.T) {
 		t.Errorf("dimensions = %dx%d, want 64x32 — they come from the bytes, not from the request",
 			res.Images[0].Width, res.Images[0].Height)
 	}
-	if res.Provider != ProviderSdcpp || res.Model != "sdxl-base-1.0" {
+	if res.Provider != ProviderOpenAICompat || res.Model != "sdxl-base-1.0" {
 		t.Errorf("provenance = %s/%s", res.Provider, res.Model)
 	}
 	if res.Destination == "" {
-		t.Error("no destination: `sdcpp` alone does not tell a reader the prompt went to the fleet's own box")
+		t.Error("no destination: the provider id alone does not say where the prompt went")
 	}
 	// There is no driver model on this route, so there are no tokens — "none", not zero.
 	if res.Usage.Measured {
@@ -115,14 +120,72 @@ func TestSdcppGenerateSendsTheOpenAIShapeAndDecodesTheAnswer(t *testing.T) {
 	}
 }
 
+// A row that declares no model at all gets no `model` field — the same behaviour this route has
+// always had for a single-checkpoint server that never told the catalogue its own id.
+func TestOpenAICompatSendsNoModelWhenTheRowDeclaresNone(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 8, 8)))
+	}))
+	t.Cleanup(srv.Close)
+	p := &openaiCompatProvider{
+		client: srv.Client(),
+		lookup: func(context.Context) (EngineConn, bool) {
+			return EngineConn{BaseURL: srv.URL + "/engine/image/v1", Token: "t"}, true
+		},
+	}
+	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if _, sent := gotBody["model"]; sent {
+		t.Errorf("model = %v, want no model field when the row declares none", gotBody["model"])
+	}
+}
+
+// The caller's own choice of model outranks the row's first declared id.
+func TestOpenAICompatCallerModelOverridesTheRowDefault(t *testing.T) {
+	var gotBody map[string]any
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 8, 8)))
+	})
+	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x", Model: "other-checkpoint"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if gotBody["model"] != "other-checkpoint" {
+		t.Errorf("model = %v, want the caller's own choice", gotBody["model"])
+	}
+}
+
+// A url-only answer is REFUSED, not fetched: response_format=b64_json was requested, so a server
+// that ignores it and returns a link is a server this client does not follow (ADR 0083 decision
+// 2 — the egress is not this provider's to make on the caller's behalf).
+func TestOpenAICompatRefusesAUrlOnlyAnswer(t *testing.T) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
+		out, _ := json.Marshal(map[string]any{
+			"created": 1,
+			"data":    []map[string]string{{"url": "https://example.invalid/generated.png"}},
+		})
+		_, _ = w.Write(out)
+	})
+	_, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x"})
+	if err == nil {
+		t.Fatal("a url-only answer was accepted")
+	}
+	if !strings.Contains(err.Error(), "url") {
+		t.Errorf("err = %v, want the field name named", err)
+	}
+}
+
 // "auto" and an empty size are not sizes: they are omitted so the checkpoint's own default
 // applies, rather than being passed through as a literal the engine would reject.
-func TestSdcppOmitsANonSize(t *testing.T) {
+func TestOpenAICompatOmitsANonSize(t *testing.T) {
 	for _, size := range []string{"", "auto", "big"} {
 		var gotBody map[string]any
-		p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+		p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewDecoder(r.Body).Decode(&gotBody)
-			_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 8, 8)))
+			_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 8, 8)))
 		})
 		if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x", Size: size}); err != nil {
 			t.Fatalf("size %q: %v", size, err)
@@ -136,7 +199,7 @@ func TestSdcppOmitsANonSize(t *testing.T) {
 // The edits endpoint is multipart/form-data, and the mask is a FILE part. This is the one
 // request in the system that is not JSON — the reason the CP's gateway forwards the caller's
 // Content-Type instead of stamping application/json on everything (the boundary is in it).
-func TestSdcppInpaintPostsMultipartWithTheMask(t *testing.T) {
+func TestOpenAICompatInpaintPostsMultipartWithTheMask(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.png")
 	mask := filepath.Join(dir, "mask.png")
@@ -150,7 +213,7 @@ func TestSdcppInpaintPostsMultipartWithTheMask(t *testing.T) {
 	var gotPath string
 	files := map[string]int{}
 	fields := map[string]string{}
-	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil {
@@ -170,7 +233,7 @@ func TestSdcppInpaintPostsMultipartWithTheMask(t *testing.T) {
 				fields[part.FormName()] = string(b)
 			}
 		}
-		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 16, 16)))
+		_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 16, 16)))
 	})
 
 	if _, err := p.Generate(context.Background(), Request{
@@ -184,6 +247,12 @@ func TestSdcppInpaintPostsMultipartWithTheMask(t *testing.T) {
 	if fields["prompt"] != "a blue circle" || fields["size"] != "512x512" {
 		t.Errorf("fields = %v", fields)
 	}
+	if fields["model"] != "sdxl-base-1.0" {
+		t.Errorf("model field = %q, want the row's declared checkpoint", fields["model"])
+	}
+	if fields["response_format"] != "b64_json" {
+		t.Errorf("response_format field = %q, want b64_json", fields["response_format"])
+	}
 	if files["image"] == 0 {
 		t.Error("no image part")
 	}
@@ -194,16 +263,16 @@ func TestSdcppInpaintPostsMultipartWithTheMask(t *testing.T) {
 
 // A mask handed to a route that cannot use it produces a picture OF the mask, so the refusal
 // is here rather than at the engine. The mirror case matters as much: inpaint IS the mask.
-func TestSdcppRefusesTheImpossibleCombinations(t *testing.T) {
+func TestOpenAICompatRefusesTheImpossibleCombinations(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.png")
 	if err := os.WriteFile(src, tinyPNG(t, 8, 8), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	called := false
-	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 8, 8)))
+		_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 8, 8)))
 	})
 	for _, tc := range []struct {
 		name string
@@ -224,21 +293,24 @@ func TestSdcppRefusesTheImpossibleCombinations(t *testing.T) {
 	}
 }
 
-// Caps is per (provider, MODEL) — ADR 0069 decision 5 — and for this provider the model is
-// the checkpoint the stack staged. SDXL and SD 1.5 are the same code path and differ only in
-// what sizes produce a picture rather than a smear.
-func TestSdcppCapsFollowTheCheckpoint(t *testing.T) {
-	p := &sdcppProvider{lookup: func(context.Context) (EngineConn, bool) {
-		return EngineConn{BaseURL: "http://x/v1", Token: "t", Models: []string{"sdxl-base-1.0"}}, true
+// Caps is per (provider, MODEL) — ADR 0069 decision 5 — and sizes come only from what the row
+// declares (ADR 0083 decision 2): no guess from the model id survives the rename, because a
+// guess is a claim about Stable Diffusion checkpoints specifically and this client no longer
+// assumes the far end is one.
+func TestOpenAICompatCapsSizesComeOnlyFromTheRow(t *testing.T) {
+	p := &openaiCompatProvider{lookup: func(context.Context) (EngineConn, bool) {
+		return EngineConn{
+			BaseURL: "http://x/v1", Token: "t",
+			Models: []string{"sdxl-base-1.0"},
+			Sizes:  map[string][]string{"sdxl-base-1.0": {"1024x1024", "1152x896"}},
+		}, true
 	}}
-	if got := p.Caps("").Sizes; got[0] != "1024x1024" {
-		t.Errorf("the default model's sizes = %v, want SDXL's 1024 first", got)
+	if got := p.Caps("").Sizes; len(got) != 2 || got[0] != "1024x1024" {
+		t.Errorf("sizes = %v, want the row's own declaration", got)
 	}
-	if got := p.Caps("sd-v1-5").Sizes; got[0] != "512x512" {
-		t.Errorf("sd-v1-5 sizes = %v, want 512 first", got)
-	}
-	if got := p.Caps("something-else").Sizes; len(got) == 0 {
-		t.Error("an unrecognised checkpoint reported no sizes at all")
+	// A model the row says nothing about offers no sizes at all — not a guess from its id.
+	if got := p.Caps("undeclared-checkpoint").Sizes; len(got) != 0 {
+		t.Errorf("sizes = %v, want none for an undeclared model", got)
 	}
 	caps := p.Caps("")
 	for _, op := range []Op{OpGenerate, OpEdit, OpInpaint} {
@@ -246,25 +318,25 @@ func TestSdcppCapsFollowTheCheckpoint(t *testing.T) {
 			t.Errorf("Caps does not claim %s", op)
 		}
 	}
-	// No Stable Diffusion checkpoint here produces an alpha channel, so the honest answer is
-	// an empty list plus a warning at generation time — not a background this route cannot do.
+	// This client cannot verify whether an arbitrary server's checkpoints have an alpha
+	// channel, so it advertises none rather than guessing either way.
 	if len(caps.Backgrounds) != 0 {
 		t.Errorf("Backgrounds = %v, want none", caps.Backgrounds)
 	}
 }
 
-// Asleep is the NORMAL state of this engine and Ready must not mean "up" — reporting it as
+// Asleep is the NORMAL state of a managed engine and Ready must not mean "up" — reporting it as
 // unready would take generate_image out of tools/list for exactly the reason the on-demand
-// design exists to make invisible. Ready means "this deployment has one, and we hold a token".
-func TestSdcppReadyIsAboutConfigurationNotWakefulness(t *testing.T) {
-	if (&sdcppProvider{}).Ready(context.Background()) {
+// design exists to make invisible. Ready means "this deployment has a row, and we hold a token".
+func TestOpenAICompatReadyIsAboutConfigurationNotWakefulness(t *testing.T) {
+	if (&openaiCompatProvider{}).Ready(context.Background()) {
 		t.Error("ready with no lookup at all")
 	}
-	none := &sdcppProvider{lookup: func(context.Context) (EngineConn, bool) { return EngineConn{}, false }}
+	none := &openaiCompatProvider{lookup: func(context.Context) (EngineConn, bool) { return EngineConn{}, false }}
 	if none.Ready(context.Background()) {
 		t.Error("ready with no engine in the deployment")
 	}
-	half := &sdcppProvider{lookup: func(context.Context) (EngineConn, bool) {
+	half := &openaiCompatProvider{lookup: func(context.Context) (EngineConn, bool) {
 		return EngineConn{BaseURL: "http://x/v1"}, true // no token
 	}}
 	if half.Ready(context.Background()) {
@@ -272,7 +344,7 @@ func TestSdcppReadyIsAboutConfigurationNotWakefulness(t *testing.T) {
 	}
 	// Nothing was dialled to answer any of that: an engine that costs $1.26/hour must not be
 	// woken by a tools/list.
-	full := &sdcppProvider{lookup: func(context.Context) (EngineConn, bool) {
+	full := &openaiCompatProvider{lookup: func(context.Context) (EngineConn, bool) {
 		return EngineConn{BaseURL: "http://127.0.0.1:1/v1", Token: "t"}, true
 	}}
 	if !full.Ready(context.Background()) {
@@ -283,8 +355,8 @@ func TestSdcppReadyIsAboutConfigurationNotWakefulness(t *testing.T) {
 // The gateway's own refusal is the informative one — it is the only party that knows the box
 // did not come up — so it has to survive the trip to the model rather than being replaced by
 // a status code.
-func TestSdcppPassesTheGatewaysReasonThrough(t *testing.T) {
-	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+func TestOpenAICompatPassesTheGatewaysReasonThrough(t *testing.T) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "30")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = io.WriteString(w, `{"error":{"code":"engine_unavailable","message":"the fleet's own inference engine did not come up in time: gave up after 15m0s"}}`)
@@ -295,10 +367,10 @@ func TestSdcppPassesTheGatewaysReasonThrough(t *testing.T) {
 	}
 }
 
-// Decision 7: what could not be honoured is reported, never silently dropped.
-func TestSdcppReportsATransparentBackgroundItCannotDo(t *testing.T) {
-	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 8, 8)))
+// Decision 7 (ADR 0072): what could not be honoured is reported, never silently dropped.
+func TestOpenAICompatReportsATransparentBackgroundItCannotDo(t *testing.T) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 8, 8)))
 	})
 	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x", Background: "transparent"})
 	if err != nil {
@@ -309,30 +381,30 @@ func TestSdcppReportsATransparentBackgroundItCannotDo(t *testing.T) {
 	}
 }
 
-func TestSdcppRejectsAnAnswerItCannotRead(t *testing.T) {
+func TestOpenAICompatRejectsAnAnswerItCannotRead(t *testing.T) {
 	for _, body := range []string{`not json`, `{"data":[]}`, `{"data":[{"b64_json":"@@@"}]}`} {
-		p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) })
+		p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) })
 		if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x"}); err == nil {
 			t.Errorf("%s: accepted", body)
 		}
 	}
 }
 
-// "auto" walks the effective order, and the fleet's own engine comes first where it exists:
+// "auto" walks the effective order, and the fleet's own engines come first where they exist:
 // the other routes spend a MEMBER's plan quota, while a deployment that stood up this engine
 // already decided to pay for the hardware itself. Naming a provider explicitly still pins it,
 // and a deployment with no engine — the normal case — is unaffected.
 func TestAutoPrefersTheSelfHostedEngineOverAMembersPlan(t *testing.T) {
 	caps := func(id string) Caps {
-		if id == ProviderSdcpp {
+		if id == ProviderOpenAICompat {
 			return Caps{Ops: []Op{OpGenerate, OpEdit, OpInpaint}}
 		}
 		return Caps{Ops: []Op{OpGenerate, OpEdit}}
 	}
-	ready := map[string]bool{ProviderSdcpp: true, ProviderCodex: true, ProviderAgy: true}
+	ready := map[string]bool{ProviderOpenAICompat: true, ProviderCodex: true, ProviderAgy: true}
 	got := chooseImageProviders("", Request{Op: OpGenerate}, providerOrder, ready, caps)
-	if len(got) == 0 || got[0] != ProviderSdcpp {
-		t.Errorf("auto chose %v, want %q first", got, ProviderSdcpp)
+	if len(got) == 0 || got[0] != ProviderOpenAICompat {
+		t.Errorf("auto chose %v, want %q first", got, ProviderOpenAICompat)
 	}
 	// The fall-through order still holds behind it: an engine that turns out to be broken must
 	// leave the member's own routes reachable rather than ending the call.
@@ -349,7 +421,7 @@ func TestAutoPrefersTheSelfHostedEngineOverAMembersPlan(t *testing.T) {
 	}
 	// inpaint is the fleet engine's alone here, so the list must not offer a provider that
 	// cannot do it — a fall-through to one would be a second failure, not a rescue.
-	if got := chooseImageProviders("", Request{Op: OpInpaint}, providerOrder, ready, caps); len(got) != 1 || got[0] != ProviderSdcpp {
+	if got := chooseImageProviders("", Request{Op: OpInpaint}, providerOrder, ready, caps); len(got) != 1 || got[0] != ProviderOpenAICompat {
 		t.Errorf("inpaint chose %v", got)
 	}
 }
@@ -369,10 +441,10 @@ func shortRetries(t *testing.T) {
 // while a GPU box boots — the ingress closes an idle connection first (measured: the CP
 // answered `503 59.998s` against its own 900-second hold, while the engine took 165 s) — so
 // one tool call has to survive being answered "not yet" several times.
-func TestSdcppKeepsAskingWhileTheEngineIsWaking(t *testing.T) {
+func TestOpenAICompatKeepsAskingWhileTheEngineIsWaking(t *testing.T) {
 	shortRetries(t)
 	var attempts int
-	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		if attempts < 3 {
 			w.Header().Set("Retry-After", "6")
@@ -380,7 +452,7 @@ func TestSdcppKeepsAskingWhileTheEngineIsWaking(t *testing.T) {
 			_, _ = io.WriteString(w, `{"error":{"code":"engine_waking","message":"the fleet's own inference engine is starting; retry"}}`)
 			return
 		}
-		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 8, 8)))
+		_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 8, 8)))
 	})
 	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x"})
 	if err != nil {
@@ -397,17 +469,17 @@ func TestSdcppKeepsAskingWhileTheEngineIsWaking(t *testing.T) {
 // An ingress that gave up on the gateway's behalf. It never gets to say `engine_waking`, so
 // the status is all there is — and it is also what a Control Plane too old to fold its wait
 // looks like from here.
-func TestSdcppRetriesAnIngressTimeout(t *testing.T) {
+func TestOpenAICompatRetriesAnIngressTimeout(t *testing.T) {
 	shortRetries(t)
 	var attempts int
-	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		if attempts == 1 {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			_, _ = io.WriteString(w, "<html>504 Gateway Time-out</html>")
 			return
 		}
-		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 8, 8)))
+		_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 8, 8)))
 	})
 	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x"}); err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -419,7 +491,7 @@ func TestSdcppRetriesAnIngressTimeout(t *testing.T) {
 
 // The two 503s that are refusals, not delays. Retrying either would turn a clear answer into
 // a sixteen-minute hang, with the model told nothing until the very end.
-func TestSdcppDoesNotRetryARefusal(t *testing.T) {
+func TestOpenAICompatDoesNotRetryARefusal(t *testing.T) {
 	shortRetries(t)
 	for _, tc := range []struct{ code, want string }{
 		{"engine_off", "switched off"},
@@ -427,7 +499,7 @@ func TestSdcppDoesNotRetryARefusal(t *testing.T) {
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			var attempts int
-			p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+			p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 				attempts++
 				w.WriteHeader(http.StatusServiceUnavailable)
 				_, _ = io.WriteString(w, `{"error":{"code":"`+tc.code+`","message":"`+tc.want+`"}}`)
@@ -446,7 +518,7 @@ func TestSdcppDoesNotRetryARefusal(t *testing.T) {
 // The retry has to REBUILD the request, not replay it: an edit's body is a multipart document
 // that the first attempt has already read to the end. A retried POST carrying an empty body
 // would fail on the one endpoint in this system that is not JSON, and only there.
-func TestSdcppRebuildsTheMultipartBodyOnRetry(t *testing.T) {
+func TestOpenAICompatRebuildsTheMultipartBodyOnRetry(t *testing.T) {
 	shortRetries(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.png")
@@ -455,7 +527,7 @@ func TestSdcppRebuildsTheMultipartBodyOnRetry(t *testing.T) {
 	}
 	var attempts int
 	sizes := map[int]int{}
-	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil {
@@ -479,7 +551,7 @@ func TestSdcppRebuildsTheMultipartBodyOnRetry(t *testing.T) {
 			_, _ = io.WriteString(w, `{"error":{"code":"engine_waking","message":"starting"}}`)
 			return
 		}
-		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 16, 16)))
+		_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 16, 16)))
 	})
 	if _, err := p.Generate(context.Background(), Request{
 		Op: OpEdit, Prompt: "red", Inputs: []string{src},
@@ -498,9 +570,9 @@ func TestSdcppRebuildsTheMultipartBodyOnRetry(t *testing.T) {
 // The budget is the caller's, not the gateway's: when it runs out the message has to say what
 // was being waited for, because "context deadline exceeded" after fifteen minutes of waking a
 // GPU box tells nobody what to do next.
-func TestSdcppGivesUpWithAReasonWhenTheBudgetRunsOut(t *testing.T) {
+func TestOpenAICompatGivesUpWithAReasonWhenTheBudgetRunsOut(t *testing.T) {
 	shortRetries(t)
-	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "1")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = io.WriteString(w, `{"error":{"code":"engine_waking","message":"starting"}}`)
@@ -517,10 +589,10 @@ func TestSdcppGivesUpWithAReasonWhenTheBudgetRunsOut(t *testing.T) {
 // the two notices first is a race — it showed up as a flaky test before it showed up as a
 // thought — and a caller who waited a quarter of an hour must not be told
 // "context deadline exceeded" just because the clock happened to land mid-flight.
-func TestSdcppGivesUpWithAReasonWhenTheBudgetRunsOutMidRequest(t *testing.T) {
+func TestOpenAICompatGivesUpWithAReasonWhenTheBudgetRunsOutMidRequest(t *testing.T) {
 	shortRetries(t)
 	var attempts int
-	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+	p := openaiCompatStub(t, func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		if attempts == 1 {
 			w.Header().Set("Retry-After", "1")
@@ -533,7 +605,7 @@ func TestSdcppGivesUpWithAReasonWhenTheBudgetRunsOutMidRequest(t *testing.T) {
 		// waits for outstanding handlers and is registered before anything this function can
 		// add, so it runs last (measured, as a 600-second hang).
 		time.Sleep(200 * time.Millisecond)
-		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 8, 8)))
+		_, _ = io.WriteString(w, openaiCompatAnswer(t, tinyPNG(t, 8, 8)))
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
@@ -547,7 +619,7 @@ func TestSdcppGivesUpWithAReasonWhenTheBudgetRunsOutMidRequest(t *testing.T) {
 	}
 }
 
-func TestSdcppRetryAfterIsClamped(t *testing.T) {
+func TestOpenAICompatRetryAfterIsClamped(t *testing.T) {
 	for _, tc := range []struct {
 		in   string
 		want time.Duration

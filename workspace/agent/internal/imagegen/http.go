@@ -290,8 +290,13 @@ func serviceLabelOf(id string) string {
 		// rather than a tier ("Nano Banana Pro" is the pro image model, this route is on a flash
 		// one) — naming a tier would be a claim about a model id that moves.
 		return "Gemini の画像生成（通称 Nano Banana。Google。利用者の Antigravity/Gemini プランを消費）"
-	case ProviderSdcpp:
-		return "Stable Diffusion（このフリート自身の GPU。外部サービスではない）"
+	case ProviderOpenAICompat:
+		// Unlike the other cases, this id names a PROTOCOL, not a service (ADR 0083 decision 2):
+		// the engine table row behind it can be this fleet's own GPU, an operator's LAN box, or a
+		// metered vendor endpoint paid by an API key, and the id alone cannot tell those apart.
+		// Say what is true of the protocol and let Destination (Result.Destination) carry the
+		// specific row's answer, rather than asserting "not external" for a row that may be.
+		return "OpenAI 互換の画像サーバー（宛先はエンジン表の行次第。このフリート自身の GPU のこともあれば、鍵で払う外部サービスのこともある）"
 	case ProviderComfy:
 		// Deliberately not "this fleet's own GPU": since ADR 0076 the same route also reaches a
 		// ComfyUI on the operator's LAN, and the part that decides between routes is that no
@@ -309,11 +314,11 @@ func driverModelOf(id string) string {
 		return codexDriverModel()
 	case ProviderAgy:
 		return agyDriverModel()
-	case ProviderSdcpp:
-		// Not a driver model but the CHECKPOINT the engine was started with — the only model
-		// this route has, and the one its Caps are keyed to. Answered from the stack's
-		// declaration, so asking costs nothing and does not wake the box.
-		return sdcppDriverModel()
+	case ProviderOpenAICompat:
+		// Not a driver model but the default checkpoint: the row's first declared model id, which
+		// is also the only one on a single-checkpoint server. Answered from the row's own
+		// declaration, so asking costs nothing and does not wake anything.
+		return openaiCompatDriverModel()
 	case ProviderComfy:
 		// Not a driver model either, and unlike sdcpp not the only one this route has: it is the
 		// checkpoint a request naming none would run on, with the rest carried in

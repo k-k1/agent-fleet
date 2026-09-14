@@ -91,7 +91,7 @@ export interface ImagegenLora {
 /**
  * One ready provider. The engine-level fields of decision 5 (`samplers`, `schedulers`,
  * `typical_ms`, `wake_ms`, `lora_weight_max`, `negative_always`) live HERE, not on the status
- * root — they are per provider, and a fleet with both comfy and sdcpp has two answers.
+ * root — they are per provider, and a fleet with both comfy and openai-compat has two answers.
  */
 export interface ImagegenProvider {
   id: string;
@@ -308,11 +308,11 @@ export const loraTriggers = (l: ImagegenLora): string[] => l.trained_words || []
 export const loraWeight = (l: ImagegenLora): number => (l.weight && l.weight > 0 ? l.weight : 1);
 
 /**
- * The provider this pane drives: the first FLEET provider (comfy / sdcpp) that is ready.
+ * The provider this pane drives: the first FLEET provider (comfy / openai-compat) that is ready.
  * The CLI-driven providers are agents by construction and own none of these knobs, so the
  * pane must not offer them even when the status lists them first (decision 1).
  */
-export const FLEET_PROVIDERS = ["comfy", "sdcpp"];
+export const FLEET_PROVIDERS = ["comfy", "openai-compat"];
 
 export function fleetProvider(st: ImagegenStatus | null): ImagegenProvider | null {
   const list = st?.providers || [];

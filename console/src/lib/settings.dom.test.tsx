@@ -51,27 +51,30 @@ describe("normalizeClaudeCustomModels", () => {
 // before a provider existed must still RANK it — and WHERE it ranks it decides whose money an
 // unattended call spends.
 describe("normalizeImageProviderOrder", () => {
-  it("puts a fleet provider the stored list predates at the FRONT", () => {
-    // 🔴 The measured case (ADR 0072, 2026-09-11): this exact stored value, written before
-    // `comfy` existed, made `auto` reach the fleet's own GPU only after two personal plans.
-    expect(normalizeImageProviderOrder(["sdcpp", "agy", "codex"])).toEqual(["comfy", "sdcpp", "agy", "codex"]);
+  // 🔴 The measured case (ADR 0072, 2026-09-11) was this exact stored value, written before
+  // `comfy` existed: `auto` reached the fleet's own GPU only after two personal plans. ADR 0083
+  // retired the `sdcpp` id, so the same literal value now exercises the migration decision 7
+  // describes: an id the vocabulary no longer knows drops out entirely, and BOTH fleet providers
+  // — unmentioned, same as `comfy` was in 2026-09-11 — go to the front together.
+  it("drops a retired id and puts every fleet provider the stored list predates at the FRONT", () => {
+    expect(normalizeImageProviderOrder(["sdcpp", "agy", "codex"])).toEqual(["openai-compat", "comfy", "agy", "codex"]);
   });
 
   it("keeps an external provider the stored list predates at the back", () => {
-    expect(normalizeImageProviderOrder(["sdcpp", "comfy", "agy"])).toEqual(["sdcpp", "comfy", "agy", "codex"]);
+    expect(normalizeImageProviderOrder(["openai-compat", "comfy", "agy"])).toEqual(["openai-compat", "comfy", "agy", "codex"]);
   });
 
   it("leaves a provider the stored list names where the user put it", () => {
     // Including a fleet one ranked last on purpose: this step only places what was never named.
-    expect(normalizeImageProviderOrder(["agy", "codex", "comfy", "sdcpp"])).toEqual(["agy", "codex", "comfy", "sdcpp"]);
+    expect(normalizeImageProviderOrder(["agy", "codex", "comfy", "openai-compat"])).toEqual(["agy", "codex", "comfy", "openai-compat"]);
   });
 
   it("honours an explicit reorder and drops unknown ids and duplicates", () => {
-    expect(normalizeImageProviderOrder(["codex", "bedrock", "codex", "agy"])).toEqual(["sdcpp", "comfy", "codex", "agy"]);
+    expect(normalizeImageProviderOrder(["codex", "bedrock", "codex", "agy"])).toEqual(["openai-compat", "comfy", "codex", "agy"]);
   });
 
   it("falls back to the built-in order for a broken stored value", () => {
-    expect(normalizeImageProviderOrder("agy")).toEqual(["sdcpp", "comfy", "agy", "codex"]);
+    expect(normalizeImageProviderOrder("agy")).toEqual(["openai-compat", "comfy", "agy", "codex"]);
   });
 });
 
@@ -79,12 +82,12 @@ describe("normalizeImageProviderOrder", () => {
 // (ADR 0082). The stored value still carries both ids, so the round trip is what these pin.
 describe("the fleet's own engines as one row", () => {
   it("draws one row for them, at the rank the first of them holds", () => {
-    expect(collapseImageProviderOrder(["sdcpp", "comfy", "agy", "codex"])).toEqual([
+    expect(collapseImageProviderOrder(["openai-compat", "comfy", "agy", "codex"])).toEqual([
       IMAGE_PROVIDER_FLEET_GROUP,
       "agy",
       "codex",
     ]);
-    expect(collapseImageProviderOrder(["agy", "codex", "comfy", "sdcpp"])).toEqual([
+    expect(collapseImageProviderOrder(["agy", "codex", "comfy", "openai-compat"])).toEqual([
       "agy",
       "codex",
       IMAGE_PROVIDER_FLEET_GROUP,
@@ -102,16 +105,16 @@ describe("the fleet's own engines as one row", () => {
     expect(expandImageProviderOrder(["agy", "codex", IMAGE_PROVIDER_FLEET_GROUP])).toEqual([
       "agy",
       "codex",
-      "sdcpp",
+      "openai-compat",
       "comfy",
     ]);
   });
 
   it("brings ids that were stored apart back together, which is what one row promised", () => {
-    const stored = normalizeImageProviderOrder(["sdcpp", "agy", "comfy"]);
-    expect(stored).toEqual(["sdcpp", "agy", "comfy", "codex"]);
+    const stored = normalizeImageProviderOrder(["openai-compat", "agy", "comfy"]);
+    expect(stored).toEqual(["openai-compat", "agy", "comfy", "codex"]);
     expect(expandImageProviderOrder(collapseImageProviderOrder(stored))).toEqual([
-      "sdcpp",
+      "openai-compat",
       "comfy",
       "agy",
       "codex",

@@ -156,9 +156,9 @@ func TestStatusNamesTheFleetEngineServiceAndModel(t *testing.T) {
 			}
 		})
 	}
-	// sdcpp is the route comfy's case was modelled on; both fleet routes answer, and an empty
-	// answer from either is what this test exists to catch.
-	if s, m := serviceLabelOf(ProviderSdcpp), serviceLabelOf(ProviderComfy); s == "" || m == "" {
+	// openai-compat is the route comfy's case was modelled on; both fleet routes answer, and an
+	// empty answer from either is what this test exists to catch.
+	if s, m := serviceLabelOf(ProviderOpenAICompat), serviceLabelOf(ProviderComfy); s == "" || m == "" {
 		t.Errorf("service labels = %q/%q, want both fleet routes named", s, m)
 	}
 }

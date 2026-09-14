@@ -298,6 +298,14 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		row["negative_always"] = e.negativeAlways(ctx)
 		row["negative_max"] = engineNegativeMaxRunes
 	}
+	// This build's client vocabulary is {comfy, openai-compat} (ADR 0083 decision 5). A row
+	// naming anything else — `sdcpp`, most likely, retired the same ADR — cannot be served no
+	// matter what its mode or lifecycle say, and the panel has to say so rather than let the row
+	// look like every other one until an operator hears "the image tool disappeared" from a
+	// member.
+	if !imageProviderServable(e.def) {
+		row["provider_unserved"] = true
+	}
 	// Which model is actually in VRAM, and how often that changed. Both are IN-MEMORY facts of
 	// this CP process (see engineServed), and `warm_model` is absent rather than stale whenever
 	// the engine is not warm — a named model would say "this request is cheap" about a box that

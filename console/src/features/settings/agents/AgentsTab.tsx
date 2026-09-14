@@ -148,9 +148,10 @@ export function AgentsTab() {
       {s.imageGeneration && (
         <>
           <Row label={tr("agents.image_provider_order")}>
-            {/* Drawn collapsed: the fleet's own engines are one row, because sdcpp and comfy
-                carry the same label and only one of them is ever served (ADR 0072 decision 4).
-                The setting itself keeps every id — see IMAGE_PROVIDER_FLEET_GROUP. */}
+            {/* Drawn collapsed: the fleet's own providers are one row, because until the list
+                comes from the engine table's own rows (ADR 0082 decision 3) a provider with no
+                row is a rank nothing can route to (ADR 0083 decision 8). The setting itself
+                keeps every id — see IMAGE_PROVIDER_FLEET_GROUP. */}
             <OrderList
               value={imageOrder}
               labels={Object.fromEntries(imageOrder.map((p) => [p, imageProviderLabel(p) || agentOf(p).assistantName]))}
