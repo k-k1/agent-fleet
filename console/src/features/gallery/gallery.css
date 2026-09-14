@@ -18,8 +18,20 @@
   display: inline-flex;
   gap: 2px;
 }
-/* The breadcrumb: the way out of a folder, and the only one that survives the empty state.
-   It shrinks before the title does — the last segment is already the pane's title. */
+/* Its own row, under the head: the head's title/count/sort toggle left the breadcrumb almost no
+   room to grow, and a folder a few levels down had nowhere to show its trail. The "Up" button
+   here is ALWAYS present (disabled at the root), not only as a grid card that a scrolled-down
+   folder hides — see GalleryView.tsx for why it and the breadcrumb share `navigate()`. */
+.gal-path {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px 10px;
+  background: var(--bar);
+  border-bottom: 1px solid var(--border);
+}
+/* The breadcrumb: the way out of a folder, and the only one that survives the empty state. */
 .gal-crumbs {
   display: flex;
   min-width: 0;

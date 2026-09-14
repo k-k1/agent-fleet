@@ -31,7 +31,7 @@ const fetchMock = vi.fn(async (url: string) => {
 vi.stubGlobal("fetch", fetchMock);
 
 const { GalleryView } = await import("./GalleryView.tsx");
-const { useLayoutStore } = await import("../../layout/store.ts");
+const { useLayoutStore, wireLayoutHistory } = await import("../../layout/store.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { allViews, freshLayout } = await import("../../layout/ops.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
@@ -79,6 +79,14 @@ const click = async (el: Element | null | undefined) => {
     el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
 };
+
+/** popstate arrives asynchronously even in jsdom (history.back() is queued as a task) — same
+ *  helper layout/history.dom.test.tsx uses. */
+const back = (): Promise<void> =>
+  new Promise((resolve) => {
+    window.addEventListener("popstate", () => setTimeout(resolve, 0), { once: true });
+    history.back();
+  });
 
 beforeEach(() => {
   listings = 0;
@@ -296,6 +304,47 @@ describe("画像ギャラリーのペイン", () => {
     await click(folderCards()[0].querySelector(".gal-enter")); // 上へ
     const content = () => allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content;
     expect(content()).toEqual({ kind: "gallery", galleryPath: "a" });
+  });
+
+  it("ヘッダの「上へ」は常に出ており（スクロールで隠れるグリッドの札とは別）、押すと親フォルダへ移動する", async () => {
+    served = [img("a.png", 100)];
+    const paneId = await render({ path: "a/b" });
+    const upBtn = host.querySelector<HTMLButtonElement>(".gal-path button");
+    expect(upBtn).not.toBeNull();
+    expect(upBtn!.disabled).toBe(false);
+    await click(upBtn);
+    const content = allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content;
+    expect(content).toEqual({ kind: "gallery", galleryPath: "a" });
+  });
+
+  it("ルートではヘッダの「上へ」が無効になる（グリッドに札そのものが無いのと揃える）", async () => {
+    served = [img("a.png", 100)];
+    await render({ path: "" });
+    expect(host.querySelector<HTMLButtonElement>(".gal-path button")!.disabled).toBe(true);
+    expect(folderCards()).toHaveLength(0); // グリッド側にも「上へ」の札が無い
+  });
+
+  it("戻るボタンでひとつ前のフォルダへ戻る（「上へ」・パンくず・カードのどれで来ても同じ経路）", async () => {
+    const unwire = wireLayoutHistory();
+    try {
+      served = [{ name: "b", type: "dir" }];
+      const paneId = await render({ path: "a" });
+      // A clean standing entry to leave the first navigate's push something correct to restamp
+      // (same convention layout/history.dom.test.tsx's beforeEach uses).
+      history.replaceState({ __af: true, layout: useLayoutStore.getState().layout }, "");
+      const pathOf = () =>
+        (allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content as { galleryPath: string })
+          .galleryPath;
+
+      served = [img("x.png", 1)];
+      await click(folderCards().find((c) => c.textContent?.includes("b"))?.querySelector(".gal-enter"));
+      expect(pathOf()).toBe("a/b");
+
+      await back();
+      expect(pathOf()).toBe("a");
+    } finally {
+      unwire();
+    }
   });
 
   it("セッションのフォルダは UUID でなくセッション名と枚数で出る（追加の問い合わせ無しで）", async () => {
