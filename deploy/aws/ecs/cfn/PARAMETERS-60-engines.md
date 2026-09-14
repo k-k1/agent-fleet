@@ -1611,6 +1611,24 @@ the model's terms with the operator's account (and, for a fine-grained token, gr
 access to the contents of public gated repos). Accepting the terms and retrying the same file
 passed.
 
+### The Civitai token
+
+`CivitaiTokenSecret` is the same shape as `HfTokenSecret` above — always created holding the
+sentinel `-`, read by the INGEST task only, registered the same way (Console → Settings →
+engines) and carried the same way (the DB is the record of truth, the secret is the path). It is
+a SEPARATE secret rather than a second value in the Hugging Face one: the two are unrelated
+accounts on unrelated services, and clearing one must never touch the other.
+
+`ExecCivitaiTokenPolicy` mirrors `ExecHfTokenPolicy`, scoped to `CivitaiTokenSecret` alone. The
+`fetch` container's `Secrets` block carries both — `HF_TOKEN` and `CIVITAI_TOKEN` — and the
+script picks between them by the download URL's own host (`ingest-fetch.sh`), never sending a
+Hugging Face token to Civitai or the other way round.
+
+A Civitai download that fails with 401 means no token reached the task; 403 means one did and
+this deployment's Civitai account still cannot have the file — an uploader-restricted asset, or
+an account with no entitlement for it. The same two-way split as the Hugging Face token's, and
+for the same reason: the two failures send an operator to different places.
+
 ### The ingest containers
 
 Two containers, `fetch` then `upload`, sharing a `scratch` volume.
@@ -1641,7 +1659,7 @@ stack so that a deployment which does not adopt 60-engines gains nothing:
 | `ecs:RunTask` | this stack's ingest family, on this cluster | starting the fetch |
 | `iam:PassRole` | `IngestTaskRole` only | a task cannot be started without passing its role |
 | `logs:GetLogEvents` / `DescribeLogStreams` | this stack's log group | WHY a job failed |
-| `secretsmanager:PutSecretValue` | `HfTokenSecret` only | carrying a registered token to the ingest task |
+| `secretsmanager:PutSecretValue` | `HfTokenSecret` and `CivitaiTokenSecret` only | carrying a registered token to the ingest task |
 | `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets` | `*` | buying the engine box (ADR 0077 decision 10). A fleet has no ARN to scope to; the fence is the launch template the call may name and the `iam:PassRole` below |
 | `iam:PassRole` | `EngineInstanceRole` only, `PassedToService: ec2.amazonaws.com` | the launch template carries the instance profile, so the purchase passes that role — the shape of 20-platform's `PassSlotRole` |
 | `iam:CreateServiceLinkedRole` | `iam:AWSServiceName` in `[spot.amazonaws.com, ec2fleet.amazonaws.com]` | the CP's own way out on an account where `standup.sh` never ran |

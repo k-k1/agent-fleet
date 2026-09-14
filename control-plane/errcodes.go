@@ -95,11 +95,16 @@ const (
 	// the word "gated" and nothing else.
 	errCodeIngestGatedNotAccepted = "gated_not_accepted"
 	errCodeIngestIDExists         = "model_id_exists"
-	// A Civitai asset whose uploader requires a logged-in account (ADR 0072 P2 欠落 5). The
-	// counterpart of `gated_no_token`, and deliberately not the same code: gating is the
-	// repository's terms and a registered token satisfies them, while this deployment has no
-	// Civitai account at all and no field in which to put one.
+	// A Civitai download that failed with 403: a token reached the task and this deployment's
+	// Civitai account still cannot have the file (an uploader-restricted asset, or an account
+	// with no entitlement for it) — the same "the token arrived, the account cannot" shape as
+	// `gated_not_accepted`, spelled differently because the fix is on Civitai's site, not
+	// Hugging Face's.
 	errCodeIngestCivitaiLogin = "civitai_login_required"
+	// A Civitai download that failed with 401: no token reached the task, either because none
+	// is registered or because it did not carry into the secret. The counterpart of
+	// `gated_no_token`.
+	errCodeIngestCivitaiNoToken = "civitai_gated_no_token"
 	// Forgetting a row of the job history (ADR 0072 P4, the delete the table never had). Two
 	// codes because the two refusals send the reader to opposite places: `ingest_job_unknown`
 	// is the id — and also the answer a granted tenant_admin gets for another tenant's job,
@@ -117,4 +122,11 @@ const (
 	errCodeHfTokenEmpty       = "hf_token_empty"
 	errCodeHfTokenStoreFailed = "hf_token_store_failed"
 	errCodeHfTokenPutFailed   = "hf_token_put_failed"
+
+	// Registering the operator's Civitai token, the same shape as the Hugging Face token above
+	// and for the same reason: the write reaches a sealed setting and the stack's secret.
+	errCodeCivitaiTokenUnsupported = "civitai_token_unsupported"
+	errCodeCivitaiTokenEmpty       = "civitai_token_empty"
+	errCodeCivitaiTokenStoreFailed = "civitai_token_store_failed"
+	errCodeCivitaiTokenPutFailed   = "civitai_token_put_failed"
 )

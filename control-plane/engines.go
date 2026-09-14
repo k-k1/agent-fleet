@@ -211,6 +211,10 @@ type engineIngestDef struct {
 	// the CP is upgraded before the stack is — on such a table TokenSecret is empty, nothing can
 	// be registered, and this is the whole answer.
 	HasToken bool `json:"hasToken"`
+	// CivitaiTokenSecret is the Secrets Manager secret the ingest task reads CIVITAI_TOKEN
+	// from — the same carrying-path shape as TokenSecret, for an unrelated account. Empty on a
+	// stack that predates it, where there is nothing to write to and nothing can be registered.
+	CivitaiTokenSecret string `json:"civitaiTokenSecret"`
 }
 
 func (d engineIngestDef) ok() bool {
@@ -817,7 +821,8 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 				models: mgr.store,
 				storage: newEngineStorage(def.Bucket,
 					newEngineAWSStorageMetadata(def.Bucket, s3.NewFromConfig(ac))),
-				tokens: newEngineHfTokens(def, mgr.store, mgr, secretsmanager.NewFromConfig(ac)),
+				tokens:        newEngineHfTokens(def, mgr.store, mgr, secretsmanager.NewFromConfig(ac)),
+				civitaiTokens: newEngineCivitaiTokens(def, mgr.store, mgr, secretsmanager.NewFromConfig(ac)),
 				onDone: func(role string) {
 					if e := reg.get(role); e != nil {
 						e.catalog.invalidate()

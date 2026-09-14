@@ -234,7 +234,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.engine_discover_unsupported": "This row is not an external ComfyUI row, so there is nothing to discover.",
   "err.engine_discover_unreachable": "Could not reach that machine — it may be powered off or unreachable on the network.",
   "err.gated_not_accepted": "That account has not accepted this repository's terms yet.",
-  "err.civitai_login_required": "That asset's uploader only allows downloads from a logged-in account.",
+  "err.civitai_login_required": "A Civitai token reached the task, and this deployment's account still cannot have this asset.",
+  "err.civitai_gated_no_token": "That asset requires a logged-in account and this deployment has no Civitai token.",
   "err.bad_source": "The source is not a valid one.",
   "err.file_unknown": "The repository does not list that file.",
   "err.no_checksum": "The source publishes no sha256 — take it in with an explicit url and sha256.",
@@ -254,6 +255,10 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.hf_token_empty": "The token is empty.",
   "err.hf_token_store_failed": "The token could not be saved.",
   "err.hf_token_put_failed": "The token could not be written into the deployment's secret.",
+  "err.civitai_token_unsupported": "This deployment's engine stack has nowhere to keep the token — update 60-engines.",
+  "err.civitai_token_empty": "The token is empty.",
+  "err.civitai_token_store_failed": "The token could not be saved.",
+  "err.civitai_token_put_failed": "The token could not be written into the deployment's secret.",
   // --- The image queue (ADR 0081 lane A). This route was not proxied before, so these codes
   // appear here for the first time; without them the Agent's English message shows through.
   "err.queue_full": "The image queue is full. Wait for what is in it before adding more.",

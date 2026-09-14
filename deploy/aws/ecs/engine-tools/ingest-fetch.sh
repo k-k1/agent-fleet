@@ -6,10 +6,14 @@
 # reaches the bucket. `cfn/PARAMETERS-60-engines.md`, "The ingest containers".
 #
 # Environment (the contract, version CONTRACT):
-#   URL       what to fetch                              (required unless MODE=delete)
-#   SHA256    the expected digest                        (optional, and warned about when absent)
-#   MODE      "delete" skips this step entirely          (optional)
-#   HF_TOKEN  injected from Secrets Manager; "-" is the sentinel for "no token registered"
+#   URL           what to fetch                              (required unless MODE=delete)
+#   SHA256        the expected digest                        (optional, and warned about when absent)
+#   MODE          "delete" skips this step entirely          (optional)
+#   HF_TOKEN      injected from Secrets Manager; "-" is the sentinel for "no token registered"
+#   CIVITAI_TOKEN the same, for a Civitai account (engine_civitai_token.go). Only one of the two
+#                 is ever sent, chosen by the URL's own host: a foreign Bearer token offered to
+#                 the other service is not "harmless" — a value it does not recognise is not
+#                 guaranteed to be read as anonymous.
 
 # --- the contract gate -----------------------------------------------------------------
 #
@@ -42,11 +46,19 @@ set -e
 [ "$MODE" = delete ] && { echo "ingest: delete mode, nothing to fetch"; exit 0; }
 [ -n "$URL" ] || { echo "ingest: URL is required"; exit 2; }
 start=$(date +%s)
-if [ -n "$HF_TOKEN" ] && [ "$HF_TOKEN" != - ]; then
-  set -- -H "Authorization: Bearer $HF_TOKEN"
-else
-  set --
-fi
+set --
+case "$URL" in
+  https://huggingface.co/*|https://*.huggingface.co/*)
+    if [ -n "$HF_TOKEN" ] && [ "$HF_TOKEN" != - ]; then
+      set -- -H "Authorization: Bearer $HF_TOKEN"
+    fi
+    ;;
+  https://civitai.com/*|https://*.civitai.com/*)
+    if [ -n "$CIVITAI_TOKEN" ] && [ "$CIVITAI_TOKEN" != - ]; then
+      set -- -H "Authorization: Bearer $CIVITAI_TOKEN"
+    fi
+    ;;
+esac
 curl -fsSL "$@" -o /scratch/blob "$URL"
 size=$(stat -c %s /scratch/blob)
 secs=$(( $(date +%s) - start ))

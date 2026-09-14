@@ -156,6 +156,11 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	mux.HandleFunc("GET /api/admin/engines/hf-token", a.withSuperAdmin(a.getHfToken))
 	mux.HandleFunc("PUT /api/admin/engines/hf-token", a.withSuperAdmin(a.putHfToken))
 	mux.HandleFunc("DELETE /api/admin/engines/hf-token", a.withSuperAdmin(a.deleteHfToken))
+	// The operator's Civitai token (engine_civitai_token.go), the same shape and the same
+	// reason: one account serves every role, because one ingest task does.
+	mux.HandleFunc("GET /api/admin/engines/civitai-token", a.withSuperAdmin(a.getCivitaiToken))
+	mux.HandleFunc("PUT /api/admin/engines/civitai-token", a.withSuperAdmin(a.putCivitaiToken))
+	mux.HandleFunc("DELETE /api/admin/engines/civitai-token", a.withSuperAdmin(a.deleteCivitaiToken))
 	// The credential another deployment borrows these engines with (ADR 0079 decision 3, P1).
 	// Super_admin only and never GET — it opens every engine here, so a tenant-scoped role is
 	// not in proportion, and a credential does not belong in a URL. engine_issue_token.go.

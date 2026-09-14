@@ -288,7 +288,7 @@ Resources:
             Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/af/${AWS::StackName}/engines:*"
           - Effect: Allow
             Action: [ secretsmanager:PutSecretValue ]
-            Resource: !Ref HfTokenSecret
+            Resource: [ !Ref HfTokenSecret, !Ref CivitaiTokenSecret ]
           # HeadObject is authorised by s3:GetObject. ListBucket is required only for S3 to
           # answer 404 instead of 403 when that object is absent; the CP has no list operation.
           - Effect: Allow
@@ -347,6 +347,28 @@ Resources:
           - Effect: Allow
             Action: [ secretsmanager:GetSecretValue ]
             Resource: !Ref HfTokenSecret
+
+  # !! Always created, holding a sentinel - the same shape as HfTokenSecret, for an unrelated
+  # account (engine_civitai_token.go).
+  CivitaiTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "CIVITAI_TOKEN for af-${AWS::StackName} ingest, written by the Control Plane"
+      SecretString: "-"
+
+  # !! Secrets resolve with the EXECUTION role - the same shape as ExecHfTokenPolicy.
+  ExecCivitaiTokenPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "af-${AWS::StackName}-exec-civitai"
+      Roles:
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" } ] ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [ secretsmanager:GetSecretValue ]
+            Resource: !Ref CivitaiTokenSecret
 
   # --- the model catalogue - PARAMETERS, "The models bucket" ---
   ModelsBucket:
@@ -578,11 +600,13 @@ Resources:
           User: "0"
           Command: [ /opt/af/ingest-fetch.sh ]
           Environment:
-            - { Name: ENGINE_TOOLS_CONTRACT, Value: "1" }
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "2" }
             - { Name: URL, Value: "" }
             - { Name: SHA256, Value: "" }
             - { Name: MODE, Value: "" }
-          Secrets: [ { Name: HF_TOKEN, ValueFrom: !Ref HfTokenSecret } ]
+          Secrets:
+            - { Name: HF_TOKEN, ValueFrom: !Ref HfTokenSecret }
+            - { Name: CIVITAI_TOKEN, ValueFrom: !Ref CivitaiTokenSecret }
           MountPoints: [ { SourceVolume: scratch, ContainerPath: /scratch } ]
           LogConfiguration:
             LogDriver: awslogs
@@ -600,7 +624,7 @@ Resources:
           # BUCKET was a CloudFormation substitution while the script was inline; it is an
           # environment variable now, and the only interface change the move made.
           Environment:
-            - { Name: ENGINE_TOOLS_CONTRACT, Value: "1" }
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "2" }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: KEY, Value: "" }
             - { Name: MODE, Value: "" }
@@ -640,7 +664,7 @@ Resources:
               Tag: !Ref EngineToolsImageTag
           Command: [ /opt/af/fetch-models.sh ]
           Environment:
-            - { Name: ENGINE_TOOLS_CONTRACT, Value: "1" }
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "2" }
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/llm/active" }
@@ -758,7 +782,7 @@ Resources:
               Tag: !Ref EngineToolsImageTag
           Command: [ /opt/af/fetch-models.sh ]
           Environment:
-            - { Name: ENGINE_TOOLS_CONTRACT, Value: "1" }
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "2" }
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/image/active" }
@@ -879,12 +903,14 @@ Resources:
           Ingest: !Sub
             - >-
               {"taskDef":"${Family}","subnets":["${Subnets}"],"securityGroups":["${Sg}"],
-              "logGroup":"${Log}","tokenSecret":"${Secret}","bucket":"${Bucket}"}
+              "logGroup":"${Log}","tokenSecret":"${Secret}","civitaiTokenSecret":"${CivitaiSecret}",
+              "bucket":"${Bucket}"}
             - Family: !Ref IngestTaskDef
               Subnets: !Join [ '","', !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ] ]
               Sg: !Ref EngineSg
               Log: !Ref LogGroup
               Secret: !Ref HfTokenSecret
+              CivitaiSecret: !Ref CivitaiTokenSecret
               Bucket: !Ref ModelsBucket
 
 Outputs:
