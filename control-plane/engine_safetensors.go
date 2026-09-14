@@ -18,8 +18,8 @@ package main
 // the only source of the fact, which is what this reads.
 //
 // Where the bytes are read FROM is the source, over the same HTTP the resolve already uses —
-// never S3. The CP has no S3 permission at all, does not know the bucket's name, and gaining
-// either is a reversal of review R3 rather than an implementation detail (ADR 0072).
+// never S3. The CP's storage port exposes HeadObject metadata only, so it cannot supply the
+// tensor bytes this parser needs.
 //
 // 🔴 The verdict is three-valued and the third value is load-bearing. "Not read" and "no VAE in
 // it" are different facts: a `.ckpt`, a source that refuses an anonymous Range, a header longer

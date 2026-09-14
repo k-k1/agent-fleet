@@ -1547,6 +1547,18 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 	if code, body := post("sdxl-base-1.0", `,"attach":true`); code != http.StatusBadRequest {
 		t.Fatalf("an attach with no file_flag = %d, want 400 (%s)", code, body)
 	}
+	// Upload happens before the catalogue swap, so sending a new version to the old key would
+	// destroy the object the row still names even if catalogue installation later failed.
+	rec := httptest.NewRecorder()
+	sameKeyBody := `{"id":"sdxl-base-1.0","kind":"checkpoint",
+	  "s3Key":"image/checkpoints/sd_xl_base_1.0.safetensors","replace":true,"license_accepted":true,
+	  "source":{"url":"https://example.invalid/sdxl-new.safetensors","sha256":"` + strings.Repeat("e", 64) + `"}}`
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(sameKeyBody))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "new S3 key") {
+		t.Fatalf("same-key replacement = %d (%s), want a pre-upload conflict", rec.Code, rec.Body.String())
+	}
 	if code, body := post("sdxl-base-1.0", `,"replace":true`); code != http.StatusOK {
 		t.Fatalf("replacing a row's own checkpoint = %d, want 200 (%s)", code, body)
 	}

@@ -34,6 +34,7 @@ POST /api/admin/engines/{key}/ingest
 POST /api/admin/engines/{key}/ingest/files
 POST /api/admin/engines/{key}/ingest/resolve
 POST /api/admin/engines/{key}/ingest/search
+GET /api/admin/engines/{key}/storage
 DELETE /api/admin/engines/{key}/ingest/{id}
 POST /api/admin/engines/{key}/models
 POST /api/admin/engines/{key}/models/vae-scan

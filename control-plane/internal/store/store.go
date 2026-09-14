@@ -356,11 +356,11 @@ type EngineParams struct {
 type EngineModelFile struct {
 	Flag  string `json:"flag,omitempty"`
 	S3Key string `json:"s3Key"`
-	// Bytes is the object's size, as whoever staged it declared it — the CP cannot look, having
-	// no S3 permission at all (ADR 0072 review R3). It buys one thing: the panel can say what
+	// Bytes is the object's size, as whoever staged it declared it. It buys one thing: the panel can say what
 	// enabling this model adds to the next cold start, which for the llm role is real money
 	// (S3 to EBS ran at 104-147 MB/s, so 18.5 GB is three minutes of a $1.26/hour box).
-	// Zero means undeclared, and undeclared prints nothing rather than "+0 s".
+	// The storage endpoint may report S3's current ContentLength independently; zero here still
+	// means undeclared, and undeclared prints nothing rather than "+0 s".
 	Bytes int64 `json:"bytes,omitempty"`
 	// Source is where THIS file came from, in the same vocabulary as EngineModel.Source
 	// (`hf:<repo>/<file>`, `civitai:<id>`, a URL). The row carries one too, and it answers a
@@ -380,6 +380,16 @@ type EngineModelFile struct {
 	// per-file source. Absent for a seeded row, for one registered by hand, and for everything
 	// taken in before this existed — which is why nothing reads it as "unknown vendor".
 	Source string `json:"source,omitempty"`
+	// ArtifactIdentity pins Source to the exact immutable object selected upstream: HF includes
+	// repository, file, resolved revision and sha256; Civitai includes version, file and sha256;
+	// a URL includes the URL and sha256. Reuse is allowed only when this exact value matches the
+	// newly resolved source. Source alone is intentionally insufficient because its legacy HF
+	// spelling has no revision and its Civitai spelling has no selected filename.
+	//
+	// This rides inside the existing files JSON column, so old rows deserialize with it absent.
+	// Absence must never be reconstructed from Source: an ambiguous legacy identity is unknown,
+	// not permission to reuse whatever bytes happen to occupy the key now.
+	ArtifactIdentity string `json:"artifactIdentity,omitempty"`
 	// VaeBundled is whether THIS file carries the VAE tensors its family decodes with — "yes",
 	// "no", or absent for "nobody read the header" (engine_safetensors.go). It decides the one
 	// fault that otherwise costs a checkpoint switch to discover: an SDXL checkpoint published
@@ -409,6 +419,9 @@ type EngineModelStore interface {
 	ListEngineModels(ctx context.Context, role string) ([]EngineModel, error)
 	// PutEngineModel inserts or replaces one row wholesale.
 	PutEngineModel(ctx context.Context, m EngineModel) error
+	// CreateEngineModel inserts one row only when the role/id is still free. Reports false on
+	// conflict, so a validated ingest cannot overwrite a row created while it was in flight.
+	CreateEngineModel(ctx context.Context, m EngineModel) (bool, error)
 	// AppendEngineModelFile adds one file to an existing row, so a split model can be built up
 	// part by part by the ingest instead of being re-typed through the register route. Reports
 	// false when there is no such row.

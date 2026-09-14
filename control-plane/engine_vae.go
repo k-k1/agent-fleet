@@ -133,10 +133,10 @@ func engineVaeGuard(ctx context.Context, e *engineRuntimeState, id string) *apiE
 // engineVaeSourceOf turns a recorded source back into something engineIngestResolve can read, so
 // the header of a file ALREADY in the bucket can be re-read at its origin.
 //
-// 🔴 It reads the source, never S3. The CP has no S3 permission at all and does not know the
-// bucket's name (ADR 0072 review R3, re-measured 2026-09-13), so the copy this reads is the one
-// still upstream. What that costs is honest and bounded: a source that has been taken down, or a
-// Civitai asset whose uploader requires an account, leaves the verdict unknown — never "no".
+// 🔴 It reads the source, never S3. The CP's storage port exposes only object metadata, not a
+// byte stream, so the copy this reads is the one still upstream. What that costs is honest and
+// bounded: a source that has been taken down, or a Civitai asset whose uploader requires an
+// account, leaves the verdict unknown — never "no".
 func engineVaeSourceOf(source string) (engineIngestSource, bool) {
 	s := strings.TrimSpace(source)
 	switch {
@@ -278,9 +278,9 @@ type engineVaeFollowUp struct {
 	Resolved engineResolved
 	// Staged says the bytes are already here, declared by another row: then there is nothing to
 	// download and the follow-up is one write.
-	Staged bool
-	Bytes  int64
-	Source string
+	Staged                   bool
+	Bytes                    int64
+	Source, ArtifactIdentity string
 }
 
 // engineVaePlan works out what the deployment would do for a checkpoint that carries no VAE, and
@@ -294,7 +294,10 @@ func engineVaePlan(ctx context.Context, rows []store.EngineModel, family string)
 		return nil, engineFamilyVae{}, false
 	}
 	if staged, here := engineVaeStagedKey(rows, v); here {
-		return &engineVaeFollowUp{S3Key: v.S3Key, Staged: true, Bytes: staged.Bytes, Source: staged.Source}, v, true
+		return &engineVaeFollowUp{
+			S3Key: v.S3Key, Staged: true, Bytes: staged.Bytes,
+			Source: staged.Source, ArtifactIdentity: staged.ArtifactIdentity,
+		}, v, true
 	}
 	res, aerr := engineIngestResolve(ctx, engineIngestSource{HF: &engineIngestHF{Repo: v.Repo, File: v.File}})
 	if aerr != nil {
@@ -532,6 +535,7 @@ func (a engineAdminAPI) fixVae(w http.ResponseWriter, r *http.Request, g engineI
 	if alreadyHere {
 		file := store.EngineModelFile{
 			Flag: "--vae", S3Key: v.S3Key, Bytes: staged.Bytes, Source: staged.Source,
+			ArtifactIdentity: staged.ArtifactIdentity,
 			// The VAE is a VAE: saying so on the file keeps the scan from ever asking about it.
 			VaeBundled: engineVaeYes,
 		}
