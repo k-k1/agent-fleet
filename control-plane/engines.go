@@ -333,6 +333,12 @@ type engineRuntimeState struct {
 	// rung was still registered. It bounds that wait (engineClassSwapWaitMax): the end of the
 	// wait belongs to AWS, and `scaleInAfter: -1` would otherwise make it never end.
 	swapWaitSince time.Time
+	// inflight is the CP gateway's own count of requests it currently holds open for this row —
+	// ADR 0084 decision 6-A's "A". Every row gets one, managed or not: the gateway proxies an
+	// external or remote row's requests too (decision 8's gate 3 applies to all three
+	// lifecycles), so all three can be waited on. Methods are nil-safe, like engineDemand's,
+	// for the test helpers that build a row by hand without wiring one.
+	inflight *engineInFlight
 }
 
 // engineServed is which model this engine last answered with, and how often that changed.
@@ -874,6 +880,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 				def:      d,
 				settings: settings,
 				catalog:  newEngineCatalog(models, d.Key),
+				inflight: newEngineInFlight(),
 			}
 			// The bearer the reverse proxy in front of ComfyUI checks (ADR 0076 decision 7), and —
 			// for every OTHER external row — the one AF_ENGINE_API_KEY_<KEY> declares (ADR 0079
@@ -925,6 +932,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			cluster:     cluster,
 			offers:      newEngineOfferRun(d.offerBudget()),
 			audit:       auditor,
+			inflight:    newEngineInFlight(),
 		}
 		// Published at start as well as on every change: the box reads it when it starts, and a
 		// CP that came up after a catalogue edit it never saw (another replica's, or one made

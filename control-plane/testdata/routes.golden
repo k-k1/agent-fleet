@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with AF_MCP_ENABLED=true.
-# count: 488
+# count: 491
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -36,7 +36,6 @@ POST /api/admin/engines/{key}/ingest/files
 POST /api/admin/engines/{key}/ingest/resolve
 POST /api/admin/engines/{key}/ingest/search
 POST /api/admin/engines/{key}/ingest/versions
-GET /api/admin/engines/{key}/storage
 DELETE /api/admin/engines/{key}/ingest/{id}
 POST /api/admin/engines/{key}/models
 POST /api/admin/engines/{key}/models/vae-scan
@@ -45,6 +44,7 @@ PUT /api/admin/engines/{key}/models/{id}
 POST /api/admin/engines/{key}/models/{id}/vae
 PUT /api/admin/engines/{key}/negative
 POST /api/admin/engines/{key}/replace-box
+GET /api/admin/engines/{key}/storage
 GET /api/admin/host
 GET /api/admin/idp
 GET /api/admin/mcp-servers
@@ -211,6 +211,7 @@ GET /api/drawio/stencils
 GET /api/drawio/stencils/{name...}
 GET /api/egress/check
 POST /api/egress/propose
+GET /api/engines/status
 GET /api/env/jdk-install
 POST /api/env/jdk-install
 GET /api/env/node-install

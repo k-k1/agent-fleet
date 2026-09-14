@@ -24,6 +24,10 @@ func buildMux(cfg config) *http.ServeMux {
 	registerPATRoutes(mux, cfg)
 	registerMCPRoutes(mux, cfg)
 	registerWorkspaceRoutes(mux, cfg)
+	// Engine routes build the engine registry; events routes need that SAME registry for the
+	// `engines` stream (ADR 0084 decision 1), so this one has to run first and hand it down
+	// through cfg rather than each building (and running) its own.
+	cfg.engineReg = registerEngineRoutes(mux, cfg)
 	registerEventsRoutes(mux, cfg)
 	registerSessionRoutes(mux, cfg)
 	registerSessionShareRoutes(mux, cfg)
@@ -31,7 +35,6 @@ func buildMux(cfg config) *http.ServeMux {
 	registerImagegenRoutes(mux, cfg)
 	registerAssistantRoutes(mux, cfg)
 	registerTTSRoutes(mux, cfg)
-	registerEngineRoutes(mux, cfg)
 	registerSSMRoutes(mux, cfg)
 	registerMemoRoutes(mux, cfg)
 	registerWorkItemRoutes(mux, cfg)
