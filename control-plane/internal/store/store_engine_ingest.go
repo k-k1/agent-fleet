@@ -130,10 +130,12 @@ func (s *SQL) ListEngineIngestJobsForStorageByTenant(ctx context.Context, role, 
 }
 
 func (s *SQL) EngineIngestS3KeyRecorded(ctx context.Context, role, s3Key string) (bool, error) {
-	var found int
+	// EXISTS(...) scans as bool, not int — Postgres's driver hands back a real bool and
+	// refuses to convert it into an int destination (SQLite's 0/1 int would have hidden this).
+	var found bool
 	err := s.db.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM engine_ingest_jobs WHERE role=? AND s3_key=?)`, role, s3Key).Scan(&found)
-	return found != 0, err
+	return found, err
 }
 
 func (s *SQL) engineIngestStorageList(ctx context.Context, role, tenantID string, byTenant bool) ([]EngineIngestJob, error) {
