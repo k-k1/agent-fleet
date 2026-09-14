@@ -2,7 +2,10 @@
 
 [English](0083-openai-compat-image-provider.md) | 日本語
 
-- 状態: **proposed**（2026-09-14）
+- 状態: **受理**（2026-09-14 起草、同日のレビューで訂正を反映して受理。レビューは以下の主張を
+  `bf70083e` のコードとテンプレートに 1 つずつ当てて裏取りした。直した箇所には *（レビュー）* と
+  記す — 決定 1 の CFN パラメータ名 2 つ、決定 2 の行き先の文言、決定 7 の引用、維持する ADR 0069
+  の番号、サイズ推測の 2 つめの理由）
 - **この文書のために何も実測していない。** すべての記述は 2026-09-14 にこのリポジトリのコードと
   テンプレートから読んだ事実（file:line は「確認したソース」）で、例外は運用者が述べた 2 点 —
   **稼働中のどちらの配備も sdcpp を使っていない**（sandbox の借用行は `image (images/comfy)`、
@@ -76,16 +79,21 @@ provider は永久に `Ready` にならず、そのセッションで `generate_
 
 ### 1. エンジンは全部退役させ、クライアントは全部残す
 
-`ImageEngine` は `AllowedValues: [comfy]`・`Default: comfy` になり、`ImageSdTag` と sd-server の
-追加フラグは消える。`image` のタスク定義とエンジン表の行の `!If [ImageIsComfy, …]` は comfy 側に
-畳まれ、ECR リポジトリと crane の写しも消える（決定 9 の順序が効く）。
+`ImageEngine` は `AllowedValues: [comfy]`・`Default: comfy` になり、sdcpp 専用の 2 つの
+パラメータ — `ImageImageTag`（af-sdcpp の ECR タグ）と `ImageExtraArgs`（sd-server の追加フラグ）
+— が消える（*（レビュー）*: 初稿は `ImageSdTag` と書いていたが、その名前のパラメータは木に無い。
+comfy 側のタグは `ImageComfyImageTag` という別のパラメータなので、消す 2 つと残す 1 つを名前で
+区別できないと、テンプレートを触る者が grep で当たらない）。`image` のタスク定義とエンジン表の
+行の `!If [ImageIsComfy, …]` は comfy 側に畳まれ、ECR リポジトリと crane の写しも消える
+（決定 9 の順序が効く）。
 
 要求と応答の半分は何も削除しない。ADR 0072 決定 4 が stack の**形**について述べた理由付け
 （1 役・1 タスク定義・1 サービス）はそのままで、いまも正しい。消えるのはその中の分岐である。
 
 ### 2. provider は `openai-compat` に改名し、「1 枚だけ」の前提を外す
 
-変更は 3 つ。どれも sd-server にしか意味が無かった行を外すものである。
+変更は 4 つ。3 つは sd-server にしか意味が無かった行を外すもので、4 つめは外した結果として嘘に
+なる文面の書き直しである。
 
 - **行がモデルを宣言しているとき `model` を body に入れる。** 値は `sdcppRequestModel` が既に
   解決しているもの（呼び出し元の `model`、無ければ行の先頭）。宣言が無ければ何も送らない —
@@ -101,6 +109,19 @@ provider は永久に `Ready` にならず、そのセッションで `generate_
   endpoint が受けるし、この一覧はもともと制限ではなかった・`sdcpp.go:325`）。id から
   「xl / sd3 / flux ⇒ 1024²」と当てるのは Stable Diffusion の checkpoint についての言明であり、
   この provider はもう「向こうがそれを持っている」ことを知らない。
+  その推測を生かしている理由はコメントに 2 つ書いてある。1 つめ（ADR 0071 の stack から種を取った
+  カタログ）はここで退役する配備そのものである。2 つめ（カタログより古い Control Plane はサイズを
+  何も送らない）も一緒に死ぬ: そういう配備の行が名乗る provider は `sdcpp` であり、改名後それを
+  serve する者は居ないので、決定 5 の拒否が先に当たってサイズの段まで届かない *（レビュー）*。
+- 🔴 **行き先の文言を書き直す。** `serviceLabelOf` は `sdcpp` を「Stable Diffusion（このフリート
+  自身の GPU。外部サービスではない）」と名乗り（`http.go:283-300`）、`destination` の継ぎ目にも
+  同じ主張がある（「`sdcpp` はフリート自身の GPU の箱でありベンダではない」・
+  `mcp_imagegen.go:219-222`）。どちらも ADR 0069 決定 11 の面であり、id が `openai-compat` に
+  なった瞬間その文は**行ごとに真偽が変わる**: `external` の LAN の箱なら今の文でほぼ正しいが、
+  未解決 4 が挙げている鍵付き従量課金の endpoint はまさに外部サービスである。`providerIsFleet`
+  が true を返すこと（＝配備の金）と「外部サービスではない」は別の主張であり、後者は provider の
+  id からは言えなくなる。文面は行を指して言うか、言えないことを言わないかのどちらかにする
+  *（レビュー）*。
 
 id を `openai` ではなく `openai-compat` にする理由: これが話す **API** の名前であって、その
 サービスを提供する会社の名前ではない。効いている語は「compat」で、結果の
@@ -170,7 +191,8 @@ stack がまだ `sdcpp` と言っている運用者は、利用者からの「�
 この変更より前に保存された `imageProviderOrder` は `sdcpp` を名前で持っている。その id が語彙から
 抜けると `normalizeImageProviderOrder` は未知として落とし、`comfy` と `openai-compat` が「保存値が
 一度も名前を挙げなかった id」になる。そして**無名の fleet provider は先頭に置かれる**
-（`console/src/lib/settings.ts:767-800`、`imagegen.go:553` の `effectiveOrder` が鏡）。つまり
+（`console/src/lib/settings.ts:825-837` の `normalizeImageProviderOrder`、`imagegen.go:554-586` の
+`effectiveOrder` が鏡・*（レビュー）*: 初稿は同じファイルの畳み込みの段を指していた）。つまり
 `["sdcpp","agy","codex"]` は `["comfy","openai-compat","agy","codex"]` に正規化され、移行のために
 何も書かずにそれが正しい答えである。
 
@@ -242,8 +264,12 @@ ADR 0079 決定 2: どのエンジンが存在し何を話すかは **far 側**�
   （行のモデルこそが `model` を送れるようにする）。
 - **ADR 0072 決定 5 の拒否を維持** — 呼び出し元のプロンプト中の `<sd_cpp_extra_args>`、そして
   この経路にいまも seed が無い理由。
-- **ADR 0069 決定 3**（fleet 自身のハードが利用者個人のプランより前）と**決定 11**
-  （プロンプトの行き先を言う `destination`）を維持。
+- **ADR 0069 の 2026-09-11 追記「保存済みの順番に無い provider の入れ場所」を維持** — fleet 自身の
+  ハードは利用者個人のプランより前。*（レビュー）*: 初稿はこれを ADR 0069 決定 3 に帰していたが、
+  決定 3 は「層は鍵の持ち主で切る」であって順序の規則ではない。順序はその追記が `providerRanks`
+  の `fleet` 旗として決めたものである。
+- **ADR 0069 決定 11**（プロンプトの行き先を言う `destination`）**を維持** — ただし維持するには
+  文面の書き直しが要る。決定 2 の 4 つめを見よ。
 - **ADR 0076・ADR 0079 はそのまま維持。** 決定 6 はそれらを真のままに保つために存在する。
 - **ADR 0082 の P0 より前に着地させるべき。** 0082 は provider id をエンジン行のキーにする変更で、
   動かす語彙は `sdcpp` が抜けたあとのほうが小さく、0082 決定 8 の過渡的な畳み込みも二度書きに
@@ -279,7 +305,8 @@ ADR 0079 決定 2: どのエンジンが存在し何を話すかは **far 側**�
   両方の Go スイートが挙動変更なしで緑（両モジュールで `go test ./...`・`-count=1`）。
 - **P1 — 改名と汎用化。** 決定 2・5・7・8: Agent・Console の 2 つの語彙・ペインの
   `FLEET_PROVIDERS` で `sdcpp` → `openai-compat`、`model` と `response_format` とサイズの規則、
-  両側の声を出す拒否。完了条件は、`provider: "openai-compat"` を宣言した表の行が試験用の偽サーバ
+  行き先の 2 つの文面（`serviceLabelOf` と `destination`・*（レビュー）*）、両側の声を出す拒否。
+  完了条件は、`provider: "openai-compat"` を宣言した表の行が試験用の偽サーバ
   に対して `model` を名指して生成・編集・inpaint できること、`sdcpp` を宣言した行が CP のログ 1 行
   とパネルの印を生むこと、そしてその隣の comfy 行で `generate_image` が引き続き動くこと。
 - **P2 — テンプレート。** 決定 1 のパラメータと決定 9 の 2 つの更新をその順序で。加えて
@@ -302,18 +329,21 @@ ADR 0079 決定 2: どのエンジンが存在し何を話すかは **far 側**�
   補助関数への呼び出し。
 - `workspace/agent/internal/imagegen/imagegen.go:446-509` — provider id と `providerRanks`、
   `:553-584` — `effectiveOrder` の「無名の fleet は先頭」規則、`:588-590` — `Providers()`。
-- `workspace/agent/internal/imagegen/http.go:293-318` — provider ごとの分岐、
+- `workspace/agent/internal/imagegen/http.go:283-318` — `serviceLabelOf` の provider ごとの分岐と、
+  `sdcpp` の「外部サービスではない」（決定 2 の 4 つめ・*（レビュー）*）、
   `jobs.go:454, 562, 734` — sdcpp を例に説明されている cancel の規則。
 - `workspace/agent/internal/mcpx/mcp_imagegen.go:36-38` — ツールの enum は「そのセッションが実際に
   名指せる provider」から組まれる＝休眠中の provider は説明文のトークンを増やさない、
-  `:141, 220` と `mcp_stdio.go:1256` — タイムアウトの連鎖とモデルの union。
+  `:141` と `mcp_stdio.go:1256` — タイムアウトの連鎖とモデルの union、`:219-222` — ADR 0069
+  決定 11 の `destination` と、そこが `sdcpp` について主張していること（*（レビュー）*）。
 - `workspace/agent/engines.go:435-441` — 行と provider の一致、したがって沈黙の原因。
 - `control-plane/engine_gateway.go:949-956`・`engine_catalog.go:231-246` — 決定 6 の 3 分岐。
 - `control-plane/engines.go:929-975` — `engineEnvAPIKey` と行ごとの bearer の変数名。
 - `console/src/lib/settings.ts:723-800` — `IMAGE_PROVIDERS_RANKED`・ラベル・畳み込み・
   `normalizeImageProviderOrder`、`console/src/features/imagegen/wire.ts:311-315` —
   `FLEET_PROVIDERS`。
-- `deploy/aws/ecs/cfn/60-engines.yaml:111-127` — `ImageEngine` と `sdcpp` の既定、`:195` —
+- `deploy/aws/ecs/cfn/60-engines.yaml:111-127` — `ImageEngine` と `sdcpp` の既定、および sdcpp
+  専用の `ImageImageTag`・`ImageExtraArgs` と comfy 専用の `ImageComfyImageTag`（*（レビュー）*）、`:195` —
   `ImageIsComfy`、`:785` — `EcrSdcppUri` の import、`:891` — エンジン表の `provider`。
 - `deploy/aws/ecs/cfn/20-platform.yaml:103-113` — `EmptyOnDelete: true` 付きの `EcrSdcpp`、
   `:464-466` — 決定 9 が回る export。

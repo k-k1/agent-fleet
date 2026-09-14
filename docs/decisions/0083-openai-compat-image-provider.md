@@ -2,7 +2,11 @@
 
 English | [日本語](0083-openai-compat-image-provider.ja.md)
 
-- Status: **proposed** (2026-09-14).
+- Status: **accepted** (drafted 2026-09-14; accepted the same day with the review's corrections
+  folded in). The review put each claim below against the code and the templates at `bf70083e`,
+  one at a time. Corrected passages are marked *(review)* — the two CFN parameter names in
+  decision 1, the destination wording in decision 2, decision 7's citation, the ADR 0069 number
+  upheld, and the second reason behind the size guess.
 - **Nothing was measured for this document.** Every claim is read out of this repository's code
   and templates on 2026-09-14 (file:line under "Sources checked"), except two facts the operator
   states: **neither live deployment runs sdcpp** (the sandbox's borrowed row reports
@@ -78,8 +82,12 @@ session — no error, no log, no panel mark. The same silence ADR 0082's backgro
 
 ### 1. The engine is retired in full; the client is kept in full
 
-`ImageEngine` becomes `AllowedValues: [comfy]` with `Default: comfy`; `ImageSdTag` and the
-sd-server extra-flags parameter go; the `!If [ImageIsComfy, …]` pairs in the `image` task
+`ImageEngine` becomes `AllowedValues: [comfy]` with `Default: comfy`; the two sdcpp-only
+parameters go — `ImageImageTag` (the tag in the af-sdcpp ECR repository) and `ImageExtraArgs`
+(the extra sd-server flags) — *(review)*: the draft called the first one `ImageSdTag`, and no
+parameter by that name exists in the tree. comfy's own tag is a separate parameter,
+`ImageComfyImageTag`, so naming the two that go and the one that stays is what lets whoever
+edits the template find them by grep. The `!If [ImageIsComfy, …]` pairs in the `image` task
 definition and in the engine table row collapse to their comfy arm; the ECR repository and the
 crane copy go (decision 9's order applies).
 
@@ -89,7 +97,8 @@ what is gone is the branch inside it.
 
 ### 2. The provider is renamed `openai-compat` and loses the one-checkpoint assumption
 
-Three changes, each one removing a line that only made sense for sd-server:
+Four changes. Three of them remove a line that only made sense for sd-server; the fourth rewrites
+a sentence those three turn into a lie.
 
 - **`model` goes in the body when the row declares models.** The value is the one
   `sdcppRequestModel` already resolves — the caller's `model`, else the row's first. When the row
@@ -106,6 +115,20 @@ Three changes, each one removing a line that only made sense for sd-server:
   `size` is a plain `WIDTHxHEIGHT` field the endpoint accepts and this list was never a limit
   (`sdcpp.go:325`). Guessing "xl / sd3 / flux ⇒ 1024²" from an id is a statement about Stable
   Diffusion checkpoints, and this provider no longer knows that its server holds one.
+  The comment gives two reasons the guess is alive. The first (a catalogue row seeded from an
+  ADR 0071 stack) is the deployment being retired here. The second (a Control Plane older than
+  the catalogue sends no sizes either) dies with it: such a row names `sdcpp` as its provider,
+  after the rename nobody serves that id, and decision 5's refusal lands before the size code is
+  ever reached *(review)*.
+- 🔴 **Rewrite what says where the prompt went.** `serviceLabelOf` calls `sdcpp` "Stable
+  Diffusion (this fleet's own GPU, not an external service)" (`http.go:283-300`), and the
+  `destination` seam repeats the claim ("`sdcpp` is the fleet's own GPU box, not a vendor",
+  `mcp_imagegen.go:219-222`). Both are surfaces of ADR 0069 decision 11, and the moment the id
+  becomes `openai-compat` that sentence is **true or false per row**: for an `external` LAN box it
+  is nearly right, but the keyed, metered endpoint unresolved 4 raises is exactly an external
+  service. `providerIsFleet` returning true (the DEPLOYMENT's money) and "not an external
+  service" are two different claims, and the second can no longer be read off the provider id.
+  The wording either points at the row or stops saying what it cannot know *(review)*.
 
 The id is `openai-compat` and not `openai`: it names the API this speaks, not a company whose
 service it is. The word doing the work is "compat", and a member reading
@@ -176,7 +199,9 @@ whatever the far fleet declares (ADR 0079 decision 2).
 A stored `imageProviderOrder` from before this change names `sdcpp`. Once that id leaves the
 vocabulary, `normalizeImageProviderOrder` drops it as unknown, and `comfy` and `openai-compat`
 become ids the stored value never named — and an unnamed FLEET provider is placed at the FRONT
-(`console/src/lib/settings.ts:767-800`, mirrored by `effectiveOrder` in `imagegen.go:553`). So
+(`normalizeImageProviderOrder`, `console/src/lib/settings.ts:825-837`, mirrored by
+`effectiveOrder` in `imagegen.go:554-586` — *(review)*: the draft pointed at the collapse block in
+the same file). So
 `["sdcpp","agy","codex"]` normalises to `["comfy","openai-compat","agy","codex"]`, which is the
 right answer with nothing written to migrate it.
 
@@ -252,8 +277,12 @@ operator who controls both ends changes it there.
   on it: the row's models are what makes `model` sendable.
 - **Keeps ADR 0072 decision 5's refusal** of `<sd_cpp_extra_args>` in a caller's prompt, and the
   reason there is still no seed on this route.
-- **Keeps ADR 0069 decision 3** (the fleet's own hardware ranks ahead of a member's personal
-  plan) and **decision 11** (`destination` says where a prompt went).
+- **Keeps ADR 0069's 2026-09-11 addendum, "where a provider the stored order never named goes"**
+  — the fleet's own hardware ranks ahead of a member's personal plan. *(review)*: the draft
+  credited this to ADR 0069 decision 3, which is "cut the layers by who holds the key" and says
+  nothing about order. The rule is the addendum's, carried by `providerRanks`' `fleet` flag.
+- **Keeps ADR 0069 decision 11** (`destination` says where a prompt went) — but keeping it takes
+  a rewrite; see the fourth change in decision 2.
 - **Keeps ADR 0076 and ADR 0079 as they are.** Decision 6 exists to keep them true.
 - **Should land BEFORE ADR 0082's P0.** 0082 makes the provider id the engine row's key; the
   vocabulary it has to move is smaller once `sdcpp` is out of it, and 0082 decision 8's
@@ -292,7 +321,8 @@ operator who controls both ends changes it there.
   change (`go test ./...` in both modules, `-count=1`).
 - **P1 — the rename and the generalisation.** Decisions 2, 5, 7, 8: `sdcpp` → `openai-compat` in
   the Agent, the two Console vocabularies and the image pane's `FLEET_PROVIDERS`; `model`,
-  `response_format` and the sizes rule; the loud refusal on both sides. Complete when a table row
+  `response_format` and the sizes rule; the two sentences about where the prompt went
+  (`serviceLabelOf` and `destination` — *(review)*); the loud refusal on both sides. Complete when a table row
   declaring `provider: "openai-compat"` generates, edits and inpaints against the test double
   with a named `model`; a row declaring `sdcpp` produces a CP log line and a panel mark; and
   `generate_image` still works on a comfy row beside it.
@@ -318,11 +348,13 @@ operator who controls both ends changes it there.
   calls into those helpers.
 - `workspace/agent/internal/imagegen/imagegen.go:446-509` — the provider ids and `providerRanks`;
   `:553-584` — `effectiveOrder`'s fleet-to-front rule; `:588-590` — `Providers()`.
-- `workspace/agent/internal/imagegen/http.go:293-318` — the per-provider cases;
+- `workspace/agent/internal/imagegen/http.go:283-318` — `serviceLabelOf`'s per-provider cases and
+  sdcpp's "not an external service" (decision 2's fourth change — *(review)*);
   `jobs.go:454, 562, 734` — the cancel rule, explained with sdcpp as its example.
 - `workspace/agent/internal/mcpx/mcp_imagegen.go:36-38` — the tool's enums are built from the
   providers a session may actually name, so a dormant provider costs no description tokens;
-  `:141, 220` and `mcp_stdio.go:1256` — the timeout chain and the model union.
+  `:141` and `mcp_stdio.go:1256` — the timeout chain and the model union; `:219-222` — ADR 0069
+  decision 11's `destination` and what it claims about `sdcpp` (*(review)*).
 - `workspace/agent/engines.go:435-441` — the row-to-provider match, and therefore the silence.
 - `control-plane/engine_gateway.go:949-956`, `engine_catalog.go:231-246` — the three
   `provider == "comfy"` branches of decision 6.
@@ -330,7 +362,9 @@ operator who controls both ends changes it there.
 - `console/src/lib/settings.ts:723-800` — `IMAGE_PROVIDERS_RANKED`, the label, the collapse and
   `normalizeImageProviderOrder`; `console/src/features/imagegen/wire.ts:311-315` —
   `FLEET_PROVIDERS`.
-- `deploy/aws/ecs/cfn/60-engines.yaml:111-127` — `ImageEngine` and its `sdcpp` default; `:195` —
+- `deploy/aws/ecs/cfn/60-engines.yaml:111-127` — `ImageEngine` and its `sdcpp` default, plus the
+  sdcpp-only `ImageImageTag` and `ImageExtraArgs` beside comfy-only `ImageComfyImageTag`
+  (*(review)*); `:195` —
   `ImageIsComfy`; `:785` — the `EcrSdcppUri` import; `:891` — the engine table's `provider`.
 - `deploy/aws/ecs/cfn/20-platform.yaml:103-113` — `EcrSdcpp` with `EmptyOnDelete: true`;
   `:464-466` — the export decision 9 turns on.

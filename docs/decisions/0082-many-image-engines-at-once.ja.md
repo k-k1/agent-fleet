@@ -2,7 +2,12 @@
 
 [English](0082-many-image-engines-at-once.md) | 日本語
 
-- 状態: **proposed**（2026-09-14）
+- 状態: **受理**（2026-09-14 起草、同日のレビューで訂正を反映して受理。レビューは背景の 4 つの
+  事実と各決定の根拠を `bf70083e` のコードに 1 つずつ当てて裏取りした — `engineImageConn` の
+  最初の 1 本、`registry.list()` の固定の先頭、外部行への `ensureStarted` の即時拒否と
+  `engineHealthy` の 5 秒、`provider == "comfy"` の 3 分岐、`fallbackWarnings` の現在の文面、
+  `/object_info` が木に無いこと、いずれも成立。直した箇所には *（レビュー）* と記す — 維持する
+  ADR 0069 の番号、`providerIsFleet` と並べ替え UI の行番号）
 - **この文書のために何も実測していない。** すべての記述は (a) 2026-09-14 にこのリポジトリの
   コードから読んだ事実（行は「確認したソース」に列挙）か、(b) 先行 ADR の実測（使う場所で
   引用）のいずれか。設計にとっていちばん効く数字（電源の入っていない LAN ホストへの接続に
@@ -27,7 +32,7 @@ Agent の画像側は単一の選択ではなく provider の**リスト**を軸
 
 | 依頼 | 既にある実装 |
 |---|---|
-| 優先順位 | 保存設定 `imageProviderOrder`（`workspace/agent/internal/uiprefs/prefs.go:237`）を全順序に畳む `effectiveOrder`（`imagegen.go:553`）、並べ替え UI は 設定 > エージェント（`console/src/features/settings/agents/AgentsTab.tsx:148`） |
+| 優先順位 | 保存設定 `imageProviderOrder`（`workspace/agent/internal/uiprefs/prefs.go:237`）を全順序に畳む `effectiveOrder`（`imagegen.go:553`）、並べ替え UI は 設定 > エージェント（`console/src/features/settings/agents/AgentsTab.tsx:150`） |
 | 失敗したら次へ | `Run` は候補を順に回り、失敗した provider の先へ進む（`imagegen.go:683-730`）。`fallbackWarnings` が「別の経路で・誰の勘定で描いたか」を明示する（`imagegen.go:731-756`） |
 | 名指しで選ぶ | 明示された `provider` はそのまま使われ、**決してフォールバックしない** — 名指しした経路自身のエラーを返すほうが、黙って別の勘定を使うより良い（`imagegen.go:595-613`） |
 
@@ -63,7 +68,7 @@ ECS アダプタを持たない行に対して `ensureStarted` は即座に拒�
 4. **語彙はコンパイル時に、しかも二重に宣言されている。** `providerRanks`
    （`imagegen.go:504-509`）と Console の `IMAGE_PROVIDERS_RANKED`
    （`console/src/lib/settings.ts:733-745`）は同じリストの 2 つの宣言で、`providerIsFleet` は
-   そこに無い id には **false** を返す（`imagegen.go:516`）。
+   そこに無い id には **false** を返す（`imagegen.go:520-527`）。
 
 エンジン表そのものは邪魔をしていない。キーは自由文字列で、`engineAPIKeyEnvName` の doc が
 「`parseEngineTable` は運用者が `image-2` と書くのを止めない」と明言している
@@ -138,7 +143,7 @@ ECS アダプタを持たない行に対して `ensureStarted` は即座に拒�
 
 ### 4. `providerIsFleet` はすべてのエンジン行に true を返さねばならない
 
-誰も宣言していない id は fleet のものではない（`imagegen.go:516`）— 綴り間違いに対しては正しい
+誰も宣言していない id は fleet のものではない（`imagegen.go:520-527`）— 綴り間違いに対しては正しい
 規則だが、エンジンキーはまさにそういう id であり、ここを誤ると上の実測事故を再現する: 無名の
 provider は外部扱いで個人プランの経路の**後ろ**に挿入されるので、`auto` は配備が既に払っている
 GPU に届く前に利用者の利用枠を使う。したがって旗は名前のリストではなく、カタログの行
@@ -224,8 +229,10 @@ id を持ち続ける（`IMAGE_PROVIDER_FLEET_GROUP`、`console/src/lib/settings
   `image` のままで、2 本目の LAN エンジンは表で宣言する（キーを選べるのはそちらだから）。
 - **ADR 0079 決定 7・9 は維持** — 借用行のカタログは読み取り専用のミラー、ローカル行が既に持つ
   キーは借用しない、借用して描いた絵はこちらで数える。
-- **ADR 0069 決定 3 の順序**（ベンダ経路のあいだ）と、fleet 自身のハードが利用者個人のプランより
-  前に来るという規則は維持。
+- **ADR 0069 の既定順**（ベンダ経路のあいだは `agy`・`codex`・P3 の実装メモ）と、**2026-09-11 の
+  追記「保存済みの順番に無い provider の入れ場所」**が決めた規則 — fleet 自身のハードが利用者
+  個人のプランより前 — は維持。*（レビュー）*: 初稿はどちらも ADR 0069 決定 3 に帰していたが、
+  決定 3 は「層は鍵の持ち主で切る」であって順序についての決定ではない。
 
 ## 未解決（測ってから決める）
 
@@ -266,7 +273,7 @@ id を持ち続ける（`IMAGE_PROVIDER_FLEET_GROUP`、`console/src/lib/settings
   書かれた前提。
 - `workspace/agent/internal/imagegen/comfy.go:55`・`sdcpp.go:224` — 種類ごとに 1 インスタンス。
 - `workspace/agent/internal/imagegen/imagegen.go:446-509` — provider id と `providerRanks`、
-  `:516` — 未知の id に対する `providerIsFleet`、`:553-584` — `effectiveOrder`、
+  `:520-527` — 未知の id に対する `providerIsFleet`、`:553-584` — `effectiveOrder`、
   `:588-590` — `Providers()`、`:595-613` — `chooseImageProviders`、`:683-756` — `Run` の落穂と
   `fallbackWarnings`、`:376-435` — `Studio`。
 - `workspace/agent/internal/uiprefs/prefs.go:237` — 保存された順序。
@@ -282,5 +289,5 @@ id を持ち続ける（`IMAGE_PROVIDER_FLEET_GROUP`、`console/src/lib/settings
 - `control-plane/engine_remote_catalog.go:205-216` — 借用行の衝突検査。キーだけを見る。
 - `control-plane/engine_admin.go:77-145` — admin の経路。すべて `{key}` 汎用。
 - `console/src/lib/settings.ts:723-800` — `IMAGE_PROVIDERS_RANKED`・`imageProviderLabel`・
-  `normalizeImageProviderOrder`、`console/src/features/settings/agents/AgentsTab.tsx:148` —
+  `normalizeImageProviderOrder`、`console/src/features/settings/agents/AgentsTab.tsx:150` —
   並べ替えの UI。

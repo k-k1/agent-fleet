@@ -2,7 +2,14 @@
 
 English | [日本語](0082-many-image-engines-at-once.ja.md)
 
-- Status: **proposed** (2026-09-14).
+- Status: **accepted** (drafted 2026-09-14; accepted the same day with the review's corrections
+  folded in). The review put the four facts in the background and every decision's grounds
+  against the code at `bf70083e`, one at a time — `engineImageConn`'s first match,
+  `registry.list()`'s fixed head, the immediate refusal `ensureStarted` gives an external row and
+  `engineHealthy`'s five seconds, the three `provider == "comfy"` branches, the current
+  `fallbackWarnings` wording, and the absence of `/object_info` from the tree; all hold.
+  Corrected passages are marked *(review)* — the ADR 0069 number upheld, and the line citations
+  for `providerIsFleet` and the drag UI.
 - **Nothing was measured for this document.** Every claim is either (a) read out of this
   repository's code on 2026-09-14 — the lines are listed under "Sources checked" — or (b) a
   measurement an earlier ADR made, cited where it is used. The one number that matters most to
@@ -29,7 +36,7 @@ the reasons written into it are the ones this request needs.
 
 | Asked for | Already implemented |
 |---|---|
-| An order | The stored `imageProviderOrder` (`workspace/agent/internal/uiprefs/prefs.go:237`), folded into a total order by `effectiveOrder` (`imagegen.go:553`), with a drag UI in Settings > Agents (`console/src/features/settings/agents/AgentsTab.tsx:148`) |
+| An order | The stored `imageProviderOrder` (`workspace/agent/internal/uiprefs/prefs.go:237`), folded into a total order by `effectiveOrder` (`imagegen.go:553`), with a drag UI in Settings > Agents (`console/src/features/settings/agents/AgentsTab.tsx:150`) |
 | Falling through when one fails | `Run` walks the candidates and continues past a failure (`imagegen.go:683-730`); `fallbackWarnings` says out loud that the picture was made somewhere else and on whose account (`imagegen.go:731-756`) |
 | Naming one on purpose | An explicit `provider` is honoured as-is and **never** falls through — the caller's named route reports its own error rather than quietly spending a different account (`imagegen.go:595-613`) |
 
@@ -65,7 +72,7 @@ Four facts, read on 2026-09-14, and together they are the entire obstacle.
 4. **The vocabulary is compiled in, twice.** `providerRanks` (`imagegen.go:504-509`) and the
    Console's `IMAGE_PROVIDERS_RANKED` (`console/src/lib/settings.ts:733-745`) are two
    declarations of the same list, and `providerIsFleet` answers **false** for any id not in it
-   (`imagegen.go:516`).
+   (`imagegen.go:520-527`).
 
 The engine table itself is not in the way. A key is free text — `engineAPIKeyEnvName`'s doc says
 in as many words that nothing stops an operator writing `image-2`
@@ -145,7 +152,7 @@ setting. Two consequences:
 
 ### 4. `providerIsFleet` must answer true for every engine row
 
-An id nobody declared is not the fleet's (`imagegen.go:516`), and that rule is correct for a
+An id nobody declared is not the fleet's (`imagegen.go:520-527`), and that rule is correct for a
 typo — but an engine key is exactly such an id, and getting this wrong reproduces the measured
 accident above: an unnamed provider treated as external is inserted **behind** the personal-plan
 routes, so `auto` spends a member's quota before it reaches a GPU the deployment already pays
@@ -239,8 +246,11 @@ engine appears under its own key, which is a distinction a member can act on.
   be chosen.
 - **Keeps ADR 0079 decisions 7 and 9** — a borrowed row's catalogue is a read-only mirror, a key
   a local row already holds is not borrowed, and a borrowed picture is counted here.
-- **Keeps ADR 0069 decision 3's order** among the vendor routes, and the rule that the fleet's own
-  hardware ranks ahead of a member's personal plan.
+- **Keeps ADR 0069's default order** among the vendor routes (`agy` then `codex`, the P3
+  implementation note) and the rule its **2026-09-11 addendum, "where a provider the stored order
+  never named goes"**, settled — the fleet's own hardware ranks ahead of a member's personal plan.
+  *(review)*: the draft credited both to ADR 0069 decision 3, which is "cut the layers by who
+  holds the key" and is not a decision about order.
 
 ## Open questions (decide after measuring)
 
@@ -285,7 +295,7 @@ engine appears under its own key, which is a distinction a member can act on.
   assumption written into it.
 - `workspace/agent/internal/imagegen/comfy.go:55`, `sdcpp.go:224` — one instance per kind.
 - `workspace/agent/internal/imagegen/imagegen.go:446-509` — the provider ids and
-  `providerRanks`; `:516` — `providerIsFleet` on an unknown id; `:553-584` — `effectiveOrder`;
+  `providerRanks`; `:520-527` — `providerIsFleet` on an unknown id; `:553-584` — `effectiveOrder`;
   `:588-590` — `Providers()`; `:595-613` — `chooseImageProviders`; `:683-756` — `Run`'s
   fall-through and `fallbackWarnings`; `:376-435` — `Studio`.
 - `workspace/agent/internal/uiprefs/prefs.go:237` — the stored order.
@@ -305,5 +315,5 @@ engine appears under its own key, which is a distinction a member can act on.
   alone.
 - `control-plane/engine_admin.go:77-145` — the admin routes, all `{key}`-generic.
 - `console/src/lib/settings.ts:723-800` — `IMAGE_PROVIDERS_RANKED`, `imageProviderLabel` and
-  `normalizeImageProviderOrder`; `console/src/features/settings/agents/AgentsTab.tsx:148` — the
+  `normalizeImageProviderOrder`; `console/src/features/settings/agents/AgentsTab.tsx:150` — the
   ordering UI.
