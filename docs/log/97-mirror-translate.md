@@ -133,6 +133,15 @@ Agent の HTTP に直接 1 回投げた（434 バイトの英文 Markdown・箇�
 「地の文ではない」として既に除いていたが、**引用ラベルは除いていなかった**ので、かな 1 文字でも
 混じれば「もう読める」と誤判定してターン全体のボタンを消していた。
 
+`proseOnly` に、コードと同じ扱いで**引用スパン**（ASCII `"…"` ／全角 `“…”` ／`「…」` ／
+`『…』`、いずれも改行をまたがない 1 行分）を足して除去するよう修正
+（`console/src/features/mirror/translate.ts`）。引用ラベルは「そのラベルを指している」だけで
+どちらの言語のプロースでもない、という位置づけはコードブロックと同じなので、判定の閾値
+（`cjk === 0` / `cjk >= MIN_CJK`）自体は変えていない。回帰試験は `translate.test.ts`
+「does not let a quoted label alone flip the verdict」（英語本文が日本語ラベルを引用／日本語
+本文が英語ラベルを `「」` で引用／引用だけが全文、の 3 パターン）。Console 全体
+2780 件・typecheck・oxlint・i18n:lint いずれも緑。
+
 ## 97.9 🔴 訂正（2026-09-14）: 折りたたんだ作業過程の中間応答が翻訳リクエストに乗る
 
 §97.8 を配備して実機（このホスト＝配備済みの workspace-agent、セッション s6hegkv）で押したところ、
@@ -152,12 +161,3 @@ Agent の HTTP に直接 1 回投げた（434 バイトの英文 Markdown・箇�
 「does not send the folded work process's intermediate replies to translate」（ツール→短い中間応答
 →ツール→短い中間応答→ツール→長い最終回答、という形のターンで、送られるのは最終回答だけである
 ことを確認）。Console 全体 2781 件・typecheck・oxlint・i18n:lint・`docs-check.py` いずれも緑。
-
-`proseOnly` に、コードと同じ扱いで**引用スパン**（ASCII `"…"` ／全角 `“…”` ／`「…」` ／
-`『…』`、いずれも改行をまたがない 1 行分）を足して除去するよう修正
-（`console/src/features/mirror/translate.ts`）。引用ラベルは「そのラベルを指している」だけで
-どちらの言語のプロースでもない、という位置づけはコードブロックと同じなので、判定の閾値
-（`cjk === 0` / `cjk >= MIN_CJK`）自体は変えていない。回帰試験は `translate.test.ts`
-「does not let a quoted label alone flip the verdict」（英語本文が日本語ラベルを引用／日本語
-本文が英語ラベルを `「」` で引用／引用だけが全文、の 3 パターン）。Console 全体
-2780 件・typecheck・oxlint・i18n:lint いずれも緑。

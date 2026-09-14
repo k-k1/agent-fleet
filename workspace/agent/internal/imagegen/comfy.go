@@ -52,7 +52,7 @@ type comfyProvider struct {
 }
 
 func newComfyProvider() *comfyProvider {
-	return &comfyProvider{lookup: engineLookupFor(ProviderComfy), client: sdcppClient}
+	return &comfyProvider{lookup: engineLookupFor(ProviderComfy), client: engineClient}
 }
 
 func (p *comfyProvider) ID() string { return ProviderComfy }
@@ -593,7 +593,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 
 	switchWarning := comfySwitchWarning(conn, model)
 
-	ctx, cancel := context.WithTimeout(ctx, sdcppTimeout)
+	ctx, cancel := context.WithTimeout(ctx, engineTimeout)
 	defer cancel()
 
 	// The uploads come FIRST, and not only because the graph has to name them: they are now the
@@ -757,7 +757,7 @@ func (p *comfyProvider) uploadImage(ctx context.Context, conn EngineConn, req Re
 	ctype := mw.FormDataContentType()
 
 	answer, err := p.sendWithWake(ctx, conn, req, "/upload/image", func() (*http.Request, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, "/upload/image"), bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, engineURL(conn, "/upload/image"), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -824,22 +824,22 @@ func (p *comfyProvider) sendWithWake(ctx context.Context, conn EngineConn, req R
 		respBody, status, retryAfter, err := engineHTTPAttempt(p.client, httpReq)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, sdcppGaveUp(attempt, lastWaking)
+				return nil, engineGaveUp(attempt, lastWaking)
 			}
 			return nil, err
 		}
 		if status < 300 {
 			return respBody, nil
 		}
-		if !sdcppRetryable(status, respBody) {
+		if !engineRetryable(status, respBody) {
 			return nil, fmt.Errorf("the image engine's %s answered %d %s: %s",
-				what, status, http.StatusText(status), sdcppErrText(respBody))
+				what, status, http.StatusText(status), engineErrText(respBody))
 		}
-		lastWaking = sdcppErrText(respBody)
+		lastWaking = engineErrText(respBody)
 		req.reportPhase(PhaseWaking)
 		select {
 		case <-ctx.Done():
-			return nil, sdcppGaveUp(attempt, lastWaking)
+			return nil, engineGaveUp(attempt, lastWaking)
 		case <-time.After(retryAfter):
 		}
 	}
@@ -892,7 +892,7 @@ func (p *comfyProvider) submit(ctx context.Context, conn EngineConn, req Request
 		return "", err
 	}
 	respBody, err := p.sendWithWake(ctx, conn, req, "/prompt", func() (*http.Request, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, "/prompt"), bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, engineURL(conn, "/prompt"), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -956,7 +956,7 @@ type comfyHistory struct {
 func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req Request, promptID string) (comfyHistory, error) {
 	lastWaking, sawWaking := "", false
 	for {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, sdcppURL(conn, "/history/"+url.PathEscape(promptID)), nil)
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, engineURL(conn, "/history/"+url.PathEscape(promptID)), nil)
 		if err != nil {
 			return comfyHistory{}, err
 		}
@@ -970,11 +970,11 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req R
 		}
 		wait := comfyPollEvery
 		switch {
-		case status >= 300 && !sdcppRetryable(status, body):
+		case status >= 300 && !engineRetryable(status, body):
 			return comfyHistory{}, fmt.Errorf("the image engine's /history answered %d %s: %s",
-				status, http.StatusText(status), sdcppErrText(body))
+				status, http.StatusText(status), engineErrText(body))
 		case status >= 300:
-			lastWaking, sawWaking = sdcppErrText(body), true
+			lastWaking, sawWaking = engineErrText(body), true
 			// The box was replaced under the poll: the job list goes back to saying "starting",
 			// because that is what the next several minutes are.
 			req.reportPhase(PhaseWaking)
@@ -1129,7 +1129,7 @@ func (p *comfyProvider) fetchImages(ctx context.Context, conn EngineConn, hist c
 
 func (p *comfyProvider) viewOne(ctx context.Context, conn EngineConn, filename, subfolder, kind string) (Image, error) {
 	q := url.Values{"filename": {filename}, "subfolder": {subfolder}, "type": {kind}}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, sdcppURL(conn, "/view?"+q.Encode()), nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, engineURL(conn, "/view?"+q.Encode()), nil)
 	if err != nil {
 		return Image{}, err
 	}
@@ -1140,7 +1140,7 @@ func (p *comfyProvider) viewOne(ctx context.Context, conn EngineConn, filename, 
 	}
 	if status >= 300 {
 		return Image{}, fmt.Errorf("the image engine's /view answered %d %s: %s",
-			status, http.StatusText(status), sdcppErrText(body))
+			status, http.StatusText(status), engineErrText(body))
 	}
 	img := Image{Bytes: body, MIME: comfyMIMEFor(filename)}
 	if cfg, _, err := image.DecodeConfig(bytes.NewReader(body)); err == nil {
@@ -1223,7 +1223,7 @@ func (p *comfyProvider) Cancel(ctx context.Context, upstream string) error {
 // SECOND element is the prompt id (server.py's own queue tuple); anything shaped otherwise is
 // skipped rather than guessed at.
 func (p *comfyProvider) queuePending(ctx context.Context, conn EngineConn) (map[string]bool, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, sdcppURL(conn, "/queue"), nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, engineURL(conn, "/queue"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1234,7 +1234,7 @@ func (p *comfyProvider) queuePending(ctx context.Context, conn EngineConn) (map[
 	}
 	if status >= 300 {
 		return nil, fmt.Errorf("the image engine's /queue answered %d %s: %s",
-			status, http.StatusText(status), sdcppErrText(body))
+			status, http.StatusText(status), engineErrText(body))
 	}
 	var doc struct {
 		Pending [][]any `json:"queue_pending"`
@@ -1261,7 +1261,7 @@ func (p *comfyProvider) postCancel(ctx context.Context, conn EngineConn, path st
 	if err != nil {
 		return err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, path), bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, engineURL(conn, path), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -1273,7 +1273,7 @@ func (p *comfyProvider) postCancel(ctx context.Context, conn EngineConn, path st
 	}
 	if status >= 300 {
 		return fmt.Errorf("the image engine's %s answered %d %s: %s",
-			path, status, http.StatusText(status), sdcppErrText(respBody))
+			path, status, http.StatusText(status), engineErrText(respBody))
 	}
 	return nil
 }

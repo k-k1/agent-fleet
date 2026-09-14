@@ -756,12 +756,59 @@ export function imageProviderIsFleet(id: string): boolean {
 // budget lower than the user asked for rather than higher.
 export const SPAWN_CHILD_LIMITS = [1, 2, 3, 4, 5, 6] as const;
 
-// imageProviderLabel names one provider for the ordering list. agy and codex are agent kinds
-// and carry their own display name; sdcpp/comfy are not agents at all — they are a service this
-// deployment runs — so they have their own label rather than a lookup that would return the id.
+// imageProviderLabel names one row of the ordering list. agy and codex are agent kinds and carry
+// their own display name; the fleet's own engine is not an agent at all — it is a service this
+// deployment runs — so it has its own label rather than a lookup that would return the id.
 export function imageProviderLabel(id: string): string {
-  if (id === "sdcpp" || id === "comfy") return "Agent Fleet (self-hosted)";
+  if (id === IMAGE_PROVIDER_FLEET_GROUP || imageProviderIsFleet(id)) return "Agent Fleet (self-hosted)";
   return "";
+}
+
+// IMAGE_PROVIDER_FLEET_GROUP is the ONE row the fleet's own engines share in the ordering list.
+//
+// `sdcpp` and `comfy` are two spellings of "the engine this deployment hosts" and a deployment
+// runs one of them, never both (ADR 0072 decision 4), so the list showed two rows carrying the
+// SAME label — a ranking between them that no member could make a meaningful choice about, and
+// the second of which is dead on every deployment. Collapsing them is a DISPLAY change only: the
+// stored setting keeps both ids, because a stored order that dropped one would push it last on
+// the day the deployment switches engines, which is what normalizeImageProviderOrder exists to
+// prevent.
+//
+// The `@` prefix is not decoration: it keeps this pseudo id outside the space of real provider
+// ids (ADR 0082 makes those the engine table's keys, which are free text).
+export const IMAGE_PROVIDER_FLEET_GROUP = "@fleet";
+
+// collapseImageProviderOrder turns a stored order into the rows to draw: the first fleet id
+// becomes the group, any further one disappears into it. Takes an already-normalised order.
+export function collapseImageProviderOrder(order: string[]): string[] {
+  const out: string[] = [];
+  for (const id of order) {
+    if (!imageProviderIsFleet(id)) {
+      out.push(id);
+      continue;
+    }
+    if (!out.includes(IMAGE_PROVIDER_FLEET_GROUP)) out.push(IMAGE_PROVIDER_FLEET_GROUP);
+  }
+  return out;
+}
+
+// expandImageProviderOrder is the way back, for what the member just dragged: the group becomes
+// every fleet id, in the built-in order, at the rank the group now holds.
+//
+// So two fleet ids that were stored apart come back adjacent. That is the honest reading of a
+// list where they were one row, and it changes nothing that runs: only one of them is ever
+// served, and the other is skipped exactly like an unusable login.
+export function expandImageProviderOrder(display: string[]): string[] {
+  const fleet = IMAGE_PROVIDERS_RANKED.filter((p) => p.fleet).map((p) => p.id);
+  const out: string[] = [];
+  for (const id of display) {
+    if (id === IMAGE_PROVIDER_FLEET_GROUP) {
+      out.push(...fleet.filter((f) => !out.includes(f)));
+      continue;
+    }
+    if (!out.includes(id)) out.push(id);
+  }
+  return normalizeImageProviderOrder(out);
 }
 
 // normalizeImageProviderOrder folds any stored value into a total order over IMAGE_PROVIDERS —
