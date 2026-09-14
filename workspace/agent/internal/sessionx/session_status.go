@@ -153,16 +153,20 @@ func RunSessionStatusHook(args []string) {
 	// it becomes the full-text bridge body (docs/log/37). The operator report itself
 	// carries no excerpt (docs/log/30: fact-only, uniform with managed).
 	turnText, _ := status.ReadPendingText(sid)
+	notifyState, notifyText := state, turnText
 	if state == "idle" {
-		// The Stop hook's idle is a claim that the turn ended. docs/log/51's reconciler uses
-		// that one bit as the evidence of completion (to tell it apart from boot's idle
-		// reset).
-		status.PersistTurnEnd(sid, state)
+		// turnEndLabel is resolved BEFORE the write, not after: the qualifier it returns
+		// (why the turn ended, StateFailed/StateAborted) has to land in the SAME persisted
+		// record as the fact that it ended (status.PersistTurnEndReason). RecordSessionNotification
+		// below still gets told too — that is what drives the notification and the fast-path
+		// wakeup — but the report reconciler (a separate process on this route) no longer
+		// needs that call to arrive before its next tick to learn why.
+		notifyState, notifyText = turnEndLabel(sid, state, turnText)
+		status.PersistTurnEndReason(sid, state, turnEndReasonFor(notifyState))
 	} else {
 		status.Persist(sid, state)
 	}
 	applyPendingPayloads(sid, state, h)
-	notifyState, notifyText := turnEndLabel(sid, state, turnText)
 	RecordSessionNotification(sid, previous.State, notifyState, notifyText)
 }
 
@@ -202,6 +206,19 @@ func turnEndLabel(sid, state, turnText string) (string, string) {
 		return agents.StateAborted, a.Msg
 	}
 	return agents.StateFailed, a.Msg
+}
+
+// turnEndReasonFor maps the notifier label turnEndLabel resolved (agents.StateFailed /
+// StateAborted / a clean "idle") onto the qualifier persisted alongside TurnEnd
+// (status.TurnEndReasonFailed / TurnEndReasonAborted). A clean idle carries no reason.
+func turnEndReasonFor(notifyState string) string {
+	switch notifyState {
+	case agents.StateFailed:
+		return status.TurnEndReasonFailed
+	case agents.StateAborted:
+		return status.TurnEndReasonAborted
+	}
+	return ""
 }
 
 func RecordSessionNotification(sid, previous, state, turnText string) {
