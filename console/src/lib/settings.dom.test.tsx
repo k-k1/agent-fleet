@@ -76,6 +76,16 @@ describe("normalizeImageProviderOrder", () => {
   it("falls back to the built-in order for a broken stored value", () => {
     expect(normalizeImageProviderOrder("agy")).toEqual(["openai-compat", "comfy", "agy", "codex"]);
   });
+
+  // ADR 0082 P0: the Agent's own provider ids are now per-ROW engine-table keys ("comfy-lan"),
+  // not just the four kind names this list still knows. Reading the list that way is P1 (decision
+  // 3's second half); this pins the P0 promise instead — a stored value carrying one of the new
+  // ids must not throw and must not corrupt the ids this list DOES know, the same graceful drop
+  // an already-retired id like `sdcpp` gets above.
+  it("drops a row-key id this static list does not know, without disturbing the rest", () => {
+    expect(normalizeImageProviderOrder(["comfy-lan", "agy", "codex"])).toEqual(["openai-compat", "comfy", "agy", "codex"]);
+    expect(() => normalizeImageProviderOrder(["comfy-lan"])).not.toThrow();
+  });
 });
 
 // What the member SEES is one row for the fleet's own engine, not two rows with the same label

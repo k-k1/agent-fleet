@@ -871,6 +871,22 @@ func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 	}
 }
 
+// ADR 0082 decision 2: a deployment may now key an images row anything it likes (the Agent
+// side's ADR 0082 P0 makes the KEY, not the Provider field, the id everywhere outside this
+// module) — this dial-path choice must keep reading the row's declared Provider, never the key,
+// or a row keyed "comfy-lan" would get llamacpp's "/v1/" prefix prepended to ComfyUI's native
+// API and every request would 404 against a path ComfyUI never serves.
+func TestEngineUpstreamPrefixReadsProviderNotKey(t *testing.T) {
+	if got := engineUpstreamPrefix("comfy"); got != "/" {
+		t.Errorf("engineUpstreamPrefix(%q) = %q, want the bare / comfy's native API needs", "comfy", got)
+	}
+	// The negative control this decision exists to guard against: a row's KEY happening to be
+	// "comfy-lan" must not be mistaken for its Provider.
+	if got := engineUpstreamPrefix("comfy-lan"); got != "/v1/" {
+		t.Errorf("engineUpstreamPrefix(%q) = %q — a row's KEY was read as if it were its Provider", "comfy-lan", got)
+	}
+}
+
 // The LoRAs the Agent reads (ADR 0072 decision 5, phase P3). Two claims, and neither fails
 // loudly if it breaks: a LoRA that reached `models` would appear in generate_image's checkpoint
 // enum and be started with, and a `loras` row without base_model would leave the Agent no way to

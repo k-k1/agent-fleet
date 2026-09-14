@@ -216,13 +216,12 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	if res.Region != "" {
 		value["region"] = res.Region
 	}
-	// Where the prompt went, when the provider id does not say it on its own (ADR 0069
-	// decision 11): `openai-compat` can be this fleet's own GPU box or a metered external
-	// service, depending on the engine table row behind it (ADR 0083), so unlike the other
-	// routes the id alone settles nothing. Destination is a fixed sentence saying only that —
-	// not a per-row answer: the row's key IS in EngineConn.BaseURL's path, but only because the
-	// gateway happens to shape it that way, not as a contract the provider may parse. A row-
-	// specific answer needs ADR 0082 P0 (provider id becomes the engine table's key).
+	// Where the prompt went, when the id does not say it on its own (ADR 0069 decision 11):
+	// `res.Provider` IS the row's own key since ADR 0082 P0 ("comfy-lan", not a bare
+	// "openai-compat"), so a caller can already tell rows apart by `value["provider"]` alone.
+	// Destination stays a fixed sentence for what even the key cannot say — whether THIS row is
+	// this fleet's own GPU or a metered external service (ADR 0083) — because that fact is not on
+	// the wire anywhere a provider may honestly read it.
 	if res.Destination != "" {
 		value["destination"] = res.Destination
 	}
