@@ -12,19 +12,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// hfSearchStub answers /api/models the way Hugging Face does and records the query it was
-// asked, so a test can assert the FILTER as well as the answer.
-func hfSearchStub(t *testing.T, body string) (*httptest.Server, *url.Values) {
+// hfSearchStub answers /api/models the way Hugging Face does and records EVERY query it was
+// asked, so a test can assert the filters as well as the answer.
+//
+// 🔴 Every query, not the last one: the image kind asks twice (engineSearchFilters — the
+// pipeline tag cannot reach a ComfyUI-packaged repository and the library tag cannot reach
+// stock SDXL), and a recorder that keeps only the last would quietly test half of that.
+func hfSearchStub(t *testing.T, body string) (*httptest.Server, *[]url.Values) {
 	t.Helper()
-	var got url.Values
+	var got []url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.URL.Query()
+		got = append(got, r.URL.Query())
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	}))
@@ -33,6 +38,28 @@ func hfSearchStub(t *testing.T, body string) (*httptest.Server, *url.Values) {
 	engineIngestBase = srv.URL
 	t.Cleanup(func() { engineIngestBase = old })
 	return srv, &got
+}
+
+// hfLastQuery is for the assertions that do not care which lane asked — every lane carries the
+// sort, the expansions and the search word identically.
+func hfLastQuery(qs *[]url.Values) url.Values {
+	if len(*qs) == 0 {
+		return url.Values{}
+	}
+	return (*qs)[len(*qs)-1]
+}
+
+// hfAskedFor answers whether ANY lane sent this key=value, which is what "the search asked for
+// X" means once a kind can ask more than once.
+func hfAskedFor(qs *[]url.Values, key, value string) bool {
+	for _, q := range *qs {
+		for _, got := range q[key] {
+			if got == value {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 const hfSearchBody = `[
@@ -97,7 +124,7 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 	if hits[1].LicenseName != "flux-1-dev-non-commercial-license" {
 		t.Errorf("license_name = %q; `license:\"other\"` alone tells nobody the terms", hits[1].LicenseName)
 	}
-	if q.Get("expand[]") == "" || !strings.Contains(strings.Join((*q)["expand[]"], ","), "gated") {
+	if hfLastQuery(q).Get("expand[]") == "" || !strings.Contains(strings.Join(hfLastQuery(q)["expand[]"], ","), "gated") {
 		t.Errorf("no expand[]=gated in %v — without it a row carries neither gating nor licence", *q)
 	}
 }
@@ -119,8 +146,8 @@ func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 	// Asked for on the same read: without the expansion the field is simply absent, and the
 	// panel would show a repository with no age (measured live 2026-09-11 that this is the
 	// spelling that answers it).
-	if !strings.Contains(strings.Join((*q)["expand[]"], ","), "createdAt") {
-		t.Errorf("createdAt was not expanded: %v", (*q)["expand[]"])
+	if !strings.Contains(strings.Join(hfLastQuery(q)["expand[]"], ","), "createdAt") {
+		t.Errorf("createdAt was not expanded: %v", hfLastQuery(q)["expand[]"])
 	}
 	if hits[0].PublishedAt != "2024-09-18T09:12:03.000Z" {
 		t.Errorf("published_at = %q, want the repository's createdAt", hits[0].PublishedAt)
@@ -242,22 +269,36 @@ func TestSearchFiltersByWhatTheEngineCanLoad(t *testing.T) {
 	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "qwen", kind: "gguf", sort: ""}); aerr != nil {
 		t.Fatalf("gguf: %v", aerr.message)
 	}
-	if q.Get("filter") != "gguf" || q.Get("pipeline_tag") != "" {
-		t.Errorf("llm search asked %v, want filter=gguf", *q)
+	// One lane for the llm role: `gguf` is a library tag every quantised repository carries, so
+	// there is no second shape to reach for here.
+	if len(*q) != 1 || hfLastQuery(q).Get("filter") != "gguf" || hfLastQuery(q).Get("pipeline_tag") != "" {
+		t.Errorf("llm search asked %v, want one lane with filter=gguf", *q)
 	}
-	if q.Get("sort") != "lastModified" || q.Get("direction") != "-1" {
+	if hfLastQuery(q).Get("sort") != "lastModified" || hfLastQuery(q).Get("direction") != "-1" {
 		t.Errorf("initial Hugging Face browse is not ordered by updated descending: %v", *q)
 	}
+	*q = nil
 	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "sdxl", kind: "checkpoint", sort: ""}); aerr != nil {
 		t.Fatalf("checkpoint: %v", aerr.message)
 	}
-	if q.Get("pipeline_tag") != "text-to-image" || q.Get("filter") != "" {
-		t.Errorf("image search asked %v, want pipeline_tag=text-to-image", *q)
+	// 🔴 Two lanes, and NEITHER is optional. Hugging Face has no OR, `pipeline_tag=text-to-image`
+	// is a diffusers-era tag that a repository of loose safetensors does not carry, and
+	// `diffusion-single-file` is not on stock SDXL. Measured 2026-09-15: with the pipeline tag
+	// alone, `Comfy-Org/Krea-2` and `circlestone-labs/Anima` are absent from their own searches
+	// while the gated `krea/Krea-2-*` rows are offered in their place.
+	if len(*q) != 2 {
+		t.Fatalf("image search asked %d times, want both lanes: %v", len(*q), *q)
+	}
+	if !hfAskedFor(q, "pipeline_tag", "text-to-image") {
+		t.Errorf("no lane asked for the diffusers pipeline tag: %v", *q)
+	}
+	if !hfAskedFor(q, "filter", "diffusion-single-file") {
+		t.Errorf("no lane reaches ComfyUI-packaged repositories: %v", *q)
 	}
 	// The chat engine's search must not ask for `gguf` on the image role: the expansion exists
 	// to fill the window field, which sd-server has no use for.
-	if strings.Contains(strings.Join((*q)["expand[]"], ","), "gguf") {
-		t.Errorf("the image search expanded gguf: %v", (*q)["expand[]"])
+	if strings.Contains(strings.Join(hfLastQuery(q)["expand[]"], ","), "gguf") {
+		t.Errorf("the image search expanded gguf: %v", hfLastQuery(q)["expand[]"])
 	}
 }
 
@@ -523,13 +564,13 @@ func TestSearchRanksWithoutAQuery(t *testing.T) {
 		if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "", kind: "gguf", sort: tc.sort}); aerr != nil {
 			t.Fatalf("%q: %v", tc.sort, aerr.message)
 		}
-		if q.Get("sort") != tc.want {
-			t.Errorf("sort %q asked for %q, want %q", tc.sort, q.Get("sort"), tc.want)
+		if hfLastQuery(q).Get("sort") != tc.want {
+			t.Errorf("sort %q asked for %q, want %q", tc.sort, hfLastQuery(q).Get("sort"), tc.want)
 		}
 		// 🔴 No `search=` at all. An empty one is not the same as none on this API, and a
 		// ranking is what the caller asked for.
-		if _, ok := (*q)["search"]; ok {
-			t.Errorf("a wordless ranking still sent search=%q", q.Get("search"))
+		if _, ok := hfLastQuery(q)["search"]; ok {
+			t.Errorf("a wordless ranking still sent search=%q", hfLastQuery(q).Get("search"))
 		}
 	}
 	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "", kind: "gguf", sort: "newest"}); aerr == nil {
@@ -578,12 +619,12 @@ func TestCivitaiRankingUsesThePeriodForTrending(t *testing.T) {
 // Hugging Face's Link URL is not followed: accepting an arbitrary next URL here would turn the
 // admin route into an SSRF primitive.
 func TestSearchPaginationUsesOpaqueBoundedCursors(t *testing.T) {
-	var got url.Values
+	var got []url.Values
 	requests := 0
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		got = r.URL.Query()
+		got = append(got, r.URL.Query())
 		w.Header().Set("Link", "<"+srv.URL+"/api/models?cursor=next%3D%3D>; rel=\"next\"")
 		_, _ = w.Write([]byte(`[]`))
 	}))
@@ -592,24 +633,55 @@ func TestSearchPaginationUsesOpaqueBoundedCursors(t *testing.T) {
 	engineIngestBase = srv.URL
 	t.Cleanup(func() { engineIngestBase = old })
 
+	// 🔴 One cursor per LANE, joined. The image kind asks twice and the two upstream cursors are
+	// unrelated tokens, so a single one could only ever page one half of the union — the other
+	// would restart from the top on every page and repeat rows the operator already scrolled
+	// past. Each lane also asks for its own share of the page (engineSearchLimit / lanes), which
+	// is what lets its own next-cursor point exactly past what was shown.
 	_, next, aerr := engineSearchHFPage(t.Context(), engineSearchReq{
-		q: "flux", kind: "checkpoint", sort: engineSortUpdated, cursor: "current==",
+		q: "flux", kind: "checkpoint", sort: engineSortUpdated,
 	})
 	if aerr != nil {
 		t.Fatalf("HF page: %v", aerr.message)
 	}
-	if got.Get("cursor") != "current==" || next != "next==" {
-		t.Errorf("cursor request/answer = %q/%q, want current==/next==", got.Get("cursor"), next)
+	if len(got) != 2 || next != "next==~next==" {
+		t.Errorf("first page asked %d times and answered cursor %q, want 2 and next==~next==", len(got), next)
 	}
+	if lim := got[0].Get("limit"); lim != strconv.Itoa(engineSearchLimit/2) {
+		t.Errorf("lane limit = %q, want the page split between the lanes", lim)
+	}
+	got = nil
+	if _, _, aerr = engineSearchHFPage(t.Context(), engineSearchReq{
+		q: "flux", kind: "checkpoint", sort: engineSortUpdated, cursor: next,
+	}); aerr != nil {
+		t.Fatalf("HF page 2: %v", aerr.message)
+	}
+	if len(got) != 2 || got[0].Get("cursor") != "next==" || got[1].Get("cursor") != "next==" {
+		t.Errorf("page 2 asked %v, want each lane to carry its own token back", got)
+	}
+	// A lane that answered no next-cursor has run out, and its empty slot keeps the position so
+	// the OTHER lane's token still lands in the right request. Asking it again from the top is
+	// what would repeat rows.
+	got = nil
+	if _, _, aerr = engineSearchHFPage(t.Context(), engineSearchReq{
+		q: "flux", kind: "checkpoint", sort: engineSortUpdated, cursor: "~still==",
+	}); aerr != nil {
+		t.Fatalf("HF page 3: %v", aerr.message)
+	}
+	if len(got) != 1 || got[0].Get("cursor") != "still==" ||
+		got[0].Get("filter") != "diffusion-single-file" {
+		t.Errorf("an exhausted lane was asked again: %v", got)
+	}
+
 	a, _, _ := engineModelAdminAPI(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest/search",
-		strings.NewReader(`{"source":"hf","sort":"updated","cursor":"current=="}`))
+		strings.NewReader(`{"source":"hf","sort":"updated","cursor":"current==~current=="}`))
 	r.SetPathValue("key", "image")
 	a.searchIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 	var answer map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &answer)
-	if rec.Code != http.StatusOK || answer["next_cursor"] != "next==" {
+	if rec.Code != http.StatusOK || answer["next_cursor"] != "next==~next==" {
 		t.Errorf("wire pagination = %d %v", rec.Code, answer)
 	}
 
@@ -713,18 +785,36 @@ func TestBrowsingNeedsNoEngineAndSurvivesOneBeingOff(t *testing.T) {
 func TestBrowseKindPicksTheUpstreamFilter(t *testing.T) {
 	a, _, _ := engineModelAdminAPI(t)
 	_, q := hfSearchStub(t, `[]`)
-	for _, tc := range []struct{ kind, filter, pipeline string }{
-		{"gguf", "gguf", ""},
-		{"checkpoint", "", "text-to-image"},
+	// The image kind asks twice and the llm kind once, so what a browse has to get right is
+	// WHICH filters were sent between them — not what the last request happened to carry.
+	for _, tc := range []struct {
+		kind  string
+		lanes int
+		want  map[string]string // key -> value that some lane must have sent
+	}{
+		{"gguf", 1, map[string]string{"filter": "gguf"}},
+		{"checkpoint", 2, map[string]string{
+			"pipeline_tag": "text-to-image", "filter": "diffusion-single-file"}},
 	} {
+		*q = nil
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/api/admin/engines/search?kind="+tc.kind, strings.NewReader(`{}`))
 		a.browseSearch(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", tc.kind, rec.Code, rec.Body.String())
 		}
-		if q.Get("filter") != tc.filter || q.Get("pipeline_tag") != tc.pipeline {
-			t.Errorf("kind %q asked %v, want filter=%q pipeline_tag=%q", tc.kind, *q, tc.filter, tc.pipeline)
+		if len(*q) != tc.lanes {
+			t.Errorf("kind %q asked %d times, want %d: %v", tc.kind, len(*q), tc.lanes, *q)
+		}
+		for key, value := range tc.want {
+			if !hfAskedFor(q, key, value) {
+				t.Errorf("kind %q never asked %s=%s: %v", tc.kind, key, value, *q)
+			}
+		}
+		// The llm browse must not reach for image repositories, and the reverse: a GGUF row in
+		// an image picker is a dead end that resolve refuses minutes later.
+		if (tc.kind == "gguf") != hfAskedFor(q, "filter", "gguf") {
+			t.Errorf("kind %q asked the wrong role's filter: %v", tc.kind, *q)
 		}
 	}
 }
@@ -750,16 +840,31 @@ func TestSearchSurvivesAFractionalTrendingScore(t *testing.T) {
 	if len(hits) != 3 {
 		t.Fatalf("hits = %d, want 3", len(hits))
 	}
+	// By ref rather than by position: the image kind's two lanes are merged into one ranking, so
+	// where a row lands is the ORDER's business and this test is about the decode.
+	byRef := map[string]engineSearchHit{}
+	for _, h := range hits {
+		byRef[h.Ref] = h
+	}
 	// Compared through float64 so this test still COMPILES if the field is put back to an
 	// integer — then it fails on the line above with the message the panel showed, which is the
 	// failure worth keeping, rather than refusing to build.
-	if float64(hits[0].Trending) != 0.1 || float64(hits[1].Trending) != 0.7000000000000001 {
-		t.Errorf("scores = %v / %v, want them carried as they came", hits[0].Trending, hits[1].Trending)
+	if float64(byRef["John6666/wai-nsfw-illustrious-sdxl-v150-sdxl"].Trending) != 0.1 ||
+		float64(byRef["John6666/wai-nsfw-illustrious-v80-sdxl"].Trending) != 0.7000000000000001 {
+		t.Errorf("scores = %v / %v, want them carried as they came",
+			byRef["John6666/wai-nsfw-illustrious-sdxl-v150-sdxl"].Trending,
+			byRef["John6666/wai-nsfw-illustrious-v80-sdxl"].Trending)
 	}
 	// A null cardData is the other shape in that same answer, and it must not take the row with
 	// it: the licence is simply unknown there.
-	if hits[2].Ref != "martineux/waiIllustriousSDXL_v160" || hits[2].License != "" {
-		t.Errorf("row with cardData:null = %+v", hits[2])
+	if row, ok := byRef["martineux/waiIllustriousSDXL_v160"]; !ok || row.License != "" {
+		t.Errorf("row with cardData:null = %+v (present=%v)", row, ok)
+	}
+	// 🔴 The same repository answered by both lanes is ONE row. Without the dedupe every
+	// repository carrying both tags would be drawn twice, which is what this stub — one body for
+	// every query — would produce.
+	if len(byRef) != len(hits) {
+		t.Errorf("hits = %d rows for %d repositories: a lane's answer was drawn twice", len(hits), len(byRef))
 	}
 }
 

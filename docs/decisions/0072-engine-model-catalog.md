@@ -4797,3 +4797,42 @@ nothing else.
 **Remaining**: on real hardware, ingest one Krea 2 Turbo row (three files), generate once, and
 look at whether the picture matches the prompt — a generic-`qwen3vl` mis-load is the failure this
 family can have that the shape cannot show.
+
+## Addendum — the picker could not find either new family (2026-09-15)
+
+Both families landed and neither could be reached from the Console's own search. The cause is
+decision 11's filter: the image kind asked Hugging Face with `pipeline_tag=text-to-image`, which
+is a **diffusers-era** tag. A repository publishing loose safetensors for ComfyUI does not carry
+it, and Hugging Face's `filter`/`pipeline_tag` parameters AND together — there is no OR.
+
+Measured 2026-09-15, anonymously:
+
+| query | unfiltered | with `pipeline_tag=text-to-image` |
+|---|---|---|
+| `search=Anima` | `circlestone-labs/Anima` is #1 | **absent**; animagine-xl rows instead |
+| `search=Krea-2` | `Comfy-Org/Krea-2` is #1 | **absent**; `krea/Krea-2-Raw` and `krea/Krea-2-Turbo`, both **gated**, in its place |
+
+So the picker did not merely hide the right repository: it offered a 401 in its place, and the
+operator's next twenty minutes go into a token that was never needed.
+
+`filter=diffusion-single-file` is the other half — the library tag Comfy-Org's repackages carry
+(with `comfyui`). On its own it ranks `Comfy-Org/z_image_turbo`, `Comfy-Org/Krea-2`,
+`Comfy-Org/stable-diffusion-v1-5-archive`: this deployment's own shape of model. **Neither filter
+is a superset of the other** — stock SDXL is a diffusers repository with a top-level single file
+and appears only under the first — so the image kind now asks TWICE and merges.
+
+What that costs, and what it does not:
+
+- Each lane asks for `engineSearchLimit / 2`, so a lane's own next-cursor points exactly past
+  what was shown and paging needs no per-lane offset. The wire cursor is the lane cursors joined
+  with `~`; an exhausted lane keeps its (empty) position. 🔴 Not `|` — that is what Civitai's own
+  cursor is built from, and both kinds travel the same field.
+- A repository answered by both lanes is one row (dedupe by ref).
+- The merged page is re-sorted by the requested ranking, and **only when two lanes answered**: a
+  single lane's page is the upstream's own order, tie-breaks included, and re-sorting it here by
+  the one field this end can see would reorder rows Hugging Face had already separated.
+- The llm kind is unchanged, one lane: `gguf` is a library tag every quantised repository carries.
+
+The `filter=lora` rule survives as a per-LANE invariant (it drops the connection when sent alone,
+measured 2026-09-12): it rides on the pipeline tag in one lane and on the library tag in the
+other, and `filter=diffusion-single-file&filter=lora` answers 200.

@@ -17,6 +17,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -270,22 +271,44 @@ type engineCivitaiSearchDoc struct {
 // `filter=gguf&filter=lora` both drop the connection (curl exit 56, no status line), while the
 // same query with a `pipeline_tag` answers 200. So the pipeline tag is load-bearing here, not
 // extra precision.
-func engineSearchFilter(kind string, lora bool) url.Values {
-	v := url.Values{}
+// 🔴 The image kind needs TWO, and one of them is the only way to the files this engine loads.
+// `pipeline_tag=text-to-image` is a diffusers-era tag: a repository publishing loose safetensors
+// for ComfyUI does not carry it, and Hugging Face has no OR — so with that filter alone the
+// picker HID exactly the repositories the comfy provider needs. Measured 2026-09-15:
+//
+//	search=Anima    → circlestone-labs/Anima is #1 unfiltered and ABSENT under the pipeline tag
+//	search=Krea-2   → Comfy-Org/Krea-2 is #1 unfiltered and ABSENT under it, while the two rows
+//	                  the filter DOES return (krea/Krea-2-Raw, krea/Krea-2-Turbo) are gated
+//
+// So it steered an operator to a 401 and hid the ungated repackage. `filter=diffusion-single-file`
+// is the other half: the library tag Comfy-Org's repositories carry (with `comfyui`), and on its
+// own it ranks Comfy-Org/z_image_turbo, Comfy-Org/Krea-2, Comfy-Org/stable-diffusion-v1-5-archive
+// — this deployment's own shape of model. Neither filter is a superset of the other: stock SDXL
+// is diffusers with a top-level single file and appears only under the first.
+//
+// ⚠️ `filter=lora` is still never sent alone (measured 2026-09-12: alone, and with `filter=gguf`,
+// it drops the connection with no status line). It rides on the pipeline tag in one lane and on
+// the library tag in the other, and `filter=diffusion-single-file&filter=lora` answers 200.
+func engineSearchFilters(kind string, lora bool) []url.Values {
 	if kind == "gguf" {
+		v := url.Values{}
 		// The library tag, which is what a repository of quantised files carries.
 		v.Set("filter", "gguf")
 		if lora {
 			v.Add("filter", "lora")
 			v.Set("pipeline_tag", "text-generation")
 		}
-		return v
+		return []url.Values{v}
 	}
-	v.Set("pipeline_tag", "text-to-image")
+	diffusers := url.Values{}
+	diffusers.Set("pipeline_tag", "text-to-image")
+	singleFile := url.Values{}
+	singleFile.Set("filter", "diffusion-single-file")
 	if lora {
-		v.Set("filter", "lora")
+		diffusers.Set("filter", "lora")
+		singleFile.Add("filter", "lora")
 	}
-	return v
+	return []url.Values{diffusers, singleFile}
 }
 
 // engineSearchHF asks Hugging Face. An empty q is a RANKING rather than a mistake: the API
@@ -295,24 +318,84 @@ func engineSearchHF(ctx context.Context, req engineSearchReq) ([]engineSearchHit
 	return hits, aerr
 }
 
+// engineSearchLaneSep joins one per-lane cursor to the next. Hugging Face's cursor is base64
+// (`[A-Za-z0-9_=-]`), so a character outside that alphabet splits them back apart unambiguously;
+// a lane that has run out contributes an empty string and keeps its position.
+//
+// 🔴 Not `|`: that is what Civitai's own cursor is built from ("<timestamp>|<id>"), and the two
+// kinds of cursor travel the same wire field. Sharing the character would make a cursor pasted
+// or logged from the wrong source split into plausible-looking halves instead of failing.
+const engineSearchLaneSep = "~"
+
 func engineSearchHFPage(ctx context.Context, req engineSearchReq) ([]engineSearchHit, string, *apiError) {
-	q, kind := req.q, req.kind
-	sortBy, ok := engineSortHF(req.sort)
-	if !ok {
-		return nil, "", engineBadSort(req.sort)
-	}
 	if !engineCursorValid(req.cursor) {
 		return nil, "", engineBadCursor()
 	}
-	v := engineSearchFilter(kind, req.lora)
+	lanes := engineSearchFilters(req.kind, req.lora)
+	cursors := strings.Split(req.cursor, engineSearchLaneSep)
+	// One request per lane, and the page each asks for is the answer's size divided between
+	// them: a lane's own next-cursor then points exactly past what was shown, so paging needs no
+	// per-lane offset to remember. A run-out lane is skipped rather than re-asked from the top.
+	perLane := engineSearchLimit / len(lanes)
+	var (
+		merged []engineSearchHit
+		next   = make([]string, len(lanes))
+		seen   = make(map[string]bool, engineSearchLimit)
+		sortBy string
+		asked  int
+	)
+	for i, lane := range lanes {
+		cursor := ""
+		if i < len(cursors) {
+			cursor = cursors[i]
+		}
+		if req.cursor != "" && cursor == "" {
+			continue // this lane answered everything it had on an earlier page
+		}
+		hits, cur, key, aerr := engineSearchHFLane(ctx, req, lane, cursor, perLane)
+		if aerr != nil {
+			return nil, "", aerr
+		}
+		sortBy = key
+		next[i] = cur
+		asked++
+		for _, h := range hits {
+			if seen[h.Ref] {
+				continue // a repository carrying both tags is one row, not two
+			}
+			seen[h.Ref] = true
+			merged = append(merged, h)
+		}
+	}
+	// 🔴 Only when two lanes actually answered. One lane's page is the UPSTREAM's ranking, tie
+	// breaks included, and re-sorting it here by the one field this end can see would reorder
+	// rows Hugging Face had already separated by something finer.
+	if asked > 1 {
+		engineSortHits(merged, sortBy)
+	}
+	if strings.Trim(strings.Join(next, engineSearchLaneSep), engineSearchLaneSep) == "" {
+		return merged, "", nil
+	}
+	return merged, strings.Join(next, engineSearchLaneSep), nil
+}
+
+// engineSearchHFLane is one filter's page: the request this function has always made, now with
+// the filter and the page size handed to it.
+func engineSearchHFLane(ctx context.Context, req engineSearchReq, v url.Values,
+	cursor string, limit int) ([]engineSearchHit, string, string, *apiError) {
+	q, kind := req.q, req.kind
+	sortBy, ok := engineSortHF(req.sort)
+	if !ok {
+		return nil, "", "", engineBadSort(req.sort)
+	}
 	if q != "" {
 		v.Set("search", q)
 	}
 	v.Set("sort", sortBy)
 	v.Set("direction", "-1")
-	v.Set("limit", strconv.Itoa(engineSearchLimit))
-	if req.cursor != "" {
-		v.Set("cursor", req.cursor)
+	v.Set("limit", strconv.Itoa(limit))
+	if cursor != "" {
+		v.Set("cursor", cursor)
 	}
 	// `expand[]` is what makes one read enough: without it the rows carry neither the gating
 	// flag nor the licence, and the panel would have to resolve 20 repositories to draw a list.
@@ -327,7 +410,7 @@ func engineSearchHFPage(ctx context.Context, req engineSearchReq) ([]engineSearc
 	target := engineIngestBase + "/api/models?" + v.Encode()
 	head, aerr := engineSearchGetJSON(ctx, target, &rows)
 	if aerr != nil {
-		return nil, "", aerr
+		return nil, "", "", aerr
 	}
 	out := make([]engineSearchHit, 0, len(rows))
 	for _, r := range rows {
@@ -353,7 +436,37 @@ func engineSearchHFPage(ctx context.Context, req engineSearchReq) ([]engineSearc
 			ContextLength: r.GGUF.ContextLength,
 		})
 	}
-	return out, engineHFNextCursor(head), nil
+	return out, engineHFNextCursor(head), sortBy, nil
+}
+
+// engineSortHits puts a merged page back into ONE ranking. Each lane arrives sorted by the same
+// key, so this is what keeps "the interesting thing is at the top" true of the union rather than
+// of each half — without it a page would read as two lists stapled together, and the row an
+// operator wants could sit at position 11 behind a lane that had nothing better to offer.
+//
+// Stable, so that rows the key cannot separate (two repositories with no downloads yet) keep the
+// order the upstream gave them.
+func engineSortHits(hits []engineSearchHit, sortBy string) {
+	key := func(h engineSearchHit) (float64, string) {
+		switch sortBy {
+		case "downloads":
+			return float64(h.Downloads), ""
+		case "likes":
+			return float64(h.Likes), ""
+		case "trendingScore":
+			return h.Trending, ""
+		default: // lastModified — RFC 3339, so lexical order is chronological
+			return 0, h.UpdatedAt
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		ni, si := key(hits[i])
+		nj, sj := key(hits[j])
+		if si != "" || sj != "" {
+			return si > sj
+		}
+		return ni > nj
+	})
 }
 
 // engineCivitaiModelURL is the page a person opens for a hit: the MODEL's page, pointed at the
