@@ -150,7 +150,7 @@ func (d cpTenant) EvictTenantCache(tid string)       { d.m.evictTenantCache(tid)
 func (d cpTenant) PushEngineCatalogChanged(ctx context.Context, tenantID string) {
 	go notifyEngineCatalogChangedForTenant(context.WithoutCancel(ctx), d.m, tenantID, "tenant limits changed")
 }
-func (d cpTenant) InvalidateTenantLogin()            { d.m.tenantLogin.invalidate() }
+func (d cpTenant) InvalidateTenantLogin() { d.m.tenantLogin.invalidate() }
 func (d cpTenant) IdleForecastFor(wsID string) (any, bool) {
 	f, ok := d.m.idleForecastFor(wsID)
 	if !ok {
