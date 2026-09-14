@@ -50,6 +50,19 @@ function noLiveAnswer() {
   });
 }
 
+/** An Agent build old enough to predate `kind` (ADR 0082 P0/P1) — `providers` is present, and
+ *  every entry has `fleet` (a pre-P1 Agent) or neither field at all (pre-P0), but NONE carry
+ *  `kind`. This must read the same as noLiveAnswer(), not as "the fleet row is real but has no
+ *  kind" — see isPreAdr0082Status. */
+function oldAgentAnswer() {
+  api.mockImplementation((path: string) => {
+    if (path === "api/imagegen/status") {
+      return Promise.resolve({ enabled: true, ready: true, providers: [{ id: "codex" }, { id: "image", fleet: true }] });
+    }
+    return Promise.resolve({});
+  });
+}
+
 async function mount() {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -88,6 +101,18 @@ describe("画像生成の優先順位（ADR 0082 P1）", () => {
     await mount();
     // The fallback fold: both static ids collapse into one "Agent Fleet (self-hosted)" row.
     expect(orderRows().filter((l) => l === "Agent Fleet (self-hosted)").length).toBe(1);
+  });
+
+  // Regression pinned after review of PR #658: an Agent build old enough to predate `kind`
+  // still sends `providers` (with `fleet` on the pre-P1 shape, or neither field at all on
+  // pre-P0), so a check that only looked at "did providers arrive at all" wrongly treated this
+  // as a LIVE answer of zero fleet rows and dropped the fleet's own engine from the ordering
+  // list silently — the same class of bug P0 itself shipped once already, just one layer later.
+  it("kind の無い providers（ADR 0082 より前の Agent）は静的な既定に落ちる。fleet 行が消えない", async () => {
+    oldAgentAnswer();
+    await mount();
+    expect(orderRows()).toContain("Agent Fleet (self-hosted)");
+    expect(orderRows().some((l) => l.startsWith("image"))).toBe(false);
   });
 
   it("Agent が images 行を 1 本だけ答えたら、その行のキーで 1 行だけ出る（畳み込みではない）", async () => {

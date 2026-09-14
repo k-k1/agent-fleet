@@ -18,7 +18,7 @@ import { useConnections } from "../parts/useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { imagegenStatus } from "../../imagegen/api.ts";
-import type { ImagegenProvider } from "../../imagegen/wire.ts";
+import { isPreAdr0082Status, type ImagegenProvider } from "../../imagegen/wire.ts";
 import { ClaudeCard } from "./ClaudeCard.tsx";
 import { CodexCard } from "./CodexCard.tsx";
 import { CursorCard } from "./CursorCard.tsx";
@@ -64,10 +64,11 @@ export function AgentsTab() {
   const [agents, setAgents] = useState<any>(null);
   // The images rows this deployment actually declares (ADR 0082 decision 3), or null while
   // there is no live answer to trust — not running, still loading, a transient failure, or an
-  // Agent old enough to send no `fleet` at all. null is what tells imageOrder below to fall back
-  // to the static IMAGE_PROVIDERS_RANKED guess rather than mistake "nothing fetched yet" for
-  // "this deployment declares zero images rows" (a real, different answer — see
-  // normalizeImageProviderOrder's own `rows === undefined` vs `[]` distinction).
+  // Agent build old enough to predate `kind` (ADR 0082 P0/P1; see isPreAdr0082Status below).
+  // null is what tells imageOrder below to fall back to the static IMAGE_PROVIDERS_RANKED guess
+  // rather than mistake "nothing fetched yet" for "this deployment declares zero images rows"
+  // (a real, different answer — see normalizeImageProviderOrder's own `rows === undefined` vs
+  // `[]` distinction).
   const [imagegenProviders, setImagegenProviders] = useState<ImagegenProvider[] | null>(null);
 
   const loadSettings = useCallback(() => {
@@ -81,7 +82,10 @@ export function AgentsTab() {
       .then((a) => setAgents(a && !a.error ? a : false))
       .catch(() => setAgents(false));
     imagegenStatus()
-      .then((st) => setImagegenProviders(st && !isTransientErr(st) && Array.isArray(st.providers) ? st.providers : null))
+      .then((st) => {
+        const providers = st && !isTransientErr(st) && Array.isArray(st.providers) ? st.providers : null;
+        setImagegenProviders(providers && !isPreAdr0082Status(providers) ? providers : null);
+      })
       .catch(() => setImagegenProviders(null));
   }, []);
 

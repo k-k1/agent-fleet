@@ -362,3 +362,23 @@ export function fleetProviders(st: ImagegenStatus | null): ImagegenProvider[] {
 export function resolveFleetProvider(providers: ImagegenProvider[], providerId: string): ImagegenProvider | null {
   return providers.find((p) => p.id === providerId) || providers[0] || null;
 }
+
+/**
+ * Whether a `providers` list came from an Agent build old enough to predate `kind` (ADR 0082
+ * P0/P1) — the only reliable signal a CURRENT Agent stamps `kind` on EVERY entry, fleet or
+ * vendor (the Agent's providerKindOf falls back to the route's own id for codex/agy), while an
+ * old one sends none at all.
+ *
+ * `fleet` cannot be used for this the same way: a CURRENT Agent with zero declared fleet rows
+ * also has every entry's `fleet` omitted (Go's `json:",omitempty"` drops `false`), which is
+ * indistinguishable from the pre-ADR shape by that field alone.
+ *
+ * Vacuously false for an empty list: "nothing is ready right now" on a current Agent is a real,
+ * different answer from "this build cannot say" and must not be read as the same thing — an
+ * earlier version of the caller conflated them and made the fleet's own engine vanish from the
+ * settings screen's ordering list on any pre-P1 Agent, the same class of bug ADR 0082 P0 itself
+ * shipped once already (fleetProvider matching the id's spelling instead of reading `fleet`).
+ */
+export function isPreAdr0082Status(providers: ImagegenProvider[]): boolean {
+  return providers.length > 0 && providers.every((p) => !p.kind);
+}

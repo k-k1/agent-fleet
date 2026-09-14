@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fleetProvider, fleetProviders, resolveFleetProvider, type ImagegenProvider, type ImagegenStatus } from "./wire.ts";
+import { fleetProvider, fleetProviders, isPreAdr0082Status, resolveFleetProvider, type ImagegenProvider, type ImagegenStatus } from "./wire.ts";
 
 // ADR 0082 P0's regression (fixed in fleetProvider itself, pinned again here so a future
 // reader does not reach for id-matching by habit): `fleet` decides, never the id's spelling.
@@ -49,5 +49,30 @@ describe("resolveFleetProvider（ADR 0082 未解決 2）", () => {
 
   it("zero rows resolves to null, not a throw", () => {
     expect(resolveFleetProvider([], "image")).toBeNull();
+  });
+});
+
+// isPreAdr0082Status is the settings screen's generation check: an Agent build old enough to
+// predate `kind` must be read as "no live answer" (fall back to the static list), never as "this
+// deployment declares zero fleet rows" — which is what happens if the check reads `fleet`
+// instead (a current Agent with nothing ready also omits `fleet` on every entry, Go's
+// `omitempty`, so `fleet` alone cannot tell the two shapes apart).
+describe("isPreAdr0082Status", () => {
+  it("providers with no `kind` at all — the pre-ADR-0082 shape — reads as old", () => {
+    expect(isPreAdr0082Status([{ id: "codex" }, { id: "agy" }])).toBe(true);
+    expect(isPreAdr0082Status([{ id: "image", fleet: true }])).toBe(true);
+  });
+
+  it("a current Agent stamps `kind` on EVERY entry, vendor routes included — reads as current", () => {
+    expect(isPreAdr0082Status([{ id: "codex", kind: "codex" }, { id: "agy", kind: "agy" }])).toBe(false);
+    expect(isPreAdr0082Status([{ id: "image", fleet: true, kind: "comfy" }, { id: "codex", kind: "codex" }])).toBe(false);
+  });
+
+  it("one entry missing `kind` among others that have it is NOT the old shape (a mixed answer never happens, but must not false-positive)", () => {
+    expect(isPreAdr0082Status([{ id: "image", fleet: true, kind: "comfy" }, { id: "codex" }])).toBe(false);
+  });
+
+  it("zero providers is not the old shape — 'nothing is ready' is a real, different answer", () => {
+    expect(isPreAdr0082Status([])).toBe(false);
   });
 });
