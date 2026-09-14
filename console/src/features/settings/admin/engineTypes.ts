@@ -345,6 +345,9 @@ export type IngestSearchRequest = {
   sort: string;
   lora?: boolean;
   cursor?: string;
+  /** One of the engine's own `base_models`, or absent for every family. The CP translates it
+   *  into each upstream's own spelling — the Console must never send an upstream name here. */
+  family?: string;
 };
 
 export type IngestSearchAnswer = {

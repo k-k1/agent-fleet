@@ -116,6 +116,9 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
   const tr = useT();
   const [source, setSource] = useState<CatalogSource>(image ? "civitai" : "hf");
   const [sort, setSort] = useState(image ? "newest" : "updated");
+  // The family filter, as one of the ENGINE's own base models — never an upstream name. Empty is
+  // every family, which is what a browse was before this existed.
+  const [family, setFamily] = useState("");
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [hits, setHits] = useState<IngestHit[] | null>(null);
@@ -151,7 +154,8 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
   const search = useCallback(async (more = false) => {
     const seq = ++requestSeq.current;
     const body: IngestSearchRequest = {
-      q: more ? submittedQuery : query, source, sort, lora: kind === "lora", ...(more && cursor ? { cursor } : {}),
+      q: more ? submittedQuery : query, source, sort, lora: kind === "lora",
+      ...(family ? { family } : {}), ...(more && cursor ? { cursor } : {}),
     };
     setBusy(true); setBusyMore(more); setErr("");
     try {
@@ -164,9 +168,9 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
       if (!more) setSubmittedQuery(query);
       setCursor(page.next_cursor || "");
     } finally { if (seq === requestSeq.current) { setBusy(false); setBusyMore(false); } }
-  }, [cursor, kind, query, row.key, sort, source, submittedQuery]);
+  }, [cursor, family, kind, query, row.key, sort, source, submittedQuery]);
 
-  useEffect(() => { void search(false); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [row.key, kind, source, sort]);
+  useEffect(() => { void search(false); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [row.key, kind, source, sort, family]);
   const switchSource = (next: CatalogSource) => {
     setSource(next); setSort(next === "civitai" || next === "civitai-red" ? "newest" : "updated"); setHits(null); setCursor("");
   };
@@ -197,6 +201,15 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
             {tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}
           </Button>
         </form>
+        {image && !!(row.base_models || []).length && <label className="engine-catalog-family">
+          <span>{tr("admin.catalog_family" as never)}</span>
+          {/* The engine's OWN vocabulary, served by the CP — not a list this file keeps. A
+              deployment that grows a family offers it here without a Console change. */}
+          <select value={family} onChange={(event) => { setFamily(event.currentTarget.value); setHits(null); setCursor(""); }}>
+            <option value="">{tr("admin.catalog_family_all" as never)}</option>
+            {(row.base_models || []).map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+        </label>}
         <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span>
           <select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>
             {sortOptions.map((option) => <option key={option} value={option}>{tr((`admin.engines_ingest_sort_${option}`) as never)}</option>)}

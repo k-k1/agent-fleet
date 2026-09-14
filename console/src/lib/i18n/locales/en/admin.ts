@@ -298,6 +298,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.catalog_view_label": "Catalogue view",
   "admin.catalog_view_search": "Browse",
   "admin.catalog_view_registered": "Registered",
+  "admin.catalog_family_all": "Every family",
   "admin.catalog_sort": "Sort",
   "admin.catalog_checkpoint": "Checkpoint",
   "admin.catalog_family": "Family",
