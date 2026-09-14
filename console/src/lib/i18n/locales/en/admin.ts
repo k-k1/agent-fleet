@@ -908,6 +908,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.allow_engine_ingest": "Allow this tenant's administrators to take models in",
   "admin.allow_engine_ingest_hint":
     "OFF (default) means only a super_admin can start an ingest. ON lets this tenant's tenant_admins take models in from Hugging Face / Civitai / a URL. Enabling a model, changing the selected checkpoint, forgetting a row and the deployment's Hugging Face token stay super_admin. The catalogue is one per deployment, so the id of a model taken in is visible from every tenant.",
+  "admin.engine_use_title": "Inference engine use",
+  "admin.allow_engine_llm": "Allow using the self-hosted chat engine (llm)",
+  "admin.allow_engine_image": "Allow using the self-hosted image engine (image)",
+  "admin.engine_use_hint":
+    "A GPU box is billed by the hour, so this is a cost decision: may this tenant use it at all. Role-grained (llm / image), not model-grained — the catalogue stays one per deployment either way (a separate grant from model ingest above). Turning a role off removes it from the launch menu and the catalogue, and refuses existing sessions on their next request.",
   "admin.saved": "Saved",
   "admin.no_members": "No members. Add one from the form below.",
   "admin.add_failed": "Failed to add: {msg}",
