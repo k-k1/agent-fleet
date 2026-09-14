@@ -122,6 +122,107 @@ export function looksForeign(text: string, lang: TranslateLang): boolean {
   return cjk >= MIN_CJK;
 }
 
+// Server-side per-request-part cap (session_translate.go's translateMaxPartBytes), mirrored
+// here so a too-long answer can be split into several request parts BEFORE it is ever sent,
+// rather than only after the server has already said no. The 32 KiB value itself is not load-
+// bearing for correctness (a stale copy only shifts where splitting kicks in, never breaks it),
+// so unlike translateHash this does not need a pinned cross-language vector.
+export const TRANSLATE_MAX_PART_BYTES = 32 * 1024;
+
+function byteLen(s: string): number {
+  return encoder.encode(s).length;
+}
+
+// Character-offset ranges of ```-fenced blocks (opening line through the matching closing
+// line), so a split can avoid landing between them. An unterminated fence counts as open to the
+// end of the text — safer than treating a stray ``` as ordinary prose and cutting through it.
+function fenceRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const re = /^```.*$/gm;
+  let m: RegExpExecArray | null;
+  let openAt = -1;
+  while ((m = re.exec(text))) {
+    if (openAt < 0) openAt = m.index;
+    else {
+      ranges.push([openAt, m.index + m[0].length]);
+      openAt = -1;
+    }
+  }
+  if (openAt >= 0) ranges.push([openAt, text.length]);
+  return ranges;
+}
+
+const insideFence = (offset: number, ranges: Array<[number, number]>): boolean =>
+  ranges.some(([start, end]) => offset > start && offset < end);
+
+// Offsets right after each run of `pattern`, skipping any that fall inside a fenced block — a
+// fence's opening and closing ``` must never end up split across two request parts unless the
+// fence alone is already over the limit.
+function breakOffsets(text: string, pattern: RegExp, ranges: Array<[number, number]>): number[] {
+  const out: number[] = [];
+  const re = new RegExp(pattern.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const offset = m.index + m[0].length;
+    if (!insideFence(offset, ranges)) out.push(offset);
+  }
+  return out;
+}
+
+// The largest candidate offset (candidates ascending) that is past `start` and keeps
+// text.slice(start, offset) within maxBytes. The slice only grows as offset increases, so byte
+// length is monotonic — the first candidate that no longer fits ends the search.
+function bestCut(text: string, start: number, maxBytes: number, candidates: number[]): number | undefined {
+  let best: number | undefined;
+  for (const c of candidates) {
+    if (c <= start) continue;
+    if (byteLen(text.slice(start, c)) <= maxBytes) best = c;
+    else break;
+  }
+  return best;
+}
+
+// Last resort: a byte-safe cut (never inside a UTF-8 multi-byte sequence) at the widest prefix
+// that still fits. Always makes progress: even one character's UTF-8 encoding is far under any
+// maxBytes this runs with.
+function hardCut(text: string, start: number, maxBytes: number): number {
+  let lo = start + 1;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (byteLen(text.slice(start, mid)) <= maxBytes) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * Splits one translate request part at the best available boundary once it is over the
+ * server's per-part cap: a blank line, then a single line break, then a raw byte-safe cut, in
+ * that preference order. Concatenating the returned chunks with NO separator reproduces `text`
+ * exactly (each chunk keeps its own trailing newlines), so the caller sends them as independent
+ * request parts and joins the translated replies back in the same order.
+ *
+ * A fenced code block is kept whole whenever it fits in one chunk on its own: splitting through
+ * the middle of a ``` pair would hand each half to the model as a separate request, and the
+ * persona's "keep code fences verbatim" instruction cannot save a fence that is already broken
+ * before translation starts.
+ */
+export function splitForTranslate(text: string, maxBytes: number = TRANSLATE_MAX_PART_BYTES): string[] {
+  if (byteLen(text) <= maxBytes) return [text];
+  const ranges = fenceRanges(text);
+  const blank = breakOffsets(text, /\n{2,}/, ranges);
+  const single = breakOffsets(text, /\n/, ranges);
+  const out: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    const end = bestCut(text, start, maxBytes, blank) ?? bestCut(text, start, maxBytes, single) ?? hardCut(text, start, maxBytes);
+    out.push(text.slice(start, end));
+    start = end;
+  }
+  return out;
+}
+
 /** POST /api/sessions/{name}/translate — one entry per requested part, in request order. */
 export interface TranslatePartReply {
   hash: string;

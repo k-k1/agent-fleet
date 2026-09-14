@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { looksForeign, targetLang, translatableTexts, translateHash, turnTranslateKey } from "./translate.ts";
+import {
+  looksForeign,
+  splitForTranslate,
+  targetLang,
+  translatableTexts,
+  translateHash,
+  turnTranslateKey,
+} from "./translate.ts";
 import type { Group } from "./transcript/types.ts";
+
+const encoder = new TextEncoder();
+const byteLen = (s: string): number => encoder.encode(s).length;
 
 const groupOf = (parts: Group["parts"]): Pick<Group, "parts"> => ({ parts });
 
@@ -99,5 +109,54 @@ describe("looksForeign", () => {
 
     // Nothing left to translate once the quoted label is the whole message.
     expect(looksForeign('"レビューする"', "ja")).toBe(false);
+  });
+});
+
+describe("splitForTranslate", () => {
+  it("leaves a part under the cap alone", () => {
+    expect(splitForTranslate("Short answer.", 100)).toEqual(["Short answer."]);
+  });
+
+  it("splits an over-cap part at paragraph breaks, staying under the cap", () => {
+    const paragraphs = ["First paragraph, long enough on its own.", "Second paragraph, also long enough on its own."];
+    const text = paragraphs.join("\n\n");
+    const cap = byteLen(paragraphs[0]) + 5; // room for the paragraph itself plus a little slack, not both
+    const chunks = splitForTranslate(text, cap);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) expect(byteLen(c)).toBeLessThanOrEqual(cap);
+    // No text lost or reordered: concatenating the chunks reproduces the original exactly.
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("falls back to line breaks when a single paragraph alone is over the cap", () => {
+    const lines = ["line one is fairly long", "line two is fairly long", "line three is fairly long"];
+    const text = lines.join("\n"); // one paragraph (no blank line), so no paragraph break exists
+    const cap = byteLen(lines[0]) + 5;
+    const chunks = splitForTranslate(text, cap);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) expect(byteLen(c)).toBeLessThanOrEqual(cap);
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("hard-splits at a byte-safe boundary when even one line has no break", () => {
+    const text = "a".repeat(50) + "あ".repeat(50); // a run with no newline anywhere, incl. multibyte
+    const cap = 30;
+    const chunks = splitForTranslate(text, cap);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) expect(byteLen(c)).toBeLessThanOrEqual(cap);
+    // Every cut lands on a whole character: re-encoding never throws and nothing is lost.
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("keeps a fenced code block whole when it fits in one chunk", () => {
+    const before = "Explanation before the code, long enough to need a split on its own here.";
+    const fence = "```go\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```";
+    const after = "Explanation after the code, also long enough to need a split on its own here.";
+    const text = [before, fence, after].join("\n\n");
+    const cap = byteLen(before) + 5; // forces a split near the fence, not inside it
+    const chunks = splitForTranslate(text, cap);
+    expect(chunks.join("")).toBe(text);
+    // The fence never straddles a chunk boundary: each chunk holds an even number of ``` markers.
+    for (const c of chunks) expect((c.match(/```/g) || []).length % 2).toBe(0);
   });
 });
