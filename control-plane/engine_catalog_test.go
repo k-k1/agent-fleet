@@ -592,4 +592,13 @@ func TestEngineBaseModelValidation(t *testing.T) {
 	if len(engineBaseModelsFor("comfy")) == 0 {
 		t.Error("comfy has no vocabulary — the Console has nothing to build a selector from")
 	}
+	// ADR 0082 decision 2: a row's free-text KEY ("comfy-lan") must never be mistaken for its
+	// declared Provider ("comfy") — every caller here passes e.def.Provider, and this is the
+	// negative control that catches the day one of them is changed to pass e.def.Key instead.
+	if len(engineBaseModelsFor("comfy-lan")) != 0 {
+		t.Error("a row's KEY was read as if it were its Provider — the family vocabulary must come from Provider alone")
+	}
+	if len(engineFileFlagsFor("comfy-lan")) != 0 {
+		t.Error("a row's KEY was read as if it were its Provider — the file-flag vocabulary must come from Provider alone")
+	}
 }

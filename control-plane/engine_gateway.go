@@ -972,9 +972,26 @@ func (g engineGateway) ensureReady(ctx context.Context, eng *engineRuntimeState)
 	if eng.def.remote() {
 		return nil
 	}
+	// 🔥 An EXTERNAL row that was just found not answering is refused without probing again
+	// (ADR 0082 unresolved 1). ensureStarted below is what produces the refusal either way —
+	// nothing here can start such a row — so the probe's only effect would be to spend its
+	// budget first, and that budget sits in front of the PREFERRED route: a member whose LAN box
+	// is switched off pays it before every single picture, and falling through to the next
+	// provider is meant to be the cheap part. Measured: 3.05-3.11 s per attempt against a
+	// switched-off LAN host (see engineExternalDownTTL).
+	//
+	// Managed rows never take this branch: theirs is the wait for a box being bought, where "not
+	// answering" is the expected state and remembering it would refuse the engine mid-start.
+	if eng.def.external() && eng.downRecently() {
+		return eng.ensureStarted(ctx)
+	}
 	waitStarted := time.Now()
 	for {
-		if engineHealthy(ctx, eng) {
+		healthy := engineHealthy(ctx, eng)
+		if eng.def.external() {
+			eng.noteProbe(healthy)
+		}
+		if healthy {
 			return nil
 		}
 		if err := eng.ensureStarted(ctx); err != nil {
@@ -1002,8 +1019,7 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 	// (ADR 0071 decision 5), a budget meant for buying a box and pulling weights from S3 — so
 	// this fails at once and names the URL and the path the operator has to go and look at.
 	if e.ecs == nil {
-		return fmt.Errorf("%s is not answering; this engine is externally managed and nothing here can start it",
-			engineHealthURL(e.def))
+		return errors.New(engineExternalUnreachableMsg(e.def))
 	}
 	view, err := e.ecs.view(ctx)
 	if err != nil {
@@ -1065,6 +1081,15 @@ func engineHealthPath(d engineDef) string {
 // message pointing at a URL nothing actually dialled would send the operator to the wrong box.
 func engineHealthURL(d engineDef) string {
 	return strings.TrimRight(d.URL, "/") + engineHealthPath(d)
+}
+
+// engineExternalUnreachableMsg is what an externally managed row's own URL means when it does
+// not answer: nothing here started it and nothing here will (ADR 0076 decision 4). Shared with
+// the discovery probe (ADR 0082 decision 7, engine_discover.go) so the two ways an operator
+// learns "that PC is off" say exactly the same sentence.
+func engineExternalUnreachableMsg(d engineDef) string {
+	return fmt.Sprintf("%s is not answering; this engine is externally managed and nothing here can start it",
+		engineHealthURL(d))
 }
 
 // engineHealthy asks the engine's health endpoint. A short timeout on purpose: while the

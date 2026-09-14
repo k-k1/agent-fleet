@@ -115,11 +115,17 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 	changed := false
 	seen := map[string]bool{}
 	// The ingest runner, for a process that came up while the table had no rows and therefore no
-	// `ingest` block either. Once attached it is never replaced: the task definition is the
-	// stack's and a running reconcile loop owns the jobs it started.
-	if r.reg.startIngest != nil && r.reg.ingester() == nil && r.reg.startIngest(table.Ingest) {
+	// `ingest` block either. Once attached the runner is never replaced: the task definition is
+	// the stack's and a running reconcile loop owns the jobs it started. Its optional metadata
+	// reader may still be attached when a new table first publishes the bucket name.
+	hadIngest := r.reg.ingester() != nil
+	if r.reg.startIngest != nil && r.reg.startIngest(table.Ingest) {
 		changed = true
-		log.Printf("engines: the table now declares an ingest task; taking models in is available from here on")
+		if hadIngest {
+			log.Printf("engines: the model storage checker was updated from the engine table")
+		} else {
+			log.Printf("engines: the table now declares an ingest task; taking models in is available from here on")
+		}
 	}
 	for _, d := range table.Engines {
 		seen[d.Key] = true

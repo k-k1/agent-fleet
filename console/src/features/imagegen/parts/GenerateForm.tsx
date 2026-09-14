@@ -16,7 +16,7 @@ import type { KeyboardEvent as RKeyboardEvent } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { Slider } from "../../settings/parts/controls.tsx";
-import { loraTriggers, loraWeight, type ImagegenLora, type ImagegenModel, type Knob } from "../wire.ts";
+import { loraTriggers, loraWeight, type ImagegenLora, type ImagegenModel, type ImagegenProvider, type Knob } from "../wire.ts";
 import { familyCard, sizeOptions } from "../families.ts";
 import { MAX_BATCH, MAX_JOBS, OPS, type ImagegenDraft } from "../draft.ts";
 import { InputPicker } from "./InputPicker.tsx";
@@ -24,6 +24,13 @@ import { InputPicker } from "./InputPicker.tsx";
 interface Props {
   draft: ImagegenDraft;
   patch: (p: Partial<ImagegenDraft>) => void;
+  /** Every READY fleet row (ADR 0082 P1). The picker below renders only when there is more
+   *  than one — a single-engine deployment sees exactly what it always did. */
+  fleetProviders: ImagegenProvider[];
+  /** The RESOLVED row driving the pane — ImagegenView's resolveFleetProvider(fleetProviders,
+   *  draft.providerId), the same "parent resolves, child just reads" shape `model` already
+   *  follows one field down. */
+  provider: ImagegenProvider | null;
   models: ImagegenModel[];
   loras: ImagegenLora[];
   model: ImagegenModel | null;
@@ -44,6 +51,8 @@ interface Props {
 export function GenerateForm({
   draft,
   patch,
+  fleetProviders,
+  provider,
   models,
   loras,
   model,
@@ -117,8 +126,34 @@ export function GenerateForm({
   const stepsPh = model?.params?.steps != null ? tr("imggen.default_ph", { v: model.params.steps }) : tr("imggen.default_ph_none");
   const cfgPh = model?.params?.cfg != null ? tr("imggen.default_ph", { v: model.params.cfg }) : tr("imggen.default_ph_none");
 
+  // ADR 0082 unresolved question 2: shown only when there is a REAL choice — one fleet row is
+  // not a choice (the same "more than one" rule the model/LoRA pickers already follow). `value`
+  // reads the ALREADY-RESOLVED `provider` prop (ImagegenView's resolveFleetProvider) rather than
+  // re-deriving it here, the same "parent resolves, child reads" split `model` already follows.
+  const providerKindLabel = (kind?: string): string =>
+    kind === "comfy" ? tr("agents.image_kind_comfy") : kind === "openai-compat" ? tr("agents.image_kind_openai_compat") : "";
+
   return (
     <div className="igen-form" onKeyDown={onKeyDown}>
+      {fleetProviders.length > 1 && (
+        <label className="igen-field">
+          <span className="igen-label">{tr("imggen.provider")}</span>
+          <select
+            className="ds-select"
+            value={provider?.id || ""}
+            onChange={(e) => patch({ providerId: e.target.value })}
+          >
+            {fleetProviders.map((p) => {
+              const kindLabel = providerKindLabel(p.kind);
+              return (
+                <option key={p.id} value={p.id}>
+                  {kindLabel ? `${p.id} (${kindLabel})` : p.id}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+      )}
       <label className="igen-field">
         <span className="igen-label">{tr("imggen.model")}</span>
         <select

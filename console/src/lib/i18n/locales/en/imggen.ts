@@ -18,6 +18,9 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.engine_unavailable": "No engine available",
   "imggen.cost_note": "The cost is your organisation's GPU hours, not a price per picture.",
 
+  // ADR 0082 P1 (unresolved question 2): shown only with 2+ rows — one row is not a choice,
+  // and the same id can mean a different machine on each row of the same kind.
+  "imggen.provider": "Engine",
   "imggen.model": "Model",
   "imggen.model_none": "Choose a model",
   "imggen.no_models": "No model is available from this workspace.",

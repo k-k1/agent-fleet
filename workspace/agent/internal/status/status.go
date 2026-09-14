@@ -41,6 +41,17 @@ type SessionStatus struct {
 	// a timestamp that moved forward would read, to a parent polling its children, as a
 	// SECOND turn having finished.
 	TurnEndAt string `json:"turnEndAt,omitempty"`
+	// TurnEndReason is WHY this turn ended (TurnEndReasonFailed / TurnEndReasonAborted), set
+	// by the SAME write that sets TurnEnd. Before this field existed the fact (idle+TurnEnd)
+	// was persisted here but the reason travelled only as an in-process hint over an async
+	// goroutine (agents.notify) to the docs/log/51 reconciler — two different persistence
+	// levels for one event. A reconciler tick landing between the two writes settled on
+	// marker-idle with no hint yet and reported a failed turn as a plain completion (measured
+	// by delaying the goroutine past two reconciler ticks). Keeping the reason on the level
+	// closes that window: whichever write order a tick sees, the reason is already there or
+	// the turn has not ended yet. Empty means a clean end, and also an old record written
+	// before this field existed — both must read as "no reason", not a crash or a false alarm.
+	TurnEndReason string `json:"turnEndReason,omitempty"`
 	// Rev names THIS write of the record. Every write gets a fresh random one (persist), so
 	// it is the identity a poll's observation can be pinned to: an observation of the end of
 	// the turn this record describes stops counting the moment anything writes a new record
@@ -142,20 +153,36 @@ func ExitReasonFor(code, sig int, oom bool) string {
 // stale, so a log line is the only breadcrumb the write ever failed.
 func Persist(sid, state string) { persist(sid, SessionStatus{State: state}) }
 
+// TurnEndReasonFailed / TurnEndReasonAborted are the qualifiers PersistTurnEndReason
+// accepts (see SessionStatus.TurnEndReason). Their values are the wire contract with
+// chatx.ReportReasonTurnFailed / ReportReasonTurnAborted, which alias these constants
+// instead of defining their own — status sits below chatx (chatx imports status, not the
+// other way around), so this is the one place the literal is allowed to live.
+const (
+	TurnEndReasonFailed  = "turn-failed"
+	TurnEndReasonAborted = "turn-aborted"
+)
+
 // PersistTurnEnd is Persist for a write that IS a turn's end (the Stop hook's idle,
 // MarkTurnEnd's completed/failed/aborted). This is the only entry point that sets
 // TurnEnd: a write that only records "the current state" and a write that claims "the
-// turn ended" stay separate.
+// turn ended" stay separate. It is PersistTurnEndReason with no reason (a clean end).
 //
 // An end a poll already observed is adopted rather than restamped (see TurnEndAt). Reading
 // the observation is a read of a DIFFERENT store: this still writes a COMPLETE record, blind,
 // which is what keeps concurrent writers harmless here (see observedEnds).
-func PersistTurnEnd(sid, state string) {
+func PersistTurnEnd(sid, state string) { PersistTurnEndReason(sid, state, "") }
+
+// PersistTurnEndReason is PersistTurnEnd carrying WHY the turn ended (see
+// SessionStatus.TurnEndReason). The fact and the reason MUST be set in this one write —
+// splitting them, so that a caller persists the end now and reports the reason later over a
+// separate channel, is exactly the bug this function exists to rule out.
+func PersistTurnEndReason(sid, state, reason string) {
 	at := ObservedTurnEnd(sid)
 	if at == "" {
 		at = time.Now().Format(time.RFC3339)
 	}
-	persist(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at})
+	persist(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at, TurnEndReason: reason})
 }
 
 // TurnEndUnrecorded reports whether sid has a turn in flight whose end has not been observed

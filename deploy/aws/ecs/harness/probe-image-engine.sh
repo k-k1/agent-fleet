@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
-# Ask the deployment's `image` engine for one picture, from inside the VPC.
+# Ask the deployment's `image` engine whether it is alive, from inside the VPC.
 #
-#   harness/probe-image-engine.sh --profile <p> --region <r> [--wake] [--stop]
-#                                 [--prompt TEXT] [--size WxH] [--seed N] [--name TAG]
+#   harness/probe-image-engine.sh --profile <p> --region <r> [--wake] [--stop] [--name TAG]
 #
 # ## Why this exists
 #
 # The engine is on a private subnet and its security group admits the Control Plane and
-# nobody else (ADR 0071 decision 4 — reachability IS the access control, and sd-server has no
-# authentication of its own). The only ways to see a picture are therefore a member's
+# nobody else (ADR 0071 decision 4 — reachability IS the access control, and ComfyUI has no
+# authentication of its own). The only ways to reach it are therefore a member's
 # `generate_image` inside a Workspace, or a task inside the VPC wearing the CP's security
-# group. This is the second one, and it exists because ADR 0072 P0's definition of done —
-# "choose another checkpoint and the next start returns a new picture" — cannot be observed
-# from a laptop at all.
+# group. This is the second one.
+#
+# ⚠️ **This is a LIVENESS probe, not a picture.** Before ADR 0083 the `image` role could be
+# stable-diffusion.cpp, and this script asked it for one image over its OpenAI-compatible
+# `/v1/images/generations` — a request the retired engine understood. ComfyUI does not: its
+# native API is `POST /prompt` with a per-checkpoint-family workflow graph
+# (`workspace/agent/internal/imagegen/comfy.go`'s `comfyBuildGraph`), which this script does not
+# reimplement — hand-rolling that graph in bash would duplicate non-trivial Go logic that could
+# silently drift from what the `comfy` provider actually sends. So this probe only asks
+# `GET /system_stats` (unauthenticated, answers immediately once the process is up) and uploads
+# the response to S3 for inspection. To see an actual picture, use a member's `generate_image`
+# inside a Workspace pointed at this deployment — the only real entry point for one (ADR 0077).
 #
 # It is a PROBE, not a benchmark. `bench-image-engine.sh` next door measures ComfyUI on its own
-# GPU box for phase P2; this one asks the engine that is already running for one image and puts
-# it in S3, so what came back can be looked at.
+# GPU box for phase P2.
 #
 # ## What it reuses, and why that is not a shortcut
 #
@@ -31,8 +38,7 @@
 set -euo pipefail
 
 PROFILE=""; REGION=""; WAKE=0; STOP=0
-PROMPT="a red apple on a wooden table, studio lighting, photograph"
-SIZE="512x512"; SEED=""; NAME="probe"
+NAME="probe"
 ENGINES_STACK="af-ecs-engines"; NET_STACK="af-ecs-network"; PLATFORM_STACK="af-ecs-platform"
 
 usage() { sed -n '2,30p' "$0" >&2; }
@@ -41,9 +47,6 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --profile) PROFILE="${2:?}"; shift ;;
     --region)  REGION="${2:?}"; shift ;;
-    --prompt)  PROMPT="${2:?}"; shift ;;
-    --size)    SIZE="${2:?}"; shift ;;
-    --seed)    SEED="${2:?}"; shift ;;
     --name)    NAME="${2:?}"; shift ;;
     --stack)   ENGINES_STACK="${2:?}"; shift ;;
     --wake)    WAKE=1 ;;
@@ -86,54 +89,37 @@ if [ "$WAKE" = 1 ]; then
   echo "==> runningCount=$n"
 fi
 
-BODY="{\"prompt\":$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$PROMPT"),\"size\":\"$SIZE\""
-[ -n "$SEED" ] && BODY="$BODY,\"seed\":$SEED"
-BODY="$BODY}"
-KEY="probe/${NAME}.png"
+KEY="probe/${NAME}.json"
 
-# The engine listens only once its checkpoint is loaded, so a connection refused here is "not
+# The engine listens only once ComfyUI's process is up, so a connection refused here is "not
 # ready yet" rather than a failure: keep asking for a few minutes, then give up loudly.
 FETCH='set -e;
-  echo "probe: POST $ENGINE/v1/images/generations";
-  echo "probe: body $BODY";
+  echo "probe: GET $ENGINE/system_stats";
   i=0;
-  until curl -sS --max-time 900 -X POST "$ENGINE/v1/images/generations" \
-        -H "Content-Type: application/json" -d "$BODY" -o /scratch/resp.json; do
+  until curl -sS --max-time 30 "$ENGINE/system_stats" -o /scratch/resp.json; do
     i=$((i+1)); [ "$i" -lt 40 ] || { echo "probe: the engine never answered"; exit 1; };
     echo "probe: not listening yet ($i)"; sleep 15;
   done;
   echo "probe: $(stat -c %s /scratch/resp.json) bytes of answer";
-  head -c 200 /scratch/resp.json; echo'
+  head -c 400 /scratch/resp.json; echo'
 
 UPLOAD='set -e;
-  python3 - <<PY
-import base64, json, sys
-d = json.load(open("/scratch/resp.json"))
-if "data" not in d:
-    print("probe: the engine answered an error:", json.dumps(d)[:400]); sys.exit(1)
-raw = base64.b64decode(d["data"][0]["b64_json"])
-open("/scratch/out.png", "wb").write(raw)
-print("probe: decoded", len(raw), "bytes,", d.get("output_format", "png"))
-PY
-  aws s3 cp /scratch/out.png "s3://$BUCKET/$KEY" --only-show-errors;
-  echo "probe: uploaded $KEY";
-  # What the engine says it is holding. sd-server answers a fixed id, so this is a liveness
-  # line rather than the checkpoint name -- the checkpoint is in the engine container is log.
-  curl -sS --max-time 30 "$ENGINE/v1/models" || true; echo'
+  aws s3 cp /scratch/resp.json "s3://$BUCKET/$KEY" --only-show-errors;
+  echo "probe: uploaded $KEY"'
 
 echo "==> run-task $FAMILY (probe)"
 TASK="$("${AWS[@]}" ecs run-task --cluster "$CLUSTER" --launch-type FARGATE \
   --task-definition "$FAMILY" \
   --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS//,/,}],securityGroups=[$CPSG],assignPublicIp=DISABLED}" \
-  --overrides "$(python3 - "$BODY" "$BUCKET" "$KEY" "$FETCH" "$UPLOAD" <<'PY'
+  --overrides "$(python3 - "$BUCKET" "$KEY" "$FETCH" "$UPLOAD" <<'PY'
 import json, sys
-body, bucket, key, fetch, upload = sys.argv[1:6]
+bucket, key, fetch, upload = sys.argv[1:5]
 env = lambda **kw: [{"name": k, "value": v} for k, v in kw.items()]
 print(json.dumps({"containerOverrides": [
     {"name": "fetch", "command": [fetch],
-     "environment": env(ENGINE="http://image.af.internal:8080", BODY=body)},
+     "environment": env(ENGINE="http://image.af.internal:8080")},
     {"name": "upload", "command": [upload],
-     "environment": env(BUCKET=bucket, KEY=key, ENGINE="http://image.af.internal:8080")},
+     "environment": env(BUCKET=bucket, KEY=key)},
 ]}))
 PY
 )" --query 'tasks[0].taskArn' --output text)"
@@ -146,7 +132,7 @@ echo "==> probe log"
 "${AWS[@]}" logs tail "/af/${ENGINES_STACK}/engines" --since 20m \
   --filter-pattern "probe" 2>/dev/null | tail -30 || true
 
-echo "==> the picture: s3://$BUCKET/$KEY"
+echo "==> the answer: s3://$BUCKET/$KEY (for a picture, use generate_image in a Workspace)"
 
 if [ "$STOP" = 1 ]; then
   echo "==> stopping $SERVICE (desired 0) — a GPU box is \$1.26/hour"

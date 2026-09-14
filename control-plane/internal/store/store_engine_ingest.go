@@ -65,6 +65,17 @@ type EngineIngestStore interface {
 	// (the operator's own jobs) and an ambiguous sentinel here would silently hand a
 	// tenant_admin every job the super_admin started.
 	ListEngineIngestJobsByTenant(ctx context.Context, role, tenantID string, limit int) ([]EngineIngestJob, error)
+	// ListEngineIngestJobsForStorage returns every server-known object address for a role. It is
+	// intentionally separate from the capped panel history: an old successful job may be the
+	// only remaining reference to paid-for bytes that are not attached to a catalogue row.
+	ListEngineIngestJobsForStorage(ctx context.Context, role string) ([]EngineIngestJob, error)
+	// ListEngineIngestJobsForStorageByTenant preserves the same tenant-history boundary as the
+	// ordinary panel while returning every address visible through that grant.
+	ListEngineIngestJobsForStorageByTenant(ctx context.Context, role, tenantID string) ([]EngineIngestJob, error)
+	// EngineIngestS3KeyRecorded answers the write-side safety question without loading the
+	// unbounded history used by the storage panel. It spans tenants because an S3 role prefix is
+	// shared even when the job list is not.
+	EngineIngestS3KeyRecorded(ctx context.Context, role, s3Key string) (bool, error)
 	GetEngineIngestJob(ctx context.Context, id string) (EngineIngestJob, bool, error)
 	// ListActiveEngineIngestJobs is what the reconciler polls: only the jobs whose outcome is
 	// still unknown, so a CP that has been up for a week does not ask ECS about last Tuesday.
@@ -75,9 +86,9 @@ type EngineIngestStore interface {
 	//
 	// 🔴 The reason there is no timer is that this table is not only a progress display. While
 	// nothing in the catalogue points at the S3 key a `done` job wrote, this row is the
-	// deployment's ONLY written record that those bytes exist — the Control Plane cannot list
-	// the bucket, having no S3 permission at all (ADR 0072 review R3). Ageing rows out would
-	// quietly delete the address of files that keep being paid for.
+	// deployment's ONLY written address for those bytes. The Control Plane deliberately cannot
+	// list the bucket, and its HeadObject view starts from these server-known addresses. Ageing
+	// rows out would quietly make paid-for files undiscoverable from the panel.
 	//
 	// It also does NOT filter by state. A `running` job must not be deleted (the ECS task
 	// outlives the row and still writes a catalogue row nobody is waiting for), but that
@@ -110,6 +121,27 @@ func (s *SQL) ListEngineIngestJobsByTenant(ctx context.Context, role, tenantID s
 	return s.engineIngestList(ctx, role, tenantID, true, limit)
 }
 
+func (s *SQL) ListEngineIngestJobsForStorage(ctx context.Context, role string) ([]EngineIngestJob, error) {
+	return s.engineIngestStorageList(ctx, role, "", false)
+}
+
+func (s *SQL) ListEngineIngestJobsForStorageByTenant(ctx context.Context, role, tenantID string) ([]EngineIngestJob, error) {
+	return s.engineIngestStorageList(ctx, role, tenantID, true)
+}
+
+func (s *SQL) EngineIngestS3KeyRecorded(ctx context.Context, role, s3Key string) (bool, error) {
+	var found int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM engine_ingest_jobs WHERE role=? AND s3_key=?)`, role, s3Key).Scan(&found)
+	return found != 0, err
+}
+
+func (s *SQL) engineIngestStorageList(ctx context.Context, role, tenantID string, byTenant bool) ([]EngineIngestJob, error) {
+	q, args := engineIngestListQuery(role, tenantID, byTenant)
+	q += ` ORDER BY created_at DESC, id DESC`
+	return s.engineIngestRows(ctx, q, args...)
+}
+
 // engineIngestList is the body of the two above. An explicit `byTenant` flag rather than
 // "filter when tenantID is not empty" is what keeps the OPERATOR's own jobs (tenant_id is empty
 // for those) out of a tenant's list: with a non-empty test, a caller that resolved no tenant
@@ -118,6 +150,13 @@ func (s *SQL) engineIngestList(ctx context.Context, role, tenantID string, byTen
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	q, args := engineIngestListQuery(role, tenantID, byTenant)
+	q += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+	return s.engineIngestRows(ctx, q, args...)
+}
+
+func engineIngestListQuery(role, tenantID string, byTenant bool) (string, []any) {
 	q := `SELECT ` + engineIngestCols + ` FROM engine_ingest_jobs`
 	var where []string
 	var args []any
@@ -132,9 +171,7 @@ func (s *SQL) engineIngestList(ctx context.Context, role, tenantID string, byTen
 	if len(where) > 0 {
 		q += ` WHERE ` + strings.Join(where, ` AND `)
 	}
-	q += ` ORDER BY created_at DESC, id DESC LIMIT ?`
-	args = append(args, limit)
-	return s.engineIngestRows(ctx, q, args...)
+	return q, args
 }
 
 func (s *SQL) ListActiveEngineIngestJobs(ctx context.Context) ([]EngineIngestJob, error) {

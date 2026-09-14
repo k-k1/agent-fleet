@@ -48,6 +48,7 @@ var engineHTTP = &http.Client{Timeout: 20 * time.Second}
 func init() {
 	opencode.EngineEnv = engineSessionEnv
 	imagegen.EngineLookup = engineImageConn
+	imagegen.EngineImageRows = engineImageProviderRows
 	// Generated pictures land in the gallery's own folder, so pay the decode here rather
 	// than when somebody opens it (fs_thumb.go's warming notes). 512 is the edge every
 	// surface asks for — the mirror's cards, the gallery's, the studio's.
@@ -64,12 +65,34 @@ func init() {
 }
 
 // The API families the CP's catalogue reports. Chat engines become opencode providers; images
-// engines become the imagegen `sdcpp` provider. The key is NOT what decides this — an engine's
-// role is declared by the stack (ADR 0071 decision 8).
+// engines become an imagegen provider. The key is NOT what decides this — an engine's role is
+// declared by the stack (ADR 0071 decision 8).
 const (
 	engineAPIChat   = "chat"
 	engineAPIImages = "images"
 )
+
+// knownImageProviders is the images-API vocabulary this Agent build actually implements a
+// client for (ADR 0083 decision 5). A row naming anything else cannot be served no matter what
+// the catalogue says about it — imagegen.EngineLookup simply never matches it — and that used to
+// be entirely silent: generate_image just never reached tools/list, with no error and no log.
+var knownImageProviders = map[string]bool{
+	imagegen.ProviderComfy:        true,
+	imagegen.ProviderOpenAICompat: true,
+}
+
+// logUnservableImageRows says, once per fresh catalogue fetch, which images rows this build
+// cannot serve — the Agent side of decision 5's refusal. Called only when engineCatalogRows
+// actually went to the network, not on every cache hit off the 10-minute TTL, so a deployment
+// running an unserved row is not asked to read the same line every tools/list.
+func logUnservableImageRows(rows []engineCatalogRow) {
+	for _, e := range rows {
+		if e.api() != engineAPIImages || knownImageProviders[e.Provider] {
+			continue
+		}
+		log.Printf("engines: %s declares images provider %q, which this Agent build does not implement (known: comfy, openai-compat) — generate_image will not reach it", e.Key, e.Provider)
+	}
+}
 
 // engineCatalogRow is one engine as the CP describes it. It never touches an engine to
 // answer, which is what lets the launch menu be drawn — and the image tool be advertised —
@@ -200,6 +223,7 @@ func engineCatalogRows(ctx context.Context) []engineCatalogRow {
 		return engineCatalogState.rows
 	}
 	engineCatalogState.rows, engineCatalogState.ok = cat.Engines, true
+	logUnservableImageRows(cat.Engines)
 	return engineCatalogState.rows
 }
 
@@ -417,9 +441,28 @@ func engineToken(ctx context.Context, key, session string) string {
 
 // --- the image engine (ADR 0071 P1) ----------------------------------------------
 
-// engineImageConn tells internal/imagegen how to reach the fleet's own image engine, or says
-// there is none. Called from the provider's Ready() (the tools/list path) and from its
-// Generate, so both sides of "is it offered" and "can it run" agree by construction.
+// engineImageProviderRows lists the images rows Providers() should construct a client for: one
+// per catalogue row this Agent build actually implements a client for (knownImageProviders),
+// keyed by the row's OWN key rather than its provider field (ADR 0082 decision 1) — that key is
+// what becomes the provider's id everywhere a caller, the stored order, the ledger and the MCP
+// surface name it.
+func engineImageProviderRows(ctx context.Context) []imagegen.EngineImageRow {
+	rows := engineCatalogRows(ctx)
+	out := make([]imagegen.EngineImageRow, 0, len(rows))
+	for _, e := range rows {
+		if e.api() != engineAPIImages || !knownImageProviders[e.Provider] {
+			continue
+		}
+		out = append(out, imagegen.EngineImageRow{Key: e.Key, Provider: e.Provider})
+	}
+	return out
+}
+
+// engineImageConn tells internal/imagegen how to reach one images engine row, keyed by the row's
+// OWN key (ADR 0082 decision 1) rather than by provider kind — two rows of the same kind (a
+// managed comfy engine and an operator's LAN comfy box) must each reach the URL that is actually
+// theirs. Called from the provider's Ready() (the tools/list path) and from its Generate, so both
+// sides of "is it offered" and "can it run" agree by construction.
 //
 // The token is WORKSPACE-scoped, not per session, and that is a different trade from
 // opencode's. The engine credential opencode uses ends up in a config the model can read
@@ -427,13 +470,13 @@ func engineToken(ctx context.Context, key, session string) string {
 // Agent's own process. What the CP does with the session claim is label a usage row, and for
 // images the row is written here instead (feature tool.imagegen, with the session as its ref),
 // so a session-scoped token would buy nothing and cost one credential per session.
-func engineImageConn(ctx context.Context, provider string) (imagegen.EngineConn, bool) {
+func engineImageConn(ctx context.Context, key string) (imagegen.EngineConn, bool) {
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
 	if base == "" {
 		return imagegen.EngineConn{}, false
 	}
 	for _, e := range engineCatalogRows(ctx) {
-		if e.api() != engineAPIImages || e.Provider != provider {
+		if e.api() != engineAPIImages || e.Key != key {
 			continue
 		}
 		tok := engineToken(ctx, e.Key, "")

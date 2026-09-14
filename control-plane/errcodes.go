@@ -70,16 +70,24 @@ const (
 	// refused. Its own code because the two answers send the reader to opposite places — this one
 	// is "nobody knows", which is never a reason to distrust a row that generates today.
 	errCodeEngineVaeUnreadable = "engine_vae_unreadable"
-	errCodeIngestBadSource     = "bad_source"
-	errCodeIngestFileUnknown   = "file_unknown"
-	errCodeIngestNoChecksum    = "no_checksum"
-	errCodeIngestSourceUnreach = "source_unreachable"
-	errCodeIngestSourceForbid  = "source_forbidden"
-	errCodeIngestSourceError   = "source_error"
-	errCodeIngestStartFailed   = "ingest_start_failed"
-	errCodeIngestUnavailable   = "ingest_unavailable"
-	errCodeIngestNotAccepted   = "license_not_accepted"
-	errCodeIngestGatedNoToken  = "gated_no_token"
+	// The discovery button (ADR 0082 decisions 6 and 7): reading what an external ComfyUI's own
+	// checkpoint/LoRA/VAE folders hold. Two codes because the two refusals send the reader to
+	// opposite places — `unsupported` is a row this button was never for (a borrowed mirror, a
+	// managed row, a non-comfy provider) and nothing about the network changes that; `unreachable`
+	// is the right kind of row answering "that machine did not answer this time", which pressing
+	// the button again may fix.
+	errCodeEngineDiscoverUnsupported = "engine_discover_unsupported"
+	errCodeEngineDiscoverUnreachable = "engine_discover_unreachable"
+	errCodeIngestBadSource           = "bad_source"
+	errCodeIngestFileUnknown         = "file_unknown"
+	errCodeIngestNoChecksum          = "no_checksum"
+	errCodeIngestSourceUnreach       = "source_unreachable"
+	errCodeIngestSourceForbid        = "source_forbidden"
+	errCodeIngestSourceError         = "source_error"
+	errCodeIngestStartFailed         = "ingest_start_failed"
+	errCodeIngestUnavailable         = "ingest_unavailable"
+	errCodeIngestNotAccepted         = "license_not_accepted"
+	errCodeIngestGatedNoToken        = "gated_no_token"
 	// The token DID reach the ingest task and Hugging Face still refused (403): that account
 	// has not accepted this repository's terms. Measured on af-sandbox (ADR 0072 P5 実機検証):
 	// one token, FLUX.1-dev through and SD3.5 Medium refused, and accepting on the model page

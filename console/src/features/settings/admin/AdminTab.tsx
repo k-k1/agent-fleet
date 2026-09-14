@@ -17,7 +17,7 @@ import { BrandAdminView } from "./adminBrand.tsx";
 import { EgressView } from "./adminEgress.tsx";
 import { TtsAdminView } from "./adminTts.tsx";
 import { EnginesAdminView } from "./adminEngines.tsx";
-import { EngineModelsAdminView } from "./adminEngineModels.tsx";
+import { EngineCatalogLauncher } from "./adminEngineCatalogLauncher.tsx";
 import { TenantsList } from "./adminTenants.tsx";
 
 // AdminTab (the super_admin surface) — the same left rail + body two-pane shell as personal and
@@ -220,7 +220,7 @@ export function AdminTab() {
     if (rootSection === "tts") return <TtsAdminView />;
     if (rootSection === "brand") return <BrandAdminView />;
     if (rootSection === "engines" && hasEngines) return <EnginesAdminView />;
-    if (rootSection === "engine-models" && hasEngines) return <EngineModelsAdminView />;
+    if (rootSection === "engine-models" && hasEngines) return <EngineCatalogLauncher />;
     if (rootSection === "pool" && hasPool) return <PoolView />;
     if (rootSection === "sessions") return <AllSessionsView tenants={tenants} isSuper={isSuper} />;
     if (rootSection === "usage") return <UsageView tenants={tenants} isSuper={isSuper} />;

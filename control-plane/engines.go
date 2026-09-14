@@ -26,6 +26,7 @@ import (
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
@@ -202,6 +203,9 @@ type engineIngestDef struct {
 	// token, so this is a place to WRITE and never a statement that a token exists (ADR 0072
 	// decision 6 as revised: the DB is the record of truth, this is the carrying path).
 	TokenSecret string `json:"tokenSecret"`
+	// Bucket is where verified model objects live. It is carried in the table rather than
+	// derived from a stack name, so the S3 port works unchanged across AWS and test deployments.
+	Bucket string `json:"bucket"`
 	// HasToken is what a pre-P5 stack declared: HF_TOKEN came from a CloudFormation parameter,
 	// so the table itself knew whether a gated repository could be taken in. It survives because
 	// the CP is upgraded before the stack is — on such a table TokenSecret is empty, nothing can
@@ -235,6 +239,21 @@ func (d engineDef) api() string {
 		return v
 	}
 	return engineAPIChat
+}
+
+// imageServableProviders is the images-API vocabulary THIS BUILD implements a client for (ADR
+// 0083 decision 5): comfy's own wire shape, and the OpenAI Images API openai-compat speaks. A
+// row naming anything else — most likely `sdcpp`, retired the same ADR — cannot be served by
+// this software no matter what its lifecycle or mode say, and that used to be entirely silent:
+// the Workspace's imagegen.EngineLookup simply never matched it, so generate_image vanished from
+// tools/list with no error anywhere.
+var imageServableProviders = map[string]bool{"comfy": true, "openai-compat": true}
+
+// imageProviderServable answers whether THIS BUILD can serve a row's declared provider. Always
+// true off the images API: the chat role's provider vocabulary (llamacpp and friends) is a
+// different question this ADR does not touch.
+func imageProviderServable(d engineDef) bool {
+	return d.api() != engineAPIImages || imageServableProviders[strings.TrimSpace(d.Provider)]
 }
 
 // engineRuntimeState is one engine, fully wired: the ECS adapter, its controller, its
@@ -295,6 +314,16 @@ type engineRuntimeState struct {
 	// extWarm is the cached health answer an externally managed engine's panel row reports as
 	// `warm` (ADR 0076 decision 8). Inert for every engine that has a controller.
 	extWarm engineWarmCache
+	// extDown is the same idea for the GENERATION path: whether this external row was found not
+	// answering, so the next request refuses at once instead of paying the probe again (ADR 0082
+	// unresolved 1). Separate from extWarm because the two probes have different budgets — the
+	// panel's is 2 seconds, the gateway's is 5 — and a panel load must not settle what a
+	// generation is told, nor the other way round. Inert for every engine that has a controller.
+	extDown engineDownCache
+	// discover is the cached answer to the last press of the discovery button (ADR 0082
+	// decisions 6 and 7, engine_discover.go). Inert for every row that is not an external comfy
+	// one — nothing else ever populates it.
+	discover engineDiscoverCache
 	// remote is the far deployment this row borrows from (ADR 0079). Non-nil ONLY for a row whose
 	// lifecycle is `remote`; every method on it is nil-safe, so the branches that reach it do not
 	// each need a guard. It owns the three things that differ from an external row: the token
@@ -768,14 +797,20 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// definition serves both roles.
 	if haveAWS && mgr != nil && mgr.store != nil {
 		reg.startIngest = func(def engineIngestDef) bool {
-			if !def.ok() || reg.ingester() != nil {
+			if !def.ok() {
 				return false
+			}
+			if ing := reg.ingester(); ing != nil {
+				return ing.setStorage(newEngineStorage(def.Bucket,
+					newEngineAWSStorageMetadata(def.Bucket, s3.NewFromConfig(ac))))
 			}
 			ing := &engineIngester{
 				def: def, cluster: cluster, ecs: ecsc,
 				logs:   newEngineIngestLogs(ac),
 				store:  mgr.store,
 				models: mgr.store,
+				storage: newEngineStorage(def.Bucket,
+					newEngineAWSStorageMetadata(def.Bucket, s3.NewFromConfig(ac))),
 				tokens: newEngineHfTokens(def, mgr.store, mgr, secretsmanager.NewFromConfig(ac)),
 				onDone: func(role string) {
 					if e := reg.get(role); e != nil {
@@ -809,6 +844,14 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		// to publish its active set because a startup context had ended would be a box that
 		// loads nothing.
 		ctx := context.WithoutCancel(ctx)
+		// Said once per (re)build — at boot, and again if the table reloader or the remote
+		// catalogue mirror adopts this row later — rather than gated into silence: this row still
+		// gets a runtime state below, so it shows up in the admin panel with the mark row() adds,
+		// instead of just not existing where an operator would look for it (ADR 0083 decision 5).
+		if !imageProviderServable(d) {
+			log.Printf("engines: %s declares images provider %q, which this build does not implement a client for (servable: comfy, openai-compat) - generate_image on this row will not work",
+				d.Key, d.Provider)
+		}
 		// 🔴 A remote row with nothing to borrow FROM is refused rather than served. The shape that
 		// reaches here is a hand-written `lifecycle:"remote"` table row on a deployment where
 		// AF_REMOTE_ENGINE_URL / _TOKEN are unset: without the handle there is no catalogue source,
@@ -1042,6 +1085,47 @@ type engineWarmCache struct {
 	mu   sync.Mutex
 	at   time.Time
 	warm bool
+}
+
+// engineExternalDownTTL is how long the generation path trusts "that box is not answering"
+// before paying for the probe again (ADR 0082 unresolved 1). Deliberately the same window as
+// engineExternalWarmTTL: both answer "how stale may an observation of an external row be", and
+// two numbers would be two knobs for one question.
+//
+// Measured 2026-09-14, against an operator's LAN host that was switched off, from a container on
+// the same network: a connect attempt ended in `No route to host` after 3.05-3.11 s (four
+// samples). The two shapes the ADR expected bracket it — a refused connection came back in
+// 0.15 ms, and an address that drops the SYN silently held for the full 5.00 s cap — so a
+// switched-off machine on a LAN costs 3 seconds, not the 5 the cap suggests, because the kernel
+// gives up on ARP first. Without this cache ensureReady pays that on EVERY picture, in front of
+// the preferred route: the fallback to the next provider is supposed to be the cheap part.
+const engineExternalDownTTL = engineExternalWarmTTL
+
+// engineDownCache is the generation path's memory of an external row that was not answering.
+// Only a NEGATIVE is cached: a box that has come up must be usable on the next request, so a
+// healthy probe clears it rather than being remembered for the window.
+type engineDownCache struct {
+	mu   sync.Mutex
+	at   time.Time
+	down bool
+}
+
+// downRecently reports whether this row was found unreachable inside the window, which is the
+// one case where skipping the probe changes nothing: nothing here can start an external row
+// (ADR 0076 decision 4), so the probe's only outcome would be the same refusal.
+func (e *engineRuntimeState) downRecently() bool {
+	e.extDown.mu.Lock()
+	defer e.extDown.mu.Unlock()
+	return e.extDown.down && !e.extDown.at.IsZero() && time.Since(e.extDown.at) < engineExternalDownTTL
+}
+
+// noteProbe records what the generation path's health call found. Called for external rows only:
+// a managed row that answers nothing is being STARTED, and remembering "down" there would make
+// ensureReady refuse the box it is waiting for.
+func (e *engineRuntimeState) noteProbe(healthy bool) {
+	e.extDown.mu.Lock()
+	defer e.extDown.mu.Unlock()
+	e.extDown.down, e.extDown.at = !healthy, time.Now()
 }
 
 // warm is "does this engine have something loaded", answered the only way each kind of engine

@@ -12,9 +12,8 @@ package main
 //     `context_length` and the chat template, and a GGUF-only repository's `config` is `{}`
 //     (measured 2026-09-11 on Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF). So the file itself is the
 //     only source.
-//   - The CP cannot read the bucket. It has no S3 permission at all and gains none (ADR 0072
-//     review R3), so the copy that is read is the one still at the SOURCE, over the same HTTP
-//     the resolve already uses.
+//   - The CP's S3 port exposes HeadObject only, not object bytes. The copy whose header is read
+//     is therefore still the one at the SOURCE, over the same HTTP the resolve already uses.
 //
 // It is read ONCE, at registration, and stored on the row. A header read per panel refresh
 // would put a network call on a screen that lists every model, and the geometry of a file

@@ -282,6 +282,9 @@ describe("the catalogue of a borrowed engine (ADR 0079 decision 7)", () => {
     ["forget the row", () => !!btn("登録を消す")],
     ["register a file already in the bucket", () => text().includes("バケットのファイルを登録する")],
     ["the ingest form", () => text().includes("Hugging Face などから取り込む")],
+    // ADR 0082 decision 7: a borrowed row's catalogue is the far deployment's read-only mirror,
+    // and there is nothing on THIS deployment's network behind it to discover.
+    ["the discovery button", () => !!btn("このエンジンのファイルを調べる")],
   ];
 
   it("lists the borrowed rows and offers no way to change them", async () => {

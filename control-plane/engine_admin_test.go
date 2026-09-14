@@ -1516,7 +1516,7 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 	post := func(id, extra string) (int, string) {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/text_encoders/t5xxl_fp8.safetensors",
+		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/text_encoders/` + id + `_t5xxl_fp8.safetensors",
 		  "license_accepted":true,"source":{"url":"https://example.invalid/t5xxl_fp8.safetensors",
 		  "sha256":"` + strings.Repeat("c", 64) + `"}` + extra + `}`
 		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
@@ -1547,6 +1547,30 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 	if code, body := post("sdxl-base-1.0", `,"attach":true`); code != http.StatusBadRequest {
 		t.Fatalf("an attach with no file_flag = %d, want 400 (%s)", code, body)
 	}
+	// Upload happens before the catalogue swap, so sending a new version to the old key would
+	// destroy the object the row still names even if catalogue installation later failed.
+	rec := httptest.NewRecorder()
+	sameKeyBody := `{"id":"sdxl-base-1.0","kind":"checkpoint",
+	  "s3Key":"image/checkpoints/sd_xl_base_1.0.safetensors","replace":true,"license_accepted":true,
+	  "source":{"url":"https://example.invalid/sdxl-new.safetensors","sha256":"` + strings.Repeat("e", 64) + `"}}`
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(sameKeyBody))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "new S3 key") {
+		t.Fatalf("same-key replacement = %d (%s), want a pre-upload conflict", rec.Code, rec.Body.String())
+	}
+	// A different row can use the same basename. Its key still names the old object until this
+	// replacement is registered, so the incoming upload must not target it either.
+	rec = httptest.NewRecorder()
+	otherKeyBody := `{"id":"sdxl-base-1.0","kind":"checkpoint",
+	  "s3Key":"image/text_encoders/t5xxl_fp16.safetensors","replace":true,"license_accepted":true,
+	  "source":{"url":"https://example.invalid/sdxl-new.safetensors","sha256":"` + strings.Repeat("e", 64) + `"}}`
+	r = httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(otherKeyBody))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "already recorded") {
+		t.Fatalf("other-row destination = %d (%s), want a pre-upload conflict", rec.Code, rec.Body.String())
+	}
 	if code, body := post("sdxl-base-1.0", `,"replace":true`); code != http.StatusOK {
 		t.Fatalf("replacing a row's own checkpoint = %d, want 200 (%s)", code, body)
 	}
@@ -1564,6 +1588,66 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 		if m.ID == "flux1-dev-fp8" && (!m.Enabled || len(m.Files) != 2) {
 			t.Errorf("the row was touched before the download: enabled=%v files=%+v", m.Enabled, m.Files)
 		}
+	}
+}
+
+// A download writes S3 before the reconciler can change its catalogue row. A same filename from
+// a later version must therefore be rejected when any other catalogue row or tenant's job has
+// already recorded that key, rather than relying only on the replacement slot's current key.
+func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	ecsAPI := &fakeIngestECS{}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: ecsAPI, store: st, models: st,
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "target", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/current.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "other", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/occupied.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutEngineIngestJob(t.Context(), store.EngineIngestJob{
+		ID: "another-tenants-object", Role: "image", ModelID: "old", S3Key: "image/checkpoints/job-history.safetensors",
+		State: store.EngineIngestFailed, TenantID: "t-other",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	post := func(destination string) (int, string) {
+		t.Helper()
+		body := `{"id":"target","kind":"checkpoint","replace":true,"s3Key":"` + destination + `",` +
+			`"license_accepted":true,"source":{"url":"https://example.invalid/new-version.safetensors","sha256":"` + strings.Repeat("d", 64) + `"}}`
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/admin/engines/image/ingest", strings.NewReader(body))
+		r.SetPathValue("key", "image")
+		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, tenantID: "t-acme"})
+		return rec.Code, rec.Body.String()
+	}
+
+	for _, destination := range []string{"image/checkpoints/occupied.safetensors", "image/checkpoints/job-history.safetensors"} {
+		if code, body := post(destination); code != http.StatusConflict || !strings.Contains(body, "already recorded") {
+			t.Fatalf("destination %s = %d (%s), want a pre-upload collision", destination, code, body)
+		}
+	}
+	if len(ecsAPI.run) != 0 {
+		t.Fatalf("recorded destinations started %d ingest task(s)", len(ecsAPI.run))
+	}
+	jobs, err := st.ListEngineIngestJobs(t.Context(), "image", 10)
+	if err != nil || len(jobs) != 1 || jobs[0].ID != "another-tenants-object" {
+		t.Fatalf("collision left a new job: %+v (%v)", jobs, err)
 	}
 }
 

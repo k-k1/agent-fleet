@@ -261,13 +261,34 @@ func PlanExhausted(ctx context.Context) (exhausted, known bool) {
 // limit, so the last number written can sit just under the wall.
 const windowFullPct = 95
 
+// resetAtLookupTimeout bounds the whole lookup. It runs on the usage-limit watch's tick, so a
+// hung endpoint must not hold that sweep up; failing it just means no instant this minute.
+const resetAtLookupTimeout = 10 * time.Second
+
 // ResetAt reports when the usage limit that just stopped a codex turn lifts (docs/log/47
 // §4-12). ok=false means no instant can be named, and the caller books nothing — waking on a
 // guess only hits the same limit again.
 //
-// Unlike claude, nothing has to be read out of prose: codex records the account's own windows
-// into its rollout and the app-server pushes them, which is the same reading the WS-bar chip
-// shows (readUsage — local only, no network on this path).
+// Unlike claude, nothing has to be read out of prose: codex records the account's own windows.
+//
+// **Every reading is offered, not the freshest one** (docs/log/47 §4-13, measured on scpigmc).
+// The chip picks by age (pickUsage) because it is describing "how much is left right now", and
+// there a post-reset 0% is the correct answer. This question is the opposite one — "is the
+// account out, and until when" — and for it the two readings are not interchangeable:
+//
+//   - The LOCAL sources (the app-server push and the rollout) describe the window that was
+//     current when something was last written, and adjustWindow zeroes a reading whose window
+//     has since reset. That is exactly the moment this function is asked: the resume fired at
+//     the old boundary and the turn was refused again. With local sources alone every window
+//     then reads "0% used, resets at the next boundary", nothing is full, and NOTHING IS EVER
+//     BOOKED AGAIN — which is the bug this replaced.
+//   - The account view is the one source that still says "100% until 15:26" — the same instant
+//     codex puts in front of the user ("try again at 3:26 PM"). It is cached for 5 minutes and
+//     reached from here a handful of times per episode.
+//
+// So a full window is taken as evidence from whichever reading carries it, and a zeroed one
+// simply contributes nothing. Preferring the newer reading would put the zeroed one in charge
+// whenever a push happens to land after the boundary.
 //
 // Which window: the EARLIEST reset among the windows that are full. Both can be full at once
 // (the 5-hour one inside an exhausted week), and the two ways of being wrong are not
@@ -275,28 +296,35 @@ const windowFullPct = 95
 // then the 5-hour window has reset, so its percentage has dropped and the weekly one is the
 // only remaining candidate, which is the answer that self-corrects. Resuming too late parks a
 // session for days when its window would have reopened in an hour, and nothing corrects that.
-//
-// A reading whose window has already reset carries pct 0 (adjustWindow), so a stale reading
-// cannot name an instant here at all: it simply falls through to ok=false.
 func ResetAt(now time.Time) (time.Time, string, bool) {
-	u := readUsage()
-	if !u.OK {
-		return time.Time{}, "", false
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), resetAtLookupTimeout)
+	defer cancel()
+	acct, _ := accountUsage(ctx) // not ok => zero usage, which offers no window
+	return resetAtFrom(now, readUsage(), acct)
+}
+
+// resetAtFrom is the window choice itself, kept apart from the fetching so it can be tested
+// without a network (the same split as pickUsage).
+func resetAtFrom(now time.Time, readings ...usage) (time.Time, string, bool) {
 	at, source := time.Time{}, ""
-	for _, c := range []struct {
-		w   *usageWindow
-		src string
-	}{{u.FiveHour, "codex:5h"}, {u.SevenDay, "codex:weekly"}} {
-		if c.w == nil || c.w.Pct < windowFullPct {
+	for _, u := range readings {
+		if !u.OK {
 			continue
 		}
-		t, err := time.Parse(time.RFC3339, c.w.ResetsAt)
-		if err != nil || !t.After(now) {
-			continue
-		}
-		if source == "" || t.Before(at) {
-			at, source = t, c.src
+		for _, c := range []struct {
+			w   *usageWindow
+			src string
+		}{{u.FiveHour, "codex:5h"}, {u.SevenDay, "codex:weekly"}} {
+			if c.w == nil || c.w.Pct < windowFullPct {
+				continue
+			}
+			t, err := time.Parse(time.RFC3339, c.w.ResetsAt)
+			if err != nil || !t.After(now) {
+				continue
+			}
+			if source == "" || t.Before(at) {
+				at, source = t, c.src
+			}
 		}
 	}
 	if source == "" {

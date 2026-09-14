@@ -251,6 +251,22 @@ func TestReportEvidenceTable(t *testing.T) {
 		{"completion carrying an abort hint",
 			with(func(s *reportSignals) { s.HintReason = ReportReasonTurnAborted }),
 			true, ReportKindAnswerReady, ReportReasonTurnAborted, false},
+		// The reason persisted on the marker itself (status.SessionStatus.TurnEndReason) is
+		// what closes the window where the in-process hint has not arrived yet, or never will
+		// (an agent restart between the write and the notify goroutine running) — see
+		// notify.go's MarkTurnEndErr. It must still settle the report, not just sit unread.
+		{"completion falls back to the reason persisted on the marker when no hint has arrived",
+			with(func(s *reportSignals) { s.MarkerReason = ReportReasonTurnFailed }),
+			true, ReportKindAnswerReady, ReportReasonTurnFailed, false},
+		// A hint that DID arrive is preferred over the marker's reason — this is the existing
+		// behaviour before MarkerReason existed, kept unchanged. In practice the two always
+		// agree (both come from the same MarkTurnEndErr call), but the hint is checked first
+		// on principle: it is the more specific of two copies of the same fact.
+		{"a hint outranks the marker's own reason when both are present",
+			with(func(s *reportSignals) {
+				s.HintReason, s.MarkerReason = ReportReasonTurnAborted, ReportReasonTurnFailed
+			}),
+			true, ReportKindAnswerReady, ReportReasonTurnAborted, false},
 		{"an abnormal exit is terminal without debounce",
 			with(func(s *reportSignals) { s.Exit = "oom" }), true, "exit", "oom", true},
 		{"an abnormal exit outweighs busy evidence (the transcript is fresh right after a death)",

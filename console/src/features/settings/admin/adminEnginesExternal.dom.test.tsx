@@ -229,4 +229,58 @@ describe("an externally managed engine row (ADR 0076)", () => {
     await mount({ super_admin: true, engines: [e] });
     expect(btn("オンデマンド")).toBeTruthy();
   });
+
+  // ADR 0082 decisions 6 and 7: the discovery button only ever belongs to a row this control
+  // plane can dial directly. A managed row is asleep most of the time — showing the button
+  // there would invite exactly the GPU purchase decision 7 forbids — so the managed fixture is
+  // the positive control, not a second copy of the same assertion.
+  it("offers to discover this engine's own files, and never on a managed row — the positive control", async () => {
+    await mount(externalAnswer, EngineModelsAdminView);
+    expect(btn("このエンジンのファイルを調べる")).toBeTruthy();
+    await mount(managedAnswer, EngineModelsAdminView);
+    expect(btn("このエンジンのファイルを調べる")).toBeFalsy();
+  });
+
+  it("reads the discovered files and turns one into a catalogue row, family suggestion and all", async () => {
+    apiJSON.mockImplementation((p: unknown, _method: unknown, _body: unknown) => {
+      if (String(p).endsWith("/discover")) {
+        return Promise.resolve({
+          checkpoints: [{ name: "flux1-dev.safetensors", base_model_suggest: "flux1" }],
+          loras: [],
+          vaes: [{ name: "ae.safetensors" }],
+        });
+      }
+      if (String(p).endsWith("/models")) {
+        return Promise.resolve({
+          key: "image",
+          model_rows: [{ id: "flux1-dev", kind: "checkpoint", enabled: false, base_model: "flux1" }],
+        });
+      }
+      return Promise.resolve({});
+    });
+    await mount(externalAnswer, EngineModelsAdminView);
+    const discover = btn("このエンジンのファイルを調べる");
+    expect(discover).toBeTruthy();
+    await act(async () => {
+      discover!.click();
+      await Promise.resolve();
+    });
+    // The filename AND the suggestion it read off it — a suggestion, never a declaration, which
+    // is why the next assertion is that pressing add is still a separate, deliberate act.
+    expect(text()).toContain("flux1-dev.safetensors");
+    expect(text()).toContain("flux1");
+    // The VAE candidate is listed but offers no button of its own: it is not a row (ADR 0082
+    // decision 6 — a VAE is a FILE a checkpoint row names, not a catalogue entry by itself).
+    expect(text()).toContain("ae.safetensors");
+    expect(btn("この名前で行を足す")).toBeTruthy();
+    await act(async () => {
+      btn("この名前で行を足す")!.click();
+      await Promise.resolve();
+    });
+    expect(apiJSON).toHaveBeenCalledWith(
+      expect.stringContaining("api/admin/engines/image/models"),
+      "POST",
+      expect.objectContaining({ id: "flux1-dev", kind: "checkpoint", base_model: "flux1" }),
+    );
+  });
 });

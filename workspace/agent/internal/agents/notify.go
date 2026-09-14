@@ -188,7 +188,21 @@ func MarkTurnEndErr(sid string, st TurnState, failure string) {
 		status.Persist(sid, "idle")
 		return
 	}
-	status.PersistTurnEnd(sid, "idle")
+	// The reason travels in the SAME write as the fact (status.PersistTurnEndReason), not as
+	// a side channel to notify()'s goroutine below: that goroutine is deliberately async
+	// (see notify's comment) and a docs/log/51 reconciler tick can land between "idle is on
+	// disk" and "the goroutine ran", reading a bare idle as a plain completion and losing the
+	// qualifier for good (measured: TestManagedTurnFailureReportsAsError, notify() delayed
+	// past two reconciler ticks). notify() below still fires — it is what makes the "answer
+	// ready" notification and the fast path (the reconciler's hint wakeup) work — but it is no
+	// longer the only place the reason is recorded.
+	reason := ""
+	if st == TurnFailed {
+		reason = status.TurnEndReasonFailed
+	} else if st == TurnAborted {
+		reason = status.TurnEndReasonAborted
+	}
+	status.PersistTurnEndReason(sid, "idle", reason)
 	if st == TurnFailed {
 		notify(sid, previous.State, StateFailed, failure)
 		return
