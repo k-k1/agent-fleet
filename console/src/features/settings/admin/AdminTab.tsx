@@ -18,6 +18,7 @@ import { EgressView } from "./adminEgress.tsx";
 import { TtsAdminView } from "./adminTts.tsx";
 import { EnginesAdminView } from "./adminEngines.tsx";
 import { EngineCatalogLauncher } from "./adminEngineCatalogLauncher.tsx";
+import { EngineTokensAdminView } from "./adminEngineTokens.tsx";
 import { TenantsList } from "./adminTenants.tsx";
 
 // AdminTab (the super_admin surface) — the same left rail + body two-pane shell as personal and
@@ -76,6 +77,7 @@ function rootGroups(opts: { pool: boolean; cost: boolean; engines: boolean }): R
           ? ([
               ["engines", "admin.mode_engines"],
               ["engine-models", "admin.mode_engine_models"],
+              ["engine-tokens", "admin.mode_engine_tokens"],
             ] as [string, string][])
           : []),
         // The slot pool exists on one runtime only. An empty "slots" item on a Fargate
@@ -221,6 +223,7 @@ export function AdminTab() {
     if (rootSection === "brand") return <BrandAdminView />;
     if (rootSection === "engines" && hasEngines) return <EnginesAdminView />;
     if (rootSection === "engine-models" && hasEngines) return <EngineCatalogLauncher />;
+    if (rootSection === "engine-tokens" && hasEngines) return <EngineTokensAdminView />;
     if (rootSection === "pool" && hasPool) return <PoolView />;
     if (rootSection === "sessions") return <AllSessionsView tenants={tenants} isSuper={isSuper} />;
     if (rootSection === "usage") return <UsageView tenants={tenants} isSuper={isSuper} />;

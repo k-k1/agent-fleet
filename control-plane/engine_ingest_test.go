@@ -576,9 +576,10 @@ func TestEngineIngestFailureTellsTheTwoGatedRefusalsApart(t *testing.T) {
 			errCodeIngestGatedNoToken, "no token reached the task at all"},
 		{"hf:x/y/z.gguf", "HTTP/1.1 403 Forbidden", errCodeIngestGatedNotAccepted,
 			"a verbose run prints the status line instead of curl's sentence"},
-		{"civitai:128713", curl401, errCodeIngestCivitaiLogin,
-			"Civitai has no token, so both statuses mean the same act — and a job started before" +
-				" the resolve probe existed still ends up here"},
+		{"civitai:128713", curl401, errCodeIngestCivitaiNoToken,
+			"no Civitai token reached the task at all"},
+		{"civitai:128713", curl403, errCodeIngestCivitaiLogin,
+			"a Civitai token arrived and this deployment's account still cannot have the file"},
 		{"https://example.com/m.gguf", curl403, "",
 			"somebody's own server refusing is not something this can advise on"},
 		{"hf:x/y/z.gguf", "sha256 mismatch: got aa… want bb…", "",

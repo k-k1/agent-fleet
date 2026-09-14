@@ -213,6 +213,8 @@ describe("engineJobAdvice", () => {
     expect(engineJobAdvice("gated_not_accepted")).toBe("admin.engines_ingest_job_not_accepted");
     expect(engineJobAdvice("gated_no_token")).not.toBe(engineJobAdvice("gated_not_accepted"));
     expect(engineJobAdvice("civitai_login_required")).toBe("admin.engines_ingest_civitai_login");
+    expect(engineJobAdvice("civitai_gated_no_token")).toBe("admin.engines_ingest_civitai_no_token");
+    expect(engineJobAdvice("civitai_gated_no_token")).not.toBe(engineJobAdvice("civitai_login_required"));
     // A job the CP could not classify says nothing extra — the task's own words are still there.
     expect(engineJobAdvice(undefined)).toBe("");
     expect(engineJobAdvice("something_else")).toBe("");
@@ -1784,94 +1786,8 @@ describe("EngineModelsAdminView", () => {
 
 });
 
-// The operator's Hugging Face token (ADR 0072 decision 6 as revised, phase P5).
-//
-// The panel exists because the alternative was a CloudFormation round trip. What it must not do
-// is imply it holds more than it does: the CP has `PutSecretValue` and no `GetSecretValue`, so
-// there is no current value to show, and a field that looked like it had been pre-filled would
-// be a lie the deployment cannot back.
-describe("EnginesAdminView / the Hugging Face token", () => {
-  const byPath = (hf: Record<string, unknown>) => (path: string) =>
-    Promise.resolve(path === "api/admin/engines/hf-token" ? hf : { super_admin: true, engines: [row()] });
-
-  // React tracks an input's value on the node, so assigning `.value` directly is invisible to
-  // it — the state stays empty and the button stays disabled, which looks exactly like a
-  // broken form.
-  const typeInto = async (el: HTMLInputElement, value: string) => {
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  };
-
-  const tokenInput = () =>
-    ui().querySelector('input[type="password"]') as HTMLInputElement | null;
-
-  const button = (label: string) =>
-    Array.from(ui().querySelectorAll("button")).find((b) => b.textContent === label) as
-      | HTMLButtonElement
-      | undefined;
-  it("registers a token and reports who and when, never the value", async () => {
-    api.mockImplementation(byPath({ available: true, configured: false }));
-    apiJSON.mockResolvedValue({
-      available: true,
-      configured: true,
-      updated_by: "admin1",
-      updated_at: "2026-09-09T12:00:00Z",
-    });
-    await mount();
-
-    const input = tokenInput()!;
-    expect(input).toBeTruthy();
-    expect(ui().textContent).toContain("未登録");
-    // Empty is not a removal: the register button stays disabled until something is typed.
-    expect(button("登録する")?.disabled).toBe(true);
-
-    await typeInto(input, "hf_typed_value");
-    await click(button("登録する"));
-
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/hf-token", "PUT", {
-      token: "hf_typed_value",
-    });
-    expect(ui().textContent).toContain("登録済み");
-    expect(ui().textContent).toContain("admin1");
-    // 🔴 The token is not on the screen afterwards, in any field: the CP cannot read it back,
-    // so anything the panel showed would be its own copy of a secret.
-    expect(host!.innerHTML).not.toContain("hf_typed_value");
-    expect(tokenInput()!.value).toBe("");
-  });
-
-  it("offers no field on a stack that keeps the token itself, and says gated still works", async () => {
-    api.mockImplementation(byPath({ available: false, configured: true, stack_token: true }));
-    await mount();
-    expect(tokenInput()).toBeNull();
-    // Not "no token": this deployment HAS one, from a CloudFormation parameter. Reading as
-    // "unregistered" would send somebody to fix what is not broken.
-    expect(ui().textContent).toContain("CloudFormation");
-    expect(ui().textContent).not.toContain("未登録");
-  });
-
-  it("says which half failed, in Japanese, when the secret refuses the write", async () => {
-    api.mockImplementation(byPath({ available: true, configured: false }));
-    apiJSON.mockResolvedValue({
-      error: { code: "hf_token_put_failed", message: "AccessDeniedException: PutSecretValue" },
-    });
-    await mount();
-    const input = tokenInput()!;
-    await typeInto(input, "hf_typed_value");
-    await click(button("登録する"));
-
-    // Scoped to the token panel: the engine panels above carry their own .form-err (an empty
-    // catalogue), and an unscoped query would pass while this panel said nothing at all.
-    const panel = Array.from(ui().querySelectorAll(".admin-panel")).at(-1)!;
-    expect(panel.querySelector(".form-err")?.textContent).toContain("配備の秘密");
-    // Still not registered, and the typed value is kept so it can be tried again rather than
-    // retyped from wherever it came from.
-    expect(ui().textContent).toContain("未登録");
-    expect(tokenInput()!.value).toBe("hf_typed_value");
-  });
-
-});
+// The operator's Hugging Face and Civitai tokens moved to their own screen
+// (adminEngineTokens.dom.test.tsx) — they no longer render inside this one.
 
 // The repository picker (ADR 0072 decision 11).
 //

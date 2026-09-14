@@ -32,6 +32,7 @@ export const admin = {
   // 推論エンジンは 2 画面（運用とモデル）。レールの並びもこの順で、機械の話とモデルの話を
   // 混ぜない。テナント設定側の同じ画面は tenant.tab_engines（=「推論エンジンのモデル」）。
   "admin.mode_engine_models": "推論エンジンのモデル",
+  "admin.mode_engine_tokens": "APIトークン",
   "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
   "admin.engines_none_models_hint": "何を動かせるかは「推論エンジンのモデル」で探せます（エンジンもトークンも要りません）。",
   "admin.engines_ops_super_only": "エンジンの起動と停止・GPU の選択は配備管理者（super_admin）の担当です。モデルの取り込みと確認は「推論エンジンのモデル」にあります。",
@@ -502,12 +503,13 @@ export const admin = {
   // 🔴 Hugging Face の gated とは別物で、こちらには鍵が無い。CivitAI のメタデータは誰にでも
   // 200 を返し、ダウンロードの可否だけが投稿者ごとに分かれる（実機で 5 資産が 200/401/403）。
   // トークン欄を作らない判断なので、「別の資産を選ぶ・手で置いて登録する」を言い切る。
-  "admin.engines_ingest_civitai_login": "この資産は、投稿者がログイン済みのアカウントからのダウンロードだけを許しています。この配備は匿名で取り込むため取得できません（Hugging Face のトークンでは解決しません）。別の資産を選ぶか、手でバケットに置いて「バケットのファイルを登録する」から登録してください。",
+  "admin.engines_ingest_civitai_login": "この資産は、投稿者がログイン済みのアカウントからのダウンロードだけを許しています。この配備は匿名で取り込むため、登録済みの Civitai トークンのアカウントがすでに条件を満たしているかはここでは確かめられません——未登録なら「APIトークン」から登録するか、別の資産を選んでください。",
+  "admin.engines_ingest_civitai_no_token": "Civitai のトークンが取り込みタスクに届いていません。「APIトークン」に運用者のトークンを登録してから、もう一度取り込んでください。",
   // 🔴 gated の 401 と 403 は「1 行の curl」の差で、直す場所が正反対。401 はトークンが
   // 取り込みタスクに届いていない、403 は届いたうえでそのアカウントが**このリポジトリの**
   // 条項に未同意（実機: 同じトークンで FLUX.1-dev は通り SD3.5 Medium が 403）。
   "admin.engines_ingest_job_not_accepted": "トークンは届いていますが、そのアカウントはこのリポジトリの条項にまだ同意していません。Hugging Face のモデルページで同意してから、もう一度取り込んでください。",
-  "admin.engines_ingest_job_no_token": "トークンが取り込みタスクに届いていません。下の「Hugging Face のトークン」に運用者のトークンを登録してから、もう一度取り込んでください。",
+  "admin.engines_ingest_job_no_token": "トークンが取り込みタスクに届いていません。「APIトークン」に運用者のトークンを登録してから、もう一度取り込んでください。",
   "admin.engines_ingest_gated_accept_first": "gated のリポジトリです。トークンは登録済みですが、そのアカウントがこのリポジトリの条項に同意しているかは Control Plane からは確かめられません（匿名で調べているため）。未同意だと取り込みは 403 で落ちるので、先に Hugging Face のモデルページで同意しておいてください。",
   "admin.engines_hf_token": "Hugging Face のトークン",
   "admin.engines_hf_token_field": "トークン",
@@ -518,6 +520,14 @@ export const admin = {
   "admin.engines_hf_token_stack": "この配備のトークンは CloudFormation のパラメータで設定されています。Console からの登録・削除はできませんが、gated のリポジトリは取り込めます。",
   "admin.engines_hf_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新すると Console から登録できるようになります。",
   "admin.engines_hf_token_note": "配備全体で 1 つです。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます——読むのは取り込みタスクだけで、エンジンのインスタンスには渡りません。",
+  "admin.engines_civitai_token": "Civitai のトークン",
+  "admin.engines_civitai_token_field": "トークン",
+  "admin.engines_civitai_token_save": "登録する",
+  "admin.engines_civitai_token_remove": "削除する",
+  "admin.engines_civitai_token_unset": "未登録です。ログイン必須の資産は取り込めません。",
+  "admin.engines_civitai_token_set": "登録済み（{who} / {when}）。値は表示できません——Control Plane は書き込みだけができ、読み戻す権限を持ちません。",
+  "admin.engines_civitai_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新すると Console から登録できるようになります。",
+  "admin.engines_civitai_token_note": "配備全体で 1 つで、上の Hugging Face のトークンとは別物です。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます——読むのは取り込みタスクだけで、エンジンのインスタンスには渡りません。",
   // 🔴 この赤い行は FLUX 専用ではなくクラス全体に出る（engineCommercialUse が
   // non-commercial / -nc / cc-by-nc を含む名前すべてに `no` を返す）。CC-BY-NC と BFL の
   // 条項では何を縛るかが違い、生成物まで縛るかも一様ではないので、どちらが引き金かは

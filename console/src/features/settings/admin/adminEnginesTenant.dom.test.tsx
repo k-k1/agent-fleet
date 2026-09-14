@@ -149,8 +149,11 @@ describe("the engine panel a granted tenant_admin sees", () => {
     ["the model controls", () => !!btn("有効にする") || !!btn("無効にする") || !!btn("これで起動する"), EngineModelsAdminView],
     // 5. Forgetting a row (and, behind it, deleting the bytes).
     ["forget", () => !!btn("登録を消す"), EngineModelsAdminView],
-    // 6. The deployment's Hugging Face token.
-    ["the token panel", () => text().includes("Hugging Face のトークン"), EngineModelsAdminView],
+    // The deployment's Hugging Face and Civitai tokens used to be item 6 here, rendered inside
+    // this same screen. They moved to their own rail item (adminEngineTokens.tsx), reachable
+    // only through AdminTab's root rail — which a granted tenant_admin has no entry to at all,
+    // so there is no longer anything to assert against THIS screen either way. Their own
+    // write-only behaviour is pinned in adminEngineTokens.dom.test.tsx.
   ];
 
   /** Between two mounts in one test. The afterEach cannot do it: these tests mount several
@@ -162,7 +165,7 @@ describe("the engine panel a granted tenant_admin sees", () => {
     host = null;
   };
 
-  it("shows none of the six operator-only surfaces", async () => {
+  it("shows none of the five operator-only surfaces", async () => {
     for (const [name, present] of OPERATOR_ONLY) {
       await mount(tenantAnswer);
       expect(present(), `${name} must not be on a tenant_admin's panel`).toBe(false);
@@ -170,7 +173,7 @@ describe("the engine panel a granted tenant_admin sees", () => {
     }
   });
 
-  it("shows all six to the operator — the positive control for the test above", async () => {
+  it("shows all five to the operator — the positive control for the test above", async () => {
     for (const [name, present, View] of OPERATOR_ONLY) {
       await mount(superAnswer, View);
       expect(present(), `${name} is missing from the operator's panel, so its absence proves nothing`).toBe(true);

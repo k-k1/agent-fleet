@@ -34,6 +34,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // Two screens: the machine and what it loads. The rail follows that order. The same models
   // screen in tenant settings is tenant.tab_engines.
   "admin.mode_engine_models": "Inference engine models",
+  // The operator's upstream account tokens (Hugging Face, Civitai) — their own rail item so
+  // registering one does not require opening a model list first.
+  "admin.mode_engine_tokens": "API tokens",
   "admin.engines_none": "This deployment runs no self-hosted inference engines.",
   "admin.engines_none_models_hint": "What there is to run can be browsed under \"Inference engine models\" — it needs no engine and no token.",
   "admin.engines_ops_super_only": "Starting and stopping engines and choosing the GPU are the deployment administrator's (super_admin). Taking models in and reading the catalogue is under \"Inference engine models\".",
@@ -516,12 +519,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // 🔴 A different wall from Hugging Face's gating, and there is no key to it: Civitai answers
   // its metadata 200 for everybody and only the DOWNLOAD is per uploader (five assets measured,
   // split 200/401/403). No token field is being added, so the sentence says what to do instead.
-  "admin.engines_ingest_civitai_login": "The person who uploaded this asset only allows downloads from a logged-in account. This deployment ingests anonymously, so it cannot be fetched (a Hugging Face token does not help). Pick another asset, or stage the file in the bucket by hand and register it.",
+  "admin.engines_ingest_civitai_login": "The person who uploaded this asset only allows downloads from a logged-in account. This deployment ingests anonymously, so whether a registered Civitai token's own account already clears that cannot be checked here \u2014 register one under \u201cAPI tokens\u201d if none is set, or pick another asset.",
+  "admin.engines_ingest_civitai_no_token": "No Civitai token reached the ingest task. Register the operator's token under \u201cAPI tokens\u201d and take it in again.",
   // 🔴 401 and 403 on a gated repository are one line of curl apart and need opposite screens:
   // 401 is a token that never reached the ingest task, 403 is a token that did and an account
   // that has not accepted THAT repository (measured: one token, FLUX.1-dev through, SD3.5 403).
   "admin.engines_ingest_job_not_accepted": "The token reached the task, and that account has not accepted this repository's terms yet. Accept them on the Hugging Face model page and take it in again.",
-  "admin.engines_ingest_job_no_token": "No token reached the ingest task. Register the operator's token under \u201cHugging Face token\u201d below and take it in again.",
+  "admin.engines_ingest_job_no_token": "No token reached the ingest task. Register the operator's token under \u201cAPI tokens\u201d and take it in again.",
   "admin.engines_ingest_gated_accept_first": "A gated repository. A token is registered, but whether that account has accepted this repository's terms is something the Control Plane cannot check (it resolves anonymously). If it has not, the ingest fails with a 403 — so accept them on the Hugging Face model page first.",
   "admin.engines_hf_token": "Hugging Face token",
   "admin.engines_hf_token_field": "Token",
@@ -532,6 +536,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_hf_token_stack": "This deployment's token comes from a CloudFormation parameter. It cannot be registered or removed from the Console, but gated repositories can be taken in.",
   "admin.engines_hf_token_unsupported": "This deployment's engine stack has nowhere to keep a token. Update 60-engines and it can be registered from here.",
   "admin.engines_hf_token_note": "One token for the whole deployment. It is stored encrypted and written into the deployment's secret before every ingest — read by the ingest task only, and never handed to an engine instance.",
+  "admin.engines_civitai_token": "Civitai token",
+  "admin.engines_civitai_token_field": "Token",
+  "admin.engines_civitai_token_save": "Register",
+  "admin.engines_civitai_token_remove": "Remove",
+  "admin.engines_civitai_token_unset": "Not registered. Assets that require a logged-in account cannot be taken in.",
+  "admin.engines_civitai_token_set": "Registered ({who} / {when}). The value cannot be shown — the Control Plane can write it and has no permission to read it back.",
+  "admin.engines_civitai_token_unsupported": "This deployment's engine stack has nowhere to keep a token. Update 60-engines and it can be registered from here.",
+  "admin.engines_civitai_token_note": "One token for the whole deployment, separate from the Hugging Face one above. It is stored encrypted and written into the deployment's secret before every ingest — read by the ingest task only, and never handed to an engine instance.",
   "admin.engines_ingest_noncommercial":
     "🔴 A non-commercial licence. Both commercial use of the model and commercial use of what it generates may be restricted — read the licence before enabling this.",
   "admin.engines_ingest_note": "A repository name (`owner/name`) or a pasted model-page URL both work. The sha256, the size and the licence are read from that source's own API by the control plane; the download is the ingest task's, which is also the only thing that touches S3 or the token. A row that arrives is created disabled.",

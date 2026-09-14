@@ -231,7 +231,8 @@ export const errors = {
   "err.engine_discover_unsupported": "この行は外部の ComfyUI ではないので、モデルの発見はできません",
   "err.engine_discover_unreachable": "その機械に問い合わせられませんでした（電源が入っていないか、ネットワークに繋がっていません）",
   "err.gated_not_accepted": "そのアカウントはこのリポジトリの条項にまだ同意していません",
-  "err.civitai_login_required": "この資産は投稿者がログイン済みのアカウントからのダウンロードだけを許しています",
+  "err.civitai_login_required": "Civitai のトークンは届きましたが、この配備のアカウントではこの資産を取得できません",
+  "err.civitai_gated_no_token": "この資産はログイン済みのアカウントが必要ですが、この配備に Civitai のトークンがありません",
   "err.bad_source": "取り込み元の指定が不正です",
   "err.file_unknown": "そのリポジトリにそのファイルがありません",
   "err.no_checksum": "取り込み元が sha256 を公開していません。url と sha256 を直接指定してください",
@@ -251,6 +252,10 @@ export const errors = {
   "err.hf_token_empty": "トークンが空です",
   "err.hf_token_store_failed": "トークンを保存できませんでした",
   "err.hf_token_put_failed": "トークンを配備の秘密に書き込めませんでした",
+  "err.civitai_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新してください",
+  "err.civitai_token_empty": "トークンが空です",
+  "err.civitai_token_store_failed": "トークンを保存できませんでした",
+  "err.civitai_token_put_failed": "トークンを配備の秘密に書き込めませんでした",
   // --- 画像生成の待ち行列（ADR 0081 レーン A）。これまで proxy されていなかった経路なので、
   // 符号はここが初出になる。Agent の message は英語なので、目録に無いと英語がそのまま出る。
   "err.queue_full": "画像の待ち行列がいっぱいです。今の分が捌けてから投入してください。",

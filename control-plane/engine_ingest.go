@@ -686,6 +686,10 @@ type engineIngester struct {
 	// because the ingest task is deployment-wide, and because this is the only place that
 	// needs the value rather than the fact that there is one.
 	tokens *engineHfTokens
+	// civitaiTokens is the same registration for Civitai, carried through its own secret
+	// (engine_civitai_token.go) rather than sharing the Hugging Face one: the two are
+	// unrelated accounts, and the fetch container picks between them by the download's host.
+	civitaiTokens *engineCivitaiTokens
 	// onDone is called after a job created its catalogue row, so the registry can invalidate
 	// its cache and the panel shows the new row without waiting for the TTL.
 	onDone func(role string)
@@ -773,11 +777,15 @@ func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (st
 	if aerr := engineIngestDestinationUnused(ctx, g.models, g.store, req.Role, req.S3Key); aerr != nil {
 		return store.EngineIngestJob{}, aerr
 	}
-	// The registered token is carried into the stack's secret before EVERY ingest. Not when it
-	// looks stale — nothing can look stale here: the CP has no `GetSecretValue`, and a stack
-	// rebuilt under a registered token holds the sentinel with no way to notice. Staged before
-	// the job row so a deployment that cannot write the secret fails without leaving one.
+	// The registered tokens are carried into the stack's secrets before EVERY ingest, both of
+	// them regardless of which source this job is for. Not when it looks stale — nothing can
+	// look stale here: the CP has no `GetSecretValue`, and a stack rebuilt under a registered
+	// token holds the sentinel with no way to notice. Staged before the job row so a
+	// deployment that cannot write a secret fails without leaving one.
 	if aerr := g.tokens.stage(ctx); aerr != nil {
+		return store.EngineIngestJob{}, aerr
+	}
+	if aerr := g.civitaiTokens.stage(ctx); aerr != nil {
 		return store.EngineIngestJob{}, aerr
 	}
 	spec, _ := json.Marshal(req)
@@ -1151,7 +1159,8 @@ func (g *engineIngester) followUpVae(ctx context.Context, req engineIngestReques
 // **401 and 403 are not the same failure**: 401 is a token that is not reaching the task
 // (register one, check the secret), 403 is a token that arrived and an account that has not
 // accepted THIS repository. A panel that said "gated" to both sends half its readers to the
-// wrong screen.
+// wrong screen. Civitai's own token (registered the same way, `engine_civitai_token.go`) earns
+// the same two-way split.
 //
 // Read out of the message rather than carried on the job row: the status is the task's, the
 // row has no column for it, and the classification is a pure function this file can be tested
@@ -1162,9 +1171,10 @@ func engineIngestFailureCode(source, msg string) string {
 	case m == nil:
 		return ""
 	case strings.HasPrefix(source, "civitai:"):
-		// Civitai has no token at all, so both statuses mean the same act (ADR 0072 P2 欠落 5).
-		// A job started before the resolve probe existed still lands here.
-		return errCodeIngestCivitaiLogin
+		if m[1] == "403" {
+			return errCodeIngestCivitaiLogin
+		}
+		return errCodeIngestCivitaiNoToken
 	case !strings.HasPrefix(source, "hf:"):
 		return "" // a plain URL's 401 is the operator's own server, and this cannot advise on it
 	case m[1] == "403":

@@ -10,7 +10,6 @@ import {
   EngineIngest,
   EngineIngestJobs,
   EngineModelAdd,
-  HfTokenPanel,
   engineIdFromFile,
   engineIngestPrefix,
   type EngineIngestAct,
@@ -536,7 +535,6 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
         onKind(job.kind === "lora" ? "lora" : "model");
         setPrefill({ id: job.model_id, s3Key: job.s3_key || "", flag: job.file_flag || "", source: job.source || "", usedBy: job.key_used_by || "" });
       } : undefined} />
-    {isSuper && <HfTokenPanel />}
     {operation && <CatalogOperation row={row} kind={kind} initialAct={operation.act} initialTarget={operation.modelId} storage={storage || []}
       onClose={() => setOperation(null)} onStarted={() => { setOperation(null); void loadAux(); onChanged(); }} />}
     {edit && <RegisteredEditDialog row={row} model={edit} error={err} onClose={() => setEdit(null)} onSave={async (body) => {
