@@ -382,6 +382,17 @@ if [ -n "$ENGINES_STACK" ]; then
     echo "    · ${eng_role}OfferBudgetSec=$eng_budget (ADR 0077 re-meant it; 180 was the OLD meaning's default)"
     eng_params+=("${eng_role}OfferBudgetSec=$eng_budget")
   done
+  # 🔴 ADR 0083 retired the stable-diffusion.cpp engine and narrowed `ImageEngine` to
+  # `AllowedValues: [comfy]`. `ImageImageTag` / `ImageExtraArgs` were removed outright, so
+  # `deploy` simply drops them like the six retired seed parameters above — nothing to repair.
+  # `ImageEngine` itself is NOT removed, only its allowed values, and `deploy` keeps a
+  # parameter it was not given at UsePreviousValue — a live stack still carrying `sdcpp` there
+  # would fail validation against the new template ("… does not exist in the allowed values")
+  # rather than deploying onto the only engine it still builds.
+  if [ "$(af_stack_param "$ENGINES_STACK" ImageEngine)" = sdcpp ]; then
+    echo "    · ImageEngine=comfy (ADR 0083 retired sdcpp; the stack was still carrying it)"
+    eng_params+=("ImageEngine=comfy")
+  fi
   eng_deploy=(--capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset)
   eng_shown=""
   if [ "${#eng_params[@]}" -gt 0 ]; then
