@@ -12,6 +12,18 @@
 import type { EngineParams, ImageProperties, LoraRef, SeedPolicy } from "./wire.ts";
 
 export interface ImagegenDraft {
+  /**
+   * Which FLEET ROW drives this pane (ADR 0082 P1, the pane's answer to the ADR's own
+   * unresolved question 2: "does a member need to pick among N fleet rows, or does 'the
+   * first one' suffice?"). "" means no explicit choice — the pane falls back to the first
+   * ready fleet row, which is ALSO what every single-engine deployment already saw, so this
+   * is additive and changes nothing when there is only one row to choose from.
+   *
+   * A stale id (the row was removed, or this is a different deployment's draft) is read the
+   * same way as "" by the reader (ImagegenView), never as an error — the same rule `model`
+   * already follows one field up.
+   */
+  providerId: string;
   model: string;
   prompt: string;
   /** The member's own negative. The row's and the deployment's are chips, not text. */
@@ -44,6 +56,7 @@ export const MAX_BATCH = 4;
 export const OPS = ["generate", "edit", "inpaint"];
 
 export const emptyDraft = (): ImagegenDraft => ({
+  providerId: "",
   model: "",
   prompt: "",
   negative: "",
@@ -111,6 +124,7 @@ export function parseDraft(raw: string | null | undefined): ImagegenDraft {
   if (!p || typeof p !== "object") return base;
   const policy = p.seedPolicy;
   return {
+    providerId: str(p.providerId, 200),
     model: str(p.model, 200),
     prompt: str(p.prompt, 8000),
     negative: str(p.negative, 4000),

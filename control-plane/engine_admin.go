@@ -111,6 +111,11 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// property of how often somebody opens a screen.
 	mux.HandleFunc("POST /api/admin/engines/{key}/models/vae-scan", a.withIngestAdmin(a.scanVae))
 	mux.HandleFunc("POST /api/admin/engines/{key}/models/{id}/vae", a.withIngestAdmin(a.fixVae))
+	// The discovery button (ADR 0082 decisions 6 and 7): what an external ComfyUI's own
+	// checkpoint/LoRA/VAE folders currently hold, read off its /object_info and offered as
+	// candidates. Under ingest authority, not super_admin only — the same predicate the ingest
+	// form itself uses, since this is the other way a row's files get chosen rather than typed.
+	mux.HandleFunc("POST /api/admin/engines/{key}/discover", a.withIngestAdmin(a.discoverModelsGrant))
 	// Taking a model IN from Hugging Face / Civitai / a URL (ADR 0072 decision 6, phase P4),
 	// and watching the jobs that does.
 	//

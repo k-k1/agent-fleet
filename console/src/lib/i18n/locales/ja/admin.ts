@@ -211,6 +211,18 @@ export const admin = {
   "admin.engines_model_vae_started": "取り込みを開始しました。終わるとこの行に付きます（履歴で進み具合が見られます）。",
   "admin.engines_model_vae_attached": "この行に足しました。有効にできます。",
   "admin.engines_model_vae_none": "ヘッダを読み直したところ、このチェックポイントは VAE を同梱していました。印を取り消します。",
+  // --- 発見ボタン（ADR 0082 決定 6・7）----------------------------------------
+  // LAN の ComfyUI が実際に持っているファイル名を読み、候補として出す。族は
+  // ファイル名から分かる場合の「提案」でしかなく、行を作るのは常に人の「足す」の押下。
+  "admin.engines_discover_button": "このエンジンのファイルを調べる",
+  "admin.engines_discover_busy": "調べています…",
+  "admin.engines_discover_checkpoints": "チェックポイント",
+  "admin.engines_discover_loras": "LoRA",
+  "admin.engines_discover_vaes": "VAE",
+  "admin.engines_discover_vae_hint": "これらは行そのものではなく、チェックポイントの行を作るときに `--vae` として使うファイル名です。",
+  "admin.engines_discover_add": "この名前で行を足す",
+  "admin.engines_discover_added": "足しました",
+  "admin.engines_discover_empty": "このエンジンにチェックポイント・LoRA・VAE のファイルは見つかりませんでした。",
   // --- 「モデルを追加」ウィザード（4 問）--------------------------------------
   // 🔴 これが置き換えたのは、1 列に 12 項目が縦に並び、そのうちどれが効くかは画面に
   // 出ていない状態（タブ・id の衝突・役割の選択）で決まるフォーム。配備の持ち主が

@@ -220,6 +220,19 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_vae_started": "The download has started. It joins this row when it finishes — the history below shows the progress.",
   "admin.engines_model_vae_attached": "Added to this row. It can be enabled now.",
   "admin.engines_model_vae_none": "Reading the header again says this checkpoint does bundle a VAE after all. The mark is withdrawn.",
+  // --- the discovery button (ADR 0082 decisions 6 and 7) ---------------------
+  // Reads the filenames the LAN ComfyUI actually has and offers them as candidates. The family
+  // is only ever a SUGGESTION read off the filename; a row is only ever written by a person's
+  // own press of "add".
+  "admin.engines_discover_button": "Look at this engine's files",
+  "admin.engines_discover_busy": "Looking…",
+  "admin.engines_discover_checkpoints": "Checkpoints",
+  "admin.engines_discover_loras": "LoRAs",
+  "admin.engines_discover_vaes": "VAEs",
+  "admin.engines_discover_vae_hint": "These are not rows of their own — they are filenames to use as `--vae` when building a checkpoint row.",
+  "admin.engines_discover_add": "Add a row with this name",
+  "admin.engines_discover_added": "Added",
+  "admin.engines_discover_empty": "No checkpoint, LoRA or VAE files were found on this engine.",
   // --- the "add a model" wizard (four questions) -----------------------------
   // 🔴 What it replaced was twelve fields in one column, where which of them applied was decided
   // by state the screen did not show (the tab, whether the typed id collided, which file role
