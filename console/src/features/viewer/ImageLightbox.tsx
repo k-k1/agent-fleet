@@ -28,10 +28,14 @@ import { useT } from "../../lib/i18n/index.ts";
 // are written against, and renaming them would be a restyle disguised as a move.
 const STEP = 1.4; // per button press; the wheel stays continuous
 const DRAG_SLOP = 6; // px of pointer travel that turns a click into a drag
+const SWIPE_MIN = 48; // px of touch travel that counts as "next / previous", not a stray finger
 
 interface Props {
   src: string;
   onClose: () => void;
+  /** The card's thumbnail, shown until the original arrives (ImageView.placeholder).
+   *  Absent = a blank frame for the length of a multi-megabyte download. */
+  placeholder?: string;
   /** Alt text; defaults to the mirror's "enlarged image" wording. */
   alt?: string;
   /** Paging, when the host has an ordered list. Both the buttons and the ←/→ keys
@@ -53,12 +57,15 @@ interface Props {
   path?: string;
 }
 
-export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total, onOpenFolder, path }: Props) {
+export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, index, total, onOpenFolder, path }: Props) {
   const tr = useT();
   const view = useRef<ImageViewHandle>(null);
   const [scale, setScale] = useState(1);
   const [showProps, setShowProps] = useState(false);
   const down = useRef<{ x: number; y: number } | null>(null);
+  // Where a TOUCH went down, kept apart from `down`: that one decides click vs pan for
+  // every pointer, this one exists only for the swipe and only on a finger.
+  const swipe = useRef<{ x: number; y: number } | null>(null);
   const paging = !!onPrev || !!onNext;
 
   // Paging to another picture closes the panel: it is read on open only, and leaving it up
@@ -86,6 +93,31 @@ export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total,
 
   const onPointerDown = (e: RPointerEvent) => {
     down.current = { x: e.clientX, y: e.clientY };
+    swipe.current = e.pointerType === "touch" ? { x: e.clientX, y: e.clientY } : null;
+  };
+
+  /**
+   * Swipe left / right pages, on TOUCH and only while the picture is at fit.
+   *
+   * Both halves of that sentence are load-bearing. Zoomed in, a horizontal drag is the pan
+   * that ImageView owns, and stealing it would make a picture larger than the screen
+   * unreadable. On a mouse, a horizontal drag is not a gesture anyone means — the buttons
+   * and ←/→ are already there — so hijacking it would only produce accidental paging.
+   *
+   * The overlay already carries `data-no-swipe`, so the session-rotation swipe is standing
+   * down while this is open (ADR 0080 decision 5 rejected paging by swipe for P0 exactly
+   * because of that tug of war; inside the overlay there is no contest).
+   */
+  const onPointerUp = (e: RPointerEvent) => {
+    const from = swipe.current;
+    swipe.current = null;
+    if (!from || !paging || scale > 1) return;
+    const dx = e.clientX - from.x;
+    const dy = e.clientY - from.y;
+    // Horizontal intent, not a scroll that drifted: past the threshold AND mostly sideways.
+    if (Math.abs(dx) < SWIPE_MIN || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx > 0) onPrev?.();
+    else onNext?.();
   };
 
   const onClick = (e: RMouseEvent) => {
@@ -104,6 +136,8 @@ export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total,
       className="mirror-lightbox"
       data-no-swipe=""
       onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onPointerCancel={() => (swipe.current = null)}
       onClick={onClick}
       role="presentation"
     >
@@ -182,7 +216,7 @@ export function ImageLightbox({ src, onClose, alt, onPrev, onNext, index, total,
         </button>
       </div>
       {path && showProps && <ImageProps path={path} />}
-      <ImageView ref={view} src={src} alt={alt || tr("mirror.pasted_image_zoom")} onZoom={setScale} />
+      <ImageView ref={view} src={src} placeholder={placeholder} alt={alt || tr("mirror.pasted_image_zoom")} onZoom={setScale} />
     </div>
   );
 }

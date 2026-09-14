@@ -160,11 +160,15 @@ function contentFromFlat(p: any): PaneContent {
       // straight to api/fs/tree, so it gets the `browser` kind's stance: reject rather
       // than repair. Rejecting degrades to a blank terminal — forgetting the case
       // entirely does the same thing to a perfectly good gallery on every reload.
-      const galleryPath = str(p.galleryPath);
+      //
+      // The empty string is a VALID path here and `str` would drop it: it is the browse
+      // root, which the gallery's "Up" reaches from a top-level folder. A missing key is
+      // still a rejection — hence the typeof rather than a truthiness test.
+      const galleryPath = typeof p.galleryPath === "string" ? p.galleryPath : null;
       const galleryFocus = str(p.galleryFocus);
       const gallerySession = str(p.gallerySession);
       const sort = p.sort === "new" || p.sort === "name" ? p.sort : undefined;
-      return galleryPath && validGalleryPath(galleryPath)
+      return galleryPath !== null && validGalleryPath(galleryPath)
         ? {
             kind: "gallery",
             galleryPath,

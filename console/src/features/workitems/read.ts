@@ -473,15 +473,27 @@ export function sanitizeBranch(raw: string): string {
  * parties, so pasting it in by default is opening an injection path by default; instead
  * we say where it is and let the agent fetch it with `gh` / the Jira MCP. `withBody`
  * (the dialog's opt-in checkbox) wraps whatever the caller managed to fetch in a quoted
- * block that states plainly it is data, not instructions. */
-export function promptForItem(item: WorkItem, body?: string): string {
+ * block that states plainly it is data, not instructions.
+ *
+ * A pull request gets a review-framed closing line instead of the issue's "investigate,
+ * then propose a plan" — the work here is reading someone else's diff, not writing one.
+ * `reviewBranch` is the PR's head branch, named only when the launch actually resolved to
+ * it (the caller already checked it out for this working copy, docs/log/80 §80.24), so the
+ * prompt never claims a checkout that did not happen. */
+export function promptForItem(item: WorkItem, body?: string, reviewBranch?: string): string {
+  const isPR = item.kind === "pr";
   const lines = [
     t("wi.prompt_target", { key: item.key, title: item.title }),
     t("wi.prompt_url", { url: item.url }),
     "",
     readLine(item),
-    t("wi.prompt_investigate"),
   ];
+  if (isPR) {
+    if (reviewBranch) lines.push(t("wi.prompt_review_branch", { branch: reviewBranch }));
+    lines.push(t("wi.prompt_review"));
+  } else {
+    lines.push(t("wi.prompt_investigate"));
+  }
   if (body && body.trim()) {
     lines.push("", t("wi.prompt_body_notice"), "", ...body.trim().split("\n").map((l) => `> ${l}`));
   }
@@ -502,6 +514,15 @@ function readLine(item: WorkItem): string {
       // this can point at (docs/log/80 §80.19.5). The point is not to name a tool that is absent.
       return t("wi.prompt_read_generic");
   }
+}
+
+/** The branch a work-item launch actually landed on, for the ledger — and, downstream, the
+ * report draft's branch line (docs/log/80 §80.24 / report.ts). Checking an existing branch out
+ * (a pull request review) creates no new branch, and LaunchOpts carries that branch's name in
+ * `base`, not `newBranch` — `currentBranch` (the base repo's own current branch) is only a
+ * fallback for launching in place with neither. */
+export function workItemLaunchBranch(o: { useExisting?: boolean; base: string; newBranch: string }, currentBranch: string): string {
+  return (o.useExisting ? o.base : o.newBranch) || currentBranch || "";
 }
 
 /** Whether af can post the report comment back to this item's tracker.

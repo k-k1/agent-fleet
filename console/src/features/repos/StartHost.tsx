@@ -15,6 +15,7 @@ import { useLaunchTarget, useLaunchSeed } from "./store.ts";
 import { markHandoffLaunched } from "../mirror/HandoffProposal.tsx";
 import { acceptHandoffOffer } from "../sharing/acceptHandoff.ts";
 import { recordWorkItemLaunch } from "../workitems/launch.ts";
+import { workItemLaunchBranch } from "../workitems/read.ts";
 
 export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
@@ -104,10 +105,7 @@ export function StartHost() {
               // where a session is known to exist, so it is where the next person can be shown
               // that the item has been started.
               if (seedWorkItem && r.name) {
-                // Starting in an existing working copy creates no new branch, so record the
-                // branch that copy is already on — otherwise the report draft shows an empty
-                // branch line.
-                void recordWorkItemLaunch(seedWorkItem, r.name, launch.name, o.newBranch || launch.branch || "");
+                void recordWorkItemLaunch(seedWorkItem, r.name, launch.name, workItemLaunchBranch(o, launch.branch || ""));
               }
               setShow(false); // launched — drop the hub underneath too
               clearSeed();

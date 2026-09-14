@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { EngineDiscoverPanel, engineCanDiscover } from "./adminEngineDiscover.tsx";
 import { ModelVaeFix, useVaeScan } from "./adminEngineVae.tsx";
 import { openEngineAdd } from "./openEngineAdd.ts";
 import { useSettingsUI } from "../store.ts";
@@ -164,7 +165,7 @@ export function EngineModelsAdminView({
   };
 
   const addModel = async (key: string, body: Record<string, unknown>) => {
-    await callModel(key + "/+", `api/admin/engines/${encodeURIComponent(key)}/models`, "POST", body, key);
+    return callModel(key + "/+", `api/admin/engines/${encodeURIComponent(key)}/models`, "POST", body, key);
   };
 
   /** Forget the row, and optionally the bytes with it.
@@ -374,6 +375,17 @@ export function EngineModelsAdminView({
           vaeUnreadable={vaeUnreadable}
           storageFiles={storage[open.key]}
         />
+        {/* The discovery button (ADR 0082 decisions 6 and 7): only for an external ComfyUI this
+            control plane can dial directly. `engineCanDiscover` is the exact predicate the CP's
+            own route gates on, so a row that would 400 there never shows the button here. */}
+        {isSuper && engineCanDiscover(open) && (
+          <EngineDiscoverPanel
+            key={"discover/" + open.key}
+            engineKey={open.key}
+            busy={busy === open.key + "/+"}
+            onAdd={(body) => addModel(open.key, body)}
+          />
+        )}
         {/* The ingest is a write too — `POST /ingest` is one of the five routes that answer 400
             for a borrowed role — and it is also the one that would spend money and bucket space
             on a file the far engine is never going to load: the box that stages files is the far

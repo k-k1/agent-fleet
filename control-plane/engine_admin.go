@@ -111,6 +111,11 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// property of how often somebody opens a screen.
 	mux.HandleFunc("POST /api/admin/engines/{key}/models/vae-scan", a.withIngestAdmin(a.scanVae))
 	mux.HandleFunc("POST /api/admin/engines/{key}/models/{id}/vae", a.withIngestAdmin(a.fixVae))
+	// The discovery button (ADR 0082 decisions 6 and 7): what an external ComfyUI's own
+	// checkpoint/LoRA/VAE folders currently hold, read off its /object_info and offered as
+	// candidates. Under ingest authority, not super_admin only — the same predicate the ingest
+	// form itself uses, since this is the other way a row's files get chosen rather than typed.
+	mux.HandleFunc("POST /api/admin/engines/{key}/discover", a.withIngestAdmin(a.discoverModelsGrant))
 	// Taking a model IN from Hugging Face / Civitai / a URL (ADR 0072 decision 6, phase P4),
 	// and watching the jobs that does.
 	//
@@ -303,6 +308,14 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	if e.def.api() == engineAPIImages {
 		row["negative_always"] = e.negativeAlways(ctx)
 		row["negative_max"] = engineNegativeMaxRunes
+	}
+	// This build's client vocabulary is {comfy, openai-compat} (ADR 0083 decision 5). A row
+	// naming anything else — `sdcpp`, most likely, retired the same ADR — cannot be served no
+	// matter what its mode or lifecycle say, and the panel has to say so rather than let the row
+	// look like every other one until an operator hears "the image tool disappeared" from a
+	// member.
+	if !imageProviderServable(e.def) {
+		row["provider_unserved"] = true
 	}
 	// Which model is actually in VRAM, and how often that changed. Both are IN-MEMORY facts of
 	// this CP process (see engineServed), and `warm_model` is absent rather than stale whenever

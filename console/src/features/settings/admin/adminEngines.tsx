@@ -281,6 +281,13 @@ export function EnginesAdminView() {
           {isSuper && e.mode === "on" && !engineIsExternal(e) && (
             <p className="form-err">{tr("admin.engines_always_on_note")}</p>
           )}
+          {/* This build's images-provider vocabulary is {comfy, openai-compat} (ADR 0083
+              decision 5). A row naming anything else cannot be served no matter what its mode
+              says, and the operator has to hear it from this panel rather than from a member
+              reporting "the image tool disappeared". */}
+          {e.provider_unserved && (
+            <p className="form-err">{tr("admin.engines_provider_unserved").replace("{p}", e.provider || "")}</p>
+          )}
           {isSuper && e.error && <p className="form-err">{e.error}</p>}
           {/* The events are the only place ECS says why a start failed ("no container
               instances met the placement constraints", a pull failure). An engine stuck in

@@ -62,6 +62,25 @@ type statusResponse struct {
 // providerStatus is one ready provider as the tool surface needs to see it.
 type providerStatus struct {
 	ID string `json:"id"`
+	// Fleet is whether the fleet's own hardware — or another fleet's, borrowed under ADR 0079
+	// decision 9 — serves this row (ADR 0082 decision 4, same source as internal providerIsFleet).
+	//
+	// Since ADR 0082 P0, ID is the images ROW's own key ("image", "comfy-lan", …), not one of a
+	// fixed set of kind names, so a reader that used to find the fleet's own route by matching ID
+	// against `["comfy","openai-compat"]` stops finding anything the moment a deployment's row is
+	// keyed anything else — which every real deployment's default row already is (`AF_COMFY_URL`
+	// and the images role both compose the fixed key "image", control-plane/engines.go). That
+	// silently emptied the Console's image generation pane (ADR 0081) on every real deployment
+	// until this field let the pane ask the Agent instead of guessing from the id's spelling.
+	Fleet bool `json:"fleet,omitempty"`
+	// Kind is the CLIENT implementation behind this row (ADR 0082 decision 1) — `comfy` /
+	// `openai-compat` for a fleet row, this route's own id for the vendor routes (whose id
+	// already IS their kind). It exists only for the Console's settings screen to expand a
+	// legacy stored alias ("comfy"/"openai-compat", the only ids a preference saved before ADR
+	// 0082 could ever have named) into today's row(s) of that kind — see
+	// console/src/lib/settings.ts's normalizeImageProviderOrder. Never used to decide fleet-ness
+	// itself; Fleet already answers that (ADR 0082 decision 4).
+	Kind string `json:"kind,omitempty"`
 	// Service is the image service this route reaches, in the words a person asks for it by.
 	// The id alone is a CLI name, and nothing downstream can decode it: a codex session whose
 	// only route is `agy` was measured answering that "the Gemini route is not available in
@@ -184,6 +203,8 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		caps := p.Caps("")
 		st := providerStatus{
 			ID:           p.ID(),
+			Fleet:        providerIsFleet(p.ID()),
+			Kind:         providerKindOf(p.ID()),
 			Service:      serviceLabelOf(p.ID()),
 			Model:        driverModelOf(p.ID()),
 			AspectRatios: caps.AspectRatios,
@@ -280,8 +301,27 @@ func applyStudio(ctx context.Context, p Provider, st *providerStatus) {
 //
 // The plan each one spends is part of the label because it is the difference that decides
 // between two routes when the caller does have a choice.
-func serviceLabelOf(id string) string {
+// providerKindOf answers which CLIENT implementation serves a provider id: the row's own
+// declared Provider field for a currently declared images row (ADR 0082 decision 1) — checked
+// first, because a row is free to choose a key that also happens to spell a kind name — and
+// otherwise the id itself, for the vendor routes (whose id already IS their kind) and for a bare
+// kind name asked about with no row behind it (the shape every id had before this ADR, and what
+// a hand-built test double still uses).
+func providerKindOf(id string) string {
+	for _, row := range imageProviderRowsSafe() {
+		if row.Key == id {
+			return row.Provider
+		}
+	}
 	switch id {
+	case ProviderCodex, ProviderAgy, ProviderComfy, ProviderOpenAICompat:
+		return id
+	}
+	return ""
+}
+
+func serviceLabelOf(id string) string {
+	switch providerKindOf(id) {
 	case ProviderCodex:
 		return "GPT Image（OpenAI。利用者の ChatGPT プランを消費）"
 	case ProviderAgy:
@@ -290,8 +330,14 @@ func serviceLabelOf(id string) string {
 		// rather than a tier ("Nano Banana Pro" is the pro image model, this route is on a flash
 		// one) — naming a tier would be a claim about a model id that moves.
 		return "Gemini の画像生成（通称 Nano Banana。Google。利用者の Antigravity/Gemini プランを消費）"
-	case ProviderSdcpp:
-		return "Stable Diffusion（このフリート自身の GPU。外部サービスではない）"
+	case ProviderOpenAICompat:
+		// Unlike the other cases, the KIND names a PROTOCOL, not a service (ADR 0083 decision 2):
+		// the engine table row behind it can be this fleet's own GPU, an operator's LAN box, or a
+		// metered vendor endpoint paid by an API key, and the kind alone cannot tell those apart.
+		// So this says only what is true of every row of this kind — the row's own KEY (ADR 0082
+		// decision 1, `id` here) is what tells one apart from another, and it already reaches the
+		// caller as providerStatus.ID / Result.Provider.
+		return "OpenAI 互換の画像サーバー（宛先はエンジン表の行次第。このフリート自身の GPU のこともあれば、鍵で払う外部サービスのこともある）"
 	case ProviderComfy:
 		// Deliberately not "this fleet's own GPU": since ADR 0076 the same route also reaches a
 		// ComfyUI on the operator's LAN, and the part that decides between routes is that no
@@ -304,22 +350,23 @@ func serviceLabelOf(id string) string {
 // driverModelOf reports the model a generation would run on, per provider. "" for a provider
 // that is not driven by a model of ours to name.
 func driverModelOf(id string) string {
-	switch id {
+	switch providerKindOf(id) {
 	case ProviderCodex:
 		return codexDriverModel()
 	case ProviderAgy:
 		return agyDriverModel()
-	case ProviderSdcpp:
-		// Not a driver model but the CHECKPOINT the engine was started with — the only model
-		// this route has, and the one its Caps are keyed to. Answered from the stack's
-		// declaration, so asking costs nothing and does not wake the box.
-		return sdcppDriverModel()
+	case ProviderOpenAICompat:
+		// Not a driver model but the default checkpoint: the row's first declared model id, which
+		// is also the only one on a single-checkpoint server. Answered from the row's own
+		// declaration (looked up by ITS OWN key, ADR 0082 decision 1 — a second openai-compat row
+		// must not answer with the first one's model), so asking costs nothing and wakes nothing.
+		return newOpenAICompatProviderFor(id).DefaultModel()
 	case ProviderComfy:
 		// Not a driver model either, and unlike sdcpp not the only one this route has: it is the
 		// checkpoint a request naming none would run on, with the rest carried in
-		// providerStatus.Models. Answered from what the Control Plane already told us, so asking
-		// costs nothing and does not wake the box.
-		return comfyDriverModel()
+		// providerStatus.Models. Answered from what the Control Plane already told us for THIS
+		// row's own key, so asking costs nothing and does not wake the box.
+		return newComfyProviderFor(id).DefaultModel()
 	}
 	return ""
 }

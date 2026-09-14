@@ -29,6 +29,13 @@ export interface GalleryImage {
   mtime?: number;
 }
 
+/** One subfolder card. Same path convention as an image; no size, because a listing
+ *  does not carry what is inside a directory and asking would be one request per card. */
+export interface GalleryFolder {
+  name: string;
+  path: string;
+}
+
 export type GallerySort = "new" | "name";
 
 /**
@@ -84,7 +91,9 @@ export function effectiveSort(images: GalleryImage[], sort: GallerySort | undefi
   return sort === "name" || !hasTimes(images) ? "name" : "new";
 }
 
-const byName = (a: GalleryImage, b: GalleryImage): number =>
+/** Name order, digits compared as numbers ("img9" before "img10") and case ignored, with a
+ *  codepoint tiebreak so the order is total. Shared by the image list and the folder list. */
+const byName = (a: { name: string }, b: { name: string }): number =>
   a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }) ||
   (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
@@ -106,6 +115,53 @@ export function galleryTotals(images: GalleryImage[]): { count: number; bytes: n
 /** The cards to draw: the first `limit` of an already-sorted list. */
 export function visibleImages(images: GalleryImage[], limit: number): GalleryImage[] {
   return limit >= images.length ? images : images.slice(0, Math.max(0, limit));
+}
+
+/**
+ * The subfolders of a listing, always in name order.
+ *
+ * Deliberately NOT following the image sort: "newest first" over folders would reshuffle
+ * the row someone is aiming at every time a picture lands inside one of them, and a
+ * directory's mtime says when its contents last changed, which is not what the name of a
+ * folder promises.
+ */
+export function galleryFolders(entries: FsEntry[] | null | undefined, dir: string): GalleryFolder[] {
+  const out: GalleryFolder[] = [];
+  for (const e of entries || []) {
+    if (!e || typeof e.name !== "string" || !e.name) continue;
+    if (e.type !== "dir") continue;
+    out.push({ name: e.name, path: dir ? dir + "/" + e.name : e.name });
+  }
+  out.sort(byName);
+  return out;
+}
+
+/**
+ * The folder above this one, or null at the top.
+ *
+ * `""` is the browse root and IS a gallery path: going up has to reach the same place the
+ * file tree starts at, otherwise "Up" dies one level early and the reader is stranded in
+ * `.cache`. The stored-layout validator accepts the empty string for exactly this reason —
+ * the menus never produce it, navigation does.
+ */
+export function parentPath(dir: string): string | null {
+  if (!dir) return null;
+  const at = dir.lastIndexOf("/");
+  return at < 0 ? "" : dir.slice(0, at);
+}
+
+/**
+ * The breadcrumb: every folder from the root down to this one, each with the path that
+ * jumps there. The root's own label is the caller's business (it has no name).
+ */
+export function breadcrumb(dir: string): GalleryFolder[] {
+  const out: GalleryFolder[] = [];
+  let acc = "";
+  for (const seg of dir.split("/").filter(Boolean)) {
+    acc = acc ? acc + "/" + seg : seg;
+    out.push({ name: seg, path: acc });
+  }
+  return out;
 }
 
 /**

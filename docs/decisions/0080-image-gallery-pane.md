@@ -135,6 +135,38 @@ webp/avif/bmp/svg come back as originals for the browser to draw.
   round trip — open question 1).
 - The original bytes are fetched only on enlarge (the lightbox). A card always shows the
   downscaled copy.
+  - 🔴 **P1 found the gap (2026-09-14)**: "on enlarge" is exactly where the waiting moved. An
+    original averages ~1 MB here, and the frame was blank until it arrived. The card's
+    thumbnail now **stands in** and the same `<img>` swaps its `src` once the original has
+    decoded (zoom and pan survive it), blurred one step so "not there yet" is legible and the
+    picture visibly sharpens. Alongside it: the **neighbour is prefetched after 400 ms**
+    (skipped when `saveData` is set), and the original's URL carries `v=<mtime>` too, so a
+    picture paged back to costs no request at all.
+  - 🔴 **A second P1 gap, same day (2026-09-14)**: three "feels slow" reports never measured the
+    BROWSER side — only `fs_thumb.go`'s own decode cost was (95 ms cold / 44 µs cached, 4-wide).
+    Measured in headless Chromium against a real 202-image folder
+    (`console/scripts/gallery-perf/check.mjs`: drives the real bundle against a stub whose
+    `api/fs/download` reproduces that same concurrency/latency shape, so the browser sees a
+    realistic queue without needing a live Agent):
+    - `entries === null` fell into the SAME branch as a populated folder, so only the "Up" card
+      drew while the app was still booting — measured ~1.2 s with nothing else on screen, and no
+      indication anything was happening. Fixed with its own branch (`EmptyState icon="loading"`).
+      A background refresh never shows it — `load()` keeps the prior listing on screen on
+      anything but the first read of a folder — so this is only ever the first look at one.
+    - `loading="lazy"` alone requested 54 of 202 thumbnails with **zero scrolling** (Chromium's own
+      "how far ahead is worth it" heuristic is generous, and nothing narrows a request back down
+      once its card has scrolled out of view). Scrolling to the bottom right after mount left the
+      now-visible row queued behind 50 leftover requests from cards nobody was looking at anymore,
+      arriving ~1 s late.
+    - Fixed with an `IntersectionObserver` per card (`useArmed`, `rootMargin: "480px 0px"`, rooted
+      on `.gal-body` rather than the viewport — a pane can be narrower than the window), gating
+      the `<img src>` itself rather than trusting `loading="lazy"` alone: a card outside the
+      margin never enters the browser's six-per-host queue at all, and once armed it stays armed
+      (scrolling a loaded picture away and back must not re-request it). Re-measured: 34 requests
+      at rest (down from 54), and scrolling right after mount totals 33 requests instead of
+      ballooning to 107, with 0 competing requests at the moment of scroll (was 50).
+      `fetchPriority="high"` rides along once armed, on top of a queue that is now short in the
+      first place.
 
 ### Decision 5 — cards behave like the transcript's; the lightbox is shared and gains ← / →
 
@@ -152,6 +184,13 @@ webp/avif/bmp/svg come back as originals for the browser to draw.
 - **No swipe navigation on a phone** (P0). Horizontal drag already belongs to session rotation
   (the `data-no-swipe` tug of war), and touching it would break an existing gesture. Buttons and
   arrow keys navigate.
+  - 🔴 **Added in P1 (2026-09-14, at the user's request).** One premise was wrong: the lightbox's
+    overlay sets `data-no-swipe` ITSELF, so session rotation is already standing down while it is
+    open and there is no tug of war inside the overlay. The only real competitor is the PAN while
+    zoomed (`ImageView`), so the gesture is fenced twice: **touch only** (nobody drags a mouse
+    sideways meaning "next"), and **at fit only** (zoomed in, a horizontal drag is the pan). The
+    threshold is 48 px and the movement must be 1.5× more horizontal than vertical, so a vertical
+    scroll that drifted sideways does not page.
 
 ### Decision 6 — auto-refresh follows the existing policy: events pull the trigger, intervals are the safety net
 
@@ -239,6 +278,44 @@ that can ignore `.gitignore` and bound the result (`GET /fs/images?path=&depth=&
 gets built **once recursion is known to be needed**. The flat cases (generated images, `docs/img`,
 a folder of screenshots) are most of the cases, and they come first.
 
+**Revised in P1 (2026-09-14, at the user's request): let the READER do the walking.**
+Subfolders are drawn as cards, and opening one MOVES THIS PANE into it (the breadcrumb goes back;
+`galleryFocus` and `gallerySession` are dropped on the way, `sort` is carried). **The listing is
+still one level**: no recursive endpoint was built — it is one `fs/tree` here and another one
+there. That answers "let me see the subfolder", and leaves the dedicated endpoint for the only
+case that still needs it: flattening several levels into one grid (an X/Y grid, open question 2).
+
+- **A folder card shows no image count — except a session's.** The session list already carries
+  `generatedImagesPath` and `generatedImages`, so a card whose path matches one is labelled with
+  the **session's display name and its count**. Doing the same for every folder would mean one
+  `fs/tree` per card, which is exactly what decision 2 refused.
+- `galleryPath` can now be the **empty string (the browse root)**. "Up" has to reach the same
+  place the file tree starts at, or it dead-ends in `.cache`; the stored-value validator therefore
+  accepts `""` while still rejecting a missing key (a truthiness test cannot tell the two apart).
+- 🔴 **P1, user-requested (2026-09-14): the breadcrumb moves to its own row, gains an always-on
+  "Up" button, and the browser's own Back button retraces folder navigation.**
+  - The breadcrumb shared a single row with the title, the count and the sort toggle, and at a
+    few levels deep it had nowhere left to grow. It now sits in its own full-width row below the
+    head (`.gal-path`), the same pattern `TerminalView` already uses for `ContextBar` — a plain
+    sibling under `<ViewHead>`, not a feature of the head itself.
+  - **"Up" is now a persistent button in that row (disabled at the root), not only a grid card.**
+    A long folder scrolled past its top has the card off-screen; the button is always there. It
+    calls the exact same `navigate()` the breadcrumb and the grid's own "Up" card call, so all
+    three — and the browser's Back button, below — always agree on where "up" leads.
+  - **Back button integration turned out to be nearly free**: `layout/store.ts` already keeps one
+    browser-history entry per **pushed** layout commit and restores it on `popstate`
+    (`wireLayoutHistory`, predating this ADR) — `setPaneTarget` was simply one of the callers that
+    opts OUT of pushing (`push: false`, the same stance as tab selection and a divider drag: a
+    content tweak is not a place to come back to). The fix is a one-line change of stance for this
+    one caller: `setPaneTarget` gained an optional third `push` argument (default `false`,
+    every other caller unaffected), and `GalleryView.navigate()` — the function the breadcrumb,
+    the folder cards and the header's "Up" button all already funnel through — passes `true`.
+    No new history/popstate plumbing was written for the gallery at all.
+  - Verified in headless Chromium against a real folder: enter a subfolder → click the header's
+    "Up" → press Back twice → lands exactly back where the subfolder was entered, then back at
+    the folder it was entered from. `sort` survives every step (it is read live, not stored in
+    the history entry, so it is never what a Back press undoes).
+
 ## Options rejected
 
 - **A modal gallery** (like cleanup / archive): cheap, but it throws away everything a pane gets
@@ -312,9 +389,12 @@ a folder of screenshots) are most of the cases, and they come first.
     before finishing**.
   - The only cross-lane collision is i18n keys (`gallery.*` is B; the entry-point wording is C).
     `layout/types.ts` is touched by B alone.
-- **P1**: a card's right-click menu (open in a pane, download, copy path, delete); "send" to a
-  session or an assistant; W x H (the header-reading endpoint); recursion into subfolders; a
-  surface over all sessions under `generated`; tile size (S/M/L) and the matching `thumb`.
+- **P1 (partly landed 2026-09-14)**: ✅ folder cards and breadcrumb navigation (decision 9,
+  revised); ✅ four buttons that jump to the generated root (the answer to open question 3);
+  ✅ swipe paging in the lightbox (decision 5, revised).
+  Still open: a card's right-click menu (open in a pane, download, copy path, delete); "send" to a
+  session or an assistant; W x H (the header-reading endpoint); an endpoint that flattens several
+  levels into one grid; tile size (S/M/L) and the matching `thumb`.
 - **P2**: generalizing to "media" including video and PDF (whether it is wanted is open
   question 2).
 
@@ -323,11 +403,21 @@ a folder of screenshots) are most of the cases, and they come first.
 1. **Is 300 the right cap?** It has not been measured. Count how many cards are visible at a pane
    width of 1100 px and how long two-at-a-time decoding makes that wait, then decide (and record it
    next to `fs_thumb.go`'s own measurements).
+   - **2026-09-14**: the half of this question that worried about "a re-mount queues one
+     conditional request per card" now has a different answer — decision 4's `useArmed` means 300
+     rendered cards no longer implies 300 in-flight requests; only the ones actually near the
+     scroll container's viewport ever ask at all, mount or remount alike. Whether 300 is the right
+     number of cards to draw (how many fit a 1100 px pane, whether "show more" is reached too soon
+     or too late) is still unmeasured.
 2. **Video and PDF?** This starts as a gallery of images, but a place like `docs/img` holds SVG,
    PNG and PDF together. Mixing them renames the thing to "media".
-3. **Is a surface over all of `generated` wanted?** It is two levels, so N+1 `fs/tree` calls would
-   build it — but mapping a folder back to a session name means reading `generatedImagesPath`
-   backwards. Wait for the ask.
+3. ~~**Is a surface over all of `generated` wanted?**~~ **Answered (2026-09-14): no surface of its
+   own is needed.** With folders as cards (decision 9, revised) the generated root is just another
+   gallery page, and mapping a folder back to a session is exactly the `generatedImagesPath`
+   lookup this question predicted — free, because the session list already carries it. Four ways
+   in: the minimap's button row, the command table's `g g` (**the one exception to decision 1's
+   "nothing is registered"**: "a gallery needs a folder" does not apply to a fixed target), the
+   Files section header, and the image-generation pane's header.
 4. **Generated images of an archived or deleted session.** The images survive 30 days, but once the
    session leaves the list so does decision 8's entry. The tree still opens it, so P0 leaves this
    alone and watches whether the `generated` surface (open question 3) is the answer.

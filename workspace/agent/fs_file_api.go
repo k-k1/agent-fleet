@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/filemeta"
@@ -312,10 +314,7 @@ func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 		if data, ct, ok := thumbnail(opened.file, path.display, fi.Size(), fi.ModTime(), edge); ok {
 			w.Header().Set("Content-Type", ct)
 			w.Header().Set("Content-Disposition", "inline; filename*=UTF-8''"+url.PathEscape(name))
-			// Short and revalidated rather than immutable: the URL names a path, not a
-			// revision, so a regenerated file has to be able to replace what a card is
-			// already showing. ServeContent answers the revalidation with a 304.
-			w.Header().Set("Cache-Control", "private, max-age=60")
+			setVersionedCache(w, r, fi.ModTime())
 			http.ServeContent(w, r, name, fi.ModTime(), bytes.NewReader(data))
 			return
 		}
@@ -330,5 +329,27 @@ func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name))
+	// The ORIGINAL gets the same treatment, and for a bigger prize: this is the megabyte the
+	// lightbox waits for, and paging back to a picture already seen should cost nothing.
+	setVersionedCache(w, r, fi.ModTime())
 	http.ServeContent(w, r, name, fi.ModTime(), opened.file)
+}
+
+// setVersionedCache decides how long the browser may keep what it is about to be handed.
+//
+// A bare URL names a PATH, not a revision, so a regenerated file has to be able to replace
+// what is already on screen: short and revalidated, with ServeContent answering the
+// revalidation with a 304. `v=<unix mtime>` changes that — the caller (the gallery, from the
+// listing it just read) has put the revision in the URL, so those bytes can never change and
+// the browser may keep them without asking. That is the difference between coming back to a
+// tab instantly and issuing one conditional request per card.
+//
+// A mismatched `v` is treated as no `v` at all rather than as an error: the file was
+// replaced since the listing, which is exactly when the short-lived answer is right.
+func setVersionedCache(w http.ResponseWriter, r *http.Request, mod time.Time) {
+	if v := r.URL.Query().Get("v"); v != "" && v == strconv.FormatInt(mod.Unix(), 10) {
+		w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "private, max-age=60")
 }

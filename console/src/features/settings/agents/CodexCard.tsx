@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { OnOff } from "../parts/controls.tsx";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, IssueLink } from "../parts/providerCard.tsx";
@@ -29,6 +30,7 @@ export function CodexCard({
   updateAgents: (patch: unknown) => void;
 }) {
   const tr = useT();
+  const s = useSettings();
   const toast = useToast();
   const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | device | key
@@ -172,6 +174,13 @@ export function CodexCard({
       <CardSettings>
         <LaunchDefaults kind="codex" />
         <ThinkingRow kind="codex" />
+        {/* One switch shared with the Claude card (uiprefs.rateLimitAutoResume): what it
+            governs is one behaviour of the workspace, and it is shown here because a Codex
+            user has no reason to open the Claude card to find it (docs/log/47 §4-12). */}
+        <SettingRow label={tr("agents.rate_limit_resume")}>
+          <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
+        </SettingRow>
+        <p className="ps-note">{tr("agents.note_codex_rate_limit_resume")}</p>
         {codex && (
           <>
             <SettingRow label={tr("agents.codex_nudge")}>

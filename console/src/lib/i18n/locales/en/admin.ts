@@ -48,6 +48,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_lora_no_family": "no family declared",
   "admin.engines_models_label": "Models",
   "admin.engines_always_on_note": "Always-on keeps the GPU instance up, at whatever the instance class costs per hour. Put it back on demand when you are done.",
+  "admin.engines_provider_unserved": "This row declares images provider \"{p}\", which this build does not implement a client for. generate_image will not work here until the row is repointed at comfy or openai-compat.",
   "admin.engines_tenant_scope":
     "Here you can take models in and see the rows that produced. Enabling a model, starting and stopping the engine, choosing the GPU and forgetting a row belong to the deployment administrator (super_admin), so they are not on this screen. The catalogue is one per deployment, and the id of a model you take in is visible from every tenant.",
   "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys an instance only when something asks, and it stops itself once idle.",
@@ -219,6 +220,19 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_vae_started": "The download has started. It joins this row when it finishes — the history below shows the progress.",
   "admin.engines_model_vae_attached": "Added to this row. It can be enabled now.",
   "admin.engines_model_vae_none": "Reading the header again says this checkpoint does bundle a VAE after all. The mark is withdrawn.",
+  // --- the discovery button (ADR 0082 decisions 6 and 7) ---------------------
+  // Reads the filenames the LAN ComfyUI actually has and offers them as candidates. The family
+  // is only ever a SUGGESTION read off the filename; a row is only ever written by a person's
+  // own press of "add".
+  "admin.engines_discover_button": "Look at this engine's files",
+  "admin.engines_discover_busy": "Looking…",
+  "admin.engines_discover_checkpoints": "Checkpoints",
+  "admin.engines_discover_loras": "LoRAs",
+  "admin.engines_discover_vaes": "VAEs",
+  "admin.engines_discover_vae_hint": "These are not rows of their own — they are filenames to use as `--vae` when building a checkpoint row.",
+  "admin.engines_discover_add": "Add a row with this name",
+  "admin.engines_discover_added": "Added",
+  "admin.engines_discover_empty": "No checkpoint, LoRA or VAE files were found on this engine.",
   // --- the "add a model" wizard (four questions) -----------------------------
   // 🔴 What it replaced was twelve fields in one column, where which of them applied was decided
   // by state the screen did not show (the tab, whether the typed id collided, which file role

@@ -98,7 +98,7 @@ Parameters:
     AllowedValues: [ off, on, ondemand ]
     Description: Initial mode, written to the table as the DEFAULT only; a stored setting wins.
 
-  # --- image role (sd-server, or ComfyUI) ---
+  # --- image role (ComfyUI) ---
   ImageEnabled:
     Type: String
     Default: ""
@@ -110,21 +110,13 @@ Parameters:
     Description: DNS label the image engine answers on.
   ImageEngine:
     Type: String
-    Default: sdcpp
-    AllowedValues: [ sdcpp, comfy ]
+    Default: comfy
+    AllowedValues: [ comfy ]
     Description: Which server the image role runs.
-  ImageImageTag:
-    Type: String
-    Default: master-cuda
-    Description: Tag in the af-sdcpp ECR repository (sdcpp only). Amd64 only.
   ImageComfyImageTag:
     Type: String
     Default: v0.34.0
-    Description: Tag in the af-comfyui ECR repository (comfy only).
-  ImageExtraArgs:
-    Type: CommaDelimitedList
-    Default: "--diffusion-fa"
-    Description: Extra sd-server flags (sdcpp only).
+    Description: Tag in the af-comfyui ECR repository.
   ImageInstanceClasses:
     Type: String
     Default: ""
@@ -160,7 +152,7 @@ Parameters:
   ImageStartDeadlineSec:
     Type: Number
     Default: 900
-    Description: Start budget. sd-server measured 195 s to listen.
+    Description: Start budget. The instance's own appearance dominates (8-88 s, ADR 0071 P0).
   ImageMode:
     Type: String
     Default: ondemand
@@ -192,7 +184,6 @@ Conditions:
   HasImageModel: !Equals [ !Ref ImageEnabled, "true" ]
   HasImageGpu: !Not [ !Equals [ !Ref ImageGpuCount, 0 ] ]
   HasBothModels: !And [ !Condition HasLlmModel, !Condition HasImageModel ]
-  ImageIsComfy: !Equals [ !Ref ImageEngine, "comfy" ]
 
 Resources:
   # --- IAM: three roles, closed inside this stack - PARAMETERS, "The task roles" ---
@@ -773,7 +764,7 @@ Resources:
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/image/active" }
             - { Name: PENDING_PARAM, Value: !Sub "${EnginesSsmParamName}/image/pending" }
             - { Name: WATCH_SEC, Value: "60" }
-            - { Name: SYNC_ALL, Value: !If [ ImageIsComfy, "1", "" ] }
+            - { Name: SYNC_ALL, Value: "1" }
             - { Name: PRESET_FILE, Value: "" }
             - { Name: ALIAS_FLAG, Value: "" }
             - { Name: CTX_FLAG, Value: "" }
@@ -784,39 +775,22 @@ Resources:
               awslogs-group: !Ref LogGroup
               awslogs-region: !Ref "AWS::Region"
               awslogs-stream-prefix: image-fetch
-        # !! ImageEngine picks the image AND the command - PARAMETERS, "The idle wrapper".
+        # !! The engine is always ComfyUI now - PARAMETERS, "The idle wrapper".
         - Name: engine
           Essential: true
-          Image: !If
-            - ImageIsComfy
-            - !Sub
-              - "${Uri}:${Tag}"
-              - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrComfyuiUri" }
-                Tag: !Ref ImageComfyImageTag
-            - !Sub
-              - "${Uri}:${Tag}"
-              - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrSdcppUri" }
-                Tag: !Ref ImageImageTag
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrComfyuiUri" }
+              Tag: !Ref ImageComfyImageTag
           EntryPoint: [ "sh", "-c" ]
           Command:
-            - !If
-              - ImageIsComfy
-              # !! Two traps in this one line - PARAMETERS, "The idle wrapper".
-              - >-
-                n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
-                if [ -s /models/cmdline ]; then rm -rf /ComfyUI/models; ln -sfn /models/image /ComfyUI/models;
-                exec python3 /ComfyUI/main.py --listen 0.0.0.0 --port 8080 --disable-auto-launch
-                --verbose DETAIL;
-                else echo "image: no checkpoint in the catalogue - idling"; sleep infinity; fi
-              - !Sub
-                - >-
-                  mkdir -p /models/image/loras;
-                  n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
-                  if [ -s /models/cmdline ]; then exec /sd-server --listen-ip 0.0.0.0
-                  --listen-port 8080 --lora-model-dir /models/image/loras
-                  ${Extra} $(cat /models/cmdline);
-                  else echo "image: no checkpoint in the catalogue - idling"; sleep infinity; fi
-                - Extra: !Join [ " ", !Ref ImageExtraArgs ]
+            # !! Two traps in this one line - PARAMETERS, "The idle wrapper".
+            - >-
+              n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
+              if [ -s /models/cmdline ]; then rm -rf /ComfyUI/models; ln -sfn /models/image /ComfyUI/models;
+              exec python3 /ComfyUI/main.py --listen 0.0.0.0 --port 8080 --disable-auto-launch
+              --verbose DETAIL;
+              else echo "image: no checkpoint in the catalogue - idling"; sleep infinity; fi
           ResourceRequirements: !If [ HasImageGpu, [ { Type: GPU, Value: !Ref ImageGpuCount } ], !Ref "AWS::NoValue" ]
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
           DependsOn: [ { ContainerName: fetch, Condition: START } ]
@@ -891,7 +865,7 @@ Resources:
               - >-
                 {"key":"image","api":"images","service":"${Service}","launchTemplate":"${Lt}",
                 "url":"http://${ImageDiscoveryName}.${ServiceConnectNamespace}:8080",
-                "health":"${Health}","provider":"${Provider}",
+                "health":"/system_stats","provider":"comfy",
                 "apiKeyParam":"","classes":"${ImageInstanceClasses}","idleSec":${ImageIdleSec},
                 "offers":"${ImageOffers}","offerBudgetSec":${ImageOfferBudgetSec},
                 "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
@@ -900,8 +874,6 @@ Resources:
                 # Written this way and not restated as a !Sub: a table naming a template that
                 # does not exist fails at the first purchase, and only there.
                 Lt: !Ref ImageLaunchTemplate
-                Health: !If [ ImageIsComfy, "/system_stats", "/v1/models" ]
-                Provider: !If [ ImageIsComfy, "comfy", "sdcpp" ]
             - ""
           Sep: !If [ HasBothModels, ",", "" ]
           Ingest: !Sub

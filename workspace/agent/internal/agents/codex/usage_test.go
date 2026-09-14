@@ -232,3 +232,164 @@ func TestCodexObservedRateLimitsSparseMerge(t *testing.T) {
 		t.Fatalf("planType = %q, want the retained \"plus\"", u.PlanType)
 	}
 }
+
+// ResetAt (docs/log/47 §4-12) names the instant the usage limit that stopped a turn lifts.
+// What it has to get right is WHICH window it takes when more than one could apply, and that
+// it stays silent rather than guessing — the caller books a wake-up on this answer.
+func TestCodexResetAtPicksEarliestFullWindow(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	t.Setenv("HOME", t.TempDir())
+	now := time.Now()
+	fiveHourReset := now.Add(time.Hour).Truncate(time.Second)
+	// Both windows are full: the 5-hour one inside an exhausted week.
+	SetObservedRateLimits(
+		&RateLimitWindow{UsedPercent: 100, WindowMinutes: 300, ResetsAt: fiveHourReset.Unix()},
+		&RateLimitWindow{UsedPercent: 100, WindowMinutes: 10080, ResetsAt: now.Add(48 * time.Hour).Unix()},
+		"plus")
+
+	at, source, ok := ResetAt(now)
+	if !ok {
+		t.Fatalf("ResetAt = !ok, want the 5-hour reset (nothing would be booked)")
+	}
+	if !at.Equal(fiveHourReset.UTC()) || source != "codex:5h" {
+		t.Errorf("ResetAt = %v / %q, want %v / codex:5h — a session parked on the weekly reset "+
+			"sleeps for days while its window reopens in an hour", at, source, fiveHourReset.UTC())
+	}
+}
+
+// A window that is not full is not the one that stopped the turn, however soon it resets.
+func TestCodexResetAtSkipsWindowsThatAreNotFull(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	t.Setenv("HOME", t.TempDir())
+	now := time.Now()
+	weeklyReset := now.Add(48 * time.Hour).Truncate(time.Second)
+	SetObservedRateLimits(
+		&RateLimitWindow{UsedPercent: 40, WindowMinutes: 300, ResetsAt: now.Add(time.Hour).Unix()},
+		&RateLimitWindow{UsedPercent: 100, WindowMinutes: 10080, ResetsAt: weeklyReset.Unix()},
+		"plus")
+
+	at, source, ok := ResetAt(now)
+	if !ok || !at.Equal(weeklyReset.UTC()) || source != "codex:weekly" {
+		t.Errorf("ResetAt = %v / %q / ok=%v, want %v / codex:weekly — resuming at the 5-hour "+
+			"reset walks straight back into the weekly limit", at, source, ok, weeklyReset.UTC())
+	}
+}
+
+// Nothing full: no instant can be named. Silence is the answer, not the nearest reset.
+func TestCodexResetAtWithoutAFullWindow(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	t.Setenv("HOME", t.TempDir())
+	now := time.Now()
+	SetObservedRateLimits(
+		&RateLimitWindow{UsedPercent: 40, WindowMinutes: 300, ResetsAt: now.Add(time.Hour).Unix()},
+		&RateLimitWindow{UsedPercent: 12, WindowMinutes: 10080, ResetsAt: now.Add(48 * time.Hour).Unix()},
+		"plus")
+
+	if at, source, ok := ResetAt(now); ok {
+		t.Errorf("ResetAt = %v / %q / ok=true, want !ok", at, source)
+	}
+}
+
+// A reading whose window has already reset says nothing either: adjustWindow zeroes its
+// percentage, so a stale snapshot cannot be mistaken for a limit in force. This is the
+// property that keeps an old rollout from booking a resume at an instant in the past.
+func TestCodexResetAtIgnoresAReadingThatHasAlreadyReset(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	t.Setenv("HOME", t.TempDir())
+	now := time.Now()
+	SetObservedRateLimits(&RateLimitWindow{
+		UsedPercent: 100, WindowMinutes: 300, ResetsAt: now.Add(-2 * time.Hour).Unix(),
+	}, nil, "plus")
+
+	if at, source, ok := ResetAt(now); ok {
+		t.Errorf("ResetAt = %v / %q / ok=true, want !ok (a spent window read as a live limit)", at, source)
+	}
+}
+
+// No reading at all (a codex that has never recorded one) — the same silence.
+func TestCodexResetAtWithoutAnyReading(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	t.Setenv("HOME", t.TempDir())
+	if _, _, ok := ResetAt(time.Now()); ok {
+		t.Error("ResetAt = ok with no reading available, want !ok")
+	}
+}
+
+// primeAccountUsage fills the account view's cache (and a login for it to belong to) so the
+// lookup answers without a network call — the same shortcut accountUsage takes on a warm cache.
+func primeAccountUsage(t *testing.T, u usage) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("HOME"), ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	auth := `{"auth_mode":"chatgpt","tokens":{"access_token":"t","account_id":"a"}}`
+	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(auth), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &accountUsageCache
+	c.Lock()
+	c.val, c.ok, c.fetched = u, true, time.Now()
+	c.Unlock()
+	t.Cleanup(func() {
+		c.Lock()
+		c.val, c.ok, c.fetched = usage{}, false, time.Time{}
+		c.Unlock()
+	})
+}
+
+// TestCodexResetAtUsesTheAccountViewAcrossABoundary (docs/log/47 §4-13, measured on scpigmc):
+// the local reading is the one written before the window boundary, so adjustWindow has zeroed
+// it — and it is the FRESHEST of the two. The account view still says the plan is out until the
+// next boundary, and that has to be the answer: with the local reading in charge nothing is
+// ever booked again, which is exactly what left a session waiting with no reservation.
+func TestCodexResetAtUsesTheAccountViewAcrossABoundary(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	t.Setenv("HOME", t.TempDir())
+	now := time.Now()
+	realReset := now.Add(4 * time.Hour).Truncate(time.Second)
+	// Local: recorded before the boundary that has just passed => pct 0, reset rolled forward.
+	SetObservedRateLimits(&RateLimitWindow{
+		UsedPercent: 100, WindowMinutes: 300, ResetsAt: now.Add(-time.Minute).Unix(),
+	}, nil, "plus")
+	primeAccountUsage(t, usage{
+		OK: true, AgeSec: 200,
+		FiveHour: &usageWindow{Pct: 100, ResetsAt: realReset.Format(time.RFC3339)},
+		SevenDay: &usageWindow{Pct: 47, ResetsAt: now.Add(6 * 24 * time.Hour).Format(time.RFC3339)},
+	})
+
+	at, source, ok := ResetAt(now)
+	if !ok {
+		t.Fatal("ResetAt = !ok — the account view knows the plan is out, so nothing would ever be booked")
+	}
+	if !at.Equal(realReset) || source != "codex:5h" {
+		t.Errorf("ResetAt = %v / %q, want %v / codex:5h", at, source, realReset)
+	}
+}
+
+// The local reading is still trusted on its own: it is the only one a workspace without a
+// ChatGPT login (an API-key codex) has, and it is the fresher source while a session is
+// working. A full window from either reading is evidence.
+func TestCodexResetAtTakesAFullWindowFromEitherReading(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	t.Setenv("HOME", t.TempDir())
+	now := time.Now()
+	localReset := now.Add(time.Hour).Truncate(time.Second)
+	SetObservedRateLimits(&RateLimitWindow{
+		UsedPercent: 100, WindowMinutes: 300, ResetsAt: localReset.Unix(),
+	}, nil, "plus")
+	// The account view is behind by a window and says nothing useful (all zeroed).
+	primeAccountUsage(t, usage{OK: true, AgeSec: 400})
+
+	at, source, ok := ResetAt(now)
+	if !ok || !at.Equal(localReset.UTC()) || source != "codex:5h" {
+		t.Errorf("ResetAt = %v / %q / ok=%v, want %v / codex:5h", at, source, ok, localReset.UTC())
+	}
+}

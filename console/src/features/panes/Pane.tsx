@@ -139,9 +139,11 @@ function PopulatedPane({
   onDropSplit,
   sessionMeta,
   ordinal,
-}: PaneProps) {
+}: PaneProps & { pane: PaneT }) {
+  // `pane` is required here, not narrowed by an early return: Pane() already routes a cell
+  // without one to EmptyPane, and a `return null` above the hooks would make every hook
+  // below it conditional (rules-of-hooks, the mistake LayoutMap made in #631).
   const tr = useT();
-  if (!pane) return null;
   const paneRef = useRef<HTMLDivElement>(null);
   const isTerm = pane.content.kind === "terminal";
   // Minimal pop-out tab: hide the pop-out button (the pane already IS its own

@@ -45,6 +45,7 @@ export const admin = {
   "admin.engines_lora_no_family": "ファミリー未宣言",
   "admin.engines_models_label": "モデル",
   "admin.engines_always_on_note": "常時稼働は GPU のインスタンスを止めません（時間単価はインスタンスクラスによります）。用が済んだらオンデマンドへ戻してください。",
+  "admin.engines_provider_unserved": "この行は images provider「{p}」を名乗っていますが、この build はその provider のクライアントを実装していません。行を comfy か openai-compat に向け直すまで、ここで generate_image は動きません。",
   "admin.engines_tenant_scope":
     "ここではモデルの取り込みと、取り込んだ行の確認ができます。モデルの有効化・エンジンの起動と停止・GPU の選択・行の削除は配備管理者（super_admin）の担当なので、この画面には出ません。カタログは配備に 1 つで、取り込んだモデルの id はどのテナントからも見えます。",
   "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけインスタンスを買い、アイドルで自分で止まります。",
@@ -210,6 +211,18 @@ export const admin = {
   "admin.engines_model_vae_started": "取り込みを開始しました。終わるとこの行に付きます（履歴で進み具合が見られます）。",
   "admin.engines_model_vae_attached": "この行に足しました。有効にできます。",
   "admin.engines_model_vae_none": "ヘッダを読み直したところ、このチェックポイントは VAE を同梱していました。印を取り消します。",
+  // --- 発見ボタン（ADR 0082 決定 6・7）----------------------------------------
+  // LAN の ComfyUI が実際に持っているファイル名を読み、候補として出す。族は
+  // ファイル名から分かる場合の「提案」でしかなく、行を作るのは常に人の「足す」の押下。
+  "admin.engines_discover_button": "このエンジンのファイルを調べる",
+  "admin.engines_discover_busy": "調べています…",
+  "admin.engines_discover_checkpoints": "チェックポイント",
+  "admin.engines_discover_loras": "LoRA",
+  "admin.engines_discover_vaes": "VAE",
+  "admin.engines_discover_vae_hint": "これらは行そのものではなく、チェックポイントの行を作るときに `--vae` として使うファイル名です。",
+  "admin.engines_discover_add": "この名前で行を足す",
+  "admin.engines_discover_added": "足しました",
+  "admin.engines_discover_empty": "このエンジンにチェックポイント・LoRA・VAE のファイルは見つかりませんでした。",
   // --- 「モデルを追加」ウィザード（4 問）--------------------------------------
   // 🔴 これが置き換えたのは、1 列に 12 項目が縦に並び、そのうちどれが効くかは画面に
   // 出ていない状態（タブ・id の衝突・役割の選択）で決まるフォーム。配備の持ち主が

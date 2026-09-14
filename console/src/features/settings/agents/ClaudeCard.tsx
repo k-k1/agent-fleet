@@ -185,7 +185,7 @@ export function ClaudeCard({
           />
         </SettingRow>
         <p className="ps-note">{tr("agents.note_claude_abort_resume")}</p>
-        <SettingRow label={tr("agents.claude_rate_limit_resume")}>
+        <SettingRow label={tr("agents.rate_limit_resume")}>
           <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
         </SettingRow>
         <p className="ps-note">{tr("agents.note_claude_rate_limit_resume")}</p>

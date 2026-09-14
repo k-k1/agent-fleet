@@ -228,6 +228,8 @@ export const errors = {
   "err.engine_files_missing": "そのモデルファミリーのワークフローが読むファイルが、この行に揃っていません",
   "err.engine_vae_missing": "このチェックポイントは VAE を同梱していないので、そのままでは生成が必ず失敗します",
   "err.engine_vae_unreadable": "チェックポイントのヘッダを読めなかったので、VAE の有無は分かりません",
+  "err.engine_discover_unsupported": "この行は外部の ComfyUI ではないので、モデルの発見はできません",
+  "err.engine_discover_unreachable": "その機械に問い合わせられませんでした（電源が入っていないか、ネットワークに繋がっていません）",
   "err.gated_not_accepted": "そのアカウントはこのリポジトリの条項にまだ同意していません",
   "err.civitai_login_required": "この資産は投稿者がログイン済みのアカウントからのダウンロードだけを許しています",
   "err.bad_source": "取り込み元の指定が不正です",

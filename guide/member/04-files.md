@@ -135,13 +135,30 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
   gallery falls back to name order and shows no relative time ("3 minutes ago") either.
 - **Count and size** — the header carries the totals for the whole folder. A big folder stops at
   **300 images**, with "Show more" for the rest (each card is one thumbnail request).
+- **Loading** — right after opening a folder, while nothing has arrived yet, the pane shows a
+  loading state (it never sits there showing only "Up"). Thumbnails are requested for the cards
+  nearest the screen first, so opening a big folder does not fetch everything at once, and
+  scrolling ahead does not get stuck behind pictures you have already scrolled past.
+- **Folders** — subfolders are cards too, and opening one moves this pane into it. The first card,
+  "Up", goes back to the parent, and the **breadcrumb** in the row under the header
+  (`.cache / agent-fleet / generated`) jumps to any level. Ctrl/⌘-click and middle-click open the
+  folder in another pane.
+- **An always-on "Up", and the browser's Back button** — that breadcrumb row also has a
+  **permanent "Up" button** (disabled at the root), so a long folder whose "Up" card has scrolled
+  off screen is still one click from its parent. Folder navigation is retraced by the browser's
+  own **Back button** too — however you got somewhere ("Up", the breadcrumb, or a card), the same
+  number of Back presses gets you the same distance back.
 - **Cards** — click the card to **enlarge** (← / → move through the folder, and "3 / 12" tells you
-  where you are); the button in the corner **opens it in the file pane**. Just looking never costs
-  you a pane.
+  where you are; **on a phone, swipe left and right** to move — only at fit, because while you are
+  zoomed in a drag pans the picture); the button in the corner **opens it in the file pane**. Just
+  looking never costs you a pane.
 - **Refresh** — on open, on returning to the tab, and every 20 seconds while a session is running.
   New arrivals get the same highlight as the file tree, so you see a generation land. "Refresh" in
   the header re-reads at any time.
-- Cards show a **downscaled copy**; the original bytes are fetched only when you enlarge.
+- Cards show a **downscaled copy**; the original bytes are fetched only when you enlarge. The
+  moment you do, that downscaled copy is what you see — slightly blurred — and it sharpens when
+  the original arrives (originals run to several MB each). The neighbouring picture is fetched
+  ahead, so ← / → do not wait.
 
 **Images a session generated**
 
@@ -151,7 +168,11 @@ session's context menu** is the way, and it appears **only for sessions that hav
 something** (N is how many). It is absent while the workspace is stopped — reading the images is
 the Agent's job, and the Agent lives in the workspace.
 
-The gallery lists one folder level; it does not descend into subfolders.
+To see **all of them at once**, an **"Open generated images"** button opens the parent folder from
+four places: the **minimap's button row**, the leader key **`g g`** (and the command palette), the
+**Files** section header in the left pane, and the **image-generation pane's header**. It opens on
+a page of cards: one folder per session, plus the studio's own output (`console`). A session's
+folder is labelled with **the session's name and its image count**, not its internal id.
 
 ## Image generation
 

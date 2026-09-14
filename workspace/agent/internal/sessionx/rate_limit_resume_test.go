@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
@@ -35,6 +36,12 @@ type rateLimitFixture struct {
 	resetAt     time.Time
 	resetOK     bool
 	resetSource string // evidence for the instant (banner / banner+capture / capture)
+	resetCalls  int    // claude's reset lookup (must stay untouched for codex)
+	// codex managed's two answers: its handle's last turn error, and its own rate-limit
+	// windows (docs/log/47 §4-12).
+	codexLimited bool
+	codexReset   time.Time
+	codexResetOK bool
 }
 
 func newRateLimitFixture(t *testing.T) *rateLimitFixture {
@@ -55,13 +62,25 @@ func newRateLimitFixture(t *testing.T) *rateLimitFixture {
 	}
 	dropRateLimitSchedule = func(id string) { f.deleted = append(f.deleted, id) }
 	rateLimitResetAt = func(string, time.Time) (time.Time, string, bool) {
+		f.resetCalls++
 		return f.resetAt, f.resetSource, f.resetOK
+	}
+	origLimited, origCodexReset := codexRateLimited, codexResetAt
+	codexRateLimited = func(string) bool { return f.codexLimited }
+	codexResetAt = func(time.Time) (time.Time, string, bool) {
+		return f.codexReset, "codex:5h", f.codexResetOK
 	}
 	t.Cleanup(func() {
 		dismissRateLimitModal, putRateLimitSchedule = origDismiss, origPut
 		dropRateLimitSchedule, rateLimitResetAt = origDrop, origReset
+		codexRateLimited, codexResetAt = origLimited, origCodexReset
 	})
 	return f
+}
+
+// rlCodexMeta is a managed codex session — the shape §4-12 added to the watch.
+func rlCodexMeta() session.Meta {
+	return session.Meta{Name: "rlcx1", Dir: "/tmp/rlcx1", Kind: session.KindCodex, Driver: session.DriverManaged}
 }
 
 func setRateLimitPref(t *testing.T, on bool) {
@@ -502,3 +521,251 @@ func TestDismissRateLimitModalLive(t *testing.T) {
 type errTest struct{}
 
 func (errTest) Error() string { return "CP unreachable (test)" }
+
+// TestRateLimitCodexManagedBooksWithoutAMenu (docs/log/47 §4-12): a managed codex whose turn
+// was refused with usageLimitExceeded gets the same booking a claude does. The two things that
+// differ are pinned here — no key is ever sent (there is no menu to confirm), and the instant
+// comes from codex's own rate-limit windows, never from claude's transcript lookup.
+func TestRateLimitCodexManagedBooksWithoutAMenu(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	f.codexLimited, f.codexResetOK = true, true
+	f.codexReset = now.Add(3 * time.Hour)
+	m := rlCodexMeta()
+	session.WriteMeta(m)
+
+	if kind, at := atUsageLimit(m); !at || kind != claude.LimitWindow {
+		t.Fatalf("atUsageLimit = %q / %v, want window / true (the handle's turn error is the evidence)", kind, at)
+	}
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+
+	st := stateOf(t, m.Name)
+	if f.scheduled != 1 || st.ScheduleID != "sch_test" {
+		t.Fatalf("bookings = %d / id=%q, want 1 / sch_test", f.scheduled, st.ScheduleID)
+	}
+	if !f.scheduleAt.Equal(f.codexReset) || st.Source != "codex:5h" {
+		t.Errorf("booked %v (%s), want %v (codex:5h)", f.scheduleAt, st.Source, f.codexReset)
+	}
+	if f.resetCalls != 0 {
+		t.Errorf("claude's reset lookup was called %d times for a codex session", f.resetCalls)
+	}
+	if f.dismissed != 0 {
+		t.Errorf("dismissals = %d, want 0 (codex has no menu; a key press is a stray prompt)", f.dismissed)
+	}
+	if got := notice.List(); len(got) != 1 || got[0].Kind != rateLimitNoticeReached {
+		t.Fatalf("notices = %+v, want 1 reached", got)
+	}
+	// Still at the limit on the next sweep: one episode, one booking.
+	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), false, claude.LimitWindow)
+	if f.scheduled != 1 || len(notice.List()) != 1 {
+		t.Errorf("second tick: bookings=%d notices=%d - repeating within one episode", f.scheduled, len(notice.List()))
+	}
+}
+
+// TestRateLimitCodexWithoutAResetInstantBooksNothing: codex records no usable window (a login
+// with no reading yet, or one whose windows have already reset). Waking on a guess only hits
+// the same limit, so the episode opens and notifies but reserves nothing.
+func TestRateLimitCodexWithoutAResetInstantBooksNothing(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	f.codexLimited, f.codexResetOK = true, false
+	m := rlCodexMeta()
+	session.WriteMeta(m)
+
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+	st := stateOf(t, m.Name)
+	if f.scheduled != 0 || st.ResumeAt != "" {
+		t.Errorf("bookings = %d / ResumeAt = %q, want 0 / empty", f.scheduled, st.ResumeAt)
+	}
+	if st.At == "" || st.ScheduleTries != 1 {
+		t.Errorf("state = %+v, want an open episode with the attempt counted", st)
+	}
+}
+
+// TestRateLimitWatchedKinds pins the population of the watch itself — the gate that decided,
+// before §4-12, that only claude was ever looked at. A kind that slips out of this list stops
+// being recovered without anything going red.
+func TestRateLimitWatchedKinds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		m    session.Meta
+		want bool
+	}{
+		{"claude tui", session.Meta{Kind: session.KindClaude}, true},
+		{"claude managed", session.Meta{Kind: session.KindClaude, Driver: session.DriverManaged}, true},
+		// An old meta written before kinds were recorded is a claude (NormalizeKind).
+		{"empty kind", session.Meta{}, true},
+		{"codex managed", session.Meta{Kind: session.KindCodex, Driver: session.DriverManaged}, true},
+		// The TUI codex has no signal saying THIS session's turn died on the limit.
+		{"codex tui", session.Meta{Kind: session.KindCodex}, false},
+		{"opencode managed", session.Meta{Kind: session.KindOpencode, Driver: session.DriverManaged}, false},
+		{"copilot managed", session.Meta{Kind: session.KindCopilot, Driver: session.DriverManaged}, false},
+	} {
+		if got := rateLimitWatched(tc.m); got != tc.want {
+			t.Errorf("rateLimitWatched(%s) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestRateLimitScheduleBodyNamesTheSessionsKind: the reservation sent to the CP has to describe
+// the session it is for. agent_kind used to be the constant "claude", which would have put a
+// codex resume on the scheduled-execution list under the wrong agent.
+func TestRateLimitScheduleBodyNamesTheSessionsKind(t *testing.T) {
+	for _, tc := range []struct {
+		m    session.Meta
+		want string
+	}{
+		{rlMeta(), session.KindClaude},
+		{rlCodexMeta(), session.KindCodex},
+	} {
+		b, err := rateLimitScheduleBody(tc.m, time.Now().Add(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["agent_kind"] != tc.want {
+			t.Errorf("agent_kind = %v, want %q", got["agent_kind"], tc.want)
+		}
+		if got["reuse_target"] != tc.m.Name || got["session_mode"] != "reuse" ||
+			got["missing_target_policy"] != "fail" || got["wake_policy"] != "wake" {
+			t.Errorf("body = %v, want a pinned reuse of %s that is never recreated and wakes the workspace", got, tc.m.Name)
+		}
+	}
+}
+
+// TestRateLimitResumeNoticeCoversCodexManaged: the "resumed automatically" notice is raised for
+// whatever kind the watch books for, not for claude alone. Its gate used to be the kind check,
+// so a codex resume would have landed silently even once the booking existed (§4-12).
+func TestRateLimitResumeNoticeCoversCodexManaged(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	f.codexLimited, f.codexResetOK = true, true
+	f.codexReset = now.Add(time.Hour)
+	m := rlCodexMeta()
+	session.WriteMeta(m)
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow) // 1 notice: reached
+
+	notifyRateLimitResumeDelivered(m.Name, rateLimitResumePrompt(), TurnSourceSchedule, now.Add(time.Hour))
+	got := notice.List()
+	if len(got) != 2 {
+		t.Fatalf("notices = %+v, want reached + resumed", got)
+	}
+	if got[1].Kind != rateLimitNoticeResumed || got[1].SessionKind != session.KindCodex {
+		t.Fatalf("second notice = %+v, want a resumed one for a codex session", got[1])
+	}
+	// A redelivery of the same schedule adds no second resumed notice.
+	notifyRateLimitResumeDelivered(m.Name, rateLimitResumePrompt(), TurnSourceSchedule, now.Add(time.Hour))
+	if got = notice.List(); len(got) != 2 {
+		t.Errorf("notices after a redelivery = %d, want 2", len(got))
+	}
+}
+
+// TestRateLimitRebooksAfterAFiredResume (docs/log/47 §4-13, measured on scpigmc): the booked
+// resume fired, the session took a turn and was refused by the SAME limit again. Before this,
+// the spent episode stayed current for the whole cleanup grace and scheduleRateLimitResume
+// declines while it holds a ScheduleID, so nothing was booked for half an hour and the row went
+// on showing an instant that had already gone by.
+func TestRateLimitRebooksAfterAFiredResume(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	fired := now.Add(-rateLimitRebookSettle - time.Minute) // the resume went out and settled
+	next := now.Add(4 * time.Hour)
+	f.codexLimited, f.codexResetOK, f.codexReset = true, true, next
+	m := rlCodexMeta()
+	session.WriteMeta(m)
+	if err := RateLimitStates.Write(m.Name, rateLimitState{
+		At: fired.Add(-time.Hour).Format(time.RFC3339), ResumeAt: fired.Format(time.RFC3339),
+		ScheduleID: "sch_spent", ScheduleTries: maxRateLimitScheduleTries,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+
+	st := stateOf(t, m.Name)
+	if f.scheduled != 1 || st.ScheduleID != "sch_test" {
+		t.Fatalf("bookings = %d / id=%q, want 1 / sch_test — the spent episode swallowed the new limit",
+			f.scheduled, st.ScheduleID)
+	}
+	if !f.scheduleAt.Equal(next) || st.ResumeAt != next.Format(time.RFC3339) {
+		t.Errorf("booked %v (state %q), want %v", f.scheduleAt, st.ResumeAt, next)
+	}
+	// The spent once-schedule is deleted, not left behind: its id is about to be forgotten and
+	// a dead row would sit in the Console's scheduled-execution list forever.
+	if len(f.deleted) != 1 || f.deleted[0] != "sch_spent" {
+		t.Errorf("deleted = %v, want [sch_spent]", f.deleted)
+	}
+	// A new episode, so the attempt budget starts over (the old one was exhausted above).
+	if st.ScheduleTries != 1 || st.At == "" {
+		t.Errorf("state = %+v, want a fresh episode with one attempt spent", st)
+	}
+}
+
+// TestRateLimitDoesNotRebookWhileTheResumeIsInFlight: the booking fired seconds ago and the
+// evidence has not caught up yet (the resumed turn has to reach the CLI and write a record
+// before "at the limit" turns false). Rolling over here would book against the very limit the
+// resume was already sent for.
+func TestRateLimitDoesNotRebookWhileTheResumeIsInFlight(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	justFired := now.Add(-30 * time.Second)
+	f.codexLimited, f.codexResetOK, f.codexReset = true, true, now.Add(4*time.Hour)
+	m := rlCodexMeta()
+	session.WriteMeta(m)
+	if err := RateLimitStates.Write(m.Name, rateLimitState{
+		At: now.Add(-time.Hour).Format(time.RFC3339), ResumeAt: justFired.Format(time.RFC3339),
+		ScheduleID: "sch_inflight", ScheduleTries: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+
+	if f.scheduled != 0 || len(f.deleted) != 0 {
+		t.Errorf("bookings = %d / deleted = %v, want 0 / none while the resume is still landing",
+			f.scheduled, f.deleted)
+	}
+	if st := stateOf(t, m.Name); st.ScheduleID != "sch_inflight" {
+		t.Errorf("scheduleId = %q, want the in-flight booking kept", st.ScheduleID)
+	}
+}
+
+// TestRateLimitChipDropsAPastResumeTime: while the next booking is being worked out, the chip
+// must not go on naming an instant that has passed. "Waiting for the limit" with no time is
+// still true; "waiting until 10:25" at 10:41 is what the user reported as wrong.
+func TestRateLimitChipDropsAPastResumeTime(t *testing.T) {
+	newRateLimitFixture(t)
+	now := time.Now()
+	m := rlCodexMeta()
+	session.WriteMeta(m)
+	for _, tc := range []struct {
+		name     string
+		resumeAt time.Time
+		want     bool // the instant reaches the row
+	}{
+		{"still ahead", now.Add(2 * time.Hour), true},
+		{"already gone", now.Add(-2 * time.Minute), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRateLimitFixture(t)
+			f.codexLimited = true
+			session.WriteMeta(m)
+			iso := tc.resumeAt.Format(time.RFC3339)
+			if err := RateLimitStates.Write(m.Name, rateLimitState{
+				At: now.Add(-time.Hour).Format(time.RFC3339), ResumeAt: iso, ScheduleID: "sch_x",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			state, at, ok := rateLimitWaiting(m, now)
+			if !ok || state != agents.StateLimited {
+				t.Fatalf("rateLimitWaiting = %q / ok=%v, want the limit wait", state, ok)
+			}
+			if got := at == iso; got != tc.want {
+				t.Errorf("resumeAt = %q (want carried=%v)", at, tc.want)
+			}
+		})
+	}
+}

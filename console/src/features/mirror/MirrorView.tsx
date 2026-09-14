@@ -2163,6 +2163,10 @@ export function MirrorView({
         createPortal(
           <ImageLightbox
             src={lightbox.src}
+            // The card's thumbnail is on screen already, so the enlarged view has something
+            // to show while the original (megabytes) downloads. A pasted image has no path
+            // and no thumbnail — it opens as it always did.
+            placeholder={lightbox.path ? downloadURL(lightbox.path, 512) : undefined}
             // A pasted image has no path, so it gets no properties toggle either — the
             // same rule the folder button already follows (ADR 0081 decision 3).
             path={lightbox.path || undefined}

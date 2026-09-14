@@ -31,7 +31,7 @@ const fetchMock = vi.fn(async (url: string) => {
 vi.stubGlobal("fetch", fetchMock);
 
 const { GalleryView } = await import("./GalleryView.tsx");
-const { useLayoutStore } = await import("../../layout/store.ts");
+const { useLayoutStore, wireLayoutHistory } = await import("../../layout/store.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { allViews, freshLayout } = await import("../../layout/ops.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
@@ -62,7 +62,11 @@ const render = async (props: Partial<Parameters<typeof GalleryView>[0]> = {}) =>
   return paneId;
 };
 
-const cards = () => [...host.querySelectorAll<HTMLElement>(".gal-card")];
+// Image cards only: the grid now starts with "Up" and the subfolders, and every assertion
+// below is about pictures. Folder cards have their own test.
+const cards = () => [...host.querySelectorAll<HTMLElement>(".gal-card:not(.folder)")];
+const folderCards = () => [...host.querySelectorAll<HTMLElement>(".gal-card.folder")];
+const folderNames = () => folderCards().map((c) => c.querySelector(".gal-name")?.textContent);
 const names = () => cards().map((c) => c.querySelector(".gal-name")?.textContent);
 const thumbs = () => [...host.querySelectorAll<HTMLImageElement>(".gal-thumb img")];
 const lightbox = () => document.querySelector(".mirror-lightbox");
@@ -75,6 +79,14 @@ const click = async (el: Element | null | undefined) => {
     el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
 };
+
+/** popstate arrives asynchronously even in jsdom (history.back() is queued as a task) — same
+ *  helper layout/history.dom.test.tsx uses. */
+const back = (): Promise<void> =>
+  new Promise((resolve) => {
+    window.addEventListener("popstate", () => setTimeout(resolve, 0), { once: true });
+    history.back();
+  });
 
 beforeEach(() => {
   listings = 0;
@@ -101,6 +113,18 @@ describe("画像ギャラリーのペイン", () => {
     expect(thumbs()[0].getAttribute("decoding")).toBe("async");
     expect(thumbs()[0].src).toContain("thumb=512");
     expect(thumbs()[0].src).toContain(encodeURIComponent("gen/c.png"));
+    // The listing's mtime rides in the URL, so the Agent may answer `immutable` and coming
+    // back to the tab costs no request at all (a cold thumbnail is ~95 ms, a cached one 44 µs).
+    expect(thumbs()[0].src).toContain("v=300");
+    // And the listing itself asks the Agent to decode the folder while it answers.
+    expect(String(fetchMock.mock.calls[0][0])).toContain("warm=512");
+  });
+
+  it("mtime を返さない Agent では版を URL に載せない（載せると古い絵を永久に掴む）", async () => {
+    served = [img("a.png")];
+    await render();
+    expect(thumbs()[0].src).toContain("thumb=512");
+    expect(thumbs()[0].src).not.toContain("v=");
   });
 
   it("画像が 1 枚も無ければ空状態（読み込み中の空白ではなく）", async () => {
@@ -258,6 +282,229 @@ describe("画像ギャラリーのペイン", () => {
       expect(cards()[1].classList.contains("gal-new")).toBe(false);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("フォルダもカードで並び、押すとそのペインが中へ移動する（別ペインは開かない）", async () => {
+    served = [img("a.png", 100), { name: "console", type: "dir" }, { name: "trial", type: "dir" }];
+    const paneId = await render({ path: ".cache/agent-fleet/generated" });
+    expect(folderNames()).toEqual(["上へ", "console", "trial"]);
+
+    served = [img("x.png", 200)];
+    await click(folderCards()[1].querySelector(".gal-enter"));
+    const panes = allViews(useLayoutStore.getState().layout).filter((v) => v.content.kind === "gallery");
+    expect(panes).toHaveLength(1); // 遷移であって、開き直しではない
+    expect(panes[0].id).toBe(paneId);
+    expect(panes[0].content).toEqual({ kind: "gallery", galleryPath: ".cache/agent-fleet/generated/console" });
+  });
+
+  it("「上へ」は親へ、ルートまで戻れる", async () => {
+    served = [{ name: "console", type: "dir" }];
+    const paneId = await render({ path: "a/b" });
+    await click(folderCards()[0].querySelector(".gal-enter")); // 上へ
+    const content = () => allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content;
+    expect(content()).toEqual({ kind: "gallery", galleryPath: "a" });
+  });
+
+  it("ヘッダの「上へ」は常に出ており（スクロールで隠れるグリッドの札とは別）、押すと親フォルダへ移動する", async () => {
+    served = [img("a.png", 100)];
+    const paneId = await render({ path: "a/b" });
+    const upBtn = host.querySelector<HTMLButtonElement>(".gal-path button");
+    expect(upBtn).not.toBeNull();
+    expect(upBtn!.disabled).toBe(false);
+    await click(upBtn);
+    const content = allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content;
+    expect(content).toEqual({ kind: "gallery", galleryPath: "a" });
+  });
+
+  it("ルートではヘッダの「上へ」が無効になる（グリッドに札そのものが無いのと揃える）", async () => {
+    served = [img("a.png", 100)];
+    await render({ path: "" });
+    expect(host.querySelector<HTMLButtonElement>(".gal-path button")!.disabled).toBe(true);
+    expect(folderCards()).toHaveLength(0); // グリッド側にも「上へ」の札が無い
+  });
+
+  it("戻るボタンでひとつ前のフォルダへ戻る（「上へ」・パンくず・カードのどれで来ても同じ経路）", async () => {
+    const unwire = wireLayoutHistory();
+    try {
+      served = [{ name: "b", type: "dir" }];
+      const paneId = await render({ path: "a" });
+      // A clean standing entry to leave the first navigate's push something correct to restamp
+      // (same convention layout/history.dom.test.tsx's beforeEach uses).
+      history.replaceState({ __af: true, layout: useLayoutStore.getState().layout }, "");
+      const pathOf = () =>
+        (allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content as { galleryPath: string })
+          .galleryPath;
+
+      served = [img("x.png", 1)];
+      await click(folderCards().find((c) => c.textContent?.includes("b"))?.querySelector(".gal-enter"));
+      expect(pathOf()).toBe("a/b");
+
+      await back();
+      expect(pathOf()).toBe("a");
+    } finally {
+      unwire();
+    }
+  });
+
+  it("セッションのフォルダは UUID でなくセッション名と枚数で出る（追加の問い合わせ無しで）", async () => {
+    useSessionsStore.setState({
+      sessions: [
+        { name: "slot01", kind: "claude", title: "絵を描く", generatedImages: 3, generatedImagesPath: "gen/uuid-1" } as never,
+      ],
+    });
+    served = [
+      { name: "uuid-1", type: "dir" },
+      { name: "uuid-2", type: "dir" },
+    ];
+    await render({ path: "gen" });
+    expect(folderNames()).toEqual(["上へ", "絵を描く", "uuid-2"]);
+    expect(folderCards()[1].querySelector(".gal-meta")?.textContent).toBe("3 枚");
+    expect(folderCards()[2].querySelector(".gal-meta")?.textContent).toBe("");
+    expect(listings).toBe(1); // カードごとに一覧を引いてはいない
+  });
+
+  it("画像が無くてもフォルダがあれば空状態にしない（生成物の親フォルダがまさにそれ）", async () => {
+    served = [{ name: "console", type: "dir" }];
+    await render({ path: "gen" });
+    expect(host.querySelector(".ui-empty-title")).toBeNull();
+    expect(folderCards().length).toBe(2); // 上へ ＋ console
+  });
+
+  it("セッションの題は、そのフォルダから出た時点で外れる（タブが嘘をつかない）", async () => {
+    served = [{ name: "sub", type: "dir" }];
+    const paneId = await render({ path: "gen/uuid-1", sessionName: "slot01" });
+    await click(folderCards()[1].querySelector(".gal-enter"));
+    const content = allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content;
+    expect(content).toEqual({ kind: "gallery", galleryPath: "gen/uuid-1/sub" });
+  });
+
+  it("パンくずのどの段からでも飛べる", async () => {
+    served = [img("a.png", 1)];
+    const paneId = await render({ path: "a/b/c" });
+    const crumbs = [...host.querySelectorAll<HTMLButtonElement>(".gal-crumb")];
+    expect(crumbs.map((c) => c.textContent)).toEqual(["ホーム", "a", "b", "c"]);
+    expect(crumbs[3].disabled).toBe(true); // 今いる段
+    await click(crumbs[1]);
+    const content = allViews(useLayoutStore.getState().layout).find((v) => v.id === paneId)!.content;
+    expect(content).toEqual({ kind: "gallery", galleryPath: "a" });
+  });
+
+  it("拡大は先にサムネイルを出し、隣の 1 枚を先読みする", async () => {
+    // jsdom は画像を読まないので、裏で作られる Image を捕まえて中身を見る。
+    const probes: { src: string }[] = [];
+    class FakeImage {
+      src = "";
+      decoding = "";
+      complete = false;
+      constructor() {
+        probes.push(this);
+      }
+      addEventListener() {}
+      removeEventListener() {}
+    }
+    // NOT vi.unstubAllGlobals() at the end: the fetch stub every test here depends on is a
+    // global stub too, and unstubbing all of them leaves the next test with no fetch at all.
+    const realImage = globalThis.Image;
+    vi.stubGlobal("Image", FakeImage);
+    vi.useFakeTimers();
+    try {
+      served = [img("a.png", 100), img("b.png", 200), img("c.png", 300)];
+      await render();
+      await click(host.querySelector(".gal-card:not(.folder) .gal-zoom"));
+
+      // 出ているのは縮小版（原寸は約 1MB あり、届くまで真っ白になるのを避ける）。
+      const shown = document.querySelector<HTMLImageElement>(".imgview-img")!;
+      expect(shown.getAttribute("src")).toContain("thumb=512");
+      expect(shown.getAttribute("src")).toContain("v=300"); // 版付き＝2 度目は無通信
+
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+      // 隣（次の 1 枚）の原寸を先読みしている＝←/→ が待たされない。
+      const prefetched = probes.map((p) => p.src).filter((u) => u.includes("a.png") || u.includes("b.png"));
+      expect(prefetched.some((u) => u.includes("b.png") && !u.includes("thumb="))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      vi.stubGlobal("Image", realImage);
+    }
+  });
+
+  it("読み込みが終わるまでは読み込み中を出す（「上へ」だけの半端な一覧ではない）", async () => {
+    let resolveFetch!: (v: Response) => void;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((res) => {
+          resolveFetch = res;
+        }),
+    );
+    served = [img("a.png", 100), { name: "sub", type: "dir" }];
+    const paneId = paneWithGallery("gen");
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root.render(<GalleryView paneId={paneId} path="gen" />);
+    });
+    // The grid branch would draw "Up" alone here (folders/images are both empty on a null
+    // listing) — a partial page that reads as stuck rather than loading.
+    expect(folderCards()).toHaveLength(0);
+    expect(cards()).toHaveLength(0);
+    expect(host.querySelector(".ui-empty-title")?.textContent).toBe("読み込み中…");
+
+    await act(async () => {
+      resolveFetch({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ entries: served }),
+      } as unknown as Response);
+    });
+    expect(host.querySelector(".ui-empty-title")).toBeNull();
+    expect(names()).toEqual(["a.png"]);
+  });
+
+  it("サムネイルはギャラリー自身の枠に近づくまで要求しない（一括取得しない）", async () => {
+    // The default jsdom shell (domSetup.ts) reports every observed element as intersecting
+    // right away — fine for every other test here, but this one is ABOUT the gating, so it
+    // takes manual control of the callback instead (the pattern BrowserSurface's own test uses).
+    const realIO = globalThis.IntersectionObserver;
+    const observers: { cb: IntersectionObserverCallback; el: Element }[] = [];
+    class CapturingIO {
+      #cb: IntersectionObserverCallback;
+      constructor(cb: IntersectionObserverCallback) {
+        this.#cb = cb;
+      }
+      observe(el: Element) {
+        observers.push({ cb: this.#cb, el });
+      }
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    }
+    vi.stubGlobal("IntersectionObserver", CapturingIO);
+    try {
+      served = [img("a.png", 100)];
+      await render();
+      // Not armed yet: the thumb span exists (it is the observed element) but no <img>.
+      expect(thumbs()).toHaveLength(0);
+      expect(host.querySelector(".gal-thumb")).not.toBeNull();
+      expect(observers).toHaveLength(1);
+
+      await act(async () => {
+        observers[0].cb(
+          [{ isIntersecting: true, target: observers[0].el } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+      expect(thumbs()).toHaveLength(1);
+      expect(thumbs()[0].src).toContain("thumb=512");
+      expect(thumbs()[0].getAttribute("fetchpriority")).toBe("high");
+    } finally {
+      vi.stubGlobal("IntersectionObserver", realIO);
     }
   });
 

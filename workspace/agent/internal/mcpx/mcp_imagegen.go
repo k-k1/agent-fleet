@@ -216,9 +216,12 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	if res.Region != "" {
 		value["region"] = res.Region
 	}
-	// Where the prompt went, when the provider id does not say it on its own (ADR 0069
-	// decision 11): `sdcpp` is the fleet's own GPU box, not a vendor, and the tool's own
-	// description says "an external image service" because that is true of the other routes.
+	// Where the prompt went, when the id does not say it on its own (ADR 0069 decision 11):
+	// `res.Provider` IS the row's own key since ADR 0082 P0 ("comfy-lan", not a bare
+	// "openai-compat"), so a caller can already tell rows apart by `value["provider"]` alone.
+	// Destination stays a fixed sentence for what even the key cannot say — whether THIS row is
+	// this fleet's own GPU or a metered external service (ADR 0083) — because that fact is not on
+	// the wire anywhere a provider may honestly read it.
 	if res.Destination != "" {
 		value["destination"] = res.Destination
 	}

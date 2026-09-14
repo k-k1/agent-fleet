@@ -32,6 +32,20 @@
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   will-change: transform;
 }
+/* The thumbnail standing in for an original that is still downloading. Blurred on purpose:
+   an upscaled 512 px copy is soft either way, and saying so is better than looking like a
+   bad render. The transition runs on the swap, so the picture visibly sharpens. */
+.imgview-img.placeholder {
+  filter: blur(2px);
+}
+.imgview-img {
+  transition: filter 120ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .imgview-img {
+    transition: none;
+  }
+}
 .imgview-zoom {
   position: absolute;
   right: 10px;

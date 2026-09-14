@@ -276,7 +276,7 @@ func TestEngineImageConnFindsTheImagesEngine(t *testing.T) {
 	asked := engineCatalogStub(t, engineRowLlm+","+engineRowImage)
 	base := os.Getenv("AF_CP_BASE_URL")
 
-	conn, ok := engineImageConn(context.Background(), "sdcpp")
+	conn, ok := engineImageConn(context.Background(), "image")
 	if !ok {
 		t.Fatal("no image engine found in a catalogue that has one")
 	}
@@ -292,7 +292,7 @@ func TestEngineImageConnFindsTheImagesEngine(t *testing.T) {
 	}
 	// A second call is served from the caches: this sits behind Ready(), which a client calls
 	// on every tools/list.
-	if _, _ = engineImageConn(context.Background(), "sdcpp"); len(*asked) != 1 {
+	if _, _ = engineImageConn(context.Background(), "image"); len(*asked) != 1 {
 		t.Errorf("asks after a second lookup = %v — the token cache is not holding", *asked)
 	}
 }
@@ -301,21 +301,36 @@ func TestEngineImageConnFindsTheImagesEngine(t *testing.T) {
 // is staged — has no image provider, and that is a quiet no, not an error.
 func TestEngineImageConnIsAbsentWithoutAnImageEngine(t *testing.T) {
 	engineCatalogStub(t, engineRowLlm)
-	if _, ok := engineImageConn(context.Background(), "sdcpp"); ok {
+	if _, ok := engineImageConn(context.Background(), "image"); ok {
 		t.Fatal("found an image engine in a catalogue that has none")
 	}
 }
 
-// ADR 0072 P2: sdcpp and comfy are mutually exclusive on one deployment (60-engines.yaml's
-// ImageEngine), so engineImageConn must key off the row's OWN provider — asking for the wrong
-// one must come back exactly as if the role did not exist, not find the other provider's row.
-func TestEngineImageConnKeysByProvider(t *testing.T) {
-	engineCatalogStub(t, engineRowLlm+","+engineRowImage)
-	if _, ok := engineImageConn(context.Background(), "comfy"); ok {
-		t.Fatal("a provider=sdcpp row answered a comfy lookup")
+// ADR 0082 decision 1: two images rows on one deployment are two independent provider
+// instances, and engineImageConn must key off each row's OWN key — never its provider FIELD,
+// which now names only the client implementation (comfy vs openai-compat) and can repeat across
+// rows. Asking for a provider KIND that is nobody's key must come back exactly as if the row did
+// not exist, not find some row that merely shares the kind.
+func TestEngineImageConnKeysByRowKey(t *testing.T) {
+	const comfyLan = `{"key":"comfy-lan","api":"images","provider":"comfy","base_url":"/engine/comfy-lan/v1","models":["sdxl-base-1.0"]}`
+	engineCatalogStub(t, engineRowLlm+","+engineRowImage+","+comfyLan)
+
+	if _, ok := engineImageConn(context.Background(), "sdcpp"); ok {
+		t.Fatal("a lookup by provider KIND answered — engineImageConn must match the row's key, not sdcpp")
 	}
-	if _, ok := engineImageConn(context.Background(), "sdcpp"); !ok {
-		t.Fatal("the provider=sdcpp row did not answer its own lookup")
+	if _, ok := engineImageConn(context.Background(), "comfy"); ok {
+		t.Fatal("a lookup by provider KIND answered — engineImageConn must match the row's key, not comfy")
+	}
+	image, ok := engineImageConn(context.Background(), "image")
+	if !ok {
+		t.Fatal("the image row did not answer its own key")
+	}
+	lan, ok := engineImageConn(context.Background(), "comfy-lan")
+	if !ok {
+		t.Fatal("the comfy-lan row did not answer its own key")
+	}
+	if image.BaseURL == lan.BaseURL {
+		t.Errorf("both rows resolved to %q — two distinct keys must reach two distinct URLs", image.BaseURL)
 	}
 }
 
@@ -334,7 +349,7 @@ func TestEngineImageConnTranslatesComfyFields(t *testing.T) {
 		`{"s3_key":"image/checkpoints/sd_xl_base_1.0.safetensors"}]}]}`
 	engineCatalogStub(t, engineRowLlm+","+row)
 
-	conn, ok := engineImageConn(context.Background(), "comfy")
+	conn, ok := engineImageConn(context.Background(), "image")
 	if !ok {
 		t.Fatal("no comfy engine found")
 	}
@@ -373,7 +388,7 @@ func TestEngineImageConnTranslatesLoras(t *testing.T) {
 		`{"id":"no-file","base_model":"sdxl"}]}`
 	engineCatalogStub(t, engineRowLlm+","+row)
 
-	conn, ok := engineImageConn(context.Background(), "comfy")
+	conn, ok := engineImageConn(context.Background(), "image")
 	if !ok {
 		t.Fatal("no comfy engine found")
 	}

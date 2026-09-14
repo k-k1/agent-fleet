@@ -208,6 +208,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "pane.layout": "Layout",
   "pane.open_sessions": "Open the sessions overview",
   "pane.open_imagegen": "Open image generation",
+  "pane.open_generated": "Open generated images",
   "pane.pane_n": "Pane {ord}",
   "pane.no_session": "No session",
   "pane.empty": "empty",

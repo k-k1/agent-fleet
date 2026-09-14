@@ -666,6 +666,11 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	}
 	markSessionWorking(meta.Name)
 	cancelStopArmOnNewPrompt(meta.Name) // new work supersedes a stop-after-turn arm (docs/log/85)
+	// The usage-limit auto-resume's "resumed" notice, same as the TUI path above: Send having
+	// returned means the app-server took the turn, which is this driver's delivery proof (the
+	// user turn is already in the store). Without this the codex resume would land silently
+	// and only the TUI kinds would report one (docs/log/47 §4-12).
+	notifyRateLimitResumeDelivered(meta.Name, prompt, source, time.Now())
 	switch {
 	case peerFrom != "":
 		// Not on the ledger (ADR 0041 decision 4). The origin was recorded above.
