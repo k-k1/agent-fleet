@@ -141,3 +141,23 @@ Agent の HTTP に直接 1 回投げた（434 バイトの英文 Markdown・箇�
 「does not let a quoted label alone flip the verdict」（英語本文が日本語ラベルを引用／日本語
 本文が英語ラベルを `「」` で引用／引用だけが全文、の 3 パターン）。Console 全体
 2780 件・typecheck・oxlint・i18n:lint いずれも緑。
+
+## 97.9 🔴 訂正（2026-09-14）: 折りたたんだ作業過程の中間応答が翻訳リクエストに乗る
+
+§97.8 を配備して実機（このホスト＝配備済みの workspace-agent、セッション s6hegkv）で押したところ、
+今度は `translate_too_long`（Console 表示「この回答は長すぎて翻訳できません」）で失敗した。対象の
+ターンは「作業過程 ツール110件・途中応答31件」を畳んだ長い実行で、最終回答自体は短い。
+
+原因は `translatableTexts(turn)`（`TranscriptTurn.tsx:122`、当時）が **work-split（作業過程の
+折りたたみ境界、`mirrorParts.ts` の `workSplit`）を見ずに `turn.parts` 全体**を渡していたこと。
+コピー本文(`copyParts`)とツール痕跡の折りたたみ描画は既にこの境界を使っていた
+（[69](69-transcript-marks.md) §69.8 の教訓そのもの）のに、翻訳対象抽出だけそれを見落としていた。
+畳みの中の 31 件の中間応答が一緒に送られ、`session_translate.go` の `translateMaxParts`（8）／
+`translateMaxPartBytes`（32 KiB）を、**最終回答単体なら十分収まるところ**で超えていた。
+
+`TranscriptTurn.tsx` で `copyParts` と同じ `split.at` 基準のスライス（`visibleParts`）を計算し、
+`translatableTexts` にはそれだけを渡すよう修正——読者が実際に見ている範囲（畳みの外）だけが
+コピーにも翻訳にも乗る、という 1 本の規則に揃えた。回帰試験は `TranslateTurn.dom.test.tsx`
+「does not send the folded work process's intermediate replies to translate」（ツール→短い中間応答
+→ツール→短い中間応答→ツール→長い最終回答、という形のターンで、送られるのは最終回答だけである
+ことを確認）。Console 全体 2781 件・typecheck・oxlint・i18n:lint・`docs-check.py` いずれも緑。
