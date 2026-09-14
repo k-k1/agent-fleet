@@ -26,6 +26,13 @@
 // The answer is handed to the existing LaunchModal (via useLaunchTarget) rather than
 // re-implementing any of it — agent, model, prompt, branch and worktree creation all
 // stay in one place.
+//
+// A pull request's start button is a REVIEW button, not a generic launcher: a new worktree
+// checks the PR's own head branch out (useLaunchTarget's existingBranch, the same mechanism
+// the SCM view's "work on this branch" uses) instead of cutting a fresh branch from it, and
+// the seeded prompt says so and asks for a review, not an implementation plan. This only
+// fires when the live read actually resolved a head branch; an existing copy the user picked
+// by hand is left on whatever branch it already has (§80.24.4).
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -133,8 +140,11 @@ interface Props {
   started: WorkItemSessionRef[];
   onClose(): void;
   /** target = the working copy to launch in; inPlace = the user picked an existing copy
-   * (so the launch dialog must not re-default to "new worktree"). */
-  onPick(target: Repo, inPlace: boolean): void;
+   * (so the launch dialog must not re-default to "new worktree"). reviewBranch = the pull
+   * request's head branch, when the live read resolved one — the caller checks it out in a
+   * fresh worktree instead of cutting a new branch from it ("" = nothing to check out, or
+   * not a pull request: the usual new-branch flow applies). */
+  onPick(target: Repo, inPlace: boolean, reviewBranch: string): void;
   /** Called when there is no working copy at all: defer to the start hub, which has the clone
    * path. */
   onStartHub(): void;
@@ -179,6 +189,24 @@ export function WorkItemDetailModal({
   // `git worktree add` cannot resolve HEAD in a working copy with no commit yet (unborn).
   const canWorktree = !!baseRepo && baseRepo.vcs !== "svn" && !baseRepo.unborn;
 
+  const rel = relTime(view.updatedAt);
+  const d = live.detail;
+
+  // Only a fresh worktree checks the head branch out — an existing copy the user picked by
+  // hand keeps whatever branch it is already on (§80.24.4: never launch off a value the user
+  // cannot see). "" when the live read never resolved one (stopped, failed, or not a PR).
+  const reviewBranch = isPR ? d?.headBranch || "" : "";
+
+  // If the review branch already has a working copy, default straight to it. Left at "new
+  // worktree" (the initial default), "start" would try to check the branch out a second time —
+  // git refuses (one working copy per branch) and the failure would only surface after a round
+  // trip through the Agent. Only overrides the untouched default, never a choice the user made.
+  useEffect(() => {
+    if (!reviewBranch) return;
+    const existing = worktrees.find((r) => r.branch === reviewBranch);
+    if (existing) setWhere((w) => (w === NEW_WORKTREE ? existing.name : w));
+  }, [reviewBranch, worktrees]);
+
   const go = () => {
     // With no working copy yet there is nothing to choose here, so hand over to the start hub,
     // which guides from a clone (the caller has already seeded the prompt).
@@ -188,15 +216,12 @@ export function WorkItemDetailModal({
     }
     if (!baseRepo) return;
     if (where === NEW_WORKTREE && canWorktree) {
-      onPick(baseRepo, false);
+      onPick(baseRepo, false, reviewBranch);
       return;
     }
     const chosen = repos.find((r) => r.name === where) || baseRepo;
-    onPick(chosen, true);
+    onPick(chosen, true, reviewBranch);
   };
-
-  const rel = relTime(view.updatedAt);
-  const d = live.detail;
 
   // "Can this be merged" in one phrase. Draft comes before the merge check because a draft is
   // not waiting on anyone, and "unknown" is said out loud: GitHub answers null while it is still
@@ -459,7 +484,9 @@ export function WorkItemDetailModal({
                 </select>
               </label>
               <p className="wi-shint">
-                {where === NEW_WORKTREE ? tr("wi.start_new_worktree_hint") : tr("wi.start_existing_hint")}
+                {where === NEW_WORKTREE
+                  ? tr(isPR ? "wi.start_new_worktree_hint_pr" : "wi.start_new_worktree_hint")
+                  : tr("wi.start_existing_hint")}
               </p>
             </>
           )}
@@ -467,7 +494,7 @@ export function WorkItemDetailModal({
               to live next to the choices it acts on. */}
           {isPR && (
             <Button onClick={go} disabled={bases.length > 0 && !baseRepo}>
-              {tr("wi.start")}
+              {tr("wi.start_review")}
             </Button>
           )}
         </StartSection>

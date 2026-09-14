@@ -212,8 +212,10 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     (agentOf(s?.kind || "claude").caps.chat ? openSessionChat : openSessionTerminal)(name);
   };
 
-  const seedFor = (item: WorkItem) => {
-    seed(promptForItem(item), titleForItem(item), "", "", "", {
+  // reviewBranch: the PR's head branch, when the detail modal's live read resolved one and the
+  // launch is landing in a fresh worktree (WorkItemDetailModal only sets it in that case).
+  const seedFor = (item: WorkItem, reviewBranch = "") => {
+    seed(promptForItem(item, undefined, reviewBranch), titleForItem(item), "", "", "", {
       provider: item.provider,
       key: item.key,
       branch: branchForItem(item, settings.workItemBranchTemplate),
@@ -224,10 +226,16 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   // (docs/log/80 §80.8). A ticket knows nothing about working copies — a GitHub item names a
   // repository at most, Jira not even that — so the repository and new-worktree vs. existing-copy
   // choice are already decided by the time this runs.
-  const pickTarget = (item: WorkItem, target: Repo, inPlace: boolean) => {
-    seedFor(item);
+  //
+  // reviewBranch, when set, checks that branch out in the new worktree instead of cutting one
+  // from the template (docs/log/80 §80.24) — reviewing a pull request means reading the code
+  // it already has, not starting a new branch from it. It is dropped for inPlace: the user
+  // picked that existing copy by hand, and launching it on a DIFFERENT branch than the one they
+  // saw in the picker would be a silent switch under them.
+  const pickTarget = (item: WorkItem, target: Repo, inPlace: boolean, reviewBranch: string) => {
+    seedFor(item, reviewBranch);
     setDetailOn(null);
-    openLaunch(target, "", inPlace);
+    openLaunch(target, inPlace ? "" : reviewBranch, inPlace);
   };
 
   // Defer to the start hub (the clone path) only when there is no working copy at all.
@@ -349,7 +357,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
           defaultRepo={repoForItem(detailOn, payload?.queries.find((q) => q.id === detailOn.queryId)?.repoHint || "", folders)}
           started={sessionsForItem(ledger, detailOn.key)}
           onClose={() => setDetailOn(null)}
-          onPick={(target, inPlace) => pickTarget(detailOn, target, inPlace)}
+          onPick={(target, inPlace, reviewBranch) => pickTarget(detailOn, target, inPlace, reviewBranch)}
           onStartHub={() => toStartHub(detailOn)}
           onOpenSession={(name) => {
             setDetailOn(null);
