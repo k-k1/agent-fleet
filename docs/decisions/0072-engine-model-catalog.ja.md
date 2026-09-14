@@ -4418,3 +4418,42 @@ cfg 1 を宣言し、cfg 1 の guidance は `uncond + 1*(cond - uncond)`＝`cond
 
 **残**: 実機で Krea 2 Turbo の行を 1 つ（3 ファイル）取り込み、1 枚生成して、絵がプロンプトに
 沿っていることを見る——汎用 `qwen3vl` での誤読は、形では見えないこの族固有の壊れ方だ。
+
+## 追記 — 追加した 2 族がピッカーから見つからなかった（2026-09-15）
+
+2 族とも入れたのに、Console の検索からはどちらにも辿り着けなかった。原因は決定 11 の
+フィルタで、画像の kind は Hugging Face に `pipeline_tag=text-to-image` で訊いていた。これは
+**diffusers 時代の**タグで、ComfyUI 向けに素の safetensors を置くリポジトリは持っていない。
+そして HF の `filter` / `pipeline_tag` は AND で結ばれる——OR は無い。
+
+2026-09-15・匿名での実測：
+
+| 問い合わせ | フィルタ無し | `pipeline_tag=text-to-image` 付き |
+|---|---|---|
+| `search=Anima` | `circlestone-labs/Anima` が 1 位 | **出ない**。代わりに animagine-xl 群 |
+| `search=Krea-2` | `Comfy-Org/Krea-2` が 1 位 | **出ない**。代わりに `krea/Krea-2-Raw` と `krea/Krea-2-Turbo`＝どちらも **gated** |
+
+つまりピッカーは正解を隠しただけでなく、その場所に 401 を置いていた。運用者の次の 20 分は
+本来要らないトークンの手配に消える。
+
+もう半分が `filter=diffusion-single-file`——Comfy-Org の焼き直しリポジトリが（`comfyui` と
+一緒に）持っているライブラリタグだ。これ単独だと `Comfy-Org/z_image_turbo`・
+`Comfy-Org/Krea-2`・`Comfy-Org/stable-diffusion-v1-5-archive` が並ぶ＝この配備が扱う形その
+ものになる。**どちらのフィルタも他方の上位集合ではない**（素の SDXL は最上位に単一ファイルを
+持つ diffusers リポジトリで、前者でしか出ない）ので、画像の kind は **2 回訊いて併合する**。
+
+その代償と、代償でないもの：
+
+- 各レーンは `engineSearchLimit / 2` を要求する。そうすればレーン自身の next-cursor が
+  「見せた分の直後」を指すので、レーンごとの読み飛ばし数を覚えずに済む。ワイヤの cursor は
+  レーンの cursor を `~` で繋いだもので、尽きたレーンは空のまま位置を保つ。🔴 `|` ではない
+  ——それは Civitai 側の cursor の構成文字で、両者は同じフィールドを流れる。
+- 両レーンが返した同じリポジトリは 1 行（ref で重複排除）。
+- 併合したページは要求された並びで並べ直す。ただし**2 レーンが答えたときだけ**：1 レーンの
+  ページは上流自身の順序（同点の解き方を含む）であり、こちらから見える 1 項目で並べ直すと、
+  HF がもっと細かい基準で分けた行を崩してしまう。
+- llm の kind は 1 レーンのまま。`gguf` は量子化リポジトリなら必ず持つライブラリタグだ。
+
+`filter=lora` の規則は**レーンごとの**不変条件として残る（単独で送ると接続が落ちる・
+2026-09-12 実測）。一方のレーンでは pipeline タグに、もう一方ではライブラリタグに相乗りし、
+`filter=diffusion-single-file&filter=lora` は 200 を返す。
