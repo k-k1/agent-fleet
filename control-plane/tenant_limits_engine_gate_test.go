@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -114,12 +115,17 @@ func TestSetTenantLimitsPushesTheTenantScopedCatalogChange(t *testing.T) {
 	if w := putLimits(mgr, "acme", `{"max_workspaces":4,"allow_engine_llm":false}`); w.Code != http.StatusOK {
 		t.Fatalf("PUT = %d %s", w.Code, w.Body.String())
 	}
+	// Wait for it rather than reading the channel non-blockingly: PushEngineCatalogChanged
+	// (tenant_wiring.go) dispatches on its own goroutine, so a `default:` branch here asserts
+	// that the Go scheduler happened to run that goroutine before this line — true on an idle
+	// machine, false on a loaded CI runner. Reproduced deterministically with GOMAXPROCS=1,
+	// where the spawned goroutine cannot run until this one blocks.
 	select {
 	case got := <-pushed:
 		if got != tn.ID {
 			t.Errorf("pushed tenant = %q, want %q", got, tn.ID)
 		}
-	default:
+	case <-time.After(5 * time.Second):
 		t.Fatal("SetTenantLimits did not push a tenant-scoped catalogue change")
 	}
 }
