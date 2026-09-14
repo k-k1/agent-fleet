@@ -26,7 +26,7 @@ func hfStub(t *testing.T) *httptest.Server {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "FLUX.1-dev"):
-			w.Write([]byte(`{"gated":"auto","cardData":{"license":"other",
+			w.Write([]byte(`{"sha":"commit-a","gated":"auto","cardData":{"license":"other",
 				"license_name":"flux-1-dev-non-commercial-license"},
 				"siblings":[{"rfilename":"flux1-dev.safetensors","size":23802932552,
 				"lfs":{"sha256":"4610115bb0c89560703c892c59ac2742fa821e60ef5871b33493ba544683abd7"}}]}`))
@@ -48,7 +48,7 @@ func hfStub(t *testing.T) *httptest.Server {
 		// (`gguf.context_length`) and publishes on this very call — measured 2026-09-09 against
 		// four repositories from three publishers.
 		case strings.Contains(r.URL.Path, "Qwen2.5-Coder-0.5B"):
-			w.Write([]byte(`{"gated":false,"cardData":{"license":"apache-2.0"},
+			w.Write([]byte(`{"sha":"commit-a","gated":false,"cardData":{"license":"apache-2.0"},
 				"gguf":{"context_length":32768,"architecture":"qwen2"},
 				"siblings":[
 				{"rfilename":"README.md","size":9000},
@@ -60,7 +60,7 @@ func hfStub(t *testing.T) *httptest.Server {
 				{"rfilename":"qwen2.5-coder-0.5b-instruct-q2_k.gguf","size":415182720,
 				 "lfs":{"sha256":"f9bddf294ef15c800000000000000000000000000000000000000000000000aa"}}]}`))
 		case strings.Contains(r.URL.Path, "Qwen2.5-Coder"):
-			w.Write([]byte(`{"gated":false,"cardData":{"license":"apache-2.0"},
+			w.Write([]byte(`{"sha":"commit-a","gated":false,"cardData":{"license":"apache-2.0"},
 				"siblings":[{"rfilename":"qwen2.5-coder-1.5b-instruct-q4_k_m.gguf","size":1117320768,
 				"lfs":{"sha256":"cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046"}}]}`))
 		case strings.Contains(r.URL.Path, "no-checksum"):
@@ -92,8 +92,24 @@ func TestEngineResolveHuggingFace(t *testing.T) {
 	if got.Gated {
 		t.Error("an ungated repository read as gated")
 	}
+	if got.ArtifactIdentity != engineHFArtifactIdentity("Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+		"qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", "commit-a", got.SHA256) {
+		t.Errorf("artifact identity = %q", got.ArtifactIdentity)
+	}
+	if row := engineResolvedRow(got, false, "", engineKVGeometry{}); row["artifact_identity"] != got.ArtifactIdentity {
+		t.Errorf("resolve wire artifact_identity = %v, want %q", row["artifact_identity"], got.ArtifactIdentity)
+	}
 	if engineCommercialUse(got) != "yes" {
 		t.Errorf("apache-2.0 read as commercial_use=%q", engineCommercialUse(got))
+	}
+	mutable, aerr := engineResolveHF(ctx, engineIngestHF{
+		Repo: "black-forest-labs/FLUX-full", File: "alt/model.safetensors",
+	})
+	if aerr != nil {
+		t.Fatalf("resolve without an API commit: %v", aerr.message)
+	}
+	if mutable.ArtifactIdentity != "" {
+		t.Errorf("mutable revision was promoted to immutable identity %q", mutable.ArtifactIdentity)
 	}
 
 	// ⚠️ The whole reason the CP can resolve without holding the operator's token: a gated
@@ -483,6 +499,9 @@ func TestEngineResolveCivitai(t *testing.T) {
 	if got.BaseModel != "SD 1.5" {
 		t.Errorf("baseModel = %q", got.BaseModel)
 	}
+	if got.ArtifactIdentity != engineCivitaiArtifactIdentity(128713, "dreamshaper_8.safetensors", got.SHA256) {
+		t.Errorf("artifact identity = %q", got.ArtifactIdentity)
+	}
 	// 🔴 The positive control for the probe below: an asset anybody can download must not be
 	// marked, or the panel refuses every Civitai ingest and the check is indistinguishable from
 	// a check that never runs.
@@ -669,6 +688,7 @@ func ingestReq() engineIngestRequest {
 			DownloadURL: "https://huggingface.co/x/y/resolve/main/f.gguf",
 			SHA256:      strings.Repeat("a", 64), Bytes: 1117320768,
 			License: "apache-2.0", Source: "hf:x/y/f.gguf",
+			ArtifactIdentity: engineHFArtifactIdentity("x/y", "f.gguf", "commit-a", strings.Repeat("a", 64)),
 		},
 	}
 }
@@ -727,6 +747,9 @@ func TestEngineIngestJobCreatesTheRowOnlyWhenTheTaskSucceeds(t *testing.T) {
 	if len(m.Files) != 1 || m.Files[0].Bytes != 1117320768 {
 		t.Errorf("files = %+v", m.Files)
 	}
+	if m.Files[0].ArtifactIdentity != ingestReq().Resolved.ArtifactIdentity {
+		t.Errorf("immutable artifact identity was not persisted: %+v", m.Files[0])
+	}
 	// The whole tuple ADR 0072 open question 11 asks for — (tenant, member, when, licence) —
 	// and it has to survive the round trip through job.Spec, which is where it actually lives
 	// between the request and the row minutes later.
@@ -742,6 +765,35 @@ func TestEngineIngestJobCreatesTheRowOnlyWhenTheTaskSucceeds(t *testing.T) {
 	}
 	if got, _, _ := st.GetEngineIngestJob(ctx, job.ID); got.State != store.EngineIngestDone {
 		t.Errorf("job state = %q", got.State)
+	}
+}
+
+func TestEngineIngestMarksCatalogueInstallFailureAsFailed(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	req := ingestReq()
+	job, aerr := ing.start(t.Context(), req)
+	if aerr != nil {
+		t.Fatal(aerr.message)
+	}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: req.Role, ID: req.ModelID, Description: "the row that won the race",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api.tasks = []ecstypes.Task{{
+		TaskArn: aws.String(job.TaskArn), LastStatus: aws.String("STOPPED"),
+		Containers: []ecstypes.Container{{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+			{Name: aws.String("upload"), ExitCode: aws.Int32(0)}},
+	}}
+	ing.reconcile(t.Context())
+	got, ok, err := st.GetEngineIngestJob(t.Context(), job.ID)
+	if err != nil || !ok || got.State != store.EngineIngestFailed || !strings.Contains(got.Message, "object was stored") {
+		t.Fatalf("job after catalogue collision = %+v, found=%v, err=%v", got, ok, err)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), req.Role)
+	if len(rows) != 1 || rows[0].Description != "the row that won the race" {
+		t.Fatalf("catalogue collision overwrote the winning row: %+v", rows)
 	}
 }
 
@@ -1186,6 +1238,10 @@ func TestEngineIngestReplaceOfAForgottenRowWritesNothing(t *testing.T) {
 
 	if rows, err := st.ListEngineModels(ctx, "llm"); err != nil || len(rows) != 0 {
 		t.Fatalf("rows = %d (%v) — a replace with no row to replace in must write nothing", len(rows), err)
+	}
+	if got, _, _ := st.GetEngineIngestJob(ctx, job.ID); got.State != store.EngineIngestFailed ||
+		!strings.Contains(got.Message, "object was stored") {
+		t.Fatalf("orphaned replacement was shown as successful: %+v", got)
 	}
 }
 

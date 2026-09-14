@@ -138,6 +138,9 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// A card identifies a repository/model; this read expands it into the versions that the
 	// single-operation file picker can choose from.
 	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/versions", a.withIngestAdmin(a.versionsIngest))
+	// True bucket state for the catalogue and visible job keys. The handler accepts no S3 key;
+	// it derives the set from server records and bounds the metadata work by time and concurrency.
+	mux.HandleFunc("GET /api/admin/engines/{key}/storage", a.withIngestAdmin(a.getStorage))
 	// The same read with no engine in the path: a deployment that has not adopted 60-engines
 	// has an EMPTY panel, and "there is nothing here" is the worst answer to "what could I
 	// run?". Browsing needs no engine because it needs no token, no bucket and no task.
@@ -1223,10 +1226,9 @@ func engineFilesFromBody(raw json.RawMessage, rows []engineModelFileBody) ([]eng
 // and the second is a separate, deliberate press of Enable — which is also what gives an
 // administrator a chance to read the licence line before anything is offered.
 //
-// ⚠️ Nothing here verifies that the S3 key exists. The CP task role has no S3 permission at all
-// and none is being added (ADR 0072 review R3), so a typo surfaces in the fetch sidecar's log at
-// the next cold start. That is the honest cost of keeping the CP out of the bucket, and it is
-// why the panel shows the key back.
+// ⚠️ Nothing in this write verifies that the S3 key exists. The storage endpoint checks every
+// server-known key independently and reports present, missing or unknown; keeping registration
+// separate preserves the manual route when AWS access is absent or denied.
 func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	key := strings.TrimSpace(r.PathValue("key"))
 	e := a.reg.get(key)
@@ -1541,10 +1543,13 @@ func engineModeFromBody(mode string, enabled *bool) (string, *apiError) {
 // engineIngestBody is what the panel posts. The SOURCE is one of three shapes; everything else
 // is what the catalogue row should say once the bytes are in the bucket.
 type engineIngestBody struct {
-	ID     string             `json:"id"`
-	Kind   string             `json:"kind"`
-	S3Key  string             `json:"s3Key"`
-	Source engineIngestSource `json:"source"`
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	S3Key string `json:"s3Key"`
+	// ReuseS3Key selects a server-known object instead of starting a download. When S3Key is
+	// also present it must be identical: reuse does not copy or rename an object.
+	ReuseS3Key string             `json:"reuse_s3_key"`
+	Source     engineIngestSource `json:"source"`
 
 	Description     string   `json:"description"`
 	BaseModel       string   `json:"base_model"`
@@ -1655,6 +1660,9 @@ func engineResolvedRow(res engineResolved, hasToken bool, provider string, geom 
 		"source":           res.Source,
 		"can_ingest":       (!res.Gated || hasToken) && !res.LoginRequired,
 		"deployment_token": hasToken,
+	}
+	if res.ArtifactIdentity != "" {
+		row["artifact_identity"] = res.ArtifactIdentity
 	}
 	// Told apart from `gated` on purpose. Gating is the repository's terms and a registered
 	// token satisfies them; this is a Civitai uploader's switch, and there is nothing on this
@@ -1797,8 +1805,25 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		return
 	}
 	id, s3key := strings.TrimSpace(b.ID), strings.TrimSpace(b.S3Key)
+	reuseKey := strings.TrimSpace(b.ReuseS3Key)
+	if reuseKey != "" {
+		if s3key != "" && s3key != reuseKey {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+				"reuse_s3_key is the object the catalogue will use, so s3Key must be empty or identical"})
+			return
+		}
+		s3key = reuseKey
+	}
 	if id == "" || s3key == "" {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "id and s3Key are required"})
+		return
+	}
+	// The CP's IAM is deliberately limited to these two namespaces. Enforcing the same boundary
+	// before either download or HeadObject keeps a role from turning the other role's known key
+	// into an S3 oracle, even on a broadly privileged development credential.
+	if !strings.HasPrefix(s3key, key+"/") {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"the S3 key for engine " + key + " must start with " + key + "/"})
 		return
 	}
 	if !b.LicenseAccepted {
@@ -1858,7 +1883,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		}
 	}
 	if b.Replace {
-		if aerr := engineReplaceAllowed(existing, id, key, flag); aerr != nil {
+		if aerr := engineReplaceAllowed(existing, id, key, s3key, flag, reuseKey != ""); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -1872,7 +1897,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	// that no token exists that would help. The asset's uploader requires an account, this
 	// deployment has none for Civitai, and the alternative is the bare `curl: (22) … 401` nine
 	// minutes in that ADR 0072 P2 欠落 5 measured.
-	if res.LoginRequired {
+	if res.LoginRequired && reuseKey == "" {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestCivitaiLogin,
 			"the person who uploaded this asset requires a logged-in account to download it, and this " +
 				"deployment ingests anonymously — pick another asset, or stage the file by hand and register it"})
@@ -1880,7 +1905,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	}
 	// ⚠️ Refused BEFORE a task is started. Without the token the download is a 401 nine minutes
 	// into a Fargate task, and the message that reaches the panel is an exit code.
-	if res.Gated && !ing.tokens.configured(r.Context()) {
+	if res.Gated && reuseKey == "" && !ing.tokens.configured(r.Context()) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestGatedNoToken,
 			"that repository is gated: accept its terms on Hugging Face with the operator's account " +
 				"and register that account's token below — it is read by the ingest task only"})
@@ -1909,14 +1934,28 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		return
 	}
 	// The attention geometry, read from the header of the file about to be taken in — the one
-	// moment it can be had, since the CP will never see the bytes again (it has no S3
-	// permission at all, ADR 0072 review R3). Best-effort by design: anything that cannot be
-	// read leaves the row at its floor, which is what it would have been anyway.
+	// moment it can be had, since the CP's S3 port exposes metadata rather than object bytes.
+	// Best-effort by design: anything that cannot be read leaves the row at its floor, which is
+	// what it would have been anyway.
 	geom := engineIngestGeometry(r.Context(), b.Kind, res, ing.tokens)
 	// The same read for the image role, and the one that decides whether this row will be able
 	// to decode a picture at all (ADR 0072 follow-up). Read again here rather than trusted from
 	// the resolve: the form's answer can be minutes old, and this is the call that spends money.
 	vae := engineVaeOfIngest(r.Context(), e.def.Provider, b, res, ing.tokens)
+	if reuseKey != "" {
+		known, check, aerr := a.verifyEngineReuse(r.Context(), g, key, reuseKey, res, ing)
+		if aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		res.Bytes = check.Bytes
+		if known.KVGeom != (engineKVGeometry{}) {
+			geom = known.KVGeom
+		}
+		if known.VaeBundled != "" {
+			vae = known.VaeBundled
+		}
+	}
 	// And the second file the operator asked for at the same time. Planned only for a checkpoint
 	// the header says carries none: a "yes" or an unread header buys nothing, and a download
 	// nobody needs is 335 MB and a licence acceptance for a file that would never be read.
@@ -1924,7 +1963,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	if b.WithFamilyVae && vae == engineVaeNo {
 		followUp, _, _ = engineVaePlan(r.Context(), e.catalog.list(r.Context()), base)
 	}
-	job, aerr := ing.start(r.Context(), engineIngestRequest{
+	req := engineIngestRequest{
 		Role: key, ModelID: id, Kind: strings.TrimSpace(b.Kind), S3Key: s3key,
 		KVGeom:        geom,
 		Description:   strings.TrimSpace(b.Description),
@@ -1940,7 +1979,13 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		Resolved:        res,
 		FileFlag:        flag, Attach: b.Attach, Replace: b.Replace,
 		VaeBundled: vae, VaeFollowUp: followUp,
-	})
+	}
+	var job store.EngineIngestJob
+	if reuseKey != "" {
+		job, aerr = ing.reuse(r.Context(), req)
+	} else {
+		job, aerr = ing.start(r.Context(), req)
+	}
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -1949,8 +1994,11 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	// to the terms at this moment, and that is true even if Hugging Face then times out.
 	// Scoped to the granting tenant, so a tenant_admin's ingest is readable in that tenant's
 	// own audit view rather than only in the deployment-wide one.
-	a.auditFor(r, g, "engine."+key+".ingest",
-		id+" from "+res.Source+" (licence "+engineLicenceLabel(res)+" accepted)")
+	auditTarget := id + " from " + res.Source + " (licence " + engineLicenceLabel(res) + " accepted)"
+	if reuseKey != "" {
+		auditTarget += " by reusing " + reuseKey
+	}
+	a.auditFor(r, g, "engine."+key+".ingest", auditTarget)
 	writeJSON(w, http.StatusOK, engineIngestJobRow(job))
 }
 
@@ -2095,8 +2143,8 @@ func (a engineAdminAPI) ingestListBody(r *http.Request, g engineIngestGrant, key
 //   - FORGETTING the job: while nothing points at the key, this row is the last written record
 //     of it, and deleting it leaves bytes in the bucket that nothing can name again.
 //
-// 🔴 It says who POINTS at the file. It never says the file is there: the CP cannot look in the
-// bucket (ADR 0072 review R3), and `deleteModel?purge=1` deletes the bytes while leaving the job
+// 🔴 It says who POINTS at the file. It never says the file is there: only the storage endpoint's
+// current HeadObject does, and `deleteModel?purge=1` can delete the bytes while leaving the job
 // `done` for ever.
 func engineIngestKeyUsedBy(rows []store.EngineModel, s3key string) string {
 	if strings.TrimSpace(s3key) == "" {
@@ -2236,13 +2284,21 @@ func engineAttachAllowed(row *store.EngineModel, id, key, flag string) *apiError
 // 🔴 The empty flag is allowed here and refused by the attach gate, which is the whole point:
 // the unlabelled file is the checkpoint, a row has exactly one, and it was until now the one
 // file in the catalogue that no ingest could ever change.
-func engineReplaceAllowed(row *store.EngineModel, id, key, flag string) *apiError {
+func engineReplaceAllowed(row *store.EngineModel, id, key, s3key, flag string, reuse bool) *apiError {
 	if row == nil {
 		return &apiError{http.StatusNotFound, errCodeEngineModelUnknown,
 			"no model " + id + " for engine " + key + " to replace a file of"}
 	}
 	for _, f := range row.Files {
 		if strings.TrimSpace(f.Flag) == flag {
+			// A download uploads before the catalogue swap. Reusing the old key would therefore
+			// overwrite bytes the active row still names, defeating the promise that replacement
+			// retains its previous object. Verified reuse is the safe exception: no upload occurs,
+			// and its immutable identity check makes a same-key operation idempotent.
+			if !reuse && strings.TrimSpace(f.S3Key) == strings.TrimSpace(s3key) {
+				return &apiError{http.StatusConflict, errCodeIngestIDExists,
+					"a replacement download needs a new S3 key; the current object must remain available at " + f.S3Key}
+			}
 			return nil
 		}
 	}
