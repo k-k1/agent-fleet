@@ -278,9 +278,6 @@ func syncEngineProviders() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	rows := engineCatalogRows(ctx)
-	if len(rows) == 0 {
-		return
-	}
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
 	providers := make([]opencode.EngineProvider, 0, len(rows))
 	for _, e := range rows {
