@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail, isTransientErr } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { Choice, OnOff, OrderList, Row } from "../parts/controls.tsx";
 import {
@@ -11,11 +11,14 @@ import {
   collapseImageProviderOrder,
   expandImageProviderOrder,
   imageProviderLabel,
+  type ImageFleetRow,
 } from "../../../lib/settings.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { useConnections } from "../parts/useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { imagegenStatus } from "../../imagegen/api.ts";
+import type { ImagegenProvider } from "../../imagegen/wire.ts";
 import { ClaudeCard } from "./ClaudeCard.tsx";
 import { CodexCard } from "./CodexCard.tsx";
 import { CursorCard } from "./CursorCard.tsx";
@@ -59,6 +62,13 @@ export function AgentsTab() {
   const [claude, setClaude] = useState<any>(null);
   const [codex, setCodex] = useState<any>(null);
   const [agents, setAgents] = useState<any>(null);
+  // The images rows this deployment actually declares (ADR 0082 decision 3), or null while
+  // there is no live answer to trust — not running, still loading, a transient failure, or an
+  // Agent old enough to send no `fleet` at all. null is what tells imageOrder below to fall back
+  // to the static IMAGE_PROVIDERS_RANKED guess rather than mistake "nothing fetched yet" for
+  // "this deployment declares zero images rows" (a real, different answer — see
+  // normalizeImageProviderOrder's own `rows === undefined` vs `[]` distinction).
+  const [imagegenProviders, setImagegenProviders] = useState<ImagegenProvider[] | null>(null);
 
   const loadSettings = useCallback(() => {
     api("api/claude/settings")
@@ -70,12 +80,21 @@ export function AgentsTab() {
     api("api/agents/rtk")
       .then((a) => setAgents(a && !a.error ? a : false))
       .catch(() => setAgents(false));
+    imagegenStatus()
+      .then((st) => setImagegenProviders(st && !isTransientErr(st) && Array.isArray(st.providers) ? st.providers : null))
+      .catch(() => setImagegenProviders(null));
   }, []);
 
   // (Re)load when the workspace is running — including when it transitions
   // stopped→running while this dialog is open, so settings appear without a reopen.
   useEffect(() => {
-    if (!running) return;
+    if (!running) {
+      // The Agent that answered is gone with it (the same reasoning available.ts's
+      // resetImagegenAvailability follows): a stopped workspace must fall back to the static
+      // guess, not keep showing rows that may no longer be true.
+      setImagegenProviders(null);
+      return;
+    }
     reload();
     loadSettings();
   }, [running, reload, loadSettings]);
@@ -95,7 +114,31 @@ export function AgentsTab() {
   const updateCodex = mkUpdate("api/codex/settings", setCodex);
   const updateAgents = mkUpdate("api/agents/rtk", setAgents);
 
-  const imageOrder = collapseImageProviderOrder(normalizeImageProviderOrder(s.imageProviderOrder));
+  // ADR 0082 decision 3: once the Agent has answered, the list is drawn one row per DECLARED
+  // images row instead of the two static kind-name guesses — and decision 8, the fold that used
+  // to stand in for "which of them, if either, does this deployment actually run" no longer
+  // applies, because now we know.
+  const liveImages = imagegenProviders !== null;
+  const fleetRows: ImageFleetRow[] = imagegenProviders
+    ? imagegenProviders.filter((p) => p.fleet).map((p) => ({ id: p.id, kind: p.kind || p.id }))
+    : [];
+  const imageOrder = liveImages
+    ? normalizeImageProviderOrder(s.imageProviderOrder, fleetRows)
+    : collapseImageProviderOrder(normalizeImageProviderOrder(s.imageProviderOrder));
+  const imageLabels = Object.fromEntries(
+    imageOrder.map((id) => {
+      if (!liveImages) return [id, imageProviderLabel(id) || agentOf(id).assistantName];
+      const row = imagegenProviders!.find((p) => p.id === id);
+      if (!row?.fleet) return [id, agentOf(id).assistantName];
+      // Neither the key alone ("image") nor the kind alone ("ComfyUI") says enough on its own —
+      // the key is what the member can act on (it is what `provider` in generate_image names),
+      // the kind is what tells them which machine it actually is (ADR 0082 P1 follow-up).
+      const kindLabel = row.kind === "comfy" ? tr("agents.image_kind_comfy")
+        : row.kind === "openai-compat" ? tr("agents.image_kind_openai_compat")
+        : "";
+      return [id, kindLabel ? `${id} (${kindLabel})` : id];
+    }),
+  );
 
   // Session prefs render in every state (stopped / loading / running) since they're
   // local, not container-backed.
@@ -148,17 +191,20 @@ export function AgentsTab() {
       {s.imageGeneration && (
         <>
           <Row label={tr("agents.image_provider_order")}>
-            {/* Drawn collapsed: the fleet's own providers are one row, because until the list
-                comes from the engine table's own rows (ADR 0082 decision 3) a provider with no
-                row is a rank nothing can route to (ADR 0083 decision 8). The setting itself
-                keeps every id — see IMAGE_PROVIDER_FLEET_GROUP. */}
+            {/* Two shapes, chosen by whether the Agent has answered (ADR 0082 decision 3):
+                LIVE — one row per images row this deployment actually declares, each under its
+                own key, no folding (decision 8: "リストが行ごとになった時点でこの畳み込みは
+                消える"). FALLBACK — the two static kind-name placeholders folded into one row
+                (IMAGE_PROVIDER_FLEET_GROUP), because with no live answer there is no way to know
+                which of them, if either, is real. */}
             <OrderList
               value={imageOrder}
-              labels={Object.fromEntries(imageOrder.map((p) => [p, imageProviderLabel(p) || agentOf(p).assistantName]))}
-              onChange={(v) => setSetting("imageProviderOrder", expandImageProviderOrder(v))}
+              labels={imageLabels}
+              onChange={(v) => setSetting("imageProviderOrder", liveImages ? v : expandImageProviderOrder(v))}
             />
           </Row>
           <p className="muted ds-note">{tr("agents.note_image_provider_order")}</p>
+          {!liveImages && <p className="muted ds-note">{tr("agents.image_provider_order_fallback")}</p>}
         </>
       )}
     </section>

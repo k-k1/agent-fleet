@@ -107,6 +107,16 @@ export interface ImagegenProvider {
    * fixed key "image"). Read `fleet` instead of guessing from the id's spelling.
    */
   fleet?: boolean;
+  /**
+   * The CLIENT implementation behind this row (ADR 0082 decision 1): `comfy` / `openai-compat`
+   * for a fleet row, this route's own id for a vendor route (whose id already IS its kind).
+   *
+   * Used only by the settings screen's ordering list (`console/src/lib/settings.ts`,
+   * `ImageFleetRow`) to expand a legacy stored alias into today's row(s) of that kind, and to
+   * label a row with what kind of machine it is — never to decide fleet-ness, which `fleet`
+   * itself already answers.
+   */
+  kind?: string;
   service?: string;
   model?: string;
   ops?: string[];
@@ -329,4 +339,26 @@ export const loraWeight = (l: ImagegenLora): number => (l.weight && l.weight > 0
 export function fleetProvider(st: ImagegenStatus | null): ImagegenProvider | null {
   const list = st?.providers || [];
   return list.find((p) => p.fleet) || null;
+}
+
+/**
+ * Every ready fleet row (ADR 0082 P1) — the universe the studio's own provider picker offers,
+ * as opposed to `fleetProvider`'s single "the first one", which is what availability and
+ * `engineState` still only need.
+ */
+export function fleetProviders(st: ImagegenStatus | null): ImagegenProvider[] {
+  return (st?.providers || []).filter((p) => p.fleet);
+}
+
+/**
+ * Which fleet row drives the studio pane: the member's own pick (`providerId`, from
+ * `ImagegenDraft`) if it is still among the ready ones, else the first — the same fallback
+ * `model` already follows one field up. A stale or unset id (the row was removed, or this is a
+ * different deployment's draft) is read as "no choice", never as an error (ADR 0082 unresolved
+ * question 2: with N fleet rows, each carries its OWN Studio answer — overlapping model ids
+ * across two comfy rows are a real possibility — so silently driving the pane off "whichever is
+ * first" is only right while there is nothing else to pick).
+ */
+export function resolveFleetProvider(providers: ImagegenProvider[], providerId: string): ImagegenProvider | null {
+  return providers.find((p) => p.id === providerId) || providers[0] || null;
 }

@@ -268,6 +268,11 @@ func TestStatusReportsFleetOnADeclaredRowKeyedNotByKind(t *testing.T) {
 	if !row.Fleet {
 		t.Errorf("fleet = %v for row %q, want true — the Console can no longer tell this apart from a CLI-driven provider by id alone", row.Fleet, row.ID)
 	}
+	// ADR 0082 P1: the Console's settings screen needs the row's KIND (not its key) to expand a
+	// legacy stored alias ("comfy"/"openai-compat") into today's declared row(s) of that kind.
+	if row.Kind != ProviderComfy {
+		t.Errorf("kind = %q for row %q, want %q", row.Kind, row.ID, ProviderComfy)
+	}
 	// The vendor routes must not be mislabelled as fleet just because the field now exists.
 	for _, p := range got.Providers {
 		if (p.ID == ProviderCodex || p.ID == ProviderAgy) && p.Fleet {
