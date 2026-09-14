@@ -305,6 +305,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_open": "Take one in from Hugging Face",
   "admin.engines_ingest_search": "find",
   "admin.engines_ingest_search_go": "Search",
+  "admin.engines_ingest_searching": "Searching…",
   "admin.engines_ingest_search_none": "Nothing found. Try other words, or type the repository name in directly.",
   "admin.engines_ingest_source_hf": "Hugging Face",
   "admin.engines_ingest_source_civitai": "Civitai",

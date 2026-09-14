@@ -301,6 +301,41 @@ describe("model catalogue pane", () => {
     expect(document.querySelector('.engine-catalog-card[aria-label="Browse Only"] button.primary')).toBeNull();
     expect(document.body.textContent).toContain("閲覧だけです");
   });
+
+  it("shows a loading indicator while a search is in flight and clears it once it lands", async () => {
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    let resolveSearch: ((value: unknown) => void) | undefined;
+    apiJSON.mockImplementation(() => new Promise((resolve) => { resolveSearch = resolve; }));
+    await mount();
+    expect(document.body.textContent).toContain("検索しています");
+    expect(document.querySelector(".engine-catalog-loading .codicon-loading")).toBeTruthy();
+
+    await act(async () => { resolveSearch!({ hits: [] }); });
+    for (const _ of [0, 1]) await act(async () => { await Promise.resolve(); });
+    expect(document.body.textContent).not.toContain("検索しています");
+    expect(document.querySelector(".engine-catalog-loading")).toBeNull();
+  });
+
+  // 🔴 Civitai's search endpoint 503s under load (measured on af-sandbox). The panel used to
+  // show nothing but a bare error banner with no way to tell "still loading" from "it failed" —
+  // this pins that the banner carries the upstream's own status text and the spinner is gone.
+  it("surfaces a Civitai 503 as an error banner and clears the loading indicator", async () => {
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    apiJSON.mockResolvedValue({ error: { code: "source_error", message: "civitai.com answered 503 Service Unavailable" } });
+    await mount();
+    expect(document.body.textContent).toContain("取り込み元が想定外の応答を返しました: civitai.com answered 503 Service Unavailable");
+    expect(document.querySelector(".engine-catalog-loading")).toBeNull();
+  });
 });
 
 describe("catalogue storage identity", () => {

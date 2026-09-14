@@ -1266,9 +1266,16 @@ a.engines-model-source:hover {
 
 .engine-catalog-sort-note,
 .engine-catalog-storage-note,
+.engine-catalog-loading,
 .engine-catalog-zero {
   margin: 0 0 10px;
   font-size: 12px;
+}
+
+.engine-catalog-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .engine-catalog-grid {
