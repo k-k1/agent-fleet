@@ -294,8 +294,12 @@ func serviceLabelOf(id string) string {
 		// Unlike the other cases, this id names a PROTOCOL, not a service (ADR 0083 decision 2):
 		// the engine table row behind it can be this fleet's own GPU, an operator's LAN box, or a
 		// metered vendor endpoint paid by an API key, and the id alone cannot tell those apart.
-		// Say what is true of the protocol and let Destination (Result.Destination) carry the
-		// specific row's answer, rather than asserting "not external" for a row that may be.
+		// So this says only what is true of every row — not "not external", which the id can no
+		// longer make good on. Result.Destination repeats the same fixed caveat rather than
+		// naming the specific row: EngineConn carries no row identity (no key, no URL) for this
+		// provider to read, so there is nothing here to point at yet. A row-specific answer needs
+		// ADR 0082 P0 (provider id becomes the engine table's key), after which a result could
+		// name something like `provider: comfy-lan` instead of a bare `openai-compat`.
 		return "OpenAI 互換の画像サーバー（宛先はエンジン表の行次第。このフリート自身の GPU のこともあれば、鍵で払う外部サービスのこともある）"
 	case ProviderComfy:
 		// Deliberately not "this fleet's own GPU": since ADR 0076 the same route also reaches a
