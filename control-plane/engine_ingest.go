@@ -14,8 +14,8 @@ package main
 //     answers `api/models/<repo>?blobs=true` ANONYMOUSLY with its licence, its gating flag and
 //     every file's sha256 and size; only the file download is 401. So the CP can resolve
 //     everything and the token stays where ADR 0072 decision 6 put it — in the ingest task.
-//   - **the CP never touches S3** (review R3). The task uploads; the CP learns the outcome from
-//     `DescribeTasks` and the reason from the task's log.
+//   - **the CP never writes S3.** The task uploads and deletes; the CP has read-only HeadObject
+//     access to the two model prefixes so it can distinguish a saved object from a stale job.
 //   - **a job outlives the request.** It is a row (store_engine_ingest.go), reconciled against
 //     ECS, because a download runs for minutes and a CP can be replaced inside one.
 
@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -108,6 +109,10 @@ type engineResolved struct {
 	// prose (engine_params_hint.go). Offered to the form, never stored from here.
 	ParamsHint engineParamsHint
 	Source     string // what a person reads in the job list
+	// ArtifactIdentity is the immutable machine answer to "are these the same bytes from the
+	// same selected source". It is persisted per S3 object and compared verbatim on reuse;
+	// Source remains the backwards-compatible human label and is never promoted into this.
+	ArtifactIdentity string
 	// The model's OWN maximum, straight off the GGUF header Hugging Face has already parsed
 	// (`gguf.context_length` on the same call this reads everything else from). 🔴 It is a
 	// suggestion, never the value: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF says 262144 and
@@ -177,9 +182,21 @@ func engineIngestResolve(ctx context.Context, src engineIngestSource) (engineRes
 			return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource,
 				"a plain url needs its sha256 (64 hex characters) — nothing else can verify the download"}
 		}
-		return engineResolved{DownloadURL: u, SHA256: strings.ToLower(strings.TrimSpace(src.SHA256)), Source: u}, nil
+		hash := strings.ToLower(strings.TrimSpace(src.SHA256))
+		return engineResolved{
+			DownloadURL: u, SHA256: hash, Source: u,
+			ArtifactIdentity: "url:" + u + "#sha256:" + hash,
+		}, nil
 	}
 	return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "one of hf, civitai or url is required"}
+}
+
+func engineHFArtifactIdentity(repo, file, revision, sha256 string) string {
+	return "hf:" + repo + "@" + revision + "/" + file + "#sha256:" + strings.ToLower(sha256)
+}
+
+func engineCivitaiArtifactIdentity(versionID int, file, sha256 string) string {
+	return "civitai:" + strconv.Itoa(versionID) + "/" + file + "#sha256:" + strings.ToLower(sha256)
 }
 
 // engineSourceURL turns a recorded source back into the page a person can open, and is the
@@ -227,7 +244,10 @@ func engineSourceURL(source string) string {
 // answer the sha256 and the licence are then taken out of — the alternative is two reads that
 // can disagree across a push to the repository.
 type engineHFDoc struct {
-	Gated    any `json:"gated"` // false, or "auto" / "manual" — a string is still gated
+	// SHA is the repository commit the requested revision resolved to. `main` is mutable, so the
+	// literal request spelling cannot be the identity of bytes saved for later reuse.
+	SHA      string `json:"sha"`
+	Gated    any    `json:"gated"` // false, or "auto" / "manual" — a string is still gated
 	CardData struct {
 		License     any    `json:"license"` // a string, or a list on some cards
 		LicenseName string `json:"license_name"`
@@ -322,6 +342,12 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 	if len(out.SHA256) != 64 {
 		return engineResolved{}, &apiError{http.StatusBadGateway, errCodeIngestNoChecksum,
 			"Hugging Face publishes no sha256 for " + file + " — take it in with an explicit url and sha256"}
+	}
+	// Only the API's resolved commit is immutable. A missing SHA must not be replaced by the
+	// request spelling (`main`, a tag, or a branch): the ingest may proceed for compatibility,
+	// but that object is deliberately unavailable for verified reuse.
+	if resolvedRevision := strings.TrimSpace(doc.SHA); resolvedRevision != "" {
+		out.ArtifactIdentity = engineHFArtifactIdentity(repo, file, resolvedRevision, out.SHA256)
 	}
 	return out, nil
 }
@@ -487,9 +513,10 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 		if hint.empty() {
 			hint = engineParamsFromText(engineStripHTML(model.Description))
 		}
+		hash := strings.ToLower(f.Hashes.SHA256)
 		return engineResolved{
 			DownloadURL:   f.DownloadURL,
-			SHA256:        strings.ToLower(f.Hashes.SHA256),
+			SHA256:        hash,
 			Bytes:         int64(f.SizeKB * 1024),
 			LoginRequired: !engineCivitaiAnonymous(ctx, f.DownloadURL),
 			Restrictions: engineCivitaiRestrictions(model.engineCivitaiLicenceFacts,
@@ -499,10 +526,11 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 			// Civitai publishes no licence field of the kind Hugging Face does — the terms are
 			// per model on the site. Saying "unknown" is the honest answer; guessing one would
 			// put a made-up licence in the panel next to the real ones.
-			LicenseName: "see civitai model page",
-			LicenseURL:  engineCivitaiBase + "/models/?modelVersionId=" + id,
-			BaseModel:   strings.TrimSpace(doc.BaseModel),
-			Source:      "civitai:" + id,
+			LicenseName:      "see civitai model page",
+			LicenseURL:       engineCivitaiBase + "/models/?modelVersionId=" + id,
+			BaseModel:        strings.TrimSpace(doc.BaseModel),
+			Source:           "civitai:" + id,
+			ArtifactIdentity: engineCivitaiArtifactIdentity(c.VersionID, f.Name, hash),
 		}, nil
 	}
 	return engineResolved{}, &apiError{http.StatusNotFound, errCodeIngestFileUnknown,
@@ -636,12 +664,14 @@ type engineIngestLogsAPI interface {
 
 // engineIngester starts ingest tasks and reconciles them against ECS.
 type engineIngester struct {
-	def     engineIngestDef
-	cluster string
-	ecs     engineIngestECSAPI
-	logs    engineIngestLogsAPI
-	store   store.EngineIngestStore
-	models  store.EngineModelStore
+	def       engineIngestDef
+	cluster   string
+	ecs       engineIngestECSAPI
+	logs      engineIngestLogsAPI
+	store     store.EngineIngestStore
+	models    store.EngineModelStore
+	storageMu sync.RWMutex
+	storage   *engineStorage
 	// tokens is the operator's Hugging Face token. It hangs here rather than on an engine
 	// because the ingest task is deployment-wide, and because this is the only place that
 	// needs the value rather than the fact that there is one.
@@ -649,6 +679,28 @@ type engineIngester struct {
 	// onDone is called after a job created its catalogue row, so the registry can invalidate
 	// its cache and the panel shows the new row without waiting for the TTL.
 	onDone func(role string)
+}
+
+func (g *engineIngester) storageChecker() *engineStorage {
+	if g == nil {
+		return nil
+	}
+	g.storageMu.RLock()
+	defer g.storageMu.RUnlock()
+	return g.storage
+}
+
+func (g *engineIngester) setStorage(storage *engineStorage) bool {
+	if g == nil || storage == nil || strings.TrimSpace(storage.scope) == "" {
+		return false
+	}
+	g.storageMu.Lock()
+	defer g.storageMu.Unlock()
+	if g.storage != nil && g.storage.scope == storage.scope && g.storage.metadata != nil {
+		return false
+	}
+	g.storage = storage
+	return true
 }
 
 // engineIngestRequest is one "take this in", after the API has validated it.
@@ -704,6 +756,13 @@ type engineIngestRequest struct {
 // succeeds and a CP that dies before recording it is a task nobody can see, which is the one
 // outcome with no way back.
 func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (store.EngineIngestJob, *apiError) {
+	// postIngest checks this before resolving the source so the normal request pays no download
+	// for a recorded key. Keep the same fence here because follow-up VAEs start from the
+	// reconciler, not that route; otherwise two completed checkpoints could upload different
+	// bytes to the family's fixed VAE key before either attachment is registered.
+	if aerr := engineIngestDestinationUnused(ctx, g.models, g.store, req.Role, req.S3Key); aerr != nil {
+		return store.EngineIngestJob{}, aerr
+	}
 	// The registered token is carried into the stack's secret before EVERY ingest. Not when it
 	// looks stale — nothing can look stale here: the CP has no `GetSecretValue`, and a stack
 	// rebuilt under a registered token holds the sentinel with no way to notice. Staged before
@@ -736,6 +795,33 @@ func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (st
 		return job, internalErr(err)
 	}
 	log.Printf("engines: ingest %s started for %s/%s (%s)", job.ID, req.Role, req.ModelID, job.Source)
+	return job, nil
+}
+
+// reuse records the same job-shaped history row as a download, but applies the catalogue
+// transition immediately. The caller has already proved the object and immutable identity;
+// this method deliberately never stages a token or starts ECS.
+func (g *engineIngester) reuse(ctx context.Context, req engineIngestRequest) (store.EngineIngestJob, *apiError) {
+	spec, _ := json.Marshal(req)
+	job := store.EngineIngestJob{
+		ID: store.NewID(), Role: req.Role, ModelID: req.ModelID, S3Key: req.S3Key,
+		Source: req.Resolved.Source, State: store.EngineIngestPending,
+		Bytes: req.Resolved.Bytes, Spec: string(spec), StartedBy: req.AcceptedBy,
+		TenantID: req.AcceptedTenant,
+	}
+	if err := g.store.PutEngineIngestJob(ctx, job); err != nil {
+		return job, internalErr(err)
+	}
+	if err := g.install(ctx, req, job.ID); err != nil {
+		job.State, job.Message = store.EngineIngestFailed, err.Error()
+		_ = g.store.PutEngineIngestJob(ctx, job)
+		return job, &apiError{http.StatusConflict, errCodeEngineBadBody, err.Error()}
+	}
+	job.State, job.Message = store.EngineIngestDone, ""
+	if err := g.store.PutEngineIngestJob(ctx, job); err != nil {
+		return job, internalErr(err)
+	}
+	log.Printf("engines: ingest %s reused %s for %s/%s", job.ID, req.S3Key, req.Role, req.ModelID)
 	return job, nil
 }
 
@@ -857,23 +943,42 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		log.Printf("engines: ingest %s failed: %s", j.ID, j.Message)
 		return
 	}
-	j.State, j.Message = store.EngineIngestDone, ""
-	_ = g.store.PutEngineIngestJob(ctx, j)
+	if storage := g.storageChecker(); storage != nil {
+		storage.invalidate(j.S3Key)
+	}
 	var req engineIngestRequest
 	if g.models == nil || json.Unmarshal([]byte(j.Spec), &req) != nil || req.ModelID == "" {
-		// The bytes are in the bucket; the row is not. Said plainly rather than silently: the
-		// operator's next move is to register the key by hand, which is a route that exists.
-		log.Printf("engines: ingest %s finished but its catalogue row could not be read back: register %s by hand",
-			j.ID, j.S3Key)
+		// The bytes are in the bucket; the row is not. A failed state keeps the panel from calling
+		// the operation successful and names the manual recovery path without deleting the object.
+		j.State = store.EngineIngestFailed
+		j.Message = "the object was stored but its catalogue request could not be read back; register " + j.S3Key + " by hand"
+		_ = g.store.PutEngineIngestJob(ctx, j)
+		log.Printf("engines: ingest %s: %s", j.ID, j.Message)
 		return
 	}
-	// Where THIS file came from, written on the file and not only on the row. The row's own
-	// Source is set by the branch that CREATES it, so without this an attached part has no
-	// provenance at all once this job row ages out — and once a file can be REPLACED under a row
-	// that keeps everything else, the row's source names a file that is no longer there
-	// (see store.EngineModelFile.Source).
+	if err := g.install(ctx, req, j.ID); err != nil {
+		j.State = store.EngineIngestFailed
+		j.Message = "the object was stored but its catalogue change did not apply: " + err.Error()
+		_ = g.store.PutEngineIngestJob(ctx, j)
+		log.Printf("engines: ingest %s: %s", j.ID, j.Message)
+		return
+	}
+	j.State, j.Message = store.EngineIngestDone, ""
+	if err := g.store.PutEngineIngestJob(ctx, j); err != nil {
+		log.Printf("engines: ingest %s installed its catalogue row but could not record completion: %v", j.ID, err)
+	}
+}
+
+// install is the common, synchronous catalogue transition for a downloaded or reused object.
+// The three store methods enforce the operation at write time: create cannot overwrite a row
+// that won a race, attach requires a row, and replace requires the named slot.
+func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, jobID string) error {
+	if g.models == nil {
+		return fmt.Errorf("no model catalogue")
+	}
 	file := store.EngineModelFile{
 		Flag: req.FileFlag, S3Key: req.S3Key, Bytes: req.Resolved.Bytes, Source: req.Resolved.Source,
+		ArtifactIdentity: req.Resolved.ArtifactIdentity,
 		// What the header said before the download started. A file taken in AS a VAE answers the
 		// question by being one, which is what keeps the scan from ever asking about it again.
 		VaeBundled: req.VaeBundled,
@@ -894,15 +999,10 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		}
 		found, err := g.models.ReplaceEngineModelFile(ctx, req.Role, req.ModelID, file, kv)
 		if err != nil {
-			log.Printf("engines: ingest %s finished but %s could not take the file: %v", j.ID, req.ModelID, err)
-			return
+			return err
 		}
 		if !found {
-			// The row was forgotten, or that slot was, while the download ran. The bytes are in
-			// the bucket and nothing points at them, which is the one outcome worth spelling out.
-			log.Printf("engines: ingest %s finished but %s/%s no longer declares %s: register %s by hand",
-				j.ID, req.Role, req.ModelID, engineFlagLabel(req.FileFlag), j.S3Key)
-			return
+			return fmt.Errorf("%s/%s no longer declares %s", req.Role, req.ModelID, engineFlagLabel(req.FileFlag))
 		}
 		// 🔴 The OLD object stays in the bucket. The CP has no s3:DeleteObject (ADR 0072 decision
 		// 7) and the only principal that has is the ingest task — but this runs in the job
@@ -912,11 +1012,11 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		// what it refused to delete is how a model nobody touched stops loading. The panel says
 		// the bytes stay; deleting them is `?purge=1` on a row somebody chose to forget.
 		log.Printf("engines: ingest %s done: %s of %s/%s replaced by %s (the previous object stays in the bucket)",
-			j.ID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID, j.S3Key)
+			jobID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID, req.S3Key)
 		if g.onDone != nil {
 			g.onDone(req.Role)
 		}
-		return
+		return nil
 	}
 	if req.Attach {
 		// One PART of a model that already has a row. Only the file is written: the licence
@@ -924,21 +1024,16 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		// created, and this download knows none of them.
 		found, err := g.models.AppendEngineModelFile(ctx, req.Role, req.ModelID, file)
 		if err != nil {
-			log.Printf("engines: ingest %s finished but %s could not take the file: %v", j.ID, req.ModelID, err)
-			return
+			return err
 		}
 		if !found {
-			// The row was forgotten while the download ran. The bytes are in the bucket and
-			// nothing points at them, which is the one outcome worth spelling out.
-			log.Printf("engines: ingest %s finished but %s/%s no longer exists: register %s by hand",
-				j.ID, req.Role, req.ModelID, j.S3Key)
-			return
+			return fmt.Errorf("%s/%s no longer exists", req.Role, req.ModelID)
 		}
-		log.Printf("engines: ingest %s done: %s added to %s/%s", j.ID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID)
+		log.Printf("engines: ingest %s done: %s added to %s/%s", jobID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID)
 		if g.onDone != nil {
 			g.onDone(req.Role)
 		}
-		return
+		return nil
 	}
 	m := store.EngineModel{
 		Role: req.Role, ID: req.ModelID, Kind: req.Kind,
@@ -976,15 +1071,19 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		KVLayers: req.KVGeom.Layers, KVHeadsKV: req.KVGeom.HeadsKV,
 		KVKeyLen: req.KVGeom.KeyLen, KVValueLen: req.KVGeom.ValLen,
 	}
-	if err := g.models.PutEngineModel(ctx, m); err != nil {
-		log.Printf("engines: ingest %s finished but the row could not be written: %v", j.ID, err)
-		return
+	created, err := g.models.CreateEngineModel(ctx, m)
+	if err != nil {
+		return err
 	}
-	log.Printf("engines: ingest %s done: %s/%s registered (disabled)", j.ID, req.Role, req.ModelID)
+	if !created {
+		return fmt.Errorf("%s/%s was created before this object could be installed", req.Role, req.ModelID)
+	}
+	log.Printf("engines: ingest %s done: %s/%s registered (disabled)", jobID, req.Role, req.ModelID)
 	if g.onDone != nil {
 		g.onDone(req.Role)
 	}
 	g.followUpVae(ctx, req)
+	return nil
 }
 
 // followUpVae gives a row that was just created the VAE its checkpoint does not carry, either by
@@ -1001,7 +1100,8 @@ func (g *engineIngester) followUpVae(ctx context.Context, req engineIngestReques
 	}
 	if fu.Staged {
 		file := store.EngineModelFile{
-			Flag: "--vae", S3Key: fu.S3Key, Bytes: fu.Bytes, Source: fu.Source, VaeBundled: engineVaeYes,
+			Flag: "--vae", S3Key: fu.S3Key, Bytes: fu.Bytes, Source: fu.Source,
+			ArtifactIdentity: fu.ArtifactIdentity, VaeBundled: engineVaeYes,
 		}
 		found, err := g.models.AppendEngineModelFile(ctx, req.Role, req.ModelID, file)
 		if err != nil || !found {

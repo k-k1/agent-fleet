@@ -26,6 +26,7 @@ import (
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
@@ -202,6 +203,9 @@ type engineIngestDef struct {
 	// token, so this is a place to WRITE and never a statement that a token exists (ADR 0072
 	// decision 6 as revised: the DB is the record of truth, this is the carrying path).
 	TokenSecret string `json:"tokenSecret"`
+	// Bucket is where verified model objects live. It is carried in the table rather than
+	// derived from a stack name, so the S3 port works unchanged across AWS and test deployments.
+	Bucket string `json:"bucket"`
 	// HasToken is what a pre-P5 stack declared: HF_TOKEN came from a CloudFormation parameter,
 	// so the table itself knew whether a gated repository could be taken in. It survives because
 	// the CP is upgraded before the stack is — on such a table TokenSecret is empty, nothing can
@@ -793,14 +797,20 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// definition serves both roles.
 	if haveAWS && mgr != nil && mgr.store != nil {
 		reg.startIngest = func(def engineIngestDef) bool {
-			if !def.ok() || reg.ingester() != nil {
+			if !def.ok() {
 				return false
+			}
+			if ing := reg.ingester(); ing != nil {
+				return ing.setStorage(newEngineStorage(def.Bucket,
+					newEngineAWSStorageMetadata(def.Bucket, s3.NewFromConfig(ac))))
 			}
 			ing := &engineIngester{
 				def: def, cluster: cluster, ecs: ecsc,
 				logs:   newEngineIngestLogs(ac),
 				store:  mgr.store,
 				models: mgr.store,
+				storage: newEngineStorage(def.Bucket,
+					newEngineAWSStorageMetadata(def.Bucket, s3.NewFromConfig(ac))),
 				tokens: newEngineHfTokens(def, mgr.store, mgr, secretsmanager.NewFromConfig(ac)),
 				onDone: func(role string) {
 					if e := reg.get(role); e != nil {

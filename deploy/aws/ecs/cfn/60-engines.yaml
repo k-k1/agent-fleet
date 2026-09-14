@@ -289,6 +289,19 @@ Resources:
           - Effect: Allow
             Action: [ secretsmanager:PutSecretValue ]
             Resource: !Ref HfTokenSecret
+          # HeadObject is authorised by s3:GetObject. ListBucket is required only for S3 to
+          # answer 404 instead of 403 when that object is absent; the CP has no list operation.
+          - Effect: Allow
+            Action: [ s3:GetObject ]
+            Resource:
+              - !Sub "${ModelsBucket.Arn}/llm/*"
+              - !Sub "${ModelsBucket.Arn}/image/*"
+          - Effect: Allow
+            Action: [ s3:ListBucket ]
+            Resource: !GetAtt ModelsBucket.Arn
+            Condition:
+              StringLike:
+                "s3:prefix": [ "llm/*", "image/*" ]
           # !! The CP buys the box itself (ADR 0077 decision 10) - PARAMETERS, "The engine boxes".
           # A fleet has no ARN to scope to; the fence is the launch template it may pass.
           - Effect: Allow
@@ -866,12 +879,13 @@ Resources:
           Ingest: !Sub
             - >-
               {"taskDef":"${Family}","subnets":["${Subnets}"],"securityGroups":["${Sg}"],
-              "logGroup":"${Log}","tokenSecret":"${Secret}"}
+              "logGroup":"${Log}","tokenSecret":"${Secret}","bucket":"${Bucket}"}
             - Family: !Ref IngestTaskDef
               Subnets: !Join [ '","', !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ] ]
               Sg: !Ref EngineSg
               Log: !Ref LogGroup
               Secret: !Ref HfTokenSecret
+              Bucket: !Ref ModelsBucket
 
 Outputs:
   EnginesSsmParam:

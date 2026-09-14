@@ -166,6 +166,9 @@ export type EngineParams = {
 /** What POST …/ingest/resolve answered: what the file IS, before anything is started. */
 export type ResolvedSource = {
   sha256?: string;
+  /** Immutable identity of this exact resolved source file. It is the only value which may
+   * match a stored object for reuse; the human-readable source is display provenance only. */
+  artifact_identity?: string;
   bytes?: number;
   gated?: boolean;
   license?: string;
@@ -257,7 +260,13 @@ export type IngestHit = {
   source: string;
   /** The repository for HF; the VERSION id for Civitai (not the model id on the page's URL). */
   ref: string;
+  /** Stable upstream model identity. Hugging Face uses the repository and Civitai uses the
+   *  model id; `ref` keeps naming the selectable revision/version for old clients. */
+  model_ref?: string;
   name: string;
+  /** Small upstream example image. It is presentation only and is never used as an ingest
+   *  source; absence means the card has no image area at all. */
+  preview_url?: string;
   /** The three numbers a ranking is built on. All three ride on every row, whichever one the
    *  list was ordered by — sorting by one and showing only that one leaves "why is this here"
    *  unanswerable. `trending` is Hugging Face's own score; Civitai publishes none. */
@@ -274,6 +283,10 @@ export type IngestHit = {
    *  answer and must not be drawn as "anyone may download this". Measured 2026-09-12: 13 of
    *  the top 20 monthly checkpoints answer 401, and all 20 look identical in the metadata. */
   login_required?: string;
+  /** Licence-level commercial-use verdict when the listing exposes it. */
+  commercial_use?: string;
+  /** A token exists, but its account may still need to accept this repository's terms. */
+  gated_needs_acceptance?: boolean;
   /** What the source says may not be done with it, as codes — see engineRestrictLabel. */
   restrictions?: string[];
   /** A LoRA's trigger words, straight off the search answer. */
@@ -300,7 +313,55 @@ export type IngestHit = {
 
 /** One file a repository offers (POST …/ingest/files), already filtered to the ones this
  *  engine could load and that carry a sha256. */
-export type IngestCandidate = { name: string; bytes?: number; sha256?: string };
+export type IngestCandidate = {
+  name: string;
+  bytes?: number;
+  sha256?: string;
+  /** Optional source-side file identity when a provider exposes more than a filename. */
+  ref?: string;
+};
+
+export type IngestVersion = {
+  ref: string;
+  name: string;
+  published_at?: string;
+  updated_at?: string;
+};
+
+export type IngestVersionsAnswer = { versions: IngestVersion[] };
+
+export type IngestSearchRequest = {
+  q: string;
+  source: string;
+  sort: string;
+  lora?: boolean;
+  cursor?: string;
+};
+
+export type IngestSearchAnswer = {
+  hits: IngestHit[];
+  next_cursor?: string;
+};
+
+/** Server-known S3 objects only. `unknown` remains distinct from `missing`: the Console must
+ *  not turn a failed or unavailable existence check into a claim that bytes are gone. */
+export type EngineStorageFile = {
+  s3_key: string;
+  source?: string;
+  /** Machine identity for exact reuse. Missing means this is legacy or ambiguous provenance. */
+  artifact_identity?: string;
+  /** The server checked this object and permits it to be reused for its identity. */
+  reusable: boolean;
+  state: "present" | "missing" | "unknown";
+  bytes?: number;
+  checked_at?: string;
+  model_ids: string[];
+};
+
+export type EngineStorageAnswer = {
+  files: EngineStorageFile[];
+  checked_at?: string;
+};
 
 export type IngestJob = {
   id: string;

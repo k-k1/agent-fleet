@@ -3,6 +3,12 @@
 // whole pane tree into a test that only renders the panel.
 import { useLayoutStore } from "../../../layout/store.ts";
 
-export function openEngineAdd(engineKey: string, lora: boolean): void {
-  useLayoutStore.getState().openTarget({ content: { kind: "engineAdd", engineKey, lora } });
+export function openEngineAdd(
+  engineKey: string,
+  lora: boolean,
+  view?: "search" | "registered",
+): void {
+  useLayoutStore.getState().openTarget({
+    content: { kind: "engineAdd", engineKey, lora, ...(view ? { view } : {}) },
+  });
 }

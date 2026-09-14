@@ -5,6 +5,7 @@ import { openEngineAdd } from "./openEngineAdd.ts";
 import { useSettingsUI } from "../store.ts";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
+import { Button } from "../../../ui/Button.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import {
@@ -15,6 +16,7 @@ import {
   type EngineModel,
   type EngineParams,
   type EngineRow,
+  type EngineStorageFile,
   type IngestCandidate,
   type IngestHit,
   type IngestJob,
@@ -46,7 +48,15 @@ type EngineModelAnswer = { error?: { code?: string; message?: string } } | undef
  *  above; every caller that has nothing to ask simply ignores it. */
 type EngineModelChange = (id: string, patch: Record<string, unknown>) => Promise<EngineModelAnswer>;
 
-export function EngineModelsAdminView() {
+export function EngineModelsAdminView({
+  initialEngineKey = "",
+  initialKind = "model",
+  embedded = false,
+}: {
+  initialEngineKey?: string;
+  initialKind?: ModelKind;
+  embedded?: boolean;
+} = {}) {
   const tr = useT();
   const { rows, isSuper, err, setErr, setRows, load } = useEngineRows();
   const closeAdmin = useSettingsUI((s) => s.closeAdmin);
@@ -67,14 +77,17 @@ export function EngineModelsAdminView() {
     closeAdmin();
   };
   const [jobs, setJobs] = useState<Record<string, IngestJob[]>>({});
+  const [storage, setStorage] = useState<Record<string, EngineStorageFile[] | null>>({});
   /** Which engine's catalogue is open, by key. A key rather than an index so that a reload that
    *  reorders the list does not move somebody to another engine mid-ingest. */
-  const [role, setRole] = useState("");
+  const [role, setRole] = useState(initialEngineKey);
   /** Models or adapters. It drives the LIST and the ingest form together, which is the point:
    *  the form used to carry its own model/LoRA selector while the search above it always asked
    *  for checkpoints, so choosing "LoRA" changed what the row would be registered as and
    *  nothing about what was on offer. */
-  const [kind, setKind] = useState<ModelKind>("model");
+  const [kind, setKind] = useState<ModelKind>(initialKind);
+  useEffect(() => setRole(initialEngineKey), [initialEngineKey]);
+  useEffect(() => setKind(initialKind), [initialKind]);
   /** The registration form, opened with a finished job's answers already in it.
    *
    * 🔴 "Take that file in again" is not an ingest: the bytes are in the bucket already (forget
@@ -94,9 +107,19 @@ export function EngineModelsAdminView() {
     const d = await api(`api/admin/engines/${encodeURIComponent(key)}/ingest`);
     if (!d?.error) setJobs((cur) => ({ ...cur, [key]: Array.isArray(d?.jobs) ? d.jobs : [] }));
   }, []);
+  const loadStorage = useCallback(async (key: string) => {
+    const d = await api(`api/admin/engines/${encodeURIComponent(key)}/storage`);
+    setStorage((current) => ({
+      ...current,
+      [key]: d?.error ? null : Array.isArray(d?.files) ? d.files : [],
+    }));
+  }, []);
   useEffect(() => {
-    (rows || []).forEach((e) => loadJobs(e.key));
-  }, [rows, loadJobs]);
+    (rows || []).forEach((e) => {
+      loadJobs(e.key);
+      loadStorage(e.key);
+    });
+  }, [rows, loadJobs, loadStorage]);
   // A download runs for minutes, so the list polls itself while one is in flight — and stops
   // the moment none is, because this is a screen somebody leaves open.
   useEffect(() => {
@@ -281,7 +304,7 @@ export function EngineModelsAdminView() {
           {/* The ROLE, as tabs — but only when there is a choice to make. A deployment with one
               engine gets its name and no tab strip, because a single tab is a control that
               cannot be operated. */}
-          {rows.length > 1 ? (
+          {!embedded && rows.length > 1 ? (
             <span className="seg sm">
               {rows.map((e) => (
                 <button
@@ -297,9 +320,9 @@ export function EngineModelsAdminView() {
                 </button>
               ))}
             </span>
-          ) : (
+          ) : !embedded ? (
             <span>{engineTitle(open)}</span>
-          )}
+          ) : null}
           {/* Models or adapters. Both roles have both: an image LoRA is chosen per request by
               family, and the llm role's is pinned to a model through a preset (ADR 0072
               decision 5). */}
@@ -350,6 +373,7 @@ export function EngineModelsAdminView() {
           onAdd={(body) => addModel(open.key, body)}
           onReload={load}
           vaeUnreadable={vaeUnreadable}
+          storageFiles={storage[open.key]}
         />
         {/* The discovery button (ADR 0082 decisions 6 and 7): only for an external ComfyUI this
             control plane can dial directly. `engineCanDiscover` is the exact predicate the CP's
@@ -366,7 +390,7 @@ export function EngineModelsAdminView() {
             for a borrowed role — and it is also the one that would spend money and bucket space
             on a file the far engine is never going to load: the box that stages files is the far
             deployment's active set, not ours. */}
-        {!borrowed && (
+        {!embedded && !borrowed && (
           <EngineIngest
             open={false}
             setOpen={openAdd}
@@ -445,6 +469,7 @@ function EngineModels({
   onAdd,
   onReload,
   vaeUnreadable,
+  storageFiles,
 }: {
   row: EngineRow;
   kind: ModelKind;
@@ -464,6 +489,8 @@ function EngineModels({
    *  one the deployment could not ask about — said out loud, because silence there looks exactly
    *  like a healthy row. */
   vaeUnreadable?: Record<string, string>;
+  /** Actual S3 existence from the dedicated check. Null/undefined is unknown, never missing. */
+  storageFiles?: EngineStorageFile[] | null;
 }) {
   const tr = useT();
   const wantLora = kind === "lora";
@@ -615,6 +642,7 @@ function EngineModels({
               {m.description && <p className="muted engines-model-desc">{m.description}</p>}
               <p className="muted engines-model-meta">{engineModelMeta(m, tr)}</p>
               <ModelProvenance model={m} />
+              <ModelStorageStatus model={m} storageFiles={storageFiles} />
               {/* 🔴 The one thing wrong with this row that nothing else on it shows. Every other
                   field is filled in, the toggle works, the id appears in generate_image's model
                   list — and the request fails, because the provider will not guess a workflow
@@ -1199,7 +1227,7 @@ export type ModelPrefill = {
  *     is read as 32,000, so a context alone leaves 768 usable tokens);
  *   - the SIZE, because the control plane cannot look in S3 (ADR 0072 review R3) and this is the
  *     only place the "sync +N s" estimate can come from. Optional: no size, no estimate. */
-function EngineModelAdd({
+export function EngineModelAdd({
   busy,
   isImage,
   isLora,
@@ -1297,9 +1325,9 @@ function EngineModelAdd({
 
   if (!open) {
     return (
-      <button type="button" className="sm engines-open" onClick={() => setOpen(true)}>
+      <Button small className="engines-open" onClick={() => setOpen(true)}>
         {tr("admin.engines_model_add")}
-      </button>
+      </Button>
     );
   }
   const rows = files.filter((f) => f.s3Key.trim());
@@ -1310,7 +1338,9 @@ function EngineModelAdd({
   const baseOptions = basePicksAModel ? modelIds || [] : families;
   // The base is required exactly when there is a vocabulary to pick from, and the button says so
   // by being disabled rather than by letting the CP refuse after the press.
-  const incomplete = !id.trim() || rows.length === 0 || (baseOptions.length > 0 && !baseModel);
+  const incomplete = !id.trim() || rows.length === 0 || (basePicksAModel
+    ? !baseOptions.includes(baseModel)
+    : baseOptions.length > 0 && !baseModel);
   const submit = () => {
     if (incomplete) return;
     const n = (v: string) => {
@@ -1410,12 +1440,12 @@ function EngineModelAdd({
           and refused to generate (ADR 0072 P2 実機検証). The list comes from the CP, which
           validates against the same one. An llm adapter picks from the catalogue's own ids for
           the same reason: a base nothing matches is an adapter that loads nowhere. */}
-      {baseOptions.length > 0 && (
+      {(baseOptions.length > 0 || basePicksAModel) && (
         <label className="engines-model-add-row">
           <span>
             {tr(basePicksAModel ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}
           </span>
-          <select value={baseModel} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
+          <select value={baseModel} disabled={basePicksAModel && baseOptions.length === 0} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
             <option value="">
               {tr(
                 basePicksAModel
@@ -1451,25 +1481,25 @@ function EngineModelAdd({
           {field(tr("admin.engines_model_add_bytes"), f.bytes, (v) => setFile(i, { bytes: v }),
             "1117320768", true)}
           {files.length > 1 && (
-            <button
-              type="button"
-              className="ghost sm"
+            <Button
+              variant="ghost"
+              small
               onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
             >
               {tr("admin.engines_model_add_part_drop")}
-            </button>
+            </Button>
           )}
         </div>
       ))}
       {/* Offered only where a split model is a thing this provider can load. */}
       {flags.length > 0 && (
-        <button
-          type="button"
-          className="ghost sm"
+        <Button
+          variant="ghost"
+          small
           onClick={() => setFiles((prev) => [...prev, { flag: "", s3Key: "", bytes: "" }])}
         >
           {tr("admin.engines_model_add_part_more")}
-        </button>
+        </Button>
       )}
       {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
       {/* Optional, and the only route where a licence has to be TYPED — there is no source here
@@ -1487,12 +1517,12 @@ function EngineModelAdd({
       {isLora && !isImage &&
         field(tr("admin.engines_model_add_lora_scale"), scale, setScale, "1", true)}
       <div className="engines-model-add-actions">
-        <button type="button" className="primary sm" disabled={busy || incomplete} onClick={submit}>
+        <Button variant="primary" small disabled={busy || incomplete} onClick={submit}>
           {tr("admin.engines_model_add_go")}
-        </button>
-        <button type="button" className="sm" onClick={() => setOpen(false)}>
+        </Button>
+        <Button small onClick={() => setOpen(false)}>
           {tr("common.cancel")}
-        </button>
+        </Button>
       </div>
       {/* ⚠️ The CP never checks that the key exists: it has no S3 permission at all and none is
           being added (ADR 0072 review R3). A typo surfaces in the fetch sidecar's log at the
@@ -1534,7 +1564,7 @@ type HfTokenStatus = {
  * can actually do. The CP holds `PutSecretValue` on one secret and never `GetSecretValue`, so
  * "show the current token" is not something it could offer even if a screen wanted it. What
  * can be shown is that one is registered, by whom and when. */
-function HfTokenPanel() {
+export function HfTokenPanel() {
   const tr = useT();
   const [st, setSt] = useState<HfTokenStatus | null>(null);
   const [token, setToken] = useState("");
@@ -1616,13 +1646,13 @@ function HfTokenPanel() {
             />
           </label>
           <div className="engines-model-add-actions">
-            <button type="button" className="primary sm" disabled={busy || !token.trim()} onClick={save}>
+            <Button variant="primary" small disabled={busy || !token.trim()} onClick={save}>
               {tr("admin.engines_hf_token_save")}
-            </button>
+            </Button>
             {st.configured && (
-              <button type="button" className="sm" disabled={busy} onClick={remove}>
+              <Button small disabled={busy} onClick={remove}>
                 {tr("admin.engines_hf_token_remove")}
-              </button>
+              </Button>
             )}
           </div>
           <p className="muted">{tr("admin.engines_hf_token_note")}</p>
@@ -3253,7 +3283,7 @@ export function engineJobAdvice(code?: string): string {
   }
 }
 
-function EngineIngestJobs({
+export function EngineIngestJobs({
   jobs,
   busy,
   readOnly,
@@ -3344,22 +3374,24 @@ function EngineIngestJobs({
                   failed job is not offered at all — whatever it left behind is a part of a
                   file, and registering that would produce a row that fails at load. */}
               {j.state === "done" && !!j.s3_key && onReuse && (
-                <button
-                  type="button"
-                  className="ghost sm engines-ingest-job-reuse"
+                <Button
+                  variant="ghost"
+                  small
+                  className="engines-ingest-job-reuse"
                   onClick={() => onReuse(j)}
                 >
                   {tr("admin.engines_ingest_job_reuse")}
-                </button>
+                </Button>
               )}
-              <button
-                type="button"
-                className="ghost sm engines-ingest-job-forget"
+              <Button
+                variant="ghost"
+                small
+                className="engines-ingest-job-forget"
                 disabled={busy === j.id}
                 onClick={() => openConfirm(j.id)}
               >
                 {tr("admin.engines_ingest_job_forget")}
-              </button>
+              </Button>
             </span>
           )}
           {confirming === j.id && !live && (
@@ -3391,9 +3423,8 @@ function EngineIngestJobs({
                 </label>
               )}
               <span className="engines-model-actions">
-                <button
-                  type="button"
-                  className="sm"
+                <Button
+                  small
                   disabled={busy === j.id || (last && !ack)}
                   onClick={() => {
                     setConfirming("");
@@ -3401,10 +3432,10 @@ function EngineIngestJobs({
                   }}
                 >
                   {tr("admin.engines_ingest_job_forget_go")}
-                </button>
-                <button type="button" className="sm" onClick={() => setConfirming("")}>
+                </Button>
+                <Button small onClick={() => setConfirming("")}>
                   {tr("common.cancel")}
-                </button>
+                </Button>
               </span>
             </div>
           )}
@@ -3490,6 +3521,29 @@ function ModelProvenance({ model }: { model: EngineModel }) {
       ))}
     </p>
   );
+}
+
+/** Aggregate a multipart row without hiding partial loss. The dedicated storage response is
+ * the only authority here; a finished ingest job is deliberately not consulted. */
+function ModelStorageStatus({ model, storageFiles }: {
+  model: EngineModel;
+  storageFiles?: EngineStorageFile[] | null;
+}) {
+  const tr = useT();
+  const keys = (model.file_rows || []).map((file) => file.s3Key).filter(Boolean);
+  if (!keys.length) return null;
+  if (!storageFiles) {
+    return <p className="engines-model-storage unknown">{tr("admin.catalog_registered_unknown" as never)}</p>;
+  }
+  const states = keys.map((key) => storageFiles.find((file) => file.s3_key === key)?.state || "unknown");
+  const present = states.filter((state) => state === "present").length;
+  const missing = states.filter((state) => state === "missing").length;
+  const status = present === keys.length ? "present"
+    : missing === keys.length ? "missing"
+      : present > 0 || missing > 0 ? "partial" : "unknown";
+  return <p className={`engines-model-storage ${status}`}>
+    {tr((`admin.catalog_registered_${status}`) as never, { present, total: keys.length } as never)}
+  </p>;
 }
 
 /** One provenance value: a link when the CP could compose one, the same text when it could not. */

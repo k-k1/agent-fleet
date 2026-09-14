@@ -54,7 +54,13 @@ export type PaneContent =
    *  is dismissed and the thread is lost; a pane can be left open, looked away from, popped out,
    *  and end where the work ends. `engineKey` is the role (`image` / `llm`); `lora` decides
    *  which catalogue the row joins, the way the tab did. */
-  | { kind: "engineAdd"; engineKey: string; lora: boolean }
+  | {
+      kind: "engineAdd";
+      engineKey: string;
+      lora: boolean;
+      /** Additive so layouts written by the former wizard remain valid. */
+      view?: "search" | "registered";
+    }
   /**
    * A folder's images as a grid of cards (ADR 0080). `galleryPath` is the first field
    * in this union that names a DIRECTORY, which is the whole reason it is a kind of its
