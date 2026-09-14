@@ -193,15 +193,32 @@ function hardCut(text: string, start: number, maxBytes: number): number {
     if (byteLen(text.slice(start, mid)) <= maxBytes) lo = mid;
     else hi = mid - 1;
   }
+  // Never land between a UTF-16 surrogate pair (an emoji, most CJK beyond the BMP): text.slice
+  // there is not actually "byte-safe" despite fitting the byte count above — TextEncoder (and
+  // the real UTF-8 encode a fetch body goes through) turns each lone surrogate half into its
+  // OWN U+FFFD, so the character reaching the server is not reassembled, it is destroyed into
+  // two replacement characters. Move the cut before the pair; if that leaves nothing to emit
+  // (only possible with a maxBytes of a handful of bytes, never a real request), emit the pair
+  // whole instead — one character slightly over the cap beats a corrupted one.
+  const before = text.charCodeAt(lo - 1);
+  if (before >= 0xd800 && before <= 0xdbff) lo = lo - 1 > start ? lo - 1 : lo + 1;
   return lo;
 }
 
+// A sentence boundary: Latin-style closing punctuation followed by a space or tab (". ", "; ",
+// "! ", "? "), or a Japanese sentence-ending mark, which needs no trailing space of its own.
+// This is the last STRUCTURAL boundary tried before giving up to a raw byte cut — it is what
+// saves a long line that has no newline in it at all (a table row, a wrapped log line, one
+// unbroken paragraph) from being cut mid-word.
+const SENTENCE_BREAK = /[.!?;][ \t]|[。、！？]/;
+
 /**
  * Splits one translate request part at the best available boundary once it is over the
- * server's per-part cap: a blank line, then a single line break, then a raw byte-safe cut, in
- * that preference order. Concatenating the returned chunks with NO separator reproduces `text`
- * exactly (each chunk keeps its own trailing newlines), so the caller sends them as independent
- * request parts and joins the translated replies back in the same order.
+ * server's per-part cap: a blank line, then a single line break, then a sentence boundary, then
+ * a raw byte-safe cut, in that preference order. Concatenating the returned chunks with NO
+ * separator reproduces `text` exactly (each chunk keeps its own trailing newlines), so the
+ * caller sends them as independent request parts and joins the translated replies back in the
+ * same order.
  *
  * A fenced code block is kept whole whenever it fits in one chunk on its own: splitting through
  * the middle of a ``` pair would hand each half to the model as a separate request, and the
@@ -213,10 +230,15 @@ export function splitForTranslate(text: string, maxBytes: number = TRANSLATE_MAX
   const ranges = fenceRanges(text);
   const blank = breakOffsets(text, /\n{2,}/, ranges);
   const single = breakOffsets(text, /\n/, ranges);
+  const sentence = breakOffsets(text, SENTENCE_BREAK, ranges);
   const out: string[] = [];
   let start = 0;
   while (start < text.length) {
-    const end = bestCut(text, start, maxBytes, blank) ?? bestCut(text, start, maxBytes, single) ?? hardCut(text, start, maxBytes);
+    const end =
+      bestCut(text, start, maxBytes, blank) ??
+      bestCut(text, start, maxBytes, single) ??
+      bestCut(text, start, maxBytes, sentence) ??
+      hardCut(text, start, maxBytes);
     out.push(text.slice(start, end));
     start = end;
   }

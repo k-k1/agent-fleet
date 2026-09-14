@@ -138,6 +138,22 @@ describe("splitForTranslate", () => {
     expect(chunks.join("")).toBe(text);
   });
 
+  it("falls back to sentence boundaries when a line has no newline at all", () => {
+    const sentences = [
+      "This is the first sentence in one long unbroken line",
+      "here is the second one",
+      "and a third clause follows",
+      "finally the last sentence ends it",
+    ];
+    const text = sentences.join(". ") + "."; // one line, no newlines anywhere
+    const cap = byteLen(sentences[0]) + 5;
+    const chunks = splitForTranslate(text, cap);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join("")).toBe(text);
+    // Cuts land right after ". ", not mid-word: every chunk but the last ends with ". ".
+    for (const c of chunks.slice(0, -1)) expect(c.endsWith(". ")).toBe(true);
+  });
+
   it("hard-splits at a byte-safe boundary when even one line has no break", () => {
     const text = "a".repeat(50) + "あ".repeat(50); // a run with no newline anywhere, incl. multibyte
     const cap = 30;
@@ -158,5 +174,22 @@ describe("splitForTranslate", () => {
     expect(chunks.join("")).toBe(text);
     // The fence never straddles a chunk boundary: each chunk holds an even number of ``` markers.
     for (const c of chunks) expect((c.match(/```/g) || []).length % 2).toBe(0);
+  });
+
+  it("never lands a hard cut inside a surrogate pair (an emoji)", () => {
+    // No newlines anywhere, so this can only be resolved by the byte-boundary fallback — and the
+    // cap is picked to fall exactly between the emoji's two UTF-16 code units.
+    const text = "a".repeat(20) + "🔴" + "b".repeat(20);
+    const cap = byteLen("a".repeat(20)) + 3;
+    const chunks = splitForTranslate(text, cap);
+    expect(chunks.join("")).toBe(text);
+    // A cut between the two halves leaves a lone surrogate at each side. JS string equality
+    // tolerates that (it is still 1:1 in code units), but the actual bytes a fetch body sends
+    // do not: a real UTF-8 encode turns each lone half into its OWN U+FFFD, destroying the
+    // character into two replacement characters instead of reassembling it. Round-tripping each
+    // chunk through the same UTF-8 encode/decode the network does catches that even though the
+    // chunks' JS-level concatenation above already looked fine.
+    for (const c of chunks) expect(new TextDecoder().decode(encoder.encode(c))).toBe(c);
+    expect(chunks.some((c) => c.includes("🔴"))).toBe(true);
   });
 });
