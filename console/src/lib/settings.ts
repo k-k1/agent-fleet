@@ -723,15 +723,16 @@ export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 // Image providers in the Agent's own built-in order (imagegen.providerOrder). agy is first
 // because it honours more of the request — a requested aspect ratio reaches its tool, where the
 // codex route lets the caller choose no dimension at all.
-// The image providers a member can rank, in the built-in order. `sdcpp` and `comfy` are the
-// fleet's own engine (ADR 0071 / ADR 0072 decision 4) — a deployment runs the image role as ONE
-// of the two, never both, but a member's stored preference order should not care which, so both
-// are listed. Either is here because the Agent ranks it in the same list, and a UI that omitted
-// one would write a stored order that silently pushes it last — the one thing
-// normalizeImageProviderOrder exists to prevent. A deployment without that engine simply never
-// routes to it, the same way an unusable login is skipped.
+// The image providers a member can rank, in the built-in order. `openai-compat` and `comfy` are
+// both fleet-hosted (ADR 0071 / ADR 0072 decision 4 / ADR 0083) — the `image` role this stack
+// buys runs comfy alone, but a deployment may add further rows under either provider (ADR 0082),
+// and a member's stored preference order should not care which rows exist today. Both ids are
+// listed because the Agent ranks both in the same list, and a UI that omitted one would write a
+// stored order that silently pushes it last — the one thing normalizeImageProviderOrder exists
+// to prevent. A deployment with no row for one of them simply never routes to it, the same way
+// an unusable login is skipped.
 export const IMAGE_PROVIDERS_RANKED = [
-  { id: "sdcpp", fleet: true },
+  { id: "openai-compat", fleet: true },
   { id: "comfy", fleet: true },
   { id: "agy", fleet: false },
   { id: "codex", fleet: false },
@@ -764,14 +765,15 @@ export function imageProviderLabel(id: string): string {
   return "";
 }
 
-// IMAGE_PROVIDER_FLEET_GROUP is the ONE row the fleet's own engines share in the ordering list.
+// IMAGE_PROVIDER_FLEET_GROUP is the ONE row the fleet's own providers share in the ordering list.
 //
-// `sdcpp` and `comfy` are two spellings of "the engine this deployment hosts" and a deployment
-// runs one of them, never both (ADR 0072 decision 4), so the list showed two rows carrying the
-// SAME label — a ranking between them that no member could make a meaningful choice about, and
-// the second of which is dead on every deployment. Collapsing them is a DISPLAY change only: the
+// `openai-compat` and `comfy` are genuinely different providers after ADR 0083 (one id used to
+// be a second spelling of the other; it no longer is), but the fold survives for a different
+// reason (ADR 0083 decision 8): until the list is drawn from the engine table's own rows instead
+// of this built-in one (ADR 0082 decision 3), a provider with no row here is a rank a member can
+// drag with nothing to route to it. Collapsing them into one row is a DISPLAY change only: the
 // stored setting keeps both ids, because a stored order that dropped one would push it last on
-// the day the deployment switches engines, which is what normalizeImageProviderOrder exists to
+// the day a deployment adds a row for it, which is what normalizeImageProviderOrder exists to
 // prevent.
 //
 // The `@` prefix is not decoration: it keeps this pseudo id outside the space of real provider

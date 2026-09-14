@@ -370,6 +370,11 @@ export type EngineRow = {
   key: string;
   api?: string;
   provider?: string;
+  /** This build's images-provider vocabulary is {comfy, openai-compat} (ADR 0083 decision 5).
+   *  True when this row names anything else — most likely `sdcpp`, retired the same ADR — and
+   *  no client here can generate from it no matter what its mode or lifecycle say. Absent, not
+   *  false, for every row this build CAN serve. */
+  provider_unserved?: boolean;
   models?: string[];
   /** Every row of the catalogue, enabled or not — this panel is where one is turned ON, so a
    *  list filtered to the enabled ones would have no way to reach the others. */

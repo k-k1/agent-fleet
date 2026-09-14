@@ -446,15 +446,17 @@ func studioOf(ctx context.Context, p Provider) (Studio, bool) {
 const (
 	ProviderCodex = "codex"
 	ProviderAgy   = "agy"
-	// ProviderSdcpp is the fleet's OWN engine (ADR 0071): stable-diffusion.cpp on a GPU this
-	// deployment pays for, reached through the Control Plane's engine gateway.
-	ProviderSdcpp = "sdcpp"
+	// ProviderOpenAICompat speaks the OpenAI Images API against whatever server an engine table
+	// row points it at — this fleet's own GPU (ADR 0071), an operator's LAN box (ADR 0076),
+	// another fleet's borrowed engine (ADR 0079), or a metered vendor endpoint. The id names the
+	// PROTOCOL, not who runs the box or who pays for it (ADR 0083).
+	ProviderOpenAICompat = "openai-compat"
 	// ProviderComfy is the fleet's own engine, the ComfyUI alternative (ADR 0072 decision 4,
-	// phase P2). Same transport as sdcpp — the Control Plane's engine gateway — but it holds
-	// several checkpoints at once and switches per REQUEST, which is what makes `model` a real
-	// choice instead of a fixed fact about the deployment. A deployment runs the `image` role
-	// as sdcpp OR comfy, never both (60-engines.yaml's `ImageEngine`), so exactly one of the
-	// two ever answers Ready().
+	// phase P2). Same transport as openai-compat — the Control Plane's engine gateway — but it
+	// holds several checkpoints at once and switches per REQUEST, which is what makes `model` a
+	// real choice instead of a fixed fact about the deployment. The `image` role this stack buys
+	// runs comfy alone (60-engines.yaml's `ImageEngine`); a deployment may still declare further
+	// rows under other providers alongside it (ADR 0082), openai-compat ones included.
 	ProviderComfy = "comfy"
 )
 
@@ -463,13 +465,14 @@ const (
 // or an egress allowlist entry. The third is the fleet's own hardware (ADR 0071), present only
 // in a deployment that stood an image engine up.
 //
-// sdcpp is first where it exists, and the reason is whose account pays: the other two spend a
-// MEMBER's plan quota — invisibly, three to five times faster than a text turn, which is why
-// the whole feature is off by default (decision 8) — while a deployment that stood up the image
-// engine has already decided to pay for that hardware itself. It also honours more of the
-// request than either: exact sizes (measured), plus edit and inpaint, which neither of the
-// others can do at all. It is simply absent from `Ready` where no engine is deployed, which is
-// most deployments, so this does not change what anyone gets today.
+// The fleet's own image providers are first where they exist, and the reason is whose account
+// pays: the other two spend a MEMBER's plan quota — invisibly, three to five times faster than
+// a text turn, which is why the whole feature is off by default (decision 8) — while a
+// deployment that stood up an image engine, or pointed a row at one, has already decided to pay
+// for it itself. They also honour more of the request than either: the sizes a row actually
+// declares, plus edit and inpaint, which neither of the others can do at all. They are simply
+// absent from `Ready` where no such row exists, which is most deployments, so this does not
+// change what anyone gets today.
 //
 // agy before codex because it HONOURS MORE OF THE REQUEST: its aspect ratio reaches the tool
 // (measured), while the Codex route lets the caller choose no dimension at all. The first
@@ -501,7 +504,7 @@ type providerRank struct {
 // providerRanks is the single declaration of the built-in order AND of which providers the fleet
 // serves itself. Adding a provider means adding one line here; nothing else reads the ids.
 var providerRanks = []providerRank{
-	{ID: ProviderSdcpp, Fleet: true},
+	{ID: ProviderOpenAICompat, Fleet: true},
 	{ID: ProviderComfy, Fleet: true},
 	{ID: ProviderAgy},
 	{ID: ProviderCodex},
@@ -589,7 +592,7 @@ func effectiveOrder() []string {
 // changed environment (a Codex login that arrived after boot, an engine stack deployed since)
 // is picked up, and a var so a test can drive Run without a Codex CLI on PATH.
 var Providers = func() []Provider {
-	return []Provider{newSdcppProvider(), newComfyProvider(), newCodexProvider(), newAgyProvider()}
+	return []Provider{newOpenAICompatProvider(), newComfyProvider(), newCodexProvider(), newAgyProvider()}
 }
 
 // chooseImageProviders decides what "auto" (the default) routes to, in order — the same shape
