@@ -215,8 +215,24 @@ C の取り方（新しい常設ポーリングを作らないための配管）
 ⚠️ **A は CP プロセスのメモリにしか無い。** 30-ingress の CP は `DesiredCount: 1`
 （`deploy/aws/ecs/cfn/30-ingress.yaml:854`）なので配備全体として正しいが、ローリング更新の最中だけ 2 つの
 プロセスが数を分け合う。管理者行の `window_counted_secs`（`engine_admin.go:391` の ⚠️）が
-先例で、同じ正直さを持たせる: 行に `queue_counted_secs` を添え、CP が入れ替わった直後は
+先例で、同じ正直さを持たせる: 行に「どれだけの間数えたか」を添え、CP が入れ替わった直後は
 「まだ数えていない」と描けるようにする。**確信のある 0 を出さない。**
+
+**wire の形を確定する（曖昧で、2 レーンが別々に推測しかけた）。**
+決定 3 の鍵一覧は `queue{...}`（入れ子）と書き、この段落は当初 `queue_counted_secs`（平坦）と
+書いていた。**入れ子を採る**——正直さの番人は、それが守る数のそばに置くべきで、役は複数行の
+キューを畳むから:
+
+```
+queue: { count: number, counted_secs?: number }
+```
+
+`counted_secs` は、この CP が信用に足るだけ数えたあとは **0 ではなく「無い」**。`stop_eta` と同じ
+「正直さは省略に宿る」の規則（決定 4）。キューの読みがそもそも無い行は `queue` 鍵を持たない。
+
+🔥 これは `sessionWire` で覚えている失敗そのものである——**両側が違う綴りを使うとフィールドは
+黙って落ち、しかも両側の typecheck も試験も永久に緑のまま**。どちらの側もそれぞれ自己整合だからである。
+どちらのレーンにも推測させないために、ここで名前を釘付けにする。
 
 ### 決定 7 — テナント別の可否は `tenantLimits` の三値 2 本。nil = 許可
 
@@ -374,7 +390,8 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
     試験の形も同じ——実際の行に対して包含を主張する。
   - controller に会員向けスナップショット（決定 3）と、RUNNING のときだけの ComfyUI `/queue`
     読み（決定 6-B）。
-  - ゲートウェイに in-flight カウンタ 2 つ（決定 6-A）と `queue_counted_secs`。
+  - ゲートウェイに in-flight カウンタ 2 つ（決定 6-A）。送出は
+    `queue: {count, counted_secs?}`（形は決定 6 で確定）。
   - `limits.go` に `*bool` 2 本、`tenant_wiring.go`（:294 / :316）と `tenantsrv/tenants.go`
     （:151 / :960 / :1031 / :1067）に同じ 2 本、`SetTenantLimits` に audit 1 行。
   - ゲート 3 か所（`engine_gateway.go` の `catalog` / `issueSessionToken` / `serve`）と

@@ -237,8 +237,25 @@ How C is fetched, without creating a new permanent poll:
 ⚠️ **A lives in one CP process's memory and nowhere else.** The CP service is `DesiredCount: 1`
 (`deploy/aws/ecs/cfn/30-ingress.yaml:854`), so the number is deployment-wide — except during a rolling update, when
 two processes split it. The admin row's `window_counted_secs` (the ⚠️ at `engine_admin.go:391`) is
-the precedent, and this gets the same honesty: a `queue_counted_secs` beside the number, so a CP
+the precedent, and this gets the same honesty: a counted-for figure beside the number, so a CP
 that has just been replaced can be drawn as "not counted yet". **Do not state a confident 0.**
+
+**The wire shape, settled (it was ambiguous and two lanes were about to guess differently).**
+Decision 3's row list says `queue{...}` while this paragraph originally named a flat
+`queue_counted_secs`; the nested form wins, because the honesty guard belongs to the number it
+guards and a role folds several rows' queues:
+
+```
+queue: { count: number, counted_secs?: number }
+```
+
+`counted_secs` is **absent, not zero**, when this CP has been counting long enough to be trusted —
+the same "the honesty lives in the omission" rule as `stop_eta` (decision 4). A row with no queue
+reading at all carries no `queue` key.
+
+🔥 This is the exact failure `sessionWire` is remembered for: **a field the two sides spell
+differently disappears silently, and the typecheck and the tests on both sides stay green forever**,
+because each side is self-consistent. The name is pinned here so neither lane has to guess.
 
 ### Decision 7 — the tenant gate is two tri-state fields on `tenantLimits`; nil means allowed
 
@@ -410,7 +427,8 @@ your `auto` reaches first", it is a projection the CP would have to be given, no
     (assert containment against a real row);
   - a member-facing snapshot on the controller (decision 3) and the ComfyUI `/queue` read while
     RUNNING (decision 6-B);
-  - two in-flight counters on the gateway (decision 6-A) and `queue_counted_secs`;
+  - two in-flight counters on the gateway (decision 6-A), sent as
+    `queue: {count, counted_secs?}` (the shape pinned in decision 6);
   - two `*bool`s in `limits.go`, the same two through `tenant_wiring.go` (:294 / :316) and
     `tenantsrv/tenants.go` (:151 / :960 / :1031 / :1067), and one audit row in `SetTenantLimits`;
   - three gates (`catalog` / `issueSessionToken` / `serve` in `engine_gateway.go`) and the
