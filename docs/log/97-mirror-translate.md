@@ -161,3 +161,44 @@ Agent の HTTP に直接 1 回投げた（434 バイトの英文 Markdown・箇�
 「does not send the folded work process's intermediate replies to translate」（ツール→短い中間応答
 →ツール→短い中間応答→ツール→長い最終回答、という形のターンで、送られるのは最終回答だけである
 ことを確認）。Console 全体 2781 件・typecheck・oxlint・i18n:lint・`docs-check.py` いずれも緑。
+
+## 97.10 利用者要望（2026-09-14）: タブ切り替えで Original に戻る／長すぎる答えの分割翻訳
+
+配備後、利用者から実運用で 2 件。
+
+1. **翻訳を表示したままタブを切り替えると Original に戻る。** `useTranslate.ts` の `shown`
+   （どのターンを表示中か）は `useState` のコンポーネントローカル state だった。`Pane.tsx` は
+   同じセルの別セッションタブへ切り替える際 `MirrorView` インスタンスを使い回して `session` prop
+   だけを差し替える（`MirrorView.tsx` 自身がその前提でコメントされている）ため、① `session` が
+   変わるたび `useTranslate` の effect が無条件に `setState(emptyState())` していたこと、②
+   チャット以外のタブに切り替えると `MirrorView` 自体が条件レンダーでアンマウントされること、の
+   両方で `shown` が空に戻っていた。`shown` はサーバーに存在しない（`session_translate.go` の
+   保存はハッシュ→訳文のみで「どのターンが表示中か」は持たない）ので、消えたら復元しようがない。
+   同種の問題（`MirrorView` のアンマウントで消える）は送信エコー（`parts/sendEcho.ts` の
+   `echoStore`）で既に module-level Map による退避という形で解決済みだったので、同じ形を転用:
+   `useTranslate.ts` に `session+lang` をキーにした module-level `stateStore` を足し、`shown` を
+   含む state 全体を write-through で退避・復元する。GET `/translations` の結果は退避済み
+   `entries` を**上書きせずマージする**（`splitForTranslate` で作った復元済みエントリ、後述、は
+   サーバー側に存在しないので上書きすると消える）。
+2. **答えが長すぎると `translate_too_long` で丸ごと失敗する。** §97.9 で畳みの外だけに絞っても、
+   最終回答そのものが 1 パートで `translateMaxPartBytes`（32 KiB）を超えることがある。利用者の
+   要望どおり「きりの良い改行で分割して翻訳し、結合して表示」を実装。`translate.ts` に
+   `splitForTranslate(text, maxBytes)` を追加——空行、次に単一改行、最後に UTF-8 セーフな生の
+   バイト境界、の優先順で分割し、返ったチャンクを**区切り文字なしで結合すると原文と完全一致**する
+   （分割点は「改行の直後」に置くので改行自体は各チャンクが持ち歩く）。フェンスコード
+   ` ``` `〜` ``` ` は単体で収まる限り 1 チャンクに保つ（またいで分割すると開始/終了が別リクエスト
+   に分かれ、persona の「コードフェンスは原文のまま」が守れなくなる）。
+   `useTranslate.ts` の `toggle()` でこの分割を行い、各チャンクを独立した translate request part
+   として送って個別にキャッシュさせつつ、返ってきた訳文をまとめて**元のテキスト全体のハッシュ**の
+   下にも保存する——`translatedOf`/`copyText`（`TranscriptTurn.tsx`）や次回以降の cache-hit 判定
+   は元テキスト全体のハッシュだけを見るので、分割されたことを外側は一切知らなくてよい。
+   `translateMaxParts`（8）は分割後の合計パート数がこれを超えるとサーバー側がそのまま
+   `translate_too_long` を返す（同じエラーコード・同じ利用者向け文言）——本当に巨大な答え
+   （目安 256 KiB 超）はこの機構でも救えないが、実際に踏んだケース（畳みを除いた最終回答が
+   32〜90 KiB 程度）はこれで通る。
+   回帰試験: `translate.test.ts`「splitForTranslate」5 件（下限以下は無加工／段落境界で分割し
+   結合が原文と一致／段落が無い場合は行境界にフォールバック／改行すら無い場合はバイト境界に
+   フォールバックし文字の途中を切らない／フェンスを跨がない）、`useTranslate.test.tsx`
+  （新設・`react-test-renderer` の Harness 方式）でタブ切り替え 2 パターン（同一セル内の
+   session prop 差し替え／完全アンマウント）と分割送信・再結合の一連。Console 全体 2793 件・
+   typecheck・oxlint・i18n:lint・`docs-check.py` いずれも緑。
