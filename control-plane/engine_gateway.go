@@ -186,14 +186,21 @@ type engineGateway struct {
 // `GET /api/admin/engines` — the panel could not even say "no engines here", and ADR 0072
 // decision 11's browse (which needs no engine, no token and no bucket) was unreachable exactly
 // where it is most useful: deciding whether to stand the stack up at all. Every one of those
-// handlers is nil-safe on the registry and answers "there is no such engine" by itself.
-func registerEngineRoutes(mux *http.ServeMux, cfg config) {
+// handlers is nil-safe on the registry and answers "there is no such engine" by itself. The
+// member fallback (engine_member.go) is registered the same unconditional way, for the same
+// reason (ADR 0084 decision 1).
+//
+// It answers the registry it built, so registerEventsRoutes — called earlier in buildMux — can
+// wire the SAME registry into the `engines` SSE stream rather than building a second one. Two
+// registries would mean two controller goroutines per engine, each buying its own box.
+func registerEngineRoutes(mux *http.ServeMux, cfg config) *engineRegistry {
 	reg := newEngineRegistry(context.Background(), cfg.mgr)
 	// The super-admin panel. Registered before the gateway's own guard because it is the one
 	// part that has something to say when there is no engine at all.
 	registerEngineAdminRoutes(mux, cfg, reg)
+	registerEngineMemberRoutes(mux, cfg, reg)
 	if reg == nil {
-		return
+		return nil
 	}
 	g := engineGateway{mgr: cfg.mgr, reg: reg}
 	// Session-exempt, like /mcp and /git/*: the caller is a Workspace with a token, not a
@@ -202,6 +209,7 @@ func registerEngineRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/engine/token", g.issueSessionToken)
 	mux.HandleFunc("GET /internal/engine/catalog", g.catalog)
 	mux.HandleFunc("/engine/{key}/v1/{path...}", g.serve)
+	return reg
 }
 
 // --- token issue --------------------------------------------------------------
@@ -559,6 +567,13 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
+
+	// From here the request is actually held — waiting for a cold box or being answered — which
+	// is decision 6-A's "A": the CP's own in-flight count (ADR 0084). Not started any earlier:
+	// pendingGuard's refusal above sends the caller away to retry with a NEW request, and that is
+	// not a request this process is holding.
+	eng.inflight.begin()
+	defer eng.inflight.end()
 
 	if engineWantsStream(body) {
 		g.streamed(w, r, eng, claims, mv, askForStreamUsage(body))

@@ -11,6 +11,7 @@ import { aiassist } from "./en/aiassist.ts";
 import { assistant } from "./en/assistant.ts";
 import { chat } from "./en/chat.ts";
 import { common } from "./en/common.ts";
+import { engines } from "./en/engines.ts";
 import { errors } from "./en/errors.ts";
 import { gallery } from "./en/gallery.ts";
 import { imggen } from "./en/imggen.ts";
@@ -50,4 +51,5 @@ export const en: Record<keyof typeof ja, string> = {
   ...memo,
   ...gallery,
   ...imggen,
+  ...engines,
 };
