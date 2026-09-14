@@ -613,6 +613,14 @@ func engineFirstString(v any) string {
 	return ""
 }
 
+// engineIngestGetJSON deliberately makes ONE round trip and never retries a 503: this backs both
+// metadata resolution and the VAE header probe (engine_vae.go), and those callers each have
+// their OWN budget for how many times to ask a source that has already refused — a scan of many
+// rows caps how many DIFFERENT models it probes after a few come back unreadable
+// (engineVaeScanFails), and multiplying every one of those into several requests would blow that
+// budget silently. A 503 that clears in under a second is instead retried where it is safe to —
+// the search path (engineSearchGetJSON) — because that is one request per user keystroke, not
+// one per row of a batch.
 func engineIngestGetJSON(ctx context.Context, target string, out any) *apiError {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {

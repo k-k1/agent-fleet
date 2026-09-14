@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -419,7 +420,7 @@ func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq, nsfw bool
 		v.Set("cursor", req.cursor)
 	}
 	var doc engineCivitaiSearchDoc
-	if aerr := engineIngestGetJSON(ctx, host+"/api/v1/models?"+v.Encode(), &doc); aerr != nil {
+	if _, aerr := engineSearchGetJSON(ctx, host+"/api/v1/models?"+v.Encode(), &doc); aerr != nil {
 		return nil, "", aerr
 	}
 	out := make([]engineSearchHit, 0, len(doc.Items))
@@ -593,34 +594,56 @@ func engineSafeCivitaiPreviewURL(raw string) string {
 	return s
 }
 
+// engineSearchGetJSONRetries bounds how many times a single search request retries a 503.
+// Measured on af-sandbox (2026-09-14): Civitai's search endpoint sheds load with a 503 that
+// clears within a second, and until now that failed the whole search on the first bad tick —
+// the operator's only recourse was to press search again by hand. This is safe to retry where
+// engineIngestGetJSON deliberately is NOT (see its comment): one search is one request per
+// keystroke, not one of many probes in an unattended batch.
+const engineSearchGetJSONRetries = 3
+
 // engineSearchGetJSON is the search-only variant that retains response headers for Hugging
-// Face pagination. It applies the same bounded body and error mapping as metadata resolution.
+// Face pagination and retries a transient 503. It applies the same bounded body and error
+// mapping as metadata resolution (engineIngestGetJSON) otherwise.
 func engineSearchGetJSON(ctx context.Context, target string, out any) (http.Header, *apiError) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return nil, &apiError{http.StatusBadRequest, errCodeIngestBadSource, err.Error()}
+	var lastErr *apiError
+	for attempt := 1; attempt <= engineSearchGetJSONRetries; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		if err != nil {
+			return nil, &apiError{http.StatusBadRequest, errCodeIngestBadSource, err.Error()}
+		}
+		resp, err := engineIngestHTTP.Do(req)
+		if err != nil {
+			return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceUnreach,
+				"could not reach " + engineIngestHost(target) + ": " + err.Error()}
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceForbid,
+				engineIngestHost(target) + " refused the lookup (" + resp.Status + ")"}
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = &apiError{http.StatusBadGateway, errCodeIngestSourceError,
+				engineIngestHost(target) + " answered " + resp.Status}
+			if resp.StatusCode != http.StatusServiceUnavailable || attempt == engineSearchGetJSONRetries {
+				return nil, lastErr
+			}
+			select {
+			case <-ctx.Done():
+				return nil, lastErr
+			case <-time.After(time.Duration(attempt) * 400 * time.Millisecond):
+			}
+			continue
+		}
+		if err := json.Unmarshal(body, out); err != nil {
+			log.Printf("engines: unreadable answer from %s: %v", target, err)
+			return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceError,
+				"unreadable answer from " + engineIngestHost(target)}
+		}
+		return resp.Header, nil
 	}
-	resp, err := engineIngestHTTP.Do(req)
-	if err != nil {
-		return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceUnreach,
-			"could not reach " + engineIngestHost(target) + ": " + err.Error()}
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceForbid,
-			engineIngestHost(target) + " refused the lookup (" + resp.Status + ")"}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceError,
-			engineIngestHost(target) + " answered " + resp.Status}
-	}
-	if err := json.Unmarshal(body, out); err != nil {
-		log.Printf("engines: unreadable answer from %s: %v", target, err)
-		return nil, &apiError{http.StatusBadGateway, errCodeIngestSourceError,
-			"unreadable answer from " + engineIngestHost(target)}
-	}
-	return resp.Header, nil
+	return nil, lastErr
 }
 
 // searchIngest (POST …/{key}/ingest/search) is the repository picker behind one engine's

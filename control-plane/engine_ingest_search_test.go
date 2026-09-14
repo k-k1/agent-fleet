@@ -267,6 +267,93 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 	}
 }
 
+// serviceUnavailableThenOK answers 503 for the first `fails` requests and 200 (with `body`)
+// after that, and counts how many requests it saw.
+func serviceUnavailableThenOK(t *testing.T, fails int, body string) (*httptest.Server, *int) {
+	t.Helper()
+	requests := 0
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests <= fails {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(s.Close)
+	return s, &requests
+}
+
+// 🔴 Measured on af-sandbox (2026-09-14): Civitai's search endpoint answers 503 under load and
+// clears within a second, which used to fail the whole search on the FIRST bad tick — an
+// operator's only recourse was to press search again by hand. engineSearchGetJSON now retries a
+// 503 in place; this is the positive control that the retry actually fires and the eventual
+// success is still returned, not swallowed as an error. Deliberately NOT on engineIngestGetJSON
+// (see its comment) — that one backs the VAE scan's own per-batch budget, and multiplying every
+// probe by three would blow it silently.
+func TestCivitaiSearchRetries503ThenSucceeds(t *testing.T) {
+	s, requests := serviceUnavailableThenOK(t, 2, `{"items":[]}`)
+	defer s.Close()
+	old := engineCivitaiBase
+	engineCivitaiBase = s.URL
+	defer func() { engineCivitaiBase = old }()
+
+	hits, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "checkpoint", sort: ""})
+	if aerr != nil {
+		t.Fatalf("search: %v", aerr.message)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("hits = %+v, want none from an empty page", hits)
+	}
+	if *requests != 3 {
+		t.Errorf("requests = %d, want 3 (2 failures + the retry that succeeded)", *requests)
+	}
+}
+
+// A 503 that never clears must still surface as an error to the panel (the "取り込み元が想定外
+// の応答を返しました" banner) rather than retrying forever or reporting nothing.
+func TestCivitaiSearchGivesUpAfterExhaustingRetries(t *testing.T) {
+	s, requests := serviceUnavailableThenOK(t, 99, "")
+	defer s.Close()
+	old := engineCivitaiBase
+	engineCivitaiBase = s.URL
+	defer func() { engineCivitaiBase = old }()
+
+	_, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "checkpoint", sort: ""})
+	if aerr == nil {
+		t.Fatal("search of a permanently-503 host returned no error")
+	}
+	if aerr.status != http.StatusBadGateway || !strings.Contains(aerr.message, "503") {
+		t.Errorf("error = %+v, want a 502 mentioning the upstream's 503", aerr)
+	}
+	if *requests != engineSearchGetJSONRetries {
+		t.Errorf("requests = %d, want exactly %d (bounded retry, not unbounded)", *requests, engineSearchGetJSONRetries)
+	}
+}
+
+// 401/403 mean the asset needs an account NOW, not "ask again in a second" — retrying would
+// only make a login wall look like flakiness.
+func TestCivitaiSearchDoesNotRetryAuthRefusals(t *testing.T) {
+	requests := 0
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer s.Close()
+	old := engineCivitaiBase
+	engineCivitaiBase = s.URL
+	defer func() { engineCivitaiBase = old }()
+
+	_, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "checkpoint", sort: ""})
+	if aerr == nil || aerr.code != errCodeIngestSourceForbid {
+		t.Fatalf("error = %+v, want errCodeIngestSourceForbid", aerr)
+	}
+	if requests != 1 {
+		t.Errorf("requests = %d, want exactly 1 (a 401 is not retried)", requests)
+	}
+}
+
 // The civitai-red tab is the only place `nsfw=true` is ever sent, and the only place
 // engineCivitaiRedBase is ever the host — see engineSearchCivitaiPage. Measured 2026-09-14
 // against the live API: neither host returns an NSFW-flagged model without the parameter, so

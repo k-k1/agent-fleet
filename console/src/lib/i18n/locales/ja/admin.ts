@@ -299,6 +299,7 @@ export const admin = {
   "admin.engines_ingest_open": "Hugging Face などから取り込む",
   "admin.engines_ingest_search": "探す",
   "admin.engines_ingest_search_go": "検索",
+  "admin.engines_ingest_searching": "検索しています…",
   "admin.engines_ingest_search_none": "見つかりませんでした。別の言葉で試すか、リポジトリ名を直接入力してください。",
   "admin.engines_ingest_source_hf": "Hugging Face",
   "admin.engines_ingest_source_civitai": "Civitai",

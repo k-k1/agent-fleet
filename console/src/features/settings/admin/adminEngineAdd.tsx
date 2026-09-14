@@ -137,6 +137,7 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
   const [hits, setHits] = useState<IngestHit[] | null>(null);
   const [cursor, setCursor] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyMore, setBusyMore] = useState(false);
   const [err, setErr] = useState("");
   const [operation, setOperation] = useState<{ hit?: IngestHit; act: EngineIngestAct; source?: CatalogSource } | null>(null);
   const [preview, setPreview] = useState<IngestHit | null>(null);
@@ -168,7 +169,7 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
     const body: IngestSearchRequest = {
       q: more ? submittedQuery : query, source, sort, lora: kind === "lora", ...(more && cursor ? { cursor } : {}),
     };
-    setBusy(true); setErr("");
+    setBusy(true); setBusyMore(more); setErr("");
     try {
       const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/search`, "POST", body);
       if (seq !== requestSeq.current) return;
@@ -178,7 +179,7 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
       setHits((current) => more && current ? [...current, ...next] : next);
       if (!more) setSubmittedQuery(query);
       setCursor(page.next_cursor || "");
-    } finally { if (seq === requestSeq.current) setBusy(false); }
+    } finally { if (seq === requestSeq.current) { setBusy(false); setBusyMore(false); } }
   }, [cursor, kind, query, row.key, sort, source, submittedQuery]);
 
   useEffect(() => { void search(false); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [row.key, kind, source, sort]);
@@ -207,7 +208,10 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
         <form className="engine-catalog-search" onSubmit={(event) => { event.preventDefault(); void search(false); }}>
           <input value={query} aria-label={tr("admin.engines_ingest_search")} placeholder={image ? "SDXL, Flux, style…" : "Qwen, Llama, coder…"}
             onChange={(event) => setQuery(event.currentTarget.value)} />
-          <Button type="submit" variant="primary" small disabled={busy}>{tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}</Button>
+          <Button type="submit" variant="primary" small disabled={busy}>
+            {busy && !busyMore && <Icon name="loading" spin />}
+            {tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}
+          </Button>
         </form>
         <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span>
           <select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>
@@ -220,7 +224,8 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
       {storageState === "checking" && <p className="muted engine-catalog-storage-note">{tr("admin.catalog_storage_checking" as never)}</p>}
       {storageState === "failed" && <p className="form-err engine-catalog-storage-note">{tr("admin.catalog_storage_unavailable" as never)}</p>}
       {err && <p className="form-err">{err}</p>}
-      {hits?.length === 0 && <p className="muted engine-catalog-zero">{tr("admin.engines_ingest_search_none")}</p>}
+      {busy && !busyMore && <p className="muted engine-catalog-loading"><Icon name="loading" spin /> {tr("admin.engines_ingest_searching" as never)}</p>}
+      {!busy && hits?.length === 0 && <p className="muted engine-catalog-zero">{tr("admin.engines_ingest_search_none")}</p>}
       {!!hits?.length && <ul className="engine-catalog-grid">{hits.map((hit) => {
         const props: BrowseCardProps = {
           hit, kind, saved: savedFilesForHit(hit, storage?.files || []), storage: storage?.files || [], storageState, readOnly,
@@ -231,7 +236,11 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
           ? <ImageCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} onPreview={() => setPreview(hit)} />
           : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
       })}</ul>}
-      {cursor && query === submittedQuery && <Button variant="ghost" small icon="chevron-down" className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>{tr("admin.catalog_more" as never)}</Button>}
+      {cursor && query === submittedQuery && <Button variant="ghost" small icon={busy && busyMore ? undefined : "chevron-down"}
+        className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>
+        {busy && busyMore && <Icon name="loading" spin />}
+        {tr("admin.catalog_more" as never)}
+      </Button>}
       <CatalogJobs engineKey={row.key} started={startedJob} onCompleted={() => { void loadStorage(); onChanged(); }} />
       {operation && <CatalogOperation row={row} kind={kind} hit={operation.hit} initialAct={operation.act} initialSource={operation.source}
         storage={storage?.files || []} onClose={() => setOperation(null)} onStarted={(job) => { setStartedJob(job); setOperation(null); void loadStorage(); onChanged(); }} />}
