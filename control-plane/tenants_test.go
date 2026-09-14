@@ -69,6 +69,13 @@ func TestTenantLimitsRoundTripsThroughTheSeam(t *testing.T) {
 			f.SetBool(true)
 		case reflect.Slice:
 			f.Set(reflect.ValueOf([]string{v.Type().Field(i).Name}))
+		case reflect.Ptr:
+			// *bool (the tri-state allow_engine_llm/allow_engine_image fields, ADR 0084
+			// decision 7): reflect.DeepEqual is true for two pointers to equal values, not
+			// just identical pointers, so a non-nil bool proves the round trip carried the
+			// VALUE rather than merely not panicking on a nil.
+			b := true
+			f.Set(reflect.ValueOf(&b))
 		default:
 			t.Fatalf("%s: unknown kind %s - add it to the round-trip check", v.Type().Field(i).Name, f.Kind())
 		}

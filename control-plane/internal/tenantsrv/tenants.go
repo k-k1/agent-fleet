@@ -132,7 +132,7 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 		members, _ := a.cp.Store().ListMembersByTenant(r.Context(), t.ID)
 		running, _ := a.cp.CountRunningInTenant(r.Context(), t.ID)
 		lim := a.cp.ParseLimits(t.Limits)
-		out = append(out, map[string]any{
+		row := map[string]any{
 			"slug": t.Slug, "name": t.Name, "status": t.Status, "isolation": t.Isolation,
 			"users": len(members), "running": running,
 			"max_workspaces": lim.MaxWorkspaces, "max_sessions": lim.MaxSessions,
@@ -155,7 +155,17 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 			"auto_join_domains": t.AutoJoinDomains,
 			"allowed_domains":   t.AllowedDomains,
 			"hidden_providers":  t.HiddenProviders,
-		})
+		}
+		// allow_engine_llm / allow_engine_image (ADR 0084 decision 7): super_admin only. This
+		// is not "who may run what" (a tenant_admin's business) but "may this tenant spend on
+		// a GPU box at all" — a cost decision the operator alone makes, so a tenant_admin's own
+		// row never carries it. Resolved to the effective bool (nil => true) for display; a
+		// save always writes an explicit true/false regardless of what was read here.
+		if isSuper {
+			row["allow_engine_llm"] = lim.AllowEngineLLM == nil || *lim.AllowEngineLLM
+			row["allow_engine_image"] = lim.AllowEngineImage == nil || *lim.AllowEngineImage
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
 }
@@ -923,7 +933,7 @@ func (a Admin) DeleteTenant(w http.ResponseWriter, r *http.Request, ident store.
 }
 
 // SetTenantLimits (PUT /api/admin/tenants/{slug}/limits) — docs/16 P3-4.
-func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	var body struct {
 		MaxWorkspaces int   `json:"max_workspaces"`
 		MaxSessions   int   `json:"max_sessions"`
@@ -959,6 +969,14 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, _ store.I
 		// tenant_admins may add to it.
 		AllowEngineIngest            bool `json:"allow_engine_ingest"`
 		TerminalHistoryRetentionDays int  `json:"terminal_history_retention_days"`
+		// Operator gate for USING the deployment's self-hosted engines (ADR 0084 decision
+		// 7), as opposed to AllowEngineIngest above which only gates adding to the
+		// catalogue. *bool, matching tenantLimits: nil resolves to allowed. This handler
+		// rewrites the whole blob (⚠️ below), so a caller that omits the field does not
+		// preserve a prior denial — it resets it to nil/allowed, same as any other field
+		// here. The Console always sends an explicit true/false for exactly this reason.
+		AllowEngineLLM   *bool `json:"allow_engine_llm"`
+		AllowEngineImage *bool `json:"allow_engine_image"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
@@ -1030,6 +1048,8 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, _ store.I
 		AllowAgentSelfUpdate:         body.AllowAgentSelfUpdate,
 		AllowEngineIngest:            body.AllowEngineIngest,
 		TerminalHistoryRetentionDays: body.TerminalHistoryRetentionDays,
+		AllowEngineLLM:               body.AllowEngineLLM,
+		AllowEngineImage:             body.AllowEngineImage,
 	}
 	if err := a.cp.StoreTenantLimits(r.Context(), t.ID, lim); err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -1038,6 +1058,18 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, _ store.I
 	// Rebuild cached runtimes for this tenant so the new gate reaches the next
 	// container start (the gate is injected as env when the runtime is built).
 	a.cp.EvictTenantCache(t.ID)
+	// ADR 0084 decision 9: push the change to the tenant's running workspaces at once, or
+	// a grant revoked here stays live in the Agent's opencode config and gateway cache for
+	// up to ten minutes — decision 8 exists specifically to rule that window out.
+	a.cp.PushEngineCatalogChanged(r.Context(), t.ID)
+	// This endpoint had NO audit trail at all before ADR 0084 — every other admin write in
+	// this file does. A switch that can take image generation and self-hosted chat away
+	// from a whole tenant needs one; MaxWorkspaces etc. changing silently was already a
+	// gap, but this ADR is only fixing the capability-removal switches it is adding.
+	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
+		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
+		Action: "tenant.limits", Target: t.Slug, At: store.NowTS(),
+	})
 	// ⚠️ A WARNING, not a gate, and the save above has already happened. Three reasons:
 	//
 	//  1. It is not an invariant this endpoint can hold. Ec2MaxSlots is CP env and the
@@ -1066,6 +1098,8 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, _ store.I
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,
 		"allow_engine_ingest":             body.AllowEngineIngest,
 		"terminal_history_retention_days": body.TerminalHistoryRetentionDays,
+		"allow_engine_llm":                body.AllowEngineLLM,
+		"allow_engine_image":              body.AllowEngineImage,
 	}
 	// A failure to read it is not a reason to fail the save — the save is done, and the
 	// budget is advice. Say nothing rather than something wrong.

@@ -1,6 +1,6 @@
 package main
 
-// `cpTenant` in tenant_wiring.go (the implementation of `tenantsrv.CP`) is 33 adapters that
+// `cpTenant` in tenant_wiring.go (the implementation of `tenantsrv.CP`) is 34 adapters that
 // each delegate to the real thing in a single line. Neither the type checker nor
 // `var _ tenantsrv.CP = cpTenant{}` sees more than "it exists", so swapping two methods of
 // the same type sets nothing off.
@@ -18,7 +18,7 @@ package main
 // cannot be compared as pointers. In place of identity, check which real thing each one
 // delegates to, by name:
 //
-//  1. TestCPTenantAdaptersDelegateToMatchingTarget — the AST of each of the 33 bodies must
+//  1. TestCPTenantAdaptersDelegateToMatchingTarget — the AST of each of the 34 bodies must
 //     mention the expected real name (a swap changes the referenced name, hence red).
 //  2. TestCPTenantWiringCheckCoversInterface — matches `tenantsrv.CP`'s method set against
 //     the table used by 1 (a new method without a new entry is red).
@@ -48,6 +48,7 @@ var cpTenantDelegates = map[string]string{
 	"KnownProviderIDs":             "knownProviderIDs",
 	"EvictMembershipCache":         "evictMembershipCache", // ↕ same type, swappable
 	"EvictTenantCache":             "evictTenantCache",     // ↕
+	"PushEngineCatalogChanged":     "notifyEngineCatalogChangedForTenant",
 	"InvalidateTenantLogin":        "invalidate",
 	"IdleForecastFor":              "idleForecastFor",
 	"WorkspaceSizing":              "workspaceSizing",
@@ -83,7 +84,7 @@ var cpTenantDelegates = map[string]string{
 
 // bodyNames returns every identifier and selector-field name mentioned in a body.
 // Fields (`d.m.store`) and package-level variables (`trustedProxyHops`) are reached
-// without a call, so collecting names rather than call targets keeps all 33 uniform.
+// without a call, so collecting names rather than call targets keeps all 34 uniform.
 func bodyNames(fd *ast.FuncDecl) map[string]bool {
 	names := map[string]bool{}
 	ast.Inspect(fd.Body, func(n ast.Node) bool {

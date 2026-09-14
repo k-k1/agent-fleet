@@ -136,6 +136,13 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 		if p, aerr := a.wi.workItemsPayload(ctx, res, state); aerr == nil {
 			wrote = emit("workitems", p) || wrote
 		}
+		// ADR 0084 decision 8, gate 4 lands HERE once P0-A adds the `engines` stream
+		// (decision 1): a row for a role this subscriber's tenant was denied
+		// (tenantLimits.engineRoleAllowed, limits.go) must not be emit()ed, the same way
+		// gate 1 drops it from the catalogue. Left as this comment rather than built now —
+		// P0-A and P0-C were run as parallel lanes on the same file (see the ADR's "フェーズ"
+		// section), and P0-C rebases the tenant filter onto P0-A's stream instead of the two
+		// lanes reinventing it independently.
 		if wrote {
 			lastWrite = time.Now()
 		} else if time.Since(lastWrite) >= a.ping {
