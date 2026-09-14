@@ -640,10 +640,10 @@ func (e *engineRuntimeState) walkOffers(ctx context.Context, ask bool) error {
 			c, after = next, engineOfferBudget
 			continue
 		}
-		id, verdict := e.fleet.buy(ctx, c)
+		id, instanceType, verdict := e.fleet.buy(ctx, c)
 		if id != "" {
 			e.offers.took(c, id)
-			e.noteOffer(ctx, c, id, after)
+			e.noteOffer(ctx, c, id, instanceType, after)
 			// Deliberately not "wait for it here": the caller may be an HTTP request, and the
 			// next tick is five seconds away.
 			return errEngineBoxRegistering
@@ -936,12 +936,19 @@ func (e *engineRuntimeState) endBox(ctx context.Context, instanceID, why string)
 
 // noteOffer writes the one audit line per purchase (decision 8, inherited from ADR 0075 decision
 // 5). "Why is this engine running on the expensive box" is a question somebody asks a day later,
-// with only the ledger to answer it.
-func (e *engineRuntimeState) noteOffer(ctx context.Context, c engineClass, instanceID, after string) {
+// with only the ledger to answer it — which a row widened to several types (decision 1) could
+// not answer before: the offer id names the RANGE, not what was actually bought. instanceType is
+// EC2 Fleet's own answer (engineFleetInstanceType), logged even when it duplicates a single-type
+// row's only choice, so every line has the same shape to read or to query for later. Uptime is
+// not this line's job: it is the gap between this timestamp and the matching
+// "engine.<key>.box"/"engine.<key>.interrupted" line for the same instance id, both already
+// written (noteBoxAction, noteInterrupted) — recomputing it here would be a second, driftable
+// copy of what those lines already say once.
+func (e *engineRuntimeState) noteOffer(ctx context.Context, c engineClass, instanceID, instanceType, after string) {
 	if e == nil || e.audit == nil {
 		return
 	}
-	detail := fmt.Sprintf("buy=%s instance=%s", c.buy(), instanceID)
+	detail := fmt.Sprintf("buy=%s instance=%s type=%s price=%.2f", c.buy(), instanceID, instanceType, c.UsdPerHour)
 	if after != "" && after != engineOfferActive {
 		detail += " after=" + after
 	}
