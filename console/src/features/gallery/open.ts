@@ -57,7 +57,9 @@ export function openGallery(path: string, opts: OpenGalleryOptions = {}): void {
   const st = useLayoutStore.getState();
   const existing = allViews(st.layout).find((p) => p.content.kind === "gallery" && p.content.galleryPath === path);
   if (existing && !opts.newPane) {
-    st.setPaneTarget(existing.id, { content });
+    // A real navigation (a different folder), same as a click inside the gallery itself — so
+    // it goes through the same history-pushing path the browser's Back button then retraces.
+    st.setPaneTarget(existing.id, { content }, true);
     st.selectTab(existing.id);
     return;
   }

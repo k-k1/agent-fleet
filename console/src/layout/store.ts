@@ -39,7 +39,10 @@ interface LayoutStore {
   // navigation
   openTarget(target: OpenTarget): void;
   openTargetInNew(target: OpenTarget, force?: boolean): void;
-  setPaneTarget(paneId: string, target: OpenTarget): void;
+  /** `push` defaults to false (a content tweak — sort, focus, wrap — is not history-worthy,
+   *  same stance as tab selection and pane activation). A caller for whom this IS a place to
+   *  come back to (the gallery's folder navigation, say) passes `true`. */
+  setPaneTarget(paneId: string, target: OpenTarget, push?: boolean): void;
   // pane controls
   splitRight(): void;
   splitDown(paneId: string): void;
@@ -258,7 +261,7 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
           ? ops.openActive(get().layout, target)
           : ops.openInNew(get().layout, target, { mobile: mobileMatches(), force }),
       ),
-    setPaneTarget: (paneId, target) => commit(ops.setPaneTarget(get().layout, paneId, target), false),
+    setPaneTarget: (paneId, target, push = false) => commit(ops.setPaneTarget(get().layout, paneId, target), push),
 
     splitRight: () => commit(ops.splitRight(get().layout)),
     splitDown: (paneId) => commit(ops.splitDown(get().layout, paneId)),
