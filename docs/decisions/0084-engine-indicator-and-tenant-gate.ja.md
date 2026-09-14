@@ -2,13 +2,17 @@
 
 [English](0084-engine-indicator-and-tenant-gate.md) | 日本語
 
-- 状態: **起草**（2026-09-14）。実装前。以下の「ある」「無い」は `6041a58d` のツリーで grep して
-  裏取りした。
-  🔴 **番号をマージ直前に確認すること。** `develop` の最新 ADR は 0081 で、0082（多エンジン）と
-  0083（sdcpp 退役）は **PR #644（`temp/sjprno4`）で審査中**——まだ `develop` に着地していない
-  （2026-09-14 時点）。同じ番号のファイルを git は黙ってマージする。
+- 状態: **起草**（2026-09-14）。実装前。以下の「ある」「無い」は `6041a58d` で grep して裏取りし、
+  **ADR 0082 / 0083 が着地した後の develop（52 コミット）に合わせ直した**（同日）。
+  合わせ直しで**剥がれた前提が 1 つ**——`image` 役はもう 1 行とは限らない（決定 11）。
+  行番号は全部引き直し、`engineImageConn` の署名変更（`provider` → `key`）も反映した。
+  🟢 番号は確定。0082 / 0083 は develop に入り、0084 は空いている。
 - 関連: [0071](0071-self-hosted-inference-engines.ja.md)（エンジンの箱・オンデマンド制御・
   コールドスタート・ゲートウェイ） /
+  [0082](0082-many-image-engines-at-once.ja.md)（**images 行それ自体が 1 provider**。
+  1 つの役が複数の行を持つ——決定 11 はこれを受ける） /
+  [0083](0083-openai-compat-image-provider.ja.md)（`sdcpp` → `openai-compat`。
+  相手にする行は `external` と `remote` だけ） /
   [0072](0072-engine-model-catalog.ja.md)（カタログは配備で 1 つ・取り込みのテナント許可） /
   [0074](0074-engine-instance-classes.ja.md)・[0077](0077-engine-boxes-bought-by-cp.ja.md)（箱と費用） /
   [0076](0076-external-image-engine-on-lan.ja.md)・[0079](0079-remote-engine-from-another-deployment.ja.md)
@@ -25,26 +29,27 @@
 返ってくるまでの時間は、箱がいま起きているかどうかで一桁変わる**。
 
 いまその情報を持っているのは管理者だけである。`GET /api/admin/engines`
-（`control-plane/engine_admin.go:161`）の行は `state` / `warm` / `stop_eta` / `idle_secs` /
+（`control-plane/engine_admin.go:172`）の行は `state` / `warm` / `stop_eta` / `idle_secs` /
 `window_secs` / `window_units` / `box` / `lifecycle` を運ぶが、この口は super_admin と
 `allow_engine_ingest` を与えられた tenant_admin にしか開いていない。一般メンバーには
 エンジンに関する会員向けルートが**1 本も無い**——ADR 0081 決定 10 が意図してそう決めた
 （画像生成ペインの中では、ヘッダの「準備済み／冷えている／起動中／使えない」で足りたからである）。
 
-ペインの中では足りた。フリート全体では足りない。箱は**配備で 1 つ**（カタログもそう。
-`engine_ingest_perm.go:5` が実測付きで「テナントごとのカタログはコールドスタックの同期が破綻する」と
-書いている）で、全メンバーが同じ箱を共有する。「いま投げると待つのか」「もうすぐ止まるから
+ペインの中では足りた。フリート全体では足りない。**1 つの行が買う箱は 1 つで、全メンバーが
+それを共有する**（行は複数ありうる——ADR 0082、決定 11。カタログのほうは配備で 1 つのままで、
+`engine_ingest_perm.go:6` が実測付きで「テナントごとのカタログはコールドスタートの同期が破綻する」と
+書いている）。「いま投げると待つのか」「もうすぐ止まるから
 いま投げるべきか」「誰かが 40 枚積んでいるのか」は、ペインを開く前に知りたい事実である。
 
 実測で既に在るもの:
 
-- **停止までの時刻**は `stop_eta`（`engine_admin.go:430`）。`engineStopETA` は答えの無い 4 つの場合
+- **停止までの時刻**は `stop_eta`（`engine_admin.go:449`）。`engineStopETA` は答えの無い 4 つの場合
   ——固定 ON・OFF・既に停止・需要印がまだ無い——で**意図的に省略**する。ゼロや遠い日付を書かない。
 - **状態**は ECS の view（`engine_ecs.go:174`、3 秒キャッシュ）＋ `warm`（controller が自分の tick で
   維持する bool。誰も叩かない）。RUNNING と READY は別物で、llama-server は重みが VRAM に載る
   267 秒前にポートを開く（実測）。
 - **この配備が管理していない行**（ADR 0076 の external、ADR 0079 の remote）については、CP は
-  `state` / `desired` / `box` / `stop_eta` / `idle_secs` を**送らない**（`engine_admin.go:265`）。
+  `state` / `desired` / `box` / `stop_eta` / `idle_secs` を**送らない**（`engine_admin.go:274`）。
   「idle 0 は『止まらない』の意味であり、他所の箱についてこの配備が主張してよい事柄ではない」。
 - **押す配管**は在る。`GET /api/events`（`events.go:54`）は 4 秒 tick の SSE で、**JSON が変わった
   ストリームだけ**送る（`events.go:101` の `emit`）。無変化の tick は 0 バイト。冒頭が理由を書いている
@@ -86,7 +91,7 @@ elapsed を入れるとバッチが生きている間**毎回の poll が丸ご�
 送れば、`emit` の差分抑制は毎 tick 破れ、engines ストリームは「無変化なら 0 バイト」ではなく
 「稼働中はずっと全量」になる。
 
-ブラウザ側の tick は 15 秒。管理者パネルの `useSecondHand`（`adminEngines.tsx:676`）の
+ブラウザ側の tick は 15 秒。管理者パネルの `useSecondHand`（`adminEngines.tsx:683`）の
 数字と理由をそのまま借りる——表示は分に丸まるので 1 秒 tick は同じ文字列を 59 回描き直すだけであり、
 数える物が無くなれば interval ごと畳む。
 
@@ -121,13 +126,13 @@ tenant_admin 行について書いた通り、「押したら 403 になるま�
 
 ### 決定 4 — 語彙は管理者と同じ。言えないことは省く
 
-- 状態語は `engineDisplayState()`（`engine_admin.go:478`）を共有する: `stopped` / `starting` /
+- 状態語は `engineDisplayState()`（`engine_admin.go:500`）を共有する: `stopped` / `starting` /
   `running` / `stopping`。`warm` は別軸として並べる（RUNNING ≠ READY）。
 - **この配備が管理していない行**（`lifecycle` が external / remote）は `stop_eta`・`idle_secs`・
   `state` を**運ばない**。管理者行が送らないものを会員行が発明しない。ピルは「利用可」とだけ言い、
   カウントダウンの行は出さない。ADR 0079 の借用行については、向こうの配備にパネルがある。
 - `stop_eta` が無い＝カウントダウンを出さない。既定値を作らない。**正直さは省略に宿る**
-  （`adminEngines.tsx:739` が同じ注意を書いている）。`mode=ondemand` かつ `idle_secs` がある
+  （`adminEngines.tsx:746` が同じ注意を書いている）。`mode=ondemand` かつ `idle_secs` がある
   ときだけ、時刻ではなく**方針**を出してよい（「30 分使われなければ止まります」）。
 
 ### 決定 5 — 「利用できない場合は表示しない」の定義
@@ -161,13 +166,17 @@ CP が「出さない」を**行を送らないこと**で表現するからで�
   素通し、非ストリームは 45 秒で `engine_waking`）。A が「いま何人待っているか」の全量である。
 - **`image` 役 = A + B。** ComfyUI は非同期 API で、`POST /prompt` は**即座に queue id を返す**
   （`comfy.go:7`）。絵は CP の外、箱の中のキューで順番待ちする。A だけでは取りこぼす。
-  B の読み方は Agent 側に実装済みで（`comfy.go:1225` の `queuePending`、`/queue` の
+  B の読み方は Agent 側に実装済みで（`comfy.go:1232` の `queuePending`、`/queue` の
   `queue_pending` を読む取消の実装）、同じ読みを CP の controller tick に置く——
   **サービスが RUNNING のときだけ**。寝ている間は 0 コール。稼働中でも 30 秒に 1 回で、
   $1.26/h の箱の横では誤差である。
 - **C は別の数で、別の出所から来る。** メンバーが 40 枚のバッチを投げたとき、38 枚は
   自分のワークスペースの Agent のメモリの中にあり、**CP からは原理的に見えない**。これを足さないと、
   投げた本人のピルが「待ち 2」と出る。
+- **A と B は行ごとに数える**（決定 11）。ピルが見出しに出す共有の数は、その役の行の合計。
+  popover は行ごとに割って出す。**外部・借用の行には B が無い**——向こうの箱の `/queue` を
+  この配備が訊きに行くことは、`state` を送らないのと同じ理由で**しない**（決定 4）。
+  その行の数は A だけになり、popover はそう描く。
 
 **だからピルは 2 つの数を見せる: 共有（A+B）と自分（C）。**
 
@@ -190,7 +199,7 @@ C の取り方（新しい常設ポーリングを作らないための配管）
 
 ⚠️ **A は CP プロセスのメモリにしか無い。** 30-ingress の CP は `DesiredCount: 1`
 （`cfn/30-ingress.yaml:854`）なので配備全体として正しいが、ローリング更新の最中だけ 2 つの
-プロセスが数を分け合う。管理者行の `window_counted_secs`（`engine_admin.go:372` の ⚠️）が
+プロセスが数を分け合う。管理者行の `window_counted_secs`（`engine_admin.go:391` の ⚠️）が
 先例で、同じ正直さを持たせる: 行に `queue_counted_secs` を添え、CP が入れ替わった直後は
 「まだ数えていない」と描けるようにする。**確信のある 0 を出さない。**
 
@@ -224,8 +233,8 @@ ADR 0072 が実測で却下した設計（コールドスタートの同期は�
 
 | # | 場所 | 何が起きるか |
 |---|---|---|
-| 1 | `GET /internal/engine/catalog`（`engine_gateway.go:251`）を役で絞る | **主。** これ 1 つで `generate_image` が tools/list から消え、opencode の provider ブロックから落ち、画像生成ペインのカタログが空になる。Agent 側の読み手（`engines.go:430` の `engineImageConn`）が「この配備はセルフホストの画像エンジンを走らせていない」に落ちる |
-| 2 | `POST /internal/engine/token`（`:214`）を 403 | カタログは Agent 側で **10 分**キャッシュされる（`engines.go:167`） |
+| 1 | `GET /internal/engine/catalog`（`engine_gateway.go:251`）を役で絞る | **主。** これ 1 つで `generate_image` が tools/list から消え、opencode の provider ブロックから落ち、画像生成ペインのカタログが空になる。Agent 側の読み手（`engines.go:473` の `engineImageConn`）が「この配備はセルフホストの画像エンジンを走らせていない」に落ちる |
+| 2 | `POST /internal/engine/token`（`:214`）を 403 | カタログは Agent 側で **10 分**キャッシュされる（`engines.go:190`） |
 | 3 | `/engine/{key}/v1/*`（`:411`）を 403 | セッショントークンは **30 日**生きる（`engine_token.go:85`）。`mv`（membership）は認証直後に既に手元にあり、`engine_off` / `engine_unavailable` の判定の隣に 1 つ足すだけ。誤り符号は `engine_forbidden` |
 | 4 | events の `engines` ストリーム | ピルを出さない（決定 5-4） |
 
@@ -238,23 +247,24 @@ ADR 0072 が実測で却下した設計（コールドスタートの同期は�
 ### 決定 9 — 変更は即座にそのテナントへ押す。空のカタログでも provider ブロックを消す
 
 トグルを保存したら、**そのテナントの稼働中ワークスペース**に `POST /engine/catalog-changed` を
-押す。走査と並列度は既にある（`engine_usage.go:410`——全テナント×ワークスペースを回り、
+押す。走査と並列度は既にある（`engine_usage.go:408`——全テナント×ワークスペースを回り、
 DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑える）。テナント 1 つに
 絞るだけである。置き場所は `EvictTenantCache`（`tenants.go:1040`）の直後。
 
 これが無いと最大 10 分、**メニューに出ているのに 403** になる——決定 8 が作らないと言った形そのものである。
 
-🔴 **既存の穴。** `syncEngineProviders`（`workspace/agent/engines.go:253`）は
+🔴 **既存の穴。** `syncEngineProviders`（`workspace/agent/engines.go:277`）は
 `if len(rows) == 0 { return }` で抜ける（`:257`）。カタログが**空になった**とき、
 `WriteEngineProviders` は呼ばれず、**opencode の provider ブロックは古いまま残る**。
 今日これは起きない（配備からエンジンが消えることは実質ない）が、決定 8-1 はまさにそれを
 テナント単位で起こす。早期 return を「0 行なら 0 行で書く」に直し、`ApplyEngineChange`
-（`engines.go:289`）が daemon に届くようにする。**この修正無しにテナントゲートを入れると、
+（`engines.go:313`）が daemon に届くようにする。**この修正無しにテナントゲートを入れると、
 剥奪されたテナントの起動メニューにモデルが並び続け、選ぶと 403 になる。**
 
 ### 決定 10 — 見た目は TTS ピルの隣。押しても箱は買わない
 
-- 置き場所は `topbar-right` の TTS ピルの隣（`TopBar.tsx:192`）。役ごとに 1 つ、最大 2 つ。
+- 置き場所は `topbar-right` の TTS ピルの隣（`TopBar.tsx:192`）。**役ごとに 1 つ**——行ごとでは
+  ない（決定 11）。したがって最大 2 つ。
 - 幅: デスクトップは `アイコン + 状態 + 停止まで + 待ち`。**スマホはアイコンと状態ドットだけ**
   ——topbar は既に狭く、ブランドが 2 段に折れている（`TopBar.tsx:170` の注記）。詳細はタップで
   popover に出す（`appr` の popover と同じ `useDismiss` の作法）。
@@ -266,6 +276,33 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
   （共有／自分）、そして冷えているときは「最初の 1 枚でエンジンが起動します。通常 N 分」
   ——ADR 0081 決定 10 が既にペインで使っている文言に揃える。
 
+### 決定 11 — 1 つの役は行を複数持ちうる。ピルは役ごと 1 つで、行は popover に並べる
+
+🔥 **起草時の前提が 1 つ崩れた。** ADR 0082 決定 1 が着地して、**`api:"images"` の行はそれ自体が
+1 つの画像 provider** になった。provider id は行の**キー**（`image`・`comfy-lan`）で、種類
+（`comfy` / `openai-compat`）は行のフィールドに残る。つまり配備は `image` 役に**何行でも**持てる
+——自前の 1 行、LAN の ComfyUI（ADR 0076）、借りている行（ADR 0079）。「役ごとに 1 行」は
+もう成り立たない。
+
+これは ADR 0082 自身が名指しした失敗と同じ形である——**単位を「種類」で取ると、行が 2 つある
+瞬間に表現できなくなる**。ここでその過ちを繰り返さないために、単位を最初から分けて決める:
+
+- **ピルの単位は役**（llm / image）。行ごとにピルを出すと、LAN 1 台と借用 1 本を足しただけで
+  topbar が 4 つのピルで埋まる。スマホでは 1 つも入らない。
+- **popover の単位は行。** キー・状態・停止まで・待ち数を 1 行ずつ並べる。運用者が名前を選んだ
+  キーがそのまま出るので（ADR 0082 決定 1 の「結果に `provider: comfy-lan` と出れば、利用者は
+  どの機械が描いたのかを知ることができる」と同じ理屈）、どの機械の話かが読める。
+- **ピルの見出しは、その役の行のうち「いちばん良い状態」**。1 行でも warm な行があれば「準備済み」
+  と言う。これが待ち時間を決めるからで、`auto` はまさにそこへ落ちる。行が 2 つ以上あるときは
+  数の印を添える（`🖼 画像 2`）ので、「1 台の話ではない」ことが popover を開く前に分かる。
+- **`stop_eta` は畳まない。** 複数行の停止時刻を 1 つに丸めた数は、どの箱についても真ではない。
+  ピルのカウントダウンは、見出しを取った**その行の** `stop_eta` だけを出す。他の行は popover。
+
+⚠️ **「いちばん良い状態」は `auto` が実際に選ぶ行とは限らない。** 順序は `imageProviderOrder`
+——**メンバーの設定**であり（ADR 0082 決定 3）、CP がそれを知っているかは未確認（未解決 6）。
+知り得るなら見出しは「自分の `auto` が最初に当てる行」にするべきで、そちらが正しい。
+知り得ないなら「いちばん良い状態」が次善で、popover が行ごとの真実を持つ。
+
 ## 却下した案
 
 - **会員向けに `/api/engines/status` を作って Console にポーリングさせる。** 全メンバー × 5 秒の
@@ -276,7 +313,7 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
   読み手が行動できない数字で、`mode` はコントロールである。`engine_ingest_perm.go:139` が
   tenant_admin について既に却下した同じ案である。
 - **待ち数を ComfyUI に毎回訊く。** エンジンは大半の時間寝ており、寝ている箱を叩くのは
-  `engine_admin.go:173` が `ready` を行に入れなかった理由そのものである。RUNNING のときだけ、
+  `engine_admin.go:184` が `ready` を行に入れなかった理由そのものである。RUNNING のときだけ、
   controller の tick で（決定 6-B）。
 - **待ち数を A（CP の in-flight）だけにする。** image 役で嘘になる（決定 6）。
 - **待ち数を C（自分のキュー）だけにする。** 他人が 40 枚積んでいることが見えない。
@@ -288,6 +325,11 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
   片方の DB 方言で落ちた配備、あるいは移行前に立ち上がった CP が、GPU を全員から取り上げる。
   三値は移行そのものが要らない（決定 7）。
 - **ピルに「今すぐ起動」。** 決定 10。
+- **行ごとに 1 つのピル。** ADR 0082 で `image` 役は何行でも持てるようになった。自前 1 行＋
+  LAN 1 台＋借用 1 本で topbar にピルが 4 つ並び、スマホには 1 つも入らない。役ごと 1 つ、
+  行は popover（決定 11）。
+- **複数行の `stop_eta` を 1 つに畳む。** 丸めた時刻はどの箱についても真ではない。見出しの行の
+  ものだけを出し、残りは popover（決定 11）。
 
 ## 影響
 
@@ -302,13 +344,14 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
     （:151 / :960 / :1031 / :1067）に同じ 2 本、`SetTenantLimits` に audit 1 行。
   - ゲート 3 か所（`engine_gateway.go` の `catalog` / `issueSessionToken` / `serve`）と
     誤り符号 `engine_forbidden`。
-  - カタログ押し出しのテナント絞り込み（`engine_usage.go:410`）。
+  - カタログ押し出しのテナント絞り込み（`engine_usage.go:408`）。
 - **Agent**（`workspace/agent`）:
   - `syncEngineProviders` の空カタログ対応（決定 9・既存の穴）。
   - `GET /imagegen/queue`（要約のみ）と `routes.go` / `testdata/routes.golden`。
   - CP 側の中継 1 行（`control-plane/routes.go:491` の隣）。
 - **Console**:
-  - `app/TopBar.tsx` にピル 2 つと popover、`app/topbar.css`。
+  - `app/TopBar.tsx` に**役ごと**のピル（最大 2 つ）と**行ごと**に並べる popover（決定 11）、
+    `app/topbar.css`。
   - `core/push/wire.ts` に `engines` ストリーム、store 1 つ（events と REST の両方を同じ
     適用パスで、既存 4 本と同じ）。
   - imagegen キュー要約の共有 store（ペインが開いていれば 2 秒、閉じていれば 15 秒、
@@ -328,6 +371,8 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
     in-flight カウンタが増減すること／engines ストリームの**バイトが安定**していること
     （無変化 tick で `emit` が false を返す＝決定 2 の回帰試験）。
   - Go（Agent）: 空カタログで provider ブロックが消えること（決定 9）／`/imagegen/queue` の数。
+  - Go（CP）追加: 1 つの役に行が 2 つある配備で、ピル用の畳み込みが**行ごとの数を保ったまま**
+    合計を出すこと（決定 11・`image` 役 2 行の固定具で）。
   - DOM（Console）: 4 つの非表示条件でピルが出ないこと／`stop_eta` 無しでカウントダウン行が
     無いこと／external 行で状態だけ出ること／自分の待ち数がワークスペース停止時に消えること。
   - **陽性対照を必ず置く**（`AGENTS.md`「検証」）。「ピルが出ない」試験は、ピルが出る側を
@@ -366,4 +411,12 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
    ピルが入ったあと、ペインのヘッダは残すのか、ピルに寄せるのか。**残す**が既定の答え
    （ペインを見ている人の視線はペインの中にある）だが、文言は 1 か所から引くべきで、
    2 つの語彙が育つのは避ける。
-5. **番号。** 0082 / 0083 が別レーンで進行中（冒頭の 🔴）。
+5. ~~**番号。**~~ 解決——0082 / 0083 は develop に着地し、0084 は空いている（冒頭の 🟢）。
+6. **`imageProviderOrder` は CP から見えるか。** 決定 11 の見出しを「自分の `auto` が最初に
+   当てる行」にできるかが、これ 1 つで決まる。あれはメンバーの設定（ADR 0082 決定 3）で、
+   Console の設定同期が CP に置いているかどうかを実装時に確認する。見えるなら見出しはその行、
+   見えないなら「いちばん良い状態」。**推測で実装しない**——外すと、冷えている行を使う人に
+   「準備済み」と言うことになる。
+7. **役に行が 2 つ以上あるとき、テナントゲートは役のままでよいか。** 決定 7 は役の粒度で切った。
+   LAN の 1 台だけ許してクラウドの箱は許さない、という要求が実際に出るかは分からない。
+   出るまで役のままにする——行の粒度はカタログの絞り込みが 1 行では済まなくなる。
