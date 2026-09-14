@@ -4,6 +4,7 @@ import { openEngineAdd } from "./openEngineAdd.ts";
 import { useSettingsUI } from "../store.ts";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
+import { Button } from "../../../ui/Button.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import {
@@ -1312,9 +1313,9 @@ export function EngineModelAdd({
 
   if (!open) {
     return (
-      <button type="button" className="sm engines-open" onClick={() => setOpen(true)}>
+      <Button small className="engines-open" onClick={() => setOpen(true)}>
         {tr("admin.engines_model_add")}
-      </button>
+      </Button>
     );
   }
   const rows = files.filter((f) => f.s3Key.trim());
@@ -1325,7 +1326,9 @@ export function EngineModelAdd({
   const baseOptions = basePicksAModel ? modelIds || [] : families;
   // The base is required exactly when there is a vocabulary to pick from, and the button says so
   // by being disabled rather than by letting the CP refuse after the press.
-  const incomplete = !id.trim() || rows.length === 0 || (baseOptions.length > 0 && !baseModel);
+  const incomplete = !id.trim() || rows.length === 0 || (basePicksAModel
+    ? !baseOptions.includes(baseModel)
+    : baseOptions.length > 0 && !baseModel);
   const submit = () => {
     if (incomplete) return;
     const n = (v: string) => {
@@ -1425,12 +1428,12 @@ export function EngineModelAdd({
           and refused to generate (ADR 0072 P2 実機検証). The list comes from the CP, which
           validates against the same one. An llm adapter picks from the catalogue's own ids for
           the same reason: a base nothing matches is an adapter that loads nowhere. */}
-      {baseOptions.length > 0 && (
+      {(baseOptions.length > 0 || basePicksAModel) && (
         <label className="engines-model-add-row">
           <span>
             {tr(basePicksAModel ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}
           </span>
-          <select value={baseModel} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
+          <select value={baseModel} disabled={basePicksAModel && baseOptions.length === 0} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
             <option value="">
               {tr(
                 basePicksAModel
@@ -1466,25 +1469,25 @@ export function EngineModelAdd({
           {field(tr("admin.engines_model_add_bytes"), f.bytes, (v) => setFile(i, { bytes: v }),
             "1117320768", true)}
           {files.length > 1 && (
-            <button
-              type="button"
-              className="ghost sm"
+            <Button
+              variant="ghost"
+              small
               onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
             >
               {tr("admin.engines_model_add_part_drop")}
-            </button>
+            </Button>
           )}
         </div>
       ))}
       {/* Offered only where a split model is a thing this provider can load. */}
       {flags.length > 0 && (
-        <button
-          type="button"
-          className="ghost sm"
+        <Button
+          variant="ghost"
+          small
           onClick={() => setFiles((prev) => [...prev, { flag: "", s3Key: "", bytes: "" }])}
         >
           {tr("admin.engines_model_add_part_more")}
-        </button>
+        </Button>
       )}
       {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
       {/* Optional, and the only route where a licence has to be TYPED — there is no source here
@@ -1502,12 +1505,12 @@ export function EngineModelAdd({
       {isLora && !isImage &&
         field(tr("admin.engines_model_add_lora_scale"), scale, setScale, "1", true)}
       <div className="engines-model-add-actions">
-        <button type="button" className="primary sm" disabled={busy || incomplete} onClick={submit}>
+        <Button variant="primary" small disabled={busy || incomplete} onClick={submit}>
           {tr("admin.engines_model_add_go")}
-        </button>
-        <button type="button" className="sm" onClick={() => setOpen(false)}>
+        </Button>
+        <Button small onClick={() => setOpen(false)}>
           {tr("common.cancel")}
-        </button>
+        </Button>
       </div>
       {/* ⚠️ The CP never checks that the key exists: it has no S3 permission at all and none is
           being added (ADR 0072 review R3). A typo surfaces in the fetch sidecar's log at the
@@ -1631,13 +1634,13 @@ export function HfTokenPanel() {
             />
           </label>
           <div className="engines-model-add-actions">
-            <button type="button" className="primary sm" disabled={busy || !token.trim()} onClick={save}>
+            <Button variant="primary" small disabled={busy || !token.trim()} onClick={save}>
               {tr("admin.engines_hf_token_save")}
-            </button>
+            </Button>
             {st.configured && (
-              <button type="button" className="sm" disabled={busy} onClick={remove}>
+              <Button small disabled={busy} onClick={remove}>
                 {tr("admin.engines_hf_token_remove")}
-              </button>
+              </Button>
             )}
           </div>
           <p className="muted">{tr("admin.engines_hf_token_note")}</p>
@@ -3359,22 +3362,24 @@ export function EngineIngestJobs({
                   failed job is not offered at all — whatever it left behind is a part of a
                   file, and registering that would produce a row that fails at load. */}
               {j.state === "done" && !!j.s3_key && onReuse && (
-                <button
-                  type="button"
-                  className="ghost sm engines-ingest-job-reuse"
+                <Button
+                  variant="ghost"
+                  small
+                  className="engines-ingest-job-reuse"
                   onClick={() => onReuse(j)}
                 >
                   {tr("admin.engines_ingest_job_reuse")}
-                </button>
+                </Button>
               )}
-              <button
-                type="button"
-                className="ghost sm engines-ingest-job-forget"
+              <Button
+                variant="ghost"
+                small
+                className="engines-ingest-job-forget"
                 disabled={busy === j.id}
                 onClick={() => openConfirm(j.id)}
               >
                 {tr("admin.engines_ingest_job_forget")}
-              </button>
+              </Button>
             </span>
           )}
           {confirming === j.id && !live && (
@@ -3406,9 +3411,8 @@ export function EngineIngestJobs({
                 </label>
               )}
               <span className="engines-model-actions">
-                <button
-                  type="button"
-                  className="sm"
+                <Button
+                  small
                   disabled={busy === j.id || (last && !ack)}
                   onClick={() => {
                     setConfirming("");
@@ -3416,10 +3420,10 @@ export function EngineIngestJobs({
                   }}
                 >
                   {tr("admin.engines_ingest_job_forget_go")}
-                </button>
-                <button type="button" className="sm" onClick={() => setConfirming("")}>
+                </Button>
+                <Button small onClick={() => setConfirming("")}>
                   {tr("common.cancel")}
-                </button>
+                </Button>
               </span>
             </div>
           )}

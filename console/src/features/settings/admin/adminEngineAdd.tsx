@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
-import { useT } from "../../../lib/i18n/index.ts";
+import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
+import { Button, IconButton } from "../../../ui/Button.tsx";
 import { Modal } from "../../../ui/Modal.tsx";
 import { ViewHead } from "../../../ui/ViewHead.tsx";
 import {
@@ -71,19 +72,19 @@ export function EngineAddView({ engineKey, lora, initialView = "search", headerA
         <div className="engine-catalog-nav">
           <div className="engine-catalog-role-tabs" role="tablist" aria-label={tr("admin.catalog_role_label" as never)}>
             {(rows || []).map((candidate) => (
-              <button key={candidate.key} type="button" role="tab" aria-selected={candidate.key === row.key}
+              <Button key={candidate.key} variant="ghost" small role="tab" aria-selected={candidate.key === row.key}
                 className={candidate.key === row.key ? "active" : ""} onClick={() => setSelectedKey(candidate.key)}>
                 <Icon name={engineIsImage(candidate) ? "file-media" : "comment"} />
                 {tr(engineIsImage(candidate) ? "admin.engines_role_image" : "admin.engines_role_llm")}
-              </button>
+              </Button>
             ))}
           </div>
           <div className="seg engine-catalog-view-tabs" role="tablist" aria-label={tr("admin.catalog_view_label" as never)}>
             {(["search", "registered"] as const).map((next) => (
-              <button key={next} type="button" role="tab" aria-selected={view === next}
+              <Button key={next} variant="ghost" small role="tab" aria-selected={view === next}
                 className={"seg-btn" + (view === next ? " active" : "")} onClick={() => setView(next)}>
                 {tr((`admin.catalog_view_${next}`) as never)}
-              </button>
+              </Button>
             ))}
           </div>
           <span className="muted mono engine-catalog-engine-name">{engineTitle(row)}</span>
@@ -133,11 +134,12 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
   const [source, setSource] = useState<CatalogSource>(image ? "civitai" : "hf");
   const [sort, setSort] = useState(image ? "newest" : "updated");
   const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
   const [hits, setHits] = useState<IngestHit[] | null>(null);
   const [cursor, setCursor] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [operation, setOperation] = useState<{ hit?: IngestHit; act: EngineIngestAct } | null>(null);
+  const [operation, setOperation] = useState<{ hit?: IngestHit; act: EngineIngestAct; source?: CatalogSource } | null>(null);
   const [preview, setPreview] = useState<IngestHit | null>(null);
   const [storage, setStorage] = useState<EngineStorageAnswer | null>(null);
   const requestSeq = useRef(0);
@@ -160,7 +162,7 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
   const search = useCallback(async (more = false) => {
     const seq = ++requestSeq.current;
     const body: IngestSearchRequest = {
-      q: query, source, sort, lora: kind === "lora", ...(more && cursor ? { cursor } : {}),
+      q: more ? submittedQuery : query, source, sort, lora: kind === "lora", ...(more && cursor ? { cursor } : {}),
     };
     setBusy(true); setErr("");
     try {
@@ -170,9 +172,10 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
       const page = (answer || {}) as IngestSearchAnswer;
       const next = Array.isArray(page.hits) ? page.hits : [];
       setHits((current) => more && current ? [...current, ...next] : next);
+      if (!more) setSubmittedQuery(query);
       setCursor(page.next_cursor || "");
     } finally { if (seq === requestSeq.current) setBusy(false); }
-  }, [cursor, kind, query, row.key, sort, source]);
+  }, [cursor, kind, query, row.key, sort, source, submittedQuery]);
 
   useEffect(() => { void search(false); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [row.key, kind, source, sort]);
   const switchSource = (next: CatalogSource) => {
@@ -188,26 +191,26 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
     >
       <div className="engine-catalog-toolbar">
         <span className="seg sm">
-          {(["model", "lora"] as const).map((next) => <button key={next} type="button"
+          {(["model", "lora"] as const).map((next) => <Button key={next} variant="ghost" small
             className={"seg-btn" + (kind === next ? " active" : "")} onClick={() => onKind(next)}>
             {tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}
-          </button>)}
+          </Button>)}
         </span>
-        {image && <span className="seg sm">{(["civitai", "hf"] as const).map((next) => <button key={next}
-          type="button" className={"seg-btn" + (source === next ? " active" : "")} onClick={() => switchSource(next)}>
+        {image && <span className="seg sm">{(["civitai", "hf"] as const).map((next) => <Button key={next} variant="ghost" small
+          className={"seg-btn" + (source === next ? " active" : "")} onClick={() => switchSource(next)}>
           {tr((`admin.engines_ingest_source_${next}`) as never)}
-        </button>)}</span>}
+        </Button>)}</span>}
         <form className="engine-catalog-search" onSubmit={(event) => { event.preventDefault(); void search(false); }}>
           <input value={query} aria-label={tr("admin.engines_ingest_search")} placeholder={image ? "SDXL, Flux, style…" : "Qwen, Llama, coder…"}
             onChange={(event) => setQuery(event.currentTarget.value)} />
-          <button type="submit" className="primary sm" disabled={busy}>{tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}</button>
+          <Button type="submit" variant="primary" small disabled={busy}>{tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}</Button>
         </form>
         <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span>
           <select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>
             {sortOptions.map((option) => <option key={option} value={option}>{tr((`admin.engines_ingest_sort_${option}`) as never)}</option>)}
           </select>
         </label>
-        {!readOnly && <button type="button" className="ghost sm" onClick={() => setOperation({ act: "new" })}>{tr("admin.catalog_manual" as never)}</button>}
+        {!readOnly && <Button variant="ghost" small icon="link" onClick={() => setOperation({ act: "new", source })}>{tr("admin.catalog_manual" as never)}</Button>}
       </div>
       {source === "civitai" && sort === "newest" && <p className="muted engine-catalog-sort-note">{tr("admin.catalog_civitai_newest_note" as never)}</p>}
       {storage === null && <p className="muted engine-catalog-storage-note">{tr("admin.catalog_storage_checking" as never)}</p>}
@@ -223,9 +226,9 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
           ? <ImageCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} onPreview={() => setPreview(hit)} />
           : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
       })}</ul>}
-      {cursor && <button type="button" className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>{tr("admin.catalog_more" as never)}</button>}
+      {cursor && query === submittedQuery && <Button variant="ghost" small icon="chevron-down" className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>{tr("admin.catalog_more" as never)}</Button>}
       <CatalogJobs engineKey={row.key} />
-      {operation && <CatalogOperation row={row} kind={kind} hit={operation.hit} initialAct={operation.act}
+      {operation && <CatalogOperation row={row} kind={kind} hit={operation.hit} initialAct={operation.act} initialSource={operation.source}
         storage={storage?.files || []} onClose={() => setOperation(null)} onStarted={() => { setOperation(null); void loadStorage(); onChanged(); }} />}
       {preview?.preview_url && <Modal title={preview.name} className="engine-catalog-lightbox" onClose={() => setPreview(null)}>
         <img src={preview.preview_url} alt={preview.name} />
@@ -254,8 +257,7 @@ function ImageCatalogCard({ hit, kind, saved, onPreview, ...actions }: BrowseCar
         <span className="engines-model-tag">{hit.source === "civitai" ? "Civitai" : "Hugging Face"}</span>
         {hit.base_model && <span className="engines-model-tag">{tr("admin.catalog_family" as never)}: {hit.base_model}</span>}
         {license && <span className="engines-model-tag">{license}</span>}
-        {hit.gated && <span className="engines-model-tag warn">{tr("admin.engines_ingest_hit_gated")}</span>}
-        {hit.login_required === "yes" && <span className="engines-model-tag warn">{tr("admin.engines_hit_login_required")}</span>}
+        <CatalogRestrictionTags value={hit} />
       </div>
       <p className="muted engine-catalog-card-stats">
         {hit.downloads ? `${compactCount(hit.downloads)} ${tr("admin.engines_ingest_hit_downloads")}` : ""}
@@ -264,7 +266,7 @@ function ImageCatalogCard({ hit, kind, saved, onPreview, ...actions }: BrowseCar
         {hit.published_at ? ` · ${tr("admin.engines_ingest_hit_published")} ${fmtDateTime(hit.published_at)}` : ""}
       </p>
       {saved.length > 0 && <p className="engine-catalog-saved">{tr("admin.catalog_saved_count" as never, { count: saved.length } as never)}</p>}
-    </div>{hit.preview_url && <button type="button" className="engine-catalog-thumb" onClick={onPreview} aria-label={`${tr("admin.catalog_preview" as never)}: ${hit.name}`}><img src={hit.preview_url} alt="" loading="lazy" /></button>}</div>
+    </div>{hit.preview_url && <Button variant="ghost" className="engine-catalog-thumb" onClick={onPreview} aria-label={`${tr("admin.catalog_preview" as never)}: ${hit.name}`}><img src={hit.preview_url} alt="" loading="lazy" /></Button>}</div>
     <BrowseCardFooter hit={hit} {...actions} />
   </li>;
 }
@@ -279,7 +281,7 @@ function LLMCatalogCard({ hit, kind, saved, ...actions }: BrowseCardProps) {
         {hit.bytes ? <span className="engines-model-tag">{formatBytes(hit.bytes)}</span> : null}
         {hit.context_length ? <span className="engines-model-tag">{tr("admin.catalog_context" as never)}: {hit.context_length.toLocaleString()}</span> : null}
         {license && <span className="engines-model-tag">{license}</span>}
-        {hit.gated && <span className="engines-model-tag warn">{tr("admin.engines_ingest_hit_gated")}</span>}
+        <CatalogRestrictionTags value={hit} />
       </div>
       <p className="muted engine-catalog-card-stats">
         {hit.downloads ? `${compactCount(hit.downloads)} ${tr("admin.engines_ingest_hit_downloads")}` : ""}
@@ -296,10 +298,24 @@ function BrowseCardFooter({ hit, readOnly, canAttach, canReplace, onOperation }:
   const tr = useT();
   return <footer className="engine-catalog-card-footer">
     {hit.url && <a href={hit.url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a>}
-    {!readOnly && <span><button type="button" className="primary sm" aria-label={`${tr("admin.catalog_add" as never)}: ${hit.name}`} onClick={() => onOperation("new")}>{tr("admin.catalog_add" as never)}</button>
-      {canAttach && <button type="button" className="sm" aria-label={`${tr("admin.catalog_attach" as never)}: ${hit.name}`} onClick={() => onOperation("attach")}>{tr("admin.catalog_attach" as never)}</button>}
-      {canReplace && <button type="button" className="sm" aria-label={`${tr("admin.catalog_replace" as never)}: ${hit.name}`} onClick={() => onOperation("replace")}>{tr("admin.catalog_replace" as never)}</button>}</span>}
+    {!readOnly && <span><Button variant="primary" small aria-label={`${tr("admin.catalog_add" as never)}: ${hit.name}`} onClick={() => onOperation("new")}>{tr("admin.catalog_add" as never)}</Button>
+      {canAttach && <Button small aria-label={`${tr("admin.catalog_attach" as never)}: ${hit.name}`} onClick={() => onOperation("attach")}>{tr("admin.catalog_attach" as never)}</Button>}
+      {canReplace && <Button small aria-label={`${tr("admin.catalog_replace" as never)}: ${hit.name}`} onClick={() => onOperation("replace")}>{tr("admin.catalog_replace" as never)}</Button>}</span>}
   </footer>;
+}
+
+const CATALOG_HARD_RESTRICTIONS = new Set(["gated_auto", "gated_manual", "paid", "early_access", "private", "generate_only", "unscanned", "pickle"]);
+
+function CatalogRestrictionTags({ value }: { value: Pick<IngestHit, "restrictions" | "gated" | "login_required" | "commercial_use" | "gated_needs_acceptance" | "trained_words"> }) {
+  const tr = useT();
+  return <>
+    {value.login_required === "yes" && <span className="engines-model-tag warn" title={tr("admin.engines_hit_login_note")}>{tr("admin.engines_hit_login_required")}</span>}
+    {value.restrictions?.length ? value.restrictions.map((code) => <span key={code} className={`engines-model-tag${CATALOG_HARD_RESTRICTIONS.has(code) ? " warn" : ""}`}>{tMaybe(`admin.engines_limit_${code}`) ?? code}</span>)
+      : value.gated && <span className="engines-model-tag warn">{tr("admin.engines_ingest_hit_gated")}</span>}
+    {value.commercial_use === "no" && <span className="engines-model-tag warn">{tr("admin.engines_model_noncommercial")}</span>}
+    {value.gated_needs_acceptance && <span className="engines-model-tag warn">{tr("admin.catalog_gate_accept" as never)}</span>}
+    {!!value.trained_words?.length && <span className="engines-model-tag">{tr("admin.engines_hit_trigger")}: {value.trained_words.join(", ")}</span>}
+  </>;
 }
 
 function NoEngineCatalog() {
@@ -309,6 +325,7 @@ function NoEngineCatalog() {
   const [source, setSource] = useState<CatalogSource>("civitai");
   const [sort, setSort] = useState("newest");
   const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
   const [hits, setHits] = useState<IngestHit[] | null>(null);
   const [cursor, setCursor] = useState("");
   const [busy, setBusy] = useState(false);
@@ -323,16 +340,17 @@ function NoEngineCatalog() {
     try {
       const wireKind = image ? "checkpoint" : "gguf";
       const answer = await apiJSON(`api/admin/engines/search?kind=${encodeURIComponent(wireKind)}`, "POST", {
-        q: query, source, sort, lora: kind === "lora", ...(more && cursor ? { cursor } : {}),
+        q: more ? submittedQuery : query, source, sort, lora: kind === "lora", ...(more && cursor ? { cursor } : {}),
       });
       if (seq !== requestSeq.current) return;
       if (answer?.error) { setErr(errDetail(answer.error)); if (!more) setHits(null); return; }
       const page = answer as IngestSearchAnswer;
       const next = Array.isArray(page?.hits) ? page.hits : [];
       setHits((current) => more && current ? [...current, ...next] : next);
+      if (!more) setSubmittedQuery(query);
       setCursor(page?.next_cursor || "");
     } finally { if (seq === requestSeq.current) setBusy(false); }
-  }, [cursor, image, kind, query, sort, source]);
+  }, [cursor, image, kind, query, sort, source, submittedQuery]);
 
   useEffect(() => { void search(false); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [image, kind, source, sort]);
   const switchRole = (next: "image" | "llm") => {
@@ -344,16 +362,16 @@ function NoEngineCatalog() {
   return <section className="engine-catalog-browser engine-catalog-no-engine" aria-label={tr(image ? "admin.catalog_image_title" as never : "admin.catalog_llm_title" as never)}>
     <div className="engine-catalog-nav engine-catalog-no-engine-nav">
       <div className="engine-catalog-role-tabs" role="tablist" aria-label={tr("admin.catalog_role_label" as never)}>
-        <button type="button" role="tab" aria-selected={image} className={image ? "active" : ""} onClick={() => switchRole("image")}><Icon name="file-media" />{tr("admin.engines_role_image")}</button>
-        <button type="button" role="tab" aria-selected={!image} className={!image ? "active" : ""} onClick={() => switchRole("llm")}><Icon name="comment" />{tr("admin.engines_role_llm")}</button>
+        <Button variant="ghost" small role="tab" aria-selected={image} className={image ? "active" : ""} onClick={() => switchRole("image")}><Icon name="file-media" />{tr("admin.engines_role_image")}</Button>
+        <Button variant="ghost" small role="tab" aria-selected={!image} className={!image ? "active" : ""} onClick={() => switchRole("llm")}><Icon name="comment" />{tr("admin.engines_role_llm")}</Button>
       </div>
       <span className="engines-model-tag lead">{tr("admin.catalog_view_search" as never)}</span>
     </div>
     <p className="admin-hint">{tr("admin.engines_browse_note")}</p>
     <div className="engine-catalog-toolbar">
-      <span className="seg sm">{(["model", "lora"] as const).map((next) => <button key={next} type="button" className={`seg-btn${kind === next ? " active" : ""}`} onClick={() => setKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</button>)}</span>
-      {image && <span className="seg sm">{(["civitai", "hf"] as const).map((next) => <button key={next} type="button" className={`seg-btn${source === next ? " active" : ""}`} onClick={() => { setSource(next); setSort(next === "civitai" ? "newest" : "updated"); }}>{next === "hf" ? "Hugging Face" : "Civitai"}</button>)}</span>}
-      <form className="engine-catalog-search" onSubmit={(event) => { event.preventDefault(); void search(false); }}><input aria-label={tr("admin.engines_ingest_search")} value={query} onChange={(event) => setQuery(event.currentTarget.value)} /><button type="submit" className="primary sm" disabled={busy}>{tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}</button></form>
+      <span className="seg sm">{(["model", "lora"] as const).map((next) => <Button key={next} variant="ghost" small className={`seg-btn${kind === next ? " active" : ""}`} onClick={() => setKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</Button>)}</span>
+      {image && <span className="seg sm">{(["civitai", "hf"] as const).map((next) => <Button key={next} variant="ghost" small className={`seg-btn${source === next ? " active" : ""}`} onClick={() => { setSource(next); setSort(next === "civitai" ? "newest" : "updated"); }}>{next === "hf" ? "Hugging Face" : "Civitai"}</Button>)}</span>}
+      <form className="engine-catalog-search" onSubmit={(event) => { event.preventDefault(); void search(false); }}><input aria-label={tr("admin.engines_ingest_search")} value={query} onChange={(event) => setQuery(event.currentTarget.value)} /><Button type="submit" variant="primary" small disabled={busy}>{tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}</Button></form>
       <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span><select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>{sortOptions.map((option) => <option key={option} value={option}>{tr((`admin.engines_ingest_sort_${option}`) as never)}</option>)}</select></label>
     </div>
     {source === "civitai" && sort === "newest" && <p className="muted engine-catalog-sort-note">{tr("admin.catalog_civitai_newest_note" as never)}</p>}
@@ -363,7 +381,7 @@ function NoEngineCatalog() {
       const props: BrowseCardProps = { hit, kind, saved: [], readOnly: true, canAttach: false, canReplace: false, onOperation: noop };
       return image ? <ImageCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} onPreview={() => setPreview(hit)} /> : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
     })}</ul>}
-    {cursor && <button type="button" className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>{tr("admin.catalog_more" as never)}</button>}
+    {cursor && query === submittedQuery && <Button variant="ghost" small icon="chevron-down" className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>{tr("admin.catalog_more" as never)}</Button>}
     {preview?.preview_url && <Modal title={preview.name} className="engine-catalog-lightbox" onClose={() => setPreview(null)}><img src={preview.preview_url} alt={preview.name} /></Modal>}
   </section>;
 }
@@ -461,13 +479,13 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
   return <section className="engine-catalog-registered" aria-label={tr("admin.catalog_registered_title" as never)}>
     {!isSuper && <p className="admin-hint">{tr("admin.engines_tenant_scope")}</p>}
     <div className="engine-catalog-toolbar">
-      <span className="seg sm">{(["model", "lora"] as const).map((next) => <button key={next} type="button"
-        className={"seg-btn" + (kind === next ? " active" : "")} onClick={() => onKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</button>)}</span>
+      <span className="seg sm">{(["model", "lora"] as const).map((next) => <Button key={next} variant="ghost" small
+        className={"seg-btn" + (kind === next ? " active" : "")} onClick={() => onKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</Button>)}</span>
       <label className="engine-registered-search"><span>{tr("admin.catalog_registered_search" as never)}</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
       <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span><select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>
         <option value="name">{tr("admin.catalog_sort_name" as never)}</option><option value="enabled">{tr("admin.catalog_sort_enabled" as never)}</option><option value="default">{tr("admin.catalog_sort_default" as never)}</option>
       </select></label>
-      <button type="button" className="ghost sm" onClick={() => void loadAux()}>{tr("admin.refresh")}</button>
+      <IconButton icon="refresh" label={tr("admin.refresh")} onClick={() => void loadAux()} />
     </div>
     {err && <p className="form-err">{err}</p>}
     {!visible.length && <p className="muted">{tr(kind === "lora" ? "admin.engines_loras_empty" : "admin.engines_catalog_empty")}</p>}
@@ -482,11 +500,11 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
         {engineIsImage(row) ? <ImageRegisteredCardBody model={model} /> : <LLMRegisteredCardBody model={model} />}
         <RegisteredParts model={model} storage={storage} />
         <footer>
-          {isSuper && !readOnly && <button type="button" aria-label={`${tr("admin.catalog_edit" as never)}: ${model.id}`} onClick={() => setEdit(model)}>{tr("admin.catalog_edit" as never)}</button>}
-          {isSuper && !readOnly && <button type="button" aria-label={`${tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, { enabled: !model.enabled })}>{tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}</button>}
-          {isSuper && !readOnly && model.kind !== "lora" && !started && <button type="button" aria-label={`${tr("admin.engines_model_select")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, engineIsImage(row) ? { selected: true } : { default: true })}>{tr("admin.engines_model_select")}</button>}
-          {!readOnly && <button type="button" aria-label={`${tr("admin.catalog_parts" as never)}: ${model.id}`} onClick={() => setOperation({ act: (row.file_flags || []).length ? "attach" : "replace", modelId: model.id })}>{tr("admin.catalog_parts" as never)}</button>}
-          {isSuper && !readOnly && <button type="button" className="danger" aria-label={`${tr("admin.engines_model_forget")}: ${model.id}`} disabled={pending || started} onClick={() => { setDeleting(model); setPurge(false); }}>{tr("admin.engines_model_forget")}</button>}
+          {isSuper && !readOnly && <Button variant="ghost" small icon="edit" aria-label={`${tr("admin.catalog_edit" as never)}: ${model.id}`} onClick={() => setEdit(model)}>{tr("admin.catalog_edit" as never)}</Button>}
+          {isSuper && !readOnly && <Button small aria-label={`${tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, { enabled: !model.enabled })}>{tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}</Button>}
+          {isSuper && !readOnly && model.kind !== "lora" && !started && <Button variant="primary" small aria-label={`${tr("admin.engines_model_select")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, engineIsImage(row) ? { selected: true } : { default: true })}>{tr("admin.engines_model_select")}</Button>}
+          {!readOnly && <Button small aria-label={`${tr("admin.catalog_parts" as never)}: ${model.id}`} onClick={() => setOperation({ act: (row.file_flags || []).length ? "attach" : "replace", modelId: model.id })}>{tr("admin.catalog_parts" as never)}</Button>}
+          {isSuper && !readOnly && <Button variant="danger" small aria-label={`${tr("admin.engines_model_forget")}: ${model.id}`} disabled={pending || started} onClick={() => { setDeleting(model); setPurge(false); }}>{tr("admin.engines_model_forget")}</Button>}
         </footer>
       </li>;
     })}</ul>
@@ -508,7 +526,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     }} />}
     {deleting && <Modal title={`${tr("admin.engines_model_forget")} — ${deleting.id}`} className="engine-registered-confirm" onClose={() => setDeleting(null)} lockClose={busy === deleting.id}>
       <div className="engine-operation-body"><p>{tr(purge ? "admin.engines_model_forget_purge_note" : "admin.engines_model_forget_note")}</p><label className="engine-operation-check"><input type="checkbox" checked={purge} onChange={(event) => setPurge(event.currentTarget.checked)} /><span>{tr("admin.engines_model_forget_purge")}</span></label>
-        <footer className="engine-operation-footer"><button type="button" onClick={() => setDeleting(null)}>{tr("common.cancel")}</button><button type="button" className="danger" onClick={async () => { if (await callModel(deleting, "DELETE", undefined, purge)) setDeleting(null); }}>{tr("admin.engines_model_forget")}</button></footer></div>
+        <footer className="engine-operation-footer"><Button variant="ghost" onClick={() => setDeleting(null)}>{tr("common.cancel")}</Button><Button variant="danger" onClick={async () => { if (await callModel(deleting, "DELETE", undefined, purge)) setDeleting(null); }}>{tr("admin.engines_model_forget")}</Button></footer></div>
     </Modal>}
     {vramAsk && <Modal title={`${tr("admin.engines_vram_confirm_go")} — ${vramAsk.model.id}`} className="engine-registered-confirm" onClose={() => setVramAsk(null)}>
       <div className="engine-operation-body"><p className="form-err">{vramAsk.message || (tr("admin.engines_vram_confirm" as never) as string)
@@ -516,11 +534,11 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
         .replace("{n}", String(vramAsk.model.vram_need_mib || 0))
         .replace("{m}", String(row.class?.vram_mib || 0))
         .replace("{src}", tr((`admin.engines_vram_src_${vramAsk.model.vram_need_source || "unknown"}`) as never) as string)}</p>
-        <footer className="engine-operation-footer"><button type="button" onClick={() => setVramAsk(null)}>{tr("common.cancel")}</button><button type="button" className="primary" onClick={async () => {
+        <footer className="engine-operation-footer"><Button variant="ghost" onClick={() => setVramAsk(null)}>{tr("common.cancel")}</Button><Button variant="primary" onClick={async () => {
           const ask = vramAsk;
           setVramAsk(null);
           await callModel(ask.model, "PUT", { ...ask.patch, confirm_vram: true });
-        }}>{tr("admin.engines_vram_confirm_go")}</button></footer></div>
+        }}>{tr("admin.engines_vram_confirm_go")}</Button></footer></div>
     </Modal>}
   </section>;
 }
@@ -606,13 +624,15 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
     scheduler: model.params?.scheduler || "", clip_skip: String(model.params?.clip_skip || ""), weight: String(model.params?.weight || ""),
   });
   const [busy, setBusy] = useState(false);
+  const baseChoices = image ? row.base_models || [] : lora ? (row.model_rows || []).filter((candidate) => candidate.kind !== "lora").map((candidate) => candidate.id) : [];
   const whole = (value: string) => /^\d+$/.test(value.trim()) ? Number(value.trim()) : null;
   const contextNumber = whole(context);
   const outputNumber = whole(output);
   const vramNumber = whole(vram);
   const invalidWindow = !image && !lora && (contextNumber === null || outputNumber === null || (!!contextNumber !== !!outputNumber));
   const invalidVram = vramNumber === null;
-  const validation = invalidWindow ? tr("admin.catalog_edit_window_invalid" as never) : invalidVram ? tr("admin.catalog_edit_vram_invalid" as never) : "";
+  const invalidBase = !image && lora ? !baseChoices.includes(baseModel) : image && baseChoices.length > 0 && !baseChoices.includes(baseModel);
+  const validation = invalidWindow ? tr("admin.catalog_edit_window_invalid" as never) : invalidVram ? tr("admin.catalog_edit_vram_invalid" as never) : invalidBase ? tr("admin.engines_wizard_need_family") : "";
   const save = async () => {
     if (validation) return;
     const number = (value: string) => { const parsed = Number(value.trim()); return Number.isFinite(parsed) && parsed > 0 ? parsed : 0; };
@@ -633,23 +653,24 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   return <Modal title={`${tr("admin.catalog_edit" as never)} — ${model.id}`} className="engine-registered-edit" onClose={onClose} lockClose={busy}>
     <div className="engine-operation-body"><div className="engine-operation-grid">
       <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
-      {(image || lora) && <label><span>{tr(image && !lora ? "admin.engines_model_add_family" : "admin.engines_model_add_lora_base")}</span>{image && !lora && (row.base_models || []).length
-        ? <select value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)}><option value="">—</option>{row.base_models!.map((base) => <option key={base} value={base}>{base}</option>)}</select>
+      {(image || lora) && <label><span>{tr(!image && lora ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span>{baseChoices.length || (!image && lora)
+        ? <select value={baseModel} disabled={!baseChoices.length} onChange={(event) => setBaseModel(event.currentTarget.value)}><option value="">—</option>{baseChoices.map((base) => <option key={base} value={base}>{base}</option>)}</select>
         : <input value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)} />}</label>}
       {!image && !lora && <><label><span>{tr("admin.engines_model_window_context")}</span><input inputMode="numeric" value={context} onChange={(event) => setContext(event.currentTarget.value)} /></label><label><span>{tr("admin.engines_model_window_output")}</span><input inputMode="numeric" value={output} onChange={(event) => setOutput(event.currentTarget.value)} /></label></>}
       <label><span>{tr("admin.engines_model_vram_edit")}</span><input inputMode="numeric" value={vram} onChange={(event) => setVram(event.currentTarget.value)} /></label>
       {image && !lora && <label><span>{tr("admin.engines_model_negative")}</span><input value={negative} onChange={(event) => setNegative(event.currentTarget.value)} /></label>}
       {image && lora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
     </div>
-    {image && <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">{(Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{key}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}</div></details>}
+    {image && <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">{(Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}</div></details>}
     {validation && <p className="form-err">{validation}</p>}
     {error && <p className="form-err">{error}</p>}
-    <footer className="engine-operation-footer"><button type="button" onClick={onClose} disabled={busy}>{tr("common.cancel")}</button><button type="button" className="primary" disabled={busy || !!validation} onClick={() => void save()}>{tr("common.save")}</button></footer></div>
+    <footer className="engine-operation-footer"><Button variant="ghost" onClick={onClose} disabled={busy}>{tr("common.cancel")}</Button><Button variant="primary" disabled={busy || !!validation} onClick={() => void save()}>{tr("common.save")}</Button></footer></div>
   </Modal>;
 }
 
-function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, onClose, onStarted }: {
+function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTarget, storage, onClose, onStarted }: {
   row: EngineRow; kind: ModelKind; hit?: IngestHit; initialAct: EngineIngestAct;
+  initialSource?: CatalogSource;
   initialTarget?: string;
   storage: EngineStorageFile[]; onClose: () => void; onStarted: () => void;
 }) {
@@ -657,7 +678,7 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
   const image = engineIsImage(row);
   const isLora = kind === "lora";
   const [act, setAct] = useState(initialAct);
-  const [sourceType, setSourceType] = useState<CatalogSource>(hit?.source === "civitai" ? "civitai" : "hf");
+  const [sourceType, setSourceType] = useState<CatalogSource>(hit?.source === "civitai" || initialSource === "civitai" ? "civitai" : "hf");
   const [manualRef, setManualRef] = useState(hit?.model_ref || hit?.ref || "");
   const [versions, setVersions] = useState<IngestVersion[]>([]);
   const [versionRef, setVersionRef] = useState(hit?.ref || "");
@@ -675,8 +696,11 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
   const [accepted, setAccepted] = useState(false);
   const [confirmVram, setConfirmVram] = useState(false);
   const [withVae, setWithVae] = useState(false);
+  const [trainedWords, setTrainedWords] = useState((hit?.trained_words || []).join(", "));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const inspectSeq = useRef(0);
+  const filesSeq = useRef(0);
   const [params, setParams] = useState<Record<keyof EngineParams, string>>({
     steps: "", cfg: "", sampler: "", scheduler: "", clip_skip: "", weight: "",
   });
@@ -687,12 +711,25 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
   const slots = flags.filter((flag) => act === "attach" ? !!flag && !taken.has(flag) : taken.has(flag));
   const rawRef = manualRef.trim();
   const hfURL = rawRef.match(/^https?:\/\/huggingface\.co\/([^/?#]+\/[^/?#]+)(?:\/(?:blob|resolve)\/([^/?#]+)\/([^?#]+))?/);
-  const civitaiURL = rawRef.match(/^https?:\/\/(?:[\w-]+\.)*civitai\.com\/models\/(\d+).*?[?&]modelVersionId=(\d+)/);
+  const civitaiPage = rawRef.match(/^https?:\/\/(?:[\w-]+\.)*civitai\.com\/models\/(\d+)/);
+  const civitaiVersionParam = rawRef.match(/[?&]modelVersionId=(\d+)/);
   const civitaiLegacy = rawRef.match(/^civitai:(\d+)$/);
-  const repo = hit?.model_ref || (sourceType === "civitai" ? civitaiURL?.[1] : hfURL?.[1]) || rawRef || hit?.ref || "";
-  const pastedVersion = (sourceType === "civitai" ? civitaiURL?.[2] || civitaiLegacy?.[1] : hfURL?.[2]) || "";
+  const civitaiModelRef = hit?.model_ref || civitaiPage?.[1] || "";
+  const pastedVersion = (sourceType === "civitai" ? civitaiVersionParam?.[1] || civitaiLegacy?.[1] : hfURL?.[2]) || "";
+  const repo = sourceType === "civitai" ? civitaiModelRef || pastedVersion : hit?.model_ref || hfURL?.[1] || rawRef || hit?.ref || "";
   const pastedFile = sourceType === "hf" ? hfURL?.[3] || "" : "";
-  const plainURL = /^https?:\/\//.test(rawRef) && !hfURL && !civitaiURL;
+  const civitaiVersionURL = /^https?:\/\/(?:[\w-]+\.)*civitai\.com\//.test(rawRef) && !!civitaiVersionParam;
+  const plainURL = /^https?:\/\//.test(rawRef) && !hfURL && !civitaiVersionURL;
+  const resetInspection = () => {
+    ++inspectSeq.current; ++filesSeq.current;
+    setVersions([]); setVersionRef(""); setFiles([]); setFile(""); setResolved(null); setAccepted(false); setBusy(false); setErr("");
+  };
+  const changeManualRef = (value: string) => {
+    setManualRef(value);
+    if (/^civitai:\d+$/.test(value.trim()) || (/civitai\.com\//.test(value) && /[?&]modelVersionId=\d+/.test(value))) setSourceType("civitai");
+    else if (/huggingface\.co\//.test(value)) setSourceType("hf");
+    resetInspection();
+  };
 
   const sourceBody = useCallback((fileName = file) => {
     if (plainURL) return { url: repo, sha256: fileName.trim() };
@@ -700,12 +737,14 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
     return { hf: { repo, revision: versionRef, file: fileName } };
   }, [file, hit?.ref, plainURL, repo, sourceType, versionRef]);
 
-  const loadFiles = useCallback(async (selectedVersion: string) => {
+  const loadFiles = useCallback(async (selectedVersion: string, parentSeq?: number) => {
+    const seq = ++filesSeq.current;
     setErr(""); setFiles([]); setFile(""); setResolved(null);
     const source = sourceType === "civitai"
       ? { civitai: { versionId: Number(selectedVersion), file: "" } }
       : { hf: { repo, revision: selectedVersion, file: "" } };
     const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/files`, "POST", { source });
+    if (seq !== filesSeq.current || (parentSeq !== undefined && parentSeq !== inspectSeq.current)) return;
     if (answer?.error) { setErr(errDetail(answer.error)); return; }
     const offered = (Array.isArray(answer?.files) ? answer.files : []) as IngestCandidate[];
     setFiles(offered);
@@ -714,24 +753,33 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
 
   const inspect = useCallback(async () => {
     if (!repo) return;
+    const seq = ++inspectSeq.current;
+    ++filesSeq.current;
     setBusy(true); setErr("");
     try {
       if (plainURL) { setVersions([]); setFiles([]); return; }
       const requestedVersion = versionRef || pastedVersion;
+      if (sourceType === "civitai" && !civitaiModelRef && pastedVersion) {
+        setVersions([{ ref: pastedVersion, name: pastedVersion }]);
+        setVersionRef(pastedVersion);
+        await loadFiles(pastedVersion, seq);
+        return;
+      }
       const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/versions`, "POST", {
-        source: sourceType, ref: hit?.ref || pastedVersion || repo, model_ref: hit?.model_ref || civitaiURL?.[1] || repo,
+        source: sourceType, ref: hit?.ref || pastedVersion || repo, model_ref: sourceType === "civitai" ? civitaiModelRef : repo,
       });
+      if (seq !== inspectSeq.current) return;
       if (answer?.error) { setErr(errDetail(answer.error)); return; }
       const offered = (Array.isArray(answer?.versions) ? answer.versions : []) as IngestVersion[];
       setVersions(offered);
       const first = offered.find((version) => version.ref === requestedVersion)?.ref || offered[0]?.ref || requestedVersion;
       setVersionRef(first);
       if (first) {
-        await loadFiles(first);
-        if (pastedFile) setFile(pastedFile);
+        await loadFiles(first, seq);
+        if (seq === inspectSeq.current && pastedFile) setFile(pastedFile);
       }
-    } finally { setBusy(false); }
-  }, [civitaiURL, hit?.model_ref, hit?.ref, loadFiles, pastedFile, pastedVersion, plainURL, repo, row.key, sourceType, versionRef]);
+    } finally { if (seq === inspectSeq.current) setBusy(false); }
+  }, [civitaiModelRef, hit?.ref, loadFiles, pastedFile, pastedVersion, plainURL, repo, row.key, sourceType, versionRef]);
 
   useEffect(() => { if (hit) void inspect(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
   useEffect(() => {
@@ -750,10 +798,20 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
       if (answer?.error) { setErr(errDetail(answer.error)); return; }
       const found = answer as ResolvedSource;
       setResolved(found);
-      if (found.base_model_suggest && !baseModel) setBaseModel(found.base_model_suggest);
+      const selectableBases = isLora && !image
+        ? (row.model_rows || []).filter((model) => model.kind !== "lora").map((model) => model.id)
+        : row.base_models || [];
+      if (found.base_model_suggest && !baseModel && !(isLora && !image) && (!selectableBases.length || selectableBases.includes(found.base_model_suggest))) {
+        setBaseModel(found.base_model_suggest);
+      }
       if (found.context_length && !context) {
         setContext(String(found.context_length)); setOutput(String(Math.floor(found.context_length / 8)));
       }
+      if (found.params_hint) setParams((current) => ({
+        ...current,
+        ...Object.fromEntries(Object.entries(found.params_hint || {}).map(([key, value]) => [key, String(value)])),
+      }));
+      if (found.trained_words?.length && !trainedWords.trim()) setTrainedWords(found.trained_words.join(", "));
       setWithVae(found.vae_bundled === "no" && !!found.family_vae && !found.family_vae.unreachable);
     });
     return () => { live = false; };
@@ -764,12 +822,18 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
   const selectedFile = files.find((candidate) => candidate.name === file);
   const immutableReuse = exactReusableStorage(storage, sourceType, repo, versionRef, file);
   const bytes = resolved?.bytes || selectedFile?.bytes || 0;
-  const needMiB = bytes ? Math.ceil(bytes / 1048576) : 0;
+  const contextTokens = Number(context.trim().replace(/[_,]/g, "")) || 0;
+  const weightsMiB = bytes ? Math.round(bytes / 1048576) : 0;
+  const kvMiB = !image && !isLora && resolved?.kv_mib_per_1k_tokens && contextTokens
+    ? Math.round((resolved.kv_mib_per_1k_tokens * contextTokens) / 1024)
+    : 0;
+  const needMiB = weightsMiB + kvMiB;
   const cardMiB = row.class?.vram_mib;
   const tooLarge = !!cardMiB && needMiB > cardMiB && !isLora;
   const baseOptions = isLora && !image
     ? (row.model_rows || []).filter((model) => model.kind !== "lora").map((model) => model.id)
     : row.base_models || [];
+  const validBase = !baseOptions.length || (!!baseModel && baseOptions.includes(baseModel));
   const missing = (() => {
     if (!repo) return tr("admin.catalog_need_source" as never) as string;
     if (!plainURL && !versionRef) return tr("admin.catalog_need_version" as never) as string;
@@ -779,7 +843,8 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
     if (act !== "new" && !targetId) return tr("admin.catalog_need_target" as never) as string;
     if (act !== "new" && flags.length > 0 && !partChosen) return tr("admin.catalog_need_part" as never) as string;
     if (act === "new" && !id.trim()) return tr("admin.engines_wizard_need_id") as string;
-    if (act === "new" && baseOptions.length > 0 && !baseModel) return tr("admin.engines_wizard_need_family") as string;
+    if (act === "new" && !validBase) return tr("admin.engines_wizard_need_family") as string;
+    if (act === "new" && isLora && !image && !baseModel) return tr("admin.engines_wizard_need_family") as string;
     if (!accepted) return tr("admin.catalog_need_license" as never) as string;
     if (tooLarge && !confirmVram) return tr("admin.catalog_need_vram" as never) as string;
     return "";
@@ -800,7 +865,8 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
         attach: act === "attach", replace: act === "replace",
         context_tokens: !image && !isLora ? n(context) : 0,
         max_output_tokens: !image && !isLora ? n(output) : 0,
-        params: paramsBody, license_accepted: true, with_family_vae: withVae,
+        params: paramsBody, trained_words: isLora ? trainedWords.split(/[\n,]/).map((word) => word.trim()).filter(Boolean) : [],
+        license_accepted: true, with_family_vae: withVae,
         ...(immutableReuse ? { reuse_s3_key: immutableReuse.s3_key } : {}),
       });
       if (answer?.error) { setErr(errDetail(answer.error)); return; }
@@ -817,9 +883,9 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
         <input type="radio" name="catalog-act" checked={act === next} onChange={() => setAct(next)} />
         <span>{tr((`admin.catalog_act_${next}`) as never)}</span></label>)}</div>
       {!hit && <div className="engine-operation-manual">
-        {image && <select value={sourceType} onChange={(event) => setSourceType(event.currentTarget.value as CatalogSource)}><option value="civitai">Civitai</option><option value="hf">Hugging Face / URL</option></select>}
-        <input value={manualRef} onChange={(event) => setManualRef(event.currentTarget.value)} placeholder="owner/repository or https://…" />
-        <button type="button" onClick={() => void inspect()} disabled={busy || !manualRef.trim()}>{tr("admin.catalog_inspect" as never)}</button>
+        {image && <select value={sourceType} onChange={(event) => { setSourceType(event.currentTarget.value as CatalogSource); resetInspection(); }}><option value="civitai">Civitai</option><option value="hf">Hugging Face / URL</option></select>}
+        <input value={manualRef} onChange={(event) => changeManualRef(event.currentTarget.value)} placeholder="owner/repository or https://…" />
+        <Button small onClick={() => void inspect()} disabled={busy || !manualRef.trim()}>{tr("admin.catalog_inspect" as never)}</Button>
       </div>}
       <div className="engine-operation-grid">
         {!plainURL && <label><span>{tr("admin.catalog_version" as never)}</span><select value={versionRef} onChange={(event) => { const next = event.currentTarget.value; setVersionRef(next); void loadFiles(next); }}>
@@ -835,24 +901,36 @@ function CatalogOperation({ row, kind, hit, initialAct, initialTarget, storage, 
           value={partChosen ? fileFlag || "__whole__" : ""}
           onChange={(event) => { setPartChosen(!!event.currentTarget.value); setFileFlag(event.currentTarget.value === "__whole__" ? "" : event.currentTarget.value); }}>
           <option value="">{tr("admin.catalog_pick_part" as never)}</option>{slots.map((slot) => <option key={slot || "__whole__"} value={slot || "__whole__"}>{slot || tr("admin.engines_model_add_part_whole")}</option>)}</select></label>}
-        {act === "new" && baseOptions.length > 0 && <label><span>{tr("admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)}>
-          <option value="">{tr("admin.engines_model_add_family_pick")}</option>{baseOptions.map((base) => <option key={base} value={base}>{base}</option>)}</select></label>}
+        {act === "new" && (baseOptions.length > 0 || (isLora && !image)) && <label><span>{tr(isLora && !image ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)}>
+          <option value="">{tr(isLora && !image ? "admin.engines_model_add_lora_base_pick" : "admin.engines_model_add_family_pick")}</option>{baseOptions.map((base) => <option key={base} value={base}>{base}</option>)}</select></label>}
       </div>
       {resolved && <div className="engine-operation-facts"><span>{resolved.bytes ? `${Math.round(resolved.bytes / 1048576)} MiB` : tr("admin.catalog_size_unknown" as never)}</span>
         {(resolved.license_name || resolved.license) && <span>{resolved.license_name || resolved.license}</span>}
-        {resolved.gated && <span className="warn">{tr("admin.engines_ingest_hit_gated")}</span>}
+        {resolved.restrictions?.map((code) => <span key={code} className={CATALOG_HARD_RESTRICTIONS.has(code) ? "warn" : ""}>{tMaybe(`admin.engines_limit_${code}`) ?? code}</span>)}
+        {resolved.gated && !resolved.restrictions?.length && <span className="warn">{tr("admin.engines_ingest_hit_gated")}</span>}
         {immutableReuse && <span className="ok">{tr("admin.catalog_reuse_present" as never)}</span>}</div>}
-      {resolved?.vae_bundled === "no" && resolved.family_vae && <label className="engine-operation-check"><input type="checkbox" checked={withVae} onChange={(event) => setWithVae(event.currentTarget.checked)} /><span>{tr("admin.catalog_with_vae" as never)}</span></label>}
-      {tooLarge && <label className="engine-operation-check warn"><input type="checkbox" checked={confirmVram} onChange={(event) => setConfirmVram(event.currentTarget.checked)} /><span>{tr("admin.catalog_vram_warning" as never, { need: needMiB, card: cardMiB } as never)}</span></label>}
+      {resolved?.commercial_use === "no" && <p className="form-err">{tr("admin.engines_ingest_noncommercial")}</p>}
+      {resolved?.login_required && <p className="form-err">{tr("admin.engines_ingest_civitai_login")}</p>}
+      {resolved?.gated && resolved.can_ingest === false && !resolved.login_required && <p className="form-err">{tr("admin.engines_ingest_gated_no_token")}</p>}
+      {resolved?.gated_needs_acceptance && <p className="muted">{tr("admin.engines_ingest_gated_accept_first")}</p>}
+      {resolved?.vae_bundled === "no" && !resolved.family_vae && <p className="form-err">{tr("admin.engines_wizard_vae_none")}</p>}
+      {resolved?.vae_bundled === "no" && resolved.family_vae && <label className="engine-operation-check"><input type="checkbox" checked={withVae} disabled={!!resolved.family_vae.unreachable} onChange={(event) => setWithVae(event.currentTarget.checked)} /><span>{(tr(resolved.family_vae.staged ? "admin.engines_wizard_vae_staged" : "admin.engines_wizard_vae_take") as string)
+        .replace("{f}", `${resolved.family_vae.repo}/${resolved.family_vae.file}`)
+        .replace("{n}", resolved.family_vae.bytes ? formatBytes(resolved.family_vae.bytes) : "?")
+        .replace("{l}", resolved.family_vae.license || "?")}{resolved.family_vae.unreachable ? ` — ${tr("admin.catalog_vae_unreachable" as never)}` : ""}</span></label>}
+      {resolved?.params_hint && resolved.params_hint_quote && <div className="engine-operation-hint"><p className="muted">{tr("admin.engines_params_hint_found")} <q>{resolved.params_hint_quote}</q></p><Button variant="ghost" small onClick={() => setParams((current) => ({ ...current, ...Object.fromEntries(Object.entries(resolved.params_hint || {}).map(([key, value]) => [key, String(value)])) }))}>{tr("admin.engines_params_hint_apply")}</Button></div>}
+      {needMiB > 0 && <p className={`engine-operation-fit ${tooLarge ? "form-err" : "muted"}`}>{(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(weightsMiB))}{!image && !isLora ? ` · ${kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(kvMiB)).replace("{c}", String(contextTokens)) : tr("admin.engines_ingest_fit_kv_unread")}` : ""}{cardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(needMiB)).replace("{c}", String(cardMiB))}` : ""}</p>}
+      {tooLarge && <label className="engine-operation-check warn"><input type="checkbox" checked={confirmVram} onChange={(event) => setConfirmVram(event.currentTarget.checked)} /><span>{tr(!image && !isLora ? "admin.catalog_vram_warning_llm" as never : "admin.catalog_vram_warning" as never, { need: needMiB, card: cardMiB } as never)}</span></label>}
       <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
       <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">
         <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
         {!image && !isLora && <label><span>{tr("admin.engines_model_add_ctx")}</span><input value={context} onChange={(event) => setContext(event.currentTarget.value)} inputMode="numeric" /></label>}
         {!image && !isLora && <label><span>{tr("admin.engines_model_add_out")}</span><input value={output} onChange={(event) => setOutput(event.currentTarget.value)} inputMode="numeric" /></label>}
-        {(Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{key}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}
+        {isLora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
+        {image && (Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}
       </div></details>
       {err && <p className="form-err">{err}</p>}
-      <footer className="engine-operation-footer"><span className="muted">{missing}</span><button type="button" onClick={onClose} disabled={busy}>{tr("common.cancel")}</button><button type="button" className="primary" onClick={() => void start()} disabled={busy || !!missing}>{tr("admin.engines_ingest_go")}</button></footer>
+      <footer className="engine-operation-footer"><span className="muted">{missing}</span><Button variant="ghost" onClick={onClose} disabled={busy}>{tr("common.cancel")}</Button><Button variant="primary" onClick={() => void start()} disabled={busy || !!missing}>{tr("admin.engines_ingest_go")}</Button></footer>
     </div>
   </Modal>;
 }
@@ -905,9 +983,7 @@ export function exactReusableStorage(files: EngineStorageFile[], source: Catalog
   modelRef: string, versionRef: string, fileName: string): EngineStorageFile | undefined {
   if (!modelRef || !versionRef || !fileName) return undefined;
   if (source === "civitai") {
-    return files.find((file) => file.state === "present" && (
-      file.source === `civitai:${versionRef}/${fileName}` || file.source === `civitai:${versionRef}`
-    ));
+    return files.find((file) => file.state === "present" && file.source === `civitai:${versionRef}/${fileName}`);
   }
   const identities = new Set([
     `hf:${modelRef}@${versionRef}/${fileName}`,
