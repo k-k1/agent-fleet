@@ -208,9 +208,10 @@ reopen は行あたり2回まで。上限到達時は「判定が振動してい
   の相対比較が正しい。鮮度は安全弁として併用し、上限は v1 と同じ 90s に収める。
 - **`tmuxx.IsBusy` は claude TUI のみ**（v1 waiter と同じ適用範囲）。実装が claude の
   スピナー契約を読むので、他 kind のペインで誤検知すると報告が永久に出ない。
-- **異常系の qualifier**（turn-failed / turn-aborted）はレベルから読めない（どちらも
-  status には idle が書かれる）ので、唯一ヒントが運ぶ情報にした。ヒントを失うと素の
-  完了報告に縮退する — 消失ではなく情報の欠落。
+- **異常系の qualifier**（turn-failed / turn-aborted）は当初レベルから読めず（どちらも
+  status には idle が書かれる）、唯一ヒントが運ぶ情報だった。ヒントを失うと素の完了報告に
+  縮退する設計で、2026-07-29 時点ではそれを情報の欠落として受容していたが、この非対称
+  自体が誤報告の真因だったため 2026-09-14 に閉じた（後述の追補）。
 - **異常終了（exit）は ExitInfo をレベルで読む**ため、設計どおり穴 G（managed daemon の
   異常死が報告されない）も Phase 1 の時点で閉じた。
 - 配送は deliver-then-consume。会話が消えていれば arm を畳み（配送先が無い）、追記に
@@ -386,6 +387,29 @@ sannme2 は 09:57:29 に `af_report` を呼んでから最終回答を 2 分 22 
   idle 証拠に `abort` が加わる。
 - 中断が末尾にあるときは転写の鮮度を busy 証拠から下ろす（その新しさは中断レコード
   自身のもので、進行中の証拠ではない）。
+
+## 追補（2026-09-14）— 異常系 qualifier をレベルへ昇格
+
+Phase 1 は「**事実**（idle+TurnEnd）はレベルで書くが、**理由**（turn-failed /
+turn-aborted）は `agents.notify()` の非同期 goroutine が運ぶヒントだけ」という非対称を
+§Phase 1 実装メモの時点から残していた。ヒント喪失は「情報の欠落」として受容していたが、
+実際にはヒントの goroutine とリコンサイラの tick のあいだにレースがあり、goroutine が
+CI 負荷で tick に遅れると `HintReason` が空のまま marker-idle だけで settle し、**失敗した
+ターンが素の完了報告として配信**された（`TestManagedTurnFailureReportsAsError` — 3 回
+観測・断続的に CI を赤くしていた）。事実と理由を別の永続性に分けたこと自体が原因で、
+「ヒントが遅れても情報が減るだけ」という前提は成立していなかった。
+
+対処: `status.SessionStatus` に `TurnEndReason` を追加し、`PersistTurnEndReason` が事実と
+理由を**同じ書込みの中で**永続化する（managed 経路は `agents.MarkTurnEndErr`、TUI/hook
+経路は `sessionx.RunSessionStatusHook` の両方を直す — 後者も別プロセスへの HTTP 越しに
+ヒントを運んでいた点で同じ形の窓を持っていた）。リコンサイラの `collectReportSignals` は
+`status.TurnEndReason` を `MarkerReason` として読み、`HintReason` が空のときのフォールバックに
+使う（ヒントが先に届いていればそちらを優先 — 既存の優先順位は変えない。実務上は同じ
+`MarkTurnEndErr` 呼び出しが両方の書き手なので両者は常に一致する）。
+
+これにより「ヒントを失うと理由が消える」という非対称は解消し、qualifier もレベルから
+読めるようになった。旧形式のレコード（`turnEndReason` キーが無い）は理由が空と読める
+だけで、クラッシュにも誤報にもならない（`omitempty` の zero value）。
 
 ## テスト戦略
 

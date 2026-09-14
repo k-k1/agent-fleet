@@ -76,6 +76,14 @@ const (
 	// rateLimitCleanupGrace is how long after the scheduled instant the episode is kept
 	// before the spent once-schedule is deleted and the state file dropped.
 	rateLimitCleanupGrace = 30 * time.Minute
+	// rateLimitRebookSettle is how long after a booked resume has fired an episode is given
+	// before a session that is STILL at its limit is treated as a new one (episodeSpent).
+	// It is not zero because the evidence lags the delivery: the resumed turn has to reach the
+	// CLI and write its first record before "at the limit" turns false, and rolling over inside
+	// that window would book against the limit the resume was already sent for. Two scheduler
+	// ticks plus one watch tick is enough of a margin, and the cost of waiting it out is one
+	// sweep (measured 2026-09-14 scpigmc: the refusal came back within a minute of the fire).
+	rateLimitRebookSettle = 3 * time.Minute
 	// rateLimitEpisodeTTL drops an episode that never got a resume time (auto-resume off, or
 	// no instant could be determined) so a stale file can't suppress the next episode.
 	rateLimitEpisodeTTL = 12 * time.Hour
@@ -227,8 +235,14 @@ func usageLimitResetAt(m session.Meta, st rateLimitState, now time.Time) (time.T
 // is: true = the pane is pinned on the /rate-limit-options menu, false = the transcript tail
 // is a turn cut off by the limit (no menu, and the session can accept input).
 func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu bool, kind claude.LimitKind) {
-	if episodeStale(st, now) {
-		st = rateLimitState{} // the previous episode is over - treat this as a new limit
+	if episodeStale(st, now) || episodeSpent(st, now) {
+		// The previous episode is over - treat this as a new limit. Its once-schedule has
+		// already fired (or is past saving); leaving the row behind would pile dead entries up
+		// in the Console's scheduled-execution list, and the id is about to be forgotten.
+		if st.ScheduleID != "" {
+			dropRateLimitSchedule(st.ScheduleID)
+		}
+		st = rateLimitState{}
 	}
 	if st.At == "" {
 		st.At = now.Format(time.RFC3339)
@@ -413,7 +427,20 @@ func rateLimitWaiting(m session.Meta, now time.Time) (state, resumeAt string, ok
 	if kind == claude.LimitSpend {
 		return agents.StateSpendLimit, "", true // no booking exists: no instant clears this
 	}
-	return agents.StateLimited, st.ResumeAt, true
+	// A booked instant that has passed is not an answer to "when does this move again": the
+	// resume fired and the session is plainly still at its limit. The chip then says only that
+	// it is waiting, which stays true while the next booking is worked out (docs/log/47 §4-13 -
+	// a chip reading "waiting until 10:25" at 10:41 is what the user reported).
+	return agents.StateLimited, futureInstant(st.ResumeAt, now), true
+}
+
+// futureInstant passes an RFC3339 instant through only while it is still ahead of now.
+func futureInstant(iso string, now time.Time) string {
+	t, err := time.Parse(time.RFC3339, iso)
+	if err != nil || !t.After(now) {
+		return ""
+	}
+	return iso
 }
 
 // triedRecently rate-limits the Enter presses inside one episode.
@@ -437,6 +464,27 @@ func episodeStale(st rateLimitState, now time.Time) bool {
 	}
 	t, err := time.Parse(time.RFC3339, st.At)
 	return err != nil || now.After(t.Add(rateLimitEpisodeTTL))
+}
+
+// episodeSpent reports whether this episode's booking has already fired and settled. Only
+// rateLimitRecover asks, which means the session is at its usage limit AT THIS MOMENT — so the
+// resume that was sent at ResumeAt did not get the session moving, and what is in front of us
+// is a new limit that needs its own instant (docs/log/47 §4-13).
+//
+// Before this existed the episode stayed current for rateLimitCleanupGrace (30 minutes) and
+// scheduleRateLimitResume declines outright while a ScheduleID is held, so the limit that
+// followed a failed resume was silently swallowed: no second booking, and the row kept showing
+// the instant that had already gone by (measured 2026-09-14 on scpigmc).
+//
+// Deliberately NOT folded into episodeStale: that one also answers "may this file be dropped
+// and its schedule deleted" on the follow-up path, where the session is idle and a booking that
+// has just fired is exactly what must be left alone until the grace is over.
+func episodeSpent(st rateLimitState, now time.Time) bool {
+	if st.At == "" || st.Spend || st.ResumeAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, st.ResumeAt)
+	return err == nil && now.After(t.Add(rateLimitRebookSettle))
 }
 
 // createRateLimitSchedule books the resume with the CP scheduler (docs/log/38).
