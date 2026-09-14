@@ -108,6 +108,13 @@ var comfyFamilyFixtures = []comfyFamilyFixture{
 		DiffusionModel: "anima-aesthetic-v1.1.safetensors", ClipL: "qwen_3_06b_base.safetensors",
 		Vae: "qwen_image_vae.safetensors"},
 		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
+	// The names Comfy-Org/Krea-2 publishes. 🔴 The fixture's value is `clip.type`: "krea2" is
+	// read by the loader, and the default would load the same file as a generic Qwen3-VL and
+	// return a picture made against different conditioning, with no error anywhere.
+	{"krea2", ComfyFamilyKrea2, comfyFiles{
+		DiffusionModel: "krea2_turbo_fp8_scaled.safetensors", ClipL: "qwen3vl_4b_fp8_scaled.safetensors",
+		Vae: "qwen_image_vae.safetensors"},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 }
 
 // comfyLinkAt reads the graph edge at "<node>.<input>".

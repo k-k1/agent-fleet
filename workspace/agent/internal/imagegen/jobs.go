@@ -113,6 +113,10 @@ var comfyTrialSteps = map[comfyFamily]int{
 	// the undistilled versions is 30 steps, so a trial at 10 would be judging a composition this
 	// family does not produce at 10.
 	ComfyFamilyAnima: 12,
+	// krea2's own recipe is already 8, the distilled value — so for a Turbo row a trial is the
+	// batch (the klein case above). It is left here for the Raw rows, where it is the family's
+	// published 52 cut to a sixth.
+	ComfyFamilyKrea2: 8,
 }
 
 // --- the records --------------------------------------------------------------------------

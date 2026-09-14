@@ -166,7 +166,7 @@ func engineModelIsLora(m store.EngineModel) bool {
 // contract machinery in contract_wire_test.go). engine_catalog_test.go reads that file and fails
 // when the two drift, which is the only thing standing between "a sixth family was added" and
 // "the Console never offers it".
-var engineComfyFamilies = []string{"sd15", "sdxl", "sd35", "flux1", "flux2-klein", "zimage", "anima"}
+var engineComfyFamilies = []string{"sd15", "sdxl", "sd35", "flux1", "flux2-klein", "zimage", "anima", "krea2"}
 
 // engineComfyFileFlags is the per-file Flag vocabulary a comfy row may declare: "" for a
 // single-file checkpoint, and one flag per part of a split model. Without these a catalogue row
@@ -204,6 +204,10 @@ var engineComfyRequiredFlags = map[string][]string{
 	// the ordinary ingest route — but they are still three declarations, and a row holding only
 	// the 4 GiB diffusion model has nothing to encode a prompt with.
 	"anima": {"--diffusion-model", "--clip_l", "--vae"},
+	// krea2 declares the same three parts, and its VAE is the same FILE as anima's (the
+	// Qwen-Image one). Two rows pointing at one S3 key is a shape this catalogue already
+	// carries — `text_encoders/` has been shared between SD3.5 and FLUX.1 since P2.
+	"krea2": {"--diffusion-model", "--clip_l", "--vae"},
 }
 
 // engineMissingFileFlags answers "what would this row still be refused for", as the list of

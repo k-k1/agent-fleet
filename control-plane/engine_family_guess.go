@@ -19,7 +19,7 @@ package main
 //
 // Three of the four names that measurement found unrecognised (`Anima`, `Krea 2`, `LTXV 2.5`,
 // `SD 1.5 Hyper`) have since been answered by giving the provider a template, not by loosening a
-// needle. `Krea 2` and `LTXV 2.5` are still "" and stay that way until one exists.
+// needle. `LTXV 2.5` is still "" and stays that way until one exists.
 
 import "strings"
 
@@ -97,6 +97,11 @@ var engineFamilyRules = []engineFamilyRule{
 	// a row that cannot generate — the exact failure this whole file is written around. Every
 	// Anima checkpoint and merge on Civitai publishes the bare string "Anima".
 	{family: "anima", equal: []string{"anima"}},
+	// 🔴 "krea2" and not "krea": FLUX.1 Krea dev is a FLUX.1 fine-tune and belongs to the rule
+	// above, which takes it on "flux" before this one is reached — but a needle of "krea" here
+	// would be a trap waiting for the day that order changes. The digit is what separates the
+	// two products, so it is part of the needle.
+	{family: "krea2", any: []string{"krea2"}},
 }
 
 // engineFamilyFromUpstream is the table above applied to one string, before the vocabulary is

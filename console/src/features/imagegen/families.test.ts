@@ -16,7 +16,14 @@ describe("族カードの選択", () => {
       "flux2-klein",
       "zimage",
       "anima",
+      "krea2",
     ]);
+  });
+
+  it("krea2 は蒸留版と非蒸留版の両端を出す（行が params でどちらかを宣言する）", () => {
+    expect(familyCard("krea2")?.dialect).toBe("sentences");
+    expect(familyCard("krea2")?.steps).toEqual([8, 52]);
+    expect(familyCard("krea2")?.quality).toEqual([]);
   });
 
   it("anima は tags 方言で、推奨接頭辞を 2 つ持つ", () => {

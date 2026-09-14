@@ -4729,3 +4729,71 @@ is for the distilled SD1.5 variants.
 **Remaining**: on real hardware, ingest one Anima row (three files), generate once, and look at
 whether the picture is an anime illustration rather than noise — the first thing a wrong text
 encoder would cost. Until then this family claims nothing beyond "the shape is pinned".
+
+## Addendum — Krea 2 joined the family vocabulary (2026-09-15)
+
+### The same declaration as anima, and the opposite trap
+
+Krea 2 is a 12.9B DiT (Krea's first foundation model) published as the same three parts as
+Anima — diffusion model, a Qwen3-VL-4B text encoder, the Qwen-Image VAE — so it declares with
+`--diffusion-model` / `--clip_l` / `--vae` and needs no new flag either. **Its VAE is the same
+FILE as Anima's**, so two rows point at one S3 key; `text_encoders/` has been shared between
+SD3.5 and FLUX.1 since P2 and the accounting already handles it.
+
+🔴 **`type: "krea2"` on the CLIPLoader is read, and getting it wrong is silent.** `comfy/sd.py`
+(v0.34.0) reaches the Krea2 tokenizer only through `clip_type == CLIPType.KREA2`. The same
+Qwen3-VL-4B file loaded at the node's default falls into the generic `qwen3vl` branch instead,
+which loads, encodes, samples and returns a picture — made against different conditioning than
+the model was trained on, with no error at any layer. Anima is the exact opposite case (its type
+field is inert because the encoder is detected), and the two templates say so to each other.
+
+**Where the files come from matters here.** `krea/Krea-2-Raw` and `krea/Krea-2-Turbo` are
+**gated** (measured 2026-09-15: anonymous `README.md` is 401). `Comfy-Org/Krea-2` is not, and
+carries the diffusion models, both text encoders and the VAE. The ungated repository is the one
+to ingest from; the gated one needs the token in the ingest task, which is the machinery decision
+6 already describes.
+
+### The recipe is the DISTILLED one, and that is a citation, not a preference
+
+ComfyUI ships templates for Krea 2 **Turbo only** (`image_krea2_turbo_t2i.json` and two INT8
+variants) and none for Raw, so the citable recipe is 8 steps, cfg 1, euler, simple. Raw's
+published 52 steps with real guidance is the row's `params` to declare. This points the opposite
+way from the anima addendum above — there the family default is the undistilled model and Turbo
+is the declaration — and both times the rule was the same: **take the numbers somebody published
+for a graph, never invent the other mode's.**
+
+The template departs from the shipped one in one place: ComfyUI zeroes the negative out
+(`ConditioningZeroOut`) because Turbo runs at cfg 1, and this graph encodes a real negative
+instead, because the same template has to serve a Raw row. At cfg 1 the two produce identical
+pixels, and the extra encode is the same text every request, which ComfyUI serves from its
+execution cache after the first.
+
+### Capabilities became per-row, because "guided family" stopped meaning "guided row"
+
+`comfyModelTakesNegative` answered from the family alone. With Krea 2 that would tell **most**
+users of this family that their negative prompt reaches a picture it cannot touch: Turbo is the
+normal row, it declares cfg 1, and at cfg 1 guidance is `uncond + 1*(cond - uncond)` — `cond`
+exactly, whatever is wired into the negative branch.
+
+So three surfaces now read the ROW's effective cfg rather than the family:
+
+- `Caps.Negative` (`comfyModelTakesNegative`),
+- the form's field list (`comfyModelKnobs`, new — a field offered for a value the capability
+  calls ignored is the pair disagreeing in front of the member),
+- the warning that the administrator's exclusion list did not apply
+  (`comfyNegativeIgnoredWarning`, which now also says *why*: the row's cfg, not the family).
+
+`comfyFamilyTakesNegative` stays, and now means only "this family's template wires one". The
+same correction applies to Anima-Turbo and to a distilled SD1.5 declared at cfg 1, which were
+being reported wrongly before this change.
+
+### What has not been measured
+
+🔴 **Krea 2 has never been run on a GPU here**, and it is the largest family in the vocabulary:
+`krea2_turbo_fp8_scaled` is 13.1 GB and its fp8 text encoder another 5.2 GB, so an L4 (24 GB) is
+the floor and bf16 (26.3 + 8.9 GB) needs an L40S. The golden pins the graph's shape and claims
+nothing else.
+
+**Remaining**: on real hardware, ingest one Krea 2 Turbo row (three files), generate once, and
+look at whether the picture matches the prompt — a generic-`qwen3vl` mis-load is the failure this
+family can have that the shape cannot show.

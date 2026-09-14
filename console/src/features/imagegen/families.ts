@@ -111,6 +111,20 @@ export const FAMILY_CARDS: FamilyCard[] = [
     trialSteps: 12,
     sizes: DEFAULT_SIZES,
   },
+  {
+    id: "krea2",
+    dialect: "sentences",
+    // Krea 2 was trained for aesthetics rather than tag adherence, and its own prompt-enhancer
+    // node rewrites a short prompt into a paragraph. There is no quality-tag convention to offer.
+    quality: [],
+    // 🔴 The range spans the family's two modes: Turbo is 8 steps at cfg 1 (the family recipe and
+    // the only mode ComfyUI ships a template for), Raw is 52 steps with real guidance. A row
+    // declares which one it is; the card cannot, so it shows both ends rather than picking.
+    steps: [8, 52],
+    cfg: [1, 4.5],
+    trialSteps: 8,
+    sizes: DEFAULT_SIZES,
+  },
 ];
 
 const BY_ID = new Map(FAMILY_CARDS.map((c) => [c.id, c] as const));
