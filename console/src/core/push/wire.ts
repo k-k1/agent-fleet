@@ -12,6 +12,7 @@ import { useTenantStore } from "../store/tenant.ts";
 import { useSessionsStore } from "../../features/sessions/store.ts";
 import { applyPushedNotifications } from "../../features/notifications/store.ts";
 import { useWorkItemStore } from "../../features/workitems/store.ts";
+import { useEnginesStore } from "../../features/engines/store.ts";
 
 /** Register the store-apply handlers. Returns the cleanup (StrictMode-safe). */
 export function wirePushApply(): () => void {
@@ -22,6 +23,9 @@ export function wirePushApply(): () => void {
     // Work items (docs/log/80): the frame is the CP's cache verbatim. Fetching runs in a
     // separate goroutine on the CP, so only rows already in that cache arrive here.
     onPush("workitems", (d) => useWorkItemStore.getState().applyPush(d)),
+    // Engine indicator (ADR 0084 decision 1): the member row, same apply path as REST
+    // (features/engines/store.ts's refresh()).
+    onPush("engines", (d) => useEnginesStore.getState().applyPush(d)),
     // A reconnect signals "the CP may have restarted" — re-read whoami (deployment
     // capabilities included), which no frame carries. Throttled on the callee side.
     onPushConnect(() => void useTenantStore.getState().refreshWhoami()),

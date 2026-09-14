@@ -7,6 +7,9 @@
   合わせ直しで**剥がれた前提が 1 つ**——`image` 役はもう 1 行とは限らない（決定 11）。
   行番号は全部引き直し、`engineImageConn` の署名変更（`provider` → `key`）も反映した。
   🟢 番号は確定。0082 / 0083 は develop に入り、0084 は空いている。
+  🟢 **着工前に 2026-09-14 レビュー済み。** 行番号は全部ツリーで引き直した。未解決のうち 2 つは
+  ソースから答えが出たのでその答えごと閉じ（2 と 6——どちらも「CP からは見えない」）、
+  決定 9 の穴は書かれていたより狭いと分かった。
 - 関連: [0071](0071-self-hosted-inference-engines.ja.md)（エンジンの箱・オンデマンド制御・
   コールドスタート・ゲートウェイ） /
   [0082](0082-many-image-engines-at-once.ja.md)（**images 行それ自体が 1 provider**。
@@ -70,7 +73,9 @@
   あと二度と送らない**（0 バイト）。
 - REST の口も 1 本置く（`GET /api/engines/status`）。これは events が 404 を返す古い CP
   ——`events.go:12` が明示している版ずれの経路——と、`etagJSON`（`etag.go:23`）越しの
-  フォールバックのため。Console は events と REST を**同じ store 適用パス**で処理する（既存の 4 本と同じ）。
+  フォールバックのため。Console は events と REST を**同じ store 適用パス**で処理する
+  （既存の 5 本と同じ——`workspace` / `stats` / `sessions` / `notifications` / `workitems`、
+  `events.go:124`-137）。
 
 なぜ Agent 側（`GET /imagegen/status`）ではないか、3 つ:
 
@@ -85,7 +90,8 @@
 `stop_eta` は絶対時刻（RFC3339）で送り、**残り秒はブラウザが引く**。`box.since` も同じで、
 「起動して N 分」は引き算である。
 
-これは好みではなく、決定 1 を成り立たせる条件である。`imagegen/jobs.go:21` の 🔴 が同じことを
+これは好みではなく、決定 1 を成り立たせる条件である。
+`workspace/agent/internal/imagegen/jobs.go:21` の 🔴 が同じことを
 別の文脈で書いている——「実行中のジョブが `elapsed_ms` ではなく `started_at` を運ぶのは、
 elapsed を入れるとバッチが生きている間**毎回の poll が丸ごと 200 になる**から」。ここで残り秒を
 送れば、`emit` の差分抑制は毎 tick 破れ、engines ストリームは「無変化なら 0 バイト」ではなく
@@ -113,7 +119,11 @@ controller は既に 30 秒ごとに回り（`AF_TTS_ECS_CONTROL_INTERVAL_SEC`�
 
 行は**管理者行から名前でコピーして削る**。`engineTenantAdminRow`（`engine_ingest_perm.go:157`）が
 既にこの形をしていて、そのコメントが理由を書いている——「包含関係を 2 つのリストが歩調を合わせる
-ことではなく、構成によって真にする」。会員の行が持つのは:
+ことではなく、構成によって真にする」。3 つ目の写しを書かず、既にある 2 部品を使い回すこと:
+フィールド列の `var`（`engineTenantAdminFields`・`:141`）と `pickKeys`（`:170`）。
+`pickKeys` 自身の契約が、決定 4 がぶら下がっているものそのものである——「元の行に無い鍵は
+無いまま。nil をコピーすると『CP は何も言わなかった』が『CP は null と言った』に化け、
+Console はそれを値として描く」。会員の行が持つのは:
 
 ```
 key, api, state, warm, stop_eta, idle_secs, lifecycle, queue{...}
@@ -160,13 +170,14 @@ CP が「出さない」を**行を送らないこと**で表現するからで�
 |---|---|---|---|
 | A | CP ゲートウェイの in-flight | CP が**いま握っている**要求。コールドスタート待ちも生成中も含む | atomic 2 個。無料 |
 | B | ComfyUI の `GET /queue` | 箱の**中**に積まれた prompt（`queue_running` + `queue_pending`） | 稼働中のみ 30 秒に 1 回 |
-| C | 各 Workspace Agent のジョブキュー | **その人自身**の未投入ジョブ（`imagegen/jobs.go:166`） | 既存のポーリングに相乗り |
+| C | 各 Workspace Agent のジョブキュー | **その人自身**の未投入ジョブ（`internal/imagegen/jobs.go:166`） | 既存のポーリングに相乗り |
 
 - **`llm` 役 = A のみ。** chat は CP が最初から最後まで握る（ストリームはハートビート付きで
   素通し、非ストリームは 45 秒で `engine_waking`）。A が「いま何人待っているか」の全量である。
 - **`image` 役 = A + B。** ComfyUI は非同期 API で、`POST /prompt` は**即座に queue id を返す**
-  （`comfy.go:7`）。絵は CP の外、箱の中のキューで順番待ちする。A だけでは取りこぼす。
-  B の読み方は Agent 側に実装済みで（`comfy.go:1232` の `queuePending`、`/queue` の
+  （`internal/imagegen/comfy.go:7`）。絵は CP の外、箱の中のキューで順番待ちする。A だけでは
+  取りこぼす。B の読み方は Agent 側に実装済みで
+  （`workspace/agent/internal/imagegen/comfy.go:1232` の `queuePending`、`/queue` の
   `queue_pending` を読む取消の実装）、同じ読みを CP の controller tick に置く——
   **サービスが RUNNING のときだけ**。寝ている間は 0 コール。稼働中でも 30 秒に 1 回で、
   $1.26/h の箱の横では誤差である。
@@ -189,16 +200,20 @@ C の取り方（新しい常設ポーリングを作らないための配管）
 - Agent に**要約だけ**の口を足す: `GET /imagegen/queue` → `{"queued":38,"running":1,"groups":2}`。
   既存の `GET /api/imagegen/jobs` は最大 200 の待機＋500 の完了を運ぶので、数を得るためにそれを
   15 秒ごとに引くのは無駄である（バッチが動いている間は ETag も効かない）。
-  `POST /api/imagegen/queue` は既にあるので、**同じパスの GET** が素直な名前になる
-  （`routes.go:491` の隣に 1 行）。
+  `POST /imagegen/queue` は既にあるので、**同じパスの GET** が素直な名前になる。
+  ⚠️ これは **2 ファイルへの 2 登録であって 1 行ではない**。Agent 側は
+  `workspace/agent/routes.go:131`（`POST /imagegen/queue`）の隣、CP 側の中継は
+  `control-plane/routes.go:491`（`POST /api/imagegen/queue`）の隣。2 つのパスを見分ける手がかりは
+  `/api/` 接頭辞だけで、`workspace/agent/routes.go` は 478 行しかない——491 番は必ず CP 側である。
 - Console は**この購読を 1 つしか持たない**。画像生成ペインが開いていればペインの 2 秒 tick が
   同じ store を満たし、トップバーはそれを読むだけ（二重ポーリングなし）。ペインが閉じている間だけ
   15 秒。`document.hidden` で止める（`core/store/workspace.ts:238` と同じ作法）。
 - ワークスペースが停止していれば C は**無い**——0 ではなく無い。キューは Agent のメモリにしか
-  無いので（`jobs.go:17`）、停止＝本当に何も積まれていない。表示は `（自分 38）` の括弧ごと消える。
+  無いので（`internal/imagegen/jobs.go:17`）、停止＝本当に何も積まれていない。表示は
+  `（自分 38）` の括弧ごと消える。
 
 ⚠️ **A は CP プロセスのメモリにしか無い。** 30-ingress の CP は `DesiredCount: 1`
-（`cfn/30-ingress.yaml:854`）なので配備全体として正しいが、ローリング更新の最中だけ 2 つの
+（`deploy/aws/ecs/cfn/30-ingress.yaml:854`）なので配備全体として正しいが、ローリング更新の最中だけ 2 つの
 プロセスが数を分け合う。管理者行の `window_counted_secs`（`engine_admin.go:391` の ⚠️）が
 先例で、同じ正直さを持たせる: 行に `queue_counted_secs` を添え、CP が入れ替わった直後は
 「まだ数えていない」と描けるようにする。**確信のある 0 を出さない。**
@@ -254,12 +269,24 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
 これが無いと最大 10 分、**メニューに出ているのに 403** になる——決定 8 が作らないと言った形そのものである。
 
 🔴 **既存の穴。** `syncEngineProviders`（`workspace/agent/engines.go:277`）は
-`if len(rows) == 0 { return }` で抜ける（`:257`）。カタログが**空になった**とき、
+`if len(rows) == 0 { return }` で抜ける（`:281`）。カタログが**空になった**とき、
 `WriteEngineProviders` は呼ばれず、**opencode の provider ブロックは古いまま残る**。
 今日これは起きない（配備からエンジンが消えることは実質ない）が、決定 8-1 はまさにそれを
 テナント単位で起こす。早期 return を「0 行なら 0 行で書く」に直し、`ApplyEngineChange`
 （`engines.go:313`）が daemon に届くようにする。**この修正無しにテナントゲートを入れると、
 剥奪されたテナントの起動メニューにモデルが並び続け、選ぶと 403 になる。**
+
+レビューで詰めた 2 点。実装者はどちらも要る。
+
+- **穴は「剥奪された全テナント」より狭い。** chat の絞り込み（`e.api() != engineAPIChat`）は
+  長さ判定の**後**に走るので、`llm` 行が残っている配備で `image` だけ剥奪されたテナントは
+  `rows` が空にならず、`providers` が空のまま `WriteEngineProviders` が**呼ばれて消える**。
+  穴が刺さるのはカタログが**完全に空**になるときだけ——llm 行しか無い配備、または両方の役を
+  剥奪されたテナント。それでも普通に起きる形なので、この狭さを「任意」と読まないこと。
+- **早期 return を外すだけで修正は終わる。** `WriteEngineProviders`
+  （`internal/agents/opencode/engine.go:87`）は空スライスを両経路で既に処理している——設定
+  ファイルが無ければ作らず（`:99`）、あれば `want` に無い provider を全部落とす。下流に足すものは
+  無い。非空のカタログを空へ遷移させてブロックが消えることを試験で確かめる（陽性対照は非空の書き込み）。
 
 ### 決定 10 — 見た目は TTS ピルの隣。押しても箱は買わない
 
@@ -298,10 +325,17 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
 - **`stop_eta` は畳まない。** 複数行の停止時刻を 1 つに丸めた数は、どの箱についても真ではない。
   ピルのカウントダウンは、見出しを取った**その行の** `stop_eta` だけを出す。他の行は popover。
 
-⚠️ **「いちばん良い状態」は `auto` が実際に選ぶ行とは限らない。** 順序は `imageProviderOrder`
-——**メンバーの設定**であり（ADR 0082 決定 3）、CP がそれを知っているかは未確認（未解決 6）。
-知り得るなら見出しは「自分の `auto` が最初に当てる行」にするべきで、そちらが正しい。
-知り得ないなら「いちばん良い状態」が次善で、popover が行ごとの真実を持つ。
+⚠️ **「いちばん良い状態」は `auto` が実際に選ぶ行とは限らない**——そしてレビューで、そのままに
+するしかないと決まった。順序は `imageProviderOrder`、**メンバーの設定**であり（ADR 0082 決定 3）、
+**CP からは見えない**。あれはワークスペース自身の home ボリュームの
+`~/.config/agent-fleet/ui-prefs.json` にあり（`internal/uiprefs/prefs.go` の `Path()`）、
+読むのは Agent だけで（`prefs.go:241`）、CP の関与は `GET`/`PUT /api/env/ui-prefs` を Agent へ
+素通しで中継することだけである（`control-plane/routes.go:787`）——解釈も保存もしない不透明な塊。
+よって見出しは**「いちばん良い状態」**とし、行ごとの真実は popover が持つ。`auto` の実際の行き先と
+「いちばん良い行」を見分けられる場所は、そこしかない。
+
+この畳み方は**後から賢くできる場所でもない**。「自分の `auto` が最初に当てる行」が欲しくなった
+時点で、それは CP が読める投影ではなく、CP に渡してやらねばならない投影になる。
 
 ## 却下した案
 
@@ -335,8 +369,9 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
 
 - **CP**:
   - `events.go` に `engines` ストリーム 1 本＋ `GET /api/engines/status`（フォールバック）。
-  - `engine_admin.go` の行から**名前でコピーして削る** `engineMemberRow`（`engine_ingest_perm.go:157`
-    と同じ形。同じ試験の形——実際の行に対して包含を主張する）。
+  - `engine_admin.go` の行から**名前でコピーして削る** `engineMemberRow`（フィールド列の `var` ＋
+    既存の `pickKeys`・`engine_ingest_perm.go:141` / `:170`）。
+    試験の形も同じ——実際の行に対して包含を主張する。
   - controller に会員向けスナップショット（決定 3）と、RUNNING のときだけの ComfyUI `/queue`
     読み（決定 6-B）。
   - ゲートウェイに in-flight カウンタ 2 つ（決定 6-A）と `queue_counted_secs`。
@@ -347,13 +382,14 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
   - カタログ押し出しのテナント絞り込み（`engine_usage.go:408`）。
 - **Agent**（`workspace/agent`）:
   - `syncEngineProviders` の空カタログ対応（決定 9・既存の穴）。
-  - `GET /imagegen/queue`（要約のみ）と `routes.go` / `testdata/routes.golden`。
+  - `GET /imagegen/queue`（要約のみ）を `workspace/agent/routes.go:131` の隣、
+    ＋ `testdata/routes.golden`。
   - CP 側の中継 1 行（`control-plane/routes.go:491` の隣）。
 - **Console**:
   - `app/TopBar.tsx` に**役ごと**のピル（最大 2 つ）と**行ごと**に並べる popover（決定 11）、
     `app/topbar.css`。
   - `core/push/wire.ts` に `engines` ストリーム、store 1 つ（events と REST の両方を同じ
-    適用パスで、既存 4 本と同じ）。
+    適用パスで、既存 5 本と同じ）。
   - imagegen キュー要約の共有 store（ペインが開いていれば 2 秒、閉じていれば 15 秒、
     `document.hidden` で停止）。
   - `features/settings/tenant/tenantScope.tsx:331` の隣に `admin-fgroup` 1 つ、
@@ -380,7 +416,19 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
 
 ## フェーズ
 
-ファイルを共有しない 3 レーンに割れる。B は A の wire に対してスタブで組める。
+3 レーンに割れる。B は A の wire に対してスタブで組める。
+
+⚠️ **実際には「ファイルを共有しない」は成り立たない**——起草がそう書き、レビューで捕まえた。
+A と C は両方 `control-plane/engine_gateway.go` を触り（A は in-flight カウンタ、C はゲート 3 か所）、
+C のゲート 4（「行を送らない」）は A が作る `engines` ストリームを触る。したがって:
+
+- **A を先に着地させ**、C はストリームを自分で作らずその上に rebase する。それまで C のゲート 4 は
+  置き場所を書いたコメントに留める。
+- `engine_gateway.go` の中では 2 レーンが別の関数に触る（カウンタはプロキシ経路、ゲートは
+  `catalog` / `issueSessionToken` / `serve`）ので、衝突は字面のもので意味のものではない。
+  後から来たレーンに発見させず、PR にそう書くこと。
+- **C の Agent 側の修正（決定 9）は誰とも共有しない**し、A を待たない。単独で最初に片付け、
+  ゲートが修正より先に出ないようにする。
 
 - **P0-A（CP・インジケータ）**: 会員行、controller のスナップショット、`engines` ストリーム、
   REST フォールバック、ゲートウェイの in-flight（A）。
@@ -399,10 +447,16 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
 1. **待ち数の 2 つの数は、1 つのピルに収まるか。** `待ち 3（自分 38）` は日本語では読めるが、
    英語の `3 queued (38 yours)` は長い。スマホでは popover 送りになるので、デスクトップで
    共有だけを出し、自分の分は popover に置く案もある。実装して見るまで決めない。
-2. **`llm` 役の in-flight は「待ち」か「使用中」か。** llama-server は `--parallel` のスロット数
-   まで同時に走らせ、それを超えた分は箱の中で待つ。CP の in-flight はその両方を 1 つの数にする。
-   スロット数は CP が宣言から知り得るか（60-engines のパラメータに在るか）を実装時に確認する。
-   在れば `待ち` と `実行中` に割れる。
+2. ~~**`llm` 役の in-flight は「待ち」か「使用中」か。**~~ **解決——1 つの数のままにする。**
+   llama-server は `--parallel` のスロット数まで同時に走らせ、超えた分は箱の中で待つが、
+   そのスロット数を CP は知り得ない。CP が読むエンジン表（`AF_ENGINES_SSM_PARAM` →
+   `engineDef`・`control-plane/engines.go:49`）にその欄は無く、フラグの出所になり得るのは
+   `LlmExtraArgs`（`deploy/aws/ecs/cfn/60-engines.yaml:46`）だけ——コンテナのコマンドへそのまま
+   join される `CommaDelimitedList`（`:678`）で、**スタックの出力には入っていない**
+   （`:890`。出ているのは SSM パラメータ・サービス名・起動テンプレート・バケット・ingest の
+   タスク定義ファミリ）。既定値は `-ngl,99,--jinja,--no-mmap` で、そもそも `--parallel` を
+   置いていない。よって popover の文言は `待ち` と `実行中` に割らず「処理中」とする——
+   **CP に入力の無い区別を書かない。**
 3. **controller の間隔（30 秒）は状態語に十分か。** コールドスタート中は controller が短い間隔を
    返すので起動の過程は見えるはずだが、実機で確認する。足りなければ、会員向けスナップショットの
    ために controller の tick を短くするのではなく、**状態が変わった瞬間に書く**側を増やす
@@ -412,11 +466,11 @@ DB の state 列で running を絞り、`engineCatalogPushConcurrency` で抑え
    （ペインを見ている人の視線はペインの中にある）だが、文言は 1 か所から引くべきで、
    2 つの語彙が育つのは避ける。
 5. ~~**番号。**~~ 解決——0082 / 0083 は develop に着地し、0084 は空いている（冒頭の 🟢）。
-6. **`imageProviderOrder` は CP から見えるか。** 決定 11 の見出しを「自分の `auto` が最初に
-   当てる行」にできるかが、これ 1 つで決まる。あれはメンバーの設定（ADR 0082 決定 3）で、
-   Console の設定同期が CP に置いているかどうかを実装時に確認する。見えるなら見出しはその行、
-   見えないなら「いちばん良い状態」。**推測で実装しない**——外すと、冷えている行を使う人に
-   「準備済み」と言うことになる。
+6. ~~**`imageProviderOrder` は CP から見えるか。**~~ **解決——見えない。** あの設定は
+   ワークスペースから出ない。home ボリュームの `~/.config/agent-fleet/ui-prefs.json` にあり、
+   読むのは Agent（`internal/uiprefs/prefs.go:241`）、CP は解釈しない不透明な塊として中継する
+   だけである（`control-plane/routes.go:787`）。よって決定 11 の見出しは**「いちばん良い状態」**、
+   行ごとの真実は popover。着工前に決着したので、誰も推測しなくてよい。
 7. **役に行が 2 つ以上あるとき、テナントゲートは役のままでよいか。** 決定 7 は役の粒度で切った。
    LAN の 1 台だけ許してクラウドの箱は許さない、という要求が実際に出るかは分からない。
    出るまで役のままにする——行の粒度はカタログの絞り込みが 1 行では済まなくなる。

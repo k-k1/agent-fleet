@@ -8,6 +8,9 @@ English | [日本語](0084-engine-indicator-and-tenant-gate.ja.md)
   necessarily one row (decision 11). Every line anchor was redrawn, and `engineImageConn`'s changed
   signature (`provider` → `key`) is folded in.
   🟢 The number is settled: 0082 / 0083 are on develop and 0084 is free.
+  🟢 **Reviewed 2026-09-14 before the build**, every anchor re-run against the tree. Two open
+  questions were answerable from the source and are now closed with their answers (2 and 6 — both
+  "no, the CP cannot see it"), and decision 9's hole turned out narrower than it was written.
 - See also: [0071](0071-self-hosted-inference-engines.md) (the engine box, on-demand control, the
   cold start, the gateway) /
   [0082](0082-many-image-engines-at-once.md) (**an images row is itself one provider**; a role holds
@@ -79,7 +82,8 @@ Do not add a route and have the Console poll it. Add one stream, named `engines`
 - A REST door rides beside it (`GET /api/engines/status`), for the version-skew path `events.go:12`
   names — an older CP answers 404 on the stream and the client falls back — and it inherits
   `etagJSON` (`etag.go:23`). The Console applies the stream and the REST reply through **one
-  store-apply path**, exactly like the four streams that already exist.
+  store-apply path**, exactly like the five streams that already exist (`workspace` / `stats` /
+  `sessions` / `notifications` / `workitems`, `events.go:124`-137).
 
 Why not the Agent's side (`GET /imagegen/status`), three reasons:
 
@@ -96,7 +100,8 @@ Why not the Agent's side (`GET /imagegen/status`), three reasons:
 `stop_eta` ships as an absolute time (RFC3339) and **the browser does the subtraction**. Same for
 `box.since`: "up for N minutes" is arithmetic.
 
-This is not taste, it is the condition that makes decision 1 work. `imagegen/jobs.go:21` writes the
+This is not taste, it is the condition that makes decision 1 work.
+`workspace/agent/internal/imagegen/jobs.go:21` writes the
 same rule in another context with a 🔴: a running job carries `started_at` and not a live
 `elapsed_ms`, because "putting it here would make every single poll a full 200 for the life of the
 batch". Put a remaining-seconds field here and `emit`'s diff suppression breaks on every tick — the
@@ -128,7 +133,11 @@ snapshot synchronously there is what keeps "I pressed it and it still says aslee
 
 The row is built by **copying named keys out of the administrator's row**. `engineTenantAdminRow`
 (`engine_ingest_perm.go:157`) is already this shape, and its comment says why: it makes the
-containment "true by construction rather than by two lists staying in step". A member's row holds:
+containment "true by construction rather than by two lists staying in step". Reuse its two parts
+rather than writing a third copy: a field-list `var` (`engineTenantAdminFields`, `:141`) and
+`pickKeys` (`:170`). `pickKeys`' own contract is the thing decision 4 hangs on — "keys absent from
+the full row stay absent — copying a nil in would turn 'the CP said nothing' into 'the CP said
+null', which the Console draws as a value". A member's row holds:
 
 ```
 key, api, state, warm, stop_eta, idle_secs, lifecycle, queue{...}
@@ -178,14 +187,16 @@ main reason this indicator exists at all.
 |---|---|---|---|
 | A | The CP gateway's in-flight count | requests the CP **is holding right now** — cold-start waits and generations alike | two atomics; free |
 | B | ComfyUI's `GET /queue` | prompts stacked up **inside the box** (`queue_running` + `queue_pending`) | one call per 30 s, only while running |
-| C | Each Workspace Agent's job queue | **that person's own** not-yet-submitted jobs (`imagegen/jobs.go:166`) | rides an existing poll |
+| C | Each Workspace Agent's job queue | **that person's own** not-yet-submitted jobs (`internal/imagegen/jobs.go:166`) | rides an existing poll |
 
 - **`llm` role = A alone.** The CP holds a chat request end to end (streaming passes through with a
   heartbeat; non-streaming gives up at 45 s with `engine_waking`). A is the whole truth about "how
   many people are waiting".
 - **`image` role = A + B.** ComfyUI's API is asynchronous: `POST /prompt` **returns a queue id at
-  once** (`comfy.go:7`), and the picture then waits inside the box, outside the CP. A misses it. The
-  read already exists on the Agent side — `queuePending` (`comfy.go:1232`) reads `queue_pending` to
+  once** (`internal/imagegen/comfy.go:7`), and the picture then waits inside the box, outside the
+  CP. A misses it. The
+  read already exists on the Agent side — `queuePending`
+  (`workspace/agent/internal/imagegen/comfy.go:1232`) reads `queue_pending` to
   decide how to cancel — and the same read goes on the CP's controller tick, **only while the
   service is RUNNING**. Zero calls while it sleeps; one per 30 s while it runs, which next to a
   $1.26/hour box is rounding error.
@@ -208,18 +219,23 @@ How C is fetched, without creating a new permanent poll:
 - Add a **summary-only** route to the Agent: `GET /imagegen/queue` →
   `{"queued":38,"running":1,"groups":2}`. The existing `GET /api/imagegen/jobs` carries up to 200
   waiting plus 500 finished jobs, so pulling it every 15 seconds for a count is waste (and the ETag
-  does not help while a batch is moving). `POST /api/imagegen/queue` already exists, so **a GET on
-  the same path** is the honest name — one line beside `routes.go:491`.
+  does not help while a batch is moving). `POST /imagegen/queue` already exists, so **a GET on
+  the same path** is the honest name.
+  ⚠️ This is **two registrations in two files, not one**: the Agent's own line goes beside
+  `workspace/agent/routes.go:131` (`POST /imagegen/queue`), and the CP's relay beside
+  `control-plane/routes.go:491` (`POST /api/imagegen/queue`). The `/api/` prefix is the only thing
+  that tells the two paths apart, and `workspace/agent/routes.go` is 478 lines long — anything
+  numbered 491 is the CP's.
 - The Console holds **one subscription** to it. With the image-generation pane open, the pane's own
   2-second tick fills the same store and the top bar just reads it (no second poll); only while the
   pane is closed does the 15-second floor apply. It stops on `document.hidden`, the same habit as
   `core/store/workspace.ts:238`.
 - With the workspace stopped, C is **absent** — not zero. The queue lives only in the Agent's memory
-  (`jobs.go:17`), so stopped really does mean nothing is stacked up. The `(38 yours)` clause
+  (`internal/imagegen/jobs.go:17`), so stopped really does mean nothing is stacked up. The `(38 yours)` clause
   disappears with its parentheses.
 
 ⚠️ **A lives in one CP process's memory and nowhere else.** The CP service is `DesiredCount: 1`
-(`cfn/30-ingress.yaml:854`), so the number is deployment-wide — except during a rolling update, when
+(`deploy/aws/ecs/cfn/30-ingress.yaml:854`), so the number is deployment-wide — except during a rolling update, when
 two processes split it. The admin row's `window_counted_secs` (the ⚠️ at `engine_admin.go:391`) is
 the precedent, and this gets the same honesty: a `queue_counted_secs` beside the number, so a CP
 that has just been replaced can be drawn as "not counted yet". **Do not state a confident 0.**
@@ -282,12 +298,26 @@ Without it there is a window of up to ten minutes in which the model is **in the
 403** — precisely the shape decision 8 said not to build.
 
 🔴 **An existing hole.** `syncEngineProviders` (`workspace/agent/engines.go:277`) returns early on
-`if len(rows) == 0` (`:257`). When the catalogue becomes **empty**, `WriteEngineProviders` is never
+`if len(rows) == 0` (`:281`). When the catalogue becomes **empty**, `WriteEngineProviders` is never
 called and **opencode's provider block is left exactly as it was**. Today that cannot happen (an
 engine does not vanish from a deployment in practice) — but decision 8-1 makes it happen per tenant.
 The early return has to become "zero rows is written as zero rows", so that `ApplyEngineChange`
 (`engines.go:313`) reaches the daemon. **Ship the tenant gate without this fix and a stripped
 tenant's launch menu keeps listing models that 403 when picked.**
+
+Two things the review pinned down, and the builder needs both:
+
+- **The hole is narrower than "any stripped tenant".** The chat filter (`e.api() != engineAPIChat`)
+  runs *after* the length check, so a tenant denied `image` on a deployment that still has an `llm`
+  row leaves `rows` non-empty, `providers` empty, and `WriteEngineProviders` **is** called and does
+  erase. The hole bites exactly when the catalogue goes **completely** empty: a deployment with an
+  llm row and no other, or a tenant denied both roles. That is still the common shape — do not let
+  the narrowing read as "optional".
+- **Removing the early return is the whole fix.** `WriteEngineProviders`
+  (`internal/agents/opencode/engine.go:87`) already handles the empty slice on both paths: with no
+  config file it conjures none (`:99`), and with one it prunes every provider missing from `want`.
+  So there is nothing to add downstream — verify with a test that drives a non-empty catalogue to
+  empty and asserts the block is gone (the positive control is the non-empty write).
 
 ### Decision 10 — it lives beside the TTS pill, and pressing it never buys a box
 
@@ -331,11 +361,17 @@ apart from each other up front:
   pill counts down the `stop_eta` of **the row it took its headline from**; the rest are in the
   popover.
 
-⚠️ **"Best state" is not necessarily the row `auto` will actually pick.** The order is
-`imageProviderOrder` — **a member setting** (ADR 0082 decision 3) — and whether the CP can see it is
-unverified (open question 6). If it can, the headline should be "the row your `auto` reaches first",
-and that is the better answer. If it cannot, "best state" is the runner-up and the popover holds the
-per-row truth.
+⚠️ **"Best state" is not necessarily the row `auto` will actually pick**, and the review settled
+that it has to stay that way. The order is `imageProviderOrder`, **a member setting** (ADR 0082
+decision 3), and **the CP cannot see it**: it lives in the workspace's own home volume at
+`~/.config/agent-fleet/ui-prefs.json` (`internal/uiprefs/prefs.go`, `Path()`), it is read by the
+Agent alone (`prefs.go:241`), and the CP's only contact with it is relaying `GET`/`PUT
+/api/env/ui-prefs` straight through to the Agent (`control-plane/routes.go:787`) — an opaque blob it
+neither parses nor stores. So the headline is **"best state"**, and the per-row truth lives in the
+popover, which is the one place `auto`'s real target can be told apart from the best one.
+
+This also means the fold is **not** a place to be clever later: the moment somebody wants "the row
+your `auto` reaches first", it is a projection the CP would have to be given, not one it can read.
 
 ## Alternatives rejected
 
@@ -369,8 +405,9 @@ per-row truth.
 
 - **CP**:
   - one `engines` stream in `events.go`, plus `GET /api/engines/status` as the fallback;
-  - `engineMemberRow`, built by **copying named keys** out of the admin row — the shape of
-    `engine_ingest_perm.go:157`, and the same shape of test (assert containment against a real row);
+  - `engineMemberRow`, built by **copying named keys** out of the admin row — a field-list `var`
+    plus the existing `pickKeys` (`engine_ingest_perm.go:141` / `:170`), and the same shape of test
+    (assert containment against a real row);
   - a member-facing snapshot on the controller (decision 3) and the ComfyUI `/queue` read while
     RUNNING (decision 6-B);
   - two in-flight counters on the gateway (decision 6-A) and `queue_counted_secs`;
@@ -381,13 +418,14 @@ per-row truth.
   - narrowing the catalogue push to one tenant (`engine_usage.go:408`).
 - **Agent** (`workspace/agent`):
   - the empty-catalogue fix in `syncEngineProviders` (decision 9, the existing hole);
-  - `GET /imagegen/queue` (summary only), `routes.go` and `testdata/routes.golden`;
-  - one relay line on the CP side (beside `control-plane/routes.go:491`).
+  - `GET /imagegen/queue` (summary only) beside `workspace/agent/routes.go:131`, plus
+    `testdata/routes.golden`;
+  - one relay line on the CP side, beside `control-plane/routes.go:491`.
 - **Console**:
   - a pill **per role** (at most two) and a popover listing **per row** (decision 11) in
     `app/TopBar.tsx`, plus `app/topbar.css`;
   - the `engines` stream in `core/push/wire.ts` and one store, applying the stream and the REST reply
-    through the same path as the four existing ones;
+    through the same path as the five existing ones;
   - a shared store for the imagegen queue summary (2 s while the pane is open, 15 s while it is not,
     stopped on `document.hidden`);
   - one `admin-fgroup` beside `features/settings/tenant/tenantScope.tsx:331` and two fields in
@@ -415,7 +453,19 @@ per-row truth.
 
 ## Phases
 
-Three lanes that share no files; B can be built against a stub of A's wire.
+Three lanes. B can be built against a stub of A's wire.
+
+⚠️ **They do not, in fact, share no files** — the draft said so and the review caught it. A and C
+both edit `control-plane/engine_gateway.go` (A adds the in-flight counters, C adds the three gates),
+and C's fourth gate ("do not send the row") edits the `engines` stream A creates. So:
+
+- **A lands first**, and C rebases onto it rather than inventing the stream. Until then C's gate 4 is
+  a comment naming where it goes.
+- Inside `engine_gateway.go` the two lanes touch different functions — counters wrap the
+  proxy path, the gates sit in `catalog` / `issueSessionToken` / `serve` — so the merge is textual,
+  not semantic. Say so in the PR rather than letting the second lane discover it.
+- **C's Agent-side fix (decision 9) shares nothing with anybody** and does not wait for A. Do that
+  first, on its own, so the gate never ships ahead of it.
 
 - **P0-A (CP, the indicator)**: the member row, the controller snapshot, the `engines` stream, the
   REST fallback, the gateway's in-flight count (A).
@@ -436,11 +486,17 @@ Three lanes that share no files; B can be built against a stub of A's wire.
    `3 queued (38 yours)` is long in English. On a phone it goes to the popover anyway, so one option
    is to show the shared number on desktop and put "yours" in the popover too. Not decided until it
    is on screen.
-2. **For the `llm` role, is the in-flight count "waiting" or "in use"?** llama-server runs up to
-   `--parallel` slots concurrently and queues the rest inside the box; the CP's in-flight count folds
-   both into one number. Check at build time whether the slot count is something the CP can know from
-   the declaration (i.e. whether it is a 60-engines parameter). If it is, the number splits into
-   "running" and "waiting".
+2. ~~**For the `llm` role, is the in-flight count "waiting" or "in use"?**~~ **Closed: it stays one
+   folded number.** llama-server runs up to `--parallel` slots concurrently and queues the rest
+   inside the box, but the CP cannot know the slot count. The engine table the CP reads
+   (`AF_ENGINES_SSM_PARAM` → `engineDef`, `control-plane/engines.go:49`) carries no such field, and
+   the only place the flag could come from is `LlmExtraArgs`
+   (`deploy/aws/ecs/cfn/60-engines.yaml:46`) — a `CommaDelimitedList` joined verbatim into the
+   container command (`:678`) and **not among the stack's outputs** (`:890`, which export the SSM
+   param, the service names, the launch templates, the bucket and the ingest task-def family).
+   The stock value is `-ngl,99,--jinja,--no-mmap`, which sets no `--parallel` at all. So the popover
+   wording says "in flight" rather than splitting into "running" and "waiting" — **do not write a
+   split the CP has no input for.**
 3. **Is the controller's 30-second interval fast enough for the state word?** The controller returns
    a shorter interval while starting, so a cold start should be visible, but confirm on a live run.
    If it is not, do not shorten the controller's tick for the member view — add more places that
@@ -450,11 +506,11 @@ Three lanes that share no files; B can be built against a stub of A's wire.
    (a person looking at the pane is looking at the pane), but the wording must be drawn from one
    place — two vocabularies for one fact is how they drift.
 5. ~~**The number.**~~ Settled — 0082 / 0083 landed on develop and 0084 is free (the 🟢 at the top).
-6. **Can the CP see `imageProviderOrder`?** Decision 11's headline hangs entirely on this. It is a
-   member setting (ADR 0082 decision 3); check at build time whether the Console's settings sync
-   leaves it somewhere the CP can read. If it can, the headline is that row; if not, it is "best
-   state". **Do not implement this on a guess** — get it wrong and somebody whose `auto` lands on a
-   cold row is told "ready".
+6. ~~**Can the CP see `imageProviderOrder`?**~~ **Closed: no.** The setting never leaves the
+   workspace — `~/.config/agent-fleet/ui-prefs.json` in the home volume, read by the Agent
+   (`internal/uiprefs/prefs.go:241`), relayed by the CP as an opaque blob it does not parse
+   (`control-plane/routes.go:787`). Decision 11's headline is therefore **"best state"**, with the
+   per-row truth in the popover. Settled before the build, so nobody has to guess.
 7. **With two or more rows in a role, is a role-level tenant gate still right?** Decision 7 cuts at
    the role. Whether anybody actually wants "the LAN box yes, the cloud box no" is unknown. Leave it
    at the role until they ask — a row-level gate stops the catalogue filter being one line.

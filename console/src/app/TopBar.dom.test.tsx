@@ -95,7 +95,10 @@ describe("TopBar version zone", () => {
   it("does not fetch /api/version until the menu is opened", async () => {
     api.mockResolvedValue(ECS_PAYLOAD);
     await mount();
-    expect(api).not.toHaveBeenCalled();
+    // The engine indicator (ADR 0084) fetches its own status on mount regardless of the
+    // menu — it is a topbar pill, not something tucked behind a click — so this asserts the
+    // version zone specifically stays lazy rather than that `api()` was never called at all.
+    expect(api).not.toHaveBeenCalledWith("api/version");
 
     await openMenu();
     expect(api).toHaveBeenCalledWith("api/version");
