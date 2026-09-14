@@ -155,6 +155,12 @@ type engineSearchHit struct {
 	PreviewURL    string `json:"preview_url,omitempty"`
 	Bytes         int64  `json:"bytes,omitempty"`
 	ContextLength int    `json:"context_length,omitempty"`
+	// NsfwLevel is Civitai's own content-rating number (0 = safe, higher = more explicit),
+	// carried on every Civitai hit regardless of which tab found it. Measured 2026-09-14: a
+	// model rated well above what the plain "civitai" tab's default query returns can still
+	// answer a nonzero level, so this is not exclusive to the civitai-red tab and must not be
+	// drawn as if it were. Absent (0) for Hugging Face, which publishes no such rating.
+	NsfwLevel int `json:"nsfw_level,omitempty"`
 }
 
 // engineHFSearchRow is one row of `GET /api/models`. 🔴 What is NOT here is the point: asking
@@ -195,6 +201,9 @@ type engineCivitaiSearchDoc struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 		Type string `json:"type"`
+		// NsfwLevel is the model's content-rating number, published on the list itself — see
+		// engineSearchHit.NsfwLevel.
+		NsfwLevel int `json:"nsfwLevel"`
 		// CreatedAt is a fallback for the version's publication date. 🔴 Measured live
 		// 2026-09-11: `/api/v1/models` answers neither this nor a version `createdAt` —
 		// `publishedAt` is the only date on the page — so this is empty in practice and is
@@ -340,28 +349,36 @@ func engineSearchHFPage(ctx context.Context, req engineSearchReq) ([]engineSearc
 }
 
 // engineCivitaiModelURL is the page a person opens for a hit: the MODEL's page, pointed at the
-// VERSION the hit is for.
+// VERSION the hit is for, on whichever Civitai host answered the search that found it.
 //
 // Both ids are needed and they are different numbers — `/models/<model>` alone opens on
 // whatever version is newest today, which is not the one this row's `ref` would take in. A
 // model with no id falls back to the version-only form the licence link already uses, which
 // Civitai resolves.
-func engineCivitaiModelURL(modelID, versionID int) string {
+func engineCivitaiModelURL(host string, modelID, versionID int) string {
 	if modelID <= 0 {
-		return engineCivitaiBase + "/models/?modelVersionId=" + strconv.Itoa(versionID)
+		return host + "/models/?modelVersionId=" + strconv.Itoa(versionID)
 	}
-	return engineCivitaiBase + "/models/" + strconv.Itoa(modelID) + "?modelVersionId=" + strconv.Itoa(versionID)
+	return host + "/models/" + strconv.Itoa(modelID) + "?modelVersionId=" + strconv.Itoa(versionID)
 }
 
-// engineSearchCivitai asks Civitai. The hit carries the newest VERSION's id, because that is
-// what an ingest takes — `civitai.com/models/<model>` and the version behind its download
+// engineSearchCivitai asks civitai.com. The hit carries the newest VERSION's id, because that
+// is what an ingest takes — `civitai.com/models/<model>` and the version behind its download
 // button are different numbers, and the model id is the one on the page's URL.
 func engineSearchCivitai(ctx context.Context, req engineSearchReq) ([]engineSearchHit, *apiError) {
-	hits, _, aerr := engineSearchCivitaiPage(ctx, req)
+	hits, _, aerr := engineSearchCivitaiPage(ctx, req, false)
 	return hits, aerr
 }
 
-func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq) ([]engineSearchHit, string, *apiError) {
+// engineSearchCivitaiRed is the same search with `nsfw=true` against civitai.red — see
+// engineCivitaiRedBase. Measured 2026-09-14: without the parameter, NEITHER host returns
+// NSFW-flagged models, so this is the one place that parameter is set.
+func engineSearchCivitaiRed(ctx context.Context, req engineSearchReq) ([]engineSearchHit, *apiError) {
+	hits, _, aerr := engineSearchCivitaiPage(ctx, req, true)
+	return hits, aerr
+}
+
+func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq, nsfw bool) ([]engineSearchHit, string, *apiError) {
 	sortBy, period, ok := engineSortCivitai(req.sort)
 	if !ok {
 		return nil, "", engineBadSort(req.sort)
@@ -374,6 +391,10 @@ func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq) ([]engine
 		// llama.cpp cannot load, which is the dead end this filter exists to prevent.
 		return nil, "", &apiError{http.StatusBadRequest, errCodeIngestBadSource,
 			"Civitai cannot be used with an LLM engine"}
+	}
+	host := engineCivitaiBase
+	if nsfw {
+		host = engineCivitaiRedBase
 	}
 	v := url.Values{}
 	if req.q != "" {
@@ -390,12 +411,15 @@ func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq) ([]engine
 	if period != "" {
 		v.Set("period", period)
 	}
+	if nsfw {
+		v.Set("nsfw", "true")
+	}
 	v.Set("limit", strconv.Itoa(engineSearchLimit))
 	if req.cursor != "" {
 		v.Set("cursor", req.cursor)
 	}
 	var doc engineCivitaiSearchDoc
-	if aerr := engineIngestGetJSON(ctx, engineCivitaiBase+"/api/v1/models?"+v.Encode(), &doc); aerr != nil {
+	if aerr := engineIngestGetJSON(ctx, host+"/api/v1/models?"+v.Encode(), &doc); aerr != nil {
 		return nil, "", aerr
 	}
 	out := make([]engineSearchHit, 0, len(doc.Items))
@@ -432,7 +456,11 @@ func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq) ([]engine
 			// one of them wrong.
 			UpdatedAt:   strings.TrimSpace(ver.UpdatedAt),
 			PublishedAt: engineFirstNonEmpty(ver.PublishedAt, m.CreatedAt),
-			URL:         engineCivitaiModelURL(m.ID, ver.ID),
+			URL:         engineCivitaiModelURL(host, m.ID, ver.ID),
+			// Carried whichever tab this came from — a rating well above zero shows up under
+			// the plain "civitai" tab's own default query too (measured), so it is never safe
+			// to assume zero just because this hit is not from the nsfw=true tab.
+			NsfwLevel: m.NsfwLevel,
 		}
 		for _, image := range ver.Images {
 			if preview := engineSafeCivitaiPreviewURL(image.URL); preview != "" {
@@ -686,12 +714,14 @@ func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kin
 	)
 	switch strings.TrimSpace(b.Source) {
 	case "civitai":
-		hits, nextCursor, aerr = engineSearchCivitaiPage(r.Context(), req)
+		hits, nextCursor, aerr = engineSearchCivitaiPage(r.Context(), req, false)
+	case "civitai-red":
+		hits, nextCursor, aerr = engineSearchCivitaiPage(r.Context(), req, true)
 	case "", "hf":
 		hits, nextCursor, aerr = engineSearchHFPage(r.Context(), req)
 	default:
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestBadSource,
-			"source has to be hf or civitai"})
+			"source has to be hf, civitai or civitai-red"})
 		return
 	}
 	if aerr != nil {

@@ -2399,7 +2399,7 @@ export function EngineIngest({
                 load. */}
             {isImage && (
               <span className="seg sm">
-                {(["hf", "civitai"] as const).map((sr) => (
+                {(["hf", "civitai", "civitai-red"] as const).map((sr) => (
                   <button
                     key={sr}
                     type="button"
@@ -2464,7 +2464,7 @@ export function EngineIngest({
               setFound(null);
               setPicked(null);
             },
-            searchSource === "civitai"
+            searchSource === "civitai" || searchSource === "civitai-red"
               ? "civitai:782002"
               : isImage
                 ? "stabilityai/stable-diffusion-xl-base-1.0"
@@ -3052,7 +3052,7 @@ function EngineBrowse() {
         {/* Civitai only for checkpoints — the same rule the ingest form follows. */}
         {kind === "checkpoint" && (
           <span className="seg sm">
-            {(["hf", "civitai"] as const).map((sr) => (
+            {(["hf", "civitai", "civitai-red"] as const).map((sr) => (
               <button
                 key={sr}
                 type="button"
@@ -3220,6 +3220,14 @@ function HitCard({ hit, onPick }: { hit: IngestHit; onPick?: () => void }) {
         {hit.login_required === "yes" && (
           <span className="engines-model-tag warn" title={tr("admin.engines_hit_login_note")}>
             {tr("admin.engines_hit_login_required")}
+          </span>
+        )}
+        {/* Civitai's own content rating. Drawn on every Civitai hit, not only ones from the
+            civitai-red tab — the plain tab's own default query still answers a nonzero level
+            (measured), so a card without this would read as "safe" on a false premise. */}
+        {!!hit.nsfw_level && (
+          <span className="engines-model-tag">
+            {(tr("admin.engines_ingest_hit_nsfw_level" as never) as string).replace("{n}", String(hit.nsfw_level))}
           </span>
         )}
         {/* The gate, in the two flavours Hugging Face publishes. The bare `gated` stays as the

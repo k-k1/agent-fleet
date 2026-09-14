@@ -308,6 +308,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_search_none": "Nothing found. Try other words, or type the repository name in directly.",
   "admin.engines_ingest_source_hf": "Hugging Face",
   "admin.engines_ingest_source_civitai": "Civitai",
+  "admin.engines_ingest_source_civitai-red": "Civitai Red",
   "admin.engines_ingest_browse_go": "Browse",
   "admin.engines_browse_kind_gguf": "LLM (GGUF)",
   "admin.engines_browse_kind_checkpoint": "Image (checkpoint)",
@@ -426,6 +427,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // Back to the page it came from, opening the URL the CP composed (never one built here).
   "admin.engines_ingest_hit_open_hf": "Open on HF",
   "admin.engines_ingest_hit_open_civitai": "Open on CivitAI",
+  // Civitai's own content-rating number, shown on EVERY Civitai hit regardless of which tab
+  // found it — a nonzero level shows up under the plain "Civitai" tab's own default query too.
+  "admin.engines_ingest_hit_nsfw_level": "NSFW {n}",
   // Fills the ingest form from a search card. Not "ingest": it fills, and resolve → accept →
   // ingest still runs from there unchanged.
   "admin.engines_ingest_hit_pick": "Use this",
