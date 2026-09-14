@@ -1516,7 +1516,7 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 	post := func(id, extra string) (int, string) {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/text_encoders/t5xxl_fp8.safetensors",
+		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/text_encoders/` + id + `_fp8.safetensors",
 		  "license_accepted":true,"source":{"url":"https://example.invalid/t5xxl_fp8.safetensors",
 		  "sha256":"` + strings.Repeat("c", 64) + `"}` + extra + `}`
 		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
@@ -1558,6 +1558,18 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "new S3 key") {
 		t.Fatalf("same-key replacement = %d (%s), want a pre-upload conflict", rec.Code, rec.Body.String())
+	}
+	// A different row can use the same basename. Its key still names the old object until this
+	// replacement is registered, so the incoming upload must not target it either.
+	rec = httptest.NewRecorder()
+	otherKeyBody := `{"id":"sdxl-base-1.0","kind":"checkpoint",
+	  "s3Key":"image/text_encoders/t5xxl_fp16.safetensors","replace":true,"license_accepted":true,
+	  "source":{"url":"https://example.invalid/sdxl-new.safetensors","sha256":"` + strings.Repeat("e", 64) + `"}}`
+	r = httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(otherKeyBody))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "new S3 key") {
+		t.Fatalf("other-row destination = %d (%s), want a pre-upload conflict", rec.Code, rec.Body.String())
 	}
 	if code, body := post("sdxl-base-1.0", `,"replace":true`); code != http.StatusOK {
 		t.Fatalf("replacing a row's own checkpoint = %d, want 200 (%s)", code, body)

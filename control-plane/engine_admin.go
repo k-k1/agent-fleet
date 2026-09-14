@@ -1888,6 +1888,18 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 			return
 		}
 	}
+	if reuseKey == "" {
+		used, err := a.engineIngestDestinationUsed(r.Context(), s3key)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		if used {
+			writeAPIErr(w, &apiError{http.StatusConflict, errCodeIngestIDExists,
+				"a download needs a new S3 key that is not used by another catalogue model or active upload"})
+			return
+		}
+	}
 	res, aerr := engineIngestResolve(r.Context(), b.Source)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -2000,6 +2012,36 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	}
 	a.auditFor(r, g, "engine."+key+".ingest", auditTarget)
 	writeJSON(w, http.StatusOK, engineIngestJobRow(job))
+}
+
+// engineIngestDestinationUsed checks all roles because an old malformed row can still point at
+// a key in this role's prefix. A download writes before its catalogue transition, so accepting
+// that key would corrupt the other row even if this job later cannot be registered.
+func (a engineAdminAPI) engineIngestDestinationUsed(ctx context.Context, s3key string) (bool, error) {
+	if a.mgr == nil || a.mgr.store == nil {
+		return false, errors.New("no model catalogue")
+	}
+	models, err := a.mgr.store.ListEngineModels(ctx, "")
+	if err != nil {
+		return false, err
+	}
+	for _, model := range models {
+		for _, file := range model.Files {
+			if strings.TrimSpace(file.S3Key) == s3key {
+				return true, nil
+			}
+		}
+	}
+	jobs, err := a.mgr.store.ListActiveEngineIngestJobs(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, job := range jobs {
+		if strings.TrimSpace(job.S3Key) == s3key {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // listIngest (GET …/ingest) is the job list, reconciled against ECS first so that what it
