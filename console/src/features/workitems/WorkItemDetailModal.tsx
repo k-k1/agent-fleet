@@ -197,6 +197,16 @@ export function WorkItemDetailModal({
   // cannot see). "" when the live read never resolved one (stopped, failed, or not a PR).
   const reviewBranch = isPR ? d?.headBranch || "" : "";
 
+  // If the review branch already has a working copy, default straight to it. Left at "new
+  // worktree" (the initial default), "start" would try to check the branch out a second time —
+  // git refuses (one working copy per branch) and the failure would only surface after a round
+  // trip through the Agent. Only overrides the untouched default, never a choice the user made.
+  useEffect(() => {
+    if (!reviewBranch) return;
+    const existing = worktrees.find((r) => r.branch === reviewBranch);
+    if (existing) setWhere((w) => (w === NEW_WORKTREE ? existing.name : w));
+  }, [reviewBranch, worktrees]);
+
   const go = () => {
     // With no working copy yet there is nothing to choose here, so hand over to the start hub,
     // which guides from a clone (the caller has already seeded the prompt).
