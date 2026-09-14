@@ -182,4 +182,40 @@ describe("the mirror's translate button", () => {
     expect(tx.calls).toEqual([[ENGLISH]]);
     expect(el.textContent).toContain("go test");
   });
+
+  it("does not send the folded work process's intermediate replies to translate", () => {
+    // Regression: a long-running turn can hold dozens of short intermediate replies between
+    // tool calls (the "作業過程 ... 途中応答31件" fold). translatableTexts used to see the whole
+    // turn, so those replies rode along with the final answer and could alone push a short
+    // answer over the per-request part/byte caps (session_translate.go), failing translation for
+    // an answer that on its own would be well under them.
+    const intermediate1 = "Checking the test output now.";
+    const intermediate2 = "That looks correct, continuing.";
+    const turns: Turn[] = [
+      { role: "user", text: "やって", idx: 1, anchorId: "u1", ts: "2026-09-13T10:00:00Z" },
+      {
+        role: "assistant",
+        idx: 2,
+        anchorId: "a1",
+        ts: "2026-09-13T10:01:00Z",
+        parts: [
+          { kind: "tool", tool: "Bash", info: "go test ./...", output: "ok" },
+          { kind: "text", text: intermediate1 },
+          { kind: "tool", tool: "Read", info: "main.go", output: "..." },
+          { kind: "text", text: intermediate2 },
+          { kind: "tool", tool: "Bash", info: "go build ./...", output: "ok" },
+          { kind: "text", text: ENGLISH },
+        ],
+      },
+    ];
+    const tx = wiring();
+    const caps = capsWith(tx);
+    const el = render(turns, caps, false);
+    act(() => el.querySelector<HTMLButtonElement>(".mt-translate")!.click());
+    act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={{ ...caps }} />));
+    expect(prose().textContent).toBe("訳: " + ENGLISH);
+    expect(tx.calls).toEqual([[ENGLISH]]);
+    expect(el.textContent).toContain(intermediate1);
+    expect(el.textContent).toContain(intermediate2);
+  });
 });
