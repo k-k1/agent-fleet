@@ -1879,7 +1879,7 @@ describe("EnginesAdminView / searching for a model", () => {
     api.mockResolvedValue({ super_admin: true, engines: [row()] }); // api: "images"
     await mount();
     await openIngest();
-    expect(field("探す")!.placeholder).toBe("sdxl");
+    expect(field("検索")!.placeholder).toBe("sdxl");
     expect(field("リポジトリ")!.placeholder).toBe("stabilityai/stable-diffusion-xl-base-1.0");
     // ③ holds the other two. The repository is named first and answers nothing on its own, so
     // the listing comes back empty here and the box stays typeable — which is the fallback the
@@ -1927,7 +1927,7 @@ describe("EnginesAdminView / searching for a model", () => {
     await mount();
     await openIngest();
 
-    await typeInto(field("探す")!, "flux");
+    await typeInto(field("検索")!, "flux");
     await click(button("検索"));
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/search", "POST", {
       q: "flux",
@@ -1982,7 +1982,7 @@ describe("EnginesAdminView / searching for a model", () => {
     });
     await mount();
     await openIngest();
-    await typeInto(field("探す")!, "juggernaut");
+    await typeInto(field("検索")!, "juggernaut");
     await click(button("検索"));
 
     const hit = ui().querySelector(".engines-search-hits li")!;
@@ -2016,7 +2016,7 @@ describe("EnginesAdminView / searching for a model", () => {
     await mount();
     await openIngest();
 
-    await typeInto(field("探す")!, "x");
+    await typeInto(field("検索")!, "x");
     await click(button("検索"));
     await click(ui().querySelector(".engines-search-hits li button") as HTMLButtonElement);
     expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/files", "POST", {
@@ -2086,7 +2086,7 @@ describe("EnginesAdminView / searching for a model", () => {
     });
     await mount();
     await openIngest();
-    await typeInto(field("探す")!, "WAI");
+    await typeInto(field("検索")!, "WAI");
     await click(button("検索"));
     const hit = ui().querySelector(".engines-search-hits li")!;
     expect(hit.textContent).toContain("0.7");
@@ -2114,7 +2114,7 @@ describe("EnginesAdminView / searching for a model", () => {
     await mount();
     await openIngest();
     await click(button("Civitai"));
-    await typeInto(field("探す")!, "juggernaut");
+    await typeInto(field("検索")!, "juggernaut");
     await click(button("検索"));
     await click(ui().querySelector(".engines-search-hits li button") as HTMLButtonElement);
 
@@ -2145,7 +2145,7 @@ describe("EnginesAdminView / searching for a model", () => {
     await mount();
     await openIngest();
     await click(button("Civitai"));
-    await typeInto(field("探す")!, "juggernaut");
+    await typeInto(field("検索")!, "juggernaut");
     await click(button("検索"));
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/search", "POST", {
       q: "juggernaut",
@@ -2166,7 +2166,7 @@ describe("EnginesAdminView / searching for a model", () => {
     // The CP answers the llm role nothing from Civitai (it hosts image models), so a source
     // switch there is a button that can only disappoint.
     expect(button("Civitai")).toBeUndefined();
-    expect(field("探す")).toBeTruthy();
+    expect(field("検索")).toBeTruthy();
   });
 
   it("says so instead of leaving the box empty when nothing matches", async () => {
@@ -2174,7 +2174,7 @@ describe("EnginesAdminView / searching for a model", () => {
     apiJSON.mockResolvedValue({ hits: [] });
     await mount();
     await openIngest();
-    await typeInto(field("探す")!, "zzzz");
+    await typeInto(field("検索")!, "zzzz");
     await click(button("検索"));
     expect(ui().textContent).toContain("見つかりませんでした");
     // And the way in that never needed a search is still there.

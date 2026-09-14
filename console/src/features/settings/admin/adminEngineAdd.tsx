@@ -36,7 +36,7 @@ import {
 } from "./engineTypes.ts";
 
 type CatalogView = "search" | "registered";
-type CatalogSource = "hf" | "civitai";
+type CatalogSource = "hf" | "civitai" | "civitai-red";
 
 /** Full-pane catalogue. The former four-step wizard is intentionally not mounted: browsing
  * stays visible and a card opens one operation dialog for version, file, destination and
@@ -184,9 +184,9 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
 
   useEffect(() => { void search(false); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [row.key, kind, source, sort]);
   const switchSource = (next: CatalogSource) => {
-    setSource(next); setSort(next === "civitai" ? "newest" : "updated"); setHits(null); setCursor("");
+    setSource(next); setSort(next === "civitai" || next === "civitai-red" ? "newest" : "updated"); setHits(null); setCursor("");
   };
-  const sortOptions = source === "civitai" ? ["newest", "downloads", "trending", "likes"] : ["updated", "downloads", "trending", "likes"];
+  const sortOptions = source === "civitai" || source === "civitai-red" ? ["newest", "downloads", "trending", "likes"] : ["updated", "downloads", "trending", "likes"];
   const modelRows = (row.model_rows || []).filter((model) => (model.kind === "lora") === (kind === "lora"));
 
   return (
@@ -201,7 +201,7 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
             {tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}
           </Button>)}
         </span>
-        {image && <span className="seg sm">{(["civitai", "hf"] as const).map((next) => <Button key={next} variant="ghost" small
+        {image && <span className="seg sm">{(["civitai", "civitai-red", "hf"] as const).map((next) => <Button key={next} variant="ghost" small
           className={"seg-btn" + (source === next ? " active" : "")} onClick={() => switchSource(next)}>
           {tr((`admin.engines_ingest_source_${next}`) as never)}
         </Button>)}</span>}
@@ -220,7 +220,7 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
         </label>
         {!readOnly && <Button variant="ghost" small icon="link" onClick={() => setOperation({ act: "new", source })}>{tr("admin.catalog_manual" as never)}</Button>}
       </div>
-      {source === "civitai" && sort === "newest" && <p className="muted engine-catalog-sort-note">{tr("admin.catalog_civitai_newest_note" as never)}</p>}
+      {(source === "civitai" || source === "civitai-red") && sort === "newest" && <p className="muted engine-catalog-sort-note">{tr("admin.catalog_civitai_newest_note" as never)}</p>}
       {storageState === "checking" && <p className="muted engine-catalog-storage-note">{tr("admin.catalog_storage_checking" as never)}</p>}
       {storageState === "failed" && <p className="form-err engine-catalog-storage-note">{tr("admin.catalog_storage_unavailable" as never)}</p>}
       {err && <p className="form-err">{err}</p>}
@@ -271,6 +271,10 @@ function ImageCatalogCard({ hit, kind, saved, onPreview, ...actions }: BrowseCar
       <div className="engine-catalog-card-title"><span>{hit.name}</span><span className="engines-model-tag">{kind === "lora" ? "LoRA" : tr("admin.catalog_checkpoint" as never)}</span></div>
       <div className="engine-catalog-card-tags">
         <span className="engines-model-tag">{hit.source === "civitai" ? "Civitai" : "Hugging Face"}</span>
+        {/* Civitai's own content rating. Drawn on every Civitai hit, not only ones from the
+            civitai-red tab — the plain tab's own default query still answers a nonzero level
+            (measured), so a card without this would read as "safe" on a false premise. */}
+        {!!hit.nsfw_level && <span className="engines-model-tag">{(tr("admin.engines_ingest_hit_nsfw_level" as never) as string).replace("{n}", String(hit.nsfw_level))}</span>}
         {hit.base_model && <span className="engines-model-tag">{tr("admin.catalog_family" as never)}: {hit.base_model}</span>}
         {license && <span className="engines-model-tag">{license}</span>}
         <CatalogRestrictionTags value={hit} />
@@ -382,7 +386,10 @@ function NoEngineCatalog() {
   const switchRole = (next: "image" | "llm") => {
     setRole(next); setSource(next === "image" ? "civitai" : "hf"); setSort(next === "image" ? "newest" : "updated"); setHits(null); setCursor("");
   };
-  const sortOptions = source === "civitai" ? ["newest", "downloads", "trending", "likes"] : ["updated", "downloads", "trending", "likes"];
+  const switchSource = (next: CatalogSource) => {
+    setSource(next); setSort(next === "civitai" || next === "civitai-red" ? "newest" : "updated");
+  };
+  const sortOptions = source === "civitai" || source === "civitai-red" ? ["newest", "downloads", "trending", "likes"] : ["updated", "downloads", "trending", "likes"];
   const noop = () => {};
 
   return <section className="engine-catalog-browser engine-catalog-no-engine" aria-label={tr(image ? "admin.catalog_image_title" as never : "admin.catalog_llm_title" as never)}>
@@ -396,11 +403,11 @@ function NoEngineCatalog() {
     <p className="admin-hint">{tr("admin.engines_browse_note")}</p>
     <div className="engine-catalog-toolbar">
       <span className="seg sm">{(["model", "lora"] as const).map((next) => <Button key={next} variant="ghost" small className={`seg-btn${kind === next ? " active" : ""}`} onClick={() => setKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</Button>)}</span>
-      {image && <span className="seg sm">{(["civitai", "hf"] as const).map((next) => <Button key={next} variant="ghost" small className={`seg-btn${source === next ? " active" : ""}`} onClick={() => { setSource(next); setSort(next === "civitai" ? "newest" : "updated"); }}>{next === "hf" ? "Hugging Face" : "Civitai"}</Button>)}</span>}
+      {image && <span className="seg sm">{(["civitai", "civitai-red", "hf"] as const).map((next) => <Button key={next} variant="ghost" small className={`seg-btn${source === next ? " active" : ""}`} onClick={() => switchSource(next)}>{tr((`admin.engines_ingest_source_${next}`) as never)}</Button>)}</span>}
       <form className="engine-catalog-search" onSubmit={(event) => { event.preventDefault(); void search(false); }}><input aria-label={tr("admin.engines_ingest_search")} value={query} onChange={(event) => setQuery(event.currentTarget.value)} /><Button type="submit" variant="primary" small disabled={busy}>{tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}</Button></form>
       <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span><select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>{sortOptions.map((option) => <option key={option} value={option}>{tr((`admin.engines_ingest_sort_${option}`) as never)}</option>)}</select></label>
     </div>
-    {source === "civitai" && sort === "newest" && <p className="muted engine-catalog-sort-note">{tr("admin.catalog_civitai_newest_note" as never)}</p>}
+    {(source === "civitai" || source === "civitai-red") && sort === "newest" && <p className="muted engine-catalog-sort-note">{tr("admin.catalog_civitai_newest_note" as never)}</p>}
     {err && <p className="form-err">{err}</p>}
     {hits?.length === 0 && <p className="muted engine-catalog-zero">{tr("admin.engines_ingest_search_none")}</p>}
     {!!hits?.length && <ul className="engine-catalog-grid">{hits.map((hit) => {

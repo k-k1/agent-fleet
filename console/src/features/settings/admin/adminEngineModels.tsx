@@ -1956,7 +1956,7 @@ export function EngineIngest({
     await resolveFile(named, over?.repo);
   };
 
-  /** 「探す」 — for somebody who does not already know `owner/name`. Reads only: it starts
+  /** 「検索」 — for somebody who does not already know `owner/name`. Reads only: it starts
    *  nothing, writes nothing and needs no token (both APIs answer anonymously). */
   const search = async (opts: { source?: string; sort?: string } = {}) => {
     setErr("");

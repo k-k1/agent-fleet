@@ -297,7 +297,7 @@ export const admin = {
   // 🔴 解決してから受諾する。ライセンスも gated も見せる前に「同意」を出したら、それは
   // 同意ではない。gated はトークンが無ければここで断る（9 分後の 401 では遅い）。
   "admin.engines_ingest_open": "Hugging Face などから取り込む",
-  "admin.engines_ingest_search": "探す",
+  "admin.engines_ingest_search": "検索",
   "admin.engines_ingest_search_go": "検索",
   "admin.engines_ingest_searching": "検索しています…",
   "admin.engines_ingest_search_none": "見つかりませんでした。別の言葉で試すか、リポジトリ名を直接入力してください。",
@@ -319,7 +319,7 @@ export const admin = {
   "admin.catalog_opening": "モデルカタログを開いています…",
   "admin.catalog_role_label": "エンジンの役割",
   "admin.catalog_view_label": "カタログ表示",
-  "admin.catalog_view_search": "探す",
+  "admin.catalog_view_search": "検索",
   "admin.catalog_view_registered": "登録済み",
   "admin.catalog_sort": "並び順",
   "admin.catalog_checkpoint": "チェックポイント",

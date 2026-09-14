@@ -134,7 +134,7 @@ describe("EnginesAdminView with no engine", () => {
     await mount();
     expect(host!.textContent).toContain("この配備は自前の推論エンジンを動かしていません。");
     // EngineBrowse's own search box, proof this is the real screen and not a placeholder.
-    expect(host!.textContent).toContain("探す");
+    expect(host!.textContent).toContain("検索");
   });
 });
 
