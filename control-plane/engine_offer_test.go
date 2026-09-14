@@ -249,7 +249,7 @@ func (f *fakeFleet) CreateFleet(_ context.Context, in *ec2.CreateFleetInput, _ .
 		f.instances = map[string]*ec2types.Instance{}
 	}
 	f.instances[id] = inst
-	out.Instances = []ec2types.CreateFleetInstance{{InstanceIds: []string{id}}}
+	out.Instances = []ec2types.CreateFleetInstance{{InstanceIds: []string{id}, InstanceType: inst.InstanceType}}
 	return out, nil
 }
 
@@ -708,6 +708,42 @@ func TestASpotOfferAsksForPriceCapacityOptimizedAndTagsTheBox(t *testing.T) {
 	if len(fleet.creates[0].TagSpecifications) != 1 ||
 		fleet.creates[0].TagSpecifications[0].ResourceType != ec2types.ResourceTypeInstance {
 		t.Errorf("tag specifications = %+v, want one for the instance", fleet.creates[0].TagSpecifications)
+	}
+}
+
+// The audit line a purchase writes names the literal type EC2 Fleet bought and the row's
+// declared price, not just the offer id — a row widened to several types (like the spot3 row
+// above) cannot otherwise say which of them actually landed, or what it was expected to cost, to
+// anyone reading the ledger later (control-plane/engine_offer.go's noteOffer).
+func TestAPurchaseAuditsTheInstanceTypeAndPrice(t *testing.T) {
+	st := testSettingsStore(t)
+	fleet := &fakeFleet{}
+	e := newOfferTestEngine(t, &offerECS{}, fleet,
+		"spot3|Spot|22000|g6.xlarge,g5.xlarge,g6.2xlarge|4-8|15000-65536|1.57|spot", st)
+
+	tickIntoAStart(t, e, st)
+
+	rows, err := st.ListAuditByTenant(context.Background(), "", 10)
+	if err != nil {
+		t.Fatalf("ListAuditByTenant: %v", err)
+	}
+	var found *store.AuditLog
+	for i := range rows {
+		if rows[i].Action == "engine.image.offer" && rows[i].Target == "spot3" {
+			found = &rows[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("no engine.image.offer audit row for spot3 among %d rows", len(rows))
+	}
+	// The fake always launches the FIRST declared type (it does not simulate EC2's own choice
+	// among several) — what this test pins is that whatever CreateFleet answered with reaches
+	// the ledger, not which type a real price-capacity-optimized purchase would pick.
+	for _, want := range []string{"buy=spot", "instance=i-1", "type=g6.xlarge", "price=1.57"} {
+		if !strings.Contains(found.Detail, want) {
+			t.Errorf("audit detail = %q, want it to contain %q", found.Detail, want)
+		}
 	}
 }
 

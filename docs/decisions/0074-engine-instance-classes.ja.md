@@ -1528,18 +1528,37 @@ g6e-od|L40S 48GB (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|2.70|od
 7本すべての`usdPerHour`は生のEC2価格——このはしごがADR 0077以前から引きずっていた7.8%の
 Managed Instances手数料は、最新の1行だけでなく全行から消えている。
 
-🔴 **「様子を見る」に要るものが今日は無い: 購入履歴はstartをまたいで残らない。** どの型が
+🔴 **「様子を見る」に要るものが無かった: 購入履歴はstartをまたいで残らなかった。** どの型が
 買われ、いくらで、どれだけ稼働したかを(この節の数字を全部そうしたように毎回CloudTrailから
 掘り起こすのでなく)後から見返せるか、という問いに対して: `engine_hourly`(決定10)は
 意図的にそれではない——ヘッダのコメント自身が「It is NOT money and must never be rendered
 as money」と書いており、型の列も無く稼働/起動/退去の秒数だけを持つ。`engineOfferRun`の
 trail(試行ごとの`ID`/`Buy`/`Result`)はそのコメント自身の言葉で「In memory and nowhere
-else」——次のCP再起動で消え、テーブルには一度も書かれない。購入した箱のタグ
-(`engineFleet.tags`、`control-plane/engine_fleet.go:436`)はどのオファー行を試したかと
-`spot`/`od`は記録するが、複数型を束ねた行が実際にどの型に着地したか、いくら払ったかは
-記録しない。永続化するなら`settled()`の呼び出しごとに1行(オファーid・実際に買われた型・
-buy・宣言価格・開始/終了時刻)——実際のControl Plane側のコード(マイグレーション1本＋書き込み
-1箇所)であって、パラメータ編集では済まず、今回はやっていない。
+else」——次のCP再起動で消え、テーブルには一度も書かれない。`noteOffer`(購入1回につき
+既に書かれている監査1行、決定8)はオファーの`Target`と`spot`/`od`は持っていたが、複数型を
+束ねた行が実際にどの型に着地したか、価格はいくらだったかを持っていなかった。
+
+**同じ日のうちに、新しいテーブル無しで直した。** 専用の購入履歴テーブルというのが最初の
+発想で、それは間違っていた——`store.AuditLog`とその読み口(`GET /api/admin/audit`)は
+まさにこの用途(「誰が・何を・いつ・どの対象に」)で既に存在しており、稼働時間も新しい列
+無しで既に答えられた: 同じインスタンスidについて、`engine.<key>.offer`行のタイムスタンプと、
+対応する`engine.<key>.box`/`engine.<key>.interrupted`行のタイムスタンプの差がそれで、
+どちらも既に書かれている。本当に足りなかったのは既存の1行への2つのフィールドだった。
+`engineFleetInstanceType`(`control-plane/engine_fleet.go`)は、`engineFleetInstanceID`が
+既にidを読んでいるのと同じ`CreateFleetInstance`要素から実際に起動した型を読む——AWS呼び出し
+の追加無し——`buy()`の2番目の戻り値としてそれを`noteOffer`まで通し、`Detail`は
+`instance=`で止まる代わりに`buy=spot instance=i-0397… type=g6.xlarge price=1.35`を出す
+ようになった。新しい試験(`TestAPurchaseAuditsTheInstanceTypeAndPrice`)がこれを固定して
+おり、陽性対照も取った(書式文字列を戻すと確かに赤くなる)。
+
+🔴 **その価格を書き出したことで、この同じ追記の中でもう1つのバグが表に出た: `g22-spot`の
+`0.57`は、この ADR 自身は言い直していないが`engineClass.UsdPerHour`自身のコメント
+(`control-plane/engine_class.go:52`)が定める規約に反していた**——複数型を束ねた行は
+**最も高い型の価格で書く**のが規約で、安い方ではない。「安い側から書いた数字は、この欄が
+存在する目的の比較を役に立たなくする」(ADR 0075決定1)から。`0.57`はコメント自身が例に
+使っているのと同じ3型の組の、安い方の`g6.xlarge`の価格だった。liveで`1.35`
+(`g6e.xlarge`のSpot、3型のうち最も高い、`g6e-spot`行が既に宣言していた値と同じ)に
+訂正した。
 
 VRAM適合は今回も`candidateOffers`の仕事のままで、この並び順の仕事ではない: 宣言順に候補を
 歩く前に、有効化されているモデルの中で最大のVRAM要求を下回る行を落とすので、7本を価格順に

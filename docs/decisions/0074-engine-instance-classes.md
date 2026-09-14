@@ -1655,19 +1655,38 @@ All seven `usdPerHour` are the raw EC2 price — the pre-ADR-0077 7.8% Managed I
 ladder had carried since before that ADR is gone from every row, not just corrected on the newest
 one.
 
-🔴 **What "watch how it plays out" needs and does not have today: no purchase history survives
-a start.** Asked whether which type got bought, what it cost and how long it ran could be
-reviewed later rather than re-derived from CloudTrail each time (the way every number in this
-section was found): `engine_hourly` (decision 10) is deliberately NOT this — its own header
-comment says "It is NOT money and must never be rendered as money", and it carries no type
-column, only running/starting/draining seconds. `engineOfferRun`'s trail (`ID`/`Buy`/`Result` per
-attempt) is, by its own doc comment, "In memory and nowhere else" — gone on the next CP restart,
-never written to a table. The purchased box's tags (`engineFleet.tags`,
-`control-plane/engine_fleet.go:436`) record which OFFER row was tried and `spot`/`od`, but not
-which literal instance type a multi-type row actually landed on, nor the price paid. A durable
-answer would be one new row per `settled()` call (offer id, the instance type actually bought,
-buy, declared price, start and end time) — real Control Plane code (a migration plus one write
-site), not a parameter edit, and not done here.
+🔴 **What "watch how it plays out" needs and did not have: no purchase history survived a
+start.** Asked whether which type got bought, what it cost and how long it ran could be reviewed
+later rather than re-derived from CloudTrail each time (the way every number in this section was
+found): `engine_hourly` (decision 10) is deliberately NOT this — its own header comment says "It
+is NOT money and must never be rendered as money", and it carries no type column, only
+running/starting/draining seconds. `engineOfferRun`'s trail (`ID`/`Buy`/`Result` per attempt) is,
+by its own doc comment, "In memory and nowhere else" — gone on the next CP restart, never written
+to a table. `noteOffer` — the one audit line a purchase already wrote (decision 8) — had the
+offer's `Target` and `spot`/`od`, but not which literal instance type a row widened to several
+actually landed on, nor its price.
+
+**Fixed the same day, without a new table.** A dedicated purchase-history table was the first
+idea and the wrong one — `store.AuditLog` and its reader (`GET /api/admin/audit`) already exist
+for exactly this ("who did what, when, en route to a target"), and duration was already answerable
+without a new column: it is the gap between one `engine.<key>.offer` line's timestamp and the
+matching `engine.<key>.box` / `engine.<key>.interrupted` line's, for the same instance id, both
+already written. The actual gap was two fields on one existing line.
+`engineFleetInstanceType` (`control-plane/engine_fleet.go`) reads the literal type EC2 Fleet
+launched from the same `CreateFleetInstance` element `engineFleetInstanceID` already read the id
+from — no second AWS call — and `buy()`'s new second return value threads it through to
+`noteOffer`, whose `Detail` now reads `buy=spot instance=i-0397… type=g6.xlarge price=1.35`
+instead of stopping at `instance=`. A new test (`TestAPurchaseAuditsTheInstanceTypeAndPrice`)
+pins it, with a positive control (reverting the format string does fail it).
+
+🔴 **Writing that price surfaced a second bug in this same follow-up: `g22-spot`'s `0.57` violated
+a convention this ADR itself never restated but `engineClass.UsdPerHour`'s own doc comment
+(`control-plane/engine_class.go:52`) does** — a row widened to several types is written at the
+DEAREST type's price, not the cheapest, because "a figure written from the cheap end would make
+the number useless for the comparison it exists for" (ADR 0075 decision 1). `0.57` was
+`g6.xlarge`'s price, the cheap end of the very three-type spread the comment uses as its own
+example. Corrected live to `1.35` (`g6e.xlarge` spot, the dearest of the three, matching what
+`g6e-spot`'s own row already declared).
 
 VRAM fit is still `candidateOffers`'s job, not this ordering's: it drops any row under the largest
 ENABLED model's demand before walking what is left in declaration order, so listing all seven by
