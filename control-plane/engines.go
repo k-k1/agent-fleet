@@ -310,6 +310,12 @@ type engineRuntimeState struct {
 	// extWarm is the cached health answer an externally managed engine's panel row reports as
 	// `warm` (ADR 0076 decision 8). Inert for every engine that has a controller.
 	extWarm engineWarmCache
+	// extDown is the same idea for the GENERATION path: whether this external row was found not
+	// answering, so the next request refuses at once instead of paying the probe again (ADR 0082
+	// unresolved 1). Separate from extWarm because the two probes have different budgets — the
+	// panel's is 2 seconds, the gateway's is 5 — and a panel load must not settle what a
+	// generation is told, nor the other way round. Inert for every engine that has a controller.
+	extDown engineDownCache
 	// discover is the cached answer to the last press of the discovery button (ADR 0082
 	// decisions 6 and 7, engine_discover.go). Inert for every row that is not an external comfy
 	// one — nothing else ever populates it.
@@ -1069,6 +1075,47 @@ type engineWarmCache struct {
 	mu   sync.Mutex
 	at   time.Time
 	warm bool
+}
+
+// engineExternalDownTTL is how long the generation path trusts "that box is not answering"
+// before paying for the probe again (ADR 0082 unresolved 1). Deliberately the same window as
+// engineExternalWarmTTL: both answer "how stale may an observation of an external row be", and
+// two numbers would be two knobs for one question.
+//
+// Measured 2026-09-14, against an operator's LAN host that was switched off, from a container on
+// the same network: a connect attempt ended in `No route to host` after 3.05-3.11 s (four
+// samples). The two shapes the ADR expected bracket it — a refused connection came back in
+// 0.15 ms, and an address that drops the SYN silently held for the full 5.00 s cap — so a
+// switched-off machine on a LAN costs 3 seconds, not the 5 the cap suggests, because the kernel
+// gives up on ARP first. Without this cache ensureReady pays that on EVERY picture, in front of
+// the preferred route: the fallback to the next provider is supposed to be the cheap part.
+const engineExternalDownTTL = engineExternalWarmTTL
+
+// engineDownCache is the generation path's memory of an external row that was not answering.
+// Only a NEGATIVE is cached: a box that has come up must be usable on the next request, so a
+// healthy probe clears it rather than being remembered for the window.
+type engineDownCache struct {
+	mu   sync.Mutex
+	at   time.Time
+	down bool
+}
+
+// downRecently reports whether this row was found unreachable inside the window, which is the
+// one case where skipping the probe changes nothing: nothing here can start an external row
+// (ADR 0076 decision 4), so the probe's only outcome would be the same refusal.
+func (e *engineRuntimeState) downRecently() bool {
+	e.extDown.mu.Lock()
+	defer e.extDown.mu.Unlock()
+	return e.extDown.down && !e.extDown.at.IsZero() && time.Since(e.extDown.at) < engineExternalDownTTL
+}
+
+// noteProbe records what the generation path's health call found. Called for external rows only:
+// a managed row that answers nothing is being STARTED, and remembering "down" there would make
+// ensureReady refuse the box it is waiting for.
+func (e *engineRuntimeState) noteProbe(healthy bool) {
+	e.extDown.mu.Lock()
+	defer e.extDown.mu.Unlock()
+	e.extDown.down, e.extDown.at = !healthy, time.Now()
 }
 
 // warm is "does this engine have something loaded", answered the only way each kind of engine

@@ -972,9 +972,26 @@ func (g engineGateway) ensureReady(ctx context.Context, eng *engineRuntimeState)
 	if eng.def.remote() {
 		return nil
 	}
+	// 🔥 An EXTERNAL row that was just found not answering is refused without probing again
+	// (ADR 0082 unresolved 1). ensureStarted below is what produces the refusal either way —
+	// nothing here can start such a row — so the probe's only effect would be to spend its
+	// budget first, and that budget sits in front of the PREFERRED route: a member whose LAN box
+	// is switched off pays it before every single picture, and falling through to the next
+	// provider is meant to be the cheap part. Measured: 3.05-3.11 s per attempt against a
+	// switched-off LAN host (see engineExternalDownTTL).
+	//
+	// Managed rows never take this branch: theirs is the wait for a box being bought, where "not
+	// answering" is the expected state and remembering it would refuse the engine mid-start.
+	if eng.def.external() && eng.downRecently() {
+		return eng.ensureStarted(ctx)
+	}
 	waitStarted := time.Now()
 	for {
-		if engineHealthy(ctx, eng) {
+		healthy := engineHealthy(ctx, eng)
+		if eng.def.external() {
+			eng.noteProbe(healthy)
+		}
+		if healthy {
 			return nil
 		}
 		if err := eng.ensureStarted(ctx); err != nil {
