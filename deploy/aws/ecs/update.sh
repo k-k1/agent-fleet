@@ -123,6 +123,35 @@ if [ -n "$ENGINES_STACK" ]; then
 fi
 echo "      5. $STACK (30-ingress, ImageTag=$VERSION)"
 
+# --- 1a-pre) ADR 0083 migration guard: EcrSdcppUri --------------------------
+# EcrSdcpp/EcrSdcppUri (20-platform) and 60-engines' import of it were retired TOGETHER, and
+# ADR 0083 decision 9 states the order: 60-engines drops the import FIRST, 20-platform drops
+# the export SECOND — the opposite of this script's usual 20-platform-first order, which
+# exists for a different reason entirely (a NEW repository must exist in 20-platform before
+# 60-engines can reference it, pitfall 4 above). A deployment whose 60-engines is still on the
+# OLD template is still importing EcrSdcppUri, so running 20-platform first here would try to
+# delete an export CloudFormation refuses to let go while it is in use — the change set itself
+# looks clean (a deletion is not a Replacement, so the check below would not catch it), and the
+# failure only surfaces once `execute-change-set` runs, as a stack-update rollback rather than
+# a named fix. Catch it before that, while nothing has been touched yet.
+if [ -n "$ENGINES_STACK" ] && af_stack_exists "$AF_STACK_PLATFORM"; then
+  sdcpp_export="${AF_STACK_PLATFORM}-EcrSdcppUri"
+  sdcpp_importers="$("${AWS[@]}" cloudformation list-imports --export-name "$sdcpp_export" \
+    --query 'Imports' --output text 2>/dev/null || true)"
+  if [ -n "$sdcpp_importers" ] && [ "$sdcpp_importers" != "None" ]; then
+    cat >&2 <<EOF
+ERROR: $ENGINES_STACK still imports $sdcpp_export (ADR 0083 retired it from 20-platform).
+       Update 60-engines to the current template FIRST, on its own — the reverse of this
+       script's usual order — then re-run update.sh:
+         aws cloudformation deploy --stack-name $ENGINES_STACK \\
+           --template-file $HERE/cfn/60-engines.yaml --capabilities CAPABILITY_NAMED_IAM \\
+           --profile $PROFILE --region $REGION
+       Deploying 20-platform first would try to delete an export still in use and roll back.
+EOF
+    exit 1
+  fi
+fi
+
 # --- 1a) 20-platform, through a change set that is shown first --------------
 # It is deployed only on the round where the template or a parameter actually moved (an empty
 # change set is exactly that fact), and never blindly: 20-platform owns the ECR repositories,

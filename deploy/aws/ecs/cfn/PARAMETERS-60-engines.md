@@ -143,6 +143,25 @@ that value and lets the template's `comfy` default carry the deployment forward.
 way — `update.sh` reads it back with `af_stack_param` and overrides it to `comfy` when it finds
 `sdcpp`, the same repair shape as `<Role>OfferBudgetSec` above.
 
+🔴 **`EcrSdcppUri`'s removal reverses this template's usual update order, for one release
+only.** `60-engines.yaml:785` imported `${PlatformStackName}-EcrSdcppUri`, and
+`20-platform.yaml:107-112` exported it (`EcrSdcpp`, the ECR repository). CloudFormation refuses
+to delete an export another stack still imports, so on the release that drops both:
+
+1. **60-engines FIRST** — its new template no longer imports the export.
+2. **20-platform SECOND** — nothing imports the export anymore, so its own new template (which
+   drops the `EcrSdcpp` resource and the export with it) can delete it cleanly.
+
+This is the opposite of `update.sh`'s normal order (20-platform before 60-engines, `update.sh`'s
+own "the order, in one place" comment — a DIFFERENT reason: 20-platform owns the ECR
+repositories a NEW image needs to already exist in before 60-engines can reference it). Running
+20-platform first here would try to delete an in-use export instead, and CloudFormation rolls
+that update back — `update.sh` guards this specific migration with a preflight
+(`aws cloudformation list-imports --export-name <platform>-EcrSdcppUri`) that stops with a
+named instruction rather than letting the rollback happen. A hand-run `cloudformation deploy`
+has no such guard: update 60-engines on its own first, THEN 20-platform, on any deployment that
+still has 60-engines on a pre-ADR-0083 template.
+
 🔴 **Before updating a deployment that named a model key, add `<role>Enabled=true`.** Until P6
 `<role>ModelS3Key` decided two things — which model was seeded, and **whether the role's service
 existed at all** (`HasLlmModel` read the key when `LlmEnabled` was unset). `LlmEnabled` /

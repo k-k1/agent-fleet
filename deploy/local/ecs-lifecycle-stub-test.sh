@@ -120,6 +120,12 @@ case "$args" in
   # branch cannot be tested — and an engine left at desired 1 is $1.26/hour, ten times the
   # speech engine's.
   *"cloudformation describe-stacks --stack-name af-ecs-engines") [ "${STUB_ENGINES_EXISTS:-0}" = 1 ] || exit 1 ;;
+  # ADR 0083's migration guard (update.sh, before touching 20-platform): whether the LIVE
+  # 60-engines stack still imports the export 20-platform's new template drops. Default "no
+  # importer" is the state every deployment reaches once its own 60-engines has been updated
+  # once; the flag simulates a deployment still on the pre-ADR-0083 template.
+  *"cloudformation list-imports"*"EcrSdcppUri"*)
+    [ "${STUB_ENGINES_IMPORTS_SDCPP:-0}" = 1 ] && echo "af-ecs-engines" || echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EnginesSsmParam']"*) echo "/af-ws/engines" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='LlmServiceName']"*) echo "af-af-ecs-engines-llm" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='ImageServiceName']"*) echo "af-af-ecs-engines-image" ;;
@@ -633,6 +639,35 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
 if grep -q "deploy --stack-name af-ecs-engines .*OfferBudgetSec=" "$LOG"; then
   fail "update.sh overrode an OfferBudgetSec that was not the old default"
 fi
+
+echo "== case 3h-3: update.sh refuses to update 20-platform while 60-engines still imports EcrSdcppUri (ADR 0083) =="
+#
+# ADR 0083 decision 9's order is 60-engines FIRST (drops the import), 20-platform SECOND (drops
+# the export) — the opposite of update.sh's usual 20-platform-first order (case 3i below, a
+# DIFFERENT reason: a NEW repository must exist before 60-engines references it). A deployment
+# whose 60-engines is still on the pre-ADR-0083 template is still importing EcrSdcppUri, so
+# running 20-platform first would try to delete an export CloudFormation refuses to let go
+# while it is in use. The change set itself looks clean (a deletion, not a Replacement), so
+# nothing catches it until `execute-change-set` runs and the stack update rolls back — an
+# opaque CFN error rather than a named fix. The guard has to stop BEFORE that, with nothing
+# touched.
+: > "$LOG"
+if VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMPORTS_SDCPP=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3h3a" 2>&1; then
+  cat "$WORK/out3h3a"; fail "update.sh must refuse when 60-engines still imports EcrSdcppUri"
+fi
+grep -q "Update 60-engines to the current template FIRST" "$WORK/out3h3a" \
+  || { cat "$WORK/out3h3a"; fail "the refusal did not name the fix (an operator would read a raw CFN rollback instead)"; }
+hasnt "cloudformation deploy --stack-name t-platform"   # nothing was touched, not even a plan
+hasnt "cloudformation execute-change-set"
+
+# The ordinary case (no live importer, the state every deployment is in once its own 60-engines
+# has been updated once) must be unaffected — the guard is a preflight, not a new requirement.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3h3b" 2>&1 \
+  || { cat "$WORK/out3h3b"; fail "update.sh failed with no live EcrSdcppUri importer"; }
+has "cloudformation deploy --stack-name t-platform"
 
 echo "== case 3i: update.sh does repository -> image -> stack, in that order =="
 #
