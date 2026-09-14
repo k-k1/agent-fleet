@@ -96,6 +96,21 @@ export const FAMILY_CARDS: FamilyCard[] = [
     trialSteps: 4,
     sizes: DEFAULT_SIZES,
   },
+  {
+    id: "anima",
+    // Danbooru tags, natural-language captions, or the two mixed — the model card documents all
+    // three. `tags` is the dialect the chips below belong to and the one a prompt is most likely
+    // to be wrong in (lowercase, spaces not underscores, `@` before an artist name).
+    dialect: "tags",
+    // The model card's own recommended prefix, and the shorter one it tells Anima-Aesthetic
+    // users to prefer — the card says NOT to use score_* tags with that version, so offering
+    // both as separate chips is what keeps the advice honest for both checkpoints.
+    quality: ["masterpiece, best quality, score_7, safe", "masterpiece, best quality"],
+    steps: [30, 50],
+    cfg: [4, 5],
+    trialSteps: 12,
+    sizes: DEFAULT_SIZES,
+  },
 ];
 
 const BY_ID = new Map(FAMILY_CARDS.map((c) => [c.id, c] as const));

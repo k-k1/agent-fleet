@@ -233,6 +233,15 @@ var comfyFamilyRecipes = map[comfyFamily]comfyRecipe{
 	ComfyFamilyFlux1:      {Steps: 20, Sampler: "euler", Scheduler: "simple"},
 	ComfyFamilyFlux2Klein: {Steps: 4, Sampler: "euler"},
 	ComfyFamilyZImage:     {Steps: 8, CFG: 1, Sampler: "res_multistep", Scheduler: "simple"},
+	// 🔴 anima has not been run on a GPU here either. These are ComfyUI's own shipped template
+	// for the family (workflow_templates/templates/image_anima_base_v1.json: 30 steps, cfg 4,
+	// euler, simple), which is also inside the range the model card prints (30-50 steps, CFG
+	// 4-5) — a citation a reviewer can check rather than a number picked to look like SDXL's.
+	//
+	// ⚠️ These are the BASE/Aesthetic numbers. Anima-Turbo is a separate checkpoint distilled to
+	// cfg 1 and 8-12 steps, and sampled at 30/4 it burns out — that is the row's `params` to
+	// declare, exactly as for the distilled SD1.5 variants.
+	ComfyFamilyAnima: {Steps: 30, CFG: 4, Sampler: "euler", Scheduler: "simple"},
 }
 
 // recipe is the family default with this request's model declaration merged over it.
@@ -324,7 +333,7 @@ func (p comfyParams) denoise() float64 {
 // this tool's own description promises.
 //
 // VAEEncodeForInpaint is deliberately NOT used. It blanks the masked pixels before encoding,
-// which is what an inpainting-specific checkpoint expects; none of the five families here is one,
+// which is what an inpainting-specific checkpoint expects; none of the families here is one,
 // and handing an ordinary checkpoint a blanked hole is how inpainting produces grey mush.
 func comfyRequestLatent(g comfyGraph, p comfyParams, vae []any, emptyClass string) ([]any, error) {
 	if !p.isImageToImage() {
@@ -366,7 +375,7 @@ type comfyLora struct {
 // The node is `LoraLoader` for every family, which is checked against ComfyUI v0.34.0's own
 // definition rather than assumed (nodes.py, the pinned ref in deploy/aws/ecs/comfyui/Dockerfile):
 // required inputs `model` (MODEL), `clip` (CLIP), `lora_name`, `strength_model`, `strength_clip`;
-// returns (MODEL, CLIP). All five families here have a CLIP to hand it — the split ones from
+// returns (MODEL, CLIP). All seven families here have a CLIP to hand it — the split ones from
 // their own text-encoder loader — so none of them needs LoraLoaderModelOnly.
 //
 // 🔴 `lora_name` is an ENUMERATION over folder_paths' "loras" list, i.e. `<models>/loras`
@@ -414,6 +423,7 @@ const (
 	ComfyFamilyFlux1      comfyFamily = "flux1"
 	ComfyFamilyFlux2Klein comfyFamily = "flux2-klein"
 	ComfyFamilyZImage     comfyFamily = "zimage"
+	ComfyFamilyAnima      comfyFamily = "anima"
 )
 
 // comfyFamilies is every family comfyBuildGraph dispatches on. One list, so the acceptance
@@ -425,6 +435,7 @@ const (
 var comfyFamilies = []comfyFamily{
 	ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35,
 	ComfyFamilyFlux1, ComfyFamilyFlux2Klein, ComfyFamilyZImage,
+	ComfyFamilyAnima,
 }
 
 // comfyFileFlags is the Flag vocabulary resolveComfyFiles understands, in the order a panel
@@ -460,6 +471,8 @@ func comfyBuildGraph(family comfyFamily, files comfyFiles, p comfyParams) (comfy
 		return comfyGraphFlux2Klein(files, p)
 	case ComfyFamilyZImage:
 		return comfyGraphZImage(files, p)
+	case ComfyFamilyAnima:
+		return comfyGraphAnima(files, p)
 	default:
 		return nil, errUnknownComfyFamily(family)
 	}
@@ -764,5 +777,64 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": vae}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
 		"filename_prefix": "af-sd35", "images": comfyLink("dec", 0)}}
+	return g, nil
+}
+
+// --- Anima — ComfyUI's own shipped template, NOT YET RUN ON THIS DEPLOYMENT'S HARDWARE ------
+//
+// Anima is a 2B anime/illustration model (CircleStone Labs with Comfy Org, built on NVIDIA's
+// Cosmos-Predict2-2B) published as three files: the diffusion model, Qwen3-0.6B as the text
+// encoder, and the Qwen-Image VAE. So it declares like klein and Z-Image and SAMPLES like SDXL —
+// a plain KSampler with a real negative branch, because this family is guided (cfg 4) rather
+// than distilled.
+//
+// 🔴 `type: "stable_diffusion"` on the CLIPLoader is INERT here, and is the value ComfyUI's own
+// template ships rather than a claim about what the encoder is. The pinned engine picks Anima's
+// encoder by DETECTION, not by this field: comfy/sd.py (v0.34.0, the ref in
+// deploy/aws/ecs/comfyui/Dockerfile) reads the state dict's hidden size, answers TEModel.QWEN3_06B
+// at 1024, and takes the `comfy.text_encoders.anima` branch at line 1927 — which sits OUTSIDE
+// every clip_type test. `anima` is not one of CLIPLoader's type values at all (nodes.py:1011), so
+// there is nothing truer to write. That also means this family cannot be broken the way Krea 2
+// can, where the type IS read and a default silently selects a different encoder.
+//
+// 🔴 EmptyLatentImage is the 4-channel node and the Qwen-Image VAE is a 16-channel autoencoder.
+// That is not a mismatch: KSampler calls comfy.sample.fix_empty_latent_channels, which repeats an
+// ALL-ZERO latent out to the model's own channel count (comfy/sample.py:45). The edit path is
+// unaffected for the same reason — a VAEEncode latent is not empty, and it already comes back in
+// this VAE's format. The official template uses this node for exactly this reason.
+func comfyGraphAnima(f comfyFiles, p comfyParams) (comfyGraph, error) {
+	if f.DiffusionModel == "" {
+		return nil, errComfyMissingFile("anima", "diffusion model")
+	}
+	if f.ClipL == "" {
+		return nil, errComfyMissingFile("anima", "text encoder (Qwen3-0.6B, declared as --clip_l)")
+	}
+	if f.Vae == "" {
+		return nil, errComfyMissingFile("anima", "vae")
+	}
+	g := comfyGraph{
+		"unet": {ClassType: "UNETLoader", Inputs: map[string]any{"unet_name": f.DiffusionModel, "weight_dtype": "default"}},
+		"clip": {ClassType: "CLIPLoader", Inputs: map[string]any{"clip_name": f.ClipL, "type": "stable_diffusion", "device": "default"}},
+		"vae":  {ClassType: "VAELoader", Inputs: map[string]any{"vae_name": f.Vae}},
+	}
+	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
+	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
+		"text": p.Prompt, "clip": clip}}
+	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
+		"text": comfyNegativeText(p), "clip": clip}}
+	lat, err := comfyRequestLatent(g, p, comfyLink("vae", 0), "EmptyLatentImage")
+	if err != nil {
+		return nil, err
+	}
+	r := p.recipe(comfyFamilyRecipes[ComfyFamilyAnima])
+	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
+		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
+		"denoise": p.denoise(),
+		"model":   model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
+		"latent_image": lat}}
+	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{
+		"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}}
+	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
+		"filename_prefix": "af-anima", "images": comfyLink("dec", 0)}}
 	return g, nil
 }

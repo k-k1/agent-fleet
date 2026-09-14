@@ -15,7 +15,15 @@ describe("族カードの選択", () => {
       "flux1",
       "flux2-klein",
       "zimage",
+      "anima",
     ]);
+  });
+
+  it("anima は tags 方言で、推奨接頭辞を 2 つ持つ", () => {
+    expect(familyCard("anima")?.dialect).toBe("tags");
+    // Aesthetic 版は score_* を使わない、という model card の但し書きが chip 2 つの理由。
+    expect(familyCard("anima")?.quality).toHaveLength(2);
+    expect(familyCard("anima")?.cfg).toEqual([4, 5]);
   });
 
   it("base_model で引ける（大小・空白は無視）", () => {

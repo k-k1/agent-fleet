@@ -109,6 +109,10 @@ var comfyTrialSteps = map[comfyFamily]int{
 	ComfyFamilyFlux1:      8,
 	ComfyFamilyZImage:     4,
 	ComfyFamilyFlux2Klein: 4,
+	// A third of the family's 30, rather than SDXL's 10 out of 20: the model card's floor for
+	// the undistilled versions is 30 steps, so a trial at 10 would be judging a composition this
+	// family does not produce at 10.
+	ComfyFamilyAnima: 12,
 }
 
 // --- the records --------------------------------------------------------------------------

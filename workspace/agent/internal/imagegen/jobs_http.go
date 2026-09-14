@@ -159,7 +159,8 @@ const (
 	// paramsMaxCFG is past every published recommendation for these families; above it the
 	// picture is burned rather than more faithful.
 	paramsMaxCFG = 30
-	// sizeMultiple is the latent stride every one of the five families is built on. A width that
+	// sizeMultiple is the latent stride every one of the families is built on — including anima,
+	// whose Qwen-Image VAE downscales by 8 like the rest despite carrying 16 channels. A width that
 	// is not a multiple of it is silently rounded inside ComfyUI, so what comes back is not the
 	// size that was asked for and nothing says so.
 	sizeMultiple = 8

@@ -101,6 +101,13 @@ var comfyFamilyFixtures = []comfyFamilyFixture{
 	{"sd35", ComfyFamilySD35, comfyFiles{Checkpoint: "sd3.5_large.safetensors",
 		ClipL: "clip_l.safetensors", ClipG: "clip_g.safetensors", T5xxl: "t5xxl_fp16.safetensors"},
 		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
+	// The one family that is split like klein and sampled like SDXL. The file names are the ones
+	// circlestone-labs/Anima and the ComfyUI template publish, so the fixture reads as the graph
+	// an operator would build by hand from the model card.
+	{"anima", ComfyFamilyAnima, comfyFiles{
+		DiffusionModel: "anima-aesthetic-v1.1.safetensors", ClipL: "qwen_3_06b_base.safetensors",
+		Vae: "qwen_image_vae.safetensors"},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 }
 
 // comfyLinkAt reads the graph edge at "<node>.<input>".

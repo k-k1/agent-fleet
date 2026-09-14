@@ -4655,3 +4655,77 @@ deployment.
 **Remaining**: on real hardware, ingest one SD1.5 row, generate once without naming a size, and
 look at whether the subject is duplicated. Until then this family claims nothing beyond "the
 shape is pinned".
+
+## Addendum — Anima joined the family vocabulary (2026-09-15)
+
+### Why this family and not the other three
+
+The measurement behind `engineFamilyRules` found four upstream base models on Civitai's top 20
+with no family here: `Anima`, `Krea 2`, `LTXV 2.5`, `SD 1.5 Hyper`. SD1.5 was answered by the
+addendum above. Anima is answered here by the same test decision 0069 set for widening a
+vocabulary — **whether the member has a way around it**. They do not: Anima is a 2B anime and
+illustration model (CircleStone Labs with Comfy Org, built on NVIDIA's Cosmos-Predict2-2B) whose
+checkpoints, merges and LoRAs are a large and growing share of what Civitai ranks, and none of
+them load through any template here. `Krea 2` and `LTXV 2.5` are still `""` and stay that way
+until a template exists.
+
+Decision 10 is untouched: the seeded defaults are still klein / Z-Image / SDXL. This is about
+what an operator may declare, not what the deployment ships.
+
+### Declared like klein, sampled like SDXL
+
+Anima is published as three files — the diffusion model, Qwen3-0.6B as the text encoder, and the
+Qwen-Image VAE — so it declares with `--diffusion-model` / `--clip_l` / `--vae`, the split-model
+vocabulary that already existed. **No new file flag was needed.** Both parts beyond the
+diffusion model live in the same Hugging Face repository as the checkpoint
+(`circlestone-labs/Anima`) and it is **ungated** (measured 2026-09-15: `gated: false`), so all
+three parts come down the ordinary ingest route with no token.
+
+The graph, however, is SDXL's: `UNETLoader` + `CLIPLoader` + `VAELoader`, two `CLIPTextEncode`,
+`EmptyLatentImage`, `KSampler`, `VAEDecode`. It is the first family that is split in its
+declaration and **guided** in its sampling, which is why `comfyFamilyTakesNegative` and
+`comfyFamilyKnobs` gained an entry that reads like SDXL's while `engineComfyRequiredFlags`
+gained one that reads like klein's.
+
+### Two things that look wrong in the template and are not
+
+🔴 **`type: "stable_diffusion"` on the CLIPLoader is inert.** ComfyUI does not select Anima's
+text encoder from that field at all: `comfy/sd.py` (v0.34.0, the ref this deployment pins) reads
+the state dict's hidden size, answers `TEModel.QWEN3_06B` at 1024, and takes the
+`comfy.text_encoders.anima` branch at line 1927 — which sits **outside** every `clip_type` test.
+`anima` is not one of `CLIPLoader`'s type values (nodes.py:1011), so there is nothing truer to
+write, and the value here is the one ComfyUI's own shipped template uses. Krea 2, when it comes,
+is the opposite case and the dangerous one: `krea2` **is** a `CLIPType`, and leaving the default
+there selects a different encoder with no error.
+
+🔴 **`EmptyLatentImage` is the 4-channel node and the Qwen-Image VAE has 16.** `KSampler` calls
+`comfy.sample.fix_empty_latent_channels`, which repeats an **all-zero** latent out to the model's
+own channel count (`comfy/sample.py:45`). The edit path is unaffected for the same reason: a
+`VAEEncode` latent is not empty and already comes back in this VAE's format. The official
+template uses this node for exactly this reason.
+
+### The guess rule matches WHOLE, and that is the substance
+
+Every other rule in `engineFamilyRules` is a substring needle. `anima` as a substring would take
+**Animagine** (an SDXL fine-tune the rule above claims), **AnimateDiff** and **Wan-Animate** (two
+video architectures with no template here) — each time silencing `base_model_missing`, which is
+the row's only mark that it cannot generate. So `engineFamilyRule` gained an `equal` list and
+this family uses it. Every Anima checkpoint and merge on Civitai publishes the bare string
+`Anima`.
+
+### What has not been measured
+
+🔴 **Anima has never been run on a GPU here.** The recipe (30 steps, cfg 4, euler, simple) is
+ComfyUI's own shipped template for the family
+(`workflow_templates/templates/image_anima_base_v1.json`), inside the range the model card prints
+(30–50 steps, CFG 4–5) — **a citation, not a measurement**, and the SD3.5 precedent (green golden,
+could not generate at all on real hardware) applies unchanged. The golden pins the graph's shape
+and claims nothing else.
+
+⚠️ The recipe is the **base/Aesthetic** one. Anima-Turbo is a separate checkpoint distilled to
+cfg 1 and 8–12 steps; sampled at 30/4 it burns out. That is the row's `params` to declare, as it
+is for the distilled SD1.5 variants.
+
+**Remaining**: on real hardware, ingest one Anima row (three files), generate once, and look at
+whether the picture is an anime illustration rather than noise — the first thing a wrong text
+encoder would cost. Until then this family claims nothing beyond "the shape is pinned".

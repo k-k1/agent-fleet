@@ -4282,3 +4282,75 @@ golden はグラフの形を固定するだけで、それが「正しい」と�
 
 **残**: 実機で SD1.5 の行を 1 つ取り込み、寸法を名指さずに 1 枚生成して、被写体が
 二重になっていないことを見る。それまでこの族は「形は固定した」以上の主張を持たない。
+
+## 追記 — Anima を族の語彙に足した（2026-09-15）
+
+### なぜこの族で、残り 3 つではないのか
+
+`engineFamilyRules` の裏にある計測では、Civitai の月間上位 20 のうち族を持たない上流の
+base model が 4 つあった（`Anima`・`Krea 2`・`LTXV 2.5`・`SD 1.5 Hyper`）。SD1.5 は上の追記で
+答えた。Anima は、決定 0069 が語彙を広げるときに置いた同じ試験——**利用者側に回避手段が
+無いか**——で答える。無い。Anima は 2B のアニメ・イラスト向けモデル（CircleStone Labs と
+Comfy Org、NVIDIA の Cosmos-Predict2-2B が土台）で、そのチェックポイントとマージと LoRA は
+Civitai の上位の大きく育ちつつある一角を占めるのに、ここのどのテンプレートでも読み込めない。
+`Krea 2` と `LTXV 2.5` は今も `""` で、テンプレートができるまでそのままにする。
+
+決定 10 は動かしていない。種として配る既定は klein / Z-Image / SDXL のままで、これは
+運用者が宣言できるものの話であって、配備が同梱するものの話ではない。
+
+### 宣言は klein 型、サンプリングは SDXL 型
+
+Anima は 3 ファイルで公開されている——拡散モデル、テキストエンコーダの Qwen3-0.6B、そして
+Qwen-Image の VAE——ので、既にあった分割モデルの語彙 `--diffusion-model` / `--clip_l` /
+`--vae` でそのまま宣言できる。**新しい file flag は要らなかった。** 拡散モデル以外の 2 つも
+チェックポイントと同じ Hugging Face リポジトリ（`circlestone-labs/Anima`）にあり、
+**gated ではない**（2026-09-15 計測：`gated: false`）ので、3 つとも通常の ingest 経路を
+トークン無しで通る。
+
+一方でグラフは SDXL のものだ：`UNETLoader` + `CLIPLoader` + `VAELoader`、`CLIPTextEncode`
+2 つ、`EmptyLatentImage`、`KSampler`、`VAEDecode`。宣言が分割で、かつサンプリングが
+**guided** な最初の族であり、だから `comfyFamilyTakesNegative` と `comfyFamilyKnobs` には
+SDXL と同じ顔の項が増え、`engineComfyRequiredFlags` には klein と同じ顔の項が増えた。
+
+### テンプレートの中で間違いに見えて間違いでない 2 か所
+
+🔴 **CLIPLoader の `type: "stable_diffusion"` は効いていない。** ComfyUI は Anima の
+テキストエンコーダをこの欄では選ばない。`comfy/sd.py`（この配備が固定している v0.34.0）は
+state dict の hidden size を読み、1024 なら `TEModel.QWEN3_06B` と答え、1927 行の
+`comfy.text_encoders.anima` の枝に入る——この枝は `clip_type` のどの判定の**外**にある。
+`CLIPLoader` の type の値に `anima` はそもそも無い（nodes.py:1011）ので、これより本当のことは
+書けず、ここの値は ComfyUI 自身のテンプレートが入れている値そのものだ。Krea 2 を足すときは
+逆で、そちらが危ない側になる：`krea2` は `CLIPType` に**ある**ので、既定のままにすると
+エラー無しに別のエンコーダが選ばれる。
+
+🔴 **`EmptyLatentImage` は 4 チャンネルのノードで、Qwen-Image の VAE は 16 チャンネル。**
+`KSampler` は `comfy.sample.fix_empty_latent_channels` を呼び、**全ゼロの**潜在をモデル自身の
+チャンネル数まで繰り返して合わせる（`comfy/sample.py:45`）。編集経路が影響を受けないのも同じ
+理由で、`VAEEncode` の潜在は空ではなく、既にこの VAE の形で返ってくる。公式テンプレートが
+このノードを使っているのはまさにこのためだ。
+
+### 推測の規則を「全体一致」にしたのが本題
+
+`engineFamilyRules` の他の規則はすべて部分一致の needle だ。`anima` を部分一致にすると
+**Animagine**（上の規則が取るべき SDXL の fine-tune）・**AnimateDiff**・**Wan-Animate**
+（テンプレートの無い動画アーキテクチャ 2 つ）まで取ってしまい、そのたびに
+`base_model_missing`——その行が生成できないことを示す唯一の印——を消す。そこで
+`engineFamilyRule` に `equal` を足し、この族だけがそれを使う。Civitai 上の Anima の
+チェックポイントとマージは、いずれも `Anima` という裸の文字列を出している。
+
+### 測っていないこと
+
+🔴 **Anima はここで一度も GPU で走らせていない。** recipe（30 steps・cfg 4・euler・simple）は
+ComfyUI 自身がこの族向けに同梱しているテンプレート
+（`workflow_templates/templates/image_anima_base_v1.json`）で、model card が印刷している範囲
+（30〜50 steps・CFG 4〜5）の中にある——**実測ではなく出典**であり、SD3.5 の前科（golden は緑の
+まま実機で全く生成できなかった）がそのまま当てはまる。golden はグラフの形を固定するだけで、
+それ以上は何も主張しない。
+
+⚠️ この recipe は **base / Aesthetic** の値だ。Anima-Turbo は cfg 1・8〜12 steps に蒸留された
+別のチェックポイントで、30/4 で回すと焼ける。それは行の `params` が宣言することで、
+SD1.5 の蒸留版と同じ扱いになる。
+
+**残**: 実機で Anima の行を 1 つ（3 ファイル）取り込み、1 枚生成して、ノイズではなくアニメの
+絵が返ることを見る——テキストエンコーダが違っていれば最初に失われるのがそこだ。それまで
+この族は「形は固定した」以上の主張を持たない。

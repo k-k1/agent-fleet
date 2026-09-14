@@ -155,7 +155,7 @@ func (p *comfyProvider) Caps(model string) Caps {
 func comfyFamilyKnobs(family comfyFamily) []string {
 	knobs := []string{"steps"}
 	switch family {
-	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35:
+	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyAnima:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
 	case ComfyFamilyZImage:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
@@ -210,7 +210,7 @@ func comfyModelTakesNegative(conn EngineConn, model string) bool {
 	return ok && comfyFamilyTakesNegative(family)
 }
 
-// comfyFamilyTakesNegative is which of the six templates a negative prompt can actually move.
+// comfyFamilyTakesNegative is which of the seven templates a negative prompt can actually move.
 //
 // 🔴 Only the GUIDED families. The other three are distilled models sampled at cfg 1 (zimage's
 // KSampler, klein's CFGGuider) or with FLUX.1's guidance folded into the conditioning
@@ -219,8 +219,15 @@ func comfyModelTakesNegative(conn EngineConn, model string) bool {
 // cost a text encode, and change no pixel. Wiring them anyway and reporting the capability as
 // true is worse than refusing: the caller gets no warning, the picture looks right, and the thing
 // they asked to keep out is in it.
+//
+// ⚠️ anima is here because the FAMILY is guided, not because every Anima checkpoint is: the
+// Turbo variant is sampled at cfg 1 by its own `params`, where the same cancellation applies.
+// That is true of a distilled SD1.5 too, and the capability is answered per family because a
+// row's declaration is what a caller would have to read to know better — see the family's own
+// note in comfyFamilyRecipes.
 func comfyFamilyTakesNegative(family comfyFamily) bool {
-	return family == ComfyFamilySD15 || family == ComfyFamilySDXL || family == ComfyFamilySD35
+	return family == ComfyFamilySD15 || family == ComfyFamilySDXL || family == ComfyFamilySD35 ||
+		family == ComfyFamilyAnima
 }
 
 // comfyNegativeFor composes the negative prompt one request samples against, out of the three
