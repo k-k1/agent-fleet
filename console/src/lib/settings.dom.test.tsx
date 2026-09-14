@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collapseImageProviderOrder, expandImageProviderOrder, expandThinking, getSettings, IMAGE_PROVIDER_FLEET_GROUP, imageProviderLabel, isDeviceLocalSetting, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, normalizeImageProviderOrder, type Settings } from "./settings.ts";
+import { collapseImageProviderOrder, expandImageProviderOrder, expandThinking, getSettings, type ImageFleetRow, IMAGE_PROVIDER_FLEET_GROUP, imageProviderLabel, isDeviceLocalSetting, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, normalizeImageProviderOrder, type Settings } from "./settings.ts";
 
 // Pure logic, but it lives in the jsdom project (.dom.test.tsx): settings.ts touches
 // localStorage at load time through the API client, so under node the import itself fails.
@@ -85,6 +85,54 @@ describe("normalizeImageProviderOrder", () => {
   it("drops a row-key id this static list does not know, without disturbing the rest", () => {
     expect(normalizeImageProviderOrder(["comfy-lan", "agy", "codex"])).toEqual(["openai-compat", "comfy", "agy", "codex"]);
     expect(() => normalizeImageProviderOrder(["comfy-lan"])).not.toThrow();
+  });
+});
+
+// ADR 0082 P1 (decision 3's second half): once the Agent has answered, `rows` REPLACES the two
+// static placeholders as the fleet half of the universe — this is the live path AgentsTab uses.
+// Every fixture is deliberately keyed the way a real deployment's default row is ("image", not
+// "comfy") — a fixture spelled "comfy" cannot catch a reader that still matches the id's
+// spelling instead of trusting `rows`, because "comfy" would satisfy either implementation.
+describe("normalizeImageProviderOrder（行ベース・live rows）", () => {
+  const oneRow: ImageFleetRow[] = [{ id: "image", kind: "comfy" }];
+  const twoRows: ImageFleetRow[] = [
+    { id: "image", kind: "comfy" },
+    { id: "comfy-lan", kind: "comfy" },
+  ];
+
+  it("live rows replace the static placeholders entirely", () => {
+    expect(normalizeImageProviderOrder([], oneRow)).toEqual(["image", "agy", "codex"]);
+  });
+
+  it("a row the stored order predates still goes to the FRONT (the 2026-09-11 rule, live)", () => {
+    expect(normalizeImageProviderOrder(["agy", "codex"], oneRow)).toEqual(["image", "agy", "codex"]);
+  });
+
+  it("a legacy kind alias expands to every currently declared row of that kind, in order", () => {
+    expect(normalizeImageProviderOrder(["comfy", "agy", "codex"], twoRows)).toEqual(["image", "comfy-lan", "agy", "codex"]);
+  });
+
+  it("what the member explicitly ranked is still honoured through the alias", () => {
+    // The member deliberately put a vendor route ahead of the (then single) fleet engine;
+    // expanding the alias must not silently re-promote the row over that choice.
+    expect(normalizeImageProviderOrder(["agy", "comfy", "codex"], oneRow)).toEqual(["agy", "image", "codex"]);
+  });
+
+  it("a row's own key, once already stored, is not re-expanded a second time", () => {
+    expect(normalizeImageProviderOrder(["comfy-lan", "image", "agy"], twoRows)).toEqual(["comfy-lan", "image", "agy", "codex"]);
+  });
+
+  it("an empty rows answer means zero fleet rows, NOT a fall back to the two placeholders", () => {
+    expect(normalizeImageProviderOrder(["agy", "codex"], [])).toEqual(["agy", "codex"]);
+    expect(normalizeImageProviderOrder(["comfy", "agy", "codex"], [])).toEqual(["agy", "codex"]);
+  });
+
+  it("omitting rows (undefined) is what falls back — not an empty array", () => {
+    expect(normalizeImageProviderOrder(["agy", "codex"])).toEqual(["openai-compat", "comfy", "agy", "codex"]);
+  });
+
+  it("drops unknown ids and duplicates, live rows included", () => {
+    expect(normalizeImageProviderOrder(["image", "bedrock", "image", "agy"], oneRow)).toEqual(["image", "agy", "codex"]);
   });
 });
 

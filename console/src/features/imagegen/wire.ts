@@ -107,6 +107,16 @@ export interface ImagegenProvider {
    * fixed key "image"). Read `fleet` instead of guessing from the id's spelling.
    */
   fleet?: boolean;
+  /**
+   * The CLIENT implementation behind this row (ADR 0082 decision 1): `comfy` / `openai-compat`
+   * for a fleet row, this route's own id for a vendor route (whose id already IS its kind).
+   *
+   * Used only by the settings screen's ordering list (`console/src/lib/settings.ts`,
+   * `ImageFleetRow`) to expand a legacy stored alias into today's row(s) of that kind, and to
+   * label a row with what kind of machine it is — never to decide fleet-ness, which `fleet`
+   * itself already answers.
+   */
+  kind?: string;
   service?: string;
   model?: string;
   ops?: string[];
@@ -320,13 +330,74 @@ export const loraTriggers = (l: ImagegenLora): string[] => l.trained_words || []
 export const loraWeight = (l: ImagegenLora): number => (l.weight && l.weight > 0 ? l.weight : 1);
 
 /**
- * The provider this pane drives: the first ready row whose `fleet` flag is set (ADR 0082
- * decision 4). The CLI-driven providers are agents by construction and own none of these
- * knobs, so the pane must not offer them even when the status lists them first (decision 1).
+ * Whether a `providers` list came from an Agent build old enough to predate `kind` (ADR 0082
+ * P0/P1) — the only reliable signal a CURRENT Agent stamps `kind` on EVERY entry, fleet or
+ * vendor (the Agent's providerKindOf falls back to the route's own id for codex/agy), while an
+ * old one sends none at all.
  *
- * `fleet` — not a match against the id's spelling — is what decides this: see ImagegenProvider.
+ * `fleet` cannot be used for this the same way: a CURRENT Agent with zero declared fleet rows
+ * also has every entry's `fleet` omitted (Go's `json:",omitempty"` drops `false`), which is
+ * indistinguishable from the pre-ADR shape by that field alone.
+ *
+ * Vacuously false for an empty list: "nothing is ready right now" on a current Agent is a real,
+ * different answer from "this build cannot say" and must not be read as the same thing — an
+ * earlier version of the caller conflated them and made the fleet's own engine vanish from the
+ * settings screen's ordering list on any pre-P1 Agent, the same class of bug ADR 0082 P0 itself
+ * shipped once already (fleetProvider matching the id's spelling instead of reading `fleet`).
+ */
+export function isPreAdr0082Status(providers: ImagegenProvider[]): boolean {
+  return providers.length > 0 && providers.every((p) => !p.kind);
+}
+
+// The provider ids a pre-ADR-0082 Agent could ever have sent for its fleet row — the fixed
+// vocabulary of imagegen.providerRanks before P0 made the id the row's own key. `sdcpp` is ADR
+// 0083's retired id (an Agent that old predates `fleet`/`kind` too, by construction). This list
+// is closed and never grows: a CURRENT Agent's row keys are free text an operator chose, and
+// matching THOSE by name would be exactly the ADR 0082 P0 regression (id-spelling routing) all
+// over again — which is why every reader below reaches this list ONLY behind
+// isPreAdr0082Status, never unconditionally.
+const PRE_ADR_0082_FLEET_IDS = ["comfy", "openai-compat", "sdcpp"];
+
+/**
+ * Every ready fleet row (ADR 0082 P1) — the universe the studio's own provider picker offers, as
+ * opposed to `fleetProvider`'s single "the first one", which is what availability and
+ * `engineState` still only need.
+ *
+ * Falls back to matching the old, fixed kind-name ids ONLY when isPreAdr0082Status confirms
+ * this status really is that old shape (ADR 0082 P1 follow-up, PR #658 review): without this,
+ * the CP/Agent version gap that already required a guard for the settings screen's ordering
+ * list also makes the whole image generation pane — and the button that opens it (available.ts)
+ * — disappear for as long as the Workspace's Agent build lags the Control Plane's, which is
+ * exactly the silent-disappearance experience ADR 0083 decision 5 was written to stop happening
+ * again. The gate is what keeps this from being the id-matching regression ADR 0082 P0 itself
+ * shipped: a CURRENT Agent's row keys are free text, and matching them by name would silently
+ * pick up an unrelated row that happens to be keyed "comfy".
+ */
+export function fleetProviders(st: ImagegenStatus | null): ImagegenProvider[] {
+  const list = st?.providers || [];
+  const byFlag = list.filter((p) => p.fleet);
+  if (byFlag.length > 0) return byFlag;
+  if (isPreAdr0082Status(list)) return list.filter((p) => PRE_ADR_0082_FLEET_IDS.includes(p.id));
+  return [];
+}
+
+/**
+ * The provider this pane drives: the first entry of fleetProviders (ADR 0082 decision 4, and —
+ * on an Agent old enough to predate it — the compat fallback described there).
  */
 export function fleetProvider(st: ImagegenStatus | null): ImagegenProvider | null {
-  const list = st?.providers || [];
-  return list.find((p) => p.fleet) || null;
+  return fleetProviders(st)[0] || null;
+}
+
+/**
+ * Which fleet row drives the studio pane: the member's own pick (`providerId`, from
+ * `ImagegenDraft`) if it is still among the ready ones, else the first — the same fallback
+ * `model` already follows one field up. A stale or unset id (the row was removed, or this is a
+ * different deployment's draft) is read as "no choice", never as an error (ADR 0082 unresolved
+ * question 2: with N fleet rows, each carries its OWN Studio answer — overlapping model ids
+ * across two comfy rows are a real possibility — so silently driving the pane off "whichever is
+ * first" is only right while there is nothing else to pick).
+ */
+export function resolveFleetProvider(providers: ImagegenProvider[], providerId: string): ImagegenProvider | null {
+  return providers.find((p) => p.id === providerId) || providers[0] || null;
 }

@@ -73,6 +73,14 @@ type providerStatus struct {
 	// silently emptied the Console's image generation pane (ADR 0081) on every real deployment
 	// until this field let the pane ask the Agent instead of guessing from the id's spelling.
 	Fleet bool `json:"fleet,omitempty"`
+	// Kind is the CLIENT implementation behind this row (ADR 0082 decision 1) — `comfy` /
+	// `openai-compat` for a fleet row, this route's own id for the vendor routes (whose id
+	// already IS their kind). It exists only for the Console's settings screen to expand a
+	// legacy stored alias ("comfy"/"openai-compat", the only ids a preference saved before ADR
+	// 0082 could ever have named) into today's row(s) of that kind — see
+	// console/src/lib/settings.ts's normalizeImageProviderOrder. Never used to decide fleet-ness
+	// itself; Fleet already answers that (ADR 0082 decision 4).
+	Kind string `json:"kind,omitempty"`
 	// Service is the image service this route reaches, in the words a person asks for it by.
 	// The id alone is a CLI name, and nothing downstream can decode it: a codex session whose
 	// only route is `agy` was measured answering that "the Gemini route is not available in
@@ -196,6 +204,7 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		st := providerStatus{
 			ID:           p.ID(),
 			Fleet:        providerIsFleet(p.ID()),
+			Kind:         providerKindOf(p.ID()),
 			Service:      serviceLabelOf(p.ID()),
 			Model:        driverModelOf(p.ID()),
 			AspectRatios: caps.AspectRatios,
