@@ -453,7 +453,19 @@ your `auto` reaches first", it is a projection the CP would have to be given, no
 
 ## Phases
 
-Three lanes that share no files; B can be built against a stub of A's wire.
+Three lanes. B can be built against a stub of A's wire.
+
+⚠️ **They do not, in fact, share no files** — the draft said so and the review caught it. A and C
+both edit `control-plane/engine_gateway.go` (A adds the in-flight counters, C adds the three gates),
+and C's fourth gate ("do not send the row") edits the `engines` stream A creates. So:
+
+- **A lands first**, and C rebases onto it rather than inventing the stream. Until then C's gate 4 is
+  a comment naming where it goes.
+- Inside `engine_gateway.go` the two lanes touch different functions — counters wrap the
+  proxy path, the gates sit in `catalog` / `issueSessionToken` / `serve` — so the merge is textual,
+  not semantic. Say so in the PR rather than letting the second lane discover it.
+- **C's Agent-side fix (decision 9) shares nothing with anybody** and does not wait for A. Do that
+  first, on its own, so the gate never ships ahead of it.
 
 - **P0-A (CP, the indicator)**: the member row, the controller snapshot, the `engines` stream, the
   REST fallback, the gateway's in-flight count (A).
