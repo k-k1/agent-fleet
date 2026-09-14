@@ -1479,3 +1479,74 @@ func TestComfyReportsThePhasesAndTheEngineId(t *testing.T) {
 		t.Fatalf("phases = %v, want waking first and fetching last", got)
 	}
 }
+
+// --- per-family default sizes ---------------------------------------------------------------
+
+// 🔴 SD1.5's UNet was trained at 512, and a 1024 request to it does not fail — it returns a
+// picture with the subject duplicated. So the size a row falls back to has to be the FAMILY's,
+// not one list shared by everything, and the row's own declaration still has to win over both.
+//
+// The megapixel families are pinned here too, byte-for-byte as they were before sizes became a
+// per-family answer: this change must be invisible to them.
+func TestComfySizesFallBackPerFamily(t *testing.T) {
+	conn := EngineConn{
+		Models: []string{"sd15-row", "sdxl-row", "declared-row", "undeclared-row"},
+		BaseModel: map[string]string{
+			"sd15-row": "sd15", "sdxl-row": "sdxl", "declared-row": "sd15",
+		},
+		Sizes: map[string][]string{"declared-row": {"1024x1024"}},
+	}
+
+	got := comfySizesFor(conn, "sd15-row")
+	want := []string{"512x512", "512x768", "768x512", "640x512", "512x640"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("sd15 sizes = %v, want %v", got, want)
+	}
+	for _, s := range got {
+		if strings.HasPrefix(s, "1024") || strings.HasSuffix(s, "x1024") {
+			t.Errorf("sd15 is offered %s, which is the size that duplicates the subject", s)
+		}
+	}
+
+	if got := strings.Join(comfySizesFor(conn, "sdxl-row"), ","); got != strings.Join(comfyMegapixelSizes, ",") {
+		t.Errorf("sdxl sizes = %v — the megapixel families must not move", got)
+	}
+
+	// The catalogue row still wins: an operator who declares 1024 for an SD1.5 row has said
+	// something this table is not entitled to overrule.
+	if got := comfySizesFor(conn, "declared-row"); len(got) != 1 || got[0] != "1024x1024" {
+		t.Errorf("declared sizes = %v, want the row's own", got)
+	}
+
+	// An undeclared family cannot generate at all, so the list decides nothing — and answering
+	// with SD1.5's presets there would be a guess about a row nobody has declared.
+	if got := strings.Join(comfySizesFor(conn, "undeclared-row"), ","); got != strings.Join(comfyMegapixelSizes, ",") {
+		t.Errorf("undeclared sizes = %v, want the megapixel list", got)
+	}
+}
+
+// comfyDefaultSize is what a request naming no size gets, and it is the first preset of the
+// family's own list — the native square, never another family's.
+func TestComfyDefaultSizeIsTheFamilysNativeSquare(t *testing.T) {
+	if w, h := comfyDefaultSize(ComfyFamilySD15); w != 512 || h != 512 {
+		t.Errorf("sd15 default = %dx%d, want 512x512", w, h)
+	}
+	for _, f := range comfyFamilies {
+		if f == ComfyFamilySD15 {
+			continue
+		}
+		if w, h := comfyDefaultSize(f); w != 1024 || h != 1024 {
+			t.Errorf("%s default = %dx%d, want the unchanged 1024x1024", f, w, h)
+		}
+	}
+}
+
+// Every family has to have a trial step count: the map is read with a plain lookup, so a family
+// missing from it trials at 0 steps — which is not an error anywhere, just a blank picture.
+func TestEveryFamilyHasTrialSteps(t *testing.T) {
+	for _, f := range comfyFamilies {
+		if comfyTrialSteps[f] <= 0 {
+			t.Errorf("%s has no trial step count", f)
+		}
+	}
+}

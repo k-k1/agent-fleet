@@ -7,8 +7,15 @@ import { describe, expect, it } from "vitest";
 import { FAMILY_CARDS, familyCard, parseSize, sizeOptions } from "./families.ts";
 
 describe("族カードの選択", () => {
-  it("五つの族に一つずつ", () => {
-    expect(FAMILY_CARDS.map((c) => c.id)).toEqual(["sdxl", "sd35", "flux1", "flux2-klein", "zimage"]);
+  it("族の数だけ一つずつ", () => {
+    expect(FAMILY_CARDS.map((c) => c.id)).toEqual([
+      "sd15",
+      "sdxl",
+      "sd35",
+      "flux1",
+      "flux2-klein",
+      "zimage",
+    ]);
   });
 
   it("base_model で引ける（大小・空白は無視）", () => {
@@ -38,6 +45,19 @@ describe("大きさの選択肢", () => {
   it("行が無い・壊れているときは族の既定に落ちる", () => {
     expect(sizeOptions(undefined, "sdxl")).toContain("1024x1024");
     expect(sizeOptions(["huge", ""], "sdxl")).toContain("1216x832");
+  });
+
+  // 🔴 SD1.5 は 512 学習で、1024 を頼むと失敗ではなく被写体が二重になった絵が返る。
+  // 既定の一覧が族別であることが、宣言を忘れた行を救う唯一の場所（comfyDefaultSizes と対）。
+  it("SD1.5 の既定寸法は 512 系で、メガピクセルの一覧を含まない", () => {
+    expect(sizeOptions(undefined, "sd15")).toEqual([
+      "512x512",
+      "512x768",
+      "768x512",
+      "640x512",
+      "512x640",
+    ]);
+    expect(sizeOptions(undefined, "sd15")).not.toContain("1024x1024");
   });
 
   it("族も分からなければ Agent の既定 5 つ", () => {
