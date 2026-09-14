@@ -183,6 +183,46 @@ func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 	}
 }
 
+// A card draws its example in a 92x108 box, so the row must not hand it the original.
+//
+// Measured live 2026-09-15: the URL Civitai publishes carries `original=true`, and a page of
+// twenty is ~40 MB — on a phone those loads fail, and a failed <img> is the broken-image glyph.
+// The same rewrite is what makes a VIDEO example drawable at all: `anim=false` answers a still
+// JPEG where the published URL is an .mp4 that no <img> can render.
+func TestCivitaiPreviewsAreAskedForAtTheSizeTheyAreDrawn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[
+		  {"id":133005,"name":"Juggernaut XL","type":"Checkpoint",
+		   "modelVersions":[{"id":1759168,"baseModel":"SDXL 1.0",
+		                     "images":[{"url":"https://image.civitai.com/xG1nkq/3e8b5992-14fa/original=true/142762236.mp4"}]}]}]}`))
+	}))
+	defer srv.Close()
+	old := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	defer func() { engineCivitaiBase = old }()
+
+	civ, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "checkpoint", sort: ""})
+	if aerr != nil || len(civ) != 1 {
+		t.Fatalf("civitai search: %v %v", civ, aerr)
+	}
+	if want := "https://image.civitai.com/xG1nkq/3e8b5992-14fa/anim=false,width=1024/142762236.mp4"; civ[0].PreviewURL != want {
+		t.Errorf("preview_url = %q, want the lightbox size %q", civ[0].PreviewURL, want)
+	}
+	if want := "https://image.civitai.com/xG1nkq/3e8b5992-14fa/anim=false,width=256/142762236.mp4"; civ[0].ThumbURL != want {
+		t.Errorf("thumb_url = %q, want the card size %q", civ[0].ThumbURL, want)
+	}
+
+	// A URL that carries no transform segment gets one inserted before the filename; a shape
+	// flatter than the CDN's own layout is left alone rather than guessed at.
+	if got, want := engineCivitaiImageVariant("https://image.civitai.com/xG1nkq/3e8b5992-14fa/1.jpeg", engineCivitaiThumbTransform),
+		"https://image.civitai.com/xG1nkq/3e8b5992-14fa/anim=false,width=256/1.jpeg"; got != want {
+		t.Errorf("variant of a transformless URL = %q, want %q", got, want)
+	}
+	if got := engineCivitaiImageVariant("https://image.civitai.com/model.jpeg", engineCivitaiThumbTransform); got != "https://image.civitai.com/model.jpeg" {
+		t.Errorf("variant of an unrecognised shape = %q, want it untouched", got)
+	}
+}
+
 // A model with no id still gets a page: the version-only form Civitai resolves, which is what
 // the licence link has always used. Nothing measured answers that, but the id is upstream's to
 // omit and a row whose link is `/models/0?…` is worse than one that is a little less precise.

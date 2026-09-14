@@ -220,11 +220,8 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
           ? <ImageCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} onPreview={() => setPreview(hit)} />
           : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
       })}</ul>}
-      {cursor && query === submittedQuery && <Button variant="ghost" small icon={busy && busyMore ? undefined : "chevron-down"}
-        className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>
-        {busy && busyMore && <Icon name="loading" spin />}
-        {tr("admin.catalog_more" as never)}
-      </Button>}
+      {cursor && query === submittedQuery && <CatalogMore busy={busy} loading={busy && busyMore}
+        count={hits?.length || 0} onMore={() => void search(true)} />}
       <CatalogJobs engineKey={row.key} started={startedJob} onCompleted={() => { void loadStorage(); onChanged(); }} />
       {operation && <CatalogOperation row={row} kind={kind} hit={operation.hit} initialAct={operation.act} initialSource={operation.source}
         storage={storage?.files || []} onClose={() => setOperation(null)} onStarted={(job) => { setStartedJob(job); setOperation(null); void loadStorage(); onChanged(); }} />}
@@ -233,6 +230,52 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
       </Modal>}
     </section>
   );
+}
+
+/** The end of the list fetches the next page by itself, and keeps the button.
+ *
+ * The button is not a leftover: it is what still works when the observer cannot run (no
+ * IntersectionObserver, a pane that is not the scroller), and it is the deliberate way past the
+ * guard below. `count` is that guard — a page that added no row stops the automatic chain, so an
+ * upstream error with a live cursor cannot turn one landing at the bottom into an endless
+ * request loop. */
+function CatalogMore({ busy, loading, count, onMore }: { busy: boolean; loading: boolean; count: number; onMore: () => void }) {
+  const tr = useT();
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  // Read through refs because the observer is deliberately NOT rebuilt when these change:
+  // re-observing reports the current state immediately, and doing that on every render of a
+  // visible sentinel is a second request for the same landing.
+  const fire = useRef(onMore);
+  const seen = useRef(count);
+  const autoAt = useRef(-1);
+  // Updated in an effect, and declared BEFORE the one that observes: effects commit in source
+  // order, so the observer below never reads a stale callback, and nothing is written during
+  // render.
+  useEffect(() => { fire.current = onMore; seen.current = count; });
+
+  useEffect(() => {
+    const node = sentinel.current;
+    // Nothing is observed while a page is in flight, and observing again once it lands is what
+    // continues the chain: an observer reports a CHANGE, so a short page that leaves the
+    // sentinel on screen would otherwise stop the scroll dead.
+    if (busy || !node || typeof IntersectionObserver !== "function") return;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting) || autoAt.current === seen.current) return;
+      autoAt.current = seen.current;
+      fire.current();
+    }, { rootMargin: "400px" });
+    io.observe(node);
+    return () => io.disconnect();
+  }, [busy]);
+
+  return <>
+    <div ref={sentinel} className="engine-catalog-sentinel" aria-hidden="true" />
+    <Button variant="ghost" small icon={loading ? undefined : "chevron-down"} className="engine-catalog-more"
+      disabled={busy} onClick={() => { autoAt.current = -1; onMore(); }}>
+      {loading && <Icon name="loading" spin />}
+      {tr("admin.catalog_more" as never)}
+    </Button>
+  </>;
 }
 
 type BrowseCardProps = {
@@ -270,7 +313,7 @@ function ImageCatalogCard({ hit, kind, saved, onPreview, ...actions }: BrowseCar
         {hit.published_at ? ` · ${tr("admin.engines_ingest_hit_published")} ${fmtDateTime(hit.published_at)}` : ""}
       </p>
       <CatalogSavedState hit={hit} saved={saved} storage={actions.storage} storageState={actions.storageState} />
-    </div>{hit.preview_url && <Button variant="ghost" className="engine-catalog-thumb" onClick={onPreview} aria-label={`${tr("admin.catalog_preview" as never)}: ${hit.name}`}><img src={hit.preview_url} alt="" loading="lazy" /></Button>}</div>
+    </div>{hit.preview_url && <Button variant="ghost" className="engine-catalog-thumb" onClick={onPreview} aria-label={`${tr("admin.catalog_preview" as never)}: ${hit.name}`}><img src={hit.thumb_url || hit.preview_url} alt="" loading="lazy" /></Button>}</div>
     <BrowseCardFooter hit={hit} {...actions} />
   </li>;
 }
@@ -398,7 +441,7 @@ function NoEngineCatalog() {
       const props: BrowseCardProps = { hit, kind, saved: [], storage: [], storageState: "ready", readOnly: true, canAttach: false, canReplace: false, onOperation: noop };
       return image ? <ImageCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} onPreview={() => setPreview(hit)} /> : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
     })}</ul>}
-    {cursor && query === submittedQuery && <Button variant="ghost" small icon="chevron-down" className="engine-catalog-more" disabled={busy} onClick={() => void search(true)}>{tr("admin.catalog_more" as never)}</Button>}
+    {cursor && query === submittedQuery && <CatalogMore busy={busy} loading={busy} count={hits?.length || 0} onMore={() => void search(true)} />}
     {preview?.preview_url && <Modal title={preview.name} className="engine-catalog-lightbox" onClose={() => setPreview(null)}><img className="ui-modal-body" src={preview.preview_url} alt={preview.name} /></Modal>}
   </section>;
 }

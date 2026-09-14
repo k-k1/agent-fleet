@@ -264,9 +264,13 @@ export type IngestHit = {
    *  model id; `ref` keeps naming the selectable revision/version for old clients. */
   model_ref?: string;
   name: string;
-  /** Small upstream example image. It is presentation only and is never used as an ingest
-   *  source; absence means the card has no image area at all. */
+  /** Upstream example image at lightbox size. It is presentation only and is never used as an
+   *  ingest source; absence means the card has no image area at all. */
   preview_url?: string;
+  /** The same example at card size, when the source can resize (Civitai can, Hugging Face
+   *  cannot). The card must use this: the URL Civitai publishes asks for the ORIGINAL, which is
+   *  megabytes per row for a 92x108 box, and on a phone those loads are what fails. */
+  thumb_url?: string;
   /** The three numbers a ranking is built on. All three ride on every row, whichever one the
    *  list was ordered by — sorting by one and showing only that one leaves "why is this here"
    *  unanswerable. `trending` is Hugging Face's own score; Civitai publishes none. */
