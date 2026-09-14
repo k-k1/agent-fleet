@@ -310,6 +310,10 @@ type engineRuntimeState struct {
 	// extWarm is the cached health answer an externally managed engine's panel row reports as
 	// `warm` (ADR 0076 decision 8). Inert for every engine that has a controller.
 	extWarm engineWarmCache
+	// discover is the cached answer to the last press of the discovery button (ADR 0082
+	// decisions 6 and 7, engine_discover.go). Inert for every row that is not an external comfy
+	// one — nothing else ever populates it.
+	discover engineDiscoverCache
 	// remote is the far deployment this row borrows from (ADR 0079). Non-nil ONLY for a row whose
 	// lifecycle is `remote`; every method on it is nil-safe, so the branches that reach it do not
 	// each need a guard. It owns the three things that differ from an external row: the token
