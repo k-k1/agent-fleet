@@ -2332,7 +2332,8 @@ func engineIngestDestinationUnused(ctx context.Context, models store.EngineModel
 	if models == nil || jobs == nil {
 		return internalErr(errors.New("no store"))
 	}
-	rows, err := models.ListEngineModels(ctx, role)
+	// Scan every role so an old malformed row pointing across role prefixes remains protected.
+	rows, err := models.ListEngineModels(ctx, "")
 	if err != nil {
 		return internalErr(err)
 	}

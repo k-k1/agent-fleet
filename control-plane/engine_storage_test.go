@@ -210,6 +210,18 @@ func TestEngineKnownArtifactsUsesOnlyTheNewestSuccessfulUpload(t *testing.T) {
 	}
 }
 
+func TestEngineKnownArtifactsRefusesMixedLegacyProvenance(t *testing.T) {
+	key := "image/models/a.safetensors"
+	identity := "hf:org/repo@commit/a.safetensors#sha256:new"
+	known := engineKnownArtifacts([]store.EngineModel{
+		{Role: "image", ID: "current", Files: []store.EngineModelFile{{S3Key: key, ArtifactIdentity: identity}}},
+		{Role: "image", ID: "legacy", Files: []store.EngineModelFile{{S3Key: key, Source: "hf:org/repo/a.safetensors"}}},
+	}, nil)[key]
+	if known == nil || !known.Ambiguous || known.Reusable {
+		t.Fatalf("mixed legacy provenance remained reusable: %+v", known)
+	}
+}
+
 func TestEngineStorageRefusesABorrowedRole(t *testing.T) {
 	st := ingestStore(t)
 	reg, e := newAdminTestRegistry(t, &engineTestECS{}, st)

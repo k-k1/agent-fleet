@@ -205,7 +205,7 @@ type engineKnownArtifact struct {
 
 func engineKnownArtifacts(models []store.EngineModel, jobs []store.EngineIngestJob) map[string]*engineKnownArtifact {
 	out := map[string]*engineKnownArtifact{}
-	add := func(key, modelID, source, identity string, reusable bool, kv engineKVGeometry, vae string) {
+	add := func(key, modelID, source, identity string, reusable, identityRequired bool, kv engineKVGeometry, vae string) {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			return
@@ -222,17 +222,22 @@ func engineKnownArtifacts(models []store.EngineModel, jobs []store.EngineIngestJ
 			a.Source = strings.TrimSpace(source)
 		}
 		identity = strings.TrimSpace(identity)
-		if identity != "" {
-			if a.ArtifactIdentity != "" && a.ArtifactIdentity != identity {
+		if identity == "" {
+			if identityRequired {
 				a.Ambiguous = true
-			} else if a.ArtifactIdentity == "" {
-				a.ArtifactIdentity = identity
-				a.KVGeom = kv
-				a.VaeBundled = vae
+				a.Reusable = false
 			}
-			if reusable {
-				a.Reusable = true
-			}
+			return
+		}
+		if a.ArtifactIdentity != "" && a.ArtifactIdentity != identity {
+			a.Ambiguous = true
+		} else if a.ArtifactIdentity == "" {
+			a.ArtifactIdentity = identity
+			a.KVGeom = kv
+			a.VaeBundled = vae
+		}
+		if reusable {
+			a.Reusable = true
 		}
 	}
 	for _, model := range models {
@@ -242,7 +247,7 @@ func engineKnownArtifacts(models []store.EngineModel, jobs []store.EngineIngestJ
 				kv = engineKVGeometry{Layers: model.KVLayers, HeadsKV: model.KVHeadsKV,
 					KeyLen: model.KVKeyLen, ValLen: model.KVValueLen}
 			}
-			add(file.S3Key, model.ID, file.Source, file.ArtifactIdentity, true, kv, file.VaeBundled)
+			add(file.S3Key, model.ID, file.Source, file.ArtifactIdentity, true, true, kv, file.VaeBundled)
 		}
 	}
 	// Storage queries return newest jobs first. Only the newest successful upload for one key
@@ -252,23 +257,27 @@ func engineKnownArtifacts(models []store.EngineModel, jobs []store.EngineIngestJ
 	for _, job := range jobs {
 		key := strings.TrimSpace(job.S3Key)
 		if job.State == store.EngineIngestPending || job.State == store.EngineIngestRunning {
-			add(job.S3Key, job.ModelID, job.Source, "", false, engineKVGeometry{}, "")
+			add(job.S3Key, job.ModelID, job.Source, "", false, false, engineKVGeometry{}, "")
 			if a := out[key]; a != nil {
 				a.InFlight = true
 			}
 			continue
 		}
-		if job.State != store.EngineIngestDone || latestDone[key] {
-			add(job.S3Key, job.ModelID, job.Source, "", false, engineKVGeometry{}, "")
+		if job.State != store.EngineIngestDone {
+			add(job.S3Key, job.ModelID, job.Source, "", false, true, engineKVGeometry{}, "")
+			continue
+		}
+		if latestDone[key] {
+			add(job.S3Key, job.ModelID, job.Source, "", false, false, engineKVGeometry{}, "")
 			continue
 		}
 		latestDone[key] = true
 		var req engineIngestRequest
 		if strings.TrimSpace(job.Spec) == "" || json.Unmarshal([]byte(job.Spec), &req) != nil {
-			add(job.S3Key, job.ModelID, job.Source, "", false, engineKVGeometry{}, "")
+			add(job.S3Key, job.ModelID, job.Source, "", false, true, engineKVGeometry{}, "")
 			continue
 		}
-		add(job.S3Key, job.ModelID, job.Source, req.Resolved.ArtifactIdentity, job.State == store.EngineIngestDone,
+		add(job.S3Key, job.ModelID, job.Source, req.Resolved.ArtifactIdentity, job.State == store.EngineIngestDone, true,
 			req.KVGeom, req.VaeBundled)
 	}
 	return out
@@ -386,6 +395,10 @@ func (a engineAdminAPI) verifyEngineReuse(ctx context.Context, g engineIngestGra
 			"reuse_s3_key is not present in this engine's catalogue or visible job history"}
 	}
 	if known.Ambiguous {
+		if known.ArtifactIdentity == "" {
+			return nil, engineStorageCheck{}, &apiError{http.StatusConflict, errCodeEngineBadBody,
+				"reuse_s3_key has no immutable stored artifact identity; legacy source text is not enough to reuse it"}
+		}
 		return nil, engineStorageCheck{}, &apiError{http.StatusConflict, errCodeEngineBadBody,
 			"reuse_s3_key has conflicting stored artifact identities and cannot be reused safely"}
 	}
