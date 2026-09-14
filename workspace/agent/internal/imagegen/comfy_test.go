@@ -883,6 +883,79 @@ func TestComfyGenerateSendsAMatchingLoraToTheEngine(t *testing.T) {
 	}
 }
 
+// ADR 0081 decision 5. The pairing is legal, the adapter loads, the whole generation is paid for
+// — and the picture is the one without it, because the words it answers to were never said. There
+// is no error to observe, so the result has to say it out loud.
+func TestComfyGenerateWarnsWhenATriggerWordIsMissing(t *testing.T) {
+	conn := loraConn()
+	conn.Loras[0].TrainedWords = []string{"wtrcolor style", "loose wash"}
+	p, _ := comfyStub(t, conn, nil)
+
+	res, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0",
+		Loras: []LoraRef{{Name: "watercolor-v2"}},
+	})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "watercolor-v2") && strings.Contains(w, "wtrcolor style") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %v, want one naming the adapter and the words it answers to", res.Warnings)
+	}
+
+	// And silent when the prompt says one of them: a warning that fires on the correct request
+	// is a warning nobody reads on the incorrect one.
+	ok, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox, LOOSE WASH", Model: "sdxl-base-1.0",
+		Loras: []LoraRef{{Name: "watercolor-v2"}},
+	})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	for _, w := range ok.Warnings {
+		if strings.Contains(w, "answers to") {
+			t.Errorf("warnings = %v, want nothing once a trigger word is in the prompt", ok.Warnings)
+		}
+	}
+}
+
+// The edges of the same rule, where a wrong answer is a warning that cries wolf (and gets ignored
+// on the request that mattered) rather than a broken picture.
+func TestComfyTriggerWarnings(t *testing.T) {
+	conn := loraConn()
+	conn.Loras[0].TrainedWords = []string{"wtrcolor style", "loose wash"}
+
+	for _, tc := range []struct {
+		name   string
+		want   []LoraRef
+		prompt string
+		warn   bool
+	}{
+		{name: "no LoRA at all", prompt: "a fox"},
+		{name: "none of the words", want: []LoraRef{{Name: "watercolor-v2"}}, prompt: "a fox", warn: true},
+		{name: "ANY of them is enough — they are alternatives, not a checklist",
+			want: []LoraRef{{Name: "watercolor-v2"}}, prompt: "a fox, loose wash"},
+		{name: "the prompt's own casing does not decide it",
+			want: []LoraRef{{Name: "watercolor-v2"}}, prompt: "A Fox, Wtrcolor Style"},
+		{name: "an adapter that publishes none is not nagged about words it does not have",
+			want: []LoraRef{{Name: "klein-lineart"}}, prompt: "a fox"},
+		{name: "a name this engine does not have is comfyResolveLoras' refusal, not a warning",
+			want: []LoraRef{{Name: "nothing-of-the-sort"}}, prompt: "a fox"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := comfyTriggerWarnings(conn, tc.want, tc.prompt)
+			if (len(got) > 0) != tc.warn {
+				t.Fatalf("warnings = %v, want any = %v", got, tc.warn)
+			}
+		})
+	}
+}
+
 // The rest of comfyResolveLoras' contract, in one table: an unstated weight is decision 5's
 // default of 1, the range is 0-2, and neither a repeat nor an unbounded pile is accepted.
 func TestComfyResolveLoras(t *testing.T) {

@@ -81,6 +81,17 @@ type mcpImageGenLora struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	BaseModel   string `json:"baseModel,omitempty"`
+	// TrainedWords are the words the adapter was trained with (ADR 0081 decision 5). The Agent
+	// has published them on this very route since that ADR; this struct is where they used to
+	// be dropped, and a field absent from it is a field that does not exist downstream — the
+	// same silent loss engineCatalogModelRow warns about, one wire further along.
+	//
+	// They belong in the SCHEMA rather than in an answer the caller could fetch separately,
+	// because the moment they are needed is while the prompt is being written: a LoRA applied
+	// without its trigger loads, costs the same generation, and changes nothing visible. A
+	// second tool would move that fact one round trip away and reintroduce the failure as
+	// "forgot to call it" — see the `loras` description in mcp_stdio.go.
+	TrainedWords []string `json:"trained_words,omitempty"`
 }
 
 // agentImageGenStatus asks the Agent over the loopback REST every other session tool already

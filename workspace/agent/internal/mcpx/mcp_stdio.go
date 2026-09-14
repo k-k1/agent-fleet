@@ -1150,10 +1150,22 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 			enum = append(enum, l.Name)
 			line := l.Name
 			if l.BaseModel != "" {
-				line += "（" + l.BaseModel + " 用）"
+				line += " (" + l.BaseModel + ")"
 			}
 			if l.Description != "" {
 				line += " — " + l.Description
+			}
+			// The trigger words ride the schema rather than an answer to a second tool, because
+			// the moment they are needed is while the prompt is being written and a caller that
+			// has to fetch them can forget to: an adapter applied without its trigger loads,
+			// costs the whole generation, and changes nothing visible. Cheap here, too — this
+			// block exists only for a deployment that enabled a LoRA at all, and grows by one
+			// short clause per adapter.
+			// Comma-separated, while the LINES are joined by " / ": a word list using the same
+			// separator as the list of adapters would leave no boundary between one adapter's
+			// last trigger and the next adapter's name.
+			if len(l.TrainedWords) > 0 {
+				line += " — triggers: " + strings.Join(l.TrainedWords, ", ")
 			}
 			lines = append(lines, line)
 		}
@@ -1166,12 +1178,13 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
 					"name":   map[string]any{"type": "string", "enum": enum},
-					"weight": map[string]any{"type": "number", "minimum": 0, "maximum": 2, "description": "How strongly to apply it, 0-2 (1 when omitted)"},
+					"weight": map[string]any{"type": "number", "minimum": 0, "maximum": 2, "description": "How strongly to apply it, 0-2. Omit it to get the strength the adapter's author published, which is the right answer unless the picture says otherwise"},
 				},
 				"required": []string{"name"},
 			},
 			"description": "Fine-tunes to apply on top of the checkpoint, in order. **Leave it unset unless the user asked for that look** — each one is a style, not an improvement. " +
-				"A LoRA only works on the checkpoint family it was trained for; asking for a mismatched pair is refused by name, so pick one whose family matches the model you chose. " +
+				"A LoRA only works on the checkpoint family it was trained for (named in brackets below); asking for a mismatched pair is refused by name, so pick one whose family matches the model you chose. " +
+				"A line's `triggers:` are the words that adapter was trained on: put one in `prompt` yourself, or it loads and changes nothing. " +
 				"Available: " + strings.Join(lines, " / ")}
 	}
 	return []map[string]any{

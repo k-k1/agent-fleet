@@ -500,6 +500,52 @@ func comfyResolveLoras(conn EngineConn, family comfyFamily, model string, want [
 	return out, nil
 }
 
+// comfyTriggerWarnings names every applied LoRA whose trigger words are nowhere in the prompt.
+//
+// It is the other half of the family mismatch above, and the half that cannot be refused: the
+// pairing is legal, the adapter loads, the generation is paid for in full — and the picture comes
+// back looking like the one without it, because the words the adapter was trained to answer to
+// were never said. There is no failure to observe, which is exactly why it has to be spoken here
+// rather than left to the caller to notice.
+//
+// A warning and not an error, deliberately, for three reasons: some adapters genuinely need no
+// trigger (their author publishes none, and those rows are skipped outright), a word may be
+// reached through a synonym this substring test cannot see, and a caller who meant to run without
+// the trigger — to measure what the adapter does on its own — must still be able to. ANY of the
+// published words counts: they are alternatives, not a checklist.
+func comfyTriggerWarnings(conn EngineConn, want []LoraRef, prompt string) []string {
+	if len(want) == 0 {
+		return nil
+	}
+	byName := map[string]EngineLora{}
+	for _, l := range conn.Loras {
+		byName[l.ID] = l
+	}
+	lower := strings.ToLower(prompt)
+	var out []string
+	for _, w := range want {
+		l, ok := byName[w.Name]
+		if !ok || len(l.TrainedWords) == 0 {
+			continue
+		}
+		said := false
+		for _, t := range l.TrainedWords {
+			if t = strings.TrimSpace(t); t != "" && strings.Contains(lower, strings.ToLower(t)) {
+				said = true
+				break
+			}
+		}
+		if said {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			"LoRA %s answers to %s, and the prompt says none of them — it loaded and probably changed nothing;"+
+				" put one in the prompt and generate again",
+			l.ID, strings.Join(l.TrainedWords, " / ")))
+	}
+	return out
+}
+
 // errComfyLoraFamilyMismatch separates the two ways a pairing fails, because an operator fixes
 // them differently: a LoRA that declares a DIFFERENT family was registered for other checkpoints
 // and is being used on the wrong one, while a LoRA that declares NOTHING is a catalogue row
@@ -666,6 +712,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		warnings = append(warnings, ignored)
 	}
 	warnings = append(warnings, comfyIgnoredParamWarnings(family, req.Params)...)
+	warnings = append(warnings, comfyTriggerWarnings(conn, req.Loras, req.Prompt)...)
 	if switchWarning != "" {
 		warnings = append(warnings, switchWarning)
 	}
