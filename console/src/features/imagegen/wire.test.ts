@@ -25,6 +25,43 @@ describe("fleetProvider / fleetProviders", () => {
   });
 });
 
+// PR #658 review: fixing the settings screen's own version-gap guard left the pane itself (and
+// the button that opens it, available.ts) unguarded — an Agent build old enough to predate
+// `fleet`/`kind` made fleetProvider()/fleetProviders() return nothing, and the whole image
+// generation pane vanished for as long as the Workspace's Agent lagged the Control Plane. ADR
+// 0083 decision 5 specifically worked to stop image generation disappearing silently; this is
+// the same failure one layer later. The fix is a GATED compat path: old ids are matched by name
+// only when isPreAdr0082Status confirms the shape really is that old, never unconditionally —
+// unconditional id-matching is the exact ADR 0082 P0 regression.
+describe("fleetProvider / fleetProviders の互換経路（ADR 0082 より前の Agent）", () => {
+  const st = (providers: ImagegenProvider[]): ImagegenStatus => ({ enabled: true, ready: true, providers });
+
+  it("fleet も kind も無い providers では、旧来の種類名 id を拾う", () => {
+    expect(fleetProvider(st([{ id: "codex" }, { id: "comfy" }]))?.id).toBe("comfy");
+    expect(fleetProviders(st([{ id: "codex" }, { id: "comfy" }])).map((p) => p.id)).toEqual(["comfy"]);
+  });
+
+  it("openai-compat / sdcpp も同じ互換経路で拾う", () => {
+    expect(fleetProvider(st([{ id: "codex" }, { id: "openai-compat" }]))?.id).toBe("openai-compat");
+    expect(fleetProvider(st([{ id: "codex" }, { id: "sdcpp" }]))?.id).toBe("sdcpp");
+  });
+
+  it("fleet 行が無く、旧来の種類名でもない id だけなら、互換経路も何も拾わない", () => {
+    expect(fleetProvider(st([{ id: "codex" }, { id: "agy" }]))).toBeNull();
+  });
+
+  // kind が 1 つでも乗っていれば現行の形として扱い、互換経路は発火しない——現行 Agent の行が
+  // たまたま「comfy」というキーでも、旗が立っていなければ拾わない。ここで互換経路が発火すると
+  // それはまさに ADR 0082 P0 の回帰（id の綴りでの判定）の再発になる。
+  it("kind があれば現行の形として扱い、id が「comfy」でも旗が無ければ拾わない", () => {
+    expect(fleetProvider(st([{ id: "comfy", kind: "comfy" }, { id: "codex", kind: "codex" }]))).toBeNull();
+  });
+
+  it("fleet 旗が立った行が 1 本でもあれば、互換経路より優先する", () => {
+    expect(fleetProvider(st([{ id: "comfy" }, { id: "image", fleet: true, kind: "comfy" }]))?.id).toBe("image");
+  });
+});
+
 // resolveFleetProvider is the studio pane's answer to ADR 0082's unresolved question 2: which
 // of N fleet rows drives the form. Pure logic, deliberately extracted out of GenerateForm/
 // ImagegenView so this can be pinned without a DOM render — a controlled <select> whose value
