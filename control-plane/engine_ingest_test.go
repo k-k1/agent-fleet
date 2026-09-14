@@ -453,16 +453,23 @@ func TestEngineResolvedRowCarriesTheKVCostPerThousandTokens(t *testing.T) {
 	}
 }
 
-// civitaiStub answers a model VERSION and the HEAD on its download URL. The download answer is
-// the caller's, because THAT is the split this API has: the metadata is 200 for everybody and
-// the bytes are per uploader (ADR 0072 P2 欠落 5).
+// civitaiStub answers a model VERSION and the ranged GET on its download URL. The download
+// answer is the caller's, because THAT is the split this API has: the metadata is 200 for
+// everybody and the bytes are per uploader (ADR 0072 P2 欠落 5).
 func civitaiStub(t *testing.T, download int) *httptest.Server {
 	t.Helper()
 	var base string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/api/download/") {
-			if r.Method != http.MethodHead {
-				t.Errorf("the probe used %s, want HEAD — a GET here downloads gigabytes", r.Method)
+			// A HEAD here would download nothing, but Civitai's real download URL redirects to
+			// an R2 presigned URL signed for GET only — a HEAD there is always 403. The probe
+			// must use GET, and must range it so this stub (and the real CDN) need not send
+			// gigabytes to answer a status line.
+			if r.Method != http.MethodGet {
+				t.Errorf("the probe used %s, want a ranged GET", r.Method)
+			}
+			if r.Header.Get("Range") == "" {
+				t.Error("the probe GET carried no Range header — it would download the whole asset")
 			}
 			w.WriteHeader(download)
 			return
@@ -545,8 +552,8 @@ func TestEngineResolveCivitaiSpotsAnAssetThatNeedsAnAccount(t *testing.T) {
 		}
 	}
 
-	// It fails OPEN in the directions it cannot read. A CDN that dislikes HEAD is not a login
-	// wall, and neither is a probe that could not be made at all.
+	// It fails OPEN in the directions it cannot read. A CDN that dislikes a ranged GET is not a
+	// login wall, and neither is a probe that could not be made at all.
 	civitaiStub(t, http.StatusMethodNotAllowed)
 	got, aerr := engineResolveCivitai(context.Background(), engineIngestCivitai{VersionID: 128713})
 	if aerr != nil || got.LoginRequired {

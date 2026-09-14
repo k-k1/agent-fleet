@@ -556,10 +556,17 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 // minutes later with `curl: (22) … error: 401`. What reaches the operator is an exit code.
 // Measured on af-sandbox: five assets, answers split 200 / 401 / 403, per uploader.
 //
-// One HEAD, short timeout, and it FAILS OPEN in every direction but the two it can read: a
-// probe that could not run must not stop an ingest that would have worked, and a CDN that
-// dislikes HEAD (405) is not a login wall. Only 401 and 403 — the two Civitai actually answers
-// with — are read as "not anonymously".
+// 🔥 Measured 2026-09-15: this used to be a HEAD, and that is wrong now. Civitai's download URL
+// redirects (307) to a Cloudflare R2 presigned URL, and R2 signs the presigned URL for GET only
+// — a HEAD against it comes back 403 no matter who uploaded the file or what they restricted.
+// Confirmed live against a completely unwalled, 200k-download asset: HEAD 403, `GET` with
+// `Range: bytes=0-0` 206. A HEAD-based probe therefore reads *every* Civitai asset as needing an
+// account. A ranged GET costs one byte and is answered the same way the real download is.
+//
+// Short timeout, and it FAILS OPEN in every direction but the two it can read: a probe that
+// could not run must not stop an ingest that would have worked, and a CDN that dislikes ranged
+// GETs (405) is not a login wall. Only 401 and 403 — the two Civitai actually answers with —
+// are read as "not anonymously".
 func engineCivitaiAnonymous(ctx context.Context, target string) bool {
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
 		return true
@@ -568,10 +575,11 @@ func engineCivitaiAnonymous(ctx context.Context, target string) bool {
 	// somebody is typing, and the answer is a status line.
 	c, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(c, http.MethodHead, target, nil)
+	req, err := http.NewRequestWithContext(c, http.MethodGet, target, nil)
 	if err != nil {
 		return true
 	}
+	req.Header.Set("Range", "bytes=0-0")
 	resp, err := engineIngestHTTP.Do(req)
 	if err != nil {
 		return true
