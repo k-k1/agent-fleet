@@ -103,6 +103,7 @@ func validSeedPolicy(p string) bool {
 // flux2-klein is already at its family recipe's 4 — a distilled 4-step model has no cheaper
 // setting — so a trial there differs from the batch in nothing but where it sits in the queue.
 var comfyTrialSteps = map[comfyFamily]int{
+	ComfyFamilySD15:       10,
 	ComfyFamilySDXL:       10,
 	ComfyFamilySD35:       12,
 	ComfyFamilyFlux1:      8,

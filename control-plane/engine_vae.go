@@ -8,11 +8,11 @@ package main
 // fixes it — taken in and attached under `--vae`, which is the declaration comfyCheckpointVAE
 // reads (workspace/agent/internal/imagegen/comfy_workflows.go).
 //
-// 🔴 Only the two single-checkpoint families are asked about. flux1, flux2-klein and zimage
+// 🔴 Only the single-checkpoint families are asked about. flux1, flux2-klein and zimage
 // already REQUIRE a `--vae` file to be declared (engineComfyRequiredFlags), so a row of theirs
 // that has none is already marked and refused by the files guard — a second mark saying the same
-// thing is one too many. sdxl and sd35 are the two whose template falls back to the checkpoint's
-// own third output, and that is exactly the fallback that yields None.
+// thing is one too many. sd15, sdxl and sd35 are the ones whose template falls back to the
+// checkpoint's own third output, and that is exactly the fallback that yields None.
 
 import (
 	"context"
@@ -43,6 +43,15 @@ type engineFamilyVae struct {
 // really has no VAE therefore gets the mark and the refusal, and its fix is the manual
 // declaration the guide describes.
 var engineFamilyVaes = map[string]engineFamilyVae{
+	// 🔴 SD1.5's autoencoder is NOT SDXL's — the two are different architectures and swapping
+	// them decodes to colour mush rather than failing. The stock file is Stability's own
+	// ft-MSE fine-tune, which is ungated, so this family can be repaired automatically the way
+	// sdxl is (the 403 that keeps sd35 out of this table does not apply).
+	"sd15": {
+		Repo:  "stabilityai/sd-vae-ft-mse-original",
+		File:  "vae-ft-mse-840000-ema-pruned.safetensors",
+		S3Key: "image/vae/vae-ft-mse-840000-ema-pruned.safetensors",
+	},
 	"sdxl": {
 		Repo:  "stabilityai/sdxl-vae",
 		File:  "sdxl_vae.safetensors",
@@ -52,10 +61,10 @@ var engineFamilyVaes = map[string]engineFamilyVae{
 
 // engineVaeFamilies are the families whose template reads the checkpoint's own VAE, and so the
 // only ones where "the checkpoint has none" is a fault at all.
-var engineVaeFamilies = map[string]bool{"sdxl": true, "sd35": true}
+var engineVaeFamilies = map[string]bool{"sd15": true, "sdxl": true, "sd35": true}
 
 // engineVaeAsked says whether this row is one the question applies to: an image row that
-// dispatches on a family, is not a LoRA, declares one of the two families above, and does not
+// dispatches on a family, is not a LoRA, declares one of the families above, and does not
 // already declare a `--vae` of its own.
 func engineVaeAsked(provider string, m store.EngineModel) bool {
 	if engineBaseModelsFor(provider) == nil || engineModelIsLora(m) {

@@ -54,9 +54,18 @@ type engineFamilyRule struct {
 	any    []string
 }
 
-// The SD 1.5 family is deliberately absent: the comfy provider has no template for it, so
-// recognising it would mean suggesting a family that is not in any vocabulary — the function
-// above would drop it anyway, and a rule that can never fire reads as an oversight.
+// SD 1.5 was deliberately absent here while the comfy provider had no template for it. It has
+// one now, and the rule matches SD 1.4 too — the two share a UNet, a CLIP and a VAE, so they
+// load through the identical graph.
+//
+// 🔴 SD 2.0 / 2.1 must NOT reach that rule. They are a different architecture (OpenCLIP-H, and
+// v-prediction at 768), and no needle below matches them, which is the intended outcome rather
+// than a gap: an unrecognised name leaves the picker empty and an operator declares it.
+//
+// ⚠️ The distilled 1.5 variants ("SD 1.5 LCM", "SD 1.5 Hyper") DO match, and correctly — they
+// load through the same graph. What they do not share is the recipe: sampled at the family's 20
+// steps and cfg 8 an LCM checkpoint burns out. That is the row's `params` to declare, and the
+// family suggestion is right either way.
 //
 // The three SDXL derivatives are the point of this table. Pony, Illustrious and NoobAI are
 // SDXL-architecture fine-tunes: they load through the SDXL graph, and they are what Civitai's
@@ -70,6 +79,10 @@ var engineFamilyRules = []engineFamilyRule{
 	{family: "sd35", any: []string{"sd35", "stablediffusion35"}},
 	{family: "zimage", any: []string{"zimage"}},
 	{family: "sdxl", any: []string{"sdxl", "pony", "illustrious", "noobai", "animagine"}},
+	// After sdxl, because "sd15" is a substring of nothing above but the reverse order would
+	// invite someone to shorten this needle to "sd1" and quietly swallow "sd1.x" spellings the
+	// SDXL rule should have taken.
+	{family: "sd15", any: []string{"sd15", "sd14", "stablediffusion15"}},
 }
 
 // engineFamilyFromUpstream is the table above applied to one string, before the vocabulary is

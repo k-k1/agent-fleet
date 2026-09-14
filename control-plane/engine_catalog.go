@@ -155,7 +155,7 @@ func engineModelIsLora(m store.EngineModel) bool {
 }
 
 // engineComfyFamilies is the checkpoint-family vocabulary ADR 0072 decision 2 declares, and the
-// ONLY spellings the comfy provider dispatches on: it picks one of five workflow graphs by this
+// ONLY spellings the comfy provider dispatches on: it picks one of six workflow graphs by this
 // string and REFUSES rather than guessing a family from the model id, because a naming
 // convention eventually collides. So a catalogue row whose base_model is anything else — an
 // upstream display name like "SDXL 1.0", or nothing at all — is a row ComfyUI cannot generate
@@ -166,7 +166,7 @@ func engineModelIsLora(m store.EngineModel) bool {
 // contract machinery in contract_wire_test.go). engine_catalog_test.go reads that file and fails
 // when the two drift, which is the only thing standing between "a sixth family was added" and
 // "the Console never offers it".
-var engineComfyFamilies = []string{"sdxl", "sd35", "flux1", "flux2-klein", "zimage"}
+var engineComfyFamilies = []string{"sd15", "sdxl", "sd35", "flux1", "flux2-klein", "zimage"}
 
 // engineComfyFileFlags is the per-file Flag vocabulary a comfy row may declare: "" for a
 // single-file checkpoint, and one flag per part of a split model. Without these a catalogue row
@@ -193,6 +193,7 @@ var engineComfyFileFlags = []string{"", "--diffusion-model", "--clip_l", "--clip
 // comfy_workflows.go's per-family guards, and engine_catalog_test.go reads them out of that
 // file. Adding a family here without adding it there (or the reverse) fails that test.
 var engineComfyRequiredFlags = map[string][]string{
+	"sd15":        {""},
 	"sdxl":        {""},
 	"sd35":        {"", "--clip_l", "--clip_g", "--t5xxl"},
 	"flux1":       {"--diffusion-model", "--clip_l", "--t5xxl", "--vae"},

@@ -24,11 +24,21 @@ func TestFamilyGuessOnlyAnswersWhatTheProviderCanRun(t *testing.T) {
 		{"Z-Image Turbo", "zimage"},
 		{"ZImageTurbo", "zimage"},
 		{"FLUX.2 klein", "flux2-klein"},
+		// SD1.5 answered "" until the family got a template. The distilled variants come back
+		// as sd15 too, and correctly — they load through the same graph; what they do not
+		// share is the step count, which is the row's `params` to declare.
+		{"SD 1.5", "sd15"},
+		{"SD 1.5 Hyper", "sd15"},
+		{"SD 1.5 LCM", "sd15"},
+		{"SD 1.4", "sd15"},
+		// 🔴 SD 2.x is NOT SD1.5: OpenCLIP-H instead of ViT-L, v-prediction at 768. It has no
+		// template here, and the normalised "sd20"/"sd21" must never reach the sd15 rule —
+		// which is why that rule's needles are spelled out rather than shortened to "sd1".
+		{"SD 2.0", ""},
+		{"SD 2.1", ""},
 		// 🔴 No template, so no suggestion. Measured on the same 20 rows: these are what
 		// Civitai ranks highest today, and a wrong family would silence `base_model_missing` —
 		// the row's only mark that it cannot generate.
-		{"SD 1.5", ""},
-		{"SD 1.5 Hyper", ""},
 		{"Anima", ""},
 		{"Krea 2", ""},
 		{"LTXV 2.5", ""},

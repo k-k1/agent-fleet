@@ -1,5 +1,5 @@
-// families — layer A of the prompt help (ADR 0081 decision 7): what the five ComfyUI
-// families expect, with no model call and no network.
+// families — layer A of the prompt help (ADR 0081 decision 7): what the ComfyUI families
+// expect, with no model call and no network.
 //
 // The PROSE of a card is i18n (`imggen.fam.*`); this file holds only what a card is made of,
 // plus the two things a form needs when the Agent has not told it: a size list and a
@@ -26,15 +26,31 @@ export interface FamilyCard {
    *  Agent applies them; this is display only, so the two must be kept in step by the ADR,
    *  not by either side reading the other. */
   trialSteps: number;
-  /** Fallback presets for a row whose `sizes` the status did not carry. Same five the
-   *  Agent's comfy provider defaults to. */
+  /** Fallback presets for a row whose `sizes` the status did not carry. The same list the
+   *  Agent's comfy provider falls back to FOR THIS FAMILY (comfyDefaultSizes). */
   sizes: string[];
 }
 
-/** The Agent's own default list (`comfy.go`'s sizes) — the fallback, never an override. */
+/** The Agent's own default list (`comfyMegapixelSizes`) — the fallback, never an override. */
 const DEFAULT_SIZES = ["1024x1024", "1152x896", "896x1152", "1216x832", "832x1216"];
 
+/** SD1.5's UNet was trained at 512. Asking it for 1024 does not fail, it returns a picture
+ *  with the subject duplicated — so this family gets its own presets rather than the
+ *  megapixel list. Mirrors `comfyDefaultSizes` in the Agent. */
+const SD15_SIZES = ["512x512", "512x768", "768x512", "640x512", "512x640"];
+
 export const FAMILY_CARDS: FamilyCard[] = [
+  {
+    id: "sd15",
+    dialect: "tags",
+    // Same tag dialect as SDXL and the same convention: SD1.5 fine-tunes are overwhelmingly
+    // booru-tagged, and `masterpiece, best quality` is the prefix their cards print.
+    quality: ["masterpiece, best quality"],
+    steps: [20, 30],
+    cfg: [6, 9],
+    trialSteps: 10,
+    sizes: SD15_SIZES,
+  },
   {
     id: "sdxl",
     dialect: "tags",

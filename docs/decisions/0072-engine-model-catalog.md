@@ -4576,3 +4576,82 @@ browser run covered 1400 px dark/light, 390 px dark, registered editing, immedia
 the right thumbnail and lightbox focus restoration. The full Console suite additionally exposed
 and led to a fix for new dialogs bypassing the shared modal body. No AWS deployment, live-bucket
 or GPU validation, or merge into `develop` was performed.
+
+## Addendum — SD1.5 joined the family vocabulary (2026-09-15)
+
+### This does not overturn decision 10
+
+Decision 10 said "**SD1.5 and SD3 Medium are not offered.** The first is superseded by SDXL,
+the second by SD3.5." That was about **which models the deployment seeds as defaults**, not
+about decision 2's vocabulary of families an operator may declare. The defaults are still
+klein / Z-Image / SDXL, and SD1.5 has not been added to the seeded catalogue.
+
+What changed is the answer an operator gets when they try to ingest an SD1.5 checkpoint of
+their own. That answer used to be `base_model_missing`: the row registered and never reached
+generation. The LoRA and checkpoint ecosystem still on Civitai is heavily SD1.5, and **the
+member has no way around it** — the same test decision 0069 used for widening a vocabulary.
+
+### The family was split for the LoRA gate, not for quality or the recipe
+
+SD1.5's graph has SDXL's shape — `CheckpointLoaderSimple` yields MODEL, CLIP and VAE, then two
+`CLIPTextEncode`, `EmptyLatentImage`, `KSampler`, `VAEDecode`. So registering an SD1.5
+checkpoint as `base_model: sdxl` **does produce a picture**. The family was split anyway
+because of the **LoRA family gate** (`comfyResolveLoras`). As the background table already
+says, a LoRA whose `baseModel` does not match does not fail — it **quietly produces a broken
+picture**. Letting SD1.5 call itself sdxl holds that gate open between the two families, which
+defeats the point when the LoRA ecosystem is most of what SD1.5 is worth.
+
+The template is written out as `comfyGraphSD15`, sharing its body with SDXL through
+`comfyGraphSingleCheckpoint`. **It must not be `case ComfyFamilySD15: return
+comfyGraphSDXL(...)`**: `engine_catalog_test.go` reads the `comfyGraph*` bodies with a regular
+expression and builds "which files each family needs" from the pairing of `errComfyMissingFile`
+with `f.X == ""`. A family that never names itself in a refusal is a family that check
+**silently stops counting**.
+
+### Sizes were not per-family (this is the substance)
+
+`comfySizesFor` fell back to a fixed megapixel list, and a request naming no size landed on
+1024x1024. That was right for all five families, each trained around a megapixel. SD1.5's UNet
+was trained at 512, and asking it for 1024 returns **not a failure but a picture with the
+subject duplicated** — the plausible-looking wrong answer, with no error and no warning, that
+this repository keeps paying for.
+
+So the fallback list became per-family (`comfyDefaultSizes`). SD1.5 gets
+`512x512 / 512x768 / 768x512 / 640x512 / 512x640`, stopping at 768 on the long side because
+that is where the duplication starts. The other five keep today's five entries verbatim as
+`comfyMegapixelSizes`, and their goldens did not move. A catalogue row's own `Sizes` still wins
+over both. The Console's `families.ts` carries the matching pair — it is a copy **outside** the
+CP's drift check, so this ADR is the only thing holding the two together.
+
+A row with no declared family keeps **the megapixel list**. It cannot reach generation at all,
+so the list served for it decides nothing, and answering with 512 there would be exactly the
+guess about an undeclared row that decision 2 exists to forbid.
+
+### The guess table and the VAE
+
+`engineFamilyRules`' "SD 1.5 is deliberately absent" is gone, replaced by the rule. SD 1.4 maps
+to the same family — identical UNet, CLIP and VAE, so it loads through the identical graph.
+🔴 **SD 2.0 / 2.1 are a different architecture** and match no needle here: OpenCLIP-H at 768
+with v-prediction, which must never land in this family. That is why the needles are spelled
+`sd15` / `sd14` rather than shortened to `sd1`. The distilled variants (`SD 1.5 LCM`,
+`SD 1.5 Hyper`) do match, and correctly — they load through the same graph. What they do not
+share is the step count, and that is the row's `params` to declare.
+
+`engineFamilyVaes` gained an SD1.5 entry. 🔴 **It is not SDXL's VAE** — swapping the two does
+not fail, it decodes to colour mush. The stock `stabilityai/sd-vae-ft-mse-original` is
+**ungated**, so the 403 that keeps sd35 out of that table does not apply and this family can be
+repaired automatically the way sdxl is.
+
+### What has not been measured
+
+🔴 **SD1.5 has never been run on a GPU here.** The recipe (20 steps, cfg 8, euler, normal) is
+ComfyUI's own default graph as shipped with v1-5-pruned-emaonly — **a citation, not a
+measurement**. The golden pins the graph's shape and makes no claim that the shape is correct:
+SD3.5 sat green exactly that way while failing to generate at all on real hardware, and the
+precedent applies unchanged. The same holds for the size default — 512 avoids duplication
+because that is SD1.5's training resolution, not because a picture was taken on this
+deployment.
+
+**Remaining**: on real hardware, ingest one SD1.5 row, generate once without naming a size, and
+look at whether the subject is duplicated. Until then this family claims nothing beyond "the
+shape is pinned".

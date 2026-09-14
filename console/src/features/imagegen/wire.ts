@@ -34,9 +34,9 @@ export type SeedPolicy = "random" | "fixed" | "sequence";
  *  templates use; the Console must never keep a second copy (decision 4). */
 export type Knob = "steps" | "cfg" | "sampler" | "scheduler" | "negative";
 
-/** The five ComfyUI families the Agent has templates for. A row whose `base_model` is
+/** The ComfyUI families the Agent has templates for. A row whose `base_model` is
  *  something else still renders — the family card is the only thing that goes missing. */
-export type Family = "sdxl" | "sd35" | "flux1" | "flux2-klein" | "zimage";
+export type Family = "sd15" | "sdxl" | "sd35" | "flux1" | "flux2-klein" | "zimage";
 
 /** The `params` overlay of decision 4, in the shape the catalogue row already uses.
  *  `clip_skip` and `weight` ride along on the catalogue's side; the form sends neither. */
