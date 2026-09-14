@@ -278,6 +278,20 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("get setting: %v %q", err, v)
 	}
 
+	// engine ingest jobs: EXISTS(...) scans as bool on Postgres and int on SQLite — the
+	// "add model file" dialog 500'd on this deployment kind with a Scan error until this test
+	// caught it, because SQLite's 0/1 int happily satisfied the old *int destination.
+	if err := st.PutEngineIngestJob(ctx, EngineIngestJob{ID: NewID(), Role: "super_admin", S3Key: "models/x.safetensors",
+		Source: "civitai:5038", State: EngineIngestPending, CreatedAt: NowTS(), UpdatedAt: NowTS()}); err != nil {
+		t.Fatalf("put ingest job: %v", err)
+	}
+	if recorded, err := st.EngineIngestS3KeyRecorded(ctx, "super_admin", "models/x.safetensors"); err != nil || !recorded {
+		t.Fatalf("engine ingest s3 key recorded = (%v,%v), want true", recorded, err)
+	}
+	if recorded, err := st.EngineIngestS3KeyRecorded(ctx, "super_admin", "models/never-ingested.safetensors"); err != nil || recorded {
+		t.Fatalf("engine ingest s3 key recorded = (%v,%v), want false", recorded, err)
+	}
+
 	// identity_provider round trip (docs/log/61 P1 / migrations-pg/0021). Everything
 	// below had only ever run on SQLite: the pair table, its
 	// ON CONFLICT(provider, subject) upsert, and the LOWER(email)=? lookup. Postgres
