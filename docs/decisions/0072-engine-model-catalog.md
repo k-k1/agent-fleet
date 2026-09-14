@@ -4563,7 +4563,8 @@ their version; and an LLM LoRA accepts only a registered non-LoRA model as its b
 
 Storage reports server-known catalogue and job keys as present, missing or unknown. Reuse needs
 `reusable`, a present object and exact `artifact_identity`, followed by a fresh server check.
-Human `source` remains provenance, not identity. Downloads refuse a destination already recorded
+Human `source` remains provenance, not identity; a key with mixed immutable and legacy records is
+ambiguous and cannot be reused. Downloads refuse a destination already recorded
 by a catalogue row or job before upload starts, preventing a later create/replace race from
 overwriting another version with the same filename. Catalogue installation failure leaves the job
 failed rather than presenting a completed download as registered.

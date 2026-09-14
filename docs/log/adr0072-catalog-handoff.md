@@ -178,6 +178,9 @@ Follow-up work completed the fixed-operation dialog, shared Button styling, imme
 and completion refresh, immutable S3 reuse, storage-state distinctions, destination collision
 protection, and the LLM LoRA guard. The full Console suite exposed a shared modal-body violation
 that focused tests missed; it was fixed before completion.
+The new terra successor session independently added the mixed legacy/immutable identity refusal;
+its `98b87076` was reviewed and integrated as `e3419dbc` while retaining the stricter all-history
+destination fence.
 
 Verified on the integrated tree: all Control Plane packages passed with bounded parallelism;
 catalogue DOM 15/15, Console typecheck, i18n lint and production build passed; Playwright ran all
