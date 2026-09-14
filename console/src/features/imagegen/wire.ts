@@ -95,6 +95,18 @@ export interface ImagegenLora {
  */
 export interface ImagegenProvider {
   id: string;
+  /**
+   * Whether the fleet's own hardware — or another fleet's, borrowed (ADR 0079 decision 9) —
+   * serves this row (ADR 0082 decision 4, the Agent's own providerIsFleet).
+   *
+   * This is the ONLY thing that tells a fleet row apart from a CLI-driven one: since ADR 0082
+   * P0 `id` is the images ROW's own key ("image", "comfy-lan", …), not one of a fixed set of
+   * kind names, so matching it against a hardcoded `["comfy","openai-compat"]` stops finding
+   * anything the moment a deployment's row is keyed anything else — which every real
+   * deployment's default row already is (`AF_COMFY_URL` and the images role both compose the
+   * fixed key "image"). Read `fleet` instead of guessing from the id's spelling.
+   */
+  fleet?: boolean;
   service?: string;
   model?: string;
   ops?: string[];
@@ -308,13 +320,13 @@ export const loraTriggers = (l: ImagegenLora): string[] => l.trained_words || []
 export const loraWeight = (l: ImagegenLora): number => (l.weight && l.weight > 0 ? l.weight : 1);
 
 /**
- * The provider this pane drives: the first FLEET provider (comfy / openai-compat) that is ready.
- * The CLI-driven providers are agents by construction and own none of these knobs, so the
- * pane must not offer them even when the status lists them first (decision 1).
+ * The provider this pane drives: the first ready row whose `fleet` flag is set (ADR 0082
+ * decision 4). The CLI-driven providers are agents by construction and own none of these
+ * knobs, so the pane must not offer them even when the status lists them first (decision 1).
+ *
+ * `fleet` — not a match against the id's spelling — is what decides this: see ImagegenProvider.
  */
-export const FLEET_PROVIDERS = ["comfy", "openai-compat"];
-
 export function fleetProvider(st: ImagegenStatus | null): ImagegenProvider | null {
   const list = st?.providers || [];
-  return list.find((p) => FLEET_PROVIDERS.includes(p.id)) || null;
+  return list.find((p) => p.fleet) || null;
 }

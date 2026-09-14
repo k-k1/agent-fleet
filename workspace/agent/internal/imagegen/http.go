@@ -62,6 +62,17 @@ type statusResponse struct {
 // providerStatus is one ready provider as the tool surface needs to see it.
 type providerStatus struct {
 	ID string `json:"id"`
+	// Fleet is whether the fleet's own hardware — or another fleet's, borrowed under ADR 0079
+	// decision 9 — serves this row (ADR 0082 decision 4, same source as internal providerIsFleet).
+	//
+	// Since ADR 0082 P0, ID is the images ROW's own key ("image", "comfy-lan", …), not one of a
+	// fixed set of kind names, so a reader that used to find the fleet's own route by matching ID
+	// against `["comfy","openai-compat"]` stops finding anything the moment a deployment's row is
+	// keyed anything else — which every real deployment's default row already is (`AF_COMFY_URL`
+	// and the images role both compose the fixed key "image", control-plane/engines.go). That
+	// silently emptied the Console's image generation pane (ADR 0081) on every real deployment
+	// until this field let the pane ask the Agent instead of guessing from the id's spelling.
+	Fleet bool `json:"fleet,omitempty"`
 	// Service is the image service this route reaches, in the words a person asks for it by.
 	// The id alone is a CLI name, and nothing downstream can decode it: a codex session whose
 	// only route is `agy` was measured answering that "the Gemini route is not available in
@@ -184,6 +195,7 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		caps := p.Caps("")
 		st := providerStatus{
 			ID:           p.ID(),
+			Fleet:        providerIsFleet(p.ID()),
 			Service:      serviceLabelOf(p.ID()),
 			Model:        driverModelOf(p.ID()),
 			AspectRatios: caps.AspectRatios,

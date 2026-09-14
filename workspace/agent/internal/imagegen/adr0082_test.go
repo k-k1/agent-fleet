@@ -7,6 +7,7 @@ package imagegen
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -228,3 +229,49 @@ func TestEffectiveOrderExpandsLegacyAliasIntoTheDeclaredRow(t *testing.T) {
 type errNotUp string
 
 func (e errNotUp) Error() string { return string(e) }
+
+// The regression found on a real deployment: /imagegen/status is what the Console's
+// fleetProvider() reads to find the pane's driving route (ADR 0081), and since ADR 0082 P0 the
+// id it carries is the images ROW's own key — "image" on every real deployment's default row
+// (control-plane/engines.go composes that fixed key for both `AF_COMFY_URL` and the images
+// role), never the bare kind name "comfy" a reader might still be matching against. Without the
+// `fleet` field this test pins, the Console has no way to tell a fleet row from a CLI-driven one
+// once the id stops spelling the kind — which, on every real deployment, it already does.
+func TestStatusReportsFleetOnADeclaredRowKeyedNotByKind(t *testing.T) {
+	withImageRows(t, []EngineImageRow{{Key: "image", Provider: ProviderComfy}},
+		func(context.Context, string) (EngineConn, bool) {
+			return EngineConn{BaseURL: "http://example.invalid/engine/image/v1", Token: "t", Models: []string{"m"}}, true
+		})
+	oldEnabled := Enabled
+	Enabled = func() bool { return true }
+	t.Cleanup(func() { Enabled = oldEnabled })
+
+	rec := httptest.NewRecorder()
+	HandleStatus(rec, httptest.NewRequest(http.MethodGet, "/imagegen/status", nil))
+
+	var got statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("status is not JSON: %v (%s)", err, rec.Body)
+	}
+	var row *providerStatus
+	for i := range got.Providers {
+		if got.Providers[i].ID == "image" {
+			row = &got.Providers[i]
+		}
+	}
+	if row == nil {
+		t.Fatalf("providers = %+v, want the declared row present under its own key", got.Providers)
+	}
+	if row.ID == ProviderComfy || row.ID == ProviderOpenAICompat {
+		t.Fatalf("id = %q — this fixture is supposed to prove the id is NOT one of the retired kind names", row.ID)
+	}
+	if !row.Fleet {
+		t.Errorf("fleet = %v for row %q, want true — the Console can no longer tell this apart from a CLI-driven provider by id alone", row.Fleet, row.ID)
+	}
+	// The vendor routes must not be mislabelled as fleet just because the field now exists.
+	for _, p := range got.Providers {
+		if (p.ID == ProviderCodex || p.ID == ProviderAgy) && p.Fleet {
+			t.Errorf("%s: fleet = true, want false — it spends a member's own plan", p.ID)
+		}
+	}
+}
