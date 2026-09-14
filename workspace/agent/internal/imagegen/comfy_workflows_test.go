@@ -76,6 +76,11 @@ type comfyFamilyFixture struct {
 var comfyFamilyFixtures = []comfyFamilyFixture{
 	{"sdxl", ComfyFamilySDXL, comfyFiles{Checkpoint: "sd_xl_base_1.0.safetensors"},
 		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
+	// Pinned against the same 1024x1024 params as every other fixture, which is NOT this
+	// family's own default size (comfyDefaultSizes puts sd15 at 512) — the golden's job is the
+	// graph's shape, and holding the inputs identical is what makes it comparable to sdxl's.
+	{"sd15", ComfyFamilySD15, comfyFiles{Checkpoint: "v1-5-pruned-emaonly.safetensors"},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 	{"zimage", ComfyFamilyZImage, comfyFiles{
 		DiffusionModel: "z_image_turbo_bf16.safetensors", ClipL: "qwen_3_4b_fp8_mixed.safetensors", Vae: "ae.safetensors"},
 		[]string{"ms.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},

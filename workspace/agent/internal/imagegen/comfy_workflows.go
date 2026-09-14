@@ -1,6 +1,6 @@
 package imagegen
 
-// comfy_workflows.go — the five checkpoint-family workflow templates ADR 0072 decision 4
+// comfy_workflows.go — the six checkpoint-family workflow templates ADR 0072 decision 4
 // requires (ComfyUI has no OpenAI-compatible surface, so "what generate_image sends" has to be
 // a graph this package owns and version-pins, not something an engine version negotiates).
 //
@@ -10,7 +10,9 @@ package imagegen
 // real GPU (26/26 images, both checkpoints and both LoRA states). flux1 / sd35 were written from
 // the checkpoint families' standard published ComfyUI recipes and have since been run on this
 // deployment's hardware too (ADR 0072 P2 残作業 5, af-sandbox): flux1 generated on the first
-// attempt, sd35 did NOT — see its own note below for what the golden test could not see.
+// attempt, sd35 did NOT — see its own note below for what the golden test could not see. sd15
+// has not been run here at all: its graph is SDXL's shape and its recipe is ComfyUI's own
+// shipped default for the family, which is a citation and not a measurement.
 // comfy_workflows_test.go pins each template's exact JSON shape so a future change is visible in
 // the diff, which remains a different claim from "this graph is correct".
 //
@@ -221,6 +223,11 @@ func comfyKnownScheduler(s string) bool { return comfySchedulerNames[strings.Tri
 // read it at all — flux1 and klein have no cfg, klein no scheduler — which is the same fact
 // comfyFamilyKnobs states for the form.
 var comfyFamilyRecipes = map[comfyFamily]comfyRecipe{
+	// 🔴 sd15 is the one entry that has NOT been run on a GPU here. It is ComfyUI's own shipped
+	// default graph for this family verbatim (web/scripts/defaultGraph.js, the workflow that
+	// loads with v1-5-pruned-emaonly) rather than a number picked to look like SDXL's, so that
+	// what backs it is a citation a reviewer can check instead of this author's taste.
+	ComfyFamilySD15:       {Steps: 20, CFG: 8, Sampler: "euler", Scheduler: "normal"},
 	ComfyFamilySDXL:       {Steps: 20, CFG: 7, Sampler: "dpmpp_2m", Scheduler: "karras"},
 	ComfyFamilySD35:       {Steps: 28, CFG: 4.5, Sampler: "dpmpp_2m", Scheduler: "sgm_uniform"},
 	ComfyFamilyFlux1:      {Steps: 20, Sampler: "euler", Scheduler: "simple"},
@@ -230,6 +237,47 @@ var comfyFamilyRecipes = map[comfyFamily]comfyRecipe{
 
 // recipe is the family default with this request's model declaration merged over it.
 func (p comfyParams) recipe(base comfyRecipe) comfyRecipe { return base.with(p.Params) }
+
+// comfyDefaultSizes is the size list a family falls back to when the catalogue row declares
+// none, and the first element is what a request that names no size at all gets.
+//
+// 🔴 This is per-FAMILY because the resolution a diffusion model was trained at is not a
+// preference. Five of the six were trained around a megapixel and share the list this package
+// has always sent; SD1.5's UNet was trained at 512, and asking it for 1024 does not fail — it
+// returns a picture with the subject duplicated, two heads or a second torso, because the
+// composition the model knows tiles at that size. That is the failure mode this repository
+// keeps paying for: no error, no warning, a plausible-looking wrong answer. A catalogue row's
+// own Sizes still override this (comfySizesFor), but a row that declares nothing has to land
+// somewhere its family can actually generate.
+//
+// The SD1.5 entry stops at 768 on the long side for the same reason: 512x768 is the portrait
+// every model card for this family prints, and past it the duplication starts.
+var comfyDefaultSizes = map[comfyFamily][]string{
+	ComfyFamilySD15: {"512x512", "512x768", "768x512", "640x512", "512x640"},
+}
+
+// comfyMegapixelSizes is what the five megapixel-era families share, and it is the exact list
+// this package sent before sizes became a per-family answer.
+var comfyMegapixelSizes = []string{"1024x1024", "1152x896", "896x1152", "1216x832", "832x1216"}
+
+// comfySizesForFamily is the fallback list, never an override — see comfySizesFor.
+func comfySizesForFamily(f comfyFamily) []string {
+	if s, ok := comfyDefaultSizes[f]; ok {
+		return s
+	}
+	return comfyMegapixelSizes
+}
+
+// comfyDefaultSize is what a request that named no size is generated at: the first preset of
+// the family's own list, which is every family's native square.
+func comfyDefaultSize(f comfyFamily) (int, int) {
+	for _, s := range comfySizesForFamily(f) {
+		if w, h, ok := parseSize(s); ok {
+			return w, h
+		}
+	}
+	return 1024, 1024
+}
 
 // comfyEditDenoise is how much of the caller's picture an edit changes when the caller says
 // nothing: enough to follow a new prompt, little enough to leave the composition recognisable.
@@ -355,11 +403,12 @@ type comfyNode struct {
 // comfyLink is a graph edge: [node id, output slot].
 func comfyLink(node string, slot int) []any { return []any{node, slot} }
 
-// comfyFamily is one of ADR 0072's five checkpoint families (decision 2's `baseModel` values),
-// each naming its own template builder.
+// comfyFamily is one of ADR 0072's checkpoint families (decision 2's `baseModel` values), each
+// naming its own template builder.
 type comfyFamily string
 
 const (
+	ComfyFamilySD15       comfyFamily = "sd15"
 	ComfyFamilySDXL       comfyFamily = "sdxl"
 	ComfyFamilySD35       comfyFamily = "sd35"
 	ComfyFamilyFlux1      comfyFamily = "flux1"
@@ -369,10 +418,13 @@ const (
 
 // comfyFamilies is every family comfyBuildGraph dispatches on. One list, so the acceptance
 // check and the error message that tells an operator what to declare cannot disagree with the
-// switch below. The Control Plane validates catalogue rows against the same five spellings and
+// switch below. The Control Plane validates catalogue rows against the same spellings and
 // keeps its copy honest by reading THIS file (engine_catalog_test.go).
+//
+// Ordered oldest architecture first, which is the order an operator's selector offers them in.
 var comfyFamilies = []comfyFamily{
-	ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyFlux1, ComfyFamilyFlux2Klein, ComfyFamilyZImage,
+	ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35,
+	ComfyFamilyFlux1, ComfyFamilyFlux2Klein, ComfyFamilyZImage,
 }
 
 // comfyFileFlags is the Flag vocabulary resolveComfyFiles understands, in the order a panel
@@ -396,6 +448,8 @@ func comfyFamilyList() string {
 // than surfacing 100 requests later as a ComfyUI "node has no ckpt_name" validation error.
 func comfyBuildGraph(family comfyFamily, files comfyFiles, p comfyParams) (comfyGraph, error) {
 	switch family {
+	case ComfyFamilySD15:
+		return comfyGraphSD15(files, p)
 	case ComfyFamilySDXL:
 		return comfyGraphSDXL(files, p)
 	case ComfyFamilySD35:
@@ -433,11 +487,32 @@ func comfyCheckpointVAE(g comfyGraph, f comfyFiles) []any {
 }
 
 // --- SDXL — ported from bench-image-engine.py's g_sdxl (GPU-verified, ADR 0072) -------------
+//
+// SD1.5 shares this graph. Both are one checkpoint carrying MODEL, CLIP and VAE, sampled with a
+// KSampler and a real negative branch, and they differ only in the recipe and in what the saved
+// file is named after. The two entry points below stay separate rather than collapsing into one
+// `case`: engine_catalog_test.go reads THIS file to learn which files each family needs, by
+// pairing a `comfyGraph*` body's `errComfyMissingFile` with the fields it refuses on — a family
+// that never names itself in a refusal is a family that check silently stops measuring.
 
 func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if f.Checkpoint == "" {
 		return nil, errComfyMissingFile("sdxl", "checkpoint")
 	}
+	return comfyGraphSingleCheckpoint(f, p, ComfyFamilySDXL)
+}
+
+func comfyGraphSD15(f comfyFiles, p comfyParams) (comfyGraph, error) {
+	if f.Checkpoint == "" {
+		return nil, errComfyMissingFile("sd15", "checkpoint")
+	}
+	return comfyGraphSingleCheckpoint(f, p, ComfyFamilySD15)
+}
+
+// comfyGraphSingleCheckpoint is the body the two guided single-checkpoint families share. The
+// caller has already refused a missing checkpoint; what is left to fail is an edit with no image
+// or an inpaint with no mask, which comfyRequestLatent reports in the caller's own language.
+func comfyGraphSingleCheckpoint(f comfyFiles, p comfyParams, family comfyFamily) (comfyGraph, error) {
 	g := comfyGraph{
 		"ckpt": {ClassType: "CheckpointLoaderSimple", Inputs: map[string]any{"ckpt_name": f.Checkpoint}},
 	}
@@ -453,7 +528,7 @@ func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := p.recipe(comfyFamilyRecipes[ComfyFamilySDXL])
+	r := p.recipe(comfyFamilyRecipes[family])
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
 		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
 		"denoise": p.denoise(),
@@ -461,7 +536,7 @@ func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": vae}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
-		"filename_prefix": "af-sdxl", "images": comfyLink("dec", 0)}}
+		"filename_prefix": "af-" + comfyFamilyPrefixName(family), "images": comfyLink("dec", 0)}}
 	return g, nil
 }
 

@@ -155,7 +155,7 @@ func (p *comfyProvider) Caps(model string) Caps {
 func comfyFamilyKnobs(family comfyFamily) []string {
 	knobs := []string{"steps"}
 	switch family {
-	case ComfyFamilySDXL, ComfyFamilySD35:
+	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
 	case ComfyFamilyZImage:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
@@ -210,9 +210,9 @@ func comfyModelTakesNegative(conn EngineConn, model string) bool {
 	return ok && comfyFamilyTakesNegative(family)
 }
 
-// comfyFamilyTakesNegative is which of the five templates a negative prompt can actually move.
+// comfyFamilyTakesNegative is which of the six templates a negative prompt can actually move.
 //
-// 🔴 Only the two GUIDED families. The other three are distilled models sampled at cfg 1 (zimage's
+// 🔴 Only the GUIDED families. The other three are distilled models sampled at cfg 1 (zimage's
 // KSampler, klein's CFGGuider) or with FLUX.1's guidance folded into the conditioning
 // (BasicGuider, no negative input at all) — and at cfg 1 classifier-free guidance is
 // `uncond + 1*(cond - uncond)`, which is cond exactly. The negative words would ride in the graph,
@@ -220,7 +220,7 @@ func comfyModelTakesNegative(conn EngineConn, model string) bool {
 // true is worse than refusing: the caller gets no warning, the picture looks right, and the thing
 // they asked to keep out is in it.
 func comfyFamilyTakesNegative(family comfyFamily) bool {
-	return family == ComfyFamilySDXL || family == ComfyFamilySD35
+	return family == ComfyFamilySD15 || family == ComfyFamilySDXL || family == ComfyFamilySD35
 }
 
 // comfyNegativeFor composes the negative prompt one request samples against, out of the three
@@ -376,12 +376,21 @@ func comfySortedNames(set map[string]bool) []string {
 }
 
 // comfySizesFor prefers the catalogue's own declaration (ADR 0072 decision 2) and falls back to
-// the one size every family in this template set was actually trained and measured at.
+// the sizes this model's FAMILY was trained at (comfyDefaultSizes).
+//
+// A model whose family is not declared falls back to the megapixel list. It cannot generate at
+// all until somebody declares one, so the list served for it decides nothing — and answering
+// with SD1.5's 512 presets there would be a guess about an undeclared row, which is the thing
+// decision 2 exists to prevent.
 func comfySizesFor(conn EngineConn, model string) []string {
 	if s := conn.Sizes[model]; len(s) > 0 {
 		return s
 	}
-	return []string{"1024x1024", "1152x896", "896x1152", "1216x832", "832x1216"}
+	family, ok := comfyFamilyFor(conn, model)
+	if !ok {
+		return comfyMegapixelSizes
+	}
+	return comfySizesForFamily(family)
 }
 
 // comfyFamilyFor reads the catalogue's declared family for a model id. False when undeclared or
@@ -574,7 +583,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 
 	w, h, ok := parseSize(req.Size)
 	if !ok {
-		w, h = 1024, 1024
+		w, h = comfyDefaultSize(family)
 	}
 	count := req.Count
 	if count <= 0 {
