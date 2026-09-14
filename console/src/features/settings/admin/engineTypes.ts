@@ -280,6 +280,10 @@ export type IngestHit = {
    *  answer and must not be drawn as "anyone may download this". Measured 2026-09-12: 13 of
    *  the top 20 monthly checkpoints answer 401, and all 20 look identical in the metadata. */
   login_required?: string;
+  /** Licence-level commercial-use verdict when the listing exposes it. */
+  commercial_use?: string;
+  /** A token exists, but its account may still need to accept this repository's terms. */
+  gated_needs_acceptance?: boolean;
   /** What the source says may not be done with it, as codes — see engineRestrictLabel. */
   restrictions?: string[];
   /** A LoRA's trigger words, straight off the search answer. */

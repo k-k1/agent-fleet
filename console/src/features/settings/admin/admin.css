@@ -1528,6 +1528,8 @@ a.engines-model-source:hover {
 .engine-operation-facts span { padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; }
 .engine-operation-facts .warn, .engine-operation-check.warn { color: var(--warn, #d29922); }
 .engine-operation-facts .ok { color: var(--ok, #1a7f37); }
+.engine-operation-hint { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.engine-operation-hint p, .engine-operation-fit { margin: 0; font-size: 12px; }
 .engine-operation-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
 .engine-operation-advanced { border-top: 1px solid var(--border); padding-top: 8px; }
 .engine-operation-advanced summary { cursor: pointer; font-size: 12px; }

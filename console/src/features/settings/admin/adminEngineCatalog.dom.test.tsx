@@ -75,6 +75,7 @@ describe("model catalogue pane", () => {
       q: "", source: "civitai", sort: "newest", lora: false,
     });
     expect(document.body.textContent).toContain("厳密な最終更新順ではありません");
+    expect(Array.from(document.querySelectorAll(".engine-catalog-pane button")).every((item) => item.classList.contains("ui-btn"))).toBe(true);
 
     await click(button("文章"));
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/ingest/search", "POST", {
@@ -144,6 +145,7 @@ describe("model catalogue pane", () => {
     const card = document.querySelector(".engine-catalog-card")!;
     expect(card.getAttribute("aria-label")).toBe("Example");
     expect(button("追加")?.getAttribute("aria-label")).toBe("追加: Example");
+    expect(button("追加")?.classList.contains("ui-btn-primary")).toBe(true);
     await click(button("追加"));
     await act(async () => { await Promise.resolve(); });
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/versions", "POST", {
@@ -156,6 +158,85 @@ describe("model catalogue pane", () => {
     expect(document.querySelector(".engine-catalog-operation")?.getAttribute("aria-labelledby")).toBeTruthy();
     expect(document.querySelector(".engine-catalog-operation .ui-modal-title")?.textContent).toContain("Example");
     expect(document.querySelectorAll(".engine-operation-grid select").length).toBeGreaterThan(1);
+  });
+
+  it("includes the LLM KV cache in the operation VRAM guard", async () => {
+    const row = { ...llmRow, class: { vram_mib: 21000 } };
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [row] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "org/model", model_ref: "org/model", name: "Large LLM" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.gguf", bytes: 18_556_689_568 }] });
+      if (path.endsWith("/ingest/resolve")) return Promise.resolve({ bytes: 18_556_689_568, can_ingest: true, license: "apache-2.0", context_length: 262144, kv_mib_per_1k_tokens: 96 });
+      return Promise.resolve({});
+    });
+    await mount();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+    const fit = document.querySelector(".engine-operation-fit");
+    expect(fit?.textContent).toContain("重み 17697 MiB");
+    expect(fit?.textContent).toContain("KV キャッシュ 24576 MiB");
+    expect(fit?.textContent).toContain("合計 42273 MiB");
+    expect(document.querySelector(".engine-operation-check.warn")?.textContent).toContain("重みと KV キャッシュ");
+  });
+
+  it("keeps restrictions, VAE provenance, and parameter hints in the operation", async () => {
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Restricted", restrictions: ["no_derivatives"], commercial_use: "no", login_required: "yes" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "22", name: "v2" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) return Promise.resolve({
+        bytes: 2_000_000_000, can_ingest: false, commercial_use: "no", login_required: true,
+        restrictions: ["no_derivatives"], gated_needs_acceptance: true,
+        params_hint: { steps: 28, sampler: "dpmpp_2m" }, params_hint_quote: "Use 28 steps",
+        vae_bundled: "no", family_vae: { repo: "org/vae", file: "vae.safetensors", bytes: 335_000_000, license: "mit", unreachable: true },
+      });
+      return Promise.resolve({});
+    });
+    await mount();
+    const card = document.querySelector('[aria-label="Restricted"]')!;
+    expect(card.textContent).toContain("派生不可");
+    expect(card.textContent).toContain("非商用");
+    expect(card.textContent).toContain("要ログイン");
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+    expect(document.body.textContent).toContain("ログイン済みのアカウント");
+    expect(document.body.textContent).toContain("Use 28 steps");
+    expect(document.body.textContent).toContain("org/vae/vae.safetensors");
+    expect(document.body.textContent).toContain("335 MB");
+    const vae = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find((input) => input.parentElement?.textContent?.includes("org/vae"));
+    expect(vae?.disabled).toBe(true);
+    const steps = Array.from(document.querySelectorAll("label")).find((label) => label.querySelector("span")?.textContent === "ステップ数")?.querySelector("input") as HTMLInputElement;
+    expect(steps.value).toBe("28");
+  });
+
+  it("invalidates pagination when the visible query changes", async () => {
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    apiJSON.mockResolvedValue({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "First" }], next_cursor: "page-2" });
+    await mount();
+    expect(button("さらに読み込む")).toBeTruthy();
+    const search = document.querySelector<HTMLInputElement>(".engine-catalog-search input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(search, "another");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(button("さらに読み込む")).toBeUndefined();
   });
 
   it("aggregates registered multipart storage from existence checks, not ingest jobs", async () => {
@@ -227,11 +308,15 @@ describe("catalogue storage identity", () => {
     { s3_key: "a", source: "hf:org/repo@abc/model.gguf", state: "present" as const, model_ids: [] },
     { s3_key: "legacy", source: "hf:org/repo/model.gguf", state: "present" as const, model_ids: [] },
     { s3_key: "gone", source: "civitai:22", state: "missing" as const, model_ids: [] },
+    { s3_key: "ambiguous", source: "civitai:22", state: "present" as const, model_ids: [] },
+    { s3_key: "civitai-exact", source: "civitai:22/model.safetensors", state: "present" as const, model_ids: [] },
   ];
   it("counts concrete source files but reuses only present immutable identities", () => {
     expect(savedFilesForHit({ source: "hf", ref: "org/repo", model_ref: "org/repo", name: "Repo" }, files)).toHaveLength(2);
     expect(exactReusableStorage(files, "hf", "org/repo", "abc", "model.gguf")?.s3_key).toBe("a");
     expect(exactReusableStorage(files, "hf", "org/repo", "", "model.gguf")).toBeUndefined();
-    expect(exactReusableStorage(files, "civitai", "7", "22", "model.safetensors")).toBeUndefined();
+    expect(exactReusableStorage(files, "civitai", "7", "22", "other.safetensors")).toBeUndefined();
+    expect(exactReusableStorage(files.filter((file) => file.s3_key !== "civitai-exact"), "civitai", "7", "22", "model.safetensors")).toBeUndefined();
+    expect(exactReusableStorage(files, "civitai", "7", "22", "model.safetensors")?.s3_key).toBe("civitai-exact");
   });
 });
