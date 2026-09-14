@@ -42,15 +42,19 @@ type eventsAPI struct {
 	wi    workItemsAPI
 	tick  time.Duration
 	ping  time.Duration
+	// engines is the shared registry buildMux wires in (ADR 0084 decision 1). nil on a
+	// deployment with no self-hosted engines at all — enginesMemberPayload is nil-safe on it,
+	// so the stream still frames one empty snapshot rather than nothing.
+	engines *engineRegistry
 }
 
-func newEventsAPI(m *manager, autostart bool) eventsAPI {
+func newEventsAPI(m *manager, autostart bool, engines *engineRegistry) eventsAPI {
 	return eventsAPI{memberAuth{m}, newWorkspaceAPI(m, autostart), newNotificationAPI(m),
-		newWorkItemsAPI(m), eventsTick, eventsPingEvery}
+		newWorkItemsAPI(m), eventsTick, eventsPingEvery, engines}
 }
 
 func registerEventsRoutes(mux *http.ServeMux, cfg config) {
-	ev := newEventsAPI(cfg.mgr, cfg.autostart)
+	ev := newEventsAPI(cfg.mgr, cfg.autostart, cfg.engineReg)
 	mux.HandleFunc("GET /api/events", ev.withResolved(ev.stream))
 }
 
@@ -136,6 +140,15 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 		if p, aerr := a.wi.workItemsPayload(ctx, res, state); aerr == nil {
 			wrote = emit("workitems", p) || wrote
 		}
+		// ADR 0084 decision 8, gate 4: a row for a role this subscriber's tenant was denied
+		// (decision 7) must not be emit()ed, the same way gate 1 drops it from the catalogue.
+		// tenantEngineLimitsFor is a short-TTL cache shared across every subscriber of this
+		// tenant, not a per-connection read of GetTenant — this tick function runs once per
+		// open tab every 4 seconds, and reading the tenant row that way would be the exact
+		// shape decision 3 forbade for e.ecs.view(). Read ONCE per tick here, not once per
+		// engine row inside enginesMemberPayload.
+		lim := tenantEngineLimitsFor(ctx, a.mgr, res.mv.TenantID)
+		wrote = emit("engines", enginesMemberPayload(ctx, a.engines, lim)) || wrote
 		if wrote {
 			lastWrite = time.Now()
 		} else if time.Since(lastWrite) >= a.ping {

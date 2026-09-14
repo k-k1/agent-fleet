@@ -6,7 +6,7 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 141
+# count: 142
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
@@ -39,6 +39,7 @@ engine_admin.go engineAdminAPI.resolveIngest x1 {artifact_identity,base_model,ba
 engine_admin.go engineAdminAPI.unpinClass x1 {api,base_models,box,class,class_default,class_is_default,classes,desired,enabled,error,events,file_flags,has_models,idle_secs,key,last_demand,lifecycle,managed,mode,model_rows,model_swaps,models,negative_always,negative_max,offer,offer_trail,offers,provider,provider_unserved,service_since,state,stop_eta,url,vram_fits,vram_need_mib,vram_need_model,vram_need_source,warm,warm_model,window_counted_secs,window_secs,window_units} cond{base_models,box,class,class_default,class_is_default,classes,error,events,file_flags,idle_secs,last_demand,lifecycle,model_swaps,negative_always,negative_max,offer,offer_trail,offers,provider_unserved,service_since,stop_eta,url,vram_fits,vram_need_mib,vram_need_model,vram_need_source,warm_model,window_counted_secs,window_secs,window_units}
 engine_gateway.go engineGateway.catalog x1 {engines}
 engine_gateway.go engineGateway.issueSessionToken x1 {base_url,expires_at,models,token}
+engine_member.go engineMemberAPI.status x1 {engines}
 engine_vae.go engineAdminAPI.fixVae x1 {action,bytes,file,license,recheck_failed,repo,s3Key,staged,unreachable,vae_bundled} cond{action,bytes,license,recheck_failed,staged,unreachable,vae_bundled}
 engine_vae.go engineAdminAPI.fixVae x1 {action,job,vae_bundled}
 engine_vae.go engineAdminAPI.fixVae x1 {action,s3Key,vae_bundled}
@@ -67,7 +68,7 @@ internal/tenantsrv/tenants.go Admin.ListTenants x1 {super_admin,tenants}
 internal/tenantsrv/tenants.go Admin.PoolStatus x1 {runtime}
 internal/tenantsrv/tenants.go Admin.RemoveMembership x1 {leftovers,purged,removed,tenant}
 internal/tenantsrv/tenants.go Admin.SetMembershipRole x1 {role,tenant,user_key}
-internal/tenantsrv/tenants.go Admin.SetTenantLimits x1 {allow_agent_self_update,allow_engine_ingest,allowed_slot_classes,home_backup_every,home_hibernate_after,interaction_idle_timeout,max_sessions,max_workspace_cpu,max_workspace_disk_gb,max_workspace_mem,max_workspaces,pool_budget,session_idle_timeout,tenant,terminal_history_retention_days,ws_idle_timeout} cond{pool_budget}
+internal/tenantsrv/tenants.go Admin.SetTenantLimits x1 {allow_agent_self_update,allow_engine_image,allow_engine_ingest,allow_engine_llm,allowed_slot_classes,home_backup_every,home_hibernate_after,interaction_idle_timeout,max_sessions,max_workspace_cpu,max_workspace_disk_gb,max_workspace_mem,max_workspaces,pool_budget,session_idle_timeout,tenant,terminal_history_retention_days,ws_idle_timeout} cond{pool_budget}
 internal/tenantsrv/tenants.go Admin.SetUserLimit x1 {cpu_effective,cpu_limit,disk_effective,disk_gb,home_resize,max_sessions,mem_effective,mem_limit,slot_class,slot_class_effective,slot_class_note,tenant,user_key} cond{home_resize}
 internal/tenantsrv/tenants.go Admin.StopWorkspace x1 {stopped,tenant}
 internal/tenantsrv/tenants.go Admin.TerminatePoolSlot x1 {instance_id,quarantine_reason,terminated}

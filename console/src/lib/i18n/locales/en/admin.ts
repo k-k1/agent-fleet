@@ -308,6 +308,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_search_none": "Nothing found. Try other words, or type the repository name in directly.",
   "admin.engines_ingest_source_hf": "Hugging Face",
   "admin.engines_ingest_source_civitai": "Civitai",
+  "admin.engines_ingest_source_civitai-red": "Civitai Red",
   "admin.engines_ingest_browse_go": "Browse",
   "admin.engines_browse_kind_gguf": "LLM (GGUF)",
   "admin.engines_browse_kind_checkpoint": "Image (checkpoint)",
@@ -426,6 +427,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // Back to the page it came from, opening the URL the CP composed (never one built here).
   "admin.engines_ingest_hit_open_hf": "Open on HF",
   "admin.engines_ingest_hit_open_civitai": "Open on CivitAI",
+  // Civitai's own content-rating number, shown on EVERY Civitai hit regardless of which tab
+  // found it — a nonzero level shows up under the plain "Civitai" tab's own default query too.
+  "admin.engines_ingest_hit_nsfw_level": "NSFW {n}",
   // Fills the ingest form from a search card. Not "ingest": it fills, and resolve → accept →
   // ingest still runs from there unchanged.
   "admin.engines_ingest_hit_pick": "Use this",
@@ -908,6 +912,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.allow_engine_ingest": "Allow this tenant's administrators to take models in",
   "admin.allow_engine_ingest_hint":
     "OFF (default) means only a super_admin can start an ingest. ON lets this tenant's tenant_admins take models in from Hugging Face / Civitai / a URL. Enabling a model, changing the selected checkpoint, forgetting a row and the deployment's Hugging Face token stay super_admin. The catalogue is one per deployment, so the id of a model taken in is visible from every tenant.",
+  "admin.engine_use_title": "Inference engine use",
+  "admin.allow_engine_llm": "Allow using the self-hosted chat engine (llm)",
+  "admin.allow_engine_image": "Allow using the self-hosted image engine (image)",
+  "admin.engine_use_hint":
+    "A GPU box is billed by the hour, so this is a cost decision: may this tenant use it at all. Role-grained (llm / image), not model-grained — the catalogue stays one per deployment either way (a separate grant from model ingest above). Turning a role off removes it from the launch menu and the catalogue, and refuses existing sessions on their next request.",
   "admin.saved": "Saved",
   "admin.no_members": "No members. Add one from the form below.",
   "admin.add_failed": "Failed to add: {msg}",

@@ -475,3 +475,50 @@ func TestSyncEngineProvidersWritesAWindowPerModel(t *testing.T) {
 		t.Errorf("the 1.5B's limit = %+v, want 8192/2048", got)
 	}
 }
+
+// ADR 0084 decision 9: a tenant stripped of every engine role must lose the launch-menu
+// provider block too, not keep the stale one from before the catalogue went empty. This is
+// the transition the early `if len(rows) == 0 { return }` used to skip entirely — the CP's
+// catalogue answering empty never reached WriteEngineProviders, so opencode kept offering a
+// model the gateway would now refuse with engine_forbidden.
+func TestSyncEngineProvidersClearsBlockOnEmptyCatalog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	cfgPath := filepath.Join(home, ".config", "opencode", "opencode.jsonc")
+
+	// Positive control: a non-empty catalogue must actually write the provider — otherwise a
+	// green "block is gone" below could just as well mean the write path never ran at all.
+	engineCatalogStub(t, engineRowLlm)
+	syncEngineProviders()
+	b, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("positive control: no opencode config written: %v", err)
+	}
+	var cfg struct {
+		Provider map[string]any `json:"provider"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Provider["llamacpp"]; !ok {
+		t.Fatalf("positive control: llamacpp missing from %v", cfg.Provider)
+	}
+
+	// Now the tenant loses every engine role: the catalogue answers empty.
+	engineCatalogStub(t, "")
+	syncEngineProviders()
+	b, err = os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("no opencode config after the catalogue went empty: %v", err)
+	}
+	var after struct {
+		Provider map[string]any `json:"provider"`
+	}
+	if err := json.Unmarshal(b, &after); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := after.Provider["llamacpp"]; ok {
+		t.Errorf("llamacpp still in the provider block after an empty catalogue: %s", b)
+	}
+}

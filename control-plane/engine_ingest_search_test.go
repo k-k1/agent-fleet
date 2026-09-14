@@ -187,13 +187,10 @@ func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 // the licence link has always used. Nothing measured answers that, but the id is upstream's to
 // omit and a row whose link is `/models/0?…` is worse than one that is a little less precise.
 func TestCivitaiModelURLFallsBackToTheVersion(t *testing.T) {
-	old := engineCivitaiBase
-	engineCivitaiBase = "https://civitai.example"
-	defer func() { engineCivitaiBase = old }()
-	if got := engineCivitaiModelURL(0, 501240); got != "https://civitai.example/models/?modelVersionId=501240" {
+	if got := engineCivitaiModelURL("https://civitai.example", 0, 501240); got != "https://civitai.example/models/?modelVersionId=501240" {
 		t.Errorf("url with no model id = %q", got)
 	}
-	if got := engineCivitaiModelURL(4201, 501240); got != "https://civitai.example/models/4201?modelVersionId=501240" {
+	if got := engineCivitaiModelURL("https://civitai.example", 4201, 501240); got != "https://civitai.example/models/4201?modelVersionId=501240" {
 		t.Errorf("url = %q", got)
 	}
 }
@@ -267,6 +264,50 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 	// of them.
 	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "gguf", sort: ""}); aerr == nil || aerr.status != http.StatusBadRequest {
 		t.Errorf("civitai for the llm role = %v, want a 400 refusal", aerr)
+	}
+}
+
+// The civitai-red tab is the only place `nsfw=true` is ever sent, and the only place
+// engineCivitaiRedBase is ever the host — see engineSearchCivitaiPage. Measured 2026-09-14
+// against the live API: neither host returns an NSFW-flagged model without the parameter, so
+// this is load-bearing, not a nicety. nsfwLevel rides on every hit regardless of tab.
+func TestCivitaiRedSearchSetsNsfwAndUsesTheRedHost(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[
+		  {"id":827184,"name":"WAI-illustrious-SDXL","type":"Checkpoint","nsfwLevel":60,
+		   "stats":{"downloadCount":1511569,"thumbsUpCount":85086},
+		   "allowCommercialUse":["Image"],
+		   "modelVersions":[{"id":2883731,"name":"v17.0","baseModel":"Illustrious",
+		                     "publishedAt":"2026-04-23T13:02:02.382Z"}]}]}`))
+	}))
+	defer srv.Close()
+	oldRed := engineCivitaiRedBase
+	engineCivitaiRedBase = srv.URL
+	defer func() { engineCivitaiRedBase = oldRed }()
+	// The plain host must not be reachable from this path — a fallback to it would defeat the
+	// point of choosing the tab.
+	oldPlain := engineCivitaiBase
+	engineCivitaiBase = "https://civitai.example.invalid"
+	defer func() { engineCivitaiBase = oldPlain }()
+
+	hits, aerr := engineSearchCivitaiRed(t.Context(), engineSearchReq{q: "wai", kind: "checkpoint", sort: ""})
+	if aerr != nil {
+		t.Fatalf("civitai-red search: %v", aerr.message)
+	}
+	if got.Get("nsfw") != "true" {
+		t.Errorf("query = %v, want nsfw=true", got)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	if hits[0].NsfwLevel != 60 {
+		t.Errorf("nsfw_level = %d, want 60", hits[0].NsfwLevel)
+	}
+	if hits[0].URL != srv.URL+"/models/827184?modelVersionId=2883731" {
+		t.Errorf("url = %q, want the version page on the RED host", hits[0].URL)
 	}
 }
 
@@ -478,7 +519,7 @@ func TestCivitaiPaginationUsesMetadataCursor(t *testing.T) {
 
 	_, next, aerr := engineSearchCivitaiPage(t.Context(), engineSearchReq{
 		kind: "checkpoint", sort: engineSortNewest, cursor: "2026-09-12 10:00:00|10",
-	})
+	}, false)
 	if aerr != nil {
 		t.Fatalf("Civitai page: %v", aerr.message)
 	}

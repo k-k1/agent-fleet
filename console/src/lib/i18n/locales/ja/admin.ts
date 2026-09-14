@@ -302,6 +302,7 @@ export const admin = {
   "admin.engines_ingest_search_none": "見つかりませんでした。別の言葉で試すか、リポジトリ名を直接入力してください。",
   "admin.engines_ingest_source_hf": "Hugging Face",
   "admin.engines_ingest_source_civitai": "Civitai",
+  "admin.engines_ingest_source_civitai-red": "Civitai Red",
   "admin.engines_ingest_browse_go": "人気を見る",
   "admin.engines_browse_kind_gguf": "LLM（GGUF）",
   "admin.engines_browse_kind_checkpoint": "画像（checkpoint）",
@@ -420,6 +421,9 @@ export const admin = {
   // 元のページへ。CP が組み立てた URL をそのまま開く（Console 側では組まない）。
   "admin.engines_ingest_hit_open_hf": "HF で開く",
   "admin.engines_ingest_hit_open_civitai": "CivitAI で開く",
+  // Civitai 自身の年齢制限レベル。どのタブで見つかったかに関係なく全カードに出す——
+  // 「Civitai」タブの既定の検索でも 0 でない値が返ることがある（実測）。
+  "admin.engines_ingest_hit_nsfw_level": "NSFW {n}",
   // 検索結果のカードから取り込みフォームへ入れる操作。「取り込む」ではない——埋めるだけで、
   // 調べる・同意する・取り込む はこの後もそのまま通る。
   "admin.engines_ingest_hit_pick": "これにする",
@@ -894,6 +898,11 @@ export const admin = {
   "admin.allow_engine_ingest": "このテナントの管理者がモデルを取り込むのを許可",
   "admin.allow_engine_ingest_hint":
     "OFF（既定）では取り込みを起動できるのは super_admin だけです。ON にすると、このテナントの tenant_admin が Hugging Face / Civitai / URL からモデルを取り込めます。有効化・選択中チェックポイントの変更・行の削除・デプロイの Hugging Face トークンは super_admin のままです。カタログはデプロイに 1 つなので、取り込まれたモデルの id はどのテナントからも見えます。",
+  "admin.engine_use_title": "推論エンジンの利用可否",
+  "admin.allow_engine_llm": "セルフホストのチャットエンジン（llm）の利用を許可",
+  "admin.allow_engine_image": "セルフホストの画像生成エンジン（image）の利用を許可",
+  "admin.engine_use_hint":
+    "GPU の箱は時間課金なので、このテナントがそれを使ってよいかという費用の判断です。役（llm / image）単位で、モデル単位ではありません——カタログはデプロイに 1 つのままです（上のモデル取り込みとは別の権限）。オフにすると、起動メニューとカタログからその役が消え、既存のセッションも次の要求で拒否されます。",
   "admin.saved": "保存しました",
   "admin.no_members": "メンバーがいません。下のフォームから追加してください。",
   "admin.add_failed": "追加に失敗: {msg}",

@@ -42,12 +42,22 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// The two APIs' base URLs. Variables rather than constants so a test can answer them locally:
-// what this file does with a gated repository's metadata is exactly what has to be pinned, and
+// The APIs' base URLs. Variables rather than constants so a test can answer them locally: what
+// this file does with a gated repository's metadata is exactly what has to be pinned, and
 // reaching the real Hugging Face from a unit test would pin nothing and fail offline.
+//
+// engineCivitaiRedBase is civitai.red, the sister domain Civitai split off 2026-04-15 for NSFW
+// browsing (same account, database and model/version ids as civitai.com — "Two Front Doors").
+// Measured 2026-09-14: the anonymous `/api/v1/models` search omits NSFW-flagged results on
+// EITHER host unless the request also carries `nsfw=true` — the domain itself gates nothing.
+// So this only exists to point the search UI's "include NSFW" tab at the host Civitai's own
+// site now treats as canonical for that content; resolve/ingest/download stay on
+// engineCivitaiBase, which already answers a chosen NSFW version's metadata and file
+// identically to civitai.red (same measurement).
 var (
-	engineIngestBase  = "https://huggingface.co"
-	engineCivitaiBase = "https://civitai.com"
+	engineIngestBase     = "https://huggingface.co"
+	engineCivitaiBase    = "https://civitai.com"
+	engineCivitaiRedBase = "https://civitai.red"
 )
 
 // engineIngestHTTP talks to Hugging Face and Civitai. A real timeout because these are metadata

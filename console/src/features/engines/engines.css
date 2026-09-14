@@ -1,0 +1,157 @@
+/* Engine indicator (ADR 0084) — one pill per role, beside the TTS pill in topbar-right
+   (TopBar.tsx). Tone classes (on/lead/warn/off/avail) are shared between the pill and the
+   popover's per-row state badge. */
+.engine-pill-wrap {
+  position: relative;
+}
+.engine-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--btn-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.engine-pill:hover {
+  background: var(--btn-h);
+}
+.engine-pill-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.engine-pill-on {
+  color: var(--ok, #4caf82);
+  background: color-mix(in srgb, var(--ok, #4caf82) 14%, transparent);
+  border-color: color-mix(in srgb, var(--ok, #4caf82) 40%, transparent);
+}
+.engine-pill-on .engine-pill-dot {
+  background: var(--ok, #4caf82);
+}
+.engine-pill-lead {
+  color: var(--accent, #6b8fc4);
+  background: color-mix(in srgb, var(--accent, #6b8fc4) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #6b8fc4) 40%, transparent);
+}
+.engine-pill-lead .engine-pill-dot {
+  background: var(--accent, #6b8fc4);
+}
+.engine-pill-warn {
+  color: var(--warn, #d8963c);
+  background: color-mix(in srgb, var(--warn, #d8963c) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warn, #d8963c) 40%, transparent);
+}
+.engine-pill-warn .engine-pill-dot {
+  background: var(--warn, #d8963c);
+}
+.engine-pill-off .engine-pill-dot,
+.engine-pill-avail .engine-pill-dot {
+  opacity: 0.6;
+}
+.engine-pill-count {
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.engine-pill-countdown,
+.engine-pill-queue {
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.engine-popover {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 7px);
+  right: 0;
+  min-width: 240px;
+  max-width: min(320px, calc(100vw - 20px));
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+}
+.engine-popover-head {
+  padding: 2px 6px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border2, var(--border));
+  margin-bottom: 6px;
+}
+.engine-row {
+  padding: 2px 6px;
+}
+.engine-row + .engine-row {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border2, var(--border));
+}
+.engine-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.engine-row-key {
+  font-size: 12px;
+  font-weight: 600;
+}
+.engine-row-state {
+  padding: 1px 6px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: var(--btn);
+  color: var(--muted);
+}
+.engine-row-state-on {
+  color: var(--ok, #4caf82);
+  background: color-mix(in srgb, var(--ok, #4caf82) 16%, transparent);
+}
+.engine-row-state-lead {
+  color: var(--accent, #6b8fc4);
+  background: color-mix(in srgb, var(--accent, #6b8fc4) 16%, transparent);
+}
+.engine-row-state-warn {
+  color: var(--warn, #d8963c);
+  background: color-mix(in srgb, var(--warn, #d8963c) 16%, transparent);
+}
+.engine-row-lifecycle {
+  font-size: 10px;
+  color: var(--muted);
+}
+.engine-row-line {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--fg);
+}
+.engine-row-line.muted {
+  color: var(--muted);
+}
+
+/* Mobile: icon + state dot only (decision 10) — topbar-right is already tight enough that
+   the brand wraps to two lines (see the brand-stacked note in topbar.css). Everything else
+   moves to the popover, opened by the same tap. */
+@media (max-width: 760px) {
+  .engine-pill {
+    padding: 4px 7px;
+  }
+  .engine-pill-state,
+  .engine-pill-countdown,
+  .engine-pill-queue {
+    display: none;
+  }
+  .engine-popover {
+    position: fixed;
+    top: 48px;
+    right: 8px;
+    left: auto;
+    max-width: calc(100vw - 16px);
+  }
+}

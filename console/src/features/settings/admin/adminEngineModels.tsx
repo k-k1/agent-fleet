@@ -1959,7 +1959,7 @@ export function EngineIngest({
     // file plus a pick of another out of the list resolved the first one while the picker
     // showed the second — silently, because nothing on screen carried the URL's own filename.
     if (m) return { hf: { repo: m[1], revision: m[2] || "", file: name.trim() || m[3] || "" } };
-    const civ = r.match(/civitai\.com\/.*modelVersionId=(\d+)|^civitai:(\d+)$/);
+    const civ = r.match(/civitai\.(?:com|red)\/.*modelVersionId=(\d+)|^civitai:(\d+)$/);
     if (civ) return { civitai: { versionId: Number(civ[1] || civ[2]), file: name.trim() } };
     if (/^https?:\/\//.test(r)) return { url: r, sha256: name.trim() };
     return { hf: { repo: r, file: name.trim(), revision: rev } };
@@ -1975,7 +1975,7 @@ export function EngineIngest({
       /^https?:\/\/huggingface\.co\/([^/?#]+\/[^/?#]+)(?:\/(?:blob|resolve)\/([^/?#]+)\/([^?#]+))?(?:[?#].*)?$/,
     );
     if (hf) return { repo: hf[1], rev: hf[2] || "", file: hf[3] || "" };
-    const civ = t.match(/^https?:\/\/(?:[\w-]+\.)*civitai\.com\/\S*[?&]modelVersionId=(\d+)/);
+    const civ = t.match(/^https?:\/\/(?:[\w-]+\.)*civitai\.(?:com|red)\/\S*[?&]modelVersionId=(\d+)/);
     if (civ) return { repo: "civitai:" + civ[1], rev: "", file: "" };
     return null;
   };
@@ -2004,7 +2004,7 @@ export function EngineIngest({
   /** A plain url addresses one file and has no listing; the field carries its sha256 there. */
   const listable = (repoOverride?: string) => {
     const r = (repoOverride ?? repo).trim();
-    return !/^https?:\/\//.test(r) || /huggingface\.co|civitai\.com/.test(r);
+    return !/^https?:\/\//.test(r) || /huggingface\.co|civitai\.(?:com|red)/.test(r);
   };
 
   const resolveFile = async (name: string, repoOverride?: string) => {
@@ -2399,7 +2399,7 @@ export function EngineIngest({
                 load. */}
             {isImage && (
               <span className="seg sm">
-                {(["hf", "civitai"] as const).map((sr) => (
+                {(["hf", "civitai", "civitai-red"] as const).map((sr) => (
                   <button
                     key={sr}
                     type="button"
@@ -2464,7 +2464,7 @@ export function EngineIngest({
               setFound(null);
               setPicked(null);
             },
-            searchSource === "civitai"
+            searchSource === "civitai" || searchSource === "civitai-red"
               ? "civitai:782002"
               : isImage
                 ? "stabilityai/stable-diffusion-xl-base-1.0"
@@ -3052,7 +3052,7 @@ function EngineBrowse() {
         {/* Civitai only for checkpoints — the same rule the ingest form follows. */}
         {kind === "checkpoint" && (
           <span className="seg sm">
-            {(["hf", "civitai"] as const).map((sr) => (
+            {(["hf", "civitai", "civitai-red"] as const).map((sr) => (
               <button
                 key={sr}
                 type="button"
@@ -3220,6 +3220,14 @@ function HitCard({ hit, onPick }: { hit: IngestHit; onPick?: () => void }) {
         {hit.login_required === "yes" && (
           <span className="engines-model-tag warn" title={tr("admin.engines_hit_login_note")}>
             {tr("admin.engines_hit_login_required")}
+          </span>
+        )}
+        {/* Civitai's own content rating. Drawn on every Civitai hit, not only ones from the
+            civitai-red tab — the plain tab's own default query still answers a nonzero level
+            (measured), so a card without this would read as "safe" on a false premise. */}
+        {!!hit.nsfw_level && (
+          <span className="engines-model-tag">
+            {(tr("admin.engines_ingest_hit_nsfw_level" as never) as string).replace("{n}", String(hit.nsfw_level))}
           </span>
         )}
         {/* The gate, in the two flavours Hugging Face publishes. The bare `gated` stays as the

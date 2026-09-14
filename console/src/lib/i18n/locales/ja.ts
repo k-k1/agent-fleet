@@ -15,6 +15,7 @@ import { aiassist } from "./ja/aiassist.ts";
 import { assistant } from "./ja/assistant.ts";
 import { chat } from "./ja/chat.ts";
 import { common } from "./ja/common.ts";
+import { engines } from "./ja/engines.ts";
 import { errors } from "./ja/errors.ts";
 import { gallery } from "./ja/gallery.ts";
 import { imggen } from "./ja/imggen.ts";
@@ -54,4 +55,5 @@ export const ja = {
   ...memo,
   ...gallery,
   ...imggen,
+  ...engines,
 };
