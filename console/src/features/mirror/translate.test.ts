@@ -82,4 +82,22 @@ describe("looksForeign", () => {
     expect(looksForeign("テストは全部緑になりました。ブランチも push 済みです。", "en")).toBe(true);
     expect(looksForeign("Done. The tests are green.", "en")).toBe(false);
   });
+
+  it("does not let a quoted label alone flip the verdict", () => {
+    // An English report that cites a UI label next to its Japanese original is still English
+    // prose — the quoted characters are a citation, not the reader's own language showing up.
+    const englishReportCitingJa =
+      'The button label changed from "wi.detail_start_head_pr" ("レビューする"/"Review this ' +
+      'pull request") to a new key, and the rest of this report is written in English throughout.';
+    expect(looksForeign(englishReportCitingJa, "ja")).toBe(true);
+
+    // Same shape the other way: a Japanese report citing an English label in 「」 stays Japanese.
+    const japaneseReportCitingEn =
+      "ボタンの表示は「wi.detail_start_head_pr」から新しいラベルに変わりました。この報告の残りは" +
+      "すべて日本語で書かれています。テストも一式通っています。";
+    expect(looksForeign(japaneseReportCitingEn, "en")).toBe(true);
+
+    // Nothing left to translate once the quoted label is the whole message.
+    expect(looksForeign('"レビューする"', "ja")).toBe(false);
+  });
 });

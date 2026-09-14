@@ -75,14 +75,22 @@ export function turnTranslateKey(texts: string[]): string {
   return texts.length ? translateHash(texts.join("\n\n")) : "";
 }
 
-// Fenced blocks and inline code are dropped before the language is judged: a Japanese answer is
-// mostly English inside its code, and an English answer with a big Japanese log would read as
-// Japanese. What is being asked is "is the PROSE in my language".
+// Fenced blocks, inline code, and quoted spans are dropped before the language is judged: a
+// Japanese answer is mostly English inside its code, and an English answer with a big Japanese
+// log would read as Japanese. A quoted label — citing a UI string next to its other-language
+// counterpart, e.g. `"レビューする"/"Review this pull request"` or `「翻訳」/「原文」` — is
+// verbatim content being pointed at, not prose in either language, and a handful of such
+// characters must not by itself flip the verdict for an otherwise single-language answer. What
+// is being asked is "is the PROSE in my language".
 function proseOnly(s: string): string {
   return s
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`[^`\n]*`/g, " ")
-    .replace(/^\s{4,}\S.*$/gm, " ");
+    .replace(/^\s{4,}\S.*$/gm, " ")
+    .replace(/"[^"\n]*"/g, " ")
+    .replace(/“[^”\n]*”/g, " ")
+    .replace(/「[^」\n]*」/g, " ")
+    .replace(/『[^』\n]*』/g, " ");
 }
 
 // Kana and kanji, the only two that decide this. Latin is counted to keep a one-word answer
