@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
@@ -659,5 +660,112 @@ func TestRateLimitResumeNoticeCoversCodexManaged(t *testing.T) {
 	notifyRateLimitResumeDelivered(m.Name, rateLimitResumePrompt(), TurnSourceSchedule, now.Add(time.Hour))
 	if got = notice.List(); len(got) != 2 {
 		t.Errorf("notices after a redelivery = %d, want 2", len(got))
+	}
+}
+
+// TestRateLimitRebooksAfterAFiredResume (docs/log/47 §4-13, measured on scpigmc): the booked
+// resume fired, the session took a turn and was refused by the SAME limit again. Before this,
+// the spent episode stayed current for the whole cleanup grace and scheduleRateLimitResume
+// declines while it holds a ScheduleID, so nothing was booked for half an hour and the row went
+// on showing an instant that had already gone by.
+func TestRateLimitRebooksAfterAFiredResume(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	fired := now.Add(-rateLimitRebookSettle - time.Minute) // the resume went out and settled
+	next := now.Add(4 * time.Hour)
+	f.codexLimited, f.codexResetOK, f.codexReset = true, true, next
+	m := rlCodexMeta()
+	session.WriteMeta(m)
+	if err := RateLimitStates.Write(m.Name, rateLimitState{
+		At: fired.Add(-time.Hour).Format(time.RFC3339), ResumeAt: fired.Format(time.RFC3339),
+		ScheduleID: "sch_spent", ScheduleTries: maxRateLimitScheduleTries,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+
+	st := stateOf(t, m.Name)
+	if f.scheduled != 1 || st.ScheduleID != "sch_test" {
+		t.Fatalf("bookings = %d / id=%q, want 1 / sch_test — the spent episode swallowed the new limit",
+			f.scheduled, st.ScheduleID)
+	}
+	if !f.scheduleAt.Equal(next) || st.ResumeAt != next.Format(time.RFC3339) {
+		t.Errorf("booked %v (state %q), want %v", f.scheduleAt, st.ResumeAt, next)
+	}
+	// The spent once-schedule is deleted, not left behind: its id is about to be forgotten and
+	// a dead row would sit in the Console's scheduled-execution list forever.
+	if len(f.deleted) != 1 || f.deleted[0] != "sch_spent" {
+		t.Errorf("deleted = %v, want [sch_spent]", f.deleted)
+	}
+	// A new episode, so the attempt budget starts over (the old one was exhausted above).
+	if st.ScheduleTries != 1 || st.At == "" {
+		t.Errorf("state = %+v, want a fresh episode with one attempt spent", st)
+	}
+}
+
+// TestRateLimitDoesNotRebookWhileTheResumeIsInFlight: the booking fired seconds ago and the
+// evidence has not caught up yet (the resumed turn has to reach the CLI and write a record
+// before "at the limit" turns false). Rolling over here would book against the very limit the
+// resume was already sent for.
+func TestRateLimitDoesNotRebookWhileTheResumeIsInFlight(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	justFired := now.Add(-30 * time.Second)
+	f.codexLimited, f.codexResetOK, f.codexReset = true, true, now.Add(4*time.Hour)
+	m := rlCodexMeta()
+	session.WriteMeta(m)
+	if err := RateLimitStates.Write(m.Name, rateLimitState{
+		At: now.Add(-time.Hour).Format(time.RFC3339), ResumeAt: justFired.Format(time.RFC3339),
+		ScheduleID: "sch_inflight", ScheduleTries: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+
+	if f.scheduled != 0 || len(f.deleted) != 0 {
+		t.Errorf("bookings = %d / deleted = %v, want 0 / none while the resume is still landing",
+			f.scheduled, f.deleted)
+	}
+	if st := stateOf(t, m.Name); st.ScheduleID != "sch_inflight" {
+		t.Errorf("scheduleId = %q, want the in-flight booking kept", st.ScheduleID)
+	}
+}
+
+// TestRateLimitChipDropsAPastResumeTime: while the next booking is being worked out, the chip
+// must not go on naming an instant that has passed. "Waiting for the limit" with no time is
+// still true; "waiting until 10:25" at 10:41 is what the user reported as wrong.
+func TestRateLimitChipDropsAPastResumeTime(t *testing.T) {
+	newRateLimitFixture(t)
+	now := time.Now()
+	m := rlCodexMeta()
+	session.WriteMeta(m)
+	for _, tc := range []struct {
+		name     string
+		resumeAt time.Time
+		want     bool // the instant reaches the row
+	}{
+		{"still ahead", now.Add(2 * time.Hour), true},
+		{"already gone", now.Add(-2 * time.Minute), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRateLimitFixture(t)
+			f.codexLimited = true
+			session.WriteMeta(m)
+			iso := tc.resumeAt.Format(time.RFC3339)
+			if err := RateLimitStates.Write(m.Name, rateLimitState{
+				At: now.Add(-time.Hour).Format(time.RFC3339), ResumeAt: iso, ScheduleID: "sch_x",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			state, at, ok := rateLimitWaiting(m, now)
+			if !ok || state != agents.StateLimited {
+				t.Fatalf("rateLimitWaiting = %q / ok=%v, want the limit wait", state, ok)
+			}
+			if got := at == iso; got != tc.want {
+				t.Errorf("resumeAt = %q (want carried=%v)", at, tc.want)
+			}
+		})
 	}
 }
