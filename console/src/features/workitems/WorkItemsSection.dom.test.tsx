@@ -699,4 +699,53 @@ describe("WorkItemDetailModal — a pull request", () => {
     expect(document.querySelector(".wi-dmodal .ui-modal-foot a.wi-dopen")).toBeNull();
     expect(detailStart().textContent).toContain(t("wi.start"));
   });
+
+  // The button is a REVIEW button: it checks the PR's own head branch out in the new worktree
+  // (the same existingBranch mechanism the SCM view's "work on this branch" uses) instead of
+  // cutting a new one from a template, and the seeded prompt asks for a review, not a plan.
+  it("checks the pull request's head branch out and seeds a review prompt", async () => {
+    useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+    workItemDetail.mockResolvedValue(detail);
+    const modal = await openPR();
+
+    const start = [...modal.querySelectorAll<HTMLButtonElement>(".wi-dfold button")].find((b) =>
+      b.textContent?.includes(t("wi.start_review")),
+    )!;
+    await act(async () => start.click());
+
+    expect(useLaunchTarget.getState().target?.name).toBe("web");
+    expect(useLaunchTarget.getState().existingBranch).toBe("feature/x");
+    expect(useLaunchTarget.getState().inPlace).toBe(false);
+    const seed = useLaunchSeed.getState();
+    expect(seed.prompt).toContain(t("wi.prompt_review"));
+    expect(seed.prompt).toContain(t("wi.prompt_review_branch", { branch: "feature/x" }));
+    expect(seed.prompt).not.toContain(t("wi.prompt_investigate"));
+  });
+
+  // An existing copy is picked by hand from the dropdown — it must not be silently switched to
+  // the PR's branch out from under the user (docs/log/80 §80.24.4).
+  it("does not force the PR's branch onto a working copy the user picked directly", async () => {
+    useReposStore.setState({
+      repos: [
+        { name: "web", path: "/home/dev/repos/web" },
+        { name: "web@wip-abc", path: "/home/dev/repos/web@wip-abc", worktree: true, parent: "web", branch: "feature/x" },
+      ],
+    });
+    workItemDetail.mockResolvedValue(detail);
+    const modal = await openPR();
+
+    const where = [...modal.querySelectorAll<HTMLSelectElement>(".wi-sfield select")][1];
+    await act(async () => {
+      where.value = "web@wip-abc";
+      where.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const start = [...modal.querySelectorAll<HTMLButtonElement>(".wi-dfold button")].find((b) =>
+      b.textContent?.includes(t("wi.start_review")),
+    )!;
+    await act(async () => start.click());
+
+    expect(useLaunchTarget.getState().target?.name).toBe("web@wip-abc");
+    expect(useLaunchTarget.getState().existingBranch).toBe("");
+    expect(useLaunchTarget.getState().inPlace).toBe(true);
+  });
 });
