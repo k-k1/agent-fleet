@@ -280,8 +280,27 @@ func applyStudio(ctx context.Context, p Provider, st *providerStatus) {
 //
 // The plan each one spends is part of the label because it is the difference that decides
 // between two routes when the caller does have a choice.
-func serviceLabelOf(id string) string {
+// providerKindOf answers which CLIENT implementation serves a provider id: the row's own
+// declared Provider field for a currently declared images row (ADR 0082 decision 1) — checked
+// first, because a row is free to choose a key that also happens to spell a kind name — and
+// otherwise the id itself, for the vendor routes (whose id already IS their kind) and for a bare
+// kind name asked about with no row behind it (the shape every id had before this ADR, and what
+// a hand-built test double still uses).
+func providerKindOf(id string) string {
+	for _, row := range imageProviderRowsSafe() {
+		if row.Key == id {
+			return row.Provider
+		}
+	}
 	switch id {
+	case ProviderCodex, ProviderAgy, ProviderComfy, ProviderOpenAICompat:
+		return id
+	}
+	return ""
+}
+
+func serviceLabelOf(id string) string {
+	switch providerKindOf(id) {
 	case ProviderCodex:
 		return "GPT Image（OpenAI。利用者の ChatGPT プランを消費）"
 	case ProviderAgy:
@@ -291,17 +310,12 @@ func serviceLabelOf(id string) string {
 		// one) — naming a tier would be a claim about a model id that moves.
 		return "Gemini の画像生成（通称 Nano Banana。Google。利用者の Antigravity/Gemini プランを消費）"
 	case ProviderOpenAICompat:
-		// Unlike the other cases, this id names a PROTOCOL, not a service (ADR 0083 decision 2):
+		// Unlike the other cases, the KIND names a PROTOCOL, not a service (ADR 0083 decision 2):
 		// the engine table row behind it can be this fleet's own GPU, an operator's LAN box, or a
-		// metered vendor endpoint paid by an API key, and the id alone cannot tell those apart.
-		// So this says only what is true of every row — not "not external", which the id can no
-		// longer make good on. Result.Destination repeats the same fixed caveat rather than
-		// naming the specific row: EngineConn's BaseURL does carry the row's key, embedded in the
-		// gateway's own path shape ("/engine/<key>/v1"), but that shape belongs to the gateway,
-		// not to a contract this provider may parse. A row-specific answer needs ADR 0082 P0
-		// (provider id becomes the engine table's key, declared rather than extracted), after
-		// which a result could name something like `provider: comfy-lan` instead of a bare
-		// `openai-compat`.
+		// metered vendor endpoint paid by an API key, and the kind alone cannot tell those apart.
+		// So this says only what is true of every row of this kind — the row's own KEY (ADR 0082
+		// decision 1, `id` here) is what tells one apart from another, and it already reaches the
+		// caller as providerStatus.ID / Result.Provider.
 		return "OpenAI 互換の画像サーバー（宛先はエンジン表の行次第。このフリート自身の GPU のこともあれば、鍵で払う外部サービスのこともある）"
 	case ProviderComfy:
 		// Deliberately not "this fleet's own GPU": since ADR 0076 the same route also reaches a
@@ -315,7 +329,7 @@ func serviceLabelOf(id string) string {
 // driverModelOf reports the model a generation would run on, per provider. "" for a provider
 // that is not driven by a model of ours to name.
 func driverModelOf(id string) string {
-	switch id {
+	switch providerKindOf(id) {
 	case ProviderCodex:
 		return codexDriverModel()
 	case ProviderAgy:
@@ -323,14 +337,15 @@ func driverModelOf(id string) string {
 	case ProviderOpenAICompat:
 		// Not a driver model but the default checkpoint: the row's first declared model id, which
 		// is also the only one on a single-checkpoint server. Answered from the row's own
-		// declaration, so asking costs nothing and does not wake anything.
-		return openaiCompatDriverModel()
+		// declaration (looked up by ITS OWN key, ADR 0082 decision 1 — a second openai-compat row
+		// must not answer with the first one's model), so asking costs nothing and wakes nothing.
+		return newOpenAICompatProviderFor(id).DefaultModel()
 	case ProviderComfy:
 		// Not a driver model either, and unlike sdcpp not the only one this route has: it is the
 		// checkpoint a request naming none would run on, with the rest carried in
-		// providerStatus.Models. Answered from what the Control Plane already told us, so asking
-		// costs nothing and does not wake the box.
-		return comfyDriverModel()
+		// providerStatus.Models. Answered from what the Control Plane already told us for THIS
+		// row's own key, so asking costs nothing and does not wake the box.
+		return newComfyProviderFor(id).DefaultModel()
 	}
 	return ""
 }

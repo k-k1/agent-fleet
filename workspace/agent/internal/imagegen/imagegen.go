@@ -518,15 +518,48 @@ func providerIDsOf(ranks []providerRank) []string {
 	return out
 }
 
-// providerIsFleet answers whether the fleet's own hardware serves this provider. Unknown ids are
-// NOT fleet: an id nobody declared is not something this deployment can be said to pay for.
+// providerIsFleet answers whether the fleet's own hardware — or another fleet's, borrowed under
+// ADR 0079 decision 9 — serves this provider id. Unknown ids are NOT fleet: an id nobody declared
+// is not something this deployment can be said to pay for.
+//
+// Every currently declared images row is fleet, full stop (ADR 0082 decision 4), checked BEFORE
+// the static list: getting this backwards reproduces a measured accident (ADR 0072, 2026-09-11)
+// where a provider this build did not have a static entry for was filed as external and inserted
+// BEHIND a member's own plan, so "auto" spent that plan before it ever reached hardware the
+// deployment was already paying for.
 func providerIsFleet(id string) bool {
+	for _, row := range imageProviderRowsSafe() {
+		if row.Key == id {
+			return true
+		}
+	}
 	for _, r := range providerRanks {
 		if r.ID == id {
 			return r.Fleet
 		}
 	}
 	return false
+}
+
+// imageProviderRowsSafe reads EngineImageRows if the Agent installed it, deduplicated by key: a
+// malformed catalogue naming the same key twice must not hand Run() two Provider instances that
+// both answer to the same id. nil when the deployment has no engines at all, or when
+// EngineImageRows itself is nil (a dev Agent with no Control Plane).
+func imageProviderRowsSafe() []EngineImageRow {
+	if EngineImageRows == nil {
+		return nil
+	}
+	rows := EngineImageRows(context.Background())
+	seen := map[string]bool{}
+	out := make([]EngineImageRow, 0, len(rows))
+	for _, r := range rows {
+		if r.Key == "" || seen[r.Key] {
+			continue
+		}
+		seen[r.Key] = true
+		out = append(out, r)
+	}
+	return out
 }
 
 // ProviderOrderPref is the user's own preference order, installed by the ui-prefs layer (the
@@ -555,14 +588,16 @@ var ProviderOrderPref func() []string
 // fleet provider the user deliberately ranked last. This only decides where the ones it never
 // mentioned land.
 func effectiveOrder() []string {
-	seen := map[string]bool{}
+	rows := imageProviderRowsSafe()
+	order := dynamicOrder(rows)
 	known := map[string]bool{}
-	for _, id := range providerOrder {
+	for _, id := range order {
 		known[id] = true
 	}
+	seen := map[string]bool{}
 	var chosen []string
 	if ProviderOrderPref != nil {
-		for _, id := range ProviderOrderPref() {
+		for _, id := range normalizeStoredProviderOrder(ProviderOrderPref(), rows) {
 			if known[id] && !seen[id] {
 				seen[id] = true
 				chosen = append(chosen, id)
@@ -571,7 +606,7 @@ func effectiveOrder() []string {
 	}
 	// The unmentioned ones, split by who pays and each half kept in the built-in order.
 	var fleet, external []string
-	for _, id := range providerOrder {
+	for _, id := range order {
 		if seen[id] {
 			continue
 		}
@@ -582,17 +617,104 @@ func effectiveOrder() []string {
 		}
 		external = append(external, id)
 	}
-	out := make([]string, 0, len(providerOrder))
+	out := make([]string, 0, len(order))
 	out = append(out, fleet...)
 	out = append(out, chosen...)
 	return append(out, external...)
 }
 
-// Providers returns the registered providers, in providerOrder. Built fresh on each call so a
-// changed environment (a Codex login that arrived after boot, an engine stack deployed since)
-// is picked up, and a var so a test can drive Run without a Codex CLI on PATH.
+// dynamicOrder is providerOrder — the built-in, test-overridable base — with every currently
+// declared images row taking the SLOT its kind held (ADR 0082 decision 1), not appended after
+// it: a bare kind name in the base list ("comfy", "openai-compat") stands for "wherever this
+// deployment's engine of that kind is", and once a real row of that kind exists, Providers() no
+// longer constructs anything answering to the bare name. Leaving the placeholder in as well as
+// the row would give the order TWO entries for the one thing this deployment actually runs — a
+// phantom nothing can ever be ready under, sitting in front of the row it was standing in for.
+//
+// A deployment with no dynamic rows at all behaves exactly as it always did: every base id
+// passes through unchanged.
+func dynamicOrder(rows []EngineImageRow) []string {
+	byKind := map[string][]string{}
+	for _, row := range rows {
+		byKind[row.Provider] = append(byKind[row.Provider], row.Key)
+	}
+	var out []string
+	seen := map[string]bool{}
+	push := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, id := range providerOrder {
+		if keys, ok := byKind[id]; ok {
+			for _, k := range keys {
+				push(k)
+			}
+			continue
+		}
+		push(id)
+	}
+	// Any row whose kind has no slot in the built-in base at all (there is none today — comfy
+	// and openai-compat both do — but EngineImageRow.Provider is free text, and a future third
+	// kind must not be silently dropped just because it has no legacy placeholder to fill).
+	for _, row := range rows {
+		push(row.Key)
+	}
+	return out
+}
+
+// normalizeStoredProviderOrder expands a legacy PROVIDER-KIND alias — "comfy" or "openai-compat",
+// the only ids a preference saved before ADR 0082 could ever have named — into every images row of
+// that kind this deployment currently declares, in catalogue order (ADR 0082 decision 3).
+//
+// Dropping the alias instead of expanding it reproduces the accident normalizeImageProviderOrder
+// was written to prevent (ADR 0072, 2026-09-11): a fleet engine whose row key is not literally the
+// kind name would fall out of a stored order entirely and come back through the "unmentioned"
+// path below, which only agrees with what the user actually ranked when there is exactly one
+// fleet row to confuse it with.
+func normalizeStoredProviderOrder(pref []string, rows []EngineImageRow) []string {
+	byKind := map[string][]string{}
+	for _, row := range rows {
+		byKind[row.Provider] = append(byKind[row.Provider], row.Key)
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(pref))
+	push := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, id := range pref {
+		if id == ProviderComfy || id == ProviderOpenAICompat {
+			for _, key := range byKind[id] {
+				push(key)
+			}
+			continue
+		}
+		push(id)
+	}
+	return out
+}
+
+// Providers returns the registered providers: the vendor routes (ADR 0069 decision 3), whose id
+// never changes, plus one provider per images row this deployment currently declares (ADR 0082
+// decision 1) — the row's OWN key becomes that provider's id, and the row's declared Provider
+// field picks which client implementation serves it. Built fresh on each call so a changed
+// environment (a Codex login that arrived after boot, an engine table row added since) is picked
+// up, and a var so a test can drive Run without a Codex CLI on PATH.
 var Providers = func() []Provider {
-	return []Provider{newOpenAICompatProvider(), newComfyProvider(), newCodexProvider(), newAgyProvider()}
+	out := []Provider{newCodexProvider(), newAgyProvider()}
+	for _, row := range imageProviderRowsSafe() {
+		switch row.Provider {
+		case ProviderComfy:
+			out = append(out, newComfyProviderFor(row.Key))
+		case ProviderOpenAICompat:
+			out = append(out, newOpenAICompatProviderFor(row.Key))
+		}
+	}
+	return out
 }
 
 // chooseImageProviders decides what "auto" (the default) routes to, in order — the same shape
@@ -682,7 +804,7 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 		return Stored{}, ErrNoProvider
 	}
 
-	var attempts []error
+	var attempts []attemptFailure
 	for _, name := range candidates {
 		p, ok := provs[name]
 		if !ok {
@@ -708,7 +830,7 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 			err = errors.New("the provider returned no image")
 		}
 		if err != nil {
-			attempts = append(attempts, fmt.Errorf("%s: %w", name, err))
+			attempts = append(attempts, attemptFailure{id: name, err: err})
 			continue // the next provider in the order, if the caller left the choice to us
 		}
 
@@ -731,8 +853,23 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 	}
 	// Every candidate failed. Report them all: "codex is out of quota, and the local engine is
 	// not running" is actionable in a way that either half alone is not.
-	return Stored{}, errors.Join(attempts...)
+	errs := make([]error, len(attempts))
+	for i, a := range attempts {
+		errs[i] = a
+	}
+	return Stored{}, errors.Join(errs...)
 }
+
+// attemptFailure is one candidate Run() tried and failed: which id, why, carried as a value
+// (rather than a pre-formatted error) because fallbackWarnings needs the bare id back to ask
+// providerIsFleet about it — decision 5 below reads differently depending on the answer.
+type attemptFailure struct {
+	id  string
+	err error
+}
+
+func (a attemptFailure) Error() string { return fmt.Sprintf("%s: %v", a.id, a.err) }
+func (a attemptFailure) Unwrap() error { return a.err }
 
 // fallbackWarnings says out loud that this picture was NOT made by the provider the order
 // picked, and names what went wrong with the one(s) ahead of it.
@@ -746,13 +883,28 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 //
 // A warning rather than a refusal: on a deployment whose engine really is down, falling
 // through is the RIGHT answer and refusing would just mean no picture.
-func fallbackWarnings(used string, attempts []error) []string {
+//
+// ADR 0082 decision 5: with two fleet rows, a fall-through CAN land entirely inside this
+// deployment's own hardware — the LAN engine was down, the borrowed one answered instead — and
+// nobody's plan quota moved. Saying "a different account's plan" there would be exactly the lie
+// this function exists to prevent, just spelled the other way round: the two routes differ in
+// WHO PAYS, not in which account, so that is the question the wording is chosen on.
+func fallbackWarnings(used string, attempts []attemptFailure) []string {
 	if len(attempts) == 0 {
 		return nil
 	}
 	reasons := make([]string, 0, len(attempts))
-	for _, err := range attempts {
-		reasons = append(reasons, err.Error())
+	sameWallet := providerIsFleet(used)
+	for _, a := range attempts {
+		reasons = append(reasons, a.Error())
+		if !providerIsFleet(a.id) {
+			sameWallet = false
+		}
+	}
+	if sameWallet {
+		return []string{fmt.Sprintf(
+			"fell back to %s because the provider(s) ahead of it failed: %s — this deployment's own engine answered instead, no member's plan was spent",
+			used, strings.Join(reasons, "; "))}
 	}
 	return []string{fmt.Sprintf(
 		"fell back to %s because the provider(s) ahead of it failed: %s — this ran on a different account's plan than the preferred route",

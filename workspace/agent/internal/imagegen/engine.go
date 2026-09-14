@@ -156,23 +156,41 @@ type EngineFile struct {
 	Name string
 }
 
-// EngineLookup is the seam the Agent fills in, keyed by the CALLING provider's id so that
-// sdcpp and comfy — mutually exclusive on one deployment (ADR 0072 decision 4) — each get the
-// engine row that actually matches them rather than whichever the `image` role happens to be
-// running today. nil, or a lookup that finds no row for this id, means this deployment does
-// not run that provider, and it is simply never ready.
-var EngineLookup func(ctx context.Context, provider string) (EngineConn, bool)
+// EngineLookup is the seam the Agent fills in, keyed by the images ROW's own key rather than by
+// provider kind (ADR 0082 decision 1) — two rows of the same kind (a managed comfy engine and an
+// operator's LAN comfy box, say) each get the row that actually matches them rather than
+// whichever row of that kind happens to exist. nil, or a lookup that finds no row for this key,
+// means this deployment does not declare that row, and it is simply never ready.
+var EngineLookup func(ctx context.Context, key string) (EngineConn, bool)
 
-// engineLookupFor binds the package-level, provider-keyed EngineLookup to one id, giving each
+// engineLookupFor binds the package-level, key-keyed EngineLookup to one key, giving each
 // provider struct the single-argument shape its own tests already construct directly. nil when
 // EngineLookup itself is nil (the normal case for a deployment with no engines at all), so a
 // provider's lookup field is never a closure that panics on a nil call.
-func engineLookupFor(provider string) func(ctx context.Context) (EngineConn, bool) {
+func engineLookupFor(key string) func(ctx context.Context) (EngineConn, bool) {
 	if EngineLookup == nil {
 		return nil
 	}
-	return func(ctx context.Context) (EngineConn, bool) { return EngineLookup(ctx, provider) }
+	return func(ctx context.Context) (EngineConn, bool) { return EngineLookup(ctx, key) }
 }
+
+// EngineImageRow is one images-API engine row as Providers() needs to see it: the row's own KEY,
+// which becomes this provider's id everywhere a caller, the stored order, the ledger and the MCP
+// surface name it (ADR 0082 decision 1), and the row's declared Provider FIELD, which says which
+// client implementation serves it — comfy builds a workflow graph, openai-compat speaks the
+// OpenAI Images API. Two rows sharing a Provider are two independent instances of the same code,
+// talking to different URLs; that is what makes the key, not the kind, the id.
+type EngineImageRow struct {
+	Key      string
+	Provider string
+}
+
+// EngineImageRows lists the images rows this deployment currently declares (only the kinds this
+// Agent build implements a client for), or nil when there are none — a dev Agent with no Control
+// Plane, or a deployment that runs no image engine at all. Providers() calls it fresh each time,
+// the same reason it rebuilds its own provider list fresh: the engine table can change after
+// boot, and the network round trip it costs is the Agent's own catalogue cache, not this call.
+var EngineImageRows func(ctx context.Context) []EngineImageRow
 
 // engineTimeout bounds one call, and it is deliberately LONGER than the gateway's own wake
 // timeout (AF_ENGINE_WAKE_TIMEOUT, 900 s by default). The chain is

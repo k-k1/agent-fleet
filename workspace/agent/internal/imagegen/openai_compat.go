@@ -46,15 +46,24 @@ import (
 )
 
 type openaiCompatProvider struct {
+	// key is this provider's id everywhere outside this file — the images row's own key (ADR
+	// 0082 decision 1). Empty in a hand-built test double, which is why ID() falls back to the
+	// bare kind name rather than an empty string.
+	key    string
 	lookup func(ctx context.Context) (EngineConn, bool)
 	client *http.Client
 }
 
-func newOpenAICompatProvider() *openaiCompatProvider {
-	return &openaiCompatProvider{lookup: engineLookupFor(ProviderOpenAICompat), client: engineClient}
+func newOpenAICompatProviderFor(key string) *openaiCompatProvider {
+	return &openaiCompatProvider{key: key, lookup: engineLookupFor(key), client: engineClient}
 }
 
-func (p *openaiCompatProvider) ID() string { return ProviderOpenAICompat }
+func (p *openaiCompatProvider) ID() string {
+	if p.key != "" {
+		return p.key
+	}
+	return ProviderOpenAICompat
+}
 
 // Ready is "this deployment has a row for this provider and we hold a token for it" — never
 // "the far server is up". A server that is asleep is a NORMAL state for a managed row and
@@ -75,10 +84,6 @@ func (p *openaiCompatProvider) conn(ctx context.Context) (EngineConn, bool) {
 	}
 	return c, true
 }
-
-// openaiCompatDriverModel names the checkpoint for the status route (driverModelOf), without
-// waking anything: the answer comes from what the row declared, which the Agent already holds.
-func openaiCompatDriverModel() string { return newOpenAICompatProvider().DefaultModel() }
 
 // DefaultModel is the first id the row declared. For a server that holds one checkpoint chosen
 // by a startup flag this is the only model it has; for one that holds several, it is simply
@@ -173,18 +178,19 @@ func (p *openaiCompatProvider) Generate(ctx context.Context, req Request) (Resul
 		return Result{}, err
 	}
 	return Result{
-		Images:   images,
-		Provider: ProviderOpenAICompat,
+		Images: images,
+		// The row's own key (ADR 0082 decision 1), not the bare kind name: two openai-compat rows
+		// on one deployment answer with different ids, which is what tells them apart in the
+		// ledger and in generate_image's own result — `provider: comfy-lan` instead of a bare
+		// `openai-compat` that could mean any row of that kind.
+		Provider: p.ID(),
 		Model:    model,
 		// Where the prompt went (ADR 0069 decision 11 / ADR 0083 decision 2). It DID leave the
-		// container, which is the fact that matters — and unlike the other providers, this id
-		// alone does not say to whom: the row can point at this fleet's own GPU or at a metered
-		// external service. This is a FIXED sentence, the same for every row, not a per-row
-		// answer. conn.BaseURL DOES carry the row's key, embedded in the gateway's own path
-		// shape ("/engine/<key>/v1", engines.go's base_url) — but that shape is the gateway's to
-		// change, not a contract this provider may parse and depend on. Naming the actual row
-		// honestly needs ADR 0082 P0 (provider id becomes the engine table's key, declared rather
-		// than extracted), same as serviceLabelOf's case above.
+		// container, which is the fact that matters — and unlike the other providers, the id
+		// alone does not say to WHOM: the row can point at this fleet's own GPU or at a metered
+		// external service, and that ambiguity survives ADR 0082 P0 too (the key names a row an
+		// administrator chose, not a place). This is a FIXED sentence, the same for every row, not
+		// a per-row answer.
 		Destination: "an OpenAI-compatible image server（宛先はエンジン表の行次第。フリート自身の GPU のこともあれば外部サービスのこともある）",
 		Warnings:    openaiCompatWarnings(req),
 		// No cost: an engine hour is a component cost the deployment pays and ADR 0048 does

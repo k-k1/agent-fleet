@@ -47,15 +47,24 @@ import (
 )
 
 type comfyProvider struct {
+	// key is this provider's id everywhere outside this file — the images row's own key (ADR
+	// 0082 decision 1). Empty in a hand-built test double, which is why ID() falls back to the
+	// bare kind name rather than an empty string.
+	key    string
 	lookup func(ctx context.Context) (EngineConn, bool)
 	client *http.Client
 }
 
-func newComfyProvider() *comfyProvider {
-	return &comfyProvider{lookup: engineLookupFor(ProviderComfy), client: engineClient}
+func newComfyProviderFor(key string) *comfyProvider {
+	return &comfyProvider{key: key, lookup: engineLookupFor(key), client: engineClient}
 }
 
-func (p *comfyProvider) ID() string { return ProviderComfy }
+func (p *comfyProvider) ID() string {
+	if p.key != "" {
+		return p.key
+	}
+	return ProviderComfy
+}
 
 // Ready follows sdcpp's own rule exactly: "this deployment has this engine and we hold a token
 // for it", never "the engine is up". See sdcppProvider.Ready for why that is the honest answer.
@@ -74,11 +83,6 @@ func (p *comfyProvider) conn(ctx context.Context) (EngineConn, bool) {
 	}
 	return c, true
 }
-
-// comfyDriverModel names the checkpoint for the status route (driverModelOf), without waking
-// anything: DefaultModel reads the connection the Control Plane already handed us — the warm
-// model, else the catalogue's first — and asks the engine nothing.
-func comfyDriverModel() string { return newComfyProvider().DefaultModel() }
 
 // DefaultModel is what a request naming no model gets (ADR 0072 decision 7): whatever the
 // Control Plane last saw this engine actually answer with — free, because it is already loaded
@@ -663,8 +667,11 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		warnings = append(warnings, cached)
 	}
 	return Result{
-		Images:      images,
-		Provider:    ProviderComfy,
+		Images: images,
+		// The row's own key (ADR 0082 decision 1), not the bare kind name: two comfy rows on one
+		// deployment answer with different ids, and this is the one fact that tells them apart in
+		// the ledger and in generate_image's own result.
+		Provider:    p.ID(),
 		Model:       model,
 		Destination: "the fleet's own GPU engine（この配備が動かす自前のエンジン）",
 		Warnings:    warnings,
