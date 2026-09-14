@@ -62,6 +62,12 @@ type reportSignals struct {
 	MarkerTurnEnd  bool   // whether that idle was written at the end of a turn (status.TurnEnd)
 	MarkerAfterArm bool   // marker written at or after the oldest unreported instruction = minimal progressed
 	MarkerTS       string // that marker's RFC3339 (used to decide which instruction rows it covers)
+	// MarkerReason is status.SessionStatus.TurnEndReason from the same record: the qualifier
+	// persisted in the SAME write as the marker's idle+TurnEnd, so it survives independently of
+	// whether the notify hint (HintReason below) has arrived yet by this sweep. Only meaningful
+	// together with markerIdle() — a record with no TurnEnd write carries no reason either
+	// (Persist's zero-value struct literal), so reading it unconditionally is harmless.
+	MarkerReason string
 
 	PendingQuestion   bool // waiting on a question (interim — not a completion at all)
 	PendingPlan       bool // waiting on plan approval
@@ -139,7 +145,12 @@ type reportSignals struct {
 	// plain completion. Hence it is checked at the entry of evalReportEvidence.
 	AbortHeld bool
 
-	HintReason string // the qualifier the latest hint carried (turn-failed / turn-aborted)
+	// HintReason is the qualifier the latest hint carried (turn-failed / turn-aborted). It is
+	// an in-process memo (chat_report_reconcile.go's rc.hints), so it can lag or miss a sweep
+	// entirely (the writer's goroutine has not run yet, or the agent restarted). MarkerReason
+	// carries the same information persisted on disk (see evalReportEvidence) and is what
+	// keeps the qualifier from being lost rather than merely delayed when this one is empty.
+	HintReason string
 }
 
 // reportVerdict is the predicate's answer for one session at one sweep.
@@ -269,9 +280,18 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 	if len(idle) == 0 {
 		return reportVerdict{Why: "unknown"} // unknown stays unknown — never defaulted to idle
 	}
-	// An interruption says why the turn ended straight from the transcript, so it wins over the
-	// hint (hook-derived, and normally empty because an interruption fires no hook).
+	// The hint is preferred when present (unchanged from before MarkerReason existed), but a
+	// hint that has not arrived yet by this sweep — or never will (the agent restarted before
+	// its goroutine ran) — falls back to the reason persisted on the marker itself. Both name
+	// the same fact (docs/log/51's asymmetry no longer holds for this one qualifier: it is on
+	// the level too), so this is not a second source of truth, just a second copy of it.
 	reason := s.HintReason
+	if reason == "" {
+		reason = s.MarkerReason
+	}
+	// An interruption says why the turn ended straight from the transcript, so it wins over
+	// both of the above (hook-derived, and normally empty because an interruption fires no
+	// hook).
 	if s.Abort {
 		reason = s.AbortReason
 	}
@@ -347,6 +367,7 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 	var markerAt time.Time
 	if st, ok := status.Read(sid); ok {
 		s.MarkerState, s.MarkerTurnEnd, s.MarkerTS = st.State, st.TurnEnd, st.TS
+		s.MarkerReason = st.TurnEndReason
 		s.MarkerAfterArm = !reportTimeBefore(st.TS, since)
 		if t, err := time.Parse(time.RFC3339, st.TS); err == nil && st.TurnEnd {
 			markerAt = t

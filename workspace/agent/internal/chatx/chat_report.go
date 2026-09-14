@@ -36,6 +36,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -73,15 +74,18 @@ const ReportKindAnswerReady = "answer-ready"
 // provider-side error rather than an answer (agents.StateFailed). The kind stays
 // answer-ready because the EVENT is the same terminal completion; only the wording
 // differs, so the operator is told to read the error instead of the (non-existent)
-// result.
-const ReportReasonTurnFailed = "turn-failed"
+// result. Aliases status.TurnEndReasonFailed rather than defining its own literal — that
+// is also what gets persisted alongside status.SessionStatus.TurnEnd, and the two must
+// stay byte-identical or a persisted reason stops matching this constant's comparisons.
+const ReportReasonTurnFailed = status.TurnEndReasonFailed
 
 // ReportReasonTurnAborted qualifies an answer-ready report whose turn was CUT OFF
 // before it answered by something that clears on its own — a dropped connection, a
 // temporary rate limit (docs/log/47). It is deliberately distinct from turn-failed: there
 // the operator must NOT re-send until the cause is fixed, here re-sending IS the fix,
-// which is what the automatic resume after an abort acts on.
-const ReportReasonTurnAborted = "turn-aborted"
+// which is what the automatic resume after an abort acts on. Aliases
+// status.TurnEndReasonAborted (see ReportReasonTurnFailed).
+const ReportReasonTurnAborted = status.TurnEndReasonAborted
 
 // reportKindReopened is the COMPENSATION report (docs/log/51 §compensation / Phase 3): the
 // correction saying an already-delivered completion report was premature. It gets its own

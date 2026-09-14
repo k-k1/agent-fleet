@@ -7,6 +7,7 @@ package status
 // second and a rewrite of the same value cannot be told from no write at all.
 
 import (
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -240,6 +241,57 @@ func TestPersistClearsTheSettledEnd(t *testing.T) {
 
 	if st, _ := Read(sid); st.TurnEndAt != "" || st.TurnEnd {
 		t.Fatalf("the previous turn's end survived into the next turn: %+v", st)
+	}
+}
+
+// PersistTurnEndReason must write the reason in the SAME record as the fact — splitting
+// them across two writes (or two stores) is the bug it exists to close (see
+// SessionStatus.TurnEndReason).
+func TestPersistTurnEndReasonWritesTheReasonWithTheFact(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const sid = "slot-failed"
+
+	PersistTurnEndReason(sid, "idle", TurnEndReasonFailed)
+
+	st, ok := Read(sid)
+	if !ok || st.State != "idle" || !st.TurnEnd || st.TurnEndReason != TurnEndReasonFailed {
+		t.Fatalf("got %+v, ok=%v; want idle/TurnEnd=true/reason=%q", st, ok, TurnEndReasonFailed)
+	}
+}
+
+// PersistTurnEnd (no reason) must leave TurnEndReason empty — a clean completion is not
+// distinguishable from "no reason recorded" on purpose (see SessionStatus.TurnEndReason).
+func TestPersistTurnEndCarriesNoReason(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const sid = "slot-clean"
+
+	PersistTurnEnd(sid, "idle")
+
+	if st, _ := Read(sid); st.TurnEndReason != "" {
+		t.Fatalf("a clean turn end carried a reason: %+v", st)
+	}
+}
+
+// A record written before TurnEndReason existed has no such key at all. It must read back
+// as an empty reason, not fail to decode or panic — "we don't know why" is exactly what an
+// old record already means for every OTHER qualifier this store has grown over time.
+func TestOldStatusRecordWithNoTurnEndReasonFieldReadsAsEmpty(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const sid = "slot-legacy"
+	if err := os.MkdirAll(statusFiles.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"state":"idle","ts":"2026-01-01T00:00:00Z","turnEnd":true,"turnEndAt":"2026-01-01T00:00:00Z","rev":"abc"}`
+	if err := os.WriteFile(statusFiles.Path(sid), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	st, ok := Read(sid)
+	if !ok {
+		t.Fatal("an old-format record must still be readable")
+	}
+	if !st.TurnEnd || st.TurnEndReason != "" {
+		t.Fatalf("got %+v, want TurnEnd=true and an empty (not missing/crashed) reason", st)
 	}
 }
 
