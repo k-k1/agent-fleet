@@ -710,7 +710,7 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
   const image = engineIsImage(row);
   const isLora = kind === "lora";
   const act = initialAct;
-  const [sourceType, setSourceType] = useState<CatalogSource>(hit?.source === "civitai" || initialSource === "civitai" ? "civitai" : "hf");
+  const [sourceType, setSourceType] = useState<CatalogSource>(hit?.source === "civitai" || initialSource === "civitai" || initialSource === "civitai-red" ? "civitai" : "hf");
   const [manualRef, setManualRef] = useState(hit?.model_ref || hit?.ref || "");
   const [versions, setVersions] = useState<IngestVersion[]>([]);
   const [versionRef, setVersionRef] = useState(hit?.ref || "");
@@ -743,14 +743,14 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
   const slots = flags.filter((flag) => act === "attach" ? !!flag && !taken.has(flag) : taken.has(flag));
   const rawRef = manualRef.trim();
   const hfURL = rawRef.match(/^https?:\/\/huggingface\.co\/([^/?#]+\/[^/?#]+)(?:\/(?:blob|resolve)\/([^/?#]+)\/([^?#]+))?/);
-  const civitaiPage = rawRef.match(/^https?:\/\/(?:[\w-]+\.)*civitai\.com\/models\/(\d+)/);
+  const civitaiPage = rawRef.match(/^https?:\/\/(?:[\w-]+\.)*civitai\.(?:com|red)\/models\/(\d+)/);
   const civitaiVersionParam = rawRef.match(/[?&]modelVersionId=(\d+)/);
   const civitaiLegacy = rawRef.match(/^civitai:(\d+)$/);
   const civitaiModelRef = hit?.model_ref || civitaiPage?.[1] || "";
   const pastedVersion = (sourceType === "civitai" ? civitaiVersionParam?.[1] || civitaiLegacy?.[1] : hfURL?.[2]) || "";
   const repo = sourceType === "civitai" ? civitaiModelRef || pastedVersion : hit?.model_ref || hfURL?.[1] || rawRef || hit?.ref || "";
   const pastedFile = sourceType === "hf" ? hfURL?.[3] || "" : "";
-  const civitaiVersionURL = /^https?:\/\/(?:[\w-]+\.)*civitai\.com\//.test(rawRef) && !!civitaiVersionParam;
+  const civitaiVersionURL = /^https?:\/\/(?:[\w-]+\.)*civitai\.(?:com|red)\//.test(rawRef) && !!civitaiVersionParam;
   const plainURL = /^https?:\/\//.test(rawRef) && !hfURL && !civitaiVersionURL;
   const resetInspection = () => {
     ++inspectSeq.current; ++filesSeq.current;
@@ -758,7 +758,7 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
   };
   const changeManualRef = (value: string) => {
     setManualRef(value);
-    if (/^civitai:\d+$/.test(value.trim()) || (/civitai\.com\//.test(value) && /[?&]modelVersionId=\d+/.test(value))) setSourceType("civitai");
+    if (/^civitai:\d+$/.test(value.trim()) || (/civitai\.(?:com|red)\//.test(value) && /[?&]modelVersionId=\d+/.test(value))) setSourceType("civitai");
     else if (/huggingface\.co\//.test(value)) setSourceType("hf");
     resetInspection();
   };

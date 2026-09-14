@@ -104,6 +104,7 @@ describe("model catalogue operation regressions", () => {
   it.each([
     ["the compact version reference", "civitai:782002"],
     ["the version-only model page", "https://civitai.com/models/?modelVersionId=782002"],
+    ["the civitai.red version-only model page", "https://civitai.red/models/?modelVersionId=782002"],
   ])("keeps legacy Civitai input working for %s", async (_case, source) => {
     mockEngineAPI([imageRow]);
     apiJSON.mockImplementation((path: string) => {
