@@ -162,7 +162,7 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
   const loras = provider?.loras || [];
   const model = models.find((m) => m.id === draft.model) || null;
   // Engine-level fields live on the PROVIDER, not the status root: a fleet with both comfy
-  // and sdcpp has two answers, and reading the root would silently mix them.
+  // and openai-compat has two answers, and reading the root would silently mix them.
   const samplers = provider?.samplers || [];
   const schedulers = provider?.schedulers || [];
   const loraWeightMax = provider?.lora_weight_max || 2;

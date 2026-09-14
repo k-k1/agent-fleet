@@ -122,6 +122,20 @@ describe("EnginesAdminView", () => {
     expect(seg("常時稼働")?.className).not.toContain("active");
   });
 
+  // ADR 0083 decision 5: a row naming an images provider this build does not implement a client
+  // for must not look like every other row. `sdcpp`, retired the same ADR, is the row() default.
+  it("marks a row naming an images provider this build does not implement", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [row({ provider_unserved: true })] });
+    await mount();
+    expect(host!.textContent).toContain("sdcpp」を名乗っていますが");
+  });
+
+  it("leaves a row naming a servable provider unmarked", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [row({ provider: "comfy" })] });
+    await mount();
+    expect(host!.textContent).not.toContain("comfy」を名乗っていますが");
+  });
+
   it("warns about the bill only while an engine is pinned on, and names no price of its own", async () => {
     api.mockResolvedValue({ super_admin: true, engines: [row({ mode: "ondemand" })] });
     await mount();

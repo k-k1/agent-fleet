@@ -237,6 +237,21 @@ func (d engineDef) api() string {
 	return engineAPIChat
 }
 
+// imageServableProviders is the images-API vocabulary THIS BUILD implements a client for (ADR
+// 0083 decision 5): comfy's own wire shape, and the OpenAI Images API openai-compat speaks. A
+// row naming anything else — most likely `sdcpp`, retired the same ADR — cannot be served by
+// this software no matter what its lifecycle or mode say, and that used to be entirely silent:
+// the Workspace's imagegen.EngineLookup simply never matched it, so generate_image vanished from
+// tools/list with no error anywhere.
+var imageServableProviders = map[string]bool{"comfy": true, "openai-compat": true}
+
+// imageProviderServable answers whether THIS BUILD can serve a row's declared provider. Always
+// true off the images API: the chat role's provider vocabulary (llamacpp and friends) is a
+// different question this ADR does not touch.
+func imageProviderServable(d engineDef) bool {
+	return d.api() != engineAPIImages || imageServableProviders[strings.TrimSpace(d.Provider)]
+}
+
 // engineRuntimeState is one engine, fully wired: the ECS adapter, its controller, its
 // demand counter and the key it presents upstream.
 type engineRuntimeState struct {
@@ -809,6 +824,14 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		// to publish its active set because a startup context had ended would be a box that
 		// loads nothing.
 		ctx := context.WithoutCancel(ctx)
+		// Said once per (re)build — at boot, and again if the table reloader or the remote
+		// catalogue mirror adopts this row later — rather than gated into silence: this row still
+		// gets a runtime state below, so it shows up in the admin panel with the mark row() adds,
+		// instead of just not existing where an operator would look for it (ADR 0083 decision 5).
+		if !imageProviderServable(d) {
+			log.Printf("engines: %s declares images provider %q, which this build does not implement a client for (servable: comfy, openai-compat) - generate_image on this row will not work",
+				d.Key, d.Provider)
+		}
 		// 🔴 A remote row with nothing to borrow FROM is refused rather than served. The shape that
 		// reaches here is a hand-written `lifecycle:"remote"` table row on a deployment where
 		// AF_REMOTE_ENGINE_URL / _TOKEN are unset: without the handle there is no catalogue source,

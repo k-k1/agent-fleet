@@ -732,7 +732,7 @@ func TestComfyRefusesAnOversizedUpload(t *testing.T) {
 }
 
 // A model with no declared baseModel is refused rather than guessed at — decision 2 exists so
-// the family is a stated fact, and comfy has no fallback the way sdcpp's id-sniffing guess does.
+// the family is a stated fact, and comfy has no id-sniffing fallback at all.
 //
 // The refusal has to separate the two ways it happens, because they need different fixes and
 // only one of them LOOKS wrong on the admin screen: nothing declared (a seeded row) versus an
