@@ -254,12 +254,29 @@ engine appears under its own key, which is a distinction a member can act on.
 
 ## Open questions (decide after measuring)
 
-1. **What does a dial to a switched-off LAN host actually cost?** A refused connection is
-   immediate; a powered-off machine is a SYN that goes nowhere, and the bound is then the health
-   probe's 5 second cap (`engine_gateway.go:1074`) — per request, on the preferred route, every
-   time. If that is too long to sit in front of every picture, the answer is a short negative
-   cache on the row rather than a longer wait, and it belongs in P0's measurement, not in this
-   text as a guess.
+1. ~~**What does a dial to a switched-off LAN host actually cost?**~~ **Measured (2026-09-14). It
+   is about 3 seconds, and the negative cache is in.**
+
+   Dialled an operator's LAN ComfyUI host while it was switched off, from a container on the same
+   network, with the health probe's own 5-second bound and health path: **`No route to host` after
+   3.05 / 3.05 / 3.08 / 3.11 s** (four samples). The two shapes this document expected bracket it
+   — a refused connection to a closed port came back in **0.15 ms**, and an address that drops the
+   SYN silently held for the cap's full **5.00 s**. So a switched-off machine on the same network
+   costs **3 seconds, not the 5 the cap suggests**, because the kernel gives up on ARP first. To
+   keep "unreachable" apart from "blocked", a different address on the same LAN was checked first
+   and answered **HTTP 200 in 2.4 ms** — the route exists, so the 3 seconds is that machine's own
+   state.
+
+   ⚠️ Measured from the Workspace container, while the party that actually probes is the Control
+   Plane. On a native / docker deployment whose CP sits on that same LAN (what ADR 0076 aims at)
+   the number carries over; from an ECS deployment reaching an operator's network the path is a
+   different one, and that has not been measured.
+
+   `ensureReady` does not cache the health call, so those 3 seconds sat in front of the preferred
+   route **on every picture**. Hence the answer this document already named — **a short negative
+   cache on the row** (`engineExternalDownTTL`, the same 10-second window as
+   `engineExternalWarmTTL`). External rows only: a managed row's "not answering" means the box it
+   just bought is still booting. Only the negative is cached; a healthy answer clears it.
 2. **Does the image pane (ADR 0081) draw N fleet providers sensibly?** Its model list comes from
    one provider's `Studio` answer (`imagegen.go:376-435`); two rows of the same kind will offer
    two model lists whose ids may overlap, and which engine a picture was made on has to stay
