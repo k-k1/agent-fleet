@@ -180,7 +180,6 @@ export const admin = {
   "admin.engines_model_add_lora_base_pick": "微調整の対象を選んでください",
   "admin.engines_model_add_lora_scale": "強さ（0〜2・既定 1）",
   "admin.engines_model_add_lora_note": "LoRA は、名指しした土台のモデルが起動するたびに、そのモデルだけに読み込まれます。起動メニューには現れません。ファイルの置き場は {p} です。",
-  "admin.engines_ingest_family_hint": "リポジトリ側はこれを「{n}」と呼んでいます。表示名なので、対応するモデルファミリーを上から選んでください。",
   "admin.engines_model_add_family_pick": "選んでください",
   "admin.engines_model_add_part": "役割",
   "admin.engines_model_add_part_whole": "チェックポイント（単一ファイル）",
@@ -230,36 +229,14 @@ export const admin = {
   // 「モデルを追加」をペインで開く（ADR 0072 follow-up）。ダウンロードは数分かかり、
   // 終点は「取り込めた」ではなく「使える」——その 2 つは 1 回の有効化で隔たっている。
   "admin.engines_add_pane_gone": "このエンジンは、この配備にもう無いか、いまのあなたの権限では見えません。",
-  "admin.engines_add_pane_running": "ダウンロード中です（{id}）。この面は開いたままで構いません——終わるとここに出ます。",
   "admin.engines_add_pane_done": "「{id}」を取り込みました。まだ無効です。有効にすると箱へ同期されます。",
   "admin.engines_add_pane_failed": "取り込みに失敗しました（{id}）。",
   "admin.engines_add_pane_enable": "有効にする",
   "admin.engines_add_pane_enabled": "有効にしました。モデル一覧に出ます。",
   "admin.engines_wizard_title": "モデルを追加",
   "admin.engines_wizard_title_lora": "LoRA を追加",
-  "admin.engines_wizard_step_act": "何をする？",
-  "admin.engines_wizard_step_find": "どこから",
-  "admin.engines_wizard_step_file": "どれを",
-  "admin.engines_wizard_step_confirm": "確認",
-  "admin.engines_wizard_act_new": "新しいモデルを追加",
-  "admin.engines_wizard_act_new_why": "この一覧に新しい行を作ります。",
-  "admin.engines_wizard_act_attach": "既存の行に部品を足す",
-  "admin.engines_wizard_act_attach_why": "VAE やテキストエンコーダなど。行の他の欄（ファミリー・ライセンス・有効状態）は触りません。",
-  "admin.engines_wizard_act_replace": "既存の行のファイルを差し替える",
-  "admin.engines_wizard_act_replace_why": "同じ枠のファイルだけを入れ替えます。量子化を変えるときなど。",
-  "admin.engines_wizard_target": "どの行に？",
-  "admin.engines_wizard_target_pick": "行を選んでください",
-  "admin.engines_wizard_role": "この行のどの枠に？",
   "admin.engines_wizard_role_pick": "枠を選んでください",
-  "admin.engines_wizard_no_rows": "この一覧にはまだ行がありません。「新しいモデルを追加」から始めてください。",
-  "admin.engines_wizard_need_target": "足す先の行を選んでください。",
-  "admin.engines_wizard_need_role": "どの枠に入れるかを選んでください。",
   // 空いている枠が無い／埋まっている枠が無い。押せない理由をボタンの横で言う。
-  "admin.engines_wizard_no_slots_attach": "この行には空いている枠がありません。入れ替えるなら「差し替える」を選んでください。",
-  "admin.engines_wizard_no_slots_replace": "この行にはまだファイルがありません。「部品を足す」を選んでください。",
-  "admin.engines_wizard_need_repo": "リポジトリ名か URL を入れるか、上の検索から選んでください。",
-  "admin.engines_wizard_repo_note": "`owner/name`、モデルページの URL、`civitai:<versionId>` のどれでも構いません。検索は入口で、必須ではありません。",
-  "admin.engines_wizard_need_file": "ファイルを選んでください。",
   "admin.engines_wizard_cannot": "この配備ではこのファイルを取り込めません（上の理由）。",
   "admin.engines_wizard_need_id": "id を入れてください。",
   "admin.engines_wizard_need_family": "モデル族を選んでください。このエンジンはモデル族でワークフローを選び、推測はしません。",
@@ -267,14 +244,6 @@ export const admin = {
   "admin.engines_wizard_vae_take": "このチェックポイントは VAE を同梱していないので、{f} も一緒に取り込んで `--vae` として足します（{n}・ライセンス {l}）",
   "admin.engines_wizard_vae_staged": "このチェックポイントは VAE を同梱していないので、すでにこの配備にある {f} を `--vae` として足します（ダウンロードなし）",
   "admin.engines_wizard_vae_none": "このチェックポイントは VAE を同梱しておらず、この族の既定 VAE もこの配備にはありません。取り込んだあと、単体の VAE を `--vae` として足すまで生成できません。",
-  "admin.engines_wizard_plan_new": "新しい行「{id}」を作ります。",
-  "admin.engines_wizard_plan_attach": "「{id}」の {part} として足します。行の他の欄は変わりません。",
-  "admin.engines_wizard_plan_replace": "「{id}」の {part} を差し替えます。行の他の欄は変わりません。",
-  "admin.engines_wizard_plan_from": "{r} の {f}（{n}）をダウンロードします。",
-  "admin.engines_wizard_plan_after": "終わると、この一覧に無効の行として現れます。有効にすると箱へ同期されます。",
-  "admin.engines_wizard_named_file": "この URL は {f} を指しています。次へ進むとこのファイルを調べます。",
-  "admin.engines_wizard_back": "戻る",
-  "admin.engines_wizard_next": "次へ",
   "admin.engines_model_add_desc": "説明",
   // 任意。この経路には読み取る出所が無いので、ライセンスを人が書く唯一の場所になる。
   // 空のままなら行は「ライセンスの記録なし」と言う（空白のままにはしない）。
@@ -431,18 +400,11 @@ export const admin = {
   // 「これにする」で埋めたあと、その結果カードを残しておく見出し。元ページへのリンクも
   // トリガ語もライセンスもこのカードにしかなく、下のリポジトリ欄は civitai:1759168 の
   // ような id なので、消すと取り込もうとしているものを確かめる手段がなくなる。
-  "admin.engines_ingest_picked": "選んだ結果",
-  "admin.engines_ingest_repo": "リポジトリ",
-  "admin.engines_ingest_file": "ファイル名",
   // 素の https URL を貼ったときだけ、この欄はファイル名ではなく sha256 になる（listable()）。
   // 同じラベルのまま「name.safetensors」を例示すると、この欄に入れてはいけない唯一のものを
   // 求めることになる。ラベルごと差し替える。
-  "admin.engines_ingest_sha256": "sha256",
-  "admin.engines_ingest_sha256_ph": "64 桁の 16 進",
   "admin.engines_ingest_resolve": "調べる",
   // ファイル名を持っていない状態が普通なので、「調べる」は最初にリポジトリの中身を聞く。
-  "admin.engines_ingest_pick": "選んでください",
-  "admin.engines_ingest_no_files": "このリポジトリに、このエンジンが読み込めて sha256 のあるファイルがありません。",
   // 🔴 モデル側の上限であって、この配備で回せる窓ではない。30B は 262144 と申告するが
   // L4 には入らないので 32768 で走らせている。誰の数字かを言わずに出さない。
   "admin.engines_ingest_ctx_max": "モデルの上限 {n}",
@@ -469,7 +431,6 @@ export const admin = {
   "admin.engines_params_cfg_ignored": "この族では CFG は使われません（ガイダンスが別の摘みです）。",
   "admin.engines_params_clip_skip_note": "clip skip は記録だけで、いまのワークフローでは使われません。",
   // ファミリーの推定。決定 2 のとおり宣言するのは運用者なので、入れておくだけで、外せる。
-  "admin.engines_family_suggested": "「{n}」から推定しました。違っていれば選び直してください。",
   "admin.engines_ingest_go": "取り込む",
   // 分割モデルは 1 回の取り込みでは組み上がらない（FLUX.1 は unet + clip_l + t5 + vae の 4 本）。
   // 既にある id を指すと CP は新規作成を断る——行のファイル・ライセンス・有効状態を
@@ -482,21 +443,18 @@ export const admin = {
   // CP に s3:DeleteObject が無く（ADR 0072 決定 7）、差し替えが終わるのは数分後の
   // ジョブ照合の中で、断られた削除を報告する相手がいない。鍵は共有されている
   // （text_encoders/ は複数の行から指されている）ので、ここで消すと無関係な行が壊れる。
-  "admin.engines_ingest_replace_keeps_bytes": "前のファイルはバケットに残ります（消すのは行を忘れるときの「ファイルも消す」です）。",
   "admin.engines_ingest_id_taken": "この id はもう使われています。別の id にするか、上で「部品として足す」か「差し替える」を選んでください。",
   // 🔴 押す前に「載るかどうか」を言う。実機で借りた llm は L4（24 GB）に重み 17 GB を載せた
   // あと KV キャッシュ 16 GB で `cudaMalloc failed: out of memory` で落ちた——GPU を買って
   // 4 分後、つまり実費。画面が出していたのはファイル名とサイズだけだった。
   // 重みだけでカードを超える候補は一覧の時点で印を付ける（KV は解決するまで分からないので、
   // 印が無いことは「載る」ではなく「ここでは否定できない」）。
-  "admin.engines_ingest_over_card": "⚠ カード超過",
   "admin.engines_ingest_fit_weights": "重み {n} MiB",
   // 🔴 要素型（-ctk/-ctv）は CloudFormation のパラメータでエンジンの表に届かないので読めない。
   // f16 と仮定していることを言い切る（量子化 KV の配備では過大評価＝安全側）。
   "admin.engines_ingest_fit_kv": "KV キャッシュ {n} MiB（{c} トークン・f16 と仮定）",
   "admin.engines_ingest_fit_kv_unread": "KV キャッシュは読めませんでした（この数字は重みだけです）",
   "admin.engines_ingest_fit_card": "合計 {n} MiB / このカード {c} MiB",
-  "admin.engines_ingest_fit_over": "このカードには載りません。小さい量子化を選ぶか、ウィンドウを狭めてください。",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
   "admin.engines_ingest_gated": "gated のリポジトリです。運用者のアカウントで条項に同意済みのトークンを使って取り込みます。",
   "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。下の「Hugging Face のトークン」で運用者のトークンを登録してください（読むのは取り込みタスクだけです）。",
@@ -537,7 +495,6 @@ export const admin = {
   // 商用利用ではない（ADR 0072 決定 10 は「取り込みは拒まない」と決めている）。
   "admin.engines_ingest_noncommercial":
     "🔴 非商用ライセンスです。商用の場面での利用と、生成物の商用利用が制限されえます。有効にする前にライセンス本文を確認してください。",
-  "admin.engines_ingest_note": "リポジトリ名（`owner/name`）でも、モデルページの URL を貼っても構いません。sha256・サイズ・ライセンスは CP がその API から読みます。ダウンロードするのは取り込みタスクで、CP は S3 にもトークンにも触りません。取り込めた行は無効の状態で作られます。",
   // 🔴 これは出来事の記録で、カタログではない。モデルを消してもジョブは残る（「この取り込みが
   // 走って完了した」は真であり続ける）ので、見出しと日時を付けて「履歴」と読めるようにする。
   // 日時が無いと、消えたモデルの隣の「完了」が現在の状態と読める。

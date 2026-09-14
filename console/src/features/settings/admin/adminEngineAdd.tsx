@@ -7,7 +7,6 @@ import { Button, IconButton } from "../../../ui/Button.tsx";
 import { Modal } from "../../../ui/Modal.tsx";
 import { ViewHead } from "../../../ui/ViewHead.tsx";
 import {
-  EngineIngest,
   EngineIngestJobs,
   EngineModelAdd,
   engineIdFromFile,
@@ -100,21 +99,6 @@ export function EngineAddView({ engineKey, lora, initialView = "search", headerA
       </>}
     </div>
   );
-}
-
-/** Compatibility harness that keeps the former ingest's detailed parser/guard regression suite
- * available. Product navigation never mounts the legacy workflow. */
-export function LegacyEngineAddView({ engineKey, lora }: { engineKey: string; lora: boolean }) {
-  const tr = useT();
-  const { rows, load } = useEngineRows();
-  const [job, setJob] = useState<IngestJob | null>(null);
-  const row = (rows || []).find((candidate) => candidate.key === engineKey);
-  if (!row) return null;
-  if (job) return <p>{(tr("admin.engines_add_pane_running") as string).replace("{id}", job.model_id)}</p>;
-  return <EngineIngest engineKey={engineKey} isImage={engineIsImage(row)} isLora={lora}
-    baseModels={row.base_models} fileFlags={row.file_flags}
-    models={(row.model_rows || []).filter((model) => (model.kind === "lora") === lora)}
-    cardMiB={row.class?.vram_mib} busy={false} open setOpen={() => {}} onStarted={load} onJob={setJob} />;
 }
 
 type CatalogProps = {

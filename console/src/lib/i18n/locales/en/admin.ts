@@ -191,7 +191,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_lora_base_pick": "choose the model it fine-tunes",
   "admin.engines_model_add_lora_scale": "strength (0-2, default 1)",
   "admin.engines_model_add_lora_note": "A LoRA is loaded with the model it names and with no other, every time that model is started. Nothing appears in the launch menu for it. Its file belongs under {p}.",
-  "admin.engines_ingest_family_hint": "The repository calls this \"{n}\". That is a display name, so pick the family it corresponds to above.",
   "admin.engines_model_add_family_pick": "choose one",
   "admin.engines_model_add_part": "part",
   "admin.engines_model_add_part_whole": "checkpoint (single file)",
@@ -243,35 +242,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // 「モデルを追加」 as a pane (ADR 0072 follow-up). The download runs for minutes, and the end
   // of the work is not "taken in" but "usable" - one enable press apart.
   "admin.engines_add_pane_gone": "That engine is no longer on this deployment, or is not visible with your current grant.",
-  "admin.engines_add_pane_running": "Downloading ({id}). You can leave this open - it reports here when it finishes.",
   "admin.engines_add_pane_done": "\u201c{id}\u201d was taken in. It is still disabled; enabling it syncs it onto the box.",
   "admin.engines_add_pane_failed": "The download failed ({id}).",
   "admin.engines_add_pane_enable": "Enable it",
   "admin.engines_add_pane_enabled": "Enabled. It is in the model list now.",
   "admin.engines_wizard_title": "Add a model",
   "admin.engines_wizard_title_lora": "Add a LoRA",
-  "admin.engines_wizard_step_act": "What for?",
-  "admin.engines_wizard_step_find": "Where from",
-  "admin.engines_wizard_step_file": "Which file",
-  "admin.engines_wizard_step_confirm": "Confirm",
-  "admin.engines_wizard_act_new": "Add a new model",
-  "admin.engines_wizard_act_new_why": "Creates a new row in this list.",
-  "admin.engines_wizard_act_attach": "Add a part to a model that is here",
-  "admin.engines_wizard_act_attach_why": "A VAE, a text encoder. Nothing else about the row changes \u2014 not its family, its licence or whether it is on.",
-  "admin.engines_wizard_act_replace": "Replace a file of a model that is here",
-  "admin.engines_wizard_act_replace_why": "Swaps the file in one slot, e.g. for another quantisation. Everything else about the row stays.",
-  "admin.engines_wizard_target": "Which row?",
-  "admin.engines_wizard_target_pick": "Choose a row",
-  "admin.engines_wizard_role": "Which slot of that row?",
   "admin.engines_wizard_role_pick": "Choose a slot",
-  "admin.engines_wizard_no_rows": "This list has no rows yet. Start with \u201cAdd a new model\u201d.",
-  "admin.engines_wizard_need_target": "Choose the row it joins.",
-  "admin.engines_wizard_need_role": "Choose which slot it goes in.",
-  "admin.engines_wizard_no_slots_attach": "That row has no free slot. To exchange one, choose \u201creplace\u201d.",
-  "admin.engines_wizard_no_slots_replace": "That row holds no file yet. Choose \u201cadd a part\u201d.",
-  "admin.engines_wizard_need_repo": "Type a repository or a URL, or pick one from the search above.",
-  "admin.engines_wizard_repo_note": "`owner/name`, a model page URL, or `civitai:<versionId>` \u2014 any of them. The search is a way in, not a precondition.",
-  "admin.engines_wizard_need_file": "Choose the file.",
   "admin.engines_wizard_cannot": "This deployment cannot take that file in (the reason is above).",
   "admin.engines_wizard_need_id": "Give it an id.",
   "admin.engines_wizard_need_family": "Choose the family. This engine picks a workflow from it and will not guess one.",
@@ -279,14 +256,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_wizard_vae_take": "This checkpoint carries no VAE, so take {f} in as well and attach it as `--vae` ({n}, licence {l})",
   "admin.engines_wizard_vae_staged": "This checkpoint carries no VAE, so attach {f}, which this deployment already holds, as `--vae` (nothing is downloaded)",
   "admin.engines_wizard_vae_none": "This checkpoint carries no VAE and this deployment has no default one for its family. It cannot generate until a VAE is taken in and attached as `--vae`.",
-  "admin.engines_wizard_plan_new": "A new row \u201c{id}\u201d will be created.",
-  "admin.engines_wizard_plan_attach": "It joins \u201c{id}\u201d as its {part}. Nothing else about that row changes.",
-  "admin.engines_wizard_plan_replace": "It takes the place of \u201c{id}\u201d\u2019s {part}. Nothing else about that row changes.",
-  "admin.engines_wizard_plan_from": "{f} will be downloaded from {r} ({n}).",
-  "admin.engines_wizard_plan_after": "When it finishes it appears in this list, disabled. Enabling it syncs it onto the box.",
-  "admin.engines_wizard_named_file": "That URL names {f}. Next reads that file.",
-  "admin.engines_wizard_back": "Back",
-  "admin.engines_wizard_next": "Next",
   "admin.engines_model_add_desc": "description",
   // Optional. This route has no source to read a licence from, so it is the one place a person
   // types one. Left blank, the row says "licence not recorded" rather than showing a gap.
@@ -440,19 +409,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // the page, the trigger words and the licence are on that card and nowhere else, and the
   // repository field below is an id like `civitai:1759168` — so dropping it left no way to
   // check what is about to be taken in.
-  "admin.engines_ingest_picked": "Chosen result",
-  "admin.engines_ingest_repo": "repository",
-  "admin.engines_ingest_file": "file name",
   // With a plain https URL pasted above, this field is the sha256 rather than a file name
   // (listable()). Keeping the label and offering "name.safetensors" asks for the one thing
   // that field must not be given, so the label is swapped with it.
-  "admin.engines_ingest_sha256": "sha256",
-  "admin.engines_ingest_sha256_ph": "64 hex characters",
   "admin.engines_ingest_resolve": "Look it up",
   // Not having the filename in hand is the normal state, so "look it up" starts by asking the
   // repository what it holds.
-  "admin.engines_ingest_pick": "Choose one",
-  "admin.engines_ingest_no_files": "This repository offers nothing this engine could load with a sha256.",
   // 🔴 The MODEL's ceiling, not the window this deployment can run. The 30B declares 262144 and
   // does not fit an L4, so it runs at 32768. Never shown without saying whose number it is.
   "admin.engines_ingest_ctx_max": "the model's maximum is {n}",
@@ -481,7 +443,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_params_clip_skip_note": "Clip skip is recorded only; no workflow here reads it yet.",
   // The family suggestion. Decision 2 keeps the declaration with the operator, so it is filled
   // in and can be changed.
-  "admin.engines_family_suggested": "Guessed from \"{n}\". Pick another if that is wrong.",
   "admin.engines_ingest_go": "Take it in",
   // A split model is not one download (FLUX.1 is a unet, a clip_l, a t5 and a vae). The CP
   // refuses a plain ingest onto an id it already has — that would upsert the row's files,
@@ -496,7 +457,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // job reconciler where there is nobody to report a refused deletion to, and the keys are
   // shared (`text_encoders/` is pointed at from more than one row) — so deleting here breaks a
   // model nobody touched.
-  "admin.engines_ingest_replace_keeps_bytes": "The previous file stays in the bucket. Deleting bytes is “delete the files too” when a row is forgotten.",
   "admin.engines_ingest_id_taken": "That id is taken. Choose another, or tick “add it as a part” or “put this file in its place” above.",
   // 🔴 Whether it fits, said before the press. Measured on a borrowed llm engine: an L4 (24 GB)
   // took 17 GB of weights and then died on `cudaMalloc failed: out of memory … failed to
@@ -504,7 +464,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // purchased GPU after the button, and the panel had shown a filename and a size.
   // A candidate over the card on WEIGHTS ALONE is marked in the list; the cache is not known
   // until the file is resolved, so an unmarked one is "not ruled out here", never "it fits".
-  "admin.engines_ingest_over_card": "⚠ over the card",
   "admin.engines_ingest_fit_weights": "weights {n} MiB",
   // 🔴 The cache's element type cannot be read at all: -ctk/-ctv are CloudFormation parameters
   // that never reach the engine table. f16 is assumed and said so — a deployment running a
@@ -512,7 +471,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_fit_kv": "KV cache {n} MiB (at {c} tokens, assuming f16)",
   "admin.engines_ingest_fit_kv_unread": "the KV cache could not be read — this is the weights alone",
   "admin.engines_ingest_fit_card": "{n} MiB in total, against a {c} MiB card",
-  "admin.engines_ingest_fit_over": "It does not fit this card. Pick a smaller quantisation, or a narrower window.",
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
   "admin.engines_ingest_gated": "A gated repository. It is fetched with the operator's token, which has accepted its terms.",
   "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Register the operator's token under \u201cHugging Face token\u201d below — it is read by the ingest task only.",
@@ -546,7 +504,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_civitai_token_note": "One token for the whole deployment, separate from the Hugging Face one above. It is stored encrypted and written into the deployment's secret before every ingest — read by the ingest task only, and never handed to an engine instance.",
   "admin.engines_ingest_noncommercial":
     "🔴 A non-commercial licence. Both commercial use of the model and commercial use of what it generates may be restricted — read the licence before enabling this.",
-  "admin.engines_ingest_note": "A repository name (`owner/name`) or a pasted model-page URL both work. The sha256, the size and the licence are read from that source's own API by the control plane; the download is the ingest task's, which is also the only thing that touches S3 or the token. A row that arrives is created disabled.",
   // 🔴 A log of EVENTS, not the catalogue. A job stays after its model is gone ("this ingest
   // ran and finished" goes on being true), so it is headed and dated and reads as history.
   // Undated, a "done" beside a deleted model's id reads as that model's current state.
