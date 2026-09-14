@@ -231,6 +231,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.engine_files_missing": "This row does not hold the files its family's workflow reads.",
   "err.engine_vae_missing": "This checkpoint carries no VAE of its own, so every request would fail.",
   "err.engine_vae_unreadable": "The checkpoint's header could not be read, so whether it has a VAE is unknown.",
+  "err.engine_discover_unsupported": "This row is not an external ComfyUI row, so there is nothing to discover.",
+  "err.engine_discover_unreachable": "Could not reach that machine — it may be powered off or unreachable on the network.",
   "err.gated_not_accepted": "That account has not accepted this repository's terms yet.",
   "err.civitai_login_required": "That asset's uploader only allows downloads from a logged-in account.",
   "err.bad_source": "The source is not a valid one.",
