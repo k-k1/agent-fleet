@@ -96,6 +96,35 @@ export const FAMILY_CARDS: FamilyCard[] = [
     trialSteps: 4,
     sizes: DEFAULT_SIZES,
   },
+  {
+    id: "anima",
+    // Danbooru tags, natural-language captions, or the two mixed — the model card documents all
+    // three. `tags` is the dialect the chips below belong to and the one a prompt is most likely
+    // to be wrong in (lowercase, spaces not underscores, `@` before an artist name).
+    dialect: "tags",
+    // The model card's own recommended prefix, and the shorter one it tells Anima-Aesthetic
+    // users to prefer — the card says NOT to use score_* tags with that version, so offering
+    // both as separate chips is what keeps the advice honest for both checkpoints.
+    quality: ["masterpiece, best quality, score_7, safe", "masterpiece, best quality"],
+    steps: [30, 50],
+    cfg: [4, 5],
+    trialSteps: 12,
+    sizes: DEFAULT_SIZES,
+  },
+  {
+    id: "krea2",
+    dialect: "sentences",
+    // Krea 2 was trained for aesthetics rather than tag adherence, and its own prompt-enhancer
+    // node rewrites a short prompt into a paragraph. There is no quality-tag convention to offer.
+    quality: [],
+    // 🔴 The range spans the family's two modes: Turbo is 8 steps at cfg 1 (the family recipe and
+    // the only mode ComfyUI ships a template for), Raw is 52 steps with real guidance. A row
+    // declares which one it is; the card cannot, so it shows both ends rather than picking.
+    steps: [8, 52],
+    cfg: [1, 4.5],
+    trialSteps: 8,
+    sizes: DEFAULT_SIZES,
+  },
 ];
 
 const BY_ID = new Map(FAMILY_CARDS.map((c) => [c.id, c] as const));

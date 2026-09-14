@@ -36,11 +36,22 @@ func TestFamilyGuessOnlyAnswersWhatTheProviderCanRun(t *testing.T) {
 		// which is why that rule's needles are spelled out rather than shortened to "sd1".
 		{"SD 2.0", ""},
 		{"SD 2.1", ""},
+		// Anima answered "" until the family got a template, like SD1.5 before it.
+		{"Anima", "anima"},
+		// 🔴 The three reasons that rule matches WHOLE and not as a substring. Animagine is an
+		// SDXL fine-tune and must keep answering sdxl; the other two are video architectures
+		// with no template here, and taking them would silence the one mark that says so.
+		{"Animagine XL 3.1", "sdxl"},
+		{"AnimateDiff", ""},
+		{"Wan Animate", ""},
+		{"Krea 2", "krea2"},
+		{"Krea2", "krea2"},
+		// 🔴 FLUX.1 Krea dev is a FLUX.1 fine-tune and must stay there. It is why this family's
+		// needle carries the digit.
+		{"FLUX.1 Krea dev", "flux1"},
 		// 🔴 No template, so no suggestion. Measured on the same 20 rows: these are what
 		// Civitai ranks highest today, and a wrong family would silence `base_model_missing` —
 		// the row's only mark that it cannot generate.
-		{"Anima", ""},
-		{"Krea 2", ""},
 		{"LTXV 2.5", ""},
 		{"", ""},
 	} {

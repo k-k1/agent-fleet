@@ -4282,3 +4282,139 @@ golden はグラフの形を固定するだけで、それが「正しい」と�
 
 **残**: 実機で SD1.5 の行を 1 つ取り込み、寸法を名指さずに 1 枚生成して、被写体が
 二重になっていないことを見る。それまでこの族は「形は固定した」以上の主張を持たない。
+
+## 追記 — Anima を族の語彙に足した（2026-09-15）
+
+### なぜこの族で、残り 3 つではないのか
+
+`engineFamilyRules` の裏にある計測では、Civitai の月間上位 20 のうち族を持たない上流の
+base model が 4 つあった（`Anima`・`Krea 2`・`LTXV 2.5`・`SD 1.5 Hyper`）。SD1.5 は上の追記で
+答えた。Anima は、決定 0069 が語彙を広げるときに置いた同じ試験——**利用者側に回避手段が
+無いか**——で答える。無い。Anima は 2B のアニメ・イラスト向けモデル（CircleStone Labs と
+Comfy Org、NVIDIA の Cosmos-Predict2-2B が土台）で、そのチェックポイントとマージと LoRA は
+Civitai の上位の大きく育ちつつある一角を占めるのに、ここのどのテンプレートでも読み込めない。
+`Krea 2` と `LTXV 2.5` は今も `""` で、テンプレートができるまでそのままにする。
+
+決定 10 は動かしていない。種として配る既定は klein / Z-Image / SDXL のままで、これは
+運用者が宣言できるものの話であって、配備が同梱するものの話ではない。
+
+### 宣言は klein 型、サンプリングは SDXL 型
+
+Anima は 3 ファイルで公開されている——拡散モデル、テキストエンコーダの Qwen3-0.6B、そして
+Qwen-Image の VAE——ので、既にあった分割モデルの語彙 `--diffusion-model` / `--clip_l` /
+`--vae` でそのまま宣言できる。**新しい file flag は要らなかった。** 拡散モデル以外の 2 つも
+チェックポイントと同じ Hugging Face リポジトリ（`circlestone-labs/Anima`）にあり、
+**gated ではない**（2026-09-15 計測：`gated: false`）ので、3 つとも通常の ingest 経路を
+トークン無しで通る。
+
+一方でグラフは SDXL のものだ：`UNETLoader` + `CLIPLoader` + `VAELoader`、`CLIPTextEncode`
+2 つ、`EmptyLatentImage`、`KSampler`、`VAEDecode`。宣言が分割で、かつサンプリングが
+**guided** な最初の族であり、だから `comfyFamilyTakesNegative` と `comfyFamilyKnobs` には
+SDXL と同じ顔の項が増え、`engineComfyRequiredFlags` には klein と同じ顔の項が増えた。
+
+### テンプレートの中で間違いに見えて間違いでない 2 か所
+
+🔴 **CLIPLoader の `type: "stable_diffusion"` は効いていない。** ComfyUI は Anima の
+テキストエンコーダをこの欄では選ばない。`comfy/sd.py`（この配備が固定している v0.34.0）は
+state dict の hidden size を読み、1024 なら `TEModel.QWEN3_06B` と答え、1927 行の
+`comfy.text_encoders.anima` の枝に入る——この枝は `clip_type` のどの判定の**外**にある。
+`CLIPLoader` の type の値に `anima` はそもそも無い（nodes.py:1011）ので、これより本当のことは
+書けず、ここの値は ComfyUI 自身のテンプレートが入れている値そのものだ。Krea 2 を足すときは
+逆で、そちらが危ない側になる：`krea2` は `CLIPType` に**ある**ので、既定のままにすると
+エラー無しに別のエンコーダが選ばれる。
+
+🔴 **`EmptyLatentImage` は 4 チャンネルのノードで、Qwen-Image の VAE は 16 チャンネル。**
+`KSampler` は `comfy.sample.fix_empty_latent_channels` を呼び、**全ゼロの**潜在をモデル自身の
+チャンネル数まで繰り返して合わせる（`comfy/sample.py:45`）。編集経路が影響を受けないのも同じ
+理由で、`VAEEncode` の潜在は空ではなく、既にこの VAE の形で返ってくる。公式テンプレートが
+このノードを使っているのはまさにこのためだ。
+
+### 推測の規則を「全体一致」にしたのが本題
+
+`engineFamilyRules` の他の規則はすべて部分一致の needle だ。`anima` を部分一致にすると
+**Animagine**（上の規則が取るべき SDXL の fine-tune）・**AnimateDiff**・**Wan-Animate**
+（テンプレートの無い動画アーキテクチャ 2 つ）まで取ってしまい、そのたびに
+`base_model_missing`——その行が生成できないことを示す唯一の印——を消す。そこで
+`engineFamilyRule` に `equal` を足し、この族だけがそれを使う。Civitai 上の Anima の
+チェックポイントとマージは、いずれも `Anima` という裸の文字列を出している。
+
+### 測っていないこと
+
+🔴 **Anima はここで一度も GPU で走らせていない。** recipe（30 steps・cfg 4・euler・simple）は
+ComfyUI 自身がこの族向けに同梱しているテンプレート
+（`workflow_templates/templates/image_anima_base_v1.json`）で、model card が印刷している範囲
+（30〜50 steps・CFG 4〜5）の中にある——**実測ではなく出典**であり、SD3.5 の前科（golden は緑の
+まま実機で全く生成できなかった）がそのまま当てはまる。golden はグラフの形を固定するだけで、
+それ以上は何も主張しない。
+
+⚠️ この recipe は **base / Aesthetic** の値だ。Anima-Turbo は cfg 1・8〜12 steps に蒸留された
+別のチェックポイントで、30/4 で回すと焼ける。それは行の `params` が宣言することで、
+SD1.5 の蒸留版と同じ扱いになる。
+
+**残**: 実機で Anima の行を 1 つ（3 ファイル）取り込み、1 枚生成して、ノイズではなくアニメの
+絵が返ることを見る——テキストエンコーダが違っていれば最初に失われるのがそこだ。それまで
+この族は「形は固定した」以上の主張を持たない。
+
+## 追記 — Krea 2 を族の語彙に足した（2026-09-15）
+
+### 宣言は anima と同じで、罠は正反対
+
+Krea 2 は 12.9B の DiT（Krea 初の基盤モデル）で、Anima と同じ 3 部構成——拡散モデル、
+Qwen3-VL-4B のテキストエンコーダ、Qwen-Image の VAE——で公開されている。だから
+`--diffusion-model` / `--clip_l` / `--vae` で宣言でき、こちらも新しい flag は要らない。
+**VAE は Anima と同じファイル**なので、2 つの行が 1 つの S3 キーを指すことになるが、
+`text_encoders/` は P2 以来 SD3.5 と FLUX.1 で共有されていて、会計は既にそれを扱える。
+
+🔴 **CLIPLoader の `type: "krea2"` は読まれる。そして間違えても黙っている。**
+`comfy/sd.py`（v0.34.0）は `clip_type == CLIPType.KREA2` を通ってしか Krea2 の tokenizer に
+届かない。同じ Qwen3-VL-4B のファイルをノードの既定で読み込むと汎用の `qwen3vl` の枝に落ち、
+そのまま読み込み・エンコード・サンプリングが通って絵が返る——モデルが訓練されたものとは
+違う条件付けで作られた絵が、どの層にもエラー無しで。Anima はちょうど逆の事例
+（type は効かず、エンコーダは検出される）で、2 つのテンプレートは互いにそれを書いている。
+
+**ここではファイルの出所も効いてくる。** `krea/Krea-2-Raw` と `krea/Krea-2-Turbo` は
+**gated**（2026-09-15 計測：匿名の `README.md` が 401）。`Comfy-Org/Krea-2` は gated でなく、
+拡散モデル群・エンコーダ 2 種・VAE を持っている。取り込むべきは後者で、前者は ingest タスク
+側のトークンが要る——決定 6 が既に書いている仕掛けのほうだ。
+
+### recipe は蒸留版の値で、それは好みでなく出典
+
+ComfyUI が同梱しているのは **Turbo のテンプレートだけ**（`image_krea2_turbo_t2i.json` と
+INT8 の 2 種）で Raw 用は無い。だから引用できる recipe は 8 steps・cfg 1・euler・simple に
+なる。Raw の公表値である 52 steps と実効のある cfg は、行の `params` が宣言する。これは上の
+anima の追記と正反対の向きだが（あちらは族の既定が非蒸留で Turbo が宣言側）、どちらも規則は
+同じだ：**誰かがグラフとして公開した数字を採り、もう一方のモードの数字を発明しない。**
+
+同梱テンプレートから 1 か所だけ離れている。ComfyUI は Turbo が cfg 1 で走るため negative を
+`ConditioningZeroOut` で潰しているが、このグラフは本物の negative をエンコードする——同じ
+テンプレートが Raw の行も背負うからだ。cfg 1 では両者の画素は一致し、余分なエンコードは毎回
+同じ文字列なので、ComfyUI は 2 回目以降を実行キャッシュから返す。
+
+### 能力の申告が「族」から「行」になった
+
+`comfyModelTakesNegative` は族だけで答えていた。Krea 2 ではそれは、この族の**大半の**利用者に
+「あなたの negative prompt は絵に届く」と嘘をつくことになる。Turbo が普通の行で、それは
+cfg 1 を宣言し、cfg 1 の guidance は `uncond + 1*(cond - uncond)`＝`cond` そのもの——negative の
+枝に何を繋いでいようと関係ない。
+
+そこで 3 つの面が族ではなく**行の実効 cfg** を読むようになった：
+
+- `Caps.Negative`（`comfyModelTakesNegative`）
+- フォームの項目一覧（`comfyModelKnobs`・新設。能力が「無視する」と言っている値の入力欄を
+  出すのは、利用者の目の前で 2 つの面が食い違うこと）
+- 運用者の除外語が適用されなかったという警告（`comfyNegativeIgnoredWarning`。**理由**も
+  族でなく行の cfg で言うようになった）
+
+`comfyFamilyTakesNegative` は残り、意味は「この族のテンプレートが negative を配線しているか」
+だけになった。同じ訂正は Anima-Turbo と、cfg 1 を宣言した蒸留版 SD1.5 にも効く——この変更前は
+どちらも誤って申告されていた。
+
+### 測っていないこと
+
+🔴 **Krea 2 はここで一度も GPU で走らせていない。** しかも語彙の中で最大の族だ：
+`krea2_turbo_fp8_scaled` が 13.1 GB、fp8 のテキストエンコーダがさらに 5.2 GB で、L4（24 GB）が
+下限、bf16（26.3 + 8.9 GB）なら L40S が要る。golden はグラフの形を固定するだけで、それ以上は
+何も主張しない。
+
+**残**: 実機で Krea 2 Turbo の行を 1 つ（3 ファイル）取り込み、1 枚生成して、絵がプロンプトに
+沿っていることを見る——汎用 `qwen3vl` での誤読は、形では見えないこの族固有の壊れ方だ。

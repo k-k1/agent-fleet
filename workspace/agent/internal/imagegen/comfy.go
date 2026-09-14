@@ -155,7 +155,7 @@ func (p *comfyProvider) Caps(model string) Caps {
 func comfyFamilyKnobs(family comfyFamily) []string {
 	knobs := []string{"steps"}
 	switch family {
-	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35:
+	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyAnima, ComfyFamilyKrea2:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
 	case ComfyFamilyZImage:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
@@ -168,6 +168,24 @@ func comfyFamilyKnobs(family comfyFamily) []string {
 		knobs = append(knobs, "negative")
 	}
 	return knobs
+}
+
+// comfyModelKnobs is comfyFamilyKnobs for ONE ROW: the family's list, minus the negative prompt
+// when that row is declared at cfg 1 and cancels it. The form draws its fields from this, and
+// Caps.Negative answers the same question through comfyModelTakesNegative — a field offered for
+// a value the capability says is ignored is the pair disagreeing in front of the member.
+func comfyModelKnobs(conn EngineConn, family comfyFamily, model string) []string {
+	knobs := comfyFamilyKnobs(family)
+	if comfyModelTakesNegative(conn, model) {
+		return knobs
+	}
+	out := knobs[:0:0]
+	for _, k := range knobs {
+		if k != "negative" {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 func comfyFamilyReadsKnob(family comfyFamily, knob string) bool {
@@ -202,15 +220,25 @@ func comfyIgnoredParamWarnings(family comfyFamily, p *EngineParams) []string {
 	return out
 }
 
-// comfyModelTakesNegative answers whether this model's template samples with a negative branch
-// at all. A model whose family is not declared answers false: the request will be refused before
-// a graph exists, and "yes it would have been honoured" is not a useful thing to have said.
+// comfyModelTakesNegative answers whether a negative prompt can move THIS MODEL's picture. A
+// model whose family is not declared answers false: the request will be refused before a graph
+// exists, and "yes it would have been honoured" is not a useful thing to have said.
+//
+// 🔴 The family is necessary and not sufficient. A guided template still samples at whatever cfg
+// the catalogue row declares, and at cfg 1 classifier-free guidance is `uncond + 1*(cond -
+// uncond)` — cond exactly, whatever is wired into the negative branch. That is not a corner case
+// any more: the distilled member of a guided family is the NORMAL row for two of the seven
+// families now (Krea 2 Turbo declares cfg 1, Anima-Turbo does too), and answering with the
+// family alone would tell a member their negative prompt reaches a picture it cannot touch.
 func comfyModelTakesNegative(conn EngineConn, model string) bool {
 	family, ok := comfyFamilyFor(conn, model)
-	return ok && comfyFamilyTakesNegative(family)
+	if !ok || !comfyFamilyTakesNegative(family) {
+		return false
+	}
+	return comfyFamilyRecipes[family].with(conn.Params[model]).CFG != 1
 }
 
-// comfyFamilyTakesNegative is which of the six templates a negative prompt can actually move.
+// comfyFamilyTakesNegative is which of the seven templates a negative prompt can actually move.
 //
 // 🔴 Only the GUIDED families. The other three are distilled models sampled at cfg 1 (zimage's
 // KSampler, klein's CFGGuider) or with FLUX.1's guidance folded into the conditioning
@@ -219,8 +247,14 @@ func comfyModelTakesNegative(conn EngineConn, model string) bool {
 // cost a text encode, and change no pixel. Wiring them anyway and reporting the capability as
 // true is worse than refusing: the caller gets no warning, the picture looks right, and the thing
 // they asked to keep out is in it.
+//
+// ⚠️ This is the family's TEMPLATE, not the answer a member gets: anima and krea2 are here
+// because their graphs encode a real negative, while their distilled variants (Anima-Turbo,
+// Krea 2 Turbo) declare cfg 1 and cancel it anyway. comfyModelTakesNegative is what puts the
+// two facts together, and it is the one every caller asks.
 func comfyFamilyTakesNegative(family comfyFamily) bool {
-	return family == ComfyFamilySD15 || family == ComfyFamilySDXL || family == ComfyFamilySD35
+	return family == ComfyFamilySD15 || family == ComfyFamilySDXL || family == ComfyFamilySD35 ||
+		family == ComfyFamilyAnima || family == ComfyFamilyKrea2
 }
 
 // comfyNegativeFor composes the negative prompt one request samples against, out of the three
@@ -252,8 +286,12 @@ func comfyNegativeFor(conn EngineConn, model string, req Request) string {
 //
 // It is said even though nobody is at fault, because the administrator's list silently not
 // applying is precisely the failure this whole path exists to prevent.
+//
+// It reads the MODEL and not just the family for the reason comfyModelTakesNegative does: a row
+// of a guided family declared at cfg 1 drops the administrator's list exactly as silently as a
+// distilled family does, and it is the same warning either way — only the reason differs.
 func comfyNegativeIgnoredWarning(conn EngineConn, model string, family comfyFamily) string {
-	if comfyFamilyTakesNegative(family) {
+	if comfyModelTakesNegative(conn, model) {
 		return ""
 	}
 	var what []string
@@ -265,6 +303,11 @@ func comfyNegativeIgnoredWarning(conn EngineConn, model string, family comfyFami
 	}
 	if len(what) == 0 {
 		return ""
+	}
+	if comfyFamilyTakesNegative(family) {
+		return fmt.Sprintf("%s was not applied: this model is declared at cfg 1, where guidance is"+
+			" `cond` exactly and the %s family's negative branch cancels out, so nothing can be"+
+			" excluded from it", strings.Join(what, " and "), family)
 	}
 	return fmt.Sprintf("%s was not applied: the %s family samples without a negative branch"+
 		" (a distilled model at cfg 1), so nothing can be excluded from it",
@@ -339,7 +382,7 @@ func (p *comfyProvider) Studio(ctx context.Context) (Studio, bool) {
 		out.Models = append(out.Models, StudioModel{
 			ID: id, Description: conn.Descriptions[id], Family: string(family),
 			Sizes: comfySizesFor(conn, id), Params: comfyEffectiveDefaults(conn, family, id),
-			Negative: conn.Negatives[id], Knobs: comfyFamilyKnobs(family),
+			Negative: conn.Negatives[id], Knobs: comfyModelKnobs(conn, family, id),
 			Warm:        id != "" && id == conn.Warm,
 			LicenseName: lic.Name, LicenseURL: lic.URL, SourceURL: lic.Source,
 		})

@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1195,6 +1196,19 @@ func negConn() EngineConn {
 		{Flag: "--clip_l", Name: "qwen.safetensors"},
 		{Flag: "--vae", Name: "flux2-vae.safetensors"},
 	}
+	// Both Krea 2 modes of ONE guided family: the Turbo row takes the family's own recipe (cfg 1)
+	// and the Raw row declares the undistilled numbers. They exist to be compared — see
+	// TestComfyCapsNegativeReadsTheRowsCfg.
+	for _, id := range []string{"krea2-turbo", "krea2-raw"} {
+		c.Models = append(c.Models, id)
+		c.BaseModel[id] = "krea2"
+		c.Files[id] = []EngineFile{
+			{Flag: "--diffusion-model", Name: "krea2.safetensors"},
+			{Flag: "--clip_l", Name: "qwen3vl_4b.safetensors"},
+			{Flag: "--vae", Name: "qwen_image_vae.safetensors"},
+		}
+	}
+	c.Params = map[string]EngineParams{"krea2-raw": {Steps: 52, CFG: 4.5}}
 	c.Negatives = map[string]string{"sdxl-base-1.0": "extra fingers"}
 	c.NegativeAlways = "explicit"
 	return c
@@ -1269,6 +1283,31 @@ func TestComfyCapsNegativeIsPerModel(t *testing.T) {
 	// not a thing to have said.
 	if p.Caps("nothing-declared").Negative {
 		t.Error("a model with no declared family reports a negative prompt")
+	}
+}
+
+// The family is necessary and not sufficient: two rows of the SAME guided family answer
+// differently because one of them is declared at cfg 1, where `uncond + 1*(cond - uncond)` is
+// cond exactly and the branch the template wires cancels out. Krea 2 Turbo is that row, and it
+// is the normal one for the family — so answering by family alone would tell most Krea 2 users
+// their negative prompt reaches a picture it cannot touch.
+func TestComfyCapsNegativeReadsTheRowsCfg(t *testing.T) {
+	p, _ := comfyStub(t, negConn(), nil)
+	if p.Caps("krea2-turbo").Negative {
+		t.Error("a krea2 row at the family's cfg 1 reports a negative prompt that cancels out")
+	}
+	// The positive control, and the reason this is not just "krea2 is distilled": the same
+	// family, the same template, one declared `params` apart.
+	if !p.Caps("krea2-raw").Negative {
+		t.Error("a krea2 row declared at cfg 4.5 reports no negative prompt, and its KSampler runs guided")
+	}
+	// The form's fields have to say the same thing as the capability, or the member is offered a
+	// box for a value the engine has already decided to ignore.
+	if slices.Contains(comfyModelKnobs(negConn(), ComfyFamilyKrea2, "krea2-turbo"), "negative") {
+		t.Error("the form offers a negative field on a row whose Caps say it is ignored")
+	}
+	if !slices.Contains(comfyModelKnobs(negConn(), ComfyFamilyKrea2, "krea2-raw"), "negative") {
+		t.Error("the form drops the negative field on a guided row that reads it")
 	}
 }
 

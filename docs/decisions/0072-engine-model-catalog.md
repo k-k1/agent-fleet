@@ -4655,3 +4655,145 @@ deployment.
 **Remaining**: on real hardware, ingest one SD1.5 row, generate once without naming a size, and
 look at whether the subject is duplicated. Until then this family claims nothing beyond "the
 shape is pinned".
+
+## Addendum — Anima joined the family vocabulary (2026-09-15)
+
+### Why this family and not the other three
+
+The measurement behind `engineFamilyRules` found four upstream base models on Civitai's top 20
+with no family here: `Anima`, `Krea 2`, `LTXV 2.5`, `SD 1.5 Hyper`. SD1.5 was answered by the
+addendum above. Anima is answered here by the same test decision 0069 set for widening a
+vocabulary — **whether the member has a way around it**. They do not: Anima is a 2B anime and
+illustration model (CircleStone Labs with Comfy Org, built on NVIDIA's Cosmos-Predict2-2B) whose
+checkpoints, merges and LoRAs are a large and growing share of what Civitai ranks, and none of
+them load through any template here. `Krea 2` and `LTXV 2.5` are still `""` and stay that way
+until a template exists.
+
+Decision 10 is untouched: the seeded defaults are still klein / Z-Image / SDXL. This is about
+what an operator may declare, not what the deployment ships.
+
+### Declared like klein, sampled like SDXL
+
+Anima is published as three files — the diffusion model, Qwen3-0.6B as the text encoder, and the
+Qwen-Image VAE — so it declares with `--diffusion-model` / `--clip_l` / `--vae`, the split-model
+vocabulary that already existed. **No new file flag was needed.** Both parts beyond the
+diffusion model live in the same Hugging Face repository as the checkpoint
+(`circlestone-labs/Anima`) and it is **ungated** (measured 2026-09-15: `gated: false`), so all
+three parts come down the ordinary ingest route with no token.
+
+The graph, however, is SDXL's: `UNETLoader` + `CLIPLoader` + `VAELoader`, two `CLIPTextEncode`,
+`EmptyLatentImage`, `KSampler`, `VAEDecode`. It is the first family that is split in its
+declaration and **guided** in its sampling, which is why `comfyFamilyTakesNegative` and
+`comfyFamilyKnobs` gained an entry that reads like SDXL's while `engineComfyRequiredFlags`
+gained one that reads like klein's.
+
+### Two things that look wrong in the template and are not
+
+🔴 **`type: "stable_diffusion"` on the CLIPLoader is inert.** ComfyUI does not select Anima's
+text encoder from that field at all: `comfy/sd.py` (v0.34.0, the ref this deployment pins) reads
+the state dict's hidden size, answers `TEModel.QWEN3_06B` at 1024, and takes the
+`comfy.text_encoders.anima` branch at line 1927 — which sits **outside** every `clip_type` test.
+`anima` is not one of `CLIPLoader`'s type values (nodes.py:1011), so there is nothing truer to
+write, and the value here is the one ComfyUI's own shipped template uses. Krea 2, when it comes,
+is the opposite case and the dangerous one: `krea2` **is** a `CLIPType`, and leaving the default
+there selects a different encoder with no error.
+
+🔴 **`EmptyLatentImage` is the 4-channel node and the Qwen-Image VAE has 16.** `KSampler` calls
+`comfy.sample.fix_empty_latent_channels`, which repeats an **all-zero** latent out to the model's
+own channel count (`comfy/sample.py:45`). The edit path is unaffected for the same reason: a
+`VAEEncode` latent is not empty and already comes back in this VAE's format. The official
+template uses this node for exactly this reason.
+
+### The guess rule matches WHOLE, and that is the substance
+
+Every other rule in `engineFamilyRules` is a substring needle. `anima` as a substring would take
+**Animagine** (an SDXL fine-tune the rule above claims), **AnimateDiff** and **Wan-Animate** (two
+video architectures with no template here) — each time silencing `base_model_missing`, which is
+the row's only mark that it cannot generate. So `engineFamilyRule` gained an `equal` list and
+this family uses it. Every Anima checkpoint and merge on Civitai publishes the bare string
+`Anima`.
+
+### What has not been measured
+
+🔴 **Anima has never been run on a GPU here.** The recipe (30 steps, cfg 4, euler, simple) is
+ComfyUI's own shipped template for the family
+(`workflow_templates/templates/image_anima_base_v1.json`), inside the range the model card prints
+(30–50 steps, CFG 4–5) — **a citation, not a measurement**, and the SD3.5 precedent (green golden,
+could not generate at all on real hardware) applies unchanged. The golden pins the graph's shape
+and claims nothing else.
+
+⚠️ The recipe is the **base/Aesthetic** one. Anima-Turbo is a separate checkpoint distilled to
+cfg 1 and 8–12 steps; sampled at 30/4 it burns out. That is the row's `params` to declare, as it
+is for the distilled SD1.5 variants.
+
+**Remaining**: on real hardware, ingest one Anima row (three files), generate once, and look at
+whether the picture is an anime illustration rather than noise — the first thing a wrong text
+encoder would cost. Until then this family claims nothing beyond "the shape is pinned".
+
+## Addendum — Krea 2 joined the family vocabulary (2026-09-15)
+
+### The same declaration as anima, and the opposite trap
+
+Krea 2 is a 12.9B DiT (Krea's first foundation model) published as the same three parts as
+Anima — diffusion model, a Qwen3-VL-4B text encoder, the Qwen-Image VAE — so it declares with
+`--diffusion-model` / `--clip_l` / `--vae` and needs no new flag either. **Its VAE is the same
+FILE as Anima's**, so two rows point at one S3 key; `text_encoders/` has been shared between
+SD3.5 and FLUX.1 since P2 and the accounting already handles it.
+
+🔴 **`type: "krea2"` on the CLIPLoader is read, and getting it wrong is silent.** `comfy/sd.py`
+(v0.34.0) reaches the Krea2 tokenizer only through `clip_type == CLIPType.KREA2`. The same
+Qwen3-VL-4B file loaded at the node's default falls into the generic `qwen3vl` branch instead,
+which loads, encodes, samples and returns a picture — made against different conditioning than
+the model was trained on, with no error at any layer. Anima is the exact opposite case (its type
+field is inert because the encoder is detected), and the two templates say so to each other.
+
+**Where the files come from matters here.** `krea/Krea-2-Raw` and `krea/Krea-2-Turbo` are
+**gated** (measured 2026-09-15: anonymous `README.md` is 401). `Comfy-Org/Krea-2` is not, and
+carries the diffusion models, both text encoders and the VAE. The ungated repository is the one
+to ingest from; the gated one needs the token in the ingest task, which is the machinery decision
+6 already describes.
+
+### The recipe is the DISTILLED one, and that is a citation, not a preference
+
+ComfyUI ships templates for Krea 2 **Turbo only** (`image_krea2_turbo_t2i.json` and two INT8
+variants) and none for Raw, so the citable recipe is 8 steps, cfg 1, euler, simple. Raw's
+published 52 steps with real guidance is the row's `params` to declare. This points the opposite
+way from the anima addendum above — there the family default is the undistilled model and Turbo
+is the declaration — and both times the rule was the same: **take the numbers somebody published
+for a graph, never invent the other mode's.**
+
+The template departs from the shipped one in one place: ComfyUI zeroes the negative out
+(`ConditioningZeroOut`) because Turbo runs at cfg 1, and this graph encodes a real negative
+instead, because the same template has to serve a Raw row. At cfg 1 the two produce identical
+pixels, and the extra encode is the same text every request, which ComfyUI serves from its
+execution cache after the first.
+
+### Capabilities became per-row, because "guided family" stopped meaning "guided row"
+
+`comfyModelTakesNegative` answered from the family alone. With Krea 2 that would tell **most**
+users of this family that their negative prompt reaches a picture it cannot touch: Turbo is the
+normal row, it declares cfg 1, and at cfg 1 guidance is `uncond + 1*(cond - uncond)` — `cond`
+exactly, whatever is wired into the negative branch.
+
+So three surfaces now read the ROW's effective cfg rather than the family:
+
+- `Caps.Negative` (`comfyModelTakesNegative`),
+- the form's field list (`comfyModelKnobs`, new — a field offered for a value the capability
+  calls ignored is the pair disagreeing in front of the member),
+- the warning that the administrator's exclusion list did not apply
+  (`comfyNegativeIgnoredWarning`, which now also says *why*: the row's cfg, not the family).
+
+`comfyFamilyTakesNegative` stays, and now means only "this family's template wires one". The
+same correction applies to Anima-Turbo and to a distilled SD1.5 declared at cfg 1, which were
+being reported wrongly before this change.
+
+### What has not been measured
+
+🔴 **Krea 2 has never been run on a GPU here**, and it is the largest family in the vocabulary:
+`krea2_turbo_fp8_scaled` is 13.1 GB and its fp8 text encoder another 5.2 GB, so an L4 (24 GB) is
+the floor and bf16 (26.3 + 8.9 GB) needs an L40S. The golden pins the graph's shape and claims
+nothing else.
+
+**Remaining**: on real hardware, ingest one Krea 2 Turbo row (three files), generate once, and
+look at whether the picture matches the prompt — a generic-`qwen3vl` mis-load is the failure this
+family can have that the shape cannot show.
