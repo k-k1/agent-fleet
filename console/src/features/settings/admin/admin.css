@@ -471,26 +471,6 @@ a.engines-model-source:hover {
   font-size: 12px;
 }
 
-/* The chosen result, kept above the field it filled. One card, so it is not a scrolling grid:
-   the max-height and auto-fill columns of the list above would leave it stranded in a 320px box
-   of its own. */
-.engines-picked {
-  margin: 6px 0;
-  font-size: 12px;
-}
-
-.engines-picked-head {
-  display: block;
-  font-size: 11px;
-  margin-bottom: 4px;
-}
-
-.engines-picked-hit {
-  list-style: none;
-  margin: 0;
-  padding: 2px;
-}
-
 .engines-hit {
   display: flex;
   flex-direction: column;
@@ -655,20 +635,6 @@ a.engines-model-source:hover {
   min-width: 4ch;
 }
 
-/* The sentence the numbers were read out of. It is a QUOTE — somebody else's words about their
-   own model — and it is what makes the fields above judgeable rather than trusted, so it is set
-   apart rather than folded into the muted run of form help. */
-.engines-param-quote {
-  margin: 6px 0 0;
-  font-size: 11px;
-  border-left: 2px solid var(--dialog-border, #30363d);
-  padding-left: 8px;
-}
-
-.engines-param-quote q {
-  font-style: italic;
-}
-
 /* What a catalogue row declares, with the button that edits it on the same line. Wrapping
    matters: the summary is "Steps 30 · CFG 4 · dpmpp_2m · karras" and the button must not be
    pushed off the row on a narrow modal. */
@@ -818,128 +784,6 @@ a.engines-model-source:hover {
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-}
-
-.engines-wizard {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  /* A pane can be 1,400 px wide and these are sentences: capped so a line of prose stays
-     readable and the fields do not become a single stretched row. */
-  max-width: 860px;
-}
-
-.engines-wizard-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-/* The four questions. Numbers rather than dots would need a legend; the labels ARE the legend,
-   so the dot is decoration and the word is the content. */
-.engines-wizard-rail {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.engines-wizard-rail li {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.engines-wizard-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-}
-
-.engines-wizard-rail li.on {
-  color: var(--fg);
-  font-weight: 600;
-}
-
-.engines-wizard-rail li.on .engines-wizard-dot,
-.engines-wizard-rail li.done .engines-wizard-dot {
-  background: var(--accent, #4a7);
-  border-color: transparent;
-}
-
-.engines-wizard-step {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-/* The acts, and the slots inside a row. Each answer carries its own sentence, because "add a
-   part" and "replace a file" are one word apart and opposite in what they need. */
-.engines-wizard-acts,
-.engines-wizard-slots ul {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.engines-wizard-acts label,
-.engines-wizard-slots label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.engines-wizard-acts p {
-  margin: 2px 0 0 22px;
-  font-size: 12px;
-}
-
-.engines-wizard-slots {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12px;
-}
-
-.engines-wizard-plan {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding-left: 18px;
-  font-size: 13px;
-}
-
-.engines-wizard-nav {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-/* 🔴 Beside the button, never a tooltip and never an error after the press. The screen this
-   replaced had three controls that disabled each other in silence. */
-.engines-wizard-stop {
-  font-size: 12px;
-}
-
-.engines-ingest-accept {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  font-size: 12px;
 }
 
 /* The two-step forget. Indented and boxed so it reads as belonging to the row above it, and
