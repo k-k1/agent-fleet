@@ -45,6 +45,7 @@ export const imggen = {
   "imggen.negative_always": "管理者が配備全体に宣言",
   "imggen.triggers": "トリガー語",
   "imggen.trigger_add": "{word} をプロンプトに足す",
+  "imggen.lora_triggers": "選ぶと出るトリガー語: {words}",
 
   "imggen.steps": "steps",
   "imggen.cfg": "cfg",

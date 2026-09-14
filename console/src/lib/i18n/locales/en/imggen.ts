@@ -45,6 +45,7 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.negative_always": "declared by the administrator for the whole deployment",
   "imggen.triggers": "Trigger words",
   "imggen.trigger_add": "Add {word} to the prompt",
+  "imggen.lora_triggers": "Trigger words this one brings: {words}",
 
   "imggen.steps": "steps",
   "imggen.cfg": "cfg",

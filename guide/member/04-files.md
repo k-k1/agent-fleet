@@ -201,9 +201,12 @@ pane per workspace — opening it again focuses the one you have.
   runs.
 - **The administrator's negative** shows as a chip you cannot remove, next to the deployment-wide
   one. It is applied on top of yours rather than mixed into your text.
-- **LoRAs** — only the ones that match the model's family are listed. Ticking one adds its
-  **trigger words** as chips over the prompt; unticking it removes those chips and nothing else.
-  A missing trigger is the usual reason a LoRA "does nothing". The weight defaults to 1.
+- **LoRAs** — only the ones that match the model's family are listed. Each row shows the
+  **trigger words** it would bring, so you can choose between two adapters before ticking
+  either; ticking one turns those words into chips over the prompt, and unticking it removes
+  those chips and nothing else. A missing trigger is the usual reason a LoRA "does nothing" —
+  and if you generate without one, the result says so in as many words. The weight starts at
+  the strength the adapter's author published, or 1 when the catalogue has none.
 
 **Trial run, then the batch**
 
