@@ -385,6 +385,12 @@ export const admin = {
   "admin.catalog_ledger_state_uploading": "取り込み中",
   "admin.catalog_ledger_state_failed": "失敗",
   "admin.catalog_ledger_state_missing": "バイト列がありません",
+  // 🔴 CP は s3:DeleteObject を持たない（ADR 0072 決定 7）。「消す」はタスクの開始で、
+  // 実際に消えるまでバケツは同じオブジェクトを返し続ける。押しても何も変わらないように
+  // 見えたのがこの言葉が要る理由（af-sandbox 実測）。
+  "admin.catalog_ledger_state_deleting": "削除中",
+  "admin.catalog_ledger_deleting_note": "削除のタスクが走っています。完了するとこの行は一覧から消えます（数分かかることがあります）。",
+  "admin.catalog_ledger_missing_note": "{m} がこのキーを指していますが、バケツにバイト列がありません。その行を「揃える」と取り直します。",
   "admin.catalog_ledger_orphan": "どの行も宣言していません",
   "admin.catalog_ledger_declared": "宣言: {m}",
   "admin.catalog_ledger_register": "登録",

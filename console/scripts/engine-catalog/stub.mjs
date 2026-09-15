@@ -97,6 +97,12 @@ const OBJECTS = [
     role_dir: "vae", placement: "ok", state: "present",
     declared_by: [{ model_id: "anima-aesthetic-v1.1", flag: "--vae" }],
   },
+  // A row pointing at bytes that are not there: the ledger names the row, and the act is that
+  // row's 揃える (the object side has nothing anybody could press).
+  {
+    key: "image/vae/sdxl_vae.safetensors", role_dir: "vae", placement: "ok", state: "missing",
+    declared_by: [{ model_id: "sdxl-base-1.0", flag: "--vae" }],
+  },
   {
     key: "image/checkpoints/sd_xl_base_1.0.safetensors", bytes: 6_938_040_576, last_modified: "2026-08-02T09:00:00Z",
     role_dir: "checkpoints", placement: "ok", state: "present",
