@@ -90,12 +90,6 @@ export type EngineModel = {
    *  made the panel go quiet about a row that still could not generate. The CP refuses to
    *  enable one of these. */
   files_missing?: string[];
-  /** 🔴 The reading of `files_missing` that cannot be arrived at from this screen: the file the
-   *  row is "missing" is one it is HOLDING — a split family's own weights, registered as the
-   *  whole checkpoint and staged where no ComfyUI loader lists them. `from` is where the bytes
-   *  are, `to` is the key the loader reads, and "不足ファイルを揃える" moves them there inside
-   *  the bucket (no download). Absent for every row that is simply missing a part. */
-  main_file_fix?: { flag: string; from: string; to: string; bytes?: number };
   /** The row's checkpoint was READ and carries no VAE tensors, and the row declares no `--vae`
    *  file either (ADR 0072 follow-up). The one fault no declaration can express: an SDXL
    *  checkpoint published without a VAE holds every file its family needs, validates, loads —
@@ -245,21 +239,6 @@ export type ResolvedSource = {
    *  read (a `.ckpt`, a source that refused the Range) — which is not "no" and must not be drawn
    *  as one. Asked of a whole checkpoint on an image engine only. */
   vae_bundled?: string;
-  /** What this deployment would do about a `"no"`: the family's own VAE, and whether it is
-   *  already in the bucket (`staged`) or would be taken in under the licence named here. It is
-   *  what lets the form offer the second download in the same press, with its terms on screen. */
-  family_vae?: FamilyVae;
-  /** The role the file being registered plays, when the family reads no whole checkpoint — the
-   *  split families' `--diffusion-model`. The form starts the role selector on it: "whole
-   *  checkpoint" is the default and, for these families, the one answer that cannot work. */
-  family_main_flag?: string;
-  /** The files a SPLIT family reads beside the diffusion model — the text encoder and the VAE
-   *  a row is refused for not having. Present when the family being registered declares parts
-   *  this deployment knows, so the form can take the whole set in one press instead of leaving
-   *  an operator to find two more repositories by name. */
-  family_parts?: FamilyPart[];
-  /** What the parts that are NOT already here would cost, as one number. */
-  family_parts_bytes?: number;
   /** What one press would DO, decided by the CP (ADR 0085 decision 4). Everything above it is
    *  facts the card still draws; this is the only thing the ingest request is built from. */
   plan?: IngestPlan;
@@ -367,37 +346,6 @@ export type EngineApiError = {
   plan?: IngestPlan;
 };
 
-/** One file of a split family, as the form offers it. */
-export type FamilyPart = {
-  /** The role it is attached under: `--clip_l`, `--vae`. */
-  flag: string;
-  repo: string;
-  file: string;
-  s3_key: string;
-  /** Already this deployment's — declared rather than downloaded, and no licence to accept. */
-  staged?: boolean;
-  bytes?: number;
-  license?: string;
-  /** Known, and its source could not be reached. Drawn rather than dropped: a set offered
-   *  minus one part completes nothing. */
-  unreachable?: boolean;
-};
-
-/** The family VAE offered beside a checkpoint that carries none. */
-export type FamilyVae = {
-  repo: string;
-  file: string;
-  s3Key: string;
-  /** Already in this deployment's bucket: the fix is a declaration, nothing is downloaded and
-   *  there is no new licence to accept. */
-  staged?: boolean;
-  bytes?: number;
-  license?: string;
-  /** The file is known and the source could not be reached. Said rather than omitted — an
-   *  omission reads as "this family has no answer", which is a different and permanent thing. */
-  unreachable?: boolean;
-};
-
 /** One search result (POST …/ingest/search, ADR 0072 decision 11).
  *
  * A DESTINATION, not an ingest: picking one fills the repository field and the existing
@@ -502,26 +450,6 @@ export type IngestSearchRequest = {
 export type IngestSearchAnswer = {
   hits: IngestHit[];
   next_cursor?: string;
-};
-
-/** Server-known S3 objects only. `unknown` remains distinct from `missing`: the Console must
- *  not turn a failed or unavailable existence check into a claim that bytes are gone. */
-export type EngineStorageFile = {
-  s3_key: string;
-  source?: string;
-  /** Machine identity for exact reuse. Missing means this is legacy or ambiguous provenance. */
-  artifact_identity?: string;
-  /** The server checked this object and permits it to be reused for its identity. */
-  reusable: boolean;
-  state: "present" | "missing" | "unknown";
-  bytes?: number;
-  checked_at?: string;
-  model_ids: string[];
-};
-
-export type EngineStorageAnswer = {
-  files: EngineStorageFile[];
-  checked_at?: string;
 };
 
 export type IngestJob = {

@@ -7,6 +7,7 @@ import { Button, IconButton } from "../../../ui/Button.tsx";
 import { Modal } from "../../../ui/Modal.tsx";
 import { ViewHead } from "../../../ui/ViewHead.tsx";
 import { type ModelKind } from "./adminEngineModels.tsx";
+import { EngineDiscoverPanel, engineCanDiscover } from "./adminEngineDiscover.tsx";
 import {
   engineIsImage,
   engineIsRemote,
@@ -640,6 +641,22 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     } finally { setBusy(""); }
   };
 
+  /** Turn one file an external ComfyUI already holds into a row (ADR 0082 decisions 6 and 7).
+   *
+   * 🔴 `POST …/models`, not `…/objects/register`: those bytes are on the far box and never in
+   * this deployment's bucket, so there is no object to register and nothing to HeadObject. It is
+   * the one write that still takes a key nobody verified (ADR 0085 decision 3), and this is the
+   * only caller left. */
+  const addModel = async (body: Record<string, unknown>) => {
+    setBusy("discover"); setErr(null);
+    try {
+      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/models`, "POST", body);
+      if (answer?.error) { setErr(answer.error as EngineApiError); return answer; }
+      await onChanged();
+      return answer;
+    } finally { setBusy(""); }
+  };
+
   const dismissJob = async (id: string) => {
     setBusy(`job:${id}`); setErr(null);
     try {
@@ -714,6 +731,14 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
       onDelete={(object) => setDeletingObject(object)}
       onDismiss={(id) => void dismissJob(id)}
       onComplete={(id) => void align(id, models.find((model) => model.id === id)?.base_model)} />
+    {/* The discovery button (ADR 0082 decisions 6 and 7): only for an external ComfyUI this
+        control plane can dial directly. `engineCanDiscover` is the exact predicate the CP's own
+        route gates on, so a row that would 400 there never shows the button here. It sits under
+        the ledger because it is the same question one step further out — what is on the box
+        rather than what is in the bucket — and for an external row the bucket is empty. */}
+    {isSuper && !readOnly && engineCanDiscover(row) && (
+      <EngineDiscoverPanel key={"discover/" + row.key} engineKey={row.key} busy={busy === "discover"} onAdd={addModel} />
+    )}
     {completing && <CompleteDialog row={row} modelId={completing.modelId} baseModel={completing.baseModel} answer={completing.answer}
       onClose={() => setCompleting(null)}
       onRun={async (body) => { setCompleting(null); await runComplete(completing.modelId, body); }} />}
@@ -793,7 +818,11 @@ function EngineLedger({ objects, failed, checkedAt, busy, readOnly, deletingKeys
       <strong>{tr("admin.catalog_ledger_title" as never)}</strong>
       {checkedAt && <span className="muted">{(tr("admin.catalog_ledger_checked" as never) as string).replace("{t}", fmtDateTime(checkedAt))}</span>}
     </header>
-    <p className="admin-hint">{tr("admin.catalog_ledger_note" as never)}</p>
+    {/* What the list IS, always — and what to press, only where there is something to press. A
+        borrowed row's catalogue is the far deployment's mirror and draws no act at all (ADR 0079
+        decision 7), so the second sentence there would describe a button nobody has. */}
+    <p className="admin-hint">{tr("admin.catalog_ledger_note" as never)}
+      {!readOnly && <> {tr("admin.catalog_ledger_note_acts" as never)}</>}</p>
     {objects === null && <p className={failed ? "form-err" : "muted"}>{tr((failed ? "admin.catalog_ledger_unavailable" : "admin.catalog_storage_checking") as never)}</p>}
     {objects !== null && !objects.length && <p className="muted">{tr("admin.catalog_ledger_empty" as never)}</p>}
     {!!sorted.length && <ul className="engine-ledger-list">{sorted.map((object) => {

@@ -11,7 +11,7 @@ import type { EngineRow } from "./engineTypes.ts";
 //
 //   - it never writes a row on its own. Pressing the button only ever FILLS the list; turning a
 //     candidate into a row is a second, separate press — the same `POST …/models` write the
-//     manual "add" form already uses (`onAdd`, passed in from EngineModelsAdminView) — and the
+//     `POST …/models` write the registered tab passes in (`onAdd`) — and the
 //     family it carries is a SUGGESTION the CP read off the filename, not a declaration
 //     (ADR 0072 decision 2 stays: the operator confirms it, here by seeing it named before the
 //     press rather than by typing it from nothing).
@@ -55,12 +55,12 @@ export function EngineDiscoverPanel({
 }: {
   engineKey: string;
   /** Disables the per-candidate add buttons while this engine's row has another write in
-   *  flight — the same flag EngineModels already reads, so the two forms never race the same
+   *  flight — the same flag the registered tab reads, so the two never race the same
    *  catalogue. */
   busy?: boolean;
-  /** Turn one candidate into a catalogue row. The SAME write the manual "add" form makes
-   *  (`POST …/models`), passed in rather than called directly here so busy/error state and the
-   *  reload it triggers stay in the one place EngineModelsAdminView already keeps them. */
+  /** Turn one candidate into a catalogue row (`POST …/models`), passed in rather than called
+   *  directly here so busy/error state and the reload it triggers stay in the one place the
+   *  registered tab already keeps them. */
   onAdd: (body: Record<string, unknown>) => Promise<AddAnswer>;
 }) {
   const tr = useT();
