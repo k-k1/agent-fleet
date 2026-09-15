@@ -36,6 +36,7 @@ const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { allViews, freshLayout } = await import("../../layout/ops.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { WORKING_TICK_MS } = await import("../files/refreshPolicy.ts");
+const { clearGalleryCache, readGallery } = await import("./galleryCache.ts");
 
 let host: HTMLDivElement;
 let root: Root;
@@ -91,6 +92,10 @@ const back = (): Promise<void> =>
 beforeEach(() => {
   listings = 0;
   fetchMock.mockClear();
+  // The folder cache is module-level and deliberately outlives a mount (that is what makes
+  // walking back into a folder free) — so it also outlives a TEST unless it is cleared, and the
+  // next one would paint the previous one's `served` listing before its own arrives.
+  clearGalleryCache();
   useWorkspaceStore.setState({ state: "running" });
   // A fresh layout per test: openTarget dedupes galleries by folder, so a pane left over
   // from the previous test would be re-selected (keeping its old content) instead of opened.
@@ -506,6 +511,106 @@ describe("画像ギャラリーのペイン", () => {
     } finally {
       vi.stubGlobal("IntersectionObserver", realIO);
     }
+  });
+
+  it("フォルダを移った瞬間に前のフォルダのカードを消す（残すと存在しないパスのサムネイルを取りに行く）", async () => {
+    served = [img("a.png", 100)];
+    const paneId = await render({ path: "gen" });
+    expect(names()).toEqual(["a.png"]);
+
+    // The new folder's listing never answers, so anything still drawn can only be left over
+    // from the old one — with the new folder's path glued onto its file names.
+    fetchMock.mockImplementationOnce((() => new Promise(() => {})) as never);
+    await act(async () => {
+      root.render(<GalleryView paneId={paneId} path="gen/sub" />);
+    });
+    expect(cards()).toHaveLength(0);
+    expect(thumbs()).toHaveLength(0);
+    expect(host.querySelector(".ui-empty-title")?.textContent).toBe("読み込み中…");
+  });
+
+  it("一度見たフォルダは、一覧の往復を待たずに前のカードで開く（戻るでいちばん効く）", async () => {
+    served = [img("a.png", 100), img("b.png", 200)];
+    await render();
+    expect(names()).toEqual(["b.png", "a.png"]);
+    await act(async () => root.unmount());
+
+    // This time the listing never answers, so anything on screen can only have come from the
+    // cache — which is exactly the window the reader used to spend looking at "読み込み中…".
+    fetchMock.mockImplementationOnce((() => new Promise(() => {})) as never);
+    await render();
+    expect(host.querySelector(".ui-empty")).toBeNull();
+    expect(names()).toEqual(["b.png", "a.png"]);
+    // Nothing is tinted: walking back into a folder is not "two pictures just arrived".
+    expect(cards().some((c) => c.classList.contains("gal-new"))).toBe(false);
+    // And the header says where the grid came from rather than pretending it is confirmed.
+    expect(host.querySelector(".gal-count")?.textContent).toContain("更新中");
+  });
+
+  it("戻ったあとに一覧が届いたら、本当に増えた 1 枚だけに色が付く", async () => {
+    served = [img("a.png", 100)];
+    await render();
+    await act(async () => root.unmount());
+
+    served = [img("a.png", 100), img("b.png", 200)];
+    await render();
+    expect(names()).toEqual(["b.png", "a.png"]);
+    expect(cards()[0].classList.contains("gal-new")).toBe(true);
+    expect(cards()[1].classList.contains("gal-new")).toBe(false);
+    expect(host.querySelector(".gal-count")?.textContent).not.toContain("更新中");
+  });
+
+  it("フォルダでの居場所（スクロール位置と「さらに表示」）も覚えていて、戻ると同じ場所に出る", async () => {
+    served = Array.from({ length: 305 }, (_, n) => img(`i${String(n).padStart(3, "0")}.png`, 1000 + n));
+    await render();
+    await click(byText("さらに表示"));
+    expect(cards()).toHaveLength(305);
+
+    const body = () => host.querySelector<HTMLDivElement>(".gal-body")!;
+    body().scrollTop = 420;
+    await act(async () => {
+      body().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(readGallery("gen")).toMatchObject({ scrollTop: 420, limit: 600 });
+
+    await act(async () => root.unmount());
+    await render();
+    expect(cards()).toHaveLength(305);
+    // jsdom has no layout, so this pins the WIRING (the position is put back before paint),
+    // not that 420px lands on the same row — that needs a real browser.
+    expect(body().scrollTop).toBe(420);
+  });
+
+  it("消えたフォルダでは、覚えている一覧ではなくエラーを出す（キャッシュが吐ける唯一の嘘）", async () => {
+    served = [img("a.png", 100)];
+    await render();
+    await act(async () => root.unmount());
+
+    fetchMock.mockImplementationOnce((async () => ({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      headers: { get: () => null },
+      text: async () => JSON.stringify({ error: { code: "not_dir" } }),
+    })) as never);
+    await render();
+    expect(host.querySelector(".ui-empty-title")?.textContent).toBe("フォルダを読み込めませんでした");
+    expect(cards()).toHaveLength(0);
+    expect(readGallery("gen")).toBeUndefined();
+  });
+
+  it("フォルダを指しただけで、その一覧を先に取りに行く（押したときには手元にある）", async () => {
+    served = [{ name: "sub", type: "dir" }];
+    await render({ path: "gen" });
+    expect(listings).toBe(1);
+
+    const enter = folderCards().find((c) => c.textContent?.includes("sub"))!.querySelector(".gal-enter")!;
+    await act(async () => {
+      enter.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(listings).toBe(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain(encodeURIComponent("gen/sub"));
+    expect(readGallery("gen/sub")).toBeDefined();
   });
 
   it("マウント時に 1 回だけ読み、常駐ポーラーにはしない", async () => {

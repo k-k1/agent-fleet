@@ -32,6 +32,10 @@ const arg = (n, d) => {
 };
 const PORT = Number(arg("port", 8797));
 const LOCALE = arg("locale", "ja");
+// What a listing costs when the Agent is not on the same machine as the browser: Console -> CP
+// -> Agent and back. Locally that is under a millisecond, which hides the cost the gallery's
+// folder cache exists to remove — so the `nav` case asks for a realistic one.
+const TREE_LATENCY = Number(arg("tree-latency", 0));
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -216,8 +220,11 @@ const server = http.createServer((req, res) => {
     const warmEdge = Number(url.searchParams.get("warm") || 0);
     try {
       const body = JSON.stringify(realTree(relDir, warmEdge));
-      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      res.end(body);
+      const send = () => {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(body);
+      };
+      TREE_LATENCY > 0 ? setTimeout(send, TREE_LATENCY) : send();
     } catch (e) {
       res.writeHead(404, { "content-type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ error: { code: "not_dir", message: String(e) } }));

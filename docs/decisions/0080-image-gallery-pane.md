@@ -316,6 +316,45 @@ case that still needs it: flattening several levels into one grid (an X/Y grid, 
     the folder it was entered from. `sort` survives every step (it is read live, not stored in
     the history entry, so it is never what a Back press undoes).
 
+### Decision 10 — a folder that has been walked into is remembered (listing, scroll position, page size)
+
+Even after decisions 4 and 9, "opening a folder and coming back is slow" was reported again. It
+is **the listing, not the thumbnails**: every change of `path` dropped `entries` to `null` and
+waited for an `api/fs/tree` round trip — including when the destination is the folder that was
+on screen a second earlier. The CP tags JSON GETs with a weak ETag, so an unchanged folder
+already costs no BODY, but **a round trip is still a round trip**, and that window was blank.
+
+- **`galleryCache.ts` remembers 30 folders** (LRU, module-level — a store would re-render every
+  gallery pane on every scroll event, since the position is written from one). It holds the
+  listing, when it was read, the **scroll position** and the **`limit`**. The last two are the
+  reader's PLACE in the folder: being dropped at the top of the first 300 again after paging
+  halfway down a folder is its own kind of slow.
+- **Draw first, then read.** A cached folder is drawn without `EmptyState(loading)` and the read
+  behind it only corrects what changed. **The "new card" tint diffs against the remembered
+  names**, so walking back in lights up nothing. When nothing changed, the CP's 304 makes
+  `api()` **replay the very same object**, so the memo dependencies do not change and neither
+  the sort nor the `<img>` elements are redone — applying the difference is essentially free.
+- **The one lie this cache could tell** is a folder that is gone. So a **first read that answers
+  "not there / denied" throws the remembered listing away and shows the error state**, while a
+  transport failure or a 5xx keeps what is drawn (decision 6's reasoning: emptying the grid over
+  one 502 is the worse lie).
+- **Point at it and it is read.** `pointerdown` on a folder card, and 120 ms of hover, fetch the
+  listing (deduped while in flight, skipped for a folder read within 10 s), so the click lands on
+  something already in hand.
+- **The change of folder is made DURING the render** (React's "adjust state when a prop
+  changes"). In an effect it happens after a paint, and that paint is the previous folder's
+  cards under the new folder's path — a frame of the wrong pictures, each firing a thumbnail
+  request for a path that does not exist. It shows on the way back out of a folder.
+- Measured (`console/scripts/gallery-perf/check.mjs --case nav`, against a stub given a 150 ms
+  listing round trip; the real 7 folders / 202 images): **back up out of a folder 280 ms → 60 ms**,
+  **into the same folder again 345 ms → 140 ms**. What is left is not the network but the cost of
+  **drawing 202 cards**, which is the missing measurement behind open question 1.
+- **Two things measured and rejected** (both looked like wins): arming the first 12 tiles without
+  waiting for the observer moved the nav numbers not at all, and pushed the requests fired by a
+  scroll straight after mount from **33 to 44** — undoing decision 4's measurement. Marking only
+  those first tiles `fetchPriority="high"` inverts the hint once requests are already gated by
+  the observer: a card armed LATER is the one being looked at, and it would be the `auto` one.
+
 ## Options rejected
 
 - **A modal gallery** (like cleanup / archive): cheap, but it throws away everything a pane gets
@@ -395,7 +434,21 @@ case that still needs it: flattening several levels into one grid (an X/Y grid, 
   Still open: a card's right-click menu (open in a pane, download, copy path, delete); "send" to a
   session or an assistant; W x H (the header-reading endpoint); an endpoint that flattens several
   levels into one grid; tile size (S/M/L) and the matching `thumb`.
-- **P2**: generalizing to "media" including video and PDF (whether it is wanted is open
+- **P2 (landed 2026-09-15)**: ✅ decision 10 (a folder walked into is remembered).
+  The rest of what the same report asked for needs an Agent-side endpoint, so it is kept apart:
+  **a cover picture on folder cards** (`api/fs/tree?peek=<n>`, advisory, returning `preview` and
+  `images` on a dir entry; paired with `warm=` the first few pictures of a folder are already warm
+  when it is opened, and a count becomes available for EVERY folder, which lifts decision 8's
+  restriction); **choosing a card's `thumb` by device pixel ratio** (a card is 150-200 px wide at
+  4:3, i.e. 138x104-200x150 CSS px, so 512 is 3-4x more than a DPR 1 screen can show — decision 4
+  chose 512 to avoid decoding twice, but the mirror looks at shared files and the gallery at
+  generated folders, which rarely overlap); **a third step in the lightbox** (placeholder →
+  viewport-sized → original, widening `thumbMaxEdge` past 1024, instead of fetching a ~1 MB
+  original to show it at 100%); **a fast path in `boxDownscale`** (it reads every source pixel
+  through `src.At()` — about 1.57 M interface calls for a 1024x1536 picture, a real share of the
+  95 ms cold cost; a type switch over `*image.RGBA/NRGBA/YCbCr` reads `Pix` directly. Needs a
+  benchmark).
+- **P3**: generalizing to "media" including video and PDF (whether it is wanted is open
   question 2).
 
 ## Open questions
@@ -409,6 +462,12 @@ case that still needs it: flattening several levels into one grid (an X/Y grid, 
      scroll container's viewport ever ask at all, mount or remount alike. Whether 300 is the right
      number of cards to draw (how many fit a 1100 px pane, whether "show more" is reached too soon
      or too late) is still unmeasured.
+   - **2026-09-15 (out of decision 10's measurements)**: the count itself now has a number too.
+     With the listing already in hand, **drawing 202 cards costs about 140 ms** (`--case nav`'s
+     "into the same folder again" leg, which pays no network at all); the same leg back to a root
+     of 7 folders is 60 ms. So what 300 costs is not requests but **rendering**, and the next move
+     is either a lower cap or virtualizing the grid (revisiting "virtual scrolling" under options
+     rejected).
 2. **Video and PDF?** This starts as a gallery of images, but a place like `docs/img` holds SVG,
    PNG and PDF together. Mixing them renames the thing to "media".
 3. ~~**Is a surface over all of `generated` wanted?**~~ **Answered (2026-09-14): no surface of its
