@@ -468,6 +468,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
   const [edit, setEdit] = useState<EngineModel | null>(null);
+  const [partsNote, setPartsNote] = useState("");
   const [deleting, setDeleting] = useState<EngineModel | null>(null);
   const [purge, setPurge] = useState(false);
   const [operation, setOperation] = useState<{ act: EngineIngestAct; modelId?: string } | null>(null);
@@ -522,6 +523,26 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
       return true;
     } finally { setBusy(""); }
   };
+  // 🔴 The remedy for a row that is already here. Rows taken in before the ingest form offered
+  // the set are incomplete, and "take the 4 GB diffusion model in again with the box ticked" is
+  // not a repair. The CP answers `attached` when every missing file was already this
+  // deployment's, which is the common case once one row of the family exists.
+  const completeParts = async (model: EngineModel) => {
+    setBusy(model.id); setErr(""); setPartsNote("");
+    try {
+      const answer = await apiJSON(
+        `api/admin/engines/${encodeURIComponent(row.key)}/models/${encodeURIComponent(model.id)}/parts`,
+        "POST", { license_accepted: true },
+      );
+      if (answer?.error) { setErr(errDetail(answer.error)); return; }
+      const action = (answer as { action?: string })?.action;
+      setPartsNote(tr((action === "none" ? "admin.catalog_parts_fix_none"
+        : action === "attached" ? "admin.catalog_parts_fix_attached"
+          : "admin.catalog_parts_fix_started") as never) as string);
+      await onChanged();
+      await loadAux();
+    } finally { setBusy(""); }
+  };
   const guardedChange = async (model: EngineModel, patch: Record<string, unknown>) => {
     const loadsModel = !!(patch.enabled || patch.selected || patch.default);
     const cardMiB = row.class?.vram_mib || 0;
@@ -569,18 +590,26 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
       return <li key={model.id} className="engine-registered-card" aria-label={model.id}>
         <header><strong className="mono">{model.id}</strong><span className={`engines-model-tag ${model.enabled ? "on" : "off"}`}>{tr(model.enabled ? "admin.engines_model_is_on" : "admin.engines_model_is_off")}</span>
           {started && <span className="engines-model-tag lead">{tr("admin.engines_model_started")}</span>}
-          <span className={`engines-model-tag ${status.tone}`}>{tr((`admin.catalog_registered_${status.state}`) as never, { present: status.present, total: status.total } as never)}</span></header>
+          <span className={`engines-model-tag ${status.tone}`}>{tr((`admin.catalog_registered_${status.state}`) as never, { present: status.present, total: status.total } as never)}</span>
+          {!!model.files_missing?.length && <span className="engines-model-tag warn">{(tr("admin.engines_model_files_missing_tag" as never) as string).replace("{f}", model.files_missing.join(" "))}</span>}</header>
         {engineIsImage(row) ? <ImageRegisteredCardBody model={model} /> : <LLMRegisteredCardBody model={model} />}
         <RegisteredParts model={model} storage={storage} />
         <footer>
           {isSuper && !readOnly && <Button variant="ghost" small icon="edit" aria-label={`${tr("admin.catalog_edit" as never)}: ${model.id}`} onClick={() => setEdit(model)}>{tr("admin.catalog_edit" as never)}</Button>}
           {isSuper && !readOnly && <Button small aria-label={`${tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, { enabled: !model.enabled })}>{tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}</Button>}
           {isSuper && !readOnly && model.kind !== "lora" && !started && <Button variant="primary" small aria-label={`${tr("admin.engines_model_select")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, engineIsImage(row) ? { selected: true } : { default: true })}>{tr("admin.engines_model_select")}</Button>}
+          {/* 🔴 Why this row cannot be enabled, said on the row itself. The mark existed on the
+              wire since P2 and this screen never drew it, so an incomplete row looked like any
+              other — which is most of why "I took it in and do not know what to do" happens. */}
+          {!readOnly && !!model.files_missing?.length && <Button variant="primary" small
+            aria-label={`${tr("admin.catalog_parts_fix" as never)}: ${model.id}`} disabled={pending}
+            onClick={() => void completeParts(model)}>{tr(pending ? "admin.catalog_parts_fix_busy" as never : "admin.catalog_parts_fix" as never)}</Button>}
           {!readOnly && <Button small aria-label={`${tr("admin.catalog_parts" as never)}: ${model.id}`} onClick={() => setOperation({ act: (row.file_flags || []).length ? "attach" : "replace", modelId: model.id })}>{tr("admin.catalog_parts" as never)}</Button>}
           {isSuper && !readOnly && <Button variant="danger" small aria-label={`${tr("admin.engines_model_forget")}: ${model.id}`} disabled={pending || started} onClick={() => { setDeleting(model); setPurge(false); }}>{tr("admin.engines_model_forget")}</Button>}
         </footer>
       </li>;
     })}</ul>
+    {partsNote && <p className="muted engine-registered-parts-note">{partsNote}</p>}
     {isSuper && !readOnly && <details className="engine-registered-tools"><summary>{tr("admin.catalog_manual_s3" as never)}</summary>
       <EngineModelAdd busy={busy === "+"} isImage={engineIsImage(row)} isLora={kind === "lora"}
         baseModels={row.base_models} fileFlags={row.file_flags} modelIds={(row.model_rows || []).map((model) => model.id)}
@@ -768,6 +797,9 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
   const [accepted, setAccepted] = useState(false);
   const [confirmVram, setConfirmVram] = useState(false);
   const [withVae, setWithVae] = useState(false);
+  // The split family's own parts, ticked by default: a row without them cannot be enabled, so
+  // "take the checkpoint alone" is the choice that needs a deliberate press, not this one.
+  const [withParts, setWithParts] = useState(true);
   const [trainedWords, setTrainedWords] = useState((hit?.trained_words || []).join(", "));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -938,7 +970,7 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
         context_tokens: !image && !isLora ? n(context) : 0,
         max_output_tokens: !image && !isLora ? n(output) : 0,
         params: paramsBody, trained_words: isLora ? trainedWords.split(/[\n,]/).map((word) => word.trim()).filter(Boolean) : [],
-        license_accepted: true, with_family_vae: withVae,
+        license_accepted: true, with_family_vae: withVae, with_family_parts: withParts,
         ...(immutableReuse ? { reuse_s3_key: immutableReuse.s3_key } : {}),
       });
       if (answer?.error) { setErr(errDetail(answer.error)); return; }
@@ -987,6 +1019,28 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
       {resolved?.civitai_needs_account && <p className="muted">{tr("admin.engines_ingest_civitai_account_first" as never)}</p>}
       {resolved?.gated && resolved.can_ingest === false && !resolved.login_required && <p className="form-err">{tr("admin.engines_ingest_gated_no_token")}</p>}
       {resolved?.gated_needs_acceptance && <p className="muted">{tr("admin.engines_ingest_gated_accept_first")}</p>}
+      {/* 🔴 The whole point of the set: a diffusion model taken in alone leaves a row that is
+          marked, cannot be enabled, and points at files in other repositories. One checkbox, and
+          each part says what it costs — `staged` ones cost nothing because this deployment
+          already holds those bytes. */}
+      {!!resolved?.family_parts?.length && <label className="engine-operation-check engine-operation-parts">
+        <input type="checkbox" checked={withParts} disabled={resolved.family_parts.some((part) => part.unreachable)}
+          onChange={(event) => setWithParts(event.currentTarget.checked)} />
+        <span>
+          {(tr("admin.engines_wizard_parts_take" as never) as string)
+            .replace("{n}", String(resolved.family_parts.length))
+            .replace("{b}", resolved.family_parts_bytes ? formatBytes(resolved.family_parts_bytes) : "0")}
+          <ul className="engine-operation-parts-list">{resolved.family_parts.map((part) => <li key={part.flag}>
+            <span className="mono">{part.flag}</span>
+            <span className="mono">{part.repo}/{part.file}</span>
+            <span>{part.staged
+              ? tr("admin.engines_wizard_parts_staged" as never)
+              : part.unreachable
+                ? tr("admin.catalog_vae_unreachable" as never)
+                : `${part.bytes ? formatBytes(part.bytes) : "?"}${part.license ? ` · ${part.license}` : ""}`}</span>
+          </li>)}</ul>
+        </span>
+      </label>}
       {resolved?.vae_bundled === "no" && !resolved.family_vae && <p className="form-err">{tr("admin.engines_wizard_vae_none")}</p>}
       {resolved?.vae_bundled === "no" && resolved.family_vae && <label className="engine-operation-check"><input type="checkbox" checked={withVae} disabled={!!resolved.family_vae.unreachable} onChange={(event) => setWithVae(event.currentTarget.checked)} /><span>{(tr(resolved.family_vae.staged ? "admin.engines_wizard_vae_staged" : "admin.engines_wizard_vae_take") as string)
         .replace("{f}", `${resolved.family_vae.repo}/${resolved.family_vae.file}`)

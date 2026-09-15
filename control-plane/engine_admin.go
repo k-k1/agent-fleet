@@ -111,6 +111,7 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// property of how often somebody opens a screen.
 	mux.HandleFunc("POST /api/admin/engines/{key}/models/vae-scan", a.withIngestAdmin(a.scanVae))
 	mux.HandleFunc("POST /api/admin/engines/{key}/models/{id}/vae", a.withIngestAdmin(a.fixVae))
+	mux.HandleFunc("POST /api/admin/engines/{key}/models/{id}/parts", a.withIngestAdmin(a.fixParts))
 	// The discovery button (ADR 0082 decisions 6 and 7): what an external ComfyUI's own
 	// checkpoint/LoRA/VAE folders currently hold, read off its /object_info and offered as
 	// candidates. Under ingest authority, not super_admin only — the same predicate the ingest
@@ -1608,13 +1609,18 @@ type engineIngestBody struct {
 	// The licence checkbox beside it covers both files: the form shows the family VAE's own
 	// licence next to the offer, which is what `family_vae` on the resolve carries it for.
 	WithFamilyVae bool `json:"with_family_vae"`
+	// WithFamilyParts is the same for a split family's text encoder and VAE — the files the row
+	// would be refused for not having (engine_family_parts.go). One flag for the whole set: a
+	// family needs all of its parts or the row stays refused, so "some of them" is not an
+	// outcome worth offering.
+	WithFamilyParts bool `json:"with_family_parts"`
 }
 
 // resolveIngest (POST …/ingest/resolve) answers "what is this file" without starting anything.
 //
 // It exists so that the licence, the gating and the size are on screen BEFORE the checkbox that
 // accepts the licence — an acceptance offered ahead of the terms is not one.
-func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ engineIngestGrant) {
+func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
 	e := a.reg.get(strings.TrimSpace(r.PathValue("key")))
 	if e == nil {
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no such engine"})
@@ -1663,6 +1669,22 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ 
 				engineVaeFamilyOf(e.def.Provider, b, res)); known {
 				row["family_vae"] = engineVaePlanRow(plan, fam)
 			}
+		}
+	}
+	// The SPLIT families' other half. A diffusion model taken in alone leaves a row that is
+	// marked, cannot be enabled, and points at files in another repository — sometimes on
+	// another source entirely (a Civitai merge whose encoder is on Hugging Face). Offering them
+	// HERE is what makes taking a family in one act instead of a scavenger hunt.
+	//
+	// Offered for a new WHOLE row only: attaching a part is already the act this would suggest,
+	// and a LoRA reads no template of its own.
+	if !b.Attach && !b.Replace && strings.TrimSpace(b.FileFlag) == "" &&
+		!strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) {
+		fam := engineVaeFamilyOf(e.def.Provider, b, res)
+		if parts := engineFamilyPartsFor(fam); len(parts) > 0 {
+			plan := enginePartsPlan(r.Context(), a.enginePartsHeld(r.Context(), g, e.def.Key), parts)
+			row["family_parts"] = enginePartsPlanRows(plan, parts)
+			row["family_parts_bytes"] = enginePartsBytes(plan)
 		}
 	}
 	writeJSON(w, http.StatusOK, row)
@@ -1919,6 +1941,20 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		row := m
 		existing = &row
 	}
+	// 🔴 A PART cannot be a row of its own. Observed on af-sandbox 2026-09-15: taking Anima's
+	// text encoder in with "new" rather than "attach" registers a catalogue entry whose only
+	// file is an encoder — it appears in the registered list as if it were a model, it can never
+	// be enabled (no family's template reads a row like that), and the one thing an operator
+	// wanted, the encoder ON the checkpoint's row, did not happen.
+	//
+	// Refused rather than tidied afterwards: the row is the misunderstanding, and the act the
+	// person meant has its own name on the same screen.
+	if flag != "" && !b.Attach && !b.Replace {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"a " + flag + " file is a PART of a model, not a model: choose the row it belongs to and attach it," +
+				" or take the checkpoint in with its family's parts in one act"})
+		return
+	}
 	if b.Attach {
 		if aerr := engineAttachAllowed(existing, id, key, flag); aerr != nil {
 			writeAPIErr(w, aerr)
@@ -2028,6 +2064,13 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	if b.WithFamilyVae && vae == engineVaeNo {
 		followUp, _, _ = engineVaePlan(r.Context(), e.catalog.list(r.Context()), base)
 	}
+	// And the split family's parts, planned against the SAME catalogue read: a part this
+	// deployment already holds is one write rather than a second download, which is the normal
+	// case for the second row of a family (the Qwen-Image VAE is shared by two of them).
+	var parts []engineVaeFollowUp
+	if b.WithFamilyParts && !b.Attach && !b.Replace && flag == "" {
+		parts = enginePartsPlan(r.Context(), a.enginePartsHeld(r.Context(), g, key), engineFamilyPartsFor(base))
+	}
 	req := engineIngestRequest{
 		Role: key, ModelID: id, Kind: strings.TrimSpace(b.Kind), S3Key: s3key,
 		KVGeom:        geom,
@@ -2043,7 +2086,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		AcceptedLicense: engineLicenceLabel(res),
 		Resolved:        res,
 		FileFlag:        flag, Attach: b.Attach, Replace: b.Replace,
-		VaeBundled: vae, VaeFollowUp: followUp,
+		VaeBundled: vae, VaeFollowUp: followUp, PartsFollowUp: parts,
 	}
 	var job store.EngineIngestJob
 	if reuseKey != "" {

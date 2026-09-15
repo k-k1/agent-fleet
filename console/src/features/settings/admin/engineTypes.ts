@@ -243,6 +243,29 @@ export type ResolvedSource = {
    *  already in the bucket (`staged`) or would be taken in under the licence named here. It is
    *  what lets the form offer the second download in the same press, with its terms on screen. */
   family_vae?: FamilyVae;
+  /** The files a SPLIT family reads beside the diffusion model — the text encoder and the VAE
+   *  a row is refused for not having. Present when the family being registered declares parts
+   *  this deployment knows, so the form can take the whole set in one press instead of leaving
+   *  an operator to find two more repositories by name. */
+  family_parts?: FamilyPart[];
+  /** What the parts that are NOT already here would cost, as one number. */
+  family_parts_bytes?: number;
+};
+
+/** One file of a split family, as the form offers it. */
+export type FamilyPart = {
+  /** The role it is attached under: `--clip_l`, `--vae`. */
+  flag: string;
+  repo: string;
+  file: string;
+  s3_key: string;
+  /** Already this deployment's — declared rather than downloaded, and no licence to accept. */
+  staged?: boolean;
+  bytes?: number;
+  license?: string;
+  /** Known, and its source could not be reached. Drawn rather than dropped: a set offered
+   *  minus one part completes nothing. */
+  unreachable?: boolean;
 };
 
 /** The family VAE offered beside a checkpoint that carries none. */

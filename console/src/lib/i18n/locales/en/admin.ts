@@ -255,6 +255,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // 🔴 ADR 0072 follow-up. Offered only where the header was read and said the file carries none.
   "admin.engines_wizard_vae_take": "This checkpoint carries no VAE, so take {f} in as well and attach it as `--vae` ({n}, licence {l})",
   "admin.engines_wizard_vae_staged": "This checkpoint carries no VAE, so attach {f}, which this deployment already holds, as `--vae` (nothing is downloaded)",
+  "admin.engines_wizard_parts_take": "Take this family's {n} other files in too ({b}) — the encoder and VAE its workflow reads. Without them the row cannot be enabled.",
+  "admin.engines_wizard_parts_staged": "already here",
+  "admin.engines_model_files_missing_tag": "missing: {f}",
+  "admin.catalog_parts_fix": "Complete this row",
+  "admin.catalog_parts_fix_busy": "Completing…",
+  "admin.catalog_parts_fix_none": "Nothing is missing.",
+  "admin.catalog_parts_fix_attached": "Declared from files this deployment already held — nothing was downloaded.",
+  "admin.catalog_parts_fix_started": "Taking the missing files in. They attach themselves when they land.",
   "admin.engines_wizard_vae_none": "This checkpoint carries no VAE and this deployment has no default one for its family. It cannot generate until a VAE is taken in and attached as `--vae`.",
   "admin.engines_model_add_desc": "description",
   // Optional. This route has no source to read a licence from, so it is the one place a person
