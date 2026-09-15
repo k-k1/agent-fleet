@@ -979,7 +979,12 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
         {resolved.gated && !resolved.restrictions?.length && <span className="warn">{tr("admin.engines_ingest_hit_gated")}</span>}
         {immutableReuse && <span className="ok">{tr("admin.catalog_reuse_present" as never)}</span>}</div>}
       {resolved?.commercial_use === "no" && <p className="form-err">{tr("admin.engines_ingest_noncommercial")}</p>}
-      {resolved?.login_required && <p className="form-err">{tr("admin.engines_ingest_civitai_login")}</p>}
+      {/* 🔴 The wall is a REFUSAL only while nobody can answer it. With an account registered the
+          download is attempted as that account, and the CP cannot say in advance whether it
+          satisfies this uploader — the same position `gated_needs_acceptance` is in, so it reads
+          as the same kind of warning rather than a red dead end. */}
+      {resolved?.login_required && !resolved.civitai_needs_account && <p className="form-err">{tr("admin.engines_ingest_civitai_login")}</p>}
+      {resolved?.civitai_needs_account && <p className="muted">{tr("admin.engines_ingest_civitai_account_first" as never)}</p>}
       {resolved?.gated && resolved.can_ingest === false && !resolved.login_required && <p className="form-err">{tr("admin.engines_ingest_gated_no_token")}</p>}
       {resolved?.gated_needs_acceptance && <p className="muted">{tr("admin.engines_ingest_gated_accept_first")}</p>}
       {resolved?.vae_bundled === "no" && !resolved.family_vae && <p className="form-err">{tr("admin.engines_wizard_vae_none")}</p>}

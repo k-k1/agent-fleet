@@ -183,8 +183,19 @@ export type ResolvedSource = {
   /** The Civitai uploader requires a logged-in account to download this asset (ADR 0072 P2
    *  欠落 5). Its own field rather than `gated`, because the two have different answers: a
    *  registered Hugging Face token satisfies gating and cannot touch this one, so folding them
-   *  would send somebody to the token field to fix what a token does not fix. */
+   *  would send somebody to the token field to fix what a token does not fix.
+   *
+   *  ⚠️ On its own it no longer means "cannot be taken in" — see `civitai_needs_account`. Read
+   *  `can_ingest` for that, as the button does. */
   login_required?: boolean;
+  /** Login-walled, and a Civitai account IS registered — the same shape as
+   *  `gated_needs_acceptance`: the download may start, and the CP cannot say in advance whether
+   *  that account satisfies this uploader (early access is bought per creator). A warning before
+   *  the press, not a verdict. */
+  civitai_needs_account?: boolean;
+  /** Whether a Civitai account is registered at all, so the panel can tell "nobody can fetch
+   *  this" from "we will try as our account". */
+  deployment_civitai_token?: boolean;
   /** Gated, and a token IS registered — which is still not a yes. The CP resolves anonymously
    *  and cannot ask whether that account accepted THIS repository's terms; when it has not,
    *  the answer is a 403 on the download minutes later. So this is a warning before the press,

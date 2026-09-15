@@ -4877,3 +4877,37 @@ and leaving a row that could only fail at generation.
 
 `engineFamilyRule` gained a `not` list, checked before the needles, and that is what it is for: a
 product whose name outlived its architecture.
+
+## Addendum — the Civitai login wall outlived its refusal (2026-09-15)
+
+P2 欠落 5 added a refusal for a Civitai asset whose uploader requires a logged-in account: the
+resolve marks it, `can_ingest` is false, and the ingest route returns `civitai_login_required`
+before a task starts. That was right when it was written — the sentence in the code said "there
+is nothing on this deployment that could satisfy it".
+
+That stopped being true when the **Civitai token** became registrable. The account is sealed,
+carried to its own secret, and the fetch container has been sending it ever since
+(`Authorization: Bearer $CIVITAI_TOKEN`, deploy/aws/ecs/engine-tools/ingest-fetch.sh; the CFN
+task definition wires `CivitaiTokenSecret` into the same container as `HF_TOKEN`). Only the two
+gates in front of it were never told: `engineResolvedRow` was called with the **Hugging Face**
+token alone, so every login-walled asset answered `can_ingest: false` on a deployment that had
+registered a Civitai account — and the panel refused to start a download that would have worked.
+
+Found from the panel: WAI-ANIMA, an Anima checkpoint, with the button greyed out and a message
+that already talked about the registered token the code was not consulting.
+
+So each restriction is now answered by ITS OWN account:
+
+- `can_ingest` is `(!gated || hf) && (!login_required || civitai)`, and the row carries
+  `deployment_civitai_token` beside `deployment_token`.
+- The ingest route refuses only when there is no Civitai token registered, and says so.
+- With a token, `civitai_needs_account` is the warning — the exact shape `gated_needs_acceptance`
+  already has, and for the same reason: the CP resolves **anonymously** (decision 6), so it
+  cannot ask whether that account satisfies THIS uploader. Early access is bought per creator.
+  Let it start, and let the 401 be the answer if it is one.
+- The Console draws that as a muted caveat rather than a red dead end, and keeps the hard error
+  for the deployment that has registered nothing.
+
+🔴 The lesson is the comment, not the code: **"nothing could satisfy this" is a claim with a
+date on it.** A refusal justified by an absent capability has to name the capability, so that
+adding it is the same act as revisiting the refusal.

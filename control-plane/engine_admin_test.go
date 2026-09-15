@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1897,5 +1898,47 @@ func TestEngineCatalogRowCarriesLicenceAndSource(t *testing.T) {
 		if _, ok := bare[k]; ok {
 			t.Errorf("an undeclared %q was emitted: %v", k, bare)
 		}
+	}
+}
+
+// 🔴 The other half of the refusal above, and the bug it was hiding: a deployment that HAS
+// registered a Civitai account was refused too.
+//
+// The account is registered (engine_civitai_token.go), sealed, carried to the secret the fetch
+// container reads, and sent as `Authorization: Bearer $CIVITAI_TOKEN`
+// (deploy/aws/ecs/engine-tools/ingest-fetch.sh) — so the download this refused could have run.
+// The CP still cannot verify that the account satisfies THIS uploader (early access is bought
+// per creator), which is exactly the position `gated_needs_acceptance` is in: let it start, and
+// let the 401 be the answer if it is one.
+func TestEngineIngestStartsALoginWalledAssetWhenACivitaiTokenIsRegistered(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	civitaiStub(t, http.StatusUnauthorized)
+	ecsAPI := &fakeIngestECS{}
+	master := sha256.Sum256([]byte("test-master"))
+	m := &manager{store: st}
+	m.master32 = master[:]
+	m.custodian = newLocalCustodian(m.master32)
+	def := engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"},
+		CivitaiTokenSecret: "arn:aws:secretsmanager:ap-northeast-1:1:secret:af-x-civitai"}
+	tokens := newEngineCivitaiTokens(def, st, m, &fakeSecrets{})
+	if aerr := tokens.set(t.Context(), "civitai_secret_value", "admin1"); aerr != nil {
+		t.Fatalf("registering the account: %v", aerr.message)
+	}
+	a.reg.ing = &engineIngester{
+		def: def, cluster: "c", ecs: ecsAPI, store: st, models: st, civitaiTokens: tokens,
+	}
+	e.catalog.invalidate()
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
+		`{"id":"dreamshaper-8","kind":"checkpoint","s3Key":"image/checkpoints/dreamshaper_8.safetensors",
+		  "license_accepted":true,"base_model":"sdxl","source":{"civitai":{"versionId":128713}}}`))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ingest with a registered Civitai account = %d, want it to start (%s)", rec.Code, rec.Body.String())
+	}
+	if len(ecsAPI.run) != 1 {
+		t.Errorf("tasks started = %d, want the download to be attempted", len(ecsAPI.run))
 	}
 }
