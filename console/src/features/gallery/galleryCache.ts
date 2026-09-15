@@ -92,12 +92,19 @@ export function clearGalleryCache(): void {
 }
 
 /**
+ * How many pictures inside each subfolder the listing describes: one, the cover on its card
+ * (ADR 0080 P2). The endpoint accepts up to four; asking for more than is drawn would make the
+ * Agent stat and warm pictures nobody sees.
+ */
+const PEEK = 1;
+
+/**
  * The listing URL. ONE builder, because `api()`'s ETag cache is keyed by the URL string: a
  * prefetch that spelled `warm` differently from the view's own read would cache under a
  * different key and throw away the 304 replay that makes an unchanged folder free.
  */
 export function galleryTreeURL(path: string, warm: number): string {
-  return `api/fs/tree?path=${encodeURIComponent(path)}&warm=${warm}`;
+  return `api/fs/tree?path=${encodeURIComponent(path)}&warm=${warm}&peek=${PEEK}`;
 }
 
 /**

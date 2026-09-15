@@ -144,14 +144,35 @@ function warmDir(fullDir, edge, names) {
 
 const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp|svg)$/i;
 
-function realTree(relDir, warmEdge) {
+// What `peek=<n>` answers for one subfolder: how many pictures, and the newest n. Same shape
+// as workspace/agent/fs.go's peekDir — the point of having it here is that the folder CARDS
+// (cover + count) are then real in the harness, not just the grid inside.
+function peekInto(dir, n) {
+  let ents;
+  try {
+    ents = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return { images: 0, preview: [] };
+  }
+  const pics = [];
+  for (const e of ents) {
+    if (e.isDirectory() || !IMAGE_RE.test(e.name)) continue;
+    pics.push({ name: e.name, mtime: Math.floor(fs.statSync(path.join(dir, e.name)).mtimeMs / 1000) });
+  }
+  pics.sort((a, b) => b.mtime - a.mtime || (a.name < b.name ? -1 : 1));
+  return { images: pics.length, preview: pics.slice(0, n) };
+}
+
+function realTree(relDir, warmEdge, peek) {
   const full = path.join(HOME, relDir);
   const ents = fs.readdirSync(full, { withFileTypes: true });
   const out = [];
   for (const e of ents) {
     const st = fs.statSync(path.join(full, e.name));
     if (e.isDirectory()) {
-      out.push({ name: e.name, type: "dir", mtime: Math.floor(st.mtimeMs / 1000) });
+      const entry = { name: e.name, type: "dir", mtime: Math.floor(st.mtimeMs / 1000) };
+      if (peek > 0) Object.assign(entry, peekInto(path.join(full, e.name), peek));
+      out.push(entry);
     } else if (IMAGE_RE.test(e.name)) {
       out.push({ name: e.name, type: "file", size: st.size, mtime: Math.floor(st.mtimeMs / 1000) });
     }
@@ -218,8 +239,9 @@ const server = http.createServer((req, res) => {
   if (p === "/api/fs/tree") {
     const relDir = url.searchParams.get("path") || "";
     const warmEdge = Number(url.searchParams.get("warm") || 0);
+    const peek = Number(url.searchParams.get("peek") || 0);
     try {
-      const body = JSON.stringify(realTree(relDir, warmEdge));
+      const body = JSON.stringify(realTree(relDir, warmEdge, peek));
       const send = () => {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(body);

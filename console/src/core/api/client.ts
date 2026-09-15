@@ -306,6 +306,26 @@ export function downloadURL(path: string, thumb?: number, version?: number): str
   return u.toString();
 }
 
+/**
+ * The URL for a surface that SHOWS a picture at up to `edge` on its longest side — a lightbox,
+ * not a card. It differs from `downloadURL(path, edge)` in one case, and that case is the
+ * common one: when there is nothing to downscale, `thumb` hands back the original file, while
+ * `preview` re-encodes the same pixels. Measured on this deployment's generated images
+ * (832x1216 PNG, ~1.1 MB): about 120 KB for a picture nobody can tell apart on screen.
+ *
+ * Advisory exactly like `thumb` — an older Agent ignores it and serves the original, which is
+ * the behaviour this replaces. Never use it where the real bytes are the point (the download
+ * button, the file viewer's own copy).
+ */
+export function displayURL(path: string, edge: number, version?: number): string {
+  const u = new URL(rel("api/fs/download"));
+  u.searchParams.set("path", path);
+  u.searchParams.set("preview", String(edge));
+  if (version) u.searchParams.set("v", String(version));
+  if (selectedTenant) u.searchParams.set("tenant", selectedTenant);
+  return u.toString();
+}
+
 // statusJSON — the shared "{status, …json}" fold for multipart uploads and the
 // fs write ops: parse the body as JSON and merge it onto the HTTP status; a
 // non-JSON/empty body yields {status} alone. Callers branch on `status` (409

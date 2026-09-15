@@ -7,6 +7,7 @@
 //   npm --prefix console run build
 //   node console/scripts/gallery-perf/check.mjs [--case folders|images|scroll] [--warm 1]
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -26,6 +27,10 @@ const CASE = arg("case", "images"); // folders | images | scroll | nav
 const TREE_LATENCY = Number(arg("tree-latency", CASE === "nav" ? 150 : 0));
 const WARM = arg("warm", "1") === "1";
 const BASE = `http://127.0.0.1:${PORT}/`;
+// Where to write a PNG of the finished screen. The numbers below cannot see whether a folder
+// card actually shows its cover, or whether the badge over it is legible — that is what this
+// is for, and it is the only honest way to say a look was verified.
+const SHOT = arg("shot", "");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Real folders under this container's home (shared across sessions — see workspace-notes.md).
@@ -263,6 +268,12 @@ try {
   } else {
     const r = await caseImages(cdp, false);
     console.log(`  at rest (9s, no scroll), 202 cards in DOM: ${r.atRest} thumb requests fired (${r.atRestUnfinished} still unfinished)`);
+  }
+  if (SHOT) {
+    await sleep(1500); // the covers are requests like any other: let them land before looking
+    const png = await cdp.send("Page.captureScreenshot", { format: "png" });
+    fs.writeFileSync(SHOT, Buffer.from(png.data, "base64"));
+    console.log(`  wrote ${SHOT}`);
   }
   cdp.ws.close();
 } finally {

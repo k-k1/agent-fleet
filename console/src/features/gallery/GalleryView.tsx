@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { downloadURL } from "../../core/api/client.ts";
+import { displayURL, downloadURL } from "../../core/api/client.ts";
 import { humanSize } from "../../lib/filemeta.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -65,6 +65,17 @@ const THUMB = 512;
  *  off mid-fade. Same value and reasoning as the files tree. */
 const FRESH_MS = 5000;
 
+/** The longest edge the lightbox asks for. Quantised to three steps rather than taken from the
+ *  exact viewport: the Agent caches and decodes per edge, so every distinct window size would
+ *  otherwise be its own decode. The smallest step is already past the pictures this exists for
+ *  (832x1216), which is the case where `preview` re-encodes instead of downscaling. */
+const PREVIEW_STEPS = [1024, 1536, 2048];
+
+function previewEdge(): number {
+  const want = Math.max(window.innerWidth, window.innerHeight) * Math.min(window.devicePixelRatio || 1, 2);
+  return PREVIEW_STEPS.find((step) => step >= want) ?? PREVIEW_STEPS[PREVIEW_STEPS.length - 1];
+}
+
 /** How far outside the gallery's OWN scroll container (`.gal-body`, not the viewport — a pane
  *  can be narrower than the window and is often split) a card must come before its thumbnail is
  *  requested at all. `loading="lazy"` alone is not this: measured against a real 202-image
@@ -87,10 +98,10 @@ const HOVER_PREFETCH_MS = 120;
  * scrolling a loaded picture back out of view must not re-request it, and the Agent's own cache
  * (`Cache-Control` + `v=<mtime>`) makes a genuine re-look free anyway.
  */
-function useArmed(ref: { current: HTMLElement | null }): boolean {
+function useArmed(ref: { current: HTMLElement | null }, active = true): boolean {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
-    if (armed) return;
+    if (armed || !active) return;
     const el = ref.current;
     if (!el) return;
     const obs = new IntersectionObserver(
@@ -101,7 +112,7 @@ function useArmed(ref: { current: HTMLElement | null }): boolean {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [armed, ref]);
+  }, [active, armed, ref]);
   return armed;
 }
 
@@ -382,7 +393,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
         if (!near) continue;
         const probe = new Image();
         probe.decoding = "async";
-        probe.src = downloadURL(near.path, undefined, near.mtime);
+        probe.src = displayURL(near.path, previewEdge(), near.mtime);
       }
     }, 400);
     return () => window.clearTimeout(id);
@@ -559,7 +570,17 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
               <FolderCard
                 key={f.path}
                 label={named.get(f.path)?.label || f.name}
-                meta={named.has(f.path) ? tr("gallery.folder_images", { n: named.get(f.path)!.count }) : undefined}
+                // The Agent's own count when it sent one — it knows about every folder, not
+                // only the ones a session generated into. The session list stays the fallback
+                // for an older Agent that does not peek.
+                meta={
+                  typeof f.count === "number"
+                    ? tr("gallery.folder_images", { n: f.count })
+                    : named.has(f.path)
+                      ? tr("gallery.folder_images", { n: named.get(f.path)!.count })
+                      : undefined
+                }
+                cover={f.cover}
                 icon="folder"
                 title={f.path}
                 fresh={fresh.has(f.name)}
@@ -602,7 +623,9 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
           <ImageLightbox
             // Versioned like the cards: reopening a picture already looked at costs no
             // request at all (the Agent answers `immutable` when `v` matches).
-            src={downloadURL(current.path, undefined, current.mtime)}
+            // The picture at the size this screen can show, not the original file: the same
+            // pixels for anything under the step, and about a ninth of the bytes (client.ts).
+            src={displayURL(current.path, previewEdge(), current.mtime)}
             // The card's thumbnail is already decoded in this tab, so the enlarged view
             // paints immediately and sharpens when the original lands.
             placeholder={downloadURL(current.path, THUMB, current.mtime)}
@@ -630,6 +653,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
 function FolderCard({
   label,
   meta,
+  cover,
   icon,
   title,
   fresh,
@@ -638,6 +662,9 @@ function FolderCard({
 }: {
   label: string;
   meta?: string;
+  /** The newest picture inside, when the Agent described the folder. A folder named by a
+   *  session UUID says nothing about what is in it; one picture says most of it. */
+  cover?: GalleryImage;
   icon: string;
   title: string;
   fresh?: boolean;
@@ -649,6 +676,12 @@ function FolderCard({
   const hoverTimer = useRef(0);
   const disarm = () => window.clearTimeout(hoverTimer.current);
   useEffect(() => disarm, []);
+  // Gated exactly like an image card: a browse root with sixty subfolders would otherwise put
+  // sixty covers in the queue before anyone has scrolled. No cover, no observer — "Up" and the
+  // folders of an Agent that does not peek have nothing to wait for.
+  const thumbRef = useRef<HTMLSpanElement | null>(null);
+  const armed = useArmed(thumbRef, !!cover);
+  const [coverFailed, setCoverFailed] = useState(false);
   return (
     <div className={"gal-card folder" + (fresh ? " gal-new" : "")} role="listitem">
       <button
@@ -667,7 +700,22 @@ function FolderCard({
         onMouseDown={(e) => e.button === 1 && e.preventDefault()}
         onAuxClick={(e) => e.button === 1 && onOpen(true)}
       >
-        <span className="gal-thumb">
+        {/* The class follows the PICTURE, not the intent to have one: it turns the folder icon
+            into a badge over the cover, and a tile that is still waiting to be armed would
+            otherwise show that badge floating in an empty box. */}
+        <span className={"gal-thumb" + (cover && !coverFailed && armed ? " cover" : "")} ref={thumbRef}>
+          {cover && !coverFailed && armed ? (
+            <img
+              src={downloadURL(cover.path, THUMB, cover.mtime)}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              // Decorative: the card already says the folder's name, and a screen reader
+              // reading out a file name nobody chose would only be noise.
+              aria-hidden="true"
+              onError={() => setCoverFailed(true)}
+            />
+          ) : null}
           <Icon name={icon} className="gal-folder-icon" />
         </span>
         <span className="gal-name" title={title}>

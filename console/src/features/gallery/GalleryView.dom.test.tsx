@@ -613,6 +613,93 @@ describe("画像ギャラリーのペイン", () => {
     expect(readGallery("gen/sub")).toBeDefined();
   });
 
+  it("フォルダのカードは中身の表紙を出し、枚数はセッションのフォルダでなくても出る", async () => {
+    served = [
+      { name: "gen", type: "dir", images: 12, preview: [{ name: "new.png", mtime: 300 }] } as unknown as Entry,
+      { name: "plain", type: "dir" },
+    ];
+    await render({ path: "root" });
+
+    // The listing has to ASK for this, and only the gallery does (the file tree lists code
+    // folders constantly — peeking them would be one ReadDir per folder, forever).
+    expect(String(fetchMock.mock.calls[0][0])).toContain("peek=1");
+
+    const gen = folderCards().find((c) => c.textContent?.includes("gen"))!;
+    const cover = gen.querySelector<HTMLImageElement>(".gal-thumb img");
+    expect(cover).not.toBeNull();
+    expect(cover!.src).toContain(encodeURIComponent("root/gen/new.png"));
+    expect(cover!.src).toContain("thumb=512"); // the same size the grid inside will use
+    expect(cover!.src).toContain("v=300");
+    // The folder icon stays, as a badge over the picture: half a grid of pictures that are
+    // not pictures is worse than no cover at all.
+    expect(gen.querySelector(".gal-thumb.cover")).not.toBeNull();
+    expect(gen.querySelector(".gal-folder-icon")).not.toBeNull();
+    expect(gen.querySelector(".gal-meta")?.textContent).toBe("12 枚");
+
+    // A folder the Agent said nothing about is the card it always was.
+    const plain = folderCards().find((c) => c.textContent?.includes("plain"))!;
+    expect(plain.querySelector(".gal-thumb img")).toBeNull();
+    expect(plain.querySelector(".gal-thumb.cover")).toBeNull();
+    expect(plain.querySelector(".gal-meta")?.textContent).toBe("");
+  });
+
+  it("表紙が出せなければフォルダのアイコンに戻る（壊れた札にしない）", async () => {
+    served = [{ name: "gen", type: "dir", images: 1, preview: [{ name: "gone.png", mtime: 1 }] } as unknown as Entry];
+    await render({ path: "root" });
+    const card = () => folderCards().find((c) => c.textContent?.includes("gen"))!;
+    await act(async () => {
+      card().querySelector(".gal-thumb img")!.dispatchEvent(new Event("error", { bubbles: false }));
+    });
+    expect(card().querySelector(".gal-thumb img")).toBeNull();
+    expect(card().querySelector(".gal-thumb.cover")).toBeNull();
+    expect(card().querySelector(".gal-folder-icon")).not.toBeNull();
+  });
+
+  it("拡大はカードの縮小版から始め、裏で取るのは原本でなく画面サイズの複製", async () => {
+    // ImageView は原寸を画面外の `new Image()` で先に読んでから差し替えるので、そこに何を
+    // 渡したかはこの偽物でしか見えない（jsdom は load を発火しないため <img src> は代役のまま）。
+    const probes: string[] = [];
+    class ProbeImage {
+      decoding = "";
+      complete = false;
+      set src(v: string) {
+        probes.push(v);
+      }
+      addEventListener() {}
+      removeEventListener() {}
+    }
+    const realImage = globalThis.Image;
+    vi.stubGlobal("Image", ProbeImage);
+    vi.useFakeTimers();
+    try {
+      served = [img("a.png", 100), img("b.png", 200)];
+      await render();
+      await click(host.querySelectorAll(".gal-zoom")[0]); // b.png、新しい順の先頭
+
+      // 画面に出ているのは、このタブが既に持っているカードの縮小版。
+      const shown = document.querySelector(".mirror-lightbox img") as HTMLImageElement;
+      expect(shown.src).toContain("thumb=512");
+      expect(shown.src).toContain(encodeURIComponent("gen/b.png"));
+
+      // 裏で取るのは原本ではなく `preview=<段>`。ここが 1.1MB と約 120KB の差になる
+      // （同じ画素の再エンコード。client.ts の displayURL）。
+      const bigOf = (name: string) => probes.find((u) => u.includes(encodeURIComponent("gen/" + name)));
+      expect(bigOf("b.png")).toContain("preview=");
+      expect(bigOf("b.png")).toContain("v=200");
+      expect(bigOf("b.png")).not.toContain("thumb=");
+
+      // 隣の先読みも同じ口から取る——先読みした複製と、送った先で出す複製が別 URL だと
+      // 先読みが丸ごと無駄になる。
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(bigOf("a.png")).toContain("preview=");
+    } finally {
+      vi.useRealTimers();
+      vi.stubGlobal("Image", realImage);
+    }
+  });
+
   it("マウント時に 1 回だけ読み、常駐ポーラーにはしない", async () => {
     served = [img("a.png", 100)];
     await render();

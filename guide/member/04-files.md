@@ -146,7 +146,10 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
   loading state (it never sits there showing only "Up"). Thumbnails are requested for the cards
   nearest the screen first, so opening a big folder does not fetch everything at once, and
   scrolling ahead does not get stuck behind pictures you have already scrolled past.
-- **Folders** — subfolders are cards too, and opening one moves this pane into it. The first card,
+- **Folders** — subfolders are cards too, and each one shows **the newest picture inside it as
+  a cover** (the folder mark becomes a small badge over the picture), with **how many pictures
+  are in it** underneath. A folder named by a session's UUID is no longer a guess. Opening one
+  moves this pane into it. The first card,
   "Up", goes back to the parent, and the **breadcrumb** in the row under the header
   (`.cache / agent-fleet / generated`) jumps to any level. Ctrl/⌘-click and middle-click open the
   folder in another pane.

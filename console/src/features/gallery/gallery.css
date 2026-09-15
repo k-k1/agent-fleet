@@ -78,6 +78,33 @@
 .gal-card.folder:hover .gal-folder-icon {
   color: var(--accent);
 }
+/* A folder whose contents the Agent described (`peek`): the newest picture fills the tile and
+   the folder icon shrinks to a badge over it. The badge is not decoration — without it half
+   the grid would be pictures that are not pictures, and the only way to tell would be to
+   click. `cover`, not `contain`: a tile part-filled by a portrait thumbnail reads as a broken
+   image rather than as a glimpse. */
+.gal-card.folder .gal-thumb.cover {
+  position: relative;
+  background: none;
+}
+.gal-thumb.cover img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.gal-thumb.cover .gal-folder-icon {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  font-size: 16px;
+  color: #fff;
+  /* The picture underneath can be any colour, so the badge carries its own contrast rather
+     than trusting the theme's. */
+  text-shadow: 0 1px 3px rgb(0 0 0 / 80%);
+}
 .gal-sort-btn {
   font-size: 11px;
   white-space: nowrap;
