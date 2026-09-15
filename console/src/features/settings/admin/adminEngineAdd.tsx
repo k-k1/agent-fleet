@@ -6,28 +6,22 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { Button, IconButton } from "../../../ui/Button.tsx";
 import { Modal } from "../../../ui/Modal.tsx";
 import { ViewHead } from "../../../ui/ViewHead.tsx";
-import {
-  EngineIngestJobs,
-  EngineModelAdd,
-  engineIdFromFile,
-  engineIngestPrefix,
-  type EngineIngestAct,
-  type ModelKind,
-  type ModelPrefill,
-} from "./adminEngineModels.tsx";
+import { type ModelKind } from "./adminEngineModels.tsx";
 import {
   engineIsImage,
   engineIsRemote,
   engineTitle,
   useEngineRows,
-  type EngineParams,
+  type CompleteAnswer,
+  type EngineApiError,
   type EngineModel,
+  type EngineObjectRow,
+  type EngineParams,
   type EngineRow,
-  type EngineStorageAnswer,
-  type EngineStorageFile,
   type IngestCandidate,
   type IngestHit,
   type IngestJob,
+  type IngestPlan,
   type IngestSearchAnswer,
   type IngestSearchRequest,
   type IngestVersion,
@@ -37,9 +31,8 @@ import {
 type CatalogView = "search" | "registered";
 type CatalogSource = "hf" | "civitai" | "civitai-red";
 
-/** Full-pane catalogue. The former four-step wizard is intentionally not mounted: browsing
- * stays visible and a card opens one operation dialog for version, file, destination and
- * settings. */
+/** Full-pane catalogue (ADR 0085 decision 8). Two tabs and no wizard: 探す opens one plan card
+ * per press, 登録済み holds the rows and, under them, the bucket itself. */
 export function EngineAddView({ engineKey, lora, initialView = "search", headerActions }: {
   engineKey: string;
   lora: boolean;
@@ -112,6 +105,12 @@ type CatalogProps = {
 export function ImageCatalog(props: CatalogProps) { return <CatalogBrowser {...props} image />; }
 export function LLMCatalog(props: CatalogProps) { return <CatalogBrowser {...props} image={false} />; }
 
+/** The ledger route, shared by both tabs: the bucket is the only thing that knows what this
+ * deployment holds, so "have I got this already" and "what is in there" read the same answer. */
+function objectsPath(engineKey: string): string {
+  return `api/admin/engines/${encodeURIComponent(engineKey)}/objects`;
+}
+
 function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: CatalogProps & { image: boolean }) {
   const tr = useT();
   const [source, setSource] = useState<CatalogSource>(image ? "civitai" : "hf");
@@ -126,11 +125,11 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
   const [busy, setBusy] = useState(false);
   const [busyMore, setBusyMore] = useState(false);
   const [err, setErr] = useState("");
-  const [operation, setOperation] = useState<{ hit?: IngestHit; act: EngineIngestAct; source?: CatalogSource } | null>(null);
+  const [plan, setPlan] = useState<{ hit?: IngestHit; source?: CatalogSource } | null>(null);
   const [preview, setPreview] = useState<IngestHit | null>(null);
-  const [storage, setStorage] = useState<EngineStorageAnswer | null>(null);
-  const [storageState, setStorageState] = useState<"checking" | "ready" | "failed">("checking");
-  const [startedJob, setStartedJob] = useState<IngestJob | undefined>();
+  const [objects, setObjects] = useState<EngineObjectRow[] | null>(null);
+  const [ledgerState, setLedgerState] = useState<"checking" | "ready" | "failed">("checking");
+  const [started, setStarted] = useState("");
   const requestSeq = useRef(0);
 
   useEffect(() => {
@@ -140,16 +139,16 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
     setCursor("");
   }, [image, row.key]);
 
-  const loadStorage = useCallback(async () => {
-    setStorageState("checking");
+  const loadObjects = useCallback(async () => {
+    setLedgerState("checking");
     try {
-      const answer = await api(`api/admin/engines/${encodeURIComponent(row.key)}/storage`);
-      if (answer?.error) { setStorage(null); setStorageState("failed"); return; }
-      setStorage({ files: Array.isArray(answer?.files) ? answer.files : [], checked_at: answer?.checked_at });
-      setStorageState("ready");
-    } catch { setStorage(null); setStorageState("failed"); }
+      const answer = await api(objectsPath(row.key));
+      if (answer?.error) { setObjects(null); setLedgerState("failed"); return; }
+      setObjects(Array.isArray(answer?.objects) ? answer.objects : []);
+      setLedgerState("ready");
+    } catch { setObjects(null); setLedgerState("failed"); }
   }, [row.key]);
-  useEffect(() => { setStorage(null); void loadStorage(); }, [loadStorage]);
+  useEffect(() => { setObjects(null); void loadObjects(); }, [loadObjects]);
 
   const search = useCallback(async (more = false) => {
     const seq = ++requestSeq.current;
@@ -175,7 +174,6 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
     setSource(next); setSort(next === "civitai" || next === "civitai-red" ? "newest" : "updated"); setHits(null); setCursor("");
   };
   const sortOptions = source === "civitai" || source === "civitai-red" ? ["newest", "downloads", "trending", "likes"] : ["updated", "downloads", "trending", "likes"];
-  const modelRows = (row.model_rows || []).filter((model) => (model.kind === "lora") === (kind === "lora"));
 
   return (
     <section
@@ -215,19 +213,19 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
             {sortOptions.map((option) => <option key={option} value={option}>{tr((`admin.engines_ingest_sort_${option}`) as never)}</option>)}
           </select>
         </label>
-        {!readOnly && <Button variant="ghost" small icon="link" onClick={() => setOperation({ act: "new", source })}>{tr("admin.catalog_manual" as never)}</Button>}
+        {!readOnly && <Button variant="ghost" small icon="link" onClick={() => setPlan({ source })}>{tr("admin.catalog_manual" as never)}</Button>}
       </div>
       {(source === "civitai" || source === "civitai-red") && sort === "newest" && <p className="muted engine-catalog-sort-note">{tr("admin.catalog_civitai_newest_note" as never)}</p>}
-      {storageState === "checking" && <p className="muted engine-catalog-storage-note">{tr("admin.catalog_storage_checking" as never)}</p>}
-      {storageState === "failed" && <p className="form-err engine-catalog-storage-note">{tr("admin.catalog_storage_unavailable" as never)}</p>}
+      {ledgerState === "checking" && <p className="muted engine-catalog-storage-note">{tr("admin.catalog_storage_checking" as never)}</p>}
+      {ledgerState === "failed" && <p className="form-err engine-catalog-storage-note">{tr("admin.catalog_storage_unavailable" as never)}</p>}
+      {started && <p className="muted engine-catalog-started">{started}</p>}
       {err && <p className="form-err">{err}</p>}
       {busy && !busyMore && <p className="muted engine-catalog-loading"><Icon name="loading" spin /> {tr("admin.engines_ingest_searching" as never)}</p>}
       {!busy && hits?.length === 0 && <p className="muted engine-catalog-zero">{tr("admin.engines_ingest_search_none")}</p>}
       {!!hits?.length && <ul className="engine-catalog-grid">{hits.map((hit) => {
         const props: BrowseCardProps = {
-          hit, kind, saved: savedFilesForHit(hit, storage?.files || []), storage: storage?.files || [], storageState, readOnly,
-          canAttach: modelRows.length > 0 && (row.file_flags || []).some(Boolean),
-          canReplace: modelRows.length > 0, onOperation: (act) => setOperation({ hit, act }),
+          hit, kind, saved: savedObjectsForHit(hit, objects || []), objects: objects || [], ledgerState, readOnly,
+          onTakeIn: () => setPlan({ hit }),
         };
         return image
           ? <ImageCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} onPreview={() => setPreview(hit)} />
@@ -235,9 +233,17 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
       })}</ul>}
       {cursor && query === submittedQuery && <CatalogMore busy={busy} loading={busy && busyMore}
         count={hits?.length || 0} onMore={() => void search(true)} />}
-      <CatalogJobs engineKey={row.key} started={startedJob} onCompleted={() => { void loadStorage(); onChanged(); }} />
-      {operation && <CatalogOperation row={row} kind={kind} hit={operation.hit} initialAct={operation.act} initialSource={operation.source}
-        storage={storage?.files || []} onClose={() => setOperation(null)} onStarted={(job) => { setStartedJob(job); setOperation(null); void loadStorage(); onChanged(); }} />}
+      {plan && <IngestPlanDialog row={row} kind={kind} hit={plan.hit} initialSource={plan.source}
+        onClose={() => setPlan(null)}
+        onStarted={(job) => {
+          setPlan(null);
+          // Which of the three the press turned out to be: a reuse or a move crosses no network,
+          // so telling somebody to watch a download would have them watching for nothing.
+          setStarted(tr((job?.action && job.action !== "download"
+            ? "admin.catalog_started_no_download" : "admin.catalog_started") as never) as string);
+          void loadObjects();
+          onChanged();
+        }} />}
       {preview?.preview_url && <Modal title={preview.name} className="engine-catalog-lightbox" onClose={() => setPreview(null)}>
         <img className="ui-modal-body" src={preview.preview_url} alt={preview.name} />
       </Modal>}
@@ -294,13 +300,11 @@ function CatalogMore({ busy, loading, count, onMore }: { busy: boolean; loading:
 type BrowseCardProps = {
   hit: IngestHit;
   kind: ModelKind;
-  saved: EngineStorageFile[];
-  storage: EngineStorageFile[];
-  storageState: "checking" | "ready" | "failed";
+  saved: EngineObjectRow[];
+  objects: EngineObjectRow[];
+  ledgerState: "checking" | "ready" | "failed";
   readOnly: boolean;
-  canAttach: boolean;
-  canReplace: boolean;
-  onOperation: (act: EngineIngestAct) => void;
+  onTakeIn: () => void;
 };
 
 function ImageCatalogCard({ hit, kind, saved, onPreview, ...actions }: BrowseCardProps & { onPreview: () => void }) {
@@ -325,7 +329,7 @@ function ImageCatalogCard({ hit, kind, saved, onPreview, ...actions }: BrowseCar
         {hit.updated_at ? ` · ${tr("admin.engines_ingest_hit_updated")} ${fmtDateTime(hit.updated_at)}` : ""}
         {hit.published_at ? ` · ${tr("admin.engines_ingest_hit_published")} ${fmtDateTime(hit.published_at)}` : ""}
       </p>
-      <CatalogSavedState hit={hit} saved={saved} storage={actions.storage} storageState={actions.storageState} />
+      <CatalogSavedState hit={hit} saved={saved} objects={actions.objects} ledgerState={actions.ledgerState} />
     </div>{hit.preview_url && <Button variant="ghost" className="engine-catalog-thumb" onClick={onPreview} aria-label={`${tr("admin.catalog_preview" as never)}: ${hit.name}`}><img src={hit.thumb_url || hit.preview_url} alt="" loading="lazy" /></Button>}</div>
     <BrowseCardFooter hit={hit} {...actions} />
   </li>;
@@ -348,29 +352,29 @@ function LLMCatalogCard({ hit, kind, saved, ...actions }: BrowseCardProps) {
         {hit.likes ? ` · ${compactCount(hit.likes)} ${tr("admin.engines_ingest_hit_likes")}` : ""}
         {hit.updated_at ? ` · ${tr("admin.engines_ingest_hit_updated")} ${fmtDateTime(hit.updated_at)}` : ""}
       </p>
-      <CatalogSavedState hit={hit} saved={saved} storage={actions.storage} storageState={actions.storageState} />
+      <CatalogSavedState hit={hit} saved={saved} objects={actions.objects} ledgerState={actions.ledgerState} />
     </div></div>
     <BrowseCardFooter hit={hit} {...actions} />
   </li>;
 }
 
-function CatalogSavedState({ hit, saved, storage, storageState }: Pick<BrowseCardProps, "hit" | "saved" | "storage" | "storageState">) {
+function CatalogSavedState({ hit, saved, objects, ledgerState }: Pick<BrowseCardProps, "hit" | "saved" | "objects" | "ledgerState">) {
   const tr = useT();
-  if (storageState === "checking") return <p className="muted engine-catalog-saved">{tr("admin.catalog_storage_checking" as never)}</p>;
-  if (storageState === "failed") return <p className="muted engine-catalog-saved">{tr("admin.catalog_storage_unavailable" as never)}</p>;
-  const sourceFiles = sourceFilesForHit(hit, storage);
+  if (ledgerState === "checking") return <p className="muted engine-catalog-saved">{tr("admin.catalog_storage_checking" as never)}</p>;
+  if (ledgerState === "failed") return <p className="muted engine-catalog-saved">{tr("admin.catalog_storage_unavailable" as never)}</p>;
+  const sourceObjects = sourceObjectsForHit(hit, objects);
   if (saved.length) return <p className="engine-catalog-saved">{tr("admin.catalog_saved_count" as never, { count: saved.length } as never)}</p>;
-  if (sourceFiles.some((file) => file.state === "unknown")) return <p className="muted engine-catalog-saved">{tr("admin.catalog_saved_unknown" as never)}</p>;
+  if (sourceObjects.some((object) => object.state === "missing")) return <p className="muted engine-catalog-saved">{tr("admin.catalog_saved_unknown" as never)}</p>;
   return <p className="muted engine-catalog-saved">{tr("admin.catalog_saved_none" as never)}</p>;
 }
 
-function BrowseCardFooter({ hit, readOnly, canAttach, canReplace, onOperation }: Omit<BrowseCardProps, "kind" | "saved">) {
+/** One button (ADR 0085 decision 3). `attach` and `replace` are gone from this screen: a part is
+ * never the subject, and swapping one is an act on the checkpoint that reads it. */
+function BrowseCardFooter({ hit, readOnly, onTakeIn }: Pick<BrowseCardProps, "hit" | "readOnly" | "onTakeIn">) {
   const tr = useT();
   return <footer className="engine-catalog-card-footer">
     {hit.url && <a href={hit.url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a>}
-    {!readOnly && <span><Button variant="primary" small aria-label={`${tr("admin.catalog_add" as never)}: ${hit.name}`} onClick={() => onOperation("new")}>{tr("admin.catalog_add" as never)}</Button>
-      {canAttach && <Button small aria-label={`${tr("admin.catalog_attach" as never)}: ${hit.name}`} onClick={() => onOperation("attach")}>{tr("admin.catalog_attach" as never)}</Button>}
-      {canReplace && <Button small aria-label={`${tr("admin.catalog_replace" as never)}: ${hit.name}`} onClick={() => onOperation("replace")}>{tr("admin.catalog_replace" as never)}</Button>}</span>}
+    {!readOnly && <span><Button variant="primary" small aria-label={`${tr("admin.catalog_add" as never)}: ${hit.name}`} onClick={onTakeIn}>{tr("admin.catalog_add" as never)}</Button></span>}
   </footer>;
 }
 
@@ -451,7 +455,7 @@ function NoEngineCatalog() {
     {err && <p className="form-err">{err}</p>}
     {hits?.length === 0 && <p className="muted engine-catalog-zero">{tr("admin.engines_ingest_search_none")}</p>}
     {!!hits?.length && <ul className="engine-catalog-grid">{hits.map((hit) => {
-      const props: BrowseCardProps = { hit, kind, saved: [], storage: [], storageState: "ready", readOnly: true, canAttach: false, canReplace: false, onOperation: noop };
+      const props: BrowseCardProps = { hit, kind, saved: [], objects: [], ledgerState: "ready", readOnly: true, onTakeIn: noop };
       return image ? <ImageCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} onPreview={() => setPreview(hit)} /> : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
     })}</ul>}
     {cursor && query === submittedQuery && <CatalogMore busy={busy} loading={busy} count={hits?.length || 0} onMore={() => void search(true)} />}
@@ -459,38 +463,50 @@ function NoEngineCatalog() {
   </section>;
 }
 
+/** Whether a `complete` answer has a question in it. Two things are worth a dialog and nothing
+ * else is: a role the CP wants a pick for — which it asks even with ONE candidate, because
+ * `--clip_l` / `--clip_g` / `--t5xxl` share a directory and the CP will not guess which of them a
+ * loose encoder is — and bytes somebody has to agree to pay for. */
+function needsAsking(answer: CompleteAnswer): boolean {
+  return answer.action === "choose" || (answer.bytes_to_download || 0) > 0;
+}
+
 function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: CatalogProps & { isSuper: boolean }) {
   const tr = useT();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("name");
-  const [storage, setStorage] = useState<EngineStorageFile[] | null>(null);
-  const [jobs, setJobs] = useState<IngestJob[]>([]);
+  const [objects, setObjects] = useState<EngineObjectRow[] | null>(null);
+  /** Told apart from "not read yet": an empty prefix and a bucket nobody could list are
+   *  different answers, and drawing the second as the first says this deployment holds nothing. */
+  const [ledgerFailed, setLedgerFailed] = useState(false);
+  const [checkedAt, setCheckedAt] = useState("");
   const [busy, setBusy] = useState("");
-  const [err, setErr] = useState("");
+  const [err, setErr] = useState<EngineApiError | null>(null);
+  const [note, setNote] = useState("");
   const [edit, setEdit] = useState<EngineModel | null>(null);
-  const [partsNote, setPartsNote] = useState("");
   const [deleting, setDeleting] = useState<EngineModel | null>(null);
   const [purge, setPurge] = useState(false);
-  const [operation, setOperation] = useState<{ act: EngineIngestAct; modelId?: string } | null>(null);
-  const [prefill, setPrefill] = useState<ModelPrefill | null>(null);
+  const [completing, setCompleting] = useState<{ modelId: string; baseModel?: string; answer: CompleteAnswer } | null>(null);
+  const [deletingObject, setDeletingObject] = useState<EngineObjectRow | null>(null);
   const [vramAsk, setVramAsk] = useState<{ model: EngineModel; patch: Record<string, unknown>; message?: string } | null>(null);
   const models = (row.model_rows || []).filter((model) => (model.kind === "lora") === (kind === "lora"));
 
-  const loadAux = useCallback(async () => {
-    const [stored, history] = await Promise.all([
-      api(`api/admin/engines/${encodeURIComponent(row.key)}/storage`),
-      api(`api/admin/engines/${encodeURIComponent(row.key)}/ingest`),
-    ]);
-    setStorage(stored?.error ? null : Array.isArray(stored?.files) ? stored.files : []);
-    if (!history?.error) setJobs(Array.isArray(history?.jobs) ? history.jobs : []);
+  const loadObjects = useCallback(async () => {
+    const answer = await api(objectsPath(row.key));
+    if (answer?.error) { setObjects(null); setLedgerFailed(true); return; }
+    setLedgerFailed(false);
+    setObjects(Array.isArray(answer?.objects) ? answer.objects : []);
+    setCheckedAt(answer?.checked_at || "");
   }, [row.key]);
-  useEffect(() => { void loadAux(); }, [loadAux]);
-  const live = jobs.some((job) => job.state === "pending" || job.state === "running");
+  useEffect(() => { void loadObjects(); }, [loadObjects]);
+  // A download runs for minutes and has no list of its own any more (ADR 0085 decision 6): it is
+  // its destination object's `uploading` state, so the ledger is what polls.
+  const live = (objects || []).some((object) => object.state === "uploading");
   useEffect(() => {
     if (!live) return;
-    const timer = setInterval(() => void loadAux(), 5000);
+    const timer = setInterval(() => void loadObjects(), 5000);
     return () => clearInterval(timer);
-  }, [live, loadAux]);
+  }, [live, loadObjects]);
 
   const visible = [...models].filter((model) => {
     const words = [model.id, model.description, model.base_model, model.license_name, model.license].filter(Boolean).join(" ").toLowerCase();
@@ -502,7 +518,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
   });
 
   const callModel = async (model: EngineModel, method: string, body?: Record<string, unknown>, purgeBytes = false) => {
-    setBusy(model.id); setErr("");
+    setBusy(model.id); setErr(null);
     try {
       const answer = await apiJSON(
         `api/admin/engines/${encodeURIComponent(row.key)}/models/${encodeURIComponent(model.id)}${purgeBytes ? "?purge=1" : ""}`,
@@ -514,39 +530,57 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
           setEdit(null);
           setVramAsk({ model, patch: body, message: answer.error.message });
         } else {
-          setErr(errDetail(answer.error));
+          setErr(answer.error as EngineApiError);
         }
         return false;
       }
       await onChanged();
-      await loadAux();
+      await loadObjects();
       return true;
     } finally { setBusy(""); }
   };
-  // 🔴 The remedy for a row that is already here. Rows taken in before the ingest form offered
-  // the set are incomplete, and "take the 4 GB diffusion model in again with the box ticked" is
-  // not a repair. The CP answers `attached` when every missing file was already this
-  // deployment's, which is the common case once one row of the family exists.
-  const completeParts = async (model: EngineModel) => {
-    setBusy(model.id); setErr(""); setPartsNote("");
+
+  /** 揃える (ADR 0085 decision 3). The row is the subject and the CP does the reading: what the
+   * family needs, what the row has, what the bucket holds. `{check: true}` is the same answer
+   * without the act, which is what decides whether anybody is asked anything at all. */
+  const completeModel = useCallback(async (id: string, body: Record<string, unknown> = {}): Promise<CompleteAnswer | undefined> => {
+    setBusy(id); setErr(null);
     try {
       const answer = await apiJSON(
-        `api/admin/engines/${encodeURIComponent(row.key)}/models/${encodeURIComponent(model.id)}/parts`,
-        "POST", { license_accepted: true },
+        `api/admin/engines/${encodeURIComponent(row.key)}/models/${encodeURIComponent(id)}/complete`, "POST", body,
       );
-      if (answer?.error) { setErr(errDetail(answer.error)); return; }
-      const action = (answer as { action?: string })?.action;
-      setPartsNote(tr((action === "none" ? "admin.catalog_parts_fix_none"
-        : action === "attached" ? "admin.catalog_parts_fix_attached"
-          // A move is not a download and must not be reported as one: nothing crosses the
-          // internet, so an operator told to watch for a transfer would be watching for
-          // something that never appears.
-          : action === "moving" ? "admin.catalog_parts_fix_moving"
-            : "admin.catalog_parts_fix_started") as never) as string);
-      await onChanged();
-      await loadAux();
+      if (answer?.error) { setErr(answer.error as EngineApiError); return undefined; }
+      return answer as CompleteAnswer;
     } finally { setBusy(""); }
+  }, [row.key]);
+
+  const completeNote = (answer: CompleteAnswer) => tr((answer.action === "none" ? "admin.catalog_complete_none"
+    : answer.action === "attached" ? "admin.catalog_complete_attached"
+      // A move is not a download and must not be reported as one: nothing crosses the internet,
+      // so an operator told to watch for a transfer would be watching for something that never
+      // appears.
+      : answer.action === "moving" ? "admin.catalog_complete_moving"
+        : answer.action === "unknown" ? "admin.catalog_complete_unknown"
+          : "admin.catalog_complete_started") as never) as string;
+
+  const runComplete = async (id: string, body: Record<string, unknown> = {}) => {
+    const answer = await completeModel(id, body);
+    if (!answer) return;
+    setNote(completeNote(answer));
+    await onChanged();
+    await loadObjects();
   };
+
+  const align = async (model: EngineModel) => {
+    setNote("");
+    const check = await completeModel(model.id, { check: true });
+    if (!check) return;
+    // Only two things are worth a dialog: a role with several candidates, and bytes somebody has
+    // to agree to pay for. Everything else just happens.
+    if (needsAsking(check)) { setCompleting({ modelId: model.id, baseModel: model.base_model, answer: check }); return; }
+    await runComplete(model.id);
+  };
+
   const guardedChange = async (model: EngineModel, patch: Record<string, unknown>) => {
     const loadsModel = !!(patch.enabled || patch.selected || patch.default);
     const cardMiB = row.class?.vram_mib || 0;
@@ -556,22 +590,69 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     }
     await callModel(model, "PUT", patch);
   };
-  const addModel = async (body: Record<string, unknown>) => {
-    setBusy("+");
+
+  /** The one object-side act, and it is still an act on a model: an object in the bucket that no
+   * row declares becomes a row, and the encoders and VAE the ledger already holds are attached by
+   * the same press (ADR 0085 decision 3). */
+  const registerObject = async (key: string) => {
+    if (!key) return;
+    setBusy(`object:${key}`); setErr(null); setNote("");
     try {
-      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/models`, "POST", body);
-      if (answer?.error) { setErr(errDetail(answer.error)); return; }
+      const answer = await apiJSON(objectsPath(row.key) + "/register", "POST", { key });
+      if (answer?.error) { setErr(answer.error as EngineApiError); return; }
+      const registered = answer as { model_id?: string; complete?: CompleteAnswer };
+      const head = (tr("admin.catalog_ledger_registered" as never) as string).replace("{id}", registered.model_id || "");
+      setNote(registered.complete ? `${head} ${completeNote(registered.complete)}` : head);
       await onChanged();
-      await loadAux();
+      await loadObjects();
+      // 🔴 `register` assigns bytes that are already here and starts no download of its own, so a
+      // part that exists only upstream comes back as `download` in its own answer's `complete`.
+      // The row is the subject of that, and this is the press that is already in somebody's hand
+      // — leaving it as a note is how "I registered it and do not know what to do" happens.
+      if (registered.model_id && registered.complete && needsAsking(registered.complete)) {
+        setCompleting({ modelId: registered.model_id, answer: registered.complete });
+      }
     } finally { setBusy(""); }
   };
-  const forgetJob = async (id: string) => {
-    setBusy(`job:${id}`);
+
+  const deleteObject = async (key: string) => {
+    setBusy(`object:${key}`); setErr(null); setNote("");
+    try {
+      const answer = await apiJSON(objectsPath(row.key), "DELETE", { key });
+      if (answer?.error) { setErr(answer.error as EngineApiError); return; }
+      setDeletingObject(null);
+      await loadObjects();
+    } finally { setBusy(""); }
+  };
+
+  const dismissJob = async (id: string) => {
+    setBusy(`job:${id}`); setErr(null);
     try {
       const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/${encodeURIComponent(id)}`, "DELETE");
-      if (answer?.error) { setErr(errDetail(answer.error)); return; }
-      setJobs(Array.isArray(answer?.jobs) ? answer.jobs : []);
+      if (answer?.error) { setErr(answer.error as EngineApiError); return; }
+      await loadObjects();
     } finally { setBusy(""); }
+  };
+
+  /** What the CP said to press (ADR 0085 decision 5). The refusal names a holder and a next act,
+   * and this is where "the key is already recorded" turns into a button that clears it. */
+  const runNext = async (error: EngineApiError) => {
+    const next = error.next;
+    if (!next) return;
+    const target = next.target || error.holder?.id || "";
+    setErr(null);
+    switch (next.act) {
+      case "register": return registerObject(next.target || error.holder?.key || "");
+      case "complete": return runComplete(target);
+      case "replace": return runComplete(target, { replace: true });
+      case "forget_row": {
+        const model = models.find((candidate) => candidate.id === target);
+        if (model) await callModel(model, "DELETE");
+        return;
+      }
+      case "dismiss_job": return dismissJob(target || error.holder?.id || "");
+      case "wait": { await onChanged(); await loadObjects(); return; }
+    }
   };
 
   return <section className="engine-catalog-registered" aria-label={tr("admin.catalog_registered_title" as never)}>
@@ -583,12 +664,13 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
       <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span><select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>
         <option value="name">{tr("admin.catalog_sort_name" as never)}</option><option value="enabled">{tr("admin.catalog_sort_enabled" as never)}</option><option value="default">{tr("admin.catalog_sort_default" as never)}</option>
       </select></label>
-      <IconButton icon="refresh" label={tr("admin.refresh")} onClick={() => void loadAux()} />
+      <IconButton icon="refresh" label={tr("admin.refresh")} onClick={() => void loadObjects()} />
     </div>
-    {err && <p className="form-err">{err}</p>}
+    <EngineRefusal error={err} busy={!!busy} onNext={() => void runNext(err as EngineApiError)} />
+    {note && <p className="muted engine-registered-note">{note}</p>}
     {!visible.length && <p className="muted">{tr(kind === "lora" ? "admin.engines_loras_empty" : "admin.engines_catalog_empty")}</p>}
     <ul className="engine-registered-grid">{visible.map((model) => {
-      const status = registeredStorage(model, storage);
+      const status = registeredPresence(model, objects);
       const started = !!(model.selected || model.default);
       const pending = busy === model.id;
       return <li key={model.id} className="engine-registered-card" aria-label={model.id}>
@@ -597,50 +679,38 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
           <span className={`engines-model-tag ${status.tone}`}>{tr((`admin.catalog_registered_${status.state}`) as never, { present: status.present, total: status.total } as never)}</span>
           {!!model.files_missing?.length && <span className="engines-model-tag warn">{(tr("admin.engines_model_files_missing_tag" as never) as string).replace("{f}", model.files_missing.join(" "))}</span>}</header>
         {engineIsImage(row) ? <ImageRegisteredCardBody model={model} /> : <LLMRegisteredCardBody model={model} />}
-        {/* 🔴 The one thing the badge above cannot say: the role it reports as missing is a file
-            this row is HOLDING, in a directory no loader lists. Without this line the card shows
-            a 4 GB checkpoint and a "不足: --diffusion-model" beside it, which reads as a
-            contradiction — and the remedy answered "nothing is missing". */}
-        {!!model.main_file_fix && <p className="admin-hint engine-registered-misplaced">
-          {(tr("admin.catalog_main_file_misplaced" as never) as string)
-            .replace("{f}", model.main_file_fix.flag)
-            .replace("{from}", model.main_file_fix.from)
-            .replace("{to}", model.main_file_fix.to)}</p>}
-        <RegisteredParts model={model} storage={storage} />
+        <RegisteredParts model={model} objects={objects} />
         <footer>
           {isSuper && !readOnly && <Button variant="ghost" small icon="edit" aria-label={`${tr("admin.catalog_edit" as never)}: ${model.id}`} onClick={() => setEdit(model)}>{tr("admin.catalog_edit" as never)}</Button>}
           {isSuper && !readOnly && <Button small aria-label={`${tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, { enabled: !model.enabled })}>{tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}</Button>}
           {isSuper && !readOnly && model.kind !== "lora" && !started && <Button variant="primary" small aria-label={`${tr("admin.engines_model_select")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, engineIsImage(row) ? { selected: true } : { default: true })}>{tr("admin.engines_model_select")}</Button>}
-          {/* 🔴 Why this row cannot be enabled, said on the row itself. The mark existed on the
-              wire since P2 and this screen never drew it, so an incomplete row looked like any
-              other — which is most of why "I took it in and do not know what to do" happens. */}
-          {!readOnly && (!!model.files_missing?.length || !!model.main_file_fix) && <Button variant="primary" small
-            aria-label={`${tr("admin.catalog_parts_fix" as never)}: ${model.id}`} disabled={pending}
-            onClick={() => void completeParts(model)}>{tr(pending ? "admin.catalog_parts_fix_busy" as never : "admin.catalog_parts_fix" as never)}</Button>}
-          {!readOnly && <Button small aria-label={`${tr("admin.catalog_parts" as never)}: ${model.id}`} onClick={() => setOperation({ act: (row.file_flags || []).length ? "attach" : "replace", modelId: model.id })}>{tr("admin.catalog_parts" as never)}</Button>}
+          {/* 揃える is on every row, not only a marked one: what it does is read off the ledger at
+              the press, and a row that has everything answers "nothing to do" in one call. */}
+          {!readOnly && <Button variant={model.files_missing?.length || model.vae_missing ? "primary" : undefined} small
+            aria-label={`${tr("admin.catalog_complete" as never)}: ${model.id}`} disabled={pending}
+            onClick={() => void align(model)}>{tr(pending ? "admin.catalog_complete_busy" as never : "admin.catalog_complete" as never)}</Button>}
           {isSuper && !readOnly && <Button variant="danger" small aria-label={`${tr("admin.engines_model_forget")}: ${model.id}`} disabled={pending || started} onClick={() => { setDeleting(model); setPurge(false); }}>{tr("admin.engines_model_forget")}</Button>}
         </footer>
       </li>;
     })}</ul>
-    {partsNote && <p className="muted engine-registered-parts-note">{partsNote}</p>}
-    {isSuper && !readOnly && <details className="engine-registered-tools"><summary>{tr("admin.catalog_manual_s3" as never)}</summary>
-      <EngineModelAdd busy={busy === "+"} isImage={engineIsImage(row)} isLora={kind === "lora"}
-        baseModels={row.base_models} fileFlags={row.file_flags} modelIds={(row.model_rows || []).map((model) => model.id)}
-        prefill={prefill} onAdd={(body) => void addModel(body)} />
-    </details>}
-    <EngineIngestJobs jobs={jobs} busy={busy.replace(/^job:/, "")} readOnly={readOnly}
-      onForget={(id) => void forgetJob(id)} onReuse={isSuper && !readOnly ? (job) => {
-        onKind(job.kind === "lora" ? "lora" : "model");
-        setPrefill({ id: job.model_id, s3Key: job.s3_key || "", flag: job.file_flag || "", source: job.source || "", usedBy: job.key_used_by || "" });
-      } : undefined} />
-    {operation && <CatalogOperation row={row} kind={kind} initialAct={operation.act} initialTarget={operation.modelId} storage={storage || []}
-      onClose={() => setOperation(null)} onStarted={() => { setOperation(null); void loadAux(); onChanged(); }} />}
-    {edit && <RegisteredEditDialog row={row} model={edit} error={err} onClose={() => setEdit(null)} onSave={async (body) => {
+    <EngineLedger objects={objects} failed={ledgerFailed} checkedAt={checkedAt} busy={busy} readOnly={readOnly}
+      onRegister={(object) => void registerObject(object.key)}
+      onDelete={(object) => setDeletingObject(object)}
+      onDismiss={(id) => void dismissJob(id)} />
+    {completing && <CompleteDialog row={row} modelId={completing.modelId} baseModel={completing.baseModel} answer={completing.answer}
+      onClose={() => setCompleting(null)}
+      onRun={async (body) => { setCompleting(null); await runComplete(completing.modelId, body); }} />}
+    {edit && <RegisteredEditDialog row={row} model={edit} error={err ? errDetail(err) : ""} onClose={() => setEdit(null)} onSave={async (body) => {
       if (await callModel(edit, "PUT", body)) setEdit(null);
     }} />}
     {deleting && <Modal title={`${tr("admin.engines_model_forget")} — ${deleting.id}`} className="engine-registered-confirm" onClose={() => setDeleting(null)} lockClose={busy === deleting.id}>
       <div className="ui-modal-body engine-operation-body"><p>{tr(purge ? "admin.engines_model_forget_purge_note" : "admin.engines_model_forget_note")}</p><label className="engine-operation-check"><input type="checkbox" checked={purge} onChange={(event) => setPurge(event.currentTarget.checked)} /><span>{tr("admin.engines_model_forget_purge")}</span></label>
         <footer className="engine-operation-footer"><Button variant="ghost" onClick={() => setDeleting(null)}>{tr("common.cancel")}</Button><Button variant="danger" onClick={async () => { if (await callModel(deleting, "DELETE", undefined, purge)) setDeleting(null); }}>{tr("admin.engines_model_forget")}</Button></footer></div>
+    </Modal>}
+    {deletingObject && <Modal title={`${tr("admin.catalog_ledger_delete" as never)} — ${deletingObject.key}`} className="engine-ledger-confirm" onClose={() => setDeletingObject(null)} lockClose={busy === `object:${deletingObject.key}`}>
+      <div className="ui-modal-body engine-operation-body"><p>{tr("admin.catalog_ledger_delete_note" as never)}</p><p className="mono">{deletingObject.key}</p>
+        <footer className="engine-operation-footer"><Button variant="ghost" onClick={() => setDeletingObject(null)}>{tr("common.cancel")}</Button>
+          <Button variant="danger" onClick={() => void deleteObject(deletingObject.key)}>{tr("admin.catalog_ledger_delete" as never)}</Button></footer></div>
     </Modal>}
     {vramAsk && <Modal title={`${tr("admin.engines_vram_confirm_go")} — ${vramAsk.model.id}`} className="engine-registered-confirm" onClose={() => setVramAsk(null)}>
       <div className="ui-modal-body engine-operation-body"><p className="form-err">{vramAsk.message || (tr("admin.engines_vram_confirm" as never) as string)
@@ -655,6 +725,449 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
         }}>{tr("admin.engines_vram_confirm_go")}</Button></footer></div>
     </Modal>}
   </section>;
+}
+
+/** A refusal, with who is holding the thing and the one button that clears it. Drawn even when
+ * the CP sent neither — an error line without a next act is still the error line. */
+function EngineRefusal({ error, busy, onNext }: { error: EngineApiError | null; busy: boolean; onNext: () => void }) {
+  const tr = useT();
+  if (!error) return null;
+  const holder = error.holder;
+  return <p className="form-err engine-refusal">
+    <span>{errDetail(error)}</span>
+    {holder && <span className="muted engine-refusal-holder">{(tr("admin.catalog_holder" as never) as string)
+      .replace("{k}", tr((`admin.catalog_holder_${holder.kind}`) as never) as string)
+      .replace("{i}", holder.id || holder.key || "")}</span>}
+    {error.next && <Button small variant="primary" className="engine-refusal-next" disabled={busy} onClick={onNext}>
+      {tr((`admin.catalog_next_${error.next.act}`) as never)}
+    </Button>}
+  </p>;
+}
+
+/** バケツ — the bucket, listed (ADR 0085 decision 2 and 7).
+ *
+ * 🔴 Orphans and misplaced objects sort first because they are the only rows here anybody has to
+ * act on: everything else is provenance for a row that already works. A part gets no button of
+ * its own — it is attached, and moved, by the 揃える of whichever checkpoint reads it. */
+function EngineLedger({ objects, failed, checkedAt, busy, readOnly, onRegister, onDelete, onDismiss }: {
+  objects: EngineObjectRow[] | null;
+  failed: boolean;
+  checkedAt: string;
+  busy: string;
+  readOnly: boolean;
+  onRegister: (object: EngineObjectRow) => void;
+  onDelete: (object: EngineObjectRow) => void;
+  onDismiss: (id: string) => void;
+}) {
+  const tr = useT();
+  const sorted = [...(objects || [])].sort((left, right) => ledgerRank(left) - ledgerRank(right) || left.key.localeCompare(right.key));
+  return <section className="engine-ledger" aria-label={tr("admin.catalog_ledger_title" as never)}>
+    <header className="engine-ledger-head">
+      <strong>{tr("admin.catalog_ledger_title" as never)}</strong>
+      {checkedAt && <span className="muted">{(tr("admin.catalog_ledger_checked" as never) as string).replace("{t}", fmtDateTime(checkedAt))}</span>}
+    </header>
+    <p className="admin-hint">{tr("admin.catalog_ledger_note" as never)}</p>
+    {objects === null && <p className={failed ? "form-err" : "muted"}>{tr((failed ? "admin.catalog_ledger_unavailable" : "admin.catalog_storage_checking") as never)}</p>}
+    {objects !== null && !objects.length && <p className="muted">{tr("admin.catalog_ledger_empty" as never)}</p>}
+    {!!sorted.length && <ul className="engine-ledger-list">{sorted.map((object) => {
+      const orphan = !(object.declared_by || []).length;
+      const pending = busy === `object:${object.key}` || (!!object.job && busy === `job:${object.job.id}`);
+      return <li key={object.key} className={`engine-ledger-row${orphan ? " orphan" : ""}`} aria-label={object.key}>
+        <span className="mono engine-ledger-key">{object.key}</span>
+        <span className="engine-ledger-tags">
+          <span className="engines-model-tag">{object.role_dir}</span>
+          {object.placement === "misplaced" && <span className="engines-model-tag warn">{tr("admin.catalog_ledger_misplaced" as never)}</span>}
+          <span className={`engines-model-tag ${object.state === "present" ? "on" : object.state === "failed" || object.state === "missing" ? "bad" : "lead"}`}>
+            {tr((`admin.catalog_ledger_state_${object.state}`) as never)}
+          </span>
+          {!!object.bytes && <span className="engines-model-tag">{formatBytes(object.bytes)}</span>}
+          {object.license && <span className="engines-model-tag">{object.license}</span>}
+        </span>
+        <span className="muted engine-ledger-declared">{orphan
+          ? tr("admin.catalog_ledger_orphan" as never)
+          : (tr("admin.catalog_ledger_declared" as never) as string).replace("{m}", (object.declared_by || [])
+            .map((holder) => holder.flag ? `${holder.model_id} (${holder.flag})` : holder.model_id).join(", "))}</span>
+        {object.source && <span className="muted mono engine-ledger-source">{object.source}</span>}
+        {object.job?.message && <span className="form-err engine-ledger-message">{object.job.message}</span>}
+        {!readOnly && <span className="engine-ledger-acts">
+          {object.state === "failed" && object.job
+            ? <Button small variant="danger" disabled={pending} aria-label={`${tr("admin.catalog_ledger_delete" as never)}: ${object.key}`}
+              onClick={() => onDismiss(object.job!.id)}>{tr("admin.catalog_ledger_delete" as never)}</Button>
+            : <>
+              {orphan && object.state === "present" && isMainObject(object) && <Button small variant="primary" disabled={pending}
+                aria-label={`${tr("admin.catalog_ledger_register" as never)}: ${object.key}`}
+                onClick={() => onRegister(object)}>{tr("admin.catalog_ledger_register" as never)}</Button>}
+              {orphan && object.state === "present" && <Button small variant="danger" disabled={pending}
+                aria-label={`${tr("admin.catalog_ledger_delete" as never)}: ${object.key}`}
+                onClick={() => onDelete(object)}>{tr("admin.catalog_ledger_delete" as never)}</Button>}
+            </>}
+        </span>}
+      </li>;
+    })}</ul>}
+  </section>;
+}
+
+/** What has to be looked at first: a failure, then anything nobody declares or that no loader can
+ * see, then work in flight, then a row pointing at nothing. */
+function ledgerRank(object: EngineObjectRow): number {
+  if (object.state === "failed") return 0;
+  if (object.placement === "misplaced" || !(object.declared_by || []).length) return 1;
+  if (object.state === "uploading") return 2;
+  if (object.state === "missing") return 3;
+  return 4;
+}
+
+/** A main file — the thing a person means by "a model" — rather than a part. `register` is
+ * offered on these only; a misplaced one still names its role directory in the key, which is how
+ * `image/checkpoints/split_files/diffusion_models/x.safetensors` is recognised. */
+function isMainObject(object: EngineObjectRow): boolean {
+  if (object.role_dir === "checkpoints" || object.role_dir === "diffusion_models") return true;
+  return /(^|\/)(checkpoints|diffusion_models)\//.test(object.key);
+}
+
+/** The plan card (ADR 0085 decision 4). One press, and the CP decided what that press does.
+ *
+ * 🔴 No role selector, no key field, no parts checkbox, no attach/replace: every one of those was
+ * a question a person who does not know what a text encoder is cannot answer, and getting one
+ * wrong produced a row that looked complete and would not generate. What is left is the version
+ * and the file — which repository and which of its files — and the licence. */
+function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }: {
+  row: EngineRow; kind: ModelKind; hit?: IngestHit;
+  initialSource?: CatalogSource;
+  onClose: () => void; onStarted: (job: IngestJob) => void;
+}) {
+  const tr = useT();
+  const image = engineIsImage(row);
+  const isLora = kind === "lora";
+  const [sourceType, setSourceType] = useState<CatalogSource>(hit?.source === "civitai" || initialSource === "civitai" || initialSource === "civitai-red" ? "civitai" : "hf");
+  const [manualRef, setManualRef] = useState(hit?.model_ref || hit?.ref || "");
+  const [versions, setVersions] = useState<IngestVersion[]>([]);
+  const [versionRef, setVersionRef] = useState(hit?.ref || "");
+  const [files, setFiles] = useState<IngestCandidate[]>([]);
+  const [file, setFile] = useState("");
+  const [resolved, setResolved] = useState<ResolvedSource | null>(null);
+  const [plan, setPlan] = useState<IngestPlan | null>(null);
+  const [replanned, setReplanned] = useState(false);
+  const [id, setId] = useState("");
+  const [idEdited, setIdEdited] = useState(false);
+  const [description, setDescription] = useState("");
+  const [baseModel, setBaseModel] = useState("");
+  const [context, setContext] = useState("");
+  const [output, setOutput] = useState("");
+  const [accepted, setAccepted] = useState(false);
+  const [trainedWords, setTrainedWords] = useState((hit?.trained_words || []).join(", "));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<EngineApiError | null>(null);
+  const inspectSeq = useRef(0);
+  const filesSeq = useRef(0);
+  const [params, setParams] = useState<Record<keyof EngineParams, string>>({
+    steps: "", cfg: "", sampler: "", scheduler: "", clip_skip: "", weight: "",
+  });
+  const rawRef = manualRef.trim();
+  const hfURL = rawRef.match(/^https?:\/\/huggingface\.co\/([^/?#]+\/[^/?#]+)(?:\/(?:blob|resolve)\/([^/?#]+)\/([^?#]+))?/);
+  const civitaiPage = rawRef.match(/^https?:\/\/(?:[\w-]+\.)*civitai\.(?:com|red)\/models\/(\d+)/);
+  const civitaiVersionParam = rawRef.match(/[?&]modelVersionId=(\d+)/);
+  const civitaiLegacy = rawRef.match(/^civitai:(\d+)$/);
+  const civitaiModelRef = hit?.model_ref || civitaiPage?.[1] || "";
+  const pastedVersion = (sourceType === "civitai" ? civitaiVersionParam?.[1] || civitaiLegacy?.[1] : hfURL?.[2]) || "";
+  const repo = sourceType === "civitai" ? civitaiModelRef || pastedVersion : hit?.model_ref || hfURL?.[1] || rawRef || hit?.ref || "";
+  const pastedFile = sourceType === "hf" ? hfURL?.[3] || "" : "";
+  const civitaiVersionURL = /^https?:\/\/(?:[\w-]+\.)*civitai\.(?:com|red)\//.test(rawRef) && !!civitaiVersionParam;
+  const plainURL = /^https?:\/\//.test(rawRef) && !hfURL && !civitaiVersionURL;
+  const resetInspection = () => {
+    ++inspectSeq.current; ++filesSeq.current;
+    setVersions([]); setVersionRef(""); setFiles([]); setFile(""); setResolved(null); setPlan(null);
+    setAccepted(false); setBusy(false); setErr(null);
+  };
+  const changeManualRef = (value: string) => {
+    setManualRef(value);
+    if (/^civitai:\d+$/.test(value.trim()) || (/civitai\.(?:com|red)\//.test(value) && /[?&]modelVersionId=\d+/.test(value))) setSourceType("civitai");
+    else if (/huggingface\.co\//.test(value)) setSourceType("hf");
+    resetInspection();
+  };
+
+  const sourceBody = useCallback((fileName = file) => {
+    if (plainURL) return { url: repo, sha256: fileName.trim() };
+    if (sourceType === "civitai") return { civitai: { versionId: Number(versionRef || hit?.ref), file: fileName } };
+    return { hf: { repo, revision: versionRef, file: fileName } };
+  }, [file, hit?.ref, plainURL, repo, sourceType, versionRef]);
+
+  const loadFiles = useCallback(async (selectedVersion: string, parentSeq?: number) => {
+    const seq = ++filesSeq.current;
+    setErr(null); setFiles([]); setFile(""); setResolved(null); setPlan(null);
+    const source = sourceType === "civitai"
+      ? { civitai: { versionId: Number(selectedVersion), file: "" } }
+      : { hf: { repo, revision: selectedVersion, file: "" } };
+    const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/files`, "POST", { source });
+    if (seq !== filesSeq.current || (parentSeq !== undefined && parentSeq !== inspectSeq.current)) return;
+    if (answer?.error) { setErr(answer.error as EngineApiError); return; }
+    const offered = (Array.isArray(answer?.files) ? answer.files : []) as IngestCandidate[];
+    setFiles(offered);
+    if (offered.length === 1) setFile(offered[0].name);
+  }, [repo, row.key, sourceType]);
+
+  const inspect = useCallback(async () => {
+    if (!repo) return;
+    const seq = ++inspectSeq.current;
+    ++filesSeq.current;
+    setBusy(true); setErr(null);
+    try {
+      if (plainURL) { setVersions([]); setFiles([]); return; }
+      const requestedVersion = versionRef || pastedVersion;
+      if (sourceType === "civitai" && !civitaiModelRef && pastedVersion) {
+        setVersions([{ ref: pastedVersion, name: pastedVersion }]);
+        setVersionRef(pastedVersion);
+        await loadFiles(pastedVersion, seq);
+        return;
+      }
+      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/versions`, "POST", {
+        source: sourceType, ref: hit?.ref || pastedVersion || repo, model_ref: sourceType === "civitai" ? civitaiModelRef : repo,
+      });
+      if (seq !== inspectSeq.current) return;
+      if (answer?.error) { setErr(answer.error as EngineApiError); return; }
+      const offered = (Array.isArray(answer?.versions) ? answer.versions : []) as IngestVersion[];
+      setVersions(offered);
+      const first = offered.find((version) => version.ref === requestedVersion)?.ref || offered[0]?.ref || requestedVersion;
+      setVersionRef(first);
+      if (first) {
+        await loadFiles(first, seq);
+        if (seq === inspectSeq.current && pastedFile) setFile(pastedFile);
+      }
+    } finally { if (seq === inspectSeq.current) setBusy(false); }
+  }, [civitaiModelRef, hit?.ref, loadFiles, pastedFile, pastedVersion, plainURL, repo, row.key, sourceType, versionRef]);
+
+  useEffect(() => { if (hit) void inspect(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  useEffect(() => {
+    if (!file) return;
+    let live = true;
+    setResolved(null); setPlan(null); setAccepted(false); setReplanned(false);
+    apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/resolve`, "POST", {
+      source: sourceBody(file), kind: isLora ? "lora" : image ? "checkpoint" : "gguf",
+    }).then((answer) => {
+      if (!live) return;
+      if (answer?.error) { setErr(answer.error as EngineApiError); return; }
+      const found = answer as ResolvedSource;
+      setResolved(found);
+      if (found.plan) {
+        setPlan(found.plan);
+        if (!idEdited) setId(found.plan.id || "");
+        if (found.plan.base_model) setBaseModel(found.plan.base_model);
+      }
+      if (found.context_length && !context) {
+        setContext(String(found.context_length)); setOutput(String(Math.floor(found.context_length / 8)));
+      }
+      if (found.params_hint) setParams((current) => ({
+        ...current,
+        ...Object.fromEntries(Object.entries(found.params_hint || {}).map(([key, value]) => [key, String(value)])),
+      }));
+      if (found.trained_words?.length && !trainedWords.trim()) setTrainedWords(found.trained_words.join(", "));
+    });
+    return () => { live = false; };
+    // Existing typed settings deliberately outrank metadata suggestions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file, image, isLora, row.key, sourceBody]);
+
+  // The family is asked ONLY when the CP could not read one, and only from the candidates it
+  // knows. An LLM LoRA is pinned to a registered model rather than to a family name.
+  const familyOptions = isLora && !image
+    ? (row.model_rows || []).filter((model) => model.kind !== "lora").map((model) => model.id)
+    : plan?.base_model_candidates || [];
+  const needsFamily = !plan?.base_model && familyOptions.length > 0;
+  const bytes = plan?.bytes_to_download ?? resolved?.bytes ?? 0;
+  const contextTokens = Number(context.trim().replace(/[_,]/g, "")) || 0;
+  const weightsMiB = bytes ? Math.round(bytes / 1048576) : 0;
+  const kvMiB = !image && !isLora && resolved?.kv_mib_per_1k_tokens && contextTokens
+    ? Math.round((resolved.kv_mib_per_1k_tokens * contextTokens) / 1024)
+    : 0;
+  const needMiB = weightsMiB + kvMiB;
+  const cardMiB = row.class?.vram_mib;
+  const missing = (() => {
+    if (!repo) return tr("admin.catalog_need_source" as never) as string;
+    if (!plainURL && !versionRef) return tr("admin.catalog_need_version" as never) as string;
+    if (!file) return tr(plainURL ? "admin.catalog_need_checksum" as never : "admin.catalog_need_file" as never) as string;
+    if (!plan) return tr("admin.catalog_plan_building" as never) as string;
+    if (resolved?.can_ingest === false) return tr("admin.engines_wizard_cannot") as string;
+    if (!id.trim()) return tr("admin.engines_wizard_need_id") as string;
+    if (needsFamily && !baseModel) return tr("admin.engines_wizard_need_family") as string;
+    if (!accepted) return tr("admin.catalog_need_license" as never) as string;
+    return "";
+  })();
+
+  const start = async () => {
+    if (missing || !plan) return;
+    setBusy(true); setErr(null);
+    const n = (value: string) => { const parsed = Number(value.trim().replace(/[_,]/g, "")); return Number.isFinite(parsed) && parsed > 0 ? parsed : 0; };
+    const paramsBody = Object.fromEntries(Object.entries(params).flatMap(([key, value]) => value.trim()
+      ? [[key, key === "sampler" || key === "scheduler" ? value.trim() : n(value)]] : []));
+    try {
+      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest`, "POST", {
+        // 🔴 The source and the CP's own plan, and nothing else about the destination. The key,
+        // the role, the parts and the reuse decision are all inside `plan_token`: three parties
+        // deciding one key is what produced the 400 `s3Key must be empty or identical`.
+        //
+        // `kind` is the one thing the token cannot carry for us: the CP re-plans from this body
+        // at the press and reads `lora` out of it to decide the directory (`image/loras/` versus
+        // `image/checkpoints/`). Sent identical to the resolve's, or the re-plan disagrees with
+        // the token — a 409 at best, an adapter staged under `checkpoints/` at worst.
+        source: sourceBody(file), kind: isLora ? "lora" : image ? "checkpoint" : "gguf",
+        plan_token: plan.plan_token,
+        id: id.trim(), ...(baseModel ? { base_model: baseModel } : {}),
+        description: description.trim(),
+        ...(!image && !isLora ? { context_tokens: n(context), max_output_tokens: n(output) } : {}),
+        ...(image ? { params: paramsBody } : {}),
+        ...(isLora ? { trained_words: trainedWords.split(/[\n,]/).map((word) => word.trim()).filter(Boolean) } : {}),
+        license_accepted: true,
+      });
+      if (answer?.error) {
+        const error = answer.error as EngineApiError;
+        // The plan is a quote and the press is the purchase. When anything material moved, the
+        // CP answers the NEW plan and the card is redrawn from it — including the licence tick,
+        // because what was accepted is not what would now be taken in.
+        if (error.code === "engine_plan_stale" && error.plan) {
+          setPlan(error.plan); setReplanned(true); setAccepted(false);
+          if (!idEdited) setId(error.plan.id || "");
+          return;
+        }
+        setErr(error);
+        return;
+      }
+      onStarted(answer as IngestJob);
+    } finally { setBusy(false); }
+  };
+
+  const planTitle = hit?.name
+    ? `${tr("admin.catalog_plan_title" as never)} — ${hit.name}`
+    : tr("admin.catalog_plan_title" as never);
+  return <Modal title={planTitle} className="engine-catalog-operation engine-catalog-plan" onClose={onClose} lockClose={busy}>
+    <div className="ui-modal-body engine-operation-body">
+      {!hit && <div className="engine-operation-manual">
+        {image && <select value={sourceType} onChange={(event) => { setSourceType(event.currentTarget.value as CatalogSource); resetInspection(); }}><option value="civitai">Civitai</option><option value="hf">Hugging Face / URL</option></select>}
+        <input value={manualRef} onChange={(event) => changeManualRef(event.currentTarget.value)} placeholder="owner/repository or https://…" />
+        <Button small onClick={() => void inspect()} disabled={busy || !manualRef.trim()}>{tr("admin.catalog_inspect" as never)}</Button>
+      </div>}
+      <div className="engine-operation-grid">
+        {!plainURL && <label><span>{tr("admin.catalog_version" as never)}</span><select value={versionRef} onChange={(event) => { const next = event.currentTarget.value; setVersionRef(next); void loadFiles(next); }}>
+          {!versions.length && <option value={versionRef}>{versionRef || "—"}</option>}{versions.map((version) => <option key={version.ref} value={version.ref}>{version.name}</option>)}
+        </select></label>}
+        <label><span>{tr(plainURL ? "admin.catalog_checksum" as never : "admin.catalog_file" as never)}</span>{files.length
+          ? <select value={file} onChange={(event) => setFile(event.currentTarget.value)}><option value="">{tr("admin.catalog_pick_file" as never)}</option>{files.map((candidate) => <option key={candidate.ref || candidate.name} value={candidate.name}>{candidate.name}</option>)}</select>
+          : <input value={file} onChange={(event) => setFile(event.currentTarget.value)} placeholder={plainURL ? "sha256" : "model.safetensors"} />}</label>
+        {needsFamily && <label><span>{tr(isLora && !image ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)}>
+          <option value="">{tr(isLora && !image ? "admin.engines_model_add_lora_base_pick" : "admin.engines_model_add_family_pick")}</option>{familyOptions.map((base) => <option key={base} value={base}>{base}</option>)}</select></label>}
+      </div>
+      {file && !plan && !err && <p className="muted engine-plan-building"><Icon name="loading" spin /> {tr("admin.catalog_plan_building" as never)}</p>}
+      {replanned && <p className="admin-hint engine-plan-stale">{tr("admin.catalog_plan_stale" as never)}</p>}
+      {plan && <div className="engine-plan">
+        <ul className="engine-plan-files" aria-label={tr("admin.catalog_plan_files" as never)}>{plan.files.map((planned) => <li key={`${planned.flag || "whole"}:${planned.name}`}>
+          <span className="mono engine-plan-role">{planned.flag || tr("admin.catalog_plan_whole" as never)}</span>
+          <span className="mono engine-plan-name">{planned.name}</span>
+          {/* A move and a reuse cost nothing, and saying so with a size beside them is what makes
+              the total untrustworthy: those bytes are already paid for. */}
+          <span className={`engine-plan-cost${planned.action === "download" ? "" : " free"}`}>{planned.action === "download"
+            ? (planned.bytes ? `${Math.round(planned.bytes / 1048576)} MiB` : tr("admin.catalog_size_unknown" as never))
+            : tr((`admin.catalog_plan_action_${planned.action}`) as never)}</span>
+          {/* One field, two meanings, told apart by the action: the upstream for a download and
+              the key the bytes are at TODAY for a reuse or a move. Drawn unbranched, "いまの場所"
+              would name a repository and a download would claim to come from the bucket. */}
+          {planned.source && <span className="muted mono engine-plan-source">{planned.action === "download"
+            ? planned.source
+            : (tr("admin.catalog_plan_at" as never) as string).replace("{k}", planned.source)}</span>}
+        </li>)}</ul>
+        <p className="engine-plan-total">{plan.bytes_to_download
+          ? (tr("admin.catalog_plan_total" as never) as string).replace("{n}", formatBytes(plan.bytes_to_download))
+          : tr("admin.catalog_plan_total_none" as never)}</p>
+        {(plan.warnings || []).map((warning) => <p key={warning} className="admin-hint engine-plan-warning">{warning}</p>)}
+      </div>}
+      {resolved && <div className="engine-operation-facts">
+        {(resolved.license_name || resolved.license) && <span>{resolved.license_name || resolved.license}</span>}
+        {/* The "no" verdict is deliberately NOT a chip here: it is the red sentence below, and
+            saying it twice in two wordings reads as two different restrictions. */}
+        {resolved.commercial_use && resolved.commercial_use !== "no" && <span>{tr((`admin.catalog_commercial_${resolved.commercial_use}`) as never)}</span>}
+        {resolved.restrictions?.map((code) => <span key={code} className={CATALOG_HARD_RESTRICTIONS.has(code) ? "warn" : ""}>{tMaybe(`admin.engines_limit_${code}`) ?? code}</span>)}
+        {resolved.gated && !resolved.restrictions?.length && <span className="warn">{tr("admin.engines_ingest_hit_gated")}</span>}</div>}
+      {resolved?.commercial_use === "no" && <p className="form-err">{tr("admin.engines_ingest_noncommercial")}</p>}
+      {/* 🔴 The wall is a REFUSAL only while nobody can answer it. With an account registered the
+          download is attempted as that account, and the CP cannot say in advance whether it
+          satisfies this uploader — the same position `gated_needs_acceptance` is in, so it reads
+          as the same kind of warning rather than a red dead end. */}
+      {resolved?.login_required && !resolved.civitai_needs_account && <p className="form-err">{tr("admin.engines_ingest_civitai_login")}</p>}
+      {resolved?.civitai_needs_account && <p className="muted">{tr("admin.engines_ingest_civitai_account_first" as never)}</p>}
+      {resolved?.gated && resolved.can_ingest === false && !resolved.login_required && <p className="form-err">{tr("admin.engines_ingest_gated_no_token")}</p>}
+      {resolved?.gated_needs_acceptance && <p className="muted">{tr("admin.engines_ingest_gated_accept_first")}</p>}
+      {needMiB > 0 && <p className={`engine-operation-fit ${cardMiB && needMiB > cardMiB && !isLora ? "form-err" : "muted"}`}>{(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(weightsMiB))}{!image && !isLora ? ` · ${kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(kvMiB)).replace("{c}", String(contextTokens)) : tr("admin.engines_ingest_fit_kv_unread")}` : ""}{cardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(needMiB)).replace("{c}", String(cardMiB))}` : ""}</p>}
+      <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
+      <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">
+        <label><span>{tr("admin.engines_model_add_id")}</span><input value={id} onChange={(event) => { setIdEdited(true); setId(event.currentTarget.value); }} /></label>
+        <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
+        {!image && !isLora && <label><span>{tr("admin.engines_model_add_ctx")}</span><input value={context} onChange={(event) => setContext(event.currentTarget.value)} inputMode="numeric" /></label>}
+        {!image && !isLora && <label><span>{tr("admin.engines_model_add_out")}</span><input value={output} onChange={(event) => setOutput(event.currentTarget.value)} inputMode="numeric" /></label>}
+        {isLora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
+        {image && (Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}
+      </div></details>
+      <EngineRefusal error={err} busy={busy} onNext={() => { setErr(null); void inspect(); }} />
+      <footer className="engine-operation-footer"><span className="muted">{missing}</span><Button variant="ghost" onClick={onClose} disabled={busy}>{tr("common.cancel")}</Button><Button variant="primary" onClick={() => void start()} disabled={busy || !!missing}>{tr("admin.engines_ingest_go")}</Button></footer>
+    </div>
+  </Modal>;
+}
+
+/** The dialog behind 揃える (complete), opened only when there is something to choose or to pay
+ * for (ADR 0085 decision 3). This is the ONE place a person picks a part, and they pick it FOR a
+ * checkpoint:
+ * the frame is the role the workflow reads, and the candidates are what the ledger holds. */
+function CompleteDialog({ row, modelId, baseModel, answer, onClose, onRun }: {
+  row: EngineRow;
+  /** The id, not the row: 登録 opens this for a model created by the same press, which the
+   *  catalogue in hand does not list until the reload lands. */
+  modelId: string;
+  baseModel?: string;
+  answer: CompleteAnswer;
+  onClose: () => void;
+  onRun: (body: Record<string, unknown>) => void;
+}) {
+  const tr = useT();
+  const [choices, setChoices] = useState<Record<string, string>>({});
+  const [accepted, setAccepted] = useState(false);
+  const files = answer.files || [];
+  const download = answer.bytes_to_download || 0;
+  const undecided = files.some((file) => file.action === "choose" && !choices[file.flag]);
+  // Choosing something else for a slot that is already filled IS the swap (today's `replace`).
+  const replace = files.some((file) => !!file.key && !!choices[file.flag] && choices[file.flag] !== file.key);
+  const missing = undecided ? tr("admin.catalog_complete_pick" as never) as string
+    : download > 0 && !accepted ? tr("admin.catalog_need_license" as never) as string : "";
+
+  return <Modal title={`${tr("admin.catalog_complete" as never)} — ${modelId}`} className="engine-complete" onClose={onClose}>
+    <div className="ui-modal-body engine-operation-body">
+      <p className="admin-hint">{tr("admin.catalog_complete_note" as never)}</p>
+      <ul className="engine-complete-files">{files.map((file) => <li key={file.flag} aria-label={file.flag}>
+        <span className="mono engine-plan-role">{file.flag || tr("admin.catalog_plan_whole" as never)}</span>
+        <span className="engine-complete-action">{tr((`admin.catalog_complete_file_${file.action}`) as never)}</span>
+        {file.key && <span className="mono engine-complete-key">{file.key}</span>}
+        {!!file.bytes && file.action === "download" && <span>{formatBytes(file.bytes)}</span>}
+        {!!file.candidates?.length && <select aria-label={`${tr("admin.catalog_complete_pick" as never)}: ${file.flag}`}
+          value={choices[file.flag] ?? (file.action === "choose" ? "" : file.key || "")}
+          onChange={(event) => setChoices((current) => ({ ...current, [file.flag]: event.currentTarget.value }))}>
+          {file.action === "choose" && <option value="">{tr("admin.catalog_complete_pick" as never)}</option>}
+          {file.key && file.action !== "choose" && <option value={file.key}>{tr("admin.catalog_complete_keep" as never)}</option>}
+          {(file.candidates || []).filter((candidate) => candidate.key !== file.key).map((candidate) => <option key={candidate.key} value={candidate.key}>
+            {candidate.key}{candidate.bytes ? ` (${formatBytes(candidate.bytes)})` : ""}
+          </option>)}
+        </select>}
+      </li>)}</ul>
+      {download > 0 && <>
+        <p className="engine-plan-total">{(tr("admin.catalog_plan_total" as never) as string).replace("{n}", formatBytes(download))}</p>
+        <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
+      </>}
+      {engineIsImage(row) && !!baseModel && <p className="muted">{tr("admin.catalog_family" as never)}: {baseModel}</p>}
+      <footer className="engine-operation-footer"><span className="muted">{missing}</span>
+        <Button variant="ghost" onClick={onClose}>{tr("common.cancel")}</Button>
+        <Button variant="primary" disabled={!!missing} onClick={() => onRun({
+          ...(Object.keys(choices).length ? { choices } : {}),
+          ...(replace ? { replace: true } : {}),
+          ...(download > 0 ? { license_accepted: true } : {}),
+        })}>{tr("admin.catalog_complete" as never)}</Button></footer>
+    </div>
+  </Modal>;
 }
 
 function ImageRegisteredCardBody({ model }: { model: EngineModel }) {
@@ -684,34 +1197,35 @@ function LLMRegisteredCardBody({ model }: { model: EngineModel }) {
   </div></div>;
 }
 
-type RegisteredStorage = {
+type RegisteredPresence = {
   state: "present" | "partial" | "missing" | "unknown";
   tone: "on" | "warn" | "bad" | "";
   present: number;
   total: number;
 };
 
-function registeredStorage(model: EngineModel, storage: EngineStorageFile[] | null): RegisteredStorage {
+/** The row's badge, read off the LEDGER rather than off a per-row existence check. An object the
+ * ledger does not list is `missing` — listing is what the bucket answers, so a key nobody sees is
+ * a key that is not there. */
+function registeredPresence(model: EngineModel, objects: EngineObjectRow[] | null): RegisteredPresence {
   const keys = (model.file_rows || []).map((file) => file.s3Key).filter(Boolean);
-  if (!keys.length || storage === null) return { state: "unknown", tone: "", present: 0, total: keys.length };
-  const states = keys.map((key) => storage.find((file) => file.s3_key === key)?.state || "unknown");
-  const present = states.filter((state) => state === "present").length;
+  if (!keys.length || objects === null) return { state: "unknown", tone: "", present: 0, total: keys.length };
+  const present = keys.filter((key) => objects.find((object) => object.key === key)?.state === "present").length;
   if (present === keys.length) return { state: "present", tone: "on", present, total: keys.length };
-  if (states.every((state) => state === "missing")) return { state: "missing", tone: "bad", present, total: keys.length };
-  if (states.every((state) => state !== "unknown") && present > 0) return { state: "partial", tone: "warn", present, total: keys.length };
-  return { state: "unknown", tone: "", present, total: keys.length };
+  if (present === 0) return { state: "missing", tone: "bad", present, total: keys.length };
+  return { state: "partial", tone: "warn", present, total: keys.length };
 }
 
-function RegisteredParts({ model, storage }: { model: EngineModel; storage: EngineStorageFile[] | null }) {
+function RegisteredParts({ model, objects }: { model: EngineModel; objects: EngineObjectRow[] | null }) {
   const tr = useT();
   const rows = model.file_rows || [];
   if (!rows.length) return <p className="muted engine-registered-no-parts">{tr("admin.catalog_parts_unknown" as never)}</p>;
-  return <ul className="engine-registered-parts" aria-label={`${tr("admin.catalog_parts" as never)}: ${model.id}`}>{rows.map((part) => {
-    const known = storage?.find((candidate) => candidate.s3_key === part.s3Key);
-    const state = known?.state || "unknown";
+  return <ul className="engine-registered-parts" aria-label={`${tr("admin.catalog_files" as never)}: ${model.id}`}>{rows.map((part) => {
+    const known = objects?.find((candidate) => candidate.key === part.s3Key);
+    const state = objects === null ? "unknown" : known?.state === "present" ? "present" : known ? known.state : "missing";
     return <li key={`${part.flag || "whole"}:${part.s3Key}`}><span className="mono">{part.flag || tr("admin.engines_model_add_part_whole")}</span><span className="mono engine-registered-key">{part.s3Key}</span>
       {part.bytes ? <span>{formatBytes(part.bytes)}</span> : null}
-      <span className={`engines-model-tag ${state === "present" ? "on" : state === "missing" ? "bad" : ""}`}>{tr((`admin.catalog_file_${state}`) as never)}</span>
+      <span className={`engines-model-tag ${state === "present" ? "on" : state === "missing" || state === "failed" ? "bad" : ""}`}>{tr((`admin.catalog_file_${state}`) as never)}</span>
       {part.source_url ? <a href={part.source_url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a> : part.source ? <span className="muted mono">{part.source}</span> : null}</li>;
   })}</ul>;
 }
@@ -782,375 +1296,23 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   </Modal>;
 }
 
-function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTarget, storage, onClose, onStarted }: {
-  row: EngineRow; kind: ModelKind; hit?: IngestHit; initialAct: EngineIngestAct;
-  initialSource?: CatalogSource;
-  initialTarget?: string;
-  storage: EngineStorageFile[]; onClose: () => void; onStarted: (job: IngestJob) => void;
-}) {
-  const tr = useT();
-  const image = engineIsImage(row);
-  const isLora = kind === "lora";
-  const act = initialAct;
-  const [sourceType, setSourceType] = useState<CatalogSource>(hit?.source === "civitai" || initialSource === "civitai" || initialSource === "civitai-red" ? "civitai" : "hf");
-  const [manualRef, setManualRef] = useState(hit?.model_ref || hit?.ref || "");
-  const [versions, setVersions] = useState<IngestVersion[]>([]);
-  const [versionRef, setVersionRef] = useState(hit?.ref || "");
-  const [files, setFiles] = useState<IngestCandidate[]>([]);
-  const [file, setFile] = useState("");
-  const [resolved, setResolved] = useState<ResolvedSource | null>(null);
-  const [targetId, setTargetId] = useState(initialTarget || "");
-  const [fileFlag, setFileFlag] = useState("");
-  const [partChosen, setPartChosen] = useState(false);
-  const [id, setId] = useState("");
-  const [description, setDescription] = useState("");
-  const [baseModel, setBaseModel] = useState("");
-  const [context, setContext] = useState("");
-  const [output, setOutput] = useState("");
-  const [accepted, setAccepted] = useState(false);
-  const [confirmVram, setConfirmVram] = useState(false);
-  const [withVae, setWithVae] = useState(false);
-  // The split family's own parts, ticked by default: a row without them cannot be enabled, so
-  // "take the checkpoint alone" is the choice that needs a deliberate press, not this one.
-  const [withParts, setWithParts] = useState(true);
-  const [trainedWords, setTrainedWords] = useState((hit?.trained_words || []).join(", "));
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const inspectSeq = useRef(0);
-  const filesSeq = useRef(0);
-  const [params, setParams] = useState<Record<keyof EngineParams, string>>({
-    steps: "", cfg: "", sampler: "", scheduler: "", clip_skip: "", weight: "",
-  });
-  const models = (row.model_rows || []).filter((model) => (model.kind === "lora") === isLora);
-  const target = models.find((model) => model.id === targetId);
-  const flags = row.file_flags || [];
-  const taken = new Set((target?.file_rows || []).map((part) => part.flag || ""));
-  const slots = flags.filter((flag) => act === "attach" ? !!flag && !taken.has(flag) : taken.has(flag));
-  const rawRef = manualRef.trim();
-  const hfURL = rawRef.match(/^https?:\/\/huggingface\.co\/([^/?#]+\/[^/?#]+)(?:\/(?:blob|resolve)\/([^/?#]+)\/([^?#]+))?/);
-  const civitaiPage = rawRef.match(/^https?:\/\/(?:[\w-]+\.)*civitai\.(?:com|red)\/models\/(\d+)/);
-  const civitaiVersionParam = rawRef.match(/[?&]modelVersionId=(\d+)/);
-  const civitaiLegacy = rawRef.match(/^civitai:(\d+)$/);
-  const civitaiModelRef = hit?.model_ref || civitaiPage?.[1] || "";
-  const pastedVersion = (sourceType === "civitai" ? civitaiVersionParam?.[1] || civitaiLegacy?.[1] : hfURL?.[2]) || "";
-  const repo = sourceType === "civitai" ? civitaiModelRef || pastedVersion : hit?.model_ref || hfURL?.[1] || rawRef || hit?.ref || "";
-  const pastedFile = sourceType === "hf" ? hfURL?.[3] || "" : "";
-  const civitaiVersionURL = /^https?:\/\/(?:[\w-]+\.)*civitai\.(?:com|red)\//.test(rawRef) && !!civitaiVersionParam;
-  const plainURL = /^https?:\/\//.test(rawRef) && !hfURL && !civitaiVersionURL;
-  const resetInspection = () => {
-    ++inspectSeq.current; ++filesSeq.current;
-    setVersions([]); setVersionRef(""); setFiles([]); setFile(""); setResolved(null); setAccepted(false); setBusy(false); setErr("");
-  };
-  const changeManualRef = (value: string) => {
-    setManualRef(value);
-    if (/^civitai:\d+$/.test(value.trim()) || (/civitai\.(?:com|red)\//.test(value) && /[?&]modelVersionId=\d+/.test(value))) setSourceType("civitai");
-    else if (/huggingface\.co\//.test(value)) setSourceType("hf");
-    resetInspection();
-  };
-
-  const sourceBody = useCallback((fileName = file) => {
-    if (plainURL) return { url: repo, sha256: fileName.trim() };
-    if (sourceType === "civitai") return { civitai: { versionId: Number(versionRef || hit?.ref), file: fileName } };
-    return { hf: { repo, revision: versionRef, file: fileName } };
-  }, [file, hit?.ref, plainURL, repo, sourceType, versionRef]);
-
-  const loadFiles = useCallback(async (selectedVersion: string, parentSeq?: number) => {
-    const seq = ++filesSeq.current;
-    setErr(""); setFiles([]); setFile(""); setResolved(null);
-    const source = sourceType === "civitai"
-      ? { civitai: { versionId: Number(selectedVersion), file: "" } }
-      : { hf: { repo, revision: selectedVersion, file: "" } };
-    const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/files`, "POST", { source });
-    if (seq !== filesSeq.current || (parentSeq !== undefined && parentSeq !== inspectSeq.current)) return;
-    if (answer?.error) { setErr(errDetail(answer.error)); return; }
-    const offered = (Array.isArray(answer?.files) ? answer.files : []) as IngestCandidate[];
-    setFiles(offered);
-    if (offered.length === 1) setFile(offered[0].name);
-  }, [repo, row.key, sourceType]);
-
-  const inspect = useCallback(async () => {
-    if (!repo) return;
-    const seq = ++inspectSeq.current;
-    ++filesSeq.current;
-    setBusy(true); setErr("");
-    try {
-      if (plainURL) { setVersions([]); setFiles([]); return; }
-      const requestedVersion = versionRef || pastedVersion;
-      if (sourceType === "civitai" && !civitaiModelRef && pastedVersion) {
-        setVersions([{ ref: pastedVersion, name: pastedVersion }]);
-        setVersionRef(pastedVersion);
-        await loadFiles(pastedVersion, seq);
-        return;
-      }
-      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/versions`, "POST", {
-        source: sourceType, ref: hit?.ref || pastedVersion || repo, model_ref: sourceType === "civitai" ? civitaiModelRef : repo,
-      });
-      if (seq !== inspectSeq.current) return;
-      if (answer?.error) { setErr(errDetail(answer.error)); return; }
-      const offered = (Array.isArray(answer?.versions) ? answer.versions : []) as IngestVersion[];
-      setVersions(offered);
-      const first = offered.find((version) => version.ref === requestedVersion)?.ref || offered[0]?.ref || requestedVersion;
-      setVersionRef(first);
-      if (first) {
-        await loadFiles(first, seq);
-        if (seq === inspectSeq.current && pastedFile) setFile(pastedFile);
-      }
-    } finally { if (seq === inspectSeq.current) setBusy(false); }
-  }, [civitaiModelRef, hit?.ref, loadFiles, pastedFile, pastedVersion, plainURL, repo, row.key, sourceType, versionRef]);
-
-  useEffect(() => { if (hit) void inspect(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
-  useEffect(() => {
-    if (act !== "new" && models[0] && !targetId) setTargetId(models[0].id);
-  }, [act, models, targetId]);
-
-  useEffect(() => {
-    if (!file) return;
-    if (!id) setId(engineIdFromFile(file));
-    let live = true;
-    setResolved(null); setAccepted(false);
-    apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/resolve`, "POST", {
-      source: sourceBody(file), kind: isLora ? "lora" : image ? "checkpoint" : "gguf",
-    }).then((answer) => {
-      if (!live) return;
-      if (answer?.error) { setErr(errDetail(answer.error)); return; }
-      const found = answer as ResolvedSource;
-      setResolved(found);
-      const selectableBases = isLora && !image
-        ? (row.model_rows || []).filter((model) => model.kind !== "lora").map((model) => model.id)
-        : row.base_models || [];
-      if (found.base_model_suggest && !baseModel && !(isLora && !image) && (!selectableBases.length || selectableBases.includes(found.base_model_suggest))) {
-        setBaseModel(found.base_model_suggest);
-      }
-      // 🔴 A SPLIT family reads no whole checkpoint, and "whole checkpoint" is what this form
-      // offers first. Every Anima row on af-sandbox was taken in that way (2026-09-15): a 4 GB
-      // file that counts for nothing, on a row reporting all three parts missing. When the CP
-      // says the family has parts, the file being registered is its diffusion model — so that is
-      // what the role starts on, and the operator changes it rather than discovering it.
-      if (act === "new" && !partChosen && found.family_main_flag) {
-        setFileFlag(found.family_main_flag);
-        setPartChosen(true);
-      }
-      if (found.context_length && !context) {
-        setContext(String(found.context_length)); setOutput(String(Math.floor(found.context_length / 8)));
-      }
-      if (found.params_hint) setParams((current) => ({
-        ...current,
-        ...Object.fromEntries(Object.entries(found.params_hint || {}).map(([key, value]) => [key, String(value)])),
-      }));
-      if (found.trained_words?.length && !trainedWords.trim()) setTrainedWords(found.trained_words.join(", "));
-      setWithVae(found.vae_bundled === "no" && !!found.family_vae && !found.family_vae.unreachable);
-    });
-    return () => { live = false; };
-    // Existing typed settings deliberately outrank metadata suggestions.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, image, isLora, row.key, sourceBody]);
-
-  const selectedFile = files.find((candidate) => candidate.name === file);
-  const immutableReuse = exactReusableStorage(storage, resolved?.artifact_identity);
-  const bytes = resolved?.bytes || selectedFile?.bytes || 0;
-  const contextTokens = Number(context.trim().replace(/[_,]/g, "")) || 0;
-  const weightsMiB = bytes ? Math.round(bytes / 1048576) : 0;
-  const kvMiB = !image && !isLora && resolved?.kv_mib_per_1k_tokens && contextTokens
-    ? Math.round((resolved.kv_mib_per_1k_tokens * contextTokens) / 1024)
-    : 0;
-  const needMiB = weightsMiB + kvMiB;
-  const cardMiB = row.class?.vram_mib;
-  const tooLarge = !!cardMiB && needMiB > cardMiB && !isLora;
-  const baseOptions = isLora && !image
-    ? (row.model_rows || []).filter((model) => model.kind !== "lora").map((model) => model.id)
-    : row.base_models || [];
-  const validBase = !baseOptions.length || (!!baseModel && baseOptions.includes(baseModel));
-  const missing = (() => {
-    if (!repo) return tr("admin.catalog_need_source" as never) as string;
-    if (!plainURL && !versionRef) return tr("admin.catalog_need_version" as never) as string;
-    if (!file) return tr(plainURL ? "admin.catalog_need_checksum" as never : "admin.catalog_need_file" as never) as string;
-    if (!resolved) return tr("admin.catalog_resolving" as never) as string;
-    if (resolved.can_ingest === false) return tr("admin.engines_wizard_cannot") as string;
-    if (act !== "new" && !targetId) return tr("admin.catalog_need_target" as never) as string;
-    if (act !== "new" && flags.length > 0 && !partChosen) return tr("admin.catalog_need_part" as never) as string;
-    if (act === "new" && !id.trim()) return tr("admin.engines_wizard_need_id") as string;
-    if (act === "new" && !validBase) return tr("admin.engines_wizard_need_family") as string;
-    if (act === "new" && isLora && !image && !baseModel) return tr("admin.engines_wizard_need_family") as string;
-    if (!accepted) return tr("admin.catalog_need_license" as never) as string;
-    if (tooLarge && !confirmVram) return tr("admin.catalog_need_vram" as never) as string;
-    return "";
-  })();
-
-  const start = async () => {
-    if (missing) return;
-    setBusy(true); setErr("");
-    const targetName = act === "new" ? id.trim() : targetId;
-    const n = (value: string) => { const parsed = Number(value.trim().replace(/[_,]/g, "")); return Number.isFinite(parsed) && parsed > 0 ? parsed : 0; };
-    const paramsBody = Object.fromEntries(Object.entries(params).flatMap(([key, value]) => value.trim()
-      ? [[key, key === "sampler" || key === "scheduler" ? value.trim() : n(value)]] : []));
-    try {
-      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest`, "POST", {
-        id: targetName, kind: isLora ? "lora" : image ? "checkpoint" : "gguf",
-        // 🔴 The BASE NAME, never the path inside the upstream repository. Hugging Face publishes
-        // these families under `split_files/…`, and keeping that directory staged the file one
-        // level below the one its loader enumerates — `image/diffusion_models/split_files/…` is
-        // as unreadable as `image/checkpoints/…`, because the Agent names a file by its base
-        // name. Measured on af-sandbox 2026-09-15; the CP refuses the other spelling now.
-        s3Key: `${engineIngestPrefix(image, fileFlag, isLora)}${(file || targetName).split("/").pop()}`,
-        source: sourceBody(file), description: description.trim(), base_model: baseModel, file_flag: fileFlag,
-        attach: act === "attach", replace: act === "replace",
-        context_tokens: !image && !isLora ? n(context) : 0,
-        max_output_tokens: !image && !isLora ? n(output) : 0,
-        params: paramsBody, trained_words: isLora ? trainedWords.split(/[\n,]/).map((word) => word.trim()).filter(Boolean) : [],
-        license_accepted: true, with_family_vae: withVae, with_family_parts: withParts,
-        ...(immutableReuse ? { reuse_s3_key: immutableReuse.s3_key } : {}),
-      });
-      if (answer?.error) { setErr(errDetail(answer.error)); return; }
-      onStarted(answer as IngestJob);
-    } finally { setBusy(false); }
-  };
-
-  const operationTitle = hit?.name
-    ? `${tr("admin.catalog_operation_title" as never)} — ${hit.name}`
-    : tr("admin.catalog_operation_title" as never);
-  return <Modal title={operationTitle} className="engine-catalog-operation" onClose={onClose} lockClose={busy}>
-    <div className="ui-modal-body engine-operation-body">
-      {!hit && <div className="engine-operation-manual">
-        {image && <select value={sourceType} onChange={(event) => { setSourceType(event.currentTarget.value as CatalogSource); resetInspection(); }}><option value="civitai">Civitai</option><option value="hf">Hugging Face / URL</option></select>}
-        <input value={manualRef} onChange={(event) => changeManualRef(event.currentTarget.value)} placeholder="owner/repository or https://…" />
-        <Button small onClick={() => void inspect()} disabled={busy || !manualRef.trim()}>{tr("admin.catalog_inspect" as never)}</Button>
-      </div>}
-      <div className="engine-operation-grid">
-        {!plainURL && <label><span>{tr("admin.catalog_version" as never)}</span><select value={versionRef} onChange={(event) => { const next = event.currentTarget.value; setVersionRef(next); void loadFiles(next); }}>
-          {!versions.length && <option value={versionRef}>{versionRef || "—"}</option>}{versions.map((version) => <option key={version.ref} value={version.ref}>{version.name}</option>)}
-        </select></label>}
-        <label><span>{tr(plainURL ? "admin.catalog_checksum" as never : "admin.catalog_file" as never)}</span>{files.length
-          ? <select value={file} onChange={(event) => setFile(event.currentTarget.value)}><option value="">{tr("admin.catalog_pick_file" as never)}</option>{files.map((candidate) => <option key={candidate.ref || candidate.name} value={candidate.name}>{candidate.name}</option>)}</select>
-          : <input value={file} onChange={(event) => setFile(event.currentTarget.value)} placeholder={plainURL ? "sha256" : "model.safetensors"} />}</label>
-        {act !== "new" ? <label><span>{tr("admin.catalog_destination" as never)}</span><select value={targetId} onChange={(event) => { setTargetId(event.currentTarget.value); setFileFlag(""); setPartChosen(false); }}>
-          <option value="">{tr("admin.catalog_pick_target" as never)}</option>{models.map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}</select></label>
-          : <label><span>{tr("admin.engines_model_add_id")}</span><input value={id} onChange={(event) => setId(event.currentTarget.value)} /></label>}
-        {act !== "new" && flags.length > 0 && <label><span>{tr("admin.engines_model_add_part")}</span><select
-          value={partChosen ? fileFlag || "__whole__" : ""}
-          onChange={(event) => { setPartChosen(!!event.currentTarget.value); setFileFlag(event.currentTarget.value === "__whole__" ? "" : event.currentTarget.value); }}>
-          <option value="">{tr("admin.catalog_pick_part" as never)}</option>{slots.map((slot) => <option key={slot || "__whole__"} value={slot || "__whole__"}>{slot || tr("admin.engines_model_add_part_whole")}</option>)}</select></label>}
-        {act === "new" && (baseOptions.length > 0 || (isLora && !image)) && <label><span>{tr(isLora && !image ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)}>
-          <option value="">{tr(isLora && !image ? "admin.engines_model_add_lora_base_pick" : "admin.engines_model_add_family_pick")}</option>{baseOptions.map((base) => <option key={base} value={base}>{base}</option>)}</select></label>}
-      </div>
-      {resolved && <div className="engine-operation-facts"><span>{resolved.bytes ? `${Math.round(resolved.bytes / 1048576)} MiB` : tr("admin.catalog_size_unknown" as never)}</span>
-        {(resolved.license_name || resolved.license) && <span>{resolved.license_name || resolved.license}</span>}
-        {resolved.restrictions?.map((code) => <span key={code} className={CATALOG_HARD_RESTRICTIONS.has(code) ? "warn" : ""}>{tMaybe(`admin.engines_limit_${code}`) ?? code}</span>)}
-        {resolved.gated && !resolved.restrictions?.length && <span className="warn">{tr("admin.engines_ingest_hit_gated")}</span>}
-        {immutableReuse && <span className="ok">{tr("admin.catalog_reuse_present" as never)}</span>}</div>}
-      {resolved?.commercial_use === "no" && <p className="form-err">{tr("admin.engines_ingest_noncommercial")}</p>}
-      {/* 🔴 The wall is a REFUSAL only while nobody can answer it. With an account registered the
-          download is attempted as that account, and the CP cannot say in advance whether it
-          satisfies this uploader — the same position `gated_needs_acceptance` is in, so it reads
-          as the same kind of warning rather than a red dead end. */}
-      {resolved?.login_required && !resolved.civitai_needs_account && <p className="form-err">{tr("admin.engines_ingest_civitai_login")}</p>}
-      {resolved?.civitai_needs_account && <p className="muted">{tr("admin.engines_ingest_civitai_account_first" as never)}</p>}
-      {resolved?.gated && resolved.can_ingest === false && !resolved.login_required && <p className="form-err">{tr("admin.engines_ingest_gated_no_token")}</p>}
-      {resolved?.gated_needs_acceptance && <p className="muted">{tr("admin.engines_ingest_gated_accept_first")}</p>}
-      {/* 🔴 The whole point of the set: a diffusion model taken in alone leaves a row that is
-          marked, cannot be enabled, and points at files in other repositories. One checkbox, and
-          each part says what it costs — `staged` ones cost nothing because this deployment
-          already holds those bytes. */}
-      {!!resolved?.family_parts?.length && <label className="engine-operation-check engine-operation-parts">
-        <input type="checkbox" checked={withParts} disabled={resolved.family_parts.some((part) => part.unreachable)}
-          onChange={(event) => setWithParts(event.currentTarget.checked)} />
-        <span>
-          {(tr("admin.engines_wizard_parts_take" as never) as string)
-            .replace("{n}", String(resolved.family_parts.length))
-            .replace("{b}", resolved.family_parts_bytes ? formatBytes(resolved.family_parts_bytes) : "0")}
-          <ul className="engine-operation-parts-list">{resolved.family_parts.map((part) => <li key={part.flag}>
-            <span className="mono">{part.flag}</span>
-            <span className="mono">{part.repo}/{part.file}</span>
-            <span>{part.staged
-              ? tr("admin.engines_wizard_parts_staged" as never)
-              : part.unreachable
-                ? tr("admin.catalog_vae_unreachable" as never)
-                : `${part.bytes ? formatBytes(part.bytes) : "?"}${part.license ? ` · ${part.license}` : ""}`}</span>
-          </li>)}</ul>
-        </span>
-      </label>}
-      {resolved?.vae_bundled === "no" && !resolved.family_vae && <p className="form-err">{tr("admin.engines_wizard_vae_none")}</p>}
-      {resolved?.vae_bundled === "no" && resolved.family_vae && <label className="engine-operation-check"><input type="checkbox" checked={withVae} disabled={!!resolved.family_vae.unreachable} onChange={(event) => setWithVae(event.currentTarget.checked)} /><span>{(tr(resolved.family_vae.staged ? "admin.engines_wizard_vae_staged" : "admin.engines_wizard_vae_take") as string)
-        .replace("{f}", `${resolved.family_vae.repo}/${resolved.family_vae.file}`)
-        .replace("{n}", resolved.family_vae.bytes ? formatBytes(resolved.family_vae.bytes) : "?")
-        .replace("{l}", resolved.family_vae.license || "?")}{resolved.family_vae.unreachable ? ` — ${tr("admin.catalog_vae_unreachable" as never)}` : ""}</span></label>}
-      {resolved?.params_hint && resolved.params_hint_quote && <div className="engine-operation-hint"><p className="muted">{tr("admin.engines_params_hint_found")} <q>{resolved.params_hint_quote}</q></p><Button variant="ghost" small onClick={() => setParams((current) => ({ ...current, ...Object.fromEntries(Object.entries(resolved.params_hint || {}).map(([key, value]) => [key, String(value)])) }))}>{tr("admin.engines_params_hint_apply")}</Button></div>}
-      {needMiB > 0 && <p className={`engine-operation-fit ${tooLarge ? "form-err" : "muted"}`}>{(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(weightsMiB))}{!image && !isLora ? ` · ${kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(kvMiB)).replace("{c}", String(contextTokens)) : tr("admin.engines_ingest_fit_kv_unread")}` : ""}{cardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(needMiB)).replace("{c}", String(cardMiB))}` : ""}</p>}
-      {tooLarge && <label className="engine-operation-check warn"><input type="checkbox" checked={confirmVram} onChange={(event) => setConfirmVram(event.currentTarget.checked)} /><span>{tr(!image && !isLora ? "admin.catalog_vram_warning_llm" as never : "admin.catalog_vram_warning" as never, { need: needMiB, card: cardMiB } as never)}</span></label>}
-      <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
-      <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">
-        <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
-        {!image && !isLora && <label><span>{tr("admin.engines_model_add_ctx")}</span><input value={context} onChange={(event) => setContext(event.currentTarget.value)} inputMode="numeric" /></label>}
-        {!image && !isLora && <label><span>{tr("admin.engines_model_add_out")}</span><input value={output} onChange={(event) => setOutput(event.currentTarget.value)} inputMode="numeric" /></label>}
-        {isLora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
-        {image && (Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}
-      </div></details>
-      {err && <p className="form-err">{err}</p>}
-      <footer className="engine-operation-footer"><span className="muted">{missing}</span><Button variant="ghost" onClick={onClose} disabled={busy}>{tr("common.cancel")}</Button><Button variant="primary" onClick={() => void start()} disabled={busy || !!missing}>{tr("admin.engines_ingest_go")}</Button></footer>
-    </div>
-  </Modal>;
+/** Count concrete source objects, never repositories. A `missing` entry stays distinct from an
+ * absent one: the ledger says a row points at nothing, which is not "nobody took this in". */
+export function savedObjectsForHit(hit: IngestHit, objects: EngineObjectRow[]): EngineObjectRow[] {
+  return sourceObjectsForHit(hit, objects).filter((object) => object.state === "present");
 }
 
-function CatalogJobs({ engineKey, started, onCompleted }: { engineKey: string; started?: IngestJob; onCompleted: () => void }) {
-  const tr = useT();
-  const [jobs, setJobs] = useState<IngestJob[]>([]);
-  const hadLive = useRef(false);
-  const load = useCallback(async () => {
-    const answer = await api(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest`);
-    if (!answer?.error) setJobs(Array.isArray(answer?.jobs) ? answer.jobs : []);
-  }, [engineKey]);
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => {
-    if (!started?.id) return;
-    setJobs((current) => [started, ...current.filter((job) => job.id !== started.id)]);
-    void load();
-  }, [load, started]);
-  const live = jobs.some((job) => job.state === "pending" || job.state === "running");
-  useEffect(() => {
-    if (hadLive.current && !live) onCompleted();
-    hadLive.current = live;
-  }, [live, onCompleted]);
-  useEffect(() => {
-    if (!live) return;
-    const timer = setInterval(() => void load(), 5000);
-    return () => clearInterval(timer);
-  }, [live, load]);
-  if (!jobs.length) return null;
-  return <details className="engine-catalog-jobs" open={live}>
-    <summary>{tr("admin.engines_ingest_jobs_head")} <span className="engines-model-tag">{jobs.length}</span></summary>
-    <ul>{jobs.slice(0, 6).map((job) => <li key={job.id}>
-      <span className="mono">{job.model_id}</span>
-      <span className={`engines-model-tag ${job.state === "done" ? "on" : job.state === "failed" ? "bad" : "lead"}`}>
-        {tr((`admin.engines_ingest_state_${job.state}`) as never)}
-      </span>
-      {job.message && <span className="form-err">{job.message}</span>}
-    </li>)}</ul>
-  </details>;
-}
-
-/** Count concrete source files, never repositories. State stays visible separately and an
- * unknown check is never promoted to missing. */
-export function savedFilesForHit(hit: IngestHit, files: EngineStorageFile[]): EngineStorageFile[] {
-  return sourceFilesForHit(hit, files).filter((file) => file.state === "present");
-}
-
-function sourceFilesForHit(hit: IngestHit, files: EngineStorageFile[]): EngineStorageFile[] {
+function sourceObjectsForHit(hit: IngestHit, objects: EngineObjectRow[]): EngineObjectRow[] {
   const modelRef = hit.model_ref || (hit.source === "hf" ? hit.ref : "");
   if (!modelRef) return [];
   if (hit.source === "civitai") {
-    return files.filter((file) => !!file.source && (
-      file.source === `civitai:${hit.ref}` || file.source.startsWith(`civitai:${hit.ref}/`)
+    return objects.filter((object) => !!object.source && (
+      object.source === `civitai:${hit.ref}` || object.source.startsWith(`civitai:${hit.ref}/`)
     ));
   }
-  return files.filter((file) => !!file.source && (
-    file.source.startsWith(`hf:${modelRef}/`) || file.source.startsWith(`hf:${modelRef}@`)
+  return objects.filter((object) => !!object.source && (
+    object.source.startsWith(`hf:${modelRef}/`) || object.source.startsWith(`hf:${modelRef}@`)
   ));
-}
-
-/** Reuse is stricter than display: only a present object with an immutable revision/file
- * identity qualifies. Legacy `hf:repo/file` strings remain visible but are never guessed. */
-export function exactReusableStorage(files: EngineStorageFile[], identity?: string): EngineStorageFile | undefined {
-  if (!identity) return undefined;
-  return files.find((file) => file.state === "present" && file.reusable === true && file.artifact_identity === identity);
 }
 
 function compactCount(value: number): string {

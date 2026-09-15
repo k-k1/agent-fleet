@@ -37,8 +37,7 @@ const llmRow = {
 function mockEngineAPI(rows: Record<string, unknown>[]) {
   api.mockImplementation((path: string) => {
     if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: rows });
-    if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-    if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+    if (path.endsWith("/objects")) return Promise.resolve({ objects: [] });
     return Promise.resolve({});
   });
 }
@@ -186,6 +185,11 @@ describe("model catalogue operation regressions", () => {
           can_ingest: true,
           license: "apache-2.0",
           base_model_suggest: "qwen-family",
+          plan: {
+            plan_token: "p", id: "adapter",
+            files: [{ name: "adapter.gguf", action: "download", bytes: 1024 }],
+            bytes_to_download: 1024,
+          },
         });
       }
       return Promise.resolve({});
