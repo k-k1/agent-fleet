@@ -300,10 +300,11 @@ type enginePartsFixBody struct {
 // and "take the diffusion model in again, with the box ticked this time" is not a repair — it is
 // a second copy of a 4 GB file.
 //
-// Three outcomes, the same words as the VAE remedy: `none` (nothing is missing), `attached`
-// (every part was already this deployment's, so the row gained declarations and nothing was
-// downloaded), `job_started` (at least one download is running, and it attaches itself when it
-// lands).
+// Four outcomes, the first three in the same words as the VAE remedy: `none` (nothing is
+// missing), `attached` (every part was already this deployment's, so the row gained declarations
+// and nothing was downloaded), `job_started` (at least one download is running, and it attaches
+// itself when it lands) — and `moving`, which is this row's own weights being relocated inside
+// the bucket because they were staged where no loader lists them (engine_file_move.go).
 func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
 	key, id := strings.TrimSpace(r.PathValue("key")), strings.TrimSpace(r.PathValue("id"))
 	e := a.reg.get(key)
@@ -325,19 +326,29 @@ func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engin
 		return
 	}
 	family := strings.TrimSpace(m.BaseModel)
-	if len(engineFamilyPartsFor(family)) == 0 {
+	// 🔴 The row's OWN weights come first, and they are why this endpoint no longer answers only
+	// about the part list. A split family's checkpoint staged under `image/checkpoints/` is a
+	// file the row is holding and no loader can read (engine_file_move.go); with the parts
+	// already attached, the answer to "揃える" was `none` beside a badge still reading
+	// `不足: --diffusion-model`. Reported from af-sandbox 2026-09-15.
+	fix, hasFix := engineMainFileFixFor(key, family, m)
+	if len(engineFamilyPartsFor(family)) == 0 && !hasFix {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
 			"this deployment knows no part list for the " + family + " family — attach the files it reads by hand"})
 		return
 	}
 	missing := enginePartsMissing(family, m)
-	if len(missing) == 0 {
+	if len(missing) == 0 && !hasFix {
 		writeJSON(w, http.StatusOK, map[string]any{"action": "none"})
 		return
 	}
-	plan := enginePartsPlan(ctx, a.enginePartsHeld(ctx, g, key), missing)
+	held := a.enginePartsHeld(ctx, g, key)
+	plan := enginePartsPlan(ctx, held, missing)
 	if b.Check {
 		action := "attach"
+		if hasFix {
+			action = "move"
+		}
 		for _, fu := range plan {
 			if fu.Conflict != "" {
 				action = "conflict"
@@ -353,14 +364,45 @@ func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engin
 				break
 			}
 		}
+		if hasFix {
+			// `main_file` rides beside the parts and NEVER inside `bytes`: nothing is downloaded
+			// for it, and a size beside a licence line reads as what this press will fetch.
+			// Written out as its own literal rather than added to a map — the wire golden reads
+			// these call sites as source (wiremap_golden_test.go), and a map built in a variable
+			// is a shape nothing would check again.
+			writeJSON(w, http.StatusOK, map[string]any{
+				"action": action, "parts": enginePartsPlanRows(plan, missing),
+				"bytes": enginePartsBytes(plan), "main_file": engineMainFileFixRow(fix),
+			})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"action": action, "parts": enginePartsPlanRows(plan, missing),
 			"bytes": enginePartsBytes(plan),
 		})
 		return
 	}
-	// Everything already here is one write each, and it costs nothing to accept.
+	// The weights first: a row whose parts attach while its own checkpoint stays unreadable is
+	// still a row nobody can enable, and the move is the slow half (a server-side copy of up to
+	// 13 GB), so it is started before the cheap writes rather than after them.
 	var started []map[string]any
+	moved := false
+	if hasFix {
+		if aerr := a.engineMainFileMovable(ctx, held, key, id, fix); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		job, aerr := a.engineStartMainFileMove(ctx, g, key, id, fix)
+		if aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		a.auditFor(r, g, "engine."+key+".model.parts",
+			id+" moving "+fix.From+" to "+fix.To+" as "+fix.Flag)
+		started = append(started, engineIngestJobRow(job))
+		moved = true
+	}
+	// Everything already here is one write each, and it costs nothing to accept.
 	attached := 0
 	for i, fu := range plan {
 		p := missing[i]
@@ -430,9 +472,19 @@ func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engin
 			fu.S3Key+" for "+id+" from "+fu.Resolved.Source+" (licence "+engineLicenceLabel(fu.Resolved)+" accepted)")
 		started = append(started, engineIngestJobRow(job))
 	}
+	downloads := len(started)
+	if moved {
+		downloads--
+	}
 	action := "attached"
-	if len(started) > 0 {
+	switch {
+	case downloads > 0:
 		action = "job_started"
+	case moved:
+		// Said apart from a download on purpose: a move finishes in minutes with no bytes
+		// crossing the internet, and a panel that called it a download would have an operator
+		// watching for a transfer that is never going to appear.
+		action = "moving"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"action": action, "attached": attached, "jobs": started})
 }

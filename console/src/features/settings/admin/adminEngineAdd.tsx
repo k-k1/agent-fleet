@@ -538,7 +538,11 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
       const action = (answer as { action?: string })?.action;
       setPartsNote(tr((action === "none" ? "admin.catalog_parts_fix_none"
         : action === "attached" ? "admin.catalog_parts_fix_attached"
-          : "admin.catalog_parts_fix_started") as never) as string);
+          // A move is not a download and must not be reported as one: nothing crosses the
+          // internet, so an operator told to watch for a transfer would be watching for
+          // something that never appears.
+          : action === "moving" ? "admin.catalog_parts_fix_moving"
+            : "admin.catalog_parts_fix_started") as never) as string);
       await onChanged();
       await loadAux();
     } finally { setBusy(""); }
@@ -593,6 +597,15 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
           <span className={`engines-model-tag ${status.tone}`}>{tr((`admin.catalog_registered_${status.state}`) as never, { present: status.present, total: status.total } as never)}</span>
           {!!model.files_missing?.length && <span className="engines-model-tag warn">{(tr("admin.engines_model_files_missing_tag" as never) as string).replace("{f}", model.files_missing.join(" "))}</span>}</header>
         {engineIsImage(row) ? <ImageRegisteredCardBody model={model} /> : <LLMRegisteredCardBody model={model} />}
+        {/* 🔴 The one thing the badge above cannot say: the role it reports as missing is a file
+            this row is HOLDING, in a directory no loader lists. Without this line the card shows
+            a 4 GB checkpoint and a "不足: --diffusion-model" beside it, which reads as a
+            contradiction — and the remedy answered "nothing is missing". */}
+        {!!model.main_file_fix && <p className="admin-hint engine-registered-misplaced">
+          {(tr("admin.catalog_main_file_misplaced" as never) as string)
+            .replace("{f}", model.main_file_fix.flag)
+            .replace("{from}", model.main_file_fix.from)
+            .replace("{to}", model.main_file_fix.to)}</p>}
         <RegisteredParts model={model} storage={storage} />
         <footer>
           {isSuper && !readOnly && <Button variant="ghost" small icon="edit" aria-label={`${tr("admin.catalog_edit" as never)}: ${model.id}`} onClick={() => setEdit(model)}>{tr("admin.catalog_edit" as never)}</Button>}
@@ -601,7 +614,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
           {/* 🔴 Why this row cannot be enabled, said on the row itself. The mark existed on the
               wire since P2 and this screen never drew it, so an incomplete row looked like any
               other — which is most of why "I took it in and do not know what to do" happens. */}
-          {!readOnly && !!model.files_missing?.length && <Button variant="primary" small
+          {!readOnly && (!!model.files_missing?.length || !!model.main_file_fix) && <Button variant="primary" small
             aria-label={`${tr("admin.catalog_parts_fix" as never)}: ${model.id}`} disabled={pending}
             onClick={() => void completeParts(model)}>{tr(pending ? "admin.catalog_parts_fix_busy" as never : "admin.catalog_parts_fix" as never)}</Button>}
           {!readOnly && <Button small aria-label={`${tr("admin.catalog_parts" as never)}: ${model.id}`} onClick={() => setOperation({ act: (row.file_flags || []).length ? "attach" : "replace", modelId: model.id })}>{tr("admin.catalog_parts" as never)}</Button>}
@@ -973,7 +986,12 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
     try {
       const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest`, "POST", {
         id: targetName, kind: isLora ? "lora" : image ? "checkpoint" : "gguf",
-        s3Key: `${engineIngestPrefix(image, fileFlag, isLora)}${file || targetName}`,
+        // 🔴 The BASE NAME, never the path inside the upstream repository. Hugging Face publishes
+        // these families under `split_files/…`, and keeping that directory staged the file one
+        // level below the one its loader enumerates — `image/diffusion_models/split_files/…` is
+        // as unreadable as `image/checkpoints/…`, because the Agent names a file by its base
+        // name. Measured on af-sandbox 2026-09-15; the CP refuses the other spelling now.
+        s3Key: `${engineIngestPrefix(image, fileFlag, isLora)}${(file || targetName).split("/").pop()}`,
         source: sourceBody(file), description: description.trim(), base_model: baseModel, file_flag: fileFlag,
         attach: act === "attach", replace: act === "replace",
         context_tokens: !image && !isLora ? n(context) : 0,

@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -236,6 +237,62 @@ func engineMissingFileFlags(provider string, m store.EngineModel) []string {
 		}
 	}
 	return missing
+}
+
+// engineFamilyMainFlag is the role a family's OWN weights play, for the families that are
+// published in parts. Empty for a family whose template reads a whole checkpoint (sd15, sdxl,
+// sd35) and for one this provider has no list for — in both cases there is nothing to be wrong
+// about, because `""` is a role those templates do read.
+//
+// It is the first required flag rather than a second table: engineComfyRequiredFlags is written
+// weights-first for every split family, and a second list would be one more thing to keep in
+// step with comfy_workflows.go.
+func engineFamilyMainFlag(family string) string {
+	want, ok := engineComfyRequiredFlags[strings.TrimSpace(family)]
+	if !ok || len(want) == 0 || slices.Contains(want, "") {
+		return ""
+	}
+	return want[0]
+}
+
+// engineComfyRoleDir is the directory inside the bucket a file of this ROLE has to be staged in,
+// relative to the engine's own key (`image/`).
+//
+// 🔴 This is not a convention and a wrong answer is never reported anywhere: the box mirrors the
+// bucket (`/ComfyUI/models` -> `/models/image`), every ComfyUI loader builds its menu from ONE
+// directory, and the Agent names a file by its BASE NAME (engines.go, engineImageFiles). So a
+// diffusion model staged at `image/checkpoints/…` — or at `image/diffusion_models/split_files/…`
+// — is a name `UNETLoader` can never list, and the row reads as "the model does not work".
+// Measured on af-sandbox twice: a 22.2 GiB flux1 checkpoint (ADR 0072 P2 残作業 5) and every
+// Anima / Krea 2 row (2026-09-15).
+//
+// The Console composes the destination key from the same table (`engineIngestPrefix`,
+// adminEngineModels.tsx) and contract_engine_keys_test.go pins the two together.
+func engineComfyRoleDir(flag string, lora bool) string {
+	if lora {
+		return "loras/"
+	}
+	switch strings.TrimSpace(flag) {
+	case "--diffusion-model":
+		return "diffusion_models/"
+	// All three encoders live in one directory — that IS what TripleCLIPLoader enumerates.
+	case "--clip_l", "--clip_g", "--t5xxl":
+		return "text_encoders/"
+	case "--vae":
+		return "vae/"
+	default:
+		return "checkpoints/"
+	}
+}
+
+// engineComfyKeyFor is where a file of this role belongs, in full: the engine's own key, the
+// role's directory and the file's BASE NAME. Flat on purpose — see engineComfyRoleDir.
+func engineComfyKeyFor(role, flag, file string, lora bool) string {
+	name := strings.TrimSpace(file)
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	return strings.TrimSpace(role) + "/" + engineComfyRoleDir(flag, lora) + name
 }
 
 // engineFileFlagsFor is the file vocabulary an engine's provider understands, or nil when a row

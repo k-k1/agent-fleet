@@ -97,6 +97,11 @@ case "$1 $2" in
     done
     [ -z "${AF_TEST_PENDING:-}" ] || echo "$name $value" >> "$AF_TEST_PENDING"
     ;;
+  "s3 mv")
+    # The ingest task's MODE=move: one server-side relocation inside the bucket. Recorded as
+    # "<from> -> <to>", because both halves are the assertion.
+    echo "$3 -> $4" >> "${AF_TEST_MOVED:-/dev/null}"
+    ;;
   "s3 cp")
     dst="$4"
     [ -z "${AF_TEST_FAIL_CP:-}" ] || { echo "stub aws: refusing to copy" >&2; exit 1; }
@@ -112,6 +117,37 @@ esac
 STUB
 chmod +x "$WORK/bin/aws"
 export PATH="$WORK/bin:$PATH"
+
+# 🔴 The repair for bytes staged where no ComfyUI loader lists them (engine_file_move.go). It is
+# the ONE ingest mode that touches no upstream, and the thing that makes it affordable — a 13 GB
+# file relocated for one API call instead of a second download — is that the fetch container is
+# told to do nothing and the upload container runs `aws s3 mv` inside one bucket. Both halves are
+# in these scripts, which is why they are run here rather than reasoned about.
+echo "== the ingest task moves a key inside the bucket instead of fetching it again =="
+if ! MODE=move URL="" sh "$WORK/ingest-fetch.sh" > "$WORK/move-fetch.out" 2>&1; then
+  fail "the fetch container refused a move: $(cat "$WORK/move-fetch.out")"
+fi
+grep -q "nothing to fetch" "$WORK/move-fetch.out" \
+  || fail "the fetch container did not say it was skipping: $(cat "$WORK/move-fetch.out")"
+: > "$WORK/moved"
+if ! MODE=move BUCKET=b \
+  FROM=image/checkpoints/split_files/diffusion_models/anima.safetensors \
+  KEY=image/diffusion_models/anima.safetensors \
+  AF_TEST_MOVED="$WORK/moved" sh "$WORK/ingest-upload.sh" > "$WORK/move-upload.out" 2>&1; then
+  fail "the move failed: $(cat "$WORK/move-upload.out")"
+fi
+[ "$(cat "$WORK/moved")" = "s3://b/image/checkpoints/split_files/diffusion_models/anima.safetensors -> s3://b/image/diffusion_models/anima.safetensors" ] \
+  || fail "the move did not relocate the key inside the bucket: $(cat "$WORK/moved")"
+# A move with nothing to move from, and one onto itself: both would "succeed" against S3 in a
+# way that leaves a row pointing at an empty key.
+if MODE=move BUCKET=b KEY=image/diffusion_models/anima.safetensors \
+  sh "$WORK/ingest-upload.sh" >/dev/null 2>&1; then
+  fail "a move with no FROM was accepted"
+fi
+if MODE=move BUCKET=b FROM=image/x.safetensors KEY=image/x.safetensors \
+  sh "$WORK/ingest-upload.sh" >/dev/null 2>&1; then
+  fail "a move onto its own key was accepted"
+fi
 
 run() { # run <fixture> <alias-flag> <ctx-flag> [preset-file] [sync-all] -> writes $WORK/models/cmdline
   rm -rf "$WORK/models"; mkdir -p "$WORK/models"

@@ -119,6 +119,47 @@ func TestAppendEngineModelFileKeepsOneFilePerFlag(t *testing.T) {
 	}
 }
 
+// A file relocated inside the bucket changes BOTH its role and its key, and the row must end up
+// with one declaration rather than two — the old one points at a key the move emptied.
+func TestMoveEngineModelFileRewritesOneDeclaration(t *testing.T) {
+	st := engineModelStore(t)
+	ctx := t.Context()
+	from := "image/checkpoints/split_files/diffusion_models/anima.safetensors"
+	if err := st.PutEngineModel(ctx, EngineModel{Role: "image", ID: "anima", Files: []EngineModelFile{
+		{S3Key: from, Bytes: 4_182_230_656, Source: "hf:circlestone-labs/Anima/…", ArtifactIdentity: "hf:…#sha256:aa"},
+		{Flag: "--vae", S3Key: "image/vae/qwen_image_vae.safetensors"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	moved := EngineModelFile{Flag: "--diffusion-model", S3Key: "image/diffusion_models/anima.safetensors",
+		Bytes: 4_182_230_656, Source: "hf:circlestone-labs/Anima/…", ArtifactIdentity: "hf:…#sha256:aa"}
+	if found, err := st.MoveEngineModelFile(ctx, "image", "anima", from, moved); err != nil || !found {
+		t.Fatalf("move = %v, %v", found, err)
+	}
+	got := engineModelByID(t, st, "image", "anima")
+	if len(got.Files) != 2 || got.Files[0] != moved {
+		t.Fatalf("files after the move = %+v", got.Files)
+	}
+	// The reconciler can see the same finished task twice, and that is not a failed job.
+	if found, err := st.MoveEngineModelFile(ctx, "image", "anima", from, moved); err != nil || !found {
+		t.Errorf("a second move of the same file = %v, %v, want a no-op reporting success", found, err)
+	}
+	// A row that holds neither the source nor the destination is not a move to invent — the
+	// caller has to hear that its job no longer describes this catalogue.
+	if err := st.PutEngineModel(ctx, EngineModel{Role: "image", ID: "other",
+		Files: []EngineModelFile{{Flag: "--vae", S3Key: "image/vae/x.safetensors"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := st.MoveEngineModelFile(ctx, "image", "other", from, moved); err != nil || found {
+		t.Errorf("moving a key the row never had = %v, %v, want false", found, err)
+	}
+	// And the destination role must be free, for the same reason an append refuses a taken slot.
+	if found, err := st.MoveEngineModelFile(ctx, "image", "anima", moved.S3Key,
+		EngineModelFile{Flag: "--vae", S3Key: "image/vae/another.safetensors"}); !errors.Is(err, ErrEngineModelFileSlotTaken) || found {
+		t.Errorf("moving onto a taken role = %v, %v", found, err)
+	}
+}
+
 // Selecting is EXCLUSIVE within a role, and it is the invariant the image engine's command
 // line depends on: sd-server holds one checkpoint, so two selected rows have no answer to
 // "what does it start with".

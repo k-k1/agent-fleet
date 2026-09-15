@@ -102,14 +102,22 @@ const LATIN = /[A-Za-z]/g;
 const MIN_LATIN = 8;
 const MIN_CJK = 8;
 
+// What decides is the SHARE of the prose written in the other script, not whether a single
+// character of it appears. An English answer naming a Console label in Japanese where it has no
+// English name ("the engines are still 無効", "set them back to オンデマンド") is still English
+// the reader cannot read — measured on one real report, those two words are eight characters in
+// roughly 350 Latin letters, 2% of the prose. Below this share the stray characters are terms
+// being pointed at; above it the two languages are genuinely mixed and both directions stay
+// silent, because the reader can already read half of it and a translation would spend tokens
+// re-saying what is there ("実装完了。see the diff").
+const MAX_STRAY_SHARE = 0.05;
+
 /**
  * Does this answer look like it is NOT in the reader's language?
  *
  * Deliberately blunt, in both directions:
- *   ja … no CJK character at all, and enough Latin letters to be prose. An answer that mixes
- *        ("実装完了。see the diff") is NOT offered: the reader can read it, and a translation
- *        would spend tokens to re-say what is already there.
- *   en … enough CJK characters to be Japanese prose.
+ *   ja … enough Latin letters to be prose, and at most a stray word's worth of CJK.
+ *   en … enough CJK characters to be Japanese prose, and more than a stray word's worth.
  *
  * It only decides whether the BUTTON is offered. Nothing translates on this verdict alone, so a
  * wrong guess costs a button that should not be there, never a model run.
@@ -118,8 +126,10 @@ export function looksForeign(text: string, lang: TranslateLang): boolean {
   const prose = proseOnly(text);
   const cjk = (prose.match(KANA)?.length || 0) + (prose.match(KANJI)?.length || 0);
   const latin = prose.match(LATIN)?.length || 0;
-  if (lang === "ja") return cjk === 0 && latin >= MIN_LATIN;
-  return cjk >= MIN_CJK;
+  // No prose at all leaves the share undefined (0/0); nothing is offered for it either way.
+  const cjkShare = cjk + latin > 0 ? cjk / (cjk + latin) : 0;
+  if (lang === "ja") return latin >= MIN_LATIN && cjkShare <= MAX_STRAY_SHARE;
+  return cjk >= MIN_CJK && cjkShare > MAX_STRAY_SHARE;
 }
 
 // Server-side per-request-part cap (session_translate.go's translateMaxPartBytes), mirrored

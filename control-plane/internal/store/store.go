@@ -441,6 +441,15 @@ type EngineModelStore interface {
 	//
 	// Reports false when there is no such row or the row no longer declares that slot.
 	ReplaceEngineModelFile(ctx context.Context, role, id string, f EngineModelFile, kv *EngineModelKV) (bool, error)
+	// MoveEngineModelFile rewrites the file a row holds at `fromKey` into `f` — a new role and a
+	// new key for the same bytes — and changes nothing else. It is what repairs a file staged in
+	// a directory its loader does not enumerate: the bytes are relocated inside the bucket by the
+	// ingest task and the declaration has to follow them, which neither appending (the old file
+	// would stay) nor replacing (it finds its slot BY the flag that is changing) can express.
+	//
+	// Reports false when there is no such row or nothing at `fromKey`, true when the row already
+	// holds `f` — a job reconciler may see the same finished task twice.
+	MoveEngineModelFile(ctx context.Context, role, id, fromKey string, f EngineModelFile) (bool, error)
 	// SetEngineModelEnabled toggles one row. Reports false when there is no such row, so a
 	// caller can answer 404 rather than 200 for a model that does not exist.
 	SetEngineModelEnabled(ctx context.Context, role, id string, enabled bool) (bool, error)

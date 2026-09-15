@@ -361,9 +361,14 @@ func TestEngineSourceURL(t *testing.T) {
 			"https://huggingface.co/unsloth/Qwen3-30B-GGUF/blob/main/Q4_K_M/qwen3-30b-Q4_K_M.gguf"},
 		// 🔴 The whole reason this is composed in the Control Plane. `civitai:<id>` is a model
 		// VERSION id, and the model id in the page's URL is a different number — so
-		// `civitai.com/models/<id>` opens A DIFFERENT MODEL. This form is the one Civitai
-		// resolves, and it is already what the resolver hands to LicenseURL.
-		{"a Civitai version", "civitai:1759168", "https://civitai.com/models/?modelVersionId=1759168"},
+		// `civitai.com/models/<id>` opens A DIFFERENT MODEL.
+		//
+		// 🔴 And it is the REDIRECT, not `/models/?modelVersionId=<id>`: that form answers 200
+		// with the model LIST (measured 2026-09-15, reported from the panel as a link that
+		// "opens the wrong page"), while `/model-versions/<id>` is a 308 to
+		// `/models/4451?modelVersionId=5038` and on to the slug. A link that opens SOMETHING is
+		// the kind nobody reports as broken. The same form goes to LicenseURL.
+		{"a Civitai version", "civitai:1759168", "https://civitai.com/model-versions/1759168"},
 		// 🔴 A url source is the direct download of the weights (22 GB in ADR 0072's table).
 		// A link in a panel that says "where this came from" must not start one.
 		{"a plain url", "https://example.invalid/m.safetensors", ""},
@@ -382,7 +387,7 @@ func TestEngineSourceURL(t *testing.T) {
 	// And the row carries it beside the text, absent when it could not be composed — the panel
 	// branches on the field arriving rather than parsing the string a second time.
 	row := engineAdminModelRow(store.EngineModel{ID: "x", Source: "civitai:1759168"})
-	if row["source_url"] != "https://civitai.com/models/?modelVersionId=1759168" {
+	if row["source_url"] != "https://civitai.com/model-versions/1759168" {
 		t.Errorf("source_url = %v", row["source_url"])
 	}
 	plain := engineAdminModelRow(store.EngineModel{ID: "x", Source: "https://example.invalid/m.safetensors"})

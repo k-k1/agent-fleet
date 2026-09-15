@@ -256,6 +256,57 @@ func (s *SQL) ReplaceEngineModelFile(ctx context.Context, role, id string, f Eng
 	}
 }
 
+// MoveEngineModelFile rewrites the one file a row holds at `fromKey` — its role AND its key —
+// leaving every other file and every other column alone. It is the catalogue half of relocating
+// bytes inside the bucket, and it exists because neither of the two writers above can express it:
+// appending would leave the old declaration behind (two files, one of them pointing at a key the
+// move emptied) and replacing is keyed by the flag, which is the very thing that changes.
+//
+// The same optimistic compare-and-swap as its neighbours, and idempotent in the one way that
+// matters: a reconciler that sees the same finished task twice finds the row already moved —
+// `fromKey` gone, `f` present — and reports success rather than failing a job that did its work.
+func (s *SQL) MoveEngineModelFile(ctx context.Context, role, id, fromKey string, f EngineModelFile) (bool, error) {
+	for {
+		var raw string
+		switch err := s.db.QueryRowContext(ctx,
+			`SELECT files FROM engine_models WHERE role=? AND id=?`, role, id).Scan(&raw); {
+		case err == sql.ErrNoRows:
+			return false, nil
+		case err != nil:
+			return false, err
+		}
+		var files []EngineModelFile
+		_ = json.Unmarshal([]byte(raw), &files)
+		at, done := -1, false
+		for i, e := range files {
+			switch {
+			case strings.TrimSpace(e.S3Key) == strings.TrimSpace(fromKey):
+				at = i
+			case strings.TrimSpace(e.S3Key) == strings.TrimSpace(f.S3Key) &&
+				strings.TrimSpace(e.Flag) == strings.TrimSpace(f.Flag):
+				done = true
+			}
+		}
+		if at < 0 {
+			return done, nil
+		}
+		// 🔴 The destination role must be free, or the move would silently give the row two files
+		// under one flag — the state AppendEngineModelFile refuses for the same reason.
+		for i, e := range files {
+			if i != at && strings.TrimSpace(e.Flag) == strings.TrimSpace(f.Flag) {
+				return false, ErrEngineModelFileSlotTaken
+			}
+		}
+		files[at] = f
+		updated, err := affected(s.db.ExecContext(ctx,
+			`UPDATE engine_models SET files=?, updated_at=? WHERE role=? AND id=? AND files=?`,
+			jsonList(files), NowTS(), role, id, raw))
+		if err != nil || updated {
+			return updated, err
+		}
+	}
+}
+
 func (s *SQL) SetEngineModelEnabled(ctx context.Context, role, id string, enabled bool) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE engine_models SET enabled=?, updated_at=? WHERE role=? AND id=?`,

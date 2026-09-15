@@ -6,9 +6,9 @@
 # reaches the bucket. `cfn/PARAMETERS-60-engines.md`, "The ingest containers".
 #
 # Environment (the contract, version CONTRACT):
-#   URL           what to fetch                              (required unless MODE=delete)
+#   URL           what to fetch                              (required unless MODE is set)
 #   SHA256        the expected digest                        (optional, and warned about when absent)
-#   MODE          "delete" skips this step entirely          (optional)
+#   MODE          "delete" or "move" skip this step entirely (optional)
 #   HF_TOKEN      injected from Secrets Manager; "-" is the sentinel for "no token registered"
 #   CIVITAI_TOKEN the same, for a Civitai account (engine_civitai_token.go). Only one of the two
 #                 is ever sent, chosen by the URL's own host: a foreign Bearer token offered to
@@ -44,6 +44,10 @@ af_check_contract
 
 set -e
 [ "$MODE" = delete ] && { echo "ingest: delete mode, nothing to fetch"; exit 0; }
+# A move is bytes this deployment already owns changing key. S3 copies them server-side, so
+# nothing is downloaded here and the ephemeral disk never has to hold a second copy of a 13 GB
+# file — which is what makes repairing a misplaced key possible at all.
+[ "$MODE" = move ] && { echo "ingest: move mode, nothing to fetch"; exit 0; }
 [ -n "$URL" ] || { echo "ingest: URL is required"; exit 2; }
 start=$(date +%s)
 set --

@@ -1643,6 +1643,19 @@ failed its sha256 must not reach the bucket; `COMPLETE` would upload it and the 
 carry a row for a truncated file. (The ENGINE containers use `START` instead, for the opposite
 reason -- see [The fetch sidecar](#the-fetch-sidecar).)
 
+**Three modes, on the same two containers.** `MODE` is unset for an ordinary ingest (fetch, then
+upload); `MODE=delete` removes the keys in `KEY` (ADR 0072 decision 7) and `MODE=move` relocates
+`FROM` to `KEY`. Both of the latter tell `fetch` to exit at once and do all the work in `upload`.
+
+🔴 **`MODE=move` (contract 3) is a server-side `aws s3 mv` inside ONE bucket, and that is the
+point of it.** It repairs a file staged where its ComfyUI loader does not look — the box mirrors
+the bucket and each loader enumerates one directory — without downloading bytes the deployment
+already owns: measured on af-sandbox 2026-09-15, every Anima and Krea 2 row held its 4.2 / 13.1 GB
+of weights under `image/checkpoints/split_files/…`. S3 copies large objects in parts by itself,
+so the ephemeral disk is not involved and `IngestDiskGiB` does not bound what can be moved. The
+Control Plane starts it as an ordinary ingest job (`engine_file_move.go`), so the panel watches
+it like any other and the catalogue change lands when the task does.
+
 ### `IngestCpu` / `IngestMemory` / `IngestDiskGiB`
 
 Fargate sizing for the ingest task. It stages the whole file on disk before uploading, so the
