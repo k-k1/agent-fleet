@@ -9,7 +9,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/filemeta"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -267,6 +270,139 @@ type fsEntry struct {
 	// no relative time; it must not compare versions to decide, the same rule as thumb's
 	// advisory argument in fs_thumb.go.
 	Mtime int64 `json:"mtime,omitempty"`
+	// Preview and Images describe what is INSIDE a directory entry, and are filled only when
+	// the caller asked with `peek=<n>` (ADR 0080 P2). They exist so a folder card can show a
+	// cover picture and a count: the alternative is one `fs/tree` per card, which is what
+	// decision 9 refused. Advisory like `thumb` — an older Agent sends neither and the reader
+	// draws the plain folder icon it always drew.
+	Preview []fsPreview `json:"preview,omitempty"`
+	Images  int         `json:"images,omitempty"`
+}
+
+// fsPreview names one picture inside a directory. The mtime rides along because the reader
+// builds a thumbnail URL from it: without a version the answer is `max-age=60` instead of
+// `immutable`, and every folder card would re-ask on the way back (fs_thumb.go).
+type fsPreview struct {
+	Name  string `json:"name"`
+	Mtime int64  `json:"mtime,omitempty"`
+}
+
+const (
+	// The most preview names one folder can carry. A cover is one picture; the cap is what
+	// keeps a future mosaic from needing a wire change, and what bounds this per listing.
+	peekMaxNames = 4
+	// How many directories in one listing are looked into at all, and for how long. A listing
+	// must stay a listing: peeking is one ReadDir plus a stat per file INSIDE each folder, and
+	// a browse root full of repositories would otherwise turn one request into thousands of
+	// stats. Past either bound the remaining folders simply carry no preview — advisory, so
+	// there is no error to render.
+	peekMaxDirs = 60
+	peekBudget  = 300 * time.Millisecond
+	// Directories remembered. Each is a handful of names; a miss costs one ReadDir.
+	peekMemoMax = 512
+)
+
+// peekNames reads the `peek` query value: how many preview names the caller wants, or 0 for
+// none. Out of range is "none" rather than an error — same rule as thumbEdge.
+func peekNames(raw string) int {
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > peekMaxNames {
+		return 0
+	}
+	return n
+}
+
+type peekResult struct {
+	preview []fsPreview
+	images  int
+}
+
+// Memoized by the directory's own mtime, which changes whenever an entry is added or removed —
+// exactly when a cover or a count can change. The gallery re-lists every 20 seconds while a
+// session runs, and re-walking every subfolder that often would spend a shared host's I/O to
+// discover the same answer.
+//
+// Deliberately NOT sessionx's countGeneratedImages, which memoizes the same way: that one
+// answers the SESSION wire, counts only, and lives in another package. Reaching across for it
+// would tie the file listing to the session list; the shared part is one ReadDir loop.
+var peekMemo = struct {
+	mu sync.Mutex
+	m  map[string]peekEntry
+}{m: map[string]peekEntry{}}
+
+type peekEntry struct {
+	mod time.Time
+	res peekResult
+}
+
+// peekDir answers "what is in this folder" for a folder card: how many pictures, and the
+// newest few by name. Always computes peekMaxNames of them so the memo does not depend on
+// what any one caller asked for.
+//
+// `rel` is `full`'s browse-relative form and is what the denylist is checked against; the memo
+// is keyed on `full` alone because one directory has exactly one of them.
+func peekDir(full, rel string, mod time.Time) peekResult {
+	peekMemo.mu.Lock()
+	hit, ok := peekMemo.m[full]
+	peekMemo.mu.Unlock()
+	if ok && hit.mod.Equal(mod) {
+		return hit.res
+	}
+
+	// Read outside the lock: one slow folder must not hold up the rest of the listing.
+	ents, err := os.ReadDir(full)
+	if err != nil {
+		return peekResult{}
+	}
+	var res peekResult
+	for _, e := range ents {
+		// filemeta is the single axis for "is this an image" (decision 3), and it also leaves
+		// out imagegen's half-written ".image-*" temporaries, which carry no extension.
+		if e.IsDir() || filemeta.ImageContentType(e.Name()) == "" {
+			continue
+		}
+		if isDenied(filepath.Join(rel, e.Name())) {
+			continue
+		}
+		res.images++
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		res.preview = insertNewest(res.preview, fsPreview{Name: e.Name(), Mtime: fi.ModTime().Unix()})
+	}
+
+	peekMemo.mu.Lock()
+	if len(peekMemo.m) > peekMemoMax {
+		peekMemo.m = map[string]peekEntry{} // a rebuild is one ReadDir per folder still on screen
+	}
+	peekMemo.m[full] = peekEntry{mod: mod, res: res}
+	peekMemo.mu.Unlock()
+	return res
+}
+
+// insertNewest keeps the newest peekMaxNames entries, newest first, with the name as a
+// tiebreak so two pictures written in the same second cannot swap places between two listings.
+func insertNewest(list []fsPreview, p fsPreview) []fsPreview {
+	at := len(list)
+	for i, e := range list {
+		if p.Mtime > e.Mtime || (p.Mtime == e.Mtime && p.Name < e.Name) {
+			at = i
+			break
+		}
+	}
+	if at >= peekMaxNames {
+		return list
+	}
+	if len(list) < peekMaxNames {
+		list = append(list, fsPreview{})
+	}
+	copy(list[at+1:], list[at:])
+	list[at] = p
+	return list
 }
 
 func handleFSTree(w http.ResponseWriter, r *http.Request) {
@@ -281,9 +417,17 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_dir", "cannot list: "+rel)
 		return
 	}
+	// `peek=<n>` is the gallery asking what is inside each SUBFOLDER, so a folder card can
+	// show a cover and a count. Bounded hard (peekMaxDirs / peekBudget): a listing must stay
+	// a listing.
+	peek := peekNames(r.URL.Query().Get("peek"))
+	peeked, peekDeadline := 0, time.Now().Add(peekBudget)
+	var previewPaths []string
+
 	out := []fsEntry{}
 	for _, e := range ents {
-		if isDenied(filepath.Join(rel, e.Name())) {
+		childRel := filepath.Join(rel, e.Name())
+		if isDenied(childRel) {
 			continue
 		}
 		fe := fsEntry{Name: e.Name(), Type: "file"}
@@ -293,11 +437,25 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 		// One Info() for both fields, and for directories too: it is a single lstat that
 		// ReadDir has usually already paid for, and Size and Mtime come out of the same
 		// call. (Size stays meaningless for a directory, as it always was.)
-		if fi, err := e.Info(); err == nil {
+		fi, err := e.Info()
+		if err == nil {
 			if !e.IsDir() {
 				fe.Size = fi.Size()
 			}
 			fe.Mtime = fi.ModTime().Unix()
+		}
+		if peek > 0 && e.IsDir() && err == nil && peeked < peekMaxDirs && time.Now().Before(peekDeadline) {
+			peeked++
+			childFull := filepath.Join(full, e.Name())
+			res := peekDir(childFull, childRel, fi.ModTime())
+			fe.Images = res.images
+			fe.Preview = res.preview
+			if len(fe.Preview) > peek {
+				fe.Preview = fe.Preview[:peek]
+			}
+			for _, p := range fe.Preview {
+				previewPaths = append(previewPaths, filepath.Join(childFull, p.Name))
+			}
 		}
 		out = append(out, fe)
 	}
@@ -307,6 +465,12 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 	// the file tree — which lists code folders constantly — never sends the parameter.
 	if edge := thumbEdge(r.URL.Query().Get("warm")); edge > 0 {
 		go warmThumbDir(full, edge)
+		// The covers are in OTHER folders, so warming this one does not reach them. Without
+		// this a folder page (the generated root is exactly that) warms nothing at all, and
+		// every cover is a cold ~50 ms decode.
+		if len(previewPaths) > 0 {
+			go warmThumbList(previewPaths, edge)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Type != out[j].Type {

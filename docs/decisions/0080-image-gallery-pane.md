@@ -316,6 +316,133 @@ case that still needs it: flattening several levels into one grid (an X/Y grid, 
     the folder it was entered from. `sort` survives every step (it is read live, not stored in
     the history entry, so it is never what a Back press undoes).
 
+### Decision 10 — a folder that has been walked into is remembered (listing, scroll position, page size)
+
+Even after decisions 4 and 9, "opening a folder and coming back is slow" was reported again. It
+is **the listing, not the thumbnails**: every change of `path` dropped `entries` to `null` and
+waited for an `api/fs/tree` round trip — including when the destination is the folder that was
+on screen a second earlier. The CP tags JSON GETs with a weak ETag, so an unchanged folder
+already costs no BODY, but **a round trip is still a round trip**, and that window was blank.
+
+- **`galleryCache.ts` remembers 30 folders** (LRU, module-level — a store would re-render every
+  gallery pane on every scroll event, since the position is written from one). It holds the
+  listing, when it was read, the **scroll position** and the **`limit`**. The last two are the
+  reader's PLACE in the folder: being dropped at the top of the first 300 again after paging
+  halfway down a folder is its own kind of slow.
+- **Draw first, then read.** A cached folder is drawn without `EmptyState(loading)` and the read
+  behind it only corrects what changed. **The "new card" tint diffs against the remembered
+  names**, so walking back in lights up nothing. When nothing changed, the CP's 304 makes
+  `api()` **replay the very same object**, so the memo dependencies do not change and neither
+  the sort nor the `<img>` elements are redone — applying the difference is essentially free.
+- **The one lie this cache could tell** is a folder that is gone. So a **first read that answers
+  "not there / denied" throws the remembered listing away and shows the error state**, while a
+  transport failure or a 5xx keeps what is drawn (decision 6's reasoning: emptying the grid over
+  one 502 is the worse lie).
+- **Point at it and it is read.** `pointerdown` on a folder card, and 120 ms of hover, fetch the
+  listing (deduped while in flight, skipped for a folder read within 10 s), so the click lands on
+  something already in hand.
+- **The change of folder is made DURING the render** (React's "adjust state when a prop
+  changes"). In an effect it happens after a paint, and that paint is the previous folder's
+  cards under the new folder's path — a frame of the wrong pictures, each firing a thumbnail
+  request for a path that does not exist. It shows on the way back out of a folder.
+- Measured (`console/scripts/gallery-perf/check.mjs --case nav`, against a stub given a 150 ms
+  listing round trip; the real 7 folders / 202 images): **back up out of a folder 280 ms → 60 ms**,
+  **into the same folder again 345 ms → 140 ms**. What is left is not the network but the cost of
+  **drawing 202 cards**, which is the missing measurement behind open question 1.
+- **Two things measured and rejected** (both looked like wins): arming the first 12 tiles without
+  waiting for the observer moved the nav numbers not at all, and pushed the requests fired by a
+  scroll straight after mount from **33 to 44** — undoing decision 4's measurement. Marking only
+  those first tiles `fetchPriority="high"` inverts the hint once requests are already gated by
+  the observer: a card armed LATER is the one being looked at, and it would be the `auto` one.
+
+### Decision 11 — a folder card shows what is inside it (`api/fs/tree?peek=<n>`)
+
+A folder named by a session UUID tells a reader nothing: the card says "03603f64-9cbc-…". One
+picture out of it says most of what they wanted to know.
+
+- **The Console cannot build this.** As decision 9 refused, it would be one `fs/tree` per card.
+  So it rides on the listing instead: with `peek=<n>` (1-4, advisory) a directory entry also
+  carries `preview:[{name,mtime}]` and `images:<count>`.
+- The cost is one ReadDir per subfolder, fenced three ways: the first 60 directories, a 300 ms
+  budget for the whole listing, and n of at most 4. Past any of them the rest simply carry no
+  preview (advisory, so there is no error to draw). Memoized on the directory's own mtime —
+  which is what changes when an entry appears — so the gallery's 20-second re-listing is a hit.
+- **Paired with `warm=`.** The covers live in OTHER folders, so warming the listed one never
+  reaches them; without this a folder page (the generated root is exactly that) decodes every
+  cover cold.
+- A cover is fetched at `thumb=512`, the SAME key the grid inside will use, so walking into the
+  folder finds its first pictures already warm. The cards are gated by `useArmed` like any
+  other (sixty subfolders must not mean sixty requests), and a card with no cover — "Up", or
+  any folder from an Agent that does not peek — never even observes.
+- **The folder icon stays, as a badge over the picture.** Drop it and half the grid becomes
+  tiles that look like pictures but are not, with no way to tell but clicking.
+- A by-product: **every** folder can now show a count, where decision 8 could only do it for
+  the ones the session wire knew about. The session NAME still comes from that wire.
+
+### Decision 12 — the lightbox fetches a screen-sized copy, not the original (`preview=<max edge>`)
+
+- 🔥 **The "middle step" idea died on measurement.** This deployment's generated pictures are
+  **832x1216 PNGs of about 1.1 MB** — already the size a lightbox shows them at. Since only
+  integer factors are available, there is no step to put between the card's thumbnail and the
+  original (asking for 1024 gives factor 1, i.e. the original; 608 halves the picture and is
+  visibly soft).
+- **What pays is re-encoding, not resizing.** The same pixels as JPEG come to **113-138 KB,
+  about 9-11% of the PNG** (measured over three real pictures at q80/85/90: 96-175 KB; 79-114 ms
+  to decode plus ~30 ms to encode, both cached afterwards).
+- So `preview=<max edge>` sits beside `thumb`, differing only in what happens when there is
+  nothing to downscale: `thumb` serves the original (which the mirror's cards have relied on
+  since decision 4), `preview` re-encodes at the source's own size.
+  - Only for **PNG** sources (a JPEG would lose a second time; a GIF may be animated) and only
+    when the picture is **opaque** (transparency has to stay PNG, which saves nothing). When it
+    does not help, the existing `buf.Len() >= size` guard is the last backstop.
+  - `preview` ROUNDS its factor where `thumb` truncates: 4000 px asked for at 2048 becomes
+    2000, and 1216 px asked for at 1024 stays 1216. Overshooting the asked edge by less than
+    half a step is fine for something being looked at, and not fine for a card.
+  - `thumbMaxEdge` goes 1024 → **2048**, because the lightbox asks for its own viewport times
+    the device pixel ratio. The Console quantises that to **1024/1536/2048**: a distinct edge
+    per window size would be a distinct decode and cache entry in the Agent.
+  - The cache key carries the MODE. Same file, same edge, different answer — sharing an entry
+    means one of them serves the other's bytes.
+- **The original is still one click away**: the card's corner button (file pane) and the
+  download both serve the real bytes. The lightbox is a surface for LOOKING, and is the only
+  place that gets a copy.
+- The neighbour prefetch moved to the same door — prefetching one URL and then displaying
+  another wastes the whole prefetch. The mirror's shared-file lightbox is untouched so far
+  (the same move applies to it).
+
+### Decision 13 — make the downscale itself cheap (stop calling `src.At()`)
+
+Splitting the measured "95 ms for one cold picture" showed **`boxDownscale` alone at 95 ms and
+1,571,330 allocations** — one per source pixel. Every `src.At()` boxes a concrete colour value
+into the `color.Color` interface, and that is an allocation each time.
+
+- A type switch uses the **typed accessors** (`RGBAAt`, `NRGBAAt`, `GrayAt`, `YCbCrAt`) for the
+  four types PNG and JPEG actually decode to; those return concrete values, so nothing is
+  boxed. Anything else still falls through to `At()`.
+- Measured (1024x1536 PNG, this shared host): **`boxDownscale` 95.2 ms → 24.2 ms, 1.57 M
+  allocations → 3**, and **one cold 512 px thumbnail 154.6 ms → 40.8 ms**.
+- 🔥 **Do not re-derive the arithmetic by hand.** The first version scaled `color.YCbCrToRGB`'s
+  8-bit answer up to 16 bits; `color.YCbCr.RGBA()` works at 16-bit precision throughout and is
+  **off by one** — a different picture. `TestPixelReaderMatchesAt` caught it. The fast path is
+  "call the same RGBA(), without the boxing", and nothing else.
+
+### Decision 14 — a card's longest edge follows the screen's density (revising decision 4's flat 512)
+
+A card is 150-200 px wide at 4:3, so a 1x screen shows 138x104 to 200x150 CSS px. **Measured on
+one real generated picture: 42 KB at 512 against 15 KB at 256** — 65% spent on pixels that
+screen cannot show. **The Agent's cost is the same either way** (57 vs 59 ms: the work is the
+decode, not the scale).
+
+- Decision 4 fixed one number because the mirror asks for 512 and a second edge means decoding
+  the same file twice. True, but **the mirror looks at shared files and the gallery at generated
+  folders**, which in practice are different pictures.
+- The grid, **the covers (decision 11)** and the lightbox's placeholder all read the SAME value.
+  They show the same pictures at the same size, so splitting them is what would really cost a
+  second decode. `warm=` sends that value too — warming 512 for cards that ask for 256 warms
+  nothing that gets drawn.
+- **Read per render**, not frozen into a constant: a window dragged to another monitor changes
+  it, and being wrong costs one re-request at the other size.
+
 ## Options rejected
 
 - **A modal gallery** (like cleanup / archive): cheap, but it throws away everything a pane gets
@@ -395,7 +522,15 @@ case that still needs it: flattening several levels into one grid (an X/Y grid, 
   Still open: a card's right-click menu (open in a pane, download, copy path, delete); "send" to a
   session or an assistant; W x H (the header-reading endpoint); an endpoint that flattens several
   levels into one grid; tile size (S/M/L) and the matching `thumb`.
-- **P2**: generalizing to "media" including video and PDF (whether it is wanted is open
+- **P2 (landed 2026-09-15)**: ✅ decision 10 (a folder walked into is remembered); ✅ decision 11
+  (a folder's cover and count, `peek`); ✅ decision 12 (the lightbox's screen-sized copy,
+  `preview`); ✅ decision 13 (the fast path in the downscale).
+  ✅ decision 14 (a card's edge chosen by device pixel ratio).
+  Still open: **using `preview` for the mirror's
+  shared-file lightbox** (the same move as decision 12, not started); **warming `preview` at
+  generation time** (only `thumb=512` is warmed today, so the first enlarge of a new picture
+  pays ~110 ms to decode and ~30 ms to encode).
+- **P3**: generalizing to "media" including video and PDF (whether it is wanted is open
   question 2).
 
 ## Open questions
@@ -409,6 +544,12 @@ case that still needs it: flattening several levels into one grid (an X/Y grid, 
      scroll container's viewport ever ask at all, mount or remount alike. Whether 300 is the right
      number of cards to draw (how many fit a 1100 px pane, whether "show more" is reached too soon
      or too late) is still unmeasured.
+   - **2026-09-15 (out of decision 10's measurements)**: the count itself now has a number too.
+     With the listing already in hand, **drawing 202 cards costs about 140 ms** (`--case nav`'s
+     "into the same folder again" leg, which pays no network at all); the same leg back to a root
+     of 7 folders is 60 ms. So what 300 costs is not requests but **rendering**, and the next move
+     is either a lower cap or virtualizing the grid (revisiting "virtual scrolling" under options
+     rejected).
 2. **Video and PDF?** This starts as a gallery of images, but a place like `docs/img` holds SVG,
    PNG and PDF together. Mixing them renames the thing to "media".
 3. ~~**Is a surface over all of `generated` wanted?**~~ **Answered (2026-09-14): no surface of its

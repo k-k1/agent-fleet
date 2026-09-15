@@ -36,9 +36,15 @@ const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { allViews, freshLayout } = await import("../../layout/ops.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { WORKING_TICK_MS } = await import("../files/refreshPolicy.ts");
+const { clearGalleryCache, readGallery } = await import("./galleryCache.ts");
 
 let host: HTMLDivElement;
 let root: Root;
+
+/** jsdom reports a 1x screen, and the thumbnail size the view asks for depends on it. Pinning
+ *  it keeps every other test here about what it says it is about; the test that IS about the
+ *  choice sets it itself. 2 is the common laptop, and the size decision 4 originally fixed. */
+const setDPR = (v: number) => Object.defineProperty(window, "devicePixelRatio", { value: v, configurable: true });
 
 const img = (name: string, mtime?: number, size = 1000): Entry => ({ name, type: "file", size, ...(mtime ? { mtime } : {}) });
 
@@ -89,8 +95,13 @@ const back = (): Promise<void> =>
   });
 
 beforeEach(() => {
+  setDPR(2);
   listings = 0;
   fetchMock.mockClear();
+  // The folder cache is module-level and deliberately outlives a mount (that is what makes
+  // walking back into a folder free) — so it also outlives a TEST unless it is cleared, and the
+  // next one would paint the previous one's `served` listing before its own arrives.
+  clearGalleryCache();
   useWorkspaceStore.setState({ state: "running" });
   // A fresh layout per test: openTarget dedupes galleries by folder, so a pane left over
   // from the previous test would be re-selected (keeping its old content) instead of opened.
@@ -506,6 +517,211 @@ describe("画像ギャラリーのペイン", () => {
     } finally {
       vi.stubGlobal("IntersectionObserver", realIO);
     }
+  });
+
+  it("フォルダを移った瞬間に前のフォルダのカードを消す（残すと存在しないパスのサムネイルを取りに行く）", async () => {
+    served = [img("a.png", 100)];
+    const paneId = await render({ path: "gen" });
+    expect(names()).toEqual(["a.png"]);
+
+    // The new folder's listing never answers, so anything still drawn can only be left over
+    // from the old one — with the new folder's path glued onto its file names.
+    fetchMock.mockImplementationOnce((() => new Promise(() => {})) as never);
+    await act(async () => {
+      root.render(<GalleryView paneId={paneId} path="gen/sub" />);
+    });
+    expect(cards()).toHaveLength(0);
+    expect(thumbs()).toHaveLength(0);
+    expect(host.querySelector(".ui-empty-title")?.textContent).toBe("読み込み中…");
+  });
+
+  it("一度見たフォルダは、一覧の往復を待たずに前のカードで開く（戻るでいちばん効く）", async () => {
+    served = [img("a.png", 100), img("b.png", 200)];
+    await render();
+    expect(names()).toEqual(["b.png", "a.png"]);
+    await act(async () => root.unmount());
+
+    // This time the listing never answers, so anything on screen can only have come from the
+    // cache — which is exactly the window the reader used to spend looking at "読み込み中…".
+    fetchMock.mockImplementationOnce((() => new Promise(() => {})) as never);
+    await render();
+    expect(host.querySelector(".ui-empty")).toBeNull();
+    expect(names()).toEqual(["b.png", "a.png"]);
+    // Nothing is tinted: walking back into a folder is not "two pictures just arrived".
+    expect(cards().some((c) => c.classList.contains("gal-new"))).toBe(false);
+    // And the header says where the grid came from rather than pretending it is confirmed.
+    expect(host.querySelector(".gal-count")?.textContent).toContain("更新中");
+  });
+
+  it("戻ったあとに一覧が届いたら、本当に増えた 1 枚だけに色が付く", async () => {
+    served = [img("a.png", 100)];
+    await render();
+    await act(async () => root.unmount());
+
+    served = [img("a.png", 100), img("b.png", 200)];
+    await render();
+    expect(names()).toEqual(["b.png", "a.png"]);
+    expect(cards()[0].classList.contains("gal-new")).toBe(true);
+    expect(cards()[1].classList.contains("gal-new")).toBe(false);
+    expect(host.querySelector(".gal-count")?.textContent).not.toContain("更新中");
+  });
+
+  it("フォルダでの居場所（スクロール位置と「さらに表示」）も覚えていて、戻ると同じ場所に出る", async () => {
+    served = Array.from({ length: 305 }, (_, n) => img(`i${String(n).padStart(3, "0")}.png`, 1000 + n));
+    await render();
+    await click(byText("さらに表示"));
+    expect(cards()).toHaveLength(305);
+
+    const body = () => host.querySelector<HTMLDivElement>(".gal-body")!;
+    body().scrollTop = 420;
+    await act(async () => {
+      body().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(readGallery("gen")).toMatchObject({ scrollTop: 420, limit: 600 });
+
+    await act(async () => root.unmount());
+    await render();
+    expect(cards()).toHaveLength(305);
+    // jsdom has no layout, so this pins the WIRING (the position is put back before paint),
+    // not that 420px lands on the same row — that needs a real browser.
+    expect(body().scrollTop).toBe(420);
+  });
+
+  it("消えたフォルダでは、覚えている一覧ではなくエラーを出す（キャッシュが吐ける唯一の嘘）", async () => {
+    served = [img("a.png", 100)];
+    await render();
+    await act(async () => root.unmount());
+
+    fetchMock.mockImplementationOnce((async () => ({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      headers: { get: () => null },
+      text: async () => JSON.stringify({ error: { code: "not_dir" } }),
+    })) as never);
+    await render();
+    expect(host.querySelector(".ui-empty-title")?.textContent).toBe("フォルダを読み込めませんでした");
+    expect(cards()).toHaveLength(0);
+    expect(readGallery("gen")).toBeUndefined();
+  });
+
+  it("フォルダを指しただけで、その一覧を先に取りに行く（押したときには手元にある）", async () => {
+    served = [{ name: "sub", type: "dir" }];
+    await render({ path: "gen" });
+    expect(listings).toBe(1);
+
+    const enter = folderCards().find((c) => c.textContent?.includes("sub"))!.querySelector(".gal-enter")!;
+    await act(async () => {
+      enter.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(listings).toBe(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain(encodeURIComponent("gen/sub"));
+    expect(readGallery("gen/sub")).toBeDefined();
+  });
+
+  it("フォルダのカードは中身の表紙を出し、枚数はセッションのフォルダでなくても出る", async () => {
+    served = [
+      { name: "gen", type: "dir", images: 12, preview: [{ name: "new.png", mtime: 300 }] } as unknown as Entry,
+      { name: "plain", type: "dir" },
+    ];
+    await render({ path: "root" });
+
+    // The listing has to ASK for this, and only the gallery does (the file tree lists code
+    // folders constantly — peeking them would be one ReadDir per folder, forever).
+    expect(String(fetchMock.mock.calls[0][0])).toContain("peek=1");
+
+    const gen = folderCards().find((c) => c.textContent?.includes("gen"))!;
+    const cover = gen.querySelector<HTMLImageElement>(".gal-thumb img");
+    expect(cover).not.toBeNull();
+    expect(cover!.src).toContain(encodeURIComponent("root/gen/new.png"));
+    expect(cover!.src).toContain("thumb=512"); // the same size the grid inside will use
+    expect(cover!.src).toContain("v=300");
+    // The folder icon stays, as a badge over the picture: half a grid of pictures that are
+    // not pictures is worse than no cover at all.
+    expect(gen.querySelector(".gal-thumb.cover")).not.toBeNull();
+    expect(gen.querySelector(".gal-folder-icon")).not.toBeNull();
+    expect(gen.querySelector(".gal-meta")?.textContent).toBe("12 枚");
+
+    // A folder the Agent said nothing about is the card it always was.
+    const plain = folderCards().find((c) => c.textContent?.includes("plain"))!;
+    expect(plain.querySelector(".gal-thumb img")).toBeNull();
+    expect(plain.querySelector(".gal-thumb.cover")).toBeNull();
+    expect(plain.querySelector(".gal-meta")?.textContent).toBe("");
+  });
+
+  it("表紙が出せなければフォルダのアイコンに戻る（壊れた札にしない）", async () => {
+    served = [{ name: "gen", type: "dir", images: 1, preview: [{ name: "gone.png", mtime: 1 }] } as unknown as Entry];
+    await render({ path: "root" });
+    const card = () => folderCards().find((c) => c.textContent?.includes("gen"))!;
+    await act(async () => {
+      card().querySelector(".gal-thumb img")!.dispatchEvent(new Event("error", { bubbles: false }));
+    });
+    expect(card().querySelector(".gal-thumb img")).toBeNull();
+    expect(card().querySelector(".gal-thumb.cover")).toBeNull();
+    expect(card().querySelector(".gal-folder-icon")).not.toBeNull();
+  });
+
+  it("拡大はカードの縮小版から始め、裏で取るのは原本でなく画面サイズの複製", async () => {
+    // ImageView は原寸を画面外の `new Image()` で先に読んでから差し替えるので、そこに何を
+    // 渡したかはこの偽物でしか見えない（jsdom は load を発火しないため <img src> は代役のまま）。
+    const probes: string[] = [];
+    class ProbeImage {
+      decoding = "";
+      complete = false;
+      set src(v: string) {
+        probes.push(v);
+      }
+      addEventListener() {}
+      removeEventListener() {}
+    }
+    const realImage = globalThis.Image;
+    vi.stubGlobal("Image", ProbeImage);
+    vi.useFakeTimers();
+    try {
+      served = [img("a.png", 100), img("b.png", 200)];
+      await render();
+      await click(host.querySelectorAll(".gal-zoom")[0]); // b.png、新しい順の先頭
+
+      // 画面に出ているのは、このタブが既に持っているカードの縮小版。
+      const shown = document.querySelector(".mirror-lightbox img") as HTMLImageElement;
+      expect(shown.src).toContain("thumb=512");
+      expect(shown.src).toContain(encodeURIComponent("gen/b.png"));
+
+      // 裏で取るのは原本ではなく `preview=<段>`。ここが 1.1MB と約 120KB の差になる
+      // （同じ画素の再エンコード。client.ts の displayURL）。
+      const bigOf = (name: string) => probes.find((u) => u.includes(encodeURIComponent("gen/" + name)));
+      expect(bigOf("b.png")).toContain("preview=");
+      expect(bigOf("b.png")).toContain("v=200");
+      expect(bigOf("b.png")).not.toContain("thumb=");
+
+      // 隣の先読みも同じ口から取る——先読みした複製と、送った先で出す複製が別 URL だと
+      // 先読みが丸ごと無駄になる。
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(bigOf("a.png")).toContain("preview=");
+    } finally {
+      vi.useRealTimers();
+      vi.stubGlobal("Image", realImage);
+    }
+  });
+
+  it("カードのサムネイルは画面の密度で選ぶ（1x に 512 を送らない）", async () => {
+    // A card is 150-200 CSS px wide at 4:3, so a 1x screen cannot show 512. Measured on a real
+    // generated picture: 42 KB at 512 against 15 KB at 256, for the same card.
+    setDPR(1);
+    served = [img("a.png", 100), { name: "sub", type: "dir", images: 1, preview: [{ name: "c.png", mtime: 5 }] } as unknown as Entry];
+    await render({ path: "root" });
+    expect(thumbs().every((t) => t.src.includes("thumb=256"))).toBe(true);
+    // The listing asks the Agent to warm the SAME size — warming 512 for cards that ask for
+    // 256 would decode every picture twice and warm none of what is drawn.
+    expect(String(fetchMock.mock.calls[0][0])).toContain("warm=256");
+
+    await act(async () => root.unmount());
+    clearGalleryCache();
+    setDPR(2);
+    await render({ path: "root" });
+    expect(thumbs().every((t) => t.src.includes("thumb=512"))).toBe(true);
   });
 
   it("マウント時に 1 回だけ読み、常駐ポーラーにはしない", async () => {

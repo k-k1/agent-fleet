@@ -37,10 +37,12 @@ import (
 )
 
 const (
-	// Bounds on the requested edge. 512 is what the Console asks for; the range only
-	// exists so a hand-written query cannot ask for a 1-pixel or a 4K "thumbnail".
+	// Bounds on the requested edge. 512 is what the Console asks for a card; the range only
+	// exists so a hand-written query cannot ask for a 1-pixel or an 8K "thumbnail". The top
+	// is 2048 because of `preview` below: the lightbox asks for its own viewport times the
+	// device pixel ratio, which on a large high-DPI screen is past 1024.
 	thumbMinEdge = 64
-	thumbMaxEdge = 1024
+	thumbMaxEdge = 2048
 	// Below this the original is already thumbnail-sized: decoding and re-encoding it
 	// would spend ~100 ms of CPU to save a few KB.
 	thumbMinSourceBytes = 128 << 10
@@ -87,20 +89,52 @@ func thumbDecodable(name string) bool {
 	return false
 }
 
+// thumbMode is what a caller wants when the source is ALREADY at or below the requested edge.
+//
+// Measured on the pictures this exists for — generate_image writes 832x1216 PNGs of about
+// 1.1 MB — the two answers are three orders of magnitude apart in usefulness: there is no
+// integer factor to downscale by (the original is already viewport-sized, which is why a
+// "middle step" between the card's thumbnail and the original buys nothing), but the same
+// pixels re-encoded as JPEG come to 113-138 KB. About a ninth, for a lossy copy of a picture
+// that is being LOOKED at rather than downloaded.
+type thumbMode int
+
+const (
+	// modeDownscale: a card's thumbnail. Nothing to downscale means serve the original — the
+	// mirror's file cards and the gallery grid have relied on that since decision 4.
+	modeDownscale thumbMode = iota
+	// modePreview: a lightbox's copy. Nothing to downscale means re-encode at the source's
+	// own size, and fall back to the original only when that does not actually help (a
+	// picture with transparency, or one that is already small or already a JPEG).
+	modePreview
+)
+
+// thumbTranscodable reports whether re-encoding this file AT ITS OWN SIZE could be worth it.
+// Narrower than thumbDecodable: a source that is already JPEG would only be losing a second
+// time, and GIF is usually either tiny or animated (and re-encoding drops the animation).
+func thumbTranscodable(name string) bool {
+	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(name), ".")) {
+	case "png", "apng":
+		return true
+	}
+	return false
+}
+
 // thumbnail returns the downscaled bytes for an already-opened file plus their content
 // type. ok=false means "serve the original" and is the answer to every problem here —
 // there is no error path a caller has to render.
 //
 // src is left with its offset wherever the decode attempt stopped; a caller that falls
 // back needs no rewind, because http.ServeContent seeks for the size and back again.
-func thumbnail(src io.ReadSeeker, display string, size int64, modTime time.Time, edge int) (out []byte, contentType string, ok bool) {
+func thumbnail(src io.ReadSeeker, display string, size int64, modTime time.Time, edge int, mode thumbMode) (out []byte, contentType string, ok bool) {
 	if edge == 0 || !thumbDecodable(display) || size < thumbMinSourceBytes {
 		return nil, "", false
 	}
 	// Keyed on the whole path, not the base name: two `shot.png` in different directories
 	// with the same size and mtime are not far-fetched among generated images, and the
-	// cache would hand one card the other's picture.
-	key := thumbCacheKey(display, size, modTime, edge)
+	// cache would hand one card the other's picture. The MODE is in the key too: the same
+	// file at the same edge answers differently for a card and for a lightbox.
+	key := thumbCacheKey(display, size, modTime, edge, mode)
 	if cached, ct, ok := readThumbCache(key); ok {
 		return cached, ct, true
 	}
@@ -120,9 +154,27 @@ func thumbnail(src io.ReadSeeker, display string, size int64, modTime time.Time,
 	}
 	// Integer factor only: the box average below needs whole source pixels per output
 	// pixel, and a factor of 1 means the picture is already at or below the target.
-	factor := longEdge(cfg.Width, cfg.Height) / edge
+	long := longEdge(cfg.Width, cfg.Height)
+	factor := long / edge
+	if mode == modePreview {
+		// Rounded rather than truncated, which matters at both ends of preview's range: a
+		// 4000 px picture asked for at 2048 becomes 2000 (one step under the target) instead
+		// of staying 4000 and costing a megabyte, and an 1216 px one asked for at 1024 keeps
+		// its own size instead of being halved to 608. A preview may overshoot the asked edge
+		// by less than half a step; a card may not, which is why `thumb` still truncates.
+		factor = (long + edge/2) / edge
+		if factor < 1 {
+			factor = 1
+		}
+	}
 	if factor < 2 {
-		return nil, "", false
+		// Re-encoding at the source's own size only pays for a picture that is opaque (a
+		// transparent one has to stay PNG, and a PNG of the same pixels saves nothing) and
+		// not already a JPEG (that trade is a second round of loss for a few KB).
+		if mode != modePreview || !thumbTranscodable(display) {
+			return nil, "", false
+		}
+		factor = 1
 	}
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
 		return nil, "", false
@@ -131,7 +183,15 @@ func thumbnail(src io.ReadSeeker, display string, size int64, modTime time.Time,
 	if err != nil {
 		return nil, "", false
 	}
-	small := boxDownscale(img, factor)
+	if factor == 1 && !opaque(img) {
+		return nil, "", false
+	}
+	// At factor 1 the picture IS the output: walking every pixel into a copy would spend a
+	// decode's worth of time to change nothing.
+	var small image.Image = img
+	if factor > 1 {
+		small = boxDownscale(img, factor)
+	}
 
 	var buf bytes.Buffer
 	if opaque(img) {
@@ -176,7 +236,14 @@ func opaque(img image.Image) bool {
 // pixel. That is the cheap scaler that does not alias: dropping pixels (nearest
 // neighbour) turns text and thin lines in a screenshot into noise, and a proper
 // Catmull-Rom would mean a dependency (golang.org/x/image) for a difference nobody can
-// see at 512 px. Rows are read through the concrete RGBA fast path where possible.
+// see at 512 px.
+//
+// Every source pixel is read exactly once, so how a pixel is read IS this function's cost:
+// `src.At()` returns a color.Color, and boxing that concrete value into the interface
+// allocates. Measured on a 1024x1536 PNG: 1,571,330 allocations — one per source pixel — and
+// 95 ms, most of the ~155 ms a cold thumbnail costs. pixelReader gives back a direct reader
+// for the types PNG and JPEG actually decode to, which is why this is now a fraction of that;
+// anything else falls back to At() and is merely as slow as it always was.
 func boxDownscale(src image.Image, factor int) *image.RGBA {
 	b := src.Bounds()
 	w, h := b.Dx()/factor, b.Dy()/factor
@@ -188,12 +255,13 @@ func boxDownscale(src image.Image, factor int) *image.RGBA {
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	n := uint32(factor * factor)
+	at := pixelReader(src)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			var sr, sg, sb, sa uint32
 			for dy := 0; dy < factor; dy++ {
 				for dx := 0; dx < factor; dx++ {
-					r, g, bl, a := src.At(b.Min.X+x*factor+dx, b.Min.Y+y*factor+dy).RGBA()
+					r, g, bl, a := at(b.Min.X+x*factor+dx, b.Min.Y+y*factor+dy)
 					sr += r
 					sg += g
 					sb += bl
@@ -213,6 +281,32 @@ func boxDownscale(src image.Image, factor int) *image.RGBA {
 	return dst
 }
 
+// pixelReader returns a function that reads one pixel in the space color.Color.RGBA() answers
+// in: 16-bit, alpha-premultiplied.
+//
+// The saving is NOT different arithmetic — every case calls the same RGBA() the generic path
+// would. It is that the TYPED accessor (`RGBAAt`, `YCbCrAt`, …) hands back a concrete colour
+// value, so nothing is boxed into an interface and nothing is allocated. Reproducing the
+// arithmetic by hand instead is a trap the test caught: color.YCbCr.RGBA() works at 16-bit
+// precision throughout and is off by one from scaling color.YCbCrToRGB's 8-bit answer.
+//
+// The four cases are what the decoders this file registers actually produce: PNG gives RGBA,
+// NRGBA or Gray, JPEG gives YCbCr or Gray. A paletted PNG or a 16-bit-per-channel one falls
+// through to At() — they are rare here, and correctness never depends on being on this path.
+func pixelReader(src image.Image) func(x, y int) (r, g, b, a uint32) {
+	switch im := src.(type) {
+	case *image.RGBA:
+		return func(x, y int) (uint32, uint32, uint32, uint32) { return im.RGBAAt(x, y).RGBA() }
+	case *image.NRGBA:
+		return func(x, y int) (uint32, uint32, uint32, uint32) { return im.NRGBAAt(x, y).RGBA() }
+	case *image.Gray:
+		return func(x, y int) (uint32, uint32, uint32, uint32) { return im.GrayAt(x, y).RGBA() }
+	case *image.YCbCr:
+		return func(x, y int) (uint32, uint32, uint32, uint32) { return im.YCbCrAt(x, y).RGBA() }
+	}
+	return func(x, y int) (uint32, uint32, uint32, uint32) { return src.At(x, y).RGBA() }
+}
+
 // ── disk cache ────────────────────────────────────────────────────────────────────────
 //
 // Keyed by the file's identity (path, size, mtime) and the requested edge, so a rewritten
@@ -223,8 +317,8 @@ func thumbCacheDir() string {
 	return filepath.Join(homeDir(), ".cache", "agent-fleet", "thumbs")
 }
 
-func thumbCacheKey(display string, size int64, modTime time.Time, edge int) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d\x00%d", display, size, modTime.UnixNano(), edge)))
+func thumbCacheKey(display string, size int64, modTime time.Time, edge int, mode thumbMode) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%d", display, size, modTime.UnixNano(), edge, mode)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -354,7 +448,32 @@ func warmThumbFile(full string, edge int) {
 	if err != nil || fi.IsDir() {
 		return
 	}
-	thumbnail(f, full, fi.Size(), fi.ModTime(), edge)
+	thumbnail(f, full, fi.Size(), fi.ModTime(), edge, modeDownscale)
+}
+
+// warmThumbList decodes a named set of files into the cache, on the same two workers and for
+// the same reason as warmThumbDir — it is what a listing with `peek` uses for the covers of
+// the folders it just described, which live in directories this listing is not about.
+func warmThumbList(paths []string, edge int) {
+	if edge <= 0 || len(paths) == 0 {
+		return
+	}
+	work := make(chan string)
+	var wg sync.WaitGroup
+	for i := 0; i < warmThumbWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for p := range work {
+				warmThumbFile(p, edge)
+			}
+		}()
+	}
+	for _, p := range paths {
+		work <- p
+	}
+	close(work)
+	wg.Wait()
 }
 
 // warmThumbDir decodes the newest images in dir into the thumbnail cache, in the

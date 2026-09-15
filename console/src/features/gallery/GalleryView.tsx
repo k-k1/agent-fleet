@@ -11,10 +11,14 @@
 //     pane and the gallery start disagreeing about the same file.
 //   - no resident poller: refreshes are the FILES policy (refreshPolicy.ts) — mount, the
 //     files tick, tab return, and a slow tick only while something is running.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+//   - no blank grid for a folder it has already read: the listing, the scroll position and the
+//     page size come back out of galleryCache.ts first and the read behind them only corrects
+//     what changed (ADR 0080 P2). Walking back into a folder is the common case, and a round
+//     trip's worth of empty pane is what made it feel slow.
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
+import { displayURL, downloadURL } from "../../core/api/client.ts";
 import { humanSize } from "../../lib/filemeta.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -48,17 +52,44 @@ import {
   type GallerySort,
 } from "./gallery.ts";
 import { openGallery } from "./open.ts";
+import { fetchGalleryListing, forgetGallery, prefetchGallery, readGallery, rememberGalleryView } from "./galleryCache.ts";
 import "./gallery.css";
 
-/** Longest edge asked of the thumbnail endpoint. The SAME number the mirror's file cards
- *  use: the Agent's thumbnail cache is keyed by it, so a gallery that asked for 256 would
- *  make the workspace decode every shared picture a second time (decision 4). */
-const THUMB = 512;
+/**
+ * Longest edge asked of the thumbnail endpoint, for everything card-sized: the grid, a folder's
+ * cover, and the lightbox's placeholder. All three deliberately share it — they show the same
+ * pictures at the same size, and the Agent's cache is keyed by the edge.
+ *
+ * Chosen by device pixel ratio, which is a revision of decision 4's flat 512. A card is 150-200
+ * CSS px wide at 4:3, so a 1x screen shows about 138x104 to 200x150 — measured on a real
+ * generated picture, 512 costs 42 KB against 256's 15 KB for pixels that screen cannot show,
+ * and the decode costs the Agent the same either way (57 vs 59 ms: the decode, not the scale,
+ * is the work). Decision 4's reason for one number was that the mirror asks for 512 and a
+ * second edge means a second decode of the same file — true, but the mirror looks at shared
+ * files and the gallery at generated folders, which in practice are different pictures.
+ *
+ * Read per render rather than once: a window dragged to a different monitor changes it, and the
+ * cost of being wrong is one re-request at the other size.
+ */
+function thumbEdge(): number {
+  return (window.devicePixelRatio || 1) > 1.5 ? 512 : 256;
+}
 
 /** How long a newly-arrived card stays tinted. Must match the .gal-new animation in
  *  gallery.css — the class is dropped when this elapses, so a longer animation is cut
  *  off mid-fade. Same value and reasoning as the files tree. */
 const FRESH_MS = 5000;
+
+/** The longest edge the lightbox asks for. Quantised to three steps rather than taken from the
+ *  exact viewport: the Agent caches and decodes per edge, so every distinct window size would
+ *  otherwise be its own decode. The smallest step is already past the pictures this exists for
+ *  (832x1216), which is the case where `preview` re-encodes instead of downscaling. */
+const PREVIEW_STEPS = [1024, 1536, 2048];
+
+function previewEdge(): number {
+  const want = Math.max(window.innerWidth, window.innerHeight) * Math.min(window.devicePixelRatio || 1, 2);
+  return PREVIEW_STEPS.find((step) => step >= want) ?? PREVIEW_STEPS[PREVIEW_STEPS.length - 1];
+}
 
 /** How far outside the gallery's OWN scroll container (`.gal-body`, not the viewport — a pane
  *  can be narrower than the window and is often split) a card must come before its thumbnail is
@@ -71,16 +102,21 @@ const FRESH_MS = 5000;
  *  what is armed at all is what keeps that queue short — not a priority hint on top of it. */
 const ARM_MARGIN = "480px 0px";
 
+/** How long the pointer rests on a folder card before its listing is fetched. Short enough to
+ *  be in hand by the time a click lands, long enough that sweeping the pointer across a row of
+ *  folders does not ask for every one of them. */
+const HOVER_PREFETCH_MS = 120;
+
 /**
  * Sticky viewport-adjacency for one card: false until this card has been within `ARM_MARGIN` of
  * the gallery's scroll container at least once, true forever after. Never re-arms to false —
  * scrolling a loaded picture back out of view must not re-request it, and the Agent's own cache
  * (`Cache-Control` + `v=<mtime>`) makes a genuine re-look free anyway.
  */
-function useArmed(ref: { current: HTMLElement | null }): boolean {
+function useArmed(ref: { current: HTMLElement | null }, active = true): boolean {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
-    if (armed) return;
+    if (armed || !active) return;
     const el = ref.current;
     if (!el) return;
     const obs = new IntersectionObserver(
@@ -91,7 +127,7 @@ function useArmed(ref: { current: HTMLElement | null }): boolean {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [armed, ref]);
+  }, [active, armed, ref]);
   return armed;
 }
 
@@ -118,9 +154,17 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
   const anyBusy = useSessionsStore((s) => s.sessions.some(isBusySession));
   const sessionTitle = useSessionsStore((s) => (sessionName ? s.sessions.find((x) => x.name === sessionName) : undefined));
 
-  const [entries, setEntries] = useState<FsEntry[] | null>(null);
+  // What this folder looked like the last time it was read, taken ONCE at mount (the change-of
+  // -folder path below takes it again). Seeding the state from it is what makes the first paint
+  // of a folder already seen have its cards, instead of one render of the loading state and
+  // then them — this view is mounted fresh whenever its tab is switched back to.
+  const [atMount] = useState(() => readGallery(path));
+  const [entries, setEntries] = useState<FsEntry[] | null>(atMount?.entries ?? null);
   const [failed, setFailed] = useState(false);
-  const [limit, setLimit] = useState(PAGE_SIZE);
+  const [limit, setLimit] = useState(atMount?.limit ?? PAGE_SIZE);
+  /** True while the first read of a folder drawn FROM CACHE is still out. The grid is real and
+   *  usable meanwhile; this only keeps the header honest about where it came from. */
+  const [stale, setStale] = useState(!!atMount);
   const [fresh, setFresh] = useState<Set<string>>(() => new Set());
   const [broken, setBroken] = useState<Set<string>>(() => new Set());
   // The enlarged picture is remembered by PATH, not by position: a refresh that lands a
@@ -130,9 +174,44 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
 
   // Refs the refresh path reads: it runs from a timer / event, not from a render, so it
   // must not close over a stale listing or re-subscribe whenever one arrives.
-  const namesRef = useRef<Set<string> | null>(null);
+  const namesRef = useRef<Set<string> | null>(
+    atMount ? new Set(atMount.entries.map((e) => e?.name).filter(Boolean) as string[]) : null,
+  );
   const lastAutoAt = useRef(0);
   const freshTimer = useRef(0);
+  /** Whether a listing is on screen for the CURRENT folder (from a read or from the cache).
+   *  A transport failure with cards already drawn must not replace them with an error page. */
+  const shownRef = useRef(entries !== null);
+  /** The scroll container, and which folder its position has already been restored for. */
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const restoredFor = useRef<string | null>(null);
+  /** Which folder the state below belongs to. This view is NOT remounted when it walks into a
+   *  folder — the pane keeps it and changes `path` — so the switch has to be made here. */
+  const shownPath = useRef(path);
+
+  // Change of folder, done DURING the render rather than in an effect (React's "adjust state
+  // when a prop changes"). An effect runs after the browser has painted, and that paint would
+  // be the previous folder's cards under the new folder's path: a frame of the wrong pictures,
+  // each one firing a thumbnail request for a path that does not exist. Measured on the way
+  // back out of a folder, which is where a reader notices it.
+  //
+  // What the folder looked like last time comes out of the cache here, so the first paint of a
+  // folder already seen HAS its cards. The remembered names are also what the "new card" tint
+  // diffs against: seeded from the cache, walking back into a folder tints nothing and only a
+  // picture that really did arrive since lights up.
+  if (shownPath.current !== path) {
+    shownPath.current = path;
+    const cached = readGallery(path);
+    setEntries(cached?.entries ?? null);
+    setFailed(false);
+    setStale(!!cached);
+    setLimit(cached?.limit ?? PAGE_SIZE);
+    setZoomPath(null);
+    setFresh(new Set()); // the tint belongs to the folder it was worked out in
+    namesRef.current = cached ? new Set(cached.entries.map((e) => e?.name).filter(Boolean) as string[]) : null;
+    shownRef.current = !!cached;
+    restoredFor.current = null;
+  }
 
   const found = useMemo(() => galleryImages(entries, path), [entries, path]);
   const images = useMemo(() => sortImages(found, sort), [found, sort]);
@@ -164,34 +243,40 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
   const shown = visibleImages(images, limit);
 
   /**
-   * Read the folder. `initial` decides what a failure means: on the first read there is
-   * nothing to lose, so it shows the error state; on a refresh the listing on screen is
-   * kept, because one transient 502 (the CP's answer while the agent restarts) emptying a
-   * gallery is a far worse lie than a stale one. Returns true when settled, which is what
-   * useRetryLoad's backoff wants.
+   * Read the folder. `initial` is the first read after a change of folder, and decides what a
+   * failure means:
+   *
+   *   - a HARD answer (gone, denied) on a first read shows the error state and forgets the
+   *     cached listing — a remembered grid for a folder that no longer exists is the one lie
+   *     this cache could tell. A refresh keeps the grid, as it always did: one odd answer
+   *     while somebody is browsing is not worth emptying the pane for.
+   *   - a transport failure or a 5xx (the CP's answer while the agent restarts) keeps whatever
+   *     is on screen and is retried. The error state is only for a first read with nothing
+   *     drawn — with a cached grid up, a blip must not replace it.
+   *
+   * Returns true when settled, which is what the mount effect's backoff wants.
    */
   const load = useCallback(
     async (signal: AbortSignal, initial: boolean): Promise<boolean> => {
-      let d: { entries?: FsEntry[]; error?: { code?: string } };
-      try {
-        // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
-        // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
-        // it the first look at a fresh folder trickles in card by card.
-        d = await api(`api/fs/tree?path=${encodeURIComponent(path)}&warm=${THUMB}`);
-      } catch {
-        if (!signal.aborted && initial) setFailed(true);
-        return false;
-      }
+      // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
+      // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
+      // it the first look at a fresh folder trickles in card by card.
+      const r = await fetchGalleryListing(path, thumbEdge(), signal);
       if (signal.aborted) return true;
-      if (!d || isTransientErr(d)) return false;
-      if (d.error || !Array.isArray(d.entries)) {
-        if (initial) {
+      if (!r.ok) {
+        if (r.hard && initial) {
+          forgetGallery(path);
+          namesRef.current = null;
+          shownRef.current = false;
           setEntries(null);
           setFailed(true);
+        } else if (initial && !shownRef.current) {
+          setFailed(true);
         }
-        return true;
+        if (!r.retry) setStale(false);
+        return !r.retry;
       }
-      const next = d.entries;
+      const next = r.entries;
       const names = new Set(next.map((e) => e?.name).filter(Boolean) as string[]);
       // What a re-read ADDED, so the reader sees a generation land. A first read adds
       // nothing: everything is new then, and flashing the whole grid teaches the eye to
@@ -199,7 +284,9 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
       const before = namesRef.current;
       namesRef.current = names;
       lastAutoAt.current = Date.now();
+      shownRef.current = true;
       setFailed(false);
+      setStale(false);
       setEntries(next);
       if (before) {
         const added = [...names].filter((n) => !before.has(n));
@@ -218,11 +305,6 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
   // but its agent is not yet answering, which is exactly when a pane opened from a session
   // menu mounts.
   useEffect(() => {
-    setEntries(null);
-    setFailed(false);
-    setLimit(PAGE_SIZE);
-    setZoomPath(null);
-    namesRef.current = null;
     const ac = new AbortController();
     let timer = 0;
     let tries = 0;
@@ -242,6 +324,17 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
   }, [load]);
 
   useEffect(() => () => window.clearTimeout(freshTimer.current), []);
+
+  // Put the reader back where they were in a folder they have already scrolled through, before
+  // the browser paints — a layout effect, or the grid is drawn at the top for one frame and the
+  // restore reads as a jump. Once per change of folder: a background refresh must never move
+  // the scroll position under someone.
+  useLayoutEffect(() => {
+    if (entries === null || restoredFor.current === path) return;
+    restoredFor.current = path;
+    const top = readGallery(path)?.scrollTop ?? 0;
+    if (top && bodyRef.current) bodyRef.current.scrollTop = top;
+  }, [entries, path]);
 
   const refresh = useCallback(
     (force = false) => {
@@ -315,7 +408,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
         if (!near) continue;
         const probe = new Image();
         probe.decoding = "async";
-        probe.src = downloadURL(near.path, undefined, near.mtime);
+        probe.src = displayURL(near.path, previewEdge(), near.mtime);
       }
     }, 400);
     return () => window.clearTimeout(id);
@@ -397,6 +490,10 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
             {folders.length > 0 && <>{tr("gallery.summary_folders", { n: folders.length })} · </>}
             {tr("gallery.summary", { count: totals.count, size: humanSize(totals.bytes) })}
             {shown.length < totals.count && <> · {tr("gallery.shown", { shown: shown.length, count: totals.count })}</>}
+            {/* Drawn from what this folder looked like last time, with the confirming read still
+                out. Said out loud rather than shown as a spinner over the grid: the cards are
+                real and usable, and the only thing in doubt is whether one more has landed. */}
+            {stale && <> · {tr("gallery.updating")}</>}
           </span>
         )}
         <span className="gal-sort" role="group" aria-label={tr("gallery.sort")}>
@@ -466,13 +563,21 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
       ) : empty ? (
         <EmptyState icon="file-media" title={tr("gallery.empty")} hint={path} />
       ) : (
-        <div className="gal-body">
+        <div
+          className="gal-body"
+          ref={bodyRef}
+          // Where the reader is, kept with the listing, so coming back lands them there. A plain
+          // map write (galleryCache.ts) — a scroll handler that set state would re-render the
+          // whole grid on every wheel notch.
+          onScroll={(e) => rememberGalleryView(path, { scrollTop: e.currentTarget.scrollTop })}
+        >
           <div className="gal-grid" role="list">
             {parent !== null && (
               <FolderCard
                 label={tr("gallery.up")}
                 icon="arrow-up"
                 title={tr("gallery.up")}
+                onPrefetch={() => prefetchGallery(parent, thumbEdge())}
                 onOpen={(newPane) => (newPane ? openGallery(parent, { newPane: true }) : navigate(parent))}
               />
             )}
@@ -480,10 +585,21 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
               <FolderCard
                 key={f.path}
                 label={named.get(f.path)?.label || f.name}
-                meta={named.has(f.path) ? tr("gallery.folder_images", { n: named.get(f.path)!.count }) : undefined}
+                // The Agent's own count when it sent one — it knows about every folder, not
+                // only the ones a session generated into. The session list stays the fallback
+                // for an older Agent that does not peek.
+                meta={
+                  typeof f.count === "number"
+                    ? tr("gallery.folder_images", { n: f.count })
+                    : named.has(f.path)
+                      ? tr("gallery.folder_images", { n: named.get(f.path)!.count })
+                      : undefined
+                }
+                cover={f.cover}
                 icon="folder"
                 title={f.path}
                 fresh={fresh.has(f.name)}
+                onPrefetch={() => prefetchGallery(f.path, thumbEdge())}
                 onOpen={(newPane) => (newPane ? openGallery(f.path, { newPane: true }) : navigate(f.path))}
               />
             ))}
@@ -502,7 +618,15 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
           </div>
           {shown.length < totals.count && (
             <div className="gal-more">
-              <button type="button" className="ui-btn" onClick={() => setLimit((n) => n + PAGE_SIZE)}>
+              <button
+                type="button"
+                className="ui-btn"
+                onClick={() => {
+                  const next = limit + PAGE_SIZE;
+                  setLimit(next);
+                  rememberGalleryView(path, { limit: next });
+                }}
+              >
                 {tr("gallery.more")}
               </button>
             </div>
@@ -514,10 +638,12 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
           <ImageLightbox
             // Versioned like the cards: reopening a picture already looked at costs no
             // request at all (the Agent answers `immutable` when `v` matches).
-            src={downloadURL(current.path, undefined, current.mtime)}
+            // The picture at the size this screen can show, not the original file: the same
+            // pixels for anything under the step, and about a ninth of the bytes (client.ts).
+            src={displayURL(current.path, previewEdge(), current.mtime)}
             // The card's thumbnail is already decoded in this tab, so the enlarged view
             // paints immediately and sharpens when the original lands.
-            placeholder={downloadURL(current.path, THUMB, current.mtime)}
+            placeholder={downloadURL(current.path, thumbEdge(), current.mtime)}
             path={current.path}
             alt={current.name}
             onClose={close}
@@ -542,18 +668,35 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
 function FolderCard({
   label,
   meta,
+  cover,
   icon,
   title,
   fresh,
+  onPrefetch,
   onOpen,
 }: {
   label: string;
   meta?: string;
+  /** The newest picture inside, when the Agent described the folder. A folder named by a
+   *  session UUID says nothing about what is in it; one picture says most of it. */
+  cover?: GalleryImage;
   icon: string;
   title: string;
   fresh?: boolean;
+  /** Read this folder's listing into the cache before the click lands — pointing at a folder
+   *  is the earliest honest signal that somebody is about to open it. */
+  onPrefetch?: () => void;
   onOpen: (newPane: boolean) => void;
 }) {
+  const hoverTimer = useRef(0);
+  const disarm = () => window.clearTimeout(hoverTimer.current);
+  useEffect(() => disarm, []);
+  // Gated exactly like an image card: a browse root with sixty subfolders would otherwise put
+  // sixty covers in the queue before anyone has scrolled. No cover, no observer — "Up" and the
+  // folders of an Agent that does not peek have nothing to wait for.
+  const thumbRef = useRef<HTMLSpanElement | null>(null);
+  const armed = useArmed(thumbRef, !!cover);
+  const [coverFailed, setCoverFailed] = useState(false);
   return (
     <div className={"gal-card folder" + (fresh ? " gal-new" : "")} role="listitem">
       <button
@@ -561,10 +704,33 @@ function FolderCard({
         className="gal-enter"
         title={title}
         onClick={(e) => onOpen(e.ctrlKey || e.metaKey)}
+        // Pointer-down, not just hover: a touch has no hover at all, and on a mouse it is still
+        // a frame or two ahead of the click.
+        onPointerDown={() => onPrefetch?.()}
+        onPointerEnter={() => {
+          disarm();
+          hoverTimer.current = window.setTimeout(() => onPrefetch?.(), HOVER_PREFETCH_MS);
+        }}
+        onPointerLeave={disarm}
         onMouseDown={(e) => e.button === 1 && e.preventDefault()}
         onAuxClick={(e) => e.button === 1 && onOpen(true)}
       >
-        <span className="gal-thumb">
+        {/* The class follows the PICTURE, not the intent to have one: it turns the folder icon
+            into a badge over the cover, and a tile that is still waiting to be armed would
+            otherwise show that badge floating in an empty box. */}
+        <span className={"gal-thumb" + (cover && !coverFailed && armed ? " cover" : "")} ref={thumbRef}>
+          {cover && !coverFailed && armed ? (
+            <img
+              src={downloadURL(cover.path, thumbEdge(), cover.mtime)}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              // Decorative: the card already says the folder's name, and a screen reader
+              // reading out a file name nobody chose would only be noise.
+              aria-hidden="true"
+              onError={() => setCoverFailed(true)}
+            />
+          ) : null}
           <Icon name={icon} className="gal-folder-icon" />
         </span>
         <span className="gal-name" title={title}>
@@ -612,7 +778,7 @@ function GalleryCard({
           <Icon name="file-media" className="gal-thumb-none" />
         ) : armed ? (
           <img
-            src={downloadURL(img.path, THUMB, img.mtime)}
+            src={downloadURL(img.path, thumbEdge(), img.mtime)}
             alt={img.name}
             loading="lazy"
             decoding="async"

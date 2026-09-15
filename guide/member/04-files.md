@@ -135,11 +135,21 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
   gallery falls back to name order and shows no relative time ("3 minutes ago") either.
 - **Count and size** — the header carries the totals for the whole folder. A big folder stops at
   **300 images**, with "Show more" for the rest (each card is one thumbnail request).
-- **Loading** — right after opening a folder, while nothing has arrived yet, the pane shows a
+- **A folder you have already seen opens at once** — the gallery remembers how each folder it
+  has walked through looked, so coming back draws those cards immediately instead of waiting.
+  **Your scroll position and anything you expanded with "Show more" come back with them**, so a
+  folder you were halfway through carries on where you left it. It re-reads the folder behind
+  that, and says "updating…" beside the count while it does — anything that really did arrive
+  since appears afterwards with the usual highlight. If the folder itself is gone, you get an
+  error rather than the contents it remembered.
+- **Loading** — the first time you open a folder, while nothing has arrived yet, the pane shows a
   loading state (it never sits there showing only "Up"). Thumbnails are requested for the cards
   nearest the screen first, so opening a big folder does not fetch everything at once, and
   scrolling ahead does not get stuck behind pictures you have already scrolled past.
-- **Folders** — subfolders are cards too, and opening one moves this pane into it. The first card,
+- **Folders** — subfolders are cards too, and each one shows **the newest picture inside it as
+  a cover** (the folder mark becomes a small badge over the picture), with **how many pictures
+  are in it** underneath. A folder named by a session's UUID is no longer a guess. Opening one
+  moves this pane into it. The first card,
   "Up", goes back to the parent, and the **breadcrumb** in the row under the header
   (`.cache / agent-fleet / generated`) jumps to any level. Ctrl/⌘-click and middle-click open the
   folder in another pane.
