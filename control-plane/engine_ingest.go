@@ -244,7 +244,14 @@ func engineSourceURL(source string) string {
 		if _, err := strconv.Atoi(id); err != nil {
 			return ""
 		}
-		return engineCivitaiBase + "/models/?modelVersionId=" + id
+		// 🔴 `/model-versions/<id>` and NOT `/models/?modelVersionId=<id>`. A recorded source
+		// carries the VERSION id and nothing else — the model id and its slug are a different
+		// number and a different string — and the query form answers 200 with the model LIST,
+		// which reads as a working link that goes to the wrong page (reported from the panel,
+		// 2026-09-15). Measured the same day: `/model-versions/5038` answers 308 to
+		// `/models/4451?modelVersionId=5038`, which 307s on to the slug. The redirect knows the
+		// two facts this end does not, so it is the link to hand out.
+		return engineCivitaiBase + "/model-versions/" + id
 	}
 	return ""
 }
@@ -536,8 +543,12 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 			// Civitai publishes no licence field of the kind Hugging Face does — the terms are
 			// per model on the site. Saying "unknown" is the honest answer; guessing one would
 			// put a made-up licence in the panel next to the real ones.
-			LicenseName:      "see civitai model page",
-			LicenseURL:       engineCivitaiBase + "/models/?modelVersionId=" + id,
+			LicenseName: "see civitai model page",
+			// The SAME redirect engineSourceURL hands out, and for the same reason: from here
+			// the version id is all there is, and the query form lands on the model list. A
+			// "see the model page" link that opens a list is the one kind of broken link nobody
+			// reports, because it opens something.
+			LicenseURL:       engineCivitaiBase + "/model-versions/" + id,
 			BaseModel:        strings.TrimSpace(doc.BaseModel),
 			Source:           "civitai:" + id,
 			ArtifactIdentity: engineCivitaiArtifactIdentity(c.VersionID, f.Name, hash),
