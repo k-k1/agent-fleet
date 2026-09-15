@@ -219,10 +219,27 @@ fs.copyFileSync(path.join(CONSOLE, "src/features/viewer/viewer.css"), path.join(
 fs.cpSync(path.join(CONSOLE, "src/features/viewer/parts"), path.join(www, "parts"), { recursive: true, filter: (src) => !src.endsWith(".tsx") && !src.endsWith(".ts") }); // viewer.css is an index of @import only; without parts the shot comes out unstyled
 
 // ---- Inspect -----------------------------------------------------------------
-const { server, port } = await serveDir(www);
+const { server, port, requests } = await serveDir(www);
 const b = await startBrowser();
 const md = () => b.evaluate("document.querySelector('[data-md]')?.textContent || ''");
-const status = () => b.evaluate("document.querySelector('.docpreview-status')?.textContent || ''");
+// The converted body, and the status line DocPreview shows instead of one. Read together in a
+// single evaluation so the two cannot come from different moments.
+const PANE = `JSON.stringify({
+  md: document.querySelector('[data-md]')?.textContent || '',
+  status: [...document.querySelectorAll('.docpreview-status')].map((e) => e.textContent).join(' '),
+})`;
+// The failure state carries the download hint under the reason; the "converting" one does not
+// (DocPreview.tsx). Same signal the broken-file check below waits on.
+const settled = (s) => !!s.md || s.status.includes("ダウンロード");
+// Why there is no body. Waiting on the body alone runs the whole deadline for any failure and
+// then reports "missing: …", which cannot tell a conversion that came out wrong from a WASM that
+// never loaded — the state that produced the CI flake this fixes. The served-request record is
+// the only place the fetch itself shows up: nothing about it reaches the DOM.
+const noBody = (pane) => {
+  const wasm = requests.filter((r) => r.path.endsWith(".wasm"));
+  const served = wasm.length ? wasm.map((r) => `${r.path} ${r.status}`).join(" ") : "the WASM was never requested";
+  return `the pane says ${JSON.stringify(pane.status.trim()) || "nothing"} — ${served}${b.logs.length ? " — " + b.logs.join(" / ") : ""}`;
+};
 try {
   for (const [file, fmt, wants] of [
     ["sample.docx", "docx", ["四半期レポートの本文", "太字の段落", "りんご"]],
@@ -230,16 +247,25 @@ try {
     ["sample.pptx", "pptx", ["スライドの見出し", "箇条書きの項目"]],
   ]) {
     await b.goto(`http://127.0.0.1:${port}/index.html?src=/${file}&fmt=${fmt}`);
-    const text = await until(b.evaluate, "document.querySelector('[data-md]')?.textContent || ''", (s) => !!s, 150);
-    const missing = wants.filter((w) => !text.includes(w));
-    check(missing.length === 0, `${file} converts to Markdown`, missing.length ? `missing: ${missing.join(", ")}` : `${text.length} chars`);
+    const pane = JSON.parse(await until(b.evaluate, PANE, (s) => settled(JSON.parse(s)), 150));
+    const missing = wants.filter((w) => !pane.md.includes(w));
+    check(
+      missing.length === 0,
+      `${file} converts to Markdown`,
+      missing.length === 0 ? `${pane.md.length} chars` : pane.md ? `missing: ${missing.join(", ")}` : noBody(pane),
+    );
   }
 
   // A table stays a table (a GFM row). Picking up the values is not enough if the columns are
   // mangled, because then it cannot be read.
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/sample.xlsx&fmt=xlsx`);
-  const sheet = await until(b.evaluate, "document.querySelector('[data-md]')?.textContent || ''", (s) => !!s, 150);
-  check(/\|\s*みかん\s*\|\s*34\s*\|/.test(sheet), "a table renders as a GFM table", JSON.stringify(sheet.split("\n").find((l) => l.includes("みかん")) || ""));
+  const table = JSON.parse(await until(b.evaluate, PANE, (s) => settled(JSON.parse(s)), 150));
+  const sheet = table.md;
+  check(
+    /\|\s*みかん\s*\|\s*34\s*\|/.test(sheet),
+    "a table renders as a GFM table",
+    sheet ? JSON.stringify(sheet.split("\n").find((l) => l.includes("みかん")) || "") : noBody(table),
+  );
 
   // The "simple preview" caveat sits where it is seen before reading starts.
   const note = await b.evaluate("document.querySelector('.docpreview-note')?.textContent || ''");
