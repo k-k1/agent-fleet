@@ -74,6 +74,21 @@ describe("looksForeign", () => {
     expect(looksForeign("テストは全部緑です。", "ja")).toBe(false);
   });
 
+  it("still offers an English answer that names a Japanese UI label", () => {
+    // Real shape (session sb4ghpu): a long English report naming Console labels that have no
+    // English name. Eight CJK characters in ~350 Latin letters is a term being pointed at, not
+    // an answer the Japanese reader can read — with "any CJK at all" as the rule, the button
+    // was withheld from exactly the answers that need it.
+    const englishReportNamingJaLabels =
+      "Left to you, and it is the one thing not yet verified: the engines are still 無効 in " +
+      "Console. Please set llm and image back to オンデマンド, and if you want the purchase path " +
+      "proven on this account, run one image generation and I will watch the fleet calls and " +
+      "the box it buys from the AWS side.";
+    expect(looksForeign(englishReportNamingJaLabels, "ja")).toBe(true);
+    // Same text to an English reader: still English prose, so no translation is offered.
+    expect(looksForeign(englishReportNamingJaLabels, "en")).toBe(false);
+  });
+
   it("does not offer a one-word answer", () => {
     expect(looksForeign("Done.", "ja")).toBe(false);
     expect(looksForeign("OK", "ja")).toBe(false);

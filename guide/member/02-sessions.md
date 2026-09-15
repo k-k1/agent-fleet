@@ -615,6 +615,8 @@ agent's own text back.
 - **Only prose is translated.** Code blocks, commands, paths and tool output stay exactly as they
   were. Marks (highlights) stay on the original, so they are hidden while the translation is shown.
 - The button appears only on an answer **written in a language other than your own**. An answer that
-  mixes both does not get one (re-saying what you can already read buys nothing), and neither does
-  someone else's shared session — a translation runs in the owner's Workspace.
+  genuinely mixes both does not get one (re-saying what you can already read buys nothing), though a
+  few words in the other language — a Console label quoted as-is, a product name — do not withhold
+  it. Someone else's shared session does not get one either: a translation runs in the owner's
+  Workspace.
 - Turn it off under Settings > AI assistance, **Answer translation (mirror)**.

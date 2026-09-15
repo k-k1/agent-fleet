@@ -44,7 +44,13 @@ export function serveDir(dir) {
     }
     requests.push({ path: urlPath, status: 200 });
     res.writeHead(200, { "Content-Type": TYPES[path.extname(file)] || "application/octet-stream" });
-    fs.createReadStream(file).pipe(res);
+    const body = fs.createReadStream(file);
+    // A read error with no handler leaves the response open forever: the browser keeps waiting on
+    // a body that will never come, and the check spends its whole deadline on a request that is
+    // already dead. Cut the socket instead — a network error the page can see and report beats a
+    // hang that only shows up as a timeout with no cause in it.
+    body.on("error", () => res.destroy());
+    body.pipe(res);
   });
   return new Promise((r) =>
     server.listen(0, "127.0.0.1", () => r({ server, requests, port: server.address().port })),
@@ -151,11 +157,55 @@ export async function startBrowser({ chromium = "", size = "1000,760" } = {}) {
   };
   await send("Page.enable");
   await send("Runtime.enable");
+  // Where the page actually is. Two ways this does not answer, and both mean "not there yet"
+  // rather than a failure of its own: Runtime.evaluate throws while the execution context is
+  // being swapped for a new document, and it never answers AT ALL while a navigation is pending
+  // on a server that has accepted the connection without replying (measured: the evaluation for
+  // a page that never commits stays unresolved past two minutes, so awaiting it without a bound
+  // hangs the whole check instead of failing it).
+  const at = async () => {
+    try {
+      return await Promise.race([evaluate("location.href + '|' + document.readyState"), sleep(250).then(() => "")]);
+    } catch {
+      return "";
+    }
+  };
   return {
     send,
     evaluate,
     logs,
-    goto: (url) => send("Page.navigate", { url }),
+    // Page.navigate resolves when the navigation has been ISSUED, not when the document asked for
+    // exists. A navigation issued while the browser is still bringing up its first tab can be
+    // dropped outright, and then every later wait runs its full deadline against the PREVIOUS
+    // document (about:blank on the first one) — a red run whose output holds no trace of the
+    // cause. Measured in CI: doc:check took 16.7 s instead of 1.8 s and reported only
+    // "missing: …" for the first of its three conversions, the rest green. So wait for the
+    // document to be the one that was asked for, and re-issue the navigation once if it is not.
+    // The deadline is wall-clock rather than a number of polls, because a poll that goes
+    // unanswered is exactly the case being waited out.
+    goto: async (url, ms = 5000) => {
+      let last = "";
+      for (let attempt = 0; attempt < 2; attempt++) {
+        // Started, not awaited: Page.navigate answers when the navigation commits or fails, so a
+        // server that accepts the connection and then says nothing leaves it unanswered forever
+        // (measured: no reply in two minutes, with the whole check stopped on it). The verdict
+        // comes from the document below; this only carries a refusal back.
+        let navErr = "";
+        send("Page.navigate", { url }).then(
+          (r) => (navErr = r.errorText || ""),
+          (e) => (navErr = e.message),
+        );
+        const deadline = Date.now() + ms;
+        while (Date.now() < deadline) {
+          if (navErr) throw new Error(`cannot open ${url}: ${navErr}`);
+          last = await at();
+          const [href, state] = last.split("|");
+          if (href === url && state !== "loading") return;
+          await sleep(50);
+        }
+      }
+      throw new Error(`the page never became ${url} — it is at ${last || "a document that cannot be read"}`);
+    },
     screenshot: async (out) => {
       const shot = await send("Page.captureScreenshot", { format: "png" });
       fs.writeFileSync(out, Buffer.from(shot.data, "base64"));

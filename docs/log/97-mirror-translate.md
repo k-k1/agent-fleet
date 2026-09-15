@@ -217,3 +217,30 @@ Agent の HTTP に直接 1 回投げた（434 バイトの英文 Markdown・箇�
   （新設・`react-test-renderer` の Harness 方式）でタブ切り替え 2 パターン（同一セル内の
    session prop 差し替え／完全アンマウント）と分割送信・再結合の一連。Console 全体 2795 件・
    typecheck・oxlint・i18n:lint・`docs-check.py` いずれも緑。
+
+## 97.11 🔴 訂正（2026-09-15）: 地の文に日本語の表示名が数語あるだけでボタンが消える
+
+§97.8 は「引用ラベル 1 個でボタンが消える」を `proseOnly` に引用スパンの除去を足して直したが、
+**閾値 `cjk === 0` はそのまま残した**。そのため、引用でも囲みでもない形で日本語の単語が混じる
+英語回答——`the engines are still 無効 in Console` / `set llm and image back to オンデマンド` の
+ように、**Console の表示名を英訳せずそのまま名指しした**回答——では同じ事象が再発した
+（利用者報告、セッション sb4ghpu）。実測: その回答の地の文は Latin 約 350 文字に対し CJK 8 文字
+（2%）で、`looksForeign(text,"ja")` は `false`。§97.8 の対策は「引用符で囲まれていること」に
+依存していたので、囲みの無いこの形には届かない。
+
+判定を**全か無かから割合へ**変えた（`console/src/features/mirror/translate.ts`）。
+`cjkShare = cjk / (cjk + latin)` を求め、`MAX_STRAY_SHARE = 0.05` を境に
+
+- ja … `latin >= MIN_LATIN && cjkShare <= 0.05`（英語の地の文＋外れの数語なら出す）
+- en … `cjk >= MIN_CJK && cjkShare > 0.05`（同じ回答を英語読者に出さない側も同時に直る）
+
+とした。en 側に下限を足したのは、旧 `cjk >= MIN_CJK` 単独だと**上のまったく同じ英語回答が英語
+読者に「翻訳」を出す**ためで、こちらはボタンが出るだけでは済まずモデル 1 回分を払う。既存の
+「混在は訳さない」規則（`実装完了。see the diff` → 4/24 = 17%）は割合でもそのまま落ちる。
+
+一般化: **「他言語の文字が 1 つでもあるか」は言語の判定ではない**。技術文書の地の文には、
+訳す先の言語の固有名詞・UI ラベル・製品名が必ず混じる。判定するなら割合で見る。
+
+回帰試験は `translate.test.ts`「still offers an English answer that names a Japanese UI label」
+（実物と同じ形の英語報告に対し ja→出す・en→出さない、の 2 方向）。陽性対照として
+`looksForeign` を旧実装に戻すと ja 側・en 側それぞれで落ちることを確認済み。
