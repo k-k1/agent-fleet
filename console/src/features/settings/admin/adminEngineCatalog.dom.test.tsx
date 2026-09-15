@@ -630,6 +630,73 @@ describe("registered rows and the bucket", () => {
     });
   });
 
+  // 🔴 Measured on af-sandbox: 消す "did nothing". The CP holds no `s3:DeleteObject` (ADR 0072
+  // decision 7), so the route starts a TASK and answers `{deleting}` — the object goes on being
+  // listed as `present` for as long as that takes, and the screen said nothing about it.
+  it("draws an accepted delete as deleting and keeps reloading until the bucket drops it", async () => {
+    vi.useFakeTimers();
+    try {
+      const loose = { key: "image/text_encoders/loose.safetensors", bytes: 1_190_000_000, role_dir: "text_encoders", placement: "ok", state: "present", declared_by: [] };
+      let listed: Record<string, unknown>[] = [loose];
+      let reads = 0;
+      api.mockImplementation((path: string) => {
+        if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [anima] });
+        if (path.endsWith("/objects")) { reads += 1; return Promise.resolve({ objects: listed, checked_at: "2026-09-15T03:42:00Z" }); }
+        return Promise.resolve({});
+      });
+      apiJSON.mockResolvedValue({ deleting: "image/text_encoders/loose.safetensors" });
+      await mountRegistered();
+      await click(labelled("消す: image/text_encoders/loose.safetensors"));
+      await click(within(".engine-ledger-confirm", "消す"));
+
+      // The object is still in the bucket, and the row says why rather than looking untouched.
+      const row = document.querySelector<HTMLElement>('.engine-ledger-row[aria-label="image/text_encoders/loose.safetensors"]')!;
+      expect(row.className).toContain("deleting");
+      expect(row.textContent).toContain("削除中");
+      expect(row.textContent).toContain("削除のタスクが走っています");
+      expect(labelled("消す: image/text_encoders/loose.safetensors")).toBeUndefined();
+
+      const before = reads;
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(reads).toBeGreaterThan(before);
+      expect(document.querySelector('.engine-ledger-row[aria-label="image/text_encoders/loose.safetensors"]')).toBeTruthy();
+
+      // The listing dropping the key is the only thing that ends it.
+      listed = [];
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(document.querySelector('.engine-ledger-row[aria-label="image/text_encoders/loose.safetensors"]')).toBeNull();
+      const settled = reads;
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+      expect(reads).toBe(settled);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A row pointing at bytes that are not there: the ledger names the row, and the act is that
+  // row's 揃える — the object side has nothing anybody could press.
+  it("sends a missing object's holder to its own row's complete, and hides an unclaimed one", async () => {
+    mockEngines([anima], [
+      { key: "image/diffusion_models/anima.safetensors", role_dir: "diffusion_models", placement: "ok", state: "missing",
+        declared_by: [{ model_id: "anima-aesthetic", flag: "--diffusion-model" }] },
+      // Nobody declares it and there are no bytes: neither a subject nor an act. The CP stopped
+      // sending these; one that arrives anyway is dropped rather than drawn.
+      { key: "image/vae/ghost.safetensors", role_dir: "vae", placement: "ok", state: "missing", declared_by: [] },
+    ]);
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/complete")) return Promise.resolve({ action: "job_started", files: [], bytes_to_download: 0 });
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    const row = document.querySelector<HTMLElement>('.engine-ledger-row[aria-label="image/diffusion_models/anima.safetensors"]')!;
+    expect(row.textContent).toContain("anima-aesthetic がこのキーを指していますが");
+    expect(document.querySelector('.engine-ledger-row[aria-label="image/vae/ghost.safetensors"]')).toBeNull();
+
+    await click(labelled("揃える: image/diffusion_models/anima.safetensors"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/anima-aesthetic/complete", "POST", { check: true });
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/anima-aesthetic/complete", "POST", {});
+  });
+
   // A failed job is a failed entry on its destination key with one act (ADR 0085 decision 6):
   // there is no history tab to find it in any more.
   it("shows a failed ingest on its object with the task's message and dismisses it", async () => {

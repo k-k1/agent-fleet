@@ -46,6 +46,27 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  // 🔴 消す answers `{deleting}` and the bucket goes on listing the object: the row has to say so
+  // by itself, or the press reads as "nothing happened" (af-sandbox, 2026-09-15).
+  {
+    name: "deleting", view: "registered", width: 1500, height: 1080,
+    action: `(async () => {
+      const del = document.querySelector('button[aria-label="消す: image/text_encoders/qwen_3_06b_base.safetensors"]');
+      if (!del) return false;
+      del.click();
+      await new Promise((done) => setTimeout(done, 400));
+      const go = Array.from(document.querySelectorAll(".engine-ledger-confirm button")).find((b) => b.textContent === "消す");
+      if (!go) return false;
+      go.click();
+      await new Promise((done) => setTimeout(done, 800));
+      // The ledger is longer than the viewport, and the row this scene is about is the one that
+      // has to be in the picture.
+      document.querySelector(".engine-ledger-row.deleting")?.scrollIntoView({ block: "center" });
+      await new Promise((done) => setTimeout(done, 300));
+      return !!document.querySelector(".engine-ledger-row.deleting");
+    })()`,
+    settle: 1500,
+  },
   // The only question this screen ever asks: which of the bucket's files fills a role, asked FOR
   // a checkpoint (decision 3).
   {
@@ -142,7 +163,9 @@ try {
     await cdp.send("Page.navigate", { url: BASE });
     await sleep(4500);
     if (scene.action) {
-      const ran = await cdp.send("Runtime.evaluate", { expression: scene.action, returnByValue: true });
+      // awaitPromise so a scene can press twice with the render in between; a plain value is
+      // returned as it is.
+      const ran = await cdp.send("Runtime.evaluate", { expression: scene.action, returnByValue: true, awaitPromise: true });
       if (ran.result?.value !== true) throw new Error(`[${scene.name}] the action found nothing to press`);
       await sleep(scene.settle || 800);
     }

@@ -1437,6 +1437,10 @@ a.engines-model-source:hover {
   background: var(--panel2);
 }
 .engine-ledger-row.orphan { border-inline-start: 3px solid var(--warn, #d29922); }
+/* A delete is a TASK: the row stays until the bucket stops listing it, so it is dimmed and
+   its buttons are gone rather than left pressable against bytes already on their way out. */
+.engine-ledger-row.deleting { opacity: 0.6; }
+.engine-ledger-note { grid-column: 1 / -1; font-size: 11px; }
 .engine-ledger-key { grid-column: 1 / -1; overflow-wrap: anywhere; }
 .engine-ledger-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .engine-ledger-declared, .engine-ledger-source, .engine-ledger-message { grid-column: 1 / -1; font-size: 11px; overflow-wrap: anywhere; }

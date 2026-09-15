@@ -479,6 +479,11 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
   /** Told apart from "not read yet": an empty prefix and a bucket nobody could list are
    *  different answers, and drawing the second as the first says this deployment holds nothing. */
   const [ledgerFailed, setLedgerFailed] = useState(false);
+  /** Keys a delete was accepted for. 🔴 The CP has no `s3:DeleteObject` (ADR 0072 decision 7), so
+   *  `DELETE …/objects` starts a TASK and answers `{deleting}` — the object stays `present` in
+   *  the bucket for as long as that task takes. Without this the press looked like it did
+   *  nothing, which is how it read on af-sandbox. */
+  const [deletingKeys, setDeletingKeys] = useState<string[]>([]);
   const [checkedAt, setCheckedAt] = useState("");
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState<EngineApiError | null>(null);
@@ -495,13 +500,18 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     const answer = await api(objectsPath(row.key));
     if (answer?.error) { setObjects(null); setLedgerFailed(true); return; }
     setLedgerFailed(false);
-    setObjects(Array.isArray(answer?.objects) ? answer.objects : []);
+    const rows: EngineObjectRow[] = Array.isArray(answer?.objects) ? answer.objects : [];
+    setObjects(rows);
     setCheckedAt(answer?.checked_at || "");
+    // A key the listing no longer returns is gone — that, and nothing else, ends "deleting".
+    setDeletingKeys((current) => current.filter((key) => rows.some((object) => object.key === key)));
   }, [row.key]);
   useEffect(() => { void loadObjects(); }, [loadObjects]);
   // A download runs for minutes and has no list of its own any more (ADR 0085 decision 6): it is
-  // its destination object's `uploading` state, so the ledger is what polls.
-  const live = (objects || []).some((object) => object.state === "uploading");
+  // its destination object's `uploading` state, so the ledger is what polls. A delete is the same
+  // shape from the other side — a task nobody can see the end of except by listing again.
+  const live = deletingKeys.length > 0
+    || (objects || []).some((object) => object.state === "uploading" || object.job?.state === "deleting");
   useEffect(() => {
     if (!live) return;
     const timer = setInterval(() => void loadObjects(), 5000);
@@ -571,14 +581,14 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     await loadObjects();
   };
 
-  const align = async (model: EngineModel) => {
+  const align = async (id: string, baseModel?: string) => {
     setNote("");
-    const check = await completeModel(model.id, { check: true });
+    const check = await completeModel(id, { check: true });
     if (!check) return;
-    // Only two things are worth a dialog: a role with several candidates, and bytes somebody has
+    // Only two things are worth a dialog: a role the CP wants a pick for, and bytes somebody has
     // to agree to pay for. Everything else just happens.
-    if (needsAsking(check)) { setCompleting({ modelId: model.id, baseModel: model.base_model, answer: check }); return; }
-    await runComplete(model.id);
+    if (needsAsking(check)) { setCompleting({ modelId: id, baseModel, answer: check }); return; }
+    await runComplete(id);
   };
 
   const guardedChange = async (model: EngineModel, patch: Record<string, unknown>) => {
@@ -620,6 +630,9 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     try {
       const answer = await apiJSON(objectsPath(row.key), "DELETE", { key });
       if (answer?.error) { setErr(answer.error as EngineApiError); return; }
+      // The answer is `{deleting}`, not `{deleted}`: draw the row as such AT ONCE and keep
+      // reloading until the bucket stops listing it.
+      setDeletingKeys((current) => current.includes(key) ? current : [...current, key]);
       setDeletingObject(null);
       await loadObjects();
     } finally { setBusy(""); }
@@ -688,15 +701,17 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
               the press, and a row that has everything answers "nothing to do" in one call. */}
           {!readOnly && <Button variant={model.files_missing?.length || model.vae_missing ? "primary" : undefined} small
             aria-label={`${tr("admin.catalog_complete" as never)}: ${model.id}`} disabled={pending}
-            onClick={() => void align(model)}>{tr(pending ? "admin.catalog_complete_busy" as never : "admin.catalog_complete" as never)}</Button>}
+            onClick={() => void align(model.id, model.base_model)}>{tr(pending ? "admin.catalog_complete_busy" as never : "admin.catalog_complete" as never)}</Button>}
           {isSuper && !readOnly && <Button variant="danger" small aria-label={`${tr("admin.engines_model_forget")}: ${model.id}`} disabled={pending || started} onClick={() => { setDeleting(model); setPurge(false); }}>{tr("admin.engines_model_forget")}</Button>}
         </footer>
       </li>;
     })}</ul>
     <EngineLedger objects={objects} failed={ledgerFailed} checkedAt={checkedAt} busy={busy} readOnly={readOnly}
+      deletingKeys={deletingKeys}
       onRegister={(object) => void registerObject(object.key)}
       onDelete={(object) => setDeletingObject(object)}
-      onDismiss={(id) => void dismissJob(id)} />
+      onDismiss={(id) => void dismissJob(id)}
+      onComplete={(id) => void align(id, models.find((model) => model.id === id)?.base_model)} />
     {completing && <CompleteDialog row={row} modelId={completing.modelId} baseModel={completing.baseModel} answer={completing.answer}
       onClose={() => setCompleting(null)}
       onRun={async (body) => { setCompleting(null); await runComplete(completing.modelId, body); }} />}
@@ -749,18 +764,28 @@ function EngineRefusal({ error, busy, onNext }: { error: EngineApiError | null; 
  * 🔴 Orphans and misplaced objects sort first because they are the only rows here anybody has to
  * act on: everything else is provenance for a row that already works. A part gets no button of
  * its own — it is attached, and moved, by the 揃える of whichever checkpoint reads it. */
-function EngineLedger({ objects, failed, checkedAt, busy, readOnly, onRegister, onDelete, onDismiss }: {
+function EngineLedger({ objects, failed, checkedAt, busy, readOnly, deletingKeys, onRegister, onDelete, onDismiss, onComplete }: {
   objects: EngineObjectRow[] | null;
   failed: boolean;
   checkedAt: string;
   busy: string;
   readOnly: boolean;
+  /** Keys this Console asked to delete and the bucket still lists. Drawn as `deleting` until the
+   *  listing drops them; the CP's own `job.state === "deleting"` says the same thing once it
+   *  starts sending it, and either is enough. */
+  deletingKeys: string[];
   onRegister: (object: EngineObjectRow) => void;
   onDelete: (object: EngineObjectRow) => void;
   onDismiss: (id: string) => void;
+  onComplete: (modelId: string) => void;
 }) {
   const tr = useT();
-  const sorted = [...(objects || [])].sort((left, right) => ledgerRank(left) - ledgerRank(right) || left.key.localeCompare(right.key));
+  const sorted = [...(objects || [])]
+    // 🔴 A `missing` entry nobody declares is not a fact about anything: the row it belonged to is
+    // gone and so are the bytes. The CP stopped sending those; one that arrives anyway is dropped
+    // rather than drawn as a line with no subject and no act.
+    .filter((object) => object.state !== "missing" || (object.declared_by || []).length > 0)
+    .sort((left, right) => ledgerRank(left) - ledgerRank(right) || left.key.localeCompare(right.key));
   return <section className="engine-ledger" aria-label={tr("admin.catalog_ledger_title" as never)}>
     <header className="engine-ledger-head">
       <strong>{tr("admin.catalog_ledger_title" as never)}</strong>
@@ -771,14 +796,16 @@ function EngineLedger({ objects, failed, checkedAt, busy, readOnly, onRegister, 
     {objects !== null && !objects.length && <p className="muted">{tr("admin.catalog_ledger_empty" as never)}</p>}
     {!!sorted.length && <ul className="engine-ledger-list">{sorted.map((object) => {
       const orphan = !(object.declared_by || []).length;
+      const removing = deletingKeys.includes(object.key) || object.job?.state === "deleting";
       const pending = busy === `object:${object.key}` || (!!object.job && busy === `job:${object.job.id}`);
-      return <li key={object.key} className={`engine-ledger-row${orphan ? " orphan" : ""}`} aria-label={object.key}>
+      const holder = (object.declared_by || [])[0]?.model_id || "";
+      return <li key={object.key} className={`engine-ledger-row${orphan ? " orphan" : ""}${removing ? " deleting" : ""}`} aria-label={object.key}>
         <span className="mono engine-ledger-key">{object.key}</span>
         <span className="engine-ledger-tags">
           <span className="engines-model-tag">{object.role_dir}</span>
           {object.placement === "misplaced" && <span className="engines-model-tag warn">{tr("admin.catalog_ledger_misplaced" as never)}</span>}
-          <span className={`engines-model-tag ${object.state === "present" ? "on" : object.state === "failed" || object.state === "missing" ? "bad" : "lead"}`}>
-            {tr((`admin.catalog_ledger_state_${object.state}`) as never)}
+          <span className={`engines-model-tag ${removing ? "lead" : object.state === "present" ? "on" : object.state === "failed" || object.state === "missing" ? "bad" : "lead"}`}>
+            {tr((removing ? "admin.catalog_ledger_state_deleting" : `admin.catalog_ledger_state_${object.state}`) as never)}
           </span>
           {!!object.bytes && <span className="engines-model-tag">{formatBytes(object.bytes)}</span>}
           {object.license && <span className="engines-model-tag">{object.license}</span>}
@@ -788,9 +815,17 @@ function EngineLedger({ objects, failed, checkedAt, busy, readOnly, onRegister, 
           : (tr("admin.catalog_ledger_declared" as never) as string).replace("{m}", (object.declared_by || [])
             .map((holder) => holder.flag ? `${holder.model_id} (${holder.flag})` : holder.model_id).join(", "))}</span>
         {object.source && <span className="muted mono engine-ledger-source">{object.source}</span>}
+        {removing && <span className="muted engine-ledger-note">{tr("admin.catalog_ledger_deleting_note" as never)}</span>}
+        {/* A row points at bytes that are not there. The ledger says whose problem it is and the
+            act is that row's 揃える — the object side has nothing to press. */}
+        {!removing && object.state === "missing" && !!holder && <span className="form-err engine-ledger-note">
+          {(tr("admin.catalog_ledger_missing_note" as never) as string).replace("{m}", holder)}</span>}
         {object.job?.message && <span className="form-err engine-ledger-message">{object.job.message}</span>}
-        {!readOnly && <span className="engine-ledger-acts">
-          {object.state === "failed" && object.job
+        {!readOnly && !removing && <span className="engine-ledger-acts">
+          {object.state === "missing" && !!holder
+            ? <Button small variant="primary" disabled={pending} aria-label={`${tr("admin.catalog_complete" as never)}: ${object.key}`}
+              onClick={() => onComplete(holder)}>{tr("admin.catalog_complete" as never)}</Button>
+            : object.state === "failed" && object.job
             ? <Button small variant="danger" disabled={pending} aria-label={`${tr("admin.catalog_ledger_delete" as never)}: ${object.key}`}
               onClick={() => onDismiss(object.job!.id)}>{tr("admin.catalog_ledger_delete" as never)}</Button>
             : <>

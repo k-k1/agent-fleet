@@ -393,6 +393,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.catalog_ledger_state_uploading": "taking in",
   "admin.catalog_ledger_state_failed": "failed",
   "admin.catalog_ledger_state_missing": "bytes absent",
+  // 🔴 The CP holds no s3:DeleteObject (ADR 0072 decision 7): "delete" starts a task, and the
+  // bucket keeps returning the object until it finishes. Without this wording the press looks
+  // like it did nothing, which is how it read on af-sandbox.
+  "admin.catalog_ledger_state_deleting": "deleting",
+  "admin.catalog_ledger_deleting_note": "A delete task is running. This line leaves the list when it finishes (it can take minutes).",
+  "admin.catalog_ledger_missing_note": "{m} points at this key and the bucket holds no bytes for it. Complete that row to fetch them again.",
   "admin.catalog_ledger_orphan": "no row declares this",
   "admin.catalog_ledger_declared": "declared by: {m}",
   "admin.catalog_ledger_register": "Register",
