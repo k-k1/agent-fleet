@@ -92,9 +92,10 @@ func engineMainFileFixRow(fix engineMainFileFix) map[string]any {
 // engineMainFileMovable is every reason a move must not be started, asked before a task is.
 // Each one is a state where moving would destroy something: bytes another row reads, a key
 // somebody else's job is about to write, or an object that is not there to move.
-// Every 409 it answers carries a holder and a next act (ADR 0085 decision 5): what stands in the
-// way of a move is always a row, a job or an object, and the Console draws `next` as the button
-// on the error line.
+//
+// Each refusal names the holder and the one act that gets past it (ADR 0085 decision 5): the
+// Console draws `next` as the button on the error line, and a sentence alone leaves an operator
+// with nothing to press.
 func (a engineAdminAPI) engineMainFileMovable(ctx context.Context, held enginePartsHeld,
 	role, id string, fix engineMainFileFix) *apiRefusal {
 	if held.known == nil {
@@ -102,7 +103,8 @@ func (a engineAdminAPI) engineMainFileMovable(ctx context.Context, held enginePa
 		// an unfinished upload is about to write, so it is refused rather than guessed at.
 		return refuse(http.StatusServiceUnavailable, errCodeIngestUnavailable,
 			"this deployment's ingest history could not be read, and moving "+fix.From+
-				" without it could take bytes another job is writing — try again", nil, &apiNext{Act: "wait"})
+				" without it could take bytes another job is writing — try again",
+			nil, &apiNext{Act: "wait", Target: id})
 	}
 	if k := held.known[fix.From]; k != nil {
 		for other := range k.ModelIDs {
@@ -110,19 +112,20 @@ func (a engineAdminAPI) engineMainFileMovable(ctx context.Context, held enginePa
 				return refuse(http.StatusConflict, errCodeEngineBadBody,
 					fix.From+" is also declared by "+other+", and moving it would leave that row"+
 						" pointing at a key with nothing in it — give this row its own copy instead",
-					&apiHolder{Kind: "row", ID: other, Key: fix.From}, &apiNext{Act: "forget_row", Target: other})
+					&apiHolder{Kind: "row", ID: other, Key: fix.From},
+					&apiNext{Act: "forget_row", Target: other})
 			}
 		}
 		if k.InFlight {
 			return refuse(http.StatusConflict, errCodeEngineBadBody,
 				"an ingest is still writing "+fix.From+" — wait for it to finish and press again",
-				&apiHolder{Kind: "object", Key: fix.From}, &apiNext{Act: "wait"})
+				&apiHolder{Kind: "job", Key: fix.From}, &apiNext{Act: "wait", Target: id})
 		}
 	}
 	// The destination, by the same rule every upload obeys: a key another row or another job
 	// already names is not a vacant filename.
-	if aerr := engineIngestDestinationUnused(ctx, a.mgr.store, a.mgr.store, role, fix.To); aerr != nil {
-		return engineRefusalOf(aerr, &apiHolder{Kind: "object", Key: fix.To}, &apiNext{Act: "dismiss_job"})
+	if ref := engineIngestDestinationUnused(ctx, a.mgr.store, a.mgr.store, role, fix.To); ref != nil {
+		return ref
 	}
 	// And the bytes themselves. A declaration whose object was purged is a row to take in again,
 	// not one to move — and `aws s3 mv` on a key with nothing at it fails minutes later in a
@@ -130,12 +133,12 @@ func (a engineAdminAPI) engineMainFileMovable(ctx context.Context, held enginePa
 	if held.storage == nil {
 		return refuse(http.StatusServiceUnavailable, errCodeIngestUnavailable,
 			"this deployment cannot check the bucket right now, so "+fix.From+" was not moved",
-			nil, &apiNext{Act: "wait"})
+			nil, &apiNext{Act: "wait", Target: id})
 	}
 	if check := held.storage.verify(ctx, fix.From); check.State != engineStoragePresent {
 		return refuse(http.StatusConflict, errCodeEngineBadBody,
 			"there is nothing at "+fix.From+" to move: this row's weights have to be taken in again",
-			&apiHolder{Kind: "object", Key: fix.From}, nil)
+			&apiHolder{Kind: "object", Key: fix.From}, &apiNext{Act: "register", Target: id})
 	}
 	return nil
 }

@@ -416,12 +416,14 @@ func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
 	}
 }
 
-// 🔴 ADR 0072 P2 欠落 6, at the door. The ingest could say nothing about what a file IS within
-// the model, so `attach` — this file joins the row that is already there — is the act that
-// makes a split model buildable by ingest alone. It is also the one act allowed to name an id
-// the catalogue already holds, and everything about it is decided BEFORE the download: nine
-// minutes of Fargate is a bad place to learn that a flag was misspelt.
-func TestEngineIngestAttachesAPartToAnExistingRow(t *testing.T) {
+// 🔴 The two acts that LEFT this route (ADR 0085 decision 3). `attach` and `replace` both start
+// from a file and name the row it should join, which is backwards: a checkpoint is what a person
+// means, and the parts that fit it are what the machine knows. Both are `complete` now.
+//
+// Refused rather than reinterpreted, and refused before anything is spent: a request that names a
+// row and a flag is precise about something this route no longer decides, and picking a slot for
+// it is how an attach landed as a replace.
+func TestEngineIngestRetiresAttachAndReplace(t *testing.T) {
 	st := testSettingsStore(t)
 	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
 	e.settings, e.ctrl = st, nil
@@ -436,64 +438,129 @@ func TestEngineIngestAttachesAPartToAnExistingRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.catalog.invalidate()
+	ecsAPI := &fakeIngestECS{}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: ecsAPI, store: st, models: st,
+	}
+
+	for _, act := range []string{`"attach":true,"file_flag":"--clip_l"`, `"replace":true,"file_flag":"--diffusion-model"`} {
+		rec := httptest.NewRecorder()
+		body := `{"id":"flux1-dev-fp8","kind":"checkpoint",` + act + `,"license_accepted":true,
+		  "source":{"url":"https://example.invalid/clip_l.safetensors",
+		  "sha256":"` + strings.Repeat("b", 64) + `"}}`
+		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
+		r.SetPathValue("key", "image")
+		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+		if rec.Code != http.StatusGone {
+			t.Fatalf("%s = %d, want 410 (%s)", act, rec.Code, rec.Body.String())
+		}
+		// Decision 5: the refusal has to be a BUTTON, not a sentence. The Console draws `next`
+		// on the error line, and "held by X — press Y" is the whole difference from "already
+		// recorded; choose a new destination".
+		var out struct {
+			Error struct {
+				Code   string     `json:"code"`
+				Holder *apiHolder `json:"holder"`
+				Next   *apiNext   `json:"next"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("answer: %v (%s)", err, rec.Body.String())
+		}
+		if out.Error.Next == nil || out.Error.Next.Act != "complete" || out.Error.Next.Target != "flux1-dev-fp8" {
+			t.Errorf("%s: next = %+v, want complete on the row", act, out.Error.Next)
+		}
+		if out.Error.Holder == nil || out.Error.Holder.Kind != "row" {
+			t.Errorf("%s: holder = %+v", act, out.Error.Holder)
+		}
+		// And it names the route, because an operator reading this has to find it.
+		if !strings.Contains(rec.Body.String(), "/models/flux1-dev-fp8/complete") {
+			t.Errorf("%s: the refusal does not point at complete: %s", act, rec.Body.String())
+		}
+	}
+	if len(ecsAPI.run) != 0 || len(engineJobsOf(t, st, "image")) != 0 {
+		t.Error("a retired act still started something")
+	}
+	// The row was not touched on the way through.
+	rows, _ := st.ListEngineModels(ctx, "image")
+	for _, m := range rows {
+		if m.ID == "flux1-dev-fp8" && (!m.Enabled || len(m.Files) != 1) {
+			t.Errorf("the row was disturbed: enabled=%v files=%+v", m.Enabled, m.Files)
+		}
+	}
+}
+
+// 🔴 The grace release for the one field three parties used to compute (ADR 0085 decision 1).
+// `s3Key` and `reuse_s3_key` are read for one more release so that a script written against the
+// old shape is TOLD what changed: ignored when they happen to name the key the CP computed, and
+// refused with that key when they do not. Silently staging the file where the caller asked is
+// what put 24 GB in directories no ComfyUI loader enumerates.
+func TestEngineIngestGraceOnTheRetiredKeyFields(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
 	reg.ing = &engineIngester{
 		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
 		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
 	}
+	e.catalog.invalidate()
 
-	post := func(extra string) (int, string) {
+	post := func(id, field, key string) (int, string) {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		body := `{"id":"flux1-dev-fp8","kind":"checkpoint","s3Key":"image/text_encoders/clip_l.safetensors",
-		  "license_accepted":true,"source":{"url":"https://example.invalid/clip_l.safetensors",
-		  "sha256":"` + strings.Repeat("b", 64) + `"}` + extra + `}`
+		body := `{"id":"` + id + `","kind":"checkpoint","base_model":"sdxl","license_accepted":true,` +
+			`"` + field + `":"` + key + `",
+			  "source":{"url":"https://example.invalid/sd_xl_base_1.0.safetensors",
+			  "sha256":"` + strings.Repeat("a", 64) + `"}}`
 		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
 		r.SetPathValue("key", "image")
 		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 		return rec.Code, rec.Body.String()
 	}
 
-	// Without it, the existing id is still refused — that check is what stops an ingest from
-	// upserting a working row's files, licence and enabled flag away.
-	if code, body := post(`,"file_flag":"--clip_l"`); code != http.StatusConflict {
-		t.Fatalf("a plain ingest onto an existing id = %d, want 409 (%s)", code, body)
+	for _, field := range []string{"s3Key", "reuse_s3_key"} {
+		code, body := post("wrong-"+field, field, "image/checkpoints/split_files/sd_xl_base_1.0.safetensors")
+		if code != http.StatusBadRequest {
+			t.Fatalf("%s naming another key = %d, want 400 (%s)", field, code, body)
+		}
+		// It says the key the CP computed, because that is the only thing the caller can do
+		// anything with — "your key is wrong" is where the old refusal stopped.
+		if !strings.Contains(body, "image/checkpoints/sd_xl_base_1.0.safetensors") {
+			t.Errorf("%s: the refusal does not name the computed key: %s", field, body)
+		}
+		if !strings.Contains(body, `"next"`) {
+			t.Errorf("%s: the refusal carries no next act: %s", field, body)
+		}
 	}
-	// With it and no role, refused too: the unlabelled slot IS the checkpoint and a row has
-	// one, so a second would leave the last writer deciding what the loader gets.
-	if code, body := post(`,"attach":true`); code != http.StatusBadRequest {
-		t.Fatalf("an attach with no file_flag = %d, want 400 (%s)", code, body)
+	// The same key the CP would have chosen is simply ignored.
+	if code, body := post("agrees", "s3Key", "image/checkpoints/sd_xl_base_1.0.safetensors"); code != http.StatusOK {
+		t.Fatalf("a request that agrees with the CP = %d, want 200 (%s)", code, body)
 	}
-	// A role this provider does not read is refused rather than stored: the Agent's resolver
-	// drops an unknown flag (a catalogue newer than the box has to degrade), so the file would
-	// be downloaded, listed on the row and passed to nothing.
-	code, body := post(`,"attach":true,"file_flag":"--clip-l"`)
-	if code != http.StatusBadRequest || !strings.Contains(body, "--clip_l") {
-		t.Fatalf("a misspelt flag = %d, and the refusal does not name the vocabulary: %s", code, body)
-	}
-	// A role the row already fills.
-	if code, body := post(`,"attach":true,"file_flag":"--diffusion-model"`); code != http.StatusConflict {
-		t.Fatalf("attaching a second --diffusion-model = %d, want 409 (%s)", code, body)
-	}
-	// An id nothing holds: an attach names its target, and a typo must not write a row.
+	// And so are the three fields the plan answers for itself.
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
-		`{"id":"typo","kind":"checkpoint","s3Key":"image/text_encoders/clip_l.safetensors","attach":true,
-		  "file_flag":"--clip_l","license_accepted":true,
-		  "source":{"url":"https://example.invalid/c","sha256":"`+strings.Repeat("b", 64)+`"}}`))
+		`{"id":"ignored-flags","kind":"checkpoint","base_model":"sdxl","license_accepted":true,
+		  "file_flag":"--vae","with_family_parts":true,"with_family_vae":true,
+		  "source":{"url":"https://example.invalid/other_base.safetensors","sha256":"`+strings.Repeat("c", 64)+`"}}`))
 	r.SetPathValue("key", "image")
 	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("an attach to an id nothing holds = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a request still carrying the retired flags = %d (%s)", rec.Code, rec.Body.String())
 	}
-
-	// And the one that is right starts a job — with no family declared, because the row
-	// settled that when it was created.
-	if code, body := post(`,"attach":true,"file_flag":"--clip_l"`); code != http.StatusOK {
-		t.Fatalf("the attach = %d, want 200 (%s)", code, body)
-	}
-	jobs, err := st.ListEngineIngestJobs(ctx, "image", 10)
-	if err != nil || len(jobs) != 1 {
-		t.Fatalf("jobs = %d (%v) — the refusals above must not have left one", len(jobs), err)
+	jobs := engineJobsOf(t, st, "image")
+	for _, j := range jobs {
+		if j.ModelID != "ignored-flags" {
+			continue
+		}
+		// 🔴 The claimed role is IGNORED, not obeyed: a request cannot make an sdxl checkpoint a
+		// VAE, and a file staged under `image/vae/` is one the checkpoint loader never lists.
+		if j.S3Key != "image/checkpoints/other_base.safetensors" {
+			t.Errorf("file_flag from the request decided the key: %s", j.S3Key)
+		}
 	}
 }
 
@@ -1476,129 +1543,14 @@ func TestEngineAdminRefusesAWindowEditOnABorrowedRow(t *testing.T) {
 	}
 }
 
-// 🔴 The other half of ADR 0072 P2 欠落 6, and the one the code confessed to in its own refusal:
-// `engineAttachAllowed` answers "forget the row, or take this in as its own" to a file whose
-// flag is already filled. Wanting a t5xxl at another quantisation is not a reason to lose a
-// row's licence acceptance, family, params, enabled state and provenance — and the row's own
-// CHECKPOINT could not be changed by any ingest at all, because an attach requires a flag.
+// A download writes S3 before the reconciler can change its catalogue row. A destination any
+// other catalogue row or any tenant's job has already recorded is therefore not a vacant
+// filename: uploading there would destroy bytes the prior record still describes if this job
+// later lost its create race.
 //
-// Everything here is decided before RunTask, for the same reason the attach gate is: nine
-// minutes of Fargate is a bad place to learn that a slot was empty.
-func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
-	st := testSettingsStore(t)
-	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
-	e.settings, e.ctrl = st, nil
-	e.catalog = newEngineCatalog(st, "image")
-	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
-	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
-	ctx := t.Context()
-	if err := st.PutEngineModel(ctx, store.EngineModel{
-		Role: "image", ID: "flux1-dev-fp8", Kind: "checkpoint", BaseModel: "flux1", Enabled: true,
-		Files: []store.EngineModelFile{
-			{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1.safetensors"},
-			{Flag: "--t5xxl", S3Key: "image/text_encoders/t5xxl_fp16.safetensors"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// A row whose one file is UNLABELLED — the whole checkpoint, the slot no attach can reach.
-	if err := st.PutEngineModel(ctx, store.EngineModel{
-		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", BaseModel: "sdxl",
-		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	e.catalog.invalidate()
-	reg.ing = &engineIngester{
-		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
-		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
-	}
-
-	// 🔴 The key follows the ROLE, in every one of these requests. A file's destination directory
-	// is decided by the flag it is taken in under (engineComfyRoleDir) and the ingest refuses any
-	// other spelling, so a fixture that staged an unflagged checkpoint in `text_encoders/` would
-	// now be testing that refusal instead of the act it is about.
-	post := func(id, dir, extra string) (int, string) {
-		t.Helper()
-		rec := httptest.NewRecorder()
-		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/` + dir + `/` + id + `_t5xxl_fp8.safetensors",
-		  "license_accepted":true,"source":{"url":"https://example.invalid/t5xxl_fp8.safetensors",
-		  "sha256":"` + strings.Repeat("c", 64) + `"}` + extra + `}`
-		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
-		r.SetPathValue("key", "image")
-		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-		return rec.Code, rec.Body.String()
-	}
-
-	// A slot the row does not fill is NOT quietly created: that is the other act, and turning one
-	// into the other is how a mistyped flag becomes a row with two checkpoints. The refusal names
-	// the act that was meant.
-	code, body := post("flux1-dev-fp8", "text_encoders", `,"replace":true,"file_flag":"--clip_l"`)
-	if code != http.StatusBadRequest || !strings.Contains(body, "as a part") {
-		t.Fatalf("replacing an empty slot = %d, and the refusal does not point at the other act: %s", code, body)
-	}
-	// Both at once is not a request the CP may pick a winner for: their preconditions are
-	// opposite — one needs the slot free, the other needs it filled.
-	if code, body := post("flux1-dev-fp8", "text_encoders", `,"replace":true,"attach":true,"file_flag":"--t5xxl"`); code != http.StatusBadRequest {
-		t.Fatalf("attach and replace together = %d, want 400 (%s)", code, body)
-	}
-	// An id nothing holds, same as the attach gate: a typo must not write a row.
-	if code, body := post("typo", "text_encoders", `,"replace":true,"file_flag":"--t5xxl"`); code != http.StatusNotFound {
-		t.Fatalf("replacing in an id nothing holds = %d, want 404 (%s)", code, body)
-	}
-	// 🔴 The asymmetry that is the whole point. An attach with no flag is refused — the
-	// unlabelled slot is THE checkpoint and a row has one — and a replace with no flag is the
-	// only way that file has ever been changeable.
-	if code, body := post("sdxl-base-1.0", "checkpoints", `,"attach":true`); code != http.StatusBadRequest {
-		t.Fatalf("an attach with no file_flag = %d, want 400 (%s)", code, body)
-	}
-	// Upload happens before the catalogue swap, so sending a new version to the old key would
-	// destroy the object the row still names even if catalogue installation later failed.
-	rec := httptest.NewRecorder()
-	sameKeyBody := `{"id":"sdxl-base-1.0","kind":"checkpoint",
-	  "s3Key":"image/checkpoints/sd_xl_base_1.0.safetensors","replace":true,"license_accepted":true,
-	  "source":{"url":"https://example.invalid/sdxl-new.safetensors","sha256":"` + strings.Repeat("e", 64) + `"}}`
-	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(sameKeyBody))
-	r.SetPathValue("key", "image")
-	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "new S3 key") {
-		t.Fatalf("same-key replacement = %d (%s), want a pre-upload conflict", rec.Code, rec.Body.String())
-	}
-	// A different row can use the same basename. Its key still names the old object until this
-	// replacement is registered, so the incoming upload must not target it either.
-	rec = httptest.NewRecorder()
-	otherKeyBody := `{"id":"sdxl-base-1.0","kind":"checkpoint",
-	  "s3Key":"image/text_encoders/t5xxl_fp16.safetensors","replace":true,"license_accepted":true,
-	  "source":{"url":"https://example.invalid/sdxl-new.safetensors","sha256":"` + strings.Repeat("e", 64) + `"}}`
-	r = httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(otherKeyBody))
-	r.SetPathValue("key", "image")
-	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "already recorded") {
-		t.Fatalf("other-row destination = %d (%s), want a pre-upload conflict", rec.Code, rec.Body.String())
-	}
-	if code, body := post("sdxl-base-1.0", "checkpoints", `,"replace":true`); code != http.StatusOK {
-		t.Fatalf("replacing a row's own checkpoint = %d, want 200 (%s)", code, body)
-	}
-	// And the flagged one, with no family declared: the row settled that when it was created.
-	if code, body := post("flux1-dev-fp8", "text_encoders", `,"replace":true,"file_flag":"--t5xxl"`); code != http.StatusOK {
-		t.Fatalf("the replace = %d, want 200 (%s)", code, body)
-	}
-	jobs, err := st.ListEngineIngestJobs(ctx, "image", 10)
-	if err != nil || len(jobs) != 2 {
-		t.Fatalf("jobs = %d (%v) — the refusals above must not have left one", len(jobs), err)
-	}
-	// Nothing about either row changed at the door: the swap happens when the download finishes.
-	rows, _ := st.ListEngineModels(ctx, "image")
-	for _, m := range rows {
-		if m.ID == "flux1-dev-fp8" && (!m.Enabled || len(m.Files) != 2) {
-			t.Errorf("the row was touched before the download: enabled=%v files=%+v", m.Enabled, m.Files)
-		}
-	}
-}
-
-// A download writes S3 before the reconciler can change its catalogue row. A same filename from
-// a later version must therefore be rejected when any other catalogue row or tenant's job has
-// already recorded that key, rather than relying only on the replacement slot's current key.
+// 🔴 The destination is the CP's now (ADR 0085 decision 1), so the collision is reached by naming
+// a SOURCE whose file lands on the taken key — which is exactly how an operator reaches it: the
+// same filename from a later version of the same model.
 func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 	st := testSettingsStore(t)
 	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
@@ -1611,12 +1563,6 @@ func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 		cluster: "c", ecs: ecsAPI, store: st, models: st,
 	}
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
-	if err := st.PutEngineModel(t.Context(), store.EngineModel{
-		Role: "image", ID: "target", Kind: "checkpoint", BaseModel: "sdxl",
-		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/current.safetensors"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
 	if err := st.PutEngineModel(t.Context(), store.EngineModel{
 		Role: "image", ID: "other", Kind: "checkpoint", BaseModel: "sdxl",
 		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/occupied.safetensors"}},
@@ -1635,10 +1581,10 @@ func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 	}
 	e.catalog.invalidate()
 
-	post := func(destination string) (int, string) {
+	post := func(id, file string) (int, string) {
 		t.Helper()
-		body := `{"id":"target","kind":"checkpoint","replace":true,"s3Key":"` + destination + `",` +
-			`"license_accepted":true,"source":{"url":"https://example.invalid/new-version.safetensors","sha256":"` + strings.Repeat("d", 64) + `"}}`
+		body := `{"id":"` + id + `","kind":"checkpoint","base_model":"sdxl","license_accepted":true,` +
+			`"source":{"url":"https://example.invalid/` + file + `","sha256":"` + strings.Repeat("d", 64) + `"}}`
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/api/admin/engines/image/ingest", strings.NewReader(body))
 		r.SetPathValue("key", "image")
@@ -1646,17 +1592,43 @@ func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 		return rec.Code, rec.Body.String()
 	}
 
-	for _, destination := range []string{"image/checkpoints/occupied.safetensors", "image/checkpoints/job-history.safetensors"} {
-		if code, body := post(destination); code != http.StatusConflict || !strings.Contains(body, "already recorded") {
-			t.Fatalf("destination %s = %d (%s), want a pre-upload collision", destination, code, body)
+	// The row's key, and the failed job's key. Two holders with two different ways out, which is
+	// the whole reason the refusal carries them (ADR 0085 decision 5).
+	for _, c := range []struct{ id, file, holder, next string }{
+		{"new-a", "occupied.safetensors", "row", "complete"},
+		{"new-b", "job-history.safetensors", "job", "dismiss_job"},
+	} {
+		code, body := post(c.id, c.file)
+		if code != http.StatusConflict || !strings.Contains(body, "already recorded") {
+			t.Fatalf("destination %s = %d (%s), want a pre-upload collision", c.file, code, body)
+		}
+		var out struct {
+			Error struct {
+				Holder *apiHolder `json:"holder"`
+				Next   *apiNext   `json:"next"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(body), &out); err != nil {
+			t.Fatalf("answer: %v (%s)", err, body)
+		}
+		if out.Error.Holder == nil || out.Error.Holder.Kind != c.holder {
+			t.Errorf("%s: holder = %+v, want a %s", c.file, out.Error.Holder, c.holder)
+		}
+		if out.Error.Next == nil || out.Error.Next.Act != c.next {
+			t.Errorf("%s: next = %+v, want %s", c.file, out.Error.Next, c.next)
 		}
 	}
 	if len(ecsAPI.run) != 0 {
 		t.Fatalf("recorded destinations started %d ingest task(s)", len(ecsAPI.run))
 	}
-	jobs, err := st.ListEngineIngestJobs(t.Context(), "image", 10)
-	if err != nil || len(jobs) != 1 || jobs[0].ID != "another-tenants-object" {
-		t.Fatalf("collision left a new job: %+v (%v)", jobs, err)
+	jobs := engineJobsOf(t, st, "image")
+	if len(jobs) != 1 || jobs[0].ID != "another-tenants-object" {
+		t.Fatalf("collision left a new job: %+v", jobs)
+	}
+	// The negative control: a free filename goes through, so the two refusals above are about the
+	// destination and not about this fixture refusing everything.
+	if code, body := post("new-c", "free.safetensors"); code != http.StatusOK {
+		t.Fatalf("a free destination = %d (%s), want 200", code, body)
 	}
 }
 
@@ -1949,5 +1921,65 @@ func TestEngineIngestStartsALoginWalledAssetWhenACivitaiTokenIsRegistered(t *tes
 	}
 	if len(ecsAPI.run) != 1 {
 		t.Errorf("tasks started = %d, want the download to be attempted", len(ecsAPI.run))
+	}
+}
+
+// The three gates that outlived the request fields they were written for (ADR 0085 decision 3).
+// `attach` and `replace` left the ingest, and `file_flag` is ignored there — but `complete` fills
+// a free slot, swaps a filled one and takes a flag in `choices`, so all three rules are still the
+// ones that decide it. Kept under test rather than kept on trust: a rule nothing exercises is one
+// that quietly stops being true before its next caller arrives.
+func TestTheSlotGatesSurviveForComplete(t *testing.T) {
+	row := &store.EngineModel{ID: "flux1-dev", Files: []store.EngineModelFile{
+		{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1.safetensors"},
+	}}
+	// Attaching: a row that is not there, the unlabelled slot (which a row has exactly one of),
+	// and a role already filled.
+	if ref := engineAttachAllowed(nil, "typo", "image", "--clip_l"); ref == nil || ref.status != http.StatusNotFound {
+		t.Errorf("attaching to an id nothing holds = %+v", ref)
+	}
+	if ref := engineAttachAllowed(row, "flux1-dev", "image", ""); ref == nil || ref.status != http.StatusBadRequest {
+		t.Errorf("attaching with no flag = %+v", ref)
+	}
+	ref := engineAttachAllowed(row, "flux1-dev", "image", "--diffusion-model")
+	if ref == nil || ref.status != http.StatusConflict {
+		t.Fatalf("attaching a second --diffusion-model = %+v", ref)
+	}
+	// Decision 5, on the one of the three that is a 409: it names what is in the way and the act
+	// that gets past it.
+	if ref.Holder == nil || ref.Holder.Key != "image/diffusion_models/flux1.safetensors" ||
+		ref.Next == nil || ref.Next.Act != "replace" {
+		t.Errorf("the refusal carries %+v / %+v", ref.Holder, ref.Next)
+	}
+	if ref := engineAttachAllowed(row, "flux1-dev", "image", "--clip_l"); ref != nil {
+		t.Errorf("attaching to a free slot was refused: %s", ref.message)
+	}
+	// Replacing is its mirror: an empty slot is the OTHER act, and the refusal says so.
+	if ref := engineReplaceAllowed(row, "flux1-dev", "image", "image/text_encoders/x.safetensors",
+		"--clip_l", false); ref == nil || ref.status != http.StatusBadRequest {
+		t.Errorf("replacing an empty slot = %+v", ref)
+	}
+	// 🔴 A replacement download uploads before the catalogue swap, so the old key must stay
+	// occupied until the new object is registered — reusing it destroys bytes the live row names.
+	if ref := engineReplaceAllowed(row, "flux1-dev", "image", "image/diffusion_models/flux1.safetensors",
+		"--diffusion-model", false); ref == nil || ref.status != http.StatusConflict {
+		t.Errorf("a same-key replacement download = %+v", ref)
+	}
+	// Verified reuse is the exception: nothing is uploaded, so the same key is idempotent.
+	if ref := engineReplaceAllowed(row, "flux1-dev", "image", "image/diffusion_models/flux1.safetensors",
+		"--diffusion-model", true); ref != nil {
+		t.Errorf("a same-key reuse was refused: %s", ref.message)
+	}
+	// And the vocabulary: an unknown flag is dropped silently by the Agent's resolver, so a typo
+	// would produce a row whose part is never passed to any loader.
+	if aerr := engineFileFlagValid("comfy", "--clip-l"); aerr == nil {
+		t.Error("a misspelt flag passed the vocabulary check")
+	}
+	if aerr := engineFileFlagValid("comfy", "--clip_l"); aerr != nil {
+		t.Errorf("a flag comfy reads was refused: %s", aerr.message)
+	}
+	// A provider that loads one whole checkpoint has no roles to declare at all.
+	if aerr := engineFileFlagValid("sdcpp", "--vae"); aerr == nil {
+		t.Error("a provider with no vocabulary accepted a file role")
 	}
 }

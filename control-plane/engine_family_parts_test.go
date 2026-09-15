@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -231,33 +232,48 @@ func TestFixPartsRefusesAFamilyWithNoPartList(t *testing.T) {
 	}
 }
 
-// 🔴 A part is not a model. Registering one as its own row is what put encoders in the
-// registered list beside the checkpoints, where they can never be enabled and help nothing.
-func TestIngestRefusesToRegisterAPartAsItsOwnRow(t *testing.T) {
-	st := testSettingsStore(t)
-	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
-	e.settings, e.ctrl = st, nil
-	e.catalog = newEngineCatalog(st, "image")
-	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
-	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
-	reg.ing = &engineIngester{
-		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
-		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
-	}
-	e.catalog.invalidate()
+// 🔴 A part is not a model, and since ADR 0085 decision 1 a REQUEST cannot claim otherwise: the
+// role a file plays is the family's answer, not a field on the wire. What put encoders in the
+// registered list beside the checkpoints — where they can never be enabled and help nothing — was
+// a form that let somebody pick `--clip_l` and "new" in the same breath.
+//
+// So the claim is ignored rather than refused: the plan stages Anima's weights under the role its
+// template reads, and the encoder it needs arrives as a part of that row.
+func TestIngestIgnoresARoleTheRequestClaims(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, _, st, _ := enginePlanAPI(t)
+
 	rec := httptest.NewRecorder()
-	body := `{"id":"qwen_3_06b_base","kind":"checkpoint","base_model":"anima","file_flag":"--clip_l",
-	  "s3Key":"image/text_encoders/qwen_3_06b_base.safetensors","license_accepted":true,
-	  "source":{"url":"https://example.invalid/qwen.safetensors","sha256":"` + strings.Repeat("c", 64) + `"}}`
+	body := `{"kind":"checkpoint","base_model":"anima","file_flag":"--clip_l","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`
 	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
 	r.SetPathValue("key", "image")
-	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("a part registered as a row = %d %s, want 400", rec.Code, rec.Body.String())
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the press = %d (%s)", rec.Code, rec.Body.String())
 	}
-	// The message has to name the act the person meant, which is on the same screen.
-	if !strings.Contains(rec.Body.String(), "attach") {
-		t.Errorf("the refusal does not say what to do instead: %s", rec.Body.String())
+	jobs := engineJobsOf(t, st, "image")
+	if len(jobs) != 1 {
+		t.Fatalf("jobs = %d", len(jobs))
+	}
+	var spec engineIngestRequest
+	if err := json.Unmarshal([]byte(jobs[0].Spec), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.FileFlag != "--diffusion-model" {
+		t.Errorf("the request's claimed role won: %q", spec.FileFlag)
+	}
+	if jobs[0].S3Key != "image/diffusion_models/anima-aesthetic-v1.1.safetensors" {
+		t.Errorf("staged at %q — a name no UNETLoader lists", jobs[0].S3Key)
+	}
+	// And the encoder is promised as a PART of this row rather than becoming a row of its own.
+	var flags []string
+	for _, fu := range spec.PartsFollowUp {
+		flags = append(flags, fu.Flag)
+	}
+	if len(flags) != 2 {
+		t.Errorf("the family's parts = %v, want the encoder and the VAE", flags)
 	}
 }
 
@@ -319,75 +335,56 @@ func TestPartPlanRefusesAKeyHeldBySomethingItCannotMatch(t *testing.T) {
 	}
 }
 
-// 🔴 The mistake an operator falls into by DEFAULT, and the one that made every Anima row on
-// af-sandbox useless: the form offers "whole checkpoint" first, and a split family reads no
-// unflagged file at all. The row then holds a 4 GB file under a role no template looks at, and
-// reports all three parts missing — including the one it is holding.
-func TestIngestRefusesAWholeCheckpointForASplitFamily(t *testing.T) {
-	st := testSettingsStore(t)
-	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
-	e.settings, e.ctrl = st, nil
-	e.catalog = newEngineCatalog(st, "image")
-	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
-	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
-	reg.ing = &engineIngester{
-		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
-		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
-	}
-	e.catalog.invalidate()
+// 🔴 The mistake an operator fell into by DEFAULT, and the one that made every Anima row on
+// af-sandbox useless: the form offered "whole checkpoint" first, and a split family reads no
+// unflagged file at all. The row then held a 4 GB file under a role no template looks at and
+// reported all three parts missing — including the one it was holding.
+//
+// Nobody is asked any more. The family says which of its files the weights are, and the negative
+// control below is what keeps that from becoming a rule about every family: sdxl IS one whole
+// checkpoint and stays one.
+func TestIngestStagesASplitFamilysWeightsWhereItsLoaderLooks(t *testing.T) {
+	engineHFRepoStub(t, map[string][]string{
+		"circlestone-labs/Anima": {"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors",
+			"split_files/text_encoders/qwen_3_06b_base.safetensors",
+			"split_files/vae/qwen_image_vae.safetensors"},
+		"stabilityai/sdxl": {"sd_xl_base_1.0.safetensors"},
+	})
+	a, _, st, _ := enginePlanAPI(t)
 
-	post := func(family string) (int, string) {
+	post := func(repo, file string) (int, string) {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		body := `{"id":"anima-aesthetic","kind":"checkpoint","base_model":"` + family + `",
-		  "s3Key":"image/checkpoints/anima-aesthetic.safetensors","license_accepted":true,
-		  "source":{"url":"https://example.invalid/anima.safetensors","sha256":"` + strings.Repeat("d", 64) + `"}}`
+		body := `{"kind":"checkpoint","license_accepted":true,
+		  "source":{"hf":{"repo":"` + repo + `","file":"` + file + `"}}}`
 		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
 		r.SetPathValue("key", "image")
-		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
 		return rec.Code, rec.Body.String()
 	}
 
-	code, body := post("anima")
-	if code != http.StatusBadRequest {
-		t.Fatalf("an unflagged anima row = %d %s, want 400", code, body)
+	if code, body := post("circlestone-labs/Anima",
+		"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"); code != http.StatusOK {
+		t.Fatalf("taking anima in = %d (%s), want 200", code, body)
 	}
-	// The refusal names the role the file is, because the family already says there is only one
-	// candidate — an error that only says "no" leaves the operator exactly where they were.
-	if !strings.Contains(body, "--diffusion-model") {
-		t.Errorf("the refusal does not name the role: %s", body)
+	// 🔴 The negative control: sdxl is one whole checkpoint, its template reads the unflagged
+	// slot, and taking one in must stay the ordinary act it has always been.
+	if code, body := post("stabilityai/sdxl", "sd_xl_base_1.0.safetensors"); code != http.StatusOK {
+		t.Fatalf("taking an sdxl checkpoint in = %d (%s), want 200", code, body)
 	}
-	// 🔴 The negative control: sdxl IS one whole checkpoint, and taking one in must stay the
-	// ordinary act it has always been.
-	if code, body := post("sdxl"); code == http.StatusBadRequest && strings.Contains(body, "whole checkpoint") {
-		t.Errorf("a single-file family was refused its own shape: %s", body)
+	want := map[string]string{
+		"anima-aesthetic-v1.1": "image/diffusion_models/anima-aesthetic-v1.1.safetensors",
+		"sd_xl_base_1.0":       "image/checkpoints/sd_xl_base_1.0.safetensors",
 	}
-	// 🔴 And the control that matters more: the act the refusal ABOVE tells the operator to
-	// perform has to work. A flagged file is otherwise refused as "a PART of a model, not a
-	// model", and with both rules in force no new row of a split family could be taken in at
-	// all — the advice would lead straight into the other refusal.
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
-		`{"id":"anima-aesthetic","kind":"checkpoint","base_model":"anima",
-		  "s3Key":"image/diffusion_models/anima-aesthetic.safetensors","file_flag":"--diffusion-model",
-		  "license_accepted":true,
-		  "source":{"url":"https://example.invalid/anima.safetensors","sha256":"`+strings.Repeat("d", 64)+`"}}`))
-	r.SetPathValue("key", "image")
-	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("taking anima's weights in under the role the refusal names = %d (%s), want 200",
-			rec.Code, rec.Body.String())
+	for _, j := range engineJobsOf(t, st, "image") {
+		if key, ok := want[j.ModelID]; ok {
+			if j.S3Key != key {
+				t.Errorf("%s staged at %q, want %q", j.ModelID, j.S3Key, key)
+			}
+			delete(want, j.ModelID)
+		}
 	}
-	// The encoder still is not a model, which is the rule the exception above must not widen.
-	part := httptest.NewRecorder()
-	r2 := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
-		`{"id":"qwen_3_06b_base","kind":"checkpoint","base_model":"anima",
-		  "s3Key":"image/text_encoders/qwen_3_06b_base.safetensors","file_flag":"--clip_l",
-		  "license_accepted":true,
-		  "source":{"url":"https://example.invalid/q.safetensors","sha256":"`+strings.Repeat("e", 64)+`"}}`))
-	r2.SetPathValue("key", "image")
-	a.postIngest(part, r2, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-	if part.Code != http.StatusBadRequest || !strings.Contains(part.Body.String(), "not a model") {
-		t.Errorf("an encoder as its own row = %d (%s), want the part refusal", part.Code, part.Body.String())
+	if len(want) != 0 {
+		t.Errorf("no job was written for %v", want)
 	}
 }

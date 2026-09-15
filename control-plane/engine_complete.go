@@ -257,7 +257,7 @@ func engineCompletePlan(ctx context.Context, role, provider string, m store.Engi
 			p := part
 			partPtr = &p
 		}
-		step, aerr := engineCompleteStepFor(ctx, role, lora, flag, partPtr, l,
+		step, aerr := engineCompleteStepFor(ctx, role, m.ID, lora, flag, partPtr, l,
 			perDir[engineComfyRoleDir(flag, lora)] > 1, strings.TrimSpace(b.Choices[flag]), used)
 		if aerr != nil {
 			return nil, aerr
@@ -281,7 +281,7 @@ func engineCompletePlan(ctx context.Context, role, provider string, m store.Engi
 }
 
 // engineCompleteStepFor resolves one missing role against the ledger.
-func engineCompleteStepFor(ctx context.Context, role string, lora bool, flag string,
+func engineCompleteStepFor(ctx context.Context, role, id string, lora bool, flag string,
 	part *engineFamilyPart, l *engineLedger, shared bool, chosen string,
 	used map[string]bool) (engineCompleteStep, *apiRefusal) {
 	dir := strings.TrimSuffix(engineComfyRoleDir(flag, lora), "/")
@@ -290,9 +290,12 @@ func engineCompleteStepFor(ctx context.Context, role string, lora bool, flag str
 	if chosen != "" {
 		object := l.present(chosen)
 		if object == nil {
+			// The pick is minutes old and the bucket has moved on — the object was deleted, or a
+			// job is writing it now. Pressing again is the act, because that re-reads the ledger
+			// and offers what is there NOW rather than what the dialog remembered.
 			return engineCompleteStep{}, refuse(http.StatusConflict, errCodeEngineBadBody,
 				"the ledger holds nothing usable at "+chosen+" for "+flag,
-				&apiHolder{Kind: "object", Key: chosen}, nil)
+				&apiHolder{Kind: "object", Key: chosen}, &apiNext{Act: "complete", Target: id})
 		}
 		return engineCompleteDeclareOrMove(role, lora, flag, object), nil
 	}
@@ -430,7 +433,7 @@ func engineCompleteSwaps(role string, lora bool, m store.EngineModel, l *engineL
 		if object == nil {
 			return nil, refuse(http.StatusConflict, errCodeEngineBadBody,
 				"the ledger holds nothing usable at "+key+" for "+flag,
-				&apiHolder{Kind: "object", Key: key}, nil)
+				&apiHolder{Kind: "object", Key: key}, &apiNext{Act: "complete", Target: m.ID})
 		}
 		step := engineCompleteDeclareOrMove(role, lora, flag, object)
 		step.replaceSlot = true

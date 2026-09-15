@@ -249,6 +249,8 @@ export const errors = {
   // ECS のタスクは止まらない（終わったらカタログ行を書く）ことがそのまま理由になる。
   "err.ingest_job_unknown": "その取り込み履歴はこのエンジンにありません",
   "err.ingest_job_live": "その取り込みはまだ走っているので、履歴だけを消すことはできません",
+  "err.engine_plan_stale": "画面の取り込み計画は最新ではありません。新しい計画で取り込み直してください",
+  "err.engine_ingest_act_gone": "その操作は取り込みではなく、登録済みの行の「揃える」になりました",
   "err.hf_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新してください",
   "err.hf_token_empty": "トークンが空です",
   "err.hf_token_store_failed": "トークンを保存できませんでした",

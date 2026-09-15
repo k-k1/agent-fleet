@@ -14,6 +14,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"strings"
 )
 
 // apiHolder is what stands in the way: a catalogue row, an ingest job, an object in the bucket,
@@ -51,14 +52,10 @@ func (r *apiRefusal) Plain() *apiError {
 	return r.apiError
 }
 
-// writeAPIRefusal is writeAPIErr with the two fields. The `error` object keeps `code` and
-// `message` exactly where every client reads them; `holder` and `next` are added beside them and
-// omitted when nil, so a refusal without them is byte-for-byte what writeAPIErr writes.
-func writeAPIRefusal(w http.ResponseWriter, r *apiRefusal) {
-	if r == nil || r.apiError == nil {
-		writeAPIErr(w, internalErr(errNilRefusal))
-		return
-	}
+// body is the `error` object as the wire carries it. `code` and `message` stay exactly where
+// every client reads them; `holder` and `next` are added beside them and omitted when nil, so a
+// refusal without them is byte-for-byte what writeAPIErr writes.
+func (r *apiRefusal) body() map[string]any {
 	body := map[string]any{"code": r.code, "message": r.message}
 	if r.Holder != nil {
 		body["holder"] = r.Holder
@@ -66,7 +63,30 @@ func writeAPIRefusal(w http.ResponseWriter, r *apiRefusal) {
 	if r.Next != nil {
 		body["next"] = r.Next
 	}
-	writeJSON(w, r.status, map[string]any{"error": body})
+	return body
+}
+
+// writeAPIRefusal is writeAPIErr with the two fields.
+func writeAPIRefusal(w http.ResponseWriter, r *apiRefusal) {
+	writeAPIRefusalWith(w, r, "", nil)
+}
+
+// writeAPIRefusalWith adds ONE named value beside the error object.
+//
+// It exists for the stale plan (ADR 0085 decision 4): a refusal that says "what you were looking
+// at has changed" and does not carry the current answer makes the caller ask again for it, and
+// between the two calls it can change again. The fresh plan therefore rides on the refusal that
+// rejected the old one.
+func writeAPIRefusalWith(w http.ResponseWriter, r *apiRefusal, field string, v any) {
+	if r == nil || r.apiError == nil {
+		writeAPIErr(w, internalErr(errNilRefusal))
+		return
+	}
+	out := map[string]any{"error": r.body()}
+	if strings.TrimSpace(field) != "" {
+		out[field] = v
+	}
+	writeJSON(w, r.status, out)
 }
 
 var errNilRefusal = errors.New("nil refusal")
