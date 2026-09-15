@@ -189,7 +189,10 @@ folder is labelled with **the session's name and its image count**, not its inte
 A pane that makes pictures on your organisation's own ComfyUI **without an agent in the loop**.
 Asking a session for a picture is right for "put an illustration in this document"; this is for
 "forty variations of one prompt at three CFG values", where every round trip through a model
-would cost a turn and the knobs that matter would be out of reach.
+would cost a turn. A session can name the same settings you can (`generate_image` takes steps,
+cfg, sampler, scheduler, seed, the negative prompt and the LoRA weights), but it cannot see what
+this form shows you: each checkpoint's own published numbers as the placeholders, the fields its
+family does not read greyed out, and a trial run before you commit forty.
 
 **Two ways in:** the workspace action bar's **Images**, and the leader key **`g i`**. It is one
 pane per workspace — opening it again focuses the one you have.

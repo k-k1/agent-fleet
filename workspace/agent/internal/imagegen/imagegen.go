@@ -116,10 +116,11 @@ type Request struct {
 	// decision 4). It shares the catalogue's shape because it is merged into the SAME place the
 	// catalogue row is: family recipe ← catalogue row ← this, field by field.
 	//
-	// It reaches the Console's pane and never the MCP tool. ADR 0069 kept these out of the tool
-	// because an agent turning a knob that some provider ignores learns nothing; that reasoning
-	// is about the tool an agent sees, not about a form whose only providers are the fleet's own
-	// and whose greyed-out fields come from this Agent's own answer (Caps.Params).
+	// Both surfaces reach it: the Console's pane and, since the 2026-09-15 follow-up, the MCP
+	// tool. ADR 0069 kept these out of the tool on the grounds that an agent turning a knob some
+	// provider ignores learns nothing — which stopped being true for this one: all seven families
+	// read `steps` and `sampler`, and the two a family does not read are named in the result's
+	// warnings (comfyIgnoredParamWarnings) rather than swallowed.
 	//
 	// A POINTER so "the caller said nothing" survives: a zero-valued struct is exactly what the
 	// merge reads as "declared nothing", and the two must not be spelled the same at the edge

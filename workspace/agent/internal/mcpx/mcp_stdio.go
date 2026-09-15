@@ -1220,6 +1220,37 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 		props["strength"] = map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 1,
 			"description": "How much of the input picture an edit changes, 0-1 (0.6 when omitted). Small values keep the composition and correct it; 1 redraws from the prompt alone. **Only with op=edit** — inpaint always repaints its masked area fully, and says so in warnings"}
 	}
+	// params — the sampler overlay, and the fourth word ADR 0069 let into the vocabulary. Offered
+	// only where a route BUILDS the sampler graph, which is what having names to send means: the
+	// vendor routes have no steps and no sampler, and a request that carries them there comes back
+	// as a warning rather than being dropped.
+	//
+	// The enums are the AGENT's own allow-lists, relayed rather than spelled out here. This
+	// package cannot import internal/imagegen, and a second copy of those names would be a
+	// schema that offers what the Agent then refuses by name — the one failure the pane's form
+	// already takes this list to avoid.
+	if len(offer.Samplers) > 0 {
+		params := map[string]any{
+			// The bounds are literals for the same reason the LoRA cap is: internal/imagegen holds
+			// the real ones (paramsMaxSteps / paramsMaxCFG) and refuses past them by value. These
+			// only save a caller the round trip.
+			"steps": map[string]any{"type": "integer", "minimum": 1, "maximum": 150,
+				"description": "Sampling steps: slower, not automatically better"},
+			"cfg": map[string]any{"type": "number", "minimum": 0, "maximum": 30,
+				"description": "How hard the sampler is pushed toward the prompt"},
+			"sampler":   map[string]any{"type": "string", "enum": offer.Samplers},
+			"scheduler": map[string]any{"type": "string", "enum": offer.Schedulers},
+		}
+		if len(offer.Schedulers) == 0 {
+			delete(params, "scheduler")
+		}
+		props["params"] = map[string]any{
+			"type": "object", "additionalProperties": false, "properties": params,
+			"description": "Sampler settings. **Leave it unset unless the user asked for one** — each field omitted runs at what this checkpoint's own entry declares, which is what its publisher recommends, and the fields are independent (naming `sampler` alone keeps the published steps and cfg). " +
+				"**`steps` and `cfg` are per-checkpoint and this schema cannot tell you which**: a distilled \"Turbo\" checkpoint runs at ~8 steps and cfg 1, a base one at 30+ and cfg 4-7, so a guessed number burns both the picture and the GPU turn. " +
+				"`sampler` and `scheduler` are safe to name — every checkpoint takes any of them, and one a family ignores comes back in warnings",
+		}
+	}
 	// loras is offered as soon as ONE exists, unlike model: applying it or not applying it are
 	// already two different pictures, so a single-entry list is a real choice (ADR 0072
 	// decision 5, phase P3).
@@ -1370,6 +1401,15 @@ type imageGenOffer struct {
 	// Strength is true when ANY offered provider lets the caller say how much of the input
 	// picture an edit changes, by the same union rule as Seed.
 	Strength bool
+	// Samplers and Schedulers are the union of the offered providers' own allow-lists, and their
+	// presence is also what says `params` reaches anything at all: only a route that BUILDS the
+	// sampler graph has names to send, so an empty pair is exactly the case where the argument
+	// would be a knob attached to nothing.
+	//
+	// A union of NAMES rather than a boolean, unlike Seed and the rest, because the tool has to
+	// put them in an enum — and a name this binary will not send must not appear there, or the
+	// schema promises something the Agent refuses one round trip later.
+	Samplers, Schedulers []string
 	// Services maps a provider id to the image service it reaches, for EVERY ready provider —
 	// including the one dropped below, which the description has to be able to name.
 	Services map[string]string
@@ -1417,6 +1457,7 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 	}
 	seenOp, seenRatio, seenModel := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	seenLora := map[string]bool{}
+	seenSampler, seenScheduler := map[string]bool{}, map[string]bool{}
 	offer.Services = map[string]string{}
 	for _, p := range ready {
 		if p.Service != "" {
@@ -1456,6 +1497,18 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 		offer.Seed = offer.Seed || p.Seed
 		offer.Negative = offer.Negative || p.Negative
 		offer.Strength = offer.Strength || p.Strength
+		for _, s := range p.Samplers {
+			if !seenSampler[s] {
+				seenSampler[s] = true
+				offer.Samplers = append(offer.Samplers, s)
+			}
+		}
+		for _, s := range p.Schedulers {
+			if !seenScheduler[s] {
+				seenScheduler[s] = true
+				offer.Schedulers = append(offer.Schedulers, s)
+			}
+		}
 	}
 	if len(offer.Providers) == 0 || len(offer.Ops) == 0 {
 		return imageGenOffer{}, false
@@ -2295,6 +2348,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		// rest: the Agent refuses an unknown name or a family that does not match the checkpoint
 		// BY NAME, which is a better answer than a silently shortened list.
 		Loras []imageGenLoraArg `json:"loras"`
+		// Params is the sampler overlay, and a POINTER for the same reason Strength is: an absent
+		// object and an empty one are not the same request, and which of the four a family reads
+		// is answered downstream in warnings rather than guessed at here.
+		Params *imageGenParamsArg `json:"params"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
@@ -2326,7 +2383,7 @@ func mcpStdioCall(req mcpReq) []byte {
 			op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,
 			aspectRatio: a.AspectRatio, background: a.Background, count: a.Count,
 			inputs: a.Inputs, mask: a.Mask, model: a.Model, loras: a.Loras, seed: a.Seed,
-			negativePrompt: a.NegativePrompt, strength: a.Strength,
+			negativePrompt: a.NegativePrompt, strength: a.Strength, params: a.Params,
 		})
 	case "list_child_sessions":
 		// The only one of the nine that is NOT also an operator tool: the operator has
