@@ -282,6 +282,10 @@ func engineVaeFamilyOf(provider string, b engineIngestBody, res engineResolved) 
 // resolve failure to. Everything a second job needs is therefore decided while somebody is still
 // looking at the screen.
 type engineVaeFollowUp struct {
+	// Flag is the role the file is attached under. Empty means `--vae`, which is what this type
+	// carried before a SPLIT family's other parts (engine_family_parts.go) reused it — the zero
+	// value therefore stays the VAE remedy's own meaning and no stored job changes shape.
+	Flag  string
 	S3Key string
 	// Resolved is the download, for the case the bucket does not hold this file yet.
 	Resolved engineResolved

@@ -776,6 +776,10 @@ type engineIngestRequest struct {
 	// family decodes with. Written onto the FILE, so it survives the row being edited and moves
 	// with a replacement.
 	VaeBundled string
+	// PartsFollowUp is the same promise for a SPLIT family's own parts — the text encoder and
+	// VAE a diffusion model cannot generate without (engine_family_parts.go). A list rather than
+	// one, because a family needs all of them or the row stays refused.
+	PartsFollowUp []engineVaeFollowUp
 	// VaeFollowUp is the second file this ingest promised: the family's own VAE, attached to the
 	// row this job creates. Decided while somebody was still at the form — the job finishes in
 	// the reconciler, where a resolve failure has nobody to report itself to.
@@ -1128,19 +1132,39 @@ func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, j
 // form, so this path makes no judgement and can report nothing — a failure is a log line and a
 // row that keeps its `vae_missing` mark, which is the state the panel's own button fixes.
 func (g *engineIngester) followUpVae(ctx context.Context, req engineIngestRequest) {
-	fu := req.VaeFollowUp
-	if fu == nil || g.models == nil {
+	if fu := req.VaeFollowUp; fu != nil {
+		g.followUpFile(ctx, req, *fu)
+	}
+	// The SPLIT families' parts (engine_family_parts.go) ride the same path: same promise, same
+	// place it has to be kept, and the only thing that differs is which flag the file lands
+	// under — which is why the loop is over one list rather than a second copy of this function.
+	for _, fu := range req.PartsFollowUp {
+		g.followUpFile(ctx, req, fu)
+	}
+}
+
+// followUpFile keeps ONE of those promises.
+func (g *engineIngester) followUpFile(ctx context.Context, req engineIngestRequest, fu engineVaeFollowUp) {
+	if g.models == nil {
 		return
+	}
+	flag := strings.TrimSpace(fu.Flag)
+	if flag == "" {
+		flag = "--vae"
 	}
 	if fu.Staged {
 		file := store.EngineModelFile{
-			Flag: "--vae", S3Key: fu.S3Key, Bytes: fu.Bytes, Source: fu.Source,
-			ArtifactIdentity: fu.ArtifactIdentity, VaeBundled: engineVaeYes,
+			Flag: flag, S3Key: fu.S3Key, Bytes: fu.Bytes, Source: fu.Source,
+			ArtifactIdentity: fu.ArtifactIdentity,
+		}
+		if flag == "--vae" {
+			// The mark the VAE remedy exists to clear. A text encoder has no such question.
+			file.VaeBundled = engineVaeYes
 		}
 		found, err := g.models.AppendEngineModelFile(ctx, req.Role, req.ModelID, file)
 		if err != nil || !found {
-			log.Printf("engines: %s/%s did not take the family VAE %s (found=%v): attach it from the panel",
-				req.Role, req.ModelID, fu.S3Key, found)
+			log.Printf("engines: %s/%s did not take %s %s (found=%v): attach it from the panel",
+				req.Role, req.ModelID, flag, fu.S3Key, found)
 			return
 		}
 		log.Printf("engines: %s/%s declared %s, which this deployment already held", req.Role, req.ModelID, fu.S3Key)
@@ -1156,13 +1180,13 @@ func (g *engineIngester) followUpVae(ctx context.Context, req engineIngestReques
 		Role: req.Role, ModelID: req.ModelID, S3Key: fu.S3Key,
 		AcceptedBy: req.AcceptedBy, AcceptedTenant: req.AcceptedTenant,
 		AcceptedLicense: engineLicenceLabel(fu.Resolved),
-		Resolved:        fu.Resolved, FileFlag: "--vae", Attach: true,
+		Resolved:        fu.Resolved, FileFlag: flag, Attach: true,
 	}); aerr != nil {
-		log.Printf("engines: %s/%s could not start the family VAE ingest (%s): attach it from the panel",
-			req.Role, req.ModelID, aerr.message)
+		log.Printf("engines: %s/%s could not start the %s ingest (%s): attach it from the panel",
+			req.Role, req.ModelID, flag, aerr.message)
 		return
 	}
-	log.Printf("engines: %s/%s is taking its family VAE in (%s)", req.Role, req.ModelID, fu.S3Key)
+	log.Printf("engines: %s/%s is taking %s in (%s)", req.Role, req.ModelID, flag, fu.S3Key)
 }
 
 // engineIngestFailureCode reads the ONE actionable thing out of a failed task's own words: the
