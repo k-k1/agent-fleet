@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -232,6 +231,15 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		// then has to take in.
 		if missing := engineMissingFileFlags(e.def.Provider, m); len(missing) > 0 {
 			mr["files_missing"] = missing
+		}
+		// 🔴 And the reading of that mark nobody can arrive at from the screen: the file the row
+		// is "missing" is one it is HOLDING, under a role no template reads and in a directory no
+		// loader lists (engine_file_move.go). Without this the badge names a part to take in, the
+		// remedy answers "nothing is missing", and neither says the one thing that is true.
+		if engineFileFlagsFor(e.def.Provider) != nil {
+			if fix, ok := engineMainFileFixFor(e.def.Key, m.BaseModel, m); ok {
+				mr["main_file_fix"] = engineMainFileFixRow(fix)
+			}
 		}
 		// And the half of "this row cannot generate" that no declaration can express: the
 		// checkpoint file itself carries no VAE, so the family's template has nothing to decode
@@ -1687,8 +1695,8 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, g 
 		// that holds its weights under a flag no template reads — the state every Anima row on
 		// af-sandbox was in. The CP knows the answer; saying it is what stops the form offering
 		// the one choice that cannot work.
-		if want, ok := engineComfyRequiredFlags[fam]; ok && !slices.Contains(want, "") && len(want) > 0 {
-			row["family_main_flag"] = want[0]
+		if main := engineFamilyMainFlag(fam); main != "" {
+			row["family_main_flag"] = main
 		}
 		if parts := engineFamilyPartsFor(fam); len(parts) > 0 {
 			plan := enginePartsPlan(r.Context(), a.enginePartsHeld(r.Context(), g, e.def.Key), parts)
@@ -1958,7 +1966,14 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	//
 	// Refused rather than tidied afterwards: the row is the misunderstanding, and the act the
 	// person meant has its own name on the same screen.
-	if flag != "" && !b.Attach && !b.Replace {
+	//
+	// 🔴 Except for the one flagged file that IS the model: a split family's own weights. Those
+	// families read no whole checkpoint (the refusal further down says so and names this very
+	// flag), so without this exception the two rules meet and NO new Anima, Krea 2, klein or
+	// Z-Image row can be taken in at all — the form's advice would lead into the other refusal.
+	// The family is read from the request rather than from the resolve, because this runs before
+	// the upstream is contacted and a row being created always declares one.
+	if flag != "" && !b.Attach && !b.Replace && flag != engineFamilyMainFlag(b.BaseModel) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
 			"a " + flag + " file is a PART of a model, not a model: choose the row it belongs to and attach it," +
 				" or take the checkpoint in with its family's parts in one act"})
@@ -1988,6 +2003,29 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		}
 		if aerr := engineIngestDestinationUnused(r.Context(), a.mgr.store, a.mgr.store, key, s3key); aerr != nil {
 			writeAPIErr(w, aerr)
+			return
+		}
+	}
+	// 🔴 WHERE it has to land, which the role decides and nothing else. The form composed the key
+	// as "the role's directory" + "the path inside the upstream repository", and both halves went
+	// wrong on af-sandbox 2026-09-15: the role defaulted to the whole checkpoint (so
+	// `image/checkpoints/`), and Hugging Face publishes these families under `split_files/…`, so
+	// the key kept that directory too. Either half alone is a file no ComfyUI loader can offer —
+	// each loader enumerates ONE directory and the Agent names a file by its base name — and the
+	// row then reads as "the model does not work" with every mark on the card green.
+	//
+	// Last of the destination rules on purpose: a taken slot and a key that already holds
+	// somebody's bytes are the more dangerous mix-ups and their 409s have to be what comes back,
+	// and this one is reached by every act, verified reuse included.
+	//
+	// The ingest only. `POST …/models` registers bytes that are ALREADY somewhere — which is how
+	// an operator recovers from exactly this — and a rule there would close the door behind them.
+	if engineFileFlagsFor(e.def.Provider) != nil {
+		lora := strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora)
+		if want := engineComfyKeyFor(key, flag, s3key, lora); want != s3key {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+				"stage " + engineFlagLabel(flag) + " at " + want + ": the box mirrors the bucket and each " +
+					"ComfyUI loader lists one directory, so " + s3key + " is a name it can never offer"})
 			return
 		}
 	}
@@ -2044,10 +2082,10 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	// The refusal names the role the file almost certainly is, because with the family already
 	// chosen there is only one unflagged-looking candidate: the model the family is named after.
 	if flag == "" && !b.Attach && !b.Replace && !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) {
-		if want, ok := engineComfyRequiredFlags[base]; ok && !slices.Contains(want, "") {
+		if main := engineFamilyMainFlag(base); main != "" {
 			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
 				"the " + base + " family is published in parts and reads no whole checkpoint: declare this file's" +
-					" role — it is almost certainly " + want[0] + " — and take the rest in with it"})
+					" role — it is almost certainly " + main + " — and take the rest in with it"})
 			return
 		}
 	}

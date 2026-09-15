@@ -4993,3 +4993,53 @@ None of them was about the part list; all three were about the step before it.
 One lesson, and it is the same in all three: **the default choice was the only one that cannot
 work for these families.** The knowledge of which roles a family reads was in the CP all along,
 and the screen was not asking for it.
+
+## Addendum — the file was never missing; it was in a directory no loader lists (2026-09-15)
+
+The addendum above closed the door on new rows. The rows already in the deployment stayed broken,
+and the remedy contradicted the badge in front of it: the card read `不足: --diffusion-model`
+while the row held 4.2 GB of exactly that, and "Complete this row" answered **`none`** — the
+family's part list (the encoder and the VAE) really was complete.
+
+**Both halves of one line of the ingest form put them there**, and only the first had been fixed:
+
+```ts
+s3Key = engineIngestPrefix(image, fileFlag, isLora) + file
+```
+
+1. the prefix is read from the ROLE, which defaulted to "the whole checkpoint" → `image/checkpoints/`;
+2. `file` is the path inside the upstream repository, and these families are published under
+   `split_files/…` → the key kept that directory as well.
+
+🔴 **Either half alone is a file no ComfyUI loader can offer.** The box mirrors the bucket
+(`/ComfyUI/models` → `/models/image`), each loader builds its menu from ONE directory, and the
+Agent names a file by its BASE NAME. So `image/diffusion_models/split_files/…` is exactly as
+unreadable as `image/checkpoints/…` — and the second spelling was reachable with the role chosen
+correctly. Nothing reports it: the row validates, the box loads, and generation fails after a
+cold start with a node error about a name that is not in the list.
+
+### The repair is a MOVE, not a second download
+
+`MODE=move` on the ingest task (contract 3): one `aws s3 mv` inside one bucket, which S3 performs
+server-side and in parts. Nothing is fetched, nothing touches the task's disk, no licence is
+asked for again — these bytes were accepted when they were taken in — and the catalogue change
+(`MoveEngineModelFile`: the role AND the key of one file, nothing else) lands when the task does,
+like every other ingest. Re-fetching 13.1 GB to move a file one directory up is the same answer
+this feature already refused to give when the parts table was written.
+
+Refused before a task starts, because each one is a way to lose bytes: a key another row declares
+(its declaration would go on naming an empty key), a key an ingest is still writing, a
+destination already recorded, and an object that is not there to move (that row has to be taken
+in again, and the refusal says so).
+
+### The other two things that had to change with it
+
+- **The destination is now checked at the door.** The ingest refuses any key that is not
+  `<role>/<the role's directory>/<base name>` for the flag it is taken in under. `POST …/models`
+  is deliberately NOT policed: registering bytes that are already somewhere is how an operator
+  recovers, and a rule there would close the door behind them.
+- 🔴 **A split family could not be taken in at all.** The previous addendum refused an unflagged
+  file for these families ("declare the role — it is almost certainly `--diffusion-model`"), and
+  the rule beside it refuses a flagged file as "a PART of a model, not a model". The two met, and
+  the advice led into the other refusal. The family's MAIN flag is now the one exception to the
+  parts rule — an encoder as its own row is still refused, which is what that rule is for.

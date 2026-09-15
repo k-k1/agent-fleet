@@ -600,7 +600,7 @@ Resources:
           User: "0"
           Command: [ /opt/af/ingest-fetch.sh ]
           Environment:
-            - { Name: ENGINE_TOOLS_CONTRACT, Value: "2" }
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "3" }
             - { Name: URL, Value: "" }
             - { Name: SHA256, Value: "" }
             - { Name: MODE, Value: "" }
@@ -624,10 +624,14 @@ Resources:
           # BUCKET was a CloudFormation substitution while the script was inline; it is an
           # environment variable now, and the only interface change the move made.
           Environment:
-            - { Name: ENGINE_TOOLS_CONTRACT, Value: "2" }
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "3" }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: KEY, Value: "" }
             - { Name: MODE, Value: "" }
+            # MODE=move relocates FROM to KEY inside this bucket - contract 3, and the reason it
+            # is a task at all: the CP has no S3 write, and re-fetching bytes it already owns to
+            # put them in the directory its loader lists is not a repair.
+            - { Name: FROM, Value: "" }
           MountPoints: [ { SourceVolume: scratch, ContainerPath: /scratch } ]
           DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
           LogConfiguration:
@@ -664,7 +668,7 @@ Resources:
               Tag: !Ref EngineToolsImageTag
           Command: [ /opt/af/fetch-models.sh ]
           Environment:
-            - { Name: ENGINE_TOOLS_CONTRACT, Value: "2" }
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "3" }
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/llm/active" }
@@ -782,7 +786,7 @@ Resources:
               Tag: !Ref EngineToolsImageTag
           Command: [ /opt/af/fetch-models.sh ]
           Environment:
-            - { Name: ENGINE_TOOLS_CONTRACT, Value: "2" }
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "3" }
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/image/active" }

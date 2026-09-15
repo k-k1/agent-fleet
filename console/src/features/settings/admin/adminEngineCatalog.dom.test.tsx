@@ -305,9 +305,12 @@ describe("model catalogue pane", () => {
     apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
       if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "circlestone-labs/Anima", model_ref: "circlestone-labs/Anima", name: "Anima" }] });
       if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
-      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "anima-aesthetic-v1.1.safetensors" }] });
+      // 🔴 The path INSIDE the repository, which is how Hugging Face publishes these families.
+      // Composing the key from it staged the file below the directory its loader enumerates.
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "split_files/diffusion_models/anima-aesthetic-v1.1.safetensors" }] });
       if (path.endsWith("/ingest/resolve")) return Promise.resolve({
         bytes: 4_180_000_000, can_ingest: true, base_model_suggest: "anima",
+        family_main_flag: "--diffusion-model",
         family_parts: [
           { flag: "--clip_l", repo: "circlestone-labs/Anima", file: "split_files/text_encoders/qwen_3_06b_base.safetensors", s3_key: "image/text_encoders/qwen_3_06b_base.safetensors", bytes: 1_190_000_000, license: "other" },
           { flag: "--vae", repo: "circlestone-labs/Anima", file: "split_files/vae/qwen_image_vae.safetensors", s3_key: "image/vae/qwen_image_vae.safetensors", staged: true, bytes: 253_800_000 },
@@ -334,6 +337,10 @@ describe("model catalogue pane", () => {
     await act(async () => { licence.click(); });
     await click(button("取り込む"));
     expect(sent?.with_family_parts).toBe(true);
+    // The role the CP named, and the destination that role decides — flat, with the repository's
+    // own `split_files/…` dropped. Either half kept is a name no ComfyUI loader can offer.
+    expect(sent?.file_flag).toBe("--diffusion-model");
+    expect(sent?.s3Key).toBe("image/diffusion_models/anima-aesthetic-v1.1.safetensors");
   });
 
   // The rows that already exist — the ones a deployment has before any of this shipped.
@@ -364,6 +371,49 @@ describe("model catalogue pane", () => {
     await click(button("不足ファイルを揃える"));
     expect(called).toBe("api/admin/engines/image/models/anima-aesthetic/parts");
     expect(document.body.textContent).toContain("ダウンロードは発生していません");
+  });
+
+  // 🔴 The af-sandbox row: the parts are attached and the badge still reads
+  // `不足: --diffusion-model`, because the weights are registered as the whole checkpoint and
+  // staged under `checkpoints/`. Without the line below, a card shows a 4 GB file and calls the
+  // same file missing — and the press used to answer "不足はありません".
+  it("says why a row reports weights it is holding, and moves them", async () => {
+    const misplaced = {
+      ...imageRow,
+      base_models: ["anima"],
+      model_rows: [{
+        id: "anima-aesthetic-v1.1", enabled: false, base_model: "anima",
+        files_missing: ["--diffusion-model"],
+        main_file_fix: {
+          flag: "--diffusion-model",
+          from: "image/checkpoints/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors",
+          to: "image/diffusion_models/anima-aesthetic-v1.1.safetensors",
+          bytes: 4_182_230_656,
+        },
+        file_rows: [
+          { s3Key: "image/checkpoints/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors", bytes: 4_182_230_656 },
+          { s3Key: "image/text_encoders/qwen_3_06b_base.safetensors", flag: "--clip_l" },
+          { s3Key: "image/vae/qwen_image_vae.safetensors", flag: "--vae" },
+        ],
+      }],
+    };
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [misplaced] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/parts")) return Promise.resolve({ action: "moving", attached: 0, jobs: [{ id: "j1" }] });
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    const card = document.querySelector('[aria-label="anima-aesthetic-v1.1"]')!;
+    expect(card.textContent).toContain("image/diffusion_models/anima-aesthetic-v1.1.safetensors");
+    expect(card.textContent).toContain("ワークフローはその役割を読みません");
+    await click(button("不足ファイルを揃える"));
+    // A move is not a download, and the note must not tell anybody to watch for one.
+    expect(document.body.textContent).toContain("ダウンロードはありません");
   });
 
   it("invalidates pagination when the visible query changes", async () => {

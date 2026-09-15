@@ -778,6 +778,16 @@ type engineIngestRequest struct {
 	// a model to another quantisation was to forget the row — with its licence acceptance, its
 	// family, its params and its enabled state — and build it again.
 	Replace bool
+	// MoveFrom is the key these bytes are ALREADY at, when the job's work is to relocate them
+	// inside the bucket instead of downloading anything: the task copies server-side and deletes
+	// the source, and the row's declaration is rewritten from MoveFrom to S3Key with FileFlag.
+	//
+	// 🔴 The fourth act, and the one a row staged in the wrong directory needs. Nothing else can
+	// repair it: the file a ComfyUI loader cannot list is not missing, so taking it in again is a
+	// second copy of a 4–13 GB file, and re-labelling alone leaves the bytes where no loader
+	// looks. Empty for every ordinary ingest, which is what makes the task's default MODE the
+	// download it has always been.
+	MoveFrom string
 	// The attention geometry read from the GGUF header before the job started (engine_gguf.go).
 	// Zero means it could not be read — a gated repository with no token, a file that is not a
 	// GGUF, an upstream that refused the Range — and the row keeps the floor it always had.
@@ -813,11 +823,17 @@ func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (st
 	// look stale here: the CP has no `GetSecretValue`, and a stack rebuilt under a registered
 	// token holds the sentinel with no way to notice. Staged before the job row so a
 	// deployment that cannot write a secret fails without leaving one.
-	if aerr := g.tokens.stage(ctx); aerr != nil {
-		return store.EngineIngestJob{}, aerr
-	}
-	if aerr := g.civitaiTokens.stage(ctx); aerr != nil {
-		return store.EngineIngestJob{}, aerr
+	//
+	// A move is the exception and it is not an optimisation: it reaches no upstream at all, so a
+	// deployment whose secret write is refused would be blocked from repairing a row over a
+	// credential neither container is going to read.
+	if req.MoveFrom == "" {
+		if aerr := g.tokens.stage(ctx); aerr != nil {
+			return store.EngineIngestJob{}, aerr
+		}
+		if aerr := g.civitaiTokens.stage(ctx); aerr != nil {
+			return store.EngineIngestJob{}, aerr
+		}
 	}
 	spec, _ := json.Marshal(req)
 	job := store.EngineIngestJob{
@@ -890,14 +906,7 @@ func (g *engineIngester) runTask(ctx context.Context, req engineIngestRequest) (
 			},
 		},
 		Overrides: &ecstypes.TaskOverride{
-			ContainerOverrides: []ecstypes.ContainerOverride{
-				{Name: aws.String("fetch"), Environment: engineIngestEnv(map[string]string{
-					"URL": req.Resolved.DownloadURL, "SHA256": req.Resolved.SHA256,
-				})},
-				{Name: aws.String("upload"), Environment: engineIngestEnv(map[string]string{
-					"KEY": req.S3Key,
-				})},
-			},
+			ContainerOverrides: engineIngestOverrides(req),
 		},
 	})
 	if err != nil {
@@ -912,6 +921,32 @@ func (g *engineIngester) runTask(ctx context.Context, req engineIngestRequest) (
 		return "", fmt.Errorf("ECS started no task and gave no reason")
 	}
 	return aws.ToString(out.Tasks[0].TaskArn), nil
+}
+
+// engineIngestOverrides is what the two containers are told to do: fetch-and-upload for an
+// ordinary ingest, and a server-side relocation when the bytes are already in the bucket.
+//
+// 🔴 MODE=move skips the download entirely — `fetch` exits at once and `upload` runs one
+// `aws s3 mv`, which S3 performs inside the bucket. That is the whole reason a misplaced 13 GB
+// file is repairable at all: the alternative is re-fetching bytes this deployment already owns,
+// and the fetch container's ephemeral disk would have to hold them again.
+func engineIngestOverrides(req engineIngestRequest) []ecstypes.ContainerOverride {
+	if strings.TrimSpace(req.MoveFrom) != "" {
+		return []ecstypes.ContainerOverride{
+			{Name: aws.String("fetch"), Environment: engineIngestEnv(map[string]string{"MODE": "move"})},
+			{Name: aws.String("upload"), Environment: engineIngestEnv(map[string]string{
+				"MODE": "move", "FROM": req.MoveFrom, "KEY": req.S3Key,
+			})},
+		}
+	}
+	return []ecstypes.ContainerOverride{
+		{Name: aws.String("fetch"), Environment: engineIngestEnv(map[string]string{
+			"URL": req.Resolved.DownloadURL, "SHA256": req.Resolved.SHA256,
+		})},
+		{Name: aws.String("upload"), Environment: engineIngestEnv(map[string]string{
+			"KEY": req.S3Key,
+		})},
+	}
 }
 
 func engineIngestEnv(kv map[string]string) []ecstypes.KeyValuePair {
@@ -1005,6 +1040,13 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		log.Printf("engines: ingest %s: %s", j.ID, j.Message)
 		return
 	}
+	// A move empties its source, and a cached "present" there is exactly what the next parts plan
+	// would reuse — bytes it would then find gone at generation time.
+	if req.MoveFrom != "" {
+		if storage := g.storageChecker(); storage != nil {
+			storage.invalidate(req.MoveFrom)
+		}
+	}
 	if err := g.install(ctx, req, j.ID); err != nil {
 		j.State = store.EngineIngestFailed
 		j.Message = "the object was stored but its catalogue change did not apply: " + err.Error()
@@ -1034,6 +1076,25 @@ func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, j
 	}
 	if strings.TrimSpace(req.FileFlag) == "--vae" {
 		file.VaeBundled = engineVaeYes
+	}
+	if req.MoveFrom != "" {
+		// The bytes did not change, so neither does what is known about them: the size, the
+		// provenance and the immutable identity are the ones the row already carried, and the
+		// move deliberately re-uses them rather than resolving the upstream again (it may be
+		// gated, moved or gone — none of which would make these bytes any less this file).
+		found, err := g.models.MoveEngineModelFile(ctx, req.Role, req.ModelID, req.MoveFrom, file)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("%s/%s no longer declares %s", req.Role, req.ModelID, req.MoveFrom)
+		}
+		log.Printf("engines: ingest %s done: %s/%s now reads %s as %s (moved from %s)",
+			jobID, req.Role, req.ModelID, req.S3Key, engineFlagLabel(req.FileFlag), req.MoveFrom)
+		if g.onDone != nil {
+			g.onDone(req.Role)
+		}
+		return nil
 	}
 	if req.Replace {
 		// 🔴 The geometry is written again, and only for the slot it describes. The row holds ONE
