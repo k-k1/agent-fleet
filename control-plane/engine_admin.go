@@ -2496,7 +2496,7 @@ func engineIngestDestinationUnused(ctx context.Context, models store.EngineModel
 	for _, model := range rows {
 		for _, file := range model.Files {
 			if strings.TrimSpace(file.S3Key) == s3key {
-				return ingestDestinationTaken(s3key)
+				return ingestDestinationTaken(s3key, "the row "+model.ID+" declares it")
 			}
 		}
 	}
@@ -2505,14 +2505,19 @@ func engineIngestDestinationUnused(ctx context.Context, models store.EngineModel
 		return internalErr(err)
 	}
 	if recorded {
-		return ingestDestinationTaken(s3key)
+		return ingestDestinationTaken(s3key, "an earlier ingest job recorded it — forget that job in the list to free the key")
 	}
 	return nil
 }
 
-func ingestDestinationTaken(s3key string) *apiError {
+// ingestDestinationTaken names WHO holds the key, because the two holders have different ways
+// out and the refusal used to offer neither: a row is forgotten (or another destination chosen),
+// while a job is forgotten from the ingest list. Without that, an operator reading "already
+// recorded" has nothing to look for — reported from af-sandbox 2026-09-15, where the key was
+// held by a failed attempt at the very repair being retried.
+func ingestDestinationTaken(s3key, by string) *apiError {
 	return &apiError{http.StatusConflict, errCodeEngineBadBody,
-		"the S3 key " + s3key + " is already recorded; choose a new destination for this download or use verified reuse"}
+		"the S3 key " + s3key + " is already recorded (" + by + "); choose a new destination for this download or use verified reuse"}
 }
 
 // engineBaseModelHint quotes what the repository called this model, so the refusal above ends

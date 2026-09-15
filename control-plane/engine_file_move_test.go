@@ -196,6 +196,55 @@ func TestFixPartsMovesMisplacedWeightsRatherThanDownloadingThemAgain(t *testing.
 	}
 }
 
+// 🔴 A failed attempt must not fence off the repair it was attempting. Reported from af-sandbox
+// 2026-09-15: the first press ran while the CP still held a deregistered task definition, RunTask
+// answered 400, and the three job rows it left behind then refused every retry with "the S3 key
+// image/diffusion_models/anima-aesthetic-v1.1.safetensors is already recorded" — a key nothing
+// had ever written to, because no task existed to write it.
+func TestFixPartsRetriesAfterAnAttemptThatNeverStartedATask(t *testing.T) {
+	st := ingestStore(t)
+	ctx := t.Context()
+	if err := st.PutEngineModel(ctx, animaMisplacedRow()); err != nil {
+		t.Fatal(err)
+	}
+	from := animaMisplacedRow().Files[0].S3Key
+	head := &fakeEngineStorageHead{states: map[string]string{from: engineStoragePresent}}
+	ecsAPI := &fakeIngestECS{fail: "TaskDefinition is inactive"}
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}},
+		cluster: "c", ecs: ecsAPI, store: st, models: st, storage: newEngineStorage("models", head),
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	press := func() (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost,
+			"/api/admin/engines/image/models/anima-aesthetic-v1.1/parts", strings.NewReader(`{}`))
+		r.SetPathValue("key", "image")
+		r.SetPathValue("id", "anima-aesthetic-v1.1")
+		a.fixParts(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
+		return rec.Code, rec.Body.String()
+	}
+	if code, body := press(); code != http.StatusBadGateway {
+		t.Fatalf("a refused RunTask = %d (%s), want the start failure reported", code, body)
+	}
+	jobs, _ := st.ListEngineIngestJobs(ctx, "image", 10)
+	if len(jobs) != 1 || jobs[0].State != store.EngineIngestFailed || jobs[0].TaskArn != "" {
+		t.Fatalf("the wreckage of the attempt = %+v, want one failed job with no task", jobs)
+	}
+
+	// The cause is fixed; the press has to work.
+	ecsAPI.fail = ""
+	code, body := press()
+	if code != http.StatusOK || !strings.Contains(body, `"action":"moving"`) {
+		t.Fatalf("the retry = %d (%s), want the move to start", code, body)
+	}
+}
+
 // 🔴 Bytes two rows read are not one row's to move. The other row's declaration would go on
 // naming a key with nothing at it — the silent shape of breakage this repo keeps paying for.
 func TestFixPartsRefusesToMoveBytesAnotherRowDeclares(t *testing.T) {

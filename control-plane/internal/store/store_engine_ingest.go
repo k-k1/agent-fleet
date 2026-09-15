@@ -132,9 +132,22 @@ func (s *SQL) ListEngineIngestJobsForStorageByTenant(ctx context.Context, role, 
 func (s *SQL) EngineIngestS3KeyRecorded(ctx context.Context, role, s3Key string) (bool, error) {
 	// EXISTS(...) scans as bool, not int — Postgres's driver hands back a real bool and
 	// refuses to convert it into an int destination (SQLite's 0/1 int would have hidden this).
+	//
+	// 🔴 A job that FAILED WITHOUT EVER GETTING A TASK is not an address. `task_arn` is written
+	// only after RunTask returned one, so `failed` with an empty one means no container ever
+	// existed to write those bytes — RunTask itself was refused (no capacity, a task definition
+	// CloudFormation had just deregistered, an IAM hole). Counting it made the destination
+	// permanently unusable: the retry that fixes the cause is refused by the wreckage of the
+	// attempt that hit it, and the only way out was knowing to forget that job first. Measured
+	// on af-sandbox 2026-09-15 — three `TaskDefinition is inactive` failures left the three keys
+	// the repair needed blocked.
+	//
+	// Every other failure still counts. The task ran, and the upload container may have put the
+	// object there before whatever failed afterwards did.
 	var found bool
 	err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM engine_ingest_jobs WHERE role=? AND s3_key=?)`, role, s3Key).Scan(&found)
+		`SELECT EXISTS(SELECT 1 FROM engine_ingest_jobs
+		   WHERE role=? AND s3_key=? AND NOT (state='failed' AND task_arn=''))`, role, s3Key).Scan(&found)
 	return found, err
 }
 

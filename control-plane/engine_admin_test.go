@@ -1623,9 +1623,13 @@ func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// 🔴 A task ARN, because that is what makes this key an ADDRESS: the job failed, but a
+	// container existed and its upload step may have run before it did. A `failed` job that
+	// never got a task holds nothing and deliberately does not block a retry
+	// (EngineIngestS3KeyRecorded) — the state the af-sandbox repairs were stuck behind.
 	if err := st.PutEngineIngestJob(t.Context(), store.EngineIngestJob{
 		ID: "another-tenants-object", Role: "image", ModelID: "old", S3Key: "image/checkpoints/job-history.safetensors",
-		State: store.EngineIngestFailed, TenantID: "t-other",
+		State: store.EngineIngestFailed, TenantID: "t-other", TaskArn: "arn:aws:ecs:x:1:task/c/old",
 	}); err != nil {
 		t.Fatal(err)
 	}

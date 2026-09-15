@@ -5069,3 +5069,29 @@ Two faults, one on each side of the engine table, and neither is about ingest:
 Either fix alone would have cleared the error; both are here because they fail in different
 directions. The first is "the value was never safe to pin"; the second is "a value that changes
 was read once", which was equally true of the bucket and of the secrets.
+
+### Addendum follow-up 2 — the wreckage of a failed attempt fenced off the retry (2026-09-15)
+
+With the two fixes above deployed, the repair was refused:
+
+```
+the S3 key image/diffusion_models/anima-aesthetic-v1.1.safetensors is already recorded
+```
+
+Nothing had ever been written to that key. The first press — the one that met the deregistered
+task definition — had already written its job row (`start` writes the row BEFORE calling
+RunTask, so a task nobody can see is impossible), RunTask then answered 400, and the row stayed
+as `failed`. `EngineIngestS3KeyRecorded` counts a job row in ANY state, so the three keys the
+repair needed were held by the three failures of that same repair.
+
+🔴 **A job that failed without ever getting a task is not an address.** `task_arn` is written only
+after RunTask returned one, so `failed` with an empty one means no container existed to write
+those bytes: RunTask itself was refused (no capacity, an IAM hole, a task definition
+CloudFormation had just deregistered). Those rows no longer hold their destination. Every other
+failure still does — the task ran, and the upload container may have put the object there before
+whatever failed afterwards did.
+
+The refusal also names its holder now (`the row <id> declares it` / `an earlier ingest job
+recorded it — forget that job in the list to free the key`). "Already recorded" with no subject
+left an operator nothing to look for, and the manual way out — forgetting that job — existed the
+whole time.
