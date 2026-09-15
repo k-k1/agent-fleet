@@ -388,8 +388,8 @@ func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engin
 	var started []map[string]any
 	moved := false
 	if hasFix {
-		if aerr := a.engineMainFileMovable(ctx, held, key, id, fix); aerr != nil {
-			writeAPIErr(w, aerr)
+		if ref := a.engineMainFileMovable(ctx, held, key, id, fix); ref != nil {
+			writeAPIRefusal(w, ref)
 			return
 		}
 		job, aerr := a.engineStartMainFileMove(ctx, g, key, id, fix)
@@ -433,9 +433,10 @@ func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engin
 		// answer can name what is holding it — a download to that key is refused anyway, and the
 		// message it earns ("the S3 key … is already recorded") says nothing about what to do.
 		if fu.Conflict != "" {
-			writeAPIErr(w, &apiError{http.StatusConflict, errCodeEngineBadBody,
-				p.Flag + " would land at " + fu.S3Key + ", which is " + fu.Conflict +
-					" — attach that file to this row from the panel, or forget the row holding it and press again"})
+			writeAPIRefusal(w, refuse(http.StatusConflict, errCodeEngineBadBody,
+				p.Flag+" would land at "+fu.S3Key+", which is "+fu.Conflict+
+					" — attach that file to this row from the panel, or forget the row holding it and press again",
+				&apiHolder{Kind: "object", Key: fu.S3Key}, &apiNext{Act: "complete", Target: id}))
 			return
 		}
 		if fu.Resolved.SHA256 == "" {
