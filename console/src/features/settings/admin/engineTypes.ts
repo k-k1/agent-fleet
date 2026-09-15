@@ -260,6 +260,106 @@ export type ResolvedSource = {
   family_parts?: FamilyPart[];
   /** What the parts that are NOT already here would cost, as one number. */
   family_parts_bytes?: number;
+  /** What one press would DO, decided by the CP (ADR 0085 decision 4). Everything above it is
+   *  facts the card still draws; this is the only thing the ingest request is built from. */
+  plan?: IngestPlan;
+};
+
+/** One file of a plan, with what it costs. `download` spends money and `reuse` / `move` do not —
+ *  the bucket already holds those bytes, and a move is server-side. */
+export type IngestPlanFile = {
+  /** The role it is taken in as (`--vae`, `--t5xxl`); empty for a whole checkpoint. */
+  flag?: string;
+  name: string;
+  bytes?: number;
+  action: "download" | "reuse" | "move" | "unknown";
+  source?: string;
+  /** Where it lands. Composed by the CP alone since ADR 0085 decision 1 — the Console neither
+   *  builds nor sends a key, it only shows the one it is told. */
+  key?: string;
+};
+
+/** What `POST …/ingest/resolve` answers beside the facts: the whole act, priced.
+ *
+ * 🔴 `plan_token` is what `POST …/ingest` carries instead of the fields a form used to fill. The
+ * CP re-plans at the press and refuses a token that no longer matches (`engine_plan_stale`), so a
+ * card left open for ten minutes cannot spend money on last decade's numbers. */
+export type IngestPlan = {
+  plan_token: string;
+  id: string;
+  base_model?: string;
+  /** Offered ONLY when the CP could not read a family. The family selector is the one field the
+   *  card shows, and it is never a free string: an upstream display name stored as a family makes
+   *  a row that looks complete and will not generate (ADR 0072 decision 2). */
+  base_model_candidates?: string[];
+  main_flag?: string;
+  files: IngestPlanFile[];
+  bytes_to_download?: number;
+  warnings?: string[];
+};
+
+/** What `POST …/models/{id}/complete` answers (ADR 0085 decision 3). The row is the subject: the
+ *  CP reads what the family needs, what the row has and what the ledger holds, and closes the gap.
+ *
+ *  `action: "choose"` is the ONLY case a person is asked anything, and they are asked it for a
+ *  checkpoint — never "which model does this part belong to". */
+export type CompleteAnswer = {
+  action: "none" | "attached" | "moving" | "job_started" | "choose" | "unknown";
+  files?: CompleteFile[];
+  bytes_to_download?: number;
+  jobs?: IngestJob[];
+};
+
+export type CompleteFile = {
+  flag: string;
+  action: "declare" | "move" | "download" | "choose" | "unknown";
+  key?: string;
+  bytes?: number;
+  source?: string;
+  /** The ledger's objects that fit this role, ranked by the CP. With one candidate the press just
+   *  uses it; several is what opens the dialog. A FILLED slot with candidates is how a part is
+   *  swapped — the same picker, on a frame that is not empty. */
+  candidates?: { key: string; source?: string; bytes?: number }[];
+};
+
+/** One object in the bucket, as the ledger lists it (ADR 0085 decision 2).
+ *
+ * 🔴 The first thing here that does not come from a row. Forget a row and the bytes went on
+ * costing money while no longer existing to the Console — about 24 GB on af-sandbox, 2026-09-15,
+ * with no screen that could show them and no button that could touch them. */
+export type EngineObjectRow = {
+  key: string;
+  bytes?: number;
+  last_modified?: string;
+  role_dir: "checkpoints" | "diffusion_models" | "text_encoders" | "vae" | "loras" | "other";
+  /** `misplaced` = the key is not `<role dir>/<base name>`, so no ComfyUI loader enumerates it. */
+  placement: "ok" | "misplaced";
+  /** `missing` is a row pointing at nothing, which is a ledger fact too. `uploading` / `failed`
+   *  are a live job's state on this destination — jobs have no list of their own any more. */
+  state: "present" | "uploading" | "failed" | "missing";
+  declared_by?: { model_id: string; flag?: string }[];
+  source?: string;
+  artifact_identity?: string;
+  license?: string;
+  job?: { id: string; state: string; message?: string; created_at?: string };
+};
+
+export type EngineObjectsAnswer = {
+  objects: EngineObjectRow[];
+  checked_at?: string;
+};
+
+/** A refusal in this area, with the two fields ADR 0085 decision 5 requires of every 409: WHO is
+ *  holding the thing, and WHAT to press about it. The Console draws `next` as the button on the
+ *  error line, which is the whole point — "the key is already recorded" was true and useless. */
+export type EngineApiError = {
+  code?: string;
+  message?: string;
+  holder?: { kind: "row" | "job" | "object" | "task"; id?: string; key?: string };
+  next?: { act: "register" | "complete" | "replace" | "forget_row" | "dismiss_job" | "wait"; target?: string };
+  /** `engine_plan_stale` carries the plan that replaced the stale one, so the card is redrawn
+   *  from the answer rather than from a second resolve. */
+  plan?: IngestPlan;
 };
 
 /** One file of a split family, as the form offers it. */

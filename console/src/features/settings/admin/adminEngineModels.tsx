@@ -1635,16 +1635,6 @@ function EngineParamsFields({
   );
 }
 
-/** What somebody came here to do, ASKED rather than inferred.
- *
- * 🔴 This is the fix for the defect that cost an operator of this deployment an evening. The
- * three acts used to be told apart by whether the id they typed happened to collide with a row
- * that already existed — so "add this VAE to that model" was something you discovered by typing
- * a name you had to already know, and the checkbox that offered it stayed disabled until a file
- * role three fields below it was set, with nothing on screen saying so. */
-export const engineIngestActs = ["new", "attach", "replace"] as const;
-export type EngineIngestAct = (typeof engineIngestActs)[number];
-
 /** Where in the bucket a taken-in file goes, from what it IS within the model.
  *
  * 🔴 Not cosmetic, and not a place a wrong answer is ever reported: the box mirrors the bucket

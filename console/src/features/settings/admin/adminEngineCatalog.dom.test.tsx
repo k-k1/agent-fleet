@@ -10,7 +10,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { EngineAddView, exactReusableStorage, savedFilesForHit } from "./adminEngineAdd.tsx";
+import { EngineAddView, savedObjectsForHit } from "./adminEngineAdd.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -22,9 +22,20 @@ const imageRow = {
   managed: true,
   file_flags: ["", "--vae", "--t5xxl"],
   base_models: ["sdxl"],
-  model_rows: [{ id: "existing", enabled: true, file_rows: [{ s3Key: "image/existing.safetensors" }] }],
+  model_rows: [{ id: "existing", enabled: true, file_rows: [{ s3Key: "image/checkpoints/existing.safetensors" }] }],
 };
 const llmRow = { key: "llm", api: "chat", provider: "llamacpp", managed: true, model_rows: [] };
+
+/** The ledger route answers both tabs now (ADR 0085 decision 2): `GET …/storage` and
+ *  `GET …/ingest` are no longer read by this screen, and a mock that still answers them would
+ *  hide a call that went to the old route. */
+function mockEngines(rows: Record<string, unknown>[], objects: Record<string, unknown>[] = []) {
+  api.mockImplementation((path: string) => {
+    if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: rows });
+    if (path.endsWith("/objects")) return Promise.resolve({ objects, checked_at: "2026-09-15T03:42:00Z" });
+    return Promise.resolve({});
+  });
+}
 
 async function mount() {
   host = document.createElement("div");
@@ -44,10 +55,21 @@ async function mountRegistered() {
 
 const button = (label: string) => Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
   .find((candidate) => candidate.textContent === label);
+const labelled = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`) || undefined;
+/** Scoped to one dialog. Unscoped, 消す and 揃える both match the button on the row BEHIND the
+ *  modal first, so the press lands on the screen nobody is looking at. */
+const within = (selector: string, label: string) => Array.from(document.querySelectorAll<HTMLButtonElement>(`${selector} button`))
+  .find((candidate) => candidate.textContent === label);
 const click = async (element: HTMLElement | undefined) => {
   expect(element).toBeTruthy();
   await act(async () => { element!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   await act(async () => { await Promise.resolve(); });
+};
+const acceptLicence = async () => {
+  const licence = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+    .find((input) => input.parentElement?.textContent?.includes("ライセンス"))!;
+  expect(licence).toBeTruthy();
+  await act(async () => { licence.click(); });
 };
 
 afterEach(() => {
@@ -61,12 +83,7 @@ afterEach(() => {
 
 describe("model catalogue pane", () => {
   it("opens image on Civitai new arrivals and switches LLM to Hugging Face updated", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow, llmRow] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
+    mockEngines([imageRow, llmRow]);
     apiJSON.mockResolvedValue({ hits: [] });
     await mount();
     expect(document.querySelector(".engine-catalog-pane")?.classList.contains("engines-add-pane")).toBe(true);
@@ -88,22 +105,11 @@ describe("model catalogue pane", () => {
   // upstreams spell the same architecture differently and answer a name they do not know with an
   // empty list, so a Console that sent "Anima" here would draw "no models" for a full family.
   it("narrows the browse to one family without anyone typing a repository name", async () => {
-    const families = { ...imageRow, base_models: ["sdxl", "anima", "krea2"] };
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [families, llmRow] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
+    mockEngines([{ ...imageRow, base_models: ["sdxl", "anima", "krea2"] }, llmRow]);
     apiJSON.mockResolvedValue({ hits: [] });
     await mount();
     const select = document.querySelector<HTMLSelectElement>(".engine-catalog-family select");
-    expect(select).toBeTruthy();
-    // Every family the engine declares, plus the "all" entry a browse starts on.
     expect(Array.from(select!.options).map((option) => option.value)).toEqual(["", "sdxl", "anima", "krea2"]);
-    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/search", "POST", {
-      q: "", source: "civitai", sort: "newest", lora: false,
-    });
 
     apiJSON.mockClear();
     await act(async () => {
@@ -117,12 +123,7 @@ describe("model catalogue pane", () => {
   });
 
   it("renders genuinely role-specific image and LLM card facts", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow, llmRow] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
+    mockEngines([imageRow, llmRow]);
     apiJSON.mockImplementation((_path: string, _method: string, body: { source?: string }) => Promise.resolve(body.source === "civitai"
       ? { hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Image Example", base_model: "SDXL", preview_url: "https://example.test/i.jpg" }] }
       : { hits: [{ source: "hf", ref: "org/text", model_ref: "org/text", name: "Text Example", bytes: 4_200_000_000, context_length: 32768 }] }));
@@ -140,16 +141,10 @@ describe("model catalogue pane", () => {
   });
 
   it("keeps a small optional preview on the card and opens it in a keyboard-closeable modal", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
+    mockEngines([imageRow]);
     apiJSON.mockResolvedValue({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Example", preview_url: "https://example.test/a.jpg" }] });
     await mount();
     const thumb = document.querySelector<HTMLButtonElement>(".engine-catalog-thumb")!;
-    expect(thumb).toBeTruthy();
     expect(document.querySelectorAll(".engine-catalog-thumb")).toHaveLength(1);
     thumb.focus();
     await click(thumb);
@@ -160,51 +155,155 @@ describe("model catalogue pane", () => {
     expect(document.activeElement).toBe(thumb);
   });
 
-  it("loads versions and files from one card operation instead of entering a step workflow", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
-    apiJSON.mockImplementation((path: string) => {
-      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Example" }] });
-      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "22", name: "v2" }, { ref: "21", name: "v1" }] });
-      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.safetensors" }, { name: "vae.safetensors" }] });
+  // 🔴 ADR 0085 decision 3: one button on the card. `attach` and `replace` were two ways to land
+  // in the wrong place from a screen that never said which one you were on.
+  it("offers taking in as the only act on a search card", async () => {
+    mockEngines([imageRow]);
+    apiJSON.mockResolvedValue({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Example" }] });
+    await mount();
+    expect(button("追加")?.getAttribute("aria-label")).toBe("追加: Example");
+    expect(button("部品を追加")).toBeUndefined();
+    expect(button("置き換え")).toBeUndefined();
+  });
+
+  // 🔴 The whole of ADR 0085 decision 4 in one test: the CP answers a PLAN, the card shows what
+  // each file costs, and the press carries the plan's token — no key, no role, no parts checkbox,
+  // no attach/replace. Three parties deciding one destination key is what produced the 400
+  // `s3Key must be empty or identical` on af-sandbox.
+  it("takes a split family in with one press, carrying the CP's plan token and no key", async () => {
+    mockEngines([{ ...imageRow, base_models: ["anima"] }]);
+    let sent: Record<string, unknown> | undefined;
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "circlestone-labs/Anima", model_ref: "circlestone-labs/Anima", name: "Anima" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "split_files/diffusion_models/anima-aesthetic-v1.1.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) return Promise.resolve({
+        bytes: 4_180_000_000, can_ingest: true, license_name: "Anima licence", commercial_use: "no",
+        plan: {
+          plan_token: "plan-1", id: "anima-aesthetic-v1-1", base_model: "anima", main_flag: "--diffusion-model",
+          files: [
+            { flag: "--diffusion-model", name: "anima-aesthetic-v1.1.safetensors", bytes: 4_180_000_000, action: "download", key: "image/diffusion_models/anima-aesthetic-v1.1.safetensors" },
+            { flag: "--clip_l", name: "qwen_3_06b_base.safetensors", bytes: 1_190_000_000, action: "download", key: "image/text_encoders/qwen_3_06b_base.safetensors" },
+            { flag: "--vae", name: "qwen_image_vae.safetensors", bytes: 253_800_000, action: "reuse", key: "image/vae/qwen_image_vae.safetensors" },
+          ],
+          bytes_to_download: 5_370_000_000,
+          warnings: ["この族の VAE は既にこの配備にあります。"],
+        },
+      });
+      if (path.endsWith("/ingest")) { sent = body; return Promise.resolve({ id: "job1", model_id: "anima-aesthetic-v1-1", state: "pending" }); }
       return Promise.resolve({});
     });
     await mount();
-    const card = document.querySelector(".engine-catalog-card")!;
-    expect(card.getAttribute("aria-label")).toBe("Example");
-    expect(button("追加")?.getAttribute("aria-label")).toBe("追加: Example");
-    expect(button("追加")?.classList.contains("ui-btn-primary")).toBe(true);
     await click(button("追加"));
-    await act(async () => { await Promise.resolve(); });
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/versions", "POST", {
-      source: "civitai", ref: "22", model_ref: "7",
-    });
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/files", "POST", {
-      source: { civitai: { versionId: 22, file: "" } },
-    });
-    expect(document.querySelector(".engines-wizard-rail")).toBeNull();
-    expect(document.querySelector(".engine-catalog-operation")?.getAttribute("aria-labelledby")).toBeTruthy();
-    expect(document.querySelector(".engine-catalog-operation .ui-modal-title")?.textContent).toContain("Example");
-    expect(document.querySelectorAll(".engine-operation-grid select").length).toBeGreaterThan(1);
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+
+    // Every file, with what it costs — and the one already here says "no download" instead of a
+    // size, because a number beside bytes nobody will spend is what makes a total untrustworthy.
+    const plan = document.querySelector(".engine-plan-files")!;
+    expect(plan.textContent).toContain("--clip_l");
+    expect(plan.textContent).toContain("取得なし（配備が持っています）");
+    expect(document.querySelector(".engine-plan-total")?.textContent).toContain("5.4 GB");
+    // The commercial-use verdict is said ONCE, as the sentence: a chip saying the same thing in
+    // another wording beside it reads as two separate restrictions.
+    expect(document.querySelector("p.form-err")?.textContent).toContain("非商用ライセンスです");
+    expect(document.querySelector(".engine-operation-facts")?.textContent).not.toContain("商用");
+    expect(document.body.textContent).toContain("この族の VAE は既にこの配備にあります。");
+    // The questions ADR 0085 removed from this card.
+    expect(document.body.textContent).not.toContain("ファイルの役割");
+    expect(Array.from(document.querySelectorAll("select")).some((select) => Array.from(select.options).some((option) => option.value === "--vae"))).toBe(false);
+
+    await acceptLicence();
+    await click(button("取り込む"));
+    expect(sent?.plan_token).toBe("plan-1");
+    expect(sent?.id).toBe("anima-aesthetic-v1-1");
+    expect(sent?.base_model).toBe("anima");
+    expect(sent?.license_accepted).toBe(true);
+    for (const gone of ["s3Key", "reuse_s3_key", "attach", "replace", "file_flag", "with_family_parts", "with_family_vae"]) {
+      expect(sent?.[gone]).toBeUndefined();
+    }
   });
 
-  it("includes the LLM KV cache in the operation VRAM guard", async () => {
-    const row = { ...llmRow, class: { vram_mib: 21000 } };
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [row] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+  // 🔴 The plan is a quote and the press is the purchase. A card can sit open for minutes, and
+  // this is the call that spends money: when the CP re-plans and the answer differs it refuses
+  // with the NEW plan, which is redrawn — licence tick included, because what was accepted is not
+  // what would now be taken in.
+  it("redraws the card from the fresh plan when the press is refused as stale", async () => {
+    mockEngines([imageRow]);
+    const sent: Record<string, unknown>[] = [];
+    let stale = true;
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "org/model", model_ref: "org/model", name: "Example" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) return Promise.resolve({
+        bytes: 2_000_000_000, can_ingest: true,
+        plan: { plan_token: "old", id: "example", base_model: "sdxl", files: [{ name: "model.safetensors", action: "download", bytes: 2_000_000_000 }], bytes_to_download: 2_000_000_000 },
+      });
+      if (path.endsWith("/ingest")) {
+        sent.push(body || {});
+        if (stale) {
+          stale = false;
+          return Promise.resolve({ error: { code: "engine_plan_stale", message: "the source changed", plan: {
+            plan_token: "fresh", id: "example", base_model: "sdxl",
+            files: [{ name: "model.safetensors", action: "download", bytes: 3_000_000_000 }], bytes_to_download: 3_000_000_000,
+          } } });
+        }
+        return Promise.resolve({ id: "job2", model_id: "example", state: "pending" });
+      }
       return Promise.resolve({});
     });
+    await mount();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+    await acceptLicence();
+    await click(button("取り込む"));
+
+    expect(sent[0]?.plan_token).toBe("old");
+    expect(document.querySelector(".engine-plan-stale")?.textContent).toContain("作り直しました");
+    expect(document.querySelector(".engine-plan-total")?.textContent).toContain("3.0 GB");
+    // The licence has to be read again before the second press can happen at all.
+    expect((button("取り込む") as HTMLButtonElement).disabled).toBe(true);
+    await acceptLicence();
+    await click(button("取り込む"));
+    expect(sent[1]?.plan_token).toBe("fresh");
+  });
+
+  it("asks for a family only when the CP could not read one, and only from its candidates", async () => {
+    mockEngines([imageRow]);
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "org/model", model_ref: "org/model", name: "Example" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) return Promise.resolve({
+        bytes: 1024, can_ingest: true,
+        plan: { plan_token: "p", id: "example", base_model_candidates: ["sdxl", "sd35"], files: [{ name: "model.safetensors", action: "download", bytes: 1024 }], bytes_to_download: 1024 },
+      });
+      return Promise.resolve({});
+    });
+    await mount();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+    const family = Array.from(document.querySelectorAll<HTMLSelectElement>(".engine-catalog-plan select"))
+      .find((select) => Array.from(select.options).some((option) => option.value === "sd35"))!;
+    expect(family).toBeTruthy();
+    // Never a free string: an upstream display name stored as a family makes a row that looks
+    // complete and will not generate.
+    expect(family.tagName).toBe("SELECT");
+    await acceptLicence();
+    expect((button("取り込む") as HTMLButtonElement).disabled).toBe(true);
+    expect(document.querySelector(".engine-operation-footer")?.textContent).toContain("モデル族");
+  });
+
+  it("includes the LLM KV cache in the plan's VRAM fit line", async () => {
+    mockEngines([{ ...llmRow, class: { vram_mib: 21000 } }]);
     apiJSON.mockImplementation((path: string) => {
       if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "org/model", model_ref: "org/model", name: "Large LLM" }] });
       if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
       if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.gguf", bytes: 18_556_689_568 }] });
-      if (path.endsWith("/ingest/resolve")) return Promise.resolve({ bytes: 18_556_689_568, can_ingest: true, license: "apache-2.0", context_length: 262144, kv_mib_per_1k_tokens: 96 });
+      if (path.endsWith("/ingest/resolve")) return Promise.resolve({
+        bytes: 18_556_689_568, can_ingest: true, license: "apache-2.0", context_length: 262144, kv_mib_per_1k_tokens: 96,
+        plan: { plan_token: "p", id: "large-llm", files: [{ name: "model.gguf", action: "download", bytes: 18_556_689_568 }], bytes_to_download: 18_556_689_568 },
+      });
       return Promise.resolve({});
     });
     await mount();
@@ -214,215 +313,10 @@ describe("model catalogue pane", () => {
     expect(fit?.textContent).toContain("重み 17697 MiB");
     expect(fit?.textContent).toContain("KV キャッシュ 24576 MiB");
     expect(fit?.textContent).toContain("合計 42273 MiB");
-    expect(document.querySelector(".engine-operation-check.warn")?.textContent).toContain("重みと KV キャッシュ");
-  });
-
-  it("keeps restrictions, VAE provenance, and parameter hints in the operation", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
-    apiJSON.mockImplementation((path: string) => {
-      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Restricted", restrictions: ["no_derivatives"], commercial_use: "no", login_required: "yes" }] });
-      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "22", name: "v2" }] });
-      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.safetensors" }] });
-      if (path.endsWith("/ingest/resolve")) return Promise.resolve({
-        bytes: 2_000_000_000, can_ingest: false, commercial_use: "no", login_required: true,
-        restrictions: ["no_derivatives"], gated_needs_acceptance: true,
-        params_hint: { steps: 28, sampler: "dpmpp_2m" }, params_hint_quote: "Use 28 steps",
-        vae_bundled: "no", family_vae: { repo: "org/vae", file: "vae.safetensors", bytes: 335_000_000, license: "mit", unreachable: true },
-      });
-      return Promise.resolve({});
-    });
-    await mount();
-    const card = document.querySelector('[aria-label="Restricted"]')!;
-    expect(card.textContent).toContain("派生不可");
-    expect(card.textContent).toContain("非商用");
-    expect(card.textContent).toContain("要ログイン");
-    await click(button("追加"));
-    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
-    expect(document.body.textContent).toContain("ログイン済みのアカウント");
-    expect(document.body.textContent).toContain("Use 28 steps");
-    expect(document.body.textContent).toContain("org/vae/vae.safetensors");
-    expect(document.body.textContent).toContain("335 MB");
-    const vae = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find((input) => input.parentElement?.textContent?.includes("org/vae"));
-    expect(vae?.disabled).toBe(true);
-    const steps = Array.from(document.querySelectorAll("label")).find((label) => label.querySelector("span")?.textContent === "ステップ数")?.querySelector("input") as HTMLInputElement;
-    expect(steps.value).toBe("28");
-  });
-
-  // 🔴 The same wall, on a deployment that HAS registered a Civitai account. The refusal was
-  // unconditional even though the fetch container already sends that account's token, so the
-  // panel refused to start a download that could have run. With a token it reads as the warning
-  // `gated_needs_acceptance` is — the CP still cannot verify the account satisfies THIS uploader.
-  it("offers a login-walled asset once a Civitai account is registered", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
-    apiJSON.mockImplementation((path: string) => {
-      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Walled", login_required: "yes" }] });
-      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "22", name: "v1" }] });
-      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.safetensors" }] });
-      if (path.endsWith("/ingest/resolve")) return Promise.resolve({
-        bytes: 2_000_000_000, can_ingest: true, login_required: true,
-        civitai_needs_account: true, deployment_civitai_token: true,
-        base_model: "SDXL 1.0", base_model_suggest: "sdxl",
-      });
-      return Promise.resolve({});
-    });
-    await mount();
-    await click(button("追加"));
-    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
-    // The dead end is gone and the caveat is not: it is drawn muted, like the gated one.
-    const wall = Array.from(document.querySelectorAll("p")).find((item) => item.textContent?.includes("Civitai アカウント"));
-    expect(wall?.className).toBe("muted");
-    expect(Array.from(document.querySelectorAll("p.form-err")).some((item) => item.textContent?.includes("ログイン済みのアカウント"))).toBe(false);
-    // And the button is reachable — only the licence checkbox stands between here and the job.
-    const ingest = button("取り込む") as HTMLButtonElement;
-    expect(ingest.disabled).toBe(true);
-    const licence = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
-      .find((input) => input.parentElement?.textContent?.includes("ライセンス"))!;
-    await act(async () => { licence.click(); });
-    expect((button("取り込む") as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  // 🔴 One press, three files. Taking Anima's diffusion model in alone leaves a row that cannot
-  // be enabled and points at two files in another repository — which is what "I took it in and
-  // do not know what to do" was made of.
-  it("offers a split family's other files in the same press", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [{ ...imageRow, base_models: ["anima"] }] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
-    let sent: Record<string, unknown> | undefined;
-    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
-      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "circlestone-labs/Anima", model_ref: "circlestone-labs/Anima", name: "Anima" }] });
-      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
-      // 🔴 The path INSIDE the repository, which is how Hugging Face publishes these families.
-      // Composing the key from it staged the file below the directory its loader enumerates.
-      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "split_files/diffusion_models/anima-aesthetic-v1.1.safetensors" }] });
-      if (path.endsWith("/ingest/resolve")) return Promise.resolve({
-        bytes: 4_180_000_000, can_ingest: true, base_model_suggest: "anima",
-        family_main_flag: "--diffusion-model",
-        family_parts: [
-          { flag: "--clip_l", repo: "circlestone-labs/Anima", file: "split_files/text_encoders/qwen_3_06b_base.safetensors", s3_key: "image/text_encoders/qwen_3_06b_base.safetensors", bytes: 1_190_000_000, license: "other" },
-          { flag: "--vae", repo: "circlestone-labs/Anima", file: "split_files/vae/qwen_image_vae.safetensors", s3_key: "image/vae/qwen_image_vae.safetensors", staged: true, bytes: 253_800_000 },
-        ],
-        family_parts_bytes: 1_190_000_000,
-      });
-      if (path.endsWith("/ingest")) { sent = body; return Promise.resolve({ id: "job1" }); }
-      return Promise.resolve({});
-    });
-    await mount();
-    await click(button("追加"));
-    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
-    // Each part says what it is and what it costs, and the one already here says so instead of
-    // a size — a number beside bytes nobody will spend is what makes a total untrustworthy.
-    const offer = document.querySelector(".engine-operation-parts")!;
-    expect(offer.textContent).toContain("--clip_l");
-    expect(offer.textContent).toContain("--vae");
-    expect(offer.textContent).toContain("配備が既に持っています");
-    const parts = offer.querySelector("input") as HTMLInputElement;
-    expect(parts.checked).toBe(true);
-
-    const licence = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
-      .find((input) => input.parentElement?.textContent?.includes("ライセンス"))!;
-    await act(async () => { licence.click(); });
-    await click(button("取り込む"));
-    expect(sent?.with_family_parts).toBe(true);
-    // The role the CP named, and the destination that role decides — flat, with the repository's
-    // own `split_files/…` dropped. Either half kept is a name no ComfyUI loader can offer.
-    expect(sent?.file_flag).toBe("--diffusion-model");
-    expect(sent?.s3Key).toBe("image/diffusion_models/anima-aesthetic-v1.1.safetensors");
-  });
-
-  // The rows that already exist — the ones a deployment has before any of this shipped.
-  it("marks an incomplete row and completes it in one press", async () => {
-    const incomplete = {
-      ...imageRow,
-      base_models: ["anima"],
-      model_rows: [{ id: "anima-aesthetic", enabled: false, base_model: "anima",
-        files_missing: ["--clip_l", "--vae"],
-        file_rows: [{ s3Key: "image/diffusion_models/anima.safetensors", flag: "--diffusion-model" }] }],
-    };
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [incomplete] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
-    let called = "";
-    apiJSON.mockImplementation((path: string) => {
-      if (path.endsWith("/parts")) { called = path; return Promise.resolve({ action: "attached", attached: 2 }); }
-      return Promise.resolve({ hits: [] });
-    });
-    await mountRegistered();
-    const card = document.querySelector('[aria-label="anima-aesthetic"]')!;
-    // 🔴 The mark the wire has carried since P2 and this screen never drew: without it an
-    // unusable row looks like any other.
-    expect(card.textContent).toContain("--clip_l");
-    await click(button("不足ファイルを揃える"));
-    expect(called).toBe("api/admin/engines/image/models/anima-aesthetic/parts");
-    expect(document.body.textContent).toContain("ダウンロードは発生していません");
-  });
-
-  // 🔴 The af-sandbox row: the parts are attached and the badge still reads
-  // `不足: --diffusion-model`, because the weights are registered as the whole checkpoint and
-  // staged under `checkpoints/`. Without the line below, a card shows a 4 GB file and calls the
-  // same file missing — and the press used to answer "不足はありません".
-  it("says why a row reports weights it is holding, and moves them", async () => {
-    const misplaced = {
-      ...imageRow,
-      base_models: ["anima"],
-      model_rows: [{
-        id: "anima-aesthetic-v1.1", enabled: false, base_model: "anima",
-        files_missing: ["--diffusion-model"],
-        main_file_fix: {
-          flag: "--diffusion-model",
-          from: "image/checkpoints/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors",
-          to: "image/diffusion_models/anima-aesthetic-v1.1.safetensors",
-          bytes: 4_182_230_656,
-        },
-        file_rows: [
-          { s3Key: "image/checkpoints/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors", bytes: 4_182_230_656 },
-          { s3Key: "image/text_encoders/qwen_3_06b_base.safetensors", flag: "--clip_l" },
-          { s3Key: "image/vae/qwen_image_vae.safetensors", flag: "--vae" },
-        ],
-      }],
-    };
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [misplaced] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
-    apiJSON.mockImplementation((path: string) => {
-      if (path.endsWith("/parts")) return Promise.resolve({ action: "moving", attached: 0, jobs: [{ id: "j1" }] });
-      return Promise.resolve({ hits: [] });
-    });
-    await mountRegistered();
-    const card = document.querySelector('[aria-label="anima-aesthetic-v1.1"]')!;
-    expect(card.textContent).toContain("image/diffusion_models/anima-aesthetic-v1.1.safetensors");
-    expect(card.textContent).toContain("ワークフローはその役割を読みません");
-    await click(button("不足ファイルを揃える"));
-    // A move is not a download, and the note must not tell anybody to watch for one.
-    expect(document.body.textContent).toContain("ダウンロードはありません");
   });
 
   it("invalidates pagination when the visible query changes", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
+    mockEngines([imageRow]);
     apiJSON.mockResolvedValue({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "First" }], next_cursor: "page-2" });
     await mount();
     expect(button("さらに読み込む")).toBeTruthy();
@@ -432,57 +326,6 @@ describe("model catalogue pane", () => {
       search.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(button("さらに読み込む")).toBeUndefined();
-  });
-
-  it("aggregates registered multipart storage from existence checks, not ingest jobs", async () => {
-    const registered = {
-      ...imageRow,
-      model_rows: [{ id: "split", enabled: true, file_rows: [
-        { s3Key: "image/split.safetensors", flag: "" },
-        { s3Key: "image/vae.safetensors", flag: "--vae" },
-      ] }],
-    };
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [registered] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [
-        { s3_key: "image/split.safetensors", state: "present", model_ids: ["split"] },
-        { s3_key: "image/vae.safetensors", state: "missing", model_ids: ["split"] },
-      ] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [{ id: "old", model_id: "split", state: "done" }] });
-      return Promise.resolve({});
-    });
-    await mountRegistered();
-    const card = document.querySelector<HTMLElement>('.engine-registered-card[aria-label="split"]')!;
-    expect(card).toBeTruthy();
-    expect(card.querySelector("header .warn")?.textContent).toContain("1/2");
-    expect(card.querySelector("header .warn")?.textContent).toContain("一部不足");
-    expect(card.querySelectorAll(".engine-registered-parts li")).toHaveLength(2);
-    expect(card.querySelector('[aria-label="編集: split"]')).toBeTruthy();
-    expect(card.querySelector('[aria-label="ファイルと部品: split"]')).toBeTruthy();
-    expect(document.querySelector(".engine-registered-search input")).toBeTruthy();
-    await click(card.querySelector<HTMLButtonElement>('[aria-label="編集: split"]') || undefined);
-    expect(document.querySelector(".engine-registered-edit .ui-modal-title")?.textContent).toContain("split");
-    expect(document.querySelectorAll(".engine-registered-edit input").length).toBeGreaterThan(1);
-  });
-
-  it("requires an explicit VRAM confirmation before enabling an oversized registered model", async () => {
-    const oversized = { ...imageRow, class: { vram_mib: 8192 }, model_rows: [{
-      id: "large", kind: "model", enabled: false, vram_need_mib: 12288, vram_need_source: "declared",
-      file_rows: [{ s3Key: "image/large.safetensors" }],
-    }] };
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [oversized] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [{ s3_key: "image/large.safetensors", state: "present", model_ids: ["large"] }] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
-    apiJSON.mockResolvedValue({});
-    await mountRegistered();
-    await click(document.querySelector<HTMLButtonElement>('[aria-label="有効にする: large"]') || undefined);
-    expect(apiJSON).not.toHaveBeenCalled();
-    expect(document.querySelector(".engine-registered-confirm")?.textContent).toContain("12288");
-    await click(button("承知のうえで有効にする"));
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/large", "PUT", { enabled: true, confirm_vram: true });
   });
 
   it("keeps browsing usable when no engines are registered", async () => {
@@ -498,12 +341,7 @@ describe("model catalogue pane", () => {
   });
 
   it("shows a loading indicator while a search is in flight and clears it once it lands", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
+    mockEngines([imageRow]);
     let resolveSearch: ((value: unknown) => void) | undefined;
     apiJSON.mockImplementation(() => new Promise((resolve) => { resolveSearch = resolve; }));
     await mount();
@@ -520,12 +358,7 @@ describe("model catalogue pane", () => {
   // show nothing but a bare error banner with no way to tell "still loading" from "it failed" —
   // this pins that the banner carries the upstream's own status text and the spinner is gone.
   it("surfaces a Civitai 503 as an error banner and clears the loading indicator", async () => {
-    api.mockImplementation((path: string) => {
-      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
-      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
-      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
-      return Promise.resolve({});
-    });
+    mockEngines([imageRow]);
     apiJSON.mockResolvedValue({ error: { code: "source_error", message: "civitai.com answered 503 Service Unavailable" } });
     await mount();
     expect(document.body.textContent).toContain("取り込み元が想定外の応答を返しました: civitai.com answered 503 Service Unavailable");
@@ -533,20 +366,246 @@ describe("model catalogue pane", () => {
   });
 });
 
-describe("catalogue storage identity", () => {
-  const files = [
-    { s3_key: "a", source: "hf:org/repo@abc/model.gguf", artifact_identity: "hf:org/repo@abc/model.gguf#sha256:a", reusable: true, state: "present" as const, model_ids: [] },
-    { s3_key: "legacy", source: "hf:org/repo/model.gguf", reusable: false, state: "present" as const, model_ids: [] },
-    { s3_key: "gone", source: "civitai:22", reusable: false, state: "missing" as const, model_ids: [] },
-    { s3_key: "ambiguous", source: "civitai:22", reusable: false, state: "present" as const, model_ids: [] },
-    { s3_key: "civitai-exact", source: "civitai:22/model.safetensors", artifact_identity: "civitai:22/model.safetensors#sha256:b", reusable: true, state: "present" as const, model_ids: [] },
+describe("registered rows and the bucket", () => {
+  const anima = {
+    ...imageRow,
+    base_models: ["anima"],
+    model_rows: [{
+      id: "anima-aesthetic", enabled: false, base_model: "anima", kind: "model",
+      files_missing: ["--clip_l", "--vae"],
+      file_rows: [{ s3Key: "image/diffusion_models/anima.safetensors", flag: "--diffusion-model" }],
+    }],
+  };
+  const declaredObject = {
+    key: "image/diffusion_models/anima.safetensors", bytes: 4_180_000_000, role_dir: "diffusion_models",
+    placement: "ok", state: "present", declared_by: [{ model_id: "anima-aesthetic", flag: "--diffusion-model" }],
+    source: "hf:circlestone-labs/Anima/anima.safetensors",
+  };
+
+  // 揃える with nothing to ask about just acts: the check answers, the CP is told to do it, and
+  // the note says a move is not a download.
+  it("completes a row without a dialog when there is nothing to choose or to pay for", async () => {
+    mockEngines([anima], [declaredObject]);
+    const bodies: unknown[] = [];
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/complete")) { bodies.push(body); return Promise.resolve({ action: "moving", files: [], bytes_to_download: 0 }); }
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    await click(labelled("揃える: anima-aesthetic"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/anima-aesthetic/complete", "POST", { check: true });
+    expect(bodies).toEqual([{ check: true }, {}]);
+    // A move is not a download, and the note must not tell anybody to watch for one.
+    expect(document.body.textContent).toContain("ダウンロードはありません");
+  });
+
+  // The one place a person picks a part — and they pick it FOR this checkpoint, from what the
+  // ledger holds. Choosing a part and then its destination is the shape ADR 0085 removed.
+  it("asks which file to use only when the CP offers several candidates", async () => {
+    mockEngines([anima], [declaredObject]);
+    let ran: Record<string, unknown> | undefined;
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/complete")) {
+        if (body?.check) {
+          return Promise.resolve({
+            action: "choose", bytes_to_download: 0,
+            files: [{ flag: "--vae", action: "choose", candidates: [{ key: "image/vae/a.safetensors", bytes: 300_000_000 }, { key: "image/vae/b.safetensors" }] }],
+          });
+        }
+        ran = body;
+        return Promise.resolve({ action: "attached", files: [] });
+      }
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    await click(labelled("揃える: anima-aesthetic"));
+    const picker = document.querySelector<HTMLSelectElement>('.engine-complete select')!;
+    expect(picker).toBeTruthy();
+    expect((within(".engine-complete", "揃える") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      picker.value = "image/vae/b.safetensors";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(within(".engine-complete", "揃える"));
+    expect(ran).toEqual({ choices: { "--vae": "image/vae/b.safetensors" } });
+  });
+
+  // Swapping a part a row already has is the same dialog on a filled frame, and the CP is told
+  // so: without `replace` it refuses, which is the refusal that used to arrive with no way out.
+  it("swaps a filled slot from the same dialog and says so with replace", async () => {
+    mockEngines([anima], [declaredObject]);
+    let ran: Record<string, unknown> | undefined;
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/complete")) {
+        if (body?.check) {
+          return Promise.resolve({
+            action: "attached", bytes_to_download: 900_000_000,
+            files: [{ flag: "--vae", action: "declare", key: "image/vae/a.safetensors", candidates: [{ key: "image/vae/a.safetensors" }, { key: "image/vae/b.safetensors" }] }],
+          });
+        }
+        ran = body;
+        return Promise.resolve({ action: "job_started", files: [], jobs: [{ id: "j9" }] });
+      }
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    await click(labelled("揃える: anima-aesthetic"));
+    const picker = document.querySelector<HTMLSelectElement>('.engine-complete select')!;
+    expect(Array.from(picker.options)[0].textContent).toBe("今のまま");
+    await act(async () => {
+      picker.value = "image/vae/b.safetensors";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    // Bytes to pay for means the licence is read again before the press.
+    expect((within(".engine-complete", "揃える") as HTMLButtonElement).disabled).toBe(true);
+    await acceptLicence();
+    await click(within(".engine-complete", "揃える"));
+    expect(ran).toEqual({ choices: { "--vae": "image/vae/b.safetensors" }, replace: true, license_accepted: true });
+  });
+
+  // 🔴 The af-sandbox hole, with a road out of it: after the rows were forgotten the bytes stayed
+  // (about 24 GB) and no screen could show them, because every repair was computed FROM a row.
+  it("lists the bucket, sorts orphans and misplaced objects first, and registers a main file", async () => {
+    mockEngines([anima], [
+      declaredObject,
+      { key: "image/text_encoders/loose.safetensors", bytes: 1_190_000_000, role_dir: "text_encoders", placement: "ok", state: "present", declared_by: [] },
+      { key: "image/checkpoints/split_files/diffusion_models/krea2.safetensors", bytes: 13_100_000_000, role_dir: "other", placement: "misplaced", state: "present", declared_by: [] },
+    ]);
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/objects/register")) return Promise.resolve({ model_id: "krea2", moved: true, jobs: [], complete: { action: "attached" } });
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    const rows = Array.from(document.querySelectorAll(".engine-ledger-row")).map((row) => row.getAttribute("aria-label"));
+    expect(rows[0]).toBe("image/checkpoints/split_files/diffusion_models/krea2.safetensors");
+    expect(rows).toHaveLength(3);
+    expect(document.querySelector(".engine-ledger-row")?.textContent).toContain("誤配置");
+
+    // A misplaced MAIN file carries 登録; an orphan part carries only 消す, because a part is
+    // never the subject — it is attached by the 揃える of whichever checkpoint reads it.
+    expect(labelled("登録: image/checkpoints/split_files/diffusion_models/krea2.safetensors")).toBeTruthy();
+    expect(labelled("登録: image/text_encoders/loose.safetensors")).toBeUndefined();
+    expect(labelled("消す: image/text_encoders/loose.safetensors")).toBeTruthy();
+    // An object a row declares has no button at all.
+    expect(labelled("消す: image/diffusion_models/anima.safetensors")).toBeUndefined();
+
+    await click(labelled("登録: image/checkpoints/split_files/diffusion_models/krea2.safetensors"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/objects/register", "POST", {
+      key: "image/checkpoints/split_files/diffusion_models/krea2.safetensors",
+    });
+    expect(document.body.textContent).toContain("krea2 として登録しました");
+  });
+
+  it("deletes an orphan object only after saying what cannot be undone", async () => {
+    mockEngines([anima], [
+      { key: "image/text_encoders/loose.safetensors", bytes: 1_190_000_000, role_dir: "text_encoders", placement: "ok", state: "present", declared_by: [] },
+    ]);
+    apiJSON.mockResolvedValue({ deleting: "image/text_encoders/loose.safetensors" });
+    await mountRegistered();
+    await click(labelled("消す: image/text_encoders/loose.safetensors"));
+    expect(document.querySelector(".engine-ledger-confirm")?.textContent).toContain("取り消せません");
+    await click(within(".engine-ledger-confirm", "消す"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/objects", "DELETE", {
+      key: "image/text_encoders/loose.safetensors",
+    });
+  });
+
+  // A failed job is a failed entry on its destination key with one act (ADR 0085 decision 6):
+  // there is no history tab to find it in any more.
+  it("shows a failed ingest on its object with the task's message and dismisses it", async () => {
+    mockEngines([anima], [
+      { key: "image/vae/half.safetensors", role_dir: "vae", placement: "ok", state: "failed", declared_by: [],
+        job: { id: "job-7", state: "failed", message: "403 from the source", created_at: "2026-09-15T03:42:00Z" } },
+    ]);
+    apiJSON.mockResolvedValue({ jobs: [] });
+    await mountRegistered();
+    expect(document.querySelector(".engine-ledger-message")?.textContent).toContain("403 from the source");
+    expect(document.querySelector(".engine-catalog-jobs")).toBeNull();
+    await click(labelled("消す: image/vae/half.safetensors"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/job-7", "DELETE");
+  });
+
+  // 🔴 ADR 0085 decision 5. "The S3 key … is already recorded; choose a new destination" was true
+  // and unusable: the Console now draws the CP's own `next` as the button on the error line.
+  it("turns a refusal's next act into the button beside it", async () => {
+    mockEngines([anima], [
+      { key: "image/vae/orphan.safetensors", role_dir: "vae", placement: "ok", state: "present", declared_by: [] },
+    ]);
+    const calls: string[] = [];
+    apiJSON.mockImplementation((path: string, method?: string) => {
+      calls.push(`${method} ${path}`);
+      if (path.endsWith("/objects") && method === "DELETE") {
+        return Promise.resolve({ error: {
+          code: "engine_object_declared", message: "another row declares this key",
+          holder: { kind: "row", id: "anima-aesthetic" },
+          next: { act: "complete", target: "anima-aesthetic" },
+        } });
+      }
+      if (path.endsWith("/complete")) return Promise.resolve({ action: "attached", files: [] });
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    await click(labelled("消す: image/vae/orphan.safetensors"));
+    await click(within(".engine-ledger-confirm", "消す"));
+    const refusal = document.querySelector(".engine-refusal")!;
+    expect(refusal.textContent).toContain("another row declares this key");
+    expect(refusal.textContent).toContain("押さえているのは 登録済みの行: anima-aesthetic");
+    await click(refusal.querySelector<HTMLButtonElement>(".engine-refusal-next") || undefined);
+    expect(calls).toContain("POST api/admin/engines/image/models/anima-aesthetic/complete");
+    expect(document.body.textContent).toContain("ダウンロードは発生していません");
+  });
+
+  it("reads a row's file state off the ledger rather than a second existence check", async () => {
+    const split = {
+      ...imageRow,
+      model_rows: [{ id: "split", enabled: true, kind: "model", file_rows: [
+        { s3Key: "image/checkpoints/split.safetensors", flag: "" },
+        { s3Key: "image/vae/vae.safetensors", flag: "--vae" },
+      ] }],
+    };
+    mockEngines([split], [
+      { key: "image/checkpoints/split.safetensors", role_dir: "checkpoints", placement: "ok", state: "present", declared_by: [{ model_id: "split" }] },
+      { key: "image/vae/vae.safetensors", role_dir: "vae", placement: "ok", state: "missing", declared_by: [{ model_id: "split", flag: "--vae" }] },
+    ]);
+    apiJSON.mockResolvedValue({ hits: [] });
+    await mountRegistered();
+    const card = document.querySelector<HTMLElement>('.engine-registered-card[aria-label="split"]')!;
+    expect(card.querySelector("header .warn")?.textContent).toContain("1/2");
+    expect(card.querySelectorAll(".engine-registered-parts li")).toHaveLength(2);
+    expect(card.querySelector('[aria-label="編集: split"]')).toBeTruthy();
+    // The surfaces ADR 0085 decision 8 removed.
+    expect(card.querySelector('[aria-label="ファイルと部品: split"]')).toBeNull();
+    expect(button("既存の S3 ファイルを登録")).toBeUndefined();
+    expect(api).not.toHaveBeenCalledWith("api/admin/engines/image/storage");
+    expect(api).not.toHaveBeenCalledWith("api/admin/engines/image/ingest");
+  });
+
+  it("requires an explicit VRAM confirmation before enabling an oversized registered model", async () => {
+    mockEngines([{ ...imageRow, class: { vram_mib: 8192 }, model_rows: [{
+      id: "large", kind: "model", enabled: false, vram_need_mib: 12288, vram_need_source: "declared",
+      file_rows: [{ s3Key: "image/checkpoints/large.safetensors" }],
+    }] }], [
+      { key: "image/checkpoints/large.safetensors", role_dir: "checkpoints", placement: "ok", state: "present", declared_by: [{ model_id: "large" }] },
+    ]);
+    apiJSON.mockResolvedValue({});
+    await mountRegistered();
+    await click(labelled("有効にする: large"));
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(document.querySelector(".engine-registered-confirm")?.textContent).toContain("12288");
+    await click(button("承知のうえで有効にする"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/large", "PUT", { enabled: true, confirm_vram: true });
+  });
+});
+
+describe("catalogue ledger identity", () => {
+  const objects = [
+    { key: "a", source: "hf:org/repo@abc/model.gguf", artifact_identity: "hf:org/repo@abc/model.gguf#sha256:a", role_dir: "checkpoints" as const, placement: "ok" as const, state: "present" as const },
+    { key: "legacy", source: "hf:org/repo/model.gguf", role_dir: "checkpoints" as const, placement: "ok" as const, state: "present" as const },
+    { key: "gone", source: "civitai:22", role_dir: "checkpoints" as const, placement: "ok" as const, state: "missing" as const },
+    { key: "civitai-exact", source: "civitai:22/model.safetensors", role_dir: "checkpoints" as const, placement: "ok" as const, state: "present" as const },
   ];
-  it("counts concrete source files but reuses only present immutable identities", () => {
-    expect(savedFilesForHit({ source: "hf", ref: "org/repo", model_ref: "org/repo", name: "Repo" }, files)).toHaveLength(2);
-    expect(exactReusableStorage(files, "hf:org/repo@abc/model.gguf#sha256:a")?.s3_key).toBe("a");
-    expect(exactReusableStorage(files, "hf:org/repo@abc/model.gguf#sha256:other")).toBeUndefined();
-    expect(exactReusableStorage(files, "civitai:22/other.safetensors#sha256:b")).toBeUndefined();
-    expect(exactReusableStorage(files.filter((file) => file.s3_key !== "civitai-exact"), "civitai:22/model.safetensors#sha256:b")).toBeUndefined();
-    expect(exactReusableStorage(files, "civitai:22/model.safetensors#sha256:b")?.s3_key).toBe("civitai-exact");
+  it("counts present objects of one source and never promotes an absent one", () => {
+    expect(savedObjectsForHit({ source: "hf", ref: "org/repo", model_ref: "org/repo", name: "Repo" }, objects)).toHaveLength(2);
+    expect(savedObjectsForHit({ source: "civitai", ref: "22", model_ref: "7", name: "V" }, objects).map((object) => object.key)).toEqual(["civitai-exact"]);
   });
 });

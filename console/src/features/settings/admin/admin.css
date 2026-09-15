@@ -1359,29 +1359,6 @@ a.engines-model-source:hover {
   font-size: 11px;
 }
 
-.engine-registered-tools {
-  margin-top: 14px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.engine-registered-tools > summary {
-  cursor: pointer;
-}
-
-.engine-catalog-jobs {
-  margin-top: 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 12px;
-}
-
-.engine-catalog-jobs summary { cursor: pointer; }
-.engine-catalog-jobs ul { list-style: none; padding: 6px 0 0; margin: 0; }
-.engine-catalog-jobs li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 0; }
-
 .engine-catalog-operation { width: min(760px, calc(100vw - 24px)); max-height: min(820px, calc(100vh - 24px)); }
 .engine-registered-edit { width: min(680px, calc(100vw - 24px)); }
 .engine-registered-confirm { width: min(560px, calc(100vw - 24px)); }
@@ -1402,6 +1379,73 @@ a.engines-model-source:hover {
 .engine-operation-advanced .engine-operation-grid { margin-top: 10px; }
 .engine-operation-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .engine-operation-footer > span { flex: 1 1 auto; font-size: 11px; }
+
+.engine-registered-note {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+/* The plan (ADR 0085 decision 4): one line per file with what it costs. The cost column is the
+   point of the card — `reuse` and `move` spend nothing, and a size drawn beside them is what
+   made the total untrustworthy. */
+.engine-plan { display: grid; gap: 6px; }
+.engine-plan-files { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
+.engine-plan-files li {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--panel2);
+}
+.engine-plan-name { min-width: 0; overflow-wrap: anywhere; }
+.engine-plan-cost { white-space: nowrap; }
+.engine-plan-cost.free { color: var(--dialog-muted); }
+.engine-plan-total { margin: 0; font-size: 12px; font-weight: 600; }
+.engine-plan-warning, .engine-plan-stale, .engine-plan-building { margin: 0; font-size: 12px; }
+
+.engine-complete { width: min(680px, calc(100vw - 24px)); }
+.engine-complete-files { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
+.engine-complete-files li {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--panel2);
+}
+.engine-complete-files select { grid-column: 1 / -1; width: 100%; min-width: 0; color: var(--fg); }
+.engine-complete-key { min-width: 0; overflow-wrap: anywhere; }
+
+/* The bucket. Orphans are tinted rather than badged alone: the whole reason this list exists is
+   that an object nobody declares was invisible while it went on costing money. */
+.engine-ledger { margin-top: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.engine-ledger-head { display: flex; align-items: baseline; gap: 8px; }
+.engine-ledger-head span { font-size: 11px; }
+.engine-ledger > .admin-hint { margin: 6px 0 10px; }
+.engine-ledger-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
+.engine-ledger-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--panel2);
+}
+.engine-ledger-row.orphan { border-inline-start: 3px solid var(--warn, #d29922); }
+.engine-ledger-key { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.engine-ledger-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.engine-ledger-declared, .engine-ledger-source, .engine-ledger-message { grid-column: 1 / -1; font-size: 11px; overflow-wrap: anywhere; }
+.engine-ledger-acts { display: flex; gap: 6px; justify-self: end; }
+.engine-ledger-confirm { width: min(560px, calc(100vw - 24px)); }
+
+/* A refusal and the one button that clears it (ADR 0085 decision 5). The button sits ON the
+   error line because that is where the person is looking when it arrives. */
+.engine-refusal { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.engine-refusal-holder { font-size: 11px; }
 
 .engine-catalog-lightbox { width: min(1100px, calc(100vw - 24px)); max-height: calc(100vh - 24px); }
 .engine-catalog-lightbox > img { display: block; max-width: 100%; max-height: calc(100vh - 100px); margin: auto; object-fit: contain; }
@@ -1424,27 +1468,4 @@ a.engines-model-source:hover {
   .engine-catalog-thumb { flex-basis: 76px; width: 76px; height: 90px; }
 }
 
-/* The split family's parts, offered as one set on the ingest form. The list is inside the
-   checkbox's label so the whole block is one hit target, which is why it is not a <ul> beside
-   it: a person deciding "take these too" is deciding about the list, not about a line. */
-.engine-operation-parts-list {
-  margin: 6px 0 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--dialog-muted);
-}
 
-.engine-operation-parts-list li {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: baseline;
-}
-
-.engine-registered-parts-note {
-  margin: 0 0 10px;
-  font-size: 12px;
-}
