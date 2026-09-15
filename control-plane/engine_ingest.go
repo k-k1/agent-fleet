@@ -27,6 +27,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -701,14 +702,11 @@ type engineIngestLogsAPI interface {
 
 // engineIngester starts ingest tasks and reconciles them against ECS.
 type engineIngester struct {
-	def       engineIngestDef
-	cluster   string
-	ecs       engineIngestECSAPI
-	logs      engineIngestLogsAPI
-	store     store.EngineIngestStore
-	models    store.EngineModelStore
-	storageMu sync.RWMutex
-	storage   *engineStorage
+	// defMu guards everything the TABLE decides, because the table reloader replaces it while
+	// requests are reading it (engines.go, startIngest). Before this the block was read once at
+	// boot and a later table was silently ignored — see adopt.
+	defMu sync.RWMutex
+	def   engineIngestDef
 	// tokens is the operator's Hugging Face token. It hangs here rather than on an engine
 	// because the ingest task is deployment-wide, and because this is the only place that
 	// needs the value rather than the fact that there is one.
@@ -717,9 +715,80 @@ type engineIngester struct {
 	// (engine_civitai_token.go) rather than sharing the Hugging Face one: the two are
 	// unrelated accounts, and the fetch container picks between them by the download's host.
 	civitaiTokens *engineCivitaiTokens
+	cluster       string
+	ecs           engineIngestECSAPI
+	logs          engineIngestLogsAPI
+	store         store.EngineIngestStore
+	models        store.EngineModelStore
+	storageMu     sync.RWMutex
+	storage       *engineStorage
 	// onDone is called after a job created its catalogue row, so the registry can invalidate
 	// its cache and the panel shows the new row without waiting for the TTL.
 	onDone func(role string)
+}
+
+// ingestDef is what the stack declares RIGHT NOW, not what it declared at boot.
+//
+// 🔴 The difference is a whole deployment's ingest. A CloudFormation update that touches the
+// ingest task definition registers a new revision and DEREGISTERS the previous one, and the
+// table publishes `!Ref`'s ARN — the revision included, until the fix beside this one. An
+// ingester that kept the block it booted with then answered `InvalidParameterException:
+// TaskDefinition is inactive` for every ingest, forever, and the only way out was replacing the
+// Control Plane. Measured on af-sandbox 2026-09-15, one stack update after the table in SSM
+// already carried the new revision.
+func (g *engineIngester) ingestDef() engineIngestDef {
+	if g == nil {
+		return engineIngestDef{}
+	}
+	g.defMu.RLock()
+	defer g.defMu.RUnlock()
+	return g.def
+}
+
+// hfTokens and civitai are the secret carriers built from that block, read through the same
+// lock because adopt rebuilds them when the stack names different secrets.
+func (g *engineIngester) hfTokens() *engineHfTokens {
+	if g == nil {
+		return nil
+	}
+	g.defMu.RLock()
+	defer g.defMu.RUnlock()
+	return g.tokens
+}
+
+func (g *engineIngester) civitai() *engineCivitaiTokens {
+	if g == nil {
+		return nil
+	}
+	g.defMu.RLock()
+	defer g.defMu.RUnlock()
+	return g.civitaiTokens
+}
+
+// adopt takes the table's current ingest block, and reports whether anything moved.
+//
+// `secrets` rebuilds the two token carriers, and is called only when the stack names a different
+// secret than the one they hold: they are handed out by pointer to the admin routes, so
+// replacing them on every poll would be churn where the answer never changed.
+func (g *engineIngester) adopt(def engineIngestDef,
+	secrets func(engineIngestDef) (*engineHfTokens, *engineCivitaiTokens)) bool {
+	if g == nil || !def.ok() {
+		return false
+	}
+	g.defMu.Lock()
+	defer g.defMu.Unlock()
+	if reflect.DeepEqual(g.def, def) {
+		return false
+	}
+	was := g.def
+	g.def = def
+	if secrets != nil && (was.TokenSecret != def.TokenSecret ||
+		was.CivitaiTokenSecret != def.CivitaiTokenSecret || was.HasToken != def.HasToken) {
+		g.tokens, g.civitaiTokens = secrets(def)
+	}
+	log.Printf("engines: ingest declaration adopted from the table (task definition %q -> %q)",
+		was.TaskDef, def.TaskDef)
+	return true
 }
 
 func (g *engineIngester) storageChecker() *engineStorage {
@@ -828,10 +897,10 @@ func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (st
 	// deployment whose secret write is refused would be blocked from repairing a row over a
 	// credential neither container is going to read.
 	if req.MoveFrom == "" {
-		if aerr := g.tokens.stage(ctx); aerr != nil {
+		if aerr := g.hfTokens().stage(ctx); aerr != nil {
 			return store.EngineIngestJob{}, aerr
 		}
-		if aerr := g.civitaiTokens.stage(ctx); aerr != nil {
+		if aerr := g.civitai().stage(ctx); aerr != nil {
 			return store.EngineIngestJob{}, aerr
 		}
 	}
@@ -891,17 +960,18 @@ func (g *engineIngester) reuse(ctx context.Context, req engineIngestRequest) (st
 }
 
 func (g *engineIngester) runTask(ctx context.Context, req engineIngestRequest) (string, error) {
-	if g.ecs == nil || !g.def.ok() {
+	def := g.ingestDef()
+	if g.ecs == nil || !def.ok() {
 		return "", fmt.Errorf("this deployment's engine stack declares no ingest task")
 	}
 	out, err := g.ecs.RunTask(ctx, &ecs.RunTaskInput{
 		Cluster:        aws.String(g.cluster),
-		TaskDefinition: aws.String(g.def.TaskDef),
+		TaskDefinition: aws.String(def.TaskDef),
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets:        g.def.Subnets,
-				SecurityGroups: g.def.SecurityGroups,
+				Subnets:        def.Subnets,
+				SecurityGroups: def.SecurityGroups,
 				AssignPublicIp: ecstypes.AssignPublicIpDisabled,
 			},
 		},
@@ -1319,13 +1389,14 @@ func engineFlagLabel(flag string) string {
 
 // why reads the last words of the failed container's log.
 func (g *engineIngester) why(ctx context.Context, t ecstypes.Task, container string) string {
-	if g.logs == nil || g.def.LogGroup == "" {
+	group := g.ingestDef().LogGroup
+	if g.logs == nil || group == "" {
 		return ""
 	}
 	// The stream name ECS composes: <prefix>/<container>/<task id>.
 	arn := aws.ToString(t.TaskArn)
 	id := arn[strings.LastIndex(arn, "/")+1:]
-	lines, err := g.logs.GetLogEvents(ctx, g.def.LogGroup, "ingest-"+container+"/"+container+"/"+id)
+	lines, err := g.logs.GetLogEvents(ctx, group, "ingest-"+container+"/"+container+"/"+id)
 	if err != nil || len(lines) == 0 {
 		return ""
 	}
@@ -1418,17 +1489,18 @@ func (l *engineIngestLogs) GetLogEvents(ctx context.Context, group, stream strin
 // S3 action at all (ADR 0072 review R3) and the ADR chose to keep it that way, so "delete the
 // bytes" is a job handed to the principal that put them there.
 func (g *engineIngester) deleteObjects(ctx context.Context, keys []string) error {
-	if g == nil || g.ecs == nil || !g.def.ok() {
+	def := g.ingestDef()
+	if g == nil || g.ecs == nil || !def.ok() {
 		return fmt.Errorf("this deployment's engine stack declares no ingest task")
 	}
 	out, err := g.ecs.RunTask(ctx, &ecs.RunTaskInput{
 		Cluster:        aws.String(g.cluster),
-		TaskDefinition: aws.String(g.def.TaskDef),
+		TaskDefinition: aws.String(def.TaskDef),
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets:        g.def.Subnets,
-				SecurityGroups: g.def.SecurityGroups,
+				Subnets:        def.Subnets,
+				SecurityGroups: def.SecurityGroups,
 				AssignPublicIp: ecstypes.AssignPublicIpDisabled,
 			},
 		},

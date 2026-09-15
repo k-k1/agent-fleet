@@ -868,6 +868,10 @@ Resources:
   # --- the engine table - PARAMETERS, "The engine table" ---
   EnginesParam:
     Type: AWS::SSM::Parameter
+    # !! The table names the ingest family as a string now, not as a !Ref, so nothing else keeps
+    # !! these two in order - and a table published before the family exists is one the CP reads
+    # !! and cannot run. Unconditional, like the task definition it waits for.
+    DependsOn: IngestTaskDef
     Properties:
       Name: !Ref EnginesSsmParamName
       Type: String
@@ -909,7 +913,14 @@ Resources:
               {"taskDef":"${Family}","subnets":["${Subnets}"],"securityGroups":["${Sg}"],
               "logGroup":"${Log}","tokenSecret":"${Secret}","civitaiTokenSecret":"${CivitaiSecret}",
               "bucket":"${Bucket}"}
-            - Family: !Ref IngestTaskDef
+            # !! The FAMILY, never a revision - PARAMETERS, "The ingest containers".
+            # !Ref on a task definition is the ARN *with its revision*, and a stack update that
+            # touches this task definition registers a new revision and DEREGISTERS the old one.
+            # RunTask against that revision then answers `InvalidParameterException:
+            # TaskDefinition is inactive` (measured on af-sandbox 2026-09-15). A family name
+            # resolves to the latest ACTIVE revision at call time, which is what every consumer
+            # of this table wants; the CP's ecs:RunTask grant is already scoped `...-ingest:*`.
+            - Family: !Sub "af-${AWS::StackName}-ingest"
               Subnets: !Join [ '","', !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ] ]
               Sg: !Ref EngineSg
               Log: !Ref LogGroup

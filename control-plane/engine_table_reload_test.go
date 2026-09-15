@@ -421,8 +421,13 @@ func TestEngineTableReloadAttachesTheIngestRunnerThatAppears(t *testing.T) {
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}}
 	attached := 0
 	reg.startIngest = func(def engineIngestDef) bool {
-		if !def.ok() || reg.ing != nil {
+		if !def.ok() {
 			return false
+		}
+		// The two branches production has (engines.go): attach once, and afterwards take the
+		// table's declaration again without rebuilding the runner.
+		if reg.ing != nil {
+			return reg.ing.adopt(def, nil)
 		}
 		attached++
 		reg.ing = &engineIngester{def: def}
@@ -441,10 +446,23 @@ func TestEngineTableReloadAttachesTheIngestRunnerThatAppears(t *testing.T) {
 	if reg.ingester() == nil || reg.ingestDef().TaskDef != "af-ingest:3" {
 		t.Fatalf("ingest = %+v", reg.ingestDef())
 	}
-	// Once attached it is never replaced: a running reconcile loop owns the jobs it started.
+	// Once attached the RUNNER is never replaced — a running reconcile loop owns the jobs it
+	// started — but what the table DECIDES is taken again every tick.
+	//
+	// 🔴 That half was missing and it cost af-sandbox its ingest (2026-09-15): a stack update
+	// registers a new task definition revision and deregisters the previous one, and an ingester
+	// still naming the old one answers `InvalidParameterException: TaskDefinition is inactive`
+	// for every press until the Control Plane is replaced.
 	ssmc.value = strings.Replace(raw, "af-ingest:3", "af-ingest:4", 1)
 	r.tick(t.Context())
-	if attached != 1 || reg.ingestDef().TaskDef != "af-ingest:3" {
-		t.Errorf("the ingest runner was rebuilt (%d) / replaced (%s)", attached, reg.ingestDef().TaskDef)
+	if attached != 1 {
+		t.Errorf("the ingest runner was rebuilt (%d times)", attached)
+	}
+	if reg.ingestDef().TaskDef != "af-ingest:4" {
+		t.Errorf("the runner still names %s, and the table says af-ingest:4", reg.ingestDef().TaskDef)
+	}
+	// A tick that changes nothing is not a change: the reloader logs adoptions.
+	if r.tick(t.Context()) {
+		t.Error("an unchanged table reported a change")
 	}
 }

@@ -229,7 +229,7 @@ func newEngineCivitaiTokens(def engineIngestDef, settings store.SettingsStore,
 
 func (a engineAdminAPI) civitaiTokens() *engineCivitaiTokens {
 	if ing := a.reg.ingester(); ing != nil {
-		return ing.civitaiTokens
+		return ing.civitai()
 	}
 	return nil
 }
