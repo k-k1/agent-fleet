@@ -371,6 +371,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.catalog_plan_action_reuse": "no download (already held)",
   "admin.catalog_plan_action_move": "no download (moved inside the bucket)",
   "admin.catalog_plan_action_unknown": "no part list in this deployment",
+  "admin.catalog_plan_at": "currently at {k}",
   "admin.catalog_plan_total": "{n} to download",
   "admin.catalog_plan_total_none": "Nothing is downloaded.",
   // The plan is a quote and the press is the purchase. When anything material moved the card is
@@ -379,6 +380,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.catalog_commercial_yes": "commercial use allowed",
   "admin.catalog_commercial_unknown": "commercial use unknown",
   "admin.catalog_started": "Taking it in. Progress is on the bucket under the Registered tab.",
+  // A reuse and a move cross no network: "downloading" would have somebody watch for nothing.
+  "admin.catalog_started_no_download": "Built from bytes this deployment already held (nothing was downloaded). It is on the bucket under the Registered tab.",
   // --- The bucket (ADR 0085 decisions 2 and 7): what S3 holds, as it holds it. ---
   "admin.catalog_ledger_title": "Bucket",
   "admin.catalog_ledger_note": "The objects under this engine's prefix. Ones no row declares (orphans) and ones no loader can list (misplaced) sort first. A part has no button of its own — it is attached by the Complete of the checkpoint that reads it.",

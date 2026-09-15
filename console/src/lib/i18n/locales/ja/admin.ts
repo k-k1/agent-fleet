@@ -363,6 +363,7 @@ export const admin = {
   "admin.catalog_plan_action_reuse": "取得なし（配備が持っています）",
   "admin.catalog_plan_action_move": "取得なし（バケツの中で移します）",
   "admin.catalog_plan_action_unknown": "この配備には部品表がありません",
+  "admin.catalog_plan_at": "いまの場所 {k}",
   "admin.catalog_plan_total": "ダウンロード合計 {n}",
   "admin.catalog_plan_total_none": "ダウンロードは発生しません。",
   // 計画は見積りで、押すことが購入。押した時点で内容が変わっていたら作り直して見せ直す
@@ -371,6 +372,8 @@ export const admin = {
   "admin.catalog_commercial_yes": "商用可",
   "admin.catalog_commercial_unknown": "商用可否は不明",
   "admin.catalog_started": "取り込みを開始しました。進み具合は「登録済み」タブのバケツで見られます。",
+  // 再利用と移設はネットワークを渡らない。「ダウンロード中」と書くと、出てこない通信を待たせる。
+  "admin.catalog_started_no_download": "配備が既に持っているバイト列から作りました（ダウンロードはありません）。「登録済み」タブのバケツで確認できます。",
   // --- バケツ（ADR 0085 決定 2・7）。S3 が持っているものそのもの。---
   "admin.catalog_ledger_title": "バケツ",
   "admin.catalog_ledger_note": "このエンジンのプレフィックスにあるオブジェクトです。どの行も宣言していないもの（孤児）と、ローダーが一覧できない場所にあるもの（誤配置）を先に並べます。部品に単体のボタンはありません——付け直すのはチェックポイント行の「揃える」です。",

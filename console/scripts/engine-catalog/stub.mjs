@@ -138,8 +138,10 @@ const PLAN = {
   main_flag: "--diffusion-model",
   files: [
     { flag: "--diffusion-model", name: "anima-aesthetic-v1.1.safetensors", bytes: 4_182_230_656, action: "download", source: "civitai:782002", key: "image/diffusion_models/anima-aesthetic-v1.1.safetensors" },
-    { flag: "--clip_l", name: "qwen_3_06b_base.safetensors", bytes: 1_190_000_000, action: "move", source: "hf:circlestone-labs/Anima", key: "image/text_encoders/qwen_3_06b_base.safetensors" },
-    { flag: "--vae", name: "qwen_image_vae.safetensors", bytes: 253_806_080, action: "reuse", key: "image/vae/qwen_image_vae.safetensors" },
+    // 🔴 `source` on a move and a reuse is the key the bytes are at TODAY, not an upstream: the
+    // move's origin rides inside the plan's hash, so an object that wanders makes the token stale.
+    { flag: "--clip_l", name: "qwen_3_06b_base.safetensors", bytes: 1_190_000_000, action: "move", source: "image/text_encoders/qwen_3_06b_base.safetensors", key: "image/text_encoders/qwen_3_06b_base.safetensors" },
+    { flag: "--vae", name: "qwen_image_vae.safetensors", bytes: 253_806_080, action: "reuse", source: "image/vae/qwen_image_vae.safetensors", key: "image/vae/qwen_image_vae.safetensors" },
   ],
   bytes_to_download: 4_182_230_656,
   warnings: ["このライセンスは商用利用を認めていません。生成物の扱いは配布元の条項を読んでください。"],
@@ -223,7 +225,7 @@ function engineRoute(method, pathname) {
   if (rest === "/ingest/versions") return () => ({ versions: [{ ref: "782002", name: "v1.1" }, { ref: "770100", name: "v1.0" }] });
   if (rest === "/ingest/files") return () => ({ files: [{ name: "anima-aesthetic-v1.1.safetensors", bytes: 4_182_230_656, sha256: "f0d1" }] });
   if (rest === "/ingest/resolve") return () => RESOLVED;
-  if (rest === "/ingest") return () => ({ id: "job-9", model_id: PLAN.id, state: "pending", created_at: new Date().toISOString() });
+  if (rest === "/ingest") return () => ({ id: "job-9", model_id: PLAN.id, state: "pending", action: "download", created_at: new Date().toISOString() });
   if (/^\/models\/[^/]+\/complete$/.test(rest)) {
     return (body) => body?.check
       ? {

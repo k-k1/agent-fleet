@@ -1400,6 +1400,7 @@ a.engines-model-source:hover {
   background: var(--panel2);
 }
 .engine-plan-name { min-width: 0; overflow-wrap: anywhere; }
+.engine-plan-source { grid-column: 1 / -1; font-size: 11px; overflow-wrap: anywhere; }
 .engine-plan-cost { white-space: nowrap; }
 .engine-plan-cost.free { color: var(--dialog-muted); }
 .engine-plan-total { margin: 0; font-size: 12px; font-weight: 600; }

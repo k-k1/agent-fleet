@@ -235,9 +235,12 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
         count={hits?.length || 0} onMore={() => void search(true)} />}
       {plan && <IngestPlanDialog row={row} kind={kind} hit={plan.hit} initialSource={plan.source}
         onClose={() => setPlan(null)}
-        onStarted={() => {
+        onStarted={(job) => {
           setPlan(null);
-          setStarted(tr("admin.catalog_started" as never) as string);
+          // Which of the three the press turned out to be: a reuse or a move crosses no network,
+          // so telling somebody to watch a download would have them watching for nothing.
+          setStarted(tr((job?.action && job.action !== "download"
+            ? "admin.catalog_started_no_download" : "admin.catalog_started") as never) as string);
           void loadObjects();
           onChanged();
         }} />}
@@ -1043,6 +1046,12 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
           <span className={`engine-plan-cost${planned.action === "download" ? "" : " free"}`}>{planned.action === "download"
             ? (planned.bytes ? `${Math.round(planned.bytes / 1048576)} MiB` : tr("admin.catalog_size_unknown" as never))
             : tr((`admin.catalog_plan_action_${planned.action}`) as never)}</span>
+          {/* One field, two meanings, told apart by the action: the upstream for a download and
+              the key the bytes are at TODAY for a reuse or a move. Drawn unbranched, "いまの場所"
+              would name a repository and a download would claim to come from the bucket. */}
+          {planned.source && <span className="muted mono engine-plan-source">{planned.action === "download"
+            ? planned.source
+            : (tr("admin.catalog_plan_at" as never) as string).replace("{k}", planned.source)}</span>}
         </li>)}</ul>
         <p className="engine-plan-total">{plan.bytes_to_download
           ? (tr("admin.catalog_plan_total" as never) as string).replace("{n}", formatBytes(plan.bytes_to_download))

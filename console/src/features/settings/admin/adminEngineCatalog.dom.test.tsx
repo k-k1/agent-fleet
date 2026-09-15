@@ -182,15 +182,15 @@ describe("model catalogue pane", () => {
         plan: {
           plan_token: "plan-1", id: "anima-aesthetic-v1-1", base_model: "anima", main_flag: "--diffusion-model",
           files: [
-            { flag: "--diffusion-model", name: "anima-aesthetic-v1.1.safetensors", bytes: 4_180_000_000, action: "download", key: "image/diffusion_models/anima-aesthetic-v1.1.safetensors" },
-            { flag: "--clip_l", name: "qwen_3_06b_base.safetensors", bytes: 1_190_000_000, action: "download", key: "image/text_encoders/qwen_3_06b_base.safetensors" },
-            { flag: "--vae", name: "qwen_image_vae.safetensors", bytes: 253_800_000, action: "reuse", key: "image/vae/qwen_image_vae.safetensors" },
+            { flag: "--diffusion-model", name: "anima-aesthetic-v1.1.safetensors", bytes: 4_180_000_000, action: "download", source: "hf:circlestone-labs/Anima/anima-aesthetic-v1.1.safetensors", key: "image/diffusion_models/anima-aesthetic-v1.1.safetensors" },
+            { flag: "--clip_l", name: "qwen_3_06b_base.safetensors", bytes: 1_190_000_000, action: "download", source: "hf:circlestone-labs/Anima/qwen_3_06b_base.safetensors", key: "image/text_encoders/qwen_3_06b_base.safetensors" },
+            { flag: "--vae", name: "qwen_image_vae.safetensors", bytes: 253_800_000, action: "reuse", source: "image/vae/qwen_image_vae.safetensors", key: "image/vae/qwen_image_vae.safetensors" },
           ],
           bytes_to_download: 5_370_000_000,
           warnings: ["この族の VAE は既にこの配備にあります。"],
         },
       });
-      if (path.endsWith("/ingest")) { sent = body; return Promise.resolve({ id: "job1", model_id: "anima-aesthetic-v1-1", state: "pending" }); }
+      if (path.endsWith("/ingest")) { sent = body; return Promise.resolve({ id: "job1", model_id: "anima-aesthetic-v1-1", state: "pending", action: "download" }); }
       return Promise.resolve({});
     });
     await mount();
@@ -203,6 +203,11 @@ describe("model catalogue pane", () => {
     expect(plan.textContent).toContain("--clip_l");
     expect(plan.textContent).toContain("取得なし（配備が持っています）");
     expect(document.querySelector(".engine-plan-total")?.textContent).toContain("5.4 GB");
+    // 🔴 `source` carries two different things and the action is what says which: the upstream
+    // for a download, the key the bytes sit at today for a reuse or a move.
+    const lines = Array.from(plan.querySelectorAll("li"));
+    expect(lines[0].querySelector(".engine-plan-source")?.textContent).toBe("hf:circlestone-labs/Anima/anima-aesthetic-v1.1.safetensors");
+    expect(lines[2].querySelector(".engine-plan-source")?.textContent).toBe("いまの場所 image/vae/qwen_image_vae.safetensors");
     // The commercial-use verdict is said ONCE, as the sentence: a chip saying the same thing in
     // another wording beside it reads as two separate restrictions.
     expect(document.querySelector("p.form-err")?.textContent).toContain("非商用ライセンスです");
@@ -221,6 +226,7 @@ describe("model catalogue pane", () => {
     for (const gone of ["s3Key", "reuse_s3_key", "attach", "replace", "file_flag", "with_family_parts", "with_family_vae"]) {
       expect(sent?.[gone]).toBeUndefined();
     }
+    expect(document.body.textContent).toContain("取り込みを開始しました");
   });
 
   // 🔴 The plan is a quote and the press is the purchase. A card can sit open for minutes, and
@@ -248,7 +254,10 @@ describe("model catalogue pane", () => {
             files: [{ name: "model.safetensors", action: "download", bytes: 3_000_000_000 }], bytes_to_download: 3_000_000_000,
           } } });
         }
-        return Promise.resolve({ id: "job2", model_id: "example", state: "pending" });
+        // A press the CP answered with `reuse`: the bytes were already here, so nothing crosses
+        // the network — and telling somebody to watch a download would be telling them to watch
+        // for something that never appears.
+        return Promise.resolve({ id: "job2", model_id: "example", state: "pending", action: "reuse" });
       }
       return Promise.resolve({});
     });
@@ -266,6 +275,7 @@ describe("model catalogue pane", () => {
     await acceptLicence();
     await click(button("取り込む"));
     expect(sent[1]?.plan_token).toBe("fresh");
+    expect(document.body.textContent).toContain("ダウンロードはありません");
   });
 
   it("asks for a family only when the CP could not read one, and only from its candidates", async () => {

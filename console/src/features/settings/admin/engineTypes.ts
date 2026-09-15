@@ -273,6 +273,11 @@ export type IngestPlanFile = {
   name: string;
   bytes?: number;
   action: "download" | "reuse" | "move" | "unknown";
+  /** 🔴 TWO meanings, told apart by `action`: the upstream label (`hf:owner/repo/file`) for a
+   *  download, and the S3 key the bytes occupy TODAY for a reuse or a move. The CP keeps it one
+   *  field on purpose — a move's origin then rides inside the plan's hash, so an object that
+   *  wanders between the card and the press makes the token stale instead of being moved from a
+   *  key it has left. The card must branch on `action` before drawing it as either. */
   source?: string;
   /** Where it lands. Composed by the CP alone since ADR 0085 decision 1 — the Console neither
    *  builds nor sends a key, it only shows the one it is told. */
@@ -524,6 +529,11 @@ export type IngestJob = {
   model_id: string;
   s3_key?: string;
   source?: string;
+  /** Which of the three the press turned out to be (ADR 0085 decision 1). Only on the answer to
+   *  `POST …/ingest`: the job row itself cannot say it, because a move and a download are the
+   *  same task to the reconciler — and it is the one thing the person who just pressed wants to
+   *  know before any progress appears. */
+  action?: "download" | "reuse" | "move";
   state: string;
   message?: string;
   /** What the operator has to DO about a failure, read by the CP out of the status in the
