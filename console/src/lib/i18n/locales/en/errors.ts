@@ -251,6 +251,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   // waiting: deleting the row does not stop the ECS task, which writes its catalogue row anyway.
   "err.ingest_job_unknown": "This engine has no such ingest job.",
   "err.ingest_job_live": "That ingest is still running, so its history row cannot be forgotten yet.",
+  "err.engine_plan_stale": "The plan on screen is not what taking this model in would do now. Take it in again from the fresh plan.",
+  "err.engine_ingest_act_gone": "That act is no longer part of an ingest: it is the registered row's Complete button now.",
   "err.hf_token_unsupported": "This deployment's engine stack has nowhere to keep the token — update 60-engines.",
   "err.hf_token_empty": "The token is empty.",
   "err.hf_token_store_failed": "The token could not be saved.",

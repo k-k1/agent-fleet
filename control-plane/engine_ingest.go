@@ -870,6 +870,12 @@ type engineIngestRequest struct {
 	// VAE a diffusion model cannot generate without (engine_family_parts.go). A list rather than
 	// one, because a family needs all of them or the row stays refused.
 	PartsFollowUp []engineVaeFollowUp
+	// PartsMove is, per file flag, the key a follow-up part's bytes are at TODAY, when the plan
+	// found them in the bucket under a name no loader lists (ADR 0085 decision 1). Without it
+	// that second job would be a download of bytes this deployment has already bought; with it it
+	// is one server-side `aws s3 mv`. Empty for every part that is downloaded or already at its
+	// own key.
+	PartsMove map[string]string
 	// VaeFollowUp is the second file this ingest promised: the family's own VAE, attached to the
 	// row this job creates. Decided while somebody was still at the form — the job finishes in
 	// the reconciler, where a resolve failure has nobody to report itself to.
@@ -884,8 +890,11 @@ func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (st
 	// for a recorded key. Keep the same fence here because follow-up VAEs start from the
 	// reconciler, not that route; otherwise two completed checkpoints could upload different
 	// bytes to the family's fixed VAE key before either attachment is registered.
-	if aerr := engineIngestDestinationUnused(ctx, g.models, g.store, req.Role, req.S3Key); aerr != nil {
-		return store.EngineIngestJob{}, aerr
+	if ref := engineIngestDestinationUnused(ctx, g.models, g.store, req.Role, req.S3Key); ref != nil {
+		// The holder and the next act are dropped here and only here: this method answers
+		// *apiError to callers that predate them, and the routes that can draw a button
+		// (postIngest) ask the same question themselves before calling it.
+		return store.EngineIngestJob{}, ref.Plain()
 	}
 	// The registered tokens are carried into the stack's secrets before EVERY ingest, both of
 	// them regardless of which source this job is for. Not when it looks stale — nothing can
@@ -932,10 +941,17 @@ func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (st
 	return job, nil
 }
 
-// reuse records the same job-shaped history row as a download, but applies the catalogue
-// transition immediately. The caller has already proved the object and immutable identity;
-// this method deliberately never stages a token or starts ECS.
+// reuse is what happens when the bytes are already this deployment's (ADR 0085 decision 1).
+//
+// Two shapes, and the plan decides which: at the CANONICAL key there is nothing to do but
+// declare it, so the catalogue transition is applied immediately and no token is staged and no
+// ECS task started; at ANOTHER key the bytes have to be relocated first, which is a task
+// (`MODE=move`, a server-side `aws s3 mv`) and therefore the ordinary start — re-fetching a
+// 13 GB file to put it one directory higher is the repair this deployment refuses to make.
 func (g *engineIngester) reuse(ctx context.Context, req engineIngestRequest) (store.EngineIngestJob, *apiError) {
+	if strings.TrimSpace(req.MoveFrom) != "" {
+		return g.start(ctx, req)
+	}
 	spec, _ := json.Marshal(req)
 	job := store.EngineIngestJob{
 		ID: store.NewID(), Role: req.Role, ModelID: req.ModelID, S3Key: req.S3Key,
@@ -1156,15 +1172,40 @@ func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, j
 		if err != nil {
 			return err
 		}
-		if !found {
+		if found {
+			log.Printf("engines: ingest %s done: %s/%s now reads %s as %s (moved from %s)",
+				jobID, req.Role, req.ModelID, req.S3Key, engineFlagLabel(req.FileFlag), req.MoveFrom)
+			if g.onDone != nil {
+				g.onDone(req.Role)
+			}
+			return nil
+		}
+		// 🔴 The row does not declare the old key — which is the NORMAL case since ADR 0085
+		// decision 1, not a failure. The plan moves bytes this deployment already holds under a
+		// name no loader lists into a row that does not exist yet (an object a forgotten row left
+		// behind) or into a slot that row never had. The task has already put the bytes at their
+		// destination, so what is left is the ordinary write: appended for a part, created for the
+		// model itself. Only a replacement still fails here, because it names a file to swap and
+		// there is none.
+		if req.Replace {
 			return fmt.Errorf("%s/%s no longer declares %s", req.Role, req.ModelID, req.MoveFrom)
 		}
-		log.Printf("engines: ingest %s done: %s/%s now reads %s as %s (moved from %s)",
-			jobID, req.Role, req.ModelID, req.S3Key, engineFlagLabel(req.FileFlag), req.MoveFrom)
-		if g.onDone != nil {
-			g.onDone(req.Role)
+		if req.Attach {
+			found, err := g.models.AppendEngineModelFile(ctx, req.Role, req.ModelID, file)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return fmt.Errorf("%s/%s no longer exists", req.Role, req.ModelID)
+			}
+			log.Printf("engines: ingest %s done: %s added to %s/%s (moved from %s)",
+				jobID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID, req.MoveFrom)
+			if g.onDone != nil {
+				g.onDone(req.Role)
+			}
+			return nil
 		}
-		return nil
+		// and on to the create below, with the file at its destination
 	}
 	if req.Replace {
 		// 🔴 The geometry is written again, and only for the slot it describes. The row holds ONE
@@ -1301,6 +1342,22 @@ func (g *engineIngester) followUpFile(ctx context.Context, req engineIngestReque
 	flag := strings.TrimSpace(fu.Flag)
 	if flag == "" {
 		flag = "--vae"
+	}
+	// The bytes are here, under a name no loader lists: one server-side move rather than a second
+	// download of a file this deployment already owns (ADR 0085 decision 1). Attached, because
+	// the row this follows up on exists by now.
+	if from := strings.TrimSpace(req.PartsMove[flag]); from != "" {
+		if _, aerr := g.start(ctx, engineIngestRequest{
+			Role: req.Role, ModelID: req.ModelID, S3Key: fu.S3Key, MoveFrom: from,
+			AcceptedBy: req.AcceptedBy, AcceptedTenant: req.AcceptedTenant,
+			Resolved: fu.Resolved, FileFlag: flag, Attach: true,
+		}); aerr != nil {
+			log.Printf("engines: %s/%s could not move %s to %s (%s): attach it from the panel",
+				req.Role, req.ModelID, from, fu.S3Key, aerr.message)
+			return
+		}
+		log.Printf("engines: %s/%s is moving %s to %s", req.Role, req.ModelID, from, fu.S3Key)
+		return
 	}
 	if fu.Staged {
 		file := store.EngineModelFile{
