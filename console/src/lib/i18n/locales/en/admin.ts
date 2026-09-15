@@ -263,6 +263,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.catalog_parts_fix_none": "Nothing is missing.",
   "admin.catalog_parts_fix_attached": "Declared from files this deployment already held — nothing was downloaded.",
   "admin.catalog_parts_fix_started": "Taking the missing files in. They attach themselves when they land.",
+  // 🔴 Said apart from a download: this is a server-side copy inside the bucket, so nothing
+  // crosses the internet and "taking it in" would have somebody watching for a transfer.
+  "admin.catalog_parts_fix_moving": "Moving this row's own weights inside the bucket (no download). The row becomes readable when it lands.",
+  // The one reason a row can report a file it is holding as missing, said on the row.
+  "admin.catalog_main_file_misplaced": "This row's weights are registered as the whole checkpoint, which this family's workflow does not read at all. The bytes are at {from} and the loader lists {to} — \"Complete this row\" moves them inside the bucket and re-declares them as {f}.",
   "admin.engines_wizard_vae_none": "This checkpoint carries no VAE and this deployment has no default one for its family. It cannot generate until a VAE is taken in and attached as `--vae`.",
   "admin.engines_model_add_desc": "description",
   // Optional. This route has no source to read a licence from, so it is the one place a person

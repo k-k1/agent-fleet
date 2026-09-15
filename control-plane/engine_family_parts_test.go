@@ -344,4 +344,32 @@ func TestIngestRefusesAWholeCheckpointForASplitFamily(t *testing.T) {
 	if code, body := post("sdxl"); code == http.StatusBadRequest && strings.Contains(body, "whole checkpoint") {
 		t.Errorf("a single-file family was refused its own shape: %s", body)
 	}
+	// 🔴 And the control that matters more: the act the refusal ABOVE tells the operator to
+	// perform has to work. A flagged file is otherwise refused as "a PART of a model, not a
+	// model", and with both rules in force no new row of a split family could be taken in at
+	// all — the advice would lead straight into the other refusal.
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
+		`{"id":"anima-aesthetic","kind":"checkpoint","base_model":"anima",
+		  "s3Key":"image/diffusion_models/anima-aesthetic.safetensors","file_flag":"--diffusion-model",
+		  "license_accepted":true,
+		  "source":{"url":"https://example.invalid/anima.safetensors","sha256":"`+strings.Repeat("d", 64)+`"}}`))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("taking anima's weights in under the role the refusal names = %d (%s), want 200",
+			rec.Code, rec.Body.String())
+	}
+	// The encoder still is not a model, which is the rule the exception above must not widen.
+	part := httptest.NewRecorder()
+	r2 := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
+		`{"id":"qwen_3_06b_base","kind":"checkpoint","base_model":"anima",
+		  "s3Key":"image/text_encoders/qwen_3_06b_base.safetensors","file_flag":"--clip_l",
+		  "license_accepted":true,
+		  "source":{"url":"https://example.invalid/q.safetensors","sha256":"`+strings.Repeat("e", 64)+`"}}`))
+	r2.SetPathValue("key", "image")
+	a.postIngest(part, r2, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if part.Code != http.StatusBadRequest || !strings.Contains(part.Body.String(), "not a model") {
+		t.Errorf("an encoder as its own row = %d (%s), want the part refusal", part.Code, part.Body.String())
+	}
 }

@@ -90,6 +90,12 @@ export type EngineModel = {
    *  made the panel go quiet about a row that still could not generate. The CP refuses to
    *  enable one of these. */
   files_missing?: string[];
+  /** 🔴 The reading of `files_missing` that cannot be arrived at from this screen: the file the
+   *  row is "missing" is one it is HOLDING — a split family's own weights, registered as the
+   *  whole checkpoint and staged where no ComfyUI loader lists them. `from` is where the bytes
+   *  are, `to` is the key the loader reads, and "不足ファイルを揃える" moves them there inside
+   *  the bucket (no download). Absent for every row that is simply missing a part. */
+  main_file_fix?: { flag: string; from: string; to: string; bytes?: number };
   /** The row's checkpoint was READ and carries no VAE tensors, and the row declares no `--vae`
    *  file either (ADR 0072 follow-up). The one fault no declaration can express: an SDXL
    *  checkpoint published without a VAE holds every file its family needs, validates, loads —

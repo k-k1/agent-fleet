@@ -1514,10 +1514,14 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
 	}
 
-	post := func(id, extra string) (int, string) {
+	// 🔴 The key follows the ROLE, in every one of these requests. A file's destination directory
+	// is decided by the flag it is taken in under (engineComfyRoleDir) and the ingest refuses any
+	// other spelling, so a fixture that staged an unflagged checkpoint in `text_encoders/` would
+	// now be testing that refusal instead of the act it is about.
+	post := func(id, dir, extra string) (int, string) {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/text_encoders/` + id + `_t5xxl_fp8.safetensors",
+		body := `{"id":"` + id + `","kind":"checkpoint","s3Key":"image/` + dir + `/` + id + `_t5xxl_fp8.safetensors",
 		  "license_accepted":true,"source":{"url":"https://example.invalid/t5xxl_fp8.safetensors",
 		  "sha256":"` + strings.Repeat("c", 64) + `"}` + extra + `}`
 		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
@@ -1529,23 +1533,23 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 	// A slot the row does not fill is NOT quietly created: that is the other act, and turning one
 	// into the other is how a mistyped flag becomes a row with two checkpoints. The refusal names
 	// the act that was meant.
-	code, body := post("flux1-dev-fp8", `,"replace":true,"file_flag":"--clip_l"`)
+	code, body := post("flux1-dev-fp8", "text_encoders", `,"replace":true,"file_flag":"--clip_l"`)
 	if code != http.StatusBadRequest || !strings.Contains(body, "as a part") {
 		t.Fatalf("replacing an empty slot = %d, and the refusal does not point at the other act: %s", code, body)
 	}
 	// Both at once is not a request the CP may pick a winner for: their preconditions are
 	// opposite — one needs the slot free, the other needs it filled.
-	if code, body := post("flux1-dev-fp8", `,"replace":true,"attach":true,"file_flag":"--t5xxl"`); code != http.StatusBadRequest {
+	if code, body := post("flux1-dev-fp8", "text_encoders", `,"replace":true,"attach":true,"file_flag":"--t5xxl"`); code != http.StatusBadRequest {
 		t.Fatalf("attach and replace together = %d, want 400 (%s)", code, body)
 	}
 	// An id nothing holds, same as the attach gate: a typo must not write a row.
-	if code, body := post("typo", `,"replace":true,"file_flag":"--t5xxl"`); code != http.StatusNotFound {
+	if code, body := post("typo", "text_encoders", `,"replace":true,"file_flag":"--t5xxl"`); code != http.StatusNotFound {
 		t.Fatalf("replacing in an id nothing holds = %d, want 404 (%s)", code, body)
 	}
 	// 🔴 The asymmetry that is the whole point. An attach with no flag is refused — the
 	// unlabelled slot is THE checkpoint and a row has one — and a replace with no flag is the
 	// only way that file has ever been changeable.
-	if code, body := post("sdxl-base-1.0", `,"attach":true`); code != http.StatusBadRequest {
+	if code, body := post("sdxl-base-1.0", "checkpoints", `,"attach":true`); code != http.StatusBadRequest {
 		t.Fatalf("an attach with no file_flag = %d, want 400 (%s)", code, body)
 	}
 	// Upload happens before the catalogue swap, so sending a new version to the old key would
@@ -1572,11 +1576,11 @@ func TestEngineIngestReplacesAFileOfAnExistingRow(t *testing.T) {
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "already recorded") {
 		t.Fatalf("other-row destination = %d (%s), want a pre-upload conflict", rec.Code, rec.Body.String())
 	}
-	if code, body := post("sdxl-base-1.0", `,"replace":true`); code != http.StatusOK {
+	if code, body := post("sdxl-base-1.0", "checkpoints", `,"replace":true`); code != http.StatusOK {
 		t.Fatalf("replacing a row's own checkpoint = %d, want 200 (%s)", code, body)
 	}
 	// And the flagged one, with no family declared: the row settled that when it was created.
-	if code, body := post("flux1-dev-fp8", `,"replace":true,"file_flag":"--t5xxl"`); code != http.StatusOK {
+	if code, body := post("flux1-dev-fp8", "text_encoders", `,"replace":true,"file_flag":"--t5xxl"`); code != http.StatusOK {
 		t.Fatalf("the replace = %d, want 200 (%s)", code, body)
 	}
 	jobs, err := st.ListEngineIngestJobs(ctx, "image", 10)
