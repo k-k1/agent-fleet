@@ -431,11 +431,7 @@ func (r *engineRegistry) ingester() *engineIngester {
 // ingestDef is what the stack declared about taking models in. The zero value is a complete
 // answer: `hasToken` false and `ok()` false mean "no gated repositories, no ingest".
 func (r *engineRegistry) ingestDef() engineIngestDef {
-	ing := r.ingester()
-	if ing == nil {
-		return engineIngestDef{}
-	}
-	return ing.def
+	return r.ingester().ingestDef()
 }
 
 // adopt registers a role the table now declares and this process does not serve.
@@ -810,9 +806,22 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			if !def.ok() {
 				return false
 			}
+			secrets := func(d engineIngestDef) (*engineHfTokens, *engineCivitaiTokens) {
+				return newEngineHfTokens(d, mgr.store, mgr, secretsmanager.NewFromConfig(ac)),
+					newEngineCivitaiTokens(d, mgr.store, mgr, secretsmanager.NewFromConfig(ac))
+			}
+			// 🔴 Already running: the RUNNER stays — its reconcile loop owns the jobs it started —
+			// but everything the table decides is taken again. A CloudFormation update registers a
+			// new ingest task definition revision and deregisters the previous one, so an ingester
+			// that kept the block it booted with fails every ingest with `TaskDefinition is
+			// inactive` until the Control Plane is replaced (af-sandbox, 2026-09-15).
 			if ing := reg.ingester(); ing != nil {
-				return ing.setStorage(newEngineStorage(def.Bucket,
-					newEngineAWSStorageMetadata(def.Bucket, s3.NewFromConfig(ac))))
+				moved := ing.adopt(def, secrets)
+				if ing.setStorage(newEngineStorage(def.Bucket,
+					newEngineAWSStorageMetadata(def.Bucket, s3.NewFromConfig(ac)))) {
+					moved = true
+				}
+				return moved
 			}
 			ing := &engineIngester{
 				def: def, cluster: cluster, ecs: ecsc,

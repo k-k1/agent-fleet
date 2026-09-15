@@ -5043,3 +5043,29 @@ in again, and the refusal says so).
   the rule beside it refuses a flagged file as "a PART of a model, not a model". The two met, and
   the advice led into the other refusal. The family's MAIN flag is now the one exception to the
   parts rule — an encoder as its own row is still refused, which is what that rule is for.
+
+### Addendum follow-up — the table named a revision, and the CP read it once (2026-09-15)
+
+The move above was deployed to af-sandbox and every ingest answered:
+
+```
+InvalidParameterException: TaskDefinition is inactive
+```
+
+Two faults, one on each side of the engine table, and neither is about ingest:
+
+1. 🔴 **The table published `!Ref IngestTaskDef`, which is the ARN _with its revision_.** A
+   CloudFormation update that touches the task definition registers a new revision and
+   **deregisters the previous one** — so the pinned value becomes one `RunTask` refuses. The
+   table carries the FAMILY now, which resolves to the latest ACTIVE revision at call time
+   (`EnginesParam` gains `DependsOn: IngestTaskDef`, since a string no longer creates that
+   ordering).
+2. 🔴 **The CP read the ingest block once and ignored every later table.** `startIngest` attached
+   the runner on the first table that declared one and afterwards re-pointed only its storage
+   checker, so the task definition, subnets, security group, log group and secrets were whatever
+   the process booted with. The runner is still never rebuilt — its reconcile loop owns the jobs
+   it started — but it now **adopts** the block on every reload.
+
+Either fix alone would have cleared the error; both are here because they fail in different
+directions. The first is "the value was never safe to pin"; the second is "a value that changes
+was read once", which was equally true of the bucket and of the secrets.

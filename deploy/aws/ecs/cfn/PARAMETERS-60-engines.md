@@ -1876,6 +1876,22 @@ or 2 rows (each role is staged independently), which the Control Plane reads onc
 4, ADR 0083 decision 1 — before ADR 0083 these followed `ImageEngine`, which could also be
 `sdcpp`; the template now writes them as literals since `comfy` is the only value left).
 
+🔴 **`ingest.taskDef` is the FAMILY name, never `!Ref IngestTaskDef`.** `!Ref` on a task
+definition is the ARN *with its revision*, and a CloudFormation update that touches this task
+definition registers a new revision and **deregisters the old one** — so the value a consumer
+kept becomes one that `RunTask` refuses:
+`InvalidParameterException: TaskDefinition is inactive` (af-sandbox, 2026-09-15, the first stack
+update after the ingest containers changed). A family name resolves to the latest ACTIVE revision
+at call time. The CP's `ecs:RunTask` grant is already scoped to `…-ingest:*`, which covers both
+spellings, and `EnginesParam` carries a `DependsOn: IngestTaskDef` because naming the family as a
+string is the one thing that does not create that ordering by itself.
+
+⚠️ The Control Plane's half of the same fault is in `engines.go` (`startIngest` → `adopt`): the
+ingest runner is attached once and never rebuilt, but everything the table decides — task
+definition, subnets, security group, log group, bucket, the two secrets — is taken again on every
+reload. Before that it read the block at boot and ignored every later table, so a stack update
+could only be picked up by replacing the CP.
+
 **Three fields carry how the box is bought** (the contract between this template and the
 Control Plane):
 

@@ -2044,7 +2044,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	// download this refused could have run. What the CP still cannot do is verify that the
 	// account satisfies THIS uploader — early access is bought per creator — so the honest
 	// shape is the gated one: let it start, and let the 401 be the answer if it is one.
-	if res.LoginRequired && reuseKey == "" && !ing.civitaiTokens.configured(r.Context()) {
+	if res.LoginRequired && reuseKey == "" && !ing.civitai().configured(r.Context()) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestCivitaiLogin,
 			"the person who uploaded this asset requires a logged-in account to download it, and this " +
 				"deployment has no Civitai token registered — register one below, pick another asset, " +
@@ -2053,7 +2053,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	}
 	// ⚠️ Refused BEFORE a task is started. Without the token the download is a 401 nine minutes
 	// into a Fargate task, and the message that reaches the panel is an exit code.
-	if res.Gated && reuseKey == "" && !ing.tokens.configured(r.Context()) {
+	if res.Gated && reuseKey == "" && !ing.hfTokens().configured(r.Context()) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestGatedNoToken,
 			"that repository is gated: accept its terms on Hugging Face with the operator's account " +
 				"and register that account's token below — it is read by the ingest task only"})
@@ -2101,11 +2101,11 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	// moment it can be had, since the CP's S3 port exposes metadata rather than object bytes.
 	// Best-effort by design: anything that cannot be read leaves the row at its floor, which is
 	// what it would have been anyway.
-	geom := engineIngestGeometry(r.Context(), b.Kind, res, ing.tokens)
+	geom := engineIngestGeometry(r.Context(), b.Kind, res, ing.hfTokens())
 	// The same read for the image role, and the one that decides whether this row will be able
 	// to decode a picture at all (ADR 0072 follow-up). Read again here rather than trusted from
 	// the resolve: the form's answer can be minutes old, and this is the call that spends money.
-	vae := engineVaeOfIngest(r.Context(), e.def.Provider, b, res, ing.tokens)
+	vae := engineVaeOfIngest(r.Context(), e.def.Provider, b, res, ing.hfTokens())
 	if reuseKey != "" {
 		known, check, aerr := a.verifyEngineReuse(r.Context(), g, key, reuseKey, res, ing)
 		if aerr != nil {

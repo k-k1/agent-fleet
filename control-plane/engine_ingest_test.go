@@ -844,6 +844,51 @@ func TestEngineIngestStartRefusesARecordedDestinationBeforeRunTask(t *testing.T)
 	}
 }
 
+// 🔴 The revision the table names is the revision the task runs on, and the CP has to keep
+// reading it. Reported from af-sandbox 2026-09-15, one stack update after this branch's own
+// change to the ingest task definition:
+//
+//	取り込みタスクを起動できませんでした: operation error ECS: RunTask, …
+//	InvalidParameterException: TaskDefinition is inactive
+//
+// CloudFormation registers a NEW revision and DEREGISTERS the previous one, the table publishes
+// the new ARN within the same update — and the ingester went on naming the one it booted with,
+// because the reloader only ever re-pointed its storage checker. Every ingest, every move and
+// every purge on that deployment failed until the Control Plane itself was replaced.
+func TestEngineIngestTakesTheTaskDefinitionTheTableNowNames(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, _ := testIngester(t, api, nil)
+	was := ing.ingestDef()
+	if _, aerr := ing.start(t.Context(), ingestReq()); aerr != nil {
+		t.Fatalf("first start: %#v", aerr)
+	}
+	if got := aws.ToString(api.run[0].TaskDefinition); got != "af-ingest" {
+		t.Fatalf("task definition = %q, want the one it booted with", got)
+	}
+
+	next := was
+	next.TaskDef = "af-ingest:4"
+	if !ing.adopt(next, nil) {
+		t.Fatal("a table naming another revision was not adopted")
+	}
+	if ing.adopt(next, nil) {
+		t.Error("an unchanged table was reported as a change")
+	}
+	second := ingestReq()
+	second.ModelID, second.S3Key = "another", "llm/another.gguf"
+	if _, aerr := ing.start(t.Context(), second); aerr != nil {
+		t.Fatalf("second start: %#v", aerr)
+	}
+	if got := aws.ToString(api.run[1].TaskDefinition); got != "af-ingest:4" {
+		t.Fatalf("task definition = %q, want the revision the table now names", got)
+	}
+	// An incomplete block is not an adoption: a table read during the migration window carries
+	// no ingest at all, and taking it would leave the runner unable to start anything.
+	if ing.adopt(engineIngestDef{}, nil) || ing.ingestDef().TaskDef != "af-ingest:4" {
+		t.Error("an empty ingest block replaced a working declaration")
+	}
+}
+
 // 🔴 ADR 0072 P2 欠落 6. The row an ingest wrote was always `[{S3Key, Bytes}]` with no flag —
 // "one whole checkpoint" — so a SPLIT model could not be assembled by taking its parts in.
 // Measured on af-sandbox: the four files of `flux1-dev-fp8` had to be staged as three throwaway
