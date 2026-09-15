@@ -242,3 +242,106 @@ func TestIngestRefusesToRegisterAPartAsItsOwnRow(t *testing.T) {
 		t.Errorf("the refusal does not say what to do instead: %s", rec.Body.String())
 	}
 }
+
+// 🔴 Reported from af-sandbox 2026-09-15: "the S3 key image/text_encoders/qwen_3_06b_base
+// .safetensors is already recorded; choose a new destination for this download or use verified
+// reuse". The key was held by a row made earlier by hand, the plan could not match its identity,
+// and the fallback was a download — which engineIngestDestinationUnused refuses for a taken key.
+//
+// So the plan must not propose that download at all. What an operator can act on is WHO holds
+// the key, and that is what comes back.
+func TestPartPlanRefusesAKeyHeldBySomethingItCannotMatch(t *testing.T) {
+	part := engineFamilyParts["anima"][0]
+	if part.Flag != "--clip_l" {
+		t.Fatalf("the fixture assumed anima's first part is the encoder, got %s", part.Flag)
+	}
+	held := enginePartsHeld{known: map[string]*engineKnownArtifact{
+		part.S3Key: {
+			S3Key:    part.S3Key,
+			ModelIDs: map[string]struct{}{"qwen_3_06b_base": {}},
+			// Taken in from somewhere else, so the identity cannot match what this plan resolves.
+			ArtifactIdentity: "hf:somebody/else@main/encoder.safetensors#sha256:dead",
+			Reusable:         true,
+		},
+	}}
+	// The resolve is stubbed to answer, so the fallthrough this test is about is reachable.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/models/") {
+			// The shape hfStub pins: `lfs.sha256` is what the resolve reads.
+			_, _ = w.Write([]byte(`{"sha":"commit-a","cardData":{"license":"other"},"siblings":[
+				{"rfilename":"` + part.File + `","size":1190000000,
+				 "lfs":{"sha256":"` + strings.Repeat("a", 64) + `"}}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	old := engineIngestBase
+	engineIngestBase = srv.URL
+	t.Cleanup(func() { engineIngestBase = old })
+
+	fu := enginePartPlan(context.Background(), held, part)
+	if fu.Conflict == "" {
+		t.Fatalf("plan = %+v, want the taken key reported rather than a download that is refused", fu)
+	}
+	if !strings.Contains(fu.Conflict, "qwen_3_06b_base") {
+		t.Errorf("conflict = %q, want it to name what is holding the key", fu.Conflict)
+	}
+	if fu.Staged || fu.Resolved.SHA256 != "" {
+		t.Errorf("a conflicted part was also offered as something to do: %+v", fu)
+	}
+	// It costs nothing and it is drawn as a conflict, not as an unreachable upstream: the
+	// upstream is fine, the destination is not.
+	if enginePartsBytes([]engineVaeFollowUp{fu}) != 0 {
+		t.Error("a part that cannot be downloaded was counted into the total")
+	}
+	rows := enginePartsPlanRows([]engineVaeFollowUp{fu}, []engineFamilyPart{part})
+	if rows[0]["conflict"] == nil || rows[0]["unreachable"] != nil {
+		t.Errorf("plan row = %+v, want a conflict and not an unreachable source", rows[0])
+	}
+}
+
+// 🔴 The mistake an operator falls into by DEFAULT, and the one that made every Anima row on
+// af-sandbox useless: the form offers "whole checkpoint" first, and a split family reads no
+// unflagged file at all. The row then holds a 4 GB file under a role no template looks at, and
+// reports all three parts missing — including the one it is holding.
+func TestIngestRefusesAWholeCheckpointForASplitFamily(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+	}
+	e.catalog.invalidate()
+
+	post := func(family string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		body := `{"id":"anima-aesthetic","kind":"checkpoint","base_model":"` + family + `",
+		  "s3Key":"image/checkpoints/anima-aesthetic.safetensors","license_accepted":true,
+		  "source":{"url":"https://example.invalid/anima.safetensors","sha256":"` + strings.Repeat("d", 64) + `"}}`
+		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
+		r.SetPathValue("key", "image")
+		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+		return rec.Code, rec.Body.String()
+	}
+
+	code, body := post("anima")
+	if code != http.StatusBadRequest {
+		t.Fatalf("an unflagged anima row = %d %s, want 400", code, body)
+	}
+	// The refusal names the role the file is, because the family already says there is only one
+	// candidate — an error that only says "no" leaves the operator exactly where they were.
+	if !strings.Contains(body, "--diffusion-model") {
+		t.Errorf("the refusal does not name the role: %s", body)
+	}
+	// 🔴 The negative control: sdxl IS one whole checkpoint, and taking one in must stay the
+	// ordinary act it has always been.
+	if code, body := post("sdxl"); code == http.StatusBadRequest && strings.Contains(body, "whole checkpoint") {
+		t.Errorf("a single-file family was refused its own shape: %s", body)
+	}
+}

@@ -908,6 +908,15 @@ function CatalogOperation({ row, kind, hit, initialAct, initialSource, initialTa
       if (found.base_model_suggest && !baseModel && !(isLora && !image) && (!selectableBases.length || selectableBases.includes(found.base_model_suggest))) {
         setBaseModel(found.base_model_suggest);
       }
+      // 🔴 A SPLIT family reads no whole checkpoint, and "whole checkpoint" is what this form
+      // offers first. Every Anima row on af-sandbox was taken in that way (2026-09-15): a 4 GB
+      // file that counts for nothing, on a row reporting all three parts missing. When the CP
+      // says the family has parts, the file being registered is its diffusion model — so that is
+      // what the role starts on, and the operator changes it rather than discovering it.
+      if (act === "new" && !partChosen && found.family_main_flag) {
+        setFileFlag(found.family_main_flag);
+        setPartChosen(true);
+      }
       if (found.context_length && !context) {
         setContext(String(found.context_length)); setOutput(String(Math.floor(found.context_length / 8)));
       }

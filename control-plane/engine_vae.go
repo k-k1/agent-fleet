@@ -294,6 +294,12 @@ type engineVaeFollowUp struct {
 	Staged                   bool
 	Bytes                    int64
 	Source, ArtifactIdentity string
+	// Conflict is set when the destination key is ALREADY recorded by something this plan
+	// cannot prove is the same file. It is not a download that failed — it is a download that
+	// must not be offered: engineIngestDestinationUnused refuses one to a taken key, so the
+	// press would end in "the S3 key … is already recorded" minutes after somebody accepted a
+	// licence for it. Carried so the panel can say WHICH row or job is holding the key.
+	Conflict string
 }
 
 // engineVaePlan works out what the deployment would do for a checkpoint that carries no VAE, and

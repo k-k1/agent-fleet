@@ -4971,3 +4971,25 @@ nobody has measured their files the way these two were, and an entry written fro
 
 🔴 Neither family has been run on a GPU here, so "the row is complete" still means the
 declaration is complete.
+
+## Addendum — for a split family, the default choice was the only one that cannot work (2026-09-15)
+
+Three faults came back from af-sandbox the moment the addendum above was in an operator's hands.
+None of them was about the part list; all three were about the step before it.
+
+1. 🔴 **The main file had no role either.** `anima-aesthetic-v1.1` was registered as "the whole
+   checkpoint", because that is the first thing the form offers. A split family has no `""` in
+   `engineComfyRequiredFlags` — **no template reads that role** — so the row held a 4.2 GB file
+   and reported `--diffusion-model --clip_l --vae` as missing, counting the file it was holding
+   among them. Now refused, naming the role it almost certainly is; the resolve answers
+   `family_main_flag` and the form's role selector starts there.
+2. 🔴 **Parts were standing in the list as models** (an encoder and a VAE as three "models") —
+   the same cause: with no role, a new ingest makes a row.
+3. 🔴 **"the S3 key … is already recorded" was a dead end.** When the plan could not match the
+   identity of whatever holds the key, it fell through to a DOWNLOAD — which
+   `engineIngestDestinationUnused` always refuses. Proposing it was the error; the plan now
+   reports what is holding the key (a row id, a running job, an earlier one).
+
+One lesson, and it is the same in all three: **the default choice was the only one that cannot
+work for these families.** The knowledge of which roles a family reads was in the CP all along,
+and the screen was not asking for it.
