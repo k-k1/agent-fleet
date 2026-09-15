@@ -23,7 +23,10 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 }));
 
 import { EnginesAdminView } from "./adminEngines.tsx";
-import { EngineModelsAdminView } from "./adminEngineModels.tsx";
+import { EngineAddView } from "./adminEngineAdd.tsx";
+
+/** The catalogue as the pane renders it, opened on the rows (ADR 0085 decision 8). */
+const RegisteredView = () => <EngineAddView engineKey="image" lora={false} initialView="registered" />;
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -96,11 +99,11 @@ const managedAnswer = {
 };
 
 /** Which SCREEN. Everything an external row changes is on the machine screen — the mode, the
- *  box, the ladder — so that is the default; the one assertion about the catalogue mounts the
- *  models screen, because that is where a catalogue now is. */
+ *  box, the ladder — so that is the default; the assertions about the catalogue mount the
+ *  catalogue pane, because that is where a catalogue now is. */
 async function mount(answer: unknown, View: () => ReactNode = EnginesAdminView) {
   api.mockImplementation((p: string) =>
-    String(p).endsWith("/ingest") ? Promise.resolve({ jobs: [] }) : Promise.resolve(answer),
+    String(p).endsWith("/objects") ? Promise.resolve({ objects: [] }) : Promise.resolve(answer),
   );
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -108,9 +111,7 @@ async function mount(answer: unknown, View: () => ReactNode = EnginesAdminView) 
   await act(async () => {
     root!.render(<View />);
   });
-  await act(async () => {
-    await Promise.resolve();
-  });
+  for (const _ of [0, 1, 2]) await act(async () => { await Promise.resolve(); });
 }
 
 const text = () => host?.textContent || "";
@@ -213,7 +214,7 @@ describe("an externally managed engine row (ADR 0076)", () => {
   });
 
   it("still lists the catalogue, which is where the model names come from", async () => {
-    await mount(externalAnswer, EngineModelsAdminView);
+    await mount(externalAnswer, RegisteredView);
     // Decision 6: the catalogue is a hand-written declaration either way, so nothing about it
     // changes for an external engine. It is the half of the panel that must NOT disappear.
     expect(text()).toContain("sdxl-base-1.0");
@@ -235,9 +236,9 @@ describe("an externally managed engine row (ADR 0076)", () => {
   // there would invite exactly the GPU purchase decision 7 forbids — so the managed fixture is
   // the positive control, not a second copy of the same assertion.
   it("offers to discover this engine's own files, and never on a managed row — the positive control", async () => {
-    await mount(externalAnswer, EngineModelsAdminView);
+    await mount(externalAnswer, RegisteredView);
     expect(btn("このエンジンのファイルを調べる")).toBeTruthy();
-    await mount(managedAnswer, EngineModelsAdminView);
+    await mount(managedAnswer, RegisteredView);
     expect(btn("このエンジンのファイルを調べる")).toBeFalsy();
   });
 
@@ -258,7 +259,7 @@ describe("an externally managed engine row (ADR 0076)", () => {
       }
       return Promise.resolve({});
     });
-    await mount(externalAnswer, EngineModelsAdminView);
+    await mount(externalAnswer, RegisteredView);
     const discover = btn("このエンジンのファイルを調べる");
     expect(discover).toBeTruthy();
     await act(async () => {

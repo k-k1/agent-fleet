@@ -23,7 +23,7 @@ import {
 // same off / on-demand / always-on control the VOICEVOX panel has, plus what that engine is
 // actually doing right now, which box it is on and what that box has cost.
 //
-// What it LOADS is the other screen (adminEngineModels.tsx), reached from a "model catalogue"
+// What it LOADS is the catalogue pane (adminEngineAdd.tsx), reached from a "model catalogue"
 // button on each row rather than a sibling item in the admin rail: this whole screen is the
 // operator's — it buys and stops a GPU for the whole deployment — so there was never a second
 // audience to give the catalogue its own door here. A granted tenant_admin reaches the same
@@ -172,8 +172,8 @@ export function EnginesAdminView() {
     <div className="admin-stage">
       {/* 🔴 A deployment with no engine still has a question worth answering — "what could I
           run?" — and answering it needs neither an engine nor a token (ADR 0072 decision 11), so
-          this embeds the model screen's own empty-catalogue state rather than a sentence
-          pointing at a button that has nothing to be a row of yet. */}
+          this embeds the engine-less browser rather than a sentence pointing at a button that
+          has nothing to be a row of yet. */}
       {rows.length === 0 && <EngineModelsAdminView />}
       {/* 🔴 Everything on this screen buys or stops a GPU for the WHOLE deployment, so it is the
           operator's alone. A granted tenant_admin reaches the models screen instead (ADR 0072

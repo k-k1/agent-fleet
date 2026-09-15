@@ -240,7 +240,12 @@ function engineRoute(method, pathname) {
   if (rest === "/ingest/versions") return () => ({ versions: [{ ref: "782002", name: "v1.1" }, { ref: "770100", name: "v1.0" }] });
   if (rest === "/ingest/files") return () => ({ files: [{ name: "anima-aesthetic-v1.1.safetensors", bytes: 4_182_230_656, sha256: "f0d1" }] });
   if (rest === "/ingest/resolve") return () => RESOLVED;
-  if (rest === "/ingest") return () => ({ id: "job-9", model_id: PLAN.id, state: "pending", action: "download", created_at: new Date().toISOString() });
+  // 🔴 POST only. `GET …/ingest` (the job list) is gone with the history tab (ADR 0085 decision
+  // 6), and a stub that answered it would let a screen read a route no deployment has.
+  if (rest === "/ingest" && method === "POST") return () => ({ id: "job-9", model_id: PLAN.id, state: "pending", action: "download", created_at: new Date().toISOString() });
+  // Dismissing a failed job is the one act left on one: the ledger drops the entry on the next
+  // listing, so the answer carries nothing.
+  if (/^\/ingest\/[^/]+$/.test(rest) && method === "DELETE") return () => ({});
   if (/^\/models\/[^/]+\/complete$/.test(rest)) {
     return (body) => body?.check
       ? {
