@@ -395,6 +395,11 @@ type generateRequest struct {
 	// Strength is how much of the input picture an edit changes, and a pointer for the same
 	// reason as Seed — `"strength": 0` is a request, not an absence.
 	Strength *float64 `json:"strength"`
+	// Params is the caller's own sampler overlay — steps, cfg, sampler, scheduler. It rides the
+	// SAME key and the same shape the job queue's route uses, because it is merged into the same
+	// place (family recipe ← catalogue row ← this) and a second spelling for one fact is a second
+	// thing to keep in step.
+	Params *EngineParams `json:"params"`
 }
 
 type loraRequest struct {
@@ -442,6 +447,17 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("strength must be greater than 0 and at most 1 (got %g): 1 redraws the picture from the prompt alone, and small values keep more of the input", *s))
 		return
 	}
+	// The sampler overlay is refused by VALUE here exactly as it is on the queue's route, and
+	// this route needs it more: 150 steps is the ceiling that keeps a typo from buying an hour of
+	// a shared GPU, and nothing below this layer enforces one — comfyRecipe.with is deliberately
+	// LENIENT (it ignores a name it does not know and keeps the family's own) because it also
+	// reads an administrator's old catalogue row. A caller that typed a value is the opposite
+	// case: they are looking at the result, and a number that silently did nothing is
+	// indistinguishable from a broken feature.
+	if err := validateRequestParams(body.Params); err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_params", err.Error())
+		return
+	}
 	meta, ok := session.ReadMeta(body.Session)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+body.Session)
@@ -478,7 +494,7 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 			Size: body.Size, AspectRatio: body.AspectRatio,
 			Background: body.Background, Count: body.Count, Inputs: body.Inputs,
 			Mask: body.Mask, Model: body.Model, Loras: loras, Seed: body.Seed,
-			Strength: body.Strength,
+			Strength: body.Strength, Params: body.Params,
 		},
 	}
 	out, err := Run(r.Context(), job)

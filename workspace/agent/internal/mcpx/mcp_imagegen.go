@@ -61,6 +61,15 @@ type mcpImageGenProvider struct {
 	// Strength is whether this route lets the caller say how much of the input picture an edit
 	// changes (ADR 0069 follow-up, strength).
 	Strength bool `json:"strength,omitempty"`
+	// Samplers and Schedulers are the names this route is willing to SEND — the Agent's own
+	// allow-list, not ComfyUI's whole enumeration. The tool's enum is built from these rather
+	// than from a list spelled out here, for the reason the pane's form already relies on: a
+	// surface that offers a name the Agent would then refuse by name is the pair disagreeing in
+	// front of the caller, and this binary is the one that knows which names it sends.
+	//
+	// Empty for the vendor routes, which build no sampler graph and have neither.
+	Samplers   []string `json:"samplers,omitempty"`
+	Schedulers []string `json:"schedulers,omitempty"`
 }
 
 // mcpImageGenModel is one checkpoint `model` may name.
@@ -137,6 +146,21 @@ type imageGenArgs struct {
 	// Agent as the request it is and gets refused by value there, rather than being read here as
 	// "not given" and silently becoming the default.
 	strength *float64
+	// params is the sampler overlay (steps, cfg, sampler, scheduler). A POINTER because an absent
+	// object and an empty one must not become the same request downstream, and forwarded as
+	// typed: which family reads which of the four, and what the ceilings are, is the Agent's
+	// answer — this layer knows neither and must not narrow either.
+	params *imageGenParamsArg
+}
+
+// imageGenParamsArg is the tool's `params` object. Its keys are imagegen.EngineParams' own JSON
+// spellings, so it rides to the Agent under the same key and in the same shape the job queue's
+// route and the catalogue row already use — one fact, one wire.
+type imageGenParamsArg struct {
+	Steps     int     `json:"steps,omitempty"`
+	CFG       float64 `json:"cfg,omitempty"`
+	Sampler   string  `json:"sampler,omitempty"`
+	Scheduler string  `json:"scheduler,omitempty"`
 }
 
 // imageGenLoraArg is one entry of the tool's `loras` argument.
@@ -180,7 +204,7 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 		"size": a.size, "aspectRatio": a.aspectRatio, "background": a.background,
 		"count": a.count, "inputs": a.inputs, "mask": a.mask, "model": a.model,
 		"loras": a.loras, "seed": a.seed, "negativePrompt": a.negativePrompt,
-		"strength": a.strength,
+		"strength": a.strength, "params": a.params,
 	})
 
 	// The heartbeat runs for as long as the Agent is working. Without it opencode cuts the
