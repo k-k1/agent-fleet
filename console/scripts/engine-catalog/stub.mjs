@@ -74,6 +74,15 @@ const OBJECTS = [
     role_dir: "other", placement: "misplaced", state: "present", declared_by: [],
     source: "hf:krea-ai/krea2", license: "other",
   },
+  // 🔴 A re-ingest over bytes that are already there: the ledger keeps `present` and only the JOB
+  // says `uploading`. This is the row that offered 登録 and answered 409 on af-sandbox.
+  {
+    key: "image/diffusion_models/krea2_raw_fp8_scaled.safetensors",
+    bytes: 13_100_000_000, last_modified: "2026-09-15T08:00:00Z",
+    role_dir: "diffusion_models", placement: "ok", state: "present", declared_by: [],
+    source: "hf:krea-ai/krea2",
+    job: { id: "job-11", state: "uploading", created_at: "2026-09-15T08:00:00Z" },
+  },
   {
     key: "image/text_encoders/qwen_3_06b_base.safetensors",
     bytes: 1_190_000_000, last_modified: "2026-09-14T22:06:00Z",

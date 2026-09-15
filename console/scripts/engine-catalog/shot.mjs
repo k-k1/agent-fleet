@@ -46,6 +46,17 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  // 🔴 A key a task is writing: `present` in the bucket, `uploading` on the job. The row says so
+  // and offers nothing to press — 登録 there answered 409 `already declared by` (af-sandbox).
+  {
+    name: "uploading", view: "registered", width: 1500, height: 1080,
+    action: `(() => {
+      const row = document.querySelector(".engine-ledger-row.uploading");
+      row?.scrollIntoView({ block: "center" });
+      return !!row;
+    })()`,
+    settle: 800,
+  },
   // 🔴 消す answers `{deleting}` and the bucket goes on listing the object: the row has to say so
   // by itself, or the press reads as "nothing happened" (af-sandbox, 2026-09-15).
   {

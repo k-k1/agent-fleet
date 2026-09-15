@@ -389,6 +389,10 @@ export const admin = {
   // 実際に消えるまでバケツは同じオブジェクトを返し続ける。押しても何も変わらないように
   // 見えたのがこの言葉が要る理由（af-sandbox 実測）。
   "admin.catalog_ledger_state_deleting": "削除中",
+  // 🔴 既にバイト列があるキーに上書きで取り込むと、台帳の state は present のままで job だけが
+  // uploading になる。行の操作を state だけで決めると、取り込み中のキーに 登録 が出て 409
+  // `already declared by` を返す（af-sandbox 実測）。
+  "admin.catalog_ledger_uploading_note": "取り込みのタスクが走っています。完了するとこの行に宣言が付きます。",
   "admin.catalog_ledger_deleting_note": "削除のタスクが走っています。完了するとこの行は一覧から消えます（数分かかることがあります）。",
   "admin.catalog_ledger_missing_note": "{m} がこのキーを指していますが、バケツにバイト列がありません。その行を「揃える」と取り直します。",
   "admin.catalog_ledger_orphan": "どの行も宣言していません",
