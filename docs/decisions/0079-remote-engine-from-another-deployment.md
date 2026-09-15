@@ -382,6 +382,22 @@ Refresh on the Agent's existing 10-minute cadence; a failed refresh keeps the pr
 for the same reason the local catalogue does (a transient error must not read as "no models",
 which means "do not start this engine"). This same poll is what adopts the rows in decision 2.
 
+🔴 **2026-09-15 amendment: two minutes, and the poll now pushes.** Borrowing the Agent's cadence
+was wrong twice over, and the two mistakes multiplied. They are not the same kind of wait — the
+Agent's TTL is a cache that decision 7's `catalog-changed` push cuts short, while this poll is the
+only way a borrowing deployment hears about a far change at all — and the mirror moving was not
+one of the events that pushed, because the push was wired to this deployment's own admin routes.
+So a checkpoint enabled on the lending fleet reached a running session after this interval PLUS
+the Agent's TTL: up to twenty minutes, uniform in between, measured at about three on a lucky
+draw. The interval is now two minutes (one small GET of one URL — 720 a day), and
+`applyCatalogRow` pushes when the mirror it just wrote differs from the one it replaced. 🔴 Not
+on every tick and not on warmth: the fingerprint is sorted (a far side owes us no row order) and
+excludes the warm model (it moves whenever anyone over there generates with another checkpoint,
+and all it changes here is a hint in a tool description). See also ADR 0072's 2026-09-15
+correction: a session's tool list is a snapshot, so the last mile needs
+`notifications/tools/list_changed` as well — without it the fastest catalogue in the world stops
+at the client's cached schema.
+
 **A role the far fleet switches off disappears from its catalogue** (`engine_gateway.go:224`
 skips `engineModeOff`). The mirror then holds no models for that row, and `serve` already
 refuses that with `engine_unavailable` and "this engine has no enabled model". Rows are

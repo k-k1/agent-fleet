@@ -2075,6 +2075,17 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   （`routes.go`）は CP → Agent の逆経路として**既にある**——決定 7 の `catalog-changed` は
   同じ形で作れる。`opencode.ApplyEngineChange` と `engineProviderEntry`（モデル単位）も本文の
   とおり在る。
+  🔴 **2026-09-15 訂正: claude について「毎ターン」は誤り。** 開発ワークスペースで実測——
+  claude が `tools/list` を引くのは**接続時の 1 回だけ**で、以後は引き直さない。つまり
+  セッションが広告する `model` の enum は、その MCP サーバが起動した瞬間の**スナップショット**
+  である。セッション再起動でも直らない: Console の停止→再開は `claude --resume` で、
+  クライアントは会話と一緒にスナップショットも復元する（起動 1 分のプロセスが、その
+  チェックポイントが存在する前の enum を持ち続け、同じ引数で手で起こしたサーバは新しい方を
+  返した）。したがって**カタログが Agent に届くだけでは足りない**: stdio サーバは
+  `capabilities.tools.listChanged` を宣言し、広告すべき内容がクライアントに最後に伝えた
+  ものと食い違ったら `notifications/tools/list_changed` を送るようにした（一覧全体の指紋を
+  1 分周期で見る。チェックポイントを有効化してもツール**名**は動かず、動くのはスキーマの中の
+  enum だけだからである）。
 - **R8. HF の現況（本日）。** FLUX.1-schnell は `license: apache-2.0`・`gated: auto`（本文の
   とおり）、FLUX.2 klein 4B と Z-Image-Turbo は `apache-2.0`・`gated: false`。🔴 **FLUX.1-dev と
   SD3.5 Medium は `cardData.license` が `"other"`** で、実体は `license_name`
