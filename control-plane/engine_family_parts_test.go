@@ -121,11 +121,29 @@ func TestPartPlanDeclaresWhatARowAlreadyHas(t *testing.T) {
 // The remedy for rows that already exist — which is every row on a deployment that took this
 // family in before the checkbox existed.
 func TestFixPartsCompletesAnExistingRowFromWhatIsAlreadyHere(t *testing.T) {
-	st := testSettingsStore(t)
+	st := ingestStore(t)
 	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
 	e.settings, e.ctrl = st, nil
 	e.catalog = newEngineCatalog(st, "image")
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	// 🔴 The bucket, and it is now part of the fixture rather than an implementation detail: a
+	// part is declared onto a second row only when the OBJECT is there (ADR 0072 decision 2's
+	// second layer, which ADR 0085 makes the rule for every declaration). Another row's word for
+	// it is not proof — its bytes may have been purged.
+	head := &fakeEngineStorageHead{states: map[string]string{
+		"image/text_encoders/qwen_3_06b_base.safetensors":    engineStoragePresent,
+		"image/vae/qwen_image_vae.safetensors":               engineStoragePresent,
+		"image/diffusion_models/anima-turbo.safetensors":     engineStoragePresent,
+		"image/diffusion_models/anima-aesthetic.safetensors": engineStoragePresent,
+	}, bytes: map[string]int64{
+		"image/text_encoders/qwen_3_06b_base.safetensors": 1_190_000_000,
+		"image/vae/qwen_image_vae.safetensors":            253_800_000,
+	}}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		storage: newEngineStorage("models", head),
+	}
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
 	ctx := t.Context()
 	// One row of the family already holds both parts; the new row holds only its diffusion model.

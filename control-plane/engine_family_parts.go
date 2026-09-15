@@ -292,19 +292,17 @@ type enginePartsFixBody struct {
 	LicenseAccepted bool `json:"license_accepted"`
 }
 
-// fixParts (POST …/models/{id}/parts) gives an incomplete split-family row the files its family
-// reads, in one press.
+// fixParts (POST …/models/{id}/parts) is the grace form of 揃える, kept one release
+// (ADR 0085 Consequences). The act itself is engine_complete.go's: the row is the subject, the
+// ledger is what it is completed from, and this route only translates the body in and the answer
+// back out. What it is NOT any more is a second implementation — that was the fault, not the
+// shape: `main_file_fix`, `files_missing` and the part list each decided the same question in a
+// different place, and 揃える answered `none` beside a badge reading `不足: --diffusion-model`.
 //
-// 🔴 This is the remedy for rows that ALREADY exist, and it is why the feature is not only a
-// checkbox on the ingest form: a deployment's rows were taken in before the checkbox existed,
-// and "take the diffusion model in again, with the box ticked this time" is not a repair — it is
-// a second copy of a 4 GB file.
-//
-// Four outcomes, the first three in the same words as the VAE remedy: `none` (nothing is
-// missing), `attached` (every part was already this deployment's, so the row gained declarations
-// and nothing was downloaded), `job_started` (at least one download is running, and it attaches
-// itself when it lands) — and `moving`, which is this row's own weights being relocated inside
-// the bucket because they were staged where no loader lists them (engine_file_move.go).
+// Two differences an operator's script may notice, and both are the new rule rather than a
+// regression: a part is declared only when the BUCKET holds it (another row's declaration is no
+// longer proof on its own — ADR 0072 decision 2's second layer), and a role with several
+// candidates answers `choose` instead of picking one.
 func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
 	key, id := strings.TrimSpace(r.PathValue("key")), strings.TrimSpace(r.PathValue("id"))
 	e := a.reg.get(key)
@@ -326,165 +324,84 @@ func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engin
 		return
 	}
 	family := strings.TrimSpace(m.BaseModel)
-	// 🔴 The row's OWN weights come first, and they are why this endpoint no longer answers only
-	// about the part list. A split family's checkpoint staged under `image/checkpoints/` is a
-	// file the row is holding and no loader can read (engine_file_move.go); with the parts
-	// already attached, the answer to "揃える" was `none` beside a badge still reading
-	// `不足: --diffusion-model`. Reported from af-sandbox 2026-09-15.
-	fix, hasFix := engineMainFileFixFor(key, family, m)
+	_, hasFix := engineCompleteMainFix(key, family, m)
 	if len(engineFamilyPartsFor(family)) == 0 && !hasFix {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
 			"this deployment knows no part list for the " + family + " family — attach the files it reads by hand"})
 		return
 	}
-	missing := enginePartsMissing(family, m)
-	if len(missing) == 0 && !hasFix {
+	ledger, aerr := a.engineLedgerFor(ctx, key)
+	if aerr != nil {
+		writeAPIRefusal(w, aerr)
+		return
+	}
+	answer, _, aerr := a.engineCompleteRun(ctx, r, g, e, id,
+		engineCompleteBody{Check: b.Check, LicenseAccepted: b.LicenseAccepted}, ledger, true)
+	if aerr != nil {
+		writeAPIRefusal(w, aerr)
+		return
+	}
+	if answer.Action == engineCompleteNone {
 		writeJSON(w, http.StatusOK, map[string]any{"action": "none"})
 		return
 	}
-	held := a.enginePartsHeld(ctx, g, key)
-	plan := enginePartsPlan(ctx, held, missing)
 	if b.Check {
-		action := "attach"
-		if hasFix {
-			action = "move"
-		}
-		for _, fu := range plan {
-			if fu.Conflict != "" {
-				action = "conflict"
-				break
-			}
-			if !fu.Staged {
-				action = "ingest"
-			}
-			if !fu.Staged && fu.Resolved.SHA256 == "" {
-				// 🔴 A part nobody can price is a press that cannot be promised. Said here
-				// rather than after the licence was accepted.
-				action = "unreachable"
-				break
-			}
-		}
-		if hasFix {
-			// `main_file` rides beside the parts and NEVER inside `bytes`: nothing is downloaded
-			// for it, and a size beside a licence line reads as what this press will fetch.
-			// Written out as its own literal rather than added to a map — the wire golden reads
-			// these call sites as source (wiremap_golden_test.go), and a map built in a variable
-			// is a shape nothing would check again.
-			writeJSON(w, http.StatusOK, map[string]any{
-				"action": action, "parts": enginePartsPlanRows(plan, missing),
-				"bytes": enginePartsBytes(plan), "main_file": engineMainFileFixRow(fix),
-			})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"action": action, "parts": enginePartsPlanRows(plan, missing),
-			"bytes": enginePartsBytes(plan),
-		})
+		writeJSON(w, http.StatusOK, enginePartsCheckRow(family, answer))
 		return
 	}
-	// The weights first: a row whose parts attach while its own checkpoint stays unreadable is
-	// still a row nobody can enable, and the move is the slow half (a server-side copy of up to
-	// 13 GB), so it is started before the cheap writes rather than after them.
-	var started []map[string]any
-	moved := false
-	if hasFix {
-		if aerr := a.engineMainFileMovable(ctx, held, key, id, fix); aerr != nil {
-			writeAPIErr(w, aerr)
-			return
-		}
-		job, aerr := a.engineStartMainFileMove(ctx, g, key, id, fix)
-		if aerr != nil {
-			writeAPIErr(w, aerr)
-			return
-		}
-		a.auditFor(r, g, "engine."+key+".model.parts",
-			id+" moving "+fix.From+" to "+fix.To+" as "+fix.Flag)
-		started = append(started, engineIngestJobRow(job))
-		moved = true
-	}
-	// Everything already here is one write each, and it costs nothing to accept.
 	attached := 0
-	for i, fu := range plan {
-		p := missing[i]
-		if fu.Staged {
-			file := store.EngineModelFile{
-				Flag: p.Flag, S3Key: fu.S3Key, Bytes: fu.Bytes,
-				Source: fu.Source, ArtifactIdentity: fu.ArtifactIdentity,
-			}
-			if p.Flag == "--vae" {
-				file.VaeBundled = engineVaeYes
-			}
-			found, err := a.mgr.store.AppendEngineModelFile(ctx, key, id, file)
-			if err != nil {
-				writeAPIErr(w, internalErr(err))
-				return
-			}
-			if !found {
-				writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineModelUnknown,
-					"no model " + id + " for engine " + key})
-				return
-			}
-			e.catalog.invalidate()
-			a.auditFor(r, g, "engine."+key+".model.parts", id+" attached "+fu.S3Key+" (already staged)")
+	for _, f := range answer.Files {
+		if f.Action == engineCompleteActDeclare {
 			attached++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"action": answer.Action, "attached": attached, "jobs": answer.Jobs,
+	})
+}
+
+// enginePartsCheckRow renders the planner's answer in the words the old check spoke, so a panel
+// or a script written against this route keeps reading it for the release it still exists.
+func enginePartsCheckRow(family string, answer engineCompleteAnswer) map[string]any {
+	byFlag := map[string]engineFamilyPart{}
+	for _, p := range engineFamilyPartsFor(family) {
+		byFlag[p.Flag] = p
+	}
+	main := engineFamilyMainFlag(family)
+	action, parts := "attach", []map[string]any{}
+	var mainFile map[string]any
+	for _, f := range answer.Files {
+		if f.Flag == main && f.Action == engineCompleteActMove {
+			// `main_file` rides beside the parts and NEVER inside `bytes`: nothing is downloaded
+			// for it, and a size beside a licence line reads as what this press will fetch.
+			mainFile = map[string]any{"flag": f.Flag, "from": "", "to": f.Key}
+			if f.Bytes > 0 {
+				mainFile["bytes"] = f.Bytes
+			}
+			action = "move"
 			continue
 		}
-		// 🔴 The key is taken by something this plan could not match. Refused HERE, where the
-		// answer can name what is holding it — a download to that key is refused anyway, and the
-		// message it earns ("the S3 key … is already recorded") says nothing about what to do.
-		if fu.Conflict != "" {
-			writeAPIErr(w, &apiError{http.StatusConflict, errCodeEngineBadBody,
-				p.Flag + " would land at " + fu.S3Key + ", which is " + fu.Conflict +
-					" — attach that file to this row from the panel, or forget the row holding it and press again"})
-			return
+		p := byFlag[f.Flag]
+		row := map[string]any{"flag": f.Flag, "repo": p.Repo, "file": p.File, "s3_key": f.Key}
+		switch f.Action {
+		case engineCompleteActDeclare, engineCompleteActMove:
+			row["staged"] = true
+			row["bytes"] = f.Bytes
+		case engineCompleteActDownload:
+			row["bytes"] = f.Bytes
+			action = "ingest"
+		case engineCompleteActChoose:
+			row["conflict"] = "several files could fill this role — choose one on the row"
+			action = "conflict"
+		default:
+			row["unreachable"] = true
+			action = "unreachable"
 		}
-		if fu.Resolved.SHA256 == "" {
-			writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeIngestUnavailable,
-				p.Repo + "/" + p.File + " could not be resolved, so " + p.Flag + " was not taken in"})
-			return
-		}
-		// 🔴 The licence is asked for ONCE, for the whole set, and only when something is
-		// actually going to be downloaded: the staged parts above were accepted when they were
-		// taken in, and asking again for bytes this deployment already owns is a dialog that
-		// teaches people to click through dialogs.
-		if !b.LicenseAccepted {
-			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestNotAccepted,
-				"taking " + p.Repo + "/" + p.File + " in needs its licence accepted first"})
-			return
-		}
-		ing := a.reg.ingester()
-		if ing == nil {
-			writeAPIErr(w, &apiError{http.StatusServiceUnavailable, errCodeIngestUnavailable,
-				"this deployment's engine stack declares no ingest task — stage " + p.File + " by hand and attach it"})
-			return
-		}
-		job, aerr := ing.start(ctx, engineIngestRequest{
-			Role: key, ModelID: id, S3Key: fu.S3Key,
-			AcceptedBy: g.ident.ID, AcceptedTenant: g.tenantID,
-			AcceptedLicense: engineLicenceLabel(fu.Resolved),
-			Resolved:        fu.Resolved, FileFlag: p.Flag, Attach: true,
-		})
-		if aerr != nil {
-			writeAPIErr(w, aerr)
-			return
-		}
-		a.auditFor(r, g, "engine."+key+".ingest",
-			fu.S3Key+" for "+id+" from "+fu.Resolved.Source+" (licence "+engineLicenceLabel(fu.Resolved)+" accepted)")
-		started = append(started, engineIngestJobRow(job))
+		parts = append(parts, row)
 	}
-	downloads := len(started)
-	if moved {
-		downloads--
+	out := map[string]any{"action": action, "parts": parts, "bytes": answer.BytesToDownload}
+	if mainFile != nil {
+		out["main_file"] = mainFile
 	}
-	action := "attached"
-	switch {
-	case downloads > 0:
-		action = "job_started"
-	case moved:
-		// Said apart from a download on purpose: a move finishes in minutes with no bytes
-		// crossing the internet, and a panel that called it a download would have an operator
-		// watching for a transfer that is never going to appear.
-		action = "moving"
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"action": action, "attached": attached, "jobs": started})
+	return out
 }

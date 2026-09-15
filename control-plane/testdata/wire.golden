@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 186
+# count: 212
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -20,6 +20,32 @@ cliReleaseWire.tested object
 cliReleaseWire.watcherAt string
 cliReleaseWire.watcherFailed [string]
 cliReleaseWire.watcherOkAt string
+engineCompleteAnswer.action string
+engineCompleteAnswer.bytes_to_download number
+engineCompleteAnswer.files[].action string
+engineCompleteAnswer.files[].bytes number,omitempty
+engineCompleteAnswer.files[].candidates[].bytes number,omitempty
+engineCompleteAnswer.files[].candidates[].key string
+engineCompleteAnswer.files[].candidates[].source string,omitempty
+engineCompleteAnswer.files[].flag string
+engineCompleteAnswer.files[].key string,omitempty
+engineCompleteAnswer.files[].source string,omitempty
+engineCompleteAnswer.jobs [object]
+engineObjectRow.artifact_identity string,omitempty
+engineObjectRow.bytes number
+engineObjectRow.declared_by[].flag string
+engineObjectRow.declared_by[].model_id string
+engineObjectRow.job.created_at string
+engineObjectRow.job.id string
+engineObjectRow.job.message string,omitempty
+engineObjectRow.job.state string
+engineObjectRow.key string
+engineObjectRow.last_modified string,omitempty
+engineObjectRow.license string,omitempty
+engineObjectRow.placement string
+engineObjectRow.role_dir string
+engineObjectRow.source string,omitempty
+engineObjectRow.state string
 imageInfo.digest string,omitempty
 imageInfo.repo string
 imageInfo.tag string,omitempty

@@ -1291,6 +1291,11 @@ touches the NAT). **Versioning is off deliberately**: a 17 GB model kept in dupl
 re-ingest is a bill nobody meant to sign, and the sha256 identifies a file (ADR 0071 decision 10).
 The layout is ComfyUI's, so all three engines read one tree (ADR 0072 decision 2).
 
+The Control Plane's `s3:ListBucket` on it — conditioned on the `llm/*` and `image/*` prefixes —
+is what the model ledger is read with (ADR 0085 decision 2). It was granted before anything used
+it, so **the ledger needed no IAM change**; the CP still has no `s3:DeleteObject` and still never
+reads object bytes.
+
 Both launch templates are created even when the role is off and nothing is staged: a launch
 template costs nothing while nothing launches from it, and an Output that is missing is an empty
 export the stack refuses to create at all ([the engine table](#the-engine-table)).

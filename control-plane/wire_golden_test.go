@@ -70,6 +70,12 @@ func wireGoldenTypes() []struct {
 		// Memo queue / scheduled execution.
 		{"memoDTO", reflect.TypeOf(memoDTO{})},
 		{"scheduleDTO", reflect.TypeOf(scheduleDTO{})},
+		// The model ledger and the one press that completes a row (ADR 0085 decisions 2 and 3).
+		// Here because three separate pieces of work agreed this wire before any of them built
+		// their half: the CP writes it, the Console draws every field of it, and a tag that
+		// drifted would take the bucket view out with no compiler saying anything.
+		{"engineObjectRow", reflect.TypeOf(engineObjectRow{})},
+		{"engineCompleteAnswer", reflect.TypeOf(engineCompleteAnswer{})},
 		// Version info behind the update toast and the restart badge.
 		{"imageInfo", reflect.TypeOf(imageInfo{})},
 		// "What am I running on". Two nested halves whose keys the Console compares against

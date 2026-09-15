@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -34,8 +35,24 @@ const (
 // engineStorageMetadataPort is the deployment-neutral object metadata boundary. Implementations
 // classify absence themselves because a cloud provider's permission model is part of that
 // classification, not something the catalogue or reuse policy should know.
+//
+// List is the ledger's read (ADR 0085 decision 2) and is the one operation here that answers
+// about keys the server does not already know. It returns an error rather than an empty list
+// because the two are opposite facts: "this prefix is empty" is a ledger a person can act on,
+// and "the listing was refused" must never be drawn as one — an operator who reads an empty
+// bucket forgets bytes that are still being paid for.
 type engineStorageMetadataPort interface {
 	Stat(context.Context, string) engineStorageObjectMetadata
+	List(ctx context.Context, prefix string) ([]engineStorageObject, error)
+}
+
+// engineStorageObject is one object as the bucket lists it. Deliberately three fields: a listing
+// carries no checksum and no provenance, and everything else the ledger says about an object
+// comes from the database beside it.
+type engineStorageObject struct {
+	Key          string
+	Bytes        int64
+	LastModified time.Time
 }
 
 type engineStorageObjectMetadata struct {
@@ -153,6 +170,26 @@ func (s *engineStorage) checks(ctx context.Context, keys []string) map[string]en
 	wg.Wait()
 	return out
 }
+
+// list enumerates one prefix, and it is the only read here that does not start from a key the
+// server already wrote down. The result is NOT put in the display cache: that cache exists to
+// keep a panel refresh from re-heading a hundred known keys, while this answers "what is in the
+// bucket" — a question whose stale answer is an object an operator would delete twice.
+func (s *engineStorage) list(ctx context.Context, prefix string) ([]engineStorageObject, error) {
+	if !s.configured() {
+		return nil, errEngineStorageUnconfigured
+	}
+	ctx, cancel := context.WithTimeout(ctx, engineStorageListTimeout)
+	defer cancel()
+	objects, err := s.metadata.List(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(objects, func(i, j int) bool { return objects[i].Key < objects[j].Key })
+	return objects, nil
+}
+
+var errEngineStorageUnconfigured = errors.New("this deployment declares no model bucket")
 
 // verify deliberately bypasses the display cache. Reuse is a write to the catalogue and must
 // prove the object exists now; a thirty-second-old present result is only a display hint.

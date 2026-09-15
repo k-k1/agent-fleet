@@ -445,6 +445,14 @@ type engineVaeFixBody struct {
 // fixVae (POST …/models/{id}/vae) is the one press that ends the fault: read the header, and if
 // the checkpoint really carries no VAE, give the row the family's own.
 //
+// ⚠️ 揃える (engine_complete.go) now covers the ATTACH half of this: engineCompleteMissing folds
+// the family VAE into the gap by this file's own rule, so a row marked `vae_missing` is completed
+// by the same press as everything else. This route stays one release (ADR 0085 Consequences) and
+// is deliberately NOT rewritten on top of that planner: what it does and complete does not is
+// read the checkpoint's header at the source — `force`, `recheck_failed` and the `none` answer
+// ("the mark was a question, and this is its answer") are all about that read, and folding them
+// into a planner that never opens an upstream would lose the diagnosis, not just a route.
+//
 // Three outcomes and they are deliberately different words. `none` means the header says the
 // checkpoint has one after all — the mark was a question, and this is its answer. `attached` is
 // the cheap path: this deployment already holds the file, so the row gains a declaration and
