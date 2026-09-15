@@ -529,7 +529,7 @@ func (a engineAdminAPI) engineCompleteRun(ctx context.Context, r *http.Request, 
 			if aerr != nil {
 				return engineCompleteAnswer{}, jobs, aerr
 			}
-			jobs = append(jobs, engineIngestJobRow(job))
+			jobs = append(jobs, engineCompleteJobRow(job, enginePlanMove))
 		case engineCompleteActDeclare:
 			if aerr := a.engineCompleteDeclare(ctx, r, g, e, id, s); aerr != nil {
 				return engineCompleteAnswer{}, jobs, aerr
@@ -542,7 +542,7 @@ func (a engineAdminAPI) engineCompleteRun(ctx context.Context, r *http.Request, 
 			if aerr != nil {
 				return engineCompleteAnswer{}, jobs, aerr
 			}
-			jobs = append(jobs, engineIngestJobRow(job))
+			jobs = append(jobs, engineCompleteJobRow(job, enginePlanDownload))
 		}
 	}
 	if !allowDownload {
@@ -553,6 +553,16 @@ func (a engineAdminAPI) engineCompleteRun(ctx context.Context, r *http.Request, 
 	}
 	answer.Jobs = jobs
 	return answer, jobs, nil
+}
+
+// engineCompleteJobRow is the shared job row (engineIngestJobRow) with the one thing the row
+// itself cannot say: which of the three this job is. A move and a download are the same task to
+// the reconciler, and it is what a person watching the press wants to know before the progress
+// bar does anything — the same field postIngest puts on its own answer.
+func engineCompleteJobRow(job store.EngineIngestJob, action string) map[string]any {
+	row := engineIngestJobRow(job)
+	row["action"] = action
+	return row
 }
 
 // engineCompleteActionAfterRegister is the same precedence with the download not taken: what

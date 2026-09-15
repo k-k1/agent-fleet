@@ -8,6 +8,7 @@ package main
 // holding 4.2 GB of exactly that.
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -295,6 +296,76 @@ func TestCompleteCheckActsOnNothing(t *testing.T) {
 	for _, f := range m.Files {
 		if f.Flag == "--vae" {
 			t.Fatalf("a check wrote a declaration: %+v", m.Files)
+		}
+	}
+}
+
+// 🔴 Three properties the Console (ADR 0085 P2) builds directly on, pinned here because each one
+// is invisible from this side until a button does nothing:
+//
+//  1. `choose` is only ever asked about a PART. The main file's candidates are register's to
+//     resolve, so a `flag: ""` the Console has no dialog for must never come back;
+//  2. a job row carries `action`, so a move is not drawn as a download that never transfers;
+//  3. `job.id` is the engine_ingest_jobs id — the Console dismisses a failed one with
+//     `DELETE …/ingest/{id}`, which is a different id from everything else on the row.
+func TestCompleteAnswersWhatTheConsoleDrawsButtonsFrom(t *testing.T) {
+	h := newEngineLedgerHarness(t)
+	misplaced := "image/checkpoints/split_files/diffusion_models/anima_v1.safetensors"
+	h.put(misplaced, 4_180_000_000)
+	h.put("image/text_encoders/qwen_3_06b_base.safetensors", 1_190_000_000)
+	h.put("image/vae/qwen_image_vae.safetensors", 253_800_000)
+	rec := h.call(t, h.a.postObjectRegister, "POST", "/api/admin/engines/image/objects/register",
+		`{"key":"`+misplaced+`","base_model":"anima"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register = %d %s", rec.Code, rec.Body.String())
+	}
+	var answer engineObjectRegisterAnswer
+	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil {
+		t.Fatal(err)
+	}
+	if len(answer.Jobs) != 1 || answer.Jobs[0]["action"] != enginePlanMove {
+		t.Fatalf("jobs = %+v, want one job that says it is a move", answer.Jobs)
+	}
+	jobID, _ := answer.Jobs[0]["id"].(string)
+	stored, err := h.st.ListEngineIngestJobs(t.Context(), "image", 10)
+	if err != nil || len(stored) != 1 || stored[0].ID != jobID {
+		t.Fatalf("the job row's id is not the ingest job's: %q vs %+v (%v)", jobID, stored, err)
+	}
+	for _, f := range answer.Complete.Files {
+		if f.Action == engineCompleteActChoose && f.Flag == "" {
+			t.Errorf("the whole-checkpoint slot was put to the operator as a choice: %+v", f)
+		}
+	}
+	// And the ledger lends that same id to the object, which is what the dismiss button addresses.
+	led := h.call(t, h.a.getObjects, "GET", "/api/admin/engines/image/objects", "", nil)
+	var ledger engineObjectsResponse
+	if err := json.Unmarshal(led.Body.Bytes(), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range ledger.Objects {
+		if row.Job != nil {
+			found = true
+			if row.Job.ID != jobID {
+				t.Errorf("the ledger's job id = %q, want the ingest job's %q", row.Job.ID, jobID)
+			}
+		}
+	}
+	if !found {
+		t.Error("the running move is on no object in the ledger")
+	}
+}
+
+// The planner never asks about the unflagged slot, whatever the row is missing: `engineComfyRequiredFlags`
+// lists "" for the whole-checkpoint families and that role is the row's own file, not a part.
+func TestCompleteNeverAsksAboutTheWholeCheckpointSlot(t *testing.T) {
+	for _, family := range engineComfyFamilies {
+		m := store.EngineModel{Role: "image", ID: "x", Kind: "checkpoint", BaseModel: family}
+		files := planActions(t, m, ledgerOf("image/checkpoints/a.safetensors",
+			"image/checkpoints/b.safetensors", "image/vae/v1.safetensors",
+			"image/vae/v2.safetensors", "image/text_encoders/e1.safetensors"), engineCompleteBody{})
+		if got, ok := files[""]; ok {
+			t.Errorf("%s put the unflagged slot on the wire as %+v", family, got)
 		}
 	}
 }
