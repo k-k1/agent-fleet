@@ -4676,3 +4676,28 @@ InvalidParameterException: TaskDefinition is inactive
 どちらか一方でもエラーは消えるが、壊れ方が別方向なので両方直した。1 は「そもそも固定してはいけない
 値だった」、2 は「変わる値を 1 度しか読んでいなかった」——後者はバケツ名にもシークレットにも
 等しく当てはまっていた。
+
+### 追記の続き 2 — 失敗した試行の残骸が、その再試行を締め出していた（2026-09-15）
+
+上の 2 つを反映した後、修復がこう拒否された。
+
+```
+the S3 key image/diffusion_models/anima-aesthetic-v1.1.safetensors is already recorded
+```
+
+そのキーには**何も書かれていない**。最初の押下（登録解除されたタスク定義に当たった回）が
+ジョブ行を先に書いており（`start` は RunTask の**前**に行を書く＝誰にも見えないタスクを作らない
+ため）、RunTask が 400 を返して行は `failed` のまま残った。`EngineIngestS3KeyRecorded` は
+**状態を問わず**ジョブ行を数えるので、修復に要る 3 つのキーを、その修復自身の 3 回の失敗が
+押さえていた。
+
+🔴 **タスクを一度も得ずに失敗したジョブは「住所」ではない。** `task_arn` は RunTask が返した
+後にだけ書かれるので、空のまま `failed` なら**バイト列を書けるコンテナは存在しなかった**
+（容量不足・IAM の穴・CFN が直前に登録解除したタスク定義）。この行はもう宛先を押さえない。
+それ以外の失敗は従来どおり押さえる——タスクは走っており、後段が失敗する前に upload が
+置いた可能性があるから。
+
+拒否文も**誰が押さえているか**を名乗るようにした（`the row <id> declares it` ／
+`an earlier ingest job recorded it — forget that job in the list to free the key`）。主語の無い
+「already recorded」は探す先が無く、手動の逃げ道（そのジョブを忘れる）は最初からあったのに
+画面のどこにも書かれていなかった。
