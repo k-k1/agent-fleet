@@ -84,6 +84,10 @@ type engineStorage struct {
 
 	mu    sync.Mutex
 	cache map[string]engineStorageCacheEntry
+	// deletes is the keys a MODE=delete task was started for and when, so the ledger can draw the
+	// press before the bucket answers differently (ADR 0085 decision 7). Guarded by the same
+	// mutex as the cache, because the two are always written together.
+	deletes map[string]time.Time
 }
 
 func newEngineStorage(scope string, metadata engineStorageMetadataPort) *engineStorage {
@@ -104,6 +108,53 @@ func (s *engineStorage) invalidate(key string) {
 	s.mu.Lock()
 	delete(s.cache, key)
 	s.mu.Unlock()
+}
+
+// engineStorageDeleteTTL is how long a key started deleting is still drawn as deleting.
+//
+// 🔴 A ceiling and not a lifetime. The deletion is an ECS task the CP does not watch — it writes
+// no job row (the CP has no s3:DeleteObject, so the task is the principal that acts, ADR 0072
+// decision 7) — so nothing here ever learns that it FAILED. Without the ceiling one refused task
+// would draw an object as "deleting" until the Control Plane is replaced, and the operator could
+// never press 消す again. The measured task takes seconds; fifteen minutes is generous.
+const engineStorageDeleteTTL = 15 * time.Minute
+
+// markDeleting records that a MODE=delete task was started for these keys, so the ledger can show
+// the press doing something. In memory on purpose: it is progress, not truth — the bucket is the
+// truth, and a Control Plane that restarts simply re-reads it.
+func (s *engineStorage) markDeleting(keys ...string) {
+	if s == nil {
+		return
+	}
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, key := range keys {
+		if s.deletes == nil {
+			s.deletes = map[string]time.Time{}
+		}
+		s.deletes[key] = now
+		delete(s.cache, key) // whatever HeadObject last said about it is about to stop being true
+	}
+}
+
+// deleting is the keys whose deletion was started and has not aged out, with when it was pressed.
+func (s *engineStorage) deleting() map[string]time.Time {
+	if s == nil {
+		return nil
+	}
+	cutoff := time.Now().Add(-engineStorageDeleteTTL)
+	out := map[string]time.Time{}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, at := range s.deletes {
+		if at.Before(cutoff) {
+			delete(s.deletes, key)
+			continue
+		}
+		out[key] = at
+	}
+	return out
 }
 
 // checks uses a small fixed worker set. A panel can know hundreds of historical keys, but it

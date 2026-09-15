@@ -439,3 +439,89 @@ func TestObjectIDFromKeyDropsTheQuantisationTag(t *testing.T) {
 		t.Errorf("a supplied id that collides = %v, want 409", aerr)
 	}
 }
+
+// 🔴 Measured on af-sandbox (2026-09-15, build 0a89569e): 消す ran MODE=delete, the object really
+// went — and the key came back in the ledger as `バイト列がありません` with no button on it,
+// because a `done` job still named it. To the operator that reads as "消す did not work".
+//
+// No bytes and nobody pointing at them is not a ledger entry: a finished job is provenance ON an
+// object (decision 6), not a record OF one. `missing` is kept for the case it was written for —
+// a ROW pointing at nothing — because that is a fault with a button.
+func TestLedgerDropsAKeyWithNeitherBytesNorADeclaration(t *testing.T) {
+	l := engineLedgerJoin("image", nil,
+		[]store.EngineModel{{Role: "image", ID: "krea2", Files: []store.EngineModelFile{
+			{Flag: "--vae", S3Key: "image/vae/declared-but-purged.safetensors"},
+		}}},
+		[]store.EngineIngestJob{
+			// The memory of a delete that worked: the job finished months ago, the object is gone.
+			{ID: "j-done", S3Key: "image/checkpoints/deleted.safetensors", State: store.EngineIngestDone},
+			// A failed attempt that never wrote anything is still a line: it has a dismiss button.
+			{ID: "j-failed", S3Key: "image/checkpoints/never-landed.safetensors",
+				State: store.EngineIngestFailed, Message: "sha256 mismatch"},
+		})
+	var keys []string
+	for _, row := range l.objects {
+		keys = append(keys, row.Key)
+	}
+	want := []string{"image/checkpoints/never-landed.safetensors", "image/vae/declared-but-purged.safetensors"}
+	if strings.Join(keys, " ") != strings.Join(want, " ") {
+		t.Fatalf("ledger = %v, want %v", keys, want)
+	}
+	if l.at("image/vae/declared-but-purged.safetensors").State != engineStorageMissing {
+		t.Error("a row pointing at nothing lost its missing mark, which is the fault it reports")
+	}
+}
+
+// The other half of the same complaint: after 消す the list looked identical until the task
+// finished, so the press had no visible outcome at all.
+func TestDeleteObjectShowsTheDeletionInTheLedger(t *testing.T) {
+	h := newEngineLedgerHarness(t)
+	h.put("image/checkpoints/orphan.safetensors", 42)
+	rec := h.call(t, h.a.deleteObject, "DELETE", "/api/admin/engines/image/objects",
+		`{"key":"image/checkpoints/orphan.safetensors"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s", rec.Code, rec.Body.String())
+	}
+	led := h.call(t, h.a.getObjects, "GET", "/api/admin/engines/image/objects", "", nil)
+	var ledger engineObjectsResponse
+	if err := json.Unmarshal(led.Body.Bytes(), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.Objects) != 1 || ledger.Objects[0].Job == nil ||
+		ledger.Objects[0].Job.State != engineObjectDeleting {
+		t.Fatalf("the ledger = %+v, want the object drawn as deleting", ledger.Objects)
+	}
+	// No id, because there is no job row to dismiss — the CP started an ECS task it does not own.
+	if ledger.Objects[0].Job.ID != "" || ledger.Objects[0].Job.CreatedAt == "" {
+		t.Errorf("the deletion = %+v, want no job id and the time it was pressed", ledger.Objects[0].Job)
+	}
+	// Pressing again is the same act, not a second task and not an error.
+	again := h.call(t, h.a.deleteObject, "DELETE", "/api/admin/engines/image/objects",
+		`{"key":"image/checkpoints/orphan.safetensors"}`, nil)
+	if again.Code != http.StatusOK || len(h.ecs.run) != 1 {
+		t.Fatalf("a second press = %d, %d tasks; want 200 and still one task", again.Code, len(h.ecs.run))
+	}
+	// And once the bytes are gone the line goes with them, rather than turning into `missing`.
+	delete(h.bucket.states, "image/checkpoints/orphan.safetensors")
+	led = h.call(t, h.a.getObjects, "GET", "/api/admin/engines/image/objects", "", nil)
+	if err := json.Unmarshal(led.Body.Bytes(), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.Objects) != 0 {
+		t.Errorf("after the delete landed the ledger still holds %+v", ledger.Objects)
+	}
+}
+
+// An object being deleted is not one to declare or move onto: the bytes are on their way out.
+func TestLedgerWillNotOfferAnObjectThatIsBeingDeleted(t *testing.T) {
+	l := engineLedgerJoin("image", []engineStorageObject{
+		{Key: "image/vae/qwen_image_vae.safetensors", Bytes: 10},
+	}, nil, nil)
+	l.applyDeleting(map[string]time.Time{"image/vae/qwen_image_vae.safetensors": time.Now()})
+	if l.present("image/vae/qwen_image_vae.safetensors") != nil {
+		t.Error("a key with a deletion in flight was offered as usable")
+	}
+	if len(l.inDir("vae")) != 0 {
+		t.Error("a key with a deletion in flight was offered as a candidate")
+	}
+}

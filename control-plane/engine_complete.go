@@ -662,13 +662,14 @@ func engineCompleteDestinationFree(ledger *engineLedger, to, id string) *apiRefu
 				&apiHolder{Kind: "row", ID: by.ModelID, Key: to}, &apiNext{Act: "forget_row", Target: by.ModelID})
 		}
 	}
-	// 🔴 Only a job that could still WRITE these bytes stands in the way (PR #691, and ADR 0085
-	// decision 6's definition of a holder). A failed attempt is not a fence: three of them fenced
-	// off the very repair they were attempting on af-sandbox, and the store-level check behind
-	// this one already knows the difference.
-	if ledger.uploading(object) {
+	// 🔴 Only a task that is doing something to these bytes right now stands in the way (PR #691,
+	// and ADR 0085 decision 6's definition of a holder: an object, or a task that could have
+	// written one). A failed attempt is not a fence — three of them fenced off the very repair
+	// they were attempting on af-sandbox — and the store-level check behind this one already
+	// knows the difference.
+	if ledger.inFlight(object) {
 		return refuse(http.StatusConflict, errCodeEngineBadBody,
-			to+" is being written by an ingest started at "+object.Job.CreatedAt,
+			to+" is held by a task started at "+object.Job.CreatedAt+" ("+object.Job.State+")",
 			&apiHolder{Kind: "job", ID: object.Job.ID, Key: to}, &apiNext{Act: "wait"})
 	}
 	return nil

@@ -49,6 +49,11 @@ const (
 const (
 	engineObjectUploading = "uploading"
 	engineObjectFailed    = "failed"
+	// engineObjectDeleting is the only one of the four that no database row is behind: the CP has
+	// no s3:DeleteObject, the ingest task does the deleting, and that task writes no job row. It
+	// is held in memory by the storage view (engineStorage.markDeleting) and bounded by a TTL,
+	// because nothing ever comes back to say the task finished.
+	engineObjectDeleting = "deleting"
 )
 
 // engineObjectRoleDirOther is every key the loader-directory table has no opinion about: a file
@@ -194,16 +199,20 @@ func (l *engineLedger) at(key string) *engineObjectRow {
 // and the operator had no way to see why.
 func (l *engineLedger) present(key string) *engineObjectRow {
 	row := l.at(key)
-	if row == nil || row.State != engineStoragePresent || l.uploading(row) {
+	if row == nil || row.State != engineStoragePresent || l.inFlight(row) {
 		return nil
 	}
 	return row
 }
 
-// uploading is "a task could still write these bytes", which is the only job state that fences
-// anything off.
-func (l *engineLedger) uploading(row *engineObjectRow) bool {
-	return row != nil && row.Job != nil && row.Job.State == engineObjectUploading
+// inFlight is "a task is doing something to these bytes right now", which is the only condition
+// that fences an object off: an upload that may replace them, or a deletion that may remove them.
+// A FAILED job is not one (PR #691's rule) — it is a line with a dismiss button, not a lock.
+func (l *engineLedger) inFlight(row *engineObjectRow) bool {
+	if row == nil || row.Job == nil {
+		return false
+	}
+	return row.Job.State == engineObjectUploading || row.Job.State == engineObjectDeleting
 }
 
 // inDir is every present object of one loader directory, in key order. The candidate pool a
@@ -211,7 +220,7 @@ func (l *engineLedger) uploading(row *engineObjectRow) bool {
 func (l *engineLedger) inDir(dir string) []*engineObjectRow {
 	var out []*engineObjectRow
 	for i := range l.objects {
-		if l.objects[i].RoleDir == dir && l.objects[i].State == engineStoragePresent && !l.uploading(&l.objects[i]) {
+		if l.objects[i].RoleDir == dir && l.objects[i].State == engineStoragePresent && !l.inFlight(&l.objects[i]) {
 			out = append(out, &l.objects[i])
 		}
 	}
@@ -268,7 +277,33 @@ func (a engineAdminAPI) engineLedgerFor(ctx context.Context, role string) (*engi
 		log.Printf("engines: the ledger could not read %s's ingest jobs (%v): objects will carry no job state", role, err)
 		jobs = nil
 	}
-	return engineLedgerJoin(role, objects, models, jobs), nil
+	ledger := engineLedgerJoin(role, objects, models, jobs)
+	// And the deletions somebody pressed that the bucket has not caught up with yet. Applied
+	// AFTER the join rather than inside it: the join is what a golden pins (family × ledger
+	// state), and this is wall-clock state of one process.
+	ledger.applyDeleting(ing.storageChecker().deleting())
+	return ledger, nil
+}
+
+// applyDeleting draws the press. Until this existed, 消す answered 200 and the next listing looked
+// exactly the same for as long as the task ran — measured on af-sandbox (2026-09-15, build
+// 0a89569e), where the only visible outcome was the object turning into `バイト列がありません`
+// minutes later, which reads as a failure rather than as a success.
+//
+// 🔴 It carries no job id, because there is no job row to dismiss: the deletion is an ECS task the
+// CP started and does not own (ADR 0072 decision 7). The Console draws "deleting" and no button.
+func (l *engineLedger) applyDeleting(started map[string]time.Time) {
+	for key, at := range started {
+		row := l.at(key)
+		if row == nil || row.State != engineStoragePresent {
+			// Already gone, or never this engine's: the press has landed, and a line for it would
+			// be the very "it did not work" this answers.
+			continue
+		}
+		// A deletion in flight outranks whatever an earlier job said about the key: it is the act
+		// happening now, and it is the one that decides whether these bytes are still here.
+		row.Job = &engineObjectJob{State: engineObjectDeleting, CreatedAt: at.UTC().Format(time.RFC3339)}
+	}
 }
 
 // engineLedgerJoin is the pure half, so the classification can be pinned as a golden without a
@@ -382,7 +417,21 @@ func engineLedgerJoin(role string, objects []engineStorageObject, models []store
 		}
 	}
 	l.objects = make([]engineObjectRow, 0, len(l.byKey))
-	for _, row := range l.byKey {
+	for key, row := range l.byKey {
+		// 🔴 No bytes and nobody pointing at them is not a ledger entry at all — it is the memory
+		// of a job. Measured on af-sandbox (2026-09-15, build 0a89569e): after 消す ran MODE=delete
+		// and the object really went, the key came back as `バイト列がありません` with no button on
+		// it, because a `done` job still named it. To the operator that reads as "消す did not
+		// work". Decision 6 settles it: a finished job is provenance ON an object, not a record OF
+		// one, so once neither the bucket nor a row says the key exists, it stops being a line.
+		//
+		// `missing` stays for the case it was written for — a ROW pointing at nothing — because
+		// that is a fault somebody has to fix, and it has a button (揃える, or forget the row).
+		// A `failed` or `uploading` key is kept for the same reason: a task could still write it.
+		if row.State == engineStorageMissing && len(row.DeclaredBy) == 0 {
+			delete(l.byKey, key)
+			continue
+		}
 		l.objects = append(l.objects, *row)
 	}
 	sort.Slice(l.objects, func(i, j int) bool { return l.objects[i].Key < l.objects[j].Key })
@@ -825,6 +874,13 @@ func (a engineAdminAPI) deleteObject(w http.ResponseWriter, r *http.Request, g e
 			&apiHolder{Kind: "job", ID: object.Job.ID, Key: key}, &apiNext{Act: "wait"}))
 		return
 	}
+	// Pressing 消す twice is the SAME act, not an error: the first task is still running and the
+	// object is still listed, which is exactly what makes somebody press again. Answering 200
+	// without starting a second task keeps the button honest and the bill unchanged.
+	if object.Job != nil && object.Job.State == engineObjectDeleting {
+		writeJSON(w, http.StatusOK, engineObjectDeleteAnswer{Deleting: key})
+		return
+	}
 	ing := a.reg.ingester()
 	if ing == nil {
 		writeAPIRefusal(w, refuse(http.StatusServiceUnavailable, errCodeIngestUnavailable,
@@ -836,9 +892,8 @@ func (a engineAdminAPI) deleteObject(w http.ResponseWriter, r *http.Request, g e
 		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineECSError, err.Error()})
 		return
 	}
-	if s := ing.storageChecker(); s != nil {
-		s.invalidate(key)
-	}
+	// The press is recorded before the answer, so the very next ledger read draws it.
+	ing.storageChecker().markDeleting(key)
 	a.auditFor(r, g, "engine."+role+".object", "delete "+key)
 	writeJSON(w, http.StatusOK, engineObjectDeleteAnswer{Deleting: key})
 }
