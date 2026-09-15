@@ -630,6 +630,83 @@ describe("registered rows and the bucket", () => {
     });
   });
 
+  // 🔴 Measured on af-sandbox, during a krea2 ingest: the bucket already held the key, so the
+  // ledger kept `state: "present"` and only the JOB said `uploading` — the row offered 登録, and
+  // pressing it answered 409 `already declared by`. The refusal was right; the button was not.
+  it("presses nothing on a key a task is writing, however the row spells it", async () => {
+    vi.useFakeTimers();
+    try {
+      const key = "image/diffusion_models/krea2_raw_fp8_scaled.safetensors";
+      let listed: Record<string, unknown>[] = [{
+        key, bytes: 13_100_000_000, role_dir: "diffusion_models", placement: "ok",
+        // present AND uploading: what a re-ingest over existing bytes looks like.
+        state: "present", declared_by: [],
+        job: { id: "job-11", state: "uploading", created_at: "2026-09-15T08:00:00Z" },
+      }];
+      let reads = 0;
+      api.mockImplementation((path: string) => {
+        if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [anima] });
+        if (path.endsWith("/objects")) { reads += 1; return Promise.resolve({ objects: listed, checked_at: "2026-09-15T08:00:00Z" }); }
+        return Promise.resolve({});
+      });
+      apiJSON.mockResolvedValue({ hits: [] });
+      await mountRegistered();
+      const row = document.querySelector<HTMLElement>(`.engine-ledger-row[aria-label="${key}"]`)!;
+      expect(row.textContent).toContain("取り込み中");
+      expect(row.textContent).toContain("取り込みのタスクが走っています");
+      expect(labelled(`登録: ${key}`)).toBeUndefined();
+      expect(labelled(`消す: ${key}`)).toBeUndefined();
+
+      // And the ledger follows the task to its end rather than waiting for somebody to reload.
+      const before = reads;
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(reads).toBeGreaterThan(before);
+
+      listed = [{ key, bytes: 13_100_000_000, role_dir: "diffusion_models", placement: "ok", state: "present",
+        declared_by: [{ model_id: "krea2-v2", flag: "--diffusion-model" }] }];
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      const done = document.querySelector<HTMLElement>(`.engine-ledger-row[aria-label="${key}"]`)!;
+      expect(done.textContent).toContain("krea2-v2");
+      expect(done.textContent).not.toContain("取り込み中");
+      const settled = reads;
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+      expect(reads).toBe(settled);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The refusal the operator actually saw, with the button they could not: 登録 on a key a row
+  // already declares answers 409 with holder=row and next=complete, and that is a press.
+  it("draws a register refusal's next act as the row's 揃える", async () => {
+    mockEngines([anima], [
+      { key: "image/diffusion_models/krea2.safetensors", bytes: 13_100_000_000, role_dir: "diffusion_models",
+        placement: "ok", state: "present", declared_by: [] },
+    ]);
+    const calls: string[] = [];
+    apiJSON.mockImplementation((path: string, method?: string) => {
+      calls.push(`${method} ${path}`);
+      if (path.endsWith("/objects/register")) {
+        return Promise.resolve({ error: {
+          code: "engine_bad_body", message: "already declared by krea2_raw_fp8_scaled",
+          holder: { kind: "row", id: "krea2_raw_fp8_scaled", key: "image/diffusion_models/krea2.safetensors" },
+          next: { act: "complete", target: "krea2_raw_fp8_scaled" },
+        } });
+      }
+      if (path.endsWith("/complete")) return Promise.resolve({ action: "attached", files: [] });
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    await click(labelled("登録: image/diffusion_models/krea2.safetensors"));
+    const refusal = document.querySelector(".engine-refusal")!;
+    expect(refusal.textContent).toContain("already declared by krea2_raw_fp8_scaled");
+    expect(refusal.textContent).toContain("押さえているのは 登録済みの行: krea2_raw_fp8_scaled");
+    const next = refusal.querySelector<HTMLButtonElement>(".engine-refusal-next")!;
+    expect(next.textContent).toBe("揃える");
+    await click(next);
+    expect(calls).toContain("POST api/admin/engines/image/models/krea2_raw_fp8_scaled/complete");
+  });
+
   // 🔴 Measured on af-sandbox: 消す "did nothing". The CP holds no `s3:DeleteObject` (ADR 0072
   // decision 7), so the route starts a TASK and answers `{deleting}` — the object goes on being
   // listed as `present` for as long as that takes, and the screen said nothing about it.

@@ -510,8 +510,10 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
   // A download runs for minutes and has no list of its own any more (ADR 0085 decision 6): it is
   // its destination object's `uploading` state, so the ledger is what polls. A delete is the same
   // shape from the other side — a task nobody can see the end of except by listing again.
-  const live = deletingKeys.length > 0
-    || (objects || []).some((object) => object.state === "uploading" || object.job?.state === "deleting");
+  // 🔴 Read the JOB as well as the state. A key that already holds bytes keeps `state: "present"`
+  // while a task writes over it (engine_objects.go:354 only promotes an ABSENT object to
+  // `uploading`), so an ingest in flight is invisible if only the state is consulted.
+  const live = deletingKeys.length > 0 || (objects || []).some(inFlight);
   useEffect(() => {
     if (!live) return;
     const timer = setInterval(() => void loadObjects(), 5000);
@@ -797,15 +799,18 @@ function EngineLedger({ objects, failed, checkedAt, busy, readOnly, deletingKeys
     {!!sorted.length && <ul className="engine-ledger-list">{sorted.map((object) => {
       const orphan = !(object.declared_by || []).length;
       const removing = deletingKeys.includes(object.key) || object.job?.state === "deleting";
+      const taking = !removing && ingesting(object);
       const pending = busy === `object:${object.key}` || (!!object.job && busy === `job:${object.job.id}`);
       const holder = (object.declared_by || [])[0]?.model_id || "";
-      return <li key={object.key} className={`engine-ledger-row${orphan ? " orphan" : ""}${removing ? " deleting" : ""}`} aria-label={object.key}>
+      return <li key={object.key} className={`engine-ledger-row${orphan ? " orphan" : ""}${removing ? " deleting" : ""}${taking ? " uploading" : ""}`} aria-label={object.key}>
         <span className="mono engine-ledger-key">{object.key}</span>
         <span className="engine-ledger-tags">
           <span className="engines-model-tag">{object.role_dir}</span>
           {object.placement === "misplaced" && <span className="engines-model-tag warn">{tr("admin.catalog_ledger_misplaced" as never)}</span>}
-          <span className={`engines-model-tag ${removing ? "lead" : object.state === "present" ? "on" : object.state === "failed" || object.state === "missing" ? "bad" : "lead"}`}>
-            {tr((removing ? "admin.catalog_ledger_state_deleting" : `admin.catalog_ledger_state_${object.state}`) as never)}
+          <span className={`engines-model-tag ${removing || taking ? "lead" : object.state === "present" ? "on" : object.state === "failed" || object.state === "missing" ? "bad" : "lead"}`}>
+            {tr((removing ? "admin.catalog_ledger_state_deleting"
+              : taking ? "admin.catalog_ledger_state_uploading"
+                : `admin.catalog_ledger_state_${object.state}`) as never)}
           </span>
           {!!object.bytes && <span className="engines-model-tag">{formatBytes(object.bytes)}</span>}
           {object.license && <span className="engines-model-tag">{object.license}</span>}
@@ -816,12 +821,15 @@ function EngineLedger({ objects, failed, checkedAt, busy, readOnly, deletingKeys
             .map((holder) => holder.flag ? `${holder.model_id} (${holder.flag})` : holder.model_id).join(", "))}</span>
         {object.source && <span className="muted mono engine-ledger-source">{object.source}</span>}
         {removing && <span className="muted engine-ledger-note">{tr("admin.catalog_ledger_deleting_note" as never)}</span>}
+        {taking && <span className="muted engine-ledger-note">{tr("admin.catalog_ledger_uploading_note" as never)}</span>}
         {/* A row points at bytes that are not there. The ledger says whose problem it is and the
             act is that row's 揃える — the object side has nothing to press. */}
         {!removing && object.state === "missing" && !!holder && <span className="form-err engine-ledger-note">
           {(tr("admin.catalog_ledger_missing_note" as never) as string).replace("{m}", holder)}</span>}
         {object.job?.message && <span className="form-err engine-ledger-message">{object.job.message}</span>}
-        {!readOnly && !removing && <span className="engine-ledger-acts">
+        {/* Nothing is pressable while a task owns the key. 登録 on a key an ingest is writing
+            answers 409 `already declared by` — the refusal is right and the button was not. */}
+        {!readOnly && !removing && !taking && <span className="engine-ledger-acts">
           {object.state === "missing" && !!holder
             ? <Button small variant="primary" disabled={pending} aria-label={`${tr("admin.catalog_complete" as never)}: ${object.key}`}
               onClick={() => onComplete(holder)}>{tr("admin.catalog_complete" as never)}</Button>
@@ -840,6 +848,18 @@ function EngineLedger({ objects, failed, checkedAt, busy, readOnly, deletingKeys
       </li>;
     })}</ul>}
   </section>;
+}
+
+/** Whether a task is writing this key right now. Both spellings count: the ledger promotes an
+ * object to `uploading` only when the bucket does not hold it yet, so a re-ingest over an
+ * existing key is `present` with an `uploading` job — which is exactly the row that offered 登録
+ * and answered 409 `already declared by` on af-sandbox. */
+function ingesting(object: EngineObjectRow): boolean {
+  return object.state === "uploading" || object.job?.state === "uploading";
+}
+
+function inFlight(object: EngineObjectRow): boolean {
+  return ingesting(object) || object.job?.state === "deleting";
 }
 
 /** What has to be looked at first: a failure, then anything nobody declares or that no loader can

@@ -397,6 +397,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // bucket keeps returning the object until it finishes. Without this wording the press looks
   // like it did nothing, which is how it read on af-sandbox.
   "admin.catalog_ledger_state_deleting": "deleting",
+  // 🔴 Taking a key in over bytes that are already there leaves the ledger state `present`
+  // with only the job `uploading`. Deciding the row's acts from the state alone put 登録 on a
+  // key an ingest was writing, which answers 409 `already declared by` (measured on af-sandbox).
+  "admin.catalog_ledger_uploading_note": "An ingest task is running. The declaration appears on this line when it lands.",
   "admin.catalog_ledger_deleting_note": "A delete task is running. This line leaves the list when it finishes (it can take minutes).",
   "admin.catalog_ledger_missing_note": "{m} points at this key and the bucket holds no bytes for it. Complete that row to fetch them again.",
   "admin.catalog_ledger_orphan": "no row declares this",
