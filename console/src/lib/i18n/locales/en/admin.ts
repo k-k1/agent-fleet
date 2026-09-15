@@ -478,6 +478,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // 🔴 A different wall from Hugging Face's gating, and there is no key to it: Civitai answers
   // its metadata 200 for everybody and only the DOWNLOAD is per uploader (five assets measured,
   // split 200/401/403). No token field is being added, so the sentence says what to do instead.
+  "admin.engines_ingest_civitai_account_first": "This asset is download-restricted by its uploader. The ingest will run as the registered Civitai account — if that account does not already meet the uploader's condition, the download answers 401 and the job says so.",
   "admin.engines_ingest_civitai_login": "The person who uploaded this asset only allows downloads from a logged-in account. This deployment ingests anonymously, so whether a registered Civitai token's own account already clears that cannot be checked here \u2014 register one under \u201cAPI tokens\u201d if none is set, or pick another asset.",
   "admin.engines_ingest_civitai_no_token": "No Civitai token reached the ingest task. Register the operator's token under \u201cAPI tokens\u201d and take it in again.",
   // 🔴 401 and 403 on a gated repository are one line of curl apart and need opposite screens:

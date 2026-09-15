@@ -1648,7 +1648,10 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ 
 		kind = engineIngestKindFor(e)
 	}
 	geom := engineIngestGeometry(r.Context(), kind, res, a.hfTokens())
-	row := engineResolvedRow(res, a.hfTokens().configured(r.Context()), e.def.Provider, geom)
+	row := engineResolvedRow(res, engineDeploymentTokens{
+		hf:      a.hfTokens().configured(r.Context()),
+		civitai: a.civitaiTokens().configured(r.Context()),
+	}, e.def.Provider, geom)
 	// And the other header read, for the image role: does this checkpoint carry the VAE its
 	// family decodes with (ADR 0072 follow-up). Here for the same reason the licence is — the
 	// fact has to be on screen BEFORE the press, because afterwards it costs a download, a
@@ -1669,25 +1672,47 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ 
 // verdict this route exists for: a gated repository on a deployment with no HF token cannot be
 // taken in, and saying so here costs nothing — finding out from a 401 costs a Fargate task and
 // a confused administrator.
-func engineResolvedRow(res engineResolved, hasToken bool, provider string, geom engineKVGeometry) map[string]any {
+// engineDeploymentTokens is which accounts this deployment can download AS. Two unrelated
+// services, so two bits — and a struct rather than two bools in a row, because the call sites
+// that pass them are the ones deciding whether a file is reachable at all.
+type engineDeploymentTokens struct {
+	hf      bool
+	civitai bool
+}
+
+func engineResolvedRow(res engineResolved, tokens engineDeploymentTokens, provider string, geom engineKVGeometry) map[string]any {
 	row := map[string]any{
-		"sha256":           res.SHA256,
-		"bytes":            res.Bytes,
-		"gated":            res.Gated,
-		"commercial_use":   engineCommercialUse(res),
-		"source":           res.Source,
-		"can_ingest":       (!res.Gated || hasToken) && !res.LoginRequired,
-		"deployment_token": hasToken,
+		"sha256":         res.SHA256,
+		"bytes":          res.Bytes,
+		"gated":          res.Gated,
+		"commercial_use": engineCommercialUse(res),
+		"source":         res.Source,
+		// 🔴 Each restriction is answered by ITS OWN account. A Hugging Face token does nothing
+		// for a Civitai uploader's login switch, and until the Civitai token was consulted here
+		// this said "no" to every login-required asset even on a deployment that had registered
+		// one — with the token already wired into the fetch container's `Authorization` header
+		// (deploy/aws/ecs/engine-tools/ingest-fetch.sh). The download could have run; the panel
+		// refused to start it.
+		"can_ingest":               (!res.Gated || tokens.hf) && (!res.LoginRequired || tokens.civitai),
+		"deployment_token":         tokens.hf,
+		"deployment_civitai_token": tokens.civitai,
 	}
 	if res.ArtifactIdentity != "" {
 		row["artifact_identity"] = res.ArtifactIdentity
 	}
-	// Told apart from `gated` on purpose. Gating is the repository's terms and a registered
-	// token satisfies them; this is a Civitai uploader's switch, and there is nothing on this
-	// deployment that could satisfy it — so a panel that folded the two would send somebody to
-	// the token field to fix something a token cannot fix (ADR 0072 P2 欠落 5).
+	// Told apart from `gated` on purpose: gating is the REPOSITORY's terms, this is a Civitai
+	// uploader's switch, and the two are satisfied by accounts on different services.
+	//
+	// ⚠️ "There is nothing on this deployment that could satisfy it" was true when this note was
+	// written and is not any more — engine_civitai_token.go registers the account and the fetch
+	// container sends it. What remains true is that the CP cannot tell whether THAT account
+	// satisfies THIS uploader (early access is bought per creator), so with a token registered
+	// this is a warning and without one it is still a refusal.
 	if res.LoginRequired {
 		row["login_required"] = true
+		if tokens.civitai {
+			row["civitai_needs_account"] = true
+		}
 	}
 	// A gated repository WITH a token registered is not yet a yes, and this is the one place
 	// that can say so in advance. 🔴 The CP resolves anonymously (decision 6) — it never holds
@@ -1695,7 +1720,7 @@ func engineResolvedRow(res engineResolved, hasToken bool, provider string, geom 
 	// the answer arrives as a 403 on the download instead (measured, ADR 0072 P5 実機検証: one
 	// token, FLUX.1-dev through and SD3.5 Medium refused). A warning is therefore all this can
 	// honestly be; the CODE for it exists on the failed job, where the status is known.
-	if res.Gated && hasToken {
+	if res.Gated && tokens.hf {
 		row["gated_needs_acceptance"] = true
 	}
 	if res.License != "" {
@@ -1926,14 +1951,21 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		writeAPIErr(w, aerr)
 		return
 	}
-	// ⚠️ Refused BEFORE a task is started, for the same reason as the gated case below — except
-	// that no token exists that would help. The asset's uploader requires an account, this
-	// deployment has none for Civitai, and the alternative is the bare `curl: (22) … 401` nine
-	// minutes in that ADR 0072 P2 欠落 5 measured.
-	if res.LoginRequired && reuseKey == "" {
+	// ⚠️ Refused BEFORE a task is started, for the same reason as the gated case below: without
+	// an account the download is the bare `curl: (22) … 401` nine minutes into a Fargate task
+	// that ADR 0072 P2 欠落 5 measured.
+	//
+	// 🔴 WITH a Civitai token registered this is allowed through, and that is the fix to a
+	// refusal that had outlived its reason: engine_civitai_token.go registers the account and
+	// the fetch container already sends it (`Authorization: Bearer $CIVITAI_TOKEN`), so the
+	// download this refused could have run. What the CP still cannot do is verify that the
+	// account satisfies THIS uploader — early access is bought per creator — so the honest
+	// shape is the gated one: let it start, and let the 401 be the answer if it is one.
+	if res.LoginRequired && reuseKey == "" && !ing.civitaiTokens.configured(r.Context()) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestCivitaiLogin,
 			"the person who uploaded this asset requires a logged-in account to download it, and this " +
-				"deployment ingests anonymously — pick another asset, or stage the file by hand and register it"})
+				"deployment has no Civitai token registered — register one below, pick another asset, " +
+				"or stage the file by hand and register it"})
 		return
 	}
 	// ⚠️ Refused BEFORE a task is started. Without the token the download is a 401 nine minutes

@@ -96,7 +96,7 @@ func TestEngineResolveHuggingFace(t *testing.T) {
 		"qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", "commit-a", got.SHA256) {
 		t.Errorf("artifact identity = %q", got.ArtifactIdentity)
 	}
-	if row := engineResolvedRow(got, false, "", engineKVGeometry{}); row["artifact_identity"] != got.ArtifactIdentity {
+	if row := engineResolvedRow(got, engineDeploymentTokens{}, "", engineKVGeometry{}); row["artifact_identity"] != got.ArtifactIdentity {
 		t.Errorf("resolve wire artifact_identity = %v, want %q", row["artifact_identity"], got.ArtifactIdentity)
 	}
 	if engineCommercialUse(got) != "yes" {
@@ -412,7 +412,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	if got.ContextLength != 32768 {
 		t.Errorf("context_length = %d, want 32768", got.ContextLength)
 	}
-	if row := engineResolvedRow(got, false, "", engineKVGeometry{}); row["context_length"] != 32768 {
+	if row := engineResolvedRow(got, engineDeploymentTokens{}, "", engineKVGeometry{}); row["context_length"] != 32768 {
 		t.Errorf("the panel is not told the context length: %v", row["context_length"])
 	}
 
@@ -423,7 +423,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("gated resolve: %v", aerr.message)
 	}
-	if _, ok := engineResolvedRow(flux, false, "", engineKVGeometry{})["context_length"]; ok {
+	if _, ok := engineResolvedRow(flux, engineDeploymentTokens{}, "", engineKVGeometry{})["context_length"]; ok {
 		t.Error("a repository with no gguf metadata reported a context length")
 	}
 }
@@ -439,7 +439,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 func TestEngineResolvedRowCarriesTheKVCostPerThousandTokens(t *testing.T) {
 	// The 30B this deployment runs: 48 layers, 4 KV heads, 128/128 — 3072 MiB at 32768 tokens
 	// (engine_gguf_test.go), so 96 MiB per 1024.
-	row := engineResolvedRow(engineResolved{}, false, "", engineKVGeometry{48, 4, 128, 128})
+	row := engineResolvedRow(engineResolved{}, engineDeploymentTokens{}, "", engineKVGeometry{48, 4, 128, 128})
 	if row["kv_mib_per_1k_tokens"] != 96 {
 		t.Errorf("kv_mib_per_1k_tokens = %v, want 96", row["kv_mib_per_1k_tokens"])
 	}
@@ -447,7 +447,7 @@ func TestEngineResolvedRowCarriesTheKVCostPerThousandTokens(t *testing.T) {
 	// wire is a model whose window is free — which is the lie this whole field exists to stop.
 	// A partial geometry is the same case: three numbers out of four answer nothing.
 	for _, g := range []engineKVGeometry{{}, {Layers: 48, HeadsKV: 4, KeyLen: 128}} {
-		if v, ok := engineResolvedRow(engineResolved{}, false, "", g)["kv_mib_per_1k_tokens"]; ok {
+		if v, ok := engineResolvedRow(engineResolved{}, engineDeploymentTokens{}, "", g)["kv_mib_per_1k_tokens"]; ok {
 			t.Errorf("geometry %+v reported a KV cost of %v — unread must not read as measured", g, v)
 		}
 	}
@@ -515,7 +515,7 @@ func TestEngineResolveCivitai(t *testing.T) {
 	if got.LoginRequired {
 		t.Error("a downloadable asset was marked as needing an account")
 	}
-	if row := engineResolvedRow(got, false, "", engineKVGeometry{}); row["can_ingest"] != true {
+	if row := engineResolvedRow(got, engineDeploymentTokens{}, "", engineKVGeometry{}); row["can_ingest"] != true {
 		t.Errorf("can_ingest = %v for an asset with no wall at all", row["can_ingest"])
 	}
 }
@@ -541,14 +541,27 @@ func TestEngineResolveCivitaiSpotsAnAssetThatNeedsAnAccount(t *testing.T) {
 		if !got.LoginRequired {
 			t.Errorf("a %d download resolved as freely fetchable", status)
 		}
-		row := engineResolvedRow(got, true, "", engineKVGeometry{})
+		row := engineResolvedRow(got, engineDeploymentTokens{hf: true}, "", engineKVGeometry{})
 		if row["can_ingest"] != false || row["login_required"] != true {
 			t.Errorf("the panel is not told (%d): %v", status, row)
 		}
 		// NOT reported as gated: that word sends somebody to the Hugging Face token field,
-		// which cannot help here. A registered token does not change can_ingest either.
+		// which cannot help here — and neither does registering one, which is why the row above
+		// is built WITH an hf token and still refuses.
 		if row["gated"] == true {
 			t.Errorf("a Civitai login wall was reported as a gated repository (%d)", status)
+		}
+		// 🔴 The account that DOES answer this wall. The fetch container has sent
+		// `Authorization: Bearer $CIVITAI_TOKEN` since the token was registrable, so refusing
+		// here was refusing a download that could have run. It is a warning rather than a
+		// promise: the CP resolves anonymously and cannot ask whether that account satisfies
+		// this uploader, the same honesty `gated_needs_acceptance` is built on.
+		withCivitai := engineResolvedRow(got, engineDeploymentTokens{civitai: true}, "", engineKVGeometry{})
+		if withCivitai["can_ingest"] != true || withCivitai["civitai_needs_account"] != true {
+			t.Errorf("a registered Civitai token still cannot start the download (%d): %v", status, withCivitai)
+		}
+		if withCivitai["login_required"] != true {
+			t.Errorf("the wall stopped being mentioned once a token existed (%d): %v", status, withCivitai)
 		}
 	}
 
@@ -990,18 +1003,18 @@ func TestEngineIngestRecordsARefusedRunTask(t *testing.T) {
 // with no HF token is refused at the API, before anything is started.
 func TestEngineResolvedRowRefusesGatedWithoutAToken(t *testing.T) {
 	res := engineResolved{Gated: true, LicenseName: "flux-1-dev-non-commercial-license"}
-	row := engineResolvedRow(res, false, "", engineKVGeometry{})
+	row := engineResolvedRow(res, engineDeploymentTokens{}, "", engineKVGeometry{})
 	if row["can_ingest"] != false {
 		t.Error("a gated model read as ingestible with no token")
 	}
 	if row["commercial_use"] != "no" {
 		t.Errorf("commercial_use = %v", row["commercial_use"])
 	}
-	if engineResolvedRow(res, true, "", engineKVGeometry{})["can_ingest"] != true {
+	if engineResolvedRow(res, engineDeploymentTokens{hf: true}, "", engineKVGeometry{})["can_ingest"] != true {
 		t.Error("a gated model with a token configured was still refused")
 	}
 	// An ungated model needs no token at all.
-	if engineResolvedRow(engineResolved{}, false, "", engineKVGeometry{})["can_ingest"] != true {
+	if engineResolvedRow(engineResolved{}, engineDeploymentTokens{}, "", engineKVGeometry{})["can_ingest"] != true {
 		t.Error("an ungated model was refused")
 	}
 	b, _ := json.Marshal(row)

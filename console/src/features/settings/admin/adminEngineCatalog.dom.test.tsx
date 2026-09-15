@@ -253,6 +253,44 @@ describe("model catalogue pane", () => {
     expect(steps.value).toBe("28");
   });
 
+  // 🔴 The same wall, on a deployment that HAS registered a Civitai account. The refusal was
+  // unconditional even though the fetch container already sends that account's token, so the
+  // panel refused to start a download that could have run. With a token it reads as the warning
+  // `gated_needs_acceptance` is — the CP still cannot verify the account satisfies THIS uploader.
+  it("offers a login-walled asset once a Civitai account is registered", async () => {
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Walled", login_required: "yes" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "22", name: "v1" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) return Promise.resolve({
+        bytes: 2_000_000_000, can_ingest: true, login_required: true,
+        civitai_needs_account: true, deployment_civitai_token: true,
+        base_model: "SDXL 1.0", base_model_suggest: "sdxl",
+      });
+      return Promise.resolve({});
+    });
+    await mount();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+    // The dead end is gone and the caveat is not: it is drawn muted, like the gated one.
+    const wall = Array.from(document.querySelectorAll("p")).find((item) => item.textContent?.includes("Civitai アカウント"));
+    expect(wall?.className).toBe("muted");
+    expect(Array.from(document.querySelectorAll("p.form-err")).some((item) => item.textContent?.includes("ログイン済みのアカウント"))).toBe(false);
+    // And the button is reachable — only the licence checkbox stands between here and the job.
+    const ingest = button("取り込む") as HTMLButtonElement;
+    expect(ingest.disabled).toBe(true);
+    const licence = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+      .find((input) => input.parentElement?.textContent?.includes("ライセンス"))!;
+    await act(async () => { licence.click(); });
+    expect((button("取り込む") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("invalidates pagination when the visible query changes", async () => {
     api.mockImplementation((path: string) => {
       if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });

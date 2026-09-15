@@ -90,6 +90,23 @@ func (t *engineCivitaiTokens) view(ctx context.Context) engineCivitaiTokenStatus
 	return out
 }
 
+// configured is view()'s one bit, for the paths that only need to know whether a download could
+// carry an account — the same question engineHfTokens.configured answers, and the same
+// tie-break: a store that cannot be read is NOT a deployment without a token. Saying "no" here
+// would put "pick another asset" in front of somebody whose token is fine, when the honest
+// outcome is to let the download fail with the real reason.
+func (t *engineCivitaiTokens) configured(ctx context.Context) bool {
+	if t == nil || !t.available() {
+		return false
+	}
+	enc, err := t.settings.GetSetting(ctx, engineCivitaiTokenSetting)
+	if err != nil {
+		log.Printf("engines: civitai token setting unreadable: %v", err)
+		return true
+	}
+	return strings.TrimSpace(enc) != ""
+}
+
 // set seals the token, writes it down and carries it to the secret, in that order — see
 // engineHfTokens.set for why the secret goes first.
 func (t *engineCivitaiTokens) set(ctx context.Context, token, by string) *apiError {
