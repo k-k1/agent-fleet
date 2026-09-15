@@ -21,6 +21,31 @@ type fakeEngineStorageHead struct {
 	active     int
 	maxActive  int
 	blockDelay time.Duration
+	// listErr makes the bucket refuse to be listed, which is a different answer from an empty
+	// bucket and the ledger has to keep them apart.
+	listErr error
+	// listCalls counts the ledger's reads, so a test can prove a plan answered from the listing
+	// rather than from a fan-out of HeadObject.
+	listCalls int
+}
+
+// List answers from the same fixture Stat does: every key the test declared `present` is in the
+// bucket. That keeps one map as the fixture's single statement about what exists.
+func (f *fakeEngineStorageHead) List(_ context.Context, prefix string) ([]engineStorageObject, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listCalls++
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	var out []engineStorageObject
+	for key, state := range f.states {
+		if state != engineStoragePresent || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		out = append(out, engineStorageObject{Key: key, Bytes: f.bytes[key]})
+	}
+	return out, nil
 }
 
 func (f *fakeEngineStorageHead) Stat(ctx context.Context, key string) engineStorageObjectMetadata {

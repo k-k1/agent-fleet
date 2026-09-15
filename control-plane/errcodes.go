@@ -124,6 +124,13 @@ const (
 	// successor rather than the mistake.
 	errCodeEngineIngestActGone = "engine_ingest_act_gone"
 
+	// 揃える was asked to put a file in a role the row already fills (ADR 0085 decision 3). Its own
+	// code and not `bad_body`, because it is the one refusal in that area that is a QUESTION: the
+	// same request with `replace` succeeds, and the Console draws the refusal's `next` as that
+	// button. Swapping a part changes what an enabled row loads at the next cold start, which is
+	// not something a mis-click may do.
+	errCodeEngineSlotFilled = "engine_slot_filled"
+
 	// Registering the operator's Hugging Face token (ADR 0072 decision 6 as revised). The
 	// write reaches two places — the sealed setting and the stack's secret — and they fail
 	// for different reasons, so a single "could not save" would send the reader to the wrong

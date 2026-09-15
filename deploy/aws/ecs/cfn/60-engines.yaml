@@ -289,8 +289,10 @@ Resources:
           - Effect: Allow
             Action: [ secretsmanager:PutSecretValue ]
             Resource: [ !Ref HfTokenSecret, !Ref CivitaiTokenSecret ]
-          # HeadObject is authorised by s3:GetObject. ListBucket is required only for S3 to
-          # answer 404 instead of 403 when that object is absent; the CP has no list operation.
+          # HeadObject is authorised by s3:GetObject. ListBucket is what the CP enumerates the
+          # ledger with (ADR 0085 decision 2: GET /api/admin/engines/{key}/objects) and is also
+          # what makes S3 answer 404 instead of 403 for an absent object. No grant changed for
+          # the ledger - this permission was already here, conditioned on the two prefixes.
           - Effect: Allow
             Action: [ s3:GetObject ]
             Resource:

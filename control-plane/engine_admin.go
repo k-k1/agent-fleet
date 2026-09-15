@@ -162,6 +162,10 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	mux.HandleFunc("GET /api/admin/engines/civitai-token", a.withSuperAdmin(a.getCivitaiToken))
 	mux.HandleFunc("PUT /api/admin/engines/civitai-token", a.withSuperAdmin(a.putCivitaiToken))
 	mux.HandleFunc("DELETE /api/admin/engines/civitai-token", a.withSuperAdmin(a.deleteCivitaiToken))
+	// The bucket read as the ledger, and the two acts that start from it (ADR 0085 decisions 2, 3
+	// and 7). One line on purpose: the route table is what three lanes writing this ADR at once
+	// would otherwise each append to.
+	registerEngineObjectRoutes(mux, a)
 	// The credential another deployment borrows these engines with (ADR 0079 decision 3, P1).
 	// Super_admin only and never GET — it opens every engine here, so a tenant-scoped role is
 	// not in proportion, and a credential does not belong in a URL. engine_issue_token.go.
