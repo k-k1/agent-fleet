@@ -41,6 +41,11 @@ const { clearGalleryCache, readGallery } = await import("./galleryCache.ts");
 let host: HTMLDivElement;
 let root: Root;
 
+/** jsdom reports a 1x screen, and the thumbnail size the view asks for depends on it. Pinning
+ *  it keeps every other test here about what it says it is about; the test that IS about the
+ *  choice sets it itself. 2 is the common laptop, and the size decision 4 originally fixed. */
+const setDPR = (v: number) => Object.defineProperty(window, "devicePixelRatio", { value: v, configurable: true });
+
 const img = (name: string, mtime?: number, size = 1000): Entry => ({ name, type: "file", size, ...(mtime ? { mtime } : {}) });
 
 /** Open a real gallery pane so the view's writes (sort, focus consumption) land somewhere
@@ -90,6 +95,7 @@ const back = (): Promise<void> =>
   });
 
 beforeEach(() => {
+  setDPR(2);
   listings = 0;
   fetchMock.mockClear();
   // The folder cache is module-level and deliberately outlives a mount (that is what makes
@@ -698,6 +704,24 @@ describe("画像ギャラリーのペイン", () => {
       vi.useRealTimers();
       vi.stubGlobal("Image", realImage);
     }
+  });
+
+  it("カードのサムネイルは画面の密度で選ぶ（1x に 512 を送らない）", async () => {
+    // A card is 150-200 CSS px wide at 4:3, so a 1x screen cannot show 512. Measured on a real
+    // generated picture: 42 KB at 512 against 15 KB at 256, for the same card.
+    setDPR(1);
+    served = [img("a.png", 100), { name: "sub", type: "dir", images: 1, preview: [{ name: "c.png", mtime: 5 }] } as unknown as Entry];
+    await render({ path: "root" });
+    expect(thumbs().every((t) => t.src.includes("thumb=256"))).toBe(true);
+    // The listing asks the Agent to warm the SAME size — warming 512 for cards that ask for
+    // 256 would decode every picture twice and warm none of what is drawn.
+    expect(String(fetchMock.mock.calls[0][0])).toContain("warm=256");
+
+    await act(async () => root.unmount());
+    clearGalleryCache();
+    setDPR(2);
+    await render({ path: "root" });
+    expect(thumbs().every((t) => t.src.includes("thumb=512"))).toBe(true);
   });
 
   it("マウント時に 1 回だけ読み、常駐ポーラーにはしない", async () => {

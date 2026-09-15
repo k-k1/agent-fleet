@@ -426,6 +426,23 @@ into the `color.Color` interface, and that is an allocation each time.
   **off by one** — a different picture. `TestPixelReaderMatchesAt` caught it. The fast path is
   "call the same RGBA(), without the boxing", and nothing else.
 
+### Decision 14 — a card's longest edge follows the screen's density (revising decision 4's flat 512)
+
+A card is 150-200 px wide at 4:3, so a 1x screen shows 138x104 to 200x150 CSS px. **Measured on
+one real generated picture: 42 KB at 512 against 15 KB at 256** — 65% spent on pixels that
+screen cannot show. **The Agent's cost is the same either way** (57 vs 59 ms: the work is the
+decode, not the scale).
+
+- Decision 4 fixed one number because the mirror asks for 512 and a second edge means decoding
+  the same file twice. True, but **the mirror looks at shared files and the gallery at generated
+  folders**, which in practice are different pictures.
+- The grid, **the covers (decision 11)** and the lightbox's placeholder all read the SAME value.
+  They show the same pictures at the same size, so splitting them is what would really cost a
+  second decode. `warm=` sends that value too — warming 512 for cards that ask for 256 warms
+  nothing that gets drawn.
+- **Read per render**, not frozen into a constant: a window dragged to another monitor changes
+  it, and being wrong costs one re-request at the other size.
+
 ## Options rejected
 
 - **A modal gallery** (like cleanup / archive): cheap, but it throws away everything a pane gets
@@ -508,11 +525,8 @@ into the `color.Color` interface, and that is an allocation each time.
 - **P2 (landed 2026-09-15)**: ✅ decision 10 (a folder walked into is remembered); ✅ decision 11
   (a folder's cover and count, `peek`); ✅ decision 12 (the lightbox's screen-sized copy,
   `preview`); ✅ decision 13 (the fast path in the downscale).
-  Still open: **choosing a card's `thumb` by device pixel ratio** (a card is 150-200 px wide at
-  4:3, i.e. 138x104-200x150 CSS px, so 512 is 3-4x more than a DPR 1 screen shows — decision 4
-  chose 512 to avoid decoding twice, but the mirror looks at shared files and the gallery at
-  generated folders, which rarely overlap; decision 11 made the covers use that key too, so
-  changing it now means changing three places at once); **using `preview` for the mirror's
+  ✅ decision 14 (a card's edge chosen by device pixel ratio).
+  Still open: **using `preview` for the mirror's
   shared-file lightbox** (the same move as decision 12, not started); **warming `preview` at
   generation time** (only `thumb=512` is warmed today, so the first enlarge of a new picture
   pays ~110 ms to decode and ~30 ms to encode).

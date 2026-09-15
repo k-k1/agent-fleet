@@ -55,10 +55,25 @@ import { openGallery } from "./open.ts";
 import { fetchGalleryListing, forgetGallery, prefetchGallery, readGallery, rememberGalleryView } from "./galleryCache.ts";
 import "./gallery.css";
 
-/** Longest edge asked of the thumbnail endpoint. The SAME number the mirror's file cards
- *  use: the Agent's thumbnail cache is keyed by it, so a gallery that asked for 256 would
- *  make the workspace decode every shared picture a second time (decision 4). */
-const THUMB = 512;
+/**
+ * Longest edge asked of the thumbnail endpoint, for everything card-sized: the grid, a folder's
+ * cover, and the lightbox's placeholder. All three deliberately share it — they show the same
+ * pictures at the same size, and the Agent's cache is keyed by the edge.
+ *
+ * Chosen by device pixel ratio, which is a revision of decision 4's flat 512. A card is 150-200
+ * CSS px wide at 4:3, so a 1x screen shows about 138x104 to 200x150 — measured on a real
+ * generated picture, 512 costs 42 KB against 256's 15 KB for pixels that screen cannot show,
+ * and the decode costs the Agent the same either way (57 vs 59 ms: the decode, not the scale,
+ * is the work). Decision 4's reason for one number was that the mirror asks for 512 and a
+ * second edge means a second decode of the same file — true, but the mirror looks at shared
+ * files and the gallery at generated folders, which in practice are different pictures.
+ *
+ * Read per render rather than once: a window dragged to a different monitor changes it, and the
+ * cost of being wrong is one re-request at the other size.
+ */
+function thumbEdge(): number {
+  return (window.devicePixelRatio || 1) > 1.5 ? 512 : 256;
+}
 
 /** How long a newly-arrived card stays tinted. Must match the .gal-new animation in
  *  gallery.css — the class is dropped when this elapses, so a longer animation is cut
@@ -246,7 +261,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
       // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
       // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
       // it the first look at a fresh folder trickles in card by card.
-      const r = await fetchGalleryListing(path, THUMB, signal);
+      const r = await fetchGalleryListing(path, thumbEdge(), signal);
       if (signal.aborted) return true;
       if (!r.ok) {
         if (r.hard && initial) {
@@ -562,7 +577,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
                 label={tr("gallery.up")}
                 icon="arrow-up"
                 title={tr("gallery.up")}
-                onPrefetch={() => prefetchGallery(parent, THUMB)}
+                onPrefetch={() => prefetchGallery(parent, thumbEdge())}
                 onOpen={(newPane) => (newPane ? openGallery(parent, { newPane: true }) : navigate(parent))}
               />
             )}
@@ -584,7 +599,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
                 icon="folder"
                 title={f.path}
                 fresh={fresh.has(f.name)}
-                onPrefetch={() => prefetchGallery(f.path, THUMB)}
+                onPrefetch={() => prefetchGallery(f.path, thumbEdge())}
                 onOpen={(newPane) => (newPane ? openGallery(f.path, { newPane: true }) : navigate(f.path))}
               />
             ))}
@@ -628,7 +643,7 @@ export function GalleryView({ paneId, path, sort, focus, sessionName, headerActi
             src={displayURL(current.path, previewEdge(), current.mtime)}
             // The card's thumbnail is already decoded in this tab, so the enlarged view
             // paints immediately and sharpens when the original lands.
-            placeholder={downloadURL(current.path, THUMB, current.mtime)}
+            placeholder={downloadURL(current.path, thumbEdge(), current.mtime)}
             path={current.path}
             alt={current.name}
             onClose={close}
@@ -706,7 +721,7 @@ function FolderCard({
         <span className={"gal-thumb" + (cover && !coverFailed && armed ? " cover" : "")} ref={thumbRef}>
           {cover && !coverFailed && armed ? (
             <img
-              src={downloadURL(cover.path, THUMB, cover.mtime)}
+              src={downloadURL(cover.path, thumbEdge(), cover.mtime)}
               alt=""
               loading="lazy"
               decoding="async"
@@ -763,7 +778,7 @@ function GalleryCard({
           <Icon name="file-media" className="gal-thumb-none" />
         ) : armed ? (
           <img
-            src={downloadURL(img.path, THUMB, img.mtime)}
+            src={downloadURL(img.path, thumbEdge(), img.mtime)}
             alt={img.name}
             loading="lazy"
             decoding="async"
