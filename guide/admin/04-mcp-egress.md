@@ -131,8 +131,16 @@ Where the figure came from is printed with it, and the three are not equally str
 
 ### Taking models in, and what that has to do with tenants
 
-Taking a model in from Hugging Face / Civitai / a URL — putting it in the bucket and creating a
-catalogue row — can be started by a **super_admin only**, by default. Where the operator grants it
+Taking a model in is one press: **search** the model, press **add** on its card, read the plan the
+card shows (every file the model needs with its size, which of them the deployment already holds,
+the licence) and press **take in**. The Control Plane decides where each file goes and which parts
+the family needs; nothing on the card asks for a role, a key or a file name. Below the registered
+rows sits the **bucket** — every object the deployment holds, what declares it, and what is still
+being taken in or failed. Bytes nobody declares can be registered as a model or deleted there; a
+row whose files are incomplete is repaired from the row itself (**complete**), never from a part.
+
+That press — putting the file in the bucket and creating a catalogue row — can be started by a
+**super_admin only**, by default. Where the operator grants it
 to a tenant, that tenant's **tenant_admins can take models in too** (Admin modal → the tenant →
 "Limits & idle" → **Inference engine model ingest**).
 
@@ -159,12 +167,12 @@ it, which means "the operator accepted on behalf of the whole deployment".
 
 A tenant_admin of a granted tenant gets a reduced screen under **Tenant settings → "Inference
 engine models"** (not the Admin modal — that one is super_admin only). It holds four things:
-**the model search, the ingest form, the ingest history their own tenant started, and the list of
-catalogue rows** (id, name, family, licence and on/off — **read-only**). What it does not hold:
+**the model search, the plan card, the bucket entries their own tenant's jobs produced, and the list
+of catalogue rows** (id, name, family, licence and on/off — **read-only**). What it does not hold:
 **the mode (disabled / on demand / always on), the GPU class, the state of the instance, enabling
 and selecting a model, forgetting a row, and the Hugging Face token** — each of those decides what
-every *other* tenant runs, or who pays for the GPU. The ingest history is **that tenant's own jobs
-only**, and a super_admin's do not appear in it (a super_admin's own screen shows all of them).
+every *other* tenant runs, or who pays for the GPU. The bucket shows **that tenant's own objects
+only**, and a super_admin's do not appear in it (a super_admin's own screen shows the whole bucket).
 
 ### Reading the current state
 
