@@ -223,17 +223,12 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		}
 		// And the half of "this row cannot generate" that no declaration can express: the
 		// checkpoint file itself carries no VAE, so the family's template has nothing to decode
-		// with (ADR 0072 follow-up). Two marks rather than one, because they send the reader to
-		// opposite places — `vae_missing` is fixed by taking ONE more file in and attaching it,
-		// while `vae_unread` is a question nobody has asked yet, which the panel's scan answers
-		// without the operator deciding anything.
+		// with (ADR 0072 follow-up). ONE mark, and it stays because it answers "why can this row
+		// not be enabled" (ADR 0085 decision 7); the remedy is 揃える, which folds the family's
+		// own VAE into the gap it closes. `vae_fix` (which file that would be) and `vae_unread`
+		// (nobody has read this header) left with the routes that acted on them.
 		if engineVaeMissing(e.def.Provider, m) {
 			mr["vae_missing"] = true
-			if v, ok := engineFamilyVaes[strings.TrimSpace(m.BaseModel)]; ok {
-				mr["vae_fix"] = v.Repo + "/" + v.File
-			}
-		} else if engineVaeUnread(e.def.Provider, m) {
-			mr["vae_unread"] = true
 		}
 		// A LoRA pinned to nothing (ADR 0072 decision 5, the llm half). The adapter reaches the
 		// engine through the preset section of the model named in `base_model`, so a base that is

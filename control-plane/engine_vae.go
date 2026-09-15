@@ -11,8 +11,10 @@ package main
 //
 // 🔴 The verdict is read ONCE, at the press that takes the checkpoint in (engineVaeOfIngest,
 // through the plan). There is no second read: the header scan and the per-row re-read left with
-// their routes (ADR 0085 P3), so a row whose bytes were registered from the bucket rather than
-// taken in has no verdict at all and is marked `vae_unread` until it does.
+// their routes (ADR 0085 P3), so a row whose bytes were REGISTERED from the bucket rather than
+// taken in carries no verdict at all — and an absent verdict is deliberately not a mark, so such
+// a row is neither marked nor offered the family's VAE by 揃える. Its `--vae` is declared by hand
+// (`PUT …/models/{id}`) until something reads that header again.
 //
 // 🔴 Only the single-checkpoint families are asked about. flux1, flux2-klein and zimage
 // already REQUIRE a `--vae` file to be declared (engineComfyRequiredFlags), so a row of theirs
@@ -109,16 +111,6 @@ func engineVaeMissing(provider string, m store.EngineModel) bool {
 	}
 	f, ok := engineVaeCheckpoint(m)
 	return ok && f.VaeBundled == engineVaeNo
-}
-
-// engineVaeUnread says the question applies to this row and nobody has answered it — what the
-// panel's scan looks for.
-func engineVaeUnread(provider string, m store.EngineModel) bool {
-	if !engineVaeAsked(provider, m) {
-		return false
-	}
-	f, ok := engineVaeCheckpoint(m)
-	return ok && f.VaeBundled == engineVaeUnknown && engineSafetensorsName(f.S3Key)
 }
 
 // engineVaeGuard refuses to switch on a row whose checkpoint is known to carry no VAE.

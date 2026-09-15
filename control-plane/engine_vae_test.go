@@ -43,9 +43,10 @@ func vaeModelRows(t *testing.T, a engineAdminAPI, e *engineRuntimeState) map[str
 	return out
 }
 
-// 🔴 The three states have to stay three. A row nobody has read must NOT be marked broken —
-// every row taken in before this existed is in that state, and a mark on all of them is a mark
-// worth nothing.
+// 🔴 A row nobody has read must NOT be marked broken — every row registered from the bucket is in
+// that state (ADR 0085 P3 took the header scan away), and a mark on all of them is a mark worth
+// nothing. `vae_missing` is the one mark left: `vae_fix` and `vae_unread` went with the routes
+// that acted on them.
 func TestEngineVaeMarksOnlyWhatWasRead(t *testing.T) {
 	a, e, st := vaeComfyAPI(t)
 	vaeTestRow(t, st, "unread", engineVaeUnknown)
@@ -59,21 +60,14 @@ func TestEngineVaeMarksOnlyWhatWasRead(t *testing.T) {
 	if rows["novae"]["vae_missing"] != true {
 		t.Errorf("a checkpoint read as carrying no VAE is not marked: %v", rows["novae"])
 	}
-	if rows["novae"]["vae_fix"] != "stabilityai/sdxl-vae/sdxl_vae.safetensors" {
-		t.Errorf("the mark does not name the file that fixes it: %v", rows["novae"]["vae_fix"])
-	}
-	if _, marked := rows["unread"]["vae_missing"]; marked {
-		t.Errorf("a row nobody has read was marked broken: %v", rows["unread"])
-	}
-	if rows["unread"]["vae_unread"] != true {
-		t.Errorf("an unread row is not offered to the scan: %v", rows["unread"])
-	}
-	for _, id := range []string{"hasvae", "declared"} {
-		if _, marked := rows[id][" vae_missing"]; marked {
-			t.Errorf("%s was marked: %v", id, rows[id])
+	for _, gone := range []string{"vae_fix", "vae_unread"} {
+		if _, ok := rows["novae"][gone]; ok {
+			t.Errorf("the row still carries %s, which left with its route: %v", gone, rows["novae"])
 		}
-		if rows[id]["vae_missing"] == true || rows[id]["vae_unread"] == true {
-			t.Errorf("%s is neither missing nor unread, but carries a mark: %v", id, rows[id])
+	}
+	for _, id := range []string{"unread", "hasvae", "declared"} {
+		if _, marked := rows[id]["vae_missing"]; marked {
+			t.Errorf("%s carries a mark it has not earned: %v", id, rows[id])
 		}
 	}
 }
