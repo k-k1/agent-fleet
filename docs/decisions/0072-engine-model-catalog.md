@@ -2284,6 +2284,17 @@ manifest) and decision 7 (delete the S3 file) were written without noticing (R3)
   with a 10-minute TTL; the Agent's `POST /engine/usage` (`routes.go`) **already exists** as
   the CP → Agent reverse path — decision 7's `catalog-changed` can take the same shape.
   `opencode.ApplyEngineChange` and the per-model `engineProviderEntry` exist as the text says.
+  🔴 **2026-09-15 correction: "every turn" is wrong for claude.** Measured on the dev workspace:
+  a claude session asks `tools/list` once, when it connects, and never again — so the `model`
+  enum a session advertises is a SNAPSHOT of the moment its MCP server was spawned. Restarting
+  the session does not fix it either, because the Console's stop/resume is `claude --resume` and
+  the client restores the snapshot with the conversation (a process one minute old kept an enum
+  from before the checkpoint existed, while a server spawned by hand with the same arguments
+  answered with the new one). The catalogue reaching the Agent is therefore NOT enough: the
+  stdio server now declares `capabilities.tools.listChanged` and sends
+  `notifications/tools/list_changed` when what it would advertise stops matching what the client
+  was last told (a one-minute watcher over a fingerprint of the whole list, because the names
+  never move when a checkpoint is enabled — only the enum inside the schema does).
 - **R8. HF today.** FLUX.1-schnell: `license: apache-2.0`, `gated: auto` (as the text says);
   FLUX.2 klein 4B and Z-Image-Turbo: `apache-2.0`, `gated: false`. 🔴 **FLUX.1-dev and SD3.5
   Medium report `cardData.license` as `"other"`**, with the substance in `license_name`
