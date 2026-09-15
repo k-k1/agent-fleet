@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -145,7 +146,33 @@ func enginePartPlan(ctx context.Context, held enginePartsHeld, p engineFamilyPar
 	if fu, ok := enginePartHeldBytes(ctx, held, p, res); ok {
 		return fu
 	}
+	// 3. 🔴 The key is recorded and step 2 could not vouch for it. A download is refused for a
+	//    taken destination (engineIngestDestinationUnused), so proposing one here would spend a
+	//    licence acceptance and end in "the S3 key … is already recorded" — reported from
+	//    af-sandbox 2026-09-15, where an earlier hand-made row held that very key. What the
+	//    operator can act on is WHO holds it, so that is what this carries.
+	if k := held.known[p.S3Key]; k != nil {
+		return engineVaeFollowUp{Flag: p.Flag, S3Key: p.S3Key, Conflict: enginePartConflictWord(k)}
+	}
 	return engineVaeFollowUp{Flag: p.Flag, S3Key: p.S3Key, Resolved: res}
+}
+
+// enginePartConflictWord names what is sitting on the key, in the words the panel can act on:
+// the row to attach from or forget, or the job history that recorded it.
+func enginePartConflictWord(k *engineKnownArtifact) string {
+	ids := make([]string, 0, len(k.ModelIDs))
+	for id := range k.ModelIDs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	switch {
+	case len(ids) > 0:
+		return "already declared by " + strings.Join(ids, ", ")
+	case k.InFlight:
+		return "an ingest is still running for this key"
+	default:
+		return "an earlier ingest recorded this key"
+	}
 }
 
 // enginePartHeldBytes is step 2 above, and every one of its refusals is a case where downloading
@@ -198,6 +225,10 @@ func enginePartsPlanRows(plan []engineVaeFollowUp, parts []engineFamilyPart) []m
 		p := byFlag[fu.Flag]
 		row := map[string]any{"flag": fu.Flag, "repo": p.Repo, "file": p.File, "s3_key": fu.S3Key}
 		switch {
+		case fu.Conflict != "":
+			// Not offerable and not a failure of the upstream: the bytes are here, under a name
+			// this plan cannot match. The fix is a human one and the row says which.
+			row["conflict"] = fu.Conflict
 		case fu.Staged:
 			row["staged"] = true
 			row["bytes"] = fu.Bytes
@@ -221,8 +252,8 @@ func enginePartsPlanRows(plan []engineVaeFollowUp, parts []engineFamilyPart) []m
 func enginePartsBytes(plan []engineVaeFollowUp) int64 {
 	var total int64
 	for _, fu := range plan {
-		if fu.Staged {
-			continue // already here, and paid for
+		if fu.Staged || fu.Conflict != "" {
+			continue // already here, and paid for — or not ours to download at all
 		}
 		total += fu.Resolved.Bytes
 	}
@@ -308,6 +339,10 @@ func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engin
 	if b.Check {
 		action := "attach"
 		for _, fu := range plan {
+			if fu.Conflict != "" {
+				action = "conflict"
+				break
+			}
 			if !fu.Staged {
 				action = "ingest"
 			}
@@ -351,6 +386,15 @@ func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engin
 			a.auditFor(r, g, "engine."+key+".model.parts", id+" attached "+fu.S3Key+" (already staged)")
 			attached++
 			continue
+		}
+		// 🔴 The key is taken by something this plan could not match. Refused HERE, where the
+		// answer can name what is holding it — a download to that key is refused anyway, and the
+		// message it earns ("the S3 key … is already recorded") says nothing about what to do.
+		if fu.Conflict != "" {
+			writeAPIErr(w, &apiError{http.StatusConflict, errCodeEngineBadBody,
+				p.Flag + " would land at " + fu.S3Key + ", which is " + fu.Conflict +
+					" — attach that file to this row from the panel, or forget the row holding it and press again"})
+			return
 		}
 		if fu.Resolved.SHA256 == "" {
 			writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeIngestUnavailable,

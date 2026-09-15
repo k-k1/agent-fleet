@@ -1148,6 +1148,14 @@ func (g *engineIngester) followUpFile(ctx context.Context, req engineIngestReque
 	if g.models == nil {
 		return
 	}
+	if fu.Conflict != "" {
+		// Planned as unstartable and never offered, so reaching here means a job spec outlived
+		// the catalogue it was planned against. Logged rather than attempted: the download would
+		// be refused for the taken key, minutes later, in a reconciler nobody is watching.
+		log.Printf("engines: %s/%s left %s alone — %s is %s",
+			req.Role, req.ModelID, fu.Flag, fu.S3Key, fu.Conflict)
+		return
+	}
 	flag := strings.TrimSpace(fu.Flag)
 	if flag == "" {
 		flag = "--vae"

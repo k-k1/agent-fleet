@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1681,6 +1682,14 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, g 
 	if !b.Attach && !b.Replace && strings.TrimSpace(b.FileFlag) == "" &&
 		!strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) {
 		fam := engineVaeFamilyOf(e.def.Provider, b, res)
+		// 🔴 Which role the file being registered plays, when the family reads no whole
+		// checkpoint. The form starts on "whole checkpoint", which for a split family is a row
+		// that holds its weights under a flag no template reads — the state every Anima row on
+		// af-sandbox was in. The CP knows the answer; saying it is what stops the form offering
+		// the one choice that cannot work.
+		if want, ok := engineComfyRequiredFlags[fam]; ok && !slices.Contains(want, "") && len(want) > 0 {
+			row["family_main_flag"] = want[0]
+		}
 		if parts := engineFamilyPartsFor(fam); len(parts) > 0 {
 			plan := enginePartsPlan(r.Context(), a.enginePartsHeld(r.Context(), g, e.def.Key), parts)
 			row["family_parts"] = enginePartsPlanRows(plan, parts)
@@ -2026,6 +2035,22 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	// An attach writes no family: the row it joins declared one when it was created, and asking
 	// for it again is asking for a second answer to a question already settled. A replace is the
 	// same case — it changes one file and nothing else about the row.
+	// 🔴 And the same mistake with no flag at all, which is the one an operator falls into by
+	// DEFAULT. Observed on af-sandbox 2026-09-15: every Anima row — the diffusion model included
+	// — was taken in as "the whole checkpoint", because that is what the form offers first. A
+	// split family reads no unflagged file at all (engineComfyRequiredFlags has no "" for it),
+	// so those rows hold a 4 GB file that counts for nothing and report every part as missing.
+	//
+	// The refusal names the role the file almost certainly is, because with the family already
+	// chosen there is only one unflagged-looking candidate: the model the family is named after.
+	if flag == "" && !b.Attach && !b.Replace && !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) {
+		if want, ok := engineComfyRequiredFlags[base]; ok && !slices.Contains(want, "") {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+				"the " + base + " family is published in parts and reads no whole checkpoint: declare this file's" +
+					" role — it is almost certainly " + want[0] + " — and take the rest in with it"})
+			return
+		}
+	}
 	if !b.Attach && !b.Replace && !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) && !engineBaseModelValid(e.def.Provider, base) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
 			"declare base_model as one of %s: this engine runs %s, which picks a workflow by family"+

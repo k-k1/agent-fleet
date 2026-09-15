@@ -243,6 +243,10 @@ export type ResolvedSource = {
    *  already in the bucket (`staged`) or would be taken in under the licence named here. It is
    *  what lets the form offer the second download in the same press, with its terms on screen. */
   family_vae?: FamilyVae;
+  /** The role the file being registered plays, when the family reads no whole checkpoint — the
+   *  split families' `--diffusion-model`. The form starts the role selector on it: "whole
+   *  checkpoint" is the default and, for these families, the one answer that cannot work. */
+  family_main_flag?: string;
   /** The files a SPLIT family reads beside the diffusion model — the text encoder and the VAE
    *  a row is refused for not having. Present when the family being registered declares parts
    *  this deployment knows, so the form can take the whole set in one press instead of leaving
