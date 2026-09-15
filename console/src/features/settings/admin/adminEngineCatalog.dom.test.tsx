@@ -45,6 +45,14 @@ async function mount() {
   for (const _ of [0, 1, 2]) await act(async () => { await Promise.resolve(); });
 }
 
+async function mountLora() {
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root!.render(<EngineAddView engineKey="image" lora />); });
+  for (const _ of [0, 1, 2]) await act(async () => { await Promise.resolve(); });
+}
+
 async function mountRegistered() {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -220,6 +228,10 @@ describe("model catalogue pane", () => {
     await acceptLicence();
     await click(button("取り込む"));
     expect(sent?.plan_token).toBe("plan-1");
+    // 🔴 The same `kind` the resolve was asked with. The CP re-plans from this body and reads
+    // `lora` out of it to choose the directory, so a press without it stages an adapter under
+    // `checkpoints/` — or, with luck, only disagrees with the token and 409s.
+    expect(sent?.kind).toBe("checkpoint");
     expect(sent?.id).toBe("anima-aesthetic-v1-1");
     expect(sent?.base_model).toBe("anima");
     expect(sent?.license_accepted).toBe(true);
@@ -227,6 +239,39 @@ describe("model catalogue pane", () => {
       expect(sent?.[gone]).toBeUndefined();
     }
     expect(document.body.textContent).toContain("取り込みを開始しました");
+  });
+
+  // 🔴 The press re-plans on the CP, and `kind` is what tells it `image/loras/` from
+  // `image/checkpoints/`. The plan's token cannot stand in for it: a body without it re-plans as
+  // a checkpoint, which is a 409 if the deployment is lucky and an adapter in the wrong loader's
+  // directory if it is not.
+  it("sends the same kind the resolve was asked with when taking a LoRA in", async () => {
+    mockEngines([imageRow]);
+    let sent: Record<string, unknown> | undefined;
+    const resolves: Record<string, unknown>[] = [];
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "civitai", ref: "31", model_ref: "9", name: "Style LoRA" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "31", name: "v1" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "style.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) {
+        resolves.push(body || {});
+        return Promise.resolve({
+          bytes: 220_000_000, can_ingest: true, trained_words: ["stylething"],
+          plan: { plan_token: "lora-1", id: "style", base_model: "sdxl", files: [{ name: "style.safetensors", action: "download", bytes: 220_000_000, key: "image/loras/style.safetensors" }], bytes_to_download: 220_000_000 },
+        });
+      }
+      if (path.endsWith("/ingest")) { sent = body; return Promise.resolve({ id: "job3", model_id: "style", state: "pending", action: "download" }); }
+      return Promise.resolve({});
+    });
+    await mountLora();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+    await acceptLicence();
+    await click(button("取り込む"));
+    expect(resolves[0]?.kind).toBe("lora");
+    expect(sent?.kind).toBe("lora");
+    expect(sent?.plan_token).toBe("lora-1");
+    expect(sent?.trained_words).toEqual(["stylething"]);
   });
 
   // 🔴 The plan is a quote and the press is the purchase. A card can sit open for minutes, and
@@ -438,6 +483,71 @@ describe("registered rows and the bucket", () => {
     });
     await click(within(".engine-complete", "揃える"));
     expect(ran).toEqual({ choices: { "--vae": "image/vae/b.safetensors" } });
+  });
+
+  // 🔴 ONE candidate still asks. `--clip_l` / `--clip_g` / `--t5xxl` share `text_encoders/`, so
+  // the CP will not guess which role a loose encoder fills — a Console that treated a single
+  // candidate as obvious would attach it to the wrong flag without saying anything.
+  it("opens the dialog for a single candidate too, because the CP asked", async () => {
+    mockEngines([anima], [declaredObject]);
+    let ran: Record<string, unknown> | undefined;
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/complete")) {
+        if (body?.check) {
+          return Promise.resolve({
+            action: "choose", bytes_to_download: 0,
+            files: [{ flag: "--clip_l", action: "choose", candidates: [{ key: "image/text_encoders/qwen_3_06b_base.safetensors", bytes: 1_190_000_000 }] }],
+          });
+        }
+        ran = body;
+        return Promise.resolve({ action: "attached", files: [] });
+      }
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    await click(labelled("揃える: anima-aesthetic"));
+    const picker = document.querySelector<HTMLSelectElement>(".engine-complete select")!;
+    expect(picker).toBeTruthy();
+    expect(Array.from(picker.options).map((option) => option.value))
+      .toEqual(["", "image/text_encoders/qwen_3_06b_base.safetensors"]);
+    await act(async () => {
+      picker.value = "image/text_encoders/qwen_3_06b_base.safetensors";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(within(".engine-complete", "揃える"));
+    expect(ran).toEqual({ choices: { "--clip_l": "image/text_encoders/qwen_3_06b_base.safetensors" } });
+  });
+
+  // 🔴 `register` starts no download of its own: a part that lives only upstream comes back as
+  // `download` in the answer's own `complete`, and the row is the subject of that. Left as a note
+  // it is exactly "I registered it and do not know what to do".
+  it("carries a register's unfinished business straight into the complete dialog", async () => {
+    mockEngines([anima], [
+      { key: "image/checkpoints/split_files/diffusion_models/krea2.safetensors", bytes: 13_100_000_000, role_dir: "other", placement: "misplaced", state: "present", declared_by: [] },
+    ]);
+    let ran: Record<string, unknown> | undefined;
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/objects/register")) {
+        return Promise.resolve({
+          model_id: "krea2", moved: true, jobs: [],
+          complete: {
+            action: "job_started", bytes_to_download: 1_190_000_000,
+            files: [{ flag: "--clip_l", action: "download", bytes: 1_190_000_000, source: "hf:krea-ai/krea2" }],
+          },
+        });
+      }
+      if (path.endsWith("/complete")) { ran = body; return Promise.resolve({ action: "job_started", files: [] }); }
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    await click(labelled("登録: image/checkpoints/split_files/diffusion_models/krea2.safetensors"));
+    expect(document.querySelector(".engine-complete .ui-modal-title")?.textContent).toContain("krea2");
+    // Bytes to pay for, so the licence is read before the press — on the row the register made.
+    expect((within(".engine-complete", "揃える") as HTMLButtonElement).disabled).toBe(true);
+    await acceptLicence();
+    await click(within(".engine-complete", "揃える"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/krea2/complete", "POST", { license_accepted: true });
+    expect(ran).toEqual({ license_accepted: true });
   });
 
   // Swapping a part a row already has is the same dialog on a filled frame, and the CP is told

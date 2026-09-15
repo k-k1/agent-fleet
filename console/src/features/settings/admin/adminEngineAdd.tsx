@@ -463,6 +463,14 @@ function NoEngineCatalog() {
   </section>;
 }
 
+/** Whether a `complete` answer has a question in it. Two things are worth a dialog and nothing
+ * else is: a role the CP wants a pick for — which it asks even with ONE candidate, because
+ * `--clip_l` / `--clip_g` / `--t5xxl` share a directory and the CP will not guess which of them a
+ * loose encoder is — and bytes somebody has to agree to pay for. */
+function needsAsking(answer: CompleteAnswer): boolean {
+  return answer.action === "choose" || (answer.bytes_to_download || 0) > 0;
+}
+
 function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: CatalogProps & { isSuper: boolean }) {
   const tr = useT();
   const [query, setQuery] = useState("");
@@ -478,7 +486,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
   const [edit, setEdit] = useState<EngineModel | null>(null);
   const [deleting, setDeleting] = useState<EngineModel | null>(null);
   const [purge, setPurge] = useState(false);
-  const [completing, setCompleting] = useState<{ model: EngineModel; answer: CompleteAnswer } | null>(null);
+  const [completing, setCompleting] = useState<{ modelId: string; baseModel?: string; answer: CompleteAnswer } | null>(null);
   const [deletingObject, setDeletingObject] = useState<EngineObjectRow | null>(null);
   const [vramAsk, setVramAsk] = useState<{ model: EngineModel; patch: Record<string, unknown>; message?: string } | null>(null);
   const models = (row.model_rows || []).filter((model) => (model.kind === "lora") === (kind === "lora"));
@@ -569,7 +577,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     if (!check) return;
     // Only two things are worth a dialog: a role with several candidates, and bytes somebody has
     // to agree to pay for. Everything else just happens.
-    if (check.action === "choose" || (check.bytes_to_download || 0) > 0) { setCompleting({ model, answer: check }); return; }
+    if (needsAsking(check)) { setCompleting({ modelId: model.id, baseModel: model.base_model, answer: check }); return; }
     await runComplete(model.id);
   };
 
@@ -597,6 +605,13 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
       setNote(registered.complete ? `${head} ${completeNote(registered.complete)}` : head);
       await onChanged();
       await loadObjects();
+      // 🔴 `register` assigns bytes that are already here and starts no download of its own, so a
+      // part that exists only upstream comes back as `download` in its own answer's `complete`.
+      // The row is the subject of that, and this is the press that is already in somebody's hand
+      // — leaving it as a note is how "I registered it and do not know what to do" happens.
+      if (registered.model_id && registered.complete && needsAsking(registered.complete)) {
+        setCompleting({ modelId: registered.model_id, answer: registered.complete });
+      }
     } finally { setBusy(""); }
   };
 
@@ -682,9 +697,9 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
       onRegister={(object) => void registerObject(object.key)}
       onDelete={(object) => setDeletingObject(object)}
       onDismiss={(id) => void dismissJob(id)} />
-    {completing && <CompleteDialog row={row} model={completing.model} answer={completing.answer}
+    {completing && <CompleteDialog row={row} modelId={completing.modelId} baseModel={completing.baseModel} answer={completing.answer}
       onClose={() => setCompleting(null)}
-      onRun={async (body) => { setCompleting(null); await runComplete(completing.model.id, body); }} />}
+      onRun={async (body) => { setCompleting(null); await runComplete(completing.modelId, body); }} />}
     {edit && <RegisteredEditDialog row={row} model={edit} error={err ? errDetail(err) : ""} onClose={() => setEdit(null)} onSave={async (body) => {
       if (await callModel(edit, "PUT", body)) setEdit(null);
     }} />}
@@ -990,7 +1005,13 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
         // 🔴 The source and the CP's own plan, and nothing else about the destination. The key,
         // the role, the parts and the reuse decision are all inside `plan_token`: three parties
         // deciding one key is what produced the 400 `s3Key must be empty or identical`.
-        source: sourceBody(file), plan_token: plan.plan_token,
+        //
+        // `kind` is the one thing the token cannot carry for us: the CP re-plans from this body
+        // at the press and reads `lora` out of it to decide the directory (`image/loras/` versus
+        // `image/checkpoints/`). Sent identical to the resolve's, or the re-plan disagrees with
+        // the token — a 409 at best, an adapter staged under `checkpoints/` at worst.
+        source: sourceBody(file), kind: isLora ? "lora" : image ? "checkpoint" : "gguf",
+        plan_token: plan.plan_token,
         id: id.trim(), ...(baseModel ? { base_model: baseModel } : {}),
         description: description.trim(),
         ...(!image && !isLora ? { context_tokens: n(context), max_output_tokens: n(output) } : {}),
@@ -1094,9 +1115,12 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
  * for (ADR 0085 decision 3). This is the ONE place a person picks a part, and they pick it FOR a
  * checkpoint:
  * the frame is the role the workflow reads, and the candidates are what the ledger holds. */
-function CompleteDialog({ row, model, answer, onClose, onRun }: {
+function CompleteDialog({ row, modelId, baseModel, answer, onClose, onRun }: {
   row: EngineRow;
-  model: EngineModel;
+  /** The id, not the row: 登録 opens this for a model created by the same press, which the
+   *  catalogue in hand does not list until the reload lands. */
+  modelId: string;
+  baseModel?: string;
   answer: CompleteAnswer;
   onClose: () => void;
   onRun: (body: Record<string, unknown>) => void;
@@ -1112,7 +1136,7 @@ function CompleteDialog({ row, model, answer, onClose, onRun }: {
   const missing = undecided ? tr("admin.catalog_complete_pick" as never) as string
     : download > 0 && !accepted ? tr("admin.catalog_need_license" as never) as string : "";
 
-  return <Modal title={`${tr("admin.catalog_complete" as never)} — ${model.id}`} className="engine-complete" onClose={onClose}>
+  return <Modal title={`${tr("admin.catalog_complete" as never)} — ${modelId}`} className="engine-complete" onClose={onClose}>
     <div className="ui-modal-body engine-operation-body">
       <p className="admin-hint">{tr("admin.catalog_complete_note" as never)}</p>
       <ul className="engine-complete-files">{files.map((file) => <li key={file.flag} aria-label={file.flag}>
@@ -1134,7 +1158,7 @@ function CompleteDialog({ row, model, answer, onClose, onRun }: {
         <p className="engine-plan-total">{(tr("admin.catalog_plan_total" as never) as string).replace("{n}", formatBytes(download))}</p>
         <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
       </>}
-      {engineIsImage(row) && !!model.base_model && <p className="muted">{tr("admin.catalog_family" as never)}: {model.base_model}</p>}
+      {engineIsImage(row) && !!baseModel && <p className="muted">{tr("admin.catalog_family" as never)}: {baseModel}</p>}
       <footer className="engine-operation-footer"><span className="muted">{missing}</span>
         <Button variant="ghost" onClick={onClose}>{tr("common.cancel")}</Button>
         <Button variant="primary" disabled={!!missing} onClick={() => onRun({
