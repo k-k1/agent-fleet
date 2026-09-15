@@ -1379,21 +1379,17 @@ func TestIngestHistorySaysWhichCatalogueRowStillUsesTheFile(t *testing.T) {
 	seedIngestJob(t, st, "j-shared", "image", store.EngineIngestDone, "", "image/text_encoders/clip_l.safetensors")
 	seedIngestJob(t, st, "j-orphan", "image", store.EngineIngestDone, "", "image/checkpoints/forgotten.safetensors")
 
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/api/admin/engines/image/ingest", nil)
+	// Read through the body builder itself: the list route left with the job history tab (ADR
+	// 0085 decision 6), and what still answers this is the body the dismiss hands back.
+	r := httptest.NewRequest("DELETE", "/api/admin/engines/image/ingest/j-none", nil)
 	r.SetPathValue("key", "image")
-	a.listIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u0"}, super: true})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("list = %d (%s)", rec.Code, rec.Body.String())
+	body, err := a.ingestListBody(r, engineIngestGrant{ident: store.Identity{ID: "u0"}, super: true}, "image")
+	if err != nil {
+		t.Fatalf("jobs: %v", err)
 	}
-	var out struct {
-		Jobs []map[string]any `json:"jobs"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	rows, _ := body["jobs"].([]map[string]any)
 	got := map[string]any{}
-	for _, j := range out.Jobs {
+	for _, j := range rows {
 		got[j["id"].(string)] = j["key_used_by"]
 	}
 	// 🔴 The row that keeps the file alive is NAMED, because "still used" with no name is an

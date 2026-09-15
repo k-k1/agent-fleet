@@ -80,15 +80,6 @@ func engineMainFileFixFor(role, family string, m store.EngineModel) (engineMainF
 	return engineMainFileFix{Flag: flag, From: from, To: to, File: moved}, true
 }
 
-// engineMainFileFixRow is the fix as the panel and the check answer read it.
-func engineMainFileFixRow(fix engineMainFileFix) map[string]any {
-	row := map[string]any{"flag": fix.Flag, "from": fix.From, "to": fix.To}
-	if fix.File.Bytes > 0 {
-		row["bytes"] = fix.File.Bytes
-	}
-	return row
-}
-
 // engineMainFileMovable is every reason a move must not be started, asked before a task is.
 // Each one is a state where moving would destroy something: bytes another row reads, a key
 // somebody else's job is about to write, or an object that is not there to move.

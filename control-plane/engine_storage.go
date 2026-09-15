@@ -3,16 +3,16 @@ package main
 // engine_storage.go — the read-only S3 view behind the model catalogue.
 //
 // The bucket is not the catalogue: S3 says whether bytes exist, while the database says which
-// keys this deployment knows and which models use them. This file never lists a bucket and never
-// accepts a key from the storage route. It applies HeadObject only to catalogue and ingest-job
-// keys already visible to the caller, keeping a granted tenant administrator inside both their
-// engine role and their own job history.
+// keys this deployment knows and which models use them (ADR 0072 decision 2). What is here is the
+// port and the cache — HeadObject for one key, ListObjectsV2 for one role's prefix — plus
+// `engineKnownArtifacts`, the database half every reuse decision is made against. It never reads
+// object bytes and it takes no key from a caller: the ledger (engine_objects.go) and the plan
+// (engine_plan.go) decide which keys are asked about, each inside the grant its caller holds.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -371,85 +371,6 @@ func engineKnownArtifacts(models []store.EngineModel, jobs []store.EngineIngestJ
 	return out
 }
 
-type engineStorageFileRow struct {
-	S3Key            string   `json:"s3_key"`
-	Source           string   `json:"source,omitempty"`
-	ArtifactIdentity string   `json:"artifact_identity,omitempty"`
-	Reusable         bool     `json:"reusable"`
-	State            string   `json:"state"`
-	Bytes            int64    `json:"bytes,omitempty"`
-	Checked          string   `json:"checked_at,omitempty"`
-	ModelIDs         []string `json:"model_ids"`
-}
-
-type engineStorageResponse struct {
-	Files     []engineStorageFileRow `json:"files"`
-	CheckedAt string                 `json:"checked_at,omitempty"`
-}
-
-// getStorage returns only keys the server already knows. It has no query/body key parameter,
-// so the route cannot be turned into an S3 existence oracle for another role or prefix.
-func (a engineAdminAPI) getStorage(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
-	key := strings.TrimSpace(r.PathValue("key"))
-	e := a.reg.get(key)
-	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
-		return
-	}
-	if a.refuseBorrowedWrite(w, e, "checking model storage") {
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), engineStorageListTimeout)
-	defer cancel()
-	models, jobs, err := a.engineStorageRows(ctx, g, key)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	known := engineKnownArtifacts(models, jobs)
-	keys := make([]string, 0, len(known))
-	checkKeys := make([]string, 0, len(known))
-	for s3key := range known {
-		keys = append(keys, s3key)
-		if strings.HasPrefix(s3key, key+"/") {
-			checkKeys = append(checkKeys, s3key)
-		}
-	}
-	sort.Strings(keys)
-	var storage *engineStorage
-	if ing := a.reg.ingester(); ing != nil {
-		storage = ing.storageChecker()
-	}
-	checks := storage.checks(ctx, checkKeys)
-	rows := make([]engineStorageFileRow, 0, len(keys))
-	topChecked := ""
-	for _, s3key := range keys {
-		a := known[s3key]
-		check := checks[s3key]
-		ids := make([]string, 0, len(a.ModelIDs))
-		for id := range a.ModelIDs {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
-		row := engineStorageFileRow{
-			S3Key: s3key, Source: a.Source, State: check.State, Bytes: check.Bytes,
-			Checked: check.CheckedAt, ModelIDs: ids,
-		}
-		if !a.Ambiguous {
-			row.ArtifactIdentity = a.ArtifactIdentity
-			row.Reusable = check.State == engineStoragePresent && a.Reusable && !a.InFlight && a.ArtifactIdentity != ""
-		}
-		if row.State == "" {
-			row.State = engineStorageUnknown
-		}
-		if row.Checked > topChecked {
-			topChecked = row.Checked
-		}
-		rows = append(rows, row)
-	}
-	writeJSON(w, http.StatusOK, engineStorageResponse{Files: rows, CheckedAt: topChecked})
-}
-
 func (a engineAdminAPI) engineStorageRows(ctx context.Context, g engineIngestGrant, role string) ([]store.EngineModel, []store.EngineIngestJob, error) {
 	if a.mgr == nil || a.mgr.store == nil {
 		return nil, nil, nil
@@ -465,56 +386,4 @@ func (a engineAdminAPI) engineStorageRows(ctx context.Context, g engineIngestGra
 		jobs, err = a.mgr.store.ListEngineIngestJobsForStorageByTenant(ctx, role, g.tenantID)
 	}
 	return models, jobs, err
-}
-
-// verifyEngineReuse joins the two independent proofs reuse needs. HeadObject proves that some
-// bytes occupy the known key now; the persisted artifact identity proves which exact upstream
-// file and revision those bytes were verified against before upload. Neither proof substitutes
-// for the other.
-func (a engineAdminAPI) verifyEngineReuse(ctx context.Context, g engineIngestGrant, role, key string,
-	resolved engineResolved, ing *engineIngester) (*engineKnownArtifact, engineStorageCheck, *apiError) {
-	models, jobs, err := a.engineStorageRows(ctx, g, role)
-	if err != nil {
-		return nil, engineStorageCheck{}, internalErr(err)
-	}
-	known := engineKnownArtifacts(models, jobs)[key]
-	if known == nil {
-		return nil, engineStorageCheck{}, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
-			"reuse_s3_key is not present in this engine's catalogue or visible job history"}
-	}
-	if known.Ambiguous {
-		if known.ArtifactIdentity == "" {
-			return nil, engineStorageCheck{}, &apiError{http.StatusConflict, errCodeEngineBadBody,
-				"reuse_s3_key has no immutable stored artifact identity; legacy source text is not enough to reuse it"}
-		}
-		return nil, engineStorageCheck{}, &apiError{http.StatusConflict, errCodeEngineBadBody,
-			"reuse_s3_key has conflicting stored artifact identities and cannot be reused safely"}
-	}
-	if known.InFlight {
-		return nil, engineStorageCheck{}, &apiError{http.StatusConflict, errCodeEngineBadBody,
-			"reuse_s3_key has an ingest still in flight and cannot be reused safely"}
-	}
-	if !known.Reusable || known.ArtifactIdentity == "" {
-		return nil, engineStorageCheck{}, &apiError{http.StatusConflict, errCodeEngineBadBody,
-			"reuse_s3_key has no immutable stored artifact identity; legacy source text is not enough to reuse it"}
-	}
-	if strings.TrimSpace(resolved.ArtifactIdentity) == "" || resolved.ArtifactIdentity != known.ArtifactIdentity {
-		return nil, engineStorageCheck{}, &apiError{http.StatusConflict, errCodeEngineBadBody,
-			"reuse_s3_key belongs to a different source file, revision, or sha256"}
-	}
-	if ing == nil || ing.storageChecker() == nil {
-		return nil, engineStorageCheck{}, &apiError{http.StatusServiceUnavailable, errCodeIngestUnavailable,
-			"the deployment has no model storage checker, so it cannot prove reuse_s3_key exists"}
-	}
-	check := ing.storageChecker().verify(ctx, key)
-	switch check.State {
-	case engineStoragePresent:
-		return known, check, nil
-	case engineStorageMissing:
-		return nil, check, &apiError{http.StatusConflict, errCodeEngineBadBody,
-			"reuse_s3_key is recorded but the S3 object is missing"}
-	default:
-		return nil, check, &apiError{http.StatusServiceUnavailable, errCodeIngestUnavailable,
-			"the deployment could not verify reuse_s3_key in S3; access denied and missing configuration are not treated as absence"}
-	}
 }

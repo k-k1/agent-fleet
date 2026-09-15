@@ -1,7 +1,8 @@
 package main
 
-// engine_family_parts.go — the files a SPLIT family needs beside its diffusion model, and the one
-// press that takes them in (ADR 0072 decision 2, follow-up to the VAE remedy next door).
+// engine_family_parts.go — the files a SPLIT family needs beside its diffusion model (ADR 0072
+// decision 2, follow-up to the VAE remedy next door). The press that takes them in is
+// engine_complete.go's: this is the table it and the plan (engine_plan.go) both read.
 //
 // engine_vae.go answers "this checkpoint carries no VAE" for the two single-file families. This
 // is the other half of the same fault, and it is the bigger one: klein, Z-Image, Anima and Krea 2
@@ -23,13 +24,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
-	"net/http"
-	"sort"
 	"strings"
-
-	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // engineFamilyPart is one file a family's template reads, as the ingest would declare it.
@@ -77,29 +73,6 @@ func engineFamilyPartsFor(family string) []engineFamilyPart {
 	return engineFamilyParts[strings.TrimSpace(family)]
 }
 
-// enginePartsMissing is which of a family's parts a row does not have yet, by FLAG. It reads the
-// row's own declarations, so a part attached by hand — or one this deployment declared from a
-// different repository — is not offered again.
-func enginePartsMissing(family string, m store.EngineModel) []engineFamilyPart {
-	parts := engineFamilyPartsFor(family)
-	if len(parts) == 0 {
-		return nil
-	}
-	have := map[string]bool{}
-	for _, f := range m.Files {
-		if strings.TrimSpace(f.S3Key) != "" {
-			have[strings.TrimSpace(f.Flag)] = true
-		}
-	}
-	var out []engineFamilyPart
-	for _, p := range parts {
-		if !have[p.Flag] {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 // enginePartsHeld is what the deployment ALREADY has, for a plan that would rather declare than
 // download. Two independent things, because they answer different halves of "is it here":
 //
@@ -108,156 +81,11 @@ func enginePartsMissing(family string, m store.EngineModel) []engineFamilyPart {
 //	           against before upload;
 //	storage  — HeadObject, which is the only thing that proves bytes occupy that key NOW.
 //
-// 🔴 Neither substitutes for the other, which is the rule `reuse_s3_key` is already built on: a
-// record without an object is a key whose bytes were purged, and an object without a record is
-// bytes nobody can say the provenance of.
+// 🔴 Neither substitutes for the other: a record without an object is a key whose bytes were
+// purged, and an object without a record is bytes nobody can say the provenance of.
 type enginePartsHeld struct {
-	rows    []store.EngineModel
 	known   map[string]*engineKnownArtifact
 	storage *engineStorage
-}
-
-// enginePartPlan is one part's follow-up, resolved while somebody is still looking at the screen
-// — the same rule engineVaePlan is built on, and for the same reason: the second download is
-// started by the reconciler, where there is no request and nobody to report a failure to.
-//
-// `Staged` is the cheap outcome and it is the COMMON one: the Qwen-Image VAE is shared by two
-// families, a deployment that runs either already has it, and a part re-downloaded would be the
-// same bytes at the same key for a second licence acceptance and a second Fargate task.
-func enginePartPlan(ctx context.Context, held enginePartsHeld, p engineFamilyPart) engineVaeFollowUp {
-	// 1. A row declares it. This deployment's own declaration, trusted as such — the same thing
-	//    the VAE remedy does, and no S3 call is spent on a fact the catalogue already states.
-	if staged, here := engineVaeStagedKey(held.rows, engineFamilyVae{Repo: p.Repo, File: p.File, S3Key: p.S3Key}); here {
-		return engineVaeFollowUp{
-			Flag: p.Flag, S3Key: p.S3Key, Staged: true, Bytes: staged.Bytes,
-			Source: staged.Source, ArtifactIdentity: staged.ArtifactIdentity,
-		}
-	}
-	res, aerr := engineIngestResolve(ctx, engineIngestSource{HF: &engineIngestHF{Repo: p.Repo, File: p.File}})
-	if aerr != nil {
-		// Unreachable today. Reported as a plan with no resolve so the panel can say which part
-		// could not be priced, rather than dropping it and offering an incomplete set silently.
-		return engineVaeFollowUp{Flag: p.Flag, S3Key: p.S3Key}
-	}
-	// 2. NO row declares it, and the bytes are there anyway — a job that finished for a row since
-	//    forgotten, or the same file taken in for another engine. The resolve above is what makes
-	//    this decidable: the identity it just computed is compared against the one recorded
-	//    before that upload, so "the same path" is never mistaken for "the same file".
-	if fu, ok := enginePartHeldBytes(ctx, held, p, res); ok {
-		return fu
-	}
-	// 3. 🔴 The key is recorded and step 2 could not vouch for it. A download is refused for a
-	//    taken destination (engineIngestDestinationUnused), so proposing one here would spend a
-	//    licence acceptance and end in "the S3 key … is already recorded" — reported from
-	//    af-sandbox 2026-09-15, where an earlier hand-made row held that very key. What the
-	//    operator can act on is WHO holds it, so that is what this carries.
-	if k := held.known[p.S3Key]; k != nil {
-		return engineVaeFollowUp{Flag: p.Flag, S3Key: p.S3Key, Conflict: enginePartConflictWord(k)}
-	}
-	return engineVaeFollowUp{Flag: p.Flag, S3Key: p.S3Key, Resolved: res}
-}
-
-// enginePartConflictWord names what is sitting on the key, in the words the panel can act on:
-// the row to attach from or forget, or the job history that recorded it.
-func enginePartConflictWord(k *engineKnownArtifact) string {
-	ids := make([]string, 0, len(k.ModelIDs))
-	for id := range k.ModelIDs {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	switch {
-	case len(ids) > 0:
-		return "already declared by " + strings.Join(ids, ", ")
-	case k.InFlight:
-		return "an ingest is still running for this key"
-	default:
-		return "an earlier ingest recorded this key"
-	}
-}
-
-// enginePartHeldBytes is step 2 above, and every one of its refusals is a case where downloading
-// again is the honest answer.
-func enginePartHeldBytes(ctx context.Context, held enginePartsHeld, p engineFamilyPart,
-	res engineResolved) (engineVaeFollowUp, bool) {
-	k := held.known[p.S3Key]
-	switch {
-	case k == nil, k.Ambiguous, k.InFlight, !k.Reusable:
-		// No record, conflicting records, an upload still running that may replace these bytes,
-		// or a record that never carried an identity at all.
-		return engineVaeFollowUp{}, false
-	case strings.TrimSpace(res.ArtifactIdentity) == "" || k.ArtifactIdentity != res.ArtifactIdentity:
-		// The same key holding a different file. Reusing it would attach bytes nobody asked for.
-		return engineVaeFollowUp{}, false
-	case held.storage == nil:
-		// Nothing can prove the object is still there, and a declaration pointing at a purged
-		// key is a row that passes every check and fails inside the engine.
-		return engineVaeFollowUp{}, false
-	}
-	if check := held.storage.verify(ctx, p.S3Key); check.State != engineStoragePresent {
-		return engineVaeFollowUp{}, false
-	}
-	return engineVaeFollowUp{
-		// The size is the RESOLVE's, which is the same file by the identity check above — the
-		// record of the upload carries no length of its own.
-		Flag: p.Flag, S3Key: p.S3Key, Staged: true, Bytes: res.Bytes,
-		Source: k.Source, ArtifactIdentity: k.ArtifactIdentity,
-	}, true
-}
-
-// enginePartsPlan is that for every part a row is missing.
-func enginePartsPlan(ctx context.Context, held enginePartsHeld, parts []engineFamilyPart) []engineVaeFollowUp {
-	out := make([]engineVaeFollowUp, 0, len(parts))
-	for _, p := range parts {
-		out = append(out, enginePartPlan(ctx, held, p))
-	}
-	return out
-}
-
-// enginePartsPlanRows is the plan as the panel reads it: what each part is, what it costs, and
-// whose licence is about to be accepted — beside the checkbox, not after the press.
-func enginePartsPlanRows(plan []engineVaeFollowUp, parts []engineFamilyPart) []map[string]any {
-	byFlag := map[string]engineFamilyPart{}
-	for _, p := range parts {
-		byFlag[p.Flag] = p
-	}
-	out := make([]map[string]any, 0, len(plan))
-	for _, fu := range plan {
-		p := byFlag[fu.Flag]
-		row := map[string]any{"flag": fu.Flag, "repo": p.Repo, "file": p.File, "s3_key": fu.S3Key}
-		switch {
-		case fu.Conflict != "":
-			// Not offerable and not a failure of the upstream: the bytes are here, under a name
-			// this plan cannot match. The fix is a human one and the row says which.
-			row["conflict"] = fu.Conflict
-		case fu.Staged:
-			row["staged"] = true
-			row["bytes"] = fu.Bytes
-		case fu.Resolved.SHA256 != "":
-			row["bytes"] = fu.Resolved.Bytes
-			if lic := engineLicenceLabel(fu.Resolved); lic != "" {
-				row["license"] = lic
-			}
-		default:
-			// 🔴 Said out loud. A part whose upstream could not be read is one this press cannot
-			// promise, and an offer that quietly drops it would leave a row still incomplete
-			// after a button that said it would complete it.
-			row["unreachable"] = true
-		}
-		out = append(out, row)
-	}
-	return out
-}
-
-// enginePartsBytes is what the whole set will cost, for the one number a person decides on.
-func enginePartsBytes(plan []engineVaeFollowUp) int64 {
-	var total int64
-	for _, fu := range plan {
-		if fu.Staged || fu.Conflict != "" {
-			continue // already here, and paid for — or not ours to download at all
-		}
-		total += fu.Resolved.Bytes
-	}
-	return total
 }
 
 // enginePartsHeld gathers the two records a plan reuses bytes from. It is on the admin API
@@ -265,9 +93,6 @@ func enginePartsBytes(plan []engineVaeFollowUp) int64 {
 // grant the caller already holds, and the storage checker lives on the ingester.
 func (a engineAdminAPI) enginePartsHeld(ctx context.Context, g engineIngestGrant, role string) enginePartsHeld {
 	held := enginePartsHeld{}
-	if e := a.reg.get(role); e != nil {
-		held.rows = e.catalog.list(ctx)
-	}
 	models, jobs, err := a.engineStorageRows(ctx, g, role)
 	if err != nil {
 		// Not fatal: without the job history a part is simply downloaded again, which is the
@@ -280,128 +105,4 @@ func (a engineAdminAPI) enginePartsHeld(ctx context.Context, g engineIngestGrant
 		held.storage = ing.storageChecker()
 	}
 	return held
-}
-
-// --- the one press that completes a row ------------------------------------------------------
-
-// enginePartsFixBody is what the button sends. `check` asks what WOULD happen, which is how the
-// panel shows the size and the licence before anything is spent — the same two-step the VAE
-// remedy uses.
-type enginePartsFixBody struct {
-	Check           bool `json:"check"`
-	LicenseAccepted bool `json:"license_accepted"`
-}
-
-// fixParts (POST …/models/{id}/parts) is the grace form of 揃える, kept one release
-// (ADR 0085 Consequences). The act itself is engine_complete.go's: the row is the subject, the
-// ledger is what it is completed from, and this route only translates the body in and the answer
-// back out. What it is NOT any more is a second implementation — that was the fault, not the
-// shape: `main_file_fix`, `files_missing` and the part list each decided the same question in a
-// different place, and 揃える answered `none` beside a badge reading `不足: --diffusion-model`.
-//
-// Two differences an operator's script may notice, and both are the new rule rather than a
-// regression: a part is declared only when the BUCKET holds it (another row's declaration is no
-// longer proof on its own — ADR 0072 decision 2's second layer), and a role with several
-// candidates answers `choose` instead of picking one.
-func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
-	key, id := strings.TrimSpace(r.PathValue("key")), strings.TrimSpace(r.PathValue("id"))
-	e := a.reg.get(key)
-	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
-		return
-	}
-	if a.refuseBorrowedWrite(w, e, "completing a row") {
-		return
-	}
-	var b enginePartsFixBody
-	if r.Body != nil {
-		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b)
-	}
-	ctx := r.Context()
-	m, ok := engineCatalogModel(ctx, e, id)
-	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineModelUnknown, "no model " + id + " for engine " + key})
-		return
-	}
-	family := strings.TrimSpace(m.BaseModel)
-	_, hasFix := engineCompleteMainFix(key, family, m)
-	if len(engineFamilyPartsFor(family)) == 0 && !hasFix {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
-			"this deployment knows no part list for the " + family + " family — attach the files it reads by hand"})
-		return
-	}
-	ledger, aerr := a.engineLedgerFor(ctx, key)
-	if aerr != nil {
-		writeAPIRefusal(w, aerr)
-		return
-	}
-	answer, _, aerr := a.engineCompleteRun(ctx, r, g, e, id,
-		engineCompleteBody{Check: b.Check, LicenseAccepted: b.LicenseAccepted}, ledger, true)
-	if aerr != nil {
-		writeAPIRefusal(w, aerr)
-		return
-	}
-	if answer.Action == engineCompleteNone {
-		writeJSON(w, http.StatusOK, map[string]any{"action": "none"})
-		return
-	}
-	if b.Check {
-		writeJSON(w, http.StatusOK, enginePartsCheckRow(family, answer))
-		return
-	}
-	attached := 0
-	for _, f := range answer.Files {
-		if f.Action == engineCompleteActDeclare {
-			attached++
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"action": answer.Action, "attached": attached, "jobs": answer.Jobs,
-	})
-}
-
-// enginePartsCheckRow renders the planner's answer in the words the old check spoke, so a panel
-// or a script written against this route keeps reading it for the release it still exists.
-func enginePartsCheckRow(family string, answer engineCompleteAnswer) map[string]any {
-	byFlag := map[string]engineFamilyPart{}
-	for _, p := range engineFamilyPartsFor(family) {
-		byFlag[p.Flag] = p
-	}
-	main := engineFamilyMainFlag(family)
-	action, parts := "attach", []map[string]any{}
-	var mainFile map[string]any
-	for _, f := range answer.Files {
-		if f.Flag == main && f.Action == engineCompleteActMove {
-			// `main_file` rides beside the parts and NEVER inside `bytes`: nothing is downloaded
-			// for it, and a size beside a licence line reads as what this press will fetch.
-			mainFile = map[string]any{"flag": f.Flag, "from": "", "to": f.Key}
-			if f.Bytes > 0 {
-				mainFile["bytes"] = f.Bytes
-			}
-			action = "move"
-			continue
-		}
-		p := byFlag[f.Flag]
-		row := map[string]any{"flag": f.Flag, "repo": p.Repo, "file": p.File, "s3_key": f.Key}
-		switch f.Action {
-		case engineCompleteActDeclare, engineCompleteActMove:
-			row["staged"] = true
-			row["bytes"] = f.Bytes
-		case engineCompleteActDownload:
-			row["bytes"] = f.Bytes
-			action = "ingest"
-		case engineCompleteActChoose:
-			row["conflict"] = "several files could fill this role — choose one on the row"
-			action = "conflict"
-		default:
-			row["unreachable"] = true
-			action = "unreachable"
-		}
-		parts = append(parts, row)
-	}
-	out := map[string]any{"action": action, "parts": parts, "bytes": answer.BytesToDownload}
-	if mainFile != nil {
-		out["main_file"] = mainFile
-	}
-	return out
 }

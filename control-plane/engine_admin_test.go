@@ -382,9 +382,9 @@ func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	body := `{"id":"sdxl-base-1.0","kind":"checkpoint","s3Key":"image/checkpoints/other.safetensors",
+	body := enginePressBody(t, a, "image", `{"id":"sdxl-base-1.0","kind":"checkpoint",
 	  "license_accepted":true,"source":{"url":"https://example.invalid/other.safetensors",
-	  "sha256":"` + strings.Repeat("a", 64) + `"}}`
+	  "sha256":"`+strings.Repeat("a", 64)+`"}}`)
 	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
 	r.SetPathValue("key", "image")
 	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
@@ -407,7 +407,7 @@ func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
 	// A DIFFERENT id on the same engine is not what this refuses — it gets past the check and
 	// fails later for its own reasons (this deployment's registry declares no ingest task).
 	rec2 := httptest.NewRecorder()
-	body2 := strings.Replace(body, `"id":"sdxl-base-1.0"`, `"id":"sdxl-base-1.1"`, 1)
+	body2 := enginePressBody(t, a, "image", strings.Replace(body, `"id":"sdxl-base-1.0"`, `"id":"sdxl-base-1.1"`, 1))
 	r2 := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body2))
 	r2.SetPathValue("key", "image")
 	a.postIngest(rec2, r2, engineIngestGrant{ident: store.Identity{ID: "u1"}})
@@ -416,151 +416,52 @@ func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
 	}
 }
 
-// 🔴 The two acts that LEFT this route (ADR 0085 decision 3). `attach` and `replace` both start
-// from a file and name the row it should join, which is backwards: a checkpoint is what a person
-// means, and the parts that fit it are what the machine knows. Both are `complete` now.
-//
-// Refused rather than reinterpreted, and refused before anything is spent: a request that names a
-// row and a flag is precise about something this route no longer decides, and picking a slot for
-// it is how an attach landed as a replace.
-func TestEngineIngestRetiresAttachAndReplace(t *testing.T) {
+// 🔴 A press with no plan behind it (ADR 0085 decision 4, P3). `plan_token` was optional for one
+// release so that a script written before plans existed kept working; the operator chose on
+// 2026-09-15 to end that at once. What it buys is not tidiness: the plan is what prices the act
+// and what names the destination, so a request without one asks this route to decide both with
+// nobody looking — which is how 24 GB landed in directories no ComfyUI loader enumerates.
+func TestIngestRefusesAPressWithNoPlan(t *testing.T) {
 	st := testSettingsStore(t)
 	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
 	e.settings, e.ctrl = st, nil
 	e.catalog = newEngineCatalog(st, "image")
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
-	ctx := t.Context()
-	if err := st.PutEngineModel(ctx, store.EngineModel{
-		Role: "image", ID: "flux1-dev-fp8", Kind: "checkpoint", BaseModel: "flux1", Enabled: true,
-		Files: []store.EngineModelFile{{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1.safetensors"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	e.catalog.invalidate()
 	ecsAPI := &fakeIngestECS{}
 	reg.ing = &engineIngester{
 		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
 		cluster: "c", ecs: ecsAPI, store: st, models: st,
 	}
-
-	for _, act := range []string{`"attach":true,"file_flag":"--clip_l"`, `"replace":true,"file_flag":"--diffusion-model"`} {
-		rec := httptest.NewRecorder()
-		body := `{"id":"flux1-dev-fp8","kind":"checkpoint",` + act + `,"license_accepted":true,
-		  "source":{"url":"https://example.invalid/clip_l.safetensors",
-		  "sha256":"` + strings.Repeat("b", 64) + `"}}`
-		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
-		r.SetPathValue("key", "image")
-		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-		if rec.Code != http.StatusGone {
-			t.Fatalf("%s = %d, want 410 (%s)", act, rec.Code, rec.Body.String())
-		}
-		// Decision 5: the refusal has to be a BUTTON, not a sentence. The Console draws `next`
-		// on the error line, and "held by X — press Y" is the whole difference from "already
-		// recorded; choose a new destination".
-		var out struct {
-			Error struct {
-				Code   string     `json:"code"`
-				Holder *apiHolder `json:"holder"`
-				Next   *apiNext   `json:"next"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-			t.Fatalf("answer: %v (%s)", err, rec.Body.String())
-		}
-		if out.Error.Next == nil || out.Error.Next.Act != "complete" || out.Error.Next.Target != "flux1-dev-fp8" {
-			t.Errorf("%s: next = %+v, want complete on the row", act, out.Error.Next)
-		}
-		if out.Error.Holder == nil || out.Error.Holder.Kind != "row" {
-			t.Errorf("%s: holder = %+v", act, out.Error.Holder)
-		}
-		// And it names the route, because an operator reading this has to find it.
-		if !strings.Contains(rec.Body.String(), "/models/flux1-dev-fp8/complete") {
-			t.Errorf("%s: the refusal does not point at complete: %s", act, rec.Body.String())
-		}
-	}
-	if len(ecsAPI.run) != 0 || len(engineJobsOf(t, st, "image")) != 0 {
-		t.Error("a retired act still started something")
-	}
-	// The row was not touched on the way through.
-	rows, _ := st.ListEngineModels(ctx, "image")
-	for _, m := range rows {
-		if m.ID == "flux1-dev-fp8" && (!m.Enabled || len(m.Files) != 1) {
-			t.Errorf("the row was disturbed: enabled=%v files=%+v", m.Enabled, m.Files)
-		}
-	}
-}
-
-// 🔴 The grace release for the one field three parties used to compute (ADR 0085 decision 1).
-// `s3Key` and `reuse_s3_key` are read for one more release so that a script written against the
-// old shape is TOLD what changed: ignored when they happen to name the key the CP computed, and
-// refused with that key when they do not. Silently staging the file where the caller asked is
-// what put 24 GB in directories no ComfyUI loader enumerates.
-func TestEngineIngestGraceOnTheRetiredKeyFields(t *testing.T) {
-	st := testSettingsStore(t)
-	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
-	e.settings, e.ctrl = st, nil
-	e.catalog = newEngineCatalog(st, "image")
-	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
-	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
-	reg.ing = &engineIngester{
-		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
-		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
-	}
 	e.catalog.invalidate()
 
-	post := func(id, field, key string) (int, string) {
+	press := func(body string) (int, string) {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		body := `{"id":"` + id + `","kind":"checkpoint","base_model":"sdxl","license_accepted":true,` +
-			`"` + field + `":"` + key + `",
-			  "source":{"url":"https://example.invalid/sd_xl_base_1.0.safetensors",
-			  "sha256":"` + strings.Repeat("a", 64) + `"}}`
 		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
 		r.SetPathValue("key", "image")
 		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 		return rec.Code, rec.Body.String()
 	}
-
-	for _, field := range []string{"s3Key", "reuse_s3_key"} {
-		code, body := post("wrong-"+field, field, "image/checkpoints/split_files/sd_xl_base_1.0.safetensors")
-		if code != http.StatusBadRequest {
-			t.Fatalf("%s naming another key = %d, want 400 (%s)", field, code, body)
-		}
-		// It says the key the CP computed, because that is the only thing the caller can do
-		// anything with — "your key is wrong" is where the old refusal stopped.
-		if !strings.Contains(body, "image/checkpoints/sd_xl_base_1.0.safetensors") {
-			t.Errorf("%s: the refusal does not name the computed key: %s", field, body)
-		}
-		if !strings.Contains(body, `"next"`) {
-			t.Errorf("%s: the refusal carries no next act: %s", field, body)
-		}
+	bare := `{"id":"sdxl-base-1.0","kind":"checkpoint","base_model":"sdxl","license_accepted":true,
+	  "source":{"url":"https://example.invalid/sd_xl_base_1.0.safetensors",
+	  "sha256":"` + strings.Repeat("a", 64) + `"}}`
+	code, body := press(bare)
+	if code != http.StatusBadRequest || !strings.Contains(body, "plan_token") {
+		t.Fatalf("a press with no plan = %d (%s), want 400 naming plan_token", code, body)
 	}
-	// The same key the CP would have chosen is simply ignored.
-	if code, body := post("agrees", "s3Key", "image/checkpoints/sd_xl_base_1.0.safetensors"); code != http.StatusOK {
-		t.Fatalf("a request that agrees with the CP = %d, want 200 (%s)", code, body)
+	// And it says where a plan comes from: the refusal is not an act on a row, it is the read that
+	// makes the card, so an operator reading this has to be able to find it.
+	if !strings.Contains(body, "/ingest/resolve") {
+		t.Errorf("the refusal does not say how to get a plan: %s", body)
 	}
-	// And so are the three fields the plan answers for itself.
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
-		`{"id":"ignored-flags","kind":"checkpoint","base_model":"sdxl","license_accepted":true,
-		  "file_flag":"--vae","with_family_parts":true,"with_family_vae":true,
-		  "source":{"url":"https://example.invalid/other_base.safetensors","sha256":"`+strings.Repeat("c", 64)+`"}}`))
-	r.SetPathValue("key", "image")
-	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("a request still carrying the retired flags = %d (%s)", rec.Code, rec.Body.String())
+	if len(ecsAPI.run) != 0 || len(engineJobsOf(t, st, "image")) != 0 {
+		t.Error("a press with no plan still spent something")
 	}
-	jobs := engineJobsOf(t, st, "image")
-	for _, j := range jobs {
-		if j.ModelID != "ignored-flags" {
-			continue
-		}
-		// 🔴 The claimed role is IGNORED, not obeyed: a request cannot make an sdxl checkpoint a
-		// VAE, and a file staged under `image/vae/` is one the checkpoint loader never lists.
-		if j.S3Key != "image/checkpoints/other_base.safetensors" {
-			t.Errorf("file_flag from the request decided the key: %s", j.S3Key)
-		}
+	// Positive control: the SAME request with the plan the CP would have shown goes through.
+	// Without it, a route that refused every press would pass the assertions above.
+	if code, body := press(enginePressBody(t, a, "image", bare)); code != http.StatusOK {
+		t.Fatalf("the same press with its plan = %d (%s), want 200", code, body)
 	}
 }
 
@@ -579,8 +480,8 @@ func TestEngineIngestRefusesACivitaiAssetThatNeedsAnAccount(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
-		`{"id":"dreamshaper-8","kind":"checkpoint","s3Key":"image/checkpoints/dreamshaper_8.safetensors",
-		  "license_accepted":true,"base_model":"sdxl","source":{"civitai":{"versionId":128713}}}`))
+		enginePressBody(t, a, "image", `{"id":"dreamshaper-8","kind":"checkpoint",
+		  "license_accepted":true,"base_model":"sdxl","source":{"civitai":{"versionId":128713}}}`)))
 	r.SetPathValue("key", "image")
 	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 	if rec.Code != http.StatusBadRequest {
@@ -1583,8 +1484,9 @@ func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 
 	post := func(id, file string) (int, string) {
 		t.Helper()
-		body := `{"id":"` + id + `","kind":"checkpoint","base_model":"sdxl","license_accepted":true,` +
-			`"source":{"url":"https://example.invalid/` + file + `","sha256":"` + strings.Repeat("d", 64) + `"}}`
+		body := enginePressBody(t, a, "image",
+			`{"id":"`+id+`","kind":"checkpoint","base_model":"sdxl","license_accepted":true,`+
+				`"source":{"url":"https://example.invalid/`+file+`","sha256":"`+strings.Repeat("d", 64)+`"}}`)
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/api/admin/engines/image/ingest", strings.NewReader(body))
 		r.SetPathValue("key", "image")
@@ -1690,17 +1592,17 @@ func TestRegisteringAModelRecordsWhereItCameFrom(t *testing.T) {
 	}
 }
 
-// A borrowed role has no bucket and no active set on this side (ADR 0079), so a replace here
-// would stage bytes for an engine that will never read them — and the row it would rewrite is
-// the far deployment's to change.
+// A borrowed role has no bucket and no active set on this side (ADR 0079), so taking a model in
+// here would stage bytes for an engine that will never read them — and the catalogue it would
+// write to is the far deployment's to change.
 //
 // 🔴 The control is an EXTERNAL row, not a managed one. Paired with a managed row this passes
 // for an implementation that refuses every unmanaged engine, which is exactly the LAN ComfyUI
 // of ADR 0076: `managed:false` with a lifecycle that is not `remote`, and it takes models in
 // like any other.
-func TestEngineIngestReplaceIsRefusedForABorrowedRoleAndAllowedForAnExternalOne(t *testing.T) {
+func TestEngineIngestIsRefusedForABorrowedRoleAndAllowedForAnExternalOne(t *testing.T) {
 	body := func() string {
-		return `{"id":"m1","kind":"gguf","s3Key":"llm/new.gguf","replace":true,"license_accepted":true,
+		return `{"id":"m1","kind":"gguf","license_accepted":true,
 		  "source":{"url":"https://example.invalid/new.gguf","sha256":"` + strings.Repeat("d", 64) + `"}}`
 	}
 	call := func(t *testing.T, e *engineRuntimeState, st store.Store) (int, string) {
@@ -1727,7 +1629,7 @@ func TestEngineIngestReplaceIsRefusedForABorrowedRoleAndAllowedForAnExternalOne(
 	borrowed.def.URL = "https://far.invalid"
 	borrowed.catalog = newEngineCatalog(st, "image")
 	if code, msg := call(t, borrowed, st); code != http.StatusBadRequest || !strings.Contains(msg, errCodeEngineNotOurs) {
-		t.Fatalf("replace on a borrowed role = %d (%s), want 400 engine_not_ours", code, msg)
+		t.Fatalf("an ingest on a borrowed role = %d (%s), want 400 engine_not_ours", code, msg)
 	}
 
 	// 🔴 The pair. An external engine — the LAN ComfyUI an operator runs on their own box — is
@@ -1912,8 +1814,8 @@ func TestEngineIngestStartsALoginWalledAssetWhenACivitaiTokenIsRegistered(t *tes
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
-		`{"id":"dreamshaper-8","kind":"checkpoint","s3Key":"image/checkpoints/dreamshaper_8.safetensors",
-		  "license_accepted":true,"base_model":"sdxl","source":{"civitai":{"versionId":128713}}}`))
+		enginePressBody(t, a, "image", `{"id":"dreamshaper-8","kind":"checkpoint",
+		  "license_accepted":true,"base_model":"sdxl","source":{"civitai":{"versionId":128713}}}`)))
 	r.SetPathValue("key", "image")
 	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 	if rec.Code != http.StatusOK {

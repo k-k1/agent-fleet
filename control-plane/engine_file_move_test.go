@@ -89,7 +89,7 @@ func TestMainFileFixNamesTheRoleAndTheKeyTheLoaderReads(t *testing.T) {
 // 🔴 The whole complaint, end to end: "「不足ファイルを揃える」を押しても、全てが揃わない".
 // The parts are attached, the badge still reads `不足: --diffusion-model`, and the answer used
 // to be `none`. Now it is one server-side move, and the row is complete when it lands.
-func TestFixPartsMovesMisplacedWeightsRatherThanDownloadingThemAgain(t *testing.T) {
+func TestCompleteMovesMisplacedWeightsRatherThanDownloadingThemAgain(t *testing.T) {
 	st := ingestStore(t)
 	ctx := t.Context()
 	if err := st.PutEngineModel(ctx, animaMisplacedRow()); err != nil {
@@ -108,31 +108,28 @@ func TestFixPartsMovesMisplacedWeightsRatherThanDownloadingThemAgain(t *testing.
 	}
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
 
-	// What the card says before anything is pressed, which is the other half of the fault: the
-	// badge named a part to take in and nothing said the row was holding it.
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/api/admin/engines", nil)
-	a.get(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
-	if !strings.Contains(rec.Body.String(), `"main_file_fix"`) ||
-		!strings.Contains(rec.Body.String(), `"image/diffusion_models/anima-aesthetic-v1.1.safetensors"`) {
-		t.Fatalf("the panel is not told where the weights belong: %s", rec.Body.String())
-	}
-
-	press := func() (int, map[string]any) {
+	press := func(body string) (int, map[string]any) {
 		t.Helper()
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost,
-			"/api/admin/engines/image/models/anima-aesthetic-v1.1/parts", strings.NewReader(`{}`))
+			"/api/admin/engines/image/models/anima-aesthetic-v1.1/complete", strings.NewReader(body))
 		r.SetPathValue("key", "image")
 		r.SetPathValue("id", "anima-aesthetic-v1.1")
-		a.fixParts(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
+		a.completeModel(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
 		var out map[string]any
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
 		return rec.Code, out
 	}
-	code, out := press()
+	// What the row is told before anything is pressed, which is the other half of the fault: the
+	// badge named a part to take in and nothing said the row was holding it. 🔴 `main_file_fix`
+	// left the row with ADR 0085 P3 — where the bytes are is the ledger's fact — so the answer is
+	// 揃える's own dry run, and it names the key the loader reads.
+	if code, out := press(`{"check":true}`); code != http.StatusOK || out["action"] != engineCompleteMoving {
+		t.Fatalf("the dry run = %d %v, want the move named before it is spent", code, out)
+	}
+	code, out := press(`{}`)
 	if code != http.StatusOK || out["action"] != "moving" {
-		t.Fatalf("fixParts = %d %v, want a move (and NOT a download of bytes this deployment owns)", code, out)
+		t.Fatalf("complete = %d %v, want a move (and NOT a download of bytes this deployment owns)", code, out)
 	}
 	if len(ecsAPI.run) != 1 {
 		t.Fatalf("%d tasks started, want exactly the move", len(ecsAPI.run))
@@ -160,7 +157,7 @@ func TestFixPartsMovesMisplacedWeightsRatherThanDownloadingThemAgain(t *testing.
 		t.Fatalf("the row was rewritten before the move landed: %+v", rows[0].Files)
 	}
 	// Pressing again while it runs must not start a second one — the key is in flight.
-	if code, out := press(); code != http.StatusConflict {
+	if code, out := press(`{}`); code != http.StatusConflict {
 		t.Errorf("a second press while the move runs = %d %v, want a refusal naming the job", code, out)
 	}
 
@@ -201,7 +198,7 @@ func TestFixPartsMovesMisplacedWeightsRatherThanDownloadingThemAgain(t *testing.
 // answered 400, and the three job rows it left behind then refused every retry with "the S3 key
 // image/diffusion_models/anima-aesthetic-v1.1.safetensors is already recorded" — a key nothing
 // had ever written to, because no task existed to write it.
-func TestFixPartsRetriesAfterAnAttemptThatNeverStartedATask(t *testing.T) {
+func TestCompleteRetriesAfterAnAttemptThatNeverStartedATask(t *testing.T) {
 	st := ingestStore(t)
 	ctx := t.Context()
 	if err := st.PutEngineModel(ctx, animaMisplacedRow()); err != nil {
@@ -223,10 +220,10 @@ func TestFixPartsRetriesAfterAnAttemptThatNeverStartedATask(t *testing.T) {
 		t.Helper()
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost,
-			"/api/admin/engines/image/models/anima-aesthetic-v1.1/parts", strings.NewReader(`{}`))
+			"/api/admin/engines/image/models/anima-aesthetic-v1.1/complete", strings.NewReader(`{}`))
 		r.SetPathValue("key", "image")
 		r.SetPathValue("id", "anima-aesthetic-v1.1")
-		a.fixParts(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
+		a.completeModel(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
 		return rec.Code, rec.Body.String()
 	}
 	if code, body := press(); code != http.StatusBadGateway {
@@ -247,7 +244,7 @@ func TestFixPartsRetriesAfterAnAttemptThatNeverStartedATask(t *testing.T) {
 
 // 🔴 Bytes two rows read are not one row's to move. The other row's declaration would go on
 // naming a key with nothing at it — the silent shape of breakage this repo keeps paying for.
-func TestFixPartsRefusesToMoveBytesAnotherRowDeclares(t *testing.T) {
+func TestCompleteRefusesToMoveBytesAnotherRowDeclares(t *testing.T) {
 	st := ingestStore(t)
 	ctx := t.Context()
 	row := animaMisplacedRow()
@@ -274,10 +271,10 @@ func TestFixPartsRefusesToMoveBytesAnotherRowDeclares(t *testing.T) {
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost,
-		"/api/admin/engines/image/models/anima-aesthetic-v1.1/parts", strings.NewReader(`{}`))
+		"/api/admin/engines/image/models/anima-aesthetic-v1.1/complete", strings.NewReader(`{}`))
 	r.SetPathValue("key", "image")
 	r.SetPathValue("id", "anima-aesthetic-v1.1")
-	a.fixParts(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
+	a.completeModel(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "anima-copy") {
 		t.Fatalf("moving shared bytes = %d (%s), want a refusal naming the other row", rec.Code, rec.Body.String())
 	}
@@ -288,7 +285,7 @@ func TestFixPartsRefusesToMoveBytesAnotherRowDeclares(t *testing.T) {
 
 // A declaration whose object was purged is a row to take in again. Moving nothing succeeds in
 // the task and leaves a row pointing at an empty key, which every check would call complete.
-func TestFixPartsRefusesToMoveBytesThatAreNotThere(t *testing.T) {
+func TestCompleteRefusesToMoveBytesThatAreNotThere(t *testing.T) {
 	st := ingestStore(t)
 	if err := st.PutEngineModel(t.Context(), animaMisplacedRow()); err != nil {
 		t.Fatal(err)
@@ -307,10 +304,10 @@ func TestFixPartsRefusesToMoveBytesThatAreNotThere(t *testing.T) {
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost,
-		"/api/admin/engines/image/models/anima-aesthetic-v1.1/parts", strings.NewReader(`{}`))
+		"/api/admin/engines/image/models/anima-aesthetic-v1.1/complete", strings.NewReader(`{}`))
 	r.SetPathValue("key", "image")
 	r.SetPathValue("id", "anima-aesthetic-v1.1")
-	a.fixParts(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
+	a.completeModel(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "taken in again") {
 		t.Fatalf("moving absent bytes = %d (%s), want a refusal that says what to do", rec.Code, rec.Body.String())
 	}
@@ -319,41 +316,33 @@ func TestFixPartsRefusesToMoveBytesThatAreNotThere(t *testing.T) {
 	}
 }
 
-// 🔴 The other half of the fault, refused where it is created. Both spellings the form produced
-// on af-sandbox are keys no ComfyUI loader can offer, and neither reports anything at
-// generation time beyond "the model does not work".
-func TestIngestRefusesAKeyTheLoaderCannotList(t *testing.T) {
-	st := ingestStore(t)
-	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
-	e.settings, e.ctrl = st, nil
-	e.catalog = newEngineCatalog(st, "image")
-	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
-	reg.ing = &engineIngester{
-		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}},
-		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+// 🔴 The other half of the fault, and it is no longer refusable because it is no longer askable:
+// `s3Key` and `file_flag` left the wire in ADR 0085 P3, so both spellings the af-sandbox form
+// produced — the role's directory with the upstream's `split_files/…` kept below it, and another
+// role's directory entirely — are simply not a thing a request can say. The CP composes the key
+// from (role, flag, base name) and the press lands where the loader looks.
+func TestIngestStagesWhereTheCPSaysWhateverTheRequestCarries(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, _, st, _ := enginePlanAPI(t)
+	rec := httptest.NewRecorder()
+	// A caller written against the old shape, asking for both wrong keys at once.
+	body := enginePressBody(t, a, "image", `{"id":"anima-aesthetic","kind":"checkpoint",
+	  "base_model":"anima","license_accepted":true,
+	  "s3Key":"image/checkpoints/a.safetensors",
+	  "reuse_s3_key":"image/diffusion_models/split_files/a.safetensors",
+	  "file_flag":"--vae","source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)
+	r := httptest.NewRequest(http.MethodPost, "/api/admin/engines/image/ingest", strings.NewReader(body))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the press = %d (%s)", rec.Code, rec.Body.String())
 	}
-	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
-	post := func(key string) (int, string) {
-		t.Helper()
-		rec := httptest.NewRecorder()
-		body := `{"id":"anima-aesthetic","kind":"checkpoint","s3Key":"` + key + `","base_model":"anima",
-		  "file_flag":"--diffusion-model","license_accepted":true,
-		  "source":{"url":"https://example.invalid/a.safetensors","sha256":"` + strings.Repeat("d", 64) + `"}}`
-		r := httptest.NewRequest(http.MethodPost, "/api/admin/engines/image/ingest", strings.NewReader(body))
-		r.SetPathValue("key", "image")
-		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
-		return rec.Code, rec.Body.String()
+	jobs := engineJobsOf(t, st, "image")
+	if len(jobs) != 1 {
+		t.Fatalf("jobs = %d", len(jobs))
 	}
-	// The role's directory, but the upstream's own path kept below it.
-	code, body := post("image/diffusion_models/split_files/diffusion_models/a.safetensors")
-	if code != http.StatusBadRequest || !strings.Contains(body, "image/diffusion_models/a.safetensors") {
-		t.Errorf("a nested key = %d (%s), want a refusal naming where it belongs", code, body)
-	}
-	// Another role's directory entirely.
-	if code, body := post("image/checkpoints/a.safetensors"); code != http.StatusBadRequest {
-		t.Errorf("a checkpoint-directory diffusion model = %d (%s), want a refusal", code, body)
-	}
-	if code, body := post("image/diffusion_models/a.safetensors"); code != http.StatusOK {
-		t.Errorf("the right key = %d (%s), want 200", code, body)
+	if jobs[0].S3Key != "image/diffusion_models/anima-aesthetic-v1.1.safetensors" {
+		t.Errorf("staged at %q — a key the request asked for rather than the one the loader reads", jobs[0].S3Key)
 	}
 }

@@ -18,8 +18,8 @@ package main
 // only acts are the ones a row performs on it. The one place a person ever picks a part is a
 // row's 揃える dialog with several candidates for one role, and they pick it FOR this checkpoint.
 //
-// This is what `POST …/models/{id}/parts` and `…/vae` fold into. Both stay one release
-// (ADR 0085 Consequences) and both now answer from this planner.
+// This is what `POST …/models/{id}/parts` and `…/vae` folded into; both are gone (ADR 0085 P3,
+// removed at once on 2026-09-15 rather than after a release).
 
 import (
 	"context"
