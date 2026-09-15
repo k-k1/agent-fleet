@@ -4914,6 +4914,8 @@ adding it is the same act as revisiting the refusal.
 
 ## Addendum — a split family is taken in as one act (2026-09-15)
 
+🔴 **Superseded by [ADR 0085](0085-model-ledger-and-one-press-ingest.md) (2026-09-15, built the same day).** `with_family_parts` and `POST …/models/{id}/parts` are gone from the wire: the resolve answers a **plan** with every file the family reads, and `…/complete` (揃える) is the row's one remedy. Kept as the record of what the parts table was written for.
+
 Taking Anima in cost **three separate ingests**, in an order nobody documents, and left a row
 that was still marked until the third landed. The parts are in another repository — for a
 Civitai merge, on another SOURCE entirely — so nothing on the screen an operator was looking at
@@ -4974,6 +4976,8 @@ declaration is complete.
 
 ## Addendum — for a split family, the default choice was the only one that cannot work (2026-09-15)
 
+🔴 **Superseded by [ADR 0085](0085-model-ledger-and-one-press-ingest.md) (2026-09-15, built the same day).** The form no longer offers a role at all: `main_flag` is the CP's answer inside the plan, and `file_flag` left the request.
+
 Three faults came back from af-sandbox the moment the addendum above was in an operator's hands.
 None of them was about the part list; all three were about the step before it.
 
@@ -4995,6 +4999,8 @@ work for these families.** The knowledge of which roles a family reads was in th
 and the screen was not asking for it.
 
 ## Addendum — the file was never missing; it was in a directory no loader lists (2026-09-15)
+
+🔴 **Superseded by [ADR 0085](0085-model-ledger-and-one-press-ingest.md) (2026-09-15, built the same day).** `s3Key` left the request — the CP computes the key (decision 1 there) — so the destination check this addendum added is unreachable, and `main_file_fix` is now one case of `…/complete` reading the bucket ledger (`GET …/objects`) rather than a row attribute.
 
 The addendum above closed the door on new rows. The rows already in the deployment stayed broken,
 and the remedy contradicted the badge in front of it: the card read `不足: --diffusion-model`
@@ -5071,6 +5077,8 @@ directions. The first is "the value was never safe to pin"; the second is "a val
 was read once", which was equally true of the bucket and of the secrets.
 
 ### Addendum follow-up 2 — the wreckage of a failed attempt fenced off the retry (2026-09-15)
+
+🔴 **Superseded by [ADR 0085](0085-model-ledger-and-one-press-ingest.md) (2026-09-15, built the same day).** The holder rule written here (#691) became 0085 decision 6's definition of a holder — an object, or a task that could have written one — and every refusal in this area now carries `holder` and `next` as fields, not prose.
 
 With the two fixes above deployed, the repair was refused:
 
