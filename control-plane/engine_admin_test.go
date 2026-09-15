@@ -1879,9 +1879,10 @@ func TestEngineCatalogRowCarriesLicenceAndSource(t *testing.T) {
 		row["license_url"] != "https://example.invalid/license" {
 		t.Errorf("row = %v, want the licence", row)
 	}
-	// Composed, not relayed raw: `civitai:<id>` is a VERSION id and the page that opens the
-	// right model is not `/models/<id>` — knowledge only this side has.
-	if row["source_url"] != "https://civitai.com/models/?modelVersionId=1759168" {
+	// Composed, not relayed raw: `civitai:<id>` is a VERSION id, and the page for the model it
+	// belongs to is reached through Civitai's own redirect — the model id and its slug are two
+	// facts a recorded source does not carry.
+	if row["source_url"] != "https://civitai.com/model-versions/1759168" {
 		t.Errorf("source_url = %v, want the composed page", row["source_url"])
 	}
 	// 🔴 A `url:` source stays unlinked here exactly as it does on the admin row: that click is
