@@ -252,8 +252,8 @@ func TestGatedIngestFollowsTheRegisteredToken(t *testing.T) {
 
 	post := func() *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		body := `{"id":"flux1-dev","kind":"checkpoint","s3Key":"image/checkpoints/flux1-dev.safetensors",
-		  "license_accepted":true,"source":{"hf":{"repo":"black-forest-labs/FLUX.1-dev","file":"flux1-dev.safetensors"}}}`
+		body := enginePressBody(t, a, "image", `{"id":"flux1-dev","kind":"checkpoint",
+		  "license_accepted":true,"source":{"hf":{"repo":"black-forest-labs/FLUX.1-dev","file":"flux1-dev.safetensors"}}}`)
 		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
 		r.SetPathValue("key", "image")
 		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})

@@ -118,11 +118,6 @@ const (
 	// the licence or the size changed between the resolve and the press, the caller did nothing
 	// wrong, and the answer carries the fresh plan beside the error for it to look at again.
 	errCodeEnginePlanStale = "engine_plan_stale"
-	// An act that has left this route and lives on the model (ADR 0085 decision 3): `attach` and
-	// `replace` are what `POST …/models/{id}/complete` does now. 410 rather than 400 because the
-	// request was right for the shape this route used to have, and the refusal names its
-	// successor rather than the mistake.
-	errCodeEngineIngestActGone = "engine_ingest_act_gone"
 
 	// 揃える was asked to put a file in a role the row already fills (ADR 0085 decision 3). Its own
 	// code and not `bad_body`, because it is the one refusal in that area that is a QUESTION: the

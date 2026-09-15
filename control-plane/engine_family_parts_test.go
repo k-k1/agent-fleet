@@ -7,7 +7,6 @@ package main
 // before this existed.
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -67,171 +66,6 @@ func TestFamilyPartsShareOneSourceForOneKey(t *testing.T) {
 	}
 }
 
-// What a row is still missing is read off the row, so a part attached by hand — or one this
-// deployment declared from somewhere else — is not offered again.
-func TestPartsMissingReadsTheRowsOwnDeclarations(t *testing.T) {
-	row := store.EngineModel{BaseModel: "anima", Files: []store.EngineModelFile{
-		{Flag: "--diffusion-model", S3Key: "image/diffusion_models/anima.safetensors"},
-		{Flag: "--vae", S3Key: "image/vae/somebody-elses-vae.safetensors"},
-	}}
-	missing := enginePartsMissing("anima", row)
-	if len(missing) != 1 || missing[0].Flag != "--clip_l" {
-		t.Fatalf("missing = %+v, want only the text encoder", missing)
-	}
-	full := row
-	full.Files = append(full.Files, store.EngineModelFile{Flag: "--clip_l", S3Key: "image/text_encoders/x.safetensors"})
-	if got := enginePartsMissing("anima", full); len(got) != 0 {
-		t.Errorf("a complete row still wants %+v", got)
-	}
-	// A family with no part list is not a family with no parts — it is one nobody measured, and
-	// the answer is nothing rather than a guess.
-	if got := enginePartsMissing("flux2-klein", store.EngineModel{BaseModel: "flux2-klein"}); got != nil {
-		t.Errorf("an unmeasured family offered %+v", got)
-	}
-}
-
-// 🔴 The point of the whole feature for a deployment that already runs one of these families:
-// bytes it already has are DECLARED, not downloaded again. A row declaring the key is the
-// cheapest proof and costs no S3 call at all.
-func TestPartPlanDeclaresWhatARowAlreadyHas(t *testing.T) {
-	held := enginePartsHeld{rows: []store.EngineModel{{
-		ID: "krea2-turbo", Files: []store.EngineModelFile{{
-			Flag: "--vae", S3Key: "image/vae/qwen_image_vae.safetensors",
-			Bytes: 253_806_1, Source: "hf:circlestone-labs/Anima/split_files/vae/qwen_image_vae.safetensors",
-			ArtifactIdentity: "hf:circlestone-labs/Anima@main/split_files/vae/qwen_image_vae.safetensors#sha256:a705",
-		}},
-	}}}
-	vae := engineFamilyParts["anima"][1]
-	if vae.Flag != "--vae" {
-		t.Fatalf("the fixture assumed anima's second part is the VAE, got %s", vae.Flag)
-	}
-	// No HTTP stub is installed: a plan that reached the network here would fail, which is the
-	// assertion — this path answers from the catalogue alone.
-	fu := enginePartPlan(context.Background(), held, vae)
-	if !fu.Staged || fu.S3Key != vae.S3Key || fu.Flag != "--vae" {
-		t.Fatalf("plan = %+v, want the key declared rather than fetched", fu)
-	}
-	if fu.ArtifactIdentity == "" || fu.Source == "" {
-		t.Errorf("the reused declaration lost where the bytes came from: %+v", fu)
-	}
-	if enginePartsBytes([]engineVaeFollowUp{fu}) != 0 {
-		t.Error("a part already here was counted as something to download")
-	}
-}
-
-// The remedy for rows that already exist — which is every row on a deployment that took this
-// family in before the checkbox existed.
-func TestFixPartsCompletesAnExistingRowFromWhatIsAlreadyHere(t *testing.T) {
-	st := ingestStore(t)
-	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
-	e.settings, e.ctrl = st, nil
-	e.catalog = newEngineCatalog(st, "image")
-	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
-	// 🔴 The bucket, and it is now part of the fixture rather than an implementation detail: a
-	// part is declared onto a second row only when the OBJECT is there (ADR 0072 decision 2's
-	// second layer, which ADR 0085 makes the rule for every declaration). Another row's word for
-	// it is not proof — its bytes may have been purged.
-	head := &fakeEngineStorageHead{states: map[string]string{
-		"image/text_encoders/qwen_3_06b_base.safetensors":    engineStoragePresent,
-		"image/vae/qwen_image_vae.safetensors":               engineStoragePresent,
-		"image/diffusion_models/anima-turbo.safetensors":     engineStoragePresent,
-		"image/diffusion_models/anima-aesthetic.safetensors": engineStoragePresent,
-	}, bytes: map[string]int64{
-		"image/text_encoders/qwen_3_06b_base.safetensors": 1_190_000_000,
-		"image/vae/qwen_image_vae.safetensors":            253_800_000,
-	}}
-	reg.ing = &engineIngester{
-		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}},
-		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
-		storage: newEngineStorage("models", head),
-	}
-	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
-	ctx := t.Context()
-	// One row of the family already holds both parts; the new row holds only its diffusion model.
-	if err := st.PutEngineModel(ctx, store.EngineModel{
-		Role: "image", ID: "anima-turbo", Kind: "checkpoint", BaseModel: "anima",
-		Files: []store.EngineModelFile{
-			{Flag: "--diffusion-model", S3Key: "image/diffusion_models/anima-turbo.safetensors"},
-			{Flag: "--clip_l", S3Key: "image/text_encoders/qwen_3_06b_base.safetensors", Bytes: 1_190_000_000},
-			{Flag: "--vae", S3Key: "image/vae/qwen_image_vae.safetensors", Bytes: 253_800_000},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.PutEngineModel(ctx, store.EngineModel{
-		Role: "image", ID: "anima-aesthetic", Kind: "checkpoint", BaseModel: "anima",
-		Files: []store.EngineModelFile{
-			{Flag: "--diffusion-model", S3Key: "image/diffusion_models/anima-aesthetic.safetensors"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	e.catalog.invalidate()
-
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/api/admin/engines/image/models/anima-aesthetic/parts", strings.NewReader(`{}`))
-	r.SetPathValue("key", "image")
-	r.SetPathValue("id", "anima-aesthetic")
-	a.fixParts(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("fixParts = %d %s", rec.Code, rec.Body.String())
-	}
-	// 🔴 `attached`, not `job_started`: nothing was downloaded and no licence was asked for,
-	// because the bytes are already this deployment's under a licence somebody accepted when
-	// they were taken in.
-	if !strings.Contains(rec.Body.String(), `"action":"attached"`) {
-		t.Errorf("answer = %s, want the parts declared from what is already here", rec.Body.String())
-	}
-	rows := e.catalog.list(ctx)
-	var fixed store.EngineModel
-	for _, m := range rows {
-		if m.ID == "anima-aesthetic" {
-			fixed = m
-		}
-	}
-	if got := enginePartsMissing("anima", fixed); len(got) != 0 {
-		t.Errorf("the row is still missing %+v", got)
-	}
-	if len(engineMissingFileFlags("comfy", fixed)) != 0 {
-		t.Errorf("the row is still refused by the files guard: %+v", fixed.Files)
-	}
-	// Pressing again is a no-op rather than a second set of files.
-	again := httptest.NewRecorder()
-	r2 := httptest.NewRequest("POST", "/api/admin/engines/image/models/anima-aesthetic/parts", strings.NewReader(`{}`))
-	r2.SetPathValue("key", "image")
-	r2.SetPathValue("id", "anima-aesthetic")
-	a.fixParts(again, r2, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-	if !strings.Contains(again.Body.String(), `"action":"none"`) {
-		t.Errorf("a second press = %s, want nothing to do", again.Body.String())
-	}
-}
-
-// A family nobody measured parts for says so, rather than answering an empty plan that reads as
-// "this row is fine".
-func TestFixPartsRefusesAFamilyWithNoPartList(t *testing.T) {
-	st := testSettingsStore(t)
-	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
-	e.settings, e.ctrl = st, nil
-	e.catalog = newEngineCatalog(st, "image")
-	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
-	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
-	if err := st.PutEngineModel(t.Context(), store.EngineModel{
-		Role: "image", ID: "klein", Kind: "checkpoint", BaseModel: "flux2-klein",
-		Files: []store.EngineModelFile{{Flag: "--diffusion-model", S3Key: "image/diffusion_models/klein.safetensors"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	e.catalog.invalidate()
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/api/admin/engines/image/models/klein/parts", strings.NewReader(`{}`))
-	r.SetPathValue("key", "image")
-	r.SetPathValue("id", "klein")
-	a.fixParts(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "flux2-klein") {
-		t.Errorf("fixParts on an unmeasured family = %d %s, want 400 naming it", rec.Code, rec.Body.String())
-	}
-}
-
 // 🔴 A part is not a model, and since ADR 0085 decision 1 a REQUEST cannot claim otherwise: the
 // role a file plays is the family's answer, not a field on the wire. What put encoders in the
 // registered list beside the checkpoints — where they can never be enabled and help nothing — was
@@ -244,9 +78,9 @@ func TestIngestIgnoresARoleTheRequestClaims(t *testing.T) {
 	a, _, st, _ := enginePlanAPI(t)
 
 	rec := httptest.NewRecorder()
-	body := `{"kind":"checkpoint","base_model":"anima","file_flag":"--clip_l","license_accepted":true,
-	  "source":{"hf":{"repo":"circlestone-labs/Anima",
-	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`
+	body := enginePressBody(t, a, "image", `{"kind":"checkpoint","base_model":"anima","file_flag":"--clip_l",
+	  "license_accepted":true,"source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)
 	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
 	r.SetPathValue("key", "image")
 	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
@@ -277,64 +111,6 @@ func TestIngestIgnoresARoleTheRequestClaims(t *testing.T) {
 	}
 }
 
-// 🔴 Reported from af-sandbox 2026-09-15: "the S3 key image/text_encoders/qwen_3_06b_base
-// .safetensors is already recorded; choose a new destination for this download or use verified
-// reuse". The key was held by a row made earlier by hand, the plan could not match its identity,
-// and the fallback was a download — which engineIngestDestinationUnused refuses for a taken key.
-//
-// So the plan must not propose that download at all. What an operator can act on is WHO holds
-// the key, and that is what comes back.
-func TestPartPlanRefusesAKeyHeldBySomethingItCannotMatch(t *testing.T) {
-	part := engineFamilyParts["anima"][0]
-	if part.Flag != "--clip_l" {
-		t.Fatalf("the fixture assumed anima's first part is the encoder, got %s", part.Flag)
-	}
-	held := enginePartsHeld{known: map[string]*engineKnownArtifact{
-		part.S3Key: {
-			S3Key:    part.S3Key,
-			ModelIDs: map[string]struct{}{"qwen_3_06b_base": {}},
-			// Taken in from somewhere else, so the identity cannot match what this plan resolves.
-			ArtifactIdentity: "hf:somebody/else@main/encoder.safetensors#sha256:dead",
-			Reusable:         true,
-		},
-	}}
-	// The resolve is stubbed to answer, so the fallthrough this test is about is reachable.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/api/models/") {
-			// The shape hfStub pins: `lfs.sha256` is what the resolve reads.
-			_, _ = w.Write([]byte(`{"sha":"commit-a","cardData":{"license":"other"},"siblings":[
-				{"rfilename":"` + part.File + `","size":1190000000,
-				 "lfs":{"sha256":"` + strings.Repeat("a", 64) + `"}}]}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	t.Cleanup(srv.Close)
-	old := engineIngestBase
-	engineIngestBase = srv.URL
-	t.Cleanup(func() { engineIngestBase = old })
-
-	fu := enginePartPlan(context.Background(), held, part)
-	if fu.Conflict == "" {
-		t.Fatalf("plan = %+v, want the taken key reported rather than a download that is refused", fu)
-	}
-	if !strings.Contains(fu.Conflict, "qwen_3_06b_base") {
-		t.Errorf("conflict = %q, want it to name what is holding the key", fu.Conflict)
-	}
-	if fu.Staged || fu.Resolved.SHA256 != "" {
-		t.Errorf("a conflicted part was also offered as something to do: %+v", fu)
-	}
-	// It costs nothing and it is drawn as a conflict, not as an unreachable upstream: the
-	// upstream is fine, the destination is not.
-	if enginePartsBytes([]engineVaeFollowUp{fu}) != 0 {
-		t.Error("a part that cannot be downloaded was counted into the total")
-	}
-	rows := enginePartsPlanRows([]engineVaeFollowUp{fu}, []engineFamilyPart{part})
-	if rows[0]["conflict"] == nil || rows[0]["unreachable"] != nil {
-		t.Errorf("plan row = %+v, want a conflict and not an unreachable source", rows[0])
-	}
-}
-
 // 🔴 The mistake an operator fell into by DEFAULT, and the one that made every Anima row on
 // af-sandbox useless: the form offered "whole checkpoint" first, and a split family reads no
 // unflagged file at all. The row then held a 4 GB file under a role no template looks at and
@@ -355,8 +131,8 @@ func TestIngestStagesASplitFamilysWeightsWhereItsLoaderLooks(t *testing.T) {
 	post := func(repo, file string) (int, string) {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		body := `{"kind":"checkpoint","license_accepted":true,
-		  "source":{"hf":{"repo":"` + repo + `","file":"` + file + `"}}}`
+		body := enginePressBody(t, a, "image", `{"kind":"checkpoint","license_accepted":true,
+		  "source":{"hf":{"repo":"`+repo+`","file":"`+file+`"}}}`)
 		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
 		r.SetPathValue("key", "image")
 		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})

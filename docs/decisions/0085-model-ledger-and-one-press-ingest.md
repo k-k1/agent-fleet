@@ -322,6 +322,9 @@ not find; it feeds the same plan.
   `POST …/models/{id}/parts`, `…/vae`, `…/models/vae-scan`. `main_file_fix` leaves the row.
   There is no third client: the Agent never calls admin routes, so the Console and CP change in
   one deployment and the one-release grace is for the operator's scripts.
+  🔴 Removed at once on 2026-09-15 by the operator's decision, with no grace release (this is a
+  development deployment only, with no third client and no scripts). "Removed after one release"
+  above was carried out the same day, in P3.
 - **IAM.** None. The CFN comment at `60-engines.yaml:292` is corrected.
 - **Store.** No schema change in this ADR. `engine_ingest_jobs` stays as the task ledger the
   reconciler owns; the Console stops reading it directly.
@@ -350,6 +353,8 @@ not find; it feeds the same plan.
   surfaces removed. Measure: a person who has not read this ADR searches "anima", presses once,
   enables, generates.
 - **P3** — decisions 6 and 7's remainder; remove the grace routes; the docs.
+  🔴 Done at once on 2026-09-15 by the operator's decision (the CP half): the grace routes and the
+  grace fields are gone and `plan_token` is required.
 
 ## Open questions
 

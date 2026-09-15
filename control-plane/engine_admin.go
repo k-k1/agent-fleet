@@ -102,34 +102,22 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// route that needs no `ecs:RunTask` and works on a deployment whose egress is closed.
 	mux.HandleFunc("POST /api/admin/engines/{key}/models", a.withSuperAdmin(a.postModel))
 	mux.HandleFunc("DELETE /api/admin/engines/{key}/models/{id}", a.withSuperAdmin(a.deleteModel))
-	// Reading the checkpoints' own headers to find the rows whose family has nothing to decode
-	// with, and fixing one of them (ADR 0072 follow-up). Under the ingest authority rather than
-	// super_admin because the fix IS an ingest: it takes the family's VAE in and attaches it.
-	//
-	// The scan is one call for the whole catalogue instead of one per row: it runs on the panel's
-	// own load, and a fan-out of browser requests would make the number of upstream reads a
-	// property of how often somebody opens a screen.
-	mux.HandleFunc("POST /api/admin/engines/{key}/models/vae-scan", a.withIngestAdmin(a.scanVae))
-	mux.HandleFunc("POST /api/admin/engines/{key}/models/{id}/vae", a.withIngestAdmin(a.fixVae))
-	mux.HandleFunc("POST /api/admin/engines/{key}/models/{id}/parts", a.withIngestAdmin(a.fixParts))
 	// The discovery button (ADR 0082 decisions 6 and 7): what an external ComfyUI's own
 	// checkpoint/LoRA/VAE folders currently hold, read off its /object_info and offered as
 	// candidates. Under ingest authority, not super_admin only — the same predicate the ingest
 	// form itself uses, since this is the other way a row's files get chosen rather than typed.
 	mux.HandleFunc("POST /api/admin/engines/{key}/discover", a.withIngestAdmin(a.discoverModelsGrant))
-	// Taking a model IN from Hugging Face / Civitai / a URL (ADR 0072 decision 6, phase P4),
-	// and watching the jobs that does.
+	// Taking a model IN from Hugging Face / Civitai / a URL (ADR 0072 decision 6, phase P4).
 	//
-	// These six are the ONLY engine routes that are not super_admin: a tenant_admin of a tenant
+	// These are the ONLY engine routes that are not super_admin: a tenant_admin of a tenant
 	// the operator granted `allow_engine_ingest` may drive them too (ADR 0072 open question 11 —
 	// engine_ingest_perm.go says why the axis stops here).
 	mux.HandleFunc("POST /api/admin/engines/{key}/ingest", a.withIngestAdmin(a.postIngest))
-	mux.HandleFunc("GET /api/admin/engines/{key}/ingest", a.withIngestAdmin(a.listIngest))
-	// And forgetting one of those jobs. The list had no delete and no TTL at all, so it grew
-	// for the life of the deployment — `limit` was only hiding the tail. Under the same
-	// authority as the list rather than super_admin, because the rule is "your own jobs": a
-	// granted tenant_admin sees theirs and may forget theirs, and deleteIngest narrows by the
-	// same tenant the list does.
+	// And dismissing a job. The list itself is gone (ADR 0085 decision 6 — a job is its
+	// destination object's progress in the ledger, not a second list), but a `failed` one is an
+	// entry on that key with exactly one act, and this is it. Under the same authority as the
+	// ledger rather than super_admin, because the rule is "your own jobs": a granted tenant_admin
+	// may forget theirs, and deleteIngest narrows by the same tenant the ledger does.
 	mux.HandleFunc("DELETE /api/admin/engines/{key}/ingest/{id}", a.withIngestAdmin(a.deleteIngest))
 	// Resolving a source WITHOUT starting anything: what the licence is, whether the repository
 	// is gated, how big the file is. The panel calls it while somebody is typing, so that the
@@ -144,9 +132,6 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// A card identifies a repository/model; this read expands it into the versions that the
 	// single-operation file picker can choose from.
 	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/versions", a.withIngestAdmin(a.versionsIngest))
-	// True bucket state for the catalogue and visible job keys. The handler accepts no S3 key;
-	// it derives the set from server records and bounds the metadata work by time and concurrency.
-	mux.HandleFunc("GET /api/admin/engines/{key}/storage", a.withIngestAdmin(a.getStorage))
 	// The same read with no engine in the path: a deployment that has not adopted 60-engines
 	// has an EMPTY panel, and "there is nothing here" is the worst answer to "what could I
 	// run?". Browsing needs no engine because it needs no token, no bucket and no task.
@@ -236,28 +221,14 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		if missing := engineMissingFileFlags(e.def.Provider, m); len(missing) > 0 {
 			mr["files_missing"] = missing
 		}
-		// 🔴 And the reading of that mark nobody can arrive at from the screen: the file the row
-		// is "missing" is one it is HOLDING, under a role no template reads and in a directory no
-		// loader lists (engine_file_move.go). Without this the badge names a part to take in, the
-		// remedy answers "nothing is missing", and neither says the one thing that is true.
-		if engineFileFlagsFor(e.def.Provider) != nil {
-			if fix, ok := engineMainFileFixFor(e.def.Key, m.BaseModel, m); ok {
-				mr["main_file_fix"] = engineMainFileFixRow(fix)
-			}
-		}
 		// And the half of "this row cannot generate" that no declaration can express: the
 		// checkpoint file itself carries no VAE, so the family's template has nothing to decode
-		// with (ADR 0072 follow-up). Two marks rather than one, because they send the reader to
-		// opposite places — `vae_missing` is fixed by taking ONE more file in and attaching it,
-		// while `vae_unread` is a question nobody has asked yet, which the panel's scan answers
-		// without the operator deciding anything.
+		// with (ADR 0072 follow-up). ONE mark, and it stays because it answers "why can this row
+		// not be enabled" (ADR 0085 decision 7); the remedy is 揃える, which folds the family's
+		// own VAE into the gap it closes. `vae_fix` (which file that would be) and `vae_unread`
+		// (nobody has read this header) left with the routes that acted on them.
 		if engineVaeMissing(e.def.Provider, m) {
 			mr["vae_missing"] = true
-			if v, ok := engineFamilyVaes[strings.TrimSpace(m.BaseModel)]; ok {
-				mr["vae_fix"] = v.Repo + "/" + v.File
-			}
-		} else if engineVaeUnread(e.def.Provider, m) {
-			mr["vae_unread"] = true
 		}
 		// A LoRA pinned to nothing (ADR 0072 decision 5, the llm half). The adapter reaches the
 		// engine through the preset section of the model named in `base_model`, so a base that is
@@ -1577,19 +1548,13 @@ func engineModeFromBody(mode string, enabled *bool) (string, *apiError) {
 type engineIngestBody struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
-	// PlanToken is the fingerprint of the plan the person pressed (ADR 0085 decision 4). The CP
-	// re-plans at the press — the form's answer can be minutes old and this is the call that
-	// spends money — and refuses with a fresh plan when the two disagree. Empty is accepted for
-	// one release, for a script written against the shape this route had before the plan existed.
-	PlanToken string `json:"plan_token"`
-	// 🔴 S3Key and ReuseS3Key are GONE as inputs (ADR 0085 decision 1): the destination is a pure
-	// function of (role, flag, base name) and the CP is the only party that computes it. They are
-	// still read for one release so that an operator's script is told what changed rather than
-	// silently staging a file where no loader lists it — ignored when they name the key the CP
-	// computed, refused with that key when they do not.
-	S3Key      string             `json:"s3Key"`
-	ReuseS3Key string             `json:"reuse_s3_key"`
-	Source     engineIngestSource `json:"source"`
+	// PlanToken is the fingerprint of the plan the person pressed (ADR 0085 decision 4), and it is
+	// REQUIRED: the CP re-plans at the press — the form's answer can be minutes old and this is the
+	// call that spends money — and a press with no plan behind it is one nobody saw the price of.
+	// The refusal sends the caller back through `…/ingest/resolve`, which is where a plan and its
+	// token come from.
+	PlanToken string             `json:"plan_token"`
+	Source    engineIngestSource `json:"source"`
 
 	Description     string   `json:"description"`
 	BaseModel       string   `json:"base_model"`
@@ -1606,21 +1571,6 @@ type engineIngestBody struct {
 	// deployment the operator accepts on behalf of every member — so the answer is recorded
 	// against a person, in the row and in the audit log.
 	LicenseAccepted bool `json:"license_accepted"`
-
-	// 🔴 The four fields below are what the form used to have to know (ADR 0085 decision 4
-	// retires all of them): which role this file plays, whether it joins or replaces a row, and
-	// whether the family's parts and VAE should come too. The plan answers every one of them from
-	// the family's own table, so they are read for one release and then gone.
-	//
-	// FileFlag, WithFamilyVae and WithFamilyParts are IGNORED — the plan says what the family
-	// reads and a request cannot say otherwise. Attach and Replace are refused with the act that
-	// replaced them, because doing something else with a request that names a row is worse than
-	// refusing it.
-	FileFlag        string `json:"file_flag"`
-	Attach          bool   `json:"attach"`
-	Replace         bool   `json:"replace"`
-	WithFamilyVae   bool   `json:"with_family_vae"`
-	WithFamilyParts bool   `json:"with_family_parts"`
 }
 
 // resolveIngest (POST …/ingest/resolve) answers "what is this file" without starting anything.
@@ -1666,9 +1616,10 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, g 
 		civitai: a.civitaiTokens().configured(r.Context()),
 	}, e.def.Provider, geom)
 	// 🔴 The PLAN (ADR 0085 decision 4): what one press would do, priced, with the destination
-	// keys the CP has already decided. Everything below it is the older, field-by-field answer
-	// the form used to assemble a request out of; it rides along for one release while the
-	// Console moves onto the plan.
+	// keys the CP has already decided. It is the whole answer to "what will this button cost" —
+	// the field-by-field version the form used to assemble a request out of (`family_vae`,
+	// `family_main_flag`, `family_parts`) is gone, because every one of those was a decision the
+	// form then had to make again.
 	plan, v := a.enginePlanFor(r.Context(), g, e, b, res)
 	row["plan"] = plan
 	// And the other header read, for the image role: does this checkpoint carry the VAE its
@@ -1678,36 +1629,6 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, g 
 	// answer to decide whether the family's VAE is one of the files.
 	if v != engineVaeUnknown {
 		row["vae_bundled"] = v
-		if v == engineVaeNo {
-			if plan, fam, known := engineVaePlan(r.Context(), e.catalog.list(r.Context()),
-				engineVaeFamilyOf(e.def.Provider, b, res)); known {
-				row["family_vae"] = engineVaePlanRow(plan, fam)
-			}
-		}
-	}
-	// The SPLIT families' other half. A diffusion model taken in alone leaves a row that is
-	// marked, cannot be enabled, and points at files in another repository — sometimes on
-	// another source entirely (a Civitai merge whose encoder is on Hugging Face). Offering them
-	// HERE is what makes taking a family in one act instead of a scavenger hunt.
-	//
-	// Offered for a new WHOLE row only: attaching a part is already the act this would suggest,
-	// and a LoRA reads no template of its own.
-	if !b.Attach && !b.Replace && strings.TrimSpace(b.FileFlag) == "" &&
-		!strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) {
-		fam := engineVaeFamilyOf(e.def.Provider, b, res)
-		// 🔴 Which role the file being registered plays, when the family reads no whole
-		// checkpoint. The form starts on "whole checkpoint", which for a split family is a row
-		// that holds its weights under a flag no template reads — the state every Anima row on
-		// af-sandbox was in. The CP knows the answer; saying it is what stops the form offering
-		// the one choice that cannot work.
-		if main := engineFamilyMainFlag(fam); main != "" {
-			row["family_main_flag"] = main
-		}
-		if parts := engineFamilyPartsFor(fam); len(parts) > 0 {
-			plan := enginePartsPlan(r.Context(), a.enginePartsHeld(r.Context(), g, e.def.Key), parts)
-			row["family_parts"] = enginePartsPlanRows(plan, parts)
-			row["family_parts_bytes"] = enginePartsBytes(plan)
-		}
 	}
 	writeJSON(w, http.StatusOK, row)
 }
@@ -1900,18 +1821,15 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		writeAPIErr(w, aerr)
 		return
 	}
-	// 🔴 The two acts that LEFT this route (ADR 0085 decision 3). Both of them start from a model
-	// rather than from a file, and both are now what `complete` does: it looks at what the family
-	// reads, what the row has and what the bucket holds, and closes the gap. Refused rather than
-	// reinterpreted — a request that names a row and a flag is precise about something this route
-	// no longer decides, and guessing which slot it meant is how an attach landed as a replace.
-	if b.Attach || b.Replace {
-		id := strings.TrimSpace(b.ID)
-		writeAPIRefusal(w, refuse(http.StatusGone, errCodeEngineIngestActGone,
-			"attaching and replacing a file are acts on the MODEL now: POST /api/admin/engines/"+key+
-				"/models/"+id+"/complete declares what this deployment already holds for that row, moves what "+
-				"is in the wrong directory and takes in only what is missing",
-			&apiHolder{Kind: "row", ID: id}, &apiNext{Act: "complete", Target: id}))
+	// 🔴 A press with no plan behind it (ADR 0085 decision 4). The plan is what prices the act and
+	// what names the destination, so a request without one is asking this route to decide both
+	// silently — which is the shape every wall in this ADR's table was found in. Answered as
+	// "resolve again" rather than with `next`, because the act it is missing is not one the
+	// Console performs on a row: it is the read that makes the card.
+	if strings.TrimSpace(b.PlanToken) == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"plan_token is required: ask POST /api/admin/engines/" + key + "/ingest/resolve what taking " +
+				"this source in would do, show the person that plan, and send back its plan_token"})
 		return
 	}
 	if !b.LicenseAccepted {
@@ -1931,27 +1849,10 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		return
 	}
 	id := plan.ID
-	// The grace release for a caller that still names the destination. Ignored when it agrees
-	// with the key the CP computed; refused, with that key, when it does not — the two disagreed
-	// in every direction on af-sandbox (a role defaulting to the whole checkpoint, an upstream
-	// `split_files/…` path kept verbatim, a `reuse_s3_key` carrying the OLD key), and each one
-	// was a file no ComfyUI loader could ever list.
-	for _, asked := range []string{b.S3Key, b.ReuseS3Key} {
-		if asked = strings.TrimSpace(asked); asked == "" || asked == main.Key {
-			continue
-		}
-		writeAPIRefusal(w, refuse(http.StatusBadRequest, errCodeEngineBadBody,
-			"the destination is the Control Plane's to compute now: "+main.Name+" belongs at "+main.Key+
-				", not at "+asked+" — leave s3Key and reuse_s3_key out of the request, or press 揃える on the"+
-				" row that already declares those bytes",
-			&apiHolder{Kind: "object", Key: asked}, &apiNext{Act: "complete", Target: id}))
-		return
-	}
-	// 🔴 The plan the person pressed against the plan that holds now. Empty is accepted for one
-	// release (a script written before plans existed), and a mismatch answers with the fresh plan
-	// beside the refusal: telling somebody their answer is stale without handing them the current
-	// one only makes them ask again, and between the two calls it can go stale again.
-	if tok := strings.TrimSpace(b.PlanToken); tok != "" && tok != plan.PlanToken {
+	// 🔴 The plan the person pressed against the plan that holds now. A mismatch answers with the
+	// fresh plan beside the refusal: telling somebody their answer is stale without handing them
+	// the current one only makes them ask again, and between the two calls it can go stale again.
+	if tok := strings.TrimSpace(b.PlanToken); tok != plan.PlanToken {
 		writeAPIRefusalWith(w, refuse(http.StatusConflict, errCodeEnginePlanStale,
 			"what taking "+main.Name+" in would do has changed since that plan was made ("+
 				enginePlanChanged(plan)+"): look at the plan beside this error and press again",
@@ -2126,40 +2027,10 @@ func enginePlanChanged(plan enginePlan) string {
 		plan.BytesToDownload)
 }
 
-// listIngest (GET …/ingest) is the job list, reconciled against ECS first so that what it
-// reports is what ECS thinks rather than what this table last heard.
-//
-// A granted tenant_admin sees THEIR TENANT's jobs only (ADR 0072 open question 11). Not a
-// privacy nicety: this list is what somebody watches for the ten minutes before a catalogue row
-// exists, and filling it with every other tenant's downloads buries the one they started. The
-// reconcile above still runs over ALL of them — the jobs a caller cannot see still have to be
-// brought up to date, or a task that finished while nobody with the right tenant was looking
-// stays `running` for ever.
-func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
-	key := strings.TrimSpace(r.PathValue("key"))
-	if a.reg.get(key) == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
-		return
-	}
-	if ing := a.reg.ingester(); ing != nil {
-		ing.reconcile(r.Context())
-	}
-	if a.mgr == nil || a.mgr.store == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"jobs": []any{}})
-		return
-	}
-	body, err := a.ingestListBody(r, g, key)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	writeJSON(w, http.StatusOK, body)
-}
-
 // deleteIngest (DELETE …/ingest/{id}) forgets ONE job of the history.
 //
-// Until this existed the table had no delete, no TTL and no prune, so it grew for the life of
-// the deployment and the list's `limit` only hid the tail. There is still no timer, and
+// It is what a `failed` entry in the ledger is dismissed with (ADR 0085 decision 6), and the last
+// route of the job history to survive it. There is no timer and no prune, and
 // store.DeleteEngineIngestJob says why: a `done` row is the only written record of an S3 key
 // until a catalogue row points at it.
 //
@@ -2172,7 +2043,7 @@ func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, g eng
 //     to move to `done`, so the outcome (and a sha256 mismatch, if that is what happened) is
 //     lost;
 //   - another ROLE's job, another TENANT's job, and an id that never existed → all 404 with the
-//     same words. The list a granted tenant_admin reads is narrowed to their own tenant (ADR
+//     same words. The ledger a granted tenant_admin reads is narrowed to their own tenant (ADR
 //     0072 open question 11) and the delete has to be narrowed by the same rule, or the reduced
 //     panel is a read-only view of one tenant with a delete button for every tenant. 404 and
 //     not 403 because "you may not touch job X" tells a tenant_admin that job X exists.
@@ -2219,8 +2090,8 @@ func (a engineAdminAPI) deleteIngest(w http.ResponseWriter, r *http.Request, g e
 	// written down.
 	a.auditFor(r, g, "engine."+key+".ingest",
 		"forget job "+id+" ("+j.ModelID+" "+j.S3Key+", "+j.State+")")
-	// The remaining list, so the panel does not have to ask again — and so what it draws is the
-	// server's list rather than one it edited locally.
+	// The jobs that are left, so the panel does not have to ask again — and so what it draws is
+	// the server's answer rather than one it edited locally.
 	body, err := a.ingestListBody(r, g, key)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -2229,8 +2100,9 @@ func (a engineAdminAPI) deleteIngest(w http.ResponseWriter, r *http.Request, g e
 	writeJSON(w, http.StatusOK, body)
 }
 
-// ingestListBody is the `{"jobs": …}` answer both the list and the delete give, narrowed to the
-// caller's authority. Shared so that the two cannot drift into two shapes for one list.
+// ingestListBody is the `{"jobs": …}` answer the delete gives back, narrowed to the caller's
+// authority — the same narrowing the ledger applies, so dismissing a job cannot show a caller
+// jobs the ledger would have hidden.
 func (a engineAdminAPI) ingestListBody(r *http.Request, g engineIngestGrant, key string) (map[string]any, error) {
 	jobs, err := a.ingestJobsFor(r, g, key)
 	if err != nil {
@@ -2268,9 +2140,9 @@ func (a engineAdminAPI) ingestListBody(r *http.Request, g engineIngestGrant, key
 //   - FORGETTING the job: while nothing points at the key, this row is the last written record
 //     of it, and deleting it leaves bytes in the bucket that nothing can name again.
 //
-// 🔴 It says who POINTS at the file. It never says the file is there: only the storage endpoint's
-// current HeadObject does, and `deleteModel?purge=1` can delete the bytes while leaving the job
-// `done` for ever.
+// 🔴 It says who POINTS at the file. It never says the file is there: only the ledger's own read
+// of the bucket does (engine_objects.go), and `deleteModel?purge=1` can delete the bytes while
+// leaving the job `done` for ever.
 func engineIngestKeyUsedBy(rows []store.EngineModel, s3key string) string {
 	if strings.TrimSpace(s3key) == "" {
 		return ""

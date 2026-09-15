@@ -109,6 +109,34 @@ func enginePlanOf(t *testing.T, a engineAdminAPI, e *engineRuntimeState, body st
 	return plan
 }
 
+// enginePressBody is a fixture body with the plan_token the CP would have handed the form, so a
+// test presses the way the Console does: resolve first, show the plan, send its fingerprint back.
+//
+// Required since ADR 0085 P3 (`plan_token` is no longer optional), and spliced in rather than
+// written into every fixture because the token is a hash of the CP's own answer — a literal in a
+// test would be a value nobody can recompute after the planner changes one field.
+func enginePressBody(t *testing.T, a engineAdminAPI, role, body string) string {
+	t.Helper()
+	e := a.reg.get(role)
+	if e == nil {
+		t.Fatalf("no engine %q in the fixture registry", role)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		t.Fatalf("fixture body: %v", err)
+	}
+	token, err := json.Marshal(enginePlanOf(t, a, e, body).PlanToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw["plan_token"] = token
+	out, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
 func enginePlanFileFor(plan enginePlan, flag string) (enginePlanFile, bool) {
 	for _, f := range plan.Files {
 		if f.Flag == flag {
@@ -399,9 +427,9 @@ func TestIngestStartsExactlyWhatThePlanNamed(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
-		`{"kind":"checkpoint","license_accepted":true,
+		enginePressBody(t, a, "image", `{"kind":"checkpoint","license_accepted":true,
 		  "source":{"hf":{"repo":"circlestone-labs/Anima",
-		  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`))
+		  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)))
 	r.SetPathValue("key", "image")
 	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
 	if rec.Code != http.StatusOK {

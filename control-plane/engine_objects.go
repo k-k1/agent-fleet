@@ -4,7 +4,8 @@ package main
 //
 // 🔴 Why this exists, in one measurement. On 2026-09-15 af-sandbox held about 24 GB under
 // `image/` that the panel could not show at all: the rows had been forgotten, the jobs
-// dismissed, and `GET …/storage` "returns only keys the server already knows" — a HeadObject
+// dismissed, and `GET …/storage` (retired with this route's arrival) "returned only keys the
+// server already knows" — a HeadObject
 // fan-out over the keys rows and jobs name. Forget both and the object goes on costing money
 // while ceasing to exist for every screen. The permission to look was already there: the CP task
 // role holds `s3:ListBucket` conditioned on the `llm/*` and `image/*` prefixes
@@ -674,8 +675,9 @@ func engineObjectRowKind(e *engineRuntimeState) string {
 	return "checkpoint"
 }
 
-// engineObjectKeyInRole keeps the route from becoming an existence oracle for another prefix —
-// the property `GET …/storage` has by having no key parameter at all, kept here by checking one.
+// engineObjectKeyInRole keeps the route from becoming an existence oracle for another prefix.
+// The retired storage route had that property by accepting no key at all; this one takes a key,
+// so it earns the same property by checking it.
 func engineObjectKeyInRole(role, key string) *apiRefusal {
 	switch {
 	case key == "":

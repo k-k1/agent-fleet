@@ -176,13 +176,8 @@ func (a engineAdminAPI) enginePlanFor(ctx context.Context, g engineIngestGrant, 
 	// question is meaningless for it, and the families that answer it (engineFamilyVaes) are all
 	// of the first kind.
 	vae := engineVaeUnknown
-	if plan.MainFlag == "" {
-		probe := b
-		probe.Attach, probe.Replace, probe.FileFlag = false, false, ""
-		if main, ok := plan.main(); ok {
-			probe.S3Key = main.Key
-		}
-		vae = engineVaeOfIngest(ctx, provider, probe, res, a.hfTokens())
+	if main, ok := plan.main(); ok && plan.MainFlag == "" {
+		vae = engineVaeOfIngest(ctx, provider, b.Kind, main.Key, res, a.hfTokens())
 	}
 	if vae == engineVaeNo && !enginePlanHasFlag(plan.Files, "--vae") {
 		if v, ok := engineFamilyVaes[base]; ok {
