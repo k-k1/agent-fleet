@@ -146,8 +146,10 @@ try {
       if (ran.result?.value !== true) throw new Error(`[${scene.name}] the action found nothing to press`);
       await sleep(scene.settle || 800);
     }
-    const shot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-    const file = path.join(OUT, `engine-catalog-${scene.name}-${LOCALE}.png`);
+    // WebP straight out of Chromium, like scripts/shots/capture.mjs: a fifth of the PNG at a
+    // quality where 2x UI text stays crisp, which is what makes these cheap to attach to a PR.
+    const shot = await cdp.send("Page.captureScreenshot", { format: "webp", quality: 82, captureBeyondViewport: false });
+    const file = path.join(OUT, `engine-catalog-${scene.name}-${LOCALE}.webp`);
     fs.mkdirSync(OUT, { recursive: true });
     fs.writeFileSync(file, Buffer.from(shot.data, "base64"));
     console.log("[shot]", file, `${scene.width}x${scene.height}@2x`);
