@@ -243,6 +243,14 @@ export const admin = {
   // 🔴 ADR 0072 follow-up。ヘッダを読んで「VAE 非同梱」と分かったときだけ出る。
   "admin.engines_wizard_vae_take": "このチェックポイントは VAE を同梱していないので、{f} も一緒に取り込んで `--vae` として足します（{n}・ライセンス {l}）",
   "admin.engines_wizard_vae_staged": "このチェックポイントは VAE を同梱していないので、すでにこの配備にある {f} を `--vae` として足します（ダウンロードなし）",
+  "admin.engines_wizard_parts_take": "この族が読む残り {n} ファイルも一緒に取り込む（{b}）——ワークフローが使うエンコーダと VAE。無いとこの行は有効化できません。",
+  "admin.engines_wizard_parts_staged": "配備が既に持っています",
+  "admin.engines_model_files_missing_tag": "不足: {f}",
+  "admin.catalog_parts_fix": "不足ファイルを揃える",
+  "admin.catalog_parts_fix_busy": "揃えています…",
+  "admin.catalog_parts_fix_none": "不足はありません。",
+  "admin.catalog_parts_fix_attached": "配備が既に持っていたファイルから宣言しました——ダウンロードは発生していません。",
+  "admin.catalog_parts_fix_started": "不足ファイルを取り込んでいます。完了すると自動でこの行に付きます。",
   "admin.engines_wizard_vae_none": "このチェックポイントは VAE を同梱しておらず、この族の既定 VAE もこの配備にはありません。取り込んだあと、単体の VAE を `--vae` として足すまで生成できません。",
   "admin.engines_model_add_desc": "説明",
   // 任意。この経路には読み取る出所が無いので、ライセンスを人が書く唯一の場所になる。

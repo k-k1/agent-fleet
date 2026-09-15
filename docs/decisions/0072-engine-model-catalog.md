@@ -4911,3 +4911,63 @@ So each restriction is now answered by ITS OWN account:
 🔴 The lesson is the comment, not the code: **"nothing could satisfy this" is a claim with a
 date on it.** A refusal justified by an absent capability has to name the capability, so that
 adding it is the same act as revisiting the refusal.
+
+## Addendum — a split family is taken in as one act (2026-09-15)
+
+Taking Anima in cost **three separate ingests**, in an order nobody documents, and left a row
+that was still marked until the third landed. The parts are in another repository — for a
+Civitai merge, on another SOURCE entirely — so nothing on the screen an operator was looking at
+led to them. Reported from the sandbox as "I took things in and do not know what to do".
+
+The machinery for this already existed and was pointed at the wrong half of the problem:
+`engine_vae.go` offers a family's VAE beside a checkpoint that carries none, ticked by default,
+with a one-press remedy for rows that already exist. Its own note says why it stops there — the
+split families "already REQUIRE a `--vae` … so a row of theirs that has none is already marked
+and refused". True, and it assumed a mark is a way forward. For a family whose parts are two
+repositories away, it is not.
+
+So the same shape now covers the parts of a split family:
+
+- **`engineFamilyParts`** declares them per family — flag, repository, path, and the S3 key they
+  land at. Measured 2026-09-15, ungated, both paths fetched.
+- The ingest form offers the set **ticked by default** (`with_family_parts`), with each part's
+  size and licence beside it, and takes them in as follow-ups to the same press.
+- **`POST …/models/{id}/parts`** is the remedy for rows that already exist — because "take the
+  4 GB diffusion model in again with the box ticked this time" is not a repair.
+- The registered card now draws `files_missing`, which the wire has carried since P2 and this
+  screen never showed: an unusable row looked like every other row.
+
+### Bytes this deployment already has are declared, never fetched again
+
+Three steps, cheapest first:
+
+1. **A row declares the key** — this deployment's own declaration, trusted as such, no S3 call.
+2. **No row, but the bytes are there anyway** — a job that finished for a row since forgotten, or
+   the same file taken in for another engine. Requires BOTH proofs `reuse_s3_key` is built on:
+   the identity recorded before that upload equals the one the resolve just computed, and
+   HeadObject says an object occupies the key now. A record without an object is a purged key; an
+   object without a record is bytes nobody can vouch for.
+3. Otherwise, download.
+
+🔴 **The two families declare the Qwen-Image VAE from ONE repository.** It is the same file in
+`circlestone-labs/Anima`, `Comfy-Org/Krea-2` and `Comfy-Org/Qwen-Image_ComfyUI` (sha256 a70580f0…,
+measured) — but reuse compares the artifact identity `hf:<repo>@<rev>/<path>#sha256:…`, not the
+hash, so declaring them from their own repositories would download the same bytes twice into two
+keys. Taking Anima in and then Krea 2 now costs one encoder download and nothing for the VAE.
+
+### A part is not a model
+
+The ingest accepted `new` + a `file_flag` and made a row whose only file was a text encoder: it
+appeared in the registered list as if it were a model, could never be enabled, and the thing the
+operator wanted — the encoder ON the checkpoint's row — had not happened. That is refused now,
+naming the act they meant. ⚠️ Rows already made that way are not migrated: they are deleted with
+`forget`, and the checkpoint's own row is completed with the button above.
+
+### What is not covered
+
+⚠️ `flux1`, `flux2-klein`, `sd35` and `zimage` are split too and have **no part list yet** —
+nobody has measured their files the way these two were, and an entry written from memory is a
+404 minutes after a press. They behave exactly as before: marked, and attached by hand.
+
+🔴 Neither family has been run on a GPU here, so "the row is complete" still means the
+declaration is complete.

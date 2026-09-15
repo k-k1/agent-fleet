@@ -23,7 +23,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
+	"net/http"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -247,4 +249,146 @@ func (a engineAdminAPI) enginePartsHeld(ctx context.Context, g engineIngestGrant
 		held.storage = ing.storageChecker()
 	}
 	return held
+}
+
+// --- the one press that completes a row ------------------------------------------------------
+
+// enginePartsFixBody is what the button sends. `check` asks what WOULD happen, which is how the
+// panel shows the size and the licence before anything is spent — the same two-step the VAE
+// remedy uses.
+type enginePartsFixBody struct {
+	Check           bool `json:"check"`
+	LicenseAccepted bool `json:"license_accepted"`
+}
+
+// fixParts (POST …/models/{id}/parts) gives an incomplete split-family row the files its family
+// reads, in one press.
+//
+// 🔴 This is the remedy for rows that ALREADY exist, and it is why the feature is not only a
+// checkbox on the ingest form: a deployment's rows were taken in before the checkbox existed,
+// and "take the diffusion model in again, with the box ticked this time" is not a repair — it is
+// a second copy of a 4 GB file.
+//
+// Three outcomes, the same words as the VAE remedy: `none` (nothing is missing), `attached`
+// (every part was already this deployment's, so the row gained declarations and nothing was
+// downloaded), `job_started` (at least one download is running, and it attaches itself when it
+// lands).
+func (a engineAdminAPI) fixParts(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
+	key, id := strings.TrimSpace(r.PathValue("key")), strings.TrimSpace(r.PathValue("id"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	if a.refuseBorrowedWrite(w, e, "completing a row") {
+		return
+	}
+	var b enginePartsFixBody
+	if r.Body != nil {
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b)
+	}
+	ctx := r.Context()
+	m, ok := engineCatalogModel(ctx, e, id)
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineModelUnknown, "no model " + id + " for engine " + key})
+		return
+	}
+	family := strings.TrimSpace(m.BaseModel)
+	if len(engineFamilyPartsFor(family)) == 0 {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"this deployment knows no part list for the " + family + " family — attach the files it reads by hand"})
+		return
+	}
+	missing := enginePartsMissing(family, m)
+	if len(missing) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"action": "none"})
+		return
+	}
+	plan := enginePartsPlan(ctx, a.enginePartsHeld(ctx, g, key), missing)
+	if b.Check {
+		action := "attach"
+		for _, fu := range plan {
+			if !fu.Staged {
+				action = "ingest"
+			}
+			if !fu.Staged && fu.Resolved.SHA256 == "" {
+				// 🔴 A part nobody can price is a press that cannot be promised. Said here
+				// rather than after the licence was accepted.
+				action = "unreachable"
+				break
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"action": action, "parts": enginePartsPlanRows(plan, missing),
+			"bytes": enginePartsBytes(plan),
+		})
+		return
+	}
+	// Everything already here is one write each, and it costs nothing to accept.
+	var started []map[string]any
+	attached := 0
+	for i, fu := range plan {
+		p := missing[i]
+		if fu.Staged {
+			file := store.EngineModelFile{
+				Flag: p.Flag, S3Key: fu.S3Key, Bytes: fu.Bytes,
+				Source: fu.Source, ArtifactIdentity: fu.ArtifactIdentity,
+			}
+			if p.Flag == "--vae" {
+				file.VaeBundled = engineVaeYes
+			}
+			found, err := a.mgr.store.AppendEngineModelFile(ctx, key, id, file)
+			if err != nil {
+				writeAPIErr(w, internalErr(err))
+				return
+			}
+			if !found {
+				writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineModelUnknown,
+					"no model " + id + " for engine " + key})
+				return
+			}
+			e.catalog.invalidate()
+			a.auditFor(r, g, "engine."+key+".model.parts", id+" attached "+fu.S3Key+" (already staged)")
+			attached++
+			continue
+		}
+		if fu.Resolved.SHA256 == "" {
+			writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeIngestUnavailable,
+				p.Repo + "/" + p.File + " could not be resolved, so " + p.Flag + " was not taken in"})
+			return
+		}
+		// 🔴 The licence is asked for ONCE, for the whole set, and only when something is
+		// actually going to be downloaded: the staged parts above were accepted when they were
+		// taken in, and asking again for bytes this deployment already owns is a dialog that
+		// teaches people to click through dialogs.
+		if !b.LicenseAccepted {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestNotAccepted,
+				"taking " + p.Repo + "/" + p.File + " in needs its licence accepted first"})
+			return
+		}
+		ing := a.reg.ingester()
+		if ing == nil {
+			writeAPIErr(w, &apiError{http.StatusServiceUnavailable, errCodeIngestUnavailable,
+				"this deployment's engine stack declares no ingest task — stage " + p.File + " by hand and attach it"})
+			return
+		}
+		job, aerr := ing.start(ctx, engineIngestRequest{
+			Role: key, ModelID: id, S3Key: fu.S3Key,
+			AcceptedBy: g.ident.ID, AcceptedTenant: g.tenantID,
+			AcceptedLicense: engineLicenceLabel(fu.Resolved),
+			Resolved:        fu.Resolved, FileFlag: p.Flag, Attach: true,
+		})
+		if aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		a.auditFor(r, g, "engine."+key+".ingest",
+			fu.S3Key+" for "+id+" from "+fu.Resolved.Source+" (licence "+engineLicenceLabel(fu.Resolved)+" accepted)")
+		started = append(started, engineIngestJobRow(job))
+	}
+	action := "attached"
+	if len(started) > 0 {
+		action = "job_started"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"action": action, "attached": attached, "jobs": started})
 }

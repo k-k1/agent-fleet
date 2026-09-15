@@ -291,6 +291,81 @@ describe("model catalogue pane", () => {
     expect((button("取り込む") as HTMLButtonElement).disabled).toBe(false);
   });
 
+  // 🔴 One press, three files. Taking Anima's diffusion model in alone leaves a row that cannot
+  // be enabled and points at two files in another repository — which is what "I took it in and
+  // do not know what to do" was made of.
+  it("offers a split family's other files in the same press", async () => {
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [{ ...imageRow, base_models: ["anima"] }] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    let sent: Record<string, unknown> | undefined;
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "circlestone-labs/Anima", model_ref: "circlestone-labs/Anima", name: "Anima" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "anima-aesthetic-v1.1.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) return Promise.resolve({
+        bytes: 4_180_000_000, can_ingest: true, base_model_suggest: "anima",
+        family_parts: [
+          { flag: "--clip_l", repo: "circlestone-labs/Anima", file: "split_files/text_encoders/qwen_3_06b_base.safetensors", s3_key: "image/text_encoders/qwen_3_06b_base.safetensors", bytes: 1_190_000_000, license: "other" },
+          { flag: "--vae", repo: "circlestone-labs/Anima", file: "split_files/vae/qwen_image_vae.safetensors", s3_key: "image/vae/qwen_image_vae.safetensors", staged: true, bytes: 253_800_000 },
+        ],
+        family_parts_bytes: 1_190_000_000,
+      });
+      if (path.endsWith("/ingest")) { sent = body; return Promise.resolve({ id: "job1" }); }
+      return Promise.resolve({});
+    });
+    await mount();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+    // Each part says what it is and what it costs, and the one already here says so instead of
+    // a size — a number beside bytes nobody will spend is what makes a total untrustworthy.
+    const offer = document.querySelector(".engine-operation-parts")!;
+    expect(offer.textContent).toContain("--clip_l");
+    expect(offer.textContent).toContain("--vae");
+    expect(offer.textContent).toContain("配備が既に持っています");
+    const parts = offer.querySelector("input") as HTMLInputElement;
+    expect(parts.checked).toBe(true);
+
+    const licence = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+      .find((input) => input.parentElement?.textContent?.includes("ライセンス"))!;
+    await act(async () => { licence.click(); });
+    await click(button("取り込む"));
+    expect(sent?.with_family_parts).toBe(true);
+  });
+
+  // The rows that already exist — the ones a deployment has before any of this shipped.
+  it("marks an incomplete row and completes it in one press", async () => {
+    const incomplete = {
+      ...imageRow,
+      base_models: ["anima"],
+      model_rows: [{ id: "anima-aesthetic", enabled: false, base_model: "anima",
+        files_missing: ["--clip_l", "--vae"],
+        file_rows: [{ s3Key: "image/diffusion_models/anima.safetensors", flag: "--diffusion-model" }] }],
+    };
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [incomplete] });
+      if (path.endsWith("/storage")) return Promise.resolve({ files: [] });
+      if (path.endsWith("/ingest")) return Promise.resolve({ jobs: [] });
+      return Promise.resolve({});
+    });
+    let called = "";
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/parts")) { called = path; return Promise.resolve({ action: "attached", attached: 2 }); }
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered();
+    const card = document.querySelector('[aria-label="anima-aesthetic"]')!;
+    // 🔴 The mark the wire has carried since P2 and this screen never drew: without it an
+    // unusable row looks like any other.
+    expect(card.textContent).toContain("--clip_l");
+    await click(button("不足ファイルを揃える"));
+    expect(called).toBe("api/admin/engines/image/models/anima-aesthetic/parts");
+    expect(document.body.textContent).toContain("ダウンロードは発生していません");
+  });
+
   it("invalidates pagination when the visible query changes", async () => {
     api.mockImplementation((path: string) => {
       if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [imageRow] });

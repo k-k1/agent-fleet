@@ -1423,3 +1423,28 @@ a.engines-model-source:hover {
   .engine-catalog-card-main { min-height: 0; }
   .engine-catalog-thumb { flex-basis: 76px; width: 76px; height: 90px; }
 }
+
+/* The split family's parts, offered as one set on the ingest form. The list is inside the
+   checkbox's label so the whole block is one hit target, which is why it is not a <ul> beside
+   it: a person deciding "take these too" is deciding about the list, not about a line. */
+.engine-operation-parts-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--dialog-muted);
+}
+
+.engine-operation-parts-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.engine-registered-parts-note {
+  margin: 0 0 10px;
+  font-size: 12px;
+}

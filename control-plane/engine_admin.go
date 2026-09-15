@@ -111,6 +111,7 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// property of how often somebody opens a screen.
 	mux.HandleFunc("POST /api/admin/engines/{key}/models/vae-scan", a.withIngestAdmin(a.scanVae))
 	mux.HandleFunc("POST /api/admin/engines/{key}/models/{id}/vae", a.withIngestAdmin(a.fixVae))
+	mux.HandleFunc("POST /api/admin/engines/{key}/models/{id}/parts", a.withIngestAdmin(a.fixParts))
 	// The discovery button (ADR 0082 decisions 6 and 7): what an external ComfyUI's own
 	// checkpoint/LoRA/VAE folders currently hold, read off its /object_info and offered as
 	// candidates. Under ingest authority, not super_admin only — the same predicate the ingest
@@ -1939,6 +1940,20 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 		}
 		row := m
 		existing = &row
+	}
+	// 🔴 A PART cannot be a row of its own. Observed on af-sandbox 2026-09-15: taking Anima's
+	// text encoder in with "new" rather than "attach" registers a catalogue entry whose only
+	// file is an encoder — it appears in the registered list as if it were a model, it can never
+	// be enabled (no family's template reads a row like that), and the one thing an operator
+	// wanted, the encoder ON the checkpoint's row, did not happen.
+	//
+	// Refused rather than tidied afterwards: the row is the misunderstanding, and the act the
+	// person meant has its own name on the same screen.
+	if flag != "" && !b.Attach && !b.Replace {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"a " + flag + " file is a PART of a model, not a model: choose the row it belongs to and attach it," +
+				" or take the checkpoint in with its family's parts in one act"})
+		return
 	}
 	if b.Attach {
 		if aerr := engineAttachAllowed(existing, id, key, flag); aerr != nil {
