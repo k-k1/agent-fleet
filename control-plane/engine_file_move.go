@@ -115,7 +115,7 @@ func (a engineAdminAPI) engineMainFileMovable(ctx context.Context, held enginePa
 	}
 	// The destination, by the same rule every upload obeys: a key another row or another job
 	// already names is not a vacant filename.
-	if ref := engineIngestDestinationUnused(ctx, a.mgr.store, a.mgr.store, role, fix.To); ref != nil {
+	if ref := engineIngestDestinationUnused(ctx, a.mgr.store, a.mgr.store, held.storage, role, fix.To); ref != nil {
 		return ref
 	}
 	// And the bytes themselves. A declaration whose object was purged is a row to take in again,
