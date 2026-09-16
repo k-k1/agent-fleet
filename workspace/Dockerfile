@@ -84,7 +84,7 @@ ARG BAKE_OPTIONAL_TOOLS=1
 # stored URL + service-account token and -disable-write -disable-admin). Works
 # against self-hosted / Grafana Cloud / Amazon Managed Grafana. Bump
 # MCP_GRAFANA_VERSION to upgrade (ARG pin busts the cache; same idiom as GH_VERSION).
-ARG MCP_GRAFANA_VERSION=1.4.0
+ARG MCP_GRAFANA_VERSION=1.4.2
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) mgarch=x86_64 ;; arm64) mgarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -126,7 +126,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # `/usr/bin/python3` へのリンクなので、interpreter の major が動いた日に**リンクは切れず、
 # 黙って新しい python で起動して site-packages を見失う**——`test -x` は通ってしまう型で
 # ある（docs/decisions/0068 決定 4）。import 名は実インストールで確認済み。
-ARG AWS_MCP_PROXY_VERSION=1.6.6
+ARG AWS_MCP_PROXY_VERSION=1.7.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
@@ -215,7 +215,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/log/35
 # §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
-ARG AWSCLI_VERSION=2.36.43
+ARG AWSCLI_VERSION=2.36.46
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -240,7 +240,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # (gh-auth-wrapper.sh) にする。ラッパーが呼び出しのたびに git と同一の cred helper
 # からトークンを取り出し GH_TOKEN に注入するので、`gh auth login` 不要で gh が使える
 # （docs/build/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
-ARG GH_VERSION=2.100.0
+ARG GH_VERSION=2.101.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
