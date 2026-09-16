@@ -124,11 +124,11 @@ Go は **2 モジュール**（`control-plane/` と `workspace/agent/`）でそ�
 
 - CP 側は `httptest` ベースのスモークを多数含む（audit / egress / 内部 git smart-HTTP / LFS /
   store 両実装など）。Postgres 系は `AF_TEST_DATABASE_URL` 未設定なら skip。
-- ⚠️ **マイグレーションを足したときは、実 Postgres でも 1 度回すこと。** skip される
-  `TestPostgresStore` / `TestPostgresDeleteCascade` / `TestSchemaDialectParity` の 3 本が
-  「片方の系列にだけ足した」を捕まえる唯一の場所（CI は `AF_TEST_DATABASE_URL` を持たない。
-  [06 §6.4](06-data.ja.md)）。Workspace では `af-db` がインストール・初期化・起動を担う。
-  完了の定義は 4 PASS、0 SKIP:
+- ⚠️ **マイグレーションを足したときは、実 Postgres でも 1 度回すこと。** 下の `-run` パターンは
+  4 本にマッチし、そのうち `TestPostgresStore` / `TestPostgresDeleteCascade` /
+  `TestSchemaDialectParity` の 3 本が「片方の系列にだけ足した」を捕まえる唯一の場所
+  （CI は `AF_TEST_DATABASE_URL` を持たない。[06 §6.4](06-data.ja.md)）。
+  Workspace では `af-db` がインストール・初期化・起動を担う。完了の定義は 4 PASS、0 SKIP:
 
 ```bash
 # Workspace 内（af-db が使える場合）:

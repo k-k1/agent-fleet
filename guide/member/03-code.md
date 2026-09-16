@@ -175,16 +175,17 @@ Bitbucket tokens are refreshed automatically even after they expire.
 ## Running database-backed tests
 
 Postgres is available inside the workspace without Docker or any external service. `af-db url`
-returns a connection URL for the current working copy's database, starting and creating it on
-first call.
+returns a connection URL for the current working copy's database — downloading, initialising, and
+starting the server on first call if needed (first use may take a minute). The server idle-stops
+after 30 minutes of no connections.
 
 ```bash
-# Pass the URL directly to a test run
-AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 ./...
-
-# Or export it into the current shell (also sets DATABASE_URL)
+# Export DATABASE_URL into the current shell
 eval "$(af-db env)"
 go test -count=1 ./...
+
+# Or pass the URL under your project's own variable name
+MY_DB_URL="$(af-db url)" go test -count=1 ./...
 ```
 
 Check what is running with `af-db status`. When you are done, stop the server:
@@ -200,11 +201,12 @@ A few things worth knowing:
 
 - **One database per working copy.** Two sessions that share the same working copy share the same
   database. To address a named database explicitly, use `af-db url --db=<name>`.
-- **`--tcp`** — use when the test driver requires TCP (for example, `jdbc:postgresql://127.0.0.1:…`).
-  The default URL uses a unix socket, which most Go and Python clients support but JDBC cannot.
-- **`--persist`** — forces the database files onto the home volume so they survive a workspace
-  stop. Only meaningful on ECS deployments where the default disk is task-local and cleared on
-  stop; on docker and native deployments the files already persist across stops.
+- **`af-db url --tcp`** — use when the test driver requires TCP (for example,
+  `jdbc:postgresql://127.0.0.1:…`). The default URL uses a unix socket, which most Go and Python
+  clients support but JDBC cannot.
+- **`af-db up --persist`** — forces the database files onto the home volume so they survive a
+  workspace stop. Only meaningful on ECS deployments where the default disk is task-local and
+  cleared on stop; on docker and native deployments the files already persist across stops.
 - Install `psql` with `workspace-agent install-pg-client`.
 - MySQL is not yet available.
 

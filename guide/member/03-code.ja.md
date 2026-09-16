@@ -168,16 +168,17 @@ push は git の通常操作としてそのまま行えます（端末やエー�
 
 ## DB を使うテストを回す
 
-Workspace の中では、Docker や外部サービス不要で Postgres を使えます。`af-db url` は現在の
-作業コピー用データベースへの接続 URL を返します（初回呼び出し時に起動・作成も行います）。
+ワークスペースの中では、Docker や外部サービス不要で Postgres を使えます。`af-db url` は現在の
+作業コピー用データベースへの接続 URL を返します。初回は必要に応じてダウンロード・初期化・
+起動を行うため数分かかることがあります。サーバは 30 分接続が無いと自動停止します。
 
 ```bash
-# URL をそのままテストに渡す
-AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 ./...
-
-# または現在のシェルにエクスポートする（DATABASE_URL も設定される）
+# DATABASE_URL を現在のシェルにエクスポートする
 eval "$(af-db env)"
 go test -count=1 ./...
+
+# またはプロジェクト固有の変数名で URL を渡す
+MY_DB_URL="$(af-db url)" go test -count=1 ./...
 ```
 
 `af-db status` で稼働状況を確認できます。終わったらサーバを停止します:
@@ -193,14 +194,14 @@ af-db down
 
 - **作業コピーごとに 1 DB。** 同じ作業コピーを使う 2 セッションは同じデータベースを共有
   します。名前で明示的に指定するには `af-db url --db=<name>`。
-- **`--tcp`** — テストドライバが TCP を必要とする場合（例: `jdbc:postgresql://127.0.0.1:…`）に
-  使います。デフォルト URL は unix socket を使います（Go / Python の多くのクライアントは
-  対応していますが、JDBC は unix socket に対応していません）。
-- **`--persist`** — DB ファイルをホームボリュームへ移してストップ後も残します。
+- **`af-db url --tcp`** — テストドライバが TCP を必要とする場合（例:
+  `jdbc:postgresql://127.0.0.1:…`）に使います。デフォルト URL は unix socket を使います
+  （Go / Python の多くのクライアントは対応していますが、JDBC は対応していません）。
+- **`af-db up --persist`** — DB ファイルをホームボリュームへ移してストップ後も残します。
   ECS 配備でデフォルトのディスクがタスクローカルでストップ時に消える場合にのみ意味が
   あります。docker / native 配備ではデフォルトでもストップ後にデータが残ります。
 - `psql` は `workspace-agent install-pg-client` でインストールできます。
-- MySQL はまだ対応していません（P1）。
+- MySQL はまだ対応していません。
 
 ## Subversion（SVN）リポジトリ
 

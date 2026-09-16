@@ -13,8 +13,9 @@ effect after the image is rebuilt.
 ## This environment
 Your own per-user container, driving several sessions from the browser Console. Working copies
 live under `~/repos/<repo>`. You are `dev` (uid 1000): **no root, no `sudo`, no `apt`, no Docker,
-no database servers**. Install into `~/.local`; run DB-backed tests against a service the user
-provides, or skip them and say so.
+no Docker**. Install into `~/.local`; Postgres is available via `af-db` (details:
+`notes/environment.md`); for other DB servers run tests against a service the user provides, or
+skip and say so.
 
 ## What survives (persistence)
 - **"Recreate" deletes only `~/repos`** — every clone, *including uncommitted work*. Commit / push

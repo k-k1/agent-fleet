@@ -127,10 +127,11 @@ Go is **two modules**, run separately:
 
 - The CP side carries many `httptest`-based smoke tests. The Postgres ones skip
   themselves unless a database URL is set.
-- ⚠️ **When you add a migration, run it once against a real Postgres.** Three tests
-  skip without a database, and they are **the only place** that catches "added to one
-  dialect but not the other" ([06 §6.4](06-data.md)). In a Workspace, `af-db` handles
-  install, init, and start; the completion criterion is 4 PASS, 0 SKIP:
+- ⚠️ **When you add a migration, run it once against a real Postgres.** The `-run` pattern
+  below matches four tests; three of them (`TestPostgresStore`, `TestPostgresDeleteCascade`,
+  `TestSchemaDialectParity`) are **the only place** that catches "added to one dialect but not
+  the other" ([06 §6.4](06-data.md)). In a Workspace, `af-db` handles install, init, and start;
+  the completion criterion is 4 PASS, 0 SKIP:
 
 ```bash
 # In a Workspace (af-db available):
