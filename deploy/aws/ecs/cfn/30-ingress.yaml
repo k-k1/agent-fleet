@@ -468,7 +468,7 @@ Resources:
       Scope: REGIONAL
       IPAddressVersion: IPV4
       Addresses: !Ref WafTrustedIpCidrs
-      Description: IPs that bypass the rate-limit rule (office NAT, VPN, etc.)
+      Description: IPs that bypass the rate-limit rule - office NAT and VPN exit nodes
 
   WebAcl:
     Type: AWS::WAFv2::WebACL
