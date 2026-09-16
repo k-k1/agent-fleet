@@ -15,7 +15,15 @@ import (
 // pw="" omits MYSQL_PWD (used before the root password is set).
 // If AF_DB_MYSQL_LIBS is set, prepends it to LD_LIBRARY_PATH.
 func buildMySQLEnv(pw string) []string {
-	env := os.Environ()
+	// Strip any inherited MYSQL_PWD so we never send a stale password from the
+	// caller's environment; we append our own value below when pw is non-empty.
+	base := os.Environ()
+	env := base[:0:len(base)]
+	for _, e := range base {
+		if !strings.HasPrefix(e, "MYSQL_PWD=") {
+			env = append(env, e)
+		}
+	}
 	if libs := os.Getenv("AF_DB_MYSQL_LIBS"); libs != "" {
 		found := false
 		for i, e := range env {
@@ -197,10 +205,10 @@ func startMySQLServer(inst *Instance, persist bool) error {
 	}
 
 	if newInit {
-		// Generate and set the root password.
-		// SQL is passed via stdin, not -e argv, to keep the password out of /proc/cmdline.
+		// Generate a random password into memory first; write the pass file only
+		// after ALTER USER succeeds so the file always matches MySQL's actual state.
 		pp := passPath("mysql", major)
-		pw, err := generatePass(pp)
+		pw, err := generatePassInMemory()
 		if err != nil {
 			srv.Process.Kill() //nolint:errcheck
 			return errStart(fmt.Sprintf("generate mysql password: %v", err))
@@ -219,7 +227,16 @@ func startMySQLServer(inst *Instance, persist bool) error {
 		pwSetCmd.Env = buildMySQLEnv("")
 		if out, err := pwSetCmd.CombinedOutput(); err != nil {
 			srv.Process.Kill() //nolint:errcheck
+			// Datadir is in an unknown state; remove it so the next `af-db up mysql`
+			// re-initializes from scratch rather than trying to start with no password.
+			_ = os.RemoveAll(datadir)
 			return errStart(fmt.Sprintf("set mysql root password: %v\n%s", err, out))
+		}
+		// ALTER succeeded — now persist the password.
+		if err := writePassFile(pp, pw); err != nil {
+			srv.Process.Kill() //nolint:errcheck
+			_ = os.RemoveAll(datadir)
+			return errStart(fmt.Sprintf("write mysql pass file: %v", err))
 		}
 	}
 

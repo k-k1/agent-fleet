@@ -209,6 +209,23 @@ func generatePass(path string) (string, error) {
 	return pw, nil
 }
 
+// generatePassInMemory generates a random 32-hex-char password without writing it to disk.
+func generatePassInMemory() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// writePassFile writes pw to path (mode 0600), creating parent dirs as needed.
+func writePassFile(path, pw string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(pw+"\n"), 0o600)
+}
+
 // readPass reads the password from path, returning "" on any error.
 func readPass(path string) string {
 	b, err := os.ReadFile(path)
@@ -365,7 +382,9 @@ func isRunning(pid int) bool {
 		for _, line := range strings.SplitN(string(data), "\n", 10) {
 			if strings.HasPrefix(line, "State:") {
 				// "State:\tZ (zombie)" — process has exited but not been reaped.
-				return !strings.Contains(line, " Z ")
+				// The separator is a tab, so split on whitespace rather than matching a literal space.
+				f := strings.Fields(line)
+				return !(len(f) >= 2 && f[1] == "Z")
 			}
 		}
 	}
