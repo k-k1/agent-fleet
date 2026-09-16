@@ -1,7 +1,11 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -22,13 +26,6 @@ Filename: pool/main/p/postgresql-17/libpq5_17.11-0+deb13u1_amd64.deb
 Size: 237376
 SHA256: 20a4c9ef58b4baf90deda67cfb2cc062871c062830dddc234d28f5ac7931b86b
 
-Package: postgresql-client-common
-Version: 278
-Architecture: all
-Filename: pool/main/p/postgresql-common/postgresql-client-common_278_all.deb
-Size: 47080
-SHA256: 023e5b37cdeecedcd32b7ea0d799c9696310c4fc659b8123c494e1ad3ca9e726
-
 `
 	pkgs := parseDebPackages(fixture)
 
@@ -44,12 +41,6 @@ SHA256: 023e5b37cdeecedcd32b7ea0d799c9696310c4fc659b8123c494e1ad3ca9e726
 			Version:  "17.11-0+deb13u1",
 			Filename: "pool/main/p/postgresql-17/libpq5_17.11-0+deb13u1_amd64.deb",
 			SHA256:   "20a4c9ef58b4baf90deda67cfb2cc062871c062830dddc234d28f5ac7931b86b",
-		},
-		"postgresql-client-common": {
-			Name:     "postgresql-client-common",
-			Version:  "278",
-			Filename: "pool/main/p/postgresql-common/postgresql-client-common_278_all.deb",
-			SHA256:   "023e5b37cdeecedcd32b7ea0d799c9696310c4fc659b8123c494e1ad3ca9e726",
 		},
 	}
 
@@ -69,7 +60,6 @@ SHA256: 023e5b37cdeecedcd32b7ea0d799c9696310c4fc659b8123c494e1ad3ca9e726
 			t.Errorf("%s: SHA256 = %q, want %q", name, got.SHA256, wp.SHA256)
 		}
 	}
-
 	if _, ok := pkgs["nonexistent"]; ok {
 		t.Error("nonexistent package unexpectedly found")
 	}
@@ -95,11 +85,47 @@ SHA256: abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234
 	}
 }
 
-// TestWrapperContent verifies the wrapper script contains the right paths.
+// TestExtractDeb verifies the pure-Go ar reader against a hand-built .deb.
+// The .deb contains a data.tar with one file; extractDeb should unpack it.
+func TestExtractDeb(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Build a minimal tar archive with one file.
+	const fileContent = "hello from tar"
+	tarData := buildMinimalTar(t, "testfile.txt", []byte(fileContent))
+
+	// Build a minimal ar archive: magic + one member named "data.tar".
+	debData := buildArArchive(t, "data.tar", tarData)
+
+	debPath := filepath.Join(tmp, "test.deb")
+	if err := os.WriteFile(debPath, debData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	destDir := filepath.Join(tmp, "dest")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := extractDeb(debPath, destDir); err != nil {
+		t.Fatalf("extractDeb: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(destDir, "testfile.txt"))
+	if err != nil {
+		t.Fatalf("read extracted file: %v", err)
+	}
+	if string(got) != fileContent {
+		t.Errorf("extracted content = %q, want %q", got, fileContent)
+	}
+}
+
+// TestWrapperContent verifies that writePgWrapper produces a script with the
+// expected binary path and LD_LIBRARY_PATH setting.
 func TestWrapperContent(t *testing.T) {
 	tmp := t.TempDir()
-	binDir := tmp + "/bin"
-	clientRoot := tmp + "/pg-client"
+	binDir := filepath.Join(tmp, "bin")
+	clientRoot := filepath.Join(tmp, "pg-client")
 	major := "17"
 
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -109,7 +135,7 @@ func TestWrapperContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	content, err := os.ReadFile(binDir + "/psql")
+	content, err := os.ReadFile(filepath.Join(binDir, "psql"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +149,48 @@ func TestWrapperContent(t *testing.T) {
 		t.Errorf("wrapper missing lib dir %q\ncontent:\n%s", wantLib, got)
 	}
 	if !strings.Contains(got, "LD_LIBRARY_PATH") {
-		t.Errorf("wrapper missing LD_LIBRARY_PATH")
+		t.Errorf("wrapper missing LD_LIBRARY_PATH\ncontent:\n%s", got)
 	}
+}
+
+// buildMinimalTar creates an uncompressed tar archive with one file.
+func buildMinimalTar(t *testing.T, name string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{
+		Name: name,
+		Mode: 0o644,
+		Size: int64(len(content)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// buildArArchive builds a minimal ar archive with one member.
+// The ar format: 8-byte magic + per-member 60-byte header + data.
+func buildArArchive(t *testing.T, memberName string, data []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	buf.WriteString("!<arch>\n")
+	// ar member header (60 bytes):
+	//   name(16) + mtime(12) + uid(6) + gid(6) + mode(8) + size(10) + magic(2)
+	hdr := fmt.Sprintf("%-16s%-12d%-6d%-6d%-8s%-10d`\n",
+		memberName, 0, 0, 0, "100644", len(data))
+	if len(hdr) != 60 {
+		t.Fatalf("ar header length = %d, want 60", len(hdr))
+	}
+	buf.WriteString(hdr)
+	buf.Write(data)
+	if len(data)%2 != 0 {
+		buf.WriteByte('\n') // ar padding
+	}
+	return buf.Bytes()
 }

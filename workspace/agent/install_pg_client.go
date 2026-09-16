@@ -2,15 +2,15 @@ package main
 
 // install_pg_client.go — workspace-agent install-pg-client [<major>]
 //
-// Installs postgresql-client-<major>, libpq5, and postgresql-client-common from
-// the Debian trixie Packages index without root. Package version and SHA256 are
-// read from the index at install time — no pinned filenames.
+// Installs postgresql-client-<major> and libpq5 from the Debian trixie Packages
+// index without root. Package version and SHA256 are read from the index at
+// install time — no pinned filenames, so Debian can update debs in place.
 //
 // A pure-Go ar reader extracts data.tar.* from each .deb; tar then unpacks it
 // into ~/.local/share/agent-fleet/pg-client/. Wrappers with LD_LIBRARY_PATH are
 // written to ~/.local/bin/{psql,pg_dump,pg_restore}.
 //
-// Exit codes: 0 ok, 1 error, 2 usage.
+// Exit codes: 0 ok, 1 error, 2 usage, 3 sha mismatch.
 
 import (
 	"compress/gzip"
@@ -22,8 +22,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
+
+// debMirrorURL is the Debian mirror base. Overridable in tests.
+var debMirrorURL = "https://deb.debian.org/debian"
 
 func runInstallPgClient(args []string) {
 	major := pgDefaultMajor
@@ -37,6 +41,10 @@ func runInstallPgClient(args []string) {
 		os.Exit(2)
 	}
 	if err := installPgClient(major); err != nil {
+		if _, ok := err.(*pgSHAMismatch); ok {
+			fmt.Fprintf(os.Stderr, "[install-pg-client] %v\n", err)
+			os.Exit(3)
+		}
 		fmt.Fprintf(os.Stderr, "[install-pg-client] %v\n", err)
 		os.Exit(1)
 	}
@@ -45,6 +53,43 @@ func runInstallPgClient(args []string) {
 // pgClientRoot is where the merged extracted .deb trees land.
 func pgClientRoot() string {
 	return filepath.Join(agentFleetShareDir(), "pg-client")
+}
+
+// pgClientBin returns the path to a specific binary for the given major inside
+// the extracted pg-client tree.
+func pgClientBin(major, bin string) string {
+	return filepath.Join(pgClientRoot(), "usr", "lib", "postgresql", major, "bin", bin)
+}
+
+// pgClientInstallStaging is the fixed staging path for pg-client installs.
+// Same filesystem as agentFleetShareDir() → rename is atomic.
+func pgClientInstallStaging() string {
+	return filepath.Join(agentFleetShareDir(), "pg-client-install")
+}
+
+func pgClientInstallLockPath() string {
+	return filepath.Join(agentFleetShareDir(), ".pg-client-install.lock")
+}
+
+func pgClientInstallLock() (func(), error) {
+	if err := os.MkdirAll(agentFleetShareDir(), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(pgClientInstallLockPath(), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fmt.Fprintln(os.Stderr, "[install-pg-client] another install is in progress; waiting ...")
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("flock: %w", err)
+		}
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 // debArch returns the Debian architecture string for this container.
@@ -80,26 +125,28 @@ type debPkg struct {
 }
 
 func installPgClient(major string) error {
-	psqlWrapper := filepath.Join(homeDir(), ".local", "bin", "psql")
-	if fileExecutable(psqlWrapper) {
+	psqlBin := pgClientBin(major, "psql")
+
+	// Fast path (pre-lock): major-specific binary present.
+	if fileExecutable(psqlBin) {
 		fmt.Fprintf(os.Stderr, "[install-pg-client] pg-client %s already installed\n", major)
-		return nil
+		return ensurePgWrappers(major)
 	}
 
+	// Resolve packages before taking the lock (network call).
 	arch := debArch()
-	pkgsURL := fmt.Sprintf(
-		"https://deb.debian.org/debian/dists/trixie/main/binary-%s/Packages.gz", arch,
-	)
+	pkgsURL := fmt.Sprintf("%s/dists/trixie/main/binary-%s/Packages.gz", debMirrorURL, arch)
 	fmt.Fprintf(os.Stderr, "[install-pg-client] fetching %s ...\n", pkgsURL)
 	index, err := fetchDebPackages(pkgsURL)
 	if err != nil {
 		return err
 	}
 
+	// postgresql-client-common is not needed at runtime (wrappers exec the binary
+	// directly, bypassing pg_wrapper), so we only install the client and libpq.
 	wanted := []string{
 		"postgresql-client-" + major,
 		"libpq5",
-		"postgresql-client-common",
 	}
 	pkgs := make([]debPkg, 0, len(wanted))
 	for _, name := range wanted {
@@ -110,12 +157,25 @@ func installPgClient(major string) error {
 		pkgs = append(pkgs, p)
 	}
 
+	unlock, err := pgClientInstallLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	// Re-check under lock.
+	if fileExecutable(psqlBin) {
+		fmt.Fprintf(os.Stderr, "[install-pg-client] pg-client %s already installed (by a concurrent run)\n", major)
+		return ensurePgWrappers(major)
+	}
+
 	shareDir := agentFleetShareDir()
 	if err := os.MkdirAll(shareDir, 0o755); err != nil {
 		return err
 	}
-	staging, err := os.MkdirTemp(shareDir, ".pg-client-")
-	if err != nil {
+	staging := pgClientInstallStaging()
+	_ = os.RemoveAll(staging)
+	if err := os.MkdirAll(staging, 0o755); err != nil {
 		return err
 	}
 	defer os.RemoveAll(staging)
@@ -125,9 +185,8 @@ func installPgClient(major string) error {
 		return err
 	}
 
-	const debBase = "https://deb.debian.org/debian/"
 	for _, pkg := range pkgs {
-		url := debBase + pkg.Filename
+		url := debMirrorURL + "/" + pkg.Filename
 		debPath := filepath.Join(staging, filepath.Base(pkg.Filename))
 		fmt.Fprintf(os.Stderr, "[install-pg-client] downloading %s (%s) ...\n", pkg.Name, pkg.Version)
 		if err := runCmd("curl", "-fsSL", "--retry", "3", "--retry-delay", "2",
@@ -139,8 +198,9 @@ func installPgClient(major string) error {
 			return err
 		}
 		if got != pkg.SHA256 {
-			return fmt.Errorf("sha256 mismatch for %s\n  got:  %s\n  want: %s",
-				url, got, pkg.SHA256)
+			return &pgSHAMismatch{fmt.Sprintf(
+				"sha256 mismatch for %s\n  got:  %s\n  want: %s", url, got, pkg.SHA256,
+			)}
 		}
 		if err := extractDeb(debPath, extractRoot); err != nil {
 			return fmt.Errorf("extract %s: %w", pkg.Name, err)
@@ -151,7 +211,6 @@ func installPgClient(major string) error {
 	libDir := filepath.Join(extractRoot, "usr", "lib", debLibTriplet())
 	makeLibpqSymlink(libDir)
 
-	// Atomic place.
 	dest := pgClientRoot()
 	_ = os.RemoveAll(dest)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -161,21 +220,33 @@ func installPgClient(major string) error {
 		return err
 	}
 
-	binDir := filepath.Join(homeDir(), ".local", "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	if err := ensurePgWrappers(major); err != nil {
 		return err
 	}
-	for _, bin := range []string{"psql", "pg_dump", "pg_restore"} {
-		if err := writePgWrapper(binDir, dest, major, bin); err != nil {
-			return err
-		}
-	}
 
+	psqlWrapper := filepath.Join(homeDir(), ".local", "bin", "psql")
 	out, err := exec.Command(psqlWrapper, "--version").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("psql --version: %w\n%s", err, string(out))
 	}
 	fmt.Fprintf(os.Stderr, "[install-pg-client] installed: %s\n", strings.TrimSpace(string(out)))
+	return nil
+}
+
+// ensurePgWrappers writes (or overwrites) ~/.local/bin/{psql,pg_dump,pg_restore}.
+// Wrappers are always rewritten — they are small and the major may differ from
+// what a prior install wrote.
+func ensurePgWrappers(major string) error {
+	binDir := filepath.Join(homeDir(), ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return err
+	}
+	dest := pgClientRoot()
+	for _, bin := range []string{"psql", "pg_dump", "pg_restore"} {
+		if err := writePgWrapper(binDir, dest, major, bin); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -231,7 +302,9 @@ func parseDebPackages(text string) map[string]debPkg {
 }
 
 // extractDeb extracts the data.tar.* payload from a .deb file into destDir.
-// Uses a pure-Go ar reader so no external ar binary is required.
+// Uses a pure-Go ar reader — no external ar binary required.
+// Note: data.tar.zst is not supported because trixie ships .xz and this
+// container lacks zstd; tar -xf will fail with a clear error if .zst is ever used.
 func extractDeb(debPath, destDir string) error {
 	f, err := os.Open(debPath)
 	if err != nil {
@@ -239,7 +312,6 @@ func extractDeb(debPath, destDir string) error {
 	}
 	defer f.Close()
 
-	// Verify ar magic header.
 	magic := make([]byte, 8)
 	if _, err := io.ReadFull(f, magic); err != nil {
 		return fmt.Errorf("read ar magic: %w", err)
@@ -248,7 +320,6 @@ func extractDeb(debPath, destDir string) error {
 		return fmt.Errorf("%s: not an ar archive", debPath)
 	}
 
-	// Walk members looking for data.tar.*.
 	for {
 		var hdr [60]byte
 		if _, err := io.ReadFull(f, hdr[:]); err != nil {
@@ -274,7 +345,7 @@ func extractDeb(debPath, destDir string) error {
 			return nil
 		}
 
-		// Skip over this member (ar pads to even byte boundary).
+		// Skip member (ar pads to even byte boundary).
 		skip := size
 		if size%2 != 0 {
 			skip++
@@ -286,8 +357,8 @@ func extractDeb(debPath, destDir string) error {
 	return fmt.Errorf("%s: no data.tar.* member", debPath)
 }
 
-// writeArMember copies exactly size bytes from r into a new file at path, then
-// consumes the padding byte if size is odd.
+// writeArMember copies exactly size bytes from r into a new file at path,
+// then consumes the ar padding byte if size is odd.
 func writeArMember(r io.Reader, path string, size int64) error {
 	out, err := os.Create(path)
 	if err != nil {
@@ -310,6 +381,7 @@ func writeArMember(r io.Reader, path string, size int64) error {
 }
 
 // makeLibpqSymlink creates libpq.so.5 → libpq.so.5.N in libDir if not present.
+// ldconfig normally creates this symlink; we do it manually since we have no root.
 func makeLibpqSymlink(libDir string) {
 	entries, err := os.ReadDir(libDir)
 	if err != nil {

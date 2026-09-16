@@ -30,102 +30,82 @@ func TestPgVersionGT(t *testing.T) {
 	}
 }
 
-// TestZonkyLatestVersion exercises the maven-metadata parser against a test server.
+// TestZonkyLatestVersion verifies that zonkyLatestVersion picks the highest plain
+// release version for a major from a maven-metadata.xml served by httptest.
 func TestZonkyLatestVersion(t *testing.T) {
 	meta := `<?xml version="1.0"?>
 <metadata>
   <versioning>
     <versions>
+      <version>16.9.0</version>
       <version>17.6.0</version>
       <version>17.6.0-1</version>
       <version>17.11.0</version>
       <version>18.1.0</version>
-      <version>16.9.0</version>
     </versions>
   </versioning>
 </metadata>`
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, meta)
 	}))
 	defer srv.Close()
 
-	// The function builds its own URL from the classifier; we can't easily inject the server URL.
-	// Instead we test parseDebPackages (pg client) and zonkyLatestVersion indirectly via
-	// the version-comparison logic, which is fully unit-testable.
-	_ = srv // server is used in integration-style tests; unit path covered by TestPgVersionGT
+	origURL := zonkyBaseURL
+	zonkyBaseURL = srv.URL
+	defer func() { zonkyBaseURL = origURL }()
 
-	// Verify that hyphenated versions are skipped and the highest plain release wins.
-	versions := []string{"17.6.0", "17.6.0-1", "17.11.0", "18.1.0", "16.9.0"}
-	prefix := "17."
-	latest := ""
-	for _, v := range versions {
-		if !strings.HasPrefix(v, prefix) || strings.Contains(v, "-") {
-			continue
-		}
-		if pgVersionGT(v, latest) {
-			latest = v
-		}
-	}
-	if latest != "17.11.0" {
-		t.Errorf("expected latest=17.11.0, got %q", latest)
-	}
-}
-
-// TestPgSHAMismatchExitCode3 verifies that sha mismatch produces pgSHAMismatch.
-func TestPgSHAMismatchExitCode3(t *testing.T) {
-	tmp := t.TempDir()
-	jarPath := filepath.Join(tmp, "pg.jar")
-	if err := os.WriteFile(jarPath, []byte("wrong content"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, err := fileSHA256(jarPath)
+	ver, err := zonkyLatestVersion("linux-amd64", "17")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("zonkyLatestVersion: %v", err)
 	}
-	wrongSHA := "0000000000000000000000000000000000000000000000000000000000000000"
-	if got == wrongSHA {
-		t.Skip("unlikely collision")
-	}
-	e := &pgSHAMismatch{fmt.Sprintf("sha256 mismatch for url\n  got:  %s\n  want: %s", got, wrongSHA)}
-	if _, ok := interface{}(e).(*pgSHAMismatch); !ok {
-		t.Fatal("not a pgSHAMismatch")
+	if ver != "17.11.0" {
+		t.Errorf("got %q, want 17.11.0 (hyphenated 17.6.0-1 and other majors must be skipped)", ver)
 	}
 }
 
-// TestNoStagingResidue verifies that the staging directory is removed after install.
-// We simulate a failed download by pointing at a server that 404s, then check
-// the staging dirs under agentFleetShareDir() are cleaned up.
-func TestNoStagingResidue(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-
+// TestInstallPostgresSHAMismatch verifies that a sha mismatch returns *pgSHAMismatch
+// and leaves no staging residue.
+func TestInstallPostgresSHAMismatch(t *testing.T) {
+	const wrongSHA = "0000000000000000000000000000000000000000000000000000000000000000"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/maven-metadata.xml"):
+			fmt.Fprint(w, `<?xml version="1.0"?><metadata><versioning><versions><version>16.1.0</version></versions></versioning></metadata>`)
+		case strings.HasSuffix(r.URL.Path, ".sha256"):
+			fmt.Fprint(w, wrongSHA)
+		default:
+			// Return real bytes so curl exits 0, but sha will not match wrongSHA.
+			fmt.Fprint(w, "fake jar content")
+		}
 	}))
 	defer srv.Close()
 
-	// We can't override the download URL in doInstallPostgres without refactoring,
-	// but we can verify the share directory is clean after a no-op path (already installed).
-	dest := filepath.Join(tmp, ".local", "share", "agent-fleet", "postgres", "17")
-	binDir := filepath.Join(dest, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatal(err)
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	origURL := zonkyBaseURL
+	zonkyBaseURL = srv.URL
+	defer func() { zonkyBaseURL = origURL }()
+
+	// Use major 16 so the sidecar path is taken (not the versions.json pin path).
+	err := installPostgres("16")
+	if err == nil {
+		t.Fatal("expected error on sha mismatch, got nil")
 	}
-	fake := filepath.Join(binDir, "initdb")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho initdb"), 0o755); err != nil {
-		t.Fatal(err)
+	if _, ok := err.(*pgSHAMismatch); !ok {
+		t.Fatalf("expected *pgSHAMismatch, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), wrongSHA) {
+		t.Errorf("error message should include expected sha %q\ngot: %s", wrongSHA, err.Error())
 	}
 
-	t.Setenv("AF_DB_POSTGRES_ROOT", dest)
-	if err := installPostgres("17"); err != nil {
-		t.Fatalf("expected no-op: %v", err)
-	}
-	// Check no staging dirs left behind.
+	// Staging dir must be gone.
 	share := filepath.Join(tmp, ".local", "share", "agent-fleet")
-	entries, _ := os.ReadDir(share)
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".pg-") {
-			t.Errorf("staging residue found: %s", e.Name())
+	if entries, readErr := os.ReadDir(share); readErr == nil {
+		for _, e := range entries {
+			if e.Name() == "pg-16-install" {
+				t.Errorf("staging dir not cleaned up: %s", e.Name())
+			}
 		}
 	}
 }

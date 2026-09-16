@@ -88,9 +88,9 @@ var toolSpecs = []toolSpec{
 	// `kiro-cli --version` prints "kiro-cli 2.14.1".
 	{Name: "kiro", Cmd: "kiro-cli", Baked: "/usr/local/bin/kiro-cli", Pin: "kiro"},
 	// psql is installed on-demand by workspace-agent install-pg-client into ~/.local/bin.
-	// The pin key "postgres" is the Zonky version (e.g. 17.11.0), not the psql version;
-	// psql itself reports the same PostgreSQL major.minor build number.
-	{Name: "postgres", Cmd: "psql", Baked: "", Pin: "postgres"},
+	// No Pin: versions.json "postgres" is the Zonky server version (e.g. 17.11.0) while
+	// psql reports the Debian client version (17.11); comparing them produces false drift.
+	{Name: "postgres", Cmd: "psql", Baked: ""},
 	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk", Pin: "rtk"},
 	{Name: "gh", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"}, // /usr/local/bin/gh is the transparent-auth wrapper
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},

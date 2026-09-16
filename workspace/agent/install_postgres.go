@@ -10,7 +10,7 @@ package main
 // sha256 verified against Maven Central's .sha256 sidecar.
 //
 // Install path: ~/.local/share/agent-fleet/postgres/<major>/{bin,lib,share}
-// AF_DB_POSTGRES_ROOT overrides the per-major dir root for tests.
+// AF_DB_POSTGRES_ROOT overrides the per-major dir for tests.
 //
 // Exit codes: 0 ok, 2 usage, 3 sha mismatch (message names URL + both shas).
 
@@ -26,24 +26,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
-// fileSHA256 returns the hex-encoded SHA-256 digest of the file at path.
-func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
 const pgDefaultMajor = "17"
+
+// zonkyBaseURL is the Maven Central Zonky postgres artifact root.
+// Overridable in tests via package variable so httptest servers can be used.
+var zonkyBaseURL = "https://repo1.maven.org/maven2/io/zonky/test/postgres"
 
 // zonkyArtifact returns the Maven artifact classifier and txz member name.
 // amd64: classifier="linux-amd64", member="postgres-linux-x86_64.txz"
@@ -61,10 +52,7 @@ func zonkyArtifact() (classifier, member string, err error) {
 
 func zonkyJarURL(classifier, ver string) string {
 	art := "embedded-postgres-binaries-" + classifier
-	return fmt.Sprintf(
-		"https://repo1.maven.org/maven2/io/zonky/test/postgres/%s/%s/%s-%s.jar",
-		art, ver, art, ver,
-	)
+	return fmt.Sprintf("%s/%s/%s/%s-%s.jar", zonkyBaseURL, art, ver, art, ver)
 }
 
 // pgInstallDir returns the install root for a given major. Respects
@@ -76,8 +64,46 @@ func pgInstallDir(major string) string {
 	return filepath.Join(agentFleetShareDir(), "postgres", major)
 }
 
-// pgSHAMismatch is returned on sha256 verification failure so the caller
-// can exit with code 3.
+// pgInstallStaging returns the fixed staging path for a postgres major.
+// Same filesystem as agentFleetShareDir() → os.Rename is atomic.
+// Wiped at the start of each install run so a SIGKILL leaves at most one
+// install-worth of residue rather than accumulating per attempt (kiro's
+// kiroInstallStaging follows the same convention).
+func pgInstallStaging(major string) string {
+	return filepath.Join(agentFleetShareDir(), "pg-"+major+"-install")
+}
+
+func pgInstallLockPath(major string) string {
+	return filepath.Join(agentFleetShareDir(), ".pg-"+major+"-install.lock")
+}
+
+// pgInstallLock takes the exclusive cross-process flock for this major.
+// L2 calls workspace-agent install-postgres from subprocesses (af-db url
+// ensureInstalled); without this two concurrent callers race on os.RemoveAll
+// and os.Rename in doInstallPostgres. Returns an unlock function.
+func pgInstallLock(major string) (func(), error) {
+	if err := os.MkdirAll(agentFleetShareDir(), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(pgInstallLockPath(major), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fmt.Fprintf(os.Stderr, "[install-postgres] another install of postgres %s is in progress; waiting ...\n", major)
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("flock: %w", err)
+		}
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
+// pgSHAMismatch is returned when the downloaded jar's sha256 does not match
+// the expected value. runInstallPostgres exits with code 3 for this error.
 type pgSHAMismatch struct{ msg string }
 
 func (e *pgSHAMismatch) Error() string { return e.msg }
@@ -110,11 +136,15 @@ func installPostgres(major string) error {
 	}
 
 	dest := pgInstallDir(major)
+
+	// Fast path (pre-lock): already installed.
 	if fileExecutable(filepath.Join(dest, "bin", "initdb")) {
 		fmt.Fprintf(os.Stderr, "[install-postgres] postgres %s already installed at %s\n", major, dest)
 		return nil
 	}
 
+	// Resolve version and sha before taking the lock to avoid holding it
+	// during network calls. For the default major the pin avoids any network.
 	var ver, sha string
 	pins := readBuildPins()
 	if major == pgDefaultMajor && pins["postgres"] != "" && pins["postgres_sha256"] != "" {
@@ -125,11 +155,23 @@ func installPostgres(major string) error {
 		if err != nil {
 			return err
 		}
-		url := zonkyJarURL(classifier, ver)
-		sha, err = fetchRemoteSHA256(url + ".sha256")
+		sha, err = fetchRemoteSHA256(zonkyJarURL(classifier, ver) + ".sha256")
 		if err != nil {
 			return err
 		}
+	}
+
+	// Serialise across concurrent installs.
+	unlock, err := pgInstallLock(major)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	// Re-check under lock: another process may have finished while we waited.
+	if fileExecutable(filepath.Join(dest, "bin", "initdb")) {
+		fmt.Fprintf(os.Stderr, "[install-postgres] postgres %s already installed at %s (by a concurrent run)\n", major, dest)
+		return nil
 	}
 
 	return doInstallPostgres(major, classifier, member, ver, sha, dest)
@@ -142,8 +184,11 @@ func doInstallPostgres(major, classifier, member, ver, sha, dest string) error {
 	if err := os.MkdirAll(shareDir, 0o755); err != nil {
 		return err
 	}
-	staging, err := os.MkdirTemp(shareDir, ".pg-"+major+"-")
-	if err != nil {
+	// Fixed staging dir wiped at start: a SIGKILL leaves at most one install's
+	// worth of residue. defer cleans it on normal or error exit.
+	staging := pgInstallStaging(major)
+	_ = os.RemoveAll(staging)
+	if err := os.MkdirAll(staging, 0o755); err != nil {
 		return err
 	}
 	defer os.RemoveAll(staging)
@@ -155,7 +200,7 @@ func doInstallPostgres(major, classifier, member, ver, sha, dest string) error {
 		return fmt.Errorf("download %s: %w", url, err)
 	}
 
-	// Compute sha256 ourselves so we can include both values in the error.
+	// Compute sha256 ourselves so the error message can include both values.
 	got, err := fileSHA256(jarPath)
 	if err != nil {
 		return err
@@ -166,7 +211,7 @@ func doInstallPostgres(major, classifier, member, ver, sha, dest string) error {
 		)}
 	}
 
-	// Extract the .txz member from the jar (which is a zip).
+	// Extract the .txz member from the jar (zip archive).
 	jarDir := filepath.Join(staging, "jar")
 	if err := os.MkdirAll(jarDir, 0o755); err != nil {
 		return err
@@ -176,7 +221,7 @@ func doInstallPostgres(major, classifier, member, ver, sha, dest string) error {
 	}
 	_ = os.Remove(jarPath)
 
-	// Extract the .txz into dist dir; the txz lays out bin/, lib/, share/ at root.
+	// Extract the .txz; Zonky lays out bin/ lib/ share/ at the archive root.
 	txzPath := filepath.Join(jarDir, member)
 	distDir := filepath.Join(staging, "dist")
 	if err := os.MkdirAll(distDir, 0o755); err != nil {
@@ -208,14 +253,11 @@ func doInstallPostgres(major, classifier, member, ver, sha, dest string) error {
 	return nil
 }
 
-// zonkyLatestVersion fetches maven-metadata.xml and returns the highest release
-// version whose major prefix matches (e.g. "17.11.0" for major "17").
-// Hyphenated builds (e.g. "17.6.0-1") are skipped in favour of plain releases.
+// zonkyLatestVersion fetches maven-metadata.xml and returns the highest plain
+// release (no hyphen suffix) for the given major prefix.
 func zonkyLatestVersion(classifier, major string) (string, error) {
 	art := "embedded-postgres-binaries-" + classifier
-	metaURL := fmt.Sprintf(
-		"https://repo1.maven.org/maven2/io/zonky/test/postgres/%s/maven-metadata.xml", art,
-	)
+	metaURL := fmt.Sprintf("%s/%s/maven-metadata.xml", zonkyBaseURL, art)
 	cl := &http.Client{Timeout: 30 * time.Second}
 	resp, err := cl.Get(metaURL)
 	if err != nil {
@@ -237,33 +279,31 @@ func zonkyLatestVersion(classifier, major string) (string, error) {
 	latest := ""
 	for _, v := range meta.Versioning.Versions {
 		if !strings.HasPrefix(v, prefix) || strings.Contains(v, "-") {
-			continue // skip other majors and hyphenated builds
+			continue
 		}
 		if pgVersionGT(v, latest) {
 			latest = v
 		}
 	}
 	if latest == "" {
-		return "", fmt.Errorf("no Zonky release version for major %s in %s", major, metaURL)
+		return "", fmt.Errorf("no Zonky release for major %s in %s", major, metaURL)
 	}
 	return latest, nil
 }
 
-// pgVersionGT reports whether version string a is greater than b (both "X.Y.Z").
+// pgVersionGT reports whether "X.Y.Z" version string a is greater than b.
 func pgVersionGT(a, b string) bool {
 	if b == "" {
 		return true
 	}
-	aParts := strings.SplitN(a, ".", 3)
-	bParts := strings.SplitN(b, ".", 3)
-	for i := 0; i < 3 && i < len(aParts) && i < len(bParts); i++ {
-		ai := parseUint(aParts[i])
-		bi := parseUint(bParts[i])
-		if ai != bi {
+	ap := strings.SplitN(a, ".", 3)
+	bp := strings.SplitN(b, ".", 3)
+	for i := 0; i < 3 && i < len(ap) && i < len(bp); i++ {
+		if ai, bi := parseUint(ap[i]), parseUint(bp[i]); ai != bi {
 			return ai > bi
 		}
 	}
-	return len(aParts) > len(bParts)
+	return len(ap) > len(bp)
 }
 
 func parseUint(s string) int {
@@ -277,7 +317,7 @@ func parseUint(s string) int {
 	return n
 }
 
-// fetchRemoteSHA256 fetches a .sha256 sidecar URL and returns the trimmed hex digest.
+// fetchRemoteSHA256 fetches a .sha256 sidecar and returns the trimmed hex digest.
 func fetchRemoteSHA256(url string) (string, error) {
 	cl := &http.Client{Timeout: 15 * time.Second}
 	resp, err := cl.Get(url)
@@ -293,4 +333,18 @@ func fetchRemoteSHA256(url string) (string, error) {
 		return "", fmt.Errorf("read sha256 from %s: %w", url, err)
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+// fileSHA256 returns the hex-encoded SHA-256 digest of the file at path.
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
