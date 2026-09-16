@@ -91,6 +91,10 @@ var toolSpecs = []toolSpec{
 	// No Pin: versions.json "postgres" is the Zonky server version (e.g. 17.11.0) while
 	// psql reports the Debian client version (17.11); comparing them produces false drift.
 	{Name: "postgres", Cmd: "psql", Baked: ""},
+	// mysqld is installed on-demand by workspace-agent install-mysql into ~/.local/share/agent-fleet/mysql/.
+	// No Baked: mysql is not baked into the image (GPL tarball kept out of the distributed image).
+	// Pin key "mysql" holds the pinned tarball version (e.g. 8.4.6).
+	{Name: "mysql", Cmd: "mysqld", Baked: "", Pin: "mysql"},
 	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk", Pin: "rtk"},
 	{Name: "gh", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"}, // /usr/local/bin/gh is the transparent-auth wrapper
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},

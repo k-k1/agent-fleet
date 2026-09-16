@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ripgrep fd-find bat jq unzip zip \
       build-essential pkg-config \
       python3 python3-pip python3-venv python3-dev python-is-python3 \
+      libaio1t64 libnuma1 libncurses6 \
  && ln -sf "$(command -v fdfind)" /usr/local/bin/fd \
  && ln -sf "$(command -v batcat)" /usr/local/bin/bat \
  && rm -rf /var/lib/apt/lists/* \
@@ -441,6 +442,13 @@ ARG KIRO_SHA256_ARM64=958308767edd6f2ded505b4a4467b93878f9a324675e3545627aee51f3
 ARG POSTGRES_VERSION=17.11.0
 ARG POSTGRES_SHA256_X64=0dd7b72b6f335b8ecfb355fa24c5781e8a93edd09880bb77eb52ebbf29b3e96d
 ARG POSTGRES_SHA256_ARM64=8b042e0ea418b1927d95399207950da0734d27fe01e29503ade3bdc464ad4c2b
+# MySQL供給ピン（ADR 0086 P1 供給レーン）: 公式 tarball のハッシュ。
+# x86_64: minimal tarball (66,009,936 bytes) sha256 は実物から計算。
+# arm64:  フル tarball (909,017,708 bytes) sha256 は実物から計算（minimal は存在しない）。
+# 両 sha は cdn.mysql.com/archives/mysql-8.4/ からダウンロードして sha256sum で確認。
+ARG MYSQL_VERSION=8.4.6
+ARG MYSQL_SHA256_X64=f284b17b9e038adbe77f0dd5fb11ed30262286b23a390b8b4e367abc3574c42e
+ARG MYSQL_SHA256_ARM64=ab2c553ee4349a6bbe62325d4efcb427204e389264c4759ca32a92eae9aa2abc
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -499,12 +507,12 @@ RUN mkdir -p /scratch && chown 1000:1000 /scratch
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
-      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}"; pg_sha="${POSTGRES_SHA256_X64}" ;; \
-      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}" ;; \
-      *) agy_sha=""; cursor_sha=""; kiro_sha=""; pg_sha="" ;; \
+      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}"; pg_sha="${POSTGRES_SHA256_X64}"; mysql_sha="${MYSQL_SHA256_X64}" ;; \
+      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}" ;; \
+      *) agy_sha=""; cursor_sha=""; kiro_sha=""; pg_sha=""; mysql_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","postgres":"%s","postgres_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$POSTGRES_VERSION" "$pg_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWS_MCP_PROXY_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 

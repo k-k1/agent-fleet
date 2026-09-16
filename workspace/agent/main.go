@@ -114,6 +114,12 @@ func main() {
 		runInstallPgClient(os.Args[2:])
 		return
 	}
+	// On-demand MySQL binary installer (ADR 0086 P1 supply lane): downloads the
+	// MySQL official tarball for the container arch. See install_mysql.go.
+	if len(os.Args) > 1 && os.Args[1] == "install-mysql" {
+		runInstallMySQL(os.Args[2:])
+		return
+	}
 	// claude hook helper: records session working/idle/question state.
 	if len(os.Args) > 1 && os.Args[1] == "session-status" {
 		sessionx.RunSessionStatusHook(os.Args[2:])
