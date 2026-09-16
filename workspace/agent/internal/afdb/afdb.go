@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -64,21 +65,31 @@ func homeDir() string {
 	return os.Getenv("HOME")
 }
 
-// registryDir returns ~/.config/agent-fleet/af-db.
+// registryDir returns the af-db config directory.
 func registryDir() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "af-db")
+	return filepath.Join(paths.AgentConfigDir(), "af-db")
 }
 
 func registryPath() string { return filepath.Join(registryDir(), "instances.json") }
 func lockPath() string     { return filepath.Join(registryDir(), "lock") }
 
-// scratchBase returns the base for datadirs: $AF_WS_SCRATCH/af-db if set, else
-// ~/.local/state/af-db (home, persists across stops on docker/native).
+// startLockPath is a per-(engine,major) lock that serializes concurrent starts.
+func startLockPath(engine string, major int) string {
+	return filepath.Join(registryDir(), fmt.Sprintf("%s-%d.start.lock", engine, major))
+}
+
+// homeStateBase is the home-rooted state base (persists across container stops).
+func homeStateBase() string {
+	return filepath.Join(homeDir(), ".local", "state", "af-db")
+}
+
+// scratchBase returns the task-local or home state base for datadirs.
+// When AF_WS_SCRATCH is set the datadir is on the fast scratch disk (wiped on stop).
 func scratchBase() string {
 	if s := os.Getenv("AF_WS_SCRATCH"); s != "" {
 		return filepath.Join(s, "af-db")
 	}
-	return filepath.Join(homeDir(), ".local", "state", "af-db")
+	return homeStateBase()
 }
 
 // sockBase always uses home so socket paths stay well under 107 bytes.
@@ -92,17 +103,12 @@ func postgresRoot(major int) string {
 	if r := os.Getenv("AF_DB_POSTGRES_ROOT"); r != "" {
 		return r
 	}
-	return filepath.Join(homeDir(), ".local", "share", "agent-fleet", "postgres", fmt.Sprintf("%d", major))
+	return filepath.Join(paths.AgentDataDir(), "postgres", fmt.Sprintf("%d", major))
 }
 
 // passPath is where the generated password for a major is kept (mode 0600).
 func passPath(major int) string {
 	return filepath.Join(registryDir(), fmt.Sprintf("postgres-%d.pass", major))
-}
-
-// logPath is where pg_ctl logs server output.
-func logPath(root string, major int) string {
-	return filepath.Join(root, fmt.Sprintf("postgres-%d.log", major))
 }
 
 // ---- database name derivation ----
@@ -123,6 +129,17 @@ func DBNameFor(dir string) string {
 	}
 	h := sha256.Sum256([]byte(dir))
 	return "af_" + base + "_" + hex.EncodeToString(h[:])[:6]
+}
+
+// validExplicitDBRe validates an explicit --db name (user-supplied).
+var validExplicitDBRe = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+
+// validateExplicitDB returns an errUsage if name is not a safe Postgres identifier.
+func validateExplicitDB(name string) error {
+	if !validExplicitDBRe.MatchString(name) {
+		return errUsage(fmt.Sprintf("--db name must match ^[a-z_][a-z0-9_]{0,62}$, got %q", name))
+	}
+	return nil
 }
 
 // ---- working copy resolution ----
@@ -151,7 +168,6 @@ func ResolveDir() string {
 // ---- TCP port allocation ----
 
 // pickPort allocates a free port on 127.0.0.1 by binding :0 and closing.
-// There is a small TOCTOU window; it is standard practice for this use case.
 func pickPort() (int, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -208,6 +224,23 @@ func withLock(fn func() error) error {
 	return fn()
 }
 
+// withStartLock serializes concurrent startServer calls for one (engine, major).
+func withStartLock(engine string, major int, fn func() error) error {
+	if err := os.MkdirAll(registryDir(), 0o700); err != nil {
+		return err
+	}
+	lf, err := os.OpenFile(startLockPath(engine, major), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lf.Close()
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("start lock: %w", err)
+	}
+	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN) //nolint:errcheck
+	return fn()
+}
+
 // readRegistry reads the registry. Caller must hold the lock.
 func readRegistry() (*registry, error) {
 	r := &registry{Instances: make(map[string]*Instance)}
@@ -242,8 +275,13 @@ func writeRegistry(r *registry) error {
 
 // URLForDir returns the Postgres connection URL (socket form) if a running Postgres
 // instance has a database for dir. Returns "" if not found or not running.
-// Called from session_tmux.go to inject AF_DB_URL_POSTGRES without any side effects.
+// Called from session_tmux.go to inject AF_DB_URL_POSTGRES; no side effects.
 func URLForDir(dir string) string {
+	// Return early if the registry doesn't exist yet to avoid creating lock files
+	// on every tmux launch before af-db has ever been used.
+	if _, err := os.Stat(registryPath()); os.IsNotExist(err) {
+		return ""
+	}
 	var url string
 	_ = withLock(func() error {
 		r, err := readRegistry()
@@ -254,7 +292,7 @@ func URLForDir(dir string) string {
 			if inst.Engine != "postgres" {
 				continue
 			}
-			if !isRunning(inst.PID) {
+			if !isPGRunning(inst.PID, inst.Datadir) {
 				continue
 			}
 			dbName := DBNameFor(dir)
@@ -271,7 +309,7 @@ func URLForDir(dir string) string {
 
 // buildURL returns the connection URL for an instance and database.
 // tcp=true uses the TCP listener; tcp=false uses the unix socket.
-// Socket connections must include the port so pgx looks for .s.PGSQL.<port> not .s.PGSQL.5432.
+// Socket connections include port= so pgx finds .s.PGSQL.<port> not .s.PGSQL.5432.
 func buildURL(inst *Instance, dbName, pw string, tcp bool) string {
 	if tcp {
 		return fmt.Sprintf("postgres://postgres:%s@127.0.0.1:%d/%s?sslmode=disable",
@@ -281,7 +319,9 @@ func buildURL(inst *Instance, dbName, pw string, tcp bool) string {
 		pw, dbName, inst.Sockdir, inst.Port)
 }
 
-// isRunning returns true if pid > 0 and the process is alive (kill(pid, 0) succeeds).
+// ---- process liveness ----
+
+// isRunning returns true if pid > 0 and the process is alive.
 func isRunning(pid int) bool {
 	if pid <= 0 {
 		return false
@@ -291,6 +331,20 @@ func isRunning(pid int) bool {
 		return false
 	}
 	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+// isPGRunning checks if the postgres instance is running by cross-checking with
+// postmaster.pid in the datadir. This guards against stale registry pids after a
+// container restart on a persistent home (pid reuse).
+func isPGRunning(pid int, datadir string) bool {
+	if datadir != "" {
+		if authPID, err := readPostmasterPID(datadir); err == nil && authPID > 0 {
+			return isRunning(authPID)
+		}
+		// postmaster.pid absent: server is not running, regardless of registry pid.
+		return false
+	}
+	return isRunning(pid)
 }
 
 // waitPIDGone polls until pid is no longer alive or timeout elapses.

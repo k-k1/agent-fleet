@@ -55,12 +55,14 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `usage: af-db <verb> [options]
 
 Verbs:
-  up [--major N] [--persist]   ensure Postgres is installed and running
-  url [--db=NAME] [--tcp]      print connection URL (installs/starts if needed)
-  env [--db=NAME] [--tcp]      print export lines for AF_DB_URL_POSTGRES and DATABASE_URL
-  reset [--db=NAME]            DROP + CREATE the database
-  down [--purge]               stop the server; --purge removes the datadir
-  status [--json]              show instance state`)
+  up [--major N] [--persist]         ensure Postgres is installed and running
+  url [--major N] [--db=NAME] [--tcp] print connection URL (installs/starts if needed)
+  env [--major N] [--db=NAME] [--tcp] print export lines for AF_DB_URL_POSTGRES / DATABASE_URL
+  reset [--major N] [--db=NAME]       DROP + CREATE the database
+  down [--major N] [--purge]          stop the server; --purge removes the datadir
+  status [--major N] [--json]         show instance state
+
+  --major defaults to 17`)
 }
 
 // afdbErr carries an exit code.
@@ -88,25 +90,51 @@ func errInstall(msg string) error { return &afdbErr{3, msg} }
 func errStart(msg string) error   { return &afdbErr{4, msg} }
 func errNotRun(msg string) error  { return &afdbErr{5, msg} }
 
+// parseMajorFromArgs extracts --major N (both --major=N and space forms) from args.
+// Returns the major and the remaining args (with --major and its value removed).
+func parseMajorFromArgs(args []string) (int, []string, error) {
+	major := DefaultMajor
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case strings.HasPrefix(a, "--major="):
+			n, err := strconv.Atoi(strings.TrimPrefix(a, "--major="))
+			if err != nil {
+				return 0, nil, errUsage("--major: not a number")
+			}
+			major = n
+		case a == "--major":
+			if i+1 >= len(args) {
+				return 0, nil, errUsage("--major requires a value")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return 0, nil, errUsage("--major: not a number")
+			}
+			major = n
+			i++
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return major, rest, nil
+}
+
 // ---- verb implementations ----
 
 func cmdUp(args []string) error {
-	major := DefaultMajor
+	major, args, err := parseMajorFromArgs(args)
+	if err != nil {
+		return err
+	}
 	persist := false
 	for _, a := range args {
 		switch {
 		case a == "--persist":
 			persist = true
-		case strings.HasPrefix(a, "--major="):
-			n, err := strconv.Atoi(strings.TrimPrefix(a, "--major="))
-			if err != nil {
-				return errUsage("--major: not a number")
-			}
-			major = n
-		case a == "--major":
-			// handled as two args; not supported in positional form
 		case a == "postgres":
-			// explicit engine, default is postgres
+			// explicit engine name; default is postgres
 		default:
 			return errUsage(fmt.Sprintf("unknown option: %s", a))
 		}
@@ -120,6 +148,10 @@ func cmdUp(args []string) error {
 }
 
 func cmdURL(args []string) error {
+	major, args, err := parseMajorFromArgs(args)
+	if err != nil {
+		return err
+	}
 	dbName := ""
 	tcp := false
 	for _, a := range args {
@@ -132,7 +164,12 @@ func cmdURL(args []string) error {
 			return errUsage(fmt.Sprintf("unknown option: %s", a))
 		}
 	}
-	url, err := urlFor("postgres", DefaultMajor, dbName, tcp)
+	if dbName != "" {
+		if err := validateExplicitDB(dbName); err != nil {
+			return err
+		}
+	}
+	url, err := urlFor("postgres", major, dbName, tcp)
 	if err != nil {
 		return err
 	}
@@ -141,6 +178,10 @@ func cmdURL(args []string) error {
 }
 
 func cmdEnv(args []string) error {
+	major, args, err := parseMajorFromArgs(args)
+	if err != nil {
+		return err
+	}
 	dbName := ""
 	tcp := false
 	for _, a := range args {
@@ -153,7 +194,12 @@ func cmdEnv(args []string) error {
 			return errUsage(fmt.Sprintf("unknown option: %s", a))
 		}
 	}
-	url, err := urlFor("postgres", DefaultMajor, dbName, tcp)
+	if dbName != "" {
+		if err := validateExplicitDB(dbName); err != nil {
+			return err
+		}
+	}
+	url, err := urlFor("postgres", major, dbName, tcp)
 	if err != nil {
 		return err
 	}
@@ -163,6 +209,10 @@ func cmdEnv(args []string) error {
 }
 
 func cmdReset(args []string) error {
+	major, args, err := parseMajorFromArgs(args)
+	if err != nil {
+		return err
+	}
 	dbName := ""
 	for _, a := range args {
 		switch {
@@ -172,10 +222,19 @@ func cmdReset(args []string) error {
 			return errUsage(fmt.Sprintf("unknown option: %s", a))
 		}
 	}
-	return resetDB("postgres", DefaultMajor, dbName)
+	if dbName != "" {
+		if err := validateExplicitDB(dbName); err != nil {
+			return err
+		}
+	}
+	return resetDB("postgres", major, dbName)
 }
 
 func cmdDown(args []string) error {
+	major, args, err := parseMajorFromArgs(args)
+	if err != nil {
+		return err
+	}
 	purge := false
 	for _, a := range args {
 		if a == "--purge" {
@@ -184,10 +243,14 @@ func cmdDown(args []string) error {
 			return errUsage(fmt.Sprintf("unknown option: %s", a))
 		}
 	}
-	return stopInstance("postgres", DefaultMajor, purge)
+	return stopInstance("postgres", major, purge)
 }
 
 func cmdStatus(args []string) error {
+	major, args, err := parseMajorFromArgs(args)
+	if err != nil {
+		return err
+	}
 	asJSON := false
 	for _, a := range args {
 		if a == "--json" {
@@ -196,51 +259,96 @@ func cmdStatus(args []string) error {
 			return errUsage(fmt.Sprintf("unknown option: %s", a))
 		}
 	}
-	return showStatus("postgres", DefaultMajor, asJSON)
+	return showStatus("postgres", major, asJSON)
 }
 
 // ---- core logic ----
 
-// ensureUp installs postgres if needed and starts it if stopped. Returns the running instance.
+// ensureUp installs Postgres if needed and starts it if stopped.
+// Concurrent calls are serialized by a per-(engine,major) start lock so only one
+// initdb + pg_ctl start ever runs at a time.
 func ensureUp(engine string, major int, persist bool) (*Instance, error) {
 	root := postgresRoot(major)
 	if err := ensureInstalled(root, major); err != nil {
 		return nil, err
 	}
-	var inst *Instance
+	key := instanceKey(engine, major)
+
+	// Ensure a registry entry exists before the start lock.
 	if err := withLock(func() error {
 		r, err := readRegistry()
 		if err != nil {
 			return err
 		}
-		key := instanceKey(engine, major)
-		inst = r.Instances[key]
-		if inst == nil {
-			inst = &Instance{
+		if r.Instances[key] == nil {
+			r.Instances[key] = &Instance{
 				Engine:    engine,
 				Major:     major,
 				Root:      root,
 				Databases: make(map[string]string),
-				Persist:   persist,
 			}
+			return writeRegistry(r)
 		}
-		inst.Root = root
-		r.Instances[key] = inst
-		return writeRegistry(r)
+		return nil
 	}); err != nil {
 		return nil, err
 	}
 
-	if !isRunning(inst.PID) {
-		if err := startServer(inst, persist); err != nil {
-			return nil, err
+	// Serialize concurrent starts: only one goroutine/process runs initdb+pg_ctl at a time.
+	if err := withStartLock(engine, major, func() error {
+		// Re-read under start lock — a racing caller may have already started the server.
+		var current *Instance
+		_ = withLock(func() error {
+			r, _ := readRegistry()
+			if i, ok := r.Instances[key]; ok {
+				cp := *i
+				current = &cp
+			}
+			return nil
+		})
+		if current == nil {
+			current = &Instance{Engine: engine, Major: major, Root: root,
+				Databases: make(map[string]string)}
 		}
+		if isPGRunning(current.PID, current.Datadir) {
+			return nil
+		}
+		// When restarting a stopped instance, preserve its persist setting unless
+		// the caller is explicitly requesting persist (af-db up --persist).
+		effectivePersist := current.Persist
+		if persist {
+			effectivePersist = true
+		}
+		return startServer(current, effectivePersist)
+	}); err != nil {
+		return nil, err
 	}
+
+	// Re-read the final state after start.
+	var inst *Instance
+	_ = withLock(func() error {
+		r, _ := readRegistry()
+		if i, ok := r.Instances[key]; ok {
+			cp := *i
+			inst = &cp
+		}
+		return nil
+	})
+	if inst == nil {
+		return nil, fmt.Errorf("postgres-%d: not in registry after start", major)
+	}
+
+	// Reconcile stale databases (directories that no longer exist).
+	pw := readPass(passPath(major))
+	if err := reconcile(inst, pw); err != nil {
+		fmt.Fprintf(os.Stderr, "af-db: reconcile warning: %v\n", err)
+	}
+
 	return inst, nil
 }
 
-// urlFor ensures an instance is up and a database for the current working copy (or --db)
-// exists, then returns the connection URL. Bumps lastUsedAt and reconciles.
+// urlFor ensures an instance is up, a database exists for the current working copy
+// (or --db), bumps lastUsedAt, and returns the connection URL.
 func urlFor(engine string, major int, explicitDB string, tcp bool) (string, error) {
 	inst, err := ensureUp(engine, major, false)
 	if err != nil {
@@ -258,18 +366,13 @@ func urlFor(engine string, major int, explicitDB string, tcp bool) (string, erro
 		dbName = DBNameFor(dir)
 	}
 
-	// Reconcile: drop databases whose recorded dir no longer exists.
-	if err := reconcile(inst, pw); err != nil {
-		fmt.Fprintf(os.Stderr, "af-db: reconcile warning: %v\n", err)
-	}
-
 	// Ensure the database exists.
 	connStr := buildURL(inst, "postgres", pw, false)
 	if err := ensureDatabase(connStr, dbName); err != nil {
 		return "", fmt.Errorf("create database: %w", err)
 	}
 
-	// Record the database in the registry.
+	// Record the database and bump lastUsedAt.
 	recordedDir := dir
 	if explicitlyNamed {
 		recordedDir = "" // explicitly named = no dir = reconcile never drops it
@@ -291,7 +394,6 @@ func urlFor(engine string, major int, explicitDB string, tcp bool) (string, erro
 	}); err != nil {
 		return "", err
 	}
-	inst.LastUsedAt = time.Now()
 
 	return buildURL(inst, dbName, pw, tcp), nil
 }
@@ -304,12 +406,15 @@ func resetDB(engine string, major int, explicitDB string) error {
 		if err != nil {
 			return err
 		}
-		inst = r.Instances[instanceKey(engine, major)]
+		if i, ok := r.Instances[instanceKey(engine, major)]; ok {
+			cp := *i
+			inst = &cp
+		}
 		return nil
 	}); err != nil {
 		return err
 	}
-	if inst == nil || !isRunning(inst.PID) {
+	if inst == nil || !isPGRunning(inst.PID, inst.Datadir) {
 		return errNotRun("postgres is not running; run 'af-db up' first")
 	}
 	pw := readPass(passPath(major))
@@ -326,10 +431,10 @@ func resetDB(engine string, major int, explicitDB string) error {
 		return fmt.Errorf("connect: %w", err)
 	}
 	defer conn.Close(ctx)
-	if _, err := conn.Exec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, dbName)); err != nil {
+	if _, err := conn.Exec(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{dbName}.Sanitize()); err != nil {
 		return fmt.Errorf("drop database: %w", err)
 	}
-	if _, err := conn.Exec(ctx, fmt.Sprintf(`CREATE DATABASE "%s"`, dbName)); err != nil {
+	if _, err := conn.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{dbName}.Sanitize()); err != nil {
 		return fmt.Errorf("create database: %w", err)
 	}
 	fmt.Printf("database %q reset\n", dbName)
@@ -344,11 +449,9 @@ func stopInstance(engine string, major int, purge bool) error {
 		if err != nil {
 			return err
 		}
-		if r.Instances != nil {
-			if i, ok := r.Instances[instanceKey(engine, major)]; ok {
-				instCopy := *i
-				inst = &instCopy
-			}
+		if i, ok := r.Instances[instanceKey(engine, major)]; ok {
+			cp := *i
+			inst = &cp
 		}
 		return nil
 	}); err != nil {
@@ -393,11 +496,9 @@ func showStatus(engine string, major int, asJSON bool) error {
 		if err != nil {
 			return err
 		}
-		if r.Instances != nil {
-			if i, ok := r.Instances[instanceKey(engine, major)]; ok {
-				instCopy := *i
-				inst = &instCopy
-			}
+		if i, ok := r.Instances[instanceKey(engine, major)]; ok {
+			cp := *i
+			inst = &cp
 		}
 		return nil
 	}); err != nil {
@@ -411,10 +512,15 @@ func showStatus(engine string, major int, asJSON bool) error {
 		}
 		return nil
 	}
-	running := isRunning(inst.PID)
+	running := isPGRunning(inst.PID, inst.Datadir)
 	state := "stopped"
 	if running {
 		state = "running"
+		// Reconcile stale databases while we have a live server.
+		pw := readPass(passPath(major))
+		if err := reconcile(inst, pw); err != nil {
+			fmt.Fprintf(os.Stderr, "af-db: reconcile warning: %v\n", err)
+		}
 	}
 	if asJSON {
 		out := map[string]any{
@@ -454,10 +560,9 @@ func showStatus(engine string, major int, asJSON bool) error {
 func ensureInstalled(root string, major int) error {
 	bin := filepath.Join(root, "bin", "postgres")
 	if _, err := os.Stat(bin); err == nil {
-		return nil // already installed
+		return nil
 	}
 	fmt.Fprintf(os.Stderr, "af-db: postgres-%d not installed; installing...\n", major)
-	// exec ourselves (workspace-agent) with install-postgres <major>.
 	self, err := os.Executable()
 	if err != nil {
 		self = "/usr/local/bin/workspace-agent"
@@ -466,13 +571,10 @@ func ensureInstalled(root string, major int) error {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		// Determine sha info for the user.
-		return errInstall(fmt.Sprintf(
-			"install-postgres %d failed: %v (see stderr for details)", major, err))
+		return errInstall(fmt.Sprintf("install-postgres %d failed: %v", major, err))
 	}
 	if _, err := os.Stat(bin); err != nil {
-		return errInstall(fmt.Sprintf(
-			"install-postgres %d completed but %s not found", major, bin))
+		return errInstall(fmt.Sprintf("install-postgres %d completed but %s not found", major, bin))
 	}
 	return nil
 }
@@ -480,22 +582,28 @@ func ensureInstalled(root string, major int) error {
 // ---- server lifecycle ----
 
 // startServer runs initdb (if datadir absent), then pg_ctl start.
-// The caller must have already checked that the instance is not running.
+// Caller must hold the start lock.
 func startServer(inst *Instance, persist bool) error {
 	major := inst.Major
 	root := inst.Root
 	binDir := filepath.Join(root, "bin")
 
-	// Determine paths.
-	datadir := filepath.Join(scratchBase(), fmt.Sprintf("postgres-%d", major), "data")
+	// Choose datadir base: home (persistent) or scratch (wiped on stop).
+	var base string
+	if persist {
+		base = homeStateBase()
+	} else {
+		base = scratchBase()
+	}
+	datadir := filepath.Join(base, fmt.Sprintf("postgres-%d", major), "data")
 	sockdir := filepath.Join(sockBase(), fmt.Sprintf("postgres-%d", major))
-	lp := logPath(root, major)
+	logFile := filepath.Join(base, fmt.Sprintf("postgres-%d.log", major))
 
 	inst.Datadir = datadir
 	inst.Sockdir = sockdir
 	inst.Persist = persist
 
-	// initdb if datadir missing.
+	// Run initdb when the datadir is absent.
 	if _, err := os.Stat(datadir); os.IsNotExist(err) {
 		if err := os.MkdirAll(datadir, 0o700); err != nil {
 			return errStart(fmt.Sprintf("create datadir: %v", err))
@@ -505,13 +613,10 @@ func startServer(inst *Instance, persist bool) error {
 		}
 
 		pp := passPath(major)
-		pw, err := generatePass(pp)
-		if err != nil {
+		if _, err := generatePass(pp); err != nil {
 			return errStart(fmt.Sprintf("generate password: %v", err))
 		}
-		_ = pw
 
-		// Write a temp pwfile for initdb (it must end with a newline, which generatePass ensures).
 		cmd := exec.Command(filepath.Join(binDir, "initdb"),
 			"--auth=scram-sha-256",
 			"--auth-local=scram-sha-256",
@@ -522,20 +627,18 @@ func startServer(inst *Instance, persist bool) error {
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return errStart(fmt.Sprintf("initdb: %v (log: %s)", err, lp))
+			return errStart(fmt.Sprintf("initdb: %v (log: %s)", err, logFile))
 		}
 	} else if err != nil {
 		return errStart(fmt.Sprintf("stat datadir: %v", err))
 	}
 
-	// Pick a free port.
 	port, err := pickPort()
 	if err != nil {
 		return errStart(fmt.Sprintf("pick port: %v", err))
 	}
 	inst.Port = port
 
-	// Build server flags.
 	fsync := "off"
 	if persist {
 		fsync = "on"
@@ -551,26 +654,23 @@ func startServer(inst *Instance, persist bool) error {
 	cmd := exec.Command(filepath.Join(binDir, "pg_ctl"),
 		"-w", "start",
 		"-D", datadir,
-		"-l", lp,
+		"-l", logFile,
 		"-o", serverFlags,
 	)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return errStart(fmt.Sprintf("pg_ctl start: %v (log: %s)", err, lp))
+		return errStart(fmt.Sprintf("pg_ctl start: %v (log: %s)", err, logFile))
 	}
 
-	// Read the postmaster PID.
 	pid, err := readPostmasterPID(datadir)
 	if err != nil {
-		// Not fatal — we can still use the instance.
 		fmt.Fprintf(os.Stderr, "af-db: warning: could not read postmaster.pid: %v\n", err)
 	}
 	inst.PID = pid
 	inst.StartedAt = time.Now()
 	inst.LastUsedAt = time.Now()
 
-	// Write back to registry.
 	return withLock(func() error {
 		r, err := readRegistry()
 		if err != nil {
@@ -583,11 +683,18 @@ func startServer(inst *Instance, persist bool) error {
 }
 
 // stopServer runs pg_ctl stop -m fast and waits for the postmaster pid to disappear.
-// Only THEN is the datadir safe to touch.
+// Only THEN is it safe for the caller to touch the datadir.
 func stopServer(inst *Instance) error {
 	if inst.Datadir == "" {
 		return nil
 	}
+
+	// Resolve the authoritative pid from postmaster.pid — not the (possibly stale) registry pid.
+	livePID, pidErr := readPostmasterPID(inst.Datadir)
+	if pidErr != nil || livePID <= 0 {
+		livePID = inst.PID
+	}
+
 	binDir := filepath.Join(inst.Root, "bin")
 	cmd := exec.Command(filepath.Join(binDir, "pg_ctl"),
 		"stop", "-m", "fast",
@@ -596,16 +703,19 @@ func stopServer(inst *Instance) error {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		if !isRunning(inst.PID) {
-			// Already stopped; pg_ctl exit 1 means not running — that's fine.
+		// pg_ctl exits non-zero when the server is already stopped — that is fine.
+		if !isPGRunning(livePID, inst.Datadir) {
 			return nil
+		}
+		// Server is still up but stop failed, and we do not have a pid to wait on.
+		if livePID <= 0 {
+			return fmt.Errorf("pg_ctl stop failed and no postmaster pid known; datadir may be unsafe to remove: %w", err)
 		}
 		return fmt.Errorf("pg_ctl stop: %w", err)
 	}
-	// Wait for pid to disappear before returning.
-	if inst.PID > 0 {
-		if !waitPIDGone(inst.PID, 15*time.Second) {
-			return fmt.Errorf("postmaster pid %d did not disappear within 15 s", inst.PID)
+	if livePID > 0 {
+		if !waitPIDGone(livePID, 15*time.Second) {
+			return fmt.Errorf("postmaster pid %d did not disappear within 15 s", livePID)
 		}
 	}
 	return nil
@@ -637,16 +747,15 @@ func ensureDatabase(connStr, dbName string) error {
 	defer conn.Close(ctx)
 
 	var exists bool
-	err = conn.QueryRow(ctx,
+	if err := conn.QueryRow(ctx,
 		"SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)", dbName,
-	).Scan(&exists)
-	if err != nil {
+	).Scan(&exists); err != nil {
 		return fmt.Errorf("check database existence: %w", err)
 	}
 	if exists {
 		return nil
 	}
-	if _, err := conn.Exec(ctx, fmt.Sprintf(`CREATE DATABASE "%s"`, dbName)); err != nil {
+	if _, err := conn.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{dbName}.Sanitize()); err != nil {
 		return fmt.Errorf("create database %q: %w", dbName, err)
 	}
 	return nil
@@ -655,7 +764,7 @@ func ensureDatabase(connStr, dbName string) error {
 // reconcile drops databases whose recorded directory no longer exists on disk.
 // Databases with dir=="" (explicitly named) are never dropped.
 func reconcile(inst *Instance, pw string) error {
-	if !isRunning(inst.PID) || len(inst.Databases) == 0 {
+	if !isPGRunning(inst.PID, inst.Datadir) || len(inst.Databases) == 0 {
 		return nil
 	}
 	var toDrop []string
@@ -681,7 +790,7 @@ func reconcile(inst *Instance, pw string) error {
 
 	var dropped []string
 	for _, name := range toDrop {
-		if _, err := conn.Exec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, name)); err != nil {
+		if _, err := conn.Exec(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()); err != nil {
 			fmt.Fprintf(os.Stderr, "af-db: reconcile: drop %q: %v\n", name, err)
 			continue
 		}
@@ -691,7 +800,6 @@ func reconcile(inst *Instance, pw string) error {
 	if len(dropped) == 0 {
 		return nil
 	}
-	// Remove dropped databases from the registry.
 	return withLock(func() error {
 		r, err := readRegistry()
 		if err != nil {
@@ -707,10 +815,10 @@ func reconcile(inst *Instance, pw string) error {
 	})
 }
 
-// CountClientBackends returns the number of client backends on the running instance.
-// Returns -1 on any error.
+// CountClientBackends returns the number of client backends connected to the instance,
+// excluding this monitoring connection itself. Returns -1 on any error.
 func CountClientBackends(inst *Instance) int {
-	if !isRunning(inst.PID) {
+	if !isPGRunning(inst.PID, inst.Datadir) {
 		return -1
 	}
 	pw := readPass(passPath(inst.Major))
@@ -724,7 +832,8 @@ func CountClientBackends(inst *Instance) int {
 	defer conn.Close(ctx)
 	var n int
 	if err := conn.QueryRow(ctx,
-		`SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend'`,
+		`SELECT count(*) FROM pg_stat_activity
+		 WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()`,
 	).Scan(&n); err != nil {
 		return -1
 	}
