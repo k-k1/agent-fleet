@@ -126,8 +126,12 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 // id, at ConfigDir()/projects/<project>/<id>.jsonl (CLAUDE_CONFIG_DIR when set,
 // P3-5 stage 2) — NOT a hardcoded ~/.claude. Takes the id at face value.
 func rawJSONLPaths(id string) []string {
-	m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", id+".jsonl"))
-	return m
+	// Memoized: the `projects/*` sweep is the agent's hottest file-system operation and
+	// CLAUDE_CONFIG_DIR is on EFS. See jsonl_memo.go for the measurement and the invariants.
+	return jsonlMemo.lookup(ConfigDir()+"\x00"+id, func() []string {
+		m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", id+".jsonl"))
+		return m
+	})
 }
 
 // jsonlPaths returns the conversation log file(s) for OUR slot sid, following the
