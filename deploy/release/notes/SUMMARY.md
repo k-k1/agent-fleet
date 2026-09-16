@@ -35,8 +35,8 @@ Keeping it current:
 - **[engines]** Taking a model in is one press: a plan card lists every file the model needs with its cost, licence and warnings, the destination is decided for you, a family split across several files arrives in one act, and an incomplete row is completed from the same press
 - **[engines]** The S3 bucket is the ledger: the catalogue's second screen lists what is actually in storage, including objects no row declares, which can be registered as a row or deleted; a file in the wrong place is repaired by moving it inside the bucket
 - **[image generation]** More than one image engine at once — the route a picture takes is the engine row rather than the provider kind, so a LAN ComfyUI can be preferred with a borrowed engine behind it, and the priority list in Settings › Agents is row-based
-- **[engines]** An external ComfyUI's loaded checkpoints, LoRAs and VAEs can be read off the box and offered as catalogue candidates
-- **[engines]** Every member sees a pill per role in the top bar with a popover per row: state, queue and how long the box has left
+- **[engines]** An external ComfyUI's loaded checkpoints, LoRAs and VAEs can be read off the machine and offered as catalogue candidates
+- **[engines]** Every member sees a pill per role in the top bar with a popover per row: state, queue and how long the instance has left
 - **[admin / tenants]** `llm` and `image` can be switched off for one tenant by a super admin; a tenant nobody has answered for keeps both
 - **[image generation]** An `external` or `remote` row can point at any OpenAI-compatible image server (`provider: "openai-compat"`), with its bearer read from `AF_ENGINE_API_KEY_<KEY>` — tested only against this project's own test double
 - **[image generation]** `generate_image` accepts steps, CFG, sampler and scheduler; an omitted field runs at the model's published value and a family that ignores one says so
@@ -80,7 +80,7 @@ Keeping it current:
 - **[sessions]** A "Sessions overview" pane: every session as a card under its repository, in family order, with state, last utterance and — while it runs — the mirror's context gauge and token graph
 - **[engines]** An inference engine can be borrowed from another Agent Fleet deployment: the lending super admin issues a token and records whose GPU it is, and the borrowed row is shown as such
 - **[engines]** A ComfyUI on the LAN can serve image generation on a native / Docker deployment (`AF_COMFY_URL`), shown as an externally managed row
-- **[engines / ecs-ec2]** The image role's box comes from an offers list, one of which can be Spot, bought by the Control Plane itself and falling through to the next offer when no instance arrives; the panel shows the list, the offer in use and the order tried
+- **[engines / ecs-ec2]** The image role's instance comes from an offers list, one of which can be Spot, bought by the Control Plane itself and falling through to the next offer when no instance arrives; the panel shows the list, the offer in use and the order tried
 - **[engines]** Checkpoints published without a VAE are detected from the file's own header, refused for enabling, and repaired in one press by taking the family's VAE in as `--vae`
 - **[engines]** Taking a model in is four questions in a pane (what for, where from, which file, confirm), ending at the enable press
 - **[engines]** The inference-engine screen is two — "Inference engines" (mode, state, rung, uptime) and "Inference engine models" (catalogue, ingest, upstream search), with role and model / LoRA tabs
@@ -343,11 +343,11 @@ Keeping it current:
 - **[issue tracker]** Work items (GitHub issues/PRs, Jira issues, Bitbucket PRs) list in the left pane, and work starts from one of them
 - **[issue tracker / connections]** GitHub / Jira / Bitbucket connect per tenant; settings gained an *Issue tracker* tab
 - **[issue tracker]** Reports can be written back to the ticket — Agent Fleet drafts the facts, you write the text and press post
-- **[ecs-ec2]** Workspaces run with a memory cap, so one workspace can no longer take the box down with it
+- **[ecs-ec2]** Workspaces run with a memory cap, so one workspace can no longer take the instance down with it
 
 **Fixed**
 
-- **[ecs-ec2]** A workspace could become permanently unstartable, returning 504 every time (the box looked healthy from outside, the OS inside was dead)
+- **[ecs-ec2]** A workspace could become permanently unstartable, returning 504 every time (the instance looked healthy from outside, the OS inside was dead)
 - **[mobile / session state]** A running turn was shown as waiting for input on narrow screens
 - **[session-to-session messages]** Messages from another session looked like your own
 - **[start flow / models]** The reason for a failure on a retired model was buried in the list of available ones

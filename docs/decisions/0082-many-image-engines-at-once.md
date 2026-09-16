@@ -48,7 +48,7 @@ appears nowhere in the tree.
 The order only helps if a dead engine gets out of the way quickly, and for an external row it
 does. `ensureStarted` refuses at once for a row with no ECS adapter — "nothing here can start
 it", naming the URL to go and look at — precisely so that a LAN ComfyUI which is off does not
-enter the `engine_waking` retry budget that exists for buying a GPU box
+enter the `engine_waking` retry budget that exists for buying a GPU instance
 (`control-plane/engine_gateway.go:995-1001`, ADR 0076 decision 4). What is spent before that
 refusal is one health probe, capped at **5 seconds** (`engine_gateway.go:1073-1075`).
 
@@ -275,7 +275,7 @@ engine appears under its own key, which is a distinction a member can act on.
    `ensureReady` does not cache the health call, so those 3 seconds sat in front of the preferred
    route **on every picture**. Hence the answer this document already named — **a short negative
    cache on the row** (`engineExternalDownTTL`, the same 10-second window as
-   `engineExternalWarmTTL`). External rows only: a managed row's "not answering" means the box it
+   `engineExternalWarmTTL`). External rows only: a managed row's "not answering" means the instance it
    just bought is still booting. Only the negative is cached; a healthy answer clears it.
 2. **Does the image pane (ADR 0081) draw N fleet providers sensibly?** Its model list comes from
    one provider's `Studio` answer (`imagegen.go:376-435`); two rows of the same kind will offer

@@ -16,7 +16,7 @@ around that: point at a machine you already run. **This chapter is the other one
 If you already operate an Agent Fleet on AWS, a second deployment on your own host
 (`compose`, `native` or `docker`) can **use that one's engines**. The near deployment
 relays; the far one keeps doing what it already does — deciding that something wants a
-GPU, buying the box, loading the model, letting it go again. Nothing in a session
+GPU, buying the instance, loading the model, letting it go again. Nothing in a session
 knows the difference: the borrowed models appear wherever this deployment's own would.
 
 **What you get.** Both roles, `llm` and `image`, or just the one you name. No new
@@ -25,7 +25,7 @@ code on the far deployment, no port opened there, no VPN, no change to any works
 **What you do not get.**
 
 - **Any control over the far engines.** You cannot start one, stop one, edit its
-  model list, or see which box it is on. Those are the far administrator's, and this
+  model list, or see which instance it is on. Those are the far administrator's, and this
   chapter is mostly about where that boundary falls.
 - **Speech.** VOICEVOX is reached by a direct URL with no token-authenticated
   gateway in front of it, so borrowing a voice is a different design and does not
@@ -68,14 +68,16 @@ work — see the last section for why it costs money and still fails.
 
 Which engines exist, which API and provider each speaks, and which models they offer
 are all **read from the far deployment's catalogue**, never declared here. That is
-deliberate: an image role is ComfyUI on one deployment and sd.cpp on another, a
-session composes a completely different request for each, and a guess would post a
-ComfyUI graph at an OpenAI-compatible endpoint.
+deliberate: an image role is ComfyUI on one deployment and an OpenAI-compatible server
+on another, a session composes a completely different request for each, and a guess
+would post a ComfyUI graph at an OpenAI-compatible endpoint.
 
 The consequence is operational:
 
-- The catalogue is fetched at startup and then **every 10 minutes**. A borrowed role
-  becomes available on the first fetch that succeeds.
+- The catalogue is fetched at startup and then **every 2 minutes**. A borrowed role
+  becomes available on the first fetch that succeeds, and when a fetch finds the far
+  catalogue changed, every running workspace is told at once — a checkpoint enabled
+  over there reaches a session here in about two minutes, without restarting anything.
 - **A far fleet that is unreachable when the CP starts leaves the launch menu without
   those models**, and the only signal is a line in the CP log. It recovers on its own
   at the next poll.
@@ -143,14 +145,15 @@ and a message naming the far deployment:
 - editing "excluded from every image".
 
 All of those are done **in the far deployment's own admin panel**, by whoever
-administers it. A change there reaches this deployment within one poll.
+administers it. A change there reaches this deployment within one poll — about two
+minutes — and running sessions see it without being restarted.
 
 What you *can* still do here:
 
 - **on / off.** "off" closes the route on this deployment — sessions stop being
-  offered the engine — and does absolutely nothing to the far fleet's box.
+  offered the engine — and does absolutely nothing to the far fleet's instance.
 - Nothing else. **"on demand" is refused**, exactly as it is for a ComfyUI of your
-  own: it is a promise to release a box, and there is no box here to release.
+  own: it is a promise to release an instance, and there is no instance here to release.
 
 ### When the far side switches a role off
 
@@ -162,12 +165,12 @@ enabled model was removed. On this side that arrives as **zero models for that r
   model — an administrator has to select one",
 - the launch menu stops offering them.
 
-The administrator who has to select one is **the far one**. Within one poll of them
-switching it back on, it works again.
+The administrator who has to select one is **the far one**. Within one poll — about
+two minutes — of them switching it back on, it works again.
 
 ## What the first request waits for
 
-A borrowed engine is usually asleep. The far deployment buys a GPU box when something
+A borrowed engine is usually asleep. The far deployment buys a GPU instance when something
 asks for one, and **the first request after that pays for the whole cold start** —
 instance, image, model into VRAM.
 
@@ -189,7 +192,7 @@ What happens while that runs, so that a long first request is not read as a fail
 - **If this side's hold expires first, the answer is still `engine_waking`**, never
   `engine_unavailable`. That distinction is load-bearing: the image tool retries
   `engine_waking` for up to 16 minutes and does not retry `engine_unavailable` at
-  all, so getting it wrong would turn a box on its way up into a permanent failure.
+  all, so getting it wrong would turn an instance on its way up into a permanent failure.
 
 🔴 **The far side's 45 seconds is its own setting and you cannot read it.** If its
 operator raised it, this side's hold expires first again whatever you do — which is
@@ -206,18 +209,18 @@ reason.
 - **warm** is **what the far deployment last observed about its own engine**, as its
   catalogue reports it — not a check made from here. Nothing on this side ever probes
   a borrowed engine, on the panel or anywhere else; probing would land on the far
-  fleet's gateway, record demand and buy a box.
-- **Left out rather than guessed:** state, desired count, which box, when it will
+  fleet's gateway, record demand and buy an instance.
+- **Left out rather than guessed:** state, desired count, which instance, when it will
   stop, the idle window. None of them is this deployment's to claim about somebody
   else's instance.
 - **No uptime history.** The heatmap is drawn from samples a control loop takes, and
   a borrowed row has no control loop.
 - The **"+N s on the next cold start"** size estimate reads 0. File sizes are not on
-  the wire, and that estimate is about a box this deployment does not pay for.
+  the wire, and that estimate is about an instance this deployment does not pay for.
 
 ## Who pays, and what is recorded
 
-**The far deployment buys the box and pays for it.** Nothing about a borrowed engine
+**The far deployment buys the instance and pays for it.** Nothing about a borrowed engine
 appears under this deployment's cloud cost, because this deployment has no instance.
 
 What is *recorded* differs by role, and the difference matters if you are the one
@@ -246,11 +249,16 @@ GET /api/admin/engines/<key>/attribution?from=YYYY-MM-DD&to=YYYY-MM-DD
 
 - `memberships` — requests, successes, milliseconds and tokens per membership per hour,
   for **both roles**. This is the only count the image role has, and it is what answers
-  "whose work was that box doing". 🔴 A request is counted when it is **admitted**, which
-  is also when the box is bought — so a request that bought a GPU and then failed still
+  "whose work was that instance doing". 🔴 A request is counted when it is **admitted**, which
+  is also when the instance is bought — so a request that bought a GPU and then failed still
   appears, and `requests` minus `ok_requests` is the failure count.
 - `undelivered` — the chat rows kept whole, each with the borrowing session's name and
   the reason it could not be delivered (`no_workspace` is the ordinary borrowing case).
+
+What the instance itself cost is in that deployment's **audit log**, not here: its Control
+Plane writes one line per purchase (`engine.<key>.offer`) naming the instance type it
+actually got and the hourly price — the offer only names a range of types, so this line is
+what answers "why is this engine on the expensive one" a day later.
 
 Two things to know about it:
 
@@ -289,7 +297,7 @@ And the answers a session can see:
 🔴 **One shortcut to avoid.** Pointing `AF_COMFY_URL` at the far fleet's image route
 (`https://…/engine/image/v1`) looks like it would work without any of this, and it is
 the worst of both: that row is health-checked from here, the check lands on the far
-gateway, **records demand and buys a GPU box** — and then fails anyway, because it
+gateway, **records demand and buys a GPU instance** — and then fails anyway, because it
 allows five seconds against a cold start of minutes. A failed check that buys a GPU
 instance by the hour is the one outcome worth going out of your way to avoid.
 

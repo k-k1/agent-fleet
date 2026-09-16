@@ -1,4 +1,4 @@
-# 0079. Borrowing another deployment's engines — a `remote` row in the engine table, with the waiting and the box-buying left to the far Control Plane
+# 0079. Borrowing another deployment's engines — a `remote` row in the engine table, with the waiting and the instance-buying left to the far Control Plane
 
 English | [日本語](0079-remote-engine-from-another-deployment.ja.md)
 
@@ -25,7 +25,7 @@ deployment it is in**.
 1. **The Workspace does not know what a runtime is.** Both providers dial
    `AF_CP_BASE_URL` plus the `base_url` the CP handed back (`workspace/agent/engines.go:185`),
    with the engine session token as the only credential. No AWS SDK, no bucket, no service
-   name. Whether the far end is ECS, a LAN box or another fleet **cannot be told apart from
+   name. Whether the far end is ECS, a LAN instance or another fleet **cannot be told apart from
    here, and does not need to be**.
 2. **The gateway assumes one thing: that there is an upstream URL.** `dial` composes
    `def.URL` + a provider-dependent prefix + the path (`control-plane/engine_gateway.go:766`),
@@ -64,7 +64,7 @@ them.
 
 | Shape | The far side | What the local CP must do |
 |---|---|---|
-| **1. A fleet that buys boxes** (ecs-ec2) | a CP that wakes a GPU on demand and stops it again | forward and **let the far side hold the request** |
+| **1. A fleet that buys instances** (ecs-ec2) | a CP that wakes a GPU on demand and stops it again | forward and **let the far side hold the request** |
 | **2. A fleet pointing at an always-on engine** (compose / native / ec2-single with ADR 0076's `external` row) | a CP that only forwards | forward; there is nothing to wait for |
 | **3. No fleet in the path** | the engine itself, on a reachable URL | ADR 0076 as it stands — an `external` row |
 
@@ -89,7 +89,7 @@ below:
   seconds (`engine_gateway.go:920`); a sleeping engine makes the far gateway hold and then
   answer 503, so the local row — being `external` — fails at once (`engine_gateway.go:845`).
   🔥 Worse than useless: that failed five-second probe still records demand on the far side and
-  **buys a GPU box** that nothing local is waiting for.
+  **buys a GPU instance** that nothing local is waiting for.
 - **The llm role cannot be wired at all.** An inline row via `AF_ENGINES_JSON` is accepted
   (`engines.go:498`) but there is no way to give it a bearer: `apiKey` is filled only for the
   synthesised comfy row (`engines.go:768`) or from SSM, which the external lane deliberately
@@ -268,7 +268,7 @@ where the probe *does* reach an engine it can only ever fail.
 🔥 **And on one shape it is not merely useless but expensive.** When the row's URL already
 contains the engine path — which is the no-code-change baseline above,
 `AF_COMFY_URL=https://<far>/engine/image/v1` — the probe lands on the far gateway as
-`/engine/image/v1/system_stats`, which records demand and buys a box (`engine_gateway.go:384`
+`/engine/image/v1/system_stats`, which records demand and buys an instance (`engine_gateway.go:384`
 onward). A five-second check that always fails and starts a $1.26/hour instance is the single
 worst outcome available here, and it is what a naive reuse of the `external` lane produces.
 Decision 4's URL is the bare base, so a probe there would only reach the far CP's root — but the
@@ -362,7 +362,7 @@ Hand-typing the catalogue locally — ADR 0076's answer for a LAN ComfyUI — is
 `base_model`, `sizes`, `negative`, `selected`, `default`, `warm` and the window
 (`engine_catalog.go:556-604`) — and the one fact that makes a *mirrored* `s3_key` correct rather
 than a leak of somebody else's bucket layout is that only its **basename** is ever used: the
-Agent takes the last path segment as the file name to put in a loader node, because "the box
+Agent takes the last path segment as the file name to put in a loader node, because "the instance
 mirrors bucket keys onto disk verbatim" (`workspace/agent/engines.go:519-521` and `:544-556`).
 The bucket is irrelevant; the file name travels.
 
@@ -372,11 +372,11 @@ mirror rather than read:
 - **`kind` is not on the wire at all.** LoRAs ride a separate `loras` array beside `model_rows`
   (`engine_gateway.go:270-286`), so the mirror sets `Kind:"lora"` from *which array a row arrived
   in*. Get it wrong and every borrowed LoRA becomes a model: it enters the launch menu, and a
-  LoRA-only catalogue makes `hasModels` answer true, which is a box started to run nothing.
+  LoRA-only catalogue makes `hasModels` answer true, which is an instance started to run nothing.
 - **`enabled` is not on the wire either**, because only enabled rows are published. The mirror
   sets it true, which is also why "a role the far fleet switched off" collapses to an empty list.
 - `bytes` is dropped, so the panel's "+N s on the next cold start" reads 0 for a borrowed row.
-  Harmless — that estimate is about a box this deployment does not pay for.
+  Harmless — that estimate is about an instance this deployment does not pay for.
 
 Refresh on the Agent's existing 10-minute cadence; a failed refresh keeps the previous answer,
 for the same reason the local catalogue does (a transient error must not read as "no models",
@@ -487,7 +487,7 @@ Two things the draft got wrong here, and the review found both:
   deployment's own observation and the only honest one available here.
 
 `ondemand` is refused with 400 for a remote row, as it already is for external
-(`engine_admin.go:463`): `off` here closes the route, it does not stop somebody else's box. The
+(`engine_admin.go:463`): `off` here closes the route, it does not stop somebody else's instance. The
 Console needs no change for P0 — it already branches on `managed` — and gets its own "another
 fleet" label in P1, because "externally managed" is true but unhelpful when there is a fleet on
 the other end with a panel of its own.
@@ -531,7 +531,7 @@ not the same kind of fact — the same line decision 9 draws:
 
 ⚠️ **Neither is a second ledger.** ADR 0029's ledger stays the file inside a Workspace, the usage
 graph still reads only that, and nothing here feeds it. These answer one operator question —
-"whose work was that box doing" — and carry no price, which ADR 0048 decision 2 and ADR 0071
+"whose work was that instance doing" — and carry no price, which ADR 0048 decision 2 and ADR 0071
 decision 9 both forbid.
 
 🔴 **And the post-back must not PROVISION.** `resolveByMembership` creates a workspace for a
@@ -547,8 +547,8 @@ had just made. The workspace is looked up directly, before the resolver is asked
 | Rejected | Why |
 |---|---|
 | **The Workspace dials the far CP directly** (a second base URL + issuing token in the container) | Fewest lines by far, and wrong in three ways: the far CP's usage post-back resolves **its own** store and would deliver rows to an unrelated workspace (`engine_usage.go:218-232`); the borrowing credential would sit in every workspace container's environment; and the workspace container gains an egress destination, which ADR 0071 decision 4(a) exists to avoid |
-| **An `external` row with a long-lived static token** | Works only while the far engine is warm, and its health probe buys a GPU box each time it fails (decision 5). Making it work would mean teaching the far gateway to accept a non-expiring credential on the data path — weakening the far side to save the near side |
-| **A tunnel or VPN to the engine boxes** (SSM port forward, Tailscale into the VPC) | The boxes are short-lived, addressed through Cloud Map, and their SG admits the CP only. Worse, **nothing but the far CP can buy or wake one** — a tunnel reaches an address that is usually not there. And llama-server and ComfyUI have no authentication of their own: reachability is their access control |
+| **An `external` row with a long-lived static token** | Works only while the far engine is warm, and its health probe buys a GPU instance each time it fails (decision 5). Making it work would mean teaching the far gateway to accept a non-expiring credential on the data path — weakening the far side to save the near side |
+| **A tunnel or VPN to the engine instances** (SSM port forward, Tailscale into the VPC) | The instances are short-lived, addressed through Cloud Map, and their SG admits the CP only. Worse, **nothing but the far CP can buy or wake one** — a tunnel reaches an address that is usually not there. And llama-server and ComfyUI have no authentication of their own: reachability is their access control |
 | **Publishing the engines on the far ALB** | Same authentication problem with a bigger audience, and it discards the wake, the hold, the catalogue check and the accounting the gateway exists to do |
 | **Doing ec2-single's engine stack first** (make a single-VM deployment drive the ECS engine roles, then borrow from it) | Not rejected — **reordered**. It is a cost optimisation of the far side, not a capability: the borrower still faces shape 1, so this ADR is still needed. It touches CloudFormation, IAM, VPC placement and the ec2-single runbook, needs a live stand-up to prove, and its economics turn on whether a NAT gateway can be avoided. Doing it after this ADR means its completion test is "the same workspace gets the same image, more cheaply" |
 
@@ -840,7 +840,7 @@ fixed.
   the far IdP, stated in decision 3, with the alternative (moving P1's button into P0, at the cost
   of P0's "no new code over there") as open question 6. P0's fake-far-gateway tests are unaffected,
   which is why the verdict is still "may start".
-- **R10. Decision 5's 🔥 was true of the wrong row.** The probe buys a box only when the row's URL
+- **R10. Decision 5's 🔥 was true of the wrong row.** The probe buys an instance only when the row's URL
   already contains the engine path — which is the `AF_COMFY_URL=…/engine/image/v1` baseline in the
   Background, not decision 4's bare base, where `engineHealthURL` would reach the far CP's root
   (`engine_gateway.go:911-913`). The 🔥 stays, with its condition in the sentence, and the plain
@@ -875,7 +875,7 @@ that one miss fails a remote row immediately.
 | `engines.go:624` | not managed here | does this table need AWS | a borrowing native CP loads an AWS config for a feature it is not using (ADR 0076 decision 3) |
 | `engines.go:754` | not managed here | the machinery a row is not given | a remote row gets an ECS adapter with an empty service, a controller goroutine, an active-set publish to SSM and a GPU ladder |
 | `engines.go:932` | **neither** | `warm` for the panel | false for ever, or a health probe on every panel load — see R3 |
-| `engine_admin.go:209` | not managed here | the admin row's shape | the panel claims `idle_secs` and a demand window about somebody else's box |
+| `engine_admin.go:209` | not managed here | the admin row's shape | the panel claims `idle_secs` and a demand window about somebody else's instance |
 | `engine_admin.go:463` | not managed here | `ondemand` refused | `off`/`ondemand` offered for an engine this deployment cannot stop |
 | `engine_table_reload.go:148` | not managed here | do not carry a ladder onto it | a restart request logged about a row the table never mentioned |
 | `engine_table_reload.go:192` | not managed here | its absence from the table says nothing | "the table no longer declares image" on every table change |
@@ -959,7 +959,7 @@ decision says:
   table nobody writes, and the alternative is a key whose bearer cannot be declared at all.
 - **One variable per ROW, not one per deployment.** A single shared bearer would present the
   credential of the proxy in front of the llm engine to a ComfyUI on the same network — the two
-  are different boxes belonging to different reverse proxies, and ADR 0076's whole threat model
+  are different instances belonging to different reverse proxies, and ADR 0076's whole threat model
   is that reachability is the access control.
 - **`AF_COMFY_API_KEY` wins on the row `AF_COMFY_URL` synthesises**, and the generic variable is
   its fallback rather than dead: an operator who declared that row inline instead has no
@@ -982,7 +982,7 @@ decision says:
 The first time any of this touched real hardware. **Lender**: the ecs-ec2 deployment, put on this
 branch's build first so that decision 12 was actually deployed. **Borrower**: a throwaway Control
 Plane built from the same tree and started inside a workspace container — `AUTH=dev`, SQLite under
-`$HOME`, `AF_REMOTE_ENGINE_KEYS=llm` so that no image request could buy a second box. Cost: **one
+`$HOME`, `AF_REMOTE_ENGINE_KEYS=llm` so that no image request could buy a second instance. Cost: **one
 g6.xlarge for about 14 minutes, ≈ $0.29.**
 
 **The borrowing lane worked end to end, and added nothing measurable to the cold start.**
@@ -991,7 +991,7 @@ g6.xlarge for about 14 minutes, ≈ $0.29.**
 |---|---|
 | — | `engines: llm (chat/llamacpp) is borrowed from <far> (1 model(s))` at boot; the admin row came back `managed:false`, `lifecycle:"remote"`, `warm:false`, with none of the managed-only fields |
 | 0.02 s | the borrower answered 200 + `text/event-stream` and began holding |
-| 2 s | the far side minted the session token and **bought the box**: `engine llm: offer l4 (od) bought i-…` |
+| 2 s | the far side minted the session token and **bought the instance**: `engine llm: offer l4 (od) bought i-…` |
 | 55 s | `the box i-… registered (asking for the task)`, desired moved |
 | every 10 s | `: af-engine waking` relayed to the caller, **not once interrupted**, through the whole wait |
 | 233.6 s | the far side's answer arrived — carrying the engine's own failure |
@@ -1004,10 +1004,10 @@ still unmeasured, because the model never loaded.
 🔴 **What it found in decision 12, which the unit tests could not.** The attribution tables were
 EMPTY afterwards, for a request that had bought a GPU. `recordUsage` is reached only once a relay
 returns, and three paths return before it: `dial` failing, the streamed path's upstream 3xx-or-
-worse, and the plain path's refusal. Those are exactly the requests that bought a box and did not
+worse, and the plain path's refusal. Those are exactly the requests that bought an instance and did not
 succeed — the most expensive case, and the one a lending operator most needs a name for. The tests
 written for decision 12 called `recordUsage` directly and never crossed those returns. Fixed by
-counting the request where it is ADMITTED, next to the demand mark that buys the box, and
+counting the request where it is ADMITTED, next to the demand mark that buys the instance, and
 splitting the counters: `requests` at admission, `ok_requests` / milliseconds / tokens at the
 outcome — so `requests - ok_requests` is the failure count for free.
 
@@ -1016,5 +1016,5 @@ outcome — so `requests - ok_requests` is the failure count for free.
 had chosen that card saying `largest model … wants 17093 MiB (floor)`. `engineVramFor`
 (`engine_class.go`) adds the KV cache only when the row carries GGUF geometry; without it the
 estimate is the weights alone, and the floor **silently buys a card the model cannot load on**.
-The failure surfaces four minutes later, on a box already paid for. That belongs to ADR 0072/0074,
+The failure surfaces four minutes later, on an instance already paid for. That belongs to ADR 0072/0074,
 not here, but it is what stopped this run from producing a successful completion.

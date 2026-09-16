@@ -273,7 +273,7 @@ describe("an engine borrowed from another fleet (ADR 0079)", () => {
 
   it("explains that off closes the local route only", async () => {
     await mount(remoteAnswer);
-    expect(text()).toContain("向こうの箱は止めません");
+    expect(text()).toContain("向こうのインスタンスは止めません");
     // The external sentence is about a URL changed by restarting the Control Plane, which
     // describes a LAN box nobody wakes — not this.
     expect(text()).not.toContain("URL の変更は Control Plane の再起動です");

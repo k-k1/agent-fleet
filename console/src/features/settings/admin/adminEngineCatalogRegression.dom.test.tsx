@@ -208,7 +208,7 @@ describe("model catalogue operation regressions", () => {
     await click(accept);
 
     expect(button("取り込む")?.disabled).toBe(true);
-    expect(document.querySelector(".engine-operation-footer")?.textContent).toContain("モデル族");
+    expect(document.querySelector(".engine-operation-footer")?.textContent).toContain("ファミリーを選んでください");
   });
 
   // The card draws a 92x108 box and the lightbox fills the screen, so they must not load the

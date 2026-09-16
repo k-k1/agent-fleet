@@ -54,7 +54,7 @@
 届かない（新しい Agent REST は agent と CP の**両方**に要る、という繰り返し踏んでいる穴）。
 
 共有先へは `GET /api/shared-sessions/{id}/marks` を新設し、`handoffProposals` を雛形にする
-（認可 → **転写と同じレート制限バケツ** → 所有者 Workspace が running か → `ownerGET` → allowlist DTO）。
+（認可 → **転写と同じレート制限バケット** → 所有者 Workspace が running か → `ownerGET` → allowlist DTO）。
 **新しいポーリングは作らない**——ミラーは転写のポーリングに、共有ビューは既にある
 handoff-proposals のポーリングに相乗りさせ、実際の往復は 15 秒に間引く。
 

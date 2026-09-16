@@ -1246,7 +1246,7 @@ image の実測（SDXL 8.0 秒・Z-Image 10.5 秒・klein 4B 4.0 秒。ADR 0072�
 
 ## 追記 — ADR 0077 がこの決定を覆した（2026-09-12）
 
-[ADR 0077](0077-engine-boxes-bought-by-cp.ja.md) は、エンジンの箱を買う役を ECS Managed
+[ADR 0077](0077-engine-boxes-bought-by-cp.ja.md) は、エンジンのインスタンスを買う役を ECS Managed
 Instances からコントロールプレーンへ移した（launch template に対する `CreateFleet(type=instant)`
 で買い、サービスは EC2 の launch type で走る）。上の本文は 1 文字も変えていない。以下は 0077 の
 「上書きする既存の決定」の表のうち、この ADR の決定の行そのものである。表に無いものは覆っていない。

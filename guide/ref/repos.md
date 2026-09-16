@@ -1,7 +1,7 @@
 ---
 audience: "everyone"
 source_of_truth: "this table (maintained by hand — there is no single provider registry in the code)"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # Repository providers — what each supports
@@ -30,6 +30,7 @@ the review flow can offer at all.
 | Large files (LFS) | ✓ | ✓ | ✓ | — | ✓ |
 | Issues in the work-item inbox | ✓ | — | — | — | — |
 | Pull requests in the work-item inbox | ✓ | ✓⁶ | — | — | — |
+| Start a review from a pull request (its head branch checked out) | ✓ | ✓⁶ | — | — | — |
 | Search across repositories | ✓ | —⁷ | — | — | — |
 | Write back to the item (comment) | ✓ | —⁸ | — | — | — |
 

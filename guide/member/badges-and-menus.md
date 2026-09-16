@@ -1,6 +1,6 @@
 ---
 audience: "anyone wondering what a mark on the screen means"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # Icons, badges, and menus — common Console reference
@@ -57,6 +57,22 @@ automatic tidying — [02](02-sessions.md#tidying-up-in-bulk-cleanup)).
 
 `●N` is the number of running sessions in that working copy; a plain number is the count of stopped sessions.
 A collapsed parent repository also aggregates the sessions of the worktrees under it.
+
+## The engine pills in the top bar
+
+Where the deployment runs or borrows inference engines, the top bar carries **one pill per
+role** — **Chat** and **Images** — that every member sees. The pill names the role's state
+(**Ready**, **Running**, **Starting**, **Stopping**, **Stopped**, or **Available** for an engine
+that is external or borrowed), with **×N** when several engines serve the role, **"in 12m"**
+while a countdown to the automatic stop is running, and **"N queued"** when something is
+waiting. Press it and a popover lists each engine on its own line: its state, **External** or
+**Borrowed** where that applies (hover for what it means — those cannot be started or stopped
+from this deployment), **"Stops at 19:50 · in 12m"** when a stop is booked, **"Stops
+automatically after 15m with nobody using it"** for the idle rule, and **"The engine starts on
+the next request. That can take a few minutes."** for one that is asleep. A line without a
+countdown means none is booked, not that the number is unknown. The image-generation pane's
+header says the same four things for the engine it is about to use
+([04](04-files.md#image-generation)).
 
 ## Other badges
 

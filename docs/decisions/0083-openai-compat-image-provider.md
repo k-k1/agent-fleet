@@ -25,7 +25,7 @@ English | [日本語](0083-openai-compat-image-provider.ja.md)
 They came in together (ADR 0071 P1) and have been one word since, which is why "retire sdcpp"
 sounds like one action:
 
-1. **An engine this deployment buys and runs.** An `sd-server` container on a GPU box, its ECR
+1. **An engine this deployment buys and runs.** An `sd-server` container on a GPU instance, its ECR
    repository, the 2.31 GB crane copy in `standup.sh`, the `ImageEngine` parameter that selects
    it. All of this is what nothing runs.
 2. **A client that speaks the OpenAI Images API.** The provider that composes the request and
@@ -122,9 +122,9 @@ a sentence those three turn into a lie.
   ever reached *(review)*.
 - 🔴 **Rewrite what says where the prompt went.** `serviceLabelOf` calls `sdcpp` "Stable
   Diffusion (this fleet's own GPU, not an external service)" (`http.go:283-300`), and the
-  `destination` seam repeats the claim ("`sdcpp` is the fleet's own GPU box, not a vendor",
+  `destination` seam repeats the claim ("`sdcpp` is the fleet's own GPU instance, not a vendor",
   `mcp_imagegen.go:219-222`). Both are surfaces of ADR 0069 decision 11, and the moment the id
-  becomes `openai-compat` that sentence is **true or false per row**: for an `external` LAN box it
+  becomes `openai-compat` that sentence is **true or false per row**: for an `external` LAN instance it
   is nearly right, but the keyed, metered endpoint unresolved 4 raises is exactly an external
   service. `providerIsFleet` returning true (the DEPLOYMENT's money) and "not an external
   service" are two different claims, and the second can no longer be read off the provider id.
@@ -141,7 +141,7 @@ file paths, which ADR 0072 decision 5 closes on purpose.
 
 ### 3. Its rows are `external` and `remote` only, and that makes it usable the day it lands
 
-This deployment buys no OpenAI-compatible box, so no `managed` row will ever name this provider.
+This deployment buys no OpenAI-compatible instance, so no `managed` row will ever name this provider.
 What an operator needs is a row:
 
 ```json
@@ -272,7 +272,7 @@ operator who controls both ends changes it there.
 - **Overrides ADR 0072 decision 4's choice.** "sdcpp or comfy" had two answers; the engine half
   has one now. The rest of that decision stands unchanged.
 - **Overrides ADR 0071 P1's image engine**, and keeps its measurements: cold starts, GPU rungs
-  and the 16-minute budget were measurements of a GPU box and an S3 pull, not of that binary.
+  and the 16-minute budget were measurements of a GPU instance and an S3 pull, not of that binary.
 - **Keeps ADR 0072 decision 2** — the operator declares what a row holds. Decision 2 above leans
   on it: the row's models are what makes `model` sendable.
 - **Keeps ADR 0072 decision 5's refusal** of `<sd_cpp_extra_args>` in a caller's prompt, and the

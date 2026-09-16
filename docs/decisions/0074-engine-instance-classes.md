@@ -1058,7 +1058,7 @@ process's verbosity is what prints `KV self size`, and `LlmExtraArgs` was off li
 CloudFormation parameter). **The catalogue row's `args` solved it**: `["--verbosity","4"]` on the
 row is written into the preset by the fetch sidecar and handed to the child as
 `--log-verbosity 4` (confirmed in the log). So an engine's observability can be raised without
-touching CloudFormation at all. The price was **one wasted start** — three boxes, two usable.
+touching CloudFormation at all. The price was **one wasted start** — three instances, two usable.
 
 ### The ladder's `vram_mib` is the card's physical size
 
@@ -1084,7 +1084,7 @@ ImageInstanceClasses=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge|4-8|15000-65536|1.26
   `Mem*` copied across (llm `g6.xlarge,g5.xlarge` / 4-8 / 15000-65536; image `g6.xlarge` / 4-8 /
   15000-65536).
 - **The second rung is g6e.xlarge.** At 4 vCPU it fits inside the G-family quota of 8 even with
-  the image role holding a box.
+  the image role holding an instance.
 - **`vramMiB` is 22000.** The question the previous section left open — the card's physical size
   or an operational cap — is settled as the former. Three numbers are involved: the hardware's
   own `Total VRAM 22563 MB`, **EC2's declared 22,888 MiB**
@@ -1109,7 +1109,7 @@ ImageInstanceClasses=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge|4-8|15000-65536|1.26
 From `ce get-cost-and-usage` over 2026-09-09..11, filtered by `INSTANCE_TYPE` and divided by
 `USAGE_TYPE` (4.2181 billed hours of g6.xlarge, 1.4978 of g6e.xlarge — the latter is P1's
 90.5 minutes). **g6.xlarge coming out at the 1.26 already declared** is the positive control for
-the method. The management fee is **7.80%** of the box on both types, which is the ~8% the
+the method. The management fee is **7.80%** of the instance on both types, which is the ~8% the
 "do not copy a list price" note in `PARAMETERS-60-engines.md` is about. `l40s2x` has no billed
 hours, so **its price was left empty** — declaring nothing is the rule.
 
@@ -1175,7 +1175,7 @@ side:
 | `memoryMiB` | 15000-65536 | 15000-65536 |
 
 Only the VRAM floor moved — and that is precisely the value the declaration changed. Decision
-1's "four fields are rewritten" holds on the real path. **No box was started on a higher rung**
+1's "four fields are rewritten" holds on the real path. **No instance was started on a higher rung**
 (GPU cost; P1 already did that).
 
 ### The deployment itself
@@ -1438,7 +1438,7 @@ not appear in `describe-instances`. **That is half right** — measured at the s
 `ec2InstanceId` on `ecs describe-container-instances`. That is **the only route from the calling
 account to a proof that Spot sold you the instance**.
 
-### 🔴 Rename the provider and a running Control Plane loses the box
+### 🔴 Rename the provider and a running Control Plane loses the instance
 
 This is the heaviest finding of the run, and **switching to Spot is precisely its trigger.** The
 replacement renames the provider from `af-…-image` to `af-…-image-spot`, and **the only part of
@@ -1468,7 +1468,7 @@ same moment:
 - **The rung never reached hardware.** The apply went to the **deleted old provider** and 400'd,
   so the new one stayed at the template's `ImageAcceleratorMemMinMiB` of **8,000**. The instance
   was bought against the template's floor, not the declared rung's.
-- **The box is invisible.** The `box` lookup matches `ci.CapacityProviderName` against the
+- **The instance is invisible.** The `box` lookup matches `ci.CapacityProviderName` against the
   **baked-in old name**, so `GET /api/admin/engines` answered `box: null` while a g6e.xlarge was
   running at $1.35/h.
 - **And the panel still says "running on l4"** (line 4). Decision 4's "you think you raised the
@@ -1499,11 +1499,11 @@ its repair are shown on hardware.
 > client, the controller's goroutine and its intervals, the demand window — and replacing them
 > means replacing the runtime state. The provider's name is neither: it is a **destination
 > string** (which provider a rung is written to) and a **match string** (which container
-> instance is this engine's box), and it keys nothing this process holds. So it now moves live,
+> instance is this engine's instance), and it keys nothing this process holds. So it now moves live,
 > alongside the ladder and for the same reason (`engine_table_reload.go`, `setCapacityProvider`).
 > Three things go with it:
 >
-> - the **box match** re-runs under the new name, and the cached lookup is dropped with it —
+> - the **instance match** re-runs under the new name, and the cached lookup is dropped with it —
 >   that entry was matched against the old name, so keeping it would go on reporting the
 >   previous provider's instance for the rest of `engineBoxTTL`;
 > - the **rung this process last applied is forgotten**. It was written to the old provider;
@@ -1533,7 +1533,7 @@ the live stack through `cloudformation deploy --parameter-overrides`; `update.sh
 
 ## Appendix — ADR 0077 overrode this decision (2026-09-12)
 
-[ADR 0077](0077-engine-boxes-bought-by-cp.md) moves the purchase of the engine box from ECS
+[ADR 0077](0077-engine-boxes-bought-by-cp.md) moves the purchase of the engine instance from ECS
 Managed Instances to the Control Plane, which buys it with `CreateFleet(type=instant)` against a
 launch template and runs the service on the EC2 launch type. Nothing above is edited; the rows
 below are 0077's own "Which existing decisions this overrides" table, for the decisions of this
@@ -1547,7 +1547,7 @@ ADR. What is NOT in the table is not overridden.
 Decisions 1, 2, 3, 6, 7, 10 and 11 stand. What the rung application's disappearance takes with
 it is the whole class of failure this ADR's follow-ups were about: "declared" and "actual" cannot
 drift apart when the declaration IS the request, and a misspelled type is refused by the call
-rather than by a box that never arrives. `usdPerHour` stays display-only, but it is the EC2 price
+rather than by an instance that never arrives. `usdPerHour` stays display-only, but it is the EC2 price
 now — the 7.80% Managed Instances management fee measured here is gone with the providers.
 
 ## Follow-up — a T4 rung (g4dn.xlarge), adopted as the image role's automatic first choice (2026-09-14, af-sandbox, comfy)
@@ -1692,7 +1692,7 @@ VRAM fit is still `candidateOffers`'s job, not this ordering's: it drops any row
 ENABLED model's demand before walking what is left in declaration order, so listing all seven by
 price and letting the filter narrow them per-start was the point, not a gap to fill by hand.
 
-🔥 **Tolerating a Spot interruption and still landing on an on-demand box that fits needed no code
+🔥 **Tolerating a Spot interruption and still landing on an on-demand instance that fits needed no code
 change either** — `engineOfferRun.noteInterrupted` (`control-plane/engine_offer.go:299`) only
 takes an offer off the table after it is reclaimed **twice in a row**; the first interruption
 retries the SAME cheapest fitting row, and only a second consecutive loss moves the walk to the

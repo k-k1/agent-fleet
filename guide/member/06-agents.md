@@ -1,6 +1,6 @@
 ---
 audience: "anyone choosing and connecting an agent"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 06. Agents — connecting and choosing claude / codex / opencode / GitHub Copilot / Cursor / Kiro
@@ -27,6 +27,7 @@ settings apply **from each agent's new sessions**.
 | Resume | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (can't resume across execution methods) | Yes (not if the working folder is gone) |
 | Hand off | Yes | Yes | Yes | Yes | Yes | Yes |
 | Image paste | Yes | Yes | Yes (model-dependent) | Not supported | Not supported | Not supported |
+| Auto-resume after a usage limit resets | Yes | Managed only | Not supported | Not supported | Not supported | Not supported |
 
 If you're unsure, choose by the subscription or models you use. If you use an Anthropic
 account, pick **claude**; if you use ChatGPT or the OpenAI API, pick **codex**; if you want

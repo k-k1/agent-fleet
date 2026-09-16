@@ -151,7 +151,7 @@ The cards sit under one heading per project, and the identity is **`remote` (the
   working copy's name** (a worktree under its parent's). Sessions in no working copy (a shell in
   home) fall into a trailing "other" heading — where the rail's tree puts them too.
 - Headings are **ordered by name and stay put**. A project holding a waiting session is not
-  lifted: whole sections moving would change which box is "the second one down" every time.
+  lifted: whole sections moving would change which instance is "the second one down" every time.
   Where to go next is said by decision 6's family stage and the card's warm frame.
 
 ### Decision 10 — the card's top right is the state; right of the branch is the parent diff (added 2026-09-12)
@@ -305,7 +305,7 @@ gauge plus the token-spend sparkline.
 - **Grouping projects by folder name**: the name is the user's, and a second clone of one
   repository would be split into a second project (decision 9).
 - **Lifting the heading of a project that holds a waiting session**: whole sections moving
-  changes where every box is (decision 9).
+  changes where every instance is (decision 9).
 - **Filling the waiting time in with "0m"**: turning what the ledgers do not know into a number
   puts a lie under the decision of what to answer first (decision 11).
 - **Doubling as the fleet overview diagram**: the "conversations × sessions × messages"

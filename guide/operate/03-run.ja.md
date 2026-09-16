@@ -1,7 +1,7 @@
 ---
 audience: "動いている配備を保つ人"
 source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 03. 日常運用
@@ -91,6 +91,9 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 - **AWS（`ecs` / `ecs-ec2`）の場合は compose ではなく `deploy/aws/ecs/update.sh`** です
   （`VERSION=<v> ./update.sh --profile <p> --region <r>`）。ECR へ push → ingress スタックを
   `ImageTag` だけ上書きして deploy → CP サービスの入れ替わりを待つ、までを 1 コマンドで行います。
+  版によっては、あるスタックを別のスタックより先に更新する必要があります（スクリプトの通常の
+  順序の逆）。`update.sh` はそれを最初に検査し、何にも触れる前に止まって、単独で実行する
+  `aws cloudformation deploy` のコマンドをそのまま印字します。実行したら `update.sh` をもう一度。
   **走っているワークスペースは自動では新しくなりません**（次の「起動」から新しい image）。
   該当する利用者の Console には「要再起動」バッジが出るので、停止のタイミングは本人に委ねます。
 

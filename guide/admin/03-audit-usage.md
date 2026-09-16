@@ -1,6 +1,6 @@
 ---
 audience: "a tenant administrator reviewing what happened and what it cost"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 03. Audit log and usage
@@ -17,7 +17,8 @@ row is one operation, with the following columns.
 
 - **Time** — when it was done.
 - **Action** — what was done (`fs.*` = file operations, `git.*` = commits, checkouts, and so on,
-  `repo.*` = repository creation / deletion, `session.*` = session creation / fork / stop, etc.).
+  `repo.*` = repository creation / deletion, `session.*` = session creation / fork / stop,
+  `engine.*` = the self-hosted inference engines, etc.).
 - **Actor** — who did it (email address). Besides human operations, the actor can also be an
   external Claude client (MCP) or a system action (auto-stop, etc.).
 - **Target** — which file, repository, or session it was done to.
@@ -33,6 +34,13 @@ keep it in mind.
 
 - **Recorded** — operations that "change state": file upload / creation / rename / deletion, git
   commit / checkout / fetch, repository clone / deletion, session creation / fork / stop, and so on.
+  The self-hosted inference engines write here too, because they spend money without anybody
+  asking: `engine.<engine>.offer` is one line per GPU instance bought, and its detail carries the
+  instance type and the hourly price that were actually bought; `engine.<engine>.box` is what the
+  Control Plane did to an instance it owns (stopped it, replaced it); `engine.<engine>.ingest` and
+  `engine.<engine>.model.complete` are models taken in or completed; `engine.hf_token` and
+  `engine.civitai_token` are the API tokens registered or removed. These lines belong to the
+  deployment rather than to a tenant, so they appear in a deployment administrator's audit view.
 - **Not recorded** — plain **reads** (just opening and viewing a file, just browsing a list) are
   not kept by default. And **raw terminal input/output (the very characters flowing across the
   screen) is not stored**. This is by design, to avoid the risk of passwords or tokens slipping in.

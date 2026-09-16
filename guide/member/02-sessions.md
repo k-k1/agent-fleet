@@ -1,6 +1,6 @@
 ---
 audience: "anyone running and steering agents"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 02. Sessions — launch, switch, and stop AI conversations
@@ -161,7 +161,8 @@ workspace is stopped.
 - The usual launch dialog then opens, with the agent, model and first instruction filled in. **That
   instruction carries the key, the title, the URL and where to read the body** — not the body
   itself.
-- The branch defaults to `feature/<key>`; the template is in the settings tab.
+- For an issue, the branch defaults to `feature/<key>`; the template is in the settings tab. A
+  pull request launches on its own head branch instead (below).
 - Once work is under way, **Comment the work back** appears in the details. The draft holds the
   branch and the changed files, and **the sentence is yours**: it is posted exactly as written and
   nothing is written for you. Bitbucket items have no such button — Agent Fleet only reads from
@@ -182,8 +183,11 @@ five-minute refreshes, and a stale copy of them is worse than none.
   "Try again" appears.
 - The main button is **Open in GitHub / Bitbucket**. The diff and the review thread live there, not
   in Agent Fleet.
-- **Starting a session** is one fold away — reviewing someone else's pull request still needs a
-  working copy, and the started badge keeps working for it.
+- **Starting a session** is one fold away, and here **Start is a review button**: a new worktree
+  checks out **the pull request's own head branch** rather than cutting a fresh one, and the first
+  instruction asks for a review, not a plan. When a working copy on that branch already exists,
+  **where to work** defaults to it; a copy you pick by hand keeps whatever branch it is on. The
+  started badge keeps working for it.
 - **The description is still not shown here.**
 
 ## Reading state — badges and notifications
@@ -323,7 +327,7 @@ when it started. The states that need you now (a question, a plan to review, a p
 colour the whole card, so they can be spotted from across the room.
 
 - **Opening it**: **"Sessions"** on the action bar (next to Split right / Split down / Close all),
-  the same button on the layout map at the top of the left pane, or the leader key **`g` → `s`**.
+  the same button on the layout map at the top of the left pane, or the leader keys **`g` → `s`** / **`s` → `l`**.
   It is an ordinary pane: split it, tab it, pop it out, and it is there again after a reload.
 - **How many columns** depends on the width of the pane it is in — one column in a narrow side
   column, four or more across a wide one.
@@ -504,7 +508,9 @@ picture for a README: the things you cannot hand over in prose.
 
 **Off by default.** Turn it on under **Settings > Agents > Session > "Image generation"**. The
 change applies to **sessions started from then on**; sessions already running keep their
-current tools until restarted.
+current tools until restarted. The list of checkpoints and LoRAs is different: when an
+administrator enables or disables one, running sessions are told within about a minute and see
+the new list **without a restart**.
 
 - **Every kind of session gets it** — claude and opencode, but codex and agy too. What is left
   out is **the one route that runs the session's own CLI**: a codex session cannot pick the
@@ -513,20 +519,26 @@ current tools until restarted.
   missing route is still available from that session's own built-in tool** — including "make
   the same prompt on both so I can compare", which is one call to each. Only when no route is
   left does the tool itself disappear.
-- **Generation runs on a CLI you already have connected.** Two can serve it — **Codex (the
-  ChatGPT login)** and **Antigravity (agy)** — and **Settings > Agents > Session > "Image
-  provider order"** decides which is tried first. The first one signed in is used, and **a
-  call that fails falls through to the next**. With neither connected the tool does not appear.
-- **You can name one in the request.** Say "make it with Codex", or "make the same prompt on
-  both so I can compare", and the agent picks that provider. A named provider is used on its
+- **Which route draws it is a list of rows.** **Settings > Agents > Session > "Image provider
+  order"** ranks every image route this workspace can reach: the deployment's own engines, each
+  under its own name (with **ComfyUI** or **OpenAI-compatible** in brackets), and the CLI routes
+  **Codex (the ChatGPT login)** and **Antigravity (agy)**. The first usable one is used, and **a
+  call that fails falls through to the next**. The deployment's engines sit first by default
+  because that GPU is paid for by the deployment, while a CLI route spends your own plan; a
+  route that appears later is slotted the same way without moving what you ranked. While the
+  workspace is stopped the list shows the built-in default only. With no route usable the tool
+  does not appear.
+- **You can name one in the request.** Say "make it with Codex", name one of the deployment's
+  engines as it appears in that list, or say "make the same prompt on both so I can compare",
+  and the agent picks that provider. A named provider is used on its
   own with no fall-through — nothing is billed to a service you did not choose — and
   **comparing costs one image on each plan.** Say nothing and the order above decides.
-- **Every image spends the included usage of whichever plan produced it** — the ChatGPT plan
+- **Every image made on a CLI route spends the included usage of that plan** — the ChatGPT plan
   for Codex, the Gemini/Antigravity plan for Antigravity, both 3–5× faster than a text
-  exchange. Image generation is not available at all on ChatGPT Free. **Which plan is drawn
+  exchange. An image made on one of the deployment's own engines spends none of your plans. Image generation is not available at all on ChatGPT Free. **Which plan is drawn
   down is decided by that order**, so move the other one up if you would rather not spend one
   of them.
-- **The prompt is sent to that provider (OpenAI or Google).** Do not have images generated
+- **The prompt is sent to that provider (OpenAI, Google, or the deployment's engine).** Do not have images generated
   from instructions that carry anything confidential. Which one produced a picture is recorded
   with it.
 - **Size, background and count are requests, not guarantees.** On the Codex route, asking for
@@ -535,6 +547,14 @@ current tools until restarted.
 - **The aspect ratio is the one exception, and only on the Antigravity route** (16:9 measured
   as 1376×768). You still cannot pick exact dimensions, but you can ask for landscape or
   portrait. The Codex route has no aspect-ratio setting at all.
+- **Sampler settings can be asked for on the deployment's engines.** `generate_image` takes
+  steps, cfg, sampler and scheduler (and a seed, the negative prompt and LoRA weights). Anything
+  left out runs at the checkpoint's published values, and a setting the model's family does not
+  read — cfg on FLUX.1, a named scheduler on FLUX.2 klein — is **named in the result as not
+  applied** rather than dropped in silence.
+- **A LoRA asked for from chat carries its trigger words.** The tool lists each adapter with the
+  words it was trained on and tells the agent to put one in the prompt — an adapter loaded
+  without its trigger costs the whole generation and changes nothing visible.
 - **The picture appears in the conversation as a card** (click to enlarge, or open it in a
   pane). Anything the request did not get is noted above it — "asked for 1024x1024, got
   1536x1024".

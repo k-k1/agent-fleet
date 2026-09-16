@@ -17,7 +17,7 @@
 
 ### 何が ecs-ec2 に縛られているか（2026-09-11 に読んだ）
 
-ADR 0071 は GPU の箱を ECS Managed Instances で買い、ADR 0072 はその箱に載せるモデルを
+ADR 0071 は GPU のインスタンスを ECS Managed Instances で買い、ADR 0072 はそのインスタンスに載せるモデルを
 カタログで宣言した。画像生成の経路は次の 3 段で、**縛られているのは真ん中の登録側だけ**である。
 
 1. **Workspace 側は runtime を知らない。** `generate_image` の provider `comfy` は
@@ -92,7 +92,7 @@ external 行の nil が何に当たるかをコードで読んだ（レビュー
 表と env の両方が同じ `key` を持ったら: 表の行が無いか external なら env が勝ち、**表の行が
 managed なら表が勝つ**。どちらもログに書く。レビューで草稿の「常に env が勝つ」を逆にした——
 制御下の行を差し替えると、その行が指す ECS サービスを止める者が誰もいなくなり、そちらの方が
-高くつく。LAN の箱に替えたい運用者はスタックからその役を外す。
+高くつく。LAN のインスタンスに替えたい運用者はスタックからその役を外す。
 
 SSM の表は 10 秒ごとに読み直される（ADR 0074 の `engineTableReloader`）が、環境変数は起動時に
 1 回しか読まないので、URL の変更は CP の再起動である。reloader は **external 行を飛ばす**——
@@ -110,11 +110,11 @@ ADR 0071 決定 4 を維持する。理由 (a) 経路と allowlist が増えな�
 ### 4. 起こす相手がいないので、`ensureStarted` は external なら**即時に失敗する**
 
 `ensureReady` は health が通ればそのまま転送する（今もそう）。通らないとき、managed なら
-`ensureStarted` が箱を買って待つが、external では待つ理由が無い——**health が落ちている
+`ensureStarted` がインスタンスを買って待つが、external では待つ理由が無い——**health が落ちている
 LAN の ComfyUI は、待っても起きない**。即時に失敗し、非ストリーミング経路は
 `503 engine_unavailable` を返す。`engine_waking` にしない理由: provider は `engine_waking` を
-16 分再試行する（ADR 0071 決定 5）が、その 16 分は「箱を買って S3 から引く」ための予算で、
-落ちている箱に対しては 16 分の沈黙にしかならない。本文には URL と health のパスを書く——
+16 分再試行する（ADR 0071 決定 5）が、その 16 分は「インスタンスを買って S3 から引く」ための予算で、
+落ちているインスタンスに対しては 16 分の沈黙にしかならない。本文には URL と health のパスを書く——
 運用者が読む文である。新しいエラーコードは要らない: 非ストリーミング経路は `errEngineWaking`
 以外の dial の失敗をすべて既に `503 engine_unavailable` に、その文言を末尾に付けて変換し、
 ストリーミング経路も `engine_unavailable` のイベントにする。P0 が足すのは即時に返ることと、
@@ -124,7 +124,7 @@ LAN の ComfyUI は、待っても起きない**。即時に失敗し、非ス�
 ### 5. モードは `on` / `off` の 2 値。既定は `on`
 
 `engineMode(v, managed=false)` の既定 `on` をそのまま使う。保存済みの `ondemand` は `on` と
-読む（切ってよい箱が無い）。管理 API は external への `ondemand` を 400 で拒み、Console は
+読む（切ってよいインスタンスが無い）。管理 API は external への `ondemand` を 400 で拒み、Console は
 external の行に `ondemand` のボタンを出さない。`off` の意味は VOICEVOX と同じ「経路を閉じる」
 であって、ComfyUI を止めることではない。
 
@@ -165,11 +165,11 @@ reverse proxy を置いて bearer を検査し、その鍵を `AF_COMFY_API_KEY`
 
 ### 8. 使用量は `tool.imagegen` の provider `comfy` のまま。費用は付けない。パネルの `warm` は生存確認
 
-Agent が枚数とピクセルを数える経路は変えない（ADR 0069 決定 9・0071 決定 9）。LAN の箱に
+Agent が枚数とピクセルを数える経路は変えない（ADR 0069 決定 9・0071 決定 9）。LAN のインスタンスに
 時間単価は無いので費用は出さない。制御ループが無い external の `warm` は、パネルを開いた
 瞬間の health の結果で答える——1 回の HTTP・**2 秒**上限・結果は 10 秒キャッシュ。ゲートウェイの
 5 秒にしない理由: 一覧のハンドラは同期で、Console は読み込みのたびに叩くので、落ちている LAN の
-箱は external 行 1 つにつき 5 秒パネル全体を止めてしまう。稼働ヒートマップは P0 では空——
+インスタンスは external 行 1 つにつき 5 秒パネル全体を止めてしまう。稼働ヒートマップは P0 では空——
 サンプラは制御ループの tick だからで、health だけを 30 秒ごとに書く軽い prober は P1。
 
 ## 却下した案

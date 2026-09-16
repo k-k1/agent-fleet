@@ -1,6 +1,6 @@
 ---
 audience: "a tenant administrator distributing integrations to the team"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 04. Distributing MCP servers and controlling outbound traffic
@@ -69,9 +69,18 @@ in-house term is consistently mispronounced, ask the super_admin to add it there
 
 ## Inference engines (self-hosted GPUs — super_admin only)
 
-An **Inference engines** section appears in the Admin modal only where the deployment actually
-runs its own engines (`llamacpp` for conversation, `sdcpp` for images). Where it runs none, the
-item is not there at all.
+An **Inference engines** section appears in the Admin modal wherever the Control Plane serves it
+— it does not wait for an engine to be registered. A deployment that runs no engine yet sees the
+same section with an empty list, and the **API tokens** item beside it (the Hugging Face and Civitai
+tokens, below) opens all the same. The chat role (llm) is a self-hosted chat engine; the image role
+(image) is ComfyUI. A row that names an images provider this build cannot serve is not dropped
+silently: the panel marks the row and shows the provider name, and `generate_image` does not work on
+it until the row is pointed at a provider the build knows.
+
+The section is two screens. **Inference engines** is the machine: one row per engine, with its
+mode, state and instance. **Model catalogue** on a row opens the models as a pane of their own,
+with **Text** / **Image** for the role and **Models** / **LoRAs** for what is listed — a LoRA is
+never mixed into the checkpoint list.
 
 Each role takes one of three settings.
 
@@ -92,9 +101,20 @@ Always on — **and remember to switch it back.**
 
 ### The GPU instance class
 
-The selector under the modes appears only where the deployment **declares instance classes**. On
-a deployment that declares none, **there is no such control** — the instance is whatever was fixed at
-deployment time.
+The selector under the modes appears only where the deployment **declares instance classes or
+offers**. On a deployment that declares neither, **there is no such control** — the instance is
+whatever was fixed at deployment time.
+
+Where the deployment declares **offers** — the same GPU rungs, each with how it is bought,
+**On-demand** or **Spot** — the Control Plane buys from that list: the offers are tried **from
+the top, in the order they were declared**, and when one cannot be bought the next is tried.
+The panel lists them under **Offers, tried from the top in the order they were declared**, and
+shows **Current offer** and **Tried, in order** with what each answered — **got it**, **no
+capacity**, **quota**, **budget spent**, **taken away**, **cannot be bought as declared**. The
+selector then reads **Automatic (the default)**; choosing a rung **pins** it (the badge says
+**pinned, not automatic**, and **Back to automatic** undoes it), and a pinned offer never falls
+through to the next one. Everything below about the next instance, the cold start and putting
+it back applies the same way under offers.
 
 It is for **temporarily moving a role onto a bigger GPU** in order to try a model that wants
 more VRAM.
@@ -132,12 +152,48 @@ Where the figure came from is printed with it, and the three are not equally str
 ### Taking models in, and what that has to do with tenants
 
 Taking a model in is one press: **search** the model, press **add** on its card, read the plan the
-card shows (every file the model needs with its size, which of them the deployment already holds,
-the licence) and press **take in**. The Control Plane decides where each file goes and which parts
-the family needs; nothing on the card asks for a role, a key or a file name. Below the registered
-rows sits the **bucket** — every object the deployment holds, what declares it, and what is still
-being taken in or failed. Bytes nobody declares can be registered as a model or deleted there; a
-row whose files are incomplete is repaired from the row itself (**complete**), never from a part.
+card shows and press **take in**. The plan lists every file the model needs, one line each, with
+what that press costs — a download in MiB, or **no download (already held)** / **no download
+(moved inside the bucket)** when the deployment already has the bytes — then the licence and any
+warnings the source carries. The Control Plane decides where each file goes and which parts the
+family needs; nothing on the card asks for a role, a key or a file name, and a model split across
+several files goes in with the same single press. The search can be narrowed to one **Family**
+(the default is **Every family**), and it finds repositories laid out for ComfyUI as well as the
+usual ones. On a phone the search, filter and sort stay put above the cards, the next page loads
+when you reach the end, and the example images arrive as thumbnails.
+
+Every hit also says **what the source will not let you do, before anything is downloaded**: for a
+Hugging Face repository **gated (accept the terms)** or **gated (the author approves)**; for a
+Civitai file **login required** (the Civitai token, below, is what gets past it); and the
+licence and content flags — **non-commercial**, **credit required**, **no derivatives**, **same
+licence only**, **paid**, **early access (paid until a date)**, **not public**, **on-site
+generation only (no download)**, **NSFW** (with Civitai's own level), **real person**, **minor**,
+**virus scan not clean**, **pickle warning**. A hit that shows none of them could not be told
+apart — that is not the same as "anyone may".
+
+The card arrives with the **Family** already chosen where the upstream's name ("SDXL 1.0",
+"Illustrious" and the like) maps onto one of this deployment's families, and with the author's
+published Steps / CFG / sampler filled in under **Read out of the author's description
+(unverified):**, the sentence they were read from beside them; **Use these** keeps them. Nothing
+is guessed: an upstream name the deployment does not recognise leaves the family at **choose
+one**, and the press is refused until you pick. What you save is kept on the row and, at
+generation time, overrides the family's own recipe **field by field** — an empty field keeps the
+recipe (the row's **Parameters** shows what is declared).
+
+Below the registered rows sits the **S3 bucket** (the **Bucket** tab) — every object the deployment
+holds, what declares it, and what is still being taken in or failed. Bytes nobody declares can be
+registered as a model or deleted there; a row whose files are incomplete is repaired from the row
+itself (**complete**), never from a part. **Complete** also fixes a file that is right but sits under
+the wrong key: it is moved inside the bucket (**Moved inside the bucket (no download)**) rather
+than fetched a second time.
+
+A row can be kept in order after the fact. Its **Files** list records where each file came from,
+linked as **Source page**. **Edit** on the row changes the description, the family, the measured
+VRAM, a chat model's context window and max output, a LoRA's **trigger words** and the generation
+**Parameters**. When a press is refused because something already holds its destination, the
+card names it — **held by** the registered row, the ingest job, the bucket object or the running
+task — and offers the one next step: **Register it**, **Complete it**, **Replace it**, **Forget the
+row**, or **Dismiss the job**, which removes a finished line from the ingest history.
 
 That press — putting the file in the bucket and creating a catalogue row — can be started by a
 **super_admin only**, by default. Where the operator grants it
@@ -150,7 +206,12 @@ granted or not:
 - **Enabling** a model (making it something members can choose)
 - Changing the image role's **selected checkpoint**
 - **Forgetting** a row
-- Registering the deployment's **Hugging Face token**
+- Registering the deployment's **Hugging Face token** and **Civitai token**
+
+Both tokens live under the Admin modal's **API tokens** item, which opens even before any engine
+is registered. Without the Hugging Face token only ungated repositories can be taken in; without
+the Civitai token, assets that require a logged-in account cannot. Each is one token for the whole
+deployment, stored encrypted, read by the ingest task only and never handed to an engine instance.
 
 🔴 **The catalogue is one per deployment and is not split per tenant. The id of a model taken in is
 visible from every tenant.** That is deliberate: the GPU instance is shared between tenants, and every
@@ -170,7 +231,7 @@ engine models"** (not the Admin modal — that one is super_admin only). It hold
 **the model search, the plan card, the bucket entries their own tenant's jobs produced, and the list
 of catalogue rows** (id, name, family, licence and on/off — **read-only**). What it does not hold:
 **the mode (disabled / on demand / always on), the GPU class, the state of the instance, enabling
-and selecting a model, forgetting a row, and the Hugging Face token** — each of those decides what
+and selecting a model, forgetting a row, and the API tokens** — each of those decides what
 every *other* tenant runs, or who pays for the GPU. The bucket shows **that tenant's own objects
 only**, and a super_admin's do not appear in it (a super_admin's own screen shows the whole bucket).
 
@@ -210,7 +271,10 @@ and the darker it is the longer the engine was up in that hour.
   stopped is grey, which is a different colour from blank.
 - **No amounts are shown.** Real cloud spend is only available per day, so an hourly figure could
   only be a rate times a number of seconds — an estimate. This screen answers "when was it
-  running"; "what did it cost" is answered by the cloud cost screen.
+  running"; "what did it cost" is answered by the cloud cost screen. The one real price this
+  deployment knows is the hourly rate of each instance it bought, and that is written once, in the
+  audit log's `engine.<engine>.offer` line, with the instance type that was actually bought
+  ([03](03-audit-usage.md)).
 
 ## Controlling outbound traffic (egress — super_admin only)
 

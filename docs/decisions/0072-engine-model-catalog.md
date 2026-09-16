@@ -3369,7 +3369,7 @@ make the gateway rewrite a request body.
   the boundary between two adapters, so the CP refuses one when it publishes the active set, for
   every role.
 - **An adapter with no base.** If the base is disabled or absent it is pinned to nothing and the
-  panel row is marked `lora_base_missing`. Enabled, staged on the box and doing nothing looks
+  panel row is marked `lora_base_missing`. Enabled, staged on the instance and doing nothing looks
   exactly like working.
 - **The Console.** Both forms — register and ingest — gained a "this row is" control.
   🔴 **Before this, no route in the Console could create a LoRA row for EITHER role**: both sent
@@ -3577,7 +3577,7 @@ stops and names the workflow. `deploy/local/ecs-lifecycle-stub-test.sh` case 3i 
 
 For 1, the reference was checked in all three task definitions (llm's `fetch`, image's `fetch`,
 ingest's `fetch` and `upload`). Two of them actually ran — image's fetch and the ingest pair;
-**only llm's fetch never ran**, for want of a box.
+**only llm's fetch never ran**, for want of an instance.
 
 Item 2, verbatim:
 
@@ -3610,7 +3610,7 @@ containers' division of labour, showing through. The object left the bucket
 ### #512's window **can** be opened — but it has to be arranged
 
 "The engine comes up mid-sync" could **not** be reproduced by another lane in two cold starts:
-the box takes longer to acquire than the remaining sync. **Enabling more models stretches
+the instance takes longer to acquire than the remaining sync. **Enabling more models stretches
 `keys.rest` until it opens.** Measured with five models enabled (~30 GB):
 
 | Time | Event | keys in `pending` |
@@ -3638,7 +3638,7 @@ taken on hardware".
 
 ### #512's resident sidecar works
 
-`juggernaut-xl-v9` (7.1 GB) was enabled while the box was running. **No restart.**
+`juggernaut-xl-v9` (7.1 GB) was enabled while the instance was running. **No restart.**
 
 ```
 02:47:26  enabled
@@ -3649,11 +3649,11 @@ taken on hardware".
 ```
 
 `WATCH_SEC` is 60 seconds, so **19** is inside one period. Open question 3 (syncing into a
-running box) now has its hardware backing.
+running instance) now has its hardware backing.
 
 ### 🔴 What could not be taken — AWS ran out of capacity
 
-The llm box **never came**. The service's own events, verbatim:
+The llm instance **never came**. The service's own events, verbatim:
 
 ```
 (service af-af-ecs-engines-llm) was unable to place a task. Reason: ResourceInitializationError:
@@ -3915,7 +3915,7 @@ no such line.
 | 05:11:55 | `mode: off` | – |
 
 **The window was about 2 minutes 02 seconds** (05:07:00 to 05:09:01.9). Shorter than the
-previous section's 2:39 because the box came faster (`mode: on` to `running` was 10 min 50 s
+previous section's 2:39 because the instance came faster (`mode: on` to `running` was 10 min 50 s
 there, 6 min 46 s here), which is the previous section's formula — **"the total bytes of the
 non-start models minus the acquisition time"** — behaving as stated. `state` was sampled every
 ten seconds, so `running` carries ±10 s. The last file to land was again `z_image_turbo`
@@ -3940,10 +3940,10 @@ token never reaching stdout, disk or `argv`.
 
 The two the previous section left (**#518's item 3, the llm idle wrapper** and **#513's fixed
 preset LoRA**) were not touched here either: another lane holds the llm role, and the on-demand
-G-family vCPU limit is 8 (a `g6.xlarge` is 4), so image plus llm fills it exactly. **While a box
+G-family vCPU limit is 8 (a `g6.xlarge` is 4), so image plus llm fills it exactly. **While an instance
 is being remade — `off` → `on` — the 4 vCPU of the draining one still count, so two lanes
 remaking at once leave the later request silently unplaced with `VcpuLimitExceeded`**; this run
-kept to a single remake and told the other lane before and after. The GPU was one box for about
+kept to a single remake and told the other lane before and after. The GPU was one instance for about
 nine minutes (`mode: on` 05:00:14 to `mode: off` 05:11:55).
 
 ## Follow-up — a checkpoint that carries no VAE (2026-09-12)
@@ -3966,7 +3966,7 @@ different nodes reached by different requests; what they have in common is the V
 the SDXL template that link was `CheckpointLoaderSimple`'s third output unconditionally. That
 output is `None` when the checkpoint holds no VAE tensors — which plenty of published SDXL
 checkpoints do not — and nothing before the GPU refuses it: the row validates, `base_model` is
-right, the files are on disk, the box pays the 1–2.5 minute checkpoint switch, and then the
+right, the files are on disk, the instance pays the 1–2.5 minute checkpoint switch, and then the
 graph dies. A member cannot work around it either, because `generate_image` has no VAE argument
 (ADR 0069's vocabulary is deliberately provider-neutral).
 
@@ -3988,7 +3988,7 @@ since the exception message sorts before the traceback in ComfyUI's error dict.
 
 - **No automatic fallback to a well-known VAE name.** `VAELoader`'s `vae_name` is an enumeration
   over `models/vae`, the same shape that refused SD3.5's `clip_name1` (P2 remaining work 5), so
-  naming an `sdxl_vae` the box does not hold would turn a family that works today into
+  naming an `sdxl_vae` the instance does not hold would turn a family that works today into
   `Value not in list` for every row.
 - **No "this row has no VAE" check on the catalogue.** The CP never reads the files — decision 2
   makes the catalogue a declaration — and most SDXL checkpoints do bundle a VAE, so adding
@@ -4008,7 +4008,7 @@ Every measurement below is from anonymous access on 2026-09-12.
 
 ### 1. The panel is two screens: the machine, and what it loads
 
-One rail item held 2,991 lines: the GPU's mode, its box, its rung and its uptime, stacked above
+One rail item held 2,991 lines: the GPU's mode, its instance, its rung and its uptime, stacked above
 the catalogue, the ingest, the upstream search and the Hugging Face token. Two questions are
 mixed there ("is the GPU costing me money right now" and "what should this engine load"), and
 **the permission boundary is in exactly the same place** — open question 11's granted
@@ -4213,7 +4213,7 @@ failed to allocate buffer for kv cache
 
 The row's `context_tokens` was still the 262144 off the model's own header, and an L4 holds
 neither 17 GB of weights nor the 16 GB of KV cache that window asks for. **The Console has no
-field for it.** The box is bought, the weights are synced, and the failure arrives four minutes
+field for it.** The instance is bought, the weights are synced, and the failure arrives four minutes
 later, so the price of an uncorrectable row is paid in GPU-hours.
 
 Three gaps were found around it, and two more the operator named:
@@ -4379,7 +4379,7 @@ Two defects, found by an operator of this deployment on one evening, with one ro
 checkpoint published without VAE tensors. The row declares its family, holds the one file that
 family requires, passes `engineMissingFileFlags`, enables, appears in `generate_image`'s `model`
 enum — and then fails EVERY request inside ComfyUI with `ERROR: VAE is invalid: None`, after the
-box has paid a 1–2.5 minute checkpoint switch. Generate dies in `VAEDecode`, edit in `VAEEncode`,
+instance has paid a 1–2.5 minute checkpoint switch. Generate dies in `VAEDecode`, edit in `VAEEncode`,
 so "it is the checkpoint, not the workflow" is diagnosable but only after the fact. A caller
 cannot act on it at all: `generate_image` has no VAE argument. The Agent has read a catalogue
 `--vae` since the 2026-09-12 fix, so the DECLARATION was possible — nothing pointed at the rows
@@ -4436,7 +4436,7 @@ with a 403 inside the job reconciler. An sd35 row that really lacks one gets the
 refusal, and its fix is the manual declaration the operator guide describes.
 
 Two things that remain impossible, unchanged from the 2026-09-12 fix: a runtime fallback to a
-known VAE name (`VAELoader.vae_name` enumerates the box's own `models/vae`, so naming a file it
+known VAE name (`VAELoader.vae_name` enumerates the instance's own `models/vae`, so naming a file it
 does not hold breaks the families that work today), and making `--vae` mandatory in the catalogue
 (every bundled checkpoint would become "file not set").
 
@@ -4470,7 +4470,7 @@ pane opened from inside one is a screen nobody can see.
    next question.
 3. **Which file** — the candidates, the licence, what it would ask of the card, the family with
    the provenance of the suggestion, the author's own settings, and the VAE offer above.
-4. **Confirm** — what will happen, in sentences, with the licence beside the box that accepts it.
+4. **Confirm** — what will happen, in sentences, with the licence beside the instance that accepts it.
 
 🔴 **When the next button is grey, the reason stands beside it.** That is the rule the whole
 rebuild is for, and the one the old form broke in three places.
@@ -4515,7 +4515,7 @@ Publication and update dates remain separate facts; a missing update date is not
 A search card represents one HF repository or Civitai model. Versions and files are selected in
 the operation dialog. Image cards show family and model type; LLM cards show available file,
 quantisation and context information. An available example image is a **small thumbnail on the
-right**, opening a lightbox on activation. No image means no reserved image box. Narrow panes
+right**, opening a lightbox on activation. No image means no reserved image instance. Narrow panes
 use one column and wrap footer buttons. The lightbox supports keyboard activation, Escape and
 focus restoration.
 
@@ -4946,7 +4946,7 @@ So the same shape now covers the parts of a split family:
 - The ingest form offers the set **ticked by default** (`with_family_parts`), with each part's
   size and licence beside it, and takes them in as follow-ups to the same press.
 - **`POST …/models/{id}/parts`** is the remedy for rows that already exist — because "take the
-  4 GB diffusion model in again with the box ticked this time" is not a repair.
+  4 GB diffusion model in again with the instance ticked this time" is not a repair.
 - The registered card now draws `files_missing`, which the wire has carried since P2 and this
   screen never showed: an unusable row looked like every other row.
 
@@ -5028,11 +5028,11 @@ s3Key = engineIngestPrefix(image, fileFlag, isLora) + file
 2. `file` is the path inside the upstream repository, and these families are published under
    `split_files/…` → the key kept that directory as well.
 
-🔴 **Either half alone is a file no ComfyUI loader can offer.** The box mirrors the bucket
+🔴 **Either half alone is a file no ComfyUI loader can offer.** The instance mirrors the bucket
 (`/ComfyUI/models` → `/models/image`), each loader builds its menu from ONE directory, and the
 Agent names a file by its BASE NAME. So `image/diffusion_models/split_files/…` is exactly as
 unreadable as `image/checkpoints/…` — and the second spelling was reachable with the role chosen
-correctly. Nothing reports it: the row validates, the box loads, and generation fails after a
+correctly. Nothing reports it: the row validates, the instance loads, and generation fails after a
 cold start with a node error about a name that is not in the list.
 
 ### The repair is a MOVE, not a second download

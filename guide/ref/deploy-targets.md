@@ -1,7 +1,7 @@
 ---
 audience: "everyone; decisive for operate/"
 source_of_truth: "this table; the rows are checked against the runtime profiles the Control Plane accepts"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # Deployment targets — what exists where
@@ -49,7 +49,8 @@ delivery mechanisms, one implementation of "what may this role see".
 the first time.
 
 ⁴ A ComfyUI **already running on your own network**, pointed at with one environment
-variable ([operate/07](../operate/07-image-engine.md)).
+variable — or several engine rows side by side: a LAN ComfyUI, a borrowed engine, an
+OpenAI-compatible server ([operate/07](../operate/07-image-engine.md)).
 
 ⁵ The fleet's own GPU, bought when something asks for it. There is no equivalent on
 Fargate. On every target a session can also generate images on **the member's own CLI

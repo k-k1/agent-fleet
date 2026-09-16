@@ -11,14 +11,14 @@ English | [日本語](0084-engine-indicator-and-tenant-gate.ja.md)
   🟢 **Reviewed 2026-09-14 before the build**, every anchor re-run against the tree. Two open
   questions were answerable from the source and are now closed with their answers (2 and 6 — both
   "no, the CP cannot see it"), and decision 9's hole turned out narrower than it was written.
-- See also: [0071](0071-self-hosted-inference-engines.md) (the engine box, on-demand control, the
+- See also: [0071](0071-self-hosted-inference-engines.md) (the engine instance, on-demand control, the
   cold start, the gateway) /
   [0082](0082-many-image-engines-at-once.md) (**an images row is itself one provider**; a role holds
   several rows — decision 11 takes this up) /
   [0083](0083-openai-compat-image-provider.md) (`sdcpp` → `openai-compat`; the rows it deals with
   are `external` and `remote` only) /
   [0072](0072-engine-model-catalog.md) (one catalogue per deployment; the tenant grant for ingest) /
-  [0074](0074-engine-instance-classes.md), [0077](0077-engine-boxes-bought-by-cp.md) (the box and what it costs) /
+  [0074](0074-engine-instance-classes.md), [0077](0077-engine-boxes-bought-by-cp.md) (the instance and what it costs) /
   [0076](0076-external-image-engine-on-lan.md), [0079](0079-remote-engine-from-another-deployment.md)
   (engine rows this deployment does not manage — they decide what the indicator **may not say**) /
   [0081](0081-image-generation-pane.md) (decision 10 wrote "there is no member-facing route to the
@@ -29,10 +29,10 @@ English | [日本語](0084-engine-indicator-and-tenant-gate.ja.md)
 
 ## Context
 
-The self-hosted engines (ADR 0071; roles `llm` = chat and `image` = images) run on demand. The box
+The self-hosted engines (ADR 0071; roles `llm` = chat and `image` = images) run on demand. The instance
 stops after its idle window and is bought again on the next request. The cold start is a measured
 165-197 seconds (image role) and 527 seconds from S3 with the image already pulled. So **how long a
-member waits after pressing "generate" differs by an order of magnitude depending on whether the box
+member waits after pressing "generate" differs by an order of magnitude depending on whether the instance
 happens to be awake.**
 
 Today only an administrator can see that. The row behind `GET /api/admin/engines`
@@ -42,7 +42,7 @@ a tenant_admin granted `allow_engine_ingest`, and to nobody else. An ordinary me
 member-facing engine route at all**: ADR 0081 decision 10 decided that deliberately, because inside
 the image-generation pane a header saying ready / cold / starting / unavailable was enough.
 
-It was enough inside the pane. It is not enough for the fleet. **One row buys one box, and every
+It was enough inside the pane. It is not enough for the fleet. **One row buys one instance, and every
 member shares it** (there may be several rows — ADR 0082, decision 11. The catalogue stays one per
 deployment; `engine_ingest_perm.go:6` says so with the measurement: a per-tenant catalogue breaks the
 cold-start sync). "Will I wait if I submit now?", "is it
@@ -60,7 +60,7 @@ What already exists, measured:
 - For **rows this deployment does not manage** (ADR 0076's external, ADR 0079's remote) the CP
   **does not send** `state` / `desired` / `box` / `stop_eta` / `idle_secs` (`engine_admin.go:274`):
   "an idle window of 0 is configured to mean 'never stops', which is a claim nothing here is
-  entitled to make about somebody else's box."
+  entitled to make about somebody else's instance."
 - **The push plumbing exists.** `GET /api/events` (`events.go:54`) is SSE on a 4-second tick that
   frames **only the streams whose JSON changed** (`emit`, `events.go:101`). An unchanged tick costs
   zero bytes. The file's own header says why: "on a mobile link the request headers and cookie round
@@ -88,7 +88,7 @@ Do not add a route and have the Console poll it. Add one stream, named `engines`
 Why not the Agent's side (`GET /imagegen/status`), three reasons:
 
 1. **The `llm` role has no Agent-side view.** This is not an image-only surface.
-2. **It has to show while the workspace is stopped.** "The box is awake, starting now is fast" is
+2. **It has to show while the workspace is stopped.** "The instance is awake, starting now is fast" is
    what somebody wants to know *before* waking their workspace. Through the Agent there is nothing
    to say while it is down.
 3. Engine state is a **deployment fact** the CP already holds. Keeping a second projection of the
@@ -186,26 +186,26 @@ main reason this indicator exists at all.
 | # | Source | What it counts | Cost |
 |---|---|---|---|
 | A | The CP gateway's in-flight count | requests the CP **is holding right now** — cold-start waits and generations alike | two atomics; free |
-| B | ComfyUI's `GET /queue` | prompts stacked up **inside the box** (`queue_running` + `queue_pending`) | one call per 30 s, only while running |
+| B | ComfyUI's `GET /queue` | prompts stacked up **inside the instance** (`queue_running` + `queue_pending`) | one call per 30 s, only while running |
 | C | Each Workspace Agent's job queue | **that person's own** not-yet-submitted jobs (`internal/imagegen/jobs.go:166`) | rides an existing poll |
 
 - **`llm` role = A alone.** The CP holds a chat request end to end (streaming passes through with a
   heartbeat; non-streaming gives up at 45 s with `engine_waking`). A is the whole truth about "how
   many people are waiting".
 - **`image` role = A + B.** ComfyUI's API is asynchronous: `POST /prompt` **returns a queue id at
-  once** (`internal/imagegen/comfy.go:7`), and the picture then waits inside the box, outside the
+  once** (`internal/imagegen/comfy.go:7`), and the picture then waits inside the instance, outside the
   CP. A misses it. The
   read already exists on the Agent side — `queuePending`
   (`workspace/agent/internal/imagegen/comfy.go:1232`) reads `queue_pending` to
   decide how to cancel — and the same read goes on the CP's controller tick, **only while the
   service is RUNNING**. Zero calls while it sleeps; one per 30 s while it runs, which next to a
-  $1.26/hour box is rounding error.
+  $1.26/hour instance is rounding error.
 - **C is a different number from a different place.** When a member submits a batch of forty, the
   other thirty-eight are in their own workspace's Agent memory and are **structurally invisible to
   the CP**. Without it, the pill of the person who just submitted reads "2 queued".
 - **A and B are counted per row** (decision 11). The shared number on the pill is the sum over that
   role's rows; the popover splits it per row. **External and borrowed rows have no B** — this
-  deployment does not go and ask somebody else's box for its `/queue`, for the same reason it does
+  deployment does not go and ask somebody else's instance for its `/queue`, for the same reason it does
   not send their `state` (decision 4). Those rows carry A alone, and the popover draws them that way.
 
 **So the pill shows two numbers: shared (A+B) and yours (C).**
@@ -284,7 +284,7 @@ tri-state idiom `limits.go` already uses for the idle timeouts (`""` = the deplo
 
 **Role granularity, not model granularity.** The catalogue stays one per deployment (ADR 0072).
 "This tenant may use only this checkpoint" means a tenant axis on the catalogue, which is the design
-ADR 0072 rejected with a measurement: every enabled model is synced onto the box at every cold
+ADR 0072 rejected with a measurement: every enabled model is synced onto the instance at every cold
 start, and about five models already fill a ten-minute one.
 
 ### Decision 8 — four gates; miss one and the gate is decorative
@@ -336,7 +336,7 @@ Two things the review pinned down, and the builder needs both:
   So there is nothing to add downstream — verify with a test that drives a non-empty catalogue to
   empty and asserts the block is gone (the positive control is the non-empty write).
 
-### Decision 10 — it lives beside the TTS pill, and pressing it never buys a box
+### Decision 10 — it lives beside the TTS pill, and pressing it never buys an instance
 
 - Beside the TTS pill in `topbar-right` (`TopBar.tsx:192`). **One per role** — not one per row
   (decision 11), so at most two.
@@ -346,7 +346,7 @@ Two things the review pinned down, and the builder needs both:
   appearance popover.
 - **No "wake it now" button.** TTS has `POST /api/tts/wake` (ADR 0070 decision 4) and the reason
   there was that "somebody who wants the voice for their own notifications must not have to earn it
-  by volume". A GPU box is $1.26/hour, and nothing says the person who pressed it will then use it.
+  by volume". A GPU instance is $1.26/hour, and nothing says the person who pressed it will then use it.
   A member can already wake it **by using it** — the request *is* the demand (ADR 0071 decision 5).
   Pinning it ON stays a super_admin control.
 - The popover carries: the state in a sentence, the stop time (absolute, local), the policy (the
@@ -366,7 +366,7 @@ cannot express the moment there are two rows.** To avoid repeating it here, the 
 apart from each other up front:
 
 - **The pill's unit is the role** (llm / image). A pill per row puts four pills in the top bar for
-  one fleet row plus one LAN box plus one borrowed row, and not one of them fits on a phone.
+  one fleet row plus one LAN instance plus one borrowed row, and not one of them fits on a phone.
 - **The popover's unit is the row.** Key, state, stop-in and queue, one line each. The key is the
   name the operator chose, so it reads as "which machine" — the same reasoning ADR 0082 decision 1
   gives for putting `provider: comfy-lan` in the result.
@@ -374,7 +374,7 @@ apart from each other up front:
   because that is what decides the wait and `auto` lands exactly there. With two or more rows the
   pill carries a count (`🖼 Image 2`), so "this is not about one machine" is legible before the
   popover is opened.
-- **Do not fold several `stop_eta`s into one.** A rounded time is not true of any of the boxes. The
+- **Do not fold several `stop_eta`s into one.** A rounded time is not true of any of the instances. The
   pill counts down the `stop_eta` of **the row it took its headline from**; the rest are in the
   popover.
 
@@ -400,22 +400,22 @@ your `auto` reaches first", it is a projection the CP would have to be given, no
   numbers the reader cannot act on and `mode` is a control. `engine_ingest_perm.go:139` already
   rejected the same idea for tenant_admins.
 - **Asking ComfyUI for the queue on every read.** The engine is asleep most of the time, and dialing
-  a sleeping box is precisely why `ready` was kept off the admin row (`engine_admin.go:184`). Only
+  a sleeping instance is precisely why `ready` was kept off the admin row (`engine_admin.go:184`). Only
   while RUNNING, on the controller's tick (decision 6-B).
 - **Queue depth from A (the CP's in-flight) alone.** It lies for the image role (decision 6).
 - **Queue depth from C (your own queue) alone.** It cannot see that somebody else is forty pictures
-  deep, which is the one thing worth knowing about a shared box.
+  deep, which is the one thing worth knowing about a shared instance.
 - **A per-tenant catalogue, or per-model grants.** ADR 0072 rejected it with a measurement (every
-  enabled model syncs onto the box at cold start, in series at ~159 MB/s; about five models fill a
+  enabled model syncs onto the instance at cold start, in series at ~159 MB/s; about five models fill a
   ten-minute cold start).
 - **`bool allow_engine_*` defaulting to false, plus a migration writing true for existing tenants.**
   A deployment whose migration failed on one SQL dialect, or a CP that came up before the migration,
   takes the GPU away from everybody. The tri-state needs no migration at all (decision 7).
 - **A "wake it now" button on the pill.** Decision 10.
 - **One pill per row.** ADR 0082 lets the `image` role hold any number of rows; one fleet row plus a
-  LAN box plus a borrowed row is four pills in the top bar and none of them fits on a phone. One per
+  LAN instance plus a borrowed row is four pills in the top bar and none of them fits on a phone. One per
   role, rows in the popover (decision 11).
-- **Folding several `stop_eta`s into one.** A rounded time is true of no box. Show the headline row's
+- **Folding several `stop_eta`s into one.** A rounded time is true of no instance. Show the headline row's
   and put the rest in the popover (decision 11).
 
 ## Consequences
@@ -506,7 +506,7 @@ and C's fourth gate ("do not send the row") edits the `engines` stream A creates
    is on screen.
 2. ~~**For the `llm` role, is the in-flight count "waiting" or "in use"?**~~ **Closed: it stays one
    folded number.** llama-server runs up to `--parallel` slots concurrently and queues the rest
-   inside the box, but the CP cannot know the slot count. The engine table the CP reads
+   inside the instance, but the CP cannot know the slot count. The engine table the CP reads
    (`AF_ENGINES_SSM_PARAM` → `engineDef`, `control-plane/engines.go:49`) carries no such field, and
    the only place the flag could come from is `LlmExtraArgs`
    (`deploy/aws/ecs/cfn/60-engines.yaml:46`) — a `CommaDelimitedList` joined verbatim into the
@@ -530,5 +530,5 @@ and C's fourth gate ("do not send the row") edits the `engines` stream A creates
    (`control-plane/routes.go:787`). Decision 11's headline is therefore **"best state"**, with the
    per-row truth in the popover. Settled before the build, so nobody has to guess.
 7. **With two or more rows in a role, is a role-level tenant gate still right?** Decision 7 cuts at
-   the role. Whether anybody actually wants "the LAN box yes, the cloud box no" is unknown. Leave it
+   the role. Whether anybody actually wants "the LAN instance yes, the cloud instance no" is unknown. Leave it
    at the role until they ask — a row-level gate stops the catalogue filter being one line.

@@ -1,7 +1,7 @@
 ---
 audience: "全員（operate/ には決定的）"
 source_of_truth: "この表（行は Control Plane が受け付ける runtime プロファイルと突き合わせ）"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # デプロイ形態 — どこに何が在るか
@@ -48,7 +48,8 @@ updated: "2026-08"
 ³ `native` が使う lean イメージは Chromium を焼いていないので、初回にオンデマンドで
 取得する。
 
-⁴ **自分の網の中ですでに動いている** ComfyUI を、環境変数 1 つで指す
+⁴ **自分の網の中ですでに動いている** ComfyUI を、環境変数 1 つで指す——あるいは
+LAN の ComfyUI・借りたエンジン・OpenAI 互換のサーバを、エンジンの行として並べる
 （[operate/07](../operate/07-image-engine.ja.md)）。
 
 ⁵ フリート自身の GPU を、要求が来たときに買う。Fargate に相当するものは無い。

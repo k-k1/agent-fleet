@@ -1,7 +1,7 @@
 ---
 audience: "全員（他の表がぶら下がる索引）"
 source_of_truth: "「在るか・誰が使えるか」はこの表、「どうやるか」はリンク先"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 機能カタログ
@@ -34,6 +34,8 @@ updated: "2026-08"
 | マーカー | メンバー | ミラーの選択範囲 | [09 他の人と扱う](../member/09-collaboration.ja.md) |
 | 変更ファイル | メンバー | ミラーのヘッダ下の帯 | [09 他の人と扱う](../member/09-collaboration.ja.md) |
 | コンテキスト使用量ゲージ | メンバー | セッションのヘッダ | [06 エージェント](../member/06-agents.ja.md) |
+| 回答を自分の言語で読む（翻訳・ターンを使わない）| メンバー | ミラーの回答の下 | [02 セッション](../member/02-sessions.ja.md#回答を自分の言語で読む翻訳) |
+| セッションに画像を作らせる（`generate_image`）| メンバー | どのセッションでも、頼むだけ | [02 セッション](../member/02-sessions.ja.md#セッションに画像を作らせる) |
 | 中断の検知と自動再開 | メンバー | 自動 | [09 他の人と扱う](../member/09-collaboration.ja.md) |
 
 ## コードを扱う
@@ -48,7 +50,9 @@ updated: "2026-08"
 | Markdown / コードの編集 | メンバー | ファイル → 各ファイル | [04 ファイル](../member/04-files.ja.md) |
 | `.drawio` の図 | メンバー | ファイル → `.drawio` | [04 ファイル](../member/04-files.ja.md) |
 | PDF・Office 文書のプレビュー | メンバー | ファイル → その文書 | [04 ファイル](../member/04-files.ja.md) |
-| 画像生成 — エージェントを介さずに絵をまとめて作る | メンバー | 操作バー → 画像生成、またはリーダー `g i` | [04 ファイル](../member/04-files.ja.md) |
+| 画像生成 — エージェントを介さずに絵をまとめて作る | メンバー | 操作バー → 画像生成、またはリーダー `g i` | [04 ファイル](../member/04-files.ja.md#画像生成) |
+| LoRA と、選ぶ前に見えるトリガー語 | メンバー | 画像生成 → LoRA | [04 ファイル](../member/04-files.ja.md#画像生成) |
+| 画像ギャラリー — フォルダの画像をカードで | メンバー | ファイルツリー →「ギャラリーで開く」、またはセッションの「生成した画像 (N)」| [04 ファイル](../member/04-files.ja.md#画像ギャラリー) |
 | ローカル Web アプリのブラウザペイン | メンバー | ワークスペース操作バー → プレビュー | [10 応用](../member/10-integrations.ja.md)。契約は [browser-pane.md](browser-pane.ja.md) |
 | プレビュー用サブドメイン（起動ごとに発行）| メンバー | ワークスペース操作バー → プレビュー | [10 応用](../member/10-integrations.ja.md) |
 | エージェントが持つ Chromium への接続 | メンバー | エージェントが渡すリンク | [10 応用](../member/10-integrations.ja.md) |
@@ -62,6 +66,7 @@ updated: "2026-08"
 | 作業項目の受信箱（Issue / チケット / プルリクエスト）| メンバー | 課題管理 | [02 セッション](../member/02-sessions.ja.md)。どのプロバイダが何を出すかは [repos.md](repos.ja.md) |
 | 定時実行（無人実行）| メンバー | スケジュール | [08 フリート運用](../member/08-organising.ja.md) |
 | 通知センター | メンバー | 画面最上部のバー | [12 設定](../member/12-settings.ja.md) |
+| エンジンのピル — チャット / 画像のエンジンが起きているか | メンバー | 画面最上部のバー | [アイコン・バッジ・メニュー](../member/badges-and-menus.ja.md#画面最上部のエンジンのピル) |
 | アシスタントチャット | メンバー | アシスタント | [07 チャットとメモ](../member/07-chat-memo.ja.md) |
 | チャットブリッジ（Discord / Slack）| メンバー | 設定 → チャット連携 | [10 応用](../member/10-integrations.ja.md) |
 | 返信候補 | メンバー | ミラーの入力欄 | [09 他の人と扱う](../member/09-collaboration.ja.md) |
@@ -101,6 +106,7 @@ updated: "2026-08"
 | メンバー | テナント管理者 | メンバー | [admin 01](../admin/01-members.ja.md) |
 | テナント全体のセッション | テナント管理者 | セッション | [admin 02](../admin/02-limits.ja.md) |
 | 上限とアイドル自動停止 | テナント管理者（読み取り）| 上限・自動停止 | [admin 02](../admin/02-limits.ja.md) |
+| このテナントが llm / image エンジンを使ってよいか | 配備管理者（super_admin）| テナント設定 → 上限 | [admin 02](../admin/02-limits.ja.md) |
 | ワークスペースのサイズ | 配備管理者 | — | [deploy-targets.md](deploy-targets.ja.md) |
 | サインイン方式とログイン規則 | テナント管理者 | サインイン方式 / ログイン規則 | [operator 05](../operate/05-signin.ja.md) |
 | 接続元の制限 | テナント管理者 | 接続元の制限 | [admin 05](../admin/05-access.ja.md) |
@@ -122,6 +128,9 @@ updated: "2026-08"
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [member 10](../member/13-ops-tooling.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
 | 推論エンジンの GPU クラス | 配備管理者（super_admin）| 管理 → 推論エンジン | [admin 04](../admin/04-mcp-egress.ja.md) |
+| モデルの取り込み — 検索・計画カード・1 押し | 配備管理者（super_admin）、許可されたテナント管理者 | 管理 → 推論エンジンのモデル | [admin 04](../admin/04-mcp-egress.ja.md) |
+| S3 Bucket — 配備が実際に持っているものの台帳 | 配備管理者（super_admin）| 管理 → 推論エンジンのモデル → バケット | [admin 04](../admin/04-mcp-egress.ja.md) |
+| Hugging Face / Civitai のトークン（ログインが要る取り込み）| 配備管理者（super_admin）| 管理 → API トークン | [admin 04](../admin/04-mcp-egress.ja.md) |
 | 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 07](../operate/07-image-engine.ja.md) |
 | 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| 端末と、向こうの配備のメンバーシップ 1 つ | [operator 08](../operate/08-borrowed-engine.ja.md) |
 | コンテナ内のロール別ドキュメント | — | 自動 | [roles.md](roles.ja.md) |

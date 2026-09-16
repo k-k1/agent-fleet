@@ -1,7 +1,7 @@
 ---
 audience: "everyone; most often a member asking \"why did it stop?\" and an administrator asking \"what should I set?\""
 source_of_truth: "this table for the fixed values; the limit's own screen for anything a tenant or deployment sets"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # Limits and defaults
@@ -58,6 +58,9 @@ Read the screen rather than this page.
 - Workspace size (CPU, memory, disk) where the target supports it —
   [deploy-targets.md](deploy-targets.md)
 - Idle auto-stop threshold
+- Whether the tenant's administrators may take engine models in (off unless granted), and whether
+  the tenant may use the self-hosted engines at all, per role (llm / image) — allowed unless
+  switched off
 
 ## Status
 

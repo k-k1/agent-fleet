@@ -179,7 +179,7 @@ was added to `Request`/`Caps` and the MCP tool advertises it **only where a prov
 of its own**. The rule survives intact — exact sizes are still promised by nobody, and the miss
 is reported — but "warnings are the permanent story" is now specific to the Codex route rather
 than to every CLI-driven one. See the P2 notes. The
-core does not silently resize: an integer-factor box downscale already exists for thumbnails,
+core does not silently resize: an integer-factor instance downscale already exists for thumbnails,
 but 1254→1024 is not an integer factor, and adding a resampler to get an exact size would trade
 a real dependency for a promise the provider never made. Exact sizes arrive with the provider
 that supports them natively.
@@ -942,7 +942,7 @@ picture. The tool's description says which end is which.
 **The shape.** `Request.Strength *float64` and `Caps.Strength bool`, alongside the seed and the
 negative prompt. A pointer — but not for the seed's reason. 0 is not a usable value here, it is a
 *refused* one: at denoise 0 ComfyUI's sampler hands the latent straight back, so honouring it
-would spend a GPU box on a VAE round-trip of a picture the caller already has. The pointer is what
+would spend a GPU instance on a VAE round-trip of a picture the caller already has. The pointer is what
 lets it be refused **by value**, with a reason, instead of a plain `float64` reading it as "not
 given" and quietly editing at the full 0.6 — the opposite of what was asked for. The accepted
 range is `(0, 1]`, and `HandleGenerate` answers `bad_strength` outside it rather than clamping:

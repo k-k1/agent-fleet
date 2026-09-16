@@ -1,7 +1,7 @@
 ---
 audience: "everyone, and especially anyone translating between a screen and the code"
 source_of_truth: "the Console's own strings for the screen column; the code for the implementation column"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # Glossary
@@ -43,3 +43,14 @@ thing.
 | Tenant | tenant | One team or department. Members of different tenants are invisible to each other |
 | Slot | slot | On the EC2 target, one pooled instance a workspace can be placed on |
 | Deployment | deployment | One installation of Agent Fleet. One company runs one |
+| Inference engine | engine / role (`llm`, `image`) | A model server the deployment runs, points at, or borrows — one for chat, one for images. What the top-bar pills report on |
+| Engine row | engine row / `lifecycle` | One declared engine: the deployment's own GPU, a ComfyUI on your network (external), one borrowed from another deployment (remote), or any OpenAI-compatible image server. Which row draws a picture is decided by the row, not by the server's type |
+| Borrowed engine | remote engine | An engine another deployment runs and lends through its gateway. Its catalogue is a read-only copy here; starting, stopping and editing happen over there |
+| Model catalogue | catalog | The checkpoints, LoRAs and VAEs the engines can load, one row per model, one catalogue per deployment |
+| Family | family / `base_model` | The checkpoint's lineage — SD 1.5, SDXL, SD 3.5, FLUX.1, FLUX.2 klein, Z-Image, Anima, Krea 2. It decides the workflow, the default size and which settings are read. The image-generation pane's card for it |
+| Plan card | ingest plan / `plan_token` | The quote shown before a model is taken in: every file it needs, what each costs (a download in MiB, or nothing when the bytes are already held), the licence and the warnings. Not the chat plan card a session asks you to approve |
+| S3 Bucket | ledger / object store | The tab ("Bucket") that lists what the deployment's storage actually holds — including objects no catalogue row declares — and lets you register, move or delete them |
+| Image generation (pane) | imagegen studio | The pane that makes pictures on the deployment's ComfyUI without an agent: trial run, batches, seeds, LoRAs |
+| Image gallery | gallery pane | A folder's pictures as cards, with folders, covers, counts and an enlarged view |
+| LoRA | LoRA adapter | A small add-on trained against one family that steers a checkpoint's style or subject. Listed only for the family it matches |
+| Trigger words | trigger words | The words a LoRA needs in the prompt to do anything. Shown on its row before you pick it, and added as chips when you do |

@@ -1,7 +1,7 @@
 ---
 audience: "everyone; the index the other tables hang off"
 source_of_truth: "this table for \"does it exist and who can use it\"; the linked page for how"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # Features — the catalogue
@@ -35,6 +35,8 @@ If a feature ships and does not appear here, it is not done
 | Highlights | member | mirror, on a selection | [09 Working with others](../member/09-collaboration.md) |
 | Changed files | member | strip under the mirror header | [09 Working with others](../member/09-collaboration.md) |
 | Context usage gauge | member | session header | [06 Agents](../member/06-agents.md) |
+| Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [02 Sessions](../member/02-sessions.md#reading-an-answer-in-your-own-language-translation) |
+| Have a session generate an image (`generate_image`) | member | any session, by asking | [02 Sessions](../member/02-sessions.md#having-a-session-generate-an-image) |
 | Abort detection and auto-resume | member | automatic | [09 Working with others](../member/09-collaboration.md) |
 
 ## Working with code
@@ -49,7 +51,9 @@ If a feature ships and does not appear here, it is not done
 | Markdown and code editing | member | Files → a file | [04 Files](../member/04-files.md) |
 | `.drawio` diagrams | member | Files → a `.drawio` file | [04 Files](../member/04-files.md) |
 | PDF and Office document preview | member | Files → that document | [04 Files](../member/04-files.md) |
-| Image generation — make pictures in bulk without an agent | member | action bar → Images, or leader `g i` | [04 Files](../member/04-files.md) |
+| Image generation — make pictures in bulk without an agent | member | action bar → Images, or leader `g i` | [04 Files](../member/04-files.md#image-generation) |
+| LoRAs with their trigger words, shown before you pick one | member | image generation → LoRAs | [04 Files](../member/04-files.md#image-generation) |
+| Image gallery — a folder's pictures as cards | member | file tree → "Open in gallery", or a session's "Generated images (N)" | [04 Files](../member/04-files.md#image-gallery) |
 | Browser pane for a local web app | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md); [browser-pane.md](browser-pane.md) for the contract |
 | Preview subdomains (minted on every start) | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md) |
 | Attach to a Chromium the agent owns | member | a link the agent hands you | [10 Going further](../member/10-integrations.md) |
@@ -63,6 +67,7 @@ If a feature ships and does not appear here, it is not done
 | Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [02 Sessions](../member/02-sessions.md); [repos.md](repos.md) for what each provider contributes |
 | Scheduled (unattended) runs | member | Schedules | [08 Fleet operator](../member/08-organising.md) |
 | Notification centre | member | top bar | [12 Settings](../member/12-settings.md) |
+| Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
 | Assistant chat | member | Assistants | [07 Chat & memo](../member/07-chat-memo.md) |
 | Chat bridge — Discord / Slack | member | Settings → Chat | [10 Advanced](../member/10-integrations.md) |
 | Reply suggestions | member | mirror composer | [09 Working with others](../member/09-collaboration.md) |
@@ -103,6 +108,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Members | tenant admin | Members | [admin 01](../admin/01-members.md) |
 | Sessions across the tenant | tenant admin | Sessions | [admin 02](../admin/02-limits.md) |
 | Limits and idle auto-stop | tenant admin (read) | Limits & idle | [admin 02](../admin/02-limits.md) |
+| Whether this tenant may use the llm / image engines | deployment admin (super_admin) | Tenant settings → Limits | [admin 02](../admin/02-limits.md) |
 | Workspace sizing | deployment admin | — | [deploy-targets.md](deploy-targets.md) |
 | Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [operator 05](../operate/05-signin.md) |
 | Connection-source restriction | tenant admin | Allowed networks | [admin 05](../admin/05-access.md) |
@@ -124,6 +130,9 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 10](../member/13-ops-tooling.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
 | The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [admin 04](../admin/04-mcp-egress.md) |
+| Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engine models | [admin 04](../admin/04-mcp-egress.md) |
+| The S3 bucket as the ledger of what is actually held | deployment admin (super_admin) | Admin → Inference engine models → Bucket | [admin 04](../admin/04-mcp-egress.md) |
+| Hugging Face and Civitai tokens for gated downloads | deployment admin (super_admin) | Admin → API tokens | [admin 04](../admin/04-mcp-egress.md) |
 | Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 07](../operate/07-image-engine.md) |
 | Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [operator 08](../operate/08-borrowed-engine.md) |
 | Role-scoped documentation in containers | — | automatic | [roles.md](roles.md) |

@@ -12,9 +12,9 @@ English | [日本語](0085-model-ledger-and-one-press-ingest.ja.md)
   database says how it is offered) **stands and is what this ADR finally builds on**; decision 2's
   manifest file next to every object was never written (`ingest-upload.sh` writes the object and
   nothing else) and is retired here.
-- See also: [0071](0071-self-hosted-inference-engines.md) (the box mirrors the bucket; ComfyUI's
+- See also: [0071](0071-self-hosted-inference-engines.md) (the instance mirrors the bucket; ComfyUI's
   layout) / [0082](0082-many-image-engines-at-once.md) (several image rows; the external row's
-  `/discover`, which is the same idea read off a box this deployment does not own) /
+  `/discover`, which is the same idea read off an instance this deployment does not own) /
   [0084](0084-engine-indicator-and-tenant-gate.md) (the tenant gate the ledger's visibility
   follows) / [0069](0069-image-generation-providers.md) (what the Agent names a file by)
 

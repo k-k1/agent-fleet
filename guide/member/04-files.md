@@ -1,6 +1,6 @@
 ---
 audience: "anyone reading or editing files in the Console"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 04. Files — tree, viewer, Markdown/slides
@@ -165,10 +165,14 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
 - **Refresh** — on open, on returning to the tab, and every 20 seconds while a session is running.
   New arrivals get the same highlight as the file tree, so you see a generation land. "Refresh" in
   the header re-reads at any time.
-- Cards show a **downscaled copy**; the original bytes are fetched only when you enlarge. The
-  moment you do, that downscaled copy is what you see — slightly blurred — and it sharpens when
-  the original arrives (originals run to several MB each). The neighbouring picture is fetched
-  ahead, so ← / → do not wait.
+- Cards show a **downscaled copy**, requested at your screen's own pixel density — a sharp
+  display gets a sharper thumbnail, a plain one is not sent pixels it cannot show. When you
+  enlarge, that downscaled copy is what you see first — slightly blurred — and it sharpens when
+  **a copy sized to your screen** arrives. That copy is re-made from the original pixels; for a
+  generated picture it is roughly 120 KB against 1.1 MB, so it looks the same and only the wait
+  shrinks. The neighbouring picture is fetched ahead, so ← / → do not wait.
+  **When you need the real file** (to save it, or to inspect detail at full size), open it in the
+  file pane with the button in the card's corner, or download it — those are still the original.
 
 **Images a session generated**
 
@@ -190,9 +194,11 @@ A pane that makes pictures on your organisation's own ComfyUI **without an agent
 Asking a session for a picture is right for "put an illustration in this document"; this is for
 "forty variations of one prompt at three CFG values", where every round trip through a model
 would cost a turn. A session can name the same settings you can (`generate_image` takes steps,
-cfg, sampler, scheduler, seed, the negative prompt and the LoRA weights), but it cannot see what
-this form shows you: each checkpoint's own published numbers as the placeholders, the fields its
-family does not read greyed out, and a trial run before you commit forty.
+cfg, sampler, scheduler, seed, the negative prompt and the LoRA weights); what it leaves out runs
+at the checkpoint's own published values, and a setting its family does not read is named in the
+result's warnings rather than dropped in silence. What a session cannot see is what this form shows
+you: each checkpoint's own published numbers as the placeholders, the fields its family does not
+read greyed out, and a trial run before you commit forty.
 
 **Two ways in:** the workspace action bar's **Images**, and the leader key **`g i`**. It is one
 pane per workspace — opening it again focuses the one you have.
@@ -207,11 +213,14 @@ pane per workspace — opening it again focuses the one you have.
 - **The family card** — under the model, one line per thing that family expects: whether it
   wants a tag list or sentences, the prefix that dialect usually opens with (offered as a chip
   — nothing is ever written into your prompt on its own), whether a negative prompt reaches it
-  at all, and the step and cfg ranges worth staying inside.
+  at all, and the step and cfg ranges worth staying inside. The families the catalogue knows
+  run from SD 1.5 and SDXL to FLUX, Anima and Krea 2, and **the default size follows the family**
+  — SD 1.5 starts at 512 rather than the megapixel square the others share, because asking it
+  for more gives you a doubled subject, not an error.
 - **Fields a family does not read are disabled, with the reason on them.** `flux1` and
-  `flux2-klein` ignore cfg; the three distilled families ignore the negative prompt. That comes
-  from the workspace, not from a table in the browser, so it cannot disagree with what actually
-  runs.
+  `flux2-klein` ignore cfg; the distilled families — and a checkpoint of a guided family that
+  runs at cfg 1 — ignore the negative prompt. That comes from the workspace, not from a table in
+  the browser, so it cannot disagree with what actually runs.
 - **The administrator's negative** shows as a chip you cannot remove, next to the deployment-wide
   one. It is applied on top of yours rather than mixed into your text.
 - **LoRAs** — only the ones that match the model's family are listed. Each row shows the
@@ -234,6 +243,10 @@ pane per workspace — opening it again focuses the one you have.
 - `batch_size` under **Advanced** is a different thing: pictures sampled together inside one job.
   Faster on a card with headroom, an out-of-memory after a five-minute wait on one without, and
   no per-picture cancel. It stays at 1 unless you know the card.
+- **Operation** under Advanced switches **Generate** to **Edit** or **Inpaint**. An edit takes
+  **reference images** (a path in the workspace, or a file dropped onto the field) and a slider,
+  **"How much of the input to change"**, from 0 to 1; the size fields step aside, because on an
+  edit the input's own dimensions win.
 
 **While it runs**
 

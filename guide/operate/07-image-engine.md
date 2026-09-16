@@ -19,8 +19,11 @@ box under someone's desk, the Windows side of a WSL2 machine, a shared server. T
 Control Plane relays to it, so no session has to know where it is or hold a
 credential for it.
 
-It is two environment variables and a manually-kept model list. **The engine stays
+It is two environment variables and a model list you keep yourself. **The engine stays
 yours**: the Control Plane never starts it, never stops it, and never bills for it.
+A deployment is not limited to one of these either — a LAN ComfyUI, a borrowed engine
+and an OpenAI-compatible server can all be rows at once, and which one draws a given
+picture is a setting ([More than one image engine](#more-than-one-image-engine)).
 
 There is a fourth possibility, and it is a different chapter: if you already run an
 Agent Fleet on AWS, this deployment can **borrow that one's engines** —
@@ -51,6 +54,46 @@ running the CP. **ComfyUI Desktop on Windows is untested**: the setting that
 corresponds to `--listen` there has not been confirmed, so the procedure above is
 written for the server build.
 
+## More than one image engine
+
+Every image engine this deployment can reach is **a row in the engine table**, and the row
+is what a picture is routed by — not the kind of software behind it. `AF_COMFY_URL` is a
+shortcut that writes one such row for you, under the key `image`. Any further row is declared
+in the table itself: on `compose`, `native` and `docker` that is the inline `AF_ENGINES_JSON`
+the Control Plane reads once at startup; on AWS the table is the engine stack's.
+
+- **The order is the member's.** Under **Settings › Agents › "Image provider order"** each of
+  this deployment's engines appears **under its own name**, ranked beside the routes that run
+  on the member's own CLI plan. A request that names no engine walks that list and moves on
+  when one fails; the answer says which engine drew the picture instead. So "the ComfyUI under
+  my desk first, the borrowed one when that PC is off" is that list, with no extra setting.
+- **A request can name one.** `generate_image` takes a `provider`, and an engine row's key is
+  a valid value. A named engine does **not** fall through — that is how a session gets "use the
+  LAN one, and tell me when it is off".
+- **Two rows need two keys.** A borrowed role arrives under the far fleet's key, usually
+  `image`, and a key a local row already holds is not borrowed (the CP log says so once per
+  poll). A LAN ComfyUI that is to sit *beside* a borrowed `image` is therefore declared in
+  the table under a key of its own — `comfy-lan`, say — rather than through `AF_COMFY_URL`.
+- **An OpenAI-compatible image server is a row too.** Declare it once, on an `external` (or
+  `remote`) row, with `provider: "openai-compat"`:
+
+  ```json
+  {"key":"oai-image","api":"images","provider":"openai-compat",
+   "url":"http://<host>:<port>","health":"/v1/models","lifecycle":"external"}
+  ```
+
+  A bearer, if the server wants one, is read from `AF_ENGINE_API_KEY_<KEY>` — the row's key
+  upper-cased with every character that is not a letter or digit turned into `_`, so the row
+  above reads `AF_ENGINE_API_KEY_OAI_IMAGE`. Such a row has no files to stage and no family to
+  declare: the server holds its own weights. 🔴 **This path has only been exercised against
+  the project's own test double, never against a real OpenAI-compatible server** — treat it as
+  unverified until you have pointed it at one.
+- **A row this build cannot serve is marked, not dropped.** The providers a Control Plane can
+  drive are `comfy` and `openai-compat`. A row naming anything else — `sdcpp`, retired — used
+  to make the image tool disappear from sessions with no error anywhere; now **Admin → Inference
+  engines** marks that row and shows the provider name it carries, and the fix is to repoint
+  the row.
+
 ## What the modes mean here
 
 In the Console under **Admin → Inference engines** an engine like this shows as
@@ -64,14 +107,14 @@ exactly what it was doing. It is the same meaning "off" has for the speech engin
 when that is externally managed. Stopping the process is yours to do, on the host it
 runs on.
 
-The fields that describe a cloud instance — state, desired count, which box, when it
+The fields that describe a cloud instance — state, desired count, which instance, when it
 will stop — are **left out** rather than guessed at, because the deployment does not
 know them.
 
 ## Registering the models by hand
 
-Nothing is taken in for you here: there is no ingest job, no bucket, and the CP
-never reads the model directory. **The catalogue is a declaration you write.** For
+Nothing is taken in for you here: there is no ingest job and no S3 bucket, and nothing
+copies a file onto that machine. **The catalogue is a declaration you write.** For
 each model, register in the Console under **Admin → Inference engines**:
 
 - the **id** you want members to see,
@@ -82,6 +125,16 @@ each model, register in the Console under **Admin → Inference engines**:
 A row missing a file for one of the roles it needs is marked **files missing**. That
 check reads your declaration only — it is not evidence that the file is on the disk.
 If you declare a name that is not there, the failure arrives at generation time.
+
+What the panel *can* do is read the names for you. On an externally managed ComfyUI row
+the button **"Look at this engine's files"** asks the engine, once, which checkpoint, LoRA
+and VAE files its loaders currently list, and offers each as a candidate — **"Add a row with
+this name"**. It runs only when you press it; nothing polls the machine on your network.
+What it cannot read is the family: ComfyUI does not publish `base_model`, so a candidate
+comes with at most a suggestion read off the file name, and the form refuses to write the
+row until you have chosen one — a wrong family would silence the row's only mark and fail
+minutes later at generation time. A borrowed row has nothing to look at here: its list is a
+read-only copy of the far catalogue.
 
 🔴 **Some checkpoints are published without a VAE, and the panel now tells you
 which.** Plenty of SDXL-family checkpoints on the model sites ship the UNet and the
@@ -130,11 +183,18 @@ A row that declares its own replaces that default rather than being added to it.
 
 🔴 **This is a negative prompt, not a content filter.** The words are handed to the sampler as
 something to steer away from. They are not a gate, a determined prompt outweighs them, and — most
-importantly — **three of the five checkpoint families ignore them completely**: Z-Image and
-FLUX.2 klein sample at cfg 1, where the negative branch cancels out exactly, and FLUX.1 has no
-negative input at all. Only SDXL and SD3.5 are steered by what you type. A request answered by one of them **says so in its warnings**,
-naming the family. If a deployment needs a guarantee about what can be produced, this is not
-where it lives.
+importantly — **the distilled families ignore them completely**: Z-Image and FLUX.2 klein
+sample at cfg 1, where the negative branch cancels out exactly, and FLUX.1 has no negative
+input at all. The words reach the guided families — SD 1.5, SDXL, SD3.5, Anima, Krea 2 — and
+even there a checkpoint whose row declares cfg 1 (a Turbo variant) cancels them the same way.
+A request answered by a model that ignores them **says so in its warnings**, naming the
+family. If a deployment needs a guarantee about what can be produced, this is not where it
+lives.
+
+The family also decides the size a request gets when it names none: the megapixel-era
+families generate at 1024×1024, SD 1.5 at 512×512, because asking that UNet for 1024 returns
+a plausible picture with the subject duplicated rather than an error. A row's own size list
+still overrides the family's.
 
 ## The network is yours to close
 
@@ -168,7 +228,7 @@ can use that GPU, and you are relying on trusting them.
 The Control Plane does not wait for an engine it does not own. A request made while
 ComfyUI is down is refused **immediately** with `503 engine_unavailable`, and the
 message names the URL that was tried and the health path. Nothing retries for
-minutes in the hope that a box is still booting — that budget exists for a cloud
+minutes in the hope that an instance is still booting — that budget exists for a cloud
 instance being bought, and a machine on your network that is switched off does not
 come back because someone waited.
 

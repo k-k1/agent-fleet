@@ -346,7 +346,7 @@ describe("model catalogue pane", () => {
     expect(family.tagName).toBe("SELECT");
     await acceptLicence();
     expect((button("取り込む") as HTMLButtonElement).disabled).toBe(true);
-    expect(document.querySelector(".engine-operation-footer")?.textContent).toContain("モデル族");
+    expect(document.querySelector(".engine-operation-footer")?.textContent).toContain("ファミリーを選んでください");
   });
 
   it("includes the LLM KV cache in the plan's VRAM fit line", async () => {

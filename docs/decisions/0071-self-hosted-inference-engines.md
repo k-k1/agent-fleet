@@ -1360,7 +1360,7 @@ observation that verifies the replacement of decision 5.
 
 ## Appendix — ADR 0077 overrode this decision (2026-09-12)
 
-[ADR 0077](0077-engine-boxes-bought-by-cp.md) moves the purchase of the engine box from ECS
+[ADR 0077](0077-engine-boxes-bought-by-cp.md) moves the purchase of the engine instance from ECS
 Managed Instances to the Control Plane, which buys it with `CreateFleet(type=instant)` against a
 launch template and runs the service on the EC2 launch type. Nothing above is edited; the rows
 below are 0077's own "Which existing decisions this overrides" table, for the decisions of this
