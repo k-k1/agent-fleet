@@ -768,6 +768,10 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	// Toolchain selection (node / java) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/toolchains", rest)
 	mux.HandleFunc("PUT /api/env/toolchains", rest)
+	// Database card (ADR 0086 P1 decision 9) — proxied to the Agent.
+	// GET returns the per-engine state list; POST starts/stops/resets an engine.
+	mux.HandleFunc("GET /api/env/databases", rest)
+	mux.HandleFunc("POST /api/env/databases/{engine}/{action}", rest)
 	// One-button Temurin install for the Java row (agent jdk_install_http.go): POST
 	// starts the download in the workspace, GET polls its state.
 	mux.HandleFunc("POST /api/env/jdk-install", rest)
