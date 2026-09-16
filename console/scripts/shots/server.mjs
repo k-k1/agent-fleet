@@ -159,6 +159,15 @@ const exact = {
   // Image generation (ADR 0081): the widened status and a queue mid-run. Without these the
   // studio pane renders as "no engine available", which shows none of what it is for.
   "/api/imagegen/status": () => fx.imagegenStatus(LOCALE),
+  // The top-bar engine pills (ADR 0084): one row per role, the member shape of
+  // console/src/features/engines/wire.ts. A warm chat engine with a countdown and a
+  // stopped image engine, so both pill states appear. Absent, no pill renders at all.
+  "/api/engines/status": () => ({
+    engines: [
+      { key: "llm", api: "chat", state: "running", warm: true, stop_eta: new Date(Date.now() + 14 * 60_000).toISOString(), idle_secs: 900 },
+      { key: "image", api: "images", state: "stopped", idle_secs: 900 },
+    ],
+  }),
   "/api/imagegen/jobs": () => fx.imagegenJobs(LOCALE),
   "/api/browser/pages": () => ({ pages: [] }),
   "/api/tts/speakers": () => ({ speakers: [] }),
