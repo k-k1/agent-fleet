@@ -590,3 +590,60 @@ runtime, documentation) can be built by different sessions against the same word
 | Verbs | `af-db up [postgres] [--major N] [--persist]` · `af-db url [--db=NAME] [--tcp]` (installs if missing, starts if stopped, creates the database if absent) · `af-db env [--db=NAME] [--tcp]` (prints `export AF_DB_URL_POSTGRES=…` and `export DATABASE_URL=…`) · `af-db reset [--db=NAME]` (DROP + CREATE) · `af-db down [--purge]` (stop; `--purge` removes the datadir after the pid is gone) · `af-db status [--json]` |
 | Exit codes | 0 ok · 2 usage · 3 install failed (message names the URL and both shas) · 4 server failed to start (message names the log path) · 5 not running (`reset` only). |
 | Code | `workspace/agent/internal/afdb/` holds the CLI verbs and the Agent's idle/reconcile loop; `workspace/agent/install_postgres.go` and `install_pg_client.go` follow `install_kiro.go`. |
+
+## P0 accepted (2026-09-17)
+
+Three lanes were built by three sessions against the contract table, each reviewed by a
+fourth session before merge (the reviewer sent its findings to the author by peer message and
+re-ran the acceptance after the fixes):
+
+| Lane | Branch | Findings sent / fixed | Merged as |
+|---|---|---|---|
+| L3 documentation (`workspace/notes/environment.md`, `guide/member/03-code`, `docs/build/10-development` §10.4, plus `AGENTS.md` and `workspace/workspace-notes.md` whose old "no database, skip them" lines contradicted the new note) | `temp/s6arm5b` | 11 / 11 | `a39c4487` |
+| L1 supply (`install-postgres`, `install-pg-client`, `Dockerfile` pins and the `af-db` shim) | `temp/s66bqob` | 7 / 7 | `3ad2ce88` |
+| L2 runtime (`internal/afdb`, the `af-db` verbs, the idle loop, `session_tmux.go` injection, pgx) | `temp/sawbl7m` | 13 / 13 | `d3b6f3ce` |
+
+**The completion criterion ran green from a HOME that had never seen `af-db`** (this
+container, x86_64, the merged branch): `af-db up` installed Zonky 17.11.0 from Maven Central,
+ran `initdb` with scram and started the server in **8.7 s** end to end; `af-db url` returned a
+socket URL for the working copy's database (`af_agent_fleet_wip_szkxzgu_9af42b`); in
+`control-plane/`, `AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 -run 'TestPostgres|TestSchemaDialectParity' ./internal/store/`
+→ **4 PASS, 0 SKIP** (`TestPostgresPasswordRotation` included, because the server is scram, not
+trust); `af-db status --json` carried no password; `af-db down --purge` stopped the server and
+removed the datadir; no `postgres` process remained. `gofmt`, `go vet` and
+`go test -count=1 ./...` are clean on the merged `workspace/agent`.
+
+### Contract corrections found by the reviews (the table above is superseded on these rows)
+
+- **URL (default)**: `postgres://postgres:<pw>@/<db>?host=<sockdir>&port=<port>&sslmode=disable`.
+  pgx derives the socket file name `.s.PGSQL.<port>` from the port, so with an allocated port
+  `port=` is mandatory on the socket URL too.
+- **Registry**: not `fstore` — `fstore` has no lock and forbids read-modify-write. The registry
+  is written tmp + rename under a dedicated flock (`~/.config/agent-fleet/af-db/lock`); the
+  start path is serialised by a second flock per (engine, major)
+  (`postgres-<major>.start.lock`), because two `af-db url` from a stopped state raced to
+  `initdb` and the second one exited 4 before the lock existed. `install-postgres` holds its own
+  per-major flock for the same reason.
+- **Log**: `<root>/postgres-<major>.log` where `<root>` is the *state* root
+  (`$AF_WS_SCRATCH/af-db` or `~/.local/state/af-db`), not the install root.
+- **`--major N`** is accepted by every verb, default 17.
+- **`install-pg-client`**: Debian trixie `main` carries `postgresql-client-17` only; a request
+  for 16 or 18 is served with 17 and says so on stderr (PGDG would have all three, but only
+  `.debian.org` is in the default egress allowlist). The wrapper execs
+  `/usr/lib/postgresql/17/bin/psql` directly, not Debian's `pg_wrapper`, so
+  `postgresql-client-common` is not installed.
+- **Install time**: 1.6–2.1 s for any Postgres major (15 MB jar → 60 MB tree) and 1.5–2.0 s for
+  the client, measured three times each; the guide's "a few minutes" is conservative.
+- **The `versions.json` pin path is untested until the image is rebuilt**: this container's
+  `versions.json` predates the `postgres` key, so the acceptance went through the
+  Maven-metadata route (which chose the same 17.11.0). The pinned route is exercised by the
+  unit tests only.
+- **Idle stop** counts `client backend` rows excluding `pg_backend_pid()`; the first version
+  counted its own probe and would never have stopped anything.
+- **`down --purge`** refuses to remove a datadir when the postmaster pid is unknown and
+  `pg_ctl stop` failed — the ordering of decision 10, made concrete.
+
+What P0 does not do, on purpose: no Console card (P1, decision 9), no MySQL (P1), no
+`AF_DB_URL_POSTGRES` on managed sessions (8′). The next thing to measure is the first real
+member run on an ECS deployment — the scratch-disk datadir (4′) and the rebuilt image's pin
+route are the two paths this acceptance could not reach.

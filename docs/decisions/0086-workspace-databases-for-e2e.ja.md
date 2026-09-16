@@ -554,3 +554,55 @@ Agent が止める。あるセッションの終了が、兄弟セッション�
 | 動詞 | `af-db up [postgres] [--major N] [--persist]` · `af-db url [--db=NAME] [--tcp]`（未導入なら導入、停止中なら起動、無ければデータベースを作る） · `af-db env [--db=NAME] [--tcp]`（`export AF_DB_URL_POSTGRES=…` と `export DATABASE_URL=…` を出力） · `af-db reset [--db=NAME]`（DROP + CREATE） · `af-db down [--purge]`（停止。`--purge` は pid が消えた後にデータディレクトリも消す） · `af-db status [--json]` |
 | 終了コード | 0 正常 · 2 使い方 · 3 導入失敗（メッセージに URL と両方の sha） · 4 サーバ起動失敗（メッセージにログのパス） · 5 未起動（`reset` だけ）。 |
 | コード | `workspace/agent/internal/afdb/` に CLI の動詞と Agent のアイドル／突き合わせループ。`workspace/agent/install_postgres.go`・`install_pg_client.go` は `install_kiro.go` に倣う。 |
+
+## P0 受け入れ（2026-09-17）
+
+3 レーンを 3 つのセッションが契約表に向かって組み、それぞれを 4 つ目のセッションが merge 前に
+レビューした（レビュー側が指摘を peer メッセージで著者に送り、修正後に受け入れを回し直した）。
+
+| レーン | ブランチ | 指摘 送／修正 | merge |
+|---|---|---|---|
+| L3 文書（`workspace/notes/environment.md`・`guide/member/03-code`・`docs/build/10-development` §10.4。加えて旧文「DB は無いので skip」が新しいノートと矛盾していた `AGENTS.md` と `workspace/workspace-notes.md`） | `temp/s6arm5b` | 11 / 11 | `a39c4487` |
+| L1 供給（`install-postgres`・`install-pg-client`・`Dockerfile` のピンと `af-db` シム） | `temp/s66bqob` | 7 / 7 | `3ad2ce88` |
+| L2 実行（`internal/afdb`・`af-db` の動詞・アイドルループ・`session_tmux.go` の注入・pgx） | `temp/sawbl7m` | 13 / 13 | `d3b6f3ce` |
+
+**完了条件は `af-db` を一度も見ていない HOME から緑になった**（このコンテナ・x86_64・merge 後の
+ブランチ）：`af-db up` が Maven Central から Zonky 17.11.0 を導入し、scram で `initdb` してサーバを
+起動するまで通しで **8.7 秒**。`af-db url` は作業コピーのデータベース
+（`af_agent_fleet_wip_szkxzgu_9af42b`）のソケット URL を返した。`control-plane/` で
+`AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 -run 'TestPostgres|TestSchemaDialectParity' ./internal/store/`
+→ **4 PASS・0 SKIP**（サーバが trust でなく scram なので `TestPostgresPasswordRotation` も走る）。
+`af-db status --json` にパスワードは無く、`af-db down --purge` でサーバ停止とデータディレクトリ削除、
+`postgres` プロセスは残らなかった。merge 後の `workspace/agent` で `gofmt`・`go vet`・
+`go test -count=1 ./...` はきれい。
+
+### レビューで見つかった契約の訂正（上の表はこれらの行で上書きされる）
+
+- **URL（既定）**: `postgres://postgres:<pw>@/<db>?host=<sockdir>&port=<port>&sslmode=disable`。
+  pgx はソケットファイル名 `.s.PGSQL.<port>` をポートから組むので、割り当てポートではソケット URL
+  にも `port=` が必須。
+- **レジストリ**: `fstore` ではない——`fstore` にはロックが無く read-modify-write を禁じている。
+  レジストリは専用 flock（`~/.config/agent-fleet/af-db/lock`）の下で tmp + rename。起動経路は
+  （エンジン, メジャー）ごとの第 2 の flock（`postgres-<major>.start.lock`）で直列化する。停止状態
+  から `af-db url` を 2 本同時に走らせると `initdb` を取り合い、ロックが無い版では後発が exit 4 に
+  なった（実測）。`install-postgres` も同じ理由でメジャーごとの flock を持つ。
+- **ログ**: `<root>/postgres-<major>.log` の `<root>` は *state* root（`$AF_WS_SCRATCH/af-db` か
+  `~/.local/state/af-db`）であって導入 root ではない。
+- **`--major N`** は全動詞が受ける。既定 17。
+- **`install-pg-client`**: Debian trixie の `main` にあるのは `postgresql-client-17` だけ。16 / 18 の
+  要求は 17 で応え、stderr にそう言う（PGDG なら 3 つ揃うが、既定の egress 許可は `.debian.org`
+  のみ）。ラッパーは Debian の `pg_wrapper` を経由せず `/usr/lib/postgresql/17/bin/psql` を直接
+  exec するので、`postgresql-client-common` は導入しない。
+- **導入時間**: Postgres はどのメジャーも 1.6〜2.1 秒（jar 15 MB → 60 MB）、クライアントは 1.5〜2.0
+  秒、各 3 回計測。ガイドの「数分」は保守的。
+- **`versions.json` のピン経路はイメージを焼き直すまで未通過**: このコンテナの `versions.json` は
+  `postgres` キーより古いので、受け入れは Maven metadata の経路（同じ 17.11.0 を選ぶ）を通った。
+  ピン経路は単体テストだけが通している。
+- **アイドル停止**は `client backend` 行から `pg_backend_pid()` を除いて数える。最初の版は自分の
+  プローブを数えていて、永久に止まらなかった。
+- **`down --purge`** は postmaster の pid が不明で `pg_ctl stop` が失敗したときデータディレクトリを
+  消さない——決定 10 の順序の具体化。
+
+P0 が意図してやらないこと：Console のカード（P1・決定 9）、MySQL（P1）、マネージドセッションへの
+`AF_DB_URL_POSTGRES`（8′）。次に測るのは ECS 配備での最初の実利用者の 1 回——作業ディスク上の
+データディレクトリ（4′）と、焼き直したイメージのピン経路が、この受け入れで届かなかった 2 経路。
