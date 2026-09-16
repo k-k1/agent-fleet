@@ -1,12 +1,95 @@
 package main
 
 import (
+	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
+
+// vaeOversizedHeader is a file that DECLARES a header longer than the ceiling. Not a synthetic
+// impossibility: it is also the shape a `.ckpt` and a truncated upload land in, and all three have
+// to answer "nobody read it" rather than "no VAE in it".
+func vaeOversizedHeader() []byte {
+	out := make([]byte, 8, 64)
+	binary.LittleEndian.PutUint64(out, uint64(safetensorsHeadMax)+1)
+	return append(out, []byte(`{"first_stage_model.decoder.conv_in.weight":{}}`)...)
+}
+
+// The verdict read out of THIS deployment's bucket, which is the only road a row registered from
+// bytes already here has — there is no upstream URL, and there may never have been one the CP can
+// still reach (ADR 0085 P3 took the routes that re-read headers away).
+func TestEngineVaeOfObjectReadsTheStoredFile(t *testing.T) {
+	const key = "image/checkpoints/a.safetensors"
+	bundled := safetensorsFixture(t, []string{
+		"model.diffusion_model.input_blocks.0.0.weight",
+		"first_stage_model.decoder.conv_in.weight",
+	})
+	none := safetensorsFixture(t, []string{"model.diffusion_model.input_blocks.0.0.weight"})
+	for _, tc := range []struct {
+		name string
+		head []byte
+		err  error
+		want string
+	}{
+		{name: "bundled", head: bundled, want: engineVaeYes},
+		{name: "none", head: none, want: engineVaeNo},
+		// 🔴 The two that must NOT come out "no". A mark is a refusal to enable the row, and
+		// neither a header past the ceiling nor a bucket that would not answer is evidence about
+		// what the file contains.
+		{name: "header past the ceiling", head: vaeOversizedHeader(), want: engineVaeUnknown},
+		{name: "unreadable", err: errors.New("AccessDenied"), want: engineVaeUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bucket := &fakeEngineStorageHead{head: map[string][]byte{key: tc.head}}
+			if tc.err != nil {
+				bucket.prefixErr = map[string]error{key: tc.err}
+			}
+			got := engineVaeOfObject(t.Context(), "comfy", "checkpoint", key, newEngineStorage("models", bucket))
+			if got != tc.want {
+				t.Fatalf("verdict = %q, want %q", got, tc.want)
+			}
+			if len(bucket.prefixCalls[key]) == 0 {
+				t.Fatal("the bucket was never read")
+			}
+			if w := bucket.prefixCalls[key][0]; w != safetensorsHeadWindow {
+				t.Errorf("the first window was %d, want the cheap one (%d)", w, safetensorsHeadWindow)
+			}
+		})
+	}
+}
+
+// Everything the question does not apply to answers unknown without touching the bucket: a
+// megabyte pulled per registered part is a cost, and a verdict about a part or a LoRA is a fact
+// about the wrong file.
+func TestEngineVaeOfObjectAsksOnlyWhereItMeansSomething(t *testing.T) {
+	const key = "image/checkpoints/a.safetensors"
+	head := map[string][]byte{key: safetensorsFixture(t, []string{"first_stage_model.decoder.conv_in.weight"})}
+	for _, tc := range []struct{ name, provider, kind, key string }{
+		{"llm role", "llamacpp", "gguf", key},
+		{"lora", "comfy", engineModelKindLora, key},
+		{"pickle checkpoint", "comfy", "checkpoint", "image/checkpoints/a.ckpt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bucket := &fakeEngineStorageHead{head: head}
+			if got := engineVaeOfObject(t.Context(), tc.provider, tc.kind, tc.key,
+				newEngineStorage("models", bucket)); got != engineVaeUnknown {
+				t.Fatalf("verdict = %q, want unknown", got)
+			}
+			if len(bucket.prefixCalls) != 0 {
+				t.Fatalf("the bucket was read anyway: %v", bucket.prefixCalls)
+			}
+		})
+	}
+	// And a deployment with no bucket at all, which must not panic on the way to unknown.
+	if got := engineVaeOfObject(t.Context(), "comfy", "checkpoint", key, nil); got != engineVaeUnknown {
+		t.Fatalf("verdict with no bucket = %q, want unknown", got)
+	}
+}
 
 func vaeTestRow(t *testing.T, st store.Store, id, verdict string, files ...store.EngineModelFile) {
 	t.Helper()
@@ -69,6 +152,100 @@ func TestEngineVaeMarksOnlyWhatWasRead(t *testing.T) {
 		if _, marked := rows[id]["vae_missing"]; marked {
 			t.Errorf("%s carries a mark it has not earned: %v", id, rows[id])
 		}
+	}
+}
+
+// The hand-registration road (`POST …/models`) reads the same header out of the same bucket. It
+// is the one a super_admin rebuilds a forgotten row with, and a row rebuilt WITHOUT the verdict is
+// the same silent fault the register button had.
+func TestPostModelReadsTheVaeVerdictOutOfTheBucket(t *testing.T) {
+	h := newEngineLedgerHarness(t)
+	const key = "image/checkpoints/hand_registered.safetensors"
+	h.put(key, 6_900_000_000)
+	h.header(key, safetensorsFixture(t, []string{"model.diffusion_model.input_blocks.0.0.weight"}))
+	// A part in the same body: its header says nothing about the checkpoint that loads it, so it
+	// is not read at all.
+	h.put("image/vae/other.safetensors", 334_600_000)
+	h.header("image/vae/other.safetensors", safetensorsFixture(t, []string{"first_stage_model.decoder.conv_in.weight"}))
+
+	code, out := adminModel(t, h.a, "POST", "image", "", `{"id":"hand","kind":"checkpoint","base_model":"sdxl",
+		"file_rows":[{"s3Key":"`+key+`"},{"flag":"--clip_l","s3Key":"image/vae/other.safetensors"}]}`)
+	if code != http.StatusOK {
+		t.Fatalf("register = %d (%v)", code, out)
+	}
+	m, ok := engineCatalogModel(t.Context(), h.e, "hand")
+	if !ok {
+		t.Fatal("no row was created")
+	}
+	byFlag := map[string]store.EngineModelFile{}
+	for _, f := range m.Files {
+		byFlag[f.Flag] = f
+	}
+	if byFlag[""].VaeBundled != engineVaeNo {
+		t.Fatalf("the checkpoint's verdict = %q, want %q", byFlag[""].VaeBundled, engineVaeNo)
+	}
+	if byFlag["--clip_l"].VaeBundled != engineVaeUnknown {
+		t.Errorf("a part was given a verdict about itself: %+v", byFlag["--clip_l"])
+	}
+	if len(h.bucket.prefixCalls["image/vae/other.safetensors"]) != 0 {
+		t.Errorf("a part's header was read: %v", h.bucket.prefixCalls)
+	}
+	// And the round trip: a body that CARRIES the verdict is believed, and the bucket is not
+	// re-read for it — which is what makes reading a row out of the panel and posting it back
+	// restore the row rather than re-derive half of it.
+	h2 := newEngineLedgerHarness(t)
+	h2.put(key, 6_900_000_000)
+	code, out = adminModel(t, h2.a, "POST", "image", "", `{"id":"hand","kind":"checkpoint","base_model":"sdxl",
+		"file_rows":[{"s3Key":"`+key+`","vae_bundled":"yes"}]}`)
+	if code != http.StatusOK {
+		t.Fatalf("round trip = %d (%v)", code, out)
+	}
+	m, _ = engineCatalogModel(t.Context(), h2.e, "hand")
+	if f, _ := engineVaeCheckpoint(m); f.VaeBundled != engineVaeYes {
+		t.Fatalf("the posted verdict = %q, want it carried through", f.VaeBundled)
+	}
+	if len(h2.bucket.prefixCalls) != 0 {
+		t.Errorf("the bucket was read for a fact the body already stated: %v", h2.bucket.prefixCalls)
+	}
+}
+
+// 揃える says what it could not find out. An unread header is not a missing VAE and must not be
+// marked as one (the rule the whole three-valued verdict exists for) — but `none` on a row nobody
+// has read reads as "nothing is wrong", and the row it is silent about is the one that fails every
+// request. So the fact rides in the answer rather than being dropped.
+func TestCompleteSaysWhenTheVaeQuestionWasNeverAsked(t *testing.T) {
+	h := newEngineLedgerHarness(t)
+	const key = "image/checkpoints/seeded.safetensors"
+	h.put(key, 6_900_000_000)
+	h.row(t, store.EngineModel{ID: "seeded", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{{S3Key: key}}})
+
+	answer := func(t *testing.T) engineCompleteAnswer {
+		t.Helper()
+		rec := h.call(t, h.a.completeModel, "POST", "/api/admin/engines/image/models/seeded/complete",
+			`{"check":true}`, map[string]string{"id": "seeded"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("complete = %d %s", rec.Code, rec.Body.String())
+		}
+		var out engineCompleteAnswer
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	got := answer(t)
+	if got.Action != engineCompleteNone {
+		t.Fatalf("action = %q, want none — an unread header is not a gap", got.Action)
+	}
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "seeded.safetensors") {
+		t.Fatalf("warnings = %v, want one naming the file nobody read", got.Warnings)
+	}
+	// The control: the same row with the header READ says nothing. Without it, a warning emitted
+	// unconditionally would look identical.
+	h.row(t, store.EngineModel{ID: "seeded", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{{S3Key: key, VaeBundled: engineVaeYes}}})
+	if got = answer(t); len(got.Warnings) != 0 {
+		t.Fatalf("warnings = %v on a row whose header was read", got.Warnings)
 	}
 }
 

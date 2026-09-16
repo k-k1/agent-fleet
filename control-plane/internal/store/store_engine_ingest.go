@@ -72,10 +72,20 @@ type EngineIngestStore interface {
 	// ListEngineIngestJobsForStorageByTenant preserves the same tenant-history boundary as the
 	// ordinary panel while returning every address visible through that grant.
 	ListEngineIngestJobsForStorageByTenant(ctx context.Context, role, tenantID string) ([]EngineIngestJob, error)
-	// EngineIngestS3KeyRecorded answers the write-side safety question without loading the
-	// unbounded history used by the storage panel. It spans tenants because an S3 role prefix is
-	// shared even when the job list is not.
-	EngineIngestS3KeyRecorded(ctx context.Context, role, s3Key string) (bool, error)
+	// EngineIngestJobForS3Key answers the write-side safety question without loading the
+	// unbounded history used by the storage panel: the newest job addressing this key, or
+	// found=false when none does. It spans tenants because an S3 role prefix is shared even when
+	// the job list is not.
+	//
+	// The ROW and not a bool, because the refusal it feeds has to name the job: the operator's way
+	// out of "this key is already recorded" is to dismiss that job, and `DELETE …/ingest/{id}`
+	// needs an id. A bool made the Console draw a button with no target — measured on af-sandbox
+	// 2026-09-16, where pressing it did nothing at all.
+	//
+	// Newest first because it is the only one that can still describe the key's current bytes;
+	// older jobs for the same key are history, and naming one of those would send the operator to
+	// dismiss a row that is not what holds them up.
+	EngineIngestJobForS3Key(ctx context.Context, role, s3Key string) (EngineIngestJob, bool, error)
 	GetEngineIngestJob(ctx context.Context, id string) (EngineIngestJob, bool, error)
 	// ListActiveEngineIngestJobs is what the reconciler polls: only the jobs whose outcome is
 	// still unknown, so a CP that has been up for a week does not ask ECS about last Tuesday.
@@ -129,10 +139,7 @@ func (s *SQL) ListEngineIngestJobsForStorageByTenant(ctx context.Context, role, 
 	return s.engineIngestStorageList(ctx, role, tenantID, true)
 }
 
-func (s *SQL) EngineIngestS3KeyRecorded(ctx context.Context, role, s3Key string) (bool, error) {
-	// EXISTS(...) scans as bool, not int — Postgres's driver hands back a real bool and
-	// refuses to convert it into an int destination (SQLite's 0/1 int would have hidden this).
-	//
+func (s *SQL) EngineIngestJobForS3Key(ctx context.Context, role, s3Key string) (EngineIngestJob, bool, error) {
 	// 🔴 A job that FAILED WITHOUT EVER GETTING A TASK is not an address. `task_arn` is written
 	// only after RunTask returned one, so `failed` with an empty one means no container ever
 	// existed to write those bytes — RunTask itself was refused (no capacity, a task definition
@@ -144,11 +151,14 @@ func (s *SQL) EngineIngestS3KeyRecorded(ctx context.Context, role, s3Key string)
 	//
 	// Every other failure still counts. The task ran, and the upload container may have put the
 	// object there before whatever failed afterwards did.
-	var found bool
-	err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM engine_ingest_jobs
-		   WHERE role=? AND s3_key=? AND NOT (state='failed' AND task_arn=''))`, role, s3Key).Scan(&found)
-	return found, err
+	rows, err := s.engineIngestRows(ctx,
+		`SELECT `+engineIngestCols+` FROM engine_ingest_jobs
+		   WHERE role=? AND s3_key=? AND NOT (state='failed' AND task_arn='')
+		   ORDER BY created_at DESC, id DESC LIMIT 1`, role, s3Key)
+	if err != nil || len(rows) == 0 {
+		return EngineIngestJob{}, false, err
+	}
+	return rows[0], true, nil
 }
 
 func (s *SQL) engineIngestStorageList(ctx context.Context, role, tenantID string, byTenant bool) ([]EngineIngestJob, error) {

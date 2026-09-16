@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -19,6 +20,7 @@ import (
 type engineStorageS3API interface {
 	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 	ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 }
 
 // engineStorageListPages bounds one listing. The CP task role's `s3:ListBucket` is already
@@ -97,6 +99,32 @@ func (a *engineAWSStorageMetadata) List(ctx context.Context, prefix string) ([]e
 	// Said out loud rather than silently truncated: a ledger missing its tail is one an operator
 	// would act on, and the act ("nothing declares this, delete it") is irreversible.
 	return out, fmt.Errorf("the bucket lists more than %d objects under %q", engineStorageListPages*1000, prefix)
+}
+
+// Prefix asks for the first n bytes with a ranged GetObject.
+//
+// No new permission: the CP task role already carries `s3:GetObject` on `llm/*` and `image/*`
+// (deploy/aws/ecs/cfn/60-engines.yaml) — it is what HeadObject is allowed by — so this reads what
+// the deployment could already read, and nothing outside those two prefixes is ever passed in.
+//
+// The LimitReader is not belt-and-braces: a server that ignores the Range answers 200 with a
+// checkpoint of several gigabytes behind it, and the caller asked for a megabyte.
+func (a *engineAWSStorageMetadata) Prefix(ctx context.Context, key string, n int) ([]byte, error) {
+	if a == nil || a.api == nil || a.bucket == "" {
+		return nil, errEngineStorageUnconfigured
+	}
+	if n <= 0 {
+		return nil, fmt.Errorf("s3: a prefix read of %d bytes answers nothing", n)
+	}
+	out, err := a.api.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(a.bucket), Key: aws.String(key),
+		Range: aws.String(fmt.Sprintf("bytes=0-%d", n-1)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer out.Body.Close()
+	return io.ReadAll(io.LimitReader(out.Body, int64(n)))
 }
 
 func engineStorageNotFound(err error) bool {

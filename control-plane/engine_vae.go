@@ -9,12 +9,14 @@ package main
 // under `--vae` — the declaration comfyCheckpointVAE reads
 // (workspace/agent/internal/imagegen/comfy_workflows.go).
 //
-// 🔴 The verdict is read ONCE, at the press that takes the checkpoint in (engineVaeOfIngest,
-// through the plan). There is no second read: the header scan and the per-row re-read left with
-// their routes (ADR 0085 P3), so a row whose bytes were REGISTERED from the bucket rather than
-// taken in carries no verdict at all — and an absent verdict is deliberately not a mark, so such
-// a row is neither marked nor offered the family's VAE by 揃える. Its `--vae` is declared by hand
-// (`PUT …/models/{id}`) until something reads that header again.
+// 🔴 The verdict is read ONCE, when the row's checkpoint is declared, and never again: the header
+// scan and the per-row re-read left with their routes (ADR 0085 P3). What the row is declared BY
+// decides which road reads it — engineVaeOfIngest at the upstream URL for a press that takes the
+// file in, engineVaeOfObject out of this deployment's own bucket for one that registers bytes
+// already here (`…/objects/register`, `POST …/models`). A seeded row reaches neither, and an
+// absent verdict is deliberately not a mark, so such a row is neither marked nor offered the
+// family's VAE by 揃える — which 揃える's check says out loud rather than leaving it to be read as
+// "nothing is wrong". Its `--vae` is declared by hand (`PUT …/models/{id}`) until then.
 //
 // 🔴 Only the single-checkpoint families are asked about. flux1, flux2-klein and zimage
 // already REQUIRE a `--vae` file to be declared (engineComfyRequiredFlags), so a row of theirs
@@ -171,6 +173,65 @@ func engineVaeOfIngest(ctx context.Context, provider, kind, key string,
 		return engineVaeUnknown
 	}
 	return verdict
+}
+
+// engineVaeOfObject is the same verdict for a file whose bytes are already in this deployment's
+// bucket — the road `…/objects/register` and `POST …/models` take, where there is no upstream URL
+// to read and never was one (the bytes may have outlived the job that fetched them).
+//
+// Best-effort and deliberately silent about failing: a refused read, an unconfigured bucket, a
+// `.ckpt`, a header past the ceiling all leave the answer unknown, and unknown never marks a row.
+// The one thing it must not do is fail the press — register exists to give forgotten bytes a row
+// at all, and a row that was not created because a 1 MiB read timed out helps nobody.
+//
+// The guards are engineVaeOfIngest's, minus the upstream ones: a part is not a checkpoint, a LoRA
+// is not one either, and for the llm role the question is meaningless. The FAMILY is not a guard
+// here for the same reason it is not one there — sd15/sdxl is decided elsewhere (engineVaeAsked),
+// and the fact belongs to the bytes whichever family ends up claiming them.
+func engineVaeOfObject(ctx context.Context, provider, kind, key string, storage *engineStorage) string {
+	if engineBaseModelsFor(provider) == nil {
+		return engineVaeUnknown
+	}
+	if strings.EqualFold(strings.TrimSpace(kind), engineModelKindLora) {
+		return engineVaeUnknown
+	}
+	if !engineSafetensorsName(key) || !storage.configured() {
+		return engineVaeUnknown
+	}
+	verdict, err := engineSafetensorsVaeOf(func(window int) ([]byte, error) {
+		return storage.prefix(ctx, key, window)
+	})
+	if err != nil {
+		log.Printf("engines: %s: the VAE question went unanswered (%v)", key, err)
+		return engineVaeUnknown
+	}
+	return verdict
+}
+
+// engineVaeMainFile says whether this declaration is the one whose header answers the question:
+// the row's own weights, under the unflagged slot a whole-checkpoint family reads or the
+// `--diffusion-model` a split one does. Every other flag names a part, and a part's header has
+// nothing to say about the checkpoint that loads it.
+func engineVaeMainFile(flag string) bool {
+	switch strings.TrimSpace(flag) {
+	case "", "--diffusion-model":
+		return true
+	}
+	return false
+}
+
+// engineVaeVerdict clamps what a caller CLAIMS the verdict is to the three the parser can produce.
+// A body is allowed to carry one forward (that is what makes reading a row and posting it back a
+// round trip), but an unrecognised word must land as "nobody read it" rather than being stored as
+// a fourth value that only `== engineVaeNo` would ever be compared against.
+func engineVaeVerdict(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case engineVaeYes:
+		return engineVaeYes
+	case engineVaeNo:
+		return engineVaeNo
+	}
+	return engineVaeUnknown
 }
 
 // engineVaeFollowUp is the second file an ingest promised to take in: the family's VAE, attached

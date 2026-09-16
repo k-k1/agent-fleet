@@ -56,6 +56,16 @@ func (h *engineLedgerHarness) put(key string, bytes int64) {
 	h.bucket.bytes[key] = bytes
 }
 
+// header stages what the first bytes of an object ARE, which is the only thing the VAE question
+// can be answered from. A key put without one is present and unreadable — the ordinary state of
+// every object in these tests, and the state whose verdict is "nobody read it".
+func (h *engineLedgerHarness) header(key string, head []byte) {
+	if h.bucket.head == nil {
+		h.bucket.head = map[string][]byte{}
+	}
+	h.bucket.head[key] = head
+}
+
 func (h *engineLedgerHarness) row(t *testing.T, m store.EngineModel) {
 	t.Helper()
 	m.Role = "image"
@@ -315,6 +325,79 @@ func TestRegisterRebuildsARowAndMovesItsWeights(t *testing.T) {
 	if env["upload"]["MODE"] != "move" || env["upload"]["FROM"] != misplaced ||
 		env["upload"]["KEY"] != "image/diffusion_models/anima_v1.safetensors" {
 		t.Errorf("the upload container = %v, want one `aws s3 mv` inside the bucket", env["upload"])
+	}
+}
+
+// 🔴 The side effect the scan's removal left behind (ADR 0085 P3, reported on PR #704): a row
+// registered from the bucket never had its checkpoint header read, so an SDXL file published
+// without a VAE was neither marked `vae_missing` nor offered the family's VAE by the 揃える the
+// same press runs — and the next act on it is Enable, straight into `VAE is invalid: None` on
+// every request. The bytes are HERE, so the header is read from the bucket.
+//
+// The pair is the point. A checkpoint that bundles its own VAE must come out of the same press
+// with nothing attached; a rule that attached one to both would put the wrong autoencoder on half
+// the catalogue.
+func TestRegisterReadsTheVaeVerdictOutOfTheBucket(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		tensors []string
+		verdict string
+		attach  bool
+	}{
+		{
+			name:    "published with no VAE",
+			tensors: []string{"model.diffusion_model.input_blocks.0.0.weight"},
+			verdict: engineVaeNo, attach: true,
+		},
+		{
+			name: "bundling its own",
+			tensors: []string{"model.diffusion_model.input_blocks.0.0.weight",
+				"first_stage_model.decoder.conv_in.weight"},
+			verdict: engineVaeYes, attach: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newEngineLedgerHarness(t)
+			const key = "image/checkpoints/somexl_v3.safetensors"
+			h.put(key, 6_900_000_000)
+			h.header(key, safetensorsFixture(t, tc.tensors))
+			// The family's own VAE, already in the bucket: the remedy is then a declaration and
+			// this test reaches no network at all.
+			h.put(engineFamilyVaes["sdxl"].S3Key, 334_600_000)
+
+			rec := h.call(t, h.a.postObjectRegister, "POST", "/api/admin/engines/image/objects/register",
+				`{"key":"`+key+`","base_model":"sdxl"}`, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("register = %d %s", rec.Code, rec.Body.String())
+			}
+			m, ok := engineCatalogModel(t.Context(), h.e, "somexl_v3")
+			if !ok {
+				t.Fatal("no row was created")
+			}
+			main, ok := engineVaeCheckpoint(m)
+			if !ok {
+				t.Fatalf("the row declares no checkpoint: %+v", m.Files)
+			}
+			if main.VaeBundled != tc.verdict {
+				t.Fatalf("vae_bundled = %q, want %q", main.VaeBundled, tc.verdict)
+			}
+			var vae string
+			for _, f := range m.Files {
+				if f.Flag == "--vae" {
+					vae = f.S3Key
+				}
+			}
+			if tc.attach && vae != engineFamilyVaes["sdxl"].S3Key {
+				t.Fatalf("--vae = %q, want the family's own VAE attached by the same press", vae)
+			}
+			if !tc.attach && vae != "" {
+				t.Fatalf("--vae = %q was attached to a checkpoint that carries one", vae)
+			}
+			// And the mark follows from the verdict, which is what refuses Enable.
+			if got := engineVaeMissing(h.e.def.Provider, m); got {
+				t.Errorf("the row is marked vae_missing after 揃える attached %q", vae)
+			}
+		})
 	}
 }
 

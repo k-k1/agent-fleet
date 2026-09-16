@@ -3,6 +3,18 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.20.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.20.2) — 2026-09-16
+
+0.20.0 以降の本番障害の修正が 1 件です。転写の探索で全プロジェクトディレクトリを
+毎回掃引していた問題が、EFS のバーストクレジットを枯渇させてすべてのセッションを
+低速化させていました。
+
+## [0.20.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.20.1) — 2026-09-16
+
+0.20.0 で本番配備に出た障害への修正が 2 件です。左ペインのセッション行が 5xx 応答を
+受けると全消えして戻らない問題と、設定 → Git ホスティングの読み込みが完了しない問題を
+直しました。
+
 ## [0.20.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.20.0) — 2026-09-13
 
 画像の生成と閲覧が Console の中で完結し、走っているセッションが 1 画面に収まり、画像エンジンの箱は

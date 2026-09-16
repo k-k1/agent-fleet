@@ -108,11 +108,6 @@ Parameters:
     Type: String
     Default: image
     Description: DNS label the image engine answers on.
-  ImageEngine:
-    Type: String
-    Default: comfy
-    AllowedValues: [ comfy ]
-    Description: Which server the image role runs.
   ImageComfyImageTag:
     Type: String
     Default: v0.34.0

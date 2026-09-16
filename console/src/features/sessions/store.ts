@@ -4,7 +4,7 @@
 // Only publishes on an actual change (serialized compare) — an unconditional 4s
 // repaint flickered the terminal cursor in the old console.
 import { create } from "zustand";
-import { api } from "../../core/api/client.ts";
+import { api, isTransientErr } from "../../core/api/client.ts";
 import { pushHealthy, pushStamp } from "../../core/push/events.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { toast } from "../../ui/toast.ts";
@@ -81,6 +81,14 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       // A pushed frame that arrived while this fetch was in flight is at least
       // as fresh — a slow (mobile) response must not clobber it and stick.
       if (pushStamp("sessions") !== stamp) return;
+      // A 5xx is NOT an empty session list. api() RESOLVES an error body rather than
+      // throwing (client.ts: `{error:{code:"http_502"}}`), so the catch below never
+      // sees it and `d.sessions || []` published [] — wiping every row in the rail.
+      // Measured on a production console: one `GET /api/sessions 500` blanked the whole
+      // list, and nothing refetched it because the 4s poll stands down while the push
+      // channel is healthy. The repos store has guarded this since it wedged the rail on
+      // its own empty state; this list needs the same guard for the same reason.
+      if (isTransientErr(d)) return;
       get().applyList(d.sessions || []);
     } catch {
       // KEEP the last known list. Publishing [] here wiped every row on any transient

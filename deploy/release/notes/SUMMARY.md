@@ -26,6 +26,19 @@ Keeping it current:
 
 ---
 
+## [0.20.2](0.20.2.md) — 2026-09-16
+
+**Fixed**
+
+- **[agent / efs]** The agent swept every project directory on EFS on every transcript lookup, issuing 821 directory reads per second per workspace and exhausting EFS burst credits across the whole deployment; the scan is now memoised
+
+## [0.20.1](0.20.1.md) — 2026-09-16
+
+**Fixed**
+
+- **[sessions / rail]** Every session row disappeared after a 5xx and did not recover on its own; a browser reload now restores it
+- **[connections / agent]** `GET /connections` could block for 21–28 s and time out at the load balancer because `claude auth status` ran synchronously with no timeout; the fix runs it asynchronously and falls back to the last known result
+
 ## [0.20.0](0.20.0.md) — 2026-09-13
 
 **New / Improved**

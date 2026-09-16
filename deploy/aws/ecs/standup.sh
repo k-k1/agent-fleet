@@ -550,13 +550,12 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
   # template does not declare, same as the seed parameters above.
   af_param_drop ImageImageTag
   af_param_drop ImageExtraArgs
-  # A capture still naming the retired engine fails CFN's AllowedValues check (the template
-  # now declares only `comfy`) rather than the friendlier "does not exist" — drop it and let
-  # the template default carry the deployment forward onto the only engine it still builds.
-  if [ "$(af_read_one_param 60-engines ImageEngine)" = "sdcpp" ]; then
-    echo "    · dropping ImageEngine=sdcpp (ADR 0083 retired the engine; taking the template's comfy)"
-    af_param_drop ImageEngine
-  fi
+  # 🔴 And the choice itself, dropped whatever it says. It was narrowed to `AllowedValues:
+  # [comfy]` while `sdcpp` was being retired and then had no `!If` left to read it, so the
+  # template declares it no more — and `deploy` refuses a key the template does not declare,
+  # which makes `comfy` as fatal here as `sdcpp` was. The image role runs ComfyUI; nothing
+  # chooses.
+  af_param_drop ImageEngine
 
   # Retired in ADR 0075: the purchase option is not a switch on one provider any more, it is the
   # `buy` field of an offer against two providers that both stand. A capture taken before that

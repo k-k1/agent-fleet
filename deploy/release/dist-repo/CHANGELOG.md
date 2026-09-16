@@ -3,6 +3,17 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.20.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.20.2) — 2026-09-16
+
+One fix for a production outage first seen in 0.20.0 where the agent exhausted EFS
+burst credits by sweeping all project directories on every transcript lookup.
+
+## [0.20.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.20.1) — 2026-09-16
+
+Two fixes for a production outage first seen in 0.20.0: every session row disappearing
+from the left pane after a 5xx response, and Settings → Git hosting never finishing
+its first load.
+
 ## [0.20.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.20.0) — 2026-09-13
 
 Images are generated and browsed in the Console itself, every running session fits on one

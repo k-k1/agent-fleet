@@ -348,16 +348,28 @@ func SubagentLogs(sid string) []string {
 	if sid == "" {
 		return nil
 	}
-	base := filepath.Join(ConfigDir(), "projects", "*", sid, "subagents")
 	var out []string
-	for _, pat := range []string{
-		filepath.Join(base, "agent-*.jsonl"),
-		filepath.Join(base, "workflows", "wf_*", "agent-*.jsonl"),
-	} {
-		logs, _ := filepath.Glob(pat)
-		out = append(out, logs...)
+	for _, base := range subagentBases(sid) {
+		for _, pat := range []string{
+			filepath.Join(base, "agent-*.jsonl"),
+			filepath.Join(base, "workflows", "wf_*", "agent-*.jsonl"),
+		} {
+			logs, _ := filepath.Glob(pat)
+			out = append(out, logs...)
+		}
 	}
 	return out
+}
+
+// subagentBases resolves sid's subagents directories. Splitting this out of the pattern above
+// is what keeps the `projects/*` half from sweeping every project directory on every call —
+// the inner agent-*.jsonl globs still have to read the subagents directory itself, but that is
+// one directory, not one per project (jsonl_memo.go).
+func subagentBases(sid string) []string {
+	return subagentMemo.lookup(ConfigDir()+"\x00"+sid, func() []string {
+		m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", sid, "subagents"))
+		return m
+	})
 }
 
 // SubagentSnapshot is TranscriptSnapshot for the background agents' logs — the baseline

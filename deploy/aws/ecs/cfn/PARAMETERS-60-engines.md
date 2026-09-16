@@ -129,19 +129,22 @@ CloudFormation run. Eight parameters were retired, in two steps:
 `LlmExtraArgs` **stays**: it is the llm INSTANCE's flags (`-ngl 99`), not a model's.
 `ImageExtraArgs` did not survive ADR 0083 — see below, it went with the engine it configured.
 
-**ADR 0083 then retired the stable-diffusion.cpp engine itself**, and with it `ImageImageTag`
-(its ECR tag) and `ImageExtraArgs` (its `sd-server` flags): `deploy` refuses either key now, the
-same as the eight above, so `standup.sh` drops both from a captured file, and `update.sh` needs
-no change — it never passed them, and a removed key is not something `deploy`'s
-`UsePreviousValue` carries forward (same as the eight above).
+**ADR 0083 then retired the stable-diffusion.cpp engine itself**, and with it three more:
+`ImageImageTag` (its ECR tag), `ImageExtraArgs` (its `sd-server` flags) and `ImageEngine` (which
+server the role runs). `deploy` refuses any of the three now, the same as the eight above, so
+`standup.sh` drops all three from a captured file, and `update.sh` needs no change — it never
+passed them, and a removed key is not something `deploy`'s `UsePreviousValue` carries forward
+(same as the eight above).
 
-`ImageEngine` is different: it is NOT removed, only narrowed to `AllowedValues: [comfy]`, and
-`deploy` keeps a parameter it is not given at `UsePreviousValue`. A capture naming `sdcpp` fails
-the narrowed check outright rather than the friendlier "does not exist", so `standup.sh` drops
-that value and lets the template's `comfy` default carry the deployment forward. On the
-`update.sh` route the stack's OWN previous value would otherwise be carried forward the same
-way — `update.sh` reads it back with `af_stack_param` and overrides it to `comfy` when it finds
-`sdcpp`, the same repair shape as `<Role>OfferBudgetSec` above.
+🔴 `ImageEngine` went in two steps, and the second one is the trap. ADR 0083 first NARROWED it
+to `AllowedValues: [comfy]` and left it declared, so a capture naming `sdcpp` had to be dropped
+and a live stack still carrying `sdcpp` had to be overridden to `comfy`. Once the last `!If` on
+it was gone the parameter was unused (cfn-lint W2001) and it is now removed outright — at which
+point `comfy` became as fatal as `sdcpp`, because `deploy` refuses a key the template does not
+declare whatever its value is. `standup.sh` therefore drops it unconditionally, `update.sh`
+passes nothing (the override it used to add for `sdcpp` would itself fail every update now), and
+a live stack's own previous value is simply lost at the next update, which is the correct
+outcome: the image role runs ComfyUI and nothing chooses.
 
 🔴 **`EcrSdcppUri`'s removal reverses this template's usual update order, for one release
 only.** `60-engines.yaml:785` imported `${PlatformStackName}-EcrSdcppUri`, and
@@ -525,16 +528,16 @@ decision 2 is that instance requirements are DECLARED per role, because the floo
 number (SDXL fp16 measured 7,379 MiB against the 30B's 20,943) and the two roles must never land
 on the same instance — CUDA does not slow down when VRAM runs out, it crashes.
 
-### `ImageEngine`
+### There is no `ImageEngine`
 
 ADR 0072 decision 4 gave the role a choice of server, `sdcpp` (stable-diffusion.cpp, one
 checkpoint chosen at start) or `comfy` (this deployment's own ComfyUI image, which switches
 checkpoints per REQUEST). ADR 0083 decision 1 retired the `sdcpp` engine — nobody was running
 it, and its "one checkpoint, chosen at start" shape is what made it obsolete once `comfy`
-existed — so the parameter is now locked to `AllowedValues: [comfy]`. It stays as a parameter
-(rather than disappearing outright) so a captured environment and `standup.sh`'s `--image-tag`-
-style overrides keep meaning something, and so the engine table's `provider` field has a
-documented source.
+existed. The parameter outlived it by one release, locked to `AllowedValues: [comfy]` and read
+by nothing, and is now gone as well: the role runs ComfyUI, the engine table writes `comfy` as a
+literal, and a choice of one is a question nobody should be asked. What a captured file or a
+live stack still says about it is dropped (see the retired-parameters section above).
 
 `ImageComfyImageTag` (default `v0.34.0`) is the tag inside `af-comfyui`, baked by
 `.github/workflows/comfyui-image.yml` (a dedicated `workflow_dispatch`, deliberately NOT part of
