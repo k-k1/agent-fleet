@@ -526,3 +526,67 @@ route. Decisions 1, 2, 5–10 stand; two of them gain a P0 item each (a client, 
 - `~/.local/share/af-pgtest` (Zonky 17 dist + data) and `~/.local/share/af-dbtest/my.tar.xz`
   — the retained artefacts the re-measurement used; upstream sizes by `curl -I` against
   `cdn.mysql.com`, `repo1.maven.org` and `deb.debian.org` on 2026-09-17.
+
+## Decisions overridden, decisions kept (2026-09-17, after the review, before P0)
+
+The author accepted the review. The decisions above stay as written; where one is named here,
+this section replaces it. The contract table at the end is fixed so that three lanes (supply,
+runtime, documentation) can be built by different sessions against the same words.
+
+- **Decision 3 → 3′. One server per (engine, major) per Workspace; one database per
+  *working copy*.** The key is the working copy directory (`Meta.Dir`, the git toplevel), not
+  the session — the slug is already immutable, and the managed route cannot name its session.
+  `af-db` resolves the caller as: `AF_SESSION_NAME` set → that session's `Dir`; otherwise the
+  git toplevel of cwd; otherwise cwd. Database name: `af_` + the directory's basename
+  sanitised (lower-case, `[^a-z0-9]` → `_`, at most 40 characters) + `_` + the first six hex
+  of `sha256(dir)`. The registry records name → dir. **Reconcile** on every `up` / `url` /
+  `status`: drop every registered database whose recorded directory no longer exists on disk.
+  `--db=<name>` names a shared database explicitly; reconcile never drops those. No hook in
+  any of the five session-deletion paths.
+- **Decision 4 → 4′.** `$AF_WS_SCRATCH/af-db/` whenever the variable is set, regardless of the
+  entrypoint's 30 GiB relocation gate; otherwise `~/.local/state/af-db/`. On docker and native
+  the default persists across stops — "gone when the workspace stops" is the ECS behaviour.
+  `--persist` forces the home path and turns `fsync` back on.
+- **Decision 8 → 8′.** `af-db url` and `eval "$(af-db env)"` are the contract. `AF_DB_URL_POSTGRES`
+  is injected at tmux launch only, and only when the instance is running and the working
+  copy's database already exists; managed sessions get nothing by environment. `DATABASE_URL`
+  is set only by `af-db env`.
+- **Decision 5 gains three P0 items.** (a) `workspace-agent install-pg-client`: `postgresql-client-<major>`
+  and `libpq5` resolved from the Debian trixie `Packages` index for the build architecture —
+  version and sha256 from the index, never a pinned filename Debian retires — unpacked under
+  `~/.local/share/agent-fleet/pg-client/`, with `~/.local/bin/{psql,pg_dump,pg_restore}` wrappers
+  that set `LD_LIBRARY_PATH`. (b) The Agent takes `github.com/jackc/pgx/v5`. (c) A real
+  `/usr/local/bin/af-db` shim and an `os.Args[1] == "af-db"` dispatch in `main.go`.
+- **Decision 6 gains authentication.** `initdb --auth=scram-sha-256 --auth-local=scram-sha-256
+  -U postgres`, password generated at `initdb` and kept mode 0600 in
+  `~/.config/agent-fleet/af-db/postgres-<major>.pass`. The `127.0.0.1` listener is therefore
+  not a trust superuser port.
+- **Decision 7 is kept, with its mechanism named.** The Agent's loop, every 60 s:
+  `SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend'`; zero for
+  30 consecutive minutes → `pg_ctl stop -m fast`. `lastUsedAt` is also bumped by every
+  `af-db url`.
+- **Decision 10 gains the ordering.** stop → wait for the postmaster pid to be gone → only then
+  touch the datadir. The server log is `<root>/postgres-<major>.log` via `pg_ctl -l`.
+- **P0's completion criterion** is the review's: in `control-plane/`,
+  `AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 -run 'TestPostgres|TestSchemaDialectParity' ./...`
+  shows 4 PASS, 0 SKIP, in a workspace that has never run `af-db` before.
+- **Open question 3 is closed** by the review: P1 ships MySQL on arm64 via `strip` on the
+  arm64 host; MariaDB is a separate offer, not a fallback.
+
+### The P0 contract
+
+| Item | Value |
+|---|---|
+| Install root | `~/.local/share/agent-fleet/postgres/<major>/{bin,lib,share}`; `workspace-agent install-postgres <major>`, `major` ∈ {16, 17, 18}, default 17. `AF_DB_POSTGRES_ROOT=<dir>` overrides the root for tests (the retained `~/.local/share/af-pgtest/dist` has the same shape). |
+| Pins | `versions.json`: `postgres` = the Zonky version of the default major (e.g. `17.11.0`), `postgres_sha256` = its jar's sha for the build architecture (the `kiro_sha256` pattern). Other majors: the latest Zonky release of that major, verified against Maven Central's `.sha256` sidecar. Jar → `postgres-linux-<arch>.txz` → staging dir → atomic rename. |
+| Shim | `/usr/local/bin/af-db` = `exec workspace-agent af-db "$@"` (baked in `workspace/Dockerfile`, next to `af-scratch`). |
+| Registry | `~/.config/agent-fleet/af-db/instances.json`, read-modify-write through `fstore` under `~/.config/agent-fleet/af-db/lock`. One instance = `{engine, major, root, datadir, sockdir, port, pid, startedAt, lastUsedAt, persist, databases: {name: dir}}`. |
+| Datadir | `<root>/postgres-<major>/data`, `<root>` = `$AF_WS_SCRATCH/af-db` or `~/.local/state/af-db`. |
+| Socket | `~/.local/state/af-db/run/postgres-<major>/` (short path; the file is `.s.PGSQL.<port>`). |
+| Port | The Agent binds `127.0.0.1:0`, releases it, passes it as `-p`, records it. |
+| Server flags | `-k <sockdir> -h 127.0.0.1 -p <port> -c shared_buffers=32MB -c max_connections=50 -c fsync=off` (`fsync=on` under `--persist`). |
+| URL (default) | `postgres://postgres:<pw>@/<db>?host=<sockdir>&sslmode=disable` |
+| URL (`--tcp`) | `postgres://postgres:<pw>@127.0.0.1:<port>/<db>?sslmode=disable` |
+| Verbs | `af-db up [postgres] [--major N] [--persist]` · `af-db url [--db=NAME] [--tcp]` (installs if missing, starts if stopped, creates the database if absent) · `af-db env [--db=NAME] [--tcp]` (prints `export AF_DB_URL_POSTGRES=…` and `export DATABASE_URL=…`) · `af-db reset [--db=NAME]` (DROP + CREATE) · `af-db down [--purge]` (stop; `--purge` removes the datadir after the pid is gone) · `af-db status [--json]` |
+| Exit codes | 0 ok · 2 usage · 3 install failed (message names the URL and both shas) · 4 server failed to start (message names the log path) · 5 not running (`reset` only). |
+| Code | `workspace/agent/internal/afdb/` holds the CLI verbs and the Agent's idle/reconcile loop; `workspace/agent/install_postgres.go` and `install_pg_client.go` follow `install_kiro.go`. |

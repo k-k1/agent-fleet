@@ -493,3 +493,64 @@ Agent が止める。あるセッションの終了が、兄弟セッション�
 - `~/.local/share/af-pgtest`（Zonky 17 の dist + data）と `~/.local/share/af-dbtest/my.tar.xz`
   — 測り直しに使った残置物。上流のサイズは 2026-09-17 に `cdn.mysql.com`・`repo1.maven.org`・
   `deb.debian.org` へ `curl -I`。
+
+## 上書きする既存の決定と、維持する決定（2026-09-17・レビュー後・P0 前）
+
+著者はレビューを受け入れた。上の決定は書かれたまま残し、ここで名指ししたものはこの節が
+置き換える。末尾の契約表は、3 レーン（供給・実行・文書）を別々のセッションが同じ言葉に
+向かって組めるように固定したもの。
+
+- **決定 3 → 3′。サーバは Workspace ごとに（エンジン, メジャー）1 本。データベースは*作業コピー*
+  ごとに 1 つ。** 鍵は作業コピーのディレクトリ（`Meta.Dir`、git のトップレベル）であってセッション
+  ではない——スラグは既に不変で、マネージド経路は自分のセッションを名指しできない。`af-db` は
+  呼び手をこう解決する：`AF_SESSION_NAME` があればそのセッションの `Dir`、無ければ cwd の git
+  トップレベル、それも無ければ cwd。データベース名は `af_` + ディレクトリのベース名を正規化
+  （小文字、`[^a-z0-9]` → `_`、40 文字まで）+ `_` + `sha256(dir)` の先頭 6 hex。レジストリに名前 →
+  dir を記録。**突き合わせ**を `up` / `url` / `status` のたびに：記録されたディレクトリがディスクに
+  無いデータベースは落とす。`--db=<name>` は明示の共有データベースで、突き合わせは決して落とさない。
+  セッション削除 5 経路には吊るさない。
+- **決定 4 → 4′。** 変数があれば `$AF_WS_SCRATCH/af-db/`——entrypoint の 30 GiB の退避門とは無関係に。
+  無ければ `~/.local/state/af-db/`。docker と native では既定が停止をまたいで残る——「Workspace が
+  止まれば消える」は ECS の挙動。`--persist` はホーム側を強制し、`fsync` を戻す。
+- **決定 8 → 8′。** 契約は `af-db url` と `eval "$(af-db env)"`。`AF_DB_URL_POSTGRES` の注入は tmux
+  起動時だけ、しかもインスタンスが動いていて作業コピーのデータベースが既にあるときだけ。
+  マネージドセッションは環境変数では何も受け取らない。`DATABASE_URL` を設定するのは `af-db env`
+  だけ。
+- **決定 5 に P0 の項目が 3 つ増える。** (a) `workspace-agent install-pg-client`：
+  `postgresql-client-<major>` と `libpq5` を Debian trixie の `Packages` 索引からビルド
+  アーキテクチャ向けに解決——版と sha256 は索引から取り、Debian が引き上げるファイル名を固定
+  しない——`~/.local/share/agent-fleet/pg-client/` に展開し、`LD_LIBRARY_PATH` を設定する
+  `~/.local/bin/{psql,pg_dump,pg_restore}` ラッパーを置く。(b) Agent は
+  `github.com/jackc/pgx/v5` を取る。(c) 実体の `/usr/local/bin/af-db` シムと、`main.go` の
+  `os.Args[1] == "af-db"` 分岐。
+- **決定 6 に認証が付く。** `initdb --auth=scram-sha-256 --auth-local=scram-sha-256 -U postgres`、
+  パスワードは `initdb` 時に生成して `~/.config/agent-fleet/af-db/postgres-<major>.pass` に
+  0600 で置く。`127.0.0.1` のリスナは trust のスーパーユーザ口にならない。
+- **決定 7 は維持。機構を名指しする。** Agent のループが 60 秒ごとに
+  `SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend'`。30 分連続で 0
+  なら `pg_ctl stop -m fast`。`lastUsedAt` は `af-db url` のたびにも更新。
+- **決定 10 に順序が付く。** 停止 → postmaster の pid が消えるのを待つ → それからデータ
+  ディレクトリに触る。サーバのログは `pg_ctl -l` で `<root>/postgres-<major>.log`。
+- **P0 の完了条件**はレビューのもの：`control-plane/` で
+  `AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 -run 'TestPostgres|TestSchemaDialectParity' ./...`
+  が、`af-db` を一度も走らせたことのない Workspace で 4 PASS・0 SKIP。
+- **未解決の問い 3 はレビューで閉じた**：P1 は arm64 の MySQL を arm64 ホスト上の `strip` で出す。
+  MariaDB は別の提供であって退避ではない。
+
+### P0 の契約
+
+| 項目 | 値 |
+|---|---|
+| 導入先 | `~/.local/share/agent-fleet/postgres/<major>/{bin,lib,share}`。`workspace-agent install-postgres <major>`、`major` ∈ {16, 17, 18}、既定 17。`AF_DB_POSTGRES_ROOT=<dir>` でテスト用に root を上書き（残置の `~/.local/share/af-pgtest/dist` が同じ形）。 |
+| ピン | `versions.json`：`postgres` = 既定メジャーの Zonky 版（例 `17.11.0`）、`postgres_sha256` = その jar のビルドアーキテクチャ向け sha（`kiro_sha256` の型）。他のメジャーはその系列の最新 Zonky を Maven Central の `.sha256` サイドカーで検証。jar → `postgres-linux-<arch>.txz` → staging → atomic rename。 |
+| シム | `/usr/local/bin/af-db` = `exec workspace-agent af-db "$@"`（`workspace/Dockerfile` で `af-scratch` の隣に焼く）。 |
+| レジストリ | `~/.config/agent-fleet/af-db/instances.json`。`fstore` の read-modify-write を `~/.config/agent-fleet/af-db/lock` の下で。インスタンス 1 つ = `{engine, major, root, datadir, sockdir, port, pid, startedAt, lastUsedAt, persist, databases: {name: dir}}`。 |
+| データディレクトリ | `<root>/postgres-<major>/data`。`<root>` = `$AF_WS_SCRATCH/af-db` か `~/.local/state/af-db`。 |
+| ソケット | `~/.local/state/af-db/run/postgres-<major>/`（短いパス。ファイルは `.s.PGSQL.<port>`）。 |
+| ポート | Agent が `127.0.0.1:0` を bind して離し、`-p` で渡し、記録する。 |
+| サーバのフラグ | `-k <sockdir> -h 127.0.0.1 -p <port> -c shared_buffers=32MB -c max_connections=50 -c fsync=off`（`--persist` では `fsync=on`）。 |
+| URL（既定） | `postgres://postgres:<pw>@/<db>?host=<sockdir>&sslmode=disable` |
+| URL（`--tcp`） | `postgres://postgres:<pw>@127.0.0.1:<port>/<db>?sslmode=disable` |
+| 動詞 | `af-db up [postgres] [--major N] [--persist]` · `af-db url [--db=NAME] [--tcp]`（未導入なら導入、停止中なら起動、無ければデータベースを作る） · `af-db env [--db=NAME] [--tcp]`（`export AF_DB_URL_POSTGRES=…` と `export DATABASE_URL=…` を出力） · `af-db reset [--db=NAME]`（DROP + CREATE） · `af-db down [--purge]`（停止。`--purge` は pid が消えた後にデータディレクトリも消す） · `af-db status [--json]` |
+| 終了コード | 0 正常 · 2 使い方 · 3 導入失敗（メッセージに URL と両方の sha） · 4 サーバ起動失敗（メッセージにログのパス） · 5 未起動（`reset` だけ）。 |
+| コード | `workspace/agent/internal/afdb/` に CLI の動詞と Agent のアイドル／突き合わせループ。`workspace/agent/install_postgres.go`・`install_pg_client.go` は `install_kiro.go` に倣う。 |
