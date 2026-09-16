@@ -456,8 +456,9 @@ const (
 	// phase P2). Same transport as openai-compat — the Control Plane's engine gateway — but it
 	// holds several checkpoints at once and switches per REQUEST, which is what makes `model` a
 	// real choice instead of a fixed fact about the deployment. The `image` role this stack buys
-	// runs comfy alone (60-engines.yaml's `ImageEngine`); a deployment may still declare further
-	// rows under other providers alongside it (ADR 0082), openai-compat ones included.
+	// runs comfy alone (it is the only image server 60-engines.yaml builds); a deployment may
+	// still declare further rows under other providers alongside it (ADR 0082), openai-compat
+	// ones included.
 	ProviderComfy = "comfy"
 )
 
