@@ -168,6 +168,10 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.image_provider_order": "Image provider order",
   "agents.note_image_provider_order":
     "The order providers are tried in for image generation. The first usable one is used, and a failed call falls through to the next. By default the engine this deployment hosts itself (Agent Fleet (self-hosted)) comes first and external services follow: the self-hosted engine runs on a GPU this deployment pays for, while an external service spends your own plan's usage. A provider added after this list was saved is placed the same way — self-hosted at the front, external at the back — without moving anything you ranked here.",
+  "agents.image_kind_comfy": "ComfyUI",
+  "agents.image_kind_openai_compat": "OpenAI-compatible",
+  "agents.image_provider_order_fallback":
+    "Showing the built-in default. Start the workspace to see this deployment's own image engines, each under its own name.",
   "agents.rate_limit_resume": "Auto-resume after a usage limit resets",
   "agents.note_claude_rate_limit_resume":
     "When a Claude session is interrupted by its usage limit, a one-time resume is booked to send \"please carry on\" to that session when the limit resets. The booking is deleted after use and never repeats. If the workspace stops while waiting, it is started at the booked time for delivery. The resume is skipped if you are already driving the session then. Reaching the limit and a successful automatic resume are also shown in the notification center. Sessions launched directly from Console are included. Default ON.\nEven when OFF, the limit menu (\"1. Stop and wait for limit to reset / 2. Ask your admin for more usage\") is still confirmed automatically. While the menu is open, the session accepts no input, notifications, or reports, and only the no-cost waiting option is chosen automatically. To pick 2, choose it yourself while the menu is on screen.\nThis switch also covers Codex (managed) — it is the same setting as the one on the Codex card.",

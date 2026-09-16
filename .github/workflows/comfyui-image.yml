@@ -79,5 +79,5 @@ jobs:
             echo "crane copy $REG/comfyui:${{ inputs.tag }} <acct>.dkr.ecr.<region>.amazonaws.com/af-comfyui:${{ inputs.tag }}"
             echo '```'
             echo ""
-            echo "standup.sh does this automatically when ImageEngine=comfy — see ImageComfyImageTag in params/60-engines."
+            echo "standup.sh does this automatically when the image role is enabled — see ImageComfyImageTag in params/60-engines."
           } >> "$GITHUB_STEP_SUMMARY"

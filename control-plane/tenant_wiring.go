@@ -147,7 +147,14 @@ func (d cpTenant) Store() store.Store                { return d.m.store }
 func (d cpTenant) KnownProviderIDs() map[string]bool { return d.m.knownProviderIDs }
 func (d cpTenant) EvictMembershipCache(mid string)   { d.m.evictMembershipCache(mid) }
 func (d cpTenant) EvictTenantCache(tid string)       { d.m.evictTenantCache(tid) }
-func (d cpTenant) InvalidateTenantLogin()            { d.m.tenantLogin.invalidate() }
+func (d cpTenant) PushEngineCatalogChanged(ctx context.Context, tenantID string) {
+	// Gate 4's cache (engine_member.go) would otherwise hold the OLD grant for up to
+	// tenantEngineLimitsTTL after this save — drop it here so the events stream's very next
+	// tick sees the change, the same immediacy decision 9 asks for on the Agent side below.
+	invalidateTenantEngineLimits(tenantID)
+	go notifyEngineCatalogChangedForTenant(context.WithoutCancel(ctx), d.m, tenantID, "tenant limits changed")
+}
+func (d cpTenant) InvalidateTenantLogin() { d.m.tenantLogin.invalidate() }
 func (d cpTenant) IdleForecastFor(wsID string) (any, bool) {
 	f, ok := d.m.idleForecastFor(wsID)
 	if !ok {
@@ -293,6 +300,8 @@ func tenantLimitsOut(l tenantLimits) tenantsrv.Limits {
 		AllowAgentSelfUpdate:         l.AllowAgentSelfUpdate,
 		AllowEngineIngest:            l.AllowEngineIngest,
 		TerminalHistoryRetentionDays: l.TerminalHistoryRetentionDays,
+		AllowEngineLLM:               l.AllowEngineLLM,
+		AllowEngineImage:             l.AllowEngineImage,
 	}
 }
 
@@ -315,6 +324,8 @@ func tenantLimitsIn(l tenantsrv.Limits) tenantLimits {
 		AllowAgentSelfUpdate:         l.AllowAgentSelfUpdate,
 		AllowEngineIngest:            l.AllowEngineIngest,
 		TerminalHistoryRetentionDays: l.TerminalHistoryRetentionDays,
+		AllowEngineLLM:               l.AllowEngineLLM,
+		AllowEngineImage:             l.AllowEngineImage,
 	}
 }
 

@@ -47,15 +47,24 @@ import (
 )
 
 type comfyProvider struct {
+	// key is this provider's id everywhere outside this file — the images row's own key (ADR
+	// 0082 decision 1). Empty in a hand-built test double, which is why ID() falls back to the
+	// bare kind name rather than an empty string.
+	key    string
 	lookup func(ctx context.Context) (EngineConn, bool)
 	client *http.Client
 }
 
-func newComfyProvider() *comfyProvider {
-	return &comfyProvider{lookup: engineLookupFor(ProviderComfy), client: sdcppClient}
+func newComfyProviderFor(key string) *comfyProvider {
+	return &comfyProvider{key: key, lookup: engineLookupFor(key), client: engineClient}
 }
 
-func (p *comfyProvider) ID() string { return ProviderComfy }
+func (p *comfyProvider) ID() string {
+	if p.key != "" {
+		return p.key
+	}
+	return ProviderComfy
+}
 
 // Ready follows sdcpp's own rule exactly: "this deployment has this engine and we hold a token
 // for it", never "the engine is up". See sdcppProvider.Ready for why that is the honest answer.
@@ -74,11 +83,6 @@ func (p *comfyProvider) conn(ctx context.Context) (EngineConn, bool) {
 	}
 	return c, true
 }
-
-// comfyDriverModel names the checkpoint for the status route (driverModelOf), without waking
-// anything: DefaultModel reads the connection the Control Plane already handed us — the warm
-// model, else the catalogue's first — and asks the engine nothing.
-func comfyDriverModel() string { return newComfyProvider().DefaultModel() }
 
 // DefaultModel is what a request naming no model gets (ADR 0072 decision 7): whatever the
 // Control Plane last saw this engine actually answer with — free, because it is already loaded
@@ -151,7 +155,7 @@ func (p *comfyProvider) Caps(model string) Caps {
 func comfyFamilyKnobs(family comfyFamily) []string {
 	knobs := []string{"steps"}
 	switch family {
-	case ComfyFamilySDXL, ComfyFamilySD35:
+	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyAnima, ComfyFamilyKrea2:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
 	case ComfyFamilyZImage:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
@@ -164,6 +168,24 @@ func comfyFamilyKnobs(family comfyFamily) []string {
 		knobs = append(knobs, "negative")
 	}
 	return knobs
+}
+
+// comfyModelKnobs is comfyFamilyKnobs for ONE ROW: the family's list, minus the negative prompt
+// when that row is declared at cfg 1 and cancels it. The form draws its fields from this, and
+// Caps.Negative answers the same question through comfyModelTakesNegative — a field offered for
+// a value the capability says is ignored is the pair disagreeing in front of the member.
+func comfyModelKnobs(conn EngineConn, family comfyFamily, model string) []string {
+	knobs := comfyFamilyKnobs(family)
+	if comfyModelTakesNegative(conn, model) {
+		return knobs
+	}
+	out := knobs[:0:0]
+	for _, k := range knobs {
+		if k != "negative" {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 func comfyFamilyReadsKnob(family comfyFamily, knob string) bool {
@@ -198,25 +220,41 @@ func comfyIgnoredParamWarnings(family comfyFamily, p *EngineParams) []string {
 	return out
 }
 
-// comfyModelTakesNegative answers whether this model's template samples with a negative branch
-// at all. A model whose family is not declared answers false: the request will be refused before
-// a graph exists, and "yes it would have been honoured" is not a useful thing to have said.
+// comfyModelTakesNegative answers whether a negative prompt can move THIS MODEL's picture. A
+// model whose family is not declared answers false: the request will be refused before a graph
+// exists, and "yes it would have been honoured" is not a useful thing to have said.
+//
+// 🔴 The family is necessary and not sufficient. A guided template still samples at whatever cfg
+// the catalogue row declares, and at cfg 1 classifier-free guidance is `uncond + 1*(cond -
+// uncond)` — cond exactly, whatever is wired into the negative branch. That is not a corner case
+// any more: the distilled member of a guided family is the NORMAL row for two of the seven
+// families now (Krea 2 Turbo declares cfg 1, Anima-Turbo does too), and answering with the
+// family alone would tell a member their negative prompt reaches a picture it cannot touch.
 func comfyModelTakesNegative(conn EngineConn, model string) bool {
 	family, ok := comfyFamilyFor(conn, model)
-	return ok && comfyFamilyTakesNegative(family)
+	if !ok || !comfyFamilyTakesNegative(family) {
+		return false
+	}
+	return comfyFamilyRecipes[family].with(conn.Params[model]).CFG != 1
 }
 
-// comfyFamilyTakesNegative is which of the five templates a negative prompt can actually move.
+// comfyFamilyTakesNegative is which of the seven templates a negative prompt can actually move.
 //
-// 🔴 Only the two GUIDED families. The other three are distilled models sampled at cfg 1 (zimage's
+// 🔴 Only the GUIDED families. The other three are distilled models sampled at cfg 1 (zimage's
 // KSampler, klein's CFGGuider) or with FLUX.1's guidance folded into the conditioning
 // (BasicGuider, no negative input at all) — and at cfg 1 classifier-free guidance is
 // `uncond + 1*(cond - uncond)`, which is cond exactly. The negative words would ride in the graph,
 // cost a text encode, and change no pixel. Wiring them anyway and reporting the capability as
 // true is worse than refusing: the caller gets no warning, the picture looks right, and the thing
 // they asked to keep out is in it.
+//
+// ⚠️ This is the family's TEMPLATE, not the answer a member gets: anima and krea2 are here
+// because their graphs encode a real negative, while their distilled variants (Anima-Turbo,
+// Krea 2 Turbo) declare cfg 1 and cancel it anyway. comfyModelTakesNegative is what puts the
+// two facts together, and it is the one every caller asks.
 func comfyFamilyTakesNegative(family comfyFamily) bool {
-	return family == ComfyFamilySDXL || family == ComfyFamilySD35
+	return family == ComfyFamilySD15 || family == ComfyFamilySDXL || family == ComfyFamilySD35 ||
+		family == ComfyFamilyAnima || family == ComfyFamilyKrea2
 }
 
 // comfyNegativeFor composes the negative prompt one request samples against, out of the three
@@ -248,8 +286,12 @@ func comfyNegativeFor(conn EngineConn, model string, req Request) string {
 //
 // It is said even though nobody is at fault, because the administrator's list silently not
 // applying is precisely the failure this whole path exists to prevent.
+//
+// It reads the MODEL and not just the family for the reason comfyModelTakesNegative does: a row
+// of a guided family declared at cfg 1 drops the administrator's list exactly as silently as a
+// distilled family does, and it is the same warning either way — only the reason differs.
 func comfyNegativeIgnoredWarning(conn EngineConn, model string, family comfyFamily) string {
-	if comfyFamilyTakesNegative(family) {
+	if comfyModelTakesNegative(conn, model) {
 		return ""
 	}
 	var what []string
@@ -261,6 +303,11 @@ func comfyNegativeIgnoredWarning(conn EngineConn, model string, family comfyFami
 	}
 	if len(what) == 0 {
 		return ""
+	}
+	if comfyFamilyTakesNegative(family) {
+		return fmt.Sprintf("%s was not applied: this model is declared at cfg 1, where guidance is"+
+			" `cond` exactly and the %s family's negative branch cancels out, so nothing can be"+
+			" excluded from it", strings.Join(what, " and "), family)
 	}
 	return fmt.Sprintf("%s was not applied: the %s family samples without a negative branch"+
 		" (a distilled model at cfg 1), so nothing can be excluded from it",
@@ -335,7 +382,7 @@ func (p *comfyProvider) Studio(ctx context.Context) (Studio, bool) {
 		out.Models = append(out.Models, StudioModel{
 			ID: id, Description: conn.Descriptions[id], Family: string(family),
 			Sizes: comfySizesFor(conn, id), Params: comfyEffectiveDefaults(conn, family, id),
-			Negative: conn.Negatives[id], Knobs: comfyFamilyKnobs(family),
+			Negative: conn.Negatives[id], Knobs: comfyModelKnobs(conn, family, id),
 			Warm:        id != "" && id == conn.Warm,
 			LicenseName: lic.Name, LicenseURL: lic.URL, SourceURL: lic.Source,
 		})
@@ -372,12 +419,21 @@ func comfySortedNames(set map[string]bool) []string {
 }
 
 // comfySizesFor prefers the catalogue's own declaration (ADR 0072 decision 2) and falls back to
-// the one size every family in this template set was actually trained and measured at.
+// the sizes this model's FAMILY was trained at (comfyDefaultSizes).
+//
+// A model whose family is not declared falls back to the megapixel list. It cannot generate at
+// all until somebody declares one, so the list served for it decides nothing — and answering
+// with SD1.5's 512 presets there would be a guess about an undeclared row, which is the thing
+// decision 2 exists to prevent.
 func comfySizesFor(conn EngineConn, model string) []string {
 	if s := conn.Sizes[model]; len(s) > 0 {
 		return s
 	}
-	return []string{"1024x1024", "1152x896", "896x1152", "1216x832", "832x1216"}
+	family, ok := comfyFamilyFor(conn, model)
+	if !ok {
+		return comfyMegapixelSizes
+	}
+	return comfySizesForFamily(family)
 }
 
 // comfyFamilyFor reads the catalogue's declared family for a model id. False when undeclared or
@@ -487,6 +543,52 @@ func comfyResolveLoras(conn EngineConn, family comfyFamily, model string, want [
 	return out, nil
 }
 
+// comfyTriggerWarnings names every applied LoRA whose trigger words are nowhere in the prompt.
+//
+// It is the other half of the family mismatch above, and the half that cannot be refused: the
+// pairing is legal, the adapter loads, the generation is paid for in full — and the picture comes
+// back looking like the one without it, because the words the adapter was trained to answer to
+// were never said. There is no failure to observe, which is exactly why it has to be spoken here
+// rather than left to the caller to notice.
+//
+// A warning and not an error, deliberately, for three reasons: some adapters genuinely need no
+// trigger (their author publishes none, and those rows are skipped outright), a word may be
+// reached through a synonym this substring test cannot see, and a caller who meant to run without
+// the trigger — to measure what the adapter does on its own — must still be able to. ANY of the
+// published words counts: they are alternatives, not a checklist.
+func comfyTriggerWarnings(conn EngineConn, want []LoraRef, prompt string) []string {
+	if len(want) == 0 {
+		return nil
+	}
+	byName := map[string]EngineLora{}
+	for _, l := range conn.Loras {
+		byName[l.ID] = l
+	}
+	lower := strings.ToLower(prompt)
+	var out []string
+	for _, w := range want {
+		l, ok := byName[w.Name]
+		if !ok || len(l.TrainedWords) == 0 {
+			continue
+		}
+		said := false
+		for _, t := range l.TrainedWords {
+			if t = strings.TrimSpace(t); t != "" && strings.Contains(lower, strings.ToLower(t)) {
+				said = true
+				break
+			}
+		}
+		if said {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			"LoRA %s answers to %s, and the prompt says none of them — it loaded and probably changed nothing;"+
+				" put one in the prompt and generate again",
+			l.ID, strings.Join(l.TrainedWords, " / ")))
+	}
+	return out
+}
+
 // errComfyLoraFamilyMismatch separates the two ways a pairing fails, because an operator fixes
 // them differently: a LoRA that declares a DIFFERENT family was registered for other checkpoints
 // and is being used on the wrong one, while a LoRA that declares NOTHING is a catalogue row
@@ -570,7 +672,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 
 	w, h, ok := parseSize(req.Size)
 	if !ok {
-		w, h = 1024, 1024
+		w, h = comfyDefaultSize(family)
 	}
 	count := req.Count
 	if count <= 0 {
@@ -593,7 +695,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 
 	switchWarning := comfySwitchWarning(conn, model)
 
-	ctx, cancel := context.WithTimeout(ctx, sdcppTimeout)
+	ctx, cancel := context.WithTimeout(ctx, engineTimeout)
 	defer cancel()
 
 	// The uploads come FIRST, and not only because the graph has to name them: they are now the
@@ -653,6 +755,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		warnings = append(warnings, ignored)
 	}
 	warnings = append(warnings, comfyIgnoredParamWarnings(family, req.Params)...)
+	warnings = append(warnings, comfyTriggerWarnings(conn, req.Loras, req.Prompt)...)
 	if switchWarning != "" {
 		warnings = append(warnings, switchWarning)
 	}
@@ -663,8 +766,11 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		warnings = append(warnings, cached)
 	}
 	return Result{
-		Images:      images,
-		Provider:    ProviderComfy,
+		Images: images,
+		// The row's own key (ADR 0082 decision 1), not the bare kind name: two comfy rows on one
+		// deployment answer with different ids, and this is the one fact that tells them apart in
+		// the ledger and in generate_image's own result.
+		Provider:    p.ID(),
 		Model:       model,
 		Destination: "the fleet's own GPU engine（この配備が動かす自前のエンジン）",
 		Warnings:    warnings,
@@ -757,7 +863,7 @@ func (p *comfyProvider) uploadImage(ctx context.Context, conn EngineConn, req Re
 	ctype := mw.FormDataContentType()
 
 	answer, err := p.sendWithWake(ctx, conn, req, "/upload/image", func() (*http.Request, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, "/upload/image"), bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, engineURL(conn, "/upload/image"), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -824,22 +930,22 @@ func (p *comfyProvider) sendWithWake(ctx context.Context, conn EngineConn, req R
 		respBody, status, retryAfter, err := engineHTTPAttempt(p.client, httpReq)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, sdcppGaveUp(attempt, lastWaking)
+				return nil, engineGaveUp(attempt, lastWaking)
 			}
 			return nil, err
 		}
 		if status < 300 {
 			return respBody, nil
 		}
-		if !sdcppRetryable(status, respBody) {
+		if !engineRetryable(status, respBody) {
 			return nil, fmt.Errorf("the image engine's %s answered %d %s: %s",
-				what, status, http.StatusText(status), sdcppErrText(respBody))
+				what, status, http.StatusText(status), engineErrText(respBody))
 		}
-		lastWaking = sdcppErrText(respBody)
+		lastWaking = engineErrText(respBody)
 		req.reportPhase(PhaseWaking)
 		select {
 		case <-ctx.Done():
-			return nil, sdcppGaveUp(attempt, lastWaking)
+			return nil, engineGaveUp(attempt, lastWaking)
 		case <-time.After(retryAfter):
 		}
 	}
@@ -892,7 +998,7 @@ func (p *comfyProvider) submit(ctx context.Context, conn EngineConn, req Request
 		return "", err
 	}
 	respBody, err := p.sendWithWake(ctx, conn, req, "/prompt", func() (*http.Request, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, "/prompt"), bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, engineURL(conn, "/prompt"), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -956,7 +1062,7 @@ type comfyHistory struct {
 func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req Request, promptID string) (comfyHistory, error) {
 	lastWaking, sawWaking := "", false
 	for {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, sdcppURL(conn, "/history/"+url.PathEscape(promptID)), nil)
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, engineURL(conn, "/history/"+url.PathEscape(promptID)), nil)
 		if err != nil {
 			return comfyHistory{}, err
 		}
@@ -970,11 +1076,11 @@ func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, req R
 		}
 		wait := comfyPollEvery
 		switch {
-		case status >= 300 && !sdcppRetryable(status, body):
+		case status >= 300 && !engineRetryable(status, body):
 			return comfyHistory{}, fmt.Errorf("the image engine's /history answered %d %s: %s",
-				status, http.StatusText(status), sdcppErrText(body))
+				status, http.StatusText(status), engineErrText(body))
 		case status >= 300:
-			lastWaking, sawWaking = sdcppErrText(body), true
+			lastWaking, sawWaking = engineErrText(body), true
 			// The box was replaced under the poll: the job list goes back to saying "starting",
 			// because that is what the next several minutes are.
 			req.reportPhase(PhaseWaking)
@@ -1129,7 +1235,7 @@ func (p *comfyProvider) fetchImages(ctx context.Context, conn EngineConn, hist c
 
 func (p *comfyProvider) viewOne(ctx context.Context, conn EngineConn, filename, subfolder, kind string) (Image, error) {
 	q := url.Values{"filename": {filename}, "subfolder": {subfolder}, "type": {kind}}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, sdcppURL(conn, "/view?"+q.Encode()), nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, engineURL(conn, "/view?"+q.Encode()), nil)
 	if err != nil {
 		return Image{}, err
 	}
@@ -1140,7 +1246,7 @@ func (p *comfyProvider) viewOne(ctx context.Context, conn EngineConn, filename, 
 	}
 	if status >= 300 {
 		return Image{}, fmt.Errorf("the image engine's /view answered %d %s: %s",
-			status, http.StatusText(status), sdcppErrText(body))
+			status, http.StatusText(status), engineErrText(body))
 	}
 	img := Image{Bytes: body, MIME: comfyMIMEFor(filename)}
 	if cfg, _, err := image.DecodeConfig(bytes.NewReader(body)); err == nil {
@@ -1223,7 +1329,7 @@ func (p *comfyProvider) Cancel(ctx context.Context, upstream string) error {
 // SECOND element is the prompt id (server.py's own queue tuple); anything shaped otherwise is
 // skipped rather than guessed at.
 func (p *comfyProvider) queuePending(ctx context.Context, conn EngineConn) (map[string]bool, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, sdcppURL(conn, "/queue"), nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, engineURL(conn, "/queue"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1234,7 +1340,7 @@ func (p *comfyProvider) queuePending(ctx context.Context, conn EngineConn) (map[
 	}
 	if status >= 300 {
 		return nil, fmt.Errorf("the image engine's /queue answered %d %s: %s",
-			status, http.StatusText(status), sdcppErrText(body))
+			status, http.StatusText(status), engineErrText(body))
 	}
 	var doc struct {
 		Pending [][]any `json:"queue_pending"`
@@ -1261,7 +1367,7 @@ func (p *comfyProvider) postCancel(ctx context.Context, conn EngineConn, path st
 	if err != nil {
 		return err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, path), bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, engineURL(conn, path), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -1273,7 +1379,7 @@ func (p *comfyProvider) postCancel(ctx context.Context, conn EngineConn, path st
 	}
 	if status >= 300 {
 		return fmt.Errorf("the image engine's %s answered %d %s: %s",
-			path, status, http.StatusText(status), sdcppErrText(respBody))
+			path, status, http.StatusText(status), engineErrText(respBody))
 	}
 	return nil
 }

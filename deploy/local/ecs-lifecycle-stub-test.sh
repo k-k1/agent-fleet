@@ -83,7 +83,7 @@ STATE4="$AF_DEPLOY_STATE_DIR/p4.ap-northeast-1.t-ingress"
 mkdir -p "$STATE4/params"
 cp -a "$STATE/params/." "$STATE4/params/"
 cp "$STATE/env" "$STATE4/env"
-printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\n' > "$STATE4/params/60-engines"
 
 # --- fake aws. Answers queries in the same shape the real one does ----------
 cat > "$STUB/aws" <<'FAKE'
@@ -120,6 +120,12 @@ case "$args" in
   # branch cannot be tested — and an engine left at desired 1 is $1.26/hour, ten times the
   # speech engine's.
   *"cloudformation describe-stacks --stack-name af-ecs-engines") [ "${STUB_ENGINES_EXISTS:-0}" = 1 ] || exit 1 ;;
+  # ADR 0083's migration guard (update.sh, before touching 20-platform): whether the LIVE
+  # 60-engines stack still imports the export 20-platform's new template drops. Default "no
+  # importer" is the state every deployment reaches once its own 60-engines has been updated
+  # once; the flag simulates a deployment still on the pre-ADR-0083 template.
+  *"cloudformation list-imports"*"EcrSdcppUri"*)
+    [ "${STUB_ENGINES_IMPORTS_SDCPP:-0}" = 1 ] && echo "af-ecs-engines" || echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EnginesSsmParam']"*) echo "/af-ws/engines" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='LlmServiceName']"*) echo "af-af-ecs-engines-llm" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='ImageServiceName']"*) echo "af-af-ecs-engines-image" ;;
@@ -406,10 +412,11 @@ grep -q "deploy --stack-name af-ecs-engines .*CAPABILITY_NAMED_IAM" "$LOG" \
 has "ssm put-parameter --cli-input-json"
 has "ecs update-service --cluster t-cluster --service af-af-ecs-engines-llm --desired-count 0"
 order "cloudformation deploy --stack-name af-ecs-engines" "ecs update-service --cluster t-cluster --service af-af-ecs-engines-llm --desired-count 0"
-# The image role (ADR 0071 P1) is the same shape, with two differences that are easy to get
-# wrong: its image comes from a different upstream, and it has NO generated key at all
-# (sd-server has no authentication option — the security group is the whole of it).
-order "crane copy ghcr.io/leejet/stable-diffusion.cpp:master-cuda" "cloudformation deploy --stack-name af-ecs-engines"
+# The image role (ADR 0071 P1, ComfyUI since ADR 0083) is the same shape, with two differences
+# that are easy to get wrong: its image comes from a different upstream, and it has NO
+# generated key at all (ComfyUI has no authentication option — the security group is the whole
+# of it).
+order "crane copy ghcr.io/k-k1/agent-fleet/comfyui:v0.34.0" "cloudformation deploy --stack-name af-ecs-engines"
 has "ecs update-service --cluster t-cluster --service af-af-ecs-engines-image --desired-count 0"
 grep -q "deploy --stack-name t-ingress .*EnginesSsmParam=/af-ws/engines" "$LOG" \
   || fail "30-ingress did not get the engine table's SSM name (the gateway would 404)"
@@ -426,13 +433,13 @@ hasnt "--service af-af-ecs-engines-image --desired-count 0"
 # And a key that is already there is never rotated: the CP is holding the old value, and
 # replacing it under a running engine locks the gateway out of it.
 hasnt "ssm put-parameter"
-# A deployment that runs only an LLM must not pay for the 2.3 GB image it will never start.
+# A deployment that runs only an LLM must not pay for an image it will never start.
 # The condition is the same one that decides whether the service exists at all — without
 # ImageEnabled 60-engines creates no image service, so there is nothing to pull.
 : > "$LOG"
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\n' > "$STATE4/params/60-engines"
 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
-hasnt "crane copy ghcr.io/leejet/stable-diffusion.cpp"
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
 has "crane copy ghcr.io/ggml-org/llama.cpp:server-cuda"
 
 # A capture taken before ADR 0072 phase P6 names a model key and says nothing about Enabled,
@@ -450,20 +457,41 @@ printf 'ServiceConnectNamespace=af.internal\nLlmModelS3Key=llm/model.gguf\nImage
 if grep -qE "deploy --stack-name af-ecs-engines .*(LlmModelS3Key|LlmModelIds|LlmContextTokens|LlmMaxOutputTokens|ImageModelS3Key|ImageModelIds)=" "$LOG"; then
   fail "a parameter retired in ADR 0072 P6 was passed to deploy (the CLI refuses it)"
 fi
+# ImageImageTag was retired separately, by ADR 0083 — a capture from before that still names
+# it, and `deploy` refuses it the same way as the six above.
+if grep -qE "deploy --stack-name af-ecs-engines .*ImageImageTag=" "$LOG"; then
+  fail "ImageImageTag, retired in ADR 0083, was passed to deploy (the CLI refuses it)"
+fi
 grep -q "deploy --stack-name af-ecs-engines .*LlmEnabled=true" "$LOG" \
   || fail "the llm role implied by LlmModelS3Key was not carried over (the update would delete it)"
 grep -q "deploy --stack-name af-ecs-engines .*ImageEnabled=true" "$LOG" \
   || fail "the image role implied by ImageModelS3Key was not carried over"
-# And the sd-server image is read the same way, so the role is never created against an empty
-# ECR repository — the stabilisation trap the ordering above exists for.
-has "crane copy ghcr.io/leejet/stable-diffusion.cpp"
-printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+# And the image is read the same way, so the role is never created against an empty ECR
+# repository — the stabilisation trap the ordering above exists for.
+has "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\n' > "$STATE4/params/60-engines"
+
+# 🔴 `ImageEngine` is gone from the template (ADR 0083 retired the engine it chose; the
+# parameter outlived its last `!If` by a release), so a captured value of ANY spelling has to be
+# dropped rather than only the retired one: `deploy` refuses a key the template does not
+# declare, which makes `comfy` as fatal as `sdcpp`. Both are asked, so a conditional drop that
+# only knew about `sdcpp` fails this.
+for stale_engine in sdcpp comfy; do
+  : > "$LOG"
+  printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageEngine=%s\n' \
+    "$stale_engine" > "$STATE4/params/60-engines"
+  "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+  if grep -qE "deploy --stack-name af-ecs-engines .*ImageEngine=" "$LOG"; then
+    fail "a captured ImageEngine=$stale_engine reached deploy (the template no longer declares it)"
+  fi
+done
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\n' > "$STATE4/params/60-engines"
 
 # How the image role's box is bought is an OFFER now (ADR 0075), and the offers are a captured
 # parameter like any other: a path that quietly dropped ImageOffers would put the deployment
 # back on plain on-demand while the capture says otherwise, and nothing would say so.
 : > "$LOG"
-printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\nImageOffers=spot3|Spot|22000|g6.xlarge|4-8|15000-65536|1.57|spot\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageOffers=spot3|Spot|22000|g6.xlarge|4-8|15000-65536|1.57|spot\n' > "$STATE4/params/60-engines"
 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
 grep -q "deploy --stack-name af-ecs-engines .*ImageOffers=" "$LOG" \
   || fail "ImageOffers did not reach the deploy (the box would never be tried on Spot)"
@@ -472,18 +500,18 @@ grep -q "deploy --stack-name af-ecs-engines .*ImageOffers=" "$LOG" \
 # and `cloudformation deploy` refuses a key it is given and does not know, so a capture holding
 # the old line would fail the stand-up outright rather than deploy without it.
 : > "$LOG"
-printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\nImageCapacityOptionType=SPOT\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageCapacityOptionType=SPOT\n' > "$STATE4/params/60-engines"
 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
 if grep -q "deploy --stack-name af-ecs-engines .*ImageCapacityOptionType=" "$LOG"; then
   fail "a parameter retired in ADR 0075 was passed to deploy (the CLI refuses it)"
 fi
-printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\n' > "$STATE4/params/60-engines"
 
 # 🔴 Same again for the Managed Instances requirement block, retired in ADR 0077 (the offer's
 # own type set is the requirement now). A deployment that has been running since ADR 0071 has
 # every one of these in its capture, and one of them reaching `deploy` stops the stand-up.
 : > "$LOG"
-printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\nLlmAllowedInstanceTypes=g6.xlarge,g5.xlarge\nLlmAcceleratorMemMinMiB=21000\nLlmVCpuMin=4\nLlmVCpuMax=8\nLlmMemMinMiB=15000\nLlmMemMaxMiB=65536\nLlmUseLocalStorage=true\nLlmScaleInAfter=-2\nImageAllowedInstanceTypes=g6.xlarge\nImageUseLocalStorage=true\nLlmStorageGiB=120\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nLlmAllowedInstanceTypes=g6.xlarge,g5.xlarge\nLlmAcceleratorMemMinMiB=21000\nLlmVCpuMin=4\nLlmVCpuMax=8\nLlmMemMinMiB=15000\nLlmMemMaxMiB=65536\nLlmUseLocalStorage=true\nLlmScaleInAfter=-2\nImageAllowedInstanceTypes=g6.xlarge\nImageUseLocalStorage=true\nLlmStorageGiB=120\n' > "$STATE4/params/60-engines"
 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
 if grep -qE "deploy --stack-name af-ecs-engines .*(AllowedInstanceTypes|AcceleratorMemMinMiB|VCpuMin|VCpuMax|MemMinMiB|MemMaxMiB|UseLocalStorage|ScaleInAfter)=" "$LOG"; then
   fail "a parameter retired in ADR 0077 was passed to deploy (the CLI refuses it)"
@@ -493,7 +521,7 @@ fi
 # put every deployment back on the AMI's 30 GiB default.
 grep -q "deploy --stack-name af-ecs-engines .*LlmStorageGiB=120" "$LOG" \
   || fail "LlmStorageGiB was dropped with the ADR 0077 parameters (it sizes the root volume now)"
-printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\n' > "$STATE4/params/60-engines"
 
 # 🔴 And the parameter ADR 0077 RE-MEANT is dropped only when it still holds the OLD default.
 # `<Role>OfferBudgetSec` stopped bounding "how long to wait for this offer's box" and started
@@ -501,14 +529,14 @@ printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\
 # meaning's default and would silently halve the new ceiling, while a value somebody chose must
 # survive a stand-up like any other.
 : > "$LOG"
-printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\nLlmOfferBudgetSec=180\nImageOfferBudgetSec=600\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nLlmOfferBudgetSec=180\nImageOfferBudgetSec=600\n' > "$STATE4/params/60-engines"
 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
 if grep -q "deploy --stack-name af-ecs-engines .*LlmOfferBudgetSec=" "$LOG"; then
   fail "a captured LlmOfferBudgetSec=180 was passed on (it means something else since ADR 0077)"
 fi
 grep -q "deploy --stack-name af-ecs-engines .*ImageOfferBudgetSec=600" "$LOG" \
   || fail "a chosen ImageOfferBudgetSec was dropped (only the old DEFAULT may be dropped)"
-printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\n' > "$STATE4/params/60-engines"
 
 # 🔴 The box is the Control Plane's to buy now (ADR 0077): one launch template per role, the
 # role's name written into the ECS agent's attributes, and the service placed by that attribute.
@@ -616,6 +644,35 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
 if grep -q "deploy --stack-name af-ecs-engines .*OfferBudgetSec=" "$LOG"; then
   fail "update.sh overrode an OfferBudgetSec that was not the old default"
 fi
+
+echo "== case 3h-3: update.sh refuses to update 20-platform while 60-engines still imports EcrSdcppUri (ADR 0083) =="
+#
+# ADR 0083 decision 9's order is 60-engines FIRST (drops the import), 20-platform SECOND (drops
+# the export) — the opposite of update.sh's usual 20-platform-first order (case 3i below, a
+# DIFFERENT reason: a NEW repository must exist before 60-engines references it). A deployment
+# whose 60-engines is still on the pre-ADR-0083 template is still importing EcrSdcppUri, so
+# running 20-platform first would try to delete an export CloudFormation refuses to let go
+# while it is in use. The change set itself looks clean (a deletion, not a Replacement), so
+# nothing catches it until `execute-change-set` runs and the stack update rolls back — an
+# opaque CFN error rather than a named fix. The guard has to stop BEFORE that, with nothing
+# touched.
+: > "$LOG"
+if VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_IMPORTS_SDCPP=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3h3a" 2>&1; then
+  cat "$WORK/out3h3a"; fail "update.sh must refuse when 60-engines still imports EcrSdcppUri"
+fi
+grep -q "Update 60-engines to the current template FIRST" "$WORK/out3h3a" \
+  || { cat "$WORK/out3h3a"; fail "the refusal did not name the fix (an operator would read a raw CFN rollback instead)"; }
+hasnt "cloudformation deploy --stack-name t-platform"   # nothing was touched, not even a plan
+hasnt "cloudformation execute-change-set"
+
+# The ordinary case (no live importer, the state every deployment is in once its own 60-engines
+# has been updated once) must be unaffected — the guard is a preflight, not a new requirement.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3h3b" 2>&1 \
+  || { cat "$WORK/out3h3b"; fail "update.sh failed with no live EcrSdcppUri importer"; }
+has "cloudformation deploy --stack-name t-platform"
 
 echo "== case 3i: update.sh does repository -> image -> stack, in that order =="
 #

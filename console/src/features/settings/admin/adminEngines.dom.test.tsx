@@ -25,6 +25,12 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
+// openEngineAdd is its OWN module for exactly this reason (its own comment): a component that
+// reaches the layout store must not drag the whole pane tree into a test that only renders the
+// panel. Mocked here rather than asserted against the real store.
+const openEngineAdd = vi.fn();
+vi.mock("./openEngineAdd.ts", () => ({ openEngineAdd: (...args: unknown[]) => openEngineAdd(...args) }));
+
 import { EnginesAdminView, engineOfferResultKey } from "./adminEngines.tsx";
 
 let root: Root | null = null;
@@ -60,6 +66,11 @@ const seg = (label: string) =>
     | HTMLButtonElement
     | undefined;
 
+const btn = (label: string) =>
+  Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+    | HTMLButtonElement
+    | undefined;
+
 const click = async (el: HTMLElement | undefined) => {
   expect(el).toBeTruthy();
   await act(async () => {
@@ -77,7 +88,54 @@ afterEach(() => {
   host = null;
   api.mockReset();
   apiJSON.mockReset();
+  openEngineAdd.mockReset();
   vi.useRealTimers();
+});
+
+// The model catalogue used to be a sibling rail item (EngineCatalogLauncher); it is now a
+// button on each engine's own row, opened as a pane the same way that launcher did.
+describe("the model catalogue button", () => {
+  it("opens the pane for THIS row's key and closes the admin dialog behind it", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [row({ key: "image" }), row({ key: "llm", api: "chat" })] });
+    await mount();
+
+    await click(btn("モデルカタログ"));
+    // Not rows[0] unconditionally: with two engines on screen, pressing the SECOND row's button
+    // must open that engine's catalogue, not the first one's.
+    expect(openEngineAdd).toHaveBeenCalledWith("image", false, "registered");
+
+    openEngineAdd.mockClear();
+    const buttons = Array.from(host!.querySelectorAll("button")).filter((b) => b.textContent === "モデルカタログ");
+    expect(buttons).toHaveLength(2);
+    await click(buttons[1]);
+    expect(openEngineAdd).toHaveBeenCalledWith("llm", false, "registered");
+  });
+
+  it("is offered even for a borrowed row, which opens read-only", async () => {
+    // engineIsRemote (ADR 0079) — the catalogue that opens for one already disables every
+    // control and says whose deployment to edit it on, so there is no reason to withhold the
+    // button itself.
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [row({ managed: false, lifecycle: "remote", url: "https://far.example" })],
+    });
+    await mount();
+    expect(btn("モデルカタログ")).toBeTruthy();
+  });
+});
+
+// 🔴 With no engine at all there is still a question worth answering — "what could I run?" —
+// and it needs neither an engine nor a token (ADR 0072 decision 11). This used to be a sentence
+// pointing at the (now removed) "Inference engine models" rail item; it is now the browse UI
+// itself, embedded.
+describe("EnginesAdminView with no engine", () => {
+  it("embeds the browse-only catalogue instead of pointing at a deleted screen", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [] });
+    await mount();
+    expect(host!.textContent).toContain("この配備は自前の推論エンジンを動かしていません。");
+    // EngineBrowse's own search box, proof this is the real screen and not a placeholder.
+    expect(host!.textContent).toContain("検索");
+  });
 });
 
 // The five results an attempt can end in (ADR 0075 decision 5), and the one thing the table must
@@ -120,6 +178,20 @@ describe("EnginesAdminView", () => {
     await mount();
     expect(seg("無効")?.className).toContain("active");
     expect(seg("常時稼働")?.className).not.toContain("active");
+  });
+
+  // ADR 0083 decision 5: a row naming an images provider this build does not implement a client
+  // for must not look like every other row. `sdcpp`, retired the same ADR, is the row() default.
+  it("marks a row naming an images provider this build does not implement", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [row({ provider_unserved: true })] });
+    await mount();
+    expect(host!.textContent).toContain("sdcpp」を名乗っていますが");
+  });
+
+  it("leaves a row naming a servable provider unmarked", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [row({ provider: "comfy" })] });
+    await mount();
+    expect(host!.textContent).not.toContain("comfy」を名乗っていますが");
   });
 
   it("warns about the bill only while an engine is pinned on, and names no price of its own", async () => {

@@ -66,6 +66,11 @@ type CP interface {
 	ResolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string)
 	EvictMembershipCache(membershipID string)
 	EvictTenantCache(tenantID string)
+	// PushEngineCatalogChanged tells the tenant's running workspaces at once that its
+	// engine catalogue view moved (ADR 0084 decision 9) — the tenant-scoped counterpart
+	// of the deployment-wide push engine_usage.go already does for an operator-side
+	// engine change. Fire-and-forget, like that one: the caller does not wait on it.
+	PushEngineCatalogChanged(ctx context.Context, tenantID string)
 	// InvalidateTenantLogin drops the cached per-tenant login rules. Those rules ARE
 	// the entry gate, so every write that changes who may sign in calls it.
 	InvalidateTenantLogin()
@@ -161,6 +166,11 @@ type Limits struct {
 	AllowAgentSelfUpdate         bool
 	AllowEngineIngest            bool
 	TerminalHistoryRetentionDays int
+	// AllowEngineLLM / AllowEngineImage: see limits.go's tenantLimits, the field's only
+	// encoder. *bool, not bool — nil means "nobody has said anything" and resolves to
+	// allowed (ADR 0084 decision 7).
+	AllowEngineLLM   *bool
+	AllowEngineImage *bool
 }
 
 // APIError carries an HTTP status + machine code, mirroring the CP's apiError

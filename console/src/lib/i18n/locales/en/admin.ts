@@ -31,12 +31,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.brand_pwa_note": "Saving applies to this tab at once. Other tabs pick it up on reload, and a PWA already installed keeps its icon and name until it is reinstalled.",
   "admin.mode_pool": "Slots",
   "admin.mode_engines": "Inference engines",
-  // Two screens: the machine and what it loads. The rail follows that order. The same models
-  // screen in tenant settings is tenant.tab_engines.
-  "admin.mode_engine_models": "Inference engine models",
+  // The operator's upstream account tokens (Hugging Face, Civitai) — their own rail item so
+  // registering one does not require opening a model list first.
+  "admin.mode_engine_tokens": "API tokens",
   "admin.engines_none": "This deployment runs no self-hosted inference engines.",
-  "admin.engines_none_models_hint": "What there is to run can be browsed under \"Inference engine models\" — it needs no engine and no token.",
-  "admin.engines_ops_super_only": "Starting and stopping engines and choosing the GPU are the deployment administrator's (super_admin). Taking models in and reading the catalogue is under \"Inference engine models\".",
+  // The button that opens one engine's model catalogue as its own pane (the same models screen
+  // tenant settings' tenant.tab_engines opens for a granted tenant_admin).
+  "admin.engines_open_catalog": "Model catalogue",
+  "admin.engines_ops_super_only": "Starting and stopping engines and choosing the GPU are the deployment administrator's (super_admin). Taking models in and reading the catalogue is behind the \"Model catalogue\" button on each row.",
   // The role tabs. A deployment with one engine gets its name and no tab strip.
   "admin.engines_role_llm": "Text",
   "admin.engines_role_image": "Image",
@@ -45,9 +47,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // No LoRA is an ordinary state. In red it would look broken on every deployment that never
   // wanted one.
   "admin.engines_loras_empty": "This engine has no LoRAs.",
-  "admin.engines_lora_no_family": "no family declared",
   "admin.engines_models_label": "Models",
   "admin.engines_always_on_note": "Always-on keeps the GPU instance up, at whatever the instance class costs per hour. Put it back on demand when you are done.",
+  "admin.engines_provider_unserved": "This row declares images provider \"{p}\", which this build does not implement a client for. generate_image will not work here until the row is repointed at comfy or openai-compat.",
   "admin.engines_tenant_scope":
     "Here you can take models in and see the rows that produced. Enabling a model, starting and stopping the engine, choosing the GPU and forgetting a row belong to the deployment administrator (super_admin), so they are not on this screen. The catalogue is one per deployment, and the id of a model you take in is visible from every tenant.",
   "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys an instance only when something asks, and it stops itself once idle.",
@@ -129,7 +131,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // may use it, the second is the one checkpoint sd-server holds (or, for llm, the model a
   // request that named none gets).
   "admin.engines_catalog_empty": "This engine's catalogue is empty. Until a model is ingested, requests are refused with 503 and no instance is started.",
-  "admin.engines_catalog_none_enabled": "No model is enabled. This engine will not start until one is.",
   "admin.engines_model_started": "loaded at start",
   // The state is said in a badge. The button's label says what pressing it would do, not
   // which state the row is in; dimming the row instead is what a disabled control looks like.
@@ -138,10 +139,6 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_enable": "Enable",
   "admin.engines_model_disable": "Disable",
   "admin.engines_model_select": "Start with this",
-  // 🔴 Choosing another one does NOT swap a running instance. It holds the one chosen at start, and
-  // redeploying here would kill a generation in flight (ADR 0072 decision 4). Say so first.
-  "admin.engines_model_next_start": "A new choice takes effect at the next start. A running engine is not swapped (that would kill a generation in flight).",
-  "admin.engines_model_window": "context {c} / output {o}",
   // 🔴 "Forget", not "Delete": the CP has no s3:DeleteObject and is not getting one (ADR 0072
   // decision 7 — deleting the file is the ingest task's job, phase P4). The file stays.
   "admin.engines_model_forget": "Forget",
@@ -152,23 +149,15 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_forget_purge": "Delete the file from the bucket too (cannot be undone)",
   "admin.engines_model_forget_note": "Forgets the catalogue row only. The file stays in the bucket and keeps costing storage.",
   "admin.engines_model_forget_purge_note": "Forgets the row and starts a task that deletes the bytes. The deletion is the task's, so it takes a moment.",
-  "admin.engines_model_forget_go": "Forget it",
-  // Not P4's ingest (which fetches from Hugging Face); just writing down what a file already in
-  // the bucket IS. The seed creates one row per role, so without this there is no second
-  // checkpoint to switch to without touching CloudFormation.
-  "admin.engines_model_add": "Register a file from the bucket",
   "admin.engines_model_add_id": "id",
-  "admin.engines_model_add_key": "key",
   "admin.engines_model_add_family": "family",
   // ADR 0072 follow-up, negative prompts. Three places get a say in what a picture keeps out —
   // this row, the request, and the deployment — and they are ADDED, so none of the labels may
   // read as "the" negative prompt.
   "admin.engines_model_negative": "never draw",
-  "admin.engines_model_negative_placeholder": "what this checkpoint should keep out",
   // ADR 0081 decision 5. The adapter's counterpart to the checkpoint's "never draw" above: a
   // LoRA loaded without its trigger changes nothing visible, which reads as a failed ingest.
   "admin.engines_model_trigger": "trigger words",
-  "admin.engines_model_trigger_placeholder": "the words this adapter answers to, comma separated",
   "admin.engines_negative_label": "excluded from every image",
   "admin.engines_negative_placeholder": "keywords, separated by commas",
   "admin.engines_negative_save": "Save",
@@ -178,122 +167,39 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_negative_note":
     "Added to the negative prompt of every image this engine makes, on top of the model's own and the request's. It is guidance, not a filter — two checkpoint families sample without a negative prompt at all, and those requests say so in their warnings.",
   "admin.engines_negative_too_long": "Too long — this is a keyword list, not a policy document.",
-  // ADR 0072 decision 5, the llm half. A LoRA is not a model: it is pinned to one, travels in
-  // that model's preset section, and is invisible to the member — who sees an ordinary model id
-  // that happens to include the fine-tune.
-  "admin.engines_model_add_kind": "this row is",
-  "admin.engines_model_add_kind_model": "a model",
-  "admin.engines_model_add_kind_lora": "a LoRA adapter",
   "admin.engines_model_add_lora_base": "applies to",
   "admin.engines_model_add_lora_base_pick": "choose the model it fine-tunes",
-  "admin.engines_model_add_lora_scale": "strength (0-2, default 1)",
-  "admin.engines_model_add_lora_note": "A LoRA is loaded with the model it names and with no other, every time that model is started. Nothing appears in the launch menu for it. Its file belongs under {p}.",
-  "admin.engines_ingest_family_hint": "The repository calls this \"{n}\". That is a display name, so pick the family it corresponds to above.",
   "admin.engines_model_add_family_pick": "choose one",
-  "admin.engines_model_add_part": "part",
   "admin.engines_model_add_part_whole": "checkpoint (single file)",
-  "admin.engines_model_add_part_more": "Add a file",
-  "admin.engines_model_add_part_drop": "Remove",
-  "admin.engines_model_no_family": "No checkpoint family is declared. This engine picks a workflow from the family and will not guess one from a name, so this row can be enabled and will appear as a model — and then fail when something asks it to generate. Choose one below.",
-  // 🔴 Declaring a family clears `base_model_missing`; whether the row holds the files that
-  // family's template reads is a different question. On the real deployment `flux1-dev` was one
-  // unflagged file in `image/checkpoints/` and flux1 reads four others — no answer in the
-  // selector could work, and choosing one made the only mark disappear.
-  "admin.engines_model_files_missing": "This row does not hold the files the \u201c{n}\u201d workflow reads (missing: {f}). It cannot be enabled until they are taken in and attached to it.",
-  // 🔴 The checkpoint file itself carries no VAE (ADR 0072 follow-up): the one fault no
-  // declaration can express. The row looks complete and every request dies inside ComfyUI —
-  // after the box has paid a 1-2.5 minute checkpoint switch — and a caller cannot act on it at
-  // all, because the image tool has no VAE argument.
-  "admin.engines_model_vae_missing":
-    "This checkpoint carries no VAE of its own. Its family's workflow has nothing to decode with, so every request fails at the same point whatever the prompt or size. It cannot be enabled.",
-  "admin.engines_model_vae_fix": "Add a VAE",
-  // The cheap case, said out loud: nothing is downloaded and there is no new licence to accept.
-  "admin.engines_model_vae_plan_staged": "{f} is already in this deployment. Adding it to this row is all it takes — nothing is downloaded.",
-  "admin.engines_model_vae_plan_ingest": "{f} will be taken in and attached to this row as `--vae` ({n}, licence {l}).",
-  "admin.engines_model_vae_accept": "Accept the licence and take it in",
-  "admin.engines_model_vae_attach": "Add it to this row",
-  "admin.engines_model_vae_unknown": "Whether this checkpoint carries a VAE could not be checked ({e}). If it does not, every generation fails.",
-  "admin.engines_model_vae_force": "The source will not answer - add it anyway",
-  "admin.engines_model_vae_recheck_failed": "The source could not be read again ({e}). What follows rests on the reading recorded on this row - the VAE itself comes from another repository and is not affected.",
-  "admin.engines_model_vae_cancel": "Cancel",
-  "admin.engines_model_vae_started": "The download has started. It joins this row when it finishes — the history below shows the progress.",
-  "admin.engines_model_vae_attached": "Added to this row. It can be enabled now.",
-  "admin.engines_model_vae_none": "Reading the header again says this checkpoint does bundle a VAE after all. The mark is withdrawn.",
-  // --- the "add a model" wizard (four questions) -----------------------------
-  // 🔴 What it replaced was twelve fields in one column, where which of them applied was decided
-  // by state the screen did not show (the tab, whether the typed id collided, which file role
-  // was chosen). The operator of this deployment lost an evening to it and never reached the
-  // checkbox that adds a part to an existing row.
-  // 「モデルを追加」 as a pane (ADR 0072 follow-up). The download runs for minutes, and the end
-  // of the work is not "taken in" but "usable" - one enable press apart.
-  "admin.engines_add_pane_gone": "That engine is no longer on this deployment, or is not visible with your current grant.",
-  "admin.engines_add_pane_running": "Downloading ({id}). You can leave this open - it reports here when it finishes.",
-  "admin.engines_add_pane_done": "\u201c{id}\u201d was taken in. It is still disabled; enabling it syncs it onto the box.",
-  "admin.engines_add_pane_failed": "The download failed ({id}).",
-  "admin.engines_add_pane_enable": "Enable it",
-  "admin.engines_add_pane_enabled": "Enabled. It is in the model list now.",
-  "admin.engines_wizard_title": "Add a model",
-  "admin.engines_wizard_title_lora": "Add a LoRA",
-  "admin.engines_wizard_step_act": "What for?",
-  "admin.engines_wizard_step_find": "Where from",
-  "admin.engines_wizard_step_file": "Which file",
-  "admin.engines_wizard_step_confirm": "Confirm",
-  "admin.engines_wizard_act_new": "Add a new model",
-  "admin.engines_wizard_act_new_why": "Creates a new row in this list.",
-  "admin.engines_wizard_act_attach": "Add a part to a model that is here",
-  "admin.engines_wizard_act_attach_why": "A VAE, a text encoder. Nothing else about the row changes \u2014 not its family, its licence or whether it is on.",
-  "admin.engines_wizard_act_replace": "Replace a file of a model that is here",
-  "admin.engines_wizard_act_replace_why": "Swaps the file in one slot, e.g. for another quantisation. Everything else about the row stays.",
-  "admin.engines_wizard_target": "Which row?",
-  "admin.engines_wizard_target_pick": "Choose a row",
-  "admin.engines_wizard_role": "Which slot of that row?",
-  "admin.engines_wizard_role_pick": "Choose a slot",
-  "admin.engines_wizard_no_rows": "This list has no rows yet. Start with \u201cAdd a new model\u201d.",
-  "admin.engines_wizard_need_target": "Choose the row it joins.",
-  "admin.engines_wizard_need_role": "Choose which slot it goes in.",
-  "admin.engines_wizard_no_slots_attach": "That row has no free slot. To exchange one, choose \u201creplace\u201d.",
-  "admin.engines_wizard_no_slots_replace": "That row holds no file yet. Choose \u201cadd a part\u201d.",
-  "admin.engines_wizard_need_repo": "Type a repository or a URL, or pick one from the search above.",
-  "admin.engines_wizard_repo_note": "`owner/name`, a model page URL, or `civitai:<versionId>` \u2014 any of them. The search is a way in, not a precondition.",
-  "admin.engines_wizard_need_file": "Choose the file.",
+  // --- the discovery button (ADR 0082 decisions 6 and 7) ---------------------
+  // Reads the filenames the LAN ComfyUI actually has and offers them as candidates. The family
+  // is only ever a SUGGESTION read off the filename; a row is only ever written by a person's
+  // own press of "add".
+  "admin.engines_discover_button": "Look at this engine's files",
+  "admin.engines_discover_busy": "Looking…",
+  "admin.engines_discover_checkpoints": "Checkpoints",
+  "admin.engines_discover_loras": "LoRAs",
+  "admin.engines_discover_vaes": "VAEs",
+  "admin.engines_discover_vae_hint": "These are not rows of their own — they are filenames to use as `--vae` when building a checkpoint row.",
+  "admin.engines_discover_add": "Add a row with this name",
+  "admin.engines_discover_added": "Added",
+  "admin.engines_discover_empty": "No checkpoint, LoRA or VAE files were found on this engine.",
   "admin.engines_wizard_cannot": "This deployment cannot take that file in (the reason is above).",
   "admin.engines_wizard_need_id": "Give it an id.",
   "admin.engines_wizard_need_family": "Choose the family. This engine picks a workflow from it and will not guess one.",
-  // 🔴 ADR 0072 follow-up. Offered only where the header was read and said the file carries none.
-  "admin.engines_wizard_vae_take": "This checkpoint carries no VAE, so take {f} in as well and attach it as `--vae` ({n}, licence {l})",
-  "admin.engines_wizard_vae_staged": "This checkpoint carries no VAE, so attach {f}, which this deployment already holds, as `--vae` (nothing is downloaded)",
-  "admin.engines_wizard_vae_none": "This checkpoint carries no VAE and this deployment has no default one for its family. It cannot generate until a VAE is taken in and attached as `--vae`.",
-  "admin.engines_wizard_plan_new": "A new row \u201c{id}\u201d will be created.",
-  "admin.engines_wizard_plan_attach": "It joins \u201c{id}\u201d as its {part}. Nothing else about that row changes.",
-  "admin.engines_wizard_plan_replace": "It takes the place of \u201c{id}\u201d\u2019s {part}. Nothing else about that row changes.",
-  "admin.engines_wizard_plan_from": "{f} will be downloaded from {r} ({n}).",
-  "admin.engines_wizard_plan_after": "When it finishes it appears in this list, disabled. Enabling it syncs it onto the box.",
-  "admin.engines_wizard_named_file": "That URL names {f}. Next reads that file.",
-  "admin.engines_wizard_back": "Back",
-  "admin.engines_wizard_next": "Next",
+  "admin.engines_model_files_missing_tag": "missing: {f}",
   "admin.engines_model_add_desc": "description",
-  // Optional. This route has no source to read a licence from, so it is the one place a person
-  // types one. Left blank, the row says "licence not recorded" rather than showing a gap.
-  "admin.engines_model_add_license": "licence (optional)",
-  "admin.engines_model_add_license_url": "licence URL (optional)",
   // 🔴 Both halves of the window or neither: with a context and no output cap, opencode reads
   // the cap as 32,000 and a 32k model is left with 768 usable tokens (ADR 0072 decision 3).
   "admin.engines_model_add_ctx": "context window",
   "admin.engines_model_add_out": "output cap",
-  // The control plane cannot look in S3, so a declared size is the only source for "sync +N s".
-  "admin.engines_model_add_bytes": "size",
-  "admin.engines_model_add_go": "Register",
-  "admin.engines_model_add_note": "The id is what a member picks, the key is the path inside the bucket, the description is the one line an agent reads. The window and the output cap only count when BOTH are given (one alone is ignored — without a cap it is read as 32,000, which leaves a 32k model 768 usable tokens). The size in bytes is optional and only feeds the \"sync +N s\" estimate. The control plane does not look in S3 (it holds no permission to), so a mistyped key shows up in the fetch log at the next start. The row is created disabled.",
-  // --- ingest (ADR 0072 decision 6, phase P4) ---
-  // 🔴 Resolve, then accept. An "I agree" offered before the licence and the gating are on
-  // screen is not an acceptance, and a gated repository with no token is refused here rather
-  // than by a 401 nine minutes into a task.
-  "admin.engines_ingest_open": "Take one in from Hugging Face",
   "admin.engines_ingest_search": "find",
   "admin.engines_ingest_search_go": "Search",
+  "admin.engines_ingest_searching": "Searching…",
   "admin.engines_ingest_search_none": "Nothing found. Try other words, or type the repository name in directly.",
   "admin.engines_ingest_source_hf": "Hugging Face",
   "admin.engines_ingest_source_civitai": "Civitai",
+  "admin.engines_ingest_source_civitai-red": "Civitai Red",
   "admin.engines_ingest_browse_go": "Browse",
   "admin.engines_browse_kind_gguf": "LLM (GGUF)",
   "admin.engines_browse_kind_checkpoint": "Image (checkpoint)",
@@ -301,6 +207,143 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_sort_downloads": "Downloads",
   "admin.engines_ingest_sort_trending": "Trending",
   "admin.engines_ingest_sort_likes": "Likes",
+  "admin.engines_ingest_sort_updated": "Recently updated",
+  "admin.engines_ingest_sort_newest": "New arrivals",
+  "admin.catalog_title": "Model catalogue",
+  "admin.catalog_image_title": "Image model catalogue",
+  "admin.catalog_llm_title": "Language model catalogue",
+  "admin.catalog_opening": "Opening the model catalogue…",
+  "admin.catalog_role_label": "Engine role",
+  "admin.catalog_view_label": "Catalogue view",
+  "admin.catalog_view_search": "Browse",
+  "admin.catalog_view_registered": "Registered",
+  "admin.catalog_family_all": "Every family",
+  "admin.catalog_sort": "Sort",
+  "admin.catalog_checkpoint": "Checkpoint",
+  "admin.catalog_family": "Family",
+  "admin.catalog_context": "Context",
+  "admin.catalog_output": "Output",
+  "admin.catalog_registered_title": "Registered models",
+  "admin.catalog_registered_search": "Filter registered models",
+  "admin.catalog_sort_name": "Name",
+  "admin.catalog_sort_enabled": "Enabled first",
+  "admin.catalog_sort_default": "Default first",
+  "admin.catalog_edit": "Edit",
+  "admin.catalog_parts_unknown": "No file keys are recorded for this model.",
+  "admin.catalog_no_description": "No description",
+  "admin.catalog_file_present": "present",
+  "admin.catalog_file_missing": "missing",
+  "admin.catalog_file_unknown": "not checked",
+  "admin.catalog_file_uploading": "taking in",
+  "admin.catalog_file_failed": "ingest failed",
+  "admin.catalog_edit_window_invalid": "Context and output must be whole numbers and must both be set or both be zero.",
+  "admin.catalog_edit_vram_invalid": "Measured VRAM must be a whole number.",
+  "admin.catalog_gate_accept": "terms must be accepted",
+  "admin.catalog_civitai_newest_note": "New arrivals on Civitai; this is not a strict last-updated order.",
+  "admin.catalog_storage_checking": "Checking the known model files in storage…",
+  "admin.catalog_storage_unavailable": "Storage status could not be loaded. Refresh to try again.",
+  "admin.catalog_saved_none": "No saved files from this source",
+  "admin.catalog_saved_unknown": "Storage status for this source is not known",
+  "admin.catalog_manual": "URL or repository",
+  "admin.catalog_more": "Load more",
+  "admin.catalog_preview": "Enlarge example image",
+  "admin.catalog_source_page": "Source page",
+  "admin.catalog_saved_count": "{count} saved file(s) from this source",
+  "admin.catalog_add": "Add",
+  "admin.catalog_inspect": "Inspect",
+  "admin.catalog_version": "Version",
+  "admin.catalog_file": "File",
+  "admin.catalog_checksum": "SHA-256",
+  "admin.catalog_pick_file": "Choose a file",
+  "admin.catalog_size_unknown": "Size not reported",
+  "admin.catalog_advanced": "Advanced settings",
+  "admin.catalog_need_source": "Enter a source.",
+  "admin.catalog_need_version": "Choose a version.",
+  "admin.catalog_need_file": "Choose a file.",
+  "admin.catalog_need_checksum": "Enter the file's SHA-256.",
+  "admin.catalog_need_license": "Read and accept the source licence to continue.",
+  "admin.catalog_registered_present": "Storage: {present}/{total} files present",
+  "admin.catalog_registered_partial": "Storage: {present}/{total} files present (partial)",
+  "admin.catalog_registered_missing": "Storage: no registered files are present",
+  "admin.catalog_registered_unknown": "Storage: existence not confirmed",
+  // --- Complete (ADR 0085 decision 3). The subject is the row; a part never is. ---
+  "admin.catalog_complete": "Complete",
+  "admin.catalog_complete_busy": "Completing…",
+  "admin.catalog_complete_none": "Nothing is missing from this row.",
+  "admin.catalog_complete_attached": "Declared from files this deployment already held — nothing was downloaded.",
+  // 🔴 Said apart from a download: this is a server-side copy inside the bucket, so nothing
+  // crosses the internet and "taking it in" would have somebody watching for a transfer.
+  "admin.catalog_complete_moving": "Moving this row's files inside the bucket (no download). The loader can read them when it lands.",
+  "admin.catalog_complete_started": "Taking the missing files in. They attach themselves when they land.",
+  "admin.catalog_complete_unknown": "This deployment has no part list for the rest of what this family reads. Take those files in to attach them.",
+  "admin.catalog_complete_note": "Fills what this row reads from what the bucket already holds, and takes in only what is left.",
+  "admin.catalog_complete_pick": "Choose the file to use",
+  "admin.catalog_complete_keep": "Keep the current one",
+  "admin.catalog_complete_file_declare": "Held in the bucket — declared",
+  "admin.catalog_complete_file_move": "Moved inside the bucket (no download)",
+  "admin.catalog_complete_file_download": "Taken in",
+  "admin.catalog_complete_file_choose": "Several candidates",
+  "admin.catalog_complete_file_unknown": "No file is known for this role",
+  "admin.catalog_files": "Files",
+  // --- The plan card (ADR 0085 decision 4). No role selector, no key field, no parts box. ---
+  "admin.catalog_plan_title": "Take in",
+  "admin.catalog_plan_building": "Working out what this press would do…",
+  "admin.catalog_plan_files": "Files to take in",
+  "admin.catalog_plan_whole": "main file",
+  "admin.catalog_plan_action_reuse": "no download (already held)",
+  "admin.catalog_plan_action_move": "no download (moved inside the bucket)",
+  "admin.catalog_plan_action_unknown": "no part list in this deployment",
+  "admin.catalog_plan_at": "currently at {k}",
+  "admin.catalog_plan_total": "{n} to download",
+  "admin.catalog_plan_total_none": "Nothing is downloaded.",
+  // The plan is a quote and the press is the purchase. When anything material moved the card is
+  // redrawn — including the licence tick, because what was accepted is not what would be taken in.
+  "admin.catalog_plan_stale": "The source changed, so the plan was worked out again. Read it once more before pressing.",
+  "admin.catalog_commercial_yes": "commercial use allowed",
+  "admin.catalog_commercial_unknown": "commercial use unknown",
+  "admin.catalog_started": "Taking it in. Progress is on the bucket under the Registered tab.",
+  // A reuse and a move cross no network: "downloading" would have somebody watch for nothing.
+  "admin.catalog_started_no_download": "Built from bytes this deployment already held (nothing was downloaded). It is on the bucket under the Registered tab.",
+  // --- The bucket (ADR 0085 decisions 2 and 7): what S3 holds, as it holds it. ---
+  "admin.catalog_ledger_title": "Bucket",
+  "admin.catalog_ledger_note": "The objects under this engine's prefix. Ones no row declares (orphans) and ones no loader can list (misplaced) sort first.",
+  "admin.catalog_ledger_note_acts": "A part has no button of its own — it is attached by the Complete of the checkpoint that reads it.",
+  "admin.catalog_ledger_checked": "checked {t}",
+  "admin.catalog_ledger_empty": "There are no objects under this engine's prefix.",
+  "admin.catalog_ledger_unavailable": "The bucket listing could not be read. Reload to try again.",
+  "admin.catalog_ledger_misplaced": "misplaced",
+  "admin.catalog_ledger_state_present": "present",
+  "admin.catalog_ledger_state_uploading": "taking in",
+  "admin.catalog_ledger_state_failed": "failed",
+  "admin.catalog_ledger_state_missing": "bytes absent",
+  // 🔴 The CP holds no s3:DeleteObject (ADR 0072 decision 7): "delete" starts a task, and the
+  // bucket keeps returning the object until it finishes. Without this wording the press looks
+  // like it did nothing, which is how it read on af-sandbox.
+  "admin.catalog_ledger_state_deleting": "deleting",
+  // 🔴 Taking a key in over bytes that are already there leaves the ledger state `present`
+  // with only the job `uploading`. Deciding the row's acts from the state alone put 登録 on a
+  // key an ingest was writing, which answers 409 `already declared by` (measured on af-sandbox).
+  "admin.catalog_ledger_uploading_note": "An ingest task is running. The declaration appears on this line when it lands.",
+  "admin.catalog_ledger_deleting_note": "A delete task is running. This line leaves the list when it finishes (it can take minutes).",
+  "admin.catalog_ledger_missing_note": "{m} points at this key and the bucket holds no bytes for it. Complete that row to fetch them again.",
+  "admin.catalog_ledger_orphan": "no row declares this",
+  "admin.catalog_ledger_declared": "declared by: {m}",
+  "admin.catalog_ledger_register": "Register",
+  "admin.catalog_ledger_delete": "Delete",
+  "admin.catalog_ledger_delete_note": "Deletes this object from the bucket. It cannot be undone, and it is refused while any row declares the key.",
+  "admin.catalog_ledger_registered": "Registered as {id}.",
+  // --- Refusals (ADR 0085 decision 5): who holds it, and the one button that clears it. ---
+  "admin.catalog_holder": "held by {k}: {i}",
+  "admin.catalog_holder_row": "the registered row",
+  "admin.catalog_holder_job": "the ingest job",
+  "admin.catalog_holder_object": "the bucket object",
+  "admin.catalog_holder_task": "the running task",
+  "admin.catalog_next_register": "Register it",
+  "admin.catalog_next_complete": "Complete it",
+  "admin.catalog_next_replace": "Replace it",
+  "admin.catalog_next_forget_row": "Forget the row",
+  "admin.catalog_next_dismiss_job": "Dismiss the job",
+  "admin.catalog_next_wait": "Reload",
   "admin.engines_ingest_hit_downloads": " downloads",
   "admin.engines_ingest_hit_likes": " likes",
   "admin.engines_ingest_hit_trending": " trending",
@@ -336,33 +379,15 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // Back to the page it came from, opening the URL the CP composed (never one built here).
   "admin.engines_ingest_hit_open_hf": "Open on HF",
   "admin.engines_ingest_hit_open_civitai": "Open on CivitAI",
-  // Fills the ingest form from a search card. Not "ingest": it fills, and resolve → accept →
-  // ingest still runs from there unchanged.
-  "admin.engines_ingest_hit_pick": "Use this",
-  // Heads the card the form was filled from, kept after the results list is gone. The link to
-  // the page, the trigger words and the licence are on that card and nowhere else, and the
-  // repository field below is an id like `civitai:1759168` — so dropping it left no way to
-  // check what is about to be taken in.
-  "admin.engines_ingest_picked": "Chosen result",
-  "admin.engines_ingest_repo": "repository",
-  "admin.engines_ingest_file": "file name",
-  // With a plain https URL pasted above, this field is the sha256 rather than a file name
-  // (listable()). Keeping the label and offering "name.safetensors" asks for the one thing
-  // that field must not be given, so the label is swapped with it.
-  "admin.engines_ingest_sha256": "sha256",
-  "admin.engines_ingest_sha256_ph": "64 hex characters",
-  "admin.engines_ingest_resolve": "Look it up",
-  // Not having the filename in hand is the normal state, so "look it up" starts by asking the
-  // repository what it holds.
-  "admin.engines_ingest_pick": "Choose one",
-  "admin.engines_ingest_no_files": "This repository offers nothing this engine could load with a sha256.",
+  // Civitai's own content-rating number, shown on EVERY Civitai hit regardless of which tab
+  // found it — a nonzero level shows up under the plain "Civitai" tab's own default query too.
+  "admin.engines_ingest_hit_nsfw_level": "NSFW {n}",
   // 🔴 The MODEL's ceiling, not the window this deployment can run. The 30B declares 262144 and
   // does not fit an L4, so it runs at 32768. Never shown without saying whose number it is.
   "admin.engines_ingest_ctx_max": "the model's maximum is {n}",
-  // --- generation parameters, read out of the author's own description ---
-  // 🔴 A regular expression's guess about somebody else's prose, which is why the sentence it
-  // came from is always beside it and a person edits the field before pressing anything.
-  "admin.engines_params": "Generation parameters",
+  // --- Recommended parameters, read out of the author's own prose ---
+  // 🔴 A regular expression's guess about somebody else's paragraph, which is why the sentence
+  // it was read from is always drawn beside it. Nothing is stored until the press.
   "admin.engines_params_note": "An empty field keeps the family's own recipe. Only what is filled in is replaced for this model.",
   "admin.engines_params_hint_found": "Read out of the author's description (unverified):",
   "admin.engines_params_hint_apply": "Use these",
@@ -384,30 +409,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_params_clip_skip_note": "Clip skip is recorded only; no workflow here reads it yet.",
   // The family suggestion. Decision 2 keeps the declaration with the operator, so it is filled
   // in and can be changed.
-  "admin.engines_family_suggested": "Guessed from \"{n}\". Pick another if that is wrong.",
   "admin.engines_ingest_go": "Take it in",
-  // A split model is not one download (FLUX.1 is a unet, a clip_l, a t5 and a vae). The CP
-  // refuses a plain ingest onto an id it already has — that would upsert the row's files,
-  // licence and enabled flag away — so the other act is offered here instead.
-  "admin.engines_ingest_attach": "Add it to “{id}” as a part (no new row)",
-  // 🔴 The other destination. A slot that is filled cannot be added to (the CP answers 409), and
-  // the unlabelled file — the checkpoint itself — cannot be added to at all, so changing a
-  // quantisation meant forgetting the row and building it again: licence acceptance, family,
-  // params, enabled state and provenance all went with it.
-  "admin.engines_ingest_replace": "Put this file in place of “{id}”'s {part} (the row stays as it is)",
-  // The CP has no s3:DeleteObject (ADR 0072 decision 7), the swap lands minutes later inside the
-  // job reconciler where there is nobody to report a refused deletion to, and the keys are
-  // shared (`text_encoders/` is pointed at from more than one row) — so deleting here breaks a
-  // model nobody touched.
-  "admin.engines_ingest_replace_keeps_bytes": "The previous file stays in the bucket. Deleting bytes is “delete the files too” when a row is forgotten.",
-  "admin.engines_ingest_id_taken": "That id is taken. Choose another, or tick “add it as a part” or “put this file in its place” above.",
   // 🔴 Whether it fits, said before the press. Measured on a borrowed llm engine: an L4 (24 GB)
   // took 17 GB of weights and then died on `cudaMalloc failed: out of memory … failed to
   // allocate buffer for kv cache` for the 16 GB the window wanted — four minutes and one
   // purchased GPU after the button, and the panel had shown a filename and a size.
   // A candidate over the card on WEIGHTS ALONE is marked in the list; the cache is not known
   // until the file is resolved, so an unmarked one is "not ruled out here", never "it fits".
-  "admin.engines_ingest_over_card": "⚠ over the card",
   "admin.engines_ingest_fit_weights": "weights {n} MiB",
   // 🔴 The cache's element type cannot be read at all: -ctk/-ctv are CloudFormation parameters
   // that never reach the engine table. f16 is assumed and said so — a deployment running a
@@ -415,19 +423,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_fit_kv": "KV cache {n} MiB (at {c} tokens, assuming f16)",
   "admin.engines_ingest_fit_kv_unread": "the KV cache could not be read — this is the weights alone",
   "admin.engines_ingest_fit_card": "{n} MiB in total, against a {c} MiB card",
-  "admin.engines_ingest_fit_over": "It does not fit this card. Pick a smaller quantisation, or a narrower window.",
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
-  "admin.engines_ingest_gated": "A gated repository. It is fetched with the operator's token, which has accepted its terms.",
   "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Register the operator's token under \u201cHugging Face token\u201d below — it is read by the ingest task only.",
   // 🔴 A different wall from Hugging Face's gating, and there is no key to it: Civitai answers
   // its metadata 200 for everybody and only the DOWNLOAD is per uploader (five assets measured,
   // split 200/401/403). No token field is being added, so the sentence says what to do instead.
-  "admin.engines_ingest_civitai_login": "The person who uploaded this asset only allows downloads from a logged-in account. This deployment ingests anonymously, so it cannot be fetched (a Hugging Face token does not help). Pick another asset, or stage the file in the bucket by hand and register it.",
-  // 🔴 401 and 403 on a gated repository are one line of curl apart and need opposite screens:
-  // 401 is a token that never reached the ingest task, 403 is a token that did and an account
-  // that has not accepted THAT repository (measured: one token, FLUX.1-dev through, SD3.5 403).
-  "admin.engines_ingest_job_not_accepted": "The token reached the task, and that account has not accepted this repository's terms yet. Accept them on the Hugging Face model page and take it in again.",
-  "admin.engines_ingest_job_no_token": "No token reached the ingest task. Register the operator's token under \u201cHugging Face token\u201d below and take it in again.",
+  "admin.engines_ingest_civitai_account_first": "This asset is download-restricted by its uploader. The ingest will run as the registered Civitai account — if that account does not already meet the uploader's condition, the download answers 401 and the job says so.",
+  "admin.engines_ingest_civitai_login": "The person who uploaded this asset only allows downloads from a logged-in account. This deployment ingests anonymously, so whether a registered Civitai token's own account already clears that cannot be checked here \u2014 register one under \u201cAPI tokens\u201d if none is set, or pick another asset.",
   "admin.engines_ingest_gated_accept_first": "A gated repository. A token is registered, but whether that account has accepted this repository's terms is something the Control Plane cannot check (it resolves anonymously). If it has not, the ingest fails with a 403 — so accept them on the Hugging Face model page first.",
   "admin.engines_hf_token": "Hugging Face token",
   "admin.engines_hf_token_field": "Token",
@@ -438,38 +440,16 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_hf_token_stack": "This deployment's token comes from a CloudFormation parameter. It cannot be registered or removed from the Console, but gated repositories can be taken in.",
   "admin.engines_hf_token_unsupported": "This deployment's engine stack has nowhere to keep a token. Update 60-engines and it can be registered from here.",
   "admin.engines_hf_token_note": "One token for the whole deployment. It is stored encrypted and written into the deployment's secret before every ingest — read by the ingest task only, and never handed to an engine instance.",
+  "admin.engines_civitai_token": "Civitai token",
+  "admin.engines_civitai_token_field": "Token",
+  "admin.engines_civitai_token_save": "Register",
+  "admin.engines_civitai_token_remove": "Remove",
+  "admin.engines_civitai_token_unset": "Not registered. Assets that require a logged-in account cannot be taken in.",
+  "admin.engines_civitai_token_set": "Registered ({who} / {when}). The value cannot be shown — the Control Plane can write it and has no permission to read it back.",
+  "admin.engines_civitai_token_unsupported": "This deployment's engine stack has nowhere to keep a token. Update 60-engines and it can be registered from here.",
+  "admin.engines_civitai_token_note": "One token for the whole deployment, separate from the Hugging Face one above. It is stored encrypted and written into the deployment's secret before every ingest — read by the ingest task only, and never handed to an engine instance.",
   "admin.engines_ingest_noncommercial":
     "🔴 A non-commercial licence. Both commercial use of the model and commercial use of what it generates may be restricted — read the licence before enabling this.",
-  "admin.engines_ingest_note": "A repository name (`owner/name`) or a pasted model-page URL both work. The sha256, the size and the licence are read from that source's own API by the control plane; the download is the ingest task's, which is also the only thing that touches S3 or the token. A row that arrives is created disabled.",
-  // 🔴 A log of EVENTS, not the catalogue. A job stays after its model is gone ("this ingest
-  // ran and finished" goes on being true), so it is headed and dated and reads as history.
-  // Undated, a "done" beside a deleted model's id reads as that model's current state.
-  "admin.engines_ingest_jobs_head": "Ingest history",
-  // Forgetting one row of the history — the delete this table never had. There is still no TTL
-  // and no bulk sweep: while nothing in the catalogue points at it, a `done` row is the only
-  // written record that the file is in the bucket, and the CP cannot look in the bucket (review
-  // R3). So the confirmation says which of the two cases this row is.
-  // 🔴 NOT "take it in again". The bytes are in the bucket already — forgetting a row without a
-  // purge leaves them there (measured on the dev deployment, 2026-09-09: a 491 MB object outlived
-  // its row) — so this is a registration, and the only thing that was missing was the list of
-  // keys. It fills the form and stops: the id and the family are a person's to confirm.
-  "admin.engines_ingest_job_reuse": "Register this key",
-  "admin.engines_model_add_from_job": "From the ingest history: {s}",
-  // More than one row pointing at one key is normal — SD3.5 and FLUX.1 read the same text
-  // encoders — so this names who has it instead of refusing.
-  "admin.engines_model_add_from_job_used": "{who} also points at this key. One file used by several rows is normal.",
-  "admin.engines_ingest_job_forget": "Forget this",
-  "admin.engines_ingest_job_forget_go": "Forget it",
-  "admin.engines_ingest_job_forget_live": "A running ingest cannot have its history forgotten. Deleting the row does not stop the task, which finishes and writes a catalogue row nobody is waiting for.",
-  "admin.engines_ingest_job_forget_used": "{who} points at this key. Forgetting the history leaves that row and its file alone.",
-  // 🔴 Never "the file is still there". A purge deletes the bytes and leaves the job `done`, and
-  // the CP cannot look in the bucket. All that can be said is that no catalogue row names it.
-  "admin.engines_ingest_job_forget_last": "No catalogue row points at this key. Forgetting the history also removes the only place it can be picked from to register it again. (The Control Plane cannot look in the bucket, so whether the file is still there is not known here.)",
-  "admin.engines_ingest_job_forget_ack": "Forget it anyway",
-  "admin.engines_ingest_state_pending": "starting",
-  "admin.engines_ingest_state_running": "fetching",
-  "admin.engines_ingest_state_done": "done",
-  "admin.engines_ingest_state_failed": "failed",
   // The GPU rung this role buys (ADR 0074). The hourly figure comes from the ladder the
   // operator declared, never from a number written here: the instance is selectable now.
   "admin.engines_class": "Instance class: ",
@@ -521,34 +501,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_vram_confirm": "{id} wants {n} MiB ({src}) and the class you have chosen has {m} MiB. Short VRAM does not slow CUDA down, it crashes it. Quantisation or offloading may still fit it — continue if you know that.",
   "admin.engines_vram_confirm_go": "Enable it anyway",
   "admin.engines_model_vram": "VRAM {n} MiB",
-  "admin.engines_model_vram_floor": "VRAM at least {n} MiB (a weights-only floor)",
-  // 🔴 A floor, said as one. Drawn with the measured wording instead, a number the CP DERIVED
-  // reads as one an operator stood behind — and this is the row where that matters most, because
-  // it is the only source that moves when the context window is edited.
-  "admin.engines_model_vram_weights_kv": "VRAM at least {n} MiB (weights + KV cache)",
-  // The window an llm row declares, and the editor for it. The context window is what a wrong
-  // value bills for: a row left at 262144 asked for a 16 GiB KV cache and killed the engine four
-  // minutes into a cold start somebody had already paid for.
-  "admin.engines_model_window_edit": "Window",
   "admin.engines_model_window_context": "Context",
   "admin.engines_model_window_output": "Max output",
   "admin.engines_model_vram_edit": "Measured VRAM (MiB)",
-  // What the panel thinks this row needs right now, and WHERE that number came from. Shown
-  // beside the fields because editing either of them moves it — and because "measured" and
-  // "derived from the files" are not the same claim.
-  "admin.engines_model_need_now": "now: {n} MiB ({src})",
-  "admin.engines_model_need_unknown": "now: not known",
-  "admin.engines_model_window_save": "Save",
   // The licence facts a row can carry (ADR 0072 decision 10). "Not recorded" is stated rather
   // than left blank: a seeded row cannot know a licence and the hand-registration form does not
   // ask, and a gap where every ingested row names one reads as "no restrictions".
   "admin.engines_model_noncommercial": "non-commercial",
-  "admin.engines_model_license_by": "accepted by {who} / {when}",
-  "admin.engines_model_license_unknown": "licence not recorded",
-  // An ESTIMATE, and it says so: S3 to the instance was measured at 104–147 MB/s and this
-  // uses the slow end. For a router role every enabled model is synced, so this really is what
-  // enabling it adds to the next cold start.
-  "admin.engines_model_sync": "sync +{n} s (est.)",
   // Which model has weights in VRAM, and how often that changed — the price of holding one
   // model at a time, rather than a uniformly "warm" engine.
   "admin.engines_warm_model": "In VRAM: ",
@@ -818,6 +777,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.allow_engine_ingest": "Allow this tenant's administrators to take models in",
   "admin.allow_engine_ingest_hint":
     "OFF (default) means only a super_admin can start an ingest. ON lets this tenant's tenant_admins take models in from Hugging Face / Civitai / a URL. Enabling a model, changing the selected checkpoint, forgetting a row and the deployment's Hugging Face token stay super_admin. The catalogue is one per deployment, so the id of a model taken in is visible from every tenant.",
+  "admin.engine_use_title": "Inference engine use",
+  "admin.allow_engine_llm": "Allow using the self-hosted chat engine (llm)",
+  "admin.allow_engine_image": "Allow using the self-hosted image engine (image)",
+  "admin.engine_use_hint":
+    "A GPU box is billed by the hour, so this is a cost decision: may this tenant use it at all. Role-grained (llm / image), not model-grained — the catalogue stays one per deployment either way (a separate grant from model ingest above). Turning a role off removes it from the launch menu and the catalogue, and refuses existing sessions on their next request.",
   "admin.saved": "Saved",
   "admin.no_members": "No members. Add one from the form below.",
   "admin.add_failed": "Failed to add: {msg}",

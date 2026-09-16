@@ -541,6 +541,36 @@ type engineController struct {
 	// firing on a healthy engine right after a CP restart — see engineSnapshot.unwarmedSince.
 	lastWarmAt time.Time
 	watchSince time.Time
+	// memberState/memberDesired are the RAW service view this tick just observed, cached for
+	// the member-facing row to read (ADR 0084 decision 3). A member request must not call
+	// c.eng.view itself: engineViewTTL is 3s and the events tick is 4s, so a fresh call per
+	// subscriber per tick would turn one admin panel's DescribeServices rate into one per
+	// member with a tab open (engine_ecs.go's note on the TTS mistake this repeats otherwise).
+	// memberAt is zero until the first tick lands, which the member row reads as "say nothing"
+	// rather than a guess.
+	memberState   string
+	memberDesired int32
+	memberAt      time.Time
+}
+
+// noteMemberSnapshot records what THIS tick observed, for memberSnapshot to read. Called only
+// from tick, never from a member request.
+func (c *engineController) noteMemberSnapshot(state string, desired int32, at time.Time) {
+	c.mu.Lock()
+	c.memberState, c.memberDesired, c.memberAt = state, desired, at
+	c.mu.Unlock()
+}
+
+// memberSnapshot is the controller's last observation, or ok=false before the first tick — see
+// the field comments above. nil-safe: an unmanaged row (external, remote) has no controller at
+// all, and its member row must omit state/stop_eta outright rather than call this.
+func (c *engineController) memberSnapshot() (state string, desired int32, ok bool) {
+	if c == nil {
+		return "", 0, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.memberState, c.memberDesired, !c.memberAt.IsZero()
 }
 
 // ttsControlCfgFromEnv reads the tuning. The defaults are ADR 0070's: a 5-minute window,
@@ -672,6 +702,10 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 		return c.cfg.interval
 	}
 	now := c.now()
+	// The member row's whole source (ADR 0084 decision 3), stamped before any of the judgement
+	// below — even a first pass with nothing stamped yet observed the service just as well as
+	// any other tick.
+	c.noteMemberSnapshot(view.state, view.desired, now)
 	replaced := c.noteReplacement(ctx, view)
 	// The RAW state, not engineDisplayState's: the heatmap records what the hardware did,
 	// and the display state is a statement about the button that was just pressed.

@@ -296,22 +296,23 @@ func engineFleetResponseVerdict(codes []string) (engineFleetOutcome, bool) {
 
 // --- decision 1: one offer row, one instant fleet ---------------------------------------
 
-// buy places one offer's request and answers with the instance that launched, or with what the
-// walk is to do next.
+// buy places one offer's request and answers with the instance that launched (and its literal
+// EC2 type, for a row widened to several — see engineFleetInstanceType), or with what the walk is
+// to do next.
 //
 // Everything that made this hard under Managed Instances is gone here: the call is SYNCHRONOUS,
 // so "did this offer produce a box" is the return value rather than a string written into a
 // service's event list minutes later, and a response belongs to its own call rather than to
 // whichever offer was tried last.
-func (f *engineFleet) buy(ctx context.Context, c engineClass) (string, engineFleetOutcome) {
+func (f *engineFleet) buy(ctx context.Context, c engineClass) (string, string, engineFleetOutcome) {
 	if f == nil {
-		return "", engineFleetOutcome{engineFleetUnusable, engineOfferUnusable}
+		return "", "", engineFleetOutcome{engineFleetUnusable, engineOfferUnusable}
 	}
 	if len(f.subnets) == 0 {
 		// Nothing to launch into. Refusing loudly beats an `InvalidParameterValue` per offer:
 		// every row of the list would answer the same way and the whole list would be spent.
 		log.Printf("%s: cannot buy a box: no subnet is configured (AF_ECS_SUBNETS)", f.logKey())
-		return "", engineFleetOutcome{engineFleetUnusable, engineOfferUnusable}
+		return "", "", engineFleetOutcome{engineFleetUnusable, engineOfferUnusable}
 	}
 	in := f.request(c)
 	out, err := f.api.CreateFleet(ctx, in)
@@ -323,17 +324,18 @@ func (f *engineFleet) buy(ctx context.Context, c engineClass) (string, engineFle
 		// rest are not verdicts about this offer, so the next row gets its own chance.
 		log.Printf("%s: buying %s (%s) failed: %v", f.logKey(), c.ID, c.buy(), err)
 		if engineFleetDenied(err) {
-			return "", engineFleetOutcome{engineFleetRefused, engineOfferUnusable}
+			return "", "", engineFleetOutcome{engineFleetRefused, engineOfferUnusable}
 		}
-		return "", engineFleetOutcome{engineFleetNext, engineOfferUnfulfillable}
+		return "", "", engineFleetOutcome{engineFleetNext, engineOfferUnfulfillable}
 	}
 	f.invalidate()
 	if id := engineFleetInstanceID(out); id != "" {
 		// The tags are already on it: `TagSpecifications` (ResourceType `instance`) merges with
 		// the launch template's own and lands at launch (measured, P0). That is what lets a
 		// restarted CP find this box at all (ADR 0045 decision 29).
-		log.Printf("%s: offer %s (%s) bought %s", f.logKey(), c.ID, c.buy(), id)
-		return id, engineFleetOutcome{}
+		typ := engineFleetInstanceType(out)
+		log.Printf("%s: offer %s (%s) bought %s (%s)", f.logKey(), c.ID, c.buy(), id, typ)
+		return id, typ, engineFleetOutcome{}
 	}
 	codes := make([]string, 0, len(out.Errors))
 	messages := make([]string, 0, len(out.Errors))
@@ -357,7 +359,7 @@ func (f *engineFleet) buy(ctx context.Context, c engineClass) (string, engineFle
 	default:
 		log.Printf("%s: offer %s (%s) bought nothing: %s", f.logKey(), c.ID, c.buy(), strings.Join(messages, " | "))
 	}
-	return "", verdict
+	return "", "", verdict
 }
 
 // request is one offer as EC2 Fleet reads it (decision 1).
@@ -463,6 +465,26 @@ func engineFleetInstanceID(out *ec2.CreateFleetOutput) string {
 			if id = strings.TrimSpace(id); id != "" {
 				return id
 			}
+		}
+	}
+	return ""
+}
+
+// engineFleetInstanceType reads the literal instance type EC2 Fleet actually launched, from the
+// same CreateFleetInstance element engineFleetInstanceID reads its id from — the one piece of
+// information a row widened to several types (decision 1's `types=g6.xlarge,g5.xlarge,g6e.xlarge`)
+// cannot answer on its own. "" if the response carries none, which the caller logs rather than
+// guesses at.
+func engineFleetInstanceType(out *ec2.CreateFleetOutput) string {
+	if out == nil {
+		return ""
+	}
+	for _, inst := range out.Instances {
+		if len(inst.InstanceIds) == 0 {
+			continue
+		}
+		if t := strings.TrimSpace(string(inst.InstanceType)); t != "" {
+			return t
 		}
 	}
 	return ""

@@ -986,3 +986,52 @@ same class of claim that was true of SD3.5's template before it turned out not t
 A live check wants one model, one input picture, one seed and two strengths far apart (0.2 and
 0.8), which is two images: the distance from the input has to differ visibly. klein deserves its
 own pair for the step-count change.
+
+## Follow-up — `params` (steps, cfg, sampler, scheduler) joins the vocabulary (2026-09-15)
+
+The fourth word, and the three this ADR kept naming as the ones it would not take. The test is
+the same as for the three before it — **the caller has no way to say it otherwise** — and
+`dpmpp_2m` is not something a rephrased prompt, a seed or a negative prompt can ask for. What
+changed is the REASON for keeping them out.
+
+Two were given: "the providers differ too much" and "a knob that moves nothing". The second is
+now false where it can be measured: as `comfyFamilyKnobs` declares, **all seven families read
+`steps` and `sampler`** (five through `KSampler`, flux1 and klein through `KSamplerSelect`). Only
+two things go unread — `cfg` on flux1 and klein, `scheduler` on klein — and both are named out
+loud by `comfyIgnoredParamWarnings`, which ADR 0081 decision 4 already built. The first is the
+shape `strength` already has (comfy takes it, the rest warn), and it is treated the same way.
+
+**The shape is a nested `params` object**, keyed by `EngineParams`' own spellings. Not four flat
+arguments: one fact with two spellings is one that goes missing somewhere along a relay (the
+sessionWire lesson), and this way the tool, the Agent's REST, the queue, the catalogue row and
+the sidecar all write it with the same words.
+
+**The blocking route now validates too.** That was the first trap: ADR 0081 put
+`validateRequestParams` on the queue's route alone, so passing `params` through the MCP route
+would have made it the looser of the two — `steps: 10000` straight through, an hour of a shared
+GPU for one typo. Decision 4's asymmetry (lenient for a catalogue row, refusing for a request)
+is kept as it was.
+
+**`steps` and `cfg` are not as safe as the sampler.** Their right value is a property OF THE
+CHECKPOINT, and the schema cannot carry it: an enum cannot depend on another argument — the same
+constraint that made `loras` spell its base model out in prose. A caller that puts 30 steps and
+cfg 7 on a distilled row (Krea 2 Turbo declares 8 and 1) gets a burned picture. So the four live
+in one object whose description says **"leave it unset unless the user named one", "every field
+omitted runs at what the checkpoint's own entry declares", and "steps and cfg are per-checkpoint
+and this schema cannot show you which"**, with the ceilings (150 / 30) behind it. `sampler` and
+`scheduler` carry no such risk — **every name works on every family** — so their enum is the
+whole truth.
+
+**The enum relays the Agent's allow-list.** `mcpx` cannot import `internal/imagegen`, and a list
+copied there would be a schema that offers a name the Agent then refuses. The tool reads the same
+list the pane's form does (`Studio.Samplers`), and a route with an empty one is a route that
+builds no graph, so the argument is not offered there at all.
+
+**The spellings are ComfyUI's** (`euler_ancestral`; the `euler_a` people ask for is A1111's), and
+**there is no alias table** — that would be a second vocabulary, with nothing to say which one is
+right. The enum is, and a name outside it is refused as `bad_params` with the list.
+
+**Not on hardware.** That all seven families take a `sampler_name` is pinned by
+`comfy_workflows_test.go`. A live check wants one model, one seed and two samplers far apart
+(`euler` and `dpmpp_2m`), which is two images, plus one call putting a `scheduler` on klein to see
+the warning.

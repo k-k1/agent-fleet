@@ -1,5 +1,6 @@
 #!/bin/sh
-# Ingest, step 2: put the verified file in the models bucket, or delete keys (MODE=delete).
+# Ingest, step 2: put the verified file in the models bucket, delete keys (MODE=delete), or move
+# one key to another inside the bucket (MODE=move).
 #
 # The essential container of the ingest task: its exit code is the job's. `cfn/PARAMETERS-60-
 # engines.md`, "The ingest containers" and "The ingest permissions" -- deleting is a separate
@@ -10,7 +11,8 @@
 #   BUCKET  the models bucket   (required; it was a CloudFormation substitution while this
 #           script lived inside the template, and is an environment variable now)
 #   KEY     the destination key, or a space-separated list of keys when MODE=delete (required)
-#   MODE    "delete" removes the keys instead of uploading  (optional)
+#   MODE    "delete" removes the keys instead of uploading, "move" relocates FROM to KEY (optional)
+#   FROM    the key to move away from                       (required when MODE=move)
 
 # --- the contract gate -----------------------------------------------------------------
 #
@@ -48,6 +50,18 @@ if [ "$MODE" = delete ]; then
     aws s3 rm "s3://$BUCKET/$k" --only-show-errors
     echo "ingest: deleted $k"
   done
+  exit 0
+fi
+if [ "$MODE" = move ]; then
+  # 🔴 The repair for bytes staged where no ComfyUI loader lists them (engine_file_move.go). One
+  # `mv` inside ONE bucket: S3 copies server-side (multipart for anything over 5 GB, which the
+  # CLI does by itself) and then deletes the source, so nothing crosses the internet and nothing
+  # touches /scratch. Re-fetching from the upstream would be minutes and a second copy of a file
+  # this deployment already owns.
+  [ -n "$FROM" ] || { echo "ingest: FROM is required in move mode"; exit 2; }
+  [ "$FROM" != "$KEY" ] || { echo "ingest: FROM and KEY are the same key ($KEY)"; exit 2; }
+  aws s3 mv "s3://$BUCKET/$FROM" "s3://$BUCKET/$KEY" --only-show-errors
+  echo "ingest: moved $FROM to $KEY in $(( $(date +%s) - start ))s"
   exit 0
 fi
 aws s3 cp /scratch/blob "s3://$BUCKET/$KEY" --only-show-errors

@@ -24,10 +24,24 @@ func stubImageGenStatus(t *testing.T, st mcpImageGenStatus) {
 
 func stubAgentForImageGen(t *testing.T, st mcpImageGenStatus, generate http.HandlerFunc) {
 	t.Helper()
+	body, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubAgentForImageGenRaw(t, string(body), generate)
+}
+
+// stubAgentForImageGenRaw answers /imagegen/status with a BODY rather than with a struct. It
+// exists for the one failure the typed helper above structurally cannot see: a field the Agent
+// really sends and mcpImageGenStatus has no home for is dropped in silence, and a test that
+// encodes the very struct it then decodes agrees with itself either way (the same blind spot
+// sessionWire had). A test that cares whether a fact SURVIVES the relay writes the JSON out.
+func stubAgentForImageGenRaw(t *testing.T, status string, generate http.HandlerFunc) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/imagegen/status":
-			_ = json.NewEncoder(w).Encode(st)
+			_, _ = w.Write([]byte(status))
 		case "/imagegen/generate":
 			if generate == nil {
 				http.Error(w, `{"error":{"code":"unexpected","message":"not stubbed"}}`, http.StatusInternalServerError)
@@ -317,6 +331,49 @@ func TestImageGenLorasOfferedWithTheirFamilies(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ADR 0081 decision 5, on the tool route. An adapter applied without the words it was trained on
+// loads, costs the whole generation and changes nothing visible — so the words have to be in
+// front of the caller WHILE it writes the prompt, which on this route means the schema.
+//
+// The status is written as JSON rather than built as a struct on purpose: what this guards is a
+// relay, and the Agent has published `trained_words` on /imagegen/status since ADR 0081 while
+// mcpImageGenLora quietly had nowhere to put them. Encoding the same struct the decoder fills
+// would have agreed with itself both before and after that fix.
+func TestImageGenLoraTriggerWordsReachTheSchema(t *testing.T) {
+	withImageGen(t, true)
+	stubAgentForImageGenRaw(t, `{"enabled":true,"ready":true,"kind":"claude","providers":[
+		{"id":"comfy","ops":["generate"],"loras":[
+			{"name":"watercolor-v2","description":"soft watercolour","baseModel":"sdxl",
+			 "trained_words":["wtrcolor style","loose wash"]},
+			{"name":"klein-lineart","baseModel":"flux2-klein"}]}]}`, nil)
+
+	offer, ok := mcpImageGenAdvertise()
+	if !ok {
+		t.Fatal("expected the tool to be advertised")
+	}
+	if got := offer.Loras[0].TrainedWords; !reflect.DeepEqual(got, []string{"wtrcolor style", "loose wash"}) {
+		t.Fatalf("trained words = %v — the Agent sent them and this layer dropped them", got)
+	}
+	props := imageGenSchemaProps(mcpStdioImageGenTools(offer))
+	loras, _ := props["loras"].(map[string]any)
+	desc, _ := loras["description"].(string)
+	for _, want := range []string{"wtrcolor style", "loose wash"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("description does not carry the trigger word %q: %s", want, desc)
+		}
+	}
+	// An adapter that publishes none must not grow an empty clause — a bare "triggers:" is worse
+	// than saying nothing, and every word here is paid for in every session's first turn.
+	if i := strings.Index(desc, "klein-lineart"); i < 0 || strings.Contains(desc[i:], "triggers:") {
+		t.Errorf("a LoRA with no trigger words should be spelled plainly: %s", desc)
+	}
+	// The word list must not use the separator that divides one adapter from the next, or the
+	// last trigger of one runs into the name of the other.
+	if strings.Contains(desc, "wtrcolor style / loose wash") {
+		t.Errorf("trigger words share the line separator, so the adapter boundary is gone: %s", desc)
 	}
 }
 
@@ -651,6 +708,146 @@ func TestGenerateImageForwardsTheStrength(t *testing.T) {
 			callGenerateImage(t, tc.args)
 			if got["strength"] != tc.want {
 				t.Fatalf("forwarded strength = %v (%T), want %v", got["strength"], got["strength"], tc.want)
+			}
+		})
+	}
+}
+
+// The sampler overlay is offered only where a route BUILDS the sampler graph, which is exactly
+// what having names to send means: the vendor routes have neither a step count nor a sampler,
+// and an argument they are obliged to ignore is what this schema exists to keep out.
+func TestImageGenParamsOfferedOnlyWhereTheGraphIsBuilt(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		status                   mcpImageGenStatus
+		wantParams, wantSchedule bool
+	}{
+		{
+			name: "a route that builds the graph",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"},
+					Samplers: []string{"euler", "dpmpp_2m"}, Schedulers: []string{"normal", "karras"}}}},
+			wantParams: true, wantSchedule: true,
+		},
+		{
+			name: "a vendor route drives a CLI with a prompt and has no knobs at all",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "agy", Ops: []string{"generate"}}}},
+		},
+		{
+			// An Agent that sends samplers but no schedule names must not have one invented for
+			// it: the field would be an enum with nothing in it, which no caller can satisfy.
+			name: "samplers without schedulers offer only the sampler",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"},
+					Samplers: []string{"euler"}}}},
+			wantParams: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withImageGen(t, true)
+			stubImageGenStatus(t, tc.status)
+			offer, ok := mcpImageGenAdvertise()
+			if !ok {
+				t.Fatal("expected the tool to be advertised")
+			}
+			props := imageGenSchemaProps(mcpStdioImageGenTools(offer))
+			params, has := props["params"].(map[string]any)
+			if has != tc.wantParams {
+				t.Fatalf("params in schema = %v, want %v", has, tc.wantParams)
+			}
+			if !has {
+				return
+			}
+			fields, _ := params["properties"].(map[string]any)
+			for _, want := range []string{"steps", "cfg", "sampler"} {
+				if _, ok := fields[want]; !ok {
+					t.Errorf("params has no %s: %v", want, fields)
+				}
+			}
+			if _, ok := fields["scheduler"]; ok != tc.wantSchedule {
+				t.Errorf("scheduler in params = %v, want %v", ok, tc.wantSchedule)
+			}
+			// The two numbers are per-checkpoint and this schema cannot say which — the enum
+			// of a sibling argument is built at tools/list, before `model` exists — so the
+			// description has to warn instead of leaving the caller to infer a default.
+			desc, _ := params["description"].(string)
+			if !strings.Contains(desc, "per-checkpoint") || !strings.Contains(desc, "Leave it unset") {
+				t.Errorf("description does not warn about the per-checkpoint numbers: %s", desc)
+			}
+		})
+	}
+}
+
+// The enum comes from the AGENT's own allow-list, relayed, never from a copy in this package: a
+// schema that offers a name this binary will not send is the pair disagreeing in front of the
+// caller, one round trip later.
+//
+// The status is written as RAW JSON on purpose. A test that encodes the very struct it then
+// decodes agrees with itself even when the field never reaches the wire — the blind spot
+// sessionWire had.
+func TestImageGenSamplerEnumComesFromTheAgent(t *testing.T) {
+	withImageGen(t, true)
+	stubAgentForImageGenRaw(t, `{"enabled":true,"ready":true,"kind":"claude","providers":[
+		{"id":"comfy","ops":["generate"],
+		 "samplers":["euler","euler_ancestral","dpmpp_2m"],
+		 "schedulers":["normal","karras"]}]}`, nil)
+	offer, ok := mcpImageGenAdvertise()
+	if !ok {
+		t.Fatal("expected the tool to be advertised")
+	}
+	if !reflect.DeepEqual(offer.Samplers, []string{"euler", "euler_ancestral", "dpmpp_2m"}) {
+		t.Fatalf("offer samplers = %v, want the three the Agent sent", offer.Samplers)
+	}
+	props := imageGenSchemaProps(mcpStdioImageGenTools(offer))
+	params, _ := props["params"].(map[string]any)
+	fields, _ := params["properties"].(map[string]any)
+	sampler, _ := fields["sampler"].(map[string]any)
+	if !reflect.DeepEqual(sampler["enum"], []string{"euler", "euler_ancestral", "dpmpp_2m"}) {
+		t.Fatalf("sampler enum = %v, want the Agent's own list", sampler["enum"])
+	}
+	scheduler, _ := fields["scheduler"].(map[string]any)
+	if !reflect.DeepEqual(scheduler["enum"], []string{"normal", "karras"}) {
+		t.Fatalf("scheduler enum = %v, want the Agent's own list", scheduler["enum"])
+	}
+}
+
+// The overlay reaches the Agent under the same key and in the same shape the queue's route and
+// the catalogue row use, per field. It is NOT flattened here: a caller who named only the
+// sampler must not have steps and cfg zeroed on the way, because zero is what the merge reads
+// as "declared nothing" and the checkpoint's own published numbers are what fills it.
+func TestGenerateImageForwardsTheSamplerOverlay(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want map[string]any
+	}{
+		{
+			name: "all four",
+			args: map[string]any{"prompt": "a cat", "params": map[string]any{
+				"steps": 30, "cfg": 6, "sampler": "dpmpp_2m", "scheduler": "karras"}},
+			want: map[string]any{"steps": float64(30), "cfg": float64(6), "sampler": "dpmpp_2m", "scheduler": "karras"},
+		},
+		{
+			name: "the sampler alone leaves the rest undeclared",
+			args: map[string]any{"prompt": "a cat", "params": map[string]any{"sampler": "euler_ancestral"}},
+			want: map[string]any{"sampler": "euler_ancestral"},
+		},
+		{"none is absent", map[string]any{"prompt": "a cat"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withImageGen(t, true)
+			var got map[string]any
+			stubAgentForImageGen(t,
+				mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate"}},
+				func(w http.ResponseWriter, r *http.Request) {
+					_ = json.NewDecoder(r.Body).Decode(&got)
+					_, _ = w.Write([]byte(`{"files":[{"path":"/tmp/i.png","name":"i.png","mime":"image/png","bytes":1}],"provider":"comfy"}`))
+				})
+			callGenerateImage(t, tc.args)
+			params, _ := got["params"].(map[string]any)
+			if !reflect.DeepEqual(params, tc.want) {
+				t.Fatalf("forwarded params = %v, want %v", got["params"], tc.want)
 			}
 		})
 	}

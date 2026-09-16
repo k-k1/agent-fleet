@@ -303,16 +303,42 @@ func TestLoraNarrowsBothUpstreams(t *testing.T) {
 	// 🔴 Hugging Face drops the connection on `filter=lora` with no pipeline tag — measured
 	// 2026-09-12, curl exit 56 and no status line, for both `filter=lora` and
 	// `filter=gguf&filter=lora`. So the pipeline tag is load-bearing and not extra precision.
-	for _, tc := range []struct{ kind, pipeline string }{
-		{"checkpoint", "text-to-image"},
-		{"gguf", "text-generation"},
-	} {
-		v := engineSearchFilter(tc.kind, true)
-		if got := v.Get("pipeline_tag"); got != tc.pipeline {
-			t.Errorf("%s lora search pipeline_tag = %q, want %q", tc.kind, got, tc.pipeline)
+	// The invariant is per LANE, because the image kind asks twice (see engineSearchFilters): a
+	// lane whose only filter is `lora` is the request that drops the connection, whichever half
+	// of the union it is.
+	for _, kind := range []string{"checkpoint", "gguf"} {
+		lanes := engineSearchFilters(kind, true)
+		if len(lanes) == 0 {
+			t.Fatalf("%s has no search lanes at all", kind)
 		}
-		if !strings.Contains(strings.Join(v["filter"], ","), "lora") {
-			t.Errorf("%s lora search filter = %v, want lora among them", tc.kind, v["filter"])
+		for i, v := range lanes {
+			if !strings.Contains(strings.Join(v["filter"], ","), "lora") {
+				t.Errorf("%s lane %d filter = %v, want lora among them", kind, i, v["filter"])
+			}
+			company := v.Get("pipeline_tag") != ""
+			for _, f := range v["filter"] {
+				if f != "lora" {
+					company = true
+				}
+			}
+			if !company {
+				t.Errorf("%s lane %d sends filter=lora alone (%v), which drops the connection", kind, i, v)
+			}
 		}
+	}
+
+	// 🔴 The lane that reaches ComfyUI-packaged repositories. Without it the picker cannot show
+	// Comfy-Org/Krea-2 or circlestone-labs/Anima at all — they carry no pipeline tag — and the
+	// rows it shows for "Krea 2" instead are the gated ones (measured 2026-09-15).
+	var singleFile bool
+	for _, v := range engineSearchFilters("checkpoint", false) {
+		for _, f := range v["filter"] {
+			if f == "diffusion-single-file" {
+				singleFile = true
+			}
+		}
+	}
+	if !singleFile {
+		t.Error("no image lane asks for diffusion-single-file, so single-file repositories are invisible")
 	}
 }

@@ -14,6 +14,7 @@ export const gallery = {
   "gallery.empty": "このフォルダに画像はありません。",
   "gallery.failed": "フォルダを読み込めませんでした",
   "gallery.loading": "読み込み中…",
+  "gallery.updating": "更新中…",
   "gallery.refresh": "最新に更新",
   "gallery.sort": "並び",
   "gallery.sort_new": "新しい順",

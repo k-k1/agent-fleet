@@ -14,8 +14,8 @@ package main
 //     answers `api/models/<repo>?blobs=true` ANONYMOUSLY with its licence, its gating flag and
 //     every file's sha256 and size; only the file download is 401. So the CP can resolve
 //     everything and the token stays where ADR 0072 decision 6 put it — in the ingest task.
-//   - **the CP never touches S3** (review R3). The task uploads; the CP learns the outcome from
-//     `DescribeTasks` and the reason from the task's log.
+//   - **the CP never writes S3.** The task uploads and deletes; the CP has read-only HeadObject
+//     access to the two model prefixes so it can distinguish a saved object from a stale job.
 //   - **a job outlives the request.** It is a row (store_engine_ingest.go), reconciled against
 //     ECS, because a download runs for minutes and a CP can be replaced inside one.
 
@@ -27,10 +27,12 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -41,12 +43,22 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// The two APIs' base URLs. Variables rather than constants so a test can answer them locally:
-// what this file does with a gated repository's metadata is exactly what has to be pinned, and
+// The APIs' base URLs. Variables rather than constants so a test can answer them locally: what
+// this file does with a gated repository's metadata is exactly what has to be pinned, and
 // reaching the real Hugging Face from a unit test would pin nothing and fail offline.
+//
+// engineCivitaiRedBase is civitai.red, the sister domain Civitai split off 2026-04-15 for NSFW
+// browsing (same account, database and model/version ids as civitai.com — "Two Front Doors").
+// Measured 2026-09-14: the anonymous `/api/v1/models` search omits NSFW-flagged results on
+// EITHER host unless the request also carries `nsfw=true` — the domain itself gates nothing.
+// So this only exists to point the search UI's "include NSFW" tab at the host Civitai's own
+// site now treats as canonical for that content; resolve/ingest/download stay on
+// engineCivitaiBase, which already answers a chosen NSFW version's metadata and file
+// identically to civitai.red (same measurement).
 var (
-	engineIngestBase  = "https://huggingface.co"
-	engineCivitaiBase = "https://civitai.com"
+	engineIngestBase     = "https://huggingface.co"
+	engineCivitaiBase    = "https://civitai.com"
+	engineCivitaiRedBase = "https://civitai.red"
 )
 
 // engineIngestHTTP talks to Hugging Face and Civitai. A real timeout because these are metadata
@@ -108,6 +120,10 @@ type engineResolved struct {
 	// prose (engine_params_hint.go). Offered to the form, never stored from here.
 	ParamsHint engineParamsHint
 	Source     string // what a person reads in the job list
+	// ArtifactIdentity is the immutable machine answer to "are these the same bytes from the
+	// same selected source". It is persisted per S3 object and compared verbatim on reuse;
+	// Source remains the backwards-compatible human label and is never promoted into this.
+	ArtifactIdentity string
 	// The model's OWN maximum, straight off the GGUF header Hugging Face has already parsed
 	// (`gguf.context_length` on the same call this reads everything else from). 🔴 It is a
 	// suggestion, never the value: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF says 262144 and
@@ -177,9 +193,21 @@ func engineIngestResolve(ctx context.Context, src engineIngestSource) (engineRes
 			return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource,
 				"a plain url needs its sha256 (64 hex characters) — nothing else can verify the download"}
 		}
-		return engineResolved{DownloadURL: u, SHA256: strings.ToLower(strings.TrimSpace(src.SHA256)), Source: u}, nil
+		hash := strings.ToLower(strings.TrimSpace(src.SHA256))
+		return engineResolved{
+			DownloadURL: u, SHA256: hash, Source: u,
+			ArtifactIdentity: "url:" + u + "#sha256:" + hash,
+		}, nil
 	}
 	return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "one of hf, civitai or url is required"}
+}
+
+func engineHFArtifactIdentity(repo, file, revision, sha256 string) string {
+	return "hf:" + repo + "@" + revision + "/" + file + "#sha256:" + strings.ToLower(sha256)
+}
+
+func engineCivitaiArtifactIdentity(versionID int, file, sha256 string) string {
+	return "civitai:" + strconv.Itoa(versionID) + "/" + file + "#sha256:" + strings.ToLower(sha256)
 }
 
 // engineSourceURL turns a recorded source back into the page a person can open, and is the
@@ -217,7 +245,14 @@ func engineSourceURL(source string) string {
 		if _, err := strconv.Atoi(id); err != nil {
 			return ""
 		}
-		return engineCivitaiBase + "/models/?modelVersionId=" + id
+		// 🔴 `/model-versions/<id>` and NOT `/models/?modelVersionId=<id>`. A recorded source
+		// carries the VERSION id and nothing else — the model id and its slug are a different
+		// number and a different string — and the query form answers 200 with the model LIST,
+		// which reads as a working link that goes to the wrong page (reported from the panel,
+		// 2026-09-15). Measured the same day: `/model-versions/5038` answers 308 to
+		// `/models/4451?modelVersionId=5038`, which 307s on to the slug. The redirect knows the
+		// two facts this end does not, so it is the link to hand out.
+		return engineCivitaiBase + "/model-versions/" + id
 	}
 	return ""
 }
@@ -227,7 +262,10 @@ func engineSourceURL(source string) string {
 // answer the sha256 and the licence are then taken out of — the alternative is two reads that
 // can disagree across a push to the repository.
 type engineHFDoc struct {
-	Gated    any `json:"gated"` // false, or "auto" / "manual" — a string is still gated
+	// SHA is the repository commit the requested revision resolved to. `main` is mutable, so the
+	// literal request spelling cannot be the identity of bytes saved for later reuse.
+	SHA      string `json:"sha"`
+	Gated    any    `json:"gated"` // false, or "auto" / "manual" — a string is still gated
 	CardData struct {
 		License     any    `json:"license"` // a string, or a list on some cards
 		LicenseName string `json:"license_name"`
@@ -322,6 +360,12 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 	if len(out.SHA256) != 64 {
 		return engineResolved{}, &apiError{http.StatusBadGateway, errCodeIngestNoChecksum,
 			"Hugging Face publishes no sha256 for " + file + " — take it in with an explicit url and sha256"}
+	}
+	// Only the API's resolved commit is immutable. A missing SHA must not be replaced by the
+	// request spelling (`main`, a tag, or a branch): the ingest may proceed for compatibility,
+	// but that object is deliberately unavailable for verified reuse.
+	if resolvedRevision := strings.TrimSpace(doc.SHA); resolvedRevision != "" {
+		out.ArtifactIdentity = engineHFArtifactIdentity(repo, file, resolvedRevision, out.SHA256)
 	}
 	return out, nil
 }
@@ -487,9 +531,10 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 		if hint.empty() {
 			hint = engineParamsFromText(engineStripHTML(model.Description))
 		}
+		hash := strings.ToLower(f.Hashes.SHA256)
 		return engineResolved{
 			DownloadURL:   f.DownloadURL,
-			SHA256:        strings.ToLower(f.Hashes.SHA256),
+			SHA256:        hash,
 			Bytes:         int64(f.SizeKB * 1024),
 			LoginRequired: !engineCivitaiAnonymous(ctx, f.DownloadURL),
 			Restrictions: engineCivitaiRestrictions(model.engineCivitaiLicenceFacts,
@@ -500,9 +545,14 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 			// per model on the site. Saying "unknown" is the honest answer; guessing one would
 			// put a made-up licence in the panel next to the real ones.
 			LicenseName: "see civitai model page",
-			LicenseURL:  engineCivitaiBase + "/models/?modelVersionId=" + id,
-			BaseModel:   strings.TrimSpace(doc.BaseModel),
-			Source:      "civitai:" + id,
+			// The SAME redirect engineSourceURL hands out, and for the same reason: from here
+			// the version id is all there is, and the query form lands on the model list. A
+			// "see the model page" link that opens a list is the one kind of broken link nobody
+			// reports, because it opens something.
+			LicenseURL:       engineCivitaiBase + "/model-versions/" + id,
+			BaseModel:        strings.TrimSpace(doc.BaseModel),
+			Source:           "civitai:" + id,
+			ArtifactIdentity: engineCivitaiArtifactIdentity(c.VersionID, f.Name, hash),
 		}, nil
 	}
 	return engineResolved{}, &apiError{http.StatusNotFound, errCodeIngestFileUnknown,
@@ -518,10 +568,17 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 // minutes later with `curl: (22) … error: 401`. What reaches the operator is an exit code.
 // Measured on af-sandbox: five assets, answers split 200 / 401 / 403, per uploader.
 //
-// One HEAD, short timeout, and it FAILS OPEN in every direction but the two it can read: a
-// probe that could not run must not stop an ingest that would have worked, and a CDN that
-// dislikes HEAD (405) is not a login wall. Only 401 and 403 — the two Civitai actually answers
-// with — are read as "not anonymously".
+// 🔥 Measured 2026-09-15: this used to be a HEAD, and that is wrong now. Civitai's download URL
+// redirects (307) to a Cloudflare R2 presigned URL, and R2 signs the presigned URL for GET only
+// — a HEAD against it comes back 403 no matter who uploaded the file or what they restricted.
+// Confirmed live against a completely unwalled, 200k-download asset: HEAD 403, `GET` with
+// `Range: bytes=0-0` 206. A HEAD-based probe therefore reads *every* Civitai asset as needing an
+// account. A ranged GET costs one byte and is answered the same way the real download is.
+//
+// Short timeout, and it FAILS OPEN in every direction but the two it can read: a probe that
+// could not run must not stop an ingest that would have worked, and a CDN that dislikes ranged
+// GETs (405) is not a login wall. Only 401 and 403 — the two Civitai actually answers with —
+// are read as "not anonymously".
 func engineCivitaiAnonymous(ctx context.Context, target string) bool {
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
 		return true
@@ -530,10 +587,11 @@ func engineCivitaiAnonymous(ctx context.Context, target string) bool {
 	// somebody is typing, and the answer is a status line.
 	c, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(c, http.MethodHead, target, nil)
+	req, err := http.NewRequestWithContext(c, http.MethodGet, target, nil)
 	if err != nil {
 		return true
 	}
+	req.Header.Set("Range", "bytes=0-0")
 	resp, err := engineIngestHTTP.Do(req)
 	if err != nil {
 		return true
@@ -575,6 +633,14 @@ func engineFirstString(v any) string {
 	return ""
 }
 
+// engineIngestGetJSON deliberately makes ONE round trip and never retries a 503: this backs both
+// metadata resolution and the VAE header probe (engine_vae.go), and those callers each have
+// their OWN budget for how many times to ask a source that has already refused — a scan of many
+// rows caps how many DIFFERENT models it probes after a few come back unreadable
+// (engineVaeScanFails), and multiplying every one of those into several requests would blow that
+// budget silently. A 503 that clears in under a second is instead retried where it is safe to —
+// the search path (engineSearchGetJSON) — because that is one request per user keystroke, not
+// one per row of a batch.
 func engineIngestGetJSON(ctx context.Context, target string, out any) *apiError {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
@@ -636,19 +702,115 @@ type engineIngestLogsAPI interface {
 
 // engineIngester starts ingest tasks and reconciles them against ECS.
 type engineIngester struct {
-	def     engineIngestDef
-	cluster string
-	ecs     engineIngestECSAPI
-	logs    engineIngestLogsAPI
-	store   store.EngineIngestStore
-	models  store.EngineModelStore
+	// defMu guards everything the TABLE decides, because the table reloader replaces it while
+	// requests are reading it (engines.go, startIngest). Before this the block was read once at
+	// boot and a later table was silently ignored — see adopt.
+	defMu sync.RWMutex
+	def   engineIngestDef
 	// tokens is the operator's Hugging Face token. It hangs here rather than on an engine
 	// because the ingest task is deployment-wide, and because this is the only place that
 	// needs the value rather than the fact that there is one.
 	tokens *engineHfTokens
+	// civitaiTokens is the same registration for Civitai, carried through its own secret
+	// (engine_civitai_token.go) rather than sharing the Hugging Face one: the two are
+	// unrelated accounts, and the fetch container picks between them by the download's host.
+	civitaiTokens *engineCivitaiTokens
+	cluster       string
+	ecs           engineIngestECSAPI
+	logs          engineIngestLogsAPI
+	store         store.EngineIngestStore
+	models        store.EngineModelStore
+	storageMu     sync.RWMutex
+	storage       *engineStorage
 	// onDone is called after a job created its catalogue row, so the registry can invalidate
 	// its cache and the panel shows the new row without waiting for the TTL.
 	onDone func(role string)
+}
+
+// ingestDef is what the stack declares RIGHT NOW, not what it declared at boot.
+//
+// 🔴 The difference is a whole deployment's ingest. A CloudFormation update that touches the
+// ingest task definition registers a new revision and DEREGISTERS the previous one, and the
+// table publishes `!Ref`'s ARN — the revision included, until the fix beside this one. An
+// ingester that kept the block it booted with then answered `InvalidParameterException:
+// TaskDefinition is inactive` for every ingest, forever, and the only way out was replacing the
+// Control Plane. Measured on af-sandbox 2026-09-15, one stack update after the table in SSM
+// already carried the new revision.
+func (g *engineIngester) ingestDef() engineIngestDef {
+	if g == nil {
+		return engineIngestDef{}
+	}
+	g.defMu.RLock()
+	defer g.defMu.RUnlock()
+	return g.def
+}
+
+// hfTokens and civitai are the secret carriers built from that block, read through the same
+// lock because adopt rebuilds them when the stack names different secrets.
+func (g *engineIngester) hfTokens() *engineHfTokens {
+	if g == nil {
+		return nil
+	}
+	g.defMu.RLock()
+	defer g.defMu.RUnlock()
+	return g.tokens
+}
+
+func (g *engineIngester) civitai() *engineCivitaiTokens {
+	if g == nil {
+		return nil
+	}
+	g.defMu.RLock()
+	defer g.defMu.RUnlock()
+	return g.civitaiTokens
+}
+
+// adopt takes the table's current ingest block, and reports whether anything moved.
+//
+// `secrets` rebuilds the two token carriers, and is called only when the stack names a different
+// secret than the one they hold: they are handed out by pointer to the admin routes, so
+// replacing them on every poll would be churn where the answer never changed.
+func (g *engineIngester) adopt(def engineIngestDef,
+	secrets func(engineIngestDef) (*engineHfTokens, *engineCivitaiTokens)) bool {
+	if g == nil || !def.ok() {
+		return false
+	}
+	g.defMu.Lock()
+	defer g.defMu.Unlock()
+	if reflect.DeepEqual(g.def, def) {
+		return false
+	}
+	was := g.def
+	g.def = def
+	if secrets != nil && (was.TokenSecret != def.TokenSecret ||
+		was.CivitaiTokenSecret != def.CivitaiTokenSecret || was.HasToken != def.HasToken) {
+		g.tokens, g.civitaiTokens = secrets(def)
+	}
+	log.Printf("engines: ingest declaration adopted from the table (task definition %q -> %q)",
+		was.TaskDef, def.TaskDef)
+	return true
+}
+
+func (g *engineIngester) storageChecker() *engineStorage {
+	if g == nil {
+		return nil
+	}
+	g.storageMu.RLock()
+	defer g.storageMu.RUnlock()
+	return g.storage
+}
+
+func (g *engineIngester) setStorage(storage *engineStorage) bool {
+	if g == nil || storage == nil || strings.TrimSpace(storage.scope) == "" {
+		return false
+	}
+	g.storageMu.Lock()
+	defer g.storageMu.Unlock()
+	if g.storage != nil && g.storage.scope == storage.scope && g.storage.metadata != nil {
+		return false
+	}
+	g.storage = storage
+	return true
 }
 
 // engineIngestRequest is one "take this in", after the API has validated it.
@@ -685,6 +847,16 @@ type engineIngestRequest struct {
 	// a model to another quantisation was to forget the row — with its licence acceptance, its
 	// family, its params and its enabled state — and build it again.
 	Replace bool
+	// MoveFrom is the key these bytes are ALREADY at, when the job's work is to relocate them
+	// inside the bucket instead of downloading anything: the task copies server-side and deletes
+	// the source, and the row's declaration is rewritten from MoveFrom to S3Key with FileFlag.
+	//
+	// 🔴 The fourth act, and the one a row staged in the wrong directory needs. Nothing else can
+	// repair it: the file a ComfyUI loader cannot list is not missing, so taking it in again is a
+	// second copy of a 4–13 GB file, and re-labelling alone leaves the bytes where no loader
+	// looks. Empty for every ordinary ingest, which is what makes the task's default MODE the
+	// download it has always been.
+	MoveFrom string
 	// The attention geometry read from the GGUF header before the job started (engine_gguf.go).
 	// Zero means it could not be read — a gated repository with no token, a file that is not a
 	// GGUF, an upstream that refused the Range — and the row keeps the floor it always had.
@@ -694,6 +866,16 @@ type engineIngestRequest struct {
 	// family decodes with. Written onto the FILE, so it survives the row being edited and moves
 	// with a replacement.
 	VaeBundled string
+	// PartsFollowUp is the same promise for a SPLIT family's own parts — the text encoder and
+	// VAE a diffusion model cannot generate without (engine_family_parts.go). A list rather than
+	// one, because a family needs all of them or the row stays refused.
+	PartsFollowUp []engineVaeFollowUp
+	// PartsMove is, per file flag, the key a follow-up part's bytes are at TODAY, when the plan
+	// found them in the bucket under a name no loader lists (ADR 0085 decision 1). Without it
+	// that second job would be a download of bytes this deployment has already bought; with it it
+	// is one server-side `aws s3 mv`. Empty for every part that is downloaded or already at its
+	// own key.
+	PartsMove map[string]string
 	// VaeFollowUp is the second file this ingest promised: the family's own VAE, attached to the
 	// row this job creates. Decided while somebody was still at the form — the job finishes in
 	// the reconciler, where a resolve failure has nobody to report itself to.
@@ -704,12 +886,32 @@ type engineIngestRequest struct {
 // succeeds and a CP that dies before recording it is a task nobody can see, which is the one
 // outcome with no way back.
 func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (store.EngineIngestJob, *apiError) {
-	// The registered token is carried into the stack's secret before EVERY ingest. Not when it
-	// looks stale — nothing can look stale here: the CP has no `GetSecretValue`, and a stack
-	// rebuilt under a registered token holds the sentinel with no way to notice. Staged before
-	// the job row so a deployment that cannot write the secret fails without leaving one.
-	if aerr := g.tokens.stage(ctx); aerr != nil {
-		return store.EngineIngestJob{}, aerr
+	// postIngest checks this before resolving the source so the normal request pays no download
+	// for a recorded key. Keep the same fence here because follow-up VAEs start from the
+	// reconciler, not that route; otherwise two completed checkpoints could upload different
+	// bytes to the family's fixed VAE key before either attachment is registered.
+	if ref := engineIngestDestinationUnused(ctx, g.models, g.store, g.storageChecker(), req.Role, req.S3Key); ref != nil {
+		// The holder and the next act are dropped here and only here: this method answers
+		// *apiError to callers that predate them, and the routes that can draw a button
+		// (postIngest) ask the same question themselves before calling it.
+		return store.EngineIngestJob{}, ref.Plain()
+	}
+	// The registered tokens are carried into the stack's secrets before EVERY ingest, both of
+	// them regardless of which source this job is for. Not when it looks stale — nothing can
+	// look stale here: the CP has no `GetSecretValue`, and a stack rebuilt under a registered
+	// token holds the sentinel with no way to notice. Staged before the job row so a
+	// deployment that cannot write a secret fails without leaving one.
+	//
+	// A move is the exception and it is not an optimisation: it reaches no upstream at all, so a
+	// deployment whose secret write is refused would be blocked from repairing a row over a
+	// credential neither container is going to read.
+	if req.MoveFrom == "" {
+		if aerr := g.hfTokens().stage(ctx); aerr != nil {
+			return store.EngineIngestJob{}, aerr
+		}
+		if aerr := g.civitai().stage(ctx); aerr != nil {
+			return store.EngineIngestJob{}, aerr
+		}
 	}
 	spec, _ := json.Marshal(req)
 	job := store.EngineIngestJob{
@@ -739,30 +941,58 @@ func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (st
 	return job, nil
 }
 
+// reuse is what happens when the bytes are already this deployment's (ADR 0085 decision 1).
+//
+// Two shapes, and the plan decides which: at the CANONICAL key there is nothing to do but
+// declare it, so the catalogue transition is applied immediately and no token is staged and no
+// ECS task started; at ANOTHER key the bytes have to be relocated first, which is a task
+// (`MODE=move`, a server-side `aws s3 mv`) and therefore the ordinary start — re-fetching a
+// 13 GB file to put it one directory higher is the repair this deployment refuses to make.
+func (g *engineIngester) reuse(ctx context.Context, req engineIngestRequest) (store.EngineIngestJob, *apiError) {
+	if strings.TrimSpace(req.MoveFrom) != "" {
+		return g.start(ctx, req)
+	}
+	spec, _ := json.Marshal(req)
+	job := store.EngineIngestJob{
+		ID: store.NewID(), Role: req.Role, ModelID: req.ModelID, S3Key: req.S3Key,
+		Source: req.Resolved.Source, State: store.EngineIngestPending,
+		Bytes: req.Resolved.Bytes, Spec: string(spec), StartedBy: req.AcceptedBy,
+		TenantID: req.AcceptedTenant,
+	}
+	if err := g.store.PutEngineIngestJob(ctx, job); err != nil {
+		return job, internalErr(err)
+	}
+	if err := g.install(ctx, req, job.ID); err != nil {
+		job.State, job.Message = store.EngineIngestFailed, err.Error()
+		_ = g.store.PutEngineIngestJob(ctx, job)
+		return job, &apiError{http.StatusConflict, errCodeEngineBadBody, err.Error()}
+	}
+	job.State, job.Message = store.EngineIngestDone, ""
+	if err := g.store.PutEngineIngestJob(ctx, job); err != nil {
+		return job, internalErr(err)
+	}
+	log.Printf("engines: ingest %s reused %s for %s/%s", job.ID, req.S3Key, req.Role, req.ModelID)
+	return job, nil
+}
+
 func (g *engineIngester) runTask(ctx context.Context, req engineIngestRequest) (string, error) {
-	if g.ecs == nil || !g.def.ok() {
+	def := g.ingestDef()
+	if g.ecs == nil || !def.ok() {
 		return "", fmt.Errorf("this deployment's engine stack declares no ingest task")
 	}
 	out, err := g.ecs.RunTask(ctx, &ecs.RunTaskInput{
 		Cluster:        aws.String(g.cluster),
-		TaskDefinition: aws.String(g.def.TaskDef),
+		TaskDefinition: aws.String(def.TaskDef),
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets:        g.def.Subnets,
-				SecurityGroups: g.def.SecurityGroups,
+				Subnets:        def.Subnets,
+				SecurityGroups: def.SecurityGroups,
 				AssignPublicIp: ecstypes.AssignPublicIpDisabled,
 			},
 		},
 		Overrides: &ecstypes.TaskOverride{
-			ContainerOverrides: []ecstypes.ContainerOverride{
-				{Name: aws.String("fetch"), Environment: engineIngestEnv(map[string]string{
-					"URL": req.Resolved.DownloadURL, "SHA256": req.Resolved.SHA256,
-				})},
-				{Name: aws.String("upload"), Environment: engineIngestEnv(map[string]string{
-					"KEY": req.S3Key,
-				})},
-			},
+			ContainerOverrides: engineIngestOverrides(req),
 		},
 	})
 	if err != nil {
@@ -777,6 +1007,32 @@ func (g *engineIngester) runTask(ctx context.Context, req engineIngestRequest) (
 		return "", fmt.Errorf("ECS started no task and gave no reason")
 	}
 	return aws.ToString(out.Tasks[0].TaskArn), nil
+}
+
+// engineIngestOverrides is what the two containers are told to do: fetch-and-upload for an
+// ordinary ingest, and a server-side relocation when the bytes are already in the bucket.
+//
+// 🔴 MODE=move skips the download entirely — `fetch` exits at once and `upload` runs one
+// `aws s3 mv`, which S3 performs inside the bucket. That is the whole reason a misplaced 13 GB
+// file is repairable at all: the alternative is re-fetching bytes this deployment already owns,
+// and the fetch container's ephemeral disk would have to hold them again.
+func engineIngestOverrides(req engineIngestRequest) []ecstypes.ContainerOverride {
+	if strings.TrimSpace(req.MoveFrom) != "" {
+		return []ecstypes.ContainerOverride{
+			{Name: aws.String("fetch"), Environment: engineIngestEnv(map[string]string{"MODE": "move"})},
+			{Name: aws.String("upload"), Environment: engineIngestEnv(map[string]string{
+				"MODE": "move", "FROM": req.MoveFrom, "KEY": req.S3Key,
+			})},
+		}
+	}
+	return []ecstypes.ContainerOverride{
+		{Name: aws.String("fetch"), Environment: engineIngestEnv(map[string]string{
+			"URL": req.Resolved.DownloadURL, "SHA256": req.Resolved.SHA256,
+		})},
+		{Name: aws.String("upload"), Environment: engineIngestEnv(map[string]string{
+			"KEY": req.S3Key,
+		})},
+	}
 }
 
 func engineIngestEnv(kv map[string]string) []ecstypes.KeyValuePair {
@@ -857,29 +1113,99 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		log.Printf("engines: ingest %s failed: %s", j.ID, j.Message)
 		return
 	}
-	j.State, j.Message = store.EngineIngestDone, ""
-	_ = g.store.PutEngineIngestJob(ctx, j)
+	if storage := g.storageChecker(); storage != nil {
+		storage.invalidate(j.S3Key)
+	}
 	var req engineIngestRequest
 	if g.models == nil || json.Unmarshal([]byte(j.Spec), &req) != nil || req.ModelID == "" {
-		// The bytes are in the bucket; the row is not. Said plainly rather than silently: the
-		// operator's next move is to register the key by hand, which is a route that exists.
-		log.Printf("engines: ingest %s finished but its catalogue row could not be read back: register %s by hand",
-			j.ID, j.S3Key)
+		// The bytes are in the bucket; the row is not. A failed state keeps the panel from calling
+		// the operation successful and names the manual recovery path without deleting the object.
+		j.State = store.EngineIngestFailed
+		j.Message = "the object was stored but its catalogue request could not be read back; register " + j.S3Key + " by hand"
+		_ = g.store.PutEngineIngestJob(ctx, j)
+		log.Printf("engines: ingest %s: %s", j.ID, j.Message)
 		return
 	}
-	// Where THIS file came from, written on the file and not only on the row. The row's own
-	// Source is set by the branch that CREATES it, so without this an attached part has no
-	// provenance at all once this job row ages out — and once a file can be REPLACED under a row
-	// that keeps everything else, the row's source names a file that is no longer there
-	// (see store.EngineModelFile.Source).
+	// A move empties its source, and a cached "present" there is exactly what the next parts plan
+	// would reuse — bytes it would then find gone at generation time.
+	if req.MoveFrom != "" {
+		if storage := g.storageChecker(); storage != nil {
+			storage.invalidate(req.MoveFrom)
+		}
+	}
+	if err := g.install(ctx, req, j.ID); err != nil {
+		j.State = store.EngineIngestFailed
+		j.Message = "the object was stored but its catalogue change did not apply: " + err.Error()
+		_ = g.store.PutEngineIngestJob(ctx, j)
+		log.Printf("engines: ingest %s: %s", j.ID, j.Message)
+		return
+	}
+	j.State, j.Message = store.EngineIngestDone, ""
+	if err := g.store.PutEngineIngestJob(ctx, j); err != nil {
+		log.Printf("engines: ingest %s installed its catalogue row but could not record completion: %v", j.ID, err)
+	}
+}
+
+// install is the common, synchronous catalogue transition for a downloaded or reused object.
+// The three store methods enforce the operation at write time: create cannot overwrite a row
+// that won a race, attach requires a row, and replace requires the named slot.
+func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, jobID string) error {
+	if g.models == nil {
+		return fmt.Errorf("no model catalogue")
+	}
 	file := store.EngineModelFile{
 		Flag: req.FileFlag, S3Key: req.S3Key, Bytes: req.Resolved.Bytes, Source: req.Resolved.Source,
+		ArtifactIdentity: req.Resolved.ArtifactIdentity,
 		// What the header said before the download started. A file taken in AS a VAE answers the
 		// question by being one, which is what keeps the scan from ever asking about it again.
 		VaeBundled: req.VaeBundled,
 	}
 	if strings.TrimSpace(req.FileFlag) == "--vae" {
 		file.VaeBundled = engineVaeYes
+	}
+	if req.MoveFrom != "" {
+		// The bytes did not change, so neither does what is known about them: the size, the
+		// provenance and the immutable identity are the ones the row already carried, and the
+		// move deliberately re-uses them rather than resolving the upstream again (it may be
+		// gated, moved or gone — none of which would make these bytes any less this file).
+		found, err := g.models.MoveEngineModelFile(ctx, req.Role, req.ModelID, req.MoveFrom, file)
+		if err != nil {
+			return err
+		}
+		if found {
+			log.Printf("engines: ingest %s done: %s/%s now reads %s as %s (moved from %s)",
+				jobID, req.Role, req.ModelID, req.S3Key, engineFlagLabel(req.FileFlag), req.MoveFrom)
+			if g.onDone != nil {
+				g.onDone(req.Role)
+			}
+			return nil
+		}
+		// 🔴 The row does not declare the old key — which is the NORMAL case since ADR 0085
+		// decision 1, not a failure. The plan moves bytes this deployment already holds under a
+		// name no loader lists into a row that does not exist yet (an object a forgotten row left
+		// behind) or into a slot that row never had. The task has already put the bytes at their
+		// destination, so what is left is the ordinary write: appended for a part, created for the
+		// model itself. Only a replacement still fails here, because it names a file to swap and
+		// there is none.
+		if req.Replace {
+			return fmt.Errorf("%s/%s no longer declares %s", req.Role, req.ModelID, req.MoveFrom)
+		}
+		if req.Attach {
+			found, err := g.models.AppendEngineModelFile(ctx, req.Role, req.ModelID, file)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return fmt.Errorf("%s/%s no longer exists", req.Role, req.ModelID)
+			}
+			log.Printf("engines: ingest %s done: %s added to %s/%s (moved from %s)",
+				jobID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID, req.MoveFrom)
+			if g.onDone != nil {
+				g.onDone(req.Role)
+			}
+			return nil
+		}
+		// and on to the create below, with the file at its destination
 	}
 	if req.Replace {
 		// 🔴 The geometry is written again, and only for the slot it describes. The row holds ONE
@@ -894,15 +1220,10 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		}
 		found, err := g.models.ReplaceEngineModelFile(ctx, req.Role, req.ModelID, file, kv)
 		if err != nil {
-			log.Printf("engines: ingest %s finished but %s could not take the file: %v", j.ID, req.ModelID, err)
-			return
+			return err
 		}
 		if !found {
-			// The row was forgotten, or that slot was, while the download ran. The bytes are in
-			// the bucket and nothing points at them, which is the one outcome worth spelling out.
-			log.Printf("engines: ingest %s finished but %s/%s no longer declares %s: register %s by hand",
-				j.ID, req.Role, req.ModelID, engineFlagLabel(req.FileFlag), j.S3Key)
-			return
+			return fmt.Errorf("%s/%s no longer declares %s", req.Role, req.ModelID, engineFlagLabel(req.FileFlag))
 		}
 		// 🔴 The OLD object stays in the bucket. The CP has no s3:DeleteObject (ADR 0072 decision
 		// 7) and the only principal that has is the ingest task — but this runs in the job
@@ -912,11 +1233,11 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		// what it refused to delete is how a model nobody touched stops loading. The panel says
 		// the bytes stay; deleting them is `?purge=1` on a row somebody chose to forget.
 		log.Printf("engines: ingest %s done: %s of %s/%s replaced by %s (the previous object stays in the bucket)",
-			j.ID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID, j.S3Key)
+			jobID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID, req.S3Key)
 		if g.onDone != nil {
 			g.onDone(req.Role)
 		}
-		return
+		return nil
 	}
 	if req.Attach {
 		// One PART of a model that already has a row. Only the file is written: the licence
@@ -924,21 +1245,16 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		// created, and this download knows none of them.
 		found, err := g.models.AppendEngineModelFile(ctx, req.Role, req.ModelID, file)
 		if err != nil {
-			log.Printf("engines: ingest %s finished but %s could not take the file: %v", j.ID, req.ModelID, err)
-			return
+			return err
 		}
 		if !found {
-			// The row was forgotten while the download ran. The bytes are in the bucket and
-			// nothing points at them, which is the one outcome worth spelling out.
-			log.Printf("engines: ingest %s finished but %s/%s no longer exists: register %s by hand",
-				j.ID, req.Role, req.ModelID, j.S3Key)
-			return
+			return fmt.Errorf("%s/%s no longer exists", req.Role, req.ModelID)
 		}
-		log.Printf("engines: ingest %s done: %s added to %s/%s", j.ID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID)
+		log.Printf("engines: ingest %s done: %s added to %s/%s", jobID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID)
 		if g.onDone != nil {
 			g.onDone(req.Role)
 		}
-		return
+		return nil
 	}
 	m := store.EngineModel{
 		Role: req.Role, ID: req.ModelID, Kind: req.Kind,
@@ -976,15 +1292,19 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		KVLayers: req.KVGeom.Layers, KVHeadsKV: req.KVGeom.HeadsKV,
 		KVKeyLen: req.KVGeom.KeyLen, KVValueLen: req.KVGeom.ValLen,
 	}
-	if err := g.models.PutEngineModel(ctx, m); err != nil {
-		log.Printf("engines: ingest %s finished but the row could not be written: %v", j.ID, err)
-		return
+	created, err := g.models.CreateEngineModel(ctx, m)
+	if err != nil {
+		return err
 	}
-	log.Printf("engines: ingest %s done: %s/%s registered (disabled)", j.ID, req.Role, req.ModelID)
+	if !created {
+		return fmt.Errorf("%s/%s was created before this object could be installed", req.Role, req.ModelID)
+	}
+	log.Printf("engines: ingest %s done: %s/%s registered (disabled)", jobID, req.Role, req.ModelID)
 	if g.onDone != nil {
 		g.onDone(req.Role)
 	}
 	g.followUpVae(ctx, req)
+	return nil
 }
 
 // followUpVae gives a row that was just created the VAE its checkpoint does not carry, either by
@@ -995,18 +1315,63 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 // form, so this path makes no judgement and can report nothing — a failure is a log line and a
 // row that keeps its `vae_missing` mark, which is the state the panel's own button fixes.
 func (g *engineIngester) followUpVae(ctx context.Context, req engineIngestRequest) {
-	fu := req.VaeFollowUp
-	if fu == nil || g.models == nil {
+	if fu := req.VaeFollowUp; fu != nil {
+		g.followUpFile(ctx, req, *fu)
+	}
+	// The SPLIT families' parts (engine_family_parts.go) ride the same path: same promise, same
+	// place it has to be kept, and the only thing that differs is which flag the file lands
+	// under — which is why the loop is over one list rather than a second copy of this function.
+	for _, fu := range req.PartsFollowUp {
+		g.followUpFile(ctx, req, fu)
+	}
+}
+
+// followUpFile keeps ONE of those promises.
+func (g *engineIngester) followUpFile(ctx context.Context, req engineIngestRequest, fu engineVaeFollowUp) {
+	if g.models == nil {
+		return
+	}
+	if fu.Conflict != "" {
+		// Planned as unstartable and never offered, so reaching here means a job spec outlived
+		// the catalogue it was planned against. Logged rather than attempted: the download would
+		// be refused for the taken key, minutes later, in a reconciler nobody is watching.
+		log.Printf("engines: %s/%s left %s alone — %s is %s",
+			req.Role, req.ModelID, fu.Flag, fu.S3Key, fu.Conflict)
+		return
+	}
+	flag := strings.TrimSpace(fu.Flag)
+	if flag == "" {
+		flag = "--vae"
+	}
+	// The bytes are here, under a name no loader lists: one server-side move rather than a second
+	// download of a file this deployment already owns (ADR 0085 decision 1). Attached, because
+	// the row this follows up on exists by now.
+	if from := strings.TrimSpace(req.PartsMove[flag]); from != "" {
+		if _, aerr := g.start(ctx, engineIngestRequest{
+			Role: req.Role, ModelID: req.ModelID, S3Key: fu.S3Key, MoveFrom: from,
+			AcceptedBy: req.AcceptedBy, AcceptedTenant: req.AcceptedTenant,
+			Resolved: fu.Resolved, FileFlag: flag, Attach: true,
+		}); aerr != nil {
+			log.Printf("engines: %s/%s could not move %s to %s (%s): attach it from the panel",
+				req.Role, req.ModelID, from, fu.S3Key, aerr.message)
+			return
+		}
+		log.Printf("engines: %s/%s is moving %s to %s", req.Role, req.ModelID, from, fu.S3Key)
 		return
 	}
 	if fu.Staged {
 		file := store.EngineModelFile{
-			Flag: "--vae", S3Key: fu.S3Key, Bytes: fu.Bytes, Source: fu.Source, VaeBundled: engineVaeYes,
+			Flag: flag, S3Key: fu.S3Key, Bytes: fu.Bytes, Source: fu.Source,
+			ArtifactIdentity: fu.ArtifactIdentity,
+		}
+		if flag == "--vae" {
+			// The mark the VAE remedy exists to clear. A text encoder has no such question.
+			file.VaeBundled = engineVaeYes
 		}
 		found, err := g.models.AppendEngineModelFile(ctx, req.Role, req.ModelID, file)
 		if err != nil || !found {
-			log.Printf("engines: %s/%s did not take the family VAE %s (found=%v): attach it from the panel",
-				req.Role, req.ModelID, fu.S3Key, found)
+			log.Printf("engines: %s/%s did not take %s %s (found=%v): attach it from the panel",
+				req.Role, req.ModelID, flag, fu.S3Key, found)
 			return
 		}
 		log.Printf("engines: %s/%s declared %s, which this deployment already held", req.Role, req.ModelID, fu.S3Key)
@@ -1022,13 +1387,13 @@ func (g *engineIngester) followUpVae(ctx context.Context, req engineIngestReques
 		Role: req.Role, ModelID: req.ModelID, S3Key: fu.S3Key,
 		AcceptedBy: req.AcceptedBy, AcceptedTenant: req.AcceptedTenant,
 		AcceptedLicense: engineLicenceLabel(fu.Resolved),
-		Resolved:        fu.Resolved, FileFlag: "--vae", Attach: true,
+		Resolved:        fu.Resolved, FileFlag: flag, Attach: true,
 	}); aerr != nil {
-		log.Printf("engines: %s/%s could not start the family VAE ingest (%s): attach it from the panel",
-			req.Role, req.ModelID, aerr.message)
+		log.Printf("engines: %s/%s could not start the %s ingest (%s): attach it from the panel",
+			req.Role, req.ModelID, flag, aerr.message)
 		return
 	}
-	log.Printf("engines: %s/%s is taking its family VAE in (%s)", req.Role, req.ModelID, fu.S3Key)
+	log.Printf("engines: %s/%s is taking %s in (%s)", req.Role, req.ModelID, flag, fu.S3Key)
 }
 
 // engineIngestFailureCode reads the ONE actionable thing out of a failed task's own words: the
@@ -1041,7 +1406,8 @@ func (g *engineIngester) followUpVae(ctx context.Context, req engineIngestReques
 // **401 and 403 are not the same failure**: 401 is a token that is not reaching the task
 // (register one, check the secret), 403 is a token that arrived and an account that has not
 // accepted THIS repository. A panel that said "gated" to both sends half its readers to the
-// wrong screen.
+// wrong screen. Civitai's own token (registered the same way, `engine_civitai_token.go`) earns
+// the same two-way split.
 //
 // Read out of the message rather than carried on the job row: the status is the task's, the
 // row has no column for it, and the classification is a pure function this file can be tested
@@ -1052,9 +1418,10 @@ func engineIngestFailureCode(source, msg string) string {
 	case m == nil:
 		return ""
 	case strings.HasPrefix(source, "civitai:"):
-		// Civitai has no token at all, so both statuses mean the same act (ADR 0072 P2 欠落 5).
-		// A job started before the resolve probe existed still lands here.
-		return errCodeIngestCivitaiLogin
+		if m[1] == "403" {
+			return errCodeIngestCivitaiLogin
+		}
+		return errCodeIngestCivitaiNoToken
 	case !strings.HasPrefix(source, "hf:"):
 		return "" // a plain URL's 401 is the operator's own server, and this cannot advise on it
 	case m[1] == "403":
@@ -1079,13 +1446,14 @@ func engineFlagLabel(flag string) string {
 
 // why reads the last words of the failed container's log.
 func (g *engineIngester) why(ctx context.Context, t ecstypes.Task, container string) string {
-	if g.logs == nil || g.def.LogGroup == "" {
+	group := g.ingestDef().LogGroup
+	if g.logs == nil || group == "" {
 		return ""
 	}
 	// The stream name ECS composes: <prefix>/<container>/<task id>.
 	arn := aws.ToString(t.TaskArn)
 	id := arn[strings.LastIndex(arn, "/")+1:]
-	lines, err := g.logs.GetLogEvents(ctx, g.def.LogGroup, "ingest-"+container+"/"+container+"/"+id)
+	lines, err := g.logs.GetLogEvents(ctx, group, "ingest-"+container+"/"+container+"/"+id)
 	if err != nil || len(lines) == 0 {
 		return ""
 	}
@@ -1178,17 +1546,18 @@ func (l *engineIngestLogs) GetLogEvents(ctx context.Context, group, stream strin
 // S3 action at all (ADR 0072 review R3) and the ADR chose to keep it that way, so "delete the
 // bytes" is a job handed to the principal that put them there.
 func (g *engineIngester) deleteObjects(ctx context.Context, keys []string) error {
-	if g == nil || g.ecs == nil || !g.def.ok() {
+	def := g.ingestDef()
+	if g == nil || g.ecs == nil || !def.ok() {
 		return fmt.Errorf("this deployment's engine stack declares no ingest task")
 	}
 	out, err := g.ecs.RunTask(ctx, &ecs.RunTaskInput{
 		Cluster:        aws.String(g.cluster),
-		TaskDefinition: aws.String(g.def.TaskDef),
+		TaskDefinition: aws.String(def.TaskDef),
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets:        g.def.Subnets,
-				SecurityGroups: g.def.SecurityGroups,
+				Subnets:        def.Subnets,
+				SecurityGroups: def.SecurityGroups,
 				AssignPublicIp: ecstypes.AssignPublicIpDisabled,
 			},
 		},

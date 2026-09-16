@@ -115,18 +115,26 @@ function TranscriptTurnImpl({
   }
   const workOpen = work.current.open;
   const edited = isUser ? [] : turnFiles(turn.parts);
+  // Copy and translate both follow what the reader can actually see. A folded turn hides its
+  // work-process text (the intermediate replies between tool calls, e.g. "途中応答31件"), and
+  // neither the clipboard nor a translation request should reach past that fold: the reader
+  // never asked to copy or translate text they cannot see, and a long tool trace's intermediate
+  // replies can alone push a short final answer over the per-request part/byte caps
+  // (translateMaxParts / translateMaxPartBytes in session_translate.go), failing translation
+  // for an answer that on its own would be well under them.
+  const visibleParts = split ? turn.parts.slice(split.at) : turn.parts;
   // Per-answer translation (docs/log/97). The key is derived from the prose itself rather than
   // from turn.idx, which shifts when an older page is prepended — with an index key the reader's
   // translation would jump to a different answer.
   const tx = isUser ? undefined : caps.translate;
-  const txTexts = tx ? translatableTexts(turn) : [];
+  const txTexts = tx ? translatableTexts({ parts: visibleParts }) : [];
   const txKey = tx ? turnTranslateKey(txTexts) : "";
   const txShown = !!txKey && !!tx?.shown(txKey);
   const translatedOf = (p: Part): string | undefined =>
     txShown && p.kind === "text" && p.text ? tx?.get(p.text) : undefined;
   // Copy follows what the reader is looking at: with the translation on screen, handing them
   // back the English they could not read would be a surprise.
-  const copyParts = split ? turn.parts.slice(split.at) : turn.parts;
+  const copyParts = visibleParts;
   const copyText = txShown
     ? textOfParts(copyParts.map((p) => ({ ...p, text: translatedOf(p) ?? p.text })))
     : split

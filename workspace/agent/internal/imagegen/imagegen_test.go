@@ -158,11 +158,11 @@ func TestBuiltInOrderPutsTheFleetsOwnEnginesFirst(t *testing.T) {
 	t.Cleanup(func() { ProviderOrderPref = oldPref })
 
 	got := effectiveOrder()
-	want := []string{ProviderSdcpp, ProviderComfy, ProviderAgy, ProviderCodex}
+	want := []string{ProviderOpenAICompat, ProviderComfy, ProviderAgy, ProviderCodex}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("effectiveOrder = %v, want %v", got, want)
 	}
-	for _, id := range []string{ProviderSdcpp, ProviderComfy} {
+	for _, id := range []string{ProviderOpenAICompat, ProviderComfy} {
 		if !providerIsFleet(id) {
 			t.Errorf("%s is not declared as the fleet's own", id)
 		}
@@ -780,7 +780,7 @@ func TestAutoSaysWhenItFellThroughToAnotherAccount(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
 	withStubProvider(t,
-		stubProvider{id: ProviderSdcpp, err: errors.New("the engine did not come up")},
+		stubProvider{id: ProviderOpenAICompat, err: errors.New("the engine did not come up")},
 		stubProvider{id: ProviderAgy, res: Result{Provider: ProviderAgy,
 			Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png", Width: 4, Height: 4}}}},
 	)
@@ -802,7 +802,7 @@ func TestAutoSaysWhenItFellThroughToAnotherAccount(t *testing.T) {
 	if got == "" {
 		t.Fatalf("warnings = %v — a fall-through onto another account said nothing", out.Warnings)
 	}
-	if !strings.Contains(got, ProviderSdcpp) || !strings.Contains(got, "did not come up") {
+	if !strings.Contains(got, ProviderOpenAICompat) || !strings.Contains(got, "did not come up") {
 		t.Errorf("warning = %q, want it to name what failed and why", got)
 	}
 }
@@ -814,7 +814,7 @@ func TestAutoIsSilentWhenTheFirstProviderServed(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
 	withStubProvider(t,
-		stubProvider{id: ProviderSdcpp, res: Result{Provider: ProviderSdcpp,
+		stubProvider{id: ProviderOpenAICompat, res: Result{Provider: ProviderOpenAICompat,
 			Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png", Width: 4, Height: 4}}}},
 		stubProvider{id: ProviderAgy},
 	)

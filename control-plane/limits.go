@@ -104,6 +104,32 @@ type tenantLimits struct {
 	// history into the workspace home volume for this many days. 0 keeps the
 	// standard short-lived /tmp history only.
 	TerminalHistoryRetentionDays int `json:"terminal_history_retention_days,omitempty"`
+	// AllowEngineLLM and AllowEngineImage gate USE of the deployment's self-hosted
+	// engines (ADR 0084 decision 7) — unlike AllowEngineIngest above, which only gates
+	// adding models to the catalogue. These are *bool, not bool: the capability they
+	// gate already exists today for every tenant, so a bool with zero=false would read
+	// every tenant's stored limits as "false" the moment a deployment upgrades to this
+	// field, silently taking image generation and self-hosted chat away fleet-wide.
+	// nil means "nobody has said anything" and resolves to ALLOWED — the same
+	// three-value idiom idleTimeout already uses ("" => deployment default). No
+	// migration is needed; upgrading changes nothing until a super_admin sets one.
+	AllowEngineLLM   *bool `json:"allow_engine_llm,omitempty"`
+	AllowEngineImage *bool `json:"allow_engine_image,omitempty"`
+}
+
+// engineRoleAllowed reports whether this tenant may use the given engine role. nil
+// (the field never set) means allowed — see AllowEngineLLM/AllowEngineImage.
+func (l tenantLimits) engineRoleAllowed(role string) bool {
+	var p *bool
+	switch role {
+	case engineAPIChat:
+		p = l.AllowEngineLLM
+	case engineAPIImages:
+		p = l.AllowEngineImage
+	default:
+		return true
+	}
+	return p == nil || *p
 }
 
 func parseLimits(s string) tenantLimits {

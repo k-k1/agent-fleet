@@ -35,6 +35,13 @@ export interface Tenant {
   // (ADR 0072 open question 11). The catalogue itself stays one per deployment — this only
   // says who may add to it, and every tenant sees every id either way.
   allow_engine_ingest?: boolean;
+  // Whether this tenant may USE the deployment's self-hosted engines at all (ADR 0084
+  // decision 7) — the cost decision, as opposed to allow_engine_ingest above (who may add to
+  // the catalogue). super_admin only: absent from a tenant_admin's own row. The server
+  // resolves its stored nil ("nobody has said") to true before sending, so undefined here only
+  // means "not loaded yet" — never treat it as denied.
+  allow_engine_llm?: boolean;
+  allow_engine_image?: boolean;
   terminal_history_retention_days?: number;
   // Per-tenant login rules, stored as CSV (docs/log/61 §61.9.7).
   allowed_providers?: string;

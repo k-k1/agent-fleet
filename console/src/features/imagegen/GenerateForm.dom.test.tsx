@@ -14,7 +14,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { GenerateForm } from "./parts/GenerateForm.tsx";
 import { emptyDraft, type ImagegenDraft } from "./draft.ts";
-import type { ImagegenLora, ImagegenModel } from "./wire.ts";
+import { resolveFleetProvider, type ImagegenLora, type ImagegenModel, type ImagegenProvider } from "./wire.ts";
 
 let host: HTMLDivElement;
 let root: Root;
@@ -29,12 +29,22 @@ const LORAS: ImagegenLora[] = [
   { name: "neon", baseModel: "sdxl", trained_words: ["neon_glow", "night"] },
 ];
 
-function Harness({ model, initial }: { model: ImagegenModel; initial?: Partial<ImagegenDraft> }) {
+function Harness({
+  model,
+  initial,
+  fleetProviders = [],
+}: {
+  model: ImagegenModel;
+  initial?: Partial<ImagegenDraft>;
+  fleetProviders?: ImagegenProvider[];
+}) {
   const [draft, setDraft] = useState<ImagegenDraft>({ ...emptyDraft(), model: model.id, ...initial });
   return (
     <GenerateForm
       draft={draft}
       patch={(p) => setDraft((d) => ({ ...d, ...p }))}
+      fleetProviders={fleetProviders}
+      provider={resolveFleetProvider(fleetProviders, draft.providerId)}
       models={[model]}
       loras={LORAS}
       model={model}
@@ -52,12 +62,12 @@ function Harness({ model, initial }: { model: ImagegenModel; initial?: Partial<I
   );
 }
 
-const render = async (model: ImagegenModel, initial?: Partial<ImagegenDraft>) => {
+const render = async (model: ImagegenModel, initial?: Partial<ImagegenDraft>, fleetProviders?: ImagegenProvider[]) => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root.render(<Harness model={model} initial={initial} />);
+    root.render(<Harness model={model} initial={initial} fleetProviders={fleetProviders} />);
   });
 };
 
@@ -135,6 +145,20 @@ describe("トリガー語のチップ", () => {
     expect(chips().sort()).toEqual(["neon_glow", "night"]);
   });
 
+  // 選ぶ前の「何が付いてくるか」。チップは選んだ後の答えで、選ぶかどうかを決めている最中には
+  // 何も答えていなかった。ticked になったらチップ側が同じ語を押せる形で持つので、行からは消す
+  // （押せない同じ一覧が 2 つ並ぶのは 1 つより悪い）。
+  it("選ぶ前に行へ出て、選んだらチップに入れ替わる", async () => {
+    await render(SDXL);
+    const rowOf = (name: string) =>
+      [...host.querySelectorAll(".igen-lora")].find((r) => r.querySelector(".igen-lora-pick")?.textContent?.includes(name))!;
+    expect(rowOf("neon").querySelector(".igen-lora-trigger")?.textContent).toContain("neon_glow");
+    expect(rowOf("neon").querySelector(".igen-lora-trigger")?.textContent).toContain("night");
+    await tick("neon");
+    expect(rowOf("neon").querySelector(".igen-lora-trigger")).toBeNull();
+    expect(chips().sort()).toEqual(["neon_glow", "night"]);
+  });
+
   it("チップは押されるまでプロンプトへ入らない（勝手に足さない）", async () => {
     await render(SDXL);
     await tick("detail");
@@ -152,5 +176,87 @@ describe("編集のときの大きさ", () => {
     await render(SDXL, { op: "edit" });
     const size = fieldByLabel("大きさ") ?? fieldByLabel("Size");
     expect((size as HTMLSelectElement).disabled).toBe(true);
+  });
+});
+
+// ADR 0082 P1, unresolved question 2: two fleet rows must be choosable, not silently collapsed
+// into "the first one" — but one row is not a choice, so the picker must not clutter the form
+// on every ordinary, single-engine deployment (which is most of them).
+describe("fleet が複数あるときの選択", () => {
+  const IMAGE: ImagegenProvider = { id: "image", fleet: true, kind: "comfy" };
+  const LAN: ImagegenProvider = { id: "comfy-lan", fleet: true, kind: "comfy" };
+
+  const providerField = () => fieldByLabel("エンジン") ?? fieldByLabel("Engine");
+
+  it("1 本しか無ければピッカーごと出さない", async () => {
+    await render(SDXL, {}, [IMAGE]);
+    expect(providerField()).toBeNull();
+  });
+
+  it("0 本でも出さない", async () => {
+    await render(SDXL, {}, []);
+    expect(providerField()).toBeNull();
+  });
+
+  it("2 本あれば選べる。値はそれぞれの行のキー", async () => {
+    await render(SDXL, {}, [IMAGE, LAN]);
+    const select = providerField() as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    const values = [...select.options].map((o) => o.value);
+    expect(values).toEqual(["image", "comfy-lan"]);
+  });
+
+  it("何も選んでいなければ最初の行が既定（今までと同じ挙動）", async () => {
+    await render(SDXL, {}, [IMAGE, LAN]);
+    expect((providerField() as HTMLSelectElement).value).toBe("image");
+  });
+
+  it("選ぶと draft.providerId に積まれ、選択が反映される", async () => {
+    let seen: ImagegenDraft | null = null;
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    function Probe() {
+      const [draft, setDraft] = useState<ImagegenDraft>({ ...emptyDraft(), model: SDXL.id });
+      seen = draft;
+      return (
+        <GenerateForm
+          draft={draft}
+          patch={(p) => setDraft((d) => ({ ...d, ...p }))}
+          fleetProviders={[IMAGE, LAN]}
+          provider={resolveFleetProvider([IMAGE, LAN], draft.providerId)}
+          models={[SDXL]}
+          loras={[]}
+          model={SDXL}
+          samplers={[]}
+          schedulers={[]}
+          loraWeightMax={2}
+          alwaysNegative=""
+          busy={false}
+          trialFull={false}
+          queueFull={false}
+          onTrial={() => {}}
+          onEnqueue={() => {}}
+          onPromptHelp={() => {}}
+        />
+      );
+    }
+    await act(async () => {
+      root.render(<Probe />);
+    });
+    const select = providerField() as HTMLSelectElement;
+    await act(async () => {
+      select.value = "comfy-lan";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(seen!.providerId).toBe("comfy-lan");
+    expect((providerField() as HTMLSelectElement).value).toBe("comfy-lan");
+  });
+
+  // A row a stored draft named that no longer exists (removed, or a different deployment's
+  // draft) must read the same as "no choice" — the first ready row — never as an error.
+  it("消えた行を選んでいた draft は最初の行に読み替わる", async () => {
+    await render(SDXL, { providerId: "gone" }, [IMAGE, LAN]);
+    expect((providerField() as HTMLSelectElement).value).toBe("image");
   });
 });

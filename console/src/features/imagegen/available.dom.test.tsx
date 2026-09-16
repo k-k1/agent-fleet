@@ -20,7 +20,10 @@ vi.mock("../../core/store/workspace.ts", () => ({
 
 const { useImagegenAvailable, _imagegenAvailability } = await import("./available.ts");
 
-const comfy: ImagegenStatus = { enabled: true, ready: true, providers: [{ id: "comfy" } as never] };
+// The id is a real deployment's images ROW KEY (ADR 0082 P0) — "image", not "comfy" — on
+// purpose: a fixture spelled "comfy" cannot catch a reader that (re)introduces a match against
+// the retired kind-name list, because "comfy" would satisfy either implementation.
+const comfy: ImagegenStatus = { enabled: true, ready: true, providers: [{ id: "image", fleet: true } as never] };
 const none: ImagegenStatus = { enabled: true, ready: true, providers: [{ id: "codex" } as never] };
 
 function Probe() {

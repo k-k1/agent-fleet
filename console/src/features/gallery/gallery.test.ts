@@ -214,6 +214,48 @@ describe("フォルダと、その行き来", () => {
     expect(galleryFolders(null, "gen")).toEqual([]);
   });
 
+  it("Agent がフォルダの中身を答えたときだけ、表紙と枚数を載せる", () => {
+    const peeked = galleryFolders(
+      [
+        { name: "gen", type: "dir", images: 12, preview: [{ name: "new.png", mtime: 300 }] },
+        // 答えが無いフォルダ（peek を返さない古い Agent、または空のフォルダ）。
+        { name: "plain", type: "dir" },
+      ],
+      "root",
+    );
+    expect(peeked[0]).toEqual({
+      name: "gen",
+      path: "root/gen",
+      count: 12,
+      cover: { name: "new.png", path: "root/gen/new.png", size: 0, mtime: 300 },
+    });
+    // 枚数 0 と「答えていない」は別物＝カードに「0 枚」と書いてはいけない。
+    expect(peeked[1]).toEqual({ name: "plain", path: "root/plain" });
+    expect(galleryFolders([{ name: "empty", type: "dir", images: 0, preview: [] }], "")[0]).toEqual({
+      name: "empty",
+      path: "empty",
+      count: 0,
+    });
+  });
+
+  it("表紙は一覧の項目と同じ厳しさで見る（画像でない名前・壊れた項目は表紙にしない）", () => {
+    const bad = galleryFolders(
+      [
+        { name: "a", type: "dir", preview: [{ name: "notes.md", mtime: 1 }] },
+        { name: "b", type: "dir", preview: [{ mtime: 1 }] },
+        { name: "c", type: "dir", preview: [] },
+        { name: "d", type: "dir", preview: "x.png" as unknown as FsEntry["preview"] },
+      ],
+      "",
+    );
+    expect(bad.map((f) => f.cover)).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
+  it("mtime の無い表紙は版を持たない（持たせると古い絵を永久に掴む）", () => {
+    const [f] = galleryFolders([{ name: "gen", type: "dir", preview: [{ name: "a.png" }] }], "");
+    expect(f.cover).toEqual({ name: "a.png", path: "gen/a.png", size: 0 });
+  });
+
   it("画像とフォルダは互いに混ざらない", () => {
     expect(galleryImages(entries, "gen").map((i) => i.name)).toEqual(["b.png"]);
   });

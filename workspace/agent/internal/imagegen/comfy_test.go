@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -732,7 +733,7 @@ func TestComfyRefusesAnOversizedUpload(t *testing.T) {
 }
 
 // A model with no declared baseModel is refused rather than guessed at — decision 2 exists so
-// the family is a stated fact, and comfy has no fallback the way sdcpp's id-sniffing guess does.
+// the family is a stated fact, and comfy has no id-sniffing fallback at all.
 //
 // The refusal has to separate the two ways it happens, because they need different fixes and
 // only one of them LOOKS wrong on the admin screen: nothing declared (a seeded row) versus an
@@ -880,6 +881,79 @@ func TestComfyGenerateSendsAMatchingLoraToTheEngine(t *testing.T) {
 	}
 	if inputs["strength_model"] != 0.6 {
 		t.Errorf("strength_model = %v, want the requested weight", inputs["strength_model"])
+	}
+}
+
+// ADR 0081 decision 5. The pairing is legal, the adapter loads, the whole generation is paid for
+// — and the picture is the one without it, because the words it answers to were never said. There
+// is no error to observe, so the result has to say it out loud.
+func TestComfyGenerateWarnsWhenATriggerWordIsMissing(t *testing.T) {
+	conn := loraConn()
+	conn.Loras[0].TrainedWords = []string{"wtrcolor style", "loose wash"}
+	p, _ := comfyStub(t, conn, nil)
+
+	res, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0",
+		Loras: []LoraRef{{Name: "watercolor-v2"}},
+	})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "watercolor-v2") && strings.Contains(w, "wtrcolor style") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %v, want one naming the adapter and the words it answers to", res.Warnings)
+	}
+
+	// And silent when the prompt says one of them: a warning that fires on the correct request
+	// is a warning nobody reads on the incorrect one.
+	ok, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox, LOOSE WASH", Model: "sdxl-base-1.0",
+		Loras: []LoraRef{{Name: "watercolor-v2"}},
+	})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	for _, w := range ok.Warnings {
+		if strings.Contains(w, "answers to") {
+			t.Errorf("warnings = %v, want nothing once a trigger word is in the prompt", ok.Warnings)
+		}
+	}
+}
+
+// The edges of the same rule, where a wrong answer is a warning that cries wolf (and gets ignored
+// on the request that mattered) rather than a broken picture.
+func TestComfyTriggerWarnings(t *testing.T) {
+	conn := loraConn()
+	conn.Loras[0].TrainedWords = []string{"wtrcolor style", "loose wash"}
+
+	for _, tc := range []struct {
+		name   string
+		want   []LoraRef
+		prompt string
+		warn   bool
+	}{
+		{name: "no LoRA at all", prompt: "a fox"},
+		{name: "none of the words", want: []LoraRef{{Name: "watercolor-v2"}}, prompt: "a fox", warn: true},
+		{name: "ANY of them is enough — they are alternatives, not a checklist",
+			want: []LoraRef{{Name: "watercolor-v2"}}, prompt: "a fox, loose wash"},
+		{name: "the prompt's own casing does not decide it",
+			want: []LoraRef{{Name: "watercolor-v2"}}, prompt: "A Fox, Wtrcolor Style"},
+		{name: "an adapter that publishes none is not nagged about words it does not have",
+			want: []LoraRef{{Name: "klein-lineart"}}, prompt: "a fox"},
+		{name: "a name this engine does not have is comfyResolveLoras' refusal, not a warning",
+			want: []LoraRef{{Name: "nothing-of-the-sort"}}, prompt: "a fox"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := comfyTriggerWarnings(conn, tc.want, tc.prompt)
+			if (len(got) > 0) != tc.warn {
+				t.Fatalf("warnings = %v, want any = %v", got, tc.warn)
+			}
+		})
 	}
 }
 
@@ -1122,6 +1196,19 @@ func negConn() EngineConn {
 		{Flag: "--clip_l", Name: "qwen.safetensors"},
 		{Flag: "--vae", Name: "flux2-vae.safetensors"},
 	}
+	// Both Krea 2 modes of ONE guided family: the Turbo row takes the family's own recipe (cfg 1)
+	// and the Raw row declares the undistilled numbers. They exist to be compared — see
+	// TestComfyCapsNegativeReadsTheRowsCfg.
+	for _, id := range []string{"krea2-turbo", "krea2-raw"} {
+		c.Models = append(c.Models, id)
+		c.BaseModel[id] = "krea2"
+		c.Files[id] = []EngineFile{
+			{Flag: "--diffusion-model", Name: "krea2.safetensors"},
+			{Flag: "--clip_l", Name: "qwen3vl_4b.safetensors"},
+			{Flag: "--vae", Name: "qwen_image_vae.safetensors"},
+		}
+	}
+	c.Params = map[string]EngineParams{"krea2-raw": {Steps: 52, CFG: 4.5}}
 	c.Negatives = map[string]string{"sdxl-base-1.0": "extra fingers"}
 	c.NegativeAlways = "explicit"
 	return c
@@ -1196,6 +1283,31 @@ func TestComfyCapsNegativeIsPerModel(t *testing.T) {
 	// not a thing to have said.
 	if p.Caps("nothing-declared").Negative {
 		t.Error("a model with no declared family reports a negative prompt")
+	}
+}
+
+// The family is necessary and not sufficient: two rows of the SAME guided family answer
+// differently because one of them is declared at cfg 1, where `uncond + 1*(cond - uncond)` is
+// cond exactly and the branch the template wires cancels out. Krea 2 Turbo is that row, and it
+// is the normal one for the family — so answering by family alone would tell most Krea 2 users
+// their negative prompt reaches a picture it cannot touch.
+func TestComfyCapsNegativeReadsTheRowsCfg(t *testing.T) {
+	p, _ := comfyStub(t, negConn(), nil)
+	if p.Caps("krea2-turbo").Negative {
+		t.Error("a krea2 row at the family's cfg 1 reports a negative prompt that cancels out")
+	}
+	// The positive control, and the reason this is not just "krea2 is distilled": the same
+	// family, the same template, one declared `params` apart.
+	if !p.Caps("krea2-raw").Negative {
+		t.Error("a krea2 row declared at cfg 4.5 reports no negative prompt, and its KSampler runs guided")
+	}
+	// The form's fields have to say the same thing as the capability, or the member is offered a
+	// box for a value the engine has already decided to ignore.
+	if slices.Contains(comfyModelKnobs(negConn(), ComfyFamilyKrea2, "krea2-turbo"), "negative") {
+		t.Error("the form offers a negative field on a row whose Caps say it is ignored")
+	}
+	if !slices.Contains(comfyModelKnobs(negConn(), ComfyFamilyKrea2, "krea2-raw"), "negative") {
+		t.Error("the form drops the negative field on a guided row that reads it")
 	}
 }
 
@@ -1404,5 +1516,76 @@ func TestComfyReportsThePhasesAndTheEngineId(t *testing.T) {
 	}
 	if len(phases) < 3 || phases[0] != PhaseWaking || phases[len(phases)-1] != PhaseFetching {
 		t.Fatalf("phases = %v, want waking first and fetching last", got)
+	}
+}
+
+// --- per-family default sizes ---------------------------------------------------------------
+
+// 🔴 SD1.5's UNet was trained at 512, and a 1024 request to it does not fail — it returns a
+// picture with the subject duplicated. So the size a row falls back to has to be the FAMILY's,
+// not one list shared by everything, and the row's own declaration still has to win over both.
+//
+// The megapixel families are pinned here too, byte-for-byte as they were before sizes became a
+// per-family answer: this change must be invisible to them.
+func TestComfySizesFallBackPerFamily(t *testing.T) {
+	conn := EngineConn{
+		Models: []string{"sd15-row", "sdxl-row", "declared-row", "undeclared-row"},
+		BaseModel: map[string]string{
+			"sd15-row": "sd15", "sdxl-row": "sdxl", "declared-row": "sd15",
+		},
+		Sizes: map[string][]string{"declared-row": {"1024x1024"}},
+	}
+
+	got := comfySizesFor(conn, "sd15-row")
+	want := []string{"512x512", "512x768", "768x512", "640x512", "512x640"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("sd15 sizes = %v, want %v", got, want)
+	}
+	for _, s := range got {
+		if strings.HasPrefix(s, "1024") || strings.HasSuffix(s, "x1024") {
+			t.Errorf("sd15 is offered %s, which is the size that duplicates the subject", s)
+		}
+	}
+
+	if got := strings.Join(comfySizesFor(conn, "sdxl-row"), ","); got != strings.Join(comfyMegapixelSizes, ",") {
+		t.Errorf("sdxl sizes = %v — the megapixel families must not move", got)
+	}
+
+	// The catalogue row still wins: an operator who declares 1024 for an SD1.5 row has said
+	// something this table is not entitled to overrule.
+	if got := comfySizesFor(conn, "declared-row"); len(got) != 1 || got[0] != "1024x1024" {
+		t.Errorf("declared sizes = %v, want the row's own", got)
+	}
+
+	// An undeclared family cannot generate at all, so the list decides nothing — and answering
+	// with SD1.5's presets there would be a guess about a row nobody has declared.
+	if got := strings.Join(comfySizesFor(conn, "undeclared-row"), ","); got != strings.Join(comfyMegapixelSizes, ",") {
+		t.Errorf("undeclared sizes = %v, want the megapixel list", got)
+	}
+}
+
+// comfyDefaultSize is what a request naming no size gets, and it is the first preset of the
+// family's own list — the native square, never another family's.
+func TestComfyDefaultSizeIsTheFamilysNativeSquare(t *testing.T) {
+	if w, h := comfyDefaultSize(ComfyFamilySD15); w != 512 || h != 512 {
+		t.Errorf("sd15 default = %dx%d, want 512x512", w, h)
+	}
+	for _, f := range comfyFamilies {
+		if f == ComfyFamilySD15 {
+			continue
+		}
+		if w, h := comfyDefaultSize(f); w != 1024 || h != 1024 {
+			t.Errorf("%s default = %dx%d, want the unchanged 1024x1024", f, w, h)
+		}
+	}
+}
+
+// Every family has to have a trial step count: the map is read with a plain lookup, so a family
+// missing from it trials at 0 steps — which is not an error anywhere, just a blank picture.
+func TestEveryFamilyHasTrialSteps(t *testing.T) {
+	for _, f := range comfyFamilies {
+		if comfyTrialSteps[f] <= 0 {
+			t.Errorf("%s has no trial step count", f)
+		}
 	}
 }

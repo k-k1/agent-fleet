@@ -144,7 +144,10 @@ describe("seed の方針", () => {
 });
 
 describe("エンジンの状態", () => {
-  const ready: ImagegenStatus = { enabled: true, ready: true, providers: [{ id: "comfy", models: [] }] };
+  // The id is a real deployment's images ROW KEY (ADR 0082 P0), not the kind name "comfy": a
+  // fixture spelled "comfy" cannot catch a reader that matches the id's spelling instead of
+  // reading `fleet`, because "comfy" happens to satisfy both.
+  const ready: ImagegenStatus = { enabled: true, ready: true, providers: [{ id: "image", fleet: true, models: [] }] };
 
   it("waking のジョブがあれば starting", () => {
     expect(engineState(ready, [job({ id: "1", state: "waking" })], { id: "m", warm: true })).toBe("starting");

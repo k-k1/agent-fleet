@@ -186,14 +186,21 @@ type engineGateway struct {
 // `GET /api/admin/engines` — the panel could not even say "no engines here", and ADR 0072
 // decision 11's browse (which needs no engine, no token and no bucket) was unreachable exactly
 // where it is most useful: deciding whether to stand the stack up at all. Every one of those
-// handlers is nil-safe on the registry and answers "there is no such engine" by itself.
-func registerEngineRoutes(mux *http.ServeMux, cfg config) {
+// handlers is nil-safe on the registry and answers "there is no such engine" by itself. The
+// member fallback (engine_member.go) is registered the same unconditional way, for the same
+// reason (ADR 0084 decision 1).
+//
+// It answers the registry it built, so registerEventsRoutes — called earlier in buildMux — can
+// wire the SAME registry into the `engines` SSE stream rather than building a second one. Two
+// registries would mean two controller goroutines per engine, each buying its own box.
+func registerEngineRoutes(mux *http.ServeMux, cfg config) *engineRegistry {
 	reg := newEngineRegistry(context.Background(), cfg.mgr)
 	// The super-admin panel. Registered before the gateway's own guard because it is the one
 	// part that has something to say when there is no engine at all.
 	registerEngineAdminRoutes(mux, cfg, reg)
+	registerEngineMemberRoutes(mux, cfg, reg)
 	if reg == nil {
-		return
+		return nil
 	}
 	g := engineGateway{mgr: cfg.mgr, reg: reg}
 	// Session-exempt, like /mcp and /git/*: the caller is a Workspace with a token, not a
@@ -202,6 +209,7 @@ func registerEngineRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/engine/token", g.issueSessionToken)
 	mux.HandleFunc("GET /internal/engine/catalog", g.catalog)
 	mux.HandleFunc("/engine/{key}/v1/{path...}", g.serve)
+	return reg
 }
 
 // --- token issue --------------------------------------------------------------
@@ -234,6 +242,18 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
 		return
 	}
+	// ADR 0084 decision 8, gate 2: a safety net for the up-to-ten-minute window the catalogue
+	// (gate 1) stays cached on the Agent side. Without this, a tenant denied mid-window could
+	// still buy a session token for the role it no longer holds.
+	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if !lim.engineRoleAllowed(eng.def.api()) {
+		writeAPIErr(w, engineForbiddenErr(eng.def.api()))
+		return
+	}
 	exp := time.Now().Add(engineSessionTokenTTL)
 	tok := mintEngineSessionToken(g.reg.signKey, mv.MembershipID, strings.TrimSpace(req.Session), key, exp)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -249,7 +269,13 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 // never touches the engines themselves — the whole point is that the launch menu can be
 // drawn while every engine is asleep.
 func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
-	if _, aerr := g.issuerMembership(r); aerr != nil {
+	mv, aerr := g.issuerMembership(r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -257,6 +283,12 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 	for _, e := range g.reg.list() {
 		if e.mode(r.Context()) == engineModeOff {
 			continue // an engine an admin switched off is not offered, rather than offered and refused
+		}
+		// ADR 0084 decision 7/8, gate 1 (the main one): a role this tenant was denied is
+		// dropped from the catalogue exactly like an engine switched off — never offered and
+		// then refused, which is the shape decision 8 rules out.
+		if !lim.engineRoleAllowed(e.def.api()) {
+			continue
 		}
 		served, _ := e.servedModel()
 		row := engineCatalogRowFor(e.def, e.catalog.enabled(r.Context()), served, e.negativeAlways(r.Context()))
@@ -353,6 +385,30 @@ func engineStartWindow(models []store.EngineModel) (int, int) {
 	return first.ContextTokens, first.MaxOutputTokens
 }
 
+// tenantLimitsFor reads and parses the caller's tenant limits (ADR 0084 decision 7). An
+// unreadable tenant is answered as an internal error rather than as allowed or forbidden —
+// GPU spend is a cost decision, and a stale or missing row here must never silently open a
+// gate the operator closed, nor silently close one they left open.
+func (g engineGateway) tenantLimitsFor(ctx context.Context, tenantID string) (tenantLimits, *apiError) {
+	if g.mgr == nil || g.mgr.store == nil {
+		return tenantLimits{}, internalErr(errors.New("no store"))
+	}
+	t, err := g.mgr.store.GetTenant(ctx, tenantID)
+	if err != nil {
+		return tenantLimits{}, internalErr(err)
+	}
+	return parseLimits(t.Limits), nil
+}
+
+// engineForbiddenErr is what gates 2 and 3 (ADR 0084 decision 8) answer when a tenant has
+// been denied the engine's role. Its own code, not `engine_off`: an operator switch and a
+// tenant grant are different axes, and the operator-facing panel (`/api/admin/engines`)
+// never changes because of this — knowing which one applies is the caller's only way to
+// tell "nobody may use this" from "you may not".
+func engineForbiddenErr(role string) *apiError {
+	return &apiError{http.StatusForbidden, "engine_forbidden", "this tenant is not allowed to use the " + role + " engine"}
+}
+
 func (g engineGateway) issuerMembership(r *http.Request) (store.MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	mid, ok := verifyEngineIssueToken(g.reg.signKey, tok)
@@ -432,6 +488,18 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
+	// ADR 0084 decision 8, gate 3: the other safety net, for the session token's own 30-day
+	// life. mv is already in hand right after auth, so this sits next to the existing
+	// engine_off / engine_unavailable checks below rather than adding a second store round trip.
+	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if !lim.engineRoleAllowed(eng.def.api()) {
+		writeAPIErr(w, engineForbiddenErr(eng.def.api()))
+		return
+	}
 	if eng.mode(r.Context()) == engineModeOff {
 		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_off", "this engine is switched off"})
 		return
@@ -499,6 +567,13 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
+
+	// From here the request is actually held — waiting for a cold box or being answered — which
+	// is decision 6-A's "A": the CP's own in-flight count (ADR 0084). Not started any earlier:
+	// pendingGuard's refusal above sends the caller away to retry with a NEW request, and that is
+	// not a request this process is holding.
+	eng.inflight.begin()
+	defer eng.inflight.end()
 
 	if engineWantsStream(body) {
 		g.streamed(w, r, eng, claims, mv, askForStreamUsage(body))
@@ -972,9 +1047,26 @@ func (g engineGateway) ensureReady(ctx context.Context, eng *engineRuntimeState)
 	if eng.def.remote() {
 		return nil
 	}
+	// 🔥 An EXTERNAL row that was just found not answering is refused without probing again
+	// (ADR 0082 unresolved 1). ensureStarted below is what produces the refusal either way —
+	// nothing here can start such a row — so the probe's only effect would be to spend its
+	// budget first, and that budget sits in front of the PREFERRED route: a member whose LAN box
+	// is switched off pays it before every single picture, and falling through to the next
+	// provider is meant to be the cheap part. Measured: 3.05-3.11 s per attempt against a
+	// switched-off LAN host (see engineExternalDownTTL).
+	//
+	// Managed rows never take this branch: theirs is the wait for a box being bought, where "not
+	// answering" is the expected state and remembering it would refuse the engine mid-start.
+	if eng.def.external() && eng.downRecently() {
+		return eng.ensureStarted(ctx)
+	}
 	waitStarted := time.Now()
 	for {
-		if engineHealthy(ctx, eng) {
+		healthy := engineHealthy(ctx, eng)
+		if eng.def.external() {
+			eng.noteProbe(healthy)
+		}
+		if healthy {
 			return nil
 		}
 		if err := eng.ensureStarted(ctx); err != nil {
@@ -1002,8 +1094,7 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 	// (ADR 0071 decision 5), a budget meant for buying a box and pulling weights from S3 — so
 	// this fails at once and names the URL and the path the operator has to go and look at.
 	if e.ecs == nil {
-		return fmt.Errorf("%s is not answering; this engine is externally managed and nothing here can start it",
-			engineHealthURL(e.def))
+		return errors.New(engineExternalUnreachableMsg(e.def))
 	}
 	view, err := e.ecs.view(ctx)
 	if err != nil {
@@ -1065,6 +1156,15 @@ func engineHealthPath(d engineDef) string {
 // message pointing at a URL nothing actually dialled would send the operator to the wrong box.
 func engineHealthURL(d engineDef) string {
 	return strings.TrimRight(d.URL, "/") + engineHealthPath(d)
+}
+
+// engineExternalUnreachableMsg is what an externally managed row's own URL means when it does
+// not answer: nothing here started it and nothing here will (ADR 0076 decision 4). Shared with
+// the discovery probe (ADR 0082 decision 7, engine_discover.go) so the two ways an operator
+// learns "that PC is off" say exactly the same sentence.
+func engineExternalUnreachableMsg(d engineDef) string {
+	return fmt.Sprintf("%s is not answering; this engine is externally managed and nothing here can start it",
+		engineHealthURL(d))
 }
 
 // engineHealthy asks the engine's health endpoint. A short timeout on purpose: while the

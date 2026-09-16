@@ -181,6 +181,10 @@ notices, the retries and the retirement are shared.
 - **With two full windows, take the earlier reset.** Resuming too early costs one wake that hits
   the limit again and then converges on the right window; resuming too late parks a session for
   days and nothing corrects it.
+  (Added 2026-09-14: that convergence did not actually happen in the implementation — a spent
+  episode swallowed the limit that followed, and at a window boundary the reading collapses so no
+  instant could be named. The first real run exposed both; closed in docs/log/47 §4-13. **The
+  decision is unchanged.**)
 - **Managed only.** What a TUI codex leaves behind is the account's percentages, which is a
   different fact from "this session stopped on the limit". Without the evidence, no extension.
 - **No new settings key.** One `rateLimitAutoResume` governs every watched kind (the same

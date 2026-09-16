@@ -32,11 +32,11 @@ platform changes:
 |------|--------|----------|
 | `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, S3 gateway endpoint, base SGs (`alb`/`cp`/`ws`) |
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
-| `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace, plus an empty `af-voicevox` for the optional speech engine and `af-llamacpp` / `af-sdcpp` / `af-comfyui` / `af-engine-tools` for the optional inference engines — the last two self-built, by `comfyui-image.yml` and `engine-tools-image.yml`), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
+| `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace, plus an empty `af-voicevox` for the optional speech engine and `af-llamacpp` / `af-comfyui` / `af-engine-tools` for the optional inference engines — the last two self-built, by `comfyui-image.yml` and `engine-tools-image.yml`), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 | `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/log/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/log/70 §70.8) |
 
-| `cfn/60-engines.yaml` | **new** (ADR 0071 P0+P1, ADR 0072 P0/P1/P4/P2-in-progress) | **Optional — only for self-hosted inference.** The fleet's own llama.cpp (`llm`) engine and an `image` role whose server is picked by `ImageEngine` (`sdcpp` = stable-diffusion.cpp, one checkpoint; `comfy` = this deployment's own ComfyUI, switches per request — ADR 0072 decision 4), on GPUs, as ECS services on the **EC2** launch type that are normally scaled to zero: one launch template per role for the box the Control Plane buys with EC2 Fleet, on Spot or on demand as the offer says (never one instance for both roles — VRAM; ADR 0075, ADR 0077), the IAM roles they need, an S3 bucket for the model catalogue, a Fargate ingest task (Hugging Face → sha256 → S3), each engine's task definition, service and Cloud Map name, one SG (8080 from the CP only), and the SSM parameter holding the engine table. Each role is created only when its `<Role>Enabled` is `true` (ADR 0072 P6). Imports 00-network and 20-platform (`af-engine-tools`, which holds the fetch sidecar and the ingest steps, plus whichever of `af-llamacpp` / `af-sdcpp` / `af-comfyui` it needs — all of which must already hold their image); hands 30-ingress its `EnginesSsmParam` output. ⚠️ It owns the cluster's capacity-provider associations |
+| `cfn/60-engines.yaml` | **new** (ADR 0071 P0+P1, ADR 0072 P0/P1/P4/P2, ADR 0083 P2) | **Optional — only for self-hosted inference.** The fleet's own llama.cpp (`llm`) engine and an `image` role that runs this deployment's own ComfyUI, switching checkpoints per request (ADR 0072 decision 4; the earlier `sdcpp` choice, stable-diffusion.cpp with one checkpoint, was retired by ADR 0083, and the `ImageEngine` parameter that chose between them with it), on GPUs, as ECS services on the **EC2** launch type that are normally scaled to zero: one launch template per role for the box the Control Plane buys with EC2 Fleet, on Spot or on demand as the offer says (never one instance for both roles — VRAM; ADR 0075, ADR 0077), the IAM roles they need, an S3 bucket for the model catalogue, a Fargate ingest task (Hugging Face → sha256 → S3), each engine's task definition, service and Cloud Map name, one SG (8080 from the CP only), and the SSM parameter holding the engine table. Each role is created only when its `<Role>Enabled` is `true` (ADR 0072 P6). Imports 00-network and 20-platform (`af-engine-tools`, which holds the fetch sidecar and the ingest steps, plus whichever of `af-llamacpp` / `af-comfyui` it needs — all of which must already hold their image); hands 30-ingress its `EnginesSsmParam` output. ⚠️ It owns the cluster's capacity-provider associations |
 | `cfn/50-tts.yaml` | **new, unproven** (ADR 0070 P0) | **Optional — only for Japanese speech.** The VOICEVOX (Zundamon) engine as a Fargate service that is normally scaled to zero, its Cloud Map DNS name, and a dedicated SG (50021 from the CP only). Imports 00-network and 20-platform (including the `af-voicevox` repository, which must already hold the image before this stack is created); hands 30-ingress its `TtsEcsService` / `VoicevoxUrl` outputs |
 
 > The first five are proven end-to-end **including teardown**: two real deployments in two
@@ -887,7 +887,7 @@ only exists while somebody is using it**. It has two independent roles:
 | Role | Engine | What a member gets | Cold start |
 |---|---|---|---|
 | `llm` | llama.cpp (`llama-server`) | `llamacpp/<model>` in opencode's launch picker | ~527–586 s |
-| `image` | stable-diffusion.cpp (`sd-server`) | the `generate_image` tool, provider `sdcpp` — generate, edit and inpaint | ~195 s + the instance |
+| `image` | ComfyUI (`comfy`) | the `generate_image` tool, provider `comfy` — generate, edit and inpaint | the instance dominates (8–88 s) |
 
 Each is optional on its own (without `<Role>Enabled=true` that role's service is not
 created at all), and **the two never share an instance**: CUDA does not slow down when VRAM runs
@@ -928,11 +928,11 @@ by the Control Plane rather than delegated (ADR 0077 decisions 1 and 5).
    can rescue an empty repository). `standup.sh` does it in the images step; by hand it is
    `crane copy ghcr.io/ggml-org/llama.cpp:server-cuda <acct>.dkr.ecr.<region>.amazonaws.com/af-llamacpp:server-cuda`
    and, for the image role,
-   `crane copy ghcr.io/leejet/stable-diffusion.cpp:master-cuda <acct>.dkr.ecr.<region>.amazonaws.com/af-sdcpp:master-cuda`.
+   `crane copy ghcr.io/k-k1/agent-fleet/comfyui:v0.34.0 <acct>.dkr.ecr.<region>.amazonaws.com/af-comfyui:v0.34.0`.
    It is also worth doing for a measured reason: **GHCR through this NAT runs at 12–14 MB/s**,
    which put 178 seconds of a 527-second cold start into the pull alone. (`standup.sh` copies
-   the sd-server image only when `ImageEnabled=true` — an LLM-only deployment does not pay for
-   2.3 GB it will never start.)
+   the image-role image only when `ImageEnabled=true` — an LLM-only deployment does not pay for
+   an image it will never start.)
 
 ### Turning it on
 
@@ -965,7 +965,7 @@ ImageEnabled=true
 (`/af-ws/engine-llm-key`, a SecureString) if it is not there, deploys `60-engines` after the
 speech engine and before `30-ingress`, scales each **newly created** service to 0, and hands
 `30-ingress` the stack's `EnginesSsmParam` output. The image role has no key of its own:
-sd-server has no authentication option at all, so its security group — 8080 from the CP and
+ComfyUI has no authentication option at all, so its security group — 8080 from the CP and
 nothing else — is the whole of its access control.
 
 **The first stand-up is ONE pass, and it stands up empty.** It used to be two: the bucket and
@@ -1057,10 +1057,12 @@ decision 10 — Apache-2.0 or OpenRAIL, not gated, and it has to fit an L4 witho
      {"name":"upload","environment":[{"name":"KEY","value":"image/checkpoints/<file>.safetensors"}]}]}'
 ```
 
-⚠️ **For the `sdcpp` image role it must be a SINGLE-file checkpoint** — an SDXL fine-tune, not
-FLUX.2 klein or Z-Image. Those are split models (`--diffusion-model` + text encoders + VAE) and
-sd-server's flag assembly for them is unmeasured; they are ComfyUI's job in phase P2, where
-they WERE measured (ADR 0072, "measurements that settled a question", 2026-09-08).
+The image role's engine is ComfyUI, so a split model (FLUX.2 klein, Z-Image — a
+`--diffusion-model` + text encoders + VAE rather than one SDXL-shaped checkpoint) is fine too:
+ingest it into `image/diffusion_models/`, `image/text_encoders/`, `image/vae/` respectively,
+matching the layout above. This is `comfy`'s job specifically (ADR 0072 phase P2, measured —
+"measurements that settled a question", 2026-09-08); the earlier `sdcpp` engine could only ever
+take a single-file checkpoint, and ADR 0083 retired it.
 
 ⚠️ **The container overrides above take ONE string per command**, because the containers'
 `EntryPoint` is already `["sh","-c"]`. Passing `["sh","-c", "<script>"]` becomes
@@ -1123,15 +1125,15 @@ which is what keeps opencode's 60-second per-call ceiling from cutting it off.
   **527 s** to a listening engine — 178 s of image pull and 179 s of S3 fetch running
   concurrently, then 267 s loading 18.5 GB into VRAM. The CP holds the request open across
   all of it (see below), so a person sees a slow first answer rather than an error.
-- **The image engine is cheaper to wake and cheaper to keep.** Measured: 195 s from task
-  creation to listening (135 s of that a GHCR pull, less from ECR), then **512px in 7.8 s and
-  1024px in 20.8–21.0 s** on an L4, using 7.4 GB of VRAM. Its idle window is therefore half
-  the llm role's (900 s): an image is a request with no conversation around it.
-- **sd-server has no `/health`.** Readiness is `GET /v1/models`, which it only answers once
-  the checkpoint is loaded. It also has no authentication of any kind, and its native async
-  job API (`/sdcpp/v1/img_gen`) does not work in a container at all — it answers
-  `filesystem error: /proc/1/map_files … Operation not permitted` — so the fleet uses the
-  OpenAI-compatible endpoints, which map one-to-one onto generate / edit / inpaint.
+- **The image engine's idle window is half the llm role's (900 s)**: an image is a request with
+  no conversation around it. (The retired stable-diffusion.cpp engine measured 195 s from task
+  creation to listening, 512px in 7.8 s and 1024px in 20.8–21.0 s on an L4, 7.4 GB of VRAM — the
+  numbers this window was chosen against. `comfy`'s own are not re-measured here, ADR 0083
+  unresolved question 1.)
+- **ComfyUI's `/system_stats`, not `/health`.** It answers unauthenticated and immediately
+  (measured), which is a liveness check rather than a checkpoint-loaded one — `comfy` has no
+  single loaded checkpoint to report on, it builds a per-request workflow graph and picks the
+  checkpoint the graph names.
 - **Everything the controller does automatically is in the audit log** (`engine.llm.auto` /
   `engine.image.auto`, actor `engine-<role>-controller`), like the speech engine's.
 
@@ -1176,7 +1178,7 @@ a connection that has carried no response byte for a minute, and the engine need
 streaming path never noticed because its heartbeat is a byte every 10 s, which is exactly what
 an idle timer watches for. So the non-streaming hold is folded below the front end
 (`AF_ENGINE_PLAIN_HOLD`, 45 s) and answers `503 engine_waking` + `Retry-After`; the Workspace's
-`sdcpp` provider keeps asking inside its own 16-minute budget, so one tool call still returns
+`comfy` provider keeps asking inside its own 16-minute budget, so one tool call still returns
 one picture. **Behind a stricter proxy than this repository's ALB, lower `AF_ENGINE_PLAIN_HOLD`
 to match** — the CP has no way to ask what that timeout is.
 

@@ -166,6 +166,9 @@ export type EngineParams = {
 /** What POST …/ingest/resolve answered: what the file IS, before anything is started. */
 export type ResolvedSource = {
   sha256?: string;
+  /** Immutable identity of this exact resolved source file. It is the only value which may
+   * match a stored object for reuse; the human-readable source is display provenance only. */
+  artifact_identity?: string;
   bytes?: number;
   gated?: boolean;
   license?: string;
@@ -180,8 +183,19 @@ export type ResolvedSource = {
   /** The Civitai uploader requires a logged-in account to download this asset (ADR 0072 P2
    *  欠落 5). Its own field rather than `gated`, because the two have different answers: a
    *  registered Hugging Face token satisfies gating and cannot touch this one, so folding them
-   *  would send somebody to the token field to fix what a token does not fix. */
+   *  would send somebody to the token field to fix what a token does not fix.
+   *
+   *  ⚠️ On its own it no longer means "cannot be taken in" — see `civitai_needs_account`. Read
+   *  `can_ingest` for that, as the button does. */
   login_required?: boolean;
+  /** Login-walled, and a Civitai account IS registered — the same shape as
+   *  `gated_needs_acceptance`: the download may start, and the CP cannot say in advance whether
+   *  that account satisfies this uploader (early access is bought per creator). A warning before
+   *  the press, not a verdict. */
+  civitai_needs_account?: boolean;
+  /** Whether a Civitai account is registered at all, so the panel can tell "nobody can fetch
+   *  this" from "we will try as our account". */
+  deployment_civitai_token?: boolean;
   /** Gated, and a token IS registered — which is still not a yes. The CP resolves anonymously
    *  and cannot ask whether that account accepted THIS repository's terms; when it has not,
    *  the answer is a 403 on the download minutes later. So this is a warning before the press,
@@ -225,25 +239,111 @@ export type ResolvedSource = {
    *  read (a `.ckpt`, a source that refused the Range) — which is not "no" and must not be drawn
    *  as one. Asked of a whole checkpoint on an image engine only. */
   vae_bundled?: string;
-  /** What this deployment would do about a `"no"`: the family's own VAE, and whether it is
-   *  already in the bucket (`staged`) or would be taken in under the licence named here. It is
-   *  what lets the form offer the second download in the same press, with its terms on screen. */
-  family_vae?: FamilyVae;
+  /** What one press would DO, decided by the CP (ADR 0085 decision 4). Everything above it is
+   *  facts the card still draws; this is the only thing the ingest request is built from. */
+  plan?: IngestPlan;
 };
 
-/** The family VAE offered beside a checkpoint that carries none. */
-export type FamilyVae = {
-  repo: string;
-  file: string;
-  s3Key: string;
-  /** Already in this deployment's bucket: the fix is a declaration, nothing is downloaded and
-   *  there is no new licence to accept. */
-  staged?: boolean;
+/** One file of a plan, with what it costs. `download` spends money and `reuse` / `move` do not —
+ *  the bucket already holds those bytes, and a move is server-side. */
+export type IngestPlanFile = {
+  /** The role it is taken in as (`--vae`, `--t5xxl`); empty for a whole checkpoint. */
+  flag?: string;
+  name: string;
   bytes?: number;
+  action: "download" | "reuse" | "move" | "unknown";
+  /** 🔴 TWO meanings, told apart by `action`: the upstream label (`hf:owner/repo/file`) for a
+   *  download, and the S3 key the bytes occupy TODAY for a reuse or a move. The CP keeps it one
+   *  field on purpose — a move's origin then rides inside the plan's hash, so an object that
+   *  wanders between the card and the press makes the token stale instead of being moved from a
+   *  key it has left. The card must branch on `action` before drawing it as either. */
+  source?: string;
+  /** Where it lands. Composed by the CP alone since ADR 0085 decision 1 — the Console neither
+   *  builds nor sends a key, it only shows the one it is told. */
+  key?: string;
+};
+
+/** What `POST …/ingest/resolve` answers beside the facts: the whole act, priced.
+ *
+ * 🔴 `plan_token` is what `POST …/ingest` carries instead of the fields a form used to fill. The
+ * CP re-plans at the press and refuses a token that no longer matches (`engine_plan_stale`), so a
+ * card left open for ten minutes cannot spend money on last decade's numbers. */
+export type IngestPlan = {
+  plan_token: string;
+  id: string;
+  base_model?: string;
+  /** Offered ONLY when the CP could not read a family. The family selector is the one field the
+   *  card shows, and it is never a free string: an upstream display name stored as a family makes
+   *  a row that looks complete and will not generate (ADR 0072 decision 2). */
+  base_model_candidates?: string[];
+  main_flag?: string;
+  files: IngestPlanFile[];
+  bytes_to_download?: number;
+  warnings?: string[];
+};
+
+/** What `POST …/models/{id}/complete` answers (ADR 0085 decision 3). The row is the subject: the
+ *  CP reads what the family needs, what the row has and what the ledger holds, and closes the gap.
+ *
+ *  `action: "choose"` is the ONLY case a person is asked anything, and they are asked it for a
+ *  checkpoint — never "which model does this part belong to". */
+export type CompleteAnswer = {
+  action: "none" | "attached" | "moving" | "job_started" | "choose" | "unknown";
+  files?: CompleteFile[];
+  bytes_to_download?: number;
+  jobs?: IngestJob[];
+};
+
+export type CompleteFile = {
+  flag: string;
+  action: "declare" | "move" | "download" | "choose" | "unknown";
+  key?: string;
+  bytes?: number;
+  source?: string;
+  /** The ledger's objects that fit this role, ranked by the CP. With one candidate the press just
+   *  uses it; several is what opens the dialog. A FILLED slot with candidates is how a part is
+   *  swapped — the same picker, on a frame that is not empty. */
+  candidates?: { key: string; source?: string; bytes?: number }[];
+};
+
+/** One object in the bucket, as the ledger lists it (ADR 0085 decision 2).
+ *
+ * 🔴 The first thing here that does not come from a row. Forget a row and the bytes went on
+ * costing money while no longer existing to the Console — about 24 GB on af-sandbox, 2026-09-15,
+ * with no screen that could show them and no button that could touch them. */
+export type EngineObjectRow = {
+  key: string;
+  bytes?: number;
+  last_modified?: string;
+  role_dir: "checkpoints" | "diffusion_models" | "text_encoders" | "vae" | "loras" | "other";
+  /** `misplaced` = the key is not `<role dir>/<base name>`, so no ComfyUI loader enumerates it. */
+  placement: "ok" | "misplaced";
+  /** `missing` is a row pointing at nothing, which is a ledger fact too. `uploading` / `failed`
+   *  are a live job's state on this destination — jobs have no list of their own any more. */
+  state: "present" | "uploading" | "failed" | "missing";
+  declared_by?: { model_id: string; flag?: string }[];
+  source?: string;
+  artifact_identity?: string;
   license?: string;
-  /** The file is known and the source could not be reached. Said rather than omitted — an
-   *  omission reads as "this family has no answer", which is a different and permanent thing. */
-  unreachable?: boolean;
+  job?: { id: string; state: string; message?: string; created_at?: string };
+};
+
+export type EngineObjectsAnswer = {
+  objects: EngineObjectRow[];
+  checked_at?: string;
+};
+
+/** A refusal in this area, with the two fields ADR 0085 decision 5 requires of every 409: WHO is
+ *  holding the thing, and WHAT to press about it. The Console draws `next` as the button on the
+ *  error line, which is the whole point — "the key is already recorded" was true and useless. */
+export type EngineApiError = {
+  code?: string;
+  message?: string;
+  holder?: { kind: "row" | "job" | "object" | "task"; id?: string; key?: string };
+  next?: { act: "register" | "complete" | "replace" | "forget_row" | "dismiss_job" | "wait"; target?: string };
+  /** `engine_plan_stale` carries the plan that replaced the stale one, so the card is redrawn
+   *  from the answer rather than from a second resolve. */
+  plan?: IngestPlan;
 };
 
 /** One search result (POST …/ingest/search, ADR 0072 decision 11).
@@ -257,7 +357,17 @@ export type IngestHit = {
   source: string;
   /** The repository for HF; the VERSION id for Civitai (not the model id on the page's URL). */
   ref: string;
+  /** Stable upstream model identity. Hugging Face uses the repository and Civitai uses the
+   *  model id; `ref` keeps naming the selectable revision/version for old clients. */
+  model_ref?: string;
   name: string;
+  /** Upstream example image at lightbox size. It is presentation only and is never used as an
+   *  ingest source; absence means the card has no image area at all. */
+  preview_url?: string;
+  /** The same example at card size, when the source can resize (Civitai can, Hugging Face
+   *  cannot). The card must use this: the URL Civitai publishes asks for the ORIGINAL, which is
+   *  megabytes per row for a 92x108 box, and on a phone those loads are what fails. */
+  thumb_url?: string;
   /** The three numbers a ranking is built on. All three ride on every row, whichever one the
    *  list was ordered by — sorting by one and showing only that one leaves "why is this here"
    *  unanswerable. `trending` is Hugging Face's own score; Civitai publishes none. */
@@ -274,6 +384,10 @@ export type IngestHit = {
    *  answer and must not be drawn as "anyone may download this". Measured 2026-09-12: 13 of
    *  the top 20 monthly checkpoints answer 401, and all 20 look identical in the metadata. */
   login_required?: string;
+  /** Licence-level commercial-use verdict when the listing exposes it. */
+  commercial_use?: string;
+  /** A token exists, but its account may still need to accept this repository's terms. */
+  gated_needs_acceptance?: boolean;
   /** What the source says may not be done with it, as codes — see engineRestrictLabel. */
   restrictions?: string[];
   /** A LoRA's trigger words, straight off the search answer. */
@@ -296,17 +410,58 @@ export type IngestHit = {
   url?: string;
   bytes?: number;
   context_length?: number;
+  /** Civitai's own content-rating number (0 = safe, higher = more explicit). Rides on every
+   *  Civitai hit regardless of which search tab found it — a nonzero level shows up under the
+   *  plain "civitai" tab's own default query too (measured 2026-09-14), so the card must not
+   *  assume "safe" just because it did not come from the civitai-red tab. Absent for HF. */
+  nsfw_level?: number;
 };
 
 /** One file a repository offers (POST …/ingest/files), already filtered to the ones this
  *  engine could load and that carry a sha256. */
-export type IngestCandidate = { name: string; bytes?: number; sha256?: string };
+export type IngestCandidate = {
+  name: string;
+  bytes?: number;
+  sha256?: string;
+  /** Optional source-side file identity when a provider exposes more than a filename. */
+  ref?: string;
+};
+
+export type IngestVersion = {
+  ref: string;
+  name: string;
+  published_at?: string;
+  updated_at?: string;
+};
+
+export type IngestVersionsAnswer = { versions: IngestVersion[] };
+
+export type IngestSearchRequest = {
+  q: string;
+  source: string;
+  sort: string;
+  lora?: boolean;
+  cursor?: string;
+  /** One of the engine's own `base_models`, or absent for every family. The CP translates it
+   *  into each upstream's own spelling — the Console must never send an upstream name here. */
+  family?: string;
+};
+
+export type IngestSearchAnswer = {
+  hits: IngestHit[];
+  next_cursor?: string;
+};
 
 export type IngestJob = {
   id: string;
   model_id: string;
   s3_key?: string;
   source?: string;
+  /** Which of the three the press turned out to be (ADR 0085 decision 1). Only on the answer to
+   *  `POST …/ingest`: the job row itself cannot say it, because a move and a download are the
+   *  same task to the reconciler — and it is the one thing the person who just pressed wants to
+   *  know before any progress appears. */
+  action?: "download" | "reuse" | "move";
   state: string;
   message?: string;
   /** What the operator has to DO about a failure, read by the CP out of the status in the
@@ -370,6 +525,11 @@ export type EngineRow = {
   key: string;
   api?: string;
   provider?: string;
+  /** This build's images-provider vocabulary is {comfy, openai-compat} (ADR 0083 decision 5).
+   *  True when this row names anything else — most likely `sdcpp`, retired the same ADR — and
+   *  no client here can generate from it no matter what its mode or lifecycle say. Absent, not
+   *  false, for every row this build CAN serve. */
+  provider_unserved?: boolean;
   models?: string[];
   /** Every row of the catalogue, enabled or not — this panel is where one is turned ON, so a
    *  list filtered to the enabled ones would have no way to reach the others. */

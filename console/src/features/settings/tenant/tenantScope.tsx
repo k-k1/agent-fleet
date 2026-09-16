@@ -28,7 +28,7 @@ import { MemberView } from "./tenantMemberDetail.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
 import { CloudCostAdminView } from "../../cost/CloudCostView.tsx";
 import { McpAdminView } from "../mcp/mcpAdmin.tsx";
-import { EngineModelsAdminView } from "../admin/adminEngineModels.tsx";
+import { EngineCatalogLauncher } from "../admin/adminEngineCatalogLauncher.tsx";
 
 export interface ScopeGroup {
   key: string;
@@ -154,6 +154,10 @@ export function TenantLimits({
   const [homeBackup, setHomeBackup] = useState(tenant?.home_backup_every || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
   const [allowIngest, setAllowIngest] = useState(!!tenant?.allow_engine_ingest);
+  // ADR 0084 decision 7: the server always resolves its stored nil to true before sending, so
+  // `!== false` treats "not loaded yet" the same way — allowed, never a flash of "denied".
+  const [allowLlm, setAllowLlm] = useState(tenant?.allow_engine_llm !== false);
+  const [allowImage, setAllowImage] = useState(tenant?.allow_engine_image !== false);
   const [termRetention, setTermRetention] = useState(tenant?.terminal_history_retention_days || 0);
   const [saved, setSaved] = useState(false);
   // Set only when the save response reports that the tenant limits no longer fit in the pool.
@@ -172,6 +176,8 @@ export function TenantLimits({
     setHomeBackup(tenant?.home_backup_every || "");
     setAllowUpd(!!tenant?.allow_agent_self_update);
     setAllowIngest(!!tenant?.allow_engine_ingest);
+    setAllowLlm(tenant?.allow_engine_llm !== false);
+    setAllowImage(tenant?.allow_engine_image !== false);
     setTermRetention(tenant?.terminal_history_retention_days || 0);
   }, [slug, tenant]);
 
@@ -189,6 +195,10 @@ export function TenantLimits({
       home_backup_every: homeBackup.trim(),
       allow_agent_self_update: allowUpd,
       allow_engine_ingest: allowIngest,
+      // Always an explicit true/false (ADR 0084 decision 7): this PUT rewrites the whole
+      // limits blob, and omitting the field would reset a prior denial back to nil/allowed.
+      allow_engine_llm: allowLlm,
+      allow_engine_image: allowImage,
       terminal_history_retention_days: termRetention,
     });
     if (res?.error) {
@@ -336,6 +346,23 @@ export function TenantLimits({
         <p className="admin-hint">{tr("admin.allow_engine_ingest_hint")}</p>
       </div>
 
+      {/* ADR 0084 decision 7: whether this tenant may USE the deployment's self-hosted
+          engines at all — a cost decision (a GPU box is billed per hour), separate from the
+          ingest grant above (who may add to the catalogue). Role-grained, not model-grained:
+          the catalogue itself has no tenant axis (ADR 0072). */}
+      <div className="admin-fgroup">
+        <h4>{tr("admin.engine_use_title")}</h4>
+        <label className="admin-check">
+          <input type="checkbox" checked={allowLlm} onChange={(e) => setAllowLlm(e.target.checked)} />
+          <span>{tr("admin.allow_engine_llm")}</span>
+        </label>
+        <label className="admin-check">
+          <input type="checkbox" checked={allowImage} onChange={(e) => setAllowImage(e.target.checked)} />
+          <span>{tr("admin.allow_engine_image")}</span>
+        </label>
+        <p className="admin-hint">{tr("admin.engine_use_hint")}</p>
+      </div>
+
       <div className="admin-actions">
         <button onClick={saveLimits} className="primary">{tr("common.save")}</button>
         {saved && <span className="saved-note"><Icon name="check" /> {tr("admin.saved")}</span>}
@@ -465,7 +492,7 @@ export function TenantScopeBody({
   // the same component the operator sees: it draws itself from the `super_admin` flag in its
   // own answer (ADR 0072 open question 11), so there is one screen to keep working rather than
   // a copy that drifts. The rail's own label has always said "models" (tenant.tab_engines).
-  if (section === "engines") return <EngineModelsAdminView key={slug} />;
+  if (section === "engines") return <EngineCatalogLauncher key={slug} />;
   // Not switched on isSuper: the git provider OAuth app belongs to the tenant admin, and its
   // PUT is gated by tenantAdminFor (ADR 0052 decision 3).
   if (section === "git-oauth") return <TenantGitOAuthView key={slug} slug={slug} />;

@@ -26,7 +26,7 @@ func hfStub(t *testing.T) *httptest.Server {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "FLUX.1-dev"):
-			w.Write([]byte(`{"gated":"auto","cardData":{"license":"other",
+			w.Write([]byte(`{"sha":"commit-a","gated":"auto","cardData":{"license":"other",
 				"license_name":"flux-1-dev-non-commercial-license"},
 				"siblings":[{"rfilename":"flux1-dev.safetensors","size":23802932552,
 				"lfs":{"sha256":"4610115bb0c89560703c892c59ac2742fa821e60ef5871b33493ba544683abd7"}}]}`))
@@ -48,7 +48,7 @@ func hfStub(t *testing.T) *httptest.Server {
 		// (`gguf.context_length`) and publishes on this very call — measured 2026-09-09 against
 		// four repositories from three publishers.
 		case strings.Contains(r.URL.Path, "Qwen2.5-Coder-0.5B"):
-			w.Write([]byte(`{"gated":false,"cardData":{"license":"apache-2.0"},
+			w.Write([]byte(`{"sha":"commit-a","gated":false,"cardData":{"license":"apache-2.0"},
 				"gguf":{"context_length":32768,"architecture":"qwen2"},
 				"siblings":[
 				{"rfilename":"README.md","size":9000},
@@ -60,7 +60,7 @@ func hfStub(t *testing.T) *httptest.Server {
 				{"rfilename":"qwen2.5-coder-0.5b-instruct-q2_k.gguf","size":415182720,
 				 "lfs":{"sha256":"f9bddf294ef15c800000000000000000000000000000000000000000000000aa"}}]}`))
 		case strings.Contains(r.URL.Path, "Qwen2.5-Coder"):
-			w.Write([]byte(`{"gated":false,"cardData":{"license":"apache-2.0"},
+			w.Write([]byte(`{"sha":"commit-a","gated":false,"cardData":{"license":"apache-2.0"},
 				"siblings":[{"rfilename":"qwen2.5-coder-1.5b-instruct-q4_k_m.gguf","size":1117320768,
 				"lfs":{"sha256":"cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046"}}]}`))
 		case strings.Contains(r.URL.Path, "no-checksum"):
@@ -92,8 +92,24 @@ func TestEngineResolveHuggingFace(t *testing.T) {
 	if got.Gated {
 		t.Error("an ungated repository read as gated")
 	}
+	if got.ArtifactIdentity != engineHFArtifactIdentity("Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+		"qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", "commit-a", got.SHA256) {
+		t.Errorf("artifact identity = %q", got.ArtifactIdentity)
+	}
+	if row := engineResolvedRow(got, engineDeploymentTokens{}, "", engineKVGeometry{}); row["artifact_identity"] != got.ArtifactIdentity {
+		t.Errorf("resolve wire artifact_identity = %v, want %q", row["artifact_identity"], got.ArtifactIdentity)
+	}
 	if engineCommercialUse(got) != "yes" {
 		t.Errorf("apache-2.0 read as commercial_use=%q", engineCommercialUse(got))
+	}
+	mutable, aerr := engineResolveHF(ctx, engineIngestHF{
+		Repo: "black-forest-labs/FLUX-full", File: "alt/model.safetensors",
+	})
+	if aerr != nil {
+		t.Fatalf("resolve without an API commit: %v", aerr.message)
+	}
+	if mutable.ArtifactIdentity != "" {
+		t.Errorf("mutable revision was promoted to immutable identity %q", mutable.ArtifactIdentity)
 	}
 
 	// ⚠️ The whole reason the CP can resolve without holding the operator's token: a gated
@@ -345,9 +361,14 @@ func TestEngineSourceURL(t *testing.T) {
 			"https://huggingface.co/unsloth/Qwen3-30B-GGUF/blob/main/Q4_K_M/qwen3-30b-Q4_K_M.gguf"},
 		// 🔴 The whole reason this is composed in the Control Plane. `civitai:<id>` is a model
 		// VERSION id, and the model id in the page's URL is a different number — so
-		// `civitai.com/models/<id>` opens A DIFFERENT MODEL. This form is the one Civitai
-		// resolves, and it is already what the resolver hands to LicenseURL.
-		{"a Civitai version", "civitai:1759168", "https://civitai.com/models/?modelVersionId=1759168"},
+		// `civitai.com/models/<id>` opens A DIFFERENT MODEL.
+		//
+		// 🔴 And it is the REDIRECT, not `/models/?modelVersionId=<id>`: that form answers 200
+		// with the model LIST (measured 2026-09-15, reported from the panel as a link that
+		// "opens the wrong page"), while `/model-versions/<id>` is a 308 to
+		// `/models/4451?modelVersionId=5038` and on to the slug. A link that opens SOMETHING is
+		// the kind nobody reports as broken. The same form goes to LicenseURL.
+		{"a Civitai version", "civitai:1759168", "https://civitai.com/model-versions/1759168"},
 		// 🔴 A url source is the direct download of the weights (22 GB in ADR 0072's table).
 		// A link in a panel that says "where this came from" must not start one.
 		{"a plain url", "https://example.invalid/m.safetensors", ""},
@@ -366,7 +387,7 @@ func TestEngineSourceURL(t *testing.T) {
 	// And the row carries it beside the text, absent when it could not be composed — the panel
 	// branches on the field arriving rather than parsing the string a second time.
 	row := engineAdminModelRow(store.EngineModel{ID: "x", Source: "civitai:1759168"})
-	if row["source_url"] != "https://civitai.com/models/?modelVersionId=1759168" {
+	if row["source_url"] != "https://civitai.com/model-versions/1759168" {
 		t.Errorf("source_url = %v", row["source_url"])
 	}
 	plain := engineAdminModelRow(store.EngineModel{ID: "x", Source: "https://example.invalid/m.safetensors"})
@@ -396,7 +417,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	if got.ContextLength != 32768 {
 		t.Errorf("context_length = %d, want 32768", got.ContextLength)
 	}
-	if row := engineResolvedRow(got, false, "", engineKVGeometry{}); row["context_length"] != 32768 {
+	if row := engineResolvedRow(got, engineDeploymentTokens{}, "", engineKVGeometry{}); row["context_length"] != 32768 {
 		t.Errorf("the panel is not told the context length: %v", row["context_length"])
 	}
 
@@ -407,7 +428,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("gated resolve: %v", aerr.message)
 	}
-	if _, ok := engineResolvedRow(flux, false, "", engineKVGeometry{})["context_length"]; ok {
+	if _, ok := engineResolvedRow(flux, engineDeploymentTokens{}, "", engineKVGeometry{})["context_length"]; ok {
 		t.Error("a repository with no gguf metadata reported a context length")
 	}
 }
@@ -423,7 +444,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 func TestEngineResolvedRowCarriesTheKVCostPerThousandTokens(t *testing.T) {
 	// The 30B this deployment runs: 48 layers, 4 KV heads, 128/128 — 3072 MiB at 32768 tokens
 	// (engine_gguf_test.go), so 96 MiB per 1024.
-	row := engineResolvedRow(engineResolved{}, false, "", engineKVGeometry{48, 4, 128, 128})
+	row := engineResolvedRow(engineResolved{}, engineDeploymentTokens{}, "", engineKVGeometry{48, 4, 128, 128})
 	if row["kv_mib_per_1k_tokens"] != 96 {
 		t.Errorf("kv_mib_per_1k_tokens = %v, want 96", row["kv_mib_per_1k_tokens"])
 	}
@@ -431,22 +452,29 @@ func TestEngineResolvedRowCarriesTheKVCostPerThousandTokens(t *testing.T) {
 	// wire is a model whose window is free — which is the lie this whole field exists to stop.
 	// A partial geometry is the same case: three numbers out of four answer nothing.
 	for _, g := range []engineKVGeometry{{}, {Layers: 48, HeadsKV: 4, KeyLen: 128}} {
-		if v, ok := engineResolvedRow(engineResolved{}, false, "", g)["kv_mib_per_1k_tokens"]; ok {
+		if v, ok := engineResolvedRow(engineResolved{}, engineDeploymentTokens{}, "", g)["kv_mib_per_1k_tokens"]; ok {
 			t.Errorf("geometry %+v reported a KV cost of %v — unread must not read as measured", g, v)
 		}
 	}
 }
 
-// civitaiStub answers a model VERSION and the HEAD on its download URL. The download answer is
-// the caller's, because THAT is the split this API has: the metadata is 200 for everybody and
-// the bytes are per uploader (ADR 0072 P2 欠落 5).
+// civitaiStub answers a model VERSION and the ranged GET on its download URL. The download
+// answer is the caller's, because THAT is the split this API has: the metadata is 200 for
+// everybody and the bytes are per uploader (ADR 0072 P2 欠落 5).
 func civitaiStub(t *testing.T, download int) *httptest.Server {
 	t.Helper()
 	var base string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/api/download/") {
-			if r.Method != http.MethodHead {
-				t.Errorf("the probe used %s, want HEAD — a GET here downloads gigabytes", r.Method)
+			// A HEAD here would download nothing, but Civitai's real download URL redirects to
+			// an R2 presigned URL signed for GET only — a HEAD there is always 403. The probe
+			// must use GET, and must range it so this stub (and the real CDN) need not send
+			// gigabytes to answer a status line.
+			if r.Method != http.MethodGet {
+				t.Errorf("the probe used %s, want a ranged GET", r.Method)
+			}
+			if r.Header.Get("Range") == "" {
+				t.Error("the probe GET carried no Range header — it would download the whole asset")
 			}
 			w.WriteHeader(download)
 			return
@@ -483,13 +511,16 @@ func TestEngineResolveCivitai(t *testing.T) {
 	if got.BaseModel != "SD 1.5" {
 		t.Errorf("baseModel = %q", got.BaseModel)
 	}
+	if got.ArtifactIdentity != engineCivitaiArtifactIdentity(128713, "dreamshaper_8.safetensors", got.SHA256) {
+		t.Errorf("artifact identity = %q", got.ArtifactIdentity)
+	}
 	// 🔴 The positive control for the probe below: an asset anybody can download must not be
 	// marked, or the panel refuses every Civitai ingest and the check is indistinguishable from
 	// a check that never runs.
 	if got.LoginRequired {
 		t.Error("a downloadable asset was marked as needing an account")
 	}
-	if row := engineResolvedRow(got, false, "", engineKVGeometry{}); row["can_ingest"] != true {
+	if row := engineResolvedRow(got, engineDeploymentTokens{}, "", engineKVGeometry{}); row["can_ingest"] != true {
 		t.Errorf("can_ingest = %v for an asset with no wall at all", row["can_ingest"])
 	}
 }
@@ -515,19 +546,32 @@ func TestEngineResolveCivitaiSpotsAnAssetThatNeedsAnAccount(t *testing.T) {
 		if !got.LoginRequired {
 			t.Errorf("a %d download resolved as freely fetchable", status)
 		}
-		row := engineResolvedRow(got, true, "", engineKVGeometry{})
+		row := engineResolvedRow(got, engineDeploymentTokens{hf: true}, "", engineKVGeometry{})
 		if row["can_ingest"] != false || row["login_required"] != true {
 			t.Errorf("the panel is not told (%d): %v", status, row)
 		}
 		// NOT reported as gated: that word sends somebody to the Hugging Face token field,
-		// which cannot help here. A registered token does not change can_ingest either.
+		// which cannot help here — and neither does registering one, which is why the row above
+		// is built WITH an hf token and still refuses.
 		if row["gated"] == true {
 			t.Errorf("a Civitai login wall was reported as a gated repository (%d)", status)
 		}
+		// 🔴 The account that DOES answer this wall. The fetch container has sent
+		// `Authorization: Bearer $CIVITAI_TOKEN` since the token was registrable, so refusing
+		// here was refusing a download that could have run. It is a warning rather than a
+		// promise: the CP resolves anonymously and cannot ask whether that account satisfies
+		// this uploader, the same honesty `gated_needs_acceptance` is built on.
+		withCivitai := engineResolvedRow(got, engineDeploymentTokens{civitai: true}, "", engineKVGeometry{})
+		if withCivitai["can_ingest"] != true || withCivitai["civitai_needs_account"] != true {
+			t.Errorf("a registered Civitai token still cannot start the download (%d): %v", status, withCivitai)
+		}
+		if withCivitai["login_required"] != true {
+			t.Errorf("the wall stopped being mentioned once a token existed (%d): %v", status, withCivitai)
+		}
 	}
 
-	// It fails OPEN in the directions it cannot read. A CDN that dislikes HEAD is not a login
-	// wall, and neither is a probe that could not be made at all.
+	// It fails OPEN in the directions it cannot read. A CDN that dislikes a ranged GET is not a
+	// login wall, and neither is a probe that could not be made at all.
 	civitaiStub(t, http.StatusMethodNotAllowed)
 	got, aerr := engineResolveCivitai(context.Background(), engineIngestCivitai{VersionID: 128713})
 	if aerr != nil || got.LoginRequired {
@@ -557,9 +601,10 @@ func TestEngineIngestFailureTellsTheTwoGatedRefusalsApart(t *testing.T) {
 			errCodeIngestGatedNoToken, "no token reached the task at all"},
 		{"hf:x/y/z.gguf", "HTTP/1.1 403 Forbidden", errCodeIngestGatedNotAccepted,
 			"a verbose run prints the status line instead of curl's sentence"},
-		{"civitai:128713", curl401, errCodeIngestCivitaiLogin,
-			"Civitai has no token, so both statuses mean the same act — and a job started before" +
-				" the resolve probe existed still ends up here"},
+		{"civitai:128713", curl401, errCodeIngestCivitaiNoToken,
+			"no Civitai token reached the task at all"},
+		{"civitai:128713", curl403, errCodeIngestCivitaiLogin,
+			"a Civitai token arrived and this deployment's account still cannot have the file"},
 		{"https://example.com/m.gguf", curl403, "",
 			"somebody's own server refusing is not something this can advise on"},
 		{"hf:x/y/z.gguf", "sha256 mismatch: got aa… want bb…", "",
@@ -669,6 +714,7 @@ func ingestReq() engineIngestRequest {
 			DownloadURL: "https://huggingface.co/x/y/resolve/main/f.gguf",
 			SHA256:      strings.Repeat("a", 64), Bytes: 1117320768,
 			License: "apache-2.0", Source: "hf:x/y/f.gguf",
+			ArtifactIdentity: engineHFArtifactIdentity("x/y", "f.gguf", "commit-a", strings.Repeat("a", 64)),
 		},
 	}
 }
@@ -727,6 +773,9 @@ func TestEngineIngestJobCreatesTheRowOnlyWhenTheTaskSucceeds(t *testing.T) {
 	if len(m.Files) != 1 || m.Files[0].Bytes != 1117320768 {
 		t.Errorf("files = %+v", m.Files)
 	}
+	if m.Files[0].ArtifactIdentity != ingestReq().Resolved.ArtifactIdentity {
+		t.Errorf("immutable artifact identity was not persisted: %+v", m.Files[0])
+	}
 	// The whole tuple ADR 0072 open question 11 asks for — (tenant, member, when, licence) —
 	// and it has to survive the round trip through job.Spec, which is where it actually lives
 	// between the request and the row minutes later.
@@ -742,6 +791,101 @@ func TestEngineIngestJobCreatesTheRowOnlyWhenTheTaskSucceeds(t *testing.T) {
 	}
 	if got, _, _ := st.GetEngineIngestJob(ctx, job.ID); got.State != store.EngineIngestDone {
 		t.Errorf("job state = %q", got.State)
+	}
+}
+
+func TestEngineIngestMarksCatalogueInstallFailureAsFailed(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	req := ingestReq()
+	job, aerr := ing.start(t.Context(), req)
+	if aerr != nil {
+		t.Fatal(aerr.message)
+	}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: req.Role, ID: req.ModelID, Description: "the row that won the race",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api.tasks = []ecstypes.Task{{
+		TaskArn: aws.String(job.TaskArn), LastStatus: aws.String("STOPPED"),
+		Containers: []ecstypes.Container{{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+			{Name: aws.String("upload"), ExitCode: aws.Int32(0)}},
+	}}
+	ing.reconcile(t.Context())
+	got, ok, err := st.GetEngineIngestJob(t.Context(), job.ID)
+	if err != nil || !ok || got.State != store.EngineIngestFailed || !strings.Contains(got.Message, "object was stored") {
+		t.Fatalf("job after catalogue collision = %+v, found=%v, err=%v", got, ok, err)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), req.Role)
+	if len(rows) != 1 || rows[0].Description != "the row that won the race" {
+		t.Fatalf("catalogue collision overwrote the winning row: %+v", rows)
+	}
+}
+
+// VAE follow-ups start from the reconciler rather than postIngest, so the ingester itself has to
+// retain the destination fence. Otherwise a second task could overwrite a known object before
+// either task has a chance to install its catalogue change.
+func TestEngineIngestStartRefusesARecordedDestinationBeforeRunTask(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	req := ingestReq()
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: req.Role, ID: "already-there", Files: []store.EngineModelFile{{S3Key: req.S3Key}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, aerr := ing.start(t.Context(), req); aerr == nil || aerr.status != http.StatusConflict ||
+		!strings.Contains(aerr.message, "already recorded") {
+		t.Fatalf("recorded destination start = %#v, want conflict", aerr)
+	}
+	if len(api.run) != 0 {
+		t.Fatalf("recorded destination started %d ingest task(s)", len(api.run))
+	}
+}
+
+// 🔴 The revision the table names is the revision the task runs on, and the CP has to keep
+// reading it. Reported from af-sandbox 2026-09-15, one stack update after this branch's own
+// change to the ingest task definition:
+//
+//	取り込みタスクを起動できませんでした: operation error ECS: RunTask, …
+//	InvalidParameterException: TaskDefinition is inactive
+//
+// CloudFormation registers a NEW revision and DEREGISTERS the previous one, the table publishes
+// the new ARN within the same update — and the ingester went on naming the one it booted with,
+// because the reloader only ever re-pointed its storage checker. Every ingest, every move and
+// every purge on that deployment failed until the Control Plane itself was replaced.
+func TestEngineIngestTakesTheTaskDefinitionTheTableNowNames(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, _ := testIngester(t, api, nil)
+	was := ing.ingestDef()
+	if _, aerr := ing.start(t.Context(), ingestReq()); aerr != nil {
+		t.Fatalf("first start: %#v", aerr)
+	}
+	if got := aws.ToString(api.run[0].TaskDefinition); got != "af-ingest" {
+		t.Fatalf("task definition = %q, want the one it booted with", got)
+	}
+
+	next := was
+	next.TaskDef = "af-ingest:4"
+	if !ing.adopt(next, nil) {
+		t.Fatal("a table naming another revision was not adopted")
+	}
+	if ing.adopt(next, nil) {
+		t.Error("an unchanged table was reported as a change")
+	}
+	second := ingestReq()
+	second.ModelID, second.S3Key = "another", "llm/another.gguf"
+	if _, aerr := ing.start(t.Context(), second); aerr != nil {
+		t.Fatalf("second start: %#v", aerr)
+	}
+	if got := aws.ToString(api.run[1].TaskDefinition); got != "af-ingest:4" {
+		t.Fatalf("task definition = %q, want the revision the table now names", got)
+	}
+	// An incomplete block is not an adoption: a table read during the migration window carries
+	// no ingest at all, and taking it would leave the runner unable to start anything.
+	if ing.adopt(engineIngestDef{}, nil) || ing.ingestDef().TaskDef != "af-ingest:4" {
+		t.Error("an empty ingest block replaced a working declaration")
 	}
 }
 
@@ -909,18 +1053,18 @@ func TestEngineIngestRecordsARefusedRunTask(t *testing.T) {
 // with no HF token is refused at the API, before anything is started.
 func TestEngineResolvedRowRefusesGatedWithoutAToken(t *testing.T) {
 	res := engineResolved{Gated: true, LicenseName: "flux-1-dev-non-commercial-license"}
-	row := engineResolvedRow(res, false, "", engineKVGeometry{})
+	row := engineResolvedRow(res, engineDeploymentTokens{}, "", engineKVGeometry{})
 	if row["can_ingest"] != false {
 		t.Error("a gated model read as ingestible with no token")
 	}
 	if row["commercial_use"] != "no" {
 		t.Errorf("commercial_use = %v", row["commercial_use"])
 	}
-	if engineResolvedRow(res, true, "", engineKVGeometry{})["can_ingest"] != true {
+	if engineResolvedRow(res, engineDeploymentTokens{hf: true}, "", engineKVGeometry{})["can_ingest"] != true {
 		t.Error("a gated model with a token configured was still refused")
 	}
 	// An ungated model needs no token at all.
-	if engineResolvedRow(engineResolved{}, false, "", engineKVGeometry{})["can_ingest"] != true {
+	if engineResolvedRow(engineResolved{}, engineDeploymentTokens{}, "", engineKVGeometry{})["can_ingest"] != true {
 		t.Error("an ungated model was refused")
 	}
 	b, _ := json.Marshal(row)
@@ -1187,6 +1331,10 @@ func TestEngineIngestReplaceOfAForgottenRowWritesNothing(t *testing.T) {
 	if rows, err := st.ListEngineModels(ctx, "llm"); err != nil || len(rows) != 0 {
 		t.Fatalf("rows = %d (%v) — a replace with no row to replace in must write nothing", len(rows), err)
 	}
+	if got, _, _ := st.GetEngineIngestJob(ctx, job.ID); got.State != store.EngineIngestFailed ||
+		!strings.Contains(got.Message, "object was stored") {
+		t.Fatalf("orphaned replacement was shown as successful: %+v", got)
+	}
 }
 
 // A job of ANOTHER role is not this engine's to forget, and an id that never existed answers the
@@ -1231,21 +1379,17 @@ func TestIngestHistorySaysWhichCatalogueRowStillUsesTheFile(t *testing.T) {
 	seedIngestJob(t, st, "j-shared", "image", store.EngineIngestDone, "", "image/text_encoders/clip_l.safetensors")
 	seedIngestJob(t, st, "j-orphan", "image", store.EngineIngestDone, "", "image/checkpoints/forgotten.safetensors")
 
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/api/admin/engines/image/ingest", nil)
+	// Read through the body builder itself: the list route left with the job history tab (ADR
+	// 0085 decision 6), and what still answers this is the body the dismiss hands back.
+	r := httptest.NewRequest("DELETE", "/api/admin/engines/image/ingest/j-none", nil)
 	r.SetPathValue("key", "image")
-	a.listIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u0"}, super: true})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("list = %d (%s)", rec.Code, rec.Body.String())
+	body, err := a.ingestListBody(r, engineIngestGrant{ident: store.Identity{ID: "u0"}, super: true}, "image")
+	if err != nil {
+		t.Fatalf("jobs: %v", err)
 	}
-	var out struct {
-		Jobs []map[string]any `json:"jobs"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	rows, _ := body["jobs"].([]map[string]any)
 	got := map[string]any{}
-	for _, j := range out.Jobs {
+	for _, j := range rows {
 		got[j["id"].(string)] = j["key_used_by"]
 	}
 	// 🔴 The row that keeps the file alive is NAMED, because "still used" with no name is an

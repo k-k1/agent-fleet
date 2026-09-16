@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with AF_MCP_ENABLED=true.
-# count: 487
+# count: 494
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -20,6 +20,9 @@ POST /api/admin/egress/allowlist/{id}/state
 GET /api/admin/egress/mode
 PUT /api/admin/egress/mode
 GET /api/admin/engines
+DELETE /api/admin/engines/civitai-token
+GET /api/admin/engines/civitai-token
+PUT /api/admin/engines/civitai-token
 DELETE /api/admin/engines/hf-token
 GET /api/admin/engines/hf-token
 PUT /api/admin/engines/hf-token
@@ -28,19 +31,22 @@ POST /api/admin/engines/search
 PUT /api/admin/engines/{key}
 GET /api/admin/engines/{key}/attribution
 PUT /api/admin/engines/{key}/class
+POST /api/admin/engines/{key}/discover
 GET /api/admin/engines/{key}/hourly
-GET /api/admin/engines/{key}/ingest
 POST /api/admin/engines/{key}/ingest
 POST /api/admin/engines/{key}/ingest/files
 POST /api/admin/engines/{key}/ingest/resolve
 POST /api/admin/engines/{key}/ingest/search
+POST /api/admin/engines/{key}/ingest/versions
 DELETE /api/admin/engines/{key}/ingest/{id}
 POST /api/admin/engines/{key}/models
-POST /api/admin/engines/{key}/models/vae-scan
 DELETE /api/admin/engines/{key}/models/{id}
 PUT /api/admin/engines/{key}/models/{id}
-POST /api/admin/engines/{key}/models/{id}/vae
+POST /api/admin/engines/{key}/models/{id}/complete
 PUT /api/admin/engines/{key}/negative
+DELETE /api/admin/engines/{key}/objects
+GET /api/admin/engines/{key}/objects
+POST /api/admin/engines/{key}/objects/register
 POST /api/admin/engines/{key}/replace-box
 GET /api/admin/host
 GET /api/admin/idp
@@ -208,6 +214,7 @@ GET /api/drawio/stencils
 GET /api/drawio/stencils/{name...}
 GET /api/egress/check
 POST /api/egress/propose
+GET /api/engines/status
 GET /api/env/jdk-install
 POST /api/env/jdk-install
 GET /api/env/node-install

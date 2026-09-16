@@ -3,6 +3,9 @@ import type { ReactNode } from "react";
 import { apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { useSettingsUI } from "../store.ts";
+import { openEngineAdd } from "./openEngineAdd.ts";
+import { EngineModelsAdminView } from "./adminEngineModels.tsx";
 import { EngineIssueTokenPanel } from "./adminEngineIssueToken.tsx";
 import { EngineUptimePanel, Sep, useDuration } from "./EngineUptime.tsx";
 import { secsUntil, windowIsPartial } from "./engineUptime.ts";
@@ -20,9 +23,12 @@ import {
 // same off / on-demand / always-on control the VOICEVOX panel has, plus what that engine is
 // actually doing right now, which box it is on and what that box has cost.
 //
-// What it LOADS is the other screen (adminEngineModels.tsx). The split is along the line the
-// permissions already follow: everything here is the operator's — it buys and stops a GPU for the
-// whole deployment — while a granted tenant_admin may fill the catalogue and never sees this.
+// What it LOADS is the catalogue pane (adminEngineAdd.tsx), reached from a "model catalogue"
+// button on each row rather than a sibling item in the admin rail: this whole screen is the
+// operator's — it buys and stops a GPU for the whole deployment — so there was never a second
+// audience to give the catalogue its own door here. A granted tenant_admin reaches the same
+// catalogue component through the tenant settings modal's own "engines" item instead
+// (tenantScope.tsx) and never sees this screen at all.
 //
 // Until this existed the only way to switch one off was a CloudFormation parameter
 // (`LlmMode` / `ImageMode`), which is not a control anyone reaches for when a GPU is
@@ -46,6 +52,17 @@ export function EnginesAdminView() {
   const tr = useT();
   const { rows, isSuper, err, setErr, setRows, load } = useEngineRows();
   const [busy, setBusy] = useState("");
+  const closeAdmin = useSettingsUI((s) => s.closeAdmin);
+  const closeTenant = useSettingsUI((s) => s.closeTenantSettings);
+  /** Opens the model catalogue for one row as its own PANE, the same act
+   *  `EngineCatalogLauncher` used to open from a sibling rail item. Closing the admin dialog is
+   *  part of the act, not a courtesy: a dialog renders ABOVE the layout, so a pane opened from
+   *  inside one would be a screen nobody can see. */
+  const openCatalog = (key: string) => {
+    openEngineAdd(key, false, "registered");
+    closeAdmin();
+    closeTenant();
+  };
 
   // Poll only while something is actually moving. An engine parked at "off", or stopped under
   // on-demand with nobody asking, is a settled state, and a GPU panel that polls forever is a
@@ -153,15 +170,11 @@ export function EnginesAdminView() {
 
   return (
     <div className="admin-stage">
-      {rows.length === 0 && (
-        <section className="admin-panel">
-          <p className="muted">{tr("admin.engines_none")}</p>
-          {/* 🔴 Where the browse used to be. A deployment with no engine still has a question
-              worth answering — "what could I run?" — and it is now answered on the models
-              screen, which needs neither an engine nor a token to ask Hugging Face. */}
-          <p className="muted">{tr("admin.engines_none_models_hint")}</p>
-        </section>
-      )}
+      {/* 🔴 A deployment with no engine still has a question worth answering — "what could I
+          run?" — and answering it needs neither an engine nor a token (ADR 0072 decision 11), so
+          this embeds the engine-less browser rather than a sentence pointing at a button that
+          has nothing to be a row of yet. */}
+      {rows.length === 0 && <EngineModelsAdminView />}
       {/* 🔴 Everything on this screen buys or stops a GPU for the WHOLE deployment, so it is the
           operator's alone. A granted tenant_admin reaches the models screen instead (ADR 0072
           open question 11) and has no door to this one — but the component is reachable from
@@ -192,6 +205,12 @@ export function EnginesAdminView() {
                 ))}
               </span>
             )}
+            {/* What this row LOADS, opened as its own pane (ADR 0072 follow-up). Unconditional —
+                even a borrowed row gets the button, and the catalogue that opens for one is
+                already read-only and says whose deployment to edit it on. */}
+            <button type="button" className="sm" onClick={() => openCatalog(e.key)}>
+              {tr("admin.engines_open_catalog")}
+            </button>
             <button type="button" className="ghost" title={tr("admin.refresh")} onClick={load}>
               <Icon name="refresh" />
             </button>
@@ -280,6 +299,13 @@ export function EnginesAdminView() {
               default and costs this deployment nothing, so the warning would be pure noise. */}
           {isSuper && e.mode === "on" && !engineIsExternal(e) && (
             <p className="form-err">{tr("admin.engines_always_on_note")}</p>
+          )}
+          {/* This build's images-provider vocabulary is {comfy, openai-compat} (ADR 0083
+              decision 5). A row naming anything else cannot be served no matter what its mode
+              says, and the operator has to hear it from this panel rather than from a member
+              reporting "the image tool disappeared". */}
+          {e.provider_unserved && (
+            <p className="form-err">{tr("admin.engines_provider_unserved").replace("{p}", e.provider || "")}</p>
           )}
           {isSuper && e.error && <p className="form-err">{e.error}</p>}
           {/* The events are the only place ECS says why a start failed ("no container

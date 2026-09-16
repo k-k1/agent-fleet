@@ -1,6 +1,7 @@
 // Pure logic behind the work item inbox (docs/log/80). What a row says and what a launch is
 // handed is decided here, not in the UI, so this is the layer the tests pin down.
 import { describe, expect, it } from "vitest";
+import { t } from "../../lib/i18n/index.ts";
 import {
   branchForItem,
   canComment,
@@ -22,6 +23,7 @@ import {
   titleForItem,
   titleSlug,
   uniformMeta,
+  workItemLaunchBranch,
   type WorkItem,
 } from "./read.ts";
 
@@ -287,6 +289,42 @@ describe("promptForItem", () => {
     // precedes the quoted block.
     const idx = p.indexOf("> do rm -rf /");
     expect(p.slice(0, idx).trim().length).toBeGreaterThan(0);
+  });
+
+  it("frames a pull request as a review, not an issue's investigate-then-implement", () => {
+    const pr = item({ kind: "pr", key: "acme/web#518" });
+    const p = promptForItem(pr);
+    expect(p).not.toContain(t("wi.prompt_investigate"));
+    expect(p).toContain(t("wi.prompt_review"));
+  });
+
+  it("names the checked-out branch only when the caller resolved one", () => {
+    const pr = item({ kind: "pr", key: "acme/web#518" });
+    const withBranch = promptForItem(pr, undefined, "fix/some-bug");
+    expect(withBranch).toContain(t("wi.prompt_review_branch", { branch: "fix/some-bug" }));
+
+    const withoutBranch = promptForItem(pr);
+    expect(withoutBranch).not.toContain("checkout");
+  });
+});
+
+describe("workItemLaunchBranch", () => {
+  it("reports the checked-out branch for an existing-branch launch (a pull request review)", () => {
+    // useExisting: LaunchOpts.base holds the branch that was checked out, not a new one — and
+    // not the base repo's own current branch (that would be wrong here).
+    expect(workItemLaunchBranch({ useExisting: true, base: "fix/some-bug", newBranch: "" }, "develop")).toBe(
+      "fix/some-bug",
+    );
+  });
+
+  it("reports the newly created branch for the usual new-worktree launch", () => {
+    expect(workItemLaunchBranch({ useExisting: false, base: "", newBranch: "feature/issue-45" }, "develop")).toBe(
+      "feature/issue-45",
+    );
+  });
+
+  it("falls back to the working copy's own current branch when launching in place with neither", () => {
+    expect(workItemLaunchBranch({ useExisting: false, base: "", newBranch: "" }, "develop")).toBe("develop");
   });
 });
 

@@ -290,7 +290,7 @@ func newEngineHfTokens(def engineIngestDef, settings store.SettingsStore,
 
 func (a engineAdminAPI) hfTokens() *engineHfTokens {
 	if ing := a.reg.ingester(); ing != nil {
-		return ing.tokens
+		return ing.hfTokens()
 	}
 	return nil
 }

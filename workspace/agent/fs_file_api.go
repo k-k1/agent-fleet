@@ -310,8 +310,19 @@ func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 	// (fs_thumb.go). It is advisory: anything that cannot be scaled falls through to the
 	// original, so a caller needs no capability check and an older Agent that ignores the
 	// parameter is simply the fallback.
-	if edge := thumbEdge(r.URL.Query().Get("thumb")); edge > 0 {
-		if data, ct, ok := thumbnail(opened.file, path.display, fi.Size(), fi.ModTime(), edge); ok {
+	// `preview=<max edge>` is the same door for a surface that SHOWS the picture rather than
+	// standing in for it: a lightbox. It differs only in what happens when there is nothing to
+	// downscale — measured on this deployment's generated images (832x1216 PNG, ~1.1 MB), the
+	// same pixels as JPEG are ~120 KB, and a downscale would have to halve the picture to say
+	// anything at all. `thumb` wins if both are given; nothing sends both.
+	edge, mode := thumbEdge(r.URL.Query().Get("thumb")), modeDownscale
+	if edge == 0 {
+		if e := thumbEdge(r.URL.Query().Get("preview")); e > 0 {
+			edge, mode = e, modePreview
+		}
+	}
+	if edge > 0 {
+		if data, ct, ok := thumbnail(opened.file, path.display, fi.Size(), fi.ModTime(), edge, mode); ok {
 			w.Header().Set("Content-Type", ct)
 			w.Header().Set("Content-Disposition", "inline; filename*=UTF-8''"+url.PathEscape(name))
 			setVersionedCache(w, r, fi.ModTime())

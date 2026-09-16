@@ -12,19 +12,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// hfSearchStub answers /api/models the way Hugging Face does and records the query it was
-// asked, so a test can assert the FILTER as well as the answer.
-func hfSearchStub(t *testing.T, body string) (*httptest.Server, *url.Values) {
+// hfSearchStub answers /api/models the way Hugging Face does and records EVERY query it was
+// asked, so a test can assert the filters as well as the answer.
+//
+// 🔴 Every query, not the last one: the image kind asks twice (engineSearchFilters — the
+// pipeline tag cannot reach a ComfyUI-packaged repository and the library tag cannot reach
+// stock SDXL), and a recorder that keeps only the last would quietly test half of that.
+func hfSearchStub(t *testing.T, body string) (*httptest.Server, *[]url.Values) {
 	t.Helper()
-	var got url.Values
+	var got []url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.URL.Query()
+		got = append(got, r.URL.Query())
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	}))
@@ -35,10 +40,33 @@ func hfSearchStub(t *testing.T, body string) (*httptest.Server, *url.Values) {
 	return srv, &got
 }
 
+// hfLastQuery is for the assertions that do not care which lane asked — every lane carries the
+// sort, the expansions and the search word identically.
+func hfLastQuery(qs *[]url.Values) url.Values {
+	if len(*qs) == 0 {
+		return url.Values{}
+	}
+	return (*qs)[len(*qs)-1]
+}
+
+// hfAskedFor answers whether ANY lane sent this key=value, which is what "the search asked for
+// X" means once a kind can ask more than once.
+func hfAskedFor(qs *[]url.Values, key, value string) bool {
+	for _, q := range *qs {
+		for _, got := range q[key] {
+			if got == value {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 const hfSearchBody = `[
   {"id":"Qwen/Qwen2.5-Coder-7B-Instruct-GGUF","downloads":256578,"likes":435,"trendingScore":22,
    "gated":false,"lastModified":"2024-11-01T00:00:00.000Z","createdAt":"2024-09-18T09:12:03.000Z",
-   "cardData":{"license":"apache-2.0","extra_gated_prompt":"PROMPT-PADDING-PROMPT-PADDING"},
+   "cardData":{"license":"apache-2.0","thumbnail":"https://cdn-uploads.huggingface.co/model.png",
+               "extra_gated_prompt":"PROMPT-PADDING-PROMPT-PADDING"},
    "gguf":{"total":7615616512,"context_length":131072,
            "chat_template":"TEMPLATE-PADDING-TEMPLATE-PADDING"}},
   {"id":"black-forest-labs/FLUX.1-dev","downloads":790579,"likes":14538,
@@ -71,6 +99,15 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 		h.License != "apache-2.0" || h.Bytes != 7615616512 || h.ContextLength != 131072 {
 		t.Errorf("hit = %+v", h)
 	}
+	if h.ModelRef != h.Ref {
+		t.Errorf("model_ref = %q, want the Hugging Face repository %q", h.ModelRef, h.Ref)
+	}
+	if h.PreviewURL != "https://cdn-uploads.huggingface.co/model.png" {
+		t.Errorf("preview_url = %q, want the published model-card thumbnail", h.PreviewURL)
+	}
+	if hits[1].PreviewURL != "" {
+		t.Errorf("preview_url = %q for a card that publishes no thumbnail", hits[1].PreviewURL)
+	}
 	// All three ranking numbers ride on every row, whichever one the list was ordered by:
 	// sorting by one and showing only that one leaves "why is this here" unanswerable.
 	if h.Likes != 435 || h.Trending != 22 {
@@ -87,7 +124,7 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 	if hits[1].LicenseName != "flux-1-dev-non-commercial-license" {
 		t.Errorf("license_name = %q; `license:\"other\"` alone tells nobody the terms", hits[1].LicenseName)
 	}
-	if q.Get("expand[]") == "" || !strings.Contains(strings.Join((*q)["expand[]"], ","), "gated") {
+	if hfLastQuery(q).Get("expand[]") == "" || !strings.Contains(strings.Join(hfLastQuery(q)["expand[]"], ","), "gated") {
 		t.Errorf("no expand[]=gated in %v — without it a row carries neither gating nor licence", *q)
 	}
 }
@@ -98,8 +135,8 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 // right is here: the two sources spell a page differently, and Civitai's needs the MODEL id —
 // a number the panel never otherwise sees, because `ref` is the version's.
 //
-// 🔴 The dates are DISPLAY ONLY. The vocabulary still has no "newest" (see engineSortHF: every
-// date-ordered page is bulk automated re-quantisations), and this must not become one.
+// Dates are also the explicit initial rankings: updated repositories on Hugging Face and new
+// model arrivals on Civitai remain separate meanings in the API.
 func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 	_, q := hfSearchStub(t, hfSearchBody)
 	hits, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "qwen", kind: "gguf", sort: ""})
@@ -109,8 +146,8 @@ func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 	// Asked for on the same read: without the expansion the field is simply absent, and the
 	// panel would show a repository with no age (measured live 2026-09-11 that this is the
 	// spelling that answers it).
-	if !strings.Contains(strings.Join((*q)["expand[]"], ","), "createdAt") {
-		t.Errorf("createdAt was not expanded: %v", (*q)["expand[]"])
+	if !strings.Contains(strings.Join(hfLastQuery(q)["expand[]"], ","), "createdAt") {
+		t.Errorf("createdAt was not expanded: %v", hfLastQuery(q)["expand[]"])
 	}
 	if hits[0].PublishedAt != "2024-09-18T09:12:03.000Z" {
 		t.Errorf("published_at = %q, want the repository's createdAt", hits[0].PublishedAt)
@@ -131,7 +168,9 @@ func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 		_, _ = w.Write([]byte(`{"items":[
 		  {"id":133005,"name":"Juggernaut XL","type":"Checkpoint","allowCommercialUse":["Image"],
 		   "modelVersions":[{"id":1759168,"name":"Ragnarok","baseModel":"SDXL 1.0",
-		                     "publishedAt":"2025-05-07T21:02:16.940Z"}]}]}`))
+		                     "publishedAt":"2025-05-07T21:02:16.940Z",
+		                     "images":[{"url":"javascript:alert(1)"},
+							   {"url":"https://image.civitai.com/model.jpeg"}]}]}]}`))
 	}))
 	defer srv.Close()
 	old := engineCivitaiBase
@@ -155,19 +194,70 @@ func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
 		t.Errorf("updated_at = %q — Civitai published no such date, so the row must not claim one",
 			civ[0].UpdatedAt)
 	}
+	if civ[0].PreviewURL != "https://image.civitai.com/model.jpeg" {
+		t.Errorf("preview_url = %q, want the first safe HTTP(S) image", civ[0].PreviewURL)
+	}
+	if civ[0].Name != "Juggernaut XL" {
+		t.Errorf("name = %q, want the model title without a version suffix", civ[0].Name)
+	}
+	if got := engineSafeCivitaiPreviewURL("https://metadata.example.invalid/private.jpeg"); got != "" {
+		t.Errorf("a non-Civitai preview origin was exposed: %q", got)
+	}
+	for _, unsafe := range []string{"javascript:alert(1)", "https://user:password@example.com/x.png"} {
+		if got := engineSafeHTTPURL(unsafe); got != "" {
+			t.Errorf("unsafe HTTP thumbnail %q was exposed as %q", unsafe, got)
+		}
+	}
+}
+
+// A card draws its example in a 92x108 box, so the row must not hand it the original.
+//
+// Measured live 2026-09-15: the URL Civitai publishes carries `original=true`, and a page of
+// twenty is ~40 MB — on a phone those loads fail, and a failed <img> is the broken-image glyph.
+// The same rewrite is what makes a VIDEO example drawable at all: `anim=false` answers a still
+// JPEG where the published URL is an .mp4 that no <img> can render.
+func TestCivitaiPreviewsAreAskedForAtTheSizeTheyAreDrawn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[
+		  {"id":133005,"name":"Juggernaut XL","type":"Checkpoint",
+		   "modelVersions":[{"id":1759168,"baseModel":"SDXL 1.0",
+		                     "images":[{"url":"https://image.civitai.com/xG1nkq/3e8b5992-14fa/original=true/142762236.mp4"}]}]}]}`))
+	}))
+	defer srv.Close()
+	old := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	defer func() { engineCivitaiBase = old }()
+
+	civ, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "checkpoint", sort: ""})
+	if aerr != nil || len(civ) != 1 {
+		t.Fatalf("civitai search: %v %v", civ, aerr)
+	}
+	if want := "https://image.civitai.com/xG1nkq/3e8b5992-14fa/anim=false,width=1024/142762236.mp4"; civ[0].PreviewURL != want {
+		t.Errorf("preview_url = %q, want the lightbox size %q", civ[0].PreviewURL, want)
+	}
+	if want := "https://image.civitai.com/xG1nkq/3e8b5992-14fa/anim=false,width=256/142762236.mp4"; civ[0].ThumbURL != want {
+		t.Errorf("thumb_url = %q, want the card size %q", civ[0].ThumbURL, want)
+	}
+
+	// A URL that carries no transform segment gets one inserted before the filename; a shape
+	// flatter than the CDN's own layout is left alone rather than guessed at.
+	if got, want := engineCivitaiImageVariant("https://image.civitai.com/xG1nkq/3e8b5992-14fa/1.jpeg", engineCivitaiThumbTransform),
+		"https://image.civitai.com/xG1nkq/3e8b5992-14fa/anim=false,width=256/1.jpeg"; got != want {
+		t.Errorf("variant of a transformless URL = %q, want %q", got, want)
+	}
+	if got := engineCivitaiImageVariant("https://image.civitai.com/model.jpeg", engineCivitaiThumbTransform); got != "https://image.civitai.com/model.jpeg" {
+		t.Errorf("variant of an unrecognised shape = %q, want it untouched", got)
+	}
 }
 
 // A model with no id still gets a page: the version-only form Civitai resolves, which is what
 // the licence link has always used. Nothing measured answers that, but the id is upstream's to
 // omit and a row whose link is `/models/0?…` is worse than one that is a little less precise.
 func TestCivitaiModelURLFallsBackToTheVersion(t *testing.T) {
-	old := engineCivitaiBase
-	engineCivitaiBase = "https://civitai.example"
-	defer func() { engineCivitaiBase = old }()
-	if got := engineCivitaiModelURL(0, 501240); got != "https://civitai.example/models/?modelVersionId=501240" {
+	if got := engineCivitaiModelURL("https://civitai.example", 0, 501240); got != "https://civitai.example/models/?modelVersionId=501240" {
 		t.Errorf("url with no model id = %q", got)
 	}
-	if got := engineCivitaiModelURL(4201, 501240); got != "https://civitai.example/models/4201?modelVersionId=501240" {
+	if got := engineCivitaiModelURL("https://civitai.example", 4201, 501240); got != "https://civitai.example/models/4201?modelVersionId=501240" {
 		t.Errorf("url = %q", got)
 	}
 }
@@ -179,22 +269,36 @@ func TestSearchFiltersByWhatTheEngineCanLoad(t *testing.T) {
 	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "qwen", kind: "gguf", sort: ""}); aerr != nil {
 		t.Fatalf("gguf: %v", aerr.message)
 	}
-	if q.Get("filter") != "gguf" || q.Get("pipeline_tag") != "" {
-		t.Errorf("llm search asked %v, want filter=gguf", *q)
+	// One lane for the llm role: `gguf` is a library tag every quantised repository carries, so
+	// there is no second shape to reach for here.
+	if len(*q) != 1 || hfLastQuery(q).Get("filter") != "gguf" || hfLastQuery(q).Get("pipeline_tag") != "" {
+		t.Errorf("llm search asked %v, want one lane with filter=gguf", *q)
 	}
-	if q.Get("sort") != "downloads" || q.Get("direction") != "-1" {
-		t.Errorf("not ordered by downloads: %v", *q)
+	if hfLastQuery(q).Get("sort") != "lastModified" || hfLastQuery(q).Get("direction") != "-1" {
+		t.Errorf("initial Hugging Face browse is not ordered by updated descending: %v", *q)
 	}
+	*q = nil
 	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "sdxl", kind: "checkpoint", sort: ""}); aerr != nil {
 		t.Fatalf("checkpoint: %v", aerr.message)
 	}
-	if q.Get("pipeline_tag") != "text-to-image" || q.Get("filter") != "" {
-		t.Errorf("image search asked %v, want pipeline_tag=text-to-image", *q)
+	// 🔴 Two lanes, and NEITHER is optional. Hugging Face has no OR, `pipeline_tag=text-to-image`
+	// is a diffusers-era tag that a repository of loose safetensors does not carry, and
+	// `diffusion-single-file` is not on stock SDXL. Measured 2026-09-15: with the pipeline tag
+	// alone, `Comfy-Org/Krea-2` and `circlestone-labs/Anima` are absent from their own searches
+	// while the gated `krea/Krea-2-*` rows are offered in their place.
+	if len(*q) != 2 {
+		t.Fatalf("image search asked %d times, want both lanes: %v", len(*q), *q)
+	}
+	if !hfAskedFor(q, "pipeline_tag", "text-to-image") {
+		t.Errorf("no lane asked for the diffusers pipeline tag: %v", *q)
+	}
+	if !hfAskedFor(q, "filter", "diffusion-single-file") {
+		t.Errorf("no lane reaches ComfyUI-packaged repositories: %v", *q)
 	}
 	// The chat engine's search must not ask for `gguf` on the image role: the expansion exists
 	// to fill the window field, which sd-server has no use for.
-	if strings.Contains(strings.Join((*q)["expand[]"], ","), "gguf") {
-		t.Errorf("the image search expanded gguf: %v", (*q)["expand[]"])
+	if strings.Contains(strings.Join(hfLastQuery(q)["expand[]"], ","), "gguf") {
+		t.Errorf("the image search expanded gguf: %v", hfLastQuery(q)["expand[]"])
 	}
 }
 
@@ -231,13 +335,147 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 	if hits[0].Ref != "1759168" {
 		t.Errorf("ref = %q, want the version id 1759168 (133005 is the MODEL id)", hits[0].Ref)
 	}
+	if hits[0].ModelRef != "133005" {
+		t.Errorf("model_ref = %q, want the model id 133005", hits[0].ModelRef)
+	}
 	if hits[0].BaseModel != "SDXL 1.0" || hits[0].Downloads != 1632949 {
 		t.Errorf("hit = %+v", hits[0])
 	}
 	// Civitai is not asked for GGUFs at all: it hosts image models, and llama.cpp can load none
 	// of them.
-	if hits, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "gguf", sort: ""}); aerr != nil || len(hits) != 0 {
-		t.Errorf("civitai for the llm role = %v %v, want nothing", hits, aerr)
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "gguf", sort: ""}); aerr == nil || aerr.status != http.StatusBadRequest {
+		t.Errorf("civitai for the llm role = %v, want a 400 refusal", aerr)
+	}
+}
+
+// serviceUnavailableThenOK answers 503 for the first `fails` requests and 200 (with `body`)
+// after that, and counts how many requests it saw.
+func serviceUnavailableThenOK(t *testing.T, fails int, body string) (*httptest.Server, *int) {
+	t.Helper()
+	requests := 0
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests <= fails {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(s.Close)
+	return s, &requests
+}
+
+// 🔴 Measured on af-sandbox (2026-09-14): Civitai's search endpoint answers 503 under load and
+// clears within a second, which used to fail the whole search on the FIRST bad tick — an
+// operator's only recourse was to press search again by hand. engineSearchGetJSON now retries a
+// 503 in place; this is the positive control that the retry actually fires and the eventual
+// success is still returned, not swallowed as an error. Deliberately NOT on engineIngestGetJSON
+// (see its comment) — that one backs the VAE scan's own per-batch budget, and multiplying every
+// probe by three would blow it silently.
+func TestCivitaiSearchRetries503ThenSucceeds(t *testing.T) {
+	s, requests := serviceUnavailableThenOK(t, 2, `{"items":[]}`)
+	defer s.Close()
+	old := engineCivitaiBase
+	engineCivitaiBase = s.URL
+	defer func() { engineCivitaiBase = old }()
+
+	hits, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "checkpoint", sort: ""})
+	if aerr != nil {
+		t.Fatalf("search: %v", aerr.message)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("hits = %+v, want none from an empty page", hits)
+	}
+	if *requests != 3 {
+		t.Errorf("requests = %d, want 3 (2 failures + the retry that succeeded)", *requests)
+	}
+}
+
+// A 503 that never clears must still surface as an error to the panel (the "取り込み元が想定外
+// の応答を返しました" banner) rather than retrying forever or reporting nothing.
+func TestCivitaiSearchGivesUpAfterExhaustingRetries(t *testing.T) {
+	s, requests := serviceUnavailableThenOK(t, 99, "")
+	defer s.Close()
+	old := engineCivitaiBase
+	engineCivitaiBase = s.URL
+	defer func() { engineCivitaiBase = old }()
+
+	_, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "checkpoint", sort: ""})
+	if aerr == nil {
+		t.Fatal("search of a permanently-503 host returned no error")
+	}
+	if aerr.status != http.StatusBadGateway || !strings.Contains(aerr.message, "503") {
+		t.Errorf("error = %+v, want a 502 mentioning the upstream's 503", aerr)
+	}
+	if *requests != engineSearchGetJSONRetries {
+		t.Errorf("requests = %d, want exactly %d (bounded retry, not unbounded)", *requests, engineSearchGetJSONRetries)
+	}
+}
+
+// 401/403 mean the asset needs an account NOW, not "ask again in a second" — retrying would
+// only make a login wall look like flakiness.
+func TestCivitaiSearchDoesNotRetryAuthRefusals(t *testing.T) {
+	requests := 0
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer s.Close()
+	old := engineCivitaiBase
+	engineCivitaiBase = s.URL
+	defer func() { engineCivitaiBase = old }()
+
+	_, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "juggernaut", kind: "checkpoint", sort: ""})
+	if aerr == nil || aerr.code != errCodeIngestSourceForbid {
+		t.Fatalf("error = %+v, want errCodeIngestSourceForbid", aerr)
+	}
+	if requests != 1 {
+		t.Errorf("requests = %d, want exactly 1 (a 401 is not retried)", requests)
+	}
+}
+
+// The civitai-red tab is the only place `nsfw=true` is ever sent, and the only place
+// engineCivitaiRedBase is ever the host — see engineSearchCivitaiPage. Measured 2026-09-14
+// against the live API: neither host returns an NSFW-flagged model without the parameter, so
+// this is load-bearing, not a nicety. nsfwLevel rides on every hit regardless of tab.
+func TestCivitaiRedSearchSetsNsfwAndUsesTheRedHost(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[
+		  {"id":827184,"name":"WAI-illustrious-SDXL","type":"Checkpoint","nsfwLevel":60,
+		   "stats":{"downloadCount":1511569,"thumbsUpCount":85086},
+		   "allowCommercialUse":["Image"],
+		   "modelVersions":[{"id":2883731,"name":"v17.0","baseModel":"Illustrious",
+		                     "publishedAt":"2026-04-23T13:02:02.382Z"}]}]}`))
+	}))
+	defer srv.Close()
+	oldRed := engineCivitaiRedBase
+	engineCivitaiRedBase = srv.URL
+	defer func() { engineCivitaiRedBase = oldRed }()
+	// The plain host must not be reachable from this path — a fallback to it would defeat the
+	// point of choosing the tab.
+	oldPlain := engineCivitaiBase
+	engineCivitaiBase = "https://civitai.example.invalid"
+	defer func() { engineCivitaiBase = oldPlain }()
+
+	hits, aerr := engineSearchCivitaiRed(t.Context(), engineSearchReq{q: "wai", kind: "checkpoint", sort: ""})
+	if aerr != nil {
+		t.Fatalf("civitai-red search: %v", aerr.message)
+	}
+	if got.Get("nsfw") != "true" {
+		t.Errorf("query = %v, want nsfw=true", got)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	if hits[0].NsfwLevel != 60 {
+		t.Errorf("nsfw_level = %d, want 60", hits[0].NsfwLevel)
+	}
+	if hits[0].URL != srv.URL+"/models/827184?modelVersionId=2883731" {
+		t.Errorf("url = %q, want the version page on the RED host", hits[0].URL)
 	}
 }
 
@@ -251,7 +489,7 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 // the card at all, which is what this test pins.
 func TestCivitaiSearchMarksNonCommercial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"items":[{"name":"X","allowCommercialUse":[],
+		_, _ = w.Write([]byte(`{"items":[{"id":2,"name":"X","allowCommercialUse":[],
 		  "modelVersions":[{"id":5,"baseModel":"SDXL 1.0"}]}]}`))
 	}))
 	defer srv.Close()
@@ -317,7 +555,8 @@ func TestSearchRouteAnswersHitsAndRefusesAnEmptyQuery(t *testing.T) {
 func TestSearchRanksWithoutAQuery(t *testing.T) {
 	_, q := hfSearchStub(t, `[]`)
 	for _, tc := range []struct{ sort, want string }{
-		{"", "downloads"},
+		{"", "lastModified"},
+		{engineSortUpdated, "lastModified"},
 		{engineSortDownloads, "downloads"},
 		{engineSortTrending, "trendingScore"},
 		{engineSortLikes, "likes"},
@@ -325,13 +564,13 @@ func TestSearchRanksWithoutAQuery(t *testing.T) {
 		if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "", kind: "gguf", sort: tc.sort}); aerr != nil {
 			t.Fatalf("%q: %v", tc.sort, aerr.message)
 		}
-		if q.Get("sort") != tc.want {
-			t.Errorf("sort %q asked for %q, want %q", tc.sort, q.Get("sort"), tc.want)
+		if hfLastQuery(q).Get("sort") != tc.want {
+			t.Errorf("sort %q asked for %q, want %q", tc.sort, hfLastQuery(q).Get("sort"), tc.want)
 		}
 		// 🔴 No `search=` at all. An empty one is not the same as none on this API, and a
 		// ranking is what the caller asked for.
-		if _, ok := (*q)["search"]; ok {
-			t.Errorf("a wordless ranking still sent search=%q", q.Get("search"))
+		if _, ok := hfLastQuery(q)["search"]; ok {
+			t.Errorf("a wordless ranking still sent search=%q", hfLastQuery(q).Get("search"))
 		}
 	}
 	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{q: "", kind: "gguf", sort: "newest"}); aerr == nil {
@@ -365,8 +604,126 @@ func TestCivitaiRankingUsesThePeriodForTrending(t *testing.T) {
 		t.Errorf("likes asked %v, want sort=Highest Rated with no period", got)
 	}
 	// 🔴 Not passed through: this API answers 400 to a sort it does not know (measured).
-	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "", kind: "checkpoint", sort: "newest"}); aerr == nil {
-		t.Error("an unknown ranking reached Civitai, which answers 400")
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "", kind: "checkpoint", sort: engineSortNewest}); aerr != nil {
+		t.Errorf("new arrivals: %v", aerr)
+	}
+	if got.Get("sort") != "Newest" || got.Get("period") != "" {
+		t.Errorf("new arrivals asked %v, want sort=Newest with no period", got)
+	}
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{q: "", kind: "checkpoint", sort: engineSortUpdated}); aerr == nil {
+		t.Error("Hugging Face's updated ranking reached Civitai")
+	}
+}
+
+// Pagination passes only the opaque token back to the fixed upstream endpoint. In particular,
+// Hugging Face's Link URL is not followed: accepting an arbitrary next URL here would turn the
+// admin route into an SSRF primitive.
+func TestSearchPaginationUsesOpaqueBoundedCursors(t *testing.T) {
+	var got []url.Values
+	requests := 0
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		got = append(got, r.URL.Query())
+		w.Header().Set("Link", "<"+srv.URL+"/api/models?cursor=next%3D%3D>; rel=\"next\"")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	old := engineIngestBase
+	engineIngestBase = srv.URL
+	t.Cleanup(func() { engineIngestBase = old })
+
+	// 🔴 One cursor per LANE, joined. The image kind asks twice and the two upstream cursors are
+	// unrelated tokens, so a single one could only ever page one half of the union — the other
+	// would restart from the top on every page and repeat rows the operator already scrolled
+	// past. Each lane also asks for its own share of the page (engineSearchLimit / lanes), which
+	// is what lets its own next-cursor point exactly past what was shown.
+	_, next, aerr := engineSearchHFPage(t.Context(), engineSearchReq{
+		q: "flux", kind: "checkpoint", sort: engineSortUpdated,
+	})
+	if aerr != nil {
+		t.Fatalf("HF page: %v", aerr.message)
+	}
+	if len(got) != 2 || next != "next==~next==" {
+		t.Errorf("first page asked %d times and answered cursor %q, want 2 and next==~next==", len(got), next)
+	}
+	if lim := got[0].Get("limit"); lim != strconv.Itoa(engineSearchLimit/2) {
+		t.Errorf("lane limit = %q, want the page split between the lanes", lim)
+	}
+	got = nil
+	if _, _, aerr = engineSearchHFPage(t.Context(), engineSearchReq{
+		q: "flux", kind: "checkpoint", sort: engineSortUpdated, cursor: next,
+	}); aerr != nil {
+		t.Fatalf("HF page 2: %v", aerr.message)
+	}
+	if len(got) != 2 || got[0].Get("cursor") != "next==" || got[1].Get("cursor") != "next==" {
+		t.Errorf("page 2 asked %v, want each lane to carry its own token back", got)
+	}
+	// A lane that answered no next-cursor has run out, and its empty slot keeps the position so
+	// the OTHER lane's token still lands in the right request. Asking it again from the top is
+	// what would repeat rows.
+	got = nil
+	if _, _, aerr = engineSearchHFPage(t.Context(), engineSearchReq{
+		q: "flux", kind: "checkpoint", sort: engineSortUpdated, cursor: "~still==",
+	}); aerr != nil {
+		t.Fatalf("HF page 3: %v", aerr.message)
+	}
+	if len(got) != 1 || got[0].Get("cursor") != "still==" ||
+		got[0].Get("filter") != "diffusion-single-file" {
+		t.Errorf("an exhausted lane was asked again: %v", got)
+	}
+
+	a, _, _ := engineModelAdminAPI(t)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest/search",
+		strings.NewReader(`{"source":"hf","sort":"updated","cursor":"current==~current=="}`))
+	r.SetPathValue("key", "image")
+	a.searchIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	var answer map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &answer)
+	if rec.Code != http.StatusOK || answer["next_cursor"] != "next==~next==" {
+		t.Errorf("wire pagination = %d %v", rec.Code, answer)
+	}
+
+	h := http.Header{}
+	h.Set("Link", `<https://metadata.example.invalid/api/models?cursor=secret>; rel="next"`)
+	if cursor := engineHFNextCursor(h); cursor != "" {
+		t.Errorf("a different origin supplied next cursor %q", cursor)
+	}
+
+	before := requests
+	if _, _, aerr := engineSearchHFPage(t.Context(), engineSearchReq{
+		kind: "checkpoint", cursor: "bad\ncursor",
+	}); aerr == nil || aerr.status != http.StatusBadRequest {
+		t.Errorf("control-character cursor = %v, want 400", aerr)
+	}
+	if requests != before {
+		t.Error("an invalid cursor reached the upstream")
+	}
+	if engineCursorValid(strings.Repeat("x", engineCursorMax+1)) {
+		t.Error("an unbounded cursor was accepted")
+	}
+}
+
+func TestCivitaiPaginationUsesMetadataCursor(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		_, _ = w.Write([]byte(`{"items":[],"metadata":{"nextCursor":"2026-09-13 14:37:43.239|2935601"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	old := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	t.Cleanup(func() { engineCivitaiBase = old })
+
+	_, next, aerr := engineSearchCivitaiPage(t.Context(), engineSearchReq{
+		kind: "checkpoint", sort: engineSortNewest, cursor: "2026-09-12 10:00:00|10",
+	}, false)
+	if aerr != nil {
+		t.Fatalf("Civitai page: %v", aerr.message)
+	}
+	if got.Get("cursor") != "2026-09-12 10:00:00|10" || next != "2026-09-13 14:37:43.239|2935601" {
+		t.Errorf("cursor request/answer = %q/%q", got.Get("cursor"), next)
 	}
 }
 
@@ -428,18 +785,36 @@ func TestBrowsingNeedsNoEngineAndSurvivesOneBeingOff(t *testing.T) {
 func TestBrowseKindPicksTheUpstreamFilter(t *testing.T) {
 	a, _, _ := engineModelAdminAPI(t)
 	_, q := hfSearchStub(t, `[]`)
-	for _, tc := range []struct{ kind, filter, pipeline string }{
-		{"gguf", "gguf", ""},
-		{"checkpoint", "", "text-to-image"},
+	// The image kind asks twice and the llm kind once, so what a browse has to get right is
+	// WHICH filters were sent between them — not what the last request happened to carry.
+	for _, tc := range []struct {
+		kind  string
+		lanes int
+		want  map[string]string // key -> value that some lane must have sent
+	}{
+		{"gguf", 1, map[string]string{"filter": "gguf"}},
+		{"checkpoint", 2, map[string]string{
+			"pipeline_tag": "text-to-image", "filter": "diffusion-single-file"}},
 	} {
+		*q = nil
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/api/admin/engines/search?kind="+tc.kind, strings.NewReader(`{}`))
 		a.browseSearch(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", tc.kind, rec.Code, rec.Body.String())
 		}
-		if q.Get("filter") != tc.filter || q.Get("pipeline_tag") != tc.pipeline {
-			t.Errorf("kind %q asked %v, want filter=%q pipeline_tag=%q", tc.kind, *q, tc.filter, tc.pipeline)
+		if len(*q) != tc.lanes {
+			t.Errorf("kind %q asked %d times, want %d: %v", tc.kind, len(*q), tc.lanes, *q)
+		}
+		for key, value := range tc.want {
+			if !hfAskedFor(q, key, value) {
+				t.Errorf("kind %q never asked %s=%s: %v", tc.kind, key, value, *q)
+			}
+		}
+		// The llm browse must not reach for image repositories, and the reverse: a GGUF row in
+		// an image picker is a dead end that resolve refuses minutes later.
+		if (tc.kind == "gguf") != hfAskedFor(q, "filter", "gguf") {
+			t.Errorf("kind %q asked the wrong role's filter: %v", tc.kind, *q)
 		}
 	}
 }
@@ -465,16 +840,31 @@ func TestSearchSurvivesAFractionalTrendingScore(t *testing.T) {
 	if len(hits) != 3 {
 		t.Fatalf("hits = %d, want 3", len(hits))
 	}
+	// By ref rather than by position: the image kind's two lanes are merged into one ranking, so
+	// where a row lands is the ORDER's business and this test is about the decode.
+	byRef := map[string]engineSearchHit{}
+	for _, h := range hits {
+		byRef[h.Ref] = h
+	}
 	// Compared through float64 so this test still COMPILES if the field is put back to an
 	// integer — then it fails on the line above with the message the panel showed, which is the
 	// failure worth keeping, rather than refusing to build.
-	if float64(hits[0].Trending) != 0.1 || float64(hits[1].Trending) != 0.7000000000000001 {
-		t.Errorf("scores = %v / %v, want them carried as they came", hits[0].Trending, hits[1].Trending)
+	if float64(byRef["John6666/wai-nsfw-illustrious-sdxl-v150-sdxl"].Trending) != 0.1 ||
+		float64(byRef["John6666/wai-nsfw-illustrious-v80-sdxl"].Trending) != 0.7000000000000001 {
+		t.Errorf("scores = %v / %v, want them carried as they came",
+			byRef["John6666/wai-nsfw-illustrious-sdxl-v150-sdxl"].Trending,
+			byRef["John6666/wai-nsfw-illustrious-v80-sdxl"].Trending)
 	}
 	// A null cardData is the other shape in that same answer, and it must not take the row with
 	// it: the licence is simply unknown there.
-	if hits[2].Ref != "martineux/waiIllustriousSDXL_v160" || hits[2].License != "" {
-		t.Errorf("row with cardData:null = %+v", hits[2])
+	if row, ok := byRef["martineux/waiIllustriousSDXL_v160"]; !ok || row.License != "" {
+		t.Errorf("row with cardData:null = %+v (present=%v)", row, ok)
+	}
+	// 🔴 The same repository answered by both lanes is ONE row. Without the dedupe every
+	// repository carrying both tags would be drawn twice, which is what this stub — one body for
+	// every query — would produce.
+	if len(byRef) != len(hits) {
+		t.Errorf("hits = %d rows for %d repositories: a lane's answer was drawn twice", len(hits), len(byRef))
 	}
 }
 
@@ -502,5 +892,101 @@ func TestUnreadableAnswerLogsWhichFieldItWas(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Errorf("log line %q does not say %q — the field has to be findable from it", line, want)
 		}
+	}
+}
+
+// Filtering a browse by FAMILY (the answer to "show me what this engine can load, of this
+// architecture" without typing a repository name).
+//
+// 🔴 The deployment's word is translated per upstream and never passed through. Both APIs answer
+// a name they do not know with an EMPTY LIST and no error — measured 2026-09-15, `baseModels=SD
+// 3.5` and `baseModels=Z-Image` both answer zero — so a pass-through would turn one typo into
+// "this family has no models", which reads as an answer.
+func TestSearchFiltersByFamilyInEachUpstreamsOwnWords(t *testing.T) {
+	_, q := hfSearchStub(t, `[]`)
+	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{kind: "checkpoint", family: "anima"}); aerr != nil {
+		t.Fatalf("hf: %v", aerr.message)
+	}
+	// ONE lane, not the kind's two: `base_model:` already implies an image repository, and
+	// Hugging Face ANDs its filters so two bases would answer models derived from both.
+	if len(*q) != 1 || !hfAskedFor(q, "filter", "base_model:circlestone-labs/Anima") {
+		t.Errorf("hf family filter asked %v, want one lane on the family's base repository", *q)
+	}
+	*q = nil
+	if _, aerr := engineSearchHF(t.Context(), engineSearchReq{kind: "checkpoint", family: "anima", lora: true}); aerr != nil {
+		t.Fatalf("hf lora: %v", aerr.message)
+	}
+	if !hfAskedFor(q, "filter", "lora") || !hfAskedFor(q, "filter", "base_model:circlestone-labs/Anima") {
+		t.Errorf("a family LoRA search asked %v, want both filters", *q)
+	}
+
+	var civ url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		civ = r.URL.Query()
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	oldCiv := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	t.Cleanup(func() { engineCivitaiBase = oldCiv })
+
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{kind: "checkpoint", family: "sdxl"}); aerr != nil {
+		t.Fatalf("civitai: %v", aerr.message)
+	}
+	// Repeated, because one family is published under several names — Civitai answers the union
+	// (measured: `baseModels=Pony&baseModels=Illustrious` returns both).
+	got := civ["baseModels"]
+	if len(got) < 2 || !strings.Contains(strings.Join(got, ","), "Illustrious") {
+		t.Errorf("civitai family filter asked baseModels=%v, want the family's published names", got)
+	}
+	for _, name := range got {
+		if strings.Contains(name, "Pony V7") {
+			t.Error("Pony V7 is AuraFlow, not SDXL — the SDXL graph cannot load it")
+		}
+	}
+}
+
+// 🔴 A source that cannot narrow by this family REFUSES. Measured 2026-09-15: Civitai publishes
+// no `baseModel` string for sd35 or zimage, so an unfiltered list (wrong: it is not this family)
+// and an empty one (wrong: it reads as "none exist") are both lies the panel would draw as an
+// answer.
+func TestSearchRefusesAFamilyAnUpstreamCannotNarrow(t *testing.T) {
+	asked := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		asked++
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	old := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	t.Cleanup(func() { engineCivitaiBase = old })
+
+	_, aerr := engineSearchCivitai(t.Context(), engineSearchReq{kind: "checkpoint", family: "zimage"})
+	if aerr == nil || aerr.status != http.StatusBadRequest {
+		t.Fatalf("zimage on Civitai = %v, want 400", aerr)
+	}
+	if !strings.Contains(aerr.message, "zimage") || !strings.Contains(aerr.message, "name") {
+		t.Errorf("refusal = %q, want it to name the family and say what to do instead", aerr.message)
+	}
+	if asked != 0 {
+		t.Error("the upstream was asked anyway, which spends a request to learn nothing")
+	}
+	// The positive control: the same source, a family it does publish.
+	if _, aerr := engineSearchCivitai(t.Context(), engineSearchReq{kind: "checkpoint", family: "anima"}); aerr != nil {
+		t.Errorf("anima on Civitai = %v, want the filter to be applied", aerr.message)
+	}
+}
+
+// The wire refuses a family this deployment has no template for, rather than narrowing a browse
+// to models it could never load.
+func TestSearchRefusesAFamilyTheProviderDoesNotHave(t *testing.T) {
+	a, _, _ := engineModelAdminAPI(t)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest/search",
+		strings.NewReader(`{"source":"hf","family":"pixart"}`))
+	r.SetPathValue("key", "image")
+	a.searchIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown family = %d %s, want 400", rec.Code, rec.Body.String())
 	}
 }

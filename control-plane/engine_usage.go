@@ -451,6 +451,52 @@ var notifyEngineCatalogChanged = func(ctx context.Context, mgr *manager, key str
 	}
 }
 
+// notifyEngineCatalogChangedForTenant is notifyEngineCatalogChanged narrowed to one
+// tenant (ADR 0084 decision 9): a super_admin flipping allow_engine_llm/allow_engine_image
+// for a tenant must reach that tenant's running workspaces at once, or a revoked grant
+// stays live in the Agent's cached catalogue and opencode config for up to the ten-minute
+// TTL — the exact "shown in the menu, refused on pick" window decision 8 exists to close.
+//
+// `reason` is carried through to postEngineCatalogChanged's `key` field purely for the log
+// line on the far side; unlike the per-engine push above, this is not scoped to one engine
+// key, so it does not name one.
+var notifyEngineCatalogChangedForTenant = func(ctx context.Context, mgr *manager, tenantID, reason string) {
+	if mgr == nil || mgr.store == nil || tenantID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	wss, err := mgr.store.ListWorkspaces(ctx, tenantID)
+	if err != nil {
+		log.Printf("engines: listing workspaces for the tenant limits push failed: %v", err)
+		return
+	}
+	sem := make(chan struct{}, engineCatalogPushConcurrency)
+	var wg sync.WaitGroup
+	sent := 0
+	for _, ws := range wss {
+		if ws.State != "running" {
+			continue
+		}
+		rt := mgr.runtimeFor(ws, "")
+		if rt == nil || rt.Endpoint() == "" {
+			continue
+		}
+		sent++
+		wg.Add(1)
+		go func(endpoint, token string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			postEngineCatalogChanged(ctx, endpoint, token, reason)
+		}(rt.Endpoint(), rt.Token())
+	}
+	wg.Wait()
+	if sent > 0 {
+		log.Printf("engines: tenant limits change pushed to %d workspace(s)", sent)
+	}
+}
+
 func postEngineCatalogChanged(ctx context.Context, endpoint, token, key string) {
 	body, _ := json.Marshal(map[string]string{"key": key})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/engine/catalog-changed", bytes.NewReader(body))
