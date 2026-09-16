@@ -176,6 +176,13 @@ Parameters:
     Description: >-
       Add AWS's managed IP reputation list (known scanners/botnets). Matches on the SOURCE,
       not the body. Requires WafRateLimitPer5Min > 0 (that is what creates the web ACL).
+  WafTrustedIpCidrs:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >-
+      Comma-separated list of IPv4/IPv6 CIDRs (e.g. 203.0.113.0/24,2001:db8::/32) that are
+      never counted toward the rate limit. Typical use: office NAT, VPN exit node. Empty =
+      every IP is subject to WafRateLimitPer5Min. Requires WafRateLimitPer5Min > 0.
   Fqdn:
     Type: String
     Description: >-
@@ -422,6 +429,7 @@ Conditions:
   HasCpAlarms: !Not [ !Equals [ !Ref CpAlarmEmail, "" ] ]
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
+  HasWafTrustedIps: !And [ !Condition HasWaf, !Not [ !Equals [ !Join [ ",", !Ref WafTrustedIpCidrs ], "" ] ] ]
 
 Resources:
   Cert:
@@ -452,6 +460,16 @@ Resources:
         - { Key: idle_timeout.timeout_seconds, Value: "60" }
 
   # --- WAF (only when WafRateLimitPer5Min > 0) --------------------------------
+  TrustedIpSet:
+    Type: AWS::WAFv2::IPSet
+    Condition: HasWafTrustedIps
+    Properties:
+      Name: !Sub "af-${AWS::StackName}-trusted"
+      Scope: REGIONAL
+      IPAddressVersion: IPV4
+      Addresses: !Ref WafTrustedIpCidrs
+      Description: IPs that bypass the rate-limit rule (office NAT, VPN, etc.)
+
   WebAcl:
     Type: AWS::WAFv2::WebACL
     Condition: HasWaf
@@ -473,6 +491,13 @@ Resources:
             RateBasedStatement:
               Limit: !Ref WafRateLimitPer5Min
               AggregateKeyType: IP
+              ScopeDownStatement: !If
+                - HasWafTrustedIps
+                - NotStatement:
+                    Statement:
+                      IPSetReferenceStatement:
+                        ARN: !GetAtt TrustedIpSet.Arn
+                - !Ref AWS::NoValue
           VisibilityConfig:
             SampledRequestsEnabled: true
             CloudWatchMetricsEnabled: true
