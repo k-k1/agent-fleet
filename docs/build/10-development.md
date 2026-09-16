@@ -129,17 +129,31 @@ Go is **two modules**, run separately:
   themselves unless a database URL is set.
 - ⚠️ **When you add a migration, run it once against a real Postgres.** Three tests
   skip without a database, and they are **the only place** that catches "added to one
-  dialect but not the other" ([06 §6.4](06-data.md)). Standing one up needs no Docker:
+  dialect but not the other" ([06 §6.4](06-data.md)). In a Workspace, `af-db` handles
+  install, init, and start; the completion criterion is 4 PASS, 0 SKIP:
 
 ```bash
-PGT=~/.local/share/af-pgtest    # create it with initdb -U postgres --auth=trust
-# ★ Start it on a unix socket, not TCP (-h '' closes TCP). On a shared development
-#   host, a TCP port will collide sooner rather than later.
+# In a Workspace (af-db available):
+(cd control-plane && \
+  AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 \
+  -run 'TestPostgres|TestSchemaDialectParity' ./...)
+af-db down    # free ≈ 47 MB before the next heavy build
+```
+
+  `af-db` uses scram-sha-256 authentication, so `TestPostgresPasswordRotation` runs and
+  passes (it only skips when the server uses trust auth, as the hand-rolled harness did).
+  `-count=1` defeats the test cache — a cached `ok` proves nothing.
+
+  Without `af-db` (a development host outside a Workspace):
+
+```bash
+PGT=~/.local/share/af-pgtest    # create with: initdb -U postgres --auth=trust
+# Use a unix socket — a TCP port collides on a shared host.
 nohup "$PGT/dist/bin/postgres" -D "$PGT/data" -k "$PGT/sock" -h '' \
   -c shared_buffers=32MB -c fsync=off > "$PGT/pg.log" 2>&1 &
 (cd control-plane && \
   AF_TEST_DATABASE_URL="postgres://postgres@/postgres?host=$PGT/sock&sslmode=disable" \
-  go test -run 'TestPostgres|TestSchemaDialectParity' ./...)
+  go test -count=1 -run 'TestPostgres|TestSchemaDialectParity' ./...)
 "$PGT/dist/bin/pg_ctl" -D "$PGT/data" stop -m fast
 ```
 

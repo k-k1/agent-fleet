@@ -78,9 +78,12 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
 - **No root, no `sudo`** — you are `dev` (uid 1000); `apt install` is not possible. Install into
   your home instead (`~/.local`, `pip install --user`, `uv tool install`, `npm i -g` through the
   home-volume node). Anything that must be in the image is a request to the operator.
-- **No Docker / Podman**, and no database servers (`psql`, `sqlite3`, `redis-cli` absent).
-  Testcontainers, `docker compose` fixtures and "just start a Postgres" do not work — run such
-  tests against a service the user provides, or skip them and say plainly that you did.
+- **No Docker / Podman** — Testcontainers and `docker compose` fixtures are not available.
+  **Postgres is**: `AF_TEST_DATABASE_URL="$(af-db url)" go test …` — one database per working
+  copy, started on demand; `eval "$(af-db env)"` also exports `DATABASE_URL`. Client:
+  `workspace-agent install-pg-client`. **Stop before heavy builds** (`af-db down`) — the server
+  holds ≈ 47 MB of cgroup memory; idle-stops after 30 min. MySQL: P1, not yet. `sqlite3` /
+  `redis-cli` absent.
 - `ss`, `lsof`, `netstat` are **not installed**; probe a port with
   `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/`.
 - Present and usable: `gcc`/`g++`/`make`/`pkg-config` (so cgo, node-gyp and source-built wheels

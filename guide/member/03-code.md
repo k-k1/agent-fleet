@@ -172,6 +172,42 @@ Bitbucket tokens are refreshed automatically even after they expire.
 > Uncommitted changes and unpushed branches exist **only inside the workspace**.
 > Push work you want to keep frequently ([01 First day](01-first-day.md)).
 
+## Running database-backed tests
+
+Postgres is available inside the workspace without Docker or any external service. `af-db url`
+returns a connection URL for the current working copy's database, starting and creating it on
+first call.
+
+```bash
+# Pass the URL directly to a test run
+AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 ./...
+
+# Or export it into the current shell (also sets DATABASE_URL)
+eval "$(af-db env)"
+go test -count=1 ./...
+```
+
+Check what is running with `af-db status`. When you are done, stop the server:
+
+```bash
+af-db down
+```
+
+Stop it before a memory-intensive build — the server holds ≈ 47 MB of the workspace's memory
+quota, and a heavy JVM build next to it can exhaust it.
+
+A few things worth knowing:
+
+- **One database per working copy.** Two sessions that share the same working copy share the same
+  database. To address a named database explicitly, use `af-db url --db=<name>`.
+- **`--tcp`** — use when the test driver requires TCP (for example, `jdbc:postgresql://127.0.0.1:…`).
+  The default URL uses a unix socket, which most Go and Python clients support but JDBC cannot.
+- **`--persist`** — forces the database files onto the home volume so they survive a workspace
+  stop. Only meaningful on ECS deployments where the default disk is task-local and cleared on
+  stop; on docker and native deployments the files already persist across stops.
+- Install `psql` with `workspace-agent install-pg-client`.
+- MySQL is not yet available.
+
 ## Subversion (SVN) repositories
 
 You can work with **SVN** repositories, not just git. In the clone modal, use the **Git / SVN

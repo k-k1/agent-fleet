@@ -124,20 +124,34 @@ Go は **2 モジュール**（`control-plane/` と `workspace/agent/`）でそ�
 
 - CP 側は `httptest` ベースのスモークを多数含む（audit / egress / 内部 git smart-HTTP / LFS /
   store 両実装など）。Postgres 系は `AF_TEST_DATABASE_URL` 未設定なら skip。
-- ⚠️ **マイグレーションを足したときは、実 Postgres でも 1 度回すこと。** skip される 3 本
-  （`TestPostgresStore` / `TestPostgresDeleteCascade` / **`TestSchemaDialectParity`**）が
-  「片方の系列にだけ足した」を捕まえる唯一の場所で、CI は `AF_TEST_DATABASE_URL` を持たない
-  （[06 §6.4](06-data.ja.md)）。Docker が要らない立て方（初回のみ数分）:
+- ⚠️ **マイグレーションを足したときは、実 Postgres でも 1 度回すこと。** skip される
+  `TestPostgresStore` / `TestPostgresDeleteCascade` / `TestSchemaDialectParity` の 3 本が
+  「片方の系列にだけ足した」を捕まえる唯一の場所（CI は `AF_TEST_DATABASE_URL` を持たない。
+  [06 §6.4](06-data.ja.md)）。Workspace では `af-db` がインストール・初期化・起動を担う。
+  完了の定義は 4 PASS、0 SKIP:
 
 ```bash
-PGT=~/.local/share/af-pgtest    # 無ければ initdb -U postgres --auth=trust で作る
-# ★ TCP ポートではなく unix socket で上げる（-h '' で TCP を閉じる）。開発ホストを
-#   他のセッションと共有していると、ポートは高確率で衝突する。
+# Workspace 内（af-db が使える場合）:
+(cd control-plane && \
+  AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 \
+  -run 'TestPostgres|TestSchemaDialectParity' ./...)
+af-db down    # ≈ 47 MB を解放してから次の重いビルドへ
+```
+
+  `af-db` は scram-sha-256 認証を使うため `TestPostgresPasswordRotation` も実行されパスする
+  （trust 認証の手組みハーネスではこのテストは skip された）。
+  `-count=1` はテストキャッシュを無効にする — キャッシュの `ok` は何も証明しない。
+
+  `af-db` が無い場合（Workspace 外の開発ホスト）:
+
+```bash
+PGT=~/.local/share/af-pgtest    # 無ければ: initdb -U postgres --auth=trust
+# TCP ではなく unix socket で上げる — 共有ホストではポートが衝突する。
 nohup "$PGT/dist/bin/postgres" -D "$PGT/data" -k "$PGT/sock" -h '' \
   -c shared_buffers=32MB -c fsync=off > "$PGT/pg.log" 2>&1 &
 (cd control-plane && \
   AF_TEST_DATABASE_URL="postgres://postgres@/postgres?host=$PGT/sock&sslmode=disable" \
-  go test -run 'TestPostgres|TestSchemaDialectParity' ./...)
+  go test -count=1 -run 'TestPostgres|TestSchemaDialectParity' ./...)
 "$PGT/dist/bin/pg_ctl" -D "$PGT/data" stop -m fast   # 使い終わったら止める
 ```
 - CI（GitHub Actions）: `ci.yml` が push/PR ごとに 3 コンポーネント（CP / Agent / Console）の
