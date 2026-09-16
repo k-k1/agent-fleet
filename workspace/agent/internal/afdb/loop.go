@@ -3,6 +3,7 @@ package afdb
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -11,22 +12,32 @@ const (
 	idleStopThreshold = 30 * time.Minute
 )
 
-// StartIdleLoop starts the background goroutine that stops idle Postgres instances.
+// idleThreshold returns the idle stop threshold, overridable by AF_DB_IDLE_SECONDS.
+func idleThreshold() time.Duration {
+	if s := os.Getenv("AF_DB_IDLE_SECONDS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return idleStopThreshold
+}
+
+// StartIdleLoop starts the background goroutine that stops idle instances.
 // Called once from main.go's serve path.
 func StartIdleLoop() {
 	go runIdleLoop()
 }
 
 func runIdleLoop() {
-	// Track consecutive idle ticks per instance key.
 	idleSince := make(map[string]time.Time)
-
 	for range time.Tick(idleCheckInterval) {
-		checkAllInstances(idleSince)
+		CheckAllInstances(idleSince)
 	}
 }
 
-func checkAllInstances(idleSince map[string]time.Time) {
+// CheckAllInstances checks all running instances for idleness and stops those
+// that have been idle past the threshold. Exported so tests can call it directly.
+func CheckAllInstances(idleSince map[string]time.Time) {
 	var instances []*Instance
 	_ = withLock(func() error {
 		r, err := readRegistry()
@@ -34,7 +45,7 @@ func checkAllInstances(idleSince map[string]time.Time) {
 			return nil
 		}
 		for _, inst := range r.Instances {
-			if inst.Engine == "postgres" && isRunning(inst.PID) {
+			if isInstanceRunning(inst) {
 				cp := *inst
 				instances = append(instances, &cp)
 			}
@@ -42,16 +53,16 @@ func checkAllInstances(idleSince map[string]time.Time) {
 		return nil
 	})
 
+	threshold := idleThreshold()
+
 	for _, inst := range instances {
 		key := instanceKey(inst.Engine, inst.Major)
 		n := CountClientBackends(inst)
 		if n != 0 {
-			// Active connections (or error) — reset the idle clock.
 			delete(idleSince, key)
 			continue
 		}
-		// Zero client backends — check how long it has been idle.
-		// Also respect LastUsedAt from url calls.
+		// Zero active connections — check how long it has been idle.
 		var effectiveLastUsed time.Time
 		_ = withLock(func() error {
 			r, err := readRegistry()
@@ -63,18 +74,24 @@ func checkAllInstances(idleSince map[string]time.Time) {
 			}
 			return nil
 		})
-		if time.Since(effectiveLastUsed) < idleStopThreshold {
+		if time.Since(effectiveLastUsed) < threshold {
 			delete(idleSince, key)
 			continue
 		}
 		if _, seen := idleSince[key]; !seen {
 			idleSince[key] = time.Now()
 		}
-		if time.Since(idleSince[key]) >= idleStopThreshold {
-			fmt.Fprintf(os.Stderr, "af-db: idle-stop postgres-%d (no clients for %s)\n",
-				inst.Major, idleStopThreshold)
-			if err := stopServer(inst); err != nil {
-				fmt.Fprintf(os.Stderr, "af-db: idle-stop error: %v\n", err)
+		if time.Since(idleSince[key]) >= threshold {
+			fmt.Fprintf(os.Stderr, "af-db: idle-stop %s-%s (no clients for %s)\n",
+				inst.Engine, inst.Major, threshold)
+			var stopErr error
+			if inst.Engine == "mysql" {
+				stopErr = stopMySQLServer(inst)
+			} else {
+				stopErr = stopServer(inst)
+			}
+			if stopErr != nil {
+				fmt.Fprintf(os.Stderr, "af-db: idle-stop error: %v\n", stopErr)
 				continue
 			}
 			_ = withLock(func() error {

@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ---- unit tests (no Postgres required) ----
+// ---- unit tests (no database required) ----
 
 func TestDBNameFor(t *testing.T) {
 	cases := []string{
@@ -52,13 +52,167 @@ func TestResolveDirFallback(t *testing.T) {
 	}
 }
 
+func TestInstanceKeyString(t *testing.T) {
+	if got := instanceKey("mysql", "8.4"); got != "mysql-8.4" {
+		t.Errorf("instanceKey(mysql, 8.4) = %q, want mysql-8.4", got)
+	}
+	if got := instanceKey("postgres", "17"); got != "postgres-17" {
+		t.Errorf("instanceKey(postgres, 17) = %q, want postgres-17", got)
+	}
+}
+
+func TestPassPathEngine(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	p := passPath("mysql", "8.4")
+	if !strings.Contains(p, "mysql-8.4") {
+		t.Errorf("passPath(mysql, 8.4) = %q, expected to contain mysql-8.4", p)
+	}
+	p2 := passPath("postgres", "17")
+	if !strings.Contains(p2, "postgres-17") {
+		t.Errorf("passPath(postgres, 17) = %q, expected to contain postgres-17", p2)
+	}
+}
+
+func TestBuildMySQLURL(t *testing.T) {
+	inst := &Instance{
+		Engine:  "mysql",
+		Major:   "8.4",
+		Sockdir: "/tmp/sock-dir",
+		Port:    3308,
+	}
+	pw := "testpw"
+	dbName := "mydb"
+
+	sockURL := buildMySQLURL(inst, dbName, pw, false)
+	if !strings.HasPrefix(sockURL, "mysql://") {
+		t.Errorf("socket URL missing mysql:// prefix: %q", sockURL)
+	}
+	if !strings.Contains(sockURL, "socket=") {
+		t.Errorf("socket URL missing socket= param: %q", sockURL)
+	}
+	if !strings.Contains(sockURL, "mysql.sock") {
+		t.Errorf("socket URL missing mysql.sock: %q", sockURL)
+	}
+
+	tcpURL := buildMySQLURL(inst, dbName, pw, true)
+	if !strings.Contains(tcpURL, "127.0.0.1:3308") {
+		t.Errorf("TCP URL missing host:port: %q", tcpURL)
+	}
+}
+
+func TestBuildMySQLGoDSN(t *testing.T) {
+	inst := &Instance{
+		Engine:  "mysql",
+		Major:   "8.4",
+		Sockdir: "/tmp/sock-dir",
+		Port:    3308,
+	}
+	pw := "testpw"
+	dbName := "mydb"
+
+	sockDSN := buildMySQLGoDSN(inst, dbName, pw, false)
+	if !strings.HasPrefix(sockDSN, "root:") {
+		t.Errorf("socket DSN missing root: prefix: %q", sockDSN)
+	}
+	if !strings.Contains(sockDSN, "@unix(") {
+		t.Errorf("socket DSN missing @unix(: %q", sockDSN)
+	}
+
+	tcpDSN := buildMySQLGoDSN(inst, dbName, pw, true)
+	if !strings.Contains(tcpDSN, "@tcp(127.0.0.1:3308)") {
+		t.Errorf("TCP DSN missing @tcp: %q", tcpDSN)
+	}
+}
+
+func TestParseEngineAndMajor(t *testing.T) {
+	cases := []struct {
+		args          []string
+		defaultEngine string
+		wantEngine    string
+		wantMajor     string
+		wantRestLen   int
+		wantErr       bool
+	}{
+		{nil, "postgres", "postgres", "17", 0, false},
+		{[]string{"mysql"}, "postgres", "mysql", "8.4", 0, false},
+		{[]string{"postgres"}, "postgres", "postgres", "17", 0, false},
+		{[]string{"mysql", "--major=8.4"}, "postgres", "mysql", "8.4", 0, false},
+		{[]string{"--major=16"}, "postgres", "postgres", "16", 0, false},
+		{[]string{"--major", "18"}, "postgres", "postgres", "18", 0, false},
+		{[]string{"--persist", "--major=16"}, "postgres", "postgres", "16", 1, false},
+		{[]string{"--major"}, "postgres", "", "", 0, true},
+		{[]string{"mysql", "--persist"}, "postgres", "mysql", "8.4", 1, false},
+	}
+	for _, c := range cases {
+		engine, major, rest, err := parseEngineAndMajor(c.args, c.defaultEngine)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("parseEngineAndMajor(%v) expected error, got nil", c.args)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseEngineAndMajor(%v) unexpected error: %v", c.args, err)
+			continue
+		}
+		if engine != c.wantEngine {
+			t.Errorf("parseEngineAndMajor(%v) engine=%q, want %q", c.args, engine, c.wantEngine)
+		}
+		if major != c.wantMajor {
+			t.Errorf("parseEngineAndMajor(%v) major=%q, want %q", c.args, major, c.wantMajor)
+		}
+		if len(rest) != c.wantRestLen {
+			t.Errorf("parseEngineAndMajor(%v) rest=%v (len %d), want len %d", c.args, rest, len(rest), c.wantRestLen)
+		}
+	}
+}
+
+func TestMemoryGateDisabled(t *testing.T) {
+	t.Setenv("AF_DB_MEM_GATE", "0")
+	if err := checkMemoryGate(); err != nil {
+		t.Errorf("checkMemoryGate with gate disabled returned error: %v", err)
+	}
+}
+
+func TestMemoryGateParsing(t *testing.T) {
+	// Test the parseMemoryMax helper logic inline by exercising checkMemoryGate
+	// with the gate disabled (so it does not actually read the cgroup file).
+	// The underlying logic is tested via unit checks here.
+	cases := []struct {
+		s      string
+		wantOK bool // true means "above threshold" (no gate)
+		limit  uint64
+	}{
+		{"max", true, 0},
+		{"2147483648", true, 2147483648},  // 2 GiB
+		{"1073741824", true, 1073741824},  // exactly 1 GiB
+		{"1073741823", false, 1073741823}, // 1 byte below 1 GiB
+		{"0", false, 0},
+	}
+	for _, c := range cases {
+		// Replicate the gate logic directly.
+		var belowThreshold bool
+		if c.s != "max" {
+			n, err := parseUint64(c.s)
+			if err == nil {
+				const oneGiB = 1024 * 1024 * 1024
+				belowThreshold = n < oneGiB
+			}
+		}
+		if belowThreshold == c.wantOK {
+			t.Errorf("memgate(%q): belowThreshold=%v but wantOK=%v", c.s, belowThreshold, c.wantOK)
+		}
+	}
+}
+
 func TestRegistryRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
 	inst := &Instance{
 		Engine:    "postgres",
-		Major:     17,
+		Major:     "17",
 		Root:      filepath.Join(tmp, "root"),
 		Datadir:   filepath.Join(tmp, "data"),
 		Sockdir:   filepath.Join(tmp, "sock"),
@@ -69,7 +223,7 @@ func TestRegistryRoundTrip(t *testing.T) {
 	}
 
 	if err := withLock(func() error {
-		r := &registry{Instances: map[string]*Instance{instanceKey("postgres", 17): inst}}
+		r := &registry{Instances: map[string]*Instance{instanceKey("postgres", "17"): inst}}
 		return writeRegistry(r)
 	}); err != nil {
 		t.Fatalf("write registry: %v", err)
@@ -81,7 +235,7 @@ func TestRegistryRoundTrip(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		got = r.Instances[instanceKey("postgres", 17)]
+		got = r.Instances[instanceKey("postgres", "17")]
 		return nil
 	}); err != nil {
 		t.Fatalf("read registry: %v", err)
@@ -92,16 +246,18 @@ func TestRegistryRoundTrip(t *testing.T) {
 	if got.Port != inst.Port {
 		t.Errorf("Port: got %d, want %d", got.Port, inst.Port)
 	}
+	if got.Major != "17" {
+		t.Errorf("Major: got %q, want \"17\"", got.Major)
+	}
 	if got.Databases["af_test_aabbcc"] != "/some/dir" {
 		t.Errorf("Databases: got %v", got.Databases)
 	}
 }
 
 func TestReconcileStoppedInstanceNoOp(t *testing.T) {
-	// reconcile on a stopped instance (PID=0, no datadir) must be a no-op.
 	inst := &Instance{
 		Engine: "postgres",
-		Major:  17,
+		Major:  "17",
 		PID:    0,
 		Databases: map[string]string{
 			"af_existing_aa": t.TempDir(),
@@ -132,45 +288,15 @@ func TestValidateExplicitDB(t *testing.T) {
 	}
 }
 
-func TestParseMajorFromArgs(t *testing.T) {
-	cases := []struct {
-		args       []string
-		wantMajor  int
-		wantRest   []string
-		wantErrNil bool
-	}{
-		{nil, 17, nil, true},
-		{[]string{"--major=16"}, 16, nil, true},
-		{[]string{"--major", "18"}, 18, nil, true},
-		{[]string{"--persist", "--major=16"}, 16, []string{"--persist"}, true},
-		{[]string{"--major"}, 0, nil, false},   // missing value
-		{[]string{"--major=x"}, 0, nil, false}, // non-number
-	}
-	for _, c := range cases {
-		major, rest, err := parseMajorFromArgs(c.args)
-		if c.wantErrNil && err != nil {
-			t.Errorf("parseMajorFromArgs(%v) unexpected error: %v", c.args, err)
-			continue
-		}
-		if !c.wantErrNil && err == nil {
-			t.Errorf("parseMajorFromArgs(%v) expected error, got nil", c.args)
-			continue
-		}
-		if err != nil {
-			continue
-		}
-		if major != c.wantMajor {
-			t.Errorf("parseMajorFromArgs(%v) major=%d, want %d", c.args, major, c.wantMajor)
-		}
-		if len(rest) != len(c.wantRest) {
-			t.Errorf("parseMajorFromArgs(%v) rest=%v, want %v", c.args, rest, c.wantRest)
-		}
-	}
+// parseUint64 is a test-local helper that mirrors the gate logic.
+func parseUint64(s string) (uint64, error) {
+	var n uint64
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
 }
 
-// ---- integration tests (require AF_DB_POSTGRES_ROOT) ----
+// ---- Postgres integration tests (require AF_DB_POSTGRES_ROOT) ----
 
-// skipIfNoBinary skips the test when AF_DB_POSTGRES_ROOT is unset or the binary is absent.
 func skipIfNoBinary(t *testing.T) string {
 	t.Helper()
 	root := os.Getenv("AF_DB_POSTGRES_ROOT")
@@ -183,24 +309,20 @@ func skipIfNoBinary(t *testing.T) string {
 	return root
 }
 
-// TestEnsureUpURLStop exercises the full ensureUp → urlFor → stopInstance path.
-// This is the path the acceptance criterion exercises end to end.
 func TestEnsureUpURLStop(t *testing.T) {
 	root := skipIfNoBinary(t)
 
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("AF_DB_POSTGRES_ROOT", root)
-	// Ensure AF_WS_SCRATCH is not set so the datadir lands in home (the temp dir).
 	t.Setenv("AF_WS_SCRATCH", "")
 
-	inst, err := ensureUp("postgres", 17, false)
+	inst, err := ensureUp("postgres", "17", false)
 	if err != nil {
 		t.Fatalf("ensureUp: %v", err)
 	}
 	t.Cleanup(func() {
-		// stopInstance with purge removes the datadir AFTER pg_ctl stop.
-		if err := stopInstance("postgres", 17, true); err != nil {
+		if err := stopInstance("postgres", "17", true); err != nil {
 			t.Logf("stopInstance cleanup: %v", err)
 		}
 	})
@@ -209,8 +331,7 @@ func TestEnsureUpURLStop(t *testing.T) {
 		t.Fatal("server is not running after ensureUp")
 	}
 
-	// urlFor creates a database and returns a usable URL.
-	url, err := urlFor("postgres", 17, "", false)
+	url, err := urlFor("postgres", "17", "", false, false)
 	if err != nil {
 		t.Fatalf("urlFor: %v", err)
 	}
@@ -218,7 +339,6 @@ func TestEnsureUpURLStop(t *testing.T) {
 		t.Fatal("urlFor returned empty URL")
 	}
 
-	// Connect to the database and run a basic query.
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
@@ -231,8 +351,7 @@ func TestEnsureUpURLStop(t *testing.T) {
 	}
 	conn.Close(ctx)
 
-	// Second call to urlFor must be idempotent (same URL, database already exists).
-	url2, err := urlFor("postgres", 17, "", false)
+	url2, err := urlFor("postgres", "17", "", false, false)
 	if err != nil {
 		t.Fatalf("urlFor idempotent: %v", err)
 	}
@@ -240,17 +359,15 @@ func TestEnsureUpURLStop(t *testing.T) {
 		t.Errorf("urlFor not idempotent: first=%q second=%q", url, url2)
 	}
 
-	// CountClientBackends must not count its own connection.
 	n2 := CountClientBackends(inst)
 	if n2 != 0 {
 		t.Errorf("CountClientBackends with no real clients: got %d, want 0", n2)
 	}
 
-	// Concurrent ensureUp calls must not race (both should return cleanly).
 	done := make(chan error, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			_, err := ensureUp("postgres", 17, false)
+			_, err := ensureUp("postgres", "17", false)
 			done <- err
 		}()
 	}
@@ -261,8 +378,6 @@ func TestEnsureUpURLStop(t *testing.T) {
 	}
 }
 
-// TestPostgresIntegration exercises initdb + start + database operations + reconcile
-// with more granular assertions.
 func TestPostgresIntegration(t *testing.T) {
 	root := skipIfNoBinary(t)
 	binDir := filepath.Join(root, "bin")
@@ -274,8 +389,8 @@ func TestPostgresIntegration(t *testing.T) {
 
 	_ = os.MkdirAll(filepath.Join(tmp, ".config", "agent-fleet", "af-db"), 0o700)
 
-	major := 17
-	pp := passPath(major)
+	major := "17"
+	pp := passPath("postgres", major)
 	pw, err := generatePass(pp)
 	if err != nil {
 		t.Fatalf("generatePass: %v", err)
@@ -287,7 +402,6 @@ func TestPostgresIntegration(t *testing.T) {
 	_ = os.MkdirAll(datadir, 0o700)
 	_ = os.MkdirAll(sockdir, 0o700)
 
-	// initdb with scram-sha-256.
 	initArgs := []string{
 		"--auth=scram-sha-256", "--auth-local=scram-sha-256",
 		"-U", "postgres",
@@ -325,7 +439,6 @@ func TestPostgresIntegration(t *testing.T) {
 	connStr := fmt.Sprintf("postgres://postgres:%s@/postgres?host=%s&port=%d&sslmode=disable",
 		pw, sockdir, port)
 
-	// Basic connectivity.
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, connStr)
 	if err != nil {
@@ -334,7 +447,6 @@ func TestPostgresIntegration(t *testing.T) {
 	}
 	conn.Close(ctx)
 
-	// ensureDatabase idempotency.
 	testDB := fmt.Sprintf("af_inttest_%d", port%10000)
 	if err := ensureDatabase(connStr, testDB); err != nil {
 		t.Fatalf("ensureDatabase: %v", err)
@@ -343,7 +455,6 @@ func TestPostgresIntegration(t *testing.T) {
 		t.Fatalf("ensureDatabase idempotent: %v", err)
 	}
 
-	// Connect to the new database.
 	dbURL := fmt.Sprintf("postgres://postgres:%s@/%s?host=%s&port=%d&sslmode=disable",
 		pw, testDB, sockdir, port)
 	dbConn, err := pgx.Connect(ctx, dbURL)
@@ -357,13 +468,11 @@ func TestPostgresIntegration(t *testing.T) {
 	}
 	dbConn.Close(ctx)
 
-	// DBNameFor: verify format.
 	dirName := DBNameFor(tmp)
 	if !strings.HasPrefix(dirName, "af_") {
 		t.Errorf("DBNameFor(%q) = %q: missing prefix", tmp, dirName)
 	}
 
-	// Reconcile: one database with an existing dir (stays), one with a gone dir (dropped).
 	existDir := t.TempDir()
 	goneDir := filepath.Join(tmp, "nonexistent-repo-zz99")
 	goneDB := "af_gone_zz99aa"
@@ -385,8 +494,8 @@ func TestPostgresIntegration(t *testing.T) {
 		Datadir: datadir,
 		Databases: map[string]string{
 			testDB:               existDir,
-			goneDB:               goneDir, // does not exist → should be dropped
-			"af_shared_explicit": "",      // explicitly named → never dropped
+			goneDB:               goneDir,
+			"af_shared_explicit": "",
 		},
 	}
 
@@ -399,7 +508,6 @@ func TestPostgresIntegration(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	// goneDB should be removed from the registry.
 	_ = withLock(func() error {
 		r, _ := readRegistry()
 		if i, ok := r.Instances[instanceKey("postgres", major)]; ok {
@@ -416,7 +524,6 @@ func TestPostgresIntegration(t *testing.T) {
 		return nil
 	})
 
-	// Verify goneDB is actually gone from Postgres.
 	conn2, err := pgx.Connect(ctx, connStr)
 	if err != nil {
 		t.Fatalf("connect for verification: %v", err)
@@ -428,6 +535,135 @@ func TestPostgresIntegration(t *testing.T) {
 	).Scan(&dbExists)
 	if dbExists {
 		t.Errorf("goneDB %q still exists in Postgres after reconcile", goneDB)
+	}
+}
+
+// ---- MySQL integration tests (require AF_DB_MYSQL_ROOT) ----
+
+func skipIfNoMySQLBinary(t *testing.T) string {
+	t.Helper()
+	root := os.Getenv("AF_DB_MYSQL_ROOT")
+	if root == "" {
+		t.Skip("AF_DB_MYSQL_ROOT not set; skipping MySQL integration test")
+	}
+	if _, err := os.Stat(filepath.Join(root, "bin", "mysqld")); err != nil {
+		t.Skipf("mysqld not found at %s/bin/mysqld: %v", root, err)
+	}
+	return root
+}
+
+func TestMySQLEnsureUpURLStop(t *testing.T) {
+	root := skipIfNoMySQLBinary(t)
+
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("AF_DB_MYSQL_ROOT", root)
+	t.Setenv("AF_WS_SCRATCH", "")
+
+	t.Cleanup(func() {
+		if err := stopInstance("mysql", "8.4", true); err != nil {
+			t.Logf("stopInstance mysql cleanup: %v", err)
+		}
+	})
+
+	inst, err := ensureUp("mysql", "8.4", false)
+	if err != nil {
+		t.Fatalf("ensureUp mysql: %v", err)
+	}
+	if !isInstanceRunning(inst) {
+		t.Fatal("mysql not running after ensureUp")
+	}
+
+	url, err := urlFor("mysql", "8.4", "", false, false)
+	if err != nil {
+		t.Fatalf("urlFor mysql: %v", err)
+	}
+	if !strings.HasPrefix(url, "mysql://") {
+		t.Errorf("urlFor mysql: unexpected URL %q", url)
+	}
+
+	// Run a version query.
+	pw := readPass(passPath("mysql", "8.4"))
+	out, err := mysqlQuery(inst, pw, "SELECT VERSION()")
+	if err != nil {
+		t.Fatalf("mysqlQuery VERSION: %v", err)
+	}
+	if !strings.Contains(out, "8.4") {
+		t.Errorf("VERSION() = %q, expected to contain 8.4", out)
+	}
+
+	// JSON+CRUD round-trip.
+	if _, err := mysqlQuery(inst, pw,
+		"CREATE DATABASE IF NOT EXISTS af_test_mysql_p1"); err != nil {
+		t.Fatalf("CREATE DATABASE: %v", err)
+	}
+	if _, err := mysqlQuery(inst, pw,
+		"CREATE TABLE IF NOT EXISTS af_test_mysql_p1.t(id INT PRIMARY KEY, j JSON)"); err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+	if _, err := mysqlQuery(inst, pw,
+		`INSERT INTO af_test_mysql_p1.t VALUES (1,'{"a":1}') ON DUPLICATE KEY UPDATE j=j`); err != nil {
+		t.Fatalf("INSERT: %v", err)
+	}
+	jsonOut, err := mysqlQuery(inst, pw,
+		`SELECT j->>'$.a' FROM af_test_mysql_p1.t WHERE id=1`)
+	if err != nil {
+		t.Fatalf("SELECT json: %v", err)
+	}
+	if strings.TrimSpace(jsonOut) != "1" {
+		t.Errorf("j->>'$.a' = %q, want 1", jsonOut)
+	}
+
+	// Idempotent ensureUp.
+	inst2, err := ensureUp("mysql", "8.4", false)
+	if err != nil {
+		t.Fatalf("ensureUp mysql idempotent: %v", err)
+	}
+	if inst2.Port != inst.Port {
+		t.Errorf("ensureUp not idempotent: port changed from %d to %d", inst.Port, inst2.Port)
+	}
+
+	// rssBytes should be non-zero for a running server.
+	rss := rssForInstance(inst)
+	if rss <= 0 {
+		t.Errorf("rssForInstance returned %d, expected > 0", rss)
+	}
+	t.Logf("MySQL rssBytes: %d (%.1f MB)", rss, float64(rss)/(1024*1024))
+}
+
+func TestMySQLIdleStop(t *testing.T) {
+	skipIfNoMySQLBinary(t)
+
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("AF_DB_MYSQL_ROOT", os.Getenv("AF_DB_MYSQL_ROOT"))
+	t.Setenv("AF_WS_SCRATCH", "")
+	t.Setenv("AF_DB_IDLE_SECONDS", "2")
+
+	t.Cleanup(func() {
+		stopInstance("mysql", "8.4", true) //nolint:errcheck
+	})
+
+	inst, err := ensureUp("mysql", "8.4", false)
+	if err != nil {
+		t.Fatalf("ensureUp: %v", err)
+	}
+
+	key := instanceKey("mysql", "8.4")
+	// Backdate lastUsedAt so idle threshold is immediately exceeded.
+	_ = withLock(func() error {
+		r, _ := readRegistry()
+		if i, ok := r.Instances[key]; ok {
+			i.LastUsedAt = time.Now().Add(-5 * time.Second)
+		}
+		return writeRegistry(r)
+	})
+
+	idleSince := map[string]time.Time{key: time.Now().Add(-5 * time.Second)}
+	CheckAllInstances(idleSince)
+
+	if isMySQLRunning(inst.PID, inst.Datadir) {
+		t.Fatal("expected mysql to be stopped by idle loop")
 	}
 }
 

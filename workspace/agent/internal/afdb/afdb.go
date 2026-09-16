@@ -1,4 +1,4 @@
-// Package afdb implements the af-db CLI (ADR 0086 P0): per-working-copy Postgres
+// Package afdb implements the af-db CLI (ADR 0086 P0/P1): per-working-copy Postgres and MySQL
 // databases started on demand inside the Workspace container, no Docker, no root.
 //
 // One server per (engine, major) per Workspace; one database per working copy
@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,12 +28,15 @@ import (
 )
 
 // DefaultMajor is the default Postgres major version.
-const DefaultMajor = 17
+const DefaultMajor = "17"
+
+// DefaultMySQLMajor is the default MySQL major version.
+const DefaultMySQLMajor = "8.4"
 
 // Instance holds the live state for one (engine, major) server.
 type Instance struct {
 	Engine     string    `json:"engine"`
-	Major      int       `json:"major"`
+	Major      string    `json:"major"`
 	Root       string    `json:"root"`
 	Datadir    string    `json:"datadir"`
 	Sockdir    string    `json:"sockdir"`
@@ -52,8 +56,8 @@ type registry struct {
 }
 
 // instanceKey is the registry map key for an engine+major.
-func instanceKey(engine string, major int) string {
-	return fmt.Sprintf("%s-%d", engine, major)
+func instanceKey(engine, major string) string {
+	return engine + "-" + major
 }
 
 // ---- path helpers ----
@@ -74,8 +78,8 @@ func registryPath() string { return filepath.Join(registryDir(), "instances.json
 func lockPath() string     { return filepath.Join(registryDir(), "lock") }
 
 // startLockPath is a per-(engine,major) lock that serializes concurrent starts.
-func startLockPath(engine string, major int) string {
-	return filepath.Join(registryDir(), fmt.Sprintf("%s-%d.start.lock", engine, major))
+func startLockPath(engine, major string) string {
+	return filepath.Join(registryDir(), fmt.Sprintf("%s-%s.start.lock", engine, major))
 }
 
 // homeStateBase is the home-rooted state base (persists across container stops).
@@ -99,16 +103,25 @@ func sockBase() string {
 
 // postgresRoot returns the install root for a given major.
 // AF_DB_POSTGRES_ROOT overrides (used in tests against the retained dist).
-func postgresRoot(major int) string {
+func postgresRoot(major string) string {
 	if r := os.Getenv("AF_DB_POSTGRES_ROOT"); r != "" {
 		return r
 	}
-	return filepath.Join(paths.AgentDataDir(), "postgres", fmt.Sprintf("%d", major))
+	return filepath.Join(paths.AgentDataDir(), "postgres", major)
 }
 
-// passPath is where the generated password for a major is kept (mode 0600).
-func passPath(major int) string {
-	return filepath.Join(registryDir(), fmt.Sprintf("postgres-%d.pass", major))
+// mysqlRoot returns the install root for MySQL.
+// AF_DB_MYSQL_ROOT overrides (used in tests).
+func mysqlRoot(major string) string {
+	if r := os.Getenv("AF_DB_MYSQL_ROOT"); r != "" {
+		return r
+	}
+	return filepath.Join(paths.AgentDataDir(), "mysql", major)
+}
+
+// passPath is where the generated password for (engine, major) is kept (mode 0600).
+func passPath(engine, major string) string {
+	return filepath.Join(registryDir(), fmt.Sprintf("%s-%s.pass", engine, major))
 }
 
 // ---- database name derivation ----
@@ -134,7 +147,7 @@ func DBNameFor(dir string) string {
 // validExplicitDBRe validates an explicit --db name (user-supplied).
 var validExplicitDBRe = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
-// validateExplicitDB returns an errUsage if name is not a safe Postgres identifier.
+// validateExplicitDB returns an errUsage if name is not a safe database identifier.
 func validateExplicitDB(name string) error {
 	if !validExplicitDBRe.MatchString(name) {
 		return errUsage(fmt.Sprintf("--db name must match ^[a-z_][a-z0-9_]{0,62}$, got %q", name))
@@ -225,7 +238,7 @@ func withLock(fn func() error) error {
 }
 
 // withStartLock serializes concurrent startServer calls for one (engine, major).
-func withStartLock(engine string, major int, fn func() error) error {
+func withStartLock(engine, major string, fn func() error) error {
 	if err := os.MkdirAll(registryDir(), 0o700); err != nil {
 		return err
 	}
@@ -297,7 +310,7 @@ func URLForDir(dir string) string {
 			}
 			dbName := DBNameFor(dir)
 			if _, ok := inst.Databases[dbName]; ok {
-				pw := readPass(passPath(inst.Major))
+				pw := readPass(passPath(inst.Engine, inst.Major))
 				url = buildURL(inst, dbName, pw, false)
 				return nil
 			}
@@ -307,7 +320,7 @@ func URLForDir(dir string) string {
 	return url
 }
 
-// buildURL returns the connection URL for an instance and database.
+// buildURL returns the Postgres connection URL for an instance and database.
 // tcp=true uses the TCP listener; tcp=false uses the unix socket.
 // Socket connections include port= so pgx finds .s.PGSQL.<port> not .s.PGSQL.5432.
 func buildURL(inst *Instance, dbName, pw string, tcp bool) string {
@@ -317,6 +330,27 @@ func buildURL(inst *Instance, dbName, pw string, tcp bool) string {
 	}
 	return fmt.Sprintf("postgres://postgres:%s@/%s?host=%s&port=%d&sslmode=disable",
 		pw, dbName, inst.Sockdir, inst.Port)
+}
+
+// mysqlSockFile returns the MySQL socket file path from an instance's sockdir.
+func mysqlSockFile(inst *Instance) string {
+	return filepath.Join(inst.Sockdir, "mysql.sock")
+}
+
+// buildMySQLURL returns the MySQL connection URL for an instance and database.
+func buildMySQLURL(inst *Instance, dbName, pw string, tcp bool) string {
+	if tcp {
+		return fmt.Sprintf("mysql://root:%s@127.0.0.1:%d/%s", pw, inst.Port, dbName)
+	}
+	return fmt.Sprintf("mysql://root:%s@localhost/%s?socket=%s", pw, dbName, mysqlSockFile(inst))
+}
+
+// buildMySQLGoDSN returns the go-sql-driver DSN for a MySQL instance and database.
+func buildMySQLGoDSN(inst *Instance, dbName, pw string, tcp bool) string {
+	if tcp {
+		return fmt.Sprintf("root:%s@tcp(127.0.0.1:%d)/%s", pw, inst.Port, dbName)
+	}
+	return fmt.Sprintf("root:%s@unix(%s)/%s", pw, mysqlSockFile(inst), dbName)
 }
 
 // ---- process liveness ----
@@ -347,6 +381,37 @@ func isPGRunning(pid int, datadir string) bool {
 	return isRunning(pid)
 }
 
+// readMySQLPID reads the MySQL pid file (one number per line).
+func readMySQLPID(pidFile string) (int, error) {
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		return 0, err
+	}
+	line := strings.SplitN(strings.TrimSpace(string(b)), "\n", 2)[0]
+	return strconv.Atoi(strings.TrimSpace(line))
+}
+
+// isMySQLRunning checks if the MySQL instance is running via its pid file.
+func isMySQLRunning(pid int, datadir string) bool {
+	if datadir != "" {
+		pidFile := filepath.Join(filepath.Dir(datadir), "mysqld.pid")
+		if p, err := readMySQLPID(pidFile); err == nil && p > 0 {
+			return isRunning(p)
+		}
+		return false
+	}
+	return isRunning(pid)
+}
+
+// isInstanceRunning returns whether the instance is currently running,
+// dispatching to the engine-specific liveness check.
+func isInstanceRunning(inst *Instance) bool {
+	if inst.Engine == "postgres" {
+		return isPGRunning(inst.PID, inst.Datadir)
+	}
+	return isMySQLRunning(inst.PID, inst.Datadir)
+}
+
 // waitPIDGone polls until pid is no longer alive or timeout elapses.
 func waitPIDGone(pid int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
@@ -357,4 +422,78 @@ func waitPIDGone(pid int, timeout time.Duration) bool {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return !isRunning(pid)
+}
+
+// ---- RSS helpers ----
+
+// rssForPID returns the resident set size (VmRSS) in bytes for a process.
+// Returns 0 on any error.
+func rssForPID(pid int) int64 {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "VmRSS:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				n, _ := strconv.ParseInt(fields[1], 10, 64)
+				return n * 1024 // kB → bytes
+			}
+		}
+	}
+	return 0
+}
+
+// rssForPGInstance returns the combined RSS of the postmaster and all its children.
+func rssForPGInstance(inst *Instance) int64 {
+	authPID, err := readPostmasterPID(inst.Datadir)
+	if err != nil || authPID <= 0 {
+		authPID = inst.PID
+	}
+	if authPID <= 0 {
+		return 0
+	}
+	total := rssForPID(authPID)
+
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return total
+	}
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid == authPID {
+			continue
+		}
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "PPid:") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					if ppid, _ := strconv.Atoi(fields[1]); ppid == authPID {
+						total += rssForPID(pid)
+					}
+				}
+				break
+			}
+		}
+	}
+	return total
+}
+
+// rssForInstance returns the RSS in bytes for a running instance.
+func rssForInstance(inst *Instance) int64 {
+	if inst.Engine == "postgres" {
+		return rssForPGInstance(inst)
+	}
+	// For MySQL, use the live pid from the pid file.
+	pidFile := filepath.Join(filepath.Dir(inst.Datadir), "mysqld.pid")
+	pid, err := readMySQLPID(pidFile)
+	if err != nil || pid <= 0 {
+		return rssForPID(inst.PID)
+	}
+	return rssForPID(pid)
 }
