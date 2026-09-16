@@ -1931,7 +1931,8 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 			writeAPIErr(w, internalErr(errors.New("no store")))
 			return
 		}
-		if ref := engineIngestDestinationUnused(r.Context(), a.mgr.store, a.mgr.store, key, main.Key); ref != nil {
+		if ref := engineIngestDestinationUnused(r.Context(), a.mgr.store, a.mgr.store,
+			a.engineStorageBytes(), key, main.Key); ref != nil {
 			writeAPIRefusal(w, ref)
 			return
 		}
@@ -2342,8 +2343,22 @@ func engineReplaceAllowed(row *store.EngineModel, id, key, s3key, flag string, r
 // different download would let the upload overwrite it even when the later installation fails.
 // Job rows are checked across tenants without revealing which tenant recorded the key: tenant
 // visibility applies to the panel, not to protecting a shared role prefix from an overwrite.
+//
+// 🔴 A finished job holds the key only while BYTES ARE AT IT. Decision 6's holder is an object, or
+// a task that could still write one — and a `done` job is provenance ON an object, not a record OF
+// one, which is the same sentence the ledger already applies on the read side (engineLedgerJoin).
+// Without the bucket read below, 消す on an orphan left the key permanently unusable: the object
+// was gone, the ledger correctly stopped drawing it, and taking the same model in again was
+// refused with "it holds bytes a record still describes" — a claim about bytes that no longer
+// existed, whose only offered way out was `dismiss_job`. Measured on af-sandbox 2026-09-16 (build
+// e370f0e0) with `nuclearAnimeHybridSfw_v1NoVAE.safetensors`, deleted minutes earlier from the
+// same panel.
+//
+// `storage` may be nil, and an unreadable bucket keeps the key HELD: an inability to look is not
+// proof the bytes are gone, and the refusal then says which of the two it is (the direction that
+// costs a retry, rather than the one that overwrites a file somebody paid for).
 func engineIngestDestinationUnused(ctx context.Context, models store.EngineModelStore, jobs store.EngineIngestStore,
-	role, s3key string) *apiRefusal {
+	storage *engineStorage, role, s3key string) *apiRefusal {
 	if models == nil || jobs == nil {
 		return &apiRefusal{apiError: internalErr(errors.New("no store"))}
 	}
@@ -2361,15 +2376,26 @@ func engineIngestDestinationUnused(ctx context.Context, models store.EngineModel
 			}
 		}
 	}
-	recorded, err := jobs.EngineIngestS3KeyRecorded(ctx, role, s3key)
+	job, recorded, err := jobs.EngineIngestJobForS3Key(ctx, role, s3key)
 	if err != nil {
 		return &apiRefusal{apiError: internalErr(err)}
 	}
-	if recorded {
-		return ingestDestinationTaken(s3key, "an earlier ingest job recorded it",
-			&apiHolder{Kind: "job", Key: s3key}, &apiNext{Act: "dismiss_job"})
+	if !recorded {
+		return nil
 	}
-	return nil
+	switch storage.verify(ctx, s3key).State {
+	case engineStorageMissing:
+		// The job is a memory of bytes that are not there. Nothing can be overwritten, so nothing
+		// is refused — and the operator never learns this job exists, which is right: it is not a
+		// thing they did wrong.
+		return nil
+	case engineStoragePresent:
+		return ingestDestinationTaken(s3key, "an earlier ingest job recorded it",
+			&apiHolder{Kind: "job", ID: job.ID, Key: s3key},
+			&apiNext{Act: "dismiss_job", Target: job.ID})
+	default:
+		return ingestDestinationUnverifiable(s3key, job.ID)
+	}
 }
 
 // ingestDestinationTaken names WHO holds the key, because the two holders have different ways
@@ -2384,6 +2410,25 @@ func ingestDestinationTaken(s3key, by string, holder *apiHolder, next *apiNext) 
 	return refuse(http.StatusConflict, errCodeEngineBadBody,
 		"the S3 key "+s3key+" is already recorded ("+by+"); it holds bytes a record still describes, so this"+
 			" download would overwrite them", holder, next)
+}
+
+// ingestDestinationUnverifiable is the same refusal with the one difference that decides what the
+// operator should do: the bytes were not seen. It is a separate sentence rather than the one above
+// because that one asserts the object is there, and asserting it out of a HeadObject that was
+// refused or timed out is how "dismiss the job" gets pressed on a key nobody looked at.
+//
+// The next act is `wait`, not `dismiss_job`: forgetting the job would remove the deployment's only
+// written address for bytes that may well still be in the bucket, and the question here is not one
+// the operator can answer either. It carries no target — what is being waited for is the BUCKET,
+// not the job — while the holder still names the job, because that is what a person reading this
+// has to go and look at.
+func ingestDestinationUnverifiable(s3key, jobID string) *apiRefusal {
+	return refuse(http.StatusConflict, errCodeEngineBadBody,
+		"the S3 key "+s3key+" is recorded by an earlier ingest job, and the bucket could not be asked whether"+
+			" anything is still at it — access denied, a missing configuration and a timeout all answer this way."+
+			" Not being able to look is not proof the key is free, so the download is refused rather than"+
+			" allowed to overwrite a file somebody paid for. Press again once the bucket answers",
+		&apiHolder{Kind: "job", ID: jobID, Key: s3key}, &apiNext{Act: "wait"})
 }
 
 // engineBaseModelHint quotes what the repository called this model, so the refusal above ends

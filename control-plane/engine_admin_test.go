@@ -1459,9 +1459,16 @@ func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 	e.catalog = newEngineCatalog(st, "image")
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
 	ecsAPI := &fakeIngestECS{}
+	// The bucket really holds the job's key. A `done` or `failed` job only holds its destination
+	// while bytes are at it (engineIngestDestinationUnused), so without this the refusal under
+	// test would be the "could not look" one instead.
+	bucket := &fakeEngineStorageHead{states: map[string]string{
+		"image/checkpoints/job-history.safetensors": engineStoragePresent,
+	}}
 	reg.ing = &engineIngester{
 		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
 		cluster: "c", ecs: ecsAPI, store: st, models: st,
+		storage: newEngineStorage("models", bucket),
 	}
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
 	if err := st.PutEngineModel(t.Context(), store.EngineModel{
@@ -1496,9 +1503,12 @@ func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 
 	// The row's key, and the failed job's key. Two holders with two different ways out, which is
 	// the whole reason the refusal carries them (ADR 0085 decision 5).
-	for _, c := range []struct{ id, file, holder, next string }{
-		{"new-a", "occupied.safetensors", "row", "complete"},
-		{"new-b", "job-history.safetensors", "job", "dismiss_job"},
+	for _, c := range []struct{ id, file, holder, next, target string }{
+		{"new-a", "occupied.safetensors", "row", "complete", "other"},
+		// 🔴 `target` is the whole point of naming a job holder: the Console's button on this line
+		// is `DELETE …/ingest/{id}`, so a refusal with an empty one draws a button that does
+		// nothing when pressed (measured on af-sandbox 2026-09-16).
+		{"new-b", "job-history.safetensors", "job", "dismiss_job", "another-tenants-object"},
 	} {
 		code, body := post(c.id, c.file)
 		if code != http.StatusConflict || !strings.Contains(body, "already recorded") {
@@ -1513,11 +1523,11 @@ func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 		if err := json.Unmarshal([]byte(body), &out); err != nil {
 			t.Fatalf("answer: %v (%s)", err, body)
 		}
-		if out.Error.Holder == nil || out.Error.Holder.Kind != c.holder {
-			t.Errorf("%s: holder = %+v, want a %s", c.file, out.Error.Holder, c.holder)
+		if out.Error.Holder == nil || out.Error.Holder.Kind != c.holder || out.Error.Holder.ID != c.target {
+			t.Errorf("%s: holder = %+v, want a %s called %s", c.file, out.Error.Holder, c.holder, c.target)
 		}
-		if out.Error.Next == nil || out.Error.Next.Act != c.next {
-			t.Errorf("%s: next = %+v, want %s", c.file, out.Error.Next, c.next)
+		if out.Error.Next == nil || out.Error.Next.Act != c.next || out.Error.Next.Target != c.target {
+			t.Errorf("%s: next = %+v, want %s on %s", c.file, out.Error.Next, c.next, c.target)
 		}
 	}
 	if len(ecsAPI.run) != 0 {
@@ -1531,6 +1541,116 @@ func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 	// destination and not about this fixture refusing everything.
 	if code, body := post("new-c", "free.safetensors"); code != http.StatusOK {
 		t.Fatalf("a free destination = %d (%s), want 200", code, body)
+	}
+}
+
+// 🔴 The orphan that could never be taken in again. Reported from af-sandbox 2026-09-16 (build
+// e370f0e0): the operator deleted an orphaned checkpoint with 消す, the object really went (the
+// ledger stopped drawing it), and taking the same model in again was refused with "it holds bytes
+// a record still describes" — a claim about bytes that no longer existed. The only way out the
+// refusal offered was `dismiss_job`, which is an act about the deployment's records that nobody
+// should have to understand to download a file twice.
+//
+// Decision 6's holder is an object, or a task that could still write one. So the same `done` job
+// holds the key or does not depending on ONE thing: whether the bucket still has bytes at it.
+//
+// The three rows are each other's control. If the fence had simply stopped running, `present` and
+// `unknown` would go green too.
+func TestARecordedDestinationIsHeldOnlyWhileTheBytesAreThere(t *testing.T) {
+	const key = "image/checkpoints/orphan.safetensors"
+	for _, tc := range []struct {
+		name   string
+		state  string
+		code   int
+		next   string
+		target string
+	}{
+		// The bytes are gone: the job is a memory, and nothing can be overwritten.
+		{name: "deleted", state: engineStorageMissing, code: http.StatusOK},
+		// The bytes are there. This is what the fence exists for, and the way out names the job.
+		{name: "still there", state: engineStoragePresent, code: http.StatusConflict,
+			next: "dismiss_job", target: "old-ingest"},
+		// 🔴 Nobody could look. Not being able to ask is not proof the key is free, so it stays
+		// held — and the answer says which of the two it is rather than asserting bytes it did not
+		// see. `wait`, not `dismiss_job`: forgetting the job would drop the only written address
+		// for bytes that may well still be there.
+		{name: "bucket refused", state: engineStorageUnknown, code: http.StatusConflict,
+			next: "wait", target: "old-ingest"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testSettingsStore(t)
+			e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+			e.settings, e.ctrl = st, nil
+			e.catalog = newEngineCatalog(st, "image")
+			reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+			ecsAPI := &fakeIngestECS{}
+			reg.ing = &engineIngester{
+				def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+				cluster: "c", ecs: ecsAPI, store: st, models: st,
+				storage: newEngineStorage("models", &fakeEngineStorageHead{states: map[string]string{key: tc.state}}),
+			}
+			a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+			// The finished ingest that wrote those bytes, still in the history — which is right:
+			// while nothing in the catalogue points at the key, this row is the deployment's only
+			// written address for them.
+			if err := st.PutEngineIngestJob(t.Context(), store.EngineIngestJob{
+				ID: "old-ingest", Role: "image", ModelID: "orphan", S3Key: key,
+				State: store.EngineIngestDone, TaskArn: "arn:aws:ecs:x:1:task/c/a1",
+				CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			e.catalog.invalidate()
+
+			body := enginePressBody(t, a, "image",
+				`{"id":"orphan-again","kind":"checkpoint","base_model":"sdxl","license_accepted":true,`+
+					`"source":{"url":"https://example.invalid/orphan.safetensors","sha256":"`+strings.Repeat("d", 64)+`"}}`)
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/api/admin/engines/image/ingest", strings.NewReader(body))
+			r.SetPathValue("key", "image")
+			a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, tenantID: "t-acme"})
+
+			if rec.Code != tc.code {
+				t.Fatalf("ingest = %d (%s), want %d", rec.Code, rec.Body.String(), tc.code)
+			}
+			if tc.code == http.StatusOK {
+				if len(ecsAPI.run) != 1 {
+					t.Fatalf("%d task(s) started, want the download the operator asked for", len(ecsAPI.run))
+				}
+				return
+			}
+			if len(ecsAPI.run) != 0 {
+				t.Fatalf("a refused destination started %d task(s)", len(ecsAPI.run))
+			}
+			var out struct {
+				Error struct {
+					Message string     `json:"message"`
+					Holder  *apiHolder `json:"holder"`
+					Next    *apiNext   `json:"next"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatalf("answer: %v (%s)", err, rec.Body.String())
+			}
+			if out.Error.Holder == nil || out.Error.Holder.Kind != "job" || out.Error.Holder.ID != tc.target {
+				t.Errorf("holder = %+v, want the job %s", out.Error.Holder, tc.target)
+			}
+			// The target is the job only where the act is ABOUT the job. `wait` is about the
+			// bucket answering, so it names nothing — the holder above is what points at the job.
+			wantTarget := ""
+			if tc.next == "dismiss_job" {
+				wantTarget = tc.target
+			}
+			if out.Error.Next == nil || out.Error.Next.Act != tc.next || out.Error.Next.Target != wantTarget {
+				t.Errorf("next = %+v, want %s on %q", out.Error.Next, tc.next, wantTarget)
+			}
+			// 🔴 The sentence must not assert bytes nobody saw. "it holds bytes a record still
+			// describes" is what sent the operator to dismiss a job over a key that was empty.
+			said := strings.Contains(out.Error.Message, "holds bytes a record still describes")
+			if want := tc.state == engineStoragePresent; said != want {
+				t.Errorf("the refusal claims the bytes are there = %v, want %v: %s", said, want, out.Error.Message)
+			}
+		})
 	}
 }
 
