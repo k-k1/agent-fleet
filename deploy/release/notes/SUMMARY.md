@@ -26,6 +26,38 @@ Keeping it current:
 
 ---
 
+## [0.21.0](0.21.0.md) — 2026-09-16
+
+**CLI pins** — Claude Code 2.1.273, OpenCode 1.18.31, Antigravity 1.2.3, Cursor 2026.09.10, Kiro 2.21.4
+
+**New / Improved**
+
+- **[engines]** Taking a model in is one press: a plan card lists every file the model needs with its cost, licence and warnings, the destination is decided for you, a family split across several files arrives in one act, and an incomplete row is completed from the same press
+- **[engines]** The bucket is the ledger: the catalogue's second screen lists what is actually in storage, including objects no row declares, which can be registered as a row or deleted; a file in the wrong place is repaired by moving it inside the bucket
+- **[image generation]** More than one image engine at once — the route a picture takes is the engine row rather than the provider kind, so a LAN ComfyUI can be preferred with a borrowed engine behind it, and the priority list in Settings › Agents is row-based
+- **[engines]** An external ComfyUI's loaded checkpoints, LoRAs and VAEs can be read off the box and offered as catalogue candidates
+- **[engines]** Every member sees a pill per role in the top bar with a popover per row: state, queue and how long the box has left
+- **[admin / tenants]** `llm` and `image` can be switched off for one tenant by a super admin; a tenant nobody has answered for keeps both
+- **[image generation]** An `external` or `remote` row can point at any OpenAI-compatible image server (`provider: "openai-compat"`), with its bearer read from `AF_ENGINE_API_KEY_<KEY>` — tested only against this project's own test double
+- **[image generation]** `generate_image` accepts steps, CFG, sampler and scheduler; an omitted field runs at the model's published value and a family that ignores one says so
+- **[image generation]** A LoRA's trigger words reach the chat route and are shown on a row before it is picked
+- **[engines]** SD 1.5, Anima and Krea 2 join the family vocabulary, and the default size follows the family instead of always being 1024×1024
+- **[engines]** A Civitai token can be registered for login-walled assets; it and the Hugging Face token sit under "API tokens" in the administration modal, reachable with no engine configured
+- **[gallery]** A folder shows a cover and its image count, and opening an image serves a copy at the size of the screen rather than the original
+- **[work items]** A pull request's "start" checks its head branch out into a new working copy and asks for a review
+- **[engines]** A row whose `provider` this build cannot serve is marked on the "Inference engines" screen instead of silently dropping `generate_image` from the tool list
+- **[engines]** A running session sees a newly enabled checkpoint without being recreated, and a borrowed deployment's catalogue changes arrive in about two minutes rather than up to twenty
+- **[engines]** The model catalogue works on a phone: the search and filter bar stays put, the next page loads at the end of the list, example images arrive as thumbnails
+- **[engines]** Ingest search can be narrowed to a family and finds ComfyUI-shaped repositories it used to pass over
+- **[engines / ecs-ec2]** The audit log records the instance type actually bought and its price
+- **[gallery]** Moving between folders draws from what is already held instead of blanking, and thumbnails are asked for at the screen's density
+
+**Fixed**
+
+- **[mirror]** Translating a reply: it vanished on a tab switch, broke surrogate pairs when splitting a long answer, was missing when the only label was a quote, was withheld from an English answer holding a few Japanese display names, and was sent for intermediate replies folded inside the working steps
+- **[sessions]** A managed session's turn could fail and still be reported as a completed answer waiting on you
+- **[sessions]** After a usage limit the resume reservation could stall, leaving the badge on a time already past with no further attempt scheduled
+
 ## [0.20.2](0.20.2.md) — 2026-09-16
 
 **Fixed**
