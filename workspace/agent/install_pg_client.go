@@ -179,8 +179,8 @@ func installPgClient(major string) error {
 	if actualMajor != major {
 		fmt.Fprintf(os.Stderr,
 			"[install-pg-client] postgresql-client-%s が trixie に無いため %s を導入します"+
-				"（psql %s は %s サーバに接続可・pg_dump %s は %s サーバを dump できません）\n",
-			major, actualMajor, actualMajor, major, actualMajor, major)
+				"（psql %s は %s サーバに接続可・pg_dump は導入版以下のサーバのみ対応）\n",
+			major, actualMajor, actualMajor, major)
 		fmt.Fprintf(os.Stderr, "[install-pg-client] pg-client は 1 バージョンのみ保持します\n")
 	}
 	libpqPkg, ok := index["libpq5"]
