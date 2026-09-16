@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -246,7 +247,29 @@ func TestAbortedTurnLiveCorpus(t *testing.T) {
 func TestHealIdleRoutesAbortToNotifier(t *testing.T) {
 	type call struct{ previous, state, excerpt string }
 
-	setup := func(t *testing.T, tail string) (string, *[]call) {
+	// notify() delivers on its own goroutine, so the notifier and the assertions below run
+	// concurrently on the same slice. Holding it as a bare []call read without a lock is a
+	// data race — `go test -race` fails here every run — and even without the detector the
+	// waiter can observe a half-written slice header. The lock is what makes "wait for the
+	// call to arrive" a legal thing to do.
+	type callLog struct {
+		mu    sync.Mutex
+		calls []call
+	}
+	add := func(l *callLog, v call) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		l.calls = append(l.calls, v)
+	}
+	// snapshot returns a copy, so the assertions never read the slice the notifier may still
+	// be appending to.
+	snapshot := func(l *callLog) []call {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return append([]call(nil), l.calls...)
+	}
+
+	setup := func(t *testing.T, tail string) (string, *callLog) {
 		t.Helper()
 		home := t.TempDir()
 		t.Setenv("HOME", home)
@@ -260,21 +283,21 @@ func TestHealIdleRoutesAbortToNotifier(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		var calls []call
+		log := &callLog{}
 		agents.SetStateNotifier(func(_, previous, state, excerpt string) {
-			calls = append(calls, call{previous, state, excerpt})
+			add(log, call{previous, state, excerpt})
 		})
 		t.Cleanup(func() { agents.SetStateNotifier(nil) })
 		status.Persist(sid, "working")
-		return sid, &calls
+		return sid, log
 	}
 
 	// notify() fires the notifier on its own goroutine; wait for it rather than sleeping.
-	waitCalls := func(t *testing.T, calls *[]call) []call {
+	waitCalls := func(t *testing.T, log *callLog) []call {
 		t.Helper()
 		for i := 0; i < 200; i++ {
-			if len(*calls) > 0 {
-				return *calls
+			if got := snapshot(log); len(got) > 0 {
+				return got
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
@@ -312,8 +335,8 @@ func TestHealIdleRoutesAbortToNotifier(t *testing.T) {
 		sid, calls := setup(t, asstLine("done"))
 		HealIdle(sid)
 		time.Sleep(50 * time.Millisecond)
-		if len(*calls) != 0 {
-			t.Fatalf("silent heal emitted %+v", *calls)
+		if got := snapshot(calls); len(got) != 0 {
+			t.Fatalf("silent heal emitted %+v", got)
 		}
 		if st, ok := status.Read(sid); ok && st.State != "" {
 			t.Errorf("status = %q, want the marker removed as before", st.State)
