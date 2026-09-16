@@ -471,15 +471,20 @@ grep -q "deploy --stack-name af-ecs-engines .*ImageEnabled=true" "$LOG" \
 has "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\n' > "$STATE4/params/60-engines"
 
-# A capture still naming the retired `sdcpp` engine fails ImageEngine's narrowed
-# AllowedValues rather than the friendlier "does not exist" — standup.sh drops the value so
-# the template's `comfy` default carries the deployment forward (ADR 0083).
-: > "$LOG"
-printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageEngine=sdcpp\n' > "$STATE4/params/60-engines"
-"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
-if grep -qE "deploy --stack-name af-ecs-engines .*ImageEngine=sdcpp" "$LOG"; then
-  fail "a captured ImageEngine=sdcpp reached deploy (AllowedValues no longer includes it)"
-fi
+# 🔴 `ImageEngine` is gone from the template (ADR 0083 retired the engine it chose; the
+# parameter outlived its last `!If` by a release), so a captured value of ANY spelling has to be
+# dropped rather than only the retired one: `deploy` refuses a key the template does not
+# declare, which makes `comfy` as fatal as `sdcpp`. Both are asked, so a conditional drop that
+# only knew about `sdcpp` fails this.
+for stale_engine in sdcpp comfy; do
+  : > "$LOG"
+  printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageEngine=%s\n' \
+    "$stale_engine" > "$STATE4/params/60-engines"
+  "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+  if grep -qE "deploy --stack-name af-ecs-engines .*ImageEngine=" "$LOG"; then
+    fail "a captured ImageEngine=$stale_engine reached deploy (the template no longer declares it)"
+  fi
+done
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\n' > "$STATE4/params/60-engines"
 
 # How the image role's box is bought is an OFFER now (ADR 0075), and the offers are a captured
