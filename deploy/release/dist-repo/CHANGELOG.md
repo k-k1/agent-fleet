@@ -5,9 +5,9 @@ to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGEL
 
 ## [0.21.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.21.0) — 2026-09-16
 
-Taking a model in is one press now: search, read the plan, confirm. The storage bucket
-behind the catalogue became the ledger, so bytes nobody declared are visible instead of
-billed in silence. A deployment can also run several image engines at once, and every
+Taking a model in is one press now: search, read the plan, confirm. The S3 bucket behind
+the catalogue became the ledger, so bytes nobody declared are visible instead of billed
+in silence. A deployment can also run several image engines at once, and every
 member — not only an administrator — can see whether the engines are awake.
 
 ## [0.20.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.20.2) — 2026-09-16

@@ -33,7 +33,7 @@ Keeping it current:
 **New / Improved**
 
 - **[engines]** Taking a model in is one press: a plan card lists every file the model needs with its cost, licence and warnings, the destination is decided for you, a family split across several files arrives in one act, and an incomplete row is completed from the same press
-- **[engines]** The bucket is the ledger: the catalogue's second screen lists what is actually in storage, including objects no row declares, which can be registered as a row or deleted; a file in the wrong place is repaired by moving it inside the bucket
+- **[engines]** The S3 bucket is the ledger: the catalogue's second screen lists what is actually in storage, including objects no row declares, which can be registered as a row or deleted; a file in the wrong place is repaired by moving it inside the bucket
 - **[image generation]** More than one image engine at once — the route a picture takes is the engine row rather than the provider kind, so a LAN ComfyUI can be preferred with a borrowed engine behind it, and the priority list in Settings › Agents is row-based
 - **[engines]** An external ComfyUI's loaded checkpoints, LoRAs and VAEs can be read off the box and offered as catalogue candidates
 - **[engines]** Every member sees a pill per role in the top bar with a popover per row: state, queue and how long the box has left
