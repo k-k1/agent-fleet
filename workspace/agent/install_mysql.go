@@ -45,16 +45,20 @@ var mysqlCDNBaseURLs = []string{
 	"https://cdn.mysql.com/archives/mysql-%s/%s",
 }
 
+// mysqlGOARCH mirrors runtime.GOARCH and is overridable in tests to exercise
+// the arm64 extraction and strip paths on an x86_64 host.
+var mysqlGOARCH = runtime.GOARCH
+
 // mysqlTarballName returns the tarball file name for this arch and version.
 // x86_64 uses the "minimal" variant; arm64 uses the full tarball (no minimal exists).
 func mysqlTarballName(ver string) (string, error) {
-	switch runtime.GOARCH {
+	switch mysqlGOARCH {
 	case "amd64":
 		return fmt.Sprintf("mysql-%s-linux-glibc2.28-x86_64-minimal.tar.xz", ver), nil
 	case "arm64":
 		return fmt.Sprintf("mysql-%s-linux-glibc2.28-aarch64.tar.xz", ver), nil
 	default:
-		return "", fmt.Errorf("unsupported arch %q", runtime.GOARCH)
+		return "", fmt.Errorf("unsupported arch %q", mysqlGOARCH)
 	}
 }
 
@@ -157,7 +161,7 @@ func installMySQL(major string) error {
 
 	// Resolve SHA before taking the lock (no network needed — it's in the pin).
 	if sha == "" {
-		return fmt.Errorf("no mysql_sha256 pin in versions.json — cannot install safely")
+		return fmt.Errorf("no mysql_sha256 pin in versions.json — this image pre-dates the MySQL pin; rebuild the workspace image to install MySQL")
 	}
 
 	// Serialise across concurrent installs.
@@ -252,7 +256,7 @@ func doInstallMySQL(major, ver, tarball, sha, dest string) error {
 	}
 	_ = os.Remove(tarPath)
 
-	if runtime.GOARCH == "arm64" {
+	if mysqlGOARCH == "arm64" {
 		if err := mysqlStripELFs(distDir); err != nil {
 			return err
 		}
@@ -271,7 +275,9 @@ func doInstallMySQL(major, ver, tarball, sha, dest string) error {
 		return err
 	}
 
-	out, err := exec.Command(filepath.Join(dest, "bin", "mysqld"), "--version").CombinedOutput()
+	vCmd := exec.Command(filepath.Join(dest, "bin", "mysqld"), "--version")
+	vCmd.Env = mysqlLibsEnv()
+	out, err := vCmd.CombinedOutput()
 	if err != nil {
 		// mysqld --version exits non-zero on some builds; the output is still useful.
 		fmt.Fprintf(os.Stderr, "[install-mysql] mysqld --version: %v\n%s\n", err, string(out))
@@ -294,24 +300,34 @@ func doInstallMySQL(major, ver, tarball, sha, dest string) error {
 //	lib/plugin/*.so
 //	share/
 func mysqlExtract(tarPath, distDir string) error {
-	if runtime.GOARCH == "arm64" {
+	if mysqlGOARCH == "arm64" {
 		return mysqlExtractSubset(tarPath, distDir)
 	}
 	return runCmd("tar", "-xJf", tarPath, "--strip-components=1", "-C", distDir)
 }
 
 // mysqlExtractSubset extracts only the af-db subset from the arm64 full tarball.
-// GNU tar's --wildcards --no-anchored lets us match paths without knowing the
-// exact top-level directory name (which embeds the version).
+// GNU tar's --wildcards --no-anchored matches paths anywhere in the archive without
+// knowing the exact top-level directory name (which embeds the version).
+//
+// Note: --wildcards-match-slash is on by default in GNU tar, so "*.so*" crosses "/".
+// That means "lib/plugin/*.so" would include lib/plugin/debug/*.so, which is 30 files
+// and 41 MB of debug symbols we don't need. After extraction we remove that subdirectory.
 func mysqlExtractSubset(tarPath, distDir string) error {
-	return runCmd("tar", "-xJf", tarPath,
+	if err := runCmd("tar", "-xJf", tarPath,
 		"--strip-components=1", "-C", distDir,
 		"--wildcards", "--no-anchored",
 		"bin/mysqld", "bin/mysql", "bin/mysqladmin", "bin/mysqldump",
 		"lib/private/*.so*",
+		"lib/private/icudt*l",
 		"lib/plugin/*.so",
 		"share",
-	)
+	); err != nil {
+		return err
+	}
+	// Remove the debug plugin directory included transitively by "lib/plugin/*.so".
+	_ = os.RemoveAll(filepath.Join(distDir, "lib", "plugin", "debug"))
+	return nil
 }
 
 // mysqlStripELFs strips debug symbols from every ELF file under root.
@@ -332,8 +348,10 @@ func mysqlStripELFs(root string) error {
 		if !isELFFile(path) {
 			return nil
 		}
-		if err := exec.Command(stripBin, path).Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "[install-mysql] WARN: strip %s: %v\n", path, err)
+		out, err := exec.Command(stripBin, path).CombinedOutput()
+		if err != nil {
+			firstLine := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+			fmt.Fprintf(os.Stderr, "[install-mysql] WARN: strip %s: %v: %s\n", path, err, firstLine)
 		} else {
 			stripped++
 		}
@@ -359,31 +377,42 @@ func isELFFile(path string) bool {
 	return magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F'
 }
 
+// mysqlLibsEnv returns os.Environ() with AF_DB_MYSQL_LIBS prepended to
+// LD_LIBRARY_PATH when set. Used by mysqlCheckLDD and the post-install
+// mysqld --version call so both see the same library path.
+func mysqlLibsEnv() []string {
+	env := os.Environ()
+	libs := os.Getenv("AF_DB_MYSQL_LIBS")
+	if libs == "" {
+		return env
+	}
+	filtered := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, "LD_LIBRARY_PATH=") {
+			filtered = append(filtered, e)
+		}
+	}
+	ldPath := libs
+	if existing := os.Getenv("LD_LIBRARY_PATH"); existing != "" {
+		ldPath = libs + ":" + existing
+	}
+	return append(filtered, "LD_LIBRARY_PATH="+ldPath)
+}
+
 // mysqlCheckLDD runs ldd on mysqldBin and returns a mysqlLDDError if any
 // library is listed as "not found". Prepends AF_DB_MYSQL_LIBS to LD_LIBRARY_PATH
 // when set (the documented workaround for images that predate the libaio/libnuma/
 // libncurses bake — this container: ~/.local/share/af-dbtest/libs/...).
 func mysqlCheckLDD(mysqldBin string) error {
-	env := os.Environ()
-	if libs := os.Getenv("AF_DB_MYSQL_LIBS"); libs != "" {
-		newEnv := make([]string, 0, len(env))
-		for _, e := range env {
-			if !strings.HasPrefix(e, "LD_LIBRARY_PATH=") {
-				newEnv = append(newEnv, e)
-			}
-		}
-		ldPath := libs
-		if existing := os.Getenv("LD_LIBRARY_PATH"); existing != "" {
-			ldPath = libs + ":" + existing
-		}
-		env = append(newEnv, "LD_LIBRARY_PATH="+ldPath)
-	}
-
 	cmd := exec.Command("ldd", mysqldBin)
-	cmd.Env = env
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		// ldd exits non-zero for statically linked binaries; check the output anyway.
+	cmd.Env = mysqlLibsEnv()
+	out, cmdErr := cmd.CombinedOutput()
+	if cmdErr != nil {
+		if _, ok := cmdErr.(*exec.ExitError); !ok {
+			// ldd itself could not be executed (not in PATH or permission denied).
+			return fmt.Errorf("ldd not found in PATH; cannot verify shared libraries for %s: %w", mysqldBin, cmdErr)
+		}
+		// ldd exits non-zero for statically linked binaries; fall through to check output.
 		if !strings.Contains(string(out), "not found") {
 			return nil
 		}

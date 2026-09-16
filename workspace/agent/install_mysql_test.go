@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -168,46 +168,130 @@ func TestMySQLIsELFFile(t *testing.T) {
 	}
 }
 
-// TestMySQLStripELFs verifies that mysqlStripELFs calls strip on ELF files
-// and skips non-ELF files. We use a real ELF from the system (/bin/sh) copied
-// into a temp dir.
+// TestMySQLStripELFs verifies that mysqlStripELFs calls the strip shim exactly
+// on ELF files, skips non-ELF files, and returns nil (with a stderr warning)
+// when strip is absent from PATH.
 func TestMySQLStripELFs(t *testing.T) {
-	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
-		t.Skip("strip test requires amd64 or arm64")
-	}
-	tmp := t.TempDir()
+	// Sub-test: strip is on PATH — verify it is called on the ELF and not the script.
+	t.Run("called_on_elf_only", func(t *testing.T) {
+		binDir := t.TempDir()
+		calledFile := filepath.Join(binDir, "strip_args.txt")
+		// Fake strip records each argument in a file.
+		fakeStrip := filepath.Join(binDir, "strip")
+		script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$1\" >> %q\n", calledFile)
+		if err := os.WriteFile(fakeStrip, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 
-	// Copy a real ELF binary so strip actually works.
-	elfSrc := "/bin/sh"
-	elfData, err := os.ReadFile(elfSrc)
-	if err != nil {
-		t.Skipf("cannot read %s: %v", elfSrc, err)
+		filesDir := t.TempDir()
+		elfPath := filepath.Join(filesDir, "libfoo.so")
+		if err := os.WriteFile(elfPath, []byte{0x7f, 'E', 'L', 'F', 0, 0, 0, 0}, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		scriptPath := filepath.Join(filesDir, "run.sh")
+		if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := mysqlStripELFs(filesDir); err != nil {
+			t.Fatalf("mysqlStripELFs: %v", err)
+		}
+
+		data, err := os.ReadFile(calledFile)
+		if err != nil {
+			t.Fatal("fake strip was never called (calledFile not written)")
+		}
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		if len(lines) != 1 || lines[0] != elfPath {
+			t.Errorf("strip called with %v, want [%q]", lines, elfPath)
+		}
+	})
+
+	// Sub-test: strip absent → returns nil (not an error), warns to stderr.
+	t.Run("absent_returns_nil", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir()) // empty dir — no strip
+		if err := mysqlStripELFs(t.TempDir()); err != nil {
+			t.Fatalf("expected nil when strip absent, got %v", err)
+		}
+	})
+}
+
+// TestMySQLExtractSubset exercises mysqlExtractSubset via the mysqlGOARCH seam.
+// It builds a synthetic arm64-shaped tarball and asserts that exactly the expected
+// subset is extracted: bin/{mysqld,mysql,mysqladmin,mysqldump}, lib/private/*.so*,
+// lib/private/icudt*l, lib/plugin/*.so (minus debug/), share — and nothing else.
+func TestMySQLExtractSubset(t *testing.T) {
+	if _, err := exec.LookPath("tar"); err != nil {
+		t.Skip("tar not available")
 	}
-	elfDst := filepath.Join(tmp, "sh")
-	if err := os.WriteFile(elfDst, elfData, 0o755); err != nil {
-		t.Fatal(err)
+	if _, err := exec.LookPath("xz"); err != nil {
+		t.Skip("xz not available")
 	}
 
-	// Also write a non-ELF file; it must not be passed to strip.
-	scriptPath := filepath.Join(tmp, "script.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
+	// Build the synthetic source tree under a versioned top-level dir (like the real tarball).
+	srcDir := t.TempDir()
+	top := filepath.Join(srcDir, "mysql-8.4.6-linux-glibc2.28-aarch64")
+
+	type entry struct {
+		path    string
+		include bool
+	}
+	entries := []entry{
+		// bin subset — included
+		{"bin/mysqld", true},
+		{"bin/mysql", true},
+		{"bin/mysqladmin", true},
+		{"bin/mysqldump", true},
+		// extra binary — excluded
+		{"bin/mysqlbinlog", false},
+		// lib/private shared objects — included
+		{"lib/private/libprotobuf-lite.so.24.4.0", true},
+		// sasl2 is under lib/private and matched by *.so* crossing / — included
+		{"lib/private/sasl2/libsasldb.so", true},
+		// ICU data directory — included (issue 2)
+		{"lib/private/icudt77l/icudt77l.dat", true},
+		// lib/plugin *.so — included
+		{"lib/plugin/auth_socket.so", true},
+		// lib/plugin/debug — excluded (issue 1)
+		{"lib/plugin/debug/auth_socket.so", false},
+		// share — included
+		{"share/english/errmsg.sys", true},
+		// man — excluded
+		{"man/man1/mysql.1", false},
 	}
 
-	origSize, _ := os.Stat(elfDst)
-	if err := mysqlStripELFs(tmp); err != nil {
-		t.Fatalf("mysqlStripELFs: %v", err)
+	for _, e := range entries {
+		p := filepath.Join(top, e.path)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(e.path), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// The ELF should be smaller (or same size if already stripped) after stripping.
-	newInfo, err := os.Stat(elfDst)
-	if err != nil {
-		t.Fatalf("stat after strip: %v", err)
+	tarPath := filepath.Join(t.TempDir(), "mysql.tar.xz")
+	if err := runCmd("tar", "-cJf", tarPath, "-C", srcDir, "mysql-8.4.6-linux-glibc2.28-aarch64"); err != nil {
+		t.Fatalf("create test tarball: %v", err)
 	}
-	_ = origSize
-	// It must still exist and be executable.
-	if newInfo.Mode()&0111 == 0 {
-		t.Errorf("stripped file lost executable bit")
+
+	destDir := t.TempDir()
+	if err := mysqlExtractSubset(tarPath, destDir); err != nil {
+		t.Fatalf("mysqlExtractSubset: %v", err)
+	}
+
+	for _, e := range entries {
+		p := filepath.Join(destDir, e.path)
+		_, statErr := os.Stat(p)
+		exists := statErr == nil
+		if exists != e.include {
+			if e.include {
+				t.Errorf("expected %q in subset, not found", e.path)
+			} else {
+				t.Errorf("expected %q excluded from subset, but it exists", e.path)
+			}
+		}
 	}
 }
 
@@ -238,14 +322,19 @@ func TestMySQLDownloadURLAllFail(t *testing.T) {
 }
 
 // TestMySQLLDDNotFound verifies that mysqlCheckLDD surfaces "not found" libraries
-// by using a fake ldd shim (via PATH override).
+// via a fake ldd shim, and that AF_DB_MYSQL_LIBS is forwarded as the leading
+// segment of LD_LIBRARY_PATH to the ldd subprocess.
 func TestMySQLLDDNotFound(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
-	// Write a fake ldd that prints "not found" output.
+	// Fake ldd: records received LD_LIBRARY_PATH, then prints "not found" lines.
+	envFile := filepath.Join(tmp, "ldd_env.txt")
 	fakeLDD := filepath.Join(tmp, "ldd")
-	fakeLDDScript := "#!/bin/sh\necho '\tlibaio.so.1 => not found'\necho '\tlibnuma.so.1 => not found'\n"
+	fakeLDDScript := fmt.Sprintf(
+		"#!/bin/sh\nprintf '%%s' \"$LD_LIBRARY_PATH\" > %q\necho '\tlibaio.so.1 => not found'\necho '\tlibnuma.so.1 => not found'\n",
+		envFile,
+	)
 	if err := os.WriteFile(fakeLDD, []byte(fakeLDDScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -260,8 +349,10 @@ func TestMySQLLDDNotFound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", tmp+":"+origPath)
+	const testLibsDir = "/fake/libs/dir"
+	t.Setenv("AF_DB_MYSQL_LIBS", testLibsDir)
+	t.Setenv("LD_LIBRARY_PATH", "")
+	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
 
 	err := mysqlCheckLDD(mysqldPath)
 	if err == nil {
@@ -276,5 +367,35 @@ func TestMySQLLDDNotFound(t *testing.T) {
 	}
 	if !strings.Contains(ldderr.Error(), "AF_DB_MYSQL_LIBS") {
 		t.Errorf("error should mention AF_DB_MYSQL_LIBS\ngot: %s", ldderr.Error())
+	}
+
+	// Verify fake ldd received AF_DB_MYSQL_LIBS as the leading LD_LIBRARY_PATH segment.
+	envData, err2 := os.ReadFile(envFile)
+	if err2 != nil {
+		t.Fatalf("ldd env file not written: %v", err2)
+	}
+	ldLibPath := string(envData)
+	if !strings.HasPrefix(ldLibPath, testLibsDir) {
+		t.Errorf("LD_LIBRARY_PATH passed to ldd = %q; want leading %q", ldLibPath, testLibsDir)
+	}
+}
+
+// TestMySQLLDDNotInPath verifies that mysqlCheckLDD returns a plain error (not
+// *mysqlLDDError) when ldd itself is not in PATH.
+func TestMySQLLDDNotInPath(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no ldd here
+	mysqldPath := filepath.Join(t.TempDir(), "mysqld")
+	if err := os.WriteFile(mysqldPath, []byte{0x7f, 'E', 'L', 'F'}, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := mysqlCheckLDD(mysqldPath)
+	if err == nil {
+		t.Fatal("expected error when ldd not in PATH")
+	}
+	if _, ok := err.(*mysqlLDDError); ok {
+		t.Errorf("expected plain error (not *mysqlLDDError) when ldd absent, got *mysqlLDDError: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ldd") {
+		t.Errorf("error should mention ldd\ngot: %s", err.Error())
 	}
 }
