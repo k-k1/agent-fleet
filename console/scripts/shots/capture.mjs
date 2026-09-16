@@ -289,6 +289,17 @@ try {
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: seed });
     await cdp.send("Page.navigate", { url: BASE });
     await sleep(4500); // boot + first poll round + xterm paint
+    // The first scene of a run can still be on its "Loading…" placeholders after the fixed
+    // wait (a cold bundle), and a shot taken then looks like a broken build. Wait for the
+    // placeholder text to leave the page, bounded so a genuinely empty pane cannot hang the run.
+    for (let i = 0; i < 16; i++) {
+      const r = await cdp.send("Runtime.evaluate", {
+        expression: `/読み込み中…|Loading…/.test(document.body.innerText)`,
+        returnByValue: true,
+      });
+      if (!r.result?.value) break;
+      await sleep(500);
+    }
     if (scene.action) {
       await cdp.send("Runtime.evaluate", { expression: scene.action, awaitPromise: true });
       await sleep(scene.settle || 800);
