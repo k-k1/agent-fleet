@@ -647,3 +647,97 @@ What P0 does not do, on purpose: no Console card (P1, decision 9), no MySQL (P1)
 `AF_DB_URL_POSTGRES` on managed sessions (8′). The next thing to measure is the first real
 member run on an ECS deployment — the scratch-disk datadir (4′) and the rebuilt image's pin
 route are the two paths this acceptance could not reach.
+
+## The P1 contract (2026-09-17, fixed before the lanes start)
+
+P1 is three lanes built the same way as P0 (one session each, a reviewer each, merge in the
+order M1 → M2 → M3). What each lane may touch is named so that they do not collide.
+
+### M1 — MySQL supply (`workspace/agent/install_mysql.go`, `workspace/Dockerfile`)
+
+- **Image**: `libaio1t64`, `libnuma1`, `libncurses6` are installed by `apt` in `workspace/Dockerfile`
+  (both architectures; ~250 KB). Until an image with them is deployed, `AF_DB_MYSQL_LIBS=<dir>`
+  is prepended to `LD_LIBRARY_PATH` when `mysqld` / `mysql` are started — the test hook, and the
+  documented workaround for older images (this container: `~/.local/share/af-dbtest/libs/usr/lib/x86_64-linux-gnu`).
+- **`workspace-agent install-mysql [8.4]`** → `~/.local/share/agent-fleet/mysql/8.4/{bin,lib,share}`.
+  Pins: `mysql` = `8.4.6`, `mysql_sha256` per build architecture (x86_64: the `minimal` tarball;
+  arm64: the full tarball). URL: try `https://cdn.mysql.com/Downloads/MySQL-8.4/<file>` then
+  `https://cdn.mysql.com/archives/mysql-8.4/<file>`; `<file>` = `mysql-<ver>-linux-glibc2.28-x86_64-minimal.tar.xz`
+  or `mysql-<ver>-linux-glibc2.28-aarch64.tar.xz`. Download to a staging file, verify sha, then
+  unpack — on arm64 **only** `bin/{mysqld,mysql,mysqladmin,mysqldump}`, `lib/private/*.so*`,
+  `lib/plugin/*.so`, `share/`, then `strip` every ELF in place with the image's binutils (if
+  `strip` is absent, keep them and say so on stderr). Staging is a fixed per-version dir wiped at
+  start, under a per-version flock, like `install-postgres`. Exit 3 with the URL and both shas on
+  mismatch; when the download is refused, the message names `cdn.mysql.com` and
+  `AF_EGRESS_ALLOWLIST` (open question 4 stays open).
+- After unpack, `ldd bin/mysqld` must show no `not found`; if it does, exit 3 naming the libraries
+  and `AF_DB_MYSQL_LIBS`.
+- `AF_DB_MYSQL_ROOT=<dir>` overrides the root, as `AF_DB_POSTGRES_ROOT` does.
+
+### M2 — MySQL runtime and the Agent API (`workspace/agent/internal/afdb/`, `routes.go`)
+
+- `Instance.Major` becomes a string (`"17"`, `"8.4"`); the registry file is new in P0 and not
+  deployed, so no migration. Instance key `mysql-8.4`; state root as for Postgres; datadir
+  `<state root>/mysql-8.4/data`; socket `~/.local/state/af-db/run/mysql-8.4/mysql.sock`; pid file
+  `<state root>/mysql-8.4/mysqld.pid`; log `<state root>/mysql-8.4.log`; password
+  `~/.config/agent-fleet/af-db/mysql-8.4.pass` (0600).
+- **Init**: `mysqld --no-defaults --initialize-insecure --basedir=<root> --datadir=<datadir>`, then
+  on the socket `ALTER USER 'root'@'localhost' IDENTIFIED BY '<pw>'` and
+  `CREATE USER 'root'@'127.0.0.1' IDENTIFIED BY '<pw>'` + `GRANT ALL ON *.* … WITH GRANT OPTION`
+  (with `--skip-name-resolve`, `127.0.0.1` does not match `localhost`).
+- **Start flags**: `--no-defaults --basedir --datadir --socket --pid-file --log-error
+  --bind-address=127.0.0.1 --port=<port> --skip-name-resolve --mysqlx=0
+  --innodb-buffer-pool-size=64M --performance-schema=0 --innodb-flush-log-at-trx-commit=0`
+  (the last one is the `fsync=off` analogue; dropped under `--persist`). Ready = `mysqladmin ping`
+  on the socket.
+- **Talking to MySQL**: shell out to `<root>/bin/mysql` and `mysqladmin` (both in the `minimal`
+  tarball and in the arm64 subset); no new Go dependency. Idle count:
+  `SELECT count(*) FROM information_schema.processlist WHERE id <> connection_id() AND user <> 'event_scheduler'`.
+  Stop: `mysqladmin shutdown` → wait for the pid → only then the datadir (same rule as Postgres;
+  the mysqld-spins-forever hazard is the reason).
+- **Memory gate**: `af-db up mysql` refuses with exit 6 when `/sys/fs/cgroup/memory.max` is a
+  number below 1 GiB, and says so (`AF_DB_MEM_GATE=0` disables the gate).
+- **URLs**: socket `mysql://root:<pw>@localhost/<db>?socket=<sockpath>`; `--tcp`
+  `mysql://root:<pw>@127.0.0.1:<port>/<db>`. `af-db url --format=go-dsn` prints the
+  `go-sql-driver` form (`root:<pw>@unix(<sock>)/<db>` / `root:<pw>@tcp(127.0.0.1:<port>)/<db>`;
+  for Postgres `go-dsn` is the URL). `af-db env` adds `AF_DB_URL_MYSQL`. Per-working-copy database
+  naming, reconcile and `--db=NAME` exactly as for Postgres.
+- **`status --json` gains** `version` (server version string) and `rssBytes` (VmRSS from
+  `/proc/<pid>/status`; for Postgres the postmaster plus its children) per instance.
+- **Test hooks**: `AF_DB_IDLE_SECONDS` overrides the 30-minute idle window (the loop test uses
+  5 s); `AF_DB_MYSQL_ROOT`, `AF_DB_MYSQL_LIBS` as above.
+- **Agent HTTP API** (the Console's source; registered in `workspace/agent/routes.go` next to
+  `/env/toolchains`):
+  - `GET /env/databases` → `{"engines":[{"engine":"postgres","major":"17","installed":true,
+    "state":"absent|installing|starting|running|stopped|error","version":"17.11","rssBytes":n,
+    "port":n,"datadir":"…","urlSocket":"…","urlTcp":"…","databases":{"<db>":"<dir>"},
+    "lastUsedAt":"…","lastError":""}, {"engine":"mysql","major":"8.4",…}]}`. URLs carry the
+    password; the CP relays and never persists this body.
+  - `POST /env/databases/{engine}/start|stop|reset` (`stop?purge=1`). `start` returns at once
+    with `state` `installing` or `starting` and runs the work in the Agent; `GET` reports
+    progress and `lastError`. `stop` and `reset` are synchronous.
+- **Acceptance (M2)**: from a HOME that has never seen `af-db`, with `AF_DB_MYSQL_ROOT` pointing
+  at an unpacked `minimal` tarball and `AF_DB_MYSQL_LIBS` at the scavenged libraries:
+  `af-db up mysql` → `af-db url mysql` → a `CREATE TABLE … JSON` / `SELECT j->>'$.a'` round trip
+  through `mysql` → `status --json` shows `rssBytes` near 226 MB → with `AF_DB_IDLE_SECONDS=5`
+  the loop stops it → `down --purge` leaves no `mysqld` and no datadir. Postgres's 4 PASS / 0 SKIP
+  still green.
+
+### M3 — Console card, CP proxy, documentation (`control-plane/routes.go`, `console/`, docs)
+
+- **CP**: `GET /api/env/databases` and `POST /api/env/databases/{engine}/{action}` registered as
+  `rest` next to `/api/env/toolchains` (`routes.go:769`). Nothing else in the CP.
+- **Console**: a "Databases" card in the workspace settings Env tab
+  (`console/src/features/settings/workspace/`, a new `EnvTabDatabases.tsx` beside `EnvTab.tsx`):
+  one row per engine — version, state, resident size, port, the URL with a copy button and a
+  socket / TCP toggle, Start / Stop / Reset (Stop offers "also remove the data"), an
+  "installing…" state polled every 5 s while `installing|starting`, `lastError` shown inline.
+  Strings through `console/src/lib/i18n` in en and ja; `oxlint` clean; dom tests modelled on
+  `EnvTabNode.dom.test.tsx` with the API mocked; `NODE_OPTIONS=--max-old-space-size=3072 npm run build`
+  passes.
+- **Docs** (en/ja): the member guide gains the card and MySQL (memory: ~226 MB resident, stop it
+  before a JVM build; arm64 install downloads 909 MB); `workspace/notes/environment.md` gains the
+  one MySQL sentence; `guide/ref/features.md` a row if that table lists Env-tab features.
+- **Acceptance (M3)**: dom tests and build green; a headless-Chromium screenshot of the card
+  against a mocked `GET` is attached to the PR; the live card is verified after the next
+  development deployment (it needs an Agent with M2 merged).

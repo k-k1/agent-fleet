@@ -606,3 +606,91 @@ Agent が止める。あるセッションの終了が、兄弟セッション�
 P0 が意図してやらないこと：Console のカード（P1・決定 9）、MySQL（P1）、マネージドセッションへの
 `AF_DB_URL_POSTGRES`（8′）。次に測るのは ECS 配備での最初の実利用者の 1 回——作業ディスク上の
 データディレクトリ（4′）と、焼き直したイメージのピン経路が、この受け入れで届かなかった 2 経路。
+
+## P1 の契約（2026-09-17・レーン起動前に固定）
+
+P1 も P0 と同じ組み方の 3 レーン（各 1 セッション、各レビュー子、merge は M1 → M2 → M3 の順）。
+衝突しないよう、各レーンが触ってよい場所を名指しする。
+
+### M1 — MySQL の供給（`workspace/agent/install_mysql.go`・`workspace/Dockerfile`）
+
+- **イメージ**: `libaio1t64`・`libnuma1`・`libncurses6` を `workspace/Dockerfile` の `apt` で入れる
+  （両アーキ、約 250 KB）。それを積んだイメージが配備されるまでは `AF_DB_MYSQL_LIBS=<dir>` を
+  `mysqld` / `mysql` 起動時の `LD_LIBRARY_PATH` の先頭に付ける——テスト用の鉤であり、古いイメージ
+  向けの文書化された回避策（このコンテナでは `~/.local/share/af-dbtest/libs/usr/lib/x86_64-linux-gnu`）。
+- **`workspace-agent install-mysql [8.4]`** → `~/.local/share/agent-fleet/mysql/8.4/{bin,lib,share}`。
+  ピン: `mysql` = `8.4.6`、`mysql_sha256` はビルドアーキ別（x86_64 は `minimal` tarball、arm64 は
+  フル tarball）。URL は `https://cdn.mysql.com/Downloads/MySQL-8.4/<file>` を試してから
+  `https://cdn.mysql.com/archives/mysql-8.4/<file>`。`<file>` は
+  `mysql-<ver>-linux-glibc2.28-x86_64-minimal.tar.xz` か `mysql-<ver>-linux-glibc2.28-aarch64.tar.xz`。
+  staging ファイルに落として sha 検証してから展開——arm64 は `bin/{mysqld,mysql,mysqladmin,mysqldump}`・
+  `lib/private/*.so*`・`lib/plugin/*.so`・`share/` **だけ**を取り出し、イメージの binutils で各 ELF を
+  その場で `strip`（`strip` が無ければそのまま置いて stderr に言う）。staging は版ごとの固定 dir を
+  開始時に消し、版ごとの flock の下で——`install-postgres` と同じ。sha 不一致は exit 3 で URL と
+  両方の sha。ダウンロードが拒まれたときはメッセージに `cdn.mysql.com` と `AF_EGRESS_ALLOWLIST`
+  を出す（未解決の問い 4 は開いたまま）。
+- 展開後に `ldd bin/mysqld` で `not found` が無いこと。あれば exit 3 でライブラリ名と
+  `AF_DB_MYSQL_LIBS` を名指しする。
+- `AF_DB_MYSQL_ROOT=<dir>` で root を上書き（`AF_DB_POSTGRES_ROOT` と同じ）。
+
+### M2 — MySQL の実行と Agent API（`workspace/agent/internal/afdb/`・`routes.go`）
+
+- `Instance.Major` を文字列にする（`"17"`・`"8.4"`）。レジストリは P0 で新設で未配備なので移行は
+  無し。インスタンス鍵 `mysql-8.4`。state root は Postgres と同じ。datadir `<state root>/mysql-8.4/data`、
+  ソケット `~/.local/state/af-db/run/mysql-8.4/mysql.sock`、pid ファイル `<state root>/mysql-8.4/mysqld.pid`、
+  ログ `<state root>/mysql-8.4.log`、パスワード `~/.config/agent-fleet/af-db/mysql-8.4.pass`（0600）。
+- **初期化**: `mysqld --no-defaults --initialize-insecure --basedir=<root> --datadir=<datadir>`、
+  続けてソケット越しに `ALTER USER 'root'@'localhost' IDENTIFIED BY '<pw>'` と
+  `CREATE USER 'root'@'127.0.0.1' IDENTIFIED BY '<pw>'` + `GRANT ALL ON *.* … WITH GRANT OPTION`
+  （`--skip-name-resolve` だと `127.0.0.1` は `localhost` に一致しない）。
+- **起動フラグ**: `--no-defaults --basedir --datadir --socket --pid-file --log-error
+  --bind-address=127.0.0.1 --port=<port> --skip-name-resolve --mysqlx=0
+  --innodb-buffer-pool-size=64M --performance-schema=0 --innodb-flush-log-at-trx-commit=0`
+  （最後が `fsync=off` の相当。`--persist` では外す）。ready はソケットへの `mysqladmin ping`。
+- **MySQL と話す**: `<root>/bin/mysql` と `mysqladmin` をシェルアウト（`minimal` にも arm64 の
+  部分集合にもある）。Go の依存は増やさない。アイドル計数は
+  `SELECT count(*) FROM information_schema.processlist WHERE id <> connection_id() AND user <> 'event_scheduler'`。
+  停止は `mysqladmin shutdown` → pid 消滅を待つ → それからデータディレクトリ（Postgres と同じ
+  規則。mysqld が止まらず回り続ける危険がその理由）。
+- **メモリの門**: `/sys/fs/cgroup/memory.max` が数値で 1 GiB 未満なら `af-db up mysql` は exit 6 で
+  拒み、そう言う（`AF_DB_MEM_GATE=0` で無効化）。
+- **URL**: ソケット `mysql://root:<pw>@localhost/<db>?socket=<sockpath>`、`--tcp`
+  `mysql://root:<pw>@127.0.0.1:<port>/<db>`。`af-db url --format=go-dsn` は `go-sql-driver` の形
+  （`root:<pw>@unix(<sock>)/<db>` / `root:<pw>@tcp(127.0.0.1:<port>)/<db>`。Postgres の `go-dsn`
+  は URL そのもの）。`af-db env` に `AF_DB_URL_MYSQL` が加わる。作業コピーごとの DB 名・突き合わせ・
+  `--db=NAME` は Postgres と全く同じ。
+- **`status --json` に追加**: インスタンスごとに `version`（サーバの版文字列）と `rssBytes`
+  （`/proc/<pid>/status` の VmRSS。Postgres は postmaster と子の合計）。
+- **テスト用の鉤**: `AF_DB_IDLE_SECONDS` で 30 分のアイドル窓を上書き（ループのテストは 5 秒）。
+  `AF_DB_MYSQL_ROOT`・`AF_DB_MYSQL_LIBS` は上のとおり。
+- **Agent の HTTP API**（Console の源。`workspace/agent/routes.go` の `/env/toolchains` の隣に登録）:
+  - `GET /env/databases` → `{"engines":[{"engine":"postgres","major":"17","installed":true,
+    "state":"absent|installing|starting|running|stopped|error","version":"17.11","rssBytes":n,
+    "port":n,"datadir":"…","urlSocket":"…","urlTcp":"…","databases":{"<db>":"<dir>"},
+    "lastUsedAt":"…","lastError":""}, {"engine":"mysql","major":"8.4",…}]}`。URL はパスワードを
+    含む。CP は中継するだけで本文を保存しない。
+  - `POST /env/databases/{engine}/start|stop|reset`（`stop?purge=1`）。`start` は即座に `state` を
+    `installing` か `starting` で返し、作業は Agent 内で続ける。`GET` が進捗と `lastError` を返す。
+    `stop` と `reset` は同期。
+- **受け入れ（M2）**: `af-db` を一度も見ていない HOME で、`AF_DB_MYSQL_ROOT` を展開済みの `minimal`
+  tarball に、`AF_DB_MYSQL_LIBS` を剥がしたライブラリに向けて：`af-db up mysql` → `af-db url mysql`
+  → `mysql` で `CREATE TABLE … JSON` / `SELECT j->>'$.a'` の往復 → `status --json` の `rssBytes`
+  が 226 MB 前後 → `AF_DB_IDLE_SECONDS=5` でループが止める → `down --purge` で `mysqld` も
+  データディレクトリも残らない。Postgres の 4 PASS / 0 SKIP は引き続き緑。
+
+### M3 — Console のカード・CP の proxy・文書（`control-plane/routes.go`・`console/`・docs）
+
+- **CP**: `GET /api/env/databases` と `POST /api/env/databases/{engine}/{action}` を `rest` として
+  `/api/env/toolchains`（`routes.go:769`）の隣に登録。CP はそれ以外触らない。
+- **Console**: Workspace 設定の Env タブに「データベース」カード
+  （`console/src/features/settings/workspace/` に `EnvTab.tsx` と並べて新規 `EnvTabDatabases.tsx`）:
+  エンジンごとに 1 行——版・状態・常駐サイズ・ポート・コピー付き URL（ソケット／TCP 切替）・
+  Start / Stop / Reset（Stop に「データも消す」）、`installing|starting` の間は 5 秒ごとに GET して
+  「導入中…」、`lastError` はその場に表示。文言は `console/src/lib/i18n` で en / ja。`oxlint` きれい、
+  dom テストは `EnvTabNode.dom.test.tsx` に倣い API はモック、
+  `NODE_OPTIONS=--max-old-space-size=3072 npm run build` が通る。
+- **文書**（en/ja）: 利用者ガイドにカードと MySQL（メモリ約 226 MB、JVM ビルドの前に止める、arm64 の
+  導入は 909 MB のダウンロード）。`workspace/notes/environment.md` に MySQL の 1 文。
+  `guide/ref/features.md` に Env タブの機能表があれば 1 行。
+- **受け入れ（M3）**: dom テストとビルドが緑。モックした `GET` に対するヘッドレス Chromium の
+  スクリーンショットを PR に添える。実カードは次の開発配備の後に確認（M2 を merge した Agent が要る）。
