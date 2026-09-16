@@ -1,6 +1,6 @@
 ---
 audience: "anyone whose screen is not doing what they expected"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 11. Troubleshooting — fixes by symptom and FAQ
@@ -31,6 +31,13 @@ claude, and reaches stopped sessions too. The full comparison is in
 
 If the agent still seems to lack the tools after you turn it on, check whether that session was
 already running beforehand — a running session keeps its current tools until it restarts.
+
+### A **Restart needed** badge sits next to the power button
+
+The backend was updated while your workspace was running. Nothing is broken and nothing has to
+happen now: the badge offers **Restart now** (a stop→start, which stops running sessions —
+they stay resumable) and goes away once the workspace is back on the current version
+([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
 
 ### Sessions or repositories have vanished from the left pane
 

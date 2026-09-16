@@ -1,7 +1,7 @@
 ---
 audience: "someone keeping a running deployment healthy"
 source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 03. Day-to-Day Operations
@@ -104,6 +104,9 @@ The commands are in the runbook's "Upgrade" section.
 - **On AWS (`ecs` / `ecs-ec2`) the command is `deploy/aws/ecs/update.sh`, not compose**
   (`VERSION=<v> ./update.sh --profile <p> --region <r>`): it pushes to ECR, re-deploys the
   ingress stack with only `ImageTag` overridden, and waits for the CP service to roll.
+  When a release needs one stack updated before another — the reverse of the script's usual
+  order — `update.sh` checks for that first, stops before touching anything, and prints the
+  exact `aws cloudformation deploy` command to run on its own; then run `update.sh` again.
   **Running workspaces are not upgraded automatically** — each picks the new image up on its
   next Start. The users concerned see a "Restart needed" badge in the Console, so when to take the
   restart is their call, not yours.

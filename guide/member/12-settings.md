@@ -1,6 +1,6 @@
 ---
 audience: "anyone looking for a setting"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 12. Settings — every tab of the ⚙ settings dialog
@@ -203,7 +203,7 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
 Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor / Kiro (and the experimental
 Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
 **Sessions** group holds **session-to-session messaging**, **fleet observation from sessions**,
-**image generation**, auto-resume after a rate
+**image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
 limit resets, and auto-resume of an interrupted turn.
 → [06 Agents](06-agents.md), [02 Sessions](02-sessions.md#messages-between-sessions),
 [02 Sessions](02-sessions.md#having-a-session-generate-an-image)

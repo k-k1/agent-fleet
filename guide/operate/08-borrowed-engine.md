@@ -68,14 +68,16 @@ work — see the last section for why it costs money and still fails.
 
 Which engines exist, which API and provider each speaks, and which models they offer
 are all **read from the far deployment's catalogue**, never declared here. That is
-deliberate: an image role is ComfyUI on one deployment and sd.cpp on another, a
-session composes a completely different request for each, and a guess would post a
-ComfyUI graph at an OpenAI-compatible endpoint.
+deliberate: an image role is ComfyUI on one deployment and an OpenAI-compatible server
+on another, a session composes a completely different request for each, and a guess
+would post a ComfyUI graph at an OpenAI-compatible endpoint.
 
 The consequence is operational:
 
-- The catalogue is fetched at startup and then **every 10 minutes**. A borrowed role
-  becomes available on the first fetch that succeeds.
+- The catalogue is fetched at startup and then **every 2 minutes**. A borrowed role
+  becomes available on the first fetch that succeeds, and when a fetch finds the far
+  catalogue changed, every running workspace is told at once — a checkpoint enabled
+  over there reaches a session here in about two minutes, without restarting anything.
 - **A far fleet that is unreachable when the CP starts leaves the launch menu without
   those models**, and the only signal is a line in the CP log. It recovers on its own
   at the next poll.
@@ -143,7 +145,8 @@ and a message naming the far deployment:
 - editing "excluded from every image".
 
 All of those are done **in the far deployment's own admin panel**, by whoever
-administers it. A change there reaches this deployment within one poll.
+administers it. A change there reaches this deployment within one poll — about two
+minutes — and running sessions see it without being restarted.
 
 What you *can* still do here:
 
@@ -162,8 +165,8 @@ enabled model was removed. On this side that arrives as **zero models for that r
   model — an administrator has to select one",
 - the launch menu stops offering them.
 
-The administrator who has to select one is **the far one**. Within one poll of them
-switching it back on, it works again.
+The administrator who has to select one is **the far one**. Within one poll — about
+two minutes — of them switching it back on, it works again.
 
 ## What the first request waits for
 
@@ -251,6 +254,11 @@ GET /api/admin/engines/<key>/attribution?from=YYYY-MM-DD&to=YYYY-MM-DD
   appears, and `requests` minus `ok_requests` is the failure count.
 - `undelivered` — the chat rows kept whole, each with the borrowing session's name and
   the reason it could not be delivered (`no_workspace` is the ordinary borrowing case).
+
+What the instance itself cost is in that deployment's **audit log**, not here: its Control
+Plane writes one line per purchase (`engine.<key>.offer`) naming the instance type it
+actually got and the hourly price — the offer only names a range of types, so this line is
+what answers "why is this engine on the expensive one" a day later.
 
 Two things to know about it:
 

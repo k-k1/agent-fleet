@@ -1,6 +1,6 @@
 ---
 audience: "a tenant administrator managing resources and running sessions"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # 02. Resource limits, idle auto-stop, and the sessions overview
@@ -31,9 +31,16 @@ in the Admin modal and never appears for you. What you can read is the current v
 - **Idle auto-stop** — how long before neglected sessions and workspaces are stopped automatically
   (next section).
 - **Inference engine model ingest** — whether this tenant's tenant_admins may take engine models in
-  from Hugging Face and the like. Off by default. Even where it is granted, **the catalogue stays one
-  per deployment** and the id of a model taken in is visible from every tenant
+  from Hugging Face, Civitai or a URL. Off by default. Even where it is granted, **the catalogue stays
+  one per deployment** and the id of a model taken in is visible from every tenant
   ([04](04-mcp-egress.md#taking-models-in-and-what-that-has-to-do-with-tenants)).
+- **Inference engine use** — whether this tenant may use the deployment's self-hosted engines at all,
+  one switch per role: **Allow using the self-hosted chat engine (llm)** and **Allow using the
+  self-hosted image engine (image)**. Both are allowed by default, and a tenant nobody has touched
+  keeps both, so an upgrade changes nothing. It is a cost decision (a GPU instance bills by the hour),
+  per role and not per model — the catalogue stays one per deployment either way. Turning a role off
+  removes it from the launch menu and the catalogue, and a session already running is refused on its
+  next request.
 
 The "Limits — Workspace: X / Session: Y" shown under **Tenant › Limits & idle** is the value
 currently in effect. When you want it changed, ask your IT department / deployment administrator

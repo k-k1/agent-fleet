@@ -1,7 +1,7 @@
 ---
 audience: "everyone; the axis features.md resolves \"who\" against"
 source_of_truth: "this table (maintained by hand); which shelves a role receives is decided in one place in the Control Plane"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # Roles — who may do what
@@ -41,6 +41,7 @@ settings**. Only a deployment administrator sees the shield-icon **Admin** item.
 | Read the audit log | — | ✓ | ✓ |
 | Running time and cloud cost | — | ✓ | ✓ |
 | Egress control, speech engine, shared dictionary | — | — | ✓ |
+| Allow a tenant the self-hosted engines (llm / image), take models in, API tokens | — | —³ | ✓ |
 | Create tenants and grant admin rights | — | — | ✓ |
 | Install, upgrade, back up, restore | — | — | ✓ |
 | A shell on the host | — | — | ✓ |
@@ -51,6 +52,10 @@ was refused without having to ask.
 ² Registering is not enough — a deployment administrator approves it, and a later
 change (adding an organisation, changing how the same account is recognised) sends the
 row back for approval.
+
+³ Taking models in can be granted to a tenant's administrators by the deployment
+administrator (the ingest grant in the tenant's limits); enabling a model, the engine
+modes, the use gate and the API tokens stay with the deployment administrator.
 
 ## Where a tenant administrator has to ask
 
