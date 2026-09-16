@@ -41,20 +41,22 @@ func (a *AsyncOp) Set(state, lastError string) {
 }
 
 // EngineStatus is the JSON shape returned by GET /env/databases.
+// All fields are always present (no omitempty) so the Console type can
+// treat every key as required without truthy guards on the sender side.
 type EngineStatus struct {
 	Engine     string            `json:"engine"`
 	Major      string            `json:"major"`
 	Installed  bool              `json:"installed"`
 	State      string            `json:"state"`
-	Version    string            `json:"version,omitempty"`
-	RSSBytes   int64             `json:"rssBytes,omitempty"`
-	Port       int               `json:"port,omitempty"`
-	Datadir    string            `json:"datadir,omitempty"`
-	URLSocket  string            `json:"urlSocket,omitempty"`
-	URLTCP     string            `json:"urlTcp,omitempty"`
-	Databases  map[string]string `json:"databases,omitempty"`
-	LastUsedAt *time.Time        `json:"lastUsedAt,omitempty"`
-	LastError  string            `json:"lastError,omitempty"`
+	Version    string            `json:"version"`
+	RSSBytes   int64             `json:"rssBytes"`
+	Port       int               `json:"port"`
+	Datadir    string            `json:"datadir"`
+	URLSocket  string            `json:"urlSocket"`
+	URLTCP     string            `json:"urlTcp"`
+	Databases  map[string]string `json:"databases"`
+	LastUsedAt time.Time         `json:"lastUsedAt"`
+	LastError  string            `json:"lastError"`
 }
 
 // isEngineInstalled reports whether the engine binary is present on disk.
@@ -67,6 +69,14 @@ func isEngineInstalled(engine, major string) bool {
 	}
 	_, err := os.Stat(binPath)
 	return err == nil
+}
+
+// engineRoot returns the install root for the given engine and major.
+func engineRoot(engine, major string) string {
+	if engine == "mysql" {
+		return mysqlRoot(major)
+	}
+	return postgresRoot(major)
 }
 
 // BuildEngineStatus assembles the EngineStatus for one (engine, major) combination.
@@ -87,52 +97,54 @@ func BuildEngineStatus(engine, major string) EngineStatus {
 		return nil
 	})
 
-	installed := isEngineInstalled(engine, major)
 	status := EngineStatus{
 		Engine:    engine,
 		Major:     major,
-		Installed: installed,
+		Installed: isEngineInstalled(engine, major),
 		LastError: lastError,
+		Databases: map[string]string{},
 	}
 
 	// State priority: async op in flight > running > error from last op > stopped > absent
 	if opState != "" {
 		status.State = opState
-	} else if inst == nil {
+		return status
+	}
+
+	if inst == nil {
 		if lastError != "" {
 			status.State = "error"
 		} else {
 			status.State = "absent"
 		}
-	} else {
-		running := isInstanceRunning(inst)
-		if running {
-			status.State = "running"
-		} else if lastError != "" {
-			status.State = "error"
-		} else {
-			status.State = "stopped"
-		}
-		status.Port = inst.Port
-		status.Datadir = inst.Datadir
+		return status
+	}
+
+	status.Port = inst.Port
+	status.Datadir = inst.Datadir
+	status.LastUsedAt = inst.LastUsedAt
+	if inst.Databases != nil {
 		status.Databases = inst.Databases
-		if !inst.LastUsedAt.IsZero() {
-			t := inst.LastUsedAt
-			status.LastUsedAt = &t
+	}
+
+	running := isInstanceRunning(inst)
+	if running {
+		status.State = "running"
+		pw := readPass(passPath(engine, major))
+		dbName := DBNameFor(ResolveDir())
+		if engine == "mysql" {
+			status.URLSocket = buildMySQLURL(inst, dbName, pw, false)
+			status.URLTCP = buildMySQLURL(inst, dbName, pw, true)
+		} else {
+			status.URLSocket = buildURL(inst, dbName, pw, false)
+			status.URLTCP = buildURL(inst, dbName, pw, true)
 		}
-		if running {
-			pw := readPass(passPath(engine, major))
-			dbName := DBNameFor(ResolveDir())
-			if engine == "mysql" {
-				status.URLSocket = buildMySQLURL(inst, dbName, pw, false)
-				status.URLTCP = buildMySQLURL(inst, dbName, pw, true)
-			} else {
-				status.URLSocket = buildURL(inst, dbName, pw, false)
-				status.URLTCP = buildURL(inst, dbName, pw, true)
-			}
-			status.Version = instanceVersion(inst)
-			status.RSSBytes = rssForInstance(inst)
-		}
+		status.Version = instanceVersion(inst)
+		status.RSSBytes = rssForInstance(inst)
+	} else if lastError != "" {
+		status.State = "error"
+	} else {
+		status.State = "stopped"
 	}
 
 	return status
@@ -180,8 +192,29 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		op.Set("starting", "")
+		// Set initial state: "installing" when the binary is absent, "starting" when present.
+		if isEngineInstalled(engine, major) {
+			op.Set("starting", "")
+		} else {
+			op.Set("installing", "")
+		}
 		go func() {
+			// Phase 1: install binary if not present.
+			if !isEngineInstalled(engine, major) {
+				root := engineRoot(engine, major)
+				var installErr error
+				if engine == "mysql" {
+					installErr = ensureInstalledMySQL(root, major)
+				} else {
+					installErr = ensureInstalled(root, major)
+				}
+				if installErr != nil {
+					op.Set("", installErr.Error())
+					return
+				}
+			}
+			// Phase 2: start the server (ensureInstalled inside ensureUp is a fast no-op now).
+			op.Set("starting", "")
 			_, err := ensureUp(engine, major, false)
 			if err != nil {
 				op.Set("", err.Error())
