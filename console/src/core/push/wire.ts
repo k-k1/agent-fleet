@@ -18,7 +18,13 @@ import { useEnginesStore } from "../../features/engines/store.ts";
 export function wirePushApply(): () => void {
   const un = [
     onPush("workspace", (d) => useWorkspaceStore.getState().applyPush(d || {})),
-    onPush("sessions", (d) => useSessionsStore.getState().applyList(d?.sessions || [])),
+    // Only an actual list clears the rail. A frame that carries no `sessions` array (a
+    // truncated or partial payload) used to publish [] through the same `|| []` that the
+    // poll had, and the rail lost every row with no poll left to restore it — the 4s poll
+    // stands down precisely while this channel is healthy.
+    onPush("sessions", (d) => {
+      if (Array.isArray(d?.sessions)) useSessionsStore.getState().applyList(d.sessions);
+    }),
     onPush("notifications", (d) => applyPushedNotifications(d || {})),
     // Work items (docs/log/80): the frame is the CP's cache verbatim. Fetching runs in a
     // separate goroutine on the CP, so only rows already in that cache arrive here.
@@ -29,6 +35,12 @@ export function wirePushApply(): () => void {
     // A reconnect signals "the CP may have restarted" — re-read whoami (deployment
     // capabilities included), which no frame carries. Throttled on the callee side.
     onPushConnect(() => void useTenantStore.getState().refreshWhoami()),
+    // Re-read the session list on every (re)connect for the same reason, plus one this
+    // stream cannot fix by itself: a frame is only sent when something CHANGES, so a rail
+    // left empty by a failed load stays empty for as long as nobody starts or stops a
+    // session. The poll cannot cover it either — it stands down while the channel is
+    // healthy. Without this the only way out is a manual reload.
+    onPushConnect(() => void useSessionsStore.getState().refresh()),
     // The stats stream feeds one more consumer than the WS bar: a per-tick series for the
     // Machine tab's charts. It keeps its own clock because an unchanged frame is never sent
     // (see wsStatsFeed), and it is started here rather than by the tab so that opening the

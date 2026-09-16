@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -176,8 +177,85 @@ func loggedIn() bool {
 // subscriptionType (measured on 2.1.231). The card looked at nothing else, so an expired
 // login still read as "connected" (docs/log/47 §4-7: never take a card's status display as
 // evidence). The expiry itself is read straight from the credentials by authexpiry.go.
+// Bounding this probe is not an optimisation: launching the CLI is not an operation this
+// process controls the cost of. Measured on a busy production workspace, `claude auth status`
+// took 21-28s on EVERY run with 0.24s of CPU — it sits in futex, waiting on locks over the
+// CLAUDE_CONFIG_DIR that every other Claude session in the container shares, so the cost
+// grows with how many sessions the person is running. GET /connections is the only caller,
+// the ALB in front of the Control Plane cuts a client at 60s, and the request carried this
+// probe inline — which is how Settings > Git hosting came to sit on "loading" forever
+// instead of rendering.
+//
+// So the CLI now runs off the request path. A probe that does not answer in time yields the
+// PREVIOUS answer; a late one stores itself and serves the next poll. Serving a stale card
+// beats serving none, and both beat `{"connected": false}` — that is not "unknown", it is a
+// claim that the person is signed out, and the launch pickers hide the agent when they read it.
+// Budgets are vars so the tests can shrink them: the behaviour worth pinning is "what is
+// served when the probe overruns", and waiting out the real budget to see it would make the
+// suite slower than the bug.
+var (
+	statusBudget = 3 * time.Second
+	// The first answer has nothing to fall back to, so it waits longer — but still bounded,
+	// because dying at the ALB renders as a card that never loads rather than a slow one.
+	statusColdBudget = 25 * time.Second
+)
+
+// A safety net on the abandoned probe itself, so a CLI that never returns cannot pile up
+// one stranded process per poll for the life of the agent.
+const statusExecCeiling = 60 * time.Second
+
+var (
+	stMu      sync.Mutex
+	stLast    map[string]any // last completed answer; nil until the first one lands
+	stRunning bool           // a probe is already out — do not launch a second
+)
+
 func Status() map[string]any {
-	out, err := exec.Command("claude", "auth", "status").Output()
+	stMu.Lock()
+	last, running := stLast, stRunning
+	if !running {
+		stRunning = true
+	}
+	stMu.Unlock()
+
+	// Starting a second CLI while one is still out would feed the contention that makes it
+	// slow: at the Console's 4s poll rate, a 20s probe would leave five of them fighting
+	// each other over the same config directory.
+	if running {
+		return last
+	}
+
+	done := make(chan map[string]any, 1)
+	go func() {
+		m := probeStatus()
+		stMu.Lock()
+		if m != nil {
+			stLast = m // a real "signed out" answer must replace a stale "connected" one
+		}
+		stRunning = false
+		stMu.Unlock()
+		done <- m
+	}()
+
+	budget := statusBudget
+	if last == nil {
+		budget = statusColdBudget
+	}
+	select {
+	case m := <-done:
+		return m
+	case <-time.After(budget):
+		return last // nil on a cold miss: unknown, which the card reads as not-connected
+	}
+}
+
+// probeStatus is Status's actual work: the CLI call and the shape the card reads. A var so a
+// test can stand in for the CLI — the bounding above is the behaviour under test, and it can
+// only be exercised by a probe whose duration the test controls.
+var probeStatus = func() map[string]any {
+	ctx, cancel := context.WithTimeout(context.Background(), statusExecCeiling)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "claude", "auth", "status").Output()
 	if err != nil {
 		return map[string]any{"connected": false}
 	}

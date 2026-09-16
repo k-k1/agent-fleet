@@ -49,6 +49,35 @@ describe("sessions store", () => {
     expect(useSessionsStore.getState().sessions.map((s) => s.name)).toEqual(["ssko6g5"]);
   });
 
+  // The gap the case above did not cover: a REJECTED fetch is only half of "a refresh
+  // failed". When the server answers, api() resolves an error body instead of throwing, so
+  // the catch never runs and `d.sessions || []` published an empty list. Both shapes the CP
+  // really produces are pinned here — the plain-text 502 it writes while the agent is
+  // unreachable, and the JSON 500 it writes when its own store is unwell.
+  // Each case seeds a DISTINCT name: applyList only publishes on a changed serialization and
+  // that comparison is module state, so reusing one name would make the seeding refresh a
+  // no-op and the case would fail before it reached what it is testing.
+  it.each([
+    ["plain-text 502 from the agent proxy", "sproxy52", () => new Response("workspace agent unreachable", { status: 502 })],
+    [
+      "JSON 500 from the control plane",
+      "sinternal5",
+      () =>
+        new Response(JSON.stringify({ error: { code: "internal" } }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }),
+    ],
+  ])("keeps the last known list on a %s", async (_label, name, res) => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ sessions: [row(name, false)] }));
+    await useSessionsStore.getState().refresh();
+    expect(useSessionsStore.getState().sessions).toHaveLength(1);
+
+    fetchMock.mockResolvedValueOnce(res());
+    await useSessionsStore.getState().refresh();
+    expect(useSessionsStore.getState().sessions.map((s) => s.name)).toEqual([name]);
+  });
+
   it("reports a failed resume instead of swallowing it", async () => {
     fetchMock
       .mockRejectedValueOnce(new Error("502")) // POST …/start
