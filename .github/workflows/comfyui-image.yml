@@ -24,13 +24,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Image tag pushed to GHCR (and what standup.sh reads as ImageComfyImageTag). Convention: the ComfyUI ref itself, e.g. v0.34.0.'
+        description: 'Image tag pushed to GHCR (and what standup.sh reads as ImageComfyImageTag). Convention: the ComfyUI ref itself, e.g. v0.35.2.'
         required: true
-        default: 'v0.34.0'
+        default: 'v0.35.2'
       comfyui_ref:
         description: 'ComfyUI git ref to build (tag or commit). Must match deploy/aws/ecs/comfyui/Dockerfile unless you are testing a bump.'
         required: true
-        default: 'v0.34.0'
+        default: 'v0.35.2'
 
 concurrency:
   group: comfyui-image-${{ inputs.tag }}

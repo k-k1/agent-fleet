@@ -3,7 +3,7 @@
 # The community image measured for ADR 0072 (ghcr.io/lecode-official/comfyui-docker) bakes
 # ComfyUI v0.8.2 and checks out v0.34.0 at CONTAINER START, which cost 20-26 seconds of NAT-
 # dependent git+pip work on every cold start on top of a 205-second, 5.36 GB pull. This image
-# bakes v0.34.0 directly so a cold start pays for neither.
+# bakes the pinned COMFYUI_REF (currently v0.35.2) directly so a cold start pays for neither.
 #
 # ⚠️ The revision is pinned on purpose (ADR 0071 decision 6: this deployment tracks upstream
 # revisions explicitly, never `latest`) — bump COMFYUI_REF deliberately, rebuild via
@@ -30,7 +30,7 @@
 # anything less than two weeks old).
 FROM pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
 
-ARG COMFYUI_REF=v0.34.0
+ARG COMFYUI_REF=v0.35.2
 
 LABEL org.opencontainers.image.source="https://github.com/k-k1/agent-fleet" \
       org.opencontainers.image.description="Agent Fleet's pinned ComfyUI build for the image engine role (ADR 0072 P2)" \
