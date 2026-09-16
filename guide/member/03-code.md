@@ -176,7 +176,7 @@ Bitbucket tokens are refreshed automatically even after they expire.
 
 Postgres is available inside the workspace without Docker or any external service. `af-db url`
 returns a connection URL for the current working copy's database — downloading, initialising, and
-starting the server on first call if needed (first use may take a minute). The server idle-stops
+starting the server on first call if needed (first use may take a few minutes). The server idle-stops
 after 30 minutes of no connections.
 
 ```bash
