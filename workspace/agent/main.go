@@ -5,6 +5,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"log"
@@ -32,6 +33,12 @@ import (
 var buildVersion = "dev"
 
 func main() {
+	// af-db CLI: per-working-copy Postgres databases (ADR 0086 P0). Must be
+	// the first branch — `workspace-agent <unknown>` would otherwise boot the Agent.
+	if len(os.Args) > 1 && os.Args[1] == "af-db" {
+		afdb.RunAFDB(os.Args[2:])
+		return
+	}
 	// Subcommand mode: git invokes this binary as its credential helper
 	// (`workspace-agent cred get`), backed by the encrypted store. It prints
 	// creds and exits without starting the server. `bitbucket-cred` is kept as
@@ -292,6 +299,9 @@ func main() {
 	// bound user's thread replies back into sessions. No-op until a user opts into receive
 	// (Discord.Receive) — bounds the WSS connection to opted-in users only.
 	sessionx.StartBridgeReceiver()
+
+	// af-db idle-stop: polls every 60 s and stops servers with no client backends for 30 min.
+	afdb.StartIdleLoop()
 
 	log.Printf("workspace-agent %s listening on %s", buildVersion, addr)
 	if err := http.ListenAndServe(addr, httpx.LogRequests(httpx.Gzip(httpx.RequireToken(mux)))); err != nil {
