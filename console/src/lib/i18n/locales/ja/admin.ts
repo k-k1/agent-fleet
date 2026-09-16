@@ -299,7 +299,7 @@ export const admin = {
   // 再利用と移設はネットワークを渡らない。「ダウンロード中」と書くと、出てこない通信を待たせる。
   "admin.catalog_started_no_download": "配備が既に持っているバイト列から作りました（ダウンロードはありません）。「登録済み」タブのバケットで確認できます。",
   // --- バケツ（ADR 0085 決定 2・7）。S3 が持っているものそのもの。---
-  "admin.catalog_ledger_title": "S3 Bucket",
+  "admin.catalog_ledger_title": "バケット",
   "admin.catalog_ledger_note": "このエンジンのプレフィックスにあるオブジェクトです。どの行も宣言していないもの（孤児）と、ローダーが一覧できない場所にあるもの（誤配置）を先に並べます。",
   "admin.catalog_ledger_note_acts": "部品に単体のボタンはありません——付け直すのはチェックポイント行の「揃える」です。",
   "admin.catalog_ledger_checked": "確認 {t}",

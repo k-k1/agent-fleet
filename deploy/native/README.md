@@ -185,7 +185,7 @@ unit's `[Service]` section.
 `generate_image` normally runs on the member's own CLI plan (Codex / Antigravity),
 and the fleet's own GPU engines exist on the AWS `ecs-ec2` target only. On native
 you can instead point the CP at a **ComfyUI you already run on your network** — the
-GPU box, the gaming PC, the Windows side of WSL2. The CP relays to it; no session
+GPU machine, the gaming PC, the Windows side of WSL2. The CP relays to it; no session
 needs to know where it is. (Nothing is bundled: leaving this out affects nothing
 else.)
 
@@ -226,9 +226,36 @@ is `AF_ENGINE_API_KEY_<KEY>` — the row's key upper-cased, e.g.
 an engine this deployment runs keeps its key in SSM, and a borrowed one buys its
 own per session. On the row `AF_COMFY_URL` creates, `AF_COMFY_API_KEY` wins.
 
+### More than one engine row
+
+`AF_COMFY_URL` writes exactly one row, keyed `image`. A second ComfyUI, an
+OpenAI-compatible image server, or a LAN ComfyUI kept **next to** a borrowed
+`image` role each need a row of their own, declared in the inline engine table —
+one JSON document with an `engines` array, read **once at startup** like the
+variables above:
+
+```bash
+AF_ENGINES_JSON='{"engines":[
+  {"key":"comfy-lan","api":"images","provider":"comfy",
+   "url":"http://192.168.1.20:8188","health":"/system_stats","lifecycle":"external"},
+  {"key":"oai-image","api":"images","provider":"openai-compat",
+   "url":"http://192.168.1.21:8000","health":"/v1/models","lifecycle":"external"}
+]}' af start
+```
+
+The providers a CP can drive are `comfy` and `openai-compat`; a row naming any
+other is shown marked in the admin panel, not dropped. A bearer for a row is
+`AF_ENGINE_API_KEY_<KEY>` (the key upper-cased, non-alphanumerics folded to `_`).
+Which row draws is the member's **Settings › Agents › "Image provider order"**, or
+the `provider` a request names. The procedure and the caveats are in
+`guide/operate/07-image-engine.md`.
+
 ### Registering the models by hand
 
-There is no ingest job here — nothing copies files for you or reads them back.
+There is no ingest job here — nothing copies files for you. What the CP *can* do is
+read the names: **"Look at this engine's files"** on the row asks ComfyUI once for
+the checkpoints, LoRAs and VAEs its loaders list and offers each as a candidate;
+the row is still written by your press, and the family is still yours to choose.
 Register each model in the Console under **Admin → Inference engines** with its id,
 its `base_model` and its file names, spelled exactly as ComfyUI's loaders list them.
 
@@ -253,7 +280,7 @@ The reader-facing version of all of this, including the network caveat, is
 
 If you already run an Agent Fleet on **AWS** with GPU engines, this native
 deployment can use them instead of running anything locally. That deployment goes
-on doing the work — deciding a GPU is wanted, buying the box, loading the model,
+on doing the work — deciding a GPU is wanted, buying the instance, loading the model,
 letting it go — and this CP relays. Both roles are available (`llm` and `image`),
 and nothing has to be installed or opened on the far side.
 
@@ -278,7 +305,7 @@ All three are read **once at startup**, so changing one is a restart.
 
 🔴 **Do not point `AF_COMFY_URL` at the far fleet's image route instead.** That row
 is health-checked from here; the check lands on the far gateway, **records demand
-and buys a GPU box**, and then fails anyway — it allows five seconds against a cold
+and buys a GPU instance**, and then fails anyway — it allows five seconds against a cold
 start of minutes.
 
 ### The token
@@ -318,11 +345,11 @@ The catalogue is **read-only** here. Enabling or disabling a model, registering
 one, forgetting one, ingesting one and editing "excluded from every image" all
 answer `400 engine_not_ours`; they are done in the far deployment's own Admin
 panel. This side keeps **on / off** only — "off" closes the route here and does
-nothing to the far fleet's box — and "on demand" is refused.
+nothing to the far fleet's instance — and "on demand" is refused.
 
 ### The first request is a cold start over there
 
-The far deployment buys the box on demand, so the first request after that pays
+The far deployment buys the instance on demand, so the first request after that pays
 for the whole start. Its own measured cold starts are 527 s for `llm` and 165 s
 for `image` (ADR 0071); **the borrowed figure has not been measured** — two holds,
 two retry loops and an internet round trip sit in between.

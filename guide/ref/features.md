@@ -131,7 +131,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
 | The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [admin 04](../admin/04-mcp-egress.md) |
 | Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engine models | [admin 04](../admin/04-mcp-egress.md) |
-| The S3 bucket as the ledger of what is actually held | deployment admin (super_admin) | Admin → Inference engine models → S3 Bucket | [admin 04](../admin/04-mcp-egress.md) |
+| The S3 bucket as the ledger of what is actually held | deployment admin (super_admin) | Admin → Inference engine models → Bucket | [admin 04](../admin/04-mcp-egress.md) |
 | Hugging Face and Civitai tokens for gated downloads | deployment admin (super_admin) | Admin → API tokens | [admin 04](../admin/04-mcp-egress.md) |
 | Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 07](../operate/07-image-engine.md) |
 | Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [operator 08](../operate/08-borrowed-engine.md) |
