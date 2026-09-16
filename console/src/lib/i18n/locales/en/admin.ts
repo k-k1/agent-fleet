@@ -74,7 +74,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // unqualified "loaded" would be this panel asserting something about a box it does not hold.
   "admin.engines_remote_model_loaded": "(loaded, as the lending deployment last saw it)",
   "admin.engines_remote_model_declared": "(declared; the lending deployment has not seen it loaded)",
-  "admin.engines_note_remote": "A borrowed engine is reached through another Agent Fleet's gateway. Starting and stopping it, choosing its GPU and editing its catalogue all happen on that deployment's admin panel. Disabled closes the route on this side only — it does not stop their box.",
+  "admin.engines_note_remote": "A borrowed engine is reached through another Agent Fleet's gateway. Starting and stopping it, choosing its GPU and editing its catalogue all happen on that deployment's admin panel. Disabled closes the route on this side only — it does not stop their instance.",
   "admin.engines_remote_catalog": "This catalogue is a mirror of the lending deployment's. It cannot be changed from here — ingest, enable and forget all happen over there. Lending deployment:",
   // --- issuing a borrowing token (ADR 0079 decision 3, the LENDING side) ---
   // The super_admin of the deployment that owns the engines mints the one issuing token a
@@ -781,7 +781,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.allow_engine_llm": "Allow using the self-hosted chat engine (llm)",
   "admin.allow_engine_image": "Allow using the self-hosted image engine (image)",
   "admin.engine_use_hint":
-    "A GPU box is billed by the hour, so this is a cost decision: may this tenant use it at all. Role-grained (llm / image), not model-grained — the catalogue stays one per deployment either way (a separate grant from model ingest above). Turning a role off removes it from the launch menu and the catalogue, and refuses existing sessions on their next request.",
+    "A GPU instance is billed by the hour, so this is a cost decision: may this tenant use it at all. Role-grained (llm / image), not model-grained — the catalogue stays one per deployment either way (a separate grant from model ingest above). Turning a role off removes it from the launch menu and the catalogue, and refuses existing sessions on their next request.",
   "admin.saved": "Saved",
   "admin.no_members": "No members. Add one from the form below.",
   "admin.add_failed": "Failed to add: {msg}",

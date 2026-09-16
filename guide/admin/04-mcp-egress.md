@@ -135,7 +135,7 @@ Taking a model in is one press: **search** the model, press **add** on its card,
 card shows (every file the model needs with its size, which of them the deployment already holds,
 the licence) and press **take in**. The Control Plane decides where each file goes and which parts
 the family needs; nothing on the card asks for a role, a key or a file name. Below the registered
-rows sits the **bucket** — every object the deployment holds, what declares it, and what is still
+rows sits the **S3 bucket** — every object the deployment holds, what declares it, and what is still
 being taken in or failed. Bytes nobody declares can be registered as a model or deleted there; a
 row whose files are incomplete is repaired from the row itself (**complete**), never from a part.
 

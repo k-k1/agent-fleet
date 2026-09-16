@@ -69,7 +69,7 @@ export const admin = {
   // 持っていない箱について断定することになる。
   "admin.engines_remote_model_loaded": "（借用元が最後に見た時点で読み込み済）",
   "admin.engines_remote_model_declared": "（宣言。借用元はまだ読み込みを見ていません）",
-  "admin.engines_note_remote": "借用エンジンは、別の Agent Fleet のゲートウェイ越しに使っています。起動と停止・GPU の選択・カタログの編集は、いずれも借用元の配備の管理画面で行います。「無効」はこちら側の経路を閉じるだけで、向こうの箱は止めません。",
+  "admin.engines_note_remote": "借用エンジンは、別の Agent Fleet のゲートウェイ越しに使っています。起動と停止・GPU の選択・カタログの編集は、いずれも借用元の配備の管理画面で行います。「無効」はこちら側の経路を閉じるだけで、向こうのインスタンスは止めません。",
   "admin.engines_remote_catalog": "このカタログは借用元の配備のものを写したものです。この画面からは変更できません（取り込み・有効化・削除は借用元で）。借用元:",
   // --- 借用トークンの発行（ADR 0079 決定 3・貸す側）---
   // エンジンを持っている側の super_admin が、借りる配備の要る発行トークン 1 本を見せる導線。
@@ -175,7 +175,7 @@ export const admin = {
   // 空いている枠が無い／埋まっている枠が無い。押せない理由をボタンの横で言う。
   "admin.engines_wizard_cannot": "この配備ではこのファイルを取り込めません（上の理由）。",
   "admin.engines_wizard_need_id": "id を入れてください。",
-  "admin.engines_wizard_need_family": "モデル族を選んでください。このエンジンはモデル族でワークフローを選び、推測はしません。",
+  "admin.engines_wizard_need_family": "ファミリーを選んでください。このエンジンはファミリーでワークフローを選び、推測はしません。",
   "admin.engines_model_files_missing_tag": "不足: {f}",
   "admin.engines_model_add_desc": "説明",
   // 🔴 コンテキストウィンドウは「両方か、どちらも書かないか」。context だけだと opencode は
@@ -267,14 +267,14 @@ export const admin = {
   "admin.catalog_complete_attached": "配備が既に持っていたファイルから宣言しました——ダウンロードは発生していません。",
   // 🔴 ダウンロードとは別の言葉で言う。バケツの中のサーバ側コピーなので転送は起きず、
   // 「取り込み中」と書くと出てこない通信を待たせることになる。
-  "admin.catalog_complete_moving": "この行のファイルをバケツの中で移しています（ダウンロードはありません）。完了するとローダーが読めるようになります。",
+  "admin.catalog_complete_moving": "この行のファイルをバケットの中で移しています（ダウンロードはありません）。完了するとローダーが読めるようになります。",
   "admin.catalog_complete_started": "不足ファイルを取り込んでいます。完了すると自動でこの行に付きます。",
-  "admin.catalog_complete_unknown": "この族が読む残りの役割は、この配備には部品表がありません。ファイルを取り込んで足してください。",
-  "admin.catalog_complete_note": "この行が読むファイルを、バケツにあるもので埋めます。足りないものだけを取り込みます。",
+  "admin.catalog_complete_unknown": "このファミリーが読む残りの役割は、この配備には部品表がありません。ファイルを取り込んで足してください。",
+  "admin.catalog_complete_note": "この行が読むファイルを、バケットにあるもので埋めます。足りないものだけを取り込みます。",
   "admin.catalog_complete_pick": "使うファイルを選ぶ",
   "admin.catalog_complete_keep": "今のまま",
-  "admin.catalog_complete_file_declare": "バケツにあるので宣言します",
-  "admin.catalog_complete_file_move": "バケツの中で移します（ダウンロードなし）",
+  "admin.catalog_complete_file_declare": "バケットにあるので宣言します",
+  "admin.catalog_complete_file_move": "バケットの中で移します（ダウンロードなし）",
   "admin.catalog_complete_file_download": "取り込みます",
   "admin.catalog_complete_file_choose": "候補が複数あります",
   "admin.catalog_complete_file_unknown": "この役割のファイルが分かりません",
@@ -285,7 +285,7 @@ export const admin = {
   "admin.catalog_plan_files": "取り込むファイル",
   "admin.catalog_plan_whole": "本体",
   "admin.catalog_plan_action_reuse": "取得なし（配備が持っています）",
-  "admin.catalog_plan_action_move": "取得なし（バケツの中で移します）",
+  "admin.catalog_plan_action_move": "取得なし（バケットの中で移します）",
   "admin.catalog_plan_action_unknown": "この配備には部品表がありません",
   "admin.catalog_plan_at": "いまの場所 {k}",
   "admin.catalog_plan_total": "ダウンロード合計 {n}",
@@ -295,16 +295,16 @@ export const admin = {
   "admin.catalog_plan_stale": "配布元の内容が変わったので、取り込む計画を作り直しました。もう一度確認してから押してください。",
   "admin.catalog_commercial_yes": "商用可",
   "admin.catalog_commercial_unknown": "商用可否は不明",
-  "admin.catalog_started": "取り込みを開始しました。進み具合は「登録済み」タブのバケツで見られます。",
+  "admin.catalog_started": "取り込みを開始しました。進み具合は「登録済み」タブのバケットで見られます。",
   // 再利用と移設はネットワークを渡らない。「ダウンロード中」と書くと、出てこない通信を待たせる。
-  "admin.catalog_started_no_download": "配備が既に持っているバイト列から作りました（ダウンロードはありません）。「登録済み」タブのバケツで確認できます。",
+  "admin.catalog_started_no_download": "配備が既に持っているバイト列から作りました（ダウンロードはありません）。「登録済み」タブのバケットで確認できます。",
   // --- バケツ（ADR 0085 決定 2・7）。S3 が持っているものそのもの。---
-  "admin.catalog_ledger_title": "バケツ",
+  "admin.catalog_ledger_title": "S3 Bucket",
   "admin.catalog_ledger_note": "このエンジンのプレフィックスにあるオブジェクトです。どの行も宣言していないもの（孤児）と、ローダーが一覧できない場所にあるもの（誤配置）を先に並べます。",
   "admin.catalog_ledger_note_acts": "部品に単体のボタンはありません——付け直すのはチェックポイント行の「揃える」です。",
   "admin.catalog_ledger_checked": "確認 {t}",
   "admin.catalog_ledger_empty": "このエンジンのプレフィックスにオブジェクトはありません。",
-  "admin.catalog_ledger_unavailable": "バケツの一覧を取得できませんでした。再読み込みしてください。",
+  "admin.catalog_ledger_unavailable": "バケットの一覧を取得できませんでした。再読み込みしてください。",
   "admin.catalog_ledger_misplaced": "誤配置",
   "admin.catalog_ledger_state_present": "あり",
   "admin.catalog_ledger_state_uploading": "取り込み中",
@@ -319,18 +319,18 @@ export const admin = {
   // `already declared by` を返す（af-sandbox 実測）。
   "admin.catalog_ledger_uploading_note": "取り込みのタスクが走っています。完了するとこの行に宣言が付きます。",
   "admin.catalog_ledger_deleting_note": "削除のタスクが走っています。完了するとこの行は一覧から消えます（数分かかることがあります）。",
-  "admin.catalog_ledger_missing_note": "{m} がこのキーを指していますが、バケツにバイト列がありません。その行を「揃える」と取り直します。",
+  "admin.catalog_ledger_missing_note": "{m} がこのキーを指していますが、バケットにバイト列がありません。その行を「揃える」と取り直します。",
   "admin.catalog_ledger_orphan": "どの行も宣言していません",
   "admin.catalog_ledger_declared": "宣言: {m}",
   "admin.catalog_ledger_register": "登録",
   "admin.catalog_ledger_delete": "消す",
-  "admin.catalog_ledger_delete_note": "このオブジェクトをバケツから削除します。取り消せません。どれかの行が宣言しているものは断られます。",
+  "admin.catalog_ledger_delete_note": "このオブジェクトをバケットから削除します。取り消せません。どれかの行が宣言しているものは断られます。",
   "admin.catalog_ledger_registered": "{id} として登録しました。",
   // --- 拒否（ADR 0085 決定 5）。押さえ手と、次に押すものを必ず書く。---
   "admin.catalog_holder": "押さえているのは {k}: {i}",
   "admin.catalog_holder_row": "登録済みの行",
   "admin.catalog_holder_job": "取り込みジョブ",
-  "admin.catalog_holder_object": "バケツのオブジェクト",
+  "admin.catalog_holder_object": "バケットのオブジェクト",
   "admin.catalog_holder_task": "実行中のタスク",
   "admin.catalog_next_register": "登録する",
   "admin.catalog_next_complete": "揃える",
@@ -398,7 +398,7 @@ export const admin = {
   "admin.engines_params_edit": "パラメータ",
   "admin.engines_params_save": "保存",
   // 🔴 flux1 / klein の CFG は別の摘み（FluxGuidance・蒸留パス）なので、当てても効かない。
-  "admin.engines_params_cfg_ignored": "この族では CFG は使われません（ガイダンスが別の摘みです）。",
+  "admin.engines_params_cfg_ignored": "このファミリーでは CFG は使われません（ガイダンスが別の入力です）。",
   "admin.engines_params_clip_skip_note": "clip skip は記録だけで、いまのワークフローでは使われません。",
   // ファミリーの推定。決定 2 のとおり宣言するのは運用者なので、入れておくだけで、外せる。
   "admin.engines_ingest_go": "取り込む",
@@ -774,7 +774,7 @@ export const admin = {
   "admin.allow_engine_llm": "セルフホストのチャットエンジン（llm）の利用を許可",
   "admin.allow_engine_image": "セルフホストの画像生成エンジン（image）の利用を許可",
   "admin.engine_use_hint":
-    "GPU の箱は時間課金なので、このテナントがそれを使ってよいかという費用の判断です。役（llm / image）単位で、モデル単位ではありません——カタログはデプロイに 1 つのままです（上のモデル取り込みとは別の権限）。オフにすると、起動メニューとカタログからその役が消え、既存のセッションも次の要求で拒否されます。",
+    "GPU のインスタンスは時間課金なので、このテナントがそれを使ってよいかという費用の判断です。役（llm / image）単位で、モデル単位ではありません——カタログはデプロイに 1 つのままです（上のモデル取り込みとは別の権限）。オフにすると、起動メニューとカタログからその役が消え、既存のセッションも次の要求で拒否されます。",
   "admin.saved": "保存しました",
   "admin.no_members": "メンバーがいません。下のフォームから追加してください。",
   "admin.add_failed": "追加に失敗: {msg}",

@@ -112,6 +112,18 @@ VOCAB_BANNED = (
     (re.compile(r"(?<![\w/])/api/[a-z]"), "an API path"),
     (re.compile(r"(?<![\w/])/internal/[a-z]"), "an internal API path"),
 )
+# Developer slang that leaks out of ADRs and commit messages. The glossary's words are
+# instance (箱), S3 bucket (バケツ), copy / mirror (鏡) and family (族); these are checked
+# on every guide/ shelf, operate/ and ref/ included, because a reader at a shell is still
+# a reader. Compounds that are ordinary Japanese (ごみ箱, 受信箱, 空の箱) are excluded.
+SLANG_BANNED = (
+    (re.compile(r"(?<!ごみ)(?<!ゴミ)(?<!受信)(?<!空の)箱"), "「箱」(write インスタンス / マシン)"),
+    (re.compile(r"バケツ"), "「バケツ」(write S3 Bucket)"),
+    (re.compile(r"(?<!眼)鏡"), "「鏡」(write ミラー or 複製)"),
+    (re.compile(r"(?<![家親民貴一水部])族"), "「族」(write ファミリー, or 系統 on the image pane)"),
+    (re.compile(r"\b(?:GPU|engine|fleet's) box(?:es)?\b|\bwhich box\b|\bbuy(?:s|ing)? (?:a|the) box\b"),
+     "\"box\" (write instance)"),
+)
 
 
 @dataclass
@@ -534,10 +546,14 @@ def check_header(files: list[str], f: Findings, strict: bool) -> None:
 def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
     for path in files:
         src = rel(path)
-        if shelf(src) not in READER_FACING:
+        sh = shelf(src)
+        if sh not in GUIDE_SHELVES:
             continue
         body = strip_code(read(path))
-        for pattern, label in VOCAB_BANNED:
+        banned = list(SLANG_BANNED)
+        if sh in READER_FACING:
+            banned += list(VOCAB_BANNED)
+        for pattern, label in banned:
             hit = pattern.search(body)
             if hit:
                 msg = (

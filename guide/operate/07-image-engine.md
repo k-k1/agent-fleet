@@ -64,7 +64,7 @@ exactly what it was doing. It is the same meaning "off" has for the speech engin
 when that is externally managed. Stopping the process is yours to do, on the host it
 runs on.
 
-The fields that describe a cloud instance — state, desired count, which box, when it
+The fields that describe a cloud instance — state, desired count, which instance, when it
 will stop — are **left out** rather than guessed at, because the deployment does not
 know them.
 
@@ -168,7 +168,7 @@ can use that GPU, and you are relying on trusting them.
 The Control Plane does not wait for an engine it does not own. A request made while
 ComfyUI is down is refused **immediately** with `503 engine_unavailable`, and the
 message names the URL that was tried and the health path. Nothing retries for
-minutes in the hope that a box is still booting — that budget exists for a cloud
+minutes in the hope that an instance is still booting — that budget exists for a cloud
 instance being bought, and a machine on your network that is switched off does not
 come back because someone waited.
 

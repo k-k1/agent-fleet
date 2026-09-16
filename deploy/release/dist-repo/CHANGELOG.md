@@ -24,7 +24,7 @@ its first load.
 ## [0.20.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.20.0) — 2026-09-13
 
 Images are generated and browsed in the Console itself, every running session fits on one
-screen, and the inference engine's box is bought by the Control Plane from a list of offers —
+screen, and the inference engine's instance is bought by the Control Plane from a list of offers —
 one of which can be Spot.
 
 ## [0.19.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.19.0) — 2026-09-11
@@ -43,7 +43,7 @@ so several environments are told apart at a glance.
 
 ## [0.17.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.17.0) — 2026-09-09
 
-An ECS deployment can now run inference on its own GPU, on a box that only exists while
+An ECS deployment can now run inference on its own GPU, on an instance that only exists while
 somebody is using it: a model that appears in opencode's launch menu, and image generation
 that needs no external account. Sessions can also be told to stop themselves once the work
 is done, and image generation gained a second provider.
