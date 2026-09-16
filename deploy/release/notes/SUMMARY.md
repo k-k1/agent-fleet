@@ -26,6 +26,12 @@ Keeping it current:
 
 ---
 
+## [0.20.2](0.20.2.md) — 2026-09-16
+
+**Fixed**
+
+- **[agent / efs]** The agent swept every project directory on EFS on every transcript lookup, issuing 821 directory reads per second per workspace and exhausting EFS burst credits across the whole deployment; the scan is now memoised
+
 ## [0.20.1](0.20.1.md) — 2026-09-16
 
 **Fixed**
