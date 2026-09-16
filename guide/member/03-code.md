@@ -208,7 +208,47 @@ A few things worth knowing:
   workspace stop. Only meaningful on ECS deployments where the default disk is task-local and
   cleared on stop; on docker and native deployments the files already persist across stops.
 - Install `psql` with `workspace-agent install-pg-client`.
-- MySQL is not yet available.
+
+### MySQL
+
+MySQL 8.4 is also available. Start it the same way:
+
+```bash
+af-db up mysql
+eval "$(af-db env)"
+```
+
+`AF_DB_URL_MYSQL` is set when a MySQL instance is running. Pass the connection in the form
+your driver expects with `af-db url mysql --format=go-dsn` (for `go-sql-driver/mysql`).
+
+Things to know about MySQL specifically:
+
+- **Memory: ≈ 226 MB resident** (MySQL holds an InnoDB buffer pool even at idle). Stop it
+  before a JVM build or another memory-intensive task — the workspace's cgroup is shared with
+  all sessions: `af-db down mysql`.
+- **arm64 install downloads 909 MB.** The full tarball is required on arm64 (there is no
+  `minimal` build for that architecture). The installer strips debug sections in place, so the
+  installed size is comparable to x86_64, but the download takes several minutes.
+- **x86_64 install downloads ≈ 63 MB** (the `minimal` tarball).
+- The memory guard refuses `af-db up mysql` when the workspace's cgroup limit is below 1 GiB
+  and says so — run `af-db down postgres` first if Postgres is running.
+
+### Console database card
+
+The workspace settings **Env** tab has a **Databases** card that shows the state of every
+engine — version, resident size (MB), port, connection URL — and lets you Start, Stop, or Reset
+an engine without opening a terminal.
+
+- **Start** on an uninstalled engine downloads and installs it first, then starts it. The card
+  polls automatically while the state is `installing` or `starting`.
+- **Stop** has a "Stop and remove data" option (`--purge`): use it to free the datadir space.
+- **Reset** drops and recreates the per-working-copy database (same as `af-db reset`). A
+  confirmation is shown before anything is deleted.
+- The **socket / TCP toggle** on the URL lets you copy whichever form your driver needs.
+- Any error from the last operation is shown inline under the engine row.
+
+The card becomes active once the workspace is running; when the workspace is stopped it shows
+a placeholder and makes no API calls.
 
 ## Subversion (SVN) repositories
 

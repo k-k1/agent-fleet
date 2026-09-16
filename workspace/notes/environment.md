@@ -79,11 +79,12 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   your home instead (`~/.local`, `pip install --user`, `uv tool install`, `npm i -g` through the
   home-volume node). Anything that must be in the image is a request to the operator.
 - **No Docker / Podman** — Testcontainers and `docker compose` fixtures are not available.
-  **Postgres is**: `eval "$(af-db env)"` exports `DATABASE_URL`; or pass `"$(af-db url)"` as the
-  project's own variable — one database per working copy, on demand. Client:
-  `workspace-agent install-pg-client`. **Stop before heavy builds** (`af-db down`) — the server
-  holds ≈ 47 MB of cgroup memory; idle-stops after 30 min. MySQL: not yet. For other DB servers
-  (`sqlite3`, `redis-cli`, …): run tests against a service the user provides, or skip and say so.
+  **Postgres** and **MySQL** are available: `eval "$(af-db env)"` exports `DATABASE_URL`
+  (Postgres) / `AF_DB_URL_MYSQL`; or pass `"$(af-db url)"` as your own variable. Client:
+  `workspace-agent install-pg-client`. **Stop before heavy builds** (`af-db down`) — Postgres
+  holds ≈ 47 MB and MySQL ≈ 226 MB of cgroup memory; both idle-stop after 30 min. Manage
+  both from the **Settings → Env → Databases** card. For other DB servers (`sqlite3`,
+  `redis-cli`, …): run tests against a service the user provides, or skip and say so.
 - `ss`, `lsof`, `netstat` are **not installed**; probe a port with
   `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/`.
 - Present and usable: `gcc`/`g++`/`make`/`pkg-config` (so cgo, node-gyp and source-built wheels
