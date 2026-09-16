@@ -307,3 +307,189 @@ Agent が止める。あるセッションの終了が、兄弟セッション�
 - `workspace/af-scratch.sh`・`workspace/entrypoint.sh:245` — `AF_WS_SCRATCH` はタスクローカルで、
   停止すると消える。
 - `docs/build/10-development.md` §10.4 — この ADR が製品化する、手組みの Postgres 治具。
+
+## レビュー（2026-09-17・P0 着手前）
+
+0071・0076 のレビューと同じ流儀で——各決定は根拠から出ているか、コードは草稿が言うとおりに
+なっているか。「確認した出どころ」の `file:line` は全部 `sed -n` で読み直し、両サーバを同じ
+コンテナ（docker ランタイム配備・x86_64・cgroup 10 GiB・8 CPU）で起動し直し、未解決の問い 3 を
+測った。結論を先に：**P0 は着手してよい。ただし決定 3 は書く前に書き直しが要る**——前提が
+コードと違い、依拠しているセッション単位の鍵はマネージド経路に存在しない。決定 1・2・5〜10 は
+立つ。うち 2 つに P0 の項目が 1 つずつ増える（クライアントとシム）。2026-09-16 の数字は全部
+再現し、2 つは ADR に有利な方へ動いた。
+
+### 前提をコードに当てる
+
+- **引用は全部解決する。** `runtime.go:12` はインタフェースの 1 行上のコメント（`:13`）、
+  「docs/log/62 §62.4」は §62.4.1（`docs/log/62-ecs-start-latency.md:198`）。「アダプタ 4 つ」は
+  `NewFactory` のプロファイル 4 つ（`local|docker`・`ecs`・`ecs-ec2`・`native|wsl`）で、struct は
+  3 種——書いてあるとおりに正しい。
+- 🔴 **決定 3 の前提が違う：セッション名はスロット名ではなく、再利用もされない。** 2026-07-03
+  （コミット `4ae4424a`）以降、セッション名は乱数スラグ——`"s"` + base32 6 文字、約 30 ビット——で、
+  `allocSessionName`（`workspace/agent/internal/sessionx/session_name.go:51`）はメタがある・tmux が
+  生きている・jsonl がディスクにある、のどれかに当たるスラグを配らない。その上のコメントは
+  スラグを「セッションの不変の同一性」と呼んでいる。`cleanup_ops.go:103` のコメント（「スロット名で
+  再利用される」）は 2026-08-19、この変更の後に書かれたもので、7 月以前の `slotNN` 方式を説明
+  している。第二の同一性は存在しない：`session.UUID(dir, name)` は名前から決定的に導かれ
+  （`internal/session/uuid.go:19`）、`session.Meta` に id 欄は無い。つまり「名前でなく同一性で
+  鍵を取る」には取るものが無く、守る相手もいない——**名前が同一性そのもの**。ADR が代わりに
+  言うべきこと：データベースの鍵はスラグ。そして drop を `removeSessionSideFiles` に吊るさない——
+  そこはメタを消す 5 箇所のうちの 1 つに過ぎない（`cleanup_ops.go:80`・`:98`・
+  `internal/gitx/git.go:1701`・`internal/sessionx/session_handlers.go:161`・`:1169`）。`af-db` が
+  **突き合わせる**：`up` / `url` / `status` のたびに、メタの無いスラグのデータベースを落とす。
+  経路は 1 本で済み、drop を通らずに停止した後も片付く。
+- 🔴 **「*このセッション*の接続 URL」はマネージド経路では答えられない。** `AF_SESSION_NAME` が
+  プロセス環境に入る場所は tmux 起動の 1 箇所だけ（`internal/sessionx/session_tmux.go:40`）。
+  マネージドセッションは kind ごとに 1 本の共有デーモンの中で動く——
+  `internal/agents/codex/driver.go:88` がそう書いて実測しており、opencode の `EngineEnv` が
+  あるのはデーモンの環境が Workspace 単位だから——ので、マネージドセッションからエージェントが
+  回すシェルにはセッション名が無い。codex の前例は作業ディレクトリに退避している。従って
+  実用上の既定の鍵は**作業コピー**（`Meta.Dir`）であってセッションではない：`af-db url` は
+  `AF_SESSION_NAME` があればそれで、無ければ cwd → 作業コピーで呼び手を解決する。1 つの作業
+  コピーを共有する 2 セッションは既にファイルとブランチを共有しており、テスト DB の共有は同じ
+  取引。明示的な共有には `--db=<name>` が残る。決定 8 の「Agent が注入する環境変数 2 つ」にも
+  同じ限界がある——環境は起動時に固定され、しかも tmux セッションだけ。後から起動したサーバは
+  動作中のセッションから環境変数では見えない。常に効くのは `af-db url` / `eval "$(af-db env)"`
+  で、注入される変数は tmux セッション向けの便宜に過ぎない。
+- **決定 5 の供給に、草稿が名指ししていない穴がある：Zonky はクライアントを同梱しない。**
+  残してあった `pg.jar` の中身は `postgres-linux-x86_64.txz` 1 本、展開した `dist/bin` は
+  `initdb`・`pg_ctl`・`postgres` の 3 つだけ。帰結は 2 つ。(a) Agent に Postgres のワイヤ
+  クライアントが要る——`CREATE DATABASE`・`reset`・上の突き合わせ・アイドル判定
+  （`pg_stat_activity`）のために。`workspace/agent/go.mod` には無く、`pgx/v5` は CP のモジュールに
+  既にあり pure Go。(b) 利用者はサーバを得るが `psql` を得ない。「手軽に」にとっては機能の半分。
+  `.deb` の経路（`.debian.org` は許可済みで、注 2 が動くことを実測している）で
+  `postgresql-client-17` と `libpq5` が取れる。P0 に名指しすること。MySQL の `minimal` tarball は
+  `mysql`・`mysqladmin`・`mysqldump` ほか `bin/` 下に 29 本を同梱しているので、こちらはシェル
+  アウトで足りる。
+- **決定 9 は両側 1 行ずつで、新しいものは無い。** `proxy.rest`（`control-plane/proxy.go:148`）は
+  `/api/<x>` を Agent の `/<x>` へ汎用に転送し、PUT を Workspace の活動として数える——Start / Stop
+  にはそれで正しい。要るのはルートを**両方**に登録すること：`control-plane/routes.go`（`:769` の
+  隣）と `workspace/agent/routes.go`（`:355` の隣）。CP の中継は catch-all ではなく明示の許可
+  リストで、CP 側の 1 行が無いと Console では無音の 404 になる。
+- **決定 5 のピンとシム。** `versions.json` は Dockerfile が ARG から書く平らな map
+  （`Dockerfile:500`）で、アーキテクチャ別の sha 鍵はビルド時に選ばれる（`kiro_sha256`・
+  `install_kiro.go:61`）。Postgres のメジャー 3 × アーキテクチャ 2 は sha ARG が 6 本。安い形は
+  既定メジャーだけをピン（`postgres` + `postgres_sha256`）し、残りは Maven Central の `.sha256`
+  サイドカー（17.6.0 で HTTP 200、存在する）で検証すること——`install-go` の前例
+  （`install_tools.go:300`）は既に出所から sum を取っている。Zonky の arm64 系列は現在
+  16.15 / 17.11 / 18.6 を持つので「16 / 17 / 18、両アーキテクチャ」は成り立つ。それと罠が
+  1 つ：`workspace-agent <未知のサブコマンド>` は **Agent を起動する**（`main.go` は
+  `os.Args[1] ==` の連鎖で default が無い）。`af-db` は実体の `/usr/local/bin/af-db` シム**と**
+  `main.go` のディスパッチ 1 行、両方が要る。
+- **決定 4 は 1 プロファイルの意味論を全部のように書いている。** `AF_WS_SCRATCH` を設定するのは
+  ECS アダプタだけ（`entrypoint.sh:246`）で、entrypoint が退避するのはディスクが 30 GiB 以上の
+  ときだけ（`AF_WS_SCRATCH_MIN_GB`・`entrypoint.sh:263`）——既定の Fargate 配備は 20 GiB で
+  スキップする（ADR 0044 決定 5）。「設定されているとき」と「entrypoint が退避したとき」は別の
+  条件。39 MB / 200 MB のデータディレクトリは、この門が守っている数 GiB のキャッシュではない
+  ので、変数があれば `$AF_WS_SCRATCH` を使う、と書く。docker と native では既定がホームに落ち、
+  **停止しても残る**ので、「Workspace が止まれば消える」は ECS だけの意味論。従って `--persist`
+  も ECS でしか意味を持たない。
+
+### 測り直し（2026-09-17・同じコンテナ）
+
+- **Postgres**：`pg_ctl -w start` で 118 ms（ログ上は listening → ready が 8 ms）、常駐 47 MB
+  ＝ postmaster 17.6 MB + 子 5 本。`CREATE DATABASE … TEMPLATE` は初回 **57 ms**・2 回目
+  **35 ms**、`DROP DATABASE` 19〜86 ms（§10.4 の治具と同じ fsync=off）。草稿の 0.63 s は上限で
+  あって費用ではない。
+- **MySQL** を `tar xJf` から：dist 446 MB、`--initialize-insecure` 12.9 s、start → ping 1.85 s、
+  VmRSS 226 MB（HWM 238 MB）、データディレクトリ 200 MB、JSON の往復が答えた。SIGTERM で約 1 秒
+  で正常停止。6 つの数字が全部再現する。
+- 🔴 **残っていたログが記録していて、草稿が触れていない危険。** 前回の `mysqld.log` は 105 MB、
+  `[ERROR] Unable to open './#innodb_redo/#ib_redo5'` が 6 分 43 秒で 904,817 行——動いている
+  mysqld の下からデータディレクトリを消した跡。mysqld は終了せず、毎秒約 2,200 行を書き続ける。
+  `af-db down` / `reset` / アイドル停止はデータディレクトリに触る**前に**プロセスを止めること、
+  `--log-error` は決して EFS に向けないこと。決定 10（プロセスを持つのは Agent）がこの順序を
+  強制できる根拠。順序を明文化する。
+
+### 未解決の問い 3 を測った——P1 の決まり方が草稿の想定と違う
+
+- `mysql-8.4.6-linux-glibc2.28-aarch64.tar.xz` は **909,017,708 バイト**（`archives/` 配下。
+  `Downloads/` は 404、aarch64 の `-minimal` はどちらにも無い）、**展開 1,742 MB**、471
+  メンバー。`bin/mysqld` だけで **514 MB**。
+- x86_64 `minimal` tarball のメンバー集合（440 個）そのものに刈っても **1,245 MB で、446 には
+  ならない**——フル tarball は strip されていない。arm64 の `mysqld` を `readelf -S` で見ると
+  `.debug_*` セクションが 7 つ、非割当セクション 451 MB のうち debug が 363 MB。割当セクション
+  ——`strip` が残す分——の合計は **69 MB**。突き合わせ：x86_64 フル tarball の `mysqld` は 516 MB、
+  `minimal` の 78 MB に対して。つまり `minimal` はフルを strip したもの。
+- `strip` は **arm64 の Workspace 自身で**走らせる必要がある：このホストの binutils 2.44 は
+  AArch64 を拒む（"Unable to recognise the format of the input file"）。イメージは gcc と一緒に
+  binutils を積んでいるので、arm64 の導入経路は：909 MB を落とし、`bin/mysqld`・`bin/mysql`・
+  `lib/private/*.so`・`lib/plugin/*.so`・`share/` を取り出し、その場で strip、ディスク上は
+  200 MB 前後を見込む。費用はディスクでなくダウンロード。
+- arm64 `mysqld` の `NEEDED` は libc / libstdc++ / OpenSSL を除くとちょうど `libaio.so.1` と
+  `libnuma.so.1`。`libncurses.so.6` が要るのは `mysql` クライアントだけ。決定 5 の「焼くのは
+  3 つ」はクライアントには正しく、サーバには 2 つ。
+- **Debian trixie の MariaDB** がもう 1 つの候補：`mariadb-server-core_11.8.8-0+deb13u1_arm64.deb`
+  は 7.1 MB（導入後 46 MB、`mariadbd` 27 MB）、`mariadb-client-core` は 0.9 MB。`Depends` は
+  `libaio1t64` / `libnuma1` に加えてイメージに無い `liburing2` を要求する。`libpcre2-8`・
+  `libssl3`・`libsystemd0` はある。同じワイヤプロトコルでダウンロードは 1/130。ただし MySQL 8.4
+  ではない——JSON・`CHECK`・ウィンドウ関数が端で違い、「MySQL で」と言った利用者には応えない。
+  推奨：MySQL を両アーキテクチャで strip 経路により出す。MariaDB は利用者が名指しで求めたときだけ。
+  どちらにせよ、未解決の問い 3 にあった「arm64 は Console のカードでそう言う」という退避は
+  もう要らない。
+
+### 完了の定義
+
+- **P0 の「完了」には、検証可能にするために足りないものが 3 つある。** 変数名は
+  `AF_TEST_DATABASE_URL`（`store_postgres_test.go:19`）、ソケットの URL の形は
+  `postgres://postgres@/postgres?host=<sockdir>&sslmode=disable`（§10.4）、そして
+  `-run 'TestPostgres|TestSchemaDialectParity'` の正規表現は **4 つ**のテストに当たり、うち
+  `TestPostgresPasswordRotation` は `--auth=trust` だとスキップする
+  （`store_postgres_rotation_test.go:91`）。残してあったサーバに対して今日リハーサルした：
+  `TestPostgresDeleteCascade` 0.34 s、`TestPostgresStore` 0.66 s、`TestSchemaDialectParity`
+  0.55 s——PASS、rotation——SKIP。従って `af-db` は `initdb --auth=scram-sha-256` で生成した
+  パスワードを URL に載せる（決定 6 の `127.0.0.1` リスナが trust のスーパーユーザ口にならない
+  効果もある）べきで、完了の定義はこう読む：`control-plane/` で
+  `AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 -run 'TestPostgres|TestSchemaDialectParity' ./...`
+  が **4 PASS・0 SKIP**。`-count=1` は、キャッシュの `ok` が何も証明しないから。
+- 🔴 **このリポジトリに MySQL のテストは無い。** `TestSchemaDialectParity` が比べるのは SQLite と
+  Postgres（`store_schema_parity_test.go`）で、`control-plane/` の下に MySQL を話すものは無い。
+  従って P1 の MySQL レーンにはリポジトリ内の「完了」が無い。フェーズに何をもって完了とするかを
+  書く——利用者のプロジェクトの MySQL スイート、あるいは `e2e/` に足す `go-sql-driver/mysql` の
+  スモーク。実測は立つが、受け入れはまだ存在しない。
+
+### 選び方
+
+- **決定 1・2 は「サイドカーでなく利用者ごと」への最短。** 著者が内々に重みを置いたもの——
+  手軽さが第一、費用と配備プロファイルの広さが決め手——は、今日の数字がそのまま支える：118 ms、
+  47 MB、インフラ無し、native・docker・ECS 2 種で同じ日に同じ機能。今日見つかったもので決定 2 を
+  弱めるものは無い。「手軽さ」を弱めるのは上のクライアント欠落で、それは P0 の項目であって
+  設計変更ではない。
+- **却下案は立つ。1 つは理由が違う。** 「共有サーバに利用者ごとの role」を「スーパーユーザが
+  無い」で却下しているが、それは書かれたままでは誤り——`CREATEDB` の role と利用者ごとの
+  データベースで、拡張も照合順序もデータベース内で試せる。スーパーユーザが要るのは版の選択と
+  `ALTER SYSTEM` だけ。立つ理由は草稿が 2 番目に挙げているもの：そのサーバはどこかに存在せねば
+  ならず、native / docker 配備は誰からも無料で貰えない。却下は保ち、文言を直す。サイドカーの
+  却下には 1 つ足せる：Workspace と別にアイドル停止できない。案 B は費用を 1 つ控えめに書いて
+  いる：利用者ごとの ECS サービスは利用者ごとに 2 本目のサービスで、ADR 0045 のタスク数が倍になる。
+
+### このレビュー後の未解決の問い
+
+- **問い 3 は答えが出た**（上）：P1 は arm64 の MySQL を strip 経路で出してよい。MariaDB は退避
+  ではなく別の提供。
+- **問い 4 は鋭くなった**：`.deb` の経路が賄うのはクライアントとライブラリ 3 つで、サーバでは
+  ない。Debian の `postgresql-17` サーバパッケージをホームに移した `.deb` からこのイメージで
+  動かせるかは未測。測るまで、上流 2 つは問いに残る。
+- 問い 1・2・5 はこの配備では測れない。変更なし。問い 5 に添えて：`memFloorBytes` は 256 MiB
+  （`workspace_lifecycle.go:415`）——床サイズの Workspace は MySQL をそもそも動かせず、
+  `af-db up mysql` は exit 137 を稼ぐ前にそう言うべき。
+
+### 確認した出どころ（2026-09-17・このリポジトリのコード）
+
+- `workspace/agent/internal/sessionx/session_name.go:31`・`:51`・`:69` — 乱数の不変スラグと
+  3 つの拒否条件。`internal/session/uuid.go:19` — UUID は名前の関数。
+- `workspace/agent/internal/sessionx/session_tmux.go:40` — `AF_SESSION_NAME` が注入される
+  唯一の場所。`internal/agents/codex/driver.go:88` — マネージド経路が運べない理由。
+- `workspace/agent/cleanup_ops.go:80`・`:98`・`internal/gitx/git.go:1701`・
+  `internal/sessionx/session_handlers.go:161`・`:1169` — メタを消す 5 経路。
+- `control-plane/proxy.go:148` — 汎用の中継。`workspace/agent/routes.go:355` —
+  `/env/toolchains` の Agent 側。
+- `workspace/agent/main.go:56`〜`:100` — default 無しのサブコマンド分岐。`install_kiro.go:61` —
+  `versions.json` のアーキテクチャ別 sha。`install_tools.go:300` — 出所から取る sum。
+- `workspace/entrypoint.sh:246`・`:263` — `AF_WS_SCRATCH` は ECS 限定で 30 GiB の門。
+- `control-plane/internal/store/store_postgres_test.go:19`・`store_schema_parity_test.go:24`・
+  `store_postgres_rotation_test.go:91` — 変数名、方言の組、trust 認証のスキップ。
+- `control-plane/workspace_lifecycle.go:415` — `memFloorBytes`。
+- `~/.local/share/af-pgtest`（Zonky 17 の dist + data）と `~/.local/share/af-dbtest/my.tar.xz`
+  — 測り直しに使った残置物。上流のサイズは 2026-09-17 に `cdn.mysql.com`・`repo1.maven.org`・
+  `deb.debian.org` へ `curl -I`。

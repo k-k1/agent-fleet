@@ -331,3 +331,198 @@ database is "in".
 - `workspace/af-scratch.sh`, `workspace/entrypoint.sh:245` — `AF_WS_SCRATCH` is task-local and
   wiped on stop.
 - `docs/build/10-development.md` §10.4 — the hand-rolled Postgres harness this productises.
+
+## Review (2026-09-17, before P0)
+
+In the manner of 0071's and 0076's reviews: does each decision follow from its evidence, and
+does the code say what the draft says it says? Every `file:line` under "Sources checked" was
+re-read with `sed -n`, both servers were started again in the same container (docker-runtime
+deployment, x86_64, 10 GiB cgroup, 8 CPUs), and open question 3 was measured. The verdict
+first: **P0 may start, but decision 3 has to be rewritten before it is coded** — its premise
+is not what the code does, and the per-session key it relies on does not exist on the managed
+route. Decisions 1, 2, 5–10 stand; two of them gain a P0 item each (a client, a shim). The
+2026-09-16 numbers all reproduced; two moved in the ADR's favour.
+
+### Premises against the code
+
+- **All citations resolve.** `runtime.go:12` is the comment line above the interface (`:13`);
+  "docs/log/62 §62.4" is §62.4.1 (`docs/log/62-ecs-start-latency.md:198`). "Four adapters" is
+  four profiles in `NewFactory` (`local|docker`, `ecs`, `ecs-ec2`, `native|wsl`) over three
+  struct types — accurate as stated.
+- 🔴 **Decision 3's premise is false: session names are not slot names, and they are not
+  reused.** Since 2026-07-03 (commit `4ae4424a`) a session name is a random slug — `"s"` plus
+  six base32 characters, about 30 bits — and `allocSessionName`
+  (`workspace/agent/internal/sessionx/session_name.go:51`) refuses any slug that has a meta,
+  a live tmux session, *or* a jsonl on disk; the comment above it calls the slug "the session's
+  IMMUTABLE identity". The comment at `cleanup_ops.go:103` ("slot names and get REUSED") was
+  written on 2026-08-19, after that change, and describes the earlier `slotNN` scheme. There is
+  no second identity to key on: `session.UUID(dir, name)` is derived from the name
+  (`internal/session/uuid.go:19`), and `session.Meta` has no id field. So "key the database on
+  identity, not on name" has nothing to key on and nothing to protect against — **the name is
+  the identity.** What the ADR should say instead: key the database on the slug, and do not
+  hook the drop into `removeSessionSideFiles` — that is one of five places a meta is removed
+  (`cleanup_ops.go:80`, `:98`, `internal/gitx/git.go:1701`,
+  `internal/sessionx/session_handlers.go:161`, `:1169`). Have `af-db` **reconcile** instead: on
+  every `up` / `url` / `status`, drop databases whose slug no longer has a meta. One code path,
+  and it also cleans up after a stop that never ran a drop.
+- 🔴 **"A connection URL for *this session*" cannot be answered on the managed route.** The
+  only place `AF_SESSION_NAME` enters a process environment is the tmux launch
+  (`internal/sessionx/session_tmux.go:40`). A managed session runs inside one shared daemon
+  per kind — `internal/agents/codex/driver.go:88` says so and measured it, and opencode's
+  `EngineEnv` exists because that daemon's environment is workspace-scoped — so a shell an
+  agent runs from a managed session carries no session name at all. The codex precedent falls
+  back to the working directory. Hence the practical default key is the **working copy**
+  (`Meta.Dir`), not the session: `af-db url` resolves the caller from `AF_SESSION_NAME` when it
+  is set, otherwise from cwd → the working copy. Two sessions sharing one working copy already
+  share its files and branch; sharing its test database is the same trade, and `--db=<name>`
+  remains for the explicit case. Decision 8's "two environment variables the Agent injects"
+  has the same limit — environment is fixed at launch, and only for tmux sessions, so a server
+  started later is invisible to a running session by env. `af-db url` / `eval "$(af-db env)"`
+  is the path that always works; the injected variables are a convenience for tmux sessions.
+- **Decision 5's supply has a gap the draft does not name: Zonky ships no client.** The
+  retained `pg.jar` holds one `postgres-linux-x86_64.txz`, and the unpacked `dist/bin` is
+  `initdb`, `pg_ctl`, `postgres` — nothing else. Two consequences. (a) The Agent needs a
+  Postgres wire client for `CREATE DATABASE`, `reset`, the reconcile above and the idle check
+  (`pg_stat_activity`); `workspace/agent/go.mod` carries none, `pgx/v5` is already in the CP's
+  module and is pure Go. (b) The member gets a server and no `psql`, which for "without
+  ceremony" is half the feature. The `.deb` route (`.debian.org` is allowlisted, and note 2
+  measured it working) supplies `postgresql-client-17` and `libpq5`; name it in P0. MySQL's
+  `minimal` tarball ships `mysql`, `mysqladmin`, `mysqldump` and 26 more under `bin/`, so
+  shelling out is fine there.
+- **Decision 9 is one line on each side plus nothing new.** `proxy.rest`
+  (`control-plane/proxy.go:148`) forwards `/api/<x>` to the Agent's `/<x>` generically and
+  counts PUT as workspace activity, which is right for Start / Stop. What it needs is the route
+  registered in **both** `control-plane/routes.go` (next to `:769`) and
+  `workspace/agent/routes.go` (next to `:355`): the CP relays by explicit allowlist, not
+  catch-all, and a missing CP line is a silent 404 in the Console.
+- **Decision 5's pins and the shim.** `versions.json` is a flat map the Dockerfile writes from
+  ARGs (`Dockerfile:500`), with per-architecture sha keys chosen at build time (`kiro_sha256`,
+  `install_kiro.go:61`). Three Postgres majors × two architectures is six sha ARGs; the
+  cheaper shape is to pin the default major (`postgres` + `postgres_sha256`) and verify the
+  others against Maven Central's `.sha256` sidecar, which exists (HTTP 200 for 17.6.0) — the
+  `install-go` precedent (`install_tools.go:300`) already fetches its sum from the origin.
+  Zonky's arm64 line currently carries 16.15 / 17.11 / 18.6, so "16 / 17 / 18, both
+  architectures" holds. And one trap: `workspace-agent <unknown-subcommand>` **boots the
+  Agent** (`main.go` is a chain of `os.Args[1] ==` tests with no default), so `af-db` must be
+  both a real `/usr/local/bin/af-db` shim and a dispatch line in `main.go`.
+- **Decision 4 describes one profile as if it were all of them.** `AF_WS_SCRATCH` is set only
+  by the ECS adapters (`entrypoint.sh:246`), and the entrypoint relocates only when the disk is
+  30 GiB or more (`AF_WS_SCRATCH_MIN_GB`, `entrypoint.sh:263`) — a default Fargate deployment
+  has 20 GiB and skips (ADR 0044 decision 5). "When set" and "when the entrypoint relocates"
+  are different tests; a 39 MB / 200 MB datadir is not the multi-GiB cache the size gate exists
+  for, so say it uses `$AF_WS_SCRATCH` whenever the variable is set. On docker and native the
+  default lands in the home and **survives a stop**, so "gone when the workspace stops" is
+  the ECS semantics only; `--persist` therefore means something on ECS alone.
+
+### Measured again (2026-09-17, same container)
+
+- **Postgres**: `pg_ctl -w start` 118 ms wall (the log shows listening → ready in 8 ms);
+  resident 47 MB = postmaster 17.6 MB + five children. `CREATE DATABASE … TEMPLATE` **57 ms**
+  first, **35 ms** second; `DROP DATABASE` 19–86 ms (fsync=off, as §10.4's harness). The
+  draft's 0.63 s is an upper bound, not the cost.
+- **MySQL** from `tar xJf`: dist 446 MB, `--initialize-insecure` 12.9 s, start → ping
+  1.85 s, VmRSS 226 MB (HWM 238 MB), datadir 200 MB, the JSON round trip answered; SIGTERM
+  shut it down cleanly in about 1 s. All six numbers reproduce.
+- 🔴 **A hazard the retained log had recorded and the draft does not mention.** The previous
+  run's `mysqld.log` was 105 MB: 904,817 lines of `[ERROR] Unable to open
+  './#innodb_redo/#ib_redo5'` in 6 min 43 s — a datadir removed under a running mysqld.
+  mysqld does not exit; it spins at ~2,200 log lines a second. `af-db down` / `reset` / the
+  idle stop must stop the process **before** touching the datadir, and `--log-error` must never
+  point at EFS. Decision 10 (the Agent owns the process) is what makes that ordering
+  enforceable; write the ordering down.
+
+### Open question 3, measured — it decides P1 differently than the draft expected
+
+- `mysql-8.4.6-linux-glibc2.28-aarch64.tar.xz` is **909,017,708 bytes** (under `archives/`;
+  the `Downloads/` path 404s, and no `-minimal` exists for aarch64 at either), **1,742 MB
+  unpacked**, 471 members; `bin/mysqld` alone is **514 MB**.
+- Pruning to the exact member set of the x86_64 `minimal` tarball (440 members) leaves
+  **1,245 MB, not 446** — the full tarball is unstripped. `readelf -S` on the arm64 `mysqld`:
+  seven `.debug_*` sections, 451 MB of non-allocated sections of which 363 MB is debug; the
+  allocated sections — what `strip` keeps — sum to **69 MB**. Cross-check: the x86_64 full
+  tarball's `mysqld` is 516 MB against `minimal`'s 78 MB, so `minimal` *is* the stripped full.
+- `strip` has to run **on the arm64 workspace itself**: this host's binutils 2.44 refuses
+  AArch64 ("Unable to recognise the format of the input file"). The image ships binutils with
+  gcc, so the arm64 install path is: download 909 MB, extract `bin/mysqld`, `bin/mysql`,
+  `lib/private/*.so`, `lib/plugin/*.so`, `share/`, strip in place, expect on the order of
+  200 MB on disk. The download, not the disk, is the cost.
+- The arm64 `mysqld`'s `NEEDED` list outside libc / libstdc++ / OpenSSL is exactly
+  `libaio.so.1` and `libnuma.so.1`; `libncurses.so.6` is needed by the `mysql` client only.
+  Decision 5's "three things get baked" is right for the client, two for the server.
+- **MariaDB from Debian trixie** is the other candidate: `mariadb-server-core_11.8.8-0+deb13u1_arm64.deb`
+  is 7.1 MB (installed 46 MB, `mariadbd` 27 MB) and `mariadb-client-core` is 0.9 MB. Its
+  `Depends` adds `liburing2`, which the image lacks, on top of `libaio1t64` / `libnuma1`;
+  `libpcre2-8`, `libssl3` and `libsystemd0` are present. 1/130 of the download for the same
+  wire protocol, but it is not MySQL 8.4 — JSON, `CHECK`, window functions differ at the edges,
+  and a member who asked for "MySQL" is not served. Recommendation: MySQL on both architectures
+  via the strip path; MariaDB only if a member asks for it by name. Either way, the "arm64 says
+  so on the Console card" fallback in open question 3 is no longer needed.
+
+### The completion criterion
+
+- **P0's "Done means" omits three things it needs to be checkable.** The variable is
+  `AF_TEST_DATABASE_URL` (`store_postgres_test.go:19`); the socket URL shape is
+  `postgres://postgres@/postgres?host=<sockdir>&sslmode=disable` (§10.4); and the
+  `-run 'TestPostgres|TestSchemaDialectParity'` regex matches **four** tests, of which
+  `TestPostgresPasswordRotation` skips under `--auth=trust` (`store_postgres_rotation_test.go:91`).
+  Rehearsed today against the retained server: `TestPostgresDeleteCascade` 0.34 s,
+  `TestPostgresStore` 0.66 s, `TestSchemaDialectParity` 0.55 s — PASS; rotation — SKIP. So
+  `af-db` should `initdb --auth=scram-sha-256` with a generated password carried in the URL
+  (this also keeps decision 6's `127.0.0.1` listener from being a trust superuser port), and the
+  criterion reads: in `control-plane/`,
+  `AF_TEST_DATABASE_URL="$(af-db url)" go test -count=1 -run 'TestPostgres|TestSchemaDialectParity' ./...`
+  shows **4 PASS, 0 SKIP**. `-count=1` because a cached `ok` proves nothing.
+- 🔴 **MySQL has no test in this repository.** `TestSchemaDialectParity` compares SQLite with
+  Postgres (`store_schema_parity_test.go`), and nothing under `control-plane/` speaks MySQL.
+  P1's MySQL lane therefore has no in-repo "done"; the phase should say what counts — a member
+  project's MySQL suite, or a `go-sql-driver/mysql` smoke added under `e2e/`. The measurements
+  stand; the acceptance does not exist yet.
+
+### The shape of the choice
+
+- **Decisions 1 and 2 are the shortest path to "per member, not a sidecar".** What the author
+  weighed privately — handiness first, cost and profile breadth as the tie-breakers — is exactly
+  what today's numbers support: 118 ms, 47 MB, no infrastructure, and the same feature on
+  native, docker and both ECS profiles on the same day. Nothing found today weakens decision 2.
+  What weakens "handy" is the missing client above; it is a P0 item, not a redesign.
+- **Rejected options hold, one for the wrong reason.** "A shared server with a role per
+  member" is rejected for "no superuser", which is wrong as stated — a `CREATEDB` role and a
+  database per member cover extensions and collations in-database; only the version choice and
+  `ALTER SYSTEM` need superuser. The reason that does stand is the one the draft lists second:
+  such a server has to exist somewhere, and native / docker deployments get it for free from
+  nobody. Keep the rejection, fix the wording. The sidecar rejection can add: it cannot be
+  idle-stopped apart from the workspace. Option B undersells one cost: a per-member ECS service
+  is a second service per member, doubling ADR 0045's task count.
+
+### Open questions after this review
+
+- **OQ3 is answered** above: P1 may ship MySQL on arm64 via the strip path; MariaDB is a
+  different offer, not a fallback.
+- **OQ4 is sharpened**: the `.deb` route covers the client and the three libraries, not the
+  servers. Whether Debian's `postgresql-17` server package runs from a home-relocated `.deb`
+  on this image was not measured; until it is, the two upstreams stay in the question.
+- OQ1, OQ2 and OQ5 cannot be measured on this deployment; unchanged. On OQ5 note that
+  `memFloorBytes` is 256 MiB (`workspace_lifecycle.go:415`) — a floor-sized workspace cannot
+  run MySQL at all, and `af-db up mysql` should say so rather than earn exit 137.
+
+### Sources checked (2026-09-17, this repository's code)
+
+- `workspace/agent/internal/sessionx/session_name.go:31`, `:51`, `:69` — random immutable slugs
+  and the three refusals; `internal/session/uuid.go:19` — the UUID is a function of the name.
+- `workspace/agent/internal/sessionx/session_tmux.go:40` — the one place `AF_SESSION_NAME` is
+  injected; `internal/agents/codex/driver.go:88` — why the managed route cannot carry it.
+- `workspace/agent/cleanup_ops.go:80`, `:98`, `internal/gitx/git.go:1701`,
+  `internal/sessionx/session_handlers.go:161`, `:1169` — the five meta-removal paths.
+- `control-plane/proxy.go:148` — the generic relay; `workspace/agent/routes.go:355` — the
+  Agent side of `/env/toolchains`.
+- `workspace/agent/main.go:56`–`:100` — subcommand dispatch with no default;
+  `install_kiro.go:61` — per-architecture sha in `versions.json`; `install_tools.go:300` — a sum
+  fetched from the origin.
+- `workspace/entrypoint.sh:246`, `:263` — `AF_WS_SCRATCH` is ECS-only and gated at 30 GiB.
+- `control-plane/internal/store/store_postgres_test.go:19`,
+  `store_schema_parity_test.go:24`, `store_postgres_rotation_test.go:91` — the variable, the
+  dialect pair, and the trust-auth skip.
+- `control-plane/workspace_lifecycle.go:415` — `memFloorBytes`.
+- `~/.local/share/af-pgtest` (Zonky 17 dist + data) and `~/.local/share/af-dbtest/my.tar.xz`
+  — the retained artefacts the re-measurement used; upstream sizes by `curl -I` against
+  `cdn.mysql.com`, `repo1.maven.org` and `deb.debian.org` on 2026-09-17.
