@@ -12,8 +12,11 @@ package main
 //     `context_length` and the chat template, and a GGUF-only repository's `config` is `{}`
 //     (measured 2026-09-11 on Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF). So the file itself is the
 //     only source.
-//   - The CP's S3 port exposes HeadObject only, not object bytes. The copy whose header is read
-//     is therefore still the one at the SOURCE, over the same HTTP the resolve already uses.
+//   - The copy whose header is read is the one at the SOURCE, over the same HTTP the resolve
+//     already uses. The storage port can hand over a prefix of a stored object as well
+//     (engineStorageMetadataPort.Prefix, added for the VAE question); a row registered from the
+//     bucket still reaches this reader through no road, so its geometry stays unknown and its
+//     VRAM estimate stays the weights alone.
 //
 // It is read ONCE, at registration, and stored on the row. A header read per panel refresh
 // would put a network call on a screen that lists every model, and the geometry of a file

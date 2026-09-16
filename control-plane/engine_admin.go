@@ -1195,6 +1195,11 @@ type engineModelFileBody struct {
 	// that the answer carries but the register route drops would be silently erased by the one
 	// operation that exists to restore a forgotten row (ADR 0072 P6 R2).
 	Source string `json:"source"`
+	// Whether this file bundles its family's VAE, carried for the same round-trip reason — the row
+	// ANSWERS `vae_bundled` per file (engineModelFileRows). Only "yes" and "no" survive
+	// (engineVaeVerdict); anything else is "nobody read it", and for the row's own weights that is
+	// what sends the route to the file's header instead.
+	VaeBundled string `json:"vae_bundled"`
 }
 
 // engineFilesFromBody reads the files out of a register body, from whichever of the two names
@@ -1231,7 +1236,9 @@ func engineFilesFromBody(raw json.RawMessage, rows []engineModelFileBody) ([]eng
 //
 // ⚠️ Nothing in this write verifies that the S3 key exists. The storage endpoint checks every
 // server-known key independently and reports present, missing or unknown; keeping registration
-// separate preserves the manual route when AWS access is absent or denied.
+// separate preserves the manual route when AWS access is absent or denied. The header read below
+// does not change that: it can only ADD a verdict, and a key with nothing at it simply fails to
+// answer, exactly as a deployment with no bucket does.
 func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	key := strings.TrimSpace(r.PathValue("key"))
 	e := a.reg.get(key)
@@ -1331,12 +1338,22 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		return
 	}
 	for _, f := range files {
-		if k := strings.TrimSpace(f.S3Key); k != "" {
-			m.Files = append(m.Files, store.EngineModelFile{
-				Flag: strings.TrimSpace(f.Flag), S3Key: k, Bytes: f.Bytes,
-				Source: strings.TrimSpace(f.Source),
-			})
+		k := strings.TrimSpace(f.S3Key)
+		if k == "" {
+			continue
 		}
+		file := store.EngineModelFile{
+			Flag: strings.TrimSpace(f.Flag), S3Key: k, Bytes: f.Bytes,
+			Source: strings.TrimSpace(f.Source), VaeBundled: engineVaeVerdict(f.VaeBundled),
+		}
+		// The body did not say, and this is the row's own weights: read the header of the file in
+		// the bucket rather than leaving the row with no verdict. A hand-registered SD1.5/SDXL
+		// checkpoint is otherwise exactly the row `vae_missing` cannot mark and 揃える cannot
+		// repair — and nobody finds out until every request fails inside ComfyUI.
+		if file.VaeBundled == engineVaeUnknown && engineVaeMainFile(file.Flag) {
+			file.VaeBundled = engineVaeOfObject(r.Context(), e.def.Provider, m.Kind, k, a.engineStorageBytes())
+		}
+		m.Files = append(m.Files, file)
 	}
 	if len(m.Files) == 0 {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "at least one file (s3Key) is required"})

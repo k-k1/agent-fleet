@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,36 @@ type fakeEngineStorageHead struct {
 	// listCalls counts the ledger's reads, so a test can prove a plan answered from the listing
 	// rather than from a fan-out of HeadObject.
 	listCalls int
+	// head is the first bytes of an object, for the header reads (engine_safetensors.go). A key
+	// with no entry reads as a refusal rather than as an empty file: "the bucket would not say"
+	// and "the file starts with nothing" are the two answers those parsers keep apart.
+	head map[string][]byte
+	// prefixErr overrides that per key, so a test can make a PRESENT object unreadable — which is
+	// what an AccessDenied or a timeout looks like from here.
+	prefixErr map[string]error
+	// prefixCalls is the window each read asked for, in order, per key: the two-step ladder is
+	// the thing a test about a header past the ceiling has to observe.
+	prefixCalls map[string][]int
+}
+
+func (f *fakeEngineStorageHead) Prefix(_ context.Context, key string, n int) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.prefixCalls == nil {
+		f.prefixCalls = map[string][]int{}
+	}
+	f.prefixCalls[key] = append(f.prefixCalls[key], n)
+	if err := f.prefixErr[key]; err != nil {
+		return nil, err
+	}
+	buf, ok := f.head[key]
+	if !ok {
+		return nil, errors.New("no such object")
+	}
+	if len(buf) > n {
+		buf = buf[:n]
+	}
+	return append([]byte(nil), buf...), nil
 }
 
 // List answers from the same fixture Stat does: every key the test declared `present` is in the

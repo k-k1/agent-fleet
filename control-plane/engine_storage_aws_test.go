@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -18,6 +20,24 @@ type fakeEngineStorageS3 struct {
 	pages   []*s3.ListObjectsV2Output
 	listIn  []*s3.ListObjectsV2Input
 	listErr error
+	// The ranged read: what the object holds, what the call was asked with, and a refusal.
+	body    []byte
+	getIn   *s3.GetObjectInput
+	getErr  error
+	getBody io.ReadCloser
+}
+
+func (f *fakeEngineStorageS3) GetObject(_ context.Context, in *s3.GetObjectInput,
+	_ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	f.getIn = in
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	body := f.getBody
+	if body == nil {
+		body = io.NopCloser(bytes.NewReader(f.body))
+	}
+	return &s3.GetObjectOutput{Body: body}, nil
 }
 
 func (f *fakeEngineStorageS3) HeadObject(_ context.Context, in *s3.HeadObjectInput,
@@ -109,6 +129,50 @@ func TestEngineAWSStorageMetadataClassifiesHeadObject(t *testing.T) {
 				t.Errorf("present metadata = %+v", got)
 			}
 		})
+	}
+}
+
+// The ranged read has to ASK for a range. Without the header S3 answers 200 with the whole
+// object, and the objects this is pointed at are checkpoints of several gigabytes on the shared
+// CP task — the LimitReader is what stops it, but only after the transfer has started.
+func TestEngineAWSStoragePrefixAsksForARangeAndStopsAtTheWindow(t *testing.T) {
+	api := &fakeEngineStorageS3{body: []byte("0123456789")}
+	got, err := newEngineAWSStorageMetadata("models", api).Prefix(t.Context(), "image/checkpoints/a.safetensors", 4)
+	if err != nil {
+		t.Fatalf("Prefix: %v", err)
+	}
+	if string(got) != "0123" {
+		t.Fatalf("prefix = %q, want the first 4 bytes", got)
+	}
+	if api.getIn == nil || aws.ToString(api.getIn.Bucket) != "models" ||
+		aws.ToString(api.getIn.Key) != "image/checkpoints/a.safetensors" ||
+		aws.ToString(api.getIn.Range) != "bytes=0-3" {
+		t.Fatalf("GetObject input = %+v", api.getIn)
+	}
+}
+
+// A server that ignored the Range must not turn a header read into a multi-gigabyte download.
+func TestEngineAWSStoragePrefixCapsAServerThatIgnoredTheRange(t *testing.T) {
+	api := &fakeEngineStorageS3{body: bytes.Repeat([]byte("x"), 4096)}
+	got, err := newEngineAWSStorageMetadata("models", api).Prefix(t.Context(), "image/checkpoints/a.safetensors", 16)
+	if err != nil || len(got) != 16 {
+		t.Fatalf("prefix = %d bytes, err = %v; want the window", len(got), err)
+	}
+}
+
+// A refused read is an ERROR and never an empty prefix: an empty buffer parses as "this is not a
+// safetensors file", which for a checkpoint that is merely unreadable would be a verdict invented
+// out of a permission failure.
+func TestEngineAWSStoragePrefixReportsRefusalRatherThanEmptiness(t *testing.T) {
+	api := &fakeEngineStorageS3{getErr: &smithy.GenericAPIError{Code: "AccessDenied", Message: "denied"}}
+	if _, err := newEngineAWSStorageMetadata("models", api).Prefix(t.Context(), "image/checkpoints/a.safetensors", 16); err == nil {
+		t.Fatal("a refused read answered no error")
+	}
+	if _, err := newEngineAWSStorageMetadata("", nil).Prefix(t.Context(), "image/checkpoints/a.safetensors", 16); err == nil {
+		t.Fatal("an unconfigured bucket answered no error")
+	}
+	if _, err := newEngineAWSStorageMetadata("models", api).Prefix(t.Context(), "image/checkpoints/a.safetensors", 0); err == nil {
+		t.Fatal("a zero-byte window answered no error")
 	}
 }
 

@@ -627,14 +627,22 @@ func (a engineAdminAPI) postObjectRegister(w http.ResponseWriter, r *http.Reques
 			nil, nil))
 		return
 	}
+	kind := engineObjectRowKind(e)
 	m := store.EngineModel{
-		Role: role, ID: id, Kind: engineObjectRowKind(e), BaseModel: family,
+		Role: role, ID: id, Kind: kind, BaseModel: family,
 		// The file stays where it IS. The move is `complete`'s act below, and it is the ingest
 		// task's job to perform: MoveEngineModelFile rewrites a declaration the row already
 		// holds, so a row registered at the destination would have nothing to move.
 		Files: []store.EngineModelFile{{
 			S3Key: key, Bytes: object.Bytes, Source: object.Source,
 			ArtifactIdentity: object.ArtifactIdentity,
+			// The one fact these bytes state that nothing else in the deployment holds: does this
+			// checkpoint bundle the VAE its family decodes with. An ingest reads it upstream before
+			// the download; this road has no upstream, so it reads the file that is already here —
+			// and without it a registered SD1.5/SDXL row carries no verdict, so the 揃える below
+			// would not offer the family's VAE and the row would be enabled straight into
+			// `VAE is invalid: None` (the fault engine_safetensors.go was written for).
+			VaeBundled: engineVaeOfObject(ctx, e.def.Provider, kind, key, a.engineStorageBytes()),
 		}},
 	}
 	created, err := a.mgr.store.CreateEngineModel(ctx, m)
@@ -687,6 +695,18 @@ func engineObjectKeyInRole(role, key string) *apiRefusal {
 			"key must be an object of this engine's own prefix ("+strings.TrimSpace(role)+"/)", nil, nil)
 	}
 	return nil
+}
+
+// engineStorageBytes is the bucket as a source of object BYTES, for the header reads that answer
+// a question about a file this deployment already holds. Nil when this deployment has no ingester
+// or no bucket, which every caller treats as "the question went unanswered" — the same shape a
+// refused read has, and never a reason to refuse the write.
+func (a engineAdminAPI) engineStorageBytes() *engineStorage {
+	ing := a.reg.ingester()
+	if ing == nil {
+		return nil
+	}
+	return ing.storageChecker()
 }
 
 // engineObjectMustExist is the HeadObject the register and the delete both owe: a 404 for a key

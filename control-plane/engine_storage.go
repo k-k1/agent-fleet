@@ -4,10 +4,11 @@ package main
 //
 // The bucket is not the catalogue: S3 says whether bytes exist, while the database says which
 // keys this deployment knows and which models use them (ADR 0072 decision 2). What is here is the
-// port and the cache — HeadObject for one key, ListObjectsV2 for one role's prefix — plus
-// `engineKnownArtifacts`, the database half every reuse decision is made against. It never reads
-// object bytes and it takes no key from a caller: the ledger (engine_objects.go) and the plan
-// (engine_plan.go) decide which keys are asked about, each inside the grant its caller holds.
+// port and the cache — HeadObject for one key, ListObjectsV2 for one role's prefix, and a Range
+// GetObject of one file's first bytes — plus `engineKnownArtifacts`, the database half every
+// reuse decision is made against. It takes no key from a caller: the ledger (engine_objects.go)
+// and the plan (engine_plan.go) decide which keys are asked about, each inside the grant its
+// caller holds.
 
 import (
 	"context"
@@ -30,6 +31,9 @@ const (
 	engineStorageHeadTimeout = 8 * time.Second
 	engineStorageListTimeout = 20 * time.Second
 	engineStorageConcurrency = 4
+	// A prefix read is a transfer and not a metadata call: up to 16 MiB (safetensorsHeadMax) of
+	// a file whose body is gigabytes, so it gets the listing's budget rather than HeadObject's.
+	engineStoragePrefixTimeout = 20 * time.Second
 )
 
 // engineStorageMetadataPort is the deployment-neutral object metadata boundary. Implementations
@@ -41,9 +45,18 @@ const (
 // because the two are opposite facts: "this prefix is empty" is a ledger a person can act on,
 // and "the listing was refused" must never be drawn as one — an operator who reads an empty
 // bucket forgets bytes that are still being paid for.
+//
+// Prefix is the one operation here that reads object BYTES, and it reads only the first n of
+// them. It exists because the facts a file's own header states — does this checkpoint bundle the
+// VAE its family decodes with (engine_safetensors.go) — are otherwise readable only at the
+// upstream URL, so a row REGISTERED from bytes already in the bucket had no way to learn them at
+// all (ADR 0085 P3 dropped the routes that re-read them). It returns an error rather than a short
+// buffer for the same reason List does: "the file starts like this" and "the read was refused"
+// must not be the same answer, because only the first may be parsed as a verdict.
 type engineStorageMetadataPort interface {
 	Stat(context.Context, string) engineStorageObjectMetadata
 	List(ctx context.Context, prefix string) ([]engineStorageObject, error)
+	Prefix(ctx context.Context, key string, n int) ([]byte, error)
 }
 
 // engineStorageObject is one object as the bucket lists it. Deliberately three fields: a listing
@@ -241,6 +254,31 @@ func (s *engineStorage) list(ctx context.Context, prefix string) ([]engineStorag
 }
 
 var errEngineStorageUnconfigured = errors.New("this deployment declares no model bucket")
+
+// prefix reads the first n bytes of one object, for the parsers that answer a question from a
+// file's own header.
+//
+// Uncached on purpose, and it shares the HeadObject slots rather than getting its own: the answer
+// is written into a catalogue row once and never refreshed from here, while the cost of the call
+// is a transfer the shared CP task pays — so what matters is that two of these and two HeadObjects
+// cannot become four simultaneous S3 calls, not that a second reader gets the bytes free.
+func (s *engineStorage) prefix(ctx context.Context, key string, n int) ([]byte, error) {
+	if !s.configured() {
+		return nil, errEngineStorageUnconfigured
+	}
+	if n <= 0 {
+		return nil, errors.New("a prefix read of no bytes answers nothing")
+	}
+	ctx, cancel := context.WithTimeout(ctx, engineStoragePrefixTimeout)
+	defer cancel()
+	select {
+	case s.headSlots <- struct{}{}:
+		defer func() { <-s.headSlots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return s.metadata.Prefix(ctx, key, n)
+}
 
 // verify deliberately bypasses the display cache. Reuse is a write to the catalogue and must
 // prove the object exists now; a thirty-second-old present result is only a display hint.
