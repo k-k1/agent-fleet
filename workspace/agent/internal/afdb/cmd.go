@@ -737,8 +737,10 @@ func postgresVersion(inst *Instance) string {
 		return ""
 	}
 	defer conn.Close(ctx)
+	// SHOW server_version returns the short form ("17.11"), unlike SELECT version()
+	// which returns the long build string.
 	var v string
-	if err := conn.QueryRow(ctx, "SELECT version()").Scan(&v); err != nil {
+	if err := conn.QueryRow(ctx, "SHOW server_version").Scan(&v); err != nil {
 		return ""
 	}
 	return v

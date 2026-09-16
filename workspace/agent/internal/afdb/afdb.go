@@ -355,10 +355,19 @@ func buildMySQLGoDSN(inst *Instance, dbName, pw string, tcp bool) string {
 
 // ---- process liveness ----
 
-// isRunning returns true if pid > 0 and the process is alive.
+// isRunning returns true if pid > 0 and the process is alive and not a zombie.
+// A zombie passes Signal(0) on some kernels; we check /proc explicitly.
 func isRunning(pid int) bool {
 	if pid <= 0 {
 		return false
+	}
+	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid)); err == nil {
+		for _, line := range strings.SplitN(string(data), "\n", 10) {
+			if strings.HasPrefix(line, "State:") {
+				// "State:\tZ (zombie)" — process has exited but not been reaped.
+				return !strings.Contains(line, " Z ")
+			}
+		}
 	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
@@ -367,16 +376,18 @@ func isRunning(pid int) bool {
 	return proc.Signal(syscall.Signal(0)) == nil
 }
 
-// isPGRunning checks if the postgres instance is running by cross-checking with
-// postmaster.pid in the datadir. This guards against stale registry pids after a
-// container restart on a persistent home (pid reuse).
+// isPGRunning checks if the Postgres instance is running by cross-checking with
+// postmaster.pid in the datadir. When the pid file is absent (e.g. the file was
+// removed while the server is still up), it falls back to the registry pid so that
+// a running server is never silently treated as stopped (which would allow unsafe
+// datadir removal).
 func isPGRunning(pid int, datadir string) bool {
 	if datadir != "" {
 		if authPID, err := readPostmasterPID(datadir); err == nil && authPID > 0 {
 			return isRunning(authPID)
 		}
-		// postmaster.pid absent: server is not running, regardless of registry pid.
-		return false
+		// pid file absent — fall back to registry pid as a safety net.
+		return isRunning(pid)
 	}
 	return isRunning(pid)
 }
@@ -392,13 +403,16 @@ func readMySQLPID(pidFile string) (int, error) {
 }
 
 // isMySQLRunning checks if the MySQL instance is running via its pid file.
+// When the pid file is absent it falls back to the registry pid, matching the
+// same safety-net behaviour as isPGRunning.
 func isMySQLRunning(pid int, datadir string) bool {
 	if datadir != "" {
 		pidFile := filepath.Join(filepath.Dir(datadir), "mysqld.pid")
 		if p, err := readMySQLPID(pidFile); err == nil && p > 0 {
 			return isRunning(p)
 		}
-		return false
+		// pid file absent — fall back to registry pid.
+		return isRunning(pid)
 	}
 	return isRunning(pid)
 }

@@ -181,31 +181,44 @@ func startMySQLServer(inst *Instance, persist bool) error {
 	if err := srv.Start(); err != nil {
 		return errStart(fmt.Sprintf("mysqld start: %v (log: %s)", err, logFile))
 	}
+	// Reap the child when it exits so it does not become a zombie.
+	// waitPIDGone / isMySQLRunning use /proc and the pid file rather than Wait(),
+	// so the reaper goroutine runs independently.
+	go srv.Wait() //nolint:errcheck
 
-	// Wait for mysqld to be ready (no password yet).
-	if err := waitMySQLReady(binDir, sockFile, "", 60*time.Second); err != nil {
+	// Wait for mysqld to be ready (no password yet on first init).
+	startingPW := ""
+	if !newInit {
+		startingPW = readPass(passPath("mysql", major))
+	}
+	if err := waitMySQLReady(binDir, sockFile, startingPW, 60*time.Second); err != nil {
+		srv.Process.Kill() //nolint:errcheck
 		return errStart(fmt.Sprintf("%v (log: %s)", err, logFile))
 	}
 
 	if newInit {
 		// Generate and set the root password.
+		// SQL is passed via stdin, not -e argv, to keep the password out of /proc/cmdline.
 		pp := passPath("mysql", major)
 		pw, err := generatePass(pp)
 		if err != nil {
+			srv.Process.Kill() //nolint:errcheck
 			return errStart(fmt.Sprintf("generate mysql password: %v", err))
 		}
 		initSQL := fmt.Sprintf(
-			"ALTER USER 'root'@'localhost' IDENTIFIED BY '%s'; "+
-				"CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '%s'; "+
-				"GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION; "+
-				"FLUSH PRIVILEGES;",
+			"ALTER USER 'root'@'localhost' IDENTIFIED BY '%s';\n"+
+				"CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '%s';\n"+
+				"GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;\n"+
+				"FLUSH PRIVILEGES;\n",
 			pw, pw,
 		)
 		pwSetCmd := exec.Command(filepath.Join(binDir, "mysql"),
-			"--no-defaults", "-uroot", "--socket="+sockFile, "-e", initSQL,
+			"--no-defaults", "-uroot", "--socket="+sockFile,
 		)
+		pwSetCmd.Stdin = strings.NewReader(initSQL)
 		pwSetCmd.Env = buildMySQLEnv("")
 		if out, err := pwSetCmd.CombinedOutput(); err != nil {
+			srv.Process.Kill() //nolint:errcheck
 			return errStart(fmt.Sprintf("set mysql root password: %v\n%s", err, out))
 		}
 	}
@@ -277,18 +290,9 @@ func stopMySQLServer(inst *Instance) error {
 }
 
 // ensureMySQLDatabase creates the named database if it does not already exist.
+// Using IF NOT EXISTS makes this atomic against concurrent callers.
 func ensureMySQLDatabase(inst *Instance, pw, dbName string) error {
-	// Check existence.
-	out, err := mysqlQuery(inst, pw, fmt.Sprintf(
-		"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='%s'", dbName,
-	))
-	if err != nil {
-		return fmt.Errorf("check mysql database existence: %w", err)
-	}
-	if strings.TrimSpace(out) == dbName {
-		return nil
-	}
-	_, err = mysqlQuery(inst, pw, "CREATE DATABASE `"+dbName+"`")
+	_, err := mysqlQuery(inst, pw, "CREATE DATABASE IF NOT EXISTS `"+dbName+"`")
 	if err != nil {
 		return fmt.Errorf("create mysql database %q: %w", dbName, err)
 	}

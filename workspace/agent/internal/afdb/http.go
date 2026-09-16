@@ -40,6 +40,20 @@ func (a *AsyncOp) Set(state, lastError string) {
 	a.mu.Unlock()
 }
 
+// StartIfIdle atomically sets the operation state to initialState when idle.
+// Returns true if the state was set (caller should launch the goroutine),
+// false if an operation is already in flight.
+func (a *AsyncOp) StartIfIdle(initialState string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.OpState == "installing" || a.OpState == "starting" {
+		return false
+	}
+	a.OpState = initialState
+	a.LastError = ""
+	return true
+}
+
 // EngineStatus is the JSON shape returned by GET /env/databases.
 // All fields are always present (no omitempty) so the Console type can
 // treat every key as required without truthy guards on the sender side.
@@ -184,19 +198,19 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		op := GetAsyncOp(engine, major)
-		curState, _ := op.Get()
-		if curState == "installing" || curState == "starting" {
+		// StartIfIdle is atomic: both the in-flight check and the state write happen
+		// under the same mutex, preventing two concurrent requests from both launching
+		// a goroutine.
+		initialState := "starting"
+		if !isEngineInstalled(engine, major) {
+			initialState = "installing"
+		}
+		if !op.StartIfIdle(initialState) {
 			// Already in flight.
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"status": BuildEngineStatus(engine, major),
 			})
 			return
-		}
-		// Set initial state: "installing" when the binary is absent, "starting" when present.
-		if isEngineInstalled(engine, major) {
-			op.Set("starting", "")
-		} else {
-			op.Set("installing", "")
 		}
 		go func() {
 			// Phase 1: install binary if not present.
@@ -232,6 +246,8 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "stop_failed", err.Error())
 			return
 		}
+		// Clear any previous error so GET no longer reports state=error after success.
+		GetAsyncOp(engine, major).Set("", "")
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"status": BuildEngineStatus(engine, major),
 		})
@@ -241,6 +257,7 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "reset_failed", err.Error())
 			return
 		}
+		GetAsyncOp(engine, major).Set("", "")
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"status": BuildEngineStatus(engine, major),
 		})

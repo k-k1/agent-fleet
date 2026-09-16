@@ -30,7 +30,14 @@ func StartIdleLoop() {
 
 func runIdleLoop() {
 	idleSince := make(map[string]time.Time)
-	for range time.Tick(idleCheckInterval) {
+	for {
+		// When AF_DB_IDLE_SECONDS is set (e.g. in tests), use the same value for
+		// the check interval so the loop actually fires within the window.
+		interval := idleCheckInterval
+		if t := idleThreshold(); t < interval {
+			interval = t
+		}
+		time.Sleep(interval)
 		CheckAllInstances(idleSince)
 	}
 }
