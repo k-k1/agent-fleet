@@ -95,6 +95,18 @@ func main() {
 		runInstallKiro(os.Args[2:])
 		return
 	}
+	// On-demand Postgres binary installer (ADR 0086 P0 supply lane): downloads the
+	// Zonky embedded-postgres jar for the container arch. See install_postgres.go.
+	if len(os.Args) > 1 && os.Args[1] == "install-postgres" {
+		runInstallPostgres(os.Args[2:])
+		return
+	}
+	// On-demand Postgres client installer (ADR 0086 P0): downloads postgresql-client-N
+	// and libpq5 from Debian trixie and writes wrappers into ~/.local/bin. See install_pg_client.go.
+	if len(os.Args) > 1 && os.Args[1] == "install-pg-client" {
+		runInstallPgClient(os.Args[2:])
+		return
+	}
 	// claude hook helper: records session working/idle/question state.
 	if len(os.Args) > 1 && os.Args[1] == "session-status" {
 		sessionx.RunSessionStatusHook(os.Args[2:])
