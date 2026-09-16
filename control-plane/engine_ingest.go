@@ -890,7 +890,7 @@ func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (st
 	// for a recorded key. Keep the same fence here because follow-up VAEs start from the
 	// reconciler, not that route; otherwise two completed checkpoints could upload different
 	// bytes to the family's fixed VAE key before either attachment is registered.
-	if ref := engineIngestDestinationUnused(ctx, g.models, g.store, req.Role, req.S3Key); ref != nil {
+	if ref := engineIngestDestinationUnused(ctx, g.models, g.store, g.storageChecker(), req.Role, req.S3Key); ref != nil {
 		// The holder and the next act are dropped here and only here: this method answers
 		// *apiError to callers that predate them, and the routes that can draw a button
 		// (postIngest) ask the same question themselves before calling it.

@@ -278,18 +278,21 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("get setting: %v %q", err, v)
 	}
 
-	// engine ingest jobs: EXISTS(...) scans as bool on Postgres and int on SQLite — the
-	// "add model file" dialog 500'd on this deployment kind with a Scan error until this test
-	// caught it, because SQLite's 0/1 int happily satisfied the old *int destination.
-	if err := st.PutEngineIngestJob(ctx, EngineIngestJob{ID: NewID(), Role: "super_admin", S3Key: "models/x.safetensors",
+	// engine ingest jobs: the write-side fence, whose predecessor scanned EXISTS(...) as bool on
+	// Postgres and int on SQLite — the "add model file" dialog 500'd on this deployment kind with
+	// a Scan error until this test caught it. It now selects the ROW instead (the refusal has to
+	// name the job), which is the same ORDER BY … LIMIT 1 in both dialects.
+	jobID := NewID()
+	if err := st.PutEngineIngestJob(ctx, EngineIngestJob{ID: jobID, Role: "super_admin", S3Key: "models/x.safetensors",
 		Source: "civitai:5038", State: EngineIngestPending, CreatedAt: NowTS(), UpdatedAt: NowTS()}); err != nil {
 		t.Fatalf("put ingest job: %v", err)
 	}
-	if recorded, err := st.EngineIngestS3KeyRecorded(ctx, "super_admin", "models/x.safetensors"); err != nil || !recorded {
-		t.Fatalf("engine ingest s3 key recorded = (%v,%v), want true", recorded, err)
+	if job, recorded, err := st.EngineIngestJobForS3Key(ctx, "super_admin", "models/x.safetensors"); err != nil ||
+		!recorded || job.ID != jobID {
+		t.Fatalf("engine ingest job for s3 key = (%q,%v,%v), want %q", job.ID, recorded, err, jobID)
 	}
-	if recorded, err := st.EngineIngestS3KeyRecorded(ctx, "super_admin", "models/never-ingested.safetensors"); err != nil || recorded {
-		t.Fatalf("engine ingest s3 key recorded = (%v,%v), want false", recorded, err)
+	if job, recorded, err := st.EngineIngestJobForS3Key(ctx, "super_admin", "models/never-ingested.safetensors"); err != nil || recorded {
+		t.Fatalf("engine ingest job for s3 key = (%q,%v,%v), want not found", job.ID, recorded, err)
 	}
 
 	// identity_provider round trip (docs/log/61 P1 / migrations-pg/0021). Everything
