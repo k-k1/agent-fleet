@@ -205,6 +205,8 @@ export const tools = {
   "env.db_reset_go": "リセットする",
   "env.db_action_failed": "失敗: {msg}",
   "env.db_copied": "コピーしました",
+  "env.db_purge_confirm_title": "データを全削除しますか？",
+  "env.db_purge_confirm_body": "データベースが停止され、データディレクトリが削除されます。取り消せません。",
   // --- マシン（features/settings/workspace/MachineTab.tsx。何の上で動いているか）---
   "machine.title": "このワークスペースのマシン",
   "machine.load_failed": "マシンの情報を取得できませんでした。",

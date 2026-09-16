@@ -16,8 +16,8 @@ interface DBEngine {
   rssBytes: number;
   port: number;
   datadir: string;
-  urlSocket: string;
-  urlTcp: string;
+  urlSocket?: string; // omitempty — absent when stopped
+  urlTcp?: string; // omitempty — absent when stopped
   databases: Record<string, string>;
   lastUsedAt: string;
   lastError: string;
@@ -27,7 +27,13 @@ interface DBPayload {
   engines: DBEngine[];
 }
 
-function stateLabel(tr: (k: string) => string, state: DBState): string {
+// Mask :password@ in URLs so credentials are not shown in the clear; the raw value is
+// still passed to clipboard.writeText so copy/paste works as expected.
+function maskUrl(url: string): string {
+  return url.replace(/:([^:@/]+)@/, ":••••@");
+}
+
+function stateLabel(tr: ReturnType<typeof useT>, state: DBState): string {
   switch (state) {
     case "absent":
       return tr("env.db_state_absent");
@@ -53,21 +59,25 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
   const [busy, setBusy] = useState(false);
   const [stopMenu, setStopMenu] = useState(false);
   const alive = useRef(true);
-  useEffect(
-    () => () => {
-      alive.current = false;
-    },
-    [],
-  );
 
-  // Poll while installing or starting (5 s interval).
+  useEffect(() => {
+    // Reset on remount so StrictMode's double-invoke does not leave alive permanently false.
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  // Poll while installing or starting (5 s interval). setInterval keeps firing even when the
+  // refreshed state is still installing/starting; the effect cleanup stops it on unmount or
+  // when the state transitions away from those two values.
   useEffect(() => {
     if (eng.state !== "installing" && eng.state !== "starting") return;
-    const id = setTimeout(function tick() {
+    const id = setInterval(() => {
       if (!alive.current) return;
       onRefresh();
     }, 5000);
-    return () => clearTimeout(id);
+    return () => clearInterval(id);
   }, [eng.state, onRefresh]);
 
   const doAction = async (action: string, query = "") => {
@@ -78,7 +88,7 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
     setBusy(false);
     if (!alive.current) return;
     if (res && res.error) {
-      toast(tr("env.db_action_failed").replace("{msg}", res.error.message || ""));
+      toast(tr("env.db_action_failed", { msg: res.error.message || "" }));
       return;
     }
     onRefresh();
@@ -95,9 +105,21 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
     doAction("reset");
   };
 
+  const handleStopPurge = async () => {
+    const ok = await askConfirm({
+      title: tr("env.db_purge_confirm_title"),
+      body: tr("env.db_purge_confirm_body"),
+      confirmLabel: tr("env.db_stop_purge"),
+      danger: true,
+    });
+    if (!ok) return;
+    doAction("stop", "purge=1");
+  };
+
   const copyUrl = () => {
-    const url = urlMode === "socket" ? eng.urlSocket : eng.urlTcp;
-    navigator.clipboard.writeText(url).then(() => {
+    const raw = urlMode === "socket" ? eng.urlSocket : eng.urlTcp;
+    if (!raw) return;
+    navigator.clipboard.writeText(raw).then(() => {
       setCopied(true);
       setTimeout(() => {
         if (alive.current) setCopied(false);
@@ -105,11 +127,13 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
     });
   };
 
-  const label = `${eng.engine === "postgres" ? "PostgreSQL" : "MySQL"} ${eng.major}`;
+  const engineName = eng.engine === "postgres" ? "PostgreSQL" : "MySQL";
+  const versionSuffix = eng.version && eng.version !== eng.major ? ` · ${eng.version}` : "";
+  const label = `${engineName} ${eng.major}${versionSuffix}`;
   const stateText = stateLabel(tr, eng.state);
-  const rssText = eng.rssBytes > 0 ? tr("env.db_rss").replace("{n}", String(Math.round(eng.rssBytes / 1_000_000))) : "";
-  const portText = eng.port > 0 ? tr("env.db_port").replace("{n}", String(eng.port)) : "";
-  const url = urlMode === "socket" ? eng.urlSocket : eng.urlTcp;
+  const rssText = eng.rssBytes > 0 ? tr("env.db_rss", { n: Math.round(eng.rssBytes / 1_000_000) }) : "";
+  const portText = eng.port > 0 ? tr("env.db_port", { n: eng.port }) : "";
+  const rawUrl = urlMode === "socket" ? (eng.urlSocket || "") : (eng.urlTcp || "");
   const busy2 = busy || eng.state === "installing" || eng.state === "starting";
 
   return (
@@ -123,7 +147,7 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
 
       {eng.lastError && <p className="db-engine-error">{eng.lastError}</p>}
 
-      {(eng.state === "running" || eng.state === "stopped") && (
+      {(eng.state === "running" || eng.state === "stopped") && rawUrl && (
         <div className="db-engine-url">
           <span className="db-url-toggle">
             <button
@@ -139,7 +163,7 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
               {tr("env.db_url_tcp")}
             </button>
           </span>
-          <code className="db-url-text">{url}</code>
+          <code className="db-url-text">{maskUrl(rawUrl)}</code>
           <button className="db-url-copy" onClick={copyUrl} title={tr("env.db_copy")}>
             {copied ? tr("env.db_copied") : tr("env.db_copy")}
           </button>
@@ -163,7 +187,7 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
                 <button className="db-stop-item" onClick={() => doAction("stop")}>
                   {tr("env.db_stop")}
                 </button>
-                <button className="db-stop-item db-stop-purge" onClick={() => doAction("stop", "purge=1")}>
+                <button className="db-stop-item db-stop-purge" onClick={handleStopPurge}>
                   {tr("env.db_stop_purge")}
                 </button>
               </div>
@@ -171,7 +195,7 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
           </div>
         )}
 
-        {(eng.state === "running" || eng.state === "stopped") && (
+        {eng.state === "running" && (
           <button className="db-btn db-btn-reset" disabled={busy2} onClick={handleReset}>
             {tr("env.db_reset")}
           </button>
@@ -181,7 +205,7 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
   );
 }
 
-// EnvTabDatabases is the "Databases" card in the workspace settings Env tab.
+// EnvTabDatabases is the "Databases" card in the workspace settings Toolchains tab.
 // It shows the per-engine state — version, resident size, port, URL, and
 // Start / Stop / Reset actions — proxied through the CP to the Agent.
 // Requires the workspace to be running (the Agent owns the database processes).

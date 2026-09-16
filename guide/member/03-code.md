@@ -235,7 +235,7 @@ Things to know about MySQL specifically:
 
 ### Console database card
 
-The workspace settings **Env** tab has a **Databases** card that shows the state of every
+The workspace settings **Toolchains** tab has a **Databases** card that shows the state of every
 engine — version, resident size (MB), port, connection URL — and lets you Start, Stop, or Reset
 an engine without opening a terminal.
 

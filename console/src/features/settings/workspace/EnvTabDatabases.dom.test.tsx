@@ -1,8 +1,9 @@
-// EnvTabDatabases — the "Databases" card in the workspace Env tab.
+// EnvTabDatabases — the "Databases" card in the workspace Toolchains tab.
 // What matters:
 //   1. the engine list renders from GET /env/databases
 //   2. the Start button POSTs /{engine}/start and triggers a reload
 //   3. while state is "installing" or "starting", a 5-second poll drives GET
+//      — and the poll keeps going even if state stays installing across ticks
 //   4. lastError is shown inline under the engine row
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
@@ -156,7 +157,7 @@ describe("EnvTabDatabases", () => {
     let getCount = api.mock.calls.filter((c) => c[0] === "api/env/databases").length;
     expect(getCount).toBe(1);
 
-    // Advance 5 s — the effect-internal setTimeout fires and triggers a reload
+    // Advance 5 s — the interval fires and triggers a reload
     api.mockResolvedValue({ engines: [{ ...mysqlInstalling, state: "running" }] });
     await act(async () => {
       vi.advanceTimersByTime(5000);
@@ -167,6 +168,26 @@ describe("EnvTabDatabases", () => {
 
     getCount = api.mock.calls.filter((c) => c[0] === "api/env/databases").length;
     expect(getCount).toBeGreaterThan(1);
+  });
+
+  it("poll keeps going while state stays installing — 3 ticks produce at least 4 GETs", async () => {
+    // Installing state that never changes — the interval must keep re-arming.
+    api.mockResolvedValue({ engines: [mysqlInstalling] });
+    await mount();
+
+    const countAfterMount = api.mock.calls.filter((c) => c[0] === "api/env/databases").length;
+    expect(countAfterMount).toBe(1);
+
+    // Advance 15 s (3 × 5 s intervals), still returning installing each time.
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+    });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const getCount = api.mock.calls.filter((c) => c[0] === "api/env/databases").length;
+    expect(getCount).toBeGreaterThanOrEqual(4); // 1 initial + ≥ 3 interval fires
   });
 
   it("poll stops after unmount — no further GETs after the component is removed", async () => {

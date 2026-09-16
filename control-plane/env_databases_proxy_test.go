@@ -15,11 +15,15 @@ import (
 // This guards decision 9 of ADR 0086 P1: the CP is a transparent relay here, never a
 // transformer.
 func TestEnvDatabasesProxyForwardsPath(t *testing.T) {
-	var agentPaths []string
-	var calls atomic.Int32
+	type call struct {
+		path  string
+		query string
+	}
+	var calls []call
+	var count atomic.Int32
 	proxy, res, _, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		agentPaths = append(agentPaths, r.URL.Path)
+		count.Add(1)
+		calls = append(calls, call{path: r.URL.Path, query: r.URL.RawQuery})
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"engines":[]}`))
 	}))
@@ -49,16 +53,19 @@ func TestEnvDatabasesProxyForwardsPath(t *testing.T) {
 		t.Fatalf("POST /api/env/databases/postgres/stop?purge=1: status %d, body %s", rec3.Code, rec3.Body.String())
 	}
 
-	if calls.Load() != 3 {
-		t.Fatalf("expected 3 agent calls, got %d", calls.Load())
+	if count.Load() != 3 {
+		t.Fatalf("expected 3 agent calls, got %d", count.Load())
 	}
-	if agentPaths[0] != "/env/databases" {
-		t.Errorf("GET path: got %q, want /env/databases", agentPaths[0])
+	if calls[0].path != "/env/databases" {
+		t.Errorf("GET path: got %q, want /env/databases", calls[0].path)
 	}
-	if agentPaths[1] != "/env/databases/mysql/start" {
-		t.Errorf("POST start path: got %q, want /env/databases/mysql/start", agentPaths[1])
+	if calls[1].path != "/env/databases/mysql/start" {
+		t.Errorf("POST start path: got %q, want /env/databases/mysql/start", calls[1].path)
 	}
-	if agentPaths[2] != "/env/databases/postgres/stop" {
-		t.Errorf("POST stop path: got %q, want /env/databases/postgres/stop", agentPaths[2])
+	if calls[2].path != "/env/databases/postgres/stop" {
+		t.Errorf("POST stop path: got %q, want /env/databases/postgres/stop", calls[2].path)
+	}
+	if calls[2].query != "purge=1" {
+		t.Errorf("POST stop query: got %q, want purge=1", calls[2].query)
 	}
 }
