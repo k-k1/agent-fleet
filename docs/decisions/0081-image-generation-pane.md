@@ -16,7 +16,7 @@ English | [日本語](0081-image-generation-pane.ja.md)
   [0078](0078-sessions-overview-pane.md) (the most recent pane kind, and the boilerplate) /
   [log 19](../log/19-assistant-chat.md) (`POST api/chat/ask`, the one-shot LLM call the prompt help
   reuses — it belongs to the assistant chat, not to ADR 0020 as first drafted; *review*) /
-  [0071](0071-self-hosted-inference-engines.md) (the engine box, its cold start, and who pays for it)
+  [0071](0071-self-hosted-inference-engines.md) (the engine instance, its cold start, and who pays for it)
 
 ## Background
 
@@ -68,7 +68,7 @@ ADR 0080's P0 lane B, #622):
 
   Unknown sampler or scheduler names are **silently ignored** (`comfy_workflows.go:174-209` —
   `comfyRecipe.with` keeps the recipe's name when the overlay's is not on the list); a name the
-  box does not know would fail after a cold start with `Value not in list`, so the Agent's allow-list
+  instance does not know would fail after a cold start with `Value not in list`, so the Agent's allow-list
   is the contract. A negative prompt on a distilled family is dropped with a warning
   (`comfy.go:187-204`). Nothing in the Console knows this table.
 - **The blocking call and the clocks.** `POST /imagegen/generate` returns when the picture is on disk.
@@ -82,7 +82,7 @@ ADR 0080's P0 lane B, #622):
   (`mcp_imagegen.go:250-298`); a random seed drawn in `comfySeedFor` is not in `Result`
   (`imagegen.go:154-171`) — the caller cannot reproduce what they got.
 - **No provenance on disk.** The Agent writes the PNG bytes as they come and no sidecar (`store.go`).
-  ComfyUI's `SaveImage` embeds the API graph as the `prompt` text chunk unless the box runs with
+  ComfyUI's `SaveImage` embeds the API graph as the `prompt` text chunk unless the instance runs with
   `--disable-metadata`; nothing in this repository reads or writes PNG text.
 - **No member-facing catalogue.** The admin screens (`console/src/features/settings/admin/adminEngines.tsx`,
   `adminEngineModels.tsx`) are super_admin, or tenant_admin under `allow_engine_ingest`. The only door
@@ -99,7 +99,7 @@ ADR 0080's P0 lane B, #622):
   own CLI login, ledgered as `assistant.ask`. Memo tidy (`MemoTidyModal.tsx:83`) and the TTS summary
   (`useMirrorTts.tsx:160`) already use it and preview the answer before applying it.
 - **Upstream, verified in ComfyUI's `server.py` (2026-09-13):** `POST /interrupt` with `{"prompt_id"}`
-  interrupts that prompt only, without it the whole box; `POST /queue {"delete":[id]}` removes a
+  interrupts that prompt only, without it the whole instance; `POST /queue {"delete":[id]}` removes a
   pending item; `GET /queue` lists running and pending; per-step progress exists **only** on the
   websocket, and the control plane's relay does not upgrade connections.
 
@@ -142,7 +142,7 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
     and never admits half of it *(review: the body's fields were scattered over decisions 8 and 11;
     this is the one list)*.
     Refused with 429 when the queue holds `imagegenQueueMax` (200) pending jobs — one member cannot
-    park a day of GPU on a shared box by accident.
+    park a day of GPU on a shared instance by accident.
   - `GET /imagegen/jobs` — every job the Agent still remembers (pending, running, the last 500
     finished), newest first, with `state` ∈ `queued | waking | uploading | running | fetching | done |
     failed | cancelled`, `position` while queued, `started_at`, `finished_at`, `elapsed_ms`, the
@@ -153,10 +153,10 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   - `DELETE /imagegen/jobs/{id}` — cancel. Queued: removed. Running: the provider's optional
     `Canceller` is asked. For comfy that is `POST /queue {"delete":[prompt_id]}` when the prompt is
     still pending upstream and `POST /interrupt {"prompt_id"}` when it is executing — **always with the
-    id**, never the bare `/interrupt`, because the box is shared across workspaces and a bare interrupt
+    id**, never the bare `/interrupt`, because the instance is shared across workspaces and a bare interrupt
     kills someone else's picture. `sdcpp` has no cancel; the job runs out and its result is discarded.
   - `GET /imagegen/status` — widened (decision 5).
-- **One worker per provider, jobs run one at a time.** The box already serialises sampling; submitting
+- **One worker per provider, jobs run one at a time.** The instance already serialises sampling; submitting
   ahead only moves the queue somewhere the Agent cannot see or cancel from, and leaves two requests
   waiting on `engine_waking` at once. Serial also gives the queue position and the estimate a meaning.
 - **State phases come from the provider.** `sendWithWake` and `awaitHistory` report `waking`,
@@ -194,7 +194,7 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   Agent build. Format-independent (works for webp and jpeg, no PNG rewrite), invisible to the gallery
   (it filters by `imageFormat()`), and the thing the gallery's card hover, "open in image generation",
   and any later "X/Y grid" read. ComfyUI's own `prompt` chunk stays in the PNG untouched; it is the API
-  graph, not the request, and is absent when the box runs with `--disable-metadata`.
+  graph, not the request, and is absent when the instance runs with `--disable-metadata`.
 - **`Image` (what a provider returns inside `Result`) and `StoredFile` gain `seed`** (per image: base
   seed for batch index 0, `seed+i` after — ComfyUI derives batch noise that way). The MCP tool's answer gains the same line; "it was random and I
   cannot get it back" is the single most common complaint in any image UI.
@@ -258,11 +258,11 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
     knobs a family does not read are named by the warning this very decision introduced. **The rest of
     this decision stands unchanged** — with `validateRequestParams` added to the blocking route as well,
     the two routes are now equally strict.
-- **The Agent validates, the box never sees a bad value after a cold start.** Sampler and scheduler are
+- **The Agent validates, the instance never sees a bad value after a cold start.** Sampler and scheduler are
   checked against `comfySamplerNames` / `comfySchedulerNames` and refused with 400 `bad_params` (not
   silently ignored, as the catalogue overlay is — a typed value must fail loudly). Steps 1–150, cfg
   0–30, size a multiple of 8 on each side with a pixel ceiling (`imagegenMaxPixels`, 4 M — a 2048²
-  SDXL request on an `l4` is an OOM after a 5-minute wait, and the box's 400 comes back bare, not even
+  SDXL request on an `l4` is an OOM after a 5-minute wait, and the instance's 400 comes back bare, not even
   as `engine_waking`).
 - **What a family ignores is reported, not swallowed.** A `cfg` on `flux1` or `flux2-klein`, a
   `scheduler` on `flux2-klein`, a negative on the three distilled families: each produces a warning
@@ -360,7 +360,7 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   the reverse), and, when a reference image is attached, "describe the image as a prompt" (vision —
   P2, the assistant path does not attach files today).
 - **Why `api/chat/ask` and not the tenant's `llm` engine.** The browser cannot reach `/engine/llm/*`
-  (no credential), not every deployment has the role, and a cold llama.cpp box is minutes of GPU for
+  (no credential), not every deployment has the role, and a cold llama.cpp instance is minutes of GPU for
   one sentence. `askAssistant` runs on the member's own CLI login, is what memo tidy and TTS summary
   already do, and is ledgered. It is "an LLM in the loop" only when pressed, and the assistant's name
   is on the button. An Agent-side `POST /imagegen/suggest` that uses the workspace's engine token
@@ -451,14 +451,14 @@ teach the average that batches are fast.
 
 ### Decision 12 — A batch shows its progress, and can be paused, resumed, skipped and aborted — as a group, at the job boundary
 
-Forty pictures take a quarter of an hour on a warm box. The person watching needs to know how far it
+Forty pictures take a quarter of an hour on a warm instance. The person watching needs to know how far it
 is, and to be able to stop it — for a minute (to try something), or for good — without losing what
 has been made. All four verbs are **group** operations (decision 8's `group` id), because the group is
 the thing the person submitted; the queue-wide versions are the same operations over every group.
 
 - **Progress, P0, without the websocket.** The Agent reports per group `done`, `failed`, `total`,
   `running` (the job in flight with its phase and `elapsed_ms`), `eta_ms` = remaining × `typical_ms`
-  for that (model, size bucket, steps) plus the observed wake time when the box is cold. The pane draws
+  for that (model, size bucket, steps) plus the observed wake time when the instance is cold. The pane draws
   one bar per group — done, failed and running as segments; the running segment fills by time against
   `typical_ms` and stops at 95 % until the job actually ends, so the bar never claims completion it
   has not seen. Above the bar: "12 / 40 · about 9 min left · sampling the 13th for 18 s". The
@@ -481,7 +481,7 @@ the thing the person submitted; the queue-wide versions are the same operations 
 - **Abort** (`{"op":"cancel"}`) interrupts the running job the same way and removes every queued job
   of the group; finished pictures stay — the group is `cancelled` with "12 of 40 made" on it. The
   per-job `DELETE` of decision 2 remains for one picture.
-- **A paused batch lets the box go cold.** The engine's idle window is the administrator's, not this
+- **A paused batch lets the instance go cold.** The engine's idle window is the administrator's, not this
   pane's; after it, resume means a wake. The group row says "paused 6 min — the engine may have gone
   to sleep" from the same wake estimate decision 10 shows, so the person is not surprised by the
   minutes that follow "resume".
@@ -515,7 +515,7 @@ the thing the person submitted; the queue-wide versions are the same operations 
   are the failure ADR 0069 decision 7 forbids for sizes; chips the user sees and can remove are the form.
 - **Silently ignore a bad sampler name in the request, as the catalogue overlay does.** A typed value
   fails loudly; the overlay's leniency is for an admin's old row, not a member's form (decision 4).
-- **Bare `POST /interrupt`.** Kills another workspace's picture on a shared box (decision 2).
+- **Bare `POST /interrupt`.** Kills another workspace's picture on a shared instance (decision 2).
 - **A separate pane per model / per output folder.** Not asked for (unresolved 4).
 - **Reading properties from the thumbnail, or from every original on mount.** The thumbnail is a JPEG
   re-encode with no chunk; 300 originals is the bandwidth 0080 decision 4 refused (decision 3).
@@ -555,7 +555,7 @@ the thing the person submitted; the queue-wide versions are the same operations 
   prompt-help parses), DOM (form disables what `knobs` omits; chips follow LoRA selection; the
   proposal is previewed, not applied; cancel per job and per group), Go (queue order, cap 429,
   cancel of queued vs running with the targeted `/interrupt`, validation refusals, sidecar contents,
-  seed in the answer, status fields, ETag-stable bytes, EMA), and one live run against a GPU box
+  seed in the answer, status fields, ETag-stable bytes, EMA), and one live run against a GPU instance
   before P0 is called done — the golden files pin graph shapes, and ADR 0072 recorded what a green
   golden is worth when a graph has never run.
 

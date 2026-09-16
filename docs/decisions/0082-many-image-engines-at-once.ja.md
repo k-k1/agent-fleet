@@ -43,7 +43,7 @@ Agent の画像側は単一の選択ではなく provider の**リスト**を軸
 
 順位が役に立つのは、死んでいるエンジンが素早く道を譲る場合だけで、外部行はまさにそうなっている。
 ECS アダプタを持たない行に対して `ensureStarted` は即座に拒否し（「nothing here can start it」＋
-見に行くべき URL）、落ちている LAN の ComfyUI が **GPU の箱を買うために存在する** `engine_waking`
+見に行くべき URL）、落ちている LAN の ComfyUI が **GPU のインスタンスを買うために存在する** `engine_waking`
 のリトライ予算に入らないようにしている（`control-plane/engine_gateway.go:995-1001`、ADR 0076
 決定 4）。その拒否の前に費やされるのはヘルスチェック 1 回で、上限は **5 秒**
 （`engine_gateway.go:1073-1075`）。
@@ -121,10 +121,10 @@ ECS アダプタを持たない行に対して `ensureStarted` は即座に拒�
 
 ゲートウェイ・カタログ・admin パネル・remote のミラーは既に行を鍵にしている。とくに
 `provider == "comfy"` で分岐している 3 箇所 — 上流のパス接頭辞（`engine_gateway.go:949-956`）、
-ファイル flag の語彙（`engine_catalog.go:231-234`）、`base_model` の族語彙
+ファイル flag の語彙（`engine_catalog.go:231-234`）、`base_model` のファミリー語彙
 （`engine_catalog.go:239-246`）— は **行の `provider` フィールドを読み続けること。キーを渡しては
 ならない。** これが「自然に見えて全部壊す」唯一の置き換えである: `provider` が `comfy-lan` に
-なった行は ComfyUI のグラフ POST に `/v1/` を前置され、族の検証も失われ、しかも検証の欠落は数分後
+なった行は ComfyUI のグラフ POST に `/v1/` を前置され、ファミリーの検証も失われ、しかも検証の欠落は数分後
 の生成失敗としてしか現れない。
 
 ### 3. 順序は既存の設定のまま。Console はリストを宣言するのをやめて行を読む
@@ -174,8 +174,8 @@ CP は LAN の行へ直接届くので、その機械が持つ checkpoint・LoRA
 なく、comfy provider がワークフローのグラフをディスパッチする鍵で（`engine_catalog.go:239-246`）、
 ComfyUI はそれを公開していない。しかも誤った値は `base_model_missing` — その行が絵を出せない
 ことを示す唯一の印 — を黙らせるので、失敗は数分後の生成時にしか来ない。よって ADR 0072 決定 2
-（族は運用者が宣言する）は維持する: 発見はファイル名と files を埋め、`engineFamilyGuess`
-（`control-plane/engine_family_guess.go`）がファイル名から分かる場合に族を事前選択し、
+（ファミリーは運用者が宣言する）は維持する: 発見はファイル名と files を埋め、`engineFamilyGuess`
+（`control-plane/engine_family_guess.go`）がファイル名から分かる場合にファミリーを事前選択し、
 **人が確認する**。ingest の流れが既に採っている形である。
 
 ### 7. 発見はボタンであり、ポーリングではない
@@ -208,7 +208,7 @@ id を持ち続ける（`IMAGE_PROVIDER_FLEET_GROUP`、`console/src/lib/settings
 - **provider の種類を増やす（`comfy2`、あるいは行の `provider` を `comfy-lan` にする）。**
   語彙はコンパイル時のままなので実際には何も得られない。しかも行の `provider` を新しい文字列に
   すると決定 2 の CP 側 3 分岐から外れ、拒否ではなく**黙った誤生成**になる。
-- **`/object_info` の行を自動で採り込む。** 決定 6 のとおり、族は発見できず、推測した族はその行
+- **`/object_info` の行を自動で採り込む。** 決定 6 のとおり、ファミリーは発見できず、推測したファミリーはその行
   が生成できないことを示す唯一の印を黙らせる。
 - **Control Plane 側で健全性による並べ替え**（両方を叩いて生きている方を先に出す）。失敗経路は
   既に上限付きのプローブ 1 回で済むのに、運用者の LAN への定期通信と、「生きているか」に対する
@@ -222,7 +222,7 @@ id を持ち続ける（`IMAGE_PROVIDER_FLEET_GROUP`、`console/src/lib/settings
   この配備自身の stack の記述としては引き続き有効。1 つの Control Plane が serve できる images
   行の数の記述ではなくなる: ここでは誰も起動しない行（`external`）と他の fleet が起動する行
   （`remote`）をその隣に足せる。
-- **ADR 0072 決定 2 は維持** — 族は運用者が宣言する。上の決定 6 は提案の流れであって導出では
+- **ADR 0072 決定 2 は維持** — ファミリーは運用者が宣言する。上の決定 6 は提案の流れであって導出では
   ない。
 - **ADR 0076 決定 1・2・4 は維持** — `external` は宣言であって推論しない、managed 行が
   `AF_COMFY_URL` に勝つ、外部エンジンはここでは誰も起動しない。`AF_COMFY_URL` は固定キー
@@ -254,7 +254,7 @@ id を持ち続ける（`IMAGE_PROVIDER_FLEET_GROUP`、`console/src/lib/settings
    `ensureReady` はヘルスチェックをキャッシュしないので、この 3 秒は**優先経路の先頭に、絵 1 枚
    ごとに**座っていた。よってこの文書が挙げていた答え——**行に短い否定キャッシュ**——を採る
    （`engineExternalDownTTL`、窓は `engineExternalWarmTTL` と同じ 10 秒）。外部行だけが対象で、
-   管理行の「答えない」は買った箱が起動中という意味なので覚えない。キャッシュするのは否定だけで、
+   管理行の「答えない」は買ったインスタンスが起動中という意味なので覚えない。キャッシュするのは否定だけで、
    健全な応答は覚えずに消す。
 2. **画像生成ペイン（ADR 0081）は fleet provider が N 本でも描けるか。** モデル一覧は 1 つの
    provider の `Studio` の答えから来る（`imagegen.go:376-435`）。同じ種類の 2 行は id が重なり
@@ -274,7 +274,7 @@ id を持ち続ける（`IMAGE_PROVIDER_FLEET_GROUP`、`console/src/lib/settings
   かつ `auto` が停止中の LAN 行から借用行へ落ちて警告が両方を名指すこと。未解決 1 に答える。
 - **P1 — Console。** 決定 3 の「Agent から来るリスト」、決定 8 の行ごとの設定リスト、画像生成
   ペインのピッカー（未解決 2）。
-- **P2 — 発見。** 決定 6・7: admin パネルのボタンの下の `/object_info`、族を事前選択した行の提案、
+- **P2 — 発見。** 決定 6・7: admin パネルのボタンの下の `/object_info`、ファミリーを事前選択した行の提案、
   人による確認。
 - **P3 — 運用者自身のネットワーク。** これを走らせられるのは運用者だけ: LAN の ComfyUI を優先し、
   セッション中に PC の電源を落とし、次の 1 枚を借用エンジンが拾う。P0 も P1 もこれの代わりには
@@ -300,7 +300,7 @@ id を持ち続ける（`IMAGE_PROVIDER_FLEET_GROUP`、`console/src/lib/settings
   対する `ensureStarted` の即時拒否、`:1073-1092` — `engineHealthy` の 5 秒上限。
 - `control-plane/engine_catalog.go:231-246` — ファイル flag と `base_model` の語彙。どちらも
   `provider == "comfy"` を鍵にしている。
-- `control-plane/engine_family_guess.go` — 族の提案と、推測ではなく "" を返す理由。
+- `control-plane/engine_family_guess.go` — ファミリーの提案と、推測ではなく "" を返す理由。
 - `control-plane/engine_remote_catalog.go:205-216` — 借用行の衝突検査。キーだけを見る。
 - `control-plane/engine_admin.go:77-145` — admin の経路。すべて `{key}` 汎用。
 - `console/src/lib/settings.ts:723-800` — `IMAGE_PROVIDERS_RANKED`・`imageProviderLabel`・

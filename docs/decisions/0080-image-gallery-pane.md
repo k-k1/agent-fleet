@@ -413,7 +413,7 @@ picture out of it says most of what they wanted to know.
 ### Decision 13 — make the downscale itself cheap (stop calling `src.At()`)
 
 Splitting the measured "95 ms for one cold picture" showed **`boxDownscale` alone at 95 ms and
-1,571,330 allocations** — one per source pixel. Every `src.At()` boxes a concrete colour value
+1,571,330 allocations** — one per source pixel. Every `src.At()` instances a concrete colour value
 into the `color.Color` interface, and that is an allocation each time.
 
 - A type switch uses the **typed accessors** (`RGBAAt`, `NRGBAAt`, `GrayAt`, `YCbCrAt`) for the

@@ -19,7 +19,7 @@ English | [日本語](0076-external-image-engine-on-lan.ja.md)
 
 ### What is tied to ecs-ec2 (read on 2026-09-11)
 
-ADR 0071 buys the GPU box through ECS Managed Instances, ADR 0072 declares what that box loads
+ADR 0071 buys the GPU instance through ECS Managed Instances, ADR 0072 declares what that instance loads
 through a catalogue. The image path has three stages, and **only the middle one, registration,
 is tied down**.
 
@@ -46,7 +46,7 @@ ADR 0013 made VOICEVOX "a URL the CP points at" (`AF_VOICEVOX_URL`); ADR 0070 pu
 under ECS. **The branch between the two is one function**: `newTTSEngineFromEnv` returns nil
 without `AF_TTS_ECS_SERVICE`, no controller and no demand counter are attached,
 `engineMode(v, managed=false)` defaults to `on`, and the admin row reports `managed:false` and
-**omits** the ECS-derived fields (state / desired / box / stop_eta). The Console's engines panel
+**omits** the ECS-derived fields (state / desired / instance / stop_eta). The Console's engines panel
 already draws `managed:false` as "externally managed". The native README already documents
 pointing a CP inside WSL at a VOICEVOX on the Windows side. **This ADR copies that shape onto the
 image engine.**
@@ -100,7 +100,7 @@ When the table and the environment both declare the same `key`: the environment 
 table row that is absent or itself external, and **a managed table row wins over the
 environment**, with a log line either way. The review reversed the draft's "the environment
 always wins": replacing a controlled row would leave the ECS service it names running with
-nobody to stop it, which is the more expensive mistake, and an operator who wants the LAN box
+nobody to stop it, which is the more expensive mistake, and an operator who wants the LAN instance
 instead removes the role from the stack.
 
 The SSM table is re-read every 10 seconds (ADR 0074's `engineTableReloader`), but an environment
@@ -113,17 +113,17 @@ rejected (see "Rejected").
 
 ADR 0071 decision 4 stands. Its reasons (a) no new path or allowlist entry, (c) the CP counts
 usage, (d) ComfyUI has unauthenticated mutating endpoints (`/prompt`, `/upload/image`) all hold
-on a LAN. Only (b), "a place to hold the request while the box wakes", stops applying (decision
+on a LAN. Only (b), "a place to hold the request while the instance wakes", stops applying (decision
 4). The `comfy` provider's five workflow families (sdxl / sd35 / flux1 / flux2-klein / zimage)
 are used as they are.
 
 ### 4. There is nothing to wake, so `ensureStarted` **fails immediately** for an external engine
 
 `ensureReady` forwards as soon as health passes (as today). When it does not, a managed row
-buys a box and waits; an external row has no reason to wait — **a LAN ComfyUI whose health is
+buys an instance and waits; an external row has no reason to wait — **a LAN ComfyUI whose health is
 down will not come up because we waited**. It fails at once, and the non-streaming path answers
 `503 engine_unavailable`. Not `engine_waking`: the provider retries that code for 16 minutes
-(ADR 0071 decision 5), a budget sized for "buy a box and pull from S3", which against a dead box
+(ADR 0071 decision 5), a budget sized for "buy an instance and pull from S3", which against a dead instance
 is 16 minutes of silence. The body names the URL and the health path — it is text an operator
 reads. No new error code: the non-streaming path already turns any dial error that is not
 `errEngineWaking` into `503 engine_unavailable` with the error's text appended, and the stream
@@ -134,7 +134,7 @@ Health is `/system_stats`, as in 60-engines; ComfyUI answers it while a model lo
 ### 5. Two modes, `on` / `off`; the default is `on`
 
 The `on` default of `engineMode(v, managed=false)` is used as is. A stored `ondemand` reads as
-`on` (there is no box to switch off). The admin API refuses `ondemand` for an external engine
+`on` (there is no instance to switch off). The admin API refuses `ondemand` for an external engine
 with 400, and the Console does not render the `ondemand` button on such a row. `off` means what
 it means for VOICEVOX — routing is closed — not that ComfyUI is stopped.
 
@@ -180,10 +180,10 @@ defence that does not exist (found by the documentation lane while writing it).
 ### 8. Usage stays `tool.imagegen` / provider `comfy`; no cost is attached; `warm` on the panel is a liveness probe
 
 The Agent's counting of images and pixels is unchanged (ADR 0069 decision 9, ADR 0071 decision
-9). A LAN box has no hourly price, so no cost is shown. With no controller, an external engine's
+9). A LAN instance has no hourly price, so no cost is shown. With no controller, an external engine's
 `warm` is the result of one health probe at the moment the panel is opened — one HTTP call with
 a **2 second** cap, and the answer cached for 10 seconds. Not the gateway's 5 seconds: the list
-handler is synchronous and the Console re-reads it on every load, so a LAN box that is down
+handler is synchronous and the Console re-reads it on every load, so a LAN instance that is down
 would otherwise hold the whole panel for 5 seconds per external row. The uptime heatmap is empty
 in P0 — the sampler is the controller's tick; a light prober writing health alone every 30
 seconds is P1.
@@ -251,7 +251,7 @@ seconds is P1.
     AWS, the gateway against an httptest ComfyUI stub (upstream up → forwarded; upstream down →
     immediate `engine_unavailable` naming the URL), and the nil-walk of decision 1.
   - *Console* (`console/src/features/settings/admin/adminEngines.tsx` and the catalogues): no
-    `ondemand` button on a `managed:false` row, the URL shown, the ECS-only fields (idle, box,
+    `ondemand` button on a `managed:false` row, the URL shown, the ECS-only fields (idle, instance,
     heatmap) not drawn for it; a dom test on a row of decision 5's shape.
   - *Agent* (`workspace/agent/`): the existing hole fixed alongside — `serviceLabelOf` /
     `driverModelOf` have no `comfy` case, so the tool description shows neither the route's

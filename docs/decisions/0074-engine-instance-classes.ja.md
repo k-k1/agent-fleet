@@ -68,7 +68,7 @@ ADR 0072 がモデルを CloudFormation から外してカタログに移した�
 
 - **インスタンスは capacity provider の `InstanceRequirements` が決める。** `60-engines.yaml` の
   `LlmAllowedInstanceTypes`（既定 `g6.xlarge,g5.xlarge`）・`LlmAcceleratorMemMinMiB`（21000）・
-  `LlmVCpuMin/Max`（4/8）・`LlmMemMinMiB/MaxMiB`（15000/65536）と、image 役の鏡像。
+  `LlmVCpuMin/Max`（4/8）・`LlmMemMinMiB/MaxMiB`（15000/65536）と、image 役の対応物。
   **すべて CloudFormation パラメータ＝配備時固定**で、変えるにはスタック更新が要る。
 - **サービスは役の provider を名指ししている**（`CapacityProviderStrategy: [{CapacityProvider:
   !Ref LlmCapacityProvider, Weight: 1}]`）。つまりインスタンスを変える口は provider の要求だけである。
@@ -880,7 +880,7 @@ KV = n_layer × n_head_kv × (key_length + value_length) × ctx × bytes(cache �
 
 ### 突き合わせた 2 点
 
-| モデル | 族 | n_layer | n_head_kv | key/value | ctx | 式 | 実機 `KV self size` | 差 |
+| モデル | ファミリー | n_layer | n_head_kv | key/value | ctx | 式 | 実機 `KV self size` | 差 |
 |---|---|---|---|---|---|---|---|---|
 | `qwen2.5-coder-1.5b` | qwen2 | 28 | 2 | 128 / 128（導出） | 16,384 | 448.00 MiB | **448.00 MiB** | 0.00 |
 | `qwen3-coder-30b-a3b` | qwen3moe | 48 | 4 | 128 / 128（宣言） | 32,768 | 3,072.00 MiB | **3,072.00 MiB** | 0.00 |
@@ -904,7 +904,7 @@ cells`）。スロット数を掛けると 4 倍の過大評価になる。
 qwen3moe は `attention.key_length` / `value_length` を **128 と宣言**しているのに、
 `embedding_length / head_count` は **2048 / 32 = 64** である。導出を優先していたら 30B の KV を
 **1,536 MiB と見積もり、実機の半分**になっていた。24 GB のカードで 1.5 GiB の過小評価は
-「載る」と「載らない」を分ける大きさである。**宣言があれば宣言が勝ち、導出は宣言が無い族
+「載る」と「載らない」を分ける大きさである。**宣言があれば宣言が勝ち、導出は宣言が無いファミリー
 （qwen2 がそう）への代替**にすぎない。実機の `print_info: n_embd_head_k = 128` が裏づけている。
 
 ### ヘッダは Hugging Face から HTTP Range で取れる。S3 は要らない
@@ -1119,7 +1119,7 @@ ImageTag=0.18.1-dev-b6feea43）。その中の 60-engines の段で、ADR 0072 P
 `ImageCapacityOptionType` が provider の `Name` を動かすようになったので、**同じ置き換えを
 開発配備の live で 1 回流し、往復させた**。acrt に入れる前の予行である。
 
-**結論は 2 つに割れる。置き換えの機構は設計どおり完全に動いた。そして Spot の箱は
+**結論は 2 つに割れる。置き換えの機構は設計どおり完全に動いた。そして Spot のインスタンスは
 1 台も取れなかった**——しかも理由が、これまでの 2 つのどちらでもない**第 3 のエラーコード**
 だった。
 
@@ -1186,7 +1186,7 @@ change set に出ず、CP は誰も使っていない provider を見続ける�
 の間、provider は宣言した段より下にいる**。段を当てる経路が無い配備では、それが恒常的な
 差になる。
 
-### 🔴 箱は取れなかった。しかも第 3 のエラーコードだった
+### 🔴 インスタンスは取れなかった。しかも第 3 のエラーコードだった
 
 `mode=on` を 05:24:42Z に入れ、**17 分**（05:41:05Z に `off`）。ECS は約 5 分おきに 4 回
 試し、4 回ともこれを返した——**GPU の課金は $0**（1 台も起動していない）:
@@ -1268,7 +1268,7 @@ Please adjust your request and try again.
 | **3 型まとめて・単一 AZ** | **9 / 10**（1a も 1c も） |
 | 3 型まとめて・リージョン | **9 / 10** |
 
-`mode: on` の直前（06:01:04Z）にもう一度取って 9 を記録し、**その 42 秒後に箱が来た**。
+`mode: on` の直前（06:01:04Z）にもう一度取って 9 を記録し、**その 42 秒後にインスタンスが来た**。
 予測と結果が並んでいる。**`get-spot-placement-scores` は「Spot にする前に訊く」価値がある**
 ——ただし**provider と同じ型の組で**訊くこと。1 型で訊いた 1 は、3 型で買う provider について
 何も言っていなかった。
@@ -1328,7 +1328,7 @@ ImageInstanceClasses=l4|24GB+ (g6/g5/g6e)|22000|g6.xlarge,g5.xlarge,g6e.xlarge|4
 `ecs describe-container-instances` の `ec2InstanceId` にあるので、**Spot で買えたことを
 呼び出し側のアカウントから証明する経路はこれ 1 本だけ**である。
 
-### 🔴 provider の名前が変わると、走っている CP は箱を見失う
+### 🔴 provider の名前が変わると、走っている CP はインスタンスを見失う
 
 これが今回いちばん重い発見で、**Spot への切り替えがその引き金そのもの**である。置き換えは
 provider を `af-…-image` から `af-…-image-spot` へ改名するが、**エンジン表のうち生きたまま
@@ -1355,8 +1355,8 @@ API の `GET /api/admin/engines` に、ECS の言葉ごと載っていた。**�
 
 - **段が実機に当たっていない。** 適用は**消えた旧 provider**へ飛んで 400 になり、新しい
   provider は**テンプレートの `ImageAcceleratorMemMinMiB` 8,000 のまま**だった。つまり
-  買った箱は、宣言した段の下限ではなく**テンプレートの下限で**買われている。
-- **箱が見えない。** `box` の照会は `ci.CapacityProviderName` と**焼き込まれた旧名**を
+  買ったインスタンスは、宣言した段の下限ではなく**テンプレートの下限で**買われている。
+- **インスタンスが見えない。** `box` の照会は `ci.CapacityProviderName` と**焼き込まれた旧名**を
   突き合わせるので、`GET /api/admin/engines` の `box` は `null` のままだった——実際には
   g6e.xlarge が 1 台、$1.35/h で動いていたのに、である。
 - **それでもパネルは「l4 で起動中」と言う**（4 行目）。決定 4 の「段を上げたつもりで古い
@@ -1381,14 +1381,14 @@ API の `GET /api/admin/engines` に、ECS の言葉ごと載っていた。**�
 > **運用手順として書いておくほかない。**
 
 > ✅ **修正済み（2026-09-11・実装のみ、実機未検証）——CP の入れ替えは不要になった。** 上の段落は
-> capacity provider を行の他の欄と同じ箱に入れていたが、それが間違いだった。他の欄は**オブジェクトを
+> capacity provider を行の他の欄と同じインスタンスに入れていたが、それが間違いだった。他の欄は**オブジェクトを
 > 組み立てた材料**——ECS クライアント、コントローラの goroutine とその間隔、需要窓——で、差し替えとは
 > runtime state ごと作り直すことを意味する。provider の名前はそのどちらでもない。**宛先の文字列**
 > （段をどの provider へ書くか）であり、**照合の文字列**（どのコンテナインスタンスがこのエンジンの
-> 箱か）であって、このプロセスが持つ状態を何もキーにしていない。だから梯子と並んで、同じ理由で
+> インスタンスか）であって、このプロセスが持つ状態を何もキーにしていない。だから梯子と並んで、同じ理由で
 > 生きたまま動くようにした（`engine_table_reload.go` の `setCapacityProvider`）。連れて動くものが 3 つある。
 >
-> - **箱の照合**が新しい名前でやり直され、キャッシュは一緒に捨てられる。あの項目は旧名で照合した
+> - **インスタンスの照合**が新しい名前でやり直され、キャッシュは一緒に捨てられる。あの項目は旧名で照合した
 >   結果なので、残せば `engineBoxTTL` のあいだ前の provider のインスタンスを報告し続ける；
 > - **このプロセスが最後に適用した段を忘れる**。それは旧 provider へ書いたものなので、残すと
 >   `startGate` が新 provider への失敗を「このプロセスが適用済み」と読み、設定されていないカードで
@@ -1412,7 +1412,7 @@ image 役は `mode: off`（元の値）へ戻し、**provider は `SPOT` のま�
 
 ## 追記 — ADR 0077 がこの決定を覆した（2026-09-12）
 
-[ADR 0077](0077-engine-boxes-bought-by-cp.ja.md) は、エンジンの箱を買う役を ECS Managed
+[ADR 0077](0077-engine-boxes-bought-by-cp.ja.md) は、エンジンのインスタンスを買う役を ECS Managed
 Instances からコントロールプレーンへ移した（launch template に対する `CreateFleet(type=instant)`
 で買い、サービスは EC2 の launch type で走る）。上の本文は 1 文字も変えていない。以下は 0077 の
 「上書きする既存の決定」の表のうち、この ADR の決定の行そのものである。表に無いものは覆っていない。
@@ -1424,7 +1424,7 @@ Instances からコントロールプレーンへ移した（launch template に
 
 決定 1・2・3・6・7・10・11 は立つ。段の再適用が消えることで、この ADR の追記が扱っていた失敗の
 型ごと無くなる——宣言がそのまま要求なので「宣言」と「実際」がずれようがなく、綴り違いの型は
-「来ない箱」ではなく呼び出し自身が拒む。`usdPerHour` は表示専用のままだが、ここで実測した
+「来ないインスタンス」ではなく呼び出し自身が拒む。`usdPerHour` は表示専用のままだが、ここで実測した
 Managed Instances の管理料 7.80% は provider ごと消えるので、**EC2 の価格そのもの**になる。
 
 ## 追記 — T4 段（g4dn.xlarge）を image 役の自動選択の第一候補に採用（2026-09-14、af-sandbox、comfy）
@@ -1507,7 +1507,7 @@ AllocationStrategy: price-capacity-optimized`は**1回の`CreateFleet`呼び出�
 同じ行を安全に共有できない——`l4`に混ぜなかったのと同じ理由)。オンデマンド行は分けたままにした:
 `OnDemandOptions.AllocationStrategy: prioritized`は宣言された型の順序を読むだけでライブ価格を
 見ないし、オンデマンドの価格はほとんど動かないので、手書きの順序がSpotのラベルのように古くなる
-ことはない。`ImageOffers`（`ImageInstanceClasses`も鏡写しのまま、`ImageOffers`が宣言されている
+ことはない。`ImageOffers`（`ImageInstanceClasses`も対のまま、`ImageOffers`が宣言されている
 間は無効）、7行・価格順:
 
 ```

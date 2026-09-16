@@ -1,4 +1,4 @@
-# 0077. The Control Plane buys engine boxes itself with EC2 Fleet — ECS runs them with the EC2 launch type, and Managed Instances goes
+# 0077. The Control Plane buys engine instances itself with EC2 Fleet — ECS runs them with the EC2 launch type, and Managed Instances goes
 
 English | [日本語](0077-engine-boxes-bought-by-cp.ja.md)
 
@@ -14,8 +14,8 @@ English | [日本語](0077-engine-boxes-bought-by-cp.ja.md)
   questions", each naming the decision that waits on it.
 - **What the operator asked for is unchanged from ADR 0075, to the letter** — (1) buy whatever clears
   the required VRAM, cheapest first, without distinguishing on-demand from Spot; (2) if Spot cannot
-  be had, take on-demand; (3) a Spot box dying suddenly is acceptable, and rule 2 rebuilds it. The
-  exception: the llm role is on-demand only. **The only thing that changes is who buys the box.**
+  be had, take on-demand; (3) a Spot instance dying suddenly is acceptable, and rule 2 rebuilds it. The
+  exception: the llm role is on-demand only. **The only thing that changes is who buys the instance.**
 - 🔴 **This ADR exists because ADR 0075's own revisit condition was met.** Under the rejected
   alternative "move to EC2 Fleet / an Auto Scaling group", 0075 wrote: "if rule 2's implementation
   turns into 'AWS retries and the CP retries on top of it', revisit this rejection." Three rounds
@@ -46,17 +46,17 @@ is fully in develop (#548, #549, #552, #561, #564). Every problem the hardware p
 | Run | What came out | Fix | What the fix cost |
 |---|---|---|---|
 | 0 ($0) | An `UpdateService` changing the strategy needs `forceNewDeployment` even at desired 0 (HTTP 400) | pass force | — |
-| 1-7 ($1.45) | The 180 s budget never looked at "did a box arrive"; the list was walked to the end, two boxes bought, none started | stop the budget when the box arrives | the lookup must name the provider |
+| 1-7 ($1.45) | The 180 s budget never looked at "did an instance arrive"; the list was walked to the end, two instances bought, none started | stop the budget when the instance arrives | the lookup must name the provider |
 | 1-7 | The Spot quota answers `MaxSpotInstanceCountExceeded`, wrapped inside another error; not in the three-code table, so 15 minutes were waited | a fourth code, substring-matched | one more string match |
-| 1-7 | Desired 0 → 1 and the strategy in one call: ECS places under the old strategy first and **buys two boxes** | split the start into two calls | — |
-| re-run ($0.38) | Even split, while the old deployment is ACTIVE ECS places there too — **still two boxes** | gate on "the old deployment is gone" | **a start at least 2 min 35 s slower** |
+| 1-7 | Desired 0 → 1 and the strategy in one call: ECS places under the old strategy first and **buys two instances** | split the start into two calls | — |
+| re-run ($0.38) | Even split, while the old deployment is ACTIVE ECS places there too — **still two instances** | gate on "the old deployment is gone" | **a start at least 2 min 35 s slower** |
 | re-run | The previous offer's event (another provider's) was read as the next offer's answer; the start was abandoned | filter events by provider and time | one misread still voids the whole list |
 | 1-7 | "An offer that cannot be bought" cannot be declared: `UpdateCapacityProvider` refused with 400 and the CP kept starting | add `unusable` | — |
 | 3 | The three-type Spot row delivered a **g6e.xlarge** (not the cheapest g6); Managed Instances has no allocation strategy | cannot be fixed | — |
 
-**The common shape**: ECS sees "a task cannot be placed" and goes to buy a box; the CP **infers the
+**The common shape**: ECS sees "a task cannot be placed" and goes to buy an instance; the CP **infers the
 outcome** from service-event strings and deployment state. Because the buyer and the judge are
-different parties, (i) two boxes get bought, (ii) the echo of one judgement is read by the next,
+different parties, (i) two instances get bought, (ii) the echo of one judgement is read by the next,
 (iii) an unbuyable request silently stays as the previous one. Each fix needed a hardware round
 (about $2.2 over three), and each fix uncovered another hole of the same kind.
 
@@ -86,16 +86,16 @@ different parties, (i) two boxes get bought, (ii) the echo of one judgement is r
   repository). The engine services and the three MI providers already carry the tags `af-pool` /
   `af-role=engine-<role>` (`PropagateTags: SERVICE`), so the vocabulary decision 3 uses is not
   new — what is new is that it lands on an instance the CP can enumerate.
-- 🔴 **The slot pool's only way of saying "not my box" is a non-empty `capacityProviderName`**
-  (`isPoolContainerInstance`, the intake of 0071's review R7(a)). A box the CP buys on EC2 has an
+- 🔴 **The slot pool's only way of saying "not my instance" is a non-empty `capacityProviderName`**
+  (`isPoolContainerInstance`, the intake of 0071's review R7(a)). An instance the CP buys on EC2 has an
   **empty** `capacityProviderName`, so that test collapses as it stands. Five EC2-side walks
   (`slotsOfMyType` and through it `freeSlots`, `poolSize`, `sweepFreeSlots`, `makeRoom`,
   `PoolStatus`) filter on **both** `af-pool` and `af-role=slot` and are unaffected. **One does
   not: `sweepSlotOwnerTags` filters on `af-pool` alone** and then writes or strips
-  `af-membership` / `af-tenant` on every instance it finds — an engine box tagged `af-pool` would
+  `af-membership` / `af-tenant` on every instance it finds — an engine instance tagged `af-pool` would
   be walked by it (decision 3). What mixes on the ECS side is `registeredSlots`,
   `sweepGhostInstances`, `deregisterSlot`, `slotTaskCounts` — four call sites, one function.
-- **A Workspace task is pinned to a box by a task-definition placement constraint
+- **A Workspace task is pinned to an instance by a task-definition placement constraint
   `memberOf(ec2InstanceId == …)`.** The service is `LaunchType: EC2`, `awsvpc`, desired 1.
 - **The CP's IAM** (`20-platform.yaml`): Sid `Ec2SlotPool` holds `ec2:RunInstances` /
   `TerminateInstances` / `DescribeInstances` / `CreateTags` and more on `Resource: *` (Describe
@@ -124,14 +124,14 @@ different parties, (i) two boxes get bought, (ii) the echo of one judgement is r
   created in 0074.
 - Of 0075's implementation, **what does not depend on who buys**: offer parsing (the `buy`
   column), the VRAM filter, pin/automatic (`engine_<role>_class`), `offer_trail` and contract B,
-  the Console card (#549). What does: the "buy", "wait for the box" and "read the failure code"
+  the Console card (#549). What does: the "buy", "wait for the instance" and "read the failure code"
   parts of `engine_offer.go` (`startOnOffer` / `applyFirstUsableOffer` / `stepOffers` /
   `offerBoxIsUp` / `moveToNextOffer` / `engineOfferVerdict` / `engineEventIsAbout` and the
   run-state clock), the strategy write (`setStrategy` / `writeStrategyOnly`) and the
   provider-named `boxOn()` / `describeBoxes()` in `engine_ecs.go`, `applyEngineClass`
   (`UpdateCapacityProvider`) and `startGate` in `engine_class.go`. `startGate` gates on four
   things in order — no ladder (pass), no candidate after the VRAM filter (refuse), the swap wait
-  (the current box's type is not in the first candidate), the rung apply — and only the middle
+  (the current instance's type is not in the first candidate), the rung apply — and only the middle
   two survive here. "One lap then cooldown" lives in the controller (`engine_control.go`), not in
   the gate, and stays.
 - **0075 decision 6 (interruption) exists in the code only as `noteReplacement`** — a log line
@@ -145,8 +145,8 @@ different parties, (i) two boxes get bought, (ii) the echo of one judgement is r
   in `60-engines.yaml`. The three Outputs `Llm` / `Image` / `ImageSpot` `CapacityProviderName` are
   read by six harness scripts (`bench-image-engine`, `probe-fetch-client`, `probe-llm-mount-load`,
   `probe-s3-fetch-tuning`, `probe-s3-mount`, `probe-warm-volume`).
-- **`teardown.sh` does not terminate an engine box**: it sets desired 0 and lets Managed
-  Instances' drain remove the box while the stacks delete. Slots it terminates itself, by tag.
+- **`teardown.sh` does not terminate an engine instance**: it sets desired 0 and lets Managed
+  Instances' drain remove the instance while the stacks delete. Slots it terminates itself, by tag.
 
 ### What is known as published specification (c) — not load-bearing
 
@@ -182,7 +182,7 @@ the delegated judgement comes back.
 
 ## Decisions
 
-### 1. The CP buys the box with `CreateFleet(type=instant, TotalTargetCapacity=1)`. One offer row = one call
+### 1. The CP buys the instance with `CreateFleet(type=instant, TotalTargetCapacity=1)`. One offer row = one call
 
 0075's offer list (`<role>Offers`, eight fields, the `buy` column) is **unchanged**. What changes is
 what "trying" a row means: **"put the row's type set into the overrides, make `buy` the
@@ -199,26 +199,26 @@ what "trying" a row means: **"put the row's type set into the overrides, make `b
   and recorded in the fleet's configuration.
 - The overrides are the product "type × private subnet". The CP does not choose an AZ (the
   slot pool's `spreadAZs` exists for home volumes' AZ affinity; an engine has no home).
-- 🔴 **The response is synchronous.** A launched box comes back as its `InstanceId`; otherwise
+- 🔴 **The response is synchronous.** A launched instance comes back as its `InstanceId`; otherwise
   `Errors[]` carries an `ErrorCode`. **0075's budget clock, service-event string matching and
   deployment gate all disappear at this one point.** Moving to the next offer happens when "the
-  response had no box", and nothing is waited for.
-- The budget (`<role>OfferBudgetSec`) shrinks in meaning to **the ceiling on the box registering
+  response had no instance", and nothing is waited for.
+- The budget (`<role>OfferBudgetSec`) shrinks in meaning to **the ceiling on the instance registering
   with ECS** (the slot pool's `waitSlotRegistered`, polling every 3 s). Default 300 s (0045 decision
   22 measured boot → ECS registration at 21 s, 77 s with a home-baked AMI; ten-plus times that).
-  Past it, terminate the box and move to the next offer.
-- An instant fleet deletes itself once its boxes are gone (c). The CP **does not remember** the
-  fleet id. It remembers the `InstanceId` and the tags on the box (decision 3). **Measured (P0
+  Past it, terminate the instance and move to the next offer.
+- An instant fleet deletes itself once its instances are gone (c). The CP **does not remember** the
+  fleet id. It remembers the `InstanceId` and the tags on the instance (decision 3). **Measured (P0
   open question 3)**: an instant fleet does linger, but it is invisible to `describe-fleets` unless
   named by id, and `DeleteFleets(TerminateInstances=false)` is refused for an instant fleet
   (`NoTerminateInstancesNotSupported`). So there is **no follow-up call**: the port is
   `CreateFleet` / `DescribeInstances` / `TerminateInstances`, and nothing accumulates in any list
   the CP reads.
 
-🔁 **What would change this**: a response on real hardware carrying neither a box nor an error
+🔁 **What would change this**: a response on real hardware carrying neither an instance nor an error
 ((c) says it is always one or the other). Then one `DescribeFleets` follow-up is added.
 
-### 2. ECS only runs it. The service is `LaunchType: EC2` with no strategy. Desired rises after the box is here
+### 2. ECS only runs it. The service is `LaunchType: EC2` with no strategy. Desired rises after the instance is here
 
 - The service **spells out** `LaunchType: EC2` (0070 decision 1's invariant — writing neither is what
   is forbidden, and `LaunchType` satisfies it). There is no `CapacityProviderStrategy`. The problem
@@ -228,11 +228,11 @@ what "trying" a row means: **"put the row's type set into the overrides, make `b
   `ResourceRequirements`, the fetch sidecar and the idle wrapper are untouched.
 - **The placement constraint lives on the service and names the role's attribute**:
   `memberOf(attribute:af-role == engine-<role>)`. Slots write `ec2InstanceId == …` on the task
-  definition because "this user on this box" is the point there; an engine changes boxes and must
+  definition because "this user on this instance" is the point there; an engine changes instances and must
   not cut a task-definition revision each time. With the role attribute the service never changes.
 - 🔴 **The order is the reverse of 0075's.** Under Managed Instances, setting desired to 1 sent ECS
-  out to buy a box. Here **the CP buys the box, waits for it to register, and only then sets
-  desired to 1**. There is no interval in which desired is 1 and no box exists, so the re-run's
+  out to buy an instance. Here **the CP buys the instance, waits for it to register, and only then sets
+  desired to 1**. There is no interval in which desired is 1 and no instance exists, so the re-run's
   "who places the PENDING task" problem (the old deployment did) has no shape to take.
 - The desired 0 → 1 `UpdateService` carries the desired count only (no strategy, no
   `forceNewDeployment`). 0075 run 0's 400 was about changing the strategy; there is nothing to
@@ -242,7 +242,7 @@ what "trying" a row means: **"put the row's type set into the overrides, make `b
 EC2-launch-type service (open question 2), write `ec2InstanceId` on the task definition as slots
 do and cut a revision per start.
 
-### 3. A box is identified by the ECS attribute `af-role=engine-<role>` and by EC2 tags. The slot pool's test changes
+### 3. An instance is identified by the ECS attribute `af-role=engine-<role>` and by EC2 tags. The slot pool's test changes
 
 - The launch template's user data writes `ECS_INSTANCE_ATTRIBUTES={"af-role":"engine-<role>"}` into
   `/etc/ecs/ecs.config` (where slots write `ECS_CLUSTER`). One launch template per role
@@ -251,52 +251,52 @@ do and cut a revision per start.
   `af-engine-buy=spot|od`, `af-managed-by=agent-fleet`. Following 0045 decision 29's general rule
   ("when the thing is in AWS and its name is in the DB, a cleanup that can only be reached from
   the DB turns 'the row is gone' into a permanent leak"), **the CP must be able to find all its
-  boxes from `describe-instances` tags alone, with no memory.** Unlike a Managed Instances box, an
-  EC2 box the CP bought is enumerable by `describe-instances` (the reverse of 0071 P1 measurement 2).
+  instances from `describe-instances` tags alone, with no memory.** Unlike an instance from Managed Instances, an
+  EC2 instance the CP bought is enumerable by `describe-instances` (the reverse of 0071 P1 measurement 2).
 - 🔴 **`isPoolContainerInstance` changes from "`capacityProviderName` is empty" to
   "`capacityProviderName` is empty **and** the `af-role` attribute is absent or is `slot`".**
-  The provider test stays (a Managed Instances box carries no attribute, so dropping it would
-  let an MI box back into the pool — and MI boxes exist until decision 11's migration is done on
-  every deployment). This is the successor of 0071 review R7(a)'s test: a Managed Instances box
-  (provider name) and an EC2 engine box (attribute) both leave the pool through the same one
+  The provider test stays (an instance from Managed Instances carries no attribute, so dropping it would
+  let an MI instance back into the pool — and MI instances exist until decision 11's migration is done on
+  every deployment). This is the successor of 0071 review R7(a)'s test: an instance from Managed Instances
+  (provider name) and an EC2 engine instance (attribute) both leave the pool through the same one
   function. The test pins three kinds of container instance (slot, MI engine, EC2 engine); the
-  positive control is that removing the attribute makes an engine box count as a slot.
+  positive control is that removing the attribute makes an engine instance count as a slot.
 - **The engine's own deregister does not go through `deregisterSlot`** (which applies the pool
-  test and would refuse an engine box). The engine runtime deregisters by container-instance ARN
+  test and would refuse an engine instance). The engine runtime deregisters by container-instance ARN
   directly.
 - The EC2-side walks already exclude it by `af-pool` + `af-role=slot` (`slotsOfMyType`,
   `poolSize`, `sweepFreeSlots`, `makeRoom`, `PoolStatus`). **`sweepSlotOwnerTags` gains the
   role filter** it lacks (Background) — `af-role` in `{slot, quarantined}`, not `slot` alone: a
-  quarantined box is stopped, not released, and can still carry a person's `af-membership` that
+  quarantined instance is stopped, not released, and can still carry a person's `af-membership` that
   this sweep exists to repair (the CP lane's finding, #577). The test's positive control is that
   removing the filter makes the sweep touch an engine-tagged instance. With that, "keeping out of
   `Ec2MaxSlots`" is complete.
 - 0070 decision 1's invariant, "one non-Workspace task mixed in breaks the premise", is kept **on
-  the box side**: no Workspace task lands on an engine box (a Workspace's constraint names an
-  `ec2InstanceId`), and no engine lands on a Workspace box (decision 2's attribute).
+  the instance side**: no Workspace task lands on an engine instance (a Workspace's constraint names an
+  `ec2InstanceId`), and no engine lands on a Workspace instance (decision 2's attribute).
 
 🔁 **What would change this**: if `ECS_INSTANCE_ATTRIBUTES` is not honoured by the agent on the
 AL2023 GPU AMI (open question 2), the CP calls `PutAttributes` right after registration.
 
 ### 4. An interruption is read as an EC2 fact. The rebuild starts from the top of the list, synchronously
 
-- 0075 decision 6's detection (`running` → `starting` at desired 1, and the box gone) is inherited
+- 0075 decision 6's detection (`running` → `starting` at desired 1, and the instance gone) is inherited
   **as a design**: in the code it exists only as `noteReplacement`'s log and audit row; the rebuild
   and the skip were 0075 P1 and were never written (Background). P2 builds them here, once.
-  "The box is gone" can be stated from **`describe-instances`: no box tagged
+  "The instance is gone" can be stated from **`describe-instances`: no instance tagged
   `af-role=engine-<role>` is `pending` or `running`**. The Managed Instances "cannot enumerate"
   limit does not apply.
 - 🔴 **That second condition is sufficient on its own**, and the transition is the other half of an
-  OR rather than a precondition: at desired ≥ 1, with a box **on the CP's books** (this demand's
+  OR rather than a precondition: at desired ≥ 1, with an instance **on the CP's books** (this demand's
   walk saw one register) and no `af-role=engine-<role>` instance alive, it is an interruption
-  whether or not the service ever left `running`. **Measured (P2 hardware run)**: a box taken away
+  whether or not the service ever left `running`. **Measured (P2 hardware run)**: an instance taken away
   102 s after it registered, with its task still PENDING, produces no transition at all — there is
-  no `running` to leave — and the engine sat at desired 1 with no box, no walk, no log line and no
+  no `running` to leave — and the engine sat at desired 1 with no instance, no walk, no log line and no
   clock, its only automatic way out being the idle window throwing the demand away 900 s later.
   The window in which that happens is the **whole cold start, 4 min 45 s on that same run**, so it
   is not a corner case. What keeps the rebuild from firing on an ordinary replacement (an OOM kill,
-  a failed health check — 0071 P0) is unchanged and is the other clause: **the box is still there**.
-  The ledger is consumed at detection, or the same loss would be detected every tick and buy a box
+  a failed health check — 0071 P0) is unchanged and is the other clause: **the instance is still there**.
+  The ledger is consumed at detection, or the same loss would be detected every tick and buy an instance
   every tick; it lives in the CP's memory, so a Control Plane replaced mid-demand detects nothing —
   the same limit the transition's own `prevState` already had (#598).
 - ECS deregisters a terminated instance's container instance by itself — **measured (P2 hardware
@@ -308,11 +308,11 @@ AL2023 GPU AMI (open question 2), the CP calls `PutAttributes` right after regis
   puts the instance into DRAINING, the service's task stops first and `noteReplacement` (0075
   Background, point 4) records "a replacement nobody asked for". **Still (c) after P2** (open
   question 9): the interruption was made with `terminate-instances`, which gives no notice, so
-  draining was never exercised. Nothing depends on it — detection holds on "no box alive" alone.
+  draining was never exercised. Nothing depends on it — detection holds on "no instance alive" alone.
 - The rebuild is decision 1's call again from the top of the list. Being synchronous, 0075
   decision 6's restriction ("write only when the first candidate differs from the current
   provider", to avoid racing ECS's own re-placement) is unnecessary — ECS buys nothing.
-- An interruption is not a failure (0075 decision 6 inherited). A rebuild that gets no box by the
+- An interruption is not a failure (0075 decision 6 inherited). A rebuild that gets no instance by the
   registration ceiling is.
 - **An offer interrupted twice in a row is skipped for the rest of that demand** (0075 decision 6
   inherited). Implemented (#591) and **unmeasured on hardware**: two *detected* interruptions need
@@ -322,37 +322,37 @@ AL2023 GPU AMI (open question 2), the CP calls `PutAttributes` right after regis
 🔁 **What would change this**: the same as 0075 open question 9 (if interruptions are rare, the
 skip is not needed).
 
-### 5. Departure is the CP terminating the box. `draining` is "from the CP's terminate until EC2 says terminated"
+### 5. Departure is the CP terminating the instance. `draining` is "from the CP's terminate until EC2 says terminated"
 
 - When the idle window (0071 decision 5, 0070 decision 5) closes, the CP sets desired 0 → waits
   for the task to go → `DeregisterContainerInstance(Force)` → `TerminateInstances` (the order of
   the slot pool's `terminateSlot`; 0045 decision 23's reason — never leave an ACTIVE ghost behind
-  when it is you who removes the box — applies as written).
+  when it is you who removes the instance — applies as written).
 - `draining` (0071 decision 7) changes meaning from "Managed Instances drains it out of our hands
   in 427-463 s" to "**from the CP issuing the terminate until EC2 reports `terminated`**".
   **Measured (P1 hardware runs 1 and 2, three laps): 4 min 8 s to 5 min 45 s** — 5 min 28 s to
   5 min 45 s on a g6e, 4 min 8 s to 4 min 30 s twice on a g5. The slot figure (0045 decision 22:
-  93 s, CPU) does not carry to a GPU box. 0071 decision 7's drain wait (0074 decision 4) is
-  inherited — no new box while the old one is still `running` — and **its window is carried as
+  93 s, CPU) does not carry to a GPU instance. 0071 decision 7's drain wait (0074 decision 4) is
+  inherited — no new instance while the old one is still `running` — and **its window is carried as
   the range, four to six minutes, not as a number**: a demand that arrives inside it waits up to
-  six minutes for the old box to be gone before a new one is bought, and either side of "five
+  six minutes for the old instance to be gone before a new one is bought, and either side of "five
   minutes" is wrong about a third of the time.
-- 🔴 **The Managed Instances `scaleInAfter` trap disappears.** 0071 P0 measurement 3's "a box left
+- 🔴 **The Managed Instances `scaleInAfter` trap disappears.** 0071 P0 measurement 3's "an instance left
   under `-1` is never reclaimed even after the value changes, and `terminate-instances` is refused
   by the MI policy" cannot exist once the CP is the terminator. In its place, **a terminate the CP
-  forgets leaves a box for ever** — the sweep loop gains one pass in the shape of 0045 decision
+  forgets leaves an instance for ever** — the sweep loop gains one pass in the shape of 0045 decision
   29, audited, in two directions: (a) an EC2 instance tagged `af-role=engine-*` and `running`,
   with **zero running and pending tasks** on its container instance (read from
   `DescribeContainerInstances`, the way `sweepFreeSlots` / `makeRoom` read `slotTaskCounts`),
   older than a grace and with no start in flight for its role — terminated. The CP has no
   `ghostAfter` of its own (that is the slot pool's, in another package), so the grace is **two
   minutes at desired 0** (the ordinary departure, one tick after the task goes) and **fifteen
-  minutes while the service is up** (0075's "two boxes" leak, without touching a task still being
+  minutes while the service is up** (0075's "two instances" leak, without touching a task still being
   placed) — the CP lane's shape, #577;
   (b) a container instance carrying the engine attribute whose EC2 instance is gone —
   deregistered (the shape of 0045's `sweepGhostInstances`, which checks registration age and
   "instance gone", not task counts; the zero-task caution belongs to the free-slot sweeps).
-  **(b) is insurance, measured as such**: on the P2 hardware run ECS deregistered the dead box's
+  **(b) is insurance, measured as such**: on the P2 hardware run ECS deregistered the dead instance's
   container instance itself within 90 s and the CP's own direction had nothing left to do (the (c)
   decision 4 rested on, now confirmed). It stays as the backstop it was written to be — for the day
   ECS does not — and is still unexercised.
@@ -362,16 +362,16 @@ skip is not needed).
 🔁 **What would change this**: fired on one lap of three (5 min 45 s) and not on the other two, so
 the window above is written as the range instead of a number. What would change it now is a lap
 above six minutes, or a demand pattern where the four-to-six-minute wait is the common case
-rather than the rare one — then the drain wait becomes "buy the next box while the old one is
+rather than the rare one — then the drain wait becomes "buy the next instance while the old one is
 `shutting-down`", which decision 5 forbids today.
 
 ### 6. The model directory can be a host volume. P0 keeps it anonymous; P1 measures
 
 - The ECS-optimized AL2023 GPU AMI is not Bottlerocket. `Host: {SourcePath:
   /var/lib/af-engine-models}` simply works, and with the g6 local NVMe mounted from user data
-  **the second start on the same box does not re-fetch the models** (structurally impossible on
+  **the second start on the same instance does not re-fetch the models** (structurally impossible on
   Managed Instances — Background).
-- The value is limited, though: a box goes on departure (decision 5) and on interruption
+- The value is limited, though: an instance goes on departure (decision 5) and on interruption
   (decision 4). It is warm only when desired goes 0 → 1 inside the idle window — the very case
   0071 decision 5 already decided not to stop in. **So P0 keeps the anonymous `Host: {}`**
   (nothing changes).
@@ -379,9 +379,9 @@ rather than the rare one — then the drain wait becomes "buy the next box while
   52.1 GiB, `sync done` in 5 min 47 s at 154 MB/s** (S3 is the ceiling, not the NVMe data-root),
   with **the engine free to start after 1 min 42 s** — the default model set — and `warm: true`
   4 min 59 s after the desired count. The remaining four minutes of the sync happen behind a
-  serving engine. A host volume saves none of that on the two events that actually end a box:
+  serving engine. A host volume saves none of that on the two events that actually end an instance:
   measured on the same run, an interruption cost 53 s to a registered replacement **and then a full
-  cold start on empty hardware**, because the volume died with the box.
+  cold start on empty hardware**, because the volume died with the instance.
 
 🔁 **What would change this**: not the size of the re-fetch — that number prices an interruption,
 and an interruption always lands on new hardware. What would change it is **how often desired goes
@@ -406,7 +406,7 @@ the engine images do not agree with. Then a knob pinning `…/gpu/<version>` is 
 ### 8. The offer list, the VRAM filter, pin/automatic and the panel contract stand. Applying a rung goes
 
 - 0075 decision 1 (declared order is tried order), decision 2 (filter by VRAM), decision 8
-  (pin/automatic), decision 11 (the panel says what it runs on — now **from the box's tags**,
+  (pin/automatic), decision 11 (the panel says what it runs on — now **from the instance's tags**,
   `af-engine-offer` / `af-engine-buy`, not the service) and contract B (`offers` / `offer` /
   `offer_trail`) are **unchanged**. The Console (#549) does not change.
 - **0074 decision 5's rung application (the four-field read-modify-write of
@@ -433,7 +433,7 @@ the engine images do not agree with. Then a knob pinning `…/gpu/<version>` is 
   say "inclusive of the fee" (`engine_class.go`'s field comment, PARAMETERS "The offers") change
   with it.
 
-🔁 **What would change this**: if contract B needs "the box id" (0075 kept `box.provider`
+🔁 **What would change this**: if contract B needs "the instance id" (0075 kept `box.provider`
 CP-internal), it is added by agreement with the Console lane.
 
 ### 9. The llm role stays on-demand only. TTS stays on Fargate
@@ -453,7 +453,7 @@ CP-internal), it is added by agreement with the Console lane.
 | `iam:PassRole` on `role/af-*-engine` (`iam:PassedToService: ec2.amazonaws.com`), as its own statement in the shape of `PassSlotRole` | `iam:PassRole` on `InfraRole` / `InstanceRole` |
 | `iam:CreateServiceLinkedRole` with `iam:AWSServiceName` in `[spot.amazonaws.com, ec2fleet.amazonaws.com]` (the second is what creates `AWSServiceRoleForEC2Fleet`) | `InfraRole` itself |
 | `ssm:GetParameters` on `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/*`, **unconditionally** — measured (P0 open question 3): without it `CreateFleet` fails top-level with `SsmAccessDenied`, naming neither the action nor the parameter. The CP's existing `ssm:GetParameter` is scoped to `/af-ws/*` and cannot read it | |
-| `ec2:CreateTags` is **not** needed for the box's tags: `CreateFleet`'s `TagSpecifications` merges with the launch template's tags (measured). `ec2:DescribeLaunchTemplates` / `Versions` are not needed either | |
+| `ec2:CreateTags` is **not** needed for the instance's tags: `CreateFleet`'s `TagSpecifications` merges with the launch template's tags (measured). `ec2:DescribeLaunchTemplates` / `Versions` are not needed either | |
 
 `ec2:RunInstances` / `TerminateInstances` / `DescribeInstances` / `CreateTags` are already in
 `Ec2SlotPool`; `ecs:ListContainerInstances` / `DescribeContainerInstances` /
@@ -503,9 +503,9 @@ ARN (`ec2:LaunchTemplate`) works on real hardware, `Resource: *` is narrowed.
   table JSON, `capacityProvider` / `spotCapacityProvider` become `launchTemplate` (id); `offers` /
   `offerBudgetSec` / `classes` are unchanged. `CpIngestPolicy` swaps its Managed Instances
   statements for the Fleet ones (decision 10).
-- 🔴 **Order**: (1) **with not one box standing** (both roles `mode: off`, no engine box among
+- 🔴 **Order**: (1) **with not one instance standing** (both roles `mode: off`, no engine instance among
   the container instances), (2) apply this template. Deleting a provider goes through when it has
-  no box (measured on 0074 open question 1's throwaway: `delete-capacity-provider` at zero boxes
+  no instance (measured on 0074 open question 1's throwaway: `delete-capacity-provider` at zero instances
   is `INACTIVE` at once). **Measured (P0 open question 1): the service's
   `CapacityProviderStrategy` → `LaunchType` is a replacement in CloudFormation**, and because
   both services carry an explicit `ServiceName` (`af-<stack>-llm` / `-image`) CloudFormation
@@ -531,7 +531,7 @@ ARN (`ec2:LaunchTemplate`) works on real hardware, `Resource: *` is narrowed.
   `<Role>Enabled=true` read back from the live stack, the only path that repairs it — and
   `cloudformation deploy` keeps every unnamed parameter at its previous value, so retired ones
   fall away silently as long as that block is not touched.
-- **`teardown.sh` terminates engine boxes by tag** (`af-pool` + `af-role=engine-*`) the way it
+- **`teardown.sh` terminates engine instances by tag** (`af-pool` + `af-role=engine-*`) the way it
   terminates slots, before the stacks go — the CP that would have done it is stopped first
   (step 1), and Managed Instances' drain no longer does it for us.
 - Template size: three providers (about 3 KB) and the MI parameter block leave, two launch
@@ -551,16 +551,16 @@ above is the migration. The ECS service is gone for about a minute; unlike TTS n
   three-type Spot row buys cannot be controlled. Three rounds, about $2.2 and a day, produced
   consecutive holes of the same kind. **There is no guarantee a fourth round is the last.**
 - **An Auto Scaling group (`maintain`).** Mixed-instances policies and Spot replenishment exist
-  there, but "one box per role, the CP holds desired" collides with the ASG's autonomous
+  there, but "one instance per role, the CP holds desired" collides with the ASG's autonomous
   replacement — the same shape 0075 decision 6 struggled with against ECS's own re-placement, now
   against the ASG. `instant` is enough.
 - **`RunInstances` (as the slot pool does).** Spot is limited to one type and one AZ, and Spot
   and On-Demand cannot share a request (c). 0074's measurement "widening to three types bought the
-  box (1/10 for one type, 9/10 for three)" maps straight onto instant-fleet overrides, so that is
+  instance (1/10 for one type, 9/10 for three)" maps straight onto instant-fleet overrides, so that is
   what is taken.
 - **EC2 Fleet of type `request` / `maintain`.** Asynchronous; back to 0075's "infer the outcome".
 - **Baking our own AMI** (image layers, models). Withdrawn as slow by 0045 decision 19.
-- **Karpenter / EKS.** A different scale. One box per role does not justify another controller.
+- **Karpenter / EKS.** A different scale. One instance per role does not justify another controller.
 - **Keeping `ecs:UpdateCapacityProvider` and running MI and EC2 side by side.** Two ways to buy
   keep 0075's judgement holes on one side. **Switch in one move** (migration section).
 
@@ -577,15 +577,15 @@ edited; each affected ADR gains "**Appendix — ADR 0077 overrode this decision 
 | 0074 decision 5, "describe → copy → update" | **goes**; a rung is the override type set | the ladder; a stored choice wins |
 | 0074 decision 9, "IAM limited to two capacity providers" | **replaced** (decision 10's table) | what cannot be scoped is fenced by tags |
 | 0075 decision 3, "two providers per role" | **goes** | the offer format and the `buy` column |
-| 0075 decision 4, "the strategy only while running is 0" | **goes** (there is no strategy) | no box swap while running ≥ 1 (decision 5's drain wait) |
+| 0075 decision 4, "the strategy only while running is 0" | **goes** (there is no strategy) | no instance swap while running ≥ 1 (decision 5's drain wait) |
 | 0075 decision 5, "budget and failure codes" | the budget shrinks to **the registration ceiling**; the codes move to `CreateFleet`'s response | one lap then cooldown / one audit line |
 | 0075 decision 6, "interruption" | detection may use `describe-instances` (enumerable) | not a failure / skip after two in a row |
-| 0075 decision 11, "the panel answers from the service's strategy" | **from the box's tags** | EC2 is not asked for prices (`describe-instances` is read) |
+| 0075 decision 11, "the panel answers from the service's strategy" | **from the instance's tags** | EC2 is not asked for prices (`describe-instances` is read) |
 | 0075 decision 12, "re-application is for the provider / CFN puts the strategy back" | **goes** | — |
 
 **What does NOT move**: 0070 decision 1 (the placement is spelled out — `LaunchType: EC2`
 satisfies it), 0045 decision 6 (no MI for Workspaces), 0045 decision 19 (a home-baked AMI is
-slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box side by decision 3),
+slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the instance side by decision 3),
 0074 decisions 1, 2, 3, 6, 7, 10 and 11, 0075 decisions 1, 2, 7, 8, 9 and 10.
 
 ## Open questions (in the order they can be measured for $0)
@@ -600,7 +600,7 @@ slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box
    Depends on: decision 11.
 2. 🔴 **Whether a service placement constraint `memberOf(attribute:af-role == …)` binds on an
    attribute set through `ECS_INSTANCE_ATTRIBUTES`, on the EC2 launch type.** One GPU-less m-class
-   box and a task definition with no GPU requirement; under $0.05. Depends on: decisions 2 and 3.
+   instance and a task definition with no GPU requirement; under $0.05. Depends on: decisions 2 and 3.
 3. 🔴 **The vocabulary of `CreateFleet(instant)`'s `Errors[].ErrorCode`.** With a type above the
    quota (0075 run 4's `g6.4xlarge`), a misspelled type and a type with no stock, what the
    response carries. $0 (nothing launches). Three things ride on the same calls: (a) **the IAM
@@ -613,7 +613,7 @@ slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box
 4. **Whether the CP can create `AWSServiceRoleForEC2Fleet` itself** (does the limited
    `iam:CreateServiceLinkedRole` go through). $0. Depends on: decision 10.
 5. **`awsvpc` on the EC2 launch type: the g6.xlarge ENI limit and the task ENI.** One task per
-   box should fit under a limit of 4, but agent settings such as `ECS_AWSVPC_BLOCK_IMDS` are (c).
+   instance should fit under a limit of 4, but agent settings such as `ECS_AWSVPC_BLOCK_IMDS` are (c).
    Depends on: decision 2. P1's hardware run.
 6. **Measured terminate → `terminated` on a GPU** (the length of decision 5's `draining`).
    **Measured**: 4 min 8 s to 5 min 45 s over three laps (P1 hardware runs 1 and 2); decision 5
@@ -625,9 +625,9 @@ slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box
    If user data mounts it, is it Docker's data-root or the models' host volume? Depends on:
    decision 6. P1.
 9. **Whether the ECS agent's Spot draining works on the AL2023 GPU AMI** (c). **Unmeasured after
-   P2**: the interruption was made with `terminate-instances` — decision 4's "the box is gone" with
+   P2**: the interruption was made with `terminate-instances` — decision 4's "the instance is gone" with
    nothing simulated — which gives no two-minute notice, so draining never had an occasion to run.
-   Nothing waits on the answer any more: detection is "no box of this role alive" on its own
+   Nothing waits on the answer any more: detection is "no instance of this role alive" on its own
    (decision 4).
 10. **Whether `price-capacity-optimized` actually picks a g6** (Managed Instances bought a g6e in
     0075 run 3). P1's hardware run.
@@ -637,7 +637,7 @@ slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box
 ### P0 — the $0 premises (no code)
 
 Scope: open questions 1, 2, 3 and 4. **If any one is red, this ADR is rewritten decision by
-decision** — 1 (the shape of the migration) and 2 (identifying the box) above all.
+decision** — 1 (the shape of the migration) and 2 (identifying the instance) above all.
 
 **Done means**: the four verdicts are appended in the shape of ADR 0075's run 0 (steps, raw
 responses, verdict).
@@ -650,10 +650,10 @@ volume are not in it).
 - CP: **a new EC2 port in package `main`** (`engineFleetAPI`: `CreateFleet`, `DescribeInstances`,
   `TerminateInstances`, `CreateTags`, and `DeleteFleets` if open question 3 (b) says so) with a
   fake, constructed on **every** flavour (today only the ecs-ec2 runtime builds an EC2 client;
-  the engine code has none — Background). Replace "buy", "wait for the box" and "read the failure
+  the engine code has none — Background). Replace "buy", "wait for the instance" and "read the failure
   code" in `engine_offer.go` with one `CreateFleet` per offer. Remove `setStrategy` /
   `writeStrategyOnly` and the provider-named `boxOn()` / `describeBoxes()` from `engine_ecs.go`;
-  identify the box by attribute and tags. Remove `applyEngineClass` / `engineCapacityAPI` from
+  identify the instance by attribute and tags. Remove `applyEngineClass` / `engineCapacityAPI` from
   `engine_class.go`; `startGate` keeps the no-candidate refusal and the swap wait. In
   `runtime_ecs_ec2.go`: `isPoolContainerInstance` gains the attribute clause,
   `sweepSlotOwnerTags` gains the role filter. Contract A (the table JSON): `capacityProvider` /
@@ -661,7 +661,7 @@ volume are not in it).
   `engine_offer_test.go`, `engine_table_reload_test.go` follow). Decision 5's sweep, both
   directions.
 - CFN: as in the migration section, including the Outputs, `CpIngestPolicy`, `standup.sh`'s
-  service-linked role and `af_param_drop` column, `teardown.sh`'s engine-box terminate, and the
+  service-linked role and `af_param_drop` column, `teardown.sh`'s engine-instance terminate, and the
   six harness scripts. Rewrite "The capacity providers" and "The offers" in PARAMETERS.
 - Console: **no change** (contract B is unchanged).
 
@@ -670,15 +670,15 @@ volume are not in it).
 1. A test can say a deployment declaring no offers makes no additional EC2 call (0074 decision 3
    inherited; positive control).
 2. A test can say `CreateFleet`'s `Errors` separate into "next" and "skip this purchase type".
-3. A test can say the only route that sets desired to 1 **comes after the box registered** (a
+3. A test can say the only route that sets desired to 1 **comes after the instance registered** (a
    negative claim — a positive control where removing the guard fails the test).
-4. A test can say `isPoolContainerInstance` sorts the three kinds of box (slot, MI, EC2 engine)
+4. A test can say `isPoolContainerInstance` sorts the three kinds of instance (slot, MI, EC2 engine)
    correctly.
 5. A test can say `sweepSlotOwnerTags` leaves an instance tagged `af-role=engine-*` alone
    (positive control: removing the filter makes it write).
 6. A test can say an `od` offer's overrides carry `Priority` in the declared order.
 7. **On hardware (af-sandbox, the image role, 30 GPU minutes, up to $1)**: the same verdicts as
-   0075's runs 3-7, plus **"exactly one box"** (0075 bought two, three times out of three) and
+   0075's runs 3-7, plus **"exactly one instance"** (0075 bought two, three times out of three) and
    "the start does not wait for the deployment to settle" (the +2 min 35 s is gone). The type the
    Spot row delivered, the `af-engine-buy` tag, `InstanceLifecycle`.
 
@@ -729,7 +729,7 @@ decisions 6, 19, 22, 23, 29; 0070 decision 1; 0071 decisions 1, 2, 5, 7; 0074 de
   of open question 3, together with the rest of the IAM minimum (an `AccessDenied` is $0).
 - **R3. `sweepSlotOwnerTags` filters on `af-pool` alone.** Five EC2-side walks pair `af-pool`
   with `af-role=slot`; this one does not, and it writes `af-membership` / `af-tenant` on what it
-  finds. An engine box tagged `af-pool` (decision 3) would be relabelled by it. Decision 3 gives
+  finds. An engine instance tagged `af-pool` (decision 3) would be relabelled by it. Decision 3 gives
   it the role filter, with a test (done item 5). Also corrected: the slot tags come from the CP
   at `RunInstances`, not from `40-ec2-pool.yaml` (whose only tag is `af-managed-by`), and the
   engine services and providers already carry `af-pool` / `af-role=engine-<role>`.
@@ -738,10 +738,10 @@ decisions 6, 19, 22, 23, 29; 0070 decision 1; 0071 decisions 1, 2, 5, 7; 0074 de
   the top and the two-in-a-row skip were 0075 P1 and were not reached — `engine_offer.go`'s own
   header says so. The decision now says it inherits the design, and P2 builds it once.
 - **R5. `isPoolContainerInstance`'s new rule dropped the provider test.** "Changes from A to B"
-  would let a Managed Instances box (no attribute) back into the pool, contradicting the same
+  would let an instance from Managed Instances (no attribute) back into the pool, contradicting the same
   paragraph's "both leave through the same function" and the three-kind test. The rule is now
   "A and B". The same paragraph gained: the engine's deregister does not reuse `deregisterSlot`
-  (it applies the pool test), and decision 5's sweep runs in both directions — an EC2 box with
+  (it applies the pool test), and decision 5's sweep runs in both directions — an EC2 instance with
   no tasks, and a container instance with no EC2 — since the pool's `sweepGhostInstances` will no
   longer see engine ghosts. The attribution "zero tasks, the caution of `sweepGhostInstances`"
   was wrong too: that sweep checks registration age and "instance gone"; the task-count caution
@@ -761,7 +761,7 @@ decisions 6, 19, 22, 23, 29; 0070 decision 1; 0071 decisions 1, 2, 5, 7; 0074 de
   parameters. `*StorageGiB` stays and becomes the root volume size — the anonymous model volume
   lands on the root filesystem, and a 30 GiB default root (c) does not hold a comfy deployment's
   models. The three `*CapacityProviderName` Outputs go with the providers, and six harness
-  scripts read them; `teardown.sh` relied on Managed Instances' drain to remove the box and now
+  scripts read them; `teardown.sh` relied on Managed Instances' drain to remove the instance and now
   terminates by tag, as it does slots.
 - **R9. The CP's `main` package has no EC2 client.** The engine ports are ECS-only
   (`engineECSAPI`, `engineCapacityAPI`); the one EC2 port is unexported in `internal/runtime`
@@ -840,12 +840,12 @@ decision above is edited** — this section is the record, in the shape of 0075'
    `!GetAtt EngineInstanceRole.Arn` — the same shape, one resource tighter. (The role is still
    named `af-<stack>-engine`, which the convention would also have matched. `EngineTaskRole` is
    `af-<stack>-engine-task` and would not have been.)
-3. **`teardown.sh` already terminated an engine box; what was missing was the words.** Decision 11
+3. **`teardown.sh` already terminated an engine instance; what was missing was the words.** Decision 11
    asks for a terminate "by tag `af-pool` + `af-role=engine-*`, the way it terminates slots".
    `list_slots` filters on `af-pool` **alone** — the same one-filter shape review R3 found as a bug
-   in `sweepSlotOwnerTags` — so a CP-bought engine box is already in the list step 3 terminates.
-   Only a Managed Instances box was invisible there (an AWS-managed account, not enumerable), which
-   is why the step read "slots". The lane renamed the step, counted engine boxes separately and
+   in `sweepSlotOwnerTags` — so a CP-bought engine instance is already in the list step 3 terminates.
+   Only an instance from Managed Instances was invisible there (an AWS-managed account, not enumerable), which
+   is why the step read "slots". The lane renamed the step, counted engine instances separately and
    said why; it did not add a second terminate pass.
 4. **The launch templates are created unconditionally**, as the capacity providers were. Decision
    11 does not say, and `<Role>Enabled` would be the obvious condition — but `check-cfn-exports.py`
@@ -892,7 +892,7 @@ What was pushed on top of the branch:
    volume — no task-definition change. An EBS-only type matches nothing and keeps the root volume;
    the AMI's cached agent and pause images are copied across first; every step is chained so a
    failure leaves Docker where it was. 🔴 **Not measured**: the first P1 run checks
-   `df /var/lib/docker` and `docker info | grep "Docker Root Dir"` on the box, because the symptom
+   `df /var/lib/docker` and `docker info | grep "Docker Root Dir"` on the instance, because the symptom
    of a silent failure here is only "the start is slow".
 
 Template size after all of it: **40,182 bytes** (was 36,816 in the first push; the wall is 51,200).
@@ -900,7 +900,7 @@ Template size after all of it: **40,182 bytes** (was 36,816 in the first push; t
 ### And one from the CP lane (PR #577): the budget's meaning and default
 
 `<Role>OfferBudgetSec` is the only contract-A field besides `launchTemplate` that this ADR moves,
-and the CP lane settled it: it bounds **the ECS registration wait for the box that was bought**,
+and the CP lane settled it: it bounds **the ECS registration wait for the instance that was bought**,
 not a per-offer purchase clock — the purchase answers in the call — and the Control Plane's
 default is **300 s**, decision 1's number. So the template's `Default` is 300 on both roles, and
 the two `Description` lines say what it now bounds.
@@ -920,9 +920,9 @@ stack, the real cluster, a real service or a capacity provider: every write name
 name starts with `af-adr0077-p0-`. **No GPU was bought.** Elapsed: **16 minutes 45 seconds**
 (11:50:02-12:06:47 JST).
 
-Two non-GPU boxes were run, not one: open question 2's `t3.small` (3 min 6 s) and — a deliberate
+Two non-GPU instances were run, not one: open question 2's `t3.small` (3 min 6 s) and — a deliberate
 addition — one `t3.small` bought by a *successful* `CreateFleet` under the candidate IAM set
-(1 min 6 s). The second box exists because the IAM set was otherwise proved only against calls that
+(1 min 6 s). The second instance exists because the IAM set was otherwise proved only against calls that
 launched nothing, and the measurement below shows that is exactly where `iam:PassRole` is **not**
 checked. About 4.2 instance-minutes in total, inside open question 2's own $0.05 allowance.
 
@@ -991,13 +991,13 @@ and the task definition the stack already carries (`awsvpc`, 256/512, no GPU req
 
 **Verdict 🟢.** The agent honours `ECS_INSTANCE_ATTRIBUTES` on the AL2023 ECS AMI, and a *service*
 placement constraint reading that attribute binds on the EC2 launch type. The positive control
-shows the constraint is genuinely evaluated rather than ignored — the same box, the same task
+shows the constraint is genuinely evaluated rather than ignored — the same instance, the same task
 definition, one word different in the expression, and the task will not place.
 
 **Impact — depends on: decisions 2 and 3.** Both stand as written. Decision 2's 🔁 (write
 `ec2InstanceId` on the task definition and cut a revision per start) is **not needed**. Decision
 3's 🔁 (`PutAttributes` right after registration) is **not needed**. Two premises of decision 3
-were confirmed as side effects: an EC2 box the CP buys carries **no `capacityProviderName`**
+were confirmed as side effects: an EC2 instance the CP buys carries **no `capacityProviderName`**
 (so `isPoolContainerInstance` does collapse as the Background says, and does need the attribute
 clause), and `awsvpc` on the EC2 launch type attaches a task ENI without any agent setting.
 One item of decision 4 gained support it did not have: ECS **does** deregister a terminated
@@ -1058,20 +1058,20 @@ added, and one already in the table was proved necessary the hard way.
 parameter is required of the **caller** of `CreateFleet`, exactly as (c) suspected. Two grants that
 are *not* needed and should not be added: `ec2:DescribeLaunchTemplates` /
 `ec2:DescribeLaunchTemplateVersions` (the role held neither and `CreateFleet` resolved the template
-by name), and `ec2:CreateTags` for the box's tags — see (d).
+by name), and `ec2:CreateTags` for the instance's tags — see (d).
 
 #### (b) The instant fleet lingers, and `DeleteFleets(TerminateInstances=false)` is refused
 
 - After a call that launched **nothing**, `describe-fleets --fleet-ids <id>` returns the fleet as
   `FleetState: active`, `ActivityStatus: fulfilled`, `FulfilledCapacity: 0.0`, with its whole
   recorded configuration.
-- After the successful call's box was terminated, the fleet stayed **`active` / `fulfilled` /
+- After the successful call's instance was terminated, the fleet stayed **`active` / `fulfilled` /
   `FulfilledCapacity: 1.0`** — a number that is now false — through a further 30 s of polling. It
   does **not** delete itself. Published spec (c) says it does; on this deployment it does not.
 - 🔴 `delete-fleets --no-terminate-instances` — the exact call decision 1 names — is refused:
   `NoTerminateInstancesNotSupported`, *"NoTerminateInstances option is not supported for instant
   fleet"*. Only `--terminate-instances` works (`deleted_terminating` → `deleted`), which for the
-  CP means the call is only safe on a fleet whose box it has already decided to lose.
+  CP means the call is only safe on a fleet whose instance it has already decided to lose.
 - 🟢 **But nothing accumulates on a path the CP walks**: an unfiltered `describe-fleets` returned
   `{"Fleets": []}` throughout, while the by-id calls in the same second returned the fleets — that
   by-id call is the positive control for the empty list. Instant fleets are simply not enumerated.
@@ -1092,13 +1092,13 @@ written against this shape.
 #### (d) Two things the calls handed back that the text does not have
 
 - **The whole tag set lands in the one `CreateFleet` call.** Request-level `TagSpecifications`
-  (`ResourceType: instance`) **merges** with the launch template's own tags: the box came up
+  (`ResourceType: instance`) **merges** with the launch template's own tags: the instance came up
   carrying `af-pool`, `af-role=engine-image`, `af-engine-offer`, `af-engine-buy` from the request
   *and* `af-managed-by=agent-fleet` from the template. Decision 3's tag set needs no separate
   `CreateTags` — unlike the slot pool, which tags at `RunInstances`.
-- **EC2 writes `aws:ec2:fleet-id` on the box by itself.** So the CP can reach the fleet from the
-  box with no memory at all, which is the 0045 decision 29 shape decision 3 asks for, for free.
-- `InstanceLifecycle` is **absent** on an on-demand box (it is `spot` on a Spot one — 0075's
+- **EC2 writes `aws:ec2:fleet-id` on the instance by itself.** So the CP can reach the fleet from the
+  instance with no memory at all, which is the 0045 decision 29 shape decision 3 asks for, for free.
+- `InstanceLifecycle` is **absent** on an on-demand instance (it is `spot` on a Spot one — 0075's
   measurement). Done item 7's "`InstanceLifecycle`" check must read "absent" as "on-demand", not
   as missing data.
 
@@ -1143,7 +1143,7 @@ shows the tool would have found something (the positive control is in the same o
 - `describe-stacks` → the **seven real stacks only** (`af-ecs-network` … `af-ecs-engines`, all
   `CREATE_COMPLETE` / `UPDATE_COMPLETE`); `af-adr0077-p0-oq1` is gone (12:06:47).
 - `describe-instances --filters Name=tag-key,Values=af-adr0077-p0` **with no state filter** → the
-  two probe boxes, both `terminated`. (An empty answer here would have been the ambiguous one.)
+  two probe instances, both `terminated`. (An empty answer here would have been the ambiguous one.)
 - `describe-launch-templates` → `af-af-ecs-pool-slot` only.
 - `list-roles` for `af-*` → the eight real roles only; both throwaway roles and the instance
   profile are gone.
@@ -1190,7 +1190,7 @@ in this. What the implementation handed back:
   `unusable` only when EVERY override said it; a minority means the other overrides are still
   worth asking for, and the walk takes the next row instead.
 - **`<role>OfferBudgetSec`'s default moves from 180 to 300 seconds** with its meaning (decision 1).
-  ⚠️ **A deployment that wrote 180 for the old meaning would give a box 180 seconds to register**,
+  ⚠️ **A deployment that wrote 180 for the old meaning would give an instance 180 seconds to register**,
   which is inside ADR 0045 decision 22's measurement (21 s, 77 s with a home-baked AMI) but leaves
   little room on a slow boot. The CFN lane settled the other half of this independently and the
   two agree: `standup.sh` drops a captured **180 and nothing else**, so the template's 300 stands
@@ -1202,30 +1202,30 @@ in this. What the implementation handed back:
   change" holds — but contract B is "unchanged minus one field that can no longer occur", not
   "unchanged".
 - **Decision 3's new filter on `sweepSlotOwnerTags` is `af-role ∈ {slot, quarantined}`, not
-  `= slot`.** A quarantined box can still carry a person's `af-membership` (it is stopped, not
+  `= slot`.** A quarantined instance can still carry a person's `af-membership` (it is stopped, not
   released), and repairing exactly that is what the sweep exists for; narrowing to `slot` alone
-  would leave a stale owner tag billing somebody for a box they do not have — the same defect the
+  would leave a stale owner tag billing somebody for an instance they do not have — the same defect the
   filter was added to prevent, in the other direction.
 - **`draining` is answered from EC2 through a function handed to the ECS adapter.** Decision 5
   gives the terminate to the CP and orders it deregister-then-terminate, which means ECS knows
-  nothing about the box during the very window the state names. `engineECS` therefore holds no
+  nothing about the instance during the very window the state names. `engineECS` therefore holds no
   EC2 client and no tags: it is given `fleet.live` when the offers are wired, and a Fargate engine
   is given nothing and pays for nothing.
 - **Decision 5's sweep needs TWO graces, because the CP has no `ghostAfter` of its own** (that is
-  the slot pool's configuration, in another package). At desired 0 a box with no task is ended
+  the slot pool's configuration, in another package). At desired 0 an instance with no task is ended
   after 2 minutes — that is the ordinary departure, one tick after the task goes — and while the
-  service is up a second box with no task is ended after 15 minutes, which is the "two boxes"
+  service is up a second instance with no task is ended after 15 minutes, which is the "two instances"
   leak of ADR 0075 without ever touching a task that is merely still being placed.
 - **Decision 9's refusal is keyed by the ROLE at parse time** (`parseEngineOffers(key, spec)`), so
   it is one function and not a condition at each call site; the reloader uses the same one.
 - **A start already in flight is a fourth gate on `startGate`.** Decision 8 leaves the gate with
   the no-candidate refusal and the swap wait; a third was needed. The admin toggle calls the gate
-  itself, so without this the toggle's own call would begin the walk again while a box was
+  itself, so without this the toggle's own call would begin the walk again while an instance was
   registering and buy a second one — the failure ADR 0075 produced three times out of three.
 - **Contract A's final shape, for the CFN lane**: `launchTemplate` (a launch template id `lt-…`
   or a name) replaces `capacityProvider` and `spotCapacityProvider`, which are **ignored** wherever
   a stack still emits them. `offers`, `offerBudgetSec`, `classes` and every other field are
-  unchanged. A row with no `launchTemplate` buys no box and recognises none: it keeps serving and
+  unchanged. A row with no `launchTemplate` buys no instance and recognises none: it keeps serving and
   starts the engine the plain way, which is what a CP upgraded before its stack does.
 
 ## Revisions after P0 and the P1 lanes (2026-09-12)
@@ -1238,7 +1238,7 @@ that P0 measured to be wrong or (c).
 | Decision | What changed | Source |
 |---|---|---|
 | 1 | "if fleets linger, `DeleteFleets`" → measured: they linger but are invisible to `describe-fleets` unless named by id, and `DeleteFleets(TerminateInstances=false)` is refused; **no follow-up call**, the port is three calls / `Priority` is honoured and recorded | P0 open question 3 |
-| 3 | `sweepSlotOwnerTags`'s filter is `af-role` in `{slot, quarantined}`, not `slot` alone (a quarantined box still carries the owner tag the sweep repairs) | #577 |
+| 3 | `sweepSlotOwnerTags`'s filter is `af-role` in `{slot, quarantined}`, not `slot` alone (a quarantined instance still carries the owner tag the sweep repairs) | #577 |
 | 5 | the sweep's grace is not the slot pool's `ghostAfter` (another package) but two minutes at desired 0 and fifteen minutes while the service is up | #577 |
 | 8 | the failure-code table is written out with the measured vocabulary; `InvalidFleetConfiguration` is `unusable` only when every override says it; **authorization failures inside `Errors[]` are a hard failure that stops the lap**, and `--dry-run` is no pre-flight | P0 open question 3 |
 | 10 | `ssm:GetParameters` on the public AMI parameter is **unconditional**; `DescribeFleets` / `DeleteFleets` / `CreateTags` / `DescribeLaunchTemplates` are not needed; the service-linked role is "cheap insurance", the published "first call fails" was not confirmed | P0 open questions 3 and 4 |
@@ -1253,11 +1253,11 @@ mounts the NVMe as Docker's data-root from user data, and the P1 hardware run re
 
 Done item 7, on af-sandbox, with the CP and CFN lanes (#575, #577) in develop and the Control
 Plane at `0.19.1-dev-07f95ee0`. **The migration went through and the purchase side is green; the
-box side was red twice and the departure is still red.** Six GPU boxes, **30 minutes 24 seconds**
+instance side was red twice and the departure is still red.** Six GPU instances, **30 minutes 24 seconds**
 of GPU, about **$1.02** — the budget was one and a half cents over, and the reason is in the cost
-table: four of the six boxes were bought by a start that could never succeed, because **not one
-box the launch template bought could join the cluster**. The cause was found on hardware, fixed in
-the template, and the fix was measured (a box registered in 48 s); what the budget gate then cut
+table: four of the six instances were bought by a start that could never succeed, because **not one
+instance the launch template bought could join the cluster**. The cause was found on hardware, fixed in
+the template, and the fix was measured (an instance registered in 48 s); what the budget gate then cut
 short is `warm: true` and the image generation.
 
 Everything below is a raw return value or a Control Plane log line. Where something was not
@@ -1267,7 +1267,7 @@ reached, it says so rather than being estimated.
 
 | Step | Elapsed | What came back |
 |---|---|---|
-| Both roles `mode: off`, no engine box among the container instances | — | `describe-container-instances` → four slot boxes, `capacityProviderName: null`, no `af-role` attribute. `image` was already `off`, `llm` was `ondemand` and was turned off |
+| Both roles `mode: off`, no engine instance among the container instances | — | `describe-container-instances` → four slot instances, `capacityProviderName: null`, no `af-role` attribute. `image` was already `off`, `llm` was `ondemand` and was turned off |
 | `update-stack --use-previous-template`, `LlmEnabled=false ImageEnabled=false` (the OLD template) | **24.8 s** (04:53:40.692 → 04:54:05.454 UTC) | Both services `DELETE_COMPLETE` at 04:54:03. P0's 25 s reproduced exactly |
 | `dev-deploy.sh --profile af-sandbox --region ap-northeast-1` | **≈31 min** (13:56 → 14:26:49 JST), about 20 of them the two-architecture QEMU bake | 60-engines itself: **189 s** (05:17:56.559 → 05:21:05.407). `LlmCapacityProvider` / `ImageCapacityProvider` / `ImageSpotCapacityProvider` / `InfraRole` / `InstanceRole` / `InstanceProfile` `DELETE_COMPLETE`; `LlmLaunchTemplate` / `ImageLaunchTemplate` / `EngineInstanceRole` / `EngineInstanceProfile` `CREATE_COMPLETE`; `CpIngestPolicy` and `Associations` updated. 20-platform: "No changes to deploy" — the Fleet grants really are 60-engines' alone (R1) |
 | `cloudformation deploy … --parameter-overrides LlmEnabled=true ImageEnabled=true` | 🔴 **691 s** (05:28:39.986 → 05:40:10.996), and it only finished because of a hand intervention — see below | `launchType: EC2`, `capacityProviderStrategy: null`, `placementConstraints: [{memberOf, "attribute:af-role == engine-image"}]` |
@@ -1281,7 +1281,7 @@ Managed Instances providers are gone outright, not `INACTIVE`), and `/af-ws/engi
 `AWS::ECS::Service` has no `DesiredCount` in this template deliberately ("for a NEW service an
 unspecified desired count defaults to 1", PARAMETERS, "The engine services"). Under Managed
 Instances that was harmless: desired 1 sent ECS shopping and the service stabilised. On the EC2
-launch type **there is no box**, so both services were created at desired 1 with nothing to place
+launch type **there is no instance**, so both services were created at desired 1 with nothing to place
 on, and CloudFormation sat on the stabilisation wait:
 
 ```
@@ -1343,7 +1343,7 @@ request and `CreateService` response). Cloud Map re-issued the same id for the s
 namespace-and-name pair. That is a property of Cloud Map, not evidence that the resource survived
 — PARAMETERS' ✅ says the second thing and has to be corrected to the first.
 
-### The $0 positive controls (05:47:38-42, four seconds, no box)
+### The $0 positive controls (05:47:38-42, four seconds, no instance)
 
 Declared: `bad` (spot, `g6.xxlarge`) / `q4x` (spot, `g6.4xlarge`) / `q4xb` (spot, `g6.4xlarge`) /
 `od48` (od, `g6.48xlarge`).
@@ -1360,16 +1360,16 @@ Declared: `bad` (spot, `g6.xxlarge`) / `q4x` (spot, `g6.4xlarge`) / `q4xb` (spot
 not a proxy timeout, and it is the same 502 an operator will see on a deployment that simply has
 no capacity today. Worth a friendlier code, but it is not wrong.
 
-### 🔴 The box side: not one box could join the cluster, in two layers
+### 🔴 The instance side: not one instance could join the cluster, in two layers
 
-| Run | Boxes | What happened |
+| Run | Instances | What happened |
 |---|---|---|
 | A (05:50-06:05) | `i-0b8c…` g6.xlarge spot, `i-0d42…` g6.xlarge od, `i-0a96…` g6e.xlarge od | Each: `the box … for offer <id> did not register within 3m0s; ending it` → the next offer. The whole list spent |
 | B (06:07-06:13), after fix 1 | `i-0779…` g5.xlarge spot, `i-0225…` g6.xlarge od | Same |
 | C (06:14-06:23), after fix 2 | `i-0353…` g6e.xlarge od | **registered in 48 s** |
 
-**The diagnosis was made on a live box over SSM** (`AmazonSSMManagedInstanceCore` is on
-`EngineInstanceRole`, and the agent was `Online` — so the box had network, credentials and a route
+**The diagnosis was made on a live instance over SSM** (`AmazonSSMManagedInstanceCore` is on
+`EngineInstanceRole`, and the agent was `Online` — so the instance had network, credentials and a route
 to AWS all along):
 
 ```
@@ -1381,7 +1381,7 @@ df -h /var/lib/docker            →  /dev/nvme1n1  233G  1.7G  232G   1% /var/l
 
 So the user data had done its whole job — the NVMe was mounted as Docker's data-root and
 `/etc/ecs/ecs.config` held `ECS_CLUSTER` and `ECS_INSTANCE_ATTRIBUTES` — and **the agent had simply
-never been started**. `systemctl start ecs` by hand registered the box in **three seconds**
+never been started**. `systemctl start ecs` by hand registered the instance in **three seconds**
 (`Websocket connection established … containerInstanceArn=…/a0694593…`). That is the positive
 control for everything else in the chain being right.
 
@@ -1389,12 +1389,12 @@ control for everything else in the chain being right.
    data-root; systemd cancels the start job it had queued for `ecs.service` from
    `multi-user.target`, and `systemctl start docker` does not queue it again. The agent is left
    `inactive (dead)` with an empty journal — **there is no error anywhere**, and the only symptom
-   is a box that never registers. Neither decision 6 nor PARAMETERS' "the order works because the
+   is an instance that never registers. Neither decision 6 nor PARAMETERS' "the order works because the
    ECS agent has not started yet" anticipates it: the agent has not started, but it *had a job
    waiting*, and stopping docker took that job away.
 2. 🔴 **A plain `systemctl start ecs` at the end of the user data deadlocks.** `ecs.service` is
    `After=cloud-final.service` and the user data *is* cloud-final, so a blocking start waits for a
-   job that waits for the caller. Measured on the next box, live:
+   job that waits for the caller. Measured on the next instance, live:
 
    ```
    JOB UNIT                  TYPE  STATE
@@ -1403,13 +1403,13 @@ control for everything else in the chain being right.
    cloud-init status: running
    ```
 
-   The box sat there until the registration ceiling terminated it.
+   The instance sat there until the registration ceiling terminated it.
 
 **The fix is `systemctl start --no-block ecs`, last, after `ecs.config` is written** (the agent
 reads the file at start). It is in this PR, in both roles' launch templates, with the two
-measurements as the comment. ⚠️ It reaches a box only because the CP asks for the launch
+measurements as the comment. ⚠️ It reaches an instance only because the CP asks for the launch
 template's **`$Latest`** version: CloudFormation created version 2 and then 3 and left
-`DefaultVersionNumber` at **1** throughout. The box that worked carries
+`DefaultVersionNumber` at **1** throughout. The instance that worked carries
 `aws:ec2launchtemplate:version = 3`.
 
 **Impact — decisions 6 and 7 and the CFN lane's follow-up item 4.** No decision's premise moves;
@@ -1418,42 +1418,42 @@ half of the story.
 
 ### Run C, the checks done item 7 asks for
 
-The box (`i-0353a9e56cba02b2f`, `g6e.xlarge`, on-demand, offer `l40s`) was bought at 06:14:15 and
+The instance (`i-0353a9e56cba02b2f`, `g6e.xlarge`, on-demand, offer `l40s`) was bought at 06:14:15 and
 the run was stopped by the budget gate at 06:19:13.
 
 | Check | Result | Evidence |
 |---|---|---|
-| **exactly one box** (ADR 0075 bought two, three times out of three) | 🟢 | At no sample was more than one `af-role=engine-image` instance `running`; the cluster's container instances went 4 → 5 → 4. `offer_trail` has one `active` row. The 0075 shape cannot occur: the desired count is written after registration, so there is no window in which ECS places anything itself |
-| **the start does not wait for the deployment to settle** | 🟢 | `06:15:03 engines: image: the box i-0353… registered; asking for the task` — the desired count goes up **in the same second the box registers**. 0075's re-run paid 2 min 35 s here, waiting for the old deployment to leave; that wait has no shape to take and does not appear in the log |
-| buy → box registered | 🟢 **48 s** | bought 06:14:15, registered 06:15:03. The ceiling in force was **180 s** (see below) |
+| **exactly one instance** (ADR 0075 bought two, three times out of three) | 🟢 | At no sample was more than one `af-role=engine-image` instance `running`; the cluster's container instances went 4 → 5 → 4. `offer_trail` has one `active` row. The 0075 shape cannot occur: the desired count is written after registration, so there is no window in which ECS places anything itself |
+| **the start does not wait for the deployment to settle** | 🟢 | `06:15:03 engines: image: the box i-0353… registered; asking for the task` — the desired count goes up **in the same second the instance registers**. 0075's re-run paid 2 min 35 s here, waiting for the old deployment to leave; that wait has no shape to take and does not appear in the log |
+| buy → instance registered | 🟢 **48 s** | bought 06:14:15, registered 06:15:03. The ceiling in force was **180 s** (see below) |
 | the Spot row's type (0075 run 3 got a g6e) | 🟢 | Two Spot purchases: **`g6.xlarge`** (run A) and **`g5.xlarge`** (run B). Never g6e. `price-capacity-optimized` is doing what Managed Instances could not be asked to do — the spot prices at the time were g6.xlarge $0.563-0.576, g5.xlarge $0.739-0.790, g6e.xlarge $1.353 |
-| `af-engine-buy` / `af-engine-offer` tags | 🟢 | On the box from the one `CreateFleet`: `af-pool=af-af-ecs-platform`, `af-role=engine-image`, `af-engine-offer=l40s`, `af-engine-buy=od`, `af-managed-by=agent-fleet`, `Name=af-engine-image`, plus EC2's own `aws:ec2:fleet-id` and `aws:ec2launchtemplate:{id,version}`. No `CreateTags` call, as P0 (d) said |
-| `InstanceLifecycle` | 🟢 | `spot` on both Spot boxes, **absent** on all four on-demand ones — P0 (d)'s reading ("absent means on-demand") is what a reader needs |
-| the panel answers from the box | 🟢 | `box: {id: i-0353…, instance_type: g6e.xlarge, since: 06:14:48Z, status: ACTIVE}` and `offer: {id: l40s, buy: od}`, with `offer_trail` `[spot3 budget, l4 budget, l40s active]`. Never `null` while the box was up |
+| `af-engine-buy` / `af-engine-offer` tags | 🟢 | On the instance from the one `CreateFleet`: `af-pool=af-af-ecs-platform`, `af-role=engine-image`, `af-engine-offer=l40s`, `af-engine-buy=od`, `af-managed-by=agent-fleet`, `Name=af-engine-image`, plus EC2's own `aws:ec2:fleet-id` and `aws:ec2launchtemplate:{id,version}`. No `CreateTags` call, as P0 (d) said |
+| `InstanceLifecycle` | 🟢 | `spot` on both Spot instances, **absent** on all four on-demand ones — P0 (d)'s reading ("absent means on-demand") is what a reader needs |
+| the panel answers from the instance | 🟢 | `box: {id: i-0353…, instance_type: g6e.xlarge, since: 06:14:48Z, status: ACTIVE}` and `offer: {id: l40s, buy: od}`, with `offer_trail` `[spot3 budget, l4 budget, l40s active]`. Never `null` while the instance was up |
 | **`df /var/lib/docker` is the instance store** (open question 8, unverified until now) | 🟢 | `/dev/nvme1n1 233G … /var/lib/docker`, `Docker Root Dir: /var/lib/docker`, and `du -sh /var/lib/docker/volumes` → **24G** while the fetch ran. The anonymous `host` volume lands on the NVMe exactly as designed, with no task-definition change |
 | the fetch runs at NVMe speed, not 125 MB/s | 🟢 | From the fetch sidecar's own log: `sd3.5_medium 5,107,104,286 bytes in 27s` (189 MB/s), `t5xxl 4,893,934,904 in 47s` (104 MB/s), `neoAnime 7,105,352,134 in 34s` (209 MB/s), `sd_xl_base 6,938,078,334 in 34s` (204 MB/s), `z_image_turbo 12,309,866,400 in 60s` (205 MB/s). ADR 0071's Managed Instances figure was 104-147 MB/s |
-| `state: running` / `warm: true` | 🔴 **not reached** | desired 1 at 06:15:03 → fetch started 06:15:31 → the default model set on disk 06:17:04 → the ComfyUI process up on the GPU at **06:18:52** (`Total VRAM 45458 MB … Device: cuda:0 NVIDIA L40S`), i.e. **3 min 49 s** from the desired count. The budget gate closed at 06:19:13, ~30-90 s short of the warm probe. For comparison: ADR 0075's re-run reached `warm: true` in 5 min 11 s on a g6.xlarge Spot box under Managed Instances |
+| `state: running` / `warm: true` | 🔴 **not reached** | desired 1 at 06:15:03 → fetch started 06:15:31 → the default model set on disk 06:17:04 → the ComfyUI process up on the GPU at **06:18:52** (`Total VRAM 45458 MB … Device: cuda:0 NVIDIA L40S`), i.e. **3 min 49 s** from the desired count. The budget gate closed at 06:19:13, ~30-90 s short of the warm probe. For comparison: ADR 0075's re-run reached `warm: true` in 5 min 11 s on a g6.xlarge Spot instance under Managed Instances |
 | one image generated, 200 | 🔴 **not reached** | Same gate |
-| **departure**: desired 0 → deregister → terminate | 🔴 | `mode: off` at 06:19:13 → `desiredCount` 0 immediately, the task gone by 06:20:29 (**76 s**) — and then **nothing**. Four minutes later the box was still `running`, the panel still read `box: {…, status: ACTIVE}` / `state: draining`, and the CP had logged not one line. Terminated by hand at 06:23:39 |
+| **departure**: desired 0 → deregister → terminate | 🔴 | `mode: off` at 06:19:13 → `desiredCount` 0 immediately, the task gone by 06:20:29 (**76 s**) — and then **nothing**. Four minutes later the instance was still `running`, the panel still read `box: {…, status: ACTIVE}` / `state: draining`, and the CP had logged not one line. Terminated by hand at 06:23:39 |
 | terminate → `terminated` (open question 6) | measured **5 min 28 s - 5 min 45 s** | `terminate-instances` at 06:23:39, last seen `shutting-down` at 06:29:07, `terminated` at 06:29:24 (15 s polling). 🔴 That is **above the five minutes** decision 5's 🔁 names, so 0071 decision 7's window arithmetic is due a rewrite |
 
 #### 🔴 Why the departure never happens: `startInFlight()` is never cleared
 
 `sweepBoxes` (decision 5, both directions) returns early while `e.offers.startInFlight()` is true,
-and that is right — a box bought seconds ago has no task on it by construction. But
-`startInFlight()` is `boxID() != ""`, and the only two things that clear the box id are
+and that is right — an instance bought seconds ago has no task on it by construction. But
+`startInFlight()` is `boxID() != ""`, and the only two things that clear the instance id are
 `dropBox()` on the registration-ceiling path and `begin()` at the *next* start. **A start that
-succeeds leaves it set for ever.** So from the moment a box registers, decision 5's sweep is
+succeeds leaves it set for ever.** So from the moment an instance registers, decision 5's sweep is
 switched off for that engine — including the ordinary departure it exists to perform, which is
 exactly the tick after the one that wrote desired 0.
 
-The comment on `startInFlight` states the intent precisely — "a box is bought and the desired
+The comment on `startInFlight` states the intent precisely — "an instance is bought and the desired
 count has not been written yet" — and nothing writes the second half back. Measured twice today:
-once with mode off and a box that never registered (still `running` 9 minutes later), once with
+once with mode off and an instance that never registered (still `running` 9 minutes later), once with
 mode off after a successful start (still `running` 4 minutes later, terminated by hand).
 
 **Impact — decision 5.** Its premise is untouched; the implementation switches its own sweep off.
-The fix belongs to the CP lane: clear the box id where `setEnabled(ctx, true)` is called after
+The fix belongs to the CP lane: clear the instance id where `setEnabled(ctx, true)` is called after
 `registered()`, and pin it with a test whose positive control is that leaving it set makes the
 departure sweep never fire.
 
@@ -1468,7 +1468,7 @@ is the slow boot it does not leave room for.
 
 ### Cost and cleanup
 
-| Box | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
+| Instance | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
 |---|---|---|---|---|---|---|---|
 | `i-0b8c04c29851f88fa` | g6.xlarge | spot | 05:50:11 | 05:53:16 | 3m05s | 0.576 | $0.030 |
 | `i-0d428939322e54519` | g6.xlarge | on-demand | 05:53:17 | 05:56:22 | 3m05s | 1.167 | $0.060 |
@@ -1479,8 +1479,8 @@ is the slow boot it does not leave room for.
 
 **30 minutes 24 seconds, about $1.02** (on-demand prices from the pricing API for
 ap-northeast-1/Linux; Spot from `describe-spot-price-history` in the same hour). The budget was
-$1, and it went 2% over while the last box was being read for the `df` and fetch numbers. ⚠️ **The
-two g6e boxes are 82% of the spend** — both were reached because the offer walk fell through to
+$1, and it went 2% over while the last instance was being read for the `df` and fetch numbers. ⚠️ **The
+two g6e instances are 82% of the spend** — both were reached because the offer walk fell through to
 `l40s` after the two cheaper rows had been terminated at the registration ceiling, and both
 outlived their purpose because the departure defect above meant they had to be ended by hand.
 There is no Managed Instances fee in any of these figures any more (decision 8).
@@ -1489,9 +1489,9 @@ There is no Managed Instances fee in any of these figures any more (decision 8).
   `AWSServiceRoleForEC2Fleet` and `AWSServiceRoleForEC2Spot` both already existed.
 - `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**: six
   instances, all `terminated`. (The positive control is in the same output — the query with
-  `tag-key=af-role` alone returns 10, the four slot boxes included, so an empty answer would have
+  `tag-key=af-role` alone returns 10, the four slot instances included, so an empty answer would have
   been the ambiguous one.)
-- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → `[]`, as
+- Container instances back to **four**, all slot instances. `describe-fleets` unfiltered → `[]`, as
   P0 (b) measured: instant fleets are not enumerated.
 - **Restored to what step 1 recorded**: `image` `mode: off`, `llm` `mode: ondemand`, `ImageOffers`
   byte-identical to the value read before the run, `ImageOfferBudgetSec` 180, `ImageInstanceClasses`
@@ -1506,13 +1506,13 @@ There is no Managed Instances fee in any of these figures any more (decision 8).
 | # | Verdict | Decision | What has to change |
 |---|---|---|---|
 | 1 | 🔴 | 6, 7 | The launch template must start the ECS agent itself, `--no-block`, after `ecs.config`. Fixed in this PR and measured; PARAMETERS' "the order works because the ECS agent has not started yet" needs the `PartOf=docker.service` half added |
-| 2 | 🔴 | 5 | `startInFlight()` is never cleared after a successful start, so the departure sweep never runs and a box bills until somebody notices. CP lane |
-| 3 | 🔴 | 11 | The `<Role>Enabled=true` half blocks on service stabilisation at desired 1 with no box; the migration needs "scale both services to 0 while the update runs" or an explicit `DesiredCount` |
+| 2 | 🔴 | 5 | `startInFlight()` is never cleared after a successful start, so the departure sweep never runs and an instance bills until somebody notices. CP lane |
+| 3 | 🔴 | 11 | The `<Role>Enabled=true` half blocks on service stabilisation at desired 1 with no instance; the migration needs "scale both services to 0 while the update runs" or an explicit `DesiredCount` |
 | 4 | 🔴 | 11 | The CP must be force-redeployed after the round trip: it booted against a zero-row engine table and `newEngineRegistry` returns `nil` there, so even the reloader is absent |
 | 5 | 🔴 | 11 | The Cloud Map services DO carry the role condition on the real template and are deleted with the services. P0's ✅ was measured on a throwaway that had no condition; PARAMETERS says the wrong thing where an operator reads it |
 | 6 | ⚠️ | — | `update.sh` does not drop a captured `<Role>OfferBudgetSec=180`; only `standup.sh` does, so an ordinary upgrade keeps the old ceiling |
 | 7 | ⚠️ | 6 | PARAMETERS' "an EBS-only type (g6e) matches nothing here" is wrong — `g6e.xlarge` has a 232.8 GB instance store and used it |
-| 8 | 🟢 | 1, 2, 3, 8 | Exactly one box, no settle wait, the cheap Spot type, the tags, the panel from the box, the NVMe data-root. Nothing in the purchase side needs changing |
+| 8 | 🟢 | 1, 2, 3, 8 | Exactly one instance, no settle wait, the cheap Spot type, the tags, the panel from the instance, the NVMe data-root. Nothing in the purchase side needs changing |
 
 **Done item 7 is not complete**: `warm: true`, the image generation and a CP-driven departure were
 not measured. They need one more run of roughly ten GPU minutes, after items 1 and 2 are in
@@ -1527,16 +1527,16 @@ and third are the ADR's migration meeting a state it does not describe.
 
 - 🔴 **Decision 5's departure never ran once, and the text is not at fault — the code was.** The
   hardware run's own diagnosis stands ("Why the departure never happens", above): the sweep stands
-  down while a start is in flight, which is right — a box bought seconds ago has no task on it BY
+  down while a start is in flight, which is right — an instance bought seconds ago has no task on it BY
   CONSTRUCTION, and sweeping there would terminate every start — but nothing cleared the flag on a
   start that SUCCEEDED, so after the first one the sweep returned at its first line for ever
   (`mode=off` at 06:19:13, the task gone in 76 s, and then nothing; terminated by hand four
-  minutes later). The start now forgets the box the moment it writes the desired count. **What the
+  minutes later). The start now forgets the instance the moment it writes the desired count. **What the
   text should carry from this**: the departure has two preconditions that are the same fact from
   two sides — no start in flight, and the desired count already written — and an implementation
   that keeps only the first has no departure at all.
 - **A start needed a second guard as a consequence: "the service already wants a task".** The
-  admin toggle calls the start unconditionally on `mode=on`, and with the box no longer
+  admin toggle calls the start unconditionally on `mode=on`, and with the instance no longer
   remembered a press on a RUNNING engine would begin the walk again and buy a second GPU. The
   start now reads the service first and returns when `desired >= 1`. This is the successor of the
   same guard ADR 0075 had inside `setStrategy`, which went with it.
@@ -1553,9 +1553,9 @@ and third are the ADR's migration meeting a state it does not describe.
   from inside a poll would build a controller with none of the state the process assumes". That
   was true while construction lived in the boot loop; it is one function now, so an adopted role
   is built exactly as a boot-time one is. **What the text should carry**: decision 11's migration
-  section asks for a window in which no box stands, and it should also say that the CP must
+  section asks for a window in which no instance stands, and it should also say that the CP must
   survive a table with no rows — because the round trip is what produces one.
-- **`<Role>Enabled=true` leaves the service at desired 1 with no box.** CloudFormation creates a
+- **`<Role>Enabled=true` leaves the service at desired 1 with no instance.** CloudFormation creates a
   service that omits `DesiredCount` at 1, so the second half of the round trip sits in
   stabilisation until somebody writes 0 (on hardware, another shell did). The controller already
   writes desired 0 whenever the mode is `off`, whoever set the count — that behaviour was there
@@ -1596,7 +1596,7 @@ and the reason the property is absent. The second shell is the cheaper of the tw
 
 The three things run 1 could not reach. On af-sandbox, with #583, #584 and #585 all in develop and
 the Control Plane put on by `dev-deploy.sh` at `0.19.1-dev-3d4cb9e9`. **All three were reached and
-nothing new went red on the purchase side: done item 7 is complete.** Two Spot boxes, **11 minutes
+nothing new went red on the purchase side: done item 7 is complete.** Two Spot instances, **11 minutes
 58 seconds** of GPU, about **$0.15** against a gate of fifteen minutes and $0.60.
 
 **No migration this time.** The deployment has been on the EC2 launch type since run 1, so the
@@ -1640,16 +1640,16 @@ The first row filled, so the walk was one row long: `offer_trail` `[spot3 active
 
 | Check | Result | Evidence |
 |---|---|---|
-| **exactly one box** | 🟢 | CloudTrail from 09:15 UTC has exactly **two `CreateFleet` calls**, one per lap. At no sample was more than one `af-role=engine-image` instance alive; the cluster's container instances went 4 → 5 → 4 twice |
-| buy → box registered | 🟢 **45 s** | `CreateFleet` 09:15:43, `engines: image: the box i-00fc158ca3f562466 registered; asking for the task` 09:16:28. Lap 2: **44 s**. The ceiling in force was 300 s |
+| **exactly one instance** | 🟢 | CloudTrail from 09:15 UTC has exactly **two `CreateFleet` calls**, one per lap. At no sample was more than one `af-role=engine-image` instance alive; the cluster's container instances went 4 → 5 → 4 twice |
+| buy → instance registered | 🟢 **45 s** | `CreateFleet` 09:15:43, `engines: image: the box i-00fc158ca3f562466 registered; asking for the task` 09:16:28. Lap 2: **44 s**. The ceiling in force was 300 s |
 | the desired count goes up in the same second as the registration | 🟢 | the `UpdateService` in CloudTrail is at **09:16:28**, the second of the log line above. Run 1's finding reproduced, and 0075's 2 min 35 s settle wait still has no shape to take |
-| the Spot row is the one that fills | 🟢 | `spot3` bought a **`g5.xlarge`**, `InstanceLifecycle: spot`, ap-northeast-1a, on both laps — never a g6e. Run 1 never saw this row succeed: both of its Spot boxes died at the registration ceiling before the launch template was fixed |
-| the panel answers from the box | 🟢 | `box: {id: i-00fc158c…, status: ACTIVE}` and `offer: {id: spot3, buy: spot}` from the first sample after registration until the box went. `class` reads `spot3`, `class_is_default: true` |
+| the Spot row is the one that fills | 🟢 | `spot3` bought a **`g5.xlarge`**, `InstanceLifecycle: spot`, ap-northeast-1a, on both laps — never a g6e. Run 1 never saw this row succeed: both of its Spot instances died at the registration ceiling before the launch template was fixed |
+| the panel answers from the instance | 🟢 | `box: {id: i-00fc158c…, status: ACTIVE}` and `offer: {id: spot3, buy: spot}` from the first sample after registration until the instance went. `class` reads `spot3`, `class_is_default: true` |
 | **`state: running` / `warm: true`** | 🟢 **5 min 40 s - 5 min 53 s** from desired 1 | see the cold start below. `running` first seen 09:22:08, `warm: true` first seen 09:22:21, at 13-second polling; ComfyUI's `Starting server` is 09:22:08, so the true figure is inside that band. From `mode: on` it is **6 min 40 s** |
 | **one image, 200** | 🟢 | `provider: comfy`, model `sd35-medium`, `warnings: []`, 1024×1024, 1,011,661 bytes. ComfyUI's own line: `Prompt executed in 73.12 seconds` |
 | **departure: desired 0 → deregister → terminate, by the CP** | 🟢 | `mode: off` 09:24:21 → the task gone 09:24:31 (**10 s**) → `DeregisterContainerInstance` 09:25:10 → `TerminateInstances` 09:25:11. **Nothing was terminated by hand on either lap.** Run 1's item 2 is closed |
 | terminate → `terminated` | measured **4 min 14 s - 4 min 30 s** | last `shutting-down` 09:29:25, `terminated` 09:29:41 (15-second polling). Lap 2: **4 min 8 s - 4 min 25 s**. ⚠️ Run 1 measured 5 min 28 s - 5 min 45 s — see below |
-| the sweep did not misfire while the engine was up | 🟢 | CloudTrail's only two `TerminateInstances` are the two departures, both after their `mode: off`. The box that served the image lived 9 min 28 s and was never touched |
+| the sweep did not misfire while the engine was up | 🟢 | CloudTrail's only two `TerminateInstances` are the two departures, both after their `mode: off`. The instance that served the image lived 9 min 28 s and was never touched |
 | **`df /var/lib/docker` is the instance store on a g5 too** | 🟢 | measured on lap 2 — see below |
 
 #### The cold start, line by line (from desired 1 at 09:16:28)
@@ -1664,18 +1664,18 @@ The first row filled, so the walk was one row long: `offer_trail` `[spot3 active
 
 Beside the other measurements of the same thing:
 
-| Run | Box | To `warm: true` |
+| Run | Instance | To `warm: true` |
 |---|---|---|
 | 0074 (Managed Instances) | g6e.xlarge spot | 307 s from `mode: on` (one image at 403 s) |
 | 0075 re-run (Managed Instances) | g6.xlarge spot | 5 min 30 s from `mode: on` |
 | 0077 run 1 (EC2 Fleet) | g6e.xlarge on-demand | not reached; ComfyUI on the GPU at 3 min 49 s from desired 1 |
 | **this run** (EC2 Fleet) | **g5.xlarge spot** | **5 min 53 s from desired 1, 6 min 40 s from `mode: on`** |
 
-⚠️ **Read that honestly: buying the box got much faster and the cold start did not.** Two seconds
+⚠️ **Read that honestly: buying the instance got much faster and the cold start did not.** Two seconds
 to buy and 45 to register is a different world from Managed Instances, but everything after
 registration is model bytes and CUDA, and an A10G loads them more slowly than an L40S — 5 min 26 s
 here against run 1's 3 min 49 s to the same line. The fetch throughput says the same:
-102 / 87 / 103 / 173 / 158 / 140 MB/s on this box, against 104-209 on run 1's g6e.xlarge and
+102 / 87 / 103 / 173 / 158 / 140 MB/s on this instance, against 104-209 on run 1's g6e.xlarge and
 ADR 0071's 104-147 on Managed Instances. **The ranges overlap, so this run is no evidence that the
 NVMe data-root is faster** — on a g5.xlarge the network is the ceiling, not the disk. The `df` is
 the evidence for decision 6, not the throughput.
@@ -1713,14 +1713,14 @@ CloudTrail, the same lap, from the Control Plane's own task role: `UpdateService
 off in ten seconds; the sweep's next tick did the rest, **50 s** after the toggle. Lap 2, where the
 task was still `pending` when the engine was turned off, took **65 s** by the same route
 (`mode: off` 09:32:24, ECS `stopped 1 pending tasks` 09:32:32, deregister 09:33:28, terminate
-09:33:29). Neither needed a human, and `describe-instances` never showed a box the CP had
+09:33:29). Neither needed a human, and `describe-instances` never showed an instance the CP had
 forgotten.
 
-### Lap 2 — the two checks that needed a box but not a warm one (09:30:57 → 09:33:29 UTC)
+### Lap 2 — the two checks that needed an instance but not a warm one (09:30:57 → 09:33:29 UTC)
 
 Two and a half minutes of GPU, deliberately ended before the fetch mattered.
 
-- 🟢 **The NVMe data-root is there on a `g5.xlarge` as well.** Over SSM on the live box:
+- 🟢 **The NVMe data-root is there on a `g5.xlarge` as well.** Over SSM on the live instance:
 
   ```
   df -h /var/lib/docker   →  /dev/nvme1n1  233G  2.6G  231G   2% /var/lib/docker
@@ -1731,11 +1731,11 @@ Two and a half minutes of GPU, deliberately ended before the fetch mattered.
 
   Run 1 measured this on a `g6e.xlarge`; the instance store is a per-type property, so the second
   type is worth having. The root volume is the 60 GiB gp3 `ImageStorageGiB` asks for, and `ecs`
-  being `active` is the launch template fix (`systemctl start --no-block ecs`) holding on a box
+  being `active` is the launch template fix (`systemctl start --no-block ecs`) holding on an instance
   nobody touched.
 
 - 🟢 **Pressing `mode: on` on an engine that is already running buys nothing** — #584's second
-  guard, which until now only a unit test had seen. At 09:31:49, eleven seconds ago, the box was
+  guard, which until now only a unit test had seen. At 09:31:49, eleven seconds ago, the instance was
   registered and the desired count written; the admin `PUT` returned **200 in 0.28 s** (a real
   start takes 2.6 s), CloudTrail records **no third `CreateFleet`**, and `describe-instances` had
   one instance before and after. The Control Plane logged the start's opening line
@@ -1744,13 +1744,13 @@ Two and a half minutes of GPU, deliberately ended before the fetch mattered.
 
   ⚠️ **but the press wiped the panel's `offer_trail` to `null`.** The walk's `begin()` runs before
   `startOnOffer` takes the lock and finds `desired >= 1`, so the trail of the run that is actually
-  live is cleared and no row replaces it. `offer` still read `{id: spot3, buy: spot}` and the box
+  live is cleared and no row replaces it. `offer` still read `{id: spot3, buy: spot}` and the instance
   was never in danger; what is lost is the audit trail on the panel, at exactly the moment an
   operator is pressing buttons.
 
 ### Cost and cleanup
 
-| Box | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
+| Instance | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
 |---|---|---|---|---|---|---|---|
 | `i-00fc158ca3f562466` | g5.xlarge | spot | 09:15:43 | 09:25:11 | 9m28s | 0.7391 | $0.117 |
 | `i-0566a8943c902d524` | g5.xlarge | spot | 09:30:59 | 09:33:29 | 2m30s | 0.7391 | $0.031 |
@@ -1763,8 +1763,8 @@ did not change between the two runs.
 
 - `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**: two
   instances, both `terminated`. (Positive control in the same output: `tag-key=af-role` alone
-  returns 6, the four slot boxes included.)
-- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → empty, as
+  returns 6, the four slot instances included.)
+- Container instances back to **four**, all slot instances. `describe-fleets` unfiltered → empty, as
   P0 (b) measured.
 - **Restored to what step 1 recorded**: `image` `mode: off`, `llm` `mode: ondemand`, `ImageOffers`
   byte-identical, `ImageInstanceClasses` untouched, both `<Role>Enabled=true`. The Workspace that
@@ -1779,14 +1779,14 @@ did not change between the two runs.
 | # | Verdict | Decision | What it says |
 |---|---|---|---|
 | 1 | 🟢 | 5 | The departure is CP-driven, twice, in the order the decision states: desired 0 → deregister → terminate, 50 s and 65 s after the toggle, nothing ended by hand. Run 1's item 2 is closed |
-| 2 | 🟢 | 1, 2, 6, 7 | One box per lap, 44-45 s to registration, the desired count in the same second, the Spot row filling with the cheap type, `ecs` and `docker` both active on a box nobody touched. The launch template fix holds |
+| 2 | 🟢 | 1, 2, 6, 7 | One instance per lap, 44-45 s to registration, the desired count in the same second, the Spot row filling with the cheap type, `ecs` and `docker` both active on an instance nobody touched. The launch template fix holds |
 | 3 | 🟢 | 6 | The NVMe data-root is there on `g5.xlarge` as well as `g6e.xlarge`. ⚠️ But the fetch throughput does **not** prove it: 87-173 MB/s here overlaps ADR 0071's Managed Instances range, because on this type the network is the ceiling |
 | 4 | 🟢 | — | Run 1's item 6 is confirmed live: `update.sh` moved both roles' `OfferBudgetSec` from 180 to 300 and touched no other parameter |
 | 5 | ⚠️ | 5 | **terminate → `terminated` is 4-6 minutes, not "about five".** Measured 4 min 8 s - 4 min 30 s twice today against run 1's 5 min 28 s - 5 min 45 s on a g6e. Decision 5's 🔁 fired on one run and would not have fired on these two, so whoever rewrites ADR 0071 decision 7's window arithmetic should carry **the range**, not a number: assuming either side of five minutes is wrong about a third of the time |
 | 6 | ⚠️ | — | A `mode: on` press on a running engine is correctly a no-op for the hardware but clears the panel's `offer_trail`. `begin()` runs before the guard returns. One line to move, and it is the only thing on this run that behaves worse than before #584 |
 | 7 | — | 11 | **Not measured, and not by omission**: the `<Role>Enabled` round trip (items 3, 4, 5) and #584's recovery from a zero-row engine table need a deployment that is still on Managed Instances. This one is not, and re-migrating it backwards to prove the point costs more than it returns. They are fixed in #585 / #584 and stand unverified on hardware |
 
-**Done item 7 is complete**: exactly one box, no settle wait, the Spot row's type, the tags and
+**Done item 7 is complete**: exactly one instance, no settle wait, the Spot row's type, the tags and
 `InstanceLifecycle`, `state: running` / `warm: true` in 5 min 53 s, one image at 200, the NVMe
 data-root, and a departure the Control Plane drove itself — with the migration's own steps
 (items 3, 4, 5) carried over as fixed-but-unmeasured.
@@ -1823,19 +1823,19 @@ implementation says back:
   noticed the registration ceiling or moved to the next offer. There is now a step asked on every
   tick while a walk is in flight, and it is also what ends a rebuild abandoned by a stop.
 - 🔴 **Decision 4's second condition corrected decision 5's sweep, which #577 had implemented too
-  eagerly.** "The task was replaced but the box is still there" is not an interruption (the ADR
-  says so, and an OOM kill produces exactly that shape) — but #577's stray rule, "a box with no
-  task on it while the service wants one, after fifteen minutes", fires on *precisely* that box:
+  eagerly.** "The task was replaced but the instance is still there" is not an interruption (the ADR
+  says so, and an OOM kill produces exactly that shape) — but #577's stray rule, "an instance with no
+  task on it while the service wants one, after fifteen minutes", fires on *precisely* that instance:
   the engine's only one, empty for the seconds ECS takes to re-place the task. Terminating it
-  turns a restart ECS was already handling into a box purchase, and decision 4's rebuild would
-  then buy the replacement. The stray rule gained a second condition — **another box of this role
-  must be carrying the task** — which is what "a SECOND box with no task" always meant. The test
+  turns a restart ECS was already handling into an instance purchase, and decision 4's rebuild would
+  then buy the replacement. The stray rule gained a second condition — **another instance of this role
+  must be carrying the task** — which is what "a SECOND instance with no task" always meant. The test
   for the not-an-interruption case is what found it.
 - **An abandoned walk has to be ended by somebody, and `startInFlight` is not enough.** The
   departure sweep stands down while a walk is in flight, which is the P1 hardware run's red seen
-  from the other side: switch the engine off while a box is still booting and nothing drives that
+  from the other side: switch the engine off while an instance is still booting and nothing drives that
   walk again, so the flag would stand for ever. Two answers, and both are needed: the rebuild step
-  ends its own box when the desired count has gone (its premise is a task the service wants), and
+  ends its own instance when the desired count has gone (its premise is a task the service wants), and
   the sweep now stands down **only inside the registration ceiling plus the departure grace**
   rather than for any walk in flight. The second one also covers a START abandoned by a stop,
   which had no cover at all — the same leak in a shape nobody had walked into yet.
@@ -1851,7 +1851,7 @@ implementation says back:
 
 P3's whole surface is two things P1 did not touch: **the llm role's own launch template** (#575's
 `LlmLaunchTemplateId`) and **decision 9's refusal of a `spot` row in `LlmOffers`** (#577). Both are
-measured here — the refusal for $0, the rest on one on-demand box, **6 minutes 46 seconds** of GPU,
+measured here — the refusal for $0, the rest on one on-demand instance, **6 minutes 46 seconds** of GPU,
 about **$0.13** against a gate of fifteen minutes and $0.60.
 
 **Every item this run names is green. P3 as a phase is not complete**, because its own text puts it
@@ -1895,7 +1895,7 @@ defect, but the panel gives no hint that a rung was superseded rather than remov
 
 The role's default is `qwen3-coder-30b-a3b` (**18,556,689,568 bytes**), the llm role had **never
 run on this deployment** (no `llm/…` log stream existed at all), `LlmTaskMemory` is 14 GiB and
-`LlmExtraArgs` carries `--no-mmap`. Whether that model fits a 22 GB box is a real question and it
+`LlmExtraArgs` carries `--no-mmap`. Whether that model fits a 22 GB instance is a real question and it
 is **not P3's** — losing a fifteen-minute budget to it would have measured nothing about EC2 Fleet.
 `qwen2.5-coder-1.5b` was made the role's default for the lap and the 30B put back afterwards. It
 did not spare the run as much as expected; see the cold start below.
@@ -1904,12 +1904,12 @@ did not spare the run as much as expected; see the cold start below.
 
 | Check | Result | Evidence |
 |---|---|---|
-| **exactly one box** | 🟢 | CloudTrail from 10:10 UTC has **one `CreateFleet`**, at 10:12:21. Container instances 4 → 5 → 4 |
-| buy → box registered | 🟢 **41 s** | bought 10:12:20, `engines: llm: the box i-0ddc67d973d10325a registered; asking for the task` 10:13:01. P1's image laps were 44-48 s |
+| **exactly one instance** | 🟢 | CloudTrail from 10:10 UTC has **one `CreateFleet`**, at 10:12:21. Container instances 4 → 5 → 4 |
+| buy → instance registered | 🟢 **41 s** | bought 10:12:20, `engines: llm: the box i-0ddc67d973d10325a registered; asking for the task` 10:13:01. P1's image laps were 44-48 s |
 | the desired count goes up in the same second | 🟢 | the `UpdateService` in CloudTrail is at 10:13:01 |
 | the offer that filled | 🟢 | `l4`, `buy: od`, a **`g6.xlarge`** in ap-northeast-1a, `InstanceLifecycle` **absent** (P0 (d): absent means on-demand). `offer_trail` `[l4 active]` — one row, no fall-through |
-| **the llm launch template is the one that bought** | 🟢 | the box carries `aws:ec2launchtemplate:id = lt-087eee2a966d767a0` — the `LlmLaunchTemplateId` in the engine table's llm row — at **version 3**, which is the `systemctl start --no-block ecs` fix. `af-role=engine-llm`, `af-engine-offer=l4`, `af-engine-buy=od`, `af-pool`, `af-managed-by`, `Name=af-engine-llm`, plus EC2's `aws:ec2:fleet-id`. One `CreateFleet`, no `CreateTags` |
-| the panel answers from the box | 🟢 | `box: {…, status: ACTIVE}` from the first sample after registration until it went |
+| **the llm launch template is the one that bought** | 🟢 | the instance carries `aws:ec2launchtemplate:id = lt-087eee2a966d767a0` — the `LlmLaunchTemplateId` in the engine table's llm row — at **version 3**, which is the `systemctl start --no-block ecs` fix. `af-role=engine-llm`, `af-engine-offer=l4`, `af-engine-buy=od`, `af-pool`, `af-managed-by`, `Name=af-engine-llm`, plus EC2's `aws:ec2:fleet-id`. One `CreateFleet`, no `CreateTags` |
+| the panel answers from the instance | 🟢 | `box: {…, status: ACTIVE}` from the first sample after registration until it went |
 | **`df /var/lib/docker` is the instance store** | 🟢 | `/dev/nvme1n1 233G 25G 208G 11% /var/lib/docker`, `Docker Root Dir: /var/lib/docker`, `du -sh …/volumes` **19G** (the two GGUFs), `systemctl is-active ecs docker` → active / active, `nvidia-smi` → `NVIDIA L4, 23034 MiB`. The ROOT volume is **120 G** here, which is `LlmStorageGiB` — the image role's is 60 |
 | **`state: running` / `warm: true`** | 🟢 **2 min 47 s - 3 min 14 s** from desired 1 | 13-second polling: `warm: false` at 10:15:48, `warm: true` at 10:16:15; llama-server logged `listening` at 10:15:42, so the true figure is inside that band. From `mode: on`: 3 min 29 s - 3 min 56 s |
 | **one completion, 200** | 🟢 | from the **engine's own log**, not the client's word: `prompt eval time = 2033.35 ms / 17492 tokens (8602.54 tokens per second)`, `eval time = 11.90 ms / 2 tokens`, `total time = 2045.25 ms` at 10:16:44 |
@@ -1949,12 +1949,12 @@ engines: llm: starting on l4 (22000 MiB VRAM declared); no model declares what i
 ```
 
 No llm row carries a `vram_need_mib`, so decision 6's fit check is **inert for this role** — the
-same line on the image role names the model and its figure. For the 30B default on a 22 GB box that
+same line on the image role names the model and its figure. For the 30B default on a 22 GB instance that
 is the difference between a refusal an operator can read and a CUDA death they have to diagnose.
 
 ### Cost and cleanup
 
-| Box | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
+| Instance | Type | Purchase | Up (UTC) | Ended | Alive | $/h | ≈ |
 |---|---|---|---|---|---|---|---|
 | `i-0ddc67d973d10325a` | g6.xlarge | on-demand | 10:12:20 | 10:19:06 | 6m46s | 1.1672 | $0.132 |
 
@@ -1963,8 +1963,8 @@ ap-northeast-1 / Linux / shared). The $0 half of this run really was $0.
 
 - `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**:
   three instances, all `terminated` (this one and PR #588's two). Positive control in the same
-  output: `tag-key=af-role` alone returns 7, the four slot boxes included.
-- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → empty.
+  output: `tag-key=af-role` alone returns 7, the four slot instances included.
+- Container instances back to **four**, all slot instances. `describe-fleets` unfiltered → empty.
 - **Restored to what step 1 recorded**: `llm` `mode: ondemand`, `LlmOffers` back to empty (so the
   panel reads the ladder's `l4` and `l40s` again), `qwen3-coder-30b-a3b` the role's default once
   more, `LlmOfferBudgetSec` untouched at 300, `image` still `mode: off`. The Workspace that was
@@ -1995,7 +1995,7 @@ is no longer on Managed Instances, so it cannot be replayed there. It was replay
 at `66983c96`, migrated to develop's by **#585's four steps**, with its own throwaway ECS cluster
 and Cloud Map namespace. Nothing of `af-ecs-*` was named by any command. **Not one instance was
 bought** (`describe-instances` on the throwaway tag is empty in every state, while the same query
-shape lists the five real boxes). Elapsed for the four steps: **11 minutes 49 seconds**
+shape lists the five real instances). Elapsed for the four steps: **11 minutes 49 seconds**
 (19:32:44 → 19:44:33 JST). Cost: **$0**.
 
 **Verdict: the round trip works, and all three of P1's findings reproduce.** 3 🔴 confirmed (and
@@ -2065,7 +2065,7 @@ The stall reproduced exactly, on an empty cluster:
 of its requirements. The reason for failure is No Container Instances were found in your cluster.
 ```
 
-(P1 saw the same refusal worded against the dev deployment's slot boxes — *"The closest matching …
+(P1 saw the same refusal worded against the dev deployment's slot instances — *"The closest matching …
 doesn't have the agent connected"* — because that cluster is not empty. Same stall, different
 nearest miss.) The second shell is what clears it, and the cost of clearing it is **41 seconds**.
 Left alone the update runs to the resource timeout, exactly as P1 predicted.
@@ -2074,7 +2074,7 @@ Left alone the update runs to the resource timeout, exactly as P1 predicted.
 harmless under Managed Instances". The throwaway shows the property is the **template's**, not the
 launch type's: creating the *old*, Managed-Instances services put **both of them at desired 1 too**
 (19:31:15 / 19:31:20, the second shell's log), and CloudFormation would have waited there just the
-same. What differs is only who satisfies the 1 — under Managed Instances a box is bought and the
+same. What differs is only who satisfies the 1 — under Managed Instances an instance is bought and the
 service stabilises (at GPU cost, which is why this run held them at 0 instead), and on the EC2
 launch type nothing can ever satisfy it. So the second shell is not a fix for a new EC2-side
 problem; it is the same hand `standup.sh` already applies to a fresh service, now needed on the one
@@ -2134,7 +2134,7 @@ own positive control:
 - `list-roles` for `af-*` → the seven real roles only.
 - `describe-parameters` → no `/af-ws/adr0077-p1x-engines`; the real `/af-ws/engines` untouched.
 - `describe-instances` on the throwaway tag, **with no state filter** → empty, while the same query
-  shape on `af-pool` lists the five real boxes. Not one instance was ever bought.
+  shape on `af-pool` lists the five real instances. Not one instance was ever bought.
 
 Nothing was left behind. The raw responses and the two generated templates are in
 `~/.cache/adr0077-p1x/` of the session that measured this.
@@ -2143,13 +2143,13 @@ Nothing was left behind. The raw responses and the two generated templates are i
 
 Decision 4 on hardware, with #591 in develop and the Control Plane put on by `dev-deploy.sh` at
 `0.19.1-dev-72d0af07`. The interruption was made the blunt way — `terminate-instances` on the
-engine's own box, which is decision 4's "the box is gone" with nothing simulated. Three Spot boxes,
+engine's own instance, which is decision 4's "the instance is gone" with nothing simulated. Three Spot instances,
 **13 minutes 54 seconds** of GPU, about **$0.13** against a gate of twenty minutes and $0.80.
 
 **P2's verdict in one line: the first interruption is fully green — detected, `interrupted` in the
-trail, rebuilt from the top of the list, one box, no `UpdateService`, no failure counted — but the
+trail, rebuilt from the top of the list, one instance, no `UpdateService`, no failure counted — but the
 SECOND interruption was never detected, because it landed on a task that had not reached RUNNING
-yet, and the engine stayed wedged at `desired 1` with no box and no log line until a human turned
+yet, and the engine stayed wedged at `desired 1` with no instance and no log line until a human turned
 it off; so the two-in-a-row skip (decision 4's last bullet) is UNMEASURED, and decision 6's 🔁 has
 fired on the letter (5 min 47 s to re-fetch 52.1 GiB) while its reasoning needs restating.**
 
@@ -2160,7 +2160,7 @@ record. Where something was not measured, it says so.
 
 Lap: `mode: on` 11:28:05 UTC → `spot3` bought `i-0dd6877b4148871f6` (g6.xlarge, Spot,
 ap-northeast-1a) at 11:28:07 → registered 11:28:43 (**36 s**) → `state: running` 11:33:28,
-`warm: true` 11:33:42 (**4 min 45 s / 4 min 59 s** from the desired count). The box was terminated
+`warm: true` 11:33:42 (**4 min 45 s / 4 min 59 s** from the desired count). The instance was terminated
 out from under the Control Plane at **11:37:15**.
 
 ```
@@ -2173,20 +2173,20 @@ out from under the Control Plane at **11:37:15**.
 
 | Check | Result | Evidence |
 |---|---|---|
-| the interruption is detected (desired 1, the task replaced, the box gone) | 🟢 **15 s** | terminate 11:37:15 → the `replaced without being asked` line 11:37:30. The audit has both halves: `engine.image.replaced / restart` and `engine.image.interrupted / spot3` — *"the box was taken away while the service still wanted a task"* — at the same second |
+| the interruption is detected (desired 1, the task replaced, the instance gone) | 🟢 **15 s** | terminate 11:37:15 → the `replaced without being asked` line 11:37:30. The audit has both halves: `engine.image.replaced / restart` and `engine.image.interrupted / spot3` — *"the instance was taken away while the service still wanted a task"* — at the same second |
 | `offer_trail` records `interrupted` | 🟢 | `[{spot3, spot, interrupted}, {spot3, spot, active}]` — the same offer twice, exactly the shape #591 describes |
 | the rebuild starts from the TOP of the list | 🟢 | `rebuilding from spot3 (spot)`, and `spot3` is row 1 of three. Nothing skipped, nothing carried over from the interrupted attempt |
-| **exactly one box** | 🟢 | CloudTrail's `CreateFleet` calls for the whole run are **three**, one per box, 11:28:07 / 11:37:32 / 11:46:29. At no 13-second sample was more than one `af-role=engine-image` instance alive |
+| **exactly one instance** | 🟢 | CloudTrail's `CreateFleet` calls for the whole run are **three**, one per instance, 11:28:07 / 11:37:32 / 11:46:29. At no 13-second sample was more than one `af-role=engine-image` instance alive |
 | **the desired count is NOT rewritten** | 🟢 | CloudTrail has **no `UpdateService` at all between 11:33:44 and 11:46:12** — the interruption, the rebuild and the second interruption all fall inside that gap. The registration log line says it in words too: `(the pending task goes to it)`, where a start says `(asking for the task)` |
 | no failure counted, no cooldown | 🟢 | `failures: null` on the panel before and after. An interruption is not a failure (decision 4), and the rebuild started 2 s after detection rather than after a cooldown |
-| the rebuild's own box registers | 🟢 **36 s** | 11:37:32 → 11:38:08. **53 s from the terminate to a registered replacement** |
-| sweep (a) does not terminate the new box for having no task | 🟢 | CloudTrail's only `TerminateInstances` in the window is **mine** (`agent-fleet-aws-deployer`, 11:37:16). The Control Plane terminated nothing until the departure at the end of the run |
-| sweep (b) deregisters the dead box's container instance | ⚠️ **not exercised** | Within 90 s the cluster was back to one engine container instance (the new box, `pending: 1`) — but there is **no `deregistering the ghost container instance` line and no `DeregisterContainerInstance` in CloudTrail from any principal**. ECS removed it itself, which is decision 4's `(c)` — published spec until now — confirmed. The CP's own direction (b) had nothing left to do, so it is still unmeasured |
+| the rebuild's own instance registers | 🟢 **36 s** | 11:37:32 → 11:38:08. **53 s from the terminate to a registered replacement** |
+| sweep (a) does not terminate the new instance for having no task | 🟢 | CloudTrail's only `TerminateInstances` in the window is **mine** (`agent-fleet-aws-deployer`, 11:37:16). The Control Plane terminated nothing until the departure at the end of the run |
+| sweep (b) deregisters the dead instance's container instance | ⚠️ **not exercised** | Within 90 s the cluster was back to one engine container instance (the new instance, `pending: 1`) — but there is **no `deregistering the ghost container instance` line and no `DeregisterContainerInstance` in CloudTrail from any principal**. ECS removed it itself, which is decision 4's `(c)` — published spec until now — confirmed. The CP's own direction (b) had nothing left to do, so it is still unmeasured |
 
 ### 🔴 Interruption 2 — not detected, and the engine wedges
 
 `i-024627c199338ca2f` was terminated at **11:39:50**, 102 seconds after it registered. Its task was
-still PENDING: on a fresh box the fetch sidecar needs 1 min 42 s before the engine container may
+still PENDING: on a fresh instance the fetch sidecar needs 1 min 42 s before the engine container may
 start (below), so nothing had reached RUNNING yet.
 
 Nothing happened. Not at once, and not in the six minutes that were watched:
@@ -2201,8 +2201,8 @@ Nothing happened. Not at once, and not in the six minutes that were watched:
 | 11:46:12 | ended by hand with `mode: off` |
 
 **Why.** Decision 4's detection is inherited from ADR 0075 decision 6 as "`running` → `starting` at
-desired 1, and the box gone", and `stepRebuild` will not run without that `replaced` flag. The
-panel's own state trace, sampled every 13 seconds, never left `starting` for this box:
+desired 1, and the instance gone", and `stepRebuild` will not run without that `replaced` flag. The
+panel's own state trace, sampled every 13 seconds, never left `starting` for this instance:
 
 ```
 20:38:18 JST  state=starting d=1 svc=1,0,0  box=i-024627c199338ca2f     (registered)
@@ -2212,23 +2212,23 @@ panel's own state trace, sampled every 13 seconds, never left `starting` for thi
 ```
 
 There is no `running` to leave, so there is no transition, so there is no interruption — and the
-other half of decision 4's condition, "the box is gone", is never consulted on its own. The
-`startInFlight` flag was dropped when the box registered (#584), so no walk was in flight to notice
-either. **The engine is left with a desired count of 1, no box, no walk and no clock**, and the
+other half of decision 4's condition, "the instance is gone", is never consulted on its own. The
+`startInFlight` flag was dropped when the instance registered (#584), so no walk was in flight to notice
+either. **The engine is left with a desired count of 1, no instance, no walk and no clock**, and the
 only automatic way out is the idle window (`ImageIdleSec`, 900 s here) eventually stopping the
 engine and throwing the demand away — that was not waited for, so it is unmeasured.
 
 ⚠️ **This is not a rare corner.** The cold start measured on this very run is **4 min 45 s** from
 the desired count to `running`, and the window in which an interruption is invisible is all of it.
-A Spot reclaim is at least as likely during the six minutes a box is booting and fetching 52 GiB as
+A Spot reclaim is at least as likely during the six minutes an instance is booting and fetching 52 GiB as
 during the minutes it is serving.
 
-**Impact — decision 4.** Its premise stands; its detection is one condition short. "The box is
+**Impact — decision 4.** Its premise stands; its detection is one condition short. "The instance is
 gone" is a fact `describe-instances` can state on its own (decision 4 says exactly that, two
 sentences before it inherits the transition), so the fix is to make the second condition
-sufficient: **at desired ≥ 1, with an offer that took a box and no `af-role=engine-<role>` instance
+sufficient: **at desired ≥ 1, with an offer that took an instance and no `af-role=engine-<role>` instance
 alive, rebuild — whether or not a task was ever RUNNING.** The `not a rebuild` guard that keeps an
-OOM kill from buying a GPU is the box still being there, and it is untouched by this.
+OOM kill from buying a GPU is the instance still being there, and it is untouched by this.
 
 **Consequence for the rest of P2**: the two-in-a-row skip could not be reached. It needs two
 *detected* interruptions of the same offer, each of which needs a task that has been RUNNING, and
@@ -2238,7 +2238,7 @@ either. **Decision 4's last bullet is implemented (#591) and unmeasured on hardw
 
 ### The departure, re-confirmed
 
-A third box, deliberately short, to check that the interruptions had left nothing broken:
+A third instance, deliberately short, to check that the interruptions had left nothing broken:
 
 ```
 11:46:29  engine image: offer spot3 (spot) bought i-0653b21fd06393519
@@ -2255,7 +2255,7 @@ of the four-to-six-minute range it was rewritten as, and still inside it.
 
 ### Decision 6 — what a re-fetch actually costs
 
-The first box's fetch sidecar, from its own log. The catalogue on this deployment is **eleven files,
+The first instance's fetch sidecar, from its own log. The catalogue on this deployment is **eleven files,
 55,974,977,974 bytes = 52.1 GiB** — well past the 30 GB decision 6's 🔁 names.
 
 | Elapsed | What |
@@ -2273,11 +2273,11 @@ holding 30 GB" is exactly 5 min 47 s on 52.1 GiB, so by decision 6's own trigger
 `SourcePath` host volume — moves forward.
 
 ⚠️ **But the trigger predicts the wrong thing, and this run is what shows it.** Decision 6 already
-says the host volume is warm only when desired goes 0 → 1 **on the same box**, and neither event
-that ends a box produces that: a departure terminates it (decision 5) and an interruption takes it
+says the host volume is warm only when desired goes 0 → 1 **on the same instance**, and neither event
+that ends an instance produces that: a departure terminates it (decision 5) and an interruption takes it
 away (decision 4). Measured here, an interruption cost **53 s to a registered replacement and then
 a full cold start on empty hardware** — a host volume saves nothing at all of it, because the
-volume died with the box. What the 5 min 47 s actually prices is the case decision 6 lists as its
+volume died with the instance. What the 5 min 47 s actually prices is the case decision 6 lists as its
 only beneficiary and ADR 0071 decision 5 has already decided not to stop in. So:
 
 - the 🔁's condition: **fired** (🔴);
@@ -2293,7 +2293,7 @@ four minutes of the full sync happen behind a serving engine.
 
 ### Cost and cleanup
 
-| Box | Type | Purchase | Up (UTC) | Ended | Alive | Why it ended |
+| Instance | Type | Purchase | Up (UTC) | Ended | Alive | Why it ended |
 |---|---|---|---|---|---|---|
 | `i-0dd6877b4148871f6` | g6.xlarge | spot | 11:28:07 | 11:37:15 | 9m08s | interruption 1, by hand |
 | `i-024627c199338ca2f` | g6.xlarge | spot | 11:37:32 | 11:39:50 | 2m18s | interruption 2, by hand |
@@ -2305,13 +2305,13 @@ and the run stopped short of the two-in-a-row skip rather than of the money.
 
 - `describe-instances` for `af-role` in `{engine-image, engine-llm}` **with no state filter**: three
   instances, all `terminated`. (The positive control is the same query with `tag-key=af-role` alone,
-  which returns 7 — the slot boxes included.)
-- Container instances back to **four**, all slot boxes. `describe-fleets` unfiltered → `[]`.
+  which returns 7 — the slot instances included.)
+- Container instances back to **four**, all slot instances. `describe-fleets` unfiltered → `[]`.
 - **Restored to what step 1 recorded**: `image` `mode: off`, `llm` `mode: ondemand`, `ImageOffers`
   byte-identical (it was never changed — the production declaration was what P2 needed),
   `ImageOfferBudgetSec` 300, service at desired 0. Nothing was left changed on the deployment, and
   no template was edited for this run.
-- Every box in this run came up on the launch template as it stands in develop, and every one of
+- Every instance in this run came up on the launch template as it stands in develop, and every one of
   them registered — the two P1 defects in the user data stay fixed.
 - The raw responses are in `~/.cache/adr0077-p2/` of the session that measured this.
 
@@ -2319,11 +2319,11 @@ and the run stopped short of the two-in-a-row skip rather than of the money.
 
 | # | Verdict | Decision | What has to change |
 |---|---|---|---|
-| 1 | 🔴 | 4 | An interruption before the task reaches RUNNING is invisible, and the engine wedges at desired 1 with no box and no log. Make "no `af-role=engine-<role>` instance alive at desired ≥ 1 with a box on the books" sufficient on its own, without the `running` → `starting` transition |
+| 1 | 🔴 | 4 | An interruption before the task reaches RUNNING is invisible, and the engine wedges at desired 1 with no instance and no log. Make "no `af-role=engine-<role>` instance alive at desired ≥ 1 with an instance on the books" sufficient on its own, without the `running` → `starting` transition |
 | 2 | ⚠️ | 4 | The two-in-a-row skip is implemented and **unmeasured**: two detected interruptions need two full cold starts, which does not fit a twenty-minute gate. It needs its own run, or a deployment with a smaller catalogue |
-| 3 | ⚠️ | 4 | Direction (b) of decision 5's sweep was **not needed**: ECS deregistered the dead box's container instance itself within 90 s, confirming the `(c)` the text marked unconfirmed. The sweep stays as the backstop it was written to be, still unexercised |
-| 4 | 🔴/⚠️ | 6 | The 🔁 fired (5 min 47 s for 52.1 GiB) but on a number the host volume cannot improve — an interruption always lands on a new box. Restate the 🔁 around "desired 0 → 1 inside the idle window", and measure how often that happens before building anything |
-| 5 | 🟢 | 4, 5 | Detection, the `interrupted` trail row, the rebuild from the top, one box, no `UpdateService`, no cooldown, no misfiring sweep, and the CP's own departure at 61 s |
+| 3 | ⚠️ | 4 | Direction (b) of decision 5's sweep was **not needed**: ECS deregistered the dead instance's container instance itself within 90 s, confirming the `(c)` the text marked unconfirmed. The sweep stays as the backstop it was written to be, still unexercised |
+| 4 | 🔴/⚠️ | 6 | The 🔁 fired (5 min 47 s for 52.1 GiB) but on a number the host volume cannot improve — an interruption always lands on a new instance. Restate the 🔁 around "desired 0 → 1 inside the idle window", and measure how often that happens before building anything |
+| 5 | 🟢 | 4, 5 | Detection, the `interrupted` trail row, the rebuild from the top, one instance, no `UpdateService`, no cooldown, no misfiring sweep, and the CP's own departure at 61 s |
 
 ## Revision after P2 and P3 (2026-09-12)
 
@@ -2335,8 +2335,8 @@ too narrow.
 
 | Decision | What changed | Source |
 |---|---|---|
-| 4 | the detection's second condition ("no box tagged `af-role=engine-<role>` is `pending` or `running`") is **sufficient on its own** at desired ≥ 1 with a box on the CP's books; the `running` → `starting` transition becomes the other half of an OR instead of a precondition. The guard against an ordinary replacement is unchanged (the box is still there), and the ledger is consumed at detection | P2 hardware run (#597), the fix #598 |
-| 4 | ECS deregistering the dead box's container instance itself moves from (c) to **measured: within 90 s**, with no `DeregisterContainerInstance` from any principal | P2 hardware run |
+| 4 | the detection's second condition ("no instance tagged `af-role=engine-<role>` is `pending` or `running`") is **sufficient on its own** at desired ≥ 1 with an instance on the CP's books; the `running` → `starting` transition becomes the other half of an OR instead of a precondition. The guard against an ordinary replacement is unchanged (the instance is still there), and the ledger is consumed at detection | P2 hardware run (#597), the fix #598 |
+| 4 | ECS deregistering the dead instance's container instance itself moves from (c) to **measured: within 90 s**, with no `DeregisterContainerInstance` from any principal | P2 hardware run |
 | 4 | the Spot-draining bullet is marked **still (c)**, and the last bullet — the two-in-a-row skip — is marked implemented (#591) and **unmeasured on hardware**, with the reason it could not be reached | P2 hardware run |
 | 5 | direction (b) of the departure sweep is written as **insurance**: ECS does the deregistration itself, so the CP's own direction had nothing to do. It stays as the backstop, still unexercised | P2 hardware run |
 | 6 | "P1 measures" becomes the measurement: 52.1 GiB in **5 min 47 s** at 154 MB/s, the engine free to start at 1 min 42 s, `warm: true` at 4 min 59 s. The 🔁 is **restated**: the number that crossed its old threshold prices an interruption, which always lands on new hardware, so the trigger is now "how often desired goes 0 → 1 inside the idle window" — to be measured before anything is built | P2 hardware run |
@@ -2346,9 +2346,9 @@ too narrow.
 **P2 is complete**, with two things it could not reach, both named above and neither of them a
 premise: the two-in-a-row skip (it needs two *detected* interruptions, i.e. two full cold starts,
 which does not fit a twenty-minute gate) and **#598's own detection on hardware** — the fix is
-tested against the fake and its defect was measured live, but no box has yet been taken away before
+tested against the fake and its defect was measured live, but no instance has yet been taken away before
 its task reached RUNNING with #598 running. One run of about twenty-five GPU minutes closes both:
-kill a box while its task is still PENDING, then kill its replacement the same way, and watch
+kill an instance while its task is still PENDING, then kill its replacement the same way, and watch
 `spot3` be skipped for an `od` row.
 
 **P3 is complete.** Its run (#592) was green on every item it named and stayed open only on its own
