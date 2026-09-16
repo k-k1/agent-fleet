@@ -124,10 +124,36 @@ type debPkg struct {
 	SHA256   string
 }
 
+// resolveClientPkg finds the postgresql-client package for the requested major.
+// If the exact major is not in the index (trixie tracks only the current stable
+// release), it falls back to the highest available postgresql-client-N.
+func resolveClientPkg(index map[string]debPkg, major string) (pkg debPkg, actualMajor string, err error) {
+	if p, ok := index["postgresql-client-"+major]; ok {
+		return p, major, nil
+	}
+	// Scan for the highest postgresql-client-N (N must be a plain integer).
+	bestN := 0
+	for name := range index {
+		if !strings.HasPrefix(name, "postgresql-client-") {
+			continue
+		}
+		suffix := strings.TrimPrefix(name, "postgresql-client-")
+		n := parseUint(suffix)
+		if n > 0 && fmt.Sprintf("%d", n) == suffix && n > bestN {
+			bestN = n
+		}
+	}
+	if bestN == 0 {
+		return debPkg{}, "", fmt.Errorf("package %q not found in Packages index", "postgresql-client-"+major)
+	}
+	fallback := fmt.Sprintf("postgresql-client-%d", bestN)
+	return index[fallback], fmt.Sprintf("%d", bestN), nil
+}
+
 func installPgClient(major string) error {
 	psqlBin := pgClientBin(major, "psql")
 
-	// Fast path (pre-lock): major-specific binary present.
+	// Fast path (pre-lock): exact-major binary present.
 	if fileExecutable(psqlBin) {
 		fmt.Fprintf(os.Stderr, "[install-pg-client] pg-client %s already installed\n", major)
 		return ensurePgWrappers(major)
@@ -142,20 +168,26 @@ func installPgClient(major string) error {
 		return err
 	}
 
-	// postgresql-client-common is not needed at runtime (wrappers exec the binary
-	// directly, bypassing pg_wrapper), so we only install the client and libpq.
-	wanted := []string{
-		"postgresql-client-" + major,
-		"libpq5",
+	// trixie tracks only the current stable major; fall back if the requested
+	// major is absent (e.g. request 16 or 18 when only 17 is in the index).
+	// postgresql-client-common is not needed at runtime (wrappers exec the
+	// binary directly, bypassing pg_wrapper).
+	clientPkg, actualMajor, err := resolveClientPkg(index, major)
+	if err != nil {
+		return err
 	}
-	pkgs := make([]debPkg, 0, len(wanted))
-	for _, name := range wanted {
-		p, ok := index[name]
-		if !ok {
-			return fmt.Errorf("package %q not found in Packages index", name)
-		}
-		pkgs = append(pkgs, p)
+	if actualMajor != major {
+		fmt.Fprintf(os.Stderr,
+			"[install-pg-client] postgresql-client-%s が trixie に無いため %s を導入します"+
+				"（psql %s は %s サーバに接続可・pg_dump %s は %s サーバを dump できません）\n",
+			major, actualMajor, actualMajor, major, actualMajor, major)
+		fmt.Fprintf(os.Stderr, "[install-pg-client] pg-client は 1 バージョンのみ保持します\n")
 	}
+	libpqPkg, ok := index["libpq5"]
+	if !ok {
+		return fmt.Errorf("package %q not found in Packages index", "libpq5")
+	}
+	pkgs := []debPkg{clientPkg, libpqPkg}
 
 	unlock, err := pgClientInstallLock()
 	if err != nil {
@@ -163,10 +195,11 @@ func installPgClient(major string) error {
 	}
 	defer unlock()
 
-	// Re-check under lock.
-	if fileExecutable(psqlBin) {
-		fmt.Fprintf(os.Stderr, "[install-pg-client] pg-client %s already installed (by a concurrent run)\n", major)
-		return ensurePgWrappers(major)
+	// Re-check under lock using actualMajor (the version we will install).
+	actualPsqlBin := pgClientBin(actualMajor, "psql")
+	if fileExecutable(actualPsqlBin) {
+		fmt.Fprintf(os.Stderr, "[install-pg-client] pg-client %s already installed (by a concurrent run)\n", actualMajor)
+		return ensurePgWrappers(actualMajor)
 	}
 
 	shareDir := agentFleetShareDir()
@@ -220,7 +253,7 @@ func installPgClient(major string) error {
 		return err
 	}
 
-	if err := ensurePgWrappers(major); err != nil {
+	if err := ensurePgWrappers(actualMajor); err != nil {
 		return err
 	}
 

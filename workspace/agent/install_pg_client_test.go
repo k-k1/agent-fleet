@@ -65,6 +65,49 @@ SHA256: 20a4c9ef58b4baf90deda67cfb2cc062871c062830dddc234d28f5ac7931b86b
 	}
 }
 
+// TestResolveClientPkgFallback verifies that resolveClientPkg falls back to the
+// highest available postgresql-client-N when the requested major is absent.
+func TestResolveClientPkgFallback(t *testing.T) {
+	fixture := `Package: postgresql-client-17
+Version: 17.11-0+deb13u1
+Architecture: amd64
+Filename: pool/main/p/postgresql-17/postgresql-client-17_17.11-0+deb13u1_amd64.deb
+SHA256: 9d8558f8dd57c8e92e218a20698383575d53742ca3f9e7c2b7fe5f246d5216ae
+
+`
+	index := parseDebPackages(fixture)
+
+	// Request major 18 — not in index; expect fallback to 17.
+	pkg, actualMajor, err := resolveClientPkg(index, "18")
+	if err != nil {
+		t.Fatalf("resolveClientPkg: %v", err)
+	}
+	if actualMajor != "17" {
+		t.Errorf("actualMajor = %q, want 17", actualMajor)
+	}
+	if pkg.Name != "postgresql-client-17" {
+		t.Errorf("pkg.Name = %q, want postgresql-client-17", pkg.Name)
+	}
+
+	// Request major 16 — also not in index; same fallback.
+	_, actualMajor16, err := resolveClientPkg(index, "16")
+	if err != nil {
+		t.Fatalf("resolveClientPkg(16): %v", err)
+	}
+	if actualMajor16 != "17" {
+		t.Errorf("actualMajor for 16 = %q, want 17", actualMajor16)
+	}
+
+	// Request major 17 — exact match; no fallback.
+	_, exactMajor, err := resolveClientPkg(index, "17")
+	if err != nil {
+		t.Fatalf("resolveClientPkg(17): %v", err)
+	}
+	if exactMajor != "17" {
+		t.Errorf("exactMajor = %q, want 17", exactMajor)
+	}
+}
+
 // TestParseDebPackagesMissingFields ensures stanzas without Filename are skipped.
 func TestParseDebPackagesMissingFields(t *testing.T) {
 	fixture := `Package: incomplete-pkg
