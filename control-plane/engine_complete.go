@@ -102,6 +102,11 @@ type engineCompleteAnswer struct {
 	// 0, which is the number that makes the difference between the two visible at all.
 	BytesToDownload int64            `json:"bytes_to_download"`
 	Jobs            []map[string]any `json:"jobs"`
+	// Warnings is what this press could NOT find out, and it exists because `none` is otherwise
+	// indistinguishable from "nothing is wrong" (decision 4's rule about never inventing a path,
+	// applied to a fact instead of a key). Today it has one member: a row whose checkpoint header
+	// nobody ever read, where the family VAE is neither offered nor ruled out.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // engineCompleteStep is one file's plan with everything the act needs, and it is deliberately
@@ -183,6 +188,28 @@ func engineCompleteMissing(provider string, m store.EngineModel, skip string) []
 		out = append(out, "--vae")
 	}
 	return out
+}
+
+// engineCompleteVaeUnread is the row this press cannot answer for: a family whose template reads
+// the checkpoint's own VAE, on a row whose checkpoint header nobody has read.
+//
+// `--vae` is absent from the gap for such a row and that is correct — an unread header is not a
+// missing VAE, and marking one would put a red line on every row that predates the read. But the
+// silence is what an operator then acts on, so the answer says which fact is missing rather than
+// implying there is none: the rows this can still happen to are the seeded ones and any whose
+// bytes refused to be read (engineVaeOfObject).
+func engineCompleteVaeUnread(provider string, m store.EngineModel) []string {
+	if !engineVaeAsked(provider, m) {
+		return nil
+	}
+	f, ok := engineVaeCheckpoint(m)
+	if !ok || strings.TrimSpace(f.VaeBundled) != engineVaeUnknown {
+		return nil
+	}
+	return []string{"nobody has read " + path.Base(strings.TrimSpace(f.S3Key)) + ", so whether it carries a VAE" +
+		" of its own is unknown — a " + strings.TrimSpace(m.BaseModel) + " checkpoint published without one fails" +
+		" every request inside the engine, and this press neither offers the family's VAE nor rules it out." +
+		" Attach one under `--vae` by hand if the engine answers `VAE is invalid: None`"}
 }
 
 func slicesContains(list []string, want string) bool {
@@ -517,6 +544,9 @@ func (a engineAdminAPI) engineCompleteRun(ctx context.Context, r *http.Request, 
 		return engineCompleteAnswer{}, nil, aerr
 	}
 	answer := engineCompleteAnswerOf(steps)
+	// On the act as well as on `check`: the shape is the same for both on purpose, and a fact the
+	// press could not establish does not become established by pressing.
+	answer.Warnings = engineCompleteVaeUnread(e.def.Provider, m)
 	if b.Check || answer.Action == engineCompleteChoose || answer.Action == engineCompleteNone {
 		return answer, nil, nil
 	}
