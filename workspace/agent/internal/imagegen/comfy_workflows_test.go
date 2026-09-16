@@ -76,6 +76,11 @@ type comfyFamilyFixture struct {
 var comfyFamilyFixtures = []comfyFamilyFixture{
 	{"sdxl", ComfyFamilySDXL, comfyFiles{Checkpoint: "sd_xl_base_1.0.safetensors"},
 		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
+	// Pinned against the same 1024x1024 params as every other fixture, which is NOT this
+	// family's own default size (comfyDefaultSizes puts sd15 at 512) — the golden's job is the
+	// graph's shape, and holding the inputs identical is what makes it comparable to sdxl's.
+	{"sd15", ComfyFamilySD15, comfyFiles{Checkpoint: "v1-5-pruned-emaonly.safetensors"},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 	{"zimage", ComfyFamilyZImage, comfyFiles{
 		DiffusionModel: "z_image_turbo_bf16.safetensors", ClipL: "qwen_3_4b_fp8_mixed.safetensors", Vae: "ae.safetensors"},
 		[]string{"ms.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
@@ -95,6 +100,20 @@ var comfyFamilyFixtures = []comfyFamilyFixture{
 		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 	{"sd35", ComfyFamilySD35, comfyFiles{Checkpoint: "sd3.5_large.safetensors",
 		ClipL: "clip_l.safetensors", ClipG: "clip_g.safetensors", T5xxl: "t5xxl_fp16.safetensors"},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
+	// The one family that is split like klein and sampled like SDXL. The file names are the ones
+	// circlestone-labs/Anima and the ComfyUI template publish, so the fixture reads as the graph
+	// an operator would build by hand from the model card.
+	{"anima", ComfyFamilyAnima, comfyFiles{
+		DiffusionModel: "anima-aesthetic-v1.1.safetensors", ClipL: "qwen_3_06b_base.safetensors",
+		Vae: "qwen_image_vae.safetensors"},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
+	// The names Comfy-Org/Krea-2 publishes. 🔴 The fixture's value is `clip.type`: "krea2" is
+	// read by the loader, and the default would load the same file as a generic Qwen3-VL and
+	// return a picture made against different conditioning, with no error anywhere.
+	{"krea2", ComfyFamilyKrea2, comfyFiles{
+		DiffusionModel: "krea2_turbo_fp8_scaled.safetensors", ClipL: "qwen3vl_4b_fp8_scaled.safetensors",
+		Vae: "qwen_image_vae.safetensors"},
 		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 }
 

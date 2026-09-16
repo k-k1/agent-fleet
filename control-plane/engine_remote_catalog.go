@@ -28,6 +28,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -220,13 +221,21 @@ func (r *engineRemotes) applyCatalogRow(ctx context.Context, reg *engineRegistry
 	}
 	// The mirror is replaced before the row is adopted, so that the row build's own log line —
 	// and the first request to reach it — see the models rather than an empty catalogue.
-	r.forKey(row.Key).setMirror(row)
+	changed := r.forKey(row.Key).setMirror(row)
 	if e != nil {
 		// Already borrowed. The mirror above is the whole update — engineCatalog reads through
 		// it — and dropping the row's ten-second cache is what stops a role the far side has just
 		// switched off from being offered for ten seconds more. The re-read costs a mutex and a
 		// slice, not a database round trip, because the source is the mirror in memory.
 		e.catalog.invalidate()
+		if changed {
+			// 🔥 A borrowed catalogue used to move in silence. Decision 7's push is wired to this
+			// deployment's own admin routes, so every workspace learned about a far checkpoint on
+			// its own ten-minute TTL and not before — which is the difference between "a model
+			// somebody enabled" and "a model nobody can find". Telling them here costs one POST
+			// per running workspace, and only when the mirror really moved.
+			go notifyEngineCatalogChanged(context.WithoutCancel(ctx), r.mgr, row.Key)
+		}
 		return
 	}
 	if row.API == "" {
@@ -246,6 +255,9 @@ func (r *engineRemotes) applyCatalogRow(ctx context.Context, reg *engineRegistry
 	if reg.adopt(def) {
 		log.Printf("engines: %s (%s/%s) is borrowed from %s (%d model(s))",
 			row.Key, def.api(), def.Provider, r.base, len(row.Models))
+		// A role that did not exist a moment ago is the largest change a workspace can be told
+		// about: with no row, generate_image was not advertised at all.
+		go notifyEngineCatalogChanged(context.WithoutCancel(ctx), r.mgr, row.Key)
 		return
 	}
 	log.Printf("engines: %s is offered by %s but this process cannot take it on", row.Key, r.base)
@@ -265,9 +277,12 @@ func lifecycleLabel(d engineDef) string {
 // at all, so an absent mirror would pass serve's no-models gate and then 404 every named model.
 // An empty list is the honest "this role has nothing enabled", which serve already refuses with
 // `engine_unavailable` and a sentence saying so.
-func (e *engineRemote) setMirror(row engineRemoteCatalogRow) {
+// It reports whether the mirror it just wrote differs from the one it replaced, which is what
+// decides whether every running workspace is told (applyCatalogRow). false on the FIRST mirror:
+// there is nothing to have changed from, and the adoption that follows it does the telling.
+func (e *engineRemote) setMirror(row engineRemoteCatalogRow) (changed bool) {
 	if e == nil {
-		return
+		return false
 	}
 	rows := make([]store.EngineModel, 0, len(row.Models)+len(row.Loras))
 	// Warmth is read off the model the far side says its engine last answered with, and only off
@@ -284,9 +299,33 @@ func (e *engineRemote) setMirror(row engineRemoteCatalogRow) {
 	for _, m := range row.Loras {
 		rows = append(rows, e.mirrorRow(m, engineModelKindLora))
 	}
+	sig := engineMirrorSignature(rows)
 	e.mu.Lock()
-	e.rows, e.warmModel, e.loaded = rows, warm, true
+	changed = e.loaded && sig != e.sig
+	e.rows, e.warmModel, e.loaded, e.sig = rows, warm, true, sig
 	e.mu.Unlock()
+	return changed
+}
+
+// engineMirrorSignature is what "the far catalogue moved" means, and it deliberately does not
+// mean "the answer differed".
+//
+// 🔴 Sorted, because a far side that listed the same rows in another order would otherwise be a
+// change on every tick — and a change on every tick is a fan-out to every running workspace every
+// two minutes, forever. Order carries nothing here that the rows do not: which checkpoint is the
+// default is the `Selected`/`Default` flag, and that IS part of the signature.
+//
+// 🔴 The warm model is deliberately absent. It moves whenever anyone over there generates with a
+// different checkpoint — several times an hour on a busy engine — and all it changes on this side
+// is a hint in a tool description. Waking every workspace for it would spend the push on the one
+// fact that does not need it.
+func engineMirrorSignature(rows []store.EngineModel) string {
+	parts := make([]string, 0, len(rows))
+	for _, r := range rows {
+		parts = append(parts, fmt.Sprintf("%+v", r))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "\n")
 }
 
 // mirrorRow turns one wire row into a catalogue row of this deployment's own shape.

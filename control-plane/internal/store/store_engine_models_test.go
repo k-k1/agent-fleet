@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -29,7 +30,8 @@ func TestEngineModelRoundTrip(t *testing.T) {
 	want := EngineModel{
 		Role: "image", ID: "flux2-klein-4b", Kind: "checkpoint",
 		Files: []EngineModelFile{
-			{Flag: "--diffusion-model", S3Key: "image/diffusion_models/klein.safetensors"},
+			{Flag: "--diffusion-model", S3Key: "image/diffusion_models/klein.safetensors",
+				ArtifactIdentity: "hf:org/repo@commit/klein.safetensors#sha256:abc"},
 			{Flag: "--t5xxl", S3Key: "image/text_encoders/qwen_3_4b.safetensors"},
 		},
 		Args: []string{"--type", "q8_0"}, Sizes: []string{"1024x1024", "1216x832"},
@@ -51,7 +53,7 @@ func TestEngineModelRoundTrip(t *testing.T) {
 	}
 	g := got[0]
 	if len(g.Files) != 2 || g.Files[0].Flag != "--diffusion-model" ||
-		g.Files[1].S3Key != "image/text_encoders/qwen_3_4b.safetensors" {
+		g.Files[0].ArtifactIdentity == "" || g.Files[1].S3Key != "image/text_encoders/qwen_3_4b.safetensors" {
 		t.Fatalf("files did not survive: %+v", g.Files)
 	}
 	if len(g.Args) != 2 || len(g.Sizes) != 2 || g.VramMiB != 11600 || g.BaseModel != "flux2-klein" {
@@ -74,6 +76,87 @@ func TestEngineModelRoundTrip(t *testing.T) {
 	}
 	if rows, err := st.ListEngineModels(ctx, ""); err != nil || len(rows) != 1 {
 		t.Fatalf("every role: %v %+v", err, rows)
+	}
+}
+
+func TestCreateEngineModelNeverOverwritesAConcurrentRow(t *testing.T) {
+	st := engineModelStore(t)
+	ctx := t.Context()
+	if created, err := st.CreateEngineModel(ctx, EngineModel{Role: "llm", ID: "m", Description: "first"}); err != nil || !created {
+		t.Fatalf("first create = %v, %v", created, err)
+	}
+	if created, err := st.CreateEngineModel(ctx, EngineModel{Role: "llm", ID: "m", Description: "second"}); err != nil || created {
+		t.Fatalf("conflicting create = %v, %v", created, err)
+	}
+	rows, err := st.ListEngineModels(ctx, "llm")
+	if err != nil || len(rows) != 1 || rows[0].Description != "first" {
+		t.Fatalf("row after conflict = %+v, %v", rows, err)
+	}
+}
+
+func TestAppendEngineModelFileKeepsOneFilePerFlag(t *testing.T) {
+	st := engineModelStore(t)
+	ctx := t.Context()
+	if err := st.PutEngineModel(ctx, EngineModel{Role: "image", ID: "m", Files: []EngineModelFile{
+		{Flag: "--diffusion-model", S3Key: "image/a.safetensors"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	part := EngineModelFile{Flag: "--vae", S3Key: "image/vae-a.safetensors"}
+	if found, err := st.AppendEngineModelFile(ctx, "image", "m", part); err != nil || !found {
+		t.Fatalf("first append = %v, %v", found, err)
+	}
+	if found, err := st.AppendEngineModelFile(ctx, "image", "m", part); err != nil || !found {
+		t.Fatalf("idempotent append = %v, %v", found, err)
+	}
+	if found, err := st.AppendEngineModelFile(ctx, "image", "m",
+		(EngineModelFile{Flag: "--vae", S3Key: "image/vae-b.safetensors"})); !errors.Is(err, ErrEngineModelFileSlotTaken) || found {
+		t.Fatalf("occupied slot append = %v, %v", found, err)
+	}
+	got := engineModelByID(t, st, "image", "m")
+	if len(got.Files) != 2 || got.Files[1] != part {
+		t.Fatalf("files after refused append = %+v", got.Files)
+	}
+}
+
+// A file relocated inside the bucket changes BOTH its role and its key, and the row must end up
+// with one declaration rather than two — the old one points at a key the move emptied.
+func TestMoveEngineModelFileRewritesOneDeclaration(t *testing.T) {
+	st := engineModelStore(t)
+	ctx := t.Context()
+	from := "image/checkpoints/split_files/diffusion_models/anima.safetensors"
+	if err := st.PutEngineModel(ctx, EngineModel{Role: "image", ID: "anima", Files: []EngineModelFile{
+		{S3Key: from, Bytes: 4_182_230_656, Source: "hf:circlestone-labs/Anima/…", ArtifactIdentity: "hf:…#sha256:aa"},
+		{Flag: "--vae", S3Key: "image/vae/qwen_image_vae.safetensors"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	moved := EngineModelFile{Flag: "--diffusion-model", S3Key: "image/diffusion_models/anima.safetensors",
+		Bytes: 4_182_230_656, Source: "hf:circlestone-labs/Anima/…", ArtifactIdentity: "hf:…#sha256:aa"}
+	if found, err := st.MoveEngineModelFile(ctx, "image", "anima", from, moved); err != nil || !found {
+		t.Fatalf("move = %v, %v", found, err)
+	}
+	got := engineModelByID(t, st, "image", "anima")
+	if len(got.Files) != 2 || got.Files[0] != moved {
+		t.Fatalf("files after the move = %+v", got.Files)
+	}
+	// The reconciler can see the same finished task twice, and that is not a failed job.
+	if found, err := st.MoveEngineModelFile(ctx, "image", "anima", from, moved); err != nil || !found {
+		t.Errorf("a second move of the same file = %v, %v, want a no-op reporting success", found, err)
+	}
+	// A row that holds neither the source nor the destination is not a move to invent — the
+	// caller has to hear that its job no longer describes this catalogue.
+	if err := st.PutEngineModel(ctx, EngineModel{Role: "image", ID: "other",
+		Files: []EngineModelFile{{Flag: "--vae", S3Key: "image/vae/x.safetensors"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := st.MoveEngineModelFile(ctx, "image", "other", from, moved); err != nil || found {
+		t.Errorf("moving a key the row never had = %v, %v, want false", found, err)
+	}
+	// And the destination role must be free, for the same reason an append refuses a taken slot.
+	if found, err := st.MoveEngineModelFile(ctx, "image", "anima", moved.S3Key,
+		EngineModelFile{Flag: "--vae", S3Key: "image/vae/another.safetensors"}); !errors.Is(err, ErrEngineModelFileSlotTaken) || found {
+		t.Errorf("moving onto a taken role = %v, %v", found, err)
 	}
 }
 

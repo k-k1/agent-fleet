@@ -249,6 +249,19 @@
   white-space: nowrap;
 }
 
+/* The words an unticked adapter would bring. It yields the row to the name and to the weight
+   slider that replaces it on ticking: one line, ellipsised, never wrapping the row taller — a
+   list of twenty adapters is a list, not twenty paragraphs. */
+.igen-lora-trigger {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .igen-lora-weight {
   margin-left: auto;
 }

@@ -75,14 +75,22 @@ export function turnTranslateKey(texts: string[]): string {
   return texts.length ? translateHash(texts.join("\n\n")) : "";
 }
 
-// Fenced blocks and inline code are dropped before the language is judged: a Japanese answer is
-// mostly English inside its code, and an English answer with a big Japanese log would read as
-// Japanese. What is being asked is "is the PROSE in my language".
+// Fenced blocks, inline code, and quoted spans are dropped before the language is judged: a
+// Japanese answer is mostly English inside its code, and an English answer with a big Japanese
+// log would read as Japanese. A quoted label — citing a UI string next to its other-language
+// counterpart, e.g. `"レビューする"/"Review this pull request"` or `「翻訳」/「原文」` — is
+// verbatim content being pointed at, not prose in either language, and a handful of such
+// characters must not by itself flip the verdict for an otherwise single-language answer. What
+// is being asked is "is the PROSE in my language".
 function proseOnly(s: string): string {
   return s
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`[^`\n]*`/g, " ")
-    .replace(/^\s{4,}\S.*$/gm, " ");
+    .replace(/^\s{4,}\S.*$/gm, " ")
+    .replace(/"[^"\n]*"/g, " ")
+    .replace(/“[^”\n]*”/g, " ")
+    .replace(/「[^」\n]*」/g, " ")
+    .replace(/『[^』\n]*』/g, " ");
 }
 
 // Kana and kanji, the only two that decide this. Latin is counted to keep a one-word answer
@@ -94,14 +102,22 @@ const LATIN = /[A-Za-z]/g;
 const MIN_LATIN = 8;
 const MIN_CJK = 8;
 
+// What decides is the SHARE of the prose written in the other script, not whether a single
+// character of it appears. An English answer naming a Console label in Japanese where it has no
+// English name ("the engines are still 無効", "set them back to オンデマンド") is still English
+// the reader cannot read — measured on one real report, those two words are eight characters in
+// roughly 350 Latin letters, 2% of the prose. Below this share the stray characters are terms
+// being pointed at; above it the two languages are genuinely mixed and both directions stay
+// silent, because the reader can already read half of it and a translation would spend tokens
+// re-saying what is there ("実装完了。see the diff").
+const MAX_STRAY_SHARE = 0.05;
+
 /**
  * Does this answer look like it is NOT in the reader's language?
  *
  * Deliberately blunt, in both directions:
- *   ja … no CJK character at all, and enough Latin letters to be prose. An answer that mixes
- *        ("実装完了。see the diff") is NOT offered: the reader can read it, and a translation
- *        would spend tokens to re-say what is already there.
- *   en … enough CJK characters to be Japanese prose.
+ *   ja … enough Latin letters to be prose, and at most a stray word's worth of CJK.
+ *   en … enough CJK characters to be Japanese prose, and more than a stray word's worth.
  *
  * It only decides whether the BUTTON is offered. Nothing translates on this verdict alone, so a
  * wrong guess costs a button that should not be there, never a model run.
@@ -110,8 +126,133 @@ export function looksForeign(text: string, lang: TranslateLang): boolean {
   const prose = proseOnly(text);
   const cjk = (prose.match(KANA)?.length || 0) + (prose.match(KANJI)?.length || 0);
   const latin = prose.match(LATIN)?.length || 0;
-  if (lang === "ja") return cjk === 0 && latin >= MIN_LATIN;
-  return cjk >= MIN_CJK;
+  // No prose at all leaves the share undefined (0/0); nothing is offered for it either way.
+  const cjkShare = cjk + latin > 0 ? cjk / (cjk + latin) : 0;
+  if (lang === "ja") return latin >= MIN_LATIN && cjkShare <= MAX_STRAY_SHARE;
+  return cjk >= MIN_CJK && cjkShare > MAX_STRAY_SHARE;
+}
+
+// Server-side per-request-part cap (session_translate.go's translateMaxPartBytes), mirrored
+// here so a too-long answer can be split into several request parts BEFORE it is ever sent,
+// rather than only after the server has already said no. The 32 KiB value itself is not load-
+// bearing for correctness (a stale copy only shifts where splitting kicks in, never breaks it),
+// so unlike translateHash this does not need a pinned cross-language vector.
+export const TRANSLATE_MAX_PART_BYTES = 32 * 1024;
+
+function byteLen(s: string): number {
+  return encoder.encode(s).length;
+}
+
+// Character-offset ranges of ```-fenced blocks (opening line through the matching closing
+// line), so a split can avoid landing between them. An unterminated fence counts as open to the
+// end of the text — safer than treating a stray ``` as ordinary prose and cutting through it.
+function fenceRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const re = /^```.*$/gm;
+  let m: RegExpExecArray | null;
+  let openAt = -1;
+  while ((m = re.exec(text))) {
+    if (openAt < 0) openAt = m.index;
+    else {
+      ranges.push([openAt, m.index + m[0].length]);
+      openAt = -1;
+    }
+  }
+  if (openAt >= 0) ranges.push([openAt, text.length]);
+  return ranges;
+}
+
+const insideFence = (offset: number, ranges: Array<[number, number]>): boolean =>
+  ranges.some(([start, end]) => offset > start && offset < end);
+
+// Offsets right after each run of `pattern`, skipping any that fall inside a fenced block — a
+// fence's opening and closing ``` must never end up split across two request parts unless the
+// fence alone is already over the limit.
+function breakOffsets(text: string, pattern: RegExp, ranges: Array<[number, number]>): number[] {
+  const out: number[] = [];
+  const re = new RegExp(pattern.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const offset = m.index + m[0].length;
+    if (!insideFence(offset, ranges)) out.push(offset);
+  }
+  return out;
+}
+
+// The largest candidate offset (candidates ascending) that is past `start` and keeps
+// text.slice(start, offset) within maxBytes. The slice only grows as offset increases, so byte
+// length is monotonic — the first candidate that no longer fits ends the search.
+function bestCut(text: string, start: number, maxBytes: number, candidates: number[]): number | undefined {
+  let best: number | undefined;
+  for (const c of candidates) {
+    if (c <= start) continue;
+    if (byteLen(text.slice(start, c)) <= maxBytes) best = c;
+    else break;
+  }
+  return best;
+}
+
+// Last resort: a byte-safe cut (never inside a UTF-8 multi-byte sequence) at the widest prefix
+// that still fits. Always makes progress: even one character's UTF-8 encoding is far under any
+// maxBytes this runs with.
+function hardCut(text: string, start: number, maxBytes: number): number {
+  let lo = start + 1;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (byteLen(text.slice(start, mid)) <= maxBytes) lo = mid;
+    else hi = mid - 1;
+  }
+  // Never land between a UTF-16 surrogate pair (an emoji, most CJK beyond the BMP): text.slice
+  // there is not actually "byte-safe" despite fitting the byte count above — TextEncoder (and
+  // the real UTF-8 encode a fetch body goes through) turns each lone surrogate half into its
+  // OWN U+FFFD, so the character reaching the server is not reassembled, it is destroyed into
+  // two replacement characters. Move the cut before the pair; if that leaves nothing to emit
+  // (only possible with a maxBytes of a handful of bytes, never a real request), emit the pair
+  // whole instead — one character slightly over the cap beats a corrupted one.
+  const before = text.charCodeAt(lo - 1);
+  if (before >= 0xd800 && before <= 0xdbff) lo = lo - 1 > start ? lo - 1 : lo + 1;
+  return lo;
+}
+
+// A sentence boundary: Latin-style closing punctuation followed by a space or tab (". ", "; ",
+// "! ", "? "), or a Japanese sentence-ending mark, which needs no trailing space of its own.
+// This is the last STRUCTURAL boundary tried before giving up to a raw byte cut — it is what
+// saves a long line that has no newline in it at all (a table row, a wrapped log line, one
+// unbroken paragraph) from being cut mid-word.
+const SENTENCE_BREAK = /[.!?;][ \t]|[。、！？]/;
+
+/**
+ * Splits one translate request part at the best available boundary once it is over the
+ * server's per-part cap: a blank line, then a single line break, then a sentence boundary, then
+ * a raw byte-safe cut, in that preference order. Concatenating the returned chunks with NO
+ * separator reproduces `text` exactly (each chunk keeps its own trailing newlines), so the
+ * caller sends them as independent request parts and joins the translated replies back in the
+ * same order.
+ *
+ * A fenced code block is kept whole whenever it fits in one chunk on its own: splitting through
+ * the middle of a ``` pair would hand each half to the model as a separate request, and the
+ * persona's "keep code fences verbatim" instruction cannot save a fence that is already broken
+ * before translation starts.
+ */
+export function splitForTranslate(text: string, maxBytes: number = TRANSLATE_MAX_PART_BYTES): string[] {
+  if (byteLen(text) <= maxBytes) return [text];
+  const ranges = fenceRanges(text);
+  const blank = breakOffsets(text, /\n{2,}/, ranges);
+  const single = breakOffsets(text, /\n/, ranges);
+  const sentence = breakOffsets(text, SENTENCE_BREAK, ranges);
+  const out: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    const end =
+      bestCut(text, start, maxBytes, blank) ??
+      bestCut(text, start, maxBytes, single) ??
+      bestCut(text, start, maxBytes, sentence) ??
+      hardCut(text, start, maxBytes);
+    out.push(text.slice(start, end));
+    start = end;
+  }
+  return out;
 }
 
 /** POST /api/sessions/{name}/translate — one entry per requested part, in request order. */

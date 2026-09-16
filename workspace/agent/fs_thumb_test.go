@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"math/rand/v2"
 	"net/http/httptest"
@@ -160,7 +161,7 @@ func TestFSDownloadThumbServesTheCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := thumbCacheKey("shot.png", st.Size(), st.ModTime(), 64)
+	key := thumbCacheKey("shot.png", st.Size(), st.ModTime(), 64, modeDownscale)
 	cached, err := os.ReadFile(thumbCacheFile(key, "image/jpeg"))
 	if err != nil {
 		t.Fatalf("nothing cached under the file's identity: %v", err)
@@ -209,7 +210,7 @@ func TestFSDownloadThumbKeysOnTheWholePath(t *testing.T) {
 	}
 	// The identity that matters, held equal except for the directory: two files that
 	// differ only there must not share an entry.
-	if thumbCacheKey("a/shot.png", 4096, when, 512) == thumbCacheKey("b/shot.png", 4096, when, 512) {
+	if thumbCacheKey("a/shot.png", 4096, when, 512, modeDownscale) == thumbCacheKey("b/shot.png", 4096, when, 512, modeDownscale) {
 		t.Fatal("cache key ignores the directory")
 	}
 	first := download(t, "path=a/shot.png&thumb=64").Body.Bytes()
@@ -220,7 +221,9 @@ func TestFSDownloadThumbKeysOnTheWholePath(t *testing.T) {
 }
 
 func TestThumbEdgeRejectsOutOfRange(t *testing.T) {
-	cases := map[string]int{"": 0, "0": 0, "63": 0, "64": 64, "512": 512, "1024": 1024, "1025": 0, "-1": 0, "abc": 0, "512.5": 0}
+	// The top is 2048 since `preview`: a lightbox asks for its own viewport times the device
+	// pixel ratio, which is past 1024 on a large high-DPI screen.
+	cases := map[string]int{"": 0, "0": 0, "63": 0, "64": 64, "512": 512, "1024": 1024, "2048": 2048, "2049": 0, "-1": 0, "abc": 0, "512.5": 0}
 	for in, want := range cases {
 		if got := thumbEdge(in); got != want {
 			t.Errorf("thumbEdge(%q) = %d, want %d", in, got, want)
@@ -238,7 +241,7 @@ func waitForCache(t *testing.T, display string, edge int) bool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := thumbCacheKey(display, fi.Size(), fi.ModTime(), edge)
+	key := thumbCacheKey(display, fi.Size(), fi.ModTime(), edge, modeDownscale)
 	for i := 0; i < 200; i++ {
 		if _, _, ok := readThumbCache(key); ok {
 			return true
@@ -281,7 +284,7 @@ func TestFSTreeWithoutWarmDecodesNothing(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 	fi, _ := os.Stat(filepath.Join(root, "a.png"))
-	if _, _, ok := readThumbCache(thumbCacheKey(filepath.Join(root, "a.png"), fi.Size(), fi.ModTime(), 64)); ok {
+	if _, _, ok := readThumbCache(thumbCacheKey(filepath.Join(root, "a.png"), fi.Size(), fi.ModTime(), 64, modeDownscale)); ok {
 		t.Fatal("a plain listing warmed the cache — the file tree would then decode every images folder it walks")
 	}
 }
@@ -294,7 +297,7 @@ func TestWarmThumbDirIsThrottledPerFolder(t *testing.T) {
 	noisyPNG(t, filepath.Join(root, "late.png"), 800, 600, false)
 	warmThumbDir(root, 64) // inside warmGap: must do nothing
 	fi, _ := os.Stat(filepath.Join(root, "late.png"))
-	if _, _, ok := readThumbCache(thumbCacheKey(filepath.Join(root, "late.png"), fi.Size(), fi.ModTime(), 64)); ok {
+	if _, _, ok := readThumbCache(thumbCacheKey(filepath.Join(root, "late.png"), fi.Size(), fi.ModTime(), 64, modeDownscale)); ok {
 		t.Fatal("the second warm-up ran inside the throttle window")
 	}
 }
@@ -341,5 +344,195 @@ func TestOriginalIsImmutableWithTheMatchingVersion(t *testing.T) {
 	rec = download(t, "path=shot.png")
 	if cc := rec.Header().Get("Cache-Control"); cc != "private, max-age=60" {
 		t.Errorf("Cache-Control without a version = %q, want the short one", cc)
+	}
+}
+
+// --- the direct pixel readers --------------------------------------------------------
+//
+// pixelReader exists only to be fast (fs_thumb.go's measurement: 1.5 M allocations a picture
+// through At()). It therefore has to answer EXACTLY what At().RGBA() would — a downscale that
+// rounds one channel differently is a different picture, and nothing downstream would notice.
+
+// viaAt hides the concrete type so pixelReader cannot match it and falls back to At(). That is
+// the reference the fast paths are compared against.
+type viaAt struct{ image.Image }
+
+// sameDownscale scales `src` twice — once as itself, once hidden behind viaAt — and reports
+// the first pixel where the two differ.
+func sameDownscale(t *testing.T, name string, src image.Image, factor int) {
+	t.Helper()
+	fast := boxDownscale(src, factor)
+	slow := boxDownscale(viaAt{src}, factor)
+	if fast.Rect != slow.Rect {
+		t.Fatalf("%s: fast path produced %v, At() path %v", name, fast.Rect, slow.Rect)
+	}
+	for i := range slow.Pix {
+		if fast.Pix[i] != slow.Pix[i] {
+			px := i / 4
+			t.Fatalf("%s: differs at pixel %d (x=%d y=%d) channel %d: fast %d, At() %d",
+				name, px, px%fast.Rect.Dx(), px/fast.Rect.Dx(), i%4, fast.Pix[i], slow.Pix[i])
+		}
+	}
+}
+
+func TestPixelReaderMatchesAt(t *testing.T) {
+	const w, h = 24, 18
+	rng := rand.New(rand.NewPCG(7, 11))
+	b := image.Rect(0, 0, w, h)
+
+	rgba := image.NewRGBA(b)
+	nrgba := image.NewNRGBA(b)
+	gray := image.NewGray(b)
+	ycbcr := image.NewYCbCr(b, image.YCbCrSubsampleRatio420)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			// Alpha included on purpose: NRGBA premultiplies on read, which is the one case
+			// where "just copy the bytes" would be wrong.
+			rgba.SetRGBA(x, y, color.RGBA{uint8(rng.UintN(256)), uint8(rng.UintN(256)), uint8(rng.UintN(256)), uint8(rng.UintN(256))})
+			nrgba.SetNRGBA(x, y, color.NRGBA{uint8(rng.UintN(256)), uint8(rng.UintN(256)), uint8(rng.UintN(256)), uint8(rng.UintN(256))})
+			gray.SetGray(x, y, color.Gray{uint8(rng.UintN(256))})
+			ycbcr.Y[ycbcr.YOffset(x, y)] = uint8(rng.UintN(256))
+			ycbcr.Cb[ycbcr.COffset(x, y)] = uint8(rng.UintN(256))
+			ycbcr.Cr[ycbcr.COffset(x, y)] = uint8(rng.UintN(256))
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		img  image.Image
+	}{
+		{"RGBA", rgba}, {"NRGBA", nrgba}, {"Gray", gray}, {"YCbCr", ycbcr},
+		// A sub-image has a non-zero Min, and every reader indexes through PixOffset /
+		// YOffset. Reading from the wrong corner is the bug this catches.
+		{"RGBA sub-image", rgba.SubImage(image.Rect(6, 3, 24, 18))},
+		{"YCbCr sub-image", ycbcr.SubImage(image.Rect(6, 4, 24, 18))},
+	} {
+		sameDownscale(t, tc.name, tc.img, 3)
+	}
+}
+
+// --- preview: the copy a lightbox shows ----------------------------------------------
+//
+// The gallery's enlarge used to fetch the original — ~1.1 MB for this deployment's generated
+// pictures (832x1216 PNG). There is no downscale to offer: at a lightbox's own size the
+// picture IS the right size, which is why `thumb` answers "serve the original" here. `preview`
+// is the other answer — the same pixels, re-encoded.
+
+func TestPreviewReEncodesAPictureItCannotDownscale(t *testing.T) {
+	root := thumbRoots(t)
+	path := filepath.Join(root, "shot.png")
+	original := noisyPNG(t, path, 700, 500, false)
+
+	// `thumb` at an edge the picture is already under: nothing to downscale, so the original.
+	thumb := download(t, "path=shot.png&thumb=1024")
+	if thumb.Body.Len() != len(original) {
+		t.Errorf("thumb served %d bytes, want the original's %d", thumb.Body.Len(), len(original))
+	}
+	// `preview` at the same edge: the same picture, smaller.
+	prev := download(t, "path=shot.png&preview=1024")
+	if prev.Body.Len() >= len(original) {
+		t.Fatalf("preview served %d bytes, no better than the original's %d", prev.Body.Len(), len(original))
+	}
+	if ct := prev.Header().Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q, want image/jpeg", ct)
+	}
+	// Same pixels: a preview that quietly halved the picture would be a worse lightbox, not a
+	// faster one.
+	img, _, err := image.Decode(bytes.NewReader(prev.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("decode the preview: %v", err)
+	}
+	if img.Bounds().Dx() != 700 || img.Bounds().Dy() != 500 {
+		t.Errorf("preview is %v, want the source's 700x500", img.Bounds())
+	}
+}
+
+func TestPreviewStillDownscalesWhenItCan(t *testing.T) {
+	root := thumbRoots(t)
+	noisyPNG(t, filepath.Join(root, "big.png"), 1200, 900, false)
+	prev := download(t, "path=big.png&preview=256")
+	img, _, err := image.Decode(bytes.NewReader(prev.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("decode the preview: %v", err)
+	}
+	// 1200/256 rounds to 5, so a fifth in each direction: a preview lands on the step nearest
+	// the asked edge (240) rather than the next one up (300, which `thumb` would give).
+	if img.Bounds().Dx() != 240 || img.Bounds().Dy() != 180 {
+		t.Errorf("preview is %v, want 240x180", img.Bounds())
+	}
+}
+
+// Transparency has to stay PNG, and a PNG of the same pixels is not smaller — so there is
+// nothing to gain and a JPEG would composite the transparent parts onto black.
+func TestPreviewLeavesATransparentPictureAlone(t *testing.T) {
+	root := thumbRoots(t)
+	original := noisyPNG(t, filepath.Join(root, "logo.png"), 700, 500, true)
+	prev := download(t, "path=logo.png&preview=1024")
+	if prev.Body.Len() != len(original) {
+		t.Errorf("preview served %d bytes; a transparent picture must fall through to the original (%d)",
+			prev.Body.Len(), len(original))
+	}
+	if ct := prev.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q, want image/png", ct)
+	}
+}
+
+// A JPEG source would be losing a second time for a few KB.
+func TestPreviewDoesNotReEncodeAJPEG(t *testing.T) {
+	root := thumbRoots(t)
+	path := filepath.Join(root, "photo.jpg")
+	src := image.NewRGBA(image.Rect(0, 0, 700, 500))
+	rng := rand.New(rand.NewPCG(3, 4))
+	for y := 0; y < 500; y++ {
+		for x := 0; x < 700; x++ {
+			src.SetRGBA(x, y, color.RGBA{uint8(rng.UintN(256)), uint8(rng.UintN(256)), uint8(rng.UintN(256)), 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() < thumbMinSourceBytes {
+		t.Fatalf("fixture is only %d bytes — under thumbMinSourceBytes, the test would prove nothing", buf.Len())
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if n := download(t, "path=photo.jpg&preview=1024").Body.Len(); n != buf.Len() {
+		t.Errorf("preview served %d bytes, want the original JPEG's %d", n, buf.Len())
+	}
+}
+
+// The two modes are different answers for the same file at the same edge, so they cannot
+// share a cache entry — one of them would serve the other's bytes.
+func TestPreviewAndThumbDoNotShareACacheEntry(t *testing.T) {
+	root := thumbRoots(t)
+	noisyPNG(t, filepath.Join(root, "shot.png"), 700, 500, false)
+	prev := download(t, "path=shot.png&preview=1024").Body.Bytes()
+	thumb := download(t, "path=shot.png&thumb=1024").Body.Bytes()
+	if bytes.Equal(prev, thumb) {
+		t.Fatal("preview and thumb served the same bytes at an edge where they must differ")
+	}
+	// And the order does not matter: ask the other way round on a second file.
+	noisyPNG(t, filepath.Join(root, "other.png"), 700, 500, false)
+	t2 := download(t, "path=other.png&thumb=1024").Body.Bytes()
+	p2 := download(t, "path=other.png&preview=1024").Body.Bytes()
+	if bytes.Equal(t2, p2) {
+		t.Fatal("thumb-then-preview served the same bytes")
+	}
+}
+
+// A big picture asked for at a lightbox's size must come DOWN, not merely change format: the
+// rounded factor is what keeps "at most 2048" from answering with 4000 px and a megabyte.
+func TestPreviewBringsALargePictureDownToTheAskedSize(t *testing.T) {
+	root := thumbRoots(t)
+	noisyPNG(t, filepath.Join(root, "huge.png"), 4000, 3000, false)
+	prev := download(t, "path=huge.png&preview=2048")
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(prev.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("decode the preview: %v", err)
+	}
+	if cfg.Width != 2000 || cfg.Height != 1500 {
+		t.Errorf("preview is %dx%d, want 2000x1500 (4000/2048 rounds to 2)", cfg.Width, cfg.Height)
 	}
 }

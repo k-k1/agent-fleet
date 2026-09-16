@@ -135,14 +135,29 @@ A plain click uses the current pane; Ctrl/⌘-click and middle-click open anothe
   gallery falls back to name order and shows no relative time ("3 minutes ago") either.
 - **Count and size** — the header carries the totals for the whole folder. A big folder stops at
   **300 images**, with "Show more" for the rest (each card is one thumbnail request).
-- **Loading** — right after opening a folder, while nothing has arrived yet, the pane shows a
+- **A folder you have already seen opens at once** — the gallery remembers how each folder it
+  has walked through looked, so coming back draws those cards immediately instead of waiting.
+  **Your scroll position and anything you expanded with "Show more" come back with them**, so a
+  folder you were halfway through carries on where you left it. It re-reads the folder behind
+  that, and says "updating…" beside the count while it does — anything that really did arrive
+  since appears afterwards with the usual highlight. If the folder itself is gone, you get an
+  error rather than the contents it remembered.
+- **Loading** — the first time you open a folder, while nothing has arrived yet, the pane shows a
   loading state (it never sits there showing only "Up"). Thumbnails are requested for the cards
   nearest the screen first, so opening a big folder does not fetch everything at once, and
   scrolling ahead does not get stuck behind pictures you have already scrolled past.
-- **Folders** — subfolders are cards too, and opening one moves this pane into it. The first card,
-  "Up", goes back to the parent, and the **breadcrumb** in the header
+- **Folders** — subfolders are cards too, and each one shows **the newest picture inside it as
+  a cover** (the folder mark becomes a small badge over the picture), with **how many pictures
+  are in it** underneath. A folder named by a session's UUID is no longer a guess. Opening one
+  moves this pane into it. The first card,
+  "Up", goes back to the parent, and the **breadcrumb** in the row under the header
   (`.cache / agent-fleet / generated`) jumps to any level. Ctrl/⌘-click and middle-click open the
   folder in another pane.
+- **An always-on "Up", and the browser's Back button** — that breadcrumb row also has a
+  **permanent "Up" button** (disabled at the root), so a long folder whose "Up" card has scrolled
+  off screen is still one click from its parent. Folder navigation is retraced by the browser's
+  own **Back button** too — however you got somewhere ("Up", the breadcrumb, or a card), the same
+  number of Back presses gets you the same distance back.
 - **Cards** — click the card to **enlarge** (← / → move through the folder, and "3 / 12" tells you
   where you are; **on a phone, swipe left and right** to move — only at fit, because while you are
   zoomed in a drag pans the picture); the button in the corner **opens it in the file pane**. Just
@@ -174,7 +189,10 @@ folder is labelled with **the session's name and its image count**, not its inte
 A pane that makes pictures on your organisation's own ComfyUI **without an agent in the loop**.
 Asking a session for a picture is right for "put an illustration in this document"; this is for
 "forty variations of one prompt at three CFG values", where every round trip through a model
-would cost a turn and the knobs that matter would be out of reach.
+would cost a turn. A session can name the same settings you can (`generate_image` takes steps,
+cfg, sampler, scheduler, seed, the negative prompt and the LoRA weights), but it cannot see what
+this form shows you: each checkpoint's own published numbers as the placeholders, the fields its
+family does not read greyed out, and a trial run before you commit forty.
 
 **Two ways in:** the workspace action bar's **Images**, and the leader key **`g i`**. It is one
 pane per workspace — opening it again focuses the one you have.
@@ -196,9 +214,12 @@ pane per workspace — opening it again focuses the one you have.
   runs.
 - **The administrator's negative** shows as a chip you cannot remove, next to the deployment-wide
   one. It is applied on top of yours rather than mixed into your text.
-- **LoRAs** — only the ones that match the model's family are listed. Ticking one adds its
-  **trigger words** as chips over the prompt; unticking it removes those chips and nothing else.
-  A missing trigger is the usual reason a LoRA "does nothing". The weight defaults to 1.
+- **LoRAs** — only the ones that match the model's family are listed. Each row shows the
+  **trigger words** it would bring, so you can choose between two adapters before ticking
+  either; ticking one turns those words into chips over the prompt, and unticking it removes
+  those chips and nothing else. A missing trigger is the usual reason a LoRA "does nothing" —
+  and if you generate without one, the result says so in as many words. The weight starts at
+  the strength the adapter's author published, or 1 when the catalogue has none.
 
 **Trial run, then the batch**
 

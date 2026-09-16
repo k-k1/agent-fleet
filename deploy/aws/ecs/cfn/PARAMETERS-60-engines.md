@@ -17,7 +17,7 @@ Order matches the template.
 - [Shared](#shared)
 - [Upgrading: the model parameters are gone](#upgrading-the-model-parameters-are-gone)
 - [The `llm` role (llama.cpp)](#the-llm-role-llamacpp)
-- [The `image` role (stable-diffusion.cpp)](#the-image-role-stable-diffusioncpp)
+- [The `image` role (ComfyUI)](#the-image-role-comfyui)
 - [The instance classes](#the-instance-classes)
 - [The offers](#the-offers)
 - [The fetch sidecar](#the-fetch-sidecar)
@@ -36,12 +36,13 @@ Order matches the template.
 ## What this stack is
 
 The fleet's own inference engines on GPU, normally scaled to zero (ADR 0071 P0: the `llm`
-role, llama.cpp; P1: the `image` role, stable-diffusion.cpp's sd-server). Optional, and each
-role is optional on its own: a deployment that does not want self-hosted inference deploys
-nothing and no engine model appears in any launch menu.
+role, llama.cpp; P1: the `image` role — originally stable-diffusion.cpp's sd-server, retired by
+ADR 0083 and ComfyUI-only since). Optional, and each role is optional on its own: a deployment
+that does not want self-hosted inference deploys nothing and no engine model appears in any
+launch menu.
 
 It imports the VPC, private subnets and the CP security group from 00-network, and the
-cluster, execution role, Cloud Map namespace and the af-llamacpp / af-sdcpp ECR repositories
+cluster, execution role, Cloud Map namespace and the af-llamacpp / af-comfyui ECR repositories
 from 20-platform; it does **not** depend on 30-ingress. Deploy it BEFORE 30-ingress and hand
 30-ingress this stack's `EnginesSsmParam` output.
 
@@ -125,8 +126,44 @@ CloudFormation run. Eight parameters were retired, in two steps:
 | `LlmModelIds` / `ImageModelIds` | P6 | the catalogue row's id |
 | `LlmContextTokens` / `LlmMaxOutputTokens` | P6 | the row's own window, per MODEL |
 
-`LlmExtraArgs` / `ImageExtraArgs` **stay**: those are the INSTANCE's flags (`-ngl 99`,
-`--diffusion-fa`), not a model's.
+`LlmExtraArgs` **stays**: it is the llm INSTANCE's flags (`-ngl 99`), not a model's.
+`ImageExtraArgs` did not survive ADR 0083 — see below, it went with the engine it configured.
+
+**ADR 0083 then retired the stable-diffusion.cpp engine itself**, and with it three more:
+`ImageImageTag` (its ECR tag), `ImageExtraArgs` (its `sd-server` flags) and `ImageEngine` (which
+server the role runs). `deploy` refuses any of the three now, the same as the eight above, so
+`standup.sh` drops all three from a captured file, and `update.sh` needs no change — it never
+passed them, and a removed key is not something `deploy`'s `UsePreviousValue` carries forward
+(same as the eight above).
+
+🔴 `ImageEngine` went in two steps, and the second one is the trap. ADR 0083 first NARROWED it
+to `AllowedValues: [comfy]` and left it declared, so a capture naming `sdcpp` had to be dropped
+and a live stack still carrying `sdcpp` had to be overridden to `comfy`. Once the last `!If` on
+it was gone the parameter was unused (cfn-lint W2001) and it is now removed outright — at which
+point `comfy` became as fatal as `sdcpp`, because `deploy` refuses a key the template does not
+declare whatever its value is. `standup.sh` therefore drops it unconditionally, `update.sh`
+passes nothing (the override it used to add for `sdcpp` would itself fail every update now), and
+a live stack's own previous value is simply lost at the next update, which is the correct
+outcome: the image role runs ComfyUI and nothing chooses.
+
+🔴 **`EcrSdcppUri`'s removal reverses this template's usual update order, for one release
+only.** `60-engines.yaml:785` imported `${PlatformStackName}-EcrSdcppUri`, and
+`20-platform.yaml:107-112` exported it (`EcrSdcpp`, the ECR repository). CloudFormation refuses
+to delete an export another stack still imports, so on the release that drops both:
+
+1. **60-engines FIRST** — its new template no longer imports the export.
+2. **20-platform SECOND** — nothing imports the export anymore, so its own new template (which
+   drops the `EcrSdcpp` resource and the export with it) can delete it cleanly.
+
+This is the opposite of `update.sh`'s normal order (20-platform before 60-engines, `update.sh`'s
+own "the order, in one place" comment — a DIFFERENT reason: 20-platform owns the ECR
+repositories a NEW image needs to already exist in before 60-engines can reference it). Running
+20-platform first here would try to delete an in-use export instead, and CloudFormation rolls
+that update back — `update.sh` guards this specific migration with a preflight
+(`aws cloudformation list-imports --export-name <platform>-EcrSdcppUri`) that stops with a
+named instruction rather than letting the rollback happen. A hand-run `cloudformation deploy`
+has no such guard: update 60-engines on its own first, THEN 20-platform, on any deployment that
+still has 60-engines on a pre-ADR-0083 template.
 
 🔴 **Before updating a deployment that named a model key, add `<role>Enabled=true`.** Until P6
 `<role>ModelS3Key` decided two things — which model was seeded, and **whether the role's service
@@ -484,73 +521,54 @@ idle rule fires at once. For the `image` role that throws away an instance that 
 mode at `ondemand` and wake it with a request through the gateway (measured, ADR 0072 "P2 の残作業
 4・5 を実機で押した").
 
-## The `image` role (stable-diffusion.cpp, or ComfyUI since ADR 0072 P2)
+## The `image` role (ComfyUI)
 
 A mirror of the `llm` block, and deliberately a mirror rather than a shared set of parameters:
 decision 2 is that instance requirements are DECLARED per role, because the floor is a VRAM
 number (SDXL fp16 measured 7,379 MiB against the 30B's 20,943) and the two roles must never land
 on the same instance — CUDA does not slow down when VRAM runs out, it crashes.
 
-### `ImageEngine`
+### There is no `ImageEngine`
 
-ADR 0072 decision 4: which server the role actually runs, `sdcpp` (stable-diffusion.cpp, one
+ADR 0072 decision 4 gave the role a choice of server, `sdcpp` (stable-diffusion.cpp, one
 checkpoint chosen at start) or `comfy` (this deployment's own ComfyUI image, which switches
-checkpoints per REQUEST). One role, one task definition, one service either way — `!If` only
-switches the `engine` container's `Image` and `Command` and the engine table's `health`/
-`provider` fields, never the shape of the stack. A second container/service pair for `comfy`
-would need its own capacity-provider association and can never run at the same time as
-`sdcpp`'s (ADR 0071 decision 2 — the two roles never share an instance, let alone the same role run
-twice), so there is nothing to gain from one.
+checkpoints per REQUEST). ADR 0083 decision 1 retired the `sdcpp` engine — nobody was running
+it, and its "one checkpoint, chosen at start" shape is what made it obsolete once `comfy`
+existed. The parameter outlived it by one release, locked to `AllowedValues: [comfy]` and read
+by nothing, and is now gone as well: the role runs ComfyUI, the engine table writes `comfy` as a
+literal, and a choice of one is a question nobody should be asked. What a captured file or a
+live stack still says about it is dropped (see the retired-parameters section above).
 
 `ImageComfyImageTag` (default `v0.34.0`) is the tag inside `af-comfyui`, baked by
 `.github/workflows/comfyui-image.yml` (a dedicated `workflow_dispatch`, deliberately NOT part of
 `dev-image.yml`/`release.sh` — ComfyUI's pinned upstream revision moves on its own schedule, not
-the app's) and copied in by `standup.sh` the same way `af-sdcpp` is, gated on `ImageEngine=comfy`.
+the app's) and copied in by `standup.sh`, gated on `ImageEnabled=true`.
 
-### The `image` role's engine table fields, per `ImageEngine`
+### The `image` role's engine table fields
 
-| | `sdcpp` | `comfy` |
-|---|---|---|
-| `health` | `/v1/models` | `/system_stats` (unauthenticated, answers immediately — measured) |
-| `provider` | `sdcpp` | `comfy` |
+`health` is `/system_stats` (unauthenticated, answers immediately — measured) and `provider` is
+`comfy`. Before ADR 0083 these were an `!If` on `ImageEngine`; now that `comfy` is the only
+value the template writes them as literals.
 
-Neither engine is a router (`PRESET_FILE`/`ALIAS_FLAG`/`CTX_FLAG` stay empty for both), and the
-fetch sidecar does not otherwise know or care which one it is feeding — it already syncs every
-ENABLED model's files (`keys.start` then `keys.rest`), not just the selected one, which happens
-to be exactly what `comfy` needs (every enabled checkpoint on disk so a request can pick any of
-them) and is merely wasted bandwidth for `sdcpp` if an administrator enables more than one
-checkpoint while running it. `comfy`'s container command never reads `/models/cmdline`'s
-CONTENT (there is no `-m` flag to build — the checkpoint is chosen per request by the `comfy`
-provider's own graph JSON), only whether the file is non-empty, which is the same "something is
-enabled" gate `sdcpp` uses.
+The `image` role is not a router (`PRESET_FILE`/`ALIAS_FLAG`/`CTX_FLAG` stay empty), and the
+fetch sidecar syncs every ENABLED model's files (`keys.start` then `keys.rest`), not just one
+selected checkpoint — exactly what `comfy` needs, since any of them can be picked per request.
+`comfy`'s container command never reads `/models/cmdline`'s CONTENT (there is no `-m` flag to
+build — the checkpoint is chosen per request by the `comfy` provider's own graph JSON), only
+whether the file is non-empty, the same "something is enabled" gate the `llm` role uses.
 
-### `ImageImageTag`
-
-Tag inside the `af-sdcpp` ECR repository (the doubled word is the `image` ROLE's container image
-tag), used when `ImageEngine=sdcpp`. Upstream is `ghcr.io/leejet/stable-diffusion.cpp:master-cuda`,
-2.31 GB and **amd64 only** — there is no arm64 build and G-family instances have no arm64 member
-either, so this role is x86_64 by construction (ADR 0071 decision 12). `standup.sh` copies it in
-with `crane` before this stack is deployed, and only when `ImageEnabled=true` — the same switch
-that decides whether the service exists, read the same way, because a role created against an
-empty ECR repository sits in `CREATE_IN_PROGRESS` repeating `CannotPullContainerError` with no
-later step able to rescue it.
-
-### `ImageExtraArgs`
-
-Extra `sd-server` flags. `--diffusion-fa` (flash attention) is what the P0 GPU measurement ran
-with: 1024px in 20.8-21.0 s and 7.4 GB of VRAM on an L4.
-
-There is no `ImageApiKeySsmParam`, and that is not an omission: stable-diffusion.cpp's server has
-no authentication option at all (upstream `examples/server/api.md` documents none), so the
-security group — port 8080 from the CP and nothing else — is the whole of this engine's access
-control. The llm role's `--api-key` is a second lock that does not exist here.
+There is no `ImageApiKeySsmParam`, and that is not an omission: ComfyUI's `/system_stats` answers
+unauthenticated (measured), so the security group — port 8080 from the CP and nothing else — is
+the whole of this engine's access control. The llm role's `--api-key` is a second lock that does
+not exist here.
 
 ### `ImageStorageGiB`
 
 The box's root gp3 volume, as [`LlmStorageGiB`](#llmstoragegib). Smaller than the llm role's 120
-because the whole role is a 2.3 GB image and a 6.5 GB checkpoint — but not much smaller: the
-anonymous host volume is re-allocated per task and never reclaimed, so several starts on one box
-each cost a copy. A `comfy` deployment that has enabled 30 GB of checkpoints needs this raised.
+because the whole role is a ~5.4 GB image plus whatever checkpoints are enabled — but not much
+smaller: the anonymous host volume is re-allocated per task and never reclaimed, so several
+starts on one box each cost a copy. A deployment that has enabled 30 GB of checkpoints needs this
+raised.
 
 ### `ImageAllowedInstanceTypes` / `ImageAcceleratorMemMinMiB` and the rest of the requirement block
 
@@ -572,9 +590,8 @@ making.
 
 ### `ImageStartDeadlineSec`
 
-How long a start may take before the controller calls it failed. sd-server measured 195 s from
-task creation to listen (135 s of that a GHCR pull, so less from ECR) — but the dominant term is
-how long the INSTANCE takes to appear, measured anywhere from 8 to 88 s and not something a deadline
+How long a start may take before the controller calls it failed. The dominant term is how long
+the INSTANCE takes to appear, measured anywhere from 8 to 88 s and not something a deadline
 should be tuned against (ADR 0071, P0 measurement 1). With an `ImageInstanceClasses` ladder
 declared, the rung-change budget under `LlmStartDeadlineSec` applies here unchanged.
 
@@ -972,11 +989,10 @@ Four rules, each with a failure behind it:
   stack-creation time there is no Control Plane and no parameter at all. A `set -e` that failed
   here would bring the two-pass stand-up back in a new shape (ADR 0072 decision 1(b)).
 - **Both roles fetch the STARTING model first and every OTHER enabled model behind it** (see
-  "The START model gates the engine" below) — the sidecar does not distinguish by role. For
-  `sdcpp`, which holds exactly one checkpoint, an administrator who enables more than one pays
-  for a sync that never gets used; for the `llm` router and for `comfy` (ADR 0072 P2), every
-  enabled model really can be asked for, so the extra sync is not waste. Enabling a model
-  OFFERS it; `sdcpp`'s `selected` (or the llm router's `default`) decides what is LOADED first.
+  "The START model gates the engine" below) — the sidecar does not distinguish by role. For the
+  `llm` router and for `comfy` (ADR 0072 P2) every enabled model really can be asked for, so the
+  extra sync is not waste — enabling a model OFFERS it, and the llm router's `default` (or, on
+  `comfy`, the request itself) decides what is LOADED first.
 - **The llm role's cold start therefore grows with the sum of the enabled GGUFs** — ADR 0072
   decision 9, and what the panel's "sync +N s" estimate is for. The same is true of `comfy`'s
   enabled checkpoints, for the same reason.
@@ -1029,13 +1045,10 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
 
 - **The binary path is spelled out** because the entry point is being overridden. llama.cpp's
   own `ENTRYPOINT` is `["/app/llama-server"]` and `/app` is NOT on `PATH` (measured with
-  `crane config ghcr.io/ggml-org/llama.cpp:server-cuda`); sd-server's image entry point is
-  `/sd-cli`, the one-shot CLI, and it has no `curl` either — which is why the fetch is a
-  separate `aws-cli` container (measured 2026-09-07).
-- **sd-server's flags are spelled differently**: `--listen-ip` / `--listen-port`, not `--host` /
-  `--port`. `--lora-model-dir` is STATED rather than defaulted, because the default is the
-  current directory — `/` here — and that is the leading suspicion for the async job API dying
-  in `/proc` (ADR 0072 open question 6).
+  `crane config ghcr.io/ggml-org/llama.cpp:server-cuda`); ComfyUI's own `CMD` invokes
+  `main.py` relative to its `WORKDIR`, which the wrapper's `sh -c` override does not inherit,
+  hence `exec python3 /ComfyUI/main.py`. Neither image ships `curl`, which is why the fetch is
+  a separate `aws-cli` container either way (measured 2026-09-07).
 - **`--models-max` is on the llm wrapper, not in the preset**: it is a property of the INSTANCE (how
   many models fit in this L4's VRAM), not of a model, so it stays a stack parameter
   (`LlmModelsMax`) while everything per-model comes from the catalogue.
@@ -1059,7 +1072,8 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
   is `rm -rf /ComfyUI/models; ln -sfn /models/image /ComfyUI/models` before `exec`: no copying,
   and no need to tell ComfyUI which checkpoint to load, because the `comfy` provider picks one
   per REQUEST in its own graph JSON. `/models/cmdline`'s CONTENT is therefore irrelevant to this
-  branch — only its non-emptiness is read, as the same "something is enabled" gate `sdcpp` uses.
+  branch — only its non-emptiness is read, as the same "something is enabled" gate the `llm`
+  role uses.
 
   ⚠️ **Both halves of that line are load-bearing, and each is a trap the other creates.**
 
@@ -1130,11 +1144,12 @@ commit — `deploy/local/engine-sidecar-test.sh` fails when they disagree, and a
 container runs one of the scripts and declares no contract at all.
 
 ⚠️ **The idle wrappers did NOT move, and cannot.** They run in the ENGINE's container —
-`/app/llama-server`, `/sd-server`, `/ComfyUI/main.py` — and a container runs one image. Two of
-those three images (`af-llamacpp`, `af-sdcpp`) are pinned copies of third-party builds that this
-repository does not build, so baking a wrapper into them would mean forking them. The 1,318
-bytes they occupy stay inline, and [The idle wrapper](#the-idle-wrapper) is still where their
-traps are written down.
+`/app/llama-server`, `/ComfyUI/main.py` — and a container runs one image. `af-llamacpp` is a
+pinned copy of a third-party build this repository does not build, so baking a wrapper into it
+would mean forking it (`af-comfyui` IS this repository's own build, but the wrapper stays out of
+the image regardless — ADR 0072 decision 4's checkpoint-per-request behaviour lives in the
+`comfy` provider, not in a script baked into ComfyUI). The bytes they occupy stay inline, and
+[The idle wrapper](#the-idle-wrapper) is still where their traps are written down.
 
 **To change a script**: edit it, run `deploy/local/engine-sidecar-test.sh` (it runs the real
 thing against a stub `aws`), run `engine-tools-image.yml` with a new tag, and set
@@ -1232,15 +1247,17 @@ bucket that the start path would execute — a security boundary, not a size que
 (an SSM parameter — 4 KB Standard, and the fetch script alone was 6.3 KB by then).
 
 The template was 45,792 bytes when the second pass started, and is 39,592 after it: **6,200
-bytes back, 11,608 of headroom**. The shell that is left is the three idle wrappers, and they are
-not movable — see the section above for why.
+bytes back, 11,608 of headroom**. The shell that is left is the idle wrappers, and they are
+not movable — see the section above for why. (ADR 0083 later folded the image wrapper's
+`sdcpp`/`comfy` branch down to `comfy` alone, so there are two wrappers now, not three; the
+bytes below predate that and are not re-measured here.)
 
 | Block | Bytes | Moved? |
 |---|---|---|
 | `Mappings.Engine.fetch.script` (the fetch sidecar) | 6,308 | yes |
 | ingest `fetch` / `upload` commands | 979 / 523 | yes |
 | llm idle wrapper | 383 | no — third-party image |
-| image idle wrapper, `comfy` / `sdcpp` | 456 / 479 | no — ditto (and one of three is not worth splitting) |
+| image idle wrapper | 456 | no — ditto |
 | engine-table JSON fragments (not shell) | ~1,078 | no |
 
 What the saving is smaller than the shell removed: the template gained a parameter, four `!Sub`
@@ -1277,6 +1294,11 @@ touches the NAT). **Versioning is off deliberately**: a 17 GB model kept in dupl
 re-ingest is a bill nobody meant to sign, and the sha256 identifies a file (ADR 0071 decision 10).
 The layout is ComfyUI's, so all three engines read one tree (ADR 0072 decision 2).
 
+The Control Plane's `s3:ListBucket` on it — conditioned on the `llm/*` and `image/*` prefixes —
+is what the model ledger is read with (ADR 0085 decision 2). It was granted before anything used
+it, so **the ledger needed no IAM change**; the CP still has no `s3:DeleteObject` and still never
+reads object bytes.
+
 Both launch templates are created even when the role is off and nothing is staged: a launch
 template costs nothing while nothing launches from it, and an Output that is missing is an empty
 export the stack refuses to create at all ([the engine table](#the-engine-table)).
@@ -1284,7 +1306,7 @@ export the stack refuses to create at all ([the engine table](#the-engine-table)
 ## The engine security group
 
 **Reachability IS the access control** (ADR 0071 decision 4): port 8080, from the Control
-Plane's security group and from nothing else. sd-server has no authentication of its own, so
+Plane's security group and from nothing else. ComfyUI has no authentication of its own, so
 for the image role this is the whole of it; the llm role adds `--api-key` on top
 ([`LlmApiKeySsmParam`](#llmapikeyssmparam)).
 
@@ -1489,8 +1511,8 @@ CloudFormation blocks on ECS service stabilisation, so a service that cannot pul
 stack in `CREATE_IN_PROGRESS` indefinitely. That is why the repositories live in 20-platform and
 `standup.sh` copies the images in during its images step, one stack earlier than this one
 (measured on 50-tts, 2026-09-06). The image role's single `engine` container (named that rather
-than `sd` since ADR 0072 P2, now that it can be either binary) pulls from `af-sdcpp` or
-`af-comfyui` depending on `ImageEngine`, and `standup.sh` only copies the ONE it needs.
+than `sd` since ADR 0072 P2, and left that way by ADR 0083's retirement of `sdcpp`) pulls from
+`af-comfyui`, and `standup.sh` copies it in whenever `ImageEnabled=true`.
 
 ⚠️ **`DesiredCount` is deliberately ABSENT, and this is load-bearing.** From the resource
 schema: for a NEW service an unspecified desired count defaults to 1; for an EXISTING one it is
@@ -1597,6 +1619,24 @@ the model's terms with the operator's account (and, for a fine-grained token, gr
 access to the contents of public gated repos). Accepting the terms and retrying the same file
 passed.
 
+### The Civitai token
+
+`CivitaiTokenSecret` is the same shape as `HfTokenSecret` above — always created holding the
+sentinel `-`, read by the INGEST task only, registered the same way (Console → Settings →
+engines) and carried the same way (the DB is the record of truth, the secret is the path). It is
+a SEPARATE secret rather than a second value in the Hugging Face one: the two are unrelated
+accounts on unrelated services, and clearing one must never touch the other.
+
+`ExecCivitaiTokenPolicy` mirrors `ExecHfTokenPolicy`, scoped to `CivitaiTokenSecret` alone. The
+`fetch` container's `Secrets` block carries both — `HF_TOKEN` and `CIVITAI_TOKEN` — and the
+script picks between them by the download URL's own host (`ingest-fetch.sh`), never sending a
+Hugging Face token to Civitai or the other way round.
+
+A Civitai download that fails with 401 means no token reached the task; 403 means one did and
+this deployment's Civitai account still cannot have the file — an uploader-restricted asset, or
+an account with no entitlement for it. The same two-way split as the Hugging Face token's, and
+for the same reason: the two failures send an operator to different places.
+
 ### The ingest containers
 
 Two containers, `fetch` then `upload`, sharing a `scratch` volume.
@@ -1610,6 +1650,19 @@ permission one (measured).
 failed its sha256 must not reach the bucket; `COMPLETE` would upload it and the catalogue would
 carry a row for a truncated file. (The ENGINE containers use `START` instead, for the opposite
 reason -- see [The fetch sidecar](#the-fetch-sidecar).)
+
+**Three modes, on the same two containers.** `MODE` is unset for an ordinary ingest (fetch, then
+upload); `MODE=delete` removes the keys in `KEY` (ADR 0072 decision 7) and `MODE=move` relocates
+`FROM` to `KEY`. Both of the latter tell `fetch` to exit at once and do all the work in `upload`.
+
+🔴 **`MODE=move` (contract 3) is a server-side `aws s3 mv` inside ONE bucket, and that is the
+point of it.** It repairs a file staged where its ComfyUI loader does not look — the box mirrors
+the bucket and each loader enumerates one directory — without downloading bytes the deployment
+already owns: measured on af-sandbox 2026-09-15, every Anima and Krea 2 row held its 4.2 / 13.1 GB
+of weights under `image/checkpoints/split_files/…`. S3 copies large objects in parts by itself,
+so the ephemeral disk is not involved and `IngestDiskGiB` does not bound what can be moved. The
+Control Plane starts it as an ordinary ingest job (`engine_file_move.go`), so the panel watches
+it like any other and the catalogue change lands when the task does.
 
 ### `IngestCpu` / `IngestMemory` / `IngestDiskGiB`
 
@@ -1627,7 +1680,7 @@ stack so that a deployment which does not adopt 60-engines gains nothing:
 | `ecs:RunTask` | this stack's ingest family, on this cluster | starting the fetch |
 | `iam:PassRole` | `IngestTaskRole` only | a task cannot be started without passing its role |
 | `logs:GetLogEvents` / `DescribeLogStreams` | this stack's log group | WHY a job failed |
-| `secretsmanager:PutSecretValue` | `HfTokenSecret` only | carrying a registered token to the ingest task |
+| `secretsmanager:PutSecretValue` | `HfTokenSecret` and `CivitaiTokenSecret` only | carrying a registered token to the ingest task |
 | `ec2:CreateFleet` / `DescribeFleets` / `DeleteFleets` | `*` | buying the engine box (ADR 0077 decision 10). A fleet has no ARN to scope to; the fence is the launch template the call may name and the `iam:PassRole` below |
 | `iam:PassRole` | `EngineInstanceRole` only, `PassedToService: ec2.amazonaws.com` | the launch template carries the instance profile, so the purchase passes that role — the shape of 20-platform's `PassSlotRole` |
 | `iam:CreateServiceLinkedRole` | `iam:AWSServiceName` in `[spot.amazonaws.com, ec2fleet.amazonaws.com]` | the CP's own way out on an account where `standup.sh` never ran |
@@ -1717,8 +1770,7 @@ from the HF API's `?blobs=true` `siblings[].lfs.sha256`, which was verified agai
 
 **Where the file goes** is the ComfyUI layout (ADR 0071 decision 6, ADR 0072 decision 2):
 `llm/<name>.gguf`, `llm/loras/`, `image/checkpoints/`, `image/loras/`, `image/vae/`,
-`image/text_encoders/`, `image/diffusion_models/`. All three engines read the same tree, so a
-checkpoint ingested for sd-server is already where ComfyUI would look for it.
+`image/text_encoders/`, `image/diffusion_models/`. Both engines read the same tree.
 
 ## The model volume
 
@@ -1828,10 +1880,25 @@ the CP task role's SSM read scope.
 Not a parameter but the stack's real output: the one SSM value 30-ingress is handed, holding 0, 1
 or 2 rows (each role is staged independently), which the Control Plane reads once at startup.
 
-**`health` and `provider` on the image row follow `ImageEngine`** (ADR 0072 decision 4): `comfy`
-writes `/system_stats` and `comfy`, `sdcpp` writes `/v1/models` and `sdcpp`. Nothing else in the
-row changes — `url`, `launchTemplate` and `service` are the same regardless, because it is
-still one role, one service.
+**`health` and `provider` on the image row are `/system_stats` and `comfy`** (ADR 0072 decision
+4, ADR 0083 decision 1 — before ADR 0083 these followed `ImageEngine`, which could also be
+`sdcpp`; the template now writes them as literals since `comfy` is the only value left).
+
+🔴 **`ingest.taskDef` is the FAMILY name, never `!Ref IngestTaskDef`.** `!Ref` on a task
+definition is the ARN *with its revision*, and a CloudFormation update that touches this task
+definition registers a new revision and **deregisters the old one** — so the value a consumer
+kept becomes one that `RunTask` refuses:
+`InvalidParameterException: TaskDefinition is inactive` (af-sandbox, 2026-09-15, the first stack
+update after the ingest containers changed). A family name resolves to the latest ACTIVE revision
+at call time. The CP's `ecs:RunTask` grant is already scoped to `…-ingest:*`, which covers both
+spellings, and `EnginesParam` carries a `DependsOn: IngestTaskDef` because naming the family as a
+string is the one thing that does not create that ordering by itself.
+
+⚠️ The Control Plane's half of the same fault is in `engines.go` (`startIngest` → `adopt`): the
+ingest runner is attached once and never rebuilt, but everything the table decides — task
+definition, subnets, security group, log group, bucket, the two secrets — is taken again on every
+reload. Before that it read the block at boot and ignored every later table, so a stack update
+could only be picked up by replacing the CP.
 
 **Three fields carry how the box is bought** (the contract between this template and the
 Control Plane):
@@ -1855,13 +1922,14 @@ watch against one of them reported `box: null` for a box that existed and was bi
 
 **`api`** tells the reader what KIND of endpoint a row is, and it decides two things that would
 otherwise be guessed from the key: whether the Agent writes an opencode chat provider for it — an
-image engine there would put `sdcpp/sdxl-base-1.0` in the launch menu as something to hold a
+image engine there would put `comfy/sdxl-base-1.0` in the launch menu as something to hold a
 conversation with — and whether the gateway counts tokens out of the response (`chat`) or leaves
 the accounting to the Agent's `tool.imagegen` row (`images`, ADR 0071 decision 9).
 
-**The image row's health path is `/v1/models`, not `/health`**: stable-diffusion.cpp's server has
-no health endpoint at all (upstream `examples/server/api.md`), and `/v1/models` is the cheapest GET
-it answers. It only listens once the checkpoint is loaded, so a 200 there really does mean ready.
+**The image row's health path is `/system_stats`, not `/health`**: ComfyUI has no health
+endpoint at all, and `/system_stats` is an unauthenticated GET that answers immediately
+(measured). It says nothing about whether a checkpoint is loaded — `comfy` has no "loaded
+checkpoint" the way a one-model server does, it reads whichever the request names.
 
 **The llm row carries `warmPath: /models`**, and the image row carries none. It is where the CP
 asks "are there weights in memory", which stopped being the same question as "is it healthy" the

@@ -176,7 +176,8 @@ func pickKeys(src map[string]any, keys []string) map[string]any {
 	return out
 }
 
-// ingestJobsFor is listIngest's read, narrowed to the caller's authority. The super_admin branch
+// ingestJobsFor is the job read behind the dismiss's answer, narrowed to the caller's
+// authority. The super_admin branch
 // is the unfiltered list, which is also the only way the operator's own jobs (no tenant) are
 // ever visible.
 func (a engineAdminAPI) ingestJobsFor(r *http.Request, g engineIngestGrant, key string) ([]store.EngineIngestJob, error) {

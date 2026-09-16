@@ -397,7 +397,7 @@ func (g comfyReadGraph) props() ImageProps {
 	// The positive prompt is the CLIPTextEncode WIRED to the sampler, not "the first one in the
 	// graph": klein's second text encode is a zeroed-out copy of the same conditioning, and
 	// flux1's runs through FluxGuidance on the way, so a graph read by position would report the
-	// negative prompt as the positive one on two of the five families.
+	// negative prompt as the positive one on two of the seven families.
 	if hasSampler {
 		out.Prompt = g.textBehind(sampler, "positive", "conditioning", "guider")
 		out.Negative = g.textBehind(sampler, "negative")

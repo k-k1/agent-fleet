@@ -7,6 +7,7 @@
 //   npm --prefix console run build
 //   node console/scripts/gallery-perf/check.mjs [--case folders|images|scroll] [--warm 1]
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -19,9 +20,17 @@ const arg = (n, d) => {
 };
 const PORT = Number(arg("port", 8797));
 const CDP_PORT = Number(arg("cdp-port", 9257));
-const CASE = arg("case", "images"); // folders | images | scroll
+const CASE = arg("case", "images"); // folders | images | scroll | nav
+// Only the `nav` case cares: it measures the round trip the folder cache removes, so the stub
+// has to have one. 150ms is a plausible Console -> CP -> Agent hop for a workspace that is not
+// on the reader's own machine.
+const TREE_LATENCY = Number(arg("tree-latency", CASE === "nav" ? 150 : 0));
 const WARM = arg("warm", "1") === "1";
 const BASE = `http://127.0.0.1:${PORT}/`;
+// Where to write a PNG of the finished screen. The numbers below cannot see whether a folder
+// card actually shows its cover, or whether the badge over it is legible — that is what this
+// is for, and it is the only honest way to say a look was verified.
+const SHOT = arg("shot", "");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Real folders under this container's home (shared across sessions — see workspace-notes.md).
@@ -165,7 +174,45 @@ async function caseImages(cdp, doScroll) {
   };
 }
 
-const stub = spawn(process.execPath, [path.join(HERE, "stub.mjs"), "--port", String(PORT)], { stdio: ["ignore", "inherit", "inherit"] });
+// Walking into a folder and back out — the path a reader takes constantly, and the one that
+// used to blank the grid for a round trip in BOTH directions (ADR 0080 P2). Each leg is timed
+// from the click to the first card of the folder being drawn.
+async function caseNav(cdp) {
+  const count = (sel) => cdp.ev(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
+  const until = async (expr, limit = 600) => {
+    for (let i = 0; i < limit; i++) {
+      if (await cdp.ev(expr)) return true;
+      await sleep(5);
+    }
+    return false;
+  };
+  const leg = async (clickExpr, doneExpr) => {
+    const t = Date.now();
+    await cdp.ev(clickExpr);
+    const ok = await until(doneExpr);
+    return ok ? Date.now() - t : -1;
+  };
+
+  await until(`document.querySelectorAll(".gal-card.folder").length > 1`);
+  const folders = await count(".gal-card.folder");
+  // The second folder card: the first is "Up". Clicked by index, not by name — the folders here
+  // are session UUIDs.
+  const enter = `(() => { document.querySelectorAll(".gal-card.folder .gal-enter")[1].click(); return true; })()`;
+  const up = `(() => { document.querySelector(".gal-path button").click(); return true; })()`;
+  const intoFolder = `document.querySelectorAll(".gal-card.image").length > 0`;
+  const atRoot = `document.querySelectorAll(".gal-card.folder").length > 1 && document.querySelectorAll(".gal-card.image").length === 0`;
+
+  const first = await leg(enter, intoFolder);
+  const back = await leg(up, atRoot);
+  const again = await leg(enter, intoFolder);
+  return { folders, first, back, again };
+}
+
+const stub = spawn(
+  process.execPath,
+  [path.join(HERE, "stub.mjs"), "--port", String(PORT), "--tree-latency", String(TREE_LATENCY)],
+  { stdio: ["ignore", "inherit", "inherit"] },
+);
 const chrome = spawn(
   "/usr/bin/chromium",
   ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
@@ -187,7 +234,7 @@ try {
   await cdp.send("Page.enable");
   await cdp.send("Network.enable");
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
-  const galleryPath = CASE === "folders" ? GENERATED_ROOT : BIG_FOLDER;
+  const galleryPath = CASE === "folders" || CASE === "nav" ? GENERATED_ROOT : BIG_FOLDER;
   const layout = paneFor(galleryPath);
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
     source: `try {
@@ -199,8 +246,15 @@ try {
   const tNav = Date.now();
   await cdp.send("Page.navigate", { url: BASE });
 
-  console.log(`[gallery-perf] case=${CASE} warm=${WARM} path=${galleryPath}`);
-  if (CASE === "folders") {
+  console.log(`[gallery-perf] case=${CASE} warm=${WARM} path=${galleryPath} treeLatency=${TREE_LATENCY}ms`);
+  if (CASE === "nav") {
+    const r = await caseNav(cdp);
+    console.log(
+      `  ${r.folders - 1} subfolders. into a folder for the first time ${r.first}ms, ` +
+        `back up ${r.back}ms, into the SAME folder again ${r.again}ms ` +
+        `(each leg: click -> first card drawn; a listing costs ${TREE_LATENCY}ms here)`,
+    );
+  } else if (CASE === "folders") {
     const r = await caseFolders(cdp, tNav);
     console.log(`  loading state visible at +${r.sawLoading}ms, real cards at +${r.sawCards}ms, api/fs/tree round-trip ${r.netMs}ms`);
   } else if (CASE === "scroll") {
@@ -214,6 +268,12 @@ try {
   } else {
     const r = await caseImages(cdp, false);
     console.log(`  at rest (9s, no scroll), 202 cards in DOM: ${r.atRest} thumb requests fired (${r.atRestUnfinished} still unfinished)`);
+  }
+  if (SHOT) {
+    await sleep(1500); // the covers are requests like any other: let them land before looking
+    const png = await cdp.send("Page.captureScreenshot", { format: "png" });
+    fs.writeFileSync(SHOT, Buffer.from(png.data, "base64"));
+    console.log(`  wrote ${SHOT}`);
   }
   cdp.ws.close();
 } finally {

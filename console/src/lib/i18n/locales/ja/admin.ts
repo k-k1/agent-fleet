@@ -29,12 +29,12 @@ export const admin = {
   "admin.brand_pwa_note": "保存するとこのタブにはすぐ反映されます。他のタブは再読み込み、インストール済みの PWA は入れ直すとアイコンと名前が変わります。",
   "admin.mode_pool": "スロット",
   "admin.mode_engines": "推論エンジン",
-  // 推論エンジンは 2 画面（運用とモデル）。レールの並びもこの順で、機械の話とモデルの話を
-  // 混ぜない。テナント設定側の同じ画面は tenant.tab_engines（=「推論エンジンのモデル」）。
-  "admin.mode_engine_models": "推論エンジンのモデル",
+  "admin.mode_engine_tokens": "APIトークン",
   "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
-  "admin.engines_none_models_hint": "何を動かせるかは「推論エンジンのモデル」で探せます（エンジンもトークンも要りません）。",
-  "admin.engines_ops_super_only": "エンジンの起動と停止・GPU の選択は配備管理者（super_admin）の担当です。モデルの取り込みと確認は「推論エンジンのモデル」にあります。",
+  // 各行の「モデルカタログ」ボタンで開くペイン（テナント設定側で tenant.tab_engines が
+  // 権限のあるテナント管理者に開くのと同じモデル画面）。
+  "admin.engines_open_catalog": "モデルカタログ",
+  "admin.engines_ops_super_only": "エンジンの起動と停止・GPU の選択は配備管理者（super_admin）の担当です。モデルの取り込みと確認は各行の「モデルカタログ」ボタンからできます。",
   // 役割のタブ。配備にエンジンが 1 本しか無ければタブは出さず、名前だけを出す。
   "admin.engines_role_llm": "文章",
   "admin.engines_role_image": "画像",
@@ -42,9 +42,9 @@ export const admin = {
   "admin.engines_tab_loras": "LoRA",
   // LoRA が 0 件なのは普通の状態。赤くすると、要らない配備で毎回壊れて見える。
   "admin.engines_loras_empty": "このエンジンに LoRA はありません。",
-  "admin.engines_lora_no_family": "ファミリー未宣言",
   "admin.engines_models_label": "モデル",
   "admin.engines_always_on_note": "常時稼働は GPU のインスタンスを止めません（時間単価はインスタンスクラスによります）。用が済んだらオンデマンドへ戻してください。",
+  "admin.engines_provider_unserved": "この行は images provider「{p}」を名乗っていますが、この build はその provider のクライアントを実装していません。行を comfy か openai-compat に向け直すまで、ここで generate_image は動きません。",
   "admin.engines_tenant_scope":
     "ここではモデルの取り込みと、取り込んだ行の確認ができます。モデルの有効化・エンジンの起動と停止・GPU の選択・行の削除は配備管理者（super_admin）の担当なので、この画面には出ません。カタログは配備に 1 つで、取り込んだモデルの id はどのテナントからも見えます。",
   "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけインスタンスを買い、アイドルで自分で止まります。",
@@ -122,7 +122,6 @@ export const admin = {
   // 「有効/無効」と「これで起動する」は別の問い。前者は配備が使ってよいか、後者は
   // sd-server が抱える 1 つのチェックポイント（llm なら model 未指定の既定）。
   "admin.engines_catalog_empty": "このエンジンのカタログは空です。モデルを取り込むまで、要求は 503 で断られ、インスタンスも起動しません。",
-  "admin.engines_catalog_none_enabled": "有効なモデルがありません。1 つ有効にするまで、このエンジンは起動しません。",
   "admin.engines_model_started": "起動時に読み込む",
   // 状態はバッジで言う。ボタンの文言（「有効にする」）は押したら何が起きるかであって、
   // 今どちらであるかではない。行を薄くして表すのは disabled なコントロールと同じ見た目になる。
@@ -131,11 +130,6 @@ export const admin = {
   "admin.engines_model_enable": "有効にする",
   "admin.engines_model_disable": "無効にする",
   "admin.engines_model_select": "これで起動する",
-  // 🔴 Choosing another one does NOT swap the running instance. It holds the one chosen at
-  // start, and redeploying here would kill a generation in flight (ADR 0072 decision 4) — so
-  // this is said before the press rather than explained after it.
-  "admin.engines_model_next_start": "選び直しは次の起動から効きます。走っているエンジンは入れ替えません（生成中の要求を殺さないため）。",
-  "admin.engines_model_window": "コンテキスト {c} / 出力 {o}",
   // 🔴 「削除」ではなく「登録を消す」。CP に `s3:DeleteObject` は無く、足すつもりも無い
   // （決定 7。消すのは取り込みタスクの仕事で P4）。ファイルはバケットに残る。
   "admin.engines_model_forget": "登録を消す",
@@ -146,22 +140,14 @@ export const admin = {
   "admin.engines_model_forget_purge": "バケットのファイルも削除する（取り消せません）",
   "admin.engines_model_forget_note": "カタログの行だけ消します。バケットのファイルはそのまま残り、保管費もかかり続けます。",
   "admin.engines_model_forget_purge_note": "行を消し、続けてバイト列を削除するタスクを起こします。削除はタスクが行うので、完了までに少しかかります。",
-  "admin.engines_model_forget_go": "消す",
-  // P4 の取り込み（HF から取ってくる）ではなく、既にバケットに在るファイルを「これは
-  // 何か」と書き留めるだけの口。種は役ごとに 1 行しか作らないので、これが無いと
-  // 「CloudFormation を触らずに別のチェックポイントへ」の選び先が無い。
-  "admin.engines_model_add": "バケットのファイルを登録する",
   "admin.engines_model_add_id": "id",
-  "admin.engines_model_add_key": "キー",
   "admin.engines_model_add_family": "ファミリー",
   // ADR 0072 追記（ネガティブプロンプト）。「何を描かせないか」には 3 か所が口を出す——この行・
   // 要求・配備——そしてそれらは足し合わされる。どのラベルも「唯一のネガティブ」と読めてはいけない。
   "admin.engines_model_negative": "描かせないもの",
-  "admin.engines_model_negative_placeholder": "このチェックポイントで避けたいもの",
   // ADR 0081 決定 5。チェックポイントの「描かせないもの」と対になる、アダプタ側の 1 行。
   // 起動語の無い LoRA は読み込んでも絵が変わらず、取り込みの失敗と見分けが付かない。
   "admin.engines_model_trigger": "起動語",
-  "admin.engines_model_trigger_placeholder": "このアダプタが反応する語をカンマ区切りで",
   "admin.engines_negative_label": "全画像から除外する語",
   "admin.engines_negative_placeholder": "キーワードをカンマ区切りで",
   "admin.engines_negative_save": "保存",
@@ -170,103 +156,28 @@ export const admin = {
   "admin.engines_negative_note":
     "このエンジンが作る全画像のネガティブプロンプトに、モデル自身のものと要求のものに足して加えられます。フィルタではなく誘導です——ネガティブを持たないチェックポイントのファミリーが 2 つあり、その要求では警告にそう出ます。",
   "admin.engines_negative_too_long": "長すぎます。ここはキーワードの列挙であって、方針の文書ではありません。",
-  // ADR 0072 決定 5 の llm 側。LoRA はモデルではなく、土台のモデルに固定され、その preset の
-  // 節に載る。利用者からは見えない——見えるのは「その微調整込みのモデル id」1 つだけ。
-  "admin.engines_model_add_kind": "この行の種類",
-  "admin.engines_model_add_kind_model": "モデル",
-  "admin.engines_model_add_kind_lora": "LoRA アダプタ",
   "admin.engines_model_add_lora_base": "土台のモデル",
   "admin.engines_model_add_lora_base_pick": "微調整の対象を選んでください",
-  "admin.engines_model_add_lora_scale": "強さ（0〜2・既定 1）",
-  "admin.engines_model_add_lora_note": "LoRA は、名指しした土台のモデルが起動するたびに、そのモデルだけに読み込まれます。起動メニューには現れません。ファイルの置き場は {p} です。",
-  "admin.engines_ingest_family_hint": "リポジトリ側はこれを「{n}」と呼んでいます。表示名なので、対応するモデルファミリーを上から選んでください。",
   "admin.engines_model_add_family_pick": "選んでください",
-  "admin.engines_model_add_part": "役割",
   "admin.engines_model_add_part_whole": "チェックポイント（単一ファイル）",
-  "admin.engines_model_add_part_more": "ファイルを追加する",
-  "admin.engines_model_add_part_drop": "この行を削除",
-  "admin.engines_model_no_family": "モデルファミリーが宣言されていません。このエンジンはファミリーを見てワークフローを選び、名前からの推測はしません。この行は有効にでき、モデル名としても現れますが、生成しようとすると失敗します。下から選んでください。",
-  // 🔴 ファミリーを宣言すると `base_model_missing` の印は消えるが、そのファミリーの
-  // テンプレートが要求するファイルが行に揃っているかは別の話。実機の `flux1-dev` は
-  // `image/checkpoints/` の Flag 無し 1 ファイルで、flux1 は別に 4 本を読む——どれを
-  // 選んでも動かないのに、選んだ瞬間に印だけが消えていた。
-  "admin.engines_model_files_missing": "この行は「{n}」のワークフローが読むファイルを持っていません（不足: {f}）。取り込みでこの行の部品として足すまで、有効にはできません。",
-  // 🔴 チェックポイント自身が VAE を持たない場合（ADR 0072 follow-up）。宣言では表せない
-  // 唯一の欠陥で、行は完全に見えるのに全要求が ComfyUI の中で落ちる——しかも箱が
-  // 切り替え 1〜2.5 分を払ったあとに。利用者側の回避手段は無い（ツールに VAE の引数が無い）。
-  "admin.engines_model_vae_missing":
-    "このチェックポイントは VAE を同梱していません。族のワークフローには復号に使えるものが無く、プロンプトや大きさを変えても全部同じところで失敗します。有効にはできません。",
-  "admin.engines_model_vae_fix": "VAE を足す",
-  // すでにバケットに置いてある場合。ダウンロードも新しいライセンス受諾も要らない、が
-  // いちばん伝える価値のある違い。
-  "admin.engines_model_vae_plan_staged": "{f} はこの配備にもう置いてあります。この行に足すだけで済みます（ダウンロードなし）。",
-  "admin.engines_model_vae_plan_ingest": "{f} を取り込んで、この行に `--vae` として足します（{n}・ライセンス {l}）。",
-  "admin.engines_model_vae_accept": "ライセンスに同意して取り込む",
-  "admin.engines_model_vae_attach": "この行に足す",
-  "admin.engines_model_vae_unknown": "このチェックポイントが VAE を同梱しているかを確認できませんでした（{e}）。同梱していない場合、生成はすべて失敗します。",
-  "admin.engines_model_vae_force": "上流が答えないので、承知のうえで足す",
-  "admin.engines_model_vae_recheck_failed": "取り込み元をもう一度読めませんでした（{e}）。以下は、この行に記録済みの読み取り結果に基づきます——足す VAE 自体は別のリポジトリから取るので、この失敗の影響は受けません。",
-  "admin.engines_model_vae_cancel": "やめる",
-  "admin.engines_model_vae_started": "取り込みを開始しました。終わるとこの行に付きます（履歴で進み具合が見られます）。",
-  "admin.engines_model_vae_attached": "この行に足しました。有効にできます。",
-  "admin.engines_model_vae_none": "ヘッダを読み直したところ、このチェックポイントは VAE を同梱していました。印を取り消します。",
-  // --- 「モデルを追加」ウィザード（4 問）--------------------------------------
-  // 🔴 これが置き換えたのは、1 列に 12 項目が縦に並び、そのうちどれが効くかは画面に
-  // 出ていない状態（タブ・id の衝突・役割の選択）で決まるフォーム。配備の持ち主が
-  // 実際にここで詰まり、「部品として足す」のチェックに辿り着けなかった。
-  // 「モデルを追加」をペインで開く（ADR 0072 follow-up）。ダウンロードは数分かかり、
-  // 終点は「取り込めた」ではなく「使える」——その 2 つは 1 回の有効化で隔たっている。
-  "admin.engines_add_pane_gone": "このエンジンは、この配備にもう無いか、いまのあなたの権限では見えません。",
-  "admin.engines_add_pane_running": "ダウンロード中です（{id}）。この面は開いたままで構いません——終わるとここに出ます。",
-  "admin.engines_add_pane_done": "「{id}」を取り込みました。まだ無効です。有効にすると箱へ同期されます。",
-  "admin.engines_add_pane_failed": "取り込みに失敗しました（{id}）。",
-  "admin.engines_add_pane_enable": "有効にする",
-  "admin.engines_add_pane_enabled": "有効にしました。モデル一覧に出ます。",
-  "admin.engines_wizard_title": "モデルを追加",
-  "admin.engines_wizard_title_lora": "LoRA を追加",
-  "admin.engines_wizard_step_act": "何をする？",
-  "admin.engines_wizard_step_find": "どこから",
-  "admin.engines_wizard_step_file": "どれを",
-  "admin.engines_wizard_step_confirm": "確認",
-  "admin.engines_wizard_act_new": "新しいモデルを追加",
-  "admin.engines_wizard_act_new_why": "この一覧に新しい行を作ります。",
-  "admin.engines_wizard_act_attach": "既存の行に部品を足す",
-  "admin.engines_wizard_act_attach_why": "VAE やテキストエンコーダなど。行の他の欄（ファミリー・ライセンス・有効状態）は触りません。",
-  "admin.engines_wizard_act_replace": "既存の行のファイルを差し替える",
-  "admin.engines_wizard_act_replace_why": "同じ枠のファイルだけを入れ替えます。量子化を変えるときなど。",
-  "admin.engines_wizard_target": "どの行に？",
-  "admin.engines_wizard_target_pick": "行を選んでください",
-  "admin.engines_wizard_role": "この行のどの枠に？",
-  "admin.engines_wizard_role_pick": "枠を選んでください",
-  "admin.engines_wizard_no_rows": "この一覧にはまだ行がありません。「新しいモデルを追加」から始めてください。",
-  "admin.engines_wizard_need_target": "足す先の行を選んでください。",
-  "admin.engines_wizard_need_role": "どの枠に入れるかを選んでください。",
+  // --- 発見ボタン（ADR 0082 決定 6・7）----------------------------------------
+  // LAN の ComfyUI が実際に持っているファイル名を読み、候補として出す。族は
+  // ファイル名から分かる場合の「提案」でしかなく、行を作るのは常に人の「足す」の押下。
+  "admin.engines_discover_button": "このエンジンのファイルを調べる",
+  "admin.engines_discover_busy": "調べています…",
+  "admin.engines_discover_checkpoints": "チェックポイント",
+  "admin.engines_discover_loras": "LoRA",
+  "admin.engines_discover_vaes": "VAE",
+  "admin.engines_discover_vae_hint": "これらは行そのものではなく、チェックポイントの行を作るときに `--vae` として使うファイル名です。",
+  "admin.engines_discover_add": "この名前で行を足す",
+  "admin.engines_discover_added": "足しました",
+  "admin.engines_discover_empty": "このエンジンにチェックポイント・LoRA・VAE のファイルは見つかりませんでした。",
   // 空いている枠が無い／埋まっている枠が無い。押せない理由をボタンの横で言う。
-  "admin.engines_wizard_no_slots_attach": "この行には空いている枠がありません。入れ替えるなら「差し替える」を選んでください。",
-  "admin.engines_wizard_no_slots_replace": "この行にはまだファイルがありません。「部品を足す」を選んでください。",
-  "admin.engines_wizard_need_repo": "リポジトリ名か URL を入れるか、上の検索から選んでください。",
-  "admin.engines_wizard_repo_note": "`owner/name`、モデルページの URL、`civitai:<versionId>` のどれでも構いません。検索は入口で、必須ではありません。",
-  "admin.engines_wizard_need_file": "ファイルを選んでください。",
   "admin.engines_wizard_cannot": "この配備ではこのファイルを取り込めません（上の理由）。",
   "admin.engines_wizard_need_id": "id を入れてください。",
-  "admin.engines_wizard_need_family": "ファミリーを選んでください。このエンジンはファミリーでワークフローを選び、推測はしません。",
-  // 🔴 ADR 0072 follow-up。ヘッダを読んで「VAE 非同梱」と分かったときだけ出る。
-  "admin.engines_wizard_vae_take": "このチェックポイントは VAE を同梱していないので、{f} も一緒に取り込んで `--vae` として足します（{n}・ライセンス {l}）",
-  "admin.engines_wizard_vae_staged": "このチェックポイントは VAE を同梱していないので、すでにこの配備にある {f} を `--vae` として足します（ダウンロードなし）",
-  "admin.engines_wizard_vae_none": "このチェックポイントは VAE を同梱しておらず、この族の既定 VAE もこの配備にはありません。取り込んだあと、単体の VAE を `--vae` として足すまで生成できません。",
-  "admin.engines_wizard_plan_new": "新しい行「{id}」を作ります。",
-  "admin.engines_wizard_plan_attach": "「{id}」の {part} として足します。行の他の欄は変わりません。",
-  "admin.engines_wizard_plan_replace": "「{id}」の {part} を差し替えます。行の他の欄は変わりません。",
-  "admin.engines_wizard_plan_from": "{r} の {f}（{n}）をダウンロードします。",
-  "admin.engines_wizard_plan_after": "終わると、この一覧に無効の行として現れます。有効にすると箱へ同期されます。",
-  "admin.engines_wizard_named_file": "この URL は {f} を指しています。次へ進むとこのファイルを調べます。",
-  "admin.engines_wizard_back": "戻る",
-  "admin.engines_wizard_next": "次へ",
+  "admin.engines_wizard_need_family": "モデル族を選んでください。このエンジンはモデル族でワークフローを選び、推測はしません。",
+  "admin.engines_model_files_missing_tag": "不足: {f}",
   "admin.engines_model_add_desc": "説明",
-  // 任意。この経路には読み取る出所が無いので、ライセンスを人が書く唯一の場所になる。
-  // 空のままなら行は「ライセンスの記録なし」と言う（空白のままにはしない）。
-  "admin.engines_model_add_license": "ライセンス（任意）",
-  "admin.engines_model_add_license_url": "ライセンスの URL（任意）",
   // 🔴 コンテキストウィンドウは「両方か、どちらも書かないか」。context だけだと opencode は
   // 出力上限 0 を 32,000 と読み、32k のモデルが使えるウィンドウ 768 トークンになる
   // （ADR 0072 決定 3）。
@@ -276,19 +187,13 @@ export const admin = {
   // メタ行だけ「コンテキスト」と短くする。
   "admin.engines_model_add_ctx": "コンテキストウィンドウ",
   "admin.engines_model_add_out": "出力上限",
-  // CP は S3 を見られないので、同期の秒数を出せる唯一の出どころが宣言されたサイズ。
-  "admin.engines_model_add_bytes": "サイズ",
-  "admin.engines_model_add_go": "登録する",
-  "admin.engines_model_add_note": "id は利用者が選ぶ名前、キーはバケットの中のパス、説明はエージェントが読む 1 行です。コンテキストウィンドウと出力上限は両方書いたときだけ効きます（片方だけは無視します——出力上限を書かないと 32,000 と読まれ、32k のモデルが 768 トークンになるため）。サイズ（バイト）は「同期 +N 秒」の推定に使うだけで任意です。CP は S3 を見ません（権限を持たせていません）ので、キーの打ち間違いは次の起動時に fetch のログで分かります。登録した行は無効の状態で作られます。",
-  // --- 取り込み（ADR 0072 決定 6・P4）---
-  // 🔴 解決してから受諾する。ライセンスも gated も見せる前に「同意」を出したら、それは
-  // 同意ではない。gated はトークンが無ければここで断る（9 分後の 401 では遅い）。
-  "admin.engines_ingest_open": "Hugging Face などから取り込む",
-  "admin.engines_ingest_search": "探す",
+  "admin.engines_ingest_search": "検索",
   "admin.engines_ingest_search_go": "検索",
+  "admin.engines_ingest_searching": "検索しています…",
   "admin.engines_ingest_search_none": "見つかりませんでした。別の言葉で試すか、リポジトリ名を直接入力してください。",
   "admin.engines_ingest_source_hf": "Hugging Face",
   "admin.engines_ingest_source_civitai": "Civitai",
+  "admin.engines_ingest_source_civitai-red": "Civitai Red",
   "admin.engines_ingest_browse_go": "人気を見る",
   "admin.engines_browse_kind_gguf": "LLM（GGUF）",
   "admin.engines_browse_kind_checkpoint": "画像（checkpoint）",
@@ -296,6 +201,143 @@ export const admin = {
   "admin.engines_ingest_sort_downloads": "DL数",
   "admin.engines_ingest_sort_trending": "話題",
   "admin.engines_ingest_sort_likes": "いいね",
+  "admin.engines_ingest_sort_updated": "更新が新しい",
+  "admin.engines_ingest_sort_newest": "新着",
+  "admin.catalog_title": "モデルカタログ",
+  "admin.catalog_image_title": "画像モデルカタログ",
+  "admin.catalog_llm_title": "文章モデルカタログ",
+  "admin.catalog_opening": "モデルカタログを開いています…",
+  "admin.catalog_role_label": "エンジンの役割",
+  "admin.catalog_view_label": "カタログ表示",
+  "admin.catalog_view_search": "検索",
+  "admin.catalog_view_registered": "登録済み",
+  "admin.catalog_family_all": "すべて",
+  "admin.catalog_sort": "並び順",
+  "admin.catalog_checkpoint": "チェックポイント",
+  "admin.catalog_family": "ファミリー",
+  "admin.catalog_context": "コンテキスト",
+  "admin.catalog_output": "出力",
+  "admin.catalog_registered_title": "登録済みモデル",
+  "admin.catalog_registered_search": "登録済みモデルを絞り込む",
+  "admin.catalog_sort_name": "名前",
+  "admin.catalog_sort_enabled": "有効を先に",
+  "admin.catalog_sort_default": "既定を先に",
+  "admin.catalog_edit": "編集",
+  "admin.catalog_parts_unknown": "このモデルにはファイルキーが記録されていません。",
+  "admin.catalog_no_description": "説明なし",
+  "admin.catalog_file_present": "あり",
+  "admin.catalog_file_missing": "不足",
+  "admin.catalog_file_unknown": "未確認",
+  "admin.catalog_file_uploading": "取り込み中",
+  "admin.catalog_file_failed": "取り込み失敗",
+  "admin.catalog_edit_window_invalid": "コンテキストと出力は整数で、両方を設定するか両方を 0 にしてください。",
+  "admin.catalog_edit_vram_invalid": "実測 VRAM は整数で入力してください。",
+  "admin.catalog_gate_accept": "条項への同意が必要",
+  "admin.catalog_civitai_newest_note": "Civitai の新着順です。厳密な最終更新順ではありません。",
+  "admin.catalog_storage_checking": "保存済みのモデルファイルを確認しています…",
+  "admin.catalog_storage_unavailable": "保存状態を取得できませんでした。再読み込みしてください。",
+  "admin.catalog_saved_none": "この配布元の保存済みファイルはありません",
+  "admin.catalog_saved_unknown": "この配布元の保存状態を確認できません",
+  "admin.catalog_manual": "URL・リポジトリを指定",
+  "admin.catalog_more": "さらに読み込む",
+  "admin.catalog_preview": "作例を拡大",
+  "admin.catalog_source_page": "配布元を見る",
+  "admin.catalog_saved_count": "この配布元の保存済みファイル {count} 件",
+  "admin.catalog_add": "追加",
+  "admin.catalog_inspect": "調べる",
+  "admin.catalog_version": "バージョン",
+  "admin.catalog_file": "ファイル",
+  "admin.catalog_checksum": "SHA-256",
+  "admin.catalog_pick_file": "ファイルを選ぶ",
+  "admin.catalog_size_unknown": "サイズ未取得",
+  "admin.catalog_advanced": "詳細設定",
+  "admin.catalog_need_source": "配布元を入力してください。",
+  "admin.catalog_need_version": "バージョンを選んでください。",
+  "admin.catalog_need_file": "ファイルを選んでください。",
+  "admin.catalog_need_checksum": "ファイルの SHA-256 を入力してください。",
+  "admin.catalog_need_license": "配布元のライセンスを読み、同意してください。",
+  "admin.catalog_registered_present": "保存先: {present}/{total} ファイルあり",
+  "admin.catalog_registered_partial": "保存先: {present}/{total} ファイルあり（一部不足）",
+  "admin.catalog_registered_missing": "保存先: 登録ファイルがありません",
+  "admin.catalog_registered_unknown": "保存先: 存在を確認できていません",
+  // --- 揃える（ADR 0085 決定 3）。主語は行で、部品ではない。---
+  "admin.catalog_complete": "揃える",
+  "admin.catalog_complete_busy": "揃えています…",
+  "admin.catalog_complete_none": "この行に足りないものはありません。",
+  "admin.catalog_complete_attached": "配備が既に持っていたファイルから宣言しました——ダウンロードは発生していません。",
+  // 🔴 ダウンロードとは別の言葉で言う。バケツの中のサーバ側コピーなので転送は起きず、
+  // 「取り込み中」と書くと出てこない通信を待たせることになる。
+  "admin.catalog_complete_moving": "この行のファイルをバケツの中で移しています（ダウンロードはありません）。完了するとローダーが読めるようになります。",
+  "admin.catalog_complete_started": "不足ファイルを取り込んでいます。完了すると自動でこの行に付きます。",
+  "admin.catalog_complete_unknown": "この族が読む残りの役割は、この配備には部品表がありません。ファイルを取り込んで足してください。",
+  "admin.catalog_complete_note": "この行が読むファイルを、バケツにあるもので埋めます。足りないものだけを取り込みます。",
+  "admin.catalog_complete_pick": "使うファイルを選ぶ",
+  "admin.catalog_complete_keep": "今のまま",
+  "admin.catalog_complete_file_declare": "バケツにあるので宣言します",
+  "admin.catalog_complete_file_move": "バケツの中で移します（ダウンロードなし）",
+  "admin.catalog_complete_file_download": "取り込みます",
+  "admin.catalog_complete_file_choose": "候補が複数あります",
+  "admin.catalog_complete_file_unknown": "この役割のファイルが分かりません",
+  "admin.catalog_files": "ファイル",
+  // --- 計画カード（ADR 0085 決定 4）。役割セレクタも鍵欄も部品チェックも出さない。---
+  "admin.catalog_plan_title": "取り込む",
+  "admin.catalog_plan_building": "取り込む内容を組み立てています…",
+  "admin.catalog_plan_files": "取り込むファイル",
+  "admin.catalog_plan_whole": "本体",
+  "admin.catalog_plan_action_reuse": "取得なし（配備が持っています）",
+  "admin.catalog_plan_action_move": "取得なし（バケツの中で移します）",
+  "admin.catalog_plan_action_unknown": "この配備には部品表がありません",
+  "admin.catalog_plan_at": "いまの場所 {k}",
+  "admin.catalog_plan_total": "ダウンロード合計 {n}",
+  "admin.catalog_plan_total_none": "ダウンロードは発生しません。",
+  // 計画は見積りで、押すことが購入。押した時点で内容が変わっていたら作り直して見せ直す
+  // （ライセンスの同意もやり直し——同意したものと取り込むものが違うため）。
+  "admin.catalog_plan_stale": "配布元の内容が変わったので、取り込む計画を作り直しました。もう一度確認してから押してください。",
+  "admin.catalog_commercial_yes": "商用可",
+  "admin.catalog_commercial_unknown": "商用可否は不明",
+  "admin.catalog_started": "取り込みを開始しました。進み具合は「登録済み」タブのバケツで見られます。",
+  // 再利用と移設はネットワークを渡らない。「ダウンロード中」と書くと、出てこない通信を待たせる。
+  "admin.catalog_started_no_download": "配備が既に持っているバイト列から作りました（ダウンロードはありません）。「登録済み」タブのバケツで確認できます。",
+  // --- バケツ（ADR 0085 決定 2・7）。S3 が持っているものそのもの。---
+  "admin.catalog_ledger_title": "バケツ",
+  "admin.catalog_ledger_note": "このエンジンのプレフィックスにあるオブジェクトです。どの行も宣言していないもの（孤児）と、ローダーが一覧できない場所にあるもの（誤配置）を先に並べます。",
+  "admin.catalog_ledger_note_acts": "部品に単体のボタンはありません——付け直すのはチェックポイント行の「揃える」です。",
+  "admin.catalog_ledger_checked": "確認 {t}",
+  "admin.catalog_ledger_empty": "このエンジンのプレフィックスにオブジェクトはありません。",
+  "admin.catalog_ledger_unavailable": "バケツの一覧を取得できませんでした。再読み込みしてください。",
+  "admin.catalog_ledger_misplaced": "誤配置",
+  "admin.catalog_ledger_state_present": "あり",
+  "admin.catalog_ledger_state_uploading": "取り込み中",
+  "admin.catalog_ledger_state_failed": "失敗",
+  "admin.catalog_ledger_state_missing": "バイト列がありません",
+  // 🔴 CP は s3:DeleteObject を持たない（ADR 0072 決定 7）。「消す」はタスクの開始で、
+  // 実際に消えるまでバケツは同じオブジェクトを返し続ける。押しても何も変わらないように
+  // 見えたのがこの言葉が要る理由（af-sandbox 実測）。
+  "admin.catalog_ledger_state_deleting": "削除中",
+  // 🔴 既にバイト列があるキーに上書きで取り込むと、台帳の state は present のままで job だけが
+  // uploading になる。行の操作を state だけで決めると、取り込み中のキーに 登録 が出て 409
+  // `already declared by` を返す（af-sandbox 実測）。
+  "admin.catalog_ledger_uploading_note": "取り込みのタスクが走っています。完了するとこの行に宣言が付きます。",
+  "admin.catalog_ledger_deleting_note": "削除のタスクが走っています。完了するとこの行は一覧から消えます（数分かかることがあります）。",
+  "admin.catalog_ledger_missing_note": "{m} がこのキーを指していますが、バケツにバイト列がありません。その行を「揃える」と取り直します。",
+  "admin.catalog_ledger_orphan": "どの行も宣言していません",
+  "admin.catalog_ledger_declared": "宣言: {m}",
+  "admin.catalog_ledger_register": "登録",
+  "admin.catalog_ledger_delete": "消す",
+  "admin.catalog_ledger_delete_note": "このオブジェクトをバケツから削除します。取り消せません。どれかの行が宣言しているものは断られます。",
+  "admin.catalog_ledger_registered": "{id} として登録しました。",
+  // --- 拒否（ADR 0085 決定 5）。押さえ手と、次に押すものを必ず書く。---
+  "admin.catalog_holder": "押さえているのは {k}: {i}",
+  "admin.catalog_holder_row": "登録済みの行",
+  "admin.catalog_holder_job": "取り込みジョブ",
+  "admin.catalog_holder_object": "バケツのオブジェクト",
+  "admin.catalog_holder_task": "実行中のタスク",
+  "admin.catalog_next_register": "登録する",
+  "admin.catalog_next_complete": "揃える",
+  "admin.catalog_next_replace": "置き換える",
+  "admin.catalog_next_forget_row": "行の登録を消す",
+  "admin.catalog_next_dismiss_job": "ジョブを消す",
+  "admin.catalog_next_wait": "読み直す",
   "admin.engines_ingest_hit_downloads": " DL",
   "admin.engines_ingest_hit_likes": " いいね",
   "admin.engines_ingest_hit_trending": " 話題度",
@@ -331,31 +373,15 @@ export const admin = {
   // 元のページへ。CP が組み立てた URL をそのまま開く（Console 側では組まない）。
   "admin.engines_ingest_hit_open_hf": "HF で開く",
   "admin.engines_ingest_hit_open_civitai": "CivitAI で開く",
-  // 検索結果のカードから取り込みフォームへ入れる操作。「取り込む」ではない——埋めるだけで、
-  // 調べる・同意する・取り込む はこの後もそのまま通る。
-  "admin.engines_ingest_hit_pick": "これにする",
-  // 「これにする」で埋めたあと、その結果カードを残しておく見出し。元ページへのリンクも
-  // トリガ語もライセンスもこのカードにしかなく、下のリポジトリ欄は civitai:1759168 の
-  // ような id なので、消すと取り込もうとしているものを確かめる手段がなくなる。
-  "admin.engines_ingest_picked": "選んだ結果",
-  "admin.engines_ingest_repo": "リポジトリ",
-  "admin.engines_ingest_file": "ファイル名",
-  // 素の https URL を貼ったときだけ、この欄はファイル名ではなく sha256 になる（listable()）。
-  // 同じラベルのまま「name.safetensors」を例示すると、この欄に入れてはいけない唯一のものを
-  // 求めることになる。ラベルごと差し替える。
-  "admin.engines_ingest_sha256": "sha256",
-  "admin.engines_ingest_sha256_ph": "64 桁の 16 進",
-  "admin.engines_ingest_resolve": "調べる",
-  // ファイル名を持っていない状態が普通なので、「調べる」は最初にリポジトリの中身を聞く。
-  "admin.engines_ingest_pick": "選んでください",
-  "admin.engines_ingest_no_files": "このリポジトリに、このエンジンが読み込めて sha256 のあるファイルがありません。",
+  // Civitai 自身の年齢制限レベル。どのタブで見つかったかに関係なく全カードに出す——
+  // 「Civitai」タブの既定の検索でも 0 でない値が返ることがある（実測）。
+  "admin.engines_ingest_hit_nsfw_level": "NSFW {n}",
   // 🔴 モデル側の上限であって、この配備で回せる窓ではない。30B は 262144 と申告するが
   // L4 には入らないので 32768 で走らせている。誰の数字かを言わずに出さない。
   "admin.engines_ingest_ctx_max": "モデルの上限 {n}",
   // --- 推奨パラメータ（作者の説明文から拾ったもの）---
   // 🔴 正規表現が他人の散文から拾った値である。だから引用した一文を必ず隣に出し、押す前に
   // 人が読んで直せるようにする。保存されるのは押したときだけ。
-  "admin.engines_params": "生成パラメータ",
   "admin.engines_params_note": "空欄はファミリーの既定のまま。埋めた欄だけがこのモデルで置き換わります。",
   "admin.engines_params_hint_found": "作者の記述から拾いました（未検証）:",
   "admin.engines_params_hint_apply": "この値を入れる",
@@ -375,46 +401,25 @@ export const admin = {
   "admin.engines_params_cfg_ignored": "この族では CFG は使われません（ガイダンスが別の摘みです）。",
   "admin.engines_params_clip_skip_note": "clip skip は記録だけで、いまのワークフローでは使われません。",
   // ファミリーの推定。決定 2 のとおり宣言するのは運用者なので、入れておくだけで、外せる。
-  "admin.engines_family_suggested": "「{n}」から推定しました。違っていれば選び直してください。",
   "admin.engines_ingest_go": "取り込む",
-  // 分割モデルは 1 回の取り込みでは組み上がらない（FLUX.1 は unet + clip_l + t5 + vae の 4 本）。
-  // 既にある id を指すと CP は新規作成を断る——行のファイル・ライセンス・有効状態を
-  // 上書きしてしまうため——ので、「その行の部品として足す」をここで選ばせる。
-  "admin.engines_ingest_attach": "「{id}」の部品として足す（新しい行は作らない）",
-  // 🔴 もう 1 つの行き先。埋まっているスロットには「足す」ことができず（CP は 409）、
-  // ラベルの無いファイル＝本体は足すこと自体ができないので、量子化を変えるには行を捨てて
-  // 作り直すしかなかった——ライセンス受諾・族・params・有効状態・取り込み元を全部失う。
-  "admin.engines_ingest_replace": "「{id}」の {part} をこのファイルに差し替える（行はそのまま）",
-  // CP に s3:DeleteObject が無く（ADR 0072 決定 7）、差し替えが終わるのは数分後の
-  // ジョブ照合の中で、断られた削除を報告する相手がいない。鍵は共有されている
-  // （text_encoders/ は複数の行から指されている）ので、ここで消すと無関係な行が壊れる。
-  "admin.engines_ingest_replace_keeps_bytes": "前のファイルはバケットに残ります（消すのは行を忘れるときの「ファイルも消す」です）。",
-  "admin.engines_ingest_id_taken": "この id はもう使われています。別の id にするか、上で「部品として足す」か「差し替える」を選んでください。",
   // 🔴 押す前に「載るかどうか」を言う。実機で借りた llm は L4（24 GB）に重み 17 GB を載せた
   // あと KV キャッシュ 16 GB で `cudaMalloc failed: out of memory` で落ちた——GPU を買って
   // 4 分後、つまり実費。画面が出していたのはファイル名とサイズだけだった。
   // 重みだけでカードを超える候補は一覧の時点で印を付ける（KV は解決するまで分からないので、
   // 印が無いことは「載る」ではなく「ここでは否定できない」）。
-  "admin.engines_ingest_over_card": "⚠ カード超過",
   "admin.engines_ingest_fit_weights": "重み {n} MiB",
   // 🔴 要素型（-ctk/-ctv）は CloudFormation のパラメータでエンジンの表に届かないので読めない。
   // f16 と仮定していることを言い切る（量子化 KV の配備では過大評価＝安全側）。
   "admin.engines_ingest_fit_kv": "KV キャッシュ {n} MiB（{c} トークン・f16 と仮定）",
   "admin.engines_ingest_fit_kv_unread": "KV キャッシュは読めませんでした（この数字は重みだけです）",
   "admin.engines_ingest_fit_card": "合計 {n} MiB / このカード {c} MiB",
-  "admin.engines_ingest_fit_over": "このカードには載りません。小さい量子化を選ぶか、ウィンドウを狭めてください。",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
-  "admin.engines_ingest_gated": "gated のリポジトリです。運用者のアカウントで条項に同意済みのトークンを使って取り込みます。",
   "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。下の「Hugging Face のトークン」で運用者のトークンを登録してください（読むのは取り込みタスクだけです）。",
   // 🔴 Hugging Face の gated とは別物で、こちらには鍵が無い。CivitAI のメタデータは誰にでも
   // 200 を返し、ダウンロードの可否だけが投稿者ごとに分かれる（実機で 5 資産が 200/401/403）。
   // トークン欄を作らない判断なので、「別の資産を選ぶ・手で置いて登録する」を言い切る。
-  "admin.engines_ingest_civitai_login": "この資産は、投稿者がログイン済みのアカウントからのダウンロードだけを許しています。この配備は匿名で取り込むため取得できません（Hugging Face のトークンでは解決しません）。別の資産を選ぶか、手でバケットに置いて「バケットのファイルを登録する」から登録してください。",
-  // 🔴 gated の 401 と 403 は「1 行の curl」の差で、直す場所が正反対。401 はトークンが
-  // 取り込みタスクに届いていない、403 は届いたうえでそのアカウントが**このリポジトリの**
-  // 条項に未同意（実機: 同じトークンで FLUX.1-dev は通り SD3.5 Medium が 403）。
-  "admin.engines_ingest_job_not_accepted": "トークンは届いていますが、そのアカウントはこのリポジトリの条項にまだ同意していません。Hugging Face のモデルページで同意してから、もう一度取り込んでください。",
-  "admin.engines_ingest_job_no_token": "トークンが取り込みタスクに届いていません。下の「Hugging Face のトークン」に運用者のトークンを登録してから、もう一度取り込んでください。",
+  "admin.engines_ingest_civitai_account_first": "この資産は投稿者がダウンロードを制限しています。取り込みは登録済みの Civitai アカウントとして実行されます——そのアカウントが投稿者の条件を満たしていない場合は、ダウンロードが 401 で返り、ジョブにその旨が出ます。",
+  "admin.engines_ingest_civitai_login": "この資産は、投稿者がログイン済みのアカウントからのダウンロードだけを許しています。この配備は匿名で取り込むため、登録済みの Civitai トークンのアカウントがすでに条件を満たしているかはここでは確かめられません——未登録なら「APIトークン」から登録するか、別の資産を選んでください。",
   "admin.engines_ingest_gated_accept_first": "gated のリポジトリです。トークンは登録済みですが、そのアカウントがこのリポジトリの条項に同意しているかは Control Plane からは確かめられません（匿名で調べているため）。未同意だと取り込みは 403 で落ちるので、先に Hugging Face のモデルページで同意しておいてください。",
   "admin.engines_hf_token": "Hugging Face のトークン",
   "admin.engines_hf_token_field": "トークン",
@@ -425,6 +430,14 @@ export const admin = {
   "admin.engines_hf_token_stack": "この配備のトークンは CloudFormation のパラメータで設定されています。Console からの登録・削除はできませんが、gated のリポジトリは取り込めます。",
   "admin.engines_hf_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新すると Console から登録できるようになります。",
   "admin.engines_hf_token_note": "配備全体で 1 つです。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます——読むのは取り込みタスクだけで、エンジンのインスタンスには渡りません。",
+  "admin.engines_civitai_token": "Civitai のトークン",
+  "admin.engines_civitai_token_field": "トークン",
+  "admin.engines_civitai_token_save": "登録する",
+  "admin.engines_civitai_token_remove": "削除する",
+  "admin.engines_civitai_token_unset": "未登録です。ログイン必須の資産は取り込めません。",
+  "admin.engines_civitai_token_set": "登録済み（{who} / {when}）。値は表示できません——Control Plane は書き込みだけができ、読み戻す権限を持ちません。",
+  "admin.engines_civitai_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新すると Console から登録できるようになります。",
+  "admin.engines_civitai_token_note": "配備全体で 1 つで、上の Hugging Face のトークンとは別物です。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます——読むのは取り込みタスクだけで、エンジンのインスタンスには渡りません。",
   // 🔴 この赤い行は FLUX 専用ではなくクラス全体に出る（engineCommercialUse が
   // non-commercial / -nc / cc-by-nc を含む名前すべてに `no` を返す）。CC-BY-NC と BFL の
   // 条項では何を縛るかが違い、生成物まで縛るかも一様ではないので、どちらが引き金かは
@@ -434,36 +447,6 @@ export const admin = {
   // 商用利用ではない（ADR 0072 決定 10 は「取り込みは拒まない」と決めている）。
   "admin.engines_ingest_noncommercial":
     "🔴 非商用ライセンスです。商用の場面での利用と、生成物の商用利用が制限されえます。有効にする前にライセンス本文を確認してください。",
-  "admin.engines_ingest_note": "リポジトリ名（`owner/name`）でも、モデルページの URL を貼っても構いません。sha256・サイズ・ライセンスは CP がその API から読みます。ダウンロードするのは取り込みタスクで、CP は S3 にもトークンにも触りません。取り込めた行は無効の状態で作られます。",
-  // 🔴 これは出来事の記録で、カタログではない。モデルを消してもジョブは残る（「この取り込みが
-  // 走って完了した」は真であり続ける）ので、見出しと日時を付けて「履歴」と読めるようにする。
-  // 日時が無いと、消えたモデルの隣の「完了」が現在の状態と読める。
-  "admin.engines_ingest_jobs_head": "取り込みの履歴",
-  // 履歴を 1 行消す（ADR 0072 P4 に無かった削除）。この表には TTL も一括の掃除も無いままに
-  // する: done の行は、カタログがその鍵を指すまでのあいだ「バケットにこのファイルがある」と
-  // 書いてある唯一の場所で、CP は S3 を見られない（レビュー R3）。だから消す前に、その鍵を
-  // 使っている行がいるかどうかを言い分ける。
-  // 🔴 「取り込み直す」ではない。バイトはもうバケットにある（purge を付けずに行を消すと
-  // 残る——2026-09-09 に開発配備で 491 MB のファイルが行より長生きした）ので、これは登録
-  // （POST /models）で、足りていなかったのは鍵の一覧だけだった。押しても登録はせず、フォーム
-  // を開いて埋めるところで止まる: id とファミリーは人が確かめる欄。
-  "admin.engines_ingest_job_reuse": "この鍵で登録する",
-  "admin.engines_model_add_from_job": "取り込み履歴から: {s}",
-  // 同じ鍵を複数の行が指すのは異常ではない（SD3.5 と FLUX.1 は同じ text encoder を読む）。
-  // 拒まず、誰が使っているかだけを言う。
-  "admin.engines_model_add_from_job_used": "この鍵は {who} も使っています。同じファイルを複数の行が指すのは正常です。",
-  "admin.engines_ingest_job_forget": "履歴を消す",
-  "admin.engines_ingest_job_forget_go": "消す",
-  "admin.engines_ingest_job_forget_live": "実行中の取り込みは履歴だけを消すことはできません。行を消してもタスクは止まらず、終われば誰も待っていないカタログ行を書きます。",
-  "admin.engines_ingest_job_forget_used": "この鍵は {who} が使っています。履歴を消しても、その行と鍵は残ります。",
-  // 🔴 「ファイルは在ります」とは言わない。purge（バイトごと削除）してもジョブは done のまま
-  // 残るし、CP はバケットを見られない。言えるのは「この鍵を指すカタログ行が無い」だけ。
-  "admin.engines_ingest_job_forget_last": "この鍵を指すカタログ行はありません。履歴を消すと、この鍵をここから選んで登録し直す道も一緒に消えます（Control Plane はバケットを見られないので、ファイルがまだ在るかどうかは分かりません）。",
-  "admin.engines_ingest_job_forget_ack": "承知のうえで消す",
-  "admin.engines_ingest_state_pending": "開始中",
-  "admin.engines_ingest_state_running": "取り込み中",
-  "admin.engines_ingest_state_done": "完了",
-  "admin.engines_ingest_state_failed": "失敗",
   // The GPU rung this role buys (ADR 0074). The hourly figure comes from the ladder the
   // operator declared, never from a number written here: the box is selectable now.
   "admin.engines_class": "インスタンスクラス: ",
@@ -512,31 +495,13 @@ export const admin = {
   "admin.engines_vram_confirm": "{id} は {n} MiB（{src}）を必要としますが、いま選んでいるクラスは {m} MiB です。CUDA は VRAM が足りないと遅くなるのではなく落ちます。量子化やオフロードで載ることもあるので、承知のうえなら続けてください。",
   "admin.engines_vram_confirm_go": "承知のうえで有効にする",
   "admin.engines_model_vram": "VRAM {n} MiB",
-  "admin.engines_model_vram_floor": "VRAM 少なくとも {n} MiB（重みだけの下限）",
-  // 🔴 下限は下限として書く。実測の言い回しで描くと、CP が導出した数字が「運用者が測った」
-  // ように読める。コンテキスト窓を編集したときに動く唯一の出所なので、ここが一番効く。
-  "admin.engines_model_vram_weights_kv": "VRAM 少なくとも {n} MiB（重み＋KV キャッシュ）",
-  // llm の行が宣言する窓と、その編集欄。間違った値の代価は実費で払う——262144 のままの行は
-  // 16 GiB の KV キャッシュを要求し、既に金を払った冷間起動の 4 分後にエンジンを殺した。
-  "admin.engines_model_window_edit": "窓",
   "admin.engines_model_window_context": "コンテキスト",
   "admin.engines_model_window_output": "最大出力",
   "admin.engines_model_vram_edit": "実測 VRAM（MiB）",
-  // いまこの行がどれだけ要ると見ているか、そしてその出所。どちらの欄を編集しても動くので
-  // 欄の隣に置く。「実測」と「ファイルからの導出」は同じ主張ではない。
-  "admin.engines_model_need_now": "現在 {n} MiB（{src}）",
-  "admin.engines_model_need_unknown": "現在：不明",
-  "admin.engines_model_window_save": "保存",
   // 行が持ちうるライセンスの事実（ADR 0072 決定 10）。「記録なし」は空白にせず書く——seed の
   // 行はライセンスを知りようがなく、手登録のフォームは訊いていない。取り込んだ行が必ず名前を
   // 出している中の空白は「制限なし」と読めてしまう。
   "admin.engines_model_noncommercial": "非商用",
-  "admin.engines_model_license_by": "同意 {who} / {when}",
-  "admin.engines_model_license_unknown": "ライセンスの記録なし",
-  // An ESTIMATE, and it says so: S3 to the instance measured 104-147 MB/s and this uses the
-  // slow end. The router role syncs every enabled model, so this rides straight onto the next
-  // cold start.
-  "admin.engines_model_sync": "同期 +{n} 秒（推定）",
   // いま VRAM に載っているモデルと、その入れ替わりの回数。1 度に 1 つしか抱えない設計の
   // 価格で、「warm」だけを出していると見えなくなる。
   "admin.engines_warm_model": "VRAM 上: ",
@@ -805,6 +770,11 @@ export const admin = {
   "admin.allow_engine_ingest": "このテナントの管理者がモデルを取り込むのを許可",
   "admin.allow_engine_ingest_hint":
     "OFF（既定）では取り込みを起動できるのは super_admin だけです。ON にすると、このテナントの tenant_admin が Hugging Face / Civitai / URL からモデルを取り込めます。有効化・選択中チェックポイントの変更・行の削除・デプロイの Hugging Face トークンは super_admin のままです。カタログはデプロイに 1 つなので、取り込まれたモデルの id はどのテナントからも見えます。",
+  "admin.engine_use_title": "推論エンジンの利用可否",
+  "admin.allow_engine_llm": "セルフホストのチャットエンジン（llm）の利用を許可",
+  "admin.allow_engine_image": "セルフホストの画像生成エンジン（image）の利用を許可",
+  "admin.engine_use_hint":
+    "GPU の箱は時間課金なので、このテナントがそれを使ってよいかという費用の判断です。役（llm / image）単位で、モデル単位ではありません——カタログはデプロイに 1 つのままです（上のモデル取り込みとは別の権限）。オフにすると、起動メニューとカタログからその役が消え、既存のセッションも次の要求で拒否されます。",
   "admin.saved": "保存しました",
   "admin.no_members": "メンバーがいません。下のフォームから追加してください。",
   "admin.add_failed": "追加に失敗: {msg}",

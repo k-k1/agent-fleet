@@ -1549,3 +1549,164 @@ it is the whole class of failure this ADR's follow-ups were about: "declared" an
 drift apart when the declaration IS the request, and a misspelled type is refused by the call
 rather than by a box that never arrives. `usdPerHour` stays display-only, but it is the EC2 price
 now — the 7.80% Managed Instances management fee measured here is gone with the providers.
+
+## Follow-up — a T4 rung (g4dn.xlarge), adopted as the image role's automatic first choice (2026-09-14, af-sandbox, comfy)
+
+The question behind this: every rung declared so far is 22-24 GB (L4/A10G) or 48 GB (L40S). Is
+that VRAM actually needed for the models the image role runs, or is a cheaper, smaller card
+enough for the common case (SDXL)? g4dn.xlarge (NVIDIA T4, 16 GB, $0.71/h on-demand in Tokyo,
+Pricing API) is the next rung down AWS offers; g4ad (AMD, 8 GB) was ruled out first — ComfyUI's
+CUDA stack does not run on it.
+
+🔥 **Adding the rung to `ImageInstanceClasses` did nothing.** `offersSpec()`
+(`control-plane/engines.go:162`) reads `Offers` when the stack declares one and **Classes is not
+consulted at all** — not merged, not a fallback list, just unread. af-sandbox already declares
+`ImageOffers` (decision 1, ADR 0075's three rungs), so the Console's instance-class picker (whose
+prices match `ImageOffers` exactly: $1.57 / $1.26 / $2.91) never showed the new rung, and nothing
+logged that the edit was inert. The rung had to go into `ImageOffers` — with a `buy` field this
+time — for the picker to see it at all.
+
+**Real hardware, `t4|T4 16GB (g4dn.xlarge)|14500|g4dn.xlarge|4|15000-16384|0.77|od`, one SDXL
+generation, 1024×1024, 20 steps:**
+
+```
+Total VRAM 14912 MB, total RAM 15791 MB
+Device: cuda:0 Tesla T4 : cudaMallocAsync
+DynamicVRAM support detected and enabled
+```
+
+The declared `14500` sits safely under the measured `14912`, the same margin-below-hardware
+convention decision 6 already used for the l4 rung.
+
+🔥 **SDXL's real VRAM use here is far below the 11.7 GiB this ADR measured earlier** (`What P1
+measured`, sd-server/sd.cpp, `juggernaut-xl-v9`). Summing the warm request's `Model loaded: …
+vram_mb=…` lines: `SDXLClipModel` 1568.4 + `SDXL` 4929.2 + `AutoencoderKL` 256.2 ≈ **6.75 GiB**.
+The difference is the loader, not the checkpoint: ComfyUI v0.34.0 ships `DynamicVRAM`
+(`comfy-aimdo`), which stages weights onto the card incrementally instead of sd.cpp's one-shot
+load plus a fixed compute reserve. The first (cold) request logged smaller, transient `vram_mb`
+values for the same models while staging was still in flight — the warm request's numbers are
+the steady-state ones quoted above.
+
+🔴 **Corrected (2026-09-14, same rung, 8 requests, batch 1-4): Turing IS a clear penalty, just
+not a VRAM one.** The first three single-image (batch 1) requests warm took 17.87-17.95 s —
+against the l4 rung's ~11.5 s at the same resolution and step count (`What was measured` above),
+that is **about 1.56x**, not "close to". Five more requests at batch 2-4 (`latent_shapes`'
+leading dimension) settled the open question this ADR's own `The floor is 58% of the demand`
+note left hanging for the image role — **per-image time does not move with batch size**:
+51.93 s / 3 = 17.31 s, 68.23 s / 4 = 17.06 s, 68.59 s / 4 = 17.15 s, 35.45 s / 2 = 17.73 s, all
+within the same 17.0-17.9 s band as batch 1. ComfyUI runs a batch's images through the sampler
+sequentially on this rung, so ten images cost **ten times one image (~3 minutes), with no
+batching discount** — the number an operator queuing several generations in a row actually
+feels. VRAM was never the constraint (six of the eight requests reused the warm, already-loaded
+checkpoint); wall clock is the T4 rung's real trade-off against l4, not headroom.
+
+**Adopted, then redesigned around price alone (same day).** The first cut just moved `t4` to the
+front of the existing three-row `ImageOffers` (`spot3;l4;l40s`, one Spot row bundling
+`g6.xlarge,g5.xlarge,g6e.xlarge`). Working through what that bundling actually costs reopened a
+question this ADR's `Why three types is safe` section had already flagged and left as a
+trade-off: `spot3`'s declared `$1.57` turned out to be stale — measured against fresh
+`describe-spot-price-history`, `g6.xlarge` and `g5.xlarge` spot were $0.57 and $0.76, `g6e.xlarge`
+spot was $1.35, so the true expected price of "whichever of the three you get" was well under the
+row's own label. `usdPerHour` is display-only; nobody had corrected it since it was written.
+
+🔥 **The `g6e`-overpay complaint this reopened turned out to already be fixed.** ADR 0077 decision
+1 named it directly: "0075 run 3's problem — the three-type Spot row delivered a g6e.xlarge, not
+the cheapest — came from Managed Instances having no allocation strategy." The CP's own
+`CreateFleet` request sets `SpotOptions.AllocationStrategy: price-capacity-optimized`
+(`control-plane/engine_fleet.go:410`), and 0077's own P0 hardware runs bought `g6.xlarge` and
+`g5.xlarge` across two Spot purchases, never `g6e.xlarge`. The failure mode being designed
+against here no longer reproduces on the current purchase path — what was left to fix was that
+the ladder's own price labels did not reflect it.
+
+**The redesign, worked through on real numbers, went through two cuts the same day.** The first
+listed every type SEPARATELY (bundling one label over three real prices was the root problem, not
+just the stale number), both `spot` and `od`, sorted purely by price — no `spot > on-demand`
+category rule, because at real prices Spot is not uniformly cheaper (`g6e` spot at $1.35 sits
+above `g6` on-demand at $1.17). That produced three Spot rows for `g6.xlarge` / `g5.xlarge` /
+`g6e.xlarge`, each with its own hand-typed price — which is the same staleness problem `spot3`
+already had, just three times over, and it undid something the platform already does better:
+`SpotOptions.AllocationStrategy: price-capacity-optimized` picks the best AVAILABLE price across
+every type and AZ **listed in one `CreateFleet` call**, live, at the moment of purchase — closer
+to real-time than a label anyone remembers to refresh. So the second cut put `g6.xlarge`,
+`g5.xlarge` and `g6e.xlarge` back into ONE Spot row (as `spot3` originally had them) and left only
+`g4dn.xlarge` (a different VRAM floor, so it cannot safely share a row with the 22 GB+ types —
+the same reason mixing it into `l4` was never on the table) and the on-demand rows split, since
+`OnDemandOptions.AllocationStrategy: prioritized` reads the declared type order rather than a live
+price and on-demand prices barely move, so a hand-typed order does not go stale there the way a
+Spot label does. `ImageOffers` (`ImageInstanceClasses` kept mirrored, still inert while
+`ImageOffers` is declared), seven rows, price-sorted:
+
+```
+g4dn-spot|T4 16GB Spot (g4dn.xlarge)|14500|g4dn.xlarge|4|15000-16384|0.34|spot;
+g22-spot|22GB+ Spot (g6/g5/g6e)|22000|g6.xlarge,g5.xlarge,g6e.xlarge|4-8|15000-65536|0.57|spot;
+g4dn-od|T4 16GB (g4dn.xlarge)|14500|g4dn.xlarge|4|15000-16384|0.71|od;
+g6-od|L4 24GB (g6.xlarge)|22000|g6.xlarge|4-8|15000-65536|1.17|od;
+g6e-spot|L40S 48GB Spot (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|1.35|spot;
+g5-od|A10G 24GB (g5.xlarge)|22000|g5.xlarge|4-8|15000-65536|1.46|od;
+g6e-od|L40S 48GB (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|2.70|od
+```
+
+`g6e-spot` stays a row of its own alongside `g22-spot` rather than folding away: a demand between
+22,001 and 44,000 MiB is filtered OUT of `g22-spot` (whose declared floor is 22,000, the safe
+minimum across its three types) but still fits `g6e-spot`'s 44,000, which is what lets such a
+model reach an L40S at all instead of only ever landing on-demand.
+
+All seven `usdPerHour` are the raw EC2 price — the pre-ADR-0077 7.8% Managed Instances fee this
+ladder had carried since before that ADR is gone from every row, not just corrected on the newest
+one.
+
+🔴 **What "watch how it plays out" needs and did not have: no purchase history survived a
+start.** Asked whether which type got bought, what it cost and how long it ran could be reviewed
+later rather than re-derived from CloudTrail each time (the way every number in this section was
+found): `engine_hourly` (decision 10) is deliberately NOT this — its own header comment says "It
+is NOT money and must never be rendered as money", and it carries no type column, only
+running/starting/draining seconds. `engineOfferRun`'s trail (`ID`/`Buy`/`Result` per attempt) is,
+by its own doc comment, "In memory and nowhere else" — gone on the next CP restart, never written
+to a table. `noteOffer` — the one audit line a purchase already wrote (decision 8) — had the
+offer's `Target` and `spot`/`od`, but not which literal instance type a row widened to several
+actually landed on, nor its price.
+
+**Fixed the same day, without a new table.** A dedicated purchase-history table was the first
+idea and the wrong one — `store.AuditLog` and its reader (`GET /api/admin/audit`) already exist
+for exactly this ("who did what, when, en route to a target"), and duration was already answerable
+without a new column: it is the gap between one `engine.<key>.offer` line's timestamp and the
+matching `engine.<key>.box` / `engine.<key>.interrupted` line's, for the same instance id, both
+already written. The actual gap was two fields on one existing line.
+`engineFleetInstanceType` (`control-plane/engine_fleet.go`) reads the literal type EC2 Fleet
+launched from the same `CreateFleetInstance` element `engineFleetInstanceID` already read the id
+from — no second AWS call — and `buy()`'s new second return value threads it through to
+`noteOffer`, whose `Detail` now reads `buy=spot instance=i-0397… type=g6.xlarge price=1.35`
+instead of stopping at `instance=`. A new test (`TestAPurchaseAuditsTheInstanceTypeAndPrice`)
+pins it, with a positive control (reverting the format string does fail it).
+
+🔴 **Writing that price surfaced a second bug in this same follow-up: `g22-spot`'s `0.57` violated
+a convention this ADR itself never restated but `engineClass.UsdPerHour`'s own doc comment
+(`control-plane/engine_class.go:52`) does** — a row widened to several types is written at the
+DEAREST type's price, not the cheapest, because "a figure written from the cheap end would make
+the number useless for the comparison it exists for" (ADR 0075 decision 1). `0.57` was
+`g6.xlarge`'s price, the cheap end of the very three-type spread the comment uses as its own
+example. Corrected live to `1.35` (`g6e.xlarge` spot, the dearest of the three, matching what
+`g6e-spot`'s own row already declared).
+
+VRAM fit is still `candidateOffers`'s job, not this ordering's: it drops any row under the largest
+ENABLED model's demand before walking what is left in declaration order, so listing all seven by
+price and letting the filter narrow them per-start was the point, not a gap to fill by hand.
+
+🔥 **Tolerating a Spot interruption and still landing on an on-demand box that fits needed no code
+change either** — `engineOfferRun.noteInterrupted` (`control-plane/engine_offer.go:299`) only
+takes an offer off the table after it is reclaimed **twice in a row**; the first interruption
+retries the SAME cheapest fitting row, and only a second consecutive loss moves the walk to the
+next-cheapest candidate (`restart`, line 221). With every VRAM tier represented by both a Spot and
+an on-demand row, a demand that keeps losing its cheap Spot offers works its way down the
+price-sorted list and always has an on-demand row of sufficient VRAM waiting below it — which is
+exactly the trade-off asked for: price first, an eventual on-demand landing accepted as the cost
+of trying Spot at all.
+
+⚠️ **Renaming `t4`/`spot3`/`l4`/`l40s` to type-based ids** (`g4dn-od`, `g6-spot`, …) invalidates
+any administrator's PINNED choice under the old ids (decision 2: a stored id that no longer names
+a rung falls back to automatic, logged, not refused). No pin existed on this deployment.
+
+⚠️ **Applied to the live stack only**, the same way the 2026-09-11 follow-up above did it
+(`aws cloudformation update-stack --use-previous-template`, one changed parameter at a time,
+everything else `UsePreviousValue`) — not through `params/60-engines`. `standup.sh` rebuilding
+from the local capture would still come back with the old three-row ladder and no `t4`.

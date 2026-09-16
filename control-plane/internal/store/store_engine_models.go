@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 )
 
@@ -122,48 +123,77 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 	return err
 }
 
+// CreateEngineModel is the ingest writer. Unlike the administrative Put above, a collision is
+// not an edit: the new bytes and their licence were chosen for a different row, so the caller
+// must keep the row that won the race and report the conflict.
+func (s *SQL) CreateEngineModel(ctx context.Context, m EngineModel) (bool, error) {
+	now := NowTS()
+	if m.CreatedAt == "" {
+		m.CreatedAt = now
+	}
+	params := ""
+	if m.Params != nil && *m.Params != (EngineParams{}) {
+		if b, err := json.Marshal(m.Params); err == nil {
+			params = string(b)
+		}
+	}
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO engine_models(`+engineModelCols+`)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 ON CONFLICT(role, id) DO NOTHING`,
+		m.Role, m.ID, m.Kind, jsonList(m.Files), boolInt(m.Enabled), boolInt(m.Selected), boolInt(m.Default), jsonList(m.Args),
+		m.ContextTokens, m.MaxOutputTokens, jsonList(m.Sizes), m.Description, m.VramMiB,
+		m.License, m.LicenseName, m.LicenseURL, m.Precision, m.BaseModel,
+		m.LicenseAcceptedBy, m.LicenseAcceptedAt, m.LicenseAcceptedTenant, m.LicenseAcceptedLicense,
+		m.CommercialUse, m.Source,
+		m.KVLayers, m.KVHeadsKV, m.KVKeyLen, m.KVValueLen,
+		m.NegativePrompt, jsonList(m.TrainedWords), params, m.CreatedAt, now)
+	return affected(res, err)
+}
+
 // AppendEngineModelFile adds one file to a row that already exists, which is what lets a SPLIT
 // model be assembled by taking its parts in one at a time (ADR 0072 decision 2's
 // `text_encoders/`). Without it an ingest could only ever create a row of one file, and a
 // four-file FLUX.1 had to be staged as three throwaway rows and then re-typed through
 // `POST /models`.
 //
-// Read-modify-write inside a transaction rather than through PutEngineModel: the row carries a
-// licence acceptance, a source and an enabled flag that the ingest that is appending knows
-// nothing about, and an upsert would carry them back out and in again — the failure that
-// refusing an ingest onto an existing id exists to prevent.
+// An optimistic compare-and-swap rather than PutEngineModel: the row carries a licence
+// acceptance, a source and an enabled flag that the ingest that is appending knows nothing
+// about. Comparing the JSON read also keeps two concurrent parts from overwriting each other.
 //
 // A key already listed is a no-op reporting success: the caller is a job reconciler that may
 // see the same finished task twice, and a second append would put the same file in the active
 // set twice.
+var ErrEngineModelFileSlotTaken = errors.New("engine model file slot is already taken")
+
 func (s *SQL) AppendEngineModelFile(ctx context.Context, role, id string, f EngineModelFile) (bool, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-	var raw string
-	switch err := tx.QueryRowContext(ctx,
-		`SELECT files FROM engine_models WHERE role=? AND id=?`, role, id).Scan(&raw); {
-	case err == sql.ErrNoRows:
-		return false, nil
-	case err != nil:
-		return false, err
-	}
-	var files []EngineModelFile
-	_ = json.Unmarshal([]byte(raw), &files)
-	for _, e := range files {
-		if e.S3Key == f.S3Key {
-			return true, tx.Commit()
+	for {
+		var raw string
+		switch err := s.db.QueryRowContext(ctx,
+			`SELECT files FROM engine_models WHERE role=? AND id=?`, role, id).Scan(&raw); {
+		case err == sql.ErrNoRows:
+			return false, nil
+		case err != nil:
+			return false, err
+		}
+		var files []EngineModelFile
+		_ = json.Unmarshal([]byte(raw), &files)
+		for _, e := range files {
+			if e.S3Key == f.S3Key {
+				return true, nil
+			}
+			if strings.TrimSpace(e.Flag) == strings.TrimSpace(f.Flag) {
+				return false, ErrEngineModelFileSlotTaken
+			}
+		}
+		files = append(files, f)
+		updated, err := affected(s.db.ExecContext(ctx,
+			`UPDATE engine_models SET files=?, updated_at=? WHERE role=? AND id=? AND files=?`,
+			jsonList(files), NowTS(), role, id, raw))
+		if err != nil || updated {
+			return updated, err
 		}
 	}
-	files = append(files, f)
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE engine_models SET files=?, updated_at=? WHERE role=? AND id=?`,
-		jsonList(files), NowTS(), role, id); err != nil {
-		return false, err
-	}
-	return true, tx.Commit()
 }
 
 // ReplaceEngineModelFile swaps the file a row holds under one flag, leaving the rest of the row
@@ -175,58 +205,106 @@ func (s *SQL) AppendEngineModelFile(ctx context.Context, role, id string, f Engi
 // where the licence acceptance (a record of a human act), the family, the params, the enabled
 // flag and the provenance live. Swapping a t5xxl for another quantisation threw all of them away.
 //
-// The same read-modify-write inside a transaction as the append above, and for the same reason:
-// an upsert through PutEngineModel would have to carry every one of those columns back out and
-// in again to change one entry of a JSON list.
+// The same optimistic compare-and-swap as the append above, and for the same reason: an upsert
+// through PutEngineModel would have to carry every other column back out and in again, while an
+// unchecked read-modify-write could discard a part attached at the same time.
 //
 // A flag the row does not declare is NOT created here. "Replace what is there" and "add a part"
 // are different acts with different refusals, and silently turning one into the other is how a
 // typo in a flag becomes a row with two checkpoints.
 func (s *SQL) ReplaceEngineModelFile(ctx context.Context, role, id string, f EngineModelFile, kv *EngineModelKV) (bool, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-	var raw string
-	switch err := tx.QueryRowContext(ctx,
-		`SELECT files FROM engine_models WHERE role=? AND id=?`, role, id).Scan(&raw); {
-	case err == sql.ErrNoRows:
-		return false, nil
-	case err != nil:
-		return false, err
-	}
-	var files []EngineModelFile
-	_ = json.Unmarshal([]byte(raw), &files)
-	at := -1
-	for i, e := range files {
-		if strings.TrimSpace(e.Flag) == strings.TrimSpace(f.Flag) {
-			at = i
-			break
-		}
-	}
-	if at < 0 {
-		return false, nil
-	}
-	files[at] = f
-	if kv == nil {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE engine_models SET files=?, updated_at=? WHERE role=? AND id=?`,
-			jsonList(files), NowTS(), role, id); err != nil {
+	for {
+		var raw string
+		switch err := s.db.QueryRowContext(ctx,
+			`SELECT files FROM engine_models WHERE role=? AND id=?`, role, id).Scan(&raw); {
+		case err == sql.ErrNoRows:
+			return false, nil
+		case err != nil:
 			return false, err
 		}
-		return true, tx.Commit()
+		var files []EngineModelFile
+		_ = json.Unmarshal([]byte(raw), &files)
+		at := -1
+		for i, e := range files {
+			if strings.TrimSpace(e.Flag) == strings.TrimSpace(f.Flag) {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			return false, nil
+		}
+		files[at] = f
+		var updated bool
+		var err error
+		if kv == nil {
+			updated, err = affected(s.db.ExecContext(ctx,
+				`UPDATE engine_models SET files=?, updated_at=? WHERE role=? AND id=? AND files=?`,
+				jsonList(files), NowTS(), role, id, raw))
+		} else {
+			// Written even when it is all zeros: an unreadable header means the row's geometry is
+			// now UNKNOWN. Keeping the previous file's numbers would describe bytes no longer used.
+			updated, err = affected(s.db.ExecContext(ctx,
+				`UPDATE engine_models SET files=?, kv_layers=?, kv_heads_kv=?, kv_key_len=?, kv_value_len=?,
+				   updated_at=? WHERE role=? AND id=? AND files=?`,
+				jsonList(files), kv.Layers, kv.HeadsKV, kv.KeyLen, kv.ValueLen,
+				NowTS(), role, id, raw))
+		}
+		if err != nil || updated {
+			return updated, err
+		}
 	}
-	// Written even when it is all zeros: an unreadable header means the row's geometry is now
-	// UNKNOWN, and the estimate falling back to the weights floor is the honest outcome. Keeping
-	// the previous file's numbers would be a KV estimate for a file that is no longer there.
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE engine_models SET files=?, kv_layers=?, kv_heads_kv=?, kv_key_len=?, kv_value_len=?,
-		   updated_at=? WHERE role=? AND id=?`,
-		jsonList(files), kv.Layers, kv.HeadsKV, kv.KeyLen, kv.ValueLen, NowTS(), role, id); err != nil {
-		return false, err
+}
+
+// MoveEngineModelFile rewrites the one file a row holds at `fromKey` — its role AND its key —
+// leaving every other file and every other column alone. It is the catalogue half of relocating
+// bytes inside the bucket, and it exists because neither of the two writers above can express it:
+// appending would leave the old declaration behind (two files, one of them pointing at a key the
+// move emptied) and replacing is keyed by the flag, which is the very thing that changes.
+//
+// The same optimistic compare-and-swap as its neighbours, and idempotent in the one way that
+// matters: a reconciler that sees the same finished task twice finds the row already moved —
+// `fromKey` gone, `f` present — and reports success rather than failing a job that did its work.
+func (s *SQL) MoveEngineModelFile(ctx context.Context, role, id, fromKey string, f EngineModelFile) (bool, error) {
+	for {
+		var raw string
+		switch err := s.db.QueryRowContext(ctx,
+			`SELECT files FROM engine_models WHERE role=? AND id=?`, role, id).Scan(&raw); {
+		case err == sql.ErrNoRows:
+			return false, nil
+		case err != nil:
+			return false, err
+		}
+		var files []EngineModelFile
+		_ = json.Unmarshal([]byte(raw), &files)
+		at, done := -1, false
+		for i, e := range files {
+			switch {
+			case strings.TrimSpace(e.S3Key) == strings.TrimSpace(fromKey):
+				at = i
+			case strings.TrimSpace(e.S3Key) == strings.TrimSpace(f.S3Key) &&
+				strings.TrimSpace(e.Flag) == strings.TrimSpace(f.Flag):
+				done = true
+			}
+		}
+		if at < 0 {
+			return done, nil
+		}
+		// 🔴 The destination role must be free, or the move would silently give the row two files
+		// under one flag — the state AppendEngineModelFile refuses for the same reason.
+		for i, e := range files {
+			if i != at && strings.TrimSpace(e.Flag) == strings.TrimSpace(f.Flag) {
+				return false, ErrEngineModelFileSlotTaken
+			}
+		}
+		files[at] = f
+		updated, err := affected(s.db.ExecContext(ctx,
+			`UPDATE engine_models SET files=?, updated_at=? WHERE role=? AND id=? AND files=?`,
+			jsonList(files), NowTS(), role, id, raw))
+		if err != nil || updated {
+			return updated, err
+		}
 	}
-	return true, tx.Commit()
 }
 
 func (s *SQL) SetEngineModelEnabled(ctx context.Context, role, id string, enabled bool) (bool, error) {

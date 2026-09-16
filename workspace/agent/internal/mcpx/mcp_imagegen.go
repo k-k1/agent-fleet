@@ -61,6 +61,15 @@ type mcpImageGenProvider struct {
 	// Strength is whether this route lets the caller say how much of the input picture an edit
 	// changes (ADR 0069 follow-up, strength).
 	Strength bool `json:"strength,omitempty"`
+	// Samplers and Schedulers are the names this route is willing to SEND — the Agent's own
+	// allow-list, not ComfyUI's whole enumeration. The tool's enum is built from these rather
+	// than from a list spelled out here, for the reason the pane's form already relies on: a
+	// surface that offers a name the Agent would then refuse by name is the pair disagreeing in
+	// front of the caller, and this binary is the one that knows which names it sends.
+	//
+	// Empty for the vendor routes, which build no sampler graph and have neither.
+	Samplers   []string `json:"samplers,omitempty"`
+	Schedulers []string `json:"schedulers,omitempty"`
 }
 
 // mcpImageGenModel is one checkpoint `model` may name.
@@ -81,6 +90,17 @@ type mcpImageGenLora struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	BaseModel   string `json:"baseModel,omitempty"`
+	// TrainedWords are the words the adapter was trained with (ADR 0081 decision 5). The Agent
+	// has published them on this very route since that ADR; this struct is where they used to
+	// be dropped, and a field absent from it is a field that does not exist downstream — the
+	// same silent loss engineCatalogModelRow warns about, one wire further along.
+	//
+	// They belong in the SCHEMA rather than in an answer the caller could fetch separately,
+	// because the moment they are needed is while the prompt is being written: a LoRA applied
+	// without its trigger loads, costs the same generation, and changes nothing visible. A
+	// second tool would move that fact one round trip away and reintroduce the failure as
+	// "forgot to call it" — see the `loras` description in mcp_stdio.go.
+	TrainedWords []string `json:"trained_words,omitempty"`
 }
 
 // agentImageGenStatus asks the Agent over the loopback REST every other session tool already
@@ -126,6 +146,21 @@ type imageGenArgs struct {
 	// Agent as the request it is and gets refused by value there, rather than being read here as
 	// "not given" and silently becoming the default.
 	strength *float64
+	// params is the sampler overlay (steps, cfg, sampler, scheduler). A POINTER because an absent
+	// object and an empty one must not become the same request downstream, and forwarded as
+	// typed: which family reads which of the four, and what the ceilings are, is the Agent's
+	// answer — this layer knows neither and must not narrow either.
+	params *imageGenParamsArg
+}
+
+// imageGenParamsArg is the tool's `params` object. Its keys are imagegen.EngineParams' own JSON
+// spellings, so it rides to the Agent under the same key and in the same shape the job queue's
+// route and the catalogue row already use — one fact, one wire.
+type imageGenParamsArg struct {
+	Steps     int     `json:"steps,omitempty"`
+	CFG       float64 `json:"cfg,omitempty"`
+	Sampler   string  `json:"sampler,omitempty"`
+	Scheduler string  `json:"scheduler,omitempty"`
 }
 
 // imageGenLoraArg is one entry of the tool's `loras` argument.
@@ -169,7 +204,7 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 		"size": a.size, "aspectRatio": a.aspectRatio, "background": a.background,
 		"count": a.count, "inputs": a.inputs, "mask": a.mask, "model": a.model,
 		"loras": a.loras, "seed": a.seed, "negativePrompt": a.negativePrompt,
-		"strength": a.strength,
+		"strength": a.strength, "params": a.params,
 	})
 
 	// The heartbeat runs for as long as the Agent is working. Without it opencode cuts the
@@ -216,9 +251,12 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	if res.Region != "" {
 		value["region"] = res.Region
 	}
-	// Where the prompt went, when the provider id does not say it on its own (ADR 0069
-	// decision 11): `sdcpp` is the fleet's own GPU box, not a vendor, and the tool's own
-	// description says "an external image service" because that is true of the other routes.
+	// Where the prompt went, when the id does not say it on its own (ADR 0069 decision 11):
+	// `res.Provider` IS the row's own key since ADR 0082 P0 ("comfy-lan", not a bare
+	// "openai-compat"), so a caller can already tell rows apart by `value["provider"]` alone.
+	// Destination stays a fixed sentence for what even the key cannot say — whether THIS row is
+	// this fleet's own GPU or a metered external service (ADR 0083) — because that fact is not on
+	// the wire anywhere a provider may honestly read it.
 	if res.Destination != "" {
 		value["destination"] = res.Destination
 	}

@@ -18,6 +18,7 @@ import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { NotificationCenter } from "../features/notifications/NotificationCenter.tsx";
+import { EnginesPill } from "../features/engines/EnginesPill.tsx";
 import { hintSuffix } from "../features/keys/keyHint.ts";
 import { confirmDirtyNavigation } from "../features/editor/dirtyRegistry.ts";
 
@@ -190,6 +191,9 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         </div>
       </div>
       <div className="topbar-right">
+        {/* Engine indicator (ADR 0084): one pill per role (llm/image), beside the TTS pill —
+            decision 10. Renders nothing when no role is visible to this tenant/deployment. */}
+        <EnginesPill />
         <button
           className={"tts-status" + (ttsBusy ? " speaking" : s.ttsEnabled ? "" : " off")}
           title={

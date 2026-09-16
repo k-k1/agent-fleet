@@ -17,9 +17,11 @@ package main
 // file the box does not hold breaks the families that work today. That leaves the file itself as
 // the only source of the fact, which is what this reads.
 //
-// Where the bytes are read FROM is the source, over the same HTTP the resolve already uses —
-// never S3. The CP has no S3 permission at all, does not know the bucket's name, and gaining
-// either is a reversal of review R3 rather than an implementation detail (ADR 0072).
+// Where the bytes are read FROM is whichever road holds them: the upstream URL over HTTP Range
+// before anything is downloaded, and this deployment's own bucket for a file that is already
+// here. The parser is the same one either way (engineSafetensorsVaeOf), because the verdict is
+// written into a row once and read from there forever — two roads that disagreed would be two
+// rows that disagree.
 //
 // 🔴 The verdict is three-valued and the third value is load-bearing. "Not read" and "no VAE in
 // it" are different facts: a `.ckpt`, a source that refuses an anonymous Range, a header longer
@@ -117,15 +119,23 @@ func engineSafetensorsHasVae(buf []byte) (bool, error) {
 	return false, nil
 }
 
-// engineSafetensorsVae fetches enough of a file to answer the question, over HTTP Range.
+// engineSafetensorsVaeOf is the whole verdict, expressed over a source that can hand back the
+// first n bytes of the file and nothing else.
 //
-// `token` is the operator's Hugging Face token when one is registered, for the same reason the
-// GGUF geometry read needs it: a gated repository answers metadata anonymously and refuses the
-// file. Without one, a gated model's verdict simply stays unknown.
-func engineSafetensorsVae(ctx context.Context, url, token string) (string, error) {
-	has, err := engineSafetensorsTry(ctx, url, token, safetensorsHeadWindow)
+// The two-step window is what this owns and what every caller would otherwise re-invent: one
+// megabyte answers for the checkpoints this deployment runs, a header that declares itself longer
+// is retried once at the ceiling, and a header longer than THAT stays unknown rather than being
+// read a window at a time until the weights have been downloaded.
+//
+// Written against a reader rather than a URL because the same file is reachable two ways and the
+// answer must not depend on which: upstream over HTTP Range before a byte is downloaded
+// (engineVaeOfIngest), and out of this deployment's own bucket for a row registered from bytes
+// that are already here (engineVaeOfObject). The verdict is written into a catalogue row once and
+// read from there forever, so two roads that disagreed would be two rows that disagree.
+func engineSafetensorsVaeOf(read func(window int) ([]byte, error)) (string, error) {
+	has, err := engineSafetensorsTry(read, safetensorsHeadWindow)
 	if errors.Is(err, errSafetensorsShort) {
-		has, err = engineSafetensorsTry(ctx, url, token, safetensorsHeadMax)
+		has, err = engineSafetensorsTry(read, safetensorsHeadMax)
 	}
 	if err != nil {
 		return engineVaeUnknown, err
@@ -136,10 +146,29 @@ func engineSafetensorsVae(ctx context.Context, url, token string) (string, error
 	return engineVaeNo, nil
 }
 
-func engineSafetensorsTry(ctx context.Context, url, token string, window int) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func engineSafetensorsTry(read func(window int) ([]byte, error), window int) (bool, error) {
+	buf, err := read(window)
 	if err != nil {
 		return false, err
+	}
+	return engineSafetensorsHasVae(buf)
+}
+
+// engineSafetensorsVae fetches enough of a file to answer the question, over HTTP Range.
+//
+// `token` is the operator's Hugging Face token when one is registered, for the same reason the
+// GGUF geometry read needs it: a gated repository answers metadata anonymously and refuses the
+// file. Without one, a gated model's verdict simply stays unknown.
+func engineSafetensorsVae(ctx context.Context, url, token string) (string, error) {
+	return engineSafetensorsVaeOf(func(window int) ([]byte, error) {
+		return engineSafetensorsHead(ctx, url, token, window)
+	})
+}
+
+func engineSafetensorsHead(ctx context.Context, url, token string, window int) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", window-1))
 	if t := strings.TrimSpace(token); t != "" {
@@ -147,20 +176,16 @@ func engineSafetensorsTry(ctx context.Context, url, token string, window int) (b
 	}
 	resp, err := engineIngestHTTP.Do(req)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	// 206 is the answer that was asked for. A 200 means the server ignored the Range and is
 	// about to send the whole file — the LimitReader caps what is actually pulled either way,
 	// and a truncated body either parses or reports itself short.
 	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("safetensors: %s answered %d", url, resp.StatusCode)
+		return nil, fmt.Errorf("safetensors: %s answered %d", url, resp.StatusCode)
 	}
-	buf, err := io.ReadAll(io.LimitReader(resp.Body, int64(window)))
-	if err != nil {
-		return false, err
-	}
-	return engineSafetensorsHasVae(buf)
+	return io.ReadAll(io.LimitReader(resp.Body, int64(window)))
 }
 
 // engineSafetensorsName says whether a file is one this can be asked about at all. A `.ckpt` is

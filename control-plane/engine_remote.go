@@ -27,10 +27,17 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// engineRemotePollInterval is how often the far catalogue is re-read. The Agent's own catalogue
-// cadence (ADR 0072), for the same reason: what changes here is an administrator's toggle on
-// another deployment, which is minutes-scale, and each tick is one request to one URL.
-const engineRemotePollInterval = 10 * time.Minute
+// engineRemotePollInterval is how often the far catalogue is re-read.
+//
+// Two minutes rather than the Agent's ten. The cadences were the same because the reasoning was
+// "an administrator's toggle is minutes-scale", but they are not the same KIND of wait: the
+// Agent's TTL is a cache a push already cuts short (decision 7's `catalog-changed`), while this
+// poll is the only way a borrowing deployment ever hears about a change at all — the far side
+// cannot call us. Measured 2026-09-15 on the dev deployment: a checkpoint enabled over there took
+// about three minutes to reach a session here, and that was a lucky draw from a span whose worst
+// case was this interval plus the Agent's TTL. Each tick is still one GET of one small JSON to
+// one URL, so the cost of the change is 720 requests a day against a wait nobody can explain.
+const engineRemotePollInterval = 2 * time.Minute
 
 // engineRemoteTokenRenewAhead is how long before expiry a far session token is replaced. The TTL
 // the far side mints is 30 days (engine_token.go), so this is generous by three orders of
@@ -50,6 +57,9 @@ type engineRemotes struct {
 	// keys is AF_REMOTE_ENGINE_KEYS: which roles to borrow. Empty borrows every role the far
 	// fleet offers, which is the answer for an operator who just wants what is there.
 	keys []string
+	// mgr is who the workspaces are asked from when a mirror moves and every running one has to
+	// be told (applyCatalogRow). nil in the unit tests, where the fan-out itself is stubbed.
+	mgr *manager
 
 	mu    sync.Mutex
 	byKey map[string]*engineRemote
@@ -67,6 +77,10 @@ type engineRemote struct {
 	// consults the catalogue on every request.
 	rows   []store.EngineModel
 	loaded bool
+	// sig is the fingerprint of that mirror, so the poll can tell "the far side answered again"
+	// from "the far side answers something else now" — only the second is worth waking every
+	// running workspace for (engineMirrorSignature).
+	sig string
 	// warmModel is the id the FAR deployment last saw its engine answer with, as its catalogue
 	// reports it. It is the only honest answer to "is this warm" available here: probing would be
 	// the health call decision 5 refuses (ADR 0079 decision 10).
@@ -115,7 +129,7 @@ func newEngineRemotes(mgr *manager) *engineRemotes {
 			keys = append(keys, k)
 		}
 	}
-	return &engineRemotes{base: base, token: token, keys: keys, byKey: map[string]*engineRemote{}}
+	return &engineRemotes{base: base, token: token, keys: keys, mgr: mgr, byKey: map[string]*engineRemote{}}
 }
 
 // wants reports whether this role is one the operator asked to borrow.

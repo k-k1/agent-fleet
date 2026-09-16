@@ -103,11 +103,20 @@ func validSeedPolicy(p string) bool {
 // flux2-klein is already at its family recipe's 4 — a distilled 4-step model has no cheaper
 // setting — so a trial there differs from the batch in nothing but where it sits in the queue.
 var comfyTrialSteps = map[comfyFamily]int{
+	ComfyFamilySD15:       10,
 	ComfyFamilySDXL:       10,
 	ComfyFamilySD35:       12,
 	ComfyFamilyFlux1:      8,
 	ComfyFamilyZImage:     4,
 	ComfyFamilyFlux2Klein: 4,
+	// A third of the family's 30, rather than SDXL's 10 out of 20: the model card's floor for
+	// the undistilled versions is 30 steps, so a trial at 10 would be judging a composition this
+	// family does not produce at 10.
+	ComfyFamilyAnima: 12,
+	// krea2's own recipe is already 8, the distilled value — so for a Turbo row a trial is the
+	// batch (the klein case above). It is left here for the Raw rows, where it is the family's
+	// published 52 cut to a sixth.
+	ComfyFamilyKrea2: 8,
 }
 
 // --- the records --------------------------------------------------------------------------

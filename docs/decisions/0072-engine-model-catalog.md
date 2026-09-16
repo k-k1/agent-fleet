@@ -2284,6 +2284,17 @@ manifest) and decision 7 (delete the S3 file) were written without noticing (R3)
   with a 10-minute TTL; the Agent's `POST /engine/usage` (`routes.go`) **already exists** as
   the CP → Agent reverse path — decision 7's `catalog-changed` can take the same shape.
   `opencode.ApplyEngineChange` and the per-model `engineProviderEntry` exist as the text says.
+  🔴 **2026-09-15 correction: "every turn" is wrong for claude.** Measured on the dev workspace:
+  a claude session asks `tools/list` once, when it connects, and never again — so the `model`
+  enum a session advertises is a SNAPSHOT of the moment its MCP server was spawned. Restarting
+  the session does not fix it either, because the Console's stop/resume is `claude --resume` and
+  the client restores the snapshot with the conversation (a process one minute old kept an enum
+  from before the checkpoint existed, while a server spawned by hand with the same arguments
+  answered with the new one). The catalogue reaching the Agent is therefore NOT enough: the
+  stdio server now declares `capabilities.tools.listChanged` and sends
+  `notifications/tools/list_changed` when what it would advertise stops matching what the client
+  was last told (a one-minute watcher over a fingerprint of the whole list, because the names
+  never move when a checkpoint is enabled — only the enum inside the schema does).
 - **R8. HF today.** FLUX.1-schnell: `license: apache-2.0`, `gated: auto` (as the text says);
   FLUX.2 klein 4B and Z-Image-Turbo: `apache-2.0`, `gated: false`. 🔴 **FLUX.1-dev and SD3.5
   Medium report `cardData.license` as `"other"`**, with the substance in `license_name`
@@ -4480,3 +4491,626 @@ and both tests fail.
 The panels were rendered headless in both themes and at 390 px before this was called done —
 the rail wraps, the acts stack with their sentences, and the reason the next button is grey is
 still beside it.
+
+## Revision — browse models first, act from their cards (2026-09-14)
+
+Status: approved for implementation. This decision supersedes the four-question wizard above,
+the deliberate exclusion of date sorting, and the prohibition on Control Plane S3 reads. The
+earlier verification describes the earlier implementation, not acceptance of this revision.
+
+### Model management belongs in the pane
+
+Image and LLM have separate views and card bodies. Both use the pane's full available width,
+with search and registered-model tabs and a header containing search, sorting and model/LoRA
+selection. The settings entry opens this pane; machine operation stays in the operations screen.
+Saved `engineAdd` pane entries remain readable, including their engine and LoRA selection.
+
+Image starts on Civitai, with a Hugging Face switch. Its initial ordering is Civitai's `Newest`,
+labelled new arrivals rather than last updated. Hugging Face starts on descending `lastModified`
+for both Image and LLM; LLM offers no Civitai choice. Automated quantisation repositories are not
+excluded from date ordering. Other supported upstream rankings remain selectable, and subsequent
+pages continue the upstream ranking rather than sorting a downloaded popularity page locally.
+Publication and update dates remain separate facts; a missing update date is not manufactured.
+
+A search card represents one HF repository or Civitai model. Versions and files are selected in
+the operation dialog. Image cards show family and model type; LLM cards show available file,
+quantisation and context information. An available example image is a **small thumbnail on the
+right**, opening a lightbox on activation. No image means no reserved image box. Narrow panes
+use one column and wrap footer buttons. The lightbox supports keyboard activation, Escape and
+focus restoration.
+
+### The button chooses the operation
+
+Add, add as a part and replace live in the card footer. Each opens a single dialog for that
+operation: source version/file, destination, required settings, and optional advanced settings.
+There is no next/back rail. Attach offers an empty compatible slot; replace names the occupied
+slot and its current file. Registration, enable/disable, default selection, editing, part
+management and deletion are reachable from registered cards. Manual URL and staged-key entry,
+token management and ingest history remain available as secondary actions.
+
+Starting a job returns to browsing. Progress is attached to the relevant card and an accessible
+job list, and is restored from the server when the pane is reopened. Dismissing the dialog does
+not cancel the job. Completion does not enable a model automatically. Licence acceptance,
+family/VAE/VRAM checks and borrowed-engine read-only restrictions still apply. A replacement
+installs only after success and retains the previous object; failed downloads leave the previous
+catalogue declaration intact.
+
+### Storage is observed, not inferred from history
+
+The Control Plane may read model-object metadata through a deployment-neutral port. The AWS
+implementation receives only the model storage read permissions needed for existence checks,
+including scoped bucket listing where required to distinguish absence from denial. Upload and
+deletion remain worker operations; this revision does not give the Control Plane S3 writes.
+
+An engine-scoped storage endpoint enumerates only server-known catalogue, part and ingest keys.
+Callers cannot name an arbitrary bucket or object. Reads are bounded and briefly cached. An
+unconfigured reader, permission denial or failed check is unknown, not missing. The API carries
+present/missing/unknown per file and the observation time. The UI separately shows checking,
+partial presence for multipart models, registration and enabled state.
+
+Search cards report saved-file counts, not that an entire upstream repository is downloaded.
+Reuse requires an existing object and an exact immutable source-file identity; matching a model
+name, mutable branch or old completed job is insufficient. New ingests persist the identity
+needed for that decision. Ambiguous legacy provenance stays unverified. Reuse applies the same
+registration, attach and replace validation as a download and never silently overwrites a row.
+
+### Acceptance and rollout
+
+Acceptance covers role-specific browsing, upstream date order and pagination, single-operation
+dialogs, small right-side images and lightboxes, persisted-pane/job restoration, exact file reuse,
+all storage verdicts, and the existing licence/VAE/VRAM/permission guards. Console tests and a
+production build, focused Control Plane tests, and headless wide/narrow pane checks are required.
+AWS existence checks need the corresponding IAM deployment; local mocks do not constitute that
+live verification. Deployment and merging into the shared base are separate from implementation.
+
+### Implementation result (2026-09-14)
+
+This revision is implemented on `temp/silzntq`. The Image and LLM catalogue panes use shared
+`Button` primitives throughout. A card-footer press fixes add, attach or replace for one flat
+dialog, with no operation selector or next/back rail. Jobs appear immediately from the POST
+response, restore from the server, and refresh rows and storage after completion. Paging stays
+bound to the submitted query; stale version/file replies are discarded; Civitai URLs preserve
+their version; and an LLM LoRA accepts only a registered non-LoRA model as its base.
+
+Storage reports server-known catalogue and job keys as present, missing or unknown. Reuse needs
+`reusable`, a present object and exact `artifact_identity`, followed by a fresh server check.
+Human `source` remains provenance, not identity; a key with mixed immutable and legacy records is
+ambiguous and cannot be reused. Downloads refuse a destination already recorded
+by a catalogue row or job before upload starts, preventing a later create/replace race from
+overwriting another version with the same filename. Catalogue installation failure leaves the job
+failed rather than presenting a completed download as registered.
+
+On the integrated tree, all Control Plane packages passed with bounded parallelism; the focused
+catalogue DOM suites passed 15 tests; Console typecheck, i18n lint and production build passed;
+and all seven Playwright catalogue scenarios passed against that build in local Chromium. The
+browser run covered 1400 px dark/light, 390 px dark, registered editing, immediate job display,
+the right thumbnail and lightbox focus restoration. The full Console suite additionally exposed
+and led to a fix for new dialogs bypassing the shared modal body. No AWS deployment, live-bucket
+or GPU validation, or merge into `develop` was performed.
+
+## Addendum — SD1.5 joined the family vocabulary (2026-09-15)
+
+### This does not overturn decision 10
+
+Decision 10 said "**SD1.5 and SD3 Medium are not offered.** The first is superseded by SDXL,
+the second by SD3.5." That was about **which models the deployment seeds as defaults**, not
+about decision 2's vocabulary of families an operator may declare. The defaults are still
+klein / Z-Image / SDXL, and SD1.5 has not been added to the seeded catalogue.
+
+What changed is the answer an operator gets when they try to ingest an SD1.5 checkpoint of
+their own. That answer used to be `base_model_missing`: the row registered and never reached
+generation. The LoRA and checkpoint ecosystem still on Civitai is heavily SD1.5, and **the
+member has no way around it** — the same test decision 0069 used for widening a vocabulary.
+
+### The family was split for the LoRA gate, not for quality or the recipe
+
+SD1.5's graph has SDXL's shape — `CheckpointLoaderSimple` yields MODEL, CLIP and VAE, then two
+`CLIPTextEncode`, `EmptyLatentImage`, `KSampler`, `VAEDecode`. So registering an SD1.5
+checkpoint as `base_model: sdxl` **does produce a picture**. The family was split anyway
+because of the **LoRA family gate** (`comfyResolveLoras`). As the background table already
+says, a LoRA whose `baseModel` does not match does not fail — it **quietly produces a broken
+picture**. Letting SD1.5 call itself sdxl holds that gate open between the two families, which
+defeats the point when the LoRA ecosystem is most of what SD1.5 is worth.
+
+The template is written out as `comfyGraphSD15`, sharing its body with SDXL through
+`comfyGraphSingleCheckpoint`. **It must not be `case ComfyFamilySD15: return
+comfyGraphSDXL(...)`**: `engine_catalog_test.go` reads the `comfyGraph*` bodies with a regular
+expression and builds "which files each family needs" from the pairing of `errComfyMissingFile`
+with `f.X == ""`. A family that never names itself in a refusal is a family that check
+**silently stops counting**.
+
+### Sizes were not per-family (this is the substance)
+
+`comfySizesFor` fell back to a fixed megapixel list, and a request naming no size landed on
+1024x1024. That was right for all five families, each trained around a megapixel. SD1.5's UNet
+was trained at 512, and asking it for 1024 returns **not a failure but a picture with the
+subject duplicated** — the plausible-looking wrong answer, with no error and no warning, that
+this repository keeps paying for.
+
+So the fallback list became per-family (`comfyDefaultSizes`). SD1.5 gets
+`512x512 / 512x768 / 768x512 / 640x512 / 512x640`, stopping at 768 on the long side because
+that is where the duplication starts. The other five keep today's five entries verbatim as
+`comfyMegapixelSizes`, and their goldens did not move. A catalogue row's own `Sizes` still wins
+over both. The Console's `families.ts` carries the matching pair — it is a copy **outside** the
+CP's drift check, so this ADR is the only thing holding the two together.
+
+A row with no declared family keeps **the megapixel list**. It cannot reach generation at all,
+so the list served for it decides nothing, and answering with 512 there would be exactly the
+guess about an undeclared row that decision 2 exists to forbid.
+
+### The guess table and the VAE
+
+`engineFamilyRules`' "SD 1.5 is deliberately absent" is gone, replaced by the rule. SD 1.4 maps
+to the same family — identical UNet, CLIP and VAE, so it loads through the identical graph.
+🔴 **SD 2.0 / 2.1 are a different architecture** and match no needle here: OpenCLIP-H at 768
+with v-prediction, which must never land in this family. That is why the needles are spelled
+`sd15` / `sd14` rather than shortened to `sd1`. The distilled variants (`SD 1.5 LCM`,
+`SD 1.5 Hyper`) do match, and correctly — they load through the same graph. What they do not
+share is the step count, and that is the row's `params` to declare.
+
+`engineFamilyVaes` gained an SD1.5 entry. 🔴 **It is not SDXL's VAE** — swapping the two does
+not fail, it decodes to colour mush. The stock `stabilityai/sd-vae-ft-mse-original` is
+**ungated**, so the 403 that keeps sd35 out of that table does not apply and this family can be
+repaired automatically the way sdxl is.
+
+### What has not been measured
+
+🔴 **SD1.5 has never been run on a GPU here.** The recipe (20 steps, cfg 8, euler, normal) is
+ComfyUI's own default graph as shipped with v1-5-pruned-emaonly — **a citation, not a
+measurement**. The golden pins the graph's shape and makes no claim that the shape is correct:
+SD3.5 sat green exactly that way while failing to generate at all on real hardware, and the
+precedent applies unchanged. The same holds for the size default — 512 avoids duplication
+because that is SD1.5's training resolution, not because a picture was taken on this
+deployment.
+
+**Remaining**: on real hardware, ingest one SD1.5 row, generate once without naming a size, and
+look at whether the subject is duplicated. Until then this family claims nothing beyond "the
+shape is pinned".
+
+## Addendum — Anima joined the family vocabulary (2026-09-15)
+
+### Why this family and not the other three
+
+The measurement behind `engineFamilyRules` found four upstream base models on Civitai's top 20
+with no family here: `Anima`, `Krea 2`, `LTXV 2.5`, `SD 1.5 Hyper`. SD1.5 was answered by the
+addendum above. Anima is answered here by the same test decision 0069 set for widening a
+vocabulary — **whether the member has a way around it**. They do not: Anima is a 2B anime and
+illustration model (CircleStone Labs with Comfy Org, built on NVIDIA's Cosmos-Predict2-2B) whose
+checkpoints, merges and LoRAs are a large and growing share of what Civitai ranks, and none of
+them load through any template here. `Krea 2` and `LTXV 2.5` are still `""` and stay that way
+until a template exists.
+
+Decision 10 is untouched: the seeded defaults are still klein / Z-Image / SDXL. This is about
+what an operator may declare, not what the deployment ships.
+
+### Declared like klein, sampled like SDXL
+
+Anima is published as three files — the diffusion model, Qwen3-0.6B as the text encoder, and the
+Qwen-Image VAE — so it declares with `--diffusion-model` / `--clip_l` / `--vae`, the split-model
+vocabulary that already existed. **No new file flag was needed.** Both parts beyond the
+diffusion model live in the same Hugging Face repository as the checkpoint
+(`circlestone-labs/Anima`) and it is **ungated** (measured 2026-09-15: `gated: false`), so all
+three parts come down the ordinary ingest route with no token.
+
+The graph, however, is SDXL's: `UNETLoader` + `CLIPLoader` + `VAELoader`, two `CLIPTextEncode`,
+`EmptyLatentImage`, `KSampler`, `VAEDecode`. It is the first family that is split in its
+declaration and **guided** in its sampling, which is why `comfyFamilyTakesNegative` and
+`comfyFamilyKnobs` gained an entry that reads like SDXL's while `engineComfyRequiredFlags`
+gained one that reads like klein's.
+
+### Two things that look wrong in the template and are not
+
+🔴 **`type: "stable_diffusion"` on the CLIPLoader is inert.** ComfyUI does not select Anima's
+text encoder from that field at all: `comfy/sd.py` (v0.34.0, the ref this deployment pins) reads
+the state dict's hidden size, answers `TEModel.QWEN3_06B` at 1024, and takes the
+`comfy.text_encoders.anima` branch at line 1927 — which sits **outside** every `clip_type` test.
+`anima` is not one of `CLIPLoader`'s type values (nodes.py:1011), so there is nothing truer to
+write, and the value here is the one ComfyUI's own shipped template uses. Krea 2, when it comes,
+is the opposite case and the dangerous one: `krea2` **is** a `CLIPType`, and leaving the default
+there selects a different encoder with no error.
+
+🔴 **`EmptyLatentImage` is the 4-channel node and the Qwen-Image VAE has 16.** `KSampler` calls
+`comfy.sample.fix_empty_latent_channels`, which repeats an **all-zero** latent out to the model's
+own channel count (`comfy/sample.py:45`). The edit path is unaffected for the same reason: a
+`VAEEncode` latent is not empty and already comes back in this VAE's format. The official
+template uses this node for exactly this reason.
+
+### The guess rule matches WHOLE, and that is the substance
+
+Every other rule in `engineFamilyRules` is a substring needle. `anima` as a substring would take
+**Animagine** (an SDXL fine-tune the rule above claims), **AnimateDiff** and **Wan-Animate** (two
+video architectures with no template here) — each time silencing `base_model_missing`, which is
+the row's only mark that it cannot generate. So `engineFamilyRule` gained an `equal` list and
+this family uses it. Every Anima checkpoint and merge on Civitai publishes the bare string
+`Anima`.
+
+### What has not been measured
+
+🔴 **Anima has never been run on a GPU here.** The recipe (30 steps, cfg 4, euler, simple) is
+ComfyUI's own shipped template for the family
+(`workflow_templates/templates/image_anima_base_v1.json`), inside the range the model card prints
+(30–50 steps, CFG 4–5) — **a citation, not a measurement**, and the SD3.5 precedent (green golden,
+could not generate at all on real hardware) applies unchanged. The golden pins the graph's shape
+and claims nothing else.
+
+⚠️ The recipe is the **base/Aesthetic** one. Anima-Turbo is a separate checkpoint distilled to
+cfg 1 and 8–12 steps; sampled at 30/4 it burns out. That is the row's `params` to declare, as it
+is for the distilled SD1.5 variants.
+
+**Remaining**: on real hardware, ingest one Anima row (three files), generate once, and look at
+whether the picture is an anime illustration rather than noise — the first thing a wrong text
+encoder would cost. Until then this family claims nothing beyond "the shape is pinned".
+
+## Addendum — Krea 2 joined the family vocabulary (2026-09-15)
+
+### The same declaration as anima, and the opposite trap
+
+Krea 2 is a 12.9B DiT (Krea's first foundation model) published as the same three parts as
+Anima — diffusion model, a Qwen3-VL-4B text encoder, the Qwen-Image VAE — so it declares with
+`--diffusion-model` / `--clip_l` / `--vae` and needs no new flag either. **Its VAE is the same
+FILE as Anima's**, so two rows point at one S3 key; `text_encoders/` has been shared between
+SD3.5 and FLUX.1 since P2 and the accounting already handles it.
+
+🔴 **`type: "krea2"` on the CLIPLoader is read, and getting it wrong is silent.** `comfy/sd.py`
+(v0.34.0) reaches the Krea2 tokenizer only through `clip_type == CLIPType.KREA2`. The same
+Qwen3-VL-4B file loaded at the node's default falls into the generic `qwen3vl` branch instead,
+which loads, encodes, samples and returns a picture — made against different conditioning than
+the model was trained on, with no error at any layer. Anima is the exact opposite case (its type
+field is inert because the encoder is detected), and the two templates say so to each other.
+
+**Where the files come from matters here.** `krea/Krea-2-Raw` and `krea/Krea-2-Turbo` are
+**gated** (measured 2026-09-15: anonymous `README.md` is 401). `Comfy-Org/Krea-2` is not, and
+carries the diffusion models, both text encoders and the VAE. The ungated repository is the one
+to ingest from; the gated one needs the token in the ingest task, which is the machinery decision
+6 already describes.
+
+### The recipe is the DISTILLED one, and that is a citation, not a preference
+
+ComfyUI ships templates for Krea 2 **Turbo only** (`image_krea2_turbo_t2i.json` and two INT8
+variants) and none for Raw, so the citable recipe is 8 steps, cfg 1, euler, simple. Raw's
+published 52 steps with real guidance is the row's `params` to declare. This points the opposite
+way from the anima addendum above — there the family default is the undistilled model and Turbo
+is the declaration — and both times the rule was the same: **take the numbers somebody published
+for a graph, never invent the other mode's.**
+
+The template departs from the shipped one in one place: ComfyUI zeroes the negative out
+(`ConditioningZeroOut`) because Turbo runs at cfg 1, and this graph encodes a real negative
+instead, because the same template has to serve a Raw row. At cfg 1 the two produce identical
+pixels, and the extra encode is the same text every request, which ComfyUI serves from its
+execution cache after the first.
+
+### Capabilities became per-row, because "guided family" stopped meaning "guided row"
+
+`comfyModelTakesNegative` answered from the family alone. With Krea 2 that would tell **most**
+users of this family that their negative prompt reaches a picture it cannot touch: Turbo is the
+normal row, it declares cfg 1, and at cfg 1 guidance is `uncond + 1*(cond - uncond)` — `cond`
+exactly, whatever is wired into the negative branch.
+
+So three surfaces now read the ROW's effective cfg rather than the family:
+
+- `Caps.Negative` (`comfyModelTakesNegative`),
+- the form's field list (`comfyModelKnobs`, new — a field offered for a value the capability
+  calls ignored is the pair disagreeing in front of the member),
+- the warning that the administrator's exclusion list did not apply
+  (`comfyNegativeIgnoredWarning`, which now also says *why*: the row's cfg, not the family).
+
+`comfyFamilyTakesNegative` stays, and now means only "this family's template wires one". The
+same correction applies to Anima-Turbo and to a distilled SD1.5 declared at cfg 1, which were
+being reported wrongly before this change.
+
+### What has not been measured
+
+🔴 **Krea 2 has never been run on a GPU here**, and it is the largest family in the vocabulary:
+`krea2_turbo_fp8_scaled` is 13.1 GB and its fp8 text encoder another 5.2 GB, so an L4 (24 GB) is
+the floor and bf16 (26.3 + 8.9 GB) needs an L40S. The golden pins the graph's shape and claims
+nothing else.
+
+**Remaining**: on real hardware, ingest one Krea 2 Turbo row (three files), generate once, and
+look at whether the picture matches the prompt — a generic-`qwen3vl` mis-load is the failure this
+family can have that the shape cannot show.
+
+## Addendum — the picker could not find either new family (2026-09-15)
+
+Both families landed and neither could be reached from the Console's own search. The cause is
+decision 11's filter: the image kind asked Hugging Face with `pipeline_tag=text-to-image`, which
+is a **diffusers-era** tag. A repository publishing loose safetensors for ComfyUI does not carry
+it, and Hugging Face's `filter`/`pipeline_tag` parameters AND together — there is no OR.
+
+Measured 2026-09-15, anonymously:
+
+| query | unfiltered | with `pipeline_tag=text-to-image` |
+|---|---|---|
+| `search=Anima` | `circlestone-labs/Anima` is #1 | **absent**; animagine-xl rows instead |
+| `search=Krea-2` | `Comfy-Org/Krea-2` is #1 | **absent**; `krea/Krea-2-Raw` and `krea/Krea-2-Turbo`, both **gated**, in its place |
+
+So the picker did not merely hide the right repository: it offered a 401 in its place, and the
+operator's next twenty minutes go into a token that was never needed.
+
+`filter=diffusion-single-file` is the other half — the library tag Comfy-Org's repackages carry
+(with `comfyui`). On its own it ranks `Comfy-Org/z_image_turbo`, `Comfy-Org/Krea-2`,
+`Comfy-Org/stable-diffusion-v1-5-archive`: this deployment's own shape of model. **Neither filter
+is a superset of the other** — stock SDXL is a diffusers repository with a top-level single file
+and appears only under the first — so the image kind now asks TWICE and merges.
+
+What that costs, and what it does not:
+
+- Each lane asks for `engineSearchLimit / 2`, so a lane's own next-cursor points exactly past
+  what was shown and paging needs no per-lane offset. The wire cursor is the lane cursors joined
+  with `~`; an exhausted lane keeps its (empty) position. 🔴 Not `|` — that is what Civitai's own
+  cursor is built from, and both kinds travel the same field.
+- A repository answered by both lanes is one row (dedupe by ref).
+- The merged page is re-sorted by the requested ranking, and **only when two lanes answered**: a
+  single lane's page is the upstream's own order, tie-breaks included, and re-sorting it here by
+  the one field this end can see would reorder rows Hugging Face had already separated.
+- The llm kind is unchanged, one lane: `gguf` is a library tag every quantised repository carries.
+
+The `filter=lora` rule survives as a per-LANE invariant (it drops the connection when sent alone,
+measured 2026-09-12): it rides on the pipeline tag in one lane and on the library tag in the
+other, and `filter=diffusion-single-file&filter=lora` answers 200.
+
+## Addendum — browsing by family, and the table read backwards (2026-09-15)
+
+The picker could find a repository by name. It could not answer the question an operator
+actually has — **"show me what this engine can load, of this architecture"** — without knowing a
+repository name to type first.
+
+So the search takes a `family`: one member of the vocabulary the provider dispatches on, the same
+list the ingest form's own selector offers. 🔴 It is translated per upstream and **never passed
+through**. Both APIs answer a name they do not know with an EMPTY LIST and no error — measured
+2026-09-15, `baseModels=SD 3.5` and `baseModels=Z-Image` both answer zero — so a pass-through
+turns one typo into "this family has no models", which reads as an answer.
+
+`engineFamilyUpstreams` is that translation, and every value in it was measured against the live
+APIs on 2026-09-15:
+
+- **Civitai** publishes the family as `baseModel` strings and `baseModels=` is repeatable
+  (measured: two values answer the union). One family is usually several names — SDXL's
+  fine-tunes each publish their own, Klein publishes one per size.
+- **Hugging Face** has no such field; what it has is the `base_model:<repo>` tag other
+  repositories carry. One per family, because Hugging Face ANDs its filters and two bases would
+  answer models derived from both, which is nothing. ⚠️ It finds DERIVATIVES: the canonical
+  repository does not tag itself, so `base_model:circlestone-labs/Anima` does not return
+  `circlestone-labs/Anima`. The browse ranking and a search by name are what reach that.
+
+**A source that cannot narrow by a family refuses** (400, naming the family and what to do
+instead). sd35 and zimage have no Civitai `baseModel` string at all, so this is reachable from
+the panel today — and both alternatives would lie: an unfiltered list is not this family, and an
+empty one reads as "none exist".
+
+### The bug this found: Pony V7 is not SDXL
+
+Writing the table backwards forced every name to be checked against what it actually is, and one
+did not survive. `engineFamilyRules` matched `pony` as a substring, which was right for Pony V6 —
+an SDXL fine-tune — and **wrong for V7, which was rebuilt on AuraFlow**: a flow-matching DiT with
+a UMT5 encoder that the SDXL graph cannot load at all. Civitai publishes it as its own baseModel
+string, `Pony V7`, so the suggestion was pre-selecting sdxl for it, clearing `base_model_missing`,
+and leaving a row that could only fail at generation.
+
+`engineFamilyRule` gained a `not` list, checked before the needles, and that is what it is for: a
+product whose name outlived its architecture.
+
+## Addendum — the Civitai login wall outlived its refusal (2026-09-15)
+
+P2 欠落 5 added a refusal for a Civitai asset whose uploader requires a logged-in account: the
+resolve marks it, `can_ingest` is false, and the ingest route returns `civitai_login_required`
+before a task starts. That was right when it was written — the sentence in the code said "there
+is nothing on this deployment that could satisfy it".
+
+That stopped being true when the **Civitai token** became registrable. The account is sealed,
+carried to its own secret, and the fetch container has been sending it ever since
+(`Authorization: Bearer $CIVITAI_TOKEN`, deploy/aws/ecs/engine-tools/ingest-fetch.sh; the CFN
+task definition wires `CivitaiTokenSecret` into the same container as `HF_TOKEN`). Only the two
+gates in front of it were never told: `engineResolvedRow` was called with the **Hugging Face**
+token alone, so every login-walled asset answered `can_ingest: false` on a deployment that had
+registered a Civitai account — and the panel refused to start a download that would have worked.
+
+Found from the panel: WAI-ANIMA, an Anima checkpoint, with the button greyed out and a message
+that already talked about the registered token the code was not consulting.
+
+So each restriction is now answered by ITS OWN account:
+
+- `can_ingest` is `(!gated || hf) && (!login_required || civitai)`, and the row carries
+  `deployment_civitai_token` beside `deployment_token`.
+- The ingest route refuses only when there is no Civitai token registered, and says so.
+- With a token, `civitai_needs_account` is the warning — the exact shape `gated_needs_acceptance`
+  already has, and for the same reason: the CP resolves **anonymously** (decision 6), so it
+  cannot ask whether that account satisfies THIS uploader. Early access is bought per creator.
+  Let it start, and let the 401 be the answer if it is one.
+- The Console draws that as a muted caveat rather than a red dead end, and keeps the hard error
+  for the deployment that has registered nothing.
+
+🔴 The lesson is the comment, not the code: **"nothing could satisfy this" is a claim with a
+date on it.** A refusal justified by an absent capability has to name the capability, so that
+adding it is the same act as revisiting the refusal.
+
+## Addendum — a split family is taken in as one act (2026-09-15)
+
+🔴 **Superseded by [ADR 0085](0085-model-ledger-and-one-press-ingest.md) (2026-09-15, built the same day).** `with_family_parts` and `POST …/models/{id}/parts` are gone from the wire: the resolve answers a **plan** with every file the family reads, and `…/complete` (揃える) is the row's one remedy. Kept as the record of what the parts table was written for.
+
+Taking Anima in cost **three separate ingests**, in an order nobody documents, and left a row
+that was still marked until the third landed. The parts are in another repository — for a
+Civitai merge, on another SOURCE entirely — so nothing on the screen an operator was looking at
+led to them. Reported from the sandbox as "I took things in and do not know what to do".
+
+The machinery for this already existed and was pointed at the wrong half of the problem:
+`engine_vae.go` offers a family's VAE beside a checkpoint that carries none, ticked by default,
+with a one-press remedy for rows that already exist. Its own note says why it stops there — the
+split families "already REQUIRE a `--vae` … so a row of theirs that has none is already marked
+and refused". True, and it assumed a mark is a way forward. For a family whose parts are two
+repositories away, it is not.
+
+So the same shape now covers the parts of a split family:
+
+- **`engineFamilyParts`** declares them per family — flag, repository, path, and the S3 key they
+  land at. Measured 2026-09-15, ungated, both paths fetched.
+- The ingest form offers the set **ticked by default** (`with_family_parts`), with each part's
+  size and licence beside it, and takes them in as follow-ups to the same press.
+- **`POST …/models/{id}/parts`** is the remedy for rows that already exist — because "take the
+  4 GB diffusion model in again with the box ticked this time" is not a repair.
+- The registered card now draws `files_missing`, which the wire has carried since P2 and this
+  screen never showed: an unusable row looked like every other row.
+
+### Bytes this deployment already has are declared, never fetched again
+
+Three steps, cheapest first:
+
+1. **A row declares the key** — this deployment's own declaration, trusted as such, no S3 call.
+2. **No row, but the bytes are there anyway** — a job that finished for a row since forgotten, or
+   the same file taken in for another engine. Requires BOTH proofs `reuse_s3_key` is built on:
+   the identity recorded before that upload equals the one the resolve just computed, and
+   HeadObject says an object occupies the key now. A record without an object is a purged key; an
+   object without a record is bytes nobody can vouch for.
+3. Otherwise, download.
+
+🔴 **The two families declare the Qwen-Image VAE from ONE repository.** It is the same file in
+`circlestone-labs/Anima`, `Comfy-Org/Krea-2` and `Comfy-Org/Qwen-Image_ComfyUI` (sha256 a70580f0…,
+measured) — but reuse compares the artifact identity `hf:<repo>@<rev>/<path>#sha256:…`, not the
+hash, so declaring them from their own repositories would download the same bytes twice into two
+keys. Taking Anima in and then Krea 2 now costs one encoder download and nothing for the VAE.
+
+### A part is not a model
+
+The ingest accepted `new` + a `file_flag` and made a row whose only file was a text encoder: it
+appeared in the registered list as if it were a model, could never be enabled, and the thing the
+operator wanted — the encoder ON the checkpoint's row — had not happened. That is refused now,
+naming the act they meant. ⚠️ Rows already made that way are not migrated: they are deleted with
+`forget`, and the checkpoint's own row is completed with the button above.
+
+### What is not covered
+
+⚠️ `flux1`, `flux2-klein`, `sd35` and `zimage` are split too and have **no part list yet** —
+nobody has measured their files the way these two were, and an entry written from memory is a
+404 minutes after a press. They behave exactly as before: marked, and attached by hand.
+
+🔴 Neither family has been run on a GPU here, so "the row is complete" still means the
+declaration is complete.
+
+## Addendum — for a split family, the default choice was the only one that cannot work (2026-09-15)
+
+🔴 **Superseded by [ADR 0085](0085-model-ledger-and-one-press-ingest.md) (2026-09-15, built the same day).** The form no longer offers a role at all: `main_flag` is the CP's answer inside the plan, and `file_flag` left the request.
+
+Three faults came back from af-sandbox the moment the addendum above was in an operator's hands.
+None of them was about the part list; all three were about the step before it.
+
+1. 🔴 **The main file had no role either.** `anima-aesthetic-v1.1` was registered as "the whole
+   checkpoint", because that is the first thing the form offers. A split family has no `""` in
+   `engineComfyRequiredFlags` — **no template reads that role** — so the row held a 4.2 GB file
+   and reported `--diffusion-model --clip_l --vae` as missing, counting the file it was holding
+   among them. Now refused, naming the role it almost certainly is; the resolve answers
+   `family_main_flag` and the form's role selector starts there.
+2. 🔴 **Parts were standing in the list as models** (an encoder and a VAE as three "models") —
+   the same cause: with no role, a new ingest makes a row.
+3. 🔴 **"the S3 key … is already recorded" was a dead end.** When the plan could not match the
+   identity of whatever holds the key, it fell through to a DOWNLOAD — which
+   `engineIngestDestinationUnused` always refuses. Proposing it was the error; the plan now
+   reports what is holding the key (a row id, a running job, an earlier one).
+
+One lesson, and it is the same in all three: **the default choice was the only one that cannot
+work for these families.** The knowledge of which roles a family reads was in the CP all along,
+and the screen was not asking for it.
+
+## Addendum — the file was never missing; it was in a directory no loader lists (2026-09-15)
+
+🔴 **Superseded by [ADR 0085](0085-model-ledger-and-one-press-ingest.md) (2026-09-15, built the same day).** `s3Key` left the request — the CP computes the key (decision 1 there) — so the destination check this addendum added is unreachable, and `main_file_fix` is now one case of `…/complete` reading the bucket ledger (`GET …/objects`) rather than a row attribute.
+
+The addendum above closed the door on new rows. The rows already in the deployment stayed broken,
+and the remedy contradicted the badge in front of it: the card read `不足: --diffusion-model`
+while the row held 4.2 GB of exactly that, and "Complete this row" answered **`none`** — the
+family's part list (the encoder and the VAE) really was complete.
+
+**Both halves of one line of the ingest form put them there**, and only the first had been fixed:
+
+```ts
+s3Key = engineIngestPrefix(image, fileFlag, isLora) + file
+```
+
+1. the prefix is read from the ROLE, which defaulted to "the whole checkpoint" → `image/checkpoints/`;
+2. `file` is the path inside the upstream repository, and these families are published under
+   `split_files/…` → the key kept that directory as well.
+
+🔴 **Either half alone is a file no ComfyUI loader can offer.** The box mirrors the bucket
+(`/ComfyUI/models` → `/models/image`), each loader builds its menu from ONE directory, and the
+Agent names a file by its BASE NAME. So `image/diffusion_models/split_files/…` is exactly as
+unreadable as `image/checkpoints/…` — and the second spelling was reachable with the role chosen
+correctly. Nothing reports it: the row validates, the box loads, and generation fails after a
+cold start with a node error about a name that is not in the list.
+
+### The repair is a MOVE, not a second download
+
+`MODE=move` on the ingest task (contract 3): one `aws s3 mv` inside one bucket, which S3 performs
+server-side and in parts. Nothing is fetched, nothing touches the task's disk, no licence is
+asked for again — these bytes were accepted when they were taken in — and the catalogue change
+(`MoveEngineModelFile`: the role AND the key of one file, nothing else) lands when the task does,
+like every other ingest. Re-fetching 13.1 GB to move a file one directory up is the same answer
+this feature already refused to give when the parts table was written.
+
+Refused before a task starts, because each one is a way to lose bytes: a key another row declares
+(its declaration would go on naming an empty key), a key an ingest is still writing, a
+destination already recorded, and an object that is not there to move (that row has to be taken
+in again, and the refusal says so).
+
+### The other two things that had to change with it
+
+- **The destination is now checked at the door.** The ingest refuses any key that is not
+  `<role>/<the role's directory>/<base name>` for the flag it is taken in under. `POST …/models`
+  is deliberately NOT policed: registering bytes that are already somewhere is how an operator
+  recovers, and a rule there would close the door behind them.
+- 🔴 **A split family could not be taken in at all.** The previous addendum refused an unflagged
+  file for these families ("declare the role — it is almost certainly `--diffusion-model`"), and
+  the rule beside it refuses a flagged file as "a PART of a model, not a model". The two met, and
+  the advice led into the other refusal. The family's MAIN flag is now the one exception to the
+  parts rule — an encoder as its own row is still refused, which is what that rule is for.
+
+### Addendum follow-up — the table named a revision, and the CP read it once (2026-09-15)
+
+The move above was deployed to af-sandbox and every ingest answered:
+
+```
+InvalidParameterException: TaskDefinition is inactive
+```
+
+Two faults, one on each side of the engine table, and neither is about ingest:
+
+1. 🔴 **The table published `!Ref IngestTaskDef`, which is the ARN _with its revision_.** A
+   CloudFormation update that touches the task definition registers a new revision and
+   **deregisters the previous one** — so the pinned value becomes one `RunTask` refuses. The
+   table carries the FAMILY now, which resolves to the latest ACTIVE revision at call time
+   (`EnginesParam` gains `DependsOn: IngestTaskDef`, since a string no longer creates that
+   ordering).
+2. 🔴 **The CP read the ingest block once and ignored every later table.** `startIngest` attached
+   the runner on the first table that declared one and afterwards re-pointed only its storage
+   checker, so the task definition, subnets, security group, log group and secrets were whatever
+   the process booted with. The runner is still never rebuilt — its reconcile loop owns the jobs
+   it started — but it now **adopts** the block on every reload.
+
+Either fix alone would have cleared the error; both are here because they fail in different
+directions. The first is "the value was never safe to pin"; the second is "a value that changes
+was read once", which was equally true of the bucket and of the secrets.
+
+### Addendum follow-up 2 — the wreckage of a failed attempt fenced off the retry (2026-09-15)
+
+🔴 **Superseded by [ADR 0085](0085-model-ledger-and-one-press-ingest.md) (2026-09-15, built the same day).** The holder rule written here (#691) became 0085 decision 6's definition of a holder — an object, or a task that could have written one — and every refusal in this area now carries `holder` and `next` as fields, not prose.
+
+With the two fixes above deployed, the repair was refused:
+
+```
+the S3 key image/diffusion_models/anima-aesthetic-v1.1.safetensors is already recorded
+```
+
+Nothing had ever been written to that key. The first press — the one that met the deregistered
+task definition — had already written its job row (`start` writes the row BEFORE calling
+RunTask, so a task nobody can see is impossible), RunTask then answered 400, and the row stayed
+as `failed`. `EngineIngestS3KeyRecorded` counts a job row in ANY state, so the three keys the
+repair needed were held by the three failures of that same repair.
+
+🔴 **A job that failed without ever getting a task is not an address.** `task_arn` is written only
+after RunTask returned one, so `failed` with an empty one means no container existed to write
+those bytes: RunTask itself was refused (no capacity, an IAM hole, a task definition
+CloudFormation had just deregistered). Those rows no longer hold their destination. Every other
+failure still does — the task ran, and the upload container may have put the object there before
+whatever failed afterwards did.
+
+The refusal also names its holder now (`the row <id> declares it` / `an earlier ingest job
+recorded it — forget that job in the list to free the key`). "Already recorded" with no subject
+left an operator nothing to look for, and the manual way out — forgetting that job — existed the
+whole time.

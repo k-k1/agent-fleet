@@ -609,3 +609,99 @@ func TestRemoteCatalogueBorrowsOnlyTheDeclaredKeys(t *testing.T) {
 		t.Errorf("llm = %+v, want a role the operator did not ask for left alone", e.def)
 	}
 }
+
+// --- decision 7: telling the workspaces ------------------------------------------
+
+// farImageEngineWith is farImageEngine with the model list and the warm id under the test's
+// control, so a change to the CATALOGUE and a change to WHAT IS LOADED can be told apart.
+func farImageEngineWith(t *testing.T, warm string, ids ...string) map[string]any {
+	t.Helper()
+	def := engineDef{Key: "image", API: engineAPIImages, Provider: "comfy",
+		Service: "af-image", URL: "http://image.far.invalid:8188"}
+	models := make([]store.EngineModel, 0, len(ids))
+	for _, id := range ids {
+		models = append(models, store.EngineModel{
+			Role: "image", ID: id, Kind: "checkpoint", Enabled: true, BaseModel: "sdxl",
+			Files: []store.EngineModelFile{{S3Key: "image/checkpoints/" + id + ".safetensors"}},
+		})
+	}
+	return engineCatalogRowFor(def, models, warm, "")
+}
+
+// 🔥 A borrowed catalogue used to move in silence: decision 7's push was wired to this
+// deployment's own admin routes only, so a checkpoint enabled on the far fleet reached a running
+// session on the Agent's own ten-minute TTL and not before. Measured 2026-09-15 as "the model is
+// in the panel but generate_image cannot see it".
+//
+// The three negative controls are the point of the test: a poll that answers the same thing, and
+// a poll that only says a different checkpoint is loaded, must NOT wake every workspace — a push
+// per tick is a fan-out every two minutes forever.
+func TestBorrowedCatalogueChangeTellsTheWorkspaces(t *testing.T) {
+	pushed := make(chan string, 8)
+	orig := notifyEngineCatalogChanged
+	notifyEngineCatalogChanged = func(_ context.Context, _ *manager, key string) { pushed <- key }
+	t.Cleanup(func() { notifyEngineCatalogChanged = orig })
+	// The fan-out is detached (`go notify…`), so a test that read the channel straight away would
+	// pass on a race. Waiting is what makes "no push" mean it.
+	settle := func(t *testing.T, want int, what string) {
+		t.Helper()
+		deadline := time.After(2 * time.Second)
+		got := 0
+		for got < want {
+			select {
+			case <-pushed:
+				got++
+			case <-deadline:
+				t.Fatalf("%s: %d push(es), want %d", what, got, want)
+			}
+		}
+		select {
+		case k := <-pushed:
+			t.Fatalf("%s: an extra push for %q", what, k)
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+
+	ctx := context.Background()
+	far, srv := newFarFleet(t, farCatalogBody(t, farImageEngineWith(t, "sdxl-base", "sdxl-base", "anima")))
+	rem := newTestRemotes(t, srv.URL, "")
+	reg := newTestRemoteRegistry(rem)
+
+	rem.refreshAll(ctx, reg)
+	settle(t, 1, "adopting a role nobody had")
+
+	rem.refreshAll(ctx, reg)
+	settle(t, 0, "the same catalogue twice")
+
+	far.answers(http.StatusOK, farCatalogBody(t, farImageEngineWith(t, "sdxl-base", "sdxl-base", "anima", "krea2")))
+	rem.refreshAll(ctx, reg)
+	settle(t, 1, "a checkpoint enabled on the far fleet")
+
+	// Only the loaded model moved. It changes a hint in a tool description and nothing a session
+	// may ASK for, and it moves every time anyone over there generates with another checkpoint.
+	far.answers(http.StatusOK, farCatalogBody(t, farImageEngineWith(t, "anima", "sdxl-base", "anima", "krea2")))
+	rem.refreshAll(ctx, reg)
+	settle(t, 0, "a far engine that loaded a different checkpoint")
+
+	// And the withdrawal direction: a session holding the old list must be told too.
+	far.answers(http.StatusOK, farCatalogBody(t, farImageEngineWith(t, "anima", "sdxl-base", "anima")))
+	rem.refreshAll(ctx, reg)
+	settle(t, 1, "a checkpoint withdrawn on the far fleet")
+}
+
+// 🔴 The signature is sorted because the far side owes this deployment no order. A catalogue
+// whose rows arrive shuffled would otherwise fingerprint differently on every tick, and every
+// tick would POST to every running workspace — the failure mode this whole feature is meant to
+// remove, inverted.
+func TestMirrorSignatureIgnoresRowOrder(t *testing.T) {
+	a := store.EngineModel{Role: "image", ID: "anima", Enabled: true}
+	b := store.EngineModel{Role: "image", ID: "krea2", Enabled: true}
+	if engineMirrorSignature([]store.EngineModel{a, b}) != engineMirrorSignature([]store.EngineModel{b, a}) {
+		t.Error("the same two rows in the other order fingerprint differently")
+	}
+	c := b
+	c.Selected = true
+	if engineMirrorSignature([]store.EngineModel{a, b}) == engineMirrorSignature([]store.EngineModel{a, c}) {
+		t.Error("which checkpoint is the default fingerprints the same either way")
+	}
+}

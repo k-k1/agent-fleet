@@ -276,7 +276,7 @@ func TestEngineImageConnFindsTheImagesEngine(t *testing.T) {
 	asked := engineCatalogStub(t, engineRowLlm+","+engineRowImage)
 	base := os.Getenv("AF_CP_BASE_URL")
 
-	conn, ok := engineImageConn(context.Background(), "sdcpp")
+	conn, ok := engineImageConn(context.Background(), "image")
 	if !ok {
 		t.Fatal("no image engine found in a catalogue that has one")
 	}
@@ -292,7 +292,7 @@ func TestEngineImageConnFindsTheImagesEngine(t *testing.T) {
 	}
 	// A second call is served from the caches: this sits behind Ready(), which a client calls
 	// on every tools/list.
-	if _, _ = engineImageConn(context.Background(), "sdcpp"); len(*asked) != 1 {
+	if _, _ = engineImageConn(context.Background(), "image"); len(*asked) != 1 {
 		t.Errorf("asks after a second lookup = %v — the token cache is not holding", *asked)
 	}
 }
@@ -301,21 +301,36 @@ func TestEngineImageConnFindsTheImagesEngine(t *testing.T) {
 // is staged — has no image provider, and that is a quiet no, not an error.
 func TestEngineImageConnIsAbsentWithoutAnImageEngine(t *testing.T) {
 	engineCatalogStub(t, engineRowLlm)
-	if _, ok := engineImageConn(context.Background(), "sdcpp"); ok {
+	if _, ok := engineImageConn(context.Background(), "image"); ok {
 		t.Fatal("found an image engine in a catalogue that has none")
 	}
 }
 
-// ADR 0072 P2: sdcpp and comfy are mutually exclusive on one deployment (60-engines.yaml's
-// ImageEngine), so engineImageConn must key off the row's OWN provider — asking for the wrong
-// one must come back exactly as if the role did not exist, not find the other provider's row.
-func TestEngineImageConnKeysByProvider(t *testing.T) {
-	engineCatalogStub(t, engineRowLlm+","+engineRowImage)
-	if _, ok := engineImageConn(context.Background(), "comfy"); ok {
-		t.Fatal("a provider=sdcpp row answered a comfy lookup")
+// ADR 0082 decision 1: two images rows on one deployment are two independent provider
+// instances, and engineImageConn must key off each row's OWN key — never its provider FIELD,
+// which now names only the client implementation (comfy vs openai-compat) and can repeat across
+// rows. Asking for a provider KIND that is nobody's key must come back exactly as if the row did
+// not exist, not find some row that merely shares the kind.
+func TestEngineImageConnKeysByRowKey(t *testing.T) {
+	const comfyLan = `{"key":"comfy-lan","api":"images","provider":"comfy","base_url":"/engine/comfy-lan/v1","models":["sdxl-base-1.0"]}`
+	engineCatalogStub(t, engineRowLlm+","+engineRowImage+","+comfyLan)
+
+	if _, ok := engineImageConn(context.Background(), "sdcpp"); ok {
+		t.Fatal("a lookup by provider KIND answered — engineImageConn must match the row's key, not sdcpp")
 	}
-	if _, ok := engineImageConn(context.Background(), "sdcpp"); !ok {
-		t.Fatal("the provider=sdcpp row did not answer its own lookup")
+	if _, ok := engineImageConn(context.Background(), "comfy"); ok {
+		t.Fatal("a lookup by provider KIND answered — engineImageConn must match the row's key, not comfy")
+	}
+	image, ok := engineImageConn(context.Background(), "image")
+	if !ok {
+		t.Fatal("the image row did not answer its own key")
+	}
+	lan, ok := engineImageConn(context.Background(), "comfy-lan")
+	if !ok {
+		t.Fatal("the comfy-lan row did not answer its own key")
+	}
+	if image.BaseURL == lan.BaseURL {
+		t.Errorf("both rows resolved to %q — two distinct keys must reach two distinct URLs", image.BaseURL)
 	}
 }
 
@@ -334,7 +349,7 @@ func TestEngineImageConnTranslatesComfyFields(t *testing.T) {
 		`{"s3_key":"image/checkpoints/sd_xl_base_1.0.safetensors"}]}]}`
 	engineCatalogStub(t, engineRowLlm+","+row)
 
-	conn, ok := engineImageConn(context.Background(), "comfy")
+	conn, ok := engineImageConn(context.Background(), "image")
 	if !ok {
 		t.Fatal("no comfy engine found")
 	}
@@ -373,7 +388,7 @@ func TestEngineImageConnTranslatesLoras(t *testing.T) {
 		`{"id":"no-file","base_model":"sdxl"}]}`
 	engineCatalogStub(t, engineRowLlm+","+row)
 
-	conn, ok := engineImageConn(context.Background(), "comfy")
+	conn, ok := engineImageConn(context.Background(), "image")
 	if !ok {
 		t.Fatal("no comfy engine found")
 	}
@@ -458,5 +473,52 @@ func TestSyncEngineProvidersWritesAWindowPerModel(t *testing.T) {
 	// this model was started with — the request is then refused by llama-server itself.
 	if got := models["qwen2.5-coder-1.5b"].Limit; got.Context != 8192 || got.Output != 2048 {
 		t.Errorf("the 1.5B's limit = %+v, want 8192/2048", got)
+	}
+}
+
+// ADR 0084 decision 9: a tenant stripped of every engine role must lose the launch-menu
+// provider block too, not keep the stale one from before the catalogue went empty. This is
+// the transition the early `if len(rows) == 0 { return }` used to skip entirely — the CP's
+// catalogue answering empty never reached WriteEngineProviders, so opencode kept offering a
+// model the gateway would now refuse with engine_forbidden.
+func TestSyncEngineProvidersClearsBlockOnEmptyCatalog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	cfgPath := filepath.Join(home, ".config", "opencode", "opencode.jsonc")
+
+	// Positive control: a non-empty catalogue must actually write the provider — otherwise a
+	// green "block is gone" below could just as well mean the write path never ran at all.
+	engineCatalogStub(t, engineRowLlm)
+	syncEngineProviders()
+	b, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("positive control: no opencode config written: %v", err)
+	}
+	var cfg struct {
+		Provider map[string]any `json:"provider"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Provider["llamacpp"]; !ok {
+		t.Fatalf("positive control: llamacpp missing from %v", cfg.Provider)
+	}
+
+	// Now the tenant loses every engine role: the catalogue answers empty.
+	engineCatalogStub(t, "")
+	syncEngineProviders()
+	b, err = os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("no opencode config after the catalogue went empty: %v", err)
+	}
+	var after struct {
+		Provider map[string]any `json:"provider"`
+	}
+	if err := json.Unmarshal(b, &after); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := after.Provider["llamacpp"]; ok {
+		t.Errorf("llamacpp still in the provider block after an empty catalogue: %s", b)
 	}
 }

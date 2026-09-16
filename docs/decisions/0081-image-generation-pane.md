@@ -252,6 +252,12 @@ costs nothing but bytes, and the 60-second rule makes the blocking shape unusabl
   exists (`comfyRecipe.with`).
 - **The MCP tool does not get `params`.** ADR 0069's reason stands for agents. The pane's providers are
   the fleet's own, whose knobs the Agent built itself.
+  - 🔴 **Withdrawn on 2026-09-15** (ADR 0069's follow-up of the same day). Half of the "ADR 0069 reason"
+    this line leans on — "a knob that moves nothing" — is false if you count `comfyFamilyKnobs` below:
+    **all seven families read `steps` and `sampler`**. The tool now takes a nested `params`, and the two
+    knobs a family does not read are named by the warning this very decision introduced. **The rest of
+    this decision stands unchanged** — with `validateRequestParams` added to the blocking route as well,
+    the two routes are now equally strict.
 - **The Agent validates, the box never sees a bad value after a cold start.** Sampler and scheduler are
   checked against `comfySamplerNames` / `comfySchedulerNames` and refused with 400 `bad_params` (not
   silently ignored, as the catalogue overlay is — a typed value must fail loudly). Steps 1–150, cfg

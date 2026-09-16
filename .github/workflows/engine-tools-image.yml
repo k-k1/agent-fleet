@@ -17,6 +17,14 @@
 # amd64 only: the G-family has no arm64 member, and the ingest task runs on Fargate beside it.
 name: engine-tools-image
 
+# ⚠️ Load-bearing, not decoration — the same contract dev-image.yml carries, for the same
+# caller. `gh workflow run` does not return a run id, so dev-deploy.sh finds the run it just
+# started by matching the tag in the run's displayTitle (deploy/aws/ecs/dev-deploy.sh, the
+# engine-tools step). Without this line every run is titled "engine-tools-image", the match
+# never succeeds, and the deploy dies with "could not find the engine-tools-image run" AFTER
+# the bake has already succeeded — which is exactly what happened on 2026-09-14.
+run-name: engine-tools-image ${{ inputs.tag }}
+
 permissions:
   contents: read
   packages: write

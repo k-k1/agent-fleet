@@ -18,6 +18,9 @@ export const imggen = {
   "imggen.cost_note": "費用は 1 枚いくらではなく、組織の GPU の稼働時間です。",
 
   // ── フォーム
+  // ADR 0082 P1（未解決 2）: 同じ種類の行が 2 本あるとき、同じ id が違う機械を指すことが
+  // あるため、行が 2 本以上あるときだけ出す（1 本なら選ぶ意味が無い）。
+  "imggen.provider": "エンジン",
   "imggen.model": "モデル",
   "imggen.model_none": "モデルを選んでください",
   "imggen.no_models": "このワークスペースから使えるモデルがありません。",
@@ -42,6 +45,7 @@ export const imggen = {
   "imggen.negative_always": "管理者が配備全体に宣言",
   "imggen.triggers": "トリガー語",
   "imggen.trigger_add": "{word} をプロンプトに足す",
+  "imggen.lora_triggers": "選ぶと出るトリガー語: {words}",
 
   "imggen.steps": "steps",
   "imggen.cfg": "cfg",

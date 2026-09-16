@@ -7,8 +7,30 @@ import { describe, expect, it } from "vitest";
 import { FAMILY_CARDS, familyCard, parseSize, sizeOptions } from "./families.ts";
 
 describe("族カードの選択", () => {
-  it("五つの族に一つずつ", () => {
-    expect(FAMILY_CARDS.map((c) => c.id)).toEqual(["sdxl", "sd35", "flux1", "flux2-klein", "zimage"]);
+  it("族の数だけ一つずつ", () => {
+    expect(FAMILY_CARDS.map((c) => c.id)).toEqual([
+      "sd15",
+      "sdxl",
+      "sd35",
+      "flux1",
+      "flux2-klein",
+      "zimage",
+      "anima",
+      "krea2",
+    ]);
+  });
+
+  it("krea2 は蒸留版と非蒸留版の両端を出す（行が params でどちらかを宣言する）", () => {
+    expect(familyCard("krea2")?.dialect).toBe("sentences");
+    expect(familyCard("krea2")?.steps).toEqual([8, 52]);
+    expect(familyCard("krea2")?.quality).toEqual([]);
+  });
+
+  it("anima は tags 方言で、推奨接頭辞を 2 つ持つ", () => {
+    expect(familyCard("anima")?.dialect).toBe("tags");
+    // Aesthetic 版は score_* を使わない、という model card の但し書きが chip 2 つの理由。
+    expect(familyCard("anima")?.quality).toHaveLength(2);
+    expect(familyCard("anima")?.cfg).toEqual([4, 5]);
   });
 
   it("base_model で引ける（大小・空白は無視）", () => {
@@ -38,6 +60,19 @@ describe("大きさの選択肢", () => {
   it("行が無い・壊れているときは族の既定に落ちる", () => {
     expect(sizeOptions(undefined, "sdxl")).toContain("1024x1024");
     expect(sizeOptions(["huge", ""], "sdxl")).toContain("1216x832");
+  });
+
+  // 🔴 SD1.5 は 512 学習で、1024 を頼むと失敗ではなく被写体が二重になった絵が返る。
+  // 既定の一覧が族別であることが、宣言を忘れた行を救う唯一の場所（comfyDefaultSizes と対）。
+  it("SD1.5 の既定寸法は 512 系で、メガピクセルの一覧を含まない", () => {
+    expect(sizeOptions(undefined, "sd15")).toEqual([
+      "512x512",
+      "512x768",
+      "768x512",
+      "640x512",
+      "512x640",
+    ]);
+    expect(sizeOptions(undefined, "sd15")).not.toContain("1024x1024");
   });
 
   it("族も分からなければ Agent の既定 5 つ", () => {

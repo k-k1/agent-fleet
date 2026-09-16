@@ -23,13 +23,14 @@ import { IconButton } from "../../ui/Button.tsx";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
 import {
-  fleetProvider,
+  fleetProviders,
   imagegenCancelJob,
   imagegenEnqueue,
   imagegenGroupOp,
   imagegenJobs,
   imagegenQueueOp,
   imagegenStatus,
+  resolveFleetProvider,
   type GroupOp,
   type ImagegenStatus,
   type Job,
@@ -157,12 +158,18 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
     };
   }, [live, running]);
 
-  const provider = fleetProvider(status);
+  // ADR 0082 unresolved question 2: with N fleet rows, each carries its OWN Studio answer —
+  // two comfy rows can have overlapping model ids with different checkpoints behind them — so
+  // silently driving the pane off "the first ready one" is right only while there is just one.
+  // fleetProviderList is every ready fleet row; resolveFleetProvider picks the member's own
+  // choice among them (draft.providerId), defaulting to the first when unset or stale.
+  const fleetProviderList = useMemo(() => fleetProviders(status), [status]);
+  const provider = resolveFleetProvider(fleetProviderList, draft.providerId);
   const models = provider?.models || [];
   const loras = provider?.loras || [];
   const model = models.find((m) => m.id === draft.model) || null;
   // Engine-level fields live on the PROVIDER, not the status root: a fleet with both comfy
-  // and sdcpp has two answers, and reading the root would silently mix them.
+  // and openai-compat has two answers, and reading the root would silently mix them.
   const samplers = provider?.samplers || [];
   const schedulers = provider?.schedulers || [];
   const loraWeightMax = provider?.lora_weight_max || 2;
@@ -309,6 +316,8 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
             <GenerateForm
               draft={draft}
               patch={patch}
+              fleetProviders={fleetProviderList}
+              provider={provider}
               models={models}
               loras={loras}
               model={model}

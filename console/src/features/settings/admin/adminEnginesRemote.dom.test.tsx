@@ -26,7 +26,22 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 }));
 
 import { EnginesAdminView } from "./adminEngines.tsx";
-import { EngineModelsAdminView } from "./adminEngineModels.tsx";
+import { EngineAddView } from "./adminEngineAdd.tsx";
+
+/** The catalogue as the pane renders it, opened on the rows (ADR 0085 decision 8). */
+const RegisteredView = () => <EngineAddView engineKey="image" lora={false} initialView="registered" />;
+
+/** One object in the bucket that no row declares. It is what the ledger draws 登録 and 消す on,
+ *  and both are write doors — so the borrowed panel has to be asked about a bucket that HOLDS
+ *  something, or their absence would only mean the list was empty. */
+const ORPHAN = {
+  key: "image/checkpoints/orphan.safetensors",
+  bytes: 4_182_230_656,
+  role_dir: "checkpoints",
+  placement: "ok",
+  state: "present",
+  declared_by: [],
+};
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -127,7 +142,7 @@ const managedAnswer = {
 
 async function mount(answer: unknown, View: () => ReactNode = EnginesAdminView) {
   api.mockImplementation((p: string) =>
-    String(p).endsWith("/ingest") ? Promise.resolve({ jobs: [] }) : Promise.resolve(answer),
+    String(p).endsWith("/objects") ? Promise.resolve({ objects: [ORPHAN] }) : Promise.resolve(answer),
   );
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -135,9 +150,7 @@ async function mount(answer: unknown, View: () => ReactNode = EnginesAdminView) 
   await act(async () => {
     root!.render(<View />);
   });
-  await act(async () => {
-    await Promise.resolve();
-  });
+  for (const _ of [0, 1, 2]) await act(async () => { await Promise.resolve(); });
 }
 
 const text = () => host?.textContent || "";
@@ -273,19 +286,25 @@ describe("an engine borrowed from another fleet (ADR 0079)", () => {
 });
 
 describe("the catalogue of a borrowed engine (ADR 0079 decision 7)", () => {
-  /** Every door into a catalogue write. The CP answers all five with 400 `engine_not_ours`, so
+  /** Every door into a catalogue write. The CP answers all of them with 400 `engine_not_ours`, so
    *  none of them may be on the screen — 🔴 and each is checked against the EXTERNAL row below,
    *  where it must still be, because `managed:false` alone must not take them away. */
   const WRITE_DOORS: [string, () => boolean][] = [
     ["disable", () => !!btn("無効にする")],
     ["start with this", () => !!btn("これで起動する")],
     ["forget the row", () => !!btn("登録を消す")],
-    ["register a file already in the bucket", () => text().includes("バケットのファイルを登録する")],
-    ["the ingest form", () => text().includes("Hugging Face などから取り込む")],
+    // The ledger's two acts on an object nobody declares (ADR 0085 decisions 3 and 7).
+    ["register an object the bucket holds", () => !!btn("登録")],
+    ["delete an orphan object", () => !!btn("消す")],
+    // 揃える spends bytes and moves them inside the bucket, so it is a write like the rest.
+    ["complete a row", () => !!btn("揃える")],
+    // ADR 0082 decision 7: a borrowed row's catalogue is the far deployment's read-only mirror,
+    // and there is nothing on THIS deployment's network behind it to discover.
+    ["the discovery button", () => !!btn("このエンジンのファイルを調べる")],
   ];
 
   it("lists the borrowed rows and offers no way to change them", async () => {
-    await mount(remoteAnswer, EngineModelsAdminView);
+    await mount(remoteAnswer, RegisteredView);
     // The mirror is the reason the list is worth showing at all: these are the model ids a
     // session may ask for.
     expect(text()).toContain("sdxl-base-1.0");
@@ -298,7 +317,7 @@ describe("the catalogue of a borrowed engine (ADR 0079 decision 7)", () => {
   });
 
   it("offers every one of them for a LAN row — the positive control", async () => {
-    await mount(externalAnswer, EngineModelsAdminView);
+    await mount(externalAnswer, RegisteredView);
     for (const [name, present] of WRITE_DOORS) {
       expect(present(), `${name} is missing for an external row too, so its absence proves nothing`).toBe(true);
     }
@@ -307,9 +326,13 @@ describe("the catalogue of a borrowed engine (ADR 0079 decision 7)", () => {
 
   it("does not explain a button it is not offering", async () => {
     // The failure this panel has form for: text outliving its control (see the external file's
-    // footer case). "Re-selecting takes effect at the next start" describes a button that is not
-    // drawn for a borrowed row.
-    await mount(remoteAnswer, EngineModelsAdminView);
-    expect(text()).not.toContain("選び直しは次の起動から効きます");
+    // footer case). The ledger's second sentence describes the 揃える a borrowed row does not
+    // draw, so it is not said there — and IS said for the LAN row, which has the button.
+    await mount(remoteAnswer, RegisteredView);
+    expect(text()).not.toContain("付け直すのはチェックポイント行");
+    await act(async () => root?.unmount());
+    host?.remove();
+    await mount(externalAnswer, RegisteredView);
+    expect(text()).toContain("付け直すのはチェックポイント行");
   });
 });

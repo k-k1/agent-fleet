@@ -18,6 +18,12 @@ export interface FsEntry {
   type?: string;
   size?: number;
   mtime?: number;
+  /** On a DIRECTORY, the newest pictures inside it — the answer to `peek=<n>` (ADR 0080 P2).
+   *  Optional for the same reason `mtime` is: an Agent that does not send it is a normal
+   *  state, and a folder card then draws the plain icon it always drew. */
+  preview?: { name?: string; mtime?: number }[];
+  /** On a DIRECTORY, how many pictures are in it. Same optionality. */
+  images?: number;
 }
 
 /** One card. `path` is browse-root-relative, which is what every fs endpoint wants. */
@@ -34,6 +40,11 @@ export interface GalleryImage {
 export interface GalleryFolder {
   name: string;
   path: string;
+  /** The picture to show on the card, when the Agent described the folder (`peek`). */
+  cover?: GalleryImage;
+  /** How many pictures are inside. `undefined` means "not answered", which is NOT zero —
+   *  an empty folder and an Agent that cannot say must not read the same. */
+  count?: number;
 }
 
 export type GallerySort = "new" | "name";
@@ -130,7 +141,26 @@ export function galleryFolders(entries: FsEntry[] | null | undefined, dir: strin
   for (const e of entries || []) {
     if (!e || typeof e.name !== "string" || !e.name) continue;
     if (e.type !== "dir") continue;
-    out.push({ name: e.name, path: dir ? dir + "/" + e.name : e.name });
+    const path = dir ? dir + "/" + e.name : e.name;
+    // The cover is the first name the Agent peeked at, if it peeked at all. Validated the
+    // same way a listing's own entries are: this is a wire field, and a folder card must not
+    // build a download URL out of whatever arrived.
+    const first = Array.isArray(e.preview) ? e.preview[0] : undefined;
+    const cover =
+      first && typeof first.name === "string" && first.name && imageFormat(first.name)
+        ? {
+            name: first.name,
+            path: path + "/" + first.name,
+            size: 0,
+            ...(typeof first.mtime === "number" && first.mtime > 0 ? { mtime: first.mtime } : {}),
+          }
+        : undefined;
+    out.push({
+      name: e.name,
+      path,
+      ...(cover ? { cover } : {}),
+      ...(typeof e.images === "number" && e.images >= 0 ? { count: e.images } : {}),
+    });
   }
   out.sort(byName);
   return out;

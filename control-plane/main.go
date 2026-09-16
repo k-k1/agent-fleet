@@ -77,6 +77,12 @@ type config struct {
 	// boot value, the Admin modal's stored choice on top of it. nil = the assets ship
 	// exactly as built.
 	brand *brandResolver
+	// engineReg is set by buildMux once registerEngineRoutes has built it, so
+	// registerEventsRoutes (called right after) can wire the SAME registry into the `engines`
+	// SSE stream (ADR 0084 decision 1) instead of building a second one. nil on every request
+	// this field is read from BEFORE that assignment — there are none; buildMux orders the two
+	// calls for exactly this reason.
+	engineReg *engineRegistry
 }
 
 func main() {

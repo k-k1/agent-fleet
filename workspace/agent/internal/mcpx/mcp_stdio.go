@@ -271,7 +271,7 @@ func dispatchMCPStdio(line []byte) []byte {
 		}
 		return mcpResult(req.ID, map[string]any{
 			"protocolVersion": ver,
-			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": true}},
 			"serverInfo":      map[string]any{"name": "agent-fleet-local", "version": "q1"},
 		})
 	case "notifications/initialized", "notifications/cancelled":
@@ -293,6 +293,9 @@ func dispatchMCPStdio(line []byte) []byte {
 		// Remembered before it goes out, because this answer IS the promise the call-side check
 		// is enforcing (see mcpAdvertised).
 		rememberAdvertised(tools)
+		// From here on the client is holding a snapshot, so it is worth telling it when the
+		// snapshot goes stale (see mcpStartToolListWatch).
+		mcpStartToolListWatch()
 		return mcpResult(req.ID, map[string]any{
 			"resultType": "complete",
 			"ttlMs":      60000,
@@ -371,7 +374,7 @@ func mcpStdioDiscoverResult() map[string]any {
 	return map[string]any{
 		"resultType":        "complete",
 		"supportedVersions": mcpStdioSupportedVersions,
-		"capabilities":      map[string]any{"tools": map[string]any{}},
+		"capabilities":      map[string]any{"tools": map[string]any{"listChanged": true}},
 		"serverInfo":        info,
 		"_meta":             map[string]any{mcpMetaServerInfo: info},
 		"instructions":      mcpStdioInstructions(),
@@ -443,6 +446,7 @@ func appendMatchingMCPTools(dst, src []map[string]any, keep func(string) bool) [
 var mcpAdvertised struct {
 	mu    sync.Mutex
 	names map[string]bool // nil until the first tools/list has been served
+	fp    string          // fingerprint of that same answer, for the watcher below
 }
 
 // rememberAdvertised records what a tools/list answer actually contained.
@@ -453,9 +457,91 @@ func rememberAdvertised(tools []map[string]any) {
 			names[name] = true
 		}
 	}
+	fp := mcpToolListFingerprint(tools)
 	mcpAdvertised.mu.Lock()
-	mcpAdvertised.names = names
+	mcpAdvertised.names, mcpAdvertised.fp = names, fp
 	mcpAdvertised.mu.Unlock()
+}
+
+// mcpToolListFingerprint is the whole answer, not just the names: what changes when an
+// administrator enables a checkpoint is the `model` ENUM inside generate_image's schema, and a
+// watcher that compared names alone would never notice it. json.Marshal sorts map keys, so the
+// same tool list always fingerprints the same way.
+func mcpToolListFingerprint(tools []map[string]any) string {
+	b, err := json.Marshal(tools)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// mcpToolListWatchInterval is how often the server re-derives what it would advertise. One
+// minute because the answer is a loopback GET to the Agent's /imagegen/status, served from the
+// Agent's own ten-minute catalogue cache, and every provider's Ready() behind it is a LookPath
+// and a local file read (measured: no provider dials out from Ready). It must also stay well
+// under the stages above it — a watcher that ticked slower than the catalogue converges would
+// just become the new floor.
+const mcpToolListWatchInterval = time.Minute
+
+var mcpToolListWatchOnce sync.Once
+
+// mcpStartToolListWatch starts the watcher, once, after the first tools/list has been served.
+//
+// 🔥 It exists because a tool list is a SNAPSHOT the client takes when it connects, and nothing
+// made it take another one: measured 2026-09-15, a claude session resumed with `--resume` — a
+// process one minute old, with a freshly spawned server whose own tools/list answers with the new
+// checkpoint — kept advertising the list from before the checkpoint existed, for the whole life
+// of the session. Restarting the session is not a fix, because the Console's stop/resume IS
+// `claude --resume`. Without this notification the only way a running session ever sees a new
+// model is to be replaced by a brand-new one.
+//
+// After the first tools/list rather than at boot: a notification sent before the client has
+// listed anything is one it has no snapshot to invalidate, and old-era clients are entitled to
+// see initialize answered first. stdioOut is nil in the unit tests, which call dispatchMCPStdio
+// directly and have no stdout — that is also what keeps the goroutine out of them.
+func mcpStartToolListWatch() {
+	if stdioOut == nil {
+		return
+	}
+	mcpToolListWatchOnce.Do(func() { go mcpWatchToolList() })
+}
+
+func mcpWatchToolList() {
+	t := time.NewTicker(mcpToolListWatchInterval)
+	defer t.Stop()
+	for range t.C {
+		mcpCheckToolListOnce()
+	}
+}
+
+// mcpCheckToolListOnce re-derives the list and tells the client when it differs from what the
+// client was last told. The remembered set is updated FIRST: it is the promise the call-side
+// check enforces, and after a checkpoint is withdrawn the honest answer to a call naming it is a
+// refusal, not the stale permission from a list the client has not re-read yet.
+func mcpCheckToolListOnce() bool {
+	tools := mcpStdioToolList()
+	fp := mcpToolListFingerprint(tools)
+	mcpAdvertised.mu.Lock()
+	same := fp == mcpAdvertised.fp
+	mcpAdvertised.mu.Unlock()
+	if same || fp == "" {
+		return false
+	}
+	rememberAdvertised(tools)
+	mcpNotifyToolListChanged()
+	return true
+}
+
+// mcpNotifyToolListChanged is the 2025 spelling, sent to both eras — the same choice
+// notifications/progress already makes, and an unknown notification is one a client drops rather
+// than one it breaks on.
+func mcpNotifyToolListChanged() {
+	b, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+	if err != nil {
+		return
+	}
+	stdioOut.writeLine(b)
 }
 
 // mcpStdioToolAdvertised answers "did this server offer that name".
@@ -1134,6 +1220,37 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 		props["strength"] = map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 1,
 			"description": "How much of the input picture an edit changes, 0-1 (0.6 when omitted). Small values keep the composition and correct it; 1 redraws from the prompt alone. **Only with op=edit** — inpaint always repaints its masked area fully, and says so in warnings"}
 	}
+	// params — the sampler overlay, and the fourth word ADR 0069 let into the vocabulary. Offered
+	// only where a route BUILDS the sampler graph, which is what having names to send means: the
+	// vendor routes have no steps and no sampler, and a request that carries them there comes back
+	// as a warning rather than being dropped.
+	//
+	// The enums are the AGENT's own allow-lists, relayed rather than spelled out here. This
+	// package cannot import internal/imagegen, and a second copy of those names would be a
+	// schema that offers what the Agent then refuses by name — the one failure the pane's form
+	// already takes this list to avoid.
+	if len(offer.Samplers) > 0 {
+		params := map[string]any{
+			// The bounds are literals for the same reason the LoRA cap is: internal/imagegen holds
+			// the real ones (paramsMaxSteps / paramsMaxCFG) and refuses past them by value. These
+			// only save a caller the round trip.
+			"steps": map[string]any{"type": "integer", "minimum": 1, "maximum": 150,
+				"description": "Sampling steps: slower, not automatically better"},
+			"cfg": map[string]any{"type": "number", "minimum": 0, "maximum": 30,
+				"description": "How hard the sampler is pushed toward the prompt"},
+			"sampler":   map[string]any{"type": "string", "enum": offer.Samplers},
+			"scheduler": map[string]any{"type": "string", "enum": offer.Schedulers},
+		}
+		if len(offer.Schedulers) == 0 {
+			delete(params, "scheduler")
+		}
+		props["params"] = map[string]any{
+			"type": "object", "additionalProperties": false, "properties": params,
+			"description": "Sampler settings. **Leave it unset unless the user asked for one** — each field omitted runs at what this checkpoint's own entry declares, which is what its publisher recommends, and the fields are independent (naming `sampler` alone keeps the published steps and cfg). " +
+				"**`steps` and `cfg` are per-checkpoint and this schema cannot tell you which**: a distilled \"Turbo\" checkpoint runs at ~8 steps and cfg 1, a base one at 30+ and cfg 4-7, so a guessed number burns both the picture and the GPU turn. " +
+				"`sampler` and `scheduler` are safe to name — every checkpoint takes any of them, and one a family ignores comes back in warnings",
+		}
+	}
 	// loras is offered as soon as ONE exists, unlike model: applying it or not applying it are
 	// already two different pictures, so a single-entry list is a real choice (ADR 0072
 	// decision 5, phase P3).
@@ -1150,10 +1267,22 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 			enum = append(enum, l.Name)
 			line := l.Name
 			if l.BaseModel != "" {
-				line += "（" + l.BaseModel + " 用）"
+				line += " (" + l.BaseModel + ")"
 			}
 			if l.Description != "" {
 				line += " — " + l.Description
+			}
+			// The trigger words ride the schema rather than an answer to a second tool, because
+			// the moment they are needed is while the prompt is being written and a caller that
+			// has to fetch them can forget to: an adapter applied without its trigger loads,
+			// costs the whole generation, and changes nothing visible. Cheap here, too — this
+			// block exists only for a deployment that enabled a LoRA at all, and grows by one
+			// short clause per adapter.
+			// Comma-separated, while the LINES are joined by " / ": a word list using the same
+			// separator as the list of adapters would leave no boundary between one adapter's
+			// last trigger and the next adapter's name.
+			if len(l.TrainedWords) > 0 {
+				line += " — triggers: " + strings.Join(l.TrainedWords, ", ")
 			}
 			lines = append(lines, line)
 		}
@@ -1166,12 +1295,13 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
 					"name":   map[string]any{"type": "string", "enum": enum},
-					"weight": map[string]any{"type": "number", "minimum": 0, "maximum": 2, "description": "How strongly to apply it, 0-2 (1 when omitted)"},
+					"weight": map[string]any{"type": "number", "minimum": 0, "maximum": 2, "description": "How strongly to apply it, 0-2. Omit it to get the strength the adapter's author published, which is the right answer unless the picture says otherwise"},
 				},
 				"required": []string{"name"},
 			},
 			"description": "Fine-tunes to apply on top of the checkpoint, in order. **Leave it unset unless the user asked for that look** — each one is a style, not an improvement. " +
-				"A LoRA only works on the checkpoint family it was trained for; asking for a mismatched pair is refused by name, so pick one whose family matches the model you chose. " +
+				"A LoRA only works on the checkpoint family it was trained for (named in brackets below); asking for a mismatched pair is refused by name, so pick one whose family matches the model you chose. " +
+				"A line's `triggers:` are the words that adapter was trained on: put one in `prompt` yourself, or it loads and changes nothing. " +
 				"Available: " + strings.Join(lines, " / ")}
 	}
 	return []map[string]any{
@@ -1271,6 +1401,15 @@ type imageGenOffer struct {
 	// Strength is true when ANY offered provider lets the caller say how much of the input
 	// picture an edit changes, by the same union rule as Seed.
 	Strength bool
+	// Samplers and Schedulers are the union of the offered providers' own allow-lists, and their
+	// presence is also what says `params` reaches anything at all: only a route that BUILDS the
+	// sampler graph has names to send, so an empty pair is exactly the case where the argument
+	// would be a knob attached to nothing.
+	//
+	// A union of NAMES rather than a boolean, unlike Seed and the rest, because the tool has to
+	// put them in an enum — and a name this binary will not send must not appear there, or the
+	// schema promises something the Agent refuses one round trip later.
+	Samplers, Schedulers []string
 	// Services maps a provider id to the image service it reaches, for EVERY ready provider —
 	// including the one dropped below, which the description has to be able to name.
 	Services map[string]string
@@ -1318,6 +1457,7 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 	}
 	seenOp, seenRatio, seenModel := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	seenLora := map[string]bool{}
+	seenSampler, seenScheduler := map[string]bool{}, map[string]bool{}
 	offer.Services = map[string]string{}
 	for _, p := range ready {
 		if p.Service != "" {
@@ -1357,6 +1497,18 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 		offer.Seed = offer.Seed || p.Seed
 		offer.Negative = offer.Negative || p.Negative
 		offer.Strength = offer.Strength || p.Strength
+		for _, s := range p.Samplers {
+			if !seenSampler[s] {
+				seenSampler[s] = true
+				offer.Samplers = append(offer.Samplers, s)
+			}
+		}
+		for _, s := range p.Schedulers {
+			if !seenScheduler[s] {
+				seenScheduler[s] = true
+				offer.Schedulers = append(offer.Schedulers, s)
+			}
+		}
 	}
 	if len(offer.Providers) == 0 || len(offer.Ops) == 0 {
 		return imageGenOffer{}, false
@@ -2196,6 +2348,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		// rest: the Agent refuses an unknown name or a family that does not match the checkpoint
 		// BY NAME, which is a better answer than a silently shortened list.
 		Loras []imageGenLoraArg `json:"loras"`
+		// Params is the sampler overlay, and a POINTER for the same reason Strength is: an absent
+		// object and an empty one are not the same request, and which of the four a family reads
+		// is answered downstream in warnings rather than guessed at here.
+		Params *imageGenParamsArg `json:"params"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
@@ -2227,7 +2383,7 @@ func mcpStdioCall(req mcpReq) []byte {
 			op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,
 			aspectRatio: a.AspectRatio, background: a.Background, count: a.Count,
 			inputs: a.Inputs, mask: a.Mask, model: a.Model, loras: a.Loras, seed: a.Seed,
-			negativePrompt: a.NegativePrompt, strength: a.Strength,
+			negativePrompt: a.NegativePrompt, strength: a.Strength, params: a.Params,
 		})
 	case "list_child_sessions":
 		// The only one of the nine that is NOT also an operator tool: the operator has

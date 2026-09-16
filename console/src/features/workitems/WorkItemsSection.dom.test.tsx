@@ -699,4 +699,81 @@ describe("WorkItemDetailModal — a pull request", () => {
     expect(document.querySelector(".wi-dmodal .ui-modal-foot a.wi-dopen")).toBeNull();
     expect(detailStart().textContent).toContain(t("wi.start"));
   });
+
+  // The button is a REVIEW button: it checks the PR's own head branch out in the new worktree
+  // (the same existingBranch mechanism the SCM view's "work on this branch" uses) instead of
+  // cutting a new one from a template, and the seeded prompt asks for a review, not a plan.
+  it("checks the pull request's head branch out and seeds a review prompt", async () => {
+    useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+    workItemDetail.mockResolvedValue(detail);
+    const modal = await openPR();
+
+    const start = [...modal.querySelectorAll<HTMLButtonElement>(".wi-dfold button")].find((b) =>
+      b.textContent?.includes(t("wi.start_review")),
+    )!;
+    await act(async () => start.click());
+
+    expect(useLaunchTarget.getState().target?.name).toBe("web");
+    expect(useLaunchTarget.getState().existingBranch).toBe("feature/x");
+    expect(useLaunchTarget.getState().inPlace).toBe(false);
+    const seed = useLaunchSeed.getState();
+    expect(seed.prompt).toContain(t("wi.prompt_review"));
+    expect(seed.prompt).toContain(t("wi.prompt_review_branch", { branch: "feature/x" }));
+    expect(seed.prompt).not.toContain(t("wi.prompt_investigate"));
+  });
+
+  // Left at "new worktree" (the initial default), "start" would try to check the review branch
+  // out a second time — git refuses (one working copy per branch) and the failure would only
+  // surface after a round trip through the Agent. So when a working copy already has it, the
+  // picker defaults straight there instead, with no manual selection needed.
+  it("defaults to an existing working copy that already has the review branch", async () => {
+    useReposStore.setState({
+      repos: [
+        { name: "web", path: "/home/dev/repos/web" },
+        { name: "web@wip-old", path: "/home/dev/repos/web@wip-old", worktree: true, parent: "web", branch: "chore/unrelated" },
+        { name: "web@wip-abc", path: "/home/dev/repos/web@wip-abc", worktree: true, parent: "web", branch: "feature/x" },
+      ],
+    });
+    workItemDetail.mockResolvedValue(detail);
+    const modal = await openPR();
+
+    const where = [...modal.querySelectorAll<HTMLSelectElement>(".wi-sfield select")][1];
+    expect(where.value).toBe("web@wip-abc"); // picked automatically, not "new worktree"
+
+    const start = [...modal.querySelectorAll<HTMLButtonElement>(".wi-dfold button")].find((b) =>
+      b.textContent?.includes(t("wi.start_review")),
+    )!;
+    await act(async () => start.click());
+
+    expect(useLaunchTarget.getState().target?.name).toBe("web@wip-abc");
+    expect(useLaunchTarget.getState().existingBranch).toBe("");
+    expect(useLaunchTarget.getState().inPlace).toBe(true);
+  });
+
+  // An existing copy is picked by hand from the dropdown — it must not be silently switched to
+  // the PR's branch out from under the user (docs/log/80 §80.24.4).
+  it("does not force the PR's branch onto a working copy the user picked directly", async () => {
+    useReposStore.setState({
+      repos: [
+        { name: "web", path: "/home/dev/repos/web" },
+        { name: "web@wip-abc", path: "/home/dev/repos/web@wip-abc", worktree: true, parent: "web", branch: "feature/x" },
+      ],
+    });
+    workItemDetail.mockResolvedValue(detail);
+    const modal = await openPR();
+
+    const where = [...modal.querySelectorAll<HTMLSelectElement>(".wi-sfield select")][1];
+    await act(async () => {
+      where.value = "web@wip-abc";
+      where.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const start = [...modal.querySelectorAll<HTMLButtonElement>(".wi-dfold button")].find((b) =>
+      b.textContent?.includes(t("wi.start_review")),
+    )!;
+    await act(async () => start.click());
+
+    expect(useLaunchTarget.getState().target?.name).toBe("web@wip-abc");
+    expect(useLaunchTarget.getState().existingBranch).toBe("");
+    expect(useLaunchTarget.getState().inPlace).toBe(true);
+  });
 });

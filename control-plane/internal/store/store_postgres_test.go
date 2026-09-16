@@ -278,6 +278,23 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("get setting: %v %q", err, v)
 	}
 
+	// engine ingest jobs: the write-side fence, whose predecessor scanned EXISTS(...) as bool on
+	// Postgres and int on SQLite — the "add model file" dialog 500'd on this deployment kind with
+	// a Scan error until this test caught it. It now selects the ROW instead (the refusal has to
+	// name the job), which is the same ORDER BY … LIMIT 1 in both dialects.
+	jobID := NewID()
+	if err := st.PutEngineIngestJob(ctx, EngineIngestJob{ID: jobID, Role: "super_admin", S3Key: "models/x.safetensors",
+		Source: "civitai:5038", State: EngineIngestPending, CreatedAt: NowTS(), UpdatedAt: NowTS()}); err != nil {
+		t.Fatalf("put ingest job: %v", err)
+	}
+	if job, recorded, err := st.EngineIngestJobForS3Key(ctx, "super_admin", "models/x.safetensors"); err != nil ||
+		!recorded || job.ID != jobID {
+		t.Fatalf("engine ingest job for s3 key = (%q,%v,%v), want %q", job.ID, recorded, err, jobID)
+	}
+	if job, recorded, err := st.EngineIngestJobForS3Key(ctx, "super_admin", "models/never-ingested.safetensors"); err != nil || recorded {
+		t.Fatalf("engine ingest job for s3 key = (%q,%v,%v), want not found", job.ID, recorded, err)
+	}
+
 	// identity_provider round trip (docs/log/61 P1 / migrations-pg/0021). Everything
 	// below had only ever run on SQLite: the pair table, its
 	// ON CONFLICT(provider, subject) upsert, and the LOWER(email)=? lookup. Postgres

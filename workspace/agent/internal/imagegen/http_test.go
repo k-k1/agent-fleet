@@ -156,9 +156,9 @@ func TestStatusNamesTheFleetEngineServiceAndModel(t *testing.T) {
 			}
 		})
 	}
-	// sdcpp is the route comfy's case was modelled on; both fleet routes answer, and an empty
-	// answer from either is what this test exists to catch.
-	if s, m := serviceLabelOf(ProviderSdcpp), serviceLabelOf(ProviderComfy); s == "" || m == "" {
+	// openai-compat is the route comfy's case was modelled on; both fleet routes answer, and an
+	// empty answer from either is what this test exists to catch.
+	if s, m := serviceLabelOf(ProviderOpenAICompat), serviceLabelOf(ProviderComfy); s == "" || m == "" {
 		t.Errorf("service labels = %q/%q, want both fleet routes named", s, m)
 	}
 }
@@ -320,6 +320,70 @@ func TestStatusReportsWhichRoutesTakeAStrength(t *testing.T) {
 	}
 	if len(got.Providers) != 2 || !got.Providers[0].Strength || got.Providers[1].Strength {
 		t.Fatalf("strength flags = %+v, want it on comfy alone", got.Providers)
+	}
+}
+
+// The sampler overlay rides the blocking route under the SAME key and shape the job queue's
+// route uses, so that one request shape serves both surfaces. A field this layer drops is a
+// field the tool advertises and no graph ever reads.
+func TestGenerateForwardsTheSamplerOverlay(t *testing.T) {
+	var got Request
+	withImagegenSession(t, session.KindClaude, stubProvider{
+		id:     ProviderComfy,
+		gotReq: &got,
+		res:    Result{Images: []Image{{Bytes: tinyPNG(t, 1, 1), MIME: "image/png"}}, Provider: ProviderComfy},
+		caps:   &Caps{Ops: []Op{OpGenerate}, Params: true},
+	})
+	body := `{"session":"slot01","prompt":"a cat","params":{"steps":30,"cfg":6,"sampler":"dpmpp_2m","scheduler":"karras"}}`
+	rec := httptest.NewRecorder()
+	HandleGenerate(rec, httptest.NewRequest(http.MethodPost, "/imagegen/generate", strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if got.Params == nil {
+		t.Fatal("request params = nil, want the four the caller typed")
+	}
+	if want := (EngineParams{Steps: 30, CFG: 6, Sampler: "dpmpp_2m", Scheduler: "karras"}); *got.Params != want {
+		t.Errorf("request params = %+v, want %+v", *got.Params, want)
+	}
+}
+
+// 🔴 The overlay is refused BY VALUE on this route too, not only on the queue's. Nothing below
+// this layer enforces a ceiling — comfyRecipe.with is deliberately lenient, because it also
+// merges an administrator's catalogue row — so without this a tools/call could buy an hour of a
+// shared GPU with one number, and an unknown sampler name would reach the engine as a
+// `Value not in list` failure after the cold start somebody waited through.
+func TestGenerateRefusesATypedOverlayByValue(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+	}{
+		{"a sampler this Agent does not send", `{"session":"slot01","prompt":"a cat","params":{"sampler":"euler_a"}}`},
+		{"a scheduler this Agent does not send", `{"session":"slot01","prompt":"a cat","params":{"scheduler":"kl_optimal"}}`},
+		{"steps past the ceiling", `{"session":"slot01","prompt":"a cat","params":{"steps":10000}}`},
+		{"cfg past the ceiling", `{"session":"slot01","prompt":"a cat","params":{"cfg":99}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got Request
+			withImagegenSession(t, session.KindClaude, stubProvider{
+				id:     ProviderComfy,
+				gotReq: &got,
+				res:    Result{Images: []Image{{Bytes: tinyPNG(t, 1, 1), MIME: "image/png"}}, Provider: ProviderComfy},
+				caps:   &Caps{Ops: []Op{OpGenerate}, Params: true},
+			})
+			rec := httptest.NewRecorder()
+			HandleGenerate(rec, httptest.NewRequest(http.MethodPost, "/imagegen/generate", strings.NewReader(tc.body)))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body)
+			}
+			// By name, and with the list: "unknown sampler" that does not say which names exist
+			// sends the caller back for another round trip to find out.
+			if !strings.Contains(rec.Body.String(), "bad_params") {
+				t.Fatalf("body = %s, want the reason on the wire", rec.Body)
+			}
+			if got.Prompt != "" {
+				t.Fatal("the refused request reached the provider anyway")
+			}
+		})
 	}
 }
 

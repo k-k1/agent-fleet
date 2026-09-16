@@ -23,7 +23,11 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 }));
 
 import { EnginesAdminView } from "./adminEngines.tsx";
-import { EngineModelsAdminView } from "./adminEngineModels.tsx";
+import { EngineAddView } from "./adminEngineAdd.tsx";
+
+/** The catalogue as the pane renders it, opened on the rows rather than on the search: every
+ *  control this file is about is on that tab (ADR 0085 decision 8). */
+const RegisteredView = () => <EngineAddView engineKey="image" lora={false} initialView="registered" />;
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -94,13 +98,13 @@ const superAnswer = {
 };
 
 /** 🔴 Which SCREEN, as an argument. Since the panel was split, a granted tenant_admin reaches
- *  the models screen and only that — the other one buys and stops a GPU — so "what a tenant
- *  sees" is a question about this component, and the operator's half has to be asked of the
- *  other one. Defaulting to the models screen keeps every assertion below about the screen a
- *  tenant actually opens. */
-async function mount(answer: unknown, View: () => ReactNode = EngineModelsAdminView) {
+ *  the catalogue pane and only that — the other one buys and stops a GPU — so "what a tenant
+ *  sees" is a question about that pane, and the operator's half has to be asked of the machine
+ *  screen. Defaulting to the pane keeps every assertion below about the screen a tenant
+ *  actually opens. */
+async function mount(answer: unknown, View: () => ReactNode = RegisteredView) {
   api.mockImplementation((p: string) =>
-    String(p).endsWith("/ingest") ? Promise.resolve({ jobs: [] }) : Promise.resolve(answer),
+    String(p).endsWith("/objects") ? Promise.resolve({ objects: [] }) : Promise.resolve(answer),
   );
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -108,9 +112,7 @@ async function mount(answer: unknown, View: () => ReactNode = EngineModelsAdminV
   await act(async () => {
     root!.render(<View />);
   });
-  await act(async () => {
-    await Promise.resolve();
-  });
+  for (const _ of [0, 1, 2]) await act(async () => { await Promise.resolve(); });
 }
 
 const text = () => host?.textContent || "";
@@ -146,11 +148,14 @@ describe("the engine panel a granted tenant_admin sees", () => {
     // 3. What the box is doing right now.
     ["the box state", () => text().includes("停止中") || text().includes("稼働中"), EnginesAdminView],
     // 4. Enabling / disabling a model, and choosing what the engine starts with.
-    ["the model controls", () => !!btn("有効にする") || !!btn("無効にする") || !!btn("これで起動する"), EngineModelsAdminView],
+    ["the model controls", () => !!btn("有効にする") || !!btn("無効にする") || !!btn("これで起動する"), RegisteredView],
     // 5. Forgetting a row (and, behind it, deleting the bytes).
-    ["forget", () => !!btn("登録を消す"), EngineModelsAdminView],
-    // 6. The deployment's Hugging Face token.
-    ["the token panel", () => text().includes("Hugging Face のトークン"), EngineModelsAdminView],
+    ["forget", () => !!btn("登録を消す"), RegisteredView],
+    // The deployment's Hugging Face and Civitai tokens used to be item 6 here, rendered inside
+    // this same screen. They moved to their own rail item (adminEngineTokens.tsx), reachable
+    // only through AdminTab's root rail — which a granted tenant_admin has no entry to at all,
+    // so there is no longer anything to assert against THIS screen either way. Their own
+    // write-only behaviour is pinned in adminEngineTokens.dom.test.tsx.
   ];
 
   /** Between two mounts in one test. The afterEach cannot do it: these tests mount several
@@ -162,7 +167,7 @@ describe("the engine panel a granted tenant_admin sees", () => {
     host = null;
   };
 
-  it("shows none of the six operator-only surfaces", async () => {
+  it("shows none of the five operator-only surfaces", async () => {
     for (const [name, present] of OPERATOR_ONLY) {
       await mount(tenantAnswer);
       expect(present(), `${name} must not be on a tenant_admin's panel`).toBe(false);
@@ -170,7 +175,7 @@ describe("the engine panel a granted tenant_admin sees", () => {
     }
   });
 
-  it("shows all six to the operator — the positive control for the test above", async () => {
+  it("shows all five to the operator — the positive control for the test above", async () => {
     for (const [name, present, View] of OPERATOR_ONLY) {
       await mount(superAnswer, View);
       expect(present(), `${name} is missing from the operator's panel, so its absence proves nothing`).toBe(true);
@@ -192,35 +197,32 @@ describe("the engine panel a granted tenant_admin sees", () => {
 
   it("keeps the way in to taking a model in, which is the one thing the grant is for", async () => {
     await mount(tenantAnswer);
-    // 🔴 The button, and what it now does: 「モデルを追加」 is a PANE (the download runs for
-    // minutes and ends at an enable press), so the panel's job is to open it — the questions
-    // themselves are tested against that view in adminEngineModels.dom.test.tsx.
-    const opener = btn("Hugging Face などから取り込む");
-    expect(opener).toBeTruthy();
-    // And the two vocabularies that view is built from survived the reduced row: without
+    // 🔴 Taking a model in is the pane's OTHER tab, and it is not an operator control: the one
+    // thing the grant exists for has to be reachable from the reduced screen (ADR 0085 decision
+    // 8 — search (検索) and registered (登録済み), nothing else).
+    expect(btn("検索")).toBeTruthy();
+    // Complete (揃える) stays too: finishing a row the tenant took in is part of taking it in,
+    // and the CP gates it by the same grant as the ingest.
+    expect(btn("揃える")).toBeTruthy();
+    // And the two vocabularies that pane is built from survived the reduced row: without
     // base_models there is no family to declare, and without file_flags a split model cannot be
-    // described at all. Read off the row the CP sent, which is what the pane will read too.
+    // described at all. Read off the row the CP sent, which is what the pane reads too.
     const engines = (await api.mock.results[0].value).engines;
     expect(engines[0].base_models).toContain("flux1");
     expect(engines[0].file_flags).toContain("--diffusion-model");
   });
 
-  // 🔴 Both of these were found by RENDERING the panel, not by the table above: a sentence is
-  // neither a control nor a field, so every "must be absent" assertion passed while two
-  // paragraphs went on explaining buttons that are not on the screen. They are pinned here
-  // because that is the failure mode this whole branch has — text outliving its control.
+  // 🔴 Found by RENDERING the panel, not by the table above: a sentence is neither a control nor
+  // a field, so every "must be absent" assertion passed while a paragraph went on explaining a
+  // button that is not on the screen. It is pinned here because that is the failure mode this
+  // whole branch has — text outliving its control.
   it("drops the sentences that explain the operator's controls", async () => {
     await mount(tenantAnswer);
-    expect(text()).not.toContain("選び直しは次の起動から効きます"); // explains "start with this one"
     expect(text()).not.toContain("オンデマンド"); // explains the mode segment
   });
 
   it("keeps those sentences for the operator, whose controls they describe", async () => {
-    await mount(superAnswer);
-    expect(text()).toContain("選び直しは次の起動から効きます");
     // The sentence that explains the mode segment lives with the segment, on the other screen.
-    await act(async () => root?.unmount());
-    host?.remove();
     await mount(superAnswer, EnginesAdminView);
     expect(text()).toContain("オンデマンド");
   });

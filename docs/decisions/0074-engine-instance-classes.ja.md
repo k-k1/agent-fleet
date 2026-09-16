@@ -1426,3 +1426,158 @@ Instances からコントロールプレーンへ移した（launch template に
 型ごと無くなる——宣言がそのまま要求なので「宣言」と「実際」がずれようがなく、綴り違いの型は
 「来ない箱」ではなく呼び出し自身が拒む。`usdPerHour` は表示専用のままだが、ここで実測した
 Managed Instances の管理料 7.80% は provider ごと消えるので、**EC2 の価格そのもの**になる。
+
+## 追記 — T4 段（g4dn.xlarge）を image 役の自動選択の第一候補に採用（2026-09-14、af-sandbox、comfy）
+
+きっかけの疑問はこうだった: ここまで宣言した段は全部 22〜24 GB（L4/A10G）か 48 GB（L40S）。
+image 役が回すモデル（特に SDXL）に本当にそのVRAMが要るのか、もっと安い・小さいカードで
+普段のケースは足りるのではないか。g4dn.xlarge（NVIDIA T4、16 GB、東京の On-Demand $0.71/h、
+Pricing API 確認済み）が AWS の次に小さい段。g4ad（AMD、8 GB）は先に外した——ComfyUI の CUDA
+スタックがそのカードでは動かない。
+
+🔥 **`ImageInstanceClasses` に段を足しても何も起きなかった。** `offersSpec()`
+（`control-plane/engines.go:162`）は、スタックが `Offers` を宣言していればそちらを読み、
+**`Classes` は一切参照しない**——マージもフォールバックもせず、単に読まれない。af-sandbox は
+既に `ImageOffers`（決定 1、ADR 0075 の 3 段）を宣言済みだったので、Console のインスタンスクラス
+選択（価格が `ImageOffers` と正確に一致する: $1.57 / $1.26 / $2.91）には新しい段が一切出ず、
+編集が無効だったことはどこにもログされなかった。段を選択肢として見せるには `ImageOffers` の方
+——今回は `buy` 欄も添えて——に足す必要があった。
+
+**実機、`t4|T4 16GB (g4dn.xlarge)|14500|g4dn.xlarge|4|15000-16384|0.77|od`、SDXL を 1 回、
+1024×1024・20 ステップ:**
+
+```
+Total VRAM 14912 MB, total RAM 15791 MB
+Device: cuda:0 Tesla T4 : cudaMallocAsync
+DynamicVRAM support detected and enabled
+```
+
+宣言した `14500` は実測 `14912` より安全側に低く、決定 6 が l4 段で既に採っていた
+「ハードウェア実測より少し低く宣言する」流儀のまま。
+
+🔥 **SDXL の実VRAM使用量は、この ADR が前に測った 11.7 GiB（`What P1 measured`、
+sd-server/sd.cpp、`juggernaut-xl-v9`）よりはるかに少なかった。** 温まったリクエストの
+`Model loaded: … vram_mb=…` 行を足すと: `SDXLClipModel` 1568.4 + `SDXL` 4929.2 +
+`AutoencoderKL` 256.2 ≈ **6.75 GiB**。違いはチェックポイントではなくローダー側にある:
+ComfyUI v0.34.0 は `DynamicVRAM`（`comfy-aimdo`）を積んでおり、sd.cpp の一括ロード＋固定の
+compute reserveとは違い、重みを段階的にカードへステージする。1 回目（コールド）のリクエストは
+同じモデルに対してより小さい、ステージ中の過渡的な `vram_mb` 値をログしていた——上に引用した
+定常状態の数字は温まった 2 回目のもの。
+
+🔴 **訂正（2026-09-14、同じ段、8リクエスト、batch 1〜4）: Turing は明確な不利だった——ただし
+VRAMではなく速度の面で。** 最初の3回（batch 1・ウォーム）は17.87〜17.95秒——同じ解像度・
+ステップ数の l4 段の約11.5秒（`What was measured`節）と比べると**約1.56倍**であって、
+「近い」ではなかった。残り5リクエストはbatch 2〜4（`latent_shapes`の先頭次元）で、
+`The floor is 58% of the demand`の注記がimage役について残していた宿題に決着がついた——
+**1枚あたりの時間はbatchサイズで動かない**: 51.93秒 / 3 = 17.31秒、68.23秒 / 4 = 17.06秒、
+68.59秒 / 4 = 17.15秒、35.45秒 / 2 = 17.73秒、いずれもbatch 1と同じ17.0〜17.9秒の帯に収まる。
+この段ではComfyUIはbatchの各画像をサンプラーへ逐次流すので、10枚は**1枚の10倍（約3分)、
+バッチ割引無し**——立て続けに何回も生成を頼む利用者が実際に感じる数字はこれ。VRAMが制約に
+なったことは一度も無かった(8リクエスト中6回は温まった、既にロード済みのチェックポイントを
+使い回している)——T4段がl4に対して本当に払っているのは余裕ではなく体感時間の方。
+
+**採用したが、同じ日のうちに価格だけを基準に作り直した。** 最初の版は既存3行の`ImageOffers`
+（`spot3;l4;l40s`、`g6.xlarge,g5.xlarge,g6e.xlarge`を束ねた1つのSpot行）の先頭に`t4`を
+足しただけだった。この束ねが実際いくらの意味を持つのか詰めていったら、この ADR の
+`Why three types is safe` 節が既にトレードオフとして書き残していた論点が再燃した:
+`spot3`の宣言価格`$1.57`は古かった——`describe-spot-price-history`の最新値では
+`g6.xlarge`と`g5.xlarge`のSpotが$0.57と$0.76、`g6e.xlarge`のSpotが$1.35で、「3つのうち
+どれかが来る」の実効価格はこの行自身のラベルよりずっと安かった。`usdPerHour`は表示専用
+なので、書かれて以来誰も直していなかった。
+
+🔥 **この論点をきっかけに再燃した「g6eで割高になる」苦情は、実はもう直っていた。** ADR 0077
+決定1が名指ししている: 「0075 run 3の問題——3型のSpot行がg6e.xlargeを配達した、最安ではなく——
+はManaged Instancesに割り当て戦略が無かったから起きた」。CP自身の`CreateFleet`リクエストは
+`SpotOptions.AllocationStrategy: price-capacity-optimized`を設定しており
+(`control-plane/engine_fleet.go:410`)、0077自身のP0実機では2回のSpot購入とも`g6.xlarge`と
+`g5.xlarge`で、`g6e.xlarge`は一度も無かった。ここで対策しようとしていた不具合自体は、今の
+購入経路ではもう再現しない——直っていなかったのは、はしごの価格表示の方だった。
+
+**実数字を突き合わせた上での作り直しは、同じ日のうちに2段階になった。** 1段目は型ごとに
+別々の行にした（1つのラベルで3つの実価格を束ねること自体が根本原因で、古い数字だけの問題では
+なかった）、`spot`も`od`も両方、純粋に価格順に並べる——`spot > on-demand`という区分ルールは
+設けない。実価格ではSpotが一様に安いわけではないから(`g6e`のSpot $1.35は`g6`のOn-Demand
+$1.17より高い)。これで`g6.xlarge`/`g5.xlarge`/`g6e.xlarge`のSpot行が3本、それぞれ手書きの
+価格つきで生まれたが——これは`spot3`が既に持っていたのと同じ「値が古くなる」問題を3倍にしただけで、
+かつプラットフォームが既にもっと上手くやっていることを台無しにしていた: `SpotOptions.
+AllocationStrategy: price-capacity-optimized`は**1回の`CreateFleet`呼び出しに載せた**型とAZの
+全部の中から、購入のその瞬間にライブで一番良い実際の価格を選ぶ——誰かが更新を覚えているラベルより
+リアルタイムに近い。そこで2段目で`g6.xlarge`・`g5.xlarge`・`g6e.xlarge`を(`spot3`が元々そうして
+いたように)1本のSpot行に戻し、`g4dn.xlarge`だけを別に残した(VRAM floorが違うので22GB+の型と
+同じ行を安全に共有できない——`l4`に混ぜなかったのと同じ理由)。オンデマンド行は分けたままにした:
+`OnDemandOptions.AllocationStrategy: prioritized`は宣言された型の順序を読むだけでライブ価格を
+見ないし、オンデマンドの価格はほとんど動かないので、手書きの順序がSpotのラベルのように古くなる
+ことはない。`ImageOffers`（`ImageInstanceClasses`も鏡写しのまま、`ImageOffers`が宣言されている
+間は無効）、7行・価格順:
+
+```
+g4dn-spot|T4 16GB Spot (g4dn.xlarge)|14500|g4dn.xlarge|4|15000-16384|0.34|spot;
+g22-spot|22GB+ Spot (g6/g5/g6e)|22000|g6.xlarge,g5.xlarge,g6e.xlarge|4-8|15000-65536|0.57|spot;
+g4dn-od|T4 16GB (g4dn.xlarge)|14500|g4dn.xlarge|4|15000-16384|0.71|od;
+g6-od|L4 24GB (g6.xlarge)|22000|g6.xlarge|4-8|15000-65536|1.17|od;
+g6e-spot|L40S 48GB Spot (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|1.35|spot;
+g5-od|A10G 24GB (g5.xlarge)|22000|g5.xlarge|4-8|15000-65536|1.46|od;
+g6e-od|L40S 48GB (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|2.70|od
+```
+
+`g6e-spot`は`g22-spot`と並べて独立した行のまま残す——畳んでしまわない: 22,001〜44,000 MiBの
+需要は`g22-spot`(宣言floorは3型のうちの安全な最小値、22,000)からは**フィルタで落ちる**が、
+`g6e-spot`の44,000にはまだ収まる。これがあるおかげでそうしたモデルもL40Sへ届き、常にオンデマンド
+だけに着地するということがない。
+
+7本すべての`usdPerHour`は生のEC2価格——このはしごがADR 0077以前から引きずっていた7.8%の
+Managed Instances手数料は、最新の1行だけでなく全行から消えている。
+
+🔴 **「様子を見る」に要るものが無かった: 購入履歴はstartをまたいで残らなかった。** どの型が
+買われ、いくらで、どれだけ稼働したかを(この節の数字を全部そうしたように毎回CloudTrailから
+掘り起こすのでなく)後から見返せるか、という問いに対して: `engine_hourly`(決定10)は
+意図的にそれではない——ヘッダのコメント自身が「It is NOT money and must never be rendered
+as money」と書いており、型の列も無く稼働/起動/退去の秒数だけを持つ。`engineOfferRun`の
+trail(試行ごとの`ID`/`Buy`/`Result`)はそのコメント自身の言葉で「In memory and nowhere
+else」——次のCP再起動で消え、テーブルには一度も書かれない。`noteOffer`(購入1回につき
+既に書かれている監査1行、決定8)はオファーの`Target`と`spot`/`od`は持っていたが、複数型を
+束ねた行が実際にどの型に着地したか、価格はいくらだったかを持っていなかった。
+
+**同じ日のうちに、新しいテーブル無しで直した。** 専用の購入履歴テーブルというのが最初の
+発想で、それは間違っていた——`store.AuditLog`とその読み口(`GET /api/admin/audit`)は
+まさにこの用途(「誰が・何を・いつ・どの対象に」)で既に存在しており、稼働時間も新しい列
+無しで既に答えられた: 同じインスタンスidについて、`engine.<key>.offer`行のタイムスタンプと、
+対応する`engine.<key>.box`/`engine.<key>.interrupted`行のタイムスタンプの差がそれで、
+どちらも既に書かれている。本当に足りなかったのは既存の1行への2つのフィールドだった。
+`engineFleetInstanceType`(`control-plane/engine_fleet.go`)は、`engineFleetInstanceID`が
+既にidを読んでいるのと同じ`CreateFleetInstance`要素から実際に起動した型を読む——AWS呼び出し
+の追加無し——`buy()`の2番目の戻り値としてそれを`noteOffer`まで通し、`Detail`は
+`instance=`で止まる代わりに`buy=spot instance=i-0397… type=g6.xlarge price=1.35`を出す
+ようになった。新しい試験(`TestAPurchaseAuditsTheInstanceTypeAndPrice`)がこれを固定して
+おり、陽性対照も取った(書式文字列を戻すと確かに赤くなる)。
+
+🔴 **その価格を書き出したことで、この同じ追記の中でもう1つのバグが表に出た: `g22-spot`の
+`0.57`は、この ADR 自身は言い直していないが`engineClass.UsdPerHour`自身のコメント
+(`control-plane/engine_class.go:52`)が定める規約に反していた**——複数型を束ねた行は
+**最も高い型の価格で書く**のが規約で、安い方ではない。「安い側から書いた数字は、この欄が
+存在する目的の比較を役に立たなくする」(ADR 0075決定1)から。`0.57`はコメント自身が例に
+使っているのと同じ3型の組の、安い方の`g6.xlarge`の価格だった。liveで`1.35`
+(`g6e.xlarge`のSpot、3型のうち最も高い、`g6e-spot`行が既に宣言していた値と同じ)に
+訂正した。
+
+VRAM適合は今回も`candidateOffers`の仕事のままで、この並び順の仕事ではない: 宣言順に候補を
+歩く前に、有効化されているモデルの中で最大のVRAM要求を下回る行を落とすので、7本を価格順に
+並べてstartごとにフィルタで絞らせるのが狙いであって、手作業で絞り込むべき隙間ではない。
+
+🔥 **Spot中断を許容しつつ最終的にVRAMの合うオンデマンドへ着地する、という要件もコード変更
+無しで満たせた**——`engineOfferRun.noteInterrupted`（`control-plane/engine_offer.go:299`）は
+オファーが**2回連続**で奪われて初めてそれを今回のdemandから外す。1回目の中断は同じ最安の
+適合行をもう一度試すだけで、2回連続で失って初めて次点候補へ進む(`restart`、221行目)。
+どのVRAM帯にもSpot行とオンデマンド行が両方あるので、安いSpotを立て続けに失い続ける需要は
+価格順のリストを下へたどっていき、その先には必ずVRAMの合うオンデマンド行が待っている——
+「価格優先、Spotを試した代償としてオンデマンドへの着地は受け入れる」という要望そのもの。
+
+⚠️ **`t4`/`spot3`/`l4`/`l40s`から型名ベースのid**（`g4dn-od`、`g6-spot`、…）**への改名**は、
+管理者が旧idで固定選択(pin)していた場合それを無効化する(決定2: 保存されたidが今のリストに
+無ければ自動選択へフォールバックし、ログに残るだけで拒否はしない)。この配備に固定選択の
+痕跡は無かった。
+
+⚠️ **live スタックにしか当てていない**——上の2026-09-11の追記と同じやり方
+（`aws cloudformation update-stack --use-previous-template`で1パラメータずつ変更、他は全部
+`UsePreviousValue`）で、`params/60-engines`は経由していない。`standup.sh`をローカルの捕捉から
+建て直すと、`t4`の無い旧3行のはしごに戻る。
