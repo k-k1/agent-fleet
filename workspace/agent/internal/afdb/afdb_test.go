@@ -281,6 +281,90 @@ func TestResetRequiresDatabaseName(t *testing.T) {
 	}
 }
 
+// TestStalePIDFile covers what a container stop leaves behind. The pid file
+// outlives the server, and on the next boot its number belongs to whoever got it
+// — so "a process with this pid exists" must not be read as "our server is up".
+func TestStalePIDFile(t *testing.T) {
+	tmp := t.TempDir()
+	datadir := filepath.Join(tmp, "data")
+	if err := os.MkdirAll(datadir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(datadir, "postmaster.pid")
+
+	write := func(pid int) {
+		// A real postmaster.pid has the datadir on line 2; only line 1 is read.
+		body := fmt.Sprintf("%d\n%s\n1758000000\n5432\n", pid, datadir)
+		if err := os.WriteFile(pidFile, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("dead pid is cleared", func(t *testing.T) {
+		// A pid that cannot be alive: the kernel refuses this one.
+		write(0x7FFFFFFF)
+		if !clearStalePIDFile(pidFile, "postgres", datadir) {
+			t.Error("a pid file naming a dead process should be removed")
+		}
+		if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
+			t.Errorf("pid file still there, stat err = %v", err)
+		}
+	})
+
+	t.Run("live but foreign pid is cleared", func(t *testing.T) {
+		// This test binary is alive and is NOT postgres for this datadir — the
+		// pid-reuse case. isPGRunning must not call it running either.
+		write(os.Getpid())
+		if isPGRunning(0, datadir) {
+			t.Error("a reused pid must not count as a running server")
+		}
+		if !clearStalePIDFile(pidFile, "postgres", datadir) {
+			t.Error("a pid file naming an unrelated live process should be removed")
+		}
+	})
+
+	t.Run("our own server is left alone", func(t *testing.T) {
+		// Stand in for the server with a real process whose command line carries
+		// both the exe name and the datadir.
+		// A long-lived process whose real command line carries both needles: a
+		// link to sleep, named "postgres", living in the datadir. (No `exec -a`
+		// here — /bin/sh is dash, which has no such builtin.)
+		standIn := filepath.Join(datadir, "postgres")
+		if err := os.Symlink("/bin/sleep", standIn); err != nil {
+			t.Skipf("cannot place the stand-in: %v", err)
+		}
+		cmd := exec.Command(standIn, "30")
+		if err := cmd.Start(); err != nil {
+			t.Skipf("cannot spawn the stand-in: %v", err)
+		}
+		defer func() {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}()
+		// /proc/<pid>/cmdline is empty for the moment the process spends in exec,
+		// so wait for the line we are about to match instead of racing it.
+		deadline := time.Now().Add(5 * time.Second)
+		for !pidIsServerFor(cmd.Process.Pid, "postgres", datadir) {
+			if time.Now().After(deadline) {
+				t.Fatalf("stand-in never showed a matching command line: %q",
+					procCmdline(cmd.Process.Pid))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		write(cmd.Process.Pid)
+		// The shell's own command line contains "postgres" and the datadir.
+		if !isPGRunning(0, datadir) {
+			t.Error("a live matching process should count as running")
+		}
+		if clearStalePIDFile(pidFile, "postgres", datadir) {
+			t.Error("the pid file of a live matching server must NOT be removed")
+		}
+		if _, err := os.Stat(pidFile); err != nil {
+			t.Errorf("pid file should still be there: %v", err)
+		}
+	})
+}
+
 func TestPassPathEngine(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

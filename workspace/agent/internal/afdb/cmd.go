@@ -870,6 +870,14 @@ func startServer(inst *Instance, persist bool) error {
 		return errStart(fmt.Sprintf("create sockdir: %v", err))
 	}
 
+	// A workspace stopped as a container never ran the shutdown path, so the
+	// datadir still holds postmaster.pid from the previous boot. Clear it when it
+	// names no live postgres of ours; otherwise pg_ctl only warns
+	// ("another server might be running; trying to start server anyway") and the
+	// day that number is reused it refuses instead, with nothing the member can do
+	// from the Console.
+	clearStalePIDFile(filepath.Join(datadir, "postmaster.pid"), "postgres", datadir)
+
 	cmd := exec.Command(filepath.Join(binDir, "pg_ctl"),
 		"-w", "start",
 		"-D", datadir,

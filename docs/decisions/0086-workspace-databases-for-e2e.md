@@ -949,11 +949,17 @@ bytes through `GET /api/fs/file`.
   variable is unset, since both branches land in home. Whether the scratch disk should be turned
   on for workspaces is an ADR 0044 question, not this one — but the ADR must stop claiming the
   ECS behaviour it does not have.
-- **A stale pid survives the stop and `af-db up` starts anyway.** The first `up` after the
-  restart printed `pg_ctl: another server might be running; trying to start server anyway` — the
-  container died with `postmaster.pid` in place, and nothing clears it. It started correctly
-  (0.2 s) because the old pid was dead, but the message is the member's only signal, and a
-  reused pid number is the case this does not distinguish. Left as found, named here.
+- **A stale pid survives the stop and `af-db up` started anyway — since fixed.** The first `up`
+  after the restart printed `pg_ctl: another server might be running; trying to start server
+  anyway`: the container died with `postmaster.pid` in place and nothing cleared it. It started
+  correctly (0.2 s) because the old pid happened to be dead — the case it could not tell apart
+  was a reused number, where pg_ctl refuses instead and the member has no way out from the
+  Console. Both engines now decide liveness from `/proc/<pid>/cmdline` (the process must be
+  *this* engine's server for *this* datadir, not merely a process with that number), and a pid
+  file that names anything else is removed before the start, with a line saying so. A live
+  matching server's pid file is never touched: two postmasters on one datadir is worse than a
+  warning. Measured with a pid file planted on a live unrelated process — removed, clean start,
+  no warning — and with a second `up` against a running server — pid file unchanged.
 
 ### Reset gained the database name too (contract change, M2 + M3)
 
