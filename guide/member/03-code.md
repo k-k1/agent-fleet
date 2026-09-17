@@ -228,9 +228,10 @@ Things to know about MySQL specifically:
   before a JVM build or another memory-intensive task — the workspace's cgroup is shared with
   all sessions: `af-db down mysql`.
 - **arm64 install downloads 909 MB.** The full tarball is required on arm64 (there is no
-  `minimal` build for that architecture). The installer strips debug sections in place, so the
-  installed size is comparable to x86_64, but the download takes several minutes.
-- **x86_64 install downloads ≈ 63 MB** (the `minimal` tarball).
+  `minimal` build for that architecture). The installer keeps only what af-db needs and strips
+  the debug sections, so **the installed tree is ≈ 147 MB** — smaller than x86_64's. Measured
+  end to end: about 30 seconds.
+- **x86_64 install downloads ≈ 63 MB** (the `minimal` tarball, ≈ 446 MB installed).
 - The memory guard refuses `af-db up mysql` when the workspace's cgroup limit is below 1 GiB
   and says so — run `af-db down postgres` first if Postgres is running.
 

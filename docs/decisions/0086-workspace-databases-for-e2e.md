@@ -921,5 +921,39 @@ runs above could only promise is now measured on it, with no workaround anywhere
 
 What is still untested stays untested: the scratch-disk datadir on ECS, and arm64 MySQL.
 
+### arm64 and ECS, measured at last (2026-09-17, the dev deployment)
+
+`0.21.1-dev-18cd6e52` was deployed to the development deployment and its member workspace
+started: `uname -m` = **aarch64**, `workspace-agent 0.21.1-dev-18cd6e52 (linux/arm64)`,
+m8g.large (6.87 GB, 2 vCPU) — the tenant's slot class is already `arm`, so no admin change was
+needed. The runs were driven from another deployment through a `kind=shell` session (no agent in
+the loop): the scripts went in over the session and every number below was read back as raw
+bytes through `GET /api/fs/file`.
+
+- **arm64 MySQL works, and the subset is the point**: `install-mysql` took **30.9 s** end to end
+  (909 MB `aarch64` tarball → subset → `stripped 176 ELF file(s)` →
+  `linked libaio.so.1 -> /lib/aarch64-linux-gnu/libaio.so.1t64`), leaving **147 MB** on disk
+  (`mysqld` 63 MB) against x86_64's 446 MB. `lib/private/icudt77l` is present and
+  `lib/plugin/debug` is absent — the two P1 corrections hold. `ldd` resolves `libaio.so.1`
+  through `lib/private`. `af-db up mysql` **5.2 s**; the error log has **zero** `MY-013829` and
+  zero `[ERROR]`; `SELECT j->>'$.a'` answered `42` over the socket **and** over `127.0.0.1`;
+  `version` 8.4.6, `rssBytes` 227 MB; `down mysql --purge` left no `mysqld` and no datadir.
+  The guide's "a few minutes" for arm64 is now wrong in the safe direction.
+- **arm64 Postgres**: the pinned Zonky `linux-arm64v8` jar with the `postgres_sha256` for this
+  architecture; install + `initdb` + start in **1.6 s**. `install-pg-client` **0.7 s**.
+- **Decision 4′ does not engage on this ECS deployment: `AF_WS_SCRATCH` is unset there.** The
+  datadir went to `~/.local/state/af-db/postgres-17/data`, and a row written before the
+  workspace was stopped was **still there after it was started again** (`select count(*)` = 1).
+  So "gone when the workspace stops" is not what a member sees today on ECS; it is what they
+  would see if the scratch disk were injected. `--persist` changes only `fsync` while the
+  variable is unset, since both branches land in home. Whether the scratch disk should be turned
+  on for workspaces is an ADR 0044 question, not this one — but the ADR must stop claiming the
+  ECS behaviour it does not have.
+- **A stale pid survives the stop and `af-db up` starts anyway.** The first `up` after the
+  restart printed `pg_ctl: another server might be running; trying to start server anyway` — the
+  container died with `postmaster.pid` in place, and nothing clears it. It started correctly
+  (0.2 s) because the old pid was dead, but the message is the member's only signal, and a
+  reused pid number is the case this does not distinguish. Left as found, named here.
+
 **Next**, unchanged except for what this run closed: the Console card on a workspace whose
 Agent is the image's, the first ECS run with a scratch-disk datadir, and arm64 MySQL.
