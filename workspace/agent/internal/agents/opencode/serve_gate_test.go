@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -121,5 +122,51 @@ func TestStopIfIdleRefusesWhileNeeded(t *testing.T) {
 	}
 	if !s.up {
 		t.Fatal("up was cleared even though the stop was skipped")
+	}
+}
+
+// Deciding deliberateness from s.cmd files a crash as an orderly stop: a daemon that dies
+// on its own is replaced by the next Ensure within milliseconds, so the waiter reaches the
+// lock to find s.cmd already pointing elsewhere. Measured: 727 daemon generations in one
+// workspace log, zero exit records.
+func TestUnexpectedDeathIsRecordedEvenAfterEnsureReplacedTheProcess(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // PersistExit and ListMetas must not touch the real home
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	s := &Supervisor{}
+	// Exactly the race: a replacement is already installed when the waiter gets the lock,
+	// and nobody ever asked for this process to end.
+	s.mu.Lock()
+	s.up, s.cmd, s.askedStop = true, &exec.Cmd{}, nil
+	s.mu.Unlock()
+
+	before := len(Lifecycle())
+	s.waitDaemon(cmd, 7)
+
+	ev := Lifecycle()
+	if len(ev) != before+1 || ev[len(ev)-1].Event != "died" {
+		t.Fatalf("a death nobody asked for must be recorded, got %+v", ev[before:])
+	}
+}
+
+// The other direction: a stop we asked for is not an incident and must stay quiet.
+func TestDeliberateStopIsNotRecordedAsDeath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	s := &Supervisor{}
+	s.mu.Lock()
+	s.up, s.cmd, s.askedStop = true, cmd, cmd // stopIfIdle / Restart / Shutdown set this
+	s.mu.Unlock()
+
+	before := len(Lifecycle())
+	s.waitDaemon(cmd, 7)
+
+	if ev := Lifecycle(); len(ev) != before {
+		t.Fatalf("a teardown we asked for must not be filed as a death, got %+v", ev[before:])
 	}
 }
