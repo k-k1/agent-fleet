@@ -211,7 +211,8 @@ af-db up mysql
 eval "$(af-db env)"
 ```
 
-MySQL インスタンスが起動中のとき `AF_DB_URL_MYSQL` が設定されます。
+`eval "$(af-db env mysql)"` を実行したシェルにだけ `AF_DB_URL_MYSQL`（と `DATABASE_URL`）が
+入ります。自動では設定されません。
 `go-sql-driver/mysql` 形式の接続文字列が必要な場合は
 `af-db url mysql --format=go-dsn` を使います。
 

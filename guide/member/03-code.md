@@ -218,8 +218,9 @@ af-db up mysql
 eval "$(af-db env)"
 ```
 
-`AF_DB_URL_MYSQL` is set when a MySQL instance is running. Pass the connection in the form
-your driver expects with `af-db url mysql --format=go-dsn` (for `go-sql-driver/mysql`).
+`eval "$(af-db env mysql)"` exports `AF_DB_URL_MYSQL` (and `DATABASE_URL`) into the shell that asked;
+nothing sets it for you. Pass the connection in the form your driver expects with
+`af-db url mysql --format=go-dsn` (for `go-sql-driver/mysql`).
 
 Things to know about MySQL specifically:
 

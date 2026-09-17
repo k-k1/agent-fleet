@@ -741,3 +741,74 @@ order M1 → M2 → M3). What each lane may touch is named so that they do not c
 - **Acceptance (M3)**: dom tests and build green; a headless-Chromium screenshot of the card
   against a mocked `GET` is attached to the PR; the live card is verified after the next
   development deployment (it needs an Agent with M2 merged).
+
+## P1 accepted (2026-09-17)
+
+Same shape as P0: three lanes, a reviewer each, findings sent to the author by peer message,
+merged M1 → M3 → M2 (M3 before M2 is harmless: the card only shows `lastError` while the Agent
+has no `/env/databases`).
+
+| Lane | Branch | Findings sent / fixed | Merged as |
+|---|---|---|---|
+| M1 supply (`install-mysql`, the three libraries and the `mysql` pins in `Dockerfile`) | `temp/svxno7x` | 7 / 7 | `53344c2e` |
+| M3 Console (`EnvTabDatabases.tsx`, CP `rest` ×2, guide, environment note) | `temp/ski4oxb` | 14 / 13 | `3565b8c5` |
+| M2 runtime (MySQL engine in `internal/afdb`, `Major` as string, `status` `version`/`rssBytes`, `GET|POST /env/databases`) | `temp/se2o2ag` | 12 / 12 | `3474fea0` |
+
+**Acceptance, run by the parent from a HOME that had never seen `af-db`** (this container,
+x86_64, the merged branch; `AF_DB_MYSQL_ROOT` at an unpacked `minimal` tarball and
+`AF_DB_MYSQL_LIBS` at the scavenged libraries, because this image predates both the `mysql`
+pin and the three libraries): `af-db up mysql` 15.9 s including `--initialize-insecure`; both
+URL forms and `--format=go-dsn` as contracted; `CREATE TABLE … JSON` / `SELECT j->>'$.a'`
+answered `42` over the socket **and** over `127.0.0.1` (so `root@127.0.0.1` exists);
+`status --json` reported `version` 8.4.6 and `rssBytes` 233 MB; the password appeared nowhere
+in the log or the registry; `down mysql --purge` left no `mysqld` and no datadir. Then, in the
+same HOME, `af-db up` installed Postgres 17.11 from Maven Central and started it in 9.6 s, and
+`TestPostgres|TestSchemaDialectParity` gave **4 PASS, 0 SKIP**; `down --purge` clean. The idle
+stop with `AF_DB_IDLE_SECONDS` was observed by the M2 reviewer (2-second window, stopped on
+the second tick), not re-run here — it needs the Agent's loop. `gofmt`, `go vet`,
+`go test -count=1 ./...` on `workspace/agent` and `control-plane` are clean; one browser
+capture test (`internal/browserx`, untouched by this ADR) failed once under the concurrent
+acceptance load and passed twice alone.
+
+### Contract corrections found by the reviews (the P1 contract above is superseded on these rows)
+
+- **M1, arm64 subset**: add `lib/private/icudt*l/` (the ICU data directory; without it `mysqld`
+  starts but warns `MY-013829` on every start), and exclude `lib/plugin/debug/` explicitly —
+  GNU tar's `*` matches across `/`. Measured subset before strip: 241 files, 762 MB
+  (`bin` 534 MB of which `mysqld` 514 MB; `lib/private` 136 MB; `lib/plugin` 82 MB; `share` 11 MB).
+- **M1, x86_64 install time**: about 10 s for 66 MB → 446 MB (the guide's "a few minutes" is
+  still the arm64 figure).
+- **M1, today's images**: every deployed image predates the `mysql` pin and — unlike Postgres —
+  there is no metadata fallback, so `install-mysql` exits 1 until the image is rebuilt; the
+  Console card shows that as `lastError`.
+- **M2, liveness**: when the pid file is missing, the registry pid is consulted; if `stop`
+  fails and the process is alive, `--purge` is refused. The first version deleted the datadir
+  under a running `mysqld` (measured: 1.32 M error lines in 38 s, `SIGKILL` only) — and
+  `isPGRunning` from P0 had the same shape and was fixed with it. `mysqld` is `Wait()`ed so it
+  never lingers as a zombie that defeats the pid check.
+- **M2, init**: `ALTER USER` gets the password on stdin, not argv (`/proc/*/cmdline` is
+  shared); an inherited `MYSQL_PWD` is dropped; the `.pass` file is written only after the
+  `ALTER` succeeds; `CREATE DATABASE IF NOT EXISTS` (two concurrent `url` from a purged state
+  raced to `ERROR 1007`).
+- **M2, idle**: `AF_DB_IDLE_SECONDS` shortens the loop period as well as the window. The
+  window itself is P0's two-stage one (threshold since `lastUsedAt`, then threshold since
+  first seen idle), so the effective idle time is 30–60 minutes plus a period, not 30.
+- **M2, `version`**: short form for both engines (`SHOW server_version` → `17.11`; `8.4.6`).
+- **M2, HTTP**: `start` goes `installing` → `starting` → `running`; a failed `start` leaves
+  `state=error` with `lastError`, which a later successful `stop` or `reset` clears; the
+  state transition is a compare-and-swap so two `start`s do not race; every field is always
+  present (no `omitempty`).
+- **M3**: the URL is shown with the password masked and copied whole; `stopped` rows show no
+  URL and only Start; `reset` is offered only when running; the "also remove the data" stop
+  asks first; polling re-arms while the state stays `installing|starting` and stops on
+  unmount. The tab that holds the card is "Toolchains", not "Env"; the guide says so.
+
+Left as found: the `status --json` `databases` map is `null` after a purge (cosmetic);
+`TestMemoryGateParsing` duplicates the parsing logic instead of calling it; the datadir
+removal after a failed `ALTER` does not wait for the `SIGKILL`ed pid. Other sessions' test
+residue was running in this container during the acceptance (a `mysqld` from
+`TestMySQLIdleStop` and three `postgres` under `/tmp/tmp.*`); it was not touched.
+
+**Next**: rebuild and deploy the development image (the `mysql` pin, the three libraries, the
+`af-db` shim and the `postgres` pin route are all unexercised until then), then the live card
+and the first ECS run with a scratch-disk datadir.

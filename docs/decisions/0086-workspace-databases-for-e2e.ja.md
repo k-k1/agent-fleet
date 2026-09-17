@@ -694,3 +694,65 @@ P1 も P0 と同じ組み方の 3 レーン（各 1 セッション、各レビ�
   `guide/ref/features.md` に Env タブの機能表があれば 1 行。
 - **受け入れ（M3）**: dom テストとビルドが緑。モックした `GET` に対するヘッドレス Chromium の
   スクリーンショットを PR に添える。実カードは次の開発配備の後に確認（M2 を merge した Agent が要る）。
+
+## P1 受け入れ（2026-09-17）
+
+P0 と同じ形：3 レーン、各レビュー子、指摘は peer メッセージで著者へ、merge は M1 → M3 → M2
+（M3 が M2 より先でも害は無い：Agent に `/env/databases` が無い間、カードは `lastError` を出すだけ）。
+
+| レーン | ブランチ | 指摘 送／修正 | merge |
+|---|---|---|---|
+| M1 供給（`install-mysql`・`Dockerfile` の 3 ライブラリと `mysql` ピン） | `temp/svxno7x` | 7 / 7 | `53344c2e` |
+| M3 Console（`EnvTabDatabases.tsx`・CP の `rest` ×2・ガイド・環境ノート） | `temp/ski4oxb` | 14 / 13 | `3565b8c5` |
+| M2 実行（`internal/afdb` の MySQL エンジン・`Major` の文字列化・`status` の `version`/`rssBytes`・`GET|POST /env/databases`） | `temp/se2o2ag` | 12 / 12 | `3474fea0` |
+
+**受け入れは親が、`af-db` を一度も見ていない HOME から回した**（このコンテナ・x86_64・merge 後の
+ブランチ。`AF_DB_MYSQL_ROOT` は展開した `minimal` tarball、`AF_DB_MYSQL_LIBS` は剥がしたライブラリ——
+このイメージは `mysql` ピンより古く 3 ライブラリも無いため）：`af-db up mysql` は
+`--initialize-insecure` 込みで 15.9 秒。URL 2 形と `--format=go-dsn` は契約どおり。
+`CREATE TABLE … JSON` / `SELECT j->>'$.a'` はソケット**と** `127.0.0.1` の両方で `42` を返した
+（`root@127.0.0.1` が存在する）。`status --json` は `version` 8.4.6・`rssBytes` 233 MB。パスワードは
+ログにもレジストリにも無い。`down mysql --purge` で `mysqld` もデータディレクトリも残らない。続けて
+同じ HOME で `af-db up` が Maven Central から Postgres 17.11 を導入して 9.6 秒で起動し、
+`TestPostgres|TestSchemaDialectParity` は **4 PASS・0 SKIP**、`down --purge` もきれい。
+`AF_DB_IDLE_SECONDS` でのアイドル停止は M2 のレビュー子が観測した（2 秒窓・2 tick 目で停止）。
+ここでは回していない——Agent のループが要る。`workspace/agent` と `control-plane` の `gofmt`・
+`go vet`・`go test -count=1 ./...` はきれい。ブラウザ捕捉のテスト 1 本（`internal/browserx`、この
+ADR は触っていない）が受け入れと並走した負荷で 1 回落ち、単独では 2 回通った。
+
+### レビューで見つかった契約の訂正（上の P1 の契約はこれらの行で上書きされる）
+
+- **M1・arm64 の部分集合**：`lib/private/icudt*l/`（ICU データ。無いと `mysqld` は起動するが毎回
+  `MY-013829` を警告）を足し、`lib/plugin/debug/` を明示的に除く——GNU tar の `*` は `/` を跨ぐ。
+  strip 前の部分集合の実測：241 ファイル・762 MB（`bin` 534 MB、うち `mysqld` 514 MB。`lib/private`
+  136 MB。`lib/plugin` 82 MB。`share` 11 MB）。
+- **M1・x86_64 の導入時間**：66 MB → 446 MB で約 10 秒（ガイドの「数分」は arm64 の数字）。
+- **M1・今日のイメージ**：配備中のイメージは全部 `mysql` ピンより古く、Postgres と違って metadata の
+  退避も無いので、焼き直すまで `install-mysql` は exit 1。Console のカードには `lastError` として出る。
+- **M2・生存判定**：pid ファイルが無ければレジストリの pid を見る。`stop` が失敗しプロセスが生きて
+  いれば `--purge` を拒む。最初の版は動作中の `mysqld` の下でデータディレクトリを消した（実測：38 秒で
+  132 万行のエラー、`SIGKILL` でしか止まらない）——P0 由来の `isPGRunning` も同型で、同時に直した。
+  `mysqld` は `Wait()` するので、pid 判定を欺くゾンビにならない。
+- **M2・初期化**：`ALTER USER` のパスワードは argv でなく stdin（`/proc/*/cmdline` は共有）。継承した
+  `MYSQL_PWD` は捨てる。`.pass` は `ALTER` 成功後にだけ書く。`CREATE DATABASE IF NOT EXISTS`（purge
+  状態から `url` を 2 本同時に走らせると `ERROR 1007` を取り合った）。
+- **M2・アイドル**：`AF_DB_IDLE_SECONDS` は窓だけでなくループの周期も縮める。窓そのものは P0 の
+  二段（`lastUsedAt` から閾値、さらにアイドルを初めて見てから閾値）なので、実効は 30〜60 分＋周期で
+  あって 30 分ではない。
+- **M2・`version`**：両エンジンとも短い形（`SHOW server_version` → `17.11`、`8.4.6`）。
+- **M2・HTTP**：`start` は `installing` → `starting` → `running`。失敗した `start` は `state=error` と
+  `lastError` を残し、後の `stop` / `reset` の成功で消える。遷移は compare-and-swap で `start` 2 連打が
+  競合しない。全欄を常に出す（`omitempty` 無し）。
+- **M3**：URL はパスワードを伏せて表示し、コピーは素の値。`stopped` の行は URL 無しで Start だけ。
+  `reset` は running のときだけ。「データも消す」停止は確認を挟む。ポーリングは `installing|starting`
+  の間は再アームされ、アンマウントで止まる。カードのあるタブは「Env」でなく「ツールチェーン」で、
+  ガイドもそう言う。
+
+見つけたが残したもの：purge 後の `status --json` の `databases` が `null`（見た目だけ）。
+`TestMemoryGateParsing` が解析の論理を呼ばず複製している。`ALTER` 失敗後のデータディレクトリ削除が
+`SIGKILL` した pid の消滅を待たない。受け入れ中、このコンテナには他セッションのテスト残骸
+（`TestMySQLIdleStop` の `mysqld` 1 本と `/tmp/tmp.*` 配下の `postgres` 3 本）が動いていた。触っていない。
+
+**次**：開発配備のイメージを焼き直して配備する（`mysql` ピン・3 ライブラリ・`af-db` シム・`postgres`
+のピン経路は、それまで全部未通過）。それから実カードと、作業ディスク上のデータディレクトリでの
+ECS の初回。
