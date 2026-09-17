@@ -880,5 +880,23 @@ is exactly what a member on today's image would see.
   decision 9's card masks it for display and copies it whole — so CP relays a workspace
   credential to the browser, where `af-db status --json` deliberately carries none.
 
+### The card's URL was for a database nobody had (contract change, M2 + M3)
+
+The first look at the rendered card found the copy button handing out
+`postgres://…/af_dev_12fbd7` — `DBNameFor("/home/dev")`, the **Agent process's own directory**.
+`psql` with that URL answers `FATAL: database "af_dev_12fbd7" does not exist`, while the
+registry's only database was `af_agent_fleet_wip_szkxzgu_9af42b` for this working copy. The
+Agent cannot resolve "the caller's working copy" — it has only its own — so an engine-level URL
+is wrong by construction, and the HTTP path never creates what it advertises.
+
+`EngineStatus` therefore drops `urlSocket` / `urlTcp` and `databases` becomes a list:
+`[{name, dir, urlSocket, urlTcp}]`, sorted by name, filled only while the engine is running.
+The card renders one block per database — name, working copy, the Socket/TCP toggle and Copy —
+and says "run `af-db url` in a working copy" when the list is empty. The empty list is also a
+`[]`, which retires the `databases: null` cosmetic from the P1 acceptance. The guide's card
+section says the same in both languages. Verified by unit tests on both sides
+(`TestDatabaseEntriesPerWorkingCopy`, and a DOM test that copies the second row's own URL);
+the live card gets this at the next image bake.
+
 **Next**, unchanged except for what this run closed: the Console card on a workspace whose
 Agent is the image's, the first ECS run with a scratch-disk datadir, and arm64 MySQL.

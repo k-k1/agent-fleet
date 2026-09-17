@@ -195,6 +195,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.db_state_error": "error",
   "env.db_rss": "{n} MB",
   "env.db_port": "port {n}",
+  "env.db_none_yet": "No databases yet. Run `af-db url` in a working copy and its database appears here.",
   "env.db_url_socket": "Socket",
   "env.db_url_tcp": "TCP",
   "env.db_copy": "Copy",

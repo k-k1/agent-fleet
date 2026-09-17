@@ -821,5 +821,23 @@ sha、`libaio1t64` / `libnuma1` / `libncurses6`。P0・P1 の受け入れが届�
   「表示は伏せ字・コピーは丸ごと」だからで、つまり CP はワークスペースの資格情報をブラウザまで
   中継する。`af-db status --json` が意図的に載せないのと対照的である。
 
+### カードの URL は誰も持っていないデータベースを指していた（契約変更・M2＋M3）
+
+描画されたカードを最初に見て分かったのは、コピーが渡すのが
+`postgres://…/af_dev_12fbd7`——`DBNameFor("/home/dev")`、つまり **Agent プロセス自身の
+ディレクトリ**だということだった。その URL で `psql` を打つと
+`FATAL: database "af_dev_12fbd7" does not exist`。一方、登録簿にあった唯一のデータベースは
+この作業コピーの `af_agent_fleet_wip_szkxzgu_9af42b` である。Agent は「呼び出し側の作業
+コピー」を解決できない——自分のものしか持っていない——のだから、エンジン単位の URL は
+構造上必ず間違いで、しかも HTTP 経路は自分が宣伝した DB を作りもしない。
+
+そこで `EngineStatus` から `urlSocket` / `urlTcp` を落とし、`databases` を一覧にした：
+`[{name, dir, urlSocket, urlTcp}]`、名前順、稼働中のときだけ中身が入る。カードはデータベース
+ごとに 1 ブロック（名前・作業コピー・Socket/TCP 切替・コピー）を描き、空のときは「作業コピーで
+`af-db url` を実行してください」と言う。空が `[]` になったので、P1 受け入れで残した
+`databases: null` の見た目の問題も消えた。ガイドのカードの節も両言語で同じことを言う。
+検証は両側の単体テスト（`TestDatabaseEntriesPerWorkingCopy` と、2 行目の URL をコピーする
+DOM テスト）。実機のカードに載るのは次の焼き直しから。
+
 **次**（この実機で閉じた分を除いて変わらず）：Agent がイメージのものであるワークスペースでの
 Console カード、作業ディスク上のデータディレクトリでの ECS 初回、arm64 の MySQL。

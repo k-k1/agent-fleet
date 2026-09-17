@@ -137,6 +137,47 @@ func TestTailWriterReason(t *testing.T) {
 	}
 }
 
+// TestDatabaseEntriesPerWorkingCopy pins what the Console card copies: one entry
+// per registered database, sorted, each URL naming its OWN database. The first
+// live run built a single engine-level URL from the Agent's own directory, which
+// named a database nothing had created.
+func TestDatabaseEntriesPerWorkingCopy(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	inst := &Instance{
+		Engine:  "postgres",
+		Major:   "17",
+		Sockdir: filepath.Join(tmp, "run"),
+		Port:    5433,
+		Databases: map[string]string{
+			"af_zzz_000000": "/home/dev/repos/zzz",
+			"af_aaa_111111": "/home/dev/repos/aaa",
+		},
+	}
+	entries := databaseEntries(inst, "postgres", "17")
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d; want 2", len(entries))
+	}
+	if entries[0].Name != "af_aaa_111111" || entries[1].Name != "af_zzz_000000" {
+		t.Errorf("entries not sorted by name: %v", entries)
+	}
+	if entries[0].Dir != "/home/dev/repos/aaa" {
+		t.Errorf("entry lost its working copy: %q", entries[0].Dir)
+	}
+	for _, e := range entries {
+		if !strings.Contains(e.URLSocket, e.Name) {
+			t.Errorf("socket URL %q does not name its own database %q", e.URLSocket, e.Name)
+		}
+		if !strings.Contains(e.URLTCP, e.Name) {
+			t.Errorf("TCP URL %q does not name its own database %q", e.URLTCP, e.Name)
+		}
+		if strings.Contains(e.URLSocket, DBNameFor(ResolveDir())) && e.Name != DBNameFor(ResolveDir()) {
+			t.Errorf("URL names the agent's own directory instead of the entry: %q", e.URLSocket)
+		}
+	}
+}
+
 func TestPassPathEngine(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
