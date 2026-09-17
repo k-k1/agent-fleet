@@ -321,3 +321,36 @@ func TestWriteEngineProvidersDeclaresAWindowPerModel(t *testing.T) {
 		}
 	}
 }
+
+// A workspace with no chat engines still has a config, written by the MCP materializer, and
+// it has no provider member. Reporting that as a change makes the caller restart the serve
+// daemon on every Control Plane catalogue push, and each restart kills the turn it lands on.
+func TestWriteEngineProvidersIsANoOpWhenThereAreNoEnginesAndNoProviderMember(t *testing.T) {
+	engineTestHome(t)
+	path := engineConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// What the materializer leaves behind: mcp and permission, no provider.
+	const existing = `{"$schema":"https://opencode.ai/config.json","mcp":{},"permission":{}}`
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		changed, err := WriteEngineProviders(nil)
+		if err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+		if changed {
+			t.Fatalf("call %d reported a change: nothing to write, so nothing changed", i)
+		}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != existing {
+		t.Errorf("the file must be left alone, got %s", b)
+	}
+}
