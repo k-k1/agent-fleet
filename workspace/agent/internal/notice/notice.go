@@ -34,7 +34,7 @@ type Event struct {
 	Payload     map[string]any `json:"payload"`
 }
 
-func dir() string { return filepath.Join(paths.AgentConfigDir(), "notification-outbox") }
+func dir() string { return filepath.Join(paths.AgentStateDir(), "notification-outbox") }
 
 func New(kind, sessionName, sessionKind, displayName string) Event {
 	b := make([]byte, 16)
@@ -80,7 +80,7 @@ func Put(e Event) error {
 // on every Control Plane poll.
 func PutOnce(key string, e Event) error {
 	sum := sha256.Sum256([]byte(key))
-	markerDir := filepath.Join(paths.AgentConfigDir(), "notification-markers")
+	markerDir := filepath.Join(paths.AgentStateDir(), "notification-markers")
 	if err := os.MkdirAll(markerDir, 0o700); err != nil {
 		return err
 	}

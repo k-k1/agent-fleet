@@ -39,7 +39,7 @@ const afNamePattern = `af_[0-9a-f]{8}`
 
 var afNameRE = regexp.MustCompile(`^` + afNamePattern + `$`)
 
-func afNamePath() string { return filepath.Join(paths.AgentConfigDir(), "mcp-af-name") }
+func afNamePath() string { return filepath.Join(paths.AgentStateDir(), "mcp-af-name") }
 
 var afNameOnce struct {
 	sync.Mutex

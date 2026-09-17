@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -25,6 +26,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
@@ -166,6 +168,19 @@ func main() {
 		return
 	}
 
+	// Move the mutable state off ~/.config/agent-fleet (an EFS mount on ecs-ec2) into the
+	// home volume, once (ADR 0087 decision 4). FIRST, before anything below reads a store:
+	// every one of them resolves through paths.AgentStateDir now, and a read that lands
+	// there before the migration reads an empty store — the session ledger included, which
+	// is the Console's whole session list. Subcommand branches return above this, and they
+	// only run once the Agent has served a session, so they cannot outrun it.
+	if r := statemig.Run(); r.Files > 0 || len(r.Errs) > 0 {
+		log.Printf("state: migrated %d entr(y|ies), %d file(s), %.1f MB in %s",
+			r.Entries, r.Files, float64(r.Bytes)/(1<<20), r.Took.Round(time.Millisecond))
+		for _, err := range r.Errs {
+			log.Printf("state: migration: %v", err)
+		}
+	}
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
 	// Seed the CP-injected internal git token (docs/reference/internal-git-provider)

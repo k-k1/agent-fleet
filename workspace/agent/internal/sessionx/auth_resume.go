@@ -77,7 +77,7 @@ type authResumeState struct {
 	GaveUp       string `json:"gaveUp,omitempty"`       // non-empty = handed back to the user
 }
 
-var authResumeStates = fstore.JSON[authResumeState](paths.AgentConfigDir, "session-auth-resume", ".json")
+var authResumeStates = fstore.JSON[authResumeState](paths.AgentStateDir, "session-auth-resume", ".json")
 
 // authResumeNow is the login moment, replaceable so tests need no credentials file.
 var authResumeNow = claude.AuthOKAt

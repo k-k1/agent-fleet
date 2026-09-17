@@ -511,6 +511,73 @@ session ledger empties the session list (the transcripts themselves live under
 losing credentials. **Credentials (`secrets.*`, `~/.ssh`, `.git-credentials`, `.claude.json`)
 stay on EFS** - ADR 0045's line about not leaving plaintext on local disk does not move.
 
+#### Implementation (option (b))
+
+`paths.AgentStateDir()` = `~/.local/state/agent-fleet` was added; `AgentConfigDir()` still
+resolves to `~/.config/agent-fleet`. Which root a store belongs in is decided in this order:
+
+1. **A credential, or anything that can carry one**, stays in `AgentConfigDir`. Besides
+   `secrets.*` that is `mcp-tenant.json`: 🔥 a tenant-distributed definition that is not
+   `user_secret` **arrives with its header and env VALUES filled in** (the reason is written on
+   `UserSecret`, `secrets.go:325`), so treating it as "ids only" would take credentials down to
+   EBS. `chat-mcp/` (the per-conversation `--mcp-config`) stays for the same reason - and at
+   3 files / 16 KB there is no I/O to win by moving it.
+2. **User-supplied configuration and user-authored content** stays in `AgentConfigDir`
+   (`rtk.json`, `ui-prefs.json`, `toolchains.json`, `user-notes*`, `assistants/`, `knowledge/`,
+   `locks.json`, `mcp-optout.json`, `chats/`). `mcp-managed.json` stays too: it is the only
+   authority for deleting a row af wrote into another CLI's config, and those files
+   (`~/.claude.json`, `~/.codex`, `~/.config/opencode`) are on keep as well. Split across the
+   two volumes, losing one leaves **orphans nothing can remove**.
+3. **Everything else moves.** Anything keyed by session name or sid belongs on that side: the
+   ledger itself moved, so state outliving it is meaningless.
+
+The migration runs once at Agent start (`internal/statemig`, immediately after main's
+subcommand branches and before any other read). **Which side wins when it is interrupted** is
+settled by three rules:
+
+- **The destination is the truth.** Nothing already at the destination is ever overwritten.
+  Only the new build writes there, so what is there is newer by construction - including a
+  file a hook subprocess wrote while the migration was running.
+- **Per file, not per directory.** Per directory, a half-copied directory is indistinguishable
+  from a finished one and the next boot skips the rest of it forever.
+- **The source file is removed once copied, and a finished entry is recorded in
+  `.migrated-from-config.json` at the destination.** Both exist to stop something the user
+  deleted *after* the migration from coming back: without them, deleting a session drops its
+  meta and the next boot restores it from the leftover under `.config`.
+
+Leftovers under `.config/agent-fleet` are therefore expected, and the next boot converges.
+
+🔴 **A symlink is copied as a symlink.** The chat working directories **borrow the real
+credentials through links** - measured, three of them: `chat-claude/.credentials.json` → the
+claude config mount, `chat-codex/auth.json` → `~/.codex/auth.json`, and agy's OAuth token under
+`chat-wd/agy-*/home/.gemini/…`. Following them writes **three plaintext copies onto home**,
+which is precisely what ADR 0045 decision 3-6 forbids, and leaves `reconcileChatCreds` folding
+a rotated token into a file nothing else reads.
+
+The destination was added to the file browser's denylist (`fs.go`) in the same commit.
+`statemig.Entries` is an allowlist, with a test (`statemig_drift_test.go`) that fails when a
+store resolves through `paths.AgentStateDir` and is not listed. The inverse was rejected
+because the two kinds of omission are not equivalent: forgetting an allowlist entry leaves one
+store on EFS, forgetting a denylist entry takes a credential or a user's configuration down to
+EBS. `deploy/` (written by `deploy/aws/ecs/env.sh`) is the clearest case - moving it breaks the
+deployment scripts.
+
+Measured (`internal/session/meta_probe_test.go`, strace, 207 metas × 100 calls): the **836
+file syscalls per `ListMetas()` do not change**. What changed is that **all of them land on
+home**, and **zero** land under `.config/agent-fleet` (openat 21,018 / read 41,404 / close
+21,017 / getdents64 213, every one of them under `.local/state/agent-fleet/sessions/`).
+
+⚠️ **`chats/` (the assistant conversations themselves) was not moved.** `ListConvs()` has the
+same shape as `ListMetas()` (one `ReadDir` plus one `ReadFile` each) and what it reads is the
+full conversation. But its polling frequency has not been measured, and this is content the
+user wrote: accepting "lost with the EBS volume" for conversations is a separate judgement.
+Next candidate.
+
+⚠️ claude's hook definitions do not break (verified). What `hooks.go` embeds in a command line
+is **the agent binary's path only** (`<exe> session-status <state>`); where the state lives is
+resolved by the agent at run time, so a hook written before the migration writes to the new
+location unchanged.
+
 ### Decision 5 (permanent, P1): stop the remaining two `projects/*` sweeps
 
 - **Remember the `subagentBases()` miss, but only on the status path.** The "never remember a

@@ -2,7 +2,8 @@
 // (working/idle/question/…) and its pending payloads (question, plan, permission,
 // streaming text, last tool). The claude hooks, the opencode plugin and the codex hooks
 // (wired in package main's session_status.go) write it; the sessions list and /messages
-// read it. The on-disk layout (~/.config/agent-fleet/…) and the JSON tags must stay
+// read it. The on-disk layout (~/.local/state/agent-fleet/… — ADR 0087 decision 4 moved it
+// there from ~/.config, which is an EFS mount on ecs-ec2) and the JSON tags must stay
 // byte-identical (docs/log/23 remaining item 1 Wave A).
 package status
 
@@ -88,18 +89,18 @@ type ExitInfo struct {
 // payload; last-tool shares pending-perm's dir under a different extension. exitFiles
 // is keyed by session NAME (see ExitInfo), the others by sid.
 var (
-	statusFiles      = fstore.JSON[SessionStatus](paths.AgentConfigDir, "session-status", ".json")
-	exitFiles        = fstore.JSON[ExitInfo](paths.AgentConfigDir, "session-exit", ".json")
-	pendingQuestions = fstore.Raw(paths.AgentConfigDir, "pending-question", ".json")
-	pendingPlans     = fstore.Strings(paths.AgentConfigDir, "pending-plan", ".md")
-	pendingPerms     = fstore.Strings(paths.AgentConfigDir, "pending-perm", ".txt")
-	lastTools        = fstore.Strings(paths.AgentConfigDir, "pending-perm", ".tool")
-	pendingTexts     = fstore.Strings(paths.AgentConfigDir, "pending-text", ".txt")
-	carriedFiles     = fstore.JSON[Carried](paths.AgentConfigDir, "carried-interaction", ".json")
+	statusFiles      = fstore.JSON[SessionStatus](paths.AgentStateDir, "session-status", ".json")
+	exitFiles        = fstore.JSON[ExitInfo](paths.AgentStateDir, "session-exit", ".json")
+	pendingQuestions = fstore.Raw(paths.AgentStateDir, "pending-question", ".json")
+	pendingPlans     = fstore.Strings(paths.AgentStateDir, "pending-plan", ".md")
+	pendingPerms     = fstore.Strings(paths.AgentStateDir, "pending-perm", ".txt")
+	lastTools        = fstore.Strings(paths.AgentStateDir, "pending-perm", ".tool")
+	pendingTexts     = fstore.Strings(paths.AgentStateDir, "pending-text", ".txt")
+	carriedFiles     = fstore.JSON[Carried](paths.AgentStateDir, "carried-interaction", ".json")
 	// observedEnds holds the end of turn a POLL saw, apart from the status record so that
 	// recording it can never overwrite one — see ObservedTurnEnd for why that separation is
 	// load-bearing rather than tidy.
-	observedEnds = fstore.JSON[observedEnd](paths.AgentConfigDir, "session-turn-end", ".json")
+	observedEnds = fstore.JSON[observedEnd](paths.AgentStateDir, "session-turn-end", ".json")
 )
 
 // observedEnd is an end of turn a poll saw, tagged with the SessionStatus.Rev of the record

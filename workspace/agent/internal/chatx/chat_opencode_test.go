@@ -3,6 +3,7 @@ package chatx
 import (
 	"encoding/json"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,7 +133,7 @@ func TestChatDeleteRemovesOpencodeConfig(t *testing.T) {
 	if path == "" {
 		t.Fatal("no config generated")
 	}
-	if err := os.Remove(filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd",
+	if err := os.Remove(filepath.Join(paths.AgentStateDir(), "chat-wd",
 		"opencode-conv", id+".json")); err != nil {
 		t.Fatalf("no config at the path the delete path points at: %v", err)
 	}

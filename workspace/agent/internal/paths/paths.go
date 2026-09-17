@@ -1,7 +1,7 @@
 // Package paths holds the path conventions under the home directory (docs/log/23 P1-W5).
-// ~/.config/agent-fleet is inside the denylist (hidden from the file browser) and houses both
-// the fstore stores and the credential store. This is the lowest-layer helper, referenced by
-// package main and internal/session/status alike.
+// Both agent-fleet roots — ~/.config/agent-fleet and ~/.local/state/agent-fleet — are inside
+// the file browser's denylist. This is the lowest-layer helper, referenced by package main
+// and internal/session/status alike.
 package paths
 
 import (
@@ -17,9 +17,44 @@ func HomeDir() string {
 	return os.Getenv("HOME")
 }
 
-// AgentConfigDir is the root the per-sid file stores (fstore) live under.
+// AgentConfigDir is the root for what a Workspace must not lose: the credential store
+// (internal/secrets), anything that can carry a credential value, user-supplied
+// configuration and user-authored content.
+//
+// On the ecs-ec2 runtime it is NOT in the home volume. ~/.config is one of AF_WS_KEEP_DIRS,
+// so the entrypoint replaces it with a symlink into AF_WS_KEEP — an EFS mount shared by
+// every Workspace in the deployment (ADR 0045 decision 3-6: home is a single-AZ EBS volume,
+// and losing it must not cost anyone their logins). Every read here is therefore an NFS
+// round trip, which is why only the durable half lives here (ADR 0087 decision 4).
 func AgentConfigDir() string {
 	return filepath.Join(HomeDir(), ".config", "agent-fleet")
+}
+
+// AgentStateDir is the root for what the agent derives and can rebuild: per-session and
+// per-turn state, the session ledger, the scratch working directories of chat runs. It is
+// in the home volume (local disk on every runtime), and the fstore stores resolve through
+// it — a session-list poll reads hundreds of these files every four seconds, and on EFS
+// that measured 836 file syscalls per poll per open Console tab (ADR 0087 source A).
+//
+// The line between the two roots, in the order to apply it:
+//
+//  1. a credential, or a file that can carry one → AgentConfigDir (secrets.*, the legacy
+//     plaintext credential files, mcp-tenant.json: a tenant-distributed server definition
+//     arrives with header and env VALUES in it);
+//  2. user-supplied configuration or user-authored content → AgentConfigDir (rtk.json,
+//     ui-prefs.json, toolchains.json, user-notes*, assistants/, knowledge/, locks.json,
+//     chats/ and the rest);
+//  3. everything else → here. Anything keyed by session name or sid belongs on this side:
+//     the session ledger itself moved, so state that outlives it is meaningless anyway.
+//
+// What moves here is lost with the EBS volume. That is the trade the ADR makes: an empty
+// session list is recoverable in a way a lost credential store is not (the transcripts
+// themselves sit under CLAUDE_CONFIG_DIR and are not affected either way).
+//
+// internal/statemig carries the one-way migration off the old location and the list of
+// entries it moves; add to that list when adding a store here.
+func AgentStateDir() string {
+	return filepath.Join(HomeDir(), ".local", "state", "agent-fleet")
 }
 
 // ClaudeConfigDir resolves where the claude CLI reads/writes its state

@@ -91,7 +91,7 @@ func isolateAgentState(t *testing.T) {
 	// kill-server of the PREVIOUS round of the same name.
 	t.Setenv("AF_TMUX_SOCKET", isolatedTmuxSocket())
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
-	// The status store sits directly under HOME (paths.AgentConfigDir) — never write a marker
+	// The status store sits directly under HOME (paths.AgentStateDir) — never write a marker
 	// into the real fleet.
 	t.Setenv("HOME", t.TempDir())
 	// Isolate claude's config/credentials too. HOME alone is not enough: in this container

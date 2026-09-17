@@ -528,7 +528,7 @@ func TestInterimDeliveryIsAwaitable(t *testing.T) {
 
 	// (1) The notification sits in the temp HOME's outbox (= it did not leak to the
 	// real HOME).
-	outbox := filepath.Join(home, ".config", "agent-fleet", "notification-outbox")
+	outbox := filepath.Join(home, ".local", "state", "agent-fleet", "notification-outbox")
 	ents, err := os.ReadDir(outbox)
 	if err != nil || len(ents) != 1 {
 		t.Fatalf("no notification in %s by the time the wait returned (err=%v, count=%d)", outbox, err, len(ents))
@@ -594,7 +594,7 @@ func TestInstrLedgerFileLocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	AddInstruction("slot09", conv.ID, "operator")
-	p := filepath.Join(home, ".config", "agent-fleet", "instr-ledger", "slot09.json")
+	p := filepath.Join(home, ".local", "state", "agent-fleet", "instr-ledger", "slot09.json")
 	if _, err := os.Stat(p); err != nil {
 		t.Fatalf("expected ledger at %s: %v", p, err)
 	}

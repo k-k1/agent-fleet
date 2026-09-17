@@ -469,6 +469,66 @@ denylist（`fs.go:123`）で守られている。移行先が denylist に入っ
 軽い、というのがここでの判断である。**資格情報（`secrets.*`・`~/.ssh`・`.git-credentials`・
 `.claude.json`）は EFS に残す**——平文をローカルに残さないという ADR 0045 の線は動かさない。
 
+#### 実装（(b) を採用）
+
+`paths.AgentStateDir()` = `~/.local/state/agent-fleet` を新設し、`AgentConfigDir()` は
+`~/.config/agent-fleet` のまま残した。どちらに置くかは、この順で判定する:
+
+1. **資格情報、または資格情報を運び得るもの**は `AgentConfigDir`。`secrets.*` のほか
+   `mcp-tenant.json` がこれに当たる——🔥 `user_secret` でないテナント配布の定義は
+   **ヘッダと env の「値」ごと届く**（`secrets.go:325` の `UserSecret` のコメントがその理由を
+   書いている）ので、素朴に「id しか入っていない」と見なすと資格情報を EBS へ降ろすことになる。
+   `chat-mcp/`（会話ごとの `--mcp-config`）も同じ理由で残した（3 ファイル・16 KB で、
+   降ろしても I/O の得は無い）。
+2. **利用者が与えた設定・利用者が書いたもの**は `AgentConfigDir`（`rtk.json`・`ui-prefs.json`・
+   `toolchains.json`・`user-notes*`・`assistants/`・`knowledge/`・`locks.json`・`mcp-optout.json`・
+   `chats/`）。`mcp-managed.json` もここに残す——af が他 CLI の設定ファイルへ書いた行を
+   消してよい唯一の根拠であり、その設定ファイル自身（`~/.claude.json`・`~/.codex`・
+   `~/.config/opencode`）も keep にある。片方だけ失うと**消せない孤児**が残る。
+3. **残りは `AgentStateDir`。** セッション名や sid で引くものは全部こちら——台帳が降りた以上、
+   台帳より長生きする状態に意味は無い。
+
+移行は Agent 起動時の 1 回（`internal/statemig`、`main.go` のサブコマンド分岐の直後・
+他のどの読み出しよりも前）。**中断時にどちらを正とするか**は次の 3 つで決めた:
+
+- **移行先が正。** 既に移行先にあるものは決して上書きしない。書くのは新しいビルドだけなので、
+  移行中にフック子プロセスが書いたファイルも含めて、移行先の方が必ず新しい。
+- **ディレクトリ単位ではなくファイル単位。** ディレクトリ単位だと、途中で落ちた半分の
+  ディレクトリと完了したディレクトリが見分けられず、次回起動が残りを永久に飛ばす。
+- **コピーできた元ファイルは消し、完了した entry は移行先の `.migrated-from-config.json` に
+  記録する。** 両方とも「移行した後で利用者が消したもの」が復活するのを止めるためにある——
+  これが無いと、セッションを削除した次の起動で `.config` 側の残骸からメタが蘇る。
+
+したがって `.config/agent-fleet` 側の残骸は想定内で、次回起動で収束する。
+
+🔴 **symlink は symlink のままコピーする。** チャットの作業ディレクトリは**実物の資格情報を
+リンクで借りている**——`chat-claude/.credentials.json` → claude の設定マウント、
+`chat-codex/auth.json` → `~/.codex/auth.json`、`chat-wd/agy-*/home/.gemini/.../antigravity-oauth-token`
+の 3 本（実測）。辿ってコピーすると**平文の複製が 3 つ home に落ちる**——ADR 0045 決定 3-6 が
+禁じているまさにそれで、さらに `reconcileChatCreds` の書き戻し先が誰も読まないファイルになる。
+
+移行先は同じコミットで denylist（`fs.go`）に足した。`statemig.Entries` は allowlist で、
+**`paths.AgentStateDir` 経由の店子が `Entries` に無ければ落ちるテスト**（`statemig_drift_test.go`）
+を付けてある。逆（denylist 方式）にしなかったのは、足し忘れの向きが違うからである——
+allowlist の足し忘れは「1 つの店子が EFS に残る」だが、denylist の足し忘れは
+「資格情報や利用者の設定が EBS へ降りる」。`deploy/`（`deploy/aws/ecs/env.sh` が書く）が
+その典型で、移すと配備スクリプトが壊れる。
+
+実測（`internal/session/meta_probe_test.go`・strace・メタ 207 件 × 100 回）:
+`ListMetas()` 1 回あたり **836 のファイル系システムコールは変わらない**——変わったのは
+**その全部が home に落ちること**で、`.config/agent-fleet` に落ちるものは **0** になった
+（openat 21,018 / read 41,404 / close 21,017 / getdents64 213、すべて
+`.local/state/agent-fleet/sessions/` 配下）。
+
+⚠️ **`chats/`（アシスタントの会話そのもの）は動かしていない。** `ListConvs()` は
+`ListMetas()` と同じ形（`ReadDir` ＋ 1 件ずつ `ReadFile`）で、しかも読むのは会話全文である。
+ただし**ポーリング頻度を測っていない**し、これは利用者が書いた中身なので、
+「EBS を失えば一緒に失われる」を会話に対しても認めるかは別の判断が要る。次の候補。
+
+⚠️ claude のフック定義は壊れない（確認済み）。`hooks.go` がコマンド行に埋めるのは
+**Agent のバイナリのパスだけ**（`<exe> session-status <state>`）で、状態の置き場は
+Agent が実行時に解決する。移行前に書かれたフックはそのまま新しい場所へ書く。
+
 ### 決定 5（恒久・P1）: `projects/*` の全掃引を残り 2 箇所で止める
 
 - **`subagentBases()` の miss を、状態表示の経路に限って覚える。** 転写側の「miss を覚えない」

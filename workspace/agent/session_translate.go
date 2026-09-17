@@ -166,7 +166,7 @@ type sessionTranslation struct {
 }
 
 func sessionTranslationsPath(name string) string {
-	return filepath.Join(paths.AgentConfigDir(), "session-translations", name+".json")
+	return filepath.Join(paths.AgentStateDir(), "session-translations", name+".json")
 }
 
 // translateStoreMu serialises the store's read-modify-write. Two panes (or one reader on a

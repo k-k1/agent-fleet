@@ -100,7 +100,7 @@ type instrLedger struct {
 	Rows []instrRow `json:"rows"`
 }
 
-var instrLedgers = fstore.JSON[instrLedger](paths.AgentConfigDir, "instr-ledger", ".json")
+var instrLedgers = fstore.JSON[instrLedger](paths.AgentStateDir, "instr-ledger", ".json")
 
 // instrClosedKeep bounds the history kept per session: open rows are always kept, closed rows
 // only the newest instrClosedKeep of them — enough for reopen compensation and investigation,

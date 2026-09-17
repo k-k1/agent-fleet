@@ -192,7 +192,7 @@ func TestSweepSettledPending(t *testing.T) {
 		status.AppendPendingText(sid, "前置き")
 		// Set up the relation that the payload was written when the question appeared, i.e.
 		// before the decision.
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
 
 		// The sweep runs inside surfacePendingPayloads (the same place as the surfacing
 		// path), so the surfacing side is called here too, pinning at once that the payload
@@ -217,7 +217,7 @@ func TestSweepSettledPending(t *testing.T) {
 		// The hook wrote first and the tool_use line is not flushed yet (measured 106-122ms).
 		// The decision visible in the transcript belongs to the PREVIOUS modal, and a live
 		// question must not be removed because of it.
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:05:00.100Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "pending-question", sid+".json"), "2026-08-31T12:05:00.100Z")
 
 		resp := map[string]any{}
 		surfacePendingPayloads(resp, sid, "question", [][]byte{ask, decided})
@@ -239,8 +239,8 @@ func TestSweepSettledPending(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingQuestion(sid, raw)
 		status.WritePendingPermission(sid, "Claude needs your permission")
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"), "2026-08-31T12:00:06.000Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "pending-perm", sid+".txt"), "2026-08-31T12:00:06.000Z")
 
 		resp := map[string]any{}
 		surfacePendingPayloads(resp, sid, "permission", [][]byte{ask, decided})
@@ -258,7 +258,7 @@ func TestSweepSettledPending(t *testing.T) {
 	t.Run("a permission after the decision is genuine, so keep it", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingPermission(sid, "Edit · /tmp/a.go")
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"), "2026-08-31T12:09:00.000Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "pending-perm", sid+".txt"), "2026-08-31T12:09:00.000Z")
 
 		resp := map[string]any{}
 		surfacePendingPayloads(resp, sid, "permission", [][]byte{ask, decided})
@@ -279,9 +279,9 @@ func TestSweepSettledPending(t *testing.T) {
 		// The AUQ's own permission_prompt has overwritten the state with permission (measured:
 		// 6 seconds after the question). A cancel fires no PostToolUse, so nobody rewrites it.
 		status.Persist(sid, "permission")
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"), "2026-08-31T12:00:06.000Z")
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"), "2026-08-31T12:00:06.000Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "pending-perm", sid+".txt"), "2026-08-31T12:00:06.000Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "session-status", sid+".json"), "2026-08-31T12:00:06.000Z")
 
 		surfacePendingPayloads(map[string]any{}, sid, "permission", [][]byte{ask, decided})
 
@@ -300,8 +300,8 @@ func TestSweepSettledPending(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingPermission(sid, "Edit · /tmp/a.go")
 		status.Persist(sid, "permission")
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"), "2026-08-31T12:09:00.000Z")
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"), "2026-08-31T12:00:06.000Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "pending-perm", sid+".txt"), "2026-08-31T12:09:00.000Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "session-status", sid+".json"), "2026-08-31T12:00:06.000Z")
 
 		surfacePendingPayloads(map[string]any{}, sid, "permission", [][]byte{ask, decided})
 
@@ -315,7 +315,7 @@ func TestSweepSettledPending(t *testing.T) {
 	t.Run("a state after the decision is kept", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.Persist(sid, "permission")
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"), "2026-08-31T12:05:00.100Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "session-status", sid+".json"), "2026-08-31T12:05:00.100Z")
 
 		surfacePendingPayloads(map[string]any{}, sid, "permission", [][]byte{ask, decided})
 
@@ -330,7 +330,7 @@ func TestSweepSettledPending(t *testing.T) {
 	t.Run("a state that is not a modal is left alone", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.Persist(sid, "working")
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"), "2026-08-31T12:00:06.000Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "session-status", sid+".json"), "2026-08-31T12:00:06.000Z")
 
 		surfacePendingPayloads(map[string]any{}, sid, "working", [][]byte{ask, decided})
 
@@ -342,7 +342,7 @@ func TestSweepSettledPending(t *testing.T) {
 	t.Run("nothing is touched when there is no decision at all", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingQuestion(sid, raw)
-		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
+		backdate(t, filepath.Join(paths.AgentStateDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
 
 		surfacePendingPayloads(map[string]any{}, sid, "question", [][]byte{ask})
 
@@ -372,9 +372,9 @@ func TestCancelledInteractionFreesComposer(t *testing.T) {
 	status.WritePendingPermission(sid, "Claude needs your permission")
 	status.Persist(sid, "permission")
 	for path, ts := range map[string]string{
-		filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"): "2026-09-04T12:00:00.100Z",
-		filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"):      "2026-09-04T12:00:06.000Z",
-		filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"):   "2026-09-04T12:00:06.000Z",
+		filepath.Join(paths.AgentStateDir(), "pending-question", sid+".json"): "2026-09-04T12:00:00.100Z",
+		filepath.Join(paths.AgentStateDir(), "pending-perm", sid+".txt"):      "2026-09-04T12:00:06.000Z",
+		filepath.Join(paths.AgentStateDir(), "session-status", sid+".json"):   "2026-09-04T12:00:06.000Z",
 	} {
 		backdate(t, path, ts)
 	}

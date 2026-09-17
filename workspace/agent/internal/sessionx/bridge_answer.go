@@ -38,7 +38,7 @@ type bridgeAnswerState struct {
 	Picks map[int]int `json:"picks"` // question index → chosen option index
 }
 
-var bridgeAnswers = fstore.JSON[bridgeAnswerState](paths.AgentConfigDir, "bridge-answers", ".json")
+var bridgeAnswers = fstore.JSON[bridgeAnswerState](paths.AgentStateDir, "bridge-answers", ".json")
 
 // bridgeAnswerMu serializes the pick accumulate→submit read-modify-write: two
 // near-simultaneous button clicks would otherwise drop a pick (the form never

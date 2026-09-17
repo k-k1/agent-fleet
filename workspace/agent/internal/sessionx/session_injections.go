@@ -129,7 +129,7 @@ type injectedPrompt struct {
 // paths touch session state and Meta is one clobber-prone blob. (Format note: this replaced
 // an earlier []string operator-only store — an old file simply fails to decode into the new
 // shape and is treated as empty, which only drops badges on in-flight sessions at upgrade.)
-var injectionStore = fstore.JSON[[]injectedPrompt](paths.AgentConfigDir, "session-injections", ".json")
+var injectionStore = fstore.JSON[[]injectedPrompt](paths.AgentStateDir, "session-injections", ".json")
 
 // injectionMu serializes recordInjection's read-modify-write — concurrent injections
 // (operator + scheduler) would otherwise drop each other's record (= a missing badge).

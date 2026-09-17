@@ -29,7 +29,7 @@ func residueHome(t *testing.T, body string) string {
 // outbox reads the queued notifications the Control Plane would drain.
 func outbox(t *testing.T, home string) []notice.Event {
 	t.Helper()
-	dir := filepath.Join(home, ".config", "agent-fleet", "notification-outbox")
+	dir := filepath.Join(home, ".local", "state", "agent-fleet", "notification-outbox")
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
