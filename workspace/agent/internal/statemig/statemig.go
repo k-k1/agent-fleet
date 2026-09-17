@@ -388,9 +388,10 @@ func readMarker(dst string) marker {
 // comes back.
 //
 // Read-modify-write still has a window between the read and the rename, and closing it would
-// need a lock. That is out of proportion for what can collide: the Agent runs this once at
-// boot, and the only other caller is the af-db subcommand, which a user can start at any
-// moment from a terminal. Two of them at once cost at most a marker entry — the copying
+// need a lock. That is out of proportion for what can collide: two Agents cannot, because the
+// boot takes its listening socket before it migrates and a second one dies on the bind
+// (main.go), so the only other caller is the af-db subcommand, which a user can start at any
+// moment from a terminal. Two of those at once cost at most a marker entry — the copying
 // itself stays correct through O_EXCL and "the destination is the truth", and a lost entry
 // only means the next boot re-checks that entry and finds nothing to do. The loser of such a
 // race also logs an ENOENT from its own os.Remove, which is noise rather than damage.

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -58,19 +59,32 @@ func (a *AsyncOp) StartIfIdle(initialState string) bool {
 // All fields are always present (no omitempty) so the Console type can
 // treat every key as required without truthy guards on the sender side.
 type EngineStatus struct {
-	Engine     string            `json:"engine"`
-	Major      string            `json:"major"`
-	Installed  bool              `json:"installed"`
-	State      string            `json:"state"`
-	Version    string            `json:"version"`
-	RSSBytes   int64             `json:"rssBytes"`
-	Port       int               `json:"port"`
-	Datadir    string            `json:"datadir"`
-	URLSocket  string            `json:"urlSocket"`
-	URLTCP     string            `json:"urlTcp"`
-	Databases  map[string]string `json:"databases"`
-	LastUsedAt time.Time         `json:"lastUsedAt"`
-	LastError  string            `json:"lastError"`
+	Engine     string          `json:"engine"`
+	Major      string          `json:"major"`
+	Installed  bool            `json:"installed"`
+	State      string          `json:"state"`
+	Version    string          `json:"version"`
+	RSSBytes   int64           `json:"rssBytes"`
+	Port       int             `json:"port"`
+	Datadir    string          `json:"datadir"`
+	Databases  []DatabaseEntry `json:"databases"`
+	LastUsedAt time.Time       `json:"lastUsedAt"`
+	LastError  string          `json:"lastError"`
+}
+
+// DatabaseEntry is one database that exists on this engine, with the URLs that
+// reach it. There is one per working copy (decision 3′).
+//
+// The URLs belong to the entry, not to the engine: the Agent runs from its own
+// directory, so a single engine-level URL could only ever name the Agent's own
+// database — a name no session uses and that nothing creates. The first live run
+// of the card offered exactly that, and the copied URL answered
+// "database af_dev_… does not exist".
+type DatabaseEntry struct {
+	Name      string `json:"name"`
+	Dir       string `json:"dir"`
+	URLSocket string `json:"urlSocket"`
+	URLTCP    string `json:"urlTcp"`
 }
 
 // isEngineInstalled reports whether the engine binary is present on disk.
@@ -116,7 +130,7 @@ func BuildEngineStatus(engine, major string) EngineStatus {
 		Major:     major,
 		Installed: isEngineInstalled(engine, major),
 		LastError: lastError,
-		Databases: map[string]string{},
+		Databases: []DatabaseEntry{},
 	}
 
 	// State priority: async op in flight > running > error from last op > stopped > absent
@@ -137,22 +151,11 @@ func BuildEngineStatus(engine, major string) EngineStatus {
 	status.Port = inst.Port
 	status.Datadir = inst.Datadir
 	status.LastUsedAt = inst.LastUsedAt
-	if inst.Databases != nil {
-		status.Databases = inst.Databases
-	}
 
 	running := isInstanceRunning(inst)
 	if running {
 		status.State = "running"
-		pw := readPass(passPath(engine, major))
-		dbName := DBNameFor(ResolveDir())
-		if engine == "mysql" {
-			status.URLSocket = buildMySQLURL(inst, dbName, pw, false)
-			status.URLTCP = buildMySQLURL(inst, dbName, pw, true)
-		} else {
-			status.URLSocket = buildURL(inst, dbName, pw, false)
-			status.URLTCP = buildURL(inst, dbName, pw, true)
-		}
+		status.Databases = databaseEntries(inst, engine, major)
 		status.Version = instanceVersion(inst)
 		status.RSSBytes = rssForInstance(inst)
 	} else if lastError != "" {
@@ -162,6 +165,32 @@ func BuildEngineStatus(engine, major string) EngineStatus {
 	}
 
 	return status
+}
+
+// databaseEntries lists the instance's databases, sorted by name, each with the
+// URLs that reach it. Only called while the instance is running: a stopped
+// engine has no port and no URL to hand out.
+func databaseEntries(inst *Instance, engine, major string) []DatabaseEntry {
+	names := make([]string, 0, len(inst.Databases))
+	for name := range inst.Databases {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	pw := readPass(passPath(engine, major))
+	out := make([]DatabaseEntry, 0, len(names))
+	for _, name := range names {
+		e := DatabaseEntry{Name: name, Dir: inst.Databases[name]}
+		if engine == "mysql" {
+			e.URLSocket = buildMySQLURL(inst, name, pw, false)
+			e.URLTCP = buildMySQLURL(inst, name, pw, true)
+		} else {
+			e.URLSocket = buildURL(inst, name, pw, false)
+			e.URLTCP = buildURL(inst, name, pw, true)
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // HandleDatabasesGet handles GET /env/databases.

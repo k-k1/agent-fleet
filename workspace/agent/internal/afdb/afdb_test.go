@@ -2,6 +2,7 @@ package afdb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -58,6 +59,122 @@ func TestInstanceKeyString(t *testing.T) {
 	}
 	if got := instanceKey("postgres", "17"); got != "postgres-17" {
 		t.Errorf("instanceKey(postgres, 17) = %q, want postgres-17", got)
+	}
+}
+
+// TestRegistryMajorNumberOrString covers the registry a P0 agent left behind,
+// where "major" is a JSON number: it has to load, or every verb stops with
+// "registry parse" and nothing can repair it.
+func TestRegistryMajorNumberOrString(t *testing.T) {
+	const p0 = `{"instances":{"postgres-17":{"engine":"postgres","major":17,` +
+		`"root":"/r","datadir":"/d","sockdir":"/s","port":0}}}`
+	const p1 = `{"instances":{"mysql-8.4":{"engine":"mysql","major":"8.4",` +
+		`"root":"/r","datadir":"/d","sockdir":"/s","port":3306}}}`
+
+	for _, tc := range []struct{ name, in, key, want string }{
+		{"p0 number", p0, "postgres-17", "17"},
+		{"p1 string", p1, "mysql-8.4", "8.4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var r registry
+			if err := json.Unmarshal([]byte(tc.in), &r); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			inst := r.Instances[tc.key]
+			if inst == nil {
+				t.Fatalf("instance %q missing", tc.key)
+			}
+			if inst.Major != tc.want {
+				t.Errorf("Major = %q; want %q", inst.Major, tc.want)
+			}
+			// The rest of the instance must survive the custom unmarshaller.
+			if inst.Root != "/r" || inst.Datadir != "/d" || inst.Sockdir != "/s" {
+				t.Errorf("other fields lost: %+v", inst)
+			}
+		})
+	}
+
+	// A major that is neither string nor number is still an error.
+	var r registry
+	if err := json.Unmarshal([]byte(`{"instances":{"x":{"major":{"a":1}}}}`), &r); err == nil {
+		t.Error("expected an error for an object-valued major")
+	}
+}
+
+// TestTailWriterReason covers what a failed installer contributes to the error
+// the Console card shows: the last lines, never more than the tail it keeps.
+func TestTailWriterReason(t *testing.T) {
+	var empty tailWriter
+	if got := empty.reason(); got != "" {
+		t.Errorf("empty reason = %q; want \"\"", got)
+	}
+
+	var w tailWriter
+	fmt.Fprint(&w, "[install-mysql] downloading ...\n\n[install-mysql] extracting ...\n")
+	fmt.Fprint(&w, "[install-mysql] linked libaio.so.1 -> /lib/libaio.so.1t64\n")
+	fmt.Fprint(&w, "[install-mysql] verifying ...\n")
+	fmt.Fprint(&w, "ldd bin/mysqld: unresolved libraries: libaio.so.1\n")
+	got := w.reason()
+	if !strings.HasPrefix(got, ": ") {
+		t.Errorf("reason should be appendable to an error message, got %q", got)
+	}
+	if !strings.Contains(got, "libaio.so.1") {
+		t.Errorf("reason should keep the last line: %q", got)
+	}
+	if strings.Contains(got, "downloading") {
+		t.Errorf("reason should keep only the last lines: %q", got)
+	}
+
+	var big tailWriter
+	for i := 0; i < 500; i++ {
+		fmt.Fprintf(&big, "line %d of installer chatter\n", i)
+	}
+	if len(big.buf) > tailWriterMax {
+		t.Errorf("tail grew to %d bytes; want at most %d", len(big.buf), tailWriterMax)
+	}
+	if !strings.Contains(big.reason(), "line 499") {
+		t.Errorf("reason should end with the last line, got %q", big.reason())
+	}
+}
+
+// TestDatabaseEntriesPerWorkingCopy pins what the Console card copies: one entry
+// per registered database, sorted, each URL naming its OWN database. The first
+// live run built a single engine-level URL from the Agent's own directory, which
+// named a database nothing had created.
+func TestDatabaseEntriesPerWorkingCopy(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	inst := &Instance{
+		Engine:  "postgres",
+		Major:   "17",
+		Sockdir: filepath.Join(tmp, "run"),
+		Port:    5433,
+		Databases: map[string]string{
+			"af_zzz_000000": "/home/dev/repos/zzz",
+			"af_aaa_111111": "/home/dev/repos/aaa",
+		},
+	}
+	entries := databaseEntries(inst, "postgres", "17")
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d; want 2", len(entries))
+	}
+	if entries[0].Name != "af_aaa_111111" || entries[1].Name != "af_zzz_000000" {
+		t.Errorf("entries not sorted by name: %v", entries)
+	}
+	if entries[0].Dir != "/home/dev/repos/aaa" {
+		t.Errorf("entry lost its working copy: %q", entries[0].Dir)
+	}
+	for _, e := range entries {
+		if !strings.Contains(e.URLSocket, e.Name) {
+			t.Errorf("socket URL %q does not name its own database %q", e.URLSocket, e.Name)
+		}
+		if !strings.Contains(e.URLTCP, e.Name) {
+			t.Errorf("TCP URL %q does not name its own database %q", e.URLTCP, e.Name)
+		}
+		if strings.Contains(e.URLSocket, DBNameFor(ResolveDir())) && e.Name != DBNameFor(ResolveDir()) {
+			t.Errorf("URL names the agent's own directory instead of the entry: %q", e.URLSocket)
+		}
 	}
 }
 

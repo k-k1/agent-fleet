@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -770,10 +771,11 @@ func ensureInstalled(root, major string) error {
 		self = "/usr/local/bin/workspace-agent"
 	}
 	cmd := exec.Command(self, "install-postgres", major)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	var log tailWriter
+	cmd.Stdout = io.MultiWriter(os.Stderr, &log)
+	cmd.Stderr = cmd.Stdout
 	if err := cmd.Run(); err != nil {
-		return errInstall(fmt.Sprintf("install-postgres %s failed: %v", major, err))
+		return errInstall(fmt.Sprintf("install-postgres %s failed: %v%s", major, err, log.reason()))
 	}
 	if _, err := os.Stat(bin); err != nil {
 		return errInstall(fmt.Sprintf("install-postgres %s completed but %s not found", major, bin))

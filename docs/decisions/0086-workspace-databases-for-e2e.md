@@ -405,6 +405,10 @@ route. Decisions 1, 2, 5–10 stand; two of them gain a P0 item each (a client, 
   architectures" holds. And one trap: `workspace-agent <unknown-subcommand>` **boots the
   Agent** (`main.go` is a chain of `os.Args[1] ==` tests with no default), so `af-db` must be
   both a real `/usr/local/bin/af-db` shim and a dispatch line in `main.go`.
+  🔴 2026-09-17: the trap is closed. The branches are one table in `cli.go`; an argument it does
+  not name prints usage and exits 2, `--version` / `--help` are supported, and only "no
+  arguments" and `serve` boot the Agent. `af-db` is still a shim plus a table row. A second
+  Agent is harmless too — `serve` now takes the listening socket before any boot side effect.
 - **Decision 4 describes one profile as if it were all of them.** `AF_WS_SCRATCH` is set only
   by the ECS adapters (`entrypoint.sh:246`), and the entrypoint relocates only when the disk is
   30 GiB or more (`AF_WS_SCRATCH_MIN_GB`, `entrypoint.sh:263`) — a default Fargate deployment
@@ -812,3 +816,91 @@ residue was running in this container during the acceptance (a `mysqld` from
 **Next**: rebuild and deploy the development image (the `mysql` pin, the three libraries, the
 `af-db` shim and the `postgres` pin route are all unexercised until then), then the live card
 and the first ECS run with a scratch-disk datadir.
+
+## On the rebuilt image (2026-09-17, first live run)
+
+The development image was rebuilt from `9d5effa5` (the merge of #719) and deployed to this
+container. It carries what P1 asked for: `/usr/local/bin/af-db`, the `postgres` / `mysql` pins
+with their per-architecture shas in `versions.json`, and `libaio1t64` / `libnuma1` /
+`libncurses6`. Both paths the P0 and P1 acceptances could not reach are now measured, from
+HOMEs that had never seen `af-db`, and both found something.
+
+**The pinned supply route works.** `install-postgres` took 1.9 s and `af-db up` 3.3 s; the
+`control-plane` criterion gave **4 PASS, 0 SKIP** again; `install-mysql` downloaded the pinned
+8.4.6 and the `mysql_sha256` from `versions.json` verified the real tarball, so the pin route —
+untested until now, and without the Maven-metadata fallback Postgres has — is exercised.
+
+- **The three libraries are not enough: `libaio.so.1` is not what trixie ships.** MySQL's
+  binaries ask for `libaio.so.1`; `libaio1t64` installs `libaio.so.1t64` and **no compatibility
+  symlink**, so on the rebuilt image `install-mysql` still exited 3 with
+  `unresolved libraries: libaio.so.1`. The P1 acceptance never saw this because its
+  `AF_DB_MYSQL_LIBS` directory contained a hand-made `libaio.so.1 -> libaio.so.1t64.0.2` link,
+  scavenged before the bake existed. On 64-bit architectures the t64 library is ABI-identical,
+  so the fix is the symlink — made by `install-mysql` itself, into `lib/private`, which is on
+  the binaries' `RUNPATH` (`$ORIGIN/../lib/private`), so nothing touches `LD_LIBRARY_PATH` at
+  run time and arm64 is covered by the same code. `ldconfig -p` (readable as `dev`) supplies
+  the target; a soname with no `t64` counterpart is still reported by `mysqlCheckLDD`.
+  Measured after the fix, no `AF_DB_MYSQL_LIBS` anywhere: install 7.5 s, `af-db up mysql`
+  15.0 s, `SELECT j->>'$.a'` → `42` over the socket, `version` 8.4.6, `rssBytes` 233 MB,
+  `down --purge` clean. `AF_DB_MYSQL_LIBS` stays as the escape hatch, not the procedure.
+- **The Console card could not be verified, for a reason that has nothing to do with this
+  ADR.** `GET /env/databases` on the running Agent answers **404** while `/env/toolchains`
+  answers 200: `/proc/7/exe` points at `/home/dev/.local/bin/workspace-agent`, a hand-built
+  P0-era binary (2026-09-17 06:29) left behind by a lane during the P0 acceptance. The
+  entrypoint's `exec workspace-agent` goes through `PATH`, where `~/.local/bin` wins, and
+  `~/.local` survives both restart and recreate — so one stray build silently becomes the
+  container's Agent forever. The `af-db` shim (`exec workspace-agent af-db "$@"`) has the same
+  shape, while the Go code already hardcodes `/usr/local/bin/workspace-agent` for its own
+  re-exec (`paths.go:126`, `afdb/cmd.go:770`, `afdb/mysql.go:77`). The stray binary was removed
+  and the workspace restarted; `CMD` and the `af-db` shim now name
+  `/usr/local/bin/workspace-agent` so it cannot happen again from an image rebuild onwards. The
+  session commands that still call a bare `workspace-agent` (`record-exit`, `record-terminal`,
+  `install-kiro --if-needed`, `install-awscli`) have the same shape and were left alone: they
+  run in the member's own shell, where the shadow is at least visible. Until the rebuilt image
+  is deployed, the card's healthy states stay unseen — only `lastError` is reachable.
+
+### After the restart: the card's API is live, and two more corrections
+
+With the stray binary gone and the workspace restarted, `/proc/7/exe` is the image's agent and
+`GET /env/databases` answers 200 with every field present. Driving it: `POST …/postgres/start`
+went `starting` → `running` in under 6 s (`version` 17.11, `rssBytes` 47–49 MB, the allocated
+port), and `af-db url` from this working copy added its database to the payload.
+`POST …/mysql/start` ended in `state=error` — this image predates the `libaio` fix above, which
+is exactly what a member on today's image would see.
+
+- **A registry from an older agent stops everything.** The first `start` after the restart
+  failed with `registry parse: json: cannot unmarshal number into Go struct field
+  Instance.instances.major`: the P0 build wrote `"major": 17` as a number, P1 made it a string,
+  and `~/.config` survives recreate. The contract's "the registry is new in P0 and not deployed,
+  so no migration" holds for images, not for a HOME where an older build ever ran — and an
+  unreadable registry disables the very verbs that could repair it. `Instance.UnmarshalJSON` now
+  takes both forms, and the parse error names the file. (`af-db status` was also hiding the
+  problem behind an empty instance list while the HTTP path reported it.)
+- **`lastError` has to carry the reason.** The card showed `install-mysql 8.4 failed: exit
+  status 3`; the `libaio.so.1` line that explains it went to the Agent's log only. The installer's
+  last lines are now appended to the error, the same lesson the Console already learned about
+  generic `*_failed` codes.
+- **Noted, not changed**: `urlSocket` in the API payload carries the password in clear, because
+  decision 9's card masks it for display and copies it whole — so CP relays a workspace
+  credential to the browser, where `af-db status --json` deliberately carries none.
+
+### The card's URL was for a database nobody had (contract change, M2 + M3)
+
+The first look at the rendered card found the copy button handing out
+`postgres://…/af_dev_12fbd7` — `DBNameFor("/home/dev")`, the **Agent process's own directory**.
+`psql` with that URL answers `FATAL: database "af_dev_12fbd7" does not exist`, while the
+registry's only database was `af_agent_fleet_wip_szkxzgu_9af42b` for this working copy. The
+Agent cannot resolve "the caller's working copy" — it has only its own — so an engine-level URL
+is wrong by construction, and the HTTP path never creates what it advertises.
+
+`EngineStatus` therefore drops `urlSocket` / `urlTcp` and `databases` becomes a list:
+`[{name, dir, urlSocket, urlTcp}]`, sorted by name, filled only while the engine is running.
+The card renders one block per database — name, working copy, the Socket/TCP toggle and Copy —
+and says "run `af-db url` in a working copy" when the list is empty. The empty list is also a
+`[]`, which retires the `databases: null` cosmetic from the P1 acceptance. The guide's card
+section says the same in both languages. Verified by unit tests on both sides
+(`TestDatabaseEntriesPerWorkingCopy`, and a DOM test that copies the second row's own URL);
+the live card gets this at the next image bake.
+
+**Next**, unchanged except for what this run closed: the Console card on a workspace whose
+Agent is the image's, the first ECS run with a scratch-disk datadir, and arm64 MySQL.
