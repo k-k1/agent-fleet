@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -175,6 +176,62 @@ func TestDatabaseEntriesPerWorkingCopy(t *testing.T) {
 		if strings.Contains(e.URLSocket, DBNameFor(ResolveDir())) && e.Name != DBNameFor(ResolveDir()) {
 			t.Errorf("URL names the agent's own directory instead of the entry: %q", e.URLSocket)
 		}
+	}
+}
+
+// TestStopInstanceWaitsForStartLock pins the exclusion that was missing: a purge
+// must not run while another caller holds the per-(engine, major) start lock,
+// because that caller is inside initdb / --initialize-insecure and the removal
+// would take a half-formed datadir out from under a booting server.
+func TestStopInstanceWaitsForStartLock(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// A registry entry with a datadir to purge, and no live server: stopInstance
+	// walks straight to the removal.
+	datadir := filepath.Join(tmp, "state", "postgres-17", "data")
+	if err := os.MkdirAll(datadir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := withLock(func() error {
+		r, err := readRegistry()
+		if err != nil {
+			return err
+		}
+		r.Instances["postgres-17"] = &Instance{
+			Engine: "postgres", Major: "17", Datadir: datadir,
+		}
+		return writeRegistry(r)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	released := make(chan struct{})
+	holding := make(chan struct{})
+	var releasedFirst atomic.Bool
+
+	go func() {
+		_ = withStartLock("postgres", "17", func() error {
+			close(holding)
+			// Hold it long enough that a stopInstance which ignores the lock
+			// removes the datadir before this returns.
+			time.Sleep(300 * time.Millisecond)
+			releasedFirst.Store(true)
+			return nil
+		})
+		close(released)
+	}()
+
+	<-holding
+	if err := stopInstance("postgres", "17", true); err != nil {
+		t.Fatalf("stopInstance: %v", err)
+	}
+	if !releasedFirst.Load() {
+		t.Error("stopInstance purged while the start lock was held")
+	}
+	<-released
+	if _, err := os.Stat(datadir); !os.IsNotExist(err) {
+		t.Errorf("datadir should be gone after the purge, stat err = %v", err)
 	}
 }
 

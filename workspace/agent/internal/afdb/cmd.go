@@ -3,6 +3,7 @@ package afdb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // RunAFDB is the entry point for `workspace-agent af-db <args>`.
@@ -534,7 +536,22 @@ func resetDB(engine, major string, explicitDB string) error {
 }
 
 // stopInstance stops the server; if purge=true, removes the datadir after the pid is gone.
+//
+// It runs under the same per-(engine, major) start lock as ensureUp, in the same
+// order (start lock outside, registry lock inside). Without it a `down --purge`
+// lands in the middle of another caller's initdb / --initialize-insecure and
+// removes a half-formed datadir under a server that is still booting — the
+// failure this ADR already measured once as a mysqld looping on errors after its
+// datadir vanished. The Agent's HTTP stop/reset and the idle loop reach the same
+// removal through this one function, so the lock belongs here.
 func stopInstance(engine, major string, purge bool) error {
+	return withStartLock(engine, major, func() error {
+		return stopInstanceLocked(engine, major, purge)
+	})
+}
+
+// stopInstanceLocked is stopInstance's body; the caller holds the start lock.
+func stopInstanceLocked(engine, major string, purge bool) error {
 	var inst *Instance
 	if err := withLock(func() error {
 		r, err := readRegistry()
@@ -935,7 +952,16 @@ func readPostmasterPID(datadir string) (int, error) {
 
 // ---- database management via pgx (Postgres) ----
 
+// pgDuplicateDatabase is SQLSTATE 42P04, what Postgres answers when the database
+// already exists. Postgres has no CREATE DATABASE IF NOT EXISTS (that spelling is
+// MySQL's), so tolerating this code IS the atomic form.
+const pgDuplicateDatabase = "42P04"
+
 // ensureDatabase creates the database if it does not already exist.
+//
+// It creates first and forgives 42P04 rather than asking pg_database and then
+// creating: two `af-db url` from the same purged state both saw "does not exist"
+// and the loser exited 1 on the bare CREATE.
 func ensureDatabase(connStr, dbName string) error {
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, connStr)
@@ -944,16 +970,11 @@ func ensureDatabase(connStr, dbName string) error {
 	}
 	defer conn.Close(ctx)
 
-	var exists bool
-	if err := conn.QueryRow(ctx,
-		"SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)", dbName,
-	).Scan(&exists); err != nil {
-		return fmt.Errorf("check database existence: %w", err)
-	}
-	if exists {
-		return nil
-	}
 	if _, err := conn.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{dbName}.Sanitize()); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgDuplicateDatabase {
+			return nil
+		}
 		return fmt.Errorf("create database %q: %w", dbName, err)
 	}
 	return nil
