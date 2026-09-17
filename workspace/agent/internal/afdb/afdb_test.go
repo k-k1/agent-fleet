@@ -101,6 +101,20 @@ func TestRegistryMajorNumberOrString(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"instances":{"x":{"major":{"a":1}}}}`), &r); err == nil {
 		t.Error("expected an error for an object-valued major")
 	}
+
+	// Writing back normalises the old number to this build's string form, so a
+	// registry only has to be forgiven once.
+	var old registry
+	if err := json.Unmarshal([]byte(p0), &old); err != nil {
+		t.Fatalf("unmarshal p0: %v", err)
+	}
+	b, err := json.Marshal(&old)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"major":"17"`) {
+		t.Errorf("rewritten registry should carry a string major, got %s", b)
+	}
 }
 
 // TestTailWriterReason covers what a failed installer contributes to the error

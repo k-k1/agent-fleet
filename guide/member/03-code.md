@@ -243,7 +243,9 @@ an engine without opening a terminal.
 
 - **Start** on an uninstalled engine downloads and installs it first, then starts it. The card
   polls automatically while the state is `installing` or `starting`.
-- **Stop** has a "Stop and remove data" option (`--purge`): use it to free the datadir space.
+- **Stop** has a "Stop and remove data" option (`--purge`): use it to free the datadir space. It
+  takes **every database on that engine** with it — other working copies' included, and any
+  shared one made with `--db=`. To start one over, use **Reset** on its row instead.
 - **Reset** drops and recreates the per-working-copy database (same as `af-db reset`). A
   confirmation is shown before anything is deleted.
 - **One row per database**, with the working copy it belongs to; Copy hands you the URL of

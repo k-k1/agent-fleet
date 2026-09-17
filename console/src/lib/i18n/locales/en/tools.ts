@@ -210,7 +210,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.db_action_failed": "Failed: {msg}",
   "env.db_copied": "Copied",
   "env.db_purge_confirm_title": "Remove all data?",
-  "env.db_purge_confirm_body": "The database will be stopped and its data directory deleted. This cannot be undone.",
+  "env.db_purge_confirm_body": "The server will be stopped and its data directory deleted, taking every database on this engine with it — including other working copies'. This cannot be undone.",
   // --- Machine (features/settings/workspace/MachineTab.tsx — what it runs on) ---
   "machine.title": "This workspace's machine",
   "machine.load_failed": "Could not read the machine information.",

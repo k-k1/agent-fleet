@@ -319,6 +319,11 @@ func mysqlExtract(tarPath, distDir string) error {
 // Note: --wildcards-match-slash is on by default in GNU tar, so "*.so*" crosses "/".
 // That means "lib/plugin/*.so" would include lib/plugin/debug/*.so, which is 30 files
 // and 41 MB of debug symbols we don't need. After extraction we remove that subdirectory.
+//
+// The same crossing is WANTED under lib/private: it pulls in the nested plugin
+// directories (sasl2/) that mysqld dlopens for authentication, which a top-level-only
+// pattern would leave behind. The measured arm64 result is 147 MB installed, so the
+// extra files are not what makes this tree big.
 func mysqlExtractSubset(tarPath, distDir string) error {
 	if err := runCmd("tar", "-xJf", tarPath,
 		"--strip-components=1", "-C", distDir,
