@@ -234,18 +234,14 @@ func TestAbortNobodyAskedForLandsAbortedAndReportsReason(t *testing.T) {
 // telling the user their own stop was an incident would be noise.
 func TestAbortWeAskedForStaysCancelled(t *testing.T) {
 	m, srv := newMockServe(t)
-	m.turnDelay = 5 * time.Second // returns only once the abort lands
+	// Far longer than waitState's deadline on purpose: the turn returning on its own would
+	// land cancelled too, so a short delay would let the test pass without the abort ever
+	// arriving — and fail on a slow machine for a reason that is not the one under test.
+	m.turnDelay = 30 * time.Second
 	m.turnBody = abortedBody
 	h := newTestHandle(t, srv)
-	h.name = "slot-" + t.Name()
-	handlesMu.Lock()
-	handles[h.name] = h
-	handlesMu.Unlock()
-	t.Cleanup(func() {
-		handlesMu.Lock()
-		delete(handles, h.name)
-		handlesMu.Unlock()
-	})
+	h.name = "slot-" + t.Name() // DropHandle addresses the registry by name
+	registerTestHandle(t, h)
 
 	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
 		if sid == h.ocSid && state == agents.StateAborted {
