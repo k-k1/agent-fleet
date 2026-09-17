@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -232,6 +233,37 @@ func TestStopInstanceWaitsForStartLock(t *testing.T) {
 	<-released
 	if _, err := os.Stat(datadir); !os.IsNotExist(err) {
 		t.Errorf("datadir should be gone after the purge, stat err = %v", err)
+	}
+}
+
+// TestResetRequiresDatabaseName pins the reset contract: the caller names the
+// database. Asked without one, the Agent used to fall back to its own working
+// directory and reset af_dev_… — a database no session uses, which DROP/CREATE
+// then brought into existence.
+func TestResetRequiresDatabaseName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	for _, tc := range []struct{ name, query, wantCode string }{
+		{"no db", "", "db_required"},
+		// Uppercase and a hyphen fail ^[a-z_][a-z0-9_]{0,62}$. (A ';' would not
+		// even reach the handler: Go drops query parameters containing one.)
+		{"illegal db", "?db=Bad-Name", "bad_db"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/env/databases/postgres/reset"+tc.query, nil)
+			r.SetPathValue("engine", "postgres")
+			r.SetPathValue("action", "reset")
+			w := httptest.NewRecorder()
+
+			HandleDatabasesAction(w, r)
+
+			if w.Code != 400 {
+				t.Fatalf("status = %d; want 400 (body %s)", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tc.wantCode) {
+				t.Errorf("body should carry %q, got %s", tc.wantCode, w.Body.String())
+			}
+		})
 	}
 }
 

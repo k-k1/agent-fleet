@@ -101,15 +101,18 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
     onRefresh();
   };
 
-  const handleReset = async () => {
+  // Reset names the database it resets. The Agent cannot infer one — asked without
+  // a name it would pick its own working directory's — so the button lives on the
+  // database row and sends that row's name.
+  const handleReset = async (db: DBDatabase) => {
     const ok = await askConfirm({
       title: tr("env.db_reset_confirm_title"),
-      body: tr("env.db_reset_confirm_body"),
+      body: tr("env.db_reset_confirm_body", { db: db.name }),
       confirmLabel: tr("env.db_reset_go"),
       danger: true,
     });
     if (!ok) return;
-    doAction("reset");
+    doAction("reset", "db=" + encodeURIComponent(db.name));
   };
 
   const handleStopPurge = async () => {
@@ -189,6 +192,13 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
                 >
                   {copied === db.name ? tr("env.db_copied") : tr("env.db_copy")}
                 </button>
+                <button
+                  className="db-btn db-btn-reset"
+                  disabled={busy2}
+                  onClick={() => handleReset(db)}
+                >
+                  {tr("env.db_reset")}
+                </button>
               </div>
             </div>
           ))
@@ -219,11 +229,6 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
           </div>
         )}
 
-        {eng.state === "running" && (
-          <button className="db-btn db-btn-reset" disabled={busy2} onClick={handleReset}>
-            {tr("env.db_reset")}
-          </button>
-        )}
       </div>
     </div>
   );

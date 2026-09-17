@@ -955,5 +955,16 @@ bytes through `GET /api/fs/file`.
   (0.2 s) because the old pid was dead, but the message is the member's only signal, and a
   reused pid number is the case this does not distinguish. Left as found, named here.
 
+### Reset gained the database name too (contract change, M2 + M3)
+
+The review after the live runs found the same mistake still sitting in the POST path: the
+card's Reset sent only the engine, and `resetDB(engine, major, "")` fell back to
+`DBNameFor(ResolveDir())` — the Agent's own directory. On Postgres that is `DROP DATABASE IF
+EXISTS` followed by `CREATE DATABASE`, so pressing Reset **created** a stray `af_dev_…` and left
+every row of the card untouched. `POST /env/databases/{engine}/reset` now requires `db=<name>`
+(400 `db_required` without it, 400 `bad_db` when it fails the `--db` pattern), and the Reset
+button moved onto the database row, so it resets the row it sits on and says which one in the
+confirmation.
+
 **Next**, unchanged except for what this run closed: the Console card on a workspace whose
 Agent is the image's, the first ECS run with a scratch-disk datadir, and arm64 MySQL.

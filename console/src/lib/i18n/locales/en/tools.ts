@@ -205,7 +205,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.db_stop_purge": "Stop and remove data",
   "env.db_reset": "Reset",
   "env.db_reset_confirm_title": "Reset the database?",
-  "env.db_reset_confirm_body": "All data will be deleted and the database recreated from scratch. This cannot be undone.",
+  "env.db_reset_confirm_body": "All data in {db} will be deleted and that database recreated from scratch. This cannot be undone.",
   "env.db_reset_go": "Reset",
   "env.db_action_failed": "Failed: {msg}",
   "env.db_copied": "Copied",

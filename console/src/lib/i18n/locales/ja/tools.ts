@@ -202,7 +202,7 @@ export const tools = {
   "env.db_stop_purge": "停止してデータも削除",
   "env.db_reset": "リセット",
   "env.db_reset_confirm_title": "データベースをリセットしますか？",
-  "env.db_reset_confirm_body": "データがすべて削除され、データベースが初期状態で再作成されます。取り消せません。",
+  "env.db_reset_confirm_body": "{db} のデータがすべて削除され、そのデータベースが初期状態で再作成されます。取り消せません。",
   "env.db_reset_go": "リセットする",
   "env.db_action_failed": "失敗: {msg}",
   "env.db_copied": "コピーしました",
