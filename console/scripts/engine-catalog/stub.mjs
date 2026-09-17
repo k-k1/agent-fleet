@@ -59,7 +59,25 @@ const ENGINES = {
           id: "sdxl-base-1.0", kind: "model", enabled: true, selected: true, base_model: "sdxl",
           description: "SDXL 1.0 base — 既定のチェックポイント",
           license_name: "CreativeML Open RAIL++-M", commercial_use: "yes", vram_need_mib: 7400,
+          // ADR 0088: what the publisher calls it, and the example image it publishes. The row
+          // above deliberately carries neither — the two states have to be on one screen, because
+          // the button that fills the second in is offered on exactly that difference.
+          display_name: "Stable Diffusion XL", version_name: "base 1.0",
+          preview_url: "/stub/preview/sdxl-large.png", thumb_url: "/stub/preview/sdxl.png",
+          source: "hf:stabilityai/stable-diffusion-xl-base-1.0/sd_xl_base_1.0.safetensors",
           file_rows: [{ s3Key: "image/checkpoints/sd_xl_base_1.0.safetensors", bytes: 6_938_040_576, source: "hf:stabilityai/stable-diffusion-xl-base-1.0" }],
+        },
+        {
+          id: "meinamix_meinav11_5038", kind: "model", enabled: true, base_model: "sdxl",
+          display_name: "MeinaMix", version_name: "Meina V11",
+          preview_url: "/stub/preview/meina-large.png", thumb_url: "/stub/preview/meina.png",
+          license_name: "see civitai model page", vram_need_mib: 5312, source: "civitai:5038",
+          file_rows: [{ s3Key: "image/checkpoints/meinamix_meinav11.safetensors", bytes: 2_132_625_894, source: "civitai:5038" }],
+        },
+        {
+          id: "abyssorangemix2_hard_8832", kind: "model", enabled: false,
+          license_name: "see civitai model page", vram_need_mib: 5312, source: "civitai:8832",
+          file_rows: [{ s3Key: "image/checkpoints/abyssorangemix2_Hard_8832.safetensors", bytes: 5_600_000_000, source: "civitai:8832" }],
         },
       ],
     },
@@ -259,6 +277,12 @@ function engineRoute(method, pathname) {
         }],
       }
       : { action: "attached", files: [], bytes_to_download: 0 };
+  }
+  // ADR 0088: re-reading a model page for the name and the picture.
+  if (/^\/models\/[^/]+\/meta$/.test(rest)) {
+    return () => ({ id: "abyssorangemix2_hard_8832", display_name: "AbyssOrangeMix2",
+      version_name: "Hard", preview_url: "/stub/preview/abyss-large.png",
+      thumb_url: "/stub/preview/abyss.png", found: true });
   }
   if (/^\/models\/[^/]+$/.test(rest)) return () => ({});
   return null;

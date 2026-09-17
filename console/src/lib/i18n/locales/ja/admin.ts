@@ -260,6 +260,14 @@ export const admin = {
   "admin.catalog_registered_partial": "保存先: {present}/{total} ファイルあり（一部不足）",
   "admin.catalog_registered_missing": "保存先: 登録ファイルがありません",
   "admin.catalog_registered_unknown": "保存先: 存在を確認できていません",
+  // --- 名前と作例、そしてカテゴリ（ADR 0088）。id は鍵であって名前ではない。---
+  // 🔴「分類なし」であって「不明」ではない。画像の行ならファミリー未設定＝CP が有効化を拒む行で、
+  // 手を打つべきものが先頭に来る。
+  "admin.catalog_family_none": "分類なし",
+  "admin.catalog_meta": "配布元から名前を取る",
+  "admin.catalog_meta_all": "名前と作例をまとめて取る（{n} 件）",
+  "admin.catalog_meta_busy": "配布元のページを読んでいます… {n}/{m}",
+  "admin.catalog_meta_done": "{n} 件に名前が入りました（取れなかったもの {f} 件）。",
   // --- 揃える（ADR 0085 決定 3）。主語は行で、部品ではない。---
   "admin.catalog_complete": "揃える",
   "admin.catalog_complete_busy": "揃えています…",

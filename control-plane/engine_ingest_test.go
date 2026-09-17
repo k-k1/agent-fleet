@@ -479,7 +479,10 @@ func civitaiStub(t *testing.T, download int) *httptest.Server {
 			w.WriteHeader(download)
 			return
 		}
-		w.Write([]byte(`{"baseModel":"SD 1.5","model":{"name":"DreamShaper","type":"Checkpoint"},
+		// `name` and `images` ride on this same document (measured live 2026-09-18) and are what
+		// the catalogue row's title and example image are taken from (ADR 0088).
+		w.Write([]byte(`{"baseModel":"SD 1.5","name":"v8","model":{"name":"DreamShaper","type":"Checkpoint"},
+			"images":[{"url":"https://image.civitai.com/xG1nkq/3e8b/original=true/1.jpeg"}],
 			"files":[{"name":"config.json","sizeKB":1.5,"type":"Config","downloadUrl":"` + base + `/c"},
 			{"name":"dreamshaper_8.safetensors","sizeKB":2082642.474609375,"type":"Model",
 			 "downloadUrl":"` + base + `/api/download/models/128713",

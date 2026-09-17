@@ -1280,6 +1280,45 @@ a.engines-model-source:hover {
   flex: 1 1 auto;
 }
 
+/* The categories (ADR 0088). Chips above the list rather than a tag inside each card: the family
+   is what tells two checkpoints apart, and buried in a card it was the one fact a page could not
+   be scanned by. */
+.engine-registered-families {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* A chip and not a `.seg-btn`: that class carries `flex: 1`, which is right inside a segmented
+   control of two and wrong for a wrapping row of families — measured on the rendered screen, four
+   of them stretched across the whole pane and read as one bar rather than as filters. */
+.engine-registered-families .engine-family-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--btn-border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.engine-registered-families .engine-family-chip.active {
+  border-color: var(--accent);
+  background: var(--panel2);
+  color: var(--fg);
+}
+
+.engine-registered-group + .engine-registered-group {
+  margin-top: 14px;
+}
+
+.engine-registered-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .engine-registered-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1310,9 +1349,22 @@ a.engines-model-source:hover {
   border-bottom: 1px solid var(--border);
 }
 
-.engine-registered-card > header strong {
+/* The title, which is the publisher's name when the row carries one and the id when it does not
+   (ADR 0088). NOT monospaced any more: it is prose now, and the id that used to be here keeps
+   its own mono line inside the card. */
+.engine-registered-name {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-inline-end: auto;
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.engine-registered-version {
+  font-size: 11px;
+  color: var(--dialog-muted);
 }
 
 .engine-registered-card > footer {
@@ -1320,8 +1372,46 @@ a.engines-model-source:hover {
   border-top: 1px solid var(--border);
 }
 
-.engine-registered-body {
+/* Text on the left, the example image on the right, each taking half (ADR 0088).
+   `flex: 1 1 50%` on BOTH rather than a fixed thumbnail: this card is what answers "what does
+   this model draw", and the 92px badge the 探す tab uses is a size for recognising a hit you are
+   about to click, not for judging a model you already own. A row with no picture keeps the whole
+   width, because the image side is not rendered at all rather than left as an empty box. */
+.engine-registered-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
   padding: 10px 12px;
+}
+
+.engine-registered-copy {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+
+.engine-registered-thumb {
+  flex: 0 1 50%;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--bg);
+}
+
+/* Capped in height and `contain`, not `cover`: an example is often 2048x4096 (measured on
+   Civitai), and cropping a portrait to a landscape box cuts off the half a person judges a
+   checkpoint by. Letterboxing against the card's own background costs nothing. */
+.engine-registered-thumb img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+}
+
+.engine-registered-id {
+  margin: 0 0 6px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .engine-registered-body > p {
@@ -1471,6 +1561,11 @@ a.engines-model-source:hover {
   .engine-registered-key { grid-column: 1 / -1; }
   .engine-catalog-card-main { min-height: 0; }
   .engine-catalog-thumb { flex-basis: 76px; width: 76px; height: 90px; }
+  /* Half of a 390px pane is a 180px column of text beside a 180px picture, and neither is
+     readable. The picture goes under the text at full width instead, which is also the order
+     they are read in. */
+  .engine-registered-main { flex-direction: column; }
+  .engine-registered-copy, .engine-registered-thumb { flex: 1 1 auto; width: 100%; }
 }
 
 

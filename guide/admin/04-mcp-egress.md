@@ -187,6 +187,20 @@ itself (**complete**), never from a part. **Complete** also fixes a file that is
 the wrong key: it is moved inside the bucket (**Moved inside the bucket (no download)**) rather
 than fetched a second time.
 
+The registered rows are grouped by **family**, with the family as the heading over each section
+and a row of chips above them that narrows to one — the rows that declare no family come first,
+because those are the ones the Control Plane refuses to enable. A chat engine's rows, which
+declare no family at all, are grouped by **publisher** instead. Each card is titled with the name
+the publisher gave the model and the version beside it ("MeinaMix — Meina V11"), the row's id kept
+underneath, and the example image the source publishes on the right. Rows taken in before this
+existed carry neither: **Fetch names and example images** in the toolbar reads their source pages
+one at a time and fills them in, and the same press sits on an individual card as **Read the source
+page**. Both disappear once every row has a name. A row whose source is a plain URL, and a row with
+no recorded source at all, cannot be filled in — there is no model page behind either, and the card
+says so. Nothing is copied into the bucket: the row records where the publisher put the picture and
+the browser fetches it, so an image the publisher deletes leaves an empty frame that the same press
+repairs.
+
 A row can be kept in order after the fact. Its **Files** list records where each file came from,
 linked as **Source page**. **Edit** on the row changes the description, the family, the measured
 VRAM, a chat model's context window and max output, a LoRA's **trigger words** and the generation

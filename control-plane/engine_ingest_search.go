@@ -622,13 +622,11 @@ func engineSearchCivitaiPage(ctx context.Context, req engineSearchReq, nsfw bool
 			// to assume zero just because this hit is not from the nsfw=true tab.
 			NsfwLevel: m.NsfwLevel,
 		}
+		raw := make([]string, 0, len(ver.Images))
 		for _, image := range ver.Images {
-			if preview := engineSafeCivitaiPreviewURL(image.URL); preview != "" {
-				hit.PreviewURL = engineCivitaiImageVariant(preview, engineCivitaiPreviewTransform)
-				hit.ThumbURL = engineCivitaiImageVariant(preview, engineCivitaiThumbTransform)
-				break
-			}
+			raw = append(raw, image.URL)
 		}
+		hit.PreviewURL, hit.ThumbURL = engineCivitaiPreviewPair(raw)
 		// 🔴 The licence name this used to synthesise ("non-commercial", from an empty
 		// allowCommercialUse) is GONE, and nothing was lost: the same fact now rides as the
 		// `noncommercial` restriction code, which the panel draws in its own vocabulary. Keeping
@@ -765,6 +763,25 @@ const (
 	engineCivitaiPreviewTransform = "anim=false,width=1024"
 	engineCivitaiThumbTransform   = "anim=false,width=256"
 )
+
+// engineCivitaiPreviewPair picks the first example a browser can be pointed at and answers it at
+// both sizes. Shared by the search list and the resolve (ADR 0088), which draw the same picture
+// in two places — the card it was chosen from and the catalogue row it became — and must not
+// disagree about which of ten images that is.
+//
+// A URL that is not Civitai's own is skipped rather than returned: a model page may carry an
+// example hosted anywhere, and the transform below only means anything on their CDN.
+func engineCivitaiPreviewPair(raw []string) (preview, thumb string) {
+	for _, candidate := range raw {
+		safe := engineSafeCivitaiPreviewURL(candidate)
+		if safe == "" {
+			continue
+		}
+		return engineCivitaiImageVariant(safe, engineCivitaiPreviewTransform),
+			engineCivitaiImageVariant(safe, engineCivitaiThumbTransform)
+	}
+	return "", ""
+}
 
 // engineCivitaiImageVariant re-sizes a Civitai image URL by rewriting the transform segment
 // (`.../<bucket>/<uuid>/original=true/<id>.jpeg`). The segment is recognised by its `=`, and

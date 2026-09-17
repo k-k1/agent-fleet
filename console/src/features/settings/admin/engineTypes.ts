@@ -111,6 +111,27 @@ export type EngineModel = {
    *  🔴 For a SPLIT model this describes the file that created the row and nothing else — the
    *  parts carry their own (`file_rows[].source`). */
   source?: string;
+  /** What the publisher CALLS this, and which version of it was taken in (ADR 0088).
+   *
+   *  The `id` above is derived from the FILE name, because it is the key the launch menu, the
+   *  active set and the S3 layout are written in — so it is not a name anybody chose, and a
+   *  catalogue drawn from ids alone (`abyssorangemix2_hard_8832`) says nothing about which
+   *  model is which. The panel draws these as the card's title and keeps the id underneath: the
+   *  id is what every other screen and every S3 key says, so it is never replaced.
+   *
+   *  🔴 Absent, not empty, when nobody recorded one — a seeded row, a row registered from the
+   *  bucket by hand, and every row taken in before the columns existed. That absence is the
+   *  predicate the メタデータ button is offered on, so a fallback to `""` here would hide the
+   *  one control that fills them in. */
+  display_name?: string;
+  version_name?: string;
+  /** One example image the publisher published, at the lightbox size and the card size. URLs
+   *  into the publisher's own CDN — this deployment mirrors nothing — so an image the publisher
+   *  deletes is an empty box, which the same button re-reads. `thumb_url` is absent where the
+   *  source offers no resizing (Hugging Face), and the card falls back to `preview_url`, which
+   *  is the convention the 探す tab already draws hits with. */
+  preview_url?: string;
+  thumb_url?: string;
   /** The page `source` names, composed by the CP (engineSourceURL). Absent when it could not be
    *  composed, and the panel branches on THAT rather than parsing the string a second time:
    *  `civitai:<id>` is a model VERSION id and `/models/<id>` opens a different model, and a
