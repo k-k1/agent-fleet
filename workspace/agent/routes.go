@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
@@ -367,6 +368,10 @@ func buildMux() *http.ServeMux {
 	// Version report for the bundled tools (effective / baked in / ~/.local override /
 	// build-time pin).
 	mux.HandleFunc("GET /env/tool-versions", handleToolVersions)
+	// Per-workspace databases (ADR 0086 P1) — Console settings Env tab.
+	// control-plane/routes.go needs the same paths registered.
+	mux.HandleFunc("GET /env/databases", afdb.HandleDatabasesGet)
+	mux.HandleFunc("POST /env/databases/{engine}/{action}", afdb.HandleDatabasesAction)
 
 	// Per-user UI preferences (Console display settings, synced across browsers).
 	mux.HandleFunc("GET /env/ui-prefs", handleGetUIPrefs)
