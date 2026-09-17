@@ -47,7 +47,7 @@ type operatorTurnMarker struct {
 // turns (Discord/Slack/scheduled assistant, different convs) overwrite each other's marker —
 // the earlier turn's defer would then erase the later turn's marker and its destructive
 // tools would run ungated (fail-open).
-var operatorTurnStore = fstore.JSON[operatorTurnMarker](paths.AgentConfigDir, "bridge-operator-turn", ".json")
+var operatorTurnStore = fstore.JSON[operatorTurnMarker](paths.AgentStateDir, "bridge-operator-turn", ".json")
 
 // operatorTurnKey derives the per-conv marker filename key (conv IDs are slug-safe; any
 // other byte is normalized defensively so the key is always a plain filename).
@@ -107,7 +107,7 @@ type bridgeApprovalRec struct {
 	CreatedAt int64  `json:"createdAt"`
 }
 
-var bridgeApprovals = fstore.JSON[bridgeApprovalRec](paths.AgentConfigDir, "bridge-approvals", ".json")
+var bridgeApprovals = fstore.JSON[bridgeApprovalRec](paths.AgentStateDir, "bridge-approvals", ".json")
 
 // Tunables (vars so tests can shrink them). bridgeApprovalTimeout must stay under
 // OperatorTurnTimeout so the wait can never outlive the turn that spawned it.

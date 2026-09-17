@@ -14,8 +14,11 @@ import (
 // identity (only access/refresh token and auth_method), so on successful auth the
 // "email (plan)" line of the main-screen header is scraped and saved, and GET
 // /connections' Status() reads it back. Display-only and best-effort — without it
-// AgyCard simply degrades. Not secret, but it is kept alongside the existing stores
-// under ~/.config/agent-fleet, which the denylist covers.
+// AgyCard simply degrades.
+//
+// It holds an email address and a plan name, no credential, so it sits in the state dir with
+// the other per-agent stores (ADR 0087 decision 4) — which is where the token it describes
+// already lives anyway: ~/.gemini is not one of AF_WS_KEEP_DIRS. Denylisted either way.
 
 type accountInfo struct {
 	Email string `json:"email"`
@@ -23,7 +26,7 @@ type accountInfo struct {
 }
 
 func accountPath() string {
-	return filepath.Join(paths.AgentConfigDir(), "agy-account.json")
+	return filepath.Join(paths.AgentStateDir(), "agy-account.json")
 }
 
 // captureAccount scrapes the main-screen identity line ("email (plan)" —
@@ -48,7 +51,7 @@ func saveAccount(email, plan string) {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(paths.AgentConfigDir(), 0o700); err != nil {
+	if err := os.MkdirAll(paths.AgentStateDir(), 0o700); err != nil {
 		return
 	}
 	_ = os.WriteFile(accountPath(), append(b, '\n'), 0o600)

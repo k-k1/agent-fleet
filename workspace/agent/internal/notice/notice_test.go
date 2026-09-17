@@ -15,7 +15,7 @@ func TestOutboxPersistsListsAndAcknowledges(t *testing.T) {
 		t.Fatal(err)
 	}
 	// docs/log/37 contract 4: Put fans the event out into the chat-bridge queue too.
-	bq, _ := os.ReadDir(filepath.Join(home, ".config", "agent-fleet", "bridge-queue"))
+	bq, _ := os.ReadDir(filepath.Join(home, ".local", "state", "agent-fleet", "bridge-queue"))
 	if len(bq) != 1 {
 		t.Fatalf("bridge queue entries=%d, want 1", len(bq))
 	}
@@ -39,7 +39,7 @@ func TestPutCarriesBodyIntoBridgeQueue(t *testing.T) {
 	if err := Put(e); err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(home, ".config", "agent-fleet", "bridge-queue")
+	dir := filepath.Join(home, ".local", "state", "agent-fleet", "bridge-queue")
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 1 {
 		t.Fatalf("bridge queue entries=%d, want 1", len(entries))

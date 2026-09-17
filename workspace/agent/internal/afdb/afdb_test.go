@@ -504,7 +504,7 @@ func TestPostgresIntegration(t *testing.T) {
 	t.Setenv("AF_DB_POSTGRES_ROOT", root)
 	t.Setenv("AF_WS_SCRATCH", "")
 
-	_ = os.MkdirAll(filepath.Join(tmp, ".config", "agent-fleet", "af-db"), 0o700)
+	_ = os.MkdirAll(filepath.Join(tmp, ".local", "state", "agent-fleet", "af-db"), 0o700)
 
 	major := "17"
 	pp := passPath("postgres", major)

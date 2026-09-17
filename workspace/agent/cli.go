@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -52,7 +51,7 @@ var subcommands = []subcommand{
 		name:     "af-db",
 		operands: "<verb>",
 		summary:  "per-working-copy Postgres for tests: up|url|env|reset|down|status",
-		run:      afdb.RunAFDB,
+		run:      runAFDB,
 	},
 	// On-demand pinned installers (docs/log/35 §35.7.2, jdk.go / install_tools.go /
 	// install_kiro.go / install_postgres.go / install_pg_client.go / install_mysql.go): a lean

@@ -50,7 +50,7 @@ var (
 	slackOperator   = &operatorStore{file: "bridge-operator-slack.json"}
 )
 
-func (o *operatorStore) path() string { return filepath.Join(paths.AgentConfigDir(), o.file) }
+func (o *operatorStore) path() string { return filepath.Join(paths.AgentStateDir(), o.file) }
 
 func (o *operatorStore) state() (OperatorRef, bool) {
 	o.mu.Lock()

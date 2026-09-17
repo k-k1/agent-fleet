@@ -3,8 +3,9 @@
 //
 // One server per (engine, major) per Workspace; one database per working copy
 // (or per explicit --db=<name>). Registry at
-// ~/.config/agent-fleet/af-db/instances.json, locked under
-// ~/.config/agent-fleet/af-db/lock (advisory flock, POSIX).
+// ~/.local/state/agent-fleet/af-db/instances.json, locked under
+// ~/.local/state/agent-fleet/af-db/lock (advisory flock, POSIX) — the same home volume the
+// datadirs are on, which is what the PIDs and sockets it records are true of anyway.
 package afdb
 
 import (
@@ -140,7 +141,7 @@ func homeDir() string {
 
 // registryDir returns the af-db config directory.
 func registryDir() string {
-	return filepath.Join(paths.AgentConfigDir(), "af-db")
+	return filepath.Join(paths.AgentStateDir(), "af-db")
 }
 
 func registryPath() string { return filepath.Join(registryDir(), "instances.json") }
@@ -189,6 +190,13 @@ func mysqlRoot(major string) string {
 }
 
 // passPath is where the generated password for (engine, major) is kept (mode 0600).
+//
+// This is a plaintext password under the STATE directory, which rule ① of the split in
+// paths.AgentStateDir ("a credential, or a file that can carry one") would otherwise send to
+// the keep volume. The exception is deliberate: it authenticates nothing outside this
+// Workspace. It is generated here (generatePass), reaches only a loopback server whose
+// datadir sits on the same volume, and is worthless without it — losing the volume loses the
+// database the password is for. A copy on the keep volume would outlive the thing it opens.
 func passPath(engine, major string) string {
 	return filepath.Join(registryDir(), fmt.Sprintf("%s-%s.pass", engine, major))
 }

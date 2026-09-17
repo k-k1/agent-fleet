@@ -53,7 +53,7 @@ type browserHandoffLedger struct {
 	Rows []BrowserHandoffRow `json:"rows"`
 }
 
-var BrowserHandoffLedgers = fstore.JSON[browserHandoffLedger](paths.AgentConfigDir, "browser-handoff-ledger", ".json")
+var BrowserHandoffLedgers = fstore.JSON[browserHandoffLedger](paths.AgentStateDir, "browser-handoff-ledger", ".json")
 
 // The ledger's read-modify-write is serialized per session (the same reason as lockInstr in
 // chat_report_ledger.go: the only writers are several handlers inside this process).

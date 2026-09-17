@@ -118,20 +118,24 @@ func resolveAbs(clean, root string) (full, rel string, ok bool) {
 
 // fsDeny lists browse-root-relative paths that are never exposed.
 var fsDeny = map[string]bool{
-	".claude":               true, // plaintext claude state (also relocated via CLAUDE_CONFIG_DIR)
-	".claude.json":          true, // claude keeps this in home even with CLAUDE_CONFIG_DIR
-	".config/agent-fleet":   true, // encrypted secrets store + connection state
-	".ssh":                  true,
-	".git-credentials":      true,
-	".local/share/opencode": true, // opencode auth.json (API keys) + session db
-	".codex":                true, // codex auth.json (tokens) + sessions + helper bins
-	".gemini":               true, // agy OAuth token (plaintext) + conversation DBs
-	".copilot":              true, // copilot auth token (plaintext without a keychain) + session store
-	".cursor":               true, // cursor chats/store.db + transcripts + hooks/cli config
-	".config/cursor":        true, // cursor auth.json (accessToken/refreshToken in plaintext)
-	".kiro":                 true, // kiro settings + v2 session store (sessions/cli)
-	".local/share/kiro-cli": true, // kiro auth (data.sqlite3 auth_kv, effectively plaintext) + classic store
-	".aws":                  true, // SSM login: SSO token cache + generated configs
+	".claude":             true, // plaintext claude state (also relocated via CLAUDE_CONFIG_DIR)
+	".claude.json":        true, // claude keeps this in home even with CLAUDE_CONFIG_DIR
+	".config/agent-fleet": true, // encrypted secrets store + connection state
+	// The other half of the same tree (ADR 0087 decision 4): session ledger, chat working
+	// directories, pending-permission payloads. Moving it out of .config for the EFS I/O
+	// must not move it out of the denylist.
+	".local/state/agent-fleet": true,
+	".ssh":                     true,
+	".git-credentials":         true,
+	".local/share/opencode":    true, // opencode auth.json (API keys) + session db
+	".codex":                   true, // codex auth.json (tokens) + sessions + helper bins
+	".gemini":                  true, // agy OAuth token (plaintext) + conversation DBs
+	".copilot":                 true, // copilot auth token (plaintext without a keychain) + session store
+	".cursor":                  true, // cursor chats/store.db + transcripts + hooks/cli config
+	".config/cursor":           true, // cursor auth.json (accessToken/refreshToken in plaintext)
+	".kiro":                    true, // kiro settings + v2 session store (sessions/cli)
+	".local/share/kiro-cli":    true, // kiro auth (data.sqlite3 auth_kv, effectively plaintext) + classic store
+	".aws":                     true, // SSM login: SSO token cache + generated configs
 }
 
 func isDenied(rel string) bool {

@@ -68,6 +68,11 @@ func (c *ChatConversation) afServerArgs() ([]string, bool) {
 
 // chatMCPConfigDir holds the per-conversation --mcp-config files. Outside repos, and
 // wiped with the container's home only — same lifecycle as the rest of the chat state.
+//
+// The chat SCRATCH directories moved to the state dir (ADR 0087 decision 4); this one did
+// not, because the files here carry the attached servers' credentials as literal values. It
+// costs nothing to leave: one small file per conversation, written at turn start, never
+// swept by a poll.
 func chatMCPConfigDir() string {
 	return filepath.Join(homeDir(), ".config", "agent-fleet", "chat-mcp")
 }

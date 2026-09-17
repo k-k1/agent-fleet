@@ -87,14 +87,14 @@ type abortResumeState struct {
 	GaveUp       string `json:"gaveUp,omitempty"`       // non-empty = auto-resume stepped back (suppression lifts too)
 }
 
-var abortResumeStates = fstore.JSON[abortResumeState](paths.AgentConfigDir, "session-abort-resume", ".json")
+var abortResumeStates = fstore.JSON[abortResumeState](paths.AgentStateDir, "session-abort-resume", ".json")
 
 type managedAbortSignal struct {
 	At  string `json:"at"`
 	Msg string `json:"msg"`
 }
 
-var managedAbortSignals = fstore.JSON[managedAbortSignal](paths.AgentConfigDir, "session-managed-abort", ".json")
+var managedAbortSignals = fstore.JSON[managedAbortSignal](paths.AgentStateDir, "session-managed-abort", ".json")
 
 // The side effects stay replaceable (tests have no tmux).
 var (

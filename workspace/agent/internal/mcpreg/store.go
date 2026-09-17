@@ -33,10 +33,16 @@ var ErrReadOnly = errors.New("this server is not editable (it can only be disabl
 // ErrNameTaken is returned when a name already exists in the effective registry.
 var ErrNameTaken = errors.New("a server with this name is already registered")
 
+// tenantCachePath stays in AgentConfigDir, not the state dir the per-session stores moved
+// to (ADR 0087 decision 4): a distributed definition that is not user_secret arrives with
+// its header and env VALUES filled in, so this file can hold a credential.
 func tenantCachePath() string {
 	return filepath.Join(paths.AgentConfigDir(), "mcp-tenant.json")
 }
 
+// optOutPath holds ids only, but stays beside the cache above for a second reason that
+// applies on its own: which servers a member switched off is their configuration, not state
+// af can rebuild.
 func optOutPath() string {
 	return filepath.Join(paths.AgentConfigDir(), "mcp-optout.json")
 }
