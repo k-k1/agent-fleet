@@ -162,6 +162,41 @@ func TestAFinishedEntryIsNotMigratedTwice(t *testing.T) {
 	}
 }
 
+// A run reads the marker when it starts and writes it when it ends, so the interleaving that
+// matters is another agent finishing something IN BETWEEN — writing back the stale snapshot
+// wholesale would drop their entry. That entry is then migrated a second time, which is how
+// something the user deleted in the meantime comes back.
+//
+// Note what this does NOT reproduce: seeding the marker before run() and letting run() write
+// it, because run() reads that seed into the very map it writes back. Written that way the
+// test passes with or without the merge (measured) — it has to be the write that starts from
+// a stale snapshot.
+func TestMarkerKeepsEntriesWrittenByAnotherRun(t *testing.T) {
+	_, dst, _ := seed(t)
+	mine := readMarker(dst) // the snapshot a run starts from: empty
+	mine.Done["sessions"] = "2026-09-17T00:00:00Z"
+
+	// Another agent finishes an entry and records it while we were copying.
+	theirs := readMarker(dst)
+	theirs.Done["chat-wd"] = "2026-09-17T00:00:01Z"
+	if err := writeMarker(dst, theirs); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeMarker(dst, mine); err != nil {
+		t.Fatal(err)
+	}
+	got := readMarker(dst)
+	for _, entry := range []string{"chat-wd", "sessions"} {
+		if _, ok := got.Done[entry]; !ok {
+			t.Errorf("%q fell out of the marker", entry)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dst, markerName+".tmp")); !os.IsNotExist(err) {
+		t.Error("the temporary marker was left behind")
+	}
+}
+
 func TestEmptySourceIsANoOp(t *testing.T) {
 	root := t.TempDir()
 	res := run(filepath.Join(root, "config"), filepath.Join(root, "state"))

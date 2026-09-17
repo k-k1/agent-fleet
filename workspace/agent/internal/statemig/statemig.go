@@ -290,13 +290,35 @@ func readMarker(dst string) marker {
 	return m
 }
 
+// writeMarker folds m into whatever is on disk and replaces the file atomically.
+//
+// It MERGES rather than overwrites because nothing serializes two agents against each other,
+// and a marker written from a snapshot read minutes earlier would drop the entries another
+// one finished in between. On its own that is not destructive — their sources are already
+// gone, so the next boot's Lstat finds nothing and skips them — but the marker exists for the
+// one case where source removal FAILED, and dropping an entry reopens exactly that case: the
+// leftover under .config is migrated a second time, and something the user deleted in between
+// comes back.
+//
+// Read-modify-write still has a window between the read and the rename, and closing it would
+// need a lock. That is out of proportion here: the migration runs once per box, from one
+// process, at a point where nothing else has started. The tmp+rename is what actually has to
+// hold — a torn marker reads as "nothing is done" and re-migrates everything.
 func writeMarker(dst string, m marker) error {
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(m, "", "  ")
+	merged := readMarker(dst)
+	for entry, at := range m.Done {
+		merged.Done[entry] = at
+	}
+	b, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dst, markerName), append(b, '\n'), 0o600)
+	tmp := filepath.Join(dst, markerName+".tmp")
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dst, markerName))
 }

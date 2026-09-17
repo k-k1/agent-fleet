@@ -114,7 +114,11 @@ func TestDisplayCacheDoesNotHideARunningAgentFromTheDecisions(t *testing.T) {
 	}
 }
 
-func TestDisplayCacheIsDroppedOnceAgentsAppear(t *testing.T) {
+// Note what this does NOT say: agents appearing does not clear the cache by itself. While the
+// entry is fresh, subagentBasesDisplay returns early and never looks, so the absence is
+// dropped only by the first lookup AFTER the TTL — which is the whole cost of the cache, and
+// is what TestDisplayCacheDoesNotHideARunningAgentFromTheDecisions pins.
+func TestDisplayCacheIsDroppedByTheFirstLookupThatFindsAgents(t *testing.T) {
 	sid, _, subagents := fixture(t, 4)
 	key := ConfigDir() + "\x00" + sid
 
@@ -123,8 +127,12 @@ func TestDisplayCacheIsDroppedOnceAgentsAppear(t *testing.T) {
 		t.Fatal("a miss was not remembered — the display path would sweep on every poll")
 	}
 	startSubagent(t, subagents, "x")
-	subagentAbsent.note(key, false) // what a hit does
 
+	// Age the entry past the TTL, so the next display lookup actually searches.
+	subagentAbsent.seen[key] = time.Now().Add(-subagentAbsentTTL - time.Second)
+	if !SubagentBusyDisplay(sid) {
+		t.Fatal("the lookup after the TTL did not find the agents")
+	}
 	if subagentAbsent.fresh(key) {
 		t.Fatal("the absence outlived the directory it described")
 	}
