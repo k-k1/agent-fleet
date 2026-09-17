@@ -629,6 +629,60 @@ location unchanged.
 - The transcript side's `memoTTL = 60s` returns a hit to the full sweep once a minute. Once
   the derivation is in, re-searching is cheap, so revisit that constant afterwards.
 
+#### Implementation (option (a): a new display-only entry point)
+
+- **`SubagentBusyDisplay` / `BackgroundWorkDisplay` were added**, and the negative cache
+  (`absenceMemo`, 15s TTL) lives on that path alone. `SubagentBusy`, `SubagentLogs` and
+  `SubagentSnapshot` still **always search**, and the three decisions still call them.
+  🔥 The searching combinator `BackgroundWork` was **deleted rather than kept**: both of its
+  callers were badges to begin with, and leaving it would leave a safe-sounding unused
+  function for the next person to decide something with. The one place that does want the
+  three detectors combined for a decision (`chatx.stopArmBackgroundBusy`) names the detectors
+  it wants and gets the subagent arm from `SubagentBusy` through the report signals.
+- **The project directory is derived from the cwd** (`project_dir.go`). The encoding is
+  "every non-alphanumeric becomes `-`", verified against a live tree
+  (`agent-fleet@wip-s2y` → `-…-agent-fleet-wip-s2y`, `/home/dev/.config/…` →
+  `-home-dev--config-…`). It is **lossy and not injective**, so the derivation is a guess and
+  is only taken when one `Lstat` of `<sid>.jsonl` confirms it - a sid is unique, so finding it
+  there does settle that it IS that session's transcript. A miss falls through to the old
+  sweep. A sid cannot be turned back into a cwd (it is UUIDv5(dir|name)), so
+  `session.CWDForUUID` was added: every meta read or write records the cwd, which costs no
+  extra I/O (the list poll reads every meta every few seconds, so it is effectively always
+  populated). With a `Meta.Subdir` it returns `CWD()` - the directory claude actually runs in.
+- **`memoTTL = 60s` stays** (the review's outcome). It used to send every hit back to a full
+  sweep once a minute; the re-search now measures 2 syscalls, so there is nothing left to buy
+  by lengthening it.
+
+Measured (`internal/agents/claude/bg_probe_test.go`, strace, 39 project directories, per-call
+cost taken as the **slope** between 10 and 110 calls so that process startup and the fixture
+are out of the denominator):
+
+| path | before / equivalent | after |
+|---|---|---|
+| subagent lookup, **display** (no background agents) | 201 | **0** |
+| subagent lookup, **safety** (same) | 201 | **201** (unchanged, by design) |
+| transcript re-search, cwd known | 201 | **2** |
+| transcript re-search, cwd unknown | 201 | 201 |
+
+⚠️ **The safety side staying at 201 is a pass.** The ADR predicted "158 → single digits", but
+158 was the figure for 38 project directories and this fixture has 39 (measured: 201). The
+requirement is to **measure the two sides separately**; demanding single digits of the safety
+side as well would pass an implementation that deleted the safety check.
+
+The acceptance test (`bg_display_test.go`) is the one specified: **create the child transcript
+right after a miss, inside the TTL**, then check that (1) a misdelivery is still caught
+(`SubagentReceivedSince`), (2) completion is not reported early and (3) an armed stop does not
+fire ((2) and (3) through the `SubagentBusy` that `collectReportSignals` reads). **A positive
+control was taken**: wiring the negative cache into the shared `SubagentLogs` turns (1) and (2)
+red, and restoring it turns them green. A wiring test (`bg_display_wiring_test.go`) lists which
+files may read the display path at all - the two forms have **the same signature**, so using
+the wrong one compiles, passes the tests, and shows up only as a duplicated interruption, an
+early completion report, or a session stopped with a background agent still inside it.
+
+`jsonl_memo.go`'s type comment now explains **why the two places guard in opposite directions**
+(one never remembers a miss, the other exists to remember one), from both ends - because
+"these are duplicates, drop one" is the natural tidy-up.
+
 ### Decision 6 (permanent, P2): on mount options, establish first what is *not* possible
 
 ECS's `EFSVolumeConfiguration` carries only `FileSystemId`, `RootDirectory`,

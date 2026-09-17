@@ -36,6 +36,7 @@ func WriteMeta(m Meta) {
 	if b, err := json.Marshal(m); err == nil {
 		_ = os.WriteFile(MetaPath(m.Name), b, 0o600)
 	}
+	rememberCWD(m)
 }
 
 func ReadMeta(name string) (Meta, bool) {
@@ -47,6 +48,7 @@ func ReadMeta(name string) (Meta, bool) {
 	if json.Unmarshal(b, &m) != nil {
 		return m, false
 	}
+	rememberCWD(m)
 	return m, true
 }
 

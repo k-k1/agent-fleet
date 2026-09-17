@@ -37,7 +37,7 @@ var sids = agents.NewSidStore("claude-sid")
 // drift. When the ledger's value points at no log it falls back to slot silently, so a
 // stale entry does no harm.
 func LiveSID(slot string) string {
-	if live := sids.Read(slot); live != "" && live != slot && len(rawJSONLPaths(live)) > 0 {
+	if live := sids.Read(slot); live != "" && live != slot && len(rawJSONLPathsIn(live, session.CWDForUUID(slot))) > 0 {
 		return live
 	}
 	return slot

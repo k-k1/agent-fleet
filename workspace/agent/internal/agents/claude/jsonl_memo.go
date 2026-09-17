@@ -37,6 +37,13 @@ import (
 //     written down here — the next reader will otherwise take one out as dead code.
 //   - A hit is re-searched after memoTTL anyway, so a transcript that genuinely moved is picked
 //     up without anyone having to invalidate by hand.
+//
+// ⚠️ bg.go has an absenceMemo that does the opposite — it remembers "this session has no
+// background agents" for 15 seconds. That is not a copy of this type with the invariant
+// dropped, and neither belongs on the other's path: the absence there is read by ONE caller,
+// which lights a badge, while the absence here would be read by the resume decision. The
+// argument for each is written at both ends on purpose, because the two look like duplicates
+// and the natural tidy-up is to unify them.
 type pathMemo struct {
 	mu   sync.Mutex
 	seen map[string]memoHit
@@ -47,9 +54,15 @@ type memoHit struct {
 	at    time.Time
 }
 
-// memoTTL bounds how long a remembered answer is trusted before the full search runs again.
-// It only has to be short relative to "a transcript moved", which needs a session restart into
-// a different directory; the poll loops it protects run every few seconds.
+// memoTTL bounds how long a remembered answer is trusted before the search runs again. It
+// only has to be short relative to "a transcript moved", which needs a session restart into a
+// different directory; the poll loops it protects run every few seconds.
+//
+// It stays at 60s now that the project directory is derived from the session's cwd
+// (project_dir.go): the re-search this TTL forces used to mean a full `projects/*` sweep
+// every minute per session, and now means one more Lstat whenever the cwd is known. There is
+// nothing left to buy by lengthening it, and shortening it buys freshness nobody has asked
+// for (ADR 0087 decision 5, third bullet).
 const memoTTL = 60 * time.Second
 
 // lookup returns the memoized paths for key, falling back to search. The key must include
