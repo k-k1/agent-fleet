@@ -797,5 +797,29 @@ sha、`libaio1t64` / `libnuma1` / `libncurses6`。P0・P1 の受け入れが届�
   まだましなので触っていない。焼き直したイメージが配備されるまで、カードの正常系は見えない
   ——届くのは `lastError` だけ。
 
+### 再起動後——カードの API は生き、訂正がもう 2 つ
+
+置き忘れを消してワークスペースを再起動すると、`/proc/7/exe` はイメージの Agent になり、
+`GET /env/databases` は全フィールド入りの 200 を返す。叩いてみた結果：`POST …/postgres/start` は
+6 秒未満で `starting` → `running`（`version` 17.11・`rssBytes` 47〜49 MB・確保したポート）、
+この作業コピーから `af-db url` を打つとその DB が payload に現れる。`POST …/mysql/start` は
+`state=error`——このイメージは上の `libaio` 修正より前なので、今日のイメージの利用者が見るのと
+同じ姿である。
+
+- **古い版の登録簿があると全部止まる**。再起動後の最初の `start` は
+  `registry parse: json: cannot unmarshal number into Go struct field Instance.instances.major`
+  で失敗した。P0 の版は `"major": 17` を数値で書き、P1 で string にした。`~/.config` は recreate
+  でも消えない。契約の「登録簿は P0 で新設・未配備だから移行不要」はイメージについては正しいが、
+  古い版が一度でも動いた HOME には当てはまらない——そして読めない登録簿は、それを直せるはずの
+  動詞ごと止める。`Instance.UnmarshalJSON` で両方受けるようにし、解けない時はファイル名を出す。
+  （`af-db status` は空の一覧を返してこの問題を隠していた。HTTP 側だけが報告していた。）
+- **`lastError` は理由を運ばなければ意味が無い**。カードに出たのは
+  `install-mysql 8.4 failed: exit status 3` だけで、説明になる `libaio.so.1` の行は Agent の
+  ログにしか無かった。導入コマンドの末尾数行をメッセージに足す。Console が汎用の `*_failed`
+  コードで学んだのと同じ教訓。
+- **記録だけ・変えていない**：API の `urlSocket` はパスワードを素で運ぶ。決定 9 のカードが
+  「表示は伏せ字・コピーは丸ごと」だからで、つまり CP はワークスペースの資格情報をブラウザまで
+  中継する。`af-db status --json` が意図的に載せないのと対照的である。
+
 **次**（この実機で閉じた分を除いて変わらず）：Agent がイメージのものであるワークスペースでの
 Console カード、作業ディスク上のデータディレクトリでの ECS 初回、arm64 の MySQL。

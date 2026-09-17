@@ -855,5 +855,30 @@ untested until now, and without the Maven-metadata fallback Postgres has — is 
   run in the member's own shell, where the shadow is at least visible. Until the rebuilt image
   is deployed, the card's healthy states stay unseen — only `lastError` is reachable.
 
+### After the restart: the card's API is live, and two more corrections
+
+With the stray binary gone and the workspace restarted, `/proc/7/exe` is the image's agent and
+`GET /env/databases` answers 200 with every field present. Driving it: `POST …/postgres/start`
+went `starting` → `running` in under 6 s (`version` 17.11, `rssBytes` 47–49 MB, the allocated
+port), and `af-db url` from this working copy added its database to the payload.
+`POST …/mysql/start` ended in `state=error` — this image predates the `libaio` fix above, which
+is exactly what a member on today's image would see.
+
+- **A registry from an older agent stops everything.** The first `start` after the restart
+  failed with `registry parse: json: cannot unmarshal number into Go struct field
+  Instance.instances.major`: the P0 build wrote `"major": 17` as a number, P1 made it a string,
+  and `~/.config` survives recreate. The contract's "the registry is new in P0 and not deployed,
+  so no migration" holds for images, not for a HOME where an older build ever ran — and an
+  unreadable registry disables the very verbs that could repair it. `Instance.UnmarshalJSON` now
+  takes both forms, and the parse error names the file. (`af-db status` was also hiding the
+  problem behind an empty instance list while the HTTP path reported it.)
+- **`lastError` has to carry the reason.** The card showed `install-mysql 8.4 failed: exit
+  status 3`; the `libaio.so.1` line that explains it went to the Agent's log only. The installer's
+  last lines are now appended to the error, the same lesson the Console already learned about
+  generic `*_failed` codes.
+- **Noted, not changed**: `urlSocket` in the API payload carries the password in clear, because
+  decision 9's card masks it for display and copies it whole — so CP relays a workspace
+  credential to the browser, where `af-db status --json` deliberately carries none.
+
 **Next**, unchanged except for what this run closed: the Console card on a workspace whose
 Agent is the image's, the first ECS run with a scratch-disk datadir, and arm64 MySQL.
