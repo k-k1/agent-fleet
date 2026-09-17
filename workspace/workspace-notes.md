@@ -37,7 +37,9 @@ skip and say so.
 - Run host-wide destructive commands (runaway `rm -rf`, fork bombs, mining, port scans), or hog
   the shared, memory-constrained host with heavy parallel builds.
 - Paste `env` output anywhere — it contains live `AF_*` secrets. Never run `workspace-agent`
-  bare "to see the usage": with no subcommand it **starts a second Agent** and touches live state.
+  bare: with no argument at all it **starts a second Agent**. To inspect it, ask it —
+  `workspace-agent --version` / `--help` answer and exit, and any argument it does not know
+  prints usage and exits 2 rather than booting.
 
 ## Git branches: stay on the branch the session started on
 - **Do not create, switch, or rename branches on your own initiative** — not even when the

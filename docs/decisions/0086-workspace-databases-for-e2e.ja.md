@@ -376,6 +376,10 @@ Agent が止める。あるセッションの終了が、兄弟セッション�
   1 つ：`workspace-agent <未知のサブコマンド>` は **Agent を起動する**（`main.go` は
   `os.Args[1] ==` の連鎖で default が無い）。`af-db` は実体の `/usr/local/bin/af-db` シム**と**
   `main.go` のディスパッチ 1 行、両方が要る。
+  🔴 2026-09-17: この罠は塞いだ。分岐は `cli.go` の表 1 本になり、表に無い引数は usage を出して
+  exit 2、`--version` / `--help` は正式サポート、起動するのは「引数なし」と `serve` だけ。`af-db`
+  の要件は「シム＋表の 1 行」のまま。二重起動そのものも無害化した——`serve` は副作用より先に
+  listen する。
 - **決定 4 は 1 プロファイルの意味論を全部のように書いている。** `AF_WS_SCRATCH` を設定するのは
   ECS アダプタだけ（`entrypoint.sh:246`）で、entrypoint が退避するのはディスクが 30 GiB 以上の
   ときだけ（`AF_WS_SCRATCH_MIN_GB`・`entrypoint.sh:263`）——既定の Fargate 配備は 20 GiB で
