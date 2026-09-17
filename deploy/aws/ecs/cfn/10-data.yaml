@@ -32,6 +32,28 @@ Parameters:
     Default: afadmin
     Description: Master username. The password is generated and managed by RDS in
       Secrets Manager (ManageMasterUserPassword) - never passed as a parameter.
+  EfsThroughputMode:
+    Type: String
+    Default: elastic
+    AllowedValues: [ elastic, bursting, provisioned ]
+    Description: >-
+      EFS throughput mode. MUST match the live file system - see the warning on the
+      FileSystem resource below. elastic (default) = pay per metered I/O, no ceiling.
+      bursting = free I/O but the baseline is 50 KiB/s per GiB stored, which for a
+      config-sized file system (a few GiB) is ~0.1 MiB/s once the burst credits run out.
+      provisioned = a fixed MiB/s (EfsProvisionedThroughputMibps), free I/O, throttled
+      above the provisioned rate.
+  EfsProvisionedThroughputMibps:
+    Type: Number
+    Default: 24
+    MinValue: 1
+    Description: >-
+      Sustained MiB/s to buy when EfsThroughputMode=provisioned (ignored otherwise).
+      Billed at the region's Provisioned Throughput rate (ap-northeast-1: $7.20 per
+      MiBps-month) whether or not it is used. The default is deliberately above the
+      measured peak (about 12 MiB/s for nine workspaces) because AWS lets you RAISE the
+      provisioned amount at any time but locks a decrease - and a return to elastic - for
+      24 hours. Size up, then come down a day later.
   Persistence:
     Type: String
     Default: delete
@@ -44,6 +66,7 @@ Parameters:
 
 Conditions:
   IsRetain: !Equals [ !Ref Persistence, retain ]
+  IsProvisionedTp: !Equals [ !Ref EfsThroughputMode, provisioned ]
 
 Resources:
   # --- EFS ---
@@ -62,6 +85,21 @@ Resources:
           Description: NFS from workspace tasks only
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-efs-sg" } ]
 
+  # ⚠️ ThroughputMode is a PARAMETER, and the parameter must track the live file system.
+  # AWS accepts ONE throughput-mode change per file system per 24 hours, so a stack update
+  # that quietly moves the mode cannot be undone the same day.
+  #
+  # This resource used to hard-code `bursting`. Bursting gives a baseline of 50 KiB/s per
+  # GiB of Standard storage; this file system holds only per-member config and credentials
+  # (a few GiB), so the baseline is around 0.1 MiB/s while the workspaces' *metadata* I/O
+  # alone runs one to two orders of magnitude above that. The burst credits drained over
+  # 36 hours and every workspace went to a crawl (an `openat` of a 2.4 KB file took 5.3 s),
+  # because ~/.gitconfig and CLAUDE_CONFIG_DIR are served from here. The live file system
+  # was moved to elastic by hand to end the outage; leaving `bursting` in the template
+  # would have re-armed the same failure on the next update of this stack.
+  #
+  # Keep the deployment's params file in step with the live value (capture-env.sh records
+  # it), and read `docs/decisions/0087-efs-metadata-io.md` before changing it.
   FileSystem:
     Type: AWS::EFS::FileSystem
     DeletionPolicy: !If [ IsRetain, Retain, Delete ]
@@ -69,7 +107,9 @@ Resources:
     Properties:
       Encrypted: true
       PerformanceMode: generalPurpose
-      ThroughputMode: bursting
+      ThroughputMode: !Ref EfsThroughputMode
+      ProvisionedThroughputInMibps:
+        !If [ IsProvisionedTp, !Ref EfsProvisionedThroughputMibps, !Ref "AWS::NoValue" ]
       FileSystemTags:
         - { Key: Name, Value: !Sub "af-${AWS::StackName}-efs" }
 
