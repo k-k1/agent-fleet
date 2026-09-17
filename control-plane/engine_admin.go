@@ -151,6 +151,9 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// and 7). One line on purpose: the route table is what three lanes writing this ADR at once
 	// would otherwise each append to.
 	registerEngineObjectRoutes(mux, a)
+	// Re-reading a model page for the name and the picture (ADR 0088), which is how a row taken
+	// in before those columns existed gets them. One line for the same reason as the one above.
+	registerEngineMetaRoutes(mux, a)
 	// The credential another deployment borrows these engines with (ADR 0079 decision 3, P1).
 	// Super_admin only and never GET — it opens every engine here, so a tenant-scoped role is
 	// not in proportion, and a credential does not belong in a URL. engine_issue_token.go.

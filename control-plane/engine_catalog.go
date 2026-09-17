@@ -785,6 +785,26 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	if m.BaseModel != "" {
 		row["base_model"] = m.BaseModel
 	}
+	// What the publisher calls this and the example image it published (ADR 0088). The panel
+	// draws the name as the card's title and keeps the id underneath — the id is the key
+	// everything else is written in, so it is shown and never replaced.
+	//
+	// Each omitted rather than emitted empty, like the rest of this row: absence is what the
+	// panel reads as "nobody recorded one", and it is the predicate the metadata button is
+	// offered on. A row that would emit `display_name: ""` would be a row nothing ever offers to
+	// fill in.
+	if m.DisplayName != "" {
+		row["display_name"] = m.DisplayName
+	}
+	if m.VersionName != "" {
+		row["version_name"] = m.VersionName
+	}
+	if m.PreviewURL != "" {
+		row["preview_url"] = m.PreviewURL
+	}
+	if m.ThumbURL != "" {
+		row["thumb_url"] = m.ThumbURL
+	}
 	// The row's own negative prompt, so the panel can show and edit what this checkpoint is told
 	// to keep out. Absent rather than empty on a row that declares none — the Agent's own
 	// measured default is what such a row gets, and an empty box is how an operator says so.

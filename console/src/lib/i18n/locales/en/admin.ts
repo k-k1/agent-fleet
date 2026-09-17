@@ -266,6 +266,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.catalog_registered_partial": "Storage: {present}/{total} files present (partial)",
   "admin.catalog_registered_missing": "Storage: no registered files are present",
   "admin.catalog_registered_unknown": "Storage: existence not confirmed",
+  // --- Names, example images and categories (ADR 0088). An id is a key, not a name. ---
+  // 🔴 "Uncategorised", never "unknown": for an image row it means no family, which is a row the
+  // CP refuses to enable — the group somebody has to act on, which is why it sorts first.
+  "admin.catalog_family_none": "Uncategorised",
+  "admin.catalog_meta": "Read the source page",
+  "admin.catalog_meta_all": "Fetch names and example images ({n})",
+  "admin.catalog_meta_busy": "Reading the source pages… {n}/{m}",
+  "admin.catalog_meta_done": "{n} rows now carry a name ({f} could not be read).",
   // --- Complete (ADR 0085 decision 3). The subject is the row; a part never is. ---
   "admin.catalog_complete": "Complete",
   "admin.catalog_complete_busy": "Completing…",

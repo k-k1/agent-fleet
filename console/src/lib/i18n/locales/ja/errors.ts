@@ -231,6 +231,7 @@ export const errors = {
   "err.engine_vae_missing": "このチェックポイントは VAE を同梱していないので、そのままでは生成が必ず失敗します",
   "err.engine_slot_filled": "その役割にはすでにファイルがあります。入れ替えるなら置き換えとして実行してください",
   "err.engine_vae_unreadable": "チェックポイントのヘッダを読めなかったので、VAE の有無は分かりません",
+  "err.engine_no_source": "この行には配布元のページが記録されていないので、名前や作例を取りにいけません",
   "err.engine_discover_unsupported": "この行は外部の ComfyUI ではないので、モデルの発見はできません",
   "err.engine_discover_unreachable": "その機械に問い合わせられませんでした（電源が入っていないか、ネットワークに繋がっていません）",
   "err.gated_not_accepted": "そのアカウントはこのリポジトリの条項にまだ同意していません",

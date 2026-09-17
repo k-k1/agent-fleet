@@ -116,6 +116,17 @@ type engineResolved struct {
 	// BaseModelSuggest is BaseModel translated into the provider's family vocabulary, or "".
 	// A suggestion for the form — ADR 0072 decision 2 keeps the declaration with the operator.
 	BaseModelSuggest string
+	// What the publisher calls this, which version of it this is, and one example image at the
+	// card and lightbox sizes (ADR 0088). Stored on the row, unlike ParamsHint above: the id is
+	// derived from a FILE name and is therefore not a name anybody chose, so without these the
+	// catalogue can only draw a key.
+	//
+	// 🔴 They cost no upstream read of their own. Civitai answers all four in the version
+	// document this already decodes for the sha256 and the licence (measured live 2026-09-18:
+	// `model.name`, `name` and ten `images[]`), and Hugging Face's `cardData.thumbnail` rides on
+	// the model document the resolve has already fetched.
+	DisplayName, VersionName string
+	PreviewURL, ThumbURL     string
 	// ParamsHint is what the author's own description says about how to run this, read out of
 	// prose (engine_params_hint.go). Offered to the form, never stored from here.
 	ParamsHint engineParamsHint
@@ -275,6 +286,11 @@ type engineHFDoc struct {
 		// most cards and a list on some. It is read for ONE purpose, suggesting the family in
 		// the ingest form, and is never stored as the family itself (decision 2).
 		BaseModel any `json:"base_model"`
+		// The picture the author put on the model card, when there is one (ADR 0088). The same
+		// field the search list reads, on a document this route has already fetched. Hugging
+		// Face offers no resizing, so it is the one size there is — the panel falls back to the
+		// preview wherever it would draw a thumbnail.
+		Thumbnail string `json:"thumbnail"`
 	} `json:"cardData"`
 	// Hugging Face parses the GGUF header itself and publishes the result here. Absent for
 	// every repository that holds no GGUF, which is why the field is optional everywhere it
@@ -335,6 +351,11 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 		BaseModel:     engineFirstString(doc.CardData.BaseModel),
 		ContextLength: doc.GGUF.ContextLength,
 		Source:        "hf:" + repo + "/" + file,
+		// The repository id IS the name here, and it is still worth storing (ADR 0088): the row
+		// id is the file's stem, so `qwen3_coder_30b_q4` loses both the owner and the
+		// quantiser that `unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF` names.
+		DisplayName: repo,
+		PreviewURL:  engineSafeHTTPURL(strings.TrimSpace(doc.CardData.Thumbnail)),
 	}
 	// The model card, as text. It is the one place a Hugging Face author writes down how to run
 	// the thing, and reading it costs one more GET on a route that has already made two.
@@ -452,7 +473,11 @@ type engineCivitaiDoc struct {
 	ModelID int `json:"modelId"`
 	// Description is the version's own, in HTML. Read first because when it does carry settings
 	// they are this version's, which beats the model's older ones.
-	Description  string   `json:"description"`
+	Description string `json:"description"`
+	// Name is the VERSION's name ("Meina V11", "Hard"), beside Model.Name below, which is the
+	// model's ("MeinaMix"). The pair is what tells two rows of the same model apart — the one
+	// thing a row id derived from a file name cannot express (ADR 0088).
+	Name         string   `json:"name"`
 	TrainedWords []string `json:"trainedWords"`
 	Model        struct {
 		Name string `json:"name"`
@@ -460,6 +485,12 @@ type engineCivitaiDoc struct {
 		NSFW bool   `json:"nsfw"`
 		POI  bool   `json:"poi"`
 	} `json:"model"`
+	// The version's example images, the same list the search answer carries. Only the URL is
+	// read: an example can be a video, and the transform the panel's URL asks for answers a
+	// still frame for one (engineCivitaiImageVariant), so `type` decides nothing here.
+	Images []struct {
+		URL string `json:"url"`
+	} `json:"images"`
 	Files []struct {
 		engineCivitaiFileFacts
 		Name        string  `json:"name"`
@@ -532,6 +563,11 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 			hint = engineParamsFromText(engineStripHTML(model.Description))
 		}
 		hash := strings.ToLower(f.Hashes.SHA256)
+		images := make([]string, 0, len(doc.Images))
+		for _, image := range doc.Images {
+			images = append(images, image.URL)
+		}
+		preview, thumb := engineCivitaiPreviewPair(images)
 		return engineResolved{
 			DownloadURL:   f.DownloadURL,
 			SHA256:        hash,
@@ -553,6 +589,11 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 			BaseModel:        strings.TrimSpace(doc.BaseModel),
 			Source:           "civitai:" + id,
 			ArtifactIdentity: engineCivitaiArtifactIdentity(c.VersionID, f.Name, hash),
+			// What a person recognises this by (ADR 0088), off the same document.
+			DisplayName: strings.TrimSpace(doc.Model.Name),
+			VersionName: strings.TrimSpace(doc.Name),
+			PreviewURL:  preview,
+			ThumbURL:    thumb,
 		}, nil
 	}
 	return engineResolved{}, &apiError{http.StatusNotFound, errCodeIngestFileUnknown,
@@ -1275,6 +1316,13 @@ func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, j
 		LicenseAcceptedTenant:  req.AcceptedTenant,
 		LicenseAcceptedLicense: req.AcceptedLicense,
 		CommercialUse:          engineCommercialUse(req.Resolved),
+		// What the publisher calls it, and the picture that shows what it draws (ADR 0088).
+		// Off the same resolve as the licence beside it, so this costs no read of its own — and
+		// like the licence it is a snapshot, which the metadata route re-takes on request.
+		DisplayName: req.Resolved.DisplayName,
+		VersionName: req.Resolved.VersionName,
+		PreviewURL:  req.Resolved.PreviewURL,
+		ThumbURL:    req.Resolved.ThumbURL,
 		// Where it came from, kept for as long as the MODEL is. The job row holds it too, but a
 		// job is a record of an event on its own timeline — it outlives the row it created and
 		// says nothing about whether that model still exists (observed on the dev deployment,

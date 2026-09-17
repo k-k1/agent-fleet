@@ -300,8 +300,31 @@ type EngineModel struct {
 	// engine_ingest_jobs.source keeps that only for as long as the job row lives.
 	//
 	// Empty for a seeded row, which comes from the stack and not from anywhere with a URL.
-	Source               string
+	Source string
+	// What the publisher CALLS this, and which version of it was taken in (ADR 0088). The id
+	// next door is derived from the file name because it is the key the launch menu, the active
+	// set and the S3 layout are written in — so it is not a name anybody chose, and a catalogue
+	// drawn from ids alone (`abyssorangemix2_hard_8832`) says nothing about which model is
+	// which.
+	//
+	// Both are a SNAPSHOT, like the licence: the row records what the model page said when it
+	// was read, and the metadata route re-reads it on request. Empty means nobody recorded one —
+	// a seeded row, a row staged by hand, and every row taken in before this existed.
+	DisplayName, VersionName string
+	// One example image the publisher published, at the two sizes the panel draws (the card and
+	// the lightbox). URLs into the publisher's own CDN and never bytes this deployment holds:
+	// nothing is mirrored into the bucket, so an image the publisher deletes is an empty box and
+	// not a third kind of object that purge, the ledger and the object routes would have to
+	// learn about.
+	PreviewURL, ThumbURL string
 	CreatedAt, UpdatedAt string
+}
+
+// EngineModelDisplay is the four fields above as one value, because they are one snapshot of
+// one upstream document and every writer of them writes all four (SetEngineModelDisplay).
+type EngineModelDisplay struct {
+	DisplayName, VersionName string
+	PreviewURL, ThumbURL     string
 }
 
 // EngineParams are the generation defaults declared for one catalogue row.
@@ -472,6 +495,10 @@ type EngineModelStore interface {
 	// real value — "this row has no trigger" — so the caller passing nil clears the column
 	// rather than leaving the previous words in place (ADR 0081 decision 5).
 	SetEngineModelTrainedWords(ctx context.Context, role, id string, words []string) (bool, error)
+	// SetEngineModelDisplay writes what the publisher calls this model and where its example
+	// image is (ADR 0088). All four together, empty included: they are one snapshot of one
+	// upstream document, and "the page no longer publishes a picture" is an answer.
+	SetEngineModelDisplay(ctx context.Context, role, id string, d EngineModelDisplay) (bool, error)
 	// SetEngineModelWindow corrects the declared window. BOTH columns, because the catalogue
 	// carries max_output_tokens only when context_tokens is above zero: a row that moved one of
 	// them alone is one the panel cannot explain.

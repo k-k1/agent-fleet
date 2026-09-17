@@ -70,6 +70,12 @@ const (
 	// refused. Its own code because the two answers send the reader to opposite places — this one
 	// is "nobody knows", which is never a reason to distrust a row that generates today.
 	errCodeEngineVaeUnreadable = "engine_vae_unreadable"
+	// There is no model page behind this row to read a name and an example image off (ADR 0088):
+	// nothing was recorded about where it came from, or what was recorded is a plain URL, which
+	// addresses the weights themselves. Its own code because the answer is neither a mistake nor
+	// something pressing again fixes — the row simply has no upstream, which is the normal state
+	// of a seeded row and of one an operator registered from the bucket by hand.
+	errCodeEngineNoSource = "engine_no_source"
 	// The discovery button (ADR 0082 decisions 6 and 7): reading what an external ComfyUI's own
 	// checkpoint/LoRA/VAE folders hold. Two codes because the two refusals send the reader to
 	// opposite places — `unsupported` is a row this button was never for (a borrowed mirror, a
