@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { api, apiJSON } from "../../../core/api/client.ts";
+import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+
+// The name a member may type for a new database. Same shape the Agent enforces
+// (validateExplicitDB): checking it here turns a 400 into a disabled button with
+// a reason under it.
+const DB_NAME_RE = /^[a-z_][a-z0-9_]{0,62}$/;
 
 // Engine state vocabulary from ADR 0086 P1 M2 Agent HTTP API.
 type DBState = "absent" | "installing" | "starting" | "running" | "stopped" | "error";
@@ -65,7 +71,12 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
   const [copied, setCopied] = useState(""); // name of the database just copied
   const [busy, setBusy] = useState(false);
   const [stopMenu, setStopMenu] = useState(false);
+  const [newName, setNewName] = useState("");
   const alive = useRef(true);
+  // Every action disables every other one, including the ones the Agent runs in
+  // the background — a create sent while the engine is still starting has nothing
+  // to create in.
+  const busy2 = busy || eng.state === "installing" || eng.state === "starting";
 
   useEffect(() => {
     // Reset on remount so StrictMode's double-invoke does not leave alive permanently false.
@@ -93,12 +104,39 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
     const path = `api/env/databases/${eng.engine}/${action}${query ? "?" + query : ""}`;
     const res = await apiJSON(path, "POST", {});
     setBusy(false);
-    if (!alive.current) return;
+    if (!alive.current) return false;
     if (res && res.error) {
       toast(tr("env.db_action_failed", { msg: res.error.message || "" }));
-      return;
+      return false;
     }
     onRefresh();
+    return true;
+  };
+
+  // Creating by name is the point of this tab: a member who wants a database for
+  // something that is not a working copy — a scratch schema, a second database
+  // for one project — used to have no way to ask for one except `af-db url` from
+  // inside a checkout, which always named the database after that checkout.
+  const nameError = newName !== "" && !DB_NAME_RE.test(newName);
+  const existing = (eng.databases || []).some((d) => d.name === newName);
+  const canCreate = newName !== "" && !nameError && !existing && !busy2;
+
+  const handleCreate = async () => {
+    if (!canCreate) return;
+    if (await doAction("create", "db=" + encodeURIComponent(newName))) {
+      if (alive.current) setNewName("");
+    }
+  };
+
+  const handleDrop = async (db: DBDatabase) => {
+    const ok = await askConfirm({
+      title: tr("env.db_drop_confirm_title"),
+      body: tr("env.db_drop_confirm_body", { db: db.name }),
+      confirmLabel: tr("env.db_drop_go"),
+      danger: true,
+    });
+    if (!ok) return;
+    doAction("drop", "db=" + encodeURIComponent(db.name));
   };
 
   // Reset names the database it resets. The Agent cannot infer one — asked without
@@ -144,7 +182,6 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
   const rssText = eng.rssBytes > 0 ? tr("env.db_rss", { n: Math.round(eng.rssBytes / 1_000_000) }) : "";
   const portText = eng.port > 0 ? tr("env.db_port", { n: eng.port }) : "";
   const dbs = eng.databases || [];
-  const busy2 = busy || eng.state === "installing" || eng.state === "starting";
 
   return (
     <div className="db-engine-row">
@@ -193,6 +230,13 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
                   {copied === db.name ? tr("env.db_copied") : tr("env.db_copy")}
                 </button>
                 <button
+                  className="db-btn db-btn-drop"
+                  disabled={busy2}
+                  onClick={() => handleDrop(db)}
+                >
+                  {tr("env.db_drop")}
+                </button>
+                <button
                   className="db-btn db-btn-reset"
                   disabled={busy2}
                   onClick={() => handleReset(db)}
@@ -203,6 +247,32 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
             </div>
           ))
         ))}
+
+      {eng.state === "running" && (
+        <form
+          className="db-create"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleCreate();
+          }}
+        >
+          <input
+            className="db-create-name"
+            value={newName}
+            placeholder={tr("env.db_create_placeholder")}
+            aria-label={tr("env.db_create_label")}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <button className="db-btn db-btn-create" type="submit" disabled={!canCreate}>
+            {tr("env.db_create")}
+          </button>
+          {nameError && <span className="db-create-hint db-create-bad">{tr("env.db_name_rule")}</span>}
+          {!nameError && existing && (
+            <span className="db-create-hint db-create-bad">{tr("env.db_name_taken")}</span>
+          )}
+          {!nameError && !existing && <span className="db-create-hint muted">{tr("env.db_name_rule")}</span>}
+        </form>
+      )}
 
       <div className="db-engine-actions">
         {(eng.state === "absent" || eng.state === "stopped" || eng.state === "error") && (
@@ -234,12 +304,24 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
   );
 }
 
-// EnvTabDatabases is the "Databases" card in the workspace settings Toolchains tab.
-// It shows the per-engine state — version, resident size, port, URL, and
-// Start / Stop / Reset actions — proxied through the CP to the Agent.
-// Requires the workspace to be running (the Agent owns the database processes).
-export function EnvTabDatabases({ running }: { running: boolean }) {
+// DatabaseTab is the workspace settings "Databases" tab. It shows the per-engine
+// state — version, resident size, port, per-database URLs — and the actions:
+// start / stop, create and drop a database by name, reset one. Everything is
+// proxied through the CP to the Agent, so the workspace must be running (the
+// Agent owns the database processes).
+//
+// It used to be a card at the bottom of the Toolchains tab. Databases are not a
+// toolchain: a Java version is a setting you pick once, while these hold a
+// member's data and are created, connected to and destroyed. Burying that under
+// the language pickers also meant the only way to make a database was to run
+// `af-db url` inside a working copy — so the tab that owns them owns creating
+// them too.
+//
+// `running` is read here rather than taken as a prop, because the tab is now
+// mounted directly by SettingsDialog.
+export function DatabaseTab() {
   const tr = useT();
+  const running = useWorkspaceStore((s) => s.state) === "running";
   const [data, setData] = useState<DBPayload | null>(null);
   const [err, setErr] = useState("");
 
@@ -260,8 +342,12 @@ export function EnvTabDatabases({ running }: { running: boolean }) {
   useEffect(load, [load]);
 
   return (
-    <section className="ds-group">
-      <h4 className="ds-title">{tr("env.db_title")}</h4>
+    <div className="display-settings">
+      <section className="ds-group">
+        <h4 className="ds-title">{tr("env.db_title")}</h4>
+        <p className="muted ds-sub">{tr("env.db_intro")}</p>
+      </section>
+      <section className="ds-group">
       {!running ? (
         <p className="muted ds-sub">{tr("env.db_ws_stopped")}</p>
       ) : err ? (
@@ -275,6 +361,7 @@ export function EnvTabDatabases({ running }: { running: boolean }) {
           ))}
         </div>
       )}
-    </section>
+      </section>
+    </div>
   );
 }

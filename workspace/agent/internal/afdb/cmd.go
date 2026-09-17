@@ -34,6 +34,10 @@ func RunAFDB(args []string) {
 		err = cmdURL(rest)
 	case "env":
 		err = cmdEnv(rest)
+	case "create":
+		err = cmdCreate(rest)
+	case "drop":
+		err = cmdDrop(rest)
 	case "reset":
 		err = cmdReset(rest)
 	case "down":
@@ -60,15 +64,21 @@ func printUsage() {
 Engines: postgres (default), mysql
 
 Verbs:
-  up [engine] [--major N] [--persist]                  ensure engine is installed and running
+  up [engine] [--major N] [--durable] [--ephemeral]      ensure engine is installed and running
   url [engine] [--major N] [--db=NAME] [--tcp]          print connection URL (installs/starts if needed)
       [--format=go-dsn]
   env [engine] [--major N] [--db=NAME] [--tcp]          print export lines for AF_DB_URL_* / DATABASE_URL
+  create [engine] [--major N] --db=NAME                  create a named database
+  drop [engine] [--major N] --db=NAME                    drop a named database
   reset [engine] [--major N] [--db=NAME]                 DROP + CREATE the database
   down [engine] [--major N] [--purge]                    stop the server; --purge removes the datadir
   status [engine] [--major N] [--json]                   show instance state (omit engine for all)
 
   --major defaults to 17 for postgres, 8.4 for mysql
+
+  The datadir lives in ~/.local/state/af-db and survives a workspace stop.
+  --durable also turns fsync on; --ephemeral moves the datadir to the
+  task-local disk, which is faster and is WIPED when the workspace stops.
 
 Exit codes: 0=ok  2=usage  3=install failed  4=server failed  5=not running  6=memory gate`)
 }
@@ -173,21 +183,35 @@ func cmdUp(args []string) error {
 	if err != nil {
 		return err
 	}
-	persist := false
+	var opts startOpts
 	for _, a := range args {
 		switch a {
+		case "--durable":
+			opts.Durable = true
 		case "--persist":
-			persist = true
+			// The old spelling of --durable. It used to mean "home datadir and fsync
+			// on"; home is now the default (decision 4″), so only the fsync half is
+			// left. Kept working rather than removed: it is in members' shell history
+			// and in this repository's own docs, and failing on it would teach nothing.
+			fmt.Fprintln(os.Stderr,
+				"af-db: --persist is now --durable; the datadir is in the home by default and survives a workspace stop")
+			opts.Durable = true
+		case "--ephemeral":
+			opts.Ephemeral = true
 		default:
 			return errUsage(fmt.Sprintf("unknown option: %s", a))
 		}
+	}
+	if opts.Ephemeral && os.Getenv("AF_WS_SCRATCH") == "" {
+		fmt.Fprintln(os.Stderr,
+			"af-db: --ephemeral ignored: this workspace has no task-local disk (AF_WS_SCRATCH unset); the datadir stays in the home")
 	}
 	if engine == "mysql" {
 		if err := checkMemoryGate(); err != nil {
 			return err
 		}
 	}
-	inst, err := ensureUp(engine, major, persist)
+	inst, err := ensureUp(engine, major, opts)
 	if err != nil {
 		return err
 	}
@@ -263,6 +287,61 @@ func cmdEnv(args []string) error {
 	return nil
 }
 
+// parseRequiredDB reads the --db=NAME every named-database verb needs. Unlike
+// reset, create and drop have no working-copy default to fall back to: a create
+// that guessed its own directory's name would make a database nobody asked for,
+// and a drop that guessed would destroy one.
+func parseRequiredDB(args []string) (string, error) {
+	dbName := ""
+	for _, a := range args {
+		switch {
+		case strings.HasPrefix(a, "--db="):
+			dbName = strings.TrimPrefix(a, "--db=")
+		default:
+			return "", errUsage(fmt.Sprintf("unknown option: %s", a))
+		}
+	}
+	if dbName == "" {
+		return "", errUsage("--db=NAME is required")
+	}
+	if err := validateExplicitDB(dbName); err != nil {
+		return "", err
+	}
+	return dbName, nil
+}
+
+func cmdCreate(args []string) error {
+	engine, major, args, err := parseEngineAndMajor(args, "postgres")
+	if err != nil {
+		return err
+	}
+	dbName, err := parseRequiredDB(args)
+	if err != nil {
+		return err
+	}
+	if err := createDB(engine, major, dbName); err != nil {
+		return err
+	}
+	fmt.Printf("database %q created\n", dbName)
+	return nil
+}
+
+func cmdDrop(args []string) error {
+	engine, major, args, err := parseEngineAndMajor(args, "postgres")
+	if err != nil {
+		return err
+	}
+	dbName, err := parseRequiredDB(args)
+	if err != nil {
+		return err
+	}
+	if err := dropDB(engine, major, dbName); err != nil {
+		return err
+	}
+	fmt.Printf("database %q dropped\n", dbName)
+	return nil
+}
+
 func cmdReset(args []string) error {
 	engine, major, args, err := parseEngineAndMajor(args, "postgres")
 	if err != nil {
@@ -323,9 +402,18 @@ func cmdStatus(args []string) error {
 
 // ---- core logic ----
 
+// startOpts carries the two things a start decides that a later start must not
+// silently undo: where the datadir goes, and whether writes are flushed.
+type startOpts struct {
+	// Ephemeral puts the datadir on the task-local scratch disk (wiped on stop).
+	Ephemeral bool
+	// Durable turns fsync / flush-at-commit on.
+	Durable bool
+}
+
 // ensureUp installs the engine if needed and starts it if stopped.
 // Concurrent calls are serialized by a per-(engine,major) start lock.
-func ensureUp(engine, major string, persist bool) (*Instance, error) {
+func ensureUp(engine, major string, opts startOpts) (*Instance, error) {
 	var root string
 	if engine == "mysql" {
 		root = mysqlRoot(major)
@@ -378,14 +466,18 @@ func ensureUp(engine, major string, persist bool) (*Instance, error) {
 		if isInstanceRunning(current) {
 			return nil
 		}
-		effectivePersist := current.Persist
-		if persist {
-			effectivePersist = true
+		// Both switches are sticky: the flags turn them on, a later plain `af-db up`
+		// keeps them. For Ephemeral that matters most — forgetting it between
+		// restarts would move the datadir to home and initdb an empty one over a
+		// database the member could still see a moment ago.
+		eff := startOpts{
+			Ephemeral: current.Ephemeral || opts.Ephemeral,
+			Durable:   current.Durable || opts.Durable,
 		}
 		if engine == "mysql" {
-			return startMySQLServer(current, effectivePersist)
+			return startMySQLServer(current, eff)
 		}
-		return startServer(current, effectivePersist)
+		return startServer(current, eff)
 	}); err != nil {
 		return nil, err
 	}
@@ -422,7 +514,7 @@ func ensureUp(engine, major string, persist bool) (*Instance, error) {
 // returns the connection URL. goDSN=true returns a go-sql-driver DSN for MySQL
 // (for Postgres the URL and DSN are identical).
 func urlFor(engine, major, explicitDB string, tcp, goDSN bool) (string, error) {
-	inst, err := ensureUp(engine, major, false)
+	inst, err := ensureUp(engine, major, startOpts{})
 	if err != nil {
 		return "", err
 	}
@@ -454,21 +546,7 @@ func urlFor(engine, major, explicitDB string, tcp, goDSN bool) (string, error) {
 	if explicitlyNamed {
 		recordedDir = ""
 	}
-	if err := withLock(func() error {
-		r, err := readRegistry()
-		if err != nil {
-			return err
-		}
-		key := instanceKey(engine, major)
-		if inst2, ok := r.Instances[key]; ok {
-			if inst2.Databases == nil {
-				inst2.Databases = make(map[string]string)
-			}
-			inst2.Databases[dbName] = recordedDir
-			inst2.LastUsedAt = time.Now()
-		}
-		return writeRegistry(r)
-	}); err != nil {
+	if err := registerDatabase(engine, major, dbName, recordedDir); err != nil {
 		return "", err
 	}
 
@@ -482,8 +560,10 @@ func urlFor(engine, major, explicitDB string, tcp, goDSN bool) (string, error) {
 	return buildURL(inst, dbName, pw, tcp), nil
 }
 
-// resetDB drops and recreates the working-copy (or explicit) database.
-func resetDB(engine, major string, explicitDB string) error {
+// runningInstance returns the registered instance for (engine, major), or
+// errNotRun when there is none or its server is down. Every verb that speaks SQL
+// needs the same check and the same sentence.
+func runningInstance(engine, major string) (*Instance, error) {
 	var inst *Instance
 	if err := withLock(func() error {
 		r, err := readRegistry()
@@ -496,10 +576,108 @@ func resetDB(engine, major string, explicitDB string) error {
 		}
 		return nil
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	if inst == nil || !isInstanceRunning(inst) {
-		return errNotRun(fmt.Sprintf("%s is not running; run 'af-db up' first", engine))
+		return nil, errNotRun(fmt.Sprintf("%s is not running; run 'af-db up' first", engine))
+	}
+	return inst, nil
+}
+
+// registerDatabase records name → dir in the instance's database map and bumps
+// lastUsedAt. dir=="" marks an explicitly named database, which reconcile never
+// drops.
+func registerDatabase(engine, major, name, dir string) error {
+	return withLock(func() error {
+		r, err := readRegistry()
+		if err != nil {
+			return err
+		}
+		if inst, ok := r.Instances[instanceKey(engine, major)]; ok {
+			if inst.Databases == nil {
+				inst.Databases = make(map[string]string)
+			}
+			inst.Databases[name] = dir
+			inst.LastUsedAt = time.Now()
+		}
+		return writeRegistry(r)
+	})
+}
+
+// unregisterDatabase forgets a database the member dropped.
+func unregisterDatabase(engine, major, name string) error {
+	return withLock(func() error {
+		r, err := readRegistry()
+		if err != nil {
+			return err
+		}
+		if inst, ok := r.Instances[instanceKey(engine, major)]; ok {
+			delete(inst.Databases, name)
+			inst.LastUsedAt = time.Now()
+		}
+		return writeRegistry(r)
+	})
+}
+
+// createDB creates a named database and registers it as explicitly named, so
+// reconcile leaves it alone. Creating one that already exists succeeds: the
+// member asked for the database to be there, and it is.
+func createDB(engine, major, name string) error {
+	inst, err := runningInstance(engine, major)
+	if err != nil {
+		return err
+	}
+	pw := readPass(passPath(engine, major))
+	if engine == "mysql" {
+		if err := ensureMySQLDatabase(inst, pw, name); err != nil {
+			return err
+		}
+	} else {
+		if err := ensureDatabase(buildURL(inst, "postgres", pw, false), name); err != nil {
+			return err
+		}
+	}
+	return registerDatabase(engine, major, name, "")
+}
+
+// dropDB removes a database and its registry entry.
+//
+// Postgres refuses to drop a database that anything is connected to, and the
+// thing connected is usually a psql the member forgot in another pane — so the
+// drop is FORCE (available since Postgres 13; the offered majors are 16+). The
+// member pressed a button labelled with the database's name after a confirmation
+// that named it; leaving them with "database is being accessed by other users"
+// and no way to act on it from the Console would be the worse answer.
+func dropDB(engine, major, name string) error {
+	inst, err := runningInstance(engine, major)
+	if err != nil {
+		return err
+	}
+	pw := readPass(passPath(engine, major))
+	if engine == "mysql" {
+		if _, err := mysqlQuery(inst, pw, "DROP DATABASE IF EXISTS `"+name+"`"); err != nil {
+			return fmt.Errorf("drop mysql database %q: %w", name, err)
+		}
+	} else {
+		ctx := context.Background()
+		conn, err := pgx.Connect(ctx, buildURL(inst, "postgres", pw, false))
+		if err != nil {
+			return fmt.Errorf("connect: %w", err)
+		}
+		defer conn.Close(ctx)
+		if _, err := conn.Exec(ctx,
+			"DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)"); err != nil {
+			return fmt.Errorf("drop database %q: %w", name, err)
+		}
+	}
+	return unregisterDatabase(engine, major, name)
+}
+
+// resetDB drops and recreates the working-copy (or explicit) database.
+func resetDB(engine, major string, explicitDB string) error {
+	inst, err := runningInstance(engine, major)
+	if err != nil {
+		return err
 	}
 	pw := readPass(passPath(engine, major))
 	var dbName string
@@ -804,24 +982,20 @@ func ensureInstalled(root, major string) error {
 
 // startServer runs initdb (if datadir absent), then pg_ctl start.
 // Caller must hold the start lock.
-func startServer(inst *Instance, persist bool) error {
+func startServer(inst *Instance, opts startOpts) error {
 	major := inst.Major
 	root := inst.Root
 	binDir := filepath.Join(root, "bin")
 
-	var base string
-	if persist {
-		base = homeStateBase()
-	} else {
-		base = scratchBase()
-	}
+	base, onScratch := datadirBase(opts.Ephemeral)
 	datadir := filepath.Join(base, fmt.Sprintf("postgres-%s", major), "data")
 	sockdir := filepath.Join(sockBase(), fmt.Sprintf("postgres-%s", major))
 	logFile := filepath.Join(base, fmt.Sprintf("postgres-%s.log", major))
 
 	inst.Datadir = datadir
 	inst.Sockdir = sockdir
-	inst.Persist = persist
+	inst.Durable = opts.Durable
+	inst.Ephemeral = onScratch
 
 	if _, err := os.Stat(datadir); os.IsNotExist(err) {
 		if err := os.MkdirAll(datadir, 0o700); err != nil {
@@ -859,7 +1033,7 @@ func startServer(inst *Instance, persist bool) error {
 	inst.Port = port
 
 	fsync := "off"
-	if persist {
+	if opts.Durable {
 		fsync = "on"
 	}
 	serverFlags := fmt.Sprintf(

@@ -444,8 +444,9 @@ func TestParseEngineAndMajor(t *testing.T) {
 		{[]string{"mysql", "--major=8.4"}, "postgres", "mysql", "8.4", 0, false},
 		{[]string{"--major=16"}, "postgres", "postgres", "16", 0, false},
 		{[]string{"--major", "18"}, "postgres", "postgres", "18", 0, false},
-		{[]string{"--persist", "--major=16"}, "postgres", "postgres", "16", 1, false},
+		{[]string{"--durable", "--major=16"}, "postgres", "postgres", "16", 1, false},
 		{[]string{"--major"}, "postgres", "", "", 0, true},
+		{[]string{"mysql", "--ephemeral"}, "postgres", "mysql", "8.4", 1, false},
 		{[]string{"mysql", "--persist"}, "postgres", "mysql", "8.4", 1, false},
 	}
 	for _, c := range cases {
@@ -469,6 +470,47 @@ func TestParseEngineAndMajor(t *testing.T) {
 		if len(rest) != c.wantRestLen {
 			t.Errorf("parseEngineAndMajor(%v) rest=%v (len %d), want len %d", c.args, rest, len(rest), c.wantRestLen)
 		}
+	}
+}
+
+// TestDatadirBaseIgnoresScratchByDefault pins decision 4″: a datadir goes in the
+// home unless the member asks for the task-local disk by name. The earlier
+// default read AF_WS_SCRATCH and put it there whenever the variable was set,
+// which meant a workspace stop silently destroyed every database — a trap that
+// only fires on a deployment that injects the scratch disk, i.e. not on any of
+// them today, which is why it has to be closed before one does.
+func TestDatadirBaseIgnoresScratchByDefault(t *testing.T) {
+	home := t.TempDir()
+	scratch := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_WS_SCRATCH", scratch)
+
+	base, onScratch := datadirBase(false)
+	if want := filepath.Join(home, ".local", "state", "af-db"); base != want {
+		t.Errorf("datadirBase(false) = %q, want %q (home, even with AF_WS_SCRATCH set)", base, want)
+	}
+	if onScratch {
+		t.Error("datadirBase(false) reported onScratch; the default never uses the scratch disk")
+	}
+
+	base, onScratch = datadirBase(true)
+	if want := filepath.Join(scratch, "af-db"); base != want {
+		t.Errorf("datadirBase(true) = %q, want %q", base, want)
+	}
+	if !onScratch {
+		t.Error("datadirBase(true) with AF_WS_SCRATCH set did not report onScratch")
+	}
+
+	// No scratch disk: --ephemeral has nowhere to go, so it falls back to home AND
+	// says it did not use the scratch disk. Recording it as ephemeral here would
+	// move the datadir the first time a deployment injected one.
+	t.Setenv("AF_WS_SCRATCH", "")
+	base, onScratch = datadirBase(true)
+	if want := filepath.Join(home, ".local", "state", "af-db"); base != want {
+		t.Errorf("datadirBase(true) without AF_WS_SCRATCH = %q, want %q", base, want)
+	}
+	if onScratch {
+		t.Error("datadirBase(true) without AF_WS_SCRATCH reported onScratch")
 	}
 }
 
@@ -619,11 +661,20 @@ func TestEnsureUpURLStop(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("AF_DB_POSTGRES_ROOT", root)
-	t.Setenv("AF_WS_SCRATCH", "")
+	// Deliberately SET: decision 4″ says a scratch disk does not move the datadir
+	// unless asked. This is the end-to-end half of TestDatadirBaseIgnoresScratchByDefault.
+	t.Setenv("AF_WS_SCRATCH", t.TempDir())
 
-	inst, err := ensureUp("postgres", "17", false)
+	inst, err := ensureUp("postgres", "17", startOpts{})
 	if err != nil {
 		t.Fatalf("ensureUp: %v", err)
+	}
+	if want := filepath.Join(tmp, ".local", "state", "af-db", "postgres-17", "data"); inst.Datadir != want {
+		t.Errorf("datadir = %q, want %q (home survives a workspace stop; the scratch disk does not)",
+			inst.Datadir, want)
+	}
+	if inst.Ephemeral {
+		t.Error("instance recorded Ephemeral without --ephemeral")
 	}
 	t.Cleanup(func() {
 		if err := stopInstance("postgres", "17", true); err != nil {
@@ -668,10 +719,41 @@ func TestEnsureUpURLStop(t *testing.T) {
 		t.Errorf("CountClientBackends with no real clients: got %d, want 0", n2)
 	}
 
+	// create / drop by name — what the Database tab drives. A named database is
+	// registered with dir=="" so reconcile never drops it, and dropping forgets it
+	// again; otherwise the tab would keep listing a database that no longer exists.
+	const named = "af_tab_made_this"
+	if err := createDB("postgres", "17", named); err != nil {
+		t.Fatalf("createDB: %v", err)
+	}
+	if err := createDB("postgres", "17", named); err != nil {
+		t.Errorf("createDB on an existing database should succeed, got: %v", err)
+	}
+	if got, ok := registeredDatabases(t, "postgres", "17")[named]; !ok || got != "" {
+		t.Errorf("after createDB, registry[%q] = %q, present=%v; want present with an empty dir",
+			named, got, ok)
+	}
+	// It has to be a real database, not just a registry row.
+	namedConn, err := pgx.Connect(ctx, urlForTest(t, "postgres", "17", named))
+	if err != nil {
+		t.Fatalf("connect to the created database: %v", err)
+	}
+	namedConn.Close(ctx)
+
+	if err := dropDB("postgres", "17", named); err != nil {
+		t.Fatalf("dropDB: %v", err)
+	}
+	if _, ok := registeredDatabases(t, "postgres", "17")[named]; ok {
+		t.Errorf("after dropDB, %q is still in the registry", named)
+	}
+	if err := dropDB("postgres", "17", named); err != nil {
+		t.Errorf("dropDB on an absent database should succeed, got: %v", err)
+	}
+
 	done := make(chan error, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			_, err := ensureUp("postgres", "17", false)
+			_, err := ensureUp("postgres", "17", startOpts{})
 			done <- err
 		}()
 	}
@@ -680,6 +762,26 @@ func TestEnsureUpURLStop(t *testing.T) {
 			t.Errorf("concurrent ensureUp: %v", err)
 		}
 	}
+}
+
+// registeredDatabases reads the instance's database map out of the registry.
+func registeredDatabases(t *testing.T, engine, major string) map[string]string {
+	t.Helper()
+	inst, err := runningInstance(engine, major)
+	if err != nil {
+		t.Fatalf("runningInstance: %v", err)
+	}
+	return inst.Databases
+}
+
+// urlForTest builds the socket URL for one database of a running instance.
+func urlForTest(t *testing.T, engine, major, db string) string {
+	t.Helper()
+	inst, err := runningInstance(engine, major)
+	if err != nil {
+		t.Fatalf("runningInstance: %v", err)
+	}
+	return buildURL(inst, db, readPass(passPath(engine, major)), false)
 }
 
 func TestPostgresIntegration(t *testing.T) {
@@ -870,7 +972,7 @@ func TestMySQLEnsureUpURLStop(t *testing.T) {
 		}
 	})
 
-	inst, err := ensureUp("mysql", "8.4", false)
+	inst, err := ensureUp("mysql", "8.4", startOpts{})
 	if err != nil {
 		t.Fatalf("ensureUp mysql: %v", err)
 	}
@@ -919,7 +1021,7 @@ func TestMySQLEnsureUpURLStop(t *testing.T) {
 	}
 
 	// Idempotent ensureUp.
-	inst2, err := ensureUp("mysql", "8.4", false)
+	inst2, err := ensureUp("mysql", "8.4", startOpts{})
 	if err != nil {
 		t.Fatalf("ensureUp mysql idempotent: %v", err)
 	}
@@ -948,7 +1050,7 @@ func TestMySQLIdleStop(t *testing.T) {
 		stopInstance("mysql", "8.4", true) //nolint:errcheck
 	})
 
-	inst, err := ensureUp("mysql", "8.4", false)
+	inst, err := ensureUp("mysql", "8.4", startOpts{})
 	if err != nil {
 		t.Fatalf("ensureUp: %v", err)
 	}

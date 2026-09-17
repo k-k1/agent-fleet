@@ -45,7 +45,16 @@ type Instance struct {
 	PID        int       `json:"pid,omitempty"`
 	StartedAt  time.Time `json:"startedAt,omitempty"`
 	LastUsedAt time.Time `json:"lastUsedAt,omitempty"`
-	Persist    bool      `json:"persist,omitempty"`
+	// Durable turns fsync (Postgres) / innodb-flush-log-at-trx-commit (MySQL) back
+	// on. The JSON key stays `persist` because that is what `--persist` wrote into
+	// every registry built before decision 4″: back then the flag meant "home
+	// datadir AND fsync on", and the half that survives the new default is this
+	// one. Renaming the key would silently drop the setting on upgrade.
+	Durable bool `json:"persist,omitempty"`
+	// Ephemeral puts the datadir on the task-local scratch disk, which is wiped
+	// when the workspace stops. Opt-in (decision 4″); sticky across restarts so a
+	// plain `af-db up` does not quietly move the datadir back to home.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 	// Databases: db name → working copy dir. dir=="" means explicitly named (--db=<name>);
 	// reconcile never drops those.
 	Databases map[string]string `json:"databases,omitempty"`
@@ -157,13 +166,28 @@ func homeStateBase() string {
 	return filepath.Join(homeDir(), ".local", "state", "af-db")
 }
 
-// scratchBase returns the task-local or home state base for datadirs.
-// When AF_WS_SCRATCH is set the datadir is on the fast scratch disk (wiped on stop).
-func scratchBase() string {
-	if s := os.Getenv("AF_WS_SCRATCH"); s != "" {
-		return filepath.Join(s, "af-db")
+// datadirBase returns the base directory datadirs are built under.
+//
+// Home is the default and the only place that survives a workspace stop
+// (decision 4″). A database that disappears when the workspace stops is not a
+// behaviour a member can plan around: they cannot tell a fixture they meant to
+// throw away from the seed data they spent an afternoon on, and nothing in the
+// Console says which one they have. ephemeral=true opts in to the task-local
+// scratch disk, which is faster and is wiped on stop — and when no scratch disk
+// is injected (AF_WS_SCRATCH unset, which is every deployment today) it has
+// nowhere to put one, so it falls back to home rather than inventing a path.
+// Returns onScratch=false when the fallback was taken, so the caller records
+// what it actually did instead of what it was asked for: an instance that
+// remembered ephemeral=true from a workspace without a scratch disk would move
+// its datadir — and initdb an empty one — the first time a deployment injected
+// one.
+func datadirBase(ephemeral bool) (base string, onScratch bool) {
+	if ephemeral {
+		if s := os.Getenv("AF_WS_SCRATCH"); s != "" {
+			return filepath.Join(s, "af-db"), true
+		}
 	}
-	return homeStateBase()
+	return homeStateBase(), false
 }
 
 // sockBase always uses home so socket paths stay well under 107 bytes.

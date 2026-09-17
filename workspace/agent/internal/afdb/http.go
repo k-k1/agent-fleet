@@ -211,8 +211,11 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_engine", "engine must be postgres or mysql")
 		return
 	}
-	if action != "start" && action != "stop" && action != "reset" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_action", "action must be start, stop, or reset")
+	switch action {
+	case "start", "stop", "create", "drop", "reset":
+	default:
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_action",
+			"action must be start, stop, create, drop, or reset")
 		return
 	}
 
@@ -258,7 +261,7 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 			}
 			// Phase 2: start the server (ensureInstalled inside ensureUp is a fast no-op now).
 			op.Set("starting", "")
-			_, err := ensureUp(engine, major, false)
+			_, err := ensureUp(engine, major, startOpts{})
 			if err != nil {
 				op.Set("", err.Error())
 			} else {
@@ -276,6 +279,36 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Clear any previous error so GET no longer reports state=error after success.
+		GetAsyncOp(engine, major).Set("", "")
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": BuildEngineStatus(engine, major),
+		})
+
+	case "create", "drop":
+		// The Database tab creates and drops databases by name, so a member no longer
+		// has to run `af-db url` in a working copy to get one. Both take the name from
+		// the query string and neither has a default: ResolveDir() would answer with
+		// the Agent's own directory, which is the mistake reset already made once.
+		dbName := r.URL.Query().Get("db")
+		if dbName == "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "db_required",
+				"db=<name> is required; it names the database to "+action)
+			return
+		}
+		if err := validateExplicitDB(dbName); err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_db", err.Error())
+			return
+		}
+		var err error
+		if action == "create" {
+			err = createDB(engine, major, dbName)
+		} else {
+			err = dropDB(engine, major, dbName)
+		}
+		if err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, action+"_failed", err.Error())
+			return
+		}
 		GetAsyncOp(engine, major).Set("", "")
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"status": BuildEngineStatus(engine, major),

@@ -31,6 +31,9 @@ describe("settings rail", () => {
     expect(groupOf("ssm")).toBe("connections");
     // Agent memory is what the agent carries into a session, next to the instructions.
     expect(groupOf("memory")).toBe("personal");
+    // Databases belong to the workspace, not to the toolchains they used to hang off:
+    // they hold a member's data and are created and destroyed (ADR 0086).
+    expect(groupOf("database")).toBe("workspace");
   });
 
   it("has a renderer for every item in the rail", () => {

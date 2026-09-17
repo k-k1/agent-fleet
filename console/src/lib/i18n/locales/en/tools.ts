@@ -184,8 +184,10 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.agent_update_label": "Update the agent CLIs and rtk to the latest on start",
   "env.agent_update_note":
     "Covers claude / opencode / codex / Copilot / Antigravity (agy) / rtk. OFF (default) pins the system-baked image versions. ON updates each to the latest on the next start (applied on Stop → Start; turn it OFF and restart to return to the image versions). You can change this even while stopped.",
-  // --- Databases (features/settings/workspace/EnvTabDatabases.tsx — ADR 0086 P1 decision 9) ---
+  // --- Databases (features/settings/workspace/DatabaseTab.tsx — ADR 0086 P1 decision 9) ---
   "env.db_title": "Databases",
+  "env.db_intro":
+    "PostgreSQL and MySQL for this workspace, run by the Agent. The data lives in the home and survives a Stop \u2192 Start; only \u201cStop and remove data\u201d and dropping a database delete it.",
   "env.db_ws_stopped": "Start the workspace to manage databases.",
   "env.db_state_absent": "not installed",
   "env.db_state_installing": "installing…",
@@ -195,7 +197,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.db_state_error": "error",
   "env.db_rss": "{n} MB",
   "env.db_port": "port {n}",
-  "env.db_none_yet": "No databases yet. Run `af-db url` in a working copy and its database appears here.",
+  "env.db_none_yet": "No databases yet. Create one below, or run `af-db url` in a working copy and its database appears here.",
   "env.db_url_socket": "Socket",
   "env.db_url_tcp": "TCP",
   "env.db_copy": "Copy",
@@ -203,6 +205,15 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.db_start_absent": "Install and start",
   "env.db_stop": "Stop",
   "env.db_stop_purge": "Stop and remove data",
+  "env.db_create": "Create",
+  "env.db_create_label": "New database name",
+  "env.db_create_placeholder": "new database name",
+  "env.db_name_rule": "Lower-case letters, digits and _; must not start with a digit. Up to 63 characters.",
+  "env.db_name_taken": "A database with that name already exists on this engine.",
+  "env.db_drop": "Delete",
+  "env.db_drop_confirm_title": "Delete the database?",
+  "env.db_drop_confirm_body": "{db} and everything in it will be deleted. Anything still connected to it is disconnected. This cannot be undone.",
+  "env.db_drop_go": "Delete",
   "env.db_reset": "Reset",
   "env.db_reset_confirm_title": "Reset the database?",
   "env.db_reset_confirm_body": "All data in {db} will be deleted and that database recreated from scratch. This cannot be undone.",
