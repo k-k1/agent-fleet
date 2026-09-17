@@ -13,8 +13,13 @@ English | [日本語](0087-efs-metadata-io.ja.md)
   pass: (7) **the safety side is not just the delivery check** - the completion report and the
   firing of an armed stop go through the same `SubagentBusy`; (8) **the peak's denominator**
   (7 boxes at the peak minute, not 8) → the estimated peak is 12-15 MiB/s; (9) the cost table
-  mixed two bases and the unit convention matters (elastic is a provisional **$141-151/month**);
-  (10) "no READDIR, so B is not dominant" inferred the caller from the RPC mix.
+  mixed two bases and the unit convention mattered; (10) "no READDIR, so B is not dominant"
+  inferred the caller from the RPC mix. Third pass: (11) **billing is in GiB (2^30)** - lined up
+  on the same numerator, window and minute resolution, CloudWatch and Cost Explorer agree to
+  **0.12%** (elastic settles at **about $142/month**); (12) "there is no cheap-and-roomy
+  provisioned option" is withdrawn (**20 MiB/s costs the same and buys 1.30-1.67x**); (13)
+  headroom ratios are **1.04-1.33x** before rounding; (14) a CFN update **may**, not **will**,
+  flip the mode back to bursting.
 - **What was measured, and where.** The numbers come from three places only. (1) CloudWatch
   metrics for the production deployment's data file system (`MeteredIOBytes` /
   `MetadataIOBytes` / `ClientConnections`, 2026-09-04 to 09-17); (2) Cost Explorer actuals
@@ -272,43 +277,52 @@ The first draft said "the billing meter is `MeteredIOBytes`", and that was impre
   increments after the first 32 KiB**.
 
 So the cost is `(MetadataReadIOBytes + DataReadIOBytes) x $0.04 + (MetadataWriteIOBytes +
-DataWriteIOBytes) x $0.07`. For 09-16's elastic window (from 11:56 JST):
+DataWriteIOBytes) x $0.07`.
+
+### 🔥 Reconciled to 0.12% - billing is in GiB (2^30)
+
+09-16's elastic window (**11:56 to 09:00 JST the next day**, 698 one-minute buckets summed):
 
 | | |
 |---|---|
-| CloudWatch reads (metadata 247.43 + data 1.27) | **248.70 GB** |
-| CloudWatch writes | 2.05 GB |
-| cost by the formula above | $10.09 |
-| **Cost Explorer actual** | **235.206 GB / $9.4655** |
+| CloudWatch reads | 250,793,018,040 bytes |
+| CloudWatch writes | 2,057,315,052 bytes |
+| (reads + writes) / 2^30 | **235.485 GiB** |
+| cost by the formula / 2^30 | **$9.4769** |
+| **Cost Explorer actual** | **235.2056 / $9.4655** (`Estimated=true`) |
 
-**The gap depends on the unit convention.** At 1 GB = 10^9 bytes, CloudWatch's 248.70 against
-CE's 235.206 is **5.7%**; at 1 GiB = 2^30 bytes CloudWatch is 231.6 GiB and the gap shrinks to
-**1.5%** - **reading CE as GiB is the more consistent interpretation**. The residual has not
-been decomposed either: (1) the CE rows are `Estimated=true`; (2) the mode switch fell mid-day
-(09-16 11:56 JST). ⚠️ The first draft also said "whether CloudWatch applies the per-operation
-minimums is not documented", and that was wrong - `efs-metrics.html` states for `TotalIOBytes`
-that "Data operations are metered at 32 KiB and other operations are metered at 4 KiB. After
-the minimum, all operations are metered per KiB." **Conclusion: take Cost Explorer as the money
-and CloudWatch for shape and trend. This window reconciled to 1.5% read as GiB, but that is the
-result of one comparison, not a guarantee for the next.**
+**+0.119% on quantity, +0.120% on cost.** With the same numerator (reads + writes), the same
+window and minute resolution, CloudWatch and Cost Explorer **agree to 0.12%**. Read as
+1 GB = 10^9 the total is 252.85 and the gap is +7.5%, so **AWS bills in GiB (2^30)**.
+
+⚠️ **Both earlier drafts got this wrong.** The first said it "matched `MeteredIOBytes`"; the
+second compared CloudWatch's **reads only** against CE's **reads + writes** and reported 5.7% /
+1.5% - different numerators. And taking Period=3600 from 11:56 pulls the whole 11:00 bucket in,
+including minutes from before the switch: **cut the window at minute resolution.**
+⚠️ "Whether CloudWatch applies the per-operation minimums is not documented" was also wrong -
+`efs-metrics.html` states for `TotalIOBytes` that "Data operations are metered at 32 KiB and
+other operations are metered at 4 KiB. After the minimum, all operations are metered per KiB."
+
+**Conclusion: Cost Explorer is the money, and CloudWatch converted at GiB estimates it well.**
+That said, this is one window's reconciliation, not a guarantee for the next.
 
 ### What it costs per month (normalised per box-hour)
 
 Daily totals move with how many people used the deployment for how long, so normalise to
 **one box for one hour**:
 
-**Derive both rows with the same formula** (CloudWatch reads/writes times the unit prices),
-and state the window.
+**Derive both rows with the same formula and the same unit** (CloudWatch reads/writes times the
+unit prices, divided by 2^30), and state the window.
 
-| | window (JST) | box-hours | reads | writes | GB/box-hour | $/box-hour |
+| | window (JST, minute-cut) | box-hours | reads | writes | GiB/box-hour | $/box-hour |
 |---|---|---|---|---|---|---|
-| old agent | 09-16 11:56 - 09-17 09:00 | 48.6 | 250.79 GB | 2.06 GB | **5.20** | $0.209 |
-| **new agent** | **09-17 09:00 - 14:04** | **17.5** | **46.22 GB** | **0.80 GB** | **2.69** | **$0.109** |
+| old agent | 09-16 11:56 - 09-17 09:00 | 48.6 | 233.57 GiB | 1.92 GiB | **4.845** | $0.1950 |
+| **new agent** | **09-17 09:00 - 14:14** | **18.2** | **45.08 GiB** | **0.77 GiB** | **2.520** | **$0.1021** |
 
-⚠️ The first draft derived the old row from **Cost Explorer's actual / box-hours** ($0.196)
-while the new row came from CloudWatch ($0.109) - two bases in one column. Do not mix them.
-For reference, the old row from CE is $9.4655 / 48.6 = $0.195 per box-hour, and the gap to the
-CloudWatch formula is the same 6% (1.5% if GiB) discussed above.
+**48% less per box-hour.** Deriving the old row from CE's actual instead gives
+$9.4655 / 48.6 = $0.1948 per box-hour - 0.1% from the $0.1950 above, as the reconciliation
+predicts. ⚠️ The second draft had the old row from CE and the new one from CloudWatch, and used
+10^9 as the unit.
 
 Re-aggregating box-hours by **JST** day (09-04 to 09-16, 13 days, `ClientConnections.Sum / 120`)
 gives a **weekday median of 58.7 box-hours** (range 34.2-66.6, n=9) and a **weekend median of
@@ -316,16 +330,15 @@ gives a **weekday median of 58.7 box-hours** (range 34.2-66.6, n=9) and a **week
 ⚠️ The first draft's "weekday 54.6-66.6 / weekend 4.6-8.9" came from UTC-day buckets, which cut
 each JST day across two.
 
-- old agent: about 7,160 GB = **about $290/month**
-- **new agent: about 3,700 GB = about $150/month** ($0.109 x 1,377)
+- old agent: **about $268/month** ($0.1950 x 1,377)
+- **new agent: about $141/month** ($0.1021 x 1,377)
 
-⚠️ **The unit convention moves this by 7%.** The above converts at 1 GB = 10^9 bytes. If AWS
-bills in GiB (2^30), it is **about $140/month**. **The Cost Explorer measurement actually
-favours GiB**: over 09-16's elastic window, CloudWatch's 248.70x10^9 read bytes are 231.6 GiB
-against CE's billed quantity of 235.206 - a 1.5% gap read as GiB, 5.7% read as GB.
-**Conclusion: a provisional estimate of about $140-150/month**, not a settled figure. Both the
-first draft's "about $100/month" and its replacement "the figure is $155" overstated the
-certainty. Check against 09-17's Cost Explorer actual (its Groups are still empty).
+⚠️ **What remains uncertain here is the sample, not the unit.** The unit is settled as GiB by
+the previous section (0.12%). What is left is that the new agent's sample is **still only half a
+working day**, and the 1,377 box-hours assumption. The first draft's "$100/month", the second's
+"$155" and "$141-151" were all transitional; **the best current estimate is about $141/month**.
+Check it against 09-17's Cost Explorer actual once it posts (Groups were still empty at
+14:14 JST).
 
 ### The three-way comparison (monthly)
 
@@ -340,26 +353,29 @@ Take the old agent's 1-minute maximum of 18.118 MB/s at **7 boxes at that minute
 centre of 11. It applies a *median* improvement to a *peak*, and a 1-minute metric cannot see
 a burst that lasts seconds. It is not a measurement.
 
-| | (1) stay on elastic | (2) provisioned 16 MiB/s | (3) provisioned 24 MiB/s | (4) elastic, after the fixes |
-|---|---|---|---|---|
-| I/O volume | ~3,700 GB/month | - (not billed) | - | ~400-900 GB/month (target: 4-8x less) |
-| I/O cost | **~$140-150** | $0 | $0 | **~$15-37** |
-| fixed throughput cost | $0 | **$115.20** | **$172.80** | $0 |
-| storage | ~$1 | ~$1 | ~$1 | ~$1 |
-| **total** | **~$141-151/month** | **~$116/month** | **~$174/month** | **~$16-38/month** |
-| headroom over the estimated peak (12-15 MiB/s) | no ceiling | **1.07-1.33x** | 1.6-2.0x | no ceiling |
-| how it fails | the bill grows | **it throttles and every workspace stops** | same | the bill grows |
+The estimated peak is **12.00-15.33 MiB/s** (the extrapolation below). Headroom is computed
+against the unrounded values.
 
-⚠️ **This table has now changed twice.** The first draft estimated elastic at $105/month and
-concluded provisioned was more expensive. Measured per box-hour, elastic is **$141-151/month**
-(the range is the unit convention) and **provisioned at 16 MiB/s ($116/month) is cheaper** -
-**but once the peak's denominator is corrected, that 16 MiB/s leaves only 1.07-1.33x headroom
-over the estimated peak of 12-15 MiB/s.** The real choice is between "cheap with no headroom"
-(16) and "headroom at 15-23% more than elastic" (24); **there is no cheap-and-roomy provisioned
-option.** Break-even is around 20 MiB/s, uncomfortably close to the top of the estimated peak
-band (15.3 MiB/s).
+| | (1) stay on elastic | (2) prov. 16 MiB/s | (3) prov. 20 MiB/s | (4) prov. 24 MiB/s | (5) elastic, after the fixes |
+|---|---|---|---|---|---|
+| I/O cost | **~$141** | $0 | $0 | $0 | **~$18-35** |
+| fixed throughput cost | $0 | **$115.20** | **$144.00** | **$172.80** | $0 |
+| storage | ~$1 | ~$1 | ~$1 | ~$1 | ~$1 |
+| **total** | **~$142/month** | **~$116/month** | **~$145/month** | **~$174/month** | **~$19-36/month** |
+| headroom over the estimated peak | no ceiling | **1.04-1.33x** | 1.30-1.67x | 1.57-2.00x | no ceiling |
+| how it fails | the bill grows | **it throttles and every workspace stops** | same | same | the bill grows |
 
-So "cheaper" is not the reason to stay on elastic. Three reasons are, and they are decision 1.
+⚠️ **This is the table's third version.** First draft: $105/month, "provisioned is more
+expensive". Second: $141-151/month, "16 MiB/s is 25% cheaper". Now this. **Break-even is about
+19.6 MiB/s** ($141 / $7.20), so **20 MiB/s costs what elastic costs today and buys 1.30-1.67x
+headroom.**
+⚠️ The second draft's "there is no cheap-and-roomy provisioned option" judged from two points
+(16 and 24) without defining how much headroom is needed. **Withdrawn** - what can be said is
+that the 16 compared here has little headroom (4% over the upper demand estimate), the 24 costs
+23% more than elastic, and the 20 sits in between at the same price.
+
+Even so, "cheaper" is not the reason to stay on elastic. Three reasons are, and they are
+decision 1.
 
 ### The 24-hour restriction, stated precisely
 
@@ -394,14 +410,15 @@ If provisioned is chosen, watch these together:
 ### Decision 1: the stop-gap is to stay on elastic. Do not buy provisioned throughput
 
 ⚠️ **On cost alone, provisioned at 16 MiB/s ($116/month) is cheaper than elastic
-($141-151/month).** The first draft said the opposite. Three reasons still favour staying put.
+(about $142/month), and 20 MiB/s ($145/month) costs about the same while buying 1.30-1.67x
+headroom.** The first draft said the opposite. Three reasons still favour staying put.
 
 1. **We do not know, by measurement, how high to buy.** The ceiling would be set against an
    estimated peak (12-15 MiB/s, a scenario extrapolation) derived by applying a median
    improvement to a peak, from a 1-minute metric that cannot see a burst lasting seconds.
    **Buying a ceiling against an extrapolated peak is structurally what happened on 09-16.** And
-   the cheaper option, 16 MiB/s, leaves only 1.07-1.33x over that estimate - **the saving is
-   bought out of the headroom**.
+   the cheaper option, 16 MiB/s, leaves only **1.04-1.33x** over that estimate (4% over the
+   upper demand figure) - **the saving is bought out of the headroom**.
 2. **The failure modes differ in kind.** Overrunning elastic produces a bill. Overrunning
    provisioned produces an **outage** - and an EFS at its ceiling is not "a bit slow". That is
    the measurement from 09-16: the moment it dropped to 1 MiB/s, an `openat` of a 2.4 KB file
@@ -416,8 +433,8 @@ in**". Revisit once decisions 4 and 5 have landed and been re-measured - by then
 lower, so provisioned would be either much smaller or unnecessary.
 
 If the user prefers the predictability of a fixed cost anyway, the recommended amount is
-**24 MiB/s** ($172.80/month), on the reasoning that it is 1.6-2.0x the estimated peak of
-12-15 MiB/s. ⚠️ The first draft added "and above the 22 MiB/s the old agent's demand scales to
+**24 MiB/s** ($172.80/month), on the reasoning that it is 1.57-2.00x the estimated peak of
+12.00-15.33 MiB/s. ⚠️ The first draft added "and above the 22 MiB/s the old agent's demand scales to
 at nine boxes, so it will not throttle even if 0.21.0's gain were lost"; **that guarantee is
 withdrawn** - the peak is itself an extrapolation, so a multiple of it is only another one (and
 with the denominator corrected, demand with the improvement entirely lost extrapolates to
@@ -428,8 +445,12 @@ next. The CloudFormation default is set to the same 24 (decision 2).
 
 `deploy/aws/ecs/cfn/10-data.yaml:72` hard-coded `ThroughputMode: bursting`. The live file
 system was only changed from the CLI, and the `af-ecs-data` stack has not been updated since
-2026-08-25. **The next update of that stack would flip it back to bursting and re-arm the outage.**
-⚠️ The first draft added "with a 24-hour wait to undo it"; the asymmetric restriction above
+2026-08-25. **The next update of that stack could flip it back to bursting and re-arm the outage,
+depending on what the update changes.** ⚠️ Not "would": an ordinary change set compares the old
+and new **templates**, so drift introduced by a CLI-only change to the live file system does not
+show up there (comparing against actual state is what drift-aware change sets do). That is
+exactly what makes it nasty: **whether it flips depends on the update, and if it flips, nothing
+goes wrong until the credits drain.** ⚠️ The first draft added "with a 24-hour wait to undo it"; the asymmetric restriction above
 binds only **after a switch to provisioned or a change of its amount**, so
 elastic → bursting → elastic is not covered by it. The danger is not the wait but **the mode
 changing silently at all** - nothing goes wrong until the credits drain, so you find out at
@@ -521,8 +542,12 @@ stay on EFS** - ADR 0045's line about not leaving plaintext on local disk does n
   (`chat_report_reconcile.go`) and (3) firing an armed stop (`chat_stop_after_turn.go`) - and
   **all three must search for real**. Two ways to build it: (a) **add a display-only entry
   point** and put the negative cache there alone, leaving `SubagentBusy`'s existing meaning
-  (always a real search) untouched; (b) give every safety path an **explicit bypass**. Prefer
-  (a), because it makes the safe behaviour the default.
+  untouched; (b) give every safety path an **explicit bypass**. Prefer (a), because it makes the
+  safe behaviour the default. There are **two display-side callers** to switch over under (a):
+  `claude.go:213` (the session list) and `internal/sessionx/session_transcript.go:289` (the chat
+  header). ⚠️ "Leaving the existing meaning untouched" does **not** mean dropping the existing
+  positive `pathMemo` (a hit is revalidated with `Lstat`); the one thing that must not change is
+  that **absence is never decided from a negative cache**.
 
   Acceptance test: **create a child transcript just after a miss, inside the TTL**, and confirm
   that with the display cache warm, (1) a misdelivery is still caught, (2) completion is not
@@ -592,9 +617,11 @@ numbers**.
 0. **First, settle whether A or B dominates** (before decision 5 is implemented). On a
    production box, take a `/proc/self/mountstats` delta (READDIR / GETATTR / OPEN / READ RPC
    counts for `claude` and `keep` separately) **together with** the VFS operation count for the
-   same interval. The 20-second delta on 09-17 at 12:20 JST showed almost no READDIR on the
-   `claude` mount, so **B (the full sweep) is not always the dominant cost**. Fixing without
-   knowing the ranking means not knowing what is left when it does not help.
+   same interval. ⚠️ **The RPC mix alone cannot identify the caller** (see the note in the
+   body): READDIR RPCs being 0 on the `claude` mount in the 20-second delta on 09-17 at
+   12:20 JST does not prove B contributes little - the entries can come from cache while the
+   attribute revalidation still shows up as GETATTR. **The contribution is currently unknown**,
+   and fixing without knowing the ranking means not knowing what is left when it does not help.
 1. **Unit (`strace`).** Run the same shape of probe as this ADR - real code compiled into a
    test binary, started as a child, counted with `strace -c`. ⚠️ **Measure the display path and
    the safety paths separately** (decision 5): (1) the **display** path, with the cache warm,
@@ -617,9 +644,11 @@ numbers**.
    153). ⚠️ Do not compare across different times of day - that is how the first draft's "half"
    was produced.
 4. **The bill.** Watch `APN1-ETDataAccess-Bytes` in `ce get-cost-and-usage` over three working
-   days. ⚠️ CE rows stay `Estimated=true` for a while, and reconcile with CloudWatch only within
-   6%. Anything finer than DAILY needs the payer account to have opted in (measured: HOURLY
-   returns `AccessDeniedException`).
+   days. ⚠️ CE rows stay `Estimated=true` for a while. When reconciling against CloudWatch, line
+   up **the same numerator (reads + writes), the same window, minute resolution and GiB** - done
+   that way, 09-16's window agreed to 0.12% (mismatched, it is 6-8% out). That is this window's
+   residual, not a guarantee for the next. Anything finer than DAILY needs the payer account to
+   have opted in (measured: HOURLY returns `AccessDeniedException`).
 5. **The regression guard.** Confirm the decision-3 alarm stays silent for a week.
 
 ## Open questions
@@ -634,11 +663,11 @@ numbers**.
   measurements, but the same method should show an order of magnitude more. This ADR does not
   decide it.
 - 🔴 **Whether source A or source B dominates the floor is still undecided** (the biggest gap).
-  `/proc/self/mountstats` was captured once on a production box (the table above), and the
-  `claude` mount was GETATTR-dominated with **almost no READDIR** - a short 20-second window
-  under different conditions from the morning floor, but not what "B dominates" would predict.
-  The ranking is not settled until **VFS operations and RPCs are captured together, during an
-  interval where the floor is visible**. That is why decision 4 is sequenced ahead of decision 5.
+  `/proc/self/mountstats` was captured once on a production box (the table above), but **the RPC
+  mix does not identify the caller**, so all those 20 seconds support is "READDIR RPCs were 0,
+  GETATTR dominated, **contribution unknown**". The ranking is not settled until **VFS operations
+  and RPCs are captured together, during an interval where the floor is visible**. That is why
+  decision 4 is sequenced ahead of decision 5.
 - **How much the NFS attribute cache absorbs.** The syscall counts above are VFS-level, not
   NFS round trips. Directory contents are answered locally until `acdirmin` (default 30 s) and
   file attributes until `acregmin` (default 3 s). The first draft estimated "one to three round
