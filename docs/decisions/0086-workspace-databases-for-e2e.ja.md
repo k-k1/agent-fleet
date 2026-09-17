@@ -843,5 +843,24 @@ sha、`libaio1t64` / `libnuma1` / `libncurses6`。P0・P1 の受け入れが届�
 検証は両側の単体テスト（`TestDatabaseEntriesPerWorkingCopy` と、2 行目の URL をコピーする
 DOM テスト）。実機のカードに載るのは次の焼き直しから。
 
+### 修正を積んだイメージで確認した（2026-09-17・同日）
+
+#721 のマージから開発配備のイメージを焼き直し、ここへ配備した。上の 2 回が約束しかできな
+かったことを、回避策を一切使わずに実測した：
+
+- `/proc/7/exe` は `/usr/local/bin/workspace-agent`、シムも
+  `exec /usr/local/bin/workspace-agent af-db "$@"`。PATH の影が Agent を奪うことはもう無い。
+- `af-db up mysql` を未経験の HOME から：端から端まで **27.6 秒**。ログに
+  `[install-mysql] linked libaio.so.1 -> /lib/x86_64-linux-gnu/libaio.so.1t64 (Debian t64 soname)`
+  が出て、`AF_DB_MYSQL_LIBS` は未設定。`down mysql --purge` もきれい。
+- `install-pg-client` を新しい HOME へ：**1.8 秒**（17.11-0+deb13u1）。前回は既に入っていて
+  取れなかった数字。
+- `GET /env/databases` は新しい形（エンジン単位の URL は無く、`databases` が一覧）で、
+  **カードがコピーする URL が実際につながる**。`af_agent_fleet_wip_szkxzgu_9af42b` のソケット形・
+  TCP 形の両方が `select current_database()` に自分の名前を返した。前のイメージの URL は
+  `database "af_dev_12fbd7" does not exist` だった。
+
+未検証のものは未検証のまま：ECS の作業ディスク上のデータディレクトリと、arm64 の MySQL。
+
 **次**（この実機で閉じた分を除いて変わらず）：Agent がイメージのものであるワークスペースでの
 Console カード、作業ディスク上のデータディレクトリでの ECS 初回、arm64 の MySQL。

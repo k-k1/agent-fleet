@@ -902,5 +902,24 @@ section says the same in both languages. Verified by unit tests on both sides
 (`TestDatabaseEntriesPerWorkingCopy`, and a DOM test that copies the second row's own URL);
 the live card gets this at the next image bake.
 
+### Confirmed on the image that carries the fixes (2026-09-17, same day)
+
+The development image was rebuilt from the merge of #721 and deployed here. Everything the two
+runs above could only promise is now measured on it, with no workaround anywhere:
+
+- `/proc/7/exe` is `/usr/local/bin/workspace-agent` and the shim reads
+  `exec /usr/local/bin/workspace-agent af-db "$@"` — the PATH shadow can no longer take the Agent.
+- `af-db up mysql` from a HOME that had never seen it: **27.6 s** end to end, with
+  `[install-mysql] linked libaio.so.1 -> /lib/x86_64-linux-gnu/libaio.so.1t64 (Debian t64 soname)`
+  in the log and `AF_DB_MYSQL_LIBS` unset. `down mysql --purge` clean.
+- `install-pg-client` into a fresh HOME: **1.8 s** (17.11-0+deb13u1) — the figure the earlier run
+  could not take because the client was already there.
+- `GET /env/databases` carries the new shape (no engine-level URL; `databases` is a list), and
+  **the URL the card copies connects**: both the socket and the TCP form of
+  `af_agent_fleet_wip_szkxzgu_9af42b` answer `select current_database()` with their own name,
+  where the previous image's URL answered `database "af_dev_12fbd7" does not exist`.
+
+What is still untested stays untested: the scratch-disk datadir on ECS, and arm64 MySQL.
+
 **Next**, unchanged except for what this run closed: the Console card on a workspace whose
 Agent is the image's, the first ECS run with a scratch-disk datadir, and arm64 MySQL.
