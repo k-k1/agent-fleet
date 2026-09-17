@@ -847,10 +847,13 @@ untested until now, and without the Maven-metadata fallback Postgres has — is 
   `~/.local` survives both restart and recreate — so one stray build silently becomes the
   container's Agent forever. The `af-db` shim (`exec workspace-agent af-db "$@"`) has the same
   shape, while the Go code already hardcodes `/usr/local/bin/workspace-agent` for its own
-  re-exec (`paths.go:126`, `afdb/cmd.go:770`, `afdb/mysql.go:77`). Removing the stray binary
-  and restarting the workspace is the immediate fix; making the entrypoint and the shim name
-  the absolute path is the one that prevents it. Until then the card's healthy states are
-  unseen — only `lastError` is reachable.
+  re-exec (`paths.go:126`, `afdb/cmd.go:770`, `afdb/mysql.go:77`). The stray binary was removed
+  and the workspace restarted; `CMD` and the `af-db` shim now name
+  `/usr/local/bin/workspace-agent` so it cannot happen again from an image rebuild onwards. The
+  session commands that still call a bare `workspace-agent` (`record-exit`, `record-terminal`,
+  `install-kiro --if-needed`, `install-awscli`) have the same shape and were left alone: they
+  run in the member's own shell, where the shadow is at least visible. Until the rebuilt image
+  is deployed, the card's healthy states stay unseen — only `lastError` is reachable.
 
 **Next**, unchanged except for what this run closed: the Console card on a workspace whose
 Agent is the image's, the first ECS run with a scratch-disk datadir, and arm64 MySQL.

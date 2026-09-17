@@ -790,9 +790,12 @@ sha、`libaio1t64` / `libnuma1` / `libncurses6`。P0・P1 の受け入れが届�
   ビルド 1 本が、そのコンテナの Agent を恒久的に乗っ取る。`af-db` シム
   （`exec workspace-agent af-db "$@"`）も同じ形で、Go 側は自分の再実行に既に
   `/usr/local/bin/workspace-agent` を直書きしている（`paths.go:126`・`afdb/cmd.go:770`・
-  `afdb/mysql.go:77`）。当座の直しは置き忘れの削除とワークスペースの再起動、再発を止める直しは
-  entrypoint とシムが絶対パスを名指すこと。それまでカードの正常系は見えない——届くのは
-  `lastError` だけ。
+  `afdb/mysql.go:77`）。置き忘れは削除してワークスペースを再起動し、`CMD` と `af-db` シムは
+  `/usr/local/bin/workspace-agent` を名指すようにした（次のイメージ以降は再発しない）。素の
+  `workspace-agent` を呼ぶセッション側のコマンド（`record-exit`・`record-terminal`・
+  `install-kiro --if-needed`・`install-awscli`）は同じ形だが、利用者自身のシェルで動き影が見える分
+  まだましなので触っていない。焼き直したイメージが配備されるまで、カードの正常系は見えない
+  ——届くのは `lastError` だけ。
 
 **次**（この実機で閉じた分を除いて変わらず）：Agent がイメージのものであるワークスペースでの
 Console カード、作業ディスク上のデータディレクトリでの ECS 初回、arm64 の MySQL。

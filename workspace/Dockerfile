@@ -670,4 +670,7 @@ USER dev
 WORKDIR /home/dev
 EXPOSE 7700
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["workspace-agent"]
+# 絶対パスで名指すこと。`workspace-agent` だけだと PATH 解決になり、`~/.local/bin` に
+# 誰かが置いた（recreate でも消えない）ビルドがイメージのバイナリを恒久的に乗っ取る
+# ——実機で Agent が P0 世代の手元ビルドとして動き続けていた（ADR 0086 実機の節）。
+CMD ["/usr/local/bin/workspace-agent"]
