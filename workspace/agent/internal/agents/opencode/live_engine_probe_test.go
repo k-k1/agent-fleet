@@ -26,7 +26,7 @@ func TestLiveOpencodeListsTheEngineModel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	if _, err := WriteEngineProviders([]EngineProvider{{
+	if _, _, err := WriteEngineProviders([]EngineProvider{{
 		Key: "llm", Provider: "llamacpp",
 		BaseURL: "https://af.example.invalid/engine/llm/v1",
 		Models:  []string{"qwen3-coder-30b-a3b"},

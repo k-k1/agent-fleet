@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -293,22 +294,33 @@ func syncEngineProviders() {
 			Windows: engineModelWindows(e),
 		})
 	}
-	changed, err := opencode.WriteEngineProviders(providers)
+	changed, removed, err := opencode.WriteEngineProviders(providers)
 	if err != nil {
 		log.Printf("engines: writing the opencode provider failed: %v", err)
 		return
 	}
-	if changed {
-		names := make([]string, 0, len(providers))
-		for _, p := range providers {
-			names = append(names, p.Provider+" ("+strings.Join(p.Models, ",")+")")
-		}
-		log.Printf("engines: opencode provider written: %s", strings.Join(names, "; "))
-		// A serve daemon that was already up read its config, and its `{env:…}`, at start. At
-		// boot there is none and this costs nothing; it matters for a workspace whose sessions
-		// resumed before this call finished, and for a catalogue that changes later.
-		opencode.ApplyEngineChange(strings.Join(names, "; "))
+	if !changed {
+		return
 	}
+	names := make([]string, 0, len(providers))
+	for _, p := range providers {
+		names = append(names, p.Provider+" ("+strings.Join(p.Models, ",")+")")
+	}
+	log.Printf("engines: opencode provider written: %s", strings.Join(names, "; "))
+	// A serve daemon that was already up read its config at start, so the file alone does not
+	// reach it. Hand it over live where that is possible — this runs on every catalogue push
+	// the Control Plane makes, and replacing the daemon instead would cut short whatever turn
+	// is in flight in this workspace.
+	if !removed {
+		err := opencode.PushEngineProviders(providers)
+		if err == nil || errors.Is(err, opencode.ErrNoDaemon) {
+			return // applied live, or there is no daemon holding a stale copy
+		}
+		log.Printf("engines: handing the provider block to serve failed, asking for a restart instead: %v", err)
+	}
+	// A removal cannot be patched into a running daemon (PushEngineProviders), and a failed
+	// patch leaves it stale either way: tell the user, and let them pick the moment.
+	opencode.ApplyEngineChange(strings.Join(names, "; "))
 }
 
 // engineModelWindows is the per-model context/output declaration, or nil when the Control

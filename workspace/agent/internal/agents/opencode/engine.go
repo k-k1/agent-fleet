@@ -25,8 +25,11 @@ package opencode
 //     SESSION even though the config file is shared.
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -78,26 +81,29 @@ const engineProviderConfigKey = "provider"
 // that looks like ours" is how a user's own configuration disappears.
 const engineProviderMarker = "af-managed"
 
-// WriteEngineProviders makes the config's provider block match `engines`, and reports
-// whether anything changed.
+// WriteEngineProviders makes the config's provider block match `engines`.
+//
+// changed reports whether the file moved. removed reports whether that included dropping a
+// provider af had written — the one shape PushEngineProviders cannot deliver to a running
+// daemon, so the caller owes a restart for it.
 //
 // An unparseable config is REFUSED rather than overwritten — opencode.jsonc may legally
 // carry comments that encoding/json cannot read, and a config af cannot read is a config af
 // must not reformat away (the same bargain materialize_json.go makes).
-func WriteEngineProviders(engines []EngineProvider) (changed bool, err error) {
+func WriteEngineProviders(engines []EngineProvider) (changed, removed bool, err error) {
 	path := engineConfigPath()
 	root := map[string]any{}
 	b, rerr := os.ReadFile(path)
 	switch {
 	case rerr == nil:
 		if err := json.Unmarshal(b, &root); err != nil {
-			return false, fmt.Errorf("%s is not plain JSON, leaving it alone: %w", path, err)
+			return false, false, fmt.Errorf("%s is not plain JSON, leaving it alone: %w", path, err)
 		}
 	case !os.IsNotExist(rerr):
-		return false, rerr
+		return false, false, rerr
 	default:
 		if len(engines) == 0 {
-			return false, nil // nothing to say, so no file is conjured
+			return false, false, nil // nothing to say, so no file is conjured
 		}
 		root["$schema"] = "https://opencode.ai/config.json"
 	}
@@ -129,18 +135,19 @@ func WriteEngineProviders(engines []EngineProvider) (changed bool, err error) {
 		}
 		if m, ok := v.(map[string]any); ok && m[engineProviderMarker] == true {
 			delete(providers, name)
+			removed = true
 		}
 	}
 
 	after, _ := json.Marshal(providers)
 	if string(before) == string(after) && rerr == nil {
-		return false, nil
+		return false, false, nil
 	}
 	// Nothing to say and no file to say it in. Conjuring one holding only a $schema line
 	// would leave a config behind on every workspace that has no engines — which is most of
 	// them — and opencode would then merge that empty file forever.
 	if len(providers) == 0 && rerr != nil {
-		return false, nil
+		return false, false, nil
 	}
 	if len(providers) == 0 {
 		delete(root, engineProviderConfigKey)
@@ -149,16 +156,62 @@ func WriteEngineProviders(engines []EngineProvider) (changed bool, err error) {
 	}
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if err := os.WriteFile(path, append(out, '\n'), 0o600); err != nil {
-		return false, err
+		return false, false, err
 	}
 	InvalidateModels()
-	return true, nil
+	return true, removed, nil
+}
+
+// ErrNoDaemon: there is no running serve to hand a change to, so the file is the whole job
+// — the next start reads it.
+var ErrNoDaemon = errors.New("opencode serve is not running")
+
+// PushEngineProviders hands the provider block to the RUNNING daemon, so an engine change
+// applies without replacing the process and without cutting short whatever turn is in
+// flight.
+//
+// Measured (1.18.31): PATCH /global/config answers 200, the provider is visible to
+// /config/providers immediately, and the patch is persisted to the config file.
+//
+// It MERGES, so it cannot express a removal: `{"provider":{}}` leaves the entry in place and
+// a null value is refused with 400 (both measured). A change that drops a provider therefore
+// still owes a new process — WriteEngineProviders reports that as `removed`.
+func PushEngineProviders(engines []EngineProvider) error {
+	if !Serve().Running() {
+		return ErrNoDaemon
+	}
+	providers := map[string]any{}
+	for _, e := range engines {
+		if e.Provider == "" || e.BaseURL == "" || len(e.Models) == 0 {
+			continue
+		}
+		providers[e.Provider] = engineProviderEntry(e)
+	}
+	body, err := json.Marshal(map[string]any{engineProviderConfigKey: providers})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("PATCH", Serve().Addr()+"/global/config", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := serveClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		return fmt.Errorf("PATCH /global/config: HTTP %d", res.StatusCode)
+	}
+	InvalidateModels() // the catalogue this side caches was taken before the patch
+	return nil
 }
 
 // engineProviderEntry is one provider as opencode reads it.
