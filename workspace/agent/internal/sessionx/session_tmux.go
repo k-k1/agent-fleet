@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -38,6 +39,13 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// Session-side MCP tools need a provider-neutral owner identity. Native IDs differ
 	// across CLIs, while this slug is stable for every Agent Fleet session.
 	plan.Env = append(plan.Env, "AF_SESSION_NAME="+m.Name)
+	// Inject AF_DB_URL_POSTGRES if a Postgres instance is running and the working copy's
+	// database already exists. Silent when absent — do not block session launch on db state.
+	if m.Dir != "" {
+		if url := afdb.URLForDir(m.Dir); url != "" {
+			plan.Env = append(plan.Env, "AF_DB_URL_POSTGRES="+url)
+		}
+	}
 	// Inject the current toolchain selection (JAVA_HOME / node / TZ) so a Console
 	// change applies to this freshly-launched session without a Stop→Start. tmux
 	// runs the pane command via /bin/sh -c, so the export prefix takes effect.

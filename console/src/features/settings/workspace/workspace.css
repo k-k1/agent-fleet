@@ -482,3 +482,181 @@
   margin-top: 2px;
   color: var(--warn);
 }
+
+/* Databases card (EnvTabDatabases) — one engine row per installed / available engine. */
+.db-engine-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.db-engine-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--btn-border);
+}
+
+.db-engine-row:last-child {
+  border-bottom: none;
+}
+
+.db-engine-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+
+.db-engine-label {
+  font-weight: 500;
+  font-family: var(--mono, monospace);
+}
+
+/* State badges share the same pill shape; colour comes from the state modifier class. */
+.db-engine-state {
+  padding: 1px 7px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  border: 1px solid transparent;
+}
+
+.db-state-running {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+
+.db-state-installing,
+.db-state-starting {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 38%, transparent);
+}
+
+.db-state-stopped {
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  color: var(--muted);
+  border-color: color-mix(in srgb, var(--muted) 38%, transparent);
+}
+
+.db-state-absent {
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+  color: var(--muted);
+  border-color: color-mix(in srgb, var(--muted) 28%, transparent);
+}
+
+.db-state-error {
+  background: color-mix(in srgb, var(--del) 14%, transparent);
+  color: var(--del);
+  border-color: color-mix(in srgb, var(--del) 38%, transparent);
+}
+
+.db-engine-error {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--del);
+  font-family: var(--mono, monospace);
+}
+
+/* Connection URL row: Socket/TCP toggle + masked URL code + Copy button. */
+.db-engine-url {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.db-url-toggle {
+  display: inline-flex;
+  border: 1px solid var(--btn-border);
+  border-radius: 5px;
+  overflow: hidden;
+  flex: none;
+}
+
+.db-url-mode {
+  background: none;
+  border: none;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.db-url-mode.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.db-url-text {
+  flex: 1 1 0;
+  min-width: 0;
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-url-copy {
+  flex: none;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+/* Action buttons row. */
+.db-engine-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.db-btn {
+  font-size: 11.5px;
+  padding: 2px 10px;
+}
+
+/* Stop dropdown — floated below the Stop button; stays anchored left. */
+.db-stop-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.db-stop-menu {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  z-index: 20;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  min-width: max-content;
+}
+
+.db-stop-item {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  text-align: left;
+  background: none;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--fg);
+}
+
+.db-stop-item:hover {
+  background: var(--hover, var(--panel2));
+}
+
+.db-stop-item.db-stop-purge {
+  color: var(--del);
+}

@@ -172,6 +172,85 @@ Bitbucket tokens are refreshed automatically even after they expire.
 > Uncommitted changes and unpushed branches exist **only inside the workspace**.
 > Push work you want to keep frequently ([01 First day](01-first-day.md)).
 
+## Running database-backed tests
+
+Postgres is available inside the workspace without Docker or any external service. `af-db url`
+returns a connection URL for the current working copy's database — downloading, initialising, and
+starting the server on first call if needed (first use may take a few minutes). The server idle-stops
+after 30 minutes of no connections.
+
+```bash
+# Export DATABASE_URL into the current shell
+eval "$(af-db env)"
+go test -count=1 ./...
+
+# Or pass the URL under your project's own variable name
+MY_DB_URL="$(af-db url)" go test -count=1 ./...
+```
+
+Check what is running with `af-db status`. When you are done, stop the server:
+
+```bash
+af-db down
+```
+
+Stop it before a memory-intensive build — the server holds ≈ 47 MB of the workspace's memory
+quota, and a heavy JVM build next to it can exhaust it.
+
+A few things worth knowing:
+
+- **One database per working copy.** Two sessions that share the same working copy share the same
+  database. To address a named database explicitly, use `af-db url --db=<name>`.
+- **`af-db url --tcp`** — use when the test driver requires TCP (for example,
+  `jdbc:postgresql://127.0.0.1:…`). The default URL uses a unix socket, which most Go and Python
+  clients support but JDBC cannot.
+- **`af-db up --persist`** — forces the database files onto the home volume so they survive a
+  workspace stop. Only meaningful on ECS deployments where the default disk is task-local and
+  cleared on stop; on docker and native deployments the files already persist across stops.
+- Install `psql` with `workspace-agent install-pg-client`.
+
+### MySQL
+
+MySQL 8.4 is also available. Start it the same way:
+
+```bash
+af-db up mysql
+eval "$(af-db env)"
+```
+
+`eval "$(af-db env mysql)"` exports `AF_DB_URL_MYSQL` (and `DATABASE_URL`) into the shell that asked;
+nothing sets it for you. Pass the connection in the form your driver expects with
+`af-db url mysql --format=go-dsn` (for `go-sql-driver/mysql`).
+
+Things to know about MySQL specifically:
+
+- **Memory: ≈ 226 MB resident** (MySQL holds an InnoDB buffer pool even at idle). Stop it
+  before a JVM build or another memory-intensive task — the workspace's cgroup is shared with
+  all sessions: `af-db down mysql`.
+- **arm64 install downloads 909 MB.** The full tarball is required on arm64 (there is no
+  `minimal` build for that architecture). The installer strips debug sections in place, so the
+  installed size is comparable to x86_64, but the download takes several minutes.
+- **x86_64 install downloads ≈ 63 MB** (the `minimal` tarball).
+- The memory guard refuses `af-db up mysql` when the workspace's cgroup limit is below 1 GiB
+  and says so — run `af-db down postgres` first if Postgres is running.
+
+### Console database card
+
+The workspace settings **Toolchains** tab has a **Databases** card that shows the state of every
+engine — version, resident size (MB), port, connection URL — and lets you Start, Stop, or Reset
+an engine without opening a terminal.
+
+- **Start** on an uninstalled engine downloads and installs it first, then starts it. The card
+  polls automatically while the state is `installing` or `starting`.
+- **Stop** has a "Stop and remove data" option (`--purge`): use it to free the datadir space.
+- **Reset** drops and recreates the per-working-copy database (same as `af-db reset`). A
+  confirmation is shown before anything is deleted.
+- The **socket / TCP toggle** on the URL lets you copy whichever form your driver needs.
+- Any error from the last operation is shown inline under the engine row.
+
+The card becomes active once the workspace is running; when the workspace is stopped it shows
+a placeholder and makes no API calls.
+
 ## Subversion (SVN) repositories
 
 You can work with **SVN** repositories, not just git. In the clone modal, use the **Git / SVN

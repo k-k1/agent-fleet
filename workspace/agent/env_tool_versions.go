@@ -87,6 +87,14 @@ var toolSpecs = []toolSpec{
 	// nothing installed both effective and baked are null, which surfaces as "not installed").
 	// `kiro-cli --version` prints "kiro-cli 2.14.1".
 	{Name: "kiro", Cmd: "kiro-cli", Baked: "/usr/local/bin/kiro-cli", Pin: "kiro"},
+	// psql is installed on-demand by workspace-agent install-pg-client into ~/.local/bin.
+	// No Pin: versions.json "postgres" is the Zonky server version (e.g. 17.11.0) while
+	// psql reports the Debian client version (17.11); comparing them produces false drift.
+	{Name: "postgres", Cmd: "psql", Baked: ""},
+	// mysqld is installed on-demand by workspace-agent install-mysql into ~/.local/share/agent-fleet/mysql/.
+	// No Baked: mysql is not baked into the image (GPL tarball kept out of the distributed image).
+	// Pin key "mysql" holds the pinned tarball version (e.g. 8.4.6).
+	{Name: "mysql", Cmd: "mysqld", Baked: "", Pin: "mysql"},
 	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk", Pin: "rtk"},
 	{Name: "gh", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"}, // /usr/local/bin/gh is the transparent-auth wrapper
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},
