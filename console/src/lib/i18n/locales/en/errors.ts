@@ -203,6 +203,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.logout_failed": "Could not sign out.",
   "err.store_failed": "Could not save the credentials.",
   "err.pty_failed": "Could not start the agent's CLI.",
+  "err.serve_not_owned":
+    "This opencode serve was started by another process, so the Agent cannot replace it. Restart the workspace to apply the settings.",
   "err.serve_not_ready": "The agent's service did not respond.",
   "err.agy_unsupported": "agy was not found (the image may be out of date).",
   "err.no_flow": "That sign-in attempt is unknown or has expired. Start again.",

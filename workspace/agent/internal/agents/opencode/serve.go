@@ -145,6 +145,82 @@ func Lifecycle() []LifecycleEvent {
 	return append([]LifecycleEvent(nil), lifecycle...)
 }
 
+// --- pending restart ----------------------------------------------------------
+//
+// Provider keys arrive as environment (cmd.Env) and the engine provider block as a config
+// file, so `opencode serve` reads both once, at start: only a new process picks a change
+// up. Applying one on our own initiative costs whoever is mid-turn — the drain kills a
+// running turn after drainTimeout — and the change is rarely urgent, so the choice of
+// moment belongs to the person who made it. The change is recorded here and the Console
+// offers the restart (Settings → Agents).
+
+// pendingReasonsKeep bounds the list shown in the Console; the count is what matters, not
+// every entry.
+const pendingReasonsKeep = 8
+
+// PendingRestart is the set of changes waiting for a new serve process.
+type PendingRestart struct {
+	Reasons []string `json:"reasons"`
+	Since   string   `json:"since"` // RFC3339, when the first one landed
+}
+
+var (
+	pendingMu      sync.Mutex
+	pendingRestart PendingRestart
+)
+
+// NotePendingRestart records a change only a new serve process will pick up.
+//
+// It is deliberately a no-op while no daemon is running: there is nothing stale to replace,
+// and the next start reads the new value anyway. Saying "restart to apply" about a daemon
+// that does not exist is the kind of false alarm that teaches people to ignore the notice.
+func NotePendingRestart(reason string) {
+	if !supervisor.Running() {
+		return
+	}
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	if pendingRestart.Since == "" {
+		pendingRestart.Since = time.Now().Format(time.RFC3339)
+	}
+	for _, r := range pendingRestart.Reasons {
+		if r == reason {
+			return // the same setting toggled twice is still one pending change
+		}
+	}
+	pendingRestart.Reasons = append(pendingRestart.Reasons, reason)
+	if len(pendingRestart.Reasons) > pendingReasonsKeep {
+		pendingRestart.Reasons = pendingRestart.Reasons[len(pendingRestart.Reasons)-pendingReasonsKeep:]
+	}
+}
+
+// PendingRestartInfo returns the changes waiting to be applied, and whether there are any.
+func PendingRestartInfo() (PendingRestart, bool) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	if len(pendingRestart.Reasons) == 0 {
+		return PendingRestart{}, false
+	}
+	out := PendingRestart{Since: pendingRestart.Since, Reasons: append([]string(nil), pendingRestart.Reasons...)}
+	return out, true
+}
+
+// ClearPendingRestart forgets the pending changes — they have been applied, or the daemon
+// they were stale against is gone.
+func ClearPendingRestart() {
+	pendingMu.Lock()
+	pendingRestart = PendingRestart{}
+	pendingMu.Unlock()
+}
+
+// Running reports whether a daemon is up, which decides whether a setting change is stale
+// (NotePendingRestart) or will simply be read at the next start.
+func (s *Supervisor) Running() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.up
+}
+
 // Serve returns the package-wide supervisor instance.
 func Serve() *Supervisor { return supervisor }
 
@@ -385,11 +461,18 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
 // Restart is the path that applies an auth or config change (§7): generation++ → drain →
 // respawn → re-resume every handle. The daemon is shared, so the drain is a switchover
 // window for every opencode managed session in the workspace at once (by design, §7).
-func (s *Supervisor) Restart(reason string) {
+// replaced reports whether the daemon process was really replaced. An adopted daemon has no
+// process handle to signal, so the restart cannot apply a new environment; the caller must
+// say so rather than report success, because the whole point of a restart is the change it
+// carries.
+func (s *Supervisor) Restart(reason string) (replaced bool) {
 	s.mu.Lock()
 	if !s.up {
 		s.mu.Unlock()
-		return // not running — nothing to drain; next Ensure starts fresh
+		// Not running: nothing to replace and nothing stale — the next Ensure reads the
+		// new configuration on its own.
+		ClearPendingRestart()
+		return true
 	}
 	addr := serveAddr()
 	cmd := s.cmd
@@ -407,6 +490,11 @@ func (s *Supervisor) Restart(reason string) {
 	s.stopping = false
 	s.mu.Unlock()
 	go reconcileAll("restart: " + reason)
+	if cmd == nil {
+		return false // adopted: the process is still the old one, holding the old environment
+	}
+	ClearPendingRestart()
+	return true
 }
 
 // Shutdown drains and stops the daemon (graceful workspace stop, §10.2-8).

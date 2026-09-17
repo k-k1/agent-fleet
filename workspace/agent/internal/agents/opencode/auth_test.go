@@ -11,17 +11,18 @@ import (
 // Keys are injected into the environment at startup, so saving or deleting one has no effect
 // on a running daemon. Measured: deleting a key in the Console leaves the daemon holding it
 // in its own environment, still reporting the env connection in connections[] and still
-// listing models that could be billed against that key (restarting the Agent does not help,
-// because Ensure adopts the live daemon). Supervisor.Restart is the path that applies it.
-func TestApplyKeyChangeRestartsServeAndDropsCatalog(t *testing.T) {
+// listing models that could be billed against that key. Only a new process applies it, and
+// taking that restart is the user's call (Settings -> Agents), so what a key change owes is
+// the pending record the Console draws the notice from.
+func TestApplyKeyChangeNotesPendingRestartAndDropsCatalog(t *testing.T) {
 	modelsMu.Lock()
 	modelsList, modelsAt = []string{"opencode/stale"}, time.Now()
 	modelsMu.Unlock()
 
 	got := make(chan string, 1)
-	orig := restartServe
-	restartServe = func(reason string) { got <- reason }
-	defer func() { restartServe = orig }()
+	orig := noteRestart
+	noteRestart = func(reason string) { got <- reason }
+	defer func() { noteRestart = orig }()
 
 	applyKeyChange("provider key removed: OPENCODE_API_KEY")
 
@@ -31,7 +32,7 @@ func TestApplyKeyChangeRestartsServeAndDropsCatalog(t *testing.T) {
 			t.Error("the restart reason is empty")
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("a key change did not restart serve — a deleted key stays in the daemon")
+		t.Fatal("a key change left no pending restart — a deleted key stays in the daemon unannounced")
 	}
 	modelsMu.Lock()
 	stale := !modelsAt.IsZero()

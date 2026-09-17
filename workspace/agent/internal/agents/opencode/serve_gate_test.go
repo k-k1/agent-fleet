@@ -170,3 +170,71 @@ func TestDeliberateStopIsNotRecordedAsDeath(t *testing.T) {
 		t.Fatalf("a teardown we asked for must not be filed as a death, got %+v", ev[before:])
 	}
 }
+
+// A setting change is only stale against a daemon that is actually running. Raising the
+// notice with nothing to replace teaches people to ignore it.
+func TestPendingRestartIsNotRaisedWhileNoDaemonRuns(t *testing.T) {
+	ClearPendingRestart()
+	t.Cleanup(ClearPendingRestart)
+	if supervisor.Running() {
+		t.Skip("a daemon is up in this process; the no-daemon case cannot be observed")
+	}
+	NotePendingRestart("opencode provider key stored: OPENCODE_API_KEY")
+	if _, ok := PendingRestartInfo(); ok {
+		t.Error("nothing is running, so the next start reads the new key anyway")
+	}
+}
+
+func TestPendingRestartCollectsOneEntryPerChange(t *testing.T) {
+	supervisor.mu.Lock()
+	was := supervisor.up
+	supervisor.up = true
+	supervisor.mu.Unlock()
+	t.Cleanup(func() {
+		supervisor.mu.Lock()
+		supervisor.up = was
+		supervisor.mu.Unlock()
+	})
+	ClearPendingRestart()
+	t.Cleanup(ClearPendingRestart)
+
+	NotePendingRestart("key stored: A")
+	NotePendingRestart("key stored: A") // the same setting touched twice is one change
+	NotePendingRestart("usage changed: go → zen")
+
+	p, ok := PendingRestartInfo()
+	if !ok || len(p.Reasons) != 2 {
+		t.Fatalf("pending = %+v, want the two distinct changes", p)
+	}
+	if p.Since == "" {
+		t.Error("the notice says how long the daemon has been stale, so Since has to be set")
+	}
+	ClearPendingRestart()
+	if _, ok := PendingRestartInfo(); ok {
+		t.Error("applying the changes must clear them")
+	}
+}
+
+// An adopted daemon has no process handle, so a restart cannot hand it a new environment.
+// Reporting success would tell the user their key change had landed when it had not.
+func TestRestartOfAnAdoptedDaemonReportsItCouldNotApply(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := &Supervisor{}
+	s.mu.Lock()
+	s.up, s.cmd = true, nil
+	s.mu.Unlock()
+
+	if s.Restart("test") {
+		t.Error("an adopted daemon keeps the old environment: that is not a successful restart")
+	}
+}
+
+// Nothing running is not a failure: the next start reads the new configuration.
+func TestRestartWithNoDaemonSucceedsAndClears(t *testing.T) {
+	ClearPendingRestart()
+	t.Cleanup(ClearPendingRestart)
+	s := &Supervisor{}
+	if !s.Restart("test") {
+		t.Error("with no daemon there is nothing stale, so the change is already applied")
+	}
+}

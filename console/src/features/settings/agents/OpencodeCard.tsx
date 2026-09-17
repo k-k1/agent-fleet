@@ -59,6 +59,43 @@ function OpencodeUsageRow() {
   );
 }
 
+// Keys reach `opencode serve` as environment and the engine block as a config file, both
+// read once at start, so a change made here does nothing to the daemon already running.
+// Taking the restart automatically is what this replaced: it drains, and a session still
+// answering when the drain times out loses that turn. Whoever just changed a setting is the
+// one who can judge whether now is the moment, so it is offered rather than taken.
+function OpencodeRestartRow({ st, reload }: { st: any; reload: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const pending = st?.restart_required;
+  if (!pending) return null;
+
+  const apply = async () => {
+    setBusy(true);
+    const res = await apiJSON("api/connections/opencode/serve/restart", "POST", {});
+    setBusy(false);
+    if (res && res.error) {
+      toast(tr("agents.oc_restart_failed", { msg: errDetail(res.error) }));
+      return;
+    }
+    toast(tr("agents.oc_restart_done"));
+    reload();
+  };
+
+  return (
+    <div className="p-body">
+      <Hint>{tr("agents.oc_restart_pending", { count: (pending.reasons || []).length })}</Hint>
+      <div className="flow">
+        <button type="button" disabled={busy} onClick={() => void apply()}>
+          {tr("agents.oc_restart_apply")}
+        </button>
+      </div>
+      <p className="ps-note">{tr("agents.oc_restart_note")}</p>
+    </div>
+  );
+}
+
 // The quota affordance (docs/log/54 §54.7). opencode.ai's quota page assumes a browser session
 // and there is no API to pull the numbers from (measured: the page 302s to /auth/authorize, and
 // the console-side API has no usage endpoint). So all the Console can hold is the workspace ID,
@@ -263,6 +300,7 @@ export function OpencodeCard({
         <ConnPaused />
       ) : (
         <>
+          <OpencodeRestartRow st={st} reload={reload} />
           <div className="p-body">
             <OpencodeUsageRow />
           </div>

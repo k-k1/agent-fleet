@@ -881,6 +881,7 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/opencode/oauth/cancel", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/oauth", rest)
 	mux.HandleFunc("PUT /api/connections/opencode/workspace", rest)
+	mux.HandleFunc("POST /api/connections/opencode/serve/restart", rest)
 	// SVN saved basic-auth creds (docs/log/41) — add/correct, and forget, a stored server
 	// credential. The CP is an explicit allowlist, so PUT needs its own line.
 	mux.HandleFunc("PUT /api/connections/svn", rest)
