@@ -366,8 +366,18 @@ describe("model catalogue pane", () => {
     for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
     const fit = document.querySelector(".engine-operation-fit");
     expect(fit?.textContent).toContain("重み 17697 MiB");
-    expect(fit?.textContent).toContain("KV キャッシュ 24576 MiB");
-    expect(fit?.textContent).toContain("合計 42273 MiB");
+    // 🔴 The window is what the CARD can hold, not the model's published ceiling (ADR 0089).
+    // 262,144 would cost 24,576 MiB of cache on top of 17,697 MiB of weights — 42,273 MiB on a
+    // 21,000 MiB card — and the field used to open at exactly that, so this screen's answer for
+    // every large model was "impossible". 17,697 MiB leaves 150 MiB under the comfortable line,
+    // which buys 1,024 tokens and no more: the number is small because the model is nearly the
+    // size of the card, which is the true and useful answer.
+    expect(document.querySelector<HTMLInputElement>(".engine-operation-window input")?.value).toBe("1024");
+    expect(fit?.textContent).toContain("KV キャッシュ 96 MiB");
+    expect(fit?.textContent).toContain("合計 17793 MiB");
+    expect(fit?.textContent).toContain("収まります");
+    // And the ceiling is still on screen, said as what it is.
+    expect(document.querySelector(".engine-operation-window")?.textContent).toContain("上限 262,144");
   });
 
   it("invalidates pagination when the visible query changes", async () => {

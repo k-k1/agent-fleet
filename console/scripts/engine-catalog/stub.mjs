@@ -81,7 +81,32 @@ const ENGINES = {
         },
       ],
     },
-    { key: "llm", api: "chat", provider: "llamacpp", managed: true, model_rows: [] },
+    {
+      key: "llm", api: "chat", provider: "llamacpp", managed: true, enabled: true, state: "running",
+      class: { id: "g6.xlarge", label: "g6.xlarge", vram_mib: 22000 },
+      classes: [
+        { id: "g6.xlarge", label: "g6.xlarge", vram_mib: 22000 },
+        { id: "g6e.xlarge", label: "g6e.xlarge", vram_mib: 46068 },
+      ],
+      // ADR 0089: two quantisations of ONE repository, which is the shape the repository card
+      // exists for. Sizes and names are the real ones (unsloth/Qwen3.8-27B-GGUF, 2026-09-18).
+      model_rows: [
+        {
+          id: "qwen3_8_27b_ud_iq2_xxs", kind: "gguf", enabled: true, default: true,
+          display_name: "unsloth/Qwen3.8-27B-GGUF", context_tokens: 32768, max_output_tokens: 4096,
+          source: "hf:unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-IQ2_XXS.gguf",
+          license_name: "apache-2.0",
+          file_rows: [{ s3Key: "llm/models/Qwen3.8-27B-UD-IQ2_XXS.gguf", bytes: 7_270_000_000 }],
+        },
+        {
+          id: "qwen3_8_27b_ud_iq2_s", kind: "gguf", enabled: false,
+          display_name: "unsloth/Qwen3.8-27B-GGUF", context_tokens: 32768, max_output_tokens: 4096,
+          source: "hf:unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-IQ2_S.gguf",
+          license_name: "apache-2.0",
+          file_rows: [{ s3Key: "llm/models/Qwen3.8-27B-UD-IQ2_S.gguf", bytes: 8_370_000_000 }],
+        },
+      ],
+    },
   ],
 };
 
@@ -256,7 +281,28 @@ function engineRoute(method, pathname) {
   });
   if (rest === "/ingest/search") return () => ({ hits: HITS });
   if (rest === "/ingest/versions") return () => ({ versions: [{ ref: "782002", name: "v1.1" }, { ref: "770100", name: "v1.0" }] });
-  if (rest === "/ingest/files") return () => ({ files: [{ name: "anima-aesthetic-v1.1.safetensors", bytes: 4_182_230_656, sha256: "f0d1" }] });
+  if (rest === "/ingest/files") {
+    // The repository ladder asks for a whole repository (no `file`); the wizard asks for the one
+    // it is about to resolve. ADR 0089: the answer carries the role of each file and the KV cost
+    // of a 1,024-token window, which is what prices every line of the ladder.
+    return (body) => body?.source?.hf?.repo?.includes("Qwen3.8-27B")
+      ? {
+        kv_mib_per_1k_tokens: 260, kv_from: "Qwen3.8-27B-UD-IQ4_XS.gguf",
+        files: [
+          { name: "imatrix_unsloth.gguf", bytes: 10_000_000, sha256: "a1", role: "imatrix" },
+          { name: "mmproj-F16.gguf", bytes: 930_000_000, sha256: "a2", role: "projector" },
+          { name: "Qwen3.8-27B-UD-IQ1_S.gguf", bytes: 6_190_000_000, sha256: "a3", role: "model" },
+          { name: "Qwen3.8-27B-UD-IQ2_XXS.gguf", bytes: 7_270_000_000, sha256: "a4", role: "model" },
+          { name: "Qwen3.8-27B-UD-IQ2_S.gguf", bytes: 8_370_000_000, sha256: "a5", role: "model" },
+          { name: "Qwen3.8-27B-UD-Q2_K_XL.gguf", bytes: 9_830_000_000, sha256: "a6", role: "model" },
+          { name: "Qwen3.8-27B-UD-IQ3_XXS.gguf", bytes: 10_930_000_000, sha256: "a7", role: "model" },
+          { name: "Qwen3.8-27B-UD-IQ3_S.gguf", bytes: 12_040_000_000, sha256: "a8", role: "model" },
+          { name: "Qwen3.8-27B-UD-Q3_K_XL.gguf", bytes: 13_150_000_000, sha256: "a9", role: "model" },
+          { name: "Qwen3.8-27B-UD-IQ4_XS.gguf", bytes: 14_250_000_000, sha256: "b1", role: "model" },
+        ],
+      }
+      : { files: [{ name: "anima-aesthetic-v1.1.safetensors", bytes: 4_182_230_656, sha256: "f0d1", role: "model" }] };
+  }
   if (rest === "/ingest/resolve") return () => RESOLVED;
   // 🔴 POST only. `GET …/ingest` (the job list) is gone with the history tab (ADR 0085 decision
   // 6), and a stub that answered it would let a screen read a route no deployment has.

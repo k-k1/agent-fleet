@@ -446,6 +446,14 @@ export type IngestCandidate = {
   sha256?: string;
   /** Optional source-side file identity when a provider exposes more than a filename. */
   ref?: string;
+  /** What this file IS within the repository (ADR 0089): `model` — a quantisation somebody takes
+   *  in on its own — or `projector` / `imatrix`, the two things a quantisation repository keeps
+   *  beside its models. Absent on an older control plane, which every reader treats as `model`.
+   *
+   *  🔴 Classified by the CP and never filtered by it: this same list is the manual file picker,
+   *  where a hidden file is how somebody ends up comparing two strings across two windows. The
+   *  repository ladder folds what it does not need; the picker still shows everything. */
+  role?: string;
 };
 
 export type IngestVersion = {

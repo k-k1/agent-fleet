@@ -1310,6 +1310,97 @@ a.engines-model-source:hover {
   margin-top: 14px;
 }
 
+/* The repository's ladder of quantisations (ADR 0089). Above the rows, because it is the list
+   the rows are a subset of — what is here and what could be, in one order. */
+.engine-repo-ladder {
+  margin: 0 0 8px;
+}
+
+.engine-repo-ladder-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.engine-repo-ladder-head label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.engine-repo-ladder-head input {
+  width: 8ch;
+  min-width: 0;
+}
+
+.engine-repo-ladder-head > button:last-child {
+  margin-inline-start: auto;
+}
+
+.engine-repo-quants {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+/* One row per quantisation: the mark, the name, the two numbers, the verdict, the act. `auto` on
+   the last column keeps the button hard right whether or not the line above it has one. */
+.engine-repo-quants li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--panel2);
+}
+
+/* A size this deployment already holds is the one the rows below are about, so it is marked and
+   left alone — the act on it lives on its own card. */
+.engine-repo-quants li.held {
+  background: var(--bg);
+}
+
+.engine-repo-quant-mark {
+  color: var(--dialog-muted);
+}
+
+.engine-repo-quants li.held .engine-repo-quant-mark {
+  color: var(--ok, #1a7f37);
+}
+
+.engine-repo-quant-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The window, out of the advanced fold and next to the verdict it decides (ADR 0089). */
+.engine-operation-window {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.engine-operation-window label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.engine-operation-window input {
+  width: 9ch;
+  min-width: 0;
+  color: var(--fg);
+}
+
 .engine-registered-group-head {
   display: flex;
   align-items: baseline;

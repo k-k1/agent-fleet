@@ -201,6 +201,22 @@ says so. Nothing is copied into the bucket: the row records where the publisher 
 the browser fetches it, so an image the publisher deletes leaves an empty frame that the same press
 repairs.
 
+A chat engine's rows are grouped by the **repository** they came from — one quantisation
+repository is one model published at a dozen sizes — and the heading says how many of those sizes
+this deployment holds. **Show the other quantisations in this repository** lists the rest, each
+with its size, what the KV cache costs at the window in the box above the table, and whether the
+total fits the GPU class this engine is set to buy: **Fits**, **Tight (n%)**, or **Will not fit
+this class**, which names the smallest class that would hold it. **Add** on any of them opens the
+ordinary plan card, pre-filled. The table is an estimate of the weights plus the KV cache and says
+so — it cannot include llama.cpp's compute buffers or the CUDA context — and changing the window
+above it re-prices the table without changing any row.
+
+The same verdict is on the plan card when a model is taken in, beside a **Context** field that now
+opens at the largest window that fits the class rather than at the model's published ceiling. The
+ceiling is still shown, labelled as one. This matters more than it sounds: a 27B's KV cache is
+66,560 MiB at a 262,144-token window and 8,320 MiB at 32,768, so a screen that priced the cache at
+the ceiling reported every large model as impossible.
+
 A row can be kept in order after the fact. Its **Files** list records where each file came from,
 linked as **Source page**. **Edit** on the row changes the description, the family, the measured
 VRAM, a chat model's context window and max output, a LoRA's **trigger words** and the generation

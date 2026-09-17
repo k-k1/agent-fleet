@@ -1801,7 +1801,66 @@ func (a engineAdminAPI) listIngestFiles(w http.ResponseWriter, r *http.Request, 
 		writeAPIErr(w, aerr)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+	answer := map[string]any{"files": files}
+	// What the window costs, for the whole repository at once (ADR 0089). The panel prices every
+	// quantisation in the list against the chosen instance class from this ONE number, because
+	// the KV cache is decided by the attention geometry and the window — neither of which the
+	// weights' quantisation changes.
+	//
+	// 🔴 Read from ONE file and reported with its name. Measured on unsloth/Qwen3.8-27B-GGUF
+	// (2026-09-18) the geometry is not quite identical across a repository's own builds —
+	// `UD-IQ2_S` declares 64 blocks and `UD-IQ4_XS` declares 65, a 1.6% difference in the cache —
+	// so this is a repository-wide estimate and says which file it came from rather than
+	// pretending to be every file's answer. The row that is actually taken in gets its own
+	// header read at the resolve, which is the number the press is priced from.
+	if kv, from := a.engineListKV(r.Context(), b.Source, files, engineIngestKindFor(e)); kv > 0 {
+		answer["kv_mib_per_1k_tokens"] = kv
+		answer["kv_from"] = from
+	}
+	writeJSON(w, http.StatusOK, answer)
+}
+
+// engineListKV reads one candidate's GGUF header so the whole list can be priced.
+//
+// Best-effort and silent, like every other geometry read: a repository that will not answer a
+// ranged GET leaves the field off, and the panel then prices weights alone and says so. It costs
+// one 1 MiB request per listing, which is what makes a thirty-file repository affordable to show
+// at all — thirty header reads would be thirty.
+func (a engineAdminAPI) engineListKV(ctx context.Context, src engineIngestSource,
+	files []engineCandidate, kind string) (int, string) {
+	if !strings.EqualFold(strings.TrimSpace(kind), "gguf") {
+		return 0, ""
+	}
+	for _, f := range files {
+		if f.Role != engineCandidateModel {
+			continue
+		}
+		// Resolved rather than composed: the download URL is the source's own business, and
+		// composing a second one here is a second spelling to keep in step.
+		picked := src
+		switch {
+		case picked.HF != nil:
+			hf := *picked.HF
+			hf.File = f.Name
+			picked.HF = &hf
+		case picked.Civitai != nil:
+			civitai := *picked.Civitai
+			civitai.File = f.Name
+			picked.Civitai = &civitai
+		default:
+			return 0, ""
+		}
+		res, aerr := engineIngestResolve(ctx, picked)
+		if aerr != nil {
+			return 0, ""
+		}
+		geom := engineIngestGeometry(ctx, kind, res, a.hfTokens())
+		if kv := engineKVCacheMiB(geom, 1024); kv > 0 {
+			return kv, f.Name
+		}
+		return 0, ""
+	}
+	return 0, ""
 }
 
 // postIngest (POST …/ingest) is the one press (ADR 0085 decisions 1, 3 and 4).

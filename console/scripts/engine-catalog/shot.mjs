@@ -78,6 +78,25 @@ const SCENES = [
     })()`,
     settle: 1500,
   },
+  // The repository card and its ladder of quantisations (ADR 0089): what is here, what else this
+  // repository publishes, and whether each one fits the class this engine buys.
+  {
+    name: "ladder", view: "registered", width: 1500, height: 1080,
+    action: `(async () => {
+      const llm = Array.from(document.querySelectorAll(".engine-catalog-role-tabs button"))
+        .find((b) => (b.textContent || "").includes("文章"));
+      if (!llm) return false;
+      llm.click();
+      await new Promise((done) => setTimeout(done, 600));
+      const open = Array.from(document.querySelectorAll("button"))
+        .find((b) => b.textContent === "この配布元の他の量子化を見る");
+      if (!open) return false;
+      open.click();
+      await new Promise((done) => setTimeout(done, 900));
+      return !!document.querySelector(".engine-repo-quants");
+    })()`,
+    settle: 1500,
+  },
   // The only question this screen ever asks: which of the bucket's files fills a role, asked FOR
   // a checkpoint (decision 3).
   {
