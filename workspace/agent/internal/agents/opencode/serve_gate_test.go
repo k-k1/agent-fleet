@@ -238,3 +238,43 @@ func TestRestartWithNoDaemonSucceedsAndClears(t *testing.T) {
 		t.Error("with no daemon there is nothing stale, so the change is already applied")
 	}
 }
+
+// Restart holds no lock across drain and stopProcess, and Ensure runs under that lock while
+// the Console calls Resume about once a second, so a replacement can be installed while the
+// old process is still being signalled. Forgetting it there orphans a live daemon: the
+// supervisor then owns nothing, which costs the idle stop, exit recording, and every later
+// restart — the restart button included, which is how pressing it once could stop it working.
+func TestTeardownLeavesAReplacementInstalledMidFlightAlone(t *testing.T) {
+	old, replacement := &exec.Cmd{}, &exec.Cmd{}
+	s := &Supervisor{}
+	s.mu.Lock()
+	s.up, s.cmd, s.stopping = true, replacement, true // Ensure got in first
+	s.mu.Unlock()
+
+	s.finishTeardown(old)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cmd != replacement || !s.up {
+		t.Errorf("the replacement was orphaned: cmd=%p up=%v", s.cmd, s.up)
+	}
+	if s.stopping {
+		t.Error("the teardown is over, so stopping has to be cleared either way")
+	}
+}
+
+func TestTeardownForgetsTheProcessItActuallyStopped(t *testing.T) {
+	cmd := &exec.Cmd{}
+	s := &Supervisor{}
+	s.mu.Lock()
+	s.up, s.cmd, s.stopping = true, cmd, true
+	s.mu.Unlock()
+
+	s.finishTeardown(cmd)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cmd != nil || s.up {
+		t.Errorf("the stopped process must be forgotten: cmd=%p up=%v", s.cmd, s.up)
+	}
+}

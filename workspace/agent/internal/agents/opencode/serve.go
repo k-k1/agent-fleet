@@ -483,18 +483,40 @@ func (s *Supervisor) Restart(reason string) (replaced bool) {
 	log.Printf("opencode serve: restart requested (%s) — draining", reason)
 	recordLifecycle("restart", s.Generation(), reason)
 	s.drain(addr)
-	stopProcess(cmd, addr)
-	s.mu.Lock()
-	s.up = false
-	s.cmd = nil
-	s.stopping = false
-	s.mu.Unlock()
-	go reconcileAll("restart: " + reason)
 	if cmd == nil {
-		return false // adopted: the process is still the old one, holding the old environment
+		// Adopted: no process handle to signal, so nothing was replaced and the old
+		// environment is still in force. Leaving s.up alone matters — clearing it would send
+		// the next Ensure to adopt the very same daemon again, gaining nothing.
+		s.mu.Lock()
+		s.stopping = false
+		s.mu.Unlock()
+		return false
 	}
+	stopProcess(cmd, addr)
+	s.finishTeardown(cmd)
+	go reconcileAll("restart: " + reason)
 	ClearPendingRestart()
 	return true
+}
+
+// finishTeardown drops the supervisor's view of cmd — but only while cmd is still the
+// process it describes.
+//
+// Restart deliberately holds no lock across drain and stopProcess, both of which take
+// seconds, and Ensure runs under that lock with the Console calling Resume about once a
+// second. So a replacement can legitimately be installed while the old process is being
+// signalled. Clearing s.cmd unconditionally then orphans that live daemon: it keeps serving
+// while the supervisor believes it owns nothing, which costs the idle stop, exit recording,
+// and any further restart — including the button that started this.
+func (s *Supervisor) finishTeardown(cmd *exec.Cmd) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopping = false
+	if s.cmd != cmd {
+		return // somebody already installed a replacement; it is theirs, not ours to forget
+	}
+	s.up = false
+	s.cmd = nil
 }
 
 // Shutdown drains and stops the daemon (graceful workspace stop, §10.2-8).
