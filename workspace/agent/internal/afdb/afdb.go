@@ -121,6 +121,13 @@ func mysqlRoot(major string) string {
 }
 
 // passPath is where the generated password for (engine, major) is kept (mode 0600).
+//
+// This is a plaintext password under the STATE directory, which rule ① of the split in
+// paths.AgentStateDir ("a credential, or a file that can carry one") would otherwise send to
+// the keep volume. The exception is deliberate: it authenticates nothing outside this
+// Workspace. It is generated here (generatePass), reaches only a loopback server whose
+// datadir sits on the same volume, and is worthless without it — losing the volume loses the
+// database the password is for. A copy on the keep volume would outlive the thing it opens.
 func passPath(engine, major string) string {
 	return filepath.Join(registryDir(), fmt.Sprintf("%s-%s.pass", engine, major))
 }

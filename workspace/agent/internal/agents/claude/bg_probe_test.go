@@ -12,13 +12,18 @@ import (
 //
 //	go test -c -o /tmp/probe ./internal/agents/claude/
 //	AF_PROBE=1 strace -f -c -e trace=getdents64,openat,newfstatat,read,close \
-//	  /tmp/probe -test.run '^TestProbeSubagentSafety$'
+//	  /tmp/probe -test.run '^TestProbeSubagentLookup$'
 //
-// ⚠️ MEASURE THE TWO SIDES SEPARATELY, and expect DIFFERENT numbers. The display side should
-// fall to single digits; the safety side should NOT — it still searches, and demanding that
-// it also fall would mean an implementation that deleted the safety check passes the
-// measurement. The fixture is the expensive case on both sides: a session with no background
-// agents at all, which is most of them, and the one where "not found" is never remembered.
+// ⚠️ WHAT IS MEASURED IS A LOOKUP THAT STILL LOOKS AT THE DISK, and a low number is only
+// worth something while that stays true. The first implementation of this decision got its
+// number from a negative cache, confined to what looked like the two badge call sites —
+// review found that one of them is not a badge (WireLive's value travels the wire into the
+// CP's reaper, which stops the workspace on it). So
+// TestAnAgentStartingIsVisibleImmediately is the other half of this measurement, and neither
+// half means anything without the other.
+//
+// The fixture is the expensive case: a session with no background agents at all, which is
+// most of them, and the one whose absence used to cost a sweep on every poll.
 //
 // ⚠️ -e trace=file is not enough (read and close carry no file name), and a running Agent
 // cannot be attached to (ptrace_scope=1) — hence the real code frozen into a test binary.
@@ -37,26 +42,15 @@ func probeCalls(t *testing.T) int {
 	return 100
 }
 
-func TestProbeSubagentSafety(t *testing.T) {
+func TestProbeSubagentLookup(t *testing.T) {
 	if os.Getenv("AF_PROBE") == "" {
 		t.Skip("set AF_PROBE=1 and run under strace; see the comment above")
 	}
-	sid, _, _ := fixture(t, 38) // the production workspace measured on 2026-09-16
+	sid, cwd, _ := fixture(t, 38) // the production workspace measured on 2026-09-16
+	writeTranscript(t, cwd, sid)  // every live session has one; the lookup hangs off it
 	for range probeCalls(t) {
 		if len(SubagentLogs(sid)) != 0 {
 			t.Fatal("the fixture must have no background agents — that is the case being measured")
-		}
-	}
-}
-
-func TestProbeSubagentDisplay(t *testing.T) {
-	if os.Getenv("AF_PROBE") == "" {
-		t.Skip("set AF_PROBE=1 and run under strace; see the comment above")
-	}
-	sid, _, _ := fixture(t, 38)
-	for range probeCalls(t) {
-		if len(subagentLogsDisplay(sid)) != 0 {
-			t.Fatal("the fixture must have no background agents")
 		}
 	}
 }

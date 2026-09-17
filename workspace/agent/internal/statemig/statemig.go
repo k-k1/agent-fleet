@@ -31,6 +31,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -125,6 +126,7 @@ type marker struct {
 type Result struct {
 	Entries int // entries finished this run
 	Files   int // files and symlinks copied
+	Skipped int // files deliberately left on the old volume (entrySkipped)
 	Bytes   int64
 	Took    time.Duration
 	Errs    []error
@@ -147,6 +149,7 @@ func run(src, dst string) Result {
 		return res
 	}
 	m := readMarker(dst)
+	announced := false
 	for _, name := range Entries {
 		if _, done := m.Done[name]; done {
 			continue
@@ -155,12 +158,24 @@ func run(src, dst string) Result {
 		if _, err := os.Lstat(from); err != nil {
 			continue // never existed, or already fully moved
 		}
-		n, b, errs := copyTree(from, filepath.Join(dst, name))
+		if !announced {
+			// Said BEFORE the copying, because this is the one boot where it is slow: the
+			// whole tree measured 113 MB / 5,400 files on EFS, and nothing is served until
+			// it is here. Without this line that is an unexplained minute of "starting".
+			log.Printf("state: migrating agent state out of %s (first boot after the move; "+
+				"nothing is served until it is done)", src)
+			announced = true
+		}
+		n, b, skipped, errs := copyTree(from, filepath.Join(dst, name))
 		res.Files += n
 		res.Bytes += b
+		res.Skipped += skipped
 		res.Errs = append(res.Errs, errs...)
-		if len(errs) > 0 {
-			continue // not done: leave it unmarked so the next boot finishes it
+		if len(errs) > 0 || skipped > 0 {
+			// Not done. Errors leave the entry for the next boot to finish; a skip leaves it
+			// for good, and both take the same branch because RemoveAll below does not know
+			// the difference — it would delete the very files copyEntry declined to move.
+			continue
 		}
 		_ = os.RemoveAll(from)
 		m.Done[name] = time.Now().UTC().Format(time.RFC3339)
@@ -176,8 +191,10 @@ func run(src, dst string) Result {
 }
 
 // copyTree copies from onto to, creating nothing that is already there, and removes each
-// source file it has copied. Returns the number of files written and their total size.
-func copyTree(from, to string) (files int, bytes int64, errs []error) {
+// source file it has accounted for. Returns the number of files written, their total size,
+// and how many were deliberately left behind (see entrySkipped) — a caller that sees any of
+// those must not mark the entry finished, or the leftovers become permanent.
+func copyTree(from, to string) (files int, bytes int64, skipped int, errs []error) {
 	err := filepath.WalkDir(from, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			errs = append(errs, err)
@@ -201,17 +218,24 @@ func copyTree(from, to string) (files int, bytes int64, errs []error) {
 			}
 			return nil
 		}
-		n, err := copyEntry(p, target, d)
+		res, n, err := copyEntry(p, target, d)
 		if err != nil {
 			errs = append(errs, err)
 			return nil
 		}
-		if n >= 0 {
+		if res == entrySkipped {
+			// Not ours to move, so not ours to delete either. Leaving the source is the
+			// whole point: what is skipped here is either live (a socket) or a credential
+			// that belongs on the volume it is already on.
+			skipped++
+			return nil
+		}
+		if res == entryCopied {
 			files++
 			bytes += n
 		}
-		// Removed even when the destination already existed (n < 0): the destination is the
-		// truth, so the source copy is stale and keeping it would resurrect it later.
+		// Removed for entryAlreadyThere too: the destination is the truth, so the source is
+		// stale and keeping it would resurrect it later.
 		if err := os.Remove(p); err != nil {
 			errs = append(errs, err)
 		}
@@ -220,50 +244,81 @@ func copyTree(from, to string) (files int, bytes int64, errs []error) {
 	if err != nil {
 		errs = append(errs, err)
 	}
-	return files, bytes, errs
+	return files, bytes, skipped, errs
 }
 
-// copyEntry writes one file or symlink. It returns -1 when the destination already exists
-// (rule 1: never overwrite), and never follows a link.
+// entryResult says what happened to one file, and — through copyTree — whether the source
+// may be removed. The three outcomes are NOT interchangeable: the first two mean the file is
+// accounted for at the destination and the source is now redundant, the third means we chose
+// not to touch it and deleting it would be data loss.
+type entryResult int
+
+const (
+	entryCopied       entryResult = iota // written at the destination
+	entryAlreadyThere                    // the destination already had it (rule 1)
+	entrySkipped                         // deliberately left where it is
+)
+
+// borrowedCredentialNames are the files the chat scratch directories normally hold as
+// SYMLINKS into the volume that really owns the credential (chat-claude/.credentials.json →
+// the claude config mount, chat-codex/auth.json → ~/.codex/auth.json, agy's OAuth token under
+// chat-wd/agy-*/home/.gemini/…).
 //
-// 🔴 A SYMLINK IS COPIED AS A SYMLINK. The chat scratch directories borrow the real
-// credentials through links — chat-claude/.credentials.json → the claude config mount,
-// chat-codex/auth.json → ~/.codex/auth.json, and agy's OAuth token under chat-wd. Following
-// them here would write plaintext copies of all three onto the home volume, which is the one
-// thing ADR 0045 decision 3-6 forbids, and would leave the copy-back reconcile
-// (reconcileChatCreds) folding a rotated token into a file nothing else reads.
-func copyEntry(from, to string, d fs.DirEntry) (int64, error) {
+// They are listed because a link is not all they can be: the CLIs rewrite these files with
+// tmp+rename on a token refresh, which REPLACES THE LINK WITH A REAL FILE — that is why
+// reconcileChatCreds (chat_providers.go) exists at all. Migrating one in that state would
+// write the plaintext token onto the home volume, so a regular file under one of these names
+// is left exactly where it is; the next chat turn's reconcile puts the link back.
+var borrowedCredentialNames = map[string]bool{
+	"auth.json":                true,
+	".credentials.json":        true,
+	"antigravity-oauth-token":  true,
+	"antigravity-oauth-token2": true, // the rotated-pair spelling agy writes alongside it
+}
+
+// copyEntry writes one file or symlink, and never follows a link.
+//
+// 🔴 A SYMLINK IS COPIED AS A SYMLINK, for the reason on borrowedCredentialNames above: the
+// chat scratch borrows real credentials through links, and following one writes the plaintext
+// onto the home volume — the one thing ADR 0045 decision 3-6 forbids.
+func copyEntry(from, to string, d fs.DirEntry) (entryResult, int64, error) {
 	if _, err := os.Lstat(to); err == nil {
-		return -1, nil
+		return entryAlreadyThere, 0, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return 0, err
+		return entrySkipped, 0, err
 	}
 	if d.Type()&fs.ModeSymlink != 0 {
 		dest, err := os.Readlink(from)
 		if err != nil {
-			return 0, err
+			return entrySkipped, 0, err
 		}
-		return 0, os.Symlink(dest, to)
+		return entryCopied, 0, os.Symlink(dest, to)
 	}
 	if !d.Type().IsRegular() {
-		return -1, nil // socket / fifo / device: nothing to carry over
+		// A socket, fifo or device. There is nothing to carry over — and, unlike the case
+		// above, nothing to delete either: a unix socket under a migrated tree belongs to a
+		// process that is running right now, and removing it takes its listener away.
+		return entrySkipped, 0, nil
+	}
+	if borrowedCredentialNames[d.Name()] {
+		return entrySkipped, 0, nil // a link that a token refresh turned into a real file
 	}
 	fi, err := d.Info()
 	if err != nil {
-		return 0, err
+		return entrySkipped, 0, err
 	}
 	in, err := os.Open(from)
 	if err != nil {
-		return 0, err
+		return entrySkipped, 0, err
 	}
 	defer in.Close()
 	// O_EXCL, so two agents racing on the same tree cannot half-write the same file.
 	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fi.Mode().Perm())
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return -1, nil
+			return entryAlreadyThere, 0, nil
 		}
-		return 0, err
+		return entrySkipped, 0, err
 	}
 	n, err := io.Copy(out, in)
 	if cerr := out.Close(); err == nil {
@@ -271,9 +326,9 @@ func copyEntry(from, to string, d fs.DirEntry) (int64, error) {
 	}
 	if err != nil {
 		_ = os.Remove(to) // a partial file at the destination would become "the truth"
-		return 0, err
+		return entrySkipped, 0, err
 	}
-	return n, nil
+	return entryCopied, n, nil
 }
 
 func readMarker(dst string) marker {

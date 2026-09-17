@@ -286,9 +286,7 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		// computed when not already working (the chip prefers "in progress" then), keeping the
 		// scans off the hot path during turns.
 		if state == "idle" || state == "" {
-			// Display: the chat header's badge, so the Display twin (claude.SubagentBusyDisplay
-			// documents what may not read it).
-			busy, reason := claude.BackgroundWorkDisplay(name, sid)
+			busy, reason := claude.BackgroundWork(name, sid)
 			resp["backgroundBusy"] = busy
 			resp["backgroundBusyReason"] = reason
 		}

@@ -210,9 +210,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// Still idle: background work may yet be running — surface it so "waiting for input"
 		// isn't mistaken for "done".
 		if li.State == "idle" {
-			// Display: the session list's badge. BackgroundWorkDisplay, not BackgroundWork —
-			// see SubagentBusyDisplay for the line between the two.
-			li.BackgroundBusy, li.BackgroundBusyReason = BackgroundWorkDisplay(m.Name, sid)
+			li.BackgroundBusy, li.BackgroundBusyReason = BackgroundWork(m.Name, sid)
 		}
 	} else if !session.DirExists(m.Dir) {
 		// A stopped claude whose working dir was removed (its repo deleted) can't be

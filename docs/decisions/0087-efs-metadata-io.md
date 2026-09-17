@@ -573,6 +573,41 @@ full conversation. But its polling frequency has not been measured, and this is 
 user wrote: accepting "lost with the EBS volume" for conversations is a separate judgement.
 Next candidate.
 
+#### Four things review corrected (how the migration breaks)
+
+- 🔴 **It deleted things it had not copied.** `copyEntry` used one return value for both "the
+  destination already has it" and "not a regular file or a symlink (socket / fifo / device)",
+  so the source was removed in the second case too (reviewer measured it with a fifo). **A live
+  socket is a running process's listener**, so that is now a third outcome - leave it, delete
+  nothing - and an entry with anything left behind is **not recorded as finished** (`RemoveAll`
+  cannot tell the difference).
+- 🔴 **A credential that should be a symlink is sometimes a real file.** `reconcileChatCreds`
+  exists precisely because the CLIs **replace the link with a real file** on a token refresh,
+  and migrating one in that state writes the plaintext token onto home (measured).
+  `auth.json`, `.credentials.json` and agy's OAuth token are **left in place when they are
+  regular files**; the next chat turn's reconcile restores the link.
+- 🔴 **The `af-db` subcommand can outrun the migration.** Its branch in `main.go` returns before
+  `statemig.Run()`, and it is the one subcommand **a user runs by hand**. It reads a missing
+  registry as an empty one and writes that back, leaving a thin `{"instances":{}}` at the
+  destination that "the destination is the truth" then keeps - **orphaning a running postmaster**
+  (measured). That branch now runs the migration itself. The hook path (a tmux session that
+  outlived an Agent restart) is **deliberately not fixed**: it would put a 100 MB copy in front
+  of a claude turn, and the symptom is one mis-filed event that the next hook self-heals.
+- **af-db's `<engine>-<major>.pass` is a plaintext password.** It meets rule (1) head-on but
+  **stays on the state side as an exception**: it authenticates nothing outside this Workspace.
+  It is generated here, reaches only a loopback server whose datadir is on the same volume, and
+  **losing that volume loses the thing it opens**. A copy on keep would outlive what it unlocks.
+  `passPath` now says so - without that sentence the next reader applies rule (1) and moves it
+  back.
+
+⚠️ **The migration blocks boot.** Nothing is served until 5,400 files / 113 MB have been moved.
+Review's concern that a rollout would have every workspace do this at once and exhaust burst
+credits **does not apply to the current configuration**: decision 1 keeps it on `elastic`, which
+has no burst credits. What remains is a longer first boot - and **a readiness failure never
+fails Start** (`runtime_ecs.go`: "A readiness failure must still NEVER fail Start", structurally,
+nothing reads it), so it cannot turn into a task-replacement loop. One log line is emitted when
+there is something to move, so a slow boot is diagnosable rather than silent.
+
 ⚠️ claude's hook definitions do not break (verified). What `hooks.go` embeds in a command line
 is **the agent binary's path only** (`<exe> session-status <state>`); where the state lives is
 resolved by the agent at run time, so a hook written before the migration writes to the new
@@ -629,59 +664,67 @@ location unchanged.
 - The transcript side's `memoTTL = 60s` returns a hit to the full sweep once a minute. Once
   the derivation is in, re-searching is cheap, so revisit that constant afterwards.
 
-#### Implementation (option (a): a new display-only entry point)
+#### Implementation (option (a) was tried, rejected, and replaced by one with no cache)
 
-- **`SubagentBusyDisplay` / `BackgroundWorkDisplay` were added**, and the negative cache
-  (`absenceMemo`, 15s TTL) lives on that path alone. `SubagentBusy`, `SubagentLogs` and
-  `SubagentSnapshot` still **always search**, and the three decisions still call them.
-  🔥 The searching combinator `BackgroundWork` was **deleted rather than kept**: both of its
-  callers were badges to begin with, and leaving it would leave a safe-sounding unused
-  function for the next person to decide something with. The one place that does want the
-  three detectors combined for a decision (`chatx.stopArmBackgroundBusy`) names the detectors
-  it wants and gets the subagent arm from `SubagentBusy` through the report signals.
-- **The project directory is derived from the cwd** (`project_dir.go`). The encoding is
-  "every non-alphanumeric becomes `-`", verified against a live tree
-  (`agent-fleet@wip-s2y` → `-…-agent-fleet-wip-s2y`, `/home/dev/.config/…` →
-  `-home-dev--config-…`). It is **lossy and not injective**, so the derivation is a guess and
-  is only taken when one `Lstat` of `<sid>.jsonl` confirms it - a sid is unique, so finding it
-  there does settle that it IS that session's transcript. A miss falls through to the old
-  sweep. A sid cannot be turned back into a cwd (it is UUIDv5(dir|name)), so
-  `session.CWDForUUID` was added: every meta read or write records the cwd, which costs no
-  extra I/O (the list poll reads every meta every few seconds, so it is effectively always
-  populated). With a `Meta.Subdir` it returns `CWD()` - the directory claude actually runs in.
-- **`memoTTL = 60s` stays** (the review's outcome). It used to send every hit back to a full
-  sweep once a minute; the re-search now measures 2 syscalls, so there is nothing left to buy
-  by lengthening it.
+🔥 **The first implementation was (a) — a display-only entry point with a 15s negative cache —
+and review rejected it.** Drawing the line at "display versus every decision" was right; what
+was wrong was the census of what counts as display. **One of the two supposed badges is not a
+badge**: the `LiveInfo.BackgroundBusy` that `WireLive` fills travels the wire as the session's
+`backgroundBusy`, and **the CP's reaper decides on it**:
+
+```
+claude.go WireLive → agents.LiveInfo.BackgroundBusy → sessionx/session.go sessionWire
+  → CP control-plane/session_activity.go sessionActivity()
+     → holdsWorkspace()  … tier 2: whether to stop the WORKSPACE
+     → tier1Reapable()   … tier 1: whether to halt the session
+```
+
+The comment on that very line records the incident that put it there: **the reaper did not look
+at this and stopped running background work**. So the cached implementation was reopening, one
+layer up, the hole this decision closes inside the Agent — a 15s-stale "no background work" can
+stop the whole box, and tier 2 has no debounce, so one sweep is enough.
+
+**The implementation taken drops "avoid looking" for "look in exactly one place".** claude puts
+a session's subagents directory **beside the session's own transcript**, in the project
+directory derived from the cwd. `jsonlPaths` has already located that transcript and memoized
+it, so `subagentBases` needs **one `Lstat`** next to it — and produces its answer, "there is
+none" included, **from the disk every time**. The negative cache is gone.
+
+- `subagentBases` hangs its `Lstat` off the project directories the transcript was found in.
+  Only a session with no transcript yet (before its first turn) has nothing to hang it off, and
+  that case falls back to the original sweep.
+- `SubagentBusyDisplay` / `BackgroundWorkDisplay` / `absenceMemo` **do not exist**. There is one
+  entry point, `BackgroundWork`, and the three decisions and the badge read the same fresh
+  answer.
+- **Deriving the project directory from the cwd** (`project_dir.go`) stays, on the transcript
+  side. The encoding is "every non-alphanumeric becomes `-`", verified against a live tree. It
+  is **lossy and not injective**, so the derivation is a guess, taken only when one `Lstat` of
+  `<sid>.jsonl` confirms it — a sid is unique, so finding it there settles that it IS that
+  session's transcript. A miss falls through to the old sweep. A sid cannot be turned back into
+  a cwd (UUIDv5(dir|name)), so `session.CWDForUUID` records it whenever a meta is read or
+  written, which costs no extra I/O. With a `Meta.Subdir` it returns `CWD()`.
+- **`memoTTL = 60s` stays** (the review's outcome): the re-search it forces measures 2 syscalls.
 
 Measured (`internal/agents/claude/bg_probe_test.go`, strace, 39 project directories, per-call
-cost taken as the **slope** between 10 and 110 calls so that process startup and the fixture
-are out of the denominator):
+cost as the **slope** between 10 and 110 calls so startup and the fixture are out of the
+denominator):
 
-| path | before / equivalent | after |
-|---|---|---|
-| subagent lookup, **display** (no background agents) | 201 | **0** |
-| subagent lookup, **safety** (same) | 201 | **201** (unchanged, by design) |
-| transcript re-search, cwd known | 201 | **2** |
-| transcript re-search, cwd unknown | 201 | 201 |
+| path | before | cached version (rejected) | shipped |
+|---|---|---|---|
+| subagent lookup (no background agents) | 201 | display 0 / safety 201 | **3** (every caller) |
+| transcript re-search, cwd known | 201 | 2 | **2** |
+| transcript re-search, cwd unknown | 201 | 201 | 201 |
 
-⚠️ **The safety side staying at 201 is a pass.** The ADR predicted "158 → single digits", but
-158 was the figure for 38 project directories and this fixture has 39 (measured: 201). The
-requirement is to **measure the two sides separately**; demanding single digits of the safety
-side as well would pass an implementation that deleted the safety check.
+⚠️ **The shipped version is both faster than the rejected one and never stale.** The original
+pass criterion — "the safety side must stay at 201" — was only needed *if* the implementation
+split display from safety. With no split there is nothing to hold at 201, and what has to be
+proved instead is that **no absence is remembered**:
+`TestAnAgentStartingIsVisibleImmediately` (create the child transcript right after a miss; the
+very next call must see it), with a positive control that breaking `pathMemo`'s "never remember
+a miss" invariant turns it red.
 
-The acceptance test (`bg_display_test.go`) is the one specified: **create the child transcript
-right after a miss, inside the TTL**, then check that (1) a misdelivery is still caught
-(`SubagentReceivedSince`), (2) completion is not reported early and (3) an armed stop does not
-fire ((2) and (3) through the `SubagentBusy` that `collectReportSignals` reads). **A positive
-control was taken**: wiring the negative cache into the shared `SubagentLogs` turns (1) and (2)
-red, and restoring it turns them green. A wiring test (`bg_display_wiring_test.go`) lists which
-files may read the display path at all - the two forms have **the same signature**, so using
-the wrong one compiles, passes the tests, and shows up only as a duplicated interruption, an
-early completion report, or a session stopped with a background agent still inside it.
-
-`jsonl_memo.go`'s type comment now explains **why the two places guard in opposite directions**
-(one never remembers a miss, the other exists to remember one), from both ends - because
-"these are duplicates, drop one" is the natural tidy-up.
+`jsonl_memo.go`'s "A MISS IS NEVER REMEMBERED" is now **one invariant covering both the
+transcript and the subagents lookup**, since the exception it would have had is gone.
 
 ### Decision 6 (permanent, P2): on mount options, establish first what is *not* possible
 

@@ -3,6 +3,7 @@ package statemig
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -205,5 +206,58 @@ func TestEmptySourceIsANoOp(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "state", markerName)); !os.IsNotExist(err) {
 		t.Fatal("a marker was written with nothing to mark")
+	}
+}
+
+// A socket or fifo under a migrated tree belongs to a process that is running right now.
+// There is nothing to copy, and removing it would take that process's listener away — so it
+// is skipped, and the entry stays unfinished rather than being swept up by RemoveAll.
+func TestALiveSocketIsNeitherCopiedNorDeleted(t *testing.T) {
+	src, dst, _ := seed(t)
+	fifo := filepath.Join(src, "af-db", "s.PGSQL.5432")
+	if err := os.MkdirAll(filepath.Dir(fifo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("cannot create a fifo here: %v", err)
+	}
+
+	res := run(src, dst)
+	if len(res.Errs) > 0 {
+		t.Fatalf("errors: %v", res.Errs)
+	}
+	if res.Skipped != 1 {
+		t.Fatalf("Skipped = %d, want 1", res.Skipped)
+	}
+	if _, err := os.Lstat(fifo); err != nil {
+		t.Fatalf("the live socket was removed: %v", err)
+	}
+	if _, ok := readMarker(dst).Done["af-db"]; ok {
+		t.Error("an entry with something left behind must not be marked finished — " +
+			"the next boot would never look at it again")
+	}
+}
+
+// The chat scratch borrows the real credentials through symlinks, but a token refresh
+// replaces the link with a REAL FILE (that is why reconcileChatCreds exists). Migrating one
+// in that state writes the plaintext token onto the home volume, which is what ADR 0045
+// decision 3-6 forbids — so it stays where it is and the next chat turn re-links it.
+func TestARefreshedTokenIsLeftOnTheOldVolume(t *testing.T) {
+	src, dst, _ := seed(t)
+	real := filepath.Join(src, "chat-codex", "auth.json")
+	if err := os.Remove(real); err != nil { // the seed made it a symlink
+		t.Fatal(err)
+	}
+	write(t, real, `{"tokens":{"access_token":"secret"}}`)
+
+	res := run(src, dst)
+	if len(res.Errs) > 0 {
+		t.Fatalf("errors: %v", res.Errs)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "chat-codex", "auth.json")); !os.IsNotExist(err) {
+		t.Fatal("a plaintext token was copied onto the home volume")
+	}
+	if got := read(t, real); got != `{"tokens":{"access_token":"secret"}}` {
+		t.Fatalf("the token was removed from the volume that owns it: %q", got)
 	}
 }

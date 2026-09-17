@@ -168,7 +168,7 @@ const (
 	BGReasonShell    = "shell"    // a Monitor / waiting background shell
 )
 
-// BackgroundWorkDisplay names what is still running while the session's own turn reads idle.
+// BackgroundWork names what is still running while the session's own turn reads idle.
 // The three detectors see structurally different things and none subsumes another:
 // BackgroundBusy sees run_in_background worker processes under the pane; SubagentBusy
 // sees in-process background subagents / Workflow agents, which spawn no such process at
@@ -179,19 +179,17 @@ const (
 // them is a true statement about the session, and the order keeps the cheap cached /proc
 // snapshot ahead of the transcript reads.
 //
-// 🔴 FOR A BADGE, NOT FOR A DECISION — both callers are one (the session list's row and the
-// chat header), and the subagent arm answers from a short negative cache that may say "no"
-// while an agent is running (SubagentBusyDisplay spells out the three decisions that must
-// never be taken on it). The Display suffix is the whole warning: there is deliberately no
-// searching twin of this function to reach for by mistake, because nothing needs the three
-// detectors combined in order to decide something. The one place that does —
-// chatx.stopArmBackgroundBusy — names the detectors it wants, and gets the subagent arm from
-// SubagentBusy through the report signals instead.
-func BackgroundWorkDisplay(name, sid string) (bool, string) {
+// ⚠️ THIS IS NOT DISPLAY-ONLY, however much the two call sites look like badges. The value
+// reaches agents.LiveInfo.BackgroundBusy, travels the wire as the session's backgroundBusy,
+// and the CP's reaper decides on it (control-plane/session_activity.go: holdsWorkspace stops
+// the workspace, tier1Reapable halts the session). The comment there records the incident
+// that put it in: the reaper did not look at this and stopped running background work. So
+// every arm below has to answer from the disk, now — see subagentBases.
+func BackgroundWork(name, sid string) (bool, string) {
 	switch {
 	case BackgroundBusy(name):
 		return true, BGReasonProcess
-	case SubagentBusyDisplay(sid):
+	case SubagentBusy(sid):
 		return true, BGReasonSubagent
 	case BackgroundShellBusy(name):
 		return true, BGReasonShell
@@ -342,39 +340,6 @@ func SubagentBusy(sid string) bool {
 	return BackgroundAgentsRunning(sid) || anyFresh(SubagentLogs(sid))
 }
 
-// SubagentBusyDisplay is SubagentBusy for the BADGE ONLY. It answers from a short negative
-// cache (subagentAbsent) when the last search found no subagents directory at all, which is
-// the permanent state of every session that never launches a background agent — and the
-// state in which the search is pure loss, sweeping every project directory on every poll
-// because "not found" is never remembered (jsonl_memo.go).
-//
-// 🔴 IT MAY SAY "no" WHILE ONE IS RUNNING, for up to subagentAbsentTTL after a miss. That is
-// tolerable for a badge that lights a moment late, and NOT tolerable anywhere else, because
-// three decisions rest on this same signal and all three read a false "no" as permission to
-// act:
-//
-//   - delivery confirmation (sessionx.confirmPromptDelivery → SubagentReceivedSince): twelve
-//     seconds after a prompt is typed it asks whether the prompt landed in a background
-//     agent's transcript instead of the session's own, and stops the resend if it did. A
-//     cached "no subagents" hides a `subagents/` directory that was created the moment the
-//     prompt landed — and the self-heal then fires the same interruption into the agent a
-//     second time;
-//   - completion (chatx.collectReportSignals → busyEvidence "subagent-busy"), which is what
-//     holds a report back while an agent is still working;
-//   - the armed stop (chatx.stop_after_turn → evalReportEvidence), which goes on to kill the
-//     tmux session — taking the running background agent with it.
-//
-// The case where this is the ONLY evidence is real rather than hypothetical: a Workflow's
-// wf_* agents leave no launch/notification pairing in the main transcript, so
-// BackgroundAgentsRunning cannot see them and the freshness of their child transcripts is
-// all there is.
-//
-// So the line is display versus EVERY decision, not display versus delivery. Those callers
-// keep using SubagentBusy / SubagentLogs / SubagentSnapshot, which always search.
-func SubagentBusyDisplay(sid string) bool {
-	return BackgroundAgentsRunning(sid) || anyFresh(subagentLogsDisplay(sid))
-}
-
 // anyFresh reports whether any of these transcripts was appended to inside the freshness
 // window.
 func anyFresh(logs []string) bool {
@@ -389,24 +354,12 @@ func anyFresh(logs []string) bool {
 
 // SubagentLogs lists sid's background-agent transcripts. Regular subagents sit directly
 // under subagents/; Workflow agents nest under subagents/workflows/wf_*/.
-//
-// This is the SEARCHING entry point, the one every decision uses. subagentLogsDisplay below
-// is its badge-only twin; keep them apart (SubagentBusyDisplay says what breaks otherwise).
 func SubagentLogs(sid string) []string {
-	return subagentLogsIn(sid, subagentBases(sid))
-}
-
-// subagentLogsDisplay is SubagentLogs off the negative cache — badge only.
-func subagentLogsDisplay(sid string) []string {
-	return subagentLogsIn(sid, subagentBasesDisplay(sid))
-}
-
-func subagentLogsIn(sid string, bases []string) []string {
 	if sid == "" {
 		return nil
 	}
 	var out []string
-	for _, base := range bases {
+	for _, base := range subagentBases(sid) {
 		for _, pat := range []string{
 			filepath.Join(base, "agent-*.jsonl"),
 			filepath.Join(base, "workflows", "wf_*", "agent-*.jsonl"),
@@ -423,74 +376,50 @@ func subagentLogsIn(sid string, bases []string) []string {
 // the inner agent-*.jsonl globs still have to read the subagents directory itself, but that is
 // one directory, not one per project (jsonl_memo.go).
 //
-// It always answers from disk: the positive memo re-checks its hit with an Lstat, and a miss
-// falls through to a real search. Only subagentBasesDisplay is allowed to remember a miss.
+// 🔴 IT ALWAYS LOOKS AT THE DISK, and must keep doing so. Three decisions rest on the answer,
+// and each of them reads a false "no background agents" as permission to act: delivery
+// confirmation (sessionx.confirmPromptDelivery → SubagentReceivedSince) fires the same
+// interruption into the agent a second time; completion (chatx.collectReportSignals →
+// busyEvidence "subagent-busy") reports an instruction done while one is working; the armed
+// stop (chatx.stop_after_turn) kills the tmux session with the agent still inside it. The
+// badge is not a fourth, separate case: WireLive's BackgroundBusy travels the wire into the
+// CP's reaper (control-plane/session_activity.go — holdsWorkspace / tier1Reapable), so a
+// stale "no" there stops the whole workspace. A Workflow's wf_* agents leave no pairing
+// record in the main transcript, so for them this is the ONLY evidence.
+//
+// What makes that affordable is the layout, not a cache: claude puts the subagents directory
+// beside the session's own transcript, in the project directory it derived from the cwd.
+// jsonlPaths has already located (and memoized) that transcript for every polled predicate,
+// so the answer is one Lstat next to it — including the answer "there is none", which is the
+// permanent state of every session that never launches a background agent and used to cost a
+// sweep of every project directory on every poll.
 func subagentBases(sid string) []string {
 	return subagentMemo.lookup(ConfigDir()+"\x00"+sid, func() []string {
-		// The cwd names the project directory, so the common case is one Lstat rather than
-		// a read of every project directory there is (project_dir.go). A wrong or unknown
-		// guess just falls through to the sweep below.
-		if p := guessProjectPath(session.CWDForUUID(sid), sid, "subagents"); p != "" {
-			return []string{p}
+		if dirs := transcriptProjectDirs(sid); len(dirs) > 0 {
+			var out []string
+			for _, d := range dirs {
+				base := filepath.Join(d, sid, "subagents")
+				if _, err := os.Lstat(base); err == nil {
+					out = append(out, base)
+				}
+			}
+			return out // authoritative, empty included: we looked where it would be
 		}
+		// No transcript located — a session that has not written its first turn yet. There
+		// is nothing to hang the Lstat off, so this is the original sweep.
 		m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", sid, "subagents"))
 		return m
 	})
 }
 
-// subagentAbsentTTL bounds how long "this session has no background agents" is believed
-// without looking. It only has to be short relative to how long a badge may lag: the badge
-// re-polls every few seconds, so 15s costs at most one late light-up, while removing 3 in 4
-// of the sweeps a session that never uses background agents would otherwise pay for.
-const subagentAbsentTTL = 15 * time.Second
-
-// subagentAbsent remembers, per session, that the last search found NO subagents directory.
-//
-// It is the exact inverse of pathMemo's central invariant, and that is not an oversight:
-// pathMemo refuses to remember a miss because the transcript lookup behind it decides
-// `--resume` vs `--session-id`, where inventing an absence makes claude exit with "Session
-// ID is already in use". The absence remembered HERE is read by one caller
-// (SubagentBusyDisplay) which decides nothing. Neither of these belongs on the other's path,
-// and the two files say so in both directions so that the next reader — who will notice they
-// look like duplicates of each other — does not unify them.
-var subagentAbsent absenceMemo
-
-type absenceMemo struct {
-	mu   sync.Mutex
-	seen map[string]time.Time
-}
-
-func (a *absenceMemo) fresh(key string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	at, ok := a.seen[key]
-	return ok && time.Since(at) < subagentAbsentTTL
-}
-
-func (a *absenceMemo) note(key string, absent bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if !absent {
-		delete(a.seen, key)
-		return
+// transcriptProjectDirs returns the project directories sid's transcript was found in. Empty
+// when there is no transcript yet, which is NOT the same as "no subagents" — see the caller.
+func transcriptProjectDirs(sid string) []string {
+	var dirs []string
+	for _, p := range jsonlPaths(sid) {
+		dirs = append(dirs, filepath.Dir(p))
 	}
-	if a.seen == nil {
-		a.seen = map[string]time.Time{}
-	}
-	a.seen[key] = time.Now()
-}
-
-// subagentBasesDisplay is subagentBases with the negative cache in front of it. The ONLY
-// caller is SubagentBusyDisplay — see there for what it costs and why no decision may read
-// it.
-func subagentBasesDisplay(sid string) []string {
-	key := ConfigDir() + "\x00" + sid
-	if subagentAbsent.fresh(key) {
-		return nil
-	}
-	bases := subagentBases(sid)
-	subagentAbsent.note(key, len(bases) == 0)
-	return bases
+	return dirs
 }
 
 // SubagentSnapshot is TranscriptSnapshot for the background agents' logs — the baseline

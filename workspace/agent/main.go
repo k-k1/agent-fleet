@@ -38,6 +38,13 @@ func main() {
 	// af-db CLI: per-working-copy Postgres databases (ADR 0086 P0). Must be
 	// the first branch — `workspace-agent <unknown>` would otherwise boot the Agent.
 	if len(os.Args) > 1 && os.Args[1] == "af-db" {
+		// The state migration first, because this subcommand is the one a USER runs from a
+		// terminal, with no Agent involved (ADR 0087 decision 4). Its registry reads as an
+		// empty one when the file is not where it looks, and writes that back — so running it
+		// before the Agent has migrated leaves a `{"instances":{}}` at the destination, and
+		// "the destination is the truth" then discards the real registry, orphaning a running
+		// postmaster. Cheap once done: the marker plus one failed stat per entry.
+		statemig.Run()
 		afdb.RunAFDB(os.Args[2:])
 		return
 	}
@@ -172,8 +179,14 @@ func main() {
 	// home volume, once (ADR 0087 decision 4). FIRST, before anything below reads a store:
 	// every one of them resolves through paths.AgentStateDir now, and a read that lands
 	// there before the migration reads an empty store — the session ledger included, which
-	// is the Console's whole session list. Subcommand branches return above this, and they
-	// only run once the Agent has served a session, so they cannot outrun it.
+	// is the Console's whole session list.
+	//
+	// The subcommand branches above return before this. Most cannot outrun it because they
+	// are spawned by a session the Agent started; the exceptions are `af-db`, which a user
+	// runs by hand (it migrates for itself, see there), and the hook helpers, which a tmux
+	// session that survived an Agent restart can still fire. A hook that lands early reads an
+	// empty store and mis-files one event — the next one self-heals — and is deliberately not
+	// made to migrate: it would put a 100 MB copy in front of a claude turn.
 	if r := statemig.Run(); r.Files > 0 || len(r.Errs) > 0 {
 		log.Printf("state: migrated %d entr(y|ies), %d file(s), %.1f MB in %s",
 			r.Entries, r.Files, float64(r.Bytes)/(1<<20), r.Took.Round(time.Millisecond))
