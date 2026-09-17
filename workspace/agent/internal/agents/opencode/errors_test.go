@@ -176,3 +176,88 @@ func TestReadSessionAppendsErrorAfterPartialOutput(t *testing.T) {
 		t.Errorf("text = %q", turns[0].Text)
 	}
 }
+
+// --- aborts nobody asked for -------------------------------------------------
+//
+// A measured body (opencode 1.18.31): what a turn comes back as when the shared serve
+// daemon is replaced while it runs. Read as "no provider failure" it passes for a clean
+// completion, which leaves the Console showing a turn that stopped mid-work, an empty
+// transcript and an operator report announcing an answer.
+const abortedBody = `{"info":{"role":"assistant","modelID":"union-alpha","providerID":"opencode-go",` +
+	`"error":{"name":"MessageAbortedError","data":{"message":"Aborted"}}},"parts":[]}`
+
+func TestDecodeSeparatesAbortFromProviderFailure(t *testing.T) {
+	// The driver must SEE the abort...
+	e, ok := decodeTurnError(strings.NewReader(abortedBody))
+	if !ok {
+		t.Fatal("the driver has to see an abort: it is the only layer that knows who asked")
+	}
+	if !e.isAbort() || e.ok() {
+		t.Errorf("abort classified wrong: isAbort=%v ok=%v", e.isAbort(), e.ok())
+	}
+	// ...while the read layer must not render one as an error block.
+	if _, ok := decodeMessageError([]byte(abortedBody)); ok {
+		t.Error("the transcript must render an aborted turn as its partial answer, not an error")
+	}
+}
+
+// An abort this side never asked for is a lost turn and has to be reported as one.
+func TestAbortNobodyAskedForLandsAbortedAndReportsReason(t *testing.T) {
+	m, srv := newMockServe(t)
+	m.turnDelay = 30 * time.Millisecond
+	m.turnBody = abortedBody
+	h := newTestHandle(t, srv)
+
+	got := make(chan string, 4)
+	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
+		if sid == h.ocSid && state == agents.StateAborted {
+			got <- excerpt
+		}
+	})
+	t.Cleanup(func() { agents.SetStateNotifier(nil) })
+
+	if err := h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "msg_unasked_abort"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitState(t, h, agents.TurnAborted)
+	select {
+	case excerpt := <-got:
+		if !strings.Contains(excerpt, "中断") {
+			t.Errorf("excerpt = %q, want the reason the turn stopped", excerpt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a turn killed under us must notify, not pass for a completion")
+	}
+}
+
+// The other side of the same coin: a stop / halt / archive asks for the abort itself, and
+// telling the user their own stop was an incident would be noise.
+func TestAbortWeAskedForStaysCancelled(t *testing.T) {
+	m, srv := newMockServe(t)
+	m.turnDelay = 5 * time.Second // returns only once the abort lands
+	m.turnBody = abortedBody
+	h := newTestHandle(t, srv)
+	h.name = "slot-" + t.Name()
+	handlesMu.Lock()
+	handles[h.name] = h
+	handlesMu.Unlock()
+	t.Cleanup(func() {
+		handlesMu.Lock()
+		delete(handles, h.name)
+		handlesMu.Unlock()
+	})
+
+	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
+		if sid == h.ocSid && state == agents.StateAborted {
+			t.Errorf("an abort we asked for must not be reported as an incident (%q)", excerpt)
+		}
+	})
+	t.Cleanup(func() { agents.SetStateNotifier(nil) })
+
+	if err := h.Send(agents.TurnInput{Prompt: "long", ClientMessageID: "msg_asked_abort"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitState(t, h, agents.TurnRunning)
+	DropHandle(h.name)
+	waitState(t, h, agents.TurnCancelled)
+}

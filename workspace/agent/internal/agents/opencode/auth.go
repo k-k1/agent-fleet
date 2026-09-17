@@ -164,6 +164,13 @@ func Status(s *secrets.Data) map[string]any {
 	if l := LastLimit(); l.Name != "" || l.ResetAt != "" {
 		m["last_limit"] = l
 	}
+	// The daemon's recent lifetime (serve.go's ledger). It is here because this is the one
+	// opencode-shaped surface a person inside the workspace can already read: a daemon that
+	// keeps being replaced kills a turn every time it lands on one, and until now the only
+	// record of that was the container's stdout.
+	if ev := Lifecycle(); len(ev) > 0 {
+		m["lifecycle"] = ev
+	}
 	return m
 }
 
