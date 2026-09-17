@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupRegistered, registeredGroupKey, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
+import { groupIsRepo, groupRegistered, quantLabel, registeredGroupKey, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
 import type { EngineModel, EngineRow } from "./engineTypes.ts";
 
 const model = (over: Partial<EngineModel> & { id: string }): EngineModel =>
@@ -44,11 +44,12 @@ describe("registeredGroupKey", () => {
     expect(registeredGroupKey(model({ id: "a", kind: "lora", base_model: "qwen3" }), false)).toBe("qwen3");
   });
 
-  // A GGUF declares no family at all, so the publisher is the only category it has — and it is a
-  // real one: two people's quantisations of the same weights are different rows.
-  it("files a GGUF under the owner of its repository", () => {
-    expect(registeredGroupKey(model({ id: "a", display_name: "unsloth/Qwen3-Coder-30B-GGUF" }), false)).toBe("unsloth");
-    expect(registeredGroupKey(model({ id: "a", display_name: "Qwen3-local" }), false)).toBe("");
+  // A GGUF declares no family at all, so the repository is its category — and it is the right one:
+  // the files of one quantisation repository are alternatives to each other (ADR 0089).
+  it("files a GGUF under its repository, not its publisher", () => {
+    expect(registeredGroupKey(model({ id: "a", display_name: "unsloth/Qwen3-Coder-30B-GGUF" }), false))
+      .toBe("unsloth/Qwen3-Coder-30B-GGUF");
+    expect(registeredGroupKey(model({ id: "a", display_name: "Qwen3-local" }), false)).toBe("Qwen3-local");
     expect(registeredGroupKey(model({ id: "a" }), false)).toBe("");
   });
 });
@@ -81,15 +82,55 @@ describe("groupRegistered", () => {
     expect(groups[0].models.map((row) => row.id)).toEqual(["a"]);
   });
 
-  it("groups an LLM catalogue by publisher and keeps the unnamed rows first", () => {
+  // 🔴 Two quantisations of ONE repository land together; a different model by the same publisher
+  // does not. Filing by publisher put those three in one pile.
+  it("groups an LLM catalogue by repository and keeps the unnamed rows first", () => {
     const rows = [
-      model({ id: "a", display_name: "unsloth/Qwen3-GGUF" }),
+      model({ id: "a", display_name: "unsloth/Qwen3-GGUF", source: "hf:unsloth/Qwen3-GGUF/a.gguf" }),
       model({ id: "b" }),
       model({ id: "c", display_name: "bartowski/Qwen2.5-GGUF" }),
       model({ id: "d", display_name: "unsloth/Gemma-GGUF" }),
+      model({ id: "e", display_name: "unsloth/Qwen3-GGUF", source: "hf:unsloth/Qwen3-GGUF/e.gguf" }),
     ];
     const groups = groupRegistered(rows, llmEngine, false);
-    expect(groups.map((group) => group.key)).toEqual(["", "bartowski", "unsloth"]);
-    expect(groups[2].models.map((row) => row.id)).toEqual(["a", "d"]);
+    expect(groups.map((group) => group.key))
+      .toEqual(["", "bartowski/Qwen2.5-GGUF", "unsloth/Gemma-GGUF", "unsloth/Qwen3-GGUF"]);
+    expect(groups[3].models.map((row) => row.id)).toEqual(["a", "e"]);
+  });
+
+  it("offers the quantisation ladder only where the group names a repository", () => {
+    expect(groupIsRepo("unsloth/Qwen3.8-27B-GGUF")).toBe(true);
+    expect(groupIsRepo("unsloth")).toBe(false);
+    expect(groupIsRepo("")).toBe(false);
+    expect(groupIsRepo("a/b/c")).toBe(false);
+  });
+});
+
+describe("quantLabel and the repository card's titles", () => {
+  it("strips the model name a repository repeats on every one of its files", () => {
+    expect(quantLabel("Qwen3.8-27B-UD-IQ2_S.gguf", "unsloth/Qwen3.8-27B-GGUF")).toBe("UD-IQ2_S");
+    expect(quantLabel("MTP/mtp-Qwen3.8-27B-Q4_0.gguf", "unsloth/Qwen3.8-27B-GGUF")).toBe("mtp-Qwen3.8-27B-Q4_0");
+  });
+
+  it("keeps the whole name when the repository names its files some other way", () => {
+    expect(quantLabel("ggml-model-q4.gguf", "someone/Whatever-GGUF")).toBe("ggml-model-q4");
+  });
+
+  // 🔴 Seen on the rendered ladder: inside a repository group the repository is the HEADING, so
+  // titling every card with it left two quantisations of one model calling themselves the same
+  // thing. What tells them apart is the quantisation.
+  it("titles a card inside a repository group by its quantisation", () => {
+    const row = model({
+      id: "qwen3_8_27b_ud_iq2_s", display_name: "unsloth/Qwen3.8-27B-GGUF",
+      source: "hf:unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-IQ2_S.gguf",
+    });
+    expect(registeredTitle(row, "unsloth/Qwen3.8-27B-GGUF").title).toBe("UD-IQ2_S");
+    // Outside one — the image catalogue, a filtered list — the publisher's name is still right.
+    expect(registeredTitle(row).title).toBe("unsloth/Qwen3.8-27B-GGUF");
+  });
+
+  it("falls back to the repository name for a row whose source names another one", () => {
+    const row = model({ id: "hand", display_name: "unsloth/Qwen3.8-27B-GGUF", source: "url:https://x/y.gguf" });
+    expect(registeredTitle(row, "unsloth/Qwen3.8-27B-GGUF").title).toBe("unsloth/Qwen3.8-27B-GGUF");
   });
 });

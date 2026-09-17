@@ -22,11 +22,43 @@ export type RegisteredTitle = {
   bare: boolean;
 };
 
-export function registeredTitle(model: EngineModel): RegisteredTitle {
+export function registeredTitle(model: EngineModel, group = ""): RegisteredTitle {
+  // Inside a repository group the repository is the HEADING, so repeating it as the title of
+  // every card leaves two cards of the same model calling themselves the same thing — which is
+  // what the screen did (seen on the rendered ladder). The quantisation is what tells them
+  // apart, so in that one context it is the title.
+  const quant = groupIsRepo(group) ? quantOfRow(model, group) : "";
+  if (quant) return { title: quantLabel(quant, group), version: "", bare: false };
   const name = (model.display_name || "").trim();
   const version = (model.version_name || "").trim();
   if (!name) return { title: model.id, version: "", bare: true };
   return { title: name, version: version && version !== name ? version : "", bare: false };
+}
+
+/** The file of `repo` this row was built from, out of its recorded source (`hf:<repo>/<file>`),
+ *  or "" when the row came from somewhere else. Read off the source and never off the id: the id
+ *  is the file name MANGLED (`Qwen3.8-27B-UD-IQ2_S.gguf` becomes `qwen3_8_27b_ud_iq2_s`), and
+ *  un-mangling it would be re-deriving a transformation the source already records exactly. */
+export function quantOfRow(model: EngineModel, repo: string): string {
+  const prefix = `hf:${repo}/`;
+  const source = (model.source || "").trim();
+  return source.startsWith(prefix) ? source.slice(prefix.length) : "";
+}
+
+/** What a repository's file is called in the catalogue's own vocabulary — `UD-IQ2_S` out of
+ *  `Qwen3.8-27B-UD-IQ2_S.gguf`. The quantisation is the only part that differs between the files
+ *  of one repository, and it is what the operator is choosing between.
+ *
+ *  Falls back to the whole base name when nothing can be stripped: a repository that names its
+ *  files some other way gets a longer label, never a wrong one. */
+export function quantLabel(fileName: string, repo: string): string {
+  const base = (fileName.split("/").pop() || fileName).replace(/\.gguf$/i, "");
+  const model = (repo.split("/").pop() || "").replace(/-GGUF$/i, "");
+  if (model && base.toLowerCase().startsWith(model.toLowerCase())) {
+    const rest = base.slice(model.length).replace(/^[-_.]/, "");
+    if (rest) return rest;
+  }
+  return base;
 }
 
 /** A row nobody has read a model page for. Both halves, because the two sources answer
@@ -47,21 +79,33 @@ export type RegisteredGroup = {
 /** What a row belongs to, in the one vocabulary that means something for its role.
  *
  * Three rules because the three kinds of row answer three different questions, and one of them
- * was the complaint this ADR started from — the family was a tag in the middle of a card:
+ * was the complaint ADR 0088 started from — the family was a tag in the middle of a card:
  *
  *   - an IMAGE row belongs to its family (`sdxl`, `flux1`), which is what the provider picks a
  *     workflow with and therefore what decides whether two rows are interchangeable;
  *   - an LLM ADAPTER belongs to the model it was trained against, which its `base_model` names;
- *   - a GGUF declares neither, so it is filed under its PUBLISHER — the first segment of the
- *     repository id, which is what `display_name` holds for a Hugging Face row. Quantisations of
- *     the same model by different people are genuinely different rows, and who made them is the
- *     fact an operator picks between them by.
+ *   - a GGUF declares neither, so it is filed under its REPOSITORY — the whole of
+ *     `unsloth/Qwen3.8-27B-GGUF`, which is what `display_name` holds for a Hugging Face row.
+ *
+ * 🔴 The repository and not the publisher (which is what ADR 0088 filed them under first). A
+ * quantisation repository is ONE model published at a dozen sizes — fourteen of them in that
+ * repository, measured 2026-09-18 — and those sizes are alternatives to each other in a way that
+ * two different models by the same publisher never are. Grouping by publisher put `Qwen3.8-27B`
+ * and `Gemma` in one pile and split nothing that needed splitting.
  */
 export function registeredGroupKey(model: EngineModel, image: boolean): string {
   if (image || model.kind === "lora") return (model.base_model || "").trim();
-  const name = (model.display_name || "").trim();
-  const slash = name.indexOf("/");
-  return slash > 0 ? name.slice(0, slash) : "";
+  return (model.display_name || "").trim();
+}
+
+/** Whether a group key is a Hugging Face repository — `owner/name`, exactly two segments.
+ *
+ * The ladder of other quantisations is offered on that and nothing else: it is a listing of that
+ * repository, so a group keyed by anything else (a row registered by hand, a name somebody typed)
+ * has nothing to list and must not be offered a button that answers 400. */
+export function groupIsRepo(key: string): boolean {
+  const parts = key.split("/");
+  return parts.length === 2 && !!parts[0] && !!parts[1];
 }
 
 /** Group the rows, in the order the sections are drawn.

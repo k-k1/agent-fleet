@@ -151,6 +151,40 @@ type engineCandidate struct {
 	Name   string `json:"name"`
 	Bytes  int64  `json:"bytes"`
 	SHA256 string `json:"sha256"`
+	// Role says whether this file is a MODEL somebody can take in on its own, or one of the
+	// three things a quantisation repository keeps beside its models (ADR 0089). Measured on
+	// unsloth/Qwen3.8-27B-GGUF, 2026-09-18: thirty `.gguf` files, of which one is an importance
+	// matrix, two are vision projectors and one is the second half of a split — so a plain list
+	// of "every .gguf" buries the fourteen quantisations that are the point of the repository.
+	//
+	// 🔴 Classified, never filtered. This route is also the manual file picker, where hiding a
+	// file is how somebody ends up comparing two strings across two windows (the fault the list
+	// exists to fix). The panel folds what it does not need and can always open it again.
+	Role string `json:"role,omitempty"`
+}
+
+// The three values engineCandidate.Role takes. Read off the NAME, which is a convention and not
+// a header fact — the cost of being wrong is one row folded into the wrong group on a screen that
+// can unfold it, and the alternative is one ranged read per file of a thirty-file repository.
+//
+// Shards are not among them: engineIngestWanted drops every `-00002-of-00003` before this is
+// reached, and has since ADR 0072, because taking one in downloads gigabytes and builds a row
+// nothing can load.
+const (
+	engineCandidateModel     = "model"
+	engineCandidateProjector = "projector"
+	engineCandidateImatrix   = "imatrix"
+)
+
+func engineCandidateRole(name string) string {
+	base := strings.ToLower(engineBaseName(name))
+	switch {
+	case strings.HasPrefix(base, "imatrix"):
+		return engineCandidateImatrix
+	case strings.HasPrefix(base, "mmproj"):
+		return engineCandidateProjector
+	}
+	return engineCandidateModel
 }
 
 // engineIngestExts says which files are worth offering for a role. A repository holds READMEs,
@@ -413,7 +447,8 @@ func engineIngestList(ctx context.Context, src engineIngestSource, kind string) 
 			if len(s.LFS.SHA256) != 64 || !engineIngestWanted(s.Name, exts) {
 				continue
 			}
-			out = append(out, engineCandidate{Name: s.Name, Bytes: s.Size, SHA256: strings.ToLower(s.LFS.SHA256)})
+			out = append(out, engineCandidate{Name: s.Name, Bytes: s.Size,
+				SHA256: strings.ToLower(s.LFS.SHA256), Role: engineCandidateRole(s.Name)})
 		}
 		return engineSortCandidates(out), nil
 	case src.Civitai != nil:
@@ -431,6 +466,7 @@ func engineIngestList(ctx context.Context, src engineIngestSource, kind string) 
 			}
 			out = append(out, engineCandidate{
 				Name: f.Name, Bytes: int64(f.SizeKB * 1024), SHA256: strings.ToLower(f.Hashes.SHA256),
+				Role: engineCandidateRole(f.Name),
 			})
 		}
 		return engineSortCandidates(out), nil

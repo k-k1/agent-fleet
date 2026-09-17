@@ -8,7 +8,9 @@ import { Modal } from "../../../ui/Modal.tsx";
 import { ViewHead } from "../../../ui/ViewHead.tsx";
 import { type ModelKind } from "./adminEngineModels.tsx";
 import { EngineDiscoverPanel, engineCanDiscover } from "./adminEngineDiscover.tsx";
-import { groupRegistered, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
+import { groupIsRepo, groupRegistered, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
+import { modelFit, windowThatFits } from "./engineFit.ts";
+import { FitTag, RepoQuantLadder } from "./adminEngineRepo.tsx";
 import {
   engineIsImage,
   engineIsRemote,
@@ -508,6 +510,11 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
    *  instead of an empty one. */
   const [family, setFamily] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<EngineModel | null>(null);
+  /** Taking in ANOTHER size of a model this catalogue already has (ADR 0089). Carried as the
+   *  repository and the file rather than as a pre-built request: the dialog is the one thing that
+   *  resolves, plans and prices a press, and a second road into the ingest that skipped it would
+   *  be a press nobody saw the cost of. */
+  const [addFile, setAddFile] = useState<{ repo: string; file: string } | null>(null);
   const models = (row.model_rows || []).filter((model) => (model.kind === "lora") === (kind === "lora"));
   const image = engineIsImage(row);
 
@@ -784,14 +791,20 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     {note && <p className="muted engine-registered-note">{note}</p>}
     {!visible.length && <p className="muted">{tr(kind === "lora" ? "admin.engines_loras_empty" : "admin.engines_catalog_empty")}</p>}
     {shown.map((group) => <section key={group.key || "*"} className="engine-registered-group" aria-label={groupLabel(group.key, tr)}>
-      {groups.length > 1 && <h3 className="engine-registered-group-head">
-        <span>{groupLabel(group.key, tr)}</span><span className="muted">{group.models.length}</span>
+      {(groups.length > 1 || groupIsRepo(group.key)) && <h3 className="engine-registered-group-head">
+        <span>{groupLabel(group.key, tr)}</span>
+        <span className="muted">{(tr("admin.repo_held_count" as never) as string).replace("{n}", String(group.models.length))}</span>
       </h3>}
+      {/* The other sizes of THIS model, one press away (ADR 0089). Only where the group names a
+          repository — a row registered by hand has nothing to list — and only for the chat role,
+          because a checkpoint repository publishes one checkpoint and not a ladder. */}
+      {!image && groupIsRepo(group.key) && <RepoQuantLadder engine={row} repo={group.key}
+        rows={group.models} readOnly={readOnly} onTakeIn={(file) => setAddFile({ repo: group.key, file })} />}
       <ul className="engine-registered-grid">{group.models.map((model) => {
       const status = registeredPresence(model, objects);
       const started = !!(model.selected || model.default);
       const pending = busy === model.id || busy === `meta:${model.id}`;
-      const name = registeredTitle(model);
+      const name = registeredTitle(model, group.key);
       const thumb = model.thumb_url || model.preview_url || "";
       return <li key={model.id} className="engine-registered-card" aria-label={model.id}>
         <header><span className="engine-registered-name">
@@ -866,6 +879,13 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
         <footer className="engine-operation-footer"><Button variant="ghost" onClick={() => setDeletingObject(null)}>{tr("common.cancel")}</Button>
           <Button variant="danger" onClick={() => void deleteObject(deletingObject.key)}>{tr("admin.catalog_ledger_delete" as never)}</Button></footer></div>
     </Modal>}
+    {/* 🔴 Handed the blob URL rather than a repo/file pair: that is the form the dialog already
+        parses (`hfURL`), so this road opens the same pre-filled screen a pasted link does, and
+        there is no second way in for the plan and the licence to be skipped. */}
+    {addFile && <IngestPlanDialog row={row} kind={kind} initialSource="hf"
+      initialRef={`https://huggingface.co/${addFile.repo}/blob/main/${addFile.file}`}
+      onClose={() => setAddFile(null)}
+      onStarted={async () => { setAddFile(null); await onChanged(); await loadObjects(); }} />}
     {lightbox?.preview_url && <Modal title={registeredTitle(lightbox).title} className="engine-catalog-lightbox" onClose={() => setLightbox(null)}>
       <img className="ui-modal-body" src={lightbox.preview_url} alt="" referrerPolicy="no-referrer" />
     </Modal>}
@@ -1038,16 +1058,26 @@ function isMainObject(object: EngineObjectRow): boolean {
  * a question a person who does not know what a text encoder is cannot answer, and getting one
  * wrong produced a row that looked complete and would not generate. What is left is the version
  * and the file — which repository and which of its files — and the licence. */
-function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }: {
+function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, onStarted }: {
   row: EngineRow; kind: ModelKind; hit?: IngestHit;
   initialSource?: CatalogSource;
+  /** Open the dialog as though this had been PASTED into the source box (ADR 0089) — a Hugging
+   *  Face blob URL, which the parser below already turns into a repository, a revision and a
+   *  file.
+   *
+   *  🔴 Its own prop and not a borrowed field of `hit`: `hit.ref` is the HF REVISION and
+   *  `hit.model_ref` is the repository, so a URL smuggled through either arrives as one of those
+   *  (measured — the request went out with `revision` set to the whole URL). This is a second way
+   *  to fill the FORM and deliberately not a second way to start an ingest: the plan, the price
+   *  and the licence are the same screen either way. */
+  initialRef?: string;
   onClose: () => void; onStarted: (job: IngestJob) => void;
 }) {
   const tr = useT();
   const image = engineIsImage(row);
   const isLora = kind === "lora";
   const [sourceType, setSourceType] = useState<CatalogSource>(hit?.source === "civitai" || initialSource === "civitai" || initialSource === "civitai-red" ? "civitai" : "hf");
-  const [manualRef, setManualRef] = useState(hit?.model_ref || hit?.ref || "");
+  const [manualRef, setManualRef] = useState(initialRef || hit?.model_ref || hit?.ref || "");
   const [versions, setVersions] = useState<IngestVersion[]>([]);
   const [versionRef, setVersionRef] = useState(hit?.ref || "");
   const [files, setFiles] = useState<IngestCandidate[]>([]);
@@ -1077,7 +1107,8 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
   const civitaiLegacy = rawRef.match(/^civitai:(\d+)$/);
   const civitaiModelRef = hit?.model_ref || civitaiPage?.[1] || "";
   const pastedVersion = (sourceType === "civitai" ? civitaiVersionParam?.[1] || civitaiLegacy?.[1] : hfURL?.[2]) || "";
-  const repo = sourceType === "civitai" ? civitaiModelRef || pastedVersion : hit?.model_ref || hfURL?.[1] || rawRef || hit?.ref || "";
+  const repo = sourceType === "civitai" ? civitaiModelRef || pastedVersion
+    : hfURL?.[1] || hit?.model_ref || rawRef || hit?.ref || "";
   const pastedFile = sourceType === "hf" ? hfURL?.[3] || "" : "";
   const civitaiVersionURL = /^https?:\/\/(?:[\w-]+\.)*civitai\.(?:com|red)\//.test(rawRef) && !!civitaiVersionParam;
   const plainURL = /^https?:\/\//.test(rawRef) && !hfURL && !civitaiVersionURL;
@@ -1143,7 +1174,9 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
     } finally { if (seq === inspectSeq.current) setBusy(false); }
   }, [civitaiModelRef, hit?.ref, loadFiles, pastedFile, pastedVersion, plainURL, repo, row.key, sourceType, versionRef]);
 
-  useEffect(() => { if (hit) void inspect(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // Opened ON something — a hit from the 探す tab, or a repository file from a catalogue card
+  // (ADR 0089) — inspects itself. Opened empty, it waits for somebody to paste and press 調べる.
+  useEffect(() => { if (hit || initialRef) void inspect(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   useEffect(() => {
     if (!file) return;
@@ -1162,7 +1195,16 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
         if (found.plan.base_model) setBaseModel(found.plan.base_model);
       }
       if (found.context_length && !context) {
-        setContext(String(found.context_length)); setOutput(String(Math.floor(found.context_length / 8)));
+        // 🔴 The ceiling is not the setting (ADR 0089). The CP sends `context_length` labelled as
+        // the architecture's maximum, and pre-filling the field with it priced the KV cache at
+        // that maximum: 66,560 MiB for a 27B (measured 2026-09-18), which reads as "this will
+        // never run" about a model that runs fine at 32768. So the field opens at the largest
+        // window that actually fits the box this engine buys, and the ceiling is shown beside it
+        // as what it is.
+        const weights = found.bytes ? Math.round(found.bytes / 1048576) : 0;
+        const window = windowThatFits(weights, found.kv_mib_per_1k_tokens || 0,
+          row.class?.vram_mib || 0, found.context_length) || found.context_length;
+        setContext(String(window)); setOutput(String(Math.floor(window / 8)));
       }
       if (found.params_hint) setParams((current) => ({
         ...current,
@@ -1184,11 +1226,13 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
   const bytes = plan?.bytes_to_download ?? resolved?.bytes ?? 0;
   const contextTokens = Number(context.trim().replace(/[_,]/g, "")) || 0;
   const weightsMiB = bytes ? Math.round(bytes / 1048576) : 0;
-  const kvMiB = !image && !isLora && resolved?.kv_mib_per_1k_tokens && contextTokens
-    ? Math.round((resolved.kv_mib_per_1k_tokens * contextTokens) / 1024)
-    : 0;
-  const needMiB = weightsMiB + kvMiB;
-  const cardMiB = row.class?.vram_mib;
+  const cardMiB = row.class?.vram_mib || 0;
+  // The verdict, from the one module that owns it (ADR 0089). A LoRA is deliberately left out:
+  // an adapter is loaded beside a checkpoint and its own size is not what decides the start.
+  const fit = modelFit(weightsMiB, !image && !isLora ? resolved?.kv_mib_per_1k_tokens || 0 : 0,
+    contextTokens, isLora ? 0 : cardMiB, row.classes || []);
+  const kvMiB = fit.kvMiB;
+  const needMiB = fit.needMiB;
   const missing = (() => {
     if (!repo) return tr("admin.catalog_need_source" as never) as string;
     if (!plainURL && !versionRef) return tr("admin.catalog_need_version" as never) as string;
@@ -1302,12 +1346,25 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
       {resolved?.civitai_needs_account && <p className="muted">{tr("admin.engines_ingest_civitai_account_first" as never)}</p>}
       {resolved?.gated && resolved.can_ingest === false && !resolved.login_required && <p className="form-err">{tr("admin.engines_ingest_gated_no_token")}</p>}
       {resolved?.gated_needs_acceptance && <p className="muted">{tr("admin.engines_ingest_gated_accept_first")}</p>}
-      {needMiB > 0 && <p className={`engine-operation-fit ${cardMiB && needMiB > cardMiB && !isLora ? "form-err" : "muted"}`}>{(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(weightsMiB))}{!image && !isLora ? ` · ${kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(kvMiB)).replace("{c}", String(contextTokens)) : tr("admin.engines_ingest_fit_kv_unread")}` : ""}{cardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(needMiB)).replace("{c}", String(cardMiB))}` : ""}</p>}
+      {/* The window, OUT of the advanced fold (ADR 0089). It is the number that decides the
+          verdict below — the KV cache is linear in it — and it spent this screen's whole life
+          behind a `<summary>` the person reading the red line never opened. */}
+      {!image && !isLora && !!resolved && <div className="engine-operation-window">
+        <label><span>{tr("admin.engines_model_window_context")}</span>
+          <input inputMode="numeric" value={context} onChange={(event) => setContext(event.currentTarget.value)} /></label>
+        {!!resolved.context_length && <span className="muted">{(tr("admin.engines_ingest_ctx_ceiling" as never) as string)
+          .replace("{n}", resolved.context_length.toLocaleString())}</span>}
+      </div>}
+      {needMiB > 0 && <p className={`engine-operation-fit ${fit.state === "over" ? "form-err" : "muted"}`}>
+        {(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(weightsMiB))}
+        {!image && !isLora ? ` · ${kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(kvMiB)).replace("{c}", String(contextTokens)) : tr("admin.engines_ingest_fit_kv_unread")}` : ""}
+        {cardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(needMiB)).replace("{c}", String(cardMiB))} ` : " "}
+        <FitTag fit={fit} />
+      </p>}
       <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
       <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">
         <label><span>{tr("admin.engines_model_add_id")}</span><input value={id} onChange={(event) => { setIdEdited(true); setId(event.currentTarget.value); }} /></label>
         <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
-        {!image && !isLora && <label><span>{tr("admin.engines_model_add_ctx")}</span><input value={context} onChange={(event) => setContext(event.currentTarget.value)} inputMode="numeric" /></label>}
         {!image && !isLora && <label><span>{tr("admin.engines_model_add_out")}</span><input value={output} onChange={(event) => setOutput(event.currentTarget.value)} inputMode="numeric" /></label>}
         {isLora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
         {image && (Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}
