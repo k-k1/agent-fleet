@@ -760,3 +760,88 @@ ADR は触っていない）が受け入れと並走した負荷で 1 回落ち�
 **次**：開発配備のイメージを焼き直して配備する（`mysql` ピン・3 ライブラリ・`af-db` シム・`postgres`
 のピン経路は、それまで全部未通過）。それから実カードと、作業ディスク上のデータディレクトリでの
 ECS の初回。
+
+## 焼き直したイメージの上で（2026-09-17・初の実機）
+
+開発配備のイメージを `9d5effa5`（#719 のマージ）から焼き直し、このコンテナに配備した。P1 が求めた
+ものは載っている——`/usr/local/bin/af-db`、`versions.json` の `postgres` / `mysql` ピンとアーキ別の
+sha、`libaio1t64` / `libnuma1` / `libncurses6`。P0・P1 の受け入れが届かなかった 2 経路を、`af-db` を
+一度も動かしていない HOME から測った。どちらも何か出た。
+
+**ピンによる供給経路は通る**。`install-postgres` 1.9 秒・`af-db up` 3.3 秒、`control-plane` の完了条件は
+再び **4 PASS・0 SKIP**。`install-mysql` はピンの 8.4.6 を落とし、`versions.json` の `mysql_sha256` が
+実物の tarball を検証した——Postgres と違ってメタデータの代替経路が無い分、ここまで一度も通って
+いなかった経路が通ったことになる。
+
+- **ライブラリ 3 本では足りない。`libaio.so.1` は trixie が配るものではない**。MySQL のバイナリは
+  `libaio.so.1` を要求するが、`libaio1t64` が入れるのは `libaio.so.1t64` で**互換シンボリックリンクは
+  付かない**。そのため焼き直し後のイメージでも `install-mysql` は
+  `unresolved libraries: libaio.so.1` で exit 3 のままだった。P1 の受け入れがこれを見なかったのは、
+  当時の `AF_DB_MYSQL_LIBS` のディレクトリに、焼き込み前に拾い集めた手製の
+  `libaio.so.1 -> libaio.so.1t64.0.2` が入っていたから。64 ビットでは t64 版は ABI が同一なので、
+  直し方はそのリンク 1 本——ただし `install-mysql` 自身が、バイナリの `RUNPATH`
+  （`$ORIGIN/../lib/private`）にあたる `lib/private` へ張る。実行時に `LD_LIBRARY_PATH` を触る必要が
+  無く、同じコードで arm64 も賄える。張り先は `ldconfig -p`（`dev` でも読める）が教える。`t64` の
+  相方が無い soname はこれまでどおり `mysqlCheckLDD` が報告する。直した後の実測（`AF_DB_MYSQL_LIBS`
+  はどこにも無し）: 導入 7.5 秒、`af-db up mysql` 15.0 秒、ソケット越しの `SELECT j->>'$.a'` が `42`、
+  `version` 8.4.6・`rssBytes` 233 MB、`down --purge` はきれい。`AF_DB_MYSQL_LIBS` は手順ではなく
+  逃げ道として残す。
+- **Console のカードは確かめられなかった。理由はこの ADR と関係が無い**。動いている Agent の
+  `GET /env/databases` は **404** を返す（`/env/toolchains` は 200）。`/proc/7/exe` が指しているのは
+  `/home/dev/.local/bin/workspace-agent`——P0 の受け入れ中にレーンが置いていった P0 世代の手元
+  ビルド（2026-09-17 06:29）だった。entrypoint の `exec workspace-agent` は `PATH` 経由で、
+  `~/.local/bin` が先勝ちし、`~/.local` は再起動でも recreate でも消えない。つまり置き忘れた
+  ビルド 1 本が、そのコンテナの Agent を恒久的に乗っ取る。`af-db` シム
+  （`exec workspace-agent af-db "$@"`）も同じ形で、Go 側は自分の再実行に既に
+  `/usr/local/bin/workspace-agent` を直書きしている（`paths.go:126`・`afdb/cmd.go:770`・
+  `afdb/mysql.go:77`）。置き忘れは削除してワークスペースを再起動し、`CMD` と `af-db` シムは
+  `/usr/local/bin/workspace-agent` を名指すようにした（次のイメージ以降は再発しない）。素の
+  `workspace-agent` を呼ぶセッション側のコマンド（`record-exit`・`record-terminal`・
+  `install-kiro --if-needed`・`install-awscli`）は同じ形だが、利用者自身のシェルで動き影が見える分
+  まだましなので触っていない。焼き直したイメージが配備されるまで、カードの正常系は見えない
+  ——届くのは `lastError` だけ。
+
+### 再起動後——カードの API は生き、訂正がもう 2 つ
+
+置き忘れを消してワークスペースを再起動すると、`/proc/7/exe` はイメージの Agent になり、
+`GET /env/databases` は全フィールド入りの 200 を返す。叩いてみた結果：`POST …/postgres/start` は
+6 秒未満で `starting` → `running`（`version` 17.11・`rssBytes` 47〜49 MB・確保したポート）、
+この作業コピーから `af-db url` を打つとその DB が payload に現れる。`POST …/mysql/start` は
+`state=error`——このイメージは上の `libaio` 修正より前なので、今日のイメージの利用者が見るのと
+同じ姿である。
+
+- **古い版の登録簿があると全部止まる**。再起動後の最初の `start` は
+  `registry parse: json: cannot unmarshal number into Go struct field Instance.instances.major`
+  で失敗した。P0 の版は `"major": 17` を数値で書き、P1 で string にした。`~/.config` は recreate
+  でも消えない。契約の「登録簿は P0 で新設・未配備だから移行不要」はイメージについては正しいが、
+  古い版が一度でも動いた HOME には当てはまらない——そして読めない登録簿は、それを直せるはずの
+  動詞ごと止める。`Instance.UnmarshalJSON` で両方受けるようにし、解けない時はファイル名を出す。
+  （`af-db status` は空の一覧を返してこの問題を隠していた。HTTP 側だけが報告していた。）
+- **`lastError` は理由を運ばなければ意味が無い**。カードに出たのは
+  `install-mysql 8.4 failed: exit status 3` だけで、説明になる `libaio.so.1` の行は Agent の
+  ログにしか無かった。導入コマンドの末尾数行をメッセージに足す。Console が汎用の `*_failed`
+  コードで学んだのと同じ教訓。
+- **記録だけ・変えていない**：API の `urlSocket` はパスワードを素で運ぶ。決定 9 のカードが
+  「表示は伏せ字・コピーは丸ごと」だからで、つまり CP はワークスペースの資格情報をブラウザまで
+  中継する。`af-db status --json` が意図的に載せないのと対照的である。
+
+### カードの URL は誰も持っていないデータベースを指していた（契約変更・M2＋M3）
+
+描画されたカードを最初に見て分かったのは、コピーが渡すのが
+`postgres://…/af_dev_12fbd7`——`DBNameFor("/home/dev")`、つまり **Agent プロセス自身の
+ディレクトリ**だということだった。その URL で `psql` を打つと
+`FATAL: database "af_dev_12fbd7" does not exist`。一方、登録簿にあった唯一のデータベースは
+この作業コピーの `af_agent_fleet_wip_szkxzgu_9af42b` である。Agent は「呼び出し側の作業
+コピー」を解決できない——自分のものしか持っていない——のだから、エンジン単位の URL は
+構造上必ず間違いで、しかも HTTP 経路は自分が宣伝した DB を作りもしない。
+
+そこで `EngineStatus` から `urlSocket` / `urlTcp` を落とし、`databases` を一覧にした：
+`[{name, dir, urlSocket, urlTcp}]`、名前順、稼働中のときだけ中身が入る。カードはデータベース
+ごとに 1 ブロック（名前・作業コピー・Socket/TCP 切替・コピー）を描き、空のときは「作業コピーで
+`af-db url` を実行してください」と言う。空が `[]` になったので、P1 受け入れで残した
+`databases: null` の見た目の問題も消えた。ガイドのカードの節も両言語で同じことを言う。
+検証は両側の単体テスト（`TestDatabaseEntriesPerWorkingCopy` と、2 行目の URL をコピーする
+DOM テスト）。実機のカードに載るのは次の焼き直しから。
+
+**次**（この実機で閉じた分を除いて変わらず）：Agent がイメージのものであるワークスペースでの
+Console カード、作業ディスク上のデータディレクトリでの ECS 初回、arm64 の MySQL。

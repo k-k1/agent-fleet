@@ -2,6 +2,7 @@ package afdb
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,10 +78,11 @@ func ensureInstalledMySQL(root, major string) error {
 		self = "/usr/local/bin/workspace-agent"
 	}
 	cmd := exec.Command(self, "install-mysql", major)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	var log tailWriter
+	cmd.Stdout = io.MultiWriter(os.Stderr, &log)
+	cmd.Stderr = cmd.Stdout
 	if err := cmd.Run(); err != nil {
-		return errInstall(fmt.Sprintf("install-mysql %s failed: %v", major, err))
+		return errInstall(fmt.Sprintf("install-mysql %s failed: %v%s", major, err, log.reason()))
 	}
 	if _, err := os.Stat(bin); err != nil {
 		return errInstall(fmt.Sprintf("install-mysql %s completed but %s not found", major, bin))

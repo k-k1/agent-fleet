@@ -1,2 +1,2 @@
 #!/bin/sh
-exec workspace-agent af-db "$@"
+exec /usr/local/bin/workspace-agent af-db "$@"

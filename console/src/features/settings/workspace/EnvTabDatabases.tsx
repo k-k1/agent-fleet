@@ -7,6 +7,15 @@ import { useT } from "../../../lib/i18n/index.ts";
 // Engine state vocabulary from ADR 0086 P1 M2 Agent HTTP API.
 type DBState = "absent" | "installing" | "starting" | "running" | "stopped" | "error";
 
+// One database per working copy (decision 3'); the URLs belong to the database,
+// not to the engine, because the Agent cannot know which working copy is asking.
+interface DBDatabase {
+  name: string;
+  dir: string;
+  urlSocket: string;
+  urlTcp: string;
+}
+
 interface DBEngine {
   engine: string; // "postgres" | "mysql"
   major: string; // "17" | "8.4"
@@ -16,9 +25,7 @@ interface DBEngine {
   rssBytes: number;
   port: number;
   datadir: string;
-  urlSocket?: string; // omitempty — absent when stopped
-  urlTcp?: string; // omitempty — absent when stopped
-  databases: Record<string, string>;
+  databases: DBDatabase[]; // empty unless running
   lastUsedAt: string;
   lastError: string;
 }
@@ -55,7 +62,7 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
   const toast = useToast();
   const askConfirm = useConfirm();
   const [urlMode, setUrlMode] = useState<"socket" | "tcp">("socket");
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState(""); // name of the database just copied
   const [busy, setBusy] = useState(false);
   const [stopMenu, setStopMenu] = useState(false);
   const alive = useRef(true);
@@ -116,13 +123,13 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
     doAction("stop", "purge=1");
   };
 
-  const copyUrl = () => {
-    const raw = urlMode === "socket" ? eng.urlSocket : eng.urlTcp;
+  const copyUrl = (db: DBDatabase) => {
+    const raw = urlMode === "socket" ? db.urlSocket : db.urlTcp;
     if (!raw) return;
     navigator.clipboard.writeText(raw).then(() => {
-      setCopied(true);
+      setCopied(db.name);
       setTimeout(() => {
-        if (alive.current) setCopied(false);
+        if (alive.current) setCopied("");
       }, 1500);
     });
   };
@@ -133,7 +140,7 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
   const stateText = stateLabel(tr, eng.state);
   const rssText = eng.rssBytes > 0 ? tr("env.db_rss", { n: Math.round(eng.rssBytes / 1_000_000) }) : "";
   const portText = eng.port > 0 ? tr("env.db_port", { n: eng.port }) : "";
-  const rawUrl = urlMode === "socket" ? (eng.urlSocket || "") : (eng.urlTcp || "");
+  const dbs = eng.databases || [];
   const busy2 = busy || eng.state === "installing" || eng.state === "starting";
 
   return (
@@ -147,28 +154,45 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
 
       {eng.lastError && <p className="db-engine-error">{eng.lastError}</p>}
 
-      {(eng.state === "running" || eng.state === "stopped") && rawUrl && (
-        <div className="db-engine-url">
-          <span className="db-url-toggle">
-            <button
-              className={"db-url-mode" + (urlMode === "socket" ? " is-active" : "")}
-              onClick={() => setUrlMode("socket")}
-            >
-              {tr("env.db_url_socket")}
-            </button>
-            <button
-              className={"db-url-mode" + (urlMode === "tcp" ? " is-active" : "")}
-              onClick={() => setUrlMode("tcp")}
-            >
-              {tr("env.db_url_tcp")}
-            </button>
-          </span>
-          <code className="db-url-text">{maskUrl(rawUrl)}</code>
-          <button className="db-url-copy" onClick={copyUrl} title={tr("env.db_copy")}>
-            {copied ? tr("env.db_copied") : tr("env.db_copy")}
-          </button>
-        </div>
-      )}
+      {eng.state === "running" &&
+        (dbs.length === 0 ? (
+          <p className="muted db-engine-empty">{tr("env.db_none_yet")}</p>
+        ) : (
+          dbs.map((db) => (
+            <div className="db-database" key={db.name}>
+              <div className="db-database-meta">
+                <code className="db-database-name">{db.name}</code>
+                {db.dir && <span className="db-database-dir muted">{db.dir}</span>}
+              </div>
+              <div className="db-engine-url">
+                <span className="db-url-toggle">
+                  <button
+                    className={"db-url-mode" + (urlMode === "socket" ? " is-active" : "")}
+                    onClick={() => setUrlMode("socket")}
+                  >
+                    {tr("env.db_url_socket")}
+                  </button>
+                  <button
+                    className={"db-url-mode" + (urlMode === "tcp" ? " is-active" : "")}
+                    onClick={() => setUrlMode("tcp")}
+                  >
+                    {tr("env.db_url_tcp")}
+                  </button>
+                </span>
+                <code className="db-url-text">
+                  {maskUrl(urlMode === "socket" ? db.urlSocket : db.urlTcp)}
+                </code>
+                <button
+                  className="db-url-copy"
+                  onClick={() => copyUrl(db)}
+                  title={tr("env.db_copy")}
+                >
+                  {copied === db.name ? tr("env.db_copied") : tr("env.db_copy")}
+                </button>
+              </div>
+            </div>
+          ))
+        ))}
 
       <div className="db-engine-actions">
         {(eng.state === "absent" || eng.state === "stopped" || eng.state === "error") && (

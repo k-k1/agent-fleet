@@ -192,6 +192,7 @@ export const tools = {
   "env.db_state_error": "エラー",
   "env.db_rss": "{n} MB",
   "env.db_port": "ポート {n}",
+  "env.db_none_yet": "データベースはまだありません。作業コピーで `af-db url` を実行すると、そのコピー用のデータベースがここに並びます。",
   "env.db_url_socket": "Socket",
   "env.db_url_tcp": "TCP",
   "env.db_copy": "コピー",

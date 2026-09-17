@@ -5,6 +5,9 @@
 //   3. while state is "installing" or "starting", a 5-second poll drives GET
 //      — and the poll keeps going even if state stays installing across ticks
 //   4. lastError is shown inline under the engine row
+//   5. one row per registered database, each copying ITS OWN URL — the card must
+//      never offer a URL for a database that is not in the payload (ADR 0086,
+//      first live run: the engine-level URL named the Agent's own directory)
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -41,9 +44,15 @@ const pgRunning = {
   rssBytes: 47_000_000,
   port: 54321,
   datadir: "/tmp/data",
-  urlSocket: "postgres://postgres:pw@/af_db?host=/tmp/run&port=54321&sslmode=disable",
-  urlTcp: "postgres://postgres:pw@127.0.0.1:54321/af_db?sslmode=disable",
-  databases: {},
+  databases: [
+    {
+      name: "af_agent_fleet_9af42b",
+      dir: "/home/dev/repos/agent-fleet",
+      urlSocket:
+        "postgres://postgres:pw@/af_agent_fleet_9af42b?host=/tmp/run&port=54321&sslmode=disable",
+      urlTcp: "postgres://postgres:pw@127.0.0.1:54321/af_agent_fleet_9af42b?sslmode=disable",
+    },
+  ],
   lastUsedAt: "",
   lastError: "",
 };
@@ -57,9 +66,7 @@ const mysqlAbsent = {
   rssBytes: 0,
   port: 0,
   datadir: "",
-  urlSocket: "",
-  urlTcp: "",
-  databases: {},
+  databases: [],
   lastUsedAt: "",
   lastError: "",
 };
@@ -114,6 +121,43 @@ describe("EnvTabDatabases", () => {
     expect(rows[0].querySelector(".db-engine-state")?.textContent).toMatch(/running|稼働中/);
     // MySQL absent: state badge should say "not installed"
     expect(rows[1].querySelector(".db-engine-state")?.textContent).toMatch(/not installed|未インストール/);
+  });
+
+  it("shows one row per database, copying that database's own URL", async () => {
+    const second = {
+      name: "af_other_111111",
+      dir: "/home/dev/repos/other",
+      urlSocket: "postgres://postgres:pw@/af_other_111111?host=/tmp/run&port=54321&sslmode=disable",
+      urlTcp: "postgres://postgres:pw@127.0.0.1:54321/af_other_111111?sslmode=disable",
+    };
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    api.mockResolvedValue({
+      engines: [{ ...pgRunning, databases: [...pgRunning.databases, second] }],
+    });
+    await mount();
+
+    const rows = document.querySelectorAll(".db-database");
+    expect(rows.length).toBe(2);
+    expect(rows[0].querySelector(".db-database-name")?.textContent).toBe("af_agent_fleet_9af42b");
+    expect(rows[1].querySelector(".db-database-dir")?.textContent).toBe("/home/dev/repos/other");
+    // The password is masked in what is shown, and each row shows its own database.
+    const shown = rows[1].querySelector(".db-url-text")?.textContent || "";
+    expect(shown).toContain("af_other_111111");
+    expect(shown).not.toContain("pw@");
+
+    // Copy hands over the raw URL of THAT row.
+    await act(async () => {
+      rows[1].querySelector<HTMLButtonElement>(".db-url-copy")!.click();
+    });
+    expect(writeText).toHaveBeenCalledWith(second.urlSocket);
+  });
+
+  it("says so when a running engine has no database yet", async () => {
+    api.mockResolvedValue({ engines: [{ ...pgRunning, databases: [] }] });
+    await mount();
+    expect(document.querySelectorAll(".db-database").length).toBe(0);
+    expect(document.querySelector(".db-engine-empty")?.textContent).toMatch(/af-db url/);
   });
 
   it("shows a 'stopped' message when the workspace is not running", async () => {

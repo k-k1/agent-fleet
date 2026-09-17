@@ -245,6 +245,8 @@ an engine without opening a terminal.
 - **Stop** has a "Stop and remove data" option (`--purge`): use it to free the datadir space.
 - **Reset** drops and recreates the per-working-copy database (same as `af-db reset`). A
   confirmation is shown before anything is deleted.
+- **One row per database**, with the working copy it belongs to; Copy hands you the URL of
+  *that* database. When there is none yet, run `af-db url` in a working copy and it appears here.
 - The **socket / TCP toggle** on the URL lets you copy whichever form your driver needs.
 - Any error from the last operation is shown inline under the engine row.
 
