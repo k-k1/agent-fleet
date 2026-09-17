@@ -51,11 +51,11 @@ Parameters:
     Description: >-
       Sustained MiB/s to buy when EfsThroughputMode=provisioned (ignored otherwise).
       Billed at the region's Provisioned Throughput rate (ap-northeast-1: $7.20 per
-      MiBps-month) whether or not it is used. The default is about twice the ESTIMATED
-      peak for nine workspaces (~11 MiB/s - an extrapolation, not a measurement; see ADR
-      0087), because AWS lets you RAISE the provisioned amount at any time but locks a
-      decrease - and a return to elastic - for 24 hours. Size up, then come down a day
-      later.
+      MiBps-month) whether or not it is used. The default is 1.6-2.0x the ESTIMATED peak
+      for nine workspaces (12-15 MiB/s - an extrapolation from one minute of the old
+      agent's traffic, not a measurement; see ADR 0087), because AWS lets you RAISE the
+      provisioned amount at any time but locks a decrease - and a return to elastic - for
+      24 hours. Size up, then come down a day later.
   Persistence:
     Type: String
     Default: delete
@@ -90,8 +90,10 @@ Resources:
   # ⚠️ ThroughputMode is a PARAMETER, and the parameter must track the live file system.
   # The 24-hour restriction is ASYMMETRIC: after a switch TO provisioned, or a change of
   # the provisioned amount, AWS refuses a switch back to elastic/bursting AND a DECREASE
-  # of the amount for 24 hours. Raising the amount is not restricted. So a stack update
-  # that quietly moves the mode cannot be undone the same day.
+  # of the amount for 24 hours. Raising the amount is not restricted, and a switch that does
+  # not involve provisioned (elastic <-> bursting) is not restricted either. The danger is not
+  # the wait: a stack update can move the mode silently, and under bursting nothing goes wrong
+  # until the credits drain.
   #
   # This resource used to hard-code `bursting`. Bursting gives a baseline of 50 KiB/s per
   # GiB of Standard storage; this file system holds only per-member config and credentials

@@ -4,13 +4,17 @@ English | [日本語](0087-efs-metadata-io.ja.md)
 
 - Status: **proposed** (2026-09-17, review applied the same day). One piece is implemented: the
   CloudFormation change in decision 2.
-- ⚠️ **Six claims changed after the first draft**, each overturned by a measurement during
-  review. Every one is marked in place ("the first draft said … and was wrong"): (1)
+- ⚠️ **Claims changed after the first draft**, overturned by measurement across two review
+  passes. Each is marked in place ("the first draft said … and was wrong"). First pass: (1)
   `~/.config/agent-fleet` *does* contain the credential store; (2) a negative cache on the
-  subagents lookup can break the delivery-misdirection check; (3) `MeteredIOBytes` is not the
-  billed quantity - elastic is about $155/month, and **on cost alone provisioned is cheaper**;
-  (4) the improvement is 13-46%, not "half"; (5) the floor after burst exhaustion is **1 MiB/s**,
-  not 0.13 MiB/s; (6) a self-managed mount keeps access-point isolation.
+  subagents lookup can break a safety check; (3) `MeteredIOBytes` is not the billed quantity;
+  (4) the improvement is 13-46%, not "half"; (5) the floor after burst exhaustion is
+  **1 MiB/s**, not 0.13 MiB/s; (6) a self-managed mount keeps access-point isolation. Second
+  pass: (7) **the safety side is not just the delivery check** - the completion report and the
+  firing of an armed stop go through the same `SubagentBusy`; (8) **the peak's denominator**
+  (7 boxes at the peak minute, not 8) → the estimated peak is 12-15 MiB/s; (9) the cost table
+  mixed two bases and the unit convention matters (elastic is a provisional **$141-151/month**);
+  (10) "no READDIR, so B is not dominant" inferred the caller from the RPC mix.
 - **What was measured, and where.** The numbers come from three places only. (1) CloudWatch
   metrics for the production deployment's data file system (`MeteredIOBytes` /
   `MetadataIOBytes` / `ClientConnections`, 2026-09-04 to 09-17); (2) Cost Explorer actuals
@@ -67,9 +71,14 @@ Lining up the same clock window (09:00-13:20 JST) is the fairest comparison:
 
 | Day | agent | per box ops/s p50 | per box ops/s p99 | per box MB/s p50 | file system max (1-min) |
 |---|---|---|---|---|---|
-| 09-11 | old | 175 | 476 | 0.717 | 10.1 MB/s (6 boxes) |
-| 09-14 | old | 223 | 620 | 0.913 | 18.1 MB/s (8 boxes) |
-| **09-17** | **new 0.21.0** | **153** | **345** | **0.627** | 5.9 MB/s (6 boxes) |
+| 09-11 | old | 175 | 476 | 0.717 | 10.100 MB/s (11:49, **5 boxes**) |
+| 09-14 | old | 223 | 620 | 0.913 | 18.118 MB/s (11:46, **7 boxes**) |
+| **09-17** | **new 0.21.0** | **153** | **345** | **0.627** | 5.860 MB/s (10:48, **4 boxes**) |
+
+⚠️ The box count in the last column is **the count at that peak minute** (`ClientConnections`
+summed over the minute, divided by two). The first draft put the window's *maximum* box count
+there (6 / 8 / 6) - **the extrapolation below uses this as its denominator**, so mixing the two
+shifts the estimated peak directly.
 
 p50 is down 31% against 09-14 and 13% against 09-11; p99 is down 44% / 28%. Measured a
 different way - **I/O per box-hour** - it is 5.20 GB (old, the 48.2 box-hours of 09-16's
@@ -101,7 +110,7 @@ been in a 0.7-1.9 MB/s per-box band continuously since 09-07.
 was compiled into a test binary and started as a child**, counted with
 `strace -c -e trace=file`. Project and session counts were set to production scale.
 
-### Source A: `ListMetas()` - the session ledger lives on EFS (largest)
+### Source A: `ListMetas()` - the session ledger lives on EFS
 
 `workspace/agent/internal/session/meta.go:17`:
 
@@ -151,7 +160,7 @@ down" (see decision 4). The rest is not credentials - **the keep list being dire
 (`.config`) is what put the agent's mutable state on EFS alongside them**, and that is the
 entire story.
 
-### Source B: `subagentBases()` - the other side of "a miss is never remembered" (runner-up)
+### Source B: `subagentBases()` - the other side of "a miss is never remembered"
 
 PR #711 introduced `jsonl_memo.go` to memoize the transcript search. Its invariant is
 deliberately strict:
@@ -189,9 +198,9 @@ until the first turn writes the jsonl the lookup is a miss and sweeps every time
 ### Source C: writes to EFS (small)
 
 Under elastic, writes cost **$0.07/GB** against $0.04/GB for reads, so writing state files is
-dearer per byte than reading. The volume is small, though: writes measured **0.8%** of the
-total (over four hours on 09-17, 0.23 GB of metadata writes and 0.45 GB of data writes against
-36.35 GB of reads).
+dearer per byte than reading. The volume is small, though: measured over 09-17 09:00-14:04 JST,
+writes are **1.7%** of the total (0.80 GB written against 46.22 GB read). ⚠️ The first draft's
+"0.8%" divided by the reads alone.
 
 ⚠️ The first draft described `status.Persist(sid, "working")` as "written from the polling path"
 on every poll, and was wrong. That call at `claude.go:208` sits in the **self-heal branch only** -
@@ -221,11 +230,14 @@ review session) reads:
 | `keep` | 16.9 | OPEN_NOATTR 148, CLOSE 148, GETATTR 18, LOCK/LOCKU/FREE_STATEID 8 each |
 
 No retransmissions. The OPEN/CLOSE-dominated `keep` profile is the shape of file reads like
-`ListMetas()`, and LOCK/LOCKU/FREE_STATEID matches `secrets.go`'s flock. But `claude` is
-GETATTR-dominated with **almost no READDIR**, which means that for those 20 seconds at least, B
-(the full sweep) was not the dominant cost. **The concurrent VFS operation count was not
-measured and the conditions differ from the morning floor, so the ranking of A against B is
-undetermined** - measure both together before acting on decision 5.
+`ListMetas()`, and LOCK/LOCKU/FREE_STATEID matches `secrets.go`'s flock.
+
+⚠️ **Do not infer the caller from the RPC mix.** The first draft read "almost no READDIR on
+`claude`" as "B (the full sweep) was not the dominant cost", and that overreaches - even when
+directory contents come from cache, **the attribute revalidation that goes with a full sweep can
+still produce GETATTR**. All this measurement supports is: READDIR RPCs were 0, GETATTR
+dominated, and with no concurrent VFS count **the contribution is unknown**. **The ranking of A
+against B is undetermined** - measure both together before acting on decision 5.
 
 ## Measurement 2: the money
 
@@ -269,62 +281,85 @@ DataWriteIOBytes) x $0.07`. For 09-16's elastic window (from 11:56 JST):
 | cost by the formula above | $10.09 |
 | **Cost Explorer actual** | **235.206 GB / $9.4655** |
 
-**They differ by about 6%** (if CE's quantity is GiB, 252.6 GB, CloudWatch is 1.5% lower
-instead). ⚠️ **They do not match.** The residual has not been decomposed: (1) the CE rows are
-`Estimated=true`; (2) the mode switch fell mid-day (02:56 UTC); (3) whether CloudWatch applies
-the per-operation minimums above is not documented. **Conclusion: take Cost Explorer as the
-money and CloudWatch for shape and trend, and expect them to agree only within 6%.**
+**The gap depends on the unit convention.** At 1 GB = 10^9 bytes, CloudWatch's 248.70 against
+CE's 235.206 is **5.7%**; at 1 GiB = 2^30 bytes CloudWatch is 231.6 GiB and the gap shrinks to
+**1.5%** - **reading CE as GiB is the more consistent interpretation**. The residual has not
+been decomposed either: (1) the CE rows are `Estimated=true`; (2) the mode switch fell mid-day
+(09-16 11:56 JST). ⚠️ The first draft also said "whether CloudWatch applies the per-operation
+minimums is not documented", and that was wrong - `efs-metrics.html` states for `TotalIOBytes`
+that "Data operations are metered at 32 KiB and other operations are metered at 4 KiB. After
+the minimum, all operations are metered per KiB." **Conclusion: take Cost Explorer as the money
+and CloudWatch for shape and trend. This window reconciled to 1.5% read as GiB, but that is the
+result of one comparison, not a guarantee for the next.**
 
 ### What it costs per month (normalised per box-hour)
 
 Daily totals move with how many people used the deployment for how long, so normalise to
 **one box for one hour**:
 
-| | box-hours | reads | writes | GB/box-hour | $/box-hour |
-|---|---|---|---|---|---|
-| old agent (09-16's elastic window) | 48.2 | 248.70 GB | 2.05 GB | **5.20** | $0.196 |
-| **new agent (four hours of 09-17)** | 13.3 | 36.35 GB | 0.68 GB | **2.78** | **$0.113** |
+**Derive both rows with the same formula** (CloudWatch reads/writes times the unit prices),
+and state the window.
 
-Weekday box-hours measure 54.6-66.6 (median about 60 over twelve days) and weekends 4.6-8.9.
-Taking 22 weekdays plus weekends as **about 1,380 box-hours**:
+| | window (JST) | box-hours | reads | writes | GB/box-hour | $/box-hour |
+|---|---|---|---|---|---|---|
+| old agent | 09-16 11:56 - 09-17 09:00 | 48.6 | 250.79 GB | 2.06 GB | **5.20** | $0.209 |
+| **new agent** | **09-17 09:00 - 14:04** | **17.5** | **46.22 GB** | **0.80 GB** | **2.69** | **$0.109** |
 
-- old agent: about 7,200 GB = **about $290/month**
-- **new agent: about 3,830 GB = about $155/month**
+⚠️ The first draft derived the old row from **Cost Explorer's actual / box-hours** ($0.196)
+while the new row came from CloudWatch ($0.109) - two bases in one column. Do not mix them.
+For reference, the old row from CE is $9.4655 / 48.6 = $0.195 per box-hour, and the gap to the
+CloudWatch formula is the same 6% (1.5% if GiB) discussed above.
 
-⚠️ The first draft's "about $100/month" was an underestimate - it used a daily average that
-included weekends and assumed a 2x improvement. **The figure is about $155/month.** Cost
-Explorer has not yet posted 09-17 (not even an `Estimated=true` row), so **check this against
-the first full elastic day's actual bill.**
+Re-aggregating box-hours by **JST** day (09-04 to 09-16, 13 days, `ClientConnections.Sum / 120`)
+gives a **weekday median of 58.7 box-hours** (range 34.2-66.6, n=9) and a **weekend median of
+10.6** (range 6.9-13.6, n=4). 22 weekdays plus 8 weekend days is **about 1,377 box-hours**.
+⚠️ The first draft's "weekday 54.6-66.6 / weekend 4.6-8.9" came from UTC-day buckets, which cut
+each JST day across two.
+
+- old agent: about 7,160 GB = **about $290/month**
+- **new agent: about 3,700 GB = about $150/month** ($0.109 x 1,377)
+
+⚠️ **The unit convention moves this by 7%.** The above converts at 1 GB = 10^9 bytes. If AWS
+bills in GiB (2^30), it is **about $140/month**. **The Cost Explorer measurement actually
+favours GiB**: over 09-16's elastic window, CloudWatch's 248.70x10^9 read bytes are 231.6 GiB
+against CE's billed quantity of 235.206 - a 1.5% gap read as GiB, 5.7% read as GB.
+**Conclusion: a provisional estimate of about $140-150/month**, not a settled figure. Both the
+first draft's "about $100/month" and its replacement "the figure is $155" overstated the
+certainty. Check against 09-17's Cost Explorer actual (its Groups are still empty).
 
 ### The three-way comparison (monthly)
 
 New agent (0.21.0), about 1,380 box-hours a month.
 
 ⚠️ **The amount of provisioned throughput needed is a scenario estimate, not a measurement.**
-Take the old agent's 1-minute maximum of 18.2 MB/s at eight boxes (09-14), normalise per box,
-apply the improvement and scale to nine boxes: `18.2 / 8 * 9 / 1.048576 * (1 - improvement)`.
-At 31% (the like-for-like p50) that is **about 13 MiB/s**; at 46% (per box-hour) **about
-10 MiB/s**. The tables below take **11 MiB/s** as the central value. It applies a *median*
-improvement to a *peak*, and a 1-minute metric cannot see a burst that lasts seconds. It is
-not a measurement.
+Take the old agent's 1-minute maximum of 18.118 MB/s at **7 boxes at that minute** (09-14
+11:46), normalise per box, apply the improvement and scale to nine boxes:
+`18.118 / 7 * 9 / 1.048576 * (1 - improvement)`. At 31% (the like-for-like p50) that is
+**15.3 MiB/s**; at 46% (per box-hour) **12.0 MiB/s**. The tables below take **12-15 MiB/s**
+(centre 13.5). ⚠️ The first draft used 8 as the denominator and arrived at 10-13 MiB/s with a
+centre of 11. It applies a *median* improvement to a *peak*, and a 1-minute metric cannot see
+a burst that lasts seconds. It is not a measurement.
 
 | | (1) stay on elastic | (2) provisioned 16 MiB/s | (3) provisioned 24 MiB/s | (4) elastic, after the fixes |
 |---|---|---|---|---|
-| I/O volume | ~3,830 GB/month | - (not billed) | - | ~400-900 GB/month (target: 4-8x less) |
-| I/O cost | **~$155** | $0 | $0 | **~$16-37** |
+| I/O volume | ~3,700 GB/month | - (not billed) | - | ~400-900 GB/month (target: 4-8x less) |
+| I/O cost | **~$140-150** | $0 | $0 | **~$15-37** |
 | fixed throughput cost | $0 | **$115.20** | **$172.80** | $0 |
 | storage | ~$1 | ~$1 | ~$1 | ~$1 |
-| **total** | **~$156/month** | **~$116/month** | **~$174/month** | **~$17-38/month** |
-| headroom over the estimated peak | no ceiling | ~1.45x | ~2.2x | no ceiling |
+| **total** | **~$141-151/month** | **~$116/month** | **~$174/month** | **~$16-38/month** |
+| headroom over the estimated peak (12-15 MiB/s) | no ceiling | **1.07-1.33x** | 1.6-2.0x | no ceiling |
 | how it fails | the bill grows | **it throttles and every workspace stops** | same | the bill grows |
 
-⚠️ **This table changed from the first draft.** The draft estimated elastic at $105/month and
-concluded that provisioned was more expensive. Measured per box-hour, elastic is **$156/month**
-and **provisioned at 16 MiB/s ($116/month) is 25% cheaper**. **On cost alone, provisioned wins.**
-Break-even is around 21 MiB/s.
+⚠️ **This table has now changed twice.** The first draft estimated elastic at $105/month and
+concluded provisioned was more expensive. Measured per box-hour, elastic is **$141-151/month**
+(the range is the unit convention) and **provisioned at 16 MiB/s ($116/month) is cheaper** -
+**but once the peak's denominator is corrected, that 16 MiB/s leaves only 1.07-1.33x headroom
+over the estimated peak of 12-15 MiB/s.** The real choice is between "cheap with no headroom"
+(16) and "headroom at 15-23% more than elastic" (24); **there is no cheap-and-roomy provisioned
+option.** Break-even is around 20 MiB/s, uncomfortably close to the top of the estimated peak
+band (15.3 MiB/s).
 
-So "cheaper" is no longer the reason to stay on elastic. Three reasons remain, and they are
-decision 1.
+So "cheaper" is not the reason to stay on elastic. Three reasons are, and they are decision 1.
 
 ### The 24-hour restriction, stated precisely
 
@@ -358,14 +393,15 @@ If provisioned is chosen, watch these together:
 
 ### Decision 1: the stop-gap is to stay on elastic. Do not buy provisioned throughput
 
-⚠️ **Cost does not justify this decision.** Re-measured, provisioned at 16 MiB/s ($116/month) is
-**25% cheaper** than elastic ($156/month); the first draft had this backwards. Three reasons
-still favour staying put.
+⚠️ **On cost alone, provisioned at 16 MiB/s ($116/month) is cheaper than elastic
+($141-151/month).** The first draft said the opposite. Three reasons still favour staying put.
 
 1. **We do not know, by measurement, how high to buy.** The ceiling would be set against an
-   estimated peak (11 MiB/s, a scenario extrapolation) derived by applying a median improvement
-   to a peak, from a 1-minute metric that cannot see a burst lasting seconds. **Buying a ceiling
-   against an extrapolated peak is structurally what happened on 09-16.**
+   estimated peak (12-15 MiB/s, a scenario extrapolation) derived by applying a median
+   improvement to a peak, from a 1-minute metric that cannot see a burst lasting seconds.
+   **Buying a ceiling against an extrapolated peak is structurally what happened on 09-16.** And
+   the cheaper option, 16 MiB/s, leaves only 1.07-1.33x over that estimate - **the saving is
+   bought out of the headroom**.
 2. **The failure modes differ in kind.** Overrunning elastic produces a bill. Overrunning
    provisioned produces an **outage** - and an EFS at its ceiling is not "a bit slow". That is
    the measurement from 09-16: the moment it dropped to 1 MiB/s, an `openat` of a 2.4 KB file
@@ -380,19 +416,24 @@ in**". Revisit once decisions 4 and 5 have landed and been re-measured - by then
 lower, so provisioned would be either much smaller or unnecessary.
 
 If the user prefers the predictability of a fixed cost anyway, the recommended amount is
-**24 MiB/s** ($172.80/month), on the reasoning that it is about 2x the estimated peak of
-11 MiB/s. ⚠️ The first draft added "and above the 22 MiB/s the old agent's demand scales to at
-nine boxes, so it will not throttle even if 0.21.0's gain were lost"; **that guarantee is
-withdrawn** - the peak is itself an extrapolation, so twice the peak is only another
-extrapolation. If it is not enough it can be raised the same day; lowering it waits until the
+**24 MiB/s** ($172.80/month), on the reasoning that it is 1.6-2.0x the estimated peak of
+12-15 MiB/s. ⚠️ The first draft added "and above the 22 MiB/s the old agent's demand scales to
+at nine boxes, so it will not throttle even if 0.21.0's gain were lost"; **that guarantee is
+withdrawn** - the peak is itself an extrapolation, so a multiple of it is only another one (and
+with the denominator corrected, demand with the improvement entirely lost extrapolates to
+22.2 MiB/s, which very nearly consumes 24). If it is not enough it can be raised the same day; lowering it waits until the
 next. The CloudFormation default is set to the same 24 (decision 2).
 
 ### Decision 2: make the throughput mode a parameter in `10-data.yaml` (implemented)
 
 `deploy/aws/ecs/cfn/10-data.yaml:72` hard-coded `ThroughputMode: bursting`. The live file
 system was only changed from the CLI, and the `af-ecs-data` stack has not been updated since
-2026-08-25. **The next update of that stack would have flipped it back to bursting and re-armed
-the outage** - with a 24-hour wait to undo it.
+2026-08-25. **The next update of that stack would flip it back to bursting and re-arm the outage.**
+⚠️ The first draft added "with a 24-hour wait to undo it"; the asymmetric restriction above
+binds only **after a switch to provisioned or a change of its amount**, so
+elastic → bursting → elastic is not covered by it. The danger is not the wait but **the mode
+changing silently at all** - nothing goes wrong until the credits drain, so you find out at
+exhaustion.
 
 `EfsThroughputMode` (`elastic` / `bursting` / `provisioned`, default `elastic`) and
 `EfsProvisionedThroughputMibps` (default 24) are now parameters, with the history written
@@ -464,12 +505,30 @@ stay on EFS** - ADR 0045's line about not leaving plaintext on local disk does n
   agent a second time). A 30-second negative cache on the shared `subagentBases()` would
   **hide a `subagents/` directory created just after typing, letting that safety check through**.
 
-  So one of two conditions applies: (1) the negative cache lives only on the status path
-  (`SubagentBusy`) and the delivery check always searches for real, or (2) the delivery check
-  gets an explicit way to bypass the cache. Either way, write down in the code which of
-  `bg.go`'s three entry points are safe and which are not. ⚠️ Do not apply the same change to
-  the transcript memo - the type comment in `jsonl_memo.go` explains why the guard is written
-  twice there.
+  🔴 **"display versus delivery" is not a sufficient split either** (found on the second review
+  pass). `SubagentBusy` itself is also called from `collectReportSignals` at
+  `internal/chatx/chat_report_reconcile.go:388`, where `busyEvidence()` (:186) pushes
+  `subagent-busy` as evidence and **suppresses the completion verdict**. And
+  `chat_stop_after_turn.go:81` runs the same `collectReportSignals` → `evalReportEvidence`, and
+  proceeds to `stopArmedSession` once quiet holds. So a negative cache that hides busy can
+  **report completion early** or **stop a session while a background agent is still running** -
+  precisely the case of a new Workflow agent that the main transcript's
+  `BackgroundAgentsRunning` does not catch, where child-transcript freshness is the only
+  evidence there is.
+
+  So draw the line at "**display only versus every safety decision**". There are three safety
+  decisions - (1) the delivery check (`session_delivery.go:121`), (2) the completion report
+  (`chat_report_reconcile.go`) and (3) firing an armed stop (`chat_stop_after_turn.go`) - and
+  **all three must search for real**. Two ways to build it: (a) **add a display-only entry
+  point** and put the negative cache there alone, leaving `SubagentBusy`'s existing meaning
+  (always a real search) untouched; (b) give every safety path an **explicit bypass**. Prefer
+  (a), because it makes the safe behaviour the default.
+
+  Acceptance test: **create a child transcript just after a miss, inside the TTL**, and confirm
+  that with the display cache warm, (1) a misdelivery is still caught, (2) completion is not
+  reported early, and (3) an armed stop does not fire. ⚠️ Do not apply the same change to the
+  transcript memo - the type comment in `jsonl_memo.go` explains why the guard is written twice
+  there.
 - **Derive the project directory from the cwd.** claude encodes the cwd into the directory
   name (`/home/dev/repos/agent-fleet` → `-home-dev-repos-agent-fleet`), and the Agent already
   holds the session's `Meta.Dir`, so `projects/<derived>/<sid>.jsonl` is **one Lstat**, with
@@ -537,17 +596,22 @@ numbers**.
    `claude` mount, so **B (the full sweep) is not always the dominant cost**. Fixing without
    knowing the ranking means not knowing what is left when it does not help.
 1. **Unit (`strace`).** Run the same shape of probe as this ADR - real code compiled into a
-   test binary, started as a child, counted with `strace -c` - and confirm that
-   `SubagentLogs()` drops from 158 syscalls per call to single digits, and that
-   `ListMetas()`'s 836 becomes **zero on EFS** (because it moved to home). ⚠️ **`-e trace=file`
-   is not enough**: `read` and `close` take no filename and so fall outside that set, losing
-   624 of `ListMetas()`'s 836. The set actually used was
+   test binary, started as a child, counted with `strace -c`. ⚠️ **Measure the display path and
+   the safety paths separately** (decision 5): (1) the **display** path, with the cache warm,
+   should drop from 158 syscalls per call to single digits; (2) the **safety** paths (delivery
+   check, completion report, stop firing) still search for real, so **158 is the correct number
+   there** - demanding single digits would pass an implementation that deleted the safety check.
+   Confirm that `ListMetas()`'s 836 becomes **zero on EFS** (because it moved to home).
+   ⚠️ **`-e trace=file` is not enough**: `read` and `close` take no filename and so fall outside
+   that set, losing 624 of `ListMetas()`'s 836. The set actually used was
    `-e trace=getdents64,openat,newfstatat,read,close`.
 2. **The one-box floor.** Arrange an hour with exactly one user running and watch
    `MetadataIOBytes`' **`SampleCount`** (the operation count itself, no estimation).
-   **107.7 ops/s is the starting point**; with decisions 4 and 5 it should land in the low
-   single digits. If it does not, the source is elsewhere - suspect `~/.gitconfig` lookups (how
-   often `git` is started) and claude's own transcript writes next.
+   **107.7 ops/s is the starting point.** ⚠️ "it should land in the low single digits" is an
+   **unmeasured expectation, not a pass/fail criterion** - while the ranking of A against B is
+   unknown (step 0), how far it falls cannot be predicted. What to look at is whether it fell
+   significantly, and where to look next if it did not: `~/.gitconfig` lookups (how often `git`
+   is started) and claude's own transcript writes.
 3. **Working hours.** Count boxes from `ClientConnections` (one box = two connections) and
    compare per-box ops/s **within the same clock window** (09:00-13:20 JST: old 175-223, new
    153). ⚠️ Do not compare across different times of day - that is how the first draft's "half"
