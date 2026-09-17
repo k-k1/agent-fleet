@@ -402,10 +402,19 @@ func SubagentLogs(sid string) []string {
 // background agents" while one was running beside the other. Measured, and worse than the
 // negative cache it replaced: that one healed itself in 15s, this does not heal at all.
 //
-// The remaining assumption, which cannot be checked from here: claude runs at a cwd derived
-// from the session's own Meta. AF sets it at launch (BuildLaunch passes m.CWD()), so the
-// candidates below enumerate every value it can take — but a conversation claude was made to
-// resume from some other directory would leave state this does not look at.
+// ⚠️ THAT COMPLETENESS IS ABOUT DIRECTORIES, NOT ABOUT SESSION IDS. The path below is built
+// from the SLOT sid while jsonlPaths follows the drifted one (LiveSID), so a claude that
+// restarted itself onto an id of its own (sid.go) may keep its background agents under that
+// id instead — the transcript is then found, the directory beside it is empty, and this
+// answers "none". Measured, and the sweep it replaced answered "none" there too, so it is a
+// standing gap rather than a regression; closing it means using LiveSID(sid) here, and that
+// is worth doing only once someone has looked at a real drifted session to see which id the
+// subagents directory actually lands under.
+//
+// The other assumption cannot be checked from here: claude runs at a cwd derived from the
+// session's own Meta. AF sets it at launch (BuildLaunch passes m.CWD()), so the candidates
+// below enumerate every value it can take — but a conversation claude was made to resume from
+// some other directory would leave state this does not look at.
 func subagentBases(sid string) []string {
 	return subagentMemo.lookup(ConfigDir()+"\x00"+sid, func() []string {
 		dirs := subagentAnchors(sid)
@@ -435,6 +444,10 @@ func subagentBases(sid string) []string {
 // anything, and concluding "no background agents" from it alone made a fixture with a
 // subagents directory under an unrelated project read as idle (chat_report_main_test.go,
 // TestSessionReportDeferredWhileSubagentBusy, which is the deferred-report safety check).
+//
+// A process whose hint is still cold (a hook subprocess) gets no candidates at all, and does
+// not need them: jsonlPaths has no cwd to derive from either, so it sweeps and returns every
+// transcript there is, which makes `located` complete on its own.
 //
 // Once there is a transcript, the cwd candidates are added to it rather than replacing it:
 // Meta.CWD() resolves to Dir/Subdir or Dir depending on what exists on disk right now, so a

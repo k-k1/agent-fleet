@@ -128,9 +128,14 @@ type Result struct {
 	Entries int // entries finished this run
 	Files   int // files and symlinks copied
 	Skipped int // files deliberately left on the old volume (entrySkipped)
-	Bytes   int64
-	Took    time.Duration
-	Errs    []error
+	// SkippedPaths are those files, for the boot log. They are paths, not contents, and a
+	// path is not a secret — what makes them worth naming is that the two reasons for
+	// skipping have very different consequences for the user (a live socket costs nothing; a
+	// credential left behind can cost a re-login), and a count cannot tell them apart.
+	SkippedPaths []string
+	Bytes        int64
+	Took         time.Duration
+	Errs         []error
 }
 
 // Run performs the migration. It is safe to call on every boot: with nothing left under
@@ -173,12 +178,13 @@ func run(src, dst string, announce bool) Result {
 				"nothing is served until it is done)", src)
 			announced = true
 		}
-		n, b, skipped, errs := copyTree(from, filepath.Join(dst, name))
+		n, b, skippedPaths, errs := copyTree(from, filepath.Join(dst, name))
 		res.Files += n
 		res.Bytes += b
-		res.Skipped += skipped
+		res.Skipped += len(skippedPaths)
+		res.SkippedPaths = append(res.SkippedPaths, skippedPaths...)
 		res.Errs = append(res.Errs, errs...)
-		if len(errs) > 0 || skipped > 0 {
+		if len(errs) > 0 || len(skippedPaths) > 0 {
 			// Not done. Errors leave the entry for the next boot to finish; a skip leaves it
 			// for good, and both take the same branch because RemoveAll below does not know
 			// the difference — it would delete the very files copyEntry declined to move.
@@ -201,7 +207,7 @@ func run(src, dst string, announce bool) Result {
 // source file it has accounted for. Returns the number of files written, their total size,
 // and how many were deliberately left behind (see entrySkipped) — a caller that sees any of
 // those must not mark the entry finished, or the leftovers become permanent.
-func copyTree(from, to string) (files int, bytes int64, skipped int, errs []error) {
+func copyTree(from, to string) (files int, bytes int64, skipped []string, errs []error) {
 	// Only the chat scratch borrows credentials through links, so only there does a regular
 	// file under one of those names mean "a refresh replaced the link". Scoping it keeps an
 	// unrelated auth.json somewhere else from silently pinning its whole entry as unfinished.
@@ -240,7 +246,7 @@ func copyTree(from, to string) (files int, bytes int64, skipped int, errs []erro
 			// Not ours to move, so not ours to delete either. Leaving the source is the
 			// whole point: what is skipped here is either live (a socket) or a credential
 			// that belongs on the volume it is already on.
-			skipped++
+			skipped = append(skipped, p)
 			return nil
 		}
 		if res == entryCopied {

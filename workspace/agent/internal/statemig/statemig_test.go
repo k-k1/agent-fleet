@@ -226,8 +226,11 @@ func TestALiveSocketIsNeitherCopiedNorDeleted(t *testing.T) {
 	if len(res.Errs) > 0 {
 		t.Fatalf("errors: %v", res.Errs)
 	}
-	if res.Skipped != 1 {
-		t.Fatalf("Skipped = %d, want 1", res.Skipped)
+	if res.Skipped != 1 || len(res.SkippedPaths) != 1 || res.SkippedPaths[0] != fifo {
+		// Named, not just counted: the boot log is the only place a user learns that
+		// something stayed behind, and "a socket" and "a credential" cost them very
+		// different things.
+		t.Fatalf("Skipped = %d %v, want the one fifo (%s)", res.Skipped, res.SkippedPaths, fifo)
 	}
 	if _, err := os.Lstat(fifo); err != nil {
 		t.Fatalf("the live socket was removed: %v", err)
@@ -259,5 +262,9 @@ func TestARefreshedTokenIsLeftOnTheOldVolume(t *testing.T) {
 	}
 	if got := read(t, real); got != `{"tokens":{"access_token":"secret"}}` {
 		t.Fatalf("the token was removed from the volume that owns it: %q", got)
+	}
+	if len(res.SkippedPaths) != 1 || res.SkippedPaths[0] != real {
+		t.Fatalf("SkippedPaths = %v, want [%s] — leaving a rotated token behind can cost a "+
+			"re-login, so it has to reach the boot log", res.SkippedPaths, real)
 	}
 }

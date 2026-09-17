@@ -847,6 +847,21 @@ numbers**.
   GETATTR dominated, **contribution unknown**". The ranking is not settled until **VFS operations
   and RPCs are captured together, during an interval where the floor is visible**. That is why
   decision 4 is sequenced ahead of decision 5.
+- **Decision 5's anchor is complete over DIRECTORIES, not over SESSION IDS.** `jsonlPaths`
+  follows the drifted id (`LiveSID`), while `subagentBases` builds `<dir>/<sid>/subagents` from
+  the SLOT sid. When claude restarts itself onto an id of its own, the transcript is found, the
+  directory beside it is empty, and the answer is a confident "none". ⚠️ **The sweep it replaced
+  answered "none" on the same tree**, so this is a standing gap rather than a regression.
+  Closing it means using `LiveSID(sid)` — a no-op on the non-drifted path, since
+  `LiveSID(sid) == sid` there — but **nobody has looked at a real drifted session to see which
+  id the subagents directory lands under**, so it must be measured before it is changed. (Found
+  in the second review pass; the same note is in `bg.go`.)
+- **What a token left behind by the migration costs.** A credential that was rotated while
+  borrowed stays on the old volume, and the next chat turn only re-links the new path, so the
+  rotation is never folded back. With a provider that retires used refresh tokens, **the user
+  is asked to sign in again**. The boot log now names the file; teaching `reconcileChatCreds`
+  to look at the legacy path once was rejected as permanent legacy knowledge in chatx for a
+  one-boot window.
 - **How much the NFS attribute cache absorbs.** The syscall counts above are VFS-level, not
   NFS round trips. Directory contents are answered locally until `acdirmin` (default 30 s) and
   file attributes until `acregmin` (default 3 s). The first draft estimated "one to three round
