@@ -55,7 +55,7 @@ func read(t *testing.T, p string) string {
 func TestMovesStateAndLeavesTheDurableHalfAlone(t *testing.T) {
 	src, dst, _ := seed(t)
 
-	res := run(src, dst)
+	res := run(src, dst, false)
 	if len(res.Errs) > 0 {
 		t.Fatalf("errors: %v", res.Errs)
 	}
@@ -89,7 +89,7 @@ func TestMovesStateAndLeavesTheDurableHalfAlone(t *testing.T) {
 func TestSymlinkIsCopiedAsASymlink(t *testing.T) {
 	src, dst, target := seed(t)
 
-	if errs := run(src, dst).Errs; len(errs) > 0 {
+	if errs := run(src, dst, false).Errs; len(errs) > 0 {
 		t.Fatalf("errors: %v", errs)
 	}
 	link := filepath.Join(dst, "chat-codex", "auth.json")
@@ -111,7 +111,7 @@ func TestDestinationIsNeverOverwritten(t *testing.T) {
 	src, dst, _ := seed(t)
 	write(t, filepath.Join(dst, "session-status", "sid.json"), `{"state":"working"}`)
 
-	if errs := run(src, dst).Errs; len(errs) > 0 {
+	if errs := run(src, dst, false).Errs; len(errs) > 0 {
 		t.Fatalf("errors: %v", errs)
 	}
 	if got := read(t, filepath.Join(dst, "session-status", "sid.json")); got != `{"state":"working"}` {
@@ -130,7 +130,7 @@ func TestInterruptedRunIsFinishedByTheNext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if errs := run(src, dst).Errs; len(errs) > 0 {
+	if errs := run(src, dst, false).Errs; len(errs) > 0 {
 		t.Fatalf("errors: %v", errs)
 	}
 	for _, name := range []string{"alpha.json", "beta.json"} {
@@ -145,7 +145,7 @@ func TestInterruptedRunIsFinishedByTheNext(t *testing.T) {
 // come back from the dead in the Console's list.
 func TestAFinishedEntryIsNotMigratedTwice(t *testing.T) {
 	src, dst, _ := seed(t)
-	if errs := run(src, dst).Errs; len(errs) > 0 {
+	if errs := run(src, dst, false).Errs; len(errs) > 0 {
 		t.Fatalf("errors: %v", errs)
 	}
 	if err := os.Remove(filepath.Join(dst, "sessions", "beta.json")); err != nil {
@@ -154,7 +154,7 @@ func TestAFinishedEntryIsNotMigratedTwice(t *testing.T) {
 	// A leftover the removal above could not clear (a read-only source, say).
 	write(t, filepath.Join(src, "sessions", "beta.json"), `{"name":"beta"}`)
 
-	res := run(src, dst)
+	res := run(src, dst, false)
 	if res.Files != 0 {
 		t.Fatalf("copied %d file(s) from a finished entry", res.Files)
 	}
@@ -200,7 +200,7 @@ func TestMarkerKeepsEntriesWrittenByAnotherRun(t *testing.T) {
 
 func TestEmptySourceIsANoOp(t *testing.T) {
 	root := t.TempDir()
-	res := run(filepath.Join(root, "config"), filepath.Join(root, "state"))
+	res := run(filepath.Join(root, "config"), filepath.Join(root, "state"), false)
 	if res.Files != 0 || res.Entries != 0 || len(res.Errs) > 0 {
 		t.Fatalf("not a no-op: %+v", res)
 	}
@@ -222,7 +222,7 @@ func TestALiveSocketIsNeitherCopiedNorDeleted(t *testing.T) {
 		t.Skipf("cannot create a fifo here: %v", err)
 	}
 
-	res := run(src, dst)
+	res := run(src, dst, false)
 	if len(res.Errs) > 0 {
 		t.Fatalf("errors: %v", res.Errs)
 	}
@@ -250,7 +250,7 @@ func TestARefreshedTokenIsLeftOnTheOldVolume(t *testing.T) {
 	}
 	write(t, real, `{"tokens":{"access_token":"secret"}}`)
 
-	res := run(src, dst)
+	res := run(src, dst, false)
 	if len(res.Errs) > 0 {
 		t.Fatalf("errors: %v", res.Errs)
 	}

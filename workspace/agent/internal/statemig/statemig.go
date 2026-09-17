@@ -34,6 +34,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -139,10 +140,16 @@ type Result struct {
 // lost the history of; a boot that refused to start over it would cost them the whole
 // Workspace.
 func Run() Result {
-	return run(paths.AgentConfigDir(), paths.AgentStateDir())
+	return run(paths.AgentConfigDir(), paths.AgentStateDir(), true)
 }
 
-func run(src, dst string) Result {
+// RunQuiet is Run without the "nothing is served until it is done" line, for a caller that is
+// not the Agent's boot — a user's af-db invocation blocks only itself.
+func RunQuiet() Result {
+	return run(paths.AgentConfigDir(), paths.AgentStateDir(), false)
+}
+
+func run(src, dst string, announce bool) Result {
 	start := time.Now()
 	var res Result
 	if src == dst {
@@ -158,7 +165,7 @@ func run(src, dst string) Result {
 		if _, err := os.Lstat(from); err != nil {
 			continue // never existed, or already fully moved
 		}
-		if !announced {
+		if announce && !announced {
 			// Said BEFORE the copying, because this is the one boot where it is slow: the
 			// whole tree measured 113 MB / 5,400 files on EFS, and nothing is served until
 			// it is here. Without this line that is an unexplained minute of "starting".
@@ -195,6 +202,11 @@ func run(src, dst string) Result {
 // and how many were deliberately left behind (see entrySkipped) — a caller that sees any of
 // those must not mark the entry finished, or the leftovers become permanent.
 func copyTree(from, to string) (files int, bytes int64, skipped int, errs []error) {
+	// Only the chat scratch borrows credentials through links, so only there does a regular
+	// file under one of those names mean "a refresh replaced the link". Scoping it keeps an
+	// unrelated auth.json somewhere else from silently pinning its whole entry as unfinished.
+	chatScratch := strings.HasPrefix(filepath.Base(from), "chat-")
+	var emptyCandidates []string
 	err := filepath.WalkDir(from, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			errs = append(errs, err)
@@ -216,9 +228,10 @@ func copyTree(from, to string) (files int, bytes int64, skipped int, errs []erro
 				errs = append(errs, err)
 				return fs.SkipDir
 			}
+			emptyCandidates = append(emptyCandidates, p)
 			return nil
 		}
-		res, n, err := copyEntry(p, target, d)
+		res, n, err := copyEntry(p, target, d, chatScratch)
 		if err != nil {
 			errs = append(errs, err)
 			return nil
@@ -243,6 +256,13 @@ func copyTree(from, to string) (files int, bytes int64, skipped int, errs []erro
 	})
 	if err != nil {
 		errs = append(errs, err)
+	}
+	// An entry that skipped something is never marked finished, so RemoveAll never runs on it
+	// and its directory tree stays on the old volume — where every later boot walks it again.
+	// Pruning what is now empty (deepest first, and only what is empty) leaves just the files
+	// that were deliberately kept, which is the smallest thing that can still be walked.
+	for i := len(emptyCandidates) - 1; i >= 0; i-- {
+		_ = os.Remove(emptyCandidates[i]) // fails, harmlessly, when anything is still inside
 	}
 	return files, bytes, skipped, errs
 }
@@ -270,10 +290,9 @@ const (
 // write the plaintext token onto the home volume, so a regular file under one of these names
 // is left exactly where it is; the next chat turn's reconcile puts the link back.
 var borrowedCredentialNames = map[string]bool{
-	"auth.json":                true,
-	".credentials.json":        true,
-	"antigravity-oauth-token":  true,
-	"antigravity-oauth-token2": true, // the rotated-pair spelling agy writes alongside it
+	"auth.json":               true,
+	".credentials.json":       true,
+	"antigravity-oauth-token": true,
 }
 
 // copyEntry writes one file or symlink, and never follows a link.
@@ -281,7 +300,7 @@ var borrowedCredentialNames = map[string]bool{
 // 🔴 A SYMLINK IS COPIED AS A SYMLINK, for the reason on borrowedCredentialNames above: the
 // chat scratch borrows real credentials through links, and following one writes the plaintext
 // onto the home volume — the one thing ADR 0045 decision 3-6 forbids.
-func copyEntry(from, to string, d fs.DirEntry) (entryResult, int64, error) {
+func copyEntry(from, to string, d fs.DirEntry, chatScratch bool) (entryResult, int64, error) {
 	if _, err := os.Lstat(to); err == nil {
 		return entryAlreadyThere, 0, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -300,8 +319,14 @@ func copyEntry(from, to string, d fs.DirEntry) (entryResult, int64, error) {
 		// process that is running right now, and removing it takes its listener away.
 		return entrySkipped, 0, nil
 	}
-	if borrowedCredentialNames[d.Name()] {
-		return entrySkipped, 0, nil // a link that a token refresh turned into a real file
+	if chatScratch && borrowedCredentialNames[d.Name()] {
+		// A link that a token refresh turned into a real file. Left where it is — and the
+		// caller logs it, because leaving it has a cost the user can see: the next chat turn
+		// re-links the NEW path from the shared credential, so the rotation recorded here is
+		// not folded back and a provider that retires used refresh tokens will ask for a
+		// fresh login. Copying it instead would put the plaintext on the home volume, which
+		// is the thing ADR 0045 decision 3-6 exists to prevent.
+		return entrySkipped, 0, nil
 	}
 	fi, err := d.Info()
 	if err != nil {
@@ -356,9 +381,15 @@ func readMarker(dst string) marker {
 // comes back.
 //
 // Read-modify-write still has a window between the read and the rename, and closing it would
-// need a lock. That is out of proportion here: the migration runs once per box, from one
-// process, at a point where nothing else has started. The tmp+rename is what actually has to
-// hold — a torn marker reads as "nothing is done" and re-migrates everything.
+// need a lock. That is out of proportion for what can collide: the Agent runs this once at
+// boot, and the only other caller is the af-db subcommand, which a user can start at any
+// moment from a terminal. Two of them at once cost at most a marker entry — the copying
+// itself stays correct through O_EXCL and "the destination is the truth", and a lost entry
+// only means the next boot re-checks that entry and finds nothing to do. The loser of such a
+// race also logs an ENOENT from its own os.Remove, which is noise rather than damage.
+//
+// The tmp+rename is the part that has to hold: a torn marker reads as "nothing is done" and
+// migrates everything a second time.
 func writeMarker(dst string, m marker) error {
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err

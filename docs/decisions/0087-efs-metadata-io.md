@@ -690,9 +690,24 @@ directory derived from the cwd. `jsonlPaths` has already located that transcript
 it, so `subagentBases` needs **one `Lstat`** next to it — and produces its answer, "there is
 none" included, **from the disk every time**. The negative cache is gone.
 
-- `subagentBases` hangs its `Lstat` off the project directories the transcript was found in.
-  Only a session with no transcript yet (before its first turn) has nothing to hang it off, and
-  that case falls back to the original sweep.
+- The anchor rule in `subagentBases` **was corrected once more in the second review pass**.
+  🔥 **Absence of Y is being concluded from the presence of X, so an incomplete anchor produces
+  a false negative.** Two were found, both measured:
+  - **One transcript is not enough.** `Meta.CWD()` returns `Dir/Subdir` only while that
+    directory EXISTS and falls back to `Dir` when it does not (a branch switch removing the
+    folder). The same sid can therefore hold state under two project names while `jsonlPaths`
+    answers with whichever today's cwd resolves to — and the background agent running beside
+    the other one is invisible. 🔴 **Worse than the negative cache it replaced**, which healed
+    itself in 15s; this did not heal at all. `session.CWDCandidatesForUUID` returns every cwd
+    the session can have, and all of them are checked.
+  - **The cwd alone must not be an anchor either.** A cwd says where the session was launched,
+    not what claude wrote where. **With no transcript located, nothing is concluded and the
+    original sweep runs** — dropping that rule turns the existing safety test
+    `TestSessionReportDeferredWhileSubagentBusy` (hold the completion report while background
+    agents run) red, which was confirmed by making it red.
+  - The remaining assumption cannot be checked from here: claude runs at a cwd derived from the
+    session's own Meta. AF sets it at launch (`BuildLaunch` passes `m.CWD()`), so the
+    enumeration is exhaustive — but **it is written down as an assumption**.
 - `SubagentBusyDisplay` / `BackgroundWorkDisplay` / `absenceMemo` **do not exist**. There is one
   entry point, `BackgroundWork`, and the three decisions and the badge read the same fresh
   answer.

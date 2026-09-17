@@ -26,6 +26,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -44,7 +45,7 @@ func main() {
 		// before the Agent has migrated leaves a `{"instances":{}}` at the destination, and
 		// "the destination is the truth" then discards the real registry, orphaning a running
 		// postmaster. Cheap once done: the marker plus one failed stat per entry.
-		statemig.Run()
+		statemig.RunQuiet()
 		afdb.RunAFDB(os.Args[2:])
 		return
 	}
@@ -187,9 +188,19 @@ func main() {
 	// session that survived an Agent restart can still fire. A hook that lands early reads an
 	// empty store and mis-files one event — the next one self-heals — and is deliberately not
 	// made to migrate: it would put a 100 MB copy in front of a claude turn.
-	if r := statemig.Run(); r.Files > 0 || len(r.Errs) > 0 {
+	if r := statemig.Run(); r.Files > 0 || r.Skipped > 0 || len(r.Errs) > 0 {
 		log.Printf("state: migrated %d entr(y|ies), %d file(s), %.1f MB in %s",
 			r.Entries, r.Files, float64(r.Bytes)/(1<<20), r.Took.Round(time.Millisecond))
+		// Skipped is reported on its own because it is permanent: an entry that left
+		// something behind is never marked finished, and what stays is either live (a
+		// socket) or a credential whose rotation the next chat turn will NOT fold back.
+		// Without this, a boot that only skipped announced the migration and then said
+		// nothing at all.
+		if r.Skipped > 0 {
+			log.Printf("state: %d file(s) deliberately left in %s (live sockets, or a "+
+				"credential that belongs on that volume) — see internal/statemig",
+				r.Skipped, paths.AgentConfigDir())
+		}
 		for _, err := range r.Errs {
 			log.Printf("state: migration: %v", err)
 		}

@@ -224,3 +224,46 @@ func TestCWDHintFollowsTheSubdir(t *testing.T) {
 		t.Fatalf("CWDForUUID = %q, want the subdir", got)
 	}
 }
+
+// The hole the second review found in the first version of this lookup, kept as the case that
+// must never come back: anchoring only on the located transcript concludes "absent" from the
+// presence of a DIFFERENT object, and the anchor can be the wrong one.
+//
+// How a session gets two project directories: Meta.CWD() resolves to Dir/Subdir only while
+// that directory exists and falls back to Dir when it does not, so a branch switch that
+// removes the folder moves the next launch to the other name. Both transcripts then exist,
+// jsonlPaths answers with whichever the cwd hint resolves to today, and the background agent
+// is beside the other one.
+//
+// ⚠️ Worse than the negative cache this design replaced, which is why it is pinned: that one
+// healed itself after 15s, and this did not heal at all — and the false "no background work"
+// reaches the CP's reaper, which stops the workspace on it.
+func TestAnAgentIsFoundUnderTheOtherCWDTheSessionCanHave(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	jsonlMemo, subagentMemo = pathMemo{}, pathMemo{}
+
+	root := filepath.Join(home, "repo")
+	mkdir(t, filepath.Join(root, "pkg")) // the subdir is back on disk, so CWD() prefers it
+	m := session.Meta{Name: "slot01", Dir: root, Subdir: "pkg", Kind: "claude"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	for _, cwd := range []string{root, filepath.Join(root, "pkg")} {
+		mkdir(t, filepath.Join(cfg, "projects", projectKey(cwd)))
+		if err := os.WriteFile(filepath.Join(cfg, "projects", projectKey(cwd), sid+".jsonl"),
+			[]byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The live agent is beside the transcript the cwd hint does NOT point at.
+	startSubagent(t, filepath.Join(cfg, "projects", projectKey(root), sid, "subagents"), "x")
+
+	if !SubagentBusy(sid) {
+		t.Fatal("a live background agent went unseen because the anchor transcript was the " +
+			"stale one — the reaper would stop the workspace with it still running")
+	}
+}

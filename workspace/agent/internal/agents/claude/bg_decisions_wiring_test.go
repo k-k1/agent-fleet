@@ -16,8 +16,6 @@ import (
 // BackgroundBusy travels the wire into control-plane/session_activity.go, where the reaper
 // stops the workspace on it. That one was missed by the first implementation of this
 // decision, which is why it is written down here as well.
-// The other half: the three decisions must keep calling the searching form. A rename or a
-// well-meant "these two look the same" cleanup would otherwise pass silently.
 func TestTheThreeDecisionsStillSearch(t *testing.T) {
 	root := moduleRoot(t)
 	for _, c := range []struct{ file, call string }{

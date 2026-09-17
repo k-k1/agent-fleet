@@ -1,6 +1,9 @@
 package session
 
-import "sync"
+import (
+	"path/filepath"
+	"sync"
+)
 
 // A sid is UUIDv5(dir|name), so it cannot be turned back into the directory it was made
 // from. Things that only ever hold the sid — the transcript lookups in
@@ -48,4 +51,35 @@ func CWDForUUID(sid string) string {
 		return ""
 	}
 	return Meta{Dir: h.dir, Subdir: h.subdir}.CWD()
+}
+
+// CWDCandidatesForUUID returns EVERY directory this session can have been launched in, most
+// recent resolution first. Nil when the sid is unknown.
+//
+// There are at most two, and which one CWD() answers with depends on the disk: with a Subdir
+// set it resolves to Dir/Subdir only while that directory EXISTS, and falls back to Dir when
+// it does not (a branch switch that removed the folder). A session that lived through such a
+// switch therefore has claude state under both names, and a caller that asks only for today's
+// answer will not find yesterday's.
+//
+// That matters to anything concluding something is ABSENT: one cwd resolving to nothing is
+// not the same as the session having nothing (internal/agents/claude/bg.go relies on this).
+func CWDCandidatesForUUID(sid string) []string {
+	cwdMu.RLock()
+	h, ok := cwdBySID[sid]
+	cwdMu.RUnlock()
+	if !ok {
+		return nil
+	}
+	m := Meta{Dir: h.dir, Subdir: h.subdir}
+	out := []string{m.CWD()}
+	if m.Dir != "" && m.Dir != out[0] {
+		out = append(out, m.Dir)
+	}
+	if h.subdir != "" {
+		if sub := filepath.Join(m.Dir, filepath.FromSlash(h.subdir)); sub != out[0] {
+			out = append(out, sub)
+		}
+	}
+	return out
 }
