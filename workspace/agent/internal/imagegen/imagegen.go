@@ -348,7 +348,9 @@ type Provider interface {
 // see it: an id to send back, a line an agent reads when choosing, and whether the engine
 // happens to have it loaded right now.
 type ModelInfo struct {
-	ID          string
+	ID string
+	// Label is what a member is shown instead of the id (ADR 0090). Empty falls back to the id.
+	Label       string
 	Description string
 	// Warm is true for at most one model per provider — the one a request naming none would
 	// get (ADR 0072 decision 7). Advertised so an agent can say "the warm one is fine" instead
@@ -392,7 +394,9 @@ type Studio struct {
 
 // StudioModel is one checkpoint as a form needs to see it.
 type StudioModel struct {
-	ID          string
+	ID string
+	// Label is what a member is shown instead of the id (ADR 0090). Empty falls back to the id.
+	Label       string
 	Description string
 	// Family is the workflow template (`sdxl`, `flux1`, …). It decides everything below it.
 	Family string

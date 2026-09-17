@@ -653,6 +653,15 @@ func engineCatalogModelRow(m store.EngineModel, warm string) map[string]any {
 	if m.Description != "" {
 		row["description"] = m.Description
 	}
+	// What a MEMBER is shown instead of the id (ADR 0090). 🔴 Beside the id and never instead of
+	// it: `id` is what a request names, what opencode keys a model by and what the gateway routes
+	// on, so this relay carries a name to DRAW and changes nothing anybody sends.
+	//
+	// Absent for a row nobody has read a model page for, and every reader falls back to the id —
+	// which is the behaviour before this existed, and therefore a safe absence.
+	if label := engineModelLabel(m); label != "" {
+		row["label"] = label
+	}
 	if len(m.Sizes) > 0 {
 		row["sizes"] = m.Sizes
 	}
@@ -950,3 +959,56 @@ func engineModelFileNames(m store.EngineModel) []string {
 // answer to every workspace, and the tool description it eventually shapes is a fixed cost every
 // session pays on every tools/list. A keyword list, not a policy document.
 const engineNegativeMaxRunes = 500
+
+// engineModelLabel is what a MEMBER is shown instead of the row id (ADR 0090).
+//
+// The id is a key: derived from a file name, unique within one role, and what every request, S3
+// path and active set is written in. A member never sees an S3 path, so for them the id buys
+// nothing and costs everything — `qwen3.8-27b-ud-iq2_s` beside `qwen3.8-27b-ud-iq4_xs` in a
+// picker is two strings differing by four characters with nothing to choose between them.
+//
+// Composed HERE, for the reason engineSourceURL is: this is the only side that holds all three
+// parts, and a second composition in the Agent and a third in the browser would be three
+// spellings of one name. Empty for a row nobody has read a model page for, and every reader then
+// falls back to the id — which is today's behaviour and therefore a safe absence.
+func engineModelLabel(m store.EngineModel) string {
+	name := strings.TrimSpace(m.DisplayName)
+	if name == "" {
+		return ""
+	}
+	if suffix := engineModelVariant(m); suffix != "" {
+		return name + " " + suffix
+	}
+	return name
+}
+
+// engineModelVariant is the part that tells two rows of the SAME model apart: the version a
+// Civitai row names, or the quantisation a Hugging Face file is called.
+//
+// 🔴 Read off `source` and never off the id. The id is the file name lower-cased, and a row
+// registered by hand or seeded has an id that was never a file name at all — un-mangling it would
+// be re-deriving a transformation `source` already records exactly.
+func engineModelVariant(m store.EngineModel) string {
+	if v := strings.TrimSpace(m.VersionName); v != "" && !strings.EqualFold(v, strings.TrimSpace(m.DisplayName)) {
+		return v
+	}
+	repo := strings.TrimSpace(m.DisplayName)
+	prefix := "hf:" + repo + "/"
+	source := strings.TrimSpace(m.Source)
+	if repo == "" || !strings.HasPrefix(source, prefix) {
+		return ""
+	}
+	file := engineBaseName(strings.TrimPrefix(source, prefix))
+	stem := engineIDExtRe.ReplaceAllString(file, "")
+	// A repository repeats the model's name on every one of its files
+	// (`Qwen3.8-27B-UD-IQ2_S.gguf` in `unsloth/Qwen3.8-27B-GGUF`), so the repository's own last
+	// segment is the part worth dropping. Nothing else is: a file named some other way keeps its
+	// whole stem, which is longer than ideal and never wrong.
+	model := strings.TrimSuffix(repo[strings.LastIndex(repo, "/")+1:], "-GGUF")
+	if model != "" && len(stem) > len(model) && strings.EqualFold(stem[:len(model)], model) {
+		if rest := strings.TrimLeft(stem[len(model):], "-_."); rest != "" {
+			return rest
+		}
+	}
+	return stem
+}

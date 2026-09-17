@@ -522,3 +522,78 @@ func TestSyncEngineProvidersClearsBlockOnEmptyCatalog(t *testing.T) {
 		t.Errorf("llamacpp still in the provider block after an empty catalogue: %s", b)
 	}
 }
+
+// The name a member picks by (ADR 0090). 🔴 This walks the whole relay on purpose: the label
+// crosses five hops (the CP's row, the catalogue JSON, engineCatalogModel, engineModelLabels,
+// opencode's `name`), and a field dropped at any one of them is silent — `sessionWire` taught
+// this fleet that lesson once already.
+//
+// The ids are the two the fix in ADR 0090 produces. Before it they were `qwen3.8-27b-ud` and
+// `qwen3.8-27b-ud-2`, which is a launch menu offering a choice nobody could make.
+func TestSyncEngineProvidersNamesTwoQuantisationsApart(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	engineCatalogStub(t, `{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1",`+
+		`"models":["qwen3.8-27b-ud-iq2_xxs","qwen3.8-27b-ud-iq2_s","seeded"],`+
+		`"model_rows":[`+
+		`{"id":"qwen3.8-27b-ud-iq2_xxs","label":"unsloth/Qwen3.8-27B-GGUF UD-IQ2_XXS"},`+
+		`{"id":"qwen3.8-27b-ud-iq2_s","label":"unsloth/Qwen3.8-27B-GGUF UD-IQ2_S"},`+
+		`{"id":"seeded"}]}`)
+
+	syncEngineProviders()
+
+	b, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatalf("no opencode config written: %v", err)
+	}
+	var cfg struct {
+		Provider map[string]struct {
+			Models map[string]struct {
+				Name string `json:"name"`
+			} `json:"models"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	models := cfg.Provider["llamacpp"].Models
+	for id, want := range map[string]string{
+		"qwen3.8-27b-ud-iq2_xxs": "unsloth/Qwen3.8-27B-GGUF UD-IQ2_XXS (self-hosted)",
+		"qwen3.8-27b-ud-iq2_s":   "unsloth/Qwen3.8-27B-GGUF UD-IQ2_S (self-hosted)",
+		// 🔴 A row the Control Plane composed no name for keeps the id, which is exactly what
+		// every row did before this existed. The absence is the fallback, not a gap.
+		"seeded": "seeded (self-hosted)",
+	} {
+		if got := models[id].Name; got != want {
+			t.Errorf("%s is shown as %q, want %q", id, got, want)
+		}
+	}
+	// And the KEY is still the id: it is what a request names and what the gateway routes on, so
+	// a label that reached this side of the map would break every completion.
+	if _, ok := models["unsloth/Qwen3.8-27B-GGUF UD-IQ2_S"]; ok {
+		t.Error("a label was written as a model key")
+	}
+}
+
+// The same name down the image road, which is a different relay with its own maps.
+func TestEngineImageConnCarriesTheMemberFacingLabel(t *testing.T) {
+	e := engineCatalogRow{
+		Key: "image", API: "images", Provider: "comfy", BaseURL: "/engine/image/v1",
+		Models: []string{"meinamix_meinav11"},
+		ModelRows: []engineCatalogModel{
+			{ID: "meinamix_meinav11", Label: "MeinaMix Meina V11"},
+			{ID: "plain"},
+		},
+	}
+	labels := engineImageLabels(e)
+	if got := labels["meinamix_meinav11"]; got != "MeinaMix Meina V11" {
+		t.Errorf("label = %q", got)
+	}
+	if _, ok := labels["plain"]; ok {
+		t.Error("a row with no label got an empty entry — absent is what the form falls back on")
+	}
+	if engineImageLabels(engineCatalogRow{ModelRows: []engineCatalogModel{{ID: "a"}}}) != nil {
+		t.Error("a catalogue with no labels answered a map rather than nil")
+	}
+}

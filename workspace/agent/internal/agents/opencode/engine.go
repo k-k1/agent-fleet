@@ -62,6 +62,12 @@ type EngineProvider struct {
 	// different windows used to have to be two engines with two provider ids, because there was
 	// only one place to put the number.
 	Windows map[string]EngineModelWindow
+
+	// Labels is what to SHOW for a model id in opencode's own picker (ADR 0090). The id stays
+	// the key — it is what a request names and what the provider routes on — and this is only
+	// the `name` beside it. Empty for an id the Control Plane composed no name for, which falls
+	// back to the id exactly as before.
+	Labels map[string]string
 }
 
 // EngineModelWindow is one model's declared context and output cap. Both or neither are
@@ -220,7 +226,16 @@ func engineProviderEntry(e EngineProvider) map[string]any {
 	ids := append([]string(nil), e.Models...)
 	sort.Strings(ids) // stable, so a re-read is byte-identical and no-op launches do not churn the file
 	for _, id := range ids {
-		m := map[string]any{"name": id + " (self-hosted)"}
+		// 🔴 The name a member reads, and not the id (ADR 0090). Two quantisations of one model
+		// are two ids that differ by a few characters — and before ADR 0090's id fix they were
+		// `<name>` and `<name>-2` — so a picker showing ids offered a choice nobody could make.
+		// `(self-hosted)` stays: it is what says this model is the fleet's own rather than a
+		// vendor's, and it is the only thing here that does.
+		shown := id
+		if label := strings.TrimSpace(e.Labels[id]); label != "" {
+			shown = label
+		}
+		m := map[string]any{"name": shown + " (self-hosted)"}
 		// Both numbers or neither, and both measured against opencode 1.18.29 rather than
 		// guessed:
 		//

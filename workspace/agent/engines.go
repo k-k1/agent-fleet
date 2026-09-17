@@ -127,7 +127,16 @@ type engineCatalogRow struct {
 
 // engineCatalogModel is one model as the catalogue describes it.
 type engineCatalogModel struct {
-	ID              string   `json:"id"`
+	ID string `json:"id"`
+	// Label is what a MEMBER is shown instead of the id (ADR 0090) — the publisher's name and
+	// the one part that tells two sizes of one model apart, composed by the Control Plane
+	// because only that side holds all three pieces.
+	//
+	// 🔴 A name to DRAW and never a name to send. `ID` stays what opencode keys the model by,
+	// what a request names and what the gateway routes on. Empty on a Control Plane that does
+	// not compose it yet, and on a row nobody has read a model page for — every reader then
+	// falls back to the id, which is what they all did before this field existed.
+	Label           string   `json:"label"`
 	ContextTokens   int      `json:"context_tokens"`
 	MaxOutputTokens int      `json:"max_output_tokens"`
 	Description     string   `json:"description"`
@@ -292,6 +301,7 @@ func syncEngineProviders() {
 			Key: e.Key, Provider: e.Provider, BaseURL: base + e.BaseURL, Models: e.Models,
 			ContextTokens: e.ContextTokens, MaxOutputTokens: e.MaxOutputTokens,
 			Windows: engineModelWindows(e),
+			Labels:  engineModelLabels(e),
 		})
 	}
 	changed, removed, err := opencode.WriteEngineProviders(providers)
@@ -325,6 +335,21 @@ func syncEngineProviders() {
 
 // engineModelWindows is the per-model context/output declaration, or nil when the Control
 // Plane sent none — in which case opencode gets the engine-wide pair, exactly as before.
+// engineModelLabels is the member-facing name per model id, for opencode's own model picker
+// (ADR 0090). nil when the Control Plane composes none.
+func engineModelLabels(e engineCatalogRow) map[string]string {
+	out := map[string]string{}
+	for _, m := range e.ModelRows {
+		if m.ID != "" && m.Label != "" {
+			out[m.ID] = m.Label
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func engineModelWindows(e engineCatalogRow) map[string]opencode.EngineModelWindow {
 	if len(e.ModelRows) == 0 {
 		return nil
@@ -500,6 +525,7 @@ func engineImageConn(ctx context.Context, key string) (imagegen.EngineConn, bool
 			BaseModel:    engineImageBaseModels(e),
 			Files:        engineImageFiles(e),
 			Warm:         engineImageWarm(e),
+			Labels:       engineImageLabels(e),
 			Descriptions: engineImageDescriptions(e),
 			Negatives:    engineImageNegatives(e),
 			// Trimmed here rather than at every reader: the administrator types this into a text
@@ -707,6 +733,21 @@ func engineImageWarm(e engineCatalogRow) string {
 		}
 	}
 	return ""
+}
+
+// engineImageLabels is the member-facing name per model id (ADR 0090). nil when the Control
+// Plane composes none, which is what every reader treats as "draw the id", as before.
+func engineImageLabels(e engineCatalogRow) map[string]string {
+	out := map[string]string{}
+	for _, m := range e.ModelRows {
+		if m.ID != "" && m.Label != "" {
+			out[m.ID] = m.Label
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // engineImageDescriptions is the catalogue's own per-model line (ADR 0072 decision 2) — the
