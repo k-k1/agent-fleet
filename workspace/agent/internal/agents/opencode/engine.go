@@ -103,10 +103,15 @@ func WriteEngineProviders(engines []EngineProvider) (changed bool, err error) {
 	}
 
 	providers, _ := root[engineProviderConfigKey].(map[string]any)
-	before, _ := json.Marshal(providers)
+	// Normalise the absent member to an empty one BEFORE the comparison snapshot: a nil map
+	// marshals to `null` and an empty one to `{}`, so taking `before` first reports "changed"
+	// on every call in a workspace that has no chat engines and no provider member — which is
+	// most of them. The caller answers a change by restarting the serve daemon, and that kills
+	// whatever turn is running (measured: a restart per Control Plane catalogue push).
 	if providers == nil {
 		providers = map[string]any{}
 	}
+	before, _ := json.Marshal(providers)
 	want := map[string]bool{}
 	for _, e := range engines {
 		if e.Provider == "" || e.BaseURL == "" || len(e.Models) == 0 {
