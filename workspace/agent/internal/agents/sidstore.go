@@ -12,7 +12,7 @@ type SidStore struct{ files fstore.Store[string] }
 
 // NewSidStore builds a SidStore persisting under <AgentConfigDir>/<subdir>.
 func NewSidStore(subdir string) SidStore {
-	return SidStore{fstore.TrimmedStrings(paths.AgentConfigDir, subdir)}
+	return SidStore{fstore.TrimmedStrings(paths.AgentStateDir, subdir)}
 }
 
 func (s SidStore) Read(sid string) string {

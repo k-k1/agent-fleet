@@ -30,7 +30,7 @@ type MsgLedger struct {
 
 // NewMsgLedger builds a ledger persisting under <AgentConfigDir>/<subdir>.
 func NewMsgLedger(subdir string) *MsgLedger {
-	return &MsgLedger{files: fstore.JSON[[]string](paths.AgentConfigDir, subdir, ".json")}
+	return &MsgLedger{files: fstore.JSON[[]string](paths.AgentStateDir, subdir, ".json")}
 }
 
 // SeenOrRecord reports whether id was already submitted for name, recording it

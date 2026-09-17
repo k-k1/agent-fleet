@@ -166,6 +166,11 @@ type managedNames struct {
 	Kinds map[string][]string `json:"kinds"`
 }
 
+// managedNamesPath stays in AgentConfigDir rather than moving to the state dir with the
+// per-session stores (ADR 0087 decision 4): it is the only authority for deleting a row from
+// a user's config file, and those files (~/.claude.json, ~/.codex/config.toml,
+// ~/.config/opencode) are in AF_WS_KEEP too. Split across the two volumes, losing one would
+// leave af's rows in configs af no longer knows it wrote — orphans nothing can remove.
 func managedNamesPath() string {
 	return filepath.Join(paths.AgentConfigDir(), "mcp-managed.json")
 }

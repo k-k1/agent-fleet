@@ -48,7 +48,7 @@ var (
 	slackThreads   = &threadStore{file: "bridge-threads-slack.json"}
 )
 
-func (ts *threadStore) path() string { return filepath.Join(paths.AgentConfigDir(), ts.file) }
+func (ts *threadStore) path() string { return filepath.Join(paths.AgentStateDir(), ts.file) }
 
 func (ts *threadStore) load() threadMap {
 	ts.mu.Lock()

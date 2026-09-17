@@ -178,6 +178,13 @@ const (
 // First hit wins, in the original evaluation order — when several are true at once any of
 // them is a true statement about the session, and the order keeps the cheap cached /proc
 // snapshot ahead of the transcript reads.
+//
+// ⚠️ THIS IS NOT DISPLAY-ONLY, however much the two call sites look like badges. The value
+// reaches agents.LiveInfo.BackgroundBusy, travels the wire as the session's backgroundBusy,
+// and the CP's reaper decides on it (control-plane/session_activity.go: holdsWorkspace stops
+// the workspace, tier1Reapable halts the session). The comment there records the incident
+// that put it in: the reaper did not look at this and stopped running background work. So
+// every arm below has to answer from the disk, now — see subagentBases.
 func BackgroundWork(name, sid string) (bool, string) {
 	switch {
 	case BackgroundBusy(name):
@@ -330,11 +337,14 @@ const subagentFreshTTL = 90 * time.Second
 // Complements BackgroundBusy, which covers the process-tree case both structurally
 // cannot see.
 func SubagentBusy(sid string) bool {
-	if BackgroundAgentsRunning(sid) {
-		return true
-	}
+	return BackgroundAgentsRunning(sid) || anyFresh(SubagentLogs(sid))
+}
+
+// anyFresh reports whether any of these transcripts was appended to inside the freshness
+// window.
+func anyFresh(logs []string) bool {
 	cutoff := time.Now().Add(-subagentFreshTTL)
-	for _, p := range SubagentLogs(sid) {
+	for _, p := range logs {
 		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(cutoff) {
 			return true
 		}
@@ -365,11 +375,105 @@ func SubagentLogs(sid string) []string {
 // is what keeps the `projects/*` half from sweeping every project directory on every call —
 // the inner agent-*.jsonl globs still have to read the subagents directory itself, but that is
 // one directory, not one per project (jsonl_memo.go).
+//
+// 🔴 IT ALWAYS LOOKS AT THE DISK, and must keep doing so. Three decisions rest on the answer,
+// and each of them reads a false "no background agents" as permission to act: delivery
+// confirmation (sessionx.confirmPromptDelivery → SubagentReceivedSince) fires the same
+// interruption into the agent a second time; completion (chatx.collectReportSignals →
+// busyEvidence "subagent-busy") reports an instruction done while one is working; the armed
+// stop (chatx.stop_after_turn) kills the tmux session with the agent still inside it. The
+// badge is not a fourth, separate case: WireLive's BackgroundBusy travels the wire into the
+// CP's reaper (control-plane/session_activity.go — holdsWorkspace / tier1Reapable), so a
+// stale "no" there stops the whole workspace. A Workflow's wf_* agents leave no pairing
+// record in the main transcript, so for them this is the ONLY evidence.
+//
+// What makes that affordable is the layout, not a cache: claude puts the subagents directory
+// beside the session's own transcript, in the project directory it derived from the cwd. So
+// the answer is an Lstat of each place this session's state can be, including the answer
+// "there is none" — the permanent state of every session that never launches a background
+// agent, and the one that used to cost a sweep of every project directory on every poll.
+//
+// ⚠️ "EACH PLACE" IS THE WHOLE CORRECTNESS ARGUMENT, and it is why the located transcript is
+// not enough on its own. Absence of the subagents directory is being concluded from the
+// presence of a DIFFERENT object next to it, so the anchor has to be complete: a session
+// whose Meta.Subdir came and went (a branch switch removing the folder — see
+// session.CWDCandidatesForUUID) has claude state under two project names, jsonlPaths answers
+// with whichever one the cwd hint resolves to today, and looking only there reported "no
+// background agents" while one was running beside the other. Measured, and worse than the
+// negative cache it replaced: that one healed itself in 15s, this does not heal at all.
+//
+// ⚠️ THAT COMPLETENESS IS ABOUT DIRECTORIES, NOT ABOUT SESSION IDS. The path below is built
+// from the SLOT sid while jsonlPaths follows the drifted one (LiveSID), so a claude that
+// restarted itself onto an id of its own (sid.go) may keep its background agents under that
+// id instead — the transcript is then found, the directory beside it is empty, and this
+// answers "none". Measured here against a synthetic tree, where the sweep it replaced answered
+// "none" too — so it is a standing gap rather than a regression. Closing it means using
+// LiveSID(sid) here, and that is worth doing only once someone has looked at a REAL drifted
+// session to see which id the subagents directory actually lands under; nobody has.
+//
+// The other assumption cannot be checked from here: claude runs at a cwd derived from the
+// session's own Meta. AF sets it at launch (BuildLaunch passes m.CWD()), so the candidates
+// below enumerate every value it can take — but a conversation claude was made to resume from
+// some other directory would leave state this does not look at.
 func subagentBases(sid string) []string {
 	return subagentMemo.lookup(ConfigDir()+"\x00"+sid, func() []string {
-		m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", sid, "subagents"))
-		return m
+		dirs := subagentAnchors(sid)
+		if len(dirs) == 0 {
+			// No transcript found, so nothing here is evidence of where claude writes for
+			// this session — this is the original sweep.
+			m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", sid, "subagents"))
+			return m
+		}
+		var out []string
+		for _, d := range dirs {
+			base := filepath.Join(d, sid, "subagents")
+			if _, err := os.Lstat(base); err == nil {
+				out = append(out, base)
+			}
+		}
+		return out
 	})
+}
+
+// subagentAnchors lists the project directories to look in, without reading any directory —
+// or nothing at all, meaning "no idea, go and search".
+//
+// A LOCATED TRANSCRIPT IS WHAT MAKES THE LIST TRUSTWORTHY, and nothing else does: it is the
+// evidence that claude writes this session's state under a project directory we can name. A
+// cwd on its own is not — it says where the session was launched, not where claude put
+// anything, and concluding "no background agents" from it alone made a fixture with a
+// subagents directory under an unrelated project read as idle (chat_report_main_test.go,
+// TestSessionReportDeferredWhileSubagentBusy, which is the deferred-report safety check).
+//
+// A process whose hint is still cold (a hook subprocess) gets no candidates at all, and does
+// not need them: jsonlPaths has no cwd to derive from either, so it sweeps and returns every
+// transcript there is, which makes `located` complete on its own.
+//
+// Once there is a transcript, the cwd candidates are added to it rather than replacing it:
+// Meta.CWD() resolves to Dir/Subdir or Dir depending on what exists on disk right now, so a
+// session that lived through a branch switch has state under both names and jsonlPaths
+// answers with only one of them (session.CWDCandidatesForUUID).
+func subagentAnchors(sid string) []string {
+	located := jsonlPaths(sid)
+	if len(located) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var dirs []string
+	add := func(d string) {
+		if d == "" || seen[d] {
+			return
+		}
+		seen[d] = true
+		dirs = append(dirs, d)
+	}
+	for _, p := range located {
+		add(filepath.Dir(p))
+	}
+	for _, cwd := range session.CWDCandidatesForUUID(sid) {
+		add(filepath.Join(ConfigDir(), "projects", projectKey(cwd)))
+	}
+	return dirs
 }
 
 // SubagentSnapshot is TranscriptSnapshot for the background agents' logs — the baseline

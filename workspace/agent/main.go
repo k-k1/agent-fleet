@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -26,6 +27,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
@@ -47,6 +49,22 @@ func main() {
 	serve()
 }
 
+// runAFDB is the af-db subcommand, with the state migration in front of it. That order is
+// the point: this is the one subcommand a USER runs from a terminal, with no Agent involved
+// (ADR 0087 decision 4), and af-db reads a registry it cannot find as an EMPTY one and writes
+// that back. Run before the Agent has migrated, it would leave a `{"instances":{}}` at the
+// destination that "the destination is the truth" then keeps — discarding the real registry
+// and orphaning a running postmaster. Cheap once done: the marker plus one failed stat per
+// entry.
+//
+// The Result is dropped on purpose: anything skipped or failed leaves its entry unfinished,
+// so the next Agent boot runs into it again and logs it there, where a reader is looking for
+// boot diagnostics rather than a database command's output.
+func runAFDB(args []string) {
+	statemig.RunQuiet()
+	afdb.RunAFDB(args)
+}
+
 func serve() {
 	addr := envOr("AGENT_ADDR", ":7700")
 
@@ -62,6 +80,29 @@ func serve() {
 		log.Fatalf("listen %s: %v (is an Agent already running in this container?)", addr, err)
 	}
 
+	// Move the mutable state off ~/.config/agent-fleet (an EFS mount on ecs-ec2) into the
+	// home volume, once (ADR 0087 decision 4). FIRST, before anything below reads a store:
+	// every one of them resolves through paths.AgentStateDir now, and a read that lands there
+	// before the migration reads an empty store — the session ledger included, which is the
+	// Console's whole session list.
+	//
+	// After the listen above, deliberately: that bind is what stops a second Agent in this
+	// container, so the migration cannot be running twice here. What it does not stop is the
+	// af-db subcommand, which a user runs by hand — runAFDB migrates for itself.
+	if r := statemig.Run(); r.Files > 0 || r.Skipped > 0 || len(r.Errs) > 0 {
+		log.Printf("state: migrated %d entr(y|ies), %d file(s), %.1f MB in %s",
+			r.Entries, r.Files, float64(r.Bytes)/(1<<20), r.Took.Round(time.Millisecond))
+		for _, p := range r.SkippedPaths {
+			// Named, not counted: a live socket left behind costs nothing, while a
+			// credential left behind is a token the next chat turn will NOT fold back into
+			// the shared file — that CLI may ask for a fresh sign-in. The reader of a
+			// container log has no source tree to look any of this up in.
+			log.Printf("state: left in place (not migrated): %s", p)
+		}
+		for _, err := range r.Errs {
+			log.Printf("state: migration: %v", err)
+		}
+	}
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
 	// Seed the CP-injected internal git token (docs/reference/internal-git-provider)

@@ -109,7 +109,7 @@ type rateLimitState struct {
 	Spend bool `json:"spend,omitempty"`
 }
 
-var RateLimitStates = fstore.JSON[rateLimitState](paths.AgentConfigDir, "session-rate-limit", ".json")
+var RateLimitStates = fstore.JSON[rateLimitState](paths.AgentStateDir, "session-rate-limit", ".json")
 
 // The side effects stay replaceable: tests have neither tmux nor a CP.
 var (

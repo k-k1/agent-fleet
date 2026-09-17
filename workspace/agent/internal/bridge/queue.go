@@ -24,7 +24,7 @@ const maxQueue = 200
 // message is dropped with a log line (fire-and-forget, docs/log/37 contract 4).
 const maxAttempts = 5
 
-func queueDir() string { return filepath.Join(paths.AgentConfigDir(), "bridge-queue") }
+func queueDir() string { return filepath.Join(paths.AgentStateDir(), "bridge-queue") }
 
 // queued is the on-disk envelope: the message plus its delivery attempt count
 // (persisted so retries survive a daemon restart). Delivered tracks, per provider

@@ -105,7 +105,7 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 	// claude restarted itself it dropped --session-id and moved to an id of its own
 	// (sid.go). Resuming our slot sid there dies with "No conversation found" and the
 	// user silently loses the conversation on every restart.
-	if resume := LiveSID(sid); len(rawJSONLPaths(resume)) > 0 {
+	if resume := LiveSID(sid); len(rawJSONLPathsIn(resume, session.CWDForUUID(sid))) > 0 {
 		// Already materialized (normal session, or a fork after its first launch):
 		// resume our own jsonl. ForkFrom is intentionally ignored here so a restart
 		// never re-copies the source.
@@ -125,10 +125,24 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 // rawJSONLPaths returns the conversation log file(s) claude stores UNDER THAT EXACT
 // id, at ConfigDir()/projects/<project>/<id>.jsonl (CLAUDE_CONFIG_DIR when set,
 // P3-5 stage 2) — NOT a hardcoded ~/.claude. Takes the id at face value.
-func rawJSONLPaths(id string) []string {
+func rawJSONLPaths(id string) []string { return rawJSONLPathsIn(id, "") }
+
+// rawJSONLPathsIn is rawJSONLPaths with the session's cwd, when the caller can supply it.
+// The cwd names the project directory claude put the log in (project_dir.go), so the search
+// behind the memo becomes one Lstat instead of a sweep of every project directory — and the
+// memo's own re-search after memoTTL becomes that cheap too, which is what makes the TTL
+// affordable.
+//
+// Deriving is only ever an optimisation: a miss (wrong guess, unknown cwd, a session claude
+// resumed somewhere else) falls through to the same Glob as before. When the guess hits, the
+// answer is the log under the session's OWN cwd, which is the one claude is appending to.
+func rawJSONLPathsIn(id, cwd string) []string {
 	// Memoized: the `projects/*` sweep is the agent's hottest file-system operation and
 	// CLAUDE_CONFIG_DIR is on EFS. See jsonl_memo.go for the measurement and the invariants.
 	return jsonlMemo.lookup(ConfigDir()+"\x00"+id, func() []string {
+		if p := guessProjectPath(cwd, id+".jsonl"); p != "" {
+			return []string{p}
+		}
 		m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", id+".jsonl"))
 		return m
 	})
@@ -140,7 +154,9 @@ func rawJSONLPaths(id string) []string {
 // abort detection, background-work detection, the Remote Control URL — so they all
 // follow the drift.
 func jsonlPaths(sid string) []string {
-	return rawJSONLPaths(LiveSID(sid))
+	// session.CWDForUUID is a hint and "" is an ordinary answer; rawJSONLPathsIn then
+	// searches exactly as it always did.
+	return rawJSONLPathsIn(LiveSID(sid), session.CWDForUUID(sid))
 }
 
 // SessionJSONLExists reports whether a conversation log for sid is on disk. When

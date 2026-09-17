@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -43,7 +44,7 @@ type sessionHandoffProposal struct {
 }
 
 func HandoffProposalPath(name string) string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "session-handoffs", name+".json")
+	return filepath.Join(paths.AgentStateDir(), "session-handoffs", name+".json")
 }
 
 func newHandoffProposalID() string {

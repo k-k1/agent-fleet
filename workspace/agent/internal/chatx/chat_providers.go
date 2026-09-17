@@ -497,7 +497,7 @@ func codexChatBaseArgs() []string {
 // would replace the symlink with a diverging real file). Call again after each exec
 // to fold a rotated token back into the shared file.
 func chatCodexHome() (string, error) {
-	dir := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-codex")
+	dir := filepath.Join(paths.AgentStateDir(), "chat-codex")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
@@ -744,7 +744,7 @@ func opencodeChatDir(c *ChatConversation) string {
 	if err != nil {
 		return chatWorkdir()
 	}
-	dir := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "opencode-"+grant+serverSetKey(servers))
+	dir := filepath.Join(paths.AgentStateDir(), "chat-wd", "opencode-"+grant+serverSetKey(servers))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return chatWorkdir()
 	}
@@ -781,7 +781,7 @@ func opencodeChatConfig(c *ChatConversation) string {
 	if !c.afToolsEnabled() || !paths.ValidIDSegment(c.ID) {
 		return ""
 	}
-	dir := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "opencode-conv")
+	dir := filepath.Join(paths.AgentStateDir(), "chat-wd", "opencode-conv")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		log.Printf("opencode chat config: %v (af tools unavailable this turn)", err)
 		return ""
@@ -1075,7 +1075,7 @@ func agyChatModel(model string, catalog []agents.ModelChoice) string {
 // must ride mcp_config.json args — there is no per-invocation override to carry
 // the conversation id. The dir doubles as the cwd→UUID capture scope.
 func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
-	base := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "agy-"+c.ID)
+	base := filepath.Join(paths.AgentStateDir(), "chat-wd", "agy-"+c.ID)
 	home = filepath.Join(base, "home")
 	wd = filepath.Join(base, "wd")
 	cliDir := filepath.Join(home, ".gemini", "antigravity-cli")
@@ -1734,7 +1734,7 @@ func cliErr(err error) string {
 // chatWorkdir is a dedicated empty dir the headless CLIs run in, so a chat turn
 // never accidentally touches the user's repos.
 func chatWorkdir() string {
-	d := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd")
+	d := filepath.Join(paths.AgentStateDir(), "chat-wd")
 	_ = os.MkdirAll(d, 0o700)
 	return d
 }
@@ -1746,7 +1746,7 @@ func chatClaudeDir() string {
 	if v := os.Getenv("AF_CHAT_CLAUDE_DIR"); v != "" {
 		return v
 	}
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "chat-claude")
+	return filepath.Join(paths.AgentStateDir(), "chat-claude")
 }
 
 var migrateChatClaudeOnce sync.Once
