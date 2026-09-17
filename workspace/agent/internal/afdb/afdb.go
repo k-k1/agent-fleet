@@ -50,6 +50,75 @@ type Instance struct {
 	Databases map[string]string `json:"databases,omitempty"`
 }
 
+// UnmarshalJSON accepts `major` either as the string this build writes ("17",
+// "8.4") or as the number the P0 build wrote (17). Without this, a registry left
+// by an older agent fails to parse and every af-db verb — including the ones that
+// would repair it — stops with "registry parse".
+func (i *Instance) UnmarshalJSON(b []byte) error {
+	type plain Instance
+	aux := struct {
+		*plain
+		Major json.RawMessage `json:"major"`
+	}{plain: (*plain)(i)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	i.Major = ""
+	switch {
+	case len(aux.Major) == 0 || string(aux.Major) == "null":
+	case aux.Major[0] == '"':
+		var s string
+		if err := json.Unmarshal(aux.Major, &s); err != nil {
+			return err
+		}
+		i.Major = s
+	default:
+		var n json.Number
+		if err := json.Unmarshal(aux.Major, &n); err != nil {
+			return err
+		}
+		i.Major = n.String()
+	}
+	return nil
+}
+
+// tailWriter keeps the tail of a subprocess's output so that a failure can carry
+// the reason with it: "install-mysql 8.4 failed: exit status 3" tells a member
+// reading the Console card nothing, while the installer's own last line names the
+// library, the URL or the sha that went wrong.
+type tailWriter struct {
+	buf []byte
+}
+
+// tailWriterMax bounds what is kept; installers are chatty and only the end matters.
+const tailWriterMax = 4096
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	if len(w.buf) > tailWriterMax {
+		w.buf = w.buf[len(w.buf)-tailWriterMax:]
+	}
+	return len(p), nil
+}
+
+// reason returns the last few non-empty lines, ready to append to an error
+// message, or "" when the subprocess said nothing.
+func (w *tailWriter) reason() string {
+	var lines []string
+	for _, l := range strings.Split(string(w.buf), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > 3 {
+		lines = lines[len(lines)-3:]
+	}
+	return ": " + strings.Join(lines, " / ")
+}
+
 // registry is the on-disk JSON structure.
 type registry struct {
 	Instances map[string]*Instance `json:"instances"`
@@ -282,7 +351,9 @@ func readRegistry() (*registry, error) {
 		return nil, err
 	}
 	if err := json.Unmarshal(b, r); err != nil {
-		return nil, fmt.Errorf("registry parse: %w", err)
+		// Name the file: a registry this build cannot read is repaired by moving
+		// it aside, and the caller sees this text on the Console card.
+		return nil, fmt.Errorf("registry parse (%s): %w", registryPath(), err)
 	}
 	if r.Instances == nil {
 		r.Instances = make(map[string]*Instance)
