@@ -294,6 +294,21 @@ export function asciiPunctuationRule(rule: RegExp): RegExp {
   return source === rule.source ? rule : new RegExp(source, rule.flags);
 }
 
+// Where a bare URL has to stop. GFM's autolink rule runs to the next whitespace or `<` and
+// nothing else (`[^\s<]*`), and its backpedal only hands back trailing ASCII punctuation.
+// Japanese prose has no space to stop on and sets its punctuation flush against the URL, so
+//   https://github.com/k-k1/agent-fleet/pull/727（base は develop）
+// linked `…/pull/727（base`, percent-encoding the fullwidth paren and the word after it into
+// the href: the reader loses the working link AND the word, and 、。」・… all do the same.
+//
+// So a bare URL ends at the first non-ASCII punctuation or symbol as well. Letters are not
+// touched, which is what keeps https://ja.wikipedia.org/wiki/日本語 whole — and 人々, 〇〇, コード
+// with it, since 々〆〇ー are letters (Lm/Lo/Nl), not punctuation. Nothing changes over the
+// ASCII range: marked's own backpedal still decides where `…/x).` ends. An author who really
+// means a URL with a fullwidth character in it still has `<…>` and `[text](url)`, which are
+// read by other rules entirely.
+const URL_STOP = /(?![\x00-\x7f])[\p{P}\p{S}]/u;
+
 type Rules = Tokenizer["rules"];
 const CJK_FRIENDLY_RULES = ["emStrongLDelim", "emStrongRDelimAst", "delLDelim", "delRDelim"] as const;
 // Marked hands the tokenizer a fresh `rules` object per Lexer, holding the shared rule set
@@ -374,6 +389,14 @@ export const marked = new Marked({
     html(src) {
       const token = Tokenizer.prototype.html.call(this, src);
       return token && !isRenderedHtmlTag(token.raw) ? undefined : token;
+    },
+    // Bare URLs (the GFM autolink extension). marked's own tokenizer still decides what is a
+    // URL, where it ends and how much source it consumes — it is only shown a source cut short
+    // at the first character that cannot belong to one (see URL_STOP). Cutting the input rather
+    // than editing the token keeps `raw` and the backpedal consistent by construction.
+    url(src) {
+      const stop = src.search(URL_STOP);
+      return Tokenizer.prototype.url.call(this, stop > 0 ? src.slice(0, stop) : src);
     },
     // The two tokenizers that read `*`/`**` and `~~`. Each one is marked's own, called
     // twice at most — see retryWithCjkRules. `_` never takes the second attempt.

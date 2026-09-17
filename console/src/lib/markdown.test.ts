@@ -245,6 +245,58 @@ describe("tag-shaped text that is not HTML", () => {
   });
 });
 
+// A bare URL with Japanese punctuation against it. GFM autolinks up to the next space, and
+// Japanese prose has none — so the paren, the word after it and the 。 ended up inside the
+// href. See URL_STOP in markdown.ts.
+describe("bare URLs next to non-ASCII punctuation", () => {
+  const inline = (source: string) => marked.parseInline(source) as string;
+
+  it("ends the link where the prose starts", () => {
+    expect(inline("PR #727 → https://github.com/k-k1/agent-fleet/pull/727（base は develop）")).toBe(
+      'PR #727 → <a href="https://github.com/k-k1/agent-fleet/pull/727">https://github.com/k-k1/agent-fleet/pull/727</a>（base は develop）',
+    );
+    expect(inline("詳細は https://example.com/a、次に https://example.com/b。")).toBe(
+      '詳細は <a href="https://example.com/a">https://example.com/a</a>、次に <a href="https://example.com/b">https://example.com/b</a>。',
+    );
+    expect(inline("「https://example.com/x」を開く")).toBe(
+      '「<a href="https://example.com/x">https://example.com/x</a>」を開く',
+    );
+    // Two URLs separated by a 中黒 came out as one link over both.
+    expect(inline("https://example.com/a・https://example.com/b")).toBe(
+      '<a href="https://example.com/a">https://example.com/a</a>・<a href="https://example.com/b">https://example.com/b</a>',
+    );
+  });
+
+  it("keeps a URL whose path is Japanese", () => {
+    expect(inline("https://ja.wikipedia.org/wiki/日本語 を見る")).toContain(
+      ">https://ja.wikipedia.org/wiki/日本語</a>",
+    );
+    // 々 and 〇 are letters, not punctuation, and stay in the path with the kanji.
+    expect(inline("https://example.com/wiki/人々と〇〇")).toContain(">https://example.com/wiki/人々と〇〇</a>");
+    expect(inline("https://example.com/コード一覧")).toContain(">https://example.com/コード一覧</a>");
+  });
+
+  it("still takes a fullwidth character in a URL the author marked as one", () => {
+    expect(inline("<https://example.com/x（y）>")).toContain('href="https://example.com/x%EF%BC%88y%EF%BC%89"');
+    expect(inline("[注](https://example.com/x（y）)")).toContain('href="https://example.com/x%EF%BC%88y%EF%BC%89"');
+  });
+
+  it("reads an ASCII document exactly as marked does", () => {
+    // Trailing punctuation, balanced parens, www. and email are marked's backpedal at work,
+    // untouched here. A difference in any of them is this rule reaching past its business.
+    const cases = [
+      "see https://example.com/x.",
+      "see https://example.com/x, then https://example.com/y!",
+      "(https://example.com/x)",
+      "https://en.wikipedia.org/wiki/Foo_(bar) is one link",
+      "mail taro@example.com now",
+      "www.example.com/x?a=1&b=2#c",
+      "https://example.com/x?q=%E6%97%A5#frag",
+    ];
+    for (const source of cases) expect(inline(source)).toBe(new Marked().parseInline(source) as string);
+  });
+});
+
 // Emphasis around Japanese punctuation. CommonMark reads 「、。… as punctuation, and a
 // delimiter with punctuation on one side and a letter on the other flanks neither way —
 // so bold written the way Japanese is written came out as literal asterisks. See
