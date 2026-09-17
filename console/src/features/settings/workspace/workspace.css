@@ -657,6 +657,39 @@
   padding: 2px 10px;
 }
 
+.db-btn-drop {
+  color: var(--del);
+}
+
+/* Create a database by name. The hint sits on the same flex line and wraps under
+   the field on a narrow pane, so a bad name never pushes the button off-screen. */
+.db-create {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.db-create-name {
+  font-family: var(--mono, monospace);
+  font-size: 11.5px;
+  padding: 2px 6px;
+  min-width: 0;
+  width: 16em;
+  max-width: 100%;
+}
+
+.db-create-hint {
+  font-size: 11px;
+  min-width: 0;
+}
+
+.db-create-bad {
+  color: var(--del);
+}
+
 /* Stop dropdown — floated below the Stop button; stays anchored left. */
 .db-stop-wrap {
   position: relative;

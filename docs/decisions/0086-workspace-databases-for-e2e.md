@@ -974,3 +974,109 @@ confirmation.
 
 **Next**, unchanged except for what this run closed: the Console card on a workspace whose
 Agent is the image's, the first ECS run with a scratch-disk datadir, and arm64 MySQL.
+
+## Decision 4′ overridden: a workspace stop does not delete a database (2026-09-18)
+
+The author read decision 4′ back and rejected the behaviour it describes: **"the databases are
+gone when the workspace stops" is not something a deployment may do.** Everything below replaces
+decision 4 and decision 4′; the sections above stay as written.
+
+- **Decision 4′ → 4″. The datadir is always `~/.local/state/af-db/<instance>`.** `AF_WS_SCRATCH`
+  is not consulted unless the member asks for it by name. Home is where a workspace's own state
+  lives, and it is the only place that survives a stop.
+- **`af-db up --ephemeral` opts in to the task-local disk**, for the member who knows the
+  contents are a fixture and wants the speed. It is sticky on the instance: a later plain
+  `af-db up` keeps the datadir where the member put it rather than quietly initdb-ing an empty
+  one in the home. Where no task-local disk exists (`AF_WS_SCRATCH` unset) it prints that it was
+  ignored, uses home, and — this is the part worth naming — **does not record the instance as
+  ephemeral**, so the datadir will not move on the day a deployment starts injecting one.
+- **`--persist` becomes `--durable`, and the old spelling keeps working.** With home as the
+  default, `--persist` no longer chooses a location: all it does is turn `fsync` (Postgres) and
+  `innodb-flush-log-at-trx-commit` (MySQL) back on. A flag named for the half that is now the
+  default would be read as "makes my data persist" by every member who meets it, and the true
+  answer — "it already does" — is what the name should say. `--persist` still runs and prints
+  one line saying it is now `--durable` and that the datadir survives a stop regardless: it is
+  in shell histories and in this repository's own documentation, and failing on it would teach
+  nothing. The registry key stays `persist` for the same reason it always did — renaming it
+  would drop the setting from every registry written before today.
+- **`af-db down --purge` is untouched.** It is the member saying "delete this", which is a
+  different act from stopping a workspace for the night.
+
+### Why this costs nothing today, measured (2026-09-18, the dev deployment)
+
+The argument decision 4 was built on does not hold on the deployment that exists:
+
+- **`AF_WS_SCRATCH` is unset on the ecs-ec2 development deployment**, as the 2026-09-17 live run
+  already recorded. Every datadir there is in the home *now*. So this correction changes nothing
+  a member sees today; it closes a trap before the day a scratch disk is injected arms it. It
+  also means **there is nothing to migrate**: no member has a datadir on a scratch disk to move.
+- **`/home/dev` on that deployment is an EBS volume** — 50 GB, `/dev/nvme1n1`, read off `df` —
+  **not EFS.** Decision 4's second reason, "keep a few thousand small files off EFS, which
+  ADR 0044 measured at about 14.5 ms per file", does not apply to the ecs-ec2 home at all. What
+  is on EFS there is `~/.config`, the keep volume — which holds the registry and the password
+  file, a handful of files, not a datadir.
+- **The home-datadir numbers were never slow.** The 2026-09-17 arm64 run (m8g.large) measured
+  Postgres install + `initdb` + start at **1.6 s** and `af-db up mysql` at **5.2 s** — those were
+  home datadirs, because the variable was unset. `control-plane`'s
+  `TestPostgres|TestSchemaDialectParity` is 4 PASS / 0 SKIP against one. Nothing here is waiting
+  on a faster disk.
+- **Surviving a stop is measured**, also on 2026-09-17: a row written before the workspace was
+  stopped was still there after it started again.
+
+### Open question 2 is promoted, and re-asked
+
+The original open question 2 — "a datadir on EFS: how slow, and is it safe? Decides whether
+`--persist` is recommended, discouraged, or refused for MySQL" — is superseded. It asked about an
+opt-in flag; with home as the default it asks about the default itself, and only on the profile
+where home is EFS:
+
+> **2″. On a Fargate deployment, where the home is EFS, is a Postgres or InnoDB datadir fast
+> enough and safe?** Unmeasured. It does not affect ecs-ec2, docker or native, whose homes are
+> block storage. If the answer is bad, the fix is a Fargate-specific datadir location or a
+> refusal to offer MySQL there — **not** a return to a default that deletes the member's data,
+> which is settled.
+
+Two things make this a smaller risk than it reads. NFS is a correctness question for a datadir
+mainly through file locking, and both servers are single-instance, single-writer here, reached
+over a unix socket by one workspace. And a member who finds it slow has `--ephemeral`, which is
+exactly the old default, one flag away.
+
+### Not changed, and known: the registry and the datadir live in different trees
+
+The registry moved to `~/.local/state/agent-fleet/af-db/` with the rest of the Agent's state; the
+datadir is still `~/.local/state/af-db/`. They should share a parent. Moving the datadir under
+the member's feet would strand every database that exists, for a tidiness gain, so it is left
+where it is and written down here instead of being discovered again.
+
+## Decision 9 gains a tab: databases are created and dropped by name (2026-09-18)
+
+Decision 9 put the Console surface in "a card in the workspace settings", and P1 built it as the
+last card of the Toolchains tab. The author asked for it to become its own **Databases** tab, and
+for the tab to create and delete databases by name. Both are accepted; this replaces decision 9's
+placement.
+
+- **Databases are not a toolchain.** A Java version is a setting picked once and forgotten; these
+  hold a member's data and are made, connected to and destroyed. Sitting under the language
+  pickers, the card was also the last thing on a long tab — findable only by someone who already
+  knew it was there.
+- **`POST /env/databases/{engine}/create` and `/drop`, each requiring `db=<name>`.** Same rule as
+  reset, for the same reason: the Agent asked for a database without a name answers with
+  `DBNameFor(ResolveDir())` — its own directory — so a create would make a database nobody asked
+  for and a drop would destroy one nobody named. Absent or malformed name → 400 `db_required` /
+  `bad_db`. `create` is idempotent (the member asked for the database to be there, and it is);
+  `drop` on an absent database succeeds for the same reason.
+- **The drop is `WITH (FORCE)` on Postgres.** A plain `DROP DATABASE` refuses while anything is
+  connected, and the thing connected is usually a `psql` the member left in another pane. They
+  pressed a button labelled with the database's name, after a confirmation that named it; leaving
+  them with "database is being accessed by other users" and no way to act on it from the Console
+  is the worse answer.
+- **`af-db create --db=NAME` and `af-db drop --db=NAME`** exist too. Decision 1 says the contract
+  is `af-db`; a verb the Console can reach and a shell cannot would break that.
+- **The name is checked in the Console before it is sent**, against the Agent's own
+  `^[a-z_][a-z0-9_]{0,62}$`, and against the names already on that engine — so a bad name is a
+  disabled button with a sentence under it rather than a 400 in a toast.
+
+**Next**: the first ECS run with a scratch-disk datadir is no longer a thing to wait for — no
+deployment injects one and `--ephemeral` is now what asks for it. What is still untested is the
+Console tab on a workspace whose Agent is the image's, arm64 MySQL through the tab, and open
+question 2″.

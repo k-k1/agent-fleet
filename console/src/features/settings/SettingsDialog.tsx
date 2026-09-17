@@ -24,6 +24,9 @@ import { DisplayTab } from "./personal/DisplayTab.tsx";
 import { AccountTab } from "./personal/AccountTab.tsx";
 import { KeysTab } from "./personal/KeysTab.tsx";
 import { EnvTab } from "./workspace/EnvTab.tsx";
+// Databases (ADR 0086). Its own section rather than a card under the toolchains: these
+// hold a member's data and are created and destroyed, which a version picker is not.
+import { DatabaseTab } from "./workspace/DatabaseTab.tsx";
 // What the workspace runs on (docs/log/63 §63.9 measured half + the runtime's declared box).
 import { MachineTab } from "./workspace/MachineTab.tsx";
 // Preview subdomains (docs/log/81). Its own section rather than part of the toolchain one:
@@ -112,6 +115,7 @@ export const GROUPS: { key: string; label: string; items: [string, string][] }[]
       // is what decides which of those are even installable.
       ["machine", "set.tab_machine"],
       ["env", "set.tab_env"],
+      ["database", "set.tab_database"],
       ["preview", "set.tab_preview"],
       ["internalrepos", "set.tab_internalrepos"],
       ["backup", "set.tab_backup"],
@@ -232,6 +236,7 @@ export function SettingsDialog() {
             {section === "memory" && <MemoryTab />}
             {section === "machine" && <MachineTab />}
             {section === "env" && <EnvTab />}
+            {section === "database" && <DatabaseTab />}
             {/* Hidden from the rail, the section can still survive in the remembered last-opened
                 tab. PreviewTab itself checks previewDomain and says the deployment has none, so
                 the capability check is not repeated here — unlike cost, it never goes blank. */}

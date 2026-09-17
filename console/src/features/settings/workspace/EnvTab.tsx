@@ -11,7 +11,6 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { pinDrift } from "../../../lib/pinDrift.ts";
 import { relTime } from "../../../lib/intl.ts";
 import { watcherHealth, type CLIRelease } from "../cliRelease.ts";
-import { EnvTabDatabases } from "./EnvTabDatabases.tsx";
 
 // EnvTab (the "toolchains" tab) selects the workspace toolchains: timezone, node (via nvm),
 // go, and java (a pre-baked Temurin JDK), plus the read-only bundled-tool versions and
@@ -105,7 +104,6 @@ export function EnvTab() {
       {/* cliRelease rides on ws-settings, which is already fetched above — so the row costs
           no extra request and is there whether the workspace runs or not. */}
       <ToolVersions running={running} cliRelease={au?.cliRelease} />
-      <EnvTabDatabases running={running} />
     </div>
   );
 }

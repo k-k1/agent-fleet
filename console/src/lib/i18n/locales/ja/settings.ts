@@ -499,6 +499,7 @@ export const settings = {
   "set.tab_memory": "エージェントメモリ",
   "set.tab_machine": "マシン",
   "set.tab_env": "ツールチェーン",
+  "set.tab_database": "データベース",
   "set.tab_preview": "プレビュー用サブドメイン",
   "set.tab_agents": "エージェント",
   "set.tab_assistant": "アシスタント",

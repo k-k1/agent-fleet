@@ -204,9 +204,16 @@ A few things worth knowing:
 - **`af-db url --tcp`** — use when the test driver requires TCP (for example,
   `jdbc:postgresql://127.0.0.1:…`). The default URL uses a unix socket, which most Go and Python
   clients support but JDBC cannot.
-- **`af-db up --persist`** — forces the database files onto the home volume so they survive a
-  workspace stop. Only meaningful on ECS deployments where the default disk is task-local and
-  cleared on stop; on docker and native deployments the files already persist across stops.
+- **Your data survives a Stop → Start.** The database files live in your home
+  (`~/.local/state/af-db`), which is workspace state like anything else there. Only two things
+  delete them: `af-db down --purge`, and deleting a database from the Databases tab.
+- **`af-db up --durable`** — also flushes every commit to disk (`fsync`). The default trades that
+  for speed, which is the right trade for test data: a crash of the workspace can lose the last
+  few transactions, but a normal stop never does. (`--persist` is the old name for this flag and
+  still works.)
+- **`af-db up --ephemeral`** — the opposite: put the files on the task-local disk, which is
+  faster and is **wiped when the workspace stops**. Use it when you know the contents are a
+  fixture. Where the deployment has no task-local disk, it says so and uses your home.
 - Install `psql` with `workspace-agent install-pg-client`.
 
 ### MySQL
@@ -235,25 +242,31 @@ Things to know about MySQL specifically:
 - The memory guard refuses `af-db up mysql` when the workspace's cgroup limit is below 1 GiB
   and says so — run `af-db down postgres` first if Postgres is running.
 
-### Console database card
+### Console Databases tab
 
-The workspace settings **Toolchains** tab has a **Databases** card that shows the state of every
-engine — version, resident size (MB), port, connection URL — and lets you Start, Stop, or Reset
-an engine without opening a terminal.
+The workspace settings **Databases** tab shows the state of every engine — version, resident size
+(MB), port, connection URL — and lets you start and stop an engine, and create, delete or reset a
+database, without opening a terminal.
 
 - **Start** on an uninstalled engine downloads and installs it first, then starts it. The card
   polls automatically while the state is `installing` or `starting`.
 - **Stop** has a "Stop and remove data" option (`--purge`): use it to free the datadir space. It
   takes **every database on that engine** with it — other working copies' included, and any
   shared one made with `--db=`. To start one over, use **Reset** on its row instead.
-- **Reset** drops and recreates the per-working-copy database (same as `af-db reset`). A
+- **Create** makes a database with the name you type (same as `af-db create --db=<name>`). Use it
+  for anything that is not one working copy's database — a scratch schema, a second database for
+  one project, one shared between sessions. Names are lower-case letters, digits and `_`, not
+  starting with a digit; the button stays disabled with the reason shown until the name is usable.
+- **Delete** removes one database and everything in it (same as `af-db drop --db=<name>`), after a
+  confirmation that names it. Anything still connected to that database is disconnected.
+- **Reset** empties one database — it is dropped and recreated (same as `af-db reset`). A
   confirmation is shown before anything is deleted.
 - **One row per database**, with the working copy it belongs to; Copy hands you the URL of
-  *that* database. When there is none yet, run `af-db url` in a working copy and it appears here.
+  *that* database. When there is none yet, create one here or run `af-db url` in a working copy.
 - The **socket / TCP toggle** on the URL lets you copy whichever form your driver needs.
 - Any error from the last operation is shown inline under the engine row.
 
-The card becomes active once the workspace is running; when the workspace is stopped it shows
+The tab becomes active once the workspace is running; when the workspace is stopped it shows
 a placeholder and makes no API calls.
 
 ## Subversion (SVN) repositories

@@ -109,17 +109,12 @@ func waitMySQLReady(binDir, sockFile, pw string, timeout time.Duration) error {
 
 // startMySQLServer initializes (if new datadir) and starts mysqld.
 // Caller must hold the start lock.
-func startMySQLServer(inst *Instance, persist bool) error {
+func startMySQLServer(inst *Instance, opts startOpts) error {
 	major := inst.Major
 	root := inst.Root
 	binDir := filepath.Join(root, "bin")
 
-	var base string
-	if persist {
-		base = homeStateBase()
-	} else {
-		base = scratchBase()
-	}
+	base, onScratch := datadirBase(opts.Ephemeral)
 	datadir := filepath.Join(base, "mysql-"+major, "data")
 	sockdir := filepath.Join(sockBase(), "mysql-"+major)
 	sockFile := filepath.Join(sockdir, "mysql.sock")
@@ -128,7 +123,8 @@ func startMySQLServer(inst *Instance, persist bool) error {
 
 	inst.Datadir = datadir
 	inst.Sockdir = sockdir
-	inst.Persist = persist
+	inst.Durable = opts.Durable
+	inst.Ephemeral = onScratch
 
 	newInit := false
 	if _, err := os.Stat(datadir); os.IsNotExist(err) {
@@ -185,7 +181,7 @@ func startMySQLServer(inst *Instance, persist bool) error {
 		"--innodb-buffer-pool-size=64M",
 		"--performance-schema=0",
 	}
-	if !persist {
+	if !opts.Durable {
 		args = append(args, "--innodb-flush-log-at-trx-commit=0")
 	}
 
