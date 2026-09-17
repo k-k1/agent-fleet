@@ -406,10 +406,10 @@ func SubagentLogs(sid string) []string {
 // from the SLOT sid while jsonlPaths follows the drifted one (LiveSID), so a claude that
 // restarted itself onto an id of its own (sid.go) may keep its background agents under that
 // id instead — the transcript is then found, the directory beside it is empty, and this
-// answers "none". Measured, and the sweep it replaced answered "none" there too, so it is a
-// standing gap rather than a regression; closing it means using LiveSID(sid) here, and that
-// is worth doing only once someone has looked at a real drifted session to see which id the
-// subagents directory actually lands under.
+// answers "none". Measured here against a synthetic tree, where the sweep it replaced answered
+// "none" too — so it is a standing gap rather than a regression. Closing it means using
+// LiveSID(sid) here, and that is worth doing only once someone has looked at a REAL drifted
+// session to see which id the subagents directory actually lands under; nobody has.
 //
 // The other assumption cannot be checked from here: claude runs at a cwd derived from the
 // session's own Meta. AF sets it at launch (BuildLaunch passes m.CWD()), so the candidates

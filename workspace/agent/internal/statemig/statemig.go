@@ -205,8 +205,8 @@ func run(src, dst string, announce bool) Result {
 
 // copyTree copies from onto to, creating nothing that is already there, and removes each
 // source file it has accounted for. Returns the number of files written, their total size,
-// and how many were deliberately left behind (see entrySkipped) — a caller that sees any of
-// those must not mark the entry finished, or the leftovers become permanent.
+// and WHICH files were deliberately left behind (see entrySkipped) — a caller that gets any
+// of those must not mark the entry finished, or the leftovers become permanent.
 func copyTree(from, to string) (files int, bytes int64, skipped []string, errs []error) {
 	// Only the chat scratch borrows credentials through links, so only there does a regular
 	// file under one of those names mean "a refresh replaced the link". Scoping it keeps an
@@ -243,9 +243,10 @@ func copyTree(from, to string) (files int, bytes int64, skipped []string, errs [
 			return nil
 		}
 		if res == entrySkipped {
-			// Not ours to move, so not ours to delete either. Leaving the source is the
-			// whole point: what is skipped here is either live (a socket) or a credential
-			// that belongs on the volume it is already on.
+			// Not ours to move, so not ours to delete either. The two reasons cost the
+			// user very different things — a live socket, nothing; a rotated credential,
+			// possibly a fresh sign-in (copyEntry) — which is why the caller logs the
+			// paths rather than a count.
 			skipped = append(skipped, p)
 			return nil
 		}
