@@ -756,3 +756,43 @@ ADR は触っていない）が受け入れと並走した負荷で 1 回落ち�
 **次**：開発配備のイメージを焼き直して配備する（`mysql` ピン・3 ライブラリ・`af-db` シム・`postgres`
 のピン経路は、それまで全部未通過）。それから実カードと、作業ディスク上のデータディレクトリでの
 ECS の初回。
+
+## 焼き直したイメージの上で（2026-09-17・初の実機）
+
+開発配備のイメージを `9d5effa5`（#719 のマージ）から焼き直し、このコンテナに配備した。P1 が求めた
+ものは載っている——`/usr/local/bin/af-db`、`versions.json` の `postgres` / `mysql` ピンとアーキ別の
+sha、`libaio1t64` / `libnuma1` / `libncurses6`。P0・P1 の受け入れが届かなかった 2 経路を、`af-db` を
+一度も動かしていない HOME から測った。どちらも何か出た。
+
+**ピンによる供給経路は通る**。`install-postgres` 1.9 秒・`af-db up` 3.3 秒、`control-plane` の完了条件は
+再び **4 PASS・0 SKIP**。`install-mysql` はピンの 8.4.6 を落とし、`versions.json` の `mysql_sha256` が
+実物の tarball を検証した——Postgres と違ってメタデータの代替経路が無い分、ここまで一度も通って
+いなかった経路が通ったことになる。
+
+- **ライブラリ 3 本では足りない。`libaio.so.1` は trixie が配るものではない**。MySQL のバイナリは
+  `libaio.so.1` を要求するが、`libaio1t64` が入れるのは `libaio.so.1t64` で**互換シンボリックリンクは
+  付かない**。そのため焼き直し後のイメージでも `install-mysql` は
+  `unresolved libraries: libaio.so.1` で exit 3 のままだった。P1 の受け入れがこれを見なかったのは、
+  当時の `AF_DB_MYSQL_LIBS` のディレクトリに、焼き込み前に拾い集めた手製の
+  `libaio.so.1 -> libaio.so.1t64.0.2` が入っていたから。64 ビットでは t64 版は ABI が同一なので、
+  直し方はそのリンク 1 本——ただし `install-mysql` 自身が、バイナリの `RUNPATH`
+  （`$ORIGIN/../lib/private`）にあたる `lib/private` へ張る。実行時に `LD_LIBRARY_PATH` を触る必要が
+  無く、同じコードで arm64 も賄える。張り先は `ldconfig -p`（`dev` でも読める）が教える。`t64` の
+  相方が無い soname はこれまでどおり `mysqlCheckLDD` が報告する。直した後の実測（`AF_DB_MYSQL_LIBS`
+  はどこにも無し）: 導入 7.5 秒、`af-db up mysql` 15.0 秒、ソケット越しの `SELECT j->>'$.a'` が `42`、
+  `version` 8.4.6・`rssBytes` 233 MB、`down --purge` はきれい。`AF_DB_MYSQL_LIBS` は手順ではなく
+  逃げ道として残す。
+- **Console のカードは確かめられなかった。理由はこの ADR と関係が無い**。動いている Agent の
+  `GET /env/databases` は **404** を返す（`/env/toolchains` は 200）。`/proc/7/exe` が指しているのは
+  `/home/dev/.local/bin/workspace-agent`——P0 の受け入れ中にレーンが置いていった P0 世代の手元
+  ビルド（2026-09-17 06:29）だった。entrypoint の `exec workspace-agent` は `PATH` 経由で、
+  `~/.local/bin` が先勝ちし、`~/.local` は再起動でも recreate でも消えない。つまり置き忘れた
+  ビルド 1 本が、そのコンテナの Agent を恒久的に乗っ取る。`af-db` シム
+  （`exec workspace-agent af-db "$@"`）も同じ形で、Go 側は自分の再実行に既に
+  `/usr/local/bin/workspace-agent` を直書きしている（`paths.go:126`・`afdb/cmd.go:770`・
+  `afdb/mysql.go:77`）。当座の直しは置き忘れの削除とワークスペースの再起動、再発を止める直しは
+  entrypoint とシムが絶対パスを名指すこと。それまでカードの正常系は見えない——届くのは
+  `lastError` だけ。
+
+**次**（この実機で閉じた分を除いて変わらず）：Agent がイメージのものであるワークスペースでの
+Console カード、作業ディスク上のデータディレクトリでの ECS 初回、arm64 の MySQL。

@@ -812,3 +812,45 @@ residue was running in this container during the acceptance (a `mysqld` from
 **Next**: rebuild and deploy the development image (the `mysql` pin, the three libraries, the
 `af-db` shim and the `postgres` pin route are all unexercised until then), then the live card
 and the first ECS run with a scratch-disk datadir.
+
+## On the rebuilt image (2026-09-17, first live run)
+
+The development image was rebuilt from `9d5effa5` (the merge of #719) and deployed to this
+container. It carries what P1 asked for: `/usr/local/bin/af-db`, the `postgres` / `mysql` pins
+with their per-architecture shas in `versions.json`, and `libaio1t64` / `libnuma1` /
+`libncurses6`. Both paths the P0 and P1 acceptances could not reach are now measured, from
+HOMEs that had never seen `af-db`, and both found something.
+
+**The pinned supply route works.** `install-postgres` took 1.9 s and `af-db up` 3.3 s; the
+`control-plane` criterion gave **4 PASS, 0 SKIP** again; `install-mysql` downloaded the pinned
+8.4.6 and the `mysql_sha256` from `versions.json` verified the real tarball, so the pin route —
+untested until now, and without the Maven-metadata fallback Postgres has — is exercised.
+
+- **The three libraries are not enough: `libaio.so.1` is not what trixie ships.** MySQL's
+  binaries ask for `libaio.so.1`; `libaio1t64` installs `libaio.so.1t64` and **no compatibility
+  symlink**, so on the rebuilt image `install-mysql` still exited 3 with
+  `unresolved libraries: libaio.so.1`. The P1 acceptance never saw this because its
+  `AF_DB_MYSQL_LIBS` directory contained a hand-made `libaio.so.1 -> libaio.so.1t64.0.2` link,
+  scavenged before the bake existed. On 64-bit architectures the t64 library is ABI-identical,
+  so the fix is the symlink — made by `install-mysql` itself, into `lib/private`, which is on
+  the binaries' `RUNPATH` (`$ORIGIN/../lib/private`), so nothing touches `LD_LIBRARY_PATH` at
+  run time and arm64 is covered by the same code. `ldconfig -p` (readable as `dev`) supplies
+  the target; a soname with no `t64` counterpart is still reported by `mysqlCheckLDD`.
+  Measured after the fix, no `AF_DB_MYSQL_LIBS` anywhere: install 7.5 s, `af-db up mysql`
+  15.0 s, `SELECT j->>'$.a'` → `42` over the socket, `version` 8.4.6, `rssBytes` 233 MB,
+  `down --purge` clean. `AF_DB_MYSQL_LIBS` stays as the escape hatch, not the procedure.
+- **The Console card could not be verified, for a reason that has nothing to do with this
+  ADR.** `GET /env/databases` on the running Agent answers **404** while `/env/toolchains`
+  answers 200: `/proc/7/exe` points at `/home/dev/.local/bin/workspace-agent`, a hand-built
+  P0-era binary (2026-09-17 06:29) left behind by a lane during the P0 acceptance. The
+  entrypoint's `exec workspace-agent` goes through `PATH`, where `~/.local/bin` wins, and
+  `~/.local` survives both restart and recreate — so one stray build silently becomes the
+  container's Agent forever. The `af-db` shim (`exec workspace-agent af-db "$@"`) has the same
+  shape, while the Go code already hardcodes `/usr/local/bin/workspace-agent` for its own
+  re-exec (`paths.go:126`, `afdb/cmd.go:770`, `afdb/mysql.go:77`). Removing the stray binary
+  and restarting the workspace is the immediate fix; making the entrypoint and the shim name
+  the absolute path is the one that prevents it. Until then the card's healthy states are
+  unseen — only `lastError` is reachable.
+
+**Next**, unchanged except for what this run closed: the Console card on a workspace whose
+Agent is the image's, the first ECS run with a scratch-disk datadir, and arm64 MySQL.
