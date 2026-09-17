@@ -201,6 +201,8 @@ export const errors = {
   "err.logout_failed": "サインアウトできませんでした",
   "err.store_failed": "認証情報を保存できませんでした",
   "err.pty_failed": "エージェントの CLI を起動できませんでした",
+  "err.serve_not_owned":
+    "この opencode serve は別のプロセスが起動したもので、Agent からは入れ替えられません。設定を反映するにはワークスペースを再起動してください",
   "err.serve_not_ready": "エージェントのサービスが応答しませんでした",
   "err.agy_unsupported": "agy が見つかりません（イメージが古い可能性があります）",
   "err.no_flow": "サインインの手続きが見つからないか期限切れです。やり直してください",

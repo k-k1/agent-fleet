@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
 # ANY = registered without a method.
-# count: 269
+# count: 270
 GET /agents/memory/diff
 GET /agents/memory/export
 POST /agents/memory/import
@@ -108,6 +108,7 @@ DELETE /connections/opencode/oauth
 POST /connections/opencode/oauth/cancel
 POST /connections/opencode/oauth/poll
 POST /connections/opencode/oauth/start
+POST /connections/opencode/serve/restart
 PUT /connections/opencode/workspace
 DELETE /connections/opencode/{env}
 DELETE /connections/pagerduty

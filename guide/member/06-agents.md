@@ -150,6 +150,11 @@ Picking a preset fills in the env name automatically.
 Paste the key and press **"Connect"** to save it; it's injected when opencode launches. You
 can register multiple keys, and choose from the connected providers' models at launch.
 
+Changing a key or the billing route does **not** reach a running opencode serve on its own —
+serve keeps the configuration it started with. When a change needs applying, the card says so
+and offers **"Restart opencode serve to apply"**. A restart waits for opencode sessions to
+finish answering and cuts short any that do not, so press it when nothing is mid-turn.
+
 **Behavior** also lets you choose how opencode's thinking (chain-of-thought) is shown.
 
 - **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only — it doesn't change how the agent works (independent of the same setting on codex).

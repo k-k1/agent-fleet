@@ -425,6 +425,9 @@ func buildMux() *http.ServeMux {
 	// The id behind the link to the quota page (opencode.ai/workspace/{id}/go). Filled either
 	// by hand or learned automatically from a limit / balance error (docs/log/54 §54.7).
 	mux.HandleFunc("PUT /connections/opencode/workspace", opencode.HandlePutWorkspace)
+	// Applying a key / usage / engine change is the user's call, not ours: it replaces the
+	// shared daemon and cuts short any turn still running after the drain.
+	mux.HandleFunc("POST /connections/opencode/serve/restart", opencode.HandleServeRestart)
 	// SVN saved basic-auth creds (docs/log/41): saved at checkout time, added or corrected
 	// here (docs/log/41 amendment — declining the checkout opt-in used to be a one-way
 	// door), and forgotten here.
