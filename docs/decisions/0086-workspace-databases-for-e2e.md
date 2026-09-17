@@ -405,6 +405,10 @@ route. Decisions 1, 2, 5–10 stand; two of them gain a P0 item each (a client, 
   architectures" holds. And one trap: `workspace-agent <unknown-subcommand>` **boots the
   Agent** (`main.go` is a chain of `os.Args[1] ==` tests with no default), so `af-db` must be
   both a real `/usr/local/bin/af-db` shim and a dispatch line in `main.go`.
+  🔴 2026-09-17: the trap is closed. The branches are one table in `cli.go`; an argument it does
+  not name prints usage and exits 2, `--version` / `--help` are supported, and only "no
+  arguments" and `serve` boot the Agent. `af-db` is still a shim plus a table row. A second
+  Agent is harmless too — `serve` now takes the listening socket before any boot side effect.
 - **Decision 4 describes one profile as if it were all of them.** `AF_WS_SCRATCH` is set only
   by the ECS adapters (`entrypoint.sh:246`), and the entrypoint relocates only when the disk is
   30 GiB or more (`AF_WS_SCRATCH_MIN_GB`, `entrypoint.sh:263`) — a default Fargate deployment
