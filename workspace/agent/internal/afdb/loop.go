@@ -91,12 +91,16 @@ func CheckAllInstances(idleSince map[string]time.Time) {
 		if time.Since(idleSince[key]) >= threshold {
 			fmt.Fprintf(os.Stderr, "af-db: idle-stop %s-%s (no clients for %s)\n",
 				inst.Engine, inst.Major, threshold)
-			var stopErr error
-			if inst.Engine == "mysql" {
-				stopErr = stopMySQLServer(inst)
-			} else {
-				stopErr = stopServer(inst)
-			}
+			// Under the start lock, like every other stop: otherwise the loop can
+			// stop a server that a concurrent ensureUp has just finished starting
+			// (or is still initialising), and the caller gets a URL to a server
+			// this goroutine has already shut down.
+			stopErr := withStartLock(inst.Engine, inst.Major, func() error {
+				if inst.Engine == "mysql" {
+					return stopMySQLServer(inst)
+				}
+				return stopServer(inst)
+			})
 			if stopErr != nil {
 				fmt.Fprintf(os.Stderr, "af-db: idle-stop error: %v\n", stopErr)
 				continue

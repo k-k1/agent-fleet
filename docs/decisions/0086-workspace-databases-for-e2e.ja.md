@@ -843,5 +843,66 @@ sha、`libaio1t64` / `libnuma1` / `libncurses6`。P0・P1 の受け入れが届�
 検証は両側の単体テスト（`TestDatabaseEntriesPerWorkingCopy` と、2 行目の URL をコピーする
 DOM テスト）。実機のカードに載るのは次の焼き直しから。
 
+### 修正を積んだイメージで確認した（2026-09-17・同日）
+
+#721 のマージから開発配備のイメージを焼き直し、ここへ配備した。上の 2 回が約束しかできな
+かったことを、回避策を一切使わずに実測した：
+
+- `/proc/7/exe` は `/usr/local/bin/workspace-agent`、シムも
+  `exec /usr/local/bin/workspace-agent af-db "$@"`。PATH の影が Agent を奪うことはもう無い。
+- `af-db up mysql` を未経験の HOME から：端から端まで **27.6 秒**。ログに
+  `[install-mysql] linked libaio.so.1 -> /lib/x86_64-linux-gnu/libaio.so.1t64 (Debian t64 soname)`
+  が出て、`AF_DB_MYSQL_LIBS` は未設定。`down mysql --purge` もきれい。
+- `install-pg-client` を新しい HOME へ：**1.8 秒**（17.11-0+deb13u1）。前回は既に入っていて
+  取れなかった数字。
+- `GET /env/databases` は新しい形（エンジン単位の URL は無く、`databases` が一覧）で、
+  **カードがコピーする URL が実際につながる**。`af_agent_fleet_wip_szkxzgu_9af42b` のソケット形・
+  TCP 形の両方が `select current_database()` に自分の名前を返した。前のイメージの URL は
+  `database "af_dev_12fbd7" does not exist` だった。
+
+未検証のものは未検証のまま：ECS の作業ディスク上のデータディレクトリと、arm64 の MySQL。
+
+### arm64 と ECS をようやく測った（2026-09-17・開発配備）
+
+`0.21.1-dev-18cd6e52` を開発配備へ載せ、メンバーのワークスペースを起こした：`uname -m` は
+**aarch64**、`workspace-agent 0.21.1-dev-18cd6e52 (linux/arm64)`、m8g.large（6.87 GB・2 vCPU）。
+テナントのスロットクラスが既に `arm` だったので管理側の変更は不要だった。実行は別配備から
+`kind=shell` のセッション（エージェントを挟まない素の端末）で駆動し、下の数字はすべて
+`GET /api/fs/file` で生バイトとして読み戻したもの。
+
+- **arm64 の MySQL は動く。部分集合がまさに効いている**：`install-mysql` は端から端まで
+  **30.9 秒**（909 MB の `aarch64` tarball → 部分展開 → `stripped 176 ELF file(s)` →
+  `linked libaio.so.1 -> /lib/aarch64-linux-gnu/libaio.so.1t64`）で、ディスク上 **147 MB**
+  （`mysqld` 63 MB）。x86_64 の 446 MB に対してこの大きさ。`lib/private/icudt77l` はあり、
+  `lib/plugin/debug` は無い——P1 の訂正 2 点はそのとおりだった。`ldd` は `lib/private` 経由で
+  `libaio.so.1` を解決する。`af-db up mysql` は **5.2 秒**、エラーログに `MY-013829` は **0 件**、
+  `[ERROR]` も 0 件。`SELECT j->>'$.a'` はソケットでも `127.0.0.1` でも `42`。`version` 8.4.6・
+  `rssBytes` 227 MB、`down mysql --purge` で `mysqld` も datadir も残らない。ガイドの arm64
+  「数分」は、安全側に外れた記述になった。
+- **arm64 の Postgres**：このアーキの `postgres_sha256` でピンされた Zonky の
+  `linux-arm64v8` jar。導入＋`initdb`＋起動で **1.6 秒**。`install-pg-client` は **0.7 秒**。
+- **決定 4′ はこの ECS 配備では発動しない。`AF_WS_SCRATCH` が設定されていない。** datadir は
+  `~/.local/state/af-db/postgres-17/data` に置かれ、停止前に書いた行は**起動し直しても残って
+  いた**（`select count(*)` が 1）。つまり「ワークスペースを止めると消える」は、今日の ECS で
+  利用者が見る姿ではない——作業ディスクが注入されていれば見る姿ではある。変数が無い間は
+  `--persist` の違いは `fsync` だけで、既定も `--persist` も home に落ちる。ワークスペースに
+  作業ディスクを与えるかは ADR 0044 の問いでこの ADR の問いではないが、**持っていない ECS の
+  挙動を ADR が主張し続けるのはやめる**。
+- **停止をまたいで pid ファイルが残り、`af-db up` はそのまま起動する**。再起動後の最初の `up` が
+  `pg_ctl: another server might be running; trying to start server anyway` を出した。コンテナごと
+  死んだので `postmaster.pid` が残っており、誰も掃除しない。古い pid が死んでいたので 0.2 秒で
+  正しく起動したが、利用者に届く合図はこの 1 行だけで、**pid 番号が再利用されていた場合を
+  この経路は区別しない**。直さずここに記録する。
+
+### リセットにもデータベース名を渡すようにした（契約変更・M2＋M3）
+
+実機のあとのレビューで、同じ間違いが POST 側に残っていたと分かった。カードのリセットは
+engine しか送らず、`resetDB(engine, major, "")` は `DBNameFor(ResolveDir())`——Agent 自身の
+ディレクトリ——に落ちる。Postgres では `DROP DATABASE IF EXISTS` のあとに `CREATE DATABASE` を
+打つので、**押すと誰のものでもない `af_dev_…` が新規に作られ**、カードの行はどれも無傷のまま
+だった。`POST /env/databases/{engine}/reset` は `db=<name>` を必須にし（無ければ 400
+`db_required`、`--db` の書式に合わなければ 400 `bad_db`）、リセットのボタンはデータベースの行へ
+移した。押した行のデータベースをリセットし、確認ダイアログがその名前を言う。
+
 **次**（この実機で閉じた分を除いて変わらず）：Agent がイメージのものであるワークスペースでの
 Console カード、作業ディスク上のデータディレクトリでの ECS 初回、arm64 の MySQL。

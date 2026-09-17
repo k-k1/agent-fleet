@@ -153,6 +153,30 @@ describe("EnvTabDatabases", () => {
     expect(writeText).toHaveBeenCalledWith(second.urlSocket);
   });
 
+  it("Reset targets the row's own database (never the agent's own directory)", async () => {
+    api.mockResolvedValue({ engines: [pgRunning] });
+    apiJSON.mockResolvedValue({ status: pgRunning });
+    await mount();
+
+    const row = document.querySelector(".db-database")!;
+    const reset = Array.from(row.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      /Reset|リセット/.test(b.textContent || ""),
+    );
+    expect(reset).toBeTruthy();
+    await act(async () => {
+      reset!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const call = apiJSON.mock.calls.find((c) => String(c[0]).includes("/reset"));
+    expect(call).toBeTruthy();
+    // The name rides in the query string; without it the Agent would reset a
+    // database derived from its own working directory.
+    expect(String(call![0])).toContain("db=af_agent_fleet_9af42b");
+  });
+
   it("says so when a running engine has no database yet", async () => {
     api.mockResolvedValue({ engines: [{ ...pgRunning, databases: [] }] });
     await mount();

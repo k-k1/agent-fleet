@@ -282,7 +282,22 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case "reset":
-		if err := resetDB(engine, major, ""); err != nil {
+		// `db` names WHICH database to reset, and the caller has to say. The Agent
+		// cannot infer it: ResolveDir() would answer with the Agent's own directory,
+		// so an unqualified reset dropped and re-created a database no session uses
+		// (af_dev_… — the same mistake the engine-level URL made before it became a
+		// per-database list). The card sends the name from the row the member pressed.
+		dbName := r.URL.Query().Get("db")
+		if dbName == "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "db_required",
+				"db=<name> is required; it names the database to reset")
+			return
+		}
+		if err := validateExplicitDB(dbName); err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_db", err.Error())
+			return
+		}
+		if err := resetDB(engine, major, dbName); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "reset_failed", err.Error())
 			return
 		}

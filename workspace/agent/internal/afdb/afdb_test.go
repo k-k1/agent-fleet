@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,6 +101,20 @@ func TestRegistryMajorNumberOrString(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"instances":{"x":{"major":{"a":1}}}}`), &r); err == nil {
 		t.Error("expected an error for an object-valued major")
 	}
+
+	// Writing back normalises the old number to this build's string form, so a
+	// registry only has to be forgiven once.
+	var old registry
+	if err := json.Unmarshal([]byte(p0), &old); err != nil {
+		t.Fatalf("unmarshal p0: %v", err)
+	}
+	b, err := json.Marshal(&old)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"major":"17"`) {
+		t.Errorf("rewritten registry should carry a string major, got %s", b)
+	}
 }
 
 // TestTailWriterReason covers what a failed installer contributes to the error
@@ -175,6 +191,93 @@ func TestDatabaseEntriesPerWorkingCopy(t *testing.T) {
 		if strings.Contains(e.URLSocket, DBNameFor(ResolveDir())) && e.Name != DBNameFor(ResolveDir()) {
 			t.Errorf("URL names the agent's own directory instead of the entry: %q", e.URLSocket)
 		}
+	}
+}
+
+// TestStopInstanceWaitsForStartLock pins the exclusion that was missing: a purge
+// must not run while another caller holds the per-(engine, major) start lock,
+// because that caller is inside initdb / --initialize-insecure and the removal
+// would take a half-formed datadir out from under a booting server.
+func TestStopInstanceWaitsForStartLock(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// A registry entry with a datadir to purge, and no live server: stopInstance
+	// walks straight to the removal.
+	datadir := filepath.Join(tmp, "state", "postgres-17", "data")
+	if err := os.MkdirAll(datadir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := withLock(func() error {
+		r, err := readRegistry()
+		if err != nil {
+			return err
+		}
+		r.Instances["postgres-17"] = &Instance{
+			Engine: "postgres", Major: "17", Datadir: datadir,
+		}
+		return writeRegistry(r)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	released := make(chan struct{})
+	holding := make(chan struct{})
+	var releasedFirst atomic.Bool
+
+	go func() {
+		_ = withStartLock("postgres", "17", func() error {
+			close(holding)
+			// Hold it long enough that a stopInstance which ignores the lock
+			// removes the datadir before this returns.
+			time.Sleep(300 * time.Millisecond)
+			releasedFirst.Store(true)
+			return nil
+		})
+		close(released)
+	}()
+
+	<-holding
+	if err := stopInstance("postgres", "17", true); err != nil {
+		t.Fatalf("stopInstance: %v", err)
+	}
+	if !releasedFirst.Load() {
+		t.Error("stopInstance purged while the start lock was held")
+	}
+	<-released
+	if _, err := os.Stat(datadir); !os.IsNotExist(err) {
+		t.Errorf("datadir should be gone after the purge, stat err = %v", err)
+	}
+}
+
+// TestResetRequiresDatabaseName pins the reset contract: the caller names the
+// database. Asked without one, the Agent used to fall back to its own working
+// directory and reset af_dev_… — a database no session uses, which DROP/CREATE
+// then brought into existence.
+func TestResetRequiresDatabaseName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	for _, tc := range []struct{ name, query, wantCode string }{
+		{"no db", "", "db_required"},
+		// Uppercase and a hyphen fail ^[a-z_][a-z0-9_]{0,62}$. (A ';' would not
+		// even reach the handler: Go drops query parameters containing one.)
+		{"illegal db", "?db=Bad-Name", "bad_db"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/env/databases/postgres/reset"+tc.query, nil)
+			r.SetPathValue("engine", "postgres")
+			r.SetPathValue("action", "reset")
+			w := httptest.NewRecorder()
+
+			HandleDatabasesAction(w, r)
+
+			if w.Code != 400 {
+				t.Fatalf("status = %d; want 400 (body %s)", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tc.wantCode) {
+				t.Errorf("body should carry %q, got %s", tc.wantCode, w.Body.String())
+			}
+		})
 	}
 }
 
