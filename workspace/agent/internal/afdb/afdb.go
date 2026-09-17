@@ -474,6 +474,39 @@ func isRunning(pid int) bool {
 	return proc.Signal(syscall.Signal(0)) == nil
 }
 
+// procCmdline returns /proc/<pid>/cmdline with its NUL separators turned into
+// spaces, or "" when it cannot be read (the process is gone, or this is not Linux).
+func procCmdline(pid int) string {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.ReplaceAll(string(b), "\x00", " "))
+}
+
+// pidIsServerFor reports whether pid is alive AND is the engine's own server for
+// this datadir, by matching /proc/<pid>/cmdline.
+//
+// "A process with this pid exists" is not the same claim. A workspace that is
+// stopped as a container leaves its pid files behind; on the next boot the same
+// numbers belong to whatever started first. Reading the command line is what
+// separates "our server is up" from "someone else inherited the number", and the
+// answer decides whether a datadir may be removed or a pid file cleared.
+//
+// When /proc says nothing (cmdline unreadable), the caller's conservative
+// fallback applies: we do not claim the process is ours, and we do not claim it
+// is gone either.
+func pidIsServerFor(pid int, exeName, datadir string) bool {
+	if pid <= 0 || !isRunning(pid) {
+		return false
+	}
+	cmd := procCmdline(pid)
+	if cmd == "" {
+		return false
+	}
+	return strings.Contains(cmd, exeName) && (datadir == "" || strings.Contains(cmd, datadir))
+}
+
 // isPGRunning checks if the Postgres instance is running by cross-checking with
 // postmaster.pid in the datadir. When the pid file is absent (e.g. the file was
 // removed while the server is still up), it falls back to the registry pid so that
@@ -482,12 +515,52 @@ func isRunning(pid int) bool {
 func isPGRunning(pid int, datadir string) bool {
 	if datadir != "" {
 		if authPID, err := readPostmasterPID(datadir); err == nil && authPID > 0 {
-			return isRunning(authPID)
+			// A pid file that survived a container stop names a number that now
+			// belongs to someone else; only a postgres running THIS datadir counts.
+			return pidIsServerFor(authPID, "postgres", datadir)
 		}
 		// pid file absent — fall back to registry pid as a safety net.
 		return isRunning(pid)
 	}
 	return isRunning(pid)
+}
+
+// clearStalePIDFile removes a pid file left behind by a server that is no longer
+// there, and reports whether it removed one.
+//
+// The case is ordinary: the workspace is stopped as a container, so nothing runs
+// the shutdown path, and `postmaster.pid` / `mysqld.pid` stay in the datadir. The
+// next start then meets pg_ctl's "another server might be running; trying to
+// start server anyway" — which is a warning here and a refusal on the day the old
+// number belongs to a live process.
+//
+// It removes the file ONLY when the pid it names is provably not this engine's
+// server for this datadir. An unreadable /proc, or a live matching server, leaves
+// the file alone: two postmasters on one datadir is worse than a warning.
+func clearStalePIDFile(pidFile, exeName, datadir string) bool {
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		return false
+	}
+	line := strings.SplitN(strings.TrimSpace(string(b)), "\n", 2)[0]
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil {
+		// Unparsable pid file: nothing can be running under it.
+		pid = 0
+	}
+	if pidIsServerFor(pid, exeName, datadir) {
+		return false
+	}
+	if pid > 0 && isRunning(pid) && procCmdline(pid) == "" {
+		// Alive but unidentifiable — do not touch it.
+		return false
+	}
+	if err := os.Remove(pidFile); err != nil {
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "af-db: removed stale %s (pid %d is not %s for this datadir)\n",
+		filepath.Base(pidFile), pid, exeName)
+	return true
 }
 
 // readMySQLPID reads the MySQL pid file (one number per line).
@@ -507,7 +580,7 @@ func isMySQLRunning(pid int, datadir string) bool {
 	if datadir != "" {
 		pidFile := filepath.Join(filepath.Dir(datadir), "mysqld.pid")
 		if p, err := readMySQLPID(pidFile); err == nil && p > 0 {
-			return isRunning(p)
+			return pidIsServerFor(p, "mysqld", datadir)
 		}
 		// pid file absent — fall back to registry pid.
 		return isRunning(pid)

@@ -165,6 +165,12 @@ func startMySQLServer(inst *Instance, persist bool) error {
 	}
 	inst.Port = port
 
+	// Same as Postgres: a container stop leaves mysqld.pid behind, and the number
+	// in it belongs to someone else on the next boot. isMySQLRunning reads this
+	// file, so a stale one can make af-db believe a server is up and refuse
+	// --purge.
+	clearStalePIDFile(pidFile, "mysqld", datadir)
+
 	args := []string{
 		"--no-defaults",
 		"--basedir=" + root,
