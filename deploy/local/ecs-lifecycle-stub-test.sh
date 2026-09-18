@@ -132,8 +132,10 @@ case "$args" in
   *"ParameterKey=='LlmImageTag'"*) echo "server-cuda" ;;
   # The engine tools tag the LIVE stack asks for. Settable to empty on purpose: that is the
   # state of every stack on the update that INTRODUCES the parameter, and then the value the
-  # stack is about to take is cfn/60-engines.yaml's own Default.
-  *"ParameterKey=='EngineToolsImageTag'"*) echo "${STUB_ET_WANT-2026-09-11}" ;;
+  # stack is about to take is cfn/60-engines.yaml's own Default. The default answer here is a
+  # tag that is NEITHER the template's Default nor the stale one 3i-7 repairs, so the ordinary
+  # cases below show the LIVE value being honoured rather than agreeing by coincidence.
+  *"ParameterKey=='EngineToolsImageTag'"*) echo "${STUB_ET_WANT-2026-09-16}" ;;
   *"ParameterKey=='LlmApiKeySsmParam'"*) echo "/af-ws/engine-llm-key" ;;
   # `<Role>OfferBudgetSec` on the LIVE stack. 180 is the OLD meaning's default (a per-offer
   # purchase clock); since ADR 0077 the parameter bounds the box's ECS registration instead and
@@ -688,7 +690,7 @@ echo "== case 3i: update.sh does repository -> image -> stack, in that order =="
 ET_DEFAULT="$(sed -n '/^  EngineToolsImageTag:$/,/^  [A-Za-z]/p' "$ECS/cfn/60-engines.yaml" \
   | sed -n 's/^ *Default: *//p' | head -1 | tr -d '"')"
 [ -n "$ET_DEFAULT" ] || fail "cfn/60-engines.yaml declares no Default for EngineToolsImageTag"
-ET_GHCR="crane copy ghcr.io/k-k1/agent-fleet/engine-tools:2026-09-11"
+ET_GHCR="crane copy ghcr.io/k-k1/agent-fleet/engine-tools:2026-09-16"
 : > "$LOG"
 VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
   "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i" 2>&1 \
@@ -710,9 +712,11 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ET_IN_ECR=1 \
   "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i2" 2>&1 \
   || { cat "$WORK/out3i2"; fail "update.sh failed with the engine tools image already in ECR"; }
 hasnt "crane copy ghcr.io/k-k1/agent-fleet/engine-tools"
-grep -q "af-engine-tools:2026-09-11 is already in ECR" "$WORK/out3i2" \
+grep -q "af-engine-tools:2026-09-16 is already in ECR" "$WORK/out3i2" \
   || fail "it did not say why it copied nothing"
 has "cloudformation deploy --stack-name af-ecs-engines"
+# A live tag that is somebody's choice is left alone — the control for 3i-7's repair.
+hasnt "EngineToolsImageTag="
 
 echo "== case 3i-3: GHCR has not got it either -- stop, and deploy nothing =="
 # Nothing on the release route may bake an image (engine-tools-image.yml is dispatched by hand
@@ -736,6 +740,24 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ET_WANT="" \
   "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i4" 2>&1 \
   || { cat "$WORK/out3i4"; fail "update.sh failed against a stack without the parameter"; }
 has "crane copy ghcr.io/k-k1/agent-fleet/engine-tools:$ET_DEFAULT"
+
+echo "== case 3i-8: the stale first Default is repaired instead of carried for ever =="
+# 🔴 `2026-09-11` was this parameter's first Default and names an image speaking contract 1,
+# while the template has asked for a newer number since 0.21.0 — every ingest on such a stack
+# exits 78 before fetching a byte. A live stack records the resolved default, so `deploy` keeps
+# it for ever unless the value is NAMED. Both halves are the assertion: the copy carries the new
+# tag over, and the stack is told to use it. Copy the new tag without naming it and the stack
+# goes on pointing at the broken one; name it without copying and the task cannot pull.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ET_WANT=2026-09-11 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i8" 2>&1 \
+  || { cat "$WORK/out3i8"; fail "update.sh failed against a stack on the stale default"; }
+has "crane copy ghcr.io/k-k1/agent-fleet/engine-tools:$ET_DEFAULT"
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/engine-tools:2026-09-11"
+has "EngineToolsImageTag=$ET_DEFAULT"
+order "crane copy ghcr.io/k-k1/agent-fleet/engine-tools:$ET_DEFAULT" \
+  "cloudformation deploy --stack-name af-ecs-engines"
+grep -q "exiting 78" "$WORK/out3i8" || fail "the repair did not say what it was repairing"
 
 echo "== case 3i-5: a 20-platform change set that REPLACES something is handed back =="
 # Replacing an ECR repository throws its images away and replacing a role breaks every task
@@ -770,9 +792,9 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
   "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --dry-run > "$WORK/out3i7" 2>&1 \
   || { cat "$WORK/out3i7"; fail "update.sh --dry-run failed"; }
 grep -q "1. t-platform (20-platform" "$WORK/out3i7" || fail "the plan did not name 20-platform first"
-grep -q "4. af-engine-tools:2026-09-11 into ECR, then af-ecs-engines" "$WORK/out3i7" \
+grep -q "4. af-engine-tools:2026-09-16 into ECR, then af-ecs-engines" "$WORK/out3i7" \
   || fail "the plan did not show the image going in before the engines stack"
-grep -q "DRY: crane copy ghcr.io/k-k1/agent-fleet/engine-tools:2026-09-11" "$WORK/out3i7" \
+grep -q "DRY: crane copy ghcr.io/k-k1/agent-fleet/engine-tools:2026-09-16" "$WORK/out3i7" \
   || fail "the dry run did not show the copy it would make"
 hasnt "cloudformation execute-change-set"
 hasnt "crane copy ghcr.io/k-k1/agent-fleet/engine-tools"

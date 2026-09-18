@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.22.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.22.1) — 2026-09-18
+
+修正 1 件で、対象は自前の推論エンジンを動かす `ecs-ec2` の配備です。エンジンツールの
+イメージを手で選んだことのない配備では、モデルの取り込みが 1 バイトも取得しないまま失敗し、
+しかも画面に届く行は原因ではなく資料へのポインタだけでした。
+
 ## [0.22.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.22.0) — 2026-09-18
 
 PostgreSQL と MySQL がワークスペースの中で動くようになりました——作業コピーごとに 1 つ、

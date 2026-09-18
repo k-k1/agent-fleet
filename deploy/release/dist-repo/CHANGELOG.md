@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.22.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.22.1) — 2026-09-18
+
+One fix, for `ecs-ec2` deployments that run the fleet's own inference engines. Taking a model
+in failed before it fetched a byte on any deployment that never picked an engine tools image by
+hand, and the only line that reached the Console pointed at the documentation instead of at the
+cause.
+
 ## [0.22.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.22.0) — 2026-09-18
 
 PostgreSQL and MySQL now run inside the workspace — one database per working copy, no
