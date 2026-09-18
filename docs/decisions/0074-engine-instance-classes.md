@@ -540,8 +540,9 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
    32 GiB box it pinned 15,259 MB against a 14,336 MiB task and every 12 GB-class checkpoint was
    OOM-killed at load (seven tasks, 2026-09-17/18, L40S and L4 alike). The image task definition
    now carries no task-level `Memory`; `ImageTaskMemory` became the engine container's
-   `MemoryReservation` (placement only) — see `PARAMETERS-60-engines.md`. The llm task keeps its
-   limit: llama.cpp's host buffer is small and decision 11's measurement stands there.
+   `MemoryReservation` (placement only) — see `PARAMETERS-60-engines.md`. The llm task went the
+   same way in the same change: its host buffer is small (decision 11's measurement stands), but
+   one shape for both roles beats waiting for `--no-mmap` and a 30B to find the trap.
 7. ~~**The estimator for VRAM demand.**~~ **Resolved for the llm role (2026-09-11, the
    follow-up "open question 7 for the llm role" at the end) — the KV cache is not a coefficient
    but a quantity computed from the GGUF header, and it matched the hardware at both points to

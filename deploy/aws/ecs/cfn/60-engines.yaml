@@ -76,9 +76,9 @@ Parameters:
     Default: "4096"
     Description: Task vCPU units; keep it under the instance.
   LlmTaskMemory:
-    Type: String
-    Default: "14336"
-    Description: Task memory (MiB); leave the ECS agent room.
+    Type: Number
+    Default: 14336
+    Description: llama container MemoryReservation (MiB), placement only; the task has NO hard memory limit. PARAMETERS.
   LlmGpuCount:
     Type: Number
     Default: 1
@@ -650,7 +650,9 @@ Resources:
       RequiresCompatibilities: [ EC2 ]
       NetworkMode: awsvpc
       Cpu: !Ref LlmTaskCpu
-      Memory: !Ref LlmTaskMemory
+      # !! No task-level Memory ON PURPOSE - PARAMETERS, "ImageTaskMemory" (the same trap: a task
+      # limit sits in a cgroup the engine cannot see). The reservations below are for placement
+      # only; the engine's real ceiling is the box the Control Plane bought.
       ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
       TaskRoleArn: !GetAtt EngineTaskRole.Arn
       Volumes:
@@ -660,6 +662,7 @@ Resources:
       ContainerDefinitions:
         - Name: fetch
           Essential: false
+          MemoryReservation: 512
           # !! The script is BAKED, and the contract below is what refuses an image that speaks
           # a different one - PARAMETERS, "The engine tools image".
           Image: !Sub
@@ -686,6 +689,7 @@ Resources:
               awslogs-stream-prefix: llm-fetch
         - Name: llama
           Essential: true
+          MemoryReservation: !Ref LlmTaskMemory
           # !! The image must already be in ECR - PARAMETERS, "The engine services".
           Image: !Sub
             - "${Uri}:${Tag}"
