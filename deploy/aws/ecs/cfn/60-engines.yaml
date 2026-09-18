@@ -132,9 +132,9 @@ Parameters:
     Default: "4096"
     Description: Task vCPU units; keep it under the instance.
   ImageTaskMemory:
-    Type: String
-    Default: "14336"
-    Description: Task memory (MiB); leave the ECS agent room.
+    Type: Number
+    Default: 14336
+    Description: Engine container MemoryReservation (MiB), placement only; the task has NO hard memory limit. PARAMETERS.
   ImageGpuCount:
     Type: Number
     Default: 1
@@ -769,7 +769,10 @@ Resources:
       RequiresCompatibilities: [ EC2 ]
       NetworkMode: awsvpc
       Cpu: !Ref ImageTaskCpu
-      Memory: !Ref ImageTaskMemory
+      # !! No task-level Memory ON PURPOSE - PARAMETERS, "ImageTaskMemory". A task limit sits in
+      # a cgroup ComfyUI cannot see, so it budgets RAM from the box and is OOM-killed loading
+      # anything above ~10 GB (measured 7 times, 2026-09-17/18). The reservations below are for
+      # placement only; the engine's real ceiling is the box the Control Plane bought.
       ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
       TaskRoleArn: !GetAtt EngineTaskRole.Arn
       Volumes:
@@ -778,6 +781,7 @@ Resources:
       ContainerDefinitions:
         - Name: fetch
           Essential: false
+          MemoryReservation: 512
           # !! The script is BAKED, and the contract below is what refuses an image that speaks
           # a different one - PARAMETERS, "The engine tools image".
           Image: !Sub
@@ -806,6 +810,7 @@ Resources:
         # !! The engine is always ComfyUI now - PARAMETERS, "The idle wrapper".
         - Name: engine
           Essential: true
+          MemoryReservation: !Ref ImageTaskMemory
           Image: !Sub
             - "${Uri}:${Tag}"
             - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrComfyuiUri" }
