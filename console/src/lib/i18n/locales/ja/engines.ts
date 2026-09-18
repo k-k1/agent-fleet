@@ -7,6 +7,10 @@
 export const engines = {
   "engine.role_chat": "チャット",
   "engine.role_images": "画像",
+  // 「準備済み」と「使用中」の違いは warm ではなく、CP が今この行のために要求を握っているか
+  // （ADR 0084 決定 6-A）。warm は最後のやり取りから idle window の間ずっと真なので、
+  // セッションが動いていることはこの語でしか出ない。
+  "engine.state_in_use": "使用中",
   "engine.state_ready": "準備済み",
   "engine.state_running": "稼働中",
   "engine.state_starting": "起動中",
@@ -23,6 +27,10 @@ export const engines = {
   // typical_ms（起動の目安秒数）は会員行に乗らない（決定 3）。分数を偽って書くより、
   // 数を出さない方を選ぶ（決定 4）。
   "engine.cold_hint": "最初の要求でエンジンが起動します。数分かかることがあります。",
+  // いま VRAM に載っているモデル（ADR 0072 決定 7 / 0090 決定 2）。目録に読める名前があれば
+  // それを、無ければ id をそのまま描く。
+  "engine.warm_model": "モデル: ",
+  "engine.last_used": "最後の利用 {d}前",
   "engine.queue_shared": "待ち {n}",
   "engine.dur_hm": "{h} 時間 {m} 分",
   "engine.dur_m": "{m} 分",
