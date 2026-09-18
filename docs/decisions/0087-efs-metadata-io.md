@@ -3,10 +3,12 @@
 English | [日本語](0087-efs-metadata-io.ja.md)
 
 - Status: **proposed** (2026-09-17, review applied the same day; verification step 0 and the
-  cost reconciliation were carried out on 2026-09-18 and folded in). Implemented: the
-  CloudFormation change (decision 2), plus **the permanent P0/P1 work (decisions 4 and 5),
-  which landed on develop in #722**. 🔴 **Neither is deployed and neither has been measured in
-  effect** - every number below was taken against **production running the unfixed code**.
+  cost reconciliation, **and a sandbox deployment measured under controlled conditions**, were
+  carried out on 2026-09-18 and folded in). Implemented: the CloudFormation change (decision 2),
+  plus **the permanent P0/P1 work (decisions 4 and 5), which landed on develop in #722 and is
+  deployed to the sandbox**. 🔴 **Production is not deployed yet** - "Measurement 1" and
+  "Measurement 2" are **production running the unfixed code**, "Measurement 3" is **the sandbox
+  running the fixed code**. Do not mix them up.
 - ⚠️ **Claims changed after the first draft**, overturned by measurement across two review
   passes. Each is marked in place ("the first draft said … and was wrong"). First pass: (1)
   `~/.config/agent-fleet` *does* contain the credential store; (2) a negative cache on the
@@ -33,7 +35,16 @@ English | [日本語](0087-efs-metadata-io.ja.md)
   wrong question to ask; (18) **the monthly figure moves from about $142 to about $135** (a full
   day of measurement puts box-hours at 1,341 rather than 1,377 and $/box-hour at $0.0987-0.1012
   rather than $0.1021). That moves **the break-even from 19.6 to about 18.8 MiB/s**, so (12)'s
-  "20 MiB/s costs the same" is **withdrawn** (20 MiB/s is about 8% more expensive).
+  "20 MiB/s costs the same" is **withdrawn** (20 MiB/s is about 8% more expensive). Fifth pass
+  (2026-09-18 afternoon, #722 deployed to the sandbox and measured under conditions -
+  "Measurement 3"): (19) **the `claude` side is linear in the session count**, confirmed by
+  measurement (condition 3 of verification step 0); (20) 🔴 **what dominates after the permanent
+  fixes is claude's own I/O, not the agent's polling** (`~/.claude` and `~/.gitconfig` are on
+  `keep`) - decisions 4 and 5 do not touch it, so the comparison table's column (5) is corrected
+  from **$18-34 to $60-90/month**; (21) 🔴 **"expose the SSE subscriber count on the CP" is both
+  unnecessary and misleading** - the agent's access log's `GET /sessions` *is* the tick count, and
+  **subscriber counts overstate the load** (a stream measured open for 201 minutes with a tick
+  rate of zero).
 - **What was measured, and where.** The numbers come from three places only. (1) CloudWatch
   metrics for the production deployment's data file system (`MeteredIOBytes` /
   `MetadataIOBytes` / `ClientConnections`, 2026-09-04 to 09-17); (2) Cost Explorer actuals
@@ -473,14 +484,19 @@ against the unrounded values.
 
 | | (1) stay on elastic | (2) prov. 16 MiB/s | (3) prov. 20 MiB/s | (4) prov. 24 MiB/s | (5) elastic, after the fixes |
 |---|---|---|---|---|---|
-| I/O cost | **~$134** | $0 | $0 | $0 | **~$17-33** |
+| I/O cost | **~$134** | $0 | $0 | $0 | **~$60-89** |
 | fixed throughput cost | $0 | **$115.20** | **$144.00** | **$172.80** | $0 |
 | storage | ~$1 | ~$1 | ~$1 | ~$1 | ~$1 |
-| **total** | **~$135/month** | **~$116/month** | **~$145/month** | **~$174/month** | **~$18-34/month** |
+| **total** | **~$135/month** | **~$116/month** | **~$145/month** | **~$174/month** | **~$60-90/month** |
 | headroom over the estimated peak | no ceiling | **1.04-1.33x** | 1.30-1.67x | 1.57-2.00x | no ceiling |
 | how it fails | the bill grows | **it throttles and every workspace stops** | same | same | the bill grows |
 
-⚠️ **This is the table's fourth version.** First draft: $105/month, "provisioned is more
+🔴 **Column (5) was corrected in the fifth pass, from $18-34 to $60-90** (Measurement 3). The
+permanent fixes remove the ledger (the part proportional to M), but what remains is dominated by
+**claude's own I/O**, which decisions 4 and 5 do not touch. Every estimate up to the fourth draft
+assumed A and B were the only sources.
+
+⚠️ **This is the table's fourth version (column (5) is on its fifth).** First draft: $105/month, "provisioned is more
 expensive". Second: $141-151/month, "16 MiB/s is 25% cheaper". Third: $142/month, "20 MiB/s
 costs the same". Now $135/month. **Break-even is about 18.8 MiB/s** ($135 / $7.20).
 🔴 **The third draft's "20 MiB/s costs what elastic costs today and buys 1.30-1.67x headroom" is
@@ -522,6 +538,104 @@ If provisioned is chosen, watch these together:
   demand is unknowable until you release it - it jumped from 1.35 to 19.5 MiB/s within minutes
   of the switch to elastic.
 - `BurstCreditBalance` is not published under elastic. It comes back under provisioned.
+
+## 🔥 Measurement 3: after the permanent fixes (2026-09-18, sandbox, with conditions)
+
+#722 (decisions 4 and 5) was **deployed to the sandbox and measured under controlled
+conditions**. Production could not supply them — both boxes were in use by real people — but the
+sandbox has one workspace service for one person, so **conditions 1-4 of verification step 0 were
+taken as written**.
+
+Deployment identity: task definition rev 49; the running container's digest `sha256:949328ac…`
+matches ECR's `af-workspace:0.21.1-dev-70c2bdb9`; the baked commit contains #722.
+⚠️ **Start the box from the Console.** The pre-existing task definition still pointed at the old
+image, and coming up on that revision runs the old agent (the CP re-registers it on start).
+
+### 🔥 Count `GET /sessions`, not subscribers
+
+The first draft's open question said "exposing the SSE subscriber count on the CP side is the
+cleanest way to close this." **That was wrong, in two ways.**
+
+1. **The agent's access log already has it.** `/af/af-ecs-ingress/ws` carries one `GET /sessions`
+   line per call, so **the real tick count for any window can be recovered afterwards.** Nothing
+   needs to be added to the CP.
+2. 🔴 **Subscriber counts overstate the load.** "An SSE stream is open" and "the tick is running"
+   are different things. Measured: one stream stayed open for `08:01 → 11:22` (201 minutes) while
+   `GET /sessions` over that span ran at **0.017/s (≈ zero)** — a sleeping client whose TCP send
+   buffer filled, blocking the write and stalling the tick loop with it (the close only reached
+   the log at 11:22, when the block cleared). ⚠️ **Validating conditions by subscriber count
+   would have condemned a perfectly clean 0-tab window** — it did, once, until the tick count
+   overturned it.
+
+**Validate conditions by tick count from now on.**
+
+### Conditions and results
+
+`/proc/self/mountstats` deltas (over SSM, read-only) against the measured tick rate for the same
+window:
+
+| Condition | tick/s | ≈ tabs | `keep` RPC/s | `claude` RPC/s |
+|---|---|---|---|---|
+| (1) 0 tabs, 0 sessions (window 1) | 0.017 | 0.07 | 2.90 | 0.68 |
+| (1) 0 tabs, 0 sessions (window 2) | 0.017 | 0.07 | 3.37 | 1.03 |
+| (2) 1 tab, 0 sessions | 0.267 | 1.07 | 5.14 | 1.60 |
+| (3a) 1 tab, 1 session (window 1) | 0.267 | 1.07 | 6.88 | 2.52 |
+| (3a) 1 tab, 1 session (window 2) | 0.275 | 1.10 | 7.17 | 2.70 |
+| (3b) 1 tab, 3 sessions | 0.267 | 1.07 | 8.67 | 5.23 |
+
+The fixture is **M=9, P=7-8** (the production boxes are M=16 / 122, P=42 / 27). 120 s per window.
+
+Decomposed:
+
+| Component | `keep` | `claude` |
+|---|---|---|
+| **Floor** (no Console open at all) | 3.14 RPC/s | 0.86 RPC/s |
+| **A: one tab** | +2.01 RPC/s (**7.5 RPC/tick**) | +0.75 (**2.8 RPC/tick**) |
+| **One session** | +1.18 RPC/s (**4.4 RPC/tick**) | +1.21 (**4.5 RPC/tick**) |
+
+✅ **`claude` is linear in the session count** (1.60 → 2.61 → 5.23, slope 1.21). **The
+"per session, per poll" shape is confirmed by measurement** - exactly what condition 3 of
+verification step 0 existed to see. (`keep` is +1.88 for the first session and +0.83 for each of
+the next two, so it carries a fixed component and is not linear.)
+
+### What was confirmed, and what is left
+
+✅ **Decision 4 works structurally.** `keep/.config/agent-fleet/sessions` holds **0** entries -
+the ledger moved to `~/.local/state/agent-fleet/sessions` on EBS, where `M=9` now lives. What
+stays on `keep` is a small fixed set: `secrets.enc` (+ `.lock`), `mcp-tenant.json`,
+`mcp-managed.json`, `ui-prefs.json`, `chat-mcp/`, `chats/`, `knowledge/`.
+
+⚠️ **But the sandbox understates the improvement.** What went away is **the part proportional to
+M** (the ledger's open+close, `2M` RPC/tick); what remains on `keep` is **M-independent**. On an
+M=9 box that is 18 → 7.5 RPC/tick; on the production M=122 box it is **244 → 7.5**. **The bigger
+M is, the more this is worth.**
+
+🔴 **Per-session `keep` traffic survives anyway** (4.4 RPC/tick per session). It is **not**
+`chats/` / `chat-mcp/` / `knowledge/` — those stayed at one entry each with three sessions
+running. What sits at the root of the `keep` mount is `.claude/`, `.codex/`, `.config/`, `.ssh/`,
+`.gitconfig`, so **`~/.claude` and `~/.gitconfig` are on EFS** and the remainder is most likely
+**the claude CLI reading its own config, plus git start-ups**. **Neither decision 4 nor
+decision 5 touches that** — the question this ADR listed first under open questions, "how much of
+it is claude itself", has its first measured number here. On the `claude` side, three sessions
+also produced LOOKUP 0.38/s, REMOVE 0.09/s and READDIR 0.03/s, which is claude writing and
+rotating its own transcripts.
+
+### What it does to the bill (extrapolation)
+
+**⚠️ This extrapolates from one small box.** Against the same morning's production measurements
+of the old code:
+
+| Box | M | old: ledger alone | old: measured total | ledger's share |
+|---|---|---|---|---|
+| production box 1 | 16 | 32 RPC/tick | keep 74-103 + claude 21-22 | ~70% (within keep) |
+| production box 2 | 122 | 244 RPC/tick | keep 43-46 + claude 68 | ~40% (of the total) |
+
+With the ledger essentially gone, that is **-38% to -55% overall**, so about $135/month becomes
+**about $60-85/month**.
+
+🔴 **The third draft's comparison column (5), "elastic after the fixes, about $18-35/month", is
+too optimistic.** The reason is now clear: **what remains is dominated by claude's own I/O, not by
+the agent's polling.** Column (5) is corrected to **about $60-90/month** below.
 
 ## Decisions
 
@@ -1010,11 +1124,17 @@ numbers**.
 
 ## Open questions
 
-- **How much of it is claude itself.** Transcript appends and the repeated stats on the way to
-  the settings file all happen under `CLAUDE_CONFIG_DIR` (EFS), and they have not been
-  separated from the agent's own traffic. Whatever floor remains after decisions 4 and 5 is
-  most likely here. The separation can be measured the same way: start claude as a child under
-  `strace`.
+- 🔴 **How much of it is claude itself - this is now the first item after the permanent fixes**
+  (Measurement 3). Measured under conditions on the sandbox with #722 in place, the surviving
+  per-session `keep` traffic is **4.4 RPC/tick per session**, and `chats/` / `chat-mcp/` /
+  `knowledge/` are not it (they stayed at one entry each with three sessions running). The root of
+  the `keep` mount holds **`~/.claude` and `~/.gitconfig`**, so the remainder is most likely **the
+  claude CLI reading its own config, plus git start-ups**. **Neither decision 4 nor decision 5
+  touches that.** If anything is done next, it is here, and the first question is **whether
+  `.claude` can come out of `AF_WS_KEEP_DIRS` - i.e. whether `~/.claude.json` is the kind that
+  holds OAuth** (if it is, it cannot; same boundary as
+  [0045](0045-ec2-persistent-workspace.md)). Separating it can still be measured by starting
+  claude as a child under `strace`.
 - **The Fargate runtime is worse.** `runtime_ecs.go:684` puts **`home` itself on EFS** - every
   working copy under `~/repos`. Production runs ecs-ec2 so it does not appear in these
   measurements, but the same method should show an order of magnitude more. This ADR does not
@@ -1024,18 +1144,23 @@ numbers**.
   **(5M+4) : (5(1+P)xn)**, which **flips from box to box** (it did, on the two production
   boxes). **There is no single dominant source**, so decisions 4 and 5 are not an either/or -
   they rescue different boxes. Two gaps remain.
-- 🔴 **The wire-level (RPC) ranking is still open.** The ratio above is over syscalls, not RPCs,
-  and **the directory attribute cache absorbs A and B at very different rates** (zero READDIR
-  RPCs on `claude` in 660 seconds). Until **one box is occupied and conditions 1-4 of
-  verification step 0 are taken**, the wire-level ranking is undetermined. On 2026-09-18 both
-  production boxes were in use by real users, so only reads were taken.
-- 🔴 **Whether `ListMetas()` is the only thing opening files on `keep`.** Box 1 (M=16) carried
-  35.6-46.8 OPEN/s, which `ListMetas()` alone would need the tick rate of 9 to 12 tabs to
-  produce. Between two windows `keep` OPENs rose 32% while the `claude` side did not move, which
-  points at **another opener that varies independently of the tick** (the `claude-sid` and
-  sibling fstores). ⚠️ But **the number of open tabs was never observed independently**, so "it
-  really did have 9 tabs" cannot be ruled out. Exposing the SSE subscriber count on the CP side
-  is the cleanest way to close this.
+- 🟡 **The wire-level (RPC) ranking: "after" is measured, "before" now only exists in
+  production.** The sandbox supplied conditions 1-4 after #722 (Measurement 3), but **the old
+  code's A-versus-B split cannot be recovered there any more**. Production still runs the old
+  code, so it is measurable in principle - but the value of pinning down the old split has
+  dropped, because **what remains after the fix is now known**, and that is where the next move
+  points (claude itself).
+- ✅ **Whether `ListMetas()` is the only thing opening files on `keep`: answered - it is not.**
+  With the ledger off EFS, **7.5 RPC/tick per tab and 4.4 RPC/tick per session** remain
+  (Measurement 3). ⚠️ It is not the `claude-sid` and sibling fstores the previous draft suspected
+  — those moved to EBS too. The remainder is folded into the "claude itself" item above.
+- ✅ **Tab count is observable - but through `GET /sessions`, not through subscribers.** The
+  previous draft's "exposing the SSE subscriber count on the CP side is the cleanest way to close
+  this" is **withdrawn**. (1) The agent's access log (`/af/af-ecs-ingress/ws`) carries one
+  `GET /sessions` line per call, so nothing needs adding to the CP; (2) **subscriber counts
+  overstate the load** - a stream was measured open for 201 minutes at a tick rate of
+  **0.017/s (≈ zero)** (a sleeping client blocked the write and stalled the tick loop with it).
+  Validating conditions by subscriber count misreads a clean 0-tab window as contaminated.
 - **Decision 5's anchor is complete over DIRECTORIES, not over SESSION IDS.** `jsonlPaths`
   follows the drifted id (`LiveSID`), while `subagentBases` builds `<dir>/<sid>/subagents` from
   the SLOT sid. When claude restarts itself onto an id of its own, the transcript is found, the
