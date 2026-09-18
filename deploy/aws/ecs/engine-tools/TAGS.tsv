@@ -1,0 +1,17 @@
+# Published af-engine-tools tags — tag <TAB> the contract that image speaks.
+#
+# The image and the template ship by two separate acts, so nothing in this tree knows what an
+# already-published tag contains: the number is baked inside the image, in /opt/af/CONTRACT.
+# This file is that knowledge, and `deploy/local/engine-sidecar-test.sh` reads it to check the
+# one tag every deployment gets for free — `EngineToolsImageTag`'s Default in 60-engines.yaml.
+#
+# Without it the default went unchecked while CONTRACT moved 1 → 2 → 3, so 0.21.0 and 0.22.0
+# both shipped a template asking for 3 with a default naming a contract-1 image: a deployment
+# on the default answered every ingest with exit 78 (EX_CONFIG), and the only line reaching the
+# Console was the documentation pointer, not the mismatch.
+#
+# Append a row when engine-tools-image.yml bakes a tag, and move the Default with it.
+2026-09-11	1
+0.20.1-dev-8b710fc3	2
+0.20.1-dev-32f34657	3
+2026-09-18	3

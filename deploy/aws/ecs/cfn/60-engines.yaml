@@ -21,7 +21,10 @@ Parameters:
     Description: The private DNS namespace NAME, as given to 20-platform.
   EngineToolsImageTag:
     Type: String
-    Default: "2026-09-11"
+    # !! Move this with engine-tools/CONTRACT, and record the new tag in engine-tools/TAGS.tsv:
+    # a default naming an image that speaks another number makes every ingest exit 78, and this
+    # is the one value a deployment can hold without ever having chosen it.
+    Default: "2026-09-18"
     Description: Tag in the af-engine-tools ECR repository. !! Bound to the script contract.
   EnginesSsmParamName:
     Type: String

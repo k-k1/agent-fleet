@@ -21,8 +21,13 @@ of `grep`.
     environment variables: the gate would still stop it, but only on the real deployment, at the
     next cold start, in a log nobody is reading yet.
 
-usage: cfn-contract.py <template.yaml>
-exit 0 and the number on stdout; 1 otherwise, with what is wrong on stderr.
+`--engine-tools-tag` prints `EngineToolsImageTag`'s Default instead — the image a deployment
+gets when it says nothing. It lives here because reading it needs the same tolerant parser, and
+it is asked for because that default was the one place the gate could not protect: it named a
+contract-1 image through two releases that asked for 3.
+
+usage: cfn-contract.py [--engine-tools-tag] <template.yaml>
+exit 0 and the number (or the tag) on stdout; 1 otherwise, with what is wrong on stderr.
 """
 import sys
 
@@ -71,7 +76,24 @@ def scan(path):
     return found, undeclared
 
 
+def engine_tools_tag(path):
+    """EngineToolsImageTag's Default, or None when the parameter or its Default is absent."""
+    doc = yaml.load(open(path, encoding="utf-8"), Loader=CfnLoader)
+    param = (doc.get("Parameters") or {}).get("EngineToolsImageTag")
+    if not isinstance(param, dict):
+        return None
+    default = param.get("Default")
+    return str(default) if default not in (None, "") else None
+
+
 def main(argv):
+    if len(argv) == 3 and argv[1] == "--engine-tools-tag":
+        tag = engine_tools_tag(argv[2])
+        if tag is None:
+            print(f"cfn-contract: {argv[2]}: EngineToolsImageTag has no Default", file=sys.stderr)
+            return 1
+        print(tag)
+        return 0
     if len(argv) != 2:
         print(__doc__.strip().splitlines()[-2], file=sys.stderr)
         return 1

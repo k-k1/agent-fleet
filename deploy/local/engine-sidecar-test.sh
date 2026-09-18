@@ -58,6 +58,20 @@ asked="$(python3 "$ROOT/deploy/local/cfn-contract.py" "$TPL")" || fail "could no
 [ "$asked" = "$CONTRACT" ] \
   || fail "60-engines.yaml asks for contract '$asked', engine-tools/CONTRACT says '$CONTRACT'"
 
+# 🔴 The check above compares the number the template ASKS FOR with this tree's — both sides
+# move in the same commit, so it can never catch the third party: the tag a deployment gets when
+# it sets nothing. That default named a contract-1 image while CONTRACT went to 3, and every
+# ingest on a default deployment exited 78 for two releases. engine-tools/TAGS.tsv records what
+# each published tag speaks, because the number is inside the image and nothing here can read it.
+echo "== the tag the template defaults to speaks the contract this tree ships =="
+def_tag="$(python3 "$ROOT/deploy/local/cfn-contract.py" --engine-tools-tag "$TPL")" \
+  || fail "could not read EngineToolsImageTag's Default from 60-engines.yaml"
+speaks="$(awk -v t="$def_tag" '$1 == t { print $2 }' "$TOOLS/TAGS.tsv")"
+[ -n "$speaks" ] \
+  || fail "engine-tools/TAGS.tsv has no row for the default tag '$def_tag' — bake the image (engine-tools-image.yml) and record what it speaks"
+[ "$speaks" = "$CONTRACT" ] \
+  || fail "60-engines.yaml defaults to af-engine-tools:$def_tag, which speaks contract '$speaks'; this tree ships '$CONTRACT'. A deployment on the default exits 78 on every ingest."
+
 # ... and that a number it does not recognise stops the container instead of running the wrong
 # script. The positive control for the gate itself.
 echo "== a contract mismatch refuses to run, and says so =="
