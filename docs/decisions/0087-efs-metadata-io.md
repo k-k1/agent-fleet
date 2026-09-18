@@ -484,17 +484,22 @@ against the unrounded values.
 
 | | (1) stay on elastic | (2) prov. 16 MiB/s | (3) prov. 20 MiB/s | (4) prov. 24 MiB/s | (5) elastic, after the fixes |
 |---|---|---|---|---|---|
-| I/O cost | **~$134** | $0 | $0 | $0 | **~$60-89** |
+| I/O cost | **~$134** | $0 | $0 | $0 | **$15-89** (below) |
 | fixed throughput cost | $0 | **$115.20** | **$144.00** | **$172.80** | $0 |
 | storage | ~$1 | ~$1 | ~$1 | ~$1 | ~$1 |
-| **total** | **~$135/month** | **~$116/month** | **~$145/month** | **~$174/month** | **~$60-90/month** |
+| **total** | **~$135/month** | **~$116/month** | **~$145/month** | **~$174/month** | **$16-43 (absolute) / $60-90 (ratio)** |
 | headroom over the estimated peak | no ceiling | **1.04-1.33x** | 1.30-1.67x | 1.57-2.00x | no ceiling |
 | how it fails | the bill grows | **it throttles and every workspace stops** | same | same | the bill grows |
 
-🔴 **Column (5) was corrected in the fifth pass, from $18-34 to $60-90** (Measurement 3). The
+🔴 **Column (5) was rewritten in the fifth pass, away from $18-34** (Measurement 3). The
 permanent fixes remove the ledger (the part proportional to M), but what remains is dominated by
 **claude's own I/O**, which decisions 4 and 5 do not touch. Every estimate up to the fourth draft
 assumed A and B were the only sources.
+⚠️ **Column (5) is deliberately not a single number** - as "Two ways of computing it disagree by
+3x" in Measurement 3 sets out, there is not yet enough ground to choose between the absolute
+method ($16-43) and the ratio method ($60-90). **The observation that settles it is the
+measurement of an active session.** Writing one of them alone would be writing down a confidence
+we do not have.
 
 ⚠️ **This is the table's fourth version (column (5) is on its fifth).** First draft: $105/month, "provisioned is more
 expensive". Second: $141-151/month, "16 MiB/s is 25% cheaper". Third: $142/month, "20 MiB/s
@@ -631,15 +636,87 @@ of the old code:
 | production box 2 | 122 | 244 RPC/tick | keep 43-46 + claude 68 | ~40% (of the total) |
 
 With the ledger essentially gone, that is **-38% to -55% overall**, so about $135/month becomes
-**about $60-85/month**.
+**about $60-85/month**. Call this the **ratio method**.
 
 🔴 **The third draft's comparison column (5), "elastic after the fixes, about $18-35/month", is
 too optimistic.** The reason is now clear: **what remains is dominated by claude's own I/O, not by
-the agent's polling.** Column (5) is corrected to **about $60-90/month** below.
+the agent's polling.**
+
+### ⚠️ Two ways of computing it disagree by 3x (column (5) stays as both)
+
+The other way is to build the figure **from the measured slopes, in absolute terms**. Metadata
+operations bill in 4 KiB units, so
+`GiB/box-hour = ops/s x 3600 x 4 KiB / 2^30 = ops/s x 0.01373` (checked against production's
+09-17: 179.0 ops/s ↔ 2.441 GiB/box-hour). Apply the $0.04 read price.
+
+Fitting the two production boxes' shapes, back-derived from the old code's measurements:
+
+| Box | est. tabs | sessions | absolute method | old: measured | delta |
+|---|---|---|---|---|---|
+| production box 1 | ~9 (from the tick rate) | 2 | 33.6 RPC/s | 95-125 | **-68%** |
+| production box 2 | ~0.7 | 3 (assumed) | 13.1 RPC/s | 113 | **-88%** |
+
+⇒ the absolute method gives **about $16-43/month** — nearly **3x** away from the ratio method's
+**$60-85/month**.
+
+Neither can be settled yet:
+
+- **The absolute method rests on firmer ground** (it uses measured slopes). The ratio method
+  assumed "everything but the ledger is unchanged", but decision 4 also took `session-status/`,
+  `pending-perm/` and `claude-sid/` down with it, so **the ratio method understates what went
+  away**.
+- **But the absolute method assumes the sandbox's slopes (M=9, P=7-8) transfer to production
+  boxes with much larger M and P.** After #722 they should — M is on EBS and P sits behind the
+  anchor — but that has not been checked.
+
+🔴 **So column (5) carries both: "$16-43 (absolute) / $60-90 (ratio)".** Picking one would be
+writing down a confidence we do not have. **The observation that settles it is the measurement of
+an ACTIVE session**, below.
+
+### What 10 sessions per user would do (extrapolation)
+
+A configuration with ten claude sessions per user is under consideration. Applying the measured
+slopes (floor + tab + session):
+
+| One box, one tab | `keep` | `claude` | total | ≈MiB/s | $/box-hour | monthly (1,341 box-hours) |
+|---|---|---|---|---|---|---|
+| 0 sessions | 5.2 | 1.6 | 6.8 | 0.026 | $0.0037 | ~$5 |
+| 3 sessions | 8.7 | 5.2 | 13.9 | 0.053 | $0.0076 | ~$10 |
+| **10 sessions** | **16.9** | **13.7** | **30.7** | **0.117** | **$0.0169** | **~$23** |
+
+With nine tabs, ten sessions comes to 52.7 RPC/s = **about $39/month**. **So even at ten sessions
+per user this is cheaper than today ($135/month).** Nine boxes at that rate peak at about
+**1.1 MiB/s**, which means provisioned's smallest useful step, 16 MiB/s ($115.20/month), would be
+**paying nearly today's whole bill for capacity nobody needs**.
+
+🔴 **But this table was measured on IDLE sessions only.** A running session has claude writing its
+transcript into `CLAUDE_CONFIG_DIR` (EFS) continuously, and **#722 does not touch that**. The old
+code's measured peak was 2.6 MB/s per box — roughly 20x its idle rate. **Ten sessions per user is
+a plan to multiply that unmeasured term by ten.** Which is why decision 1 below holds *more*
+strongly under such a configuration, not less: **buying a ceiling against an estimated peak is the
+exact shape of what happened on 2026-09-16**, and the term that grows is precisely the unmeasured
+one.
+
+### 🔥 Tabs became a first-class cost driver
+
+After decision 4, **one tab (10.3 RPC/tick = keep 7.5 + claude 2.8) costs more than one session
+(8.9 RPC/tick)**. With the ledger gone, the per-tick fixed cost weighs relatively more. Production
+box 1's tick rate implied **the equivalent of nine open tabs**. **Closing one abandoned Console
+tab beats stopping one session** — worth telling users if the fleet moves to ten sessions each.
+⚠️ Drafts one through four treated tabs only as a multiplier on A; **the tab count is now the
+largest variable cost in its own right**.
 
 ## Decisions
 
 ### Decision 1: the stop-gap is to stay on elastic. Do not buy provisioned throughput
+
+✅ **A ten-sessions-per-user configuration does not change this decision - it strengthens it**
+(extrapolated in Measurement 3). On the idle slopes, ten sessions per box comes to about
+**$23-39/month**, cheaper than today, and nine boxes at that rate peak at only about
+**1.1 MiB/s**. Buying 16 MiB/s would be **paying nearly today's whole bill for capacity nobody
+needs**. And 🔴 **what actually grows with ten sessions is the running transcript writes - the
+term that is still unmeasured** - so **buying a ceiling against an estimated peak is the exact
+shape of 2026-09-16**.
 
 ⚠️ **On cost alone, provisioned at 16 MiB/s ($116/month) is 14% cheaper than elastic
 (about $135/month).** The first draft said the opposite. ⚠️ The third draft's "20 MiB/s costs
@@ -1124,6 +1201,14 @@ numbers**.
 
 ## Open questions
 
+- 🔴🔴 **The EFS cost of an ACTIVE session is unmeasured - the highest-priority observation now.**
+  Every slope in Measurement 3 was taken on **idle** sessions. A running one has claude writing its
+  transcript into `CLAUDE_CONFIG_DIR` (EFS) continuously, and #722 does not touch it. The old
+  code's measured peak was 2.6 MB/s per box, roughly 20x its idle rate. **Ten sessions per user is
+  a plan to multiply that unmeasured term by ten.** ⚠️ **Until this lands, neither the 3x spread in
+  column (5) ($16-43 against $60-90) nor the peak under a ten-session configuration can be
+  settled.** The same harness as Measurement 3 will do: on the sandbox, put three sessions
+  **mid-turn simultaneously** for 120 s and compare against the idle slope (2.4 RPC/s per session).
 - 🔴 **How much of it is claude itself - this is now the first item after the permanent fixes**
   (Measurement 3). Measured under conditions on the sandbox with #722 in place, the surviving
   per-session `keep` traffic is **4.4 RPC/tick per session**, and `chats/` / `chat-mcp/` /
