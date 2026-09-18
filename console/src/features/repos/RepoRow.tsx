@@ -64,6 +64,12 @@ export interface RepoRowProps {
    * sessionsInFolder). */
   onArchiveStopped?: () => void;
   stoppedCount?: number;
+  /** Stop every LIVE session in this row's subtree (right-click menu → StopSessionsModal).
+   * Unlike the bulk archive above, the scope is the whole subtree the rail nests under this
+   * row — a spawn's worktrees are exactly what one wants to put down in one go — so the
+   * count comes from the caller that knows the tree. */
+  onStopSessions?: () => void;
+  aliveCount?: number;
   /** Toggle the deletion lock (docs/log/45). While locked the delete menu is disabled and
    * the automatic prune of an emptied worktree stops too (the protection itself is the
    * Agent's 403). */
@@ -80,7 +86,7 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0 }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onStopSessions, aliveCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -471,16 +477,26 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 ))}
               </>
             )}
+            {/* The two bulk session actions, tidiest first in the order one reaches for them:
+                put the running ones down, then shelve what is already stopped. */}
+            {((onStopSessions && aliveCount > 0) || (onArchiveStopped && stoppedCount > 0)) && (
+              <li className="ui-menu-sep" role="separator" />
+            )}
+            {onStopSessions && aliveCount > 0 && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onStopSessions(); }}>
+                  <Icon name="debug-stop" /> {tr("repo.stop_sessions")}
+                  {tr("common.paren", { v: aliveCount })}
+                </button>
+              </li>
+            )}
             {onArchiveStopped && stoppedCount > 0 && (
-              <>
-                <li className="ui-menu-sep" role="separator" />
-                <li>
-                  <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onArchiveStopped(); }}>
-                    <Icon name="archive" /> {tr("repo.archive_stopped")}
-                    {tr("common.paren", { v: stoppedCount })}
-                  </button>
-                </li>
-              </>
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onArchiveStopped(); }}>
+                  <Icon name="archive" /> {tr("repo.archive_stopped")}
+                  {tr("common.paren", { v: stoppedCount })}
+                </button>
+              </li>
             )}
             {(onDelete || onToggleLock) && <li className="ui-menu-sep" role="separator" />}
             {onToggleLock && (

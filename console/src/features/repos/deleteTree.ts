@@ -36,7 +36,20 @@ export interface CopyPlan {
   archive: Session[];
   /** Stopped shell/ssm sessions to forget — no conversation worth shelving. */
   forget: Session[];
+  /** Live sessions holding this copy open. They are what the "stop them first" tick acts
+   *  on: /archive and /stop both kill the pane themselves, so stopping is not a separate
+   *  call — it is the same clearing pass, over more sessions. */
+  alive: Session[];
   grade: CopyGrade;
+  /** Live sessions are the ONLY thing blocking this row, so the "stop them first" tick makes
+   *  it actionable. A deletion lock — on the copy or on one of its sessions — never yields to
+   *  a flag, and a row held by one is false here however many sessions are running. */
+  aliveOnlyBlock: boolean;
+  /** The grade and why this row takes once its live sessions are stopped: what deleting
+   *  costs with the sessions set aside. Equal to grade/whyKey when nothing is alive. */
+  stoppedGrade: CopyGrade;
+  stoppedWhyKey: MsgKey | "";
+  stoppedWhyCount: number;
   /** i18n key of the one-line "why" under the row; "" when it is plainly safe. Typed so a
    *  key that does not exist in the catalogue fails tsc here rather than printing itself. */
   whyKey: MsgKey | "";
@@ -56,17 +69,12 @@ const blockers = (sessions: Session[]) => ({
   locked: sessions.filter((s) => s.locked),
 });
 
-function gradeCopy(r: Repo, sessions: Session[]): Pick<CopyPlan, "grade" | "whyKey" | "whyCount"> {
-  const { alive, locked } = blockers(sessions);
-  // Blocked first, and in the order the Agent checks: a locked copy answers 403 before
-  // anything else is looked at, so naming a different reason would send the user to fix
-  // the wrong thing.
-  if (r.locked) return { grade: "blocked", whyKey: "rp.del.why_locked", whyCount: 0 };
-  if (alive.length) return { grade: "blocked", whyKey: "rp.del.why_alive", whyCount: alive.length };
-  if (locked.length) return { grade: "blocked", whyKey: "rp.del.why_session_locked", whyCount: locked.length };
-  // Then what would be LOST, most immediate first: work never committed cannot be recovered
-  // from anywhere, commits the parent does not have are recoverable only by reflog, and
-  // unpushed commits at least exist in the parent's history.
+type Graded = Pick<CopyPlan, "grade" | "whyKey" | "whyCount">;
+
+/** What deleting this copy would COST, sessions aside — most immediate first: work never
+ *  committed cannot be recovered from anywhere, commits the parent does not have are
+ *  recoverable only by reflog, and unpushed commits at least exist in the parent's history. */
+function gradeWork(r: Repo): Graded {
   if (r.dirty) return { grade: "review", whyKey: "rp.del.why_dirty", whyCount: 0 };
   const rel = r.integration?.relation;
   if (rel === "unmerged" || rel === "diverged") {
@@ -76,6 +84,41 @@ function gradeCopy(r: Repo, sessions: Session[]): Pick<CopyPlan, "grade" | "whyK
   // "unknown" is not "fine": it is the answer when the comparison could not be made at all.
   if (rel === "unknown") return { grade: "review", whyKey: "rp.del.why_unknown", whyCount: 0 };
   return { grade: "safe", whyKey: "", whyCount: 0 };
+}
+
+function gradeCopy(
+  r: Repo,
+  sessions: Session[],
+): Graded & Pick<CopyPlan, "aliveOnlyBlock" | "stoppedGrade" | "stoppedWhyKey" | "stoppedWhyCount"> {
+  const { alive, locked } = blockers(sessions);
+  const work = gradeWork(r);
+  // What the row becomes once its sessions are out of the way is the same question either
+  // way, so it is carried on every row: the modal reads it when the "stop them first" tick
+  // is on, and it is simply the row's own grade when nothing is running.
+  const stopped = {
+    stoppedGrade: work.grade,
+    stoppedWhyKey: work.whyKey,
+    stoppedWhyCount: work.whyCount,
+  };
+  // Blocked first, and in the order the Agent checks: a locked copy answers 403 before
+  // anything else is looked at, so naming a different reason would send the user to fix
+  // the wrong thing.
+  if (r.locked) return { grade: "blocked", whyKey: "rp.del.why_locked", whyCount: 0, aliveOnlyBlock: false, ...stopped };
+  if (alive.length) {
+    // A lock on one of the sessions outlives stopping the others, so a row holding both is
+    // blocked for good — the tick must not offer to unblock what it cannot.
+    return {
+      grade: "blocked",
+      whyKey: "rp.del.why_alive",
+      whyCount: alive.length,
+      aliveOnlyBlock: locked.length === 0,
+      ...stopped,
+    };
+  }
+  if (locked.length) {
+    return { grade: "blocked", whyKey: "rp.del.why_session_locked", whyCount: locked.length, aliveOnlyBlock: false, ...stopped };
+  }
+  return { ...work, aliveOnlyBlock: false, ...stopped };
 }
 
 /** Whether this copy's branch may be deleted along with it. */
@@ -103,6 +146,7 @@ export function planTree(node: RepoTreeNode, sessions: Session[], depth = 0): Co
     // the shelf, a shell has none to keep.
     archive: stopped.filter((s) => !agentOf(s.kind).caps.ephemeral),
     forget: stopped.filter((s) => agentOf(s.kind).caps.ephemeral),
+    alive: mine.filter((s) => s.alive && !s.locked),
     ...gradeCopy(r, mine),
     force: !!r.dirty || (r.ahead || 0) > 0,
     branch,
@@ -118,12 +162,40 @@ export function defaultSelection(plans: CopyPlan[]): Set<string> {
   return new Set(plans.filter((p) => p.grade === "safe").map((p) => p.repo.name));
 }
 
+/** The grade a row actually runs at. `withStop` is the modal's "stop the live sessions
+ *  first" tick: it is the only thing that moves a row out of blocked, and only for a row
+ *  nothing else holds. Everything that reads a grade to DECIDE goes through here, so the
+ *  tick cannot half-apply — a row listed as actionable and a row the run skips would be the
+ *  worst of both. */
+export const effectiveGrade = (p: CopyPlan, withStop: boolean): CopyGrade =>
+  withStop && p.aliveOnlyBlock ? p.stoppedGrade : p.grade;
+
+/** The sessions the run has to clear before this copy's folder goes. Without the tick that
+ *  is the stopped ones only (a live session blocks the row anyway); with it, the live ones
+ *  join them — /archive and /stop kill the pane themselves, so "stop first" needs no extra
+ *  call, and a session left with a meta after its folder went is a row pointing at nothing. */
+export function sessionsToClear(p: CopyPlan, withStop: boolean): { archive: Session[]; forget: Session[] } {
+  if (!withStop || p.alive.length === 0) return { archive: p.archive, forget: p.forget };
+  const ephemeral = (s: Session) => agentOf(s.kind).caps.ephemeral;
+  return {
+    archive: [...p.archive, ...p.alive.filter((s) => !ephemeral(s))],
+    forget: [...p.forget, ...p.alive.filter(ephemeral)],
+  };
+}
+
+/** Rows to tick when the "stop them first" tick goes on: the ones held ONLY by a running
+ *  session and safe once it is gone. A row that would also take work with it stays for the
+ *  user to tick, exactly as it does without the option. */
+export function stopUnblocks(plans: CopyPlan[]): CopyPlan[] {
+  return plans.filter((p) => p.aliveOnlyBlock && p.stoppedGrade === "safe");
+}
+
 /** Run order: deepest first, so a copy is never removed before the ones nested under it,
  *  and the base clone (which git refuses to remove while a worktree of it is registered)
  *  goes last. Ties keep the listed order. */
-export function deleteOrder(plans: CopyPlan[], selected: Set<string>): CopyPlan[] {
+export function deleteOrder(plans: CopyPlan[], selected: Set<string>, withStop = false): CopyPlan[] {
   return plans
-    .filter((p) => selected.has(p.repo.name) && p.grade !== "blocked")
+    .filter((p) => selected.has(p.repo.name) && effectiveGrade(p, withStop) !== "blocked")
     .map((p, i) => ({ p, i }))
     .sort((a, b) => b.p.depth - a.p.depth || a.i - b.i)
     .map(({ p }) => p);
@@ -133,11 +205,11 @@ export function deleteOrder(plans: CopyPlan[], selected: Set<string>): CopyPlan[
  *  has_worktrees, and no force flag passes it. The rail nests a base's whole group under
  *  it, so "every other row in this plan is going too" is exactly the condition. It depends
  *  on the SELECTION, so it is recomputed as the user ticks rather than baked into the grade. */
-export function baseBlockedByWorktrees(plans: CopyPlan[], selected: Set<string>): boolean {
+export function baseBlockedByWorktrees(plans: CopyPlan[], selected: Set<string>, withStop = false): boolean {
   const root = plans[0];
   if (!root || root.repo.worktree) return false;
   if (!selected.has(root.repo.name)) return false;
-  return plans.slice(1).some((p) => !selected.has(p.repo.name) || p.grade === "blocked");
+  return plans.slice(1).some((p) => !selected.has(p.repo.name) || effectiveGrade(p, withStop) === "blocked");
 }
 
 export interface RunSummary {
@@ -147,15 +219,24 @@ export interface RunSummary {
   branches: number;
   /** Rows that need force=true — the count the warning line shows. */
   force: number;
+  /** Live sessions the run will stop on its way through (0 without the tick). */
+  stop: number;
 }
 
-export function summarize(plans: CopyPlan[], selected: Set<string>, withBranches: boolean): RunSummary {
-  const rows = deleteOrder(plans, selected);
+export function summarize(
+  plans: CopyPlan[],
+  selected: Set<string>,
+  withBranches: boolean,
+  withStop = false,
+): RunSummary {
+  const rows = deleteOrder(plans, selected, withStop);
+  const cleared = rows.map((p) => sessionsToClear(p, withStop));
   return {
     copies: rows.length,
-    archive: rows.reduce((n, p) => n + p.archive.length, 0),
-    forget: rows.reduce((n, p) => n + p.forget.length, 0),
+    archive: cleared.reduce((n, c) => n + c.archive.length, 0),
+    forget: cleared.reduce((n, c) => n + c.forget.length, 0),
     branches: withBranches ? rows.filter((p) => p.branch).length : 0,
     force: rows.filter((p) => p.force).length,
+    stop: withStop ? rows.reduce((n, p) => n + p.alive.length, 0) : 0,
   };
 }

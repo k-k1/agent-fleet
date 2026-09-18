@@ -1223,3 +1223,144 @@
   gap: 8px;
   flex: none;
 }
+
+/* Bulk session stop (StopSessionsModal) — the delete plan's layout with one level more
+   nesting: the copies are headings and the sessions are the rows that get ticked. */
+.wcstop-modal {
+  width: min(680px, 94vw);
+}
+.wcstop-intro {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wcstop-list,
+.wcstop-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.wcstop-list {
+  max-height: min(48vh, 420px);
+  overflow: auto;
+}
+.wcstop-group {
+  /* The indent mirrors the rail's nesting, as the delete plan's rows do; the depth is
+     capped by the component the way the rail caps its own. */
+  padding-left: calc(var(--wcstop-depth, 0) * 16px);
+}
+.wcstop-group + .wcstop-group {
+  margin-top: 6px;
+}
+.wcstop-copy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 0 2px;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+}
+.wcstop-copy-name,
+.wcstop-branch {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wcstop-branch {
+  opacity: 0.8;
+}
+.wcstop-row {
+  padding: 3px 0 3px 12px;
+  border-bottom: 1px solid var(--border2);
+}
+.wcstop-row:last-child {
+  border-bottom: 0;
+}
+.wcstop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+.wcstop-kind {
+  flex: none;
+  color: var(--muted);
+}
+.wcstop-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The state chip carries margin-left:auto itself, so the mode badge simply follows it. */
+.wcstop-mode {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  white-space: nowrap;
+}
+.wcstop-mode-now {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+}
+/* Only the badge that will actually cut a running turn off takes the warning colour —
+   stopping an idle session loses nothing, and an orange chip on it reads as a threat. */
+.wcstop-mode-now.is-cut {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+.wcstop-mode-after {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+.wcstop-why,
+.wcstop-result {
+  margin: 2px 0 0 38px;
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.wcstop-result.is-failed {
+  color: var(--del);
+}
+.wcstop-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.wcstop-opt-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.wcstop-opt-hint.is-warn {
+  color: var(--warn);
+}
+.wcstop-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.wcstop-summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.wcstop-warn {
+  display: block;
+  color: var(--del);
+}
+.wcstop-foot-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}

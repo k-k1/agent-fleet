@@ -63,6 +63,7 @@ export const repos = {
   "repo.lock_failed": "削除ロックの変更に失敗しました: {err}",
   "repo.locked_on": "{name} に削除ロックをかけました",
   "repo.locked_off": "{name} の削除ロックを解除しました",
+  "repo.stop_sessions": "配下のセッションを停止",
   "repo.delete_wc": "作業コピーを削除",
   "repo.svn_update": "更新（svn）",
   "repo.svn_cleanup": "ロックを解除（svn）",
@@ -295,6 +296,10 @@ export const repos = {
   "rp.del.sessions_n": "セッション {count} 件",
   "rp.del.sessions_n_alive": "セッション {count} 件（稼働 {alive}）",
   "rp.del.no_sessions": "セッション無し",
+  "rp.del.why_alive_stop": "稼働中のセッション {count} 件を先に停止します",
+  "rp.del.stop_alive": "稼働中のセッションを先に停止してから削除する（{count} 件）",
+  "rp.del.stop_alive_hint": "実行中のターンは中断されます",
+  "rp.del.summary_stop": "（うち稼働中の {count} 件は先に停止）",
   "rp.del.branches": "マージ済みブランチも削除する（{count} 件）",
   "rp.del.branches_hint": "取り消しは「整理」のゴミ箱から",
   "rp.del.remote": "リモート（origin）のブランチも削除する",
@@ -312,6 +317,30 @@ export const repos = {
   "rp.del.session_failed_generic": "セッション {name} を片付けられませんでした",
   "rp.del.branch_failed": "ブランチ {branch} は削除できませんでした: {err}",
   "rp.del.remote_failed": "origin の {branch} は削除できませんでした（ローカルは削除済み）: {err}",
+
+  // 配下のセッションの一括停止モーダル（StopSessionsModal）— 右クリックした作業コピーと、
+  // rail がその下に並べている作業コピーで動いているセッションを 1 回で止める。停止は
+  // 元に戻せる（会話は残り、再開できる）ので、失われうるのは実行中のターンだけ。
+  "rp.stop_sessions_title": "配下のセッションを停止",
+  "rp.stop.intro": "\"{name}\" で動いているセッションです。停止しても会話は残り、あとから再開できます。",
+  "rp.stop.intro_tree":
+    "\"{name}\" と、その下にぶら下がる作業コピー {count} 件で動いているセッションです（セッションのある作業コピーだけを並べています）。停止しても会話は残り、あとから再開できます。",
+  "rp.stop.mode_now": "すぐ停止",
+  "rp.stop.mode_after": "ターン終了後",
+  "rp.stop.why_pinned": "起きたままに固定中です（あと {left}）",
+  "rp.stop.why_opaque": "実行中かどうか判定できません（停止すると実行中のコマンドは失われます）",
+  "rp.stop.why_armed": "ターン終了後の停止が既に予約されています",
+  "rp.stop.force": "実行中のセッションもすぐに停止する（{count} 件）",
+  "rp.stop.force_hint": "ターンの途中で中断します",
+  "rp.stop.force_warn": "実行中の {count} 件をターンの途中で中断します。書きかけの応答は失われます。",
+  "rp.stop.summary": "セッション {count} 件を停止",
+  "rp.stop.summary_after": " / うち {count} 件はターン終了後",
+  "rp.stop.run": "停止する（{count}）",
+  "rp.stop.row_done": "停止しました。",
+  "rp.stop.row_armed": "ターン終了後に停止します。",
+  "rp.stop.row_failed": "停止に失敗しました: {err}",
+  "rp.stop.done_now": "セッション {count} 件を停止しました",
+  "rp.stop.done_after": "セッション {count} 件はターン終了後に停止します",
 
   // === P5 SCM（SourceControl/Changes/GitDiff/CommitDetail/WorkingDiff） ===
   "scm.discard_changes": "変更を破棄",
