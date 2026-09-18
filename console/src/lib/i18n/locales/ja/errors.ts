@@ -258,6 +258,8 @@ export const errors = {
   "err.hf_token_store_failed": "トークンを保存できませんでした",
   "err.hf_token_put_failed": "トークンを配備の秘密に書き込めませんでした",
   "err.civitai_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新してください",
+  "err.engine_civitai_red_off": "この配備は Civitai Red を提供していません",
+  "err.engine_civitai_red_unavailable": "この配備には Civitai Red がありません。Control Plane に AF_ENGINE_CIVITAI_RED を設定してください",
   "err.civitai_token_empty": "トークンが空です",
   "err.civitai_token_store_failed": "トークンを保存できませんでした",
   "err.civitai_token_put_failed": "トークンを配備の秘密に書き込めませんでした",

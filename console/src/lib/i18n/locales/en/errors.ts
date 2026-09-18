@@ -261,6 +261,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.hf_token_store_failed": "The token could not be saved.",
   "err.hf_token_put_failed": "The token could not be written into the deployment's secret.",
   "err.civitai_token_unsupported": "This deployment's engine stack has nowhere to keep the token — update 60-engines.",
+  "err.engine_civitai_red_off": "This deployment does not offer the Civitai Red source.",
+  "err.engine_civitai_red_unavailable": "This deployment does not have Civitai Red — set AF_ENGINE_CIVITAI_RED on the Control Plane.",
   "err.civitai_token_empty": "The token is empty.",
   "err.civitai_token_store_failed": "The token could not be saved.",
   "err.civitai_token_put_failed": "The token could not be written into the deployment's secret.",

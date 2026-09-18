@@ -136,6 +136,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Model names, example images and family categories in the catalogue | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engine models → Registered | [admin 04](../admin/04-mcp-egress.md) |
 | A repository's quantisations, with what fits the GPU class | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engine models → Registered | [admin 04](../admin/04-mcp-egress.md) |
 | Hugging Face and Civitai tokens for gated downloads | deployment admin (super_admin) | Admin → API tokens | [admin 04](../admin/04-mcp-egress.md) |
+| Civitai Red (the NSFW sister domain) as a search source | deployment admin (super_admin), where the deployment was given it | Admin → API tokens | [admin 04](../admin/04-mcp-egress.md) |
 | Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 07](../operate/07-image-engine.md) |
 | Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [operator 08](../operate/08-borrowed-engine.md) |
 | Role-scoped documentation in containers | — | automatic | [roles.md](roles.md) |

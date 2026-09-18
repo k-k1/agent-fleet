@@ -20,6 +20,7 @@ export function EngineTokensAdminView() {
     <div className="admin-stage">
       <HfTokenPanel />
       <CivitaiTokenPanel />
+      <CivitaiRedPanel />
     </div>
   );
 }
@@ -249,6 +250,77 @@ export function CivitaiTokenPanel() {
             )}
           </div>
           <p className="muted">{tr("admin.engines_civitai_token_note")}</p>
+        </>
+      )}
+      {err && <p className="form-err">{err}</p>}
+    </section>
+  );
+}
+
+/** Whether this deployment's catalogue search offers Civitai Red at all.
+ *
+ * Two levels, and only the second one is on this screen: AF_ENGINE_CIVITAI_RED says whether the
+ * deployment has the source (`available`), and this switch says whether it is showing. A
+ * deployment that was never given it reads the first sentence and nothing else — a checkbox that
+ * cannot be pressed is worse than no checkbox, and the fix is on the stack rather than here. */
+type CivitaiRedStatus = {
+  available?: boolean;
+  enabled?: boolean;
+};
+
+export function CivitaiRedPanel() {
+  const tr = useT();
+  const [st, setSt] = useState<CivitaiRedStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    const d = await api("api/admin/engines/civitai-red");
+    if (d?.error) {
+      setErr(errDetail(d.error));
+      return;
+    }
+    setSt(d || {});
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const move = async (enabled: boolean) => {
+    setBusy(true);
+    try {
+      const d = await apiJSON("api/admin/engines/civitai-red", "PUT", { enabled });
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setSt(d || {});
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!st) return null;
+  return (
+    <section className="admin-panel">
+      <div className="usage-toolbar">
+        <span>{tr("admin.engines_civitai_red")}</span>
+      </div>
+      {st.available === false ? (
+        <p className="muted">{tr("admin.engines_civitai_red_unavailable")}</p>
+      ) : (
+        <>
+          <label className="engine-operation-check">
+            <input
+              type="checkbox"
+              checked={!!st.enabled}
+              disabled={busy}
+              onChange={(ev) => move(ev.currentTarget.checked)}
+            />
+            <span>{tr("admin.engines_civitai_red_show")}</span>
+          </label>
+          <p className="muted">{tr("admin.engines_civitai_red_note")}</p>
         </>
       )}
       {err && <p className="form-err">{err}</p>}

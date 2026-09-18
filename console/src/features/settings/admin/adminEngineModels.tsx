@@ -2,7 +2,7 @@ import { useState } from "react";
 import { apiJSON, errDetail } from "../../../core/api/client.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
-import { type IngestHit } from "./engineTypes.ts";
+import { CATALOG_SOURCES_DEFAULT, type CatalogSource, type IngestHit } from "./engineTypes.ts";
 
 // What there is to run, on a deployment that has no engine to run it on.
 //
@@ -27,13 +27,18 @@ export type ModelKind = "model" | "lora";
  * Hugging Face and Civitai hold needs no engine — no token, no bucket, no task — so this screen
  * is useful on a deployment that has adopted nothing, and it says what it cannot do rather than
  * pretending (ADR 0072 decision 11). */
-export function EngineModelsAdminView() {
+export function EngineModelsAdminView({ sources = [...CATALOG_SOURCES_DEFAULT] }: {
+  /** The deployment's search sources, which both callers already hold — this screen has no
+   *  engine list of its own to read them off, and asking again for a list it was handed would
+   *  be a second GET to answer the same question. */
+  sources?: CatalogSource[];
+}) {
   const tr = useT();
   return (
     <div className="admin-stage">
       <section className="admin-panel">
         <p className="muted">{tr("admin.engines_none")}</p>
-        <EngineBrowse />
+        <EngineBrowse sources={sources} />
       </section>
     </div>
   );
@@ -46,12 +51,14 @@ export function EngineModelsAdminView() {
  * deployed. What it cannot do is take anything in, and the note says so — an administrator
  * deciding whether self-hosted inference is worth standing up is exactly the person who cannot
  * see the catalogue today. */
-function EngineBrowse() {
+function EngineBrowse({ sources }: { sources: CatalogSource[] }) {
   const tr = useT();
   const [q, setQ] = useState("");
   const [kind, setKind] = useState("gguf");
   const [sort, setSort] = useState("downloads");
-  const [source, setSource] = useState("hf");
+  const [picked, setSource] = useState<CatalogSource>("hf");
+  // A source the deployment stopped offering is not searched, whatever the state says.
+  const source = sources.includes(picked) ? picked : "hf";
   const [hits, setHits] = useState<IngestHit[] | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -117,7 +124,7 @@ function EngineBrowse() {
         {/* Civitai only for checkpoints — the same rule the catalogue pane's search follows. */}
         {kind === "checkpoint" && (
           <span className="seg sm">
-            {(["hf", "civitai", "civitai-red"] as const).map((sr) => (
+            {(["hf", "civitai", "civitai-red"] as const).filter((sr) => sources.includes(sr)).map((sr) => (
               <button
                 key={sr}
                 type="button"

@@ -19,7 +19,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { HfTokenPanel, CivitaiTokenPanel } from "./adminEngineTokens.tsx";
+import { HfTokenPanel, CivitaiTokenPanel, CivitaiRedPanel } from "./adminEngineTokens.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -185,5 +185,32 @@ describe("CivitaiTokenPanel", () => {
 
     await click(button("削除する"));
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/civitai-token", "DELETE");
+  });
+});
+
+// The super_admin's half of the Civitai Red gate (control-plane/engine_civitai_red.go). The
+// other half is the deployment's own: where it was never given the source there is nothing to
+// press, and a checkbox that cannot move is worse than no checkbox.
+describe("CivitaiRedPanel", () => {
+  const status = (answer: Record<string, unknown>) => (path: string) =>
+    Promise.resolve(path === "api/admin/engines/civitai-red" ? answer : {});
+  const box = () => document.querySelector<HTMLInputElement>('input[type="checkbox"]');
+
+  it("switches the source on, and says so to the deployment", async () => {
+    api.mockImplementation(status({ available: true, enabled: false }));
+    apiJSON.mockResolvedValue({ available: true, enabled: true });
+    await mount(<CivitaiRedPanel />);
+    expect(box()!.checked).toBe(false);
+
+    await act(async () => { box()!.click(); });
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/civitai-red", "PUT", { enabled: true });
+    expect(box()!.checked).toBe(true);
+  });
+
+  it("offers no switch on a deployment that was never given the source", async () => {
+    api.mockImplementation(status({ available: false, enabled: false }));
+    await mount(<CivitaiRedPanel />);
+    expect(box()).toBeNull();
+    expect(ui().textContent).toContain("AF_ENGINE_CIVITAI_RED");
   });
 });
