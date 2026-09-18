@@ -170,6 +170,10 @@ the assistant conversation — they share an implementation, but they surface so
     language. It spends tokens only when pressed and **uses no session turn** (the conversation does not
     move). A translation is kept until that session is deleted, so the same text is free from the second
     press on.
+  - **Translate automatically** — presses that button for you the moment a turn finishes (off by default).
+    Only answers that **arrive while you are watching that session** qualify; answers already on screen when
+    you open it are never translated on their own, and the button is still there for them. This is the one
+    translation setting that spends without being asked.
 
 ### Agent instructions
 

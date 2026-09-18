@@ -14,7 +14,7 @@ interface MockCall {
 }
 
 const calls: MockCall[] = [];
-const apiMock = vi.fn((path: string, opts?: RequestInit) => {
+const apiMock = vi.fn((path: string, opts?: RequestInit): Promise<unknown> => {
   calls.push({ path, opts });
   if (opts?.method === "POST") {
     const body = JSON.parse(String(opts.body)) as { to: string; parts: { text: string }[] };
@@ -37,16 +37,16 @@ import { splitForTranslate, translateHash } from "./translate.ts";
 
 let seen: (TranscriptTranslateWiring | undefined)[] = [];
 
-function Harness({ session }: { session: string }) {
-  seen.push(useTranslate({ session, lang: "ja", enabled: true }));
+function Harness({ session, auto = false }: { session: string; auto?: boolean }) {
+  seen.push(useTranslate({ session, lang: "ja", enabled: true, auto }));
   return null;
 }
 
 let renderer: ReactTestRenderer | null = null;
 
-function mount(session: string): void {
+function mount(session: string, auto = false): void {
   act(() => {
-    renderer = create(<Harness session={session} />);
+    renderer = create(<Harness session={session} auto={auto} />);
   });
 }
 
@@ -131,6 +131,65 @@ describe("useTranslate — surviving a tab switch", () => {
     await flush();
     expect(latest()!.shown(KEY)).toBe(true);
     expect(latest()!.get(TEXT)).toBe("訳:" + TEXT);
+  });
+});
+
+describe("useTranslate — the press nobody made (docs/log/97 §97.12)", () => {
+  it("fires once per turn, for good — a second ask, and one after going back to the original", async () => {
+    mount("auto-a", true);
+    await flush();
+    act(() => latest()!.autoPress(KEY, [TEXT]));
+    await flush();
+    expect(latest()!.shown(KEY)).toBe(true);
+    expect(calls.filter((c) => c.opts?.method === "POST")).toHaveLength(1);
+
+    act(() => latest()!.autoPress(KEY, [TEXT]));
+    await flush();
+    expect(calls.filter((c) => c.opts?.method === "POST")).toHaveLength(1);
+
+    // The reader reads the translation and flips back. The mirror re-renders about once a
+    // second, and every one of those renders asks again: without the latch the original would be
+    // taken away from them on the next poll, over and over.
+    act(() => latest()!.toggle(KEY, [TEXT]));
+    expect(latest()!.shown(KEY)).toBe(false);
+    act(() => latest()!.autoPress(KEY, [TEXT]));
+    act(() => latest()!.autoPress(KEY, [TEXT]));
+    await flush();
+    expect(latest()!.shown(KEY)).toBe(false);
+  });
+
+  it("tells the ledger which press it was, and leaves the reader's own press unlabelled", async () => {
+    mount("auto-trigger", true);
+    await flush();
+    act(() => latest()!.autoPress(translateHash("auto " + TEXT), ["auto " + TEXT]));
+    act(() => latest()!.toggle(translateHash("manual " + TEXT), ["manual " + TEXT]));
+    await flush();
+    const posts = calls.filter((c) => c.opts?.method === "POST").map((c) => JSON.parse(String(c.opts!.body)));
+    expect(posts).toHaveLength(2);
+    expect(posts[0].trigger).toBe("auto");
+    // Absent, not "manual": an Agent older than this Console rejects unknown fields outright, and
+    // the reader's own button has to keep working while a deployment rolls.
+    expect("trigger" in posts[1]).toBe(false);
+  });
+
+  it("fails silently, where the reader's own press reports", async () => {
+    apiMock.mockImplementationOnce((path: string, opts?: RequestInit) => {
+      calls.push({ path, opts });
+      return Promise.resolve({ error: { code: "translate_too_long", message: "too long" } });
+    });
+    mount("auto-fail", true);
+    await flush();
+    apiMock.mockImplementationOnce((path: string, opts?: RequestInit) => {
+      calls.push({ path, opts });
+      return Promise.resolve({ error: { code: "translate_too_long", message: "too long" } });
+    });
+    act(() => latest()!.autoPress(KEY, [TEXT]));
+    await flush();
+    // Nothing on screen: an error beside a button the reader never pressed is noise they cannot
+    // act on, and the answer is still readable as it came.
+    expect(latest()!.error(KEY)).toBeUndefined();
+    expect(latest()!.busy(KEY)).toBe(false);
+    expect(latest()!.shown(KEY)).toBe(false);
   });
 });
 

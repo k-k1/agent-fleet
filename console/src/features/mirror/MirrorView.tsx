@@ -374,6 +374,7 @@ export function MirrorView({
     session: session || "",
     lang: targetLang(settings.outputLanguage, locale),
     enabled: settings.mirrorTranslateEnabled !== false,
+    auto: settings.mirrorAutoTranslate === true,
   });
 
 

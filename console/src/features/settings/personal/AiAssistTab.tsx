@@ -86,6 +86,17 @@ export function AiAssistTab() {
           <OnOff value={s.mirrorTranslateEnabled} onChange={(v) => setSetting("mirrorTranslateEnabled", v)} />
         </Row>
         <p className="muted ds-note">{tr("aiassist.note_mirror_translate")}</p>
+        {/* Shown only while the button it automates exists, the same way this tab hides a
+            feature's button when the feature is off: an "automatic" switch left visible under a
+            feature that is off reads as a second, contradictory answer to the same question. */}
+        {s.mirrorTranslateEnabled !== false && (
+          <>
+            <Row label={tr("aiassist.mirror_auto_translate")}>
+              <OnOff value={s.mirrorAutoTranslate} onChange={(v) => setSetting("mirrorAutoTranslate", v)} />
+            </Row>
+            <p className="muted ds-note">{tr("aiassist.note_mirror_auto_translate")}</p>
+          </>
+        )}
       </section>
     </>
   );

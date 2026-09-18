@@ -8,9 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 func translateCall(t *testing.T, name, body string) *httptest.ResponseRecorder {
@@ -163,6 +166,98 @@ func TestTranslateReplyClaimsNoModel(t *testing.T) {
 	}
 	if strings.Contains(string(stored), "model") || strings.Contains(string(stored), "kind") {
 		t.Fatalf("the store keeps a model/kind it cannot know: %s", stored)
+	}
+}
+
+// The ledger records who pressed. An automatic press (docs/log/97 §97.12) spends without a
+// reader asking, so filing it as "manual" would put a run nobody made under the reader's own
+// hand — the same class of untruth ADR 0029 §1 forbids for `kind`.
+func TestTranslateRecordsWhichPressAsked(t *testing.T) {
+	const name = "tr9"
+	seedTranslateSession(t, name)
+	var seen []string
+	prev := translateOneShot
+	translateOneShot = func(ctx context.Context, text, lang string) (string, error) {
+		tag, _ := usagex.TagOf(ctx)
+		seen = append(seen, tag.Feature+"/"+tag.Trigger)
+		return "訳:" + text, nil
+	}
+	t.Cleanup(func() { translateOneShot = prev })
+
+	decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"pressed by hand"}]}`))
+	decodeTranslate(t, translateCall(t, name, `{"to":"ja","trigger":"auto","parts":[{"text":"pressed on completion"}]}`))
+	// Unknown values are the reader's own press: a typo must not invent a third kind of run.
+	decodeTranslate(t, translateCall(t, name, `{"to":"ja","trigger":"nonsense","parts":[{"text":"pressed oddly"}]}`))
+
+	want := []string{"translate.mirror/manual", "translate.mirror/auto", "translate.mirror/manual"}
+	if len(seen) != len(want) {
+		t.Fatalf("runs=%v want %v", seen, want)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Fatalf("run %d tagged %q, want %q", i, seen[i], want[i])
+		}
+	}
+}
+
+// Two readers on the same answer at the same moment — one at the desk, one on a phone, or simply
+// two panes with automatic translation on, which makes the collision the normal case rather than
+// a coincidence. The store only dedupes once a run has FINISHED (17 s, measured), so without the
+// in-flight join both would pay for the same text.
+func TestTranslateRunsOnceForSimultaneousAsks(t *testing.T) {
+	const name = "tr10"
+	seedTranslateSession(t, name)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 4)
+	var mu sync.Mutex
+	calls := 0
+	prev := translateOneShot
+	translateOneShot = func(_ context.Context, text, lang string) (string, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		entered <- struct{}{}
+		<-release
+		return "訳:" + text, nil
+	}
+	t.Cleanup(func() { translateOneShot = prev })
+
+	const body = `{"to":"ja","trigger":"auto","parts":[{"text":"the very same answer"}]}`
+	results := make(chan translateResp, 2)
+	ask := func() {
+		w := translateCall(t, name, body)
+		var resp translateResp
+		if w.Code == http.StatusOK {
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		}
+		results <- resp
+	}
+	go ask()
+	// The second ask is made only once the first is provably inside the model — that window is
+	// the only thing this test is about.
+	<-entered
+	go ask()
+	select {
+	case <-entered:
+		t.Fatal("a second model run started while the first was still in flight")
+	case <-time.After(100 * time.Millisecond):
+		// Nothing started. The second ask is either waiting on the flight or about to be served
+		// by the store the leader is about to write; both are one run.
+	}
+	close(release)
+
+	a, b := <-results, <-results
+	if calls != 1 {
+		t.Fatalf("model runs=%d, want 1", calls)
+	}
+	for _, r := range []translateResp{a, b} {
+		if len(r.Parts) != 1 || r.Parts[0].Text != "訳:the very same answer" {
+			t.Fatalf("a waiter got %+v, want the leader's translation", r)
+		}
+	}
+	// One of the two answers says it paid for nothing, and exactly one did run.
+	if a.Parts[0].Cached == b.Parts[0].Cached {
+		t.Fatalf("cached=%v/%v: exactly one of the two asks ran a model", a.Parts[0].Cached, b.Parts[0].Cached)
 	}
 }
 
