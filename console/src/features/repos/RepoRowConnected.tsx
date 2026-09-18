@@ -3,7 +3,7 @@
 // copy appears (the flat Repos list, each node of the project tree). All the launch
 // / clone-target / delete / fast-forward / open-SCM logic that used to live inline
 // in ReposSection lives here once.
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { apiJSON, errDetail, errText, repoSetLock } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -20,6 +20,8 @@ import { RepoRow } from "./RepoRow.tsx";
 import { useStartWork } from "./useStartWork.ts";
 import { SvnAuthModal } from "./SvnAuthModal.tsx";
 import { DeleteCopyModal } from "./DeleteCopyModal.tsx";
+import { StopSessionsModal } from "./StopSessionsModal.tsx";
+import { liveSessionCount } from "./stopTree.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import type { RepoRailContext } from "./useRepoRail.ts";
 
@@ -54,6 +56,16 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, onArchiveStoppe
   // svn_auth_required — the failure IS the moment to ask, and answering it retries.
   const [authOpen, setAuthOpen] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
+  const [stopOpen, setStopOpen] = useState(false);
+  // The subtree both plan dialogs work on. A row rendered outside the tree (the flat Repos
+  // list) has no subtree; a leaf of one is the same shape. Memoized because each dialog
+  // freezes its plan on this object's identity.
+  const treeNode: RepoTreeNode = useMemo(() => node || { repo: r, children: [], spine: "" }, [node, r]);
+  // The bulk stop's scope is that whole subtree, so the count that decides whether the menu
+  // item appears is counted here rather than passed per folder like stoppedCount: a folded
+  // spawn shows one row and holds four running sessions.
+  const sessions = useSessionsStore((s) => s.sessions);
+  const aliveCount = liveSessionCount(treeNode, sessions);
 
   const svnUpdate = async () => {
     const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/svn-update`, "POST", {});
@@ -83,6 +95,9 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, onArchiveStoppe
       sess={sess}
       onArchiveStopped={onArchiveStopped}
       stoppedCount={stoppedCount}
+      // Bulk stop: the whole subtree's live sessions, planned per row in the modal.
+      onStopSessions={() => setStopOpen(true)}
+      aliveCount={aliveCount}
       opens={ctx.rPanes?.get(r.name)}
       onFocusPane={setActive}
       onToggle={onToggle}
@@ -193,10 +208,24 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, onArchiveStoppe
         useFilesStore.getState().bump();
       }}
     />
+    {stopOpen && (
+      <StopSessionsModal
+        node={treeNode}
+        onClose={() => setStopOpen(false)}
+        // Two counts rather than one line: "stopped" and "will stop when its turn ends" are
+        // different promises, and a toast that merged them would overstate the first.
+        onDone={(now, after) => {
+          const parts = [
+            ...(now > 0 ? [tr("rp.stop.done_now", { count: now })] : []),
+            ...(after > 0 ? [tr("rp.stop.done_after", { count: after })] : []),
+          ];
+          toast(parts.join(tr("common.list_sep")), { kind: "success" });
+        }}
+      />
+    )}
     {delOpen && (
       <DeleteCopyModal
-        // A row outside the tree has no subtree to offer; a leaf of one is the same shape.
-        node={node || { repo: r, children: [], spine: "" }}
+        node={treeNode}
         onClose={() => setDelOpen(false)}
         // Not r.name: a run can end with the children gone and this row held back (a live
         // session, a lock), and a toast naming this copy would then be a lie.

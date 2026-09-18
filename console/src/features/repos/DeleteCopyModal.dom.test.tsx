@@ -179,6 +179,34 @@ describe("作業コピー削除モーダル", () => {
     expect(sent().at(-1)).toBe("DELETE api/repos/app/branch?branch=temp%2Fa&remote=1");
   });
 
+  it("稼働中のセッションは、チェックを入れて初めて止めてから消す", async () => {
+    await render(node(repo("app@a")), [sess("s1", "app@a", { alive: true })]);
+    // Blocked as it stands: the row cannot be ticked and nothing is sent.
+    expect(rowFor("app@a").disabled).toBe(true);
+    await click(runButton());
+    expect(sent()).toEqual([]);
+
+    raw.mockClear();
+    await render(node(repo("app@a")), [sess("s1", "app@a", { alive: true })]);
+    await click(optBoxes()[0]); // "stop the running sessions first"
+    await click(runButton());
+    // /archive kills the pane itself, so stopping is the same clearing pass — no extra call,
+    // and the copy still goes only after its session is off the list.
+    expect(sent()).toEqual(["POST api/sessions/s1/archive", "DELETE api/repos/app%40a"]);
+  });
+
+  it("削除ロック中のセッションがいる行は、停止にチェックしても触らない", async () => {
+    await render(node(repo("app@a")), [
+      sess("s1", "app@a", { alive: true }),
+      sess("s2", "app@a", { locked: true }),
+    ]);
+    // No tick is offered at all: the lock survives stopping, so there is nothing the run
+    // could do with this row (and with no runnable row there is no branch to offer either).
+    expect(optBoxes()).toHaveLength(0);
+    await click(runButton());
+    expect(sent()).toEqual([]);
+  });
+
   it("worktree を1つでも残す間は本体クローンを消しに行かない", async () => {
     const base = node(repo("app", { worktree: false, parent: undefined, branch: "develop" }), [
       node(repo("app@b")),

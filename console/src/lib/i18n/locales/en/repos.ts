@@ -65,6 +65,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "repo.lock_failed": "Failed to change the deletion lock: {err}",
   "repo.locked_on": "Locked {name} against deletion",
   "repo.locked_off": "Removed the deletion lock on {name}",
+  "repo.stop_sessions": "Stop the sessions below",
   "repo.delete_wc": "Delete the working copy",
   "repo.svn_update": "Update (svn)",
   "repo.svn_cleanup": "Clean up lock (svn)",
@@ -297,6 +298,10 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "rp.del.sessions_n": "{count} session(s)",
   "rp.del.sessions_n_alive": "{count} session(s), {alive} running",
   "rp.del.no_sessions": "no sessions",
+  "rp.del.why_alive_stop": "its {count} running session(s) are stopped first",
+  "rp.del.stop_alive": "Stop the running sessions first ({count})",
+  "rp.del.stop_alive_hint": "a turn in flight is cut off",
+  "rp.del.summary_stop": " ({count} of them are running and stopped first)",
   "rp.del.branches": "Delete the merged branches too ({count})",
   "rp.del.branches_hint": "undo from the Cleanup trash",
   "rp.del.remote": "Delete the branch on the remote (origin) too",
@@ -314,6 +319,31 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "rp.del.session_failed_generic": "could not clear session {name}",
   "rp.del.branch_failed": "branch {branch} could not be deleted: {err}",
   "rp.del.remote_failed": "{branch} could not be deleted on origin (the local branch is gone): {err}",
+
+  // Bulk session stop modal (StopSessionsModal) — stops the sessions running in the
+  // right-clicked copy and in the copies the rail nests under it. A stop is reversible
+  // (the conversation stays, the session resumes), so the only thing at risk is a turn
+  // that is still running.
+  "rp.stop_sessions_title": "Stop the sessions below",
+  "rp.stop.intro": "The sessions running in \"{name}\". Stopping keeps the conversation — they can be resumed later.",
+  "rp.stop.intro_tree":
+    "The sessions running in \"{name}\" and in the {count} working copies nested under it (only copies that have one are listed). Stopping keeps the conversation — they can be resumed later.",
+  "rp.stop.mode_now": "stop now",
+  "rp.stop.mode_after": "after the turn",
+  "rp.stop.why_pinned": "pinned awake ({left} left)",
+  "rp.stop.why_opaque": "no way to tell whether it is busy (stopping loses whatever is running in it)",
+  "rp.stop.why_armed": "already armed to stop at the end of its turn",
+  "rp.stop.force": "Stop the running sessions right away too ({count})",
+  "rp.stop.force_hint": "cuts their turn off mid-way",
+  "rp.stop.force_warn": "{count} running session(s) are cut off mid-turn. The reply being written is lost.",
+  "rp.stop.summary": "stop {count} sessions",
+  "rp.stop.summary_after": " / {count} of them after their turn",
+  "rp.stop.run": "Stop ({count})",
+  "rp.stop.row_done": "Stopped.",
+  "rp.stop.row_armed": "Will stop at the end of its turn.",
+  "rp.stop.row_failed": "Stop failed: {err}",
+  "rp.stop.done_now": "Stopped {count} sessions",
+  "rp.stop.done_after": "{count} sessions will stop at the end of their turn",
 
   // === P5 SCM（SourceControl/Changes/GitDiff/CommitDetail/WorkingDiff） ===
   "scm.discard_changes": "Discard changes",
