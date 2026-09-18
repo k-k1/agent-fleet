@@ -122,6 +122,15 @@ type Turn struct {
 	OutTok      int    `json:"outTok,omitempty"`
 	CacheRead   int    `json:"cacheRead,omitempty"`
 	CacheCreate int    `json:"cacheCreate,omitempty"`
+	// ReqID names the API response this row came out of, for parsers whose agent writes ONE
+	// response as several rows and repeats the SAME usage numbers on each of them (claude:
+	// thinking, text and tool_use rows share a requestId and every one of them carries the
+	// response's final output_tokens). Since output is SUMMED across a turn's events, a
+	// parser must leave the usage on one row per response and zero it on the rest — this
+	// field is how it tells them apart. Never leaves the Agent (json:"-"): the Console reads
+	// the already-deduplicated numbers, and adding a wire field would only invite a second,
+	// divergent dedup there. Empty = this kind has one usage record per row.
+	ReqID string `json:"-"`
 	TS          string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
 	Idx         int    `json:"idx"` // transcript line index — a stable render key
 	// AnchorID is the AGENT's own stable identifier for this turn, opaque to the Console:
