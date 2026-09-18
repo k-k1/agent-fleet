@@ -153,7 +153,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # スイートと main スイートは別の版を指すので、片方を security・片方を main で読むと
 # **存在しない版差が出る**。実際それで「trixie にすると chromium が下がる」という誤った
 # 代償が 1 度記録され、ベース更新の判断を狂わせた。ここに書くのは常に security の版。
-ARG CHROMIUM_VERSION=152.0.7977.82-1~deb13u1
+ARG CHROMIUM_VERSION=153.0.8010.47-2~deb13u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
@@ -315,10 +315,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.273
+ARG CLAUDE_CODE_VERSION=2.1.275
 ARG OPENCODE_VERSION=1.18.31
-ARG CODEX_VERSION=0.154.0
-ARG COPILOT_VERSION=1.0.83
+ARG CODEX_VERSION=0.155.0
+ARG COPILOT_VERSION=1.0.86
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -344,10 +344,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.2.3
-ARG AGY_RELEASE_BUILD=5101874907578368
-ARG AGY_SHA256_X64=57afb34f2a4be9296beb477e600761b6ac7401eb3a54a64a0014d573b7fc3af4
-ARG AGY_SHA256_ARM64=e500d8b5d61bf8420cd397a1dabfa80899817b850b57982a1f5d4742be2b5d05
+ARG AGY_VERSION=1.2.5
+ARG AGY_RELEASE_BUILD=4931130160447488
+ARG AGY_SHA256_X64=e450caab5682acc920721b04cf0f6860c313d1f5296bc6e49d79cd3843802e65
+ARG AGY_SHA256_ARM64=0c9fba6d51d98bd40f87beda43fbc75edc96578382caf4ec2efa217f751dfdb8
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -391,9 +391,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.09.10-fd3934a
-ARG CURSOR_SHA256_X64=27997c8391ad853a5a732b1845db8ef82a8ba6afb0f7829cc739464f8966e96e
-ARG CURSOR_SHA256_ARM64=e0494438b01c37bc34848491d1f3478ef469494c56caf020de11796d146db64a
+ARG CURSOR_VERSION=2026.09.15-d2fe57e
+ARG CURSOR_SHA256_X64=4b7b026dd104e935b216cc52f905a560d741fc80a4a4d62ef655735b96a15c97
+ARG CURSOR_SHA256_ARM64=2d741c12c3ee7a505584579efb28a0ee31ff13fefc1f347e2d3b43688c04620d
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -433,9 +433,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.21.4
-ARG KIRO_SHA256_X64=10e185b464802cb1fb322798f1da134330aebd11112fabba6a9f5f28061bac3c
-ARG KIRO_SHA256_ARM64=958308767edd6f2ded505b4a4467b93878f9a324675e3545627aee51f30c9435
+ARG KIRO_VERSION=2.22.0
+ARG KIRO_SHA256_X64=7ec8078d67d5705ff7265a143b25dc1b37b82dabd009e1fce3bd9828a459e971
+ARG KIRO_SHA256_ARM64=7a0b20a11258ab7396b6f855047e444d3a295dfb75bb1e11b0a9832698e7857d
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。
