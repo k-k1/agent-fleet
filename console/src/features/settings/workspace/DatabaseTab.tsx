@@ -34,6 +34,7 @@ interface DBEngine {
   rssBytes: number;
   port: number;
   datadir: string;
+  autostart: boolean; // start this engine when the workspace starts
   databases: DBDatabase[]; // empty unless running
   lastUsedAt: string;
   lastError: string;
@@ -316,6 +317,20 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
       )}
 
       <div className="db-engine-actions">
+        {/* Autostart needs an instance to exist, which means the engine has been
+            started at least once — so the workspace's boot never downloads a server.
+            Hidden while it has never run, because there would be nothing to set. */}
+        {eng.state !== "absent" && (
+          <label className="db-autostart">
+            <input
+              type="checkbox"
+              checked={!!eng.autostart}
+              disabled={busy2}
+              onChange={(e) => doAction("autostart", "on=" + (e.target.checked ? "1" : "0"))}
+            />
+            {tr("env.db_autostart")}
+          </label>
+        )}
         {(eng.state === "absent" || eng.state === "stopped" || eng.state === "error") && (
           <button className="db-btn" disabled={busy2} onClick={() => doAction("start")}>
             {eng.state === "absent" ? tr("env.db_start_absent") : tr("env.db_start")}

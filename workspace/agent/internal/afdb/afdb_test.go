@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -522,6 +523,99 @@ func stubPgClientInstall(t *testing.T) {
 	prev := installPgClientFn
 	installPgClientFn = func(string) error { return nil }
 	t.Cleanup(func() { installPgClientFn = prev })
+}
+
+// TestStablePortPrefersWellKnownAndRemembers pins what the member asked for: the
+// port must not move, because a moving port means rewriting the connection string
+// in the application under development after every restart — and decision 7's
+// idle-stop makes restarts routine rather than rare.
+//
+// It is also why the search starts at 5432/3306 rather than at a remembered
+// ephemeral port: 127.0.0.1:0 allocates from 32768-60999, the same range the
+// kernel hands to outbound sockets, so a number remembered from there can be
+// taken by an unrelated connection while the server is down.
+func TestStablePortPrefersWellKnownAndRemembers(t *testing.T) {
+	if base := basePortFor("postgres"); base != 5432 {
+		t.Errorf("postgres base port = %d, want 5432 (what every framework default says)", base)
+	}
+	if base := basePortFor("mysql"); base != 3306 {
+		t.Errorf("mysql base port = %d, want 3306", base)
+	}
+
+	// A remembered port that is free wins, so a server that had to move once stays
+	// where it landed instead of drifting back on the next restart.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	free := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	got, err := stablePort("postgres", free)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != free {
+		t.Errorf("stablePort with a free remembered port = %d, want %d", got, free)
+	}
+
+	// A remembered port that is taken must not be handed out twice.
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	taken := busy.Addr().(*net.TCPAddr).Port
+	got, err = stablePort("postgres", taken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == taken {
+		t.Errorf("stablePort returned a port that is already bound (%d)", got)
+	}
+	if !portFree(got) {
+		t.Errorf("stablePort returned %d, which is not bindable", got)
+	}
+}
+
+// TestSetAutostartRequiresAnInstance — the flag may only be set on an engine that
+// has been started once. Otherwise "start with the workspace" would mean
+// "download a database server during boot", which is not what a member ticking a
+// box in a settings tab is asking for.
+func TestSetAutostartRequiresAnInstance(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(registryDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetAutostart("postgres", "17", true); err == nil {
+		t.Error("SetAutostart on an engine that was never started should fail")
+	}
+
+	// With an instance recorded it sticks, and survives the round trip through the
+	// registry — the boot path reads it from there and nowhere else.
+	if err := withLock(func() error {
+		r, _ := readRegistry()
+		if r.Instances == nil {
+			r.Instances = map[string]*Instance{}
+		}
+		r.Instances[instanceKey("postgres", "17")] = &Instance{Engine: "postgres", Major: "17"}
+		return writeRegistry(r)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetAutostart("postgres", "17", true); err != nil {
+		t.Fatalf("SetAutostart: %v", err)
+	}
+	if !BuildEngineStatus("postgres", "17").Autostart {
+		t.Error("autostart was not reported back through the status the Console reads")
+	}
+	if err := SetAutostart("postgres", "17", false); err != nil {
+		t.Fatalf("SetAutostart off: %v", err)
+	}
+	if BuildEngineStatus("postgres", "17").Autostart {
+		t.Error("autostart stayed on after being turned off")
+	}
 }
 
 // TestEnsureClientToolsMySQL pins the gap that made this work necessary: MySQL's

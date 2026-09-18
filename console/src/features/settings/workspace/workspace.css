@@ -661,6 +661,16 @@
   font-weight: 600;
 }
 
+/* Autostart sits with the Start/Stop controls: it is the same question asked
+   about the next boot rather than about now. */
+.db-autostart {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
 .db-btn-drop {
   color: var(--del);
 }

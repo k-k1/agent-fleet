@@ -15,6 +15,8 @@
 //   8. Connect creates a home Shell session running `af-db connect` on that row's
 //      database, and opens it — the CLIs are otherwise not something a member can
 //      reach by typing (mysql was not even on PATH)
+//   9. the autostart checkbox POSTs /{engine}/autostart?on=1|0, and is absent for
+//      an engine that has never run (there is no instance to set it on)
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -65,6 +67,7 @@ const pgRunning = {
   rssBytes: 47_000_000,
   port: 54321,
   datadir: "/tmp/data",
+  autostart: false,
   databases: [
     {
       name: "af_agent_fleet_9af42b",
@@ -87,6 +90,7 @@ const mysqlAbsent = {
   rssBytes: 0,
   port: 0,
   datadir: "",
+  autostart: false,
   databases: [],
   lastUsedAt: "",
   lastError: "",
@@ -302,6 +306,49 @@ describe("DatabaseTab", () => {
     // The modal covers the pane the session opens in, so it has to get out of the way.
     expect(closeSettings).toHaveBeenCalled();
     expect(openSessionTerminal).toHaveBeenCalledWith("sh-abc123");
+  });
+
+  it("autostart POSTs on=1/on=0 and is hidden until the engine has run", async () => {
+    api.mockResolvedValue({ engines: [pgRunning] });
+    apiJSON.mockResolvedValue({ status: pgRunning });
+    await mount();
+
+    const box = document.querySelector<HTMLInputElement>(".db-autostart input");
+    expect(box).toBeTruthy();
+    expect(box!.checked).toBe(false);
+    await act(async () => {
+      box!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(String(apiJSON.mock.calls.at(-1)![0])).toContain(
+      "api/env/databases/postgres/autostart?on=1",
+    );
+
+    // Already on → the click turns it off.
+    act(() => root?.unmount());
+    root = null;
+    apiJSON.mockClear();
+    api.mockResolvedValue({ engines: [{ ...pgRunning, autostart: true }] });
+    await mount();
+    const on = document.querySelector<HTMLInputElement>(".db-autostart input")!;
+    expect(on.checked).toBe(true);
+    await act(async () => {
+      on.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(String(apiJSON.mock.calls.at(-1)![0])).toContain("on=0");
+  });
+
+  it("hides autostart for an engine that has never been started", async () => {
+    // state=absent means no instance exists, so there is nothing to set the flag
+    // on — and offering it would promise a download during the workspace's boot.
+    api.mockResolvedValue({ engines: [mysqlAbsent] });
+    await mount();
+    expect(document.querySelector(".db-autostart")).toBeNull();
   });
 
   it("Delete POSTs /{engine}/drop for the row it sits on", async () => {

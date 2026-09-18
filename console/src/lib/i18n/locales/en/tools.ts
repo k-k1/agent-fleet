@@ -205,6 +205,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.db_start_absent": "Install and start",
   "env.db_stop": "Stop",
   "env.db_stop_purge": "Stop and remove data",
+  "env.db_autostart": "Start with the workspace",
   "env.db_connect": "Connect",
   "env.db_connect_hint": "Opens a shell session and starts psql / mysql on this database",
   "env.db_create": "Create",

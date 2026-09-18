@@ -36,13 +36,23 @@ const DefaultMySQLMajor = "8.4"
 
 // Instance holds the live state for one (engine, major) server.
 type Instance struct {
-	Engine     string    `json:"engine"`
-	Major      string    `json:"major"`
-	Root       string    `json:"root"`
-	Datadir    string    `json:"datadir"`
-	Sockdir    string    `json:"sockdir"`
-	Port       int       `json:"port"`
-	PID        int       `json:"pid,omitempty"`
+	Engine  string `json:"engine"`
+	Major   string `json:"major"`
+	Root    string `json:"root"`
+	Datadir string `json:"datadir"`
+	Sockdir string `json:"sockdir"`
+	Port    int    `json:"port"`
+	// PreferredPort is the port this instance wants next time. Unlike Port it is
+	// NOT cleared on stop — that is the whole point: a clean stop zeroes Port, so
+	// without this the next start would re-run the search and could land somewhere
+	// else if the base port happened to be busy the first time.
+	PreferredPort int `json:"preferredPort,omitempty"`
+	PID           int `json:"pid,omitempty"`
+	// Autostart brings this engine up when the Agent boots, i.e. when the
+	// workspace starts. Off by default: a database costs memory on a shared,
+	// memory-constrained host, and starting one nobody asked for is not a default
+	// this project gets to choose for a member.
+	Autostart  bool      `json:"autostart,omitempty"`
 	StartedAt  time.Time `json:"startedAt,omitempty"`
 	LastUsedAt time.Time `json:"lastUsedAt,omitempty"`
 	// Durable turns fsync (Postgres) / innodb-flush-log-at-trx-commit (MySQL) back
@@ -290,6 +300,70 @@ func pickPort() (int, error) {
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
 	return port, nil
+}
+
+// basePortFor is where the search for a stable port starts: the engine's own
+// well-known number. A member's application config, their ORM's default, and
+// every tutorial they will copy from all say 5432 / 3306, so landing there means
+// the connection string they already have is the right one.
+func basePortFor(engine string) int {
+	if engine == "mysql" {
+		return 3306
+	}
+	return 5432
+}
+
+// portScanRange is how far above the base to look before giving up on a stable
+// number. Small on purpose: past this, something else in the container owns that
+// neighbourhood and an ephemeral port is the honest answer.
+const portScanRange = 64
+
+// portFree reports whether 127.0.0.1:port can be bound right now.
+func portFree(port int) bool {
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	l.Close()
+	return true
+}
+
+// stablePort picks the port a server should listen on, preferring the one it
+// used last time.
+//
+// The old behaviour — a fresh 127.0.0.1:0 on every start — gave a different
+// number after every restart, and the idle-stop of decision 7 makes restarts
+// routine rather than rare. That is not something a member can build against:
+// they would have to rewrite the connection string in the application they are
+// developing every time the server came back. For Postgres it is worse than a
+// number changing, because the unix socket is named .s.PGSQL.<port>, so the
+// socket path moves too.
+//
+// Order: the recorded port, then the engine's well-known port and the 64 above
+// it, then an ephemeral one. The recorded port comes first so a server that
+// already landed somewhere keeps its place; the well-known base comes next
+// because a first start should be predictable rather than random.
+//
+// Note that 127.0.0.1:0 hands out ports from 32768-60999, the SAME range the
+// kernel assigns to outbound sockets — so a remembered ephemeral port has a real
+// chance of being taken by some unrelated connection while the server is down.
+// Starting from 5432 / 3306 puts the server outside that traffic entirely.
+//
+// Stability is preferred, never promised: this container is shared with the
+// member's other sessions, so the port can still move if something took it.
+// Whatever it ends up as is recorded, and `af-db connect` and the Console read
+// it live.
+func stablePort(engine string, recorded int) (int, error) {
+	if recorded > 0 && portFree(recorded) {
+		return recorded, nil
+	}
+	base := basePortFor(engine)
+	for p := base; p < base+portScanRange; p++ {
+		if portFree(p) {
+			return p, nil
+		}
+	}
+	return pickPort()
 }
 
 // ---- password helpers ----

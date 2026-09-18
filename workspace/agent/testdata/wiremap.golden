@@ -62,7 +62,7 @@ fs_resolve.go handleFSResolve x1 {resolved}
 fs_search.go handleFSSearch x1 {results,root,truncated}
 fs_search.go handleFSSearch x3 {results,truncated}
 fs_suggest_edit.go handleFSSuggestEdit x1 {replacement,summary}
-internal/afdb/http.go HandleDatabasesAction x5 {status}
+internal/afdb/http.go HandleDatabasesAction x6 {status}
 internal/afdb/http.go HandleDatabasesGet x1 {engines}
 internal/agents/agy/auth.go HandleComplete x1 {connected}
 internal/agents/agy/auth.go HandleDisconnect x1 {disconnected}

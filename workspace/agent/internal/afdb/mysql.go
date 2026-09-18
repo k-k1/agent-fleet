@@ -155,11 +155,15 @@ func startMySQLServer(inst *Instance, opts startOpts) error {
 		}
 	}
 
-	port, err := pickPort()
+	// Keep the port the server had last time when it is still free (decision 7's
+	// idle-stop makes restarts routine, and a moving port moves the member's
+	// connection string with it).
+	port, err := stablePort("mysql", inst.PreferredPort)
 	if err != nil {
 		return errStart(fmt.Sprintf("pick port: %v", err))
 	}
 	inst.Port = port
+	inst.PreferredPort = port
 
 	// Same as Postgres: a container stop leaves mysqld.pid behind, and the number
 	// in it belongs to someone else on the next boot. isMySQLRunning reads this
