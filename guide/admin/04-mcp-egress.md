@@ -196,7 +196,9 @@ itself (**complete**), never from a part. **Complete** also fixes a file that is
 the wrong key: it is moved inside the bucket (**Moved inside the bucket (no download)**) rather
 than fetched a second time.
 
-The registered rows are grouped by **family**, with the family as the heading over each section
+The registered cards are laid out in **as many columns as the pane is wide**, and each one folds
+its own contents on the width it got — so a wide pane compares several models side by side instead
+of one per row. The registered rows are grouped by **family**, with the family as the heading over each section
 and a row of chips above them that narrows to one — the rows that declare no family come first,
 because those are the ones the Control Plane refuses to enable. A chat engine's rows, which
 declare no family at all, are grouped by **publisher** instead. Each card is titled with the name
