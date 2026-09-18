@@ -514,6 +514,106 @@ func TestDatadirBaseIgnoresScratchByDefault(t *testing.T) {
 	}
 }
 
+// stubPgClientInstall replaces the re-exec that fetches psql. Without it a test
+// calling ensureUp runs os.Executable() — the test binary — with
+// "install-pg-client", which re-runs this whole suite as a subprocess.
+func stubPgClientInstall(t *testing.T) {
+	t.Helper()
+	prev := installPgClientFn
+	installPgClientFn = func(string) error { return nil }
+	t.Cleanup(func() { installPgClientFn = prev })
+}
+
+// TestEnsureClientToolsMySQL pins the gap that made this work necessary: MySQL's
+// own `mysql` client ships inside the server tarball, and nothing ever put it on
+// PATH — `command -v mysql` answered nothing on a workspace that had been running
+// MySQL all day.
+func TestEnsureClientToolsMySQL(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, "mysqlroot")
+	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, bin := range []string{"mysql", "mysqldump"} {
+		if err := os.WriteFile(filepath.Join(root, "bin", bin), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ensureClientTools("mysql", "8.4", root)
+
+	for _, bin := range []string{"mysql", "mysqldump"} {
+		p := filepath.Join(home, ".local", "bin", bin)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("%s was not placed on PATH: %v", bin, err)
+		}
+		script := string(b)
+		if !strings.Contains(script, filepath.Join(root, "bin", bin)) {
+			t.Errorf("%s wrapper does not exec the installed binary:\n%s", bin, script)
+		}
+		// The client has no environment variable for the user name, so without the
+		// option file a bare `mysql` is refused as the OS user (`dev`).
+		if !strings.Contains(script, "--defaults-extra-file=") {
+			t.Errorf("%s wrapper does not point at the client defaults:\n%s", bin, script)
+		}
+		if fi, err := os.Stat(p); err == nil && fi.Mode().Perm()&0o111 == 0 {
+			t.Errorf("%s wrapper is not executable (mode %v)", bin, fi.Mode().Perm())
+		}
+	}
+	cnf, err := os.ReadFile(mysqlClientCnfPath(root))
+	if err != nil {
+		t.Fatalf("client defaults not written: %v", err)
+	}
+	if !strings.Contains(string(cnf), "user=root") {
+		t.Errorf("client defaults do not set the user:\n%s", cnf)
+	}
+	// The password belongs to the instance and is regenerated with the datadir; a
+	// copy here would go stale silently.
+	if strings.Contains(string(cnf), "password") {
+		t.Errorf("client defaults must not carry a password:\n%s", cnf)
+	}
+}
+
+// TestEnsureClientToolsSkipsAbsentBinary — a tarball that does not carry a tool
+// must not leave a wrapper pointing at nothing (a wrapper that execs a missing
+// path fails later and further away than simply not being on PATH).
+func TestEnsureClientToolsSkipsAbsentBinary(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, "mysqlroot")
+	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bin", "mysql"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ensureClientTools("mysql", "8.4", root)
+
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "mysql")); err != nil {
+		t.Errorf("mysql wrapper missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "mysqldump")); err == nil {
+		t.Error("mysqldump wrapper was written for a binary this tarball does not carry")
+	}
+}
+
+// TestShellEnvEmptyWithoutRegistry — the launch path calls ShellEnv on every tmux
+// start, including on workspaces that have never run a database. It must not
+// create lock files or invent variables there.
+func TestShellEnvEmptyWithoutRegistry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if env := ShellEnv("/home/dev/repos/x"); len(env) != 0 {
+		t.Errorf("ShellEnv with no registry = %v, want empty", env)
+	}
+	if _, err := os.Stat(registryDir()); err == nil {
+		t.Error("ShellEnv created the registry directory on a workspace that has no database")
+	}
+}
+
 func TestMemoryGateDisabled(t *testing.T) {
 	t.Setenv("AF_DB_MEM_GATE", "0")
 	if err := checkMemoryGate(); err != nil {
@@ -661,6 +761,7 @@ func TestEnsureUpURLStop(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("AF_DB_POSTGRES_ROOT", root)
+	stubPgClientInstall(t)
 	// Deliberately SET: decision 4″ says a scratch disk does not move the datadir
 	// unless asked. This is the end-to-end half of TestDatadirBaseIgnoresScratchByDefault.
 	t.Setenv("AF_WS_SCRATCH", t.TempDir())

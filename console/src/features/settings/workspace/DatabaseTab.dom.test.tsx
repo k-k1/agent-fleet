@@ -12,6 +12,9 @@
 //      Agent would reject or one that is already on the engine — the tab is the
 //      only way to make a database that is not named after a working copy
 //   7. Delete POSTs /{engine}/drop?db=NAME for the row it sits on
+//   8. Connect creates a home Shell session running `af-db connect` on that row's
+//      database, and opens it — the CLIs are otherwise not something a member can
+//      reach by typing (mysql was not even on PATH)
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -34,11 +37,22 @@ vi.mock("../../../core/store/workspace.ts", () => ({
   wsStartBusy: () => false,
 }));
 vi.mock("../../sessions/store.ts", () => ({
-  useSessionsStore: (sel: (s: unknown) => unknown) => sel({ sessions: [] }),
+  useSessionsStore: Object.assign(
+    (sel: (s: unknown) => unknown) => sel({ sessions: [] }),
+    { getState: () => ({ refresh: () => {} }) },
+  ),
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => async () => true }));
 vi.mock("../hostUpdate.ts", () => ({ useHostUpdate: () => null }));
+const openSessionTerminal = vi.fn();
+vi.mock("../../sessions/open.ts", () => ({
+  openSessionTerminal: (...a: unknown[]) => openSessionTerminal(...a),
+}));
+const closeSettings = vi.fn();
+vi.mock("../store.ts", () => ({
+  useSettingsUI: { getState: () => ({ closeSettings }) },
+}));
 
 import { DatabaseTab } from "./DatabaseTab.tsx";
 
@@ -117,6 +131,8 @@ async function mount(running = true) {
 beforeEach(() => {
   api.mockReset();
   apiJSON.mockReset();
+  openSessionTerminal.mockReset();
+  closeSettings.mockReset();
   vi.useFakeTimers();
 });
 
@@ -258,6 +274,34 @@ describe("DatabaseTab", () => {
 
     // Nothing was sent for either.
     expect(apiJSON.mock.calls.filter((c) => String(c[0]).includes("/create")).length).toBe(0);
+  });
+
+  it("Connect starts a home shell running af-db connect on that database", async () => {
+    api.mockResolvedValue({ engines: [pgRunning] });
+    apiJSON.mockResolvedValue({ name: "sh-abc123" });
+    await mount();
+
+    const row = document.querySelector(".db-database")!;
+    const connect = row.querySelector<HTMLButtonElement>(".db-btn-connect");
+    expect(connect).toBeTruthy();
+    await act(async () => {
+      connect!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const call = apiJSON.mock.calls.find((c) => c[0] === "api/sessions");
+    expect(call).toBeTruthy();
+    const body = call![2] as Record<string, unknown>;
+    expect(body.kind).toBe("shell");
+    // No dir — a home session. Tying it to whatever working copy is open would
+    // connect to the wrong database whenever the row is a shared one.
+    expect(body.dir).toBeUndefined();
+    expect(body.initial_prompt).toBe("af-db connect postgres --db=af_agent_fleet_9af42b");
+    // The modal covers the pane the session opens in, so it has to get out of the way.
+    expect(closeSettings).toHaveBeenCalled();
+    expect(openSessionTerminal).toHaveBeenCalledWith("sh-abc123");
   });
 
   it("Delete POSTs /{engine}/drop for the row it sits on", async () => {

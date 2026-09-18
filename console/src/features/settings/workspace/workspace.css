@@ -657,6 +657,10 @@
   padding: 2px 10px;
 }
 
+.db-btn-connect {
+  font-weight: 600;
+}
+
 .db-btn-drop {
   color: var(--del);
 }

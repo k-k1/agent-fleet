@@ -406,38 +406,187 @@ func writeRegistry(r *registry) error {
 	return os.Rename(tmp, registryPath())
 }
 
-// URLForDir returns the Postgres connection URL (socket form) if a running Postgres
-// instance has a database for dir. Returns "" if not found or not running.
-// Called from session_tmux.go to inject AF_DB_URL_POSTGRES; no side effects.
-func URLForDir(dir string) string {
+// ensureClientTools makes the engine's command-line client reachable as a bare
+// name on PATH. Never fatal: a member whose server is up but whose client could
+// not be placed still has a working database, and failing `af-db up` over it
+// would be the wrong trade.
+//
+// Two different gaps, one per engine:
+//
+//   - MySQL ships its own `mysql` client inside the server tarball, so it is
+//     already on disk — just three directories deep, with nothing on PATH
+//     pointing at it. `command -v mysql` answered nothing on a workspace that
+//     had been running MySQL for a day.
+//   - Postgres' client is a separate download (install-pg-client) that nothing
+//     ever ran on its own, so `psql` was missing until a member found the
+//     command in the guide.
+func ensureClientTools(engine, major, root string) {
+	binDir := filepath.Join(homeDir(), ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return
+	}
+	if engine == "mysql" {
+		// Unlike Postgres, the MySQL client has NO environment variable for the user
+		// name: it falls back to the OS user, and `dev` is not a MySQL account, so a
+		// bare `mysql` answers "Access denied for user 'dev'@'localhost'" even with
+		// the socket and password in the environment. An option file is the only
+		// place to say it. Command-line -u still wins over this.
+		if err := writeMySQLClientCnf(root); err != nil {
+			fmt.Fprintf(os.Stderr, "af-db: could not write the mysql client defaults: %v\n", err)
+		}
+		for _, bin := range []string{"mysql", "mysqldump"} {
+			if err := writeClientWrapper(binDir, root, bin); err != nil {
+				fmt.Fprintf(os.Stderr, "af-db: could not put %s on PATH: %v\n", bin, err)
+			}
+		}
+		return
+	}
+	// Postgres: install-pg-client writes the wrappers itself. Only run it when the
+	// wrapper is absent — it is a network download, and every `af-db up` paying
+	// for it would be a tax on the common case.
+	if fileExists(filepath.Join(binDir, "psql")) {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "af-db: psql not found; installing the client...")
+	if err := installPgClientFn(major); err != nil {
+		// Egress may be restricted, or the Debian index may not carry this major.
+		// The server is up either way; say what is missing and move on.
+		fmt.Fprintf(os.Stderr,
+			"af-db: psql could not be installed (%v); the server is running — retry with 'workspace-agent install-pg-client %s'\n",
+			err, major)
+	}
+}
+
+// installPgClientFn re-execs the Agent to install the Postgres client. It is a
+// seam because os.Executable() under `go test` is the TEST BINARY: called for
+// real from a test, it re-runs the whole suite as a subprocess, which is how
+// TestEnsureUpURLStop first hung for 264 s instead of failing. Tests replace it.
+var installPgClientFn = func(major string) error {
+	self, err := os.Executable()
+	if err != nil {
+		self = "/usr/local/bin/workspace-agent"
+	}
+	cmd := exec.Command(self, "install-pg-client", major)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// mysqlClientCnfPath is the option file the mysql wrappers point at. It lives in
+// the install root rather than in ~/.my.cnf: that file belongs to the member, and
+// silently taking it over would break the day they connect to something else.
+func mysqlClientCnfPath(root string) string {
+	return filepath.Join(root, "af-client.cnf")
+}
+
+func writeMySQLClientCnf(root string) error {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	// user only. The password is not written here — it belongs to the instance, it
+	// is regenerated when the datadir is, and a stale copy in a second file is a
+	// bug waiting to be filed. It reaches the client through MYSQL_PWD (ShellEnv)
+	// or through `af-db connect`, both of which read the live one.
+	return os.WriteFile(mysqlClientCnfPath(root), []byte("[client]\nuser=root\n"), 0o644)
+}
+
+// writeClientWrapper writes ~/.local/bin/<bin> pointing at the engine's own copy.
+//
+// A wrapper rather than a symlink: MySQL's binaries find their libraries through
+// a RUNPATH of $ORIGIN/../lib/private, and exec'ing the absolute path keeps
+// $ORIGIN pointing inside the install root whatever the caller's cwd is.
+// LD_LIBRARY_PATH is set as well so the binary still resolves if a future
+// tarball ships without that RUNPATH.
+func writeClientWrapper(binDir, root, bin string) error {
+	target := filepath.Join(root, "bin", bin)
+	if !fileExists(target) {
+		return nil // this tarball does not carry it; not an error
+	}
+	// --defaults-extra-file must come first, and is still overridable: the client
+	// reads option files before the command line, so a later -u or --defaults-file
+	// from the member wins.
+	var defaults string
+	if cnf := mysqlClientCnfPath(root); fileExists(cnf) {
+		defaults = fmt.Sprintf("--defaults-extra-file=%q ", cnf)
+	}
+	content := fmt.Sprintf("#!/bin/sh\nexec env LD_LIBRARY_PATH=%q\"${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\" %q %s\"$@\"\n",
+		filepath.Join(root, "lib", "private"), target, defaults)
+	dest := filepath.Join(binDir, bin)
+	tmp := dest + ".part"
+	if err := os.WriteFile(tmp, []byte(content), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dest)
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// ShellEnv returns the environment a freshly launched session needs for `psql`
+// and `mysql` to connect with no arguments at all.
+//
+// The CLIs being on PATH is only half of "a member can query their database":
+// unconfigured, `psql` tries a unix socket in /var/run under the member's own
+// user name and fails with a sentence about a socket nobody has. So the launch
+// injects the standard client variables — the same ones a human would export by
+// hand — pointing at this workspace's server and at the calling working copy's
+// database.
+//
+// dir is the working copy the session starts in; "" (or a directory with no
+// database yet) still yields the server-level variables, so `psql -l` and
+// `mysql` work and only PGDATABASE is missing.
+//
+// Passwords ride here for the reason passPath gives: they authenticate nothing
+// outside this workspace, and the environment of a process is readable only by
+// the uid that already owns the datadir.
+func ShellEnv(dir string) []string {
 	// Return early if the registry doesn't exist yet to avoid creating lock files
 	// on every tmux launch before af-db has ever been used.
 	if _, err := os.Stat(registryPath()); os.IsNotExist(err) {
-		return ""
+		return nil
 	}
-	var url string
+	var env []string
 	_ = withLock(func() error {
 		r, err := readRegistry()
 		if err != nil {
 			return nil
 		}
 		for _, inst := range r.Instances {
-			if inst.Engine != "postgres" {
+			if !isInstanceRunning(inst) {
 				continue
 			}
-			if !isPGRunning(inst.PID, inst.Datadir) {
-				continue
-			}
+			pw := readPass(passPath(inst.Engine, inst.Major))
 			dbName := DBNameFor(dir)
-			if _, ok := inst.Databases[dbName]; ok {
-				pw := readPass(passPath(inst.Engine, inst.Major))
-				url = buildURL(inst, dbName, pw, false)
-				return nil
+			_, hasDB := inst.Databases[dbName]
+			if inst.Engine == "mysql" {
+				// MYSQL_UNIX_PORT is the socket; the client has no variable for the
+				// default database, so `mysql` lands on the server and `mysql <db>`
+				// picks one. The Connect button supplies the name.
+				env = append(env,
+					"MYSQL_UNIX_PORT="+mysqlSockFile(inst),
+					"MYSQL_TCP_PORT="+strconv.Itoa(inst.Port),
+					"MYSQL_PWD="+pw,
+				)
+				continue
+			}
+			env = append(env,
+				"PGHOST="+inst.Sockdir,
+				"PGPORT="+strconv.Itoa(inst.Port),
+				"PGUSER=postgres",
+				"PGPASSWORD="+pw,
+			)
+			if hasDB && dir != "" {
+				env = append(env, "PGDATABASE="+dbName)
+				// Kept for compatibility: decision 8′ named this variable, and
+				// projects already read it.
+				env = append(env, "AF_DB_URL_POSTGRES="+buildURL(inst, dbName, pw, false))
 			}
 		}
 		return nil
 	})
-	return url
+	return env
 }
 
 // buildURL returns the Postgres connection URL for an instance and database.

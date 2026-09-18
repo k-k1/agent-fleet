@@ -39,13 +39,10 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// Session-side MCP tools need a provider-neutral owner identity. Native IDs differ
 	// across CLIs, while this slug is stable for every Agent Fleet session.
 	plan.Env = append(plan.Env, "AF_SESSION_NAME="+m.Name)
-	// Inject AF_DB_URL_POSTGRES if a Postgres instance is running and the working copy's
-	// database already exists. Silent when absent — do not block session launch on db state.
-	if m.Dir != "" {
-		if url := afdb.URLForDir(m.Dir); url != "" {
-			plan.Env = append(plan.Env, "AF_DB_URL_POSTGRES="+url)
-		}
-	}
+	// Inject the database client environment (PG* / MYSQL_* / AF_DB_URL_POSTGRES) for
+	// whichever engines are running, so `psql` and `mysql` connect with no arguments.
+	// Silent when absent — do not block session launch on db state.
+	plan.Env = append(plan.Env, afdb.ShellEnv(m.Dir)...)
 	// Inject the current toolchain selection (JAVA_HOME / node / TZ) so a Console
 	// change applies to this freshly-launched session without a Stop→Start. tmux
 	// runs the pane command via /bin/sh -c, so the export prefix takes effect.

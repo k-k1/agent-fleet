@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,6 +35,8 @@ func RunAFDB(args []string) {
 		err = cmdURL(rest)
 	case "env":
 		err = cmdEnv(rest)
+	case "connect":
+		err = cmdConnect(rest)
 	case "create":
 		err = cmdCreate(rest)
 	case "drop":
@@ -68,6 +71,7 @@ Verbs:
   url [engine] [--major N] [--db=NAME] [--tcp]          print connection URL (installs/starts if needed)
       [--format=go-dsn]
   env [engine] [--major N] [--db=NAME] [--tcp]          print export lines for AF_DB_URL_* / DATABASE_URL
+  connect [engine] [--major N] [--db=NAME]               open psql / mysql on the database
   create [engine] [--major N] --db=NAME                  create a named database
   drop [engine] [--major N] --db=NAME                    drop a named database
   reset [engine] [--major N] [--db=NAME]                 DROP + CREATE the database
@@ -310,6 +314,101 @@ func parseRequiredDB(args []string) (string, error) {
 	return dbName, nil
 }
 
+// cmdConnect replaces this process with an interactive client already pointed at
+// the database — what the Console's Connect button runs, and the one spelling
+// that works from any shell.
+//
+// It resolves the socket, the password, the user and the database at exec time
+// rather than trusting the environment: a shell opened before the server was
+// started carries none of ShellEnv's variables, and telling a member to open a
+// new terminal because they pressed Start in the wrong order is not an answer.
+// It installs and starts the engine if it has to (urlFor's contract), so the
+// button works on a workspace that has never run a database.
+func cmdConnect(args []string) error {
+	engine, major, args, err := parseEngineAndMajor(args, "postgres")
+	if err != nil {
+		return err
+	}
+	dbName := ""
+	for _, a := range args {
+		switch {
+		case strings.HasPrefix(a, "--db="):
+			dbName = strings.TrimPrefix(a, "--db=")
+		default:
+			return errUsage(fmt.Sprintf("unknown option: %s", a))
+		}
+	}
+	if dbName != "" {
+		if err := validateExplicitDB(dbName); err != nil {
+			return err
+		}
+	}
+	if engine == "mysql" {
+		if err := checkMemoryGate(); err != nil {
+			return err
+		}
+	}
+	// Ensure the server is up and the database exists; this also puts the client on
+	// PATH (ensureClientTools) the first time round.
+	inst, err := ensureUp(engine, major, startOpts{})
+	if err != nil {
+		return err
+	}
+	if dbName == "" {
+		dbName = DBNameFor(ResolveDir())
+	}
+	pw := readPass(passPath(engine, major))
+	if engine == "mysql" {
+		if err := ensureMySQLDatabase(inst, pw, dbName); err != nil {
+			return fmt.Errorf("create mysql database: %w", err)
+		}
+	} else {
+		if err := ensureDatabase(buildURL(inst, "postgres", pw, false), dbName); err != nil {
+			return fmt.Errorf("create database: %w", err)
+		}
+	}
+	if err := registerDatabase(engine, major, dbName, connectRecordDir(dbName)); err != nil {
+		return err
+	}
+
+	bin, argv, env := clientInvocation(inst, engine, major, dbName, pw)
+	if _, err := os.Stat(bin); err != nil {
+		return errInstall(fmt.Sprintf("%s not found at %s; run 'workspace-agent install-pg-client %s'",
+			filepath.Base(bin), bin, major))
+	}
+	// Replace this process: the member is talking to the client from here on, and an
+	// af-db sitting in the middle would only add a process to kill.
+	return syscall.Exec(bin, argv, env)
+}
+
+// connectRecordDir mirrors urlFor's rule: a database named with --db= is shared and
+// belongs to no directory (reconcile must never drop it), while the default one is
+// this working copy's.
+func connectRecordDir(dbName string) string {
+	dir := ResolveDir()
+	if dbName != DBNameFor(dir) {
+		return ""
+	}
+	return dir
+}
+
+// clientInvocation builds the exec for the engine's interactive client.
+func clientInvocation(inst *Instance, engine, major, dbName, pw string) (bin string, argv []string, env []string) {
+	env = os.Environ()
+	if engine == "mysql" {
+		bin = filepath.Join(inst.Root, "bin", "mysql")
+		argv = []string{"mysql", "--socket=" + mysqlSockFile(inst), "-uroot", dbName}
+		// MYSQL_PWD rather than -p<pw>: argv is world-readable through /proc on a
+		// container every session of this member shares.
+		env = append(env, "MYSQL_PWD="+pw)
+		return bin, argv, env
+	}
+	bin = filepath.Join(homeDir(), ".local", "bin", "psql")
+	argv = []string{"psql", "-h", inst.Sockdir, "-p", strconv.Itoa(inst.Port), "-U", "postgres", dbName}
+	env = append(env, "PGPASSWORD="+pw)
+	return bin, argv, env
+}
+
 func cmdCreate(args []string) error {
 	engine, major, args, err := parseEngineAndMajor(args, "postgres")
 	if err != nil {
@@ -426,6 +525,9 @@ func ensureUp(engine, major string, opts startOpts) (*Instance, error) {
 			return nil, err
 		}
 	}
+	// The client belongs with the server: a member who pressed Start in the Console
+	// and then opened a shell used to find no `psql` and no `mysql` at all.
+	ensureClientTools(engine, major, root)
 	key := instanceKey(engine, major)
 
 	// Ensure a registry entry exists before the start lock.

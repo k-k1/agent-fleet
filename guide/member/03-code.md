@@ -214,7 +214,14 @@ A few things worth knowing:
 - **`af-db up --ephemeral`** — the opposite: put the files on the task-local disk, which is
   faster and is **wiped when the workspace stops**. Use it when you know the contents are a
   fixture. Where the deployment has no task-local disk, it says so and uses your home.
-- Install `psql` with `workspace-agent install-pg-client`.
+- **`psql` and `mysql` are on PATH, and connect with no arguments.** Starting an engine
+  installs its client and puts it there (`psql` is a separate download; `mysql` ships with the
+  server). A session launched afterwards carries `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` /
+  `PGDATABASE` and `MYSQL_UNIX_PORT` / `MYSQL_PWD`, so `psql` opens this working copy's database
+  and `mysql <name>` opens a MySQL one.
+- **`af-db connect [engine] [--db=NAME]`** opens the client on a database whatever your shell
+  already has in it — it resolves the socket, password and user itself, and starts the engine
+  first if it is not running. Use it in a shell you opened before the server was up.
 
 ### MySQL
 
@@ -253,6 +260,8 @@ database, without opening a terminal.
 - **Stop** has a "Stop and remove data" option (`--purge`): use it to free the datadir space. It
   takes **every database on that engine** with it — other working copies' included, and any
   shared one made with `--db=`. To start one over, use **Reset** on its row instead.
+- **Connect** opens a Shell session in your home and starts `psql` / `mysql` on that row's
+  database (`af-db connect`). Quitting the client leaves you in the shell.
 - **Create** makes a database with the name you type (same as `af-db create --db=<name>`). Use it
   for anything that is not one working copy's database — a scratch schema, a second database for
   one project, one shared between sessions. Names are lower-case letters, digits and `_`, not

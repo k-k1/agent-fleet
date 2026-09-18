@@ -1080,3 +1080,57 @@ placement.
 deployment injects one and `--ephemeral` is now what asks for it. What is still untested is the
 Console tab on a workspace whose Agent is the image's, arm64 MySQL through the tab, and open
 question 2″.
+
+## The client is part of the contract, not an afterthought (2026-09-18)
+
+Reported from use: a member opens a shell and neither `psql` nor `mysql` is there. Decision 1
+said the contract is "`af-db` and a URL", and the URL turned out to be the wrong unit — a URL is
+only useful to someone who already has a client to paste it into. Measured in this container:
+
+- **`mysql` was never reachable.** It ships inside the server tarball
+  (`~/.local/share/agent-fleet/mysql/8.4/bin/mysql`, 7.9 MB, present since P1), but
+  `install_mysql.go` writes no wrapper and nothing else puts it on PATH. `command -v mysql`
+  answered nothing on a workspace that had been running MySQL all day.
+- **`psql` needed a command nobody ran.** `workspace-agent install-pg-client` is invoked from
+  exactly one place — a member typing it after finding it in the guide.
+- `~/.local/bin` *is* on PATH (`entrypoint.sh:10`), so there was never a PATH problem to solve,
+  only nothing to find there.
+
+**Decision 1 gains a clause: starting an engine puts its client on PATH and makes it connect.**
+
+- `af-db up` (and therefore the Console's Start) runs `ensureClientTools`: for MySQL it writes
+  `~/.local/bin/{mysql,mysqldump}` wrappers; for Postgres it runs `install-pg-client` when `psql`
+  is absent. Never fatal — a server that is up with a client that could not be fetched is still
+  a working database, and failing the start over it would be the wrong trade.
+- **Session launch injects the standard client variables** (`PGHOST`, `PGPORT`, `PGUSER`,
+  `PGPASSWORD`, `PGDATABASE`, `MYSQL_UNIX_PORT`, `MYSQL_TCP_PORT`, `MYSQL_PWD`) for whichever
+  engines are running, replacing the single `AF_DB_URL_POSTGRES` of decision 8′ — which is still
+  set, because projects read it. Measured from `$HOME` with only these variables: `psql` opened
+  the working copy's database and `mysql` answered as `root@localhost`.
+- **MySQL needed one thing more.** Its client has *no* environment variable for the user name and
+  falls back to the OS user, so a bare `mysql` was refused as `dev` even with socket and password
+  in the environment. The wrapper therefore passes `--defaults-extra-file` pointing at an
+  `af-client.cnf` in the install root holding `user=root` and nothing else. Not `~/.my.cnf`: that
+  file belongs to the member. Not the password either: it belongs to the instance and is
+  regenerated with the datadir, so a second copy would go stale in silence.
+- **`af-db connect [engine] [--db=NAME]`** resolves socket, password, user and database at exec
+  time and `execve`s the client, starting and creating what it needs first. It is the spelling
+  that works in a shell opened *before* the server was started — the case env injection cannot
+  reach, and the one a member hits by pressing Start in the Console and then typing in a terminal
+  they already had open.
+- **The Databases tab gets a Connect button per database.** It creates a `kind=shell` session in
+  the home and runs `af-db connect` in it. A shell running the client, rather than the client as
+  the session's own program, so quitting `psql` leaves a usable shell instead of ending the
+  session.
+
+### `initial_prompt` into a shell waited 30 seconds
+
+Found while building the button. `deliverInitialPrompt` waits for `PaneMode` to report a drawn
+composer before typing, capped at 60 × 500 ms; `PaneMode` has no `shell` case and never will, so
+every launch task sent to a shell burned the full 30 s cap plus the 2.5 s fallback before its
+first character arrived. A Connect button that takes half a minute is not a button.
+
+Shell is now treated as ready as soon as its pane exists. This is not a shortcut around the
+protection: that protection exists because a booting agent CLI *discards* what is typed into its
+boot screen, and bash does not — it has a line-disciplined tty from the moment it execs, and the
+terminal driver buffers anything typed before the prompt is drawn.
