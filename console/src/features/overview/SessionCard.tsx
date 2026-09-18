@@ -238,6 +238,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions 
             create={ctx.create}
             fresh={ctx.fresh}
             model={ctx.model || s.model}
+            window={ctx.window}
             spends={spends}
             maxSpend={spends && spends.length ? Math.max(...spends) : 0}
           />

@@ -112,7 +112,7 @@ type Turn struct {
 	PeerFrom  string `json:"peerFrom,omitempty"`
 	Model     string `json:"model,omitempty"`     // assistant only: the model that answered
 	Effort    string `json:"effort,omitempty"`    // assistant only: reasoning effort/variant (codex reasoning_effort, opencode variant); "" when the agent records none (claude)
-	CtxWindow int    `json:"ctxWindow,omitempty"` // assistant only: the model's real context-window size when the agent records it (codex model_context_window); 0 = let the Console guess from the model name
+	CtxWindow int    `json:"ctxWindow,omitempty"` // assistant only: the model's real context-window size when the agent records it (codex model_context_window; opencode the declared provider limit); 0 = let the Console guess from the model name
 	Sidechain bool   `json:"sidechain,omitempty"` // true = a subagent (Task) sidechain turn
 	Branch    string `json:"branch,omitempty"`    // git branch at the time of the turn
 	Cwd       string `json:"cwd,omitempty"`       // working dir at the time of the turn
