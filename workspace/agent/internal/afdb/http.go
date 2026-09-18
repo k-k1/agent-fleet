@@ -67,6 +67,7 @@ type EngineStatus struct {
 	RSSBytes   int64           `json:"rssBytes"`
 	Port       int             `json:"port"`
 	Datadir    string          `json:"datadir"`
+	Autostart  bool            `json:"autostart"`
 	Databases  []DatabaseEntry `json:"databases"`
 	LastUsedAt time.Time       `json:"lastUsedAt"`
 	LastError  string          `json:"lastError"`
@@ -151,6 +152,7 @@ func BuildEngineStatus(engine, major string) EngineStatus {
 	status.Port = inst.Port
 	status.Datadir = inst.Datadir
 	status.LastUsedAt = inst.LastUsedAt
+	status.Autostart = inst.Autostart
 
 	running := isInstanceRunning(inst)
 	if running {
@@ -212,10 +214,10 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch action {
-	case "start", "stop", "create", "drop", "reset":
+	case "start", "stop", "create", "drop", "reset", "autostart":
 	default:
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_action",
-			"action must be start, stop, create, drop, or reset")
+			"action must be start, stop, create, drop, reset, or autostart")
 		return
 	}
 
@@ -280,6 +282,17 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 		}
 		// Clear any previous error so GET no longer reports state=error after success.
 		GetAsyncOp(engine, major).Set("", "")
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": BuildEngineStatus(engine, major),
+		})
+
+	case "autostart":
+		// on=1|0. Setting it needs an instance to exist, which means the engine has
+		// been started at least once — so boot never has to download a server.
+		if err := SetAutostart(engine, major, r.URL.Query().Get("on") == "1"); err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, "autostart_failed", err.Error())
+			return
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"status": BuildEngineStatus(engine, major),
 		})

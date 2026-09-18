@@ -219,6 +219,10 @@ A few things worth knowing:
   server). A session launched afterwards carries `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` /
   `PGDATABASE` and `MYSQL_UNIX_PORT` / `MYSQL_PWD`, so `psql` opens this working copy's database
   and `mysql <name>` opens a MySQL one.
+- **The port is stable**: 5432 for Postgres and 3306 for MySQL, the numbers your framework already
+  defaults to. It only moves if something else in the container holds it when the server starts,
+  and the server keeps whatever it got across later restarts — so a connection string in the
+  application you are developing keeps working. `af-db status` always shows the live number.
 - **`af-db connect [engine] [--db=NAME]`** opens the client on a database whatever your shell
   already has in it — it resolves the socket, password and user itself, and starts the engine
   first if it is not running. Use it in a shell you opened before the server was up.
@@ -260,6 +264,10 @@ database, without opening a terminal.
 - **Stop** has a "Stop and remove data" option (`--purge`): use it to free the datadir space. It
   takes **every database on that engine** with it — other working copies' included, and any
   shared one made with `--db=`. To start one over, use **Reset** on its row instead.
+- **Start with the workspace** keeps that engine running: tick it and the Agent starts the engine
+  whenever the workspace starts, with no terminal and no button. It only appears for an engine
+  that has been started at least once, so booting never downloads a server. Off by default —
+  a database costs memory even when nothing is querying it.
 - **Connect** opens a Shell session in your home and starts `psql` / `mysql` on that row's
   database (`af-db connect`). Quitting the client leaves you in the shell.
 - **Create** makes a database with the name you type (same as `af-db create --db=<name>`). Use it

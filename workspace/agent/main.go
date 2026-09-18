@@ -195,6 +195,10 @@ func serve() {
 	// conversations created before the field existed, so schedules/operator tools can
 	// address every conversation. One-time per store state; cheap when nothing to do.
 	go chatx.BackfillConvSlugs()
+	// Databases the member asked to have running (ADR 0086). Only starts what is
+	// already installed and marked, so this is a no-op on a workspace that has
+	// never used one.
+	go afdb.Autostart("agent boot")
 
 	mux := buildMux()
 

@@ -28,6 +28,68 @@ func StartIdleLoop() {
 	go runIdleLoop()
 }
 
+// Autostart brings up every instance the member marked for it, and is called
+// once from the Agent's boot path — so "when the workspace starts" is what a
+// member gets, without a terminal.
+//
+// Only instances that already exist and are already installed are started: the
+// flag can only be set from a row in the Databases tab, which needs a started
+// engine to exist, so there is no path here that downloads a server at boot.
+//
+// Failures are logged, never fatal. This runs alongside session recovery on a
+// memory-constrained host; a database that cannot start must not take the
+// workspace's boot with it.
+func Autostart(reason string) {
+	if _, err := os.Stat(registryPath()); os.IsNotExist(err) {
+		return
+	}
+	type want struct{ engine, major string }
+	var wanted []want
+	_ = withLock(func() error {
+		r, err := readRegistry()
+		if err != nil {
+			return nil
+		}
+		for _, inst := range r.Instances {
+			if inst.Autostart && !isInstanceRunning(inst) {
+				wanted = append(wanted, want{inst.Engine, inst.Major})
+			}
+		}
+		return nil
+	})
+	for _, w := range wanted {
+		if w.engine == "mysql" {
+			// The same gate `af-db up` applies. Autostart must not be the one path
+			// that pushes a 2 GiB workspace over its limit.
+			if err := checkMemoryGate(); err != nil {
+				fmt.Fprintf(os.Stderr, "af-db autostart (%s): skipping mysql: %v\n", reason, err)
+				continue
+			}
+		}
+		if _, err := ensureUp(w.engine, w.major, startOpts{}); err != nil {
+			fmt.Fprintf(os.Stderr, "af-db autostart (%s): %s-%s: %v\n", reason, w.engine, w.major, err)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "af-db autostart (%s): %s-%s up\n", reason, w.engine, w.major)
+	}
+}
+
+// SetAutostart records whether an instance should come up with the workspace.
+func SetAutostart(engine, major string, on bool) error {
+	return withLock(func() error {
+		r, err := readRegistry()
+		if err != nil {
+			return err
+		}
+		inst, ok := r.Instances[instanceKey(engine, major)]
+		if !ok {
+			return errNotRun(fmt.Sprintf("%s has never been started; start it once before asking for it at boot", engine))
+		}
+		inst.Autostart = on
+		return writeRegistry(r)
+	})
+}
+
 func runIdleLoop() {
 	idleSince := make(map[string]time.Time)
 	for {

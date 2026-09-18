@@ -1134,3 +1134,53 @@ Shell is now treated as ready as soon as its pane exists. This is not a shortcut
 protection: that protection exists because a booting agent CLI *discards* what is typed into its
 boot screen, and bash does not — it has a line-disciplined tty from the moment it execs, and the
 terminal driver buffers anything typed before the prompt is drawn.
+
+## The port stops moving, and an engine can come up with the workspace (2026-09-18)
+
+Two things the member asked for after the client work, both about a database being something you
+can *build against* rather than something you re-discover each session.
+
+### Decision 6 gains a stable port
+
+`pickPort` bound `127.0.0.1:0` on every start and used whatever the kernel gave back, so the port
+changed on every restart — measured here: Postgres 39455 → 37977, MySQL 34935 → 41693 across one
+stop/start. Decision 7's idle-stop (30 minutes with no connections) makes restarts routine rather
+than rare, so this was not a corner case: **the member would have to rewrite the connection string
+in the application they are developing every time the server came back.** For Postgres it is worse
+than a number, because the unix socket is named `.s.PGSQL.<port>` — the socket path moved too.
+
+The search order is now: the port this instance used last, then the engine's well-known port and
+the 64 above it, then an ephemeral one.
+
+- **5432 / 3306 rather than a remembered ephemeral port.** `127.0.0.1:0` allocates from
+  32768-60999, which is exactly the range the kernel hands to outbound sockets, so a number
+  remembered from there can be taken by an unrelated connection while the server is down. Starting
+  from the well-known port puts the server outside that traffic — and it is the number the
+  member's framework, ORM and every tutorial already default to, so the connection string they
+  have is the right one.
+- **`PreferredPort` is a separate field** from `Port`, because a clean stop sets `Port = 0`.
+  Without it, a server that had to move to 5433 once would drift back to 5432 on the next restart
+  as soon as the squatter went away — stable only until it wasn't.
+- **Stability is preferred, never promised.** This container is shared with the member's other
+  sessions. Whatever port is taken is recorded, and `af-db status`, `af-db connect` and the
+  Console all read it live.
+
+### Decision 7 gains its opposite: autostart
+
+Idle-stop answers "do not pay for a database nobody is using". It had no counterpart for "this
+workspace always has one", so every morning started with a button or a command.
+
+`af-db` instances carry an `Autostart` flag, and the Agent's boot path runs `afdb.Autostart`
+alongside the managed-session reconciliation. The Databases tab shows it as a checkbox on the
+engine row.
+
+- **Off by default.** A database costs memory on a shared, memory-constrained host whether or not
+  anything is querying it, and starting one nobody asked for is not a default this project gets to
+  choose for a member.
+- **Only for an engine that has been started once.** The flag lives on the instance, and an
+  instance only exists after a start, so there is no path where a workspace's boot downloads a
+  450 MB server. The Console hides the checkbox while the engine is `absent` for the same reason.
+- **The MySQL memory gate applies**, exactly as it does to `af-db up`. Autostart must not be the
+  one path that pushes a 2 GiB workspace over its limit.
+- **Failures are logged, never fatal.** This runs next to session recovery during boot; a database
+  that cannot start must not take the workspace's boot with it.

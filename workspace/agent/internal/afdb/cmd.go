@@ -1128,11 +1128,15 @@ func startServer(inst *Instance, opts startOpts) error {
 		return errStart(fmt.Sprintf("stat datadir: %v", err))
 	}
 
-	port, err := pickPort()
+	// Keep the port the server had last time when it is still free (decision 7's
+	// idle-stop makes restarts routine, and a moving port moves the member's
+	// connection string with it).
+	port, err := stablePort("postgres", inst.PreferredPort)
 	if err != nil {
 		return errStart(fmt.Sprintf("pick port: %v", err))
 	}
 	inst.Port = port
+	inst.PreferredPort = port
 
 	fsync := "off"
 	if opts.Durable {

@@ -202,6 +202,7 @@ export const tools = {
   "env.db_start_absent": "導入して起動",
   "env.db_stop": "停止",
   "env.db_stop_purge": "停止してデータも削除",
+  "env.db_autostart": "ワークスペース起動時に開始",
   "env.db_connect": "接続",
   "env.db_connect_hint": "シェルセッションを開き、このデータベースに psql / mysql で接続します",
   "env.db_create": "作成",
