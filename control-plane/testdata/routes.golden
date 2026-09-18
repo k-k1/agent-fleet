@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with AF_MCP_ENABLED=true.
-# count: 496
+# count: 498
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -43,6 +43,7 @@ POST /api/admin/engines/{key}/models
 DELETE /api/admin/engines/{key}/models/{id}
 PUT /api/admin/engines/{key}/models/{id}
 POST /api/admin/engines/{key}/models/{id}/complete
+POST /api/admin/engines/{key}/models/{id}/meta
 PUT /api/admin/engines/{key}/negative
 DELETE /api/admin/engines/{key}/objects
 GET /api/admin/engines/{key}/objects
@@ -197,6 +198,7 @@ DELETE /api/connections/opencode/oauth
 POST /api/connections/opencode/oauth/cancel
 POST /api/connections/opencode/oauth/poll
 POST /api/connections/opencode/oauth/start
+POST /api/connections/opencode/serve/restart
 PUT /api/connections/opencode/workspace
 DELETE /api/connections/opencode/{env}
 DELETE /api/connections/pagerduty

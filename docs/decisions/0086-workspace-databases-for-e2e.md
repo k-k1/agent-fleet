@@ -405,6 +405,10 @@ route. Decisions 1, 2, 5–10 stand; two of them gain a P0 item each (a client, 
   architectures" holds. And one trap: `workspace-agent <unknown-subcommand>` **boots the
   Agent** (`main.go` is a chain of `os.Args[1] ==` tests with no default), so `af-db` must be
   both a real `/usr/local/bin/af-db` shim and a dispatch line in `main.go`.
+  🔴 2026-09-17: the trap is closed. The branches are one table in `cli.go`; an argument it does
+  not name prints usage and exits 2, `--version` / `--help` are supported, and only "no
+  arguments" and `serve` boot the Agent. `af-db` is still a shim plus a table row. A second
+  Agent is harmless too — `serve` now takes the listening socket before any boot side effect.
 - **Decision 4 describes one profile as if it were all of them.** `AF_WS_SCRATCH` is set only
   by the ECS adapters (`entrypoint.sh:246`), and the entrypoint relocates only when the disk is
   30 GiB or more (`AF_WS_SCRATCH_MIN_GB`, `entrypoint.sh:263`) — a default Fargate deployment
@@ -812,3 +816,267 @@ residue was running in this container during the acceptance (a `mysqld` from
 **Next**: rebuild and deploy the development image (the `mysql` pin, the three libraries, the
 `af-db` shim and the `postgres` pin route are all unexercised until then), then the live card
 and the first ECS run with a scratch-disk datadir.
+
+## On the rebuilt image (2026-09-17, first live run)
+
+The development image was rebuilt from `9d5effa5` (the merge of #719) and deployed to this
+container. It carries what P1 asked for: `/usr/local/bin/af-db`, the `postgres` / `mysql` pins
+with their per-architecture shas in `versions.json`, and `libaio1t64` / `libnuma1` /
+`libncurses6`. Both paths the P0 and P1 acceptances could not reach are now measured, from
+HOMEs that had never seen `af-db`, and both found something.
+
+**The pinned supply route works.** `install-postgres` took 1.9 s and `af-db up` 3.3 s; the
+`control-plane` criterion gave **4 PASS, 0 SKIP** again; `install-mysql` downloaded the pinned
+8.4.6 and the `mysql_sha256` from `versions.json` verified the real tarball, so the pin route —
+untested until now, and without the Maven-metadata fallback Postgres has — is exercised.
+
+- **The three libraries are not enough: `libaio.so.1` is not what trixie ships.** MySQL's
+  binaries ask for `libaio.so.1`; `libaio1t64` installs `libaio.so.1t64` and **no compatibility
+  symlink**, so on the rebuilt image `install-mysql` still exited 3 with
+  `unresolved libraries: libaio.so.1`. The P1 acceptance never saw this because its
+  `AF_DB_MYSQL_LIBS` directory contained a hand-made `libaio.so.1 -> libaio.so.1t64.0.2` link,
+  scavenged before the bake existed. On 64-bit architectures the t64 library is ABI-identical,
+  so the fix is the symlink — made by `install-mysql` itself, into `lib/private`, which is on
+  the binaries' `RUNPATH` (`$ORIGIN/../lib/private`), so nothing touches `LD_LIBRARY_PATH` at
+  run time and arm64 is covered by the same code. `ldconfig -p` (readable as `dev`) supplies
+  the target; a soname with no `t64` counterpart is still reported by `mysqlCheckLDD`.
+  Measured after the fix, no `AF_DB_MYSQL_LIBS` anywhere: install 7.5 s, `af-db up mysql`
+  15.0 s, `SELECT j->>'$.a'` → `42` over the socket, `version` 8.4.6, `rssBytes` 233 MB,
+  `down --purge` clean. `AF_DB_MYSQL_LIBS` stays as the escape hatch, not the procedure.
+- **The Console card could not be verified, for a reason that has nothing to do with this
+  ADR.** `GET /env/databases` on the running Agent answers **404** while `/env/toolchains`
+  answers 200: `/proc/7/exe` points at `/home/dev/.local/bin/workspace-agent`, a hand-built
+  P0-era binary (2026-09-17 06:29) left behind by a lane during the P0 acceptance. The
+  entrypoint's `exec workspace-agent` goes through `PATH`, where `~/.local/bin` wins, and
+  `~/.local` survives both restart and recreate — so one stray build silently becomes the
+  container's Agent forever. The `af-db` shim (`exec workspace-agent af-db "$@"`) has the same
+  shape, while the Go code already hardcodes `/usr/local/bin/workspace-agent` for its own
+  re-exec (`paths.go:126`, `afdb/cmd.go:770`, `afdb/mysql.go:77`). The stray binary was removed
+  and the workspace restarted; `CMD` and the `af-db` shim now name
+  `/usr/local/bin/workspace-agent` so it cannot happen again from an image rebuild onwards. The
+  session commands that still call a bare `workspace-agent` (`record-exit`, `record-terminal`,
+  `install-kiro --if-needed`, `install-awscli`) have the same shape and were left alone: they
+  run in the member's own shell, where the shadow is at least visible. Until the rebuilt image
+  is deployed, the card's healthy states stay unseen — only `lastError` is reachable.
+
+### After the restart: the card's API is live, and two more corrections
+
+With the stray binary gone and the workspace restarted, `/proc/7/exe` is the image's agent and
+`GET /env/databases` answers 200 with every field present. Driving it: `POST …/postgres/start`
+went `starting` → `running` in under 6 s (`version` 17.11, `rssBytes` 47–49 MB, the allocated
+port), and `af-db url` from this working copy added its database to the payload.
+`POST …/mysql/start` ended in `state=error` — this image predates the `libaio` fix above, which
+is exactly what a member on today's image would see.
+
+- **A registry from an older agent stops everything.** The first `start` after the restart
+  failed with `registry parse: json: cannot unmarshal number into Go struct field
+  Instance.instances.major`: the P0 build wrote `"major": 17` as a number, P1 made it a string,
+  and `~/.config` survives recreate. The contract's "the registry is new in P0 and not deployed,
+  so no migration" holds for images, not for a HOME where an older build ever ran — and an
+  unreadable registry disables the very verbs that could repair it. `Instance.UnmarshalJSON` now
+  takes both forms, and the parse error names the file. (`af-db status` was also hiding the
+  problem behind an empty instance list while the HTTP path reported it.)
+- **`lastError` has to carry the reason.** The card showed `install-mysql 8.4 failed: exit
+  status 3`; the `libaio.so.1` line that explains it went to the Agent's log only. The installer's
+  last lines are now appended to the error, the same lesson the Console already learned about
+  generic `*_failed` codes.
+- **Noted, not changed**: `urlSocket` in the API payload carries the password in clear, because
+  decision 9's card masks it for display and copies it whole — so CP relays a workspace
+  credential to the browser, where `af-db status --json` deliberately carries none.
+
+### The card's URL was for a database nobody had (contract change, M2 + M3)
+
+The first look at the rendered card found the copy button handing out
+`postgres://…/af_dev_12fbd7` — `DBNameFor("/home/dev")`, the **Agent process's own directory**.
+`psql` with that URL answers `FATAL: database "af_dev_12fbd7" does not exist`, while the
+registry's only database was `af_agent_fleet_wip_szkxzgu_9af42b` for this working copy. The
+Agent cannot resolve "the caller's working copy" — it has only its own — so an engine-level URL
+is wrong by construction, and the HTTP path never creates what it advertises.
+
+`EngineStatus` therefore drops `urlSocket` / `urlTcp` and `databases` becomes a list:
+`[{name, dir, urlSocket, urlTcp}]`, sorted by name, filled only while the engine is running.
+The card renders one block per database — name, working copy, the Socket/TCP toggle and Copy —
+and says "run `af-db url` in a working copy" when the list is empty. The empty list is also a
+`[]`, which retires the `databases: null` cosmetic from the P1 acceptance. The guide's card
+section says the same in both languages. Verified by unit tests on both sides
+(`TestDatabaseEntriesPerWorkingCopy`, and a DOM test that copies the second row's own URL);
+the live card gets this at the next image bake.
+
+### Confirmed on the image that carries the fixes (2026-09-17, same day)
+
+The development image was rebuilt from the merge of #721 and deployed here. Everything the two
+runs above could only promise is now measured on it, with no workaround anywhere:
+
+- `/proc/7/exe` is `/usr/local/bin/workspace-agent` and the shim reads
+  `exec /usr/local/bin/workspace-agent af-db "$@"` — the PATH shadow can no longer take the Agent.
+- `af-db up mysql` from a HOME that had never seen it: **27.6 s** end to end, with
+  `[install-mysql] linked libaio.so.1 -> /lib/x86_64-linux-gnu/libaio.so.1t64 (Debian t64 soname)`
+  in the log and `AF_DB_MYSQL_LIBS` unset. `down mysql --purge` clean.
+- `install-pg-client` into a fresh HOME: **1.8 s** (17.11-0+deb13u1) — the figure the earlier run
+  could not take because the client was already there.
+- `GET /env/databases` carries the new shape (no engine-level URL; `databases` is a list), and
+  **the URL the card copies connects**: both the socket and the TCP form of
+  `af_agent_fleet_wip_szkxzgu_9af42b` answer `select current_database()` with their own name,
+  where the previous image's URL answered `database "af_dev_12fbd7" does not exist`.
+
+What is still untested stays untested: the scratch-disk datadir on ECS, and arm64 MySQL.
+
+### arm64 and ECS, measured at last (2026-09-17, the dev deployment)
+
+`0.21.1-dev-18cd6e52` was deployed to the development deployment and its member workspace
+started: `uname -m` = **aarch64**, `workspace-agent 0.21.1-dev-18cd6e52 (linux/arm64)`,
+m8g.large (6.87 GB, 2 vCPU) — the tenant's slot class is already `arm`, so no admin change was
+needed. The runs were driven from another deployment through a `kind=shell` session (no agent in
+the loop): the scripts went in over the session and every number below was read back as raw
+bytes through `GET /api/fs/file`.
+
+- **arm64 MySQL works, and the subset is the point**: `install-mysql` took **30.9 s** end to end
+  (909 MB `aarch64` tarball → subset → `stripped 176 ELF file(s)` →
+  `linked libaio.so.1 -> /lib/aarch64-linux-gnu/libaio.so.1t64`), leaving **147 MB** on disk
+  (`mysqld` 63 MB) against x86_64's 446 MB. `lib/private/icudt77l` is present and
+  `lib/plugin/debug` is absent — the two P1 corrections hold. `ldd` resolves `libaio.so.1`
+  through `lib/private`. `af-db up mysql` **5.2 s**; the error log has **zero** `MY-013829` and
+  zero `[ERROR]`; `SELECT j->>'$.a'` answered `42` over the socket **and** over `127.0.0.1`;
+  `version` 8.4.6, `rssBytes` 227 MB; `down mysql --purge` left no `mysqld` and no datadir.
+  The guide's "a few minutes" for arm64 is now wrong in the safe direction.
+- **arm64 Postgres**: the pinned Zonky `linux-arm64v8` jar with the `postgres_sha256` for this
+  architecture; install + `initdb` + start in **1.6 s**. `install-pg-client` **0.7 s**.
+- **Decision 4′ does not engage on this ECS deployment: `AF_WS_SCRATCH` is unset there.** The
+  datadir went to `~/.local/state/af-db/postgres-17/data`, and a row written before the
+  workspace was stopped was **still there after it was started again** (`select count(*)` = 1).
+  So "gone when the workspace stops" is not what a member sees today on ECS; it is what they
+  would see if the scratch disk were injected. `--persist` changes only `fsync` while the
+  variable is unset, since both branches land in home. Whether the scratch disk should be turned
+  on for workspaces is an ADR 0044 question, not this one — but the ADR must stop claiming the
+  ECS behaviour it does not have.
+- **A stale pid survives the stop and `af-db up` started anyway — since fixed.** The first `up`
+  after the restart printed `pg_ctl: another server might be running; trying to start server
+  anyway`: the container died with `postmaster.pid` in place and nothing cleared it. It started
+  correctly (0.2 s) because the old pid happened to be dead — the case it could not tell apart
+  was a reused number, where pg_ctl refuses instead and the member has no way out from the
+  Console. Both engines now decide liveness from `/proc/<pid>/cmdline` (the process must be
+  *this* engine's server for *this* datadir, not merely a process with that number), and a pid
+  file that names anything else is removed before the start, with a line saying so. A live
+  matching server's pid file is never touched: two postmasters on one datadir is worse than a
+  warning. Measured with a pid file planted on a live unrelated process — removed, clean start,
+  no warning — and with a second `up` against a running server — pid file unchanged.
+
+### Reset gained the database name too (contract change, M2 + M3)
+
+The review after the live runs found the same mistake still sitting in the POST path: the
+card's Reset sent only the engine, and `resetDB(engine, major, "")` fell back to
+`DBNameFor(ResolveDir())` — the Agent's own directory. On Postgres that is `DROP DATABASE IF
+EXISTS` followed by `CREATE DATABASE`, so pressing Reset **created** a stray `af_dev_…` and left
+every row of the card untouched. `POST /env/databases/{engine}/reset` now requires `db=<name>`
+(400 `db_required` without it, 400 `bad_db` when it fails the `--db` pattern), and the Reset
+button moved onto the database row, so it resets the row it sits on and says which one in the
+confirmation.
+
+**Next**, unchanged except for what this run closed: the Console card on a workspace whose
+Agent is the image's, the first ECS run with a scratch-disk datadir, and arm64 MySQL.
+
+## Decision 4′ overridden: a workspace stop does not delete a database (2026-09-18)
+
+The author read decision 4′ back and rejected the behaviour it describes: **"the databases are
+gone when the workspace stops" is not something a deployment may do.** Everything below replaces
+decision 4 and decision 4′; the sections above stay as written.
+
+- **Decision 4′ → 4″. The datadir is always `~/.local/state/af-db/<instance>`.** `AF_WS_SCRATCH`
+  is not consulted unless the member asks for it by name. Home is where a workspace's own state
+  lives, and it is the only place that survives a stop.
+- **`af-db up --ephemeral` opts in to the task-local disk**, for the member who knows the
+  contents are a fixture and wants the speed. It is sticky on the instance: a later plain
+  `af-db up` keeps the datadir where the member put it rather than quietly initdb-ing an empty
+  one in the home. Where no task-local disk exists (`AF_WS_SCRATCH` unset) it prints that it was
+  ignored, uses home, and — this is the part worth naming — **does not record the instance as
+  ephemeral**, so the datadir will not move on the day a deployment starts injecting one.
+- **`--persist` becomes `--durable`, and the old spelling keeps working.** With home as the
+  default, `--persist` no longer chooses a location: all it does is turn `fsync` (Postgres) and
+  `innodb-flush-log-at-trx-commit` (MySQL) back on. A flag named for the half that is now the
+  default would be read as "makes my data persist" by every member who meets it, and the true
+  answer — "it already does" — is what the name should say. `--persist` still runs and prints
+  one line saying it is now `--durable` and that the datadir survives a stop regardless: it is
+  in shell histories and in this repository's own documentation, and failing on it would teach
+  nothing. The registry key stays `persist` for the same reason it always did — renaming it
+  would drop the setting from every registry written before today.
+- **`af-db down --purge` is untouched.** It is the member saying "delete this", which is a
+  different act from stopping a workspace for the night.
+
+### Why this costs nothing today, measured (2026-09-18, the dev deployment)
+
+The argument decision 4 was built on does not hold on the deployment that exists:
+
+- **`AF_WS_SCRATCH` is unset on the ecs-ec2 development deployment**, as the 2026-09-17 live run
+  already recorded. Every datadir there is in the home *now*. So this correction changes nothing
+  a member sees today; it closes a trap before the day a scratch disk is injected arms it. It
+  also means **there is nothing to migrate**: no member has a datadir on a scratch disk to move.
+- **`/home/dev` on that deployment is an EBS volume** — 50 GB, `/dev/nvme1n1`, read off `df` —
+  **not EFS.** Decision 4's second reason, "keep a few thousand small files off EFS, which
+  ADR 0044 measured at about 14.5 ms per file", does not apply to the ecs-ec2 home at all. What
+  is on EFS there is `~/.config`, the keep volume — which holds the registry and the password
+  file, a handful of files, not a datadir.
+- **The home-datadir numbers were never slow.** The 2026-09-17 arm64 run (m8g.large) measured
+  Postgres install + `initdb` + start at **1.6 s** and `af-db up mysql` at **5.2 s** — those were
+  home datadirs, because the variable was unset. `control-plane`'s
+  `TestPostgres|TestSchemaDialectParity` is 4 PASS / 0 SKIP against one. Nothing here is waiting
+  on a faster disk.
+- **Surviving a stop is measured**, also on 2026-09-17: a row written before the workspace was
+  stopped was still there after it started again.
+
+### Open question 2 is promoted, and re-asked
+
+The original open question 2 — "a datadir on EFS: how slow, and is it safe? Decides whether
+`--persist` is recommended, discouraged, or refused for MySQL" — is superseded. It asked about an
+opt-in flag; with home as the default it asks about the default itself, and only on the profile
+where home is EFS:
+
+> **2″. On a Fargate deployment, where the home is EFS, is a Postgres or InnoDB datadir fast
+> enough and safe?** Unmeasured. It does not affect ecs-ec2, docker or native, whose homes are
+> block storage. If the answer is bad, the fix is a Fargate-specific datadir location or a
+> refusal to offer MySQL there — **not** a return to a default that deletes the member's data,
+> which is settled.
+
+Two things make this a smaller risk than it reads. NFS is a correctness question for a datadir
+mainly through file locking, and both servers are single-instance, single-writer here, reached
+over a unix socket by one workspace. And a member who finds it slow has `--ephemeral`, which is
+exactly the old default, one flag away.
+
+### Not changed, and known: the registry and the datadir live in different trees
+
+The registry moved to `~/.local/state/agent-fleet/af-db/` with the rest of the Agent's state; the
+datadir is still `~/.local/state/af-db/`. They should share a parent. Moving the datadir under
+the member's feet would strand every database that exists, for a tidiness gain, so it is left
+where it is and written down here instead of being discovered again.
+
+## Decision 9 gains a tab: databases are created and dropped by name (2026-09-18)
+
+Decision 9 put the Console surface in "a card in the workspace settings", and P1 built it as the
+last card of the Toolchains tab. The author asked for it to become its own **Databases** tab, and
+for the tab to create and delete databases by name. Both are accepted; this replaces decision 9's
+placement.
+
+- **Databases are not a toolchain.** A Java version is a setting picked once and forgotten; these
+  hold a member's data and are made, connected to and destroyed. Sitting under the language
+  pickers, the card was also the last thing on a long tab — findable only by someone who already
+  knew it was there.
+- **`POST /env/databases/{engine}/create` and `/drop`, each requiring `db=<name>`.** Same rule as
+  reset, for the same reason: the Agent asked for a database without a name answers with
+  `DBNameFor(ResolveDir())` — its own directory — so a create would make a database nobody asked
+  for and a drop would destroy one nobody named. Absent or malformed name → 400 `db_required` /
+  `bad_db`. `create` is idempotent (the member asked for the database to be there, and it is);
+  `drop` on an absent database succeeds for the same reason.
+- **The drop is `WITH (FORCE)` on Postgres.** A plain `DROP DATABASE` refuses while anything is
+  connected, and the thing connected is usually a `psql` the member left in another pane. They
+  pressed a button labelled with the database's name, after a confirmation that named it; leaving
+  them with "database is being accessed by other users" and no way to act on it from the Console
+  is the worse answer.
+- **`af-db create --db=NAME` and `af-db drop --db=NAME`** exist too. Decision 1 says the contract
+  is `af-db`; a verb the Console can reach and a shell cannot would break that.
+- **The name is checked in the Console before it is sent**, against the Agent's own
+  `^[a-z_][a-z0-9_]{0,62}$`, and against the names already on that engine — so a bad name is a
+  disabled button with a sentence under it rather than a 400 in a toast.
+
+**Next**: the first ECS run with a scratch-disk datadir is no longer a thing to wait for — no
+deployment injects one and `--ephemeral` is now what asks for it. What is still untested is the
+Console tab on a workspace whose Agent is the image's, arm64 MySQL through the tab, and open
+question 2″.

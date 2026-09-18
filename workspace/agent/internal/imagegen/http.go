@@ -135,7 +135,10 @@ type providerStatus struct {
 // modelStatus is one entry of providerStatus.Models — see imagegen.ModelInfo, which this rides
 // unchanged from.
 type modelStatus struct {
-	ID          string `json:"id"`
+	ID string `json:"id"`
+	// Label is the member-facing name (ADR 0090). Absent on an Agent or a Control Plane that
+	// composes none, and the form then draws the id — which is what it always did.
+	Label       string `json:"label,omitempty"`
 	Description string `json:"description,omitempty"`
 	Warm        bool   `json:"warm,omitempty"`
 	// The rest is ADR 0081 decision 5's widening, and is filled in only for a provider that
@@ -227,7 +230,8 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 			if len(models) > 1 {
 				st.Models = make([]modelStatus, 0, len(models))
 				for _, m := range models {
-					st.Models = append(st.Models, modelStatus{ID: m.ID, Description: m.Description, Warm: m.Warm})
+					st.Models = append(st.Models, modelStatus{
+						ID: m.ID, Label: m.Label, Description: m.Description, Warm: m.Warm})
 				}
 			}
 			// A UNION over the models, unlike everything else here, because `negative_prompt` is
@@ -278,7 +282,7 @@ func applyStudio(ctx context.Context, p Provider, st *providerStatus) {
 	for _, m := range s.Models {
 		params := m.Params
 		st.Models = append(st.Models, modelStatus{
-			ID: m.ID, Description: m.Description, Warm: m.Warm,
+			ID: m.ID, Label: m.Label, Description: m.Description, Warm: m.Warm,
 			Family: m.Family, Sizes: m.Sizes, Params: &params, Negative: m.Negative,
 			Knobs: m.Knobs, LicenseName: m.LicenseName, LicenseURL: m.LicenseURL,
 			SourceURL: m.SourceURL, TypicalMS: jobs.typicalFor(p.ID(), m.ID),

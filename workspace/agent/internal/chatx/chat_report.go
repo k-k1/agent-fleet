@@ -52,7 +52,7 @@ type reportLink struct {
 	At    string `json:"at"`    // RFC3339 of the last (re)arm
 }
 
-var reportLinks = fstore.JSON[reportLink](paths.AgentConfigDir, "session-report", ".json")
+var reportLinks = fstore.JSON[reportLink](paths.AgentStateDir, "session-report", ".json")
 
 // DisarmSessionReport cancels the session's outstanding instructions. Called from
 // handleHaltSession when the stop carries disarm_report (the operator's stop_session):
@@ -124,7 +124,7 @@ type resumeState struct {
 	At    string `json:"at"` // RFC3339 of the last bump
 }
 
-var resumeStates = fstore.JSON[resumeState](paths.AgentConfigDir, "session-resume", ".json")
+var resumeStates = fstore.JSON[resumeState](paths.AgentStateDir, "session-resume", ".json")
 
 // AutoResumeAttempts is the consecutive auto-resume count recorded for the session.
 func AutoResumeAttempts(name string) int {
@@ -440,7 +440,7 @@ func HandleChatReport(w http.ResponseWriter, r *http.Request) {
 // `t.Setenv("HOME", t.TempDir())` and still put a real notification into the user's Console.
 // The test returns as soon as it sees the report appended to the conversation, but the
 // goroutine then walks on to `notice.Put`, by which time t.Setenv has been undone and
-// `paths.AgentConfigDir()` resolves to the real `~/.config/agent-fleet`. The stray
+// `paths.AgentStateDir()` resolves to the real `~/.local/state/agent-fleet`. The stray
 // notification's `conversation_id` points at a conversation in a temp HOME that is gone, so
 // it is a ghost that can only answer "conversation not found" for the 7 days it sits on the
 // control plane (and rides the bridge to Slack / Discord when one is configured). With

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -58,19 +59,32 @@ func (a *AsyncOp) StartIfIdle(initialState string) bool {
 // All fields are always present (no omitempty) so the Console type can
 // treat every key as required without truthy guards on the sender side.
 type EngineStatus struct {
-	Engine     string            `json:"engine"`
-	Major      string            `json:"major"`
-	Installed  bool              `json:"installed"`
-	State      string            `json:"state"`
-	Version    string            `json:"version"`
-	RSSBytes   int64             `json:"rssBytes"`
-	Port       int               `json:"port"`
-	Datadir    string            `json:"datadir"`
-	URLSocket  string            `json:"urlSocket"`
-	URLTCP     string            `json:"urlTcp"`
-	Databases  map[string]string `json:"databases"`
-	LastUsedAt time.Time         `json:"lastUsedAt"`
-	LastError  string            `json:"lastError"`
+	Engine     string          `json:"engine"`
+	Major      string          `json:"major"`
+	Installed  bool            `json:"installed"`
+	State      string          `json:"state"`
+	Version    string          `json:"version"`
+	RSSBytes   int64           `json:"rssBytes"`
+	Port       int             `json:"port"`
+	Datadir    string          `json:"datadir"`
+	Databases  []DatabaseEntry `json:"databases"`
+	LastUsedAt time.Time       `json:"lastUsedAt"`
+	LastError  string          `json:"lastError"`
+}
+
+// DatabaseEntry is one database that exists on this engine, with the URLs that
+// reach it. There is one per working copy (decision 3′).
+//
+// The URLs belong to the entry, not to the engine: the Agent runs from its own
+// directory, so a single engine-level URL could only ever name the Agent's own
+// database — a name no session uses and that nothing creates. The first live run
+// of the card offered exactly that, and the copied URL answered
+// "database af_dev_… does not exist".
+type DatabaseEntry struct {
+	Name      string `json:"name"`
+	Dir       string `json:"dir"`
+	URLSocket string `json:"urlSocket"`
+	URLTCP    string `json:"urlTcp"`
 }
 
 // isEngineInstalled reports whether the engine binary is present on disk.
@@ -116,7 +130,7 @@ func BuildEngineStatus(engine, major string) EngineStatus {
 		Major:     major,
 		Installed: isEngineInstalled(engine, major),
 		LastError: lastError,
-		Databases: map[string]string{},
+		Databases: []DatabaseEntry{},
 	}
 
 	// State priority: async op in flight > running > error from last op > stopped > absent
@@ -137,22 +151,11 @@ func BuildEngineStatus(engine, major string) EngineStatus {
 	status.Port = inst.Port
 	status.Datadir = inst.Datadir
 	status.LastUsedAt = inst.LastUsedAt
-	if inst.Databases != nil {
-		status.Databases = inst.Databases
-	}
 
 	running := isInstanceRunning(inst)
 	if running {
 		status.State = "running"
-		pw := readPass(passPath(engine, major))
-		dbName := DBNameFor(ResolveDir())
-		if engine == "mysql" {
-			status.URLSocket = buildMySQLURL(inst, dbName, pw, false)
-			status.URLTCP = buildMySQLURL(inst, dbName, pw, true)
-		} else {
-			status.URLSocket = buildURL(inst, dbName, pw, false)
-			status.URLTCP = buildURL(inst, dbName, pw, true)
-		}
+		status.Databases = databaseEntries(inst, engine, major)
 		status.Version = instanceVersion(inst)
 		status.RSSBytes = rssForInstance(inst)
 	} else if lastError != "" {
@@ -162,6 +165,32 @@ func BuildEngineStatus(engine, major string) EngineStatus {
 	}
 
 	return status
+}
+
+// databaseEntries lists the instance's databases, sorted by name, each with the
+// URLs that reach it. Only called while the instance is running: a stopped
+// engine has no port and no URL to hand out.
+func databaseEntries(inst *Instance, engine, major string) []DatabaseEntry {
+	names := make([]string, 0, len(inst.Databases))
+	for name := range inst.Databases {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	pw := readPass(passPath(engine, major))
+	out := make([]DatabaseEntry, 0, len(names))
+	for _, name := range names {
+		e := DatabaseEntry{Name: name, Dir: inst.Databases[name]}
+		if engine == "mysql" {
+			e.URLSocket = buildMySQLURL(inst, name, pw, false)
+			e.URLTCP = buildMySQLURL(inst, name, pw, true)
+		} else {
+			e.URLSocket = buildURL(inst, name, pw, false)
+			e.URLTCP = buildURL(inst, name, pw, true)
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // HandleDatabasesGet handles GET /env/databases.
@@ -182,8 +211,11 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_engine", "engine must be postgres or mysql")
 		return
 	}
-	if action != "start" && action != "stop" && action != "reset" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_action", "action must be start, stop, or reset")
+	switch action {
+	case "start", "stop", "create", "drop", "reset":
+	default:
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_action",
+			"action must be start, stop, create, drop, or reset")
 		return
 	}
 
@@ -229,7 +261,7 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 			}
 			// Phase 2: start the server (ensureInstalled inside ensureUp is a fast no-op now).
 			op.Set("starting", "")
-			_, err := ensureUp(engine, major, false)
+			_, err := ensureUp(engine, major, startOpts{})
 			if err != nil {
 				op.Set("", err.Error())
 			} else {
@@ -252,8 +284,53 @@ func HandleDatabasesAction(w http.ResponseWriter, r *http.Request) {
 			"status": BuildEngineStatus(engine, major),
 		})
 
+	case "create", "drop":
+		// The Database tab creates and drops databases by name, so a member no longer
+		// has to run `af-db url` in a working copy to get one. Both take the name from
+		// the query string and neither has a default: ResolveDir() would answer with
+		// the Agent's own directory, which is the mistake reset already made once.
+		dbName := r.URL.Query().Get("db")
+		if dbName == "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "db_required",
+				"db=<name> is required; it names the database to "+action)
+			return
+		}
+		if err := validateExplicitDB(dbName); err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_db", err.Error())
+			return
+		}
+		var err error
+		if action == "create" {
+			err = createDB(engine, major, dbName)
+		} else {
+			err = dropDB(engine, major, dbName)
+		}
+		if err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, action+"_failed", err.Error())
+			return
+		}
+		GetAsyncOp(engine, major).Set("", "")
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": BuildEngineStatus(engine, major),
+		})
+
 	case "reset":
-		if err := resetDB(engine, major, ""); err != nil {
+		// `db` names WHICH database to reset, and the caller has to say. The Agent
+		// cannot infer it: ResolveDir() would answer with the Agent's own directory,
+		// so an unqualified reset dropped and re-created a database no session uses
+		// (af_dev_… — the same mistake the engine-level URL made before it became a
+		// per-database list). The card sends the name from the row the member pressed.
+		dbName := r.URL.Query().Get("db")
+		if dbName == "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "db_required",
+				"db=<name> is required; it names the database to reset")
+			return
+		}
+		if err := validateExplicitDB(dbName); err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_db", err.Error())
+			return
+		}
+		if err := resetDB(engine, major, dbName); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "reset_failed", err.Error())
 			return
 		}

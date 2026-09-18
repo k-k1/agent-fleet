@@ -372,10 +372,7 @@ func engineUpstreamFileName(src engineIngestSource, res engineResolved) string {
 // engineIDExtRe and engineIDQuantRe are the two things a catalogue id is not: the container
 // format, and the quantisation tag — which names the FILE rather than the model, so the same
 // model at q4 and q8 proposes one id.
-var (
-	engineIDExtRe   = regexp.MustCompile(`(?i)\.(safetensors|gguf|ckpt|pt|sft|bin)$`)
-	engineIDQuantRe = regexp.MustCompile(`[-.](q\d+(_[a-z0-9]+)*|iq\d+(_[a-z0-9]+)*|f16|fp16|bf16|f32|fp32|fp8(_[a-z0-9]+)*|int8)$`)
-)
+var engineIDExtRe = regexp.MustCompile(`(?i)\.(safetensors|gguf|ckpt|pt|sft|bin)$`)
 
 // engineIDFromFile proposes a catalogue id from the name of the file that was picked. The same
 // derivation the Console offered while the person typed one (ADR 0085 decision 4 moves it here,
@@ -384,9 +381,16 @@ var (
 // A proposal, never a decision: the person may edit it under 詳細 (details). Deriving
 // `sdxl-base-1.0` from `sd_xl_base_1.0` is where this would stop being derivation and start being
 // guessing, and it is left to them.
+//
+// 🔴 The QUANTISATION is kept, and used to be stripped (ADR 0090). The old rule said "the
+// quantisation names the file, not the model", which was true while a deployment held one size of
+// a model — and stopped being true the moment ADR 0089 made taking in a second size one press.
+// Measured on unsloth/Qwen3.8-27B-GGUF: all four of `UD-IQ2_XXS`, `UD-IQ2_S`, `UD-Q2_K_XL` and
+// `UD-IQ4_XS` proposed the SAME `qwen3.8-27b-ud`, so the second row taken in became
+// `qwen3.8-27b-ud-2` — a numeric suffix in place of the one fact that tells them apart, in the id
+// the launch menu shows a member.
 func engineIDFromFile(file string) string {
-	stem := strings.ToLower(engineIDExtRe.ReplaceAllString(engineBaseName(file), ""))
-	return engineIDQuantRe.ReplaceAllString(stem, "")
+	return strings.ToLower(engineIDExtRe.ReplaceAllString(engineBaseName(file), ""))
 }
 
 // enginePlanIDMax bounds the suffix search. A hundred rows of one name is not a catalogue anybody

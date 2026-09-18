@@ -201,6 +201,8 @@ export const errors = {
   "err.logout_failed": "サインアウトできませんでした",
   "err.store_failed": "認証情報を保存できませんでした",
   "err.pty_failed": "エージェントの CLI を起動できませんでした",
+  "err.serve_not_owned":
+    "この opencode serve は別のプロセスが起動したもので、Agent からは入れ替えられません。設定を反映するにはワークスペースを再起動してください",
   "err.serve_not_ready": "エージェントのサービスが応答しませんでした",
   "err.agy_unsupported": "agy が見つかりません（イメージが古い可能性があります）",
   "err.no_flow": "サインインの手続きが見つからないか期限切れです。やり直してください",
@@ -229,6 +231,7 @@ export const errors = {
   "err.engine_vae_missing": "このチェックポイントは VAE を同梱していないので、そのままでは生成が必ず失敗します",
   "err.engine_slot_filled": "その役割にはすでにファイルがあります。入れ替えるなら置き換えとして実行してください",
   "err.engine_vae_unreadable": "チェックポイントのヘッダを読めなかったので、VAE の有無は分かりません",
+  "err.engine_no_source": "この行には配布元のページが記録されていないので、名前や作例を取りにいけません",
   "err.engine_discover_unsupported": "この行は外部の ComfyUI ではないので、モデルの発見はできません",
   "err.engine_discover_unreachable": "その機械に問い合わせられませんでした（電源が入っていないか、ネットワークに繋がっていません）",
   "err.gated_not_accepted": "そのアカウントはこのリポジトリの条項にまだ同意していません",

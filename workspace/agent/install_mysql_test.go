@@ -380,6 +380,94 @@ func TestMySQLLDDNotFound(t *testing.T) {
 	}
 }
 
+// TestMySQLParseLdconfigCache verifies the `ldconfig -p` parser: the first entry
+// for a soname wins, and lines without an absolute path are ignored.
+func TestMySQLParseLdconfigCache(t *testing.T) {
+	const out = "323 libs found in cache `/etc/ld.so.cache'\n" +
+		"\tlibaio.so.1t64 (libc6,x86-64) => /lib/x86_64-linux-gnu/libaio.so.1t64\n" +
+		"\tlibaio.so.1t64 (libc6) => /usr/lib/i386-linux-gnu/libaio.so.1t64\n" +
+		"\tlibnuma.so.1 (libc6,x86-64) => /lib/x86_64-linux-gnu/libnuma.so.1\n" +
+		"\tbroken.so.1 (libc6,x86-64) => relative/path.so\n"
+	cache := parseLdconfigCache(out)
+	if got, want := cache["libaio.so.1t64"], "/lib/x86_64-linux-gnu/libaio.so.1t64"; got != want {
+		t.Errorf("libaio.so.1t64 = %q; want %q (first entry wins)", got, want)
+	}
+	if got, want := cache["libnuma.so.1"], "/lib/x86_64-linux-gnu/libnuma.so.1"; got != want {
+		t.Errorf("libnuma.so.1 = %q; want %q", got, want)
+	}
+	if _, ok := cache["broken.so.1"]; ok {
+		t.Error("entry with a relative path should be ignored")
+	}
+	if n := len(cache); n != 2 {
+		t.Errorf("cache has %d entries; want 2", n)
+	}
+}
+
+// TestMySQLLinkSonameCompat verifies that a SONAME ldd cannot resolve is
+// symlinked into lib/private (the RUNPATH directory) when ldconfig knows a t64
+// library by the same name, and that a SONAME with no t64 counterpart is left
+// alone for mysqlCheckLDD to report.
+func TestMySQLLinkSonameCompat(t *testing.T) {
+	tmp := t.TempDir()
+	shims := filepath.Join(tmp, "shims")
+	if err := os.MkdirAll(shims, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The library the loader would find under its renamed soname.
+	sysLib := filepath.Join(tmp, "lib", "libaio.so.1t64")
+	if err := os.MkdirAll(filepath.Dir(sysLib), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sysLib, []byte{0x7f, 'E', 'L', 'F'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fake ldd: libaio.so.1 has a t64 counterpart, libmystery.so.9 does not.
+	fakeLDD := "#!/bin/sh\n" +
+		"echo '\tlibaio.so.1 => not found'\n" +
+		"echo '\tlibmystery.so.9 => not found'\n"
+	if err := os.WriteFile(filepath.Join(shims, "ldd"), []byte(fakeLDD), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeLdconfig := fmt.Sprintf("#!/bin/sh\necho '\tlibaio.so.1t64 (libc6,x86-64) => %s'\n", sysLib)
+	if err := os.WriteFile(filepath.Join(shims, "ldconfig"), []byte(fakeLdconfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shims)
+	t.Setenv("AF_DB_MYSQL_LIBS", "")
+
+	distDir := filepath.Join(tmp, "dist")
+	if err := os.MkdirAll(filepath.Join(distDir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"mysqld", "mysql"} {
+		if err := os.WriteFile(filepath.Join(distDir, "bin", name), []byte{0x7f, 'E', 'L', 'F'}, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	msgs := mysqlLinkSonameCompat(distDir)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %v; want exactly one (libaio.so.1, linked once for two binaries)", msgs)
+	}
+	if !strings.Contains(msgs[0], "libaio.so.1") || !strings.Contains(msgs[0], sysLib) {
+		t.Errorf("message should name the soname and the target\ngot: %s", msgs[0])
+	}
+
+	link := filepath.Join(distDir, "lib", "private", "libaio.so.1")
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("expected a symlink at %s: %v", link, err)
+	}
+	if target != sysLib {
+		t.Errorf("symlink target = %q; want %q", target, sysLib)
+	}
+	if _, err := os.Lstat(filepath.Join(distDir, "lib", "private", "libmystery.so.9")); err == nil {
+		t.Error("a soname with no t64 counterpart should not be linked")
+	}
+}
+
 // TestMySQLLDDNotInPath verifies that mysqlCheckLDD returns a plain error (not
 // *mysqlLDDError) when ldd itself is not in PATH.
 func TestMySQLLDDNotInPath(t *testing.T) {

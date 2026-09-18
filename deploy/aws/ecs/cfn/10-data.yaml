@@ -87,7 +87,7 @@ Resources:
           Description: NFS from workspace tasks only
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-efs-sg" } ]
 
-  # ⚠️ ThroughputMode is a PARAMETER, and the parameter must track the live file system.
+  # !! ThroughputMode is a PARAMETER, and the parameter must track the live file system.
   # The 24-hour restriction is ASYMMETRIC: after a switch TO provisioned, or a change of
   # the provisioned amount, AWS refuses a switch back to elastic/bursting AND a DECREASE
   # of the amount for 24 hours. Raising the amount is not restricted, and a switch that does

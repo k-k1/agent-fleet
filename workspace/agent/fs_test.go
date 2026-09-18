@@ -37,6 +37,10 @@ func TestSafeBrowsePath(t *testing.T) {
 		// absolute under the browse root → served, display path is home-relative
 		{"abs under root", root + "/repos/x/a.png", root + "/repos/x/a.png", "repos/x/a.png", true},
 		{"abs denied under root", root + "/.config/agent-fleet/store", "", "", false},
+		// The state half of the same tree (ADR 0087 decision 4) — session ledger, chat
+		// working dirs, pending-permission payloads — is denied by the same rule.
+		{"abs denied in state dir", root + "/.local/state/agent-fleet/sessions/slot01.json", "", "", false},
+		{"rel denied in state dir", ".local/state/agent-fleet/chat-wd", "", "", false},
 
 		// absolute under the scratch base → served, display path is the absolute path
 		{"abs in scratch", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", true},

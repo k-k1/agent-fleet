@@ -95,10 +95,19 @@ func (e messageError) summary() string {
 	return "[error] " + e.label() + ": " + d
 }
 
-// ok reports whether this is a failure worth surfacing (a deliberate abort is not).
+// ok reports whether this is a PROVIDER failure worth surfacing. An abort is not one:
+// whether it is news depends on who asked for it, which only the driver knows.
 func (e messageError) ok() bool {
 	return strings.TrimSpace(e.Name) != "" && strings.TrimSpace(e.Name) != abortedErrorName
 }
+
+// isAbort reports whether the turn ended in an abort rather than a provider failure.
+//
+// An abort is not automatically benign. We ask for one on Interrupt, DropHandle (stop /
+// halt / archive) and the drain that precedes a daemon swap, but opencode writes the same
+// record when the runtime goes away under a running turn — and that one is a lost turn the
+// user has to be told about. threadHandle.abortAsked is the side that knows which it was.
+func (e messageError) isAbort() bool { return strings.TrimSpace(e.Name) == abortedErrorName }
 
 func (e messageError) retryable() bool { return e.ok() && e.Data.IsRetryable }
 
@@ -117,32 +126,47 @@ type errorEnvelope struct {
 	} `json:"info"`
 }
 
-// pick returns the failure worth surfacing, or false for a clean turn / an abort.
+// pick returns the message's error field, aborts included, or false for a clean turn.
+// Callers that only render provider failures filter on ok() themselves.
+//
+// Filtering aborts out here instead would hide a runtime that went away mid-turn: the
+// driver sees no error, lands a normal completion, and the session goes quiet with nothing
+// in the transcript and an operator report saying the answer is ready.
 func (w errorEnvelope) pick() (messageError, bool) {
 	e := w.Error
 	if e == nil && w.Info != nil {
 		e = w.Info.Error
 	}
-	if e == nil || !e.ok() {
+	if e == nil || strings.TrimSpace(e.Name) == "" {
 		return messageError{}, false
 	}
 	// Every failure funnels through here, so harvesting the workspace id and the quota
-	// info sits here too (workspaceid.go). If nothing can be harvested, do nothing.
-	scanFailure(*e)
+	// info sits here too (workspaceid.go). If nothing can be harvested, do nothing. An
+	// abort carries neither, so it is not worth a scan.
+	if e.ok() {
+		scanFailure(*e)
+	}
 	return *e, true
 }
 
-// decodeMessageError pulls the failure out of a stored message row (read layer).
+// decodeMessageError pulls the FAILURE out of a stored message row (read layer). Aborts
+// are filtered out here: the transcript renders a turn somebody cut short as the partial
+// answer it is, not as an error block.
 func decodeMessageError(data []byte) (messageError, bool) {
 	var wire errorEnvelope
 	if json.Unmarshal(data, &wire) != nil {
 		return messageError{}, false
 	}
-	return wire.pick()
+	e, ok := wire.pick()
+	if !ok || !e.ok() {
+		return messageError{}, false
+	}
+	return e, true
 }
 
-// decodeTurnError pulls the failure out of the assistant message a blocking /message
-// call answers with. Streamed rather than buffered on purpose: a SUCCESSFUL turn's body
+// decodeTurnError pulls the error field out of the assistant message a blocking /message
+// call answers with — ABORTS INCLUDED, which the driver then classifies against its own
+// abortAsked. Streamed rather than buffered on purpose: a SUCCESSFUL turn's body
 // carries the whole answer (every text and tool part) and can be large, while the only
 // field that matters here is info.error.
 func decodeTurnError(r io.Reader) (messageError, bool) {

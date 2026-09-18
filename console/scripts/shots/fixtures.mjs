@@ -572,6 +572,9 @@ export function imagegenStatus(locale) {
         models: [
           {
             id: "illustrious-v2",
+            // ADR 0090: what a member is shown instead of the id. The id stays the value the
+            // generation names — the fixture carries both so the shot proves which is drawn.
+            label: "OnomaAI/Illustrious-XL v2.0",
             description: ja ? "イラスト向けの SDXL 系" : "An SDXL-family illustration checkpoint",
             family: "sdxl",
             warm: true,

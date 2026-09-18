@@ -3624,7 +3624,7 @@ func mcpChromiumToolErr(id json.RawMessage, action string, err error) []byte {
 // re-fetching the trailing 32KiB each time piles all of it back into the context, whereas
 // returning only the delta keeps later turns cheap. mcp-stdio is a short-lived per-turn
 // process, so this is a file rather than memory (chat.go deletes it with the conversation).
-var OutputCursors = fstore.JSON[map[string]int64](paths.AgentConfigDir, "mcp-output-cursor", ".json")
+var OutputCursors = fstore.JSON[map[string]int64](paths.AgentStateDir, "mcp-output-cursor", ".json")
 
 // SessionOutputTail is the effective get_session_output tail cap: the session-output limit
 // under Settings > Assistant (ui-prefs assistantOutputTailKiB), defaulting to

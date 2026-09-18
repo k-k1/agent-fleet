@@ -260,6 +260,32 @@ export const admin = {
   "admin.catalog_registered_partial": "保存先: {present}/{total} ファイルあり（一部不足）",
   "admin.catalog_registered_missing": "保存先: 登録ファイルがありません",
   "admin.catalog_registered_unknown": "保存先: 存在を確認できていません",
+  // --- 名前と作例、そしてカテゴリ（ADR 0088）。id は鍵であって名前ではない。---
+  // 🔴「分類なし」であって「不明」ではない。画像の行ならファミリー未設定＝CP が有効化を拒む行で、
+  // 手を打つべきものが先頭に来る。
+  "admin.catalog_family_none": "分類なし",
+  "admin.catalog_meta": "配布元から名前を取る",
+  "admin.catalog_meta_all": "名前と作例をまとめて取る（{n} 件）",
+  "admin.catalog_meta_busy": "配布元のページを読んでいます… {n}/{m}",
+  "admin.catalog_meta_done": "{n} 件に名前が入りました（取れなかったもの {f} 件）。",
+  // --- 収まるかどうか（ADR 0089）。判定は「重み＋KV キャッシュ」だけで、計算バッファと
+  // CUDA コンテキストは数えられない。だから 99% を「収まります」と言わない。
+  "admin.fit_fits": "収まります",
+  "admin.fit_tight": "ぎりぎり（{p}%）",
+  "admin.fit_over": "このクラスでは入りません",
+  "admin.fit_over_next": "このクラスでは入りません（{c} なら収まります）",
+  "admin.fit_card": "このクラスの VRAM {c} MiB",
+  "admin.fit_estimate_note": "重みと KV キャッシュの見積もりです。計算バッファと CUDA コンテキストは含みません。",
+  "admin.fit_no_kv": "KV キャッシュは読めなかったので、重みだけで比べています。",
+  "admin.fit_kv_from": "KV は {f} のヘッダから読みました（同じ配布元でも版によって少し違います）。",
+  "admin.engines_ingest_ctx_ceiling": "上限 {n}",
+  // --- 配布元のカード（ADR 0089）。量子化の梯子は 1 押しで開く（開くたびに上流を読むため）。
+  "admin.repo_held_count": "取り込み済み {n} 件",
+  "admin.repo_ladder_open": "この配布元の他の量子化を見る",
+  "admin.repo_ladder_close": "閉じる",
+  "admin.repo_ladder_loading": "配布元を読んでいます…",
+  "admin.repo_ladder_empty": "この配布元に取り込めるファイルがありません。",
+  "admin.repo_ladder_held": "取り込み済み",
   // --- 揃える（ADR 0085 決定 3）。主語は行で、部品ではない。---
   "admin.catalog_complete": "揃える",
   "admin.catalog_complete_busy": "揃えています…",

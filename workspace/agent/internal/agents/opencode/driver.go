@@ -213,6 +213,9 @@ func DropHandle(name string) {
 	addr, ses, dir, running := h.addr, h.ses, h.dir, h.running
 	h.alive = false
 	h.queue = nil
+	if running {
+		h.abortAsked = true // stop / halt / archive: the abort below is ours
+	}
 	h.mu.Unlock()
 	if running && ses != "" {
 		abortSession(addr, ses, dir)
@@ -295,17 +298,23 @@ type threadHandle struct {
 	// concurrent Resumes would create two native sessions and orphan one).
 	resumeMu sync.Mutex
 
-	addr     string
-	gen      int
-	ses      string
-	alive    bool
-	state    agents.TurnState
-	running  bool // a turn goroutine is in flight (pump busy)
-	pumping  bool
-	queue    []agents.TurnInput
-	settings agents.ThreadSettings
-	inter    *agents.Interaction // pending question (the payload of waiting_interaction)
-	events   chan agents.Event
+	addr  string
+	gen   int
+	ses   string
+	alive bool
+	state agents.TurnState
+	// abortAsked: this side asked the runtime to cut the running turn short (Interrupt,
+	// DropHandle, or the drain before a daemon swap). opencode records our abort and an
+	// abort that merely happened to us as the same MessageAbortedError, so without this
+	// flag runTurn cannot tell "the user pressed stop" from "the daemon went away under a
+	// running turn". Cleared at the start of every turn.
+	abortAsked bool
+	running    bool // a turn goroutine is in flight (pump busy)
+	pumping    bool
+	queue      []agents.TurnInput
+	settings   agents.ThreadSettings
+	inter      *agents.Interaction // pending question (the payload of waiting_interaction)
+	events     chan agents.Event
 }
 
 func (h *threadHandle) sessionID() string {
@@ -475,6 +484,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	h.mu.Lock()
 	addr, ses := h.addr, h.ses
 	st := h.settings
+	h.abortAsked = false // nobody has asked to cut THIS turn short yet
 	h.mu.Unlock()
 
 	// Let serve assign the messageID (measured 1.17.18: the turn loop depends on the
@@ -523,9 +533,10 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	// assistant message's error field, not in the HTTP status (measured, errors.go).
 	// Judging by the status alone lets an exhausted balance or an auth error return to
 	// idle as a normal completion, leaving nothing in the transcript either.
-	turnErr, failed := decodeTurnError(res.Body)
+	turnErr, hasErr := decodeTurnError(res.Body)
 	h.mu.Lock()
 	interrupted := h.state == agents.TurnInterrupting
+	asked := h.abortAsked
 	h.inter = nil // the turn ended, so no question is pending any more
 	h.mu.Unlock()
 	switch {
@@ -535,7 +546,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 		failure = fmt.Sprintf("[error] HTTP %d", res.StatusCode)
 		log.Printf("opencode managed: turn failed name=%s status=%d", h.name, res.StatusCode)
 		h.setState(agents.TurnFailed)
-	case failed:
+	case hasErr && turnErr.ok():
 		failure = turnErr.summary()
 		log.Printf("opencode managed: turn failed name=%s model=%s %s", h.name, st.Model, turnErr.summary())
 		if turnErr.retryable() {
@@ -543,10 +554,28 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 		} else {
 			h.setState(agents.TurnFailed)
 		}
+	case hasErr && turnErr.isAbort() && asked:
+		// We asked: a stop / halt / archive, or the drain before the daemon is swapped.
+		// The partial answer is in the parts and the user already knows why.
+		h.setState(agents.TurnCancelled)
+	case hasErr && turnErr.isAbort():
+		// An abort nobody on this side asked for: the runtime went away under the turn
+		// (measured: the shared serve daemon replaced mid-turn kills it exactly like this).
+		// The work is unfinished and resending carries on from where it stopped, which is
+		// what TurnAborted means; calling it a completion leaves the session looking like
+		// it simply stopped talking.
+		failure = abortedWithoutRequest
+		log.Printf("opencode managed: turn aborted without a request name=%s model=%s", h.name, st.Model)
+		h.setState(agents.TurnAborted)
 	default:
 		h.setState(agents.TurnCompleted)
 	}
 }
+
+// abortedWithoutRequest is the operator-facing reason for a turn the runtime cut short on
+// its own. Tagged like the other failures so a reader can tell it from the agent's prose.
+const abortedWithoutRequest = "[error] ターンが中断されました（このセッションは中断を要求していません）。" +
+	"opencode serve が入れ替わった可能性があります — もう一度送ると続きから進みます"
 
 // Interrupt aborts the running turn and clears the queued follow-ups: the intent to stop
 // reaches the queue too, since nothing surprises a user more than an old follow-up
@@ -558,6 +587,7 @@ func (h *threadHandle) Interrupt() error {
 	h.queue = nil
 	if running {
 		h.state = agents.TurnInterrupting
+		h.abortAsked = true
 	}
 	h.mu.Unlock()
 	if !running {

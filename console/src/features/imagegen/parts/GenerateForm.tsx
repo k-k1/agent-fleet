@@ -163,9 +163,12 @@ export function GenerateForm({
           onChange={(e) => patch({ model: e.target.value })}
         >
           <option value="">{models.length ? tr("imggen.model_none") : tr("imggen.no_models")}</option>
+          {/* The name, not the id (ADR 0090). The value stays the id — it is what the generation
+              names — and an option has no room for both, so the id is dropped rather than
+              doubled up: a member never sees an S3 key, so for them the id buys nothing. */}
           {models.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.id}
+              {m.label || m.id}
               {m.warm ? " ●" : ""}
             </option>
           ))}

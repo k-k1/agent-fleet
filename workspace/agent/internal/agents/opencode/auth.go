@@ -164,7 +164,35 @@ func Status(s *secrets.Data) map[string]any {
 	if l := LastLimit(); l.Name != "" || l.ResetAt != "" {
 		m["last_limit"] = l
 	}
+	// The daemon's recent lifetime (serve.go's ledger). It is here because this is the one
+	// opencode-shaped surface a person inside the workspace can already read: a daemon that
+	// keeps being replaced kills a turn every time it lands on one, and until now the only
+	// record of that was the container's stdout.
+	if ev := Lifecycle(); len(ev) > 0 {
+		m["lifecycle"] = ev
+	}
+	// Settings changed since the running daemon started. The Console turns this into the
+	// notice and the restart button; absent means everything stored is what serve is using.
+	if p, ok := PendingRestartInfo(); ok {
+		m["restart_required"] = p
+	}
 	return m
+}
+
+// HandleServeRestart applies the pending settings by replacing the serve daemon
+// (POST /connections/opencode/serve/restart). Sessions mid-turn are drained first, and one
+// still running when the drain times out is cut short, so this is only ever taken on a
+// person's own initiative.
+func HandleServeRestart(w http.ResponseWriter, r *http.Request) {
+	if !Serve().Restart("opencode restart requested from the Console") {
+		// An adopted daemon cannot be signalled, so the old environment is still in force.
+		// Reporting success here would tell the user their key change had landed when it
+		// had not.
+		httpx.WriteErr(w, http.StatusConflict, "serve_not_owned",
+			"この serve は別プロセスが起動したもので、Agent からは入れ替えられません（ワークスペースの再起動が要ります）")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"restarted": true})
 }
 
 type connReq struct {
@@ -208,20 +236,22 @@ func HandlePutConn(w http.ResponseWriter, r *http.Request) {
 
 // applyKeyChange propagates a stored-key change to the places that cached it.
 //
-// Keys are injected as env at launch (docs/log/27 §7), so storing one has NO effect on a
+// Keys are injected as env at launch (docs/log/27 §7), so storing one has no effect on a
 // serve daemon that is already running. Measured: deleting the key in the Console leaves
 // the daemon holding it in its own environment, still reporting the env connection in
-// connections[] and still listing the models that key can be billed for (restarting the
-// Agent does not help either, since Ensure adopts the live daemon). The path that does
-// apply it is generation++ plus a drain, i.e. Supervisor.Restart. The drain can take up
-// to 60 seconds, so the handler does not wait and hands it to a separate goroutine.
+// connections[] and still listing the models that key can be billed for. Only a new process
+// applies it, i.e. Supervisor.Restart.
+//
+// That restart is NOT taken here. It drains, and a turn still running when the drain times
+// out is killed — a price the person who just changed a setting is the one able to judge.
+// So the change is recorded and the Console offers the button (Settings → Agents).
 func applyKeyChange(reason string) {
 	InvalidateModels()
-	go restartServe("opencode " + reason)
+	noteRestart("opencode " + reason)
 }
 
-// restartServe is the seam tests replace (a real Restart drains live turns).
-var restartServe = func(reason string) { Serve().Restart(reason) }
+// noteRestart is the seam tests replace.
+var noteRestart = NotePendingRestart
 
 // ApplyUsageChange is applyKeyChange for a billing-route switch: entering or leaving the
 // free tier changes whether OPENCODE_API_KEY is injected, so it needs the same

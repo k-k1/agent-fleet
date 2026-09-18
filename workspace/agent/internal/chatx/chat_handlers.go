@@ -410,7 +410,7 @@ func HandleChatDelete(w http.ResponseWriter, r *http.Request) {
 	// config file (opencodeChatConfig) — drop both with the thread. validConvID above
 	// already blocked traversal in id. Best-effort; a no-op for conversations on other
 	// backends.
-	chatWD := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd")
+	chatWD := filepath.Join(paths.AgentStateDir(), "chat-wd")
 	_ = os.RemoveAll(filepath.Join(chatWD, "agy-"+id))
 	_ = os.Remove(filepath.Join(chatWD, "opencode-conv", id+".json"))
 	// claude chats get a per-conversation --mcp-config file (docs/log/48 P2) — it holds

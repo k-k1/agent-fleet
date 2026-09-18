@@ -64,6 +64,13 @@ type Supervisor struct {
 	// stopping marks a deliberate teardown (Restart/Shutdown) so the waiter doesn't
 	// record it as a crash or trigger reconciliation.
 	stopping bool
+	// askedStop is the exact process this supervisor asked to end (stopIfIdle / Restart /
+	// Shutdown). Process identity is the only honest test of "was this death deliberate":
+	// deriving it from s.cmd files every crash as an orderly stop, because a daemon that
+	// dies on its own is replaced by the next Ensure — the Console polls Resume — before
+	// the waiter can take the lock. Measured: 727 daemon generations in one workspace log,
+	// not one exit record among them.
+	askedStop *exec.Cmd
 	// watching: one zero-demand watcher (agents.WatchIdle, idlestop.go) is running.
 	watching bool
 }
@@ -96,6 +103,123 @@ func dependents() int {
 // reason to let it sit there for as long as managed goes unused.
 const idleGraceEnv = "AF_OPENCODE_SERVE_IDLE_SEC"
 const defaultIdleGrace = 2 * time.Minute
+
+// --- lifecycle ledger --------------------------------------------------------
+//
+// §9.5 makes the log the generation ledger, but in a workspace that log is the container's
+// stdout, which nothing inside the container can read — not the Console, not the MCP
+// tools, not a shell. A daemon that keeps being replaced kills whatever turn it lands on,
+// so the transitions are kept here too and ride out on GET /connections next to
+// last_limit; otherwise that failure is only diagnosable from outside the container.
+
+const lifecycleKeep = 16
+
+// LifecycleEvent is one daemon transition: what happened, when, and who asked for it.
+type LifecycleEvent struct {
+	At     string `json:"at"`            // RFC3339
+	Event  string `json:"event"`         // started | adopted | stopped | restart | died
+	Gen    int    `json:"gen,omitempty"` // the runtime generation it refers to
+	Reason string `json:"reason,omitempty"`
+}
+
+var (
+	lifecycleMu sync.Mutex
+	lifecycle   []LifecycleEvent
+)
+
+func recordLifecycle(event string, gen int, reason string) {
+	lifecycleMu.Lock()
+	defer lifecycleMu.Unlock()
+	lifecycle = append(lifecycle, LifecycleEvent{
+		At: time.Now().Format(time.RFC3339), Event: event, Gen: gen, Reason: reason,
+	})
+	if len(lifecycle) > lifecycleKeep {
+		lifecycle = lifecycle[len(lifecycle)-lifecycleKeep:]
+	}
+}
+
+// Lifecycle returns the recent daemon transitions, oldest first.
+func Lifecycle() []LifecycleEvent {
+	lifecycleMu.Lock()
+	defer lifecycleMu.Unlock()
+	return append([]LifecycleEvent(nil), lifecycle...)
+}
+
+// --- pending restart ----------------------------------------------------------
+//
+// Provider keys arrive as environment (cmd.Env) and the engine provider block as a config
+// file, so `opencode serve` reads both once, at start: only a new process picks a change
+// up. Applying one on our own initiative costs whoever is mid-turn — the drain kills a
+// running turn after drainTimeout — and the change is rarely urgent, so the choice of
+// moment belongs to the person who made it. The change is recorded here and the Console
+// offers the restart (Settings → Agents).
+
+// pendingReasonsKeep bounds the list shown in the Console; the count is what matters, not
+// every entry.
+const pendingReasonsKeep = 8
+
+// PendingRestart is the set of changes waiting for a new serve process.
+type PendingRestart struct {
+	Reasons []string `json:"reasons"`
+	Since   string   `json:"since"` // RFC3339, when the first one landed
+}
+
+var (
+	pendingMu      sync.Mutex
+	pendingRestart PendingRestart
+)
+
+// NotePendingRestart records a change only a new serve process will pick up.
+//
+// It is deliberately a no-op while no daemon is running: there is nothing stale to replace,
+// and the next start reads the new value anyway. Saying "restart to apply" about a daemon
+// that does not exist is the kind of false alarm that teaches people to ignore the notice.
+func NotePendingRestart(reason string) {
+	if !supervisor.Running() {
+		return
+	}
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	if pendingRestart.Since == "" {
+		pendingRestart.Since = time.Now().Format(time.RFC3339)
+	}
+	for _, r := range pendingRestart.Reasons {
+		if r == reason {
+			return // the same setting toggled twice is still one pending change
+		}
+	}
+	pendingRestart.Reasons = append(pendingRestart.Reasons, reason)
+	if len(pendingRestart.Reasons) > pendingReasonsKeep {
+		pendingRestart.Reasons = pendingRestart.Reasons[len(pendingRestart.Reasons)-pendingReasonsKeep:]
+	}
+}
+
+// PendingRestartInfo returns the changes waiting to be applied, and whether there are any.
+func PendingRestartInfo() (PendingRestart, bool) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	if len(pendingRestart.Reasons) == 0 {
+		return PendingRestart{}, false
+	}
+	out := PendingRestart{Since: pendingRestart.Since, Reasons: append([]string(nil), pendingRestart.Reasons...)}
+	return out, true
+}
+
+// ClearPendingRestart forgets the pending changes — they have been applied, or the daemon
+// they were stale against is gone.
+func ClearPendingRestart() {
+	pendingMu.Lock()
+	pendingRestart = PendingRestart{}
+	pendingMu.Unlock()
+}
+
+// Running reports whether a daemon is up, which decides whether a setting change is stale
+// (NotePendingRestart) or will simply be read at the next start.
+func (s *Supervisor) Running() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.up
+}
 
 // Serve returns the package-wide supervisor instance.
 func Serve() *Supervisor { return supervisor }
@@ -170,6 +294,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		s.armIdleWatchLocked()
 		go s.monitorEvents(addr, s.gen)
 		log.Printf("opencode serve: adopted running daemon at %s (gen %d)", addr, s.gen)
+		recordLifecycle("adopted", s.gen, addr)
 		return addr, s.gen, nil
 	}
 	// Past this point a new process starts, i.e. new memory is paid for. Do not pay
@@ -202,6 +327,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			go s.waitDaemon(cmd, gen)
 			go s.monitorEvents(addr, gen)
 			log.Printf("opencode serve: started (gen %d, pid %d, %s)", gen, cmd.Process.Pid, addr)
+			recordLifecycle("started", gen, fmt.Sprintf("pid %d", cmd.Process.Pid))
 			return addr, gen, nil
 		}
 	}
@@ -238,7 +364,9 @@ func (s *Supervisor) stopIfIdle() bool {
 	}
 	addr := serveAddr()
 	cmd := s.cmd
+	gen := s.gen // read under the lock: the ledger write below runs without it
 	s.stopping, s.up, s.watching = true, false, false
+	s.askedStop = cmd
 	s.mu.Unlock()
 
 	if cmd == nil {
@@ -249,6 +377,7 @@ func (s *Supervisor) stopIfIdle() bool {
 		// Zero demand means no managed turn is running, so no drain is needed.
 		stopProcess(cmd, addr)
 		log.Printf("opencode serve: stopped (zero demand)")
+		recordLifecycle("stopped", gen, "zero demand")
 	}
 	s.mu.Lock()
 	s.cmd = nil
@@ -277,10 +406,13 @@ func splitServeAddr(addr string) (host, port string, err error) {
 func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
 	err := cmd.Wait()
 	s.mu.Lock()
-	// `s.cmd != cmd` (same shape as codex): Restart clears stopping without changing
-	// gen, so comparing gen alone can misrecord a deliberate stop as "died
-	// unexpectedly".
-	deliberate := s.stopping || s.cmd != cmd
+	// Deliberate means WE asked THIS process to end. Comparing gen alone would misread a
+	// Restart (it clears stopping without changing gen), and comparing s.cmd would call
+	// every crash deliberate the moment a concurrent Ensure replaced it — see askedStop.
+	deliberate := s.askedStop == cmd
+	if s.askedStop == cmd {
+		s.askedStop = nil
+	}
 	if s.cmd == cmd {
 		s.up = false
 		s.cmd = nil
@@ -309,6 +441,7 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
 	oomNow, okOOM := status.OOMKillCount()
 	// Generation history (§9.5 operational metadata): in P2 the log IS the ledger.
 	log.Printf("opencode serve: daemon died unexpectedly (gen %d, code %d, sig %d, oomCount ok=%v)", gen, code, sig, okOOM)
+	recordLifecycle("died", gen, fmt.Sprintf("code %d, sig %d", code, sig))
 	// Thread-level record, on every managed session that was live. A session that
 	// recovers is cleared by reconcile's baseline write (same as a tui restart).
 	for _, h := range liveHandles() {
@@ -328,26 +461,62 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
 // Restart is the path that applies an auth or config change (§7): generation++ → drain →
 // respawn → re-resume every handle. The daemon is shared, so the drain is a switchover
 // window for every opencode managed session in the workspace at once (by design, §7).
-func (s *Supervisor) Restart(reason string) {
+// replaced reports whether the daemon process was really replaced. An adopted daemon has no
+// process handle to signal, so the restart cannot apply a new environment; the caller must
+// say so rather than report success, because the whole point of a restart is the change it
+// carries.
+func (s *Supervisor) Restart(reason string) (replaced bool) {
 	s.mu.Lock()
 	if !s.up {
 		s.mu.Unlock()
-		return // not running — nothing to drain; next Ensure starts fresh
+		// Not running: nothing to replace and nothing stale — the next Ensure reads the
+		// new configuration on its own.
+		ClearPendingRestart()
+		return true
 	}
 	addr := serveAddr()
 	cmd := s.cmd
 	s.stopping = true
+	s.askedStop = cmd
 	s.mu.Unlock()
 
 	log.Printf("opencode serve: restart requested (%s) — draining", reason)
+	recordLifecycle("restart", s.Generation(), reason)
 	s.drain(addr)
+	if cmd == nil {
+		// Adopted: no process handle to signal, so nothing was replaced and the old
+		// environment is still in force. Leaving s.up alone matters — clearing it would send
+		// the next Ensure to adopt the very same daemon again, gaining nothing.
+		s.mu.Lock()
+		s.stopping = false
+		s.mu.Unlock()
+		return false
+	}
 	stopProcess(cmd, addr)
+	s.finishTeardown(cmd)
+	go reconcileAll("restart: " + reason)
+	ClearPendingRestart()
+	return true
+}
+
+// finishTeardown drops the supervisor's view of cmd — but only while cmd is still the
+// process it describes.
+//
+// Restart deliberately holds no lock across drain and stopProcess, both of which take
+// seconds, and Ensure runs under that lock with the Console calling Resume about once a
+// second. So a replacement can legitimately be installed while the old process is being
+// signalled. Clearing s.cmd unconditionally then orphans that live daemon: it keeps serving
+// while the supervisor believes it owns nothing, which costs the idle stop, exit recording,
+// and any further restart — including the button that started this.
+func (s *Supervisor) finishTeardown(cmd *exec.Cmd) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopping = false
+	if s.cmd != cmd {
+		return // somebody already installed a replacement; it is theirs, not ours to forget
+	}
 	s.up = false
 	s.cmd = nil
-	s.stopping = false
-	s.mu.Unlock()
-	go reconcileAll("restart: " + reason)
 }
 
 // Shutdown drains and stops the daemon (graceful workspace stop, §10.2-8).
@@ -362,6 +531,7 @@ func (s *Supervisor) Shutdown() {
 	s.stopping = true
 	s.up = false
 	s.watching = false
+	s.askedStop = cmd
 	s.mu.Unlock()
 	s.drain(addr)
 	stopProcess(cmd, addr)
@@ -389,6 +559,11 @@ func (s *Supervisor) drain(addr string) {
 	}
 	for _, h := range busyManaged(addr) {
 		log.Printf("opencode serve: drain timeout — aborting session %s", h.sessionID())
+		// Mark it ours BEFORE the abort lands, or runTurn wakes up to an abort it cannot
+		// account for and reports the turn as killed by something unknown.
+		h.mu.Lock()
+		h.abortAsked = true
+		h.mu.Unlock()
 		abortSession(addr, h.sessionID(), h.dir)
 	}
 	// Give the aborts a moment to unwind the blocked turn goroutines.

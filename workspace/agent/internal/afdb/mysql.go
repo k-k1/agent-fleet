@@ -2,6 +2,7 @@ package afdb
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,10 +78,11 @@ func ensureInstalledMySQL(root, major string) error {
 		self = "/usr/local/bin/workspace-agent"
 	}
 	cmd := exec.Command(self, "install-mysql", major)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	var log tailWriter
+	cmd.Stdout = io.MultiWriter(os.Stderr, &log)
+	cmd.Stderr = cmd.Stdout
 	if err := cmd.Run(); err != nil {
-		return errInstall(fmt.Sprintf("install-mysql %s failed: %v", major, err))
+		return errInstall(fmt.Sprintf("install-mysql %s failed: %v%s", major, err, log.reason()))
 	}
 	if _, err := os.Stat(bin); err != nil {
 		return errInstall(fmt.Sprintf("install-mysql %s completed but %s not found", major, bin))
@@ -107,17 +109,12 @@ func waitMySQLReady(binDir, sockFile, pw string, timeout time.Duration) error {
 
 // startMySQLServer initializes (if new datadir) and starts mysqld.
 // Caller must hold the start lock.
-func startMySQLServer(inst *Instance, persist bool) error {
+func startMySQLServer(inst *Instance, opts startOpts) error {
 	major := inst.Major
 	root := inst.Root
 	binDir := filepath.Join(root, "bin")
 
-	var base string
-	if persist {
-		base = homeStateBase()
-	} else {
-		base = scratchBase()
-	}
+	base, onScratch := datadirBase(opts.Ephemeral)
 	datadir := filepath.Join(base, "mysql-"+major, "data")
 	sockdir := filepath.Join(sockBase(), "mysql-"+major)
 	sockFile := filepath.Join(sockdir, "mysql.sock")
@@ -126,7 +123,8 @@ func startMySQLServer(inst *Instance, persist bool) error {
 
 	inst.Datadir = datadir
 	inst.Sockdir = sockdir
-	inst.Persist = persist
+	inst.Durable = opts.Durable
+	inst.Ephemeral = onScratch
 
 	newInit := false
 	if _, err := os.Stat(datadir); os.IsNotExist(err) {
@@ -163,6 +161,12 @@ func startMySQLServer(inst *Instance, persist bool) error {
 	}
 	inst.Port = port
 
+	// Same as Postgres: a container stop leaves mysqld.pid behind, and the number
+	// in it belongs to someone else on the next boot. isMySQLRunning reads this
+	// file, so a stale one can make af-db believe a server is up and refuse
+	// --purge.
+	clearStalePIDFile(pidFile, "mysqld", datadir)
+
 	args := []string{
 		"--no-defaults",
 		"--basedir=" + root,
@@ -177,7 +181,7 @@ func startMySQLServer(inst *Instance, persist bool) error {
 		"--innodb-buffer-pool-size=64M",
 		"--performance-schema=0",
 	}
-	if !persist {
+	if !opts.Durable {
 		args = append(args, "--innodb-flush-log-at-trx-commit=0")
 	}
 

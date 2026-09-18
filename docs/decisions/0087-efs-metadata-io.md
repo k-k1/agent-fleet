@@ -3,8 +3,10 @@
 English | [日本語](0087-efs-metadata-io.ja.md)
 
 - Status: **proposed** (2026-09-17, review applied the same day; verification step 0 and the
-  cost reconciliation were carried out on 2026-09-18 and folded in). One piece is implemented:
-  the CloudFormation change in decision 2.
+  cost reconciliation were carried out on 2026-09-18 and folded in). Implemented: the
+  CloudFormation change (decision 2), plus **the permanent P0/P1 work (decisions 4 and 5),
+  which landed on develop in #722**. 🔴 **Neither is deployed and neither has been measured in
+  effect** - every number below was taken against **production running the unfixed code**.
 - ⚠️ **Claims changed after the first draft**, overturned by measurement across two review
   passes. Each is marked in place ("the first draft said … and was wrong"). First pass: (1)
   `~/.config/agent-fleet` *does* contain the credential store; (2) a negative cache on the
@@ -23,10 +25,11 @@ English | [日本語](0087-efs-metadata-io.ja.md)
   headroom ratios are **1.04-1.33x** before rounding; (14) a CFN update **may**, not **will**,
   flip the mode back to bursting. Fourth pass (measured 2026-09-18): (15) **`ListMetas()`'s 836
   was an undercount** - the trace set was missing `fstat` (Go's `os.ReadFile` emits `fstat`, not
-  `newfstatat`); the real figure is **5M + 4 = 1,039 at 207 metas**; (16) `subagentBases()` is
-  **4x(1+P)**, not `(1+P)x4+2` (156 at P=38, 1,277 at P=318); (17) **A and B ride the same
+  `newfstatat`); the real figure is **5M + 4 = 1,039 at 207 metas**; (16) **`subagentBases()`'s
+  158 / 1,296 were undercounts too** - the breakdown dropped `close` entirely; the real figure
+  is **5x(1+P)** (195 at P=38, 1,596 at P=318); (17) **A and B ride the same
   request**, so their ratio does not depend on the number of open tabs and is fixed at
-  **(5M+4) : (4(1+P)xn)** - **the ranking flips from box to box**, so "is it A or B" was the
+  **(5M+4) : (5(1+P)xn)** - **the ranking flips from box to box**, so "is it A or B" was the
   wrong question to ask; (18) **the monthly figure moves from about $142 to about $135** (a full
   day of measurement puts box-hours at 1,341 rather than 1,377 and $/box-hour at $0.0987-0.1012
   rather than $0.1021). That moves **the break-even from 19.6 to about 18.8 MiB/s**, so (12)'s
@@ -226,13 +229,22 @@ Cost per call, counted with `strace -c` (Go's `filepath.Glob` does one `ReadDir`
 
 | Project directories P | File syscalls per `subagentBases()` call (measured 2026-09-18) |
 |---|---|
-| 38 | **156.0** (`openat` 39 / `getdents64` 78 / `close` 39) |
-| 318 | **1,277.1** |
+| 38 | **195.0** |
+| 39 | **200.0** |
+| 318 | **1,596.2** |
 
-Exactly **`4 * (1 + P)`** - one `openat` + two `getdents64` + one `close` per directory.
-⚠️ **The first draft's `(1+P)*4+2` has no "+2" in the measurement** (156 rather than 158 at
-P=38; 1,277 rather than 1,296 at P=318, where the +1.1 is one extra `getdents64` because
-`projects/` itself no longer fits in a single buffer). A development-deployment box was
+Exactly **`5 * (1 + P)`** - one `newfstatat` + one `openat` + two `getdents64` + one `close`
+per directory. The fifth is the **`os.Stat(dir)` that Go's internal `glob()` performs at the
+top of every directory** it walks.
+
+🔥 **The first draft's 158 / 1,296 were undercounts too - the breakdown dropped `close`.**
+The breakdown printed alongside them was "getdents64 78.8 / openat 39.9 / newfstatat 39.8",
+summing to 158.5 - with **no `close`, which is emitted once per directory (39 times)**.
+158 + 39 = 197, close to the measured 195, and the `(1+P)*4+2` formula was fitted to that
+short number. ✅ **The separate probe #722 left behind (`bg_probe_test.go`, P=39) reports 201
+"before"**, which agrees with 5x40 = 200 here - the measurements matched all along; only the
+table in the body was stale. (The +1.2 at P=318 is one extra `getdents64` because `projects/`
+itself no longer fits in a single buffer.) A development-deployment box was
 measured with **318** project directories; the production boxes had **42 and 27** as of
 2026-09-18. The tell from the earlier investigation still applies: **if every directory shows
 exactly the same count, something is looking for one thing at a time.**
@@ -266,11 +278,11 @@ So **the ratio of A to B does not depend on how many tabs are open**. More tabs 
 the same factor, so on any one box the ratio is fixed by the fixture alone:
 
 ```
-A : B  =  (5M + 4)  :  (4 * (1 + P) * n)
+A : B  =  (5M + 4)  :  (5 * (1 + P) * n)
            M = session meta count      P = directories under projects/
            n = idle claude sessions (B is claude-only, and only for running ones)
 
-A dominates  ⟺  5M + 4  >  4 * (1 + P) * n
+A dominates  ⟺  5M + 4  >  5 * (1 + P) * n
 ```
 
 🔥 **Applied to the two production boxes, the ranking flips** (fixtures counted over SSM on
@@ -278,8 +290,8 @@ A dominates  ⟺  5M + 4  >  4 * (1 + P) * n
 
 | Box | M | P | A per call | B per call (n sessions) | Ranking |
 |---|---|---|---|---|---|
-| Box 1 | 16 | 42 | 84 | 172 x n | **B dominates for any n≥1** |
-| Box 2 | 122 | 27 | 614 | 112 x n | **A dominates for n≤5** (B from n≥6) |
+| Box 1 | 16 | 42 | 84 | 215 x n | **B dominates for any n≥1** |
+| Box 2 | 122 | 27 | 614 | 140 x n | **A dominates for n≤4** (B from n≥5) |
 
 **There is no single answer to "is A or B the main source".** Boxes with many metas and few
 projects are A-dominated; the reverse are B-dominated. Decisions 4 and 5 are **not alternatives
@@ -624,17 +636,122 @@ session ledger empties the session list (the transcripts themselves live under
 losing credentials. **Credentials (`secrets.*`, `~/.ssh`, `.git-credentials`, `.claude.json`)
 stay on EFS** - ADR 0045's line about not leaving plaintext on local disk does not move.
 
+#### Implementation (option (b))
+
+`paths.AgentStateDir()` = `~/.local/state/agent-fleet` was added; `AgentConfigDir()` still
+resolves to `~/.config/agent-fleet`. Which root a store belongs in is decided in this order:
+
+1. **A credential, or anything that can carry one**, stays in `AgentConfigDir`. Besides
+   `secrets.*` that is `mcp-tenant.json`: 🔥 a tenant-distributed definition that is not
+   `user_secret` **arrives with its header and env VALUES filled in** (the reason is written on
+   `UserSecret`, `secrets.go:325`), so treating it as "ids only" would take credentials down to
+   EBS. `chat-mcp/` (the per-conversation `--mcp-config`) stays for the same reason - and at
+   3 files / 16 KB there is no I/O to win by moving it.
+2. **User-supplied configuration and user-authored content** stays in `AgentConfigDir`
+   (`rtk.json`, `ui-prefs.json`, `toolchains.json`, `user-notes*`, `assistants/`, `knowledge/`,
+   `locks.json`, `mcp-optout.json`, `chats/`). `mcp-managed.json` stays too: it is the only
+   authority for deleting a row af wrote into another CLI's config, and those files
+   (`~/.claude.json`, `~/.codex`, `~/.config/opencode`) are on keep as well. Split across the
+   two volumes, losing one leaves **orphans nothing can remove**.
+3. **Everything else moves.** Anything keyed by session name or sid belongs on that side: the
+   ledger itself moved, so state outliving it is meaningless.
+
+The migration runs once at Agent start (`internal/statemig`, immediately after main's
+subcommand branches and before any other read). **Which side wins when it is interrupted** is
+settled by three rules:
+
+- **The destination is the truth.** Nothing already at the destination is ever overwritten.
+  Only the new build writes there, so what is there is newer by construction - including a
+  file a hook subprocess wrote while the migration was running.
+- **Per file, not per directory.** Per directory, a half-copied directory is indistinguishable
+  from a finished one and the next boot skips the rest of it forever.
+- **The source file is removed once copied, and a finished entry is recorded in
+  `.migrated-from-config.json` at the destination.** Both exist to stop something the user
+  deleted *after* the migration from coming back: without them, deleting a session drops its
+  meta and the next boot restores it from the leftover under `.config`.
+
+Leftovers under `.config/agent-fleet` are therefore expected, and the next boot converges.
+
+🔴 **A symlink is copied as a symlink.** The chat working directories **borrow the real
+credentials through links** - measured, three of them: `chat-claude/.credentials.json` → the
+claude config mount, `chat-codex/auth.json` → `~/.codex/auth.json`, and agy's OAuth token under
+`chat-wd/agy-*/home/.gemini/…`. Following them writes **three plaintext copies onto home**,
+which is precisely what ADR 0045 decision 3-6 forbids, and leaves `reconcileChatCreds` folding
+a rotated token into a file nothing else reads.
+
+The destination was added to the file browser's denylist (`fs.go`) in the same commit.
+`statemig.Entries` is an allowlist, with a test (`statemig_drift_test.go`) that fails when a
+store resolves through `paths.AgentStateDir` and is not listed. The inverse was rejected
+because the two kinds of omission are not equivalent: forgetting an allowlist entry leaves one
+store on EFS, forgetting a denylist entry takes a credential or a user's configuration down to
+EBS. `deploy/` (written by `deploy/aws/ecs/env.sh`) is the clearest case - moving it breaks the
+deployment scripts.
+
+Measured (`internal/session/meta_probe_test.go`, strace, 207 metas × 100 calls): the **836
+file syscalls per `ListMetas()` do not change**. What changed is that **all of them land on
+home**, and **zero** land under `.config/agent-fleet` (openat 21,018 / read 41,404 / close
+21,017 / getdents64 213, every one of them under `.local/state/agent-fleet/sessions/`).
+
+⚠️ **`chats/` (the assistant conversations themselves) was not moved.** `ListConvs()` has the
+same shape as `ListMetas()` (one `ReadDir` plus one `ReadFile` each) and what it reads is the
+full conversation. But its polling frequency has not been measured, and this is content the
+user wrote: accepting "lost with the EBS volume" for conversations is a separate judgement.
+Next candidate.
+
+#### Four things review corrected (how the migration breaks)
+
+- 🔴 **It deleted things it had not copied.** `copyEntry` used one return value for both "the
+  destination already has it" and "not a regular file or a symlink (socket / fifo / device)",
+  so the source was removed in the second case too (reviewer measured it with a fifo). **A live
+  socket is a running process's listener**, so that is now a third outcome - leave it, delete
+  nothing - and an entry with anything left behind is **not recorded as finished** (`RemoveAll`
+  cannot tell the difference).
+- 🔴 **A credential that should be a symlink is sometimes a real file.** `reconcileChatCreds`
+  exists precisely because the CLIs **replace the link with a real file** on a token refresh,
+  and migrating one in that state writes the plaintext token onto home (measured).
+  `auth.json`, `.credentials.json` and agy's OAuth token are **left in place when they are
+  regular files**; the next chat turn's reconcile restores the link.
+- 🔴 **The `af-db` subcommand can outrun the migration.** Its branch in `main.go` returns before
+  `statemig.Run()`, and it is the one subcommand **a user runs by hand**. It reads a missing
+  registry as an empty one and writes that back, leaving a thin `{"instances":{}}` at the
+  destination that "the destination is the truth" then keeps - **orphaning a running postmaster**
+  (measured). That branch now runs the migration itself. The hook path (a tmux session that
+  outlived an Agent restart) is **deliberately not fixed**: it would put a 100 MB copy in front
+  of a claude turn, and the symptom is one mis-filed event that the next hook self-heals.
+- **af-db's `<engine>-<major>.pass` is a plaintext password.** It meets rule (1) head-on but
+  **stays on the state side as an exception**: it authenticates nothing outside this Workspace.
+  It is generated here, reaches only a loopback server whose datadir is on the same volume, and
+  **losing that volume loses the thing it opens**. A copy on keep would outlive what it unlocks.
+  `passPath` now says so - without that sentence the next reader applies rule (1) and moves it
+  back.
+
+⚠️ **The migration blocks boot.** Nothing is served until 5,400 files / 113 MB have been moved.
+Review's concern that a rollout would have every workspace do this at once and exhaust burst
+credits **does not apply to the current configuration**: decision 1 keeps it on `elastic`, which
+has no burst credits. What remains is a longer first boot - and **a readiness failure never
+fails Start** (`runtime_ecs.go`: "A readiness failure must still NEVER fail Start", structurally,
+nothing reads it), so it cannot turn into a task-replacement loop. One log line is emitted when
+there is something to move, so a slow boot is diagnosable rather than silent.
+
+⚠️ claude's hook definitions do not break (verified). What `hooks.go` embeds in a command line
+is **the agent binary's path only** (`<exe> session-status <state>`); where the state lives is
+resolved by the agent at run time, so a hook written before the migration writes to the new
+location unchanged.
+
 ### Decision 5 (permanent, P1): stop the remaining two `projects/*` sweeps
 
-⚠️ **2026-09-18 added one more reason this belongs at P1.** How much B is worth depends on the
-box's fixture (`4(1+P)xn` against `5M+4`), so it **only dominates where projects are many and
-metas are few**. And the `claude` mount issued no READDIR RPC in 660 seconds, so **B's syscalls
+⚠️ **The 2026-09-18 measurement lowers the estimate of what this change buys** (it is already
+implemented - see the implementation section below; measuring its effect waits on deployment).
+How much B is worth depends on the box's fixture (`5(1+P)xn` against `5M+4`), so it **only
+dominates where projects are many and metas are few** - of the two production boxes, only one
+was B-dominated. And the `claude` mount issued no READDIR RPC in 660 seconds, so **B's syscalls
 are probably absorbed almost entirely by the directory attribute cache and never reach the
 wire.**
-🔴 **That is not a reason to skip it** - the absorption rate is unmeasured, and attribute
-revalidation surfaces as GETATTR, so part of `claude`'s GETATTR traffic *is* B. **Land decision 4
-first, clear `keep`, then re-measure what is left on `claude` with conditions 3 and 4 of
-verification step 0, and start from there.**
+🔴 **That is not "it was landed for nothing"** - the absorption rate is unmeasured, and
+attribute revalidation surfaces as GETATTR, so part of `claude`'s GETATTR traffic *is* B.
+**When the effect is measured after deployment, read `keep` (decision 4) and `claude`
+(decision 5) separately** - the two land on different mounts, so `mountstats` can separate
+them, and reading them together loses which one worked.
 
 - **Remember the `subagentBases()` miss, but only on the status path.** The "never remember a
   miss" invariant on the transcript side exists to protect the `SessionJSONLExists` →
@@ -684,6 +801,83 @@ verification step 0, and start from there.**
   become `-`), so **the derivation is a guess, not the truth** - always keep the fallback.
 - The transcript side's `memoTTL = 60s` returns a hit to the full sweep once a minute. Once
   the derivation is in, re-searching is cheap, so revisit that constant afterwards.
+
+#### Implementation (option (a) was tried, rejected, and replaced by one with no cache)
+
+🔥 **The first implementation was (a) — a display-only entry point with a 15s negative cache —
+and review rejected it.** Drawing the line at "display versus every decision" was right; what
+was wrong was the census of what counts as display. **One of the two supposed badges is not a
+badge**: the `LiveInfo.BackgroundBusy` that `WireLive` fills travels the wire as the session's
+`backgroundBusy`, and **the CP's reaper decides on it**:
+
+```
+claude.go WireLive → agents.LiveInfo.BackgroundBusy → sessionx/session.go sessionWire
+  → CP control-plane/session_activity.go sessionActivity()
+     → holdsWorkspace()  … tier 2: whether to stop the WORKSPACE
+     → tier1Reapable()   … tier 1: whether to halt the session
+```
+
+The comment on that very line records the incident that put it there: **the reaper did not look
+at this and stopped running background work**. So the cached implementation was reopening, one
+layer up, the hole this decision closes inside the Agent — a 15s-stale "no background work" can
+stop the whole box, and tier 2 has no debounce, so one sweep is enough.
+
+**The implementation taken drops "avoid looking" for "look in exactly one place".** claude puts
+a session's subagents directory **beside the session's own transcript**, in the project
+directory derived from the cwd. `jsonlPaths` has already located that transcript and memoized
+it, so `subagentBases` needs **one `Lstat`** next to it — and produces its answer, "there is
+none" included, **from the disk every time**. The negative cache is gone.
+
+- The anchor rule in `subagentBases` **was corrected once more in the second review pass**.
+  🔥 **Absence of Y is being concluded from the presence of X, so an incomplete anchor produces
+  a false negative.** Two were found, both measured:
+  - **One transcript is not enough.** `Meta.CWD()` returns `Dir/Subdir` only while that
+    directory EXISTS and falls back to `Dir` when it does not (a branch switch removing the
+    folder). The same sid can therefore hold state under two project names while `jsonlPaths`
+    answers with whichever today's cwd resolves to — and the background agent running beside
+    the other one is invisible. 🔴 **Worse than the negative cache it replaced**, which healed
+    itself in 15s; this did not heal at all. `session.CWDCandidatesForUUID` returns every cwd
+    the session can have, and all of them are checked.
+  - **The cwd alone must not be an anchor either.** A cwd says where the session was launched,
+    not what claude wrote where. **With no transcript located, nothing is concluded and the
+    original sweep runs** — dropping that rule turns the existing safety test
+    `TestSessionReportDeferredWhileSubagentBusy` (hold the completion report while background
+    agents run) red, which was confirmed by making it red.
+  - The remaining assumption cannot be checked from here: claude runs at a cwd derived from the
+    session's own Meta. AF sets it at launch (`BuildLaunch` passes `m.CWD()`), so the
+    enumeration is exhaustive — but **it is written down as an assumption**.
+- `SubagentBusyDisplay` / `BackgroundWorkDisplay` / `absenceMemo` **do not exist**. There is one
+  entry point, `BackgroundWork`, and the three decisions and the badge read the same fresh
+  answer.
+- **Deriving the project directory from the cwd** (`project_dir.go`) stays, on the transcript
+  side. The encoding is "every non-alphanumeric becomes `-`", verified against a live tree. It
+  is **lossy and not injective**, so the derivation is a guess, taken only when one `Lstat` of
+  `<sid>.jsonl` confirms it — a sid is unique, so finding it there settles that it IS that
+  session's transcript. A miss falls through to the old sweep. A sid cannot be turned back into
+  a cwd (UUIDv5(dir|name)), so `session.CWDForUUID` records it whenever a meta is read or
+  written, which costs no extra I/O. With a `Meta.Subdir` it returns `CWD()`.
+- **`memoTTL = 60s` stays** (the review's outcome): the re-search it forces measures 2 syscalls.
+
+Measured (`internal/agents/claude/bg_probe_test.go`, strace, 39 project directories, per-call
+cost as the **slope** between 10 and 110 calls so startup and the fixture are out of the
+denominator):
+
+| path | before | cached version (rejected) | shipped |
+|---|---|---|---|
+| subagent lookup (no background agents) | 201 | display 0 / safety 201 | **3** (every caller) |
+| transcript re-search, cwd known | 201 | 2 | **2** |
+| transcript re-search, cwd unknown | 201 | 201 | 201 |
+
+⚠️ **The shipped version is both faster than the rejected one and never stale.** The original
+pass criterion — "the safety side must stay at 201" — was only needed *if* the implementation
+split display from safety. With no split there is nothing to hold at 201, and what has to be
+proved instead is that **no absence is remembered**:
+`TestAnAgentStartingIsVisibleImmediately` (create the child transcript right after a miss; the
+very next call must see it), with a positive control that breaking `pathMemo`'s "never remember
+a miss" invariant turns it red.
+
+`jsonl_memo.go`'s "A MISS IS NEVER REMEMBERED" is now **one invariant covering both the
+transcript and the subagents lookup**, since the exception it would have had is gone.
 
 ### Decision 6 (permanent, P2): on mount options, establish first what is *not* possible
 
@@ -766,8 +960,8 @@ numbers**.
 1. **Unit (`strace`).** Run the same shape of probe as this ADR - real code compiled into a
    test binary, started as a child, counted with `strace -c`. ⚠️ **Measure the display path and
    the safety paths separately** (decision 5): (1) the **display** path, with the cache warm,
-   should drop from 156 syscalls per call to single digits; (2) the **safety** paths (delivery
-   check, completion report, stop firing) still search for real, so **156 is the correct number
+   should drop from 195 syscalls per call to single digits; (2) the **safety** paths (delivery
+   check, completion report, stop firing) still search for real, so **195 is the correct number
    there** - demanding single digits would pass an implementation that deleted the safety check.
    Confirm that `ListMetas()`'s 1,039 becomes **zero on EFS** (because it moved to home).
 
@@ -842,6 +1036,21 @@ numbers**.
   sibling fstores). ⚠️ But **the number of open tabs was never observed independently**, so "it
   really did have 9 tabs" cannot be ruled out. Exposing the SSE subscriber count on the CP side
   is the cleanest way to close this.
+- **Decision 5's anchor is complete over DIRECTORIES, not over SESSION IDS.** `jsonlPaths`
+  follows the drifted id (`LiveSID`), while `subagentBases` builds `<dir>/<sid>/subagents` from
+  the SLOT sid. When claude restarts itself onto an id of its own, the transcript is found, the
+  directory beside it is empty, and the answer is a confident "none". ⚠️ **The sweep it replaced
+  answered "none" on the same tree**, so this is a standing gap rather than a regression.
+  Closing it means using `LiveSID(sid)` — a no-op on the non-drifted path, since
+  `LiveSID(sid) == sid` there — but **nobody has looked at a real drifted session to see which
+  id the subagents directory lands under**, so it must be measured before it is changed. (Found
+  in the second review pass; the same note is in `bg.go`.)
+- **What a token left behind by the migration costs.** A credential that was rotated while
+  borrowed stays on the old volume, and the next chat turn only re-links the new path, so the
+  rotation is never folded back. With a provider that retires used refresh tokens, **the user
+  is asked to sign in again**. The boot log now names the file; teaching `reconcileChatCreds`
+  to look at the legacy path once was rejected as permanent legacy knowledge in chatx for a
+  one-boot window.
 - **How much the NFS attribute cache absorbs.** The syscall counts above are VFS-level, not
   NFS round trips. Directory contents are answered locally until `acdirmin` (default 30 s) and
   file attributes until `acregmin` (default 3 s). The first draft estimated "one to three round

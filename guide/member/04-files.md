@@ -205,7 +205,10 @@ pane per workspace — opening it again focuses the one you have.
 
 **Before you generate**
 
-- **Model** — the checkpoints your administrator has enabled. A dot marks one that is already
+- **Model** — the checkpoints your administrator has enabled, under **the name their publisher
+  gave them** ("unsloth/Qwen-Image-GGUF Q8_0" — enough to tell two sizes of one model apart).
+  One whose source page your administrator has not read yet appears under its internal id instead.
+  A dot marks one that is already
   loaded on the engine; anything else means the first picture waits for the engine to start.
   The header says which of the four states you are in: **ready**, **the engine is asleep**
   (with roughly how long the first picture will take), **the engine is starting**, or **no

@@ -8,6 +8,9 @@ import { Modal } from "../../../ui/Modal.tsx";
 import { ViewHead } from "../../../ui/ViewHead.tsx";
 import { type ModelKind } from "./adminEngineModels.tsx";
 import { EngineDiscoverPanel, engineCanDiscover } from "./adminEngineDiscover.tsx";
+import { groupIsRepo, groupRegistered, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
+import { modelFit, windowThatFits } from "./engineFit.ts";
+import { FitTag, RepoQuantLadder } from "./adminEngineRepo.tsx";
 import {
   engineIsImage,
   engineIsRemote,
@@ -495,7 +498,25 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
   const [completing, setCompleting] = useState<{ modelId: string; baseModel?: string; answer: CompleteAnswer } | null>(null);
   const [deletingObject, setDeletingObject] = useState<EngineObjectRow | null>(null);
   const [vramAsk, setVramAsk] = useState<{ model: EngineModel; patch: Record<string, unknown>; message?: string } | null>(null);
+  /** Which category is open, `null` being all of them (ADR 0088).
+   *
+   *  🔴 `null` and not `""`: the group of rows that declare NO family is itself keyed `""`, so a
+   *  sentinel of `""` makes "show everything" and "show the unclassified ones" the same value —
+   *  which drew both chips selected and made the unclassified chip do nothing (seen on the
+   *  rendered screen).
+   *
+   *  Held rather than derived so that a narrowed catalogue survives a reload of the rows, and read
+   *  back through the groups below, so a family whose last row was forgotten opens the whole list
+   *  instead of an empty one. */
+  const [family, setFamily] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<EngineModel | null>(null);
+  /** Taking in ANOTHER size of a model this catalogue already has (ADR 0089). Carried as the
+   *  repository and the file rather than as a pre-built request: the dialog is the one thing that
+   *  resolves, plans and prices a press, and a second road into the ingest that skipped it would
+   *  be a press nobody saw the cost of. */
+  const [addFile, setAddFile] = useState<{ repo: string; file: string } | null>(null);
   const models = (row.model_rows || []).filter((model) => (model.kind === "lora") === (kind === "lora"));
+  const image = engineIsImage(row);
 
   const loadObjects = useCallback(async () => {
     const answer = await api(objectsPath(row.key));
@@ -522,13 +543,28 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
   }, [live, loadObjects]);
 
   const visible = [...models].filter((model) => {
-    const words = [model.id, model.description, model.base_model, model.license_name, model.license].filter(Boolean).join(" ").toLowerCase();
+    // The publisher's name is searched too, and it is the half people type: a catalogue where
+    // "meina" found nothing because the row is called `meinamix_meinav11_5038` was the state
+    // this screen was in before the name was stored.
+    const words = [model.id, model.display_name, model.version_name, model.description,
+      model.base_model, model.license_name, model.license].filter(Boolean).join(" ").toLowerCase();
     return words.includes(query.trim().toLowerCase());
   }).sort((left, right) => {
-    if (sort === "enabled") return Number(right.enabled) - Number(left.enabled) || left.id.localeCompare(right.id);
-    if (sort === "default") return Number(!!(right.selected || right.default)) - Number(!!(left.selected || left.default)) || left.id.localeCompare(right.id);
-    return left.id.localeCompare(right.id);
+    // 名前 orders by what the card SHOWS. Ordering by the id while drawing the name puts the
+    // cards in an order the screen cannot explain — which is worse than either alone.
+    const byName = (a: EngineModel, b: EngineModel) =>
+      registeredTitle(a).title.localeCompare(registeredTitle(b).title) || a.id.localeCompare(b.id);
+    if (sort === "enabled") return Number(right.enabled) - Number(left.enabled) || byName(left, right);
+    if (sort === "default") return Number(!!(right.selected || right.default)) - Number(!!(left.selected || left.default)) || byName(left, right);
+    return byName(left, right);
   });
+  const groups = groupRegistered(visible, row, image);
+  // A chip that no longer matches anything opens everything, rather than leaving the catalogue
+  // empty with no visible reason: forgetting the last row of a family is exactly how that
+  // happens, and the screen it leaves looks like a failed load.
+  const openFamily = family !== null && groups.some((group) => group.key === family) ? family : null;
+  const shown = openFamily === null ? groups : groups.filter((group) => group.key === openFamily);
+  const unnamed = visible.filter(registeredNeedsMeta);
 
   const callModel = async (model: EngineModel, method: string, body?: Record<string, unknown>, purgeBytes = false) => {
     setBusy(model.id); setErr(null);
@@ -628,6 +664,37 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     } finally { setBusy(""); }
   };
 
+  /** Re-read the model pages of rows that carry no name and no picture (ADR 0088).
+   *
+   * One request per row, in order, because each is an upstream read this deployment pays for and
+   * the operator is watching the count: a fan-out would be a burst of requests at a site that
+   * sheds load with a 503, on a press whose whole value is that it is explicit.
+   *
+   * 🔴 A row that fails does not stop the run and does not raise the refusal line on its own —
+   * a `url:` source can never answer, and one of those would otherwise abort the other twenty.
+   * The last refusal is kept and shown once at the end, where it explains the failures the
+   * count reports. */
+  const fillMeta = async (targets: EngineModel[]) => {
+    if (!targets.length) return;
+    setErr(null);
+    let done = 0;
+    let last: EngineApiError | null = null;
+    for (const model of targets) {
+      setBusy(`meta:${model.id}`);
+      setNote((tr("admin.catalog_meta_busy" as never) as string)
+        .replace("{n}", String(done + 1)).replace("{m}", String(targets.length)));
+      const answer = await apiJSON(
+        `api/admin/engines/${encodeURIComponent(row.key)}/models/${encodeURIComponent(model.id)}/meta`, "POST");
+      if (answer?.error) last = answer.error as EngineApiError; else done += 1;
+    }
+    setBusy("");
+    const failed = targets.length - done;
+    setNote((tr("admin.catalog_meta_done" as never) as string)
+      .replace("{n}", String(done)).replace("{f}", String(failed)));
+    if (last) setErr(last);
+    await onChanged();
+  };
+
   const deleteObject = async (key: string) => {
     setBusy(`object:${key}`); setErr(null); setNote("");
     try {
@@ -697,25 +764,82 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
         <option value="name">{tr("admin.catalog_sort_name" as never)}</option><option value="enabled">{tr("admin.catalog_sort_enabled" as never)}</option><option value="default">{tr("admin.catalog_sort_default" as never)}</option>
       </select></label>
       <IconButton icon="refresh" label={tr("admin.refresh")} onClick={() => void loadObjects()} />
+      {/* The one press that fills a catalogue of ids in with names (ADR 0088). Drawn only while
+          there is something to fill, so it retires itself: on a deployment whose rows all carry
+          a name it is not a button anybody has to understand. */}
+      {!readOnly && !!unnamed.length && <Button small icon="download" className="engine-registered-meta-all"
+        disabled={!!busy} onClick={() => void fillMeta(unnamed)}>
+        {(tr("admin.catalog_meta_all" as never) as string).replace("{n}", String(unnamed.length))}
+      </Button>}
     </div>
+    {/* The categories, as chips (ADR 0088). Above the list and not inside a card: the family is
+        what tells two checkpoints apart at a glance, and as a tag in the middle of a card it was
+        the one fact nobody could scan a page by. */}
+    {groups.length > 1 && <div className="engine-registered-families" role="tablist" aria-label={tr("admin.catalog_family" as never)}>
+      <Button variant="ghost" small role="tab" aria-selected={openFamily === null}
+        className={"engine-family-chip" + (openFamily === null ? " active" : "")} onClick={() => setFamily(null)}>
+        {tr("admin.catalog_family_all" as never)} <span className="muted">{visible.length}</span>
+      </Button>
+      {groups.map((group) => <Button key={group.key || "*"} variant="ghost" small role="tab"
+        aria-selected={group.key === openFamily}
+        className={"engine-family-chip" + (group.key === openFamily ? " active" : "")}
+        onClick={() => setFamily(group.key === openFamily ? null : group.key)}>
+        {groupLabel(group.key, tr)} <span className="muted">{group.models.length}</span>
+      </Button>)}
+    </div>}
     <EngineRefusal error={err} busy={!!busy} onNext={() => void runNext(err as EngineApiError)} />
     {note && <p className="muted engine-registered-note">{note}</p>}
     {!visible.length && <p className="muted">{tr(kind === "lora" ? "admin.engines_loras_empty" : "admin.engines_catalog_empty")}</p>}
-    <ul className="engine-registered-grid">{visible.map((model) => {
+    {shown.map((group) => <section key={group.key || "*"} className="engine-registered-group" aria-label={groupLabel(group.key, tr)}>
+      {(groups.length > 1 || groupIsRepo(group.key)) && <h3 className="engine-registered-group-head">
+        <span>{groupLabel(group.key, tr)}</span>
+        <span className="muted">{(tr("admin.repo_held_count" as never) as string).replace("{n}", String(group.models.length))}</span>
+      </h3>}
+      {/* The other sizes of THIS model, one press away (ADR 0089). Only where the group names a
+          repository — a row registered by hand has nothing to list — and only for the chat role,
+          because a checkpoint repository publishes one checkpoint and not a ladder. */}
+      {!image && groupIsRepo(group.key) && <RepoQuantLadder engine={row} repo={group.key}
+        rows={group.models} readOnly={readOnly} onTakeIn={(file) => setAddFile({ repo: group.key, file })} />}
+      <ul className="engine-registered-grid">{group.models.map((model) => {
       const status = registeredPresence(model, objects);
       const started = !!(model.selected || model.default);
-      const pending = busy === model.id;
+      const pending = busy === model.id || busy === `meta:${model.id}`;
+      const name = registeredTitle(model, group.key);
+      const thumb = model.thumb_url || model.preview_url || "";
       return <li key={model.id} className="engine-registered-card" aria-label={model.id}>
-        <header><strong className="mono">{model.id}</strong><span className={`engines-model-tag ${model.enabled ? "on" : "off"}`}>{tr(model.enabled ? "admin.engines_model_is_on" : "admin.engines_model_is_off")}</span>
+        <header><span className="engine-registered-name">
+          <strong>{name.title}</strong>
+          {name.version && <span className="engine-registered-version">{name.version}</span>}
+        </span>
+          <span className={`engines-model-tag ${model.enabled ? "on" : "off"}`}>{tr(model.enabled ? "admin.engines_model_is_on" : "admin.engines_model_is_off")}</span>
           {started && <span className="engines-model-tag lead">{tr("admin.engines_model_started")}</span>}
           <span className={`engines-model-tag ${status.tone}`}>{tr((`admin.catalog_registered_${status.state}`) as never, { present: status.present, total: status.total } as never)}</span>
           {!!model.files_missing?.length && <span className="engines-model-tag warn">{(tr("admin.engines_model_files_missing_tag" as never) as string).replace("{f}", model.files_missing.join(" "))}</span>}</header>
-        {engineIsImage(row) ? <ImageRegisteredCardBody model={model} /> : <LLMRegisteredCardBody model={model} />}
+        {/* The id keeps its own line under the title. It is the key the launch menu, the active
+            set and every S3 path are written in, so it is on every card — and on a row whose
+            title IS the id it is not repeated, because two copies of one string in two fonts
+            read as two different facts. */}
+        <div className="engine-registered-main">
+          <div className="engine-registered-copy">
+            {!name.bare && <p className="mono muted engine-registered-id">{model.id}</p>}
+            {image ? <ImageRegisteredCardBody model={model} /> : <LLMRegisteredCardBody model={model} />}
+          </div>
+          {!!thumb && <Button variant="ghost" className="engine-registered-thumb"
+            aria-label={`${tr("admin.catalog_preview" as never)}: ${name.title}`} onClick={() => setLightbox(model)}>
+            <img src={thumb} alt="" loading="lazy" referrerPolicy="no-referrer" />
+          </Button>}
+        </div>
         <RegisteredParts model={model} objects={objects} />
         <footer>
+          {/* Offered on a row with neither a name nor a picture, and on no other: it is a
+              re-read of an upstream page, so a catalogue that already reads well must not carry
+              a button inviting one row at a time of it. */}
+          {!readOnly && registeredNeedsMeta(model) && <Button variant="ghost" small icon="download"
+            aria-label={`${tr("admin.catalog_meta" as never)}: ${model.id}`} disabled={pending}
+            onClick={() => void fillMeta([model])}>{tr("admin.catalog_meta" as never)}</Button>}
           {isSuper && !readOnly && <Button variant="ghost" small icon="edit" aria-label={`${tr("admin.catalog_edit" as never)}: ${model.id}`} onClick={() => setEdit(model)}>{tr("admin.catalog_edit" as never)}</Button>}
           {isSuper && !readOnly && <Button small aria-label={`${tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, { enabled: !model.enabled })}>{tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}</Button>}
-          {isSuper && !readOnly && model.kind !== "lora" && !started && <Button variant="primary" small aria-label={`${tr("admin.engines_model_select")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, engineIsImage(row) ? { selected: true } : { default: true })}>{tr("admin.engines_model_select")}</Button>}
+          {isSuper && !readOnly && model.kind !== "lora" && !started && <Button variant="primary" small aria-label={`${tr("admin.engines_model_select")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, image ? { selected: true } : { default: true })}>{tr("admin.engines_model_select")}</Button>}
           {/* 揃える is on every row, not only a marked one: what it does is read off the ledger at
               the press, and a row that has everything answers "nothing to do" in one call. */}
           {!readOnly && <Button variant={model.files_missing?.length || model.vae_missing ? "primary" : undefined} small
@@ -725,6 +849,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
         </footer>
       </li>;
     })}</ul>
+    </section>)}
     <EngineLedger objects={objects} failed={ledgerFailed} checkedAt={checkedAt} busy={busy} readOnly={readOnly}
       deletingKeys={deletingKeys}
       onRegister={(object) => void registerObject(object.key)}
@@ -754,6 +879,16 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
         <footer className="engine-operation-footer"><Button variant="ghost" onClick={() => setDeletingObject(null)}>{tr("common.cancel")}</Button>
           <Button variant="danger" onClick={() => void deleteObject(deletingObject.key)}>{tr("admin.catalog_ledger_delete" as never)}</Button></footer></div>
     </Modal>}
+    {/* 🔴 Handed the blob URL rather than a repo/file pair: that is the form the dialog already
+        parses (`hfURL`), so this road opens the same pre-filled screen a pasted link does, and
+        there is no second way in for the plan and the licence to be skipped. */}
+    {addFile && <IngestPlanDialog row={row} kind={kind} initialSource="hf"
+      initialRef={`https://huggingface.co/${addFile.repo}/blob/main/${addFile.file}`}
+      onClose={() => setAddFile(null)}
+      onStarted={async () => { setAddFile(null); await onChanged(); await loadObjects(); }} />}
+    {lightbox?.preview_url && <Modal title={registeredTitle(lightbox).title} className="engine-catalog-lightbox" onClose={() => setLightbox(null)}>
+      <img className="ui-modal-body" src={lightbox.preview_url} alt="" referrerPolicy="no-referrer" />
+    </Modal>}
     {vramAsk && <Modal title={`${tr("admin.engines_vram_confirm_go")} — ${vramAsk.model.id}`} className="engine-registered-confirm" onClose={() => setVramAsk(null)}>
       <div className="ui-modal-body engine-operation-body"><p className="form-err">{vramAsk.message || (tr("admin.engines_vram_confirm" as never) as string)
         .replace("{id}", vramAsk.model.id)
@@ -767,6 +902,14 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
         }}>{tr("admin.engines_vram_confirm_go")}</Button></footer></div>
     </Modal>}
   </section>;
+}
+
+/** The heading a group of rows is drawn under (ADR 0088). The stored value verbatim — a family
+ * is the provider's own spelling and a publisher is the repository's owner, and translating
+ * either would name something that exists nowhere else on the screen. Only the empty group gets
+ * a sentence, because "" is not a name but the absence of one. */
+function groupLabel(key: string, tr: ReturnType<typeof useT>): string {
+  return key || (tr("admin.catalog_family_none" as never) as string);
 }
 
 /** A refusal, with who is holding the thing and the one button that clears it. Drawn even when
@@ -915,16 +1058,26 @@ function isMainObject(object: EngineObjectRow): boolean {
  * a question a person who does not know what a text encoder is cannot answer, and getting one
  * wrong produced a row that looked complete and would not generate. What is left is the version
  * and the file — which repository and which of its files — and the licence. */
-function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }: {
+function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, onStarted }: {
   row: EngineRow; kind: ModelKind; hit?: IngestHit;
   initialSource?: CatalogSource;
+  /** Open the dialog as though this had been PASTED into the source box (ADR 0089) — a Hugging
+   *  Face blob URL, which the parser below already turns into a repository, a revision and a
+   *  file.
+   *
+   *  🔴 Its own prop and not a borrowed field of `hit`: `hit.ref` is the HF REVISION and
+   *  `hit.model_ref` is the repository, so a URL smuggled through either arrives as one of those
+   *  (measured — the request went out with `revision` set to the whole URL). This is a second way
+   *  to fill the FORM and deliberately not a second way to start an ingest: the plan, the price
+   *  and the licence are the same screen either way. */
+  initialRef?: string;
   onClose: () => void; onStarted: (job: IngestJob) => void;
 }) {
   const tr = useT();
   const image = engineIsImage(row);
   const isLora = kind === "lora";
   const [sourceType, setSourceType] = useState<CatalogSource>(hit?.source === "civitai" || initialSource === "civitai" || initialSource === "civitai-red" ? "civitai" : "hf");
-  const [manualRef, setManualRef] = useState(hit?.model_ref || hit?.ref || "");
+  const [manualRef, setManualRef] = useState(initialRef || hit?.model_ref || hit?.ref || "");
   const [versions, setVersions] = useState<IngestVersion[]>([]);
   const [versionRef, setVersionRef] = useState(hit?.ref || "");
   const [files, setFiles] = useState<IngestCandidate[]>([]);
@@ -954,7 +1107,8 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
   const civitaiLegacy = rawRef.match(/^civitai:(\d+)$/);
   const civitaiModelRef = hit?.model_ref || civitaiPage?.[1] || "";
   const pastedVersion = (sourceType === "civitai" ? civitaiVersionParam?.[1] || civitaiLegacy?.[1] : hfURL?.[2]) || "";
-  const repo = sourceType === "civitai" ? civitaiModelRef || pastedVersion : hit?.model_ref || hfURL?.[1] || rawRef || hit?.ref || "";
+  const repo = sourceType === "civitai" ? civitaiModelRef || pastedVersion
+    : hfURL?.[1] || hit?.model_ref || rawRef || hit?.ref || "";
   const pastedFile = sourceType === "hf" ? hfURL?.[3] || "" : "";
   const civitaiVersionURL = /^https?:\/\/(?:[\w-]+\.)*civitai\.(?:com|red)\//.test(rawRef) && !!civitaiVersionParam;
   const plainURL = /^https?:\/\//.test(rawRef) && !hfURL && !civitaiVersionURL;
@@ -1020,7 +1174,9 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
     } finally { if (seq === inspectSeq.current) setBusy(false); }
   }, [civitaiModelRef, hit?.ref, loadFiles, pastedFile, pastedVersion, plainURL, repo, row.key, sourceType, versionRef]);
 
-  useEffect(() => { if (hit) void inspect(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // Opened ON something — a hit from the 探す tab, or a repository file from a catalogue card
+  // (ADR 0089) — inspects itself. Opened empty, it waits for somebody to paste and press 調べる.
+  useEffect(() => { if (hit || initialRef) void inspect(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   useEffect(() => {
     if (!file) return;
@@ -1039,7 +1195,16 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
         if (found.plan.base_model) setBaseModel(found.plan.base_model);
       }
       if (found.context_length && !context) {
-        setContext(String(found.context_length)); setOutput(String(Math.floor(found.context_length / 8)));
+        // 🔴 The ceiling is not the setting (ADR 0089). The CP sends `context_length` labelled as
+        // the architecture's maximum, and pre-filling the field with it priced the KV cache at
+        // that maximum: 66,560 MiB for a 27B (measured 2026-09-18), which reads as "this will
+        // never run" about a model that runs fine at 32768. So the field opens at the largest
+        // window that actually fits the box this engine buys, and the ceiling is shown beside it
+        // as what it is.
+        const weights = found.bytes ? Math.round(found.bytes / 1048576) : 0;
+        const window = windowThatFits(weights, found.kv_mib_per_1k_tokens || 0,
+          row.class?.vram_mib || 0, found.context_length) || found.context_length;
+        setContext(String(window)); setOutput(String(Math.floor(window / 8)));
       }
       if (found.params_hint) setParams((current) => ({
         ...current,
@@ -1061,11 +1226,13 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
   const bytes = plan?.bytes_to_download ?? resolved?.bytes ?? 0;
   const contextTokens = Number(context.trim().replace(/[_,]/g, "")) || 0;
   const weightsMiB = bytes ? Math.round(bytes / 1048576) : 0;
-  const kvMiB = !image && !isLora && resolved?.kv_mib_per_1k_tokens && contextTokens
-    ? Math.round((resolved.kv_mib_per_1k_tokens * contextTokens) / 1024)
-    : 0;
-  const needMiB = weightsMiB + kvMiB;
-  const cardMiB = row.class?.vram_mib;
+  const cardMiB = row.class?.vram_mib || 0;
+  // The verdict, from the one module that owns it (ADR 0089). A LoRA is deliberately left out:
+  // an adapter is loaded beside a checkpoint and its own size is not what decides the start.
+  const fit = modelFit(weightsMiB, !image && !isLora ? resolved?.kv_mib_per_1k_tokens || 0 : 0,
+    contextTokens, isLora ? 0 : cardMiB, row.classes || []);
+  const kvMiB = fit.kvMiB;
+  const needMiB = fit.needMiB;
   const missing = (() => {
     if (!repo) return tr("admin.catalog_need_source" as never) as string;
     if (!plainURL && !versionRef) return tr("admin.catalog_need_version" as never) as string;
@@ -1179,12 +1346,25 @@ function IngestPlanDialog({ row, kind, hit, initialSource, onClose, onStarted }:
       {resolved?.civitai_needs_account && <p className="muted">{tr("admin.engines_ingest_civitai_account_first" as never)}</p>}
       {resolved?.gated && resolved.can_ingest === false && !resolved.login_required && <p className="form-err">{tr("admin.engines_ingest_gated_no_token")}</p>}
       {resolved?.gated_needs_acceptance && <p className="muted">{tr("admin.engines_ingest_gated_accept_first")}</p>}
-      {needMiB > 0 && <p className={`engine-operation-fit ${cardMiB && needMiB > cardMiB && !isLora ? "form-err" : "muted"}`}>{(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(weightsMiB))}{!image && !isLora ? ` · ${kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(kvMiB)).replace("{c}", String(contextTokens)) : tr("admin.engines_ingest_fit_kv_unread")}` : ""}{cardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(needMiB)).replace("{c}", String(cardMiB))}` : ""}</p>}
+      {/* The window, OUT of the advanced fold (ADR 0089). It is the number that decides the
+          verdict below — the KV cache is linear in it — and it spent this screen's whole life
+          behind a `<summary>` the person reading the red line never opened. */}
+      {!image && !isLora && !!resolved && <div className="engine-operation-window">
+        <label><span>{tr("admin.engines_model_window_context")}</span>
+          <input inputMode="numeric" value={context} onChange={(event) => setContext(event.currentTarget.value)} /></label>
+        {!!resolved.context_length && <span className="muted">{(tr("admin.engines_ingest_ctx_ceiling" as never) as string)
+          .replace("{n}", resolved.context_length.toLocaleString())}</span>}
+      </div>}
+      {needMiB > 0 && <p className={`engine-operation-fit ${fit.state === "over" ? "form-err" : "muted"}`}>
+        {(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(weightsMiB))}
+        {!image && !isLora ? ` · ${kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(kvMiB)).replace("{c}", String(contextTokens)) : tr("admin.engines_ingest_fit_kv_unread")}` : ""}
+        {cardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(needMiB)).replace("{c}", String(cardMiB))} ` : " "}
+        <FitTag fit={fit} />
+      </p>}
       <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
       <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">
         <label><span>{tr("admin.engines_model_add_id")}</span><input value={id} onChange={(event) => { setIdEdited(true); setId(event.currentTarget.value); }} /></label>
         <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
-        {!image && !isLora && <label><span>{tr("admin.engines_model_add_ctx")}</span><input value={context} onChange={(event) => setContext(event.currentTarget.value)} inputMode="numeric" /></label>}
         {!image && !isLora && <label><span>{tr("admin.engines_model_add_out")}</span><input value={output} onChange={(event) => setOutput(event.currentTarget.value)} inputMode="numeric" /></label>}
         {isLora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
         {image && (Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}

@@ -12,13 +12,22 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// MetaDir lives in the home volume (persists across Stop→Start) under the
-// denylisted .config/agent-fleet, so stopped sessions survive a Workspace restart.
+// MetaDir lives in the home volume (persists across Stop→Start) under the denylisted
+// .local/state/agent-fleet, so stopped sessions survive a Workspace restart.
+//
+// It used to say the same sentence about .config/agent-fleet, and on the ecs-ec2 runtime
+// that was not true: ~/.config is one of AF_WS_KEEP_DIRS, so the ledger was on EFS and
+// ListMetas below — one ReadDir plus one ReadFile per session, 5M+4 file syscalls, so 1,039
+// at 207 sessions — ran over NFS once every four seconds per open Console tab (ADR 0087
+// source A). (The 836 this comment used to quote was measured with a trace set that left out
+// fstat, which os.ReadFile's f.Stat() emits once per file on linux/amd64; re-measured
+// 2026-09-18.)
+// paths.AgentStateDir is the home-volume root that keeps the sentence true.
 func MetaDir() string {
 	if v := os.Getenv("AF_SESSIONS_DIR"); v != "" {
 		return v
 	}
-	return filepath.Join(paths.HomeDir(), ".config", "agent-fleet", "sessions")
+	return filepath.Join(paths.AgentStateDir(), "sessions")
 }
 
 func MetaPath(name string) string { return filepath.Join(MetaDir(), name+".json") }
@@ -30,6 +39,7 @@ func WriteMeta(m Meta) {
 	if b, err := json.Marshal(m); err == nil {
 		_ = os.WriteFile(MetaPath(m.Name), b, 0o600)
 	}
+	rememberCWD(m)
 }
 
 func ReadMeta(name string) (Meta, bool) {
@@ -41,6 +51,7 @@ func ReadMeta(name string) (Meta, bool) {
 	if json.Unmarshal(b, &m) != nil {
 		return m, false
 	}
+	rememberCWD(m)
 	return m, true
 }
 

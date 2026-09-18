@@ -203,6 +203,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.logout_failed": "Could not sign out.",
   "err.store_failed": "Could not save the credentials.",
   "err.pty_failed": "Could not start the agent's CLI.",
+  "err.serve_not_owned":
+    "This opencode serve was started by another process, so the Agent cannot replace it. Restart the workspace to apply the settings.",
   "err.serve_not_ready": "The agent's service did not respond.",
   "err.agy_unsupported": "agy was not found (the image may be out of date).",
   "err.no_flow": "That sign-in attempt is unknown or has expired. Start again.",
@@ -232,6 +234,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.engine_vae_missing": "This checkpoint carries no VAE of its own, so every request would fail.",
   "err.engine_slot_filled": "This row already reads a file in that role; repeat as a replacement to swap it.",
   "err.engine_vae_unreadable": "The checkpoint's header could not be read, so whether it has a VAE is unknown.",
+  "err.engine_no_source": "This row records no source page, so there is nothing to read a name or an example image from.",
   "err.engine_discover_unsupported": "This row is not an external ComfyUI row, so there is nothing to discover.",
   "err.engine_discover_unreachable": "Could not reach that machine — it may be powered off or unreachable on the network.",
   "err.gated_not_accepted": "That account has not accepted this repository's terms yet.",

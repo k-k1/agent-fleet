@@ -2,11 +2,14 @@ package afdb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,6 +62,307 @@ func TestInstanceKeyString(t *testing.T) {
 	if got := instanceKey("postgres", "17"); got != "postgres-17" {
 		t.Errorf("instanceKey(postgres, 17) = %q, want postgres-17", got)
 	}
+}
+
+// TestRegistryMajorNumberOrString covers the registry a P0 agent left behind,
+// where "major" is a JSON number: it has to load, or every verb stops with
+// "registry parse" and nothing can repair it.
+func TestRegistryMajorNumberOrString(t *testing.T) {
+	const p0 = `{"instances":{"postgres-17":{"engine":"postgres","major":17,` +
+		`"root":"/r","datadir":"/d","sockdir":"/s","port":0}}}`
+	const p1 = `{"instances":{"mysql-8.4":{"engine":"mysql","major":"8.4",` +
+		`"root":"/r","datadir":"/d","sockdir":"/s","port":3306}}}`
+
+	for _, tc := range []struct{ name, in, key, want string }{
+		{"p0 number", p0, "postgres-17", "17"},
+		{"p1 string", p1, "mysql-8.4", "8.4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var r registry
+			if err := json.Unmarshal([]byte(tc.in), &r); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			inst := r.Instances[tc.key]
+			if inst == nil {
+				t.Fatalf("instance %q missing", tc.key)
+			}
+			if inst.Major != tc.want {
+				t.Errorf("Major = %q; want %q", inst.Major, tc.want)
+			}
+			// The rest of the instance must survive the custom unmarshaller.
+			if inst.Root != "/r" || inst.Datadir != "/d" || inst.Sockdir != "/s" {
+				t.Errorf("other fields lost: %+v", inst)
+			}
+		})
+	}
+
+	// A major that is neither string nor number is still an error.
+	var r registry
+	if err := json.Unmarshal([]byte(`{"instances":{"x":{"major":{"a":1}}}}`), &r); err == nil {
+		t.Error("expected an error for an object-valued major")
+	}
+
+	// Writing back normalises the old number to this build's string form, so a
+	// registry only has to be forgiven once.
+	var old registry
+	if err := json.Unmarshal([]byte(p0), &old); err != nil {
+		t.Fatalf("unmarshal p0: %v", err)
+	}
+	b, err := json.Marshal(&old)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"major":"17"`) {
+		t.Errorf("rewritten registry should carry a string major, got %s", b)
+	}
+}
+
+// TestTailWriterReason covers what a failed installer contributes to the error
+// the Console card shows: the last lines, never more than the tail it keeps.
+func TestTailWriterReason(t *testing.T) {
+	var empty tailWriter
+	if got := empty.reason(); got != "" {
+		t.Errorf("empty reason = %q; want \"\"", got)
+	}
+
+	var w tailWriter
+	fmt.Fprint(&w, "[install-mysql] downloading ...\n\n[install-mysql] extracting ...\n")
+	fmt.Fprint(&w, "[install-mysql] linked libaio.so.1 -> /lib/libaio.so.1t64\n")
+	fmt.Fprint(&w, "[install-mysql] verifying ...\n")
+	fmt.Fprint(&w, "ldd bin/mysqld: unresolved libraries: libaio.so.1\n")
+	got := w.reason()
+	if !strings.HasPrefix(got, ": ") {
+		t.Errorf("reason should be appendable to an error message, got %q", got)
+	}
+	if !strings.Contains(got, "libaio.so.1") {
+		t.Errorf("reason should keep the last line: %q", got)
+	}
+	if strings.Contains(got, "downloading") {
+		t.Errorf("reason should keep only the last lines: %q", got)
+	}
+
+	var big tailWriter
+	for i := 0; i < 500; i++ {
+		fmt.Fprintf(&big, "line %d of installer chatter\n", i)
+	}
+	if len(big.buf) > tailWriterMax {
+		t.Errorf("tail grew to %d bytes; want at most %d", len(big.buf), tailWriterMax)
+	}
+	if !strings.Contains(big.reason(), "line 499") {
+		t.Errorf("reason should end with the last line, got %q", big.reason())
+	}
+}
+
+// TestDatabaseEntriesPerWorkingCopy pins what the Console card copies: one entry
+// per registered database, sorted, each URL naming its OWN database. The first
+// live run built a single engine-level URL from the Agent's own directory, which
+// named a database nothing had created.
+func TestDatabaseEntriesPerWorkingCopy(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	inst := &Instance{
+		Engine:  "postgres",
+		Major:   "17",
+		Sockdir: filepath.Join(tmp, "run"),
+		Port:    5433,
+		Databases: map[string]string{
+			"af_zzz_000000": "/home/dev/repos/zzz",
+			"af_aaa_111111": "/home/dev/repos/aaa",
+		},
+	}
+	entries := databaseEntries(inst, "postgres", "17")
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d; want 2", len(entries))
+	}
+	if entries[0].Name != "af_aaa_111111" || entries[1].Name != "af_zzz_000000" {
+		t.Errorf("entries not sorted by name: %v", entries)
+	}
+	if entries[0].Dir != "/home/dev/repos/aaa" {
+		t.Errorf("entry lost its working copy: %q", entries[0].Dir)
+	}
+	for _, e := range entries {
+		if !strings.Contains(e.URLSocket, e.Name) {
+			t.Errorf("socket URL %q does not name its own database %q", e.URLSocket, e.Name)
+		}
+		if !strings.Contains(e.URLTCP, e.Name) {
+			t.Errorf("TCP URL %q does not name its own database %q", e.URLTCP, e.Name)
+		}
+		if strings.Contains(e.URLSocket, DBNameFor(ResolveDir())) && e.Name != DBNameFor(ResolveDir()) {
+			t.Errorf("URL names the agent's own directory instead of the entry: %q", e.URLSocket)
+		}
+	}
+}
+
+// TestStopInstanceWaitsForStartLock pins the exclusion that was missing: a purge
+// must not run while another caller holds the per-(engine, major) start lock,
+// because that caller is inside initdb / --initialize-insecure and the removal
+// would take a half-formed datadir out from under a booting server.
+func TestStopInstanceWaitsForStartLock(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// A registry entry with a datadir to purge, and no live server: stopInstance
+	// walks straight to the removal.
+	datadir := filepath.Join(tmp, "state", "postgres-17", "data")
+	if err := os.MkdirAll(datadir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := withLock(func() error {
+		r, err := readRegistry()
+		if err != nil {
+			return err
+		}
+		r.Instances["postgres-17"] = &Instance{
+			Engine: "postgres", Major: "17", Datadir: datadir,
+		}
+		return writeRegistry(r)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	released := make(chan struct{})
+	holding := make(chan struct{})
+	var releasedFirst atomic.Bool
+
+	go func() {
+		_ = withStartLock("postgres", "17", func() error {
+			close(holding)
+			// Hold it long enough that a stopInstance which ignores the lock
+			// removes the datadir before this returns.
+			time.Sleep(300 * time.Millisecond)
+			releasedFirst.Store(true)
+			return nil
+		})
+		close(released)
+	}()
+
+	<-holding
+	if err := stopInstance("postgres", "17", true); err != nil {
+		t.Fatalf("stopInstance: %v", err)
+	}
+	if !releasedFirst.Load() {
+		t.Error("stopInstance purged while the start lock was held")
+	}
+	<-released
+	if _, err := os.Stat(datadir); !os.IsNotExist(err) {
+		t.Errorf("datadir should be gone after the purge, stat err = %v", err)
+	}
+}
+
+// TestResetRequiresDatabaseName pins the reset contract: the caller names the
+// database. Asked without one, the Agent used to fall back to its own working
+// directory and reset af_dev_… — a database no session uses, which DROP/CREATE
+// then brought into existence.
+func TestResetRequiresDatabaseName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	for _, tc := range []struct{ name, query, wantCode string }{
+		{"no db", "", "db_required"},
+		// Uppercase and a hyphen fail ^[a-z_][a-z0-9_]{0,62}$. (A ';' would not
+		// even reach the handler: Go drops query parameters containing one.)
+		{"illegal db", "?db=Bad-Name", "bad_db"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/env/databases/postgres/reset"+tc.query, nil)
+			r.SetPathValue("engine", "postgres")
+			r.SetPathValue("action", "reset")
+			w := httptest.NewRecorder()
+
+			HandleDatabasesAction(w, r)
+
+			if w.Code != 400 {
+				t.Fatalf("status = %d; want 400 (body %s)", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tc.wantCode) {
+				t.Errorf("body should carry %q, got %s", tc.wantCode, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestStalePIDFile covers what a container stop leaves behind. The pid file
+// outlives the server, and on the next boot its number belongs to whoever got it
+// — so "a process with this pid exists" must not be read as "our server is up".
+func TestStalePIDFile(t *testing.T) {
+	tmp := t.TempDir()
+	datadir := filepath.Join(tmp, "data")
+	if err := os.MkdirAll(datadir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(datadir, "postmaster.pid")
+
+	write := func(pid int) {
+		// A real postmaster.pid has the datadir on line 2; only line 1 is read.
+		body := fmt.Sprintf("%d\n%s\n1758000000\n5432\n", pid, datadir)
+		if err := os.WriteFile(pidFile, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("dead pid is cleared", func(t *testing.T) {
+		// A pid that cannot be alive: the kernel refuses this one.
+		write(0x7FFFFFFF)
+		if !clearStalePIDFile(pidFile, "postgres", datadir) {
+			t.Error("a pid file naming a dead process should be removed")
+		}
+		if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
+			t.Errorf("pid file still there, stat err = %v", err)
+		}
+	})
+
+	t.Run("live but foreign pid is cleared", func(t *testing.T) {
+		// This test binary is alive and is NOT postgres for this datadir — the
+		// pid-reuse case. isPGRunning must not call it running either.
+		write(os.Getpid())
+		if isPGRunning(0, datadir) {
+			t.Error("a reused pid must not count as a running server")
+		}
+		if !clearStalePIDFile(pidFile, "postgres", datadir) {
+			t.Error("a pid file naming an unrelated live process should be removed")
+		}
+	})
+
+	t.Run("our own server is left alone", func(t *testing.T) {
+		// Stand in for the server with a real process whose command line carries
+		// both the exe name and the datadir.
+		// A long-lived process whose real command line carries both needles: a
+		// link to sleep, named "postgres", living in the datadir. (No `exec -a`
+		// here — /bin/sh is dash, which has no such builtin.)
+		standIn := filepath.Join(datadir, "postgres")
+		if err := os.Symlink("/bin/sleep", standIn); err != nil {
+			t.Skipf("cannot place the stand-in: %v", err)
+		}
+		cmd := exec.Command(standIn, "30")
+		if err := cmd.Start(); err != nil {
+			t.Skipf("cannot spawn the stand-in: %v", err)
+		}
+		defer func() {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}()
+		// /proc/<pid>/cmdline is empty for the moment the process spends in exec,
+		// so wait for the line we are about to match instead of racing it.
+		deadline := time.Now().Add(5 * time.Second)
+		for !pidIsServerFor(cmd.Process.Pid, "postgres", datadir) {
+			if time.Now().After(deadline) {
+				t.Fatalf("stand-in never showed a matching command line: %q",
+					procCmdline(cmd.Process.Pid))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		write(cmd.Process.Pid)
+		// The shell's own command line contains "postgres" and the datadir.
+		if !isPGRunning(0, datadir) {
+			t.Error("a live matching process should count as running")
+		}
+		if clearStalePIDFile(pidFile, "postgres", datadir) {
+			t.Error("the pid file of a live matching server must NOT be removed")
+		}
+		if _, err := os.Stat(pidFile); err != nil {
+			t.Errorf("pid file should still be there: %v", err)
+		}
+	})
 }
 
 func TestPassPathEngine(t *testing.T) {
@@ -140,8 +444,9 @@ func TestParseEngineAndMajor(t *testing.T) {
 		{[]string{"mysql", "--major=8.4"}, "postgres", "mysql", "8.4", 0, false},
 		{[]string{"--major=16"}, "postgres", "postgres", "16", 0, false},
 		{[]string{"--major", "18"}, "postgres", "postgres", "18", 0, false},
-		{[]string{"--persist", "--major=16"}, "postgres", "postgres", "16", 1, false},
+		{[]string{"--durable", "--major=16"}, "postgres", "postgres", "16", 1, false},
 		{[]string{"--major"}, "postgres", "", "", 0, true},
+		{[]string{"mysql", "--ephemeral"}, "postgres", "mysql", "8.4", 1, false},
 		{[]string{"mysql", "--persist"}, "postgres", "mysql", "8.4", 1, false},
 	}
 	for _, c := range cases {
@@ -165,6 +470,47 @@ func TestParseEngineAndMajor(t *testing.T) {
 		if len(rest) != c.wantRestLen {
 			t.Errorf("parseEngineAndMajor(%v) rest=%v (len %d), want len %d", c.args, rest, len(rest), c.wantRestLen)
 		}
+	}
+}
+
+// TestDatadirBaseIgnoresScratchByDefault pins decision 4″: a datadir goes in the
+// home unless the member asks for the task-local disk by name. The earlier
+// default read AF_WS_SCRATCH and put it there whenever the variable was set,
+// which meant a workspace stop silently destroyed every database — a trap that
+// only fires on a deployment that injects the scratch disk, i.e. not on any of
+// them today, which is why it has to be closed before one does.
+func TestDatadirBaseIgnoresScratchByDefault(t *testing.T) {
+	home := t.TempDir()
+	scratch := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_WS_SCRATCH", scratch)
+
+	base, onScratch := datadirBase(false)
+	if want := filepath.Join(home, ".local", "state", "af-db"); base != want {
+		t.Errorf("datadirBase(false) = %q, want %q (home, even with AF_WS_SCRATCH set)", base, want)
+	}
+	if onScratch {
+		t.Error("datadirBase(false) reported onScratch; the default never uses the scratch disk")
+	}
+
+	base, onScratch = datadirBase(true)
+	if want := filepath.Join(scratch, "af-db"); base != want {
+		t.Errorf("datadirBase(true) = %q, want %q", base, want)
+	}
+	if !onScratch {
+		t.Error("datadirBase(true) with AF_WS_SCRATCH set did not report onScratch")
+	}
+
+	// No scratch disk: --ephemeral has nowhere to go, so it falls back to home AND
+	// says it did not use the scratch disk. Recording it as ephemeral here would
+	// move the datadir the first time a deployment injected one.
+	t.Setenv("AF_WS_SCRATCH", "")
+	base, onScratch = datadirBase(true)
+	if want := filepath.Join(home, ".local", "state", "af-db"); base != want {
+		t.Errorf("datadirBase(true) without AF_WS_SCRATCH = %q, want %q", base, want)
+	}
+	if onScratch {
+		t.Error("datadirBase(true) without AF_WS_SCRATCH reported onScratch")
 	}
 }
 
@@ -315,11 +661,20 @@ func TestEnsureUpURLStop(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("AF_DB_POSTGRES_ROOT", root)
-	t.Setenv("AF_WS_SCRATCH", "")
+	// Deliberately SET: decision 4″ says a scratch disk does not move the datadir
+	// unless asked. This is the end-to-end half of TestDatadirBaseIgnoresScratchByDefault.
+	t.Setenv("AF_WS_SCRATCH", t.TempDir())
 
-	inst, err := ensureUp("postgres", "17", false)
+	inst, err := ensureUp("postgres", "17", startOpts{})
 	if err != nil {
 		t.Fatalf("ensureUp: %v", err)
+	}
+	if want := filepath.Join(tmp, ".local", "state", "af-db", "postgres-17", "data"); inst.Datadir != want {
+		t.Errorf("datadir = %q, want %q (home survives a workspace stop; the scratch disk does not)",
+			inst.Datadir, want)
+	}
+	if inst.Ephemeral {
+		t.Error("instance recorded Ephemeral without --ephemeral")
 	}
 	t.Cleanup(func() {
 		if err := stopInstance("postgres", "17", true); err != nil {
@@ -364,10 +719,41 @@ func TestEnsureUpURLStop(t *testing.T) {
 		t.Errorf("CountClientBackends with no real clients: got %d, want 0", n2)
 	}
 
+	// create / drop by name — what the Database tab drives. A named database is
+	// registered with dir=="" so reconcile never drops it, and dropping forgets it
+	// again; otherwise the tab would keep listing a database that no longer exists.
+	const named = "af_tab_made_this"
+	if err := createDB("postgres", "17", named); err != nil {
+		t.Fatalf("createDB: %v", err)
+	}
+	if err := createDB("postgres", "17", named); err != nil {
+		t.Errorf("createDB on an existing database should succeed, got: %v", err)
+	}
+	if got, ok := registeredDatabases(t, "postgres", "17")[named]; !ok || got != "" {
+		t.Errorf("after createDB, registry[%q] = %q, present=%v; want present with an empty dir",
+			named, got, ok)
+	}
+	// It has to be a real database, not just a registry row.
+	namedConn, err := pgx.Connect(ctx, urlForTest(t, "postgres", "17", named))
+	if err != nil {
+		t.Fatalf("connect to the created database: %v", err)
+	}
+	namedConn.Close(ctx)
+
+	if err := dropDB("postgres", "17", named); err != nil {
+		t.Fatalf("dropDB: %v", err)
+	}
+	if _, ok := registeredDatabases(t, "postgres", "17")[named]; ok {
+		t.Errorf("after dropDB, %q is still in the registry", named)
+	}
+	if err := dropDB("postgres", "17", named); err != nil {
+		t.Errorf("dropDB on an absent database should succeed, got: %v", err)
+	}
+
 	done := make(chan error, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			_, err := ensureUp("postgres", "17", false)
+			_, err := ensureUp("postgres", "17", startOpts{})
 			done <- err
 		}()
 	}
@@ -376,6 +762,26 @@ func TestEnsureUpURLStop(t *testing.T) {
 			t.Errorf("concurrent ensureUp: %v", err)
 		}
 	}
+}
+
+// registeredDatabases reads the instance's database map out of the registry.
+func registeredDatabases(t *testing.T, engine, major string) map[string]string {
+	t.Helper()
+	inst, err := runningInstance(engine, major)
+	if err != nil {
+		t.Fatalf("runningInstance: %v", err)
+	}
+	return inst.Databases
+}
+
+// urlForTest builds the socket URL for one database of a running instance.
+func urlForTest(t *testing.T, engine, major, db string) string {
+	t.Helper()
+	inst, err := runningInstance(engine, major)
+	if err != nil {
+		t.Fatalf("runningInstance: %v", err)
+	}
+	return buildURL(inst, db, readPass(passPath(engine, major)), false)
 }
 
 func TestPostgresIntegration(t *testing.T) {
@@ -387,7 +793,7 @@ func TestPostgresIntegration(t *testing.T) {
 	t.Setenv("AF_DB_POSTGRES_ROOT", root)
 	t.Setenv("AF_WS_SCRATCH", "")
 
-	_ = os.MkdirAll(filepath.Join(tmp, ".config", "agent-fleet", "af-db"), 0o700)
+	_ = os.MkdirAll(filepath.Join(tmp, ".local", "state", "agent-fleet", "af-db"), 0o700)
 
 	major := "17"
 	pp := passPath("postgres", major)
@@ -566,7 +972,7 @@ func TestMySQLEnsureUpURLStop(t *testing.T) {
 		}
 	})
 
-	inst, err := ensureUp("mysql", "8.4", false)
+	inst, err := ensureUp("mysql", "8.4", startOpts{})
 	if err != nil {
 		t.Fatalf("ensureUp mysql: %v", err)
 	}
@@ -615,7 +1021,7 @@ func TestMySQLEnsureUpURLStop(t *testing.T) {
 	}
 
 	// Idempotent ensureUp.
-	inst2, err := ensureUp("mysql", "8.4", false)
+	inst2, err := ensureUp("mysql", "8.4", startOpts{})
 	if err != nil {
 		t.Fatalf("ensureUp mysql idempotent: %v", err)
 	}
@@ -644,7 +1050,7 @@ func TestMySQLIdleStop(t *testing.T) {
 		stopInstance("mysql", "8.4", true) //nolint:errcheck
 	})
 
-	inst, err := ensureUp("mysql", "8.4", false)
+	inst, err := ensureUp("mysql", "8.4", startOpts{})
 	if err != nil {
 		t.Fatalf("ensureUp: %v", err)
 	}

@@ -5,13 +5,13 @@
 package main
 
 import (
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
@@ -25,6 +25,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
@@ -33,139 +36,73 @@ import (
 var buildVersion = "dev"
 
 func main() {
-	// af-db CLI: per-working-copy Postgres databases (ADR 0086 P0). Must be
-	// the first branch — `workspace-agent <unknown>` would otherwise boot the Agent.
-	if len(os.Args) > 1 && os.Args[1] == "af-db" {
-		afdb.RunAFDB(os.Args[2:])
-		return
-	}
-	// Subcommand mode: git invokes this binary as its credential helper
-	// (`workspace-agent cred get`), backed by the encrypted store. It prints
-	// creds and exits without starting the server. `bitbucket-cred` is kept as
-	// an alias for any git config left over from before the unified helper.
-	if len(os.Args) > 1 && (os.Args[1] == "cred" || os.Args[1] == "bitbucket-cred") {
-		runCredHelper(os.Args[2:])
-		return
-	}
-	// Transparent SVN auth: the PATH shim at /usr/local/bin/svn re-enters this binary as
-	// `workspace-agent svn-run <svn args…>`, which fills in the credential from the
-	// encrypted store and execs the real svn. Same shape as the cred helper above — the
-	// process svn's caller sees is still svn. See svn_wrapper.go.
-	if len(os.Args) > 1 && os.Args[1] == "svn-run" {
-		runSvnWrapper(os.Args[2:])
-		return
-	}
-	// JDK provisioner: `workspace-agent install-jdk <major>` downloads the latest GA
-	// Temurin for the container arch into the per-user home volume (temurin-<major>-
-	// jdk-<arch>), the common JDK location the toolchain resolver + entrypoint search
-	// alongside /usr/lib/jvm. Run by the entrypoint on demand (selected java missing)
-	// and available to the agent directly. See jdk.go.
-	if len(os.Args) > 1 && os.Args[1] == "install-jdk" {
-		runInstallJDK(os.Args[2:])
-		return
-	}
-	// Arch self-repair's Console face: turn what af-arch-repair could NOT put back into
-	// a notification the member can actually see (the repair script only reaches the
-	// container's stdout). See arch_residue.go for why it is keyed on content.
-	if len(os.Args) > 1 && os.Args[1] == "notify-arch-residue" {
-		runNotifyArchResidue(os.Args[2:])
-		return
-	}
-	// On-demand pinned installers (docs/log/35 §35.7.2): chromium+CJK font for the
-	// browser pane, node (docs/decisions/0068), the Go toolchain, and AWS CLI +
-	// Session Manager plugin for ssm sessions. Lean rootfs deployments install these
-	// into the home on first use; versions come from the versions.json pins (node
-	// resolves the newest patch of the selected major). See install_tools.go.
-	if len(os.Args) > 1 && os.Args[1] == "install-chromium" {
-		runInstallChromium(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "install-node" {
-		runInstallNode(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "install-go" {
-		runInstallGo(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "install-awscli" {
-		runInstallAWSCLI(os.Args[2:])
-		return
-	}
-	// On-demand Kiro CLI installer (kind="kiro", docs/log/43 Track B): kiro is ~855MB
-	// extracted, so unlike the other agent CLIs it is NOT baked/boot-installed for
-	// everyone — it lands in the per-user home only when that user actually uses it
-	// (the kiro launch program runs this with --if-needed on every launch, so a
-	// versions.json pin bump also reaches the already-installed home copy; the
-	// connection card install button does too). See install_kiro.go.
-	if len(os.Args) > 1 && os.Args[1] == "install-kiro" {
-		runInstallKiro(os.Args[2:])
-		return
-	}
-	// On-demand Postgres binary installer (ADR 0086 P0 supply lane): downloads the
-	// Zonky embedded-postgres jar for the container arch. See install_postgres.go.
-	if len(os.Args) > 1 && os.Args[1] == "install-postgres" {
-		runInstallPostgres(os.Args[2:])
-		return
-	}
-	// On-demand Postgres client installer (ADR 0086 P0): downloads postgresql-client-N
-	// and libpq5 from Debian trixie and writes wrappers into ~/.local/bin. See install_pg_client.go.
-	if len(os.Args) > 1 && os.Args[1] == "install-pg-client" {
-		runInstallPgClient(os.Args[2:])
-		return
-	}
-	// On-demand MySQL binary installer (ADR 0086 P1 supply lane): downloads the
-	// MySQL official tarball for the container arch. See install_mysql.go.
-	if len(os.Args) > 1 && os.Args[1] == "install-mysql" {
-		runInstallMySQL(os.Args[2:])
-		return
-	}
-	// claude hook helper: records session working/idle/question state.
-	if len(os.Args) > 1 && os.Args[1] == "session-status" {
-		sessionx.RunSessionStatusHook(os.Args[2:])
-		return
-	}
-	// Pane exit recorder: `workspace-agent record-exit <name> <code>`, appended after
-	// the agent CLI by startSessionTmux, records why a session terminated (crash / OOM).
-	if len(os.Args) > 1 && os.Args[1] == "record-exit" {
-		runRecordExit(os.Args[2:])
-		return
-	}
-	// Bounded terminal-output sink, fed by tmux pipe-pane.
-	if len(os.Args) > 1 && os.Args[1] == "record-terminal" {
-		runRecordTerminal(os.Args[2:])
-		return
-	}
-	// Local stdio MCP server: assistant chat tools (docs/log/19 Q1) or the narrowly scoped
-	// interactive-session builtin (docs/log/51 Phase 3 + docs/log/53 §53.8), selected by args.
-	if len(os.Args) > 1 && os.Args[1] == "mcp-stdio" {
-		mcpx.RunStdio(os.Args[2:])
-		return
-	}
-	// Credential-injecting launcher for external ops MCP servers (docs/log/25): loads
-	// the encrypted store, injects the provider key as env, and execs the real MCP
-	// server (e.g. uvx pagerduty-mcp). Keeps API keys out of any MCP config file.
-	if len(os.Args) > 1 && os.Args[1] == "mcp-run" {
-		mcpx.RunSubcommand(os.Args[2:])
-		return
-	}
-	// claude statusLine capture: claude pipes the session JSON (incl. rate_limits) on
-	// stdin every render; we persist the 5h/weekly usage locally for the WsBar chip —
-	// no network, so the rate-limited /api/oauth/usage endpoint is no longer used.
-	if len(os.Args) > 1 && os.Args[1] == "statusline" {
-		claude.RunStatusLine(os.Args[2:])
-		return
-	}
-	// Image-only browser verification: exercise the production BrowserManager,
-	// pipe CDP, sandbox, two simultaneous Pages and capture pacing without booting
-	// the rest of the Agent subsystems. deploy/local/e2e-smoke.sh is the caller.
-	if len(os.Args) > 1 && os.Args[1] == "browser-smoke" {
-		if err := browserx.RunBrowserImageSmoke(); err != nil {
-			log.Fatal(err)
+	// Every argument this binary accepts is one row of the table in cli.go, and anything it
+	// does not name is rejected there with usage and exit 2. Only "no arguments" (the
+	// container's CMD, the native runtime's exec) and the explicit `serve` reach the boot
+	// below — inspecting the binary must never start an Agent.
+	if code, handled := dispatchCLI(os.Args[1:], os.Stdout, os.Stderr); handled {
+		if code != 0 {
+			os.Exit(code)
 		}
 		return
 	}
+	serve()
+}
 
+// runAFDB is the af-db subcommand, with the state migration in front of it. That order is
+// the point: this is the one subcommand a USER runs from a terminal, with no Agent involved
+// (ADR 0087 decision 4), and af-db reads a registry it cannot find as an EMPTY one and writes
+// that back. Run before the Agent has migrated, it would leave a `{"instances":{}}` at the
+// destination that "the destination is the truth" then keeps — discarding the real registry
+// and orphaning a running postmaster. Cheap once done: the marker plus one failed stat per
+// entry.
+//
+// The Result is dropped on purpose: anything skipped or failed leaves its entry unfinished,
+// so the next Agent boot runs into it again and logs it there, where a reader is looking for
+// boot diagnostics rather than a database command's output.
+func runAFDB(args []string) {
+	statemig.RunQuiet()
+	afdb.RunAFDB(args)
+}
+
+func serve() {
+	addr := envOr("AGENT_ADDR", ":7700")
+
+	// Take the listening socket BEFORE any of the boot work below, and die if it is busy.
+	// Every step from here to Serve mutates container-wide state — the credential store, the
+	// instruction files, and above all af's MCP server name, whose rotation rewrites every
+	// CLI's config. A second Agent in this container used to do all of that on its way to
+	// failing on bind, because the listen was last. Losing the race has to cost nothing.
+	// (Nothing is served until http.Serve runs, so a health probe in this window queues
+	// rather than being refused — a boot takes a second or two.)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("listen %s: %v (is an Agent already running in this container?)", addr, err)
+	}
+
+	// Move the mutable state off ~/.config/agent-fleet (an EFS mount on ecs-ec2) into the
+	// home volume, once (ADR 0087 decision 4). FIRST, before anything below reads a store:
+	// every one of them resolves through paths.AgentStateDir now, and a read that lands there
+	// before the migration reads an empty store — the session ledger included, which is the
+	// Console's whole session list.
+	//
+	// After the listen above, deliberately: that bind is what stops a second Agent in this
+	// container, so the migration cannot be running twice here. What it does not stop is the
+	// af-db subcommand, which a user runs by hand — runAFDB migrates for itself.
+	if r := statemig.Run(); r.Files > 0 || r.Skipped > 0 || len(r.Errs) > 0 {
+		log.Printf("state: migrated %d entr(y|ies), %d file(s), %.1f MB in %s",
+			r.Entries, r.Files, float64(r.Bytes)/(1<<20), r.Took.Round(time.Millisecond))
+		for _, p := range r.SkippedPaths {
+			// Named, not counted: a live socket left behind costs nothing, while a
+			// credential left behind is a token the next chat turn will NOT fold back into
+			// the shared file — that CLI may ask for a fresh sign-in. The reader of a
+			// container log has no source tree to look any of this up in.
+			log.Printf("state: left in place (not migrated): %s", p)
+		}
+		for _, err := range r.Errs {
+			log.Printf("state: migration: %v", err)
+		}
+	}
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
 	// Seed the CP-injected internal git token (docs/reference/internal-git-provider)
@@ -259,8 +196,6 @@ func main() {
 	// address every conversation. One-time per store state; cheap when nothing to do.
 	go chatx.BackfillConvSlugs()
 
-	addr := envOr("AGENT_ADDR", ":7700")
-
 	mux := buildMux()
 
 	// Translate the runtime's stop signal (SIGTERM from docker stop / ECS task
@@ -310,7 +245,7 @@ func main() {
 	afdb.StartIdleLoop()
 
 	log.Printf("workspace-agent %s listening on %s", buildVersion, addr)
-	if err := http.ListenAndServe(addr, httpx.LogRequests(httpx.Gzip(httpx.RequireToken(mux)))); err != nil {
+	if err := http.Serve(ln, httpx.LogRequests(httpx.Gzip(httpx.RequireToken(mux)))); err != nil {
 		log.Fatal(err)
 	}
 }

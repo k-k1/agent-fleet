@@ -2,6 +2,10 @@ package opencode
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +26,7 @@ func engineTestHome(t *testing.T) string {
 // npm provider, baseURL, and an apiKey that is an {env:…} indirection rather than a value.
 func TestWriteEngineProvidersDeclaresTheModelWithoutTheEngine(t *testing.T) {
 	engineTestHome(t)
-	changed, err := WriteEngineProviders([]EngineProvider{{
+	changed, _, err := WriteEngineProviders([]EngineProvider{{
 		Key: "llm", Provider: "llamacpp",
 		BaseURL: "https://cp.example.com/engine/llm/v1/",
 		Models:  []string{"qwen3-coder-30b-a3b"},
@@ -67,7 +71,7 @@ func TestWriteEngineProvidersDeclaresTheModelWithoutTheEngine(t *testing.T) {
 //     left with 768 usable tokens, i.e. compaction thrashing from the first turn.
 func TestWriteEngineProvidersDeclaresTheWindow(t *testing.T) {
 	engineTestHome(t)
-	if _, err := WriteEngineProviders([]EngineProvider{{
+	if _, _, err := WriteEngineProviders([]EngineProvider{{
 		Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1",
 		Models: []string{"qwen3-coder-30b-a3b"}, ContextTokens: 32768, MaxOutputTokens: 4096,
 	}}); err != nil {
@@ -97,7 +101,7 @@ func TestWriteEngineProvidersOmitsAHalfDeclaredWindow(t *testing.T) {
 		{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x", Models: []string{"m"}, ContextTokens: 32768},
 		{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x", Models: []string{"m"}, MaxOutputTokens: 4096},
 	} {
-		if _, err := WriteEngineProviders([]EngineProvider{e}); err != nil {
+		if _, _, err := WriteEngineProviders([]EngineProvider{e}); err != nil {
 			t.Fatal(err)
 		}
 		root := readEngineConfig(t)
@@ -129,7 +133,7 @@ func TestWriteEngineProvidersLeavesTheUsersOwnAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := WriteEngineProviders([]EngineProvider{{
+	if _, _, err := WriteEngineProviders([]EngineProvider{{
 		Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1",
 		Models: []string{"m"},
 	}}); err != nil {
@@ -146,7 +150,7 @@ func TestWriteEngineProvidersLeavesTheUsersOwnAlone(t *testing.T) {
 
 	// The engine goes away (the stack was taken down). af's entry must go with it, or the
 	// launch menu keeps offering a model whose gateway now answers 404.
-	if _, err := WriteEngineProviders(nil); err != nil {
+	if _, _, err := WriteEngineProviders(nil); err != nil {
 		t.Fatal(err)
 	}
 	root = readEngineConfig(t)
@@ -171,7 +175,7 @@ func TestWriteEngineProvidersRefusesAnUnparseableConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := WriteEngineProviders([]EngineProvider{{
+	_, _, err := WriteEngineProviders([]EngineProvider{{
 		Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1", Models: []string{"m"},
 	}})
 	if err == nil {
@@ -191,15 +195,15 @@ func TestWriteEngineProvidersIsANoOpWhenNothingChanged(t *testing.T) {
 		Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1",
 		Models: []string{"b", "a"},
 	}}
-	if changed, err := WriteEngineProviders(engines); err != nil || !changed {
+	if changed, _, err := WriteEngineProviders(engines); err != nil || !changed {
 		t.Fatalf("first write: changed=%v err=%v", changed, err)
 	}
-	if changed, err := WriteEngineProviders(engines); err != nil || changed {
+	if changed, _, err := WriteEngineProviders(engines); err != nil || changed {
 		t.Fatalf("second write: changed=%v err=%v — an unchanged catalogue must not touch the file", changed, err)
 	}
 	// Model order comes off a CommaDelimitedList and is not guaranteed; sorting is what
 	// makes "unchanged" mean unchanged.
-	if changed, err := WriteEngineProviders([]EngineProvider{{
+	if changed, _, err := WriteEngineProviders([]EngineProvider{{
 		Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1",
 		Models: []string{"a", "b"},
 	}}); err != nil || changed {
@@ -211,7 +215,7 @@ func TestWriteEngineProvidersIsANoOpWhenNothingChanged(t *testing.T) {
 // writing it would put an empty provider in the launch menu.
 func TestWriteEngineProvidersSkipsAnEngineWithNoModels(t *testing.T) {
 	engineTestHome(t)
-	changed, err := WriteEngineProviders([]EngineProvider{{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x"}})
+	changed, _, err := WriteEngineProviders([]EngineProvider{{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +294,7 @@ func mustConfigDir(t *testing.T) string {
 // model's context, and a model it does describe must not be overwritten by the engine's.
 func TestWriteEngineProvidersDeclaresAWindowPerModel(t *testing.T) {
 	engineTestHome(t)
-	if _, err := WriteEngineProviders([]EngineProvider{{
+	if _, _, err := WriteEngineProviders([]EngineProvider{{
 		Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1",
 		Models:        []string{"qwen3-coder-30b-a3b", "qwen2.5-coder-1.5b", "undescribed"},
 		ContextTokens: 32768, MaxOutputTokens: 4096,
@@ -319,5 +323,110 @@ func TestWriteEngineProvidersDeclaresAWindowPerModel(t *testing.T) {
 		if limit["context"] != want[0] || limit["output"] != want[1] {
 			t.Errorf("%s limit = %v, want context %v output %v", id, limit, want[0], want[1])
 		}
+	}
+}
+
+// A workspace with no chat engines still has a config, written by the MCP materializer, and
+// it has no provider member. Reporting that as a change makes the caller restart the serve
+// daemon on every Control Plane catalogue push, and each restart kills the turn it lands on.
+func TestWriteEngineProvidersIsANoOpWhenThereAreNoEnginesAndNoProviderMember(t *testing.T) {
+	engineTestHome(t)
+	path := engineConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// What the materializer leaves behind: mcp and permission, no provider.
+	const existing = `{"$schema":"https://opencode.ai/config.json","mcp":{},"permission":{}}`
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		changed, _, err := WriteEngineProviders(nil)
+		if err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+		if changed {
+			t.Fatalf("call %d reported a change: nothing to write, so nothing changed", i)
+		}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != existing {
+		t.Errorf("the file must be left alone, got %s", b)
+	}
+}
+
+// Dropping an engine is the one change that cannot be handed to a running daemon, so the
+// writer has to say when it happened — everything else can go live.
+func TestWriteEngineProvidersReportsARemoval(t *testing.T) {
+	engineTestHome(t)
+	two := []EngineProvider{
+		{Key: "a", Provider: "alpha", BaseURL: "https://cp/engine/a/v1", Models: []string{"m"}},
+		{Key: "b", Provider: "beta", BaseURL: "https://cp/engine/b/v1", Models: []string{"m"}},
+	}
+	if changed, removed, err := WriteEngineProviders(two); err != nil || !changed || removed {
+		t.Fatalf("first write: changed=%v removed=%v err=%v", changed, removed, err)
+	}
+	changed, removed, err := WriteEngineProviders(two[:1])
+	if err != nil || !changed {
+		t.Fatalf("second write: changed=%v err=%v", changed, err)
+	}
+	if !removed {
+		t.Error("beta left the stack, and only a new process can make a running daemon forget it")
+	}
+}
+
+func TestPushEngineProvidersPatchesTheRunningDaemon(t *testing.T) {
+	var gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.Method + " " + r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv(serveAddrEnv, srv.URL)
+
+	supervisor.mu.Lock()
+	was := supervisor.up
+	supervisor.up = true
+	supervisor.mu.Unlock()
+	t.Cleanup(func() {
+		supervisor.mu.Lock()
+		supervisor.up = was
+		supervisor.mu.Unlock()
+	})
+
+	err := PushEngineProviders([]EngineProvider{
+		{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1", Models: []string{"m"}},
+	})
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if gotPath != "PATCH /global/config" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if !strings.Contains(gotBody, `"llamacpp"`) || !strings.Contains(gotBody, `"provider"`) {
+		t.Errorf("body = %s", gotBody)
+	}
+}
+
+// With nothing running there is no stale copy to correct, and the caller must be able to
+// tell that apart from a daemon that refused the patch.
+func TestPushEngineProvidersSaysSoWithNoDaemon(t *testing.T) {
+	supervisor.mu.Lock()
+	was := supervisor.up
+	supervisor.up = false
+	supervisor.mu.Unlock()
+	t.Cleanup(func() {
+		supervisor.mu.Lock()
+		supervisor.up = was
+		supervisor.mu.Unlock()
+	})
+	if err := PushEngineProviders(nil); !errors.Is(err, ErrNoDaemon) {
+		t.Errorf("err = %v, want ErrNoDaemon", err)
 	}
 }

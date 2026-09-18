@@ -59,11 +59,54 @@ const ENGINES = {
           id: "sdxl-base-1.0", kind: "model", enabled: true, selected: true, base_model: "sdxl",
           description: "SDXL 1.0 base — 既定のチェックポイント",
           license_name: "CreativeML Open RAIL++-M", commercial_use: "yes", vram_need_mib: 7400,
+          // ADR 0088: what the publisher calls it, and the example image it publishes. The row
+          // above deliberately carries neither — the two states have to be on one screen, because
+          // the button that fills the second in is offered on exactly that difference.
+          display_name: "Stable Diffusion XL", version_name: "base 1.0",
+          preview_url: "/stub/preview/sdxl-large.png", thumb_url: "/stub/preview/sdxl.png",
+          source: "hf:stabilityai/stable-diffusion-xl-base-1.0/sd_xl_base_1.0.safetensors",
           file_rows: [{ s3Key: "image/checkpoints/sd_xl_base_1.0.safetensors", bytes: 6_938_040_576, source: "hf:stabilityai/stable-diffusion-xl-base-1.0" }],
+        },
+        {
+          id: "meinamix_meinav11_5038", kind: "model", enabled: true, base_model: "sdxl",
+          display_name: "MeinaMix", version_name: "Meina V11",
+          preview_url: "/stub/preview/meina-large.png", thumb_url: "/stub/preview/meina.png",
+          license_name: "see civitai model page", vram_need_mib: 5312, source: "civitai:5038",
+          file_rows: [{ s3Key: "image/checkpoints/meinamix_meinav11.safetensors", bytes: 2_132_625_894, source: "civitai:5038" }],
+        },
+        {
+          id: "abyssorangemix2_hard_8832", kind: "model", enabled: false,
+          license_name: "see civitai model page", vram_need_mib: 5312, source: "civitai:8832",
+          file_rows: [{ s3Key: "image/checkpoints/abyssorangemix2_Hard_8832.safetensors", bytes: 5_600_000_000, source: "civitai:8832" }],
         },
       ],
     },
-    { key: "llm", api: "chat", provider: "llamacpp", managed: true, model_rows: [] },
+    {
+      key: "llm", api: "chat", provider: "llamacpp", managed: true, enabled: true, state: "running",
+      class: { id: "g6.xlarge", label: "g6.xlarge", vram_mib: 22000 },
+      classes: [
+        { id: "g6.xlarge", label: "g6.xlarge", vram_mib: 22000 },
+        { id: "g6e.xlarge", label: "g6e.xlarge", vram_mib: 46068 },
+      ],
+      // ADR 0089: two quantisations of ONE repository, which is the shape the repository card
+      // exists for. Sizes and names are the real ones (unsloth/Qwen3.8-27B-GGUF, 2026-09-18).
+      model_rows: [
+        {
+          id: "qwen3_8_27b_ud_iq2_xxs", kind: "gguf", enabled: true, default: true,
+          display_name: "unsloth/Qwen3.8-27B-GGUF", context_tokens: 32768, max_output_tokens: 4096,
+          source: "hf:unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-IQ2_XXS.gguf",
+          license_name: "apache-2.0",
+          file_rows: [{ s3Key: "llm/models/Qwen3.8-27B-UD-IQ2_XXS.gguf", bytes: 7_270_000_000 }],
+        },
+        {
+          id: "qwen3_8_27b_ud_iq2_s", kind: "gguf", enabled: false,
+          display_name: "unsloth/Qwen3.8-27B-GGUF", context_tokens: 32768, max_output_tokens: 4096,
+          source: "hf:unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-IQ2_S.gguf",
+          license_name: "apache-2.0",
+          file_rows: [{ s3Key: "llm/models/Qwen3.8-27B-UD-IQ2_S.gguf", bytes: 8_370_000_000 }],
+        },
+      ],
+    },
   ],
 };
 
@@ -238,7 +281,28 @@ function engineRoute(method, pathname) {
   });
   if (rest === "/ingest/search") return () => ({ hits: HITS });
   if (rest === "/ingest/versions") return () => ({ versions: [{ ref: "782002", name: "v1.1" }, { ref: "770100", name: "v1.0" }] });
-  if (rest === "/ingest/files") return () => ({ files: [{ name: "anima-aesthetic-v1.1.safetensors", bytes: 4_182_230_656, sha256: "f0d1" }] });
+  if (rest === "/ingest/files") {
+    // The repository ladder asks for a whole repository (no `file`); the wizard asks for the one
+    // it is about to resolve. ADR 0089: the answer carries the role of each file and the KV cost
+    // of a 1,024-token window, which is what prices every line of the ladder.
+    return (body) => body?.source?.hf?.repo?.includes("Qwen3.8-27B")
+      ? {
+        kv_mib_per_1k_tokens: 260, kv_from: "Qwen3.8-27B-UD-IQ4_XS.gguf",
+        files: [
+          { name: "imatrix_unsloth.gguf", bytes: 10_000_000, sha256: "a1", role: "imatrix" },
+          { name: "mmproj-F16.gguf", bytes: 930_000_000, sha256: "a2", role: "projector" },
+          { name: "Qwen3.8-27B-UD-IQ1_S.gguf", bytes: 6_190_000_000, sha256: "a3", role: "model" },
+          { name: "Qwen3.8-27B-UD-IQ2_XXS.gguf", bytes: 7_270_000_000, sha256: "a4", role: "model" },
+          { name: "Qwen3.8-27B-UD-IQ2_S.gguf", bytes: 8_370_000_000, sha256: "a5", role: "model" },
+          { name: "Qwen3.8-27B-UD-Q2_K_XL.gguf", bytes: 9_830_000_000, sha256: "a6", role: "model" },
+          { name: "Qwen3.8-27B-UD-IQ3_XXS.gguf", bytes: 10_930_000_000, sha256: "a7", role: "model" },
+          { name: "Qwen3.8-27B-UD-IQ3_S.gguf", bytes: 12_040_000_000, sha256: "a8", role: "model" },
+          { name: "Qwen3.8-27B-UD-Q3_K_XL.gguf", bytes: 13_150_000_000, sha256: "a9", role: "model" },
+          { name: "Qwen3.8-27B-UD-IQ4_XS.gguf", bytes: 14_250_000_000, sha256: "b1", role: "model" },
+        ],
+      }
+      : { files: [{ name: "anima-aesthetic-v1.1.safetensors", bytes: 4_182_230_656, sha256: "f0d1", role: "model" }] };
+  }
   if (rest === "/ingest/resolve") return () => RESOLVED;
   // 🔴 POST only. `GET …/ingest` (the job list) is gone with the history tab (ADR 0085 decision
   // 6), and a stub that answered it would let a screen read a route no deployment has.
@@ -259,6 +323,12 @@ function engineRoute(method, pathname) {
         }],
       }
       : { action: "attached", files: [], bytes_to_download: 0 };
+  }
+  // ADR 0088: re-reading a model page for the name and the picture.
+  if (/^\/models\/[^/]+\/meta$/.test(rest)) {
+    return () => ({ id: "abyssorangemix2_hard_8832", display_name: "AbyssOrangeMix2",
+      version_name: "Hard", preview_url: "/stub/preview/abyss-large.png",
+      thumb_url: "/stub/preview/abyss.png", found: true });
   }
   if (/^\/models\/[^/]+$/.test(rest)) return () => ({});
   return null;

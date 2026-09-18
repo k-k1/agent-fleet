@@ -3,8 +3,9 @@
 //
 // One server per (engine, major) per Workspace; one database per working copy
 // (or per explicit --db=<name>). Registry at
-// ~/.config/agent-fleet/af-db/instances.json, locked under
-// ~/.config/agent-fleet/af-db/lock (advisory flock, POSIX).
+// ~/.local/state/agent-fleet/af-db/instances.json, locked under
+// ~/.local/state/agent-fleet/af-db/lock (advisory flock, POSIX) — the same home volume the
+// datadirs are on, which is what the PIDs and sockets it records are true of anyway.
 package afdb
 
 import (
@@ -44,10 +45,88 @@ type Instance struct {
 	PID        int       `json:"pid,omitempty"`
 	StartedAt  time.Time `json:"startedAt,omitempty"`
 	LastUsedAt time.Time `json:"lastUsedAt,omitempty"`
-	Persist    bool      `json:"persist,omitempty"`
+	// Durable turns fsync (Postgres) / innodb-flush-log-at-trx-commit (MySQL) back
+	// on. The JSON key stays `persist` because that is what `--persist` wrote into
+	// every registry built before decision 4″: back then the flag meant "home
+	// datadir AND fsync on", and the half that survives the new default is this
+	// one. Renaming the key would silently drop the setting on upgrade.
+	Durable bool `json:"persist,omitempty"`
+	// Ephemeral puts the datadir on the task-local scratch disk, which is wiped
+	// when the workspace stops. Opt-in (decision 4″); sticky across restarts so a
+	// plain `af-db up` does not quietly move the datadir back to home.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 	// Databases: db name → working copy dir. dir=="" means explicitly named (--db=<name>);
 	// reconcile never drops those.
 	Databases map[string]string `json:"databases,omitempty"`
+}
+
+// UnmarshalJSON accepts `major` either as the string this build writes ("17",
+// "8.4") or as the number the P0 build wrote (17). Without this, a registry left
+// by an older agent fails to parse and every af-db verb — including the ones that
+// would repair it — stops with "registry parse".
+func (i *Instance) UnmarshalJSON(b []byte) error {
+	type plain Instance
+	aux := struct {
+		*plain
+		Major json.RawMessage `json:"major"`
+	}{plain: (*plain)(i)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	i.Major = ""
+	switch {
+	case len(aux.Major) == 0 || string(aux.Major) == "null":
+	case aux.Major[0] == '"':
+		var s string
+		if err := json.Unmarshal(aux.Major, &s); err != nil {
+			return err
+		}
+		i.Major = s
+	default:
+		var n json.Number
+		if err := json.Unmarshal(aux.Major, &n); err != nil {
+			return err
+		}
+		i.Major = n.String()
+	}
+	return nil
+}
+
+// tailWriter keeps the tail of a subprocess's output so that a failure can carry
+// the reason with it: "install-mysql 8.4 failed: exit status 3" tells a member
+// reading the Console card nothing, while the installer's own last line names the
+// library, the URL or the sha that went wrong.
+type tailWriter struct {
+	buf []byte
+}
+
+// tailWriterMax bounds what is kept; installers are chatty and only the end matters.
+const tailWriterMax = 4096
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	if len(w.buf) > tailWriterMax {
+		w.buf = w.buf[len(w.buf)-tailWriterMax:]
+	}
+	return len(p), nil
+}
+
+// reason returns the last few non-empty lines, ready to append to an error
+// message, or "" when the subprocess said nothing.
+func (w *tailWriter) reason() string {
+	var lines []string
+	for _, l := range strings.Split(string(w.buf), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > 3 {
+		lines = lines[len(lines)-3:]
+	}
+	return ": " + strings.Join(lines, " / ")
 }
 
 // registry is the on-disk JSON structure.
@@ -71,7 +150,7 @@ func homeDir() string {
 
 // registryDir returns the af-db config directory.
 func registryDir() string {
-	return filepath.Join(paths.AgentConfigDir(), "af-db")
+	return filepath.Join(paths.AgentStateDir(), "af-db")
 }
 
 func registryPath() string { return filepath.Join(registryDir(), "instances.json") }
@@ -87,13 +166,28 @@ func homeStateBase() string {
 	return filepath.Join(homeDir(), ".local", "state", "af-db")
 }
 
-// scratchBase returns the task-local or home state base for datadirs.
-// When AF_WS_SCRATCH is set the datadir is on the fast scratch disk (wiped on stop).
-func scratchBase() string {
-	if s := os.Getenv("AF_WS_SCRATCH"); s != "" {
-		return filepath.Join(s, "af-db")
+// datadirBase returns the base directory datadirs are built under.
+//
+// Home is the default and the only place that survives a workspace stop
+// (decision 4″). A database that disappears when the workspace stops is not a
+// behaviour a member can plan around: they cannot tell a fixture they meant to
+// throw away from the seed data they spent an afternoon on, and nothing in the
+// Console says which one they have. ephemeral=true opts in to the task-local
+// scratch disk, which is faster and is wiped on stop — and when no scratch disk
+// is injected (AF_WS_SCRATCH unset, which is every deployment today) it has
+// nowhere to put one, so it falls back to home rather than inventing a path.
+// Returns onScratch=false when the fallback was taken, so the caller records
+// what it actually did instead of what it was asked for: an instance that
+// remembered ephemeral=true from a workspace without a scratch disk would move
+// its datadir — and initdb an empty one — the first time a deployment injected
+// one.
+func datadirBase(ephemeral bool) (base string, onScratch bool) {
+	if ephemeral {
+		if s := os.Getenv("AF_WS_SCRATCH"); s != "" {
+			return filepath.Join(s, "af-db"), true
+		}
 	}
-	return homeStateBase()
+	return homeStateBase(), false
 }
 
 // sockBase always uses home so socket paths stay well under 107 bytes.
@@ -120,6 +214,13 @@ func mysqlRoot(major string) string {
 }
 
 // passPath is where the generated password for (engine, major) is kept (mode 0600).
+//
+// This is a plaintext password under the STATE directory, which rule ① of the split in
+// paths.AgentStateDir ("a credential, or a file that can carry one") would otherwise send to
+// the keep volume. The exception is deliberate: it authenticates nothing outside this
+// Workspace. It is generated here (generatePass), reaches only a loopback server whose
+// datadir sits on the same volume, and is worthless without it — losing the volume loses the
+// database the password is for. A copy on the keep volume would outlive the thing it opens.
 func passPath(engine, major string) string {
 	return filepath.Join(registryDir(), fmt.Sprintf("%s-%s.pass", engine, major))
 }
@@ -282,7 +383,9 @@ func readRegistry() (*registry, error) {
 		return nil, err
 	}
 	if err := json.Unmarshal(b, r); err != nil {
-		return nil, fmt.Errorf("registry parse: %w", err)
+		// Name the file: a registry this build cannot read is repaired by moving
+		// it aside, and the caller sees this text on the Console card.
+		return nil, fmt.Errorf("registry parse (%s): %w", registryPath(), err)
 	}
 	if r.Instances == nil {
 		r.Instances = make(map[string]*Instance)
@@ -395,6 +498,39 @@ func isRunning(pid int) bool {
 	return proc.Signal(syscall.Signal(0)) == nil
 }
 
+// procCmdline returns /proc/<pid>/cmdline with its NUL separators turned into
+// spaces, or "" when it cannot be read (the process is gone, or this is not Linux).
+func procCmdline(pid int) string {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.ReplaceAll(string(b), "\x00", " "))
+}
+
+// pidIsServerFor reports whether pid is alive AND is the engine's own server for
+// this datadir, by matching /proc/<pid>/cmdline.
+//
+// "A process with this pid exists" is not the same claim. A workspace that is
+// stopped as a container leaves its pid files behind; on the next boot the same
+// numbers belong to whatever started first. Reading the command line is what
+// separates "our server is up" from "someone else inherited the number", and the
+// answer decides whether a datadir may be removed or a pid file cleared.
+//
+// When /proc says nothing (cmdline unreadable), the caller's conservative
+// fallback applies: we do not claim the process is ours, and we do not claim it
+// is gone either.
+func pidIsServerFor(pid int, exeName, datadir string) bool {
+	if pid <= 0 || !isRunning(pid) {
+		return false
+	}
+	cmd := procCmdline(pid)
+	if cmd == "" {
+		return false
+	}
+	return strings.Contains(cmd, exeName) && (datadir == "" || strings.Contains(cmd, datadir))
+}
+
 // isPGRunning checks if the Postgres instance is running by cross-checking with
 // postmaster.pid in the datadir. When the pid file is absent (e.g. the file was
 // removed while the server is still up), it falls back to the registry pid so that
@@ -403,12 +539,52 @@ func isRunning(pid int) bool {
 func isPGRunning(pid int, datadir string) bool {
 	if datadir != "" {
 		if authPID, err := readPostmasterPID(datadir); err == nil && authPID > 0 {
-			return isRunning(authPID)
+			// A pid file that survived a container stop names a number that now
+			// belongs to someone else; only a postgres running THIS datadir counts.
+			return pidIsServerFor(authPID, "postgres", datadir)
 		}
 		// pid file absent — fall back to registry pid as a safety net.
 		return isRunning(pid)
 	}
 	return isRunning(pid)
+}
+
+// clearStalePIDFile removes a pid file left behind by a server that is no longer
+// there, and reports whether it removed one.
+//
+// The case is ordinary: the workspace is stopped as a container, so nothing runs
+// the shutdown path, and `postmaster.pid` / `mysqld.pid` stay in the datadir. The
+// next start then meets pg_ctl's "another server might be running; trying to
+// start server anyway" — which is a warning here and a refusal on the day the old
+// number belongs to a live process.
+//
+// It removes the file ONLY when the pid it names is provably not this engine's
+// server for this datadir. An unreadable /proc, or a live matching server, leaves
+// the file alone: two postmasters on one datadir is worse than a warning.
+func clearStalePIDFile(pidFile, exeName, datadir string) bool {
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		return false
+	}
+	line := strings.SplitN(strings.TrimSpace(string(b)), "\n", 2)[0]
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil {
+		// Unparsable pid file: nothing can be running under it.
+		pid = 0
+	}
+	if pidIsServerFor(pid, exeName, datadir) {
+		return false
+	}
+	if pid > 0 && isRunning(pid) && procCmdline(pid) == "" {
+		// Alive but unidentifiable — do not touch it.
+		return false
+	}
+	if err := os.Remove(pidFile); err != nil {
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "af-db: removed stale %s (pid %d is not %s for this datadir)\n",
+		filepath.Base(pidFile), pid, exeName)
+	return true
 }
 
 // readMySQLPID reads the MySQL pid file (one number per line).
@@ -428,7 +604,7 @@ func isMySQLRunning(pid int, datadir string) bool {
 	if datadir != "" {
 		pidFile := filepath.Join(filepath.Dir(datadir), "mysqld.pid")
 		if p, err := readMySQLPID(pidFile); err == nil && p > 0 {
-			return isRunning(p)
+			return pidIsServerFor(p, "mysqld", datadir)
 		}
 		// pid file absent — fall back to registry pid.
 		return isRunning(pid)

@@ -602,6 +602,26 @@ managed セッションに tmux pane は無い。pane に依存する機能の�
 | 11 | SSM ログイン検出（capture-pane 全 scrollback の regex） | 対象外——shell / ssm は pane 前提のまま（managed 化しない） | — |
 | 12 | セッション開始・停止（tmux new-session / kill-session、Console の 再開して続ける → /start） | Driver.Resume / supervisor 経由の thread 管理へ。managed の /start・/stop・halt は P2 で driver 分岐を足す | P2 |
 
+🔴 **訂正（2026-09-17 実測）**: 上記 #2 の (a)(b) は**一度も発火していなかった**。`waitDaemon` の
+「意図した停止か」の判定が `s.stopping || s.cmd != cmd` で、`s.cmd != cmd` が常に真になるため。
+daemon が自分で死ぬと Console のポーリング（`GET /sessions/{name}/settings` → `Resume` → `Ensure`）が
+ミリ秒で次の daemon を立て、`cmd.Wait()` から戻った待ち手がロックを取る頃には `s.cmd` は既に別物になっている。
+実測: 1 ワークスペースの `~/.local/share/opencode/log/opencode.log` に daemon 世代が 727 本、
+それに対応する exit 記録は 0 件・`daemon died unexpectedly` のログも 0 行。
+判定を「その `*exec.Cmd` に停止を頼んだか」（`askedStop`）へ変更して修正。
+
+**なぜ見逃したか**: 「意図した停止」を*状態*（誰かが今停止中か）から導いていたのが誤りで、
+正しくは*同一性*（この個体に停止を頼んだか）。共有 daemon は並行して差し替わるので、
+状態から導くと必ず取り違える。**並行に差し替わる資源の来歴は、状態ではなく同一性で持つこと。**
+
+🔴 **併せて（同日実測）**: この不可視性のため、opencode serve が約 2 分ごとに入れ替わり、
+その瞬間に走っていたターンが毎回死んでいたことが長期間表面化しなかった。ターンは
+`MessageAbortedError` として記録されるが、`errors.go` がこれを「意図した中断」として無条件に
+握り潰していたため、driver は正常完了として着地し、転写にも報告にも何も残らなかった
+（利用者から見ると「催促しないと進まないセッション」）。要求していない中断を `TurnAborted` として
+報告するよう修正。**入れ替えの引き金そのものは未特定** — supervisor の停止/再起動が記録されない
+限り特定できないため、まず記録（`lifecycle` を `GET /connections` に露出）を入れた。
+
 切り分け: **実装まで必要**（managed セッションが動く条件、P2）= 2・5・7・8・9・10・12 — **P2 で全て実装済み**
 （2 = supervisor の cmd.Wait ＋ daemon 死時の per-session PersistExit、5 = TranscriptData.Mode 射影＋
 POST /sessions/{name}/settings、7 = turn 状態機械が正・unknown→reconcile、8 = AbortManaged＋

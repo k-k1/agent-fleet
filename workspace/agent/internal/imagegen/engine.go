@@ -47,6 +47,13 @@ type EngineConn struct {
 	// re-read (measured), so answering with whatever is already warm is free and answering
 	// with an arbitrary "first enabled" model is not.
 	Warm string
+	// Labels is the member-facing name per model id (ADR 0090): the publisher's name plus the
+	// part that tells two sizes of one model apart. Empty for an id the Control Plane composed
+	// none for, and every reader then draws the id — which is what they all did before.
+	//
+	// 🔴 A name to DRAW. The id stays what a `generate_image` call names and what the graph is
+	// built for; nothing here may reach a request.
+	Labels map[string]string
 	// Descriptions is the catalogue's own per-model line (ADR 0072 decision 2), the sentence an
 	// agent reads when CHOOSING a checkpoint — "photoreal, SDXL fine-tune" and the like. Empty
 	// for a model the catalogue says nothing about, which is not an error: the id alone is a

@@ -266,6 +266,33 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.catalog_registered_partial": "Storage: {present}/{total} files present (partial)",
   "admin.catalog_registered_missing": "Storage: no registered files are present",
   "admin.catalog_registered_unknown": "Storage: existence not confirmed",
+  // --- Names, example images and categories (ADR 0088). An id is a key, not a name. ---
+  // 🔴 "Uncategorised", never "unknown": for an image row it means no family, which is a row the
+  // CP refuses to enable — the group somebody has to act on, which is why it sorts first.
+  "admin.catalog_family_none": "Uncategorised",
+  "admin.catalog_meta": "Read the source page",
+  "admin.catalog_meta_all": "Fetch names and example images ({n})",
+  "admin.catalog_meta_busy": "Reading the source pages… {n}/{m}",
+  "admin.catalog_meta_done": "{n} rows now carry a name ({f} could not be read).",
+  // --- Does it fit (ADR 0089). The verdict counts the weights and the KV cache, and cannot count
+  // the compute buffers or the CUDA context — which is why 99% is not called a fit.
+  "admin.fit_fits": "Fits",
+  "admin.fit_tight": "Tight ({p}%)",
+  "admin.fit_over": "Will not fit this class",
+  "admin.fit_over_next": "Will not fit this class ({c} would hold it)",
+  "admin.fit_card": "This class has {c} MiB of VRAM",
+  "admin.fit_estimate_note": "An estimate of the weights plus the KV cache. It does not include the compute buffers or the CUDA context.",
+  "admin.fit_no_kv": "The KV cache could not be read, so this compares the weights alone.",
+  "admin.fit_kv_from": "The KV figure was read from {f}'s header — builds in one repository differ a little.",
+  "admin.engines_ingest_ctx_ceiling": "Ceiling {n}",
+  // --- The repository card (ADR 0089). The ladder opens on a press, because opening it reads
+  // upstream.
+  "admin.repo_held_count": "{n} taken in",
+  "admin.repo_ladder_open": "Show the other quantisations in this repository",
+  "admin.repo_ladder_close": "Close",
+  "admin.repo_ladder_loading": "Reading the repository…",
+  "admin.repo_ladder_empty": "This repository offers no file that can be taken in.",
+  "admin.repo_ladder_held": "Taken in",
   // --- Complete (ADR 0085 decision 3). The subject is the row; a part never is. ---
   "admin.catalog_complete": "Complete",
   "admin.catalog_complete_busy": "Completing…",

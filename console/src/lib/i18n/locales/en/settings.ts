@@ -306,6 +306,13 @@ export const settings: Record<keyof typeof jaSettings, string> = {
     "Paste the usage page URL (or just the wrk_… id) to open it straight from this card. The usage percentages can't be pulled in — opencode.ai has no API for them and the page needs a browser login. When a limit is hit, what it reported shows up here.",
   "agents.oc_ws_placeholder": "The usage page URL, or wrk_…",
   "agents.oc_ws_edit": "Change",
+  "agents.oc_restart_pending":
+    "{count} settings changed. The running opencode serve still holds the configuration it started with, so they do not apply until it restarts.",
+  "agents.oc_restart_apply": "Restart opencode serve to apply",
+  "agents.oc_restart_note":
+    "Restarting waits for opencode sessions to finish answering and cuts short any that do not. Press it when nothing is mid-turn.",
+  "agents.oc_restart_done": "opencode serve restarted; the settings are being applied.",
+  "agents.oc_restart_failed": "Could not restart: {msg}",
   "agents.oc_ws_limit": "Last limit: {name} (resets {at})",
   "agents.oc_ws_limit_unknown": "unknown window",
   "agents.oc_usage": "Route",
@@ -492,6 +499,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "set.tab_memory": "Agent memory",
   "set.tab_machine": "Machine",
   "set.tab_env": "Toolchains",
+  "set.tab_database": "Databases",
   "set.tab_preview": "Preview subdomains",
   "set.tab_agents": "Agents",
   "set.tab_assistant": "Assistant",

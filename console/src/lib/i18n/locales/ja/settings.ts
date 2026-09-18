@@ -305,6 +305,13 @@ export const settings = {
     "利用枠ページの URL（または wrk_… の ID）を貼ると、このカードから利用状況を開けます。利用率の数値は opencode.ai 側に API が無いため取り込めません（ページはブラウザのログインが必要です）。上限に当たったときは、その内容をここに表示します。",
   "agents.oc_ws_placeholder": "利用枠ページの URL、または wrk_…",
   "agents.oc_ws_edit": "変更",
+  "agents.oc_restart_pending":
+    "設定を {count} 件変更しました。稼働中の opencode serve は起動時の設定のまま動いているため、再起動するまで反映されません。",
+  "agents.oc_restart_apply": "opencode serve を再起動して反映",
+  "agents.oc_restart_note":
+    "再起動すると、応答の途中だった opencode セッションは区切りを待ってから中断されます。手が空いているときに押してください。",
+  "agents.oc_restart_done": "opencode serve を再起動しました。設定を反映しています。",
+  "agents.oc_restart_failed": "再起動できませんでした: {msg}",
   "agents.oc_ws_limit": "直近の上限: {name}（{at} にリセット）",
   "agents.oc_ws_limit_unknown": "枠不明",
   "agents.oc_usage": "使う枠",
@@ -492,6 +499,7 @@ export const settings = {
   "set.tab_memory": "エージェントメモリ",
   "set.tab_machine": "マシン",
   "set.tab_env": "ツールチェーン",
+  "set.tab_database": "データベース",
   "set.tab_preview": "プレビュー用サブドメイン",
   "set.tab_agents": "エージェント",
   "set.tab_assistant": "アシスタント",

@@ -16,7 +16,9 @@ package main
 //   https://cdn.mysql.com/Downloads/MySQL-<major>/<file>
 //   https://cdn.mysql.com/archives/mysql-<major>/<file>
 //
-// After unpacking, ldd bin/mysqld is run; any "not found" → exit 3.
+// After unpacking, SONAMEs that Debian's 64-bit time_t transition renamed
+// (libaio.so.1 → libaio.so.1t64) are symlinked into lib/private, which is on the
+// binaries' RUNPATH; then ldd bin/mysqld is run and any "not found" → exit 3.
 // AF_DB_MYSQL_LIBS prepends a library directory to LD_LIBRARY_PATH for ldd.
 //
 // Exit codes: 0 ok, 2 usage, 3 sha mismatch / ldd not-found.
@@ -262,7 +264,11 @@ func doInstallMySQL(major, ver, tarball, sha, dest string) error {
 		}
 	}
 
-	// Check ldd for unresolved libraries before promoting.
+	// Bridge the SONAMEs Debian's 64-bit time_t transition renamed, then check
+	// ldd for what is still unresolved, before promoting.
+	for _, link := range mysqlLinkSonameCompat(distDir) {
+		fmt.Fprintf(os.Stderr, "[install-mysql] %s\n", link)
+	}
 	if err := mysqlCheckLDD(filepath.Join(distDir, "bin", "mysqld")); err != nil {
 		return err
 	}
@@ -313,6 +319,11 @@ func mysqlExtract(tarPath, distDir string) error {
 // Note: --wildcards-match-slash is on by default in GNU tar, so "*.so*" crosses "/".
 // That means "lib/plugin/*.so" would include lib/plugin/debug/*.so, which is 30 files
 // and 41 MB of debug symbols we don't need. After extraction we remove that subdirectory.
+//
+// The same crossing is WANTED under lib/private: it pulls in the nested plugin
+// directories (sasl2/) that mysqld dlopens for authentication, which a top-level-only
+// pattern would leave behind. The measured arm64 result is 147 MB installed, so the
+// extra files are not what makes this tree big.
 func mysqlExtractSubset(tarPath, distDir string) error {
 	if err := runCmd("tar", "-xJf", tarPath,
 		"--strip-components=1", "-C", distDir,
@@ -399,38 +410,130 @@ func mysqlLibsEnv() []string {
 	return append(filtered, "LD_LIBRARY_PATH="+ldPath)
 }
 
-// mysqlCheckLDD runs ldd on mysqldBin and returns a mysqlLDDError if any
-// library is listed as "not found". Prepends AF_DB_MYSQL_LIBS to LD_LIBRARY_PATH
-// when set (the documented workaround for images that predate the libaio/libnuma/
-// libncurses bake — this container: ~/.local/share/af-dbtest/libs/...).
-func mysqlCheckLDD(mysqldBin string) error {
-	cmd := exec.Command("ldd", mysqldBin)
+// mysqlSonameCompatDir is where the compatibility symlinks below go, relative to
+// the install root. It is on the binaries' RUNPATH ($ORIGIN/../lib/private), so
+// the loader finds them without anyone setting LD_LIBRARY_PATH at run time.
+const mysqlSonameCompatDir = "lib/private"
+
+// mysqlLinkSonameCompat bridges the SONAMEs that Debian's 64-bit time_t
+// transition renamed, and returns one message per link it made.
+//
+// MySQL's binaries ask for libaio.so.1, while trixie's libaio1t64 ships
+// libaio.so.1t64 and no compatibility symlink — so ldd reports "not found" even
+// on an image that has the package installed. On 64-bit architectures the t64
+// library is ABI-identical to the one it replaced, so the symlink is the whole
+// fix. Whatever this cannot resolve is left for mysqlCheckLDD to report.
+func mysqlLinkSonameCompat(distDir string) []string {
+	cache := mysqlLdconfigCache()
+	if len(cache) == 0 {
+		return nil
+	}
+	compat := filepath.Join(distDir, filepath.FromSlash(mysqlSonameCompatDir))
+	var msgs []string
+	linked := map[string]bool{}
+	for _, name := range []string{"mysqld", "mysql", "mysqladmin", "mysqldump"} {
+		bin := filepath.Join(distDir, "bin", name)
+		if _, err := os.Stat(bin); err != nil {
+			continue
+		}
+		missing, err := mysqlMissingLibs(bin)
+		if err != nil {
+			return msgs
+		}
+		for _, soname := range missing {
+			target, ok := cache[soname+"t64"]
+			if !ok || linked[soname] {
+				continue
+			}
+			if err := os.MkdirAll(compat, 0o755); err != nil {
+				continue
+			}
+			link := filepath.Join(compat, soname)
+			_ = os.Remove(link)
+			if err := os.Symlink(target, link); err != nil {
+				continue
+			}
+			linked[soname] = true
+			msgs = append(msgs, fmt.Sprintf("linked %s -> %s (Debian t64 soname)", soname, target))
+		}
+	}
+	return msgs
+}
+
+// mysqlLdconfigCache returns the loader cache as soname -> absolute path. An
+// empty map means ldconfig is unavailable or said nothing; callers read that as
+// "no compatibility link possible", not as an error.
+func mysqlLdconfigCache() map[string]string {
+	for _, prog := range []string{"ldconfig", "/sbin/ldconfig", "/usr/sbin/ldconfig"} {
+		out, err := exec.Command(prog, "-p").Output()
+		if err == nil {
+			return parseLdconfigCache(string(out))
+		}
+	}
+	return nil
+}
+
+// parseLdconfigCache parses `ldconfig -p` lines of the form
+//
+//	libaio.so.1t64 (libc6,x86-64) => /lib/x86_64-linux-gnu/libaio.so.1t64
+func parseLdconfigCache(out string) map[string]string {
+	cache := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		name, path, ok := strings.Cut(strings.TrimSpace(line), " => ")
+		if !ok {
+			continue
+		}
+		if i := strings.Index(name, " ("); i >= 0 {
+			name = name[:i]
+		}
+		name, path = strings.TrimSpace(name), strings.TrimSpace(path)
+		if name == "" || !strings.HasPrefix(path, "/") {
+			continue
+		}
+		if _, dup := cache[name]; !dup {
+			cache[name] = path
+		}
+	}
+	return cache
+}
+
+// mysqlMissingLibs runs ldd on bin and returns the SONAMEs it reports as
+// "not found". AF_DB_MYSQL_LIBS is prepended to LD_LIBRARY_PATH when set (the
+// escape hatch for an image whose libraries live somewhere else).
+func mysqlMissingLibs(bin string) ([]string, error) {
+	cmd := exec.Command("ldd", bin)
 	cmd.Env = mysqlLibsEnv()
 	out, cmdErr := cmd.CombinedOutput()
 	if cmdErr != nil {
 		if _, ok := cmdErr.(*exec.ExitError); !ok {
 			// ldd itself could not be executed (not in PATH or permission denied).
-			return fmt.Errorf("ldd not found in PATH; cannot verify shared libraries for %s: %w", mysqldBin, cmdErr)
+			return nil, fmt.Errorf("ldd not found in PATH; cannot verify shared libraries for %s: %w", bin, cmdErr)
 		}
-		// ldd exits non-zero for statically linked binaries; fall through to check output.
-		if !strings.Contains(string(out), "not found") {
-			return nil
-		}
+		// ldd exits non-zero for statically linked binaries; the output still tells us.
 	}
-
 	var missing []string
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.Contains(line, "not found") {
-			lib := strings.TrimSpace(strings.SplitN(line, "=>", 2)[0])
-			missing = append(missing, lib)
+			missing = append(missing, strings.TrimSpace(strings.SplitN(line, "=>", 2)[0]))
 		}
+	}
+	return missing, nil
+}
+
+// mysqlCheckLDD returns a mysqlLDDError when mysqldBin still has unresolved
+// libraries after mysqlLinkSonameCompat has done what it can.
+func mysqlCheckLDD(mysqldBin string) error {
+	missing, err := mysqlMissingLibs(mysqldBin)
+	if err != nil {
+		return err
 	}
 	if len(missing) == 0 {
 		return nil
 	}
 	return &mysqlLDDError{fmt.Sprintf(
 		"ldd %s: unresolved libraries: %s\n"+
-			"Add the directory containing these libraries to AF_DB_MYSQL_LIBS\n"+
+			"No t64-renamed library answered for these either.\n"+
+			"Add the directory containing them to AF_DB_MYSQL_LIBS\n"+
 			"(e.g. AF_DB_MYSQL_LIBS=~/.local/share/af-dbtest/libs/usr/lib/x86_64-linux-gnu)",
 		mysqldBin, strings.Join(missing, ", "),
 	)}
