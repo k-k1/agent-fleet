@@ -17,8 +17,11 @@ import (
 //
 // It used to say the same sentence about .config/agent-fleet, and on the ecs-ec2 runtime
 // that was not true: ~/.config is one of AF_WS_KEEP_DIRS, so the ledger was on EFS and
-// ListMetas below — one ReadDir plus one ReadFile per session, 836 file syscalls at 207
-// sessions — ran over NFS once every four seconds per open Console tab (ADR 0087 source A).
+// ListMetas below — one ReadDir plus one ReadFile per session, 5M+4 file syscalls, so 1,039
+// at 207 sessions — ran over NFS once every four seconds per open Console tab (ADR 0087
+// source A). (The 836 this comment used to quote was measured with a trace set that left out
+// fstat, which os.ReadFile's f.Stat() emits once per file on linux/amd64; re-measured
+// 2026-09-18.)
 // paths.AgentStateDir is the home-volume root that keeps the sentence true.
 func MetaDir() string {
 	if v := os.Getenv("AF_SESSIONS_DIR"); v != "" {
