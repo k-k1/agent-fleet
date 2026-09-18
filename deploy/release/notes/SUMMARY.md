@@ -26,6 +26,12 @@ Keeping it current:
 
 ---
 
+## [0.22.1](0.22.1.md) — 2026-09-18
+
+**Fixed**
+
+- **[engines / ecs-ec2]** Taking a model in failed on both roles wherever `EngineToolsImageTag` still held the value it came with — the template asked for a newer script contract than that image speaks, so fetch and upload refused to start (0.21.0 and 0.22.0 were both affected; `update.sh` now moves that one value on)
+
 ## [0.22.0](0.22.0.md) — 2026-09-18
 
 **CLI pins** — Claude Code 2.1.275, Codex 0.155.0, Copilot 1.0.86, Antigravity 1.2.5, Cursor 2026.09.15, Kiro 2.22.0

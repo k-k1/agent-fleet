@@ -107,12 +107,25 @@ export AF_DRY="$DRY"
 # neither GHCR nor ECR had the image and 20-platform (which owns the repository) had not been
 # updated, so it took three hand-run steps that existed in no script. The plan is printed
 # before anything happens so that the order is readable on a --dry-run.
-ET_TAG=""
+ET_TAG=""; ET_REPAIR=0
+# The first default this parameter ever had, and the one that cannot be somebody's choice: it
+# names an image speaking contract 1, while the template has asked for a newer number since
+# 0.21.0. A live stack records the resolved default, so `deploy` would keep it for ever and
+# every ingest would go on exiting 78 — the same shape as OfferBudgetSec=180 below, repaired the
+# same way and only for this one value.
+ET_STALE_DEFAULT="2026-09-11"
 if [ -n "$ENGINES_STACK" ]; then
   # What 60-engines will ask for: the live value, or — on the update that INTRODUCES the
   # parameter — the default the new template brings with it.
   ET_TAG="$(af_stack_param "$ENGINES_STACK" EngineToolsImageTag)"
   [ -n "$ET_TAG" ] || ET_TAG="$(af_cfn_param_default "$HERE/cfn/60-engines.yaml" EngineToolsImageTag)"
+  if [ "$ET_TAG" = "$ET_STALE_DEFAULT" ]; then
+    et_new="$(af_cfn_param_default "$HERE/cfn/60-engines.yaml" EngineToolsImageTag)"
+    case "$et_new" in
+      ""|"$ET_STALE_DEFAULT") ;;
+      *) ET_TAG="$et_new"; ET_REPAIR=1 ;;
+    esac
+  fi
 fi
 echo "==> plan for $STACK (ImageTag=$VERSION):"
 echo "      1. $AF_STACK_PLATFORM (20-platform — it owns the ECR repositories)"
@@ -418,6 +431,12 @@ if [ -n "$ENGINES_STACK" ]; then
   # way the six retired seed parameters above are lost. Which is why the override this used to
   # add (`ImageEngine=comfy`, for a stack still on `sdcpp`) had to go with the parameter: it
   # would now fail every update with "Parameters: [ImageEngine] do not exist in the template".
+  # The tag repaired above has to be NAMED, or `deploy` keeps the live value and the stack
+  # points at an image this update just carried into ECR for nothing.
+  if [ "$ET_REPAIR" = 1 ]; then
+    echo "    · EngineToolsImageTag=$ET_TAG (the old default speaks contract 1; every ingest was exiting 78)"
+    eng_params+=("EngineToolsImageTag=$ET_TAG")
+  fi
   eng_deploy=(--capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset)
   eng_shown=""
   if [ "${#eng_params[@]}" -gt 0 ]; then

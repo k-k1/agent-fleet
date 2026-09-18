@@ -1155,6 +1155,26 @@ the image regardless — ADR 0072 decision 4's checkpoint-per-request behaviour 
 thing against a stub `aws`), run `engine-tools-image.yml` with a new tag, and set
 `EngineToolsImageTag` in `params/60-engines` before the stack update that needs it.
 
+🔴 **When the bump changes `CONTRACT`, the tag's `Default` here has to move too**, and the new
+tag goes in `deploy/aws/ecs/engine-tools/TAGS.tsv` with the number it speaks. The default is the
+value a deployment holds without having chosen it — a fresh stand-up, and any stack whose
+parameter was never set — so a stale one is not a stale preference but a deployment whose ingest
+is dead from birth. 0.21.0 and 0.22.0 both shipped a template asking for contract 3 with a
+default naming the contract-1 image: every ingest exited 78, and because `why()` reports the
+last non-empty line of the failed container's log, the Console showed the pointer to this
+section rather than the mismatch. `engine-sidecar-test.sh` now reads the ledger and fails on
+that pair; the fix for a live deployment is one parameter:
+
+```sh
+aws cloudformation deploy --stack-name af-ecs-engines \
+  --template-file deploy/aws/ecs/cfn/60-engines.yaml \
+  --parameter-overrides EngineToolsImageTag=<tag> \
+  --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset
+```
+
+Everything not passed keeps its previous value, which is why this is the shape to use rather
+than `standup.sh` (it would restore the captured parameter file over the live one).
+
 **Getting the image into a deployment is not a hand-run step.** All three routes do it, in the
 one order that works — **ECR repository (20-platform) → image (`crane copy`) → stack
 (60-engines)**:

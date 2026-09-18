@@ -14,6 +14,12 @@
 # running the previous release's script. Bump the number in the file and in 60-engines.yaml in
 # the same commit -- deploy/local/engine-sidecar-test.sh fails when the two disagree.
 #
+# 🔴 After a bake, record the tag in deploy/aws/ecs/engine-tools/TAGS.tsv and move
+# EngineToolsImageTag's Default onto it. Nothing in the tree can read the number baked into an
+# already-published tag, so that ledger is what lets the harness check the one tag a deployment
+# gets without choosing it -- unchecked, it named a contract-1 image through two releases that
+# asked for 3, and every ingest on a default deployment exited 78.
+#
 # amd64 only: the G-family has no arm64 member, and the ingest task runs on Fargate beside it.
 name: engine-tools-image
 
