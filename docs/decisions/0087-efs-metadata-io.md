@@ -934,7 +934,7 @@ numbers**.
 0. **The ranking of A against B** (before decision 5 is implemented). **Carried out on
    2026-09-18; the answer is "it flips from box to box, so no single ranking exists"** - the
    derivation is in "Putting it together". On the syscall side the ratio is
-   **(5M+4) : (4(1+P)xn)**, independent of tab count and fixed by the fixture alone.
+   **(5M+4) : (5(1+P)xn)**, independent of tab count and fixed by the fixture alone.
    🔴 **The wire-level (RPC) ranking is still unconfirmed.** Taking conditions 1-4 below means
    **occupying one box and opening and closing its Console tabs and sessions**, and on
    2026-09-18 both production boxes were in use by real users, so **only reads were taken**
@@ -1021,7 +1021,7 @@ numbers**.
   decide it.
 - ✅ **"Does A or B dominate" is answered - and the answer is "neither"** (2026-09-18). The two
   ride **the same request**, so the ratio does not depend on tab count and is fixed at
-  **(5M+4) : (4(1+P)xn)**, which **flips from box to box** (it did, on the two production
+  **(5M+4) : (5(1+P)xn)**, which **flips from box to box** (it did, on the two production
   boxes). **There is no single dominant source**, so decisions 4 and 5 are not an either/or -
   they rescue different boxes. Two gaps remain.
 - 🔴 **The wire-level (RPC) ranking is still open.** The ratio above is over syscalls, not RPCs,
