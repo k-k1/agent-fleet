@@ -2,8 +2,9 @@
 
 English | [日本語](0087-efs-metadata-io.ja.md)
 
-- Status: **proposed** (2026-09-17, review applied the same day). One piece is implemented: the
-  CloudFormation change in decision 2.
+- Status: **proposed** (2026-09-17, review applied the same day; verification step 0 and the
+  cost reconciliation were carried out on 2026-09-18 and folded in). One piece is implemented:
+  the CloudFormation change in decision 2.
 - ⚠️ **Claims changed after the first draft**, overturned by measurement across two review
   passes. Each is marked in place ("the first draft said … and was wrong"). First pass: (1)
   `~/.config/agent-fleet` *does* contain the credential store; (2) a negative cache on the
@@ -16,17 +17,31 @@ English | [日本語](0087-efs-metadata-io.ja.md)
   mixed two bases and the unit convention mattered; (10) "no READDIR, so B is not dominant"
   inferred the caller from the RPC mix. Third pass: (11) **billing is in GiB (2^30)** - lined up
   on the same numerator, window and minute resolution, CloudWatch and Cost Explorer agree to
-  **0.12%** (elastic settles at **about $142/month**); (12) "there is no cheap-and-roomy
-  provisioned option" is withdrawn (**20 MiB/s costs the same and buys 1.30-1.67x**); (13)
+  **0.12%** (elastic settled at **about $142/month** at the time - corrected to **$135** in the
+  fourth pass); (12) "there is no cheap-and-roomy provisioned option" is withdrawn (**20 MiB/s
+  costs the same and buys 1.30-1.67x** - itself re-withdrawn in the fourth pass); (13)
   headroom ratios are **1.04-1.33x** before rounding; (14) a CFN update **may**, not **will**,
-  flip the mode back to bursting.
+  flip the mode back to bursting. Fourth pass (measured 2026-09-18): (15) **`ListMetas()`'s 836
+  was an undercount** - the trace set was missing `fstat` (Go's `os.ReadFile` emits `fstat`, not
+  `newfstatat`); the real figure is **5M + 4 = 1,039 at 207 metas**; (16) `subagentBases()` is
+  **4x(1+P)**, not `(1+P)x4+2` (156 at P=38, 1,277 at P=318); (17) **A and B ride the same
+  request**, so their ratio does not depend on the number of open tabs and is fixed at
+  **(5M+4) : (4(1+P)xn)** - **the ranking flips from box to box**, so "is it A or B" was the
+  wrong question to ask; (18) **the monthly figure moves from about $142 to about $135** (a full
+  day of measurement puts box-hours at 1,341 rather than 1,377 and $/box-hour at $0.0987-0.1012
+  rather than $0.1021). That moves **the break-even from 19.6 to about 18.8 MiB/s**, so (12)'s
+  "20 MiB/s costs the same" is **withdrawn** (20 MiB/s is about 8% more expensive).
 - **What was measured, and where.** The numbers come from three places only. (1) CloudWatch
   metrics for the production deployment's data file system (`MeteredIOBytes` /
   `MetadataIOBytes` / `ClientConnections`, 2026-09-04 to 09-17); (2) Cost Explorer actuals
   and the ap-northeast-1 unit prices from the Pricing API (read 2026-09-17); (3) **`strace -c`
   inside a Workspace container** - the agent's real code compiled into a test binary and
   started as a child process, counting file syscalls (attaching to the running Agent is
-  refused: `ptrace_scope=1`, so it has to be a child). **No production box was straced.**
+  refused: `ptrace_scope=1`, so it has to be a child); (4) **`/proc/self/mountstats` deltas on
+  the production EC2 hosts** (over SSM, **read-only**: 2 boxes x 5 windows x 660 s total, on
+  2026-09-18). **No production box was straced.** (The host side runs `ptrace_scope=0` as root,
+  so it is possible in principle, but `strace` is not installed there and was not installed for
+  this.)
 - Related: [0044-workspace-sizing.md](0044-workspace-sizing.md) (where `~` actually lives) /
   [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) (the decision that
   introduced the `keep` volume - what it was meant to hold versus what it holds).
@@ -129,13 +144,28 @@ func MetaDir() string { … filepath.Join(paths.HomeDir(), ".config", "agent-fle
 (`.config .ssh .claude .codex`), so the entrypoint **symlinks it into `keep`, which is EFS**.
 The session ledger is on EFS.
 
-`ListMetas()` does one `ReadDir` and then **one `os.ReadFile` per session meta**. Measured
-(207 metas, 100 calls, `strace -c`):
+`ListMetas()` does one `ReadDir` and then **one `os.ReadFile` per session meta**.
 
-```
-openat 21,014   read 41,406   close 21,013   getdents64 204   = 83,637 syscalls
-→ 836 file syscalls per ListMetas() call (openat 210 / read 414 / close 210)
-```
+🔥 **Re-measured 2026-09-18: the cost is `5M + 4`, so 207 metas is 1,039 syscalls, not 836.**
+The original 836 was an undercount because **the trace set did not include `fstat`**.
+`os.ReadFile` calls `f.Stat()` to size its buffer before reading, and on linux/amd64 that emits
+**`fstat`** - the first draft listed `newfstatat`, which is a different syscall. Exactly one per
+meta was invisible, and 836 + 207 = 1,043 ≈ the measured 1,039, which closes the books.
+
+| Metas M | File syscalls per `ListMetas()` call (measured) |
+|---|---|
+| 50 | **254.0** |
+| 207 | **1,039.0** |
+| 400 | **2,005.0** |
+
+The breakdown is **4 per call** (`openat` 1 + `getdents64` 2 + `close` 1, for the directory
+itself) and **5 per meta** (`openat` 1 + `fstat` 1 + `read` 2 + `close` 1), which is exactly
+**`5M + 4`** (the +1 at M=400 is one extra `getdents64` when `sessions/` no longer fits in a
+single buffer).
+
+The method is "run with `AF_PROBE_ITERS=200` and with `AF_PROBE_ITERS=0` and divide the
+difference by 200" - both runs build the same fixture, so fixture construction and process
+start-up cancel out. Two repeats agreed to within ±0.02%.
 
 It has 32 callers, one of which is the **`GET /sessions` handler**. The frequency is set by
 the comment at `control-plane/events.go:145`:
@@ -144,6 +174,14 @@ the comment at `control-plane/events.go:145`:
 
 **Once every four seconds per open Console tab**, the CP calls the Agent's `/sessions`, and
 that one call opens and reads 207 files on EFS. Two tabs double it.
+
+⚠️ **`ListMetas()` is not the only thing hitting `keep`.** The same `~/.config/agent-fleet`
+holds a row of fstores, some of them read **once per session** - in particular
+`agents.NewSidStore("claude-sid")` (`internal/agents/sidstore.go:15` builds it with
+`fstore.TrimmedStrings(paths.AgentConfigDir, …)`), which `LiveSID()` (`sid.go:40`) reads for
+every session in the listing. `session-status/`, `pending-perm/`, `session-injections/` and
+`notification-markers/` live in the same place. **What decision 4 moves is that whole family**,
+not one ledger.
 
 `~/.config/agent-fleet` measures **113 MB across roughly 5,400 files**. What ADR 0045 intended
 `keep` to hold was "auth, connections and identity - seven items, under 100 MiB in total".
@@ -186,15 +224,18 @@ is reached whenever `BackgroundBusy` (a cheap /proc check) is false, which is th
 Cost per call, counted with `strace -c` (Go's `filepath.Glob` does one `ReadDir` of
 `projects/` plus one `ReadDir` per matched directory):
 
-| Project directories | File syscalls per `SubagentLogs()` call |
+| Project directories P | File syscalls per `subagentBases()` call (measured 2026-09-18) |
 |---|---|
-| 38 | **158** (getdents64 78.8 / openat 39.9 / newfstatat 39.8) |
-| 318 | **1,296** |
+| 38 | **156.0** (`openat` 39 / `getdents64` 78 / `close` 39) |
+| 318 | **1,277.1** |
 
-Exactly `(1 + projects) * 4 + 2`. A development-deployment box was measured with **318**
-project directories; the production measurement used 38. The tell from the earlier
-investigation still applies: **if every directory shows exactly the same count, something is
-looking for one thing at a time.**
+Exactly **`4 * (1 + P)`** - one `openat` + two `getdents64` + one `close` per directory.
+⚠️ **The first draft's `(1+P)*4+2` has no "+2" in the measurement** (156 rather than 158 at
+P=38; 1,277 rather than 1,296 at P=318, where the +1.1 is one extra `getdents64` because
+`projects/` itself no longer fits in a single buffer). A development-deployment box was
+measured with **318** project directories; the production boxes had **42 and 27** as of
+2026-09-18. The tell from the earlier investigation still applies: **if every directory shows
+exactly the same count, something is looking for one thing at a time.**
 
 The same shape survives on the transcript side: a memo hit costs one `Lstat` (measured: 5
 syscalls per call), but **`memoTTL = 60s` drops back to the full sweep every minute**, and
@@ -213,36 +254,70 @@ reached when the status file says idle while the pane is visibly working - and, 
 states, it is **self-limiting to one capture per turn** (the next poll reads "working" from the
 file). **Source C is not in the same order as A and B.**
 
-### Putting it together (a hypothesis, not yet confirmed)
+### 🔥 Putting it together - "is it A or B" was the wrong question
 
-One box, one Console tab, 207 metas, 38 project directories, three idle claude sessions:
+**A and B ride the same request.** `tickAll` in `control-plane/events.go` calls
+`a.ws.sessionsPayload`, which calls the Agent's `GET /sessions`
+(`sessionx.HandleListSessions`). That handler runs **`ListMetas()` once at the top** (= A), and
+the `wireSession` loop that follows builds each session's state through `claude.go` →
+`BackgroundWork` → `SubagentBusy` → `subagentBases()` (= B).
+
+So **the ratio of A to B does not depend on how many tabs are open**. More tabs scale both by
+the same factor, so on any one box the ratio is fixed by the fixture alone:
 
 ```
-ListMetas()          208 file reads       x 1/4s
-SubagentBusy() x3    117 directory reads  x 1/4s
-                   → roughly 80 file/directory operations per second (VFS level)
+A : B  =  (5M + 4)  :  (4 * (1 + P) * n)
+           M = session meta count      P = directories under projects/
+           n = idle claude sessions (B is claude-only, and only for running ones)
+
+A dominates  ⟺  5M + 4  >  4 * (1 + P) * n
 ```
 
-The measured floor is 107.7 metadata ops/s, so **the order of magnitude matches**. ⚠️ **That is
-not proof that A and B dominate the floor.** VFS operations and NFS round trips are different
-things, and the ratio between them has not been measured. A 20-second delta of
-`/proc/self/mountstats` taken on a production box (09-17 12:20 JST, collected over SSM by the
-review session) reads:
+🔥 **Applied to the two production boxes, the ranking flips** (fixtures counted over SSM on
+2026-09-18):
 
-| Mount | RPC/s | Breakdown (20 s) |
-|---|---|---|
-| `claude` (`CLAUDE_CONFIG_DIR`) | 27.5 | GETATTR 492, OPEN_NOATTR 29, CLOSE 29 |
-| `keep` | 16.9 | OPEN_NOATTR 148, CLOSE 148, GETATTR 18, LOCK/LOCKU/FREE_STATEID 8 each |
+| Box | M | P | A per call | B per call (n sessions) | Ranking |
+|---|---|---|---|---|---|
+| Box 1 | 16 | 42 | 84 | 172 x n | **B dominates for any n≥1** |
+| Box 2 | 122 | 27 | 614 | 112 x n | **A dominates for n≤5** (B from n≥6) |
 
-No retransmissions. The OPEN/CLOSE-dominated `keep` profile is the shape of file reads like
-`ListMetas()`, and LOCK/LOCKU/FREE_STATEID matches `secrets.go`'s flock.
+**There is no single answer to "is A or B the main source".** Boxes with many metas and few
+projects are A-dominated; the reverse are B-dominated. Decisions 4 and 5 are **not alternatives
+- they rescue different boxes.** This is the answer to the first open question.
 
-⚠️ **Do not infer the caller from the RPC mix.** The first draft read "almost no READDIR on
-`claude`" as "B (the full sweep) was not the dominant cost", and that overreaches - even when
-directory contents come from cache, **the attribute revalidation that goes with a full sweep can
-still produce GETATTR**. All this measurement supports is: READDIR RPCs were 0, GETATTR
-dominated, and with no concurrent VFS count **the contribution is unknown**. **The ranking of A
-against B is undetermined** - measure both together before acting on decision 5.
+#### On the wire (`/proc/self/mountstats`, 2026-09-18, read-only over SSM)
+
+The production EC2 hosts currently run **one box per host**, so a host's mountstats is one box.
+
+| Box | Window | `keep` RPC/s | `claude` RPC/s |
+|---|---|---|---|
+| Box 1 (M=16, P=42) | 120 s | **74.4** (OPEN=CLOSE=35.6) | 20.9 (GETATTR 12.8) |
+| Box 1 | 120 s | **103.0** (OPEN 46.8 / CLOSE 52.7) | 22.0 (GETATTR 13.5) |
+| Box 2 (M=122, P=27) | 120 s | 46.1 (OPEN=CLOSE=22.0) | **68.4** (GETATTR 60.1) |
+| Box 2 | 180 s | 45.1 (OPEN=CLOSE=21.5) | **68.2** (GETATTR 60.1) |
+| Box 2 | 120 s | 43.2 (OPEN=CLOSE=20.6) | **68.0** (GETATTR 60.1) |
+
+The `keep` : `claude` ratio is **3.6:1** on box 1 and **1:1.5** on box 2 - the same direction as
+the ranking table above. (The 09-17 12:20 delta - `claude` 27.5 / `keep` 16.9 - points a third
+way, which is a third instance of "it depends on the box".) Box 2's GETATTR sat at 60.06-60.07/s
+across all three windows, so **the RPC rate itself is extremely stable.**
+
+⚠️ **Do not infer the caller from the RPC mix** (this caution is unchanged from the second
+pass). What can now be said is that **the `claude` mount issued no READDIR RPC at all across all
+five windows, 660 seconds total** (`keep` produced 3, in one window). **Raw syscall counts are
+not a proxy for EFS metadata I/O** - directory reads (B and the globs) are largely absorbed by
+the NFS client's directory attribute cache, while a file `open()` (A) cannot be served from
+cache under NFSv4 because it needs a stateid, and goes to the wire one-for-one. **That asymmetry
+is large and differs between A and B**, so the syscall ratio above must not be read as an RPC
+ratio.
+
+⚠️ **Box 1's `keep` traffic is more than `ListMetas()` can account for.** At M=16 a call is 16
+OPENs, so 35.6-46.8 OPEN/s needs 2.2-2.9 calls/s - the tick rate of 9 to 12 open tabs. And
+between the two windows `keep` OPENs rose 32% while `claude` GETATTR barely moved (12.8 → 13.5).
+Had the tick rate itself risen 32%, both sides would have risen together, so the natural reading
+is that **something opens files on `keep` independently of the tick rate** (the fstore family
+listed above is the candidate). **This is not settled** - the number of open tabs was never
+observed independently, so "box 1 really did have 9 tabs" cannot be ruled out.
 
 ## Measurement 2: the money
 
@@ -317,32 +392,60 @@ unit prices, divided by 2^30), and state the window.
 | | window (JST, minute-cut) | box-hours | reads | writes | GiB/box-hour | $/box-hour |
 |---|---|---|---|---|---|---|
 | old agent | 09-16 11:56 - 09-17 09:00 | 48.6 | 233.57 GiB | 1.92 GiB | **4.845** | $0.1950 |
-| **new agent** | **09-17 09:00 - 14:14** | **18.2** | **45.08 GiB** | **0.77 GiB** | **2.520** | **$0.1021** |
+| new agent (half day, 3rd draft) | 09-17 09:00 - 14:14 | 18.2 | 45.08 GiB | 0.77 GiB | 2.520 | $0.1021 |
+| **new agent (full day)** | **09-17 09:00 - 09-18 09:00** | **51.26** | **123.32 GiB** | **1.79 GiB** | **2.441** | **$0.0987** |
+| new agent (JST calendar day) | 09-17 00:00 - 24:00 | 45.92 | 113.32 GiB | 1.61 GiB | 2.503 | $0.1012 |
 
-**48% less per box-hour.** Deriving the old row from CE's actual instead gives
+**48-50% less per box-hour.** Deriving the old row from CE's actual instead gives
 $9.4655 / 48.6 = $0.1948 per box-hour - 0.1% from the $0.1950 above, as the reconciliation
 predicts. ⚠️ The second draft had the old row from CE and the new one from CloudWatch, and used
 10^9 as the unit.
 
-Re-aggregating box-hours by **JST** day (09-04 to 09-16, 13 days, `ClientConnections.Sum / 120`)
-gives a **weekday median of 58.7 box-hours** (range 34.2-66.6, n=9) and a **weekend median of
-10.6** (range 6.9-13.6, n=4). 22 weekdays plus 8 weekend days is **about 1,377 box-hours**.
-⚠️ The first draft's "weekday 54.6-66.6 / weekend 4.6-8.9" came from UTC-day buckets, which cut
-each JST day across two.
+✅ **The third draft's half-day sample held up over a full day**: 2.520 → 2.441-2.503
+GiB/box-hour (1-3% lower). There are two full-day rows because Cost Explorer's DAILY buckets are
+cut in **UTC**: "09-17 09:00 - 09-18 09:00 JST" is the same window as CE's `2026-09-17` row.
 
-- old agent: **about $268/month** ($0.1950 x 1,377)
-- **new agent: about $141/month** ($0.1021 x 1,377)
+Re-aggregating box-hours by **JST** day (**09-04 to 09-17, 14 days**,
+`ClientConnections.Sum / 120`) gives a **weekday median of 57.1 box-hours** (range 34.2-66.6,
+n=10) and a **weekend median of 10.6** (range 6.9-13.6, n=4). 22 weekdays plus 8 weekend days is
+**about 1,341 box-hours**. ⚠️ The first draft's "weekday 54.6-66.6 / weekend 4.6-8.9" came from
+UTC-day buckets, which cut each JST day across two. ⚠️ The third draft's "58.7, n=9, 1,377" was
+the value before 09-17 (45.92 box-hours) joined the sample.
 
-⚠️ **What remains uncertain here is the sample, not the unit.** The unit is settled as GiB by
-the previous section (0.12%). What is left is that the new agent's sample is **still only half a
-working day**, and the 1,377 box-hours assumption. The first draft's "$100/month", the second's
-"$155" and "$141-151" were all transitional; **the best current estimate is about $141/month**.
-Check it against 09-17's Cost Explorer actual once it posts (Groups were still empty at
-14:14 JST).
+- old agent: **about $262/month** ($0.1950 x 1,341)
+- **new agent: about $134/month** ($0.0987-0.1012 x 1,341 = $132-136) plus about $1 of storage
+  = **about $135/month**
+
+⚠️ The first draft's "$100/month", the second's "$155" and "$141-151", and the third's "about
+$142" were all transitional; **the best current estimate is about $135/month**.
+
+#### 🔴 09-17's Cost Explorer actual is not final yet (as of 2026-09-18 09:00 JST)
+
+The attempt to reconcile it found that **CE's `2026-09-17` row has not finished filling in**.
+
+| | CloudWatch (reads+writes, Period=60, / 2^30) | CE's `2026-09-17` row | Difference |
+|---|---|---|---|
+| I/O (UTC day 09-17) | **125.1048 GiB** | 120.1567 | **+4.118%** |
+
+The same procedure lands within **+0.119%** on the 09-16 window, so this +4.1% is not a
+procedural slip. **The storage line settles it**: `APN1-TimedStorage-ByteHrs` reads
+**0.0513 GB-Month** for 09-17, while `StorageBytes` (Total) grew **monotonically from 2.497 to
+2.618 to 2.732 to 2.840 GB** across 09-14 to 09-17 - it did not shrink. On 09-14/15/16 the ratio
+of the CE actual to the CloudWatch-derived full day is **a constant 94.6%**, so a complete 09-17
+should read about 0.0884; the posted 0.0513 is **58% of that**. **The row is partial.**
+
+- The monthly figures above are therefore derived from **CloudWatch x unit prices**, not CE -
+  the procedure that reconciled to 0.12% on 09-16.
+- **Redo this once CE settles.** If it converges near 125.10 GiB the procedure is confirmed
+  end to end; if it stays at 120.16, then one of the procedure's premises (same numerator, same
+  window, GiB) does not hold for 09-17 and that is what to suspect first.
+- ⚠️ CE's granularity is the **UTC** day. **Do not divide it by box-hours aggregated over JST
+  calendar days** (09-17 is 51.26 box-hours on the UTC day against 45.92 on the JST day - a 12%
+  difference).
 
 ### The three-way comparison (monthly)
 
-New agent (0.21.0), about 1,380 box-hours a month.
+New agent (0.21.0), about 1,341 box-hours a month (the third draft used about 1,380).
 
 ⚠️ **The amount of provisioned throughput needed is a scenario estimate, not a measurement.**
 Take the old agent's 1-minute maximum of 18.118 MB/s at **7 boxes at that minute** (09-14
@@ -358,21 +461,24 @@ against the unrounded values.
 
 | | (1) stay on elastic | (2) prov. 16 MiB/s | (3) prov. 20 MiB/s | (4) prov. 24 MiB/s | (5) elastic, after the fixes |
 |---|---|---|---|---|---|
-| I/O cost | **~$141** | $0 | $0 | $0 | **~$18-35** |
+| I/O cost | **~$134** | $0 | $0 | $0 | **~$17-33** |
 | fixed throughput cost | $0 | **$115.20** | **$144.00** | **$172.80** | $0 |
 | storage | ~$1 | ~$1 | ~$1 | ~$1 | ~$1 |
-| **total** | **~$142/month** | **~$116/month** | **~$145/month** | **~$174/month** | **~$19-36/month** |
+| **total** | **~$135/month** | **~$116/month** | **~$145/month** | **~$174/month** | **~$18-34/month** |
 | headroom over the estimated peak | no ceiling | **1.04-1.33x** | 1.30-1.67x | 1.57-2.00x | no ceiling |
 | how it fails | the bill grows | **it throttles and every workspace stops** | same | same | the bill grows |
 
-⚠️ **This is the table's third version.** First draft: $105/month, "provisioned is more
-expensive". Second: $141-151/month, "16 MiB/s is 25% cheaper". Now this. **Break-even is about
-19.6 MiB/s** ($141 / $7.20), so **20 MiB/s costs what elastic costs today and buys 1.30-1.67x
-headroom.**
-⚠️ The second draft's "there is no cheap-and-roomy provisioned option" judged from two points
-(16 and 24) without defining how much headroom is needed. **Withdrawn** - what can be said is
-that the 16 compared here has little headroom (4% over the upper demand estimate), the 24 costs
-23% more than elastic, and the 20 sits in between at the same price.
+⚠️ **This is the table's fourth version.** First draft: $105/month, "provisioned is more
+expensive". Second: $141-151/month, "16 MiB/s is 25% cheaper". Third: $142/month, "20 MiB/s
+costs the same". Now $135/month. **Break-even is about 18.8 MiB/s** ($135 / $7.20).
+🔴 **The third draft's "20 MiB/s costs what elastic costs today and buys 1.30-1.67x headroom" is
+withdrawn.** A full day of measurement moved elastic from $142 to $135, so **20 MiB/s ($145) is
+about 8% more expensive.** The break-even is about 18.8 MiB/s, which is not a purchasable step.
+What can be said is that 16 is 14% cheaper than elastic but has little headroom (4% over the
+upper demand estimate), 20 is 8% more expensive, and 24 is 29% more expensive.
+⚠️ The second draft's "there is no cheap-and-roomy provisioned option" was withdrawn once;
+**against $135 the conclusion moves back toward the first draft** - only the 16 is cheap, and
+that 16 has 4% of headroom.
 
 Even so, "cheaper" is not the reason to stay on elastic. Three reasons are, and they are
 decision 1.
@@ -409,9 +515,10 @@ If provisioned is chosen, watch these together:
 
 ### Decision 1: the stop-gap is to stay on elastic. Do not buy provisioned throughput
 
-⚠️ **On cost alone, provisioned at 16 MiB/s ($116/month) is cheaper than elastic
-(about $142/month), and 20 MiB/s ($145/month) costs about the same while buying 1.30-1.67x
-headroom.** The first draft said the opposite. Three reasons still favour staying put.
+⚠️ **On cost alone, provisioned at 16 MiB/s ($116/month) is 14% cheaper than elastic
+(about $135/month).** The first draft said the opposite. ⚠️ The third draft's "20 MiB/s costs
+about the same while buying 1.30-1.67x headroom" is **withdrawn in the fourth pass** (elastic
+fell to $135, so 20 MiB/s is about 8% more expensive). Three reasons still favour staying put.
 
 1. **We do not know, by measurement, how high to buy.** The ceiling would be set against an
    estimated peak (12-15 MiB/s, a scenario extrapolation) derived by applying a median
@@ -477,6 +584,12 @@ inverse of PR #711, we find out from CloudWatch and not from the invoice.
 directory named `.config`. The comment in `meta.go` that believes it is on the home volume is a
 record of the design intent: that is where it belongs.
 
+⚠️ **What this decision removes is larger than one `ListMetas()` call.** Under the same
+directory sit fstores read once per session (`claude-sid`, which `LiveSID()` reads for every
+session in the listing; `session-status/`; `pending-perm/`; `session-injections/`;
+`notification-markers/` …), and **the `keep` mount's OPEN/CLOSE traffic is their sum**. Measured
+on 2026-09-18, `keep` carried **43-103 RPC/s per box**.
+
 🔴 **But it cannot be moved wholesale.** The same directory holds `secrets.enc` /
 `secrets.json` (`internal/secrets/secrets.go:383`), which is the credential store for Git,
 Claude OAuth and connections. Naively repointing `AgentConfigDir()` **takes the credentials down
@@ -512,6 +625,16 @@ losing credentials. **Credentials (`secrets.*`, `~/.ssh`, `.git-credentials`, `.
 stay on EFS** - ADR 0045's line about not leaving plaintext on local disk does not move.
 
 ### Decision 5 (permanent, P1): stop the remaining two `projects/*` sweeps
+
+⚠️ **2026-09-18 added one more reason this belongs at P1.** How much B is worth depends on the
+box's fixture (`4(1+P)xn` against `5M+4`), so it **only dominates where projects are many and
+metas are few**. And the `claude` mount issued no READDIR RPC in 660 seconds, so **B's syscalls
+are probably absorbed almost entirely by the directory attribute cache and never reach the
+wire.**
+🔴 **That is not a reason to skip it** - the absorption rate is unmeasured, and attribute
+revalidation surfaces as GETATTR, so part of `claude`'s GETATTR traffic *is* B. **Land decision 4
+first, clear `keep`, then re-measure what is left on `claude` with conditions 3 and 4 of
+verification step 0, and start from there.**
 
 - **Remember the `subagentBases()` miss, but only on the status path.** The "never remember a
   miss" invariant on the transcript side exists to protect the `SessionJSONLExists` →
@@ -605,7 +728,7 @@ round trips has come down.
 - **EBS only**: losing the single-AZ EBS would take the login credentials with it. That is
   precisely why `keep` was created.
 - **Lengthening the poll interval**: 4 s → 8 s halves the I/O at the cost of a slower UI.
-  **The abnormal part is that one poll performs 800 file operations**, so fix the weight of a
+  **The abnormal part is that one poll performs over 1,000 file operations**, so fix the weight of a
   poll, not its frequency. Tune the frequency afterwards, against whatever is left.
 
 ## How to verify on real infrastructure
@@ -614,24 +737,56 @@ After decisions 4 and 5 land, verify in this order. ⚠️ A benchmark can be gr
 still not have measured the deployment's wiring, so **always confirm against the CloudWatch
 numbers**.
 
-0. **First, settle whether A or B dominates** (before decision 5 is implemented). On a
-   production box, take a `/proc/self/mountstats` delta (READDIR / GETATTR / OPEN / READ RPC
-   counts for `claude` and `keep` separately) **together with** the VFS operation count for the
-   same interval. ⚠️ **The RPC mix alone cannot identify the caller** (see the note in the
-   body): READDIR RPCs being 0 on the `claude` mount in the 20-second delta on 09-17 at
-   12:20 JST does not prove B contributes little - the entries can come from cache while the
-   attribute revalidation still shows up as GETATTR. **The contribution is currently unknown**,
-   and fixing without knowing the ranking means not knowing what is left when it does not help.
+0. **The ranking of A against B** (before decision 5 is implemented). **Carried out on
+   2026-09-18; the answer is "it flips from box to box, so no single ranking exists"** - the
+   derivation is in "Putting it together". On the syscall side the ratio is
+   **(5M+4) : (4(1+P)xn)**, independent of tab count and fixed by the fixture alone.
+   🔴 **The wire-level (RPC) ranking is still unconfirmed.** Taking conditions 1-4 below means
+   **occupying one box and opening and closing its Console tabs and sessions**, and on
+   2026-09-18 both production boxes were in use by real users, so **only reads were taken**
+   (mountstats deltas, counting M and P) and no condition was created. When a free window is
+   available:
+
+   1. **0 claude sessions, 0 Console tabs** - the floor of the floor.
+   2. **0 claude sessions, 1 tab** - the increment is entirely **A** (and should appear on
+      `keep`). B is claude-only, so it is structurally zero here - **this is the only condition
+      that isolates A**.
+   3. **n idle claude sessions, 1 tab** - the increment is **B** (on `claude`). Vary n from 1 to
+      3 and check linearity.
+   4. **Repeat 3 on a box with a different `projects/` count** - B should scale with `(1 + P)`.
+
+   ⚠️ **The RPC mix alone cannot identify the caller** (see the note in the body). Across the
+   five windows and 660 seconds of 2026-09-18, the `claude` mount issued **zero READDIR RPCs in
+   total**, but that still does not prove B contributes little - the entries can come from cache
+   while attribute revalidation shows up as GETATTR.
+   ⚠️ **Do not use syscall counts as a proxy for RPC counts.** Directory reads (B) are largely
+   absorbed by the directory attribute cache, while a file `open()` (A) needs a stateid under
+   NFSv4 and goes to the wire one-for-one - **the absorption rates differ**, so reading the
+   syscall ratio as an RPC ratio overstates B.
 1. **Unit (`strace`).** Run the same shape of probe as this ADR - real code compiled into a
    test binary, started as a child, counted with `strace -c`. ⚠️ **Measure the display path and
    the safety paths separately** (decision 5): (1) the **display** path, with the cache warm,
-   should drop from 158 syscalls per call to single digits; (2) the **safety** paths (delivery
-   check, completion report, stop firing) still search for real, so **158 is the correct number
+   should drop from 156 syscalls per call to single digits; (2) the **safety** paths (delivery
+   check, completion report, stop firing) still search for real, so **156 is the correct number
    there** - demanding single digits would pass an implementation that deleted the safety check.
-   Confirm that `ListMetas()`'s 836 becomes **zero on EFS** (because it moved to home).
-   ⚠️ **`-e trace=file` is not enough**: `read` and `close` take no filename and so fall outside
-   that set, losing 624 of `ListMetas()`'s 836. The set actually used was
-   `-e trace=getdents64,openat,newfstatat,read,close`.
+   Confirm that `ListMetas()`'s 1,039 becomes **zero on EFS** (because it moved to home).
+
+   🔥 **Get the trace set wrong and the number comes out quietly too small.** `-e trace=file` is
+   not enough: `read` and `close` take no filename and so fall outside that set. And **`fstat`
+   must be included**: `os.ReadFile`'s `f.Stat()` emits **`fstat`**, not `newfstatat`, on
+   linux/amd64, so watching only `newfstatat` loses one syscall per meta and makes 1,039 look
+   like 836 (which is what every draft up to the third reported). The set to use is:
+
+   ```
+   -e trace=getdents64,openat,newfstatat,fstat,statx,read,close,lstat,pread64
+   ```
+
+   The probe can be a short test that reads `AF_PROBE_PROJECTS` / `AF_PROBE_METAS` /
+   `AF_PROBE_ITERS` / `AF_PROBE_MODE`, builds the fixture in temp dirs and points
+   `CLAUDE_CONFIG_DIR` and `AF_SESSIONS_DIR` at them (put it inside
+   `internal/agents/claude` so it can call `subagentBases`). **Run it twice, at `ITERS=0` and
+   `ITERS=N`, and divide the difference by N** - fixture construction and process start-up
+   cancel out, and repeat-to-repeat reproducibility was ±0.02%.
 2. **The one-box floor.** Arrange an hour with exactly one user running and watch
    `MetadataIOBytes`' **`SampleCount`** (the operation count itself, no estimation).
    **107.7 ops/s is the starting point.** ⚠️ "it should land in the low single digits" is an
@@ -644,7 +799,15 @@ numbers**.
    153). ⚠️ Do not compare across different times of day - that is how the first draft's "half"
    was produced.
 4. **The bill.** Watch `APN1-ETDataAccess-Bytes` in `ce get-cost-and-usage` over three working
-   days. ⚠️ CE rows stay `Estimated=true` for a while. When reconciling against CloudWatch, line
+   days. 🔥 **Read `Estimated=true` as "not finished filling in yet".** Pulling the 09-17 row at
+   09:00 JST on 2026-09-18 gave an I/O figure 4.1% below CloudWatch - with the very procedure
+   that agreed to 0.12% on the 09-16 window. **The tell is the storage line on the same row**:
+   `APN1-TimedStorage-ByteHrs` can be computed for a full day from `StorageBytes`, and on
+   settled days the ratio of the CE actual to that computation is **constant (94.6% on
+   09-14/15/16)**. For 09-17 it was 58%, which is how the row was known to be partial.
+   ⚠️ The rows are cut on the **UTC** day, so do not divide them by box-hours aggregated over
+   JST calendar days (09-17 is 51.26 against 45.92 - a 12% difference).
+   ⚠️ When reconciling against CloudWatch, line
    up **the same numerator (reads + writes), the same window, minute resolution and GiB** - done
    that way, 09-16's window agreed to 0.12% (mismatched, it is 6-8% out). That is this window's
    residual, not a guarantee for the next. Anything finer than DAILY needs the payer account to
@@ -662,16 +825,32 @@ numbers**.
   working copy under `~/repos`. Production runs ecs-ec2 so it does not appear in these
   measurements, but the same method should show an order of magnitude more. This ADR does not
   decide it.
-- 🔴 **Whether source A or source B dominates the floor is still undecided** (the biggest gap).
-  `/proc/self/mountstats` was captured once on a production box (the table above), but **the RPC
-  mix does not identify the caller**, so all those 20 seconds support is "READDIR RPCs were 0,
-  GETATTR dominated, **contribution unknown**". The ranking is not settled until **VFS operations
-  and RPCs are captured together, during an interval where the floor is visible**. That is why
-  decision 4 is sequenced ahead of decision 5.
+- ✅ **"Does A or B dominate" is answered - and the answer is "neither"** (2026-09-18). The two
+  ride **the same request**, so the ratio does not depend on tab count and is fixed at
+  **(5M+4) : (4(1+P)xn)**, which **flips from box to box** (it did, on the two production
+  boxes). **There is no single dominant source**, so decisions 4 and 5 are not an either/or -
+  they rescue different boxes. Two gaps remain.
+- 🔴 **The wire-level (RPC) ranking is still open.** The ratio above is over syscalls, not RPCs,
+  and **the directory attribute cache absorbs A and B at very different rates** (zero READDIR
+  RPCs on `claude` in 660 seconds). Until **one box is occupied and conditions 1-4 of
+  verification step 0 are taken**, the wire-level ranking is undetermined. On 2026-09-18 both
+  production boxes were in use by real users, so only reads were taken.
+- 🔴 **Whether `ListMetas()` is the only thing opening files on `keep`.** Box 1 (M=16) carried
+  35.6-46.8 OPEN/s, which `ListMetas()` alone would need the tick rate of 9 to 12 tabs to
+  produce. Between two windows `keep` OPENs rose 32% while the `claude` side did not move, which
+  points at **another opener that varies independently of the tick** (the `claude-sid` and
+  sibling fstores). ⚠️ But **the number of open tabs was never observed independently**, so "it
+  really did have 9 tabs" cannot be ruled out. Exposing the SSE subscriber count on the CP side
+  is the cleanest way to close this.
 - **How much the NFS attribute cache absorbs.** The syscall counts above are VFS-level, not
   NFS round trips. Directory contents are answered locally until `acdirmin` (default 30 s) and
   file attributes until `acregmin` (default 3 s). The first draft estimated "one to three round
   trips per operation"; because the concurrent VFS operation count was never captured, **that
-  ratio remains unverified**.
+  ratio remains unverified**. 2026-09-18 established the **direction** only: the `claude` mount
+  issued no READDIR RPC in 660 seconds, so **directory reads are absorbed at close to 100%**
+  (B's syscalls mostly never reach the wire), while `keep`'s OPEN and CLOSE came out in exactly
+  equal counts in every window, so **file `open()`s are not absorbed at all** (an NFSv4 OPEN
+  needs a stateid and cannot be served from cache). **The ratio itself is still unmeasured**,
+  but "A and B are absorbed at very different rates" can be said.
 - **What migration does to existing boxes under decision 4 (b).** If the Agent dies mid-way
   through the one-way migration, something has to decide which side wins.
