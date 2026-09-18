@@ -18,7 +18,7 @@ How each setting is *used* belongs to the other chapters, so read this one as a
 |---|---|
 | **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / AI assistance / Agent instructions / Agent memory |
 | **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens / AWS SSM |
-| **Workspace** | Agent usage / Cloud cost / Running time / Machine / Toolchain / Preview subdomains / Internal repositories / Export & import / Danger zone |
+| **Workspace** | Agent usage / Cloud cost / Running time / Machine / Toolchain / Databases / Preview subdomains / Internal repositories / Export & import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
 - **On a phone it is a list → detail drill-down.** Back returns to the list; back again closes the dialog.
@@ -387,6 +387,14 @@ Timezone, Node.js / Java / Go versions, the table of effective tool versions, **
 default), and applying an Agent Fleet update.
 → [10 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
 
+### Databases
+
+PostgreSQL and MySQL for this workspace — what database-backed tests run against. Each engine's
+state, version, memory, port and connection URL, with installing, starting and stopping it,
+creating, deleting and resetting a database by name, a shell already connected to one, and
+**Start with the workspace** (off by default). The same things from a terminal are `af-db`.
+→ [03 Repositories and git](03-code.md#running-database-backed-tests)
+
 ### Preview subdomains
 
 Settings for opening the app you are building at `https://<random>-<port>.<domain>/`. **The tab is only
@@ -458,6 +466,7 @@ deeper reset that also removes home except logins and connections). Both lose un
 | I want to know when my workspace was actually running | Running time |
 | It memorised something wrong | Agent memory |
 | Change the Java / Node version | Toolchain |
+| Run a test suite that needs a database | Databases |
 | Show the app you are building to someone | Preview subdomains |
 | Get into another server | AWS SSM |
 | Keep code that cannot leave the building | Internal repositories |
