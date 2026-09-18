@@ -84,16 +84,18 @@ describe("engine pill — decision 4, no countdown without stop_eta", () => {
 });
 
 describe("engine pill — decision 4/11, an external row shows state only", () => {
-  it("popover row for an external engine shows 'Available' and a lifecycle badge, no state/stop/idle lines", async () => {
+  it("popover for an external engine shows 'Available' and a lifecycle badge, no state/stop/idle lines", async () => {
     await render([
       { key: "lan", api: "images", lifecycle: "external", idle_secs: 999, stop_eta: new Date().toISOString() },
     ]);
     await openPopover(pills()[0]);
-    const rowEl = host.querySelector(".engine-row")!;
+    // A single-row role carries its state (and the lifecycle word) in the popover header — the
+    // row's own head would only repeat the role label with an operator's key beside it.
+    const headEl = host.querySelector(".engine-popover-head")!;
     // Default locale is ja — "engine.state_available" / "engine.lifecycle_external".
-    expect(rowEl.querySelector(".engine-row-state")?.textContent).toBe("利用可");
-    expect(rowEl.querySelector(".engine-row-lifecycle")?.textContent).toBe("外部管理");
-    expect(rowEl.querySelector(".engine-row-line")).toBeNull();
+    expect(headEl.querySelector(".engine-row-state")?.textContent).toBe("利用可");
+    expect(headEl.querySelector(".engine-row-lifecycle")?.textContent).toBe("外部管理");
+    expect(host.querySelector(".engine-row .engine-row-line")).toBeNull();
   });
 
   // Positive control: a self-managed stopped row (same popover render path) DOES draw an
@@ -104,6 +106,34 @@ describe("engine pill — decision 4/11, an external row shows state only", () =
     const lines = Array.from(host.querySelectorAll(".engine-row-line")).map((n) => n.textContent);
     expect(lines.some((t) => t?.includes("30 分"))).toBe(true); // idle_policy: dur(1800s) = 30 分
     expect(lines.some((t) => t?.includes("起動します"))).toBe(true); // cold_hint
+  });
+});
+
+describe("engine pill — where the popover puts the state and the engine key", () => {
+  it("a single-row role: state in the header, no key and no row head at all", async () => {
+    await render([{ key: "llm", api: "chat", state: "running", warm: true }]);
+    await openPopover(pills()[0]);
+    const headEl = host.querySelector(".engine-popover-head")!;
+    expect(headEl.textContent).toContain("チャット"); // engine.role_chat
+    expect(headEl.querySelector(".engine-row-state")?.textContent).toBe("準備済み");
+    expect(host.querySelector(".engine-row-head")).toBeNull();
+    expect(host.querySelector(".engine-row-key")).toBeNull();
+  });
+
+  // Positive control for the assertions above: two rows DO get a key and a per-row state, and
+  // then the header carries neither — the key is the only thing telling the rows apart
+  // (decision 11), and one header badge could only ever describe one of them.
+  it("a two-row role: a key and a state per row, and nothing in the header", async () => {
+    await render([
+      { key: "comfy-l4", api: "images", state: "running", warm: true },
+      { key: "lan", api: "images", lifecycle: "external" },
+    ]);
+    await openPopover(pills()[0]);
+    const keys = Array.from(host.querySelectorAll(".engine-row-key")).map((n) => n.textContent);
+    expect(keys).toEqual(["comfy-l4", "lan"]);
+    const states = Array.from(host.querySelectorAll(".engine-row .engine-row-state")).map((n) => n.textContent);
+    expect(states).toEqual(["準備済み", "利用可"]);
+    expect(host.querySelector(".engine-popover-head .engine-row-state")).toBeNull();
   });
 });
 

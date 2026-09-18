@@ -72,7 +72,10 @@ for an answer. **Ready** means the model is in VRAM and can answer at once, with
 **Running** is the step before that: the box is up, but the model is still loading, so a request
 would wait.
 
-Press the pill and a popover lists each engine on its own line: its state, **External** or
+Press the pill and a popover opens. Where the role has one engine, its state sits at the right of
+the popover's heading and everything below is detail. Only where several engines serve one role
+does each line carry the engine's own name and state — that name is the only thing telling those
+lines apart. The lines are: its state, **External** or
 **Borrowed** where that applies (hover for what it means — those cannot be started or stopped
 from this deployment), what is in VRAM right now (**"Model: Qwen3.8 27B IQ4_XS"**, or the id when
 the catalogue has no readable name), **"Last used 2m ago"** when nobody is using it, **"Stops at
