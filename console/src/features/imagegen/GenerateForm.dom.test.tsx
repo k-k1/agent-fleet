@@ -260,3 +260,24 @@ describe("fleet が複数あるときの選択", () => {
     expect((providerField() as HTMLSelectElement).value).toBe("image");
   });
 });
+
+// 🔴 The option's TEXT is the name and its VALUE is the id (ADR 0090). A member never sees an S3
+// key, so the id buys them nothing — and after ADR 0089 a catalogue routinely holds two sizes of
+// one model, whose ids differ by a few characters and say nothing about which is which. The value
+// must not move: it is what the generation names.
+describe("モデルの選択肢 (ADR 0090)", () => {
+  const NAMED: ImagegenModel = { ...SDXL, id: "qwen-image_q8", label: "unsloth/Qwen-Image-GGUF Q8_0" };
+
+  it("draws the label and still sends the id", async () => {
+    await render(NAMED);
+    const option = document.querySelector<HTMLOptionElement>(`option[value="${NAMED.id}"]`)!;
+    expect(option).toBeTruthy();
+    expect(option.textContent).toBe("unsloth/Qwen-Image-GGUF Q8_0");
+    expect(option.value).toBe("qwen-image_q8");
+  });
+
+  it("falls back to the id for a model the catalogue composed no name for", async () => {
+    await render(SDXL);
+    expect(document.querySelector<HTMLOptionElement>(`option[value="${SDXL.id}"]`)!.textContent).toBe("sdxl-base");
+  });
+});

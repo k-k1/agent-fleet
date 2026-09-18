@@ -346,7 +346,8 @@ func (p *comfyProvider) Models(ctx context.Context) []ModelInfo {
 	}
 	out := make([]ModelInfo, 0, len(conn.Models))
 	for _, id := range conn.Models {
-		out = append(out, ModelInfo{ID: id, Description: conn.Descriptions[id], Warm: id != "" && id == conn.Warm})
+		out = append(out, ModelInfo{ID: id, Label: conn.Labels[id],
+			Description: conn.Descriptions[id], Warm: id != "" && id == conn.Warm})
 	}
 	return out
 }
@@ -380,7 +381,7 @@ func (p *comfyProvider) Studio(ctx context.Context) (Studio, bool) {
 		}
 		lic := conn.Licenses[id]
 		out.Models = append(out.Models, StudioModel{
-			ID: id, Description: conn.Descriptions[id], Family: string(family),
+			ID: id, Label: conn.Labels[id], Description: conn.Descriptions[id], Family: string(family),
 			Sizes: comfySizesFor(conn, id), Params: comfyEffectiveDefaults(conn, family, id),
 			Negative: conn.Negatives[id], Knobs: comfyModelKnobs(conn, family, id),
 			Warm:        id != "" && id == conn.Warm,

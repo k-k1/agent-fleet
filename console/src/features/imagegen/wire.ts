@@ -68,6 +68,13 @@ export interface LoraRef {
  *  degrades to "no knobs declared", which is what `knobs` being absent has to mean. */
 export interface ImagegenModel {
   id: string;
+  /** What to SHOW instead of the id (ADR 0090) — the publisher's name and the part that tells
+   *  two sizes of one model apart, composed by the Control Plane.
+   *
+   *  🔴 A name to draw, never a value to send: `id` is what a generation names. Absent on an
+   *  Agent or a Control Plane that composes none, and the form then draws the id as it always
+   *  did. */
+  label?: string;
   description?: string;
   warm?: boolean;
   family?: string;

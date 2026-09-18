@@ -475,10 +475,18 @@ func TestPlanProposesAnIdNothingElseHolds(t *testing.T) {
 	if got := enginePlanID("anima-aesthetic-v1.1", "x.safetensors", rows); got != "anima-aesthetic-v1.1" {
 		t.Errorf("an explicit id was rewritten to %q", got)
 	}
-	// The quantisation names the FILE, not the model: the same model at two quantisations
-	// proposes one id.
-	if a, b := engineIDFromFile("qwen-q4_k_m.gguf"), engineIDFromFile("qwen-q8_0.gguf"); a != b || a != "qwen" {
-		t.Errorf("quantisations proposed %q and %q", a, b)
+	// 🔴 The quantisation is KEPT (ADR 0090), and used to be stripped on the rule "the
+	// quantisation names the file, not the model". That was true while a deployment held one
+	// size of a model, and stopped being true when ADR 0089 made taking in a second size one
+	// press: measured on unsloth/Qwen3.8-27B-GGUF, all four sizes proposed one id, so the second
+	// row became `<name>-2` — a numeric suffix where the distinguishing fact should be, in the id
+	// a member picks by.
+	a, b := engineIDFromFile("qwen-q4_k_m.gguf"), engineIDFromFile("qwen-q8_0.gguf")
+	if a != "qwen-q4_k_m" || b != "qwen-q8_0" {
+		t.Errorf("quantisations proposed %q and %q, want each to carry its own", a, b)
+	}
+	if got := engineIDFromFile("Qwen3.8-27B-UD-IQ2_S.gguf"); got != "qwen3.8-27b-ud-iq2_s" {
+		t.Errorf("proposed %q for a real quantisation file", got)
 	}
 }
 
