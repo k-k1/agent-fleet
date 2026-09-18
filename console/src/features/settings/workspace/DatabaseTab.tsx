@@ -3,6 +3,9 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { api, apiJSON } from "../../../core/api/client.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
+import { useSettingsUI } from "../store.ts";
+import { openSessionTerminal } from "../../sessions/open.ts";
+import { useSessionsStore } from "../../sessions/store.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 
 // The name a member may type for a new database. Same shape the Agent enforces
@@ -128,6 +131,36 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
     }
   };
 
+  // Connect opens a Shell session sitting in the home and runs `af-db connect`
+  // in it. The client, not the Console, is the thing a member actually wants:
+  // `af-db url` hands over a URL they then have to paste into a psql they may
+  // not have, while this lands them at a prompt on the right database.
+  //
+  // A shell rather than the client as the session's own program, so quitting the
+  // client leaves a usable shell instead of killing the session. `af-db connect`
+  // resolves the socket, password and user itself, so it works even though this
+  // brand-new session's environment predates nothing.
+  const handleConnect = async (db: DBDatabase) => {
+    setBusy(true);
+    const res = await apiJSON("api/sessions", "POST", {
+      kind: "shell",
+      // No dir: a home session. The database is not tied to the working copy the
+      // member happens to have open, and the Connect button names it explicitly.
+      initial_prompt: `af-db connect ${eng.engine} --db=${db.name}`,
+      title: `${eng.engine === "postgres" ? "psql" : "mysql"} ${db.name}`,
+    });
+    setBusy(false);
+    if (!alive.current) return;
+    if (res && res.error) {
+      toast(tr("env.db_action_failed", { msg: res.error.message || "" }));
+      return;
+    }
+    void useSessionsStore.getState().refresh();
+    // The settings modal covers the pane the session just opened in.
+    useSettingsUI.getState().closeSettings();
+    openSessionTerminal(res.name);
+  };
+
   const handleDrop = async (db: DBDatabase) => {
     const ok = await askConfirm({
       title: tr("env.db_drop_confirm_title"),
@@ -228,6 +261,14 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
                   title={tr("env.db_copy")}
                 >
                   {copied === db.name ? tr("env.db_copied") : tr("env.db_copy")}
+                </button>
+                <button
+                  className="db-btn db-btn-connect"
+                  disabled={busy2}
+                  onClick={() => handleConnect(db)}
+                  title={tr("env.db_connect_hint")}
+                >
+                  {tr("env.db_connect")}
                 </button>
                 <button
                   className="db-btn db-btn-drop"

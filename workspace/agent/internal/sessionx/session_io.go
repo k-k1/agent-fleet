@@ -858,7 +858,16 @@ func deliverInitialPrompt(name, prompt string) {
 		kind = meta.Kind
 	}
 	ready := false
-	for i := 0; i < 60; i++ {
+	// A shell has no composer to wait for, and PaneMode has no case for it — so the
+	// loop below would spend its full 30 s finding nothing and only then type. A
+	// shell also cannot eat the input the way a booting CLI does: bash has a
+	// line-disciplined tty from the moment it execs, and anything typed before the
+	// prompt is drawn is buffered by the terminal driver rather than dropped. So
+	// wait only for the pane, which the caller already did.
+	if kind == session.KindShell {
+		ready = true
+	}
+	for i := 0; !ready && i < 60; i++ {
 		if PaneMode(kind, tn) != "" {
 			ready = true
 			break
