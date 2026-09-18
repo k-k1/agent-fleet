@@ -101,11 +101,23 @@
   padding: 8px;
 }
 .engine-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 2px 6px 8px;
   font-size: 11px;
   color: var(--muted);
   border-bottom: 1px solid var(--border2, var(--border));
   margin-bottom: 6px;
+}
+/* The state badge a single-row role carries up here (the row below then has no head of its
+   own). Its own flex box so the badge and the external/borrowed word stay together on the
+   right while the role label keeps the left. */
+.engine-popover-head-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .engine-row {
   padding: 2px 6px;

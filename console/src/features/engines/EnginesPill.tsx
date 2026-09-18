@@ -124,6 +124,7 @@ function EngineRolePill({ role, rows }: { role: EngineRole; rows: EngineMemberRo
   useDismiss(ref, open, () => setOpen(false));
 
   const head = pickHeadRow(rows);
+  const single = rows.length === 1;
   const word = stateWord(head);
   const tone = STATE_TONE[word];
   const roleLabel = tr(ROLE_LABEL_KEY[role]);
@@ -171,9 +172,22 @@ function EngineRolePill({ role, rows }: { role: EngineRole; rows: EngineMemberRo
       </button>
       {open && (
         <div className="engine-popover" role="dialog" aria-label={roleLabel}>
-          <div className="engine-popover-head">{roleLabel}</div>
+          {/* With one row — what nearly every deployment has — the row's own head would repeat
+              this line: the engine KEY is an operator's word (it names a row in the admin panel,
+              nothing a member can press), and "チャット" already says which engine this is. So the
+              state badge moves up here and the row is detail lines only. With two or more rows the
+              key is the ONLY thing that tells them apart (decision 11), so it stays on each. */}
+          <div className="engine-popover-head">
+            <span>{roleLabel}</span>
+            {single && (
+              <span className="engine-popover-head-state">
+                <span className={"engine-row-state engine-row-state-" + tone}>{stateLabel}</span>
+                <LifecycleBadge row={head} />
+              </span>
+            )}
+          </div>
           {rows.map((row) => (
-            <EngineRowLine key={row.key} row={row} now={now} dur={dur} />
+            <EngineRowLine key={row.key} row={row} now={now} dur={dur} showHead={!single} />
           ))}
         </div>
       )}
@@ -181,7 +195,33 @@ function EngineRolePill({ role, rows }: { role: EngineRole; rows: EngineMemberRo
   );
 }
 
-function EngineRowLine({ row, now, dur }: { row: EngineMemberRow; now: number; dur: (secs: number) => string }) {
+/** The "this deployment does not manage it" badge, with the hover text that says what that
+ *  means. Drawn either on a row's own head or — when the role has a single row — up in the
+ *  popover's header beside the state, so the two sites cannot word it differently. */
+function LifecycleBadge({ row }: { row: EngineMemberRow }) {
+  const tr = useT();
+  if (!row.lifecycle) return null;
+  return (
+    <span
+      className="engine-row-lifecycle"
+      title={tr(row.lifecycle === "remote" ? "engine.lifecycle_remote_hint" : "engine.lifecycle_external_hint")}
+    >
+      {tr(row.lifecycle === "remote" ? "engine.lifecycle_remote" : "engine.lifecycle_external")}
+    </span>
+  );
+}
+
+function EngineRowLine({
+  row,
+  now,
+  dur,
+  showHead,
+}: {
+  row: EngineMemberRow;
+  now: number;
+  dur: (secs: number) => string;
+  showHead: boolean;
+}) {
   const tr = useT();
   const word = stateWord(row);
   const tone = STATE_TONE[word];
@@ -195,18 +235,13 @@ function EngineRowLine({ row, now, dur }: { row: EngineMemberRow; now: number; d
 
   return (
     <div className="engine-row">
-      <div className="engine-row-head">
-        <span className="engine-row-key mono">{row.key}</span>
-        <span className={"engine-row-state engine-row-state-" + tone}>{stateLabel}</span>
-        {row.lifecycle && (
-          <span
-            className="engine-row-lifecycle"
-            title={tr(row.lifecycle === "remote" ? "engine.lifecycle_remote_hint" : "engine.lifecycle_external_hint")}
-          >
-            {tr(row.lifecycle === "remote" ? "engine.lifecycle_remote" : "engine.lifecycle_external")}
-          </span>
-        )}
-      </div>
+      {showHead && (
+        <div className="engine-row-head">
+          <span className="engine-row-key mono">{row.key}</span>
+          <span className={"engine-row-state engine-row-state-" + tone}>{stateLabel}</span>
+          <LifecycleBadge row={row} />
+        </div>
+      )}
       {/* Which model is in VRAM right now. The label when the catalogue has one, the id when it
           does not (ADR 0090 決定 2: the id is the key, and every reader falls back to it) — mono
           only in the fallback, because an id is a key to compare character by character and a
