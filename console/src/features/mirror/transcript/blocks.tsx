@@ -245,7 +245,7 @@ export function CompactBlock({
   );
 }
 
-// ThinkingBlock renders an agent's chain-of-thought (codex/opencode reasoning) as a
+// ThinkingBlock renders an agent's chain-of-thought (claude thinking, codex/opencode reasoning) as a
 // disclosure — "thinking" — so it's available without crowding the answer. Collapsed unless
 // defaultOpen, which comes from the per-kind behaviour setting "show thinking expanded"
 // (Settings > Agents > each card; off by default). Like WorkDisclosure it holds the open/closed

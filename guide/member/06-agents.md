@@ -117,6 +117,7 @@ Claude's behavior can be adjusted on the same screen.
 - **Default model** — the model initially selected when launching a claude session. Tier aliases such as Opus / Sonnet / Haiku follow the newest release in that tier; a registered full model ID pins one release.
 - **Additional Claude models** — register a full ID such as `claude-opus-4-8` to make an older release a normal choice in launch dialogs, default-model settings, and MCP `list_models`. Claude Code's OAuth subscription has no account-aware catalog endpoint, so it checks whether your account can still use that model only when the session starts. Removing an entry removes it from the catalog but does not rewrite existing sessions.
 - **Models to exclude** — take a model out of circulation. An excluded model disappears from the launch dialog, from settings, and from the list an assistant picks from (MCP `list_models`), and any launch that names it explicitly — including a scheduled run's model field or one an assistant starts — is refused. Use it to avoid accidentally picking a model your plan bills extra for (Fable on a Claude Team plan draws on API credit, for example). It is per agent, and excluding a model also clears it from your default model and from any repository's last-used value. Excluding one model affects only that model (`gpt-5.4-mini` stays available after you exclude `gpt-5.4`) — except for claude's tier names (`fable` and friends), which are aliases and so also cover the full model ids that contain them. It cannot stop the CLI's own controls, such as typing `/model` inside the terminal — this prevents accidental selection, it is not a hard billing guard.
+- **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Claude's thinking is the short note on what it is doing right now, written between tool runs — the same text the terminal shows, and sometimes the only prose there is in the middle of a long autonomous stretch. Display only — it doesn't change how the agent works (independent of the same setting on codex / opencode).
 - **Remote control** — turns on / off the ability to remotely drive running sessions from your local Claude app and the like. Off by default in new workspaces (turn it on here if you need it).
 - **Notifications** — whether to notify you of session state changes.
 - **RTK (token savings)** — see below.
@@ -138,7 +139,7 @@ paste it → wait for approval).
 
 **Behavior** also covers how codex's thinking (chain-of-thought) is shown.
 
-- **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only — it doesn't change how the agent works. It's per agent, and opencode has the same setting.
+- **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only — it doesn't change how the agent works. It's per agent, and claude / opencode have the same setting.
 
 ## OpenCode
 
@@ -157,7 +158,7 @@ finish answering and cuts short any that do not, so press it when nothing is mid
 
 **Behavior** also lets you choose how opencode's thinking (chain-of-thought) is shown.
 
-- **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only — it doesn't change how the agent works (independent of the same setting on codex).
+- **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only — it doesn't change how the agent works (independent of the same setting on claude / codex).
 
 ## GitHub Copilot
 

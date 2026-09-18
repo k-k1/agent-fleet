@@ -236,7 +236,7 @@ function TranscriptTurnImpl({
       ) : item.p.kind === "userfile" ? (
         liftFiles ? null : renderUserFile(item.p, base + item.i)
       ) : item.p.kind === "thinking" ? (
-        // The agent's chain-of-thought (codex reasoning / opencode reasoning),
+        // The agent's chain-of-thought (claude thinking / codex / opencode reasoning),
         // collapsed unless this agent's behaviour setting asks for it expanded.
         <ThinkingBlock
           key={base + item.i}

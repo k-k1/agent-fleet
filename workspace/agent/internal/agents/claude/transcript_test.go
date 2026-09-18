@@ -608,3 +608,71 @@ func TestPeerMessageTurn(t *testing.T) {
 		}
 	}
 }
+
+// TestAssistantPartsThinking: claude narrates a long autonomous stretch through THINKING
+// blocks (the summaries the terminal prints between tool runs), which used to be dropped —
+// the mirror then showed tool traces with no prose at all while the terminal was talking.
+// They become their own parts, in order, but never join the turn's Text: that is the answer
+// (copy, TTS, translation, title all read it) and a thinking summary is not part of it.
+func TestAssistantPartsThinking(t *testing.T) {
+	content := `[{"type":"thinking","thinking":"","signature":"sig"},` +
+		`{"type":"thinking","thinking":"まず本番 ECR を見る。","signature":"sig"},` +
+		`{"type":"text","text":"確認します。"},` +
+		`{"type":"tool_use","name":"Bash","id":"t1","input":{"command":"ls"}}]`
+	parts, text := assistantParts(json.RawMessage(content))
+	want := []struct{ kind, text string }{
+		{"thinking", "まず本番 ECR を見る。"},
+		{"text", "確認します。"},
+		{"tool", ""},
+	}
+	if len(parts) != len(want) {
+		t.Fatalf("parts = %d, want %d (%+v)", len(parts), len(want), parts)
+	}
+	for i, w := range want {
+		if parts[i].Kind != w.kind || (w.text != "" && parts[i].Text != w.text) {
+			t.Errorf("part[%d] = %q/%q, want %q/%q", i, parts[i].Kind, parts[i].Text, w.kind, w.text)
+		}
+	}
+	// A signature-only block carries nothing to read: it must not become an empty disclosure.
+	if text != "確認します。" {
+		t.Errorf("Text = %q, want the answer text alone", text)
+	}
+}
+
+// TestCollectTurnsUsageOncePerRequest: claude writes ONE API response as several rows and
+// repeats that response's final usage on every one of them, while output tokens are SUMMED
+// across a turn's rows downstream (AggregateUsage / usage_fold). Emitting thinking rows
+// therefore had to come with this: one usage record per requestId, kept on the newest row —
+// the one that already carried it when the thinking rows were being dropped.
+func TestCollectTurnsUsageOncePerRequest(t *testing.T) {
+	row := func(req, block string) []byte {
+		return []byte(`{"type":"assistant","requestId":"` + req + `","message":{"model":"m","content":[` + block + `],` +
+			`"usage":{"input_tokens":32,"output_tokens":796,"cache_read_input_tokens":243165,"cache_creation_input_tokens":965}}}`)
+	}
+	lines := [][]byte{
+		row("req_a", `{"type":"thinking","thinking":"考える"}`),
+		row("req_a", `{"type":"text","text":"答え"}`),
+		row("req_a", `{"type":"tool_use","name":"Bash","id":"t1","input":{"command":"ls"}}`),
+		row("req_b", `{"type":"text","text":"次"}`),
+	}
+	turns := CollectTurns(lines, 0, len(lines))
+	if len(turns) != 4 {
+		t.Fatalf("turns = %d, want 4", len(turns))
+	}
+	out, in := 0, 0
+	for _, tn := range turns {
+		out += tn.OutTok
+		in += tn.InTok + tn.CacheRead + tn.CacheCreate
+	}
+	if out != 2*796 {
+		t.Errorf("summed OutTok = %d, want %d (one response counted once)", out, 2*796)
+	}
+	if in != 2*(32+243165+965) {
+		t.Errorf("summed input = %d, want %d", in, 2*(32+243165+965))
+	}
+	// The row that keeps the numbers is the NEWEST of its response, so the context reading
+	// downstream (last non-zero input/cache wins) still lands on the end of the response.
+	if turns[2].OutTok != 796 || turns[0].OutTok != 0 || turns[1].OutTok != 0 {
+		t.Errorf("usage kept on the wrong row: %d %d %d", turns[0].OutTok, turns[1].OutTok, turns[2].OutTok)
+	}
+}
