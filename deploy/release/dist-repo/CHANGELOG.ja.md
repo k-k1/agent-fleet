@@ -3,6 +3,14 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.22.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.22.0) — 2026-09-18
+
+PostgreSQL と MySQL がワークスペースの中で動くようになりました——作業コピーごとに 1 つ、
+Docker も手作業の導入もなしで、端末の `af-db` か設定の「データベース」タブから使えます。
+モデル目録も目録らしくなりました。モデルには配布元が付けた名前と作例の絵が並び、
+量子化リポジトリはダウンロードの前に GPU に収まるかを答え、モデルを選ぶ利用者には
+id ではなく名前が届きます。
+
 ## [0.21.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.21.0) — 2026-09-16
 
 モデルの取り込みが 1 押しになりました——検索し、計画を読み、確かめるだけです。カタログの

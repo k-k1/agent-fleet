@@ -26,6 +26,28 @@ Keeping it current:
 
 ---
 
+## [0.22.0](0.22.0.md) — 2026-09-18
+
+**CLI pins** — Claude Code 2.1.275, Codex 0.155.0, Copilot 1.0.86, Antigravity 1.2.5, Cursor 2026.09.15, Kiro 2.22.0
+
+**New / Improved**
+
+- **[workspace / databases]** PostgreSQL and MySQL run in the workspace, one database per working copy, installed and started on the first `af-db url`; the data survives Stop → Start, the port is 5432 / 3306, and starting an engine puts `psql` / `mysql` on `PATH`
+- **[workspace / databases]** A Databases tab in the workspace settings: each engine's state, version, memory and URL, install / start / stop, create, delete or reset a database by name, a shell already connected, and "Start with the workspace" (off by default)
+- **[engines]** A registered model is headed by the name its publisher gave it, with that publisher's example images, and the list is divided into families with a chip per family; one button fetches the names and pictures for models taken in earlier
+- **[engines]** A repository's quantisations are one card that answers "will this fit" before the download: the context window is a field defaulting to the largest that fits, each file is marked Fits / Tight / Will not fit this class with the class that would hold it, and a chat model's files are filed under their repository with the rest of its quantisations one press away
+- **[engines]** opencode's model list and the image generation pane's picker name a model by its publisher's name rather than by its id (the id stays the key a request names)
+- **[mirror]** "Translate automatically" presses the Translate button when a turn finishes, for answers that arrive while you are watching that session; off by default and never applied to what was already on screen
+- **[engines]** The registered model list is a grid of cards, each folding to the width it was given rather than to the window's
+- **[agents / opencode]** Changing an opencode key or seat leaves the restart to you, on the opencode card in Settings › Agents, instead of folding a running turn; a model-catalogue change reaches the running server with no restart
+
+**Fixed**
+
+- **[agents / opencode]** opencode sessions stopped mid-work without saying so: the shared server was recycled every couple of minutes and the turn that died with it was reported as a completed answer
+- **[workspace / agent]** `workspace-agent --version` started a second agent, which renamed its own MCP server and rewrote claude / codex / opencode / cursor to match; unrecognised arguments now print the usage and stop, and `--version` / `--help` are supported
+- **[agent / efs]** Every workspace on a deployment could slow to a crawl: the agent's changing state is off the shared file system and the transcript sweep is gone, and the file system's throughput mode is a CloudFormation parameter (`EfsThroughputMode`, now `elastic`) instead of a hard-coded `bursting`
+- **[markdown]** A URL followed by Japanese punctuation took everything up to the next space into the link, and two URLs separated by `・` collapsed into one
+
 ## [0.21.0](0.21.0.md) — 2026-09-16
 
 **CLI pins** — Claude Code 2.1.273, OpenCode 1.18.31, Antigravity 1.2.3, Cursor 2026.09.10, Kiro 2.21.4
