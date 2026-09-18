@@ -697,6 +697,21 @@ export function engineModes(e: EngineRow): readonly string[] {
   return engineIsExternal(e) ? ["off", "on"] : ["off", "ondemand", "on"];
 }
 
+/** A search source in the model catalogue. `civitai-red` is Civitai's NSFW sister domain and is
+ *  the only one a deployment can decline to offer — see `catalogSources` below. */
+export type CatalogSource = "hf" | "civitai" | "civitai-red";
+
+/** What a deployment offers when the answer does not say. The safe half, for the same reason
+ *  `isSuper` defaults to false: a Control Plane too old to send the list has no way to mean
+ *  "and the NSFW one", and assuming it would draw the tab exactly where it is not wanted. */
+export const CATALOG_SOURCES_DEFAULT: readonly CatalogSource[] = ["hf", "civitai"];
+
+function catalogSources(value: unknown): CatalogSource[] {
+  if (!Array.isArray(value)) return [...CATALOG_SOURCES_DEFAULT];
+  const known: CatalogSource[] = ["hf", "civitai", "civitai-red"];
+  return known.filter((source) => value.includes(source));
+}
+
 /** Everything both screens need out of `GET /api/admin/engines`, read once per screen.
  *
  * 🔴 `isSuper` comes from the answer's own flag and is never inferred from which fields arrived:
@@ -711,6 +726,9 @@ export function useEngineRows() {
   const tr = useT();
   const [rows, setRows] = useState<EngineRow[] | null>(null);
   const [isSuper, setIsSuper] = useState(false);
+  // The source tab strips are drawn from this and never from a literal: three strips each
+  // keeping their own list is three places for a deployment's gate to be forgotten.
+  const [sources, setSources] = useState<CatalogSource[]>([...CATALOG_SOURCES_DEFAULT]);
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
@@ -722,6 +740,7 @@ export function useEngineRows() {
       }
       setErr("");
       setIsSuper(!!d?.super_admin);
+      setSources(catalogSources(d?.catalog_sources));
       setRows(Array.isArray(d?.engines) ? d.engines : []);
     } catch {
       setErr(tr("admin.load_error"));
@@ -731,7 +750,7 @@ export function useEngineRows() {
     load();
   }, [load]);
 
-  return { rows, isSuper, err, setErr, setRows, load };
+  return { rows, isSuper, sources, err, setErr, setRows, load };
 }
 
 // The heading names the engine by what it does, not by its key: "llm" and "image" are the

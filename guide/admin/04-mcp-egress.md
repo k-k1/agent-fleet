@@ -162,6 +162,15 @@ several files goes in with the same single press. The search can be narrowed to 
 usual ones. On a phone the search, filter and sort stay put above the cards, the next page loads
 when you reach the end, and the example images arrive as thumbnails.
 
+The search asks one source at a time, and the tabs above it are what this deployment offers:
+**Hugging Face** and **Civitai** always, and **Civitai Red** — the sister domain Civitai split off
+for NSFW browsing — only where the deployment was given it. A standard deployment does not have
+it: no tab, no switch, and a search that asks for it anyway is refused. Where it was given (the
+control plane's `AF_ENGINE_CIVITAI_RED`), a super_admin turns it on and off under **API tokens**,
+without a redeploy. 🔴 It is a choice about what this deployment OFFERS, not a content filter —
+the plain Civitai tab also answers models carrying Civitai's NSFW level, which is why every card
+shows that level, and pasting a `civitai.red` address into the ingest form works either way.
+
 Every hit also says **what the source will not let you do, before anything is downloaded**: for a
 Hugging Face repository **gated (accept the terms)** or **gated (the author approves)**; for a
 Civitai file **login required** (the Civitai token, below, is what gets past it); and the

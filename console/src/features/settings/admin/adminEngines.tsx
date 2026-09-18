@@ -50,7 +50,7 @@ import {
 
 export function EnginesAdminView() {
   const tr = useT();
-  const { rows, isSuper, err, setErr, setRows, load } = useEngineRows();
+  const { rows, isSuper, sources, err, setErr, setRows, load } = useEngineRows();
   const [busy, setBusy] = useState("");
   const closeAdmin = useSettingsUI((s) => s.closeAdmin);
   const closeTenant = useSettingsUI((s) => s.closeTenantSettings);
@@ -174,7 +174,7 @@ export function EnginesAdminView() {
           run?" — and answering it needs neither an engine nor a token (ADR 0072 decision 11), so
           this embeds the engine-less browser rather than a sentence pointing at a button that
           has nothing to be a row of yet. */}
-      {rows.length === 0 && <EngineModelsAdminView />}
+      {rows.length === 0 && <EngineModelsAdminView sources={sources} />}
       {/* 🔴 Everything on this screen buys or stops a GPU for the WHOLE deployment, so it is the
           operator's alone. A granted tenant_admin reaches the models screen instead (ADR 0072
           open question 11) and has no door to this one — but the component is reachable from

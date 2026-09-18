@@ -355,6 +355,32 @@ variables (`AF_ENGINE_WAKE_TIMEOUT`, `AF_ENGINE_LLM_*`), documented in the deplo
 
 Background, prices and every measurement: ADR 0071.
 
+### `CivitaiRed`
+
+`AF_ENGINE_CIVITAI_RED` — whether the model catalogue's search offers **Civitai Red**, the
+sister domain Civitai split off on 2026-04-15 for NSFW browsing. `0`, the default, is what a
+standard deployment gets: the source does not exist here, the tab is not drawn, the Console
+shows no switch for it, and a search that asks for it anyway is refused (`403
+engine_civitai_red_off`) — which matters because the ingest routes are reachable by a
+tenant_admin of a tenant granted `allow_engine_ingest`, not only by the operator.
+
+`1` offers it and hands the on/off to a super_admin, under **Admin > Engines > Tokens**. The
+two levels answer different questions: this parameter is "may this deployment have it", the
+Console switch is "is it showing" — so covering it up for a while is not a CloudFormation
+update, and a deployment that never wanted it cannot be given it from a screen.
+
+⚠️ **It is not a content filter, and must not be sold as one.** Measured 2026-09-14: the
+plain Civitai tab's own default query answers models rated `nsfwLevel` 15–31 — only the
+strongest levels are missing from it — and the cards draw Civitai's example images unblurred
+with the rating beside them. What `0` buys is that the deployment does not OFFER NSFW
+browsing. Two consequences worth knowing:
+
+- Pasting a `civitai.red` URL into the ingest form still resolves, either way. Civitai's
+  detail API is domain-blind and both hosts share model ids, so refusing the red spelling
+  would only ask somebody to retype the `civitai.com` one for the same file.
+- A model already taken in through the source keeps its `civitai.red` link in the catalogue.
+  Switching the source off does not rewrite rows that exist.
+
 ## WAF
 
 Optional, OFF by default.

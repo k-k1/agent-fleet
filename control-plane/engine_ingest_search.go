@@ -984,6 +984,12 @@ func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kin
 	case "civitai":
 		hits, nextCursor, aerr = engineSearchCivitaiPage(r.Context(), req, false)
 	case "civitai-red":
+		// The deployment's own gate (engine_civitai_red.go). Here and not in the Console: this
+		// route admits a granted tenant_admin, so a tab that was never drawn is not a refusal.
+		if !a.civitaiRed().on(r.Context()) {
+			writeAPIErr(w, engineCivitaiRedOff())
+			return
+		}
 		hits, nextCursor, aerr = engineSearchCivitaiPage(r.Context(), req, true)
 	case "", "hf":
 		hits, nextCursor, aerr = engineSearchHFPage(r.Context(), req)

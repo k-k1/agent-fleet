@@ -475,6 +475,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_civitai_token_set": "Registered ({who} / {when}). The value cannot be shown — the Control Plane can write it and has no permission to read it back.",
   "admin.engines_civitai_token_unsupported": "This deployment's engine stack has nowhere to keep a token. Update 60-engines and it can be registered from here.",
   "admin.engines_civitai_token_note": "One token for the whole deployment, separate from the Hugging Face one above. It is stored encrypted and written into the deployment's secret before every ingest — read by the ingest task only, and never handed to an engine instance.",
+  "admin.engines_civitai_red": "Civitai Red (the NSFW sister domain)",
+  "admin.engines_civitai_red_show": "Offer the Civitai Red tab in the model search",
+  "admin.engines_civitai_red_note":
+    "civitai.red is the sister domain Civitai split off for NSFW browsing, and this tab is the only search that sends nsfw=true. Example images are drawn unblurred. It is not a content filter — the plain Civitai tab also answers models with a non-zero nsfwLevel. Pasting a civitai.red URL into the ingest form works either way.",
+  "admin.engines_civitai_red_unavailable": "This deployment does not have Civitai Red. Set AF_ENGINE_CIVITAI_RED on the Control Plane and the switch appears here.",
   "admin.engines_ingest_noncommercial":
     "🔴 A non-commercial licence. Both commercial use of the model and commercial use of what it generates may be restricted — read the licence before enabling this.",
   // The GPU rung this role buys (ADR 0074). The hourly figure comes from the ladder the

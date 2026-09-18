@@ -464,6 +464,11 @@ export const admin = {
   "admin.engines_civitai_token_set": "登録済み（{who} / {when}）。値は表示できません——Control Plane は書き込みだけができ、読み戻す権限を持ちません。",
   "admin.engines_civitai_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新すると Console から登録できるようになります。",
   "admin.engines_civitai_token_note": "配備全体で 1 つで、上の Hugging Face のトークンとは別物です。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます——読むのは取り込みタスクだけで、エンジンのインスタンスには渡りません。",
+  "admin.engines_civitai_red": "Civitai Red（NSFW の姉妹ドメイン）",
+  "admin.engines_civitai_red_show": "モデル検索に Civitai Red のタブを出す",
+  "admin.engines_civitai_red_note":
+    "civitai.red は Civitai が NSFW 表示のために分けた姉妹ドメインで、このタブだけが nsfw=true を付けて検索します。作例画像はぼかさずに並びます。内容の絞り込みではありません——既定の Civitai タブにも nsfwLevel が 0 でないモデルは含まれます。取り込みフォームへの civitai.red の URL の貼り付けは、この設定に関わらず通ります。",
+  "admin.engines_civitai_red_unavailable": "この配備には Civitai Red がありません。Control Plane に AF_ENGINE_CIVITAI_RED を設定すると、ここで切り替えられるようになります。",
   // 🔴 この赤い行は FLUX 専用ではなくクラス全体に出る（engineCommercialUse が
   // non-commercial / -nc / cc-by-nc を含む名前すべてに `no` を返す）。CC-BY-NC と BFL の
   // 条項では何を縛るかが違い、生成物まで縛るかも一様ではないので、どちらが引き金かは

@@ -84,16 +84,23 @@ const (
 	// the button again may fix.
 	errCodeEngineDiscoverUnsupported = "engine_discover_unsupported"
 	errCodeEngineDiscoverUnreachable = "engine_discover_unreachable"
-	errCodeIngestBadSource           = "bad_source"
-	errCodeIngestFileUnknown         = "file_unknown"
-	errCodeIngestNoChecksum          = "no_checksum"
-	errCodeIngestSourceUnreach       = "source_unreachable"
-	errCodeIngestSourceForbid        = "source_forbidden"
-	errCodeIngestSourceError         = "source_error"
-	errCodeIngestStartFailed         = "ingest_start_failed"
-	errCodeIngestUnavailable         = "ingest_unavailable"
-	errCodeIngestNotAccepted         = "license_not_accepted"
-	errCodeIngestGatedNoToken        = "gated_no_token"
+	// The Civitai Red search source (engine_civitai_red.go). Two codes because the two refusals
+	// are answered by different people: `off` is a search for a source this deployment does not
+	// offer, which a granted tenant_admin can reach and whose answer is "not here"; `unavailable`
+	// is an attempt to MOVE the switch on a deployment that has none, and the reader's next act
+	// is on the stack rather than in the Console.
+	errCodeEngineCivitaiRedOff         = "engine_civitai_red_off"
+	errCodeEngineCivitaiRedUnavailable = "engine_civitai_red_unavailable"
+	errCodeIngestBadSource             = "bad_source"
+	errCodeIngestFileUnknown           = "file_unknown"
+	errCodeIngestNoChecksum            = "no_checksum"
+	errCodeIngestSourceUnreach         = "source_unreachable"
+	errCodeIngestSourceForbid          = "source_forbidden"
+	errCodeIngestSourceError           = "source_error"
+	errCodeIngestStartFailed           = "ingest_start_failed"
+	errCodeIngestUnavailable           = "ingest_unavailable"
+	errCodeIngestNotAccepted           = "license_not_accepted"
+	errCodeIngestGatedNoToken          = "gated_no_token"
 	// The token DID reach the ingest task and Hugging Face still refused (403): that account
 	// has not accepted this repository's terms. Measured on af-sandbox (ADR 0072 P5 実機検証):
 	// one token, FLUX.1-dev through and SD3.5 Medium refused, and accepting on the model page

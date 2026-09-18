@@ -9,7 +9,7 @@ import { openEngineAdd } from "./openEngineAdd.ts";
  * durable model-management surface is now the pop-out-capable catalogue pane. */
 export function EngineCatalogLauncher() {
   const tr = useT();
-  const { rows, err } = useEngineRows();
+  const { rows, sources, err } = useEngineRows();
   const closeAdmin = useSettingsUI((state) => state.closeAdmin);
   const closeTenant = useSettingsUI((state) => state.closeTenantSettings);
   const opened = useRef(false);
@@ -23,6 +23,6 @@ export function EngineCatalogLauncher() {
   if (err) return <p className="form-err pad">{err}</p>;
   if (rows === null) return <p className="muted pad">{tr("common.loading")}</p>;
   // With no engine there is no pane target; retain the engine-less upstream browser.
-  if (rows.length === 0) return <EngineModelsAdminView />;
+  if (rows.length === 0) return <EngineModelsAdminView sources={sources} />;
   return <p className="muted pad">{tr("admin.catalog_opening" as never)}</p>;
 }

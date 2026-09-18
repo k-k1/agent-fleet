@@ -16,6 +16,7 @@ import {
   engineIsRemote,
   engineTitle,
   useEngineRows,
+  type CatalogSource,
   type CompleteAnswer,
   type EngineApiError,
   type EngineModel,
@@ -33,7 +34,6 @@ import {
 } from "./engineTypes.ts";
 
 type CatalogView = "search" | "registered";
-type CatalogSource = "hf" | "civitai" | "civitai-red";
 
 /** Full-pane catalogue (ADR 0085 decision 8). Two tabs and no wizard: 探す opens one plan card
  * per press, 登録済み holds the rows and, under them, the bucket itself. */
@@ -44,7 +44,7 @@ export function EngineAddView({ engineKey, lora, initialView = "search", headerA
   headerActions?: ReactNode;
 }) {
   const tr = useT();
-  const { rows, isSuper, err, load } = useEngineRows();
+  const { rows, isSuper, sources, err, load } = useEngineRows();
   const [selectedKey, setSelectedKey] = useState(engineKey);
   const [view, setView] = useState<CatalogView>(initialView);
   const [kind, setKind] = useState<ModelKind>(lora ? "lora" : "model");
@@ -61,7 +61,7 @@ export function EngineAddView({ engineKey, lora, initialView = "search", headerA
       </ViewHead>
       {err && <p className="form-err pad">{err}</p>}
       {rows !== null && rows.length === 0 && (
-        <NoEngineCatalog />
+        <NoEngineCatalog sources={sources} />
       )}
       {row && <>
         <div className="engine-catalog-nav">
@@ -87,8 +87,8 @@ export function EngineAddView({ engineKey, lora, initialView = "search", headerA
         {engineIsRemote(row) && <p className="admin-hint pad">{tr("admin.engines_remote_catalog")} {row.url || ""}</p>}
         {view === "search" ? (
           engineIsImage(row)
-            ? <ImageCatalog row={row} kind={kind} onKind={setKind} readOnly={engineIsRemote(row)} onChanged={load} />
-            : <LLMCatalog row={row} kind={kind} onKind={setKind} readOnly={engineIsRemote(row)} onChanged={load} />
+            ? <ImageCatalog row={row} kind={kind} onKind={setKind} sources={sources} readOnly={engineIsRemote(row)} onChanged={load} />
+            : <LLMCatalog row={row} kind={kind} onKind={setKind} sources={sources} readOnly={engineIsRemote(row)} onChanged={load} />
         ) : (
           <RegisteredCatalog row={row} kind={kind} onKind={setKind} isSuper={isSuper}
             readOnly={engineIsRemote(row)} onChanged={load} />
@@ -106,8 +106,12 @@ type CatalogProps = {
   onChanged: () => void;
 };
 
-export function ImageCatalog(props: CatalogProps) { return <CatalogBrowser {...props} image />; }
-export function LLMCatalog(props: CatalogProps) { return <CatalogBrowser {...props} image={false} />; }
+/** The search half of the pane also needs the search sources this DEPLOYMENT offers, as the
+ *  engine list answered them. The registered half never searches, so it does not take them. */
+type BrowseProps = CatalogProps & { sources: CatalogSource[] };
+
+export function ImageCatalog(props: BrowseProps) { return <CatalogBrowser {...props} image />; }
+export function LLMCatalog(props: BrowseProps) { return <CatalogBrowser {...props} image={false} />; }
 
 /** The ledger route, shared by both tabs: the bucket is the only thing that knows what this
  * deployment holds, so "have I got this already" and "what is in there" read the same answer. */
@@ -115,9 +119,14 @@ function objectsPath(engineKey: string): string {
   return `api/admin/engines/${encodeURIComponent(engineKey)}/objects`;
 }
 
-function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: CatalogProps & { image: boolean }) {
+function CatalogBrowser({ row, kind, onKind, sources, readOnly, onChanged, image }: BrowseProps & { image: boolean }) {
   const tr = useT();
-  const [source, setSource] = useState<CatalogSource>(image ? "civitai" : "hf");
+  const [picked, setSource] = useState<CatalogSource>(image ? "civitai" : "hf");
+  // 🔴 The source in force is the picked one only while the deployment still offers it. A tab
+  // strip that no longer draws `civitai-red` (engine_civitai_red.go) must not keep searching it
+  // from a state set before the switch moved — the CP answers that 403, and a search nobody can
+  // see the tab for reads as a broken panel.
+  const source = sources.includes(picked) ? picked : image ? "civitai" : "hf";
   const [sort, setSort] = useState(image ? "newest" : "updated");
   // The family filter, as one of the ENGINE's own base models — never an upstream name. Empty is
   // every family, which is what a browse was before this existed.
@@ -191,7 +200,7 @@ function CatalogBrowser({ row, kind, onKind, readOnly, onChanged, image }: Catal
             {tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}
           </Button>)}
         </span>
-        {image && <span className="seg sm">{(["civitai", "civitai-red", "hf"] as const).map((next) => <Button key={next} variant="ghost" small
+        {image && <span className="seg sm">{(["civitai", "civitai-red", "hf"] as const).filter((next) => sources.includes(next)).map((next) => <Button key={next} variant="ghost" small
           className={"seg-btn" + (source === next ? " active" : "")} onClick={() => switchSource(next)}>
           {tr((`admin.engines_ingest_source_${next}`) as never)}
         </Button>)}</span>}
@@ -396,11 +405,11 @@ function CatalogRestrictionTags({ value }: { value: Pick<IngestHit, "restriction
   </>;
 }
 
-function NoEngineCatalog() {
+function NoEngineCatalog({ sources }: { sources: CatalogSource[] }) {
   const tr = useT();
   const [role, setRole] = useState<"image" | "llm">("image");
   const [kind, setKind] = useState<ModelKind>("model");
-  const [source, setSource] = useState<CatalogSource>("civitai");
+  const [picked, setSource] = useState<CatalogSource>("civitai");
   const [sort, setSort] = useState("newest");
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
@@ -411,6 +420,8 @@ function NoEngineCatalog() {
   const [preview, setPreview] = useState<IngestHit | null>(null);
   const requestSeq = useRef(0);
   const image = role === "image";
+  // Same rule as CatalogBrowser's: a source the deployment stopped offering is not searched.
+  const source = sources.includes(picked) ? picked : image ? "civitai" : "hf";
 
   const search = useCallback(async (more = false) => {
     const seq = ++requestSeq.current;
@@ -451,7 +462,7 @@ function NoEngineCatalog() {
     <p className="admin-hint">{tr("admin.engines_browse_note")}</p>
     <div className="engine-catalog-toolbar">
       <span className="seg sm">{(["model", "lora"] as const).map((next) => <Button key={next} variant="ghost" small className={`seg-btn${kind === next ? " active" : ""}`} onClick={() => setKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</Button>)}</span>
-      {image && <span className="seg sm">{(["civitai", "civitai-red", "hf"] as const).map((next) => <Button key={next} variant="ghost" small className={`seg-btn${source === next ? " active" : ""}`} onClick={() => switchSource(next)}>{tr((`admin.engines_ingest_source_${next}`) as never)}</Button>)}</span>}
+      {image && <span className="seg sm">{(["civitai", "civitai-red", "hf"] as const).filter((next) => sources.includes(next)).map((next) => <Button key={next} variant="ghost" small className={`seg-btn${source === next ? " active" : ""}`} onClick={() => switchSource(next)}>{tr((`admin.engines_ingest_source_${next}`) as never)}</Button>)}</span>}
       <form className="engine-catalog-search" onSubmit={(event) => { event.preventDefault(); void search(false); }}><input aria-label={tr("admin.engines_ingest_search")} value={query} onChange={(event) => setQuery(event.currentTarget.value)} /><Button type="submit" variant="primary" small disabled={busy}>{tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}</Button></form>
       <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span><select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>{sortOptions.map((option) => <option key={option} value={option}>{tr((`admin.engines_ingest_sort_${option}`) as never)}</option>)}</select></label>
     </div>

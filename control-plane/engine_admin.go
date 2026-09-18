@@ -147,6 +147,12 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	mux.HandleFunc("GET /api/admin/engines/civitai-token", a.withSuperAdmin(a.getCivitaiToken))
 	mux.HandleFunc("PUT /api/admin/engines/civitai-token", a.withSuperAdmin(a.putCivitaiToken))
 	mux.HandleFunc("DELETE /api/admin/engines/civitai-token", a.withSuperAdmin(a.deleteCivitaiToken))
+	// Whether the catalogue's search offers Civitai Red at all (engine_civitai_red.go). Under
+	// engines rather than beside the egress mode because it is a property of this panel's own
+	// search, and super_admin like every other deployment-wide write — a granted tenant_admin
+	// reads the resulting list off GET /api/admin/engines below and moves nothing.
+	mux.HandleFunc("GET /api/admin/engines/civitai-red", a.withSuperAdmin(a.getCivitaiRed))
+	mux.HandleFunc("PUT /api/admin/engines/civitai-red", a.withSuperAdmin(a.putCivitaiRed))
 	// The bucket read as the ledger, and the two acts that start from it (ADR 0085 decisions 2, 3
 	// and 7). One line on purpose: the route table is what three lanes writing this ADR at once
 	// would otherwise each append to.
@@ -176,7 +182,12 @@ func (a engineAdminAPI) get(w http.ResponseWriter, r *http.Request, g engineInge
 		}
 		out = append(out, row)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"engines": out, "super_admin": g.super})
+	// `catalog_sources` is the search's source list as THIS deployment offers it
+	// (engine_civitai_red.go). It rides here because every screen with a source tab strip already
+	// reads this route, and because the list has to be known before the first search rather than
+	// discovered by being refused one.
+	writeJSON(w, http.StatusOK, map[string]any{"engines": out, "super_admin": g.super,
+		"catalog_sources": a.civitaiRed().sources(r.Context())})
 }
 
 // row is one engine's status line. `ready` is deliberately NOT here: answering it means a health
