@@ -8,7 +8,7 @@
 // This is the single entry point both readers use: MirrorView (owner) and
 // SharedSessionView (recipient) differ only in the TranscriptCaps they hand in.
 
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { CompactBlock, ContextLine } from "./blocks.tsx";
 import { MarkLayer } from "./MarkLayer.tsx";
 import { TranscriptTurn } from "./TranscriptTurn.tsx";
@@ -52,6 +52,7 @@ export function TranscriptView({
   autoCollapseWork = false,
   inlineCards = [],
 }: TranscriptViewProps) {
+  const arrivedAfter = useWatchStart(groups, caps.session || "");
   const els: ReactNode[] = [];
   let prevCtx = "";
   const times = groups.map((g) => g.ts);
@@ -111,6 +112,9 @@ export function TranscriptView({
           // no click and the reflow jumps the scroll. Only the value at the moment the turn
           // first folds is used; later changes never re-open or re-close it.
           defaultWorkOpen={!autoCollapseWork && i >= liveFrom}
+          // Eligible to have the translate button pressed for the reader when it completes —
+          // only turns that landed while they were watching (useWatchStart).
+          autoTranslate={arrivedAfter(g)}
         />
       ),
     );
@@ -123,4 +127,35 @@ export function TranscriptView({
   // belong here.
   if (caps.marks) els.push(<MarkLayer key="marklayer" marks={caps.marks} />);
   return <>{els}</>;
+}
+
+/**
+ * "Did this turn land while the reader was watching?" — the boundary that bounds automatic
+ * translation (docs/log/97 §97.12).
+ *
+ * It has to be a row number rather than a clock or a mounted flag. A block is named by `idx`, a
+ * line ordinal into that session's jsonl, and useStableBlockIds keeps that name fixed while the
+ * window it is read through moves (a backward page prepends OLDER, i.e. smaller, rows) — so
+ * "newer than the newest row on screen when this transcript first appeared" is exactly "arrived
+ * since". Without such a boundary, opening a long session with automatic translation on would
+ * press the button once for every foreign-looking answer in the whole history.
+ *
+ * Armed on the first non-empty render for a session and never on an empty one: an empty
+ * transcript is what a session switch looks like for a paint, and arming there would fix the
+ * boundary at -1 (translate everything). If the rows on screen later drop BELOW the armed
+ * boundary, they are not the ones it was armed on — a pane that rendered one paint of the
+ * outgoing session under the incoming session's name — so it re-arms rather than staying at a
+ * number that would silently translate nothing for the rest of the session.
+ */
+function useWatchStart(groups: Group[], session: string): (g: Group) => boolean {
+  const held = useRef({ session: "", idx: -1, armed: false });
+  if (held.current.session !== session) held.current = { session, idx: -1, armed: false };
+  let max = -1;
+  for (const g of groups) if (typeof g.idx === "number" && g.idx > max) max = g.idx;
+  if (!held.current.armed) {
+    if (groups.length) held.current = { session, idx: max, armed: true };
+  } else if (max < held.current.idx) {
+    held.current.idx = max;
+  }
+  return (g: Group) => typeof g.idx === "number" && g.idx > held.current.idx;
 }

@@ -48,11 +48,13 @@ function TranscriptTurnImpl({
   caps,
   foldWork,
   defaultWorkOpen,
+  autoTranslate = false,
 }: {
   turn: Group;
   caps: TranscriptCaps;
   foldWork: boolean;
   defaultWorkOpen: boolean;
+  autoTranslate?: boolean;
 }) {
   const isUser = turn.role === "user";
   const agentName = caps.agentName;
@@ -132,6 +134,30 @@ function TranscriptTurnImpl({
   const txShown = !!txKey && !!tx?.shown(txKey);
   const translatedOf = (p: Part): string | undefined =>
     txShown && p.kind === "text" && p.text ? tx?.get(p.text) : undefined;
+  // The one condition that decides both whether the button is offered and whether it is pressed
+  // for the reader. Written once on purpose: the automatic press exists to be the reader's press,
+  // and a second expression of "is there anything to translate here" is how §97.9's
+  // translate_too_long happened — the request was built from a different slice of the turn than
+  // the one the reader was looking at.
+  const txOffered =
+    !!tx &&
+    !!txKey &&
+    !turn.pending &&
+    foldWork &&
+    (txShown || !!tx.get(txTexts[0]) || looksForeign(txTexts.join("\n\n"), tx.lang));
+  // The press the reader did not make (docs/log/97 §97.12). `foldWork` — already part of the
+  // condition above — is false exactly while the live exchange is streaming, so "the turn just
+  // finished" needs no clock and no completion event of its own, and a turn still being appended
+  // to is never sent. Which turns are eligible at all is the caller's answer (autoTranslate):
+  // only those that landed while this reader was watching. Firing at most once per turn is
+  // useTranslate's (autoPress), because it outlives this component.
+  const txAuto = !!tx?.auto && autoTranslate && txOffered && !txShown;
+  const txArgs = useRef<{ key: string; texts: string[] }>({ key: "", texts: [] });
+  txArgs.current = { key: txKey, texts: txTexts };
+  useEffect(() => {
+    if (!txAuto) return;
+    tx?.autoPress(txArgs.current.key, txArgs.current.texts);
+  }, [txAuto, txKey, tx]);
   // Copy follows what the reader is looking at: with the translation on screen, handing them
   // back the English they could not read would be a surprise.
   const copyParts = visibleParts;
@@ -531,8 +557,9 @@ function TranscriptTurnImpl({
             to gain: the turn has prose, it is not still streaming (foldWork is false exactly for
             the live exchange while the session works), and either the prose does not look like
             the reader's language or a translation is already held — flipping back and forth must
-            stay possible once it exists. Pressing to show a held translation costs nothing. */}
-        {tx && txKey && !turn.pending && foldWork && (txShown || tx.get(txTexts[0]) || looksForeign(txTexts.join("\n\n"), tx.lang)) && (
+            stay possible once it exists. Pressing to show a held translation costs nothing.
+            The condition itself is txOffered, above: the automatic press is this same press. */}
+        {txOffered && tx && (
           <button
             type="button"
             className={"ghost xs mt-translate" + (txShown ? " on" : "")}

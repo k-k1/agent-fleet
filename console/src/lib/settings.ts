@@ -416,6 +416,12 @@ export interface Settings {
   // Default true: the button spends nothing until it is pressed, and a deployment that does not
   // want that spend at all turns it off here (the Agent gates on the same key).
   mirrorTranslateEnabled: boolean;
+  // Press the translate button for the reader when a turn finishes, instead of waiting for them
+  // to press it (Settings > AI assist, docs/log/97 §97.12). Default FALSE, unlike the button
+  // itself: this is the one translation setting that spends without anyone asking, so it is
+  // opted into. Read only by the mirror (the Agent sees an ordinary request carrying
+  // trigger=auto); mirrorTranslateEnabled off disables it whatever this says.
+  mirrorAutoTranslate: boolean;
   // Forced output language for assistant chat: "auto" = follow the input language
   // (default), "ja" / "en" = always reply in that language (even for foreign-language
   // content). The Agent reads this key from ui-prefs and injects a language rule into the
@@ -1008,6 +1014,7 @@ const DEFAULTS: Settings = {
   branchSuggestEnabled: true,
   editSuggestEnabled: true,
   mirrorTranslateEnabled: true,
+  mirrorAutoTranslate: false, // opt-in: the only translation setting that spends unasked
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
   aiAssistOrder: [...ASSISTANT_AGENT_KINDS],

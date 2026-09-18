@@ -38,4 +38,7 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
   "aiassist.mirror_translate": "Answer translation (mirror)",
   "aiassist.note_mirror_translate":
     "Shows a \"Translate\" button on mirror answers that came back in another language. Tokens are spent only when you press it, and no session turn is used. A translation is kept until that session is deleted, so the same text is free from the second press on.",
+  "aiassist.mirror_auto_translate": "Translate automatically",
+  "aiassist.note_mirror_auto_translate":
+    "Presses that button for you the moment a turn finishes, for answers that arrive while you are watching that session. Off by default: this is the one translation setting that spends without being asked. Answers already on screen when you open a session are never translated on their own — the button is still there for them.",
 };

@@ -11,7 +11,9 @@
 //             toast that outlives the turn it was about.
 //
 // Nothing in here runs on a timer. The mirror polls every second; translating on its own would
-// mean a model run per answer for every reader who never asked for one.
+// mean a model run per answer for every reader who never asked for one. What automatic
+// translation adds (§97.12) is not a timer either: it is the same press, made once, on the
+// transcript's own "this turn just finished" edge, and only for a reader who turned it on.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errText, type ApiError } from "../../core/api/client.ts";
@@ -41,6 +43,10 @@ export interface TranscriptTranslateWiring {
   error: (key: string) => string | undefined;
   /** The press. Flipping back to the original never calls the server. */
   toggle: (key: string, texts: string[]) => void;
+  /** Settings > AI assistance: press for the reader when a turn finishes (docs/log/97 §97.12). */
+  auto: boolean;
+  /** The press the reader did not make. At most one per turn per session+language, ever. */
+  autoPress: (key: string, texts: string[]) => void;
 }
 
 interface TranslateState {
@@ -68,6 +74,14 @@ const emptyState = (): TranslateState => ({
 const stateStore = new Map<string, TranslateState>();
 const storeKey = (session: string, lang: string): string => session + "\u0000" + lang;
 
+// Turns the automatic press has already fired on, for the life of the tab. Deliberately never
+// cleared — not when the reader flips back to the original, not on a remount, not after a
+// failure. The mirror re-renders every second, so anything the automatic press consults has to
+// be a latch: a reader who read the translation and went back to the original would otherwise
+// have it pressed again on the next poll, and an answer that cannot be translated would be
+// retried once a second for the life of the pane.
+const autoFired = new Set<string>();
+
 export interface TranslateOptions {
   /** Session name; "" disables the feature (there is nothing to ask). */
   session: string;
@@ -75,9 +89,12 @@ export interface TranslateOptions {
   lang: TranslateLang;
   /** Settings > AI assistance. Off = no fetch, no button, nothing to turn on by accident. */
   enabled: boolean;
+  /** Settings > AI assistance: press for the reader when a turn finishes. Only meaningful with
+   *  `enabled`; which turns qualify is decided by the transcript, not here. */
+  auto?: boolean;
 }
 
-export function useTranslate({ session, lang, enabled }: TranslateOptions): TranscriptTranslateWiring | undefined {
+export function useTranslate({ session, lang, enabled, auto = false }: TranslateOptions): TranscriptTranslateWiring | undefined {
   const [state, setState] = useState<TranslateState>(() => stateStore.get(storeKey(session, lang)) ?? emptyState());
   // The state is replaced wholesale on every change (a new Map/Set per mutation) so the memo
   // below changes identity and the transcript repaints. toggle() must not close over a stale
@@ -124,7 +141,7 @@ export function useTranslate({ session, lang, enabled }: TranslateOptions): Tran
   }, [session, lang, enabled, apply]);
 
   const toggle = useCallback(
-    (key: string, texts: string[]) => {
+    (key: string, texts: string[], trigger: "manual" | "auto" = "manual") => {
       if (!key || !texts.length) return;
       const held = latest.current;
       if (held.shown.has(key)) {
@@ -157,7 +174,15 @@ export function useTranslate({ session, lang, enabled }: TranslateOptions): Tran
       void api(`api/sessions/${q(session)}/translate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: lang, parts: requestTexts.map((text) => ({ text })) }),
+        // `trigger` is sent only for the automatic press, so that the ledger can tell the two
+        // apart (session_translate.go) — and so that a Console newer than the Agent it talks to
+        // cannot break the reader's own button: that Agent's strict decoder rejects a field it
+        // does not know, and the manual press must keep working across a rolling deployment.
+        body: JSON.stringify({
+          to: lang,
+          ...(trigger === "auto" ? { trigger } : {}),
+          parts: requestTexts.map((text) => ({ text })),
+        }),
         signal: ctl.signal,
       })
         .then((j: TranslateReply & { error?: ApiError }) => {
@@ -165,7 +190,10 @@ export function useTranslate({ session, lang, enabled }: TranslateOptions): Tran
             const busy = new Set(prev.busy);
             busy.delete(key);
             if (j?.error || !Array.isArray(j?.parts) || j.parts.length !== requestTexts.length) {
-              return { ...prev, busy, errors: new Map(prev.errors).set(key, errText(j?.error)) };
+              // A press nobody made fails quietly: the answer is readable as it stands, and an
+              // error message next to a button the reader never touched is noise they cannot
+              // act on. The turn keeps its button, so asking again is one click away.
+              return { ...prev, busy, errors: failed(prev.errors, key, trigger, j?.error) };
             }
             const entries = new Map(prev.entries);
             for (const p of j.parts) if (p?.hash && typeof p.text === "string") entries.set(p.hash, p.text);
@@ -188,12 +216,26 @@ export function useTranslate({ session, lang, enabled }: TranslateOptions): Tran
           apply((prev) => {
             const busy = new Set(prev.busy);
             busy.delete(key);
-            return { ...prev, busy, errors: new Map(prev.errors).set(key, errText(null)) };
+            return { ...prev, busy, errors: failed(prev.errors, key, trigger, null) };
           });
         })
         .finally(() => clearTimeout(timer));
     },
     [session, lang, apply],
+  );
+
+  // The press made on the reader's behalf (docs/log/97 §97.12). It marks the turn BEFORE asking,
+  // so two renders in the same tick — the mirror produces them — cannot both get through, and so
+  // that a failure is not retried on every poll.
+  const autoPress = useCallback(
+    (key: string, texts: string[]) => {
+      if (!key || !texts.length) return;
+      const fired = storeKey(session, lang) + "\u0000" + key;
+      if (autoFired.has(fired)) return;
+      autoFired.add(fired);
+      toggle(key, texts, "auto");
+    },
+    [session, lang, toggle],
   );
 
   return useMemo(() => {
@@ -205,8 +247,22 @@ export function useTranslate({ session, lang, enabled }: TranslateOptions): Tran
       busy: (key: string) => state.busy.has(key),
       error: (key: string) => state.errors.get(key),
       toggle,
+      auto,
+      autoPress,
     };
-  }, [session, enabled, lang, state, toggle]);
+  }, [session, enabled, lang, state, toggle, auto, autoPress]);
+}
+
+/** Where a failed press is recorded — next to the answer for a press the reader made, nowhere
+ *  for one made on their behalf. */
+function failed(
+  errors: Map<string, string>,
+  key: string,
+  trigger: "manual" | "auto",
+  err: ApiError | null | undefined,
+): Map<string, string> {
+  if (trigger === "auto") return withoutKey(errors, key);
+  return new Map(errors).set(key, errText(err));
 }
 
 function withoutKey(map: Map<string, string>, key: string): Map<string, string> {

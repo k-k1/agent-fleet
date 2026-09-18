@@ -230,6 +230,57 @@ func trimTranslations(list []*sessionTranslation) []*sessionTranslation {
 	return list
 }
 
+// errTranslateUnusable separates "the model did not answer" from "it answered with nothing a
+// reader could read". Both are generation_failed on the wire; only the wording differs.
+var errTranslateUnusable = errors.New("translation returned no usable text")
+
+// translateFlight is one run in progress, and the result every later asker for the same text
+// gets instead of starting a second one.
+type translateFlight struct {
+	done chan struct{}
+	text string
+	err  error
+}
+
+// The store only dedupes a text once its run has FINISHED, so two readers pressing within the
+// same ~17 seconds (measured, §97.5) both miss the cache and both pay. With automatic
+// translation that simultaneity stops being a coincidence: every pane open on the same session
+// presses for the same turn in the same second it completes. Keyed by session+language+hash —
+// the same three things that decide which stored entry answers the press.
+var (
+	translateFlightMu sync.Mutex
+	translateFlights  = map[string]*translateFlight{}
+)
+
+// translateShared runs gen for this key, or waits for the run already in flight and returns its
+// outcome — including its failure. A waiter retrying on its own would be exactly the second
+// model run this exists to prevent, and a failed press is something the reader can repeat.
+//
+// The wait is bounded by the CALLER's context, not the leader's: the leader is bounded by
+// translatePartTimeout, but its request can also be abandoned (a closed pane), and a waiter must
+// not be held past its own deadline by someone else's.
+func translateShared(ctx context.Context, key string, gen func() (string, error)) (string, error) {
+	translateFlightMu.Lock()
+	if f, ok := translateFlights[key]; ok {
+		translateFlightMu.Unlock()
+		select {
+		case <-f.done:
+			return f.text, f.err
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	f := &translateFlight{done: make(chan struct{})}
+	translateFlights[key] = f
+	translateFlightMu.Unlock()
+	f.text, f.err = gen()
+	translateFlightMu.Lock()
+	delete(translateFlights, key)
+	translateFlightMu.Unlock()
+	close(f.done)
+	return f.text, f.err
+}
+
 // lookupTranslation returns the stored translation of that source hash into that language.
 func lookupTranslation(name, hash, lang string) *sessionTranslation {
 	for _, e := range readSessionTranslations(name) {
@@ -295,10 +346,30 @@ func cleanTranslation(reply, source string) (string, error) {
 }
 
 type translateRequest struct {
-	To    string `json:"to"`
-	Parts []struct {
+	To string `json:"to"`
+	// Trigger tells the ledger who pressed: absent/"manual" = the reader's own press, "auto" =
+	// the press the Console made for them when a turn finished (docs/log/97 §97.12). The ledger
+	// records what actually happened, so an unattended run must not be filed as a manual one —
+	// the same rule ADR 0029 §1 states for `kind`.
+	//
+	// The Console omits this field for a manual press ON PURPOSE: DecodeStrictJSON rejects
+	// unknown fields, so a Console newer than the Agent it is talking to (a deployment mid-roll)
+	// would turn every press into a 400. Sending it only for the automatic press keeps the
+	// reader's own button working against an older Agent; the automatic one fails silently
+	// there, which is what an automatic press does on any failure.
+	Trigger string `json:"trigger"`
+	Parts   []struct {
 		Text string `json:"text"`
 	} `json:"parts"`
+}
+
+// translateTrigger maps the request's claim onto the ledger's vocabulary. Anything unknown is
+// read as the reader's own press: a mis-spelled value must not invent a third kind of run.
+func translateTrigger(v string) string {
+	if v == usagex.TriggerAuto {
+		return usagex.TriggerAuto
+	}
+	return usagex.TriggerManual
 }
 
 type translatePart struct {
@@ -369,6 +440,7 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 		texts = append(texts, p.Text)
 	}
 	lang := translateTargetLang(req.To)
+	trigger := translateTrigger(req.Trigger)
 	out := make([]translatePart, 0, len(texts))
 	for _, text := range texts {
 		hash := translateHash(text)
@@ -376,22 +448,40 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 			out = append(out, translatePart{Hash: hash, Text: hit.Text, Cached: true})
 			continue
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), translatePartTimeout)
-		ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTranslate, Trigger: usagex.TriggerManual, Ref: name})
-		reply, err := translateOneShot(ctx, text, lang)
-		cancel()
+		ran := false
+		clean, err := translateShared(r.Context(), name+"\x00"+lang+"\x00"+hash, func() (string, error) {
+			// Asked again inside the flight: a run that finished between the lookup above and
+			// this moment has already paid for this text.
+			if hit := lookupTranslation(name, hash, lang); hit != nil {
+				return hit.Text, nil
+			}
+			ran = true
+			ctx, cancel := context.WithTimeout(r.Context(), translatePartTimeout)
+			// The tag is the LEADER's: one run, one row, filed under the press that started it.
+			ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTranslate, Trigger: trigger, Ref: name})
+			reply, gerr := translateOneShot(ctx, text, lang)
+			cancel()
+			if gerr != nil {
+				return "", gerr
+			}
+			got, gerr := cleanTranslation(reply, text)
+			if gerr != nil {
+				// Wrapped rather than returned as-is: the reader is told which of the two
+				// failures happened, and a waiter on this flight gets the same wording.
+				return "", fmt.Errorf("%w: %v", errTranslateUnusable, gerr)
+			}
+			putTranslation(name, &sessionTranslation{Hash: hash, Lang: lang, Text: got, CreatedAt: time.Now().UnixMilli()})
+			return got, nil
+		})
 		if err != nil {
-			httpx.WriteErr(w, http.StatusInternalServerError, "generation_failed", "translation failed")
+			msg := "translation failed"
+			if errors.Is(err, errTranslateUnusable) {
+				msg = "translation returned no usable text"
+			}
+			httpx.WriteErr(w, http.StatusInternalServerError, "generation_failed", msg)
 			return
 		}
-		clean, err := cleanTranslation(reply, text)
-		if err != nil {
-			httpx.WriteErr(w, http.StatusInternalServerError, "generation_failed", "translation returned no usable text")
-			return
-		}
-		e := &sessionTranslation{Hash: hash, Lang: lang, Text: clean, CreatedAt: time.Now().UnixMilli()}
-		putTranslation(name, e)
-		out = append(out, translatePart{Hash: hash, Text: clean})
+		out = append(out, translatePart{Hash: hash, Text: clean, Cached: !ran})
 	}
 	httpx.WriteJSON(w, http.StatusOK, translateReply{Lang: lang, Parts: out})
 }

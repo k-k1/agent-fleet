@@ -49,6 +49,9 @@ afterEach(() => {
 });
 
 const ENGLISH = "Done — the tests are green and the branch is pushed.";
+// A second English answer, so a test can tell the turn that arrived from the one already there:
+// the cache key is the text itself, and two turns with the same prose share one entry.
+const ENGLISH2 = "Rebased onto the base branch and pushed again; the pipeline is green.";
 const JAPANESE = "テストは全部緑で、ブランチも push 済みです。";
 
 const answer = (text: string, withTool = false): Turn[] => [
@@ -64,14 +67,29 @@ const answer = (text: string, withTool = false): Turn[] => [
   },
 ];
 
-/** A wiring whose state the test drives by hand, so a press is observable without a server. */
-function wiring(entries: Record<string, string> = {}): TranscriptTranslateWiring & { calls: string[][] } {
+/** A wiring whose state the test drives by hand, so a press is observable without a server.
+ *  `autoPress` latches exactly as useTranslate's does — once per turn, for good — because that
+ *  is what keeps a once-a-second re-render from pressing again behind the reader. */
+function wiring(
+  entries: Record<string, string> = {},
+  auto = false,
+): TranscriptTranslateWiring & { calls: string[][]; autoKeys: string[] } {
   const held = new Map(Object.entries(entries));
   const shown = new Set<string>();
   const calls: string[][] = [];
-  return {
+  const autoKeys: string[] = [];
+  const fired = new Set<string>();
+  const self: TranscriptTranslateWiring & { calls: string[][]; autoKeys: string[] } = {
     lang: "ja",
     calls,
+    autoKeys,
+    auto,
+    autoPress: (key: string, texts: string[]) => {
+      autoKeys.push(key);
+      if (fired.has(key)) return;
+      fired.add(key);
+      self.toggle(key, texts);
+    },
     get: (text: string) => held.get(translateHash(text)),
     shown: (key: string) => shown.has(key),
     busy: () => false,
@@ -86,6 +104,7 @@ function wiring(entries: Record<string, string> = {}): TranscriptTranslateWiring
       shown.add(key);
     },
   };
+  return self;
 }
 
 const capsWith = (tx?: TranscriptTranslateWiring): TranscriptCaps => ({
@@ -217,5 +236,127 @@ describe("the mirror's translate button", () => {
     expect(tx.calls).toEqual([[ENGLISH]]);
     expect(el.textContent).toContain(intermediate1);
     expect(el.textContent).toContain(intermediate2);
+  });
+});
+
+// Automatic translation (docs/log/97 §97.12) — "the button, pressed for you when the turn ends".
+// Every rule here is about WHICH turns qualify, because that is the whole cost of the feature:
+// the press itself is the one already under test above.
+describe("the mirror's automatic translation", () => {
+  // The conversation already on screen when the reader opens the session, and the same
+  // conversation one exchange later. The new answer's idx is above everything the first render
+  // held, which is what makes it "arrived while watching".
+  const HISTORY: Turn[] = answer(ENGLISH);
+  const NEXT: Turn[] = [
+    ...HISTORY,
+    { role: "user", text: "もう一度", idx: 3, anchorId: "u2", ts: "2026-09-13T10:02:00Z" },
+    {
+      role: "assistant",
+      idx: 4,
+      anchorId: "a2",
+      ts: "2026-09-13T10:03:00Z",
+      parts: [{ kind: "text", text: ENGLISH2 }],
+    },
+  ];
+
+  /** Re-render into the SAME root: the watch boundary is a ref, so a fresh root would re-arm on
+   *  the new turn and hide the very regression these tests exist for. */
+  const again = (turns: Turn[], caps: TranscriptCaps, working = false) =>
+    act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={{ ...caps }} working={working} />));
+
+  it("presses for a turn that finishes while the reader is watching", () => {
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    render(HISTORY, caps);
+    again(NEXT, caps, true); // the new answer is still streaming
+    expect(tx.calls).toHaveLength(0);
+    again(NEXT, caps, false); // …and completes
+    expect(tx.calls).toEqual([[ENGLISH2]]);
+    // The press lands in an effect, so the swap shows on the next render — in the mirror that is
+    // the state change useTranslate makes; here the test supplies it.
+    again(NEXT, caps, false);
+    expect(prose().textContent).toBe("訳: " + ENGLISH2);
+  });
+
+  it("presses nothing at all when the setting is off", () => {
+    const tx = wiring({}, false);
+    const caps = capsWith(tx);
+    const el = render(HISTORY, caps);
+    again(NEXT, caps, false);
+    expect(tx.autoKeys).toHaveLength(0);
+    expect(tx.calls).toHaveLength(0);
+    // The reader's own button is untouched by any of this.
+    expect(el.querySelector(".mt-translate")).not.toBeNull();
+  });
+
+  it("never presses for the answers that were already on screen when the session was opened", () => {
+    // The cost ceiling of the whole feature: without the watch boundary, opening a session with
+    // a hundred foreign answers in it would be a hundred model runs, none of them asked for.
+    const tx = wiring({}, true);
+    render(HISTORY, capsWith(tx));
+    expect(tx.autoKeys).toHaveLength(0);
+    expect(prose().textContent).toBe(ENGLISH);
+  });
+
+  it("does not press again once the reader has gone back to the original", () => {
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    const el = render(HISTORY, caps);
+    again(NEXT, caps, false);
+    again(NEXT, caps, false);
+    expect(prose().textContent).toBe("訳: " + ENGLISH2);
+
+    act(() => Array.from(el.querySelectorAll<HTMLButtonElement>(".mt-translate")).at(-1)!.click());
+    again(NEXT, caps, false);
+    // The mirror re-renders about once a second; an automatic press that did not latch would
+    // take the original away again on the next poll, for as long as the pane stays open.
+    expect(prose().textContent).toBe(ENGLISH2);
+    expect(tx.calls).toHaveLength(1);
+  });
+
+  it("sends only what the reader can see, not the folded work process", () => {
+    // The same trap as the manual press (§97.9), and worth its own case here: the automatic
+    // press must be built from the same slice, or a long tool trace fails it silently.
+    const withWork: Turn[] = [
+      ...HISTORY,
+      { role: "user", text: "もう一度", idx: 3, anchorId: "u2", ts: "2026-09-13T10:02:00Z" },
+      {
+        role: "assistant",
+        idx: 4,
+        anchorId: "a2",
+        ts: "2026-09-13T10:03:00Z",
+        parts: [
+          { kind: "tool", tool: "Bash", info: "go test ./...", output: "ok" },
+          { kind: "text", text: "Checking the test output now." },
+          { kind: "tool", tool: "Bash", info: "go build ./...", output: "ok" },
+          { kind: "text", text: ENGLISH2 },
+        ],
+      },
+    ];
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    render(HISTORY, caps);
+    again(withWork, caps, true);
+    again(withWork, caps, false);
+    expect(tx.calls).toEqual([[ENGLISH2]]);
+  });
+
+  it("leaves an answer the reader can already read alone", () => {
+    const japanese: Turn[] = [
+      ...HISTORY,
+      { role: "user", text: "もう一度", idx: 3, anchorId: "u2", ts: "2026-09-13T10:02:00Z" },
+      {
+        role: "assistant",
+        idx: 4,
+        anchorId: "a2",
+        ts: "2026-09-13T10:03:00Z",
+        parts: [{ kind: "text", text: JAPANESE }],
+      },
+    ];
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    render(HISTORY, caps);
+    again(japanese, caps, false);
+    expect(tx.autoKeys).toHaveLength(0);
   });
 });
