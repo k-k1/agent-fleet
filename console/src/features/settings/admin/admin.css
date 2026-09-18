@@ -1410,9 +1410,20 @@ a.engines-model-source:hover {
   font-weight: 650;
 }
 
+/* One card per column was one card per PANE: on a 1,450px pane a catalogue row was a 1,450px
+   strip with its five buttons at the far right and a lake of nothing in the middle, and four
+   models filled the screen. `auto-fill` + `minmax` is the sessions overview pane's own idiom
+   (`.ovw-grid`) — a floor, one column in a narrow pane, as many as fit in a wide one, and every
+   card in a row the same width.
+
+   380px is the floor because of the FOOTER: six buttons (取る / 編集 / 有効 / 起動 / 揃える /
+   消す) is what a card has to hold without turning into a stack of them. `auto-fill` rather than
+   `auto-fit` for the reason the gallery gives: two models must not become two half-pane cards. */
 .engine-registered-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: 10px;
   margin: 0;
   padding: 0;
@@ -1422,9 +1433,21 @@ a.engines-model-source:hover {
 .engine-registered-card {
   min-width: 0;
   overflow: hidden;
+  /* Its own container, so the card folds on the width IT got from the grid rather than on the
+     viewport's. A three-column pane at 1,500px hands out 470px cards, which the viewport rules
+     below would never have folded — the same reason `.ovw-card` is a container. */
+  container: engcard / inline-size;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel2);
+}
+
+/* The footer sits at the bottom of the tallest card in the row, so a row of cards whose bodies
+   differ in height still has one line of buttons across it. */
+.engine-registered-card > footer {
+  margin-top: auto;
 }
 
 .engine-registered-card > header,
@@ -1480,23 +1503,29 @@ a.engines-model-source:hover {
   min-width: 0;
 }
 
+/* A thumbnail column, which is what the 探す tab's card has always used — and ADR 0088's 50% with
+   `contain` was written for a card as wide as the PANE, where half of 1,450px is a real picture.
+   At grid size it stopped working, and the shot says why: an example is 2048x4096 (measured), so
+   `contain` in a 555px card drew a 110px strip in the middle of a 555px box. Cropping to a
+   portrait box shows more of the picture than letterboxing it does, and the lightbox is one click
+   away for the whole thing.
+   `clamp` rather than a fold: the thumb shrinks with the card instead of jumping to full width,
+   which is the transition that made a portrait example worst. */
 .engine-registered-thumb {
-  flex: 0 1 50%;
+  flex: 0 0 clamp(88px, 22%, 132px);
   min-width: 0;
   padding: 0;
   overflow: hidden;
   border-radius: 7px;
   background: var(--bg);
+  aspect-ratio: 3 / 4;
 }
 
-/* Capped in height and `contain`, not `cover`: an example is often 2048x4096 (measured on
-   Civitai), and cropping a portrait to a landscape box cuts off the half a person judges a
-   checkpoint by. Letterboxing against the card's own background costs nothing. */
 .engine-registered-thumb img {
   display: block;
   width: 100%;
-  max-height: 220px;
-  object-fit: contain;
+  height: 100%;
+  object-fit: cover;
 }
 
 .engine-registered-id {
@@ -1648,15 +1677,17 @@ a.engines-model-source:hover {
      the two. The desktop `top: -14px` is kept: it is exactly the scroller's own padding, and
      measured, `top: 0` pins the bar 14px lower and leaves a strip of cards scrolling above it. */
   .engine-operation-grid, .engine-operation-manual { grid-template-columns: 1fr; }
-  .engine-registered-parts li { grid-template-columns: 1fr auto; }
-  .engine-registered-key { grid-column: 1 / -1; }
   .engine-catalog-card-main { min-height: 0; }
   .engine-catalog-thumb { flex-basis: 76px; width: 76px; height: 90px; }
-  /* Half of a 390px pane is a 180px column of text beside a 180px picture, and neither is
-     readable. The picture goes under the text at full width instead, which is also the order
-     they are read in. */
-  .engine-registered-main { flex-direction: column; }
-  .engine-registered-copy, .engine-registered-thumb { flex: 1 1 auto; width: 100%; }
+}
+
+/* By the CARD's width, not the pane's. Half of a 470px card is a 235px column of text beside a
+   235px picture and neither is readable, and the S3 key on a file line is longer than the column
+   it was given — both of which the viewport rules above used to catch only because every card was
+   as wide as the pane. */
+@container engcard (max-width: 560px) {
+  .engine-registered-parts li { grid-template-columns: 1fr auto; }
+  .engine-registered-key { grid-column: 1 / -1; }
 }
 
 

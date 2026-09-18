@@ -216,7 +216,10 @@ const RESOLVED = {
 // ---- a tiny PNG, so the cards have their example images without reaching the internet ------
 function swatchPNG(key, edge) {
   const W = edge || 64;
-  const H = Math.round(W * 1.18);
+  // 🔴 1:2, because that is the shape a real example is. Measured on Civitai 2026-09-18: the
+  // first image of `MeinaMix` is 2048x4096. A near-square swatch made the card layout look fine
+  // in a shot and told nothing about what a portrait example does to it.
+  const H = W * 2;
   let h = 2166136261;
   for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
   const base = [64 + (Math.abs(h) % 120), 64 + (Math.abs(h >> 8) % 120), 64 + (Math.abs(h >> 16) % 120)];
