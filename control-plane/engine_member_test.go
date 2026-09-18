@@ -72,6 +72,13 @@ func TestEngineMemberRowIsSubsetOfAdminRow(t *testing.T) {
 			// decision 6-A is new: nothing on the admin row corresponds to it yet.
 			continue
 		}
+		if k == "warm_model_label" {
+			// The READABLE name for warm_model (ADR 0090 決定 2), which is a member-facing
+			// string by construction — the admin row keeps the id alone, because an operator
+			// reading a panel needs the key that requests, S3 paths and active sets are written
+			// in. The id itself (`warm_model`) is on both rows and IS compared below.
+			continue
+		}
 		av, present := admin[k]
 		if !present {
 			t.Errorf("member[%q] = %v, but the admin row has no such key at all — not a subset", k, v)
@@ -215,6 +222,76 @@ func TestEngineMemberRowExternalOmitsState(t *testing.T) {
 	member := engineMemberRow(full)
 	if _, present := member["state"]; present {
 		t.Error("engineMemberRow let state through pickKeys for an external row")
+	}
+}
+
+// TestEngineMemberRowWarmModel is what a member is told about the model in VRAM: the id the
+// engine last answered with (ADR 0072 decision 7's warm_model) with its readable name beside it
+// (ADR 0090 決定 2), and NEITHER once the engine is not warm — a named model on a cold box says
+// "this request is cheap" about one that is not even running.
+//
+// The warm row is the positive control for the cold one: the same engine, one tick apart.
+func TestEngineMemberRowWarmModel(t *testing.T) {
+	ctx := context.Background()
+	st := testSettingsStore(t)
+	f := &engineTestECS{desired: 1, running: 1}
+	e := newMemberTestEngine(t, f, st)
+	// Store-backed, so modelLabel has a real catalogue row to find the name on.
+	e.catalog = newEngineCatalog(st, "image")
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", DisplayName: "SDXL Base", Enabled: true,
+		Files: []store.EngineModelFile{{S3Key: "checkpoints/sd_xl_base_1.0.safetensors"}},
+	}); err != nil {
+		t.Fatalf("seed the catalogue: %v", err)
+	}
+	// Enabled through the store's own toggle, not the struct field: PutEngineModel writes a row
+	// disabled (registration and offering are two decisions — ADR 0072), and a catalogue with
+	// nothing enabled would make the controller stop the engine as "no model" instead of
+	// warming it.
+	if ok, err := st.SetEngineModelEnabled(ctx, "image", "sdxl-base-1.0", true); err != nil || !ok {
+		t.Fatalf("enable the seeded model: ok=%v err=%v", ok, err)
+	}
+	e.catalog.invalidate()
+
+	// The demand mark first: a tick with nothing stamped judges nothing and returns before it
+	// ever looks at warmth (engineController.tick's first-pass branch).
+	e.demand.record(ctx, 1)
+	e.ctrl.tick(ctx) // running, and no warmup hook, so the controller marks it warm
+	e.noteServed("sdxl-base-1.0", true)
+
+	full, ok := e.memberSourceRow(ctx)
+	if !ok {
+		t.Fatal("memberSourceRow refused a warm engine with a model enabled")
+	}
+	if full["warm"] != true {
+		t.Fatalf("warm = %v, want true — the controller never observed the running service", full["warm"])
+	}
+	if got := full["warm_model"]; got != "sdxl-base-1.0" {
+		t.Errorf("warm_model = %v, want the id the engine answered with", got)
+	}
+	if got := full["warm_model_label"]; got != "SDXL Base" {
+		t.Errorf("warm_model_label = %v, want the catalogue's display name (ADR 0090)", got)
+	}
+	if member := engineMemberRow(full); member["warm_model"] != "sdxl-base-1.0" {
+		t.Errorf("engineMemberRow dropped warm_model: %v", member)
+	}
+
+	// The box goes away. Both keys go with it, rather than naming a model nothing holds.
+	// invalidate, or the next tick reads the 3-second cached view and still sees it running.
+	f.desired, f.running = 0, 0
+	e.ecs.invalidate()
+	e.ctrl.tick(ctx)
+	full, ok = e.memberSourceRow(ctx)
+	if !ok {
+		t.Fatal("a stopped engine still produces a row (decision 5)")
+	}
+	if full["warm"] != false {
+		t.Fatalf("warm = %v after the service stopped, want false", full["warm"])
+	}
+	for _, k := range []string{"warm_model", "warm_model_label"} {
+		if v, present := full[k]; present {
+			t.Errorf("a cold row carries %q = %v; it must be absent, not stale", k, v)
+		}
 	}
 }
 

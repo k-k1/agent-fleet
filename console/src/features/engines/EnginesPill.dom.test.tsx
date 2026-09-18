@@ -131,6 +131,66 @@ describe("engine pill — decision 11, headline and row count", () => {
   });
 });
 
+describe("engine pill — the model in VRAM and who is using it", () => {
+  it("draws the readable name for the loaded model, not the id, when the wire carries one", async () => {
+    await render([
+      {
+        key: "llm",
+        api: "chat",
+        state: "running",
+        warm: true,
+        warm_model: "qwen3.8-27b-ud-iq4_xs",
+        warm_model_label: "Qwen3.8 27B IQ4_XS",
+      },
+    ]);
+    await openPopover(pills()[0]);
+    const lines = Array.from(host.querySelectorAll(".engine-row-line")).map((n) => n.textContent);
+    expect(lines.some((t) => t?.includes("Qwen3.8 27B IQ4_XS"))).toBe(true);
+    expect(lines.some((t) => t?.includes("qwen3.8-27b-ud-iq4_xs"))).toBe(false);
+  });
+
+  it("falls back to the id when no label rode along (ADR 0090 — absence is the old behaviour)", async () => {
+    await render([{ key: "llm", api: "chat", state: "running", warm: true, warm_model: "qwen3.8-27b-ud-iq4_xs" }]);
+    await openPopover(pills()[0]);
+    expect(host.querySelector(".engine-row-line .mono")?.textContent).toBe("qwen3.8-27b-ud-iq4_xs");
+  });
+
+  it("omits the model line entirely for a row the CP said nothing about (cold engine)", async () => {
+    await render([{ key: "llm", api: "chat", state: "stopped" }]);
+    await openPopover(pills()[0]);
+    const lines = Array.from(host.querySelectorAll(".engine-row-line")).map((n) => n.textContent);
+    expect(lines.some((t) => t?.includes("モデル"))).toBe(false); // engine.warm_model's ja prefix
+  });
+
+  it("a warm engine with a request in flight says 'in use', not 'ready'", async () => {
+    await render([{ key: "llm", api: "chat", state: "running", warm: true, queue: { count: 1 } }]);
+    // Default locale is ja — "engine.state_in_use".
+    expect(host.querySelector(".engine-pill-state")!.textContent).toContain("使用中");
+  });
+
+  it("positive control: the same row with nothing in flight reads 'ready'", async () => {
+    await render([{ key: "llm", api: "chat", state: "running", warm: true, queue: { count: 0 } }]);
+    expect(host.querySelector(".engine-pill-state")!.textContent).toContain("準備済み");
+  });
+
+  it("an idle warm row says how long ago it was last used; a busy one does not", async () => {
+    const stopEta = new Date(Date.now() + 28 * 60_000).toISOString();
+    await render([{ key: "llm", api: "chat", state: "running", warm: true, idle_secs: 1800, stop_eta: stopEta }]);
+    await openPopover(pills()[0]);
+    const idleLines = Array.from(host.querySelectorAll(".engine-row-line")).map((n) => n.textContent);
+    expect(idleLines.some((t) => t?.includes("最後の利用 2 分前"))).toBe(true);
+
+    await act(async () => root.unmount());
+    host.remove();
+    await render([
+      { key: "llm", api: "chat", state: "running", warm: true, idle_secs: 1800, stop_eta: stopEta, queue: { count: 1 } },
+    ]);
+    await openPopover(pills()[0]);
+    const busyLines = Array.from(host.querySelectorAll(".engine-row-line")).map((n) => n.textContent);
+    expect(busyLines.some((t) => t?.includes("最後の利用"))).toBe(false);
+  });
+});
+
 describe("engine pill — decision 6, queue count", () => {
   it("omits the queue line when nothing is certain", async () => {
     await render([{ key: "image", api: "images", state: "running" }]);

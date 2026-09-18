@@ -39,6 +39,12 @@ export interface EngineMemberRow {
    *  deployment does not manage it and must not claim to know its state. */
   state?: string;
   warm?: boolean;
+  /** The id of the model actually in VRAM (ADR 0072 decision 7's warm_model), and the readable
+   *  name for it (ADR 0090 決定 2). Both absent while the engine is not warm — the CP omits them
+   *  rather than naming a model the box no longer holds — and the label alone is absent for a
+   *  row nobody has read a model page for, which every reader answers by drawing the id. */
+  warm_model?: string;
+  warm_model_label?: string;
   /** RFC3339, absolute. The subtraction into "N minutes left" happens here, in the browser
    *  (decision 2) — never on the wire, or the `engines` stream's diff-only tick (decision 1)
    *  would carry a changing payload every 4 seconds even while nothing else moved. */
@@ -75,6 +81,10 @@ function normalizeRow(raw: unknown): EngineMemberRow | null {
   const state = str(r.state);
   if (state) row.state = state;
   if (r.warm === true) row.warm = true;
+  const warmModel = str(r.warm_model);
+  if (warmModel) row.warm_model = warmModel;
+  const warmLabel = str(r.warm_model_label);
+  if (warmLabel) row.warm_model_label = warmLabel;
   const stopEta = str(r.stop_eta);
   if (stopEta) row.stop_eta = stopEta;
   const idle = num(r.idle_secs);
@@ -123,7 +133,9 @@ export function groupByRole(rows: EngineMemberRow[]): Map<EngineRole, EngineMemb
  *  is the one fact this pill exists to report. */
 function rowRank(r: EngineMemberRow): number {
   if (r.lifecycle) return 3;
-  if (r.warm) return 5;
+  // A row being used outranks an idle warm one, so the pill's headline reports the busiest fact
+  // its popover holds rather than making somebody open it to find out.
+  if (r.warm) return inUse(r) ? 6 : 5;
   switch (r.state) {
     case "running":
       return 4;
@@ -178,15 +190,40 @@ export function totalQueue(rows: EngineMemberRow[]): number | undefined {
   return total;
 }
 
-export type EngineStateWord = "ready" | "running" | "starting" | "stopping" | "stopped" | "available";
+export type EngineStateWord =
+  | "in_use"
+  | "ready"
+  | "running"
+  | "starting"
+  | "stopping"
+  | "stopped"
+  | "available";
+
+/** Whether somebody is being served by this row RIGHT NOW: the CP gateway is holding at least
+ *  one request for it (decision 6-A's in-flight count). It is what makes a session visible at
+ *  all — `warm` alone stays true between turns and for the whole idle window after them, so an
+ *  engine answering a running agent and an engine nobody has touched for 25 minutes read
+ *  identically without this.
+ *
+ *  Paired with `warm` by every caller, and that pairing is the honest part: the counter also
+ *  rises while a request waits for a COLD box to come up (engine_gateway.go starts it before
+ *  the wait), which is "somebody is waiting", not "somebody is using it". The queue line says
+ *  that case; the word must not. */
+export function inUse(row: EngineMemberRow): boolean {
+  return !!row.queue && queueIsCertain(row.queue) && row.queue.count > 0;
+}
 
 /** Which word describes a row, independent of i18n. `lifecycle` wins outright (decision 4:
  *  an external/remote row is never claimed to be running, starting or warm), then `warm`
  *  (decision 11), then the raw state. A row with neither reads as "available" too — absence
  *  of an opinion is not a license to guess one (decision 4). */
 export function stateWord(row: EngineMemberRow): EngineStateWord {
-  if (row.lifecycle) return "available";
-  if (row.warm) return "ready";
+  // `in_use` is the one word an external/remote row may carry beyond "available", and it is not
+  // a claim decision 4 forbids: the count behind it is what THIS deployment's gateway is holding
+  // for that row (decision 8's gate 3 proxies all three lifecycles), not an observation of a box
+  // somebody else runs.
+  if (row.lifecycle) return inUse(row) ? "in_use" : "available";
+  if (row.warm) return inUse(row) ? "in_use" : "ready";
   switch (row.state) {
     case "running":
       return "running";
@@ -229,6 +266,23 @@ export function secsUntil(at: string | undefined, now: number): number | null {
 export function stopSecs(row: EngineMemberRow, now: number): number | null {
   if (row.lifecycle) return null;
   return secsUntil(row.stop_eta, now);
+}
+
+/** How long ago this row last served somebody, DERIVED rather than sent (decision 2 —
+ *  "ペイロードには「自分で動く値」を入れない"). The CP stops an on-demand engine `idle_secs` after
+ *  the last demand mark and publishes that instant as `stop_eta`, so the age of the mark is
+ *  `idle_secs - (stop_eta - now)` and no new field has to ride on a diff-only stream.
+ *
+ *  `null` whenever either half is missing — an engine pinned on has no `stop_eta` at all
+ *  (engineStopETA's four refusals) — and for a row this deployment does not manage, which sends
+ *  neither. A negative result is `null` too rather than 0: it means the two values came from
+ *  different ticks, and "used 0 seconds ago" is exactly the confident lie decision 4 rules out. */
+export function lastUsedSecs(row: EngineMemberRow, now: number): number | null {
+  if (row.lifecycle || row.idle_secs === undefined) return null;
+  const left = stopSecs(row, now);
+  if (left === null) return null;
+  const since = row.idle_secs - left;
+  return since >= 0 ? since : null;
 }
 
 /** Splits seconds into whole hours and minutes, rounding up to at least one minute once

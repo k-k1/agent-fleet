@@ -9,6 +9,7 @@ import type { engines as jaEngines } from "../ja/engines.ts";
 export const engines: Record<keyof typeof jaEngines, string> = {
   "engine.role_chat": "Chat",
   "engine.role_images": "Images",
+  "engine.state_in_use": "In use",
   "engine.state_ready": "Ready",
   "engine.state_running": "Running",
   "engine.state_starting": "Starting",
@@ -25,6 +26,8 @@ export const engines: Record<keyof typeof jaEngines, string> = {
   // typical_ms (the wake-time estimate) does not ride on the member row (decision 3) — no
   // minute count here rather than a fabricated one (decision 4).
   "engine.cold_hint": "The engine starts on the next request. That can take a few minutes.",
+  "engine.warm_model": "Model: ",
+  "engine.last_used": "Last used {d} ago",
   "engine.queue_shared": "{n} queued",
   "engine.dur_hm": "{h}h {m}m",
   "engine.dur_m": "{m}m",

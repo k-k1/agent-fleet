@@ -160,11 +160,18 @@ const exact = {
   // studio pane renders as "no engine available", which shows none of what it is for.
   "/api/imagegen/status": () => fx.imagegenStatus(LOCALE),
   // The top-bar engine pills (ADR 0084): one row per role, the member shape of
-  // console/src/features/engines/wire.ts. A warm chat engine with a countdown and a
-  // stopped image engine, so both pill states appear. Absent, no pill renders at all.
+  // console/src/features/engines/wire.ts. A warm chat engine with a model loaded, a
+  // countdown and somebody actually using it, plus a stopped image engine — so the pill's
+  // two ends (in use / stopped) and the popover's model line all appear. Absent, no pill
+  // renders at all.
   "/api/engines/status": () => ({
     engines: [
-      { key: "llm", api: "chat", state: "running", warm: true, stop_eta: new Date(Date.now() + 14 * 60_000).toISOString(), idle_secs: 900 },
+      {
+        key: "llm", api: "chat", state: "running", warm: true,
+        warm_model: "qwen3.8-27b-ud-iq4_xs", warm_model_label: "Qwen3.8 27B IQ4_XS",
+        stop_eta: new Date(Date.now() + 14 * 60_000).toISOString(), idle_secs: 900,
+        queue: { count: 1 },
+      },
       { key: "image", api: "images", state: "stopped", idle_secs: 900 },
     ],
   }),

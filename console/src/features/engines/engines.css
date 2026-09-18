@@ -1,5 +1,5 @@
 /* Engine indicator (ADR 0084) — one pill per role, beside the TTS pill in topbar-right
-   (TopBar.tsx). Tone classes (on/lead/warn/off/avail) are shared between the pill and the
+   (TopBar.tsx). Tone classes (on/busy/lead/warn/off/avail) are shared between the pill and the
    popover's per-row state badge. */
 .engine-pill-wrap {
   position: relative;
@@ -33,6 +33,28 @@
 }
 .engine-pill-on .engine-pill-dot {
   background: var(--ok, #4caf82);
+}
+/* In use: the same green as `on` — the engine is healthy either way — with the dot breathing,
+   because the difference from `on` is that something is happening right now. Colour alone would
+   have to be a hue nobody else uses; motion says "in progress" without inventing one. */
+.engine-pill-busy {
+  color: var(--ok, #4caf82);
+  background: color-mix(in srgb, var(--ok, #4caf82) 14%, transparent);
+  border-color: color-mix(in srgb, var(--ok, #4caf82) 40%, transparent);
+}
+.engine-pill-busy .engine-pill-dot {
+  background: var(--ok, #4caf82);
+  animation: engine-pulse 1.6s ease-in-out infinite;
+}
+@keyframes engine-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .engine-pill-busy .engine-pill-dot {
+    animation: none;
+  }
 }
 .engine-pill-lead {
   color: var(--accent, #6b8fc4);
@@ -110,6 +132,7 @@
   background: var(--btn);
   color: var(--muted);
 }
+.engine-row-state-busy,
 .engine-row-state-on {
   color: var(--ok, #4caf82);
   background: color-mix(in srgb, var(--ok, #4caf82) 16%, transparent);
