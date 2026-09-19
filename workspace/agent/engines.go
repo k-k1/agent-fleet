@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -297,10 +298,28 @@ func syncEngineProviders() {
 		if e.api() != engineAPIChat {
 			continue
 		}
+		ctxTokens, maxOut, windows := e.ContextTokens, e.MaxOutputTokens, engineModelWindows(e)
+		// The one bounce ADR 0093's phase 0 adds (decision 7, docs/log/99 §4.11): while the box
+		// is warm enough to answer, the window it actually started with replaces the catalogue's
+		// declared one. Asleep, forbidden, or a Control Plane too old for the route all answer 0
+		// here, and the catalogue's number is left standing exactly as before this existed.
+		if id, nctx := engineWarmWindow(ctx, e); nctx > 0 {
+			ctxTokens = nctx
+			if id != "" {
+				out := maxOut
+				if w, ok := windows[id]; ok && w.MaxOutputTokens > 0 {
+					out = w.MaxOutputTokens
+				}
+				if windows == nil {
+					windows = map[string]opencode.EngineModelWindow{}
+				}
+				windows[id] = opencode.EngineModelWindow{ContextTokens: nctx, MaxOutputTokens: out}
+			}
+		}
 		providers = append(providers, opencode.EngineProvider{
 			Key: e.Key, Provider: e.Provider, BaseURL: base + e.BaseURL, Models: e.Models,
-			ContextTokens: e.ContextTokens, MaxOutputTokens: e.MaxOutputTokens,
-			Windows: engineModelWindows(e),
+			ContextTokens: ctxTokens, MaxOutputTokens: maxOut,
+			Windows: windows,
 			Labels:  engineModelLabels(e),
 		})
 	}
@@ -367,6 +386,100 @@ func engineModelWindows(e engineCatalogRow) map[string]opencode.EngineModelWindo
 		return nil
 	}
 	return out
+}
+
+// enginePropsTimeout bounds ONE read of the window bounce. Short, and deliberately shorter than
+// engineCatalogRows' own 15 s: this runs once per CHAT engine on every sync, and a box that is
+// not answering must not turn a catalogue refresh into a multi-engine deployment's worth of
+// waiting — the route behind it never waits for a start either (control-plane/engine_gateway.go's
+// props(), ADR 0093 decision 7).
+const enginePropsTimeout = 10 * time.Second
+
+// engineWarmWindow asks the Control Plane's read-only `GET /engine/{key}/props` bounce (ADR
+// 0093 decision 7, docs/log/99 §4.11) for the window llama-server actually started with, and
+// which model that answer describes.
+//
+// The model is picked the same way the Control Plane's own engineStartWindow picks it —
+// selected, else default, else the first row — because that is the one /props is describing:
+// whichever model is actually running. Nothing here mutates the catalogue row; the caller
+// decides what to do with the number.
+//
+// nctx is 0 whenever there is nothing to correct: a provider other than llamacpp (the only one
+// with a /props to read — comfy and sdcpp have none), an engine that did not answer, or a
+// Control Plane too old to carry the route. None of those wait for anything: the CP's props()
+// never runs ensureReady behind this call, so a box that is asleep answers in milliseconds, not
+// minutes, and the catalogue's own context_tokens is left standing exactly as it was before
+// this existed.
+func engineWarmWindow(ctx context.Context, e engineCatalogRow) (id string, nctx int) {
+	if e.Provider != "llamacpp" {
+		return "", 0
+	}
+	return engineSelectedModelID(e.ModelRows), enginePropsWindow(ctx, e.Key)
+}
+
+// engineSelectedModelID mirrors control-plane/engine_gateway.go's engineStartWindow: the
+// selected or default row, falling back to the first one. Both sides have to agree on which
+// model "the one the engine is running" means, or this bounce would correct the wrong id's
+// window on a router that offers several.
+func engineSelectedModelID(rows []engineCatalogModel) string {
+	first := ""
+	for _, m := range rows {
+		if m.ID == "" {
+			continue
+		}
+		if first == "" {
+			first = m.ID
+		}
+		if m.Selected || m.Default {
+			return m.ID
+		}
+	}
+	return first
+}
+
+// enginePropsWindow is the one HTTP call behind engineWarmWindow. 0 on anything that is not a
+// clean 200 with a readable body — a stopped engine's 503, a tenant this membership was denied,
+// no Control Plane to ask (AF_CP_BASE_URL unset, same as engineCPCall) — all read the same here:
+// nothing to correct.
+//
+// Not routed through engineCPCall: that helper's bearer is the workspace's ISSUING token, and
+// `/engine/{key}/props` is session-token gated like every other `/engine/{key}/...` route
+// (control-plane/engine_gateway.go's props(), same claims.Key check serve() makes). The token is
+// WORKSPACE-scoped (the same trade engineImageConn makes, and for the same reason): this runs
+// once at boot and again on every catalogue push, never per session.
+func enginePropsWindow(ctx context.Context, key string) int {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	if base == "" {
+		return 0
+	}
+	tok := engineToken(ctx, key, "")
+	if tok == "" {
+		return 0
+	}
+	c, cancel := context.WithTimeout(ctx, enginePropsTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(c, http.MethodGet, base+"/engine/"+key+"/props", nil)
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := engineHTTP.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0 // asleep (engine_unavailable/engine_off), forbidden, or a CP with no /props route
+	}
+	var out struct {
+		DefaultGenerationSettings struct {
+			NCtx int `json:"n_ctx"`
+		} `json:"default_generation_settings"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out) != nil {
+		return 0
+	}
+	return out.DefaultGenerationSettings.NCtx
 }
 
 // handleEngineCatalogChanged (POST /engine/catalog-changed) is the Control Plane telling this

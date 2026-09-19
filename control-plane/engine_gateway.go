@@ -208,6 +208,11 @@ func registerEngineRoutes(mux *http.ServeMux, cfg config) *engineRegistry {
 	exemptPrefix("/engine/", "/internal/engine/")
 	mux.HandleFunc("POST /internal/engine/token", g.issueSessionToken)
 	mux.HandleFunc("GET /internal/engine/catalog", g.catalog)
+	// Registered as its own literal route, not folded into the /v1/{path...} wildcard above:
+	// llama-server's /props lives at the engine's ROOT, and engineUpstreamPrefix always prepends
+	// /v1/ for that wildcard's target (ADR 0093 decision 7, docs/log/99 §4.11). There is no path
+	// through serve()'s prefix that reaches it.
+	mux.HandleFunc("GET /engine/{key}/props", g.props)
 	mux.HandleFunc("/engine/{key}/v1/{path...}", g.serve)
 	return reg
 }
@@ -580,6 +585,151 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.plain(w, r, eng, claims, mv, body)
+}
+
+// --- the read-only window bounce (ADR 0093 decision 7, docs/log/99 §4.11) -----
+
+// enginePropsTimeout bounds ONE read of /props. This route never waits for a box to come up —
+// no demand.record, no ensureReady, no ensureStarted — so a stopped engine's Cloud Map name
+// (or, on a borrowed row, a far gateway that is itself refusing) fails fast rather than being
+// held the way a generation request is. The caller only wants to know the window that is
+// ALREADY attached; if nothing is attached, the target's own `context_tokens` from the catalogue
+// is what stands, exactly as before this route existed.
+const enginePropsTimeout = 5 * time.Second
+
+// props answers GET /engine/{key}/props. It is the one bounce ADR 0093's phase 0 adds: the
+// window llama-server actually started with (`default_generation_settings.n_ctx`) has had no way
+// back to the Agent since ADR 0072 — the catalogue's `context_tokens` only ever travels the other
+// direction, through the active set and the sidecar preset to `--ctx-size`.
+//
+// The gate is the same five steps serve() runs, in the same order (the comments there say why the
+// order matters), plus one this route adds of its own: provider. A provider check comes after the
+// tenant gate and not before it, matching serve()'s own "who may even ask" before "what can be
+// asked" ordering.
+//
+// 🔴 What is deliberately missing, compared to serve(): eng.demand.record, g.ensureReady,
+// g.pendingGuard, eng.inflight. This is a READ of whatever is already running — recording demand
+// or waiting for a start would buy a GPU box just to answer a question about one that either is
+// not there or already answers on its own.
+func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	eng := g.reg.get(key)
+	if eng == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		return
+	}
+	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	claims, ok := verifyEngineSessionToken(g.reg.signKey, tok, time.Now())
+	if !ok || claims.Key != key {
+		// Same one-message-out, reason-in-the-log split as serve() (:482) and for the same
+		// reason: the caller can do nothing different about any of "not a token", "expired" or
+		// "a token for the other engine", and the operator is the one who needs to tell them
+		// apart.
+		log.Printf("engine %s: refusing a props request (%s)", key, engineAuthFailure(g.reg.signKey, tok, key))
+		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid engine session token"})
+		return
+	}
+	mv, aerr := g.liveMembership(r.Context(), claims.MembershipID)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	lim, aerr := g.tenantLimitsFor(r.Context(), mv.TenantID)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if !lim.engineRoleAllowed(eng.def.api()) {
+		writeAPIErr(w, engineForbiddenErr(eng.def.api()))
+		return
+	}
+	if eng.mode(r.Context()) == engineModeOff {
+		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_off", "this engine is switched off"})
+		return
+	}
+	// /props is llama-server's own endpoint. Every other provider this gateway carries (comfy,
+	// sdcpp) has no such route, and relaying to one would ask a server that was never a
+	// llama-server for something it does not have.
+	if eng.def.Provider != "llamacpp" {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_no_props",
+			"engine " + key + " has no /props (provider " + eng.def.Provider + ")"})
+		return
+	}
+
+	// The bearer, then the target — in that order, matching dial(): a BORROWED row's session
+	// token mint is also what learns the far side's own base path (engine_remote_token.go), so
+	// the target has to be built after it, not before.
+	bearer := eng.apiKey
+	if eng.def.remote() {
+		far, err := eng.remote.sessionToken(r.Context(), claims.Session)
+		if err != nil {
+			writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_unavailable", err.Error()})
+			return
+		}
+		bearer = far
+	}
+	target, err := enginePropsTarget(eng)
+	if err != nil {
+		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_unavailable", err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), enginePropsTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := engineClient.Do(req)
+	if err != nil {
+		// A box that is asleep (or, borrowed, a far gateway that is itself down) answers here,
+		// fast, because enginePropsTimeout never gives it the minutes ensureReady would. This is
+		// the "asleep" branch decision 7 calls for: no wake, no retry, just the fact reported.
+		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_unavailable",
+			"the engine did not answer /props: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, engineMaxRequestBody))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// The upstream's answer is relayed as it stands — status, headers and all — the same rule
+	// writeEngineUpstreamError follows for a generation request's error body: this route's job is
+	// to carry /props through the gateway, not to parse and rebuild it.
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
+}
+
+// enginePropsTarget is where GET /engine/{key}/props relays to — unlike engineUpstreamTarget,
+// NEVER through engineUpstreamPrefix's /v1/, because llama-server's /props lives at the engine's
+// root (decision 7).
+//
+// 🔴 A BORROWED row goes to the far gateway's OWN /engine/{key}/props (ADR 0079 decision 4's
+// rule applies here exactly as it does in engineUpstreamTarget): what is upstream is another
+// fleet's gateway, not an engine, and this deployment does not get to invent its route layout.
+// eng.remote.upstreamBase() being empty means the far side has not been asked yet (or answered
+// without a base_url), and an unknown one is an error rather than a guess at */v1 or */props.
+func enginePropsTarget(eng *engineRuntimeState) (string, error) {
+	base := strings.TrimRight(eng.def.URL, "/")
+	if eng.def.remote() {
+		if strings.TrimSpace(eng.remote.upstreamBase()) == "" {
+			return "", fmt.Errorf("%s has not said where its %s engine lives (no base_url on its token answer)",
+				base, eng.def.Key)
+		}
+		return base + "/engine/" + eng.def.Key + "/props", nil
+	}
+	return base + "/props", nil
 }
 
 // askForStreamUsage adds stream_options.include_usage to a streaming request that did not

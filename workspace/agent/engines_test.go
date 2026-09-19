@@ -597,3 +597,170 @@ func TestEngineImageConnCarriesTheMemberFacingLabel(t *testing.T) {
 		t.Error("a catalogue with no labels answered a map rather than nil")
 	}
 }
+
+// --- ADR 0093 phase 0: the window bounce (docs/log/99 §4.11) ---------------------
+
+// enginePropsStubResult is what engineCatalogPropsStub observed, so a test can assert on it
+// after syncEngineProviders runs.
+type enginePropsStubResult struct {
+	tokenAsked     []string // key+"/"+session, one per /internal/engine/token call
+	propsRequested []string // key, one per /engine/{key}/props call
+	propsAuth      map[string]string
+}
+
+// engineCatalogPropsStub is engineCatalogStub with one addition: a fake `/engine/{key}/props`
+// route, keyed by engine key so one test can make one engine answer and another stay silent.
+// status 0 means "never registered" (404, exactly like a Control Plane too old for the route)
+// rather than 200 with an empty body.
+func engineCatalogPropsStub(t *testing.T, rows string, propsStatus map[string]int, propsBody map[string]string) *enginePropsStubResult {
+	t.Helper()
+	res := &enginePropsStubResult{propsAuth: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/internal/engine/catalog":
+			_, _ = w.Write([]byte(`{"engines":[` + rows + `]}`))
+		case r.URL.Path == "/internal/engine/token":
+			var req struct{ Session, Key string }
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			res.tokenAsked = append(res.tokenAsked, req.Key+"/"+req.Session)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token": "afe_" + req.Key, "expires_at": "2099-01-01T00:00:00Z",
+			})
+		case strings.HasPrefix(r.URL.Path, "/engine/") && strings.HasSuffix(r.URL.Path, "/props"):
+			key := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/engine/"), "/props")
+			res.propsRequested = append(res.propsRequested, key)
+			res.propsAuth[key] = r.Header.Get("Authorization")
+			status, declared := propsStatus[key]
+			if !declared {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(propsBody[key]))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_ENGINE_ISSUE_TOKEN", "afei_test")
+	engineTokenCache.Clear()
+	engineCatalogState.mu.Lock()
+	engineCatalogState.rows, engineCatalogState.at, engineCatalogState.ok = nil, time.Time{}, false
+	engineCatalogState.mu.Unlock()
+	t.Cleanup(func() {
+		engineCatalogState.mu.Lock()
+		engineCatalogState.rows, engineCatalogState.at, engineCatalogState.ok = nil, time.Time{}, false
+		engineCatalogState.mu.Unlock()
+		engineTokenCache.Clear()
+	})
+	return res
+}
+
+func readOpencodeLimit(t *testing.T, home, provider, model string) (ctxTokens, output int) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatalf("no opencode config written: %v", err)
+	}
+	var cfg struct {
+		Provider map[string]struct {
+			Models map[string]struct {
+				Limit struct{ Context, Output int } `json:"limit"`
+			} `json:"models"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.Provider[provider].Models[model].Limit
+	return got.Context, got.Output
+}
+
+// The window ADR 0093 exists for: a box that is actually warm answers with the window
+// llama-server started with, and THAT number — not the catalogue's declared one — is what
+// reaches opencode's config as `limit.context`.
+func TestSyncEngineProvidersOverridesWindowWhenWarm(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	res := engineCatalogPropsStub(t,
+		`{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1",`+
+			`"models":["qwen3-coder-30b-a3b"],"context_tokens":32768,"max_output_tokens":4096,`+
+			`"model_rows":[{"id":"qwen3-coder-30b-a3b","context_tokens":32768,"max_output_tokens":4096,"default":true}]}`,
+		map[string]int{"llm": http.StatusOK},
+		map[string]string{"llm": `{"default_generation_settings":{"n_ctx":65536}}`},
+	)
+
+	syncEngineProviders()
+
+	ctxTokens, output := readOpencodeLimit(t, home, "llamacpp", "qwen3-coder-30b-a3b")
+	if ctxTokens != 65536 {
+		t.Errorf("context = %d, want the warm box's real 65536, not the catalogue's declared 32768", ctxTokens)
+	}
+	// The output cap is not what /props answers here, so the catalogue's own declaration stands.
+	if output != 4096 {
+		t.Errorf("output = %d, want the declared 4096 left alone", output)
+	}
+	if len(res.propsRequested) != 1 || res.propsRequested[0] != "llm" {
+		t.Fatalf("props requested = %v, want exactly one for llm", res.propsRequested)
+	}
+	if res.propsAuth["llm"] != "Bearer afe_llm" {
+		t.Errorf("props Authorization = %q, want the minted engine token", res.propsAuth["llm"])
+	}
+	// Workspace-scoped, like the image engine's token — this runs at boot and on every
+	// catalogue push, never for one particular session.
+	found := false
+	for _, a := range res.tokenAsked {
+		if a == "llm/" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("token asked = %v, want a workspace-scoped (empty session) llm token", res.tokenAsked)
+	}
+}
+
+// The other half of decision 7: an engine that is not answering /props leaves the catalogue's
+// declared window exactly as it was. No retry, no wait — a 503 is read once and the sync moves
+// on, which is the whole point of this route never running ensureReady behind it.
+func TestSyncEngineProvidersKeepsDeclaredWindowWhenEngineAsleep(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	res := engineCatalogPropsStub(t, engineRowLlmSized, map[string]int{"llm": http.StatusServiceUnavailable}, nil)
+
+	syncEngineProviders()
+
+	ctxTokens, output := readOpencodeLimit(t, home, "llamacpp", "qwen3-coder-30b-a3b")
+	if ctxTokens != 32768 || output != 4096 {
+		t.Errorf("limit = %d/%d, want the catalogue's declared 32768/4096 left standing", ctxTokens, output)
+	}
+	if len(res.propsRequested) != 1 {
+		t.Fatalf("props requested %d time(s), want exactly one attempt (no retry)", len(res.propsRequested))
+	}
+}
+
+// A provider other than llamacpp has no /props to read (the Control Plane's own gate answers
+// 404 for one — control-plane/engine_gateway.go's props()), so this side must not even ask.
+func TestSyncEngineProvidersNeverAsksPropsForNonLlamacppProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	res := engineCatalogPropsStub(t,
+		`{"key":"llm2","api":"chat","provider":"other-chat-provider","base_url":"/engine/llm2/v1",`+
+			`"models":["m"],"context_tokens":9999,"max_output_tokens":1024}`,
+		map[string]int{"llm2": http.StatusOK},
+		map[string]string{"llm2": `{"default_generation_settings":{"n_ctx":1}}`},
+	)
+
+	syncEngineProviders()
+
+	if len(res.propsRequested) != 0 {
+		t.Errorf("props requested = %v, want none — only llamacpp has a /props to read", res.propsRequested)
+	}
+	ctxTokens, _ := readOpencodeLimit(t, home, "other-chat-provider", "m")
+	if ctxTokens != 9999 {
+		t.Errorf("context = %d, want the catalogue's declared 9999 untouched", ctxTokens)
+	}
+}
