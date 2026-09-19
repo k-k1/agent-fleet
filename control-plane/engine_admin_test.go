@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -2063,5 +2064,130 @@ func TestEngineAdminWillNotCallAFloorAFitWhenAWindowIsDeclared(t *testing.T) {
 	e.catalog.invalidate()
 	if code, out = putModelReq(t, a, "qwen3-measured", `{"enabled":true}`); code != http.StatusOK {
 		t.Fatalf("a row with a declared vram_mib = %d (%v), want 200", code, out)
+	}
+}
+
+// 🔥 The gap engine_gguf.go's own header comment admitted and nobody had closed: "a row
+// registered from the bucket still reaches this reader through no road, so its geometry stays
+// unknown". BOTH deployments are entirely in that state — every llm row answers
+// `vram_need_source: floor`, the weights and nothing else — so the guard above could only ask
+// for a confirmation it had no way to inform, and the panel could offer no fitted window.
+//
+// The bytes are in the bucket and the header is 64 KiB in. Read it on the write the operator is
+// already making, and the row stops being unanswerable.
+func TestEngineAdminHealsAMissingGeometryFromTheBucket(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e.catalog = newEngineCatalog(st, "image")
+	key := "image/checkpoints/qwen.gguf"
+	bucket := &fakeEngineStorageHead{
+		states: map[string]string{key: engineStoragePresent},
+		head: map[string][]byte{key: ggufBuild(t, 3, []ggufKV{
+			{"general.architecture", ggufTypeString, "qwen35"},
+			{"qwen35.block_count", ggufTypeUint32, 65},
+			{"qwen35.context_length", ggufTypeUint32, 262144},
+			{"qwen35.attention.head_count_kv", ggufTypeUint32, 4},
+			{"qwen35.attention.key_length", ggufTypeUint32, 256},
+			{"qwen35.attention.value_length", ggufTypeUint32, 256},
+			{"qwen35.nextn_predict_layers", ggufTypeUint32, 1},
+			{"qwen35.full_attention_interval", ggufTypeUint32, 4},
+		})},
+	}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		storage: newEngineStorage("models", bucket),
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+
+	// The row as both deployments hold it: a window, a file, and no geometry at all.
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "qwen", Kind: "checkpoint", BaseModel: "sdxl",
+		Files:         []store.EngineModelFile{{S3Key: key, Bytes: 12_040_883_104}},
+		ContextTokens: 32768, MaxOutputTokens: 8192,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	before, _ := st.ListEngineModels(t.Context(), "image")
+	if need, source := engineModelVramNeed(before[0]); source != engineVramFloor {
+		t.Fatalf("before: need=%d source=%s, want the floor this repairs", need, source)
+	}
+
+	// Enabling it is the write that pays for the read. It goes through WITHOUT a confirmation,
+	// because by the time the guard looks the row can answer for itself.
+	if code, out := putModelReq(t, a, "qwen", `{"enabled":true}`); code != http.StatusOK {
+		t.Fatalf("enable = %d (%v), want 200", code, out)
+	}
+	after, _ := st.ListEngineModels(t.Context(), "image")
+	got := after[0]
+	if got.KVLayers != 65 || got.KVHeadsKV != 4 || got.KVKeyLen != 256 || got.KVValueLen != 256 {
+		t.Errorf("stored geometry = %+v", got)
+	}
+	// 🔴 The two modifiers are the whole point: without them this row prices its cache four
+	// times too high and the 21,000 MiB rung stops holding it.
+	if got.KVNextN != 1 || got.KVFullAttnInterval != 4 {
+		t.Errorf("modifiers = nextn %d interval %d, want 1 and 4", got.KVNextN, got.KVFullAttnInterval)
+	}
+	if got.ContextCeiling != 262144 {
+		t.Errorf("ceiling = %d, want 262144 (what the re-fit is bounded by)", got.ContextCeiling)
+	}
+	need, source := engineModelVramNeed(got)
+	if source != engineVramWeightsKV {
+		t.Fatalf("after: source = %s, want weights_kv", source)
+	}
+	// 11,483 MiB of weights + (65-1)/4 = 16 caching layers x 4 x 512 x 32768 x 2 = 2,048 MiB.
+	if need != 13531 {
+		t.Errorf("after: need = %d MiB, want 13531", need)
+	}
+}
+
+// The repair is best-effort in every direction, and none of its failures are the operator's
+// problem: the edit they actually asked for must land either way, and the row stays exactly
+// where it would have been if nothing had been attempted.
+func TestEngineAdminGeometryHealIsBestEffort(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e.catalog = newEngineCatalog(st, "image")
+	key := "image/checkpoints/unreadable.gguf"
+	bucket := &fakeEngineStorageHead{
+		states:    map[string]string{key: engineStoragePresent},
+		prefixErr: map[string]error{key: errors.New("AccessDenied")},
+	}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		storage: newEngineStorage("models", bucket),
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "unreadable", Kind: "checkpoint", BaseModel: "sdxl",
+		Files:         []store.EngineModelFile{{S3Key: key, Bytes: 1 << 30}},
+		ContextTokens: 262144, MaxOutputTokens: 32768,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	// The read fails, so the row is still unanswerable — and the guard says so rather than
+	// calling a floor a fit.
+	code, out := putModelReq(t, a, "unreadable", `{"enabled":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("enable = %d (%v), want 409", code, out)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].KVLayers != 0 || rows[0].Enabled {
+		t.Errorf("a failed read changed the row: %+v", rows[0])
+	}
+	// Confirmed, it goes through, and still nothing was invented.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "unreadable", `{"enabled":true,"confirm_vram":true}`); code != http.StatusOK {
+		t.Fatalf("confirmed enable = %d (%v), want 200", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].KVLayers != 0 {
+		t.Errorf("geometry was invented: %+v", rows[0])
 	}
 }

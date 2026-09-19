@@ -937,6 +937,20 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	// It is checked BEFORE the write, so a refusal leaves the catalogue as it was.
 	loading := (b.Enabled != nil && *b.Enabled) ||
 		(b.Selected != nil && *b.Selected) || (b.Default != nil && *b.Default)
+	// 🔴 Before anything is JUDGED, give the row a chance to stop being unanswerable. Every llm
+	// row on both deployments predates the header read and answers its floor — the weights and
+	// nothing else — so the VRAM guard below can only ask for a confirmation it has no way to
+	// inform, and the panel can offer no fitted window. The bytes are in the bucket and the
+	// header is 64 KiB in: read it once, here, where the operator is already making a write and
+	// a few hundred milliseconds is not a surprise.
+	//
+	// Only on a LOADING write, and only for a row that has none: this is a repair, not a poll.
+	// Best-effort in both directions — a refused read leaves the row where it was, and a failed
+	// STORE is logged and not raised, because the edit the operator actually asked for must not
+	// fail over a cache fill.
+	if loading {
+		a.healGeometry(ctx, e, id)
+	}
 	if loading && !b.ConfirmVram {
 		if aerr := engineVramGuard(ctx, e, id); aerr != nil {
 			writeAPIErr(w, aerr)
@@ -1151,8 +1165,9 @@ func engineVramGuardRow(ctx context.Context, e *engineRuntimeState, m store.Engi
 	// need came back as 17093 MiB of weights, fitted the 22000 MiB rung, was enabled without a
 	// word — and llama.cpp then asked for 16384 MiB of KV cache on top and the L4 answered
 	// `cudaMalloc failed: out of memory`. Passing that silently is the bug. The number cannot be
-	// computed here (that is what "no geometry" means), so the answer is to say so and let the
-	// operator confirm, or declare vram_mib, or re-ingest so the header is read.
+	// computed here (that is what "no geometry" means) — healGeometry has already TRIED, on this
+	// same request, and the bucket would not say — so the answer is to say so and let the
+	// operator confirm or declare vram_mib.
 	//
 	// Only when it does not already fail the ordinary comparison below, and only for a row that
 	// declares a window: an image checkpoint has none, and for it the weights really are most of
@@ -1161,8 +1176,8 @@ func engineVramGuardRow(ctx context.Context, e *engineRuntimeState, m store.Engi
 		return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
 			"%s declares a %d-token window but no attention geometry, so the KV cache it will ask"+
 				" for on top of %d MiB of weights cannot be sized here and the %s class's %d MiB"+
-				" cannot be said to fit; repeat with confirm_vram, or declare vram_mib, or"+
-				" re-register the model so its GGUF header is read",
+				" cannot be said to fit (its header was not readable from the bucket either);"+
+				" repeat with confirm_vram, or declare vram_mib",
 			m.ID, m.ContextTokens, need, sel.ID, sel.VramMiB)}
 	}
 	if source == engineVramUnknown || engineClassFits(sel, need) {
@@ -1392,6 +1407,18 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 	if len(m.Files) == 0 {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "at least one file (s3Key) is required"})
 		return
+	}
+	// The same read the VAE question does above, for the other fact a header states. A row that
+	// arrives here carries no geometry — this route has no upstream URL to range-GET — so
+	// without it every hand-registered and every rebuilt row answers its FLOOR forever, which is
+	// the weights and nothing else and therefore fits almost any card. Best-effort: a refused
+	// read leaves the row exactly where it would have been.
+	if !engineModelIsLora(m) && m.ContextCeiling == 0 && m.KVLayers == 0 {
+		if key, ok := engineGeometryFile(m); ok {
+			if geom := engineGGUFGeometryOfObject(r.Context(), key, a.engineStorageBytes()); geom.complete() {
+				engineApplyGeometry(&m, geom)
+			}
+		}
 	}
 	// The family, for a provider that dispatches on one (ADR 0072 decision 2). Refused HERE, in
 	// the operator's own words, rather than as a ComfyUI validation error a cold start and a
@@ -2532,4 +2559,40 @@ func engineBaseModelHint(upstream string) string {
 		return fmt.Sprintf(" (the repository calls it %q)", u)
 	}
 	return ""
+}
+
+// healGeometry reads a row's GGUF header out of the bucket and stores it, when the row has none.
+//
+// The gap it closes: engine_gguf.go reads a header at the RESOLVE, over the upstream URL, and a
+// row that never went down that road — registered from the bucket, rebuilt from a ledger key, or
+// simply taken in before the read existed — has no geometry and never gets one. Both deployments
+// are entirely in that state, which is why every llm row answers `vram_need_source: floor` and
+// why a row declaring 262,144 tokens could be switched on without a word.
+//
+// Silent about every failure on purpose. It is a repair attached to a write the operator asked
+// for, and none of its outcomes are that operator's problem: an unconfigured bucket, a refused
+// read, a file that is not a GGUF, a header past the ceiling, a losing race with another writer.
+// The row simply stays where it was, which is where it already is when this is not called at all.
+func (a engineAdminAPI) healGeometry(ctx context.Context, e *engineRuntimeState, id string) {
+	cur, ok := engineCatalogModel(ctx, e, id)
+	if !ok || engineModelIsLora(cur) || cur.KVLayers > 0 {
+		return
+	}
+	key, ok := engineGeometryFile(cur)
+	if !ok {
+		return
+	}
+	geom := engineGGUFGeometryOfObject(ctx, key, a.engineStorageBytes())
+	if !geom.complete() {
+		return
+	}
+	next := cur
+	engineApplyGeometry(&next, geom)
+	if err := a.mgr.store.PutEngineModel(ctx, next); err != nil {
+		log.Printf("engines: %s/%s: the geometry was read and could not be stored (%v)", e.def.Key, id, err)
+		return
+	}
+	e.catalog.invalidate()
+	log.Printf("engines: %s/%s: attention geometry read from the bucket (%d layers, %d caching, ceiling %d)",
+		e.def.Key, id, geom.Layers, geom.cacheLayers(), geom.Ceiling)
 }

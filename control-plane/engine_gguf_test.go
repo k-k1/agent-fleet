@@ -103,8 +103,10 @@ func TestParseGGUFGeometryReadsBothShapes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("qwen2: %v", err)
 	}
-	// 1536 / 12 = 128, derived because the file declares neither length.
-	want := engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128}
+	// 1536 / 12 = 128, derived because the file declares neither length. The ceiling rides along
+	// on the same pass — it is not part of the cache arithmetic, but the bucket road has no other
+	// way to learn it (engineGGUFGeometryOfObject).
+	want := engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, Ceiling: 32768}
 	if got != want {
 		t.Errorf("qwen2 geometry = %+v, want %+v", got, want)
 	}
@@ -114,7 +116,7 @@ func TestParseGGUFGeometryReadsBothShapes(t *testing.T) {
 		t.Fatalf("qwen3moe: %v", err)
 	}
 	// 🔴 128, NOT 2048/32 = 64. Getting this wrong halves a 30B's KV estimate.
-	want = engineKVGeometry{Layers: 48, HeadsKV: 4, KeyLen: 128, ValLen: 128}
+	want = engineKVGeometry{Layers: 48, HeadsKV: 4, KeyLen: 128, ValLen: 128, Ceiling: 262144}
 	if got != want {
 		t.Errorf("qwen3moe geometry = %+v, want %+v", got, want)
 	}

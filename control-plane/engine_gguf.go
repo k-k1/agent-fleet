@@ -12,15 +12,18 @@ package main
 //     `context_length` and the chat template, and a GGUF-only repository's `config` is `{}`
 //     (measured 2026-09-11 on Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF). So the file itself is the
 //     only source.
-//   - The copy whose header is read is the one at the SOURCE, over the same HTTP the resolve
-//     already uses. The storage port can hand over a prefix of a stored object as well
-//     (engineStorageMetadataPort.Prefix, added for the VAE question); a row registered from the
-//     bucket still reaches this reader through no road, so its geometry stays unknown and its
-//     VRAM estimate stays the weights alone.
+//   - There are two copies to read and this file reads both. The one at the SOURCE, over the
+//     same HTTP the resolve already uses (engineGGUFGeometry), and the one already in this
+//     deployment's BUCKET, through engineStorageMetadataPort.Prefix
+//     (engineGGUFGeometryOfObject). The second road was missing until 2026-09-19, and its
+//     absence is why every llm row on both deployments answered `vram_need_source: floor` — the
+//     weights and nothing else — which fits almost any card and so let a row declaring 262,144
+//     tokens be switched on without a word.
 //
-// It is read ONCE, at registration, and stored on the row. A header read per panel refresh
-// would put a network call on a screen that lists every model, and the geometry of a file
-// identified by sha256 cannot change under us.
+// It is read ONCE and stored on the row — at registration, or on the first loading write to a
+// row that has none (engineAdminAPI.healGeometry). A header read per panel refresh would put a
+// network call on a screen that lists every model, and the geometry of a file identified by
+// sha256 cannot change under us.
 //
 // 🔴 What cannot be read here is the KV cache's element type: `-ctk`/`-ctv` live in
 // `LlmExtraArgs`, a CloudFormation parameter that reaches the task definition and never the
@@ -37,7 +40,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"path"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // The GGUF v3 metadata value types, in the spec's order.
@@ -122,6 +128,12 @@ type engineKVGeometry struct {
 	// 🔴 This is the difference between an estimate that is right and one that is four times
 	// too big, which is not a rounding error when it decides whether a window fits on a card.
 	FullAttnInterval int
+
+	// Ceiling is `<arch>.context_length`: the largest window the model was TRAINED for. Not part
+	// of the cache arithmetic at all — it is read here because it is in the same header, on the
+	// same pass, and because the bucket road (engineGGUFGeometryOfObject) has no other way to
+	// learn it. 🔴 A ceiling, not a setting.
+	Ceiling int
 }
 
 func (g engineKVGeometry) complete() bool {
@@ -359,6 +371,8 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 			geom.NextN = n
 		case "full_attention_interval":
 			geom.FullAttnInterval = n
+		case "context_length":
+			geom.Ceiling = n
 		}
 		// 🔴 No early return on complete(). The two modifiers are written AFTER
 		// attention.value_length (measured on Qwen3.8-27B: value_length is key 28 of 50 and
@@ -486,4 +500,77 @@ func engineIngestGeometry(ctx context.Context, kind string, res engineResolved,
 		return engineKVGeometry{}
 	}
 	return geom
+}
+
+// engineGGUFName is whether a key names a file this reader can parse at all. The bucket holds
+// safetensors beside GGUFs and a prefix read of the wrong format is a wasted round trip that
+// ends in "not a GGUF file" — the same guard engineSafetensorsName is for the other question.
+func engineGGUFName(key string) bool {
+	return strings.EqualFold(path.Ext(strings.TrimSpace(key)), ".gguf")
+}
+
+// engineGGUFGeometryOfObject is the geometry of a file whose bytes are already in this
+// deployment's bucket — the road `POST …/models` and `…/objects/register` take, where there is
+// no upstream URL to read and there may never have been one (the bytes can outlive the job that
+// fetched them).
+//
+// 🔴 This is the half the file's own header comment said did not exist: "a row registered from
+// the bucket still reaches this reader through no road, so its geometry stays unknown". That was
+// true, and it is why every llm row on both deployments answers `vram_need_source: floor` — the
+// weights and nothing else, which fits almost any card and so let a row declaring 262,144 tokens
+// be switched on without a word (ADR 0074's 2026-09-19 follow-up).
+//
+// Best-effort and deliberately quiet, exactly like engineVaeOfObject next door: a refused read,
+// an unconfigured bucket, a file that is not a GGUF, a header past the ceiling — all of them
+// leave the geometry unknown, which is where the row already was. The one thing it must not do
+// is fail the press.
+func engineGGUFGeometryOfObject(ctx context.Context, key string, storage *engineStorage) engineKVGeometry {
+	if !engineGGUFName(key) || storage == nil || !storage.configured() {
+		return engineKVGeometry{}
+	}
+	for _, window := range []int{ggufHeadWindow, ggufHeadMax} {
+		buf, err := storage.prefix(ctx, key, window)
+		if err != nil {
+			log.Printf("engines: %s: the attention geometry went unread (%v)", key, err)
+			return engineKVGeometry{}
+		}
+		geom, err := parseGGUFGeometry(buf)
+		if err == nil {
+			return geom
+		}
+		// Only a short window is worth the second, bigger read. Anything else is the file not
+		// being what the key says it is, and reading more of it changes nothing.
+		if !errors.Is(err, errGGUFShort) {
+			log.Printf("engines: %s: the attention geometry went unread (%v)", key, err)
+			return engineKVGeometry{}
+		}
+	}
+	log.Printf("engines: %s: the attention geometry is past the %d-byte ceiling", key, ggufHeadMax)
+	return engineKVGeometry{}
+}
+
+// engineGeometryFile names the file whose header answers for the row: its own weights, under the
+// unflagged slot. Every other flag names a part, and a text encoder's header says nothing about
+// the model that loads it — the same rule engineVaeMainFile states for the other question.
+func engineGeometryFile(m store.EngineModel) (string, bool) {
+	for _, f := range m.Files {
+		if strings.TrimSpace(f.Flag) == "" && engineGGUFName(f.S3Key) {
+			return f.S3Key, true
+		}
+	}
+	return "", false
+}
+
+// engineApplyGeometry writes a read header onto a row. One function because the six fields are
+// one fact: a row carrying four of them and not the other two is a row that estimates four times
+// too high, which is the bug this whole pass exists to close.
+func engineApplyGeometry(m *store.EngineModel, geom engineKVGeometry) {
+	m.KVLayers, m.KVHeadsKV = geom.Layers, geom.HeadsKV
+	m.KVKeyLen, m.KVValueLen = geom.KeyLen, geom.ValLen
+	m.KVNextN, m.KVFullAttnInterval = geom.NextN, geom.FullAttnInterval
+	// Only when the header said so: the ingest road may already have it from the upstream API,
+	// and a 0 read off a header that does not declare one must not erase that.
+	if geom.Ceiling > 0 {
+		m.ContextCeiling = geom.Ceiling
+	}
 }

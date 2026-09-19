@@ -220,3 +220,30 @@ is worse than no offer.
   re-fit, and ADR 0074's follow-up guard asks for a confirmation every time.
 - **Changing the instance rung does not move the windows.** A window is fitted once, against the
   `class.vram_mib` of the moment. Nothing re-fits the rows when the ladder step changes.
+
+### A, implemented — the geometry is read from the bucket too (2026-09-19)
+
+`engine_gguf.go`'s own header admitted the hole: "a row registered from the bucket still reaches
+this reader through no road, so its geometry stays unknown and its VRAM estimate stays the
+weights alone". **Every llm row on both deployments was in that state**, which is why they all
+answered `vram_need_source: floor` — and weights alone fit almost any card, so a row declaring
+262,144 tokens could be switched on without a word.
+
+So the road was built. `engineGGUFGeometryOfObject` takes the first 64 KiB of the object (1 MiB
+on a second try) through `engineStorageMetadataPort.Prefix` and hands it to the same
+`parseGGUFGeometry`. The same shape as `engineVaeOfObject` next door, and the same promise to
+fail quietly.
+
+Two callers:
+
+- **At registration** (`POST …/models`), beside the VAE verdict, on the road that has no
+  upstream URL.
+- **At enable** (`healGeometry`): one read on a loading write to a row that has no geometry, and
+  it is stored. It runs BEFORE the judgement, so a row that heals passes without being asked to
+  confirm anything. From the operator's side nothing was added.
+
+`context_length` is read on the same pass (`engineKVGeometry.Ceiling`), because without a ceiling
+a re-fit has no upper bound and would propose windows the model was never trained for.
+
+That makes "add it and use it" true for existing rows as well. What is left is B — re-fitting
+when the instance rung changes.
