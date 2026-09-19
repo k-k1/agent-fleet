@@ -656,12 +656,19 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The bound covers the mint too, not just the GET: a borrowed row's bearer is a round trip
+	// to the far deployment (engine_remote.go's sessionToken), and this route's whole reason to
+	// exist — never holding the way a generation request does — is only half kept if a slow far
+	// mint can still sit outside it.
+	ctx, cancel := context.WithTimeout(r.Context(), enginePropsTimeout)
+	defer cancel()
+
 	// The bearer, then the target — in that order, matching dial(): a BORROWED row's session
 	// token mint is also what learns the far side's own base path (engine_remote_token.go), so
 	// the target has to be built after it, not before.
 	bearer := eng.apiKey
 	if eng.def.remote() {
-		far, err := eng.remote.sessionToken(r.Context(), claims.Session)
+		far, err := eng.remote.sessionToken(ctx, claims.Session)
 		if err != nil {
 			writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_unavailable", err.Error()})
 			return
@@ -674,8 +681,6 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), enginePropsTimeout)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -717,17 +722,22 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 //
 // 🔴 A BORROWED row goes to the far gateway's OWN /engine/{key}/props (ADR 0079 decision 4's
 // rule applies here exactly as it does in engineUpstreamTarget): what is upstream is another
-// fleet's gateway, not an engine, and this deployment does not get to invent its route layout.
-// eng.remote.upstreamBase() being empty means the far side has not been asked yet (or answered
-// without a base_url), and an unknown one is an error rather than a guess at */v1 or */props.
+// fleet's gateway, not an engine, and this deployment does not get to invent its route layout —
+// which includes the KEY: eng.def.Key is this deployment's own spelling for the role and is
+// never asserted to be the far side's. eng.remote.upstreamBase() is the far side's own
+// `/engine/<their-key>/v1`, READ from its token answer (engine_remote_token.go:81-83) and never
+// composed here; its /props sits one segment up, so this drops the trailing /v1 that same string
+// carries rather than guessing a path out of the local key. Empty means the far side has not been
+// asked yet (or answered without a base_url), and an unknown one is an error rather than a guess.
 func enginePropsTarget(eng *engineRuntimeState) (string, error) {
 	base := strings.TrimRight(eng.def.URL, "/")
 	if eng.def.remote() {
-		if strings.TrimSpace(eng.remote.upstreamBase()) == "" {
+		far := strings.TrimRight(eng.remote.upstreamBase(), "/")
+		if far == "" {
 			return "", fmt.Errorf("%s has not said where its %s engine lives (no base_url on its token answer)",
 				base, eng.def.Key)
 		}
-		return base + "/engine/" + eng.def.Key + "/props", nil
+		return base + strings.TrimSuffix(far, "/v1") + "/props", nil
 	}
 	return base + "/props", nil
 }

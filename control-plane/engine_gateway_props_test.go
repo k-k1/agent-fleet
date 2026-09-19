@@ -223,8 +223,13 @@ func TestEnginePropsWarmEngineRelaysUpstream(t *testing.T) {
 // --- a borrowed row: the far gateway's OWN /engine/{key}/props, never guessed -----
 
 // Mirrors engine_gateway_remote_test.go's shape (ADR 0079 decision 4): the far side is asked
-// for exactly /engine/llm/props, never /engine/llm/v1/props and never this deployment's own
-// engine URL directly.
+// for exactly its OWN /engine/{their-key}/props.
+//
+// The far side's key is deliberately spelled DIFFERENTLY from the local row's ("chat-far" vs.
+// "llm"): composing the target from the LOCAL key would happen to land on the right path when
+// the two spellings coincide, which is exactly what let a guess pass as "read from the far
+// side" before this test forced them apart. base_url is the only place the far key is stated
+// (engine_remote_token.go:81-83) — never eng.def.Key, which is this deployment's own.
 func TestEnginePropsBorrowedRowAsksTheFarGatewaysOwnRoute(t *testing.T) {
 	mgr, signKey, mid := enginePropsFixture(t)
 
@@ -232,17 +237,22 @@ func TestEnginePropsBorrowedRowAsksTheFarGatewaysOwnRoute(t *testing.T) {
 	var gotAuth string
 	far := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
-		if r.URL.Path == "/internal/engine/token" {
+		switch r.URL.Path {
+		case "/internal/engine/token":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"token":      "afe_far-token",
 				"expires_at": time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339),
-				"base_url":   "/engine/llm/v1",
+				// The far deployment's OWN spelling for this role, unrelated to the local "llm"
+				// key below.
+				"base_url": "/engine/chat-far/v1",
 			})
-			return
+		case "/engine/chat-far/props":
+			gotAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":16384}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		gotAuth = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":16384}}`))
 	}))
 	defer far.Close()
 
@@ -269,15 +279,18 @@ func TestEnginePropsBorrowedRowAsksTheFarGatewaysOwnRoute(t *testing.T) {
 	}
 	found := false
 	for _, p := range paths {
-		if p == "/engine/llm/props" {
+		if p == "/engine/chat-far/props" {
 			found = true
 		}
-		if p == "/engine/llm/v1/props" {
-			t.Errorf("the far side was asked for %s — the local /v1/ prefix must never apply to a borrowed row's /props", p)
+		if p == "/engine/llm/props" {
+			t.Errorf("the far side was asked for %s — that is the LOCAL key guessed at, not the far side's own base_url", p)
+		}
+		if p == "/engine/chat-far/v1/props" {
+			t.Errorf("the far side was asked for %s — the /v1/ segment it stated must be dropped, not kept", p)
 		}
 	}
 	if !found {
-		t.Errorf("far side saw %v, want /engine/llm/props among them", paths)
+		t.Errorf("far side saw %v, want /engine/chat-far/props among them", paths)
 	}
 	if gotAuth != "Bearer afe_far-token" {
 		t.Errorf("far Authorization = %q, want the bought far session token", gotAuth)

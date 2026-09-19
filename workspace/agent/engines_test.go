@@ -645,6 +645,12 @@ func engineCatalogPropsStub(t *testing.T, rows string, propsStatus map[string]in
 	t.Setenv("AF_CP_BASE_URL", srv.URL)
 	t.Setenv("AF_ENGINE_ISSUE_TOKEN", "afei_test")
 	engineTokenCache.Clear()
+	// Cleared here too, not only in TestSyncEngineProvidersRemembersTheLastMeasuredWindow (the
+	// one test that deliberately wants it to persist ACROSS two syncEngineProviders calls within
+	// itself): every other test in this file reuses the same "llm"/model-id keys, and a value
+	// measured by an earlier test would otherwise survive into one asserting the catalogue's
+	// declared number.
+	engineMeasuredWindows.Clear()
 	engineCatalogState.mu.Lock()
 	engineCatalogState.rows, engineCatalogState.at, engineCatalogState.ok = nil, time.Time{}, false
 	engineCatalogState.mu.Unlock()
@@ -653,6 +659,7 @@ func engineCatalogPropsStub(t *testing.T, rows string, propsStatus map[string]in
 		engineCatalogState.rows, engineCatalogState.at, engineCatalogState.ok = nil, time.Time{}, false
 		engineCatalogState.mu.Unlock()
 		engineTokenCache.Clear()
+		engineMeasuredWindows.Clear()
 	})
 	return res
 }
@@ -762,5 +769,114 @@ func TestSyncEngineProvidersNeverAsksPropsForNonLlamacppProvider(t *testing.T) {
 	ctxTokens, _ := readOpencodeLimit(t, home, "other-chat-provider", "m")
 	if ctxTokens != 9999 {
 		t.Errorf("context = %d, want the catalogue's declared 9999 untouched", ctxTokens)
+	}
+}
+
+// A measurement of ONE model on a router must not move the engine-wide fallback that every
+// OTHER model on the same router falls back to. Before this was fixed, the warm model's real
+// n_ctx replaced e.ContextTokens outright, and a second model with no model_rows entry of its
+// own — which engineProviderEntry falls back to the engine-wide pair for — silently inherited
+// a window /props never said anything about it.
+func TestSyncEngineProvidersOnlyOverridesTheMeasuredModelsWindow(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	res := engineCatalogPropsStub(t,
+		`{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1",`+
+			`"models":["qwen3-coder-30b-a3b","unsized-model"],`+
+			`"context_tokens":9999,"max_output_tokens":1024,"model_rows":[`+
+			// Only "qwen3-coder-30b-a3b" has its own row; "unsized-model" is declared in
+			// `models` but has none, so it falls back to the engine-wide pair above.
+			`{"id":"qwen3-coder-30b-a3b","context_tokens":32768,"max_output_tokens":4096,"default":true}]}`,
+		map[string]int{"llm": http.StatusOK},
+		map[string]string{"llm": `{"default_generation_settings":{"n_ctx":65536}}`},
+	)
+
+	syncEngineProviders()
+
+	if len(res.propsRequested) != 1 {
+		t.Fatalf("props requested = %v, want exactly one", res.propsRequested)
+	}
+	measured, out := readOpencodeLimit(t, home, "llamacpp", "qwen3-coder-30b-a3b")
+	if measured != 65536 || out != 4096 {
+		t.Errorf("the measured model's limit = %d/%d, want 65536/4096", measured, out)
+	}
+	// The model /props never described keeps the catalogue's own engine-wide declaration,
+	// 9999 — never the OTHER model's measured 65536.
+	unsized, unsizedOut := readOpencodeLimit(t, home, "llamacpp", "unsized-model")
+	if unsized != 9999 || unsizedOut != 1024 {
+		t.Errorf("the unmeasured model's limit = %d/%d, want the untouched engine-wide 9999/1024", unsized, unsizedOut)
+	}
+}
+
+// The other half of decision 7's fix: a value actually measured while the box was warm must
+// survive the box going back to sleep. Reverting to the catalogue's declared number on every
+// sleep would rewrite opencode's config — and, through WriteEngineProviders' before/after
+// compare, ask for a `serve` restart — on the GPU's own idle schedule, for a model whose real
+// window never changed.
+func TestSyncEngineProvidersRemembersTheLastMeasuredWindow(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	rows := `{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1",` +
+		`"models":["qwen3-coder-30b-a3b"],"context_tokens":32768,"max_output_tokens":4096,` +
+		`"model_rows":[{"id":"qwen3-coder-30b-a3b","context_tokens":32768,"max_output_tokens":4096,"default":true}]}`
+
+	var propsCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/engine/catalog":
+			_, _ = w.Write([]byte(`{"engines":[` + rows + `]}`))
+		case "/internal/engine/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token": "afe_llm", "expires_at": "2099-01-01T00:00:00Z",
+			})
+		case "/engine/llm/props":
+			propsCalls++
+			if propsCalls == 1 {
+				_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":65536}}`))
+				return
+			}
+			w.WriteHeader(http.StatusServiceUnavailable) // asleep on every call after the first
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_ENGINE_ISSUE_TOKEN", "afei_test")
+	engineTokenCache.Clear()
+	engineMeasuredWindows.Clear()
+	engineCatalogState.mu.Lock()
+	engineCatalogState.rows, engineCatalogState.at, engineCatalogState.ok = nil, time.Time{}, false
+	engineCatalogState.mu.Unlock()
+	t.Cleanup(func() {
+		engineCatalogState.mu.Lock()
+		engineCatalogState.rows, engineCatalogState.at, engineCatalogState.ok = nil, time.Time{}, false
+		engineCatalogState.mu.Unlock()
+		engineTokenCache.Clear()
+		engineMeasuredWindows.Clear()
+	})
+
+	syncEngineProviders()
+	ctxTokens, _ := readOpencodeLimit(t, home, "llamacpp", "qwen3-coder-30b-a3b")
+	if ctxTokens != 65536 {
+		t.Fatalf("first sync (warm): context = %d, want the measured 65536", ctxTokens)
+	}
+
+	// Force the second call to actually re-fetch the catalogue and re-ask /props, rather than
+	// answering off the 10-minute TTL.
+	engineCatalogState.mu.Lock()
+	engineCatalogState.at = time.Time{}
+	engineCatalogState.mu.Unlock()
+
+	syncEngineProviders()
+	ctxTokens, _ = readOpencodeLimit(t, home, "llamacpp", "qwen3-coder-30b-a3b")
+	if ctxTokens != 65536 {
+		t.Errorf("second sync (now asleep): context = %d, want the last MEASURED 65536 left standing, not reverted to the declared 32768", ctxTokens)
+	}
+	if propsCalls != 2 {
+		t.Fatalf("props called %d time(s), want exactly 2 (one per sync)", propsCalls)
 	}
 }
