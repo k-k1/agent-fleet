@@ -11,6 +11,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 }));
 
 import { EngineAddView } from "./adminEngineAdd.tsx";
+import { clearCatalogMemory } from "./catalogMemory.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -92,6 +93,10 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
+  // 🔴 The catalogue's memory is module scope and every mount here shares one key
+  //    (no paneId), so without this a case reads the previous one's page and the
+  //    search it asserts is never sent.
+  clearCatalogMemory();
   root = null;
   host = null;
   api.mockReset();
@@ -112,7 +117,12 @@ describe("model catalogue operation regressions", () => {
         return Promise.resolve({ files: [{ name: "model.safetensors" }, { name: "vae.safetensors" }] });
       }
       if (path.endsWith("/ingest/versions")) {
-        return Promise.resolve({ error: { code: "bad_source", message: "model_ref is unavailable" } });
+        // The CP resolves the model from the version now, so a paste that names only a version
+        // gets the model's REAL list back — the Console used to make up a list of one here,
+        // because the route demanded a model id nobody pasting a version link has.
+        return Promise.resolve({ model_ref: "4451", versions: [
+          { ref: "782002", name: "v1" }, { ref: "999", name: "v2" },
+        ] });
       }
       return Promise.resolve({});
     });
@@ -124,9 +134,40 @@ describe("model catalogue operation regressions", () => {
     await typeInto(input, source);
     await click(button("調べる"));
 
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/versions", "POST", {
+      source: "civitai", ref: "782002", model_ref: "",
+    });
+    // The pasted version stays the selected one, and the others are now selectable beside it.
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/files", "POST", {
       source: { civitai: { versionId: 782002, file: "" } },
     });
+    const versions = Array.from(document.querySelectorAll<HTMLSelectElement>(".engine-catalog-operation select"))
+      .find((candidate) => Array.from(candidate.options).some((option) => option.value === "999"));
+    expect(versions?.value).toBe("782002");
+  });
+
+  // 🔴 No made-up list when the read fails. The version document is the same one `ingest/files`
+  // would need, so a fallback to "one version, the pasted one" only moves the failure one press
+  // later — and hides which upstream refused.
+  it("shows the refusal when Civitai cannot say which model a pasted version belongs to", async () => {
+    mockEngineAPI([imageRow]);
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [] });
+      if (path.endsWith("/ingest/versions")) {
+        return Promise.resolve({ error: { code: "ingest_source_error", message: "Civitai answered 503" } });
+      }
+      return Promise.resolve({});
+    });
+
+    await mount("image");
+    await click(button("URL・リポジトリを指定"));
+    await select(document.querySelector<HTMLSelectElement>(".engine-operation-manual select")!, "civitai");
+    await typeInto(document.querySelector<HTMLInputElement>(".engine-operation-manual input")!, "civitai:782002");
+    await click(button("調べる"));
+
+    expect(document.querySelector(".engine-catalog-operation .form-err")?.textContent).toContain("Civitai answered 503");
+    expect(apiJSON).not.toHaveBeenCalledWith("api/admin/engines/image/ingest/files", "POST",
+      { source: { civitai: { versionId: 782002, file: "" } } });
   });
 
   it("keeps the latest version's files when older requests finish last", async () => {

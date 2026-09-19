@@ -11,6 +11,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 }));
 
 import { EngineAddView, savedObjectsForHit } from "./adminEngineAdd.tsx";
+import { clearCatalogMemory } from "./catalogMemory.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -83,6 +84,10 @@ const acceptLicence = async () => {
 afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
+  // 🔴 The catalogue's memory is module scope and every mount here shares one key
+  //    (no paneId), so without this a case reads the previous one's page and the
+  //    search it asserts is never sent.
+  clearCatalogMemory();
   root = null;
   host = null;
   api.mockReset();
@@ -845,13 +850,41 @@ describe("registered rows and the bucket", () => {
     await mountRegistered();
     const card = document.querySelector<HTMLElement>('.engine-registered-card[aria-label="split"]')!;
     expect(card.querySelector("header .warn")?.textContent).toContain("1/2");
-    expect(card.querySelectorAll(".engine-registered-parts li")).toHaveLength(2);
+    const parts = card.querySelectorAll<HTMLElement>(".engine-registered-parts li");
+    expect(parts).toHaveLength(2);
+    // The chip is the mark of a line that needs a hand: the header already counts the parts, so
+    // a present one carries none and the missing one is the only thing lit.
+    expect(parts[0].querySelector(".engines-model-tag")).toBeNull();
+    expect(parts[1].querySelector(".engines-model-tag")?.textContent).toBe("不足");
     expect(card.querySelector('[aria-label="編集: split"]')).toBeTruthy();
     // The surfaces ADR 0085 decision 8 removed.
     expect(card.querySelector('[aria-label="ファイルと部品: split"]')).toBeNull();
     expect(button("既存の S3 ファイルを登録")).toBeUndefined();
     expect(api).not.toHaveBeenCalledWith("api/admin/engines/image/storage");
     expect(api).not.toHaveBeenCalledWith("api/admin/engines/image/ingest");
+  });
+
+  // 🔴 The chip a present line drops must not drop for "nobody could look". A bucket that cannot
+  // be listed is every line's state, and it is the one the card's header cannot count either.
+  it("keeps the unchecked chip on every part when the bucket cannot be listed", async () => {
+    const solo = { ...imageRow, model_rows: [{ id: "solo", enabled: true, kind: "model", file_rows: [{
+      s3Key: "image/checkpoints/solo.safetensors", flag: "",
+      bytes: 4_200_000_000, source_url: "https://civitai.com/model-versions/5038",
+    }] }] };
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [solo] });
+      if (path.endsWith("/objects")) return Promise.resolve({ error: { code: "engine_objects_unreadable", message: "cannot list" } });
+      return Promise.resolve({});
+    });
+    apiJSON.mockResolvedValue({ hits: [] });
+    await mountRegistered();
+    const part = document.querySelector<HTMLElement>('.engine-registered-card[aria-label="solo"] .engine-registered-parts li')!;
+    expect(part.querySelector(".engines-model-tag")?.textContent).toBe("未確認");
+    // The size and the page are at the right end of the flag's line, in one span — the narrow
+    // card folds the key under them instead of scattering them down its own rows.
+    const meta = part.querySelector<HTMLElement>(".engine-registered-part-meta")!;
+    expect(meta.textContent).toContain("4.2 GB");
+    expect(meta.querySelector("a")?.textContent).toBe("配布元を見る");
   });
 
   it("requires an explicit VRAM confirmation before enabling an oversized registered model", async () => {
@@ -868,6 +901,98 @@ describe("registered rows and the bucket", () => {
     expect(document.querySelector(".engine-registered-confirm")?.textContent).toContain("12288");
     await click(button("承知のうえで有効にする"));
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/large", "PUT", { enabled: true, confirm_vram: true });
+  });
+});
+
+// A tabbed cell renders only the selected view, so leaving the catalogue for another tab unmounts
+// it. These are about what has to survive that — and about what must NOT happen on the way back.
+describe("catalogue memory", () => {
+  const mountPane = async (paneId: string, view?: "search" | "registered") => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<EngineAddView engineKey="image" lora={false} paneId={paneId} initialView={view} />);
+    });
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+  };
+  const leave = async () => {
+    await act(async () => { root?.unmount(); });
+    host?.remove();
+    root = null;
+    host = null;
+  };
+  const searches = () => apiJSON.mock.calls.filter((call) => String(call[0]).endsWith("/ingest/search")).length;
+  const settle = async () => { for (const _ of [0, 1, 2]) await act(async () => { await Promise.resolve(); }); };
+
+  // 🔴 The point of the memory is not that the page reappears — it is that the return costs
+  // NOTHING. A search is an upstream request to Civitai or Hugging Face, and this screen used to
+  // send one every time somebody looked at another tab and came back.
+  it("brings the page back from another tab without searching again", async () => {
+    mockEngines([imageRow, llmRow]);
+    apiJSON.mockResolvedValue({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Image Example" }] });
+    await mountPane("pane-1");
+    expect(document.querySelector('[aria-label="Image Example"]')).toBeTruthy();
+    expect(searches()).toBe(1);
+
+    await leave();
+    await mountPane("pane-1");
+    expect(document.querySelector('[aria-label="Image Example"]')).toBeTruthy();
+    expect(searches()).toBe(1);
+  });
+
+  it("keeps each role's own page across 文章 ⇄ 画像", async () => {
+    mockEngines([imageRow, llmRow]);
+    apiJSON.mockImplementation((path: string) => Promise.resolve(String(path).includes("/llm/")
+      ? { hits: [{ source: "hf", ref: "org/text", model_ref: "org/text", name: "Text Example" }] }
+      : { hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Image Example" }] }));
+    await mountPane("pane-2");
+    expect(document.querySelector('[aria-label="Image Example"]')).toBeTruthy();
+
+    await click(button("文章"));
+    await settle();
+    expect(document.querySelector('[aria-label="Text Example"]')).toBeTruthy();
+    const asked = searches();
+
+    await click(button("画像"));
+    await settle();
+    expect(document.querySelector('[aria-label="Image Example"]')).toBeTruthy();
+    expect(searches()).toBe(asked);
+  });
+
+  it("comes back to the registered face with its filter still in the box", async () => {
+    mockEngines([{ ...imageRow, model_rows: [
+      { id: "harbor", enabled: true, kind: "model", base_model: "sdxl", file_rows: [] },
+      { id: "meadow", enabled: true, kind: "model", base_model: "sdxl", file_rows: [] },
+    ] }], []);
+    apiJSON.mockResolvedValue({ hits: [] });
+    await mountPane("pane-3", "registered");
+    const filter = document.querySelector<HTMLInputElement>(".engine-registered-search input")!;
+    await act(async () => {
+      // Through the prototype setter: React tracks the value it wrote, and a plain assignment
+      // looks to it like no change at all.
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(filter, "harbor");
+      filter.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    expect(document.querySelector('.engine-registered-card[aria-label="meadow"]')).toBeNull();
+
+    await leave();
+    await mountPane("pane-3", "registered");
+    expect(document.querySelector<HTMLInputElement>(".engine-registered-search input")?.value).toBe("harbor");
+    expect(document.querySelector('.engine-registered-card[aria-label="harbor"]')).toBeTruthy();
+    expect(document.querySelector('.engine-registered-card[aria-label="meadow"]')).toBeNull();
+  });
+
+  // Two panes are two catalogues: one reader searching Flux must not decide what the other sees.
+  it("gives each pane its own memory", async () => {
+    mockEngines([imageRow, llmRow]);
+    apiJSON.mockResolvedValue({ hits: [{ source: "civitai", ref: "22", model_ref: "7", name: "Image Example" }] });
+    await mountPane("pane-a");
+    expect(searches()).toBe(1);
+    await leave();
+    await mountPane("pane-b");
+    expect(searches()).toBe(2);
   });
 });
 

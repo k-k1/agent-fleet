@@ -283,7 +283,19 @@ function engineRoute(method, pathname) {
     complete: { action: "attached", files: [], bytes_to_download: 0 },
   });
   if (rest === "/ingest/search") return () => ({ hits: HITS });
-  if (rest === "/ingest/versions") return () => ({ versions: [{ ref: "782002", name: "v1.1" }, { ref: "770100", name: "v1.0" }] });
+  // The model behind the version, as the CP resolves it (ADR 0092 decision 3), and the sizes its
+  // listing carries. The third version deliberately has none: the ladder has to say "size not
+  // reported" rather than price a fit it cannot compute.
+  if (rest === "/ingest/versions") {
+    return () => ({
+      model_ref: "7240",
+      versions: [
+        { ref: "782002", name: "v1.1", bytes: 5_570_000_000, published_at: "2026-05-07T21:02:16Z" },
+        { ref: "770100", name: "v1.0", bytes: 5_310_000_000, published_at: "2026-01-10T12:00:00Z" },
+        { ref: "500001", name: "v0.9 (beta)" },
+      ],
+    });
+  }
   if (rest === "/ingest/files") {
     // The repository ladder asks for a whole repository (no `file`); the wizard asks for the one
     // it is about to resolve. ADR 0089: the answer carries the role of each file and the KV cost

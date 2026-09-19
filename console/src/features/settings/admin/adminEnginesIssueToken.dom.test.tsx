@@ -23,6 +23,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 }));
 
 import { EnginesAdminView } from "./adminEngines.tsx";
+import { clearCatalogMemory } from "./catalogMemory.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -104,6 +105,10 @@ async function issue(answer: unknown, tenant = TENANT, key = USER_KEY) {
 afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
+  // 🔴 The catalogue's memory is module scope and every mount here shares one key
+  //    (no paneId), so without this a case reads the previous one's page and the
+  //    search it asserts is never sent.
+  clearCatalogMemory();
   root = null;
   host = null;
   api.mockReset();

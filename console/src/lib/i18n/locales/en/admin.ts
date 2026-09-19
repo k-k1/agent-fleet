@@ -283,6 +283,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.fit_card": "This class has {c} MiB of VRAM",
   "admin.fit_estimate_note": "An estimate of the weights plus the KV cache. It does not include the compute buffers or the CUDA context.",
   "admin.fit_no_kv": "The KV cache could not be read, so this compares the weights alone.",
+  // A checkpoint has no KV cache; saying the LLM sentence here would estimate something that
+  // does not exist.
+  "admin.fit_estimate_note_weights": "An estimate of the weights alone. It does not include the working memory generation needs on top of them.",
   "admin.fit_kv_from": "The KV figure was read from {f}'s header — builds in one repository differ a little.",
   "admin.engines_ingest_ctx_ceiling": "Ceiling {n}",
   // --- The repository card (ADR 0089). The ladder opens on a press, because opening it reads
@@ -293,6 +296,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.repo_ladder_loading": "Reading the repository…",
   "admin.repo_ladder_empty": "This repository offers no file that can be taken in.",
   "admin.repo_ladder_held": "Taken in",
+  // --- What else the model behind a registered row is published as: versions for image,
+  // sizes for chat.
+  "admin.catalog_other_versions": "Other versions…",
+  "admin.catalog_other_sizes": "Other sizes…",
+  "admin.catalog_other_note": "Taking one in creates a new row. To swap, press \"Start with this\" on the new row and then forget the old one.",
+  "admin.catalog_versions_empty": "This publisher offers no other version.",
   // --- Complete (ADR 0085 decision 3). The subject is the row; a part never is. ---
   "admin.catalog_complete": "Complete",
   "admin.catalog_complete_busy": "Completing…",
