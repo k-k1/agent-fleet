@@ -24,7 +24,13 @@ func TestMain(m *testing.M) {
 	// Port 1 refuses instantly, so the background refresh a handler test kicks off dies
 	// without waiting and without leaving the host.
 	cliRelease = newCLIReleaseCache("http://127.0.0.1:1")
-	os.Exit(m.Run())
+	code := m.Run()
+	// Not this file's own cleanup: engine_gateway_props_test.go's shared fixture needs a
+	// directory that outlives every individual test (t.TempDir() would be removed by the
+	// first test to finish), and a package may have only one TestMain — so its teardown rides
+	// here, between run and os.Exit, which skips every deferred call.
+	enginePropsFixtureCleanup()
+	os.Exit(code)
 }
 
 // TestCLIReleaseProductionBaseIsGitHub is the positive control for the line above: if the

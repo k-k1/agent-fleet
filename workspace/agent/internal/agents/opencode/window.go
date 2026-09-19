@@ -25,12 +25,16 @@ type windowFn func(providerID, modelID string) int
 // none of that.
 //
 // WHY it matters that this is the SAME number llama-server was started with: for a
-// self-hosted engine the window travels as one value — store.EngineModel.ContextTokens →
-// the active set's `c` → the sidecar's preset → llama-server's --ctx-size, and → the
-// catalogue's context_tokens → engineProviderEntry's `limit.context` here. Recording it on
-// the turn is what stops the mirror from falling back to usagex.WindowGuess, which reads a
-// self-hosted id as an unknown non-Claude model and answers 200,000 — a 32k engine then
-// showed a 25k conversation as 13% full while opencode was compacting it on every turn.
+// self-hosted engine the window travels forward as one value — store.EngineModel.ContextTokens
+// → the active set's `c` → the sidecar's preset → llama-server's --ctx-size — and, since ADR
+// 0093 phase 0, one value travels BACK: `GET /engine/{key}/props` reads the window llama-server
+// actually started with (`default_generation_settings.n_ctx`) and engines.go's
+// syncEngineProviders substitutes it for the catalogue's declared context_tokens whenever the
+// box is warm enough to answer, before either number reaches engineProviderEntry's
+// `limit.context` here. Recording it on the turn is what stops the mirror from falling back to
+// usagex.WindowGuess, which reads a self-hosted id as an unknown non-Claude model and answers
+// 200,000 — a 32k engine then showed a 25k conversation as 13% full while opencode was
+// compacting it on every turn.
 //
 // A provider af did not write (anthropic, bedrock, …) is simply absent: opencode knows those
 // windows from its own catalogue, not from this file, and 0 means "nobody said" rather than
