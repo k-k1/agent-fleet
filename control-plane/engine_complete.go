@@ -143,7 +143,13 @@ type engineCompleteStep struct {
 // their bytes land under `image/checkpoints/split_files/…` exactly the same way, from exactly the
 // same form. Without this the ledger would report `misplaced` on a row whose 揃える answered
 // `none`, which is the shape of report this whole ADR is written around.
-func engineCompleteMainFix(role, family string, m store.EngineModel) (engineMainFileFix, bool) {
+//
+// 🔴 The destination is the ROLE's layout (engineIngestKeyFor), not ComfyUI's. Asking
+// engineComfyKeyFor directly answered `llm/checkpoints/<file>.gguf` for every llm row — a
+// directory the preset does not point at and no loader reads — so 揃える on a perfectly healthy
+// chat model planned a move that would have taken its weights out of service. For the image role
+// the two functions are the same function.
+func engineCompleteMainFix(role string, images bool, family string, m store.EngineModel) (engineMainFileFix, bool) {
 	if fix, ok := engineMainFileFixFor(role, family, m); ok {
 		return fix, true
 	}
@@ -155,7 +161,7 @@ func engineCompleteMainFix(role, family string, m store.EngineModel) (engineMain
 		return engineMainFileFix{}, false
 	}
 	from := strings.TrimSpace(whole.S3Key)
-	to := engineComfyKeyFor(role, "", from, engineModelIsLora(m))
+	to := engineIngestKeyFor(role, images, "", from, engineModelIsLora(m))
 	if to == from {
 		return engineMainFileFix{}, false
 	}
@@ -242,7 +248,7 @@ func engineCompleteParts(family string) map[string]engineFamilyPart {
 //
 // ctx is used for ONE thing — pricing a part that has to be downloaded — and only for the roles
 // the ledger could not fill. A row whose parts are all here reaches no network at all.
-func engineCompletePlan(ctx context.Context, role, provider string, m store.EngineModel,
+func engineCompletePlan(ctx context.Context, role, provider string, images bool, m store.EngineModel,
 	l *engineLedger, b engineCompleteBody) ([]engineCompleteStep, *apiRefusal) {
 	family := strings.TrimSpace(m.BaseModel)
 	lora := engineModelIsLora(m)
@@ -251,7 +257,7 @@ func engineCompletePlan(ctx context.Context, role, provider string, m store.Engi
 	// The weights first. A row whose parts attach while its own checkpoint stays unreadable is
 	// still a row nobody can enable, and the move is the slow half (a server-side copy of up to
 	// 13 GB), so it is planned and started before the cheap writes rather than after them.
-	fix, hasFix := engineCompleteMainFix(role, family, m)
+	fix, hasFix := engineCompleteMainFix(role, images, family, m)
 	if hasFix {
 		steps = append(steps, engineCompleteStep{
 			wire: engineCompleteFile{Flag: fix.Flag, Action: engineCompleteActMove,
@@ -539,7 +545,7 @@ func (a engineAdminAPI) engineCompleteRun(ctx context.Context, r *http.Request, 
 		return engineCompleteAnswer{}, nil, refuse(http.StatusNotFound, errCodeEngineModelUnknown,
 			"no model "+id+" for engine "+role, nil, nil)
 	}
-	steps, aerr := engineCompletePlan(ctx, role, e.def.Provider, m, ledger, b)
+	steps, aerr := engineCompletePlan(ctx, role, e.def.Provider, e.def.api() == engineAPIImages, m, ledger, b)
 	if aerr != nil {
 		return engineCompleteAnswer{}, nil, aerr
 	}

@@ -54,11 +54,11 @@ async function mountLora() {
   for (const _ of [0, 1, 2]) await act(async () => { await Promise.resolve(); });
 }
 
-async function mountRegistered() {
+async function mountRegistered(engineKey = "image") {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(<EngineAddView engineKey="image" lora={false} initialView="registered" />); });
+  await act(async () => { root!.render(<EngineAddView engineKey={engineKey} lora={false} initialView="registered" />); });
   for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
 }
 
@@ -629,6 +629,40 @@ describe("registered rows and the bucket", () => {
       key: "image/checkpoints/split_files/diffusion_models/krea2.safetensors",
     });
     expect(document.body.textContent).toContain("krea2 として登録しました");
+  });
+
+  // 🔴 Reported from the panel on 2026-09-19: three GGUFs under `llm/` that no row declared, each
+  // drawn with 消す and nothing else, while the image tab had 登録 on the same kind of orphan. The
+  // rule was written as ComfyUI's two loader directories, and the llm layout is FLAT — so the only
+  // act the screen offered on a chat model this deployment is paying for was to throw it away.
+  it("offers 登録 on a chat engine's flat orphan, and only 消す on its adapters and shards", async () => {
+    mockEngines([llmRow], [
+      { key: "llm/Qwen3.8-27B-Uncensored-Q4_K_M.gguf", bytes: 17_900_000_000, role_dir: "other", placement: "ok", state: "present", declared_by: [] },
+      { key: "llm/loras/style-v1.gguf", bytes: 120_000_000, role_dir: "other", placement: "ok", state: "present", declared_by: [] },
+      { key: "llm/qwen3-30b/model-00001-of-00002.gguf", bytes: 9_000_000_000, role_dir: "other", placement: "ok", state: "present", declared_by: [] },
+      // Bytes in the bucket that are not a model file at all: listed, never registrable.
+      { key: "llm/notes.json", bytes: 4_096, role_dir: "other", placement: "ok", state: "present", declared_by: [] },
+    ]);
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/objects/register")) {
+        return Promise.resolve({ model_id: "qwen3.8-27b-uncensored", moved: false, jobs: [], complete: { action: "none" } });
+      }
+      return Promise.resolve({ hits: [] });
+    });
+    await mountRegistered("llm");
+    expect(labelled("登録: llm/Qwen3.8-27B-Uncensored-Q4_K_M.gguf")).toBeTruthy();
+    // An adapter is attached by the 揃える of the model that reads it; one shard is not a file;
+    // and a `.json` is not a model however flat it sits.
+    for (const key of ["llm/loras/style-v1.gguf", "llm/qwen3-30b/model-00001-of-00002.gguf", "llm/notes.json"]) {
+      expect(labelled(`登録: ${key}`)).toBeUndefined();
+      expect(labelled(`消す: ${key}`)).toBeTruthy();
+    }
+
+    await click(labelled("登録: llm/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/objects/register", "POST", {
+      key: "llm/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+    });
+    expect(document.body.textContent).toContain("qwen3.8-27b-uncensored として登録しました");
   });
 
   it("deletes an orphan object only after saying what cannot be undone", async () => {

@@ -334,10 +334,10 @@ describe("the catalogue of a borrowed engine (ADR 0079 decision 7)", () => {
     // footer case). The ledger's second sentence describes the 揃える a borrowed row does not
     // draw, so it is not said there — and IS said for the LAN row, which has the button.
     await mount(remoteAnswer, RegisteredView);
-    expect(text()).not.toContain("付け直すのはチェックポイント行");
+    expect(text()).not.toContain("付け直すのは、それを読むモデル行");
     await act(async () => root?.unmount());
     host?.remove();
     await mount(externalAnswer, RegisteredView);
-    expect(text()).toContain("付け直すのはチェックポイント行");
+    expect(text()).toContain("付け直すのは、それを読むモデル行");
   });
 });

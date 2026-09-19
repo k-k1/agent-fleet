@@ -1024,7 +1024,7 @@ function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly, onCha
       </li>;
     })}</ul>
     </section>)}
-    <EngineLedger objects={objects} failed={ledgerFailed} checkedAt={checkedAt} busy={busy} readOnly={readOnly}
+    <EngineLedger objects={objects} role={row.key} image={image} failed={ledgerFailed} checkedAt={checkedAt} busy={busy} readOnly={readOnly}
       deletingKeys={deletingKeys}
       onRegister={(object) => void registerObject(object.key)}
       onDelete={(object) => setDeletingObject(object)}
@@ -1139,8 +1139,13 @@ function EngineRefusal({ error, busy, onNext }: { error: EngineApiError | null; 
  * 🔴 Orphans and misplaced objects sort first because they are the only rows here anybody has to
  * act on: everything else is provenance for a row that already works. A part gets no button of
  * its own — it is attached, and moved, by the 揃える of whichever checkpoint reads it. */
-function EngineLedger({ objects, failed, checkedAt, busy, readOnly, deletingKeys, onRegister, onDelete, onDismiss, onComplete }: {
+function EngineLedger({ objects, role, image, failed, checkedAt, busy, readOnly, deletingKeys, onRegister, onDelete, onDismiss, onComplete }: {
   objects: EngineObjectRow[] | null;
+  /** The engine's own key, which is the prefix every one of these objects sits under. Needed
+   *  because what counts as a model's own weights is read off the key, and the two roles write
+   *  different layouts under it. */
+  role: string;
+  image: boolean;
   failed: boolean;
   checkedAt: string;
   busy: string;
@@ -1214,7 +1219,7 @@ function EngineLedger({ objects, failed, checkedAt, busy, readOnly, deletingKeys
             ? <Button small variant="danger" disabled={pending} aria-label={`${tr("admin.catalog_ledger_delete" as never)}: ${object.key}`}
               onClick={() => onDismiss(object.job!.id)}>{tr("admin.catalog_ledger_delete" as never)}</Button>
             : <>
-              {orphan && object.state === "present" && isMainObject(object) && <Button small variant="primary" disabled={pending}
+              {orphan && object.state === "present" && isMainObject(object, role, image) && <Button small variant="primary" disabled={pending}
                 aria-label={`${tr("admin.catalog_ledger_register" as never)}: ${object.key}`}
                 onClick={() => onRegister(object)}>{tr("admin.catalog_ledger_register" as never)}</Button>}
               {orphan && object.state === "present" && <Button small variant="danger" disabled={pending}
@@ -1250,12 +1255,28 @@ function ledgerRank(object: EngineObjectRow): number {
 }
 
 /** A main file — the thing a person means by "a model" — rather than a part. `register` is
- * offered on these only; a misplaced one still names its role directory in the key, which is how
- * `image/checkpoints/split_files/diffusion_models/x.safetensors` is recognised. */
-function isMainObject(object: EngineObjectRow): boolean {
-  if (object.role_dir === "checkpoints" || object.role_dir === "diffusion_models") return true;
-  return /(^|\/)(checkpoints|diffusion_models)\//.test(object.key);
+ * offered on these only, and this is the CP's `engineObjectIsMainFile` in TypeScript: a button the
+ * route would refuse is worse than no button.
+ *
+ * The image role is ComfyUI's, one directory per loader, so a misplaced file still names its role
+ * directory in the key — which is how `image/checkpoints/split_files/diffusion_models/x.safetensors`
+ * is recognised. The llm role is flat: `llm/<file>.gguf` and nothing deeper, because `llm/loras/…`
+ * is an adapter and `llm/<name>/shard.gguf` is one piece of a file. */
+function isMainObject(object: EngineObjectRow, role: string, image: boolean): boolean {
+  if (image) {
+    if (object.role_dir === "checkpoints" || object.role_dir === "diffusion_models") return true;
+    return /(^|\/)(checkpoints|diffusion_models)\//.test(object.key);
+  }
+  const prefix = `${role.trim()}/`;
+  if (!object.key.startsWith(prefix)) return false;
+  const rest = object.key.slice(prefix.length);
+  return !!rest && !rest.includes("/") && MODEL_FILE_EXTS.some((ext) => rest.toLowerCase().endsWith(ext));
 }
+
+/** The names a loader could load — the CP's `engineModelFileExts`. The image branch above has no
+ * need of them (a key under `checkpoints/` is a model file by where it is), but a flat role has
+ * only the name to go on, and a `.json` beside a GGUF is not a model. */
+const MODEL_FILE_EXTS = [".safetensors", ".gguf", ".ckpt", ".pt", ".sft", ".bin"];
 
 /** The plan card (ADR 0085 decision 4). One press, and the CP decided what that press does.
  *
