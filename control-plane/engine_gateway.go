@@ -747,7 +747,7 @@ func (g engineGateway) streamed(w http.ResponseWriter, r *http.Request, eng *eng
 	ctx, cancel := context.WithTimeout(r.Context(), engineWakeTimeout())
 	defer cancel()
 	ch := make(chan upstreamStart, 1)
-	go func() { ch <- g.dial(ctx, eng, r, body, claims) }()
+	go func() { ch <- g.dialThroughWaking(ctx, eng, r, body, claims) }()
 
 	tick := time.NewTicker(engineHeartbeatInterval)
 	defer tick.Stop()
@@ -778,8 +778,8 @@ func (g engineGateway) streamed(w http.ResponseWriter, r *http.Request, eng *eng
 	defer start.resp.Body.Close()
 	if start.resp.StatusCode >= 300 {
 		rest, _ := io.ReadAll(io.LimitReader(start.resp.Body, 1<<16))
-		writeEngineStreamError(w, flusher, fmt.Errorf("the engine answered %s: %s",
-			start.resp.Status, strings.TrimSpace(string(start.first)+string(rest))))
+		writeEngineUpstreamError(w, flusher, start.resp.Status,
+			append(append([]byte{}, start.first...), rest...))
 		return
 	}
 
@@ -813,18 +813,88 @@ func (g engineGateway) streamed(w http.ResponseWriter, r *http.Request, eng *eng
 	g.recordUsage(r.Context(), eng, claims, mv, scan.usage, time.Since(started), true, r.Header.Get("X-AF-Model"))
 }
 
-// writeEngineStreamError puts a failure into an already-open event stream, then closes it
-// the way the protocol expects so the client stops waiting instead of timing out.
+// writeEngineStreamError puts a failure of THIS deployment's own — a wake that never finished,
+// a relay that could not be made — into an already-open event stream, then closes it the way the
+// protocol expects so the client stops waiting instead of timing out.
 func writeEngineStreamError(w http.ResponseWriter, flusher http.Flusher, err error) {
-	payload, _ := json.Marshal(map[string]any{
-		"error": map[string]any{
-			"type":    "engine_unavailable",
-			"message": "the fleet's own inference engine did not come up in time: " + err.Error(),
-		},
+	writeEngineStreamErrorObject(w, flusher, map[string]any{
+		"type":    "engine_unavailable",
+		"message": "the fleet's own inference engine did not come up in time: " + err.Error(),
 	})
+}
+
+// writeEngineUpstreamError puts the UPSTREAM's own refusal into the stream, unchanged wherever
+// it can be read.
+//
+// 🔥 A refusal the engine composed must never be dressed as this deployment's own failure.
+// writeEngineStreamError is for the latter: it prefixes "did not come up in time" and types the
+// result `engine_unavailable`, which for an engine that answered is false twice over. Measured
+// while borrowing af-sandbox's llm from another deployment, llama-server's
+//
+//	400 {"error":{"code":400,"message":"request (33565 tokens) exceeds the available context size
+//	(32768 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":33565,
+//	"n_ctx":32768}}
+//
+// reached opencode as "the fleet's own inference engine did not come up in time" — the engine was
+// up, answering, and telling the caller exactly what to change, and all three facts were lost. So
+// the engine's error object is relayed as it stands: its `type`, its `code`, its numbers. Only a
+// body this cannot read as an OpenAI-shaped error is described from the outside, and that one says
+// what the status was rather than guessing why.
+func writeEngineUpstreamError(w http.ResponseWriter, flusher http.Flusher, status string, body []byte) {
+	if obj := engineUpstreamErrorObject(body); obj != nil {
+		writeEngineStreamErrorObject(w, flusher, obj)
+		return
+	}
+	writeEngineStreamErrorObject(w, flusher, map[string]any{
+		"type":    "engine_error",
+		"message": "the engine answered " + status + ": " + strings.TrimSpace(string(body)),
+	})
+}
+
+// writeEngineStreamErrorObject is the shape both of those share: one `error` object in a `data:`
+// event, then `[DONE]`.
+func writeEngineStreamErrorObject(w http.ResponseWriter, flusher http.Flusher, obj map[string]any) {
+	payload, _ := json.Marshal(map[string]any{"error": obj})
 	_, _ = w.Write([]byte("data: " + string(payload) + "\n\n"))
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	flusher.Flush()
+}
+
+// engineUpstreamErrorObject reads an OpenAI-shaped `{"error":{…}}` out of an upstream body, or
+// nil when there is none to read.
+//
+// A `message` is what makes it one: the field is the only part a person or a model actually
+// reads, and an object without it says less than the status line it would be replacing. Nothing
+// else is required, because the two upstreams this sees put different things in the rest —
+// llama-server's `code` is the NUMBER 400 while a far Control Plane's is a string like
+// `engine_waking`, and neither is this process's to normalise.
+func engineUpstreamErrorObject(body []byte) map[string]any {
+	var doc struct {
+		Error map[string]any `json:"error"`
+	}
+	if json.Unmarshal(body, &doc) != nil || doc.Error == nil {
+		return nil
+	}
+	if msg, _ := doc.Error["message"].(string); strings.TrimSpace(msg) == "" {
+		return nil
+	}
+	return doc.Error
+}
+
+// engineUpstreamErrorCode is the STRING code an upstream named itself, from either field it
+// might be in. Empty when the body holds no error object, or one whose code is a number (a
+// llama.cpp HTTP status) — which is the answer this wants, since the codes read here are the
+// fleet's own vocabulary.
+func engineUpstreamErrorCode(body []byte) string {
+	obj := engineUpstreamErrorObject(body)
+	if obj == nil {
+		return ""
+	}
+	if c, _ := obj["code"].(string); strings.TrimSpace(c) != "" {
+		return strings.TrimSpace(c)
+	}
+	t, _ := obj["type"].(string)
+	return strings.TrimSpace(t)
 }
 
 // plain is the non-streaming path. There is nowhere to put a heartbeat, so this one really
@@ -863,6 +933,81 @@ func (g engineGateway) plain(w http.ResponseWriter, r *http.Request, eng *engine
 	_, _ = w.Write(full)
 	g.recordUsage(r.Context(), eng, claims, mv, parseEngineUsage(full), time.Since(started),
 		start.resp.StatusCode < 300, r.Header.Get("X-AF-Model"))
+}
+
+// engineStreamWakingFloor and engineStreamWakingCap bound what one `Retry-After` from an
+// upstream may ask the streamed path to wait between attempts. The floor keeps a header of `0`
+// — or one this process could not read — from turning the hold into a spin against a far
+// gateway; the cap keeps a large one from spending the whole budget on a single sleep, since
+// the wait is re-checked against the deadline after every attempt anyway.
+//
+// Vars only so a test can run the loop in milliseconds. Never written at runtime.
+var (
+	engineStreamWakingFloor = time.Second
+	engineStreamWakingCap   = 30 * time.Second
+)
+
+// dialThroughWaking is dial, plus the one retry this path can afford: an upstream answering
+// `engine_waking` is not a failure, it is the word "again".
+//
+// 🔥 Why it has to be here. A BORROWED row's upstream is another fleet's gateway, and that
+// gateway refuses with `503 engine_waking` + `Retry-After` for as long as the model is still
+// being synced onto its instance — measured on af-sandbox on 2026-09-19: a request 2m20s into a
+// cold start was told "1 file(s) to go", and the file landed three minutes later. The image
+// providers retry that refusal for a quarter of an hour (imagegen/sdcpp.go's sdcppRetryable), so
+// ADR 0079 decision 6 could rest on `plain` copying the far status and body through. A CHAT
+// client has no such retry, and on the streamed path the 200 has already gone out — so the far
+// side's "ask again" arrived as a terminal error in the stream and the turn died. Measured with
+// opencode, which ended the turn with `UnknownError`.
+//
+// So the wait happens on this side, where there is a heartbeat going out every ten seconds to
+// hold the connection open. That is the same promise decision 5 makes for a cold box: the
+// caller's FIRST request gets the answer, without a resend it has no way to know it owes.
+//
+// Bounded by the caller's context — the wake budget, or the client hanging up — and the refusal
+// that ran out of budget is reported as what it is: still waking, with the far side's own
+// sentence carried along so the operator reads which model and how many files were left.
+func (g engineGateway) dialThroughWaking(ctx context.Context, eng *engineRuntimeState, r *http.Request,
+	body []byte, claims engineSessionClaims) upstreamStart {
+
+	waitedFrom := time.Now()
+	for attempt := 1; ; attempt++ {
+		start := g.dial(ctx, eng, r, body, claims)
+		if start.err != nil || start.resp.StatusCode != http.StatusServiceUnavailable ||
+			engineUpstreamErrorCode(start.first) != "engine_waking" {
+			return start
+		}
+		// The refusal is small and complete in the first chunk, so the body is finished with.
+		said := strings.TrimSpace(string(start.first))
+		start.resp.Body.Close()
+		wait := engineUpstreamRetryAfter(start.resp)
+		if attempt == 1 {
+			// Once per held request, not once per attempt: this repeats every few seconds for
+			// as long as the far sync takes, and the far side logs its own side of it already.
+			log.Printf("%s: upstream is still waking, holding the stream and asking again every %s: %s",
+				eng.logKey(), wait, said)
+		}
+		select {
+		case <-ctx.Done():
+			return upstreamStart{err: fmt.Errorf("%s after %s and %d attempt(s): %s: %w",
+				strings.TrimRight(eng.def.URL, "/"), time.Since(waitedFrom).Truncate(time.Second),
+				attempt, said, errEngineWaking)}
+		case <-time.After(wait):
+		}
+	}
+}
+
+// engineUpstreamRetryAfter is how long that upstream asked to be left alone for, clamped. Only
+// the delta-seconds form is read: it is what this fleet's own gateway sends (engineWakingRetryAfter),
+// and an HTTP-date here would be a far side this process has no reason to guess for.
+func engineUpstreamRetryAfter(resp *http.Response) time.Duration {
+	wait := time.Duration(engineWakingRetryAfter()) * time.Second
+	if resp != nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); err == nil {
+			wait = time.Duration(n) * time.Second
+		}
+	}
+	return min(max(wait, engineStreamWakingFloor), engineStreamWakingCap)
 }
 
 // dial waits for the engine and sends the request, returning once its first byte is in hand.

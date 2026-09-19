@@ -323,6 +323,17 @@ the local path writing heartbeats of its own on the same cadence, and the bound 
 `engineWakeTimeout()` (900 s), not the plain hold. Both sides then hold for 900 s and the local
 one expires a round trip earlier, which costs the far side's wording and nothing else.
 
+🔴 That is only true of a far side that has not answered yet. A live run on 2026-09-19 found the
+other case: the far gateway answers `503 engine_waking` *at once* while the model a chat request
+named is still being synced onto its instance (ADR 0072 P2 欠落 7), and on the streamed path the
+200 is already out — so the refusal became a terminal `engine_unavailable` in the stream and the
+turn died in opencode. `plain`'s pass-through has no equivalent here: there is no status left to
+copy, and a chat client retries nothing (the image providers, which do, are why this went unseen).
+So the streamed path holds through it itself — `dialThroughWaking` re-sends on the far
+`Retry-After` until the wake budget runs out, under heartbeats that are already going out — and a
+refusal the upstream composed is relayed as it stands (`writeEngineUpstreamError`), so
+llama-server's own `400 exceed_context_size_error` no longer arrives as a wake that failed.
+
 A local deployment sitting behind its own proxy is the one thing this cannot interrogate —
 hence a knob, and hence open question 2.
 
