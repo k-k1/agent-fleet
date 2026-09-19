@@ -13,45 +13,90 @@ package main
 //   - a box that is answering gets the upstream body relayed as it stands.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// enginePropsFixture is a real SQLite store with one membership in a tenant nobody has
-// restricted (ADR 0084 decision 7: no limits row resolves to allowed), which is everything
-// props() needs from the store side. Each test builds its own engine row so it can vary
-// provider, reachability and lifecycle.
+// enginePropsSharedOnce and enginePropsShared build the real SQLite store, signing key and one
+// allowed membership ONCE per test binary rather than once per test. The other gateway test
+// files in this package hold no store at all — props() is the one route that runs the same
+// membership/tenant gates serve() does — but that does not make it worth a fresh
+// store.OpenSQLite + Migrate for each of the seven tests below: every one of them only READS
+// the result, so sharing it costs nothing any of them individually needs.
+//
+// Not t.TempDir(): that directory is removed when the FIRST test to call it finishes, and the
+// other six would then be opening a database file that no longer exists. A plain os.MkdirTemp
+// outlives every test in this process — the file is a few KB and the process is short-lived, so
+// there is nothing here to clean up that the OS does not already own.
+var (
+	enginePropsSharedOnce sync.Once
+	enginePropsShared     struct {
+		mgr          *manager
+		signKey      []byte
+		membershipID string
+		err          error
+	}
+)
+
+// enginePropsFixture returns the shared store/key/membership, building them on the first call.
+// Each test still builds its OWN engine row (enginePropsFixture never touches one) so it can
+// vary provider, reachability and lifecycle freely.
 func enginePropsFixture(t *testing.T) (mgr *manager, signKey []byte, membershipID string) {
 	t.Helper()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
-	if err != nil {
-		t.Fatalf("open: %v", err)
+	enginePropsSharedOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "engine-props-fixture-*")
+		if err != nil {
+			enginePropsShared.err = err
+			return
+		}
+		st, err := store.OpenSQLite(filepath.Join(dir, "cp.db"))
+		if err != nil {
+			enginePropsShared.err = err
+			return
+		}
+		ctx := context.Background()
+		if err := st.Migrate(ctx); err != nil {
+			enginePropsShared.err = err
+			return
+		}
+		tenant, err := st.CreateTenant(ctx, "allowed", "Allowed")
+		if err != nil {
+			enginePropsShared.err = err
+			return
+		}
+		ident, err := st.UpsertIdentity(ctx, "allowed@example.com", sanitizeUser("allowed@example.com"), "")
+		if err != nil {
+			enginePropsShared.err = err
+			return
+		}
+		mem, err := st.EnsureMembership(ctx, ident.ID, tenant.ID, "member")
+		if err != nil {
+			enginePropsShared.err = err
+			return
+		}
+		enginePropsShared.mgr = &manager{store: st}
+		enginePropsShared.signKey = engineSignKey([]byte(strings.Repeat("k", 32)))
+		enginePropsShared.membershipID = mem.ID
+	})
+	// Checked OUTSIDE the Once, by every caller: t.Fatalf inside the Do closure would only
+	// fail the one test that happened to run the closure (via runtime.Goexit, which sync.Once
+	// still marks "done" through), leaving the other six silently reading a zero-value mgr.
+	// Each caller failing itself is what makes a setup failure loud on every test rather than
+	// on whichever one lost the race to build it.
+	if enginePropsShared.err != nil {
+		t.Fatalf("shared props fixture: %v", enginePropsShared.err)
 	}
-	t.Cleanup(func() { st.Close() })
-	ctx := t.Context()
-	if err := st.Migrate(ctx); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	tenant, err := st.CreateTenant(ctx, "allowed", "Allowed")
-	if err != nil {
-		t.Fatalf("tenant: %v", err)
-	}
-	ident, err := st.UpsertIdentity(ctx, "allowed@example.com", sanitizeUser("allowed@example.com"), "")
-	if err != nil {
-		t.Fatalf("identity: %v", err)
-	}
-	mem, err := st.EnsureMembership(ctx, ident.ID, tenant.ID, "member")
-	if err != nil {
-		t.Fatalf("membership: %v", err)
-	}
-	return &manager{store: st}, engineSignKey([]byte(strings.Repeat("k", 32))), mem.ID
+	return enginePropsShared.mgr, enginePropsShared.signKey, enginePropsShared.membershipID
 }
 
 func propsGateway(mgr *manager, signKey []byte, eng *engineRuntimeState) engineGateway {
