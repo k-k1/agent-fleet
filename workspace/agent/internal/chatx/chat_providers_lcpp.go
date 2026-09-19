@@ -114,11 +114,15 @@ func (lcppChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 // exactly the turn being summarized or reported on.
 //
 // So the last stored entry is dropped only when it can be PROVEN to be this same turn's own
-// raw text: it is a non-empty user row, and prompt CONTAINS it (prompt is that same raw text
-// with InjectPendingReports/InjectCarryover's preamble folded in front — verified against
-// their own source, which always appends the caller's text verbatim at the end). Any other
-// shape — compaction, a report auto-turn, or a last entry that isn't a plain user row — drops
-// nothing and lets prompt ride as an ADDITIONAL final user message instead.
+// raw text: it is a non-empty user row, and prompt ENDS WITH it — every injector that folds a
+// preamble in front (InjectPendingReports:317, InjectPlan:244, and chat_plan.go:251's own
+// "summary -> plan -> the actual prompt" ordering) puts the caller's raw text LAST, never
+// merely somewhere inside. HasSuffix rather than Contains on purpose: a mid-string match would
+// also fire when compaction's own prompt (CompactPrompt, built from c.Plan) happens to contain
+// the last turn's short text verbatim — a plan can quote an earlier "OK" or "はい" — which
+// would silently resurrect the very bug this guard exists to prevent. Any other shape —
+// compaction, a report auto-turn, or a last entry that isn't a plain user row — drops nothing
+// and lets prompt ride as an ADDITIONAL final user message instead.
 //
 // report/notice rows (chatx's own presentation cards) are not replayed as chat history either:
 // no other provider replays them as history — a report rides the NEXT prompt via
@@ -126,7 +130,7 @@ func (lcppChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 func lcppMessages(c *ChatConversation, prompt string) []harness.Message {
 	hist := c.Messages
 	if n := len(hist); n > 0 {
-		if last := hist[n-1]; last.Role == "user" && last.Content != "" && strings.Contains(prompt, last.Content) {
+		if last := hist[n-1]; last.Role == "user" && last.Content != "" && strings.HasSuffix(prompt, last.Content) {
 			hist = hist[:n-1]
 		}
 	}

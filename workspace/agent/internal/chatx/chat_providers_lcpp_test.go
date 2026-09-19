@@ -160,6 +160,33 @@ func TestLcppMessagesCompactionDropsNothing(t *testing.T) {
 	}
 }
 
+// TestLcppMessagesCompactionDropsNothingEvenWhenPlanQuotesTheLastTurn is HasSuffix's own
+// reason for existing over Contains: CompactPrompt is built from c.Plan (chat_plan.go),
+// and a short last turn like "OK" can legitimately appear INSIDE the plan text a real
+// compaction prompt carries, without being what the prompt ends with. Contains would have
+// matched there and dropped the last turn anyway — the same bug this guard exists to
+// prevent, reopened through a narrower door.
+func TestLcppMessagesCompactionDropsNothingEvenWhenPlanQuotesTheLastTurn(t *testing.T) {
+	c := &ChatConversation{}
+	c.Messages = []ChatMessage{
+		{Role: "user", Content: "Should I refactor the auth module?"},
+		{Role: "assistant", Content: "Yes, I'd split it into two files."},
+		{Role: "user", Content: "OK"},
+	}
+	// The plan quotes the last turn's own short text ("OK") mid-string, then the
+	// summarization instruction follows — CompactPrompt's real shape (plan, then "---",
+	// then the ask), matching chat_plan.go:251's own "summary -> plan -> the actual
+	// prompt" ordering. "OK" here is NOT the prompt's suffix.
+	prompt := "Current plan: user said OK to splitting auth into two files.\n---\nSummarize the conversation so far."
+	got := lcppMessages(c, prompt)
+	if len(got) != 5 { // system + q + a + "OK" + the compact prompt
+		t.Fatalf("messages = %+v, want 5 entries (nothing dropped, even though the plan quotes \"OK\")", got)
+	}
+	if got[3].Role != harness.RoleUser || got[3].Content != "OK" {
+		t.Errorf("messages[3] = %+v, want the last real turn (\"OK\") preserved", got[3])
+	}
+}
+
 // TestLcppMessagesEmptyConversation is case (c): a throwaway conversation with no stored
 // history at all (HandleChatAsk's ephemeral c), which must produce just system + prompt.
 func TestLcppMessagesEmptyConversation(t *testing.T) {
