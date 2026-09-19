@@ -6,9 +6,13 @@
 //    planner has nothing to work through.
 // 3. The return address has to be the planning session, by name. The findings travel as a
 //    peer message, and a reviewer that does not know where to send them just stops.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { reviewPrompt, reviewTitle } from "./planReview.ts";
+import { getLocale, setLocale } from "../../lib/i18n/index.ts";
 import { SESSION_TITLE_MAX } from "../../lib/sessionTitle.ts";
+
+const locale = getLocale();
+afterEach(() => setLocale(locale)); // setLocale is module-global — put it back
 
 const PLAN_BODY = "## やること\n\n巨大な本文がここに 12-36 KB 続く";
 
@@ -33,6 +37,18 @@ describe("reviewPrompt", () => {
     // Named twice (the brief and the reply instruction) — both matter, so count rather
     // than merely assert presence.
     expect(p.split("planner-x").length - 1).toBeGreaterThanOrEqual(2);
+  });
+
+  // A missing key falls back to the default catalogue, so an English reviewer would be
+  // briefed in Japanese and nothing would fail. Pin the whole prompt to one language by
+  // asserting that no CJK is left in it.
+  it("is fully translated in en", () => {
+    setLocale("en");
+    const p = reviewPrompt({ parent: "s", path: "/p/plan.md", dir: "/d", focus: "the migration order" });
+    expect(p).not.toMatch(/[぀-ヿ一-鿿]/);
+    expect(p).toContain("Verdict");
+    expect(p).toContain("Findings");
+    expect(reviewTitle("Migration")).not.toMatch(/[぀-ヿ一-鿿]/);
   });
 
   it("carries the focus line only when one was typed", () => {
