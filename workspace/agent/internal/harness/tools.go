@@ -65,12 +65,13 @@ type Runtime struct {
 	// mode — a stale advertised list or a model that ignores its own tool list
 	// must not be able to write).
 	Plan bool
-	// Approve gates a Mutates tool call. nil auto-approves every one — used by
-	// tests and any deliberate "skip permissions" opt-in a caller makes
-	// explicitly; approval is a POLICY this package accepts from its caller, not
-	// one it invents (decision 5: what makes approval real here is that this
-	// process is the one actually about to run the tool, so blocking here
-	// really does block it — unlike a CLI-driven kind, where the CLI decides).
+	// Approve gates a Mutates tool call. nil is FAIL-CLOSED: it declines every
+	// one rather than running it unattended (approval.go) — a caller that wants
+	// every Mutates call to run without asking passes AutoApprove explicitly.
+	// Approval is a POLICY this package accepts from its caller, not one it
+	// invents (decision 5: what makes approval real here is that this process
+	// is the one actually about to run the tool, so blocking here really does
+	// block it — unlike a CLI-driven kind, where the CLI decides).
 	Approve ApproveFunc
 	// AskUser answers the ask_user builtin. nil makes ask_user report that no
 	// interactive channel is available, rather than hanging the loop.

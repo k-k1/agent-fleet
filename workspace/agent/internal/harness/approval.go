@@ -7,9 +7,18 @@ package harness
 // Run executes, unconditionally — bashDanger below only enriches the summary a
 // caller's UI shows, it never widens or narrows WHICH calls are gated. There is no
 // bypass path: a caller cannot skip the gate for one call without setting
-// Runtime.Approve to nil for the whole Runtime (an explicit, all-or-nothing,
-// caller-visible choice), which is the deliberate absence of a per-call escape
-// hatch.
+// Runtime.Approve to AutoApprove for the whole Runtime (an explicit,
+// all-or-nothing, caller-visible choice), which is the deliberate absence of a
+// per-call escape hatch.
+//
+// The zero value (Runtime.Approve == nil) is FAIL-CLOSED: it declines every
+// Mutates call rather than running it. A caller that forgets to wire an approval
+// UI gets a loud, safe failure (the model is told its tool did not run) instead
+// of a silent, dangerous one (bash running unattended) — the one property this
+// kind exists to sell (decision 5's Permissions:true / Caps.PermissionChoice:true
+// claim) must hold even when a future caller (P2's kind wiring, segment G, a
+// test's Runtime literal) simply omits a field. A caller that really wants every
+// Mutates call to run unattended passes AutoApprove explicitly.
 
 import (
 	"context"
@@ -30,14 +39,21 @@ func (e *declinedError) Error() string {
 	return "the user declined this action: " + e.reason
 }
 
-// approve asks rt.Approve (if set) before a Mutates tool runs. A nil Approve
-// auto-approves — see Runtime.Approve's doc for why that is a caller's explicit
-// choice, not this package's default posture in any UI that wires one up.
+// AutoApprove is an ApproveFunc that approves every call. It exists so a caller
+// that genuinely wants Mutates tools to run unattended (tests, an explicit
+// "skip permissions" opt-in) says so in one visible line — Runtime.Approve's
+// zero value declines instead (see this file's own doc comment).
+func AutoApprove(context.Context, ToolCall, Tool, string) (bool, error) { return true, nil }
+
+// approve asks rt.Approve before a Mutates tool runs. A nil Approve is
+// fail-closed: it declines rather than running the tool unattended (see this
+// file's doc comment) — pass AutoApprove to opt into running Mutates tools
+// without asking.
 func approve(ctx context.Context, rt *Runtime, call ToolCall, tool Tool) error {
-	if rt.Approve == nil {
-		return nil
-	}
 	summary := approvalSummary(call, tool)
+	if rt.Approve == nil {
+		return &declinedError{reason: "no approval gate is wired up for this session: " + summary}
+	}
 	ok, err := rt.Approve(ctx, call, tool, summary)
 	if err != nil {
 		return err

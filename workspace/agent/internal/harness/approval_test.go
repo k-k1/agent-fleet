@@ -79,6 +79,69 @@ func TestApprovalGateRunsCallWhenApproved(t *testing.T) {
 	}
 }
 
+// TestApprovalDefaultIsFailClosed is the property a caller forgetting to wire
+// Runtime.Approve must get: every Mutates tool declines rather than running
+// unattended. A silent "bash just ran" here is exactly the failure mode ADR 0093
+// decision 5 exists to rule out.
+func TestApprovalDefaultIsFailClosed(t *testing.T) {
+	for _, name := range []string{"write", "edit", "bash"} {
+		t.Run(name, func(t *testing.T) {
+			var ran atomic.Bool
+			mutTool := Tool{
+				Def:     ToolDef{Name: name},
+				Mutates: true,
+				Run: func(_ context.Context, _ *Runtime, _ string) (string, error) {
+					ran.Store(true)
+					return "did it", nil
+				},
+			}
+			client := &scriptedClient{turns: []Turn{
+				{ToolCalls: []ToolCall{{ID: "1", Name: name, Arguments: `{"command":"echo hi","path":"x"}`}}},
+				{Content: "done"},
+			}}
+			reg := NewRegistry(mutTool)
+			rt := &Runtime{Cwd: t.TempDir()} // Approve deliberately left unset
+			res, err := Run(context.Background(), client, reg, rt, nil)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if ran.Load() {
+				t.Fatalf("%s ran with no approval gate wired up", name)
+			}
+			if res.Messages[1].Role != RoleTool || res.Messages[1].Content == "" {
+				t.Fatalf("expected a RoleTool decline message, got %+v", res.Messages[1])
+			}
+		})
+	}
+}
+
+// TestAutoApproveOptsIntoUnattendedExecution is the explicit escape hatch: a
+// caller that really wants Mutates tools to run without asking passes
+// AutoApprove, and gets exactly that.
+func TestAutoApproveOptsIntoUnattendedExecution(t *testing.T) {
+	var ran atomic.Bool
+	mutTool := Tool{
+		Def:     ToolDef{Name: "danger"},
+		Mutates: true,
+		Run: func(_ context.Context, _ *Runtime, _ string) (string, error) {
+			ran.Store(true)
+			return "did it", nil
+		},
+	}
+	client := &scriptedClient{turns: []Turn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "danger"}}},
+		{Content: "done"},
+	}}
+	reg := NewRegistry(mutTool)
+	rt := &Runtime{Cwd: t.TempDir(), Approve: AutoApprove}
+	if _, err := Run(context.Background(), client, reg, rt, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !ran.Load() {
+		t.Fatal("AutoApprove did not let the mutating tool run")
+	}
+}
+
 func TestApprovalNotAskedForNonMutatingTool(t *testing.T) {
 	asked := false
 	readTool := Tool{
