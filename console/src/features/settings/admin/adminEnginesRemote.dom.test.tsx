@@ -27,6 +27,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 
 import { EnginesAdminView } from "./adminEngines.tsx";
 import { EngineAddView } from "./adminEngineAdd.tsx";
+import { clearCatalogMemory } from "./catalogMemory.ts";
 
 /** The catalogue as the pane renders it, opened on the rows (ADR 0085 decision 8). */
 const RegisteredView = () => <EngineAddView engineKey="image" lora={false} initialView="registered" />;
@@ -172,6 +173,10 @@ const stateBadge = () =>
 afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
+  // 🔴 The catalogue's memory is module scope and every mount here shares one key
+  //    (no paneId), so without this a case reads the previous one's page and the
+  //    search it asserts is never sent.
+  clearCatalogMemory();
   root = null;
   host = null;
   api.mockReset();

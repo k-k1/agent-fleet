@@ -42,7 +42,17 @@ type Call = { path: string; method: string; body: Record<string, unknown> };
  *  verbatim: it is the only thing that carries the destination key any more. */
 const PLAN_TOKEN = "sha256:plan-harbor";
 
-async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light" | "dark" = "dark", mode: "normal" | "no-engine" | "registered" = "normal") {
+/** `extra.tabs` seeds a TABBED cell with a second view beside the catalogue, which is the only
+ *  arrangement in which the catalogue can be left and come back to: a tabbed cell renders the
+ *  selected view alone, so switching tabs unmounts it outright. `extra.hits` makes the answer long
+ *  enough for the list to scroll, which a single-hit fixture never does. */
+async function openCatalog(
+  page: Page,
+  engineKey: "image" | "llm",
+  theme: "light" | "dark" = "dark",
+  mode: "normal" | "no-engine" | "registered" = "normal",
+  extra: { tabs?: boolean; hits?: number } = {},
+) {
   const calls: Call[] = [];
   let started = false;
   const engines = [
@@ -109,13 +119,16 @@ async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light
       }
       const image = p.includes("/image/") || kind === "checkpoint";
       const civitai = body.source === "civitai";
-      return answer({ hits: [{
-        source: civitai ? "civitai" : "hf", model_ref: civitai ? "100" : "demo/Model", ref: civitai ? "101" : "demo/Model",
-        name: image ? "Harbor Image Model" : "Harbor Text Model", base_model: image ? "SDXL" : undefined,
+      const name = image ? "Harbor Image Model" : "Harbor Text Model";
+      return answer({ hits: Array.from({ length: extra.hits ?? 1 }, (_, i) => ({
+        source: civitai ? "civitai" : "hf",
+        model_ref: civitai ? `${100 + i}` : `demo/Model${i || ""}`,
+        ref: civitai ? `${101 + i}` : `demo/Model${i || ""}`,
+        name: i ? `${name} ${i}` : name, base_model: image ? "SDXL" : undefined,
         base_model_suggest: image ? "sdxl" : undefined, license: "apache-2.0", downloads: 123,
         published_at: "2026-09-12T12:00:00Z", updated_at: civitai ? undefined : "2026-09-13T12:00:00Z",
         preview_url: image ? `${origin}/example-preview.svg` : undefined,
-      }] });
+      })) });
     }
     if (p.endsWith("/ingest/versions")) return answer({ versions: [{ ref: "101", name: "Version 1" }] });
     if (p.endsWith("/ingest/files")) return answer({ files: [{ name: "harbor.safetensors", bytes: 1024, sha256: "a".repeat(64) }] });
@@ -136,14 +149,31 @@ async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light
     if (p.includes("/hf-token")) return answer({ configured: false });
     return route.abort();
   });
-  await page.addInitScript(({ key, theme, registered }) => {
-    localStorage.setItem("af-display-settings", JSON.stringify({ locale: "en", theme }));
+  await page.addInitScript(({ key, theme, registered, tabs }) => {
+    localStorage.setItem("af-display-settings", JSON.stringify({ locale: "en", theme, ...(tabs ? { paneLayout: "tabs" } : {}) }));
     localStorage.setItem("af-tenant", "demo");
+    const catalogue = {
+      id: "catalog", session: null, wrap: null,
+      content: { kind: "engineAdd", engineKey: key, lora: false, view: registered ? "registered" : "search" },
+    };
+    if (tabs) {
+      // One cell, two tabs. `.tabs` is its own stored layout (LKEY_NEW), and the mode comes from
+      // the display setting above — seeding one without the other opens the split layout instead.
+      localStorage.setItem("af.layout2.demo@example.com.demo.tabs", JSON.stringify({
+        version: 3, mode: "tabs",
+        cols: [{ id: "catalog-col", rowRatio: 0.5, cells: [{ id: "cell", selectedViewId: "catalog", views: [
+          catalogue,
+          { id: "note", session: null, wrap: null, content: { kind: "doc", docTitle: "Notes", docContent: "beside the catalogue" } },
+        ] }] }],
+        colRatios: [1], activeCellId: "cell",
+      }));
+      return;
+    }
     localStorage.setItem("af.layout2.demo@example.com.demo", JSON.stringify({
-      cols: [{ id: "catalog-col", rowRatio: 0.5, panes: [{ id: "catalog", session: null, content: { kind: "engineAdd", engineKey: key, lora: false, view: registered ? "registered" : "search" }, wrap: null }] }],
+      cols: [{ id: "catalog-col", rowRatio: 0.5, panes: [catalogue] }],
       colRatios: [1], activeId: "catalog",
     }));
-  }, { key: engineKey, theme, registered: mode === "registered" });
+  }, { key: engineKey, theme, registered: mode === "registered", tabs: !!extra.tabs });
   await page.goto(origin);
   await expect(page.locator(".engine-catalog-pane")).toBeVisible();
   return calls;
@@ -197,6 +227,37 @@ test("registered cards read their badge off the bucket and open edits from their
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(modal).toHaveCount(0);
   await expect(edit).toBeFocused();
+});
+
+// 🔴 The complaint this answers, in the arrangement it happens in: a tabbed cell renders the
+// selected view ALONE, so looking at another tab unmounts the catalogue outright. What comes back
+// has to be the same screen — same page, same place in it — and it has to come back without
+// asking Civitai for the page a second time.
+test("the catalogue comes back from another tab with its page, its place and no new search", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const calls = await openCatalog(page, "image", "dark", "normal", { tabs: true, hits: 24 });
+  const pane = page.locator(".engine-catalog-pane");
+  const list = page.locator(".engine-catalog-browser");
+  await expect(pane.getByText("Harbor Image Model 23", { exact: true })).toBeVisible();
+  const searched = () => calls.filter((call) => call.path.endsWith("/ingest/search")).length;
+  expect(searched()).toBe(1);
+
+  await list.evaluate((el) => { el.scrollTop = 600; });
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(400);
+  const left = await list.evaluate((el) => el.scrollTop);
+
+  await page.getByRole("tab", { name: "Notes" }).click();
+  await expect(pane).toHaveCount(0);
+  await page.getByRole("tab", { name: "Model catalogue" }).click();
+  await expect(pane).toBeVisible();
+
+  // The page itself, not a fresh one: the hits are on screen and nothing went upstream for them.
+  await expect(pane.getByText("Harbor Image Model 23", { exact: true })).toBeVisible();
+  expect(searched()).toBe(1);
+  // And the place in it. Restoring happens as the content settles, so this is polled.
+  await expect.poll(() => page.locator(".engine-catalog-browser").evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(left - 40);
+  await page.screenshot({ path: testInfo.outputPath("catalogue-returned.png") });
 });
 
 // The part line is what a person reads to answer "which file is this row, how big, where from".

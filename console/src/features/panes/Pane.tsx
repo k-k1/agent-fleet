@@ -752,6 +752,7 @@ function PopulatedPane({
           engineKey={pane.content.engineKey}
           lora={pane.content.lora}
           initialView={pane.content.view}
+          paneId={pane.id}
           headerActions={tabHeaderActions}
         />
       )}
