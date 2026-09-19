@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { kvCacheMiB, modelFit, windowThatFits, windowWhenUnsized, WINDOW_WHEN_UNSIZED } from "./engineFit.ts";
-import type { EngineClass } from "./engineTypes.ts";
+import { kvCacheMiB, modelFit, windowThatFits, windowWhenUnsized, WINDOW_WHEN_UNSIZED, refitWindows, outputForWindow } from "./engineFit.ts";
+import type { EngineClass, EngineModel } from "./engineTypes.ts";
 
 const rung = (id: string, vram_mib: number): EngineClass => ({ id, label: id, vram_mib, types: [] });
 const LADDER = [rung("g6.xlarge", 22000), rung("g6e.xlarge", 46068), rung("g6e.2xlarge", 46068)];
@@ -132,5 +132,64 @@ describe("the corrected cache figure changes what the form offers", () => {
 
   it("still calls the published ceiling over, which is what the row that OOMed declared", () => {
     expect(modelFit(WEIGHTS_MIB, QWEN_KV_PER_1K_CORRECTED, 262144, 22000, LADDER).state).toBe("over");
+  });
+});
+
+describe("refitWindows", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: "qwen", kind: "gguf", enabled: true,
+    context_tokens: 32768, max_output_tokens: 8192,
+    kv_mib_per_1k_tokens: QWEN_KV_PER_1K_CORRECTED, context_length: 262144,
+    file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
+    ...over,
+  }) as unknown as EngineModel;
+
+  // 🔥 The change this exists for. The rung is the one input a window is fitted against, and it
+  // was read once at registration: an engine moved up to a 48 GB card went on running the window
+  // that fitted a 24 GB one.
+  it("grows the window when the card grows", () => {
+    expect(refitWindows([row()], 22000)).toEqual([{ id: "qwen", from: 32768, to: 65536, unknown: false }]);
+    expect(refitWindows([row()], 44000)).toEqual([{ id: "qwen", from: 32768, to: 262144, unknown: false }]);
+  });
+
+  // The direction that used to fail silently at the cold start instead of on screen.
+  it("shrinks the window when the card shrinks", () => {
+    const wide = row({ context_tokens: 262144 });
+    expect(refitWindows([wide], 22000)).toEqual([{ id: "qwen", from: 262144, to: 65536, unknown: false }]);
+  });
+
+  it("says nothing about a row that is already right", () => {
+    expect(refitWindows([row({ context_tokens: 65536 })], 22000)).toEqual([]);
+  });
+
+  // 🔴 to = 0 is a REFUSAL to propose, never a window to write: 0 travels as "undeclared" and
+  // opencode reads an undeclared context as auto-compaction off.
+  it("refuses rather than proposing zero when the weights alone fill the card", () => {
+    expect(refitWindows([row()], 12000)).toEqual([{ id: "qwen", from: 32768, to: 0, unknown: false }]);
+  });
+
+  it("marks a row whose header was never read instead of guessing for it", () => {
+    expect(refitWindows([row({ kv_mib_per_1k_tokens: undefined })], 22000))
+      .toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
+    expect(refitWindows([row({ context_length: undefined })], 22000))
+      .toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
+  });
+
+  it("skips what has no window: LoRAs and image checkpoints", () => {
+    expect(refitWindows([row({ kind: "lora" })], 22000)).toEqual([]);
+    expect(refitWindows([row({ context_tokens: 0 })], 22000)).toEqual([]);
+  });
+
+  it("answers nothing at all when the deployment declares no card", () => {
+    expect(refitWindows([row()], 0)).toEqual([]);
+  });
+});
+
+describe("outputForWindow", () => {
+  // Both or neither: the CP stores the pair together, and a window written without a cap leaves
+  // the previous one against a window it was not chosen for.
+  it("is an eighth, the same as the ingest form has always opened at", () => {
+    expect(outputForWindow(65536)).toBe(8192);
+    expect(outputForWindow(262144)).toBe(32768);
   });
 });

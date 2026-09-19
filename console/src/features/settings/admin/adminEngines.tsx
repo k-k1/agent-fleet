@@ -9,6 +9,7 @@ import { EngineModelsAdminView } from "./adminEngineModels.tsx";
 import { EngineIssueTokenPanel } from "./adminEngineIssueToken.tsx";
 import { EngineUptimePanel, Sep, useDuration } from "./EngineUptime.tsx";
 import { secsUntil, windowIsPartial } from "./engineUptime.ts";
+import { outputForWindow, refitWindows, type WindowRefit } from "./engineFit.ts";
 import {
   engineIsExternal,
   engineIsRemote,
@@ -52,6 +53,9 @@ export function EnginesAdminView() {
   const tr = useT();
   const { rows, isSuper, sources, err, setErr, setRows, load } = useEngineRows();
   const [busy, setBusy] = useState("");
+  /** What the last class change did to the windows, so an automatic edit is never a silent one.
+   *  Null until a rung is picked, and cleared by the next pick. */
+  const [refit, setRefit] = useState<{ key: string; done: WindowRefit[]; stuck: WindowRefit[] } | null>(null);
   const closeAdmin = useSettingsUI((s) => s.closeAdmin);
   const closeTenant = useSettingsUI((s) => s.closeTenantSettings);
   /** Opens the model catalogue for one row as its own PANE, the same act
@@ -113,6 +117,43 @@ export function EnginesAdminView() {
     }
   };
 
+  /** Move every window onto the card that was just chosen (ADR 0089 follow-up).
+   *
+   * The rung is the one input a window is fitted against, and it used to be read once, when the
+   * model was registered. Changing it afterwards moved the card and left every window behind: an
+   * engine moved UP to a 48 GB card went on running the 16k that fitted a 24 GB one, and one
+   * moved DOWN kept a window its new card cannot hold and said nothing until the cold start
+   * failed. Nobody should have to open each model and redo that arithmetic by hand.
+   *
+   * 🔴 It takes effect on the next COLD START, not now: llama-server reads its preset once at
+   * startup and the fetch sidecar's watch loop does not rewrite it, so a running engine keeps the
+   * window it was started with. That is why this reports what it did instead of doing it quietly.
+   *
+   * Best-effort per row — each PUT is independent and idempotent, so a failure partway leaves the
+   * rows that succeeded correct and the rest exactly as they were. `to === 0` is a row whose
+   * weights alone fill the new card and it is NOT written: 0 travels as "undeclared", and
+   * opencode reads an undeclared context as auto-compaction off.
+   */
+  const refitToClass = async (key: string, row: EngineRow) => {
+    const plan = refitWindows(row.model_rows || [], row.class?.vram_mib || 0);
+    const doable = plan.filter((p) => !p.unknown && p.to > 0);
+    const stuck = plan.filter((p) => p.unknown || p.to === 0);
+    const done: WindowRefit[] = [];
+    for (const p of doable) {
+      // confirm_vram: the window being written is the one that FITS, so the guard has nothing to
+      // warn about — except on a row whose geometry has never been read, where it cannot size
+      // the cache and would stop a re-fit that is strictly an improvement on what is stored.
+      const answer = await apiJSON(
+        `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(p.id)}`,
+        "PUT",
+        { context_tokens: p.to, max_output_tokens: outputForWindow(p.to), confirm_vram: true },
+      );
+      if (!answer?.error) done.push(p);
+    }
+    if (done.length) await load();
+    setRefit(done.length || stuck.length ? { key, done, stuck } : null);
+  };
+
   /** Which GPU this role buys next (ADR 0074). It does NOT replace a running box — the API
    *  reaches new instances only — so the answer carries class_replace_pending and the card
    *  turns that into an explicit "replace it now", which costs a cold start. */
@@ -135,7 +176,9 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
+      const moved = { ...((rows || []).find((e) => e.key === key) || ({} as EngineRow)), ...d } as EngineRow;
       setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+      await refitToClass(key, moved);
     } finally {
       setBusy("");
     }
@@ -278,6 +321,7 @@ export function EnginesAdminView() {
               busy={busy === e.key}
               onPick={(cls) => setClass(e.key, cls)}
               onReplace={() => replaceBox(e.key)}
+              refit={refit?.key === e.key ? refit : null}
             />
           )}
           {/* What this deployment will not draw. On the MACHINE panel rather than with the
@@ -433,6 +477,7 @@ function EngineNegative({
 }
 
 function EngineClassPicker({
+  refit,
   row,
   busy,
   onPick,
@@ -441,6 +486,8 @@ function EngineClassPicker({
   row: EngineRow;
   busy: boolean;
   onPick: (cls: string) => void;
+  /** What the last pick did to this engine's windows, when it did anything. */
+  refit?: { done: WindowRefit[]; stuck: WindowRefit[] } | null;
   onReplace: () => void;
 }) {
   const tr = useT();
@@ -515,6 +562,44 @@ function EngineClassPicker({
           </>
         )}
       </div>
+      {/* 🔴 An automatic edit is never a silent one. Picking a rung moves every window onto the
+          new card, and the operator has to be able to see what was written in their name — and
+          that it does NOT reach a running engine, which reads its preset once at startup. */}
+      {refit && (refit.done.length > 0 || refit.stuck.length > 0) && (
+        <div className="engines-class-refit">
+          {refit.done.length > 0 && (
+            <>
+              <p className="muted">{tr("admin.engines_refit_done" as never)}</p>
+              <ul className="engines-refit-list">
+                {refit.done.map((r) => (
+                  <li key={r.id}>
+                    <span className="engines-offer-label">{r.id}</span>
+                    <span className="mono">{r.from.toLocaleString()}</span>
+                    <span aria-hidden="true">→</span>
+                    <span className="mono">{r.to.toLocaleString()}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="muted">{tr("admin.engines_refit_next_start" as never)}</p>
+            </>
+          )}
+          {refit.stuck.length > 0 && (
+            <>
+              <p className="form-err">{tr("admin.engines_refit_stuck" as never)}</p>
+              <ul className="engines-refit-list">
+                {refit.stuck.map((r) => (
+                  <li key={r.id}>
+                    <span className="engines-offer-label">{r.id}</span>
+                    <span className="muted">
+                      {tr((r.unknown ? "admin.engines_refit_unread" : "admin.engines_refit_over") as never)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
       {/* The list itself, because a collapsed select shows one row and the question this answers
           is a comparison. 🔴 Drawn in DECLARATION order and never sorted by price: the order is
           the try order and it is the operator's, and re-ordering it here would let one number

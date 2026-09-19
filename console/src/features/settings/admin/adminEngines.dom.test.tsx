@@ -773,3 +773,101 @@ describe("EnginesAdminView / the exclusion list", () => {
     expect(host!.querySelector(".engines-negative")).toBeNull();
   });
 });
+
+// 🔥 ADR 0089 follow-up. The rung is the one input a window is fitted against, and it was read
+// ONCE — when the model was registered. Changing it afterwards moved the card and left every
+// window behind: an engine moved up to a 48 GB card went on running the window that fitted a
+// 24 GB one, and one moved down kept a window its new card cannot hold and said nothing until
+// the cold start failed. Picking a rung now moves them, and says what it moved.
+describe("picking an instance class re-fits every window", () => {
+  const llm = (over: Record<string, unknown> = {}) => row({
+    key: "llm", api: "chat", provider: "llamacpp", models: ["qwen"],
+    class: { id: "l4", label: "L4", vram_mib: 22000, types: ["g6.xlarge"] },
+    classes: [
+      { id: "l4", label: "L4", vram_mib: 22000, types: ["g6.xlarge"] },
+      { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] },
+    ],
+    model_rows: [{
+      id: "qwen", kind: "gguf", enabled: true, context_tokens: 32768, max_output_tokens: 8192,
+      kv_mib_per_1k_tokens: 64, context_length: 262144,
+      file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
+    }],
+    ...over,
+  });
+
+  const pick = async (value: string) => {
+    const select = host!.querySelector<HTMLSelectElement>(".engines-class-head select")!;
+    await act(async () => {
+      select.value = value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => { await Promise.resolve(); });
+  };
+
+  it("writes the bigger window the new card holds, and says so", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [llm()] });
+    await mount();
+    // The class PUT answers with the row ON the new rung; the model PUT is what this is about.
+    apiJSON.mockImplementation((path: string) => Promise.resolve(
+      path.endsWith("/class")
+        ? llm({ class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } })
+        : {},
+    ));
+    await pick("l40s");
+
+    // 11,483 MiB of weights against 44,000 x 0.85 = 37,400 leaves 25,917 MiB: 262,144 tokens
+    // cost 16,384 and that is also the model's own ceiling.
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/llm/models/qwen", "PUT",
+      { context_tokens: 262144, max_output_tokens: 32768, confirm_vram: true },
+    );
+    const report = host!.querySelector(".engines-class-refit")!;
+    expect(report.textContent).toContain("qwen");
+    expect(report.textContent).toContain("32,768");
+    expect(report.textContent).toContain("262,144");
+    // 🔴 The one thing an automatic edit must not hide: it does not reach a running engine.
+    expect(report.textContent).toContain("次にエンジンが起動したとき");
+  });
+
+  it("shrinks a window the smaller card cannot hold, which used to fail only at the cold start", async () => {
+    const wide = llm({
+      class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] },
+      model_rows: [{
+        id: "qwen", kind: "gguf", enabled: true, context_tokens: 262144, max_output_tokens: 32768,
+        kv_mib_per_1k_tokens: 64, context_length: 262144,
+        file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
+      }],
+    });
+    api.mockResolvedValue({ super_admin: true, engines: [wide] });
+    await mount();
+    apiJSON.mockImplementation((path: string) => Promise.resolve(
+      path.endsWith("/class") ? llm() : {},
+    ));
+    await pick("l4");
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/llm/models/qwen", "PUT",
+      { context_tokens: 65536, max_output_tokens: 8192, confirm_vram: true },
+    );
+  });
+
+  it("writes nothing for a row whose header was never read, and names it", async () => {
+    const unread = llm({
+      model_rows: [{
+        id: "qwen", kind: "gguf", enabled: true, context_tokens: 32768, max_output_tokens: 8192,
+        file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
+      }],
+    });
+    api.mockResolvedValue({ super_admin: true, engines: [unread] });
+    await mount();
+    apiJSON.mockImplementation((path: string) => Promise.resolve(
+      path.endsWith("/class")
+        ? { ...unread, class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } }
+        : {},
+    ));
+    await pick("l40s");
+    const modelPuts = apiJSON.mock.calls.filter((c) => String(c[0]).includes("/models/"));
+    expect(modelPuts).toHaveLength(0);
+    expect(host!.querySelector(".engines-class-refit")?.textContent)
+      .toContain("ヘッダをまだ読めていません");
+  });
+});

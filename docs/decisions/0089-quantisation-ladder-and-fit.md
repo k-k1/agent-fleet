@@ -247,3 +247,33 @@ a re-fit has no upper bound and would propose windows the model was never traine
 
 That makes "add it and use it" true for existing rows as well. What is left is B — re-fitting
 when the instance rung changes.
+
+### B, implemented — the windows follow the rung (2026-09-19, automatic)
+
+The instance rung is **the one input a window is fitted against**, and it was read exactly once,
+when the model was registered. Changing it afterwards moved the card and left every window
+behind:
+
+- moved UP to a 48 GB card, the engine went on running the 16k that fitted a 24 GB one;
+- moved DOWN to 24 GB, it kept a window the new card cannot hold and **said nothing** until the
+  cold start failed.
+
+Picking a rung now re-fits every row of that engine against the new card and **writes the
+result** (`refitWindows`, then one `PUT …/models/{id}` per row). The rule is `windowThatFits` and
+nothing else — the ingest form, the edit dialog and this all ask the same function.
+
+**Automatic, but never silent.** What was written is listed `old → new`, and what could not be
+fitted is listed with its reason. 🔴 And it always says the part that is easy to hide: this does
+**not** reach a running engine. llama-server reads its preset once at startup and the fetch
+sidecar's watch loop does not rewrite it, so there is a window of time in which the screen and
+the running box disagree — and the person who caused it should be the one who knows.
+
+Two things it does not write:
+
+- **`to = 0`** (the weights alone do not fit the new card) is a refusal to propose, not a window.
+  0 travels as "undeclared" and opencode reads an undeclared context as auto-compaction off.
+- **A row with no geometry or no ceiling.** Nothing is said about what has not been read (A's
+  `healGeometry` reads it on the next enable).
+
+Each row is independent and idempotent, so a failure partway leaves what succeeded correct and
+the rest exactly as it was.

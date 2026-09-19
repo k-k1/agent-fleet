@@ -11,7 +11,7 @@
 // `cudaMalloc failed: out of memory ... failed to allocate buffer for kv cache` — four minutes and
 // one purchased GPU after the button. So the thresholds below leave room rather than answering
 // "it fits" at 99%.
-import type { EngineClass } from "./engineTypes.ts";
+import type { EngineClass, EngineModel } from "./engineTypes.ts";
 
 /** Above this fraction of the card the answer stops being "yes" and becomes "probably, watch it".
  *  Not a measurement — a reserve, for the two allocations this estimate cannot see. */
@@ -84,6 +84,18 @@ export function modelFit(
  * Answers 0 when nothing can be said — no card, no cache figure — and the caller then falls back
  * to whatever it had.
  */
+export function windowThatFits(weightsMiB: number, kvPer1k: number, cardMiB: number, ceiling: number): number {
+  if (!(kvPer1k > 0) || !(cardMiB > 0) || !(ceiling > 0)) return 0;
+  const room = cardMiB * FIT_COMFORTABLE - weightsMiB;
+  if (room <= 0) return 0;
+  let best = 0;
+  for (let window = 1024; window <= ceiling; window *= 2) {
+    if (kvCacheMiB(kvPer1k, window) > room) break;
+    best = window;
+  }
+  return best;
+}
+
 /** The window to open a field at when the cache could NOT be sized — which is neither of the
  * two numbers that suggest themselves, because both are wrong in a way that only shows up
  * later:
@@ -104,14 +116,52 @@ export function windowWhenUnsized(ceiling: number): number {
   return ceiling > 0 ? Math.min(WINDOW_WHEN_UNSIZED, ceiling) : WINDOW_WHEN_UNSIZED;
 }
 
-export function windowThatFits(weightsMiB: number, kvPer1k: number, cardMiB: number, ceiling: number): number {
-  if (!(kvPer1k > 0) || !(cardMiB > 0) || !(ceiling > 0)) return 0;
-  const room = cardMiB * FIT_COMFORTABLE - weightsMiB;
-  if (room <= 0) return 0;
-  let best = 0;
-  for (let window = 1024; window <= ceiling; window *= 2) {
-    if (kvCacheMiB(kvPer1k, window) > room) break;
-    best = window;
+/** One row's answer to "what changes on this card". `to` is 0 when no window can be fitted —
+ *  the weights alone fill the card — which is a REFUSAL to propose, not a window of nothing:
+ *  0 travels as "undeclared" and opencode reads an undeclared context as auto-compaction off.
+ *  `unknown` is the third answer: the row has no geometry or no ceiling, so nothing can be said
+ *  until its header is read (which the CP does on the next loading write). */
+export type WindowRefit = {
+  id: string;
+  from: number;
+  to: number;
+  unknown: boolean;
+};
+
+/** What every row's window becomes on a given card, for the rows where that is a CHANGE.
+ *
+ * The instance rung is the one input a window is fitted against, and until now it was read once,
+ * when the model was registered. Changing the rung afterwards moved the card and left every
+ * window behind — so an engine moved up to a 48 GB card went on running the 16k that fitted a
+ * 24 GB one, and one moved DOWN kept a window its new card cannot hold and said nothing until
+ * the cold start failed.
+ *
+ * LoRAs and image checkpoints are skipped: neither declares a window. A row whose fitted window
+ * already equals its stored one is not returned at all — the caller's list is what CHANGED, and
+ * a list that names every row every time is one nobody reads.
+ */
+export function refitWindows(models: EngineModel[], cardMiB: number): WindowRefit[] {
+  if (!(cardMiB > 0)) return [];
+  const out: WindowRefit[] = [];
+  for (const model of models) {
+    if (model.kind === "lora" || !(model.context_tokens && model.context_tokens > 0)) continue;
+    const kvPer1k = model.kv_mib_per_1k_tokens || 0;
+    const ceiling = model.context_length || 0;
+    if (!kvPer1k || !ceiling) {
+      out.push({ id: model.id, from: model.context_tokens, to: 0, unknown: true });
+      continue;
+    }
+    const weightsMiB = Math.round((model.file_rows || []).reduce((sum, f) => sum + (f.bytes || 0), 0) / 1048576);
+    const to = windowThatFits(weightsMiB, kvPer1k, cardMiB, ceiling);
+    if (to === model.context_tokens) continue;
+    out.push({ id: model.id, from: model.context_tokens, to, unknown: false });
   }
-  return best;
+  return out;
+}
+
+/** The output cap that travels with a window. Both or neither — the CP stores them together and
+ *  a window written without one leaves the previous cap against a window it was not chosen for.
+ *  An eighth is what the ingest form has always opened at. */
+export function outputForWindow(window: number): number {
+  return Math.floor(window / 8);
 }
