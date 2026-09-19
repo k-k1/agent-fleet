@@ -748,6 +748,39 @@ func TestSyncEngineProvidersKeepsDeclaredWindowWhenEngineAsleep(t *testing.T) {
 	}
 }
 
+// The same non-200-is-nothing-to-correct reading, pinned against the SPECIFIC status this
+// process actually saw live during ADR 0093 phase 1's development (docs/log/99): a Control
+// Plane whose binary predates PR #761 has no /engine/{key}/props route registered at all, so
+// the request lands on Go's default NotFoundHandler — a bare "404 page not found" text body,
+// not the gateway's own JSON error shape. enginePropsWindow's own rule ("anything other than
+// 200 is 0") already covers this by construction (it does not branch on the body), and this
+// test exists to keep it that way rather than to add a special case.
+//
+// The identical status was also seen through a BORROWED row (ADR 0079): far.propsTarget hits
+// the LENDING deployment's own gateway, and when that far Control Plane's binary is the one
+// still behind #761, its /engine/{key}/props answers the same bare 404 — a Control Plane's
+// own generation, not this deployment's, decides whether the route exists. Both cases fall
+// back to the catalogue's declared window identically; a local stub is enough to pin the
+// shared code path either way.
+func TestSyncEngineProvidersKeepsDeclaredWindowWhenPropsRouteIs404(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	// No "llm" entry in propsStatus: engineCatalogPropsStub's own default for an undeclared
+	// key is a bare 404 with no body (:634-637), matching what was actually observed.
+	res := engineCatalogPropsStub(t, engineRowLlmSized, map[string]int{}, nil)
+
+	syncEngineProviders()
+
+	ctxTokens, output := readOpencodeLimit(t, home, "llamacpp", "qwen3-coder-30b-a3b")
+	if ctxTokens != 32768 || output != 4096 {
+		t.Errorf("limit = %d/%d, want the catalogue's declared 32768/4096 left standing", ctxTokens, output)
+	}
+	if len(res.propsRequested) != 1 {
+		t.Fatalf("props requested %d time(s), want exactly one attempt (no retry)", len(res.propsRequested))
+	}
+}
+
 // A provider other than llamacpp has no /props to read (the Control Plane's own gate answers
 // 404 for one — control-plane/engine_gateway.go's props()), so this side must not even ask.
 func TestSyncEngineProvidersNeverAsksPropsForNonLlamacppProvider(t *testing.T) {

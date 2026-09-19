@@ -33,6 +33,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -64,6 +65,12 @@ func init() {
 	// Which Agent wrote a graph is provenance the sidecar carries and nothing else can: the
 	// templates change between releases and the record outlives the binary.
 	imagegen.Build = buildVersion
+	// ADR 0093 phase 1's LLM client (internal/harness) is the same seam shape again: it must
+	// never learn a Control Plane exists, so it gets the connection, the window and the
+	// availability bit through func-vars rather than reading AF_CP_BASE_URL itself.
+	harness.EngineToken = harnessEngineToken
+	harness.EngineWindow = harnessEngineWindow
+	harness.EngineAvailable = harnessEngineAvailable
 }
 
 // The API families the CP's catalogue reports. Chat engines become opencode providers; images
@@ -911,6 +918,56 @@ func engineImageDescriptions(e engineCatalogRow) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// --- ADR 0093 phase 1's LLM client (internal/harness) --------------------------------
+
+// harnessEngineToken fills harness.EngineToken: an absolute base URL ending at the
+// gateway's own .../v1 mount plus a bearer, exactly what engineSessionEnv/engineImageConn
+// already build for opencode and imagegen. key is "llm" for the chat role; session scopes
+// the token and its usage attribution the same way engineToken's other callers do.
+func harnessEngineToken(ctx context.Context, key, session string) (harness.EngineConn, bool) {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	if base == "" {
+		return harness.EngineConn{}, false
+	}
+	tok := engineToken(ctx, key, session)
+	if tok == "" {
+		return harness.EngineConn{}, false
+	}
+	return harness.EngineConn{BaseURL: base + "/engine/" + key + "/v1", Token: tok}, true
+}
+
+// harnessEngineWindow fills harness.EngineWindow, reusing engineWarmWindow verbatim rather
+// than re-reading /props a second way: the "any non-200 is nothing to correct, never
+// retried" rule (decision 7, TestSyncEngineProvidersKeepsDeclaredWindowWhen…) has to stay
+// exactly one implementation, or the two could drift on the very case that matters (an old
+// Control Plane's /props 404 — docs/log/99 phase 1 report).
+func harnessEngineWindow(ctx context.Context, key string) int {
+	for _, e := range engineCatalogRows(ctx) {
+		if e.Key != key || e.api() != engineAPIChat {
+			continue
+		}
+		if _, nctx := engineWarmWindow(e); nctx > 0 {
+			return nctx
+		}
+		return e.ContextTokens
+	}
+	return 0
+}
+
+// harnessEngineAvailable fills harness.EngineAvailable. engineCatalogRows itself already
+// excludes a row with no enabled model (measured live: the Control Plane's
+// /internal/engine/catalog omits an engine whose catalogue is empty entirely, not just its
+// models list) — so existence in this loop already means "has at least one enabled model",
+// and no separate len(Models) check is needed on top of it.
+func harnessEngineAvailable(ctx context.Context, key string) bool {
+	for _, e := range engineCatalogRows(ctx) {
+		if e.Key == key && e.api() == engineAPIChat {
+			return true
+		}
+	}
+	return false
 }
 
 // --- the usage the CP posts back -------------------------------------------------
