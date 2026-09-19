@@ -281,9 +281,11 @@ string-contract tests.
    `/v1/chat/completions/input_tokens` and `/control` (confirmed in the README; an older build may
    lack them, which changes Decision 7).
 3. Whether `dispatchMCPStdio`'s globals can become per-call without touching the 72 tool bodies; if
-   not, `af` tools go over loopback HTTP like everything else.
-4. Where the Console reads `Capabilities.ProcessModel` (what the fourth value breaks).
+   not, `af` tools go over loopback HTTP like everything else. → closed in Review.
+4. Where the Console reads `Capabilities.ProcessModel` (what the fourth value breaks). → closed in
+   Review.
 5. Where the "no terminal route" flag has to be read (launch modal, driver switch, handoff modal).
+   → closed in Review.
 
 ## Sources checked (2026-09-19, `951bb402`)
 
@@ -293,3 +295,75 @@ string-contract tests.
 `workspace/agent/internal/usagex/usage.go` · `workspace/agent/{engines.go,agent_models.go,agent_instructions.go,agent_rtk.go,usage_fold.go,model_provider.go}` ·
 `control-plane/engine_gateway.go` · `control-plane/internal/mcpsrv/{mcp.go,mcp_server.go}` · `console/src/agents/registry.ts` ·
 `console/src/lib/agentModels.ts` · `docs/log/{32,36,40,43,74}-*-agent-kind.md` · `docs/log/34-native-runtime.md`.
+
+## Review (2026-09-19, before Phase 0)
+
+### Confirmed
+
+- The gateway has no path allow-list in `serve`, but the only registered route is
+  `/engine/{key}/v1/{path...}` and a local llama.cpp target is built as the engine URL plus
+  `/v1/` plus that captured path (`control-plane/engine_gateway.go:211,467-583,1102-1117,1169-1177`).
+  A borrowed engine substitutes the far gateway's `base_url`, not the llama-server root
+  (`control-plane/engine_gateway.go:1094-1117`). Therefore `/props` and `/slots` have no escape
+  hatch; Decision 7 and Stage 0 still stand.
+- Unknown kinds still normalize to Claude (`workspace/agent/internal/sessionx/agent.go:25-53`), and
+  the exact usage set is still only Claude, Codex and OpenCode
+  (`workspace/agent/usage_fold.go:201-212`). `ProcessModel` still documents exactly
+  `shared-daemon`, `per-session-child` and `tui` (`workspace/agent/internal/agents/driver.go:142-157`).
+- Recounting non-test Go source under `internal/agents/<kind>` gives agy 2,109, cursor 2,753,
+  copilot 2,892, kiro 2,896, opencode 5,171, claude 5,853 and codex 5,948 lines. The scale used by
+  docs/log/99 §8 is reproducible.
+- The non-test `"kiro"` inventory found no omitted kind branch in handoff, spawn, shared-view or
+  fork-at: those paths are capability/registry/generic paths (`workspace/agent/internal/sessionx/session_handlers.go:482-529,1002-1103`,
+  `workspace/agent/internal/sessionx/session_spawn.go:294-363`,
+  `control-plane/session_share.go:645-670`). Scheduled launch is already in the table
+  (`control-plane/scheduler_wake.go:278-285`). Name searches found no existing `lcpp`, `lc`, `-lc`,
+  `KindLcpp` or `kind-lcpp` outside this proposal, and after `git fetch origin`, neither ADR 0093
+  nor docs/log 99 exists on `origin/develop`.
+
+### Broken assumptions
+
+- `dispatchMCPStdio` is not a pure one-line-in/one-line-out switch. Besides the permission globals
+  set by `parseStdioFlags`, it reads the owning session, conversation, Chromium, peer, image and
+  fleet-spawn process state; `tools/list` starts a process-wide once-only watcher, and progress or
+  list-change notifications write asynchronously through the process-wide stdout writer
+  (`workspace/agent/internal/mcpx/mcp_stdio.go:79-123,125-210,243-297,385-416,479-544,2252-2518,3236-3277`).
+  Decision 6's direct in-process call is valid only after a request-scoped dispatch context also
+  owns notification output and watcher lifetime. Merely replacing `parseStdioFlags` with an option
+  struct is insufficient; loopback remains the fallback.
+- `Capabilities.ProcessModel` is not serialized to or read by Console at all; it is currently only
+  populated by managed drivers (`workspace/agent/internal/agents/driver.go:142-157`,
+  `workspace/agent/internal/agents/{codex,opencode,kiro,cursor,copilot}/driver.go`). Adding
+  `in-process` breaks no Console consumer today. If it is intended to control UI, a wire field and
+  a consumer are additional work; `tuiMemoryCost` is unrelated descriptor data
+  (`console/src/agents/registry.ts:123-127`).
+- The §3 table omits the report reconciler from its implementation checklist. Its two-tick settle
+  rule exists for polling TUIs (`workspace/agent/internal/chatx/chat_report_reconcile.go:45-54`);
+  `lcpp` must emit the ordinary turn-end marker as §4.8 says. This is a verification/test point,
+  not a new kind-name branch. No other omission was found in the requested handoff, spawn,
+  scheduled-launch, shared-view and fork-at paths.
+- Estimate E is more likely to exceed 3,000 source lines: it combines a confined filesystem
+  editor, shell cancellation, output/binary limits, approval policy, planning/question state and a
+  parallel tool loop, while the smallest complete existing kind is already 2,109 non-test lines.
+  Estimate F is also biased upward beyond 1,200 lines because it includes two transports, two MCP
+  protocol eras, reconnect/lifetime/notifications, and the request-scoped refactor above rather
+  than only extending the probe (`workspace/agent/internal/mcpreg/probe.go:332-344,483-498`). The
+  review does not replace the estimates; it records that both ranges have more upside than downside.
+
+### Answered
+
+- Questions 1 and 2 remain hardware checks: model-family tool-call integrity and the endpoints in
+  the baked llama.cpp image cannot be established from this tree.
+- Question 3: no, not by changing the flag globals alone. The in-process route needs the wider
+  request-scoped boundary listed above; otherwise use loopback
+  (`workspace/agent/internal/mcpx/mcp_stdio.go:125-210,479-544`).
+- Question 4: nowhere in Console today; `ProcessModel` does not cross the Agent API
+  (`workspace/agent/internal/agents/driver.go:142-157`).
+- Question 5: the new terminal-route capability must gate both launch forms
+  (`console/src/features/repos/LaunchModal.tsx:776-803`, `console/src/features/repos/StartModal.tsx:303-316`),
+  quick launch (`console/src/features/repos/RepoRowConnected.tsx:178-184`), the driver-switch menu
+  and action (`console/src/features/sessions/SessionMenu.tsx:179-190`,
+  `console/src/features/sessions/useSessionActions.tsx:262-287`), and the server-side managed-to-TUI
+  transition (`workspace/agent/internal/sessionx/session_driver.go:62-105`). Handoff uses the same
+  generic create path and therefore needs the target kind to select managed, not a separate route
+  label (`console/src/features/sessions/HandoffModal.tsx:75-84,119-130`).

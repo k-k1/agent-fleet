@@ -231,9 +231,9 @@ llama.cpp 版で動く: live テストと同じ opt-in の実エンジン契約�
 2. エンジンイメージに焼かれている llama.cpp 版に `/v1/chat/completions/input_tokens` と `/control` が実在するか
    （README で確認済みだが古いビルドには無いことがあり、決定 7 が変わる）。
 3. `dispatchMCPStdio` のグローバルを 72 本のツール本体に触らず per-call にできるか。できなければ `af` ツールも
-   他と同じく loopback の HTTP で回す。
-4. Console のどこが `Capabilities.ProcessModel` を読むか（4 つ目の値が壊す先）。
-5. 「端末経路無し」のフラグをどこが読む必要があるか（起動モーダル・driver 切替・引き継ぎモーダル）。
+   他と同じく loopback の HTTP で回す。→ Review で回答済み。
+4. Console のどこが `Capabilities.ProcessModel` を読むか（4 つ目の値が壊す先）。→ Review で回答済み。
+5. 「端末経路無し」のフラグをどこが読む必要があるか（起動モーダル・driver 切替・引き継ぎモーダル）。→ Review で回答済み。
 
 ## 参照した出典（2026-09-19・`951bb402`）
 
@@ -243,3 +243,58 @@ llama.cpp 版で動く: live テストと同じ opt-in の実エンジン契約�
 `workspace/agent/internal/usagex/usage.go` · `workspace/agent/{engines.go,agent_models.go,agent_instructions.go,agent_rtk.go,usage_fold.go,model_provider.go}` ·
 `control-plane/engine_gateway.go` · `control-plane/internal/mcpsrv/{mcp.go,mcp_server.go}` · `console/src/agents/registry.ts` ·
 `console/src/lib/agentModels.ts` · `docs/log/{32,36,40,43,74}-*-agent-kind.md` · `docs/log/34-native-runtime.md`
+
+## Review (2026-09-19, before Phase 0)
+
+### 確認した
+
+- gateway の `serve` に path allow-list は無いが、登録 route は `/engine/{key}/v1/{path...}` だけで、local の llama.cpp
+  向け target は engine URL＋`/v1/`＋捕捉 path になる（`control-plane/engine_gateway.go:211,467-583,1102-1117,1169-1177`）。
+  borrowed engine も llama-server root ではなく far gateway の `base_url` に差し替える
+  （`control-plane/engine_gateway.go:1094-1117`）。したがって `/props`・`/slots` の抜け道は無く、決定 7 と段 0 は残る。
+- 未登録 kind は引き続き Claude に正規化される（`workspace/agent/internal/sessionx/agent.go:25-53`）。exact 集合は Claude・Codex・
+  OpenCode だけ（`workspace/agent/usage_fold.go:201-212`）。`ProcessModel` の記載値も `shared-daemon`・`per-session-child`・`tui`
+  の 3 つだけ（`workspace/agent/internal/agents/driver.go:142-157`）。
+- `internal/agents/<kind>` の非テスト Go src を再計測すると agy 2,109、cursor 2,753、copilot 2,892、kiro 2,896、
+  opencode 5,171、claude 5,853、codex 5,948 行で、docs/log/99 §8 の物差しは再現した。
+- 非テストの `"kiro"` 全数棚卸しでは、handoff・spawn・共有ビュー・fork-at に表から漏れた kind 分岐は無かった。
+  これらは capability／registry／generic 経路である（`workspace/agent/internal/sessionx/session_handlers.go:482-529,1002-1103`、
+  `workspace/agent/internal/sessionx/session_spawn.go:294-363`、`control-plane/session_share.go:645-670`）。定時実行は表に既載
+  （`control-plane/scheduler_wake.go:278-285`）。本提案以外に `lcpp`／`lc`／`-lc`／`KindLcpp`／`kind-lcpp` は無く、
+  `git fetch origin` 後の `origin/develop` に ADR 0093 と docs/log 99 は無い。
+
+### 壊れた
+
+- `dispatchMCPStdio` は純粋な「1 行入力→1 行出力」ではない。`parseStdioFlags` の権限 global 以外にも、所有 session・conversation・
+  Chromium・peer・image・fleet-spawn の process state を読み、`tools/list` は process-wide の once-only watcher を起動し、progress と
+  list-change notification は process-wide stdout writer へ非同期に書く
+  （`workspace/agent/internal/mcpx/mcp_stdio.go:79-123,125-210,243-297,385-416,479-544,2252-2518,3236-3277`）。決定 6 の
+  in-process 直呼びは、notification 出力と watcher の寿命も request-scoped dispatch context にした場合にだけ成立する。
+  `parseStdioFlags` を option struct に替えるだけでは足りず、loopback が fallback として残る。
+- `Capabilities.ProcessModel` は wire に載らず Console も読んでいない。現状は managed driver が値を埋めるだけである
+  （`workspace/agent/internal/agents/driver.go:142-157`、`workspace/agent/internal/agents/{codex,opencode,kiro,cursor,copilot}/driver.go`）。
+  `in-process` を足しても今日の Console は壊れない。UI の制御に使うなら wire field と consumer が追加作業になる。
+  `tuiMemoryCost` は別の descriptor data である（`console/src/agents/registry.ts:123-127`）。
+- §3 の実装チェック表には report reconciler が無い。2 tick settle は polling TUI のためにある
+  （`workspace/agent/internal/chatx/chat_report_reconcile.go:45-54`）。`lcpp` は §4.8 のとおり通常の turn-end marker を発生させる必要がある。
+  これは検証・テスト点であって新しい kind-name 分岐ではない。指定された handoff・spawn・定時実行・共有ビュー・fork-at には
+  ほかの漏れを認めなかった。
+- 見積り E は 3,000 src 行を上振れしやすい。cwd に閉じた filesystem editor、shell cancel、出力／binary 制限、approval policy、
+  plan／question state、parallel tool loop を合わせ、最小の既存 kind 全体でも非テスト 2,109 行ある。F も 1,200 行より上に偏る。
+  2 transport・2 MCP 世代・reconnect／lifetime／notification と、上記 request-scoped 化まで含み、probe の延長だけではないためである
+  （`workspace/agent/internal/mcpreg/probe.go:332-344,483-498`）。数字は直さず、E・F とも下振れより上振れ余地が大きいと記録する。
+
+### 答えた
+
+- 問い 1・2 は要実機のまま残る。model family の tool-call integrity と engine image に焼かれた endpoint は tree だけでは確定しない。
+- 問い 3: flag global だけの変更では不可。上記の広い request-scoped 境界が要り、できなければ loopback
+  （`workspace/agent/internal/mcpx/mcp_stdio.go:125-210,479-544`）。
+- 問い 4: 今日の Console には読者がいない。`ProcessModel` は Agent API を越えない
+  （`workspace/agent/internal/agents/driver.go:142-157`）。
+- 問い 5: 新しい terminal-route capability は 2 つの起動 form
+  （`console/src/features/repos/LaunchModal.tsx:776-803`、`console/src/features/repos/StartModal.tsx:303-316`）、quick launch
+  （`console/src/features/repos/RepoRowConnected.tsx:178-184`）、driver-switch menu と action
+  （`console/src/features/sessions/SessionMenu.tsx:179-190`、`console/src/features/sessions/useSessionActions.tsx:262-287`）、server 側の
+  managed→TUI 遷移（`workspace/agent/internal/sessionx/session_driver.go:62-105`）で読む必要がある。handoff は同じ generic create 経路を
+  使うので、別の route label ではなく target kind から managed を選ばせる
+  （`console/src/features/sessions/HandoffModal.tsx:75-84,119-130`）。
