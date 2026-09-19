@@ -47,6 +47,9 @@ var ChatProviders = map[string]ChatProvider{
 	session.KindOpencode: opencodeChat{},
 	session.KindAgy:      agyChat{},
 	session.KindCursor:   cursorChat{},
+	// lcppKind is NOT a session.Kind* constant (ADR 0093 phase 1 §2 — the kind is not
+	// registered yet; see chat_providers_lcpp.go's header comment for where and why).
+	lcppKind: lcppChat{},
 }
 
 // --- backend availability (claude-less workspaces, docs/log/19) ----------------------
@@ -91,6 +94,12 @@ func headlessAgentAvailable(kind string) bool {
 		v = agy.SignedIn()
 	case session.KindCursor:
 		v = cursor.LoggedIn()
+	case lcppKind:
+		// Not a CLI login check — there is no CLI (ADR 0093 phase 1 §2). "available" here
+		// means this deployment's self-hosted chat engine exists AND has at least one
+		// enabled model right now; see lcppEngineAvailable's own comment for why that is
+		// the whole check (the Control Plane's catalogue already drops an engine with none).
+		v = lcppEngineAvailable()
 	}
 	headlessAvailMu.Lock()
 	headlessAvailAt[kind], headlessAvail[kind] = time.Now(), v
@@ -103,6 +112,12 @@ func headlessAgentAvailable(kind string) bool {
 // Track D), so out of the box it is only reached in an agy-only workspace. The
 // user can rank the backends themselves in Settings > Agents (ui-prefs
 // assistantAgentOrder — assistantAgentOrderPref normalizes against this list).
+//
+// lcpp is deliberately absent (ADR 0093 phase 1): it is reachable only when a
+// conversation explicitly pins Agent==lcppKind (ChatProviderFor's own c.Agent lookup
+// already handles that with no change needed here) — auto-selecting into a self-hosted
+// engine nobody asked for is a phase 2 product decision, not something phase 1's P0
+// provider should default a workspace into.
 var DefaultHeadlessOrder = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCursor, session.KindAgy}
 
 // preferredFrom picks the first AUTHENTICATED backend in a priority order. When
@@ -145,7 +160,7 @@ func ChatProviderFor(c *ChatConversation) ChatProvider {
 
 // ChatProviderKind returns the concrete backend selected by ChatProviderFor. Keeping
 // this out of ChatProvider avoids widening every test stub merely for presentation
-// metadata. Production providers are the five value types below.
+// metadata. Production providers are the value types below.
 func ChatProviderKind(c *ChatConversation, prov ChatProvider) string {
 	switch prov.(type) {
 	case ClaudeChat:
@@ -158,6 +173,8 @@ func ChatProviderKind(c *ChatConversation, prov ChatProvider) string {
 		return session.KindAgy
 	case cursorChat:
 		return session.KindCursor
+	case lcppChat:
+		return lcppKind
 	default:
 		return c.Agent // test/custom provider: best truthful fallback available
 	}
