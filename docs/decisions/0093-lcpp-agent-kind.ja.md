@@ -1,0 +1,321 @@
+# 0093. 自前 llama.cpp エンジンの上の自前ハーネスをセッション種別（`lcpp`）にする——CLI を持たない最初の kind を、kind 非依存の中核の後ろに段階化する
+
+[English](0093-lcpp-agent-kind.md) | 日本語
+
+- 状態: **提案**（2026-09-19）。実装は無い。以下の `file:line` は `951bb402`（当時の develop）で読んだ。
+  表ごとの棚卸しは `docs/log/99-lcpp-agent-kind.md` にあり、そちらが作業記録、本 ADR が判断と棄却案を持つ。
+  🟢 **2026-09-19・段 0 の前にレビュー済み**（末尾の Review 節。別セッションが全アンカーを tree で読み直した）。
+  初稿の前提が 2 つ覆り、本文中で「初稿は…と書いたが誤り」と印を付けて訂正した: `dispatchMCPStdio` は純粋な
+  スイッチではない（背景・決定 6）、`ProcessModel` は Console のどこにも届かない（決定 4）。端末経路の門は
+  3 箇所でなく 5 箇所だった（決定 2）。未決の問い 3〜5 はそこで閉じ、1〜2 は実機のみ。
+  🟢 **2026-09-19 利用者が計画を承認**（決定 9 の段階化、段 0 から）。実装は親セッションが駆動・レビューする
+  子セッションで進め、段ごとに PR で着地させる。段 2 がマージされた時点で *採用* へ移す。途中で止まればその
+  場所を本 ADR に記す。
+- 依頼は一文: **ベンダーの CLI を駆動する代わりに llama-server の API を直接叩く自前ハーネスは、Agent Fleet の
+  セッション種別になれるか、なるなら何がいくらか。**
+- 関連: [0015](0015-agent-managed-driver.ja.md)（この kind が子プロセス無しで実装する managed driver の契約）/
+  [0026](0026-kiro-agent-kind.ja.md)（kiro——直近の kind、「kind が触る場所」の雛形）/
+  [0071](0071-self-hosted-inference-engines.ja.md)（エンジン・起床・gateway）/
+  [0072](0072-engine-model-catalog.ja.md)（`context_tokens` が窓の片道 4 ホップ目になる目録）/
+  [0079](0079-remote-engine-from-another-deployment.ja.md)（借用エンジン。その `engine_waking` を成功と読んではいけない）/
+  [0084](0084-engine-indicator-and-tenant-gate.ja.md)（この kind の可否が乗るテナント別の門）
+
+## 背景
+
+### なぜ出てきたか
+
+自前 llm エンジンの文脈量計算は何度直しても着地しなかった。真因は個々の直しではなく構造で、窓が
+**片道 4 ホップ**——`store.EngineModel.ContextTokens` → active set の `c` → sidecar の preset → llama-server の
+`--ctx-size`——で伝わり、何も帰ってこない。自分で書いた説明が `workspace/agent/internal/agents/opencode/window.go:27-33`
+にある。埋まり具合は `usagex.WindowGuess`（`workspace/agent/internal/usagex/usage.go:75-89`）の推定で、自前
+モデルの id を未知の非 Claude モデルと読んで 200,000 と答える。
+
+うまく動いている参考は NousResearch/hermes-agent（Python・MIT）。llama-server を子プロセスとして所有し、OpenAI
+互換 API を直接叩く。効いているのは式ではなく `agent/conversation_loop.py:419-437` の 1 本——圧縮の直前に、
+これから送るトークン数を手に持ったまま、サーバの窓を伸ばしに行く。1 プロセスがサーバの窓と会話の長さを同時に
+知っているから書ける行。**成長ラダーはうちには移植できない**: 彼らの bounce はローカルの再起動で秒、うちは ECS
+タスクの入れ替えで分、しかも東京の GPU は OD でも枯れる。うちは窓を**余裕を持って 1 度だけ**決め、伸ばさない。
+
+### llama-server が提供するもの（README で確認済み）
+
+`POST /v1/chat/completions/input_tokens`（送信前の正確な数）、`GET /props`（`default_generation_settings.n_ctx`＝
+実際に付いた窓）、`POST /v1/messages` と `/v1/messages/count_tokens`（Anthropic 互換）、`POST /slots/{id}?action=save|restore`、
+`POST /v1/chat/completions/control {reasoning_end}`、`--reasoning-budget N` / `--no-reasoning-preserve`（既定は
+preserve＝思考が履歴に積む）、`-fit`（既定 on。**未設定の引数しか動かさない**——`-c` を明示すると窓は触らず重みを
+CPU に溢れさせる）。
+
+**llama-server 内蔵の MCP クライアント（`--mcp-servers-config`）と `--tools` / `--agent` はここでは使えない。**
+動くのは GPU コンテナの中で、うちのツールは Workspace 側でそのセッションの資格情報で動く必要がある。箱が違うので
+原理的に委譲不可。`/tools` は "Please do NOT use this endpoint in a downstream application" と明記されている。
+**MCP クライアントはうちが書く。**
+
+### リポジトリに既にあるもの（実測）
+
+- kind が実装する Go の契約: read 層 `Agent`（6 メソッド・`workspace/agent/internal/agents/agents.go:141-161`）と
+  managed 層 `Driver` / `ThreadHandle`（7 メソッド・`driver.go:132-165`）。`Capabilities.ProcessModel` は
+  `shared-daemon` / `per-session-child` / `tui` の 3 値（`driver.go:146`）。
+- kind の登録は `session.go:19-29` と `sessionx/agent.go:28-38`。**未登録の kind は黙って `claude` に正規化される**
+  （`agent.go:49`）＝拒否されない。managed driver は `sessionx/session_turn.go:31-37` の map。managed 専用の kind は
+  今日は無い: create 経路は「managed が無い kind」の拒否（`session_handlers.go:649-668`）しか知らず、逆は無い。
+- engine gateway（`control-plane/engine_gateway.go`）に**経路の許可リストは無い**。`serve()`（`:467`）は path を
+  見ない。制限しているのは `/v1/` の 2 重適用——mux の `/engine/{key}/v1/{path...}`（`:211`）と `engineUpstreamPrefix`
+  がさらに前置する `/v1/`（`:1172`）。よって `/v1/chat/completions`・`/v1/models`・`/v1/messages`（`:1086` に明記）・
+  `/v1/messages/count_tokens`・`/v1/chat/completions/input_tokens`・`/v1/chat/completions/control` は通り、
+  **`/props`・`/slots`・`/tokenize` は通らない**（llama-server の root にあり `/v1/props` は 404）。streaming には
+  `stream_options.include_usage` が注入され（`:597`）、全リクエストが箱を買う demand 信号になる（`:540`）。
+- `af` の MCP サーバは `dispatchMCPStdio(line []byte) []byte`（`workspace/agent/internal/mcpx/mcp_stdio.go:243`）。
+  **初稿は「JSON-RPC 1 行の純粋なスイッチ」と書いたが誤り**: プロセス全体の許可集合（`parseStdioFlags`・`:131`）の
+  ほかに、所有セッション・会話・Chromium・peer・画像・spawn の状態を読み、進捗と list-change の通知をプロセス共通の
+  stdout writer へ非同期に書き、`tools/list` はプロセスで一度きりの watcher を起こす（`:79-210`・`:479-544`）。
+  in-process で呼べるのは、通知出力と watcher の寿命まで持つリクエスト単位の dispatch 文脈を作ってからに限る。
+- Go の MCP **クライアント**は無い。`mcpreg/probe.go` が stdio と Streamable HTTP で `initialize` → `initialized` →
+  `tools/list` まで話して止まる（`:332-344`・`:483-498`）。`tools/call` を呼ぶのは e2e テスト 1 本だけ。
+- 既存 kind の重さは非テスト src で 2,100〜5,950 行（agy 2,109 … codex 5,948）。
+
+## 決定
+
+### 決定 1——kind は `lcpp`。`native`・`llama`・`llm`・`llamacpp`・`engine`・`rovo` は使えない
+
+`native` はデスクトップの Runtime アダプタ（`AF_RUNTIME=native`・docs/log/34・42）。軸は違うが、同名の kind は
+ログと文書の全行を共有してしまう。`llama` は既に Meta に解決するモデル族の鍵（`workspace/agent/model_provider.go:68`）で、
+Qwen を動かす kind が `llama` を名乗るのは利用者に嘘になる。`llm` はエンジンの key、`llamacpp` はエンジンの
+provider id（`control-plane/engines.go:50`・`:81`）で、opencode のモデル id は `llamacpp/<model>` だから kind と
+provider が同綴りになる。`engine` は箱。`operator` は origin（`session.go:45-53`）、`af` は MCP サーバ名の予約語
+（`mcpreg/def.go:55`）、`rovo` は docs/log/74 が予約した第 9 種。
+
+`lcpp` は llama.cpp の慣用略で、kind の実体——モデル族でなく llama-server の API（`/props`・`/slots`・reasoning
+制御）に依存するハーネス——を言う。`session.KindLcpp`・`.kind-lcpp`・`short: "lc"`・`launchSuffix: "-lc"`
+（`""/-cx/-cu/-ag/-cp/-ki/-oc/-sh` と非衝突）。label は `llama.cpp`。ブランドアイコンは無い（ハーネスの主体は
+うち）ので shell/ssm と同じ codicon。10 色目は着手前に両テーマの実描画で確定する（docs/log/74 §8.2 が 3 つ目の
+青でやったのと同じ）。
+
+### 決定 2——`lcpp` は最初の managed 専用 kind。Terminal(CLI) 経路は無い
+
+tmux のペインに入れるものが無い。`BuildLaunch` はエラーを返し、`POST /sessions` はこの kind で `driver` を
+`managed` 既定にし、`POST /sessions/{name}/driver` は `tui` 行きを 400 で拒み、Console の descriptor に「端末経路
+無し」のフラグを 1 つ足す。**初稿は読み手を 3 箇所と書いたが、Review で 5 箇所と分かった**（`LaunchModal.tsx:776-803`・
+`StartModal.tsx:303-316`・クイック起動 `RepoRowConnected.tsx:178-184`・切替メニューと動作 `SessionMenu.tsx:179-190` /
+`useSessionActions.tsx:262-287`）＋サーバ側の managed→TUI 遷移（`session_driver.go:62-105`）。引き継ぎモーダルは
+generic の create 経路を使うので経路ラベルは要らず、この kind で managed を選ぶだけでよい。ペインの
+無いセッションは新しくない——managed セッションは既にそう。新しいのは「二度とペインに戻れない」ことだけ。
+
+REPL（`workspace-agent lcpp-tui`）を書けば Terminal 経路は作れる。ミラーが全部を映す kind に 2 つ目の UI を
+書くことになるので、作らない。
+
+### 決定 3——転写はハーネスが書く。1 レコードから 2 つの表現を導く
+
+他の kind は CLI が書く店を読む。`lcpp` は自分の店を書く: `AgentDataDir()/lcpp/sessions/<sid>.jsonl`、
+append-only、user ターン／assistant ターン（text・reasoning・tool_calls）／ツール結果／system ノート（圧縮・
+モデル変更）／usage で 1 レコード。1 レコードから**次ターンで送る OpenAI `messages` 配列**（正史）と**ミラー用の
+`transcript.Turn`**（正規化先はこれ一択——他の形にすると共有・マーク・変更ファイルが同時に落ちる）を導く。
+読み手と書き手が同じコードなので、ミラー parity は構造的に完全。
+
+追記単調は書き手が守る: 圧縮は system ノートと要約を**足す**のであって過去行を消さない。送信用 `messages` は
+最後の圧縮ノート以降から組む。過去ターンの reasoning は送信用から落とし（llama-server の `reasoning-preserve`
+既定はそのままだと積む）、ファイルには残す。fork と fork-at は anchor でこのファイルを切って新 sid に複製する
+（claude と同じ）。経路が 1 つなので「この経路では fork できない」場合は無い。
+
+### 決定 4——managed driver は in-process。`ProcessModel` の 4 つ目の値、Supervisor は無い
+
+`Resume(m)` が返すのはハンドル（goroutine とチャネル）で、子プロセスではない。opencode Supervisor の骨格
+（ensure / adopt / generation / drain）はどれも当てはまらない。残るのはターン goroutine の寿命、Agent 再起動時に
+握っていたターンの settle（`TurnUnknown` → `Snapshot` が JSONL の末尾を読む: assistant レコードで閉じていれば
+completed、tool_call で開いていれば aborted）、`shutdown.go` での ctx cancel。`Capabilities.ProcessModel` に
+`"in-process"` を足し、`tuiMemoryCost` は空。**初稿は 4 つ目の値が Console の読み手を壊し得ると見ていたが、Review で
+読み手は無いと分かった**: `ProcessModel` は Agent API に乗らず、managed driver が埋めるだけ（`driver.go:142-157`）。
+値を足しても何も壊れず、同時に UI も駆動しない——決定 2 の端末経路の門は descriptor のフラグであって、この enum ではない。
+
+ハンドルの 7 メソッド: **Send** はループ 1 周／**Steer** は次のツール境界に user メッセージを積む（`Queued` に
+映す）／**Interrupt** は ctx cancel、思考中なら先に `POST /v1/chat/completions/control {reasoning_end}` で自然に
+閉じさせてもよい／**UpdateSettings** は model・effort（`reasoning_budget`）・mode（plan＝書き込みツールを外す）を
+次ターンから反映＝`DynamicModel`・`DynamicEffort`・`DynamicMode` は全部 true（llama-server router は
+`--models-max` で複数モデルを同居させる）／**Respond** は `ask_user` ツールの戻り値／**Events**・**Snapshot** は素直。
+
+状態は検出せず発生させる: ハーネスが `status.Persist(sid, working|idle|question)` を自分で書き、claude が使う
+generic の `DriveState` 経路に乗る。語彙に無い状態が 1 つ——**箱の起床**（最初のターンで分単位）。v1 は `working`
+＋「エンジン待ち（n 秒）」の last-say 行で出し、`waking` 状態は Console の語彙変更を伴うので後回し。クライアントは
+最初のトークンが来るまで streamed の 200 を成功と読まない（ADR 0079 の潰れた `engine_waking`）。
+
+### 決定 5——ツールはうちのもの。だから承認が本物になる
+
+既存 kind のツールループ・組み込みツール（read / write / edit / bash / glob / grep / ls）・権限モデル・出力上限・
+cwd 拘束・質問と計画のツール・system prompt の組立・圧縮は**全部 CLI の中**にあり、どの kind 契約にも出てこない。
+`lcpp` では全部うち。これで買えるのは他のどの kind にも無いもの——**実行者がうちなので、承認は本当にツールを止める**。
+`Permissions: true` と `Caps.PermissionChoice: true` を「実測済み」として宣言できる（docs/log/76 の条件）。
+指示ファイル層（fleet notes・利用者指示・プロジェクトの `AGENTS.md` / `CLAUDE.md`）はハーネスが読んで system
+prompt に載せる。順序は既存の fleet → user → project → rtk。書き先のファイルが無いので `instrSupportedKinds` には
+入れない。rtk は bash ツールの exec の前段に挟むだけ——フックもプラグインもファイルも無い。スキルは foreign
+（SKILL.md を注入で読ませる・docs/log/50 §8）だけ。
+
+tool-call の書式は llama-server の chat template に依存し、モデル族で違う（Qwen・GLM・Llama で JSON の壊れ方が
+違う）。**kind は 1〜2 族だけを対応**とし、guide に名指しする。「目録にあるもの何でも」にはしない。
+
+### 決定 6——`af` ツールは in-process、外部 MCP は自前クライアント、「known だが materialize しない kind」
+
+`af` の 72 ツールは MCP を通さない: ハーネスは `dispatchMCPStdio` を直接呼ぶ。**初稿は「プロセス全体のフラグを
+per-call のオプション構造体にすれば足りる」と書いたが誤り**（Review）: dispatcher はプロセス単位のセッション／会話／
+Chromium／peer／画像／spawn の状態、非同期通知のための stdout writer、一度きりの watcher にも依存する
+（`mcp_stdio.go:79-210`・`:479-544`）。in-process 呼び出しはリクエスト単位の dispatch 文脈がそれらも持ってから
+成り立ち、それまでは——そのリファクタを見送るなら以後も——`af` ツールは他の CLI と同じく loopback の HTTP で回す。
+どちらでもツール名と説明文はそのままなので、セッションごとの説明文コストは変わらない。
+
+外部サーバ（テナント配布・プロジェクト・利用者登録）には本物のクライアント: stdio と Streamable HTTP、
+2026-07-28 の stateless 世代と 2025-06-18 の `initialize` 世代の両方（うちのサーバが両方受けるのと対称）、
+`tools/call`・`notifications/tools/list_changed`・サーバごとの寿命（stdio 子はセッションと共に死ぬ）・kind 別の
+タイムアウト。種は `mcpreg/probe.go`。
+
+登録簿はメモリで読む。`lcpp` は `mcpreg.knownKinds` に入る（利用者がこの kind 向けにサーバを有効化できる）が
+`MaterializedKinds` には入らない（書くファイルが無い）——この状態の kind は初。プロジェクトスコープの綴りは
+持たず、他 kind の `.mcp.json` を `mcpproj` で読むだけで、コピー先にもならない。
+
+### 決定 7——窓: CP に read-only の迂回 1 本、毎送信前の正確な数、1 度だけの圧縮
+
+- **窓を知る。** `GET /props` が正解で、今日の gateway は通さない。CP に `GET /engine/{key}/props` を足す:
+  read-only・同じ session token・`/v1/` 前置無し・100 行前後。これが**4 ホップに無かった帰り道**で、kind 固有では
+  ない: P0 でも P1 でも要り、`syncEngineProviders`（`workspace/agent/engines.go:287`）が箱の起きている間に実際の
+  `n_ctx` で `limit.context` を上書きできる＝opencode 経路も直る。
+- **埋まりを知る。** これから送る `messages` をそのまま `POST /v1/chat/completions/input_tokens` へ。chat template
+  込みの数が返る。gateway の model 検査は通り、demand なので寝ている箱は起きる。
+- **決める。** `(input_tokens + 予約出力) > 窓 × 閾値` で要約ターンを 1 回。窓は `/props` が届けばそれ、届かなければ
+  目録の `context_tokens`。入力側が正確なら、窓の誤差は圧縮が少し早い／遅いに収まり、「25k を 13% と表示しながら
+  毎ターン圧縮」は再現しない。
+- **成長ラダーは無い**（背景）。
+
+### 決定 8——使用量は exact。この kind は `WindowGuess` を呼ばない
+
+llama-server の `usage` は正確で、stream にも乗る。`lcpp` は `usageMeasuredForKind` の **exact** 側に入る——
+自前経路で自分の数字により exact になる最初——、`LiveInfo.Context` を `WindowSource="recorded"` で書く。
+エンジンの GPU 時間の使用量は既に Agent に届いている（`control-plane/engine_usage.go:365` →
+`workspace/agent/engines.go:788`）ので、目録の `llamacpp` provider 行を「GPU 時間で課金・トークン単価 0」として
+同じトークンを 2 度数えない。
+
+### 決定 9——段階化: CP の迂回 → kind 非依存の中核として P1 → 実測合格時だけ P2
+
+- **段 0——決定 7 の迂回**（半日）。どの案でも要る。やらない理由が無い。
+- **段 1——P1**: `internal/harness` のような kind 非依存パッケージに LLM クライアント・ツールループとツール・
+  MCP クライアント・文脈管理を置き、chatx の `ChatProvider`（`chat_providers.go:44, 70, 110, 149`）から使う。
+  「自前エンジンでコーディング作業が本当に回るか」「どの族なら tool-call が壊れないか」を実機で測るのはここ。
+- **段 2——P2**: kind の配線・driver・転写の書き手・使用量・テスト・guide。同じ中核を包む。段 1 が合格したときだけ:
+  (a) 選んだ族で 20 ターン級の実作業が完走、(b) 起床と再 prefill の固定費を利用者が受け入れる、(c) opencode 経路より
+  事故が減る見込みがある。
+
+動機が窓だけなら**段 0 で止める**。自前エンジンの利用がときどきの単発質問に留まるなら P0（`Send` だけの
+プロバイダ・1〜2 日）で止める。
+
+### 決定 10——ピン・導入・ログイン・ドリフト監視は無い。契約テストはエンジン側へ移る
+
+Dockerfile の ARG も `versions.json` の行も `env_tool_versions` の行も cli-drift・release watcher も、両
+`routes.go` のログインルートも無い。接続カードは「chat エンジンが目録にある・warm か・既定モデル」だけ。
+`fs.go` の denylist も不要（エンジン token はメモリに留まり、`opencode.EngineEnv` と同じ func-var の seam で
+取る）。残る唯一のドリフト軸は llama-server 自身の API と tool-call の出力で、これはエンジンイメージの
+llama.cpp 版で動く: live テストと同じ opt-in の実エンジン契約テストが、TUI 文字列契約テストの代わりになる。
+
+## 棄却した案
+
+- **llama-server の MCP クライアント / `--tools` / `--agent` を使う。** 箱が違う（背景）。節約ではなく不可能。
+- **hermes-agent の成長ラダーを移植する。** ここでは bounce が分単位で、GPU は戻らないことがある。
+- **REPL で Terminal 経路を作る。** ミラーが映す kind に 2 つ目の UI（決定 2）。
+- **`native` / `llama` / `llm` / `llamacpp` / `engine` と名付ける。** 決定 1。
+- **窓のために kind を作る。** 段 0 だけで帰り道は得られ、kind はそこに何も足さない。kind の理由は「opencode を
+  経由しない自前エンジンのセッション」が欲しいかどうかだけ。
+- **いきなり P2。** 費用の過半は agent の中核で、選んだ族で動かすまで判断できない。P2 固有の増分（12〜14
+  セッション日）を知る前に使うことになる。
+- **`lcpp` 向けにファイルを materialize して登録簿を読む。** 読む者がいないファイルはドリフトの源。
+
+## 帰結
+
+- 6 つの「初」と、それぞれの設計費用（上記）: managed 専用 kind／転写の書き手／in-process の `ProcessModel`／
+  うちが実行するツール／known だが materialize しない MCP kind／自前経路で exact な使用量。
+- 利用者が感じ、guide に書く固定費: 箱の起床（最初のターンで分単位）と、箱が入れ替わった後の毎ターン再 prefill
+  （30B・30k で数十秒。`/slots` の退避は箱を跨げず、そもそも gateway を通らない）。どちらも opencode 経路より
+  悪くはならず、kind でなくエンジンの費用。
+- 見積りは最大の 2 項目で下振れより上振れしやすい: Review は E（ツール群）が 3,000 行、F（MCP クライアント）が
+  1,200 行を超える見込みとした（上記のリクエスト単位 dispatch のリファクタは F に入り、最小の完成 kind が既に
+  2,109 行）。幅は据え置き、向きだけ記録する。
+- 見積り（明細と項目別の表は docs/log/99 §8）: **22〜27 セッション日・テスト込み約 9,000〜13,000 行**、1 レーン
+  ≈ 5 週・3 レーン ≈ 2〜3 週。うち P1 と共通の中核（LLM クライアント・ループとツール・MCP クライアント・文脈）が
+  12〜15 日、**P2 固有の増分は 12〜14 日**。P0 は 1〜2 日、P1 は 10〜13 日。
+- kind がもう要らなくなるもの: ピン・導入・ログイン・文字列契約テスト。新しく依存するもの: エンジンイメージの
+  llama.cpp 版。
+
+## 段階
+
+| 段 | 内容 | 次への門 |
+|---|---|---|
+| 0 | CP に `GET /engine/{key}/props`。`syncEngineProviders` が起床中に `limit.context` を上書き | 無し——出す |
+| 1 | P1: `internal/harness` の中核＋chatx プロバイダ。族の選定。実機計測 | 決定 9 の (a)(b)(c) |
+| 2 | P2: kind の配線・driver・転写の書き手・使用量・契約テスト・guide・本 ADR を *採用* に | — |
+
+## 未決の問い（段 1 の前に答える）
+
+1. どの 1〜2 族か。その族で llama-server の `tool_calls` が 20 ターンの作業を通して壊れない JSON のままか。
+2. エンジンイメージに焼かれている llama.cpp 版に `/v1/chat/completions/input_tokens` と `/control` が実在するか
+   （README で確認済みだが古いビルドには無いことがあり、決定 7 が変わる）。
+3. `dispatchMCPStdio` のグローバルを 72 本のツール本体に触らず per-call にできるか。できなければ `af` ツールも
+   他と同じく loopback の HTTP で回す。→ Review で回答済み。
+4. Console のどこが `Capabilities.ProcessModel` を読むか（4 つ目の値が壊す先）。→ Review で回答済み。
+5. 「端末経路無し」のフラグをどこが読む必要があるか（起動モーダル・driver 切替・引き継ぎモーダル）。→ Review で回答済み。
+
+## 参照した出典（2026-09-19・`951bb402`）
+
+`workspace/agent/internal/agents/{agents.go,driver.go}` · `workspace/agent/internal/sessionx/{agent.go,session_turn.go,session_driver.go,session_handlers.go}` ·
+`workspace/agent/internal/mcpx/mcp_stdio.go` · `workspace/agent/internal/mcpreg/{def.go,materialize.go,probe.go}` ·
+`workspace/agent/internal/chatx/chat_providers.go` · `workspace/agent/internal/agents/opencode/window.go` ·
+`workspace/agent/internal/usagex/usage.go` · `workspace/agent/{engines.go,agent_models.go,agent_instructions.go,agent_rtk.go,usage_fold.go,model_provider.go}` ·
+`control-plane/engine_gateway.go` · `control-plane/internal/mcpsrv/{mcp.go,mcp_server.go}` · `console/src/agents/registry.ts` ·
+`console/src/lib/agentModels.ts` · `docs/log/{32,36,40,43,74}-*-agent-kind.md` · `docs/log/34-native-runtime.md`
+
+## Review (2026-09-19, before Phase 0)
+
+### 確認した
+
+- gateway の `serve` に path allow-list は無いが、登録 route は `/engine/{key}/v1/{path...}` だけで、local の llama.cpp
+  向け target は engine URL＋`/v1/`＋捕捉 path になる（`control-plane/engine_gateway.go:211,467-583,1102-1117,1169-1177`）。
+  borrowed engine も llama-server root ではなく far gateway の `base_url` に差し替える
+  （`control-plane/engine_gateway.go:1094-1117`）。したがって `/props`・`/slots` の抜け道は無く、決定 7 と段 0 は残る。
+- 未登録 kind は引き続き Claude に正規化される（`workspace/agent/internal/sessionx/agent.go:25-53`）。exact 集合は Claude・Codex・
+  OpenCode だけ（`workspace/agent/usage_fold.go:201-212`）。`ProcessModel` の記載値も `shared-daemon`・`per-session-child`・`tui`
+  の 3 つだけ（`workspace/agent/internal/agents/driver.go:142-157`）。
+- `internal/agents/<kind>` の非テスト Go src を再計測すると agy 2,109、cursor 2,753、copilot 2,892、kiro 2,896、
+  opencode 5,171、claude 5,853、codex 5,948 行で、docs/log/99 §8 の物差しは再現した。
+- 非テストの `"kiro"` 全数棚卸しでは、handoff・spawn・共有ビュー・fork-at に表から漏れた kind 分岐は無かった。
+  これらは capability／registry／generic 経路である（`workspace/agent/internal/sessionx/session_handlers.go:482-529,1002-1103`、
+  `workspace/agent/internal/sessionx/session_spawn.go:294-363`、`control-plane/session_share.go:645-670`）。定時実行は表に既載
+  （`control-plane/scheduler_wake.go:278-285`）。本提案以外に `lcpp`／`lc`／`-lc`／`KindLcpp`／`kind-lcpp` は無く、
+  `git fetch origin` 後の `origin/develop` に ADR 0093 と docs/log 99 は無い。
+
+### 壊れた
+
+- `dispatchMCPStdio` は純粋な「1 行入力→1 行出力」ではない。`parseStdioFlags` の権限 global 以外にも、所有 session・conversation・
+  Chromium・peer・image・fleet-spawn の process state を読み、`tools/list` は process-wide の once-only watcher を起動し、progress と
+  list-change notification は process-wide stdout writer へ非同期に書く
+  （`workspace/agent/internal/mcpx/mcp_stdio.go:79-123,125-210,243-297,385-416,479-544,2252-2518,3236-3277`）。決定 6 の
+  in-process 直呼びは、notification 出力と watcher の寿命も request-scoped dispatch context にした場合にだけ成立する。
+  `parseStdioFlags` を option struct に替えるだけでは足りず、loopback が fallback として残る。
+- `Capabilities.ProcessModel` は wire に載らず Console も読んでいない。現状は managed driver が値を埋めるだけである
+  （`workspace/agent/internal/agents/driver.go:142-157`、`workspace/agent/internal/agents/{codex,opencode,kiro,cursor,copilot}/driver.go`）。
+  `in-process` を足しても今日の Console は壊れない。UI の制御に使うなら wire field と consumer が追加作業になる。
+  `tuiMemoryCost` は別の descriptor data である（`console/src/agents/registry.ts:123-127`）。
+- §3 の実装チェック表には report reconciler が無い。2 tick settle は polling TUI のためにある
+  （`workspace/agent/internal/chatx/chat_report_reconcile.go:45-54`）。`lcpp` は §4.8 のとおり通常の turn-end marker を発生させる必要がある。
+  これは検証・テスト点であって新しい kind-name 分岐ではない。指定された handoff・spawn・定時実行・共有ビュー・fork-at には
+  ほかの漏れを認めなかった。
+- 見積り E は 3,000 src 行を上振れしやすい。cwd に閉じた filesystem editor、shell cancel、出力／binary 制限、approval policy、
+  plan／question state、parallel tool loop を合わせ、最小の既存 kind 全体でも非テスト 2,109 行ある。F も 1,200 行より上に偏る。
+  2 transport・2 MCP 世代・reconnect／lifetime／notification と、上記 request-scoped 化まで含み、probe の延長だけではないためである
+  （`workspace/agent/internal/mcpreg/probe.go:332-344,483-498`）。数字は直さず、E・F とも下振れより上振れ余地が大きいと記録する。
+
+### 答えた
+
+- 問い 1・2 は要実機のまま残る。model family の tool-call integrity と engine image に焼かれた endpoint は tree だけでは確定しない。
+- 問い 3: flag global だけの変更では不可。上記の広い request-scoped 境界が要り、できなければ loopback
+  （`workspace/agent/internal/mcpx/mcp_stdio.go:125-210,479-544`）。
+- 問い 4: 今日の Console には読者がいない。`ProcessModel` は Agent API を越えない
+  （`workspace/agent/internal/agents/driver.go:142-157`）。
+- 問い 5: 新しい terminal-route capability は 2 つの起動 form
+  （`console/src/features/repos/LaunchModal.tsx:776-803`、`console/src/features/repos/StartModal.tsx:303-316`）、quick launch
+  （`console/src/features/repos/RepoRowConnected.tsx:178-184`）、driver-switch menu と action
+  （`console/src/features/sessions/SessionMenu.tsx:179-190`、`console/src/features/sessions/useSessionActions.tsx:262-287`）、server 側の
+  managed→TUI 遷移（`workspace/agent/internal/sessionx/session_driver.go:62-105`）で読む必要がある。handoff は同じ generic create 経路を
+  使うので、別の route label ではなく target kind から managed を選ばせる
+  （`console/src/features/sessions/HandoffModal.tsx:75-84,119-130`）。
