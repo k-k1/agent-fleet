@@ -534,6 +534,14 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
 5. Whether `engine_hourly` should carry the instance after all (decision 10).
 6. **Whether the task's `Memory` holds for a heavy model** (decision 11). "18.5 GB was fine" is
    as far as the evidence goes.
+   **Resolved for the image role (2026-09-19): it does not, and the reason is not the number.**
+   ComfyUI sizes its pinned host buffer and RAM cache from the cgroup limit it can read, and a
+   task-level `Memory` sits in the task's slice outside the container's cgroup namespace — so on a
+   32 GiB box it pinned 15,259 MB against a 14,336 MiB task and every 12 GB-class checkpoint was
+   OOM-killed at load (seven tasks, 2026-09-17/18, L40S and L4 alike). The image task definition
+   now carries no task-level `Memory`; `ImageTaskMemory` became the engine container's
+   `MemoryReservation` (placement only) — see `PARAMETERS-60-engines.md`. The llm task keeps its
+   limit: llama.cpp's host buffer is small and decision 11's measurement stands there.
 7. ~~**The estimator for VRAM demand.**~~ **Resolved for the llm role (2026-09-11, the
    follow-up "open question 7 for the llm role" at the end) — the KV cache is not a coefficient
    but a quantity computed from the GGUF header, and it matched the hardware at both points to

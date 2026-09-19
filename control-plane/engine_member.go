@@ -49,7 +49,8 @@ func (a engineMemberAPI) status(w http.ResponseWriter, r *http.Request, _ store.
 // hand-written copy would be a second list that has to be kept in step with this one, and
 // pickKeys' own contract (a key absent from the source stays absent) is what makes decision 4's
 // "say nothing" possible without a special case here.
-var engineMemberFields = []string{"key", "api", "state", "warm", "stop_eta", "idle_secs", "lifecycle", "queue"}
+var engineMemberFields = []string{"key", "api", "state", "warm", "warm_model", "warm_model_label",
+	"stop_eta", "idle_secs", "lifecycle", "queue"}
 
 // engineMemberRow trims one source row (memberSourceRow's output) to what every member may see.
 func engineMemberRow(full map[string]any) map[string]any {
@@ -74,11 +75,30 @@ func (e *engineRuntimeState) memberSourceRow(ctx context.Context) (map[string]an
 	if !e.catalog.hasModels(ctx) {
 		return nil, false
 	}
+	warm := e.warm(ctx)
 	row := map[string]any{
 		"key":   e.def.Key,
 		"api":   e.def.api(),
-		"warm":  e.warm(ctx),
+		"warm":  warm,
 		"queue": e.queueRow(),
+	}
+	// Which model is in VRAM right now (ADR 0072 decision 7's warm_model), and the name a member
+	// reads it by (ADR 0090 decision 2 — the id rides too, and is what every reader falls back
+	// to). "Warm" alone is not the fact somebody about to ask a question needs: `--models-max 1`
+	// means the box holds ONE, and asking for the other pays the reload the warm badge promises
+	// is over (ADR 0072 decision 3).
+	//
+	// Gated on warm here rather than trusting servedModel's own gate, because that one only
+	// knows about a controller: an external or borrowed row has none, so its last served model
+	// would otherwise outlive the box that held it and read as "cheap" about an engine that is
+	// down. Same omission, same reason as the admin row (engine_admin.go).
+	if warm {
+		if served, _ := e.servedModel(); served != "" {
+			row["warm_model"] = served
+			if label := e.modelLabel(ctx, served); label != "" {
+				row["warm_model_label"] = label
+			}
+		}
 	}
 	if e.def.notManagedHere() {
 		// Decision 4: a row this deployment does not manage carries no state, no idle window and

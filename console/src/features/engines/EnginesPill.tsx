@@ -15,6 +15,7 @@ import {
   ROLE_ORDER,
   groupByRole,
   pickHeadRow,
+  lastUsedSecs,
   queueIsCertain,
   showsColdHint,
   splitHM,
@@ -28,6 +29,7 @@ import {
 import "./engines.css";
 
 const STATE_KEY: Record<EngineStateWord, MsgKey> = {
+  in_use: "engine.state_in_use",
   ready: "engine.state_ready",
   running: "engine.state_running",
   starting: "engine.state_starting",
@@ -38,6 +40,9 @@ const STATE_KEY: Record<EngineStateWord, MsgKey> = {
 
 // Badge/dot color class per state word. Shared by the pill and the popover's per-row badge.
 const STATE_TONE: Record<EngineStateWord, string> = {
+  // Its own tone rather than `on`'s: "warm" and "warm and answering somebody" are the two states
+  // a member most needs to tell apart at a glance, and they are the two that look alike.
+  in_use: "busy",
   ready: "on",
   running: "on",
   starting: "lead",
@@ -119,6 +124,7 @@ function EngineRolePill({ role, rows }: { role: EngineRole; rows: EngineMemberRo
   useDismiss(ref, open, () => setOpen(false));
 
   const head = pickHeadRow(rows);
+  const single = rows.length === 1;
   const word = stateWord(head);
   const tone = STATE_TONE[word];
   const roleLabel = tr(ROLE_LABEL_KEY[role]);
@@ -133,6 +139,12 @@ function EngineRolePill({ role, rows }: { role: EngineRole; rows: EngineMemberRo
   const queued = totalQueue(rows);
 
   const parts = [roleLabel, stateLabel];
+  // The head row's loaded model rides in the tooltip and the accessible name, not in the pill
+  // itself: it is the longest string here and the topbar is where the brand already wraps to two
+  // lines (topbar.css). Below 760px the pill is an icon and a dot, so this is the only place a
+  // phone can read it from at all.
+  const headModel = head.warm_model_label || head.warm_model;
+  if (headModel) parts.push(tr("engine.warm_model") + headModel);
   if (headLeftSecs !== null && headLeftSecs > 0) parts.push(tr("engine.stops_in", { d: dur(headLeftSecs) }));
   if (queued !== undefined) parts.push(tr("engine.queue_shared", { n: queued }));
   const summary = parts.join(tr("ui.sep"));
@@ -160,9 +172,22 @@ function EngineRolePill({ role, rows }: { role: EngineRole; rows: EngineMemberRo
       </button>
       {open && (
         <div className="engine-popover" role="dialog" aria-label={roleLabel}>
-          <div className="engine-popover-head">{roleLabel}</div>
+          {/* With one row — what nearly every deployment has — the row's own head would repeat
+              this line: the engine KEY is an operator's word (it names a row in the admin panel,
+              nothing a member can press), and "チャット" already says which engine this is. So the
+              state badge moves up here and the row is detail lines only. With two or more rows the
+              key is the ONLY thing that tells them apart (decision 11), so it stays on each. */}
+          <div className="engine-popover-head">
+            <span>{roleLabel}</span>
+            {single && (
+              <span className="engine-popover-head-state">
+                <span className={"engine-row-state engine-row-state-" + tone}>{stateLabel}</span>
+                <LifecycleBadge row={head} />
+              </span>
+            )}
+          </div>
           {rows.map((row) => (
-            <EngineRowLine key={row.key} row={row} now={now} dur={dur} />
+            <EngineRowLine key={row.key} row={row} now={now} dur={dur} showHead={!single} />
           ))}
         </div>
       )}
@@ -170,28 +195,68 @@ function EngineRolePill({ role, rows }: { role: EngineRole; rows: EngineMemberRo
   );
 }
 
-function EngineRowLine({ row, now, dur }: { row: EngineMemberRow; now: number; dur: (secs: number) => string }) {
+/** The "this deployment does not manage it" badge, with the hover text that says what that
+ *  means. Drawn either on a row's own head or — when the role has a single row — up in the
+ *  popover's header beside the state, so the two sites cannot word it differently. */
+function LifecycleBadge({ row }: { row: EngineMemberRow }) {
+  const tr = useT();
+  if (!row.lifecycle) return null;
+  return (
+    <span
+      className="engine-row-lifecycle"
+      title={tr(row.lifecycle === "remote" ? "engine.lifecycle_remote_hint" : "engine.lifecycle_external_hint")}
+    >
+      {tr(row.lifecycle === "remote" ? "engine.lifecycle_remote" : "engine.lifecycle_external")}
+    </span>
+  );
+}
+
+function EngineRowLine({
+  row,
+  now,
+  dur,
+  showHead,
+}: {
+  row: EngineMemberRow;
+  now: number;
+  dur: (secs: number) => string;
+  showHead: boolean;
+}) {
   const tr = useT();
   const word = stateWord(row);
   const tone = STATE_TONE[word];
   const stateLabel = tr(STATE_KEY[word]);
   const leftSecs = stopSecs(row, now);
   const queued = row.queue && queueIsCertain(row.queue) ? row.queue.count : undefined;
+  // How long ago somebody last used it — the fact `warm` cannot carry, because it stays true for
+  // the whole idle window after the last turn. Suppressed while the row IS in use: "in use" and
+  // "last used a minute ago" are the same sentence, and the first one is the true one.
+  const sinceSecs = word === "in_use" ? null : lastUsedSecs(row, now);
 
   return (
     <div className="engine-row">
-      <div className="engine-row-head">
-        <span className="engine-row-key mono">{row.key}</span>
-        <span className={"engine-row-state engine-row-state-" + tone}>{stateLabel}</span>
-        {row.lifecycle && (
-          <span
-            className="engine-row-lifecycle"
-            title={tr(row.lifecycle === "remote" ? "engine.lifecycle_remote_hint" : "engine.lifecycle_external_hint")}
-          >
-            {tr(row.lifecycle === "remote" ? "engine.lifecycle_remote" : "engine.lifecycle_external")}
+      {showHead && (
+        <div className="engine-row-head">
+          <span className="engine-row-key mono">{row.key}</span>
+          <span className={"engine-row-state engine-row-state-" + tone}>{stateLabel}</span>
+          <LifecycleBadge row={row} />
+        </div>
+      )}
+      {/* Which model is in VRAM right now. The label when the catalogue has one, the id when it
+          does not (ADR 0090 決定 2: the id is the key, and every reader falls back to it) — mono
+          only in the fallback, because an id is a key to compare character by character and a
+          name is a name. */}
+      {row.warm_model && (
+        <div className="engine-row-line">
+          {tr("engine.warm_model")}
+          <span className={row.warm_model_label ? undefined : "mono"}>
+            {row.warm_model_label || row.warm_model}
           </span>
-        )}
-      </div>
+        </div>
+      )}
+      {sinceSecs !== null && (
+        <div className="engine-row-line muted">{tr("engine.last_used", { d: dur(sinceSecs) })}</div>
+      )}
       {/* stop_eta absent => no countdown line at all (decision 4) — never a fallback. */}
       {leftSecs !== null && leftSecs > 0 && (
         <div className="engine-row-line">

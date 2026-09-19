@@ -562,6 +562,31 @@ unauthenticated (measured), so the security group — port 8080 from the CP and 
 the whole of this engine's access control. The llm role's `--api-key` is a second lock that does
 not exist here.
 
+### `ImageTaskCpu` / `ImageTaskMemory`
+
+`ImageTaskCpu` is the task's vCPU units, as `LlmTaskCpu`. **`ImageTaskMemory` is NOT a task memory
+limit any more (2026-09-19)**: it is the `engine` container's `MemoryReservation`, the figure the
+ECS scheduler subtracts from the box for placement, and the task definition carries **no
+task-level `Memory` at all**. The `fetch` sidecar reserves 512 MiB on the same terms. The name and
+the value were kept so a capture and a live stack carry over unchanged; keep the sum of the two
+reservations under the smallest rung's registered memory (a g6.xlarge registers 15,371 MiB).
+
+Why the hard limit went — ADR 0074 decision 11 said an OOM-killed engine is fixed here, and this
+is the fix. **ComfyUI budgets RAM from the cgroup it can see** (`comfy/system_memory.py` walks
+`/proc/self/cgroup` for a `memory.max`), and a task-level limit lives in the task's slice, OUTSIDE
+the container's cgroup namespace. So a 32 GiB box read `total RAM 31643 MB`, pinned a 15,259 MB
+host buffer — more than the 14,336 MiB the task was allowed — and every 12 GB-class checkpoint
+(FLUX/Krea2, Z-Image/Lumina2) died at `Model Initializing ...` with the sidecar's `aws s3 cp`
+killed alongside it: seven tasks over 2026-09-17/18, the same on an L40S as on an L4, and never
+once a success. The engine's ceiling is now the box the Control Plane bought, which is the number
+ComfyUI is already planning against. What that costs: a box that really runs out of RAM is
+sorted out by the kernel's OOM killer (the largest process, ComfyUI) instead of the task cgroup —
+the same ending, one layer up — and a 16 GiB rung with a 17 GB weight set is ComfyUI's disk-backed
+loading to prove, not this parameter's.
+
+The llm role keeps its task `Memory`: llama.cpp streams weights into VRAM and its host buffer
+is small (ADR 0074 decision 11's measurement), so the trap has not bitten there.
+
 ### `ImageStorageGiB`
 
 The box's root gp3 volume, as [`LlmStorageGiB`](#llmstoragegib). Smaller than the llm role's 120

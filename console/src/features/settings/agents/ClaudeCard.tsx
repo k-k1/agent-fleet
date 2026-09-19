@@ -6,7 +6,7 @@ import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { OnOff } from "../parts/controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
-import { SettingRow, CardSettings, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
+import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
 
 // Claude: OAuth connect (start → approve in a new tab → paste code → complete), plus
 // its behavior settings (Remote Control / notifications / RTK) once connected.
@@ -178,6 +178,7 @@ export function ClaudeCard({
       )}
       <CardSettings>
         <LaunchDefaults kind="claude" />
+        <ThinkingRow kind="claude" />
         <SettingRow label={tr("agents.claude_abort_resume")}>
           <OnOff
             value={s.claudeAbortAutoResume}

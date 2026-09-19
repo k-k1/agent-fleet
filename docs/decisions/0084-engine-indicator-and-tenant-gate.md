@@ -143,6 +143,17 @@ null', which the Console draws as a value". A member's row holds:
 key, api, state, warm, stop_eta, idle_secs, lifecycle, queue{...}
 ```
 
+**Addendum (2026-09-18).** `warm_model` and `warm_model_label` joined the member row. The first
+is the admin row's own value (`engineServed` — the model this engine last actually **answered
+with**), the second is the readable name for it ([ADR 0090](0090-member-facing-model-names.md)
+decision 2). The admin row carries no `warm_model_label`: ADR 0090 split the id (a key) from the
+label (a string to draw), and somebody reading the panel needs the key. The reason for adding them
+is decision 4's rule read the other way round — this was something the CP **could** say and was
+not saying: where a deployment runs `--models-max 1`, exactly one model is in VRAM (ADR 0072
+decision 3), and whoever asks for the other buys the 267-second load. "Warm" alone does not tell
+them whether they are about to wait. Both keys are **omitted while `warm` is false**, for the
+reason the admin row omits them — naming a model on a cold box says "this request is cheap".
+
 What the admin row has and the member row does **not**: `mode` / `desired` / `box` / `offers` /
 `classes` / `events` / `vram_*` / `window_*` / `model_rows` / `has_models`. None of it is secret;
 all of it is either a number the reader cannot act on or a control they cannot press — and as
@@ -160,6 +171,16 @@ all of it is either a number the reader cannot act on or a control they cannot p
 - No `stop_eta` means no countdown. Do not invent a fallback: **the honesty lives in the omission**
   (`adminEngines.tsx:746` carries the same warning). Only when `mode=ondemand` and `idle_secs` is
   present may the pill state the **policy** instead of a time ("stops after 30 minutes unused").
+
+**Addendum (2026-09-18).** The Console added one state word — **in use** — which is not CP
+vocabulary but a **derivation from values already on the wire**: `warm` and `queue.count > 0`
+(decision 6-A's in-flight count). The complaint it answers came from the real deployment: `warm`
+stays true from the last turn until the end of the idle window, so **a session actually running**
+was invisible on the pill. The same arithmetic gives the popover its "last used 2m ago" line —
+`idle_secs - (stop_eta - now)`, again no new field (decision 2 puts the subtraction in the browser
+precisely so nothing self-ticking rides on a diff-only stream). **A cold row never reads as in
+use**: the in-flight count also rises while a request waits for a box to come up, and that is
+"somebody is waiting" — the queue line — not "somebody is using it".
 
 ### Decision 5 — what "do not show it when it is unavailable" means, exactly
 

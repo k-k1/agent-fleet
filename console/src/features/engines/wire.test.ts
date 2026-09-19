@@ -5,6 +5,8 @@
 import { describe, expect, it } from "vitest";
 import {
   groupByRole,
+  inUse,
+  lastUsedSecs,
   pickHeadRow,
   queueIsCertain,
   readEngines,
@@ -34,10 +36,20 @@ describe("readEngines", () => {
     expect(readEngines({ engines: "nope" })).toBeNull();
   });
 
+  it("keeps the warm model and its label (positive control for the absence below)", () => {
+    const rows = readEngines({
+      engines: [{ key: "llm", api: "chat", warm: true, warm_model: "qwen3.8-27b-ud-iq4_xs", warm_model_label: "Qwen3.8 27B IQ4_XS" }],
+    });
+    expect(rows![0].warm_model).toBe("qwen3.8-27b-ud-iq4_xs");
+    expect(rows![0].warm_model_label).toBe("Qwen3.8 27B IQ4_XS");
+  });
+
   it("never invents a field the wire omitted", () => {
     const [r] = readEngines({ engines: [{ key: "llm", api: "chat" }] })!;
     expect(r.state).toBeUndefined();
     expect(r.warm).toBeUndefined();
+    expect(r.warm_model).toBeUndefined();
+    expect(r.warm_model_label).toBeUndefined();
     expect(r.stop_eta).toBeUndefined();
     expect(r.idle_secs).toBeUndefined();
     expect(r.lifecycle).toBeUndefined();
@@ -70,6 +82,12 @@ describe("pickHeadRow (decision 11 — the best state wins the headline)", () =>
     expect(pickHeadRow([stopped, starting, running])).toBe(running);
   });
 
+  it("a warm row in use wins over a warm row nobody is using", () => {
+    const busy = row({ key: "a", state: "running", warm: true, queue: { count: 1 } });
+    const idle = row({ key: "b", state: "running", warm: true });
+    expect(pickHeadRow([idle, busy])).toBe(busy);
+  });
+
   it("a lifecycle row never outranks a self-managed row that is actually running", () => {
     const external = row({ key: "lan", lifecycle: "external", warm: true, state: "running" });
     const managed = row({ key: "self", state: "running" });
@@ -89,6 +107,27 @@ describe("stateWord (decision 4 — lifecycle wins, then warm, then the raw stat
 
   it("warm reads as ready regardless of the raw state word", () => {
     expect(stateWord(row({ state: "starting", warm: true }))).toBe("ready");
+  });
+
+  it("a warm row the CP is holding a request for reads as in use", () => {
+    expect(stateWord(row({ state: "running", warm: true, queue: { count: 1 } }))).toBe("in_use");
+  });
+
+  it("a warm row with a certain 0 is ready, not in use (the same row, one count apart)", () => {
+    expect(stateWord(row({ state: "running", warm: true, queue: { count: 0 } }))).toBe("ready");
+  });
+
+  it("an external row in use says so — the count is this deployment's own, unlike its state", () => {
+    expect(stateWord(row({ lifecycle: "external", queue: { count: 2 } }))).toBe("in_use");
+  });
+
+  it("a cold row somebody is waiting for stays stopped: the queue line says who waits, not the word", () => {
+    expect(stateWord(row({ state: "stopped", queue: { count: 1 } }))).toBe("stopped");
+  });
+
+  it("inUse ignores a count the counter cannot vouch for", () => {
+    expect(inUse(row({ queue: { count: 0, counted_secs: 0 } }))).toBe(false);
+    expect(inUse(row({ queue: { count: 1, counted_secs: 0 } }))).toBe(true);
   });
 
   it.each([
@@ -143,6 +182,28 @@ describe("stopSecs (decision 4 — an external/remote row never gets a countdown
     const at = "2026-09-14T00:01:00Z";
     const now = Date.parse("2026-09-14T00:00:00Z");
     expect(stopSecs(row({ lifecycle: "external", stop_eta: at }), now)).toBeNull();
+  });
+});
+
+describe("lastUsedSecs (derived from stop_eta and idle_secs — decision 2, nothing new on the wire)", () => {
+  const now = Date.parse("2026-09-14T00:00:00Z");
+
+  it("an engine stopping in 28 minutes on a 30-minute window was used 2 minutes ago", () => {
+    const r = row({ idle_secs: 1800, stop_eta: "2026-09-14T00:28:00Z" });
+    expect(lastUsedSecs(r, now)).toBe(120);
+  });
+
+  it("is null without a stop_eta (a pinned-on engine has none) rather than 0", () => {
+    expect(lastUsedSecs(row({ idle_secs: 1800 }), now)).toBeNull();
+  });
+
+  it("is null without an idle window, and for a row this deployment does not manage", () => {
+    expect(lastUsedSecs(row({ stop_eta: "2026-09-14T00:28:00Z" }), now)).toBeNull();
+    expect(lastUsedSecs(row({ lifecycle: "remote", idle_secs: 1800, stop_eta: "2026-09-14T00:28:00Z" }), now)).toBeNull();
+  });
+
+  it("is null, not negative, when the two values came from different ticks", () => {
+    expect(lastUsedSecs(row({ idle_secs: 1800, stop_eta: "2026-09-14T00:31:00Z" }), now)).toBeNull();
   });
 });
 

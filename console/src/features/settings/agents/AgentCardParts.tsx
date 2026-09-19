@@ -44,7 +44,9 @@ export function CardSettings({ children }: { children?: ReactNode }) {
 
 // ThinkingRow: "expand thinking" (kind-scoped, off by default). The mirror renders its thinking
 // blocks collapsed, so only people who always want to read them make expanded the default here.
-// Only on the cards of backends that emit thinking (codex / opencode); each kind is independent.
+// Only on the cards of backends that emit thinking (claude / codex / opencode); each kind is
+// independent — claude's blocks are the short summaries it narrates work with between tool runs,
+// which is a different reading habit from codex's reasoning dumps.
 export function ThinkingRow({ kind }: { kind: string }) {
   const s = useSettings();
   const tr = useT();

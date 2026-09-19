@@ -3,7 +3,16 @@
 // merge: a blocked row is not a review row with a scarier colour (no flag gets past it),
 // and the base clone's own block depends on the SELECTION, not on its state.
 import { describe, it, expect } from "vitest";
-import { planTree, defaultSelection, deleteOrder, baseBlockedByWorktrees, summarize } from "./deleteTree.ts";
+import {
+  planTree,
+  defaultSelection,
+  deleteOrder,
+  baseBlockedByWorktrees,
+  effectiveGrade,
+  sessionsToClear,
+  stopUnblocks,
+  summarize,
+} from "./deleteTree.ts";
 import type { Repo } from "./store.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import type { Session } from "../../types/session.ts";
@@ -167,11 +176,76 @@ describe("実行前の内訳", () => {
       sess("s2", "app@c", { kind: "shell" }),
     ]);
     const sum = summarize(plans, new Set(["app@a", "app@b"]), true);
-    expect(sum).toEqual({ copies: 2, archive: 1, forget: 0, branches: 2, force: 1 });
+    expect(sum).toEqual({ copies: 2, archive: 1, forget: 0, branches: 2, force: 1, stop: 0 });
   });
 
   it("ブランチを消さない設定なら 0 件", () => {
     const plans = planTree(node(repo("app@a")), []);
     expect(summarize(plans, new Set(["app@a"]), false).branches).toBe(0);
+  });
+});
+
+// The "stop the running sessions first" tick. What it must NOT do is the point: a deletion
+// lock (on the copy or on one of its sessions) is a 403 no flag gets past, so a row holding
+// one has to stay blocked however many sessions could be stopped.
+describe("稼働中セッションを先に停止する", () => {
+  it("止めれば消せる行だけが、その対象になる", () => {
+    const plans = planTree(
+      node(repo("app@a"), [
+        node(repo("app@b", { locked: true })),
+        node(repo("app@c")),
+      ]),
+      [sess("s1", "app@a", { alive: true }), sess("s2", "app@b", { alive: true })],
+    );
+    const [a, b, c] = plans;
+    expect(a.aliveOnlyBlock).toBe(true);
+    expect(b.aliveOnlyBlock).toBe(false); // the copy itself is locked
+    expect(c.aliveOnlyBlock).toBe(false); // nothing is running in it
+    expect(stopUnblocks(plans).map((p) => p.repo.name)).toEqual(["app@a"]);
+  });
+
+  it("ロックされたセッションが同居していれば対象外（止めても残る）", () => {
+    const [p] = planTree(node(repo("app@a")), [
+      sess("s1", "app@a", { alive: true }),
+      sess("s2", "app@a", { locked: true }),
+    ]);
+    expect(p.aliveOnlyBlock).toBe(false);
+    expect(effectiveGrade(p, true)).toBe("blocked");
+  });
+
+  it("止めた後の判定は未コミットなどをそのまま引き継ぐ（安全にはならない）", () => {
+    const [p] = planTree(node(repo("app@a", { dirty: true })), [sess("s1", "app@a", { alive: true })]);
+    expect(effectiveGrade(p, false)).toBe("blocked");
+    expect(effectiveGrade(p, true)).toBe("review");
+    expect(p.stoppedWhyKey).toBe("rp.del.why_dirty");
+    expect(stopUnblocks([p])).toEqual([]); // ticking the option alone must not select it
+  });
+
+  it("稼働中も停止中と同じ振り分けで片付ける（claude は棚へ、shell は忘れる）", () => {
+    const [p] = planTree(node(repo("app@a")), [
+      sess("live", "app@a", { alive: true }),
+      sess("sh", "app@a", { kind: "shell", alive: true }),
+      sess("old", "app@a"),
+    ]);
+    expect(sessionsToClear(p, false)).toEqual({ archive: [p.archive[0]], forget: [] });
+    const cleared = sessionsToClear(p, true);
+    expect(cleared.archive.map((s) => s.name).sort()).toEqual(["live", "old"]);
+    expect(cleared.forget.map((s) => s.name)).toEqual(["sh"]);
+  });
+
+  it("チェックを入れて初めて実行対象に入り、内訳に停止件数が出る", () => {
+    const plans = planTree(node(repo("app@a")), [sess("s1", "app@a", { alive: true })]);
+    expect(deleteOrder(plans, new Set(["app@a"]))).toEqual([]);
+    expect(deleteOrder(plans, new Set(["app@a"]), true).map((p) => p.repo.name)).toEqual(["app@a"]);
+    expect(summarize(plans, new Set(["app@a"]), false, true)).toMatchObject({ copies: 1, archive: 1, stop: 1 });
+  });
+
+  it("本体クローンの門番も、止めて消える worktree なら残らないと見なす", () => {
+    const plans = planTree(node(repo("app", { worktree: false, parent: undefined, branch: "develop" }), [node(repo("app@b"))]), [
+      sess("s1", "app@b", { alive: true }),
+    ]);
+    const sel = new Set(["app", "app@b"]);
+    expect(baseBlockedByWorktrees(plans, sel)).toBe(true);
+    expect(baseBlockedByWorktrees(plans, sel, true)).toBe(false);
   });
 });

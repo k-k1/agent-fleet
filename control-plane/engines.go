@@ -1239,3 +1239,22 @@ func (e *engineRuntimeState) modelIDs(ctx context.Context) []string {
 	}
 	return out
 }
+
+// modelLabel is the member-facing name (ADR 0090 decision 2) for one of this engine's ids.
+//
+// "" for an id the catalogue does not hold — a model disabled after it was loaded, or a name the
+// router answered with that was never a catalogue row — and for a row nobody has read a model
+// page for. Every reader falls back to the id in both cases, which is what ADR 0090 asks of an
+// absent label and is the behaviour that existed before the field did.
+func (e *engineRuntimeState) modelLabel(ctx context.Context, id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	for _, m := range e.catalog.enabled(ctx) {
+		if m.ID == id {
+			return engineModelLabel(m)
+		}
+	}
+	return ""
+}

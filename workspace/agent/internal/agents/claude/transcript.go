@@ -244,12 +244,23 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 	answers := collectAnswers(lines[lo:hi])
 	turns := []transcript.Turn{}
 	budget := 0
+	// One API response = one usage record, repeated by claude on every row it wrote
+	// (transcript.Turn.ReqID). Output tokens are SUMMED across a turn's rows downstream, so
+	// only the first row of a response the walk meets — the newest, the one that was already
+	// the sole usage carrier while thinking rows were dropped — keeps its numbers.
+	seenReq := map[string]bool{}
 	// Walk newest→oldest so the 1 MiB cap keeps the LATEST turns (the old oldest-first cap
 	// could drop the newest of a huge transcript); reverse to chronological before return.
 	for i := hi - 1; i >= lo; i-- {
 		t, ok := parseTurn(lines[i], i) // i is the absolute line index (stable across windows)
 		if !ok {
 			continue // tool results, summaries, bridge/meta bookkeeping
+		}
+		if t.ReqID != "" {
+			if seenReq[t.ReqID] {
+				t.InTok, t.OutTok, t.CacheRead, t.CacheCreate = 0, 0, 0, 0
+			}
+			seenReq[t.ReqID] = true
 		}
 		// Picture cards to splice in AFTER the walk: inserting mid-loop would shift the
 		// indices the loop is iterating over.
@@ -386,6 +397,11 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		IsCompactSummary bool   `json:"isCompactSummary"`
 		GitBranch        string `json:"gitBranch"`
 		Cwd              string `json:"cwd"`
+		// The API response this row belongs to. claude writes one response as several rows
+		// (thinking, text, each tool_use) and repeats the response's FINAL usage on every
+		// one of them, so CollectTurns keeps the usage on one row per requestId — see
+		// transcript.Turn.ReqID.
+		RequestID string `json:"requestId"`
 		// The three fields of a synthesized API-error record (errors.go). abort.go reads the
 		// same fields for its abort decision, but it asks "did the turn die", while this asks
 		// "how is it rendered" — different questions, so each keeps its own reader.
@@ -499,6 +515,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	if ev.Type == "assistant" {
 		u := ev.Message.Usage
 		t.Model = ev.Message.Model
+		t.ReqID = ev.RequestID
 		t.InTok, t.OutTok = u.InputTokens, u.OutputTokens
 		t.CacheRead, t.CacheCreate = u.CacheReadInputTokens, u.CacheCreationInputTokens
 	}
@@ -506,7 +523,8 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 }
 
 // assistantParts walks an assistant message's content blocks in order, emitting a
-// text part per text block and a tool part per tool_use (thinking/other are skipped).
+// text part per text block, a thinking part per thinking block and a tool part per
+// tool_use (other block types are skipped).
 // It also returns the concatenated text (for copy). content is normally an array of
 // blocks; a bare-string form is handled as a single text part.
 func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) {
@@ -520,11 +538,12 @@ func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) 
 		return nil, ""
 	}
 	var blocks []struct {
-		Type  string          `json:"type"`
-		Text  string          `json:"text"`
-		Name  string          `json:"name"`
-		ID    string          `json:"id"`
-		Input json.RawMessage `json:"input"`
+		Type     string          `json:"type"`
+		Text     string          `json:"text"`
+		Thinking string          `json:"thinking"`
+		Name     string          `json:"name"`
+		ID       string          `json:"id"`
+		Input    json.RawMessage `json:"input"`
 	}
 	if json.Unmarshal(raw, &blocks) != nil {
 		return nil, ""
@@ -541,6 +560,21 @@ func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) 
 				sb.WriteString("\n")
 			}
 			sb.WriteString(b.Text)
+		case "thinking":
+			// The summarized chain-of-thought claude prints in the terminal between tool
+			// runs. On a long autonomous stretch it is the ONLY prose the agent writes, so
+			// dropping it left the mirror showing tool traces alone while the terminal
+			// narrated what was happening. Rendered as a collapsible thinking block, like
+			// codex/opencode reasoning; it is not part of the answer, so it stays out of the
+			// turn's Text (copy/TTS/translation/title all read that).
+			//
+			// Blocks with an empty body (a signature-only block, which claude writes
+			// alongside the summarized one) carry nothing to read — skip them, or the turn
+			// grows an empty disclosure.
+			if strings.TrimSpace(b.Thinking) == "" {
+				continue
+			}
+			parts = append(parts, transcript.Part{Kind: "thinking", Text: b.Thinking})
 		case "tool_use":
 			// Agent (Task in older Claude releases) delegates work to a sidechain.
 			// Surface the delegation itself as a compact card; the child's raw

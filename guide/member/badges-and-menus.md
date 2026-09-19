@@ -62,15 +62,29 @@ A collapsed parent repository also aggregates the sessions of the worktrees unde
 
 Where the deployment runs or borrows inference engines, the top bar carries **one pill per
 role** — **Chat** and **Images** — that every member sees. The pill names the role's state
-(**Ready**, **Running**, **Starting**, **Stopping**, **Stopped**, or **Available** for an engine
-that is external or borrowed), with **×N** when several engines serve the role, **"in 12m"**
-while a countdown to the automatic stop is running, and **"N queued"** when something is
-waiting. Press it and a popover lists each engine on its own line: its state, **External** or
+(**In use**, **Ready**, **Running**, **Starting**, **Stopping**, **Stopped**, or **Available**
+for an engine that is external or borrowed), with **×N** when several engines serve the role,
+**"in 12m"** while a countdown to the automatic stop is running, and **"N queued"** when
+something is waiting.
+
+**In use** means this deployment is holding somebody's request right now — a session is waiting
+for an answer. **Ready** means the model is in VRAM and can answer at once, with nobody using it.
+**Running** is the step before that: the box is up, but the model is still loading, so a request
+would wait.
+
+Press the pill and a popover opens. Where the role has one engine, its state sits at the right of
+the popover's heading and everything below is detail. Only where several engines serve one role
+does each line carry the engine's own name and state — that name is the only thing telling those
+lines apart. The lines are: its state, **External** or
 **Borrowed** where that applies (hover for what it means — those cannot be started or stopped
-from this deployment), **"Stops at 19:50 · in 12m"** when a stop is booked, **"Stops
-automatically after 15m with nobody using it"** for the idle rule, and **"The engine starts on
-the next request. That can take a few minutes."** for one that is asleep. A line without a
-countdown means none is booked, not that the number is unknown. The image-generation pane's
+from this deployment), what is in VRAM right now (**"Model: Qwen3.8 27B IQ4_XS"**, or the id when
+the catalogue has no readable name), **"Last used 2m ago"** when nobody is using it, **"Stops at
+19:50 · in 12m"** when a stop is booked, **"Stops automatically after 15m with nobody using it"**
+for the idle rule, and **"The engine starts on the next request. That can take a few minutes."**
+for one that is asleep. A line without a countdown means none is booked, not that the number is
+unknown. No model line means the engine is holding nothing (it is asleep). Where a role has two
+models, only one is loaded at a time, and whoever asks for the other one waits for it to load —
+the popover says so before you ask. The image-generation pane's
 header says the same four things for the engine it is about to use
 ([04](04-files.md#image-generation)).
 

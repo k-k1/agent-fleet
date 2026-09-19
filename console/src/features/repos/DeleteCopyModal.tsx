@@ -32,6 +32,9 @@ import {
   defaultSelection,
   deleteOrder,
   baseBlockedByWorktrees,
+  effectiveGrade,
+  sessionsToClear,
+  stopUnblocks,
   summarize,
   type CopyPlan,
 } from "./deleteTree.ts";
@@ -70,6 +73,7 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
   // re-graded under the pointer is how a tick lands on a row the user never read.
   const plans = useMemo(() => planTree(node, sessions), [node]); // eslint-disable-line react-hooks/exhaustive-deps
   const [selected, setSelected] = useState<Set<string>>(() => defaultSelection(plans));
+  const [withStop, setWithStop] = useState(false);
   const [withBranches, setWithBranches] = useState(false);
   const [withRemote, setWithRemote] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -77,20 +81,24 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
 
   // The base clone's block depends on what is ticked right now, so it is recomputed here
   // rather than being part of the grade.
-  const rootHeld = baseBlockedByWorktrees(plans, selected);
+  const rootHeld = baseBlockedByWorktrees(plans, selected, withStop);
   const effective = useMemo(() => {
     if (!rootHeld) return selected;
     const next = new Set(selected);
     next.delete(plans[0].repo.name);
     return next;
   }, [rootHeld, selected, plans]);
-  const sum = summarize(plans, effective, withBranches);
+  const sum = summarize(plans, effective, withBranches, withStop);
+  // Live sessions this plan could stop, and so whether the tick is worth offering at all.
+  // Counted over the whole plan rather than the selection: the tick is what MAKES those rows
+  // selectable, so gating it on them already being ticked would hide it forever.
+  const stoppable = useMemo(() => stopUnblocks(plans).reduce((n, p) => n + p.alive.length, 0), [plans]);
   // Offered independently of the tick: the checkbox has to be visible to be ticked, and its
   // count is "how many of the selected copies have a branch that could go", not "how many
   // will go".
   const branchable = useMemo(
-    () => deleteOrder(plans, effective).filter((p) => p.branch).length,
-    [plans, effective],
+    () => deleteOrder(plans, effective, withStop).filter((p) => p.branch).length,
+    [plans, effective, withStop],
   );
   const done = results.size > 0;
 
@@ -115,11 +123,12 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
       closeSessionPanes(s.name);
       return "";
     };
-    for (const s of p.archive) {
+    const { archive, forget } = sessionsToClear(p, withStop);
+    for (const s of archive) {
       const err = await call(s, "archive");
       if (err) return err;
     }
-    for (const s of p.forget) {
+    for (const s of forget) {
       const err = await call(s, "stop");
       if (err) return err;
     }
@@ -145,7 +154,7 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
   };
 
   const run = async () => {
-    const order = deleteOrder(plans, effective);
+    const order = deleteOrder(plans, effective, withStop);
     if (order.length === 0) return;
     setBusy(true);
     const out = new Map<string, RowResult>();
@@ -188,11 +197,20 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
     }
   };
 
-  const gradeOf = (p: CopyPlan) => (p.repo.name === plans[0].repo.name && rootHeld ? "blocked" : p.grade);
-  const whyOf = (p: CopyPlan): { key: MsgKey | ""; count: number } =>
-    p.repo.name === plans[0].repo.name && rootHeld
-      ? { key: "rp.del.why_base_has_wt", count: 0 }
-      : { key: p.whyKey, count: p.whyCount };
+  const gradeOf = (p: CopyPlan) =>
+    p.repo.name === plans[0].repo.name && rootHeld ? "blocked" : effectiveGrade(p, withStop);
+  const whyOf = (p: CopyPlan): { key: MsgKey | ""; count: number } => {
+    if (p.repo.name === plans[0].repo.name && rootHeld) return { key: "rp.del.why_base_has_wt", count: 0 };
+    // With the tick on, a row that was blocked by its sessions says what will happen to them
+    // instead — unless it also takes work with it, which outranks the sessions as the thing
+    // the user has to weigh (the stop is already counted in the footer either way).
+    if (withStop && p.aliveOnlyBlock) {
+      return p.stoppedWhyKey
+        ? { key: p.stoppedWhyKey, count: p.stoppedWhyCount }
+        : { key: "rp.del.why_alive_stop", count: p.alive.length };
+    }
+    return { key: p.whyKey, count: p.whyCount };
+  };
 
   return (
     <Modal title={tr("rp.delete_workcopy_title")} onClose={onClose} lockClose={busy} className="wcdel-modal">
@@ -245,6 +263,28 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
           })}
         </ul>
 
+        {/* The dead end this dialog used to have: a copy whose session is still running is
+            refused by the Agent, and the only way out was to leave, stop the sessions by hand
+            and come back. Ticking this makes those rows actionable — /archive and /stop kill
+            the pane themselves, so the run stops them on its way through. The rows it frees
+            and nothing else takes with it are ticked along with it; anything that would still
+            lose work stays for the user to tick, as it does without the option. */}
+        {stoppable > 0 && (
+          <label className="wcdel-opt">
+            <input
+              type="checkbox"
+              checked={withStop}
+              disabled={busy || done}
+              onChange={(e) => {
+                setWithStop(e.target.checked);
+                if (e.target.checked)
+                  setSelected((prev) => new Set([...prev, ...stopUnblocks(plans).map((p) => p.repo.name)]));
+              }}
+            />
+            <span>{tr("rp.del.stop_alive", { count: stoppable })}</span>
+            <span className="wcdel-opt-hint is-warn">{tr("rp.del.stop_alive_hint")}</span>
+          </label>
+        )}
         {branchable > 0 && (
           <label className="wcdel-opt">
             <input
@@ -281,6 +321,9 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
           {tr("rp.del.summary", { copies: sum.copies, archive: sum.archive })}
           {sum.forget > 0 && tr("rp.del.summary_forget", { count: sum.forget })}
           {sum.branches > 0 && tr("rp.del.summary_branches", { count: sum.branches })}
+          {/* Last, and worded as a subset: those sessions are counted in the archive / discard
+              clauses above too — stopping is how they get there, not a fourth group. */}
+          {sum.stop > 0 && tr("rp.del.summary_stop", { count: sum.stop })}
           {sum.force > 0 && <span className="wcdel-warn">{tr("rp.del.force_warn", { count: sum.force })}</span>}
         </span>
         <span className="wcdel-foot-actions">
