@@ -349,6 +349,24 @@ func engineClassFits(c engineClass, needMiB int) bool {
 // not: the VOICEVOX engine shares that struct and has no ladder.
 func engineClassSettingKey(key string) string { return "engine_" + key + "_class" }
 
+// engineSpotSettingKey names the row holding whether this role may buy an INTERRUPTIBLE box.
+//
+// A second gate over the same offers the operator declared, and it is deliberate. Declaring a
+// Spot row is a deployment-wide act performed once, in CloudFormation, by whoever stands the
+// stack up; being interrupted is lived with by whoever runs the engine — and for the chat role
+// the two are rarely the same person. So the declaration says what MAY be bought and this says
+// whether the administrator accepts what it costs when the box is taken away: the answer in
+// flight is lost, and the next one waits out a cold start (measured 527-586 s, which is what
+// `<role>StartDeadlineSec` is sized for).
+//
+// Absent = NOT allowed. An engine only buys an interruptible box where somebody said so, which
+// is the whole point of asking — with one consequence worth stating: a deployment that declared
+// Spot offers before this existed keeps running and stops buying Spot until a super-admin ticks
+// the box. That is visible on the panel (the rows are drawn, greyed, with the reason) rather
+// than silent, and the alternative — defaulting to allowed because a row exists — would make
+// the question unasked for exactly the deployments it is asked about.
+func engineSpotSettingKey(key string) string { return "engine_" + key + "_spot" }
+
 // engineClassSwapWaitMax bounds how long a start is held back waiting for a box of the previous
 // rung to leave.
 //
@@ -441,6 +459,31 @@ func (e *engineRuntimeState) selectedClassID(ctx context.Context) string {
 	}
 	v, _ := e.settings.GetSetting(ctx, engineClassSettingKey(e.def.Key))
 	return strings.TrimSpace(v)
+}
+
+// spotAllowed reports whether an administrator has accepted interruption for this role, which is
+// what lets a `spot` offer be bought at all (see engineSpotSettingKey). Anything but the stored
+// "true" is no: a store that cannot be read answers the safe way round, since the cost of a
+// wrong `false` is a dearer box and the cost of a wrong `true` is a conversation dropped mid-answer.
+func (e *engineRuntimeState) spotAllowed(ctx context.Context) bool {
+	if e == nil || e.settings == nil {
+		return false
+	}
+	v, _ := e.settings.GetSetting(ctx, engineSpotSettingKey(e.def.Key))
+	return strings.TrimSpace(v) == "true"
+}
+
+// engineClassesHaveSpot reports whether this role declares an interruptible offer at all. It is
+// what decides whether the consent above is a question this deployment has — an all-on-demand
+// list has nothing to consent to, and a panel asking anyway would be a control that changes
+// nothing.
+func engineClassesHaveSpot(list []engineClass) bool {
+	for _, c := range list {
+		if c.buy() == engineBuySpot {
+			return true
+		}
+	}
+	return false
 }
 
 // selectedClass resolves that id against the ladder. The second result is false when this

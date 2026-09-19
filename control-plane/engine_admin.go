@@ -86,6 +86,10 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// it is a separate act with a separate cost: the mode buys a box now, this says what the
 	// NEXT box will be.
 	mux.HandleFunc("PUT /api/admin/engines/{key}/class", a.withSuperAdmin(a.putClass))
+	// Whether this role may buy an INTERRUPTIBLE box. Its own route beside the class for the
+	// same reason the class is its own route beside the mode: it is a separate act, and the one
+	// being consented to here is not "which card" but "this engine may be taken away mid-answer".
+	mux.HandleFunc("PUT /api/admin/engines/{key}/spot", a.withSuperAdmin(a.putSpot))
 	// What this deployment excludes from every image this engine makes (ADR 0072 follow-up,
 	// negative prompts). Super-admin like the mode and the class: it is a statement about the
 	// whole deployment, not about one model or one member.
@@ -353,6 +357,12 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 			offers = append(offers, engineOfferRow(c))
 		}
 		row["offers"] = offers
+		// Whether this role may buy an interruptible box at all (engineSpotSettingKey). Sent
+		// beside the offers rather than derived from them, because the two say different things:
+		// a `spot` row is what the OPERATOR declared, and this is what the ADMINISTRATOR accepted.
+		// The panel needs both to draw a declared offer as present-but-not-available and to offer
+		// the tick box that makes it available.
+		row["spot_allowed"] = e.spotAllowed(ctx)
 		// 🔴 Now "the operator has not pinned anything", not "the selection equals the first rung"
 		// (ADR 0075 decision 8). Unpinned is AUTOMATIC — the offers are filtered by VRAM and tried
 		// in order — so an administrator who pinned the offer that happens to be first has still
@@ -730,6 +740,68 @@ func (a engineAdminAPI) unpinClass(w http.ResponseWriter, r *http.Request, ident
 	}
 	a.audit(ctx, ident, "engine."+key+".class", "")
 	log.Printf("engines: %s instance class unpinned by %s (choosing automatically)", key, ident.ID)
+	writeJSON(w, http.StatusOK, a.row(ctx, e))
+}
+
+// putSpot (PUT /api/admin/engines/{key}/spot) takes {"spot": true|false} and records whether this
+// role may buy an INTERRUPTIBLE box (engineSpotSettingKey).
+//
+// The operator declares which offers exist; this is the administrator accepting what the `spot`
+// ones cost when the box is taken away — the answer in flight is lost and the next one waits out
+// a cold start. Two halves of one decision, deliberately kept apart: the declaration is made once
+// in CloudFormation by whoever stands the stack up, and the interruption is lived with by whoever
+// runs the engine.
+//
+// Like the class, it reaches the NEXT purchase and not the box that is up. Switching it off does
+// not hand back a Spot box that is answering right now, which the panel says beside the tick
+// rather than implying by echoing the new value back.
+//
+// Ticking it on is refused where the role declares no `spot` offer: consent is given to a list
+// somebody is looking at, and a stored yes that predates the declaration would buy an
+// interruptible box the moment an operator added a row, on an authority given for something
+// else. Un-ticking is always allowed — the way back from a yes cannot depend on a declaration.
+func (a engineAdminAPI) putSpot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	var b struct {
+		Spot bool `json:"spot"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
+		return
+	}
+	list := e.classList()
+	if len(list) == 0 {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineClassUnknown,
+			"engine " + key + " declares no instance classes"})
+		return
+	}
+	if b.Spot && !engineClassesHaveSpot(list) {
+		writeAPIErr(w, &apiError{http.StatusConflict, errCodeEngineBadBody,
+			"engine " + key + " declares no spot offer to accept interruption for"})
+		return
+	}
+	ctx := r.Context()
+	val := ""
+	if b.Spot {
+		val = "true"
+	}
+	if a.settings != nil {
+		if err := a.settings.SetSetting(ctx, engineSpotSettingKey(key), val); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+	}
+	state := "off"
+	if b.Spot {
+		state = "on"
+	}
+	a.audit(ctx, ident, "engine."+key+".spot", state)
+	log.Printf("engines: %s interruptible boxes %s by %s", key, state, ident.ID)
 	writeJSON(w, http.StatusOK, a.row(ctx, e))
 }
 

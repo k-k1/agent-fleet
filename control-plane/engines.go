@@ -616,30 +616,6 @@ func engineSubnets() []string {
 	return out
 }
 
-// parseEngineOffers reads one role's offer list (ADR 0075 decision 1's format), with ADR 0077
-// decision 9's refusal on top: THE LLM ROLE NEVER BUYS SPOT.
-//
-// ADR 0075 had a second safeguard — no Spot capacity provider was created for that role, so a
-// `spot` row could not be addressed even if somebody wrote one. Nothing stands in the way here:
-// one launch template serves both purchase options, and `DefaultTargetCapacityType` is a field
-// the CP fills in. So the row is dropped at parse time, with a line saying so, and an operator
-// who wanted Spot for a conversation finds out from the log rather than from a lost conversation.
-func parseEngineOffers(key, spec string) []engineClass {
-	list := parseEngineClasses(spec)
-	if key != "llm" {
-		return list
-	}
-	out := make([]engineClass, 0, len(list))
-	for _, c := range list {
-		if c.buy() == engineBuySpot {
-			log.Printf("engines: llm: ignoring the offer %s: the llm role is on-demand only (a lost conversation is not a retry)", c.ID)
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
-}
-
 // engineComfyEnvRow synthesises the engine table row an operator gets from AF_COMFY_URL, plus
 // the optional bearer from AF_COMFY_API_KEY (ADR 0076 decision 2).
 //
@@ -942,7 +918,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			ssm:         ssmc,
 			activeParam: engineActiveParamName(name, d.Key),
 			pending:     newEnginePending(ssmc, name, d.Key),
-			classes:     parseEngineOffers(d.Key, d.offersSpec()),
+			classes:     parseEngineClasses(d.offersSpec()),
 			cluster:     cluster,
 			offers:      newEngineOfferRun(d.offerBudget()),
 			audit:       auditor,

@@ -159,7 +159,7 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			// restart request about a row the table never mentioned.
 			continue
 		}
-		next := parseEngineOffers(d.Key, d.offersSpec())
+		next := parseEngineClasses(d.offersSpec())
 		// 🔴 Adopting a ladder (or dropping the last rung) is not a rung change: the capacity
 		// client and the controller's start gate are attached at construction only when a
 		// ladder exists, so a ladder that appears here would be a list the panel shows and

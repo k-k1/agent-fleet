@@ -519,24 +519,44 @@ func (e *engineRuntimeState) offerList() []engineClass { return e.classList() }
 //   - with no launch template there is nothing to buy from, so there are no candidates at all.
 //     That is the deployment whose CP was upgraded before its stack: it keeps serving, and it
 //     keeps starting the engine the plain way, because the offer hooks were never attached.
+//
+// 🔴 And a `spot` offer is a candidate only where an administrator has ACCEPTED INTERRUPTION
+// (engineSpotSettingKey). The filter is here, in the one place that decides what may be bought,
+// and not in the panel that draws the list: the pin is the only half a picker could gate, and
+// every unpinned start — which is the normal one — walks this list instead. A gate on the select
+// alone would leave an engine nobody pinned quietly buying interruptible boxes with the box
+// unticked, which is the opposite of what ticking it means.
 func (e *engineRuntimeState) candidateOffers(ctx context.Context) []engineClass {
 	list := e.offerList()
 	if len(list) == 0 || e.fleet == nil {
 		return nil
 	}
+	spotOK := e.spotAllowed(ctx)
 	if id := e.selectedClassID(ctx); id != "" {
-		if c, ok := engineClassByID(list, id); ok && id == c.ID {
+		c, ok := engineClassByID(list, id)
+		switch {
+		case ok && id == c.ID && (spotOK || c.buy() != engineBuySpot):
 			return []engineClass{c}
+		case ok && id == c.ID:
+			// Pinned to an offer this role is not allowed to buy. Automatic, for the same reason
+			// as the undeclared pin below: the pin cannot be honoured, so the honest behaviour is
+			// the one the panel can explain — and it says so beside the picker, where the tick
+			// box that would honour it is.
+			log.Printf("engines: %s: the pinned offer %q is Spot and interruption is not accepted; choosing automatically", e.def.Key, id)
+		default:
+			// A pin nobody declares any more. Falling back to AUTOMATIC rather than to the first
+			// offer: the stored id is the only evidence of intent and it no longer names anything,
+			// so the honest reading is "no choice", which is the one the operator can see and change.
+			log.Printf("engines: %s: the pinned offer %q is not in the list; choosing automatically", e.def.Key, id)
 		}
-		// A pin nobody declares any more. Falling back to AUTOMATIC rather than to the first
-		// offer: the stored id is the only evidence of intent and it no longer names anything, so
-		// the honest reading is "no choice", which is the one the operator can see and change.
-		log.Printf("engines: %s: the pinned offer %q is not in the list; choosing automatically", e.def.Key, id)
 	}
 	need, _, _ := engineVramDemand(e.catalog.list(ctx))
 	out := make([]engineClass, 0, len(list))
 	for _, c := range list {
 		if !engineClassFits(c, need) {
+			continue
+		}
+		if !spotOK && c.buy() == engineBuySpot {
 			continue
 		}
 		out = append(out, c)
