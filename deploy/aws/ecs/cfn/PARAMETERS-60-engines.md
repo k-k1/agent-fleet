@@ -436,9 +436,12 @@ the second lock on an API that is unauthenticated by default and has mutating en
 
 ### `LlmTaskCpu` / `LlmTaskMemory`
 
-Task vCPU units and memory (MiB). 4096 fills a g6.xlarge; keep it under the instance. The memory
-is below the instance's 16 GiB by enough for the ECS agent — a task that asks for all of it never
-places, which reads as a capacity problem.
+Task vCPU units, and — since 2026-09-19 — the `llama` container's `MemoryReservation` (MiB), NOT a
+task memory limit: the llm task definition carries no task-level `Memory`, for the reason
+[`ImageTaskMemory`](#imagetaskcpu--imagetaskmemory) explains (a task limit lives in a cgroup the
+engine cannot see). 4096 vCPU units fill a g6.xlarge; keep the reservation, plus the `fetch`
+sidecar's 512 MiB, under the smallest rung's registered memory (15,371 MiB on a g6.xlarge) — a
+task that reserves more than the box has never places, which reads as a capacity problem.
 
 ### `LlmGpuCount`
 
@@ -584,8 +587,10 @@ sorted out by the kernel's OOM killer (the largest process, ComfyUI) instead of 
 the same ending, one layer up — and a 16 GiB rung with a 17 GB weight set is ComfyUI's disk-backed
 loading to prove, not this parameter's.
 
-The llm role keeps its task `Memory`: llama.cpp streams weights into VRAM and its host buffer
-is small (ADR 0074 decision 11's measurement), so the trap has not bitten there.
+The llm role is on the same footing (`LlmTaskMemory`, above): llama.cpp streams weights into VRAM
+and its host buffer is small (ADR 0074 decision 11's measurement), so the trap had not bitten
+there yet — but `--no-mmap` and a 30B model would have found it, and one shape for both roles
+beats waiting for that.
 
 ### `ImageStorageGiB`
 
