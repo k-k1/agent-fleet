@@ -354,7 +354,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // --- The bucket (ADR 0085 decisions 2 and 7): what S3 holds, as it holds it. ---
   "admin.catalog_ledger_title": "Bucket",
   "admin.catalog_ledger_note": "The objects under this engine's prefix. Ones no row declares (orphans) and ones no loader can list (misplaced) sort first.",
-  "admin.catalog_ledger_note_acts": "A part has no button of its own — it is attached by the Complete of the checkpoint that reads it.",
+  "admin.catalog_ledger_note_acts": "A part has no button of its own — it is attached by the Complete of the model that reads it.",
   "admin.catalog_ledger_checked": "checked {t}",
   "admin.catalog_ledger_empty": "There are no objects under this engine's prefix.",
   "admin.catalog_ledger_unavailable": "The bucket listing could not be read. Reload to try again.",

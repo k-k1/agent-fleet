@@ -345,7 +345,7 @@ export const admin = {
   // --- バケツ（ADR 0085 決定 2・7）。S3 が持っているものそのもの。---
   "admin.catalog_ledger_title": "バケット",
   "admin.catalog_ledger_note": "このエンジンのプレフィックスにあるオブジェクトです。どの行も宣言していないもの（孤児）と、ローダーが一覧できない場所にあるもの（誤配置）を先に並べます。",
-  "admin.catalog_ledger_note_acts": "部品に単体のボタンはありません——付け直すのはチェックポイント行の「揃える」です。",
+  "admin.catalog_ledger_note_acts": "部品に単体のボタンはありません——付け直すのは、それを読むモデル行の「揃える」です。",
   "admin.catalog_ledger_checked": "確認 {t}",
   "admin.catalog_ledger_empty": "このエンジンのプレフィックスにオブジェクトはありません。",
   "admin.catalog_ledger_unavailable": "バケットの一覧を取得できませんでした。再読み込みしてください。",

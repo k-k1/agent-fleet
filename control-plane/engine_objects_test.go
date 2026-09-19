@@ -25,19 +25,40 @@ type engineLedgerHarness struct {
 	a      engineAdminAPI
 	e      *engineRuntimeState
 	st     *store.SQL
+	role   string
 	bucket *fakeEngineStorageHead
 	ecs    *fakeIngestECS
 }
 
 func newEngineLedgerHarness(t *testing.T) *engineLedgerHarness {
 	t.Helper()
-	st := ingestStore(t)
 	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	return newEngineLedgerHarnessFor(t, e)
+}
+
+// newEngineLedgerChatHarness is the same deployment with the OTHER role in it. The llm role's
+// layout is flat and its provider has no family vocabulary at all, and both of those are things
+// the ledger's acts have to answer for — a harness that could only be an image engine is why they
+// went unanswered until a chat model's bytes had no road back.
+func newEngineLedgerChatHarness(t *testing.T) *engineLedgerHarness {
+	t.Helper()
+	e := &engineRuntimeState{def: engineDef{
+		Key: "llm", API: engineAPIChat, Service: "af-llm", URL: "http://127.0.0.1:1",
+		Health: "/health", Provider: "llamacpp", IdleSec: 900, StartDeadlineSec: 900,
+	}}
+	e.demand = newEngineDemand(nil, engineSettingsFor("llm").demandAt, 5*time.Minute)
+	return newEngineLedgerHarnessFor(t, e)
+}
+
+func newEngineLedgerHarnessFor(t *testing.T, e *engineRuntimeState) *engineLedgerHarness {
+	t.Helper()
+	st := ingestStore(t)
+	role := e.def.Key
 	e.settings, e.ctrl = st, nil
-	e.catalog = newEngineCatalog(st, "image")
-	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	e.catalog = newEngineCatalog(st, role)
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{role: e}}
 	h := &engineLedgerHarness{
-		e: e, st: st, ecs: &fakeIngestECS{},
+		e: e, st: st, role: role, ecs: &fakeIngestECS{},
 		bucket: &fakeEngineStorageHead{states: map[string]string{}, bytes: map[string]int64{}},
 	}
 	reg.ing = &engineIngester{
@@ -68,7 +89,7 @@ func (h *engineLedgerHarness) header(key string, head []byte) {
 
 func (h *engineLedgerHarness) row(t *testing.T, m store.EngineModel) {
 	t.Helper()
-	m.Role = "image"
+	m.Role = h.role
 	if err := h.st.PutEngineModel(t.Context(), m); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +101,7 @@ func (h *engineLedgerHarness) call(t *testing.T, fn func(http.ResponseWriter, *h
 	t.Helper()
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
-	r.SetPathValue("key", "image")
+	r.SetPathValue("key", h.role)
 	for k, v := range values {
 		r.SetPathValue(k, v)
 	}
@@ -398,6 +419,109 @@ func TestRegisterReadsTheVaeVerdictOutOfTheBucket(t *testing.T) {
 				t.Errorf("the row is marked vae_missing after 揃える attached %q", vae)
 			}
 		})
+	}
+}
+
+// 🔴 Reported from the panel on 2026-09-19: three GGUFs sitting under `llm/` that nobody declared,
+// each drawn with 消す and nothing else. The road back to bytes this deployment is paying for
+// existed for the image role only, because "a model's own weights" was spelled as ComfyUI's two
+// loader directories — and the llm layout is FLAT, so every chat model in the bucket answered "not
+// a checkpoint" and the only act on offer was to throw it away.
+//
+// The press has to do all three things: create the row, read the geometry out of the same bytes
+// (otherwise the row answers its floor and a 262,144-token model switches on without a word), and
+// move NOTHING — a flat key is already where the preset points.
+func TestRegisterRebuildsAChatRowFromFlatBytes(t *testing.T) {
+	h := newEngineLedgerChatHarness(t)
+	const key = "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
+	h.put(key, 1_120_000_000)
+	h.header(key, qwen2Header(t))
+
+	rec := h.call(t, h.a.postObjectRegister, "POST", "/api/admin/engines/llm/objects/register",
+		`{"key":"`+key+`"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register = %d %s", rec.Code, rec.Body.String())
+	}
+	var answer engineObjectRegisterAnswer
+	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil {
+		t.Fatal(err)
+	}
+	// The quantisation tag names the FILE, so the id is the model: two quantisations are one model.
+	if answer.ModelID != "qwen2.5-coder-1.5b-instruct" {
+		t.Fatalf("model_id = %q, want the file's stem without its quantisation", answer.ModelID)
+	}
+	if answer.Moved {
+		t.Errorf("the press reports a move of bytes that are already where the preset points")
+	}
+	m, ok := engineCatalogModel(t.Context(), h.e, answer.ModelID)
+	if !ok {
+		t.Fatal("no row was created")
+	}
+	if m.Kind != "gguf" {
+		t.Errorf("kind = %q, want gguf — a chat engine loads no checkpoint", m.Kind)
+	}
+	if m.Enabled || m.LicenseAcceptedBy != "" {
+		t.Errorf("the registered row = enabled %v, accepted by %q", m.Enabled, m.LicenseAcceptedBy)
+	}
+	if len(m.Files) != 1 || m.Files[0].S3Key != key || m.Files[0].Flag != "" {
+		t.Fatalf("files = %+v, want the one flat key the bytes are at", m.Files)
+	}
+	// 🔴 The geometry, off the same bytes. Without it the row's VRAM answer is the weights alone
+	// (`vram_need_source: floor`), which fits almost any card.
+	if m.KVLayers != 28 || m.KVHeadsKV != 2 || m.KVKeyLen != 128 || m.KVValueLen != 128 {
+		t.Errorf("the attention geometry = %d/%d/%d/%d, want it read out of the GGUF header",
+			m.KVLayers, m.KVHeadsKV, m.KVKeyLen, m.KVValueLen)
+	}
+	if m.ContextCeiling != 32768 {
+		t.Errorf("context_ceiling = %d, want the window the model was trained for", m.ContextCeiling)
+	}
+	// And nothing crossed the internet or the bucket: no move, no download.
+	if len(h.ecs.run) != 0 {
+		t.Errorf("%d tasks were started for bytes that are already in the right place", len(h.ecs.run))
+	}
+}
+
+// The llm role's two non-models, which the flat rule is what tells apart: an adapter is attached by
+// the 揃える of the model that reads it, and one shard of a split file is not a file.
+func TestRegisterRefusesAChatAdapterAndAShard(t *testing.T) {
+	for _, key := range []string{"llm/loras/style-v1.gguf", "llm/qwen3-30b/model-00001-of-00002.gguf"} {
+		t.Run(key, func(t *testing.T) {
+			h := newEngineLedgerChatHarness(t)
+			h.put(key, 42)
+			rec := h.call(t, h.a.postObjectRegister, "POST", "/api/admin/engines/llm/objects/register",
+				`{"key":"`+key+`"}`, nil)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "揃える") {
+				t.Errorf("register = %d %s, want a refusal naming the act that was meant",
+					rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// 🔴 Found while adding the button above, and older than it: 揃える composed its destination with
+// ComfyUI's layout whatever the role, so an llm row whose weights are exactly where the preset
+// points was planned a move to `llm/checkpoints/…` — a directory llama-server never looks in. The
+// press an operator reaches for to REPAIR a row would have taken a working one out of service.
+func TestCompletePlansNoMoveForAFlatChatRow(t *testing.T) {
+	m := store.EngineModel{Role: "llm", ID: "qwen2", Kind: "gguf",
+		Files: []store.EngineModelFile{{S3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"}}}
+	if fix, ok := engineCompleteMainFix("llm", false, "", m); ok {
+		t.Fatalf("揃える would move the row's weights to %q", fix.To)
+	}
+	steps, aerr := engineCompletePlan(t.Context(), "llm", "llamacpp", false, m, ledgerOf(), engineCompleteBody{})
+	if aerr != nil {
+		t.Fatalf("plan = %+v", aerr)
+	}
+	if len(steps) != 0 {
+		t.Fatalf("plan = %+v, want nothing to do", steps)
+	}
+	// A shard staged under a directory of its own IS a repair, and the destination is the role's
+	// own flat layout rather than a loader directory that does not exist for this role.
+	deep := store.EngineModel{Role: "llm", ID: "qwen2", Kind: "gguf",
+		Files: []store.EngineModelFile{{S3Key: "llm/qwen3-30b/qwen3.gguf"}}}
+	fix, ok := engineCompleteMainFix("llm", false, "", deep)
+	if !ok || fix.To != "llm/qwen3.gguf" {
+		t.Fatalf("fix = %+v (%v), want a move to the role's own root", fix, ok)
 	}
 }
 

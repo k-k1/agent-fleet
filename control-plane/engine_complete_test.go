@@ -28,7 +28,7 @@ func ledgerOf(keys ...string) *engineLedger {
 
 func planActions(t *testing.T, m store.EngineModel, l *engineLedger, b engineCompleteBody) map[string]engineCompleteFile {
 	t.Helper()
-	steps, aerr := engineCompletePlan(t.Context(), "image", "comfy", m, l, b)
+	steps, aerr := engineCompletePlan(t.Context(), "image", "comfy", true, m, l, b)
 	if aerr != nil {
 		t.Fatalf("plan refused: %v", aerr.message)
 	}
@@ -52,7 +52,7 @@ func TestCompletePlansOnlyTheMoveWhenThePartsAreAlreadyAttached(t *testing.T) {
 		}}
 	l := ledgerOf(misplaced, "image/text_encoders/qwen_3_06b_base.safetensors",
 		"image/vae/qwen_image_vae.safetensors")
-	steps, aerr := engineCompletePlan(t.Context(), "image", "comfy", m, l, engineCompleteBody{})
+	steps, aerr := engineCompletePlan(t.Context(), "image", "comfy", true, m, l, engineCompleteBody{})
 	if aerr != nil {
 		t.Fatalf("plan refused: %v", aerr.message)
 	}
@@ -128,7 +128,7 @@ func TestCompleteAnswersUnknownForAFamilyWithNoPartTable(t *testing.T) {
 			t.Errorf("%s = %+v, want unknown", flag, got)
 		}
 	}
-	steps, _ := engineCompletePlan(t.Context(), "image", "comfy", m, ledgerOf(), engineCompleteBody{})
+	steps, _ := engineCompletePlan(t.Context(), "image", "comfy", true, m, ledgerOf(), engineCompleteBody{})
 	if answer := engineCompleteAnswerOf(steps); answer.Action != engineCompleteUnknown {
 		t.Errorf("answer = %+v, want unknown", answer)
 	}
@@ -157,7 +157,7 @@ func TestCompleteAsksWhenARoleHasSeveralCandidates(t *testing.T) {
 	}
 	// And the whole press stops: `choose` outranks everything, because a request that moved two
 	// files and then asked a question would have spent the irreversible half first.
-	steps, _ := engineCompletePlan(t.Context(), "image", "comfy", m, l, engineCompleteBody{})
+	steps, _ := engineCompletePlan(t.Context(), "image", "comfy", true, m, l, engineCompleteBody{})
 	if answer := engineCompleteAnswerOf(steps); answer.Action != engineCompleteChoose {
 		t.Errorf("answer = %+v, want choose", answer)
 	}
@@ -196,7 +196,7 @@ func TestCompleteRefusesToTakeAFilledSlotWithoutReplace(t *testing.T) {
 		"image/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
 		"image/vae/qwen_image_vae.safetensors", "image/vae/ae.safetensors")
 	body := engineCompleteBody{Choices: map[string]string{"--vae": "image/vae/ae.safetensors"}}
-	_, aerr := engineCompletePlan(t.Context(), "image", "comfy", m, l, body)
+	_, aerr := engineCompletePlan(t.Context(), "image", "comfy", true, m, l, body)
 	if aerr == nil || aerr.status != http.StatusConflict {
 		t.Fatalf("swapping a filled slot = %v, want 409", aerr)
 	}
@@ -219,13 +219,13 @@ func TestCompleteMovesAWholeCheckpointThatIsTooDeep(t *testing.T) {
 	misplaced := "image/checkpoints/split_files/sdxl_base.safetensors"
 	m := store.EngineModel{Role: "image", ID: "sdxl", Kind: "checkpoint", BaseModel: "sdxl",
 		Files: []store.EngineModelFile{{S3Key: misplaced, VaeBundled: engineVaeYes}}}
-	fix, ok := engineCompleteMainFix("image", "sdxl", m)
+	fix, ok := engineCompleteMainFix("image", true, "sdxl", m)
 	if !ok || fix.Flag != "" || fix.To != "image/checkpoints/sdxl_base.safetensors" {
 		t.Fatalf("fix = %+v (%v), want the unflagged slot moved one directory up", fix, ok)
 	}
 	// And a file already where its loader looks is not a repair anybody is offered.
 	m.Files[0].S3Key = "image/checkpoints/sdxl_base.safetensors"
-	if _, ok := engineCompleteMainFix("image", "sdxl", m); ok {
+	if _, ok := engineCompleteMainFix("image", true, "sdxl", m); ok {
 		t.Error("a correctly placed checkpoint was offered a move")
 	}
 }
