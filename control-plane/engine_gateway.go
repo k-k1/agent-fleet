@@ -707,13 +707,162 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 	// The upstream's answer is relayed as it stands — status, headers and all — the same rule
 	// writeEngineUpstreamError follows for a generation request's error body: this route's job is
 	// to carry /props through the gateway, not to parse and rebuild it.
+	//
+	// The ONE exception (ADR 0093 段0 追补, docs/log/99 §4.11 follow-up): a router-mode
+	// llama-server's /props describes the router, not the loaded model, and comes back with
+	// default_generation_settings.n_ctx = 0 — the exact case this whole route exists to answer.
+	// enginePropsAugmentRouterWindow adds ONE key when that happens; everything else about the
+	// body is untouched.
+	augmented := body
+	if resp.StatusCode == http.StatusOK {
+		augmented = g.enginePropsAugmentRouterWindow(ctx, eng, bearer, body)
+	}
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
+	if len(augmented) != len(body) {
+		// The upstream's own Content-Length, copied above, described the UNAUGMENTED body —
+		// leaving it would either truncate the added key or hang a client that trusts the header
+		// over what actually arrives.
+		w.Header().Set("Content-Length", strconv.Itoa(len(augmented)))
+	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(body)
+	_, _ = w.Write(augmented)
+}
+
+// enginePropsRouterWindowField is the key enginePropsAugmentRouterWindow adds to a /props body.
+// workspace/agent/engines.go's enginePropsWindow reads it as a fallback, after
+// default_generation_settings.n_ctx, so a far deployment's OLD /props (no such key) still reads
+// exactly as it always has.
+const enginePropsRouterWindowField = "router_selected_model"
+
+// enginePropsAugmentRouterWindow enriches a /props body that came back windowless
+// (default_generation_settings.n_ctx == 0, the shape a ROUTER-mode llama-server answers with —
+// see the ADR follow-up this file's props() doc comment links) with the window of whichever
+// model this deployment's catalogue says is actually loaded, read from GET {base}/v1/models —
+// measured against a real router deployment: 262144, in data[].meta.n_ctx, for the model
+// selected in the catalogue.
+//
+// Three shapes were considered for this addition:
+//   - (a) chosen: read /props first, and read /v1/models ONLY when /props came back windowless.
+//     A single-model (non-router) engine's /props already carries a real n_ctx, so this never
+//     costs it a second upstream round trip — only a router deployment, which has none to lose,
+//     pays for the extra read.
+//   - (b) always read both and merge: rejected — it would double the upstream calls on every
+//     single-model deployment, the common case, for a number that call already had.
+//   - (c) stop relaying /props verbatim and answer a normalized "here is the window" envelope
+//     instead: rejected because it breaks the rule props()'s own doc comment states — "carry
+//     /props through the gateway, not parse and rebuild it" — for every OTHER field /props
+//     carries (total_slots, model_path, ...), which a caller may still want verbatim. Adding one
+//     key keeps that promise for the rest of the body and costs the reader one extra fallback
+//     field.
+//
+// A BORROWED row is never augmented here: eng.remote.upstreamBase() is the FAR deployment's own
+// /v1/, and reading it directly from THIS process would mean dialing the far gateway's serve() —
+// exactly the demand-record-and-wake path this whole route exists to avoid (a far engine's
+// demand and lifecycle belong to the far deployment, not to a caller borrowing its row). A
+// borrowed row's /props already goes to the far deployment's OWN /engine/{key}/props
+// (enginePropsTarget); once THAT deployment carries this same patch, ITS answer already carries
+// router_selected_model, and there is nothing further for this side to add. Until it does, a
+// borrowed router reads windowless — the version-skew case this ADR follow-up calls out, and one
+// this deployment cannot itself close.
+func (g engineGateway) enginePropsAugmentRouterWindow(ctx context.Context, eng *engineRuntimeState,
+	bearer string, body []byte) []byte {
+
+	if eng.def.remote() {
+		return body
+	}
+	var props struct {
+		DefaultGenerationSettings struct {
+			NCtx int `json:"n_ctx"`
+		} `json:"default_generation_settings"`
+	}
+	if json.Unmarshal(body, &props) != nil || props.DefaultGenerationSettings.NCtx > 0 {
+		// Either not JSON — leave it exactly as it arrived — or a single-model engine that
+		// already answered its real window, which is the common case this never touches.
+		return body
+	}
+	id := enginePropsSelectedModelID(eng.catalog.enabled(ctx))
+	if id == "" {
+		return body
+	}
+	nctx := enginePropsModelWindow(ctx, eng, bearer, id)
+	if nctx <= 0 {
+		return body
+	}
+	var doc map[string]any
+	if json.Unmarshal(body, &doc) != nil {
+		return body
+	}
+	doc[enginePropsRouterWindowField] = map[string]any{"id": id, "n_ctx": nctx}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// enginePropsSelectedModelID mirrors engineStartWindow's own pick (:373) — selected or default,
+// falling back to the first non-LoRA row — so the window this route adds describes the same
+// model engineStartWindow's declared context_tokens already names, just measured live instead of
+// read from the catalogue's own declaration.
+func enginePropsSelectedModelID(models []store.EngineModel) string {
+	first := ""
+	for _, m := range models {
+		if engineModelIsLora(m) {
+			continue
+		}
+		if first == "" {
+			first = m.ID
+		}
+		if m.Selected || m.Default {
+			return m.ID
+		}
+	}
+	return first
+}
+
+// enginePropsModelWindow reads GET {base}/v1/models directly against the engine's own URL —
+// never through serve(), so never through demand.record or ensureReady, matching props()'s own
+// rule. 0 on anything that is not a clean 200 with id present in data[].meta.n_ctx: a box that
+// went to sleep between the /props call and this one, a router whose /v1/models answers a
+// different shape, or an id the live list does not (yet) hold.
+func enginePropsModelWindow(ctx context.Context, eng *engineRuntimeState, bearer, id string) int {
+	base := strings.TrimRight(eng.def.URL, "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/models", nil)
+	if err != nil {
+		return 0
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := engineClient.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	var out struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Meta struct {
+				NCtx int `json:"n_ctx"`
+			} `json:"meta"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, engineMaxRequestBody)).Decode(&out) != nil {
+		return 0
+	}
+	for _, m := range out.Data {
+		if m.ID == id {
+			return m.Meta.NCtx
+		}
+	}
+	return 0
 }
 
 // enginePropsTarget is where GET /engine/{key}/props relays to — unlike engineUpstreamTarget,

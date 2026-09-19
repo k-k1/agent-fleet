@@ -730,6 +730,38 @@ func TestSyncEngineProvidersOverridesWindowWhenWarm(t *testing.T) {
 	}
 }
 
+// ADR 0093 段0 追补: a ROUTER-mode llama-server's /props describes the router, not the loaded
+// model, so default_generation_settings.n_ctx there is 0 — and the Control Plane's props()
+// (control-plane/engine_gateway.go's enginePropsAugmentRouterWindow) adds the real window under
+// router_selected_model instead. enginePropsWindow has to fall back to that field when the first
+// one is 0, or a router deployment would never correct its catalogue-declared window at all.
+func TestSyncEngineProvidersOverridesWindowFromRouterSelectedModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	res := engineCatalogPropsStub(t,
+		`{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1",`+
+			`"models":["qwen3.8-27b-uncensored-q4_k_m"],"context_tokens":32768,"max_output_tokens":4096,`+
+			`"model_rows":[{"id":"qwen3.8-27b-uncensored-q4_k_m","context_tokens":32768,"max_output_tokens":4096,"default":true}]}`,
+		map[string]int{"llm": http.StatusOK},
+		map[string]string{"llm": `{"default_generation_settings":{"n_ctx":0},"model_path":"none","role":"router",` +
+			`"router_selected_model":{"id":"qwen3.8-27b-uncensored-q4_k_m","n_ctx":262144}}`},
+	)
+
+	syncEngineProviders()
+
+	ctxTokens, output := readOpencodeLimit(t, home, "llamacpp", "qwen3.8-27b-uncensored-q4_k_m")
+	if ctxTokens != 262144 {
+		t.Errorf("context = %d, want the router's real 262144 read from router_selected_model, not the catalogue's declared 32768", ctxTokens)
+	}
+	if output != 4096 {
+		t.Errorf("output = %d, want the declared 4096 left alone", output)
+	}
+	if len(res.propsRequested) != 1 || res.propsRequested[0] != "llm" {
+		t.Fatalf("props requested = %v, want exactly one for llm", res.propsRequested)
+	}
+}
+
 // The other half of decision 7: an engine that is not answering /props leaves the catalogue's
 // declared window exactly as it was. No retry, no wait — a 503 is read once and the sync moves
 // on, which is the whole point of this route never running ensureReady behind it.

@@ -517,11 +517,23 @@ func enginePropsWindow(ctx context.Context, key string) int {
 		DefaultGenerationSettings struct {
 			NCtx int `json:"n_ctx"`
 		} `json:"default_generation_settings"`
+		// RouterSelectedModel is the ADR 0093 段0 追补's addition (control-plane/engine_gateway.go's
+		// enginePropsAugmentRouterWindow): a router-mode llama-server's own default_generation_settings
+		// describes the router, not the loaded model, and n_ctx above is 0 for it. A CP old enough to
+		// predate that patch (the version-skew case a borrowed row can hit) never sends this key, and
+		// this struct then simply decodes it as zero — the read below falls through to the 0 it
+		// already returned before this field existed.
+		RouterSelectedModel struct {
+			NCtx int `json:"n_ctx"`
+		} `json:"router_selected_model"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out) != nil {
 		return 0
 	}
-	return out.DefaultGenerationSettings.NCtx
+	if out.DefaultGenerationSettings.NCtx > 0 {
+		return out.DefaultGenerationSettings.NCtx
+	}
+	return out.RouterSelectedModel.NCtx
 }
 
 // handleEngineCatalogChanged (POST /engine/catalog-changed) is the Control Plane telling this
