@@ -9,7 +9,7 @@ import { ViewHead } from "../../../ui/ViewHead.tsx";
 import { type ModelKind } from "./adminEngineModels.tsx";
 import { EngineDiscoverPanel, engineCanDiscover } from "./adminEngineDiscover.tsx";
 import { groupIsRepo, groupRegistered, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
-import { modelFit, windowThatFits } from "./engineFit.ts";
+import { modelFit, windowThatFits, windowWhenUnsized } from "./engineFit.ts";
 import { FitTag, RepoQuantLadder } from "./adminEngineRepo.tsx";
 import {
   engineIsImage,
@@ -1212,9 +1212,16 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         // never run" about a model that runs fine at 32768. So the field opens at the largest
         // window that actually fits the box this engine buys, and the ceiling is shown beside it
         // as what it is.
+        //
+        // 🔴 And when it CANNOT be fitted — no readable header, no card — the fallback is not
+        // the ceiling either. Falling back to it put 262,144 in the field of the af-sandbox row
+        // that then asked for 16 GiB of KV cache and took the L4 out of memory, which is the
+        // same failure ADR 0089 was written about, reached through the error path instead of the
+        // happy one. windowWhenUnsized is a stated fallback and the form says so.
         const weights = found.bytes ? Math.round(found.bytes / 1048576) : 0;
-        const window = windowThatFits(weights, found.kv_mib_per_1k_tokens || 0,
-          row.class?.vram_mib || 0, found.context_length) || found.context_length;
+        const fitted = windowThatFits(weights, found.kv_mib_per_1k_tokens || 0,
+          row.class?.vram_mib || 0, found.context_length);
+        const window = fitted || windowWhenUnsized(found.context_length);
         setContext(String(window)); setOutput(String(Math.floor(window / 8)));
       }
       if (found.params_hint) setParams((current) => ({
@@ -1533,6 +1540,24 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   const outputNumber = whole(output);
   const vramNumber = whole(vram);
   const invalidWindow = !image && !lora && (contextNumber === null || outputNumber === null || (!!contextNumber !== !!outputNumber));
+  // The same verdict the ingest form draws, on the row as it already is (ADR 0089). Without it
+  // this dialog was three raw number boxes: an operator correcting a window had to price the KV
+  // cache in their head, which is exactly what nobody should be asked to do — and is how a row
+  // came to declare 262,144 on a card that holds a quarter of that.
+  const editWeightsMiB = Math.round((model.file_rows || []).reduce((sum, f) => sum + (f.bytes || 0), 0) / 1048576);
+  const editKvPer1k = !image && !lora ? model.kv_mib_per_1k_tokens || 0 : 0;
+  const editCardMiB = lora ? 0 : row.class?.vram_mib || 0;
+  const editFit = modelFit(editWeightsMiB, editKvPer1k, contextNumber || 0, editCardMiB, row.classes || []);
+  // The largest window this card actually holds, offered as one press. 0 when it cannot be
+  // said (no geometry, no card, or the weights alone already fill it) and the button is then
+  // not drawn — an "auto" that quietly does nothing is worse than no button.
+  // 0 when it cannot be said — no geometry, no card, no stored ceiling, or the weights alone
+  // already fill the card — and the button is then not drawn. An offer computed without an
+  // upper bound would propose windows the model was never trained for, and an "auto" that
+  // quietly does nothing is worse than no button.
+  const editBestWindow = !image && !lora
+    ? windowThatFits(editWeightsMiB, editKvPer1k, editCardMiB, model.context_length || 0)
+    : 0;
   const invalidVram = vramNumber === null;
   const invalidBase = !image && lora ? !baseChoices.includes(baseModel) : image && baseChoices.length > 0 && !baseChoices.includes(baseModel);
   const validation = invalidWindow ? tr("admin.catalog_edit_window_invalid" as never) : invalidVram ? tr("admin.catalog_edit_vram_invalid" as never) : invalidBase ? tr("admin.engines_wizard_need_family") : "";
@@ -1564,6 +1589,19 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
       {image && !lora && <label><span>{tr("admin.engines_model_negative")}</span><input value={negative} onChange={(event) => setNegative(event.currentTarget.value)} /></label>}
       {image && lora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
     </div>
+    {!image && !lora && <p className="engine-operation-window-hint muted">
+      {!!model.context_length && <>{(tr("admin.engines_ingest_ctx_ceiling" as never) as string).replace("{n}", model.context_length.toLocaleString())} </>}
+      {!!editBestWindow && <Button variant="ghost" disabled={busy || editBestWindow === contextNumber} onClick={() => {
+        setContext(String(editBestWindow)); setOutput(String(Math.floor(editBestWindow / 8)));
+      }}>{(tr("admin.catalog_edit_window_fit" as never) as string).replace("{n}", editBestWindow.toLocaleString())}</Button>}
+      {!editKvPer1k && <> {tr("admin.fit_no_kv" as never)}</>}
+    </p>}
+    {!image && !lora && editFit.needMiB > 0 && <p className={`engine-operation-fit ${editFit.state === "over" ? "form-err" : "muted"}`}>
+      {(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(editFit.weightsMiB))}
+      {` · ${editFit.kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(editFit.kvMiB)).replace("{c}", String(contextNumber || 0)) : tr("admin.engines_ingest_fit_kv_unread")}`}
+      {editCardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(editFit.needMiB)).replace("{c}", String(editCardMiB))} ` : " "}
+      <FitTag fit={editFit} />
+    </p>}
     {image && <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">{(Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}</div></details>}
     {validation && <p className="form-err">{validation}</p>}
     {error && <p className="form-err">{error}</p>}

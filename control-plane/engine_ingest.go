@@ -1377,6 +1377,11 @@ func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, j
 		KVLayers: req.KVGeom.Layers, KVHeadsKV: req.KVGeom.HeadsKV,
 		KVKeyLen: req.KVGeom.KeyLen, KVValueLen: req.KVGeom.ValLen,
 		KVNextN: req.KVGeom.NextN, KVFullAttnInterval: req.KVGeom.FullAttnInterval,
+		// The architecture's own limit, kept so the row can be re-fitted later without going
+		// back through the ingest. 🔴 Stored, never APPLIED: what the model allows and what fits
+		// on the card are different questions (ADR 0089), and only the first is the publisher's
+		// to answer.
+		ContextCeiling: req.Resolved.ContextLength,
 	}
 	created, err := g.models.CreateEngineModel(ctx, m)
 	if err != nil {

@@ -283,6 +283,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.fit_card": "This class has {c} MiB of VRAM",
   "admin.fit_estimate_note": "An estimate of the weights plus the KV cache. It does not include the compute buffers or the CUDA context.",
   "admin.fit_no_kv": "The KV cache could not be read, so this compares the weights alone.",
+  "admin.catalog_edit_window_fit": "Use the largest this class holds ({n})",
   "admin.fit_kv_from": "The KV figure was read from {f}'s header — builds in one repository differ a little.",
   "admin.engines_ingest_ctx_ceiling": "Ceiling {n}",
   // --- The repository card (ADR 0089). The ladder opens on a press, because opening it reads

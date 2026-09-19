@@ -253,6 +253,12 @@ type EngineModel struct {
 	// or the row was written before they were read, and both reduce to "every layer caches".
 	// See engineKVGeometry.cacheLayers for the measurement that made them necessary.
 	KVNextN, KVFullAttnInterval int
+	// ContextCeiling is `<arch>.context_length`, the largest window the model was TRAINED for.
+	// 🔴 A ceiling, not a setting — the 27B here publishes 262144 and is run at 32768. It is
+	// stored so a registered row can be re-fitted against its own limit, which the panel cannot
+	// do from the geometry alone: the attention shape says what a token costs, not how many of
+	// them the weights can attend over. 0 = not read.
+	ContextCeiling int
 	// Sizes replaces sdcppSizes()'s guess from the model id with a declaration.
 	Sizes []string
 	// Params are the generation defaults this row asks for — see EngineParams. Nil for a row

@@ -162,3 +162,61 @@ member two ids that differ by four characters with nothing to say which is which
 | the repository publishes 30 `.gguf` files, one imatrix and two projectors | `GET /api/models/unsloth/Qwen3.8-27B-GGUF?blobs=true`, 2026-09-18 |
 | the deployment passes no `-ctk` / `-ctv`, so the cache really is f16 | `LlmExtraArgs` default in `deploy/aws/ecs/cfn/60-engines.yaml` |
 | a 2-bit 27B fits a 22,000 MiB card at 32,768 and a 4-bit one does not | the two above, through `engineFit.ts` |
+
+## Follow-up — from "automatic at registration" to "automatic for the row's whole life" (2026-09-19)
+
+Raised by the operator: **asking someone with no LLM background to type these numbers when they
+add a model is not workable.** Whether the model runs on the instance being used, and how much
+context is available, should be **decided automatically, shown on screen, applied, and ready to
+use**.
+
+That is what this ADR designed. It was not holding in three places.
+
+### 1. The automatic answer was four times off
+
+`kv_mib_per_1k_tokens` IS `engineKVCacheMiB`, and that formula was four times too big for a
+hybrid architecture (ADR 0074's 2026-09-18 follow-up). Measured against the CP that is running
+right now, resolving the same model this deployment serves: `kv_mib_per_1k_tokens = 260` where
+the truth is 64. For the same 27B on the same L4, `windowThatFits` therefore offered
+**16,384 instead of 65,536**. **The screen was lying, modestly, by a factor of four.**
+
+### 2. When no window could be fitted, the field fell back to the ceiling
+
+```ts
+windowThatFits(...) || found.context_length   // the ceiling, on failure
+```
+
+Which is the exact thing this ADR exists to stop being typed in, reached through the error path
+instead of the happy one. A row of that shape is still on af-sandbox, and it asked llama.cpp for
+16 GiB of KV cache and took the L4 out of memory.
+
+**Zero is not the answer either** — it travels as "undeclared" all the way to opencode, which
+reads a context of 0 as "auto-compaction off" (`opencode/engine.go`). The session then runs
+until llama-server rejects it, which is worse than a small window rather than safer.
+
+→ `windowWhenUnsized` (32,768, capped by the ceiling), **named as a fallback** by the form.
+
+### 3. A registered row had no verdict at all
+
+The edit dialog was three raw number boxes. **Correcting a window later meant pricing the KV
+cache in your own head.**
+
+→ The same `modelFit` verdict the ingest form draws, plus the fitted window as one press. For
+that, the CP now sends `kv_mib_per_1k_tokens` on registered rows too.
+
+And **`context_length` was never stored** — read at the resolve, shown beside the field, gone the
+moment the row existed. Without a ceiling a re-fit has no upper bound and would propose windows
+**the model was never trained for**. Migration 0070 / pg 0055 adds `context_ceiling`, written at
+ingest. 🔴 Stored, never APPLIED: what the architecture allows and what fits on the card are
+different questions, and only the first is the publisher's to answer.
+
+A row with no stored ceiling is offered **no button**. An offer computed without an upper bound
+is worse than no offer.
+
+### What is still missing
+
+- **Existing rows have no geometry** (`vram_need_source: floor`). A backfill that re-reads the
+  GGUF header from the bucket's own object is needed. Until then those rows are offered no
+  re-fit, and ADR 0074's follow-up guard asks for a confirmation every time.
+- **Changing the instance rung does not move the windows.** A window is fitted once, against the
+  `class.vram_mib` of the moment. Nothing re-fits the rows when the ladder step changes.

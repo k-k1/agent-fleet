@@ -883,3 +883,61 @@ describe("catalogue ledger identity", () => {
     expect(savedObjectsForHit({ source: "civitai", ref: "22", model_ref: "7", name: "V" }, objects).map((object) => object.key)).toEqual(["civitai-exact"]);
   });
 });
+
+// ADR 0089 follow-up. The edit dialog was three raw number boxes: an operator correcting a
+// window had to price the KV cache in their own head, which is the arithmetic nobody should be
+// asked to do — and is how a row came to declare 262,144 on a card that holds a quarter of it.
+// The same verdict the ingest form draws, on the row as it already is, plus the fitted window
+// as one press.
+describe("editing a registered LLM row", () => {
+  const registered = (extra: Record<string, unknown> = {}) => ({
+    ...llmRow,
+    class: { vram_mib: 22000 },
+    classes: [{ id: "l4", label: "l4", vram_mib: 22000, types: [] }],
+    model_rows: [{
+      id: "qwen", kind: "gguf", enabled: true, context_tokens: 32768, max_output_tokens: 8192,
+      file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
+      kv_mib_per_1k_tokens: 64, context_length: 262144, ...extra,
+    }],
+  });
+
+  it("prices the stored window and offers the largest the class holds", async () => {
+    mockEngines([registered()]);
+    apiJSON.mockResolvedValue({ hits: [] });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<EngineAddView engineKey="llm" lora={false} initialView="registered" />); });
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+
+    await click(labelled("編集: qwen"));
+    const fit = document.querySelector(".engine-registered-edit .engine-operation-fit");
+    // 11,483 MiB of weights + 64 MiB/1k x 32,768 = 2,048 MiB of cache.
+    expect(fit?.textContent).toContain("重み 11483 MiB");
+    expect(fit?.textContent).toContain("KV キャッシュ 2048 MiB");
+    expect(fit?.textContent).toContain("収まります");
+
+    // 22,000 x 0.85 = 18,700, less 11,483 of weights = 7,217 MiB of room: 65,536 tokens cost
+    // 4,096 and 131,072 would cost 8,192. The press writes the window AND the output cap.
+    const refit = button("このクラスに収まる最大 65,536 にする")!;
+    expect(refit).toBeTruthy();
+    await click(refit);
+    const inputs = document.querySelectorAll<HTMLInputElement>(".engine-registered-edit .engine-operation-grid input");
+    expect(Array.from(inputs).map((i) => i.value)).toContain("65536");
+    expect(Array.from(inputs).map((i) => i.value)).toContain("8192");
+  });
+
+  it("offers no re-fit when the row has no geometry, rather than one computed from nothing", async () => {
+    mockEngines([registered({ kv_mib_per_1k_tokens: undefined, context_length: undefined })]);
+    apiJSON.mockResolvedValue({ hits: [] });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<EngineAddView engineKey="llm" lora={false} initialView="registered" />); });
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+
+    await click(labelled("編集: qwen"));
+    expect(Array.from(document.querySelectorAll("button")).some((b) => b.textContent?.includes("収まる最大"))).toBe(false);
+    expect(document.querySelector(".engine-registered-edit")?.textContent).toContain("KV キャッシュは読めなかった");
+  });
+});

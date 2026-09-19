@@ -1,18 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { kvCacheMiB, modelFit, windowThatFits } from "./engineFit.ts";
+import { kvCacheMiB, modelFit, windowThatFits, windowWhenUnsized, WINDOW_WHEN_UNSIZED } from "./engineFit.ts";
 import type { EngineClass } from "./engineTypes.ts";
 
 const rung = (id: string, vram_mib: number): EngineClass => ({ id, label: id, vram_mib, types: [] });
 const LADDER = [rung("g6.xlarge", 22000), rung("g6e.xlarge", 46068), rung("g6e.2xlarge", 46068)];
 
-// 🔴 The measured case this ADR started from: unsloth/Qwen3.8-27B-GGUF, read off the real GGUF
-// headers on 2026-09-18. 65 blocks x 4 KV heads x (256+256) x 2 bytes = 260 MiB per 1,024 tokens,
-// and the model publishes a 262,144 ceiling — which is where the operator's "KV キャッシュ
-// 66560 MiB" came from.
+// 🔴 The figure the CP USED to send for unsloth/Qwen3.8-27B-GGUF, kept because these tests are
+// about the panel's arithmetic and this is the number that produced the screens people saw.
+// It is NOT the truth: 65 blocks x 4 KV heads x (256+256) x 2 bytes = 260 MiB per 1,024 tokens
+// counts every block, and this architecture caches on 16 of them — one block is a NEXTN head
+// llama.cpp never runs and only every 4th of the rest is full attention
+// (`full_attention_interval`). Measured on af-sandbox 2026-09-18: at the published 262,144
+// ceiling llama.cpp asked for `allocating 16384.00 MiB`, not 66,560. See
+// control-plane/engine_gguf.go's cacheLayers.
 const QWEN_KV_PER_1K = 260;
+// What the same model answers once the modifiers are counted, for the fit cases that are about
+// a real card rather than about multiplication.
+const QWEN_KV_PER_1K_CORRECTED = 64;
 
 describe("kvCacheMiB", () => {
-  it("reproduces the number the panel showed at the model's published ceiling", () => {
+  it("reproduces the number the panel USED to show at the published ceiling", () => {
     expect(kvCacheMiB(QWEN_KV_PER_1K, 262144)).toBe(66560);
   });
 
@@ -89,5 +96,41 @@ describe("windowThatFits", () => {
 
   it("answers 0 when there is no cache figure to divide the room by", () => {
     expect(windowThatFits(6933, 0, 22000, 262144)).toBe(0);
+  });
+});
+
+describe("windowWhenUnsized", () => {
+  // 🔴 The two numbers that suggest themselves are both wrong, and this is the positive control
+  // for not using either. The CEILING is what the field used to fall back to, and the af-sandbox
+  // row left at 262,144 asked llama.cpp for 16 GiB of KV cache and the L4 answered
+  // `cudaMalloc failed: out of memory`. ZERO reads as "undeclared" all the way to opencode,
+  // which takes a context of 0 as "auto-compaction off" and runs until the engine rejects it.
+  it("is neither the ceiling nor zero", () => {
+    expect(windowWhenUnsized(262144)).toBe(WINDOW_WHEN_UNSIZED);
+    expect(windowWhenUnsized(262144)).not.toBe(262144);
+    expect(windowWhenUnsized(262144)).toBeGreaterThan(0);
+  });
+
+  it("never proposes more than the model was trained for", () => {
+    expect(windowWhenUnsized(8192)).toBe(8192);
+  });
+
+  it("still answers when nothing is known about the ceiling", () => {
+    expect(windowWhenUnsized(0)).toBe(WINDOW_WHEN_UNSIZED);
+  });
+});
+
+// What the correction is worth on the card this deployment actually buys: the same 27B, the
+// same L4, four times the window. The panel was telling operators a 22 GB card could hold 16k
+// of a model that fits 65k on it.
+describe("the corrected cache figure changes what the form offers", () => {
+  const WEIGHTS_MIB = 11483; // Qwen3.8-27B-UD-IQ3_S, 12,040,883,104 bytes
+  it("offers four times the window on the same card", () => {
+    expect(windowThatFits(WEIGHTS_MIB, QWEN_KV_PER_1K, 22000, 262144)).toBe(16384);
+    expect(windowThatFits(WEIGHTS_MIB, QWEN_KV_PER_1K_CORRECTED, 22000, 262144)).toBe(65536);
+  });
+
+  it("still calls the published ceiling over, which is what the row that OOMed declared", () => {
+    expect(modelFit(WEIGHTS_MIB, QWEN_KV_PER_1K_CORRECTED, 262144, 22000, LADDER).state).toBe("over");
   });
 });

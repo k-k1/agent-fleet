@@ -782,6 +782,29 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	} else {
 		row["vram_need_source"] = engineVramUnknown
 	}
+	// What the KV cache costs per 1024 tokens of window, the same figure the ingest form is
+	// given (engineResolvedRow). The panel MULTIPLIES it, so one number answers every window
+	// somebody could type — and it is what lets an ALREADY REGISTERED row be judged and
+	// re-fitted without going back through the ingest. Until this was here the edit dialog had
+	// raw number boxes and no verdict, so correcting a window meant doing the arithmetic by
+	// hand, which is the thing ADR 0089 set out to stop asking of people.
+	//
+	// 🔴 ABSENT, never 0, when the row has no geometry: "nobody could read it" and "it measured
+	// zero" are different facts, and a 0 would be drawn as a window that costs nothing.
+	if kv := engineKVCacheMiB(engineKVGeometry{
+		Layers: m.KVLayers, HeadsKV: m.KVHeadsKV, KeyLen: m.KVKeyLen, ValLen: m.KVValueLen,
+		NextN: m.KVNextN, FullAttnInterval: m.KVFullAttnInterval,
+	}, 1024); kv > 0 {
+		row["kv_mib_per_1k_tokens"] = kv
+	}
+	// The architecture's own limit, under the SAME name the ingest form receives it by, because
+	// it is the same fact and the panel prices it the same way. 🔴 A ceiling, not a setting:
+	// absent when the row was registered before it was stored, and the panel then offers no
+	// one-press re-fit — a window proposed with no upper bound is one the model was never
+	// trained for.
+	if m.ContextCeiling > 0 {
+		row["context_length"] = m.ContextCeiling
+	}
 	if m.License != "" {
 		row["license"] = m.License
 	}

@@ -277,6 +277,7 @@ export const admin = {
   "admin.fit_card": "このクラスの VRAM {c} MiB",
   "admin.fit_estimate_note": "重みと KV キャッシュの見積もりです。計算バッファと CUDA コンテキストは含みません。",
   "admin.fit_no_kv": "KV キャッシュは読めなかったので、重みだけで比べています。",
+  "admin.catalog_edit_window_fit": "このクラスに収まる最大 {n} にする",
   "admin.fit_kv_from": "KV は {f} のヘッダから読みました（同じ配布元でも版によって少し違います）。",
   "admin.engines_ingest_ctx_ceiling": "上限 {n}",
   // --- 配布元のカード（ADR 0089）。量子化の梯子は 1 押しで開く（開くたびに上流を読むため）。

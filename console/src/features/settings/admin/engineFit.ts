@@ -84,6 +84,26 @@ export function modelFit(
  * Answers 0 when nothing can be said — no card, no cache figure — and the caller then falls back
  * to whatever it had.
  */
+/** The window to open a field at when the cache could NOT be sized — which is neither of the
+ * two numbers that suggest themselves, because both are wrong in a way that only shows up
+ * later:
+ *
+ *   - the model's CEILING (what `windowThatFits` used to fall back to) is the very thing ADR
+ *     0089 exists to stop being typed in. Measured: the af-sandbox row left at 262,144 asked
+ *     llama.cpp for 16 GiB of KV cache and the L4 answered `cudaMalloc failed: out of memory`.
+ *   - ZERO reads as "undeclared" all the way down the chain, and opencode takes a context of 0
+ *     as "auto-compaction off" (workspace/agent/.../opencode/engine.go) — the session then runs
+ *     until llama-server rejects it, which is worse than a small window, not safer.
+ *
+ * So: the window every model in these deployments is actually started at, capped by the
+ * model's own ceiling, and the caller SAYS it is a fallback rather than a fitted answer.
+ */
+export const WINDOW_WHEN_UNSIZED = 32768;
+
+export function windowWhenUnsized(ceiling: number): number {
+  return ceiling > 0 ? Math.min(WINDOW_WHEN_UNSIZED, ceiling) : WINDOW_WHEN_UNSIZED;
+}
+
 export function windowThatFits(weightsMiB: number, kvPer1k: number, cardMiB: number, ceiling: number): number {
   if (!(kvPer1k > 0) || !(cardMiB > 0) || !(ceiling > 0)) return 0;
   const room = cardMiB * FIT_COMFORTABLE - weightsMiB;
