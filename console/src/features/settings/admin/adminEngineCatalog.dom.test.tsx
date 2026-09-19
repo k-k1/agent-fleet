@@ -845,13 +845,41 @@ describe("registered rows and the bucket", () => {
     await mountRegistered();
     const card = document.querySelector<HTMLElement>('.engine-registered-card[aria-label="split"]')!;
     expect(card.querySelector("header .warn")?.textContent).toContain("1/2");
-    expect(card.querySelectorAll(".engine-registered-parts li")).toHaveLength(2);
+    const parts = card.querySelectorAll<HTMLElement>(".engine-registered-parts li");
+    expect(parts).toHaveLength(2);
+    // The chip is the mark of a line that needs a hand: the header already counts the parts, so
+    // a present one carries none and the missing one is the only thing lit.
+    expect(parts[0].querySelector(".engines-model-tag")).toBeNull();
+    expect(parts[1].querySelector(".engines-model-tag")?.textContent).toBe("不足");
     expect(card.querySelector('[aria-label="編集: split"]')).toBeTruthy();
     // The surfaces ADR 0085 decision 8 removed.
     expect(card.querySelector('[aria-label="ファイルと部品: split"]')).toBeNull();
     expect(button("既存の S3 ファイルを登録")).toBeUndefined();
     expect(api).not.toHaveBeenCalledWith("api/admin/engines/image/storage");
     expect(api).not.toHaveBeenCalledWith("api/admin/engines/image/ingest");
+  });
+
+  // 🔴 The chip a present line drops must not drop for "nobody could look". A bucket that cannot
+  // be listed is every line's state, and it is the one the card's header cannot count either.
+  it("keeps the unchecked chip on every part when the bucket cannot be listed", async () => {
+    const solo = { ...imageRow, model_rows: [{ id: "solo", enabled: true, kind: "model", file_rows: [{
+      s3Key: "image/checkpoints/solo.safetensors", flag: "",
+      bytes: 4_200_000_000, source_url: "https://civitai.com/model-versions/5038",
+    }] }] };
+    api.mockImplementation((path: string) => {
+      if (path === "api/admin/engines") return Promise.resolve({ super_admin: true, engines: [solo] });
+      if (path.endsWith("/objects")) return Promise.resolve({ error: { code: "engine_objects_unreadable", message: "cannot list" } });
+      return Promise.resolve({});
+    });
+    apiJSON.mockResolvedValue({ hits: [] });
+    await mountRegistered();
+    const part = document.querySelector<HTMLElement>('.engine-registered-card[aria-label="solo"] .engine-registered-parts li')!;
+    expect(part.querySelector(".engines-model-tag")?.textContent).toBe("未確認");
+    // The size and the page are at the right end of the flag's line, in one span — the narrow
+    // card folds the key under them instead of scattering them down its own rows.
+    const meta = part.querySelector<HTMLElement>(".engine-registered-part-meta")!;
+    expect(meta.textContent).toContain("4.2 GB");
+    expect(meta.querySelector("a")?.textContent).toBe("配布元を見る");
   });
 
   it("requires an explicit VRAM confirmation before enabling an oversized registered model", async () => {

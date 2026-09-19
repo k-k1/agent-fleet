@@ -48,8 +48,10 @@ async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light
   const engines = [
     { key: "image", api: "images", provider: "comfy", base_models: ["sdxl"], file_flags: ["--vae", "--clip_l"], model_rows: mode === "registered" ? [
       { id: "harbor", enabled: false, base_model: "sdxl", description: "Harbor checkpoint", file_rows: [
-        { s3Key: "image/checkpoints/harbor.safetensors", flag: "", bytes: 1024 },
-        { s3Key: "image/vae/harbor.safetensors", flag: "--vae", bytes: 512 },
+        // Real sizes and a real page: the part line is drawn to put both at its right end, and a
+        // fixture of 1 kB with no link cannot show whether it does.
+        { s3Key: "image/checkpoints/harbor.safetensors", flag: "", bytes: 4_200_000_000, source_url: "https://example.invalid/models/harbor" },
+        { s3Key: "image/vae/harbor.safetensors", flag: "--vae", bytes: 254_000_000, source_url: "https://example.invalid/models/harbor" },
       ] },
       { id: "meadow", enabled: false, base_model: "sdxl", description: "Meadow checkpoint", file_rows: [] },
     ] : [], managed: true, enabled: true, has_models: true, mode: "ondemand", state: "stopped" },
@@ -195,6 +197,42 @@ test("registered cards read their badge off the bucket and open edits from their
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(modal).toHaveCount(0);
   await expect(edit).toBeFocused();
+});
+
+// The part line is what a person reads to answer "which file is this row, how big, where from".
+// Measured rather than asserted by text: the fault it fixes was geometric — at card width the
+// size and the link fell onto rows of their own, three lines below the flag they belong to.
+test("a registered card's part line keeps its size and source page at the right end", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openCatalog(page, "image", "dark", "registered");
+  const pane = page.locator(".engine-catalog-pane");
+  const card = pane.getByRole("listitem", { name: "harbor", exact: true });
+  const parts = card.locator(".engine-registered-parts li");
+  await expect(parts).toHaveCount(2);
+  const whole = parts.first();
+  // 🔴 The present line carries NO chip: the card's header already says 1/2, and a badge on
+  // every line is one nobody reads. The missing one keeps its own, which is the whole point.
+  await expect(whole.locator(".engines-model-tag")).toHaveCount(0);
+  await expect(parts.nth(1).getByText("missing", { exact: true })).toBeVisible();
+  const meta = whole.locator(".engine-registered-part-meta");
+  await expect(meta).toContainText("4.2 GB");
+  await expect(meta.getByRole("link", { name: "Source page", exact: true })).toBeVisible();
+  const flagBox = (await whole.locator(".engine-registered-part-flag").boundingBox())!;
+  const metaBox = (await meta.boundingBox())!;
+  const lineBox = (await whole.boundingBox())!;
+  // Same line as the flag, hard against the line's right edge (8px of padding).
+  expect(Math.abs(metaBox.y - flagBox.y)).toBeLessThan(flagBox.height);
+  expect(metaBox.x + metaBox.width).toBeGreaterThan(lineBox.x + lineBox.width - 12);
+  await page.screenshot({ path: testInfo.outputPath("registered-parts-1400.png") });
+  // At phone width the card is far below the 560px container query, and the KEY is what folds —
+  // under the flag, never the size or the link.
+  await page.setViewportSize({ width: 390, height: 900 });
+  const narrowFlag = (await whole.locator(".engine-registered-part-flag").boundingBox())!;
+  const narrowMeta = (await meta.boundingBox())!;
+  const narrowKey = (await whole.locator(".engine-registered-key").boundingBox())!;
+  expect(Math.abs(narrowMeta.y - narrowFlag.y)).toBeLessThan(narrowFlag.height);
+  expect(narrowKey.y).toBeGreaterThan(narrowFlag.y + narrowFlag.height / 2);
+  await page.screenshot({ path: testInfo.outputPath("registered-parts-390.png") });
 });
 
 test("a card starts one operation and returns to browsing with its new object in the bucket", async ({ page }) => {

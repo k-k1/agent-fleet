@@ -1498,10 +1498,23 @@ function RegisteredParts({ model, objects }: { model: EngineModel; objects: Engi
   return <ul className="engine-registered-parts" aria-label={`${tr("admin.catalog_files" as never)}: ${model.id}`}>{rows.map((part) => {
     const known = objects?.find((candidate) => candidate.key === part.s3Key);
     const state = objects === null ? "unknown" : known?.state === "present" ? "present" : known ? known.state : "missing";
-    return <li key={`${part.flag || "whole"}:${part.s3Key}`}><span className="mono">{part.flag || tr("admin.engines_model_add_part_whole")}</span><span className="mono engine-registered-key">{part.s3Key}</span>
-      {part.bytes ? <span>{formatBytes(part.bytes)}</span> : null}
-      <span className={`engines-model-tag ${state === "present" ? "on" : state === "missing" || state === "failed" ? "bad" : ""}`}>{tr((`admin.catalog_file_${state}`) as never)}</span>
-      {part.source_url ? <a href={part.source_url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a> : part.source ? <span className="muted mono">{part.source}</span> : null}</li>;
+    return <li key={`${part.flag || "whole"}:${part.s3Key}`}>
+      <span className="mono engine-registered-part-flag">{part.flag || tr("admin.engines_model_add_part_whole")}</span>
+      <span className="mono engine-registered-key">{part.s3Key}</span>
+      {/* The size and the page in ONE span, at the right end of the flag's line. Loose children
+          left the narrow card (`@container engcard`) to place them itself, and it scattered them
+          down four rows — the size on its own line, the link on another. */}
+      <span className="engine-registered-part-meta">
+        {part.bytes ? <span>{formatBytes(part.bytes)}</span> : null}
+        {/* `present` draws no chip. The card's header already counts the parts ("3/3 files
+            present"), so a chip on every line states the same fact once per file — and a badge
+            that is on every line is one nobody reads. Every other state keeps it, which is what
+            makes a chip mean "this line needs a hand"; `unknown` in particular is the whole
+            card's state when the bucket could not be listed, and must stay visible. */}
+        {state !== "present" && <span className={`engines-model-tag ${state === "missing" || state === "failed" ? "bad" : ""}`}>{tr((`admin.catalog_file_${state}`) as never)}</span>}
+        {part.source_url ? <a href={part.source_url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a> : part.source ? <span className="muted mono">{part.source}</span> : null}
+      </span>
+    </li>;
   })}</ul>;
 }
 
