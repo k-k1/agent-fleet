@@ -451,6 +451,10 @@ type EngineModelKV struct {
 	// KVNextN/KVFullAttnInterval. Left out here, a re-read header would keep the row's stale
 	// divisor and go back to over-estimating by four.
 	NextN, FullAttnInterval int
+	// And the model's own ceiling, for the same reason: a file swapped for another quantisation
+	// of a DIFFERENT model publishes a different maximum, and a row left with the previous one
+	// is re-fitted against a limit its weights never had.
+	Ceiling int
 }
 
 // EngineModelStore is the catalogue. Two writers reach it — an administrator's toggle and the
@@ -522,6 +526,10 @@ type EngineModelStore interface {
 	// carries max_output_tokens only when context_tokens is above zero: a row that moved one of
 	// them alone is one the panel cannot explain.
 	SetEngineModelWindow(ctx context.Context, role, id string, contextTokens, maxOutputTokens int) (bool, error)
+	// SetEngineModelGeometry writes only the columns a header read produced. Targeted because
+	// the read is a network round trip and a whole-row write of the pre-read snapshot would
+	// revert anything that changed while it was in flight.
+	SetEngineModelGeometry(ctx context.Context, role, id string, kv EngineModelKV) (bool, error)
 	// SetEngineModelVram writes the operator's own VRAM measurement; 0 withdraws it and puts the
 	// row back on the floor its files imply.
 	SetEngineModelVram(ctx context.Context, role, id string, vramMiB int) (bool, error)

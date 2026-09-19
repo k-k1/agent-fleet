@@ -193,3 +193,31 @@ describe("outputForWindow", () => {
     expect(outputForWindow(262144)).toBe(32768);
   });
 });
+
+// 🔴 The two shapes a re-fit must refuse rather than guess at, both found on the live
+// deployments by review. Weights that nothing can size read as a free card, and the proposal is
+// then the model's own ceiling for a model nobody has weighed.
+describe("refitWindows will not fit against weights it does not know", () => {
+  const base = {
+    id: "qwen", kind: "gguf", enabled: true, context_tokens: 32768,
+    kv_mib_per_1k_tokens: QWEN_KV_PER_1K_CORRECTED, context_length: 262144,
+  };
+  it("refuses a row whose files declare no bytes (the seeded qwen3-coder row)", () => {
+    const seeded = { ...base, file_rows: [{ s3Key: "llm/qwen.gguf" }] } as unknown as EngineModel;
+    expect(refitWindows([seeded], 44000)).toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
+  });
+  it("prefers the operator's own measurement over the file sizes", () => {
+    // vram_mib is what engineModelVramNeed uses, so fitting against anything else would make
+    // this disagree with the guard that judges the write.
+    const measured = {
+      ...base, vram_mib: 20000,
+      file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 1_048_576 }],
+    } as unknown as EngineModel;
+    // 44,000 x 0.85 = 37,400 less 20,000 leaves 17,400 MiB: 262,144 tokens cost 16,384.
+    expect(refitWindows([measured], 44000)).toEqual([{ id: "qwen", from: 32768, to: 262144, unknown: false }]);
+    // On the small card 24,000 x 0.85 = 20,400 less the same 20,000 leaves 400 MiB, which buys
+    // 4,096 tokens (256 MiB) and not 8,192 (512 MiB) — the measurement shrinks the window, which
+    // is the direction that used to fail only at the cold start.
+    expect(refitWindows([measured], 24000)).toEqual([{ id: "qwen", from: 32768, to: 4096, unknown: false }]);
+  });
+});

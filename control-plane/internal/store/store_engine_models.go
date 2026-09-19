@@ -259,10 +259,10 @@ func (s *SQL) ReplaceEngineModelFile(ctx context.Context, role, id string, f Eng
 			// now UNKNOWN. Keeping the previous file's numbers would describe bytes no longer used.
 			updated, err = affected(s.db.ExecContext(ctx,
 				`UPDATE engine_models SET files=?, kv_layers=?, kv_heads_kv=?, kv_key_len=?, kv_value_len=?,
-				   kv_nextn=?, kv_full_attn_interval=?,
+				   kv_nextn=?, kv_full_attn_interval=?, context_ceiling=?,
 				   updated_at=? WHERE role=? AND id=? AND files=?`,
 				jsonList(files), kv.Layers, kv.HeadsKV, kv.KeyLen, kv.ValueLen,
-				kv.NextN, kv.FullAttnInterval,
+				kv.NextN, kv.FullAttnInterval, kv.Ceiling,
 				NowTS(), role, id, raw))
 		}
 		if err != nil || updated {
@@ -374,6 +374,24 @@ func (s *SQL) SetEngineModelWindow(ctx context.Context, role, id string, context
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE engine_models SET context_tokens=?, max_output_tokens=?, updated_at=? WHERE role=? AND id=?`,
 		contextTokens, maxOutputTokens, NowTS(), role, id)
+	return affected(res, err)
+}
+
+// SetEngineModelGeometry writes ONLY the attention geometry a header read produced.
+//
+// 🔴 A targeted UPDATE and not a whole-row Put, and that is the entire point of it existing.
+// The read it follows is a network round trip to object storage, so the row the caller holds is
+// already seconds old by the time there is anything to write — and a full upsert of that stale
+// snapshot silently reverts whatever anybody else changed in between. This is the same
+// read-modify-write hazard a plain file rewrite has, and the same answer: write the columns you
+// learned about and leave every other one to whoever owns it.
+func (s *SQL) SetEngineModelGeometry(ctx context.Context, role, id string, kv EngineModelKV) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engine_models SET kv_layers=?, kv_heads_kv=?, kv_key_len=?, kv_value_len=?,
+		   kv_nextn=?, kv_full_attn_interval=?, context_ceiling=?, updated_at=?
+		 WHERE role=? AND id=?`,
+		kv.Layers, kv.HeadsKV, kv.KeyLen, kv.ValueLen,
+		kv.NextN, kv.FullAttnInterval, kv.Ceiling, NowTS(), role, id)
 	return affected(res, err)
 }
 

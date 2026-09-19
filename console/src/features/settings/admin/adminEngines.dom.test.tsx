@@ -819,7 +819,7 @@ describe("picking an instance class re-fits every window", () => {
     // cost 16,384 and that is also the model's own ceiling.
     expect(apiJSON).toHaveBeenCalledWith(
       "api/admin/engines/llm/models/qwen", "PUT",
-      { context_tokens: 262144, max_output_tokens: 32768, confirm_vram: true },
+      { context_tokens: 262144, max_output_tokens: 32768 },
     );
     const report = host!.querySelector(".engines-class-refit")!;
     expect(report.textContent).toContain("qwen");
@@ -846,7 +846,7 @@ describe("picking an instance class re-fits every window", () => {
     await pick("l4");
     expect(apiJSON).toHaveBeenCalledWith(
       "api/admin/engines/llm/models/qwen", "PUT",
-      { context_tokens: 65536, max_output_tokens: 8192, confirm_vram: true },
+      { context_tokens: 65536, max_output_tokens: 8192 },
     );
   });
 
@@ -869,5 +869,40 @@ describe("picking an instance class re-fits every window", () => {
     expect(modelPuts).toHaveLength(0);
     expect(host!.querySelector(".engines-class-refit")?.textContent)
       .toContain("ヘッダをまだ読めていません");
+  });
+
+  // 🔴 A refusal is not a silent skip. `engine_publish_failed` is a 502 the CP answers AFTER the
+  // row was written, so a report that lists only the successes says less than what happened —
+  // the window stored and the box never told about it.
+  it("names a row whose window could not be written, with the reason", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [llm()] });
+    await mount();
+    apiJSON.mockImplementation((path: string) => Promise.resolve(
+      path.endsWith("/class")
+        ? llm({ class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } })
+        : { error: { code: "engine_publish_failed", message: "SSM refused the active set" } },
+    ));
+    await pick("l40s");
+    const report = host!.querySelector(".engines-class-refit")!;
+    expect(report.textContent).toContain("qwen");
+    expect(report.textContent).toContain("SSM refused the active set");
+    // And it is NOT claimed as done.
+    expect(report.textContent).not.toContain("→");
+  });
+
+  // The guard knows things this arithmetic does not: the operator's own vram_mib, and a row
+  // whose weights nothing can size. Sending confirm_vram would make this the one write on the
+  // deployment that can never be refused.
+  it("does not send confirm_vram", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [llm()] });
+    await mount();
+    apiJSON.mockImplementation((path: string) => Promise.resolve(
+      path.endsWith("/class")
+        ? llm({ class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } })
+        : {},
+    ));
+    await pick("l40s");
+    const modelPut = apiJSON.mock.calls.find((c) => String(c[0]).includes("/models/"))!;
+    expect(Object.keys(modelPut[2] as object)).not.toContain("confirm_vram");
   });
 });

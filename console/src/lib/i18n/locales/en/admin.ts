@@ -284,6 +284,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.fit_estimate_note": "An estimate of the weights plus the KV cache. It does not include the compute buffers or the CUDA context.",
   "admin.fit_no_kv": "The KV cache could not be read, so this compares the weights alone.",
   "admin.engines_refit_done": "Windows moved onto this class:",
+  "admin.engines_refit_failed": "Models whose window could not be written (their setting may be unchanged):",
   "admin.engines_refit_next_start": "It takes effect the next time the engine starts — a running box keeps the window it was started with.",
   "admin.engines_refit_stuck": "Models this class could not be fitted to:",
   "admin.engines_refit_unread": "its header has not been read yet (enabling it reads it)",

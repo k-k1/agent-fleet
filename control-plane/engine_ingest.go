@@ -1294,7 +1294,8 @@ func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, j
 		if strings.TrimSpace(req.FileFlag) == "" {
 			kv = &store.EngineModelKV{Layers: req.KVGeom.Layers, HeadsKV: req.KVGeom.HeadsKV,
 				KeyLen: req.KVGeom.KeyLen, ValueLen: req.KVGeom.ValLen,
-				NextN: req.KVGeom.NextN, FullAttnInterval: req.KVGeom.FullAttnInterval}
+				NextN: req.KVGeom.NextN, FullAttnInterval: req.KVGeom.FullAttnInterval,
+				Ceiling: req.KVGeom.Ceiling}
 		}
 		found, err := g.models.ReplaceEngineModelFile(ctx, req.Role, req.ModelID, file, kv)
 		if err != nil {

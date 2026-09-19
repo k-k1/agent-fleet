@@ -312,11 +312,11 @@ func TestParseGGUFGeometryReadsPastTheRequiredFields(t *testing.T) {
 	}
 }
 
-// Reading on past the required fields means the scan now walks into the tokenizer array, which
-// no window ever contains. Running out THERE is the normal end of a successful read; running
-// out before the geometry is complete is still the short-window error the bigger retry exists
-// for. Both directions, because swallowing the second would silently stop that retry.
-func TestParseGGUFGeometryShortWindowAfterTheGeometryIsNotAnError(t *testing.T) {
+// Reading on past the required fields means the scan walks into the tokenizer array, which no
+// window ever contains. parseGGUFGeometry reports that as errGGUFShort WITH whatever it managed
+// to read, and the LADDER decides — because "the four required fields" is not the same as "the
+// whole header", and treating it as such is how a hybrid model comes back looking dense.
+func TestParseGGUFGeometryShortWindowKeepsWhatItRead(t *testing.T) {
 	buf := ggufBuild(t, 3, []ggufKV{
 		{"general.architecture", ggufTypeString, "qwen2"},
 		{"qwen2.block_count", ggufTypeUint32, 28},
@@ -325,22 +325,97 @@ func TestParseGGUFGeometryShortWindowAfterTheGeometryIsNotAnError(t *testing.T) 
 		{"qwen2.attention.value_length", ggufTypeUint32, 128},
 		{"tokenizer.ggml.tokens", ggufTypeArray, ggufArr{ggufTypeString, []any{"x", "yy"}}},
 	})
-	// Cut the vocabulary in half, the way a 64 KiB window cuts a real one.
 	got, err := parseGGUFGeometry(buf[:len(buf)-6])
+	if !errors.Is(err, errGGUFShort) {
+		t.Fatalf("err = %v, want errGGUFShort", err)
+	}
+	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128}); got != want {
+		t.Errorf("geometry = %+v, want %+v (what it read, alongside the error)", got, want)
+	}
+}
+
+// 🔴 The regression the ladder exists to stop. Between attention.value_length and
+// full_attention_interval there are more keys, and a header whose general.* strings are long
+// enough pushes the modifiers past the first window. Settling for a COMPLETE-but-unmodified
+// geometry there prices the cache four times too high — the exact bug this pass fixes, reached
+// through the error path instead of the happy one.
+func TestEngineGGUFGeometryLadderTriesTheBiggerWindowForTheModifiers(t *testing.T) {
+	full := ggufBuild(t, 3, []ggufKV{
+		{"general.architecture", ggufTypeString, "qwen35"},
+		{"qwen35.block_count", ggufTypeUint32, 65},
+		{"qwen35.attention.head_count_kv", ggufTypeUint32, 4},
+		{"qwen35.attention.key_length", ggufTypeUint32, 256},
+		{"qwen35.attention.value_length", ggufTypeUint32, 256},
+		{"qwen35.nextn_predict_layers", ggufTypeUint32, 1},
+		{"qwen35.full_attention_interval", ggufTypeUint32, 4},
+		{"qwen35.context_length", ggufTypeUint32, 262144},
+	})
+	// Where the first window lands: after value_length, before the modifiers.
+	cut := bytes.Index(full, []byte("qwen35.nextn_predict_layers"))
+	if cut <= 0 {
+		t.Fatal("could not place the cut")
+	}
+	windows := []int{}
+	got, err := engineGGUFGeometryFrom(func(window int) ([]byte, error) {
+		windows = append(windows, window)
+		if window == ggufHeadWindow {
+			return full[:cut], nil
+		}
+		return full, nil
+	})
 	if err != nil {
-		t.Fatalf("truncated after the geometry: err = %v, want nil", err)
+		t.Fatal(err)
+	}
+	if len(windows) != 2 {
+		t.Fatalf("windows tried = %v, want both — a complete-but-unmodified read is not the end", windows)
+	}
+	if got.NextN != 1 || got.FullAttnInterval != 4 || got.Ceiling != 262144 {
+		t.Fatalf("geometry = %+v, want the modifiers the second window carries", got)
+	}
+	// And the number that rides on them: 16 caching layers, not 64.
+	if kv := engineKVCacheMiB(got, 262144); kv != 16384 {
+		t.Errorf("KV = %d MiB, want the measured 16384", kv)
+	}
+}
+
+// When the bigger window is short too, what was read is still better than nothing — and is
+// exactly what the previous behaviour gave. A read that never completes the four stays an
+// error, so nothing is stored from it.
+func TestEngineGGUFGeometryLadderFallsBackAndRefuses(t *testing.T) {
+	complete := ggufBuild(t, 3, []ggufKV{
+		{"general.architecture", ggufTypeString, "qwen2"},
+		{"qwen2.block_count", ggufTypeUint32, 28},
+		{"qwen2.attention.head_count_kv", ggufTypeUint32, 2},
+		{"qwen2.attention.key_length", ggufTypeUint32, 128},
+		{"qwen2.attention.value_length", ggufTypeUint32, 128},
+		{"tokenizer.ggml.tokens", ggufTypeArray, ggufArr{ggufTypeString, []any{"x", "yy"}}},
+	})
+	got, err := engineGGUFGeometryFrom(func(int) ([]byte, error) { return complete[:len(complete)-6], nil })
+	if err != nil {
+		t.Fatalf("both windows short but complete: err = %v, want nil", err)
 	}
 	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128}); got != want {
 		t.Errorf("geometry = %+v, want %+v", got, want)
 	}
-	// Truncated BEFORE the geometry is complete: still errGGUFShort, so engineGGUFGeometry
-	// retries with ggufHeadMax instead of storing a half-read row.
+
 	early := ggufBuild(t, 3, []ggufKV{
 		{"general.architecture", ggufTypeString, "qwen2"},
 		{"qwen2.block_count", ggufTypeUint32, 28},
-		{"qwen2.attention.head_count_kv", ggufTypeUint32, 2},
 	})
-	if _, err := parseGGUFGeometry(early[:len(early)-4]); !errors.Is(err, errGGUFShort) {
-		t.Errorf("truncated before the geometry: err = %v, want errGGUFShort", err)
+	if _, err := engineGGUFGeometryFrom(func(int) ([]byte, error) { return early[:len(early)-4], nil }); !errors.Is(err, errGGUFShort) {
+		t.Errorf("never complete: err = %v, want errGGUFShort", err)
+	}
+
+	// A file that is not a GGUF at all is refused on the FIRST window: reading more of it
+	// cannot turn it into one, and a second range GET is a round trip spent on nothing.
+	reads := 0
+	if _, err := engineGGUFGeometryFrom(func(int) ([]byte, error) {
+		reads++
+		return []byte("not a gguf at all, really"), nil
+	}); err == nil || errors.Is(err, errGGUFShort) {
+		t.Errorf("not a GGUF: err = %v, want a plain refusal", err)
+	}
+	if reads != 1 {
+		t.Errorf("reads = %d, want 1", reads)
 	}
 }

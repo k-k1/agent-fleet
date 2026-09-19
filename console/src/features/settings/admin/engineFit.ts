@@ -151,7 +151,20 @@ export function refitWindows(models: EngineModel[], cardMiB: number): WindowRefi
       out.push({ id: model.id, from: model.context_tokens, to: 0, unknown: true });
       continue;
     }
-    const weightsMiB = Math.round((model.file_rows || []).reduce((sum, f) => sum + (f.bytes || 0), 0) / 1048576);
+    // 🔴 What the weights cost has to be KNOWN, and two rows on the live deployments show why.
+    // The operator's own measurement wins where there is one (it is what engineModelVramNeed
+    // prefers, so using anything else here would fit against a number the guard disagrees
+    // with). Where there is neither a measurement nor a byte count — the seeded
+    // `qwen3-coder-30b-a3b` row is exactly that — summing the files gives 0, and 0 weights
+    // means the whole card looks free: this would propose the model's ceiling for a model
+    // nobody has weighed. Say "unknown" instead.
+    const declared = model.vram_mib || 0;
+    const fromFiles = Math.round((model.file_rows || []).reduce((sum, f) => sum + (f.bytes || 0), 0) / 1048576);
+    const weightsMiB = declared > 0 ? declared : fromFiles;
+    if (weightsMiB <= 0) {
+      out.push({ id: model.id, from: model.context_tokens, to: 0, unknown: true });
+      continue;
+    }
     const to = windowThatFits(weightsMiB, kvPer1k, cardMiB, ceiling);
     if (to === model.context_tokens) continue;
     out.push({ id: model.id, from: model.context_tokens, to, unknown: false });

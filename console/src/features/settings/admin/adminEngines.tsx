@@ -55,7 +55,9 @@ export function EnginesAdminView() {
   const [busy, setBusy] = useState("");
   /** What the last class change did to the windows, so an automatic edit is never a silent one.
    *  Null until a rung is picked, and cleared by the next pick. */
-  const [refit, setRefit] = useState<{ key: string; done: WindowRefit[]; stuck: WindowRefit[] } | null>(null);
+  const [refit, setRefit] = useState<
+    { key: string; done: WindowRefit[]; stuck: WindowRefit[]; failed: { id: string; why: string }[] } | null
+  >(null);
   const closeAdmin = useSettingsUI((s) => s.closeAdmin);
   const closeTenant = useSettingsUI((s) => s.closeTenantSettings);
   /** Opens the model catalogue for one row as its own PANE, the same act
@@ -139,19 +141,25 @@ export function EnginesAdminView() {
     const doable = plan.filter((p) => !p.unknown && p.to > 0);
     const stuck = plan.filter((p) => p.unknown || p.to === 0);
     const done: WindowRefit[] = [];
+    const failed: { id: string; why: string }[] = [];
     for (const p of doable) {
-      // confirm_vram: the window being written is the one that FITS, so the guard has nothing to
-      // warn about — except on a row whose geometry has never been read, where it cannot size
-      // the cache and would stop a re-fit that is strictly an improvement on what is stored.
+      // 🔴 NO confirm_vram. It would make this the one write on the deployment that can never be
+      // refused, and the guard knows things this arithmetic does not — the operator's own
+      // vram_mib, and a row whose weights nothing can size. A refusal here is a row that should
+      // not have been re-fitted, and it belongs on screen rather than in a silent skip.
       const answer = await apiJSON(
         `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(p.id)}`,
         "PUT",
-        { context_tokens: p.to, max_output_tokens: outputForWindow(p.to), confirm_vram: true },
+        { context_tokens: p.to, max_output_tokens: outputForWindow(p.to) },
       );
-      if (!answer?.error) done.push(p);
+      // 🔴 And a failure is REPORTED. `engine_publish_failed` is a 502 the CP answers AFTER the
+      // row was written, so dropping it quietly would leave the operator reading a list that
+      // says less than what happened — the window stored and the box never told.
+      if (answer?.error) failed.push({ id: p.id, why: errDetail(answer.error) });
+      else done.push(p);
     }
-    if (done.length) await load();
-    setRefit(done.length || stuck.length ? { key, done, stuck } : null);
+    if (done.length || failed.length) await load();
+    setRefit(done.length || stuck.length || failed.length ? { key, done, stuck, failed } : null);
   };
 
   /** Which GPU this role buys next (ADR 0074). It does NOT replace a running box — the API
@@ -487,7 +495,7 @@ function EngineClassPicker({
   busy: boolean;
   onPick: (cls: string) => void;
   /** What the last pick did to this engine's windows, when it did anything. */
-  refit?: { done: WindowRefit[]; stuck: WindowRefit[] } | null;
+  refit?: { done: WindowRefit[]; stuck: WindowRefit[]; failed: { id: string; why: string }[] } | null;
   onReplace: () => void;
 }) {
   const tr = useT();
@@ -565,7 +573,7 @@ function EngineClassPicker({
       {/* 🔴 An automatic edit is never a silent one. Picking a rung moves every window onto the
           new card, and the operator has to be able to see what was written in their name — and
           that it does NOT reach a running engine, which reads its preset once at startup. */}
-      {refit && (refit.done.length > 0 || refit.stuck.length > 0) && (
+      {refit && (refit.done.length > 0 || refit.stuck.length > 0 || refit.failed.length > 0) && (
         <div className="engines-class-refit">
           {refit.done.length > 0 && (
             <>
@@ -581,6 +589,19 @@ function EngineClassPicker({
                 ))}
               </ul>
               <p className="muted">{tr("admin.engines_refit_next_start" as never)}</p>
+            </>
+          )}
+          {refit.failed.length > 0 && (
+            <>
+              <p className="form-err">{tr("admin.engines_refit_failed" as never)}</p>
+              <ul className="engines-refit-list">
+                {refit.failed.map((r) => (
+                  <li key={r.id}>
+                    <span className="engines-offer-label">{r.id}</span>
+                    <span className="muted">{r.why}</span>
+                  </li>
+                ))}
+              </ul>
             </>
           )}
           {refit.stuck.length > 0 && (

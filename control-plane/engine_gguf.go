@@ -81,22 +81,22 @@ const (
 // window, and the one that must never be confused with "this is not a GGUF file".
 var errGGUFShort = errors.New("gguf: header window is short")
 
-// ggufStop decides what a read that ran off the end of the window means.
+// ggufStop hands a short read back to the LADDER rather than deciding for it.
 //
 // The scan no longer stops at the four required fields (the hybrid modifiers are written after
-// them), so it now walks on into `tokenizer.ggml.tokens` — an array of the whole vocabulary,
-// megabytes long, which no window this file fetches will ever contain. Running out there is
-// the NORMAL end of a successful read, not a failure: everything the header had to say about
-// attention was already behind us.
+// them), so it walks on into `tokenizer.ggml.tokens` — an array of the whole vocabulary,
+// megabytes long, which no window this file fetches will ever contain. Ending there with the
+// geometry in hand is a perfectly usable read.
 //
-// So a short window with the geometry in hand is success. A short window WITHOUT it is still
-// errGGUFShort, which is what makes engineGGUFGeometry retry with the bigger window — the one
-// case that retry exists for. Any other error is the file not being what it claims and is
-// returned as is.
+// 🔴 But it is not the same as a COMPLETE one, and this function used to say it was. Between
+// `attention.value_length` and `full_attention_interval` there are several more keys, and a
+// header whose `general.*` strings are long enough pushes the modifiers past a 64 KiB window.
+// Swallowing the short error there returned a geometry that looks whole and prices its cache
+// four times too high — the very bug this pass exists to fix, reached through the error path.
+// So the error travels with the partial answer and engineGGUFGeometryFrom tries the bigger
+// window before settling for it.
 func ggufStop(geom engineKVGeometry, err error) error {
-	if errors.Is(err, errGGUFShort) && geom.complete() {
-		return nil
-	}
+	_ = geom
 	return err
 }
 
@@ -403,17 +403,52 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 // the ingest needs it: a gated repository answers metadata anonymously but refuses the FILE.
 // Without it a gated model's row simply stays unknown.
 func engineGGUFGeometry(ctx context.Context, url, token string) (engineKVGeometry, error) {
-	geom, err := engineGGUFTry(ctx, url, token, ggufHeadWindow)
-	if !errors.Is(err, errGGUFShort) {
-		return geom, err
-	}
-	return engineGGUFTry(ctx, url, token, ggufHeadMax)
+	return engineGGUFGeometryFrom(func(window int) ([]byte, error) {
+		return engineGGUFBytes(ctx, url, token, window)
+	})
 }
 
-func engineGGUFTry(ctx context.Context, url, token string, window int) (engineKVGeometry, error) {
+// engineGGUFGeometryFrom walks the two-window ladder over whatever supplies the bytes — the
+// upstream URL or this deployment's own bucket — so both roads answer the same way.
+//
+// 🔴 The bigger window is tried even when the smaller one already produced a COMPLETE geometry.
+// Complete means the four required fields, and the optional modifiers are written after them:
+// settling for the small read is how a hybrid model comes back looking dense, which is a cache
+// estimate four times too high. A partial answer is kept only as the fallback for when the
+// second read fails or is short too — better than nothing, and strictly what the previous
+// behaviour gave.
+func engineGGUFGeometryFrom(read func(window int) ([]byte, error)) (engineKVGeometry, error) {
+	var best engineKVGeometry
+	for _, window := range []int{ggufHeadWindow, ggufHeadMax} {
+		buf, err := read(window)
+		if err != nil {
+			break
+		}
+		geom, err := parseGGUFGeometry(buf)
+		if err == nil {
+			return geom, nil // the whole header, modifiers and all
+		}
+		if !errors.Is(err, errGGUFShort) {
+			if best.complete() {
+				return best, nil
+			}
+			return geom, err // not a GGUF, or not one this reader parses: reading more cannot help
+		}
+		if geom.complete() {
+			best = geom
+		}
+	}
+	if best.complete() {
+		return best, nil
+	}
+	return best, errGGUFShort
+}
+
+// engineGGUFBytes is the first `window` bytes of the file at url, over HTTP Range.
+func engineGGUFBytes(ctx context.Context, url, token string, window int) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return engineKVGeometry{}, err
+		return nil, err
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", window-1))
 	if t := strings.TrimSpace(token); t != "" {
@@ -421,20 +456,16 @@ func engineGGUFTry(ctx context.Context, url, token string, window int) (engineKV
 	}
 	resp, err := engineIngestHTTP.Do(req)
 	if err != nil {
-		return engineKVGeometry{}, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	// 206 is the answer that was asked for. A 200 means the server ignored the Range and is
 	// about to send the whole file, which for an 18.5 GB checkpoint is not a fallback — the
 	// read is capped either way by LimitReader, and a truncated body parses or does not.
 	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
-		return engineKVGeometry{}, fmt.Errorf("gguf: %s answered %d", url, resp.StatusCode)
+		return nil, fmt.Errorf("gguf: %s answered %d", url, resp.StatusCode)
 	}
-	buf, err := io.ReadAll(io.LimitReader(resp.Body, int64(window)))
-	if err != nil {
-		return engineKVGeometry{}, err
-	}
-	return parseGGUFGeometry(buf)
+	return io.ReadAll(io.LimitReader(resp.Body, int64(window)))
 }
 
 // engineKVCacheMiB is the KV cache one model wants, in MiB.
@@ -528,25 +559,14 @@ func engineGGUFGeometryOfObject(ctx context.Context, key string, storage *engine
 	if !engineGGUFName(key) || storage == nil || !storage.configured() {
 		return engineKVGeometry{}
 	}
-	for _, window := range []int{ggufHeadWindow, ggufHeadMax} {
-		buf, err := storage.prefix(ctx, key, window)
-		if err != nil {
-			log.Printf("engines: %s: the attention geometry went unread (%v)", key, err)
-			return engineKVGeometry{}
-		}
-		geom, err := parseGGUFGeometry(buf)
-		if err == nil {
-			return geom
-		}
-		// Only a short window is worth the second, bigger read. Anything else is the file not
-		// being what the key says it is, and reading more of it changes nothing.
-		if !errors.Is(err, errGGUFShort) {
-			log.Printf("engines: %s: the attention geometry went unread (%v)", key, err)
-			return engineKVGeometry{}
-		}
+	geom, err := engineGGUFGeometryFrom(func(window int) ([]byte, error) {
+		return storage.prefix(ctx, key, window)
+	})
+	if err != nil {
+		log.Printf("engines: %s: the attention geometry went unread (%v)", key, err)
+		return engineKVGeometry{}
 	}
-	log.Printf("engines: %s: the attention geometry is past the %d-byte ceiling", key, ggufHeadMax)
-	return engineKVGeometry{}
+	return geom
 }
 
 // engineGeometryFile names the file whose header answers for the row: its own weights, under the

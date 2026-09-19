@@ -278,6 +278,7 @@ export const admin = {
   "admin.fit_estimate_note": "重みと KV キャッシュの見積もりです。計算バッファと CUDA コンテキストは含みません。",
   "admin.fit_no_kv": "KV キャッシュは読めなかったので、重みだけで比べています。",
   "admin.engines_refit_done": "この段に合わせて窓を書き換えました:",
+  "admin.engines_refit_failed": "書き換えに失敗したモデル（設定は元のままかもしれません）:",
   "admin.engines_refit_next_start": "反映は次にエンジンが起動したときからです（走行中の箱は起動時の窓のままです）。",
   "admin.engines_refit_stuck": "この段に合わせられなかったモデル:",
   "admin.engines_refit_unread": "ヘッダをまだ読めていません（有効化すると読みます）",

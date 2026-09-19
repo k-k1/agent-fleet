@@ -1172,13 +1172,24 @@ func engineVramGuardRow(ctx context.Context, e *engineRuntimeState, m store.Engi
 	// Only when it does not already fail the ordinary comparison below, and only for a row that
 	// declares a window: an image checkpoint has none, and for it the weights really are most of
 	// the story (ADR 0074's first measurement).
-	if source == engineVramFloor && m.ContextTokens > 0 && engineClassFits(sel, need) {
+	//
+	// `unknown` counts here as well as `floor`, and leaving it out was a hole the size of the
+	// original bug: a row whose FILES declare no bytes answers unknown, falls through the
+	// `unknown` line below, and is switched on without anybody looking — which is the seeded
+	// `qwen3-coder-30b-a3b` row on both deployments, enabled, declaring 32,768 tokens and not
+	// one measurable byte.
+	if (source == engineVramFloor || source == engineVramUnknown) &&
+		m.ContextTokens > 0 && engineClassFits(sel, need) {
+		known := fmt.Sprintf("%d MiB of weights", need)
+		if source == engineVramUnknown {
+			known = "weights nothing here can size either"
+		}
 		return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
 			"%s declares a %d-token window but no attention geometry, so the KV cache it will ask"+
-				" for on top of %d MiB of weights cannot be sized here and the %s class's %d MiB"+
+				" for on top of %s cannot be sized here and the %s class's %d MiB"+
 				" cannot be said to fit (its header was not readable from the bucket either);"+
 				" repeat with confirm_vram, or declare vram_mib",
-			m.ID, m.ContextTokens, need, sel.ID, sel.VramMiB)}
+			m.ID, m.ContextTokens, known, sel.ID, sel.VramMiB)}
 	}
 	if source == engineVramUnknown || engineClassFits(sel, need) {
 		return nil
@@ -2575,7 +2586,12 @@ func engineBaseModelHint(upstream string) string {
 // The row simply stays where it was, which is where it already is when this is not called at all.
 func (a engineAdminAPI) healGeometry(ctx context.Context, e *engineRuntimeState, id string) {
 	cur, ok := engineCatalogModel(ctx, e, id)
-	if !ok || engineModelIsLora(cur) || cur.KVLayers > 0 {
+	// 🔴 The skip is on the CEILING and not on KVLayers, which is what a row read before these
+	// columns existed still has. Migration 0062 stored four numbers and multiplied by all of
+	// them; such a row carries a geometry that looks present and prices its cache four times too
+	// high, and skipping on "has layers" would leave it that way for ever. context_ceiling
+	// arrived with the modifiers (0070), so a non-zero one is the mark of a row this code read.
+	if !ok || engineModelIsLora(cur) || cur.ContextCeiling > 0 {
 		return
 	}
 	key, ok := engineGeometryFile(cur)
@@ -2586,9 +2602,13 @@ func (a engineAdminAPI) healGeometry(ctx context.Context, e *engineRuntimeState,
 	if !geom.complete() {
 		return
 	}
-	next := cur
-	engineApplyGeometry(&next, geom)
-	if err := a.mgr.store.PutEngineModel(ctx, next); err != nil {
+	// 🔴 A targeted write. `cur` was read BEFORE a network round trip to object storage, so it
+	// is already stale, and a whole-row Put of it would silently revert anything another writer
+	// changed while the read was in flight.
+	if _, err := a.mgr.store.SetEngineModelGeometry(ctx, e.def.Key, id, store.EngineModelKV{
+		Layers: geom.Layers, HeadsKV: geom.HeadsKV, KeyLen: geom.KeyLen, ValueLen: geom.ValLen,
+		NextN: geom.NextN, FullAttnInterval: geom.FullAttnInterval, Ceiling: geom.Ceiling,
+	}); err != nil {
 		log.Printf("engines: %s/%s: the geometry was read and could not be stored (%v)", e.def.Key, id, err)
 		return
 	}
