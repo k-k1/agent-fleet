@@ -2593,6 +2593,10 @@ func (a engineAdminAPI) healGeometry(ctx context.Context, e *engineRuntimeState,
 	// them; such a row carries a geometry that looks present and prices its cache four times too
 	// high, and skipping on "has layers" would leave it that way for ever. context_ceiling
 	// arrived with the modifiers (0070), so a non-zero one is the mark of a row this code read.
+	//
+	// ⚠️ Which makes it "at most once per loading write", not "once": a header declaring no
+	// `<arch>.context_length` is read again every time. llama.cpp's converter always writes one,
+	// so this is a supported-input assumption rather than a leak — see engine_gguf.go's header.
 	if !ok || engineModelIsLora(cur) || cur.ContextCeiling > 0 {
 		return
 	}

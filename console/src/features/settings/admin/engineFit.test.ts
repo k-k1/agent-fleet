@@ -148,14 +148,14 @@ describe("refitWindows", () => {
   // was read once at registration: an engine moved up to a 48 GB card went on running the window
   // that fitted a 24 GB one.
   it("grows the window when the card grows", () => {
-    expect(refitWindows([row()], 22000)).toEqual([{ id: "qwen", from: 32768, to: 65536, unknown: false }]);
-    expect(refitWindows([row()], 44000)).toEqual([{ id: "qwen", from: 32768, to: 262144, unknown: false }]);
+    expect(refitWindows([row()], 22000)).toEqual([{ id: "qwen", from: 32768, to: 65536 }]);
+    expect(refitWindows([row()], 44000)).toEqual([{ id: "qwen", from: 32768, to: 262144 }]);
   });
 
   // The direction that used to fail silently at the cold start instead of on screen.
   it("shrinks the window when the card shrinks", () => {
     const wide = row({ context_tokens: 262144 });
-    expect(refitWindows([wide], 22000)).toEqual([{ id: "qwen", from: 262144, to: 65536, unknown: false }]);
+    expect(refitWindows([wide], 22000)).toEqual([{ id: "qwen", from: 262144, to: 65536 }]);
   });
 
   it("says nothing about a row that is already right", () => {
@@ -165,14 +165,14 @@ describe("refitWindows", () => {
   // 🔴 to = 0 is a REFUSAL to propose, never a window to write: 0 travels as "undeclared" and
   // opencode reads an undeclared context as auto-compaction off.
   it("refuses rather than proposing zero when the weights alone fill the card", () => {
-    expect(refitWindows([row()], 12000)).toEqual([{ id: "qwen", from: 32768, to: 0, unknown: false }]);
+    expect(refitWindows([row()], 12000)).toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "weights" }]);
   });
 
   it("marks a row whose header was never read instead of guessing for it", () => {
     expect(refitWindows([row({ kv_mib_per_1k_tokens: undefined })], 22000))
-      .toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
+      .toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "header" }]);
     expect(refitWindows([row({ context_length: undefined })], 22000))
-      .toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
+      .toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "header" }]);
   });
 
   it("skips what has no window: LoRAs and image checkpoints", () => {
@@ -204,7 +204,7 @@ describe("refitWindows will not fit against weights it does not know", () => {
   };
   it("refuses a row whose files declare no bytes (the seeded qwen3-coder row)", () => {
     const seeded = { ...base, file_rows: [{ s3Key: "llm/qwen.gguf" }] } as unknown as EngineModel;
-    expect(refitWindows([seeded], 44000)).toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
+    expect(refitWindows([seeded], 44000)).toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "weights" }]);
   });
   it("does not re-fit a row the operator measured themselves", () => {
     // 🔴 vram_mib is the WHOLE demand as engineModelVramNeed returns it — cache included, at
@@ -215,7 +215,7 @@ describe("refitWindows will not fit against weights it does not know", () => {
       ...base, vram_mib: 20000,
       file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
     } as unknown as EngineModel;
-    expect(refitWindows([measured], 24000)).toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
-    expect(refitWindows([measured], 44000)).toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
+    expect(refitWindows([measured], 24000)).toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "measured" }]);
+    expect(refitWindows([measured], 44000)).toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "measured" }]);
   });
 });

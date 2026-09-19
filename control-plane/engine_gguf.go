@@ -20,10 +20,17 @@ package main
 //     weights and nothing else — which fits almost any card and so let a row declaring 262,144
 //     tokens be switched on without a word.
 //
-// It is read ONCE and stored on the row — at registration, or on the first loading write to a
-// row that has none (engineAdminAPI.healGeometry). A header read per panel refresh would put a
-// network call on a screen that lists every model, and the geometry of a file identified by
+// It is stored on the row, and read at most once per loading write — at registration, or by
+// engineAdminAPI.healGeometry for a row that has none. A header read per panel refresh would put
+// a network call on a screen that lists every model, and the geometry of a file identified by
 // sha256 cannot change under us.
+//
+// ⚠️ "at most once" and not "exactly once", and the difference is a supported-input assumption
+// worth naming: healGeometry decides a row has been read by looking at `context_ceiling`, so a
+// header that declares no `<arch>.context_length` is re-read on every loading write. llama.cpp's
+// converter always writes one, which is why this is accepted rather than paid for with another
+// column — but a file from some other writer would be re-read, at up to two prefix reads a time,
+// on every enable. It is bounded by an operator's own action and never by a poll.
 //
 // 🔴 What cannot be read here is the KV cache's element type: `-ctk`/`-ctv` live in
 // `LlmExtraArgs`, a CloudFormation parameter that reaches the task definition and never the
@@ -134,11 +141,21 @@ type engineKVGeometry struct {
 	// same pass, and because the bucket road (engineGGUFGeometryOfObject) has no other way to
 	// learn it. 🔴 A ceiling, not a setting.
 	Ceiling int
+
+	// PastArch is "a tokenizer key went by", i.e. every `<arch>.*` key this header holds has
+	// already been seen. It is what makes a short read trustworthy: complete() says the four
+	// required numbers are in hand, and only this says nothing OPTIONAL was left behind the end
+	// of the window. Not stored on the row — it describes the read, not the model.
+	PastArch bool
 }
 
 func (g engineKVGeometry) complete() bool {
 	return g.Layers > 0 && g.HeadsKV > 0 && g.KeyLen > 0 && g.ValLen > 0
 }
+
+// settled is complete AND known to have nothing optional still ahead of it — the only state in
+// which a short read may be stored. See PastArch.
+func (g engineKVGeometry) settled() bool { return g.complete() && g.PastArch }
 
 // cacheLayers is how many of block_count actually hold a per-token KV cache.
 //
@@ -326,10 +343,22 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 	var arch string
 	var geom engineKVGeometry
 	var embedding, heads int
+	// 🔴 The marker that says a short read is nevertheless a COMPLETE one. llama.cpp's converter
+	// writes `general.*`, then every `<arch>.*` key, then `tokenizer.*` — so once a tokenizer key
+	// has gone past, no architecture key is still coming and running out of window afterwards
+	// costs nothing. Without it there is no way to tell "the header had no modifiers" from "the
+	// window ended before them", and the two have to be told apart: the second, taken for the
+	// first, stores a four-times-too-high cache estimate that reads as authoritative.
 	for i := uint64(0); i < kvCount; i++ {
 		key, err := r.str()
 		if err != nil {
 			return geom, ggufStop(geom, err)
+		}
+		// 🔴 Set from the KEY, before the value is parsed. The value that follows the first
+		// tokenizer key is the vocabulary array, which is exactly the thing no window contains —
+		// so a marker set after parsing it would never be set at all.
+		if strings.HasPrefix(key, "tokenizer.") {
+			geom.PastArch = true
 		}
 		t, err := r.u32()
 		if err != nil {
@@ -440,14 +469,26 @@ func engineGGUFGeometryFrom(read func(window int) ([]byte, error)) (engineKVGeom
 			// property here rather than a convention every caller has to remember.
 			return engineKVGeometry{}, err
 		}
-		if geom.complete() {
-			best = geom
+		// 🔴 `settled`, not `complete`. Four numbers in hand is not the same as "the header had
+		// nothing else to say": the optional modifiers come after them, and a window that ended
+		// in between yields a geometry that looks whole and prices its cache four times too
+		// high. PastArch is the only thing that can tell the two apart — a tokenizer key went
+		// by, so every architecture key this file holds is already behind us.
+		//
+		// A settled read needs no second window either, which is what makes the common case one
+		// round trip rather than two.
+		if geom.settled() {
+			return geom, nil
 		}
 	}
-	if best.complete() {
+	if best.settled() {
 		return best, nil
 	}
-	return best, errGGUFShort
+	// Complete but NOT settled: the window ended somewhere inside the architecture block, so
+	// there may be a modifier past it and there is no way to know. Refused rather than stored,
+	// for the same reason an unfinishable header is: `floor` says "we do not know" out loud,
+	// and a wrong `weights_kv` does not.
+	return engineKVGeometry{}, errGGUFShort
 }
 
 // engineGGUFBytes is the first `window` bytes of the file at url, over HTTP Range.

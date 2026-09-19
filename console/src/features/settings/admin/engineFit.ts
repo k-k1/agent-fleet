@@ -121,11 +121,18 @@ export function windowWhenUnsized(ceiling: number): number {
  *  0 travels as "undeclared" and opencode reads an undeclared context as auto-compaction off.
  *  `unknown` is the third answer: the row has no geometry or no ceiling, so nothing can be said
  *  until its header is read (which the CP does on the next loading write). */
+/** Why a row was not re-fitted. One word each, because the screen says a different sentence for
+ *  each and a single `unknown` flag made all three read as "its header has not been read yet" —
+ *  which is wrong advice for the other two and sends the operator after a header that is either
+ *  already read or not the problem. */
+export type RefitBlocked = "header" | "weights" | "measured";
+
 export type WindowRefit = {
   id: string;
   from: number;
   to: number;
-  unknown: boolean;
+  /** Absent when the row WAS re-fitted. */
+  blocked?: RefitBlocked;
 };
 
 /** What every row's window becomes on a given card, for the rows where that is a CHANGE.
@@ -148,7 +155,7 @@ export function refitWindows(models: EngineModel[], cardMiB: number): WindowRefi
     const kvPer1k = model.kv_mib_per_1k_tokens || 0;
     const ceiling = model.context_length || 0;
     if (!kvPer1k || !ceiling) {
-      out.push({ id: model.id, from: model.context_tokens, to: 0, unknown: true });
+      out.push({ id: model.id, from: model.context_tokens, to: 0, blocked: "header" });
       continue;
     }
     // 🔴 `vram_mib` is NOT the weights. engine_class.go's engineModelVramNeed returns it as the
@@ -159,7 +166,7 @@ export function refitWindows(models: EngineModel[], cardMiB: number): WindowRefi
     // that carries one is not re-fitted at all: they overrode the estimate on purpose, and this
     // is the arithmetic they overrode.
     if ((model.vram_mib || 0) > 0) {
-      out.push({ id: model.id, from: model.context_tokens, to: 0, unknown: true });
+      out.push({ id: model.id, from: model.context_tokens, to: 0, blocked: "measured" });
       continue;
     }
     // And the weights have to be known. Where the files declare no bytes — the seeded
@@ -168,12 +175,15 @@ export function refitWindows(models: EngineModel[], cardMiB: number): WindowRefi
     // ceiling for a model nobody has weighed.
     const weightsMiB = Math.round((model.file_rows || []).reduce((sum, f) => sum + (f.bytes || 0), 0) / 1048576);
     if (weightsMiB <= 0) {
-      out.push({ id: model.id, from: model.context_tokens, to: 0, unknown: true });
+      out.push({ id: model.id, from: model.context_tokens, to: 0, blocked: "weights" });
       continue;
     }
     const to = windowThatFits(weightsMiB, kvPer1k, cardMiB, ceiling);
     if (to === model.context_tokens) continue;
-    out.push({ id: model.id, from: model.context_tokens, to, unknown: false });
+    // 0 here is the third blocked shape: the weights are known and they alone fill the card.
+    out.push(to > 0
+      ? { id: model.id, from: model.context_tokens, to }
+      : { id: model.id, from: model.context_tokens, to: 0, blocked: "weights" });
   }
   return out;
 }

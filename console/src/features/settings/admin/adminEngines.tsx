@@ -60,7 +60,7 @@ export function EnginesAdminView() {
       key: string;
       done: WindowRefit[];
       stuck: WindowRefit[];
-      failed: { id: string; why: string; stored: boolean }[];
+      failed: { id: string; why: string; stored: boolean | null }[];
     } | null
   >(null);
   const closeAdmin = useSettingsUI((s) => s.closeAdmin);
@@ -143,10 +143,12 @@ export function EnginesAdminView() {
    */
   const refitToClass = async (key: string, row: EngineRow) => {
     const plan = refitWindows(row.model_rows || [], row.class?.vram_mib || 0);
-    const doable = plan.filter((p) => !p.unknown && p.to > 0);
-    const stuck = plan.filter((p) => p.unknown || p.to === 0);
+    const doable = plan.filter((p) => !p.blocked);
+    const stuck = plan.filter((p) => !!p.blocked);
     const done: WindowRefit[] = [];
-    const failed: { id: string; why: string; stored: boolean }[] = [];
+    // stored: true = written and only the publish failed / false = the CP refused before writing
+    // / null = the connection died and this side cannot say.
+    const failed: { id: string; why: string; stored: boolean | null }[] = [];
     for (const p of doable) {
       // 🔴 NO confirm_vram. It would make this the one write on the deployment that can never be
       // refused, and the guard knows things this arithmetic does not — the operator's own
@@ -157,6 +159,7 @@ export function EnginesAdminView() {
       // report never rendered, and the re-read never ran, so the screen kept showing windows
       // that no longer matched the store.
       let answer: { error?: unknown } | null = null;
+      let caught = false;
       let threw = "";
       try {
         answer = await apiJSON(
@@ -165,14 +168,20 @@ export function EnginesAdminView() {
           { context_tokens: p.to, max_output_tokens: outputForWindow(p.to) },
         );
       } catch (e) {
-        threw = e instanceof Error ? e.message : String(e);
+        // 🔴 A boolean, not the message. `reject("")` and `new Error("")` both give an empty
+        // string, and keying off that counted a throw as a success.
+        caught = true;
+        threw = (e instanceof Error ? e.message : String(e)) || "";
       }
       // 🔴 And a failure is REPORTED — with WHICH failure it was. `engine_publish_failed` is a
       // 502 the CP answers AFTER the row was written: the window IS stored and only the box was
       // never told, so calling that "unchanged" sends the operator to re-type a number that is
       // already right.
-      if (threw) {
-        failed.push({ id: p.id, why: threw, stored: false });
+      if (caught) {
+        // 🔴 And `stored` is UNKNOWN here, not false. The request may have reached the CP and
+        // been written before the connection died, so "its setting is unchanged" is a claim this
+        // side cannot make — and the re-read below can contradict it on screen.
+        failed.push({ id: p.id, why: threw, stored: null });
       } else if (answer?.error) {
         const code = (answer.error as { code?: string })?.code || "";
         failed.push({ id: p.id, why: errDetail(answer.error), stored: code === "engine_publish_failed" });
@@ -520,7 +529,7 @@ function EngineClassPicker({
   refit?: {
     done: WindowRefit[];
     stuck: WindowRefit[];
-    failed: { id: string; why: string; stored: boolean }[];
+    failed: { id: string; why: string; stored: boolean | null }[];
   } | null;
   onReplace: () => void;
 }) {
@@ -625,7 +634,11 @@ function EngineClassPicker({
                   <li key={r.id}>
                     <span className="engines-offer-label">{r.id}</span>
                     <span className="muted">
-                      {tr((r.stored ? "admin.engines_refit_stored_unpublished" : "admin.engines_refit_unchanged") as never)}
+                      {tr((r.stored === true
+                        ? "admin.engines_refit_stored_unpublished"
+                        : r.stored === false
+                          ? "admin.engines_refit_unchanged"
+                          : "admin.engines_refit_stored_unknown") as never)}
                     </span>
                     <span className="muted">{r.why}</span>
                   </li>
@@ -640,9 +653,7 @@ function EngineClassPicker({
                 {refit.stuck.map((r) => (
                   <li key={r.id}>
                     <span className="engines-offer-label">{r.id}</span>
-                    <span className="muted">
-                      {tr((r.unknown ? "admin.engines_refit_unread" : "admin.engines_refit_over") as never)}
-                    </span>
+                    <span className="muted">{tr((`admin.engines_refit_blocked_${r.blocked}`) as never)}</span>
                   </li>
                 ))}
               </ul>

@@ -1773,3 +1773,28 @@ declares a window and has no geometry through only with `confirm_vram`. Three wa
 declare `vram_mib`, or re-register so the header is read. **A row that declares no window (an
 image checkpoint) is untouched**, and for it the weights really are most of the story, as the
 first measurement said.
+
+### Review round 3 — when a short read may be believed (2026-09-19)
+
+"The four required fields are in hand" is not "the header had nothing else to say". The optional
+modifiers are written after them, so a read whose window ended in between **looks whole and
+prices its cache four times too high**. Round 2's fix caught only the case where the second read
+was corrupt; a second read that simply FAILED (a timeout, an AccessDenied — ordinary transients)
+and a header whose modifiers sit past even 1 MiB could both still store the first window's
+partial answer as an authoritative `weights_kv`.
+
+The header carries the marker that tells them apart. llama.cpp's converter writes `general.*`,
+then every `<arch>.*` key, then `tokenizer.*` — so **once a tokenizer key has gone by, every
+architecture key this file holds is already behind us**. That is `engineKVGeometry.PastArch`, and
+`settled()` (complete AND PastArch) is the only state in which a short read may be stored.
+
+It also makes the ordinary case **one round trip**: reaching the tokenizer means the second
+window is never fetched.
+
+🔴 Set from the KEY, before the value is parsed. The value after the first tokenizer key is the
+vocabulary array itself, which is precisely what no window contains — a marker set after parsing
+it would never be set at all.
+
+And round 2's test had fixed that fallback as correct. The same shape as the `vram_mib` mistake:
+**each fix bakes into a test whatever was believed at the time**, and that was the failure that
+recurred most across these three rounds.

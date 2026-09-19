@@ -106,7 +106,9 @@ func TestParseGGUFGeometryReadsBothShapes(t *testing.T) {
 	// 1536 / 12 = 128, derived because the file declares neither length. The ceiling rides along
 	// on the same pass — it is not part of the cache arithmetic, but the bucket road has no other
 	// way to learn it (engineGGUFGeometryOfObject).
-	want := engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, Ceiling: 32768}
+	// PastArch: the fixture writes a tokenizer key, so the scan knows no architecture key is
+	// still ahead — which is what makes a short read of this header trustworthy.
+	want := engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, Ceiling: 32768, PastArch: true}
 	if got != want {
 		t.Errorf("qwen2 geometry = %+v, want %+v", got, want)
 	}
@@ -116,6 +118,8 @@ func TestParseGGUFGeometryReadsBothShapes(t *testing.T) {
 		t.Fatalf("qwen3moe: %v", err)
 	}
 	// 🔴 128, NOT 2048/32 = 64. Getting this wrong halves a 30B's KV estimate.
+	// No PastArch: this fixture writes no tokenizer key, so the scan cannot know whether the
+	// header had more to say. The ladder treats that as unsettled and reads further.
 	want = engineKVGeometry{Layers: 48, HeadsKV: 4, KeyLen: 128, ValLen: 128, Ceiling: 262144}
 	if got != want {
 		t.Errorf("qwen3moe geometry = %+v, want %+v", got, want)
@@ -191,7 +195,7 @@ func TestParseGGUFGeometrySkipsPastArraysAndFloats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128}); got != want {
+	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, PastArch: true}); got != want {
 		t.Errorf("geometry = %+v, want %+v", got, want)
 	}
 }
@@ -329,7 +333,7 @@ func TestParseGGUFGeometryShortWindowKeepsWhatItRead(t *testing.T) {
 	if !errors.Is(err, errGGUFShort) {
 		t.Fatalf("err = %v, want errGGUFShort", err)
 	}
-	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128}); got != want {
+	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128, PastArch: true}); got != want {
 		t.Errorf("geometry = %+v, want %+v (what it read, alongside the error)", got, want)
 	}
 }
@@ -378,11 +382,15 @@ func TestEngineGGUFGeometryLadderTriesTheBiggerWindowForTheModifiers(t *testing.
 	}
 }
 
-// When the bigger window is short too, what was read is still better than nothing — and is
-// exactly what the previous behaviour gave. A read that never completes the four stays an
-// error, so nothing is stored from it.
-func TestEngineGGUFGeometryLadderFallsBackAndRefuses(t *testing.T) {
-	complete := ggufBuild(t, 3, []ggufKV{
+// 🔴 Rewritten after review round 3, which pointed out that the previous version of this test
+// fixed the WRONG behaviour as correct: it asserted that a short read of an unsettled header was
+// a success. Four numbers in hand is not "the header had nothing else to say" — the optional
+// modifiers come after them — so the two cases have to be told apart, and PastArch is what tells
+// them apart.
+func TestEngineGGUFGeometryLadderTrustsOnlyASettledRead(t *testing.T) {
+	// Settled: a tokenizer key went by, so no architecture key is still ahead. Short here costs
+	// nothing, and it costs no SECOND read either.
+	settled := ggufBuild(t, 3, []ggufKV{
 		{"general.architecture", ggufTypeString, "qwen2"},
 		{"qwen2.block_count", ggufTypeUint32, 28},
 		{"qwen2.attention.head_count_kv", ggufTypeUint32, 2},
@@ -390,14 +398,56 @@ func TestEngineGGUFGeometryLadderFallsBackAndRefuses(t *testing.T) {
 		{"qwen2.attention.value_length", ggufTypeUint32, 128},
 		{"tokenizer.ggml.tokens", ggufTypeArray, ggufArr{ggufTypeString, []any{"x", "yy"}}},
 	})
-	got, err := engineGGUFGeometryFrom(func(int) ([]byte, error) { return complete[:len(complete)-6], nil })
+	reads := 0
+	got, err := engineGGUFGeometryFrom(func(int) ([]byte, error) {
+		reads++
+		return settled[:len(settled)-6], nil
+	})
 	if err != nil {
-		t.Fatalf("both windows short but complete: err = %v, want nil", err)
+		t.Fatalf("settled but short: err = %v, want nil", err)
 	}
-	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128}); got != want {
-		t.Errorf("geometry = %+v, want %+v", got, want)
+	if got.Layers != 28 || !got.PastArch {
+		t.Errorf("geometry = %+v", got)
+	}
+	if reads != 1 {
+		t.Errorf("reads = %d, want 1 — a settled read needs no bigger window", reads)
 	}
 
+	// UNSETTLED: the four are in hand and the window ended inside the architecture block. There
+	// may be a modifier past it and there is no way to know, so both windows short is a refusal
+	// rather than a four-times-too-high answer stored as `weights_kv`.
+	unsettled := ggufBuild(t, 3, []ggufKV{
+		{"general.architecture", ggufTypeString, "qwen35"},
+		{"qwen35.block_count", ggufTypeUint32, 65},
+		{"qwen35.attention.head_count_kv", ggufTypeUint32, 4},
+		{"qwen35.attention.key_length", ggufTypeUint32, 256},
+		{"qwen35.attention.value_length", ggufTypeUint32, 256},
+		{"qwen35.nextn_predict_layers", ggufTypeUint32, 1},
+		{"qwen35.full_attention_interval", ggufTypeUint32, 4},
+	})
+	cut := bytes.Index(unsettled, []byte("qwen35.nextn_predict_layers"))
+	if cut <= 0 {
+		t.Fatal("could not place the cut")
+	}
+	if _, err := engineGGUFGeometryFrom(func(int) ([]byte, error) { return unsettled[:cut], nil }); !errors.Is(err, errGGUFShort) {
+		t.Errorf("both windows unsettled: err = %v, want errGGUFShort", err)
+	}
+
+	// And the case review round 3 named: the first window is complete-but-unsettled and the
+	// SECOND read fails outright — a timeout or an AccessDenied, which is an ordinary transient.
+	// Salvaging the first read there stores the unmodified shape as authoritative.
+	n := 0
+	if _, err := engineGGUFGeometryFrom(func(int) ([]byte, error) {
+		n++
+		if n == 1 {
+			return unsettled[:cut], nil
+		}
+		return nil, errors.New("AccessDenied")
+	}); err == nil {
+		t.Error("a failed second read let an unsettled first read through")
+	}
+
+	// Never complete at all stays a refusal, as before.
 	early := ggufBuild(t, 3, []ggufKV{
 		{"general.architecture", ggufTypeString, "qwen2"},
 		{"qwen2.block_count", ggufTypeUint32, 28},
@@ -406,9 +456,9 @@ func TestEngineGGUFGeometryLadderFallsBackAndRefuses(t *testing.T) {
 		t.Errorf("never complete: err = %v, want errGGUFShort", err)
 	}
 
-	// A file that is not a GGUF at all is refused on the FIRST window: reading more of it
-	// cannot turn it into one, and a second range GET is a round trip spent on nothing.
-	reads := 0
+	// A file that is not a GGUF at all is refused on the FIRST window: reading more of it cannot
+	// turn it into one, and a second range GET is a round trip spent on nothing.
+	reads = 0
 	if _, err := engineGGUFGeometryFrom(func(int) ([]byte, error) {
 		reads++
 		return []byte("not a gguf at all, really"), nil
@@ -425,16 +475,19 @@ func TestEngineGGUFGeometryLadderFallsBackAndRefuses(t *testing.T) {
 // would be stored as `weights_kv`, which reads as authoritative, while possibly being the
 // four-times-too-high form. Refuse, and let the row say `floor` out loud instead.
 func TestEngineGGUFGeometryLadderRefusesAHeaderItCannotFinish(t *testing.T) {
-	complete := ggufBuild(t, 3, []ggufKV{
+	// First window: the four are in hand and NOT settled — no tokenizer key went by, so the
+	// ladder goes on to the second. (A settled first read would return there and this test would
+	// never reach the corruption.)
+	unsettled := ggufBuild(t, 3, []ggufKV{
 		{"general.architecture", ggufTypeString, "qwen2"},
 		{"qwen2.block_count", ggufTypeUint32, 28},
 		{"qwen2.attention.head_count_kv", ggufTypeUint32, 2},
 		{"qwen2.attention.key_length", ggufTypeUint32, 128},
 		{"qwen2.attention.value_length", ggufTypeUint32, 128},
-		{"tokenizer.ggml.tokens", ggufTypeArray, ggufArr{ggufTypeString, []any{"x", "yy"}}},
+		{"qwen2.rope.freq_base", ggufTypeUint32, 7},
 	})
-	// First window: short, but the four are in hand. Second: the same header with a value type
-	// this reader does not know sitting after them, which is a file it cannot walk.
+	// Second: the same header with a value type this reader does not know sitting after the
+	// four, which is a file it cannot walk.
 	corrupt := ggufBuild(t, 3, []ggufKV{
 		{"general.architecture", ggufTypeString, "qwen2"},
 		{"qwen2.block_count", ggufTypeUint32, 28},
@@ -456,7 +509,7 @@ func TestEngineGGUFGeometryLadderRefusesAHeaderItCannotFinish(t *testing.T) {
 	got, err := engineGGUFGeometryFrom(func(int) ([]byte, error) {
 		n++
 		if n == 1 {
-			return complete[:len(complete)-6], nil
+			return unsettled[:len(unsettled)-4], nil
 		}
 		return corrupt, nil
 	})

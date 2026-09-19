@@ -942,10 +942,41 @@ describe("picking an instance class re-fits every window", () => {
     });
     await pick("l40s");
 
-    // Both rows were attempted — the throw did not end the loop.
-    expect(apiJSON.mock.calls.filter((c) => String(c[0]).includes("/models/"))).toHaveLength(2);
+    // 🔴 Review round 3: counting the calls is not enough — the same URL twice would satisfy it,
+    // and so would dropping the re-read. Name the SECOND row's address, and prove the store was
+    // read back, or the screen keeps showing windows it no longer holds.
+    const puts = apiJSON.mock.calls.filter((c) => String(c[0]).includes("/models/")).map((c) => String(c[0]));
+    expect(puts).toEqual([
+      "api/admin/engines/llm/models/first",
+      "api/admin/engines/llm/models/second",
+    ]);
+    expect(api.mock.calls.filter((c) => String(c[0]) === "api/admin/engines").length).toBeGreaterThan(1);
+
     const report = host!.querySelector(".engines-class-refit")!;
     expect(report.textContent).toContain("network is gone");
     expect(report.textContent).toContain("second");
+    // 🔴 And a dropped connection is not "unchanged": the CP may have written it before the
+    // socket died, so the only honest answer is that this side cannot say.
+    expect(report.textContent).toContain("確認できません");
+    expect(report.textContent).not.toContain("設定は元のままです");
+  });
+
+  // 🔴 `reject("")` and `new Error("")` both give an empty message, and keying the branch off
+  // that string counted a throw as a success — the row was listed as re-fitted when nothing
+  // reached the CP at all.
+  it("does not read an empty thrown error as success", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [llm()] });
+    await mount();
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/class")) {
+        return Promise.resolve(llm({ class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } }));
+      }
+      return Promise.reject(new Error(""));
+    });
+    await pick("l40s");
+    const report = host!.querySelector(".engines-class-refit")!;
+    expect(report.textContent).toContain("確認できません");
+    // Not claimed as written.
+    expect(report.textContent).not.toContain("→");
   });
 });
