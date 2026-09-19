@@ -71,6 +71,8 @@ var Entries = []string{
 	"pending-plan",
 	"pending-perm",
 	"pending-text",
+	"plan-file",
+	"plan-review",
 	// Per-agent id ledgers and message rings (agents.NewSidStore / NewMsgLedger).
 	"claude-sid",
 	"codex-sid",

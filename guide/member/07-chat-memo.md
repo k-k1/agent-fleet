@@ -180,6 +180,22 @@ approval it reads **"Send comments and reject (N)"** — delivering the body req
 approval dialog, so the two go together. The agent comes back with a revised plan that takes
 your comments into account.
 
+### Having another session review the plan
+
+Instead of reading it yourself, you can have **another agent read it**. **"Review in another
+session"** on a plan awaiting approval opens the usual launch dialog — the only difference is
+that the prompt asking for a review is already filled in. You pick the agent and the model
+there, so you can show the plan to a different model than the one that wrote it.
+
+- **The plan is rejected at that point** (the button says so). The findings come back as a
+  session-to-session message, and a session frozen on an approval dialog cannot receive text,
+  so it has to have its hands free first. The planning session stays in plan mode, takes the
+  findings, and proposes a revised plan.
+- The reviewer starts in the **same working copy** by default, so it sees your uncommitted work
+  too. You can pick a new worktree in the launch dialog instead.
+- The reviewer folds itself away when it is done. The session stays in the list, so you can open
+  it later to see **why** a given point was raised.
+
 ### Calling a skill or a command
 
 The button beside the input field — it shows the trigger character, **`/`** or **`$`** (**✦** for an

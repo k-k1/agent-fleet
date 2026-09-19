@@ -78,6 +78,29 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "plan.send_comments": "Send comments ({count})",
   "plan.feedback_undelivered": "The plan was rejected, but the comments could not be delivered. Send them again from the composer.",
   "mirror.plan_feedback_head": "{count} comment(s) on the plan. Please revise the plan to address them.",
+  // Reviewing a plan in another session (card button → reject → launch dialog with a prompt)
+  "plan.review_in_session": "Review in another session",
+  "plan.review_in_session_title": "Reject the plan and start a review session with the agent you pick",
+  "plan.review_launch_failed": "Could not start the review session: {err}",
+  "plan.review_title": "Review: {title}",
+  "plan.review_prompt_head":
+    "You have been asked to review the plan session {session} proposed to its user (started from the Console by that user).",
+  "plan.review_prompt_file": "- Plan: {path} (read it; do not edit it)",
+  "plan.review_prompt_dir": "- Working copy: {dir}",
+  "plan.review_prompt_focus": "- Look at this in particular: {focus}",
+  "plan.review_prompt_rules":
+    "Do not implement or change anything. Check the plan against the actual code: wrong assumptions, " +
+    "missed blast radius, duplication of or conflict with what already exists, missing tests, and the " +
+    "order and reversibility of the steps.",
+  "plan.review_prompt_format": "Answer in this format only.",
+  "plan.review_verdict_heading": "Verdict",
+  "plan.review_findings_heading": "Findings",
+  "plan.review_prompt_finding_shape":
+    "1. One line quoted from the plan\n   Why it is a problem and how to fix it (leave this section empty if you have none)",
+  "plan.review_prompt_reply":
+    "When you are done, send the verdict and the findings to {session} with send_to_peer_session, " +
+    "then fold this session away with af_stop_after_turn. " +
+    "If you cannot send to a peer, tell the user, and say that it could not be delivered.",
   "mirror.perm_pending": "Awaiting permission",
   "mirror.perm_asking": "Requesting permission (edits, commands, etc.)",
   "mirror.allow": "Allow",

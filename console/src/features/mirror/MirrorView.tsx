@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, ReactNode } from "react";
-import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, downloadURL } from "../../core/api/client.ts";
+import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionPlanFile, sessionSettings, downloadURL } from "../../core/api/client.ts";
 import type { CarriedInteraction, InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
@@ -72,6 +72,9 @@ import { echoStore, nextEchoId, type SendEcho } from "./parts/sendEcho.ts";
 import { findDiffPane, findPane, findPlanPane } from "./parts/panes.ts";
 import { PLAN_APPROVE_KEYS } from "./planDecision.ts";
 import { deliverPlanComments, planKey } from "./planComments.ts";
+import { reviewPrompt, reviewTitle } from "./planReview.ts";
+import { handoffLaunchTarget } from "./handoffLaunch.ts";
+import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
 import { type InteractionAnswerWire, patchAnswers } from "./interactionAnswers.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
@@ -1207,6 +1210,46 @@ export function MirrorView({
     openTargetInNew(target);
   };
 
+  // Review this plan in another session: reject it, then open the ordinary launch dialog
+  // seeded with a prompt that points the reviewer at the plan FILE.
+  //
+  // The order is forced. The findings come back as a peer message, and a session waiting on
+  // plan approval refuses free text of every kind (409 plan_pending) — because the approval
+  // modal would swallow the text and turn its Enter into an approval of the plan under
+  // review. Rejected, the planner sits idle in plan mode and the message lands.
+  //
+  // The path is fetched BEFORE anything is rejected: a launch with no plan to review is
+  // worse than no launch, and this way a failure leaves the plan exactly as it was.
+  const reviewPlanElsewhere = async (plan: string) => {
+    if (planSendBlocked) {
+      toast(planSendBlocked);
+      return;
+    }
+    if (wsDown()) return;
+    const res = await sessionPlanFile(session);
+    if (!res.ok || !res.path) {
+      toast(tr("plan.review_launch_failed", { err: res.message || "" }));
+      return;
+    }
+    const target = handoffLaunchTarget(sessionMeta, useReposStore.getState().repos, false);
+    if ("error" in target) {
+      toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
+      return;
+    }
+    markRejected(plan, true); // optimistic "rejected" badge; planOutcome reconciles it
+    wasWorkingRef.current = false; // as with an interrupt: no reply is being waited for
+    await sendInterrupt();
+    // Only the prompt and the title: the lineage fields belong to a handoff PROPOSAL, and
+    // StartHost would try to badge one that does not exist.
+    useLaunchSeed.getState().set(
+      reviewPrompt({ parent: session, path: res.path, dir: target.repo.path || "" }),
+      reviewTitle(planTitle(plan)),
+    );
+    // inPlace: the reviewer reads the working copy this plan is about, uncommitted work
+    // included. A worktree would show it the base instead — the dialog still offers one.
+    useLaunchTarget.getState().open(target.repo, "", true);
+  };
+
   // Why plan comments cannot be sent ("" = they can). The composer disappears entirely while
   // stopped, but the plan card stays in the history, so its send button must block itself.
   // Collecting comments while stopped is still allowed — they go out after a resume.
@@ -1904,6 +1947,7 @@ export function MirrorView({
               markRejected(pendingPlan, true); // optimistic "rejected" badge; planOutcome reconciles it
               void sendInterrupt();
             }}
+            onReview={() => void reviewPlanElsewhere(pendingPlan)}
           />
         )}
         {pendingPerm && !pending && !pendingPlan && (

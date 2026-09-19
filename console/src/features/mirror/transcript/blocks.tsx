@@ -957,6 +957,7 @@ export function PlanBlock({
   onOpen,
   onApprove,
   onReject,
+  onReview,
   onSendComments,
   sendDisabled,
   sending,
@@ -971,6 +972,8 @@ export function PlanBlock({
   onOpen?: () => void;
   onApprove?: () => void;
   onReject?: () => void;
+  /** Reject and open the launch dialog for a session that reviews this plan. */
+  onReview?: () => void;
   onSendComments?: () => void;
   /** Why sending is blocked ("" or absent = allowed); blocks the button on a stopped session. */
   sendDisabled?: string;
@@ -1089,6 +1092,20 @@ export function PlanBlock({
                 onClick={onReject}
               >
                 <Icon name="close" /> {tr("mirror.reject_continue")}
+              </button>
+            )}
+            {onReview && (
+              // Rejects too, and says so in the title: the findings come back as a peer
+              // message, which a session awaiting plan approval refuses (the modal would
+              // eat the text and its Enter would approve this very plan).
+              <button
+                type="button"
+                className="ghost mt-plan-review"
+                disabled={sending || !!sendDisabled}
+                title={sendDisabled || tr("plan.review_in_session_title")}
+                onClick={onReview}
+              >
+                <Icon name="comment-discussion" /> {tr("plan.review_in_session")}
               </button>
             )}
           </>

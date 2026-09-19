@@ -93,6 +93,7 @@ var (
 	exitFiles        = fstore.JSON[ExitInfo](paths.AgentStateDir, "session-exit", ".json")
 	pendingQuestions = fstore.Raw(paths.AgentStateDir, "pending-question", ".json")
 	pendingPlans     = fstore.Strings(paths.AgentStateDir, "pending-plan", ".md")
+	planFiles        = fstore.Strings(paths.AgentStateDir, "plan-file", ".txt")
 	pendingPerms     = fstore.Strings(paths.AgentStateDir, "pending-perm", ".txt")
 	lastTools        = fstore.Strings(paths.AgentStateDir, "pending-perm", ".tool")
 	pendingTexts     = fstore.Strings(paths.AgentStateDir, "pending-text", ".txt")
@@ -287,6 +288,7 @@ func Remove(sid string) {
 	RemovePendingQuestion(sid)
 	RemovePendingPlan(sid)
 	RemovePendingPermission(sid)
+	planFiles.Remove(sid)
 }
 
 // LiveState reads the status file written by the agent's hooks/plugin,
@@ -406,6 +408,19 @@ func RemovePendingText(sid string)              { pendingTexts.Remove(sid) }
 func WritePendingPlan(sid, plan string)         { _ = pendingPlans.Write(sid, plan) }
 func ReadPendingPlan(sid string) (string, bool) { return pendingPlans.Read(sid) }
 func RemovePendingPlan(sid string)              { pendingPlans.Remove(sid) }
+
+// The plan file claude is writing this session's plan into
+// ($CLAUDE_CONFIG_DIR/plans/<slug>.md). Recorded from the Write/Edit PreToolUse hook,
+// which is the only place the path appears while the plan is still pending: the
+// tool_result that spells it out arrives only after approval, and the file name is a
+// random slug in a directory shared by every session in the container — so guessing by
+// mtime would hand out another session's plan.
+//
+// Unlike the pending payload this OUTLIVES the approval: claude rewrites the same path
+// when it revises the plan, so one record per session stays correct across rounds. It is
+// dropped only with the rest of the session's state (Remove).
+func WritePlanFile(sid, path string)         { _ = planFiles.Write(sid, path) }
+func ReadPlanFile(sid string) (string, bool) { return planFiles.Read(sid) }
 
 // A pending tool-permission prompt (the Notification message), kept while the session
 // is blocked awaiting an allow/deny decision so the Console can approve it inline.
