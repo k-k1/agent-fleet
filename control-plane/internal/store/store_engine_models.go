@@ -385,13 +385,19 @@ func (s *SQL) SetEngineModelWindow(ctx context.Context, role, id string, context
 // snapshot silently reverts whatever anybody else changed in between. This is the same
 // read-modify-write hazard a plain file rewrite has, and the same answer: write the columns you
 // learned about and leave every other one to whoever owns it.
-func (s *SQL) SetEngineModelGeometry(ctx context.Context, role, id string, kv EngineModelKV) (bool, error) {
+// 🔴 `files` is a compare-and-swap, not a filter. The geometry describes ONE file's header, and
+// between the read that produced it and this write another session can Replace the main GGUF —
+// or delete the row and register the same id over different bytes. An unconditional UPDATE then
+// staples the old file's attention shape onto the new file's row, which is a wrong VRAM answer
+// that nothing afterwards contradicts. The same optimistic swap ReplaceEngineModelFile makes,
+// for the same reason: `false` means somebody moved first and the caller simply does not write.
+func (s *SQL) SetEngineModelGeometry(ctx context.Context, role, id string, files []EngineModelFile, kv EngineModelKV) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE engine_models SET kv_layers=?, kv_heads_kv=?, kv_key_len=?, kv_value_len=?,
 		   kv_nextn=?, kv_full_attn_interval=?, context_ceiling=?, updated_at=?
-		 WHERE role=? AND id=?`,
+		 WHERE role=? AND id=? AND files=?`,
 		kv.Layers, kv.HeadsKV, kv.KeyLen, kv.ValueLen,
-		kv.NextN, kv.FullAttnInterval, kv.Ceiling, NowTS(), role, id)
+		kv.NextN, kv.FullAttnInterval, kv.Ceiling, NowTS(), role, id, jsonList(files))
 	return affected(res, err)
 }
 

@@ -206,18 +206,16 @@ describe("refitWindows will not fit against weights it does not know", () => {
     const seeded = { ...base, file_rows: [{ s3Key: "llm/qwen.gguf" }] } as unknown as EngineModel;
     expect(refitWindows([seeded], 44000)).toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
   });
-  it("prefers the operator's own measurement over the file sizes", () => {
-    // vram_mib is what engineModelVramNeed uses, so fitting against anything else would make
-    // this disagree with the guard that judges the write.
+  it("does not re-fit a row the operator measured themselves", () => {
+    // 🔴 vram_mib is the WHOLE demand as engineModelVramNeed returns it — cache included, at
+    // whatever window it was measured at — not the weights. Treating it as weights and adding a
+    // cache on top double-counts: this row came out as 4,096 tokens on a card the CP says it
+    // fits. Their number cannot be taken apart, so the row is left alone and named.
     const measured = {
       ...base, vram_mib: 20000,
-      file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 1_048_576 }],
+      file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
     } as unknown as EngineModel;
-    // 44,000 x 0.85 = 37,400 less 20,000 leaves 17,400 MiB: 262,144 tokens cost 16,384.
-    expect(refitWindows([measured], 44000)).toEqual([{ id: "qwen", from: 32768, to: 262144, unknown: false }]);
-    // On the small card 24,000 x 0.85 = 20,400 less the same 20,000 leaves 400 MiB, which buys
-    // 4,096 tokens (256 MiB) and not 8,192 (512 MiB) — the measurement shrinks the window, which
-    // is the direction that used to fail only at the cold start.
-    expect(refitWindows([measured], 24000)).toEqual([{ id: "qwen", from: 32768, to: 4096, unknown: false }]);
+    expect(refitWindows([measured], 24000)).toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
+    expect(refitWindows([measured], 44000)).toEqual([{ id: "qwen", from: 32768, to: 0, unknown: true }]);
   });
 });

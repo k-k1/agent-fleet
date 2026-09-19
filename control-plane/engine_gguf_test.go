@@ -419,3 +419,54 @@ func TestEngineGGUFGeometryLadderFallsBackAndRefuses(t *testing.T) {
 		t.Errorf("reads = %d, want 1", reads)
 	}
 }
+
+// 🔴 Found by re-review. A header this reader cannot walk to the end of is one whose optional
+// modifiers may sit past the point it gave up — so a geometry salvaged from the SMALLER window
+// would be stored as `weights_kv`, which reads as authoritative, while possibly being the
+// four-times-too-high form. Refuse, and let the row say `floor` out loud instead.
+func TestEngineGGUFGeometryLadderRefusesAHeaderItCannotFinish(t *testing.T) {
+	complete := ggufBuild(t, 3, []ggufKV{
+		{"general.architecture", ggufTypeString, "qwen2"},
+		{"qwen2.block_count", ggufTypeUint32, 28},
+		{"qwen2.attention.head_count_kv", ggufTypeUint32, 2},
+		{"qwen2.attention.key_length", ggufTypeUint32, 128},
+		{"qwen2.attention.value_length", ggufTypeUint32, 128},
+		{"tokenizer.ggml.tokens", ggufTypeArray, ggufArr{ggufTypeString, []any{"x", "yy"}}},
+	})
+	// First window: short, but the four are in hand. Second: the same header with a value type
+	// this reader does not know sitting after them, which is a file it cannot walk.
+	corrupt := ggufBuild(t, 3, []ggufKV{
+		{"general.architecture", ggufTypeString, "qwen2"},
+		{"qwen2.block_count", ggufTypeUint32, 28},
+		{"qwen2.attention.head_count_kv", ggufTypeUint32, 2},
+		{"qwen2.attention.key_length", ggufTypeUint32, 128},
+		{"qwen2.attention.value_length", ggufTypeUint32, 128},
+		{"qwen2.rope.freq_base", ggufTypeUint32, 0},
+	})
+	// Bend the last key's type number to one the spec does not define. The fixture will not
+	// write such a thing, and that is the point: it is what a damaged file looks like, and the
+	// reader's answer to an unknown width is to stop, because it no longer knows where the next
+	// key begins.
+	at := bytes.LastIndex(corrupt, []byte("qwen2.rope.freq_base"))
+	if at < 0 {
+		t.Fatal("could not place the corruption")
+	}
+	corrupt[at+len("qwen2.rope.freq_base")] = 99
+	n := 0
+	got, err := engineGGUFGeometryFrom(func(int) ([]byte, error) {
+		n++
+		if n == 1 {
+			return complete[:len(complete)-6], nil
+		}
+		return corrupt, nil
+	})
+	if err == nil {
+		t.Fatalf("a header that cannot be finished came back as success: %+v", got)
+	}
+	if errors.Is(err, errGGUFShort) {
+		t.Errorf("err = %v, want a plain refusal rather than the retryable one", err)
+	}
+	if got.complete() {
+		t.Errorf("geometry = %+v, want nothing stored from a file this reader gave up on", got)
+	}
+}

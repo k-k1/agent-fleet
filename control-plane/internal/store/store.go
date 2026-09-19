@@ -529,7 +529,9 @@ type EngineModelStore interface {
 	// SetEngineModelGeometry writes only the columns a header read produced. Targeted because
 	// the read is a network round trip and a whole-row write of the pre-read snapshot would
 	// revert anything that changed while it was in flight.
-	SetEngineModelGeometry(ctx context.Context, role, id string, kv EngineModelKV) (bool, error)
+	// `files` is the declaration the caller read the geometry's file out of, compared on write: a
+	// replacement that landed in between must not have the previous file's shape stapled to it.
+	SetEngineModelGeometry(ctx context.Context, role, id string, files []EngineModelFile, kv EngineModelKV) (bool, error)
 	// SetEngineModelVram writes the operator's own VRAM measurement; 0 withdraws it and puts the
 	// row back on the floor its files imply.
 	SetEngineModelVram(ctx context.Context, role, id string, vramMiB int) (bool, error)

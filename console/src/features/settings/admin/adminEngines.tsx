@@ -56,7 +56,12 @@ export function EnginesAdminView() {
   /** What the last class change did to the windows, so an automatic edit is never a silent one.
    *  Null until a rung is picked, and cleared by the next pick. */
   const [refit, setRefit] = useState<
-    { key: string; done: WindowRefit[]; stuck: WindowRefit[]; failed: { id: string; why: string }[] } | null
+    {
+      key: string;
+      done: WindowRefit[];
+      stuck: WindowRefit[];
+      failed: { id: string; why: string; stored: boolean }[];
+    } | null
   >(null);
   const closeAdmin = useSettingsUI((s) => s.closeAdmin);
   const closeTenant = useSettingsUI((s) => s.closeTenantSettings);
@@ -141,22 +146,39 @@ export function EnginesAdminView() {
     const doable = plan.filter((p) => !p.unknown && p.to > 0);
     const stuck = plan.filter((p) => p.unknown || p.to === 0);
     const done: WindowRefit[] = [];
-    const failed: { id: string; why: string }[] = [];
+    const failed: { id: string; why: string; stored: boolean }[] = [];
     for (const p of doable) {
       // 🔴 NO confirm_vram. It would make this the one write on the deployment that can never be
       // refused, and the guard knows things this arithmetic does not — the operator's own
       // vram_mib, and a row whose weights nothing can size. A refusal here is a row that should
       // not have been re-fitted, and it belongs on screen rather than in a silent skip.
-      const answer = await apiJSON(
-        `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(p.id)}`,
-        "PUT",
-        { context_tokens: p.to, max_output_tokens: outputForWindow(p.to) },
-      );
-      // 🔴 And a failure is REPORTED. `engine_publish_failed` is a 502 the CP answers AFTER the
-      // row was written, so dropping it quietly would leave the operator reading a list that
-      // says less than what happened — the window stored and the box never told.
-      if (answer?.error) failed.push({ id: p.id, why: errDetail(answer.error) });
-      else done.push(p);
+      // 🔴 Per row, and CAUGHT. A rejected fetch — the browser losing the network mid-loop —
+      // used to throw out of the whole function: the rows after it were never attempted, the
+      // report never rendered, and the re-read never ran, so the screen kept showing windows
+      // that no longer matched the store.
+      let answer: { error?: unknown } | null = null;
+      let threw = "";
+      try {
+        answer = await apiJSON(
+          `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(p.id)}`,
+          "PUT",
+          { context_tokens: p.to, max_output_tokens: outputForWindow(p.to) },
+        );
+      } catch (e) {
+        threw = e instanceof Error ? e.message : String(e);
+      }
+      // 🔴 And a failure is REPORTED — with WHICH failure it was. `engine_publish_failed` is a
+      // 502 the CP answers AFTER the row was written: the window IS stored and only the box was
+      // never told, so calling that "unchanged" sends the operator to re-type a number that is
+      // already right.
+      if (threw) {
+        failed.push({ id: p.id, why: threw, stored: false });
+      } else if (answer?.error) {
+        const code = (answer.error as { code?: string })?.code || "";
+        failed.push({ id: p.id, why: errDetail(answer.error), stored: code === "engine_publish_failed" });
+      } else {
+        done.push(p);
+      }
     }
     if (done.length || failed.length) await load();
     setRefit(done.length || stuck.length || failed.length ? { key, done, stuck, failed } : null);
@@ -495,7 +517,11 @@ function EngineClassPicker({
   busy: boolean;
   onPick: (cls: string) => void;
   /** What the last pick did to this engine's windows, when it did anything. */
-  refit?: { done: WindowRefit[]; stuck: WindowRefit[]; failed: { id: string; why: string }[] } | null;
+  refit?: {
+    done: WindowRefit[];
+    stuck: WindowRefit[];
+    failed: { id: string; why: string; stored: boolean }[];
+  } | null;
   onReplace: () => void;
 }) {
   const tr = useT();
@@ -598,6 +624,9 @@ function EngineClassPicker({
                 {refit.failed.map((r) => (
                   <li key={r.id}>
                     <span className="engines-offer-label">{r.id}</span>
+                    <span className="muted">
+                      {tr((r.stored ? "admin.engines_refit_stored_unpublished" : "admin.engines_refit_unchanged") as never)}
+                    </span>
                     <span className="muted">{r.why}</span>
                   </li>
                 ))}

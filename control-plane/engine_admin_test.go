@@ -2308,3 +2308,100 @@ func TestEngineAdminGeometryHealUpgradesAPreModifierRow(t *testing.T) {
 		t.Errorf("after: need = %d MiB, want 13531", need)
 	}
 }
+
+// 🔴 Found by re-review: the `unknown` half of the guard had no test of its own, and the two
+// rows that reach it are not missing the same thing. A row whose FILES declare no bytes answers
+// unknown and used to fall straight through the `unknown` line below — the seeded
+// `qwen3-coder-30b-a3b` row on both deployments, enabled, declaring 32,768 tokens and not one
+// measurable byte. It may even HAVE a geometry, so the refusal must not send its operator
+// looking for a header that is already read.
+func TestEngineAdminAsksAboutAWindowOnUnweighableFiles(t *testing.T) {
+	a, e, st := engineWindowTestEngine(t)
+	row := engineWindowTestRow("seeded", false, 32768)
+	row.Files = []store.EngineModelFile{{S3Key: "image/checkpoints/seeded.gguf"}} // no Bytes
+	if err := st.PutEngineModel(t.Context(), row); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if _, source := engineModelVramNeed(row); source != engineVramUnknown {
+		t.Fatalf("premise: source = %s, want unknown", source)
+	}
+
+	code, out := putModelReq(t, a, "seeded", `{"enabled":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("enabling a row with no weighable files = %d (%v), want 409", code, out)
+	}
+	apiErr, _ := out["error"].(map[string]any)
+	msg, _ := apiErr["message"].(string)
+	if !strings.Contains(msg, "declare no bytes") {
+		t.Errorf("message = %q, want it to name the missing BYTES", msg)
+	}
+	// It has a geometry. Saying "no attention geometry" would send the operator after a header
+	// that was already read.
+	if strings.Contains(msg, "no attention geometry") {
+		t.Errorf("message = %q, want it not to blame the geometry this row has", msg)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].Enabled {
+		t.Fatal("the row was enabled by the call that refused it")
+	}
+}
+
+// 🔴 Found by re-review. The geometry describes ONE file's header, and between the read that
+// produced it and the write another session can Replace the main GGUF. An unconditional UPDATE
+// staples the old file's attention shape onto the new file's row — a wrong VRAM answer nothing
+// afterwards contradicts.
+func TestEngineAdminGeometryHealWillNotStapleAnOldShapeToANewFile(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e.catalog = newEngineCatalog(st, "image")
+	old := "image/checkpoints/old.gguf"
+	bucket := &fakeEngineStorageHead{
+		states: map[string]string{old: engineStoragePresent},
+		head: map[string][]byte{old: ggufBuild(t, 3, []ggufKV{
+			{"general.architecture", ggufTypeString, "qwen35"},
+			{"qwen35.block_count", ggufTypeUint32, 65},
+			{"qwen35.context_length", ggufTypeUint32, 262144},
+			{"qwen35.attention.head_count_kv", ggufTypeUint32, 4},
+			{"qwen35.attention.key_length", ggufTypeUint32, 256},
+			{"qwen35.attention.value_length", ggufTypeUint32, 256},
+			{"qwen35.nextn_predict_layers", ggufTypeUint32, 1},
+			{"qwen35.full_attention_interval", ggufTypeUint32, 4},
+		})},
+	}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		storage: newEngineStorage("models", bucket),
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "qwen", Kind: "checkpoint", BaseModel: "sdxl",
+		Files:         []store.EngineModelFile{{S3Key: old, Bytes: 1 << 30}},
+		ContextTokens: 32768, MaxOutputTokens: 8192,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Prime the cache with the OLD declaration, so the heal reads that file's header.
+	e.catalog.invalidate()
+	if rows := e.catalog.list(t.Context()); len(rows) != 1 {
+		t.Fatalf("cache: %+v", rows)
+	}
+	// Another session swaps the checkpoint for different bytes while the read is in flight.
+	swapped, err := st.ReplaceEngineModelFile(t.Context(), "image", "qwen",
+		store.EngineModelFile{S3Key: "image/checkpoints/new.gguf", Bytes: 2 << 30}, nil)
+	if err != nil || !swapped {
+		t.Fatalf("replace: %v %v", swapped, err)
+	}
+
+	a.healGeometry(t.Context(), e, "qwen")
+
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].KVLayers != 0 || rows[0].ContextCeiling != 0 {
+		t.Errorf("the old file's shape was written onto the new one: %+v", rows[0])
+	}
+	if len(rows[0].Files) != 1 || rows[0].Files[0].S3Key != "image/checkpoints/new.gguf" {
+		t.Errorf("files = %+v, want the replacement kept", rows[0].Files)
+	}
+}

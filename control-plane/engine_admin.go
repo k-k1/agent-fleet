@@ -1180,16 +1180,18 @@ func engineVramGuardRow(ctx context.Context, e *engineRuntimeState, m store.Engi
 	// one measurable byte.
 	if (source == engineVramFloor || source == engineVramUnknown) &&
 		m.ContextTokens > 0 && engineClassFits(sel, need) {
-		known := fmt.Sprintf("%d MiB of weights", need)
+		// 🔴 Two different rows land here and they are not missing the same thing. A `floor` row
+		// has its weights and no header; an `unknown` one declares no measurable bytes at all —
+		// and it may well HAVE a geometry, so telling it "no attention geometry" sends the
+		// operator looking for a header that is already read.
+		missing := fmt.Sprintf("a KV cache that cannot be sized (no attention geometry) on top of %d MiB of weights", need)
 		if source == engineVramUnknown {
-			known = "weights nothing here can size either"
+			missing = "weights this deployment cannot size (its files declare no bytes) plus whatever cache that window needs"
 		}
 		return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
-			"%s declares a %d-token window but no attention geometry, so the KV cache it will ask"+
-				" for on top of %s cannot be sized here and the %s class's %d MiB"+
-				" cannot be said to fit (its header was not readable from the bucket either);"+
-				" repeat with confirm_vram, or declare vram_mib",
-			m.ID, m.ContextTokens, known, sel.ID, sel.VramMiB)}
+			"%s declares a %d-token window and wants %s, so the %s class's %d MiB cannot be said"+
+				" to fit; repeat with confirm_vram, or declare vram_mib",
+			m.ID, m.ContextTokens, missing, sel.ID, sel.VramMiB)}
 	}
 	if source == engineVramUnknown || engineClassFits(sel, need) {
 		return nil
@@ -2605,7 +2607,9 @@ func (a engineAdminAPI) healGeometry(ctx context.Context, e *engineRuntimeState,
 	// 🔴 A targeted write. `cur` was read BEFORE a network round trip to object storage, so it
 	// is already stale, and a whole-row Put of it would silently revert anything another writer
 	// changed while the read was in flight.
-	if _, err := a.mgr.store.SetEngineModelGeometry(ctx, e.def.Key, id, store.EngineModelKV{
+	// cur.Files is the declaration the header was read out of — compared on write, so a
+	// replacement that landed while the read was in flight leaves this write with nothing to do.
+	if _, err := a.mgr.store.SetEngineModelGeometry(ctx, e.def.Key, id, cur.Files, store.EngineModelKV{
 		Layers: geom.Layers, HeadsKV: geom.HeadsKV, KeyLen: geom.KeyLen, ValueLen: geom.ValLen,
 		NextN: geom.NextN, FullAttnInterval: geom.FullAttnInterval, Ceiling: geom.Ceiling,
 	}); err != nil {

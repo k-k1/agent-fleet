@@ -886,7 +886,11 @@ describe("picking an instance class re-fits every window", () => {
     const report = host!.querySelector(".engines-class-refit")!;
     expect(report.textContent).toContain("qwen");
     expect(report.textContent).toContain("SSM refused the active set");
-    // And it is NOT claimed as done.
+    // 🔴 And it says WHICH failure: a 502 from publish means the row WAS written, so calling it
+    // "unchanged" would send the operator to re-type a number that is already right.
+    expect(report.textContent).toContain("窓は保存されました");
+    expect(report.textContent).not.toContain("設定は元のままです");
+    // It is still not claimed as done.
     expect(report.textContent).not.toContain("→");
   });
 
@@ -904,5 +908,44 @@ describe("picking an instance class re-fits every window", () => {
     await pick("l40s");
     const modelPut = apiJSON.mock.calls.find((c) => String(c[0]).includes("/models/"))!;
     expect(Object.keys(modelPut[2] as object)).not.toContain("confirm_vram");
+  });
+
+  // 🔴 Found by re-review. A rejected fetch — the browser losing the network mid-loop — used to
+  // throw out of the whole function: the rows after it were never attempted, the report never
+  // rendered, and the re-read never ran, so the screen kept showing windows the store no longer
+  // held.
+  it("keeps going when a write throws, and still reports", async () => {
+    const two = llm({
+      model_rows: [
+        {
+          id: "first", kind: "gguf", enabled: true, context_tokens: 32768, max_output_tokens: 8192,
+          kv_mib_per_1k_tokens: 64, context_length: 262144,
+          file_rows: [{ s3Key: "llm/first.gguf", bytes: 12_040_883_104 }],
+        },
+        {
+          id: "second", kind: "gguf", enabled: true, context_tokens: 32768, max_output_tokens: 8192,
+          kv_mib_per_1k_tokens: 64, context_length: 262144,
+          file_rows: [{ s3Key: "llm/second.gguf", bytes: 12_040_883_104 }],
+        },
+      ],
+    });
+    api.mockResolvedValue({ super_admin: true, engines: [two] });
+    await mount();
+    let seen = 0;
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/class")) {
+        return Promise.resolve({ ...two, class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } });
+      }
+      seen++;
+      if (seen === 1) return Promise.reject(new Error("network is gone"));
+      return Promise.resolve({});
+    });
+    await pick("l40s");
+
+    // Both rows were attempted — the throw did not end the loop.
+    expect(apiJSON.mock.calls.filter((c) => String(c[0]).includes("/models/"))).toHaveLength(2);
+    const report = host!.querySelector(".engines-class-refit")!;
+    expect(report.textContent).toContain("network is gone");
+    expect(report.textContent).toContain("second");
   });
 });

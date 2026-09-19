@@ -151,16 +151,22 @@ export function refitWindows(models: EngineModel[], cardMiB: number): WindowRefi
       out.push({ id: model.id, from: model.context_tokens, to: 0, unknown: true });
       continue;
     }
-    // 🔴 What the weights cost has to be KNOWN, and two rows on the live deployments show why.
-    // The operator's own measurement wins where there is one (it is what engineModelVramNeed
-    // prefers, so using anything else here would fit against a number the guard disagrees
-    // with). Where there is neither a measurement nor a byte count — the seeded
-    // `qwen3-coder-30b-a3b` row is exactly that — summing the files gives 0, and 0 weights
-    // means the whole card looks free: this would propose the model's ceiling for a model
-    // nobody has weighed. Say "unknown" instead.
-    const declared = model.vram_mib || 0;
-    const fromFiles = Math.round((model.file_rows || []).reduce((sum, f) => sum + (f.bytes || 0), 0) / 1048576);
-    const weightsMiB = declared > 0 ? declared : fromFiles;
+    // 🔴 `vram_mib` is NOT the weights. engine_class.go's engineModelVramNeed returns it as the
+    // operator's measurement of the WHOLE demand and stops there — cache included, at whatever
+    // window they measured it at. Feeding it in here as the weights and adding a cache on top
+    // double-counts, and a row measured at 20,000 MiB on a 24 GB card came out as 4,096 tokens
+    // where the CP says the same row fits. There is no way to take their number apart, so a row
+    // that carries one is not re-fitted at all: they overrode the estimate on purpose, and this
+    // is the arithmetic they overrode.
+    if ((model.vram_mib || 0) > 0) {
+      out.push({ id: model.id, from: model.context_tokens, to: 0, unknown: true });
+      continue;
+    }
+    // And the weights have to be known. Where the files declare no bytes — the seeded
+    // `qwen3-coder-30b-a3b` row on both deployments is exactly that, and enabled — summing them
+    // gives 0, and 0 weights makes the whole card look free: it would propose the model's own
+    // ceiling for a model nobody has weighed.
+    const weightsMiB = Math.round((model.file_rows || []).reduce((sum, f) => sum + (f.bytes || 0), 0) / 1048576);
     if (weightsMiB <= 0) {
       out.push({ id: model.id, from: model.context_tokens, to: 0, unknown: true });
       continue;

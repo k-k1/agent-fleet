@@ -429,10 +429,16 @@ func engineGGUFGeometryFrom(read func(window int) ([]byte, error)) (engineKVGeom
 			return geom, nil // the whole header, modifiers and all
 		}
 		if !errors.Is(err, errGGUFShort) {
-			if best.complete() {
-				return best, nil
-			}
-			return geom, err // not a GGUF, or not one this reader parses: reading more cannot help
+			// 🔴 Not a GGUF, or not one this reader parses — and NOT rescued by whatever the
+			// smaller window happened to yield. A header this reader cannot walk to the end of
+			// is one whose optional modifiers may be sitting past the point it gave up, so a
+			// geometry salvaged from the first read would be stored as `weights_kv` — which
+			// reads as authoritative — while possibly being the four-times-too-high form. `floor`
+			// says "we do not know" out loud, and that is the honest answer here.
+			//
+			// Nothing usable comes back with it either: "err != nil means do not use this" is a
+			// property here rather than a convention every caller has to remember.
+			return engineKVGeometry{}, err
 		}
 		if geom.complete() {
 			best = geom
