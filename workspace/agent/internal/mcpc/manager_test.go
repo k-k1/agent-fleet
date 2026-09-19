@@ -90,6 +90,46 @@ func TestManager_ContextCancelClosesEverything(t *testing.T) {
 	}
 }
 
+// TestManager_SyncReconnectsOnDefChange guards the fix for a review finding: editing a
+// registered server's definition in place (same Name, different Command/Env/whatever)
+// must tear down the old connection rather than leave it serving stale configuration.
+func TestManager_SyncReconnectsOnDefChange(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := NewManager(ctx)
+	defer func() { _ = m.Close() }()
+
+	defA := fakeStdioDef(t, "a", "modern")
+	if errs := m.Sync(context.Background(), []mcpreg.ServerDef{defA}); len(errs) != 0 {
+		t.Fatalf("Sync errors: %+v", errs)
+	}
+	m.mu.Lock()
+	first := m.servers["a"]
+	m.mu.Unlock()
+
+	defA2 := defA
+	defA2.Label = "changed" // any field differing is enough to trigger a reconnect
+
+	if errs := m.Sync(context.Background(), []mcpreg.ServerDef{defA2}); len(errs) != 0 {
+		t.Fatalf("Sync errors: %+v", errs)
+	}
+	m.mu.Lock()
+	second := m.servers["a"]
+	m.mu.Unlock()
+
+	if first == second {
+		t.Fatal("Sync should have replaced the *Server on a definition change, not left the old one")
+	}
+	if len(m.ToolDefs()) != 3 {
+		t.Fatalf("the reconnected server should still serve its tools: %+v", m.ToolDefs())
+	}
+	// Sync must have closed the OLD connection synchronously, not merely orphaned it —
+	// a call against it should now fail client-side (stdio.go's call() refuses once closed).
+	if _, _, err := first.CallTool(context.Background(), "echo", []byte(`{"msg":"x"}`)); err == nil {
+		t.Fatal("the replaced server's old connection should already be closed after Sync returned")
+	}
+}
+
 func TestManager_CallToolUnknownName(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

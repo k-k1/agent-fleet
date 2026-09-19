@@ -34,8 +34,27 @@ import (
 
 var buildAgentBinOnce struct {
 	sync.Once
+	dir  string // set as soon as MkdirTemp succeeds, so TestMain can always clean it up
 	path string
 	err  error
+}
+
+// TestMain exists for exactly one reason: buildAgentBin below compiles a full copy of
+// the workspace-agent binary into a MkdirTemp directory, and nothing else in this
+// package ever removes it. This workspace's /tmp is a persistent disk SHARED across
+// every session's container (workspace-notes.md: "recreate" only wipes ~/repos), not a
+// per-run scratch area — a leaked build artifact here does not vanish with the test
+// process, it sits there for every other session sharing the host. Segment D's tests
+// hit the same shape and folded the cleanup into their own existing TestMain; this
+// package had none yet, so it gets one. Safe to run even when the Once above never
+// fired (buildAgentBinOnce.dir stays "" and RemoveAll("") is a no-op... except
+// os.RemoveAll("") actually errors "no such file", so the empty check guards that).
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if buildAgentBinOnce.dir != "" {
+		_ = os.RemoveAll(buildAgentBinOnce.dir)
+	}
+	os.Exit(code) // os.Exit skips defers — the cleanup above MUST run before this line
 }
 
 // buildAgentBin compiles the real workspace-agent binary once per test run (~tens of
@@ -50,6 +69,7 @@ func buildAgentBin(t *testing.T) string {
 			buildAgentBinOnce.err = err
 			return
 		}
+		buildAgentBinOnce.dir = dir // recorded even if the build below fails
 		bin := filepath.Join(dir, "workspace-agent")
 		build := exec.Command("go", "build", "-o", bin, ".")
 		build.Dir = ".." + string(os.PathSeparator) + ".." // internal/mcpc -> workspace/agent
@@ -90,11 +110,30 @@ func TestAFLive_Stdio_ModernEra_InitializeListCallReport(t *testing.T) {
 		Transport: mcpreg.TransportStdio,
 		Command:   bin,
 		Args:      []string{"mcp-stdio", "--self-report"},
+		// stdio.go's dialStdio starts from a full os.Environ() (the right call for
+		// production: a real session's af server needs its real environment) and
+		// layers Env on top. This is the REAL workspace-agent binary, so anything this
+		// process's own environment carries for reaching the actual Control Plane
+		// would otherwise ride along uninvited — this repo has already shipped that
+		// exact mistake once (a test that wrote into the real CP's memo queue). Only
+		// AGENT_ADDR is something this test WANTS to redirect (to agentStub); every
+		// other CP-reaching variable below is blanked defensively so a future edit to
+		// this test (e.g. calling a different self-report tool) cannot silently regain
+		// a path to production.
 		Env: map[string]string{
-			"HOME":            home,
-			"AF_SESSION_NAME": "mcpc-live-test",
-			"AF_SESSIONS_DIR": filepath.Join(home, "sessions"),
-			"AGENT_ADDR":      agentStub.Listener.Addr().String(),
+			"HOME":                  home,
+			"AF_SESSION_NAME":       "mcpc-live-test",
+			"AF_SESSIONS_DIR":       filepath.Join(home, "sessions"),
+			"AGENT_ADDR":            agentStub.Listener.Addr().String(),
+			"AF_CP_BASE_URL":        "",
+			"AF_MCP_TOKEN":          "",
+			"AF_MEMO_TOKEN":         "",
+			"AF_SCHEDULE_TOKEN":     "",
+			"AF_ENGINE_TOKEN":       "",
+			"AF_ENGINE_ISSUE_TOKEN": "",
+			"AF_DOCS_TOKEN":         "",
+			"AF_GIT_OAUTH_TOKEN":    "",
+			"AF_INTERNAL_GIT_TOKEN": "",
 		},
 	}
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"reflect"
 	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
@@ -38,15 +39,19 @@ func NewManager(ctx context.Context) *Manager {
 	return m
 }
 
-// Sync reconciles the live connection set against defs: connects anything new
-// (by Name), closes anything no longer present, and leaves an already-connected
-// server alone (this version does not detect an in-place edit of an existing
-// definition — a renamed/re-pointed server needs a create+delete round trip in the
-// registry to take effect here, which is what the registry UI already does).
+// Sync reconciles the live connection set against defs: connects anything new (by
+// Name), closes anything no longer present, and RECONNECTS anything whose definition
+// changed in place (reflect.DeepEqual against the ServerDef the live connection was
+// built from) — an edited Command/URL/Env/Headers/Kinds/TimeoutMS must not leave a
+// stale connection serving the old configuration forever, silently. Detecting this by
+// full-struct comparison rather than diffing individual fields is deliberate: any field
+// mcpreg.ServerDef ever gains automatically participates, with no second place in this
+// package to remember to update.
 //
 // A single server failing to connect does not stop the others — the return value
 // carries every error, keyed by server name, and the manager still serves whichever
-// servers DID connect.
+// servers DID connect (this includes an edited server whose reconnect failed: it is
+// closed and simply absent, not left on the old configuration).
 func (m *Manager) Sync(ctx context.Context, defs []mcpreg.ServerDef) map[string]error {
 	m.mu.Lock()
 	if m.closed {
@@ -59,7 +64,8 @@ func (m *Manager) Sync(ctx context.Context, defs []mcpreg.ServerDef) map[string]
 	}
 	var toClose []*Server
 	for name, s := range m.servers {
-		if _, ok := want[name]; !ok {
+		d, ok := want[name]
+		if !ok || !reflect.DeepEqual(d, s.def) {
 			toClose = append(toClose, s)
 			delete(m.servers, name)
 		}
