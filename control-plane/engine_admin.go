@@ -937,6 +937,20 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	// It is checked BEFORE the write, so a refusal leaves the catalogue as it was.
 	loading := (b.Enabled != nil && *b.Enabled) ||
 		(b.Selected != nil && *b.Selected) || (b.Default != nil && *b.Default)
+	// 🔴 Before anything is JUDGED, give the row a chance to stop being unanswerable. Every llm
+	// row on both deployments predates the header read and answers its floor — the weights and
+	// nothing else — so the VRAM guard below can only ask for a confirmation it has no way to
+	// inform, and the panel can offer no fitted window. The bytes are in the bucket and the
+	// header is 64 KiB in: read it once, here, where the operator is already making a write and
+	// a few hundred milliseconds is not a surprise.
+	//
+	// Only on a LOADING write, and only for a row that has none: this is a repair, not a poll.
+	// Best-effort in both directions — a refused read leaves the row where it was, and a failed
+	// STORE is logged and not raised, because the edit the operator actually asked for must not
+	// fail over a cache fill.
+	if loading {
+		a.healGeometry(ctx, e, id)
+	}
 	if loading && !b.ConfirmVram {
 		if aerr := engineVramGuard(ctx, e, id); aerr != nil {
 			writeAPIErr(w, aerr)
@@ -1145,6 +1159,40 @@ func engineVramGuardRow(ctx context.Context, e *engineRuntimeState, m store.Engi
 		return nil
 	}
 	need, source := engineModelVramNeed(m)
+	// 🔴 A floor for a row that declares a WINDOW is the one estimate that is known to be
+	// missing a term which GROWS with that window, and it is the shape that has actually put a
+	// card out of memory: af-sandbox's Qwen3.8-27B row declares 262144 and no geometry, so the
+	// need came back as 17093 MiB of weights, fitted the 22000 MiB rung, was enabled without a
+	// word — and llama.cpp then asked for 16384 MiB of KV cache on top and the L4 answered
+	// `cudaMalloc failed: out of memory`. Passing that silently is the bug. The number cannot be
+	// computed here (that is what "no geometry" means) — healGeometry has already TRIED, on this
+	// same request, and the bucket would not say — so the answer is to say so and let the
+	// operator confirm or declare vram_mib.
+	//
+	// Only when it does not already fail the ordinary comparison below, and only for a row that
+	// declares a window: an image checkpoint has none, and for it the weights really are most of
+	// the story (ADR 0074's first measurement).
+	//
+	// `unknown` counts here as well as `floor`, and leaving it out was a hole the size of the
+	// original bug: a row whose FILES declare no bytes answers unknown, falls through the
+	// `unknown` line below, and is switched on without anybody looking — which is the seeded
+	// `qwen3-coder-30b-a3b` row on both deployments, enabled, declaring 32,768 tokens and not
+	// one measurable byte.
+	if (source == engineVramFloor || source == engineVramUnknown) &&
+		m.ContextTokens > 0 && engineClassFits(sel, need) {
+		// 🔴 Two different rows land here and they are not missing the same thing. A `floor` row
+		// has its weights and no header; an `unknown` one declares no measurable bytes at all —
+		// and it may well HAVE a geometry, so telling it "no attention geometry" sends the
+		// operator looking for a header that is already read.
+		missing := fmt.Sprintf("a KV cache that cannot be sized (no attention geometry) on top of %d MiB of weights", need)
+		if source == engineVramUnknown {
+			missing = "weights this deployment cannot size (its files declare no bytes) plus whatever cache that window needs"
+		}
+		return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
+			"%s declares a %d-token window and wants %s, so the %s class's %d MiB cannot be said"+
+				" to fit; repeat with confirm_vram, or declare vram_mib",
+			m.ID, m.ContextTokens, missing, sel.ID, sel.VramMiB)}
+	}
 	if source == engineVramUnknown || engineClassFits(sel, need) {
 		return nil
 	}
@@ -1372,6 +1420,18 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 	if len(m.Files) == 0 {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "at least one file (s3Key) is required"})
 		return
+	}
+	// The same read the VAE question does above, for the other fact a header states. A row that
+	// arrives here carries no geometry — this route has no upstream URL to range-GET — so
+	// without it every hand-registered and every rebuilt row answers its FLOOR forever, which is
+	// the weights and nothing else and therefore fits almost any card. Best-effort: a refused
+	// read leaves the row exactly where it would have been.
+	if !engineModelIsLora(m) && m.ContextCeiling == 0 && m.KVLayers == 0 {
+		if key, ok := engineGeometryFile(m); ok {
+			if geom := engineGGUFGeometryOfObject(r.Context(), key, a.engineStorageBytes()); geom.complete() {
+				engineApplyGeometry(&m, geom)
+			}
+		}
 	}
 	// The family, for a provider that dispatches on one (ADR 0072 decision 2). Refused HERE, in
 	// the operator's own words, rather than as a ComfyUI validation error a cold start and a
@@ -2512,4 +2572,55 @@ func engineBaseModelHint(upstream string) string {
 		return fmt.Sprintf(" (the repository calls it %q)", u)
 	}
 	return ""
+}
+
+// healGeometry reads a row's GGUF header out of the bucket and stores it, when the row has none.
+//
+// The gap it closes: engine_gguf.go reads a header at the RESOLVE, over the upstream URL, and a
+// row that never went down that road — registered from the bucket, rebuilt from a ledger key, or
+// simply taken in before the read existed — has no geometry and never gets one. Both deployments
+// are entirely in that state, which is why every llm row answers `vram_need_source: floor` and
+// why a row declaring 262,144 tokens could be switched on without a word.
+//
+// Silent about every failure on purpose. It is a repair attached to a write the operator asked
+// for, and none of its outcomes are that operator's problem: an unconfigured bucket, a refused
+// read, a file that is not a GGUF, a header past the ceiling, a losing race with another writer.
+// The row simply stays where it was, which is where it already is when this is not called at all.
+func (a engineAdminAPI) healGeometry(ctx context.Context, e *engineRuntimeState, id string) {
+	cur, ok := engineCatalogModel(ctx, e, id)
+	// 🔴 The skip is on the CEILING and not on KVLayers, which is what a row read before these
+	// columns existed still has. Migration 0062 stored four numbers and multiplied by all of
+	// them; such a row carries a geometry that looks present and prices its cache four times too
+	// high, and skipping on "has layers" would leave it that way for ever. context_ceiling
+	// arrived with the modifiers (0070), so a non-zero one is the mark of a row this code read.
+	//
+	// ⚠️ Which makes it "at most once per loading write", not "once": a header declaring no
+	// `<arch>.context_length` is read again every time. llama.cpp's converter always writes one,
+	// so this is a supported-input assumption rather than a leak — see engine_gguf.go's header.
+	if !ok || engineModelIsLora(cur) || cur.ContextCeiling > 0 {
+		return
+	}
+	key, ok := engineGeometryFile(cur)
+	if !ok {
+		return
+	}
+	geom := engineGGUFGeometryOfObject(ctx, key, a.engineStorageBytes())
+	if !geom.complete() {
+		return
+	}
+	// 🔴 A targeted write. `cur` was read BEFORE a network round trip to object storage, so it
+	// is already stale, and a whole-row Put of it would silently revert anything another writer
+	// changed while the read was in flight.
+	// cur.Files is the declaration the header was read out of — compared on write, so a
+	// replacement that landed while the read was in flight leaves this write with nothing to do.
+	if _, err := a.mgr.store.SetEngineModelGeometry(ctx, e.def.Key, id, cur.Files, store.EngineModelKV{
+		Layers: geom.Layers, HeadsKV: geom.HeadsKV, KeyLen: geom.KeyLen, ValueLen: geom.ValLen,
+		NextN: geom.NextN, FullAttnInterval: geom.FullAttnInterval, Ceiling: geom.Ceiling,
+	}); err != nil {
+		log.Printf("engines: %s/%s: the geometry was read and could not be stored (%v)", e.def.Key, id, err)
+		return
+	}
+	e.catalog.invalidate()
+	log.Printf("engines: %s/%s: attention geometry read from the bucket (%d layers, %d caching, ceiling %d)",
+		e.def.Key, id, geom.Layers, geom.cacheLayers(), geom.Ceiling)
 }

@@ -1,0 +1,20 @@
+-- The model's OWN maximum window, so a registered row can be re-fitted without going back
+-- through the ingest.
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`.
+--
+-- `<arch>.context_length` is read at the resolve and shown beside the window field as what it
+-- is - a ceiling, not a setting (ADR 0089). It was never STORED, so the moment a row existed
+-- the number was gone, and the edit dialog could offer no "largest window this card holds":
+-- the search needs an upper bound or it proposes windows the model was never trained for.
+--
+-- Stored next to the geometry rather than derived from it because it is not derivable: the
+-- attention shape says what a token costs, not how many of them the weights were trained to
+-- attend over.
+--
+-- 0 means "not read", which is every row registered before this column. Such a row keeps its
+-- window and is simply not offered the one-press re-fit - an offer computed without a bound is
+-- worse than no offer.
+ALTER TABLE engine_models ADD COLUMN context_ceiling INTEGER NOT NULL DEFAULT 0;

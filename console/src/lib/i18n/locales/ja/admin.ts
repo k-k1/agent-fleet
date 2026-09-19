@@ -279,6 +279,17 @@ export const admin = {
   "admin.fit_no_kv": "KV キャッシュは読めなかったので、重みだけで比べています。",
   // チェックポイントには KV キャッシュが無い。同じ文を出すと、無いものを見積もったことになる。
   "admin.fit_estimate_note_weights": "重みの大きさだけの見積もりです。生成中に要る作業領域は含みません。",
+  "admin.engines_refit_done": "この段に合わせて窓を書き換えました:",
+  "admin.engines_refit_blocked_header": "ヘッダをまだ読めていません（有効化すると読みます）",
+  "admin.engines_refit_blocked_weights": "重みの大きさが分からない（ファイルがバイト数を申告していない）か、重みだけでこの段に入りません",
+  "admin.engines_refit_blocked_measured": "VRAM を手で宣言してある行なので、こちらでは動かしません",
+  "admin.engines_refit_stored_unknown": "通信が切れたため、保存されたかどうか確認できません:",
+  "admin.engines_refit_failed": "書き換えが完了しなかったモデル:",
+  "admin.engines_refit_stored_unpublished": "窓は保存されましたが、エンジンへの反映指示が失敗しました:",
+  "admin.engines_refit_unchanged": "設定は元のままです:",
+  "admin.engines_refit_next_start": "反映は次にエンジンが起動したときからです（走行中の箱は起動時の窓のままです）。",
+  "admin.engines_refit_stuck": "この段に合わせられなかったモデル:",
+  "admin.catalog_edit_window_fit": "このクラスに収まる最大 {n} にする",
   "admin.fit_kv_from": "KV は {f} のヘッダから読みました（同じ配布元でも版によって少し違います）。",
   "admin.engines_ingest_ctx_ceiling": "上限 {n}",
   // --- 配布元のカード（ADR 0089）。量子化の梯子は 1 押しで開く（開くたびに上流を読むため）。

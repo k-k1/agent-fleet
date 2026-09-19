@@ -23,6 +23,7 @@ const engineModelCols = `role, id, kind, files, enabled, selected, is_default, a
 	license, license_name, license_url, model_precision, base_model,
 	license_accepted_by, license_accepted_at, license_accepted_tenant, license_accepted_license,
 	commercial_use, source, kv_layers, kv_heads_kv, kv_key_len, kv_value_len,
+	kv_nextn, kv_full_attn_interval, context_ceiling,
 	negative_prompt, trained_words, params,
 	display_name, version_name, preview_url, thumb_url, created_at, updated_at`
 
@@ -54,6 +55,7 @@ func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel,
 			&m.LicenseAcceptedTenant, &m.LicenseAcceptedLicense,
 			&m.CommercialUse, &m.Source,
 			&m.KVLayers, &m.KVHeadsKV, &m.KVKeyLen, &m.KVValueLen,
+			&m.KVNextN, &m.KVFullAttnInterval, &m.ContextCeiling,
 			&m.NegativePrompt, &trained, &params,
 			&m.DisplayName, &m.VersionName, &m.PreviewURL, &m.ThumbURL,
 			&m.CreatedAt, &m.UpdatedAt); err != nil {
@@ -99,7 +101,7 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO engine_models(`+engineModelCols+`)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(role, id) DO UPDATE SET
 		   kind=excluded.kind, files=excluded.files, enabled=excluded.enabled,
 		   selected=excluded.selected, is_default=excluded.is_default, args=excluded.args,
@@ -114,6 +116,8 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 		   commercial_use=excluded.commercial_use, source=excluded.source,
 		   kv_layers=excluded.kv_layers, kv_heads_kv=excluded.kv_heads_kv,
 		   kv_key_len=excluded.kv_key_len, kv_value_len=excluded.kv_value_len,
+		   kv_nextn=excluded.kv_nextn, kv_full_attn_interval=excluded.kv_full_attn_interval,
+		   context_ceiling=excluded.context_ceiling,
 		   negative_prompt=excluded.negative_prompt, trained_words=excluded.trained_words,
 		   params=excluded.params, display_name=excluded.display_name,
 		   version_name=excluded.version_name, preview_url=excluded.preview_url,
@@ -124,6 +128,7 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 		m.LicenseAcceptedBy, m.LicenseAcceptedAt, m.LicenseAcceptedTenant, m.LicenseAcceptedLicense,
 		m.CommercialUse, m.Source,
 		m.KVLayers, m.KVHeadsKV, m.KVKeyLen, m.KVValueLen,
+		m.KVNextN, m.KVFullAttnInterval, m.ContextCeiling,
 		m.NegativePrompt, trained, params,
 		m.DisplayName, m.VersionName, m.PreviewURL, m.ThumbURL, m.CreatedAt, now)
 	return err
@@ -145,7 +150,7 @@ func (s *SQL) CreateEngineModel(ctx context.Context, m EngineModel) (bool, error
 	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO engine_models(`+engineModelCols+`)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(role, id) DO NOTHING`,
 		m.Role, m.ID, m.Kind, jsonList(m.Files), boolInt(m.Enabled), boolInt(m.Selected), boolInt(m.Default), jsonList(m.Args),
 		m.ContextTokens, m.MaxOutputTokens, jsonList(m.Sizes), m.Description, m.VramMiB,
@@ -153,6 +158,7 @@ func (s *SQL) CreateEngineModel(ctx context.Context, m EngineModel) (bool, error
 		m.LicenseAcceptedBy, m.LicenseAcceptedAt, m.LicenseAcceptedTenant, m.LicenseAcceptedLicense,
 		m.CommercialUse, m.Source,
 		m.KVLayers, m.KVHeadsKV, m.KVKeyLen, m.KVValueLen,
+		m.KVNextN, m.KVFullAttnInterval, m.ContextCeiling,
 		m.NegativePrompt, jsonList(m.TrainedWords), params,
 		m.DisplayName, m.VersionName, m.PreviewURL, m.ThumbURL, m.CreatedAt, now)
 	return affected(res, err)
@@ -253,8 +259,10 @@ func (s *SQL) ReplaceEngineModelFile(ctx context.Context, role, id string, f Eng
 			// now UNKNOWN. Keeping the previous file's numbers would describe bytes no longer used.
 			updated, err = affected(s.db.ExecContext(ctx,
 				`UPDATE engine_models SET files=?, kv_layers=?, kv_heads_kv=?, kv_key_len=?, kv_value_len=?,
+				   kv_nextn=?, kv_full_attn_interval=?, context_ceiling=?,
 				   updated_at=? WHERE role=? AND id=? AND files=?`,
 				jsonList(files), kv.Layers, kv.HeadsKV, kv.KeyLen, kv.ValueLen,
+				kv.NextN, kv.FullAttnInterval, kv.Ceiling,
 				NowTS(), role, id, raw))
 		}
 		if err != nil || updated {
@@ -366,6 +374,30 @@ func (s *SQL) SetEngineModelWindow(ctx context.Context, role, id string, context
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE engine_models SET context_tokens=?, max_output_tokens=?, updated_at=? WHERE role=? AND id=?`,
 		contextTokens, maxOutputTokens, NowTS(), role, id)
+	return affected(res, err)
+}
+
+// SetEngineModelGeometry writes ONLY the attention geometry a header read produced.
+//
+// 🔴 A targeted UPDATE and not a whole-row Put, and that is the entire point of it existing.
+// The read it follows is a network round trip to object storage, so the row the caller holds is
+// already seconds old by the time there is anything to write — and a full upsert of that stale
+// snapshot silently reverts whatever anybody else changed in between. This is the same
+// read-modify-write hazard a plain file rewrite has, and the same answer: write the columns you
+// learned about and leave every other one to whoever owns it.
+// 🔴 `files` is a compare-and-swap, not a filter. The geometry describes ONE file's header, and
+// between the read that produced it and this write another session can Replace the main GGUF —
+// or delete the row and register the same id over different bytes. An unconditional UPDATE then
+// staples the old file's attention shape onto the new file's row, which is a wrong VRAM answer
+// that nothing afterwards contradicts. The same optimistic swap ReplaceEngineModelFile makes,
+// for the same reason: `false` means somebody moved first and the caller simply does not write.
+func (s *SQL) SetEngineModelGeometry(ctx context.Context, role, id string, files []EngineModelFile, kv EngineModelKV) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engine_models SET kv_layers=?, kv_heads_kv=?, kv_key_len=?, kv_value_len=?,
+		   kv_nextn=?, kv_full_attn_interval=?, context_ceiling=?, updated_at=?
+		 WHERE role=? AND id=? AND files=?`,
+		kv.Layers, kv.HeadsKV, kv.KeyLen, kv.ValueLen,
+		kv.NextN, kv.FullAttnInterval, kv.Ceiling, NowTS(), role, id, jsonList(files))
 	return affected(res, err)
 }
 

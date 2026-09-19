@@ -153,6 +153,44 @@ func TestEngineKnownArtifactsRefusesMixedLegacyProvenance(t *testing.T) {
 	}
 }
 
+// 🔴 The geometry a reuse carries has to be the WHOLE geometry. Reuse replaces the freshly read
+// header with this one (engineIngestResolve), so a field left out of it is written as a zero
+// over the row — and a row with no ceiling is offered no re-fit at all. Found by review round 2,
+// tested here at review round 3's suggestion, which is where the pure function lives.
+func TestEngineKnownArtifactsCarriesTheWholeGeometryOfTheMainFile(t *testing.T) {
+	main := "llm/qwen.gguf"
+	part := "llm/text_encoders/t5.gguf"
+	model := store.EngineModel{
+		Role: "llm", ID: "qwen",
+		KVLayers: 65, KVHeadsKV: 4, KVKeyLen: 256, KVValueLen: 256,
+		KVNextN: 1, KVFullAttnInterval: 4, ContextCeiling: 262144,
+		Files: []store.EngineModelFile{
+			// The identity is what makes an artifact reusable at all, so it is what the geometry
+			// rides on (engineKnownArtifacts returns early without one).
+			{S3Key: main, ArtifactIdentity: "hf:org/repo@v1/qwen.gguf#sha256:aa"},
+			{S3Key: part, Flag: "--t5xxl", ArtifactIdentity: "hf:org/repo@v1/t5.gguf#sha256:bb"},
+		},
+	}
+	known := engineKnownArtifacts([]store.EngineModel{model}, nil)
+
+	got, ok := known[main]
+	if !ok {
+		t.Fatalf("the main file is not known: %v", known)
+	}
+	want := engineKVGeometry{
+		Layers: 65, HeadsKV: 4, KeyLen: 256, ValLen: 256,
+		NextN: 1, FullAttnInterval: 4, Ceiling: 262144,
+	}
+	if got.KVGeom != want {
+		t.Errorf("main geometry = %+v, want %+v", got.KVGeom, want)
+	}
+	// And a PART carries none of it: a text encoder's header says nothing about the model that
+	// loads it, so writing the checkpoint's shape onto it would be a lie in the other direction.
+	if p, ok := known[part]; !ok || p.KVGeom != (engineKVGeometry{}) {
+		t.Errorf("part geometry = %+v, want the zero value", p.KVGeom)
+	}
+}
+
 func TestEngineStorageBoundsHeadConcurrency(t *testing.T) {
 	head := &fakeEngineStorageHead{states: map[string]string{}, bytes: map[string]int64{}, blockDelay: 10 * time.Millisecond}
 	var keys []string

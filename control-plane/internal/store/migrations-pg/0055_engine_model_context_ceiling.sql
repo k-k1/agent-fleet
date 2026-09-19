@@ -1,0 +1,11 @@
+-- The model's OWN maximum window, so a registered row can be re-fitted without going back
+-- through the ingest.
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`.
+--
+-- The sqlite counterpart is migrations/0070_engine_model_context_ceiling.sql and the reasoning
+-- is there. In short: `<arch>.context_length` was read at the resolve and never stored, so a
+-- registered row had no upper bound to fit a window against. 0 means "not read".
+ALTER TABLE engine_models ADD COLUMN context_ceiling INTEGER NOT NULL DEFAULT 0;

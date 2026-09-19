@@ -52,6 +52,17 @@ export type EngineModel = {
    *  floors have to stay distinguishable from a measurement here. */
   vram_need_mib?: number;
   vram_need_source?: "declared" | "floor" | "weights_kv" | "unknown";
+  /** What the KV cache costs per 1024 tokens of window, off this row's stored GGUF geometry.
+   *  MULTIPLY it (kvCacheMiB) — the cache is linear in the window, so one number prices every
+   *  value somebody could type, and it is what lets a registered row be re-fitted in place.
+   *  🔴 ABSENT, never 0, when the row has no geometry: "nobody could read it" is not
+   *  "it costs nothing". */
+  kv_mib_per_1k_tokens?: number;
+  /** The model's OWN maximum window (`<arch>.context_length`), stored at ingest. 🔴 A ceiling,
+   *  not a setting — the same fact and the same name the ingest form receives it by. It is what
+   *  bounds a re-fit: without it the panel would propose windows the model was never trained
+   *  for. Absent on a row registered before it was stored, and the re-fit is then not offered. */
+  context_length?: number;
   /** BOTH are kept and both are shown: Hugging Face reports `other` for the two
    *  non-commercial models in ADR 0072's table, with the real terms in license_name. */
   license?: string;

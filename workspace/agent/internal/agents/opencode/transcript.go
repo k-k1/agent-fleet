@@ -451,6 +451,9 @@ func sessionResumable(ses string) bool {
 // sequence is append-only across polls — each turn's ordinal (Idx, the render key and
 // paging cursor unit) stays stable as new messages arrive.
 func readSession(db *sql.DB, ses string) []transcript.Turn {
+	// Taken once for the whole read: every assistant message asks the same question, and the
+	// answer cannot change inside one poll.
+	win := modelWindowLookup()
 	sessions := append([]string{ses}, childSessions(db, ses)...)
 	ph := strings.TrimSuffix(strings.Repeat("?,", len(sessions)), ",")
 	args := make([]any, len(sessions))
@@ -492,7 +495,7 @@ func readSession(db *sql.DB, ses string) []transcript.Turn {
 		}
 		byMsg := loadParts(db, ids)
 		for i, mr := range batch {
-			t, ok := parseMessage(mr.id, mr.data, byMsg[mr.id], start+i)
+			t, ok := parseMessage(mr.id, mr.data, byMsg[mr.id], start+i, win)
 			if ok {
 				t.Sidechain = mr.ses != ses
 				turns = append(turns, t)
@@ -563,13 +566,15 @@ func childSessions(db *sql.DB, ses string) []string {
 
 // parseMessage builds a transcript.Turn from one message row and its parts (the raw part
 // rows, already fetched — see loadParts). idx is the message ordinal (a stable render key
-// + the unit the generic windower pages over).
-func parseMessage(msgID string, data []byte, partRows [][]byte, idx int) (transcript.Turn, bool) {
+// + the unit the generic windower pages over). win answers the model's context window and
+// may be nil (no window recorded, and the Console guesses from the model name as before).
+func parseMessage(msgID string, data []byte, partRows [][]byte, idx int, win windowFn) (transcript.Turn, bool) {
 	var md struct {
-		Role    string `json:"role"`
-		ModelID string `json:"modelID"`
-		Variant string `json:"variant"` // opencode's reasoning effort/variant (e.g. "max")
-		Tokens  struct {
+		Role       string `json:"role"`
+		ModelID    string `json:"modelID"`
+		ProviderID string `json:"providerID"` // with ModelID, the key the declared window is filed under
+		Variant    string `json:"variant"`    // opencode's reasoning effort/variant (e.g. "max")
+		Tokens     struct {
 			Input  int `json:"input"`
 			Output int `json:"output"`
 			Cache  struct {
@@ -632,6 +637,12 @@ func parseMessage(msgID string, data []byte, partRows [][]byte, idx int) (transc
 		t.Effort = md.Variant
 		t.InTok, t.OutTok = md.Tokens.Input, md.Tokens.Output
 		t.CacheRead, t.CacheCreate = md.Tokens.Cache.Read, md.Tokens.Cache.Write
+		// The declared window, so the gauge is measured against what opencode itself is
+		// using rather than against usagex.WindowGuess's 200,000 (window.go: a self-hosted
+		// 32k engine read as 13% full while it compacted on every turn).
+		if win != nil {
+			t.CtxWindow = win(md.ProviderID, md.ModelID)
+		}
 	}
 	return t, true
 }

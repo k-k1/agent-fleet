@@ -12,15 +12,25 @@ package main
 //     `context_length` and the chat template, and a GGUF-only repository's `config` is `{}`
 //     (measured 2026-09-11 on Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF). So the file itself is the
 //     only source.
-//   - The copy whose header is read is the one at the SOURCE, over the same HTTP the resolve
-//     already uses. The storage port can hand over a prefix of a stored object as well
-//     (engineStorageMetadataPort.Prefix, added for the VAE question); a row registered from the
-//     bucket still reaches this reader through no road, so its geometry stays unknown and its
-//     VRAM estimate stays the weights alone.
+//   - There are two copies to read and this file reads both. The one at the SOURCE, over the
+//     same HTTP the resolve already uses (engineGGUFGeometry), and the one already in this
+//     deployment's BUCKET, through engineStorageMetadataPort.Prefix
+//     (engineGGUFGeometryOfObject). The second road was missing until 2026-09-19, and its
+//     absence is why every llm row on both deployments answered `vram_need_source: floor` — the
+//     weights and nothing else — which fits almost any card and so let a row declaring 262,144
+//     tokens be switched on without a word.
 //
-// It is read ONCE, at registration, and stored on the row. A header read per panel refresh
-// would put a network call on a screen that lists every model, and the geometry of a file
-// identified by sha256 cannot change under us.
+// It is stored on the row, and read at most once per loading write — at registration, or by
+// engineAdminAPI.healGeometry for a row that has none. A header read per panel refresh would put
+// a network call on a screen that lists every model, and the geometry of a file identified by
+// sha256 cannot change under us.
+//
+// ⚠️ "at most once" and not "exactly once", and the difference is a supported-input assumption
+// worth naming: healGeometry decides a row has been read by looking at `context_ceiling`, so a
+// header that declares no `<arch>.context_length` is re-read on every loading write. llama.cpp's
+// converter always writes one, which is why this is accepted rather than paid for with another
+// column — but a file from some other writer would be re-read, at up to two prefix reads a time,
+// on every enable. It is bounded by an operator's own action and never by a poll.
 //
 // 🔴 What cannot be read here is the KV cache's element type: `-ctk`/`-ctv` live in
 // `LlmExtraArgs`, a CloudFormation parameter that reaches the task definition and never the
@@ -37,7 +47,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"path"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // The GGUF v3 metadata value types, in the spec's order.
@@ -75,18 +88,94 @@ const (
 // window, and the one that must never be confused with "this is not a GGUF file".
 var errGGUFShort = errors.New("gguf: header window is short")
 
-// engineKVGeometry is what a KV-cache estimate is computed from. Every field is required: a
-// partially read header answers nothing, because the product of four numbers with one missing
-// is not a smaller estimate, it is a wrong one.
+// ggufStop hands a short read back to the LADDER rather than deciding for it.
+//
+// The scan no longer stops at the four required fields (the hybrid modifiers are written after
+// them), so it walks on into `tokenizer.ggml.tokens` — an array of the whole vocabulary,
+// megabytes long, which no window this file fetches will ever contain. Ending there with the
+// geometry in hand is a perfectly usable read.
+//
+// 🔴 But it is not the same as a COMPLETE one, and this function used to say it was. Between
+// `attention.value_length` and `full_attention_interval` there are several more keys, and a
+// header whose `general.*` strings are long enough pushes the modifiers past a 64 KiB window.
+// Swallowing the short error there returned a geometry that looks whole and prices its cache
+// four times too high — the very bug this pass exists to fix, reached through the error path.
+// So the error travels with the partial answer and engineGGUFGeometryFrom tries the bigger
+// window before settling for it.
+func ggufStop(geom engineKVGeometry, err error) error {
+	_ = geom
+	return err
+}
+
+// engineKVGeometry is what a KV-cache estimate is computed from. The first four are required:
+// a partially read header answers nothing, because the product of four numbers with one
+// missing is not a smaller estimate, it is a wrong one.
+//
+// The last two are OPTIONAL modifiers, and 0 means "this architecture does not have one" —
+// which is the same answer as a row read before they were parsed, and reduces to the plain
+// `every layer caches every token` formula either way.
 type engineKVGeometry struct {
 	Layers  int // <arch>.block_count
 	HeadsKV int // <arch>.attention.head_count_kv
 	KeyLen  int // <arch>.attention.key_length, else embedding_length / head_count
 	ValLen  int // <arch>.attention.value_length, else the same fallback
+
+	// NextN is <arch>.nextn_predict_layers: multi-token-prediction heads. They are counted in
+	// block_count and carry a full set of attention tensors, but llama.cpp does not run them —
+	// it says so, once per tensor, as `model has unused tensor blk.<n>.nextn.* -- ignoring`.
+	// Measured on Qwen3.8-27B: block_count 65, nextn_predict_layers 1, and the ignored block is
+	// blk.64. Counting it overstates the cache by one layer in sixty-five.
+	NextN int
+	// FullAttnInterval is <arch>.full_attention_interval: in a hybrid model only every Nth
+	// layer is full attention and holds a cache that grows with the context. The rest are
+	// recurrent (the same header declares <arch>.ssm.*), and their state is a fixed size per
+	// sequence rather than per token — so they do not belong in a number that is multiplied by
+	// the window.
+	//
+	// 🔴 This is the difference between an estimate that is right and one that is four times
+	// too big, which is not a rounding error when it decides whether a window fits on a card.
+	FullAttnInterval int
+
+	// Ceiling is `<arch>.context_length`: the largest window the model was TRAINED for. Not part
+	// of the cache arithmetic at all — it is read here because it is in the same header, on the
+	// same pass, and because the bucket road (engineGGUFGeometryOfObject) has no other way to
+	// learn it. 🔴 A ceiling, not a setting.
+	Ceiling int
+
+	// PastArch is "a tokenizer key went by", i.e. every `<arch>.*` key this header holds has
+	// already been seen. It is what makes a short read trustworthy: complete() says the four
+	// required numbers are in hand, and only this says nothing OPTIONAL was left behind the end
+	// of the window. Not stored on the row — it describes the read, not the model.
+	PastArch bool
 }
 
 func (g engineKVGeometry) complete() bool {
 	return g.Layers > 0 && g.HeadsKV > 0 && g.KeyLen > 0 && g.ValLen > 0
+}
+
+// settled is complete AND known to have nothing optional still ahead of it — the only state in
+// which a short read may be stored. See PastArch.
+func (g engineKVGeometry) settled() bool { return g.complete() && g.PastArch }
+
+// cacheLayers is how many of block_count actually hold a per-token KV cache.
+//
+// Verified against llama.cpp itself (af-sandbox, 2026-09-18): Qwen3.8-27B started with
+// --ctx-size 262144 asked the CUDA backend for `allocating 16384.00 MiB` and named the failure
+// `failed to allocate buffer for kv cache`. (65-1)/4 = 16 layers x 4 kv heads x (256+256) x
+// 262144 x 2 B is 16384.00 MiB exactly — the plain block_count form says 66560.
+func (g engineKVGeometry) cacheLayers() int {
+	n := g.Layers
+	// Guarded rather than trusted: a header claiming more prediction heads than it has blocks
+	// is nonsense, and subtracting it would turn an over-estimate into a zero.
+	if g.NextN > 0 && g.NextN < g.Layers {
+		n -= g.NextN
+	}
+	if g.FullAttnInterval > 1 {
+		// Integer division on purpose: llama.cpp makes layer i full when (i+1) % interval == 0,
+		// so out of n layers exactly floor(n/interval) of them cache.
+		n /= g.FullAttnInterval
+	}
+	return n
 }
 
 // ggufReader walks a byte window, refusing to run off the end rather than panicking.
@@ -254,14 +343,26 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 	var arch string
 	var geom engineKVGeometry
 	var embedding, heads int
+	// 🔴 The marker that says a short read is nevertheless a COMPLETE one. llama.cpp's converter
+	// writes `general.*`, then every `<arch>.*` key, then `tokenizer.*` — so once a tokenizer key
+	// has gone past, no architecture key is still coming and running out of window afterwards
+	// costs nothing. Without it there is no way to tell "the header had no modifiers" from "the
+	// window ended before them", and the two have to be told apart: the second, taken for the
+	// first, stores a four-times-too-high cache estimate that reads as authoritative.
 	for i := uint64(0); i < kvCount; i++ {
 		key, err := r.str()
 		if err != nil {
-			return geom, err
+			return geom, ggufStop(geom, err)
+		}
+		// 🔴 Set from the KEY, before the value is parsed. The value that follows the first
+		// tokenizer key is the vocabulary array, which is exactly the thing no window contains —
+		// so a marker set after parsing it would never be set at all.
+		if strings.HasPrefix(key, "tokenizer.") {
+			geom.PastArch = true
 		}
 		t, err := r.u32()
 		if err != nil {
-			return geom, err
+			return geom, ggufStop(geom, err)
 		}
 		// The architecture names every other key, so it has to be read before they can be
 		// recognised. llama.cpp writes it first; if some writer does not, the keys simply are
@@ -277,7 +378,7 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 		}
 		n, isInt, err := r.intValue(t)
 		if err != nil {
-			return geom, err
+			return geom, ggufStop(geom, err)
 		}
 		if !isInt || arch == "" || !strings.HasPrefix(key, arch+".") {
 			continue
@@ -295,10 +396,17 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 			embedding = n
 		case "attention.head_count":
 			heads = n
+		case "nextn_predict_layers":
+			geom.NextN = n
+		case "full_attention_interval":
+			geom.FullAttnInterval = n
+		case "context_length":
+			geom.Ceiling = n
 		}
-		if geom.complete() {
-			return geom, nil
-		}
+		// 🔴 No early return on complete(). The two modifiers are written AFTER
+		// attention.value_length (measured on Qwen3.8-27B: value_length is key 28 of 50 and
+		// full_attention_interval is key 36), so stopping at the four required fields is
+		// exactly how a hybrid model came out looking like a dense one.
 	}
 	// 🔴 The fallback is `embedding_length / head_count`, and it is ONLY a fallback. Measured
 	// 2026-09-11: qwen3moe declares key_length = value_length = 128 while embedding_length /
@@ -324,17 +432,70 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 // the ingest needs it: a gated repository answers metadata anonymously but refuses the FILE.
 // Without it a gated model's row simply stays unknown.
 func engineGGUFGeometry(ctx context.Context, url, token string) (engineKVGeometry, error) {
-	geom, err := engineGGUFTry(ctx, url, token, ggufHeadWindow)
-	if !errors.Is(err, errGGUFShort) {
-		return geom, err
-	}
-	return engineGGUFTry(ctx, url, token, ggufHeadMax)
+	return engineGGUFGeometryFrom(func(window int) ([]byte, error) {
+		return engineGGUFBytes(ctx, url, token, window)
+	})
 }
 
-func engineGGUFTry(ctx context.Context, url, token string, window int) (engineKVGeometry, error) {
+// engineGGUFGeometryFrom walks the two-window ladder over whatever supplies the bytes — the
+// upstream URL or this deployment's own bucket — so both roads answer the same way.
+//
+// 🔴 The bigger window is tried even when the smaller one already produced a COMPLETE geometry.
+// Complete means the four required fields, and the optional modifiers are written after them:
+// settling for the small read is how a hybrid model comes back looking dense, which is a cache
+// estimate four times too high. A partial answer is kept only as the fallback for when the
+// second read fails or is short too — better than nothing, and strictly what the previous
+// behaviour gave.
+func engineGGUFGeometryFrom(read func(window int) ([]byte, error)) (engineKVGeometry, error) {
+	var best engineKVGeometry
+	for _, window := range []int{ggufHeadWindow, ggufHeadMax} {
+		buf, err := read(window)
+		if err != nil {
+			break
+		}
+		geom, err := parseGGUFGeometry(buf)
+		if err == nil {
+			return geom, nil // the whole header, modifiers and all
+		}
+		if !errors.Is(err, errGGUFShort) {
+			// 🔴 Not a GGUF, or not one this reader parses — and NOT rescued by whatever the
+			// smaller window happened to yield. A header this reader cannot walk to the end of
+			// is one whose optional modifiers may be sitting past the point it gave up, so a
+			// geometry salvaged from the first read would be stored as `weights_kv` — which
+			// reads as authoritative — while possibly being the four-times-too-high form. `floor`
+			// says "we do not know" out loud, and that is the honest answer here.
+			//
+			// Nothing usable comes back with it either: "err != nil means do not use this" is a
+			// property here rather than a convention every caller has to remember.
+			return engineKVGeometry{}, err
+		}
+		// 🔴 `settled`, not `complete`. Four numbers in hand is not the same as "the header had
+		// nothing else to say": the optional modifiers come after them, and a window that ended
+		// in between yields a geometry that looks whole and prices its cache four times too
+		// high. PastArch is the only thing that can tell the two apart — a tokenizer key went
+		// by, so every architecture key this file holds is already behind us.
+		//
+		// A settled read needs no second window either, which is what makes the common case one
+		// round trip rather than two.
+		if geom.settled() {
+			return geom, nil
+		}
+	}
+	if best.settled() {
+		return best, nil
+	}
+	// Complete but NOT settled: the window ended somewhere inside the architecture block, so
+	// there may be a modifier past it and there is no way to know. Refused rather than stored,
+	// for the same reason an unfinishable header is: `floor` says "we do not know" out loud,
+	// and a wrong `weights_kv` does not.
+	return engineKVGeometry{}, errGGUFShort
+}
+
+// engineGGUFBytes is the first `window` bytes of the file at url, over HTTP Range.
+func engineGGUFBytes(ctx context.Context, url, token string, window int) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return engineKVGeometry{}, err
+		return nil, err
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", window-1))
 	if t := strings.TrimSpace(token); t != "" {
@@ -342,34 +503,42 @@ func engineGGUFTry(ctx context.Context, url, token string, window int) (engineKV
 	}
 	resp, err := engineIngestHTTP.Do(req)
 	if err != nil {
-		return engineKVGeometry{}, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	// 206 is the answer that was asked for. A 200 means the server ignored the Range and is
 	// about to send the whole file, which for an 18.5 GB checkpoint is not a fallback — the
 	// read is capped either way by LimitReader, and a truncated body parses or does not.
 	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
-		return engineKVGeometry{}, fmt.Errorf("gguf: %s answered %d", url, resp.StatusCode)
+		return nil, fmt.Errorf("gguf: %s answered %d", url, resp.StatusCode)
 	}
-	buf, err := io.ReadAll(io.LimitReader(resp.Body, int64(window)))
-	if err != nil {
-		return engineKVGeometry{}, err
-	}
-	return parseGGUFGeometry(buf)
+	return io.ReadAll(io.LimitReader(resp.Body, int64(window)))
 }
 
 // engineKVCacheMiB is the KV cache one model wants, in MiB.
 //
-// `n_layer × n_head_kv × (key_length + value_length) × ctx × bytes(cache element)`, which is
-// llama.cpp's own `KV self size`. The two halves are kept apart rather than written as
+// `cacheLayers × n_head_kv × (key_length + value_length) × ctx × bytes(cache element)`, which
+// is llama.cpp's own `KV self size`. The two halves are kept apart rather than written as
 // `2 × head_dim` because a model may declare different key and value widths, and one that does
 // would be silently mis-sized by the doubled form.
+//
+// The layer count is cacheLayers() and not block_count: see there for the two reasons they
+// differ and for the measurement that settled it.
+//
+// What this still does NOT count is the recurrent half of a hybrid model — the fixed-size SSM
+// state of the layers cacheLayers() drops. It is per SEQUENCE rather than per token, so it does
+// not belong in a figure the window multiplies, and llama.cpp allocates it outside the buffer
+// this function's measurement was taken from.
 func engineKVCacheMiB(g engineKVGeometry, contextTokens int) int {
 	if !g.complete() || contextTokens <= 0 {
 		return 0
 	}
+	layers := g.cacheLayers()
+	if layers <= 0 {
+		return 0
+	}
 	const bytesPerElement = 2 // f16; see the note at the top of this file
-	total := int64(g.Layers) * int64(g.HeadsKV) * int64(g.KeyLen+g.ValLen) *
+	total := int64(layers) * int64(g.HeadsKV) * int64(g.KeyLen+g.ValLen) *
 		int64(contextTokens) * bytesPerElement
 	return int(total / (1024 * 1024))
 }
@@ -409,4 +578,66 @@ func engineIngestGeometry(ctx context.Context, kind string, res engineResolved,
 		return engineKVGeometry{}
 	}
 	return geom
+}
+
+// engineGGUFName is whether a key names a file this reader can parse at all. The bucket holds
+// safetensors beside GGUFs and a prefix read of the wrong format is a wasted round trip that
+// ends in "not a GGUF file" — the same guard engineSafetensorsName is for the other question.
+func engineGGUFName(key string) bool {
+	return strings.EqualFold(path.Ext(strings.TrimSpace(key)), ".gguf")
+}
+
+// engineGGUFGeometryOfObject is the geometry of a file whose bytes are already in this
+// deployment's bucket — the road `POST …/models` and `…/objects/register` take, where there is
+// no upstream URL to read and there may never have been one (the bytes can outlive the job that
+// fetched them).
+//
+// 🔴 This is the half the file's own header comment said did not exist: "a row registered from
+// the bucket still reaches this reader through no road, so its geometry stays unknown". That was
+// true, and it is why every llm row on both deployments answers `vram_need_source: floor` — the
+// weights and nothing else, which fits almost any card and so let a row declaring 262,144 tokens
+// be switched on without a word (ADR 0074's 2026-09-19 follow-up).
+//
+// Best-effort and deliberately quiet, exactly like engineVaeOfObject next door: a refused read,
+// an unconfigured bucket, a file that is not a GGUF, a header past the ceiling — all of them
+// leave the geometry unknown, which is where the row already was. The one thing it must not do
+// is fail the press.
+func engineGGUFGeometryOfObject(ctx context.Context, key string, storage *engineStorage) engineKVGeometry {
+	if !engineGGUFName(key) || storage == nil || !storage.configured() {
+		return engineKVGeometry{}
+	}
+	geom, err := engineGGUFGeometryFrom(func(window int) ([]byte, error) {
+		return storage.prefix(ctx, key, window)
+	})
+	if err != nil {
+		log.Printf("engines: %s: the attention geometry went unread (%v)", key, err)
+		return engineKVGeometry{}
+	}
+	return geom
+}
+
+// engineGeometryFile names the file whose header answers for the row: its own weights, under the
+// unflagged slot. Every other flag names a part, and a text encoder's header says nothing about
+// the model that loads it — the same rule engineVaeMainFile states for the other question.
+func engineGeometryFile(m store.EngineModel) (string, bool) {
+	for _, f := range m.Files {
+		if strings.TrimSpace(f.Flag) == "" && engineGGUFName(f.S3Key) {
+			return f.S3Key, true
+		}
+	}
+	return "", false
+}
+
+// engineApplyGeometry writes a read header onto a row. One function because the six fields are
+// one fact: a row carrying four of them and not the other two is a row that estimates four times
+// too high, which is the bug this whole pass exists to close.
+func engineApplyGeometry(m *store.EngineModel, geom engineKVGeometry) {
+	m.KVLayers, m.KVHeadsKV = geom.Layers, geom.HeadsKV
+	m.KVKeyLen, m.KVValueLen = geom.KeyLen, geom.ValLen
+	m.KVNextN, m.KVFullAttnInterval = geom.NextN, geom.FullAttnInterval
+	// Only when the header said so: the ingest road may already have it from the upstream API,
+	// and a 0 read off a header that does not declare one must not erase that.
+	if geom.Ceiling > 0 {
+		m.ContextCeiling = geom.Ceiling
+	}
 }

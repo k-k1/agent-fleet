@@ -444,7 +444,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 func TestEngineResolvedRowCarriesTheKVCostPerThousandTokens(t *testing.T) {
 	// The 30B this deployment runs: 48 layers, 4 KV heads, 128/128 — 3072 MiB at 32768 tokens
 	// (engine_gguf_test.go), so 96 MiB per 1024.
-	row := engineResolvedRow(engineResolved{}, engineDeploymentTokens{}, "", engineKVGeometry{48, 4, 128, 128})
+	row := engineResolvedRow(engineResolved{}, engineDeploymentTokens{}, "", engineKVGeometry{Layers: 48, HeadsKV: 4, KeyLen: 128, ValLen: 128})
 	if row["kv_mib_per_1k_tokens"] != 96 {
 		t.Errorf("kv_mib_per_1k_tokens = %v, want 96", row["kv_mib_per_1k_tokens"])
 	}
@@ -1112,7 +1112,7 @@ func TestEngineIngestReplaceKeepsTheRowAndRewritesTheGeometry(t *testing.T) {
 	req.Resolved.Source = "hf:x/y/new-q8_0.gguf"
 	req.Resolved.Bytes = 1_894_532_000
 	// The new file's own header, read at the start of the job exactly as a creating ingest does.
-	req.KVGeom = engineKVGeometry{48, 4, 128, 128}
+	req.KVGeom = engineKVGeometry{Layers: 48, HeadsKV: 4, KeyLen: 128, ValLen: 128}
 	// None of these may reach the row: a replace changes one file.
 	req.ContextTokens, req.MaxOutput = 1024, 128
 	req.AcceptedBy, req.AcceptedTenant = "u2", "t-other"

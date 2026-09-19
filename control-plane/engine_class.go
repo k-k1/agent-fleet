@@ -269,6 +269,7 @@ func engineModelVramNeed(m store.EngineModel) (int, string) {
 	// allocated 448 MiB for the 16384 it was started with.
 	if kv := engineKVCacheMiB(engineKVGeometry{
 		Layers: m.KVLayers, HeadsKV: m.KVHeadsKV, KeyLen: m.KVKeyLen, ValLen: m.KVValueLen,
+		NextN: m.KVNextN, FullAttnInterval: m.KVFullAttnInterval,
 	}, m.ContextTokens); kv > 0 {
 		return weights + kv, engineVramWeightsKV
 	}

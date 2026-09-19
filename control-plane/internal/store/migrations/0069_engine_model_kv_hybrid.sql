@@ -1,0 +1,29 @@
+-- The two header fields that decide how many of a model's blocks actually hold a KV cache.
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`.
+--
+-- 0062 stored block_count and multiplied by all of it. That is right for a dense model and
+-- four times too big for a hybrid one, which is not a rounding error when the number decides
+-- whether a window fits on a card. Two things make the counts differ:
+--
+--   nextn_predict_layers - multi-token-prediction heads. They are inside block_count and carry
+--   a full set of attention tensors, and llama.cpp does not run them (it prints
+--   `model has unused tensor blk.<n>.nextn.* -- ignoring` for each).
+--
+--   full_attention_interval - only every Nth layer is full attention. The rest are recurrent,
+--   and a recurrent layer's state is a fixed size per sequence rather than per token, so it
+--   does not grow with the window and does not belong in a figure the window multiplies.
+--
+-- Measured on af-sandbox 2026-09-18, Qwen3.8-27B (block_count 65, nextn_predict_layers 1,
+-- full_attention_interval 4). Started with --ctx-size 262144 it asked CUDA for
+-- `allocating 16384.00 MiB` and failed with `failed to allocate buffer for kv cache`.
+-- (65-1)/4 = 16 caching layers gives 16384.00 MiB exactly. All 65 gives 66560.
+--
+-- 0 means "this architecture has no such field, or the row was read before they were parsed",
+-- and both reduce to 0062's behaviour - unlike the four columns next door, a zero here is a
+-- safe default rather than an unusable one, because it is a divisor and a subtrahend rather
+-- than a factor.
+ALTER TABLE engine_models ADD COLUMN kv_nextn INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE engine_models ADD COLUMN kv_full_attn_interval INTEGER NOT NULL DEFAULT 0;

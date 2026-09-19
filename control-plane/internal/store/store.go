@@ -244,6 +244,21 @@ type EngineModel struct {
 	// checkpoint's memory is dominated by the compute buffers instead (ADR 0074's first
 	// measurement).
 	KVLayers, KVHeadsKV, KVKeyLen, KVValueLen int
+	// How many of KVLayers actually cache: KVNextN is <arch>.nextn_predict_layers (blocks
+	// inside block_count that llama.cpp never runs) and KVFullAttnInterval is
+	// <arch>.full_attention_interval (only every Nth layer is full attention — the rest are
+	// recurrent, with a state that does not grow with the window).
+	//
+	// Unlike the four above, a zero here is SAFE: it means the architecture has no such field,
+	// or the row was written before they were read, and both reduce to "every layer caches".
+	// See engineKVGeometry.cacheLayers for the measurement that made them necessary.
+	KVNextN, KVFullAttnInterval int
+	// ContextCeiling is `<arch>.context_length`, the largest window the model was TRAINED for.
+	// 🔴 A ceiling, not a setting — the 27B here publishes 262144 and is run at 32768. It is
+	// stored so a registered row can be re-fitted against its own limit, which the panel cannot
+	// do from the geometry alone: the attention shape says what a token costs, not how many of
+	// them the weights can attend over. 0 = not read.
+	ContextCeiling int
 	// Sizes replaces sdcppSizes()'s guess from the model id with a declaration.
 	Sizes []string
 	// Params are the generation defaults this row asks for — see EngineParams. Nil for a row
@@ -432,6 +447,14 @@ type EngineModelFile struct {
 // replacement of a text encoder has no opinion about the checkpoint's attention heads.
 type EngineModelKV struct {
 	Layers, HeadsKV, KeyLen, ValueLen int
+	// The hybrid modifiers, travelling with the four they correct — see EngineModel's
+	// KVNextN/KVFullAttnInterval. Left out here, a re-read header would keep the row's stale
+	// divisor and go back to over-estimating by four.
+	NextN, FullAttnInterval int
+	// And the model's own ceiling, for the same reason: a file swapped for another quantisation
+	// of a DIFFERENT model publishes a different maximum, and a row left with the previous one
+	// is re-fitted against a limit its weights never had.
+	Ceiling int
 }
 
 // EngineModelStore is the catalogue. Two writers reach it — an administrator's toggle and the
@@ -503,6 +526,12 @@ type EngineModelStore interface {
 	// carries max_output_tokens only when context_tokens is above zero: a row that moved one of
 	// them alone is one the panel cannot explain.
 	SetEngineModelWindow(ctx context.Context, role, id string, contextTokens, maxOutputTokens int) (bool, error)
+	// SetEngineModelGeometry writes only the columns a header read produced. Targeted because
+	// the read is a network round trip and a whole-row write of the pre-read snapshot would
+	// revert anything that changed while it was in flight.
+	// `files` is the declaration the caller read the geometry's file out of, compared on write: a
+	// replacement that landed in between must not have the previous file's shape stapled to it.
+	SetEngineModelGeometry(ctx context.Context, role, id string, files []EngineModelFile, kv EngineModelKV) (bool, error)
 	// SetEngineModelVram writes the operator's own VRAM measurement; 0 withdraws it and puts the
 	// row back on the floor its files imply.
 	SetEngineModelVram(ctx context.Context, role, id string, vramMiB int) (bool, error)
