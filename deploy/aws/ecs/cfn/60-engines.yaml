@@ -261,6 +261,19 @@ Resources:
               - Effect: Allow
                 Action: [ s3:DeleteObject ]
                 Resource: !Sub "${ModelsBucket.Arn}/*"
+              # !! Tagging, and it is the MOVE that needs it (ADR 0085's "present at another key
+              # -> move, then declare"). `aws s3 mv` copies an object's properties by default, so
+              # a copy of anything past the multipart threshold - every model in this bucket -
+              # reads the source's tags and writes them onto the destination. Without these two
+              # the repair dies INSIDE the task, minutes after the press, with `AccessDenied ...
+              # s3:GetObjectTagging`: measured on the dev deployment 2026-09-20, moving a 9.38 GB
+              # text encoder out of image/diffusion_models/. Nothing on the way there refuses, so
+              # the only visible trace is a red job and the route reads as "the button did
+              # nothing". Passing --copy-props to the CLI instead would drop user metadata as
+              # well, and is a change to the engine-tools image rather than to this stack.
+              - Effect: Allow
+                Action: [ s3:GetObjectTagging, s3:PutObjectTagging ]
+                Resource: !Sub "${ModelsBucket.Arn}/*"
 
   # !! The CP's only new IAM, all pinned to this stack - PARAMETERS, "The ingest permissions".
   CpIngestPolicy:

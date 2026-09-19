@@ -1769,6 +1769,14 @@ So an IAM hole is shaped exactly like "no capacity", and `--dry-run` does not ca
 0077's P0 follow-up hands it to decision 8's failure-code table — but it is also why this policy
 is not something to trim by experiment.
 
+**`s3:GetObjectTagging` / `s3:PutObjectTagging` are on the INGEST task role, for the move.**
+`MODE=move` relocates a file that was staged where no ComfyUI loader lists it (ADR 0085's
+"present at another key"), and it is `aws s3 mv` inside one bucket. The CLI copies an object's
+properties unless told otherwise, and a copy past the multipart threshold — every model here —
+reads the source's tags and writes them onto the destination. Measured 2026-09-20 on the dev
+deployment without them: the repair fails in the task with `AccessDenied … s3:GetObjectTagging`,
+minutes after the press, leaving a red job as the only trace.
+
 **`s3:DeleteObject` is on the INGEST task role, and on nothing else.** `MODE=delete` (ADR 0072
 decision 7) is how bytes leave the bucket, and the Control Plane does not hold the permission:
 forgetting a catalogue row and deleting the file it points at are different acts by different
