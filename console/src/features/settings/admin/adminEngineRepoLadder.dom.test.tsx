@@ -69,11 +69,11 @@ async function flush(turns = 4) {
   }
 }
 
-async function mount() {
+async function mount(engineKey: "llm" | "image" = "llm", lora = false) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(<EngineAddView engineKey="llm" lora={false} initialView="registered" />); });
+  await act(async () => { root!.render(<EngineAddView engineKey={engineKey} lora={lora} initialView="registered" />); });
   await flush();
 }
 
@@ -196,5 +196,110 @@ describe("the repository card", () => {
       kind: "gguf",
       source: { hf: { repo: REPO, file: "Qwen3.8-27B-UD-IQ2_S.gguf", revision: "main" } },
     });
+  });
+});
+
+// The same ladders, reached from the ROW rather than from a group heading — and the image role's
+// own, which had none at all. The entry point matters as much as the table: filing a GGUF under
+// its repository needs a `display_name`, so every row nobody has read a model page for was filed
+// under "" and could never reach the ladder, which is most of an older deployment's catalogue.
+describe("the ladders a card opens", () => {
+  const bare = {
+    ...held, id: "qwen_bare", display_name: undefined,
+    source: `hf:${REPO}/Qwen3.8-27B-UD-IQ2_S.gguf`,
+  };
+
+  const anima = {
+    id: "animaika_v47", kind: "model", enabled: true, base_model: "sdxl",
+    display_name: "Animalka", version_name: "v4.7", source: "civitai:5038",
+    file_rows: [{ s3Key: "image/checkpoints/animaika_v47.safetensors", bytes: 4_200_000_000 }],
+  };
+  const imageRow = {
+    key: "image", api: "images", provider: "comfy", managed: true, base_models: ["sdxl"],
+    class: { id: "g6.xlarge", label: "g6.xlarge", vram_mib: 22000, types: [] },
+    classes: [{ id: "g6.xlarge", label: "g6.xlarge", vram_mib: 22000, types: [] }],
+    model_rows: [anima],
+  };
+  const VERSIONS = {
+    model_ref: "4451",
+    versions: [
+      { ref: "5038", name: "v4.7", bytes: 4_200_000_000, published_at: "2026-08-01T00:00:00Z" },
+      { ref: "6000", name: "v5.0", bytes: 4_300_000_000 },
+      { ref: "7000", name: "v3.1" },
+    ],
+  };
+
+  it("offers the other sizes from a row with no name, where no group heading can", async () => {
+    mockEngineAPI([{ ...llmRow, model_rows: [bare] }]);
+    await mount();
+    expect(button("この配布元の他の量子化を見る")).toBeUndefined();
+
+    await click(button("別サイズ…"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/ingest/files", "POST",
+      { source: { hf: { repo: REPO } } });
+    expect(rowFor("UD-IQ2_XXS")).toBeTruthy();
+    // Held is answered against the whole catalogue, so the size this row IS reads as taken in.
+    expect(rowFor("UD-IQ2_S")!.className).toContain("held");
+  });
+
+  it("offers nothing where the row records no page to read", async () => {
+    mockEngineAPI([{ ...llmRow, model_rows: [
+      { ...held, id: "seeded", display_name: undefined, source: undefined },
+      { ...held, id: "direct", display_name: undefined, source: "url:https://example.invalid/m.gguf" },
+    ] }]);
+    await mount();
+    expect(button("別サイズ…")).toBeUndefined();
+  });
+
+  // An adapter is filed under the model it was trained against, not under a repository of sizes,
+  // and the ladder prices a KV cache it does not have.
+  it("offers nothing on a chat adapter", async () => {
+    mockEngineAPI([{ ...llmRow, model_rows: [
+      { ...held, id: "adapter", kind: "lora", base_model: "qwen3_8_27b_ud_iq2_xxs" },
+    ] }]);
+    await mount("llm", true);
+    expect(button("別サイズ…")).toBeUndefined();
+  });
+
+  it("lists a checkpoint's other versions, marking the one this row is", async () => {
+    mockEngineAPI([imageRow]);
+    apiJSON.mockImplementation((path: string) => path.endsWith("/ingest/versions")
+      ? Promise.resolve(VERSIONS) : Promise.resolve({}));
+    await mount("image");
+
+    await click(button("別バージョン…"));
+    // 🔴 Asked with the VERSION id alone: a row records `civitai:<version>` and nothing else, and
+    // the model id is a different number the CP resolves and sends back.
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/versions", "POST",
+      { source: "civitai", ref: "5038" });
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(".engine-repo-quants li"));
+    expect(rows.map((li) => li.querySelector(".engine-repo-quant-name")?.textContent)).toEqual(["v4.7", "v5.0", "v3.1"]);
+    expect(rows[0].className).toContain("held");
+    expect(rows[1].textContent).toContain("4.0 GiB");
+    // No size from upstream, so no verdict either: a fit computed from a missing weight would
+    // read as "it fits" about a model nobody measured.
+    expect(rows[2].textContent).toContain("サイズ未取得");
+    expect(rows[2].querySelector(".engines-model-tag")).toBeNull();
+  });
+
+  it("opens the plan dialog on the chosen version, as Civitai and not as a repository name", async () => {
+    mockEngineAPI([imageRow]);
+    apiJSON.mockImplementation((path: string) => path.endsWith("/ingest/versions")
+      ? Promise.resolve(VERSIONS)
+      : path.endsWith("/ingest/files")
+        ? Promise.resolve({ files: [{ name: "animaika_v50.safetensors", bytes: 4_300_000_000 }] })
+        : Promise.resolve({}));
+    await mount("image");
+    await click(button("別バージョン…"));
+    const wanted = Array.from(document.querySelectorAll<HTMLElement>(".engine-repo-quants li"))
+      .find((li) => li.querySelector(".engine-repo-quant-name")?.textContent === "v5.0")!;
+    await click(wanted.querySelector<HTMLButtonElement>("button")!);
+
+    // 🔴 The dialog inspects as CIVITAI. Handed the link without the source it would have opened
+    // set to Hugging Face and sent the whole URL upstream as a repository name.
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/versions", "POST",
+      { source: "civitai", ref: "6000", model_ref: "4451" });
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/files", "POST",
+      { source: { civitai: { versionId: 6000, file: "" } } });
   });
 });

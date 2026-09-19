@@ -57,7 +57,7 @@ async function openCatalog(
   let started = false;
   const engines = [
     { key: "image", api: "images", provider: "comfy", base_models: ["sdxl"], file_flags: ["--vae", "--clip_l"], model_rows: mode === "registered" ? [
-      { id: "harbor", enabled: false, base_model: "sdxl", description: "Harbor checkpoint", file_rows: [
+      { id: "harbor", enabled: false, base_model: "sdxl", description: "Harbor checkpoint", source: "civitai:101", file_rows: [
         // Real sizes and a real page: the part line is drawn to put both at its right end, and a
         // fixture of 1 kB with no link cannot show whether it does.
         { s3Key: "image/checkpoints/harbor.safetensors", flag: "", bytes: 4_200_000_000, source_url: "https://example.invalid/models/harbor" },
@@ -130,7 +130,17 @@ async function openCatalog(
         preview_url: image ? `${origin}/example-preview.svg` : undefined,
       })) });
     }
-    if (p.endsWith("/ingest/versions")) return answer({ versions: [{ ref: "101", name: "Version 1" }] });
+    // The model behind the version, as the CP resolves it, and the sizes the listing carries.
+    // A version without one is deliberate: the panel must say "size not reported" rather than
+    // price a fit it cannot compute.
+    if (p.endsWith("/ingest/versions")) return answer({
+      model_ref: "100",
+      versions: [
+        { ref: "101", name: "Version 1", bytes: 4_200_000_000, published_at: "2026-08-01T00:00:00Z" },
+        { ref: "102", name: "Version 2", bytes: 4_300_000_000 },
+        { ref: "103", name: "Version 0.9" },
+      ],
+    });
     if (p.endsWith("/ingest/files")) return answer({ files: [{ name: "harbor.safetensors", bytes: 1024, sha256: "a".repeat(64) }] });
     // The resolve answers a PLAN, not a set of fields for a form to carry (decision 4): what the
     // press would download, what it would reuse, and the token the CP re-plans against.
@@ -258,6 +268,37 @@ test("the catalogue comes back from another tab with its page, its place and no 
   await expect.poll(() => page.locator(".engine-catalog-browser").evaluate((el) => el.scrollTop))
     .toBeGreaterThan(left - 40);
   await page.screenshot({ path: testInfo.outputPath("catalogue-returned.png") });
+});
+
+// Updating a checkpoint to a newer version used to mean finding it again in the 探す tab. The row
+// records only `civitai:<version>`, so the model id behind it is the CP's answer, not the panel's.
+test("a registered card opens the other versions of its own model", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const calls = await openCatalog(page, "image", "dark", "registered");
+  const card = page.getByRole("listitem", { name: "harbor", exact: true });
+  await card.getByRole("button", { name: "Other versions…: harbor", exact: true }).click();
+
+  const modal = page.getByRole("dialog");
+  await expect(modal).toBeVisible();
+  expect(calls.filter((call) => call.path.endsWith("/ingest/versions"))).toEqual([
+    expect.objectContaining({ body: { source: "civitai", ref: "101" } }),
+  ]);
+  const rows = modal.locator(".engine-repo-quants li");
+  await expect(rows).toHaveCount(3);
+  // The version this row IS reads as taken in; the others are one press away.
+  await expect(rows.nth(0).getByText("Taken in", { exact: true })).toBeVisible();
+  await expect(rows.nth(1).getByRole("button", { name: "Add: Version 2", exact: true })).toBeVisible();
+  await expect(rows.nth(2)).toContainText("Size not reported");
+  await page.screenshot({ path: testInfo.outputPath("other-versions.png") });
+
+  // The press opens the ordinary plan card, as Civitai — the licence and the price are still seen
+  // on the one screen that has always shown them.
+  await rows.nth(1).getByRole("button", { name: "Add: Version 2", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  expect(calls.filter((call) => call.path.endsWith("/ingest/files"))).toEqual([
+    expect.objectContaining({ body: { source: { civitai: { versionId: 102, file: "" } } } }),
+  ]);
+  await page.screenshot({ path: testInfo.outputPath("other-versions-plan.png") });
 });
 
 // The part line is what a person reads to answer "which file is this row, how big, where from".

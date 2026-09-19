@@ -462,9 +462,19 @@ export type IngestVersion = {
   name: string;
   published_at?: string;
   updated_at?: string;
+  /** The version's own model file, when the listing carried one. Absent means the upstream did
+   *  not say — drawn as "size unknown", never as a comfortable zero, and no fit verdict is
+   *  offered for it (a verdict computed from a missing size would be a lie about the card). */
+  bytes?: number;
 };
 
-export type IngestVersionsAnswer = { versions: IngestVersion[] };
+export type IngestVersionsAnswer = {
+  versions: IngestVersion[];
+  /** The model the versions belong to, as the CP resolved it. A registered row records the
+   *  VERSION id alone (`civitai:<id>`), so this is how the panel learns the model id it needs to
+   *  open the ingest form on one of the other versions. */
+  model_ref?: string;
+};
 
 export type IngestSearchRequest = {
   q: string;

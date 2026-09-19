@@ -97,6 +97,20 @@ const SCENES = [
     })()`,
     settle: 1500,
   },
+  // The other VERSIONS of a checkpoint already here (ADR 0092 decision 3). The image role's
+  // counterpart to the ladder above, and the one road that used to mean searching for the model
+  // again in the 探す tab.
+  {
+    name: "versions", view: "registered", width: 1500, height: 1080,
+    action: `(async () => {
+      const open = document.querySelector('button[aria-label^="別バージョン…: meinamix"]');
+      if (!open) return false;
+      open.click();
+      await new Promise((done) => setTimeout(done, 900));
+      return !!document.querySelector(".engine-repo-quants");
+    })()`,
+    settle: 1500,
+  },
   // The only question this screen ever asks: which of the bucket's files fills a role, asked FOR
   // a checkpoint (decision 3).
   {

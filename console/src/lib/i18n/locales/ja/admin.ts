@@ -277,6 +277,8 @@ export const admin = {
   "admin.fit_card": "このクラスの VRAM {c} MiB",
   "admin.fit_estimate_note": "重みと KV キャッシュの見積もりです。計算バッファと CUDA コンテキストは含みません。",
   "admin.fit_no_kv": "KV キャッシュは読めなかったので、重みだけで比べています。",
+  // チェックポイントには KV キャッシュが無い。同じ文を出すと、無いものを見積もったことになる。
+  "admin.fit_estimate_note_weights": "重みの大きさだけの見積もりです。生成中に要る作業領域は含みません。",
   "admin.fit_kv_from": "KV は {f} のヘッダから読みました（同じ配布元でも版によって少し違います）。",
   "admin.engines_ingest_ctx_ceiling": "上限 {n}",
   // --- 配布元のカード（ADR 0089）。量子化の梯子は 1 押しで開く（開くたびに上流を読むため）。
@@ -286,6 +288,11 @@ export const admin = {
   "admin.repo_ladder_loading": "配布元を読んでいます…",
   "admin.repo_ladder_empty": "この配布元に取り込めるファイルがありません。",
   "admin.repo_ladder_held": "取り込み済み",
+  // --- 登録済みの行から「他にどんな形で出ているか」を開く。画像は版、文章はサイズ。---
+  "admin.catalog_other_versions": "別バージョン…",
+  "admin.catalog_other_sizes": "別サイズ…",
+  "admin.catalog_other_note": "取り込むと新しい行になります。入れ替えるときは、新しい行で「これで起動する」を押してから、古い行を「登録を消す」で消してください。",
+  "admin.catalog_versions_empty": "この配布元は他のバージョンを出していません。",
   // --- 揃える（ADR 0085 決定 3）。主語は行で、部品ではない。---
   "admin.catalog_complete": "揃える",
   "admin.catalog_complete_busy": "揃えています…",

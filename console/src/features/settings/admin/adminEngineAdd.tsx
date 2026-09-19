@@ -23,7 +23,7 @@ import {
 } from "./catalogMemory.ts";
 import { groupIsRepo, groupRegistered, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
 import { modelFit, windowThatFits } from "./engineFit.ts";
-import { FitTag, RepoQuantLadder } from "./adminEngineRepo.tsx";
+import { CivitaiVersionLadder, FitTag, RepoQuantLadder } from "./adminEngineRepo.tsx";
 import {
   engineIsImage,
   engineIsRemote,
@@ -158,6 +158,30 @@ function objectsPath(engineKey: string): string {
  *  what decides both where the scroll position is filed and whether a search starts at the top. */
 function conditionOf(query: string, source: string, sort: string, family: string): string {
   return `${query}\u0000${source}\u0000${sort}\u0000${family}`;
+}
+
+/** What else the model behind a row is published as, and how to ask for it — or "" when nothing
+ * can be listed.
+ *
+ * Read off the row's recorded `source`, which is the only thing that says where the bytes came
+ * from. The two roles ask different questions of different upstreams:
+ *
+ *   - an IMAGE row came from a Civitai VERSION (`civitai:<id>`), and the others are the model's
+ *     other versions;
+ *   - a GGUF row came from a Hugging Face FILE (`hf:<owner>/<repo>/<file>`), and the others are
+ *     the repository's other quantisations — which is ADR 0089's ladder, now reachable from any
+ *     such row instead of only from a group whose heading happens to be a repository name.
+ *
+ * 🔴 A LoRA is left out of the chat side on purpose: an adapter is filed under the model it was
+ * trained against, not under a repository of sizes, and the ladder prices a KV cache it does not
+ * have. A `url:` source and a row with none answer "" — there is no page behind either.
+ */
+function otherOf(model: EngineModel, image: boolean): string {
+  const source = (model.source || "").trim();
+  if (image) return source.startsWith("civitai:") ? source.slice("civitai:".length) : "";
+  if (model.kind === "lora" || !source.startsWith("hf:")) return "";
+  const parts = source.slice("hf:".length).split("/");
+  return parts.length >= 3 && parts[0] && parts[1] ? `${parts[0]}/${parts[1]}` : "";
 }
 
 function CatalogBrowser({ row, kind, onKind, paneId, sources, readOnly, onChanged, image }: BrowseProps & { image: boolean }) {
@@ -638,6 +662,17 @@ function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly, onCha
    *  resolves, plans and prices a press, and a second road into the ingest that skipped it would
    *  be a press nobody saw the cost of. */
   const [addFile, setAddFile] = useState<{ repo: string; file: string } | null>(null);
+  /** Opening the ladder of what ELSE this model is published as — the other Civitai versions of a
+   *  checkpoint, the other quantisations of a GGUF repository. The row, not a pre-built request:
+   *  which of the two ladders it gets, and what it asks upstream with, is read off the row's own
+   *  recorded source. */
+  const [other, setOther] = useState<EngineModel | null>(null);
+  /** Pre-filling the plan dialog for a Civitai version (ADR 0085 decision 4).
+   *
+   *  🔴 The source and the ref travel together. `IngestPlanDialog` picks its source type from
+   *  `hit` and `initialSource` alone, so a Civitai URL handed over without the source arrives in
+   *  a form set to Hugging Face and is parsed as a repository name. */
+  const [addVersion, setAddVersion] = useState<{ modelRef: string; versionRef: string } | null>(null);
   const models = (row.model_rows || []).filter((model) => (model.kind === "lora") === (kind === "lora"));
   const image = engineIsImage(row);
 
@@ -967,6 +1002,15 @@ function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly, onCha
           {!readOnly && registeredNeedsMeta(model) && <Button variant="ghost" small icon="download"
             aria-label={`${tr("admin.catalog_meta" as never)}: ${model.id}`} disabled={pending}
             onClick={() => void fillMeta([model])}>{tr("admin.catalog_meta" as never)}</Button>}
+          {/* The other versions / the other sizes of THIS model, from the row that has one
+              (ADR 0089 for chat, and its image counterpart). Offered only where there is
+              something to list: a row whose source is a `url:` or a seeded one records no page,
+              and a borrowed catalogue draws no acts at all. */}
+          {!readOnly && !!otherOf(model, image) && <Button variant="ghost" small icon="versions"
+            aria-label={`${tr(image ? "admin.catalog_other_versions" as never : "admin.catalog_other_sizes" as never)}: ${model.id}`}
+            onClick={() => setOther(model)}>
+            {tr(image ? "admin.catalog_other_versions" as never : "admin.catalog_other_sizes" as never)}
+          </Button>}
           {isSuper && !readOnly && <Button variant="ghost" small icon="edit" aria-label={`${tr("admin.catalog_edit" as never)}: ${model.id}`} onClick={() => setEdit(model)}>{tr("admin.catalog_edit" as never)}</Button>}
           {isSuper && !readOnly && <Button small aria-label={`${tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, { enabled: !model.enabled })}>{tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}</Button>}
           {isSuper && !readOnly && model.kind !== "lora" && !started && <Button variant="primary" small aria-label={`${tr("admin.engines_model_select")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, image ? { selected: true } : { default: true })}>{tr("admin.engines_model_select")}</Button>}
@@ -1009,6 +1053,37 @@ function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly, onCha
         <footer className="engine-operation-footer"><Button variant="ghost" onClick={() => setDeletingObject(null)}>{tr("common.cancel")}</Button>
           <Button variant="danger" onClick={() => void deleteObject(deletingObject.key)}>{tr("admin.catalog_ledger_delete" as never)}</Button></footer></div>
     </Modal>}
+    {/* What else this model is published as. One press, one modal, and the press inside it opens
+        the ordinary plan dialog — so the licence and the price are still seen on the one screen
+        that has always shown them. */}
+    {other && <Modal className="engine-catalog-operation engine-other-ladder"
+      title={`${tr(image ? "admin.catalog_other_versions" as never : "admin.catalog_other_sizes" as never)} — ${registeredTitle(other).title}`}
+      onClose={() => setOther(null)}>
+      <div className="ui-modal-body engine-operation-body">
+        {image
+          ? <CivitaiVersionLadder engine={row} versionRef={otherOf(other, true)} rows={models} readOnly={readOnly}
+            onTakeIn={(modelRef, version) => { setOther(null); setAddVersion({ modelRef, versionRef: version.ref }); }} />
+          : <RepoQuantLadder engine={row} repo={otherOf(other, false)} rows={models} readOnly={readOnly} startOpen
+            onTakeIn={(file) => { setOther(null); setAddFile({ repo: otherOf(other, false), file }); }} />}
+        {/* What taking another one in does NOT do. The row is never rewritten in place: its id is
+            the key the launch menu, the active set and every S3 path are written in, so a new
+            version arrives as a new row and the swap is two presses the card already has. */}
+        <p className="admin-hint">{tr("admin.catalog_other_note" as never)}</p>
+      </div>
+    </Modal>}
+    {/* 🔴 The source travels WITH the ref. `IngestPlanDialog` reads its source type from `hit`
+        and `initialSource` only, so a Civitai link passed alone opens a form still set to
+        Hugging Face, which parses the whole URL as a repository name. The spelling is the one the
+        dialog's own `civitaiPage` / `civitaiVersionParam` already read — no second parser. */}
+    {addVersion && <IngestPlanDialog row={row} kind={kind} initialSource="civitai"
+      // Without a model id — an older control plane that does not resolve one — the version-only
+      // spelling is still a link this dialog reads, and the CP resolves the model behind it. It
+      // is the same form a person pasting from the address bar arrives with.
+      initialRef={addVersion.modelRef
+        ? `https://civitai.com/models/${addVersion.modelRef}?modelVersionId=${addVersion.versionRef}`
+        : `https://civitai.com/models/?modelVersionId=${addVersion.versionRef}`}
+      onClose={() => setAddVersion(null)}
+      onStarted={async () => { setAddVersion(null); await onChanged(); await loadObjects(); }} />}
     {/* 🔴 Handed the blob URL rather than a repo/file pair: that is the form the dialog already
         parses (`hfURL`), so this road opens the same pre-filled screen a pasted link does, and
         there is no second way in for the plan and the licence to be skipped. */}
@@ -1282,12 +1357,10 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
     try {
       if (plainURL) { setVersions([]); setFiles([]); return; }
       const requestedVersion = versionRef || pastedVersion;
-      if (sourceType === "civitai" && !civitaiModelRef && pastedVersion) {
-        setVersions([{ ref: pastedVersion, name: pastedVersion }]);
-        setVersionRef(pastedVersion);
-        await loadFiles(pastedVersion, seq);
-        return;
-      }
+      // A Civitai version with no model beside it used to short-circuit into a list of ONE, made
+      // up here, because the route demanded a model id the Console did not have. The CP resolves
+      // it from the version now, so the same question has one answer and one road to it — the
+      // version list this then draws is the real one, and the other versions are selectable.
       const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/versions`, "POST", {
         source: sourceType, ref: hit?.ref || pastedVersion || repo, model_ref: sourceType === "civitai" ? civitaiModelRef : repo,
       });
