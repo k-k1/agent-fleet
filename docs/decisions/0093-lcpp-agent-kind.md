@@ -12,6 +12,9 @@ English | [日本語](0093-lcpp-agent-kind.ja.md)
   switch (Context, Decision 6), and `ProcessModel` reaches no Console consumer (Decision 4). The
   terminal-route gate turned out to be five sites, not three (Decision 2). Open questions 3–5 are
   closed there; 1 and 2 stay hardware-only.
+  🟢 **Plan approved by the user 2026-09-19** (the staging of Decision 9, Phase 0 first). Implementation
+  runs in child sessions driven and reviewed by a parent session; each phase lands through its own
+  PR. Status moves to *adopted* when Phase 2 is merged, or the ADR records where it stopped.
 - The request is one sentence: **can our own harness — a process that talks to llama-server's API
   directly instead of driving a vendor CLI — be a session kind of Agent Fleet, and at what cost?**
 - See also: [0015](0015-agent-managed-driver.md) (the managed driver contract this kind implements
