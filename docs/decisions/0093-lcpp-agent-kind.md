@@ -6,6 +6,12 @@ English | [日本語](0093-lcpp-agent-kind.ja.md)
   `951bb402` (develop at the time); the inventory behind it, table by table, is
   `docs/log/99-lcpp-agent-kind.md`, which stays the working record while this ADR carries the
   decisions and the options rejected.
+  🟢 **Reviewed 2026-09-19, before Phase 0** (the Review section at the end, by a separate session,
+  every anchor re-read against the tree). Two premises of the first draft were overturned and are
+  corrected in place below, each marked "the first draft said …": `dispatchMCPStdio` is not a pure
+  switch (Context, Decision 6), and `ProcessModel` reaches no Console consumer (Decision 4). The
+  terminal-route gate turned out to be five sites, not three (Decision 2). Open questions 3–5 are
+  closed there; 1 and 2 stay hardware-only.
 - The request is one sentence: **can our own harness — a process that talks to llama-server's API
   directly instead of driving a vendor CLI — be a session kind of Agent Fleet, and at what cost?**
 - See also: [0015](0015-agent-managed-driver.md) (the managed driver contract this kind implements
@@ -72,8 +78,13 @@ is ours to write.**
   is a 404. Streaming responses get `stream_options.include_usage` injected (`:597`), and every
   request is the demand signal that buys the box (`:540`).
 - The `af` MCP server is `dispatchMCPStdio(line []byte) []byte`
-  (`workspace/agent/internal/mcpx/mcp_stdio.go:243`): a pure switch over one JSON-RPC line, callable
-  in-process. Its permission set is process-global (`parseStdioFlags`, `:131`).
+  (`workspace/agent/internal/mcpx/mcp_stdio.go:243`). **The first draft called it a pure switch over
+  one JSON-RPC line and was wrong**: besides the process-global permission set (`parseStdioFlags`,
+  `:131`) it reads the owning session, conversation, Chromium, peer, image and spawn state, writes
+  progress and list-change notifications asynchronously through the process-wide stdout writer, and
+  `tools/list` starts a once-only process-wide watcher (`:79-210`, `:479-544`). It is callable
+  in-process only behind a request-scoped dispatch context that also owns notification output and
+  the watcher's lifetime.
 - There is no MCP *client* in Go. `mcpreg/probe.go` speaks `initialize` → `initialized` →
   `tools/list` over stdio and Streamable HTTP (`:332-344`, `:483-498`) and stops there; the only
   `tools/call` caller is an e2e test.
@@ -103,8 +114,12 @@ docs/log/74 §8.2 did for the third blue.
 
 There is nothing to put in a tmux pane. `BuildLaunch` returns an error, `POST /sessions` defaults
 `driver` to `managed` for this kind, `POST /sessions/{name}/driver` refuses `tui` with 400, and the
-Console gains one descriptor flag saying "no terminal route", read by the launch modal's driver
-choice, the driver-switch button and the handoff modal's route line. A paneless session is not new —
+Console gains one descriptor flag saying "no terminal route". **The first draft named three readers;
+the Review found five** (`LaunchModal.tsx:776-803`, `StartModal.tsx:303-316`, quick launch in
+`RepoRowConnected.tsx:178-184`, the driver-switch menu and action in `SessionMenu.tsx:179-190` /
+`useSessionActions.tsx:262-287`) plus the server-side managed→TUI transition
+(`session_driver.go:62-105`); the handoff modal needs no route label because it uses the generic
+create path, which only has to select managed for this kind. A paneless session is not new —
 managed sessions already are; what is new is that this one can never go back to a pane.
 
 A REPL (`workspace-agent lcpp-tui`) would give a Terminal route. It would be a second UI for a kind
@@ -132,7 +147,10 @@ Supervisor skeleton (ensure / adopt / generation / drain) applies; what remains 
 goroutine's lifetime, settling a turn the Agent was holding when it restarted (`TurnUnknown` →
 `Snapshot` reads the JSONL tail: closed on an assistant record = completed, open on a tool_call =
 aborted), and a context cancel in `shutdown.go`. `Capabilities.ProcessModel` gains `"in-process"`;
-`tuiMemoryCost` is empty.
+`tuiMemoryCost` is empty. **The first draft assumed the fourth value could break a Console consumer;
+the Review found none**: `ProcessModel` never crosses the Agent API and is only populated by the
+managed drivers (`driver.go:142-157`). Adding the value breaks nothing, and equally drives no UI —
+the terminal-route gate of Decision 2 is a descriptor flag, not this enum.
 
 The seven handle methods: **Send** runs one loop; **Steer** queues a user message for the next tool
 boundary (shown as `Queued`); **Interrupt** cancels the context, optionally after `POST
@@ -168,9 +186,14 @@ in the guide, not "whatever the catalogue holds".
 
 ### Decision 6 — `af` tools in-process; external MCP through a client of our own; a kind that is known but never materialised
 
-The 72 `af` tools do not go through MCP at all: the harness calls `dispatchMCPStdio` directly, after
-its process-global flags become a per-call option struct. Tool names and descriptions stay as they
-are, so the per-session description cost is unchanged.
+The 72 `af` tools do not go through MCP at all: the harness calls `dispatchMCPStdio` directly.
+**The first draft said this needs only the process-global flags turned into a per-call option
+struct, and was wrong** (Review): the dispatcher also depends on per-process session / conversation
+/ Chromium / peer / image / spawn state, on the stdout writer for asynchronous notifications and on
+a once-only watcher (`mcp_stdio.go:79-210`, `:479-544`). The in-process call is valid only after a
+request-scoped dispatch context owns those too; until then, and as the fallback if that refactor is
+refused, `af` tools go over loopback HTTP like every other CLI's do. Tool names and descriptions
+stay as they are either way, so the per-session description cost is unchanged.
 
 External servers (tenant-distributed, project, member-registered) get a real client: stdio and
 Streamable HTTP, both the 2026-07-28 stateless convention and the 2025-06-18 `initialize` one
@@ -258,6 +281,10 @@ string-contract tests.
   re-prefill of the whole history every turn once the box is replaced (tens of seconds at 30B / 30k;
   `/slots` save/restore cannot cross boxes and does not pass the gateway anyway). Neither is worse
   than the opencode route; both are the engine's, not the kind's.
+- The estimate is more likely to be exceeded than undercut on its two largest items: the Review
+  finds E (tools) likely above 3,000 lines and F (MCP client) above 1,200, because the request-scoped
+  dispatch refactor above lands in F and the smallest complete kind is already 2,109 lines. The ranges
+  stand; the direction is recorded.
 - The estimate (details and the per-item table in docs/log/99 §8): **22–27 session-days, roughly
   9,000–13,000 lines with tests**, one lane ≈ 5 weeks, three lanes ≈ 2–3 weeks. Of that, the core
   shared with P1 (LLM client, loop and tools, MCP client, context) is 12–15 days; **P2's own

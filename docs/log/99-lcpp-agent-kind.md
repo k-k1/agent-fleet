@@ -101,6 +101,7 @@ decisions/0084（エンジン表示とテナント別可否）。**判断と棄�
 | `session_io.go:117 / 711-718 / 798 / 1024-1035` | PaneMode / boot readiness / bracketed paste / モーダル番人 | **✗ 全部通らない**（ペインが無い）。触らないで済む |
 | `session_skills.go:80-93` | kind 別の native スキル列挙 | △ foreign（注入）だけ＝kiro/copilot/agy と同じ側 |
 | `turn_end_poll.go:62-70` | ポーリングで turn end を観測する kind | 入れない（自分で `status.RecordTurnEnd`） |
+| `chatx/chat_report_reconcile.go:45-54`（ADR 0093 Review で追加） | ポーリング kind の報告は 2 tick 落ち着いてから確定 | 分岐は不要。通常の turn-end マーカーを出すことの**検証点** |
 | `session_usage.go:89-92` | kiro だけの live `ManagedContext` | 不要（転写にトークンが載る） |
 | `shutdown.go:106/112/141` / `main.go:193 ReconcileManaged` | managed 子の abort・再起動時の引き取り | △ 子が無い＝走行中の ctx cancel と「turn を unknown に落として snapshot で settle」だけ |
 
@@ -259,7 +260,9 @@ hermes-agent はこの表の全部を Python で持っている（`tools/`・`ag
 ### 4.7 MCP クライアント — af ツールは in-process、外部だけ本物のクライアント
 
 - **af ツール（72 本）は MCP を通さなくてよい**: `mcp_stdio.go:243 dispatchMCPStdio(line []byte) []byte` は
-  「JSON-RPC 1 行を受けて 1 行返す純粋なスイッチ」で、ハーネスは同じプロセス内から直接呼べる。⚠️ ただし
+  「JSON-RPC 1 行を受けて 1 行返す純粋なスイッチ」に見えるが、ADR 0093 の Review で**そうではない**と分かった
+  （所有セッション・会話・Chromium・peer・画像・spawn の状態、stdout への非同期通知、一度きりの watcher に依存＝
+  `:79-210`・`:479-544`）。in-process で呼べるのは、それらを持つリクエスト単位の dispatch 文脈を作ってから。⚠️ 加えて
   `parseStdioFlags`（`:131`、`--write` / `--conv` / `--self-report` … の許可集合）が**プロセス全体のグローバル**
   なので、セッションごとの許可を渡せる形（per-call のオプション構造体）に直す小さなリファクタが前置き。
   ツール名（`af_report` など）と説明文は既存のまま＝[[mcp-tool-description-cost]] の固定費もそのまま。
@@ -467,6 +470,7 @@ kind を作る理由は文脈量ではなく、**「opencode を経由しない�
 2. `/v1/chat/completions/input_tokens` と `/control` が現行エンジンイメージの llama.cpp 版に**実在するか**
    （README で確認済みだが、配備している版が古いと無い。ここで G の設計が変わる）。
 3. `dispatchMCPStdio` のフラグ globals を per-call に切れるか（F の前置き。切れなければ af ツールも HTTP で回す）。
+   → ADR 0093 Review: フラグだけでは足りず、通知出力と watcher の寿命まで持つリクエスト単位の文脈が要る。
 4. `Capabilities.ProcessModel` を読んでいる Console の箇所（B の `"in-process"` 追加で壊れる先）。
 5. `tuiRoute:false` を LaunchModal / session_driver / HandoffModal のどこが読むか（A の新フラグ）。
 

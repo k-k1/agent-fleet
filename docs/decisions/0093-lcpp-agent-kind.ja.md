@@ -4,6 +4,10 @@
 
 - 状態: **提案**（2026-09-19）。実装は無い。以下の `file:line` は `951bb402`（当時の develop）で読んだ。
   表ごとの棚卸しは `docs/log/99-lcpp-agent-kind.md` にあり、そちらが作業記録、本 ADR が判断と棄却案を持つ。
+  🟢 **2026-09-19・段 0 の前にレビュー済み**（末尾の Review 節。別セッションが全アンカーを tree で読み直した）。
+  初稿の前提が 2 つ覆り、本文中で「初稿は…と書いたが誤り」と印を付けて訂正した: `dispatchMCPStdio` は純粋な
+  スイッチではない（背景・決定 6）、`ProcessModel` は Console のどこにも届かない（決定 4）。端末経路の門は
+  3 箇所でなく 5 箇所だった（決定 2）。未決の問い 3〜5 はそこで閉じ、1〜2 は実機のみ。
 - 依頼は一文: **ベンダーの CLI を駆動する代わりに llama-server の API を直接叩く自前ハーネスは、Agent Fleet の
   セッション種別になれるか、なるなら何がいくらか。**
 - 関連: [0015](0015-agent-managed-driver.ja.md)（この kind が子プロセス無しで実装する managed driver の契約）/
@@ -56,9 +60,11 @@ CPU に溢れさせる）。
   `/v1/messages/count_tokens`・`/v1/chat/completions/input_tokens`・`/v1/chat/completions/control` は通り、
   **`/props`・`/slots`・`/tokenize` は通らない**（llama-server の root にあり `/v1/props` は 404）。streaming には
   `stream_options.include_usage` が注入され（`:597`）、全リクエストが箱を買う demand 信号になる（`:540`）。
-- `af` の MCP サーバは `dispatchMCPStdio(line []byte) []byte`（`workspace/agent/internal/mcpx/mcp_stdio.go:243`）＝
-  JSON-RPC 1 行の純粋なスイッチで、in-process から呼べる。許可集合はプロセス全体のグローバル
-  （`parseStdioFlags`・`:131`）。
+- `af` の MCP サーバは `dispatchMCPStdio(line []byte) []byte`（`workspace/agent/internal/mcpx/mcp_stdio.go:243`）。
+  **初稿は「JSON-RPC 1 行の純粋なスイッチ」と書いたが誤り**: プロセス全体の許可集合（`parseStdioFlags`・`:131`）の
+  ほかに、所有セッション・会話・Chromium・peer・画像・spawn の状態を読み、進捗と list-change の通知をプロセス共通の
+  stdout writer へ非同期に書き、`tools/list` はプロセスで一度きりの watcher を起こす（`:79-210`・`:479-544`）。
+  in-process で呼べるのは、通知出力と watcher の寿命まで持つリクエスト単位の dispatch 文脈を作ってからに限る。
 - Go の MCP **クライアント**は無い。`mcpreg/probe.go` が stdio と Streamable HTTP で `initialize` → `initialized` →
   `tools/list` まで話して止まる（`:332-344`・`:483-498`）。`tools/call` を呼ぶのは e2e テスト 1 本だけ。
 - 既存 kind の重さは非テスト src で 2,100〜5,950 行（agy 2,109 … codex 5,948）。
@@ -84,7 +90,10 @@ provider が同綴りになる。`engine` は箱。`operator` は origin（`sess
 
 tmux のペインに入れるものが無い。`BuildLaunch` はエラーを返し、`POST /sessions` はこの kind で `driver` を
 `managed` 既定にし、`POST /sessions/{name}/driver` は `tui` 行きを 400 で拒み、Console の descriptor に「端末経路
-無し」のフラグを 1 つ足す（起動モーダルの driver 選択・切替ボタン・引き継ぎモーダルの経路行が読む）。ペインの
+無し」のフラグを 1 つ足す。**初稿は読み手を 3 箇所と書いたが、Review で 5 箇所と分かった**（`LaunchModal.tsx:776-803`・
+`StartModal.tsx:303-316`・クイック起動 `RepoRowConnected.tsx:178-184`・切替メニューと動作 `SessionMenu.tsx:179-190` /
+`useSessionActions.tsx:262-287`）＋サーバ側の managed→TUI 遷移（`session_driver.go:62-105`）。引き継ぎモーダルは
+generic の create 経路を使うので経路ラベルは要らず、この kind で managed を選ぶだけでよい。ペインの
 無いセッションは新しくない——managed セッションは既にそう。新しいのは「二度とペインに戻れない」ことだけ。
 
 REPL（`workspace-agent lcpp-tui`）を書けば Terminal 経路は作れる。ミラーが全部を映す kind に 2 つ目の UI を
@@ -109,7 +118,9 @@ append-only、user ターン／assistant ターン（text・reasoning・tool_cal
 （ensure / adopt / generation / drain）はどれも当てはまらない。残るのはターン goroutine の寿命、Agent 再起動時に
 握っていたターンの settle（`TurnUnknown` → `Snapshot` が JSONL の末尾を読む: assistant レコードで閉じていれば
 completed、tool_call で開いていれば aborted）、`shutdown.go` での ctx cancel。`Capabilities.ProcessModel` に
-`"in-process"` を足し、`tuiMemoryCost` は空。
+`"in-process"` を足し、`tuiMemoryCost` は空。**初稿は 4 つ目の値が Console の読み手を壊し得ると見ていたが、Review で
+読み手は無いと分かった**: `ProcessModel` は Agent API に乗らず、managed driver が埋めるだけ（`driver.go:142-157`）。
+値を足しても何も壊れず、同時に UI も駆動しない——決定 2 の端末経路の門は descriptor のフラグであって、この enum ではない。
 
 ハンドルの 7 メソッド: **Send** はループ 1 周／**Steer** は次のツール境界に user メッセージを積む（`Queued` に
 映す）／**Interrupt** は ctx cancel、思考中なら先に `POST /v1/chat/completions/control {reasoning_end}` で自然に
@@ -138,8 +149,12 @@ tool-call の書式は llama-server の chat template に依存し、モデル�
 
 ### 決定 6——`af` ツールは in-process、外部 MCP は自前クライアント、「known だが materialize しない kind」
 
-`af` の 72 ツールは MCP を通さない: ハーネスは `dispatchMCPStdio` を直接呼ぶ（プロセス全体のフラグを per-call の
-オプション構造体にしてから）。ツール名と説明文はそのままなので、セッションごとの説明文コストは変わらない。
+`af` の 72 ツールは MCP を通さない: ハーネスは `dispatchMCPStdio` を直接呼ぶ。**初稿は「プロセス全体のフラグを
+per-call のオプション構造体にすれば足りる」と書いたが誤り**（Review）: dispatcher はプロセス単位のセッション／会話／
+Chromium／peer／画像／spawn の状態、非同期通知のための stdout writer、一度きりの watcher にも依存する
+（`mcp_stdio.go:79-210`・`:479-544`）。in-process 呼び出しはリクエスト単位の dispatch 文脈がそれらも持ってから
+成り立ち、それまでは——そのリファクタを見送るなら以後も——`af` ツールは他の CLI と同じく loopback の HTTP で回す。
+どちらでもツール名と説明文はそのままなので、セッションごとの説明文コストは変わらない。
 
 外部サーバ（テナント配布・プロジェクト・利用者登録）には本物のクライアント: stdio と Streamable HTTP、
 2026-07-28 の stateless 世代と 2025-06-18 の `initialize` 世代の両方（うちのサーバが両方受けるのと対称）、
@@ -211,6 +226,9 @@ llama.cpp 版で動く: live テストと同じ opt-in の実エンジン契約�
 - 利用者が感じ、guide に書く固定費: 箱の起床（最初のターンで分単位）と、箱が入れ替わった後の毎ターン再 prefill
   （30B・30k で数十秒。`/slots` の退避は箱を跨げず、そもそも gateway を通らない）。どちらも opencode 経路より
   悪くはならず、kind でなくエンジンの費用。
+- 見積りは最大の 2 項目で下振れより上振れしやすい: Review は E（ツール群）が 3,000 行、F（MCP クライアント）が
+  1,200 行を超える見込みとした（上記のリクエスト単位 dispatch のリファクタは F に入り、最小の完成 kind が既に
+  2,109 行）。幅は据え置き、向きだけ記録する。
 - 見積り（明細と項目別の表は docs/log/99 §8）: **22〜27 セッション日・テスト込み約 9,000〜13,000 行**、1 レーン
   ≈ 5 週・3 レーン ≈ 2〜3 週。うち P1 と共通の中核（LLM クライアント・ループとツール・MCP クライアント・文脈）が
   12〜15 日、**P2 固有の増分は 12〜14 日**。P0 は 1〜2 日、P1 は 10〜13 日。
