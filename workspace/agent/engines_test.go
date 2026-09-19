@@ -651,6 +651,7 @@ func engineCatalogPropsStub(t *testing.T, rows string, propsStatus map[string]in
 	// measured by an earlier test would otherwise survive into one asserting the catalogue's
 	// declared number.
 	engineMeasuredWindows.Clear()
+	harnessEngineWindowCache.Clear() // same key space ("llm"), same cross-test leak risk
 	engineCatalogState.mu.Lock()
 	engineCatalogState.rows, engineCatalogState.at, engineCatalogState.ok = nil, time.Time{}, false
 	engineCatalogState.mu.Unlock()
@@ -660,6 +661,7 @@ func engineCatalogPropsStub(t *testing.T, rows string, propsStatus map[string]in
 		engineCatalogState.mu.Unlock()
 		engineTokenCache.Clear()
 		engineMeasuredWindows.Clear()
+		harnessEngineWindowCache.Clear()
 	})
 	return res
 }
@@ -911,5 +913,65 @@ func TestSyncEngineProvidersRemembersTheLastMeasuredWindow(t *testing.T) {
 	}
 	if propsCalls != 2 {
 		t.Fatalf("props called %d time(s), want exactly 2 (one per sync)", propsCalls)
+	}
+}
+
+// --- ADR 0093 phase 1's harnessEngineWindow cache ---------------------------------
+
+// harnessEngineWindow is called once per chat SEND (unlike syncEngineProviders, called once
+// at boot / per catalogue push), so an uncached call would pay enginePropsWindow's own
+// round trip on every single turn. A warm answer is cached across calls within the TTL.
+func TestHarnessEngineWindowCachesAWarmAnswer(t *testing.T) {
+	res := engineCatalogPropsStub(t, engineRowLlmSized,
+		map[string]int{"llm": http.StatusOK},
+		map[string]string{"llm": `{"default_generation_settings":{"n_ctx":65536}}`})
+
+	if got := harnessEngineWindow(context.Background(), "llm"); got != 65536 {
+		t.Fatalf("first call = %d, want the measured 65536", got)
+	}
+	if got := harnessEngineWindow(context.Background(), "llm"); got != 65536 {
+		t.Fatalf("second call = %d, want the cached 65536", got)
+	}
+	if len(res.propsRequested) != 1 {
+		t.Fatalf("props requested %d time(s), want exactly 1 (the second call must be served from cache)", len(res.propsRequested))
+	}
+}
+
+// The failing case matters more than the warm one: a borrowed row whose LENDING deployment's
+// Control Plane predates PR #761 answers /props 404 on every single call (ADR 0093 phase 1's
+// live report), and engineMeasuredWindows never remembers a failure — without this cache,
+// every chat turn would pay that round trip again forever.
+func TestHarnessEngineWindowCachesAFailure(t *testing.T) {
+	res := engineCatalogPropsStub(t, engineRowLlmSized, map[string]int{}, nil) // undeclared "llm" -> bare 404
+
+	for i := 0; i < 3; i++ {
+		if got := harnessEngineWindow(context.Background(), "llm"); got != 32768 {
+			t.Fatalf("call %d = %d, want the catalogue's declared 32768 left standing", i, got)
+		}
+	}
+	if len(res.propsRequested) != 1 {
+		t.Fatalf("props requested %d time(s), want exactly 1 across 3 calls", len(res.propsRequested))
+	}
+}
+
+// The cache is keyed and TTL'd, not permanent: once it expires, a box (or a Control Plane)
+// that changed state is picked up rather than being stuck on the first answer forever.
+func TestHarnessEngineWindowCacheExpires(t *testing.T) {
+	res := engineCatalogPropsStub(t, engineRowLlmSized,
+		map[string]int{"llm": http.StatusOK},
+		map[string]string{"llm": `{"default_generation_settings":{"n_ctx":65536}}`})
+
+	if got := harnessEngineWindow(context.Background(), "llm"); got != 65536 {
+		t.Fatalf("first call = %d, want 65536", got)
+	}
+	// Force expiry rather than sleeping the real TTL.
+	harnessEngineWindowCache.Store("llm", harnessEngineWindowCacheEntry{
+		value: 65536, at: time.Now().Add(-2 * harnessEngineWindowCacheTTL),
+	})
+	if got := harnessEngineWindow(context.Background(), "llm"); got != 65536 {
+		t.Fatalf("post-expiry call = %d, want 65536 re-measured", got)
+	}
+	if len(res.propsRequested) != 2 {
+		t.Fatalf("props requested %d time(s), want exactly 2 (expiry forces a second ask)", len(res.propsRequested))
 	}
 }

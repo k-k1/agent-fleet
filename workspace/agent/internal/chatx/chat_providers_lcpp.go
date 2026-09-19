@@ -105,11 +105,20 @@ func (lcppChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 // is handed" — there is no native provider session to resume, unlike claude/codex/opencode's
 // resume ids, because the gateway's chat-completions route is stateless).
 //
-// c.Messages already has THIS turn's raw user text appended as its last entry (chat_handlers.go
-// appends before calling Send) — that raw entry is skipped here and `prompt` sent in its place,
-// because prompt is what actually carries this turn's content after the pending-report and
-// carryover injections (InjectPendingReports/InjectCarryover) other providers apply the same
-// way, folding into their own single CLI argument instead of a message list.
+// 🔴 Only TWO of prov.Send's six call sites append this turn's raw user text to c.Messages
+// right before calling Send (chat_handlers.go:452,536 — the ordinary user-turn path).
+// Compaction (chat_compact.go:127) and a report auto-turn (chat_report.go:609) call Send
+// with a `prompt` that has NOTHING to do with c.Messages' last entry (CompactPrompt /
+// reportsPrompt build it from scratch) — for those, c.Messages' last entry is an ordinary
+// PAST turn that must stay in history, and dropping it unconditionally silently erased
+// exactly the turn being summarized or reported on.
+//
+// So the last stored entry is dropped only when it can be PROVEN to be this same turn's own
+// raw text: it is a non-empty user row, and prompt CONTAINS it (prompt is that same raw text
+// with InjectPendingReports/InjectCarryover's preamble folded in front — verified against
+// their own source, which always appends the caller's text verbatim at the end). Any other
+// shape — compaction, a report auto-turn, or a last entry that isn't a plain user row — drops
+// nothing and lets prompt ride as an ADDITIONAL final user message instead.
 //
 // report/notice rows (chatx's own presentation cards) are not replayed as chat history either:
 // no other provider replays them as history — a report rides the NEXT prompt via
@@ -117,7 +126,9 @@ func (lcppChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 func lcppMessages(c *ChatConversation, prompt string) []harness.Message {
 	hist := c.Messages
 	if n := len(hist); n > 0 {
-		hist = hist[:n-1]
+		if last := hist[n-1]; last.Role == "user" && last.Content != "" && strings.Contains(prompt, last.Content) {
+			hist = hist[:n-1]
+		}
 	}
 	msgs := make([]harness.Message, 0, len(hist)+2)
 	msgs = append(msgs, harness.Message{Role: harness.RoleSystem, Content: c.personaOf()})
