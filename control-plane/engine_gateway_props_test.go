@@ -36,10 +36,13 @@ import (
 //
 // Not t.TempDir(): that directory is removed when the FIRST test to call it finishes, and the
 // other six would then be opening a database file that no longer exists. A plain os.MkdirTemp
-// outlives every test in this process — the file is a few KB and the process is short-lived, so
-// there is nothing here to clean up that the OS does not already own.
+// outlives every test in this process instead — and is removed once, by
+// enginePropsFixtureCleanup, from TestMain (cli_release_watch_test.go): this workspace's /tmp is
+// a persistent disk shared by every session, not a container that vanishes at process exit, so
+// one directory per run of this package would otherwise accumulate there forever.
 var (
 	enginePropsSharedOnce sync.Once
+	enginePropsSharedDir  string
 	enginePropsShared     struct {
 		mgr          *manager
 		signKey      []byte
@@ -47,6 +50,15 @@ var (
 		err          error
 	}
 )
+
+// enginePropsFixtureCleanup removes the directory enginePropsFixture built, if it ever built
+// one. Safe to call from every test run, including one that never touched a props test at all
+// (enginePropsSharedDir is then still "").
+func enginePropsFixtureCleanup() {
+	if enginePropsSharedDir != "" {
+		_ = os.RemoveAll(enginePropsSharedDir)
+	}
+}
 
 // enginePropsFixture returns the shared store/key/membership, building them on the first call.
 // Each test still builds its OWN engine row (enginePropsFixture never touches one) so it can
@@ -59,6 +71,7 @@ func enginePropsFixture(t *testing.T) (mgr *manager, signKey []byte, membershipI
 			enginePropsShared.err = err
 			return
 		}
+		enginePropsSharedDir = dir
 		st, err := store.OpenSQLite(filepath.Join(dir, "cp.db"))
 		if err != nil {
 			enginePropsShared.err = err
