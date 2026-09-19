@@ -9,14 +9,17 @@
 // So the card is the REPOSITORY, the rows under it stay one per quantisation (a member has to be
 // able to choose between IQ2_XXS and IQ2_S, so they cannot be merged), and the ladder of sizes
 // that are not here yet is one press away with a verdict on every line.
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiJSON } from "../../../core/api/client.ts";
+import { fmtDateTime } from "../../../lib/intl.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { Icon } from "../../../ui/Icon.tsx";
 import { modelFit, type Fit } from "./engineFit.ts";
 import { quantLabel } from "./registeredGroups.ts";
-import type { EngineApiError, EngineModel, EngineRow, IngestCandidate } from "./engineTypes.ts";
+import type {
+  EngineApiError, EngineModel, EngineRow, IngestCandidate, IngestVersion, IngestVersionsAnswer,
+} from "./engineTypes.ts";
 
 /** The verdict, as one pill. Shared by the ladder and the ingest form so that the same demand
  *  against the same card never reads two ways on two screens. */
@@ -53,18 +56,23 @@ type LadderAnswer = {
   error?: EngineApiError;
 };
 
-export function RepoQuantLadder({ engine, repo, rows, readOnly, onTakeIn }: {
+export function RepoQuantLadder({ engine, repo, rows, readOnly, startOpen, onTakeIn }: {
   engine: EngineRow;
   repo: string;
   /** The rows of THIS repository that are already in the catalogue. */
   rows: EngineModel[];
   readOnly: boolean;
+  /** Skip the "show me" press and read the repository at once. What a MODAL opened from a card
+   *  wants: the press that opened it was already the ask, and a dialog whose whole body is one
+   *  more button is a dialog nobody meant to open. Under a group heading it stays false — a
+   *  catalogue of eight repositories must not open as eight upstream requests. */
+  startOpen?: boolean;
   onTakeIn: (file: string) => void;
 }) {
   const tr = useT();
   const [answer, setAnswer] = useState<LadderAnswer | null>(null);
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!startOpen);
   // The window this ladder is priced at. Taken from what the rows here are actually declared to
   // run at — they are the same model, so one of them answering 32768 is the deployment's own
   // decision about this repository — and editable, because "what would I have to shrink it to"
@@ -89,6 +97,8 @@ export function RepoQuantLadder({ engine, repo, rows, readOnly, onTakeIn }: {
     } finally { setBusy(false); }
   }, [engine.key, repo]);
 
+  useEffect(() => { if (startOpen) void load(); }, [load, startOpen]);
+
   const kvPer1k = answer?.kv_mib_per_1k_tokens || 0;
   // A repository file that is not a model — the importance matrix, a vision projector — is not a
   // choice anybody makes here. Dropped from THIS table only: the manual picker still lists them,
@@ -104,7 +114,10 @@ export function RepoQuantLadder({ engine, repo, rows, readOnly, onTakeIn }: {
         <label><span>{tr("admin.engines_model_window_context")}</span>
           <input inputMode="numeric" value={ctx} onChange={(event) => setCtx(event.currentTarget.value)} /></label>
         {!!cardMiB && <span className="muted">{(tr("admin.fit_card" as never) as string).replace("{c}", String(cardMiB))}</span>}
-        <Button variant="ghost" small icon="chevron-up" onClick={() => setOpen(false)}>{tr("admin.repo_ladder_close" as never)}</Button>
+        {busy && <span className="muted"><Icon name="loading" spin /> {tr("admin.repo_ladder_loading" as never)}</span>}
+        {/* In a modal the dialog's own close is the way out; a second one inside it would leave
+            the body empty with no way back. */}
+        {!startOpen && <Button variant="ghost" small icon="chevron-up" onClick={() => setOpen(false)}>{tr("admin.repo_ladder_close" as never)}</Button>}
       </div>
       {answer?.error && <p className="form-err">{answer.error.message}</p>}
       {/* 🔴 Said once, here, and not on every line: this counts the weights and the KV cache and
@@ -129,6 +142,81 @@ export function RepoQuantLadder({ engine, repo, rows, readOnly, onTakeIn }: {
             : !readOnly && <Button small variant={fit.state === "fits" ? "primary" : undefined}
               aria-label={`${tr("admin.catalog_add" as never)}: ${file.name}`}
               onClick={() => onTakeIn(file.name)}>{tr("admin.catalog_add" as never)}</Button>}
+        </li>;
+      })}</ul>
+    </>}
+  </div>;
+}
+
+/** The other VERSIONS of the model a registered row came from — the image role's answer to the
+ * question the quantisation ladder answers for chat.
+ *
+ * The two are not the same shape and cannot be one component. A quantisation repository publishes
+ * a dozen files of one version, and the choice is a size; a Civitai model publishes a dozen
+ * VERSIONS of one file, and the choice is which revision of the model — v4.7 against v5.0. What
+ * they do share is the rule: a press here opens the ordinary plan dialog, so the licence and the
+ * price are seen on the one screen that has always shown them.
+ *
+ * 🔴 It asks with the VERSION id, not a model id. A row records `civitai:<version>` and nothing
+ * else, and the model id is a different number — the CP resolves one from the other and sends it
+ * back as `model_ref`, which is what the press below needs to name the model. */
+export function CivitaiVersionLadder({ engine, versionRef, rows, readOnly, onTakeIn }: {
+  engine: EngineRow;
+  versionRef: string;
+  /** Every row of this engine, so "taken in" is answered for the whole catalogue and not just
+   *  for the card this was opened from. */
+  rows: EngineModel[];
+  readOnly: boolean;
+  onTakeIn: (modelRef: string, version: IngestVersion) => void;
+}) {
+  const tr = useT();
+  const [answer, setAnswer] = useState<IngestVersionsAnswer | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(true);
+  const cardMiB = engine.class?.vram_mib || 0;
+  const held = new Set(rows.map((model) => (model.source || "").trim())
+    .filter((source) => source.startsWith("civitai:"))
+    .map((source) => source.slice("civitai:".length)));
+
+  useEffect(() => {
+    let live = true;
+    setBusy(true);
+    apiJSON(`api/admin/engines/${encodeURIComponent(engine.key)}/ingest/versions`, "POST",
+      { source: "civitai", ref: versionRef }).then((got) => {
+      if (!live) return;
+      if (got?.error) setErr((got.error as EngineApiError).message || "");
+      else setAnswer(got as IngestVersionsAnswer);
+    }).finally(() => { if (live) setBusy(false); });
+    return () => { live = false; };
+  }, [engine.key, versionRef]);
+
+  const modelRef = answer?.model_ref || "";
+  const versions = answer?.versions || [];
+  return <div className="engine-repo-ladder">
+    {busy && <p className="muted"><Icon name="loading" spin /> {tr("admin.repo_ladder_loading" as never)}</p>}
+    {err && <p className="form-err">{err}</p>}
+    {!busy && !err && !versions.length && <p className="muted">{tr("admin.catalog_versions_empty" as never)}</p>}
+    {!!versions.length && <>
+      {/* Said once, here — and in the checkpoint's own terms. A checkpoint has no KV cache, so
+          the ladder next door's sentence would be an estimate of something that does not exist. */}
+      <p className="admin-hint">{tr("admin.fit_estimate_note_weights" as never)}</p>
+      <ul className="engine-repo-quants">{versions.map((version) => {
+        const weightsMiB = version.bytes ? Math.round(version.bytes / 1048576) : 0;
+        // No size, no verdict. A fit computed from a missing weight reads as "it fits" about a
+        // model nobody has measured, which is the one thing this table must not say.
+        const fit = modelFit(weightsMiB, 0, 0, weightsMiB ? cardMiB : 0, engine.classes || []);
+        const have = held.has(version.ref);
+        return <li key={version.ref} className={have ? "held" : ""}>
+          <span className="engine-repo-quant-mark" aria-hidden="true">{have ? "●" : "○"}</span>
+          <span className="engine-repo-quant-name">{version.name}</span>
+          <span className="muted">{weightsMiB ? formatMiB(weightsMiB) : tr("admin.catalog_size_unknown" as never)}</span>
+          <span className="muted">{version.published_at ? fmtDateTime(version.published_at) : ""}</span>
+          <FitTag fit={fit} />
+          {have
+            ? <span className="engines-model-tag on">{tr("admin.repo_ladder_held" as never)}</span>
+            : !readOnly && <Button small variant={fit.state === "fits" ? "primary" : undefined}
+              aria-label={`${tr("admin.catalog_add" as never)}: ${version.name}`}
+              onClick={() => onTakeIn(modelRef, version)}>{tr("admin.catalog_add" as never)}</Button>}
         </li>;
       })}</ul>
     </>}

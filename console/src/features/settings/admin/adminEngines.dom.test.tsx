@@ -32,6 +32,7 @@ const openEngineAdd = vi.fn();
 vi.mock("./openEngineAdd.ts", () => ({ openEngineAdd: (...args: unknown[]) => openEngineAdd(...args) }));
 
 import { EnginesAdminView, engineOfferResultKey } from "./adminEngines.tsx";
+import { clearCatalogMemory } from "./catalogMemory.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -84,6 +85,10 @@ const click = async (el: HTMLElement | undefined) => {
 afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
+  // 🔴 The catalogue's memory is module scope and every mount here shares one key
+  //    (no paneId), so without this a case reads the previous one's page and the
+  //    search it asserts is never sent.
+  clearCatalogMemory();
   root = null;
   host = null;
   api.mockReset();

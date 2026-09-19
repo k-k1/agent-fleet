@@ -1573,14 +1573,27 @@ a.engines-model-source:hover {
   font-size: 11px;
 }
 
+/* Three columns, and the third holds everything that belongs at the right end: the size, the
+   state (only when it is not `present`) and the link to the page. They are one span rather than
+   three columns of their own, because a line may carry any subset of them and a grid that places
+   loose children has to count them. */
 .engine-registered-parts li {
   display: grid;
-  grid-template-columns: minmax(72px, auto) minmax(160px, 1fr) auto auto auto;
+  grid-template-columns: minmax(72px, auto) minmax(160px, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
   border-radius: 6px;
   background: var(--bg);
+}
+
+.engine-registered-part-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 
 .engine-registered-key {
@@ -1711,8 +1724,13 @@ a.engines-model-source:hover {
    it was given — both of which the viewport rules above used to catch only because every card was
    as wide as the pane. */
 @container engcard (max-width: 560px) {
-  .engine-registered-parts li { grid-template-columns: 1fr auto; }
-  .engine-registered-key { grid-column: 1 / -1; }
+  /* The flag and its right-hand end stay on one line and the key folds under them. Every cell is
+     placed explicitly: a line without a size or without a link has fewer children, so auto
+     placement puts the same span in a different cell from one row to the next. */
+  .engine-registered-parts li { grid-template-columns: auto 1fr; }
+  .engine-registered-part-flag { grid-column: 1; grid-row: 1; }
+  .engine-registered-part-meta { grid-column: 2; grid-row: 1; }
+  .engine-registered-key { grid-column: 1 / -1; grid-row: 2; }
 }
 
 
