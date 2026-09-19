@@ -378,6 +378,7 @@ GET /api/sessions/{name}/messages
 GET /api/sessions/{name}/output
 POST /api/sessions/{name}/paste-image
 GET /api/sessions/{name}/pasted/{file}
+GET /api/sessions/{name}/plan-file
 POST /api/sessions/{name}/plan-respond
 POST /api/sessions/{name}/recreate
 POST /api/sessions/{name}/rename-branch

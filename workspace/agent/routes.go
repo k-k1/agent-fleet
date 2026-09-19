@@ -108,6 +108,10 @@ func buildMux() *http.ServeMux {
 	// The operator's plan approval / rejection (docs/log/30): approve = Enter, reject =
 	// interrupt plus sending feedback.
 	mux.Handle("POST /sessions/{name}/plan-respond", withShareOperationIdempotency(http.HandlerFunc(sessionx.HandleSessionPlanRespond)))
+	// Where the pending plan lives on disk, so the plan card's review launch can put a path
+	// in the reviewing session's first prompt (the Console holds only the plan text).
+	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
+	mux.HandleFunc("GET /sessions/{name}/plan-file", sessionx.HandleSessionPlanFile)
 	// Live ThreadSettings update (docs/log/27 §9.4-3, managed only — model / effort / mode
 	// changes on a running session). tui does it with key input on /input.
 	mux.HandleFunc("GET /sessions/{name}/settings", sessionx.HandleSessionSettingsGet)

@@ -84,6 +84,28 @@ export const mirror = {
   "plan.send_comments": "コメントを送る（{count}）",
   "plan.feedback_undelivered": "却下しましたが、コメントを届けられませんでした。コンポーザから送り直してください。",
   "mirror.plan_feedback_head": "プランへのコメント {count} 件です。指摘を反映してプランを修正してください。",
+  // プランを別セッションにレビューさせる（カードのボタン → 却下 → プロンプト入りの起動モーダル）
+  "plan.review_in_session": "別セッションでレビュー",
+  "plan.review_in_session_title": "プランを却下し、選んだエージェントでレビューセッションを起動します",
+  "plan.review_launch_failed": "レビューセッションを起動できませんでした：{err}",
+  "plan.review_title": "レビュー: {title}",
+  "plan.review_prompt_head":
+    "セッション {session} が利用者に提示した作業計画のレビューを依頼されました（利用者が Console から起動しています）。",
+  "plan.review_prompt_file": "- 計画: {path}（読むだけ。編集しないでください）",
+  "plan.review_prompt_dir": "- 作業コピー: {dir}",
+  "plan.review_prompt_focus": "- 特に見てほしい点: {focus}",
+  "plan.review_prompt_rules":
+    "実装・変更はしないでください。計画と実際のコードを突き合わせ、前提の誤り・影響範囲の見落とし・" +
+    "既存実装との重複や矛盾・テストの欠落・手順の順序と可逆性を見てください。",
+  "plan.review_prompt_format": "次の形式だけで答えてください。",
+  "plan.review_verdict_heading": "判定",
+  "plan.review_findings_heading": "指摘",
+  "plan.review_prompt_finding_shape":
+    "1. 計画の該当箇所を 1 行引用\n   なぜ問題か・どう直すか（指摘が無ければこの節は空でかまいません）",
+  "plan.review_prompt_reply":
+    "書き終えたら send_to_peer_session で {session} に判定と指摘をそのまま送り、" +
+    "af_stop_after_turn でこのセッションを畳んでください。" +
+    "peer 送信ができない場合は、送れなかったことを添えて利用者に伝えてください。",
   "mirror.perm_pending": "許可待ち",
   "mirror.perm_asking": "許可を求めています（編集・コマンド等）",
   "mirror.allow": "許可",

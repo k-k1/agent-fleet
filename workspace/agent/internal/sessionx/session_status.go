@@ -120,6 +120,13 @@ func RunSessionStatusHook(args []string) {
 	// it must not change the session status.
 	if state == "permtool" {
 		status.WriteLastTool(sid, h.toolDetail)
+		// The same hook is how we learn WHERE this session's plan lives: claude writes the
+		// plan through its own Write tool, so the path passes through here while the plan is
+		// still pending. Nothing else carries it in time — the tool_result that spells the
+		// path out arrives only after approval.
+		if p := planFileOf(h.filePath); p != "" {
+			status.WritePlanFile(sid, p)
+		}
 		return
 	}
 	// The Notification hook fires for several reasons (idle, permission, …); only
@@ -368,6 +375,9 @@ type hookInput struct {
 	// main-thread calls"), and empty on the session's own thread — including --agent
 	// sessions, where agent_type IS set. So agent_type must not be used in its place.
 	agentID string
+	// filePath is Write/Edit's target. Kept apart from toolDetail (which is prose for the
+	// permission card) because planFileOf has to compare it as a path.
+	filePath string
 }
 
 func decodeHookStdin() hookInput {
@@ -399,6 +409,7 @@ func decodeHookStdin() hookInput {
 		source:     in.Source,
 		toolName:   in.ToolName,
 		agentID:    in.AgentID,
+		filePath:   in.ToolInput.FilePath,
 		toolDetail: permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command),
 	}
 }

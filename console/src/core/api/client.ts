@@ -431,6 +431,32 @@ export async function sessionPlanRespond(
   return { ok: true, delivered: feedback ? r?.feedback_delivered === true : true, message: r?.hint };
 }
 
+// sessionPlanFile asks WHERE the pending plan lives, so a launch can hand the path to a
+// reviewing session. The Console itself only ever receives the plan TEXT (the pending card
+// renders the hook payload), and a real plan is 12-36 KB — far too much to ride in a first
+// prompt that a TUI launch types into the pane.
+//
+// `source` says which file it is: "claude" = the plan file claude is writing (so the
+// planner's own revisions land at the same path), "snapshot" = a copy the Agent took
+// because no path was recorded. Only the caller's diagnostics care; the path is usable
+// either way.
+export interface PlanFileResult {
+  ok: boolean;
+  path?: string;
+  source?: "claude" | "snapshot";
+  message?: string;
+  code?: string;
+}
+export async function sessionPlanFile(session: string): Promise<PlanFileResult> {
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/plan-file`, "GET").catch(() => ({
+    error: { message: t("err.network") },
+  }));
+  const err = r?.error as ApiError | undefined;
+  if (err) return { ok: false, message: errText(err) || t("err.send_failed"), code: String(err.code || "") };
+  if (!r?.path) return { ok: false, message: t("err.send_failed") };
+  return { ok: true, path: String(r.path), source: r.source === "claude" ? "claude" : "snapshot" };
+}
+
 // A carried-over interaction (docs/log/75) — the question / plan / permission that was on
 // screen when the session stopped. The modal does not come back on resume (an unanswered
 // tool_use drops out of the conversation tree), so this is NOT answered with a key sequence:

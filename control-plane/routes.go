@@ -354,6 +354,10 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// the approval dialog is open feeds the text to the modal and turns Enter into an
 	// approval, so this is the only route that delivers it safely.
 	mux.HandleFunc("POST /api/sessions/{name}/plan-respond", rest)
+	// Where that pending plan lives on disk — read by the plan card's "review in another
+	// session" launch, which puts the path (never the 12-36 KB body) in the reviewer's
+	// first prompt.
+	mux.HandleFunc("GET /api/sessions/{name}/plan-file", rest)
 	// Answer to a carried-over interaction (docs/log/75) — replies to a question, plan or
 	// permission that was still unanswered at stop time; the Agent resumes the session
 	// first and delivers the answer as text. The target may be a stopped Workspace, so
