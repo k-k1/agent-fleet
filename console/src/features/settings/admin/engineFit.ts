@@ -11,7 +11,7 @@
 // `cudaMalloc failed: out of memory ... failed to allocate buffer for kv cache` — four minutes and
 // one purchased GPU after the button. So the thresholds below leave room rather than answering
 // "it fits" at 99%.
-import type { EngineClass } from "./engineTypes.ts";
+import type { EngineClass, EngineModel } from "./engineTypes.ts";
 
 /** Above this fraction of the card the answer stops being "yes" and becomes "probably, watch it".
  *  Not a measurement — a reserve, for the two allocations this estimate cannot see. */
@@ -94,4 +94,103 @@ export function windowThatFits(weightsMiB: number, kvPer1k: number, cardMiB: num
     best = window;
   }
   return best;
+}
+
+/** The window to open a field at when the cache could NOT be sized — which is neither of the
+ * two numbers that suggest themselves, because both are wrong in a way that only shows up
+ * later:
+ *
+ *   - the model's CEILING (what `windowThatFits` used to fall back to) is the very thing ADR
+ *     0089 exists to stop being typed in. Measured: the af-sandbox row left at 262,144 asked
+ *     llama.cpp for 16 GiB of KV cache and the L4 answered `cudaMalloc failed: out of memory`.
+ *   - ZERO reads as "undeclared" all the way down the chain, and opencode takes a context of 0
+ *     as "auto-compaction off" (workspace/agent/.../opencode/engine.go) — the session then runs
+ *     until llama-server rejects it, which is worse than a small window, not safer.
+ *
+ * So: the window every model in these deployments is actually started at, capped by the
+ * model's own ceiling, and the caller SAYS it is a fallback rather than a fitted answer.
+ */
+export const WINDOW_WHEN_UNSIZED = 32768;
+
+export function windowWhenUnsized(ceiling: number): number {
+  return ceiling > 0 ? Math.min(WINDOW_WHEN_UNSIZED, ceiling) : WINDOW_WHEN_UNSIZED;
+}
+
+/** One row's answer to "what changes on this card". `to` is 0 when no window can be fitted —
+ *  the weights alone fill the card — which is a REFUSAL to propose, not a window of nothing:
+ *  0 travels as "undeclared" and opencode reads an undeclared context as auto-compaction off.
+ *  `unknown` is the third answer: the row has no geometry or no ceiling, so nothing can be said
+ *  until its header is read (which the CP does on the next loading write). */
+/** Why a row was not re-fitted. One word each, because the screen says a different sentence for
+ *  each and a single `unknown` flag made all three read as "its header has not been read yet" —
+ *  which is wrong advice for the other two and sends the operator after a header that is either
+ *  already read or not the problem. */
+export type RefitBlocked = "header" | "weights" | "measured";
+
+export type WindowRefit = {
+  id: string;
+  from: number;
+  to: number;
+  /** Absent when the row WAS re-fitted. */
+  blocked?: RefitBlocked;
+};
+
+/** What every row's window becomes on a given card, for the rows where that is a CHANGE.
+ *
+ * The instance rung is the one input a window is fitted against, and until now it was read once,
+ * when the model was registered. Changing the rung afterwards moved the card and left every
+ * window behind — so an engine moved up to a 48 GB card went on running the 16k that fitted a
+ * 24 GB one, and one moved DOWN kept a window its new card cannot hold and said nothing until
+ * the cold start failed.
+ *
+ * LoRAs and image checkpoints are skipped: neither declares a window. A row whose fitted window
+ * already equals its stored one is not returned at all — the caller's list is what CHANGED, and
+ * a list that names every row every time is one nobody reads.
+ */
+export function refitWindows(models: EngineModel[], cardMiB: number): WindowRefit[] {
+  if (!(cardMiB > 0)) return [];
+  const out: WindowRefit[] = [];
+  for (const model of models) {
+    if (model.kind === "lora" || !(model.context_tokens && model.context_tokens > 0)) continue;
+    const kvPer1k = model.kv_mib_per_1k_tokens || 0;
+    const ceiling = model.context_length || 0;
+    if (!kvPer1k || !ceiling) {
+      out.push({ id: model.id, from: model.context_tokens, to: 0, blocked: "header" });
+      continue;
+    }
+    // 🔴 `vram_mib` is NOT the weights. engine_class.go's engineModelVramNeed returns it as the
+    // operator's measurement of the WHOLE demand and stops there — cache included, at whatever
+    // window they measured it at. Feeding it in here as the weights and adding a cache on top
+    // double-counts, and a row measured at 20,000 MiB on a 24 GB card came out as 4,096 tokens
+    // where the CP says the same row fits. There is no way to take their number apart, so a row
+    // that carries one is not re-fitted at all: they overrode the estimate on purpose, and this
+    // is the arithmetic they overrode.
+    if ((model.vram_mib || 0) > 0) {
+      out.push({ id: model.id, from: model.context_tokens, to: 0, blocked: "measured" });
+      continue;
+    }
+    // And the weights have to be known. Where the files declare no bytes — the seeded
+    // `qwen3-coder-30b-a3b` row on both deployments is exactly that, and enabled — summing them
+    // gives 0, and 0 weights makes the whole card look free: it would propose the model's own
+    // ceiling for a model nobody has weighed.
+    const weightsMiB = Math.round((model.file_rows || []).reduce((sum, f) => sum + (f.bytes || 0), 0) / 1048576);
+    if (weightsMiB <= 0) {
+      out.push({ id: model.id, from: model.context_tokens, to: 0, blocked: "weights" });
+      continue;
+    }
+    const to = windowThatFits(weightsMiB, kvPer1k, cardMiB, ceiling);
+    if (to === model.context_tokens) continue;
+    // 0 here is the third blocked shape: the weights are known and they alone fill the card.
+    out.push(to > 0
+      ? { id: model.id, from: model.context_tokens, to }
+      : { id: model.id, from: model.context_tokens, to: 0, blocked: "weights" });
+  }
+  return out;
+}
+
+/** The output cap that travels with a window. Both or neither — the CP stores them together and
+ *  a window written without one leaves the previous cap against a window it was not chosen for.
+ *  An eighth is what the ingest form has always opened at. */
+export function outputForWindow(window: number): number {
+  return Math.floor(window / 8);
 }

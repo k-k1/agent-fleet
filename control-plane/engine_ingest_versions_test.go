@@ -24,7 +24,7 @@ func TestHuggingFaceVersionsExposeTheCurrentMainRevision(t *testing.T) {
 	engineIngestBase = srv.URL
 	t.Cleanup(func() { engineIngestBase = old })
 
-	versions, aerr := engineHFVersions(t.Context(), engineVersionsReq{
+	answer, aerr := engineHFVersions(t.Context(), engineVersionsReq{
 		Source: "hf", Ref: "Qwen/Qwen3-GGUF", ModelRef: "Qwen/Qwen3-GGUF",
 	})
 	if aerr != nil {
@@ -36,10 +36,13 @@ func TestHuggingFaceVersionsExposeTheCurrentMainRevision(t *testing.T) {
 	if strings.Join(query["expand[]"], ",") != "createdAt,lastModified" {
 		t.Errorf("expansions = %v", query["expand[]"])
 	}
-	if len(versions) != 1 || versions[0] != (engineVersion{
+	if len(answer.Versions) != 1 || answer.Versions[0] != (engineVersion{
 		Ref: "main", Name: "main", PublishedAt: "2025-07-31T10:27:38Z", UpdatedAt: "2026-01-30T09:00:00Z",
 	}) {
-		t.Errorf("versions = %+v", versions)
+		t.Errorf("versions = %+v", answer.Versions)
+	}
+	if answer.ModelRef != "Qwen/Qwen3-GGUF" {
+		t.Errorf("model_ref = %q", answer.ModelRef)
 	}
 }
 
@@ -69,7 +72,7 @@ func TestCivitaiVersionsExposeEveryPublishedVersion(t *testing.T) {
 	engineCivitaiBase = srv.URL
 	t.Cleanup(func() { engineCivitaiBase = old })
 
-	versions, aerr := engineCivitaiVersions(t.Context(), engineVersionsReq{
+	answer, aerr := engineCivitaiVersions(t.Context(), engineVersionsReq{
 		Source: "civitai", Ref: "1759168", ModelRef: "133005",
 	})
 	if aerr != nil {
@@ -78,14 +81,64 @@ func TestCivitaiVersionsExposeEveryPublishedVersion(t *testing.T) {
 	if path != "/api/v1/models/133005" {
 		t.Errorf("path = %q", path)
 	}
-	if len(versions) != 2 || versions[0].Ref != "1759168" || versions[1].Ref != "501240" ||
-		versions[1].UpdatedAt != "2024-02-11T12:00:00Z" {
-		t.Errorf("versions = %+v", versions)
+	if len(answer.Versions) != 2 || answer.Versions[0].Ref != "1759168" || answer.Versions[1].Ref != "501240" ||
+		answer.Versions[1].UpdatedAt != "2024-02-11T12:00:00Z" {
+		t.Errorf("versions = %+v", answer.Versions)
+	}
+	if answer.ModelRef != "133005" {
+		t.Errorf("model_ref = %q", answer.ModelRef)
 	}
 	if _, aerr := engineCivitaiVersions(t.Context(), engineVersionsReq{
 		Source: "civitai", Ref: "999", ModelRef: "133005",
 	}); aerr == nil || aerr.status != http.StatusBadRequest {
 		t.Errorf("foreign version = %v, want 400", aerr)
+	}
+}
+
+// 🔴 A registered row records `civitai:<version>` and nothing else, so "the other versions of this
+// model" has to start from a version id. The model id is a different number, and it is the version
+// document that knows it.
+func TestCivitaiVersionsResolveTheModelFromAVersionAndCarrySizes(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/api/v1/model-versions/1759168" {
+			_, _ = w.Write([]byte(`{"modelId":133005,"name":"Ragnarok"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":133005,"modelVersions":[
+		  {"id":1759168,"name":"Ragnarok","files":[
+		    {"name":"preview.png","type":"Image","sizeKB":12},
+		    {"name":"ragnarok.safetensors","type":"Model","sizeKB":4100000}]},
+		  {"id":501240,"name":"Photo 2"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	old := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	t.Cleanup(func() { engineCivitaiBase = old })
+
+	answer, aerr := engineCivitaiVersions(t.Context(), engineVersionsReq{Source: "civitai", Ref: "1759168"})
+	if aerr != nil {
+		t.Fatalf("versions: %v", aerr.message)
+	}
+	if len(paths) != 2 || paths[0] != "/api/v1/model-versions/1759168" || paths[1] != "/api/v1/models/133005" {
+		t.Fatalf("read %v", paths)
+	}
+	if answer.ModelRef != "133005" {
+		t.Errorf("model_ref = %q, want the model the version belongs to", answer.ModelRef)
+	}
+	// The weights, never the preview image beside them — and a version the listing says nothing
+	// about answers 0, which the panel draws as "size unknown".
+	if len(answer.Versions) != 2 || answer.Versions[0].Bytes != 4100000*1024 {
+		t.Errorf("versions = %+v", answer.Versions)
+	}
+	if answer.Versions[1].Bytes != 0 {
+		t.Errorf("version without files = %+v, want no size rather than a guess", answer.Versions[1])
+	}
+	// Neither of the two: there is nothing to read a model off.
+	if _, aerr := engineCivitaiVersions(t.Context(), engineVersionsReq{Source: "civitai"}); aerr == nil ||
+		aerr.status != http.StatusBadRequest {
+		t.Errorf("no ref and no model_ref = %v, want 400", aerr)
 	}
 }
 

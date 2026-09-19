@@ -122,7 +122,7 @@ Parameters:
   ImageOffers:
     Type: String
     Default: ""
-    Description: The image role's offers, as LlmOffers. This is the role Spot is offered on.
+    Description: The image role's offers, as LlmOffers. A spot row needs interruption accepted on the panel.
   ImageOfferBudgetSec:
     Type: Number
     Default: 300

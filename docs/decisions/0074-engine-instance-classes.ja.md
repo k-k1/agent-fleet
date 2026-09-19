@@ -1590,3 +1590,76 @@ VRAM適合は今回も`candidateOffers`の仕事のままで、この並び順�
 （`aws cloudformation update-stack --use-previous-template`で1パラメータずつ変更、他は全部
 `UsePreviousValue`）で、`params/60-engines`は経由していない。`standup.sh`をローカルの捕捉から
 建て直すと、`t4`の無い旧3行のはしごに戻る。
+
+## 追記 — 未解決 7 の式は密なモデルにしか合っていなかった（2026-09-18・af-sandbox・実測）
+
+2026-09-11 の追記が書いた式は `block_count × head_count_kv × (key_length + value_length) ×
+ctx × 2`。**ハイブリッドなモデルではこれが 4 倍過大**で、丸め誤差ではない——窓がカードに
+載るかどうかをこの数が決めている。
+
+**実測**。af-sandbox の llm 役で Qwen3.8-27B（`block_count 65` / `head_count_kv 4` /
+`key_length = value_length = 256`）を `--ctx-size 262144` で起こすと、llama.cpp は
+
+```
+ggml_backend_cuda_buffer_type_alloc_buffer: allocating 16384.00 MiB on device 0:
+  cudaMalloc failed: out of memory
+llama_init_from_model: failed to initialize the context: failed to allocate buffer for kv cache
+```
+
+と言って死ぬ。上の式は **66,560 MiB** と答える。実際は **16,384.00 MiB**、ちょうど 1/4。
+差は GGUF ヘッダの 2 つの鍵にある。
+
+- **`<arch>.nextn_predict_layers`**（Qwen3.8-27B は 1）——マルチトークン予測(MTP)のヘッド。
+  `block_count` に入っていてアテンションのテンソル一式も持つが、llama.cpp は実行しない。
+  ログが 1 テンソルずつ `model has unused tensor blk.64.nextn.* -- ignoring` と言う。
+- **`<arch>.full_attention_interval`**（同 4）——**4 層に 1 層だけが full attention**。残りは
+  再帰（同じヘッダが `<arch>.ssm.*` を宣言している）で、その状態は**トークンごとではなく
+  シーケンスごとの固定長**なので、窓を掛ける数に入れてはいけない。
+
+キャッシュする層数は `(block_count − nextn_predict_layers) ÷ full_attention_interval`
+＝ `(65 − 1) ÷ 4` ＝ **16**。`16 × 4 × 512 × 262144 × 2` は 16,384.00 MiB に小数まで一致する。
+
+どちらも省略可能な修飾子で、**0 は「この系統にその欄が無い」＝従来どおり全層が数えられる**。
+密なモデルの見積りは 1 バイトも変わらない（2026-09-11 の 2 つの実測値はテストの陽性対照として
+そのまま残してある）。
+
+🔴 **読む順番に罠がある。** パーサは必須の 4 つが揃った時点で早期 return していたが、実際の
+ヘッダでは `attention.value_length` が 50 個中 28 番目、`full_attention_interval` は 36 番目。
+つまり**修飾子は必ず読み飛ばされていた**。早期 return を外すと走査はトークナイザの配列
+（メガバイト級で、どの窓にも入らない）まで進むので、「幾何が揃った後の窓切れは成功」と
+読み替えている。揃う前の窓切れは従来どおり `errGGUFShort` で、大きい窓での再試行が続く。
+
+### 幾何が無い行は「下限」ではなく「答えていない」
+
+同じ実機で、もう半分が見つかった。**幾何を持たない行は重みだけを答え、重みだけはたいてい
+どのカードにも収まるので、有効化が無言で通っていた。** sandbox の Qwen3.8-27B の行は
+`262144` を宣言していて幾何が無く、22,000 MiB の段に対して **17,093 MiB** と答え、何も
+言われずに有効になり——その後 llama.cpp が 16,384 MiB の KV を要求して L4 が落ちた。
+
+欠けている項はここでは計算できない（それが「幾何が無い」の意味）。できるのは**それを「収まる」
+と呼ぶのをやめること**なので、`engineVramGuardRow` は「窓を宣言していて幾何が無い行」を
+`confirm_vram` 付きでのみ通すようにした。逃げ道は 3 つ——確認する・`vram_mib` を自分で宣言する・
+ヘッダが読める形で登録し直す。**窓を宣言しない行（image のチェックポイント）は対象外**で、
+そちらは 1 点目の実測どおり重みが話の大半を占める。
+
+### 3 巡目の指摘 — 短い読みを信じてよい条件（2026-09-19）
+
+「必須 4 項が揃った」は「ヘッダがもう何も言うことがない」ではない。省略可能な修飾子は
+その後に書かれるので、窓があいだで終わった読みは**全部揃って見えるのに 4 倍過大**になる。
+2 巡目の修正はこれを 2 回目が破損のときだけ止めており、**2 回目の読み取りが落ちた場合**
+（timeout / AccessDenied という普通の一時障害）と**1 MiB でも修飾子に届かない場合**では、
+1 回目の部分結果を権威ある `weights_kv` として保存できたままだった。
+
+見分ける印が header 自身にある。llama.cpp の変換器は `general.*` → `<arch>.*` →
+`tokenizer.*` の順に書くので、**tokenizer の鍵が 1 つでも通り過ぎていれば、その file が
+持つ architecture の鍵は全部読み終えている**。`engineKVGeometry.PastArch` がそれで、
+`settled()`（= `complete()` かつ `PastArch`）だけが短い読みを保存してよい状態になる。
+
+副産物として**普通のモデルは 1 往復で済む**（tokenizer に届いた時点で 2 窓目を読まない）。
+
+🔴 鍵を読んだ**直後**に立てる。tokenizer の最初の鍵に続く値は語彙の配列そのもので、
+どの窓にも入らない——値を解析してから立てる実装では永久に立たない。
+
+そして 2 巡目のテストがこの fallback を正解として固定していた。`vram_mib` のときと同じ形で、
+**修正のたびに「そのとき正しいと思っていたこと」がテストに焼き付く**のが今回の 3 巡で
+いちばん再発した失敗だった。

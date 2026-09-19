@@ -1,18 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { kvCacheMiB, modelFit, windowThatFits } from "./engineFit.ts";
-import type { EngineClass } from "./engineTypes.ts";
+import { kvCacheMiB, modelFit, windowThatFits, windowWhenUnsized, WINDOW_WHEN_UNSIZED, refitWindows, outputForWindow } from "./engineFit.ts";
+import type { EngineClass, EngineModel } from "./engineTypes.ts";
 
 const rung = (id: string, vram_mib: number): EngineClass => ({ id, label: id, vram_mib, types: [] });
 const LADDER = [rung("g6.xlarge", 22000), rung("g6e.xlarge", 46068), rung("g6e.2xlarge", 46068)];
 
-// 🔴 The measured case this ADR started from: unsloth/Qwen3.8-27B-GGUF, read off the real GGUF
-// headers on 2026-09-18. 65 blocks x 4 KV heads x (256+256) x 2 bytes = 260 MiB per 1,024 tokens,
-// and the model publishes a 262,144 ceiling — which is where the operator's "KV キャッシュ
-// 66560 MiB" came from.
+// 🔴 The figure the CP USED to send for unsloth/Qwen3.8-27B-GGUF, kept because these tests are
+// about the panel's arithmetic and this is the number that produced the screens people saw.
+// It is NOT the truth: 65 blocks x 4 KV heads x (256+256) x 2 bytes = 260 MiB per 1,024 tokens
+// counts every block, and this architecture caches on 16 of them — one block is a NEXTN head
+// llama.cpp never runs and only every 4th of the rest is full attention
+// (`full_attention_interval`). Measured on af-sandbox 2026-09-18: at the published 262,144
+// ceiling llama.cpp asked for `allocating 16384.00 MiB`, not 66,560. See
+// control-plane/engine_gguf.go's cacheLayers.
 const QWEN_KV_PER_1K = 260;
+// What the same model answers once the modifiers are counted, for the fit cases that are about
+// a real card rather than about multiplication.
+const QWEN_KV_PER_1K_CORRECTED = 64;
 
 describe("kvCacheMiB", () => {
-  it("reproduces the number the panel showed at the model's published ceiling", () => {
+  it("reproduces the number the panel USED to show at the published ceiling", () => {
     expect(kvCacheMiB(QWEN_KV_PER_1K, 262144)).toBe(66560);
   });
 
@@ -89,5 +96,126 @@ describe("windowThatFits", () => {
 
   it("answers 0 when there is no cache figure to divide the room by", () => {
     expect(windowThatFits(6933, 0, 22000, 262144)).toBe(0);
+  });
+});
+
+describe("windowWhenUnsized", () => {
+  // 🔴 The two numbers that suggest themselves are both wrong, and this is the positive control
+  // for not using either. The CEILING is what the field used to fall back to, and the af-sandbox
+  // row left at 262,144 asked llama.cpp for 16 GiB of KV cache and the L4 answered
+  // `cudaMalloc failed: out of memory`. ZERO reads as "undeclared" all the way to opencode,
+  // which takes a context of 0 as "auto-compaction off" and runs until the engine rejects it.
+  it("is neither the ceiling nor zero", () => {
+    expect(windowWhenUnsized(262144)).toBe(WINDOW_WHEN_UNSIZED);
+    expect(windowWhenUnsized(262144)).not.toBe(262144);
+    expect(windowWhenUnsized(262144)).toBeGreaterThan(0);
+  });
+
+  it("never proposes more than the model was trained for", () => {
+    expect(windowWhenUnsized(8192)).toBe(8192);
+  });
+
+  it("still answers when nothing is known about the ceiling", () => {
+    expect(windowWhenUnsized(0)).toBe(WINDOW_WHEN_UNSIZED);
+  });
+});
+
+// What the correction is worth on the card this deployment actually buys: the same 27B, the
+// same L4, four times the window. The panel was telling operators a 22 GB card could hold 16k
+// of a model that fits 65k on it.
+describe("the corrected cache figure changes what the form offers", () => {
+  const WEIGHTS_MIB = 11483; // Qwen3.8-27B-UD-IQ3_S, 12,040,883,104 bytes
+  it("offers four times the window on the same card", () => {
+    expect(windowThatFits(WEIGHTS_MIB, QWEN_KV_PER_1K, 22000, 262144)).toBe(16384);
+    expect(windowThatFits(WEIGHTS_MIB, QWEN_KV_PER_1K_CORRECTED, 22000, 262144)).toBe(65536);
+  });
+
+  it("still calls the published ceiling over, which is what the row that OOMed declared", () => {
+    expect(modelFit(WEIGHTS_MIB, QWEN_KV_PER_1K_CORRECTED, 262144, 22000, LADDER).state).toBe("over");
+  });
+});
+
+describe("refitWindows", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: "qwen", kind: "gguf", enabled: true,
+    context_tokens: 32768, max_output_tokens: 8192,
+    kv_mib_per_1k_tokens: QWEN_KV_PER_1K_CORRECTED, context_length: 262144,
+    file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
+    ...over,
+  }) as unknown as EngineModel;
+
+  // 🔥 The change this exists for. The rung is the one input a window is fitted against, and it
+  // was read once at registration: an engine moved up to a 48 GB card went on running the window
+  // that fitted a 24 GB one.
+  it("grows the window when the card grows", () => {
+    expect(refitWindows([row()], 22000)).toEqual([{ id: "qwen", from: 32768, to: 65536 }]);
+    expect(refitWindows([row()], 44000)).toEqual([{ id: "qwen", from: 32768, to: 262144 }]);
+  });
+
+  // The direction that used to fail silently at the cold start instead of on screen.
+  it("shrinks the window when the card shrinks", () => {
+    const wide = row({ context_tokens: 262144 });
+    expect(refitWindows([wide], 22000)).toEqual([{ id: "qwen", from: 262144, to: 65536 }]);
+  });
+
+  it("says nothing about a row that is already right", () => {
+    expect(refitWindows([row({ context_tokens: 65536 })], 22000)).toEqual([]);
+  });
+
+  // 🔴 to = 0 is a REFUSAL to propose, never a window to write: 0 travels as "undeclared" and
+  // opencode reads an undeclared context as auto-compaction off.
+  it("refuses rather than proposing zero when the weights alone fill the card", () => {
+    expect(refitWindows([row()], 12000)).toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "weights" }]);
+  });
+
+  it("marks a row whose header was never read instead of guessing for it", () => {
+    expect(refitWindows([row({ kv_mib_per_1k_tokens: undefined })], 22000))
+      .toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "header" }]);
+    expect(refitWindows([row({ context_length: undefined })], 22000))
+      .toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "header" }]);
+  });
+
+  it("skips what has no window: LoRAs and image checkpoints", () => {
+    expect(refitWindows([row({ kind: "lora" })], 22000)).toEqual([]);
+    expect(refitWindows([row({ context_tokens: 0 })], 22000)).toEqual([]);
+  });
+
+  it("answers nothing at all when the deployment declares no card", () => {
+    expect(refitWindows([row()], 0)).toEqual([]);
+  });
+});
+
+describe("outputForWindow", () => {
+  // Both or neither: the CP stores the pair together, and a window written without a cap leaves
+  // the previous one against a window it was not chosen for.
+  it("is an eighth, the same as the ingest form has always opened at", () => {
+    expect(outputForWindow(65536)).toBe(8192);
+    expect(outputForWindow(262144)).toBe(32768);
+  });
+});
+
+// 🔴 The two shapes a re-fit must refuse rather than guess at, both found on the live
+// deployments by review. Weights that nothing can size read as a free card, and the proposal is
+// then the model's own ceiling for a model nobody has weighed.
+describe("refitWindows will not fit against weights it does not know", () => {
+  const base = {
+    id: "qwen", kind: "gguf", enabled: true, context_tokens: 32768,
+    kv_mib_per_1k_tokens: QWEN_KV_PER_1K_CORRECTED, context_length: 262144,
+  };
+  it("refuses a row whose files declare no bytes (the seeded qwen3-coder row)", () => {
+    const seeded = { ...base, file_rows: [{ s3Key: "llm/qwen.gguf" }] } as unknown as EngineModel;
+    expect(refitWindows([seeded], 44000)).toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "weights" }]);
+  });
+  it("does not re-fit a row the operator measured themselves", () => {
+    // 🔴 vram_mib is the WHOLE demand as engineModelVramNeed returns it — cache included, at
+    // whatever window it was measured at — not the weights. Treating it as weights and adding a
+    // cache on top double-counts: this row came out as 4,096 tokens on a card the CP says it
+    // fits. Their number cannot be taken apart, so the row is left alone and named.
+    const measured = {
+      ...base, vram_mib: 20000,
+      file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
+    } as unknown as EngineModel;
+    expect(refitWindows([measured], 24000)).toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "measured" }]);
+    expect(refitWindows([measured], 44000)).toEqual([{ id: "qwen", from: 32768, to: 0, blocked: "measured" }]);
   });
 });

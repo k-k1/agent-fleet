@@ -6,11 +6,24 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { Button, IconButton } from "../../../ui/Button.tsx";
 import { Modal } from "../../../ui/Modal.tsx";
 import { ViewHead } from "../../../ui/ViewHead.tsx";
+import { useScrollMemory } from "../../viewer/parts/useScrollMemory.ts";
 import { type ModelKind } from "./adminEngineModels.tsx";
 import { EngineDiscoverPanel, engineCanDiscover } from "./adminEngineDiscover.tsx";
+import { setEngineAddView } from "./openEngineAdd.ts";
+import {
+  catalogKey,
+  loadObjects as loadObjectsMemory,
+  loadRegistered,
+  loadSearch,
+  loadShell,
+  saveObjects as saveObjectsMemory,
+  saveRegistered,
+  saveSearch,
+  saveShell,
+} from "./catalogMemory.ts";
 import { groupIsRepo, groupRegistered, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
-import { modelFit, windowThatFits } from "./engineFit.ts";
-import { FitTag, RepoQuantLadder } from "./adminEngineRepo.tsx";
+import { modelFit, windowThatFits, windowWhenUnsized } from "./engineFit.ts";
+import { CivitaiVersionLadder, FitTag, RepoQuantLadder } from "./adminEngineRepo.tsx";
 import {
   engineIsImage,
   engineIsRemote,
@@ -37,22 +50,37 @@ type CatalogView = "search" | "registered";
 
 /** Full-pane catalogue (ADR 0085 decision 8). Two tabs and no wizard: 探す opens one plan card
  * per press, 登録済み holds the rows and, under them, the bucket itself. */
-export function EngineAddView({ engineKey, lora, initialView = "search", headerActions }: {
+export function EngineAddView({ engineKey, lora, initialView = "search", paneId, headerActions }: {
   engineKey: string;
   lora: boolean;
   initialView?: CatalogView;
+  /** Which pane this is, so a return lands on the face, engine and kind it was left on
+   *  (catalogMemory). Absent outside a pane — the compatibility door in the settings panel — and
+   *  then every mount shares one memory, which is what `clearCatalogMemory` is for in tests. */
+  paneId?: string;
   headerActions?: ReactNode;
 }) {
   const tr = useT();
   const { rows, isSuper, sources, err, load } = useEngineRows();
-  const [selectedKey, setSelectedKey] = useState(engineKey);
-  const [view, setView] = useState<CatalogView>(initialView);
-  const [kind, setKind] = useState<ModelKind>(lora ? "lora" : "model");
+  // Read ONCE, at mount: after that this component owns the values and writes them back below.
+  const [shell] = useState(() => loadShell(paneId));
+  const [selectedKey, setSelectedKey] = useState(shell?.engineKey || engineKey);
+  const [view, setView] = useState<CatalogView>(shell?.view || initialView);
+  const [kind, setKind] = useState<ModelKind>(shell?.kind || (lora ? "lora" : "model"));
   const row = (rows || []).find((candidate) => candidate.key === selectedKey) || (rows || [])[0];
 
   useEffect(() => {
     if (rows?.length && !rows.some((candidate) => candidate.key === selectedKey)) setSelectedKey(rows[0].key);
   }, [rows, selectedKey]);
+
+  useEffect(() => { saveShell(paneId, { engineKey: selectedKey, view, kind }); }, [paneId, selectedKey, view, kind]);
+
+  // The open FACE, into the pane itself, so a browser reload comes back to it (the rest of the
+  // memory is module scope and does not survive one). Only the face — see setEngineAddView.
+  useEffect(() => {
+    if (!paneId || view === initialView) return;
+    setEngineAddView(paneId, engineKey, lora, view);
+  }, [engineKey, initialView, lora, paneId, view]);
 
   return (
     <div className="engines-add-pane engine-catalog-pane admin-stage">
@@ -85,12 +113,17 @@ export function EngineAddView({ engineKey, lora, initialView = "search", headerA
           <span className="muted mono engine-catalog-engine-name">{engineTitle(row)}</span>
         </div>
         {engineIsRemote(row) && <p className="admin-hint pad">{tr("admin.engines_remote_catalog")} {row.url || ""}</p>}
+        {/* 🔴 Keyed by the engine and the kind, which is what makes each of them a separate memory:
+            a face that changes either is a different list of a different thing, so it unmounts —
+            saving what it held — and the next one mounts and restores its own. Without the key,
+            React reuses the instance and an effect has to tear the state down by hand, which is the
+            shape that kept throwing the page away. */}
         {view === "search" ? (
           engineIsImage(row)
-            ? <ImageCatalog row={row} kind={kind} onKind={setKind} sources={sources} readOnly={engineIsRemote(row)} onChanged={load} />
-            : <LLMCatalog row={row} kind={kind} onKind={setKind} sources={sources} readOnly={engineIsRemote(row)} onChanged={load} />
+            ? <ImageCatalog key={`${row.key}:${kind}`} row={row} kind={kind} onKind={setKind} paneId={paneId} sources={sources} readOnly={engineIsRemote(row)} onChanged={load} />
+            : <LLMCatalog key={`${row.key}:${kind}`} row={row} kind={kind} onKind={setKind} paneId={paneId} sources={sources} readOnly={engineIsRemote(row)} onChanged={load} />
         ) : (
-          <RegisteredCatalog row={row} kind={kind} onKind={setKind} isSuper={isSuper}
+          <RegisteredCatalog key={`${row.key}:${kind}`} row={row} kind={kind} onKind={setKind} paneId={paneId} isSuper={isSuper}
             readOnly={engineIsRemote(row)} onChanged={load} />
         )}
       </>}
@@ -102,6 +135,8 @@ type CatalogProps = {
   row: EngineRow;
   kind: ModelKind;
   onKind: (kind: ModelKind) => void;
+  /** Which pane this face belongs to — half of its memory's key (catalogMemory). */
+  paneId?: string;
   readOnly: boolean;
   onChanged: () => void;
 };
@@ -119,49 +154,115 @@ function objectsPath(engineKey: string): string {
   return `api/admin/engines/${encodeURIComponent(engineKey)}/objects`;
 }
 
-function CatalogBrowser({ row, kind, onKind, sources, readOnly, onChanged, image }: BrowseProps & { image: boolean }) {
+/** The question a page of hits answers. Two lists are the same list when this is equal — which is
+ *  what decides both where the scroll position is filed and whether a search starts at the top. */
+function conditionOf(query: string, source: string, sort: string, family: string): string {
+  return `${query}\u0000${source}\u0000${sort}\u0000${family}`;
+}
+
+/** What else the model behind a row is published as, and how to ask for it — or "" when nothing
+ * can be listed.
+ *
+ * Read off the row's recorded `source`, which is the only thing that says where the bytes came
+ * from. The two roles ask different questions of different upstreams:
+ *
+ *   - an IMAGE row came from a Civitai VERSION (`civitai:<id>`), and the others are the model's
+ *     other versions;
+ *   - a GGUF row came from a Hugging Face FILE (`hf:<owner>/<repo>/<file>`), and the others are
+ *     the repository's other quantisations — which is ADR 0089's ladder, now reachable from any
+ *     such row instead of only from a group whose heading happens to be a repository name.
+ *
+ * 🔴 A LoRA is left out of the chat side on purpose: an adapter is filed under the model it was
+ * trained against, not under a repository of sizes, and the ladder prices a KV cache it does not
+ * have. A `url:` source and a row with none answer "" — there is no page behind either.
+ */
+function otherOf(model: EngineModel, image: boolean): string {
+  const source = (model.source || "").trim();
+  if (image) return source.startsWith("civitai:") ? source.slice("civitai:".length) : "";
+  if (model.kind === "lora" || !source.startsWith("hf:")) return "";
+  const parts = source.slice("hf:".length).split("/");
+  return parts.length >= 3 && parts[0] && parts[1] ? `${parts[0]}/${parts[1]}` : "";
+}
+
+function CatalogBrowser({ row, kind, onKind, paneId, sources, readOnly, onChanged, image }: BrowseProps & { image: boolean }) {
   const tr = useT();
-  const [picked, setSource] = useState<CatalogSource>(image ? "civitai" : "hf");
+  // This face's memory. The component is keyed by engine and kind, so the key is fixed for its
+  // whole life and the read below happens exactly once — at mount, which is the return.
+  const memoryKey = catalogKey(paneId, row.key, "search", kind);
+  const [remembered] = useState(() => loadSearch(memoryKey));
+  const [picked, setSource] = useState<CatalogSource>(remembered?.source ?? (image ? "civitai" : "hf"));
   // 🔴 The source in force is the picked one only while the deployment still offers it. A tab
   // strip that no longer draws `civitai-red` (engine_civitai_red.go) must not keep searching it
   // from a state set before the switch moved — the CP answers that 403, and a search nobody can
   // see the tab for reads as a broken panel.
   const source = sources.includes(picked) ? picked : image ? "civitai" : "hf";
-  const [sort, setSort] = useState(image ? "newest" : "updated");
+  const [sort, setSort] = useState(remembered?.sort ?? (image ? "newest" : "updated"));
   // The family filter, as one of the ENGINE's own base models — never an upstream name. Empty is
   // every family, which is what a browse was before this existed.
-  const [family, setFamily] = useState("");
-  const [query, setQuery] = useState("");
-  const [submittedQuery, setSubmittedQuery] = useState("");
-  const [hits, setHits] = useState<IngestHit[] | null>(null);
-  const [cursor, setCursor] = useState("");
+  const [family, setFamily] = useState(remembered?.family ?? "");
+  const [query, setQuery] = useState(remembered?.query ?? "");
+  const [submittedQuery, setSubmittedQuery] = useState(remembered?.submittedQuery ?? "");
+  const [hits, setHits] = useState<IngestHit[] | null>(remembered?.hits ?? null);
+  const [cursor, setCursor] = useState(remembered?.cursor ?? "");
   const [busy, setBusy] = useState(false);
   const [busyMore, setBusyMore] = useState(false);
   const [err, setErr] = useState("");
   const [plan, setPlan] = useState<{ hit?: IngestHit; source?: CatalogSource } | null>(null);
   const [preview, setPreview] = useState<IngestHit | null>(null);
-  const [objects, setObjects] = useState<EngineObjectRow[] | null>(null);
-  const [ledgerState, setLedgerState] = useState<"checking" | "ready" | "failed">("checking");
+  const [heldObjects] = useState(() => loadObjectsMemory(row.key));
+  const [objects, setObjects] = useState<EngineObjectRow[] | null>(heldObjects?.objects ?? null);
+  const [ledgerState, setLedgerState] = useState<"checking" | "ready" | "failed">(heldObjects ? "ready" : "checking");
   const [started, setStarted] = useState("");
+  // Whether the end of the list may fetch the next page by itself. A page that came back from
+  // memory starts it OFF: the restored scroll position lands at the bottom, the sentinel is on
+  // screen at once, and a return would spend an upstream request before anybody did anything —
+  // which is the exact cost this memory exists to remove. The first wheel/touch/key on the list
+  // arms it, and the manual button never went away.
+  const [autoArmed, setAutoArmed] = useState(!remembered?.hits?.length);
   const requestSeq = useRef(0);
+  const listRef = useRef<HTMLElement | null>(null);
+  /** The question the page on screen answers. What a new search is compared against to decide
+   *  whether the reader is still looking at the same list. */
+  const condition = useRef(conditionOf(
+    remembered?.submittedQuery ?? "", remembered?.source ?? source,
+    remembered?.sort ?? sort, remembered?.family ?? family,
+  ));
 
   useEffect(() => {
-    setSource(image ? "civitai" : "hf");
-    setSort(image ? "newest" : "updated");
-    setHits(null);
-    setCursor("");
-  }, [image, row.key]);
+    saveSearch(memoryKey, { source: picked, sort, family, query, submittedQuery, hits, cursor });
+  }, [memoryKey, picked, sort, family, query, submittedQuery, hits, cursor]);
 
+  // One surface, keyed by the question: coming back to the same list returns to the place in it,
+  // and a different list has no place recorded and opens at the top. 🔴 Through the hook, never
+  // `scrollMemoryRef` directly — that returns a new function every call, and React would detach
+  // and re-attach it on every render ([[react-ref-callback-identity-cleanup]]).
+  const scrollMemory = useScrollMemory(
+    `${memoryKey}\u0000${conditionOf(submittedQuery, source, sort, family)}`,
+  )("list");
+  const attachList = useCallback((element: HTMLElement | null) => {
+    listRef.current = element;
+    return scrollMemory(element);
+  }, [scrollMemory]);
+
+  // Whether anything is on screen to leave standing while the next listing is fetched. A ref and
+  // not the state itself: this is read inside the callback, and making `objects` a dependency
+  // would rebuild it on every listing and re-fire the effect that calls it.
+  const listed = useRef(!!heldObjects);
   const loadObjects = useCallback(async () => {
-    setLedgerState("checking");
+    // Only a bucket nobody has listed yet says "checking". With a remembered listing on screen,
+    // saying it again would blank every card's badge on the way back from another tab.
+    if (!listed.current) setLedgerState("checking");
     try {
       const answer = await api(objectsPath(row.key));
-      if (answer?.error) { setObjects(null); setLedgerState("failed"); return; }
-      setObjects(Array.isArray(answer?.objects) ? answer.objects : []);
+      if (answer?.error) { setObjects(null); listed.current = false; setLedgerState("failed"); return; }
+      const rows: EngineObjectRow[] = Array.isArray(answer?.objects) ? answer.objects : [];
+      setObjects(rows);
+      listed.current = true;
+      saveObjectsMemory(row.key, { objects: rows, checkedAt: answer?.checked_at || "" });
       setLedgerState("ready");
-    } catch { setObjects(null); setLedgerState("failed"); }
+    } catch { setObjects(null); listed.current = false; setLedgerState("failed"); }
   }, [row.key]);
-  useEffect(() => { setObjects(null); void loadObjects(); }, [loadObjects]);
+  useEffect(() => { void loadObjects(); }, [loadObjects]);
 
   const search = useCallback(async (more = false) => {
     const seq = ++requestSeq.current;
@@ -177,12 +278,30 @@ function CatalogBrowser({ row, kind, onKind, sources, readOnly, onChanged, image
       const page = (answer || {}) as IngestSearchAnswer;
       const next = Array.isArray(page.hits) ? page.hits : [];
       setHits((current) => more && current ? [...current, ...next] : next);
-      if (!more) setSubmittedQuery(query);
+      if (!more) {
+        setSubmittedQuery(query);
+        // A DIFFERENT question gets a fresh page and starts at the top; the same one re-asked
+        // keeps its place, which is what pressing 検索 again is for. Done by hand because the
+        // scroll memory cannot do it: its key changed with the question, and finding nothing
+        // recorded under the new one correctly leaves the box where it is (useScrollMemory's
+        // `arm`) — which would be halfway down a list nobody has read.
+        const asked = conditionOf(query, source, sort, family);
+        if (asked !== condition.current && listRef.current) listRef.current.scrollTop = 0;
+        condition.current = asked;
+      }
       setCursor(page.next_cursor || "");
     } finally { if (seq === requestSeq.current) { setBusy(false); setBusyMore(false); } }
   }, [cursor, family, kind, query, row.key, sort, source, submittedQuery]);
 
-  useEffect(() => { void search(false); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [row.key, kind, source, sort, family]);
+  // The list searches itself when the question changes — but NOT on the way back from another
+  // tab, where the page it would fetch is the one already on screen. That return is the whole
+  // point of the memory: a search is an upstream request, and Civitai sheds load with a 503.
+  const restored = useRef(!!remembered?.hits);
+  useEffect(() => {
+    if (restored.current) { restored.current = false; return; }
+    void search(false);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [source, sort, family]);
   const switchSource = (next: CatalogSource) => {
     setSource(next); setSort(next === "civitai" || next === "civitai-red" ? "newest" : "updated"); setHits(null); setCursor("");
   };
@@ -191,6 +310,15 @@ function CatalogBrowser({ row, kind, onKind, sources, readOnly, onChanged, image
   return (
     <section
       className="engine-catalog-browser"
+      ref={attachList}
+      // The first touch on a restored list is what lets its end fetch again (see `autoArmed`).
+      // Listened for on the scroller rather than the sentinel: the reader arms it by moving, and
+      // by then the sentinel may already have been on screen for a while.
+      {...(autoArmed ? {} : {
+        onWheel: () => setAutoArmed(true),
+        onTouchStart: () => setAutoArmed(true),
+        onKeyDown: () => setAutoArmed(true),
+      })}
       aria-label={tr(image ? "admin.catalog_image_title" as never : "admin.catalog_llm_title" as never)}
     >
       <div className="engine-catalog-toolbar">
@@ -245,7 +373,7 @@ function CatalogBrowser({ row, kind, onKind, sources, readOnly, onChanged, image
           : <LLMCatalogCard key={`${hit.source}:${hit.model_ref || hit.ref}:${hit.ref}`} {...props} />;
       })}</ul>}
       {cursor && query === submittedQuery && <CatalogMore busy={busy} loading={busy && busyMore}
-        count={hits?.length || 0} onMore={() => void search(true)} />}
+        paused={!autoArmed} count={hits?.length || 0} onMore={() => void search(true)} />}
       {plan && <IngestPlanDialog row={row} kind={kind} hit={plan.hit} initialSource={plan.source}
         onClose={() => setPlan(null)}
         onStarted={(job) => {
@@ -270,8 +398,13 @@ function CatalogBrowser({ row, kind, onKind, sources, readOnly, onChanged, image
  * IntersectionObserver, a pane that is not the scroller), and it is the deliberate way past the
  * guard below. `count` is that guard — a page that added no row stops the automatic chain, so an
  * upstream error with a live cursor cannot turn one landing at the bottom into an endless
- * request loop. */
-function CatalogMore({ busy, loading, count, onMore }: { busy: boolean; loading: boolean; count: number; onMore: () => void }) {
+ * request loop.
+ *
+ * `paused` is the second way past it, and it exists for the return from another tab: a restored
+ * page comes back with its scroll position, which puts the sentinel on screen before anybody has
+ * done anything, and the observer would answer that by spending an upstream request. So the
+ * caller holds the observer off until the reader moves — the button below stays either way. */
+function CatalogMore({ busy, loading, paused, count, onMore }: { busy: boolean; loading: boolean; paused?: boolean; count: number; onMore: () => void }) {
   const tr = useT();
   const sentinel = useRef<HTMLDivElement | null>(null);
   // Read through refs because the observer is deliberately NOT rebuilt when these change:
@@ -290,7 +423,7 @@ function CatalogMore({ busy, loading, count, onMore }: { busy: boolean; loading:
     // Nothing is observed while a page is in flight, and observing again once it lands is what
     // continues the chain: an observer reports a CHANGE, so a short page that leaves the
     // sentinel on screen would otherwise stop the scroll dead.
-    if (busy || !node || typeof IntersectionObserver !== "function") return;
+    if (busy || paused || !node || typeof IntersectionObserver !== "function") return;
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((entry) => entry.isIntersecting) || autoAt.current === seen.current) return;
       autoAt.current = seen.current;
@@ -298,7 +431,7 @@ function CatalogMore({ busy, loading, count, onMore }: { busy: boolean; loading:
     }, { rootMargin: "400px" });
     io.observe(node);
     return () => io.disconnect();
-  }, [busy]);
+  }, [busy, paused]);
 
   return <>
     <div ref={sentinel} className="engine-catalog-sentinel" aria-hidden="true" />
@@ -486,11 +619,14 @@ function needsAsking(answer: CompleteAnswer): boolean {
   return answer.action === "choose" || (answer.bytes_to_download || 0) > 0;
 }
 
-function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: CatalogProps & { isSuper: boolean }) {
+function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly, onChanged }: CatalogProps & { isSuper: boolean }) {
   const tr = useT();
-  const [query, setQuery] = useState("");
-  const [sort, setSort] = useState("name");
-  const [objects, setObjects] = useState<EngineObjectRow[] | null>(null);
+  const memoryKey = catalogKey(paneId, row.key, "registered", kind);
+  const [remembered] = useState(() => loadRegistered(memoryKey));
+  const [heldObjects] = useState(() => loadObjectsMemory(row.key));
+  const [query, setQuery] = useState(remembered?.query ?? "");
+  const [sort, setSort] = useState(remembered?.sort ?? "name");
+  const [objects, setObjects] = useState<EngineObjectRow[] | null>(heldObjects?.objects ?? null);
   /** Told apart from "not read yet": an empty prefix and a bucket nobody could list are
    *  different answers, and drawing the second as the first says this deployment holds nothing. */
   const [ledgerFailed, setLedgerFailed] = useState(false);
@@ -499,7 +635,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
    *  the bucket for as long as that task takes. Without this the press looked like it did
    *  nothing, which is how it read on af-sandbox. */
   const [deletingKeys, setDeletingKeys] = useState<string[]>([]);
-  const [checkedAt, setCheckedAt] = useState("");
+  const [checkedAt, setCheckedAt] = useState(heldObjects?.checkedAt ?? "");
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState<EngineApiError | null>(null);
   const [note, setNote] = useState("");
@@ -519,15 +655,32 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
    *  Held rather than derived so that a narrowed catalogue survives a reload of the rows, and read
    *  back through the groups below, so a family whose last row was forgotten opens the whole list
    *  instead of an empty one. */
-  const [family, setFamily] = useState<string | null>(null);
+  const [family, setFamily] = useState<string | null>(remembered ? remembered.family : null);
   const [lightbox, setLightbox] = useState<EngineModel | null>(null);
   /** Taking in ANOTHER size of a model this catalogue already has (ADR 0089). Carried as the
    *  repository and the file rather than as a pre-built request: the dialog is the one thing that
    *  resolves, plans and prices a press, and a second road into the ingest that skipped it would
    *  be a press nobody saw the cost of. */
   const [addFile, setAddFile] = useState<{ repo: string; file: string } | null>(null);
+  /** Opening the ladder of what ELSE this model is published as — the other Civitai versions of a
+   *  checkpoint, the other quantisations of a GGUF repository. The row, not a pre-built request:
+   *  which of the two ladders it gets, and what it asks upstream with, is read off the row's own
+   *  recorded source. */
+  const [other, setOther] = useState<EngineModel | null>(null);
+  /** Pre-filling the plan dialog for a Civitai version (ADR 0085 decision 4).
+   *
+   *  🔴 The source and the ref travel together. `IngestPlanDialog` picks its source type from
+   *  `hit` and `initialSource` alone, so a Civitai URL handed over without the source arrives in
+   *  a form set to Hugging Face and is parsed as a repository name. */
+  const [addVersion, setAddVersion] = useState<{ modelRef: string; versionRef: string } | null>(null);
   const models = (row.model_rows || []).filter((model) => (model.kind === "lora") === (kind === "lora"));
   const image = engineIsImage(row);
+
+  useEffect(() => { saveRegistered(memoryKey, { query, sort, family }); }, [memoryKey, query, sort, family]);
+
+  // The list itself keeps its place across a tab switch. Its key carries no search condition —
+  // this face filters rows it already has, so there is one list and one position for it.
+  const listRef = useScrollMemory(memoryKey)("list");
 
   const loadObjects = useCallback(async () => {
     const answer = await api(objectsPath(row.key));
@@ -536,6 +689,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     const rows: EngineObjectRow[] = Array.isArray(answer?.objects) ? answer.objects : [];
     setObjects(rows);
     setCheckedAt(answer?.checked_at || "");
+    saveObjectsMemory(row.key, { objects: rows, checkedAt: answer?.checked_at || "" });
     // A key the listing no longer returns is gone — that, and nothing else, ends "deleting".
     setDeletingKeys((current) => current.filter((key) => rows.some((object) => object.key === key)));
   }, [row.key]);
@@ -765,7 +919,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
     }
   };
 
-  return <section className="engine-catalog-registered" aria-label={tr("admin.catalog_registered_title" as never)}>
+  return <section className="engine-catalog-registered" ref={listRef} aria-label={tr("admin.catalog_registered_title" as never)}>
     {!isSuper && <p className="admin-hint">{tr("admin.engines_tenant_scope")}</p>}
     <div className="engine-catalog-toolbar">
       <span className="seg sm">{(["model", "lora"] as const).map((next) => <Button key={next} variant="ghost" small
@@ -848,6 +1002,15 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
           {!readOnly && registeredNeedsMeta(model) && <Button variant="ghost" small icon="download"
             aria-label={`${tr("admin.catalog_meta" as never)}: ${model.id}`} disabled={pending}
             onClick={() => void fillMeta([model])}>{tr("admin.catalog_meta" as never)}</Button>}
+          {/* The other versions / the other sizes of THIS model, from the row that has one
+              (ADR 0089 for chat, and its image counterpart). Offered only where there is
+              something to list: a row whose source is a `url:` or a seeded one records no page,
+              and a borrowed catalogue draws no acts at all. */}
+          {!readOnly && !!otherOf(model, image) && <Button variant="ghost" small icon="versions"
+            aria-label={`${tr(image ? "admin.catalog_other_versions" as never : "admin.catalog_other_sizes" as never)}: ${model.id}`}
+            onClick={() => setOther(model)}>
+            {tr(image ? "admin.catalog_other_versions" as never : "admin.catalog_other_sizes" as never)}
+          </Button>}
           {isSuper && !readOnly && <Button variant="ghost" small icon="edit" aria-label={`${tr("admin.catalog_edit" as never)}: ${model.id}`} onClick={() => setEdit(model)}>{tr("admin.catalog_edit" as never)}</Button>}
           {isSuper && !readOnly && <Button small aria-label={`${tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, { enabled: !model.enabled })}>{tr(model.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}</Button>}
           {isSuper && !readOnly && model.kind !== "lora" && !started && <Button variant="primary" small aria-label={`${tr("admin.engines_model_select")}: ${model.id}`} disabled={pending} onClick={() => void guardedChange(model, image ? { selected: true } : { default: true })}>{tr("admin.engines_model_select")}</Button>}
@@ -861,7 +1024,7 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
       </li>;
     })}</ul>
     </section>)}
-    <EngineLedger objects={objects} failed={ledgerFailed} checkedAt={checkedAt} busy={busy} readOnly={readOnly}
+    <EngineLedger objects={objects} role={row.key} image={image} failed={ledgerFailed} checkedAt={checkedAt} busy={busy} readOnly={readOnly}
       deletingKeys={deletingKeys}
       onRegister={(object) => void registerObject(object.key)}
       onDelete={(object) => setDeletingObject(object)}
@@ -890,6 +1053,37 @@ function RegisteredCatalog({ row, kind, onKind, isSuper, readOnly, onChanged }: 
         <footer className="engine-operation-footer"><Button variant="ghost" onClick={() => setDeletingObject(null)}>{tr("common.cancel")}</Button>
           <Button variant="danger" onClick={() => void deleteObject(deletingObject.key)}>{tr("admin.catalog_ledger_delete" as never)}</Button></footer></div>
     </Modal>}
+    {/* What else this model is published as. One press, one modal, and the press inside it opens
+        the ordinary plan dialog — so the licence and the price are still seen on the one screen
+        that has always shown them. */}
+    {other && <Modal className="engine-catalog-operation engine-other-ladder"
+      title={`${tr(image ? "admin.catalog_other_versions" as never : "admin.catalog_other_sizes" as never)} — ${registeredTitle(other).title}`}
+      onClose={() => setOther(null)}>
+      <div className="ui-modal-body engine-operation-body">
+        {image
+          ? <CivitaiVersionLadder engine={row} versionRef={otherOf(other, true)} rows={models} readOnly={readOnly}
+            onTakeIn={(modelRef, version) => { setOther(null); setAddVersion({ modelRef, versionRef: version.ref }); }} />
+          : <RepoQuantLadder engine={row} repo={otherOf(other, false)} rows={models} readOnly={readOnly} startOpen
+            onTakeIn={(file) => { setOther(null); setAddFile({ repo: otherOf(other, false), file }); }} />}
+        {/* What taking another one in does NOT do. The row is never rewritten in place: its id is
+            the key the launch menu, the active set and every S3 path are written in, so a new
+            version arrives as a new row and the swap is two presses the card already has. */}
+        <p className="admin-hint">{tr("admin.catalog_other_note" as never)}</p>
+      </div>
+    </Modal>}
+    {/* 🔴 The source travels WITH the ref. `IngestPlanDialog` reads its source type from `hit`
+        and `initialSource` only, so a Civitai link passed alone opens a form still set to
+        Hugging Face, which parses the whole URL as a repository name. The spelling is the one the
+        dialog's own `civitaiPage` / `civitaiVersionParam` already read — no second parser. */}
+    {addVersion && <IngestPlanDialog row={row} kind={kind} initialSource="civitai"
+      // Without a model id — an older control plane that does not resolve one — the version-only
+      // spelling is still a link this dialog reads, and the CP resolves the model behind it. It
+      // is the same form a person pasting from the address bar arrives with.
+      initialRef={addVersion.modelRef
+        ? `https://civitai.com/models/${addVersion.modelRef}?modelVersionId=${addVersion.versionRef}`
+        : `https://civitai.com/models/?modelVersionId=${addVersion.versionRef}`}
+      onClose={() => setAddVersion(null)}
+      onStarted={async () => { setAddVersion(null); await onChanged(); await loadObjects(); }} />}
     {/* 🔴 Handed the blob URL rather than a repo/file pair: that is the form the dialog already
         parses (`hfURL`), so this road opens the same pre-filled screen a pasted link does, and
         there is no second way in for the plan and the licence to be skipped. */}
@@ -945,8 +1139,13 @@ function EngineRefusal({ error, busy, onNext }: { error: EngineApiError | null; 
  * 🔴 Orphans and misplaced objects sort first because they are the only rows here anybody has to
  * act on: everything else is provenance for a row that already works. A part gets no button of
  * its own — it is attached, and moved, by the 揃える of whichever checkpoint reads it. */
-function EngineLedger({ objects, failed, checkedAt, busy, readOnly, deletingKeys, onRegister, onDelete, onDismiss, onComplete }: {
+function EngineLedger({ objects, role, image, failed, checkedAt, busy, readOnly, deletingKeys, onRegister, onDelete, onDismiss, onComplete }: {
   objects: EngineObjectRow[] | null;
+  /** The engine's own key, which is the prefix every one of these objects sits under. Needed
+   *  because what counts as a model's own weights is read off the key, and the two roles write
+   *  different layouts under it. */
+  role: string;
+  image: boolean;
   failed: boolean;
   checkedAt: string;
   busy: string;
@@ -1020,7 +1219,7 @@ function EngineLedger({ objects, failed, checkedAt, busy, readOnly, deletingKeys
             ? <Button small variant="danger" disabled={pending} aria-label={`${tr("admin.catalog_ledger_delete" as never)}: ${object.key}`}
               onClick={() => onDismiss(object.job!.id)}>{tr("admin.catalog_ledger_delete" as never)}</Button>
             : <>
-              {orphan && object.state === "present" && isMainObject(object) && <Button small variant="primary" disabled={pending}
+              {orphan && object.state === "present" && isMainObject(object, role, image) && <Button small variant="primary" disabled={pending}
                 aria-label={`${tr("admin.catalog_ledger_register" as never)}: ${object.key}`}
                 onClick={() => onRegister(object)}>{tr("admin.catalog_ledger_register" as never)}</Button>}
               {orphan && object.state === "present" && <Button small variant="danger" disabled={pending}
@@ -1056,12 +1255,28 @@ function ledgerRank(object: EngineObjectRow): number {
 }
 
 /** A main file — the thing a person means by "a model" — rather than a part. `register` is
- * offered on these only; a misplaced one still names its role directory in the key, which is how
- * `image/checkpoints/split_files/diffusion_models/x.safetensors` is recognised. */
-function isMainObject(object: EngineObjectRow): boolean {
-  if (object.role_dir === "checkpoints" || object.role_dir === "diffusion_models") return true;
-  return /(^|\/)(checkpoints|diffusion_models)\//.test(object.key);
+ * offered on these only, and this is the CP's `engineObjectIsMainFile` in TypeScript: a button the
+ * route would refuse is worse than no button.
+ *
+ * The image role is ComfyUI's, one directory per loader, so a misplaced file still names its role
+ * directory in the key — which is how `image/checkpoints/split_files/diffusion_models/x.safetensors`
+ * is recognised. The llm role is flat: `llm/<file>.gguf` and nothing deeper, because `llm/loras/…`
+ * is an adapter and `llm/<name>/shard.gguf` is one piece of a file. */
+function isMainObject(object: EngineObjectRow, role: string, image: boolean): boolean {
+  if (image) {
+    if (object.role_dir === "checkpoints" || object.role_dir === "diffusion_models") return true;
+    return /(^|\/)(checkpoints|diffusion_models)\//.test(object.key);
+  }
+  const prefix = `${role.trim()}/`;
+  if (!object.key.startsWith(prefix)) return false;
+  const rest = object.key.slice(prefix.length);
+  return !!rest && !rest.includes("/") && MODEL_FILE_EXTS.some((ext) => rest.toLowerCase().endsWith(ext));
 }
+
+/** The names a loader could load — the CP's `engineModelFileExts`. The image branch above has no
+ * need of them (a key under `checkpoints/` is a model file by where it is), but a flat role has
+ * only the name to go on, and a `.json` beside a GGUF is not a model. */
+const MODEL_FILE_EXTS = [".safetensors", ".gguf", ".ckpt", ".pt", ".sft", ".bin"];
 
 /** The plan card (ADR 0085 decision 4). One press, and the CP decided what that press does.
  *
@@ -1163,12 +1378,10 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
     try {
       if (plainURL) { setVersions([]); setFiles([]); return; }
       const requestedVersion = versionRef || pastedVersion;
-      if (sourceType === "civitai" && !civitaiModelRef && pastedVersion) {
-        setVersions([{ ref: pastedVersion, name: pastedVersion }]);
-        setVersionRef(pastedVersion);
-        await loadFiles(pastedVersion, seq);
-        return;
-      }
+      // A Civitai version with no model beside it used to short-circuit into a list of ONE, made
+      // up here, because the route demanded a model id the Console did not have. The CP resolves
+      // it from the version now, so the same question has one answer and one road to it — the
+      // version list this then draws is the real one, and the other versions are selectable.
       const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/versions`, "POST", {
         source: sourceType, ref: hit?.ref || pastedVersion || repo, model_ref: sourceType === "civitai" ? civitaiModelRef : repo,
       });
@@ -1212,9 +1425,16 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         // never run" about a model that runs fine at 32768. So the field opens at the largest
         // window that actually fits the box this engine buys, and the ceiling is shown beside it
         // as what it is.
+        //
+        // 🔴 And when it CANNOT be fitted — no readable header, no card — the fallback is not
+        // the ceiling either. Falling back to it put 262,144 in the field of the af-sandbox row
+        // that then asked for 16 GiB of KV cache and took the L4 out of memory, which is the
+        // same failure ADR 0089 was written about, reached through the error path instead of the
+        // happy one. windowWhenUnsized is a stated fallback and the form says so.
         const weights = found.bytes ? Math.round(found.bytes / 1048576) : 0;
-        const window = windowThatFits(weights, found.kv_mib_per_1k_tokens || 0,
-          row.class?.vram_mib || 0, found.context_length) || found.context_length;
+        const fitted = windowThatFits(weights, found.kv_mib_per_1k_tokens || 0,
+          row.class?.vram_mib || 0, found.context_length);
+        const window = fitted || windowWhenUnsized(found.context_length);
         setContext(String(window)); setOutput(String(Math.floor(window / 8)));
       }
       if (found.params_hint) setParams((current) => ({
@@ -1498,10 +1718,23 @@ function RegisteredParts({ model, objects }: { model: EngineModel; objects: Engi
   return <ul className="engine-registered-parts" aria-label={`${tr("admin.catalog_files" as never)}: ${model.id}`}>{rows.map((part) => {
     const known = objects?.find((candidate) => candidate.key === part.s3Key);
     const state = objects === null ? "unknown" : known?.state === "present" ? "present" : known ? known.state : "missing";
-    return <li key={`${part.flag || "whole"}:${part.s3Key}`}><span className="mono">{part.flag || tr("admin.engines_model_add_part_whole")}</span><span className="mono engine-registered-key">{part.s3Key}</span>
-      {part.bytes ? <span>{formatBytes(part.bytes)}</span> : null}
-      <span className={`engines-model-tag ${state === "present" ? "on" : state === "missing" || state === "failed" ? "bad" : ""}`}>{tr((`admin.catalog_file_${state}`) as never)}</span>
-      {part.source_url ? <a href={part.source_url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a> : part.source ? <span className="muted mono">{part.source}</span> : null}</li>;
+    return <li key={`${part.flag || "whole"}:${part.s3Key}`}>
+      <span className="mono engine-registered-part-flag">{part.flag || tr("admin.engines_model_add_part_whole")}</span>
+      <span className="mono engine-registered-key">{part.s3Key}</span>
+      {/* The size and the page in ONE span, at the right end of the flag's line. Loose children
+          left the narrow card (`@container engcard`) to place them itself, and it scattered them
+          down four rows — the size on its own line, the link on another. */}
+      <span className="engine-registered-part-meta">
+        {part.bytes ? <span>{formatBytes(part.bytes)}</span> : null}
+        {/* `present` draws no chip. The card's header already counts the parts ("3/3 files
+            present"), so a chip on every line states the same fact once per file — and a badge
+            that is on every line is one nobody reads. Every other state keeps it, which is what
+            makes a chip mean "this line needs a hand"; `unknown` in particular is the whole
+            card's state when the bucket could not be listed, and must stay visible. */}
+        {state !== "present" && <span className={`engines-model-tag ${state === "missing" || state === "failed" ? "bad" : ""}`}>{tr((`admin.catalog_file_${state}`) as never)}</span>}
+        {part.source_url ? <a href={part.source_url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a> : part.source ? <span className="muted mono">{part.source}</span> : null}
+      </span>
+    </li>;
   })}</ul>;
 }
 
@@ -1533,6 +1766,24 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   const outputNumber = whole(output);
   const vramNumber = whole(vram);
   const invalidWindow = !image && !lora && (contextNumber === null || outputNumber === null || (!!contextNumber !== !!outputNumber));
+  // The same verdict the ingest form draws, on the row as it already is (ADR 0089). Without it
+  // this dialog was three raw number boxes: an operator correcting a window had to price the KV
+  // cache in their head, which is exactly what nobody should be asked to do — and is how a row
+  // came to declare 262,144 on a card that holds a quarter of that.
+  const editWeightsMiB = Math.round((model.file_rows || []).reduce((sum, f) => sum + (f.bytes || 0), 0) / 1048576);
+  const editKvPer1k = !image && !lora ? model.kv_mib_per_1k_tokens || 0 : 0;
+  const editCardMiB = lora ? 0 : row.class?.vram_mib || 0;
+  const editFit = modelFit(editWeightsMiB, editKvPer1k, contextNumber || 0, editCardMiB, row.classes || []);
+  // The largest window this card actually holds, offered as one press. 0 when it cannot be
+  // said (no geometry, no card, or the weights alone already fill it) and the button is then
+  // not drawn — an "auto" that quietly does nothing is worse than no button.
+  // 0 when it cannot be said — no geometry, no card, no stored ceiling, or the weights alone
+  // already fill the card — and the button is then not drawn. An offer computed without an
+  // upper bound would propose windows the model was never trained for, and an "auto" that
+  // quietly does nothing is worse than no button.
+  const editBestWindow = !image && !lora
+    ? windowThatFits(editWeightsMiB, editKvPer1k, editCardMiB, model.context_length || 0)
+    : 0;
   const invalidVram = vramNumber === null;
   const invalidBase = !image && lora ? !baseChoices.includes(baseModel) : image && baseChoices.length > 0 && !baseChoices.includes(baseModel);
   const validation = invalidWindow ? tr("admin.catalog_edit_window_invalid" as never) : invalidVram ? tr("admin.catalog_edit_vram_invalid" as never) : invalidBase ? tr("admin.engines_wizard_need_family") : "";
@@ -1564,6 +1815,19 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
       {image && !lora && <label><span>{tr("admin.engines_model_negative")}</span><input value={negative} onChange={(event) => setNegative(event.currentTarget.value)} /></label>}
       {image && lora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
     </div>
+    {!image && !lora && <p className="engine-operation-window-hint muted">
+      {!!model.context_length && <>{(tr("admin.engines_ingest_ctx_ceiling" as never) as string).replace("{n}", model.context_length.toLocaleString())} </>}
+      {!!editBestWindow && <Button variant="ghost" disabled={busy || editBestWindow === contextNumber} onClick={() => {
+        setContext(String(editBestWindow)); setOutput(String(Math.floor(editBestWindow / 8)));
+      }}>{(tr("admin.catalog_edit_window_fit" as never) as string).replace("{n}", editBestWindow.toLocaleString())}</Button>}
+      {!editKvPer1k && <> {tr("admin.fit_no_kv" as never)}</>}
+    </p>}
+    {!image && !lora && editFit.needMiB > 0 && <p className={`engine-operation-fit ${editFit.state === "over" ? "form-err" : "muted"}`}>
+      {(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(editFit.weightsMiB))}
+      {` · ${editFit.kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(editFit.kvMiB)).replace("{c}", String(contextNumber || 0)) : tr("admin.engines_ingest_fit_kv_unread")}`}
+      {editCardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(editFit.needMiB)).replace("{c}", String(editCardMiB))} ` : " "}
+      <FitTag fit={editFit} />
+    </p>}
     {image && <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">{(Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}</div></details>}
     {validation && <p className="form-err">{validation}</p>}
     {error && <p className="form-err">{error}</p>}

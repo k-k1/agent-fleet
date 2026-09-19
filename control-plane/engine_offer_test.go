@@ -357,7 +357,7 @@ func newOfferTestEngineWith(t *testing.T, api engineECSAPI, fleet engineFleetAPI
 	e.def.LaunchTemplate = template
 	e.def.Offers = offers
 	e.ecs.roleAttr = engineBoxRole(e.def)
-	e.classes = parseEngineOffers("image", e.def.offersSpec())
+	e.classes = parseEngineClasses(e.def.offersSpec())
 	e.cluster = "cluster"
 	e.settings = st
 	e.catalog = newEngineCatalog(st, "image")
@@ -379,6 +379,16 @@ func tickIntoAStart(t *testing.T, e *engineRuntimeState, st store.Store) {
 	}
 	e.demand.stamp(t.Context())
 	e.ctrl.tick(t.Context())
+}
+
+// acceptInterruption is the administrator ticking "this engine may be taken away" — without it a
+// `spot` offer is not a candidate at all, so every test about what a Spot purchase LOOKS LIKE has
+// to say it first.
+func acceptInterruption(t *testing.T, st store.Store, role string) {
+	t.Helper()
+	if err := st.SetSetting(t.Context(), engineSpotSettingKey(role), "true"); err != nil {
+		t.Fatalf("accept interruption: %v", err)
+	}
 }
 
 const twoOffers = "l4|L4 24GB|22000|g6.xlarge|4-8|15000-65536|1.26;" +
@@ -531,19 +541,77 @@ func TestParseEngineOffersReadsTheBuyColumn(t *testing.T) {
 	}
 }
 
-// ADR 0077 decision 9: the llm role is on-demand only, and under 0075 that was guaranteed by
-// there being no Spot capacity provider to address. One launch template serves both purchase
-// options now, so nothing stands in the way except this refusal.
-func TestTheLlmRoleRefusesASpotOffer(t *testing.T) {
-	const offers = "spot|Spot|22000|g6.xlarge|4-8|15000-65536|1.57|spot;" +
-		"od|OD|22000|g6.xlarge|4-8|15000-65536|1.26|od"
-	if got := offerIDs(parseEngineOffers("llm", offers)); got != "od" {
-		t.Fatalf("llm offers = %q, want the spot row dropped: a lost conversation is not a retry", got)
+const spotAndOdOffers = "spot|Spot|22000|g6.xlarge|4-8|15000-65536|0.57|spot;" +
+	"od|OD|22000|g6.xlarge|4-8|15000-65536|1.17|od"
+
+// ADR 0077 decision 9 amended: a `spot` offer is bought where an administrator ACCEPTED
+// INTERRUPTION, and nowhere else. This is the automatic path — no pin — which is the one a gate
+// on the panel's picker would never have covered.
+func TestASpotOfferIsACandidateOnlyWhereInterruptionIsAccepted(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newOfferTestEngine(t, &offerECS{}, &fakeFleet{}, spotAndOdOffers, st)
+
+	if got := offerIDs(e.candidateOffers(t.Context())); got != "od" {
+		t.Fatalf("candidates = %q, want the spot row left out until somebody accepts interruption", got)
 	}
-	// Positive control: the same list for the image role keeps both, so the assertion above is
-	// about the role and not about a parser that drops spot rows everywhere.
-	if got := offerIDs(parseEngineOffers("image", offers)); got != "spot,od" {
-		t.Fatalf("image offers = %q, want both rows", got)
+	acceptInterruption(t, st, "image")
+	if got := offerIDs(e.candidateOffers(t.Context())); got != "spot,od" {
+		t.Fatalf("candidates with interruption accepted = %q, want both in declaration order", got)
+	}
+	// And the way back: the tick is the only thing that changed, so it is the only thing that
+	// may change the answer.
+	if err := st.SetSetting(t.Context(), engineSpotSettingKey("image"), ""); err != nil {
+		t.Fatalf("withdraw: %v", err)
+	}
+	if got := offerIDs(e.candidateOffers(t.Context())); got != "od" {
+		t.Fatalf("candidates after withdrawing = %q, want the spot row left out again", got)
+	}
+}
+
+// A pin is an explicit intent and still does not buy an interruptible box without the tick. It
+// falls back to AUTOMATIC — the same reading as a pin naming an offer nobody declares any more —
+// because the pin cannot be honoured and an engine that refuses to start is not what "I have not
+// accepted interruption" asked for.
+func TestAPinnedSpotOfferIsNotBoughtWithoutConsent(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newOfferTestEngine(t, &offerECS{}, &fakeFleet{}, spotAndOdOffers, st)
+	if err := st.SetSetting(t.Context(), engineClassSettingKey("image"), "spot"); err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+
+	if got := offerIDs(e.candidateOffers(t.Context())); got != "od" {
+		t.Fatalf("candidates = %q, want the pin ignored and the on-demand offer chosen automatically", got)
+	}
+	// Positive control: with interruption accepted the very same pin IS honoured, and alone —
+	// so the assertion above is about consent and not about a pin that stopped working.
+	acceptInterruption(t, st, "image")
+	if got := offerIDs(e.candidateOffers(t.Context())); got != "spot" {
+		t.Fatalf("pinned candidates = %q, want the pinned spot offer alone", got)
+	}
+}
+
+// The role the amendment is FOR. ADR 0075 decision 9 and ADR 0077 decision 9 refused a `spot`
+// row for the chat role at parse time; it is declarable now, and the consent is what decides.
+func TestTheChatRoleMayDeclareASpotOfferAndBuysItOnlyWithConsent(t *testing.T) {
+	st := testSettingsStore(t)
+	d := engineDef{
+		Key: "llm", API: engineAPIChat, Service: "af-llm",
+		LaunchTemplate: "lt-llm", Offers: spotAndOdOffers,
+	}
+	e := &engineRuntimeState{def: d, classes: parseEngineClasses(d.offersSpec())}
+	e.settings = st
+	e.catalog = newEngineCatalog(st, "llm")
+	e.wireOffers(newEngineFleet(&fakeFleet{}, "llm", "cluster", "lt-llm", []string{"subnet-a"}))
+
+	if got := offerIDs(e.classList()); got != "spot,od" {
+		t.Fatalf("llm offers = %q, want the spot row to survive the table: it is declarable now", got)
+	}
+	if got := offerIDs(e.candidateOffers(t.Context())); got != "od" {
+		t.Fatalf("llm candidates = %q, want on-demand only until interruption is accepted", got)
+	}
+	acceptInterruption(t, st, "llm")
+	if got := offerIDs(e.candidateOffers(t.Context())); got != "spot,od" {
+		t.Fatalf("llm candidates with interruption accepted = %q, want both", got)
 	}
 }
 
@@ -670,6 +738,7 @@ func TestASpotOfferAsksForPriceCapacityOptimizedAndTagsTheBox(t *testing.T) {
 	fleet := &fakeFleet{}
 	e := newOfferTestEngine(t, &offerECS{}, fleet,
 		"spot3|Spot|22000|g6.xlarge,g5.xlarge,g6.2xlarge|4-8|15000-65536|1.57|spot", st)
+	acceptInterruption(t, st, "image")
 
 	tickIntoAStart(t, e, st)
 
@@ -720,6 +789,7 @@ func TestAPurchaseAuditsTheInstanceTypeAndPrice(t *testing.T) {
 	fleet := &fakeFleet{}
 	e := newOfferTestEngine(t, &offerECS{}, fleet,
 		"spot3|Spot|22000|g6.xlarge,g5.xlarge,g6.2xlarge|4-8|15000-65536|1.57|spot", st)
+	acceptInterruption(t, st, "image")
 
 	tickIntoAStart(t, e, st)
 
@@ -824,6 +894,7 @@ func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
 			{codes: []string{"InsufficientInstanceCapacity"}}, {instance: "i-9"},
 		}}
 		e := newOfferTestEngine(t, &offerECS{}, fleet, offers, st)
+		acceptInterruption(t, st, "image")
 		tickIntoAStart(t, e, st)
 
 		if got := offerTrailResults(e); got != "spotA=insufficient,spotB=active" {
@@ -840,6 +911,7 @@ func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
 			{codes: []string{"MaxSpotInstanceCountExceeded"}}, {instance: "i-9"},
 		}}
 		e := newOfferTestEngine(t, &offerECS{}, fleet, offers, st)
+		acceptInterruption(t, st, "image")
 		tickIntoAStart(t, e, st)
 
 		// spotB is never asked for: the two quotas are separate, so another Spot row hits the
@@ -862,6 +934,7 @@ func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
 			{codes: []string{"InvalidFleetConfiguration"}}, {instance: "i-9"},
 		}}
 		e := newOfferTestEngine(t, &offerECS{}, fleet, offers, st)
+		acceptInterruption(t, st, "image")
 		tickIntoAStart(t, e, st)
 
 		// 🔴 `unusable` rather than a failure of the whole start: under ADR 0075 a misspelt type
@@ -882,6 +955,7 @@ func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
 		fleet := &fakeFleet{answers: []fleetAnswer{{codes: []string{"UnauthorizedOperation"}}}}
 		api := &offerECS{}
 		e := newOfferTestEngine(t, api, fleet, offers, st)
+		acceptInterruption(t, st, "image")
 		tickIntoAStart(t, e, st)
 
 		if len(fleet.creates) != 1 {
@@ -902,6 +976,7 @@ func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
 		st2 := testSettingsStore(t)
 		fleet2 := &fakeFleet{answers: []fleetAnswer{{codes: []string{"InsufficientInstanceCapacity"}}}}
 		e2 := newOfferTestEngine(t, &offerECS{}, fleet2, offers, st2)
+		acceptInterruption(t, st2, "image")
 		tickIntoAStart(t, e2, st2)
 		if len(fleet2.creates) < 2 {
 			t.Fatalf("%d purchases for a capacity failure — the assertion above is about the code, not about the walk stopping", len(fleet2.creates))
@@ -914,6 +989,7 @@ func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
 		st := testSettingsStore(t)
 		fleet := &fakeFleet{createErr: fmt.Errorf("SsmAccessDenied: User is not authorized to perform ssm:GetParameters")}
 		e := newOfferTestEngine(t, &offerECS{}, fleet, offers, st)
+		acceptInterruption(t, st, "image")
 		tickIntoAStart(t, e, st)
 		if len(fleet.creates) != 1 {
 			t.Fatalf("%d purchases, want the walk abandoned after the first denial", len(fleet.creates))
@@ -925,6 +1001,7 @@ func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
 		fleet := &fakeFleet{answers: []fleetAnswer{{codes: []string{"InsufficientInstanceCapacity"}}}}
 		api := &offerECS{}
 		e := newOfferTestEngine(t, api, fleet, offers, st)
+		acceptInterruption(t, st, "image")
 		tickIntoAStart(t, e, st)
 
 		if got := offerTrailResults(e); got != "spotA=insufficient,spotB=insufficient,l4=insufficient" {
@@ -1204,6 +1281,7 @@ func TestTheAdminToggleAndTheControllerBuyOneBoxBetweenThem(t *testing.T) {
 	api := &offerECS{}
 	const offers = "spotA|Spot A|22000|g6.xlarge|4-8|15000-65536|1.57|spot;" + twoOffers
 	e := newOfferTestEngine(t, api, fleet, offers, st)
+	acceptInterruption(t, st, "image")
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}, st}
 
 	if code, out := adminPut(t, a, "image", `{"mode":"on"}`); code != http.StatusOK {
@@ -1250,7 +1328,17 @@ func TestTheAdminRowCarriesTheOffersTheTrailAndTheOfferOnTheBox(t *testing.T) {
 	if _, said := row["offer"]; said {
 		t.Errorf("offer = %v with no box up", row["offer"])
 	}
+	// What the ADMINISTRATOR accepted, beside what the operator declared. A declared spot row
+	// with this false is an offer that exists and will not be bought, and the panel cannot draw
+	// that from the offers alone.
+	if row["spot_allowed"] != false {
+		t.Errorf("spot_allowed = %v before anybody accepted interruption", row["spot_allowed"])
+	}
 
+	acceptInterruption(t, st, "image")
+	if row := a.row(t.Context(), e); row["spot_allowed"] != true {
+		t.Errorf("spot_allowed = %v after accepting interruption", row["spot_allowed"])
+	}
 	tickIntoAStart(t, e, st)
 	e.fleet.invalidate()
 

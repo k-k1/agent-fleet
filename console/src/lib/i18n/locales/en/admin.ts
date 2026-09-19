@@ -283,6 +283,20 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.fit_card": "This class has {c} MiB of VRAM",
   "admin.fit_estimate_note": "An estimate of the weights plus the KV cache. It does not include the compute buffers or the CUDA context.",
   "admin.fit_no_kv": "The KV cache could not be read, so this compares the weights alone.",
+  // A checkpoint has no KV cache; saying the LLM sentence here would estimate something that
+  // does not exist.
+  "admin.fit_estimate_note_weights": "An estimate of the weights alone. It does not include the working memory generation needs on top of them.",
+  "admin.engines_refit_done": "Windows moved onto this class:",
+  "admin.engines_refit_blocked_header": "its header has not been read yet (enabling it reads it)",
+  "admin.engines_refit_blocked_weights": "its weights cannot be sized (the files declare no bytes), or they alone do not fit this class",
+  "admin.engines_refit_blocked_measured": "its VRAM was declared by hand, so this does not move it",
+  "admin.engines_refit_stored_unknown": "the connection dropped, so whether it was stored cannot be said:",
+  "admin.engines_refit_failed": "Models whose re-fit did not complete:",
+  "admin.engines_refit_stored_unpublished": "the window was stored, but telling the engine failed:",
+  "admin.engines_refit_unchanged": "its setting is unchanged:",
+  "admin.engines_refit_next_start": "It takes effect the next time the engine starts — a running box keeps the window it was started with.",
+  "admin.engines_refit_stuck": "Models this class could not be fitted to:",
+  "admin.catalog_edit_window_fit": "Use the largest this class holds ({n})",
   "admin.fit_kv_from": "The KV figure was read from {f}'s header — builds in one repository differ a little.",
   "admin.engines_ingest_ctx_ceiling": "Ceiling {n}",
   // --- The repository card (ADR 0089). The ladder opens on a press, because opening it reads
@@ -293,6 +307,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.repo_ladder_loading": "Reading the repository…",
   "admin.repo_ladder_empty": "This repository offers no file that can be taken in.",
   "admin.repo_ladder_held": "Taken in",
+  // --- What else the model behind a registered row is published as: versions for image,
+  // sizes for chat.
+  "admin.catalog_other_versions": "Other versions…",
+  "admin.catalog_other_sizes": "Other sizes…",
+  "admin.catalog_other_note": "Taking one in creates a new row. To swap, press \"Start with this\" on the new row and then forget the old one.",
+  "admin.catalog_versions_empty": "This publisher offers no other version.",
   // --- Complete (ADR 0085 decision 3). The subject is the row; a part never is. ---
   "admin.catalog_complete": "Complete",
   "admin.catalog_complete_busy": "Completing…",
@@ -334,7 +354,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // --- The bucket (ADR 0085 decisions 2 and 7): what S3 holds, as it holds it. ---
   "admin.catalog_ledger_title": "Bucket",
   "admin.catalog_ledger_note": "The objects under this engine's prefix. Ones no row declares (orphans) and ones no loader can list (misplaced) sort first.",
-  "admin.catalog_ledger_note_acts": "A part has no button of its own — it is attached by the Complete of the checkpoint that reads it.",
+  "admin.catalog_ledger_note_acts": "A part has no button of its own — it is attached by the Complete of the model that reads it.",
   "admin.catalog_ledger_checked": "checked {t}",
   "admin.catalog_ledger_empty": "There are no objects under this engine's prefix.",
   "admin.catalog_ledger_unavailable": "The bucket listing could not be read. Reload to try again.",
@@ -509,6 +529,19 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_offer_result_budget": "budget spent",
   "admin.engines_offer_result_unusable": "cannot be asked for",
   "admin.engines_offer_result_interrupted": "taken away",
+  // Accepting interruption (ADR 0077 decision 9, amended). The operator declares the offers; the
+  // administrator says here that a box may be taken away. 🔴 The sentence does not stop at "the
+  // instance may stop", because two things are actually being agreed to — the answer in flight is
+  // lost, and the next request waits out a cold start. Only somebody who has read both should be
+  // able to tick it.
+  "admin.engines_spot_allow": "Accept interruption (this role may buy Spot instances)",
+  "admin.engines_spot_note":
+    "AWS can take a Spot instance away. When it does, whatever was being generated at that moment is lost and the next request waits out a cold start (about 9 minutes for llm, 3 for image). An offer taken away twice in a row is skipped for the rest of that start, so the engine ends up on an on-demand offer whose VRAM fits.",
+  "admin.engines_spot_blocked": "needs interruption accepted",
+  "admin.engines_spot_pin_ignored":
+    "The pinned offer is Spot, so it is not being used (the role has fallen back to choosing automatically). Accept interruption, or pin a different offer.",
+  "admin.engines_spot_running":
+    "The instance running right now is a Spot one. Un-ticking this does not make it safe from being taken away — it applies to the NEXT instance.",
   "admin.engines_class_pending": "What is running is a {t} instance. The class you chose applies to the NEXT instance. Replacing it costs one cold start (about 9 minutes for llm, 3 for image), and the new instance does not start until the old one has left.",
   "admin.engines_class_replace": "Replace it now",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a

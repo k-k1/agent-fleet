@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errDetail } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { loadEngines, saveEngines } from "./catalogMemory.ts";
 
 export type EngineBox = {
   id?: string;
@@ -51,6 +52,17 @@ export type EngineModel = {
    *  floors have to stay distinguishable from a measurement here. */
   vram_need_mib?: number;
   vram_need_source?: "declared" | "floor" | "weights_kv" | "unknown";
+  /** What the KV cache costs per 1024 tokens of window, off this row's stored GGUF geometry.
+   *  MULTIPLY it (kvCacheMiB) — the cache is linear in the window, so one number prices every
+   *  value somebody could type, and it is what lets a registered row be re-fitted in place.
+   *  🔴 ABSENT, never 0, when the row has no geometry: "nobody could read it" is not
+   *  "it costs nothing". */
+  kv_mib_per_1k_tokens?: number;
+  /** The model's OWN maximum window (`<arch>.context_length`), stored at ingest. 🔴 A ceiling,
+   *  not a setting — the same fact and the same name the ingest form receives it by. It is what
+   *  bounds a re-fit: without it the panel would propose windows the model was never trained
+   *  for. Absent on a row registered before it was stored, and the re-fit is then not offered. */
+  context_length?: number;
   /** BOTH are kept and both are shown: Hugging Face reports `other` for the two
    *  non-commercial models in ADR 0072's table, with the real terms in license_name. */
   license?: string;
@@ -461,9 +473,19 @@ export type IngestVersion = {
   name: string;
   published_at?: string;
   updated_at?: string;
+  /** The version's own model file, when the listing carried one. Absent means the upstream did
+   *  not say — drawn as "size unknown", never as a comfortable zero, and no fit verdict is
+   *  offered for it (a verdict computed from a missing size would be a lie about the card). */
+  bytes?: number;
 };
 
-export type IngestVersionsAnswer = { versions: IngestVersion[] };
+export type IngestVersionsAnswer = {
+  versions: IngestVersion[];
+  /** The model the versions belong to, as the CP resolved it. A registered row records the
+   *  VERSION id alone (`civitai:<id>`), so this is how the panel learns the model id it needs to
+   *  open the ingest form on one of the other versions. */
+  model_ref?: string;
+};
 
 export type IngestSearchRequest = {
   q: string;
@@ -627,6 +649,14 @@ export type EngineRow = {
    *  screen back, pixel for pixel. */
   offers?: EngineOffer[];
   offer?: EngineOfferRef;
+  /** Whether an administrator has accepted interruption for this role, which is what lets a
+   *  `spot` offer be bought at all. 🔴 Not derivable from `offers`: those say what the OPERATOR
+   *  declared and this says what the ADMINISTRATOR accepted, so a declared Spot row with this
+   *  false is an offer that exists and will not be bought — which is exactly what the picker has
+   *  to draw. Absent from a control plane too old to send it, and the tick box is drawn off its
+   *  presence: an old CP buys Spot the moment it is declared, and offering a control that would
+   *  not reach it would be worse than not offering one. */
+  spot_allowed?: boolean;
   /** What this demand tried, in the order it tried them. Omitted while nothing has been tried. */
   offer_trail?: EngineOfferTry[];
   /** A box of another rung is still up, so the saved choice has reached nothing yet. */
@@ -724,11 +754,15 @@ function catalogSources(value: unknown): CatalogSource[] {
  * matters: neither of them has to be mounted for the other to work. */
 export function useEngineRows() {
   const tr = useT();
-  const [rows, setRows] = useState<EngineRow[] | null>(null);
-  const [isSuper, setIsSuper] = useState(false);
+  // The last answer, so a pane that is mounted again — the return from another tab — draws the
+  // catalogue it had instead of a page of nothing for the length of one round trip. It is still
+  // re-read below; this decides only what is on screen while that happens.
+  const [held] = useState(() => loadEngines());
+  const [rows, setRows] = useState<EngineRow[] | null>(held?.rows ?? null);
+  const [isSuper, setIsSuper] = useState(held?.isSuper ?? false);
   // The source tab strips are drawn from this and never from a literal: three strips each
   // keeping their own list is three places for a deployment's gate to be forgotten.
-  const [sources, setSources] = useState<CatalogSource[]>([...CATALOG_SOURCES_DEFAULT]);
+  const [sources, setSources] = useState<CatalogSource[]>(held?.sources ?? [...CATALOG_SOURCES_DEFAULT]);
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
@@ -739,9 +773,13 @@ export function useEngineRows() {
         return;
       }
       setErr("");
-      setIsSuper(!!d?.super_admin);
-      setSources(catalogSources(d?.catalog_sources));
-      setRows(Array.isArray(d?.engines) ? d.engines : []);
+      const answered = Array.isArray(d?.engines) ? d.engines : [];
+      const superAdmin = !!d?.super_admin;
+      const offered = catalogSources(d?.catalog_sources);
+      setIsSuper(superAdmin);
+      setSources(offered);
+      setRows(answered);
+      saveEngines({ rows: answered, isSuper: superAdmin, sources: offered });
     } catch {
       setErr(tr("admin.load_error"));
     }

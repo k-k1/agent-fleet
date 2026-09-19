@@ -18,8 +18,9 @@ package main
 // here enables a row.
 //
 // The acts are on the MODEL, never on a part (decision 3). The one object-side act is
-// `register`, and it is still an act on a model: it creates the checkpoint row that misplaced
-// bytes belong to and then runs `complete` (engine_complete.go) on it.
+// `register`, and it is still an act on a model: it creates the row that forgotten bytes belong
+// to — a checkpoint for an image engine, a gguf for a chat one — and then runs `complete`
+// (engine_complete.go) on it.
 
 import (
 	"context"
@@ -96,9 +97,10 @@ func engineModelFileName(key string) bool {
 // calling it a VAE would put the repair button on the wrong directory. The depth is what
 // `placement` then reports.
 //
-// `llm` needs no special case and gets none (ADR 0085 open question 3): its shards live under
-// `llm/<model name>/`, whose first segment is not in the table, so they answer `other` and
-// `placement: ok` — which is exactly true. Nothing in this ADR changes llm behaviour.
+// `llm` needs no special case HERE and gets none (ADR 0085 open question 3): its layout is flat,
+// so its files sit at the role's own root and its shards under `llm/<model name>/`, and neither
+// first segment is in the table — both answer `other` and `placement: ok`, which is exactly true.
+// Which of those keys is a MODEL is a different question and is engineObjectIsMainFile's.
 func engineObjectRoleDir(role, key string) string {
 	rest := strings.TrimPrefix(key, strings.TrimSpace(role)+"/")
 	if rest == key || !engineModelFileName(rest) {
@@ -606,7 +608,8 @@ func (a engineAdminAPI) postObjectRegister(w http.ResponseWriter, r *http.Reques
 		writeAPIRefusal(w, aerr)
 		return
 	}
-	if aerr := engineObjectRegisterable(object, key); aerr != nil {
+	images := e.def.api() == engineAPIImages
+	if aerr := engineObjectRegisterable(object, role, key, images); aerr != nil {
 		writeAPIRefusal(w, aerr)
 		return
 	}
@@ -644,6 +647,23 @@ func (a engineAdminAPI) postObjectRegister(w http.ResponseWriter, r *http.Reques
 			// `VAE is invalid: None` (the fault engine_safetensors.go was written for).
 			VaeBundled: engineVaeOfObject(ctx, e.def.Provider, kind, key, a.engineStorageBytes()),
 		}},
+	}
+	// The other fact these bytes state, for the other role: a GGUF's attention geometry, which is
+	// what a KV-cache estimate is computed from. Read here for the same reason `POST …/models`
+	// reads it — this road has no upstream URL to range-GET, and without it the row answers its
+	// FLOOR (the weights and nothing else), which fits almost any card and so lets a model
+	// declaring 262,144 tokens be switched on without a word (ADR 0074's 2026-09-19 follow-up).
+	// Best-effort: a refused read leaves the row exactly where it would have been, and
+	// healGeometry will try again the next time the panel reads it.
+	//
+	// Asked of a gguf ROW and not merely of a `.gguf` key, which is the guard engineIngestGeometry
+	// applies for the same reason: an image engine can be given a GGUF diffusion model, and its
+	// memory is dominated by ComfyUI's compute buffers rather than by a KV cache (ADR 0074's first
+	// measurement) — so an attention geometry written there would be a number about nothing.
+	if kind == "gguf" {
+		if geom := engineGGUFGeometryOfObject(ctx, key, a.engineStorageBytes()); geom.complete() {
+			engineApplyGeometry(&m, geom)
+		}
 	}
 	created, err := a.mgr.store.CreateEngineModel(ctx, m)
 	if err != nil {
@@ -738,7 +758,7 @@ func (a engineAdminAPI) engineObjectMustExist(ctx context.Context, key string) *
 // 🔴 A part gets no button of its own (decision 3). An encoder or a VAE registered as its own row
 // is what put parts in the registered list beside the checkpoints, where they can never be
 // enabled and help nothing — they are attached by the 揃える of whichever checkpoint reads them.
-func engineObjectRegisterable(object *engineObjectRow, key string) *apiRefusal {
+func engineObjectRegisterable(object *engineObjectRow, role, key string, images bool) *apiRefusal {
 	if object == nil {
 		return refuse(http.StatusNotFound, errCodeEngineBadBody,
 			"the ledger holds no object at "+key+" for this engine",
@@ -758,22 +778,37 @@ func engineObjectRegisterable(object *engineObjectRow, key string) *apiRefusal {
 	// The path has to NAME a main-file directory. Misplaced is the normal case here (that is what
 	// this button is for), so it is the directory the bytes were aimed at that decides, not the
 	// one they should end up in.
-	if !engineObjectIsMainFile(key) {
+	if !engineObjectIsMainFile(role, key, images) {
 		return refuse(http.StatusBadRequest, errCodeEngineBadBody,
-			key+" is not a checkpoint: a part is attached by the 揃える of the model that reads it,"+
-				" never registered as a model of its own", &apiHolder{Kind: "object", Key: key}, nil)
+			key+" is not a model's own weights: a part is attached by the 揃える of the model that"+
+				" reads it, never registered as a model of its own",
+			&apiHolder{Kind: "object", Key: key}, nil)
 	}
 	return nil
 }
 
-// engineObjectIsMainFile answers whether a key names one of the two directories a model's OWN
-// weights live in, at any depth — `image/checkpoints/split_files/diffusion_models/x.safetensors`
-// is af-sandbox's measured shape and has to qualify.
-func engineObjectIsMainFile(key string) bool {
+// engineObjectIsMainFile answers whether a key names this ROLE's own weights — the thing a person
+// means by "a model" — rather than a part.
+//
+// The two roles answer it from different layouts, because that is what `engineIngestKeyFor`
+// composes for each of them:
+//
+//   - The image role is ComfyUI's, one directory per loader. The question is which DIRECTORY the
+//     key names, at any depth — `image/checkpoints/split_files/diffusion_models/x.safetensors` is
+//     af-sandbox's measured shape and has to qualify.
+//   - The llm role is flat: `llm/<file>.gguf` and nothing else. 🔴 Depth is what disqualifies here
+//     rather than what is tolerated — `llm/loras/x.gguf` is an adapter (attached by the 揃える of
+//     the model that reads it, never a row of its own) and `llm/<name>/shard.gguf` is one piece of
+//     a file, and registering either as a model is the fault decision 3 exists to prevent.
+func engineObjectIsMainFile(role, key string, images bool) bool {
 	if !engineModelFileName(key) {
 		return false
 	}
-	return strings.Contains(key, "/checkpoints/") || strings.Contains(key, "/diffusion_models/")
+	if images {
+		return strings.Contains(key, "/checkpoints/") || strings.Contains(key, "/diffusion_models/")
+	}
+	rest := strings.TrimPrefix(key, strings.TrimSpace(role)+"/")
+	return rest != key && rest != "" && !strings.Contains(rest, "/")
 }
 
 // engineObjectProposedID is the id a registered row gets: the file's stem without the

@@ -367,6 +367,20 @@ not find; it feeds the same plan.
 3. **The llm role.** The ledger applies as is (`llm/*`, one directory, shards under
    `llm/<name>/`), with `placement` always `ok`. Nothing in this ADR changes llm behaviour; the
    screen gains the ledger there too.
+   🔴 **Resolved on 2026-09-19, and "nothing changes" was the wrong half of it.** Listing the llm
+   prefix needed no special case and got none, but **decision 3's one object-side act did**: 登録
+   was spelled as ComfyUI's two loader directories, so the three GGUFs an operator reported under
+   `llm/` — bytes this deployment is paying for, that no row declared — were each drawn with 消す
+   and nothing else. The list without the act is the fault this ADR was written around, one role
+   later. What a model's own weights ARE is now asked of the role: the image layout is the loader
+   directory at any depth, the llm layout is flat (`llm/<file>.gguf` and nothing deeper, so
+   `llm/loras/…` is an adapter and `llm/<name>/shard.gguf` is one piece of a file). The press
+   reads the GGUF header out of the same bytes, for the reason ADR 0074's follow-up gives.
+   🔴 Found by the same pass and older than it: **揃える composed its destination with ComfyUI's
+   layout whatever the role**, so every llm row was planned a move to `llm/checkpoints/…` — a
+   directory `llama-server` never looks in. The repair press would have taken a working model out
+   of service. The destination is the ROLE's layout now (`engineIngestKeyFor`); for the image role
+   the two are the same function.
 4. **Why the Console's 履歴を消す did not reach the CP on 2026-09-15** while the same `DELETE`
    answered 200 from curl. Unexplained; the tab goes in P2, but if the cause is in `apiJSON` or
    the pane it will bite the new buttons too. To be reproduced headless before P2.

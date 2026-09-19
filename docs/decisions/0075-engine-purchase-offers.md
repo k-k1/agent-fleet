@@ -383,6 +383,13 @@ is one call that can be made again; a conversation is not.
 🔁 **What would change this**: a design that can hold a second warm instance across a conversation
 (today it is one instance per role), at which point the exception loses its meaning.
 
+🔴 **This decision was replaced on 2026-09-19** (ADR 0077 decision 9 and its revision section,
+"a role's prohibition became the administrator's acceptance"). The reason for it — the interruption
+arrives mid-conversation and a cold start follows — stands, but it was re-read as a deployment's
+choice rather than a property of the role: a `spot` row is a candidate only for a role whose
+administrator has accepted interruption. The "by template" half of the safeguard had already gone
+with the capacity providers ADR 0077 retired.
+
 ### 10. TTS creates no provider; the same rules drive `FARGATE_SPOT` ↔ `FARGATE`
 
 TTS is Fargate, so there is no instance to buy. Its offer rows carry **no types — only a purchase type

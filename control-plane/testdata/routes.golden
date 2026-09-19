@@ -51,6 +51,7 @@ DELETE /api/admin/engines/{key}/objects
 GET /api/admin/engines/{key}/objects
 POST /api/admin/engines/{key}/objects/register
 POST /api/admin/engines/{key}/replace-box
+PUT /api/admin/engines/{key}/spot
 GET /api/admin/host
 GET /api/admin/idp
 GET /api/admin/mcp-servers

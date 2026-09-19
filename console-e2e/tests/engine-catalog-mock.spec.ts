@@ -42,14 +42,26 @@ type Call = { path: string; method: string; body: Record<string, unknown> };
  *  verbatim: it is the only thing that carries the destination key any more. */
 const PLAN_TOKEN = "sha256:plan-harbor";
 
-async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light" | "dark" = "dark", mode: "normal" | "no-engine" | "registered" = "normal") {
+/** `extra.tabs` seeds a TABBED cell with a second view beside the catalogue, which is the only
+ *  arrangement in which the catalogue can be left and come back to: a tabbed cell renders the
+ *  selected view alone, so switching tabs unmounts it outright. `extra.hits` makes the answer long
+ *  enough for the list to scroll, which a single-hit fixture never does. */
+async function openCatalog(
+  page: Page,
+  engineKey: "image" | "llm",
+  theme: "light" | "dark" = "dark",
+  mode: "normal" | "no-engine" | "registered" = "normal",
+  extra: { tabs?: boolean; hits?: number } = {},
+) {
   const calls: Call[] = [];
   let started = false;
   const engines = [
     { key: "image", api: "images", provider: "comfy", base_models: ["sdxl"], file_flags: ["--vae", "--clip_l"], model_rows: mode === "registered" ? [
-      { id: "harbor", enabled: false, base_model: "sdxl", description: "Harbor checkpoint", file_rows: [
-        { s3Key: "image/checkpoints/harbor.safetensors", flag: "", bytes: 1024 },
-        { s3Key: "image/vae/harbor.safetensors", flag: "--vae", bytes: 512 },
+      { id: "harbor", enabled: false, base_model: "sdxl", description: "Harbor checkpoint", source: "civitai:101", file_rows: [
+        // Real sizes and a real page: the part line is drawn to put both at its right end, and a
+        // fixture of 1 kB with no link cannot show whether it does.
+        { s3Key: "image/checkpoints/harbor.safetensors", flag: "", bytes: 4_200_000_000, source_url: "https://example.invalid/models/harbor" },
+        { s3Key: "image/vae/harbor.safetensors", flag: "--vae", bytes: 254_000_000, source_url: "https://example.invalid/models/harbor" },
       ] },
       { id: "meadow", enabled: false, base_model: "sdxl", description: "Meadow checkpoint", file_rows: [] },
     ] : [], managed: true, enabled: true, has_models: true, mode: "ondemand", state: "stopped" },
@@ -107,15 +119,28 @@ async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light
       }
       const image = p.includes("/image/") || kind === "checkpoint";
       const civitai = body.source === "civitai";
-      return answer({ hits: [{
-        source: civitai ? "civitai" : "hf", model_ref: civitai ? "100" : "demo/Model", ref: civitai ? "101" : "demo/Model",
-        name: image ? "Harbor Image Model" : "Harbor Text Model", base_model: image ? "SDXL" : undefined,
+      const name = image ? "Harbor Image Model" : "Harbor Text Model";
+      return answer({ hits: Array.from({ length: extra.hits ?? 1 }, (_, i) => ({
+        source: civitai ? "civitai" : "hf",
+        model_ref: civitai ? `${100 + i}` : `demo/Model${i || ""}`,
+        ref: civitai ? `${101 + i}` : `demo/Model${i || ""}`,
+        name: i ? `${name} ${i}` : name, base_model: image ? "SDXL" : undefined,
         base_model_suggest: image ? "sdxl" : undefined, license: "apache-2.0", downloads: 123,
         published_at: "2026-09-12T12:00:00Z", updated_at: civitai ? undefined : "2026-09-13T12:00:00Z",
         preview_url: image ? `${origin}/example-preview.svg` : undefined,
-      }] });
+      })) });
     }
-    if (p.endsWith("/ingest/versions")) return answer({ versions: [{ ref: "101", name: "Version 1" }] });
+    // The model behind the version, as the CP resolves it, and the sizes the listing carries.
+    // A version without one is deliberate: the panel must say "size not reported" rather than
+    // price a fit it cannot compute.
+    if (p.endsWith("/ingest/versions")) return answer({
+      model_ref: "100",
+      versions: [
+        { ref: "101", name: "Version 1", bytes: 4_200_000_000, published_at: "2026-08-01T00:00:00Z" },
+        { ref: "102", name: "Version 2", bytes: 4_300_000_000 },
+        { ref: "103", name: "Version 0.9" },
+      ],
+    });
     if (p.endsWith("/ingest/files")) return answer({ files: [{ name: "harbor.safetensors", bytes: 1024, sha256: "a".repeat(64) }] });
     // The resolve answers a PLAN, not a set of fields for a form to carry (decision 4): what the
     // press would download, what it would reuse, and the token the CP re-plans against.
@@ -134,14 +159,31 @@ async function openCatalog(page: Page, engineKey: "image" | "llm", theme: "light
     if (p.includes("/hf-token")) return answer({ configured: false });
     return route.abort();
   });
-  await page.addInitScript(({ key, theme, registered }) => {
-    localStorage.setItem("af-display-settings", JSON.stringify({ locale: "en", theme }));
+  await page.addInitScript(({ key, theme, registered, tabs }) => {
+    localStorage.setItem("af-display-settings", JSON.stringify({ locale: "en", theme, ...(tabs ? { paneLayout: "tabs" } : {}) }));
     localStorage.setItem("af-tenant", "demo");
+    const catalogue = {
+      id: "catalog", session: null, wrap: null,
+      content: { kind: "engineAdd", engineKey: key, lora: false, view: registered ? "registered" : "search" },
+    };
+    if (tabs) {
+      // One cell, two tabs. `.tabs` is its own stored layout (LKEY_NEW), and the mode comes from
+      // the display setting above — seeding one without the other opens the split layout instead.
+      localStorage.setItem("af.layout2.demo@example.com.demo.tabs", JSON.stringify({
+        version: 3, mode: "tabs",
+        cols: [{ id: "catalog-col", rowRatio: 0.5, cells: [{ id: "cell", selectedViewId: "catalog", views: [
+          catalogue,
+          { id: "note", session: null, wrap: null, content: { kind: "doc", docTitle: "Notes", docContent: "beside the catalogue" } },
+        ] }] }],
+        colRatios: [1], activeCellId: "cell",
+      }));
+      return;
+    }
     localStorage.setItem("af.layout2.demo@example.com.demo", JSON.stringify({
-      cols: [{ id: "catalog-col", rowRatio: 0.5, panes: [{ id: "catalog", session: null, content: { kind: "engineAdd", engineKey: key, lora: false, view: registered ? "registered" : "search" }, wrap: null }] }],
+      cols: [{ id: "catalog-col", rowRatio: 0.5, panes: [catalogue] }],
       colRatios: [1], activeId: "catalog",
     }));
-  }, { key: engineKey, theme, registered: mode === "registered" });
+  }, { key: engineKey, theme, registered: mode === "registered", tabs: !!extra.tabs });
   await page.goto(origin);
   await expect(page.locator(".engine-catalog-pane")).toBeVisible();
   return calls;
@@ -195,6 +237,104 @@ test("registered cards read their badge off the bucket and open edits from their
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(modal).toHaveCount(0);
   await expect(edit).toBeFocused();
+});
+
+// 🔴 The complaint this answers, in the arrangement it happens in: a tabbed cell renders the
+// selected view ALONE, so looking at another tab unmounts the catalogue outright. What comes back
+// has to be the same screen — same page, same place in it — and it has to come back without
+// asking Civitai for the page a second time.
+test("the catalogue comes back from another tab with its page, its place and no new search", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const calls = await openCatalog(page, "image", "dark", "normal", { tabs: true, hits: 24 });
+  const pane = page.locator(".engine-catalog-pane");
+  const list = page.locator(".engine-catalog-browser");
+  await expect(pane.getByText("Harbor Image Model 23", { exact: true })).toBeVisible();
+  const searched = () => calls.filter((call) => call.path.endsWith("/ingest/search")).length;
+  expect(searched()).toBe(1);
+
+  await list.evaluate((el) => { el.scrollTop = 600; });
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(400);
+  const left = await list.evaluate((el) => el.scrollTop);
+
+  await page.getByRole("tab", { name: "Notes" }).click();
+  await expect(pane).toHaveCount(0);
+  await page.getByRole("tab", { name: "Model catalogue" }).click();
+  await expect(pane).toBeVisible();
+
+  // The page itself, not a fresh one: the hits are on screen and nothing went upstream for them.
+  await expect(pane.getByText("Harbor Image Model 23", { exact: true })).toBeVisible();
+  expect(searched()).toBe(1);
+  // And the place in it. Restoring happens as the content settles, so this is polled.
+  await expect.poll(() => page.locator(".engine-catalog-browser").evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(left - 40);
+  await page.screenshot({ path: testInfo.outputPath("catalogue-returned.png") });
+});
+
+// Updating a checkpoint to a newer version used to mean finding it again in the 探す tab. The row
+// records only `civitai:<version>`, so the model id behind it is the CP's answer, not the panel's.
+test("a registered card opens the other versions of its own model", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const calls = await openCatalog(page, "image", "dark", "registered");
+  const card = page.getByRole("listitem", { name: "harbor", exact: true });
+  await card.getByRole("button", { name: "Other versions…: harbor", exact: true }).click();
+
+  const modal = page.getByRole("dialog");
+  await expect(modal).toBeVisible();
+  expect(calls.filter((call) => call.path.endsWith("/ingest/versions"))).toEqual([
+    expect.objectContaining({ body: { source: "civitai", ref: "101" } }),
+  ]);
+  const rows = modal.locator(".engine-repo-quants li");
+  await expect(rows).toHaveCount(3);
+  // The version this row IS reads as taken in; the others are one press away.
+  await expect(rows.nth(0).getByText("Taken in", { exact: true })).toBeVisible();
+  await expect(rows.nth(1).getByRole("button", { name: "Add: Version 2", exact: true })).toBeVisible();
+  await expect(rows.nth(2)).toContainText("Size not reported");
+  await page.screenshot({ path: testInfo.outputPath("other-versions.png") });
+
+  // The press opens the ordinary plan card, as Civitai — the licence and the price are still seen
+  // on the one screen that has always shown them.
+  await rows.nth(1).getByRole("button", { name: "Add: Version 2", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  expect(calls.filter((call) => call.path.endsWith("/ingest/files"))).toEqual([
+    expect.objectContaining({ body: { source: { civitai: { versionId: 102, file: "" } } } }),
+  ]);
+  await page.screenshot({ path: testInfo.outputPath("other-versions-plan.png") });
+});
+
+// The part line is what a person reads to answer "which file is this row, how big, where from".
+// Measured rather than asserted by text: the fault it fixes was geometric — at card width the
+// size and the link fell onto rows of their own, three lines below the flag they belong to.
+test("a registered card's part line keeps its size and source page at the right end", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openCatalog(page, "image", "dark", "registered");
+  const pane = page.locator(".engine-catalog-pane");
+  const card = pane.getByRole("listitem", { name: "harbor", exact: true });
+  const parts = card.locator(".engine-registered-parts li");
+  await expect(parts).toHaveCount(2);
+  const whole = parts.first();
+  // 🔴 The present line carries NO chip: the card's header already says 1/2, and a badge on
+  // every line is one nobody reads. The missing one keeps its own, which is the whole point.
+  await expect(whole.locator(".engines-model-tag")).toHaveCount(0);
+  await expect(parts.nth(1).getByText("missing", { exact: true })).toBeVisible();
+  const meta = whole.locator(".engine-registered-part-meta");
+  await expect(meta).toContainText("4.2 GB");
+  await expect(meta.getByRole("link", { name: "Source page", exact: true })).toBeVisible();
+  const flagBox = (await whole.locator(".engine-registered-part-flag").boundingBox())!;
+  const metaBox = (await meta.boundingBox())!;
+  const lineBox = (await whole.boundingBox())!;
+  // Same line as the flag, hard against the line's right edge (8px of padding).
+  expect(Math.abs(metaBox.y - flagBox.y)).toBeLessThan(flagBox.height);
+  expect(metaBox.x + metaBox.width).toBeGreaterThan(lineBox.x + lineBox.width - 12);
+  await page.screenshot({ path: testInfo.outputPath("registered-parts-1400.png") });
+  // At phone width the card is far below the 560px container query, and the KEY is what folds —
+  // under the flag, never the size or the link.
+  await page.setViewportSize({ width: 390, height: 900 });
+  const narrowFlag = (await whole.locator(".engine-registered-part-flag").boundingBox())!;
+  const narrowMeta = (await meta.boundingBox())!;
+  const narrowKey = (await whole.locator(".engine-registered-key").boundingBox())!;
+  expect(Math.abs(narrowMeta.y - narrowFlag.y)).toBeLessThan(narrowFlag.height);
+  expect(narrowKey.y).toBeGreaterThan(narrowFlag.y + narrowFlag.height / 2);
+  await page.screenshot({ path: testInfo.outputPath("registered-parts-390.png") });
 });
 
 test("a card starts one operation and returns to browsing with its new object in the bucket", async ({ page }) => {

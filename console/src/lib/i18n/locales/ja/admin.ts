@@ -277,6 +277,19 @@ export const admin = {
   "admin.fit_card": "このクラスの VRAM {c} MiB",
   "admin.fit_estimate_note": "重みと KV キャッシュの見積もりです。計算バッファと CUDA コンテキストは含みません。",
   "admin.fit_no_kv": "KV キャッシュは読めなかったので、重みだけで比べています。",
+  // チェックポイントには KV キャッシュが無い。同じ文を出すと、無いものを見積もったことになる。
+  "admin.fit_estimate_note_weights": "重みの大きさだけの見積もりです。生成中に要る作業領域は含みません。",
+  "admin.engines_refit_done": "この段に合わせて窓を書き換えました:",
+  "admin.engines_refit_blocked_header": "ヘッダをまだ読めていません（有効化すると読みます）",
+  "admin.engines_refit_blocked_weights": "重みの大きさが分からない（ファイルがバイト数を申告していない）か、重みだけでこの段に入りません",
+  "admin.engines_refit_blocked_measured": "VRAM を手で宣言してある行なので、こちらでは動かしません",
+  "admin.engines_refit_stored_unknown": "通信が切れたため、保存されたかどうか確認できません:",
+  "admin.engines_refit_failed": "書き換えが完了しなかったモデル:",
+  "admin.engines_refit_stored_unpublished": "窓は保存されましたが、エンジンへの反映指示が失敗しました:",
+  "admin.engines_refit_unchanged": "設定は元のままです:",
+  "admin.engines_refit_next_start": "反映は次にエンジンが起動したときからです（走行中の箱は起動時の窓のままです）。",
+  "admin.engines_refit_stuck": "この段に合わせられなかったモデル:",
+  "admin.catalog_edit_window_fit": "このクラスに収まる最大 {n} にする",
   "admin.fit_kv_from": "KV は {f} のヘッダから読みました（同じ配布元でも版によって少し違います）。",
   "admin.engines_ingest_ctx_ceiling": "上限 {n}",
   // --- 配布元のカード（ADR 0089）。量子化の梯子は 1 押しで開く（開くたびに上流を読むため）。
@@ -286,6 +299,11 @@ export const admin = {
   "admin.repo_ladder_loading": "配布元を読んでいます…",
   "admin.repo_ladder_empty": "この配布元に取り込めるファイルがありません。",
   "admin.repo_ladder_held": "取り込み済み",
+  // --- 登録済みの行から「他にどんな形で出ているか」を開く。画像は版、文章はサイズ。---
+  "admin.catalog_other_versions": "別バージョン…",
+  "admin.catalog_other_sizes": "別サイズ…",
+  "admin.catalog_other_note": "取り込むと新しい行になります。入れ替えるときは、新しい行で「これで起動する」を押してから、古い行を「登録を消す」で消してください。",
+  "admin.catalog_versions_empty": "この配布元は他のバージョンを出していません。",
   // --- 揃える（ADR 0085 決定 3）。主語は行で、部品ではない。---
   "admin.catalog_complete": "揃える",
   "admin.catalog_complete_busy": "揃えています…",
@@ -327,7 +345,7 @@ export const admin = {
   // --- バケツ（ADR 0085 決定 2・7）。S3 が持っているものそのもの。---
   "admin.catalog_ledger_title": "バケット",
   "admin.catalog_ledger_note": "このエンジンのプレフィックスにあるオブジェクトです。どの行も宣言していないもの（孤児）と、ローダーが一覧できない場所にあるもの（誤配置）を先に並べます。",
-  "admin.catalog_ledger_note_acts": "部品に単体のボタンはありません——付け直すのはチェックポイント行の「揃える」です。",
+  "admin.catalog_ledger_note_acts": "部品に単体のボタンはありません——付け直すのは、それを読むモデル行の「揃える」です。",
   "admin.catalog_ledger_checked": "確認 {t}",
   "admin.catalog_ledger_empty": "このエンジンのプレフィックスにオブジェクトはありません。",
   "admin.catalog_ledger_unavailable": "バケットの一覧を取得できませんでした。再読み込みしてください。",
@@ -503,6 +521,18 @@ export const admin = {
   "admin.engines_offer_result_budget": "予算切れ",
   "admin.engines_offer_result_unusable": "要求できない",
   "admin.engines_offer_result_interrupted": "取り上げられた",
+  // 中断の受け入れ（ADR 0077 決定 9 の改訂）。運用者が提案を宣言し、管理者がここで
+  // 「取り上げられてもよい」と言う。🔴 文面が「インスタンスが止まってもよい」で終わらないのは、
+  // 実際に同意しているのが 2 つだから——生成中の応答が失われることと、次の要求がコールド
+  // スタートを待つこと。その 2 つを読んだ人だけがチェックを入れられる文面にする。
+  "admin.engines_spot_allow": "中断を許容する（Spot のインスタンスを買ってよい）",
+  "admin.engines_spot_note":
+    "Spot のインスタンスは AWS に取り上げられることがあります。取り上げられると、その時点で処理中の応答は失われ、次の要求はコールドスタート（llm 約 9 分・image 約 3 分）を待ちます。同じ提案が続けて 2 回取り上げられたら、その提案はその回の起動では飛ばされるので、最後は VRAM の合うオンデマンドに着地します。",
+  "admin.engines_spot_blocked": "中断の許容が要ります",
+  "admin.engines_spot_pin_ignored":
+    "固定している提案は Spot なので、いまは使われません（自動選択に落ちています）。中断を許容するか、別の提案を選んでください。",
+  "admin.engines_spot_running":
+    "いま動いているインスタンスは Spot です。チェックを外しても取り上げられなくなるわけではありません——次に買うインスタンスから効きます。",
   "admin.engines_class_pending": "いま動いているのは {t} のインスタンスです。選んだクラスは次に買うインスタンスから効きます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧いインスタンスが退場するまで新しいインスタンスは起動しません。",
   "admin.engines_class_replace": "いま入れ替える",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a

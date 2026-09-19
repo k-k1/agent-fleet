@@ -196,6 +196,9 @@ func InvalidateModels() {
 	modelsMu.Lock()
 	modelsAt = time.Time{}
 	modelsMu.Unlock()
+	// The declared per-model windows come out of the config this same write just moved
+	// (window.go), so one entry point drops both caches.
+	invalidateWindows()
 }
 
 // awsChainEnv is every variable that lets the AWS SDK's credential chain resolve. Removing

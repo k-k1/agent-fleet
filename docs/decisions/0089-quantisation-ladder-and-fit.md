@@ -162,3 +162,118 @@ member two ids that differ by four characters with nothing to say which is which
 | the repository publishes 30 `.gguf` files, one imatrix and two projectors | `GET /api/models/unsloth/Qwen3.8-27B-GGUF?blobs=true`, 2026-09-18 |
 | the deployment passes no `-ctk` / `-ctv`, so the cache really is f16 | `LlmExtraArgs` default in `deploy/aws/ecs/cfn/60-engines.yaml` |
 | a 2-bit 27B fits a 22,000 MiB card at 32,768 and a 4-bit one does not | the two above, through `engineFit.ts` |
+
+## Follow-up — from "automatic at registration" to "automatic for the row's whole life" (2026-09-19)
+
+Raised by the operator: **asking someone with no LLM background to type these numbers when they
+add a model is not workable.** Whether the model runs on the instance being used, and how much
+context is available, should be **decided automatically, shown on screen, applied, and ready to
+use**.
+
+That is what this ADR designed. It was not holding in three places.
+
+### 1. The automatic answer was four times off
+
+`kv_mib_per_1k_tokens` IS `engineKVCacheMiB`, and that formula was four times too big for a
+hybrid architecture (ADR 0074's 2026-09-18 follow-up). Measured against the CP that is running
+right now, resolving the same model this deployment serves: `kv_mib_per_1k_tokens = 260` where
+the truth is 64. For the same 27B on the same L4, `windowThatFits` therefore offered
+**16,384 instead of 65,536**. **The screen was lying, modestly, by a factor of four.**
+
+### 2. When no window could be fitted, the field fell back to the ceiling
+
+```ts
+windowThatFits(...) || found.context_length   // the ceiling, on failure
+```
+
+Which is the exact thing this ADR exists to stop being typed in, reached through the error path
+instead of the happy one. A row of that shape is still on af-sandbox, and it asked llama.cpp for
+16 GiB of KV cache and took the L4 out of memory.
+
+**Zero is not the answer either** — it travels as "undeclared" all the way to opencode, which
+reads a context of 0 as "auto-compaction off" (`opencode/engine.go`). The session then runs
+until llama-server rejects it, which is worse than a small window rather than safer.
+
+→ `windowWhenUnsized` (32,768, capped by the ceiling), **named as a fallback** by the form.
+
+### 3. A registered row had no verdict at all
+
+The edit dialog was three raw number boxes. **Correcting a window later meant pricing the KV
+cache in your own head.**
+
+→ The same `modelFit` verdict the ingest form draws, plus the fitted window as one press. For
+that, the CP now sends `kv_mib_per_1k_tokens` on registered rows too.
+
+And **`context_length` was never stored** — read at the resolve, shown beside the field, gone the
+moment the row existed. Without a ceiling a re-fit has no upper bound and would propose windows
+**the model was never trained for**. Migration 0070 / pg 0055 adds `context_ceiling`, written at
+ingest. 🔴 Stored, never APPLIED: what the architecture allows and what fits on the card are
+different questions, and only the first is the publisher's to answer.
+
+A row with no stored ceiling is offered **no button**. An offer computed without an upper bound
+is worse than no offer.
+
+### What is still missing
+
+- **Existing rows have no geometry** (`vram_need_source: floor`). A backfill that re-reads the
+  GGUF header from the bucket's own object is needed. Until then those rows are offered no
+  re-fit, and ADR 0074's follow-up guard asks for a confirmation every time.
+- **Changing the instance rung does not move the windows.** A window is fitted once, against the
+  `class.vram_mib` of the moment. Nothing re-fits the rows when the ladder step changes.
+
+### A, implemented — the geometry is read from the bucket too (2026-09-19)
+
+`engine_gguf.go`'s own header admitted the hole: "a row registered from the bucket still reaches
+this reader through no road, so its geometry stays unknown and its VRAM estimate stays the
+weights alone". **Every llm row on both deployments was in that state**, which is why they all
+answered `vram_need_source: floor` — and weights alone fit almost any card, so a row declaring
+262,144 tokens could be switched on without a word.
+
+So the road was built. `engineGGUFGeometryOfObject` takes the first 64 KiB of the object (1 MiB
+on a second try) through `engineStorageMetadataPort.Prefix` and hands it to the same
+`parseGGUFGeometry`. The same shape as `engineVaeOfObject` next door, and the same promise to
+fail quietly.
+
+Two callers:
+
+- **At registration** (`POST …/models`), beside the VAE verdict, on the road that has no
+  upstream URL.
+- **At enable** (`healGeometry`): one read on a loading write to a row that has no geometry, and
+  it is stored. It runs BEFORE the judgement, so a row that heals passes without being asked to
+  confirm anything. From the operator's side nothing was added.
+
+`context_length` is read on the same pass (`engineKVGeometry.Ceiling`), because without a ceiling
+a re-fit has no upper bound and would propose windows the model was never trained for.
+
+That makes "add it and use it" true for existing rows as well. What is left is B — re-fitting
+when the instance rung changes.
+
+### B, implemented — the windows follow the rung (2026-09-19, automatic)
+
+The instance rung is **the one input a window is fitted against**, and it was read exactly once,
+when the model was registered. Changing it afterwards moved the card and left every window
+behind:
+
+- moved UP to a 48 GB card, the engine went on running the 16k that fitted a 24 GB one;
+- moved DOWN to 24 GB, it kept a window the new card cannot hold and **said nothing** until the
+  cold start failed.
+
+Picking a rung now re-fits every row of that engine against the new card and **writes the
+result** (`refitWindows`, then one `PUT …/models/{id}` per row). The rule is `windowThatFits` and
+nothing else — the ingest form, the edit dialog and this all ask the same function.
+
+**Automatic, but never silent.** What was written is listed `old → new`, and what could not be
+fitted is listed with its reason. 🔴 And it always says the part that is easy to hide: this does
+**not** reach a running engine. llama-server reads its preset once at startup and the fetch
+sidecar's watch loop does not rewrite it, so there is a window of time in which the screen and
+the running box disagree — and the person who caused it should be the one who knows.
+
+Two things it does not write:
+
+- **`to = 0`** (the weights alone do not fit the new card) is a refusal to propose, not a window.
+  0 travels as "undeclared" and opencode reads an undeclared context as auto-compaction off.
+- **A row with no geometry or no ceiling.** Nothing is said about what has not been read (A's
+  `healGeometry` reads it on the next enable).
+
+Each row is independent and idempotent, so a failure partway leaves what succeeded correct and
+the rest exactly as it was.

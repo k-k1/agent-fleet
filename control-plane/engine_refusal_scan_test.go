@@ -52,6 +52,10 @@ var engineRefusalExempt = map[string]string{
 	// object, a row or a job standing in the way.
 	"putNegative": "the engine declares no exclusion setting",
 	"replaceBox":  "the box belongs to another deployment",
+	// Interruption is being accepted for a role that declares no interruptible offer. Nothing
+	// holds the consent: it is a statement about a list that does not exist yet, and the act
+	// that makes it possible is the operator's, in CloudFormation.
+	"putSpot": "the engine declares no spot offer to accept",
 }
 
 func TestEveryCatalogueConflictNamesAHolderAndANextAct(t *testing.T) {

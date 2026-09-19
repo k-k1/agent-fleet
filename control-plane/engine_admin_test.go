@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -2003,5 +2004,404 @@ func TestTheSlotGatesSurviveForComplete(t *testing.T) {
 	// A provider that loads one whole checkpoint has no roles to declare at all.
 	if aerr := engineFileFlagValid("sdcpp", "--vae"); aerr == nil {
 		t.Error("a provider with no vocabulary accepted a file role")
+	}
+}
+
+// 🔥 The other half of the same live failure, and the one nothing was watching. A row with no
+// attention geometry answers its FLOOR — the weights and nothing else — and a floor fits almost
+// any card, so enabling it was waved through without a word. af-sandbox 2026-09-18: the
+// Qwen3.8-27B row declares 262144 tokens and no geometry, reported 17093 MiB against a 22000 MiB
+// rung, and llama.cpp then asked for 16384 MiB of KV cache on top and the L4 answered
+// `cudaMalloc failed: out of memory`.
+//
+// The missing term cannot be computed here — that is what "no geometry" means — so the guard's
+// job is to stop calling it a fit, not to invent a number.
+func TestEngineAdminWillNotCallAFloorAFitWhenAWindowIsDeclared(t *testing.T) {
+	a, e, st := engineWindowTestEngine(t)
+	row := engineWindowTestRow("qwen3", false, 262144)
+	row.KVLayers, row.KVHeadsKV, row.KVKeyLen, row.KVValueLen = 0, 0, 0, 0 // never read
+	if err := st.PutEngineModel(t.Context(), row); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	code, out := putModelReq(t, a, "qwen3", `{"enabled":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("enabling a geometry-less row that declares a window = %d (%v), want 409", code, out)
+	}
+	if err, _ := out["error"].(map[string]any); err == nil || err["code"] != errCodeEngineVramConfirm {
+		t.Fatalf("error = %v, want %s", out["error"], errCodeEngineVramConfirm)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].Enabled {
+		t.Fatal("the row was enabled by the call that refused it")
+	}
+
+	// A warning, not a wall — the same bargain as the rest of this guard.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"enabled":true,"confirm_vram":true}`); code != http.StatusOK {
+		t.Fatalf("the confirmed enable = %d (%v), want 200", code, out)
+	}
+
+	// And the two shapes it must NOT touch. An image checkpoint declares no window, so its
+	// floor is most of the story and enabling it stays a silent yes.
+	noWindow := engineWindowTestRow("sdxl", false, 0)
+	noWindow.KVLayers, noWindow.KVHeadsKV, noWindow.KVKeyLen, noWindow.KVValueLen = 0, 0, 0, 0
+	if err := st.PutEngineModel(t.Context(), noWindow); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "sdxl", `{"enabled":true}`); code != http.StatusOK {
+		t.Fatalf("a row with no window = %d (%v), want 200", code, out)
+	}
+	// And an operator's own measurement answers the question outright, geometry or not.
+	measured := engineWindowTestRow("qwen3-measured", false, 262144)
+	measured.KVLayers, measured.KVHeadsKV, measured.KVKeyLen, measured.KVValueLen = 0, 0, 0, 0
+	measured.VramMiB = 1024
+	if err := st.PutEngineModel(t.Context(), measured); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3-measured", `{"enabled":true}`); code != http.StatusOK {
+		t.Fatalf("a row with a declared vram_mib = %d (%v), want 200", code, out)
+	}
+}
+
+// 🔥 The gap engine_gguf.go's own header comment admitted and nobody had closed: "a row
+// registered from the bucket still reaches this reader through no road, so its geometry stays
+// unknown". BOTH deployments are entirely in that state — every llm row answers
+// `vram_need_source: floor`, the weights and nothing else — so the guard above could only ask
+// for a confirmation it had no way to inform, and the panel could offer no fitted window.
+//
+// The bytes are in the bucket and the header is 64 KiB in. Read it on the write the operator is
+// already making, and the row stops being unanswerable.
+func TestEngineAdminHealsAMissingGeometryFromTheBucket(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e.catalog = newEngineCatalog(st, "image")
+	key := "image/checkpoints/qwen.gguf"
+	bucket := &fakeEngineStorageHead{
+		states: map[string]string{key: engineStoragePresent},
+		head: map[string][]byte{key: ggufBuild(t, 3, []ggufKV{
+			{"general.architecture", ggufTypeString, "qwen35"},
+			{"qwen35.block_count", ggufTypeUint32, 65},
+			{"qwen35.context_length", ggufTypeUint32, 262144},
+			{"qwen35.attention.head_count_kv", ggufTypeUint32, 4},
+			{"qwen35.attention.key_length", ggufTypeUint32, 256},
+			{"qwen35.attention.value_length", ggufTypeUint32, 256},
+			{"qwen35.nextn_predict_layers", ggufTypeUint32, 1},
+			{"qwen35.full_attention_interval", ggufTypeUint32, 4},
+		})},
+	}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		storage: newEngineStorage("models", bucket),
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+
+	// The row as both deployments hold it: a window, a file, and no geometry at all.
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "qwen", Kind: "checkpoint", BaseModel: "sdxl",
+		Files:         []store.EngineModelFile{{S3Key: key, Bytes: 12_040_883_104}},
+		ContextTokens: 32768, MaxOutputTokens: 8192,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	before, _ := st.ListEngineModels(t.Context(), "image")
+	if need, source := engineModelVramNeed(before[0]); source != engineVramFloor {
+		t.Fatalf("before: need=%d source=%s, want the floor this repairs", need, source)
+	}
+
+	// Enabling it is the write that pays for the read. It goes through WITHOUT a confirmation,
+	// because by the time the guard looks the row can answer for itself.
+	if code, out := putModelReq(t, a, "qwen", `{"enabled":true}`); code != http.StatusOK {
+		t.Fatalf("enable = %d (%v), want 200", code, out)
+	}
+	after, _ := st.ListEngineModels(t.Context(), "image")
+	got := after[0]
+	if got.KVLayers != 65 || got.KVHeadsKV != 4 || got.KVKeyLen != 256 || got.KVValueLen != 256 {
+		t.Errorf("stored geometry = %+v", got)
+	}
+	// 🔴 The two modifiers are the whole point: without them this row prices its cache four
+	// times too high and the 21,000 MiB rung stops holding it.
+	if got.KVNextN != 1 || got.KVFullAttnInterval != 4 {
+		t.Errorf("modifiers = nextn %d interval %d, want 1 and 4", got.KVNextN, got.KVFullAttnInterval)
+	}
+	if got.ContextCeiling != 262144 {
+		t.Errorf("ceiling = %d, want 262144 (what the re-fit is bounded by)", got.ContextCeiling)
+	}
+	need, source := engineModelVramNeed(got)
+	if source != engineVramWeightsKV {
+		t.Fatalf("after: source = %s, want weights_kv", source)
+	}
+	// 11,483 MiB of weights + (65-1)/4 = 16 caching layers x 4 x 512 x 32768 x 2 = 2,048 MiB.
+	if need != 13531 {
+		t.Errorf("after: need = %d MiB, want 13531", need)
+	}
+}
+
+// The repair is best-effort in every direction, and none of its failures are the operator's
+// problem: the edit they actually asked for must land either way, and the row stays exactly
+// where it would have been if nothing had been attempted.
+func TestEngineAdminGeometryHealIsBestEffort(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e.catalog = newEngineCatalog(st, "image")
+	key := "image/checkpoints/unreadable.gguf"
+	bucket := &fakeEngineStorageHead{
+		states:    map[string]string{key: engineStoragePresent},
+		prefixErr: map[string]error{key: errors.New("AccessDenied")},
+	}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		storage: newEngineStorage("models", bucket),
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "unreadable", Kind: "checkpoint", BaseModel: "sdxl",
+		Files:         []store.EngineModelFile{{S3Key: key, Bytes: 1 << 30}},
+		ContextTokens: 262144, MaxOutputTokens: 32768,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	// The read fails, so the row is still unanswerable — and the guard says so rather than
+	// calling a floor a fit.
+	code, out := putModelReq(t, a, "unreadable", `{"enabled":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("enable = %d (%v), want 409", code, out)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].KVLayers != 0 || rows[0].Enabled {
+		t.Errorf("a failed read changed the row: %+v", rows[0])
+	}
+	// Confirmed, it goes through, and still nothing was invented.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "unreadable", `{"enabled":true,"confirm_vram":true}`); code != http.StatusOK {
+		t.Fatalf("confirmed enable = %d (%v), want 200", code, out)
+	}
+	rows, _ = st.ListEngineModels(t.Context(), "image")
+	if rows[0].KVLayers != 0 {
+		t.Errorf("geometry was invented: %+v", rows[0])
+	}
+}
+
+// 🔴 Found by review. healGeometry reads the row, then goes to object storage — a network round
+// trip — and only then writes. A whole-row Put of that pre-read snapshot silently reverts
+// whatever anybody changed while the read was in flight. Same hazard as rewriting a file you
+// read a second ago, and the same answer: write the columns you learned about.
+func TestEngineAdminGeometryHealDoesNotRevertAConcurrentEdit(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e.catalog = newEngineCatalog(st, "image")
+	key := "image/checkpoints/qwen.gguf"
+	header := ggufBuild(t, 3, []ggufKV{
+		{"general.architecture", ggufTypeString, "qwen35"},
+		{"qwen35.block_count", ggufTypeUint32, 65},
+		{"qwen35.context_length", ggufTypeUint32, 262144},
+		{"qwen35.attention.head_count_kv", ggufTypeUint32, 4},
+		{"qwen35.attention.key_length", ggufTypeUint32, 256},
+		{"qwen35.attention.value_length", ggufTypeUint32, 256},
+		{"qwen35.nextn_predict_layers", ggufTypeUint32, 1},
+		{"qwen35.full_attention_interval", ggufTypeUint32, 4},
+	})
+	bucket := &fakeEngineStorageHead{
+		states: map[string]string{key: engineStoragePresent},
+		head:   map[string][]byte{key: header},
+	}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		storage: newEngineStorage("models", bucket),
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "qwen", Kind: "checkpoint", BaseModel: "sdxl",
+		Files:         []store.EngineModelFile{{S3Key: key, Bytes: 12_040_883_104}},
+		ContextTokens: 32768, MaxOutputTokens: 8192,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 🔴 Prime the catalogue cache FIRST, so the snapshot healGeometry reads is the pre-edit one.
+	// Without this the test passes for the wrong reason: the cache re-reads the store and picks
+	// up the concurrent edit by itself, and the stale write never happens. (Found by mutating
+	// the fix — the original version of this test stayed green with the bug put back.)
+	e.catalog.invalidate()
+	if rows := e.catalog.list(t.Context()); len(rows) != 1 || rows[0].ContextTokens != 32768 {
+		t.Fatalf("the cache did not take the pre-edit row: %+v", rows)
+	}
+
+	// Somebody else edits the row while the header read is in flight. Written straight to the
+	// store, which is what a second writer's committed change looks like from here.
+	if _, err := st.SetEngineModelWindow(t.Context(), "image", "qwen", 65536, 8192); err != nil {
+		t.Fatal(err)
+	}
+	a.healGeometry(t.Context(), e, "qwen")
+
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].ContextTokens != 65536 || rows[0].MaxOutputTokens != 8192 {
+		t.Errorf("window = %d/%d, want the concurrent edit kept (65536/8192)",
+			rows[0].ContextTokens, rows[0].MaxOutputTokens)
+	}
+	if rows[0].KVLayers != 65 || rows[0].KVFullAttnInterval != 4 || rows[0].ContextCeiling != 262144 {
+		t.Errorf("geometry was not written: %+v", rows[0])
+	}
+}
+
+// 🔴 Also found by review. A row migrated from 0062 carries the four old numbers and neither
+// modifier, so it PRICES ITS CACHE FOUR TIMES TOO HIGH and has no ceiling to be re-fitted
+// against — and skipping on "it already has layers" would leave it that way for ever. Both
+// deployments hold rows in exactly this state.
+func TestEngineAdminGeometryHealUpgradesAPreModifierRow(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e.catalog = newEngineCatalog(st, "image")
+	key := "image/checkpoints/qwen.gguf"
+	bucket := &fakeEngineStorageHead{
+		states: map[string]string{key: engineStoragePresent},
+		head: map[string][]byte{key: ggufBuild(t, 3, []ggufKV{
+			{"general.architecture", ggufTypeString, "qwen35"},
+			{"qwen35.block_count", ggufTypeUint32, 65},
+			{"qwen35.context_length", ggufTypeUint32, 262144},
+			{"qwen35.attention.head_count_kv", ggufTypeUint32, 4},
+			{"qwen35.attention.key_length", ggufTypeUint32, 256},
+			{"qwen35.attention.value_length", ggufTypeUint32, 256},
+			{"qwen35.nextn_predict_layers", ggufTypeUint32, 1},
+			{"qwen35.full_attention_interval", ggufTypeUint32, 4},
+		})},
+	}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		storage: newEngineStorage("models", bucket),
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	// The 0062 shape: four numbers, no modifiers, no ceiling.
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "qwen", Kind: "checkpoint", BaseModel: "sdxl",
+		Files:         []store.EngineModelFile{{S3Key: key, Bytes: 12_040_883_104}},
+		ContextTokens: 32768, MaxOutputTokens: 8192,
+		KVLayers: 65, KVHeadsKV: 4, KVKeyLen: 256, KVValueLen: 256,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	before, _ := st.ListEngineModels(t.Context(), "image")
+	if need, _ := engineModelVramNeed(before[0]); need != 11483+8320 {
+		t.Fatalf("before: need = %d MiB, want the four-times-too-high 19803", need)
+	}
+
+	a.healGeometry(t.Context(), e, "qwen")
+	after, _ := st.ListEngineModels(t.Context(), "image")
+	if after[0].KVNextN != 1 || after[0].KVFullAttnInterval != 4 || after[0].ContextCeiling != 262144 {
+		t.Fatalf("the row was skipped: %+v", after[0])
+	}
+	if need, _ := engineModelVramNeed(after[0]); need != 11483+2048 {
+		t.Errorf("after: need = %d MiB, want 13531", need)
+	}
+}
+
+// 🔴 Found by re-review: the `unknown` half of the guard had no test of its own, and the two
+// rows that reach it are not missing the same thing. A row whose FILES declare no bytes answers
+// unknown and used to fall straight through the `unknown` line below — the seeded
+// `qwen3-coder-30b-a3b` row on both deployments, enabled, declaring 32,768 tokens and not one
+// measurable byte. It may even HAVE a geometry, so the refusal must not send its operator
+// looking for a header that is already read.
+func TestEngineAdminAsksAboutAWindowOnUnweighableFiles(t *testing.T) {
+	a, e, st := engineWindowTestEngine(t)
+	row := engineWindowTestRow("seeded", false, 32768)
+	row.Files = []store.EngineModelFile{{S3Key: "image/checkpoints/seeded.gguf"}} // no Bytes
+	if err := st.PutEngineModel(t.Context(), row); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if _, source := engineModelVramNeed(row); source != engineVramUnknown {
+		t.Fatalf("premise: source = %s, want unknown", source)
+	}
+
+	code, out := putModelReq(t, a, "seeded", `{"enabled":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("enabling a row with no weighable files = %d (%v), want 409", code, out)
+	}
+	apiErr, _ := out["error"].(map[string]any)
+	msg, _ := apiErr["message"].(string)
+	if !strings.Contains(msg, "declare no bytes") {
+		t.Errorf("message = %q, want it to name the missing BYTES", msg)
+	}
+	// It has a geometry. Saying "no attention geometry" would send the operator after a header
+	// that was already read.
+	if strings.Contains(msg, "no attention geometry") {
+		t.Errorf("message = %q, want it not to blame the geometry this row has", msg)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].Enabled {
+		t.Fatal("the row was enabled by the call that refused it")
+	}
+}
+
+// 🔴 Found by re-review. The geometry describes ONE file's header, and between the read that
+// produced it and the write another session can Replace the main GGUF. An unconditional UPDATE
+// staples the old file's attention shape onto the new file's row — a wrong VRAM answer nothing
+// afterwards contradicts.
+func TestEngineAdminGeometryHealWillNotStapleAnOldShapeToANewFile(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
+	e.catalog = newEngineCatalog(st, "image")
+	old := "image/checkpoints/old.gguf"
+	bucket := &fakeEngineStorageHead{
+		states: map[string]string{old: engineStoragePresent},
+		head: map[string][]byte{old: ggufBuild(t, 3, []ggufKV{
+			{"general.architecture", ggufTypeString, "qwen35"},
+			{"qwen35.block_count", ggufTypeUint32, 65},
+			{"qwen35.context_length", ggufTypeUint32, 262144},
+			{"qwen35.attention.head_count_kv", ggufTypeUint32, 4},
+			{"qwen35.attention.key_length", ggufTypeUint32, 256},
+			{"qwen35.attention.value_length", ggufTypeUint32, 256},
+			{"qwen35.nextn_predict_layers", ggufTypeUint32, 1},
+			{"qwen35.full_attention_interval", ggufTypeUint32, 4},
+		})},
+	}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+		storage: newEngineStorage("models", bucket),
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "qwen", Kind: "checkpoint", BaseModel: "sdxl",
+		Files:         []store.EngineModelFile{{S3Key: old, Bytes: 1 << 30}},
+		ContextTokens: 32768, MaxOutputTokens: 8192,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Prime the cache with the OLD declaration, so the heal reads that file's header.
+	e.catalog.invalidate()
+	if rows := e.catalog.list(t.Context()); len(rows) != 1 {
+		t.Fatalf("cache: %+v", rows)
+	}
+	// Another session swaps the checkpoint for different bytes while the read is in flight.
+	swapped, err := st.ReplaceEngineModelFile(t.Context(), "image", "qwen",
+		store.EngineModelFile{S3Key: "image/checkpoints/new.gguf", Bytes: 2 << 30}, nil)
+	if err != nil || !swapped {
+		t.Fatalf("replace: %v %v", swapped, err)
+	}
+
+	a.healGeometry(t.Context(), e, "qwen")
+
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].KVLayers != 0 || rows[0].ContextCeiling != 0 {
+		t.Errorf("the old file's shape was written onto the new one: %+v", rows[0])
+	}
+	if len(rows[0].Files) != 1 || rows[0].Files[0].S3Key != "image/checkpoints/new.gguf" {
+		t.Errorf("files = %+v, want the replacement kept", rows[0].Files)
 	}
 }

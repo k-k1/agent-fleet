@@ -86,6 +86,10 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// it is a separate act with a separate cost: the mode buys a box now, this says what the
 	// NEXT box will be.
 	mux.HandleFunc("PUT /api/admin/engines/{key}/class", a.withSuperAdmin(a.putClass))
+	// Whether this role may buy an INTERRUPTIBLE box. Its own route beside the class for the
+	// same reason the class is its own route beside the mode: it is a separate act, and the one
+	// being consented to here is not "which card" but "this engine may be taken away mid-answer".
+	mux.HandleFunc("PUT /api/admin/engines/{key}/spot", a.withSuperAdmin(a.putSpot))
 	// What this deployment excludes from every image this engine makes (ADR 0072 follow-up,
 	// negative prompts). Super-admin like the mode and the class: it is a statement about the
 	// whole deployment, not about one model or one member.
@@ -353,6 +357,12 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 			offers = append(offers, engineOfferRow(c))
 		}
 		row["offers"] = offers
+		// Whether this role may buy an interruptible box at all (engineSpotSettingKey). Sent
+		// beside the offers rather than derived from them, because the two say different things:
+		// a `spot` row is what the OPERATOR declared, and this is what the ADMINISTRATOR accepted.
+		// The panel needs both to draw a declared offer as present-but-not-available and to offer
+		// the tick box that makes it available.
+		row["spot_allowed"] = e.spotAllowed(ctx)
 		// 🔴 Now "the operator has not pinned anything", not "the selection equals the first rung"
 		// (ADR 0075 decision 8). Unpinned is AUTOMATIC — the offers are filtered by VRAM and tried
 		// in order — so an administrator who pinned the offer that happens to be first has still
@@ -733,6 +743,68 @@ func (a engineAdminAPI) unpinClass(w http.ResponseWriter, r *http.Request, ident
 	writeJSON(w, http.StatusOK, a.row(ctx, e))
 }
 
+// putSpot (PUT /api/admin/engines/{key}/spot) takes {"spot": true|false} and records whether this
+// role may buy an INTERRUPTIBLE box (engineSpotSettingKey).
+//
+// The operator declares which offers exist; this is the administrator accepting what the `spot`
+// ones cost when the box is taken away — the answer in flight is lost and the next one waits out
+// a cold start. Two halves of one decision, deliberately kept apart: the declaration is made once
+// in CloudFormation by whoever stands the stack up, and the interruption is lived with by whoever
+// runs the engine.
+//
+// Like the class, it reaches the NEXT purchase and not the box that is up. Switching it off does
+// not hand back a Spot box that is answering right now, which the panel says beside the tick
+// rather than implying by echoing the new value back.
+//
+// Ticking it on is refused where the role declares no `spot` offer: consent is given to a list
+// somebody is looking at, and a stored yes that predates the declaration would buy an
+// interruptible box the moment an operator added a row, on an authority given for something
+// else. Un-ticking is always allowed — the way back from a yes cannot depend on a declaration.
+func (a engineAdminAPI) putSpot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	var b struct {
+		Spot bool `json:"spot"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
+		return
+	}
+	list := e.classList()
+	if len(list) == 0 {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineClassUnknown,
+			"engine " + key + " declares no instance classes"})
+		return
+	}
+	if b.Spot && !engineClassesHaveSpot(list) {
+		writeAPIErr(w, &apiError{http.StatusConflict, errCodeEngineBadBody,
+			"engine " + key + " declares no spot offer to accept interruption for"})
+		return
+	}
+	ctx := r.Context()
+	val := ""
+	if b.Spot {
+		val = "true"
+	}
+	if a.settings != nil {
+		if err := a.settings.SetSetting(ctx, engineSpotSettingKey(key), val); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+	}
+	state := "off"
+	if b.Spot {
+		state = "on"
+	}
+	a.audit(ctx, ident, "engine."+key+".spot", state)
+	log.Printf("engines: %s interruptible boxes %s by %s", key, state, ident.ID)
+	writeJSON(w, http.StatusOK, a.row(ctx, e))
+}
+
 // putNegative (PUT /api/admin/engines/{key}/negative) records what this deployment excludes from
 // every image this engine makes (ADR 0072 follow-up, negative prompts). One text box, one
 // setting row, applied to every request whoever made it and whichever checkpoint answers.
@@ -937,6 +1009,20 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	// It is checked BEFORE the write, so a refusal leaves the catalogue as it was.
 	loading := (b.Enabled != nil && *b.Enabled) ||
 		(b.Selected != nil && *b.Selected) || (b.Default != nil && *b.Default)
+	// 🔴 Before anything is JUDGED, give the row a chance to stop being unanswerable. Every llm
+	// row on both deployments predates the header read and answers its floor — the weights and
+	// nothing else — so the VRAM guard below can only ask for a confirmation it has no way to
+	// inform, and the panel can offer no fitted window. The bytes are in the bucket and the
+	// header is 64 KiB in: read it once, here, where the operator is already making a write and
+	// a few hundred milliseconds is not a surprise.
+	//
+	// Only on a LOADING write, and only for a row that has none: this is a repair, not a poll.
+	// Best-effort in both directions — a refused read leaves the row where it was, and a failed
+	// STORE is logged and not raised, because the edit the operator actually asked for must not
+	// fail over a cache fill.
+	if loading {
+		a.healGeometry(ctx, e, id)
+	}
 	if loading && !b.ConfirmVram {
 		if aerr := engineVramGuard(ctx, e, id); aerr != nil {
 			writeAPIErr(w, aerr)
@@ -1145,6 +1231,40 @@ func engineVramGuardRow(ctx context.Context, e *engineRuntimeState, m store.Engi
 		return nil
 	}
 	need, source := engineModelVramNeed(m)
+	// 🔴 A floor for a row that declares a WINDOW is the one estimate that is known to be
+	// missing a term which GROWS with that window, and it is the shape that has actually put a
+	// card out of memory: af-sandbox's Qwen3.8-27B row declares 262144 and no geometry, so the
+	// need came back as 17093 MiB of weights, fitted the 22000 MiB rung, was enabled without a
+	// word — and llama.cpp then asked for 16384 MiB of KV cache on top and the L4 answered
+	// `cudaMalloc failed: out of memory`. Passing that silently is the bug. The number cannot be
+	// computed here (that is what "no geometry" means) — healGeometry has already TRIED, on this
+	// same request, and the bucket would not say — so the answer is to say so and let the
+	// operator confirm or declare vram_mib.
+	//
+	// Only when it does not already fail the ordinary comparison below, and only for a row that
+	// declares a window: an image checkpoint has none, and for it the weights really are most of
+	// the story (ADR 0074's first measurement).
+	//
+	// `unknown` counts here as well as `floor`, and leaving it out was a hole the size of the
+	// original bug: a row whose FILES declare no bytes answers unknown, falls through the
+	// `unknown` line below, and is switched on without anybody looking — which is the seeded
+	// `qwen3-coder-30b-a3b` row on both deployments, enabled, declaring 32,768 tokens and not
+	// one measurable byte.
+	if (source == engineVramFloor || source == engineVramUnknown) &&
+		m.ContextTokens > 0 && engineClassFits(sel, need) {
+		// 🔴 Two different rows land here and they are not missing the same thing. A `floor` row
+		// has its weights and no header; an `unknown` one declares no measurable bytes at all —
+		// and it may well HAVE a geometry, so telling it "no attention geometry" sends the
+		// operator looking for a header that is already read.
+		missing := fmt.Sprintf("a KV cache that cannot be sized (no attention geometry) on top of %d MiB of weights", need)
+		if source == engineVramUnknown {
+			missing = "weights this deployment cannot size (its files declare no bytes) plus whatever cache that window needs"
+		}
+		return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
+			"%s declares a %d-token window and wants %s, so the %s class's %d MiB cannot be said"+
+				" to fit; repeat with confirm_vram, or declare vram_mib",
+			m.ID, m.ContextTokens, missing, sel.ID, sel.VramMiB)}
+	}
 	if source == engineVramUnknown || engineClassFits(sel, need) {
 		return nil
 	}
@@ -1372,6 +1492,18 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 	if len(m.Files) == 0 {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "at least one file (s3Key) is required"})
 		return
+	}
+	// The same read the VAE question does above, for the other fact a header states. A row that
+	// arrives here carries no geometry — this route has no upstream URL to range-GET — so
+	// without it every hand-registered and every rebuilt row answers its FLOOR forever, which is
+	// the weights and nothing else and therefore fits almost any card. Best-effort: a refused
+	// read leaves the row exactly where it would have been.
+	if !engineModelIsLora(m) && m.ContextCeiling == 0 && m.KVLayers == 0 {
+		if key, ok := engineGeometryFile(m); ok {
+			if geom := engineGGUFGeometryOfObject(r.Context(), key, a.engineStorageBytes()); geom.complete() {
+				engineApplyGeometry(&m, geom)
+			}
+		}
 	}
 	// The family, for a provider that dispatches on one (ADR 0072 decision 2). Refused HERE, in
 	// the operator's own words, rather than as a ComfyUI validation error a cold start and a
@@ -2512,4 +2644,55 @@ func engineBaseModelHint(upstream string) string {
 		return fmt.Sprintf(" (the repository calls it %q)", u)
 	}
 	return ""
+}
+
+// healGeometry reads a row's GGUF header out of the bucket and stores it, when the row has none.
+//
+// The gap it closes: engine_gguf.go reads a header at the RESOLVE, over the upstream URL, and a
+// row that never went down that road — registered from the bucket, rebuilt from a ledger key, or
+// simply taken in before the read existed — has no geometry and never gets one. Both deployments
+// are entirely in that state, which is why every llm row answers `vram_need_source: floor` and
+// why a row declaring 262,144 tokens could be switched on without a word.
+//
+// Silent about every failure on purpose. It is a repair attached to a write the operator asked
+// for, and none of its outcomes are that operator's problem: an unconfigured bucket, a refused
+// read, a file that is not a GGUF, a header past the ceiling, a losing race with another writer.
+// The row simply stays where it was, which is where it already is when this is not called at all.
+func (a engineAdminAPI) healGeometry(ctx context.Context, e *engineRuntimeState, id string) {
+	cur, ok := engineCatalogModel(ctx, e, id)
+	// 🔴 The skip is on the CEILING and not on KVLayers, which is what a row read before these
+	// columns existed still has. Migration 0062 stored four numbers and multiplied by all of
+	// them; such a row carries a geometry that looks present and prices its cache four times too
+	// high, and skipping on "has layers" would leave it that way for ever. context_ceiling
+	// arrived with the modifiers (0070), so a non-zero one is the mark of a row this code read.
+	//
+	// ⚠️ Which makes it "at most once per loading write", not "once": a header declaring no
+	// `<arch>.context_length` is read again every time. llama.cpp's converter always writes one,
+	// so this is a supported-input assumption rather than a leak — see engine_gguf.go's header.
+	if !ok || engineModelIsLora(cur) || cur.ContextCeiling > 0 {
+		return
+	}
+	key, ok := engineGeometryFile(cur)
+	if !ok {
+		return
+	}
+	geom := engineGGUFGeometryOfObject(ctx, key, a.engineStorageBytes())
+	if !geom.complete() {
+		return
+	}
+	// 🔴 A targeted write. `cur` was read BEFORE a network round trip to object storage, so it
+	// is already stale, and a whole-row Put of it would silently revert anything another writer
+	// changed while the read was in flight.
+	// cur.Files is the declaration the header was read out of — compared on write, so a
+	// replacement that landed while the read was in flight leaves this write with nothing to do.
+	if _, err := a.mgr.store.SetEngineModelGeometry(ctx, e.def.Key, id, cur.Files, store.EngineModelKV{
+		Layers: geom.Layers, HeadsKV: geom.HeadsKV, KeyLen: geom.KeyLen, ValueLen: geom.ValLen,
+		NextN: geom.NextN, FullAttnInterval: geom.FullAttnInterval, Ceiling: geom.Ceiling,
+	}); err != nil {
+		log.Printf("engines: %s/%s: the geometry was read and could not be stored (%v)", e.def.Key, id, err)
+		return
+	}
+	e.catalog.invalidate()
+	log.Printf("engines: %s/%s: attention geometry read from the bucket (%d layers, %d caching, ceiling %d)",
+		e.def.Key, id, geom.Layers, geom.cacheLayers(), geom.Ceiling)
 }

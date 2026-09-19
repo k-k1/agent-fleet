@@ -32,6 +32,7 @@ const openEngineAdd = vi.fn();
 vi.mock("./openEngineAdd.ts", () => ({ openEngineAdd: (...args: unknown[]) => openEngineAdd(...args) }));
 
 import { EnginesAdminView, engineOfferResultKey } from "./adminEngines.tsx";
+import { clearCatalogMemory } from "./catalogMemory.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -84,6 +85,10 @@ const click = async (el: HTMLElement | undefined) => {
 afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
+  // 🔴 The catalogue's memory is module scope and every mount here shares one key
+  //    (no paneId), so without this a case reads the previous one's page and the
+  //    search it asserts is never sent.
+  clearCatalogMemory();
   root = null;
   host = null;
   api.mockReset();
@@ -487,6 +492,99 @@ describe("EnginesAdminView", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/class", "PUT", { class: "l40s" });
   });
 
+  // --- accepting interruption (ADR 0077 decision 9, amended) -----------------------------
+  //
+  // 🔴 A declared Spot offer that nobody has accepted interruption for is DRAWN AND UNAVAILABLE,
+  // never hidden. An operator who declared a row and cannot find it on the panel reads that as
+  // "my declaration was ignored" — which this deployment has already lived through once, when a
+  // ladder was edited while an offer list was live and the new rungs silently never appeared.
+
+  const tick = () =>
+    host!.querySelector(".engines-spot-allow input") as HTMLInputElement | null;
+  const spotOfferRow = () => offerRows()[1];
+
+  it("draws a declared Spot offer as unavailable until interruption is accepted", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [withOffers({ spot_allowed: false })] });
+    await mount();
+
+    expect(tick()!.checked).toBe(false);
+    // Both costs are named. "The instance may stop" is not what is being agreed to.
+    const note = host!.querySelector(".engines-spot")!.textContent || "";
+    expect(note).toContain("処理中の応答は失われ");
+    expect(note).toContain("コールドスタート");
+    // The row is still listed, in its declared position, carrying the reason.
+    expect(offerRows()).toHaveLength(3);
+    expect(spotOfferRow().textContent).toContain("中断の許容が要ります");
+    const opts = Array.from(host!.querySelectorAll(".engines-class option")) as HTMLOptionElement[];
+    expect(opts.find((o) => o.value === "l4-spot")!.disabled).toBe(true);
+    expect(opts.find((o) => o.value === "l4")!.disabled).toBe(false);
+  });
+
+  it("sends the consent and stops holding the offer back", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [withOffers({ spot_allowed: false })] });
+    await mount();
+    apiJSON.mockResolvedValue(withOffers({ spot_allowed: true }));
+    await act(async () => {
+      // Through the prototype setter, like the select above: React tracks the checked value
+      // itself, and assigning the property directly leaves the tracker thinking nothing moved —
+      // onChange never fires and the test passes on a component that is wired to nothing.
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")!.set!;
+      setter.call(tick(), true);
+      tick()!.dispatchEvent(new Event("click", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/spot", "PUT", { spot: true });
+    expect(tick()!.checked).toBe(true);
+    expect(spotOfferRow().textContent).not.toContain("中断の許容が要ります");
+    const opts = Array.from(host!.querySelectorAll(".engines-class option")) as HTMLOptionElement[];
+    expect(opts.find((o) => o.value === "l4-spot")!.disabled).toBe(false);
+  });
+
+  it("offers no tick where there is nothing to accept, or where the CP cannot hear it", async () => {
+    // An all-on-demand list: the question does not arise, and a control that changes nothing is
+    // one more thing to read on a screen that already buys GPUs.
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [withOffers({ spot_allowed: false, offers: [OFFERS[0], OFFERS[2]] })],
+    });
+    await mount();
+    expect(host!.querySelector(".engines-spot")).toBeNull();
+
+    // 🔴 And a control plane too old to send the field buys Spot the moment it is declared. A
+    // tick box there would be a promise this panel cannot keep, so the whole gate is absent and
+    // the offer is drawn exactly as it was before.
+    await act(async () => root!.unmount());
+    api.mockResolvedValue({ super_admin: true, engines: [withOffers()] });
+    await mount();
+    expect(host!.querySelector(".engines-spot")).toBeNull();
+    expect(offerRows()[1].textContent).not.toContain("中断の許容が要ります");
+    const opts = Array.from(host!.querySelectorAll(".engines-class option")) as HTMLOptionElement[];
+    expect(opts.find((o) => o.value === "l4-spot")!.disabled).toBe(false);
+  });
+
+  it("says a pinned Spot offer is not being used, and that un-ticking leaves the running box alone", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        withOffers({
+          spot_allowed: false,
+          class_is_default: false,
+          class: OFFERS[1],
+          offer: { id: "l4-spot", buy: "spot" },
+        }),
+      ],
+    });
+    await mount();
+    const gate = host!.querySelector(".engines-spot")!.textContent || "";
+    // The pin cannot be honoured, so the picker is sitting on an offer nothing is buying.
+    expect(gate).toContain("自動選択に落ちています");
+    // And withdrawing consent is not a stop: it reaches the next purchase, like a rung.
+    expect(gate).toContain("次に買うインスタンスから効きます");
+  });
+
   it("states a pin permanently and takes it off in one click", async () => {
     api.mockResolvedValue({
       super_admin: true,
@@ -771,5 +869,212 @@ describe("EnginesAdminView / the exclusion list", () => {
     });
     await mount();
     expect(host!.querySelector(".engines-negative")).toBeNull();
+  });
+});
+
+// 🔥 ADR 0089 follow-up. The rung is the one input a window is fitted against, and it was read
+// ONCE — when the model was registered. Changing it afterwards moved the card and left every
+// window behind: an engine moved up to a 48 GB card went on running the window that fitted a
+// 24 GB one, and one moved down kept a window its new card cannot hold and said nothing until
+// the cold start failed. Picking a rung now moves them, and says what it moved.
+describe("picking an instance class re-fits every window", () => {
+  const llm = (over: Record<string, unknown> = {}) => row({
+    key: "llm", api: "chat", provider: "llamacpp", models: ["qwen"],
+    class: { id: "l4", label: "L4", vram_mib: 22000, types: ["g6.xlarge"] },
+    classes: [
+      { id: "l4", label: "L4", vram_mib: 22000, types: ["g6.xlarge"] },
+      { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] },
+    ],
+    model_rows: [{
+      id: "qwen", kind: "gguf", enabled: true, context_tokens: 32768, max_output_tokens: 8192,
+      kv_mib_per_1k_tokens: 64, context_length: 262144,
+      file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
+    }],
+    ...over,
+  });
+
+  const pick = async (value: string) => {
+    const select = host!.querySelector<HTMLSelectElement>(".engines-class-head select")!;
+    await act(async () => {
+      select.value = value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => { await Promise.resolve(); });
+  };
+
+  it("writes the bigger window the new card holds, and says so", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [llm()] });
+    await mount();
+    // The class PUT answers with the row ON the new rung; the model PUT is what this is about.
+    apiJSON.mockImplementation((path: string) => Promise.resolve(
+      path.endsWith("/class")
+        ? llm({ class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } })
+        : {},
+    ));
+    await pick("l40s");
+
+    // 11,483 MiB of weights against 44,000 x 0.85 = 37,400 leaves 25,917 MiB: 262,144 tokens
+    // cost 16,384 and that is also the model's own ceiling.
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/llm/models/qwen", "PUT",
+      { context_tokens: 262144, max_output_tokens: 32768 },
+    );
+    const report = host!.querySelector(".engines-class-refit")!;
+    expect(report.textContent).toContain("qwen");
+    expect(report.textContent).toContain("32,768");
+    expect(report.textContent).toContain("262,144");
+    // 🔴 The one thing an automatic edit must not hide: it does not reach a running engine.
+    expect(report.textContent).toContain("次にエンジンが起動したとき");
+  });
+
+  it("shrinks a window the smaller card cannot hold, which used to fail only at the cold start", async () => {
+    const wide = llm({
+      class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] },
+      model_rows: [{
+        id: "qwen", kind: "gguf", enabled: true, context_tokens: 262144, max_output_tokens: 32768,
+        kv_mib_per_1k_tokens: 64, context_length: 262144,
+        file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
+      }],
+    });
+    api.mockResolvedValue({ super_admin: true, engines: [wide] });
+    await mount();
+    apiJSON.mockImplementation((path: string) => Promise.resolve(
+      path.endsWith("/class") ? llm() : {},
+    ));
+    await pick("l4");
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/llm/models/qwen", "PUT",
+      { context_tokens: 65536, max_output_tokens: 8192 },
+    );
+  });
+
+  it("writes nothing for a row whose header was never read, and names it", async () => {
+    const unread = llm({
+      model_rows: [{
+        id: "qwen", kind: "gguf", enabled: true, context_tokens: 32768, max_output_tokens: 8192,
+        file_rows: [{ s3Key: "llm/qwen.gguf", bytes: 12_040_883_104 }],
+      }],
+    });
+    api.mockResolvedValue({ super_admin: true, engines: [unread] });
+    await mount();
+    apiJSON.mockImplementation((path: string) => Promise.resolve(
+      path.endsWith("/class")
+        ? { ...unread, class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } }
+        : {},
+    ));
+    await pick("l40s");
+    const modelPuts = apiJSON.mock.calls.filter((c) => String(c[0]).includes("/models/"));
+    expect(modelPuts).toHaveLength(0);
+    expect(host!.querySelector(".engines-class-refit")?.textContent)
+      .toContain("ヘッダをまだ読めていません");
+  });
+
+  // 🔴 A refusal is not a silent skip. `engine_publish_failed` is a 502 the CP answers AFTER the
+  // row was written, so a report that lists only the successes says less than what happened —
+  // the window stored and the box never told about it.
+  it("names a row whose window could not be written, with the reason", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [llm()] });
+    await mount();
+    apiJSON.mockImplementation((path: string) => Promise.resolve(
+      path.endsWith("/class")
+        ? llm({ class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } })
+        : { error: { code: "engine_publish_failed", message: "SSM refused the active set" } },
+    ));
+    await pick("l40s");
+    const report = host!.querySelector(".engines-class-refit")!;
+    expect(report.textContent).toContain("qwen");
+    expect(report.textContent).toContain("SSM refused the active set");
+    // 🔴 And it says WHICH failure: a 502 from publish means the row WAS written, so calling it
+    // "unchanged" would send the operator to re-type a number that is already right.
+    expect(report.textContent).toContain("窓は保存されました");
+    expect(report.textContent).not.toContain("設定は元のままです");
+    // It is still not claimed as done.
+    expect(report.textContent).not.toContain("→");
+  });
+
+  // The guard knows things this arithmetic does not: the operator's own vram_mib, and a row
+  // whose weights nothing can size. Sending confirm_vram would make this the one write on the
+  // deployment that can never be refused.
+  it("does not send confirm_vram", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [llm()] });
+    await mount();
+    apiJSON.mockImplementation((path: string) => Promise.resolve(
+      path.endsWith("/class")
+        ? llm({ class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } })
+        : {},
+    ));
+    await pick("l40s");
+    const modelPut = apiJSON.mock.calls.find((c) => String(c[0]).includes("/models/"))!;
+    expect(Object.keys(modelPut[2] as object)).not.toContain("confirm_vram");
+  });
+
+  // 🔴 Found by re-review. A rejected fetch — the browser losing the network mid-loop — used to
+  // throw out of the whole function: the rows after it were never attempted, the report never
+  // rendered, and the re-read never ran, so the screen kept showing windows the store no longer
+  // held.
+  it("keeps going when a write throws, and still reports", async () => {
+    const two = llm({
+      model_rows: [
+        {
+          id: "first", kind: "gguf", enabled: true, context_tokens: 32768, max_output_tokens: 8192,
+          kv_mib_per_1k_tokens: 64, context_length: 262144,
+          file_rows: [{ s3Key: "llm/first.gguf", bytes: 12_040_883_104 }],
+        },
+        {
+          id: "second", kind: "gguf", enabled: true, context_tokens: 32768, max_output_tokens: 8192,
+          kv_mib_per_1k_tokens: 64, context_length: 262144,
+          file_rows: [{ s3Key: "llm/second.gguf", bytes: 12_040_883_104 }],
+        },
+      ],
+    });
+    api.mockResolvedValue({ super_admin: true, engines: [two] });
+    await mount();
+    let seen = 0;
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/class")) {
+        return Promise.resolve({ ...two, class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } });
+      }
+      seen++;
+      if (seen === 1) return Promise.reject(new Error("network is gone"));
+      return Promise.resolve({});
+    });
+    await pick("l40s");
+
+    // 🔴 Review round 3: counting the calls is not enough — the same URL twice would satisfy it,
+    // and so would dropping the re-read. Name the SECOND row's address, and prove the store was
+    // read back, or the screen keeps showing windows it no longer holds.
+    const puts = apiJSON.mock.calls.filter((c) => String(c[0]).includes("/models/")).map((c) => String(c[0]));
+    expect(puts).toEqual([
+      "api/admin/engines/llm/models/first",
+      "api/admin/engines/llm/models/second",
+    ]);
+    expect(api.mock.calls.filter((c) => String(c[0]) === "api/admin/engines").length).toBeGreaterThan(1);
+
+    const report = host!.querySelector(".engines-class-refit")!;
+    expect(report.textContent).toContain("network is gone");
+    expect(report.textContent).toContain("second");
+    // 🔴 And a dropped connection is not "unchanged": the CP may have written it before the
+    // socket died, so the only honest answer is that this side cannot say.
+    expect(report.textContent).toContain("確認できません");
+    expect(report.textContent).not.toContain("設定は元のままです");
+  });
+
+  // 🔴 `reject("")` and `new Error("")` both give an empty message, and keying the branch off
+  // that string counted a throw as a success — the row was listed as re-fitted when nothing
+  // reached the CP at all.
+  it("does not read an empty thrown error as success", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [llm()] });
+    await mount();
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/class")) {
+        return Promise.resolve(llm({ class: { id: "l40s", label: "L40S", vram_mib: 44000, types: ["g6e.xlarge"] } }));
+      }
+      return Promise.reject(new Error(""));
+    });
+    await pick("l40s");
+    const report = host!.querySelector(".engines-class-refit")!;
+    expect(report.textContent).toContain("確認できません");
+    // Not claimed as written.
+    expect(report.textContent).not.toContain("→");
   });
 });

@@ -12,3 +12,20 @@ export function openEngineAdd(
     content: { kind: "engineAdd", engineKey, lora, ...(view ? { view } : {}) },
   });
 }
+
+/** Record which face the catalogue is on, so a browser reload comes back to it.
+ *
+ * 🔴 `engineKey` and `lora` are the pane's OWN, passed straight back: `sameTarget` identifies an
+ * engineAdd pane by exactly those two (ops.ts), so writing the role tab or model⇄lora in here
+ * would change the pane's identity and the next `openEngineAdd` would open a second catalogue
+ * beside it. The face is not part of that identity, which is why it is the one thing written. */
+export function setEngineAddView(
+  paneId: string,
+  engineKey: string,
+  lora: boolean,
+  view: "search" | "registered",
+): void {
+  useLayoutStore.getState().setPaneTarget(paneId, {
+    content: { kind: "engineAdd", engineKey, lora, view },
+  });
+}

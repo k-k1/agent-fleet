@@ -146,6 +146,13 @@ export interface SessionContextUsage {
   create: number; // cache_creation_input_tokens (new cache)
   fresh: number; // input_tokens (uncached)
   model?: string;
+  // The window the Agent measured the fill against, when it knows it exactly (codex's
+  // model_context_window, opencode's declared provider limit). Absent = it guessed from
+  // the model name, which is also what ContextBar falls back to. Declared here because a
+  // head that picks fields by hand instead of spreading the whole object drops it
+  // otherwise, and then a 32k self-hosted engine renders against 200k.
+  window?: number;
+  windowSource?: "recorded" | "estimated";
 }
 
 // isManagedSession: a managed (paneless) session has no tmux pane — the chat

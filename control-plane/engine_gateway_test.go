@@ -213,6 +213,177 @@ func TestEngineGatewayReportsAFailedWakeInsideTheStream(t *testing.T) {
 	}
 }
 
+// --- an upstream that says "ask again", and one that says "no" -----------------
+
+// wakingEngine is the far gateway's shape: `503 engine_waking` with a Retry-After for the first
+// `refusals` requests — what a borrowed row gets while the model it named is still being synced
+// onto the lending fleet's instance — and the ordinary stream after that.
+//
+// `answer` overrides the refusal entirely when set, which is how the engine's OWN error (a
+// llama-server 400) is put on the wire.
+type wakingEngine struct {
+	refusals atomic.Int32
+	requests atomic.Int32
+	answer   func(w http.ResponseWriter)
+}
+
+func (e *wakingEngine) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		e.requests.Add(1)
+		if e.answer != nil {
+			e.answer(w)
+			return
+		}
+		if e.refusals.Add(-1) >= 0 {
+			w.Header().Set("Retry-After", "6")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"code":"engine_waking","message":"qwen3.8-27b-uncensored-q4_k_m is still being synced onto this engine's instance (1 file(s) to go); retry"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		w.(http.Flusher).Flush()
+	})
+}
+
+// setEngineStreamWakingBounds runs the retry loop on the test's clock rather than the wall's.
+func setEngineStreamWakingBounds(t *testing.T, d time.Duration) func() {
+	t.Helper()
+	prevFloor, prevCap := engineStreamWakingFloor, engineStreamWakingCap
+	engineStreamWakingFloor, engineStreamWakingCap = d, d
+	return func() { engineStreamWakingFloor, engineStreamWakingCap = prevFloor, prevCap }
+}
+
+// The far side's `engine_waking` is the word "again", and this path is the one that can afford
+// to wait for it — the 200 and the heartbeats are already on the wire.
+//
+// Measured on 2026-09-19, borrowing af-sandbox's llm: a request 2m20s into a cold start was
+// refused with "1 file(s) to go", the file landed three minutes later, and in between opencode
+// ended the turn with `UnknownError`. The image providers never saw this because they retry
+// `engine_waking` themselves for a quarter of an hour; a chat client retries nothing.
+func TestEngineStreamHoldsThroughTheFarSidesEngineWaking(t *testing.T) {
+	eng := &wakingEngine{}
+	eng.refusals.Store(2)
+	up := httptest.NewServer(eng.handler())
+	defer up.Close()
+	st := newTestEngine(t, up.URL, &engineTestECS{desired: 1, running: 1})
+	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"llm": st}}}
+
+	defer setEngineHeartbeat(t, 20*time.Millisecond)()
+	defer setEngineStreamWakingBounds(t, 10*time.Millisecond)()
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/engine/llm/v1/chat/completions", strings.NewReader("{}"))
+	r.SetPathValue("path", "chat/completions")
+	g.streamed(rec, r, st, engineSessionClaims{Key: "llm"}, testMembership(), []byte(`{"stream":true}`))
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"content":"hi"`) || !strings.Contains(body, "[DONE]") {
+		t.Fatalf("the engine's answer did not reach the client after the far side stopped refusing:\n%s", body)
+	}
+	if strings.Contains(body, "engine_unavailable") || strings.Contains(body, "did not come up in time") {
+		t.Errorf("a retryable refusal was reported as a failure:\n%s", body)
+	}
+	// Three: two refusals and the answer. The caller sent ONE request and never learned that the
+	// other two happened, which is decision 5 for a model that is still landing.
+	if got := eng.requests.Load(); got != 3 {
+		t.Errorf("the upstream saw %d requests, want 3", got)
+	}
+}
+
+// And when the budget runs out first, the far side's own sentence is what the wait is reported
+// with — which model, and how many files were left. Without it the operator is told only that
+// something did not come up.
+func TestEngineStreamCarriesTheFarRefusalWhenTheBudgetRunsOut(t *testing.T) {
+	eng := &wakingEngine{}
+	eng.refusals.Store(1 << 30) // it never stops refusing
+	up := httptest.NewServer(eng.handler())
+	defer up.Close()
+	st := newTestEngine(t, up.URL, &engineTestECS{desired: 1, running: 1})
+	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"llm": st}}}
+
+	defer setEngineHeartbeat(t, 20*time.Millisecond)()
+	defer setEngineStreamWakingBounds(t, 10*time.Millisecond)()
+	t.Setenv("AF_ENGINE_WAKE_TIMEOUT", "1")
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/engine/llm/v1/chat/completions", strings.NewReader("{}"))
+	r.SetPathValue("path", "chat/completions")
+	g.streamed(rec, r, st, engineSessionClaims{Key: "llm"}, testMembership(), []byte(`{"stream":true}`))
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "file(s) to go") || !strings.Contains(body, "qwen3.8-27b-uncensored-q4_k_m") {
+		t.Errorf("the far side's reason did not survive the wait:\n%s", body)
+	}
+	if !strings.Contains(body, "[DONE]") {
+		t.Errorf("the stream was not closed — the client waits forever:\n%s", body)
+	}
+	if got := eng.requests.Load(); got < 2 {
+		t.Errorf("the upstream saw %d requests, want the hold to have asked again at least once", got)
+	}
+}
+
+// 🔥 The engine's own refusal is relayed, not reinterpreted. This exact body reached opencode on
+// 2026-09-19 as "the fleet's own inference engine did not come up in time", which is false twice
+// over: the engine was up, and no amount of waiting changes the answer — the caller has to send
+// less, and the sentence that says so was the part that got thrown away.
+func TestEngineStreamRelaysTheEnginesOwnRefusal(t *testing.T) {
+	const refusal = `{"error":{"code":400,"message":"request (33565 tokens) exceeds the available context size (32768 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":33565,"n_ctx":32768}}`
+	eng := &wakingEngine{answer: func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(refusal))
+	}}
+	up := httptest.NewServer(eng.handler())
+	defer up.Close()
+	st := newTestEngine(t, up.URL, &engineTestECS{desired: 1, running: 1})
+	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"llm": st}}}
+
+	defer setEngineHeartbeat(t, 20*time.Millisecond)()
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/engine/llm/v1/chat/completions", strings.NewReader("{}"))
+	r.SetPathValue("path", "chat/completions")
+	g.streamed(rec, r, st, engineSessionClaims{Key: "llm"}, testMembership(), []byte(`{"stream":true}`))
+
+	body := rec.Body.String()
+	for _, want := range []string{"exceed_context_size_error", "33565", "32768", "try increasing it"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%q did not survive the relay:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "engine_unavailable") || strings.Contains(body, "did not come up in time") {
+		t.Errorf("a 400 was dressed up as a failed wake:\n%s", body)
+	}
+	// One attempt. A 4xx is not retried: the same request would get the same answer, and the
+	// caller is holding a stream open while it happens.
+	if got := eng.requests.Load(); got != 1 {
+		t.Errorf("the upstream saw %d requests, want 1", got)
+	}
+}
+
+// What is read out of an upstream error object, and what deliberately is not.
+func TestEngineUpstreamErrorCode(t *testing.T) {
+	for _, c := range []struct{ name, body, want string }{
+		{"a far gateway names its code", `{"error":{"code":"engine_waking","message":"still syncing"}}`, "engine_waking"},
+		{"a type is read when there is no string code", `{"error":{"code":400,"message":"too long","type":"exceed_context_size_error"}}`, "exceed_context_size_error"},
+		{"a numeric code is not a fleet code", `{"error":{"code":503,"message":"busy"}}`, ""},
+		{"no message, no object", `{"error":{"code":"engine_waking"}}`, ""},
+		{"not JSON at all", `<html>502 Bad Gateway</html>`, ""},
+		{"empty", ``, ""},
+	} {
+		if got := engineUpstreamErrorCode([]byte(c.body)); got != c.want {
+			t.Errorf("%s: code = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // A non-streaming request has nowhere to put a heartbeat, so this is the ONE path where 503
 // + Retry-After is right (ADR 0071 decision 5).
 func TestEngineGatewayNonStreamingSaysRetryAfter(t *testing.T) {
