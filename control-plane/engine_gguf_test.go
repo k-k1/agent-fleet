@@ -189,7 +189,7 @@ func TestParseGGUFGeometrySkipsPastArraysAndFloats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (engineKVGeometry{28, 2, 128, 128}); got != want {
+	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128}); got != want {
 		t.Errorf("geometry = %+v, want %+v", got, want)
 	}
 }
@@ -207,8 +207,8 @@ func TestEngineKVCacheMiBMatchesTheMeasuredKVSelfSize(t *testing.T) {
 		ctx  int
 		want int // MiB, as llama.cpp reported it
 	}{
-		{"qwen2.5-coder-1.5b at 16384", engineKVGeometry{28, 2, 128, 128}, 16384, 448},
-		{"qwen3-coder-30b-a3b at 32768", engineKVGeometry{48, 4, 128, 128}, 32768, 3072},
+		{"qwen2.5-coder-1.5b at 16384", engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128}, 16384, 448},
+		{"qwen3-coder-30b-a3b at 32768", engineKVGeometry{Layers: 48, HeadsKV: 4, KeyLen: 128, ValLen: 128}, 32768, 3072},
 	}
 	for _, c := range cases {
 		if got := engineKVCacheMiB(c.g, c.ctx); got != c.want {
@@ -220,11 +220,125 @@ func TestEngineKVCacheMiBMatchesTheMeasuredKVSelfSize(t *testing.T) {
 // Undeclared context is not "zero KV", it is "no answer" — and the caller must keep the row at
 // its floor rather than adding 0 and calling the result complete.
 func TestEngineKVCacheMiBNeedsBothHalves(t *testing.T) {
-	full := engineKVGeometry{28, 2, 128, 128}
+	full := engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128}
 	if got := engineKVCacheMiB(full, 0); got != 0 {
 		t.Errorf("no context: %d, want 0", got)
 	}
 	if got := engineKVCacheMiB(engineKVGeometry{Layers: 28}, 16384); got != 0 {
 		t.Errorf("partial geometry: %d, want 0", got)
+	}
+}
+
+// --- the hybrid modifiers ------------------------------------------------------
+
+// 🔴 The positive control for the correction, and the reason it exists: these are the numbers
+// af-sandbox's llama.cpp printed on 2026-09-18 for Qwen3.8-27B (block_count 65,
+// nextn_predict_layers 1, full_attention_interval 4). Started with --ctx-size 262144 it asked
+// the CUDA backend for `allocating 16384.00 MiB` and named the failure `failed to allocate
+// buffer for kv cache`. Multiplying by all 65 blocks says 66560 — four times the truth, which
+// is what had the panel warn about windows that fit and the class ladder reach for a bigger
+// card than the model needs.
+func TestEngineKVCacheMiBCountsOnlyTheCachingLayers(t *testing.T) {
+	qwen35 := engineKVGeometry{
+		Layers: 65, HeadsKV: 4, KeyLen: 256, ValLen: 256,
+		NextN: 1, FullAttnInterval: 4,
+	}
+	if got, want := qwen35.cacheLayers(), 16; got != want {
+		t.Fatalf("cacheLayers = %d, want %d ((65-1)/4)", got, want)
+	}
+	for _, c := range []struct{ ctx, want int }{
+		{262144, 16384}, // the measured allocation, to the MiB
+		{131072, 8192},
+		{65536, 4096},
+		{32768, 2048},
+	} {
+		if got := engineKVCacheMiB(qwen35, c.ctx); got != c.want {
+			t.Errorf("KV at %d = %d MiB, want %d", c.ctx, got, c.want)
+		}
+	}
+	// And the shape of the bug, stated as a number so a regression cannot pass quietly.
+	dense := engineKVGeometry{Layers: 65, HeadsKV: 4, KeyLen: 256, ValLen: 256}
+	if got := engineKVCacheMiB(dense, 262144); got != 66560 {
+		t.Errorf("without the modifiers KV = %d MiB, want the old 66560", got)
+	}
+}
+
+// Both modifiers are optional, and a row that has neither — every dense model, and every row
+// written before these columns existed — must estimate exactly as it did before.
+func TestEngineKVCacheMiBModifiersAreOptionalAndGuarded(t *testing.T) {
+	base := engineKVGeometry{Layers: 32, HeadsKV: 8, KeyLen: 128, ValLen: 128}
+	if got, want := base.cacheLayers(), 32; got != want {
+		t.Errorf("no modifiers: cacheLayers = %d, want %d", got, want)
+	}
+	// An interval of 1 is "every layer", not a division by one that reads as special.
+	one := base
+	one.FullAttnInterval = 1
+	if got := one.cacheLayers(); got != 32 {
+		t.Errorf("interval 1: cacheLayers = %d, want 32", got)
+	}
+	// Nonsense must not turn an over-estimate into a zero: a header claiming more prediction
+	// heads than it has blocks is ignored rather than subtracted.
+	for _, n := range []int{32, 33, -1} {
+		bad := base
+		bad.NextN = n
+		if got := bad.cacheLayers(); got != 32 {
+			t.Errorf("nextn %d: cacheLayers = %d, want the unmodified 32", n, got)
+		}
+	}
+}
+
+// The two modifiers are written AFTER attention.value_length in a real header, so a reader that
+// stopped as soon as the four required fields were in hand never saw them — which is exactly
+// how a hybrid model came out looking dense. Key order here is Qwen3.8-27B's own.
+func TestParseGGUFGeometryReadsPastTheRequiredFields(t *testing.T) {
+	buf := ggufBuild(t, 3, []ggufKV{
+		{"general.architecture", ggufTypeString, "qwen35"},
+		{"qwen35.block_count", ggufTypeUint32, 65},
+		{"qwen35.attention.head_count_kv", ggufTypeUint32, 4},
+		{"qwen35.attention.key_length", ggufTypeUint32, 256},
+		{"qwen35.attention.value_length", ggufTypeUint32, 256},
+		{"qwen35.nextn_predict_layers", ggufTypeUint32, 1},
+		{"qwen35.full_attention_interval", ggufTypeUint32, 4},
+	})
+	got, err := parseGGUFGeometry(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := engineKVGeometry{Layers: 65, HeadsKV: 4, KeyLen: 256, ValLen: 256, NextN: 1, FullAttnInterval: 4}
+	if got != want {
+		t.Errorf("geometry = %+v, want %+v", got, want)
+	}
+}
+
+// Reading on past the required fields means the scan now walks into the tokenizer array, which
+// no window ever contains. Running out THERE is the normal end of a successful read; running
+// out before the geometry is complete is still the short-window error the bigger retry exists
+// for. Both directions, because swallowing the second would silently stop that retry.
+func TestParseGGUFGeometryShortWindowAfterTheGeometryIsNotAnError(t *testing.T) {
+	buf := ggufBuild(t, 3, []ggufKV{
+		{"general.architecture", ggufTypeString, "qwen2"},
+		{"qwen2.block_count", ggufTypeUint32, 28},
+		{"qwen2.attention.head_count_kv", ggufTypeUint32, 2},
+		{"qwen2.attention.key_length", ggufTypeUint32, 128},
+		{"qwen2.attention.value_length", ggufTypeUint32, 128},
+		{"tokenizer.ggml.tokens", ggufTypeArray, ggufArr{ggufTypeString, []any{"x", "yy"}}},
+	})
+	// Cut the vocabulary in half, the way a 64 KiB window cuts a real one.
+	got, err := parseGGUFGeometry(buf[:len(buf)-6])
+	if err != nil {
+		t.Fatalf("truncated after the geometry: err = %v, want nil", err)
+	}
+	if want := (engineKVGeometry{Layers: 28, HeadsKV: 2, KeyLen: 128, ValLen: 128}); got != want {
+		t.Errorf("geometry = %+v, want %+v", got, want)
+	}
+	// Truncated BEFORE the geometry is complete: still errGGUFShort, so engineGGUFGeometry
+	// retries with ggufHeadMax instead of storing a half-read row.
+	early := ggufBuild(t, 3, []ggufKV{
+		{"general.architecture", ggufTypeString, "qwen2"},
+		{"qwen2.block_count", ggufTypeUint32, 28},
+		{"qwen2.attention.head_count_kv", ggufTypeUint32, 2},
+	})
+	if _, err := parseGGUFGeometry(early[:len(early)-4]); !errors.Is(err, errGGUFShort) {
+		t.Errorf("truncated before the geometry: err = %v, want errGGUFShort", err)
 	}
 }

@@ -75,18 +75,78 @@ const (
 // window, and the one that must never be confused with "this is not a GGUF file".
 var errGGUFShort = errors.New("gguf: header window is short")
 
-// engineKVGeometry is what a KV-cache estimate is computed from. Every field is required: a
-// partially read header answers nothing, because the product of four numbers with one missing
-// is not a smaller estimate, it is a wrong one.
+// ggufStop decides what a read that ran off the end of the window means.
+//
+// The scan no longer stops at the four required fields (the hybrid modifiers are written after
+// them), so it now walks on into `tokenizer.ggml.tokens` — an array of the whole vocabulary,
+// megabytes long, which no window this file fetches will ever contain. Running out there is
+// the NORMAL end of a successful read, not a failure: everything the header had to say about
+// attention was already behind us.
+//
+// So a short window with the geometry in hand is success. A short window WITHOUT it is still
+// errGGUFShort, which is what makes engineGGUFGeometry retry with the bigger window — the one
+// case that retry exists for. Any other error is the file not being what it claims and is
+// returned as is.
+func ggufStop(geom engineKVGeometry, err error) error {
+	if errors.Is(err, errGGUFShort) && geom.complete() {
+		return nil
+	}
+	return err
+}
+
+// engineKVGeometry is what a KV-cache estimate is computed from. The first four are required:
+// a partially read header answers nothing, because the product of four numbers with one
+// missing is not a smaller estimate, it is a wrong one.
+//
+// The last two are OPTIONAL modifiers, and 0 means "this architecture does not have one" —
+// which is the same answer as a row read before they were parsed, and reduces to the plain
+// `every layer caches every token` formula either way.
 type engineKVGeometry struct {
 	Layers  int // <arch>.block_count
 	HeadsKV int // <arch>.attention.head_count_kv
 	KeyLen  int // <arch>.attention.key_length, else embedding_length / head_count
 	ValLen  int // <arch>.attention.value_length, else the same fallback
+
+	// NextN is <arch>.nextn_predict_layers: multi-token-prediction heads. They are counted in
+	// block_count and carry a full set of attention tensors, but llama.cpp does not run them —
+	// it says so, once per tensor, as `model has unused tensor blk.<n>.nextn.* -- ignoring`.
+	// Measured on Qwen3.8-27B: block_count 65, nextn_predict_layers 1, and the ignored block is
+	// blk.64. Counting it overstates the cache by one layer in sixty-five.
+	NextN int
+	// FullAttnInterval is <arch>.full_attention_interval: in a hybrid model only every Nth
+	// layer is full attention and holds a cache that grows with the context. The rest are
+	// recurrent (the same header declares <arch>.ssm.*), and their state is a fixed size per
+	// sequence rather than per token — so they do not belong in a number that is multiplied by
+	// the window.
+	//
+	// 🔴 This is the difference between an estimate that is right and one that is four times
+	// too big, which is not a rounding error when it decides whether a window fits on a card.
+	FullAttnInterval int
 }
 
 func (g engineKVGeometry) complete() bool {
 	return g.Layers > 0 && g.HeadsKV > 0 && g.KeyLen > 0 && g.ValLen > 0
+}
+
+// cacheLayers is how many of block_count actually hold a per-token KV cache.
+//
+// Verified against llama.cpp itself (af-sandbox, 2026-09-18): Qwen3.8-27B started with
+// --ctx-size 262144 asked the CUDA backend for `allocating 16384.00 MiB` and named the failure
+// `failed to allocate buffer for kv cache`. (65-1)/4 = 16 layers x 4 kv heads x (256+256) x
+// 262144 x 2 B is 16384.00 MiB exactly — the plain block_count form says 66560.
+func (g engineKVGeometry) cacheLayers() int {
+	n := g.Layers
+	// Guarded rather than trusted: a header claiming more prediction heads than it has blocks
+	// is nonsense, and subtracting it would turn an over-estimate into a zero.
+	if g.NextN > 0 && g.NextN < g.Layers {
+		n -= g.NextN
+	}
+	if g.FullAttnInterval > 1 {
+		// Integer division on purpose: llama.cpp makes layer i full when (i+1) % interval == 0,
+		// so out of n layers exactly floor(n/interval) of them cache.
+		n /= g.FullAttnInterval
+	}
+	return n
 }
 
 // ggufReader walks a byte window, refusing to run off the end rather than panicking.
@@ -257,11 +317,11 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 	for i := uint64(0); i < kvCount; i++ {
 		key, err := r.str()
 		if err != nil {
-			return geom, err
+			return geom, ggufStop(geom, err)
 		}
 		t, err := r.u32()
 		if err != nil {
-			return geom, err
+			return geom, ggufStop(geom, err)
 		}
 		// The architecture names every other key, so it has to be read before they can be
 		// recognised. llama.cpp writes it first; if some writer does not, the keys simply are
@@ -277,7 +337,7 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 		}
 		n, isInt, err := r.intValue(t)
 		if err != nil {
-			return geom, err
+			return geom, ggufStop(geom, err)
 		}
 		if !isInt || arch == "" || !strings.HasPrefix(key, arch+".") {
 			continue
@@ -295,10 +355,15 @@ func parseGGUFGeometry(buf []byte) (engineKVGeometry, error) {
 			embedding = n
 		case "attention.head_count":
 			heads = n
+		case "nextn_predict_layers":
+			geom.NextN = n
+		case "full_attention_interval":
+			geom.FullAttnInterval = n
 		}
-		if geom.complete() {
-			return geom, nil
-		}
+		// 🔴 No early return on complete(). The two modifiers are written AFTER
+		// attention.value_length (measured on Qwen3.8-27B: value_length is key 28 of 50 and
+		// full_attention_interval is key 36), so stopping at the four required fields is
+		// exactly how a hybrid model came out looking like a dense one.
 	}
 	// 🔴 The fallback is `embedding_length / head_count`, and it is ONLY a fallback. Measured
 	// 2026-09-11: qwen3moe declares key_length = value_length = 128 while embedding_length /
@@ -360,16 +425,28 @@ func engineGGUFTry(ctx context.Context, url, token string, window int) (engineKV
 
 // engineKVCacheMiB is the KV cache one model wants, in MiB.
 //
-// `n_layer × n_head_kv × (key_length + value_length) × ctx × bytes(cache element)`, which is
-// llama.cpp's own `KV self size`. The two halves are kept apart rather than written as
+// `cacheLayers × n_head_kv × (key_length + value_length) × ctx × bytes(cache element)`, which
+// is llama.cpp's own `KV self size`. The two halves are kept apart rather than written as
 // `2 × head_dim` because a model may declare different key and value widths, and one that does
 // would be silently mis-sized by the doubled form.
+//
+// The layer count is cacheLayers() and not block_count: see there for the two reasons they
+// differ and for the measurement that settled it.
+//
+// What this still does NOT count is the recurrent half of a hybrid model — the fixed-size SSM
+// state of the layers cacheLayers() drops. It is per SEQUENCE rather than per token, so it does
+// not belong in a figure the window multiplies, and llama.cpp allocates it outside the buffer
+// this function's measurement was taken from.
 func engineKVCacheMiB(g engineKVGeometry, contextTokens int) int {
 	if !g.complete() || contextTokens <= 0 {
 		return 0
 	}
+	layers := g.cacheLayers()
+	if layers <= 0 {
+		return 0
+	}
 	const bytesPerElement = 2 // f16; see the note at the top of this file
-	total := int64(g.Layers) * int64(g.HeadsKV) * int64(g.KeyLen+g.ValLen) *
+	total := int64(layers) * int64(g.HeadsKV) * int64(g.KeyLen+g.ValLen) *
 		int64(contextTokens) * bytesPerElement
 	return int(total / (1024 * 1024))
 }

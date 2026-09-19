@@ -1293,7 +1293,8 @@ func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, j
 		var kv *store.EngineModelKV
 		if strings.TrimSpace(req.FileFlag) == "" {
 			kv = &store.EngineModelKV{Layers: req.KVGeom.Layers, HeadsKV: req.KVGeom.HeadsKV,
-				KeyLen: req.KVGeom.KeyLen, ValueLen: req.KVGeom.ValLen}
+				KeyLen: req.KVGeom.KeyLen, ValueLen: req.KVGeom.ValLen,
+				NextN: req.KVGeom.NextN, FullAttnInterval: req.KVGeom.FullAttnInterval}
 		}
 		found, err := g.models.ReplaceEngineModelFile(ctx, req.Role, req.ModelID, file, kv)
 		if err != nil {
@@ -1375,6 +1376,7 @@ func (g *engineIngester) install(ctx context.Context, req engineIngestRequest, j
 		// question 7).
 		KVLayers: req.KVGeom.Layers, KVHeadsKV: req.KVGeom.HeadsKV,
 		KVKeyLen: req.KVGeom.KeyLen, KVValueLen: req.KVGeom.ValLen,
+		KVNextN: req.KVGeom.NextN, KVFullAttnInterval: req.KVGeom.FullAttnInterval,
 	}
 	created, err := g.models.CreateEngineModel(ctx, m)
 	if err != nil {

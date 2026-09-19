@@ -244,6 +244,15 @@ type EngineModel struct {
 	// checkpoint's memory is dominated by the compute buffers instead (ADR 0074's first
 	// measurement).
 	KVLayers, KVHeadsKV, KVKeyLen, KVValueLen int
+	// How many of KVLayers actually cache: KVNextN is <arch>.nextn_predict_layers (blocks
+	// inside block_count that llama.cpp never runs) and KVFullAttnInterval is
+	// <arch>.full_attention_interval (only every Nth layer is full attention — the rest are
+	// recurrent, with a state that does not grow with the window).
+	//
+	// Unlike the four above, a zero here is SAFE: it means the architecture has no such field,
+	// or the row was written before they were read, and both reduce to "every layer caches".
+	// See engineKVGeometry.cacheLayers for the measurement that made them necessary.
+	KVNextN, KVFullAttnInterval int
 	// Sizes replaces sdcppSizes()'s guess from the model id with a declaration.
 	Sizes []string
 	// Params are the generation defaults this row asks for — see EngineParams. Nil for a row
@@ -432,6 +441,10 @@ type EngineModelFile struct {
 // replacement of a text encoder has no opinion about the checkpoint's attention heads.
 type EngineModelKV struct {
 	Layers, HeadsKV, KeyLen, ValueLen int
+	// The hybrid modifiers, travelling with the four they correct — see EngineModel's
+	// KVNextN/KVFullAttnInterval. Left out here, a re-read header would keep the row's stale
+	// divisor and go back to over-estimating by four.
+	NextN, FullAttnInterval int
 }
 
 // EngineModelStore is the catalogue. Two writers reach it — an administrator's toggle and the

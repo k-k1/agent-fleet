@@ -1719,3 +1719,57 @@ a rung falls back to automatic, logged, not refused). No pin existed on this dep
 (`aws cloudformation update-stack --use-previous-template`, one changed parameter at a time,
 everything else `UsePreviousValue`) — not through `params/60-engines`. `standup.sh` rebuilding
 from the local capture would still come back with the old three-row ladder and no `t4`.
+
+## Follow-up — open question 7's formula only fitted dense models (2026-09-18, af-sandbox, measured)
+
+The 2026-09-11 follow-up wrote the estimate as `block_count × head_count_kv ×
+(key_length + value_length) × ctx × 2`. **For a hybrid model that is four times too big**, which
+is not a rounding error when the number decides whether a window fits on a card.
+
+**Measured.** On af-sandbox's llm role, Qwen3.8-27B (`block_count 65`, `head_count_kv 4`,
+`key_length = value_length = 256`) started with `--ctx-size 262144` dies with
+
+```
+ggml_backend_cuda_buffer_type_alloc_buffer: allocating 16384.00 MiB on device 0:
+  cudaMalloc failed: out of memory
+llama_init_from_model: failed to initialize the context: failed to allocate buffer for kv cache
+```
+
+The formula above says **66,560 MiB**. The truth is **16,384.00 MiB**, exactly a quarter. The
+difference is two keys in the GGUF header.
+
+- **`<arch>.nextn_predict_layers`** (1 here) — multi-token-prediction heads. They sit inside
+  `block_count` and carry a full set of attention tensors, and llama.cpp does not run them: it
+  says so once per tensor, `model has unused tensor blk.64.nextn.* -- ignoring`.
+- **`<arch>.full_attention_interval`** (4 here) — **only every 4th layer is full attention**. The
+  rest are recurrent (the same header declares `<arch>.ssm.*`) and their state is a fixed size
+  **per sequence, not per token**, so it does not belong in a figure the window multiplies.
+
+Caching layers are `(block_count − nextn_predict_layers) ÷ full_attention_interval` =
+`(65 − 1) ÷ 4` = **16**, and `16 × 4 × 512 × 262144 × 2` is 16,384.00 MiB to the decimal.
+
+Both are optional modifiers, and **0 means "this architecture has no such field" — every layer
+caches, exactly as before**. A dense model's estimate does not move by a byte (the two measured
+values from 2026-09-11 stay in the tests as the positive control).
+
+🔴 **The reading order is a trap.** The parser returned as soon as the four required fields were
+in hand, but in a real header `attention.value_length` is key 28 of 50 and
+`full_attention_interval` is key 36 — so **the modifiers were never reached**. Dropping the early
+return walks the scan into the tokenizer array (megabytes, in no window this ever fetches), so
+"the window ended after the geometry was complete" is now read as success. Ending short *before*
+it is complete is still `errGGUFShort`, and the larger-window retry still fires.
+
+### A row with no geometry is not a floor, it is an unanswered question
+
+The same live run turned up the other half. **A row with no geometry answers its weights alone,
+and weights alone fit almost any card, so enabling one was waved through without a word.** The
+sandbox Qwen3.8-27B row declares `262144`, has no geometry, reported **17,093 MiB** against a
+22,000 MiB rung, was enabled silently — and llama.cpp then asked for 16,384 MiB of KV cache on
+top and the L4 went out of memory.
+
+The missing term cannot be computed here (that is what "no geometry" means), so the guard's job
+is **to stop calling it a fit**, not to invent a number: `engineVramGuardRow` now lets a row that
+declares a window and has no geometry through only with `confirm_vram`. Three ways out — confirm,
+declare `vram_mib`, or re-register so the header is read. **A row that declares no window (an
+image checkpoint) is untouched**, and for it the weights really are most of the story, as the
+first measurement said.

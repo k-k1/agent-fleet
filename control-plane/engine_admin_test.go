@@ -2005,3 +2005,63 @@ func TestTheSlotGatesSurviveForComplete(t *testing.T) {
 		t.Error("a provider with no vocabulary accepted a file role")
 	}
 }
+
+// 🔥 The other half of the same live failure, and the one nothing was watching. A row with no
+// attention geometry answers its FLOOR — the weights and nothing else — and a floor fits almost
+// any card, so enabling it was waved through without a word. af-sandbox 2026-09-18: the
+// Qwen3.8-27B row declares 262144 tokens and no geometry, reported 17093 MiB against a 22000 MiB
+// rung, and llama.cpp then asked for 16384 MiB of KV cache on top and the L4 answered
+// `cudaMalloc failed: out of memory`.
+//
+// The missing term cannot be computed here — that is what "no geometry" means — so the guard's
+// job is to stop calling it a fit, not to invent a number.
+func TestEngineAdminWillNotCallAFloorAFitWhenAWindowIsDeclared(t *testing.T) {
+	a, e, st := engineWindowTestEngine(t)
+	row := engineWindowTestRow("qwen3", false, 262144)
+	row.KVLayers, row.KVHeadsKV, row.KVKeyLen, row.KVValueLen = 0, 0, 0, 0 // never read
+	if err := st.PutEngineModel(t.Context(), row); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	code, out := putModelReq(t, a, "qwen3", `{"enabled":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("enabling a geometry-less row that declares a window = %d (%v), want 409", code, out)
+	}
+	if err, _ := out["error"].(map[string]any); err == nil || err["code"] != errCodeEngineVramConfirm {
+		t.Fatalf("error = %v, want %s", out["error"], errCodeEngineVramConfirm)
+	}
+	rows, _ := st.ListEngineModels(t.Context(), "image")
+	if rows[0].Enabled {
+		t.Fatal("the row was enabled by the call that refused it")
+	}
+
+	// A warning, not a wall — the same bargain as the rest of this guard.
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3", `{"enabled":true,"confirm_vram":true}`); code != http.StatusOK {
+		t.Fatalf("the confirmed enable = %d (%v), want 200", code, out)
+	}
+
+	// And the two shapes it must NOT touch. An image checkpoint declares no window, so its
+	// floor is most of the story and enabling it stays a silent yes.
+	noWindow := engineWindowTestRow("sdxl", false, 0)
+	noWindow.KVLayers, noWindow.KVHeadsKV, noWindow.KVKeyLen, noWindow.KVValueLen = 0, 0, 0, 0
+	if err := st.PutEngineModel(t.Context(), noWindow); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "sdxl", `{"enabled":true}`); code != http.StatusOK {
+		t.Fatalf("a row with no window = %d (%v), want 200", code, out)
+	}
+	// And an operator's own measurement answers the question outright, geometry or not.
+	measured := engineWindowTestRow("qwen3-measured", false, 262144)
+	measured.KVLayers, measured.KVHeadsKV, measured.KVKeyLen, measured.KVValueLen = 0, 0, 0, 0
+	measured.VramMiB = 1024
+	if err := st.PutEngineModel(t.Context(), measured); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = putModelReq(t, a, "qwen3-measured", `{"enabled":true}`); code != http.StatusOK {
+		t.Fatalf("a row with a declared vram_mib = %d (%v), want 200", code, out)
+	}
+}

@@ -1145,6 +1145,26 @@ func engineVramGuardRow(ctx context.Context, e *engineRuntimeState, m store.Engi
 		return nil
 	}
 	need, source := engineModelVramNeed(m)
+	// 🔴 A floor for a row that declares a WINDOW is the one estimate that is known to be
+	// missing a term which GROWS with that window, and it is the shape that has actually put a
+	// card out of memory: af-sandbox's Qwen3.8-27B row declares 262144 and no geometry, so the
+	// need came back as 17093 MiB of weights, fitted the 22000 MiB rung, was enabled without a
+	// word — and llama.cpp then asked for 16384 MiB of KV cache on top and the L4 answered
+	// `cudaMalloc failed: out of memory`. Passing that silently is the bug. The number cannot be
+	// computed here (that is what "no geometry" means), so the answer is to say so and let the
+	// operator confirm, or declare vram_mib, or re-ingest so the header is read.
+	//
+	// Only when it does not already fail the ordinary comparison below, and only for a row that
+	// declares a window: an image checkpoint has none, and for it the weights really are most of
+	// the story (ADR 0074's first measurement).
+	if source == engineVramFloor && m.ContextTokens > 0 && engineClassFits(sel, need) {
+		return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
+			"%s declares a %d-token window but no attention geometry, so the KV cache it will ask"+
+				" for on top of %d MiB of weights cannot be sized here and the %s class's %d MiB"+
+				" cannot be said to fit; repeat with confirm_vram, or declare vram_mib, or"+
+				" re-register the model so its GGUF header is read",
+			m.ID, m.ContextTokens, need, sel.ID, sel.VramMiB)}
+	}
 	if source == engineVramUnknown || engineClassFits(sel, need) {
 		return nil
 	}

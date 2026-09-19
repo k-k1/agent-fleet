@@ -371,7 +371,8 @@ func engineKnownArtifacts(models []store.EngineModel, jobs []store.EngineIngestJ
 			kv := engineKVGeometry{}
 			if strings.TrimSpace(file.Flag) == "" {
 				kv = engineKVGeometry{Layers: model.KVLayers, HeadsKV: model.KVHeadsKV,
-					KeyLen: model.KVKeyLen, ValLen: model.KVValueLen}
+					KeyLen: model.KVKeyLen, ValLen: model.KVValueLen,
+					NextN: model.KVNextN, FullAttnInterval: model.KVFullAttnInterval}
 			}
 			add(file.S3Key, model.ID, file.Source, file.ArtifactIdentity, true, true, kv, file.VaeBundled)
 		}
