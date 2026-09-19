@@ -331,7 +331,12 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
             {done ? tr("rp.del.close") : tr("common.cancel")}
           </Button>
           {!done && (
-            <Button variant="danger" onClick={() => void run()} disabled={busy || sum.copies === 0}>
+            <Button
+              variant="danger"
+              onClick={() => void run()}
+              disabled={busy || sum.copies === 0}
+              data-autofocus
+            >
               {tr("rp.del.run", { count: sum.copies })}
             </Button>
           )}
