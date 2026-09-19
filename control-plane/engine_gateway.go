@@ -792,11 +792,22 @@ func (g engineGateway) enginePropsAugmentRouterWindow(ctx context.Context, eng *
 	if nctx <= 0 {
 		return body
 	}
-	var doc map[string]any
+	// map[string]json.RawMessage, not map[string]any: every OTHER key's value rides through as
+	// the exact bytes the upstream sent — an any would decode every number as float64 and
+	// re-encode it in Go's own formatting, which is lossy for anything /props sends outside
+	// float64's 53-bit mantissa (llama-server's own `seed` is a full 64-bit value) and changes
+	// formatting even for the values that survive the round trip. This is the ONE key this route
+	// adds; nothing else about the body may change shape, which a RawMessage map is what actually
+	// guarantees rather than merely documents.
+	var doc map[string]json.RawMessage
 	if json.Unmarshal(body, &doc) != nil {
 		return body
 	}
-	doc[enginePropsRouterWindowField] = map[string]any{"id": id, "n_ctx": nctx}
+	added, err := json.Marshal(map[string]any{"id": id, "n_ctx": nctx})
+	if err != nil {
+		return body
+	}
+	doc[enginePropsRouterWindowField] = added
 	out, err := json.Marshal(doc)
 	if err != nil {
 		return body

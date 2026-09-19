@@ -365,6 +365,11 @@ func TestEnginePropsBorrowedRowAsksTheFarGatewaysOwnRoute(t *testing.T) {
 // props() must then read the model's real window from /v1/models — directly, never through
 // serve() — and add it under router_selected_model without disturbing anything /props itself
 // said. Measured against a real router deployment (2026-09-20): 262144, in data[].meta.n_ctx.
+//
+// The upstream body also carries a "seed" bigger than float64's 53-bit mantissa (max int64,
+// 9223372036854775807): a map[string]any round trip decodes every number as float64 and would
+// re-encode this one with a DIFFERENT value, silently — which is exactly what
+// enginePropsAugmentRouterWindow must not do to any key besides the one it adds.
 func TestEnginePropsRouterModeReadsV1ModelsForWindow(t *testing.T) {
 	mgr, signKey, mid := enginePropsFixture(t)
 	var modelsAuth string
@@ -372,7 +377,7 @@ func TestEnginePropsRouterModeReadsV1ModelsForWindow(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/props":
-			_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":0},"model_path":"none","role":"router"}`))
+			_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":0},"model_path":"none","role":"router","seed":9223372036854775807}`))
 		case "/v1/models":
 			modelsAuth = r.Header.Get("Authorization")
 			_, _ = w.Write([]byte(`{"data":[{"id":"qwen3.8-27b-uncensored-q4_k_m","meta":{"n_ctx":262144}}]}`))
@@ -425,6 +430,13 @@ func TestEnginePropsRouterModeReadsV1ModelsForWindow(t *testing.T) {
 	}
 	if api.updates != 0 {
 		t.Errorf("ECS saw %d UpdateService call(s) — reading /v1/models directly must never touch the engine's lifecycle", api.updates)
+	}
+	// The precision check: a map[string]any round trip decodes this into a float64 and
+	// re-encodes it as something else (measured: 9223372036854775807 becomes
+	// 9223372036854775808 through that path) — this must survive as the EXACT bytes the
+	// upstream sent, because this route's job is to carry /props through, not to parse it.
+	if !strings.Contains(rec.Body.String(), `"seed":9223372036854775807`) {
+		t.Errorf("body = %s, want the upstream's 64-bit seed byte-for-byte, not rounded through a float64", rec.Body.String())
 	}
 }
 
