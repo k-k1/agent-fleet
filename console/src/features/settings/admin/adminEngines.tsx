@@ -223,6 +223,27 @@ export function EnginesAdminView() {
     }
   };
 
+  /** Whether this role may buy an INTERRUPTIBLE box (ADR 0077 decision 9, amended).
+   *
+   * The operator declares which offers exist; this is the administrator accepting what a `spot`
+   * one costs when the box is taken away — the answer in flight is lost and the next one waits
+   * out a cold start. Like the rung, it reaches the NEXT purchase: a Spot box that is answering
+   * right now keeps answering, which the panel says rather than implying the opposite. */
+  const setSpot = async (key: string, spot: boolean) => {
+    setBusy(key);
+    try {
+      const d = await apiJSON(`api/admin/engines/${encodeURIComponent(key)}/spot`, "PUT", { spot });
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+    } finally {
+      setBusy("");
+    }
+  };
+
   /** What this deployment excludes from every image this engine makes. One setting, applied to
    *  every request whoever made it and whichever checkpoint answers.
    *
@@ -359,6 +380,7 @@ export function EnginesAdminView() {
               row={e}
               busy={busy === e.key}
               onPick={(cls) => setClass(e.key, cls)}
+              onSpot={(on) => setSpot(e.key, on)}
               onReplace={() => replaceBox(e.key)}
               refit={refit?.key === e.key ? refit : null}
             />
@@ -520,11 +542,14 @@ function EngineClassPicker({
   row,
   busy,
   onPick,
+  onSpot,
   onReplace,
 }: {
   row: EngineRow;
   busy: boolean;
   onPick: (cls: string) => void;
+  /** Accepting — or withdrawing — interruption for this role. */
+  onSpot: (spot: boolean) => void;
   /** What the last pick did to this engine's windows, when it did anything. */
   refit?: {
     done: WindowRefit[];
@@ -548,6 +573,19 @@ function EngineClassPicker({
   // pin the moment the first box was bought.
   const pinned = auto && row.class_is_default === false;
   const current = auto ? (pinned && row.class?.id) || "" : row.class?.id || row.class_default || "";
+  // 🔴 A declared `spot` offer that is NOT AVAILABLE, because nobody has accepted interruption
+  // for this role. Both halves have to be on screen: hiding the rows would make an operator who
+  // declared them read the panel as "my declaration was ignored" — which is the failure this
+  // deployment has already had once, when a ladder was edited while an offer list was live and
+  // the new rungs silently never appeared. The tick box is drawn only where the CP sent the
+  // field AND a spot row exists: an older CP buys Spot the moment it is declared, and a control
+  // that would not reach it is worse than none.
+  const spotAllowed = row.spot_allowed === true;
+  const spotGate = row.spot_allowed !== undefined && offers.some((o) => o.buy === "spot");
+  // 🔴 Off `spotGate`, not off `spotAllowed` alone: an older control plane sends no field and
+  // buys Spot the moment it is declared, so marking its rows unavailable would be the panel
+  // stating the opposite of what that deployment does.
+  const spotBlocked = (o: EngineOffer) => spotGate && !spotAllowed && (o.buy || "od") === "spot";
   // The box that is answering right now, when it is not one this rung covers. It is read from
   // the container instance rather than from the capacity provider, because the provider
   // describes the NEXT box.
@@ -581,8 +619,11 @@ function EngineClassPicker({
               back from a pin would be to pick the offer that happens to be the default — which
               is a different thing: it would still refuse to fall through to the next one. */}
           {auto && <option value="">{tr("admin.engines_class_auto")}</option>}
+          {/* A blocked offer is DISABLED rather than missing, for the same reason the list below
+              keeps it: it is declared, and "why can I not pick the cheap one" has to have an
+              answer on the screen it is asked on. */}
           {classes.map((c) => (
-            <option key={c.id} value={c.id}>
+            <option key={c.id} value={c.id} disabled={spotBlocked(c)}>
               {engineClassLabel(c, tr)}
             </option>
           ))}
@@ -680,10 +721,45 @@ function EngineClassPicker({
                 {/* Declared or nothing. An invented 0 reads as free (ADR 0074), and the number
                     that IS there is the dearest type this row can buy — see EngineOffer. */}
                 {o.usd_per_hour ? <span className="muted mono">{"$" + o.usd_per_hour + "/h"}</span> : null}
+                {/* A badge, and the row keeps full contrast — the same rule the model list is
+                    written to: dimming a whole row reads as "you may not touch this" rather than
+                    as the state it is in, and in the light theme it barely reads at all. */}
+                {spotBlocked(o) && (
+                  <span className="engines-model-tag off">{tr("admin.engines_spot_blocked")}</span>
+                )}
               </li>
             ))}
           </ul>
         </>
+      )}
+      {/* Accepting interruption, beside the list it governs. 🔴 The sentence under it names both
+          costs, because "the instance may stop" is not what anybody is actually agreeing to: the
+          answer being generated is lost, and the next request waits out a cold start of minutes.
+          An administrator who has read that is the only one who should be able to tick this. */}
+      {spotGate && (
+        <div className="engines-spot">
+          <label className="engines-spot-allow">
+            <input
+              type="checkbox"
+              checked={spotAllowed}
+              disabled={busy}
+              onChange={(ev) => onSpot(ev.currentTarget.checked)}
+            />
+            <span>{tr("admin.engines_spot_allow")}</span>
+          </label>
+          <p className="muted">{tr("admin.engines_spot_note")}</p>
+          {/* A pin that cannot be honoured. The CP chooses automatically instead of refusing to
+              start, so without this line the picker would sit on an offer nothing is buying. */}
+          {!spotAllowed && pinned && offers.some((o) => o.id === row.class?.id && o.buy === "spot") && (
+            <p className="form-err">{tr("admin.engines_spot_pin_ignored")}</p>
+          )}
+          {/* Withdrawing does not hand a box back. Like the rung, it reaches the next purchase —
+              and a panel that let "unticked" be read as "the Spot box is gone" would be stating
+              the opposite of what is running. */}
+          {!spotAllowed && row.offer?.buy === "spot" && (
+            <p className="muted">{tr("admin.engines_spot_running")}</p>
+          )}
+        </div>
       )}
       {/* How far down the list this demand walked, and why each one was left. Only from two
           entries: one entry is "it was bought on the first offer", which the line above already

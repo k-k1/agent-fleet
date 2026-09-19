@@ -15,7 +15,9 @@ English | [日本語](0077-engine-boxes-bought-by-cp.ja.md)
 - **What the operator asked for is unchanged from ADR 0075, to the letter** — (1) buy whatever clears
   the required VRAM, cheapest first, without distinguishing on-demand from Spot; (2) if Spot cannot
   be had, take on-demand; (3) a Spot instance dying suddenly is acceptable, and rule 2 rebuilds it. The
-  exception: the llm role is on-demand only. **The only thing that changes is who buys the instance.**
+  exception: the llm role is on-demand only (🔴 replaced by the revision of 2026-09-19 with "only a role
+  whose interruption was accepted buys Spot" — see the revision section at the end).
+  **The only thing that changes is who buys the instance.**
 - 🔴 **This ADR exists because ADR 0075's own revisit condition was met.** Under the rejected
   alternative "move to EC2 Fleet / an Auto Scaling group", 0075 wrote: "if rule 2's implementation
   turns into 'AWS retries and the CP retries on top of it', revisit this rejection." Three rounds
@@ -436,11 +438,26 @@ the engine images do not agree with. Then a knob pinning `…/gpu/<version>` is 
 🔁 **What would change this**: if contract B needs "the instance id" (0075 kept `box.provider`
 CP-internal), it is added by agreement with the Console lane.
 
-### 9. The llm role stays on-demand only. TTS stays on Fargate
+### 9. A `spot` offer is bought only by a role whose interruption was accepted. TTS stays on Fargate
 
-- 0075 decision 9 (no `spot` row for llm) is inherited. There is no second safeguard of "no
-  provider is created" here, so **the CP refuses a `spot` row in `LlmOffers`** (dropped at parse
-  time, with a log line).
+🔴 What this decision said when it was drafted — "the llm role stays on-demand only; a `spot` row
+in `LlmOffers` is dropped at parse time" — was replaced by the revision of 2026-09-19. The reason
+and the migration are in the revision section at the end.
+
+- **The declaration (the operator's) and the acceptance (the administrator's) are separate.** A
+  `spot` row in `<Role>Offers` does not mean "may be bought": only a role whose
+  `engine_<role>_spot` setting is `true` has that row as a candidate. Absent = not accepted —
+  letting a declaration alone buy one would take away the very thing this decision protects.
+- **The gate is in `candidateOffers`, in one place.** Gating the panel's picker is not enough: a
+  pin is the only half a picker could gate, and an ordinary start is an unpinned one walking this
+  list.
+- **A pin naming a `spot` row without the acceptance falls back to AUTOMATIC** — the same reading
+  as a pin naming an offer nobody declares any more. Refusing to start is not what "I have not
+  accepted interruption" asked for.
+- The acceptance reaches the **next purchase**. Withdrawing it does not hand back a Spot instance
+  that is answering right now; it has the same nature as a rung change, and the panel says so.
+- Accepting and withdrawing are one audit line each (`engine.<role>.spot`). A deployment that
+  starts buying interruptible boxes has to be able to answer "who said it could".
 - 0075 decision 10 (TTS) is outside this ADR. TTS is Fargate, and `FARGATE_SPOT` ↔ `FARGATE`
   stays a matter of the service's strategy.
 
@@ -1218,6 +1235,9 @@ in this. What the implementation handed back:
   leak of ADR 0075 without ever touching a task that is merely still being placed.
 - **Decision 9's refusal is keyed by the ROLE at parse time** (`parseEngineOffers(key, spec)`), so
   it is one function and not a condition at each call site; the reloader uses the same one.
+  🔴 **The revision of 2026-09-19 deleted that function** — the judgement moved from the role at
+  parse time to the acceptance at the moment of buying (`engine_<role>_spot`, read by
+  `candidateOffers`).
 - **A start already in flight is a fourth gate on `startGate`.** Decision 8 leaves the gate with
   the no-candidate refusal and the swap wait; a third was needed. The admin toggle calls the gate
   itself, so without this the toggle's own call would begin the walk again while an instance was
@@ -2361,3 +2381,33 @@ decision 6's fit check inert for that role.
 Also still unmeasured on hardware, from the earlier phases and unchanged by this revision: the
 `<Role>Enabled` round trip's Control Plane half (the CloudFormation half was measured on a throwaway
 stack, #593) and #584's recovery from a zero-row engine table.
+
+## Revision — a role's prohibition became the administrator's acceptance (2026-09-19)
+
+As drafted, decision 9 enforced "the llm role does not buy Spot" **at parse time**
+(`parseEngineOffers` dropped a `spot` row of `LlmOffers` with a log line). The reason for the
+prohibition has not changed — a Spot interruption arrives in the middle of a conversation and is
+followed by a 527-586 s cold start. What changed is the reading: **that is not a property of the
+role, it is a deployment's choice between cost and availability.** The person who lives with the
+interruption is the deployment's administrator, and they are in a position to say "a dropped
+answer now and then is worth half the bill" (measured over 30 days in Tokyo, GPU Spot never once
+exceeded on-demand, and g6.xlarge sat at about half). With the parse-time refusal, nothing in the
+product let them say it.
+
+| Changed | What it is |
+|---|---|
+| `parseEngineOffers` | **Deleted.** Parsing an offer list is role-blind (`parseEngineClasses` alone). Instead of dropping a row by role, `candidateOffers` consults the acceptance at the moment of buying |
+| Setting | `engine_<role>_spot`. Only `"true"` is acceptance; anything else is not (a settings store that cannot be read falls the safe way) |
+| Admin API | `PUT /api/admin/engines/{key}/spot` (`{"spot":true\|false}`). Accepting is 409 on a role that declares no `spot` row — consent is given to the list in front of somebody, and a `true` stored before the declaration would buy a row declared later on an authority given for something else. Withdrawing always goes through |
+| Contract B | `spot_allowed` on the row. The offers are what the operator declared, this is what the administrator accepted, and the panel needs both to draw a row that is declared and will not be bought |
+| Panel | A tick and a note under the offers list. A declared `spot` row is **not hidden**: it stays in place, badged "needs interruption accepted", with its option disabled. There are also lines for a pin that is being held back and for a Spot instance that is answering right now |
+
+⚠️ **Migration (deployments that already declare `spot` rows)**: the dev deployment's and the
+sandbox's image role. From this version those rows **are not bought until somebody ticks the box** —
+the rows do not disappear, and the reason is on screen. Treating an existing declaration as an
+implied acceptance was rejected: it would leave the question unasked for exactly the deployments
+it is being asked about.
+
+Unmeasured: no llm Spot instance has been raised on hardware. The acceptance path (setting, API,
+candidate filtering) is closed by unit tests with positive controls, but **what an interruption
+mid-conversation looks like** is inferred from the image role's hardware run (ADR 0077 P2).

@@ -301,9 +301,11 @@ $0.563-0.577. **A published price is not evidence of stock.** The second attempt
 service-linked role created and the type list widened to three, got one in **42 seconds**. That
 seventeen-minute wait is exactly what an offer's budget now bounds.
 
-The `llm` role takes the parameters (one format for both roles) but **gets no Spot provider and
-should be given no `spot` row**: a two-minute termination notice mid-conversation costs a
-527-586-second cold start to recover from.
+The `llm` role takes the same parameters, and it may be given a `spot` row — but the row alone
+buys nothing. A `spot` offer is a candidate only where a super-admin has **accepted interruption**
+for that role on the engines panel (ADR 0077 decision 9, as revised): a two-minute termination
+notice mid-conversation costs a 527-586-second cold start to recover from, and that is a choice
+the deployment makes rather than one the format makes for it.
 
 ### 0.19.0: the first update also updates 20-platform
 
@@ -724,11 +726,14 @@ had, and the same reason a deployment capture is one `key=value` per line.
   Control Plane reads the ladder itself the same way — nothing in this template chooses between
   them, and a deployment that declares neither never calls ECS about capacity at all (ADR 0074
   decision 3, inherited).
-- 🔴 **`spot` belongs to the `image` role only.** `LlmOffers` takes the field because the format
-  is one format, but a two-minute termination notice mid-conversation costs a 527-586-second
-  cold start to recover from (ADR 0075 decision 9, inherited). There is no longer a "no Spot
-  provider exists" safeguard behind that rule — the Control Plane **drops a `spot` row in
-  `LlmOffers` at parse time**, with a log line (ADR 0077 decision 9).
+- 🔴 **A `spot` row is declared here and ACCEPTED elsewhere.** Writing one does not make it
+  buyable: the Control Plane buys from it only where a super-admin has ticked "accept
+  interruption" for that role on the engines panel, and until then the offer is listed, badged
+  and skipped (ADR 0077 decision 9, as revised — it used to be dropped at parse time for the
+  `llm` role). The tick is worth its own thought on `llm`: a two-minute termination notice
+  mid-conversation costs a 527-586-second cold start to recover from, while an image request is
+  one call that can be made again. **A deployment that already declares `spot` rows gets no
+  implied acceptance from this version on** — somebody has to tick it once.
 - 🔴 **The list is tried in the order WRITTEN — the Control Plane does not sort by price.**
   Cheapest-first is an operator convention, not a mechanism. Three reasons it stays that way, and
   all three are reasons a sort would hurt: a row with no price would sort last exactly when it is

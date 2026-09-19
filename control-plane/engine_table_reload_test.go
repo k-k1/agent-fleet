@@ -369,7 +369,7 @@ func TestEngineTableReloadAdoptsARoleThatAppears(t *testing.T) {
 		built++
 		// The controller is built with no interval, so nothing here starts a goroutine; what is
 		// being pinned is that the role becomes SERVED, by the one function boot uses.
-		return &engineRuntimeState{def: d, classes: parseEngineOffers(d.Key, d.offersSpec())}
+		return &engineRuntimeState{def: d, classes: parseEngineClasses(d.offersSpec())}
 	}
 	ssmc := &fakePendingSSM{value: tableFixture(ladderBefore)}
 	r := newEngineTableReloader(ssmc, "/af-ws/engines", reg, "")

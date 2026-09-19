@@ -116,6 +116,24 @@ selector then reads **Automatic (the default)**; choosing a rung **pins** it (th
 through to the next one. Everything below about the next instance, the cold start and putting
 it back applies the same way under offers.
 
+#### A Spot offer is not bought until "accept interruption" is ticked
+
+A **Spot** row in the offers list does not make one buyable on its own. Only a role whose
+**"Accept interruption (this role may buy Spot instances)"** box — under the list — is ticked has
+that row as a candidate. Until then the row stays in the list, badged **"needs interruption
+accepted"**, and its entry in the selector cannot be chosen: the declaration is visibly there
+rather than silently ignored.
+
+What is being accepted is not "the instance may stop". It is these two:
+
+- **Whatever was being processed at that moment is lost** — on llm, a conversation is cut off
+  mid-answer.
+- **The next request waits out a cold start** (about 9 minutes for llm, 3 for image).
+
+An offer taken away twice in a row is skipped for the rest of that start, so the engine ends up on
+an on-demand offer whose VRAM fits. Un-ticking the box **leaves the Spot instance that is running
+alone** — it applies to the next instance bought, exactly like a class change.
+
 It is for **temporarily moving a role onto a bigger GPU** in order to try a model that wants
 more VRAM.
 

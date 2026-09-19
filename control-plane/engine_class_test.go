@@ -171,7 +171,7 @@ func newClassTestEngine(t *testing.T, api engineECSAPI, fleet engineFleetAPI, la
 	e.def.LaunchTemplate = "lt-image"
 	e.def.Classes = ladder
 	e.ecs.roleAttr = engineBoxRole(e.def)
-	e.classes = parseEngineOffers("image", ladder)
+	e.classes = parseEngineClasses(ladder)
 	e.cluster = "cluster"
 	e.settings = st
 	e.audit = st
@@ -333,6 +333,80 @@ func TestPutClassStoresTheChoice(t *testing.T) {
 	}
 	if v, _ := st.GetSetting(t.Context(), engineClassSettingKey("image")); v != "l40s" {
 		t.Errorf("a refused class changed the stored one to %q", v)
+	}
+}
+
+func putSpot(t *testing.T, a engineAdminAPI, body string) (int, map[string]any) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("PUT", "/api/admin/engines/image/spot", strings.NewReader(body))
+	r.SetPathValue("key", "image")
+	a.putSpot(rec, r, store.Identity{ID: "u1"})
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out
+}
+
+// The administrator accepting interruption, and taking it back. It is stored, audited and
+// reflected in the row — and it buys nothing by itself: like a pinned rung it reaches the NEXT
+// purchase, so the Spot box that is answering right now keeps answering.
+func TestPutSpotStoresTheConsentAndBuysNothing(t *testing.T) {
+	st := testSettingsStore(t)
+	f := &fakeFleet{}
+	e := newClassTestEngine(t, &engineTestECS{instance: "engine-image", instanceType: "g6.xlarge"}, f,
+		"g6-spot|L4 Spot|22000|g6.xlarge|4-8|15000-65536|0.57|spot;"+
+			"g6-od|L4|22000|g6.xlarge|4-8|15000-65536|1.17|od", st)
+	a := classAdminAPI(t, e, st)
+
+	if code, out := putSpot(t, a, `{"spot":true}`); code != http.StatusOK || out["spot_allowed"] != true {
+		t.Fatalf("accept = %d %v", code, out["spot_allowed"])
+	}
+	if v, _ := st.GetSetting(t.Context(), engineSpotSettingKey("image")); v != "true" {
+		t.Fatalf("stored consent = %q", v)
+	}
+	if f.writes() != 0 {
+		t.Errorf("%d EC2 write(s) for a stored consent, want none: it reaches the next purchase", f.writes())
+	}
+	if code, out := putSpot(t, a, `{"spot":false}`); code != http.StatusOK || out["spot_allowed"] != false {
+		t.Fatalf("withdraw = %d %v", code, out["spot_allowed"])
+	}
+	if v, _ := st.GetSetting(t.Context(), engineSpotSettingKey("image")); v != "" {
+		t.Fatalf("stored consent = %q after withdrawing, want nothing", v)
+	}
+	// Both acts are in the audit trail. A deployment that starts buying interruptible boxes has
+	// to be able to answer "who said it could" — the same reason the rung and the mode are there.
+	logs, err := st.ListAuditByTenant(t.Context(), "", 100)
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	var states []string
+	for _, l := range logs {
+		if l.Action == "engine.image.spot" {
+			states = append(states, l.Target)
+		}
+	}
+	if len(states) != 2 {
+		t.Fatalf("audited %v, want one line for each act", states)
+	}
+}
+
+// Consent is given to a list somebody is looking at. A yes stored before any `spot` row exists
+// would buy an interruptible box the moment an operator declared one, on an authority given for
+// something else — so accepting is refused where the role declares none, and withdrawing is not.
+func TestPutSpotIsRefusedWhereNoSpotOfferIsDeclared(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{},
+		"g6-od|L4|22000|g6.xlarge|4-8|15000-65536|1.17|od", st)
+	a := classAdminAPI(t, e, st)
+
+	if code, _ := putSpot(t, a, `{"spot":true}`); code != http.StatusConflict {
+		t.Fatalf("accept with no spot offer declared = %d, want 409", code)
+	}
+	if v, _ := st.GetSetting(t.Context(), engineSpotSettingKey("image")); v != "" {
+		t.Fatalf("a refused consent stored %q", v)
+	}
+	if code, _ := putSpot(t, a, `{"spot":false}`); code != http.StatusOK {
+		t.Errorf("withdrawing = %d, want the way back never to depend on a declaration", code)
 	}
 }
 

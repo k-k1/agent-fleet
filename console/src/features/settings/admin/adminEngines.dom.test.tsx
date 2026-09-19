@@ -492,6 +492,99 @@ describe("EnginesAdminView", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/class", "PUT", { class: "l40s" });
   });
 
+  // --- accepting interruption (ADR 0077 decision 9, amended) -----------------------------
+  //
+  // 🔴 A declared Spot offer that nobody has accepted interruption for is DRAWN AND UNAVAILABLE,
+  // never hidden. An operator who declared a row and cannot find it on the panel reads that as
+  // "my declaration was ignored" — which this deployment has already lived through once, when a
+  // ladder was edited while an offer list was live and the new rungs silently never appeared.
+
+  const tick = () =>
+    host!.querySelector(".engines-spot-allow input") as HTMLInputElement | null;
+  const spotOfferRow = () => offerRows()[1];
+
+  it("draws a declared Spot offer as unavailable until interruption is accepted", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [withOffers({ spot_allowed: false })] });
+    await mount();
+
+    expect(tick()!.checked).toBe(false);
+    // Both costs are named. "The instance may stop" is not what is being agreed to.
+    const note = host!.querySelector(".engines-spot")!.textContent || "";
+    expect(note).toContain("処理中の応答は失われ");
+    expect(note).toContain("コールドスタート");
+    // The row is still listed, in its declared position, carrying the reason.
+    expect(offerRows()).toHaveLength(3);
+    expect(spotOfferRow().textContent).toContain("中断の許容が要ります");
+    const opts = Array.from(host!.querySelectorAll(".engines-class option")) as HTMLOptionElement[];
+    expect(opts.find((o) => o.value === "l4-spot")!.disabled).toBe(true);
+    expect(opts.find((o) => o.value === "l4")!.disabled).toBe(false);
+  });
+
+  it("sends the consent and stops holding the offer back", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [withOffers({ spot_allowed: false })] });
+    await mount();
+    apiJSON.mockResolvedValue(withOffers({ spot_allowed: true }));
+    await act(async () => {
+      // Through the prototype setter, like the select above: React tracks the checked value
+      // itself, and assigning the property directly leaves the tracker thinking nothing moved —
+      // onChange never fires and the test passes on a component that is wired to nothing.
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")!.set!;
+      setter.call(tick(), true);
+      tick()!.dispatchEvent(new Event("click", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/spot", "PUT", { spot: true });
+    expect(tick()!.checked).toBe(true);
+    expect(spotOfferRow().textContent).not.toContain("中断の許容が要ります");
+    const opts = Array.from(host!.querySelectorAll(".engines-class option")) as HTMLOptionElement[];
+    expect(opts.find((o) => o.value === "l4-spot")!.disabled).toBe(false);
+  });
+
+  it("offers no tick where there is nothing to accept, or where the CP cannot hear it", async () => {
+    // An all-on-demand list: the question does not arise, and a control that changes nothing is
+    // one more thing to read on a screen that already buys GPUs.
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [withOffers({ spot_allowed: false, offers: [OFFERS[0], OFFERS[2]] })],
+    });
+    await mount();
+    expect(host!.querySelector(".engines-spot")).toBeNull();
+
+    // 🔴 And a control plane too old to send the field buys Spot the moment it is declared. A
+    // tick box there would be a promise this panel cannot keep, so the whole gate is absent and
+    // the offer is drawn exactly as it was before.
+    await act(async () => root!.unmount());
+    api.mockResolvedValue({ super_admin: true, engines: [withOffers()] });
+    await mount();
+    expect(host!.querySelector(".engines-spot")).toBeNull();
+    expect(offerRows()[1].textContent).not.toContain("中断の許容が要ります");
+    const opts = Array.from(host!.querySelectorAll(".engines-class option")) as HTMLOptionElement[];
+    expect(opts.find((o) => o.value === "l4-spot")!.disabled).toBe(false);
+  });
+
+  it("says a pinned Spot offer is not being used, and that un-ticking leaves the running box alone", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        withOffers({
+          spot_allowed: false,
+          class_is_default: false,
+          class: OFFERS[1],
+          offer: { id: "l4-spot", buy: "spot" },
+        }),
+      ],
+    });
+    await mount();
+    const gate = host!.querySelector(".engines-spot")!.textContent || "";
+    // The pin cannot be honoured, so the picker is sitting on an offer nothing is buying.
+    expect(gate).toContain("自動選択に落ちています");
+    // And withdrawing consent is not a stop: it reaches the next purchase, like a rung.
+    expect(gate).toContain("次に買うインスタンスから効きます");
+  });
+
   it("states a pin permanently and takes it off in one click", async () => {
     api.mockResolvedValue({
       super_admin: true,

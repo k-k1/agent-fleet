@@ -529,6 +529,19 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_offer_result_budget": "budget spent",
   "admin.engines_offer_result_unusable": "cannot be asked for",
   "admin.engines_offer_result_interrupted": "taken away",
+  // Accepting interruption (ADR 0077 decision 9, amended). The operator declares the offers; the
+  // administrator says here that a box may be taken away. 🔴 The sentence does not stop at "the
+  // instance may stop", because two things are actually being agreed to — the answer in flight is
+  // lost, and the next request waits out a cold start. Only somebody who has read both should be
+  // able to tick it.
+  "admin.engines_spot_allow": "Accept interruption (this role may buy Spot instances)",
+  "admin.engines_spot_note":
+    "AWS can take a Spot instance away. When it does, whatever was being generated at that moment is lost and the next request waits out a cold start (about 9 minutes for llm, 3 for image). An offer taken away twice in a row is skipped for the rest of that start, so the engine ends up on an on-demand offer whose VRAM fits.",
+  "admin.engines_spot_blocked": "needs interruption accepted",
+  "admin.engines_spot_pin_ignored":
+    "The pinned offer is Spot, so it is not being used (the role has fallen back to choosing automatically). Accept interruption, or pin a different offer.",
+  "admin.engines_spot_running":
+    "The instance running right now is a Spot one. Un-ticking this does not make it safe from being taken away — it applies to the NEXT instance.",
   "admin.engines_class_pending": "What is running is a {t} instance. The class you chose applies to the NEXT instance. Replacing it costs one cold start (about 9 minutes for llm, 3 for image), and the new instance does not start until the old one has left.",
   "admin.engines_class_replace": "Replace it now",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a

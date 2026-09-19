@@ -298,6 +298,26 @@
   font-weight: 600;
 }
 
+/* Accepting interruption (ADR 0077 decision 9, amended). Boxed and set apart from the offers it
+   governs: it is the one control on this panel that changes what the deployment RISKS rather
+   than what it costs, and it has to read as a statement being made and not as a filter. */
+.engines-spot {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.engines-spot-allow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .engines-offer-order {
   color: var(--dialog-muted);
   font-size: 11px;

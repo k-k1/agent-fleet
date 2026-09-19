@@ -521,6 +521,18 @@ export const admin = {
   "admin.engines_offer_result_budget": "予算切れ",
   "admin.engines_offer_result_unusable": "要求できない",
   "admin.engines_offer_result_interrupted": "取り上げられた",
+  // 中断の受け入れ（ADR 0077 決定 9 の改訂）。運用者が提案を宣言し、管理者がここで
+  // 「取り上げられてもよい」と言う。🔴 文面が「インスタンスが止まってもよい」で終わらないのは、
+  // 実際に同意しているのが 2 つだから——生成中の応答が失われることと、次の要求がコールド
+  // スタートを待つこと。その 2 つを読んだ人だけがチェックを入れられる文面にする。
+  "admin.engines_spot_allow": "中断を許容する（Spot のインスタンスを買ってよい）",
+  "admin.engines_spot_note":
+    "Spot のインスタンスは AWS に取り上げられることがあります。取り上げられると、その時点で処理中の応答は失われ、次の要求はコールドスタート（llm 約 9 分・image 約 3 分）を待ちます。同じ提案が続けて 2 回取り上げられたら、その提案はその回の起動では飛ばされるので、最後は VRAM の合うオンデマンドに着地します。",
+  "admin.engines_spot_blocked": "中断の許容が要ります",
+  "admin.engines_spot_pin_ignored":
+    "固定している提案は Spot なので、いまは使われません（自動選択に落ちています）。中断を許容するか、別の提案を選んでください。",
+  "admin.engines_spot_running":
+    "いま動いているインスタンスは Spot です。チェックを外しても取り上げられなくなるわけではありません——次に買うインスタンスから効きます。",
   "admin.engines_class_pending": "いま動いているのは {t} のインスタンスです。選んだクラスは次に買うインスタンスから効きます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧いインスタンスが退場するまで新しいインスタンスは起動しません。",
   "admin.engines_class_replace": "いま入れ替える",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a

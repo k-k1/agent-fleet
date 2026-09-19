@@ -649,6 +649,14 @@ export type EngineRow = {
    *  screen back, pixel for pixel. */
   offers?: EngineOffer[];
   offer?: EngineOfferRef;
+  /** Whether an administrator has accepted interruption for this role, which is what lets a
+   *  `spot` offer be bought at all. 🔴 Not derivable from `offers`: those say what the OPERATOR
+   *  declared and this says what the ADMINISTRATOR accepted, so a declared Spot row with this
+   *  false is an offer that exists and will not be bought — which is exactly what the picker has
+   *  to draw. Absent from a control plane too old to send it, and the tick box is drawn off its
+   *  presence: an old CP buys Spot the moment it is declared, and offering a control that would
+   *  not reach it would be worse than not offering one. */
+  spot_allowed?: boolean;
   /** What this demand tried, in the order it tried them. Omitted while nothing has been tried. */
   offer_trail?: EngineOfferTry[];
   /** A box of another rung is still up, so the saved choice has reached nothing yet. */
