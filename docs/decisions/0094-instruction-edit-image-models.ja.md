@@ -56,7 +56,7 @@ A は本体 20.43 GB の初回ロード込み、E は 2511（20.53 GB）への�
 
 ### 決定 1 — ファミリーを 2 つ足す。ファイル役の語彙は増やさない
 
-`base_model` に `qwen-image-edit`（2509）と `qwen-image-edit-2511` を足す。どちらも
+`base_model` に `qwen-image-edit-2509` と `qwen-image-edit-2511` を足す（綴りの根拠は決定 6）。どちらも
 `--diffusion-model` / `--clip_l` / `--vae` の 3 役で、**`EngineFile` のフラグ語彙は 1 つも増えない**
 （`engineComfyRequiredFlags`・`control-plane/engine_catalog.go:196` に 2 行足すだけ）。テキストエンコーダは
 Qwen2.5-VL-7B（`--clip_l` を「唯一のエンコーダ」に使う既存の約束どおり）、VAE は Qwen-Image のもので、
@@ -105,15 +105,22 @@ Qwen2.5-VL-7B（`--clip_l` を「唯一のエンコーダ」に使う既存の�
 
 🔴 **`FluxKontextImageScale` を外して `size` を尊重する案は採らない**（却下した案を見よ）。
 
-### 決定 5 — 参照画像はまず 2 枚。3 枚目は測ってから。`MaxInputs` をファミリーの属性にする
+### 決定 5 — `MaxInputs` をファミリーの属性にする。P0 は 1 枚のまま、2 枚目は経路ごと P3 で
 
 `TextEncodeQwenImageEditPlus` は `image1..image3` を取り、**2 枚目が効くことは実測 D で確かめた**
 （2 枚目の鉢植えが 1 枚目の場面に、色と形を保ったまま入った）。`Caps.MaxInputs`（`comfy.go:125` の
-固定 1）をファミリーごとにし、このファミリーは **2**。
+固定 1）をファミリーごとにする。
 
-🔴 **3 枚目は測ってから開ける。** ノードは `image3` を取るので「同じ機構だから 3」と書きたくなるが、
-それは決定 3 が inpaint に対して禁じた推論そのものである（測っていない能力は宣言しない）。P3 で
-3 枚を 1 回測り、そこで 3 に上げる。
+🔴 **2 枚目は「宣言」だけでは動かない。経路ごと同じフェーズに入れる。** いまの実装は
+`p.uploadImage(…, req.Inputs[0])`（`comfy.go:710`）で **1 枚しか上げず**、`comfyParams.Image` は
+単数の文字列（`comfy_workflows.go:134`）。`comfyCheckInputs`（`comfy.go:786`）は
+`len(req.Inputs) > caps.MaxInputs` しか見ないので、**宣言だけ 2 にすると 2 枚目は検査を通って使われない**
+——実測 C と同じ「無警告で誤った絵」である。したがって:
+
+- **P0 では `MaxInputs` は 1 のまま**。2 枚目は **P3 で経路ごと開ける**（`comfyParams` を複数形にし、
+  `image2` に配線し、`comfyCheckInputs` の拒否文の単数形も直す）。
+- 🔴 **3 枚目は測ってから。** ノードは `image3` を取るので「同じ機構だから 3」と書きたくなるが、それは
+  決定 3 が inpaint に対して禁じた推論そのもの（測っていない能力は宣言しない）。P3 で 3 枚を 1 回測る。
 
 ⚠️ **`MaxInputs` はワイヤに載っていない**（`providerStatus` に欄が無く、外に出るのは
 `comfy.go:786` の拒否文だけ）。ペインが枚数の上限を出すには status に欄を足す決定が要る（P3）。
@@ -238,8 +245,15 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
 - **広告（`/imagegen/status`・ツール定義・ペインの欄）は union**——このエンジンのどれか 1 つの行が
   できることは、全部載せる。
 - **判定（生成時）は `Caps(model)`**——`imagegen.go:806` の `capsOf` は既に `p.Caps(req.Model)` なので、
-  モデルを名指しした要求はそのまま正しい。`req.Model` が空のときは**ファミリーではなく provider の union**で
-  候補に残し、実際に選ばれた行で断る（決定 2 の 400）。
+  モデルを名指しした要求はそのまま正しい。
+- 🔴 **モデル未指定のときは、comfy のモデル解決が `req.Op` を見る。** union は「候補に残す」までしか
+  効かない: `comfy.go:647-656` は `req.Model` が空なら `DefaultModel()`＝warm な 1 行に解決し、
+  `!caps.Supports(req.Op)` で `the self-hosted image engine cannot do generate` を返す。`Run` は
+  それを attempts に積んで **`continue`**（`imagegen.go:838-841`）＝**次の provider（会員の課金プラン）へ
+  落ちる**。おまけに `recordUsage`（`imagegen.go:834`）が失敗の行を 1 本刻む。
+  したがって warm な行のファミリーがその op を名乗らないときは、**名乗る最初の有効な行に落として
+  `comfySwitchWarning`（`comfy.go:632`）を出す**。チェックポイントの切り替えは実測 1〜2.5 分かかるが、
+  黙って別プランに課金するより説明できる。**P0 完了条件 (3) はこれが入って初めて検証できる。**
 
 ### 決定 12 — ファミリーの属性は 6 つ。`cfg` と `negative` を落とすと**嘘の警告**が出る
 
@@ -302,10 +316,12 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
   （`strength` を受け取らない）、(3) 🔴 **qwen の行を warm にしたまま `op=generate` が comfy に残る**
   （決定 11 の union が効いている＝課金 provider に落ちない）。
 - **P1** — 2511（決定 6）・部品表（決定 7）・`vram_mib` の既定（決定 8）。
-  完了の定義: 1 押しの取り込みで 3 部品が正しいディレクトリに入り、有効化に `confirm_vram` が要らない。
+  完了の定義: 1 押しの取り込みで 3 部品が正しいディレクトリに入り、**取り込み直後の画面が測定値
+  （20,862 MiB・1024²/batch 1/参照 1 枚）を出し、運用者がそれを入れたあとは `confirm_vram` が出ない**
+  （入れるまでは出るのが正しい挙動——決定 8）。
 - **P2** — props（決定 10）と Console のファミリーカード。完了の定義: 生成ペインからの 1 枚で
   「この絵の設定」にプロンプトと寸法が出る。
-- **P3** — 参照画像 2 枚目・3 枚目の導線（ペインと MCP の `images`）。
+- **P3** — 参照画像 2 枚目・3 枚目の導線（ペインと MCP の `inputs`）。
   完了の定義: 実測 D をペインから再現できる。
 
 ## 未解決
@@ -332,9 +348,14 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
 - **L4 24GB に載る。** `/system_stats` の生値で `vram_total` 22,563 MiB・`vram_free` 1,701 MiB＝
   **使用 20,862 MiB**（1024²・batch 1・参照 1 枚）。VRAM の門は 28,676 MiB を要求と判定するが、
   実際にはテキストエンコーダがエンコード後に退避されるので載る（決定 8）。
-  ⚠️ `comfyMaxBatch` は 4、決定 5 は参照 2 枚まで——**その範囲は測っていない**。
+  ⚠️ `comfyMaxBatch` は 4——**その範囲は測っていない**。
 - **出力寸法の規則はノード定義から**であって、この 5 本からではない: 入力も出力も 1024² だけで、
   `PREFERRED_KONTEXT_RESOLUTIONS` の比率表は**正方形以外を試していない**。
+- **`comfyFamilyRecipes` の 4 欄は公式テンプレートの KSampler の widget から取る**——どちらのファミリーも
+  `sampler=euler` / `scheduler=simple`、steps と cfg は switch の **false 枝**（LoRA 無しの側）で
+  2509 が **20 / 4**、2511 が **40 / 4**。実測 A・E はこの値で回した。
+  ⚠️ 2509 の公式テンプレートは switch の既定が **true**＝4 steps / cfg 1 の Lightning 経路である。
+  ファミリーの既定に採るのは**LoRA 無しの側**（却下した案の「Lightning を既定にしない」と同じ理由）。
 - **箱の購入＋同期 348.9 秒**（`engine_waking` の 503 を 15 秒間隔でリトライ）。`X-AF-Model` を付けた
   要求は「あと 1 ファイル」と数えて待たせてくれる＝`pendingGuard` は実機で期待どおり働いた。
 - **取り込みは HF → S3 で約 31 MB/s**（20.43 GB で約 11 分）。
@@ -380,3 +401,19 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
   `wire.ts` の `Family` 型・`families.test.ts`・`guide/operate/07-image-engine`。
 - 🟡 **決定 5 は決定 3 と規則が逆だった**: 「3 枚目は同じ機構だから開ける」は、inpaint に対して
   禁じた推論そのもの。**2 枚に留め、3 枚目は P3 で測ってから**に改めた。
+
+### 2 巡目（同じセッション・`a2ba1b22` に対して）
+
+反映は 9 件中 8 件が意図どおり。残った 🔴 3 件はどれも「決定は正しいが、**経路が 1 本足りない**」形だった。
+
+- 🔴 **決定 11 の union だけでは P0 完了条件 (3) は緑にならない。** モデル未指定の要求は warm な行に
+  解決されてから op で落ちるので、候補に残しても**次の provider に落ちる**。モデル解決が `req.Op` を
+  見る、を決定 11 に足した。
+- 🔴 **決定 1 の綴りが旧いままだった**（ja だけ `qwen-image-edit`）。実装者が最初に読む所なので直した。
+- 🔴 **決定 5 の `MaxInputs=2` は宣言だけでは動かない**（アップロードは 1 枚・`comfyParams.Image` は単数）。
+  **P0 は 1 枚のまま**にし、2 枚目は経路ごと P3 へ移した。「宣言と経路は同じフェーズに入れる」。
+- 🟡 P3 の引数名が `images` のまま／`comfyFamilyRecipes` の sampler・scheduler の出典が無い／
+  P1 の完了条件が決定 8 と噛み合っていない、の 3 件も直した。
+- 🟢 **VRAM の数字はレビュー側が撤回し、こちらの 20,862 MiB が正しいと確認された。** 裏取りも増えた:
+  `PARAMETERS-60-engines.md:659` が「`Total VRAM 22563 MB`, so **22000 is the number**」と書いており、
+  段の 22,000 は実測と同じ出所から来ている。

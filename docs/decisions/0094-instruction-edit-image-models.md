@@ -119,15 +119,22 @@ line of the ADR.
 
 🔴 **Dropping `FluxKontextImageScale` to honour `size` is rejected** — see below.
 
-### Decision 5 — Two reference images now; the third after it is measured
+### Decision 5 — `MaxInputs` becomes per family. P0 stays at one; the second image opens with its path in P3
 
 `TextEncodeQwenImageEditPlus` takes `image1..image3`, and **run D proved the second one works** (the
 potted plant from the second picture entered the first scene with its colour and shape intact).
-Make `Caps.MaxInputs` (fixed at 1, `comfy.go:125`) per family and answer **2** here.
+Make `Caps.MaxInputs` (fixed at 1, `comfy.go:125`) per family.
 
-🔴 **The third opens after it is measured.** "The node takes `image3`, so the mechanism is the same"
-is exactly the inference decision 3 forbids for inpaint. Measure three once in P3 and raise it
-then.
+🔴 **Declaring 2 does not carry a second image.** Today `p.uploadImage(…, req.Inputs[0])`
+(`comfy.go:710`) uploads **one**, and `comfyParams.Image` is a single string
+(`comfy_workflows.go:134`). `comfyCheckInputs` (`comfy.go:786`) only tests
+`len(req.Inputs) > caps.MaxInputs`, so raising the number alone lets a second image **pass the check
+and go unused** — run C's failure mode exactly: a wrong picture with no warning. Therefore:
+
+- **P0 keeps `MaxInputs` at 1**, and the second image opens **with its path, in P3** (make
+  `comfyParams` plural, wire `image2`, and fix the refusal's singular wording).
+- 🔴 **The third opens after it is measured.** "The node takes `image3`, so the mechanism is the
+  same" is exactly the inference decision 3 forbids for inpaint. Measure three once in P3.
 
 ⚠️ **`MaxInputs` is not on the wire** (`providerStatus` has no field for it; the only place it
 reaches the outside is the refusal at `comfy.go:786`). For the pane to state the limit, P3 has to
@@ -266,9 +273,17 @@ the same shape:
 - **Advertising** (`/imagegen/status`, the tool definition, the pane's fields) is the **union** — what
   any one row on this engine can do is offered.
 - **Judging** (at generation) is `Caps(model)` — `imagegen.go:806`'s `capsOf` already asks
-  `p.Caps(req.Model)`, so a request that names a model is already right. When `req.Model` is empty,
-  keep the provider in the candidates on the union and refuse on the row that is actually chosen
-  (decision 2's 400).
+  `p.Caps(req.Model)`, so a request that names a model is already right.
+- 🔴 **With no model named, comfy's own model resolution has to read `req.Op`.** The union only
+  keeps the provider in the candidates: `comfy.go:647-656` resolves an empty `req.Model` to
+  `DefaultModel()` — the warm row — and answers `the self-hosted image engine cannot do generate`
+  on `!caps.Supports(req.Op)`. `Run` files that under attempts and **`continue`s**
+  (`imagegen.go:838-841`), i.e. **falls through to the next provider, which spends a member's
+  plan**, and `recordUsage` (`imagegen.go:834`) writes a failed row on the way. So when the warm
+  row's family does not claim the op, resolve to **the first enabled row that does** and say so
+  with `comfySwitchWarning` (`comfy.go:632`). A checkpoint switch costs 1-2.5 minutes (measured),
+  which is explainable; silently billing another plan is not. **P0's third criterion is only
+  testable once this exists.**
 
 ### Decision 12 — There are SIX per-family properties. Dropping `cfg` and `negative` produces a false warning
 
@@ -338,8 +353,10 @@ So the per-family set is **six**, not four: `Ops`, `MaxInputs`, `Strength`, `Siz
   `op=generate` still lists comfy** (decision 11's union holds, so nothing falls through to a paid
   provider).
 - **P1** — 2511 (decision 6), the parts table (decision 7), the operator-entered `vram_mib`
-  (decision 8). Done when one press stages all three parts in the right directories and entering the
-  measured number clears `confirm_vram`.
+  (decision 8). Done when one press stages all three parts in the right directories, **the screen offers
+  the measured number (20,862 MiB at 1024², batch 1, one reference) right after the ingest, and
+  `confirm_vram` stops appearing once the operator has entered it** (until then it appears, which is
+  the correct behaviour — decision 8).
 - **P2** — props (decision 10) and the Console cards. Done when a picture made from the pane shows
   its prompt, its negative and its size under "what this was made from".
 - **P3** — the reference-image path end to end (pane and the MCP `inputs` argument) and `MaxInputs`
@@ -370,9 +387,14 @@ reported **ComfyUI 0.35.2**, which is the pinned ref.
 - **It fits an L4 24GB.** Raw `/system_stats`: 22,563 MiB total, 1,701 MiB free, so **20,862 MiB in
   use** (1024², batch 1, one reference image). The guard's 28,676 MiB demand notwithstanding, the
   text encoder is evicted after encoding (decision 8).
-  ⚠️ `comfyMaxBatch` is 4 and decision 5 opens two references — **neither was measured**.
+  ⚠️ `comfyMaxBatch` is 4 — **that range was not measured**.
 - **The output-size rule comes from the node's source, not from these runs**: every run was 1024² in
   and out, so `PREFERRED_KONTEXT_RESOLUTIONS` was never exercised off-square.
+- **`comfyFamilyRecipes`' four fields come from the shipped template's KSampler widgets**: both
+  families are `sampler=euler` / `scheduler=simple`, and steps/cfg come from the switch's **false
+  branch** (the no-LoRA side) — **20 / 4** for 2509 and **40 / 4** for 2511. Runs A and E used
+  those. ⚠️ 2509's template ships that switch set to **true**, i.e. the 4-step / cfg 1 Lightning
+  path; the family default takes the **no-LoRA** side, for the reason in the rejected list.
 - **Buying the box and syncing cost 348.9 s** (503 `engine_waking`, retried every 15 s). A request
   carrying `X-AF-Model` was held with "1 file(s) to go" — `pendingGuard` behaved as designed on real
   hardware.
@@ -424,3 +446,23 @@ came off was the REACH of the decisions, and three names in the code.
   `guide/operate/07-image-engine`.
 - 🟡 **Decision 5 contradicted decision 3**: "the third image is the same mechanism, so open it" is
   the inference forbidden for inpaint. It now stops at **two, with the third measured in P3**.
+
+### Second round (same session, against `a2ba1b22`)
+
+Eight of the nine landed as intended. All three remaining 🔴 had the same shape: **the decision was
+right, but one path was missing**.
+
+- 🔴 **Decision 11's union alone does not make P0's third criterion green.** A request that names no
+  model is resolved to the warm row FIRST and then fails on the op, so keeping the provider in the
+  candidates still **falls through to the next one**. Decision 11 now says the model resolution must
+  read `req.Op`.
+- 🔴 **Decision 1 still carried the old spelling** (in the Japanese file). It is the first place an
+  implementer reads, so it is fixed.
+- 🔴 **Decision 5's `MaxInputs=2` does not carry a second image on its own** (one upload, a singular
+  `comfyParams.Image`). **P0 stays at 1** and the second image moves to P3 with its plumbing:
+  *declare a capability in the same phase as the path that serves it.*
+- 🟡 Three more: P3 still said `images`, `comfyFamilyRecipes`' sampler/scheduler had no source, and
+  P1's criterion contradicted decision 8. All corrected.
+- 🟢 **The reviewer withdrew the VRAM figure; 20,862 MiB stands.** A second witness turned up in the
+  tree: `PARAMETERS-60-engines.md:659` says "`Total VRAM 22563 MB`, so **22000 is the number**" — the
+  rung and the measurement come from the same place.
