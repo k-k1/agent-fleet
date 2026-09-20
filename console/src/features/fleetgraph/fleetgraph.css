@@ -1,0 +1,310 @@
+/* Fleet session graph (ADR 0096): lanes are sessions, time runs left to right. */
+.fgraph {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  container: paneview / inline-size;
+  /* A peer round trip's own hue, independent of any --kind-* variable: aliasing one (the
+     first version used --kind-agy) would make a session-to-session message change color
+     the day someone recolors that agent kind, and would draw a peer arrow in exactly the
+     kind color of any agy lane it happens to touch — both read as "this is an agy thing",
+     which it is not. */
+  --fgraph-peer: #4fb8d6;
+}
+.fgraph-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 6px;
+  padding-right: 6px;
+  border-right: 1px solid var(--border);
+}
+.fgraph-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.fgraph-toggle.on {
+  color: var(--accent);
+}
+@container paneview (max-width: 460px) {
+  .fgraph-toggle .lbl {
+    display: none;
+  }
+  /* The nav cluster (5 buttons) + toggle + count + err is a lot more header than the
+     sessions overview's toggle + count alone — the count is the least essential of the
+     four and goes first so the header does not overflow the tab strip on a narrow pane. */
+  .fgraph-count {
+    display: none;
+  }
+}
+.fgraph-count {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.fgraph-err {
+  color: var(--warn);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+.fgraph-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  /* Without this the row-flex default (stretch) grows the labels/canvas children to the
+     pane's full height, and their own content (fixed-height rows, an SVG sized to its own
+     aspect ratio) sits at the top of that tall box — a harmless but confusing dead area
+     below the diagram. Natural height, same as the SCM commit graph's <ul> of fixed rows. */
+  align-items: flex-start;
+  overflow: auto;
+}
+.fgraph-labels {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+.fgraph-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  min-width: 0;
+  color: var(--fg);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.fgraph-label.child {
+  color: var(--muted);
+}
+.fgraph-label.clickable {
+  cursor: pointer;
+}
+.fgraph-label.clickable:hover,
+.fgraph-label.clickable:focus-visible {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.fgraph-label.erased {
+  color: var(--muted2);
+  font-style: italic;
+}
+.fgraph-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Left-edge marker for a lane whose immediate parent has no row of its own (decision 9)
+   — off-window, or the parent's own lineage was deleted. Warn, not danger: this is a
+   normal, expected shape of the tree, not an error. */
+.fgraph-parent-gap {
+  color: var(--warn);
+  font-size: 11px;
+  flex: none;
+}
+
+.fgraph-canvas {
+  flex: 1;
+  min-width: 0;
+}
+/* Sized by explicit width/height attributes in the markup (React), NOT a percentage +
+   viewBox combination: `width:100%; height:auto` let the browser scale the SVG's internal
+   geometry by containerWidth/viewBoxWidth while the label column beside it (plain fixed-
+   height divs) stayed unscaled, so rows drifted apart the wider the pane got (see
+   FleetGraphView.tsx's `canvasW` / `scale.width`). `display:block` alone just drops the
+   inline-element baseline gap under the SVG. */
+.fgraph-svg {
+  display: block;
+}
+
+/* Coverage boundaries (decision 8): drawn, never a silent fade. */
+.fgraph-mark line {
+  stroke: var(--border2);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.fgraph-mark text {
+  fill: var(--muted2);
+  font-size: 9px;
+}
+.fgraph-mark.backfill-start line {
+  stroke: var(--muted2);
+}
+
+.fgraph-tick line {
+  stroke: var(--border);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+.fgraph-tick text {
+  fill: var(--muted);
+  font-size: 9px;
+  text-anchor: middle;
+}
+
+/* A wide, invisible hit target under the drawn line (easier to click than the 2px line
+   itself), and the hover highlight for the row it belongs to. */
+.fgraph-hit {
+  stroke: transparent;
+  stroke-width: 16;
+}
+.fgraph-lane-hit:hover .fgraph-run,
+.fgraph-lane-hit:focus-visible .fgraph-run {
+  stroke-width: 4;
+}
+
+.fgraph-run {
+  stroke: var(--lane-color, var(--muted2));
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.fgraph-birth {
+  fill: var(--lane-color, var(--muted2));
+}
+/* Live lane, right edge: it pulses — the one moving part in an otherwise static figure. */
+.fgraph-pulse {
+  fill: none;
+  stroke: var(--lane-color, var(--accent));
+  stroke-width: 2;
+  animation: fgraph-pulse 1.6s ease-out infinite;
+}
+@keyframes fgraph-pulse {
+  0% {
+    r: 5;
+    opacity: 0.9;
+  }
+  100% {
+    r: 11;
+    opacity: 0;
+  }
+}
+
+/* Presence (decision 12): stopped/resumable = dashed to the right edge; archived = the
+   same, fainter. Gone draws nothing past its ×. */
+.fgraph-tail.stopped {
+  stroke: var(--lane-color, var(--muted2));
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+  opacity: 0.85;
+}
+.fgraph-tail.archived {
+  stroke: var(--lane-color, var(--muted2));
+  stroke-width: 1.5;
+  stroke-dasharray: 2 4;
+  opacity: 0.45;
+}
+
+/* × = a run's end, as OBSERVED (title carries "may be later than…"). Filled and solid
+   for a real death; a hollow, dashed cross for `cut` — the Agent never got to write one. */
+.fgraph-death line {
+  stroke: var(--muted2);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.fgraph-death.danger line {
+  stroke: var(--warn);
+}
+.fgraph-death.cut {
+  opacity: 0.6;
+}
+.fgraph-death.cut line {
+  stroke-dasharray: 1.5 1.5;
+}
+.fgraph-death.cut circle {
+  fill: none;
+  stroke: var(--muted2);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+/* The stretch after a cut run (decision 12): hatched like an "unknown" activity band —
+   deliberately NOT the dashed .fgraph-tail line a stopped/archived lane draws, which reads
+   as "still there, resumable". A cut lane's fate past that point is genuinely unknown. */
+.fgraph-cut-unknown {
+  fill: url(#fgraph-hatch);
+  opacity: 0.55;
+  stroke: none;
+}
+
+/* Activity bands. "active" alone carries the kind color (--seg-color, set inline); the
+   rest are neutral by state, same palette as the session-state chips (lib/sessionview.ts). */
+.fgraph-seg {
+  stroke: none;
+}
+.fgraph-seg.active {
+  fill: var(--seg-color, var(--accent));
+}
+.fgraph-seg.idle {
+  fill: var(--muted2);
+  opacity: 0.5;
+}
+.fgraph-seg.waiting {
+  fill: var(--warn);
+}
+.fgraph-seg.stopped,
+.fgraph-seg.archived {
+  fill: var(--muted2);
+  opacity: 0.3;
+}
+/* "unknown" covers BOTH not-observed and observed-unrecognised (the tooltip text is what
+   tells them apart — see SegmentRect); the hatch reads as "uncertain" either way. */
+.fgraph-seg.unknown {
+  fill: url(#fgraph-hatch);
+  opacity: 0.55;
+}
+
+/* Arrows: family edges (spawn/fork/handoff) are a quiet structural line; the three
+   conversation-shaped round trips (instruct/report/peer) each get their own hue so a
+   dense figure still reads which kind of line is which at a glance. */
+.fgraph-arrow line {
+  stroke-width: 1.75;
+  fill: none;
+}
+.fgraph-arrow.family line {
+  stroke: var(--muted2);
+}
+.fgraph-arrow.instruct line {
+  stroke: var(--accent);
+}
+.fgraph-arrow.report line {
+  stroke: var(--ok);
+}
+.fgraph-arrow.peer line {
+  stroke: var(--fgraph-peer);
+}
+.fgraph-arrow.danger line {
+  stroke: var(--warn);
+}
+.fgraph-arrow.family {
+  color: var(--muted2);
+}
+.fgraph-arrow.instruct {
+  color: var(--accent);
+}
+.fgraph-arrow.report {
+  color: var(--ok);
+}
+.fgraph-arrow.peer {
+  color: var(--fgraph-peer);
+}
+.fgraph-arrow.danger {
+  color: var(--warn);
+}
+.fgraph-arrow.clickable {
+  cursor: pointer;
+}
+.fgraph-arrow.clickable:hover line {
+  stroke-width: 3;
+}
+.fgraph-edge-pt {
+  fill: currentColor;
+}

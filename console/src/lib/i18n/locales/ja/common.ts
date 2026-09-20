@@ -227,6 +227,7 @@ export const common = {
   "pane.kind.sessions": "セッション一覧",
   "pane.kind.gallery": "画像ギャラリー",
   "pane.kind.imagegen": "画像生成",
+  "pane.kind.fleetgraph": "フリート俯瞰図",
 
   // === P2 共通（追加）===
   "common.approx": "約{v}",

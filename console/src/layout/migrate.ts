@@ -137,6 +137,8 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "sessions":
       return { kind: "sessions", showStopped: p.showStopped === true };
+    case "fleetgraph":
+      return { kind: "fleetgraph", showArchived: p.showArchived !== false };
     case "engineAdd": {
       // The engine key reaches API paths, so it is validated like the other opaque ids here:
       // a corrupted layout must not become a path the pane then asks the CP about.

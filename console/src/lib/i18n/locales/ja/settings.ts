@@ -393,6 +393,7 @@ export const settings = {
   "keys.cmd.openSessions": "セッション一覧を開く",
   "keys.cmd.openImagegen": "画像生成を開く",
   "keys.cmd.openGenerated": "生成した画像を開く",
+  "keys.cmd.openFleetGraph": "フリート俯瞰図を開く",
   "keys.cmd.ttsToggle": "音声読み上げ ON/OFF",
   "keys.cmd.ttsSessionToggle": "セッション音声通知 ON/OFF",
   "keys.cmd.usageResetToggle": "制限リセット通知 ON/OFF",
