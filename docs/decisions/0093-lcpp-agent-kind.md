@@ -397,3 +397,81 @@ string-contract tests.
   transition (`workspace/agent/internal/sessionx/session_driver.go:62-105`). Handoff uses the same
   generic create path and therefore needs the target kind to select managed, not a separate route
   label (`console/src/features/sessions/HandoffModal.tsx:75-84,119-130`).
+
+## Implementation record for phases 0 and 1 (2026-09-20)
+
+Phases 0 and 1 are on develop (#761 and #767 for phase 0 and its follow-up; #762, #764, #766 and #770
+for phase 1's segments D/F/E/G). **No decision text changed.** What follows records what the
+implementation and the live runs added to those decisions, and what they overturned.
+
+### Two premises that turned out to be wrong
+
+- 🔴 **Decision 6's "the `af` tools run over loopback HTTP, the same as every other CLI" is wrong in
+  its second half.** `mcpreg/builtin.go:45-50`'s `BuiltinAF` is a **stdio** ServerDef
+  (`runArgs: ["mcp-stdio", "--self-report", "--chromium-attach"]`), and the Agent has no HTTP MCP
+  entry point at all. **Every other CLI reaches af over stdio too.** "The same as every other CLI"
+  was the right intent; only the stated mechanism was wrong. #764 connects through the existing
+  stdio ServerDef with its generic client, so `internal/mcpc` holds no af-specific code. The Review's
+  conclusion — that calling `dispatchMCPStdio` in-process is out of scope — still stands.
+- 🔴 **Decision 7's "`/props` reports the window the engine actually started with" does not hold in
+  router mode.** Measured live (#770): `GET /engine/llm/props` answers 200 with `role: "router"`,
+  `model_path: "none"` and `default_generation_settings.n_ctx = 0`. A llama-server holding several
+  models at once (`--models-max`) describes the ROUTER there, not a loaded model. The real number is
+  in `{engine}/v1/models`'s `data[].meta.n_ctx`. #767 closes this while keeping phase 0's own gate
+  (records no demand, wakes nothing): only when `n_ctx == 0` does `props()` read `/v1/models` itself
+  and add one key. **Reading `/v1/models` through the gateway's ordinary route is not an option** —
+  `serve()` records demand (`engine_gateway.go:540`) and calls `ensureReady` (`:1018`), which buys a
+  GPU box to answer a question about a window.
+
+### One condition the decisions did not state
+
+- 🔴 **A BORROWED row (ADR 0079) needs the same change on the LENDING deployment.** A borrowed row's
+  `/props` goes to the path the far side declared in its token answer — the far deployment's own
+  `/engine/{key}/props`. A lending Control Plane that predates this answers Go's stock
+  `404 page not found` (observed on 2026-09-19; cleared when sandbox was redeployed). #767
+  deliberately never augments a borrowed row locally: reading the far side's `/v1/models` would go
+  through the far `serve()`, i.e. **buy a GPU box on the lending deployment**. So the borrowing side
+  can only read the real value once the lender ships the same change.
+
+### Measurements
+
+| Item | Measured | Note |
+|---|---|---|
+| Unresolved question 2: `/v1/chat/completions/input_tokens` | **Exists.** `{"input_tokens":61,...}`, matching the same request's `prompt_tokens` | 🔴 The field is **`input_tokens`**, not the README's `tokens`/`n_tokens` |
+| Unresolved question 2: `/v1/chat/completions/control` | **Exists.** Wants a `model` and an in-flight completion id | `Interrupt` is phase 2, so it is not in the public API |
+| Unresolved question 1: family | **Qwen3** (`qwen3.8-27b-uncensored-q4_k_m`): 16 round trips across 2 projects, `tool_calls` valid JSON on every turn, no mangled names, no swapped arguments even with 4 parallel calls | ⚠️ **One family, few runs.** Other families were left unmeasured to avoid evicting the shared GPU box (`role: router`, `max_instances: 1`) |
+| Window | Real value 262144, **exactly matching** the catalogue's declared 262144 | See below |
+| Wake (true cold start) | **4–5 minutes** (buying the box plus syncing the model); `engine_waking` retried correctly across it | Phase 1-D's 34.8 s was a box already warming. The decision text's "minutes" was right |
+| Compaction | `input_tokens` climbed 93→663 and fired at the threshold for real; full went 29→30 entries, i.e. **nothing past was dropped** | Run with the window forced to 900: filling the real 262144 only burns shared GPU, and what is under test is the threshold arithmetic and the wire shape |
+
+🔴 **An honest note about the motivation.** The real window and the declared one agreed. This ADR's
+motivating defect — the window travelling one way through four hops and drifting — **did not show up
+as actual harm in this one sample**. That does not make phase 0 pointless (having no way to check was
+itself the problem), but the strength of the motivation should be marked down to match the evidence.
+
+### What only a live engine found
+
+Three defects survived every scripted-client test and appeared only against the real engine. They are
+recorded as a worked example of decision 5's consequence: part of this kind's cost is that **we own
+this class of problem** once we are the executor.
+
+- The send right after compaction was rejected by Qwen's chat template in two places: folding the
+  still-unanswered user turn into the summary left the send ending on a system message
+  (`No user query found in messages`), and the summary rode as a SECOND system message mid-list
+  (`System message must be at the beginning`).
+- chatx's P0 provider dropped the last stored history entry unconditionally. Only 2 of `prov.Send`'s
+  6 call sites satisfy the premise it assumed; compaction and a report auto-turn silently lost the
+  very turn being summarised. **`lcpp` is the first provider that assembles history itself**, which
+  is why the problem appears here and nowhere else.
+
+### Deliberately left outside phase 1
+
+- **`chat_providers_lcpp.go` (the P0 provider) is not wired to E/F/G.** Putting the P0 provider behind
+  the tool loop changes how assistant chat behaves, which is a product decision beyond phase 1.
+- ⚠️ **Summary QUALITY is model-dependent.** This quantised 27B sometimes produced a thin summary —
+  once it echoed the upcoming turn's own question instead of summarising. The mechanics
+  (append-only, a single leading system message, a trailing user turn, real token counts) all held,
+  so this is not a harness defect. It is material for choosing a family in phase 2.
+- The approval gate's zero value is **fail-closed** (`Runtime.Approve == nil` declines every `Mutates`
+  call); unattended execution passes `AutoApprove` explicitly. Decision 5's "approval really does stop
+  a tool" is implemented so that forgetting to wire it fails loudly rather than passing silently.

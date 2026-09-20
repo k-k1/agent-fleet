@@ -188,10 +188,19 @@ export function seedsFor(policy: SeedPolicy, base: number | null, n: number): (n
  * would do. Size, seed, cfg, sampler, LoRAs and the negative are the form's untouched,
  * because a trial at another size previews a different picture.
  */
-export function buildRequest(d: ImagegenDraft, opts: { trial?: boolean; provider?: string } = {}): EnqueueRequest {
+export function buildRequest(
+  d: ImagegenDraft,
+  opts: { trial?: boolean; provider?: string; model?: ImagegenModel | null } = {},
+): EnqueueRequest {
   const trial = !!opts.trial;
   const seed = Number(d.seed);
   const hasSeed = d.seed.trim() !== "" && Number.isFinite(seed);
+  // ADR 0094 decision 2: a family that does not read strength at all (Knobs omits it) must not
+  // have it sent at all — the Agent refuses it BY VALUE now, where it used to only be ignored.
+  // Absent `knobs` is an Agent old enough to predate the ADR and stays the old, permissive
+  // behaviour, the same rule every other knobs check in this feature follows.
+  const knobs = opts.model?.knobs;
+  const sendsStrength = d.op !== "generate" && (!knobs || knobs.includes("strength"));
   const body: EnqueueRequest = {
     prompt: d.prompt,
     ...(opts.provider ? { provider: opts.provider } : {}),
@@ -200,7 +209,7 @@ export function buildRequest(d: ImagegenDraft, opts: { trial?: boolean; provider
     ...(d.size ? { size: d.size } : {}),
     ...(d.op && d.op !== "generate" ? { op: d.op } : {}),
     ...(d.op !== "generate" && d.inputs.length ? { inputs: d.inputs } : {}),
-    ...(d.op !== "generate" ? { strength: d.strength } : {}),
+    ...(sendsStrength ? { strength: d.strength } : {}),
     ...(d.loras.length ? { loras: d.loras } : {}),
     // Ignored on a trial: those always land in `generated/console/trial/` (lane A,
     // deviation 5). Sent anyway, so one draft describes one run.

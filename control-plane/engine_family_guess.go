@@ -111,6 +111,13 @@ var engineFamilyRules = []engineFamilyRule{
 	// would be a trap waiting for the day that order changes. The digit is what separates the
 	// two products, so it is part of the needle.
 	{family: "krea2", any: []string{"krea2"}},
+	// 🔴 Matches WHOLE, same reason as anima: measured 2026-09-20, Civitai publishes the bare
+	// `Qwen` as baseModel for every Qwen-Image-Edit row found (not `Qwen Image Edit` or a
+	// version-specific string) — Qwen-Image itself (text-to-image, ADR 0094's rejected "却下し
+	// た案") would publish the same string, and this deployment has no template for it, so a
+	// substring needle would be no more precise than this equal match anyway. Left as `equal`
+	// rather than `any` so a future rename does not widen it by accident.
+	{family: "qwen-image-edit-2509", equal: []string{"qwen"}},
 }
 
 // engineFamilyFromUpstream is the table above applied to one string, before the vocabulary is
@@ -194,6 +201,11 @@ var engineFamilyUpstreams = map[string]engineFamilyUpstream{
 	"zimage": {hf: "Tongyi-MAI/Z-Image-Turbo"},
 	"anima":  {civitai: []string{"Anima"}, hf: "circlestone-labs/Anima"},
 	"krea2":  {civitai: []string{"Krea 2"}, hf: "krea/Krea-2-Raw"},
+	// 🔴 Civitai's baseModel is the bare `Qwen` (measured 2026-09-20, same string a future
+	// Qwen-Image (text-to-image) row would also publish — browsing by family cannot tell them
+	// apart until this deployment has a template for both and something else distinguishes
+	// them). hf is the canonical publisher repo.
+	"qwen-image-edit-2509": {civitai: []string{"Qwen"}, hf: "Qwen/Qwen-Image-Edit-2509"},
 }
 
 // engineFamilyValidFor answers whether `family` is a member of the vocabulary this request could

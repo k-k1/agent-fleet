@@ -125,6 +125,21 @@ export const FAMILY_CARDS: FamilyCard[] = [
     trialSteps: 8,
     sizes: DEFAULT_SIZES,
   },
+  {
+    id: "qwen-image-edit-2509",
+    // Instruction editing: the prompt is a sentence describing the change, not a tag list.
+    dialect: "sentences",
+    quality: [],
+    // The family's own recipe (ADR 0094 実測 A): steps 20, cfg 4, fixed — there is no published
+    // range to span, unlike the other cards.
+    steps: [20, 20],
+    cfg: [4, 4],
+    trialSteps: 8,
+    // Empty means the size field does not draw at all (sizeOptions), not "use the megapixel
+    // list": the output size is decided by FluxKontextImageScale from the INPUT picture's own
+    // aspect ratio, so no candidate here would reach the sampler (decision 4).
+    sizes: [],
+  },
 ];
 
 const BY_ID = new Map(FAMILY_CARDS.map((c) => [c.id, c] as const));
@@ -141,11 +156,18 @@ export function familyCard(family: string | undefined | null): FamilyCard | null
   return BY_ID.get(family.trim().toLowerCase() as Family) ?? null;
 }
 
-/** Size options for a model: the row's list when the status carried one, else the family's. */
+/** Size options for a model: the row's list when the status carried one, else the family's.
+ *
+ *  🔴 One family wins even over the ROW's own declaration (ADR 0094 decision 4): a card whose
+ *  `sizes` is an explicit empty list (as opposed to one this file never populated) means the
+ *  family decides the size from something other than a candidate list, so a row's own `sizes`
+ *  would offer a control that silently does nothing. */
 export function sizeOptions(rowSizes: string[] | undefined, family: string | undefined): string[] {
+  const card = familyCard(family);
+  if (card && card.sizes.length === 0) return [];
   const rows = (rowSizes || []).filter((s) => typeof s === "string" && /^\d+x\d+$/.test(s));
   if (rows.length) return rows;
-  return familyCard(family)?.sizes ?? DEFAULT_SIZES;
+  return card?.sizes ?? DEFAULT_SIZES;
 }
 
 /** `"1216x832"` → `[1216, 832]`, or null. Used by the pixel-ceiling hint and the presets. */

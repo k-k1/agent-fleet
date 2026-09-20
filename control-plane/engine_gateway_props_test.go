@@ -357,3 +357,170 @@ func TestEnginePropsBorrowedRowAsksTheFarGatewaysOwnRoute(t *testing.T) {
 		t.Error("the row's own local apiKey was presented to the far deployment")
 	}
 }
+
+// --- router mode: /props answers windowless, /v1/models fills it in (ADR 0093 段0 追补) ----
+
+// The shape this whole follow-up exists for: a router-mode llama-server's
+// default_generation_settings describes the ROUTER, not any one model, so n_ctx there is 0.
+// props() must then read the model's real window from /v1/models — directly, never through
+// serve() — and add it under router_selected_model without disturbing anything /props itself
+// said. Measured against a real router deployment (2026-09-20): 262144, in data[].meta.n_ctx.
+//
+// The upstream body also carries a "seed" bigger than float64's 53-bit mantissa (max int64,
+// 9223372036854775807): a map[string]any round trip decodes every number as float64 and would
+// re-encode this one with a DIFFERENT value, silently — which is exactly what
+// enginePropsAugmentRouterWindow must not do to any key besides the one it adds.
+func TestEnginePropsRouterModeReadsV1ModelsForWindow(t *testing.T) {
+	mgr, signKey, mid := enginePropsFixture(t)
+	var modelsAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/props":
+			_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":0},"model_path":"none","role":"router","seed":9223372036854775807}`))
+		case "/v1/models":
+			modelsAuth = r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen3.8-27b-uncensored-q4_k_m","meta":{"n_ctx":262144}}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer up.Close()
+
+	api := &engineTestECS{desired: 1, running: 1}
+	eng := newTestEngine(t, up.URL, api)
+	eng.apiKey = "engine-secret"
+	eng.catalog = &engineCatalog{source: func(context.Context) ([]store.EngineModel, error) {
+		return []store.EngineModel{
+			{ID: "qwen3.8-27b-uncensored-q4_k_m", Kind: "checkpoint", Enabled: true, Default: true},
+		}, nil
+	}}
+	g := propsGateway(mgr, signKey, eng)
+
+	tok := mintEngineSessionToken(signKey, mid, "sess-1", "llm", time.Now().Add(time.Hour))
+	rec := httptest.NewRecorder()
+	g.props(rec, propsRequest(tok))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("router props: status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		DefaultGenerationSettings struct {
+			NCtx int `json:"n_ctx"`
+		} `json:"default_generation_settings"`
+		RouterSelectedModel struct {
+			ID   string `json:"id"`
+			NCtx int    `json:"n_ctx"`
+		} `json:"router_selected_model"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("response body did not decode: %v: %s", err, rec.Body.String())
+	}
+	if out.DefaultGenerationSettings.NCtx != 0 {
+		t.Errorf("default_generation_settings.n_ctx = %d, want 0 preserved exactly as the router sent it",
+			out.DefaultGenerationSettings.NCtx)
+	}
+	if out.RouterSelectedModel.NCtx != 262144 {
+		t.Fatalf("router_selected_model.n_ctx = %d, want 262144 read from /v1/models", out.RouterSelectedModel.NCtx)
+	}
+	if out.RouterSelectedModel.ID != "qwen3.8-27b-uncensored-q4_k_m" {
+		t.Errorf("router_selected_model.id = %q, want the catalogue's default model", out.RouterSelectedModel.ID)
+	}
+	if modelsAuth != "Bearer engine-secret" {
+		t.Errorf("/v1/models Authorization = %q, want the engine's own apiKey", modelsAuth)
+	}
+	if api.updates != 0 {
+		t.Errorf("ECS saw %d UpdateService call(s) — reading /v1/models directly must never touch the engine's lifecycle", api.updates)
+	}
+	// The precision check: a map[string]any round trip decodes this into a float64 and
+	// re-encodes it as something else (measured: 9223372036854775807 becomes
+	// 9223372036854775808 through that path) — this must survive as the EXACT bytes the
+	// upstream sent, because this route's job is to carry /props through, not to parse it.
+	if !strings.Contains(rec.Body.String(), `"seed":9223372036854775807`) {
+		t.Errorf("body = %s, want the upstream's 64-bit seed byte-for-byte, not rounded through a float64", rec.Body.String())
+	}
+}
+
+// A single-model engine's /props already answers a real window, so props() must never pay a
+// second upstream round trip reading /v1/models for it — the positive control for design choice
+// (a) over (b) in enginePropsAugmentRouterWindow's doc comment: read /v1/models ONLY when /props
+// came back windowless.
+func TestEnginePropsSingleModelNeverReadsV1Models(t *testing.T) {
+	mgr, signKey, mid := enginePropsFixture(t)
+	var sawModels bool
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			sawModels = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":32768}}`))
+	}))
+	defer up.Close()
+
+	api := &engineTestECS{desired: 1, running: 1}
+	eng := newTestEngine(t, up.URL, api)
+	g := propsGateway(mgr, signKey, eng)
+
+	tok := mintEngineSessionToken(signKey, mid, "sess-1", "llm", time.Now().Add(time.Hour))
+	rec := httptest.NewRecorder()
+	g.props(rec, propsRequest(tok))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("single-model props: status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if sawModels {
+		t.Error("props() read /v1/models for an engine whose /props already answered a real window")
+	}
+}
+
+// A borrowed row is never augmented locally: its /v1/models lives on the FAR deployment, and
+// reading it directly from this process would mean dialing the far gateway's serve() — exactly
+// the demand-record-and-wake path this route exists to avoid. It is relayed exactly as the far
+// side answered, windowless or not (a version-skew case this side cannot itself close until the
+// far deployment carries this same patch).
+func TestEnginePropsBorrowedRowNeverAugmentedLocally(t *testing.T) {
+	mgr, signKey, mid := enginePropsFixture(t)
+
+	var farSawModels bool
+	far := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/engine/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token":      "afe_far-token",
+				"expires_at": time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339),
+				"base_url":   "/engine/chat-far/v1",
+			})
+		case "/engine/chat-far/props":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":0},"role":"router"}`))
+		case "/engine/chat-far/v1/models":
+			farSawModels = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer far.Close()
+
+	remotes := &engineRemotes{base: far.URL, token: "afei_borrower", byKey: map[string]*engineRemote{}}
+	rem := remotes.forKey("llm")
+	eng := &engineRuntimeState{
+		def: engineDef{
+			Key: "llm", API: engineAPIChat, Provider: "llamacpp",
+			URL: far.URL, Lifecycle: engineLifecycleRemote,
+		},
+		remote: rem,
+	}
+	g := propsGateway(mgr, signKey, eng)
+
+	tok := mintEngineSessionToken(signKey, mid, "sess-1", "llm", time.Now().Add(time.Hour))
+	rec := httptest.NewRecorder()
+	g.props(rec, propsRequest(tok))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("borrowed router row: status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), enginePropsRouterWindowField) {
+		t.Errorf("body = %s, a borrowed row must not be augmented locally", rec.Body.String())
+	}
+	if farSawModels {
+		t.Error("this deployment dialed the far side's /v1/models directly — that goes through the far gateway's serve(), the wake path this route exists to avoid")
+	}
+}

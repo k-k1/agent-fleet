@@ -19,10 +19,23 @@ import { resolveFleetProvider, type ImagegenLora, type ImagegenModel, type Image
 let host: HTMLDivElement;
 let root: Root;
 
-const SDXL: ImagegenModel = { id: "sdxl-base", family: "sdxl", knobs: ["steps", "cfg", "sampler", "scheduler", "negative"] };
+const SDXL: ImagegenModel = {
+  id: "sdxl-base",
+  family: "sdxl",
+  knobs: ["steps", "cfg", "sampler", "scheduler", "negative", "strength"],
+  ops: ["generate", "edit", "inpaint"],
+};
 // flux1 reads neither cfg nor a negative prompt; klein reads no scheduler either.
-const FLUX: ImagegenModel = { id: "flux1-dev", family: "flux1", knobs: ["steps", "sampler", "scheduler"] };
+const FLUX: ImagegenModel = { id: "flux1-dev", family: "flux1", knobs: ["steps", "sampler", "scheduler", "strength"] };
 const OLD: ImagegenModel = { id: "legacy", family: "sdxl" };
+// ADR 0094: edit-only, no strength, no size candidates.
+const QWEN_EDIT: ImagegenModel = {
+  id: "qwen-edit-row",
+  family: "qwen-image-edit-2509",
+  knobs: ["steps", "cfg", "sampler", "scheduler", "negative"],
+  ops: ["edit"],
+  sizes: [],
+};
 
 const LORAS: ImagegenLora[] = [
   { name: "detail", baseModel: "sdxl", trained_words: ["add_detail"], weight: 0.7 },
@@ -176,6 +189,51 @@ describe("編集のときの大きさ", () => {
     await render(SDXL, { op: "edit" });
     const size = fieldByLabel("大きさ") ?? fieldByLabel("Size");
     expect((size as HTMLSelectElement).disabled).toBe(true);
+  });
+
+  // ADR 0094 決定 4: sizes が空の族は disabled ではなく、欄そのものを描かない。
+  it("qwen-image-edit-2509 は sizes が空なので欄ごと出ない", async () => {
+    await render(QWEN_EDIT, { op: "edit" });
+    expect(fieldByLabel("大きさ") ?? fieldByLabel("Size")).toBeNull();
+  });
+});
+
+// ADR 0094 decision 12: the op selector and the strength slider both read the AGENT's per-model
+// word (`ops`, `knobs`), the same rule the other knobs already follow — absent means an old
+// Agent and the form stays fully usable.
+describe("ADR 0094: 編集専用モデルの op と strength", () => {
+  const opOptions = (): string[] => {
+    const select = [...host.querySelectorAll("select")].find((s) =>
+      [...s.options].some((o) => o.value === "generate" || o.value === "edit"),
+    ) as HTMLSelectElement;
+    return [...select.options].map((o) => o.value);
+  };
+
+  it("model.ops が edit だけなら選択肢も edit だけ", async () => {
+    await render(QWEN_EDIT, { op: "edit" });
+    expect(opOptions()).toEqual(["edit"]);
+  });
+
+  it("model.ops が無ければ（古い Agent）3 つとも選べる", async () => {
+    await render(OLD);
+    expect(opOptions()).toEqual(["generate", "edit", "inpaint"]);
+  });
+
+  it("model.ops のある行では 3 つとも選べる（この行は generate/edit/inpaint すべて対応）", async () => {
+    await render(SDXL);
+    expect(opOptions()).toEqual(["generate", "edit", "inpaint"]);
+  });
+
+  it("strength を読まない族はスライダーごと出ない", async () => {
+    await render(QWEN_EDIT, { op: "edit" });
+    expect(host.textContent).not.toContain("元画像をどれだけ変えるか");
+    expect(host.textContent).not.toContain("How much of the input to change");
+  });
+
+  it("strength を読む族はスライダーが出る（陽性対照）", async () => {
+    await render(SDXL, { op: "edit" });
+    const label = fieldByLabel("元画像をどれだけ変えるか") ?? fieldByLabel("How much of the input to change");
+    expect(label).not.toBeNull();
   });
 });
 

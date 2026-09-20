@@ -80,6 +80,10 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.op_generate": "Generate",
   "imggen.op_edit": "Edit",
   "imggen.op_inpaint": "Inpaint",
+  // ADR 0094 decision 12: switching to an edit-only row (or similar) can leave the draft's op
+  // pointed at something the new model does not offer; remapped and said out loud, since
+  // changing it silently and leaving it silently broken are the same hole.
+  "imggen.op_remapped": "{family} does not support the previous operation — switched to {op}",
   "imggen.inputs": "Reference images",
   "imggen.input_ph": "a path relative to the browse root",
   "imggen.input_add": "Add",

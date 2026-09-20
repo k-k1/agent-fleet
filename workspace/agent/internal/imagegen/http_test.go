@@ -409,6 +409,36 @@ func TestGenerateForwardsLoras(t *testing.T) {
 	}
 }
 
+// ADR 0094 decision 2/4's edge refusal, on the blocking route — P0 completion condition (2)
+// requires this on both the blocking route and the queue's (jobs_test.go's TestSpecRefuses*
+// covers that side). This uses the REAL comfyProvider (comfyStub), not stubProvider, because the
+// refusal resolves a family off the engine's own catalogue, which a hand-built stub has none of.
+func TestGenerateRefusesStrengthAndSizeAgainstQwenImageEdit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	session.WriteMeta(session.Meta{Name: "slot01", Kind: session.KindClaude, Dir: home})
+	oldEnabled := Enabled
+	Enabled = func() bool { return true }
+	t.Cleanup(func() { Enabled = oldEnabled })
+
+	p, _ := comfyStub(t, qwenEditConn(), nil)
+	withStubProvider(t, p)
+
+	body := `{"session":"slot01","op":"edit","model":"qwen-edit-row","prompt":"x","strength":0.3}`
+	rec := httptest.NewRecorder()
+	HandleGenerate(rec, httptest.NewRequest(http.MethodPost, "/imagegen/generate", strings.NewReader(body)))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "bad_strength") {
+		t.Fatalf("status = %d, body = %s, want 400 bad_strength", rec.Code, rec.Body)
+	}
+
+	body = `{"session":"slot01","op":"edit","model":"qwen-edit-row","prompt":"x","size":"1024x1024"}`
+	rec = httptest.NewRecorder()
+	HandleGenerate(rec, httptest.NewRequest(http.MethodPost, "/imagegen/generate", strings.NewReader(body)))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "bad_size") {
+		t.Fatalf("status = %d, body = %s, want 400 bad_size", rec.Code, rec.Body)
+	}
+}
+
 // A named provider may not be the caller's own CLI. The tool's enum already leaves it out, but
 // the advertised set is a scope boundary — a guessed name in tools/call must not cross it and
 // spend the plan twice for a picture this session can make with its own built-in tool.

@@ -79,6 +79,9 @@ export const imggen = {
   "imggen.op_generate": "生成",
   "imggen.op_edit": "編集",
   "imggen.op_inpaint": "部分描き直し",
+  // ADR 0094 決定 12: 編集専用の行へ切り替えたときなど、いま選ばれている操作がそのモデルの
+  // 候補に無くなったら読み替える。黙って変えるのも黙って落ちるのも同じ穴。
+  "imggen.op_remapped": "{family} はいまの操作に対応していないため「{op}」に読み替えました",
   "imggen.inputs": "参照画像",
   "imggen.input_ph": "browse root からの相対パス",
   "imggen.input_add": "追加",

@@ -174,7 +174,7 @@ jobs:
       # check does are written in the script.
       - name: go vet (build tags)
         working-directory: .
-        run: cd workspace/agent && ../../scripts/vet-build-tags.sh clicontract drift driftlive tui_contract
+        run: cd workspace/agent && ../../scripts/vet-build-tags.sh clicontract drift driftlive manuallive tui_contract
       # entrypoint.sh is not Go, but what dies when it breaks is the Workspace this job
       # guards. The identity-relocation block once left a home built from a golden snapshot
       # unable to boot, so that shape is pinned by a regression check.
