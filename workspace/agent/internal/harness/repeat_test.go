@@ -49,10 +49,10 @@ func TestRepeatGateWarnStageInterceptsWithoutExecuting(t *testing.T) {
 	sameArgs := func(id string) ToolCall { return ToolCall{ID: id, Name: "echo", Arguments: `{"x":1}`} }
 	otherArgs := func(id string) ToolCall { return ToolCall{ID: id, Name: "echo", Arguments: `{"x":2}`} }
 	client := &scriptedClient{turns: []Turn{
-		{ToolCalls: []ToolCall{sameArgs("1")}}, // streak 1: runs
-		{ToolCalls: []ToolCall{sameArgs("2")}}, // streak 2: runs
-		{ToolCalls: []ToolCall{sameArgs("3")}}, // streak 3 == warnAfter: intercepted
-		{ToolCalls: []ToolCall{sameArgs("4")}}, // streak 4: still intercepted
+		{ToolCalls: []ToolCall{sameArgs("1")}},  // streak 1: runs
+		{ToolCalls: []ToolCall{sameArgs("2")}},  // streak 2: runs
+		{ToolCalls: []ToolCall{sameArgs("3")}},  // streak 3 == warnAfter: intercepted
+		{ToolCalls: []ToolCall{sameArgs("4")}},  // streak 4: still intercepted
 		{ToolCalls: []ToolCall{otherArgs("5")}}, // different args: streak resets, runs
 		{Content: "done"},
 	}}
@@ -140,8 +140,8 @@ func TestRepeatGateAbortAnswersEveryCallInTheAbortingTurn(t *testing.T) {
 	reg := NewRegistry(countingTool("echo", &executed))
 	sameArgs := func(id string) ToolCall { return ToolCall{ID: id, Name: "echo", Arguments: `{"x":1}`} }
 	client := &scriptedClient{turns: []Turn{
-		{ToolCalls: []ToolCall{sameArgs("0")}},                             // streak 1: runs
-		{ToolCalls: []ToolCall{sameArgs("a"), sameArgs("b")}},              // streak 2 (a), 3 (b): abort trips at "a"
+		{ToolCalls: []ToolCall{sameArgs("0")}},                // streak 1: runs
+		{ToolCalls: []ToolCall{sameArgs("a"), sameArgs("b")}}, // streak 2 (a), 3 (b): abort trips at "a"
 	}}
 	rt := &Runtime{Cwd: t.TempDir(), RepeatWarnAfter: 100, RepeatAbortAfter: 2}
 	res, err := Run(context.Background(), client, reg, rt, nil)
