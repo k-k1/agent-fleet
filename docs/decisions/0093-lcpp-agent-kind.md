@@ -574,17 +574,26 @@ certain to be hit by Phase 2's own work.
    actual failure.** It fired zero times on hardware. The same tool name repeated six times in a row,
    but **the arguments changed every time**, so the `name+args` match never triggered. What `repeat.go`
    itself documents as a known limitation happened for real.
-3. 🔴 **`qwen3-coder-30b-a3b` has never been measured on the final #811 harness.** Each of the three
-   measurements landed on a different harness version (the run order and harness versions were
-   pinned down in `docs/log/99` §14's 2026-09-20 correction): **§14 #3 = a 72-turn loop on the Phase 1
-   harness**; **§14 #9 = real-window overflow on the Phase 1 harness** (the underlying defect, `Run`
-   never receiving the window, is fixed by 52bbda2d and 570d5042); **§14 #14 = 434-turn
-   non-convergence on #811's first draft** (that draft carries the same compaction-thrashing defect
-   as §14 #10, so it is confounded and is not evidence about the model itself). So the right summary
-   is not "three different reasons the model is bad" but **"measured on three different harness
-   versions, with no evaluation yet on the fixed one (#811's final)"**. None of the three counts
-   toward a passing checkpoint. **Recommended Phase 2 follow-up: measure qwen3-coder once more on
-   #811's final harness.**
+3. 🟢 **Resolved (2026-09-21, §14 #15/#16).** The earlier note that `qwen3-coder-30b-a3b` had never been
+   measured on the final #811 harness no longer holds. Each of the three earlier measurements had
+   landed on a different harness version (the run order and harness versions were pinned down in
+   `docs/log/99` §14's 2026-09-20 correction): **§14 #3 = a 72-turn loop on the Phase 1 harness**;
+   **§14 #9 = real-window overflow on the Phase 1 harness** (the underlying defect, `Run` never
+   receiving the window, is fixed by 52bbda2d and 570d5042); **§14 #14 = 434-turn non-convergence on
+   #811's first draft** (that draft carries the same compaction-thrashing defect as §14 #10, so it is
+   confounded and is not evidence about the model itself). **New measurements on the final #811
+   harness (570d5042 and later, today's develop): §14 #15 (window 3500) and #16 (window 8000).**
+   Window 3500 stops on `ErrCompactionThrashing` exactly as designed (task-0 itself finishes cleanly
+   in 40 turns); window 8000 PASSes in 164 turns — the same shape as gemma-4's §14 #11→#12, backing
+   up §14's conclusion that window 3500 is too narrow for the #811 harness on a second model family.
+   None of the three earlier failures were the model's own disqualifying trait; they were each a
+   harness-version problem at the time. ⚠️ **But passing is only a correctness claim — the cost is
+   separately bad.** 164 turns is 2.6x gemma-4's 63 turns at the SAME window (§14 #12), and 5.5x
+   qwen3.8's 29-30 turns at a different window (§14 #1/#2) — the single most extreme point on the
+   "families differ by more than 2x = a cost gap, not a correctness gap" axis decision 9's gate (a)
+   already names. Details (including how `compacted_at_turn=0` was traced back to a test-harness
+   turn-counting artifact rather than a real zero-turn compaction) are in `docs/log/99` §14's
+   2026-09-21 addendum.
 4. **Llama 3.1 has no exit on this engine build.** `common/chat.cpp` has no Llama-specific parser, so
    it falls to the differential autoparser. The role-wide `--jinja` always wins (the overlay in
    `tools/server/server-models.cpp:548-551`; there is no reserved key like `LLAMA_ARG_JINJA`), which
