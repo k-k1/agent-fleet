@@ -404,7 +404,7 @@ func TestNoteCreateOriginRecordsSpawnOnly(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spawnFixture(t)
-			noteCreateOrigin("slot01", &tc.req, tc.parent)
+			noteCreateOrigin("slot01", &tc.req, tc.parent, session.OriginUser)
 			got := injectionSourceOf("slot01", "task")
 			if got != tc.want {
 				t.Fatalf("recorded source = %q, want %q", got, tc.want)

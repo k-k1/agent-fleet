@@ -59,6 +59,7 @@ const exact = {
   "/api/workspace": () => ({ state: "running", bootPhase: "" }),
   "/api/sessions": () => ({ sessions: fx.sessions(LOCALE) }),
   "/api/sessions/cleanup": () => ({ candidates: fx.cleanupCandidates(LOCALE) }),
+  "/api/fleet-graph": () => fx.fleetGraph(LOCALE),
   "/api/cleanup/archives": () => ({ archives: fx.cleanupArchives(LOCALE) }),
   "/api/repos": () => ({ repos: fx.repos(LOCALE) }),
   // Four connected agents: at five the launch dialog's per-card sub-label starts to

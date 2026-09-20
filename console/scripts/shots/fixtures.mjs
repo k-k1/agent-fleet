@@ -1462,3 +1462,47 @@ export function sessionSkills(locale) {
   }));
   return [...own, ...cli].sort((a, b) => (a.name < b.name ? -1 : 1));
 }
+
+// The fleet session graph (ADR 0096): the ledger page GET /api/fleet-graph serves.
+//
+// Lane ids line up with sessions() above on purpose — presence is decided by the ledger
+// AND the live session list together, so a page whose names do not appear in /api/sessions
+// would render every lane as "gone" and hide exactly the states this figure exists for.
+// Two ids here are deliberately absent from that list: the archived lane (the Agent's list
+// skips archived rows) and the erased one (its lineage was deleted; only activity remains).
+export function fleetGraph(locale) {
+  const now = NOW.getTime();
+  const min = (m) => now - m * 60_000;
+  return {
+    since: min(24 * 60),
+    until: now,
+    now,
+    lineage: [
+      { ev: "birth", ts: min(760), name: "sh2vt8p", kind: "shell", repo: "webshop", origin: "user", display: L(locale, "ビルド確認", "Build check") },
+      { ev: "birth", ts: min(700), name: "sk4rq2f", kind: "claude", repo: "webshop", origin: "user", display: L(locale, "チェックアウトの入力検証", "Checkout input validation") },
+      { ev: "birth", ts: min(620), name: "sc9lm3d", kind: "codex", repo: "webshop", origin: "session", originSession: "sk4rq2f", display: L(locale, "返金 API の契約整理", "Refund API contract") },
+      { ev: "birth", ts: min(540), name: "scu7bx1", kind: "cursor", repo: "webshop", origin: "session", originSession: "sk4rq2f", display: L(locale, "カート UI の余白調整", "Cart UI spacing") },
+      { ev: "birth", ts: min(480), name: "sq3hn7v", kind: "copilot", repo: "infra", origin: "schedule", display: L(locale, "Terraform の lint 追従", "Terraform lint follow-up") },
+      { ev: "birth", ts: min(300), name: "so5nw6k", kind: "opencode", repo: "webshop", origin: "user", display: L(locale, "在庫同期バッチの調査", "Stock sync batch triage") },
+      { ev: "death", ts: min(90), name: "so5nw6k" },
+      { ev: "birth", ts: min(610), name: "sv1kp4q", kind: "claude", repo: "webshop", origin: "session", originSession: "sc9lm3d", display: L(locale, "返金テストの追加", "Refund tests") },
+      { ev: "death", ts: min(400), name: "sv1kp4q" },
+      { ev: "archived", ts: min(390), name: "sv1kp4q", archived: true },
+      { ev: "birth", ts: min(240), name: "sw8zt2r", kind: "claude", repo: "infra", origin: "session", originSession: "sx0ghost", display: L(locale, "GPU 使い捨て検証", "Throwaway GPU probe") },
+    ],
+    activity: [
+      { ev: "instruct", ts: min(695), from: "user", to: "sk4rq2f", excerpt: L(locale, "カートの合計が 0 円のときを弾いてほしい", "Reject zero-total carts") },
+      { ev: "state", ts: min(690), name: "sk4rq2f", to: "working" },
+      { ev: "peer", ts: min(600), from: "sk4rq2f", to: "sc9lm3d", intent: "request" },
+      { ev: "state", ts: min(600), name: "sc9lm3d", to: "working" },
+      { ev: "state", ts: min(430), name: "sc9lm3d", to: "question" },
+      { ev: "report", ts: min(405), from: "sv1kp4q", to: "conv:ops-1", kind: "answer-ready" },
+      { ev: "instruct", ts: min(300), from: "schedule", to: "sq3hn7v", excerpt: L(locale, "定時の lint 追従", "Scheduled lint follow-up") },
+      { ev: "state", ts: min(299), name: "sq3hn7v", to: "working" },
+      { ev: "state", ts: min(120), name: "so5nw6k", to: "idle" },
+      { ev: "peer", ts: min(110), from: "sk4rq2f", to: "sdelet0", intent: "notice" },
+      { ev: "state", ts: min(60), name: "scu7bx1", to: "idle" },
+    ],
+    coverage: { activitySince: min(24 * 60), lineageSince: min(24 * 60) },
+  };
+}

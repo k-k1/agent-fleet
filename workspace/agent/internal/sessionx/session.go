@@ -8,10 +8,49 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
+
+// recordFleetGraphBirth appends the fleet graph's birth line for a session that was just
+// minted (create / fork / recreate all mint a fresh name+sid, so all three are births —
+// ADR 0096 decision 13, docs/log/101 §101.6 write site ①).
+//
+// The lane's own conv id is resolved through the SAME path its kind's Forker.ForkSource
+// uses (never the id AF handed it at launch — codex/opencode fork edges would miss
+// permanently otherwise, docs/log/101 §101.5.1). Right after launch this often is not
+// resolvable yet (a fresh claude has not written its jsonl); that is expected and left
+// empty rather than guessed — a later conv-id observation fills it in.
+func recordFleetGraphBirth(m session.Meta) {
+	conv := fleetGraphResolveConv(m)
+	fleetgraph.RecordBirth(fleetgraph.Birth{
+		Name: m.Name, Kind: m.Kind, Repo: m.Repo,
+		Origin: fleetgraph.NormalizeOrigin(session.OriginOf(m)), OriginSession: m.OriginSession,
+		Conv: conv, ForkFrom: m.ForkFrom, Display: session.Display(m),
+	})
+	if conv != "" {
+		// The birth row above already carries it — seed the dedup map so the very next
+		// list poll's ObserveConv does not write a redundant convid line for it.
+		fleetgraph.SeedConv(m.Name, conv)
+	}
+}
+
+// fleetGraphResolveConv resolves m's own conversation id the same way its kind's
+// Forker.ForkSource does (ADR 0096 decision 13) — "" for a kind without CanFork, or one
+// that cannot resolve one yet (right after launch, before any conversation exists).
+func fleetGraphResolveConv(m session.Meta) string {
+	forker, ok := AgentOf(m.Kind).(agents.Forker)
+	if !ok {
+		return ""
+	}
+	conv, err := forker.ForkSource(m)
+	if err != nil {
+		return ""
+	}
+	return conv
+}
 
 // Wire conversion for sessions, plus title/label derivation. The model, meta persistence
 // and UUIDs live in internal/session (docs/log/23 remaining item 1 Wave A); tmux in

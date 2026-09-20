@@ -102,6 +102,11 @@ docs/35 §35.9 のとおり、前者は入力ハングの誤診断で入れて�
    別タスクへ送った**フリート全体の俯瞰図**が必要になる（本 ADR は必要性の確定までを行い、
    図そのものは docs/44 の後続に委ねる）。
 
+   🔴 **2026-09-20 追記**: その俯瞰図が [ADR 0096](0096-fleet-session-graph.ja.md) として起票され、
+   `DispatchEntry` を拡張する形は採らなかった。理由は本決定が示したとおり **conv 単位の台帳では
+   足りない**ことで、0096 は `fleet-graph/{lineage,activity-*}.jsonl` に `ev:"peer"` の行を持つ。
+   型の正は **`console/src/types/fleetgraph.ts`**（`types/opgraph.ts` は ADR 0027 ごと退役）。
+
 10. **ミラーに peer 着信の専用行を出す。** 相手が busy のときの peer 着信は割り込み投入経路を
     通り、そこは既知の不可視バグ（メモ `mirror-queued-steering-invisible`）を踏む。
     **人間が一番見たい場面で見えない**ため、可視化は v1 の受入条件であって後回しにしない。

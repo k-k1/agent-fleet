@@ -2,9 +2,27 @@
 
 [English](0027-operator-interaction-graph.md) | 日本語
 
-- 状態: **採用・着工中**（Phase 0 契約凍結）。設計は [docs/44](../log/44-operator-interaction-graph.md)。
+- 状態: **superseded（2026-09-20・[0096](0096-fleet-session-graph.ja.md)）**。着工したのは Phase 0
+  （契約凍結＝`console/src/types/opgraph.ts`）だけで、ビューも API も入っていない。設計は
+  [docs/44](../log/44-operator-interaction-graph.md)。
 - 関連: [0015](0015-agent-managed-driver.ja.md)（managed driver）/ [0021](0021-scheduled-execution.ja.md)（定時実行）/
   docs/30（セッション完了報告→フリート・オペレーター）/ [history/19](../log/19-assistant-chat.md)（assistant-chat）
+
+## 補遺（2026-09-20）— なぜ置き換えたか
+
+本 ADR の前提は 2 つとも崩れた。
+
+1. **決定 2 の「指示は arm にしか無く報告配送時に消える」は、ADR 0035（報告 v2・2026-07-29）が
+   `instr-ledger/<session>.json` として解決済み**。このまま着工すると同じものを数える台帳が 2 本になる。
+2. **決定 3 の「範囲は 1 オペレーター会話」は、ADR 0041 決定 9 が否定した** — peer メッセージは
+   会話に帰属できないので、conv 単位の図では**構造的に描けない往復が残る**。
+
+加えて ADR 0073（セッションがセッションを起こす）で家系が 2〜3 段に伸び、読みたいものが
+「誰が誰に言ったか」から「**いつ何本が同時に生きていたか**」へ移った。後継は
+[0096](0096-fleet-session-graph.ja.md)（レーン＝セッション × 横軸＝時間）で、本 ADR の
+「1 オペレーター会話の往復」は**会話 id による絞り込み**として吸収される。手書き SVG・
+`lib/gitgraph.ts` を構造テンプレにする判断（決定 1）と、抜粋は表示専用 ≤140 字という
+方針（決定 2）は 0096 がそのまま引き継いだ。
 
 ## 背景
 

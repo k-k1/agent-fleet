@@ -77,7 +77,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	finalizeSessionUsage(m)
 	reclaim := r.URL.Query().Get("reclaim") == "1" || r.URL.Query().Get("reclaim") == "true"
 	if !reclaim {
-		session.RemoveMeta(name)
+		session.RemoveMetaAndLineage(name) // a person's delete either way (ADR 0096 decision 6)
 		removeSessionSideFiles(name)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": name})
 		return
@@ -95,7 +95,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	session.RemoveMeta(name)
+	session.RemoveMetaAndLineage(name) // a person's delete either way (ADR 0096 decision 6)
 	removeSessionSideFiles(name)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": name, "archive": arch})
 }

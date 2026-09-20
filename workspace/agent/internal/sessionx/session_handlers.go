@@ -23,6 +23,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -138,8 +139,23 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 			if m.StoppedAt != "" {
 				m.StoppedAt = ""
 				m = WriteSessionMetaKeepingLock(m)
+				// The slot became alive again (ADR 0096 write site ③) — NOT "something
+				// cleared StoppedAt", which HandleRestoreSession also does without starting
+				// anything (docs/log/101 §101.8). This is the one branch where the clearing
+				// really is a resume.
+				fleetgraph.RecordRevive(name)
 			}
-			sessions = append(sessions, wireSession(m, true))
+			s := wireSession(m, true)
+			fleetgraph.ObserveState(name, s.State) // write site ⑤: the list already computed it
+			// decision 13's "became resolvable for the first time" case: a birth row's own
+			// conv is usually empty (no conversation exists yet at create time), and for
+			// codex/opencode this list poll — not a relaunch drift — is the only place that
+			// ever learns it. Piggybacked on the same observation as ObserveState above, so
+			// no new polling.
+			if conv := fleetGraphResolveConv(m); conv != "" {
+				fleetgraph.ObserveConv(name, conv)
+			}
+			sessions = append(sessions, s)
 			continue
 		}
 		// Stopped (exited): stamp when first noticed, auto-archive once older than the TTL,
@@ -153,6 +169,13 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 			PromoteCarriedFor(m)
 			m.StoppedAt = now.Format(time.RFC3339)
 			m = WriteSessionMetaKeepingLock(m)
+			// The end of a run, AS OBSERVED (write site ②) — this poll is the first thing
+			// that noticed the pane is gone, which is not when it actually ended.
+			reason, code, signal := "", 0, 0
+			if e, ok := status.ReadExit(name); ok && e.Reason != "" && e.Reason != "exited" && e.Reason != "stopped" {
+				reason, code, signal = e.Reason, e.Code, e.Signal
+			}
+			fleetgraph.RecordDeath(name, reason, code, signal)
 		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl && !m.Locked {
 			// The TTL MOVES the row to the shelf; it never deletes (ADR 0097). Deleting here
 			// reclaimed nothing — the transcript jsonl and the per-session side files are keyed
@@ -917,7 +940,8 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slot.publish(meta)
-		noteCreateOrigin(name, &req, spawnParent)
+		recordFleetGraphBirth(meta)
+		noteCreateOrigin(name, &req, spawnParent, origin)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
 			if err := h.Send(agents.TurnInput{Prompt: p}); err != nil {
 				log.Printf("managed initial prompt %s: %v", name, err)
@@ -933,10 +957,11 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slot.publish(meta)
+	recordFleetGraphBirth(meta)
 
 	// BEFORE the delivery below, not after: the record is what the mirror matches the turn
 	// against, and the turn can appear first (see noteCreateOrigin).
-	noteCreateOrigin(name, &req, spawnParent)
+	noteCreateOrigin(name, &req, spawnParent, origin)
 	// Optional launch task: deliver it once the CLI has booted (async — the create
 	// response returns the session immediately so the caller can start polling).
 	if strings.TrimSpace(req.InitialPrompt) != "" {
@@ -963,19 +988,41 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 // only way to observe it from a test is to be the delivery.
 var deliverInitialPromptFn = deliverInitialPrompt
 
-func noteCreateOrigin(name string, req *CreateReq, spawnParent string) {
+func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
+	hasPrompt := strings.TrimSpace(req.InitialPrompt) != ""
 	switch {
 	case req.ReportTo != "":
 		chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
+		if hasPrompt {
+			recordFleetGraphInstruct(name, injectionSource(req.Source), req.ReportTo, "", req.InitialPrompt)
+		}
 	case scheduleInjectionSource(req.Source) != "":
 		// A session created by a schedule with reporting off: no ledger row, but remember
 		// where the first prompt came from — otherwise that turn loses its badge (docs/log/38).
 		recordInjection(name, req.InitialPrompt, scheduleInjectionSource(req.Source))
+		if hasPrompt {
+			recordFleetGraphInstruct(name, scheduleInjectionSource(req.Source), "", "", req.InitialPrompt)
+		}
 	case spawnParent != "":
 		// A child another session started (ADR 0073). Its create carries no report_to, so
 		// without this the launch task — envelope and all — renders as the user's own input.
+		//
+		// No fleet-graph InstructEvent here: the parent→child edge is already the BirthEvent
+		// itself (origin=session, originSession=parent — recordFleetGraphBirth), and the
+		// view draws it as a "spawn" arrow (ArrowVariant). An InstructEvent alongside it
+		// would draw the same handoff twice.
 		recordInjection(name, req.InitialPrompt, TurnSourceSpawn)
+	default:
+		// The ordinary Console launch (or one seeded from a handoff proposal): no
+		// report_to, no schedule tag, not a spawn. No mirror badge either — it genuinely
+		// is the user's own instruction — but the fleet graph still needs the arrow, or
+		// the session's very first turn has no visible cause (ActorId "user", decision 4).
+		// Restricted to origin=user/handoff: an operator/MCP call that simply chose not
+		// to set report_to is NOT a person, and must not be drawn as one.
+		if hasPrompt && (origin == session.OriginUser || origin == session.OriginHandoff) {
+			fleetgraph.RecordInstruct("user", name, "", req.InitialPrompt)
+		}
 	}
 }
 
@@ -1122,6 +1169,7 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session.WriteMeta(meta)
+		recordFleetGraphBirth(meta)
 		httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 		return
 	}
@@ -1130,6 +1178,7 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session.WriteMeta(meta)
+	recordFleetGraphBirth(meta)
 	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 }
 
@@ -1175,8 +1224,14 @@ func HandleStopSession(w http.ResponseWriter, r *http.Request) {
 		// after killing tmux so the final events written on exit are in the transcript first.
 		finalizeSessionUsage(meta)
 	}
+	if live {
+		// A deliberate stop of a RUNNING session is also the end of a run (write site ②);
+		// an already-stopped one already got its DeathEvent from HandleListSessions'
+		// first-observed branch, so recording again here would just duplicate it.
+		fleetgraph.RecordDeath(name, "", 0, 0)
+	}
 	status.RemoveCarried(session.UUID(meta.Dir, name))
-	session.RemoveMeta(name)
+	session.RemoveMetaAndLineage(name) // /stop is a person's delete (ADR 0096 decision 6)
 	removeTerminalHistory(name)
 	// Stopping forgets the session; if it was the last one in a worktree and that
 	// worktree is clean, auto-remove it so worktrees don't pile up (no-op otherwise).
@@ -1243,6 +1298,7 @@ func haltSessionMeta(m session.Meta) (session.Meta, error) {
 		dropManagedRuntime(m)
 		status.Remove(session.UUID(m.Dir, name))
 		m.StoppedAt = time.Now().Format(time.RFC3339)
+		fleetgraph.RecordDeath(name, "", 0, 0) // halt: a deliberate stop, same as write site ②
 		// Re-merge the on-disk lock: the meta snapshot above is seconds old by now and a
 		// blind WriteMeta would roll back a lock the user flipped meanwhile.
 		return clearStopArm(WriteSessionMetaKeepingLock(m)), nil
@@ -1277,6 +1333,7 @@ func haltSessionMeta(m session.Meta) (session.Meta, error) {
 	// GracefulStop/kill above can take seconds, so re-merge the on-disk lock instead
 	// of writing back the stale snapshot (lost-update guard, same as list).
 	m.StoppedAt = time.Now().Format(time.RFC3339)
+	fleetgraph.RecordDeath(name, "", 0, 0) // halt: a deliberate stop, same as write site ②
 	// A stop consumes the arm whoever pressed it (docs/log/85): left on disk it would ride
 	// through the resume and fold the session away again at the end of a turn nobody armed.
 	return clearStopArm(WriteSessionMetaKeepingLock(m)), nil
@@ -1296,24 +1353,34 @@ func HandleArchiveSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// Captured BEFORE the kill below: HandleListSessions (write site ②) never sees this
+	// session again once it is archived (`if m.Archived { continue }`), so this is the
+	// ONLY chance to record that a run actually ended here. Skipping it for an
+	// already-stopped session avoids a second death on top of the one list already wrote.
+	tn := session.TmuxName(name)
+	wasAlive := tmuxx.HasSession(tn) || (m.DriverKind() == session.DriverManaged && ManagedAlive(m))
 	// Promote the carry-over BEFORE killing the pane (docs/log/75 P5, ADR 0055 decision 12).
 	// Archiving, like halt, folds a session away while it may still hold a pending modal,
 	// and cursor's ACP request, kiro's approval panel and a managed Interaction all live
 	// only inside the process: called after kill-session / DropHandle it gets nothing, and
 	// the question is lost silently.
 	PromoteCarriedFor(m)
-	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
+	if tmuxx.HasSession(tn) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
+	if wasAlive {
+		fleetgraph.RecordDeath(name, "", 0, 0) // write site ④, part 1: end the run being folded away
+	}
 	m.Archived = true
 	// Archiving folds the session away too, so it consumes the stop-after-turn arm for the
 	// same reason halt does (docs/log/85): an arm surviving into the restore would stop the
 	// session again at the end of a turn nobody armed.
 	m.StopAfterTurnAt = ""
 	session.WriteMeta(m)
+	fleetgraph.RecordArchived(name, true) // write site ④, part 2: AFTER the death above, never before
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archived": name})
 }
 
@@ -1333,6 +1400,10 @@ func HandleRestoreSession(w http.ResponseWriter, r *http.Request) {
 	m.Archived = false
 	m.StoppedAt = "" // re-stamped on next list, resetting the prune clock
 	session.WriteMeta(m)
+	// Restore only un-hides the row (§101.8: it never starts anything — `wireSession(m,
+	// false)` below is a STOPPED session). RecordRevive belongs to the branch in
+	// HandleListSessions that observes the slot actually come back alive.
+	fleetgraph.RecordArchived(name, false)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
 }
 
@@ -1370,18 +1441,27 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
 	// the active list. Keep the meta + jsonl (and any captured resume id) so it restores.
+	// Captured BEFORE the kill below, same reason as HandleArchiveSession: once Archived is
+	// true, HandleListSessions never looks at this name again, so this is the only chance
+	// to record that the run actually ended.
+	tn := session.TmuxName(name)
+	wasAlive := tmuxx.HasSession(tn) || (m.DriverKind() == session.DriverManaged && ManagedAlive(m))
 	// Promote the carry-over BEFORE killing the pane (docs/log/75 P5, ADR 0055 decision 12).
 	// Recreating also folds the old session away, and a pending question / approval request
 	// does not survive kill-session / DropHandle — calling later gets nothing.
 	PromoteCarriedFor(m)
-	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
+	if tmuxx.HasSession(tn) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
 	status.Remove(session.UUID(m.Dir, m.Name))
 	status.RemoveExit(m.Name)
+	if wasAlive {
+		fleetgraph.RecordDeath(m.Name, "", 0, 0) // write site ④, part 1: end the run being folded away
+	}
 	m.Archived = true
 	session.WriteMeta(m)
+	fleetgraph.RecordArchived(m.Name, true) // write site ④, part 2: AFTER the death above, never before
 
 	// Fresh identity, same slot. No ForkFrom — recreate means "start empty", not
 	// "re-copy the fork source". The driver is inherited: a slot created managed is
@@ -1404,6 +1484,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 			// fake alive=true.
 			m.Archived = false
 			session.WriteMeta(m)
+			fleetgraph.RecordArchived(m.Name, false)
 			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
 				"managed driver はこの kind ではまだ利用できません")
 			return
@@ -1411,10 +1492,12 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		if _, err := mcpx.StartManagedSession(d, newMeta); err != nil {
 			m.Archived = false
 			session.WriteMeta(m)
+			fleetgraph.RecordArchived(m.Name, false)
 			writeRuntimeErr(w, err)
 			return
 		}
 		session.WriteMeta(newMeta)
+		recordFleetGraphBirth(newMeta)
 		handOverSpawnLineage(m.Name)
 		httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
 		return
@@ -1424,10 +1507,12 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		// the active list.
 		m.Archived = false
 		session.WriteMeta(m)
+		fleetgraph.RecordArchived(m.Name, false)
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
 	session.WriteMeta(newMeta)
+	recordFleetGraphBirth(newMeta)
 	handOverSpawnLineage(m.Name)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
 }

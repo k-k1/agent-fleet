@@ -227,6 +227,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "pane.kind.sessions": "Sessions overview",
   "pane.kind.gallery": "Image gallery",
   "pane.kind.imagegen": "Image generation",
+  "pane.kind.fleetgraph": "Fleet graph",
 
   // === P2 common (added) ===
   "common.approx": "~{v}",

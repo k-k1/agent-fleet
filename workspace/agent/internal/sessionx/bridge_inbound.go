@@ -101,6 +101,7 @@ func StartBridgeReceiver() {
 				return injectFailureReason(err), err
 			}
 			recordInjection(sessionName, text, source)
+			recordFleetGraphInstruct(sessionName, source, "", "", text)
 			return "", nil
 		},
 		// P2b: a button click (AskUserQuestion pick / permission / plan decision) is

@@ -112,6 +112,12 @@ an input hang and was left in place as "harmless hardening" even after the real 
    diagram** docs/44 sent off as a separate task becomes necessary (this ADR goes as far as settling
    the necessity; the diagram itself is left to docs/44's follow-up).
 
+   🔴 **Amendment, 2026-09-20**: that overview was raised as [ADR 0096](0096-fleet-session-graph.md),
+   and extending `DispatchEntry` is not the shape it took — for the reason this very decision gives,
+   **a conv-scoped ledger is not enough**. 0096 keeps `ev:"peer"` lines in
+   `fleet-graph/{lineage,activity-*}.jsonl`, and the canonical types are now
+   **`console/src/types/fleetgraph.ts`** (`types/opgraph.ts` retired together with ADR 0027).
+
 10. **Show a dedicated row for an incoming peer message in the mirror.** An incoming peer message
     while the other side is busy goes through the interrupt-injection route, which hits a known
     invisibility bug (the `mirror-queued-steering-invisible` note). Because it is **invisible exactly

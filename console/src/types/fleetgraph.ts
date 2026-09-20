@@ -1,0 +1,457 @@
+// Fleet session graph (ADR 0096 / docs/log/101) — FROZEN CONTRACT.
+//
+// Lanes are sessions, the horizontal axis is time. This file is types-only and
+// import-only: it is the single seam the implementation lanes build against
+// without consulting each other, and it is the authority on the wire's shape.
+// Who owns which file is docs/log/101 §101.6.
+//
+// Two rules hold this together, and both exist because breaking them is silent:
+//   - Time is unix MILLIS everywhere in this file. The ledger's own jsonl lines
+//     are RFC3339; converting is the server's job, never the view's.
+//   - "Nobody observed it" is a value (`unknown`), not a missing one. Anything
+//     that folds it into "idle" reports work that never happened.
+
+import type { Session, SessionKind } from "./session.ts";
+
+// ── Identities ───────────────────────────────────────────────────────────────
+
+// A lane is a session, always addressed by Session.name — the immutable random
+// slug, never reused, so a rename, a handoff or a fork cannot break a ledger
+// line's link. What is DRAWN is the display name; the slug is never shown to a
+// human on its own.
+export type LaneId = string;
+
+// One end of an arrow. Only a LaneId becomes a lane; the rest have no birth and
+// no death, so they are drawn as arrows leaving the figure's top/bottom edge
+// rather than as horizontal bands (ADR 0096 decision 8-2):
+//
+//   "conv:<id>"        a chat conversation (the fleet operator's af_write conversation)
+//   "user"             a person — the Console composer or the terminal's keyboard
+//   "schedule"         scheduled execution (ADR 0021)
+//   "bridge:discord"   the chat bridge, per platform
+//   "bridge:slack"
+//   "agent"            AF itself — the auto-resume nudge after a retryable cut-off,
+//                      which is nobody's instruction and the one arrival that must
+//                      never be attributed to the user (docs/log/47 §4-6)
+//
+// An unknown spelling renders as an anonymous external actor rather than being
+// dropped: losing the arrow hides that the session was steered at all.
+export type ActorId = LaneId | string;
+
+// Meta.Origin's frozen vocabulary (ADR 0029 §6 + ADR 0073). "unknown" is a
+// session older than the field — never fold it into "user", which would overstate
+// what people opened themselves.
+export type GraphOrigin = "user" | "operator" | "schedule" | "handoff" | "session" | "unknown";
+
+// The state vocabulary the ledger records. It is deliberately NOT SessionState:
+// that union is the Console's live-row axis ("" = idle) and is missing the states
+// the agents emit around a stopped turn (agents/notify.go) and during a compaction
+// (agents/codex). A `string` here would type-check anything and let the writer and
+// the reader disagree in silence.
+//
+// Normalisation, applied on BOTH paths that produce one (see GraphNormalizeState):
+// "" becomes "idle", and a spelling this union does not know becomes "unknown" —
+// never "idle". Folding an unrecognised state into idle is the dangerous direction:
+// a kind that starts reporting a new busy state would have its working stretches
+// silently recorded as doing nothing.
+export type LedgerState =
+  | "working"
+  | "compacting" // auto-compaction: working, and it says so (codex sets it, the row draws it as working)
+  | "idle"
+  | "question"
+  | "plan"
+  | "permission"
+  | "blocked" // waiting on a choice in the pane
+  | "auth" // the login expired
+  | "limited" // waiting for a usage limit to lift (may auto-resume)
+  | "spend_limit" // a cap that waiting never clears
+  | "failed"
+  | "aborted"
+  | "unknown"; // observed, but not a spelling this contract knows (the raw value rides along)
+
+// ── Ledger events (the REST DTO's payload) ───────────────────────────────────
+// Lineage lines (fleet-graph/lineage.jsonl) are permanent: they survive the
+// 7-day stopped-session prune that erases Meta, and die only when a person
+// deletes the session (ADR 0096 decision 6). They carry no prompt text and no
+// report text — what must disappear on deletion is never stored.
+
+export interface BirthEvent {
+  ev: "birth";
+  ts: number;
+  name: LaneId;
+  kind: SessionKind;
+  repo?: string;
+  origin: GraphOrigin;
+  originSession?: LaneId; // the parent that spawned it, or the session whose handoff a person launched
+  // This session's own conversation id in its kind's id space, which is what
+  // resolves another lane's `forkFrom` — a conversation id, not a session name —
+  // back onto this lane.
+  //
+  // It must be resolved the SAME way the kind's own Forker.ForkSource resolves it
+  // (claude = LiveSID, codex = the hook-captured per-slot id, opencode = the
+  // current conversation in its store). Those are observed values, not the id AF
+  // passed at launch: burning in the launch id makes codex and opencode fork edges
+  // miss permanently. Absent when the kind cannot resolve one yet — a ConvIdEvent
+  // fills it in later.
+  conv?: string;
+  forkFrom?: string; // Meta.ForkFrom — match against another lane's conv
+  display?: string; // display name at birth (title → claude label → repo@MMDD-HHMM)
+}
+
+// The session's conversation id changed, or became resolvable for the first time.
+// It changes mid-life on its own: when claude relaunches itself, --session-id
+// structurally drops out of the argv and it starts writing under a new random id
+// (internal/agents/claude/sid.go tracks exactly this). `conv` is therefore read as
+// "the id in force at that time", never as a constant.
+export interface ConvIdEvent {
+  ev: "convid";
+  ts: number;
+  name: LaneId;
+  conv: string;
+}
+
+// The end of one RUN, as observed. Meta.StoppedAt is filled lazily — at the first
+// list that finds the slot gone — so this is when the end was first seen, not when
+// it happened, and the view says so in the ×'s tooltip.
+export interface DeathEvent {
+  ev: "death";
+  ts: number;
+  name: LaneId;
+  reason?: "oom" | "killed" | "crashed" | string; // absent = a clean/deliberate stop
+  code?: number; // raw pane wait status (137 = OOM SIGKILL)
+  signal?: number;
+}
+
+// A stopped session was resumed: the SAME lane starts another run. This event is
+// not a convenience — a resume clears Meta.StoppedAt (sessionx/session_handlers.go,
+// session_tmux.go, session_driver.go), so one lane's life is a sequence of runs and
+// a model with a single death cannot say which × belongs to which stretch.
+export interface ReviveEvent {
+  ev: "revive";
+  ts: number;
+  name: LaneId;
+}
+
+// Archived (folded away, restorable) or restored. `archived:false` is the restore.
+export interface ArchivedEvent {
+  ev: "archived";
+  ts: number;
+  name: LaneId;
+  archived: boolean;
+}
+
+export type LineageEvent = BirthEvent | ConvIdEvent | DeathEvent | ReviveEvent | ArchivedEvent;
+
+// Activity lines (fleet-graph/activity-<YYYY-MM-DD>.jsonl, the date in UTC so a
+// reader picking files out of a millis window cannot be thrown by the workspace's
+// timezone) rotate — 30 days by default. Everything below exists only from the
+// feature's installation forward.
+
+// A live-state transition, written where the session list already derives state
+// for every session: no new polling and no transcript scan (ADR 0096 decision 3).
+//
+// The writer holds the last state per session in process and writes ONLY on a
+// change, so the two observers that drive the list (a Console at 4s, the control
+// plane's reaper at 1m) cannot double-write. `from` comes from that map, and is
+// absent when the map has no entry — after a restart, or for a session first seen
+// mid-life. Absent `from` means "unknown before this", not "idle before this".
+export interface StateEvent {
+  ev: "state";
+  ts: number;
+  name: LaneId;
+  from?: LedgerState;
+  to: LedgerState;
+  raw?: string; // the observed spelling, kept only when `to` normalised to "unknown"
+}
+
+// Every session's current state, written once right after an Agent restart (it
+// also re-seeds the writer's last-state map). It marks the boundary of an
+// observation gap: the stretch before it stays UNKNOWN rather than being
+// back-filled with a guess.
+export interface ResyncEvent {
+  ev: "resync";
+  ts: number;
+  name: LaneId;
+  to: LedgerState;
+  raw?: string;
+}
+
+// An instruction that arrived from outside the lane. `source` uses the spellings
+// transcript.Turn.Source already carries (sessionx/session_injections.go):
+// operator | schedule | schedule-manual | discord | slack | spawn | auto-resume.
+// `excerpt` is ≤140 chars, single line, DISPLAY-ONLY: never executed, sanitized at
+// render (docs/30's prompt-injection stance).
+export interface InstructEvent {
+  ev: "instruct";
+  ts: number;
+  from: ActorId;
+  to: LaneId;
+  source?: string;
+  excerpt?: string;
+}
+
+// A report leaving a session for the conversation that is owed one.
+export interface ReportEvent {
+  ev: "report";
+  ts: number;
+  from: LaneId;
+  to: ActorId;
+  kind?: "answer-ready" | "exit" | string;
+  reason?: string; // oom | crashed | killed — the view draws these red
+}
+
+// A session-to-session message (ADR 0041). It is here and NOT in instr-ledger by
+// construction: a peer send must never touch the arm (0041 decision 4).
+export interface PeerEvent {
+  ev: "peer";
+  ts: number;
+  from: LaneId;
+  to: LaneId;
+  intent: "request" | "question" | "answer" | "notice" | string;
+  excerpt?: string;
+}
+
+export type ActivityEvent = StateEvent | ResyncEvent | InstructEvent | ReportEvent | PeerEvent;
+
+// ── REST DTO ─────────────────────────────────────────────────────────────────
+
+// How far back each layer actually reaches. The view draws these boundaries
+// rather than letting the figure fade out silently: "no arrows were kept here"
+// and "nothing happened here" look identical otherwise (ADR 0096 decision 8).
+export interface GraphCoverage {
+  activitySince: number | null; // oldest activity line available (null = none kept)
+  lineageSince: number | null; // oldest lineage line available
+  // Lineage older than this was back-filled from Meta at first start: it has one
+  // birth and at most one death per lane, never arrows, bands or earlier runs.
+  backfilledBefore?: number;
+}
+
+// Body of GET /api/fleet-graph?since=<ms>&until=<ms>.
+export interface FleetGraphPage {
+  since: number; // window the server actually served (it may narrow the request)
+  until: number;
+  now: number; // the Agent's clock, so "now" is not the browser's
+  // NOT simply "the lineage events inside the window". The server always adds:
+  //   1. every lineage event within [since, until];
+  //   2. EVERY lineage event of every lane that overlaps the window, however old
+  //      — birth, convid, death, revive and archived alike. Birth alone is not
+  //      enough: a lane born on day 1, stopped on day 2 and resumed on day 3 then
+  //      arrives with no death and no revive, so a 24-hour window on day 4 draws
+  //      one run and **the day it spent stopped disappears**. Lineage is a few
+  //      lines per session in a permanent ledger, so there is nothing to save by
+  //      clipping it;
+  //   3. the birth of those lanes' ancestors, for family ordering (decision 9).
+  // An ancestor that does not itself overlap the window is context for ordering
+  // and labels only; the builder gives it no lane.
+  lineage: LineageEvent[];
+  activity: ActivityEvent[];
+  coverage: GraphCoverage;
+}
+
+// ── Render model (BuildFleetGraph's output) ──────────────────────────────────
+
+// Whether the lane's subject still exists, which is what the line style says
+// (ADR 0096 decision 12): dashed = still there (resumable), ending = gone.
+//   live     — running now: solid line + activity band
+//   stopped  — still listed and resumable: dashed to the right edge
+//   archived — folded away, restorable: faintly dashed
+//   gone     — pruned or deleted: the line ENDS at its last × (an erased lane has
+//              no × at all — it is drawn as a row with no line)
+export type LanePresence = "live" | "stopped" | "archived" | "gone";
+
+// One run of a lane: birth or revive → death, or still open. A lane has as many
+// of these as it has been resumed.
+export interface LaneRun {
+  t0: number;
+  t1: number | null; // null = still open (see `presence` — an open run on a gone lane is cut, below)
+  exitReason?: string;
+  exitCode?: number;
+  exitSignal?: number;
+  // A run whose lane is `gone` while its newest run never got a death (the Agent
+  // died before writing one, or the session was deleted) is cut at the last
+  // moment anything was observed for that lane, and `cut` says so: the × is drawn
+  // hollow and the stretch after it is unknown, not stopped.
+  cut?: boolean;
+}
+
+interface GraphLaneBase {
+  id: LaneId;
+  row: number; // 0-based row index, in family order (a parent, then its children)
+  // Lineage, filled in even when the ancestor itself has no lane in this window:
+  // dropping it there would make a child a root, and siblings whose parent is off
+  // the window's left edge would drift apart as the window moves (decision 9).
+  parent?: LaneId;
+  // Topmost ancestor the lineage can still reach, itself when there is none. The
+  // chain stops at a parent whose own birth is gone (deleted): THAT parent's id
+  // becomes rootId, even though it has no line of its own. Family order then sorts
+  // families by the oldest birth known inside each — the root's own birth may not
+  // exist, and "roots newest first" needs a key that always does.
+  rootId: LaneId;
+  // Ancestors above it that lineage can name, drawn or not; 0 = a root. Rows may
+  // therefore start at depth 2 with no depth 1 above them: indent by this number
+  // and mark the missing parent at the left edge rather than promoting the child.
+  depth: number;
+  presence: LanePresence;
+}
+
+export interface GraphLaneKnown extends GraphLaneBase {
+  erased?: false;
+  label: string; // display name (title → claude label → repo@MMDD-HHMM)
+  kind: SessionKind;
+  origin: GraphOrigin;
+  runs: [LaneRun, ...LaneRun[]]; // chronological, never empty
+  state?: LedgerState; // live state right now (live lanes)
+  raw?: string; // the raw spelling behind state === "unknown"
+}
+
+// A lane whose lineage an explicit delete removed while activity lines naming its
+// id live on until they rotate. The id still has to hold a row for those arrows to
+// point at — otherwise a message between two sessions renders as an arrow from
+// outside the figure (decision 6).
+export interface GraphLaneErased extends GraphLaneBase {
+  erased: true;
+  // The bare slug, and the ONLY place this contract hands one out: everything
+  // else is gone. The view must not print it alone — it composes the localized
+  // "deleted" wording around it (the rule that a slug is never shown by itself).
+  label: LaneId;
+  runs: []; // its lineage is gone, so when it ran is unknown: the row carries no line
+}
+
+// An erased lane gets NO segments either, even though its state lines survive in
+// the activity ledger until they rotate. Drawing bands for a session a person
+// deleted rebuilds the picture they asked to be rid of; the arrows stay only
+// because dropping them would misattribute the OTHER lane's message as coming
+// from outside the figure. So: an erased lane is a row of arrows, nothing else.
+
+export type GraphLane = GraphLaneKnown | GraphLaneErased;
+
+// A stretch of one lane. "unknown" is the honest default, and it has TWO sources
+// the view must word differently, told apart by whether `state` is set:
+//   state absent            nobody observed the session (no Console open, the
+//                           reaper off, an Agent restart) — "not observed"
+//   state === "unknown"     it WAS observed, in a spelling this contract does not
+//                           know (`raw` has it) — "unrecognised state: <raw>"
+// Neither may be drawn as idle: "no evidence" is not "idle" (docs/log/51), and
+// saying "not observed" over a stretch that was observed is the same lie inverted.
+export type SegmentKind = "active" | "idle" | "waiting" | "unknown" | "stopped" | "archived";
+
+// The coarse band a recorded state paints. S-LOGIC owns the table; the shape is
+// frozen here so the view cannot invent a second one:
+//   working | compacting                      → active
+//   idle | failed | aborted                   → idle
+//   question | plan | permission | blocked
+//     | auth | limited | spend_limit          → waiting
+//   unknown                                   → unknown
+// The exact word survives on GraphSegment.state — the band is for colour, the
+// state is for the tooltip, and that is why "limited" need not be its own band.
+export type SegmentKindByState = Record<LedgerState, SegmentKind>;
+
+// Turns a raw live-state string into the recorded vocabulary ("" → idle, an
+// unrecognised spelling → unknown). Exported by S-LOGIC and used on BOTH paths:
+// the ledger (the Agent normalises in Go before writing) and the live map (the
+// builder normalises Session.state, which is `SessionState | string` and carries
+// the same "" and the same open-ended spellings). One rule, two languages, so both
+// suites read the same fixture: console/src/lib/fleetgraph.states.json.
+export type GraphNormalizeState = (raw: string | undefined) => LedgerState;
+
+// Answers "is this end of an arrow one of the spellings that never has a lane?"
+// (decision 8-2's vocabulary). Exported by S-LOGIC and used by the view too: the same
+// question decides whether a null row means "no lane at all" or decision 9's "the lane
+// exists, just not drawn here", so a second copy of the list would silently mis-sort
+// arrows the moment the vocabulary grows.
+export type GraphIsExternalActor = (id: ActorId) => boolean;
+
+export interface GraphSegment {
+  laneId: LaneId; // a lane's id, NOT its row index
+  t0: number;
+  t1: number; // the window's end for an open segment
+  kind: SegmentKind;
+  state?: LedgerState; // the observed state this segment was derived from; absent = unobserved
+  raw?: string; // the raw spelling behind state === "unknown" — what the tooltip shows
+}
+
+// spawn / fork / handoff connect two lanes at the child's birth; instruct /
+// report / peer are the round trips.
+//
+// 🔥 A null `fromRow` / `toRow` means two different things, and `variant` is what
+// tells them apart:
+//   round trip (instruct/report/peer) → that end is an EXTERNAL actor with no lane
+//     at all, so the arrow leaves the figure (decision 8-2). A counterpart that is
+//     a real lane merely excluded by the window or a filter is not drawn this way —
+//     the builder DROPS that arrow, because rendering it here would attribute a
+//     session's message to the outside (decision 6).
+//   lineage (spawn/fork/handoff) → the parent is a real lane with no row in this
+//     window (off the left edge, or its lineage was deleted). The builder KEEPS the
+//     arrow (dropping it is how branches silently vanish as the window narrows), and
+//     the view answers it with decision 9's mark for a missing parent on the child's
+//     label — never the external glyph, which would read as "a person or a
+//     conversation launched this". In practice the view therefore draws no line for
+//     such an arrow: one meaning, one mark.
+export type ArrowVariant = "spawn" | "fork" | "handoff" | "instruct" | "report" | "peer";
+
+export interface GraphArrow {
+  ts: number;
+  variant: ArrowVariant;
+  from: ActorId;
+  to: ActorId;
+  fromRow: number | null;
+  toRow: number | null;
+  x: number; // laid-out horizontal px
+  label?: string; // excerpt / caption
+  danger?: boolean; // an exit report with a reason — render red
+}
+
+// Where a layer of history stops, drawn as a vertical boundary with a caption.
+export interface CoverageMark {
+  t: number;
+  kind: "activity-start" | "lineage-start" | "backfill-start";
+  x: number;
+}
+
+// The window and the geometry the model was laid out for. It is what the helpers
+// below take, so a caller can map a time or a row without carrying the model.
+export interface GraphScale {
+  from: number;
+  to: number;
+  width: number;
+  laneH: number;
+}
+
+// Plain data only — no methods. The view renders a fixture straight from JSON and
+// a test compares two models, both of which a function member would break (the
+// same reason lib/gitgraph.ts returns rows and exports its helpers separately).
+export interface GraphModel {
+  scale: GraphScale;
+  lanes: GraphLane[];
+  segments: GraphSegment[];
+  arrows: GraphArrow[];
+  marks: CoverageMark[];
+  height: number;
+}
+
+// Exported alongside BuildFleetGraph by S-LOGIC. Linear, so the gap between two
+// events is readable as time (ADR 0096 decision 8).
+export type GraphXOf = (scale: GraphScale, ts: number) => number;
+export type GraphLaneY = (scale: GraphScale, row: number) => number;
+
+export interface BuildFleetGraphOptions {
+  from?: number; // window start (default: to − 24h)
+  to?: number; // window end (default: page.now)
+  width?: number; // drawable width in px
+  laneH?: number; // vertical px per lane
+  showArchived?: boolean; // default true; the toggle lives in PaneContent, not React state
+  // Keep only the lanes this conversation touched — how ADR 0027's "one operator
+  // conversation's round trips" is absorbed into this figure.
+  conversationId?: string;
+}
+
+// Implemented by S-LOGIC in console/src/lib/fleetgraph.ts. It merges the served
+// page with the live sessions map (name → Session): the page is history, the map
+// is what is true right now, and `presence` needs both — a lane whose newest run
+// ended is "stopped" while the session is still listed, and "gone" once it is not.
+// `page` may be null while the first load is in flight.
+export type BuildFleetGraph = (
+  page: FleetGraphPage | null,
+  sessions: Map<string, Session>,
+  opts?: BuildFleetGraphOptions,
+) => GraphModel;

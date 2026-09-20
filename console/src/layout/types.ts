@@ -83,7 +83,14 @@ export type PaneContent =
    * so a tab switch that unmounts the view loses nothing that one poll does not restore.
    * `sameTarget` is therefore "same kind": opening it twice focuses the one that exists.
    */
-  | { kind: "imagegen" };
+  | { kind: "imagegen" }
+  /**
+   * The fleet session graph (ADR 0096): every session as a lane, time on the horizontal
+   * axis. `showArchived` is the pane's own toggle, same reasoning as `sessions.showStopped`
+   * above — React state would snap back to the default on every tab switch, which unmounts
+   * the view (memo `sessions-overview-pane`).
+   */
+  | { kind: "fleetgraph"; showArchived: boolean };
 
 export type PaneKind = PaneContent["kind"];
 

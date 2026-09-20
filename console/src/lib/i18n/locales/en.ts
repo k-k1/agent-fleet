@@ -13,6 +13,7 @@ import { chat } from "./en/chat.ts";
 import { common } from "./en/common.ts";
 import { engines } from "./en/engines.ts";
 import { errors } from "./en/errors.ts";
+import { fleetgraph } from "./en/fleetgraph.ts";
 import { gallery } from "./en/gallery.ts";
 import { imggen } from "./en/imggen.ts";
 import { memo } from "./en/memo.ts";
@@ -52,4 +53,5 @@ export const en: Record<keyof typeof ja, string> = {
   ...gallery,
   ...imggen,
   ...engines,
+  ...fleetgraph,
 };

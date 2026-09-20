@@ -172,6 +172,7 @@ func authResumeAttempt(m session.Meta, st authResumeState, a claude.Abort, now t
 		return
 	}
 	recordInjection(m.Name, prompt, TurnSourceAutoResume)
+	recordFleetGraphInstruct(m.Name, TurnSourceAutoResume, "", "", prompt)
 	log.Printf("auth-resume: %s was re-authenticated, resumed automatically (attempt %d/%d)",
 		m.Name, st.Attempts, chatx.MaxAutoResumeAttempts)
 }

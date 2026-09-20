@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"net/http"
@@ -34,6 +35,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /workspace/machine", handleWorkspaceMachine)
 	mux.HandleFunc("GET /sessions", sessionx.HandleListSessions)
 	mux.HandleFunc("GET /sessions/catalog", sessionx.HandleSessionCatalog)
+	// Fleet session graph (ADR 0096 decision 7): lanes = sessions, x = time. CP allowlist
+	// entry is control-plane/routes.go's registerSessionRoutes.
+	mux.HandleFunc("GET /fleet-graph", fleetgraph.HandleFleetGraph)
 	mux.HandleFunc("GET /notifications", handleNotifications)
 	mux.HandleFunc("POST /notifications/ack", handleNotificationsAck)
 	// Work items (docs/log/80): the CP posts the saved queries it owns and gets non-secret

@@ -1,0 +1,41 @@
+{
+  "comment": [
+    "Frozen normalisation table for the fleet session graph (ADR 0096 decision 3).",
+    "`raw` is a live-state string as it arrives; `state` is the LedgerState written",
+    "and read; `band` is the SegmentKind it paints (types/fleetgraph.ts).",
+    "",
+    "Two implementations exist — the Agent writes the ledger in Go, the builder",
+    "normalises the live sessions map in TypeScript — so BOTH test suites read THIS",
+    "file. A test that cannot find it must fail, not skip: a silently skipped parity",
+    "check and a passing one look identical.",
+    "",
+    "Matching is exact. No case folding, no trimming: these strings are produced by",
+    "code, and folding would quietly accept a spelling nobody writes.",
+    "",
+    "`raw: null` is the one input the two sides do NOT share: Session.state is",
+    "optional, so the TypeScript side receives undefined for a live session whose",
+    "hooks have not reported yet, while Go only ever sees \"\". It means the same as",
+    "\"\" — idle. Falling it through to `unknown` would hatch every running session",
+    "that has not spoken yet."
+  ],
+  "cases": [
+    { "raw": null, "state": "idle", "band": "idle" },
+    { "raw": "", "state": "idle", "band": "idle" },
+    { "raw": "idle", "state": "idle", "band": "idle" },
+    { "raw": "working", "state": "working", "band": "active" },
+    { "raw": "compacting", "state": "compacting", "band": "active" },
+    { "raw": "question", "state": "question", "band": "waiting" },
+    { "raw": "plan", "state": "plan", "band": "waiting" },
+    { "raw": "permission", "state": "permission", "band": "waiting" },
+    { "raw": "blocked", "state": "blocked", "band": "waiting" },
+    { "raw": "auth", "state": "auth", "band": "waiting" },
+    { "raw": "limited", "state": "limited", "band": "waiting" },
+    { "raw": "spend_limit", "state": "spend_limit", "band": "waiting" },
+    { "raw": "failed", "state": "failed", "band": "idle" },
+    { "raw": "aborted", "state": "aborted", "band": "idle" },
+    { "raw": "unknown", "state": "unknown", "band": "unknown" },
+    { "raw": "Working", "state": "unknown", "band": "unknown" },
+    { "raw": "thinking", "state": "unknown", "band": "unknown" },
+    { "raw": " idle", "state": "unknown", "band": "unknown" }
+  ]
+}

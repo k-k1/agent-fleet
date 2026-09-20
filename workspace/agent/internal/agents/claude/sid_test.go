@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -115,6 +117,32 @@ func TestNormalizeHookSIDRecordsDrift(t *testing.T) {
 	}
 	if got := sids.Read(slot); got != testLiveSID {
 		t.Fatalf("ledger = %q, want %q", got, testLiveSID)
+	}
+}
+
+// The drift NormalizeHookSID records is exactly what ADR 0096 decision 13 needs a convid
+// lineage row for: the fleet graph resolves a fork edge through the SAME id LiveSID()
+// would now return, and that only happens if the drift is on the ledger.
+func TestNormalizeHookSIDRecordsFleetGraphConvID(t *testing.T) {
+	isolateSlot(t)
+	m := session.Meta{Name: "s56ynzz", Dir: "/tmp/repo", Kind: session.KindClaude}
+	session.WriteMeta(m)
+	t.Setenv("AF_SESSION_NAME", m.Name)
+
+	NormalizeHookSID(testLiveSID)
+
+	page, err := fleetgraph.BuildPage(0, time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, ev := range page.Lineage {
+		if c, ok := ev.(fleetgraph.ConvIdEvent); ok && c.Name == m.Name && c.Conv == testLiveSID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no convid lineage event for %s -> %s; lineage = %+v", m.Name, testLiveSID, page.Lineage)
 	}
 }
 

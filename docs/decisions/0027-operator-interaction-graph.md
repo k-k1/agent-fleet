@@ -2,9 +2,29 @@
 
 English | [日本語](0027-operator-interaction-graph.ja.md)
 
-- Status: **adopted, work started** (Phase 0, the contract frozen). The design is [docs/44](../log/44-operator-interaction-graph.md).
+- Status: **superseded (2026-09-20, by [0096](0096-fleet-session-graph.md))**. Only Phase 0 landed (the
+  contract freeze, `console/src/types/opgraph.ts`); neither the view nor the API exists. The design is
+  [docs/44](../log/44-operator-interaction-graph.md).
 - See also: [0015](0015-agent-managed-driver.md) (the managed driver) / [0021](0021-scheduled-execution.md) (scheduled execution) /
   docs/30 (session completion reports → the fleet and the operator) / [history/19](../log/19-assistant-chat.md) (assistant-chat)
+
+## Amendment (2026-09-20) — why it was replaced
+
+Both of this ADR's premises fell.
+
+1. **Decision 2's "an instruction lives only in the arm store and vanishes when the report is delivered" was
+   solved afterwards** by ADR 0035 (report v2, 2026-07-29) as `instr-ledger/<session>.json`. Starting work as
+   written would mint a second ledger counting the same thing.
+2. **Decision 3's "the scope is one operator conversation" was refuted** by ADR 0041 decision 9: a peer
+   message cannot be attributed to a conversation, so a conv-scoped figure **structurally cannot draw part of
+   the exchange**.
+
+On top of that, ADR 0073 (a session starts a session) stretched families two and three levels deep, moving
+what there is to read from "who said what to whom" to **when, and how many, were alive at once**. The
+successor is [0096](0096-fleet-session-graph.md) (lanes are sessions, the horizontal axis is time), which
+absorbs this ADR's "one operator conversation's round trips" as **a filter by conversation id**. Its
+hand-written SVG with `lib/gitgraph.ts` as the structural template (decision 1) and the display-only ≤140
+character excerpt (decision 2) carry over unchanged.
 
 ## Context
 
