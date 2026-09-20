@@ -233,9 +233,13 @@ export interface FleetGraphPage {
   now: number; // the Agent's clock, so "now" is not the browser's
   // NOT simply "the lineage events inside the window". The server always adds:
   //   1. every lineage event within [since, until];
-  //   2. the birth (and the newest preceding convid) of every lane that overlaps
-  //      the window, however old — without it a lane born three days before a
-  //      24-hour window has no kind, no origin and no label;
+  //   2. EVERY lineage event of every lane that overlaps the window, however old
+  //      — birth, convid, death, revive and archived alike. Birth alone is not
+  //      enough: a lane born on day 1, stopped on day 2 and resumed on day 3 then
+  //      arrives with no death and no revive, so a 24-hour window on day 4 draws
+  //      one run and **the day it spent stopped disappears**. Lineage is a few
+  //      lines per session in a permanent ledger, so there is nothing to save by
+  //      clipping it;
   //   3. the birth of those lanes' ancestors, for family ordering (decision 9).
   // An ancestor that does not itself overlap the window is context for ordering
   // and labels only; the builder gives it no lane.
@@ -251,7 +255,8 @@ export interface FleetGraphPage {
 //   live     — running now: solid line + activity band
 //   stopped  — still listed and resumable: dashed to the right edge
 //   archived — folded away, restorable: faintly dashed
-//   gone     — pruned or deleted: the line ENDS at its last ×
+//   gone     — pruned or deleted: the line ENDS at its last × (an erased lane has
+//              no × at all — it is drawn as a row with no line)
 export type LanePresence = "live" | "stopped" | "archived" | "gone";
 
 // One run of a lane: birth or revive → death, or still open. A lane has as many
@@ -269,33 +274,59 @@ export interface LaneRun {
   cut?: boolean;
 }
 
-export interface GraphLane {
+interface GraphLaneBase {
   id: LaneId;
   row: number; // 0-based row index, in family order (a parent, then its children)
   // Lineage, filled in even when the ancestor itself has no lane in this window:
   // dropping it there would make a child a root, and siblings whose parent is off
   // the window's left edge would drift apart as the window moves (decision 9).
   parent?: LaneId;
-  rootId: LaneId; // topmost known ancestor (itself when there is none) — the family ordering key
-  depth: number; // known ancestors above it, drawn or not; 0 = a root
-  label: string; // display name; for an erased lane, its id — there is nothing else left
-  // Absent ONLY on an erased lane (its birth line is what carried them). Every
-  // other lane has both, which is what decision 7's un-clipped lineage guarantees.
-  kind?: SessionKind;
-  origin?: GraphOrigin;
-  // Chronological. EMPTY only for an erased lane: an explicit delete removes the
-  // lineage lines while activity lines naming that id live on until they rotate,
-  // so the id still has to hold a row for its arrows to point at. Such a lane is
-  // drawn as a labelled row with no line (presence "gone").
-  runs: LaneRun[];
+  // Topmost ancestor the lineage can still reach, itself when there is none. The
+  // chain stops at a parent whose own birth is gone (deleted): THAT parent's id
+  // becomes rootId, even though it has no line of its own. Family order then sorts
+  // families by the oldest birth known inside each — the root's own birth may not
+  // exist, and "roots newest first" needs a key that always does.
+  rootId: LaneId;
+  // Ancestors above it that lineage can name, drawn or not; 0 = a root. Rows may
+  // therefore start at depth 2 with no depth 1 above them: indent by this number
+  // and mark the missing parent at the left edge rather than promoting the child.
+  depth: number;
   presence: LanePresence;
-  state?: LedgerState; // live state right now (live lanes)
-  erased?: boolean; // true = lineage deleted, only activity residue remains
 }
 
-// A stretch of one lane. "unknown" is the honest default: nobody observed the
-// session during it (no Console open, the reaper off, an Agent restart), and it
-// must NOT be drawn as idle — "no evidence" is not "idle" (docs/log/51).
+export interface GraphLaneKnown extends GraphLaneBase {
+  erased?: false;
+  label: string; // display name (title → claude label → repo@MMDD-HHMM)
+  kind: SessionKind;
+  origin: GraphOrigin;
+  runs: [LaneRun, ...LaneRun[]]; // chronological, never empty
+  state?: LedgerState; // live state right now (live lanes)
+  raw?: string; // the raw spelling behind state === "unknown"
+}
+
+// A lane whose lineage an explicit delete removed while activity lines naming its
+// id live on until they rotate. The id still has to hold a row for those arrows to
+// point at — otherwise a message between two sessions renders as an arrow from
+// outside the figure (decision 6).
+export interface GraphLaneErased extends GraphLaneBase {
+  erased: true;
+  // The bare slug, and the ONLY place this contract hands one out: everything
+  // else is gone. The view must not print it alone — it composes the localized
+  // "deleted" wording around it (the rule that a slug is never shown by itself).
+  label: LaneId;
+  runs: []; // nothing is known about when it ran; the row is drawn without a line
+}
+
+export type GraphLane = GraphLaneKnown | GraphLaneErased;
+
+// A stretch of one lane. "unknown" is the honest default, and it has TWO sources
+// the view must word differently, told apart by whether `state` is set:
+//   state absent            nobody observed the session (no Console open, the
+//                           reaper off, an Agent restart) — "not observed"
+//   state === "unknown"     it WAS observed, in a spelling this contract does not
+//                           know (`raw` has it) — "unrecognised state: <raw>"
+// Neither may be drawn as idle: "no evidence" is not "idle" (docs/log/51), and
+// saying "not observed" over a stretch that was observed is the same lie inverted.
 export type SegmentKind = "active" | "idle" | "waiting" | "unknown" | "stopped" | "archived";
 
 // The coarse band a recorded state paints. S-LOGIC owns the table; the shape is
@@ -313,8 +344,8 @@ export type SegmentKindByState = Record<LedgerState, SegmentKind>;
 // unrecognised spelling → unknown). Exported by S-LOGIC and used on BOTH paths:
 // the ledger (the Agent normalises in Go before writing) and the live map (the
 // builder normalises Session.state, which is `SessionState | string` and carries
-// the same "" and the same open-ended spellings). One rule, two languages — so
-// the same table is pinned by the same fixture in the Go and the vitest suites.
+// the same "" and the same open-ended spellings). One rule, two languages, so both
+// suites read the same fixture: console/src/lib/fleetgraph.states.json.
 export type GraphNormalizeState = (raw: string | undefined) => LedgerState;
 
 export interface GraphSegment {
@@ -322,7 +353,8 @@ export interface GraphSegment {
   t0: number;
   t1: number; // the window's end for an open segment
   kind: SegmentKind;
-  state?: LedgerState; // the observed state this segment was derived from
+  state?: LedgerState; // the observed state this segment was derived from; absent = unobserved
+  raw?: string; // the raw spelling behind state === "unknown" — what the tooltip shows
 }
 
 // spawn / fork / handoff connect two lanes at the child's birth; instruct /

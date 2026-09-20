@@ -199,7 +199,9 @@ its children's branch goes with it.
   `peer` / `report` lines naming that id survive alone, and the naive reading turns **a message between two
   sessions into an arrow from outside the figure** (no lane can be built, so it falls through to an
   external actor). Rewriting 30 append-only files to chase it is the opposite of ADR 0087, so instead **an
-  id with no lineage is drawn as an *erased lane*: a labelled row with no line** (`erased`). What
+  id with no lineage is drawn as an *erased lane*: a labelled row with no line** (`erased`). All that is
+  left to label it with is the slug, so **the localized "deleted" wording is S-VIEW's to add** — the
+  existing rule that a slug is never shown to a human on its own (`session.Display`) holds here too. What
   disappears is the **content** — display name, repository, lineage — while the bare id lingers for the
   activity retention. That asymmetry is deliberate, and the label says so rather than hiding it.
 
@@ -210,8 +212,12 @@ allow-list** (memory `cp-rest-proxy-allowlist`: the CP does not pass requests th
 Cross-tenant overview is the administrators' table (`GET /api/admin/sessions`), a different reader's job.
 
 🔥 **Lineage is not clipped to the window.** The response's `lineage` is the union of three things: (1)
-every event inside the window; (2) **the `birth` (and the preceding `convid`) of every lane that overlaps
-the window, however old**; (3) the `birth` of those lanes' ancestors, for family ordering (decision 9).
+every event inside the window; (2) **every lineage event of every lane that overlaps the window** — birth,
+convid, death, revive and archived alike, however old; (3) the `birth` of those lanes' ancestors, for
+family ordering (decision 9). Sending only the birth in (2) loses runs: a lane born on day 1, stopped on
+day 2 and resumed on day 3 arrives at a day-4 window with neither its death nor its revive, its `runs`
+collapse to one, and **the whole day it spent stopped disappears from the figure**. Lineage is a few lines
+per session in a permanent ledger, so clipping it saves nothing.
 Clipping naively leaves **a lane born three days before a 24-hour window with no kind, no origin and no
 label** — the live `Session` has no `origin` (only `originSession`), so the Console cannot fill it in. An
 ancestor that does not itself overlap the window is context for ordering and labels; it gets no lane.
@@ -264,6 +270,12 @@ Children directly under their parent, siblings oldest first, roots newest first 
 (`GraphLane.parent` / `rootId` / `depth`): tie them to "the parent is drawn" and a child is promoted to a
 root the moment its parent slides off the left edge, so **siblings drift apart as the window moves**. The
 ordering key is `rootId`, not whether an ancestor happens to be visible.
+
+**When a parent's lineage has been deleted** (decision 6) the chain stops there: **that unreachable
+parent's id becomes `rootId`**, and families are ordered by **the oldest birth known inside each** — the
+root's own birth may not exist, while "roots newest first" needs a key that always does. Rows indent by
+`depth` (ancestors the lineage could name), so **a depth-2 row may stand with no depth-1 row above it**: a
+missing parent is marked at the left edge, never repaired by promoting the child to a root.
 Clicking opens **beside if there is room, in the same pane on a phone, in a separate pane with a modifier or
 middle click** (0078 decision 3 as revised). Do not build a second way to do the same gesture.
 
@@ -356,8 +368,7 @@ time**.
 ## Consequences
 
 - **Eight write points and one read endpoint.** A one-line append is colocated at: (1) create
-  (`session_handlers.go`); (2) stop/exit; (3) **resume** — the three paths that clear `StoppedAt` (the list
-  handler, `session_tmux.go`, `session_driver.go`), counted as one; (4) **archive / restore**
+  (`session_handlers.go`); (2) stop/exit; (3) **resume**; (4) **archive / restore**
   (`HandleArchiveSession` / `HandleRestoreSession`); (5) the state observation (the list handler); (6) peer
   send (`session_peer.go`); (7) instruction delivery (`session_io.go`); (8) report delivery (the sink in
   `chat_report_reconcile.go`). `GET /api/fleet-graph` reads them. The existing report, notification and arm
@@ -365,6 +376,10 @@ time**.
   - 🔥 Miss (3) and (4) and **`revive` and `archived` have no writer while the implementation looks
     finished**. `runs[]` and `presence:"archived"` exist in the type, but unwritten they never occur:
     `runs` stays a single entry and decision 12's resumed stretch renders as the dashed tail again.
+  - 🔥 (3)'s condition is "**the slot became alive again**", not "a path that clears `StoppedAt`".
+    `grep 'StoppedAt = ""'` finds **four** sites, and the fourth — `HandleRestoreSession` — only puts the
+    session back in the list **still stopped** (`wireSession(m, false)`). Writing a `revive` there grows a
+    run that never ran. Restore writes (4)'s `archived:false` and nothing else.
 - **No added polling** (decision 3). The ledgers are on the order of a few hundred KB a day (docs/101 §3).
 - **Limit (intended)**: panning left decays in three steps (decision 8) — activity for 30 days, then a
   skeleton of lineage and birth/death, then the 7 days back-filled from `Meta`. That back-fill runs once at

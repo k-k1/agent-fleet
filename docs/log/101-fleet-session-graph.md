@@ -233,7 +233,7 @@ reaper（1 分）は同じ一覧ハンドラを同時に叩きうる。書き手
 | S-BE | `workspace/agent/internal/…`（台帳 2 本・**書き込み 8 箇所**〔create／stop・exit／**resume**（`StoppedAt` をクリアする 3 経路）／**archive・restore**／状態観測／peer／指示投入／報告配送〕・`GET /api/fleet-graph`）、`workspace/agent/routes.go`、`control-plane/routes.go` の許可リスト |
 | S-LOGIC | `console/src/lib/fleetgraph.ts` ＋ `fleetgraph.test.ts` のみ |
 | S-VIEW | `console/src/features/fleetgraph/*`、**共有グルー（`layout/types.ts` の union・`migrate.ts`・`Pane.tsx`・`paneTitle.ts`・`features/keys/commands.ts`・i18n の ja/en）は S-VIEW 専有**、🔥 **`console/src/core/api/client.ts`（API 呼び出しを全部持つ 1 ファイル）も S-VIEW 専有**——3 レーンが同じファイルを触りうる最後の 1 箇所がここだった |
-| （誰も） | `console/src/types/fleetgraph.ts` は**凍結**。P1 のレーンは編集しない。直す必要が出たら**統合役へ差し戻す**（契約を片側だけ書き換えると、他の 2 レーンは気づかないまま食い違う） |
+| （誰も） | `console/src/types/fleetgraph.ts` と `console/src/lib/fleetgraph.states.json`（正規化の表・Go と vitest の**両方が読む** fixture。見つからなければ skip ではなく**失敗**させる）は**凍結**。P1 のレーンは編集しない。直す必要が出たら**統合役へ差し戻す**（契約を片側だけ書き換えると、他の 2 レーンは気づかないまま食い違う） |
 
 ### P0 レビュー（子セッション・opus・2026-09-20）で直したもの
 
@@ -282,3 +282,37 @@ P0 では共有グルーに**一切触っていない**（`types/fleetgraph.ts` 
 （→ `erased` レーンとして描く規則を契約に）、`gone` なのに run が開いたままの終端規則（→ `cut`）、
 `LaneRun` が `exitSignal` を落としていた件、時刻精度の根拠の一文（`Meta`/`instr-ledger` は**秒**精度
 なので「揃える」は不正確・「同じ形式で精度だけ上げる」が正しい）。
+
+## 101.8 P0 レビュー 3 巡目 — 修正が開けた穴はまだあった
+
+2 巡目の修正が、また 1 つ**同じ失敗の別経路**を残していた。
+
+- 🔥 **非クリップ規則を `birth` だけにしていた。** 「窓に重なるレーンの `birth` は必ず載せる」は
+  `runs[]` を入れる前の文面のままで、`death` / `revive` が入っていない。1 日目に生まれ・2 日目に
+  死に・3 日目に再開したレーンは、4 日目の 24 時間窓に **`birth` だけ**で届き、`runs` が 1 本に
+  潰れて**停止していた丸 1 日が消える**——2 巡目で塞いだはずの穴が、配達経路で再発していた。
+  → 規則②を「**窓に重なるレーンの系譜イベントは全部**」に広げた。
+  **一般化: 不変条件を増やしたら、それを運ぶ経路の文面も同じ変更で読み直す。**
+- 🔥 **`revive` の条件を「`StoppedAt` をクリアする経路」と書いていた。** `grep 'StoppedAt = ""'`
+  は **4 箇所**当たり、4 つ目の `HandleRestoreSession` は**停止したまま一覧に戻すだけ**
+  （`wireSession(m, false)`）。素直に grep した実装者がそこにも足すと、**走ってもいない run が
+  生える**。→ 条件を「**スロットが再び alive になった**」と書き直した。
+  **一般化: 実装者が grep する語で条件を書かない。grep の結果と意図が食い違う場所を名指しする。**
+
+ほかに直したもの: `raw` がモデル境界で消えていた件（`GraphSegment.raw` / `GraphLaneKnown.raw`）、
+**「無観測の unknown」と「観測したが語彙外の unknown」が帯として同じ**で S-VIEW が観測済みの区間に
+「観測なし」と書きかねなかった件（`state` の有無で区別・tooltip の文言を分ける、と契約に明記）、
+祖先の系譜が削除されていると `rootId` / `depth` と「根は新しい順」の鍵が決まらない件
+（→ 辿れない親の id 自身を `rootId` に・族の鍵は**その族で分かっている最古の `birth`**・
+depth 1 が無いまま depth 2 が並ぶことを許す）、erased レーンの `label` が素のスラグで
+「スラグを単独で見せない」規約と衝突していた件（→「削除済み」の語は S-VIEW が i18n で添える）、
+`gone` の「最後の × で終端」が erased（× が無い）と食い違っていた件。
+
+- `GraphLane` は**判別共用体**にした（`GraphLaneKnown` | `GraphLaneErased`）。`kind?` / `origin?` を
+  全レーンで任意にすると、erased 以外でも S-VIEW が `undefined` を扱う羽目になり、kind 色の既定が
+  無いまま実装される。**不変条件（erased でなければ `kind` も `origin` も `runs` も必ずある）を型に
+  残す**ほうが、コメントで約束するより強い。`runs` は `[LaneRun, ...LaneRun[]]`（非空）。
+- 正規化の表は**実体のある fixture** として置いた: `console/src/lib/fleetgraph.states.json`。
+  Go と vitest の**両方がこのファイルを読む**（見つからなければ skip ではなく失敗させる——
+  「静かに skip された突合」と「通った突合」は見分けがつかない）。突合を「同じ表を両側の試験に
+  書き写す」で済ませると、ドリフトという当の失敗を招く。
