@@ -380,11 +380,11 @@ would always be true and `ops` always three, so the pane would keep showing a sl
   `op !== "generate"`, so decision 2 would refuse every edit), the `op` choices (`draft.ts`'s constant `OPS`, walked at `GenerateForm.tsx:417`, never the
   status's `ops`), and `GenerateForm.dom.test.tsx` (the test that greys fields out on `knobs` —
   extend it for `strength` and `ops`, without breaking its other claim: an ABSENT `knobs` leaves the
-  whole form usable)
+  whole form usable).
 - **The refusal has two homes** (decision 2): the blocking `/imagegen/generate` (`http.go:450`) and
   the queue route the pane uses (`jobs_http.go:115`). Both check the RANGE (0 < s ≤ 1) today, so
   **adding it to only one leaves the pane with a failed job instead of a 400** — and P0's second
-  criterion would hold on one route and not the other..
+  criterion would hold on one route and not the other.
 - **Guide**: `guide/operate/07-image-engine.{md,ja.md}` (the page that lists per-family behaviour).
 - **Deployment**: 20 GB more per checkpoint. The box keeps models on NVMe so the space is there, but
   **the cold-start sync grows** (measured: 348.9 s for 30 GB, purchase included).
