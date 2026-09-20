@@ -198,6 +198,15 @@ its children's branch goes with it.
   should be a deletion; "I deleted it and it is still in the figure" is not what a user expects.
 - A line carries `{ts, ev, name, kind, repo, origin, originSession, display}` and **no prompt text and no
   report text**. What ought to disappear on deletion is never stored in the first place.
+- 🔴 **Amendment, 2026-09-20 (ADR 0097 landed the same day)**: the motivation for this decision —
+  **the 7-day auto-prune erasing lineage** — no longer happens: [0097](0097-session-retention.md) removed
+  that sweep's deletion outright (the TTL now writes back `Archived = true`). **The decision stands**: the
+  rule that a delete erases lineage holds, and so do the ledger's other reasons to exist (activity and
+  arrows were never in `Meta`; archived rows are skipped by the list, so the live map cannot supply them;
+  pre-feature sessions need the back-fill). Two things did change: (1) the "only the TTL prune keeps it"
+  carve-out below now has **no callers** — every remaining `RemoveMeta` path is a person's delete; (2) the
+  skeleton no longer stops at 7 days, because an archived meta is never forgotten, so decision 8's third
+  tier reaches further back.
 - 🔥 **Lineage dies wherever a PERSON's action forgets the meta** (settled during P1). `session.RemoveMeta`
   has five call sites, and **only the 7-day automatic prune (the list handler) keeps the lineage**. The
   other four erase it: `DELETE /sessions/{name}` with or without `reclaim`, **`/stop`** (whose own comment

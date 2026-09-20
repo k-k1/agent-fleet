@@ -1,9 +1,15 @@
 package session
 
 // ADR 0096 decision 6: forgetting a session's meta erases its fleet-graph lineage row too,
-// UNLESS the forgetting is the stopped-session TTL auto-prune — that is the one case the
-// ledger exists to protect (docs/log/94: losing a parent to the 7-day prune used to sever a
-// child's branch line, and the ledger was built to undo exactly that).
+// UNLESS the forgetting is the stopped-session TTL sweep — the one case the ledger was built
+// to protect (docs/log/94: losing a parent to the 7-day prune used to sever a child's branch
+// line).
+//
+// ADR 0097 then removed that sweep's deletion entirely: the TTL now sets Archived instead of
+// forgetting the meta, so the exempt bucket has no callers left and EVERY remaining caller is
+// a person asking for the session to be gone. The two names stay — the exemption is a rule
+// about intent, not about how many call sites happen to exist today, and a future sweep that
+// forgets metas again would need the un-erasing name to be there.
 //
 // A conditional written as "if this is the prune path, skip erasing" is the failure this
 // project has already had three times over (revive, archived, and the classification here
@@ -32,7 +38,7 @@ var removeMetaAndLineageCaller = regexp.MustCompile(`(?:^|[^.\w])(?:session\.)?R
 // classifying the new call site against decision 6 above (never by copying whatever number
 // makes the test pass) — say which bucket it belongs in in the same commit.
 const (
-	wantRemoveMeta           = 1                          // the stopped-session TTL auto-prune, internal/sessionx/session_handlers.go
+	wantRemoveMeta           = 0                          // none since ADR 0097: the stopped-session TTL archives instead of forgetting
 	wantRemoveMetaAndLineage = 4                          // /stop, DELETE /sessions (both branches), working-copy delete collateral
 	metaGoRelPath            = "internal/session/meta.go" // defines both; excluded from the scan
 )

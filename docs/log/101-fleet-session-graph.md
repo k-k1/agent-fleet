@@ -36,7 +36,14 @@ Session D                   ○--------+----------×
 | → 指示 | 半分 | `instr-ledger/<session>.json` の `delivered_at`（`internal/chatx/chat_report_ledger.go`） |
 | ← 報告 | 半分 | 同 `reported_at` |
 | 稼働帯 | **無い** | live state の履歴はどこにも残らない。`Session.TokenSpends` は**数値の列だけで時刻を持たない**（`internal/session/session.go:318`） |
-| 7 日より前 | **消える** | `session.StoppedTTL()`（`:534`・既定 7 日・`AF_SESSION_STOPPED_TTL`）で停止セッションの meta ごと prune。系譜も一緒に消える |
+| 7 日より前 | **消える**（🔴 下記） | `session.StoppedTTL()`（`:534`・既定 7 日・`AF_SESSION_STOPPED_TTL`）で停止セッションの meta ごと prune。系譜も一緒に消える |
+
+🔴 **訂正（2026-09-20・P2 の develop 取り込み時）**: 最後の行はこの調査の時点では正しかったが、
+同日に入った **ADR 0097（セッション保持）が自動 prune の削除を廃した**——TTL は `Archived = true` の
+書き戻しになり、meta も転写も残る。**気づいたのは S-BE が仕込んだ件数テスト**（`RemoveMeta` の
+呼び出しを数える）が develop を merge した瞬間に赤くなったからで、「勝手に消えていた唯一の経路」が
+消えたことを**人間が気づく前に機械が指摘した**。ADR 0096 決定 6 の判断は変えない（理由は ADR 側の
+🔴 追記）。
 
 ### 101.1.1 🔥 0027 の前提はすでに 1 つ崩れている
 
