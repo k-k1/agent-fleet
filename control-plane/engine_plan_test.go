@@ -514,6 +514,37 @@ func TestIngestKeyFollowsTheRole(t *testing.T) {
 	}
 }
 
+// 🔴 The bug that produced "what taking … in would do has changed" on a press that changed
+// nothing but the row's name: the id is what the operator calls the row, not a priced decision.
+// A token that moved with the id would refuse every press where the person accepted the proposal
+// and pressed immediately — which is the case that must never stale.
+func TestPlanTokenDoesNotMoveWithTheID(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, e, _, _ := enginePlanAPI(t)
+	body := `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`
+
+	proposed := enginePlanOf(t, a, e, body)
+	// A request with a different id but the same source and bucket state must produce the same
+	// token, because the operator's choice of name does not change what files cost.
+	edited := enginePlanOf(t, a, e, `{"id":"my-custom-name","kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)
+	if edited.PlanToken != proposed.PlanToken {
+		t.Errorf("token with id %q = %q, token with id %q = %q — id alone must not change the token",
+			proposed.ID, proposed.PlanToken, edited.ID, edited.PlanToken)
+	}
+	// Regression: a DIFFERENT action still moves the token.  Without this half, a token() that
+	// returned a constant would satisfy the equality above and nobody would notice.
+	engineHFRepoStub(t, map[string][]string{"other/Repo": {"other.safetensors"}})
+	different := enginePlanOf(t, a, e, `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"other/Repo","file":"other.safetensors"}}}`)
+	if different.PlanToken == proposed.PlanToken {
+		t.Error("a plan for a different file produced the same token — the token is not covering the action")
+	}
+}
+
 // engineLedgerLookup is the seam decision 2's ledger replaces, and both of its proofs are
 // load-bearing: a record with no object is a key whose bytes were purged, an object with no
 // matching identity is bytes nobody can vouch for.

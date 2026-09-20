@@ -88,9 +88,14 @@ type enginePlan struct {
 // Hashed rather than echoed back (ADR 0085 open question 2): the Console re-sends 16 bytes it
 // cannot forge, and the CP compares them against a plan it made itself a moment ago. The field
 // itself is cleared before hashing, so the value never depends on what it is about to become.
+//
+// ID is excluded from the hash because it names what the row will be called — a decision the
+// operator makes at the press (details form), not part of what the plan priced. The postIngest
+// route has its own duplicate-id check; hashing the id here would make every edit to it a 409.
 func (p enginePlan) token() string {
 	bare := p
 	bare.PlanToken = ""
+	bare.ID = ""
 	raw, err := json.Marshal(bare)
 	if err != nil {
 		return ""
