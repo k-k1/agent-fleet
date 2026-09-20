@@ -15,6 +15,10 @@ English | [日本語](0093-lcpp-agent-kind.ja.md)
   🟢 **Plan approved by the user 2026-09-19** (the staging of Decision 9, Phase 0 first). Implementation
   runs in child sessions driven and reviewed by a parent session; each phase lands through its own
   PR. Status moves to *adopted* when Phase 2 is merged, or the ADR records where it stopped.
+  🟢 **Phase 2 in progress (2026-09-20, the user judged Decision 9's gates (a)(b)(c) passed)**. The
+  judgment itself and the 14 live runs (numbered #1–#14, #5 run twice = 15 runs total) are at the
+  end, under "Decision 9's gate judgment (2026-09-20)"; the known debt Phase 2 must carry is under
+  "Debt carried into Phase 2".
 - The request is one sentence: **can our own harness — a process that talks to llama-server's API
   directly instead of driving a vendor CLI — be a session kind of Agent Fleet, and at what cost?**
 - See also: [0015](0015-agent-managed-driver.md) (the managed driver contract this kind implements
@@ -475,3 +479,104 @@ this class of problem** once we are the executor.
 - The approval gate's zero value is **fail-closed** (`Runtime.Approve == nil` declines every `Mutates`
   call); unattended execution passes `AutoApprove` explicitly. Decision 5's "approval really does stop
   a tool" is implemented so that forgetting to wire it fails loudly rather than passing silently.
+
+## Decision 9's gate judgment (2026-09-20)
+
+Once Phase 1's live measurements had accumulated, the user judged Decision 9's (a)(b)(c). The full
+list of all 14 live runs is `docs/log/99-lcpp-agent-kind.md` §14 (extending §12.5's six). Runs are
+numbered #1–#14 (#5 has two runs, with and without a parallel-call instruction) — the same counting
+convention §12.5 already used for "six live runs"; the numbered rows total 14, and counting #5's two
+runs the total is 15.
+
+- **(a) Does a 20-turn-class real task complete? — Pass.** Four checkpoints across **three families**
+  (Qwen3, GPT-OSS, Gemma) passed (#1, #2, #6, #7, #8, #12, #13) — more than the "one or two families"
+  the ADR asked for. ⚠️ But **turn count for the same task varies by more than 2× across families**
+  (29 turns for #2 vs. 95 for #7) — the difference is cost, not correctness.
+- **(b) Do members accept the wake and re-prefill fixed costs? — Accepted, better than expected.**
+  🔴 Measurement showed **swapping models does not require swapping boxes** (`engine_waking` fired 0
+  times across #7–#13). Only the first purchase is expensive; true cold start stays within 3.5–5
+  minutes. §12.5's measurements include one case, #5' (the no-parallel-instruction run)'s cold start,
+  hitting **302.33 seconds** and `context deadline exceeded`. The wake-wait cap is **900 seconds** (`docs/log/99` §4.2's
+  `errEngineWaking` — a wake-timeout constant, not something Decision 4 states). ⚠️ Whether a hold
+  actually exceeded that 900-second cap is a claim from the handoff, not something confirmed against
+  the raw logs under `$HOME/lcpp-live/` — not asserted here.
+- **(c) Are fewer incidents than the opencode route plausible? — Judged passed, but 8 defects surfaced
+  across Phase 1 that only a live engine found** (a tally from the user's handoff). **This ADR
+  explicitly documents only 4 of them** — the three already recorded under "What only a live engine
+  found" below (Phase 1's early half — see "Implementation record for phases 0 and 1" above), plus
+  the one appended here from #811. 🔴 **Which defects make up the remaining 4 is not identified
+  anywhere in this ADR or in `docs/log/99`, and cannot be enumerated within this document's scope**
+  (an earlier draft claimed they were "recorded across §12.1's repeat-detection miss, §13.4/§13.8's
+  KV-geometry 409, etc." — that claim was wrong; no such record exists in either document, and this
+  corrects it). **The one defect that is identified (#811, appended below) was of a kind no test can
+  find in principle: every scripted-client unit test stayed green, the original symptom is genuinely
+  fixed on the real engine, and it is still six times slower in practice.** It is recorded as a worked
+  example of Decision 5's consequence (the executor is us, so we own this class of problem),
+  continuing the section below.
+
+### What only a live engine found (continued, added 2026-09-20)
+
+Following the three defects recorded above under "Implementation record for phases 0 and 1" (two
+chat-template rejections right after compaction, and the P0 provider dropping history), one more
+surfaced in Phase 1's second half, around PR #811.
+
+- **PR #811's first draft (#10) ran past 353 turns without completing** (86 compactions in task-1
+  alone). Every scripted-client unit test stayed green; the symptom appeared only against the real
+  engine. #811's final version (#11–#13), which keeps recent round trips raw instead of compacting
+  them away, then stopped explicitly with `ErrCompactionThrashing` at window 3500 (#11, 139 turns) as
+  designed; widening the window to 8000 let compaction fire correctly twice with an accurate recall
+  (#12); and at window 24000 compaction was not needed at all (#13, zero compactions). **The practical
+  conclusion is not "fixed" but "window 3500 is effectively too narrow for #811's harness"** — judging
+  the fix's effect required re-measuring at a wider window, and this class of performance behavior is
+  invisible to tests in principle.
+
+## Debt carried into Phase 2 (2026-09-20, all 9 items, all confirmed by measurement)
+
+Debt confirmed by measurement during Phase 1 but not fixed within Phase 1's scope. Items 1 and 2 are
+certain to be hit by Phase 2's own work.
+
+1. **The synthetic `continuationPrompt` user turn survives in `Result.Messages`**
+   (`workspace/agent/internal/harness/loop.go:77`'s constant, `:320`, `:329-335`). When a compaction
+   boundary lands on a tool result, the harness manufactures a `"Continue with the task."` user turn
+   and it stays in the record. 🔴 **Phase 2's transcript renderer must not draw this as something the
+   member said.** It is identifiable by one constant.
+2. **Repeat detection (PR #794, `workspace/agent/internal/harness/repeat.go`) did not catch coder's
+   actual failure.** It fired zero times on hardware. The same tool name repeated six times in a row,
+   but **the arguments changed every time**, so the `name+args` match never triggered. What `repeat.go`
+   itself documents as a known limitation happened for real.
+3. 🔴 **`qwen3-coder-30b-a3b` has never been measured on the final #811 harness.** Each of the three
+   measurements landed on a different harness version (the run order and harness versions were
+   pinned down in `docs/log/99` §14's 2026-09-20 correction): **§14 #3 = a 72-turn loop on the Phase 1
+   harness**; **§14 #9 = real-window overflow on the Phase 1 harness** (the underlying defect, `Run`
+   never receiving the window, is fixed by 52bbda2d and 570d5042); **§14 #14 = 434-turn
+   non-convergence on #811's first draft** (that draft carries the same compaction-thrashing defect
+   as §14 #10, so it is confounded and is not evidence about the model itself). So the right summary
+   is not "three different reasons the model is bad" but **"measured on three different harness
+   versions, with no evaluation yet on the fixed one (#811's final)"**. None of the three counts
+   toward a passing checkpoint. **Recommended Phase 2 follow-up: measure qwen3-coder once more on
+   #811's final harness.**
+4. **Llama 3.1 has no exit on this engine build.** `common/chat.cpp` has no Llama-specific parser, so
+   it falls to the differential autoparser. The role-wide `--jinja` always wins (the overlay in
+   `tools/server/server-models.cpp:548-551`; there is no reserved key like `LLAMA_ARG_JINJA`), which
+   also blocks the escape route of a per-model argument into the legacy path (already documented in
+   §12.4; the debt table just points there).
+5. **`control-plane/engine_gguf.go` cannot size KV for non-uniform `layer_types`.** GPT-OSS, gemma-4
+   and LFM2.5 all have this shape, and **enabling them is rejected with 409** ("cannot be sized (no
+   attention geometry)"). The prior session got past it by declaring the per-layer-computed real
+   number as `vram_mib` (GPT-OSS 14500 / gemma-4 9800). **This is worth fixing on its own** (not part
+   of Phase 2's body of work).
+6. **`chat_template` appears in neither `/props` nor `/v1/models`** (measured). There is no way to
+   confirm the template baked into a GGUF from the deployment side. Already noted in
+   `docs/log/99` §12.5; the debt table just restates it as "unresolved going into Phase 2".
+7. **The engine image only became pinnable in PR #803 — nobody has pinned it yet.** Sandbox still
+   runs a floating tag. Tool-call parsing lives entirely on the engine side, so behavior changes with
+   the version. The measured version was `b10830-465e49b9c`, readable from `/props`'s `build_info`
+   **without waking the box** (§12.3).
+8. **`InputTokens` is called on every iteration of the tool loop.** It is cheap (no generation), but
+   it doubles round trips. The doc still leaves room to only measure it when close to the threshold.
+9. **In run order, §14 #14 onward carries PR #811's in-tool-loop compaction.** The ten runs before it
+   (#1–#9 and #5') only compact at task boundaries. §14 #14 and #10 are further #811's **first draft**;
+   #11–#13 are the **final** one — the numbered order (#9 → #14) does not match run order (#14 in fact
+   ran before #10–#13), the same fact pinned down in `docs/log/99` §14's 2026-09-20 correction. As
+   debt, the caution is: **do not naively compare `compacted_at_turn` across a harness-version
+   boundary going forward.**
