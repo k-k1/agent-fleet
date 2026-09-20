@@ -69,7 +69,7 @@ ADR 0027 決定 2 は「指示は arm ストアにしか無く、報告配送時
 |---|---|---|
 | Console（セッション一覧） | 4 秒 | **タブが開いているあいだだけ** |
 | CP の idle-stop reaper | 既定 **1 分** | `AF_IDLE_SWEEP_INTERVAL`（`control-plane/main.go:295`・`intervalOff` で `0` は**配備ごと停止**）。`sweep` → `sweepWorkspace` が `sessionWire` を取る＝Agent の一覧ハンドラを叩く |
-| 報告リコンサイラ | 15〜30 秒 | ⚠️ **全セッションではない**。`sweep()` は `instrSweepSessions()` が返す「未報告の行を持つセッション」だけを回る（`internal/chatx/chat_report_reconcile.go:756`） |
+| 報告リコンサイラ | 15〜30 秒 | ⚠️ **全セッションではない**。`sweep()` が回るのは `instrSweepSessions()` が返す 2 集合——**未報告の行を持つセッション**と**猶予窓の中にある報告済みセッション**（補償 reopen 用）——だけ（`chat_report_ledger.go` / `chat_report_reconcile.go:756`） |
 
 つまり **Agent 側に「全セッションを定期的に見る」常設の掃引は存在しない**。誰も Console を開かず、
 reaper を切った配備では、観測は**ゼロ**になる。
@@ -77,6 +77,11 @@ reaper を切った配備では、観測は**ゼロ**になる。
 → したがって「観測が無かった区間」を idle として塗ってはいけない。報告 v2 が敗因として書き残した
 **「無ファイルは『不明』であって idle ではない」**（docs/log/51 §settled 述語）を、そのまま図の
 描画規則にする。塗らずに斜線にする。
+
+→ 🔥 **観測者が 2 人いるので、重複行の防止は書き手の責務**（ADR 0096 決定 3）。Console（4 秒）と
+reaper（1 分）は同じ一覧ハンドラを同時に叩きうる。書き手はセッションごとの直前状態をプロセス内に
+持ち、変化したときだけ・セッション単位の mutex で直列化して書く。`StateEvent.from` はその表から
+埋め、**表に無ければ省く**（`from` 無し＝「直前は不明」。idle ではない）。
 
 → Agent の再起動を挟んだ区間も同じ扱いにできるよう、起動直後に全セッションの現在状態を 1 回
 書く（`resync` 行）。
@@ -94,10 +99,15 @@ reaper を切った配備では、観測は**ゼロ**になる。
 {"ts":"2026-09-20T10:04:11+09:00","ev":"birth","name":"sage35s","kind":"claude","repo":"agent-fleet",
  "origin":"session","originSession":"sxmzm4b","conv":"<own sid>","forkFrom":"<source conv id>",
  "display":"ADR 0096 起票"}
-{"ts":"2026-09-20T14:31:00+09:00","ev":"convid","name":"sage35s","conv":"<drifted sid>"}
-{"ts":"2026-09-20T18:22:03+09:00","ev":"death","name":"sage35s","reason":"oom","code":137}
-{"ts":"2026-09-21T09:00:00+09:00","ev":"archived","name":"sage35s"}
+{"ts":"2026-09-20T14:31:00.412+09:00","ev":"convid","name":"sage35s","conv":"<drifted sid>"}
+{"ts":"2026-09-20T18:22:03.900+09:00","ev":"death","name":"sage35s","reason":"oom","code":137}
+{"ts":"2026-09-20T19:05:41.088+09:00","ev":"revive","name":"sage35s"}
+{"ts":"2026-09-21T09:00:00.000+09:00","ev":"archived","name":"sage35s","archived":true}
 ```
+
+`revive` が要るのは、**再開すると `Meta.StoppedAt` がクリアされる**から（`session_handlers.go` の
+一覧・`session_tmux.go`・`session_driver.go`）。1 レーンの生涯は ○──×──○──× と続きうるので、
+死を 1 組しか持てないモデルでは 2 回目の × がどの区間の終わりか決まらない。
 
 活動行（`activity-*.jsonl`）:
 
@@ -110,8 +120,12 @@ reaper を切った配備では、観測は**ゼロ**になる。
 ```
 
 `from` / `to` のうち**レーンになるのはセッション名だけ**で、`conv:<id>`（チャット会話）・`user`・
-`schedule`・`bridge:discord` / `bridge:slack` はレーンを持たない（図の上下へ抜ける矢印・ADR 0096
-決定 8-2）。
+`schedule`・`bridge:discord` / `bridge:slack`・`agent`（自動再開＝誰の指示でもないターン）は
+レーンを持たない（図の上下へ抜ける矢印・ADR 0096 決定 8-2）。
+
+**時刻の綴りは 2 つある**（ADR 0096 決定 2）。台帳の行は **RFC3339（ミリ秒）**、DTO
+（`FleetGraphPage`）は **unix ミリ秒の数値**で、変換は必ず S-BE が行う。日次ファイルの日付は
+**UTC**（窓は millis で来るので、ローカル TZ で切ると境界の 1 日を無言で読み落とす）。
 
 量（1 行 ≒ 80〜200 バイト）:
 
@@ -178,18 +192,32 @@ reaper を切った配備では、観測は**ゼロ**になる。
 
 ### 型に埋めた「消えると事故になる」区別
 
-- `LanePresence` = `live` / `stopped` / `archived` / `gone`。**線種の規則（点線＝まだ居る／終端＝
-  もう居ない）はここで決まる**。`presence` は台帳だけでは出ない——`death` 行があっても一覧に
-  まだ居れば `stopped`、居なければ `gone` なので、`BuildFleetGraph` は**台帳とライブの
-  `sessions` の両方**を取る。
-- `SegmentKind` に `unknown` を入れた。**既定値にしない**（`idle` に倒さない）ことがこの図の
-  正直さの全部で、型に無ければ実装は必ず `idle` を書く。
+- `LedgerState` を**台帳専用のリテラル union**として置いた。`SessionState` を借りると
+  `""`＝idle の綴りが混入し、`limited` / `blocked` / `auth` / `spend_limit` / `failed` / `aborted`
+  （`agents/notify.go`）が落ちる。🔥 そして **TS では `SessionState | string` は `string` に潰れて
+  何も縛らない**——最初の版はこれで、S-BE が `""` を書き S-LOGIC が「未知＝斜線」に倒すと
+  **働いていた区間が「不明」で塗られる**。正規化（`""`→`idle`・語彙外→`idle`）は書き手の責務と明記。
+- `SegmentKindByState`（状態 → 帯の写像）も契約に入れた。**どちらのレーンが持つか未定のまま**だと
+  2 通りの色分けが生まれる。
+- `SegmentKind` の `unknown`。**既定値にしない**（`idle` に倒さない）ことがこの図の正直さの全部で、
+  型に無ければ実装は必ず `idle` を書く。
+- `LaneRun[]`（`GraphLane.runs`）と `ev:"revive"`。🔥 **再開すると `Meta.StoppedAt` はクリアされる**
+  ので 1 レーンの生涯は複数の走行。死を 1 組しか持てない最初の版では、2 回目の × がどの区間の
+  終わりか決まらず、**死んで再開した区間が「停止中の点線」に化けた**。
+- `FleetGraphPage.lineage` は**窓で切らない**と明記。窓の中のイベントだけにすると、3 日前に生まれて
+  今も動くレーンに `kind` も `origin` も表示名も無い（ライブの `Session` に `origin` は無い）。
 - `ActorId` は「レーンになるもの（セッション名）」と「ならないもの（`conv:` / `user` /
-  `schedule` / `bridge:`）」を 1 つの型に混ぜてある。`GraphArrow.fromLane` / `toLane` が `null` を
-  取れるのが**図の外へ抜ける矢印**（決定 8-2）で、これを型で表しておかないと外部発信元が
-  無言で捨てられる。
-- `BirthEvent.conv` のコメントに「**AF が割り当てた id であって観測値ではない**」を書いた
-  （101.5 ①の罠。ここを読まずに実装すると fork のエッジが自分自身を指す）。
+  `schedule` / `bridge:` / `agent`）」を 1 つの型に混ぜてある。`GraphArrow.fromRow` / `toRow` が
+  `null` を取れるのが**図の外へ抜ける矢印**（決定 8-2）で、型で表さないと外部発信元が無言で捨てられる。
+  `agent` は自動再開（`auto-resume`）——**誰の指示でもないターン**なので、`user` に倒さない。
+- `GraphSegment.laneId`（レーン id）と `GraphLane.row` / `GraphArrow.fromRow`（行 index）は
+  **綴りで区別する**。最初の版は両方 `lane` で、S-VIEW が index と読めば全セグメントが行 0 に落ちた。
+- `GraphModel` は**素データだけ**（関数メンバを持たない）。手本の `lib/gitgraph.ts` が素データ＋
+  別 export の補助関数なのと同じ理由で、関数を埋めると **fixture が JSON にならず**、
+  モデルのスナップショット比較もできない。`xOf` / `laneY` は `GraphScale` を取る別 export。
+- `BirthEvent.conv` の解決規則（🔥 **その kind の `ForkSource` と同じ経路**。claude=`LiveSID()`・
+  codex=hook 記録の slot 別 id・opencode=会話ストアの現行セッション）。ここを「AF が割り当てた id」に
+  すると **codex / opencode の fork エッジは永久に一致しない**。
 
 ### P1 の担当境界（衝突をマージ 1 点に閉じる）
 
@@ -197,7 +225,22 @@ reaper を切った配備では、観測は**ゼロ**になる。
 |---|---|
 | S-BE | `workspace/agent/internal/…`（台帳 2 本・書き込み 6 箇所・`GET /api/fleet-graph`）、`workspace/agent/routes.go`、`control-plane/routes.go` の許可リスト |
 | S-LOGIC | `console/src/lib/fleetgraph.ts` ＋ `fleetgraph.test.ts` のみ |
-| S-VIEW | `console/src/features/fleetgraph/*`、**共有グルー（`layout/types.ts` の union・`migrate.ts`・`Pane.tsx`・`paneTitle.ts`・`features/keys/commands.ts`・i18n の ja/en）は S-VIEW 専有** |
+| S-VIEW | `console/src/features/fleetgraph/*`、**共有グルー（`layout/types.ts` の union・`migrate.ts`・`Pane.tsx`・`paneTitle.ts`・`features/keys/commands.ts`・i18n の ja/en）は S-VIEW 専有**、🔥 **`console/src/core/api/client.ts`（API 呼び出しを全部持つ 1 ファイル）も S-VIEW 専有**——3 レーンが同じファイルを触りうる最後の 1 箇所がここだった |
+| （誰も） | `console/src/types/fleetgraph.ts` は**凍結**。P1 のレーンは編集しない。直す必要が出たら**統合役へ差し戻す**（契約を片側だけ書き換えると、他の 2 レーンは気づかないまま食い違う） |
+
+### P0 レビュー（子セッション・opus・2026-09-20）で直したもの
+
+重大 3・中 7・軽微 4。**重大 3 件はすべて「契約の穴」**で、3 レーンが相談せずに実装したときに
+突き合わせで初めて壊れる種類のものだった（上の「型に埋めた区別」の 🔥 が該当箇所）。加えて
+**事実誤認が 1 件**——決定 13 の「焼くのは AF が割り当てた id」は claude 以外に当てはまらず、
+`Forker.ForkSource` の実装（codex は hook 記録の観測値、opencode は会話ストアの現行セッション）を
+読めば分かることだった。裏取りは一次情報で再確認済み。
+
+ほかに直したもの: 台帳＝RFC3339 / DTO＝millis の明記と日次ファイル日付の UTC 固定、
+`ArchivedEvent` の例に必須フィールドが無かった件、`source` 語彙に `auto-resume` が欠けていた件、
+重複 state 行の防止（観測者が 2 人いる）、担当境界表の `client.ts` と契約の改訂権、
+§101.2 の掃引集合の記述（正確には 2 集合）、docs/log/44 の状態行の矛盾、
+`types/fleetgraph.ts` のヘッダから履歴の記述を落としたこと（`AGENTS.md`）。
 
 P0 では共有グルーに**一切触っていない**（`types/fleetgraph.ts` の追加と `types/opgraph.ts` の削除だけ）。
 `npm run typecheck` は緑——ただし**この型はまだ誰も import していない**ので、陽性対照として

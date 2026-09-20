@@ -89,6 +89,14 @@ ADR's P0 contract.
 - **Reads are windowed.** With daily files, "the last 24 hours" opens one or two of them. Following ADR 0087
   (EFS metadata IO is what made the whole production deployment slow), **nothing here multiplies file
   count**: no per-session file, no file per event.
+- **Time is spelled differently in the ledger and on the wire, and the server always converts.** Ledger
+  lines carry **RFC3339 (milliseconds)** — these are jsonl files people grep, and the repository's other
+  ledgers (`Meta`, `instr-ledger`) spell time that way. The DTO (`FleetGraphPage`) carries **unix millis as
+  numbers**, so the browser never parses a date. Without fixing the direction here, the type file says
+  millis while the documented ledger lines say RFC3339, and **which one S-BE writes is decided by whichever
+  document it read**.
+- **The daily file's date is UTC.** A reader picks files out of a millis window; the workspace's clock is
+  local (policy). Let those disagree and the boundary day is silently skipped.
 
 ### Decision 3 — the activity band is written from observed state transitions only; transcripts are never scanned
 
@@ -112,6 +120,23 @@ The session list (`GET /sessions`) **already derives live state for every sessio
   not mean idle**" (docs/log/51).
 - Right after an Agent restart, write every session's current state once (a `resync` line), so the stretch
   across the restart correctly stays unknown.
+- **The state vocabulary is frozen as a ledger-specific `LedgerState`.** Reusing `SessionState`
+  (`types/session.ts`) fails twice over: it carries the Console row's convention that **`""` means idle**,
+  and it lacks the states the agents emit around a stopped turn — `limited`, `blocked`, `auth`,
+  `spend_limit`, `failed`, `aborted` (`agents/notify.go`). In TypeScript `SessionState | string` collapses
+  to `string` and **constrains nothing**, so it is written out as a literal union. **The writer (S-BE)
+  normalises**: `""` is written as `idle`, and so is anything outside the union. The reader never guesses.
+- **The state → band (`SegmentKind`) mapping is part of the contract too** (`SegmentKindByState`):
+  `working` → `active`; `idle` / `failed` / `aborted` → `idle`; `question` / `plan` / `permission` /
+  `blocked` / `auth` / `limited` / `spend_limit` → `waiting`. The exact word survives on
+  `GraphSegment.state` — **the band is for colour, the state is for the tooltip** — which is why `limited`
+  needs no band of its own.
+- **Preventing duplicate lines is the writer's job.** The observation is driven by the list handler (a GET),
+  and **a Console (4 s) and the reaper (1 min) can hit it at the same time**. The writer keeps each
+  session's last state in process and writes **only on a change** (serialized per session with a mutex).
+  `StateEvent.from` comes from that map and is **omitted when the map has no entry** — an absent `from`
+  means "unknown before this", not "idle before this". A restart empties the map, which is exactly where
+  `resync` marks the boundary.
 
 ### Decision 4 — all three round-trip arrows (instruction, report, peer) are written in one line format; `instr-ledger` is not read
 
@@ -164,6 +189,13 @@ its children's branch goes with it.
 Add `GET /api/fleet-graph?since=…&until=…` to the Agent and register it on the control plane's **explicit
 allow-list** (memory `cp-rest-proxy-allowlist`: the CP does not pass requests through by default).
 Cross-tenant overview is the administrators' table (`GET /api/admin/sessions`), a different reader's job.
+
+🔥 **Lineage is not clipped to the window.** The response's `lineage` is the union of three things: (1)
+every event inside the window; (2) **the `birth` (and the preceding `convid`) of every lane that overlaps
+the window, however old**; (3) the `birth` of those lanes' ancestors, for family ordering (decision 9).
+Clipping naively leaves **a lane born three days before a 24-hour window with no kind, no origin and no
+label** — the live `Session` has no `origin` (only `originSession`), so the Console cannot fill it in. An
+ancestor that does not itself overlap the window is context for ordering and labels; it gets no lane.
 
 ### Decision 8 — the time axis is linear; the default window is the last 24 hours, with "now" at the right edge; looking back may be bounded
 
@@ -239,6 +271,14 @@ A lane's horizontal line is drawn four ways (the user's instruction, 2026-09-20)
 but "**when its end was first observed**" (`Meta.StoppedAt` is filled lazily — the same property as the
 observation story in decision 3), and the figure says so in the ×'s tooltip.
 
+🔥 **One lane's life is a sequence of RUNS.** Resuming a stopped session **clears** `Meta.StoppedAt`
+(the list in `sessionx/session_handlers.go`, `session_tmux.go`, `session_driver.go`), so ○──×──(dashed)──○──×
+all belong to one lane. The ledger gains `ev:"revive"` and `GraphLane` carries `runs: LaneRun[]`. A model
+that holds a single death cannot say which stretch a second × ends, and **a stretch that died and was
+resumed renders as the dashed "stopped" tail**.
+- Limit (intended): the back-fill from `Meta` **cannot reconstruct past stop/resume cycles** (only the
+  latest `StoppedAt` survives there). Lanes older than the feature are drawn as a single run.
+
 - Stopped sessions are **drawn by default**. ADR 0078's list defaults to running-only, but that is a
   cross-section of *now*; this figure is the *elapsed* — hiding stopped sessions from the past empties it.
 - Archived ones are drawn by default too, with a toggle to hide them. The toggle lives in `PaneContent`
@@ -251,10 +291,16 @@ name, so it cannot be tied to a lane as is (docs/101 §101.1). The lineage ledge
 session's own conversation id alongside, and matching is done against **the id that was in force at that
 time**.
 
-- 🔥 **What is burned in is the id AF assigned, never an observed one.** Right after a fork, claude reads
-  the *source* session's transcript until its own jsonl materialises
-  (`internal/sessionx/session_transcript.go`). Burning in an observed value puts the parent's id on the
-  child's line, and **the edge points at itself**.
+- 🔥 **The id burned in must come through the same resolution as that kind's `Forker.ForkSource`.** That
+  function is what produces `ForkFrom`'s value, and **every kind resolves it from an observed store**:
+  claude uses `LiveSID()` (where it is actually writing after a drift), codex the per-slot id its hook
+  recorded (`sids.Read`), opencode the current conversation in its store. Burning in the id AF passed at
+  launch leaves **codex and opencode fork edges permanently unmatched**. A kind that cannot resolve one at
+  birth leaves it empty and a `convid` line fills it in later.
+- ⚠️ claude carries a separate trap: right after a fork it reads the *source* session's transcript until
+  its own jsonl materialises (`internal/sessionx/session_transcript.go`). Inferring the id from where the
+  transcript is puts the parent's id on the child's line and **the edge points at itself**. Always resolve
+  through `ForkSource`, never from an observed transcript.
 - The conversation id can change mid-life: when claude relaunches itself, `--session-id` structurally drops
   out of the argv and it **starts writing under a new random id** (measured on 2.1.239; the `claude-sid`
   ledger in `internal/agents/claude/sid.go` exists to track exactly this). A `convid` line records the
