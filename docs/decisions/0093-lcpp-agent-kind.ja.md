@@ -319,3 +319,74 @@ llama.cpp 版で動く: live テストと同じ opt-in の実エンジン契約�
   managed→TUI 遷移（`workspace/agent/internal/sessionx/session_driver.go:62-105`）で読む必要がある。handoff は同じ generic create 経路を
   使うので、別の route label ではなく target kind から managed を選ばせる
   （`console/src/features/sessions/HandoffModal.tsx:75-84,119-130`）。
+
+## 段 0・段 1 の実装記録（2026-09-20）
+
+段 0 と段 1 は develop に入った（#761・#767＝段 0 と追補、#762・#764・#766・#770＝段 1 の D/F/E/G）。
+**決定文は変えていない。**以下は実装と実測が決定文に対して何を足し、何を覆したかの記録である。
+
+### 覆った前提 2 つ
+
+- 🔴 **決定 6 の「`af` ツールは他の CLI と同じく loopback の HTTP で回す」は、後半が事実と違った。**
+  `mcpreg/builtin.go:45-50` の `BuiltinAF` は `runArgs: ["mcp-stdio", "--self-report", "--chromium-attach"]`
+  の **stdio** ServerDef で、Agent 側に HTTP の MCP 入口は無い。**他の CLI も stdio で繋いでいる。**
+  「他の CLI と同じく」という意図は正しく、その手段の記述だけが誤りだった。#764 は既存の stdio
+  ServerDef を汎用クライアントで繋いでおり、`af` 専用のコードは `internal/mcpc` に 1 行も無い。
+  `dispatchMCPStdio` の in-process 直呼びを見送る判断（Review）はそのまま有効。
+- 🔴 **決定 7 の「`/props` が実際に付いた窓を返す」は、router モードの配備では成立しない。**
+  実測（#770 の実機）: `GET /engine/llm/props` は 200 を返すが `role: "router"`・`model_path: "none"`・
+  `default_generation_settings.n_ctx = 0`。llama-server を `--models-max` で複数モデル同居させると、
+  `/props` はルータ自身を describe する。実値は `{engine}/v1/models` の `data[].meta.n_ctx` にある。
+  #767 は、段 0 の門（demand を記録しない・起こさない）を保ったまま、`n_ctx == 0` のときだけ
+  `props()` が自分で `/v1/models` を読んで 1 キーを足す形で塞いだ。**`/v1/models` を gateway の
+  通常経路で読むのは不可**——`serve()` が `demand.record`（`engine_gateway.go:540`）と
+  `ensureReady`（`:1018`）を踏み、窓を尋ねるために GPU を買ってしまう。
+
+### 決定文に無かった条件 1 つ
+
+- 🔴 **借用行（ADR 0079）では、貸し手側の配備にも同じものが要る。** 借用行の `/props` は far が
+  トークン応答の `base_url` で宣言した経路＝far 自身の `/engine/{key}/props` を叩く。貸し手側の CP が
+  古いと Go 標準の `404 page not found` が返る（2026-09-19 に実際に発生し、sandbox の再配備で解消した）。
+  #767 は借用行を**ローカルで augment しない**——far の `/v1/models` を読むことは far の `serve()` を
+  叩くこと＝**貸し手側で GPU を買うこと**になるため。したがって借用側で実値が読めるのは、
+  貸し手側にも同じ変更が配備されてからになる。
+
+### 実測
+
+| 項目 | 実測 | 備考 |
+|---|---|---|
+| 未決の問い 2: `/v1/chat/completions/input_tokens` | **実在**。`{"input_tokens":61,...}` が chat 応答の `prompt_tokens` と一致 | 🔴 フィールド名は README の `tokens`/`n_tokens` ではなく **`input_tokens`** |
+| 未決の問い 2: `/v1/chat/completions/control` | **実在**。`model` と in-flight な completion の id を要求 | `Interrupt` は段 2 なので public API には起こしていない |
+| 未決の問い 1: 族 | **Qwen3 系**（`qwen3.8-27b-uncensored-q4_k_m`）で 16 往復・2 プロジェクト完走。`tool_calls` は全ターン有効な JSON・名前化けなし・4 件並列でも引数の取り違えなし | ⚠️ **実質 1 族・少数本**。他族は共有 GPU 箱（`role: router` / `max_instances: 1`）の退去コストを避けて未検証 |
+| 窓 | 実値 262144。目録の宣言値 262144 と**完全一致・ずれ無し** | 下記 |
+| 起床（真の cold start） | **4〜5 分**（箱の購入＋モデル同期）。`engine_waking` が跨いで正しくリトライ | 段 1-D で測れた 34.8 秒は温まりかけの箱だった。決定文の「分単位」が正しい |
+| 圧縮 | `input_tokens` が 93→663 と増え、閾値で実際に発火。full は 29→30 エントリ＝**過去行は消えていない** | 窓を 900 に強制して実施（実の 262144 を埋めるのは共有 GPU を焼くだけで、試験対象は閾値の算術と送信形） |
+
+🔴 **動機について正直に記録する。** 窓の実値と宣言値は一致していた。本 ADR の動機だった「窓が片道
+4 ホップで伝わり、ずれる」は、**少なくともこの 1 件では実害として現れていない**。段 0 が無意味に
+なるわけではない（確かめる手段が無かったこと自体が問題だった）が、動機の強さは実測に合わせて
+弱く見積もるべきである。
+
+### 実機だけが見つけたもの
+
+偽クライアントのテストでは出ず、実エンジンに通して初めて出た欠陥が 3 件あった。この kind の
+費用の一部は「うちが実行者になる」ことで**この種の問題をうちが抱える**点にある、という決定 5 の
+帰結の実例として記録する。
+
+- 圧縮直後の送信が Qwen の chat template に 2 箇所で弾かれた（未回答の user ターンまで要約に畳んで
+  送信が system で終わる＝`No user query found in messages`／要約を 2 つ目の system として途中に
+  入れる＝`System message must be at the beginning`）。
+- chatx の P0 プロバイダが履歴の最後の 1 件を無条件に落としていた。`prov.Send` の呼び出し元 6 つの
+  うち前提が成り立つのは 2 つだけで、圧縮と報告の自動ターンでは要約対象が消えていた。**履歴を
+  自分で組み立てる最初のプロバイダが `lcpp`** なので、この問題はここで初めて現れる。
+
+### 段 1 の範囲として残したもの
+
+- **`chat_providers_lcpp.go`（P0 プロバイダ）は E/F/G に繋いでいない。** P0 プロバイダをツール
+  ループに繋ぐのはアシスタントチャットの挙動を変える製品判断で、段 1 の範囲を超える。
+- ⚠️ **要約の「質」はモデル依存。** 量子化 27B の要約は薄いことがあり、一度は次ターンの質問を
+  反響しただけだった。機構（追記単調・単一の先頭 system・末尾の user ターン・実トークン数）は
+  すべて保たれており、ハーネスの欠陥ではない。**段 2 で族を選ぶときの判断材料**になる。
+- 承認の門の既定は **fail-closed**（`Runtime.Approve == nil` は `Mutates` を拒否）。無人実行は
+  `AutoApprove` を明示的に渡す。決定 5 の「承認は本当にツールを止める」を、忘れたときの壊れ方が
+  「静かに素通り」ではなく「うるさく止まる」側になるように実装した。
