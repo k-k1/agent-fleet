@@ -84,6 +84,24 @@ type Runtime struct {
 	// MaxOutputBytes caps one tool result's size (truncateOutput). <= 0 uses
 	// defaultMaxToolOutput.
 	MaxOutputBytes int
+	// RepeatWarnAfter and RepeatAbortAfter configure the repeated-tool-call gate
+	// (repeat.go): once the SAME call (tool name + JSON-normalized arguments,
+	// canonicalCall) has come back this many times in an unbroken row, the gate
+	// intervenes instead of letting the loop run it again — a real failure mode
+	// measured live (ADR 0093 lcpp harness trial against qwen3-coder-30b-a3b:
+	// todo_write repeated with the same arguments 65 assistant turns straight,
+	// nothing else in between, never self-correcting). Each <= 0 (including a
+	// zero Runtime{}) uses the package default (defaultRepeatWarnAfter /
+	// defaultRepeatAbortAfter) for THAT field — the zero value keeps the gate ON,
+	// the same fail-closed-by-default posture as Approve's nil check above, not
+	// silently off. Set RepeatGateDisabled to turn the whole gate off instead.
+	RepeatWarnAfter  int
+	RepeatAbortAfter int
+	// RepeatGateDisabled turns the repeated-tool-call gate off entirely. The
+	// zero value (false) leaves it on — see RepeatWarnAfter's doc comment for
+	// why that default was chosen deliberately rather than left to fall out of
+	// Go's normal zero-value behaviour.
+	RepeatGateDisabled bool
 	// fileLocks serializes a single file's read-modify-write (runWrite/runEdit in
 	// tools_fs.go) across the concurrent goroutines runToolCalls (loop.go) fans a
 	// single turn's parallel tool_calls out into — see lockPath. Zero value is
