@@ -534,8 +534,13 @@ export const buildFleetGraph: BuildFleetGraph = (
       // the observed end here — a normal ×, not `cut` (cut means nobody ever
       // recorded an end at all; this end was explicitly observed). This also
       // defends a back-filled/legacy ledger where an old archive genuinely
-      // preceded its death event.
-      last.t1 = archivedEv!.ts;
+      // preceded its death event. That same "defends a broken ledger"
+      // premise cuts both ways: a `revive` with no `archived:false` restore
+      // in between (also broken) reopens a run whose t0 postdates this
+      // archived ts, and closing it at the archived ts unclamped would
+      // produce t1 < t0 — a run that ends before it starts, drawn as an ×
+      // to the LEFT of its own ○. Floor it at t0 instead.
+      last.t1 = Math.max(last.t0, archivedEv!.ts);
     } else if (presence === "gone" && last && last.t1 === null) {
       const observed = Math.max(last.t0, events[events.length - 1]?.ts ?? last.t0, activityRef.get(id)?.max ?? -Infinity);
       last.t1 = observed;

@@ -161,6 +161,20 @@ describe("buildFleetGraph — presence (the merge only both sources can decide)"
     ]);
   });
 
+  it("a broken ledger — revive after archived:true with no archived:false restore in between — never produces t1 < t0", () => {
+    // Malformed on purpose: the archived ts (1500) predates the run this revive (2000) reopens.
+    // Closing the reopened run at the archived ts unclamped would end it before it started.
+    const page = mkPage([birth("sF", 0), death("sF", 1000), archivedEv("sF", 1500, true), revive("sF", 2000)]);
+    const model = buildFleetGraph(page, sessMap(), { from: 0, to: 5000 });
+    const lane = laneOf(model, "sF");
+    expect(isKnown(lane) && lane.presence).toBe("archived");
+    expect(isKnown(lane) && lane.runs).toEqual([
+      { t0: 0, t1: 1000 },
+      { t0: 2000, t1: 2000 }, // floored at t0, not the (earlier) archived ts
+    ]);
+    for (const r of (isKnown(lane) && lane.runs) || []) expect(r.t1).toBeGreaterThanOrEqual(r.t0);
+  });
+
   it("archived is always 'archived', unconditionally — the Agent's own list excludes archived sessions outright, so `live` is NEVER defined for one and a guard gated on the base presence would never fire", () => {
     const page = mkPage([birth("sD", 0), death("sD", 1000), archivedEv("sD", 1500, true)]);
     // The realistic shape: an archived session is never in the live map.
