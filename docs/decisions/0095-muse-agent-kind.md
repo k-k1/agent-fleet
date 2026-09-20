@@ -2,7 +2,9 @@
 
 English | [日本語](0095-muse-agent-kind.ja.md)
 
-- Status: **proposed** (2026-09-20). Nothing is implemented. Every `file:line` below was read on
+- Status: **proposed** (2026-09-20), **Phase 1 gate A answered** (2026-09-20 — the last section).
+  None of the kind itself is implemented; gate A landed only the deployment changes its measurement
+  needed. Every `file:line` below was read on
   `06ea94d3` (develop at the time). Everything marked ◎ was measured in a Workspace container on
   **Muse Code 1.3.0-R3401.1** installed into a throwaway directory; △ is the vendor documentation
   only; × is not measured. The probe is reproducible from the last section.
@@ -38,7 +40,7 @@ memory.
 | Auto-update suppression | ◎ | `MUSE_NO_AUTO_UPDATE=1`, one environment variable. With it set and the binary in place, the launcher **only reads**: `muse --version` succeeded from a read-only install directory |
 | Cost of building the harness | **◎ ≈ $0** | `--provider echo` is a deterministic built-in provider. `muse exec --provider echo --json` ran a complete session with no credential. The account is needed for acceptance, not for construction |
 | Host footprint | ◎ | An idle `muse serve` host is **≈ 73 MiB RSS** (74,924 KB). Compare the registry's `tuiMemoryCost`: claude 230 MiB, opencode 300 MiB (`console/src/agents/registry.ts:227,469`) |
-| **OS sandbox** | **🔴 ◎ cannot run here** | Linux sandboxing is bubblewrap (38 `bwrap` / 50 `seccomp` strings in the binary; the docs say "needs a working bubblewrap and a non-musl build. Without it, every sandboxed shell command aborts as an environment failure"). `bwrap` is absent from the image, and in this container a user namespace is creatable but **`move_mount` returns EACCES** — bubblewrap cannot attach its mounts |
+| **OS sandbox** | **🔴 ◎ cannot run here, permanently** | Linux sandboxing is bubblewrap (38 `bwrap` / 50 `seccomp` strings in the binary; the docs say "needs a working bubblewrap and a non-musl build. Without it, every sandboxed shell command aborts as an environment failure"). Gate A settled it with a real `bwrap`: a user namespace is creatable and grants all 41 capabilities, yet **`mount(2)` and `move_mount(2)` return EACCES regardless of capabilities** while `fsopen` / `open_tree` succeed — the signature of **AppArmor's `docker-default` profile**, not of seccomp or capabilities. Muse also ships an *embedded* bwrap, so the binary's absence was never the blocker |
 | **Shared repository state** | **🔴 ◎ it writes there** | `muse exec -w create` chose `<repo>/.muse/worktrees/<date>-<hash>` as the workspace root, created `.muse/.session-worktree-reservations/`, and **appended `/.muse/worktrees/` to `.git/info/exclude`**. In a linked worktree that file is the parent clone's, shared with every other session |
 | **Foreign personal context** | **⚠️ ◎ on by default** | First run printed `Including your Codex personal rules and 5 skills`. It discovers `~/.claude` and `~/.codex` skills and rules unless foreign context is turned off — and the flag that does it, `--no-foreign-personal-context`, exists on `muse exec` but **not on `muse serve`** (measured: `unknown option`) |
 | Feature overlap | ⚠️ △ | Subagents (8 per tree by default, `agents.execution_capacity` 1–64), four background observer agents that each make their own model calls, workflows (1,000 children lifetime), a **user-wide session-name namespace** and peer messaging — all invisible to Agent Fleet's registry, mirror and usage ledger |
@@ -166,16 +168,20 @@ orthogonal and stay on: approval mode is selected per session on the wire, and A
 This is a waiver, and the ADR states it as one: inside a Workspace the container **is** the
 boundary, and the same is already true of every other kind, none of which sandboxes itself.
 
-**The waiver is expected to be permanent under the current Workspace host contract, and the
-measurement says why** — permanent because nothing *we* ship can change it, not because no change
-is conceivable. The denial is not a
-missing binary and not an artefact of one mount API: inside a user namespace this container refuses
-`move_mount` (the new API, which util-linux prefers) **and** the classic `mount(2)` that bubblewrap
-itself calls, both with EACCES — measured by forcing the old path with
-`LIBMOUNT_FORCE_MOUNT2=always`. Baking `bwrap` therefore only confirms a result already taken; that
-is what Phase 1 gate A is for, and the expected outcome is that Decision 5 becomes permanent and is
-recorded as such. Only a change in what the *host* permits (LSM policy, seccomp, capabilities)
-would reopen it.
+**The waiver is permanent under the current Workspace host contract — gate A confirmed it with a
+real `bwrap` and named the mechanism.** Permanent because nothing *we* ship can change it, not
+because no change is conceivable. The denial is not a missing binary and not an artefact of one
+mount API: inside a user namespace this container refuses `move_mount` (the new API, which
+util-linux prefers) **and** the classic `mount(2)` that bubblewrap itself calls, both with EACCES.
+Gate A closed the remaining ambiguity by varying capabilities: `fsopen` and `open_tree` go from
+EPERM to success once the namespace grants `CAP_SYS_ADMIN`, while `mount` and `move_mount` stay
+EACCES **whatever the capabilities are** — so the refusal is neither a capability check (EPERM) nor
+seccomp (capability-blind), but **AppArmor's `docker-default` profile**, applied by the container
+runtime and unchangeable from inside. Two further findings make the point independent of that
+policy: muse **embeds its own bubblewrap**, so no system `bwrap` was ever the blocker, and Debian's
+`bwrap` lacks `--ro-bind-symlink`, which muse requires, so muse would reject it anyway. Only a
+change in what the *host* permits (LSM policy, seccomp, capabilities) would reopen this — see the
+gate A section for the full matrix.
 
 ### Decision 6 — AF owns `~/.config/muse/settings.json`, and clamps seven behaviours in it
 
@@ -273,11 +279,18 @@ consequence to the reader: proprietary agent CLIs are not bundled and deployment
 first start. So there are **two variants and this ADR decides both**, rather than deciding the one
 that happens to be convenient:
 
-- **The shipped one (`BAKE_AGENT_CLIS=0`)**: the entrypoint boot-installs at container start from
-  the pin in `/usr/local/share/agent-fleet/versions.json`, verifying the release manifest's sha256.
-  Being able to fetch it anonymously (measured) is what makes this viable at all. **It installs into
+- **The shipped one (`BAKE_AGENT_CLIS=0`)**: the entrypoint installs from the pin in
+  `/usr/local/share/agent-fleet/versions.json`, verifying the release manifest's sha256. Being able
+  to fetch it anonymously (measured) is what makes this viable at all. **It installs into
   `~/.local`, the same place the vendor's own installer uses** (`workspace/Dockerfile:71`,
-  `entrypoint.sh:299-349`), which has one consequence this ADR got backwards below.
+  `entrypoint.sh:299-349`), which has one consequence this ADR got backwards below. What AF puts
+  there is **the binary, not the vendor's bash launcher** (gate A: the manifest artifact *is* the
+  binary and runs standalone), so AF's own copy has no self-update path at all.
+  ⚠️ **It is not unconditional.** Gate A shipped it as an explicit opt-in
+  (`AF_MUSE_BOOT_INSTALL=1`, default off) because 299 MiB on every fresh container, for a kind that
+  does not exist before Phase 2, is the same bill that already moved kiro (855 MiB) off
+  unconditional boot-install. **Phase 2 should follow kiro the rest of the way** — a per-user
+  on-demand `workspace-agent install-muse` — rather than flip this flag on.
 - **`BAKE_AGENT_CLIS=1`** (self-hosted deployments that want a fast first start): `ARG MUSE_VERSION`
   + sha256 per arch verified at build, the runtime laid out as the launcher expects
   (`muse-bin-<version>` plus `.muse-version` beside the launcher) under `/usr/local/share/muse`.
@@ -288,15 +301,21 @@ Both share `MUSE_NO_AUTO_UPDATE=1` from the entrypoint, a row in `env_tool_versi
 CLIs a deployment fetches.
 
 Two costs are named rather than discovered later. **Size**: ≈ 299 MiB (x86_64) / ≈ 269 MiB
-(aarch64) — a boot-install download on every fresh container in the shipped variant, and image
-growth in the baked one. **The shadow, and how not to detect it wrongly**: the vendor installer's default target is
+(aarch64) — exactly 313,800,920 B and 281,942,104 B per the release manifest. That is a download on
+every fresh container that opts in (19 s measured), and image growth in the baked one; it is also
+the reason the opt-in above is off by default. **The shadow, and how not to detect it wrongly**: the vendor installer's default target is
 `~/.local/bin/muse` — and in the shipped variant that is *also where AF puts it*, so **a check for
 the path would report AF's own binary**. The hazard is not the location but the provenance: a
 member who runs the one-line installer once ends up on an unmanaged, self-updating build that
 survives a recreate. So the check is **version identity** — does `muse --version` match the pin in
 `versions.json`? — and the repair already exists: the entrypoint re-pins `~/.local` back to the
 pinned version on a start where self-update is off (`entrypoint.sh:336-352`, the same hole kiro's
-launch guard closed). The connection card reports a version mismatch, not a path.
+launch guard closed). The connection card reports a version mismatch, not a path. Gate A measured
+both directions: a shadow reporting a drifted version was replaced, and a shadow reporting the
+**pinned** version was left alone. ⚠️ One detail the implementation must not get wrong —
+`muse --version` prints `Muse Code 1.3.0 (1.3.0-R3401.1)`, so the comparison has to take the
+parenthesised build id; the `tr -dc '0-9.'` idiom the agy block uses would drop `-R3401.1` and
+mismatch on every start.
 
 ### Decision 9 — the credential is a stored API key, entered once
 
@@ -550,7 +569,7 @@ none of it is optional.
 | Phase | Content | Gate to the next |
 |---|---|---|
 | 0 | The probe in this ADR (done 2026-09-20): install, MSP drive, pin/checksum, worktree and foreign-context behaviour, footprint | — |
-| 1 | **Gate A** (½ day): bake `bwrap` and run it on a real Workspace image. Both mount APIs are already denied here, so this confirms rather than explores; the expected answer is that Decision 5's waiver is permanent and recorded. The same image build carries **Decision 8's shipped path** for free: boot-install from `versions.json`, sha256 verified, `muse --version` matching the pin — otherwise the variant we actually distribute is never run before Phase 2. **Gate B1** (2–2½ days): one API key, and the accounting matrix of Decision 10 — cache, subagents, a failed and an interrupted turn, post-resume, cumulative vs per-turn — plus `model/list`, one `approval/requested` round trip, one `userInput/requested` round trip, one subagent, **the RSS of a host under load** (Decision 3 currently rests on an idle 73 MiB and its own re-evaluation clause asks for the loaded figure), **the observed effect of each of the seven clamps** rather than only the spelling of their keys — a key that writes but does not bite is worse than no clamp, because Decision 6 puts a fail-close in front of it — the fleet and user instruction targets of Decision 12 (separately), the settings keys for the seven clamps of Decision 6 (their spelling is not guessable from the flag names), the settings-file lock protocol by syscall, whether `session/start.config.mcpServers` is honoured (Decision 11's second route), and what a **normal** run — no `-w` — writes into a working copy, since Decision 7 currently rests on the `-w` measurement alone. **Gate B2** (½ day): can a *subscription* credential be obtained elsewhere and entered here, given the browser onboarding this container cannot run. ⚠️ B1 carries nine items and the lock-protocol trace alone is half a day; if it overruns, the items that may move to Phase 2 are the MCP second route and the clamp key spellings, never the accounting matrix | A and B1 answered; the user accepts the Decision 6 clamps and the spend. B2 may answer "no" — then v1 is pay-as-you-go only, stated in the guide, and Phase 2 proceeds |
+| 1 | **Gate A — ✅ done 2026-09-20** (see the gate A section): `bwrap` baked and run; the waiver is permanent and the denier is named (AppArmor `docker-default`), plus two premises corrected (muse embeds its own bwrap; Debian's lacks `--ro-bind-symlink`). Decision 8's shipped path ran end to end — sha256 verified, `muse --version` matching the pin, shadow repin both ways — and turned up a real defect: the sha256 check was decorative at all five boot-install sites. **Gate B1** (2–2½ days): one API key, and the accounting matrix of Decision 10 — cache, subagents, a failed and an interrupted turn, post-resume, cumulative vs per-turn — plus `model/list`, one `approval/requested` round trip, one `userInput/requested` round trip, one subagent, **the RSS of a host under load** (Decision 3 currently rests on an idle 73 MiB and its own re-evaluation clause asks for the loaded figure), **the observed effect of each of the seven clamps** rather than only the spelling of their keys — a key that writes but does not bite is worse than no clamp, because Decision 6 puts a fail-close in front of it — the fleet and user instruction targets of Decision 12 (separately), the settings keys for the seven clamps of Decision 6 (their spelling is not guessable from the flag names), the settings-file lock protocol by syscall, whether `session/start.config.mcpServers` is honoured (Decision 11's second route), and what a **normal** run — no `-w` — writes into a working copy, since Decision 7 currently rests on the `-w` measurement alone. **Gate B2** (½ day): can a *subscription* credential be obtained elsewhere and entered here, given the browser onboarding this container cannot run. ⚠️ B1 carries nine items and the lock-protocol trace alone is half a day; if it overruns, the items that may move to Phase 2 are the MCP second route and the clamp key spellings, never the accounting matrix | A and B1 answered; the user accepts the Decision 6 clamps and the spend. B2 may answer "no" — then v1 is pay-as-you-go only, stated in the guide, and Phase 2 proceeds |
 | 2 | Implementation: kind wiring, MSP client and generated types, driver, transcript, usage, settings + MCP dialect, connection card, deployment, guide, this ADR to *adopted* | — |
 
 ## Open questions (answer in Phase 1)
@@ -587,6 +606,22 @@ LIBMOUNT_FORCE_MOUNT2=always unshare --user --map-root-user --mount \
   --propagation unchanged strace -e trace=mount \
   mount -t tmpfs none /tmp/x                                     # bwrap's API: mount(2) → EACCES
 ~/muse-probe/muse auth set --help                                # the flag is mandatory
+```
+
+Gate A added (2026-09-20). `apt` needs root, so the probe extracts the same package by hand:
+
+```bash
+curl -fsSL -o bw.deb http://deb.debian.org/debian/pool/main/b/bubblewrap/\
+bubblewrap_0.12.0-1~deb13u1_amd64.deb
+dpkg-deb -x bw.deb root/                                         # no root needed
+./root/usr/bin/bwrap --ro-bind / / --dev /dev true               # Failed to make / slave: EACCES
+strace -f -e trace=mount,move_mount,open_tree,fsopen,unshare,clone \
+  ./root/usr/bin/bwrap --ro-bind / / --dev /dev true             # clone OK, first mount() EACCES
+cat /proc/self/attr/current                                      # docker-default (enforce)
+unshare --user --map-root-user --mount --propagation unchanged \
+  grep CapEff /proc/self/status                                  # 000001ffffffffff = all caps
+./root/usr/bin/bwrap --ro-bind-symlink /etc /etc true            # Unknown option (muse requires it)
+~/muse-probe/muse sandbox --help                                 # windows check|setup ONLY
 ```
 
 ## Sources checked (2026-09-20, `06ea94d3`)
@@ -749,3 +784,153 @@ One finding went the other way and is recorded because the reviewer volunteered 
 
 Not re-verified: the same boundary as rounds 2 and 3, plus this round's capability claims are a
 schema-to-type comparison rather than a running driver.
+
+## Phase 1 gate A measurements (2026-09-20)
+
+Gate A ran on `e627536f`. **Decision 5's waiver is confirmed permanent and Decision 8's shipped path
+now runs end to end**, so both decisions' text is updated above rather than only annotated here.
+Everything below was measured in **a real Workspace container** — amd64, Debian trixie, AppArmor
+profile `docker-default (enforce)`, seccomp filter mode 2 — which is the environment the answer is
+about. Nothing here needed a credential.
+
+### A-1: bubblewrap cannot work here, and three premises were wrong about why
+
+`bwrap` came from Debian trixie's own package (`bubblewrap_0.12.0-1~deb13u1_amd64.deb`,
+sha256 `70aca4fa…`, `bubblewrap 0.12.0`) — the same package `workspace/Dockerfile` now bakes.
+
+`bwrap --ro-bind / / --dev /dev true` exits 1 with `bwrap: Failed to make / slave: Permission
+denied`, and so do `--unshare-user`, `--unshare-all` and the bare `--ro-bind / /`. Under strace the
+picture is exact:
+
+```
+clone(CLONE_NEWNS|CLONE_NEWUSER|SIGCHLD)                          = 202910   <- succeeds
+mount(NULL, "/", NULL, MS_REC|MS_SILENT|MS_SLAVE, NULL)           = -1 EACCES
+```
+
+**It fails earlier than this ADR said** — not at `move_mount` attaching a bind, but at the very first
+call, making `/` rslave, before any mount is created. The syscall matrix says who is refusing.
+Inside `unshare --user --map-root-user --mount` the process is uid 0 with
+`CapEff: 000001ffffffffff` (all 41 capabilities, `CAP_SYS_ADMIN` included):
+
+| syscall | outside a userns (uid 1000, `CapEff: 0`) | inside the userns (uid 0, all caps) |
+|---|---|---|
+| `mount(NULL, "/", …, MS_REC\|MS_SLAVE, …)` | **EACCES** | **EACCES** |
+| `mount("none", "/tmp", "tmpfs", …)` | **EACCES** | **EACCES** |
+| `fsopen("tmpfs", 0)` | EPERM | **OK** (fd 3) |
+| `open_tree(AT_FDCWD, "/", OPEN_TREE_CLONE\|AT_RECURSIVE)` | EPERM | **OK** (fd 3) |
+| `move_mount(…)` | EPERM | **EACCES** |
+
+🔴 **The denier is the LSM, and it can now be named: AppArmor's `docker-default` profile.** The two
+calls that merely *create a detached handle* go EPERM → success the moment we hold `CAP_SYS_ADMIN`,
+which proves both that the capability layer is satisfied and that seccomp is not filtering the new
+mount API. The two calls that *attach or alter a mount* return **EACCES regardless of capabilities** —
+a pattern neither layer can produce: a kernel capability check fails with EPERM (as `fsopen` outside
+the userns shows), and a seccomp `ERRNO` filter is capability-blind, so it could not have let
+`fsopen` through only in the second column. AppArmor's mount mediation is what returns EACCES. You
+can build a detached mount tree here; you can never attach it. Nothing shipped from this repository
+can change that — only the container runtime's profile can, which is exactly the "host contract"
+Decision 5 names.
+
+Two premises in this ADR were wrong, and both cut the same way:
+
+- 🔴 **"`bwrap` is absent from the image" was never the operative blocker.** Muse **carries its own
+  embedded bubblewrap** — `bubblewrap built for TBH`, `__tbh_internal_bwrap`, `TBH_BWRAP_EXE`,
+  `--tbh-bwrap-selection-v1` in the binary, and its internal dispatcher answers
+  `tbh: invalid private Linux invocation markers` when invoked without the private markers. Its error
+  text says so too: "no capability-valid system bwrap was found on PATH **and no usable embedded
+  fallback is available**". Installing a system `bwrap` neither enables nor is required by muse's
+  sandbox.
+- 🔴 **Debian's `bwrap` could not satisfy muse even if mounts were permitted.** Muse requires
+  `--perms`, `--ro-bind-data` **and `--ro-bind-symlink`** ("selected Bubblewrap lacks required
+  --ro-bind-symlink support"). Trixie's 0.12.0 has the first two and answers
+  `bwrap: Unknown option --ro-bind-symlink` to the third, so muse would reject it during its own
+  availability probe.
+
+Replaying muse's own probe argv (reconstructed from the binary: `--ro-bind / / --dev /dev --bind
+<probe> <probe> --proc /proc --unshare-pid --unshare-net --new-session --die-with-parent --chdir
+<probe> /bin/sh -c 'printf ok > "$1" && printf no > "$2"'`) fails at the same first call.
+
+So gate A's expected answer holds, by three independent routes rather than one. **`bwrap` is baked
+anyway** (`workspace/Dockerfile`) so the day the host's LSM policy changes the re-measurement is one
+command, and the Dockerfile comment says plainly that it is there for that and not to enable a
+sandbox.
+
+⚠️ **A trap for whoever re-measures: do not answer this question from CI.**
+`deploy/local/e2e-smoke.sh` runs the image with `--cap-add=SYS_ADMIN` on a runner that does not apply
+`docker-default`. A `bwrap` that works there says nothing about a Workspace, and would look like
+Decision 5 being overturned.
+
+**Not reproduced, and deferred to gate B1**: the vendor's "every sandboxed shell command aborts as an
+environment failure". It needs a shell tool call, and the free path cannot produce one —
+`--provider echo` never emits a tool call (the run completes with `echo: <the prompt>` as its whole
+output), and `muse sandbox` turns out to be `windows check|setup` **only**, so there is no Linux
+preflight to ask. The mechanism above makes the claim very likely; it is still unmeasured.
+
+One thing the echo run did show, and it belongs to Decision 10 rather than here: a single echo turn
+scheduled and started **two background observer agents** (`reminder.agent.skill-reminder`,
+`reminder.agent.verify-reminder`); the second ended `invalid run configuration: provider does not
+support base instructions` only because the echo provider has no instructions to assemble. With a
+real provider those are model calls Agent Fleet does not see.
+
+### A-2: the shipped deployment path, run end to end
+
+Both manifests answer **anonymously, HTTP 200**: the channel (254 B) names `1.3.0-R3401.1`, and the
+version-addressed release manifest (1,852 B) carries `artifacts.x86_linux` = checksum `71b089d0…` /
+size **313,800,920 B** and `artifacts.aarch64_linux` = `5e5ea2a3…` / **281,942,104 B** (the 299 MiB
+and 269 MiB this ADR quotes). Its `msp_schema_fingerprint` is `sha256:7469c9e3…` — the same
+fingerprint the Phase 0 probe got from `schema generate-json-schema` offline.
+
+**The artifact is the binary, not the launcher.** Its checksum equals the sha256 of the
+`muse-bin-<version>` file the vendor installer leaves on disk, and it runs standalone
+(`Muse Code 1.3.0 (1.3.0-R3401.1)`). The vendor's `~/.local/bin/muse` is a *bash launcher* that polls
+the channel hourly and rewrites itself. So AF installs **the binary under that name**, and the
+self-update path simply does not exist for AF's own copy; `MUSE_NO_AUTO_UPDATE=1` is there for a
+vendor launcher that shadows it.
+
+Measured with the real `entrypoint.sh` block, the real CDN and a throwaway `HOME`:
+
+| Check | Result |
+|---|---|
+| Default (no opt-in) | Silent no-op, 4 ms |
+| Boot-install, empty home | **19 s** for 313,800,920 B; `[entrypoint] boot-install muse 1.3.0-R3401.1` |
+| sha256 of the installed file | `71b089d0…` = the manifest value |
+| `muse --version` vs the pin | `Muse Code 1.3.0 (1.3.0-R3401.1)` — build id matches `versions.json` |
+| Second start | `boot-install: muse already present (skip)` |
+| Repin, shadow at a drifted version | Detected and replaced with the pinned build |
+| Repin, shadow at the **same** version | Left alone — the check is version identity and is blind to the path |
+
+The last two rows are Decision 8's shadow rule working in both directions, which is the point: a
+path check would have reported AF's own binary. Note the version string is
+`Muse Code 1.3.0 (1.3.0-R3401.1)`, so the comparison must take the parenthesised build id — the
+`tr -dc '0-9.'` idiom the agy block uses would drop `-R3401.1` and mismatch forever.
+
+🔴 **The boot-install's sha256 verification was decorative — at all five call sites.** The pattern is
+
+```sh
+( set -e
+  echo "${sha}  artifact" | sha256sum -c - >/dev/null
+  install -D -m 0755 artifact "$HOME/.local/bin/…"
+) && echo "boot-install ok" || echo "WARN: failed"
+```
+
+and POSIX says `-e` is ignored for "any command of an AND-OR list other than the last". The subshell
+*is* that left operand, so **the `set -e` written inside it does nothing**. Measured on bash 5.2.37
+and on trixie's dash: with a checksum deliberately changed by one character, the run printed
+`WARNING: 1 computed checksum did NOT match`, **installed the artifact anyway, and reported success**.
+It applied to rtk, agy, cursor, rtk's self-update and muse. Fixed by making the check explicit
+(`|| exit 1`, which is unaffected by errexit) rather than by restructuring — ⚠️ moving the subshell
+into `if ( set -e; … ); then` does **not** help, because an `if` condition is another context where
+`-e` is ignored. After the fix the negative control reports WARN and installs nothing, and the
+positive control still installs.
+
+🔴 **Decision 8's "boot-installs at container start" is changed to an explicit opt-in**
+(`AF_MUSE_BOOT_INSTALL=1`, default off). At 299 MiB and with no `kind=muse` before Phase 2, an
+unconditional boot-install would make every fresh container in the fleet download a CLI nobody can
+use — which is the same reasoning that already moved kiro (855 MiB) off unconditional boot-install
+and onto a per-user on-demand install. Phase 2 should take kiro's route
+(`workspace-agent install-muse`) rather than turn this flag on.
+
+### What gate A did not do
+
+No login, no real turn, no subscription, no `-w`, and no `kind` wiring — all Phase 2 or gate B1.
+Muse was run only with `--provider echo` against a throwaway repository.

@@ -2,7 +2,8 @@
 
 [English](0095-muse-agent-kind.md) | 日本語
 
-- Status: **proposed**（2026-09-20）。実装は何も無い。以下の `file:line` は当時の develop
+- Status: **proposed**（2026-09-20）・**段 1 門 A 回答済み**（2026-09-20——最終節）。
+  種別そのものの実装は何も無く、門 A が入れたのはその計測に必要な配備変更だけである。以下の `file:line` は当時の develop
   `06ea94d3` で読んだ。◎ は Workspace のコンテナで **Muse Code 1.3.0-R3401.1** を使い捨てディレクトリへ
   導入して実測したもの、△ はベンダ文献のみ、× は未測。再現手順は末尾にある。
 - 依頼は一文である。**Meta のコーディングエージェント Muse Code は 10 番目のセッション種別になれるか、
@@ -36,7 +37,7 @@ workflow・セッション間メッセージング・スキル・メモリを持
 | 自動更新の封殺 | ◎ | `MUSE_NO_AUTO_UPDATE=1` の env 1 本。これを立ててバイナリが在れば、ランチャーは**読むだけ**になる（読み取り専用ディレクトリで `muse --version` が成功） |
 | ハーネス構築の原資 | **◎ ほぼ $0** | `--provider echo` という決定的な組み込み provider がある。`muse exec --provider echo --json` は資格情報なしで 1 セッションを完走した。アカウントは受け入れに要るのであって、構築には要らない |
 | 常駐費 | ◎ | 待機中の `muse serve` は **≈ 73 MiB RSS**（74,924 KB）。登録簿の `tuiMemoryCost` は claude 230 MiB、opencode 300 MiB（`console/src/agents/registry.ts:227,469`） |
-| **OS サンドボックス** | **🔴 ◎ ここでは動かない** | Linux のサンドボックスは bubblewrap（バイナリ中に `bwrap` 38・`seccomp` 50 の文字列。文献は「動作する bubblewrap と非 musl ビルドが要る。無ければサンドボックス下のシェルコマンドは全て environment failure で中断する」と言う）。イメージに `bwrap` は無く、この箱ではユーザー名前空間は作れるのに **`move_mount` が EACCES** ＝ bubblewrap はマウントを木に付けられない |
+| **OS サンドボックス** | **🔴 ◎ ここでは恒久に動かない** | Linux のサンドボックスは bubblewrap（バイナリ中に `bwrap` 38・`seccomp` 50 の文字列。文献は「動作する bubblewrap と非 musl ビルドが要る。無ければサンドボックス下のシェルコマンドは全て environment failure で中断する」と言う）。門 A が実機の `bwrap` で決着させた: ユーザー名前空間は作れて全 41 能力を得るのに、**`mount(2)` と `move_mount(2)` は能力に関わらず EACCES** を返し、`fsopen` / `open_tree` は成功する——これは seccomp でも能力でもなく **AppArmor の `docker-default` プロファイル**の指紋である。muse は*埋め込み*の bwrap も同梱しており、バイナリの不在はそもそも阻害要因ではなかった |
 | **共有リポジトリへの書き込み** | **🔴 ◎ 触る** | `muse exec -w create` は `<repo>/.muse/worktrees/<日付>-<hash>` を作業根に選び、`.muse/.session-worktree-reservations/` を作り、**`.git/info/exclude` に `/.muse/worktrees/` を追記した**。リンク worktree ではそのファイルは親クローンのもの＝全セッション共有 |
 | **他 CLI の個人領域** | **⚠️ ◎ 既定で読む** | 初回起動が `Including your Codex personal rules and 5 skills` と出した。他 CLI 文脈を切らない限り `~/.claude` と `~/.codex` のスキル・ルールを拾う。しかも切るフラグ `--no-foreign-personal-context` は `muse exec` にはあるが **`muse serve` には無い**（実測: `unknown option`） |
 | 機能の重複 | ⚠️ △ | subagent（既定 1 木 8・`agents.execution_capacity` は 1〜64）、それぞれ独自にモデルを呼ぶ背景オブザーバ 4 本、workflow（生涯 1,000 子）、**利用者横断のセッション名前空間**とピアメッセージング。いずれも AF の登録簿・ミラー・使用量台帳からは見えない |
@@ -160,14 +161,18 @@ MSP は 1 プロセスで複数セッションを抱えられる（`session/list
 これは免除であり、ADR として免除と明記する。Workspace の中では箱そのものが境界であり、それは他の 9 種別
 ——どれも自分をサンドボックスしない——でも既に同じである。
 
-**この免除は現行の Workspace ホスト契約の下では恒久になる見込みで、その根拠は実測にある**——恒久というのは
-「こちらが出荷できるもので覆せない」という意味であって、変化があり得ないという意味ではない。拒否は
-バイナリの不在でも、片方のマウント API
-だけの事情でもない。ユーザー名前空間の中でこの箱は、`move_mount`（util-linux が優先する新 API）も、
-bubblewrap 自身が呼ぶ**旧来の `mount(2)`** も、どちらも EACCES で拒む——`LIBMOUNT_FORCE_MOUNT2=always`
-で旧経路を強制して測った。したがって `bwrap` を焼く作業は既に出た答えの確認でしかない。段 1 の門 A は
-そのための門であり、期待される結果は「決定 5 の免除は恒久」と記録することである。覆るのは**ホスト側**が
-許す範囲（LSM ポリシー・seccomp・ケーパビリティ）が変わったときだけである。
+**この免除は現行の Workspace ホスト契約の下で恒久である——門 A が実機の `bwrap` で確認し、機構を名指しした。**
+恒久というのは「こちらが出荷できるもので覆せない」という意味であって、変化があり得ないという意味ではない。
+拒否はバイナリの不在でも、片方のマウント API だけの事情でもない。ユーザー名前空間の中でこの箱は、
+`move_mount`（util-linux が優先する新 API）も、bubblewrap 自身が呼ぶ**旧来の `mount(2)`** も、どちらも
+EACCES で拒む。門 A は残った曖昧さを**能力を変えて**潰した: `fsopen` と `open_tree` は名前空間が
+`CAP_SYS_ADMIN` を与えた瞬間に EPERM から成功へ変わるのに、`mount` と `move_mount` は**能力が何であれ**
+EACCES のままだった——つまり拒んでいるのは能力検査（なら EPERM）でも seccomp（能力を見ない）でもなく、
+**AppArmor の `docker-default` プロファイル**であり、これはコンテナランタイムが当てるもので中からは
+変えられない。さらに 2 つの実測がこの方針とは独立に同じ結論を支える: muse は**自前の bubblewrap を
+埋め込んで**おり system の `bwrap` はそもそも阻害要因ではなかったこと、そして Debian の `bwrap` は muse が
+必須とする `--ro-bind-symlink` を持たないので muse 側が拒否すること。覆るのは**ホスト側**が許す範囲
+（LSM ポリシー・seccomp・ケーパビリティ）が変わったときだけである——表の全体は門 A の節にある。
 
 ### 決定 6 — `~/.config/muse/settings.json` は AF が持ち、7 つの挙動を締める
 
@@ -258,11 +263,17 @@ Antigravity が既に置かれているのと同じ規則である。Dockerfile 
 lean とし、`NOTICE:57-62` が読み手向けに「プロプライエタリな CLI は同梱せず、配備が初回起動時に取得する」と
 明言している。よって **variant は 2 つあり、この ADR は両方を決める**（都合のよい方だけを決めない）:
 
-- **出荷される方（`BAKE_AGENT_CLIS=0`）**: entrypoint がコンテナ起動時に
-  `/usr/local/share/agent-fleet/versions.json` のピンから boot-install し、release マニフェストの
+- **出荷される方（`BAKE_AGENT_CLIS=0`）**: entrypoint が
+  `/usr/local/share/agent-fleet/versions.json` のピンから導入し、release マニフェストの
   sha256 で検証する。匿名で取得できること（実測）がそもそもこの案を成立させている。**導入先は
   `~/.local`＝ベンダ自身のインストーラと同じ場所**であり（`workspace/Dockerfile:71`、
-  `entrypoint.sh:299-349`）、この ADR が下で取り違えていた点がそこにある。
+  `entrypoint.sh:299-349`）、この ADR が下で取り違えていた点がそこにある。AF がそこへ置くのは
+  **ベンダの bash ランチャではなくバイナリ**で（門 A: manifest の成果物が*バイナリそのもの*で単体で
+  動く）、AF 自身の導入分には自己更新経路が一切無い。
+  ⚠️ **無条件ではない。** 門 A では明示 opt-in（`AF_MUSE_BOOT_INSTALL=1`・既定 OFF）として入れた。
+  段 2 より前に存在しない種別のために新しいコンテナ全部が 299 MiB を払うのは、kiro（855 MiB）を
+  既に無条件 boot-install から外したのと同じ勘定だからである。**段 2 ではこのフラグを ON にするのでは
+  なく、kiro の道を最後まで行く**（利用者ごとのオンデマンド `workspace-agent install-muse`）。
 - **`BAKE_AGENT_CLIS=1`**（初回起動を速くしたい自社配備）: `ARG MUSE_VERSION` ＋アーキ別 sha256 を
   ビルド時検証し、ランチャーが期待する配置（ランチャーの隣に `muse-bin-<版>` と `.muse-version`）で
   `/usr/local/share/muse` に置く。この配置が読み取り専用でも動くことは実測した。
@@ -271,15 +282,20 @@ lean とし、`NOTICE:57-62` が読み手向けに「プロプライエタリな
 への記載を要する——`NOTICE` はここでは事務書類ではなく、「その配備がどのプロプライエタリ CLI を取得するか」を
 読み手に伝えるファイルである。
 
-費用は 2 つ、後から発見せずここで名指しする。**容量**: ≈ 299 MiB（x86_64）/ ≈ 269 MiB（aarch64）。
-出荷 variant では新しいコンテナごとの boot-install ダウンロード、焼く variant ではイメージの肥大になる。
+費用は 2 つ、後から発見せずここで名指しする。**容量**: ≈ 299 MiB（x86_64）/ ≈ 269 MiB（aarch64）——
+release manifest の実値でちょうど 313,800,920 B と 281,942,104 B。opt-in した新しいコンテナごとの
+ダウンロード（実測 19 秒）と、焼く variant ではイメージの肥大になる。上の opt-in を既定 OFF に
+している理由でもある。
 **影と、その誤った検知の仕方**: ベンダ導入スクリプトの既定の置き場は `~/.local/bin/muse`——そして出荷
 variant では **AF 自身も同じ場所に置く**ので、**パスで検知すると AF 自身のバイナリを影として報告する**。
 危ないのは場所ではなく素性である: 利用者が一行インストーラを一度走らせると、管理外の自己更新ビルドに
 乗り、それは recreate でも消えない。よって検査は**版の一致**——`muse --version` が `versions.json` の
 ピンと合うか——であり、直し方は既にある: self-update が OFF の起動では entrypoint が `~/.local` をピン版へ
 戻す（`entrypoint.sh:336-352`、kiro の起動ガードが塞いだのと同型の穴）。接続カードが報告するのは版の
-不一致であって、パスの有無ではない。
+不一致であって、パスの有無ではない。門 A は両方向を実測した: 版がずれた影は置き換えられ、**ピン版**を
+名乗る影は触られなかった。⚠️ 実装が間違えてはいけない細部が 1 つ——`muse --version` は
+`Muse Code 1.3.0 (1.3.0-R3401.1)` と出るので、比較は括弧内のビルド id を取る必要がある。agy の
+ブロックが使う `tr -dc '0-9.'` の流儀では `-R3401.1` が落ちて毎起動で不一致になる。
 
 ### 決定 9 — 資格情報は保存型 API キー、入力は 1 回
 
@@ -503,7 +519,7 @@ managed 専用の門と同じく、先に着地した方が払う。
 | 段 | 内容 | 次への門 |
 |---|---|---|
 | 0 | この ADR のプローブ（2026-09-20 完了）: 導入・MSP 疎通・ピンとチェックサム・worktree と他 CLI 文脈の挙動・常駐費 | — |
-| 1 | **門 A**（0.5 日）: `bwrap` を焼いて実 Workspace イメージで走らせる。両方のマウント API が既に拒否されているので、これは探索でなく確認であり、期待される答えは「決定 5 の免除は恒久」と記録すること。同じイメージビルドに**決定 8 の出荷経路**をタダで相乗りさせる: `versions.json` からの boot-install・sha256 検証・`muse --version` がピンと一致すること——さもないと実際に配る variant を段 2 まで一度も通さないことになる。**門 B1**（2〜2.5 日）: API キー 1 本と、決定 10 の会計マトリクス（キャッシュ・subagent・失敗／中断ターン・resume 後・累積か毎ターンか）、加えて `model/list`、`approval/requested` の往復 1 回、`userInput/requested` の往復 1 回、subagent 1 つ、**負荷時のホスト RSS**（決定 3 は待機 73 MiB に乗っており、その再評価条件は自分で「負荷時の実測」を求めている）、**締め付け 7 つそれぞれの効き目**（鍵の綴りだけでなく。書けるが効かない鍵は締め付け無しより悪い——決定 6 はその前に fail-close を置いているからである）、決定 12 のフリート層と利用者層の書込先（別々に）、決定 6 の締め付け 7 つの設定鍵（綴りはフラグ名から推測できない）、設定ファイルのロック規約を syscall で、`session/start.config.mcpServers` が効くか（決定 11 の第 2 経路）、そして **`-w` を渡さない通常実行**が作業コピーに何を書くか（決定 7 は今 `-w` の実測だけに乗っている）。**門 B2**（0.5 日）: この箱で走らせられないブラウザオンボーディングを前提に、**サブスク**の資格情報を別の場所で取得してここに入れられるか。⚠️ B1 は 9 項目を抱えており、ロック規約の追跡だけで半日級である。溢れた場合に段 2 へ回してよいのは MCP の第 2 経路と締め付けの鍵の綴りで、会計マトリクスは決して回さない | A と B1 に答えが出て、利用者が決定 6 の締め付けと出費を受け入れる。B2 は「不可」でもよい——その場合 v1 は従量のみとガイドに書いて段 2 へ進む |
+| 1 | **門 A — ✅ 完了 2026-09-20**（門 A の節を見よ）: `bwrap` を焼いて走らせ、免除は恒久と確定、拒否している主体を名指しした（AppArmor `docker-default`）。加えて前提を 2 つ訂正（muse は自前の bwrap を埋め込む／Debian のものは `--ro-bind-symlink` を持たない）。決定 8 の出荷経路も一度通った——sha256 検証・`muse --version` とピンの一致・影の repin 両方向——そしてその過程で実在の欠陥が出た: sha256 検証が boot-install 5 か所すべてで飾りだった。**門 B1**（2〜2.5 日）: API キー 1 本と、決定 10 の会計マトリクス（キャッシュ・subagent・失敗／中断ターン・resume 後・累積か毎ターンか）、加えて `model/list`、`approval/requested` の往復 1 回、`userInput/requested` の往復 1 回、subagent 1 つ、**負荷時のホスト RSS**（決定 3 は待機 73 MiB に乗っており、その再評価条件は自分で「負荷時の実測」を求めている）、**締め付け 7 つそれぞれの効き目**（鍵の綴りだけでなく。書けるが効かない鍵は締め付け無しより悪い——決定 6 はその前に fail-close を置いているからである）、決定 12 のフリート層と利用者層の書込先（別々に）、決定 6 の締め付け 7 つの設定鍵（綴りはフラグ名から推測できない）、設定ファイルのロック規約を syscall で、`session/start.config.mcpServers` が効くか（決定 11 の第 2 経路）、そして **`-w` を渡さない通常実行**が作業コピーに何を書くか（決定 7 は今 `-w` の実測だけに乗っている）。**門 B2**（0.5 日）: この箱で走らせられないブラウザオンボーディングを前提に、**サブスク**の資格情報を別の場所で取得してここに入れられるか。⚠️ B1 は 9 項目を抱えており、ロック規約の追跡だけで半日級である。溢れた場合に段 2 へ回してよいのは MCP の第 2 経路と締め付けの鍵の綴りで、会計マトリクスは決して回さない | A と B1 に答えが出て、利用者が決定 6 の締め付けと出費を受け入れる。B2 は「不可」でもよい——その場合 v1 は従量のみとガイドに書いて段 2 へ進む |
 | 2 | 実装: 種別配線、MSP クライアントと生成型、ドライバ、転写、使用量、設定＋MCP 方言、接続カード、配備、ガイド、この ADR を *adopted* へ | — |
 
 ## 未解決（段 1 で答える）
@@ -540,6 +556,22 @@ LIBMOUNT_FORCE_MOUNT2=always unshare --user --map-root-user --mount \
   --propagation unchanged strace -e trace=mount \
   mount -t tmpfs none /tmp/x                                     # bwrap の API: mount(2) → EACCES
 ~/muse-probe/muse auth set --help                                # フラグは必須
+```
+
+門 A で足した分（2026-09-20）。`apt` には root が要るので、同じパッケージを手で展開する:
+
+```bash
+curl -fsSL -o bw.deb http://deb.debian.org/debian/pool/main/b/bubblewrap/\
+bubblewrap_0.12.0-1~deb13u1_amd64.deb
+dpkg-deb -x bw.deb root/                                         # root 不要
+./root/usr/bin/bwrap --ro-bind / / --dev /dev true               # Failed to make / slave: EACCES
+strace -f -e trace=mount,move_mount,open_tree,fsopen,unshare,clone \
+  ./root/usr/bin/bwrap --ro-bind / / --dev /dev true             # clone は成功・最初の mount() が EACCES
+cat /proc/self/attr/current                                      # docker-default (enforce)
+unshare --user --map-root-user --mount --propagation unchanged \
+  grep CapEff /proc/self/status                                  # 000001ffffffffff ＝全能力
+./root/usr/bin/bwrap --ro-bind-symlink /etc /etc true            # Unknown option（muse は必須とする）
+~/muse-probe/muse sandbox --help                                 # windows check|setup 専用
 ```
 
 ## 参照した出所（2026-09-20・`06ea94d3`）
@@ -683,3 +715,147 @@ start だけでなく start・poll・delete（`:869-875`）である。
 
 再検証していないこと: 第 2・3 巡と同じ境界に加えて、この巡の能力の主張はスキーマと AF の型定義の突き合わせ
 までで、実際にドライバを動かしてはいない。
+
+## 段 1 門 A の実測（2026-09-20）
+
+門 A は `e627536f` で実施した。**決定 5 の免除は恒久として確定し、決定 8 の出荷経路は一度通った**
+ので、両決定は本文（上）を書き換えてある。以下はすべて **実機の Workspace コンテナ** での実測
+——amd64・Debian trixie・AppArmor プロファイル `docker-default (enforce)`・seccomp filter mode 2
+——で、答えが問われているのはまさにこの環境である。資格情報は一切使っていない。
+
+### A-1: bubblewrap はここでは動かない。そして「なぜ動かないか」の前提が 3 つ間違っていた
+
+`bwrap` は Debian trixie の純正パッケージ（`bubblewrap_0.12.0-1~deb13u1_amd64.deb`・
+sha256 `70aca4fa…`・`bubblewrap 0.12.0`）を使った——`workspace/Dockerfile` がいま焼くのと同じ物。
+
+`bwrap --ro-bind / / --dev /dev true` は `bwrap: Failed to make / slave: Permission denied` で
+終了 1。`--unshare-user`・`--unshare-all`・素の `--ro-bind / /` も同じ。strace で見ると正確な姿が出る:
+
+```
+clone(CLONE_NEWNS|CLONE_NEWUSER|SIGCHLD)                          = 202910   <- 成功
+mount(NULL, "/", NULL, MS_REC|MS_SILENT|MS_SLAVE, NULL)           = -1 EACCES
+```
+
+**この ADR が書いていたより早く落ちる**——bind を付ける `move_mount` ではなく、マウントを 1 つも
+作る前の最初の呼び出し、`/` を rslave にするところで落ちている。誰が拒否しているかは syscall の
+表が答える。`unshare --user --map-root-user --mount` の中では uid 0 かつ
+`CapEff: 000001ffffffffff`（`CAP_SYS_ADMIN` を含む全 41 能力）を持っている:
+
+| syscall | userns の外（uid 1000・`CapEff: 0`） | userns の中（uid 0・全能力） |
+|---|---|---|
+| `mount(NULL, "/", …, MS_REC\|MS_SLAVE, …)` | **EACCES** | **EACCES** |
+| `mount("none", "/tmp", "tmpfs", …)` | **EACCES** | **EACCES** |
+| `fsopen("tmpfs", 0)` | EPERM | **成功**（fd 3） |
+| `open_tree(AT_FDCWD, "/", OPEN_TREE_CLONE\|AT_RECURSIVE)` | EPERM | **成功**（fd 3） |
+| `move_mount(…)` | EPERM | **EACCES** |
+
+🔴 **拒否しているのは LSM で、いまや名指しできる: AppArmor の `docker-default` プロファイルである。**
+**切り離したハンドルを作るだけ**の 2 本は `CAP_SYS_ADMIN` を得た瞬間に EPERM から成功へ変わる
+——これは能力の層が満たされていることと、seccomp が新マウント API を濾していないことの両方を示す。
+一方**マウントを接続または変更する** 2 本は **能力に関わらず EACCES** を返す。この組み合わせは
+どちらの層にも作れない: カーネルの能力検査が落ちるときの errno は EPERM（userns の外の `fsopen`
+がまさにそれ）であり、seccomp の `ERRNO` フィルタは能力を見ないので、2 列目でだけ `fsopen` を
+通すことはできない。EACCES を返すのは AppArmor のマウント仲介である。ここでは切り離した
+マウントツリーを作ることはできるが、接続することは決してできない。**このリポジトリが出荷する
+どんな物でもこれは変えられない**——変えられるのはコンテナランタイムのプロファイルだけで、それが
+決定 5 の言う「ホストの契約」そのものだ。
+
+この ADR の前提が 2 つ間違っており、どちらも同じ向きに効く:
+
+- 🔴 **「`bwrap` がイメージに無い」は、そもそも阻害要因ではなかった。** muse は**自前の埋め込み
+  bubblewrap を同梱している**——バイナリ中に `bubblewrap built for TBH`・`__tbh_internal_bwrap`・
+  `TBH_BWRAP_EXE`・`--tbh-bwrap-selection-v1` があり、私用マーカー無しで内部モードを叩くと
+  `tbh: invalid private Linux invocation markers` と答える。エラー文言自体もそう言っている:
+  「PATH に capability-valid な system bwrap が見つからず、**かつ使える埋め込みフォールバックも
+  無い**」。system の `bwrap` を入れることは muse のサンドボックスを有効にもしないし、必要でもない。
+- 🔴 **仮にマウントが許されていても、Debian の `bwrap` では muse の要求を満たせない。** muse は
+  `--perms`・`--ro-bind-data` **と `--ro-bind-symlink`** を必須とする（"selected Bubblewrap lacks
+  required --ro-bind-symlink support"）。trixie の 0.12.0 は前 2 つを持つが 3 つめには
+  `bwrap: Unknown option --ro-bind-symlink` と答えるので、muse は自前の可用性プローブの段階で
+  この bwrap を拒否する。
+
+muse 自身のプローブ argv（バイナリから復元: `--ro-bind / / --dev /dev --bind <probe> <probe>
+--proc /proc --unshare-pid --unshare-net --new-session --die-with-parent --chdir <probe>
+/bin/sh -c 'printf ok > "$1" && printf no > "$2"'`）を再生しても、同じ最初の呼び出しで落ちる。
+
+つまり門 A の期待どおりの答えが、1 本ではなく**独立した 3 本の道**で出た。**`bwrap` はそれでも
+焼いてある**（`workspace/Dockerfile`）——ホストの LSM 方針が変わった日に再計測をコマンド 1 本で
+やり直せるようにするためで、Dockerfile のコメントには「そのためであって、サンドボックスを
+有効にするためではない」と明記した。
+
+⚠️ **測り直す人への罠: この問いを CI で答えてはいけない。** `deploy/local/e2e-smoke.sh` は
+`--cap-add=SYS_ADMIN` かつ `docker-default` が当たらないランナーでイメージを回す。そこで `bwrap`
+が通っても Workspace については何も言っておらず、決定 5 が覆ったように見えるだけである。
+
+**再現できず、門 B1 送りにしたもの**: ベンダの言う「サンドボックス下のシェルコマンドはすべて
+環境エラーで中断する」。これにはシェルのツール呼び出しが要るが、無課金の経路では作れない——
+`--provider echo` はツール呼び出しを一切出さず（実行は `echo: <プロンプト>` だけを出力して
+completed になる）、`muse sandbox` は実は `windows check|setup` **専用**で、Linux の事前検査は
+存在しない。上の機構からして主張はきわめてもっともらしいが、未計測である。
+
+echo の 1 ターンが見せたことが 1 つあり、これはここではなく決定 10 に属する: たった 1 ターンで
+**バックグラウンドの観測エージェントが 2 つ**（`reminder.agent.skill-reminder`・
+`reminder.agent.verify-reminder`）スケジュールされ起動した。2 つめが
+`invalid run configuration: provider does not support base instructions` で終わったのは、echo
+プロバイダに組み立てる指示が無いからにすぎない。実プロバイダならこれらは **Agent Fleet に
+見えないモデル呼び出し**になる。
+
+### A-2: 出荷される配備経路を一度通した
+
+manifest は 2 つとも **匿名で HTTP 200**: チャンネル（254 B）が `1.3.0-R3401.1` を名指し、版指定の
+リリース manifest（1,852 B）が `artifacts.x86_linux` = checksum `71b089d0…` / size
+**313,800,920 B**、`artifacts.aarch64_linux` = `5e5ea2a3…` / **281,942,104 B** を載せる（この ADR が
+言う 299 MiB と 269 MiB）。`msp_schema_fingerprint` は `sha256:7469c9e3…` で、段 0 が
+`schema generate-json-schema` からオフラインで得た指紋と一致する。
+
+**配布物はランチャではなくバイナリそのもの。** その checksum はベンダのインストーラが置く
+`muse-bin-<版>` の sha256 と一致し、単体で動く（`Muse Code 1.3.0 (1.3.0-R3401.1)`）。ベンダの
+`~/.local/bin/muse` は**チャンネルを毎時見て自分を書き換える bash ランチャ**の方だ。だから AF は
+**その名前でバイナリを置く**——AF 自身の導入分には自己更新経路がそもそも存在しない。
+`MUSE_NO_AUTO_UPDATE=1` は、それを影として覆うベンダのランチャのためにある。
+
+実機の `entrypoint.sh` のブロック・実 CDN・使い捨て `HOME` で測った:
+
+| 検査 | 結果 |
+|---|---|
+| 既定（opt-in なし） | 無音の no-op・4 ms |
+| boot-install（空の home） | 313,800,920 B を **19 秒**・`[entrypoint] boot-install muse 1.3.0-R3401.1` |
+| 導入されたファイルの sha256 | `71b089d0…` ＝ manifest の値 |
+| `muse --version` とピン | `Muse Code 1.3.0 (1.3.0-R3401.1)` ——ビルド id が `versions.json` と一致 |
+| 2 回目の起動 | `boot-install: muse already present (skip)` |
+| repin・版がずれた影 | 検知してピン版へ置き換えた |
+| repin・**同じ**版の影 | 触らなかった——検査は版一致であり、パスを見ていない |
+
+最後の 2 行が決定 8 の影の規則が両方向に効いている証拠で、そこが要点だ: パスで見ていたら
+**AF 自身のバイナリを影として報告していた**。なお版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)` なので
+比較は括弧内のビルド id を取らねばならない——agy のブロックが使う `tr -dc '0-9.'` の流儀では
+`-R3401.1` が落ちて永久に不一致になる。
+
+🔴 **boot-install の sha256 検証は飾りだった——5 か所すべてで。** 形はこうだ:
+
+```sh
+( set -e
+  echo "${sha}  artifact" | sha256sum -c - >/dev/null
+  install -D -m 0755 artifact "$HOME/.local/bin/…"
+) && echo "boot-install ok" || echo "WARN: failed"
+```
+
+POSIX は「AND-OR リストの最後以外のコマンド」では `-e` を無視すると定める。サブシェルは
+まさにその左辺なので、**中に書いた `set -e` は何もしない**。bash 5.2.37 と trixie の dash で実測:
+checksum を 1 文字だけ変えると、`WARNING: 1 computed checksum did NOT match` を出したうえで
+**成果物をそのまま導入し、成功として記録した**。rtk・agy・cursor・rtk の自己更新・muse が該当。
+検証を errexit に頼らず**明示**（`exit` は errexit と無関係に効くので `|| exit 1`）することで直した
+——⚠️ サブシェルを `if ( set -e; … ); then` へ移すのは**直らない**。if の条件もまた `-e` が
+無視される文脈だからだ。修正後、陰性対照は WARN を出して何も導入せず、陽性対照は従来どおり導入する。
+
+🔴 **決定 8 の「コンテナ起動時に boot-install する」は明示 opt-in に変えた**
+（`AF_MUSE_BOOT_INSTALL=1`・既定 OFF）。299 MiB あり、段 2 より前には `kind=muse` が存在しない以上、
+無条件にすればフリート中の新しいコンテナ全部が**誰も使えない CLI** を落とすことになる。これは
+kiro（855 MiB）を無条件 boot-install から利用者ごとのオンデマンド導入へ移したときと同じ勘定だ。
+**段 2 ではこのフラグを ON にするのではなく、kiro の道を最後まで行く**べきである
+（`workspace-agent install-muse`）。
+
+### 門 A がやらなかったこと
+
+ログインなし・実ターンなし・サブスクリプションなし・`-w` なし・`kind` の配線なし——すべて段 2 か
+門 B1 の仕事。muse は使い捨てリポジトリに対し `--provider echo` でしか動かしていない。
