@@ -8,17 +8,22 @@ export function ChatAttachStrip({
   attachments,
   pasting,
   onRemove,
+  onOpen,
 }: {
   attachments: { path: string; name: string; url: string }[];
   pasting: boolean;
   onRemove: (i: number) => void;
+  /** Opens a chip's image in the shared lightbox; ChatView owns the state. */
+  onOpen: (url: string) => void;
 }) {
   const tr = useT();
   return (
     <div className="chat-attach">
       {attachments.map((a, i) => (
         <div className="ca-chip" key={a.path}>
-          <img className="ca-thumb" src={a.url} alt="" />
+          <button type="button" className="ca-thumb-btn" title={tr("chat.click_to_zoom")} onClick={() => onOpen(a.url)}>
+            <img className="ca-thumb" src={a.url} alt="" />
+          </button>
           <button type="button" className="ca-del" title={tr("chat.remove")} onClick={() => onRemove(i)}>
             <Icon name="close" />
           </button>

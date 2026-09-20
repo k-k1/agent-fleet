@@ -22,6 +22,7 @@ export function ChatMessageRow({
   assistVoice,
   paneId,
   highlight,
+  onOpenImage,
 }: {
   m: ChatMessage;
   conv: Conversation;
@@ -31,6 +32,8 @@ export function ChatMessageRow({
   /** The sentence being read in karaoke mode. Null for every turn but the last (the caller
    * has already resolved it). */
   highlight: string | null;
+  /** Opens a pasted image in the shared lightbox; ChatView owns the state. */
+  onOpenImage: (url: string) => void;
 }) {
   const tr = useT();
   // Session reports (docs/log/30) render as a session-origin card — the sender is
@@ -99,7 +102,7 @@ export function ChatMessageRow({
         {images.length > 0 && conv && (
           <div className="chat-imgs">
             {images.map((nm) => (
-              <ChatPastedThumb key={nm} convId={conv.id} name={nm} />
+              <ChatPastedThumb key={nm} convId={conv.id} name={nm} onOpen={onOpenImage} />
             ))}
           </div>
         )}

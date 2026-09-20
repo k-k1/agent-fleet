@@ -1,6 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, KeyboardEvent, ClipboardEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "../../ui/Icon.tsx";
+import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
+import { useBackClose } from "../../lib/backClose.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
@@ -118,6 +121,11 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   const [input, setInput] = useDraft(draftKey);
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
   const [pasting, setPasting] = useState(false); // an image upload is in flight
+  // The enlarged pasted image (a blob URL), shared by the composer's pre-send chips and
+  // already-sent turns (same pattern as the mirror's lightbox, minus paging/path — a
+  // pasted image here never has a folder to page through).
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  useBackClose(lightbox ? () => setLightbox(null) : undefined, !!lightbox);
   // Chats this pane is streaming a turn for. A set, not a flag: after switching away
   // mid-answer the old turn keeps running here, and the new chat must still be sendable.
   const [sendingKeys, setSendingKeys] = useState<Record<string, true>>({});
@@ -1123,6 +1131,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
             assistVoice={assistVoice}
             paneId={paneId}
             highlight={i === conv.messages.length - 1 ? karaokeText : null}
+            onOpenImage={setLightbox}
           />
         ))}
         {showStreaming && (
@@ -1158,7 +1167,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       )}
       <div className="chat-composer">
         {(attachments.length > 0 || pasting) && (
-          <ChatAttachStrip attachments={attachments} pasting={pasting} onRemove={removeAttachment} />
+          <ChatAttachStrip attachments={attachments} pasting={pasting} onRemove={removeAttachment} onOpen={setLightbox} />
         )}
         {!wsRunning ? (
           // Workspace stopped: nothing here can succeed (no per-chat "alive" to resume —
@@ -1213,6 +1222,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         </>
         )}
       </div>
+      {lightbox && createPortal(<ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />, document.body)}
     </div>
   );
 }

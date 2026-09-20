@@ -5,8 +5,17 @@ import { useT } from "../../../lib/i18n/index.ts";
 
 // ChatPastedThumb previews a pasted image referenced in a chat turn. It fetches the bytes
 // through the authenticated API wrapper (an <img src> can't carry the tenant header) into
-// an object URL; clicking opens the full image in a new tab.
-export function ChatPastedThumb({ convId, name }: { convId: string; name: string }) {
+// an object URL; clicking hands that URL to the caller's lightbox (ChatView owns the state,
+// same pattern as the mirror's PastedThumb).
+export function ChatPastedThumb({
+  convId,
+  name,
+  onOpen,
+}: {
+  convId: string;
+  name: string;
+  onOpen: (url: string) => void;
+}) {
   const tr = useT();
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -47,7 +56,7 @@ export function ChatPastedThumb({ convId, name }: { convId: string; name: string
     );
   }
   return (
-    <button type="button" className="chat-img" title={tr("chat.click_to_zoom")} onClick={() => window.open(url, "_blank", "noopener")}>
+    <button type="button" className="chat-img" title={tr("chat.click_to_zoom")} onClick={() => onOpen(url)}>
       <img src={url} alt={tr("chat.pasted_image_alt")} />
     </button>
   );
