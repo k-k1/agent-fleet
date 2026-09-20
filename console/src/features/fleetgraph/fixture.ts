@@ -7,10 +7,11 @@
 // same GraphModel shape (types/fleetgraph.ts), so the view itself needs no change.
 //
 // The fixture exists to exercise every branch the contract distinguishes, not to look
-// like a plausible fleet: all four LanePresence values, a revived run, an erased lane,
-// both flavors of "unknown" (never-observed vs. observed-but-unrecognised), all six
-// ArrowVariant values including two that leave the figure's top edge, and a coverage
-// boundary.
+// like a plausible fleet: all four LanePresence values, a revived run, a cut run (hollow
+// ×, hatched "unknown" tail), an erased lane, a lane whose immediate parent has no row of
+// its own (depth jumps to 2 with nothing at depth 1), both flavors of "unknown"
+// (never-observed vs. observed-but-unrecognised), all six ArrowVariant values including
+// two that leave the figure's top edge, and a coverage boundary.
 import type { GraphArrow, GraphLane, GraphModel, GraphScale, GraphSegment, CoverageMark } from "../../types/fleetgraph.ts";
 import { xOf } from "./geometry.ts";
 
@@ -113,13 +114,19 @@ export function buildFixtureGraph(scale: GraphScale): GraphModel {
       // The Agent went down before writing a death for this run (or the process was
       // killed outside the tmux pane wait): the run is CUT at the last observed instant
       // rather than left open forever. A hollow × — never a filled one, which would
-      // claim a death that was never actually seen — and nothing drawn after it: the
-      // stretch past the cut is unknown, not the resumable dashed line a `stopped`
-      // presence would draw (ADR 0096 decision 12).
+      // claim a death that was never actually seen — and a hatched "unknown" tail after
+      // it (never the resumable dashed line a `stopped` presence would draw) — decision 12.
+      //
+      // Doubles as the "missing parent" fixture (decision 9, docs/log/101 §101.8):
+      // `parent`/`rootId` name an ancestor that never gets a lane of its own here — its
+      // own lineage was deleted, or it is simply off-window — so depth jumps straight to
+      // 2 with no depth-1 row above it. The view marks that at the left edge rather than
+      // promoting this lane to a root or silently indenting as if nothing were missing.
       id: "fx-cut1",
       row: 6,
-      rootId: "fx-cut1",
-      depth: 0,
+      parent: "fx-ghost-parent",
+      rootId: "fx-ghost-parent",
+      depth: 2,
       presence: "gone",
       erased: false,
       label: "unwatched probe",

@@ -70,6 +70,37 @@ describe("FleetGraphView", () => {
     expect(host.querySelectorAll("svg.fgraph-svg .fgraph-arrow").length).toBeGreaterThan(0);
   });
 
+  it("sizes the SVG in real pixels matching its own viewBox, not a CSS-scaled percentage", async () => {
+    // Regression guard for the label/SVG row-drift bug review caught: the first version had
+    // no width/height attributes at all (CSS `width:100%;height:auto` scaled the internal
+    // geometry by containerWidth/viewBoxWidth while the label column's fixed 34px rows did
+    // not scale with it) — `width` below would have been null under that version.
+    await render();
+    const svg = host.querySelector<SVGSVGElement>("svg.fgraph-svg")!;
+    const width = svg.getAttribute("width");
+    const height = svg.getAttribute("height");
+    expect(width).toBeTruthy();
+    expect(height).toBeTruthy();
+    expect(svg.getAttribute("viewBox")).toBe(`0 0 ${width} ${height}`);
+    // Same constant the SVG's row math (ROW_H) uses, so the two cannot silently diverge.
+    expect(host.querySelector<HTMLElement>(".fgraph-label")!.style.height).toBe("34px");
+  });
+
+  it("marks a lane whose immediate parent has no row of its own (decision 9)", async () => {
+    await render();
+    const labelFor = (text: string) =>
+      [...host.querySelectorAll<HTMLElement>(".fgraph-label")].find((el) => el.textContent?.includes(text));
+    // fx-cut1's parent ("fx-ghost-parent") never gets a lane in the fixture.
+    expect(labelFor("unwatched probe")?.querySelector(".fgraph-parent-gap")).toBeTruthy();
+    // fx-child2's parent (fx-child1, "S-VIEW lane") IS drawn — no marker.
+    expect(labelFor("S-LOGIC lane")?.querySelector(".fgraph-parent-gap")).toBeFalsy();
+  });
+
+  it("draws a hatched 'unknown' tail after a cut run, never the resumable dashed line", async () => {
+    await render();
+    expect(host.querySelectorAll("svg.fgraph-svg .fgraph-cut-unknown").length).toBe(1);
+  });
+
   it("clicking a known lane opens the session it names", async () => {
     await render();
     const row = [...host.querySelectorAll<HTMLElement>(".fgraph-label")].find((el) => el.textContent?.includes("fleet-graph kickoff"));

@@ -4,17 +4,26 @@
 //
 // The render model (GraphModel) comes from lib/fleetgraph.ts's BuildFleetGraph in the
 // finished feature. That module is S-LOGIC's (docs/log/101 §101.6) and has not landed
-// yet — P1's three lanes run in parallel — so this view draws a FIXED FIXTURE model
-// instead (./fixture.ts), exactly as docs/log/101 §101.6 allows: "S-LOGIC の関数が出来る
-// までは fixture の GraphModel で描いてよい（P2 で差し替え）". `xOf`/`laneY` are a
-// same-shape stand-in for S-LOGIC's own exports (./geometry.ts) for the same reason.
+// yet in THIS worktree — P1's three lanes run in parallel, each in its own worktree — so
+// this view draws a FIXED FIXTURE model instead (./fixture.ts), exactly as docs/log/101
+// §101.6 allows: "S-LOGIC の関数が出来るまでは fixture の GraphModel で描いてよい（P2 で
+// 差し替え）". `xOf`/`laneY` are a same-shape stand-in for S-LOGIC's own exports
+// (./geometry.ts) for the same reason.
+//
+// P2 integration deletes MORE than those two files: everything below marked "P1-only"
+// (the showArchived filtering in the `model` useMemo, `visualRow`, `rowIsHidden`) exists
+// only because this stub draws a flat fixture with no `opts.showArchived` support —
+// BuildFleetGraph takes that option itself and returns lanes already filtered and
+// re-numbered, so all of it becomes dead weight the moment the real import lands.
+// features/fleetgraph/stubRemoval.test.ts fails as soon as lib/fleetgraph.ts exists on
+// disk, so "merged S-LOGIC but forgot the swap" cannot pass CI silently.
 //
 // GET /api/fleet-graph IS wired (core/api/client.ts fetchFleetGraph) so the network path
 // exists end to end, but its response cannot become a GraphModel without BuildFleetGraph —
 // P1 uses it only to surface a load error, and P2 integration is expected to replace the
 // fixture call with BuildFleetGraph(page, sessions, opts) using the very state this
 // already tracks.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, WheelEvent as RWheelEvent } from "react";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -45,7 +54,7 @@ import type {
 } from "../../types/fleetgraph.ts";
 import type { SessionKind } from "../../types/session.ts";
 import { buildFixtureGraph } from "./fixture.ts";
-import { clampToScale, laneY, xOf } from "./geometry.ts";
+import { laneY, xOf } from "./geometry.ts";
 import "./fleetgraph.css";
 
 const ROW_H = 34;
@@ -55,7 +64,10 @@ const DEATH_R = 5;
 const TOP_PAD = 26;
 const BOTTOM_PAD = 22;
 const LABEL_W = 176;
+// Fallback only, used until the canvas's ResizeObserver reports a real width (and in the
+// dom test project, whose ResizeObserver stub never calls back at all — see domSetup.ts).
 const CANVAS_W = 920;
+const MIN_CANVAS_W = 240;
 const DAY_MS = 86_400_000;
 const MIN_SPAN_MS = 30 * 60_000; // 30 minutes — zooming past this stops being readable
 const MAX_SPAN_MS = 30 * DAY_MS; // matches decision 8's activity-retention tier
@@ -178,9 +190,29 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
     return () => ac.abort();
   }, [win.from, win.to]);
 
+  // The canvas's real width, not a constant: `.fgraph-svg` now carries explicit width/
+  // height attributes matching `scale` 1:1 (px-for-px with the label column's fixed
+  // 34px rows), rather than a percentage width scaled by the browser against a viewBox —
+  // that scaled the SVG's internal geometry by containerWidth/920 while the label column
+  // next to it stayed at a literal 34px, so the two drifted apart by row (measured: ~17px
+  // per row at 1700px wide, ~160px by row 6). See geometry.ts's header for the other half
+  // of this (laneY/xOf not matching S-LOGIC's own formulas).
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasW, setCanvasW] = useState(CANVAS_W);
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 0) setCanvasW(Math.round(w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const scale: GraphScale = useMemo(
-    () => ({ from: win.from, to: win.to, width: CANVAS_W, laneH: ROW_H }),
-    [win.from, win.to],
+    () => ({ from: win.from, to: win.to, width: Math.max(MIN_CANVAS_W, canvasW), laneH: ROW_H }),
+    [win.from, win.to, canvasW],
   );
   const fullModel = useMemo(() => buildFixtureGraph(scale), [scale]);
   const model: GraphModel = useMemo(() => {
@@ -237,7 +269,9 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
   const clickable = (actor: ActorId): boolean => actor.startsWith("conv:") || laneById.has(actor);
 
   const totalH = TOP_PAD + model.height + BOTTOM_PAD;
-  const topY = (row: number) => TOP_PAD + laneY(scale, row);
+  // laneY returns the row's TOP (matching S-LOGIC's own formula, confirmed in review);
+  // every line/arrow this view draws wants the midline, so the +laneH/2 lives here, once.
+  const topY = (row: number) => TOP_PAD + laneY(scale, row) + scale.laneH / 2;
   const ticks = useMemo(() => axisTicks(win.from, win.to), [win.from, win.to]);
 
   return (
@@ -286,12 +320,34 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
       ) : (
         <div className="fgraph-body" onWheel={onWheel}>
           <div className="fgraph-labels" style={{ width: LABEL_W, paddingTop: TOP_PAD }}>
-            {model.lanes.map((lane) => (
-              <LaneLabel key={lane.id} lane={lane} h={ROW_H} clickable={!lane.erased && clickable(lane.id)} onOpen={(e) => activate(e, (np) => openActor(lane.id, np))} />
-            ))}
+            {model.lanes.map((lane) => {
+              // "欠けた親は左端の印で示す" (decision 9): a lane can sit at depth > 0 while its
+              // immediate parent has no row of its own in this model — off-window, or the
+              // parent's OWN lineage was deleted (docs/log/101 §101.8). Either way, indenting
+              // silently would read as "this session has no history", which is the one thing
+              // depth is there to deny.
+              const parentMissing = !lane.erased && lane.depth > 0 && !!lane.parent && !laneById.has(lane.parent);
+              return (
+                <LaneLabel
+                  key={lane.id}
+                  lane={lane}
+                  h={ROW_H}
+                  clickable={!lane.erased && clickable(lane.id)}
+                  parentMissing={parentMissing}
+                  onOpen={(e) => activate(e, (np) => openActor(lane.id, np))}
+                />
+              );
+            })}
           </div>
-          <div className="fgraph-canvas">
-            <svg viewBox={`0 0 ${CANVAS_W} ${totalH}`} preserveAspectRatio="none" className="fgraph-svg" role="img" aria-label={tr("pane.kind.fleetgraph")}>
+          <div className="fgraph-canvas" ref={canvasRef}>
+            <svg
+              width={scale.width}
+              height={totalH}
+              viewBox={`0 0 ${scale.width} ${totalH}`}
+              className="fgraph-svg"
+              role="img"
+              aria-label={tr("pane.kind.fleetgraph")}
+            >
               <defs>
                 {/* A marker's `color` inherits from where it sits in the DOM (inside <defs>), not
                     from the <line> that references it via marker-end — so a fixed neutral fill
@@ -313,13 +369,18 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
                 <LaneLine key={lane.id} lane={lane} scale={scale} y={topY(visualRow.get(lane.id) ?? lane.row)} onOpen={(e) => !lane.erased && clickable(lane.id) && activate(e, (np) => openActor(lane.id, np))} />
               ))}
 
-              {model.segments.map((seg, i) => {
+              {model.segments.map((seg) => {
+                const row = visualRow.get(seg.laneId);
+                // A segment whose lane isn't in this model should not happen (segments never
+                // outlive their lane), but "guess row 0" would silently paint another,
+                // unrelated session's band — skip instead of fabricating data nobody observed.
+                if (row === undefined) return null;
                 const owner = laneById.get(seg.laneId);
                 const kind = owner && !owner.erased ? owner.kind : undefined;
-                return <SegmentRect key={i} seg={seg} scale={scale} y={topY(visualRow.get(seg.laneId) ?? 0)} kind={kind} tr={tr} />;
+                return <SegmentRect key={`${seg.laneId}-${seg.t0}-${seg.t1}`} seg={seg} scale={scale} y={topY(row)} kind={kind} tr={tr} />;
               })}
 
-              {model.arrows.map((a, i) => {
+              {model.arrows.map((a) => {
                 // Same compaction as the lanes: an arrow's fromRow/toRow are absolute indices
                 // baked in against the FULL fixture, so they need the same id->visualRow
                 // translation the lane lines just got. null (an off-figure end) passes through.
@@ -327,7 +388,7 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
                 const toRow = a.toRow == null ? null : (visualRow.get(a.to) ?? null);
                 return (
                   <ArrowGlyph
-                    key={i}
+                    key={`${a.ts}-${a.variant}-${a.from}-${a.to}`}
                     arrow={{ ...a, fromRow, toRow }}
                     topY={topY}
                     tr={tr}
@@ -351,6 +412,9 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
   );
 }
 
+// P1-only (see the file header): BuildFleetGraph takes opts.showArchived itself and
+// returns already-filtered, already-renumbered lanes, so this helper has nothing left to
+// do once the real import lands.
 function rowIsHidden(lanes: GraphLane[], hidden: Set<string>, row: number): boolean {
   const lane = lanes.find((l) => l.row === row);
   return !!lane && hidden.has(lane.id);
@@ -374,7 +438,19 @@ function axisTicks(from: number, to: number): { ts: number; label: string }[] {
   return out;
 }
 
-function LaneLabel({ lane, h, clickable, onOpen }: { lane: GraphLane; h: number; clickable: boolean; onOpen: (e: ClickMods) => void }) {
+function LaneLabel({
+  lane,
+  h,
+  clickable,
+  parentMissing,
+  onOpen,
+}: {
+  lane: GraphLane;
+  h: number;
+  clickable: boolean;
+  parentMissing: boolean;
+  onOpen: (e: ClickMods) => void;
+}) {
   const tr = useT();
   if (lane.erased) {
     return (
@@ -405,6 +481,7 @@ function LaneLabel({ lane, h, clickable, onOpen }: { lane: GraphLane; h: number;
           : undefined
       }
     >
+            {parentMissing && <Icon name="warning" className="fgraph-parent-gap" title={tr("fgraph.parent_missing")} />}
       <span className={"sess-kic kind-" + cls}>
         <Icon name={kindIcon(lane.kind)} />
       </span>
@@ -427,9 +504,9 @@ function LaneLine({ lane, scale, y, onOpen }: { lane: GraphLane; scale: GraphSca
   if (lane.erased) return null; // ADR 0096 decision 6: an erased lane is a row of arrows, no line at all.
   const nodes: ReactNode[] = [];
   lane.runs.forEach((run, i) => {
-    const x0 = xOf(scale, clampToScale(scale, run.t0));
+    const x0 = xOf(scale, run.t0); // xOf clamps to the window itself (geometry.ts)
     const open = run.t1 == null;
-    const x1 = xOf(scale, clampToScale(scale, run.t1 ?? scale.to));
+    const x1 = xOf(scale, run.t1 ?? scale.to);
     nodes.push(<line key={`r${i}`} className="fgraph-run" x1={x0} x2={x1} y1={y} y2={y} />);
     // ○ at every run's start — birth for the first run, revive for any later one (the
     // ADR's own ASCII reuses the same glyph for both: "○──×──○──×").
@@ -454,6 +531,25 @@ function LaneLine({ lane, scale, y, onOpen }: { lane: GraphLane; scale: GraphSca
         const tailX = xOf(scale, scale.to);
         if (lane.presence === "stopped") nodes.push(<line key="tail" className="fgraph-tail stopped" x1={x1} x2={tailX} y1={y} y2={y} />);
         else if (lane.presence === "archived") nodes.push(<line key="tail" className="fgraph-tail archived" x1={x1} x2={tailX} y1={y} y2={y} />);
+      } else if (isLast && run.cut) {
+        // "その先は不明" (decision 12): a cut run draws NOTHING like a stopped/archived tail
+        // would (that reads as "resumable", which this lane is not confirmed to be) — instead
+        // the stretch after the hollow × is hatched exactly like an "unknown" activity band,
+        // so it reads as uncertain rather than either "still there" or "definitely gone".
+        const tailX = xOf(scale, scale.to);
+        nodes.push(
+          <rect
+            key="cut-tail"
+            className="fgraph-cut-unknown"
+            x={x1}
+            y={y - SEG_H / 2}
+            width={Math.max(1, tailX - x1)}
+            height={SEG_H}
+            rx={2}
+          >
+            <title>{tr("fgraph.seg_not_observed")}</title>
+          </rect>,
+        );
       }
     } else if (lane.presence === "live") {
       // Right-edge pulse: the lane is running RIGHT NOW.
@@ -475,8 +571,8 @@ function LaneLine({ lane, scale, y, onOpen }: { lane: GraphLane; scale: GraphSca
 }
 
 function SegmentRect({ seg, scale, y, kind, tr }: { seg: GraphSegment; scale: GraphScale; y: number; kind: SessionKind | undefined; tr: Tr }) {
-  const x0 = xOf(scale, clampToScale(scale, seg.t0));
-  const x1 = xOf(scale, clampToScale(scale, seg.t1));
+  const x0 = xOf(scale, seg.t0); // xOf clamps to the window itself (geometry.ts)
+  const x1 = xOf(scale, seg.t1);
   const w = Math.max(1, x1 - x0);
   const stateWord = seg.state ? tr(STATE_KEY[seg.state]) : null;
   // The TWO sources of "unknown" (contract comment on GraphSegment): tell them apart by

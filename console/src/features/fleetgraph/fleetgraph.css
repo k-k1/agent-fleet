@@ -5,6 +5,12 @@
   height: 100%;
   min-height: 0;
   container: paneview / inline-size;
+  /* A peer round trip's own hue, independent of any --kind-* variable: aliasing one (the
+     first version used --kind-agy) would make a session-to-session message change color
+     the day someone recolors that agent kind, and would draw a peer arrow in exactly the
+     kind color of any agy lane it happens to touch — both read as "this is an agy thing",
+     which it is not. */
+  --fgraph-peer: #4fb8d6;
 }
 .fgraph-nav {
   display: inline-flex;
@@ -28,6 +34,12 @@
   .fgraph-toggle .lbl {
     display: none;
   }
+  /* The nav cluster (5 buttons) + toggle + count + err is a lot more header than the
+     sessions overview's toggle + count alone — the count is the least essential of the
+     four and goes first so the header does not overflow the tab strip on a narrow pane. */
+  .fgraph-count {
+    display: none;
+  }
 }
 .fgraph-count {
   color: var(--muted);
@@ -38,6 +50,9 @@
   color: var(--warn);
   font-size: 11px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
 }
 
 .fgraph-body {
@@ -89,15 +104,27 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Left-edge marker for a lane whose immediate parent has no row of its own (decision 9)
+   — off-window, or the parent's own lineage was deleted. Warn, not danger: this is a
+   normal, expected shape of the tree, not an error. */
+.fgraph-parent-gap {
+  color: var(--warn);
+  font-size: 11px;
+  flex: none;
+}
 
 .fgraph-canvas {
   flex: 1;
   min-width: 0;
 }
+/* Sized by explicit width/height attributes in the markup (React), NOT a percentage +
+   viewBox combination: `width:100%; height:auto` let the browser scale the SVG's internal
+   geometry by containerWidth/viewBoxWidth while the label column beside it (plain fixed-
+   height divs) stayed unscaled, so rows drifted apart the wider the pane got (see
+   FleetGraphView.tsx's `canvasW` / `scale.width`). `display:block` alone just drops the
+   inline-element baseline gap under the SVG. */
 .fgraph-svg {
   display: block;
-  width: 100%;
-  height: auto;
 }
 
 /* Coverage boundaries (decision 8): drawn, never a silent fade. */
@@ -199,6 +226,14 @@
   stroke-width: 1;
   stroke-dasharray: 2 2;
 }
+/* The stretch after a cut run (decision 12): hatched like an "unknown" activity band —
+   deliberately NOT the dashed .fgraph-tail line a stopped/archived lane draws, which reads
+   as "still there, resumable". A cut lane's fate past that point is genuinely unknown. */
+.fgraph-cut-unknown {
+  fill: url(#fgraph-hatch);
+  opacity: 0.55;
+  stroke: none;
+}
 
 /* Activity bands. "active" alone carries the kind color (--seg-color, set inline); the
    rest are neutral by state, same palette as the session-state chips (lib/sessionview.ts). */
@@ -244,7 +279,7 @@
   stroke: var(--ok);
 }
 .fgraph-arrow.peer line {
-  stroke: var(--kind-agy);
+  stroke: var(--fgraph-peer);
 }
 .fgraph-arrow.danger line {
   stroke: var(--warn);
@@ -259,7 +294,7 @@
   color: var(--ok);
 }
 .fgraph-arrow.peer {
-  color: var(--kind-agy);
+  color: var(--fgraph-peer);
 }
 .fgraph-arrow.danger {
   color: var(--warn);

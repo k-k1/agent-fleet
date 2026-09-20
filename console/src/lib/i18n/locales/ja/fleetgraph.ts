@@ -40,6 +40,10 @@ export const fleetgraph = {
   "fgraph.seg_not_observed": "この区間は誰も観測していません",
   "fgraph.seg_unrecognized": "観測済み・未知の綴り: {raw}",
 
+  // 欠けた親（決定 9）。id は出さない——契約がここで生の綴りを出す許可を与えていない
+  // （削除済みレーンとは違い、これは単に「この窓に描かれていない」だけのことも多い）。
+  "fgraph.parent_missing": "親レーンはこの図に描かれていません",
+
   // レーンの線種（ADR 0096 決定 12）。
   "fgraph.presence_live": "稼働中",
   "fgraph.presence_stopped": "停止中 — 再開できます",

@@ -43,6 +43,11 @@ export const fleetgraph: Record<keyof typeof jaFleetgraph, string> = {
   "fgraph.seg_not_observed": "Nobody observed this stretch",
   "fgraph.seg_unrecognized": "Observed, unrecognised spelling: {raw}",
 
+  // Missing parent (decision 9). No id shown — unlike an erased lane, the contract does
+  // not license a bare slug here, and this is often just "off this window" rather than
+  // deleted.
+  "fgraph.parent_missing": "The parent lane isn't drawn in this figure",
+
   // Lane line style (ADR 0096 decision 12).
   "fgraph.presence_live": "Live",
   "fgraph.presence_stopped": "Stopped — resumable",
