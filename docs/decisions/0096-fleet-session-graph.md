@@ -195,6 +195,13 @@ its children's branch goes with it.
   should be a deletion; "I deleted it and it is still in the figure" is not what a user expects.
 - A line carries `{ts, ev, name, kind, repo, origin, originSession, display}` and **no prompt text and no
   report text**. What ought to disappear on deletion is never stored in the first place.
+- 🔥 **Lineage dies wherever a PERSON's action forgets the meta** (settled during P1). `session.RemoveMeta`
+  has five call sites, and **only the 7-day automatic prune (the list handler) keeps the lineage**. The
+  other four erase it: `DELETE /sessions/{name}` with or without `reclaim`, **`/stop`** (whose own comment
+  says it is the Console's delete), and a session removed along with its working copy (a path the deletion
+  lock also refuses, i.e. the product already treats it as deletion).
+  ⚠️ **Do not encode this as a list of call sites.** Pin it so a new caller is noticed — count them in a
+  test, or move the erasure into `RemoveMeta` itself.
 - 🔥 **Deleting leaves the activity lines** (up to 30 days, until they rotate). With the lineage gone, the
   `peer` / `report` lines naming that id survive alone, and the naive reading turns **a message between two
   sessions into an arrow from outside the figure** (no lane can be built, so it falls through to an
@@ -261,6 +268,13 @@ Session D              ○----------+--------×
   axis meaning one thing.
 - Rejected: pinning conversations as lanes at the top (closest to ADR 0027's sequence diagram). Round trips
   would close as lane-to-lane lines, but the axis splits in meaning as above.
+- 🔥 **When the counterpart has no row, the rule depends on the kind of arrow** (settled during P1). A
+  **round trip** (instruct / report / peer) whose counterpart is an **internal** lane excluded by the window
+  or a filter is **dropped**: keeping it as `fromRow:null` would be indistinguishable from an external
+  sender, which is the misattribution decision 6 spends a paragraph preventing. A **lineage** edge (spawn /
+  fork / handoff) does the opposite — it **stays, with `fromRow:null`**, and the view draws it as decision
+  9's **mark for a missing parent**. `variant` tells the two apart mechanically. "When and from whom it was
+  born" is the figure's whole point, so branches silently vanishing as the window narrows is not acceptable.
 - Rejected: dropping the arrows and marking the lane instead. Density goes down, but **whether a report came
   back** stops being legible at a glance — the same reason 0041 decision 10 refused to defer visualising a
   peer arrival ("invisible exactly where a human most wants to see it").
@@ -315,6 +329,13 @@ that holds a single death cannot say which stretch a second × ends, and **a str
 resumed renders as the dashed "stopped" tail**.
 - Limit (intended): the back-fill from `Meta` **cannot reconstruct past stop/resume cycles** (only the
   latest `StoppedAt` survives there). Lanes older than the feature are drawn as a single run.
+- 🔥 **Archiving a LIVE session writes `death` first, then `archived`** (settled during P1).
+  `HandleArchiveSession` kills the pane to fold the session away, but the only place that notices an ended
+  slot — the list handler — skips archived rows (`if m.Archived { continue }`), so the death would never be
+  written. A ledger holding only `[birth, archived]` leaves the run open on the reader's side: **a solid
+  line to the right edge, no ×, indistinguishable from running**. The reader also closes an open run at the
+  `archived` timestamp, but that is a defence for back-filled and older ledgers; writing the death is what
+  is actually correct.
 - **A newest run still open on a lane that is gone** (the Agent died before writing a death, or the session
   was deleted) is **cut at the last moment anything was observed** for it (`LaneRun.cut`): a hollow ×, and
   unknown after it. Defining `gone` as "ends at its last ×" alone leaves this case with no end at all.
@@ -388,6 +409,10 @@ time**.
   first start, so **the skeleton covers the past 7 days immediately**.
 - **Limit (intended)**: observation resolution depends on the deployment (4 s / 1 min / none). The figure
   does not hide that — it hatches it.
+- **Limit (intended)**: a child's **launch task text is not drawn**. The spawn arrow already comes from
+  `birth`'s `origin` / `originSession`, so writing the same exchange again as an `instruct` would draw the
+  arrow **twice**. Showing the text needs a rule that collapses a spawn and an instruct at the same instant
+  between the same pair into one arrow labelled with the excerpt — P3.
 - **Stopped and archived sessions are drawn too** (decision 12), so there are **more lanes** than the list
   shows (0078 defaults to running-only). Family ordering (decision 9) and the dashed styles are what is
   meant to carry that density; measure after implementation to decide whether lanes need folding or
