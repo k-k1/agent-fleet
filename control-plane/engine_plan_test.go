@@ -779,3 +779,69 @@ func TestIngestStoresConflictInPartFollowUpSpec(t *testing.T) {
 		t.Error("the --clip_l follow-up has no Conflict in the stored spec; the reconciler will attempt a download")
 	}
 }
+
+// listCountStore wraps store.Store and records every ListEngineModels call so tests can assert the
+// lazy-fetch path without an external counter.
+type listCountStore struct {
+	store.Store
+	calls int
+}
+
+func (s *listCountStore) ListEngineModels(ctx context.Context, role string) ([]store.EngineModel, error) {
+	if role == "" {
+		// Count only the all-roles scan (role == "") used by the destination-conflict check.
+		// The role-scoped scan (role != "") is the reuse/move lookup in enginePartsHeld and
+		// is unavoidable; counting it here would make the fixture fragile to that path.
+		s.calls++
+	}
+	return s.Store.ListEngineModels(ctx, role)
+}
+
+// When all parts are already in the bucket (reuse), no ListEngineModels call must happen.
+// The destination-conflict check is only needed for download parts, and a plan that costs
+// nothing to download should never pay a full-catalogue scan either.
+func TestPlanAllReusePartsSkipListEngineModels(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, e, st, head := enginePlanAPI(t)
+
+	clipKey := "image/text_encoders/qwen_3_06b_base.safetensors"
+	vaeKey := "image/vae/qwen_image_vae.safetensors"
+	// Declare both part files as existing rows with the correct identity so enginePlanLine
+	// returns reuse for each. The stub always answers commit-a and a per-file sha.
+	for _, row := range []struct {
+		id, flag, key, file string
+	}{
+		{"enc", "--clip_l", clipKey, "split_files/text_encoders/qwen_3_06b_base.safetensors"},
+		{"vae", "--vae", vaeKey, "split_files/vae/qwen_image_vae.safetensors"},
+	} {
+		if err := st.PutEngineModel(t.Context(), store.EngineModel{
+			Role: "image", ID: row.id, Kind: "checkpoint",
+			Files: []store.EngineModelFile{{
+				Flag: row.flag, S3Key: row.key,
+				Source:           "hf:circlestone-labs/Anima/" + row.file,
+				ArtifactIdentity: engineHFArtifactIdentity("circlestone-labs/Anima", row.file, "commit-a", engineStubSHA(engineBaseName(row.file))),
+			}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		head.states[row.key] = engineStoragePresent
+	}
+	e.catalog.invalidate()
+
+	cs := &listCountStore{Store: st}
+	a.mgr.store = cs
+
+	plan := enginePlanOf(t, a, e, `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)
+
+	// Both parts are reuse — no download parts — so ListEngineModels must not have been called.
+	for _, f := range plan.Files {
+		if (f.Flag == "--clip_l" || f.Flag == "--vae") && f.Action != enginePlanReuse {
+			t.Errorf("expected reuse for %s, got %s — fixture is wrong", f.Flag, f.Action)
+		}
+	}
+	if cs.calls != 0 {
+		t.Errorf("ListEngineModels called %d time(s) for an all-reuse plan, want 0", cs.calls)
+	}
+}
