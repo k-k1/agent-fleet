@@ -213,6 +213,16 @@ func readPNGProps(path string) (ImageProps, bool) {
 	}
 	props := g.props()
 	props.Provider = ProviderComfy
+	if props.Size == "" {
+		// The instruction-edit families build their latent from the input picture (VAEEncode),
+		// so no Empty*LatentImage carries a size and the graph alone cannot answer (ADR 0094
+		// decision 10). The picture SaveImage wrote is the honest source, and it is the file in
+		// front of us. Only as a fallback: where the graph does state the latent's size, that is
+		// what was asked for, and a later upscale node would make the file disagree with it.
+		if w, h, ok := readPNGSize(path); ok {
+			props.Size = fmt.Sprintf("%dx%d", w, h)
+		}
+	}
 	if seed := props.Seed; seed != nil {
 		// A batch PNG carries the graph's BASE seed with batch_size next to it, so the picture's
 		// own seed is base + its index — which lives only in the `-<n>` the store put in the file
@@ -282,6 +292,31 @@ func readPNGTextChunk(path, keyword string) (string, bool) {
 			return text, true
 		}
 	}
+}
+
+// readPNGSize reads the width and height out of IHDR, which the format requires to be the first
+// chunk after the signature. No decoder is involved on purpose: this is the same "13 bytes, then
+// stop" rule the text-chunk walk follows, and it must not pull a 3 MB picture through memory for
+// two numbers on every card a folder shows.
+func readPNGSize(path string) (width, height int, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, false
+	}
+	defer f.Close()
+	var head [8 + 8 + 8]byte // signature, then IHDR's length and type, then its width and height
+	if _, err := io.ReadFull(f, head[:]); err != nil || string(head[:8]) != "\x89PNG\r\n\x1a\n" {
+		return 0, 0, false
+	}
+	if string(head[12:16]) != "IHDR" {
+		return 0, 0, false
+	}
+	w := int(binary.BigEndian.Uint32(head[16:20]))
+	h := int(binary.BigEndian.Uint32(head[20:24]))
+	if w <= 0 || h <= 0 {
+		return 0, 0, false
+	}
+	return w, h, true
 }
 
 // pngTextValue splits one text chunk's payload. tEXt is `keyword\0text`; iTXt adds a compression
@@ -394,7 +429,7 @@ func (g comfyReadGraph) props() ImageProps {
 		out.Params = &p
 	}
 
-	// The positive prompt is the CLIPTextEncode WIRED to the sampler, not "the first one in the
+	// The positive prompt is the text encode WIRED to the sampler, not "the first one in the
 	// graph": klein's second text encode is a zeroed-out copy of the same conditioning, and
 	// flux1's runs through FluxGuidance on the way, so a graph read by position would report the
 	// negative prompt as the positive one on two of the seven families.
@@ -439,10 +474,21 @@ func (g comfyReadGraph) props() ImageProps {
 	return out
 }
 
-// textBehind follows one of the sampler's conditioning inputs back to the CLIPTextEncode that
-// feeds it, through the guidance and guider nodes that sit in between on the FLUX families.
-// Bounded, because a graph from elsewhere may be a cycle and this is parsing somebody else's
-// file.
+// comfyTextEncodeFields names, per text-encode class, the input the prompt is written into. The
+// class alone is not enough: the instruction-edit families spell theirs `prompt` rather than
+// `text` (measured on the graph embedded in a picture this Agent's own 2511 run produced —
+// TextEncodeQwenImageEditPlus carries `prompt`), so reading "text" from them answers empty and the
+// gallery reports a picture that was made from nothing.
+var comfyTextEncodeFields = map[string]string{
+	"CLIPTextEncode":              "text",
+	"TextEncodeQwenImageEdit":     "prompt",
+	"TextEncodeQwenImageEditPlus": "prompt",
+}
+
+// textBehind follows one of the sampler's conditioning inputs back to the text encode that feeds
+// it, through the guidance, guider and reference-latent nodes that sit in between on the FLUX and
+// instruction-edit families. Bounded, because a graph from elsewhere may be a cycle and this is
+// parsing somebody else's file.
 func (g comfyReadGraph) textBehind(from comfyReadNode, inputs ...string) string {
 	for _, in := range inputs {
 		id, ok := linkTarget(from.Inputs[in])
@@ -451,11 +497,12 @@ func (g comfyReadGraph) textBehind(from comfyReadNode, inputs ...string) string 
 			if !exists {
 				break
 			}
-			if n.Class == "CLIPTextEncode" {
-				return stringOf(n.Inputs["text"])
+			if field, isText := comfyTextEncodeFields[n.Class]; isText {
+				return stringOf(n.Inputs[field])
 			}
 			// The one hop that matters on each family: FluxGuidance's `conditioning`,
-			// BasicGuider's / CFGGuider's `conditioning` or `positive`.
+			// BasicGuider's / CFGGuider's `conditioning` or `positive`, and — on 2511 —
+			// FluxKontextMultiReferenceLatentMethod's `conditioning`.
 			next := ""
 			for _, key := range []string{"conditioning", "positive", "negative"} {
 				if t, ok2 := linkTarget(n.Inputs[key]); ok2 {

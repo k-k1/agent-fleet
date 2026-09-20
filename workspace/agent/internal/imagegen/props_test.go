@@ -170,6 +170,59 @@ func TestPropsFallsBackToClassTypesForAForeignGraph(t *testing.T) {
 	}
 }
 
+// The instruction-edit families (ADR 0094 decision 10) are the case neither half of the reader
+// was written for: their text encode is a TextEncodeQwenImageEdit* whose prompt lives in `prompt`
+// rather than `text`, and they build their latent from the input picture, so no Empty*LatentImage
+// carries the size. Both topologies are driven — 2511 puts a
+// FluxKontextMultiReferenceLatentMethod between each conditioning and the sampler, 2509 wires them
+// straight — because the hop is what the reader has to walk through to reach the text at all.
+func TestPropsReadsTheInstructionEditGraph(t *testing.T) {
+	const instruction = `Change the text on the blue sign to "CLOSED".`
+	files := comfyFiles{
+		DiffusionModel: "qwen_image_edit_2511_fp8mixed.safetensors",
+		ClipL:          "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+		Vae:            "qwen_image_vae.safetensors",
+	}
+	for _, f := range []comfyFamily{ComfyFamilyQwenImageEdit2509, ComfyFamilyQwenImageEdit2511} {
+		t.Run(string(f), func(t *testing.T) {
+			g, err := comfyBuildGraph(f, files, comfyParams{
+				Op: OpEdit, Image: "af-input.png", Prompt: instruction, Negative: "extra text",
+				Seed: 42, Width: 1024, Height: 1024, BatchSize: 1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			graph, err := json.Marshal(g)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "image-1-1.png")
+			// 1024x1024, because the size this family reports is the saved picture's own — the
+			// graph does not carry one, and 2x2 would let a reader that invented a default pass.
+			if err := os.WriteFile(path, pngWithText(t, tinyPNG(t, 1024, 1024), "prompt", string(graph)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got := readImageProps(path)
+			if got.Source != "png" {
+				t.Fatalf("source = %q, want png (%+v)", got.Source, got)
+			}
+			if got.Prompt != instruction {
+				t.Errorf("prompt = %q, want the instruction — TextEncodeQwenImageEdit* spells its text input `prompt`, not `text`", got.Prompt)
+			}
+			if got.Negative != "extra text" {
+				t.Errorf("negative = %q — the family puts the same encode class on the negative side", got.Negative)
+			}
+			if got.Size != "1024x1024" {
+				t.Errorf("size = %q, want the saved picture's own: this family has no Empty*LatentImage to read", got.Size)
+			}
+			if got.Family != string(f) || got.Op != string(OpEdit) || got.Model != files.DiffusionModel {
+				t.Errorf("family/op/model = %q/%q/%q", got.Family, got.Op, got.Model)
+			}
+		})
+	}
+}
+
 // A vendor-route picture has neither, and the answer says so rather than showing blanks that
 // read as "the seed was 0".
 func TestPropsAnswersNoneForAPictureWithNeither(t *testing.T) {
