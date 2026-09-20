@@ -576,16 +576,27 @@ kind を作る理由は文脈量ではなく、**「opencode を経由しない�
   **「この 1 モデルのためだけに配備のコンテナイメージを非公式サードパーティフォーク（PrismML-Eng/llama.cpp）へ
   差し替える」という別の意思決定**になる——これは本タスクの範囲外の管理操作なので実行していない。判断は利用者へ。
 
-### 12.3 エンジンに焼かれている llama.cpp の版（結論: 特定不能・下限のみ判明）
+### 12.3 エンジンに焼かれている llama.cpp の版（結論: 特定できた・**`/props` は箱を起こさない**）
 
 **`build: NNNN (sha)` 形式の版バナーは、CloudWatch（`/af/af-ecs-engines/engines`）のどのログにも一度も現れない。**
 Logs Insights で `/af/af-ecs-engines/engines` 全体・過去 7 日を `@message like /(?i)build:/ or
 /(?i)system_info/ or /(?i)CUDA devices/` で検索して **0 件**。個別に確認した 6 本の `llm/llama/*` ストリーム
 （起動ごとに別ストリーム）は全て一言一句同じ先頭行 `warn: LLAMA_ARG_HOST environment variable is set, but will be
-overwritten by command line argument --host` で始まり、その手前にあるはずのビルド行は無い。読み取り専用の
-CloudWatch 以外の手段（`/props` などエンジンへの実アクセス）はこのタスクの範囲外なので、**正確な版は分からなかった**。
+overwritten by command line argument --host` で始まり、その手前にあるはずのビルド行は無い。**この観測（CloudWatch
+だけでは版が取れない）はそのまま正しい**。
 
-判明した下限（実際にログへ出た文字列から）:
+🔴 ただし版そのものは**別経路で取れた**。`GET /engine/{key}/props`（読み取り専用・`k1.kami@gmail.com` のセッションから
+実測・2026-09-20）の応答に `build_info` 欄がある:
+
+```json
+{"build_info":"b10830-465e49b9c", ...}
+```
+
+（`/home/dev/lcpp-live/props-response.json`）。**`/props` は llama-server が既に応答している時に読む REST 呼び出し
+であって、`{engine}/v1/...` のような「箱を眠りから起こす」経路ではない**（ADR 0093 段 0 の設計どおり。GPU 課金を
+発生させていない）。したがって「CloudWatch では取れないが、箱を起こさずに `/props` の `build_info` で取れる」が
+正しい言い方で、以前の「正確な版は分からなかった」は**解消済み**。以下、旧稿にあった下限の記述は
+（`build_info` の実測値より緩い情報として）位置づけを変えてそのまま残す:
 
 - 起動ログに `NOTICE: server default port will be changed to :9931 in a future release / ref:
   https://github.com/ggml-org/llama.cpp/pull/26508` が出る。PR #26508 の `merged_at` は
@@ -597,7 +608,157 @@ CloudWatch 以外の手段（`/props` などエンジンへの実アクセス）
   同ファイルは上流で 2025-12-03 導入（PR #17136）・2026-09-12 まで手が入り続けている——2026-08-03 の下限より緩いが
   独立に確認できた事実として記録する。
 - 配備イメージは `ghcr.io/ggml-org/llama.cpp:server-cuda` という**動くタグ**で、インフラのスタンドアップ毎に
-  再取得される（`EcrLlamacpp` の周辺コメント、`cfn/20-platform.yaml`）。固定ダイジェストでの pin はしていないため、
-  実行中の正確なコミットは配備時点に依存し、ログからは再構築できない。
+  再取得される（`LLM_ENGINE_FROM="ghcr.io/ggml-org/llama.cpp"`・`deploy/aws/ecs/standup.sh:63`、
+  `af_run crane copy "$LLM_ENGINE_FROM:$llm_tag" ...`・`standup.sh:378`、既定タグ `server-cuda`・
+  `deploy/aws/ecs/cfn/60-engines.yaml:46`、`20-platform.yaml:91`「pinned by tag and re-copied on every stand-up」の
+  コメント）。固定ダイジェストでの pin はしていないため、**次にスタンドアップした瞬間に版が変わりうる**——
+  実測した `b10830-465e49b9c`（`gh api repos/ggml-org/llama.cpp/commits/465e49b9c` で 2026-09-06T16:47:05Z のコミット
+  と確認済み）は「2026-09-20 時点でこの配備が実際に動かしていた版」であって、以後の恒久的な事実ではない。
+  2026-08-03 の PR #26508 下限とは整合する（465e49b9c はそれより新しい）。
 
+### 12.4 `llama-3.1-8b-instruct-q4_k_m` — 先頭の `;` の真因（結論: 分からなかった部分あり。上流に既知の修正は無い）
+
+否定された仮説（前セッションで確定・再確認していない）: 「system prompt と task-0 が並列呼び出しを指示しているせいで、
+Llama 3.1 の書式に無い複数同時呼び出しを我流でやって落ちている」——**これは反証されている**。並列指示を外した
+2 回目の実行（`log-llama-noparallel.txt` ATTEMPT 2）でも同じ症状が出て、エンジン側ログの実物
+（`llm/llama/e78d2c37730945e980af67dddf6c0b3e`・ts=1789893297572）は
+
+```
+common_chat_peg_parse: unparsed peg-native output: ; {"name": "todo_write", "parameters": {"todos": "[...]"}}
+```
+
+——**単発の `todo_write` 呼び出し 1 件**に、先頭の孤立した `;` が 1 つ付いているだけだった。並列呼び出しの複数連結
+ではない。この事実自体は前セッションの記録どおりで、消さずにここへも引き継ぐ。
+
+#### A-1. 「Llama 3.1 の python_tag 形式は `;` で複数呼び出しを区切る」という理解は誤り
+
+Meta 公式の Llama-3.1-8B-Instruct jinja テンプレート（`models/templates/meta-llama-Llama-3.1-8B-Instruct.jinja`、
+`ggml-org/llama.cpp` リポジトリ内・`gh api repos/ggml-org/llama.cpp/contents/...?ref=465e49b9c` で本文取得）は、
+複数呼び出しをそもそも**許していない**:
+
+```jinja
+{%- if 'tool_calls' in message %}
+    {%- if not message.tool_calls|length == 1 %}
+        {{- raise_exception("This model only supports single tool-calls at once!") }}
+    {%- endif %}
+```
+
+しかも `;` という文字はこのテンプレート全文のどこにも出てこない。ツール呼び出しの描画は 2 通りだけ:
+builtin tool（`code_interpreter` 等）なら `<|python_tag|>funcname.call(arg="val", ...)`、カスタムツールなら
+`{"name": "...", "parameters": {...}}` という素の JSON（マーカー無し）。**どちらの経路にも `;` は無い**。したがって
+「python_tag 形式は `;` で複数呼び出しを区切る、という理解」は、少なくとも Llama 3.1 の公式テンプレート・公式書式
+としては**誤り**。
+
+⚠️ 紛らわしい隣接事実（見つけたので記録するが、本件には直接あたらない）: `;` 区切りは Llama **3.2/4 の
+"pythonic" 形式**（`func(a=1), func(b=2)` をリストで並べる書式）については実在の現象として観測・記録されている。
+vLLM の `vllm/tool_parsers/llama4_pythonic_tool_parser.py`（`gh api search/code` で発見）の TODO コメント原文:
+
+```python
+#   2. Support tools outside of a list (or separated by a semicolon).
+#      This depends on item 1 for consistent streaming.
+# Neither of these are necessary for e.g. ToolACE, but both would help make
+# Llama3.2 models more reliable.
+```
+
+——**Llama 3.2/4 の pythonic 形式**でモデルが `[...]` に包まず `;` 区切りで複数呼び出しを出すことがある、という
+vLLM 側の経験則。しかし今回動いているのは Llama **3.1** の **JSON** 形式（`--jinja` 指定・GGUF ファイル名も
+`Llama-3.1-8B-Instruct-Q4_K_M.gguf`）であり、pythonic 形式ではない。**別モデル・別書式の話を混同していた**、というのが
+この論点の実質的な結論。
+
+#### A-2. llama.cpp `b10830`（465e49b9c）側の扱い — 専用パーサが無く、実行時生成の「差分オートパーサ」を通る
+
+`common/chat.cpp`（465e49b9c 時点の実物・`raw.githubusercontent.com/.../465e49b9c/common/chat.cpp`）を検索した限り、
+`llama_3_1` / `python_tag` / `ipython` の**いずれの文字列も出てこない**。専用ディスパッチ関数
+`common_chat_try_specialized_template`（`chat.cpp:3482-3604`）が手書きパーサへ振り分ける先は次の族だけ:
+Ministral/Magistral・GPT-OSS・Muse Glimmer・Functionary v3.2・Kimi K2/K3・Cohere2 MoE・LFM2/LFM2.5・GigaChat V3・
+MiniMax-M3・DeepSeek V3.2/V4・MiniCPM5・Qwen3-Coder（`chat.cpp:3486-3600`）。**Llama 系の専用分岐は無く**、末尾は
+`return std::nullopt;`（`chat.cpp:3604`）。
+
+呼び出し元 `common_chat_templates_apply_jinja`（`chat.cpp:3713-3720`）はこれが `nullopt` のとき
+
+```cpp
+try {
+    LOG_DBG("%s: using differential autoparser\n", __func__);
+    struct autoparser::autoparser autoparser;
+    autoparser.analyze_template(tmpl);
+    auto auto_params = autoparser::peg_generator::generate_parser(tmpl, params, autoparser);
+```
+
+——**「差分オートパーサ」**（`common/chat-auto-parser-generator.cpp`・`chat-auto-parser-helpers.cpp`・
+`chat-diff-analyzer.cpp`）に落ちる。これは特定モデル向けに人間が書いたパーサではなく、**そのモデルの GGUF に
+実際に焼かれている jinja テンプレートを実行時に何通りかの合成メッセージで描画させ、出力の差分から呼び出しの
+区切りマーカーを逆算して PEG 文法を自動生成する**しくみ（ファイル名 `chat-diff-analyzer.cpp` の由来）。
+⚠️ **手書きパーサ（Qwen3-Coder 等）もこのオートパーサも、両方ともログ・エラー文言では同じ
+`COMMON_CHAT_FORMAT_PEG_NATIVE`（表示名 "peg-native"）を名乗る**（`chat.cpp:859-860`
+`case COMMON_CHAT_FORMAT_PEG_NATIVE: return "peg-native";`、複数の `data.format = COMMON_CHAT_FORMAT_PEG_NATIVE;`
+代入箇所）。したがって §12.1 の qwen3-coder のログに出た "peg-native" という語も、今回の llama-3.1 のエラー文言
+`does not match the expected peg-native format` に出た同じ語も、**それだけでは「どちらの経路を通ったか」を
+区別する情報にならない**——今回、実際に Llama 3.1 がどちらでもなく後者（オートパーサ）を通っていることは、
+専用分岐に Llama が無いという `chat.cpp` の中身から確定できる。
+
+複数呼び出し境界の推定ロジック（`chat-diff-analyzer.cpp:888-916 analyze_json_native_parallel_calls`・
+`:1047-1080 check_per_call_markers`）は、ツール呼び出し 1 件版と 2 件版の合成メッセージをテンプレートへ実際に
+描画させて `compare_variants` で差分を取る、という作りになっている。**もし GGUF に焼かれたテンプレートが公式版と
+同じ（2 件で `raise_exception`）なら、この描画は失敗し、両関数とも `if (!comparison) { ...; return; }` で
+早期リターンして何の区切りマーカーも設定しない**（`:901-904`・`:1064-1066` 相当）——つまりオートパーサ自身の
+このロジックが、公式どおりのテンプレートに対して先頭 `;` を注入する経路には**見えない**。
+
+#### A-3. 上流に既知の不具合・修正はあるか — 見つからなかった
+
+`gh api search/issues`（`repo:ggml-org/llama.cpp`）で `"unparsed peg-native output"`・`peg-native llama` ・
+`autoparser Llama-3.1`・`"Llama 3.1" tool_call` 等を検索したが、**この症状（Llama 3.1・先頭の孤立 `;`）に一致する
+issue/PR は見つからなかった**。ヒットしたのは Muse Glimmer・Kimi K2.7-Code・Qwen3.6-35B・DeepSeek-V4-Flash・
+gpt-oss-20b など**別モデルの peg-native 系不具合**ばかりで、対象の Llama 系は無い。465e49b9c（2026-09-06）以降に
+`common/chat.cpp` へ入ったコミットも 3 本（`59657a6`・`acecd56`・`895c045` = Ling 3.0 追加／JSON schema 内部表現／
+専用パーサの `common/parsers/` への分割）で、いずれも Llama 3.x や自動パーサの区切り検出には触れていない
+（`gh api repos/ggml-org/llama.cpp/commits?path=common/chat.cpp&since=2026-09-06T16:47:05Z`）。**「次の版で直る」と
+言える根拠は無い**。
+
+#### A-4. モデルとテンプレートのどちらが `;` を出しているか — 切り分けられなかった
+
+A-2 の分析どおり、GGUF に実際に焼かれたテンプレートが Meta 公式版と一致するかは**このタスクの範囲（エンジン
+不接触）では確認できない**（§12.1 で他モデルについて既に明記した同じ限界がここにも当てはまる）。公式版どおり
+なら（A-2 の分析により）オートパーサ側が `;` を注入する経路は見えない——ということは、GGUF 側のテンプレートが
+公式版と違う（例えば量子化元が改変した、複数呼び出し対応版に差し替えた等）か、モデル自身が学習分布の癖として
+`;` を生成しているか、のどちらかになる。**この 2 つを切り分ける手段が、エンジンに触れない範囲には無かった。
+分からなかった、とだけ言える。**
+
+#### B. 出口候補 4 つ（実行可能性のみ判定。実行しない）
+
+| # | 候補 | 実行可能性（このリポジトリで読んだ事実） | 誰の作業 | 費用 | 副作用 |
+|---|---|---|---|---|---|
+| 1 | 上流の版を上げる | **可能だが受動的**。`LlmImageTag` 既定 `server-cuda` は動くタグで、スタンドアップの度に `crane copy $LLM_ENGINE_FROM:$llm_tag`（`standup.sh:63,374-379`）で再取得される——固定 pin ではない。A-3 で修正コミットが見つからなかった以上、「次の配備で直る」保証は無い。**逆に「次の配備でオートパーサや Qwen3-Coder の専用分岐が変わり、今 PASS している qwen3.8/qwen3-coder/qwen3.6 が壊れる」リスクも同じ経路にある**（同じ動くタグが全モデル共通） | 配備役（standup 再実行） | インフラのスタンドアップ 1 回分（GPU 課金は箱を買った時のみ） | 全モデル同時に版が変わる。回帰確認が要る |
+| 2 | このモデルだけ引数を変える | **欄はある**。`store.EngineModel.Args []string`（wire key `"a"`、`engine_admin.go:1402`・`engine_catalog.go:385,433,907-908`）が行単位の追加フラグ欄で、`fetch-models.sh:123,128` の jq が `key = value` 形式で `presets.ini` に書く。したがって `Args: ["--chat-template", "llama3"]` のような**モデル別上書きは技術的に可能**。⚠️ ただし `--jinja` は role 全体の `LlmExtraArgs`（既定 `-ngl,99,--jinja,--no-mmap`・`60-engines.yaml:51`）としてコンテナ起動コマンドに前置される（`$(cat /models/cmdline)` の前に `${Extra}` が付く・`60-engines.yaml:718-722`）ので、**`--jinja`（role 全体）と `--chat-template`（モデル別）が同時に llama-server へ渡る**。どちらが勝つか、あるいは衝突してエラーになるかは llama-server の引数解析の実装次第で、**エンジンに触れない範囲では確認できなかった** | 利用者の管理操作（目録の該当行を編集して再取り込み） | 再取り込み 1 回（軽い） | 他モデルには影響しない（行単位）。ただし効果自体が未確認 |
+| 3 | ハーネス側で吸収する | **不可（吸収先が無い）**。`workspace/agent/internal/harness/client.go:125-129` の `chatRequest` は `model`/`messages`/`stream`/`tools` のみで、`parallel_tool_calls` や `chat_template_kwargs` に相当するフィールドは無い（§12.1 で既に確認済みの事実の再確認）。応答側もハーネスは `deltaToolCall`（`tool_calls` 配列）を**そのまま受け取るだけ**で、テキストから tool_calls へのパース（PEG）は完全にエンジン側で完結し、失敗時はエンジンが 4xx/5xx か整形失敗を返した時点でハーネスに届く。つまり**うちのコードがパースをやり直す余地が無い**——今回のエラーはハーネスへ届く前（エンジン内）で起きている | （該当作業者なし） | ー | ー |
+| 4 | 諦める（この族を候補から外す） | 常に可能。ADR 0093 の合格基準（`tool_calls` が全ターン有効な JSON・名前化けなし）を llama-3.1-8b-instruct-q4_k_m は満たしていない（実行 5/5′、後述 §12.5）ので、他候補が無ければこれが既定 | 利用者の管理操作（目録から外す／既定から外す） | ー | この 1 族が使えなくなるだけ |
+
+### 12.5 実機 6 本の実測一覧
+
+課題は全部同じ（`TestManualLiveAgenticSession`・バグ持ちの Go プロジェクトを直させる 5 タスク＋圧縮後の想起 1 問・
+`window=3500`）。
+
+| 実行 | モデル | 結果 | ターン | 圧縮 | 並列 | JSON不正/未知名/引数欠落 | 所要 |
+|---|---|---|---|---|---|---|---|
+| 1 | qwen3.8-27b-uncensored-q4_k_m | PASS | 30 | turn 13 | 11 | 0 / 0 / 0 | 431.58s |
+| 2 | qwen3.8-27b-uncensored-q4_k_m | PASS | 29 | turn 11 | 9 | 0 / 0 / 0 | 348.90s |
+| 3 | qwen3-coder-30b-a3b | PASS（⚠️） | 162 | turn 19 | 0 | 0 / 0 / 0 | 451.28s |
+| 4 | ternary-bonsai-2-27b-pq2_0 | FAIL（起動せず） | — | — | — | — | 605.49s（再試行のみ） |
+| 5 | llama-3.1-8b-instruct-q4_k_m（並列指示あり） | FAIL | — | — | — | — | 17.98s |
+| 5' | llama-3.1-8b-instruct-q4_k_m（**並列指示なし**） | FAIL | — | — | — | — | 15.58s（別に cold start 302.33s で 1 回タイムアウト） |
+| 6 | qwen3.6-35b-a3b-ud-iq3_s | PASS | 33 | turn 10 | 14 | 0 / 0 / 0 | 144.14s |
+
+補足:
+
+- 実行 3 は**形式の合格基準は満たしているが** `todo_write` が 72 ターン連続（turn 50〜121）で、162 ターンに膨らんだ。
+  繰り返し検知の門は PR #794 で develop に入った。圧縮後の想起は 17 ターン迷走した。
+- 実行 6 の圧縮後の想起は**具体的で正確**だった（実際の応答: 「1. `stack/Pop` は panic していたのを zero 値＋false
+  返却に修正。2. `mathutil.Average` は `len(nums)-1` で割っていた（本来は `len(nums)`。n-1 はベッセルの補正で標本
+  分散用、単純平均には不適）」）。実行 1・2 も同様に的確で、一度は「それは自分の記録に無い」と限界を正直に申告した。
+- 実行 5' の 1 回目は**真の cold start が 302.33 秒**かかり `context deadline exceeded` で終わった（箱の購入＋モデル
+  同期）。2 回目は warm で 15.58 秒。
+- 🔴 `/props` にも `/v1/models` にも **`chat_template` の欄は無い**（実測・`props-response.json`／
+  `models-response.json`）。したがって「GGUF に焼かれたテンプレートと HF の `tokenizer_config.json` が一致するか」
+  は**エンジンに触れる範囲では確認できない**——§12.1 が唯一裏を取れなかった点はそのまま残る。§12.4 A-4 の
+  切り分け不能もこれと同じ限界に由来する。
+- 実測の生ログは `$HOME/lcpp-live/`（セッション外からは見えない）にある。
 
