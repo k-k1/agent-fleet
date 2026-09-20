@@ -2,8 +2,8 @@
 
 English | [日本語](0094-instruction-edit-image-models.ja.md)
 
-- Status: **P0 built** (2026-09-20, develop `f57e82dd` — PRs #773 and #775). **Not verified on real
-  hardware yet.**
+- Status: **P0 built and accepted on real hardware** (2026-09-20). All four completion criteria
+  passed on the dev deployment — the record is "P0's live acceptance" at the end.
   🔴 The `file:line` references below have been **re-pointed at the tree as built**; they were taken
   on `ae069aaf` while drafting. Whoever moves those lines in P1 re-points them.
   🟢 **Reviewed before implementation** (2026-09-20, in a separate session). The nine findings are
@@ -92,14 +92,21 @@ for an edit and nothing happened" the default behaviour**.
   🔴 **Refuse only when the RESOLVED model is of this family** — a request that names no provider
   may not land on comfy at all, so "a `strength` present means 400" would be wrong. Resolve
   model → family at the edge (`comfyFamilyFor` is in the same package).
-- 🔴 **One route cannot be refused, so the generation side warns there.** A request that names
-  neither `model` nor `provider` cannot have its family resolved at the edge, so it reaches comfy
-  and `strength` is dropped by the denoise-1 graph. `requestWarnings` (`imagegen.go:1012`) has a
-  `!caps.Strength` branch, but **decision 11's union silences it** (`imagegen.go:915` and
-  `jobs.go:480` both ask `Caps(req.Model)`, which is the union when the model is empty). So put a
-  strength-shaped twin of `comfyNegativeIgnoredWarning` (`comfy.go:432`) on the PROVIDER side, which
-  emits into `res.Warnings` when the resolved family does not read it. Without it, run C's "dropped
-  with no warning" survives on exactly one route.
+- 🔴 **One route cannot be refused, so a warning catches it — in the CORE, not in the provider.**
+  A request naming neither `model` nor `provider` cannot have its family resolved at the edge, so it
+  reaches comfy and `strength` is dropped by the denoise-1 graph. `requestWarnings`
+  (`imagegen.go:1019`) has a `!caps.Strength` branch that never fired, and the reason was the CALLER:
+  it passed the Caps of the model the REQUEST named, which is decision 11's union (true) when that is
+  empty.
+
+  So **the Caps handed to `requestWarnings` is the row that actually ran** — `Run`
+  (`imagegen.go:922`) and the queue's `finish` (`jobs.go:486`) pass `Caps(res.Model)`.
+  🟢 **A strength-shaped twin on the provider side is rejected** (this ADR's first draft asked for
+  one): it patches a core mistake inside comfy alone, **the same mistake was already live for
+  `negative`**, and the next capability that becomes per-model would repeat it. One fix in the core
+  gives every provider the same guarantee. The price is that the sentence goes from naming the
+  family to the generic "this route cannot vary how much of the input it keeps"; putting the family
+  name back belongs in the core's message or in `Caps` carrying a reason — a different decision.
 - ADR 0069's rule for adding a word ("is there no way around it for the caller") **points the other
   way here**: it is not that the caller has no workaround, it is that the knob has no meaning.
 
@@ -118,11 +125,11 @@ not one it declares** (the lesson SD3.5 charged us in ADR 0072).
 The output size is `FluxKontextImageScale` picking the nearest entry of
 `PREFERRED_KONTEXT_RESOLUTIONS` by the **input's aspect ratio** (read off the node's v0.35.2 source;
 the five runs went 1024² in → 1024² out, which — being all square — does **not** evidence the ratio
-table). `comfySizesFor` (`comfy.go:576`) answers **empty** for this family, and a `size` that
+table). `comfySizesFor` (`comfy.go:575`) answers **empty** for this family, and a `size` that
 arrives anyway is refused the way decision 2 refuses `strength`.
 
 🔴 **The row's own `sizes` are not honoured either.** `comfySizesFor` returns `conn.Sizes[model]`
-ahead of the family's list (`comfy.go:577`), so an empty family answer alone would still let an
+ahead of the family's list (`comfy.go:576`), so an empty family answer alone would still let an
 operator's declared presets through. This family is the one case where **the family wins over the
 row** — the point is not to offer a value that cannot take effect, and that reason belongs in this
 line of the ADR.
@@ -224,9 +231,20 @@ means "the measurement is withdrawn"). Letting a machine fill in a family defaul
 field means** — from "somebody measured this" to "somebody wrote this" — which is the exact hole ADR
 0074 warns about ("a default nobody measured makes decision 1's premise a lie").
 
-Instead **this ADR and the ingest UI publish the measured number, and the operator enters it once**.
-Once entered, the `m.VramMiB > 0` branch wins over the sum and `confirm_vram` stops appearing. One
-press, with the conditions attached (1024², batch 1, one reference), beats a silent pass.
+Instead **this ADR and the ingest UI publish the measured number, and the operator enters it once** —
+one press, with the conditions attached (1024², batch 1, one reference), beats a silent pass.
+
+🔴 **The live run corrected two things** (2026-09-20, during acceptance):
+
+- **Declaring the number does NOT clear `confirm_vram`.** The guard (`engineVramGuardRow`) compares
+  against the **selected class**, which on a deployment with an unpinned ladder is its first rung — a
+  T4 at 14,500 MiB. Entering an honest 20,862 still answered `engine_vram_confirm` (measured). **Only
+  pinning a class as well clears it**, so P1's criterion is not "the prompt stops appearing" but
+  "the declared number reaches the ladder".
+- **The file-sum estimate does not merely nag — it buys a bigger box.** At acceptance the row was
+  enabled at the 28,676 MiB sum, so **the 22,000 rung (L4) dropped out of the ladder and an L40S was
+  bought** (45,458 MiB, 33.2 GB of host RAM — measured). With 20,862 declared, the L4 rung is a
+  candidate again. This field is a COST field as much as a fit field.
 
 ### Decision 9 — "Custom workflows" stay out of this ADR; the trigger is duplication, not the family count
 
@@ -275,7 +293,7 @@ reached `SaveImage`.
 provider".** Capabilities leave through `http.go:217`'s `caps := p.Caps("")` — **the warm default
 model, one row** — and from there into `st.Ops` (`http.go:227`), `st.Strength` (`http.go:234`), the
 MCP tool definition (`mcp_stdio.go:1132`'s `op` enum) and the pane's fields. Worse,
-`chooseImageProviders` (`imagegen.go:775`) drops a **whole provider** on
+`chooseImageProviders` (`imagegen.go:742`) drops a **whole provider** on
 `caps(id).Supports(req.Op)`, so while a qwen row is warm, `op=generate` takes comfy out of the
 candidates and lands on a provider that spends a member's plan.
 
@@ -286,7 +304,7 @@ the same shape:
 - 🔴 **The union goes inside `comfyProvider.Caps("")` itself**, not in the route. `Caps` resolves an
   empty model to `DefaultModel()` — the warm row — at `comfy.go:121-125`, so **making that one answer
   a union over the enabled rows fixes both the advertising (`http.go:217`) and the candidate filter
-  (`imagegen.go:841`'s `capsOf` → `imagegen.go:775`) at once**. `Caps(model)` for a named model stays
+  (`imagegen.go:842`'s `capsOf` → `imagegen.go:742`) at once**. `Caps(model)` for a named model stays
   exactly the family's answer, so judging stays strict.
   ⚠️ **The negative precedent (`http.go:242-247`) unions in the ROUTE, and copying that shape alone is
   not enough**: `capsOf` would still see the warm row, `op=generate` would drop comfy at the
@@ -296,16 +314,16 @@ the same shape:
   (`mcp_stdio.go:1132`'s `op` enum) is a **connect-time snapshot** and cannot be per model at all, so
   a union is correct there and a model-specific refusal can only be decision 2's 400. **The pane
   needs per-model** (decision 12).
-- **Judging** (at generation) is `Caps(model)` — `imagegen.go:841`'s `capsOf` already asks
+- **Judging** (at generation) is `Caps(model)` — `imagegen.go:842`'s `capsOf` already asks
   `p.Caps(req.Model)`, so a request that names a model is already right.
 - 🔴 **With no model named, comfy's own model resolution has to read `req.Op`.** The union only
   keeps the provider in the candidates: `comfy.go:647-656` resolves an empty `req.Model` to
   `DefaultModel()` — the warm row — and answers `the self-hosted image engine cannot do generate`
   on `!caps.Supports(req.Op)`. `Run` files that under attempts and **`continue`s**
-  (`imagegen.go:897-899`), i.e. **falls through to the next provider, which spends a member's
-  plan**, and `recordUsage` (`imagegen.go:893`) writes a failed row on the way. So when the warm
+  (`imagegen.go:898-900`), i.e. **falls through to the next provider, which spends a member's
+  plan**, and `recordUsage` (`imagegen.go:894`) writes a failed row on the way. So when the warm
   row's family does not claim the op, resolve to **the first enabled row that does** and say so
-  with `comfySwitchWarning` (`comfy.go:783`). A checkpoint switch costs 1-2.5 minutes (measured),
+  with `comfySwitchWarning` (`comfy.go:782`). A checkpoint switch costs 1-2.5 minutes (measured),
   which is explainable; silently billing another plan is not. **P0's third criterion is only
   testable once this exists.**
 
@@ -349,7 +367,7 @@ would always be true and `ops` always three, so the pane would keep showing a sl
 ### Decision 13 — A named model PINS the provider that lists it; if it has no such op, refuse instead of falling through
 
 🔴 **Decision 3 opened this door and the ADR had not looked at it.** `chooseImageProviders`
-(`imagegen.go:775`) filters candidates on `caps(id).Supports(req.Op)`, and `capsOf` asks
+(`imagegen.go:742`) filters candidates on `caps(id).Supports(req.Op)`, and `capsOf` asks
 `p.Caps(req.Model)` — strict when a model is named. So `model=qwen-image-edit-2509` with
 `op=generate` and no provider named **drops comfy at the candidate filter**, while
 `codexProvider.Caps(string)` and `agyProvider.Caps(string)` **ignore the model** and go on claiming
@@ -365,8 +383,8 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   request is not dropped" is decision 11's own spirit, and saying which ops exist is shorter than
   silently billing another plan.
 - ⚠️ A request that names a `pref` is already collapsed to one provider at the top of
-  `chooseImageProviders` (`imagegen.go:776-778`), so this decision is about **auto only**. As built,
-  the pin itself is `modelOwner` (`imagegen.go:748`) and the gate that calls it is `Run`'s
+  `chooseImageProviders` (`imagegen.go:743-745`), so this decision is about **auto only**. As built,
+  the pin itself is `modelOwner` (`imagegen.go:761`) and the gate that calls it is `Run`'s
   `pref == "" || pref == "auto"` (`imagegen.go:858`).
 
 ## Rejected
@@ -526,7 +544,7 @@ came off was the REACH of the decisions, and three names in the code.
   (one with a version, one without) breaks the day 2512 arrives with 2509's wiring. Its cost (one
   LoRA row per family) is now stated.
 - 🟡 **Decision 4 was losing to the row's `sizes` and to the Console's default list**
-  (`comfy.go:577`, `families.ts:145`).
+  (`comfy.go:576`, `families.ts:145`).
 - 🟡 **Decision 9's "past 12 families" trigger measured the wrong thing** (families unrelated to
   editing would fire it). It now counts duplication, and names the table-driven middle step.
 - 🟡 **Three names were wrong**: the `op` enum is in `mcp_stdio.go:1132`, not `mcp_imagegen.go`; the
@@ -564,7 +582,7 @@ One 🔴 left, and it was **where the union goes**.
 
 - 🔴 **Calling decision 11's union "advertising" defined it by its consumers.** The negative
   precedent it cited unions in the ROUTE (`http.go:242-247`), so copying that shape leaves `capsOf`
-  (`imagegen.go:841`) looking at the warm row: `op=generate` drops comfy **at the candidate filter**
+  (`imagegen.go:842`) looking at the warm row: `op=generate` drops comfy **at the candidate filter**
   and never reaches the third bullet (the op-aware resolution inside `Generate`). It now names the
   function — the union lives in **`comfyProvider.Caps("")`** — which fixes advertising and candidate
   selection in one place while `Caps(model)` stays strict.
@@ -583,10 +601,14 @@ comment rewrite: `providerStatus.Strength` (`http.go:108-112`) still claims "No 
 per provider, not per model", which decisions 2 and 11 make false.
 
 🟢 The review's sweep of "what else reads `Caps("")`" is worth recording: five call sites take an
-unnamed model (`http.go:217`, `imagegen.go:841`, `:821`, `:856` and **`jobs.go:480`** — the last one
-this ADR had never named). The last two feed `requestWarnings`, and comfy emits its per-row warnings
-itself (`comfy.go:755`, `:758`), so no warning is lost. `comfy.go:654` passes the resolved model, so
-judging stays strict, and `http.go:243` already asks `Caps(m.ID)`. **Nothing else breaks.**
+unnamed model (`http.go:217`, `imagegen.go:842`, `:821`, `:856` and **`jobs.go:486`** — the last one
+this ADR had never named).
+
+⚠️ **Its conclusion that "no warning is lost" was wrong.** It counted the negative correctly and
+missed what `strength` becoming per-model had just added; the last two call sites — the warning path
+— are readers that must NOT see the union. P0 closes it by passing `Caps(res.Model)` (decision 2).
+**The union is now read by three places only**: the advertisement (`http.go:217`) and the candidate
+filter (`imagegen.go:842`, `:821`).
 
 ### Fifth round (against `a1583944`)
 
@@ -613,18 +635,46 @@ already deferred to P3 by decision 5's ⚠️).
 Decisions 1-5, 11, 12 and 13 landed (#773 and #775). **Not verified on hardware** — completion
 criteria (1)-(4) wait for a deployment. The seams worth knowing, for whoever picks up P1:
 
-- Decision 11's union is `comfyProvider.capsUnion` (`comfy.go:152`), returned by `Caps("")`
+- Decision 11's union is `comfyProvider.capsUnion` (`comfy.go:165`), returned by `Caps("")`
   (`comfy.go:121-125`).
-- Decision 13's pin is `modelOwner` (`imagegen.go:748`) and the gate in `Run` that calls it
+- Decision 13's pin is `modelOwner` (`imagegen.go:761`) and the gate in `Run` that calls it
   (`imagegen.go:858`).
 - Decision 2's refusal is `bad_strength_family` (`http.go:479`, `jobs_http.go:124`) — a **separate
   code** from the out-of-range `bad_strength`, and decision 4's size refusal has the same shape
   (`bad_size_family`).
-- The warning for the route that cannot be refused is `comfyStrengthIgnoredWarning`
-  (`comfy.go:825`).
+- The warning for the route that cannot be refused lives in the CORE: `requestWarnings` is handed
+  the Caps of the row that actually ran (`imagegen.go:922`, `jobs.go:486`). The provider-side twin
+  this ADR's first draft asked for was deleted in #779 (comfy.go −73 lines).
 - Decision 12's op re-read is the Console's pure `remappedOp` (`draft.ts:65`).
 
 The implementation review (opus, read-only) ran twice: 🔴3 / 🟡5, then 🔴0 / 🟡4 (all code-level and
 handed straight to the implementer). **Two holes the ADR was silent about came out of that review**,
 and both became decisions: 13 (a named model falling through to a paid provider) and decision 2's
 "one route that cannot be refused".
+
+## P0's live acceptance (2026-09-20, dev deployment)
+
+All four completion criteria passed **through the deployed Agent's own path** (its HTTP API). The
+engine was ComfyUI 0.35.2 on an **L40S** (45,458 MiB, 33.2 GB of host RAM).
+
+| Criterion | Result |
+|---|---|
+| (1) run A reproduced | ✅ the sign reads `CLOSED`, mug / table / typography untouched. `provider=image`, `model=zz-exp-qwen-image-edit-2509`, 1024², seed 42, **474 s wall** (box purchase + 30 GB sync + first load included) |
+| (2) `strength` refused | ✅ **400 `bad_strength_family` on both routes** (`/imagegen/generate` and `/imagegen/jobs`), reading "the qwen-image-edit-2509 family fixes its denoise at 1 by construction" |
+| (3) generate stays on comfy while qwen is warm | ✅ `provider=image`, re-read onto `abyssorangemix2_hard_8832`, **no fall-through to agy**, and the switch warning fired |
+| (4) named model, op it cannot do | ✅ `imagegen_no_provider` — "model … cannot do generate (it can: edit)", **no fall-through to agy** |
+
+The per-model wire fields of decision 12 were checked too: the qwen row answers `ops=["edit"]`, no
+`strength`, no `sizes`, while the existing rows (SDXL, krea2) answer three ops, `strength` and a size
+list — **a control taken before trusting the reading**.
+
+🔴 **Two things went wrong during acceptance** (neither is about the spec):
+
+- **The positive control queued a REAL job and bought a box.** Checking "an SDXL row is not refused"
+  through `/imagegen/jobs` was the wrong choice: being accepted there means being queued, which is
+  recorded demand. **To watch an acceptance, pick a route that stops before execution.**
+  `DELETE /imagegen/jobs/{id}` answered 200 but the job stayed `waking` until the box came up, and
+  only then became `cancelled`.
+- **Decision 8's two corrections** (folded into decision 8): declaring the number does not clear the
+  prompt, and the file-sum estimate buys a bigger box.
+
