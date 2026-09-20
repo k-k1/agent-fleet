@@ -55,13 +55,16 @@ export const FAMILY_VRAM_MEASURED = new Map<string, FamilyVramMeasurement>([
     mib: 20862, file: "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
     size: "1024x1024", batch: 1, inputs: 1,
   }],
-  // 🔴 qwen-image-edit-2511 stays absent, and NOT for want of a reading: a 2511 run was measured
-  // on 2026-09-20 and answered 28,358 MiB — on an L40S 48GB, where nothing was ever evicted (the
-  // three files sum to 28,774). 2509's 20,862 above is an L4 24GB number, and it is small only
-  // BECAUSE the card is tight enough to evict the text encoder after encoding. The two answer
-  // different questions, and this column feeds `vram_mib`, so entering the L40S number would pin
-  // 2511 to the 44,000-and-above rungs for good. It waits for an L4 measurement
-  // (ADR 0094 decision 8's third 🔴, open questions 6 and 7).
+  // 🔴 Both numbers here were read on an **L4 24GB**, and that is load-bearing rather than
+  // incidental: the same 2511 run on an L40S 48GB answered 28,358 MiB — the whole 28,774 MiB file
+  // set resident, because a card with room to spare evicts nothing. These figures are small only
+  // BECAUSE the card is tight enough to evict the text encoder after encoding. A reading taken on
+  // a bigger card is not a value of this field (ADR 0094 decision 8's third 🔴; the field has no
+  // column for the card yet — open question 7).
+  ["qwen-image-edit-2511", {
+    mib: 20974, file: "qwen_image_edit_2511_fp8mixed.safetensors",
+    size: "1024x1024", batch: 1, inputs: 1,
+  }],
 ]);
 
 /**

@@ -26,13 +26,31 @@ describe("族の実測 VRAM", () => {
     expect(familyVramMeasurement(" QWEN-IMAGE-EDIT-2509 ", fp8)?.mib).toBe(20862);
   });
 
+  it("2511 も実測値と測定条件をひと組で返す", () => {
+    const m = familyVramMeasurement("qwen-image-edit-2511", ["qwen_image_edit_2511_fp8mixed.safetensors"]);
+    // 実測（開発配備・L4 24GB・40 秒間隔の標本のピーク）: vram_total 23,659,151,360 B、
+    // 使用 20,974 MiB。🔴 同じ走行を L40S 48GB で測ると 28,358 MiB＝ファイル合計そのままで、
+    // 退避が起きない。この欄の値は「苦しいカードで測った量」であって、カードが変われば別の数。
+    expect(m?.mib).toBe(20974);
+    expect(m?.file).toBe("qwen_image_edit_2511_fp8mixed.safetensors");
+    expect(m?.size).toBe("1024x1024");
+    expect(m?.batch).toBe(1);
+    expect(m?.inputs).toBe(1);
+  });
+
   // 🔴 これが表の主張そのもの。測っていない族に「たぶんこれくらい」を返した時点で、
   // vram_mib の意味が「誰かが測った数字」から「誰かが書いた数字」に変わる。
-  it("測っていない族には何も返さない（2511 も含む）", () => {
+  it("測っていない族には何も返さない", () => {
     expect(familyVramMeasurement("sdxl", fp8)).toBeNull();
-    expect(familyVramMeasurement("qwen-image-edit-2511", ["qwen_image_edit_2511_fp8mixed.safetensors"])).toBeNull();
+    expect(familyVramMeasurement("anima", ["animaCatTower_v10.safetensors"])).toBeNull();
     expect(familyVramMeasurement("", fp8)).toBeNull();
     expect(familyVramMeasurement(undefined, fp8)).toBeNull();
+  });
+
+  // 2511 も 2509 と同じ契約に従う: 族が合っても別ビルドには返さない。
+  it("2511 でも別のビルドには返さない", () => {
+    expect(familyVramMeasurement("qwen-image-edit-2511", ["qwen_image_edit_2511_bf16.safetensors"])).toBeNull();
+    expect(familyVramMeasurement("qwen-image-edit-2511", [])).toBeNull();
   });
 
   // 🔴 同じ族の別ビルドにも返さない。`vram_mib` は合計の下限を**上書きする**ので、bf16
