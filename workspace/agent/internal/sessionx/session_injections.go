@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -172,6 +173,45 @@ func recordInjection(name, text, source string) {
 // recordOperatorInjection is the operator-origin convenience wrapper (docs/log/30 ②), kept so
 // the several operator-injection call sites read unchanged.
 func recordOperatorInjection(name, text string) { recordInjection(name, text, TurnSourceOperator) }
+
+// fleetGraphActorFor derives an InstructEvent's `from` (ADR 0096 decision 4) from the
+// SAME TurnSource* vocabulary recordInjection's callers already classify by — one
+// switch, so the graph and the mirror badge can never disagree about who sent a prompt.
+// reportTo and spawnParent are each non-empty only at the one or two call sites that
+// actually have them; every other caller passes "".
+func fleetGraphActorFor(source, reportTo, spawnParent string) string {
+	switch source {
+	case TurnSourceOperator:
+		if reportTo == "" {
+			return "" // no conversation to attribute to — drop rather than mis-attribute
+		}
+		return "conv:" + reportTo
+	case TurnSourceSchedule, TurnSourceScheduleManual:
+		return "schedule"
+	case TurnSourceDiscord:
+		return "bridge:discord"
+	case TurnSourceSlack:
+		return "bridge:slack"
+	case TurnSourceSpawn:
+		return spawnParent // the parent session — a real lane, not a special ActorId spelling
+	case TurnSourceAutoResume:
+		return "agent" // AF's own nudge, never the user (docs/log/47 §4-6)
+	default:
+		return ""
+	}
+}
+
+// recordFleetGraphInstruct appends the graph's instruct line for a prompt about to be
+// delivered (ADR 0096 write site ⑦). Peer sends are recorded separately by
+// RecordPeer (session_io.go, where peer_intent is still in scope) — this only ever
+// fires for source != "peer".
+func recordFleetGraphInstruct(to, source, reportTo, spawnParent, excerpt string) {
+	from := fleetGraphActorFor(source, reportTo, spawnParent)
+	if from == "" || to == "" {
+		return
+	}
+	fleetgraph.RecordInstruct(from, to, source, excerpt)
+}
 
 // operatorInjections returns the distinct prompt texts recorded for a session (nil when
 // none). Used by tests.

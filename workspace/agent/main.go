@@ -22,6 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -165,6 +166,12 @@ func serve() {
 	// "no unreported instructions".
 	chatx.MigrateReportArms()
 	chatx.StartReportReconciler()
+	// Fleet session graph (ADR 0096): resync marks the observation boundary before the
+	// server accepts its first request, and the Meta backfill (once per AgentStateDir)
+	// writes lineage for sessions that predate the ledger.
+	sessionx.FleetGraphResync()
+	sessionx.FleetGraphBackfillFromMeta()
+	go fleetgraph.PruneActivity()
 	// Delivery ledger for browser attach handoffs (docs/log/53, completion-notice section):
 	// pick up the ones where resolveBrowserHandoff finished last boot but
 	// deliverBrowserHandoff did not. It has no busy/idle settle decision, so unlike the

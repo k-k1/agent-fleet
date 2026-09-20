@@ -13,6 +13,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -106,6 +107,7 @@ func ensureSessionTmux(name string, ssmForce bool) error {
 		if m.StoppedAt != "" {
 			m.StoppedAt = ""
 			session.WriteMeta(m)
+			fleetgraph.RecordRevive(name) // write site ③: the slot became alive again
 		}
 		return nil
 	}

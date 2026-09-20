@@ -337,6 +337,9 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Agent has already aggregated it.
 	mux.HandleFunc("GET /api/usage/series", rest)
 	mux.HandleFunc("GET /api/sessions/cleanup", rest)
+	// Fleet session graph (ADR 0096): lanes = sessions, x = time. Proxied verbatim like
+	// the other GETs above; the Agent has already assembled the page.
+	mux.HandleFunc("GET /api/fleet-graph", rest)
 	mux.HandleFunc("DELETE /api/sessions/{name}", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/lock", rest) // deletion lock (docs/log/45)
 	mux.HandleFunc("GET /api/cleanup/archives", rest)

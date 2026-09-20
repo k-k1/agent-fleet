@@ -22,6 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -327,6 +328,10 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			writePeerErr(w, err)
 			return
 		}
+		// Fleet graph write site ⑥ (ADR 0041 / 0096 decision 4): recorded on the RAW message,
+		// before the envelope wraps it — the excerpt is for a human reading the graph, not
+		// the delivery machinery.
+		fleetgraph.RecordPeer(body.PeerFrom, name, strings.TrimSpace(body.PeerIntent), body.Prompt)
 		// The server builds the envelope; the caller never does, so it can neither be
 		// forgotten nor forged.
 		body.Prompt = peerEnvelope(body.PeerFrom, strings.TrimSpace(body.PeerIntent), reply, body.Prompt)
@@ -535,6 +540,9 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// makes this the only correct position.
 	if src := badgeOriginOf(body.PeerFrom, body.ReportTo, body.Source); src != "" {
 		recordInjection(name, body.Prompt, src)
+		if body.PeerFrom == "" { // peer was already recorded above, before the envelope wrap
+			recordFleetGraphInstruct(name, src, body.ReportTo, "", body.Prompt)
+		}
 	}
 	if !submitPromptTUI(w, name, pane, body.Prompt) {
 		return
@@ -654,6 +662,9 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	// afterwards opens the same gap as the tmux path — merely a shorter one.
 	if src := badgeOriginOf(peerFrom, reportTo, source); src != "" {
 		recordInjection(meta.Name, prompt, src)
+		if peerFrom == "" { // peer was already recorded in the {prompt} handler above
+			recordFleetGraphInstruct(meta.Name, src, reportTo, "", prompt)
+		}
 	}
 	if err := h.Send(agents.TurnInput{Prompt: prompt}); err != nil {
 		if errors.Is(err, agents.ErrQuestionPending) {
