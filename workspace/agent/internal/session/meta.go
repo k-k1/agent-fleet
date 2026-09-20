@@ -5,10 +5,12 @@ package session
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
@@ -55,7 +57,29 @@ func ReadMeta(name string) (Meta, bool) {
 	return m, true
 }
 
+// RemoveMeta forgets the meta and NOTHING else — no fleet-graph lineage change. It has
+// exactly ONE production caller: the stopped-session TTL auto-prune in
+// HandleListSessions, which is the one case ADR 0096 decision 6 says must NOT erase the
+// lineage row (prune already costs the session's card; costing its line in the graph too
+// is the exact regression the ADR's ledger exists to undo — see docs/log/94). Every other
+// place a session's meta is forgotten is a PERSON asking for it to be gone, and belongs on
+// RemoveMetaAndLineage instead. meta_remove_sites_test.go counts callers of both so a new
+// call site cannot silently pick the wrong one.
 func RemoveMeta(name string) { _ = os.Remove(MetaPath(name)) }
+
+// RemoveMetaAndLineage is RemoveMeta plus erasing the session's fleet-graph lineage row
+// (ADR 0096 decision 6: an explicit, person-initiated forgetting of a session means
+// "deleted", not "still has a line in the graph"). Use this — never bare RemoveMeta — for
+// every path that forgets a meta because someone asked to: /stop, DELETE /sessions/{name}
+// (with or without ?reclaim=1), and a working-copy delete's session collateral. Erasure is
+// best-effort and logged, never fatal: the meta is already gone by the time this runs, so
+// failing the request over it would be strictly worse than a leftover lineage row.
+func RemoveMetaAndLineage(name string) {
+	RemoveMeta(name)
+	if err := fleetgraph.EraseLineage(name); err != nil {
+		log.Printf("fleet-graph: erase lineage for %s: %v", name, err)
+	}
+}
 
 func ListMetas() []Meta {
 	ents, err := os.ReadDir(MetaDir())

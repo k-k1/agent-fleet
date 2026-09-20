@@ -1203,7 +1203,7 @@ func HandleStopSession(w http.ResponseWriter, r *http.Request) {
 		fleetgraph.RecordDeath(name, "", 0, 0)
 	}
 	status.RemoveCarried(session.UUID(meta.Dir, name))
-	session.RemoveMeta(name)
+	session.RemoveMetaAndLineage(name) // /stop is a person's delete (ADR 0096 decision 6)
 	removeTerminalHistory(name)
 	// Stopping forgets the session; if it was the last one in a worktree and that
 	// worktree is clean, auto-remove it so worktrees don't pile up (no-op otherwise).
@@ -1325,25 +1325,34 @@ func HandleArchiveSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// Captured BEFORE the kill below: HandleListSessions (write site ②) never sees this
+	// session again once it is archived (`if m.Archived { continue }`), so this is the
+	// ONLY chance to record that a run actually ended here. Skipping it for an
+	// already-stopped session avoids a second death on top of the one list already wrote.
+	tn := session.TmuxName(name)
+	wasAlive := tmuxx.HasSession(tn) || (m.DriverKind() == session.DriverManaged && ManagedAlive(m))
 	// Promote the carry-over BEFORE killing the pane (docs/log/75 P5, ADR 0055 decision 12).
 	// Archiving, like halt, folds a session away while it may still hold a pending modal,
 	// and cursor's ACP request, kiro's approval panel and a managed Interaction all live
 	// only inside the process: called after kill-session / DropHandle it gets nothing, and
 	// the question is lost silently.
 	PromoteCarriedFor(m)
-	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
+	if tmuxx.HasSession(tn) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
+	if wasAlive {
+		fleetgraph.RecordDeath(name, "", 0, 0) // write site ④, part 1: end the run being folded away
+	}
 	m.Archived = true
 	// Archiving folds the session away too, so it consumes the stop-after-turn arm for the
 	// same reason halt does (docs/log/85): an arm surviving into the restore would stop the
 	// session again at the end of a turn nobody armed.
 	m.StopAfterTurnAt = ""
 	session.WriteMeta(m)
-	fleetgraph.RecordArchived(name, true)
+	fleetgraph.RecordArchived(name, true) // write site ④, part 2: AFTER the death above, never before
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archived": name})
 }
 
@@ -1404,19 +1413,27 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
 	// the active list. Keep the meta + jsonl (and any captured resume id) so it restores.
+	// Captured BEFORE the kill below, same reason as HandleArchiveSession: once Archived is
+	// true, HandleListSessions never looks at this name again, so this is the only chance
+	// to record that the run actually ended.
+	tn := session.TmuxName(name)
+	wasAlive := tmuxx.HasSession(tn) || (m.DriverKind() == session.DriverManaged && ManagedAlive(m))
 	// Promote the carry-over BEFORE killing the pane (docs/log/75 P5, ADR 0055 decision 12).
 	// Recreating also folds the old session away, and a pending question / approval request
 	// does not survive kill-session / DropHandle — calling later gets nothing.
 	PromoteCarriedFor(m)
-	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
+	if tmuxx.HasSession(tn) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
 	status.Remove(session.UUID(m.Dir, m.Name))
 	status.RemoveExit(m.Name)
+	if wasAlive {
+		fleetgraph.RecordDeath(m.Name, "", 0, 0) // write site ④, part 1: end the run being folded away
+	}
 	m.Archived = true
 	session.WriteMeta(m)
-	fleetgraph.RecordArchived(m.Name, true) // recreate folds the OLD identity away, same as /archive
+	fleetgraph.RecordArchived(m.Name, true) // write site ④, part 2: AFTER the death above, never before
 
 	// Fresh identity, same slot. No ForkFrom — recreate means "start empty", not
 	// "re-copy the fork source". The driver is inherited: a slot created managed is

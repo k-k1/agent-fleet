@@ -12,14 +12,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
-	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -79,7 +77,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	finalizeSessionUsage(m)
 	reclaim := r.URL.Query().Get("reclaim") == "1" || r.URL.Query().Get("reclaim") == "true"
 	if !reclaim {
-		session.RemoveMeta(name)
+		session.RemoveMetaAndLineage(name) // a person's delete either way (ADR 0096 decision 6)
 		removeSessionSideFiles(name)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": name})
 		return
@@ -97,14 +95,8 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	session.RemoveMeta(name)
+	session.RemoveMetaAndLineage(name) // a person's delete either way (ADR 0096 decision 6)
 	removeSessionSideFiles(name)
-	// ADR 0096 decision 6: an explicit reclaim-delete erases the lineage row too — "deleted"
-	// should mean deleted. Best-effort; a failure here must not fail the delete itself (the
-	// session and its transcript are already gone by this point).
-	if err := fleetgraph.EraseLineage(name); err != nil {
-		log.Printf("fleet-graph: erase lineage for %s: %v", name, err)
-	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": name, "archive": arch})
 }
 

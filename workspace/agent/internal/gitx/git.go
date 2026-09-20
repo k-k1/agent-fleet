@@ -1698,6 +1698,9 @@ func forgetNonLiveMetasUnder(dir string) {
 			continue
 		}
 		finalizeSessionUsage(m) // settle into the usage ledger before forgetting (docs/log/46 §3-b)
-		session.RemoveMeta(m.Name)
+		// A person deleting the working copy is a person's delete of this session too, the
+		// same as /stop or DELETE /sessions — the fleet graph's lineage row goes with it
+		// (ADR 0096 decision 6).
+		session.RemoveMetaAndLineage(m.Name)
 	}
 }
