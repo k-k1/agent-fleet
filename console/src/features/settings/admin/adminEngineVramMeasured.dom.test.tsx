@@ -38,6 +38,14 @@ const qwen = {
 
 const sdxl = { id: "abyssorangemix2_hard_8832", kind: "checkpoint", enabled: true, base_model: "sdxl" };
 
+// 同じ族の別ビルド。bf16 は 40.86 GB で L4 に載らないので、fp8 の 20,862 を入れられると
+// 梯子が L4 の段を通して OOM になる（`vram_mib` は合計の下限を上書きする）。
+const qwenBf16 = {
+  id: "zz-qwen-image-edit-2509-bf16",
+  kind: "checkpoint", enabled: false, base_model: "qwen-image-edit-2509", vram_mib: 0,
+  file_rows: [{ flag: "--diffusion-model", s3Key: "image/diffusion_models/qwen_image_edit_2509_bf16.safetensors", bytes: 43876536320 }],
+};
+
 const imageRow = {
   key: "image",
   api: "images",
@@ -46,7 +54,7 @@ const imageRow = {
   base_models: ["sdxl", "qwen-image-edit-2509", "qwen-image-edit-2511"],
   class: { id: "g6", label: "L4 24GB", vram_mib: 22000, types: ["g6.xlarge"] },
   classes: [{ id: "g6", label: "L4 24GB", vram_mib: 22000, types: ["g6.xlarge"] }],
-  model_rows: [qwen, sdxl],
+  model_rows: [qwen, sdxl, qwenBf16],
 };
 
 function mockEngineAPI() {
@@ -143,6 +151,15 @@ describe("行の編集で実測 VRAM を勧める", () => {
     await openEdit(sdxl.id);
     expect(hint()).toBeNull();
     expect(vramField()).toBeTruthy();
+  });
+
+  // 🔴 同じ族でも、測ったのと別のビルドには出さない。ここで出すと、fp8 で測った 20,862 を
+  // 40.86 GB の bf16 の行に入れられる——梯子は L4 の段を通し、読み込みは OOM で落ちる。
+  it("同じ族の別ビルドには出さない", async () => {
+    await mount();
+    await openEdit(qwenBf16.id);
+    expect(hint()).toBeNull();
+    expect(vramField()?.value).toBe("0");
   });
 });
 
