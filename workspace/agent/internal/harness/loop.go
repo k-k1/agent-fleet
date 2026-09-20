@@ -45,6 +45,16 @@ const defaultWindowFallback = 8192
 // end in nothing but the one leading system message: the same "no user query found in
 // messages" chat-template rejection compact.go's own doc comment already found live, just
 // reached from a different calling shape than the one Compact was written against.
+//
+// 🔴 This message ends up sitting in Result.Messages/full itself (decision 3's append-only
+// record), as an ordinary Role==RoleUser entry indistinguishable, BY ROLE ALONE, from
+// something the actual human/caller said — it is NOT stripped back out once its one job
+// (keeping the post-compaction request template-valid) is done. A transcript writer or
+// mirror reading full later MUST NOT render this as something the user said. It IS reliably
+// identifiable: match on Content == continuationPrompt (this exact constant, exported by
+// neither name nor value elsewhere) rather than on position or role, since a real user
+// message with the same wording is vanishingly unlikely but not impossible to rule out by
+// role/position alone.
 const continuationPrompt = "Continue with the task."
 
 // Result is what Run returns once a turn with no ToolCalls comes back, or once ctx
@@ -219,6 +229,9 @@ func maybeCompact(ctx context.Context, client Client, rt *Runtime, tools []ToolD
 	// "pending" — without SOMETHING surviving after the new boundary, BuildSendMessages'
 	// next slice would end in nothing but the one leading system message, the same "no
 	// user query found in messages" rejection compact.go already found live once.
+	// 🔴 The synthetic turn this appends survives into full/Result.Messages permanently —
+	// see continuationPrompt's own doc comment for why a future transcript writer must
+	// never render it as something the human/caller actually said.
 	toCompact := full
 	if n := len(full); n == 0 || full[n-1].Role != RoleUser {
 		toCompact = append(append([]Message(nil), full...), Message{Role: RoleUser, Content: continuationPrompt})

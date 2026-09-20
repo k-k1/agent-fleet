@@ -164,6 +164,14 @@ func TestManualLiveCompaction(t *testing.T) {
 //
 //	cp -r internal/harness/testdata/liveproject "$HOME/lcpp-live/run-<name>"
 //	export AF_LCPP_LIVE_CWD="$HOME/lcpp-live/run-<name>"
+//
+// ⚠️ Runs from loop.go's own mid-loop compaction check (maybeCompact) landing in this file
+// compact differently than every earlier run of this test: runTurn used to call PrepareTurn
+// once per task, so "compaction fired" only ever meant a TASK-BOUNDARY compaction; Run now
+// re-checks the budget on every tool-loop iteration too, so compactedAtTurn below can now be
+// set by a compaction that happened INSIDE a task, not just between them. The pass/fail bar
+// (finishes cleanly, every tool_calls JSON valid, no unknown tool names) is unchanged and
+// still comparable across runs — only compactedAtTurn's own meaning shifted.
 func TestManualLiveAgenticSession(t *testing.T) {
 	base := os.Getenv("AF_LCPP_LIVE_BASE")
 	token := os.Getenv("AF_LCPP_LIVE_TOKEN")
