@@ -363,8 +363,8 @@ func TestEnginePropsBorrowedRowAsksTheFarGatewaysOwnRoute(t *testing.T) {
 // The shape this whole follow-up exists for: a router-mode llama-server's
 // default_generation_settings describes the ROUTER, not any one model, so n_ctx there is 0.
 // props() must then read the model's real window from /v1/models — directly, never through
-// serve() — and add it under router_selected_model without disturbing anything /props itself
-// said. Measured against a real router deployment (2026-09-20): 262144, in data[].meta.n_ctx.
+// serve() — and add it under router_models without disturbing anything /props itself said.
+// Measured against a real router deployment (2026-09-20): 262144, in data[].meta.n_ctx.
 //
 // The upstream body also carries a "seed" bigger than float64's 53-bit mantissa (max int64,
 // 9223372036854775807): a map[string]any round trip decodes every number as float64 and would
@@ -390,11 +390,6 @@ func TestEnginePropsRouterModeReadsV1ModelsForWindow(t *testing.T) {
 	api := &engineTestECS{desired: 1, running: 1}
 	eng := newTestEngine(t, up.URL, api)
 	eng.apiKey = "engine-secret"
-	eng.catalog = &engineCatalog{source: func(context.Context) ([]store.EngineModel, error) {
-		return []store.EngineModel{
-			{ID: "qwen3.8-27b-uncensored-q4_k_m", Kind: "checkpoint", Enabled: true, Default: true},
-		}, nil
-	}}
 	g := propsGateway(mgr, signKey, eng)
 
 	tok := mintEngineSessionToken(signKey, mid, "sess-1", "llm", time.Now().Add(time.Hour))
@@ -407,10 +402,10 @@ func TestEnginePropsRouterModeReadsV1ModelsForWindow(t *testing.T) {
 		DefaultGenerationSettings struct {
 			NCtx int `json:"n_ctx"`
 		} `json:"default_generation_settings"`
-		RouterSelectedModel struct {
+		RouterModels []struct {
 			ID   string `json:"id"`
 			NCtx int    `json:"n_ctx"`
-		} `json:"router_selected_model"`
+		} `json:"router_models"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("response body did not decode: %v: %s", err, rec.Body.String())
@@ -419,11 +414,14 @@ func TestEnginePropsRouterModeReadsV1ModelsForWindow(t *testing.T) {
 		t.Errorf("default_generation_settings.n_ctx = %d, want 0 preserved exactly as the router sent it",
 			out.DefaultGenerationSettings.NCtx)
 	}
-	if out.RouterSelectedModel.NCtx != 262144 {
-		t.Fatalf("router_selected_model.n_ctx = %d, want 262144 read from /v1/models", out.RouterSelectedModel.NCtx)
+	if len(out.RouterModels) != 1 {
+		t.Fatalf("router_models = %v, want exactly the one model /v1/models listed", out.RouterModels)
 	}
-	if out.RouterSelectedModel.ID != "qwen3.8-27b-uncensored-q4_k_m" {
-		t.Errorf("router_selected_model.id = %q, want the catalogue's default model", out.RouterSelectedModel.ID)
+	if out.RouterModels[0].NCtx != 262144 {
+		t.Errorf("router_models[0].n_ctx = %d, want 262144 read from /v1/models", out.RouterModels[0].NCtx)
+	}
+	if out.RouterModels[0].ID != "qwen3.8-27b-uncensored-q4_k_m" {
+		t.Errorf("router_models[0].id = %q, want the id /v1/models actually listed", out.RouterModels[0].ID)
 	}
 	if modelsAuth != "Bearer engine-secret" {
 		t.Errorf("/v1/models Authorization = %q, want the engine's own apiKey", modelsAuth)
@@ -437,6 +435,70 @@ func TestEnginePropsRouterModeReadsV1ModelsForWindow(t *testing.T) {
 	// upstream sent, because this route's job is to carry /props through, not to parse it.
 	if !strings.Contains(rec.Body.String(), `"seed":9223372036854775807`) {
 		t.Errorf("body = %s, want the upstream's 64-bit seed byte-for-byte, not rounded through a float64", rec.Body.String())
+	}
+}
+
+// The bug this test pins down (2026-09-20, a real sandbox deployment, reported through the ADR
+// 0093 段0 追补 follow-up): enginePropsAugmentRouterWindow used to ask the CATALOGUE which model
+// SHOULD be running (selected, else default) and look for only THAT id in /v1/models. A router's
+// own max_instances: 1 means /v1/models only ever lists what is ACTUALLY loaded — so the moment a
+// caller loaded anything other than the catalogue's declared default, the id this route went
+// looking for was never in the list, the lookup came back 0, and the whole field silently
+// vanished from the response. Measured live: 3 requests in a row, right after a successful
+// generation on the non-default model, all came back with no window at all.
+//
+// Here the catalogue's Default is qwen3.8, but /v1/models says llama-3.1-8b is what is actually
+// loaded — exactly that live shape. Before the fix this is red (router_models never appears,
+// because the old code looked for qwen3.8 and never found it); after it, the model /v1/models
+// actually named — not the catalogue's guess — is what the response carries.
+func TestEnginePropsRouterModeNonDefaultModelLoaded(t *testing.T) {
+	mgr, signKey, mid := enginePropsFixture(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/props":
+			_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":0},"model_path":"none","role":"router"}`))
+		case "/v1/models":
+			// Deliberately NOT the catalogue's default below — the model actually loaded.
+			_, _ = w.Write([]byte(`{"data":[{"id":"llama-3.1-8b-instruct-q4_k_m","meta":{"n_ctx":65536}}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer up.Close()
+
+	api := &engineTestECS{desired: 1, running: 1}
+	eng := newTestEngine(t, up.URL, api)
+	eng.apiKey = "engine-secret"
+	eng.catalog = &engineCatalog{source: func(context.Context) ([]store.EngineModel, error) {
+		return []store.EngineModel{
+			{ID: "qwen3.8-27b-uncensored-q4_k_m", Kind: "checkpoint", Enabled: true, Default: true},
+			{ID: "llama-3.1-8b-instruct-q4_k_m", Kind: "checkpoint", Enabled: true},
+		}, nil
+	}}
+	g := propsGateway(mgr, signKey, eng)
+
+	tok := mintEngineSessionToken(signKey, mid, "sess-1", "llm", time.Now().Add(time.Hour))
+	rec := httptest.NewRecorder()
+	g.props(rec, propsRequest(tok))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("router props: status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		RouterModels []struct {
+			ID   string `json:"id"`
+			NCtx int    `json:"n_ctx"`
+		} `json:"router_models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("response body did not decode: %v: %s", err, rec.Body.String())
+	}
+	if len(out.RouterModels) != 1 {
+		t.Fatalf("router_models = %v, want exactly the one model /v1/models actually listed", out.RouterModels)
+	}
+	if out.RouterModels[0].ID != "llama-3.1-8b-instruct-q4_k_m" || out.RouterModels[0].NCtx != 65536 {
+		t.Errorf("router_models[0] = %+v, want the LOADED model (llama-3.1-8b-instruct-q4_k_m, 65536), not the catalogue's default guess",
+			out.RouterModels[0])
 	}
 }
 
