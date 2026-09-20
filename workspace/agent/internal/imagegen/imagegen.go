@@ -1016,6 +1016,10 @@ func normalizeRequest(r Request) Request {
 // The provider reports what IT knows it could not honour; this catches the rest — most
 // importantly a count that came back short, which no provider can see as a failure because
 // each image it did produce is fine.
+// 🔴 `caps` is the row that ACTUALLY RAN (`Caps(res.Model)`), never the one the request named.
+// With ADR 0094 decision 11, `Caps("")` is a union over the enabled models, so a request that named
+// no model would be judged against "some row here can do it" and every per-model warning below
+// would fall silent — measured on `strength` before it was per-model's turn (ADR 0094 decision 2).
 func requestWarnings(req Request, res Result, caps Caps) []string {
 	var out []string
 	// A route with no aspect-ratio list cannot have honoured one, and unlike the size there is
