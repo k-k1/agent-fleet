@@ -279,13 +279,23 @@ including which two clamps are still spelling-only):
    writes `skills.activation.bundled["bundled://muse-core/skills/resume-claude/SKILL.md"] = "off"` —
    keyed by a pack-qualified *path*, not by skill id, so a rename or move in 1.4 silently
    re-enables it. This belongs in the drift check, not only in gate B1.
-8. **A non-contributor model, pinned per session.** Gate B1: the host's default model is
-   `muse-spark-1.3-contributor`, whose catalogue description reads "Your content, including
-   inter-session messages, may be used for product improvement". There is no settings key for it —
-   the route is `session/start.modelId` (and `session/setModel`), which is honoured for every model
-   call including after a resume that passes no model. This is a **policy** clamp, not a technical
-   one: AF is deciding on the member's behalf that their code does not feed product improvement,
-   which is the right default but has to be stated in the guide rather than buried here.
+8. **A non-contributor model by default — but the member owns the choice.** Gate B1: the host's
+   default model is `muse-spark-1.3-contributor`, whose catalogue description reads "Your content,
+   including inter-session messages, may be used for product improvement". There is no settings key
+   for it — the route is `session/start.modelId` (and `session/setModel`), which is honoured for
+   every model call including after a resume that passes no model.
+
+   This is the one clamp that is **not** AF's to decide silently, and the user settled it
+   (2026-09-20): **it is a member-facing setting in Settings → Agents**, not a hidden pin. AF
+   defaults it to the non-contributor model — the safe direction, and the one a member who never
+   opens settings gets — and the contributor variants stay selectable for a member who wants them
+   (they are the same model at the same price; the difference is only what Meta may do with the
+   content). The clamp's mechanism is unchanged; what changes is that the value comes from the
+   member's setting rather than from a constant, and that the setting says in plain words what
+   choosing a contributor model means. Consequences: `console/src/features/settings/agents/`
+   gains the control (and its i18n in both languages), the guide explains the trade-off, and the
+   launch-defaults store carries it the way it already carries model and effort per kind
+   (`console/src/lib/settings.ts`). Everything else in this list stays a clamp AF sets.
    ⚠️ The session's *stored metadata* and every `session` projection keep reporting the contributor
    id (measured in all five sessions), so the Console must take the model from
    `session/tokenUsage.modelId`, never from the session projection.
@@ -1485,12 +1495,12 @@ unpaid, and **19–28 if ADR 0093 lands first** — and that recommendation is u
 better supported, because every 0093-shared item (the managed-only gate, the approval
 interaction) was confirmed to be exactly the work muse needs.
 
-**Two things a human, not a measurement, has to decide before Phase 2 starts.** The clamps are a
-policy choice with a privacy edge: the default model is
-`muse-spark-1.3-contributor`, whose own description says "Your content, including inter-session
-messages, may be used for product improvement", so AF pinning a non-contributor model is a
-decision about a member's code made on their behalf — the right one, in our view, but it belongs
-to the user, and it must be visible in the guide rather than buried in a clamp table. And the
-spend: on a subscription the invisible quota is observers and subagents, which the clamps close;
+**Two things a human, not a measurement, had to decide before Phase 2 starts; one is now settled.**
+The clamps carry a privacy edge: the default model is `muse-spark-1.3-contributor`, whose own
+description says "Your content, including inter-session messages, may be used for product
+improvement". 🟢 **Settled 2026-09-20: the member chooses, in Settings → Agents, with the
+non-contributor model as the default** (Decision 6, clamp 8) — AF neither hides the choice nor
+makes it silently, and the guide explains what picking a contributor model means. What remains is
+the spend: on a subscription the invisible quota is observers and subagents, which the clamps close;
 on a metered account there is still **no price per token from the vendor** (`cost: null`), so the
 cost chip cannot ship in v1 and the guide has to say why.
