@@ -525,54 +525,6 @@ if [ "$LEAN_CLIS" = 1 ]; then
   elif cli_present cursor-agent; then
     echo "[entrypoint] boot-install: cursor already present (skip)"
   fi
-  # muse（Muse Code / Meta・ADR 0095 決定 8）。版別 manifest の sha256 ピンで
-  # ~/.local/bin/muse へ実体を置く（agy と同じ「版付き URL ＋ sha256」経路）。
-  #
-  # ⚠️ **既定では走らない**（AF_MUSE_BOOT_INSTALL=1 の明示 opt-in）。配布物は 299 MiB
-  # 級で、kind="muse" は段 2 まで存在しない——無条件にすると全コンテナが初回起動で
-  # 「誰も使えない CLI」の 299 MiB を払う。kiro（855 MiB）を無条件 boot-install から
-  # 利用者限定のオンデマンド導入へ移したのと同じ理由なので、段 2 では
-  # `workspace-agent install-kiro` 型のオンデマンドへ寄せる（ADR 0095 段 1 門 A の所見）。
-  #
-  # ⚠️ 置くのは**ベンダの bash ランチャではなく実体**。ランチャは既定で毎時チャンネルを
-  # 見て自分を書き換えるので、実体を直接置けば自己更新経路そのものが無くなる。
-  # ⚠️ だから**影の検知はパスではなく版一致**でやる: ベンダの install.sh も同じ
-  # `~/.local/bin/muse` を使うため、パスで見ると AF 自身のバイナリを影と報告してしまう。
-  # `muse --version` は `Muse Code 1.3.0 (1.3.0-R3401.1)` の形なので、
-  # 括弧内のビルド id をピンと突き合わせる（`tr -dc '0-9.'` ではピンの `-R3401.1` が
-  # 落ちて常に不一致になる — agy の marker の罠と同型）。
-  MUSE_NEED=0
-  if [ "${AF_MUSE_BOOT_INSTALL:-0}" = "1" ] \
-     && [ -n "$(vj_pin muse)" ] && [ -n "$(vj_pin muse_sha256)" ]; then
-    if ! cli_present muse; then
-      MUSE_NEED=1
-    elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/muse" ]; then
-      mver="$(MUSE_NO_AUTO_UPDATE=1 MUSE_LOGIN=0 timeout 60 "$HOME/.local/bin/muse" --version 2>/dev/null \
-                | sed -n 's/.*(\(.*\)).*/\1/p' | head -1)"
-      if [ -n "$mver" ] && [ "$mver" != "$(vj_pin muse)" ]; then MUSE_NEED=1; fi
-    fi
-  fi
-  if [ "$MUSE_NEED" = 1 ]; then
-    (
-      set -e
-      mver="$(vj_pin muse)"; msha="$(vj_pin muse_sha256)"
-      arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-      case "$arch" in
-        amd64 | x86_64) masset="muse-x86-linux" ;;
-        arm64 | aarch64) masset="muse-aarch64-linux" ;;
-        *) echo "unsupported arch: $arch" >&2; exit 1 ;;
-      esac
-      tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
-        "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${mver}&file=${masset}" \
-        -o "$tmp/muse"
-      echo "${msha}  $tmp/muse" | sha256sum -c - >/dev/null || exit 1
-      install -D -m 0755 "$tmp/muse" "$HOME/.local/bin/muse"
-    ) && echo "[entrypoint] boot-install muse $(vj_pin muse)" \
-      || echo "[entrypoint] WARN: muse boot-install failed (retrying next start)"
-  elif [ "${AF_MUSE_BOOT_INSTALL:-0}" = "1" ] && cli_present muse; then
-    echo "[entrypoint] boot-install: muse already present (skip)"
-  fi
 fi
 
 # Kiro CLI（kind="kiro"、docs/log/43 Track B / §4-2）は ~855MB と桁違いに巨大なため、

@@ -2,8 +2,8 @@
 
 [English](0095-muse-agent-kind.md) | 日本語
 
-- Status: **proposed**（2026-09-20）・**段 1 門 A 回答済み**（2026-09-20——最終節）。
-  種別そのものの実装は何も無く、門 A が入れたのはその計測に必要な配備変更だけである。以下の `file:line` は当時の develop
+- Status: **proposed**（2026-09-20）・**段 1 門 A・B1・B2 すべて回答済み**（2026-09-20——最終 3 節）。
+  種別そのものの実装は何も無く、門 A が入れた配備変更もこの版で抜いた（「門 A 成果物の要否」節）。以下の `file:line` は当時の develop
   `06ea94d3` で読んだ。◎ は Workspace のコンテナで **Muse Code 1.3.0-R3401.1** を使い捨てディレクトリへ
   導入して実測したもの、△ はベンダ文献のみ、× は未測。再現手順は末尾にある。
 - 依頼は一文である。**Meta のコーディングエージェント Muse Code は 10 番目のセッション種別になれるか、
@@ -32,18 +32,18 @@ workflow・セッション間メッセージング・スキル・メモリを持
 | managed の契約 | **◎ これまでで最良** | `muse serve` は **stdio** 上の改行区切り JSON-RPC 2.0。`muse schema generate-json-schema` が MSP v1 をオフライン出力し、**47 メソッド・31 通知・31 エラー・234 型**、指紋 `sha256:7469c9e3…`。未認証のまま `initialize` → `initialized` → `session/start` → `turn/start` を疎通させた |
 | 状態検出 | **◎ 文字列でなく契約** | `session/statusChanged` が `running` / `idle` / `notLoaded` を運ぶ。TUI スクレイプもフックもフッタ推定も要らない |
 | セッション ID | **◎ AF が採番** | `session/start.sessionId` に自前 UUIDv7 を渡すとそのまま採用され、ワイヤにもディスク上の経路にも現れた。`muse exec --session-id <uuid>` も同じ欄 |
-| read 正本 | **◎ 追記のみ** | `~/.local/share/muse/sessions/YYYY/MM/DD/<sid>/session.jsonl`（subagent は `subagent/<id>/` 配下）。`session/start` の応答がその `path` を返すので AF が推測する必要が無い |
+| read 正本 | **◎ 追記のみ** | `~/.local/share/muse/sessions/YYYY/MM/DD/<sid>/session.jsonl` ——**根セッション 1 つにファイル 1 本で、subagent のレコードは同じファイルに `stream.id` 違いで混ざる**（門 B1 実測。`subagent/<id>/` ディレクトリは存在しない）。`session/start` の応答がその `path` を返すので AF が推測する必要が無い |
 | 版ピン＋sha256 | **◎ 両方、匿名で** | channel マニフェスト（`api.meta.ai/muse-code/channels/muse-stable`、匿名 200）が**版付きアドレスの** release マニフェストを指し、そこにプラットフォーム別の url・**sha256**・サイズがある（`aarch64_linux` も）。成果物自体も匿名で 206 ＝**焼くのにアカウントが要らない** |
 | 自動更新の封殺 | ◎ | `MUSE_NO_AUTO_UPDATE=1` の env 1 本。これを立ててバイナリが在れば、ランチャーは**読むだけ**になる（読み取り専用ディレクトリで `muse --version` が成功） |
 | ハーネス構築の原資 | **◎ ほぼ $0** | `--provider echo` という決定的な組み込み provider がある。`muse exec --provider echo --json` は資格情報なしで 1 セッションを完走した。アカウントは受け入れに要るのであって、構築には要らない |
-| 常駐費 | ◎ | 待機中の `muse serve` は **≈ 73 MiB RSS**（74,924 KB）。登録簿の `tuiMemoryCost` は claude 230 MiB、opencode 300 MiB（`console/src/agents/registry.ts:227,469`） |
+| 常駐費 | ◎ | 待機中の `muse serve` は **≈ 73 MiB RSS**（74,924 KB）。**負荷時はホスト＋子で 137〜147 MiB**（門 B1。最大値は subagent を生んだターン）。登録簿の `tuiMemoryCost` は claude 230 MiB、opencode 300 MiB（`console/src/agents/registry.ts:227,469`） |
 | **OS サンドボックス** | **🔴 ◎ ここでは恒久に動かない** | Linux のサンドボックスは bubblewrap（バイナリ中に `bwrap` 38・`seccomp` 50 の文字列。文献は「動作する bubblewrap と非 musl ビルドが要る。無ければサンドボックス下のシェルコマンドは全て environment failure で中断する」と言う）。門 A が実機の `bwrap` で決着させた: ユーザー名前空間は作れて全 41 能力を得るのに、**`mount(2)` と `move_mount(2)` は能力に関わらず EACCES** を返し、`fsopen` / `open_tree` は成功する——これは seccomp でも能力でもなく **AppArmor の `docker-default` プロファイル**の指紋である。muse は*埋め込み*の bwrap も同梱しており、バイナリの不在はそもそも阻害要因ではなかった |
 | **共有リポジトリへの書き込み** | **🔴 ◎ 触る** | `muse exec -w create` は `<repo>/.muse/worktrees/<日付>-<hash>` を作業根に選び、`.muse/.session-worktree-reservations/` を作り、**`.git/info/exclude` に `/.muse/worktrees/` を追記した**。リンク worktree ではそのファイルは親クローンのもの＝全セッション共有 |
-| **他 CLI の個人領域** | **⚠️ ◎ 既定で読む** | 初回起動が `Including your Codex personal rules and 5 skills` と出した。他 CLI 文脈を切らない限り `~/.claude` と `~/.codex` のスキル・ルールを拾う。しかも切るフラグ `--no-foreign-personal-context` は `muse exec` にはあるが **`muse serve` には無い**（実測: `unknown option`） |
+| **他 CLI の個人領域** | **🔴 ◎ 既定で読み、モデルまで届く** | 初回起動が `Including your Codex personal rules and 5 skills` と出した。門 B1 がその帰結を実測した: 切らないまま実ターンを回すと、**モデルの答えに `~/.claude/CLAUDE.md` の中身がそのまま出た**——利用者の Claude Code のルールが Meta へ行く。止めるフラグ `--no-foreign-personal-context` は `muse exec` にはあるが **`muse serve` には無い**（実測: `unknown option`）。効く鍵は `context.foreign_personal_rules` と `context.foreign_personal_skills` の **2 本**で、片方だけでは片方が残る |
 | 機能の重複 | ⚠️ △ | subagent（既定 1 木 8・`agents.execution_capacity` は 1〜64）、それぞれ独自にモデルを呼ぶ背景オブザーバ 4 本、workflow（生涯 1,000 子）、**利用者横断のセッション名前空間**とピアメッセージング。いずれも AF の登録簿・ミラー・使用量台帳からは見えない |
-| 認証 | △ | ブラウザサインインか API キー。`META_API_KEY`、または `muse auth set` で `~/.config/muse/auth.json` に保存。API キーは常にブラウザセッションに優先する。マネージド（MMA）アカウントはキー必須 |
-| 課金 | △ | トークン従量、または定額サブスク 3 段。サブスクの枠は **5 時間あたりのプロンプト数**で数え、Meta Model API アカウントでサインインした CLI 経由でのみ有効 |
-| 実ターンの挙動 | **× 未測** | `turn/start` は `{"error":{"kind":"authRequired","retryable":false}}` を返した。トークン使用量・モデル目録（未認証の `model/list` は `{"models":[],"source":"bundledCatalog"}`）・承認の往復・subagent イベントは資格情報 1 本が要る |
+| 認証 | **◎ デバイスコード** | `muse login` は `https://auth.meta.com/oauth/device/?code=XXXX-XXXX` を表示してポーリングする——TTY もローカルコールバックも要らず、cursor / kiro の接続カードと同じ **start→poll** の形である。保存先は `~/.config/muse/auth.json`。API キー（`META_API_KEY` / `muse auth set`）は常にアカウントログインに**優先する**ので、サブスク契約では絶対に置いてはならない |
+| 課金 | **◎ ワイヤに乗る** | トークン従量、または定額サブスク。枠は `usage/read` / `usage/changed` が `{tier, weekly{usedPercent}, window{usedPercent, windowDurationMins: 300}}` で返す。Everyday Usage で実測: 10 プロンプトで 5 時間窓が 0 % → 6 %。`model/list` の価格は 4 モデルすべて **`cost: null`** |
+| 実ターンの挙動 | **◎ 実測** | 門 B1: ターン・ツール呼び出し・承認の往復・`userInput` の往復・subagent・中断・失敗・resume・モデル呼び出しごとのトークン使用量——門 B1 の節を見よ。ワイヤが運ばない唯一のものが subagent とオブザーバの使用量である |
 | TUI の文字列契約 | × | 未測。決定 2 により不要 |
 
 ### リポジトリに既にあるもの
@@ -146,14 +146,25 @@ MSP は 1 プロセスで複数セッションを抱えられる（`session/list
 `session.Meta` を明示のホワイトリストから組み直すこと（`sessionx/session_handlers.go:1381-1390` と
 `:1083-1098`）であり、列挙されない欄は構造上引き継がれない。むしろ逆を警戒する: 将来 `Meta` を丸ごと
 コピーする経路を作ると、1 度きりの id を持ち回って次の `session/start` が `session_id_conflict` で失敗する。Muse が v5 を受けるかは未測——プローブが渡したのはスキーマが
-サーバ既定と呼ぶ v7 である。subagent の転写は `subagent/<id>/session.jsonl` にあるが、v1 では親ターン上のツール型の
-項目として描き、子ごとのペインは作らない。
+サーバ既定と呼ぶ v7 である。
+
+**subagent のレコードは `subagent/<id>/` ではなく親のファイルの中にある**——門 B1 実測で、この決定の
+初稿を訂正する。subagent を 1 つ走らせたセッションが作った `session.jsonl` は 1 本だけで、子のレコードは
+そこに混ざり `stream: {kind: "session", id: <子のセッション id>}` で区別されていた。ストアのどこにも
+子ごとのディレクトリは無い。これは読み層を単純にする（追うファイルは 1 本）と同時に、決定 10 の会計の
+穴を埋める唯一の材料でもある。v1 では subagent の活動を親ターン上のツール型の項目として描き、子ごとの
+ペインは作らない。
 
 ### 決定 5 — サンドボックスは切る。残る門は承認である
 
 `muse serve --disable-sandbox`。実測のとおり Workspace のコンテナでは bubblewrap がサンドボックスを
 組めず（`move_mount` → EACCES）、サンドボックスが ON のまま使えないと **エージェントが走らせるシェル
-コマンドは全て environment failure で中断する**＝種別として成立しない。承認はこれと直交するので ON の
+コマンドは全て失敗する**＝種別として何の仕事もできない。⚠️ 門 B1 がその場合を実際に走らせたところ、
+症状はベンダの「environment failure で中断する」より狭く、そして AF にとってはより悪い: `toolCall` の
+項目が `status: "failed"`・`visibleOutput: "bwrap: Failed to make / slave: Permission denied"` で
+返る一方、**`turn/completed` は `terminal: "completed"`** と言う。つまりフラグを付け忘れたセッションは
+Console 上では健康に見えたまま、シェルを触る仕事だけが静かに全部落ちる。だからドライバはフラグを
+「渡したつもり」にせず spawn 時に検査する。承認はこれと直交するので ON の
 まま残す。承認モードはセッションごとにワイヤ上で選ばれ、AF は `approval/requested` に
 `approval/decide` で答え、起動時の許可選択（docs/log/76）を `untrusted` | `on-request` | `never` に
 写す。
@@ -174,7 +185,7 @@ EACCES のままだった——つまり拒んでいるのは能力検査（な�
 必須とする `--ro-bind-symlink` を持たないので muse 側が拒否すること。覆るのは**ホスト側**が許す範囲
 （LSM ポリシー・seccomp・ケーパビリティ）が変わったときだけである——表の全体は門 A の節にある。
 
-### 決定 6 — `~/.config/muse/settings.json` は AF が持ち、7 つの挙動を締める
+### 決定 6 — `~/.config/muse/settings.json` は AF が持ち、8 つの挙動を締める
 
 このファイルは `"schema_version": 1` が無いと **全コマンドが起動時に落ちる**ので、盲目的にマージせず書く。
 **書き手はただ 1 つ、MCP materialize のそれである。** 下の締め付けと決定 11 の `mcp_servers` は同じ
@@ -190,7 +201,9 @@ mutex を置かない）、**自分が所有しない鍵は全部保つ**
 - **これは「JSON の MCP materializer にブロックを 1 つ足したもの」ではなく、専用の書き手である。** あの
   materializer はサーバ集合が変わらなければ早期 return し（`mcpreg/materialize_json.go:110-112`）、集合が
   空なら鍵ごと消す。MCP としては正しいが、**MCP サーバが 0 件の種別でも書かねばならない締め付けには致命的**
-  である。よって muse は `mcpreg` の中に自前の書き手を持ち、締め付けと `mcp_servers` を 1 パスでマージする。
+  である。よって muse は `mcpreg` の中に自前の書き手を持ち、締め付けを 1 パスでマージする。（門 B1 でこの
+  書き手の仕事から `mcp_servers` の半分が消えた——決定 11 を見よ。ワイヤ経路が効くので、AF がサーバ
+  ブロックをファイルへ書く必要はもう無い。）
 - **締め付けは fail-close で、門は `Resume` の内側に置く。** 今の `Materialize` は設計として失敗を
   ログに落として飲み込み（「MCP 設定が更新できなくてもセッションは起動しなければならない」）、
   `StartManagedSession` は結果を見ずに `Resume` する（`mcpx/mcp_materialize.go:30-41`）。MCP にはそれが
@@ -204,29 +217,42 @@ mutex を置かない）、**自分が所有しない鍵は全部保つ**
   （`agents/kiro/program.go:196-208`）で、その 2 つの欠陥は直す——`sync.Once` にしないこと、エラーを
   握り潰さないこと。起動時の `MaterializeAll` は全種別で best-effort の契約を保つ。
 
-ロックについての主張は意図的に弱くしてある。`.settings.json.lock` が現れたことが示すのは「Muse がロック
-規約を**持つ**」ことであって、どの規約かではない。段 1 門 B1 で設定更新と意図的な競合の syscall を追跡し、
-AF は同じ規約を取る——他の `.lock` が `flock` だから `flock` だろうと推測するのは、2 人の書き手が礼儀正しく
-互いを無視する道である。
+**ロック規約は推測でなく実測である**（門 B1・syscall）: `open(".settings.json.lock",
+O_RDWR|O_CREAT, 0666)` → `flock(LOCK_EX)`（BSD の advisory flock・ブロッキング・`LOCK_NB` 無し）→ 同じ
+ディレクトリに一時ファイル → `fchmod` → `fsync` → `rename` で差し替え → ディレクトリの `fsync` →
+`flock(LOCK_UN)`。AF はこれをそのまま取る。設計を変える実測が 2 つある。**muse はロックを取る*前*に
+ファイルを読む**（実測: 読みは `flock` の 11 syscall 前）ので、muse 自身の更新も「保護されていない読み」
+の read-merge-write であり、AF は書いたあとに読み直して確認しなければ自分のマージが生き残ったと言えない。
+そして**muse は握られたロックを無期限に待つ**ので、AF が遅い処理を挟んでロックを持ち続けると利用者が
+叩く `muse` コマンドが全部止まる。
 
-AF が設定するのは:
+AF が設定するのは（綴りと効き目は門 B1 の実測。どの 2 つが「綴りだけ」なのかも含めて門 B1 の節に表がある）:
 
 1. `agents.execution_capacity` を小さく。放っておくと 1 セッションが、メモリ制約のある共有ホストで
    8 エージェントを走らせる。
 2. 背景オブザーバを OFF。4 本がそれぞれ独自にモデルを呼ぶ＝従量アカウントでは見えない出費、
-   プロンプト枠のサブスクでは見えない枠消費になる。
-3. workflow を OFF（`auto` は 1 セッションに最大 1,000 の子を許す）。
-4. worktree 隔離を OFF、`-w` は渡さない。決定 7。
+   プロンプト枠のサブスクでは見えない枠消費になる。**そして実測では、出費よりターン時間に効く: 同じ
+   一行の答えが 17.9 秒 対 4.5 秒**——答え自体は 6.3 秒で出ているのに、終端の門がオブザーバを待つ
+   （`eot_gate_ms: 11518`）。設定鍵は見つからず、効いた経路は子の環境変数
+   `MUSE_EXPERIMENTAL_{SKILL,GOAL,VERIFY,TODO,MEMORY,SCOPE}_REMINDER=0` である。
+3. workflow を OFF——`run.workflow_trigger_mode: "off"`、実測でツール一覧から `muse.workflow` が消える
+   （`auto` は 1 セッションに最大 1,000 の子を許す）。
+4. worktree 隔離を OFF、`-w` は渡さない。決定 7。子を一切許さない配備では
+   `run.subagent_delegation_mode: "off"` も——実測で `muse.subagent_*` 6 本が丸ごと消え、これが決定 10 の
+   台帳を exact にする最も安い方法である。
 5. 他 CLI の個人文脈を OFF。`~/.claude` と `~/.codex` を読むことは、別種別の指示層をこの種別に黙って
-   混ぜることであり、その 2 つはワークスペース方針で触れてはならない場所でもある。**経路は設定ファイル
+   混ぜることであり、その 2 つはワークスペース方針で触れてはならない場所でもある。**これは仮定ではない:
+   実測で、実ターンの答えに `~/.claude/CLAUDE.md` の中身が出た**——利用者の Claude Code のルールが
+   Meta へ行った。**経路は設定ファイル
    だけである**: `--no-foreign-personal-context` は `muse exec` にはあるが **`muse serve` には無い**
    （実測——`muse serve … --no-foreign-personal-context` は `unknown option` と答える）。決定 2 により
-   AF が動かすプロセスは `serve` だけなので、フラグは選択肢にならない。鍵の綴りは門 B1 の項目とする
-   （バイナリには `allow_foreign_configuration` と `foreign_personal_fallback` の両方があり、フラグ名
-   からは推測できない）。
+   AF が動かすプロセスは `serve` だけなので、フラグは選択肢にならない。鍵は **2 本**
+   ——`context.foreign_personal_rules: false` と `context.foreign_personal_skills: false`——で、片方だけ
+   では片方が ON のまま残る。
 6. 承認ジャッジを OFF（`--approval-judge off` か `MUSE_DISABLE_APPROVAL_JUDGE`）。**既定 ON** で、
    Prompt 由来の承認ごとに独自のモデル呼び出しをする。従量アカウントでは利用者が頼んでいない出費で、
-   決定 5 は承認を残すので頻繁に発火する。
+   決定 5 は承認を残すので頻繁に発火する。⚠️ 締め付け 5 と同じくこのフラグも `muse serve` には無く、
+   門 B1 は設定鍵を**見つけられなかった**。候補は環境変数だけで、効き目は未測である。
 7. このセッションの外へ手を伸ばす同梱スキル。`muse skills list` には `resume-claude`・`resume-codex`・
    `import`・`migrate`・`read-session` が最初から入っており、その役目は Claude Code や Codex の転写・
    メモ・MCP サーバを読むことである（締め付け 5 が統制するのは他 CLI 規則の*発見*で、これらは要求時に動く
@@ -237,6 +263,21 @@ AF が設定するのは:
    `skills.activation.bundled["bundled://muse-core/skills/resume-claude/SKILL.md"] = "off"` を書く。
    鍵は skill id ではなく**パック名込みのパス**なので、1.4 で改名や移設があれば黙って再有効化される。
    これは門 B1 だけでなくドリフト検査の項目である。
+8. **contributor でないモデルをセッションごとにピンする。** 門 B1: ホスト既定のモデルは
+   `muse-spark-1.3-contributor` で、目録の説明文は "Your content, including inter-session messages,
+   may be used for product improvement" と書いてある。設定鍵は無く、経路は
+   `session/start.modelId`（と `session/setModel`）で、これは resume 後にモデルを渡さない場合も含めて
+   全てのモデル呼び出しで honour される。これは技術でなく**方針**の締め付けである: 利用者のコードを
+   製品改善に渡さないと AF が代わりに決めるという話で、既定としては正しいが、ここに埋めずガイドに
+   書かねばならない。
+   ⚠️ セッションの*保存メタデータ*と `session` 射影は contributor の id を返し続ける（5 セッション
+   すべてで実測）ので、Console はモデル表示を `session/tokenUsage.modelId` から取る。射影から取っては
+   ならない。
+
+**黙って失敗する形が 2 つあり、鍵ごとの振る舞い試験を必須にする**（門 B1）: muse が厳密に解釈する節の
+中で綴りを間違えると `muse serve` は **`initialize` の前に rc=3 で落ち**、それ以外の場所で間違えると
+ホストは何の診断も出さずに起動して**締め付けだけが効いていない**。「JSON を書いた」は締め付けが
+効いている証拠にならない。
 
 Muse 自身のピアメッセージングとセッション名の権威
 （`~/.local/share/muse/session-name-authority/`、利用者横断）は、v1 では AF の cross-session messaging に
@@ -254,6 +295,12 @@ worktree では親クローンの、全セッション共有のファイルで�
 （決定 6）、この種別は「ブランチも worktree も作らない種別」として宣言する。並行して書きたい利用者には AF 自身の worktree がある。それが worktree の
 用途である。
 
+**門 B1 が、この主張のもう半分——これまで仮定だった側——を実測した。** `-w` を渡さずに 5 セッション・
+実ターン 6 本（シェルのツール呼び出し・ファイルを書いた subagent・中断・resume）を回して、作業コピーに
+増えたのはエージェントに作らせたファイルだけだった: `.muse/` も
+`.muse/.session-worktree-reservations/` も無く、`.git/info/exclude` は git 既定とバイト一致、
+`git worktree list` も 1 件のまま。共有状態の危険は `-w` に固有で、渡さないことで足りる。
+
 ### 決定 8 — 配備はピン版の焼き込み。`~/.local/bin` の影を見張る
 
 **Muse Code はプロプライエタリなので、配布されるイメージには入らない**——Claude Code・Copilot CLI・
@@ -270,10 +317,15 @@ lean とし、`NOTICE:57-62` が読み手向けに「プロプライエタリな
   `entrypoint.sh:299-349`）、この ADR が下で取り違えていた点がそこにある。AF がそこへ置くのは
   **ベンダの bash ランチャではなくバイナリ**で（門 A: manifest の成果物が*バイナリそのもの*で単体で
   動く）、AF 自身の導入分には自己更新経路が一切無い。
-  ⚠️ **無条件ではない。** 門 A では明示 opt-in（`AF_MUSE_BOOT_INSTALL=1`・既定 OFF）として入れた。
-  段 2 より前に存在しない種別のために新しいコンテナ全部が 299 MiB を払うのは、kiro（855 MiB）を
-  既に無条件 boot-install から外したのと同じ勘定だからである。**段 2 ではこのフラグを ON にするのでは
-  なく、kiro の道を最後まで行く**（利用者ごとのオンデマンド `workspace-agent install-muse`）。
+  ⚠️ **無条件ではなく、そして「門 A 成果物の要否」の結論として今はツリーにも無い。** 門 A では明示
+  opt-in（`AF_MUSE_BOOT_INSTALL=1`・既定 OFF）として入れた。段 2 より前に存在しない種別のために新しい
+  コンテナ全部が 299 MiB を払うのは、kiro（855 MiB）を既に無条件 boot-install から外したのと同じ勘定
+  だからである——そして同じ勘定で opt-in 自体も抜いた（種別が無い間、誰もそこへ到達できない）。
+  **段 2 は kiro の形を書く**（利用者ごとのオンデマンド `workspace-agent install-muse`）。抜いたコードが
+  知っていたことを、段 2 が再発見せずに済むようここに残す: 成果物の URL は
+  `https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=<版>&file=<asset>`
+  で `<asset>` は `muse-x86-linux` / `muse-aarch64-linux`、検証する sha256 は版別 release manifest の
+  `artifacts.{x86_linux,aarch64_linux}.checksum`、落ちてくるのはバイナリ実体で `muse` の名前で置く。
 - **`BAKE_AGENT_CLIS=1`**（初回起動を速くしたい自社配備）: `ARG MUSE_VERSION` ＋アーキ別 sha256 を
   ビルド時検証し、ランチャーが期待する配置（ランチャーの隣に `muse-bin-<版>` と `.muse-version`）で
   `/usr/local/share/muse` に置く。この配置が読み取り専用でも動くことは実測した。
@@ -297,12 +349,22 @@ variant では **AF 自身も同じ場所に置く**ので、**パスで検知�
 `Muse Code 1.3.0 (1.3.0-R3401.1)` と出るので、比較は括弧内のビルド id を取る必要がある。agy の
 ブロックが使う `tr -dc '0-9.'` の流儀では `-R3401.1` が落ちて毎起動で不一致になる。
 
-### 決定 9 — 資格情報は保存型 API キー、入力は 1 回
+### 決定 9 — 資格情報はデバイスコードのアカウントログイン。API キーはその代替
 
-**`muse auth set --api-key-stdin`**——このフラグは省略できない。`muse auth --help` は usage を
+**門 B1 による訂正で、これは注記でなく接続カードの形が変わる話である。** `muse login` は
+**デバイスコード**方式だった: `https://auth.meta.com/oauth/device/?code=XXXX-XXXX` を表示して、利用者が
+手元のブラウザで承認するまでポーリングする。TTY もローカルコールバックも要らず、この箱にできないことは
+何も無い——cursor と kiro の接続カードが既に実装している **start → poll** と同じ形である
+（kiro の前例は start / poll / delete の 3 本、`control-plane/routes.go:869-875`）。実サブスクで端から端まで
+実測した: managed 経路でターンが回り、`turn/completed` は `terminal: "completed"` を返した。
+
+🔴 **サブスク契約では AF が API キーを書いてはならない。** `muse auth set --api-key-stdin` も
+`META_API_KEY` も保存済みのアカウントログインに**優先する**ので、書いた瞬間に利用者は定額から従量へ
+黙って移る。よって API キーは従量利用の経路としてのみ残し、その入力方法は変わらない:
+`muse auth --help` は usage を
 `muse auth set [--provider <PROVIDER>] --api-key-stdin` と出し、`muse auth set --help` は「秘密を渡す
 唯一の許された方法」「コマンドライン引数としては決して受け取らないのでシェル履歴に残らない」と説明する
-（どちらも 1.3.0 で実測）。保存先は `~/.config/muse/auth.json`。
+（どちらも 1.3.0 で実測）。どちらの経路でも保存先は `~/.config/muse/auth.json`。
 
 **ファイル拒否リストに入れるのは 1 つでなく 2 つ**: `~/.config/muse`（資格情報）と
 `~/.local/share/muse`（全セッションの会話全文と、利用者横断のセッション名権威）。前例はそのままある——
@@ -311,33 +373,62 @@ variant では **AF 自身も同じ場所に置く**ので、**パスで検知�
 
 子プロセスの環境変数に `META_API_KEY` を撒く形は採らない。cursor が env 注入を断った理由
 （ADR 0023）がそのまま効き、さらに **API キーは常に保存済みサインインに優先する**ので、env のキーは後から
-サインインした利用者を黙って無効化する。よって接続カードは **入力 1 つ**——既存のどの種別より簡単である。
-切断は `muse logout`。
+サインインした利用者を黙って無効化する（サブスクなら従量へ落とす）。
 
-未決: Muse Code の**サブスク**利用者（従量ではない）は CLI のオンボーディング中にブラウザでサインインする
-が、この箱にその導線は無い。段 1 の門 **B2** で、サブスクの資格情報を別の場所で作って貼れるのか、それとも v1 は
-サブスク対象外なのかを決める。
+**門 B2 は「可」で閉じる**: サブスクにこの機械でのブラウザオンボーディングは要らないので、サブスクは
+v1 の対象で、ガイドに「従量のみ」の但し書きは不要である。よってカードは入力 1 つではなく**導線 2 つ**に
+なる——「サインイン」（デバイスコード・start→poll・既定）と「API キーを使う」（秘密 1 つ・従量）で、
+切断は `muse logout`。
 
 ### 決定 10 — 使用量とモデル一覧はプロトコルに乗る
 
-`usage/read`・`session/tokenUsage`・`session/contextUsage` がワイヤにあるので、`muse` は
-`usageMeasuredForKind` の **exact** 集合（`usage_fold.go:206`）に入る見込みである。ただし測っていない
-「exact」こそあの switch が防ぐために存在する嘘そのものであり、**成功ターン 1 本はその証拠にならない**。
-門は段 1 門 B1 の会計マトリクスである: キャッシュ入力が別に数えられるか、subagent とオブザーバの呼び出しが
-帰属する（か、除外されると示せる）か、失敗ターンと中断ターン、`session/resume` 後の数字（二重計上が無い
-こと）、そして値が累積か毎ターンか——累積カウンタを差分として畳むのが、台帳が黙って倍になる手口である。
-これに満たなければ `MeasuredPartial` に落とす。そちらが正直で、`MeasuredExact` はそうではない。
-**チップ 2 つには出所が無く、ADR はそれを取り繕わない。** 費用推計は種別→models.dev プロバイダの表
-（`workspace/agent/usage_catalog.go:45-55`）を読むが、そこに Meta の行は無い——金額を出すにはトークン
-単価をどこかから持ってくる必要がある。サブスクの残量は「5 時間あたりのプロンプト数」で、これは
-`get_agent_usage`（claude / codex / agy）の形であってトークン台帳ではないうえ、Muse がそれを見せるのは
-TUI の `/upgrade`＝`serve` に無い面である。v1 はトークン台帳だけで、費用チップも残量チップも無しで出荷
-する可能性がある。それは段 2 の決定であり、「機能が無い」と後から発見しないようここに名指ししておく。
+`usage/read`・`session/tokenUsage`・`session/contextUsage` がワイヤにあり、門 B1 の会計マトリクスを
+走らせた。**判定は `MeasuredPartial`**（`usage_fold.go:204-212`）で、理由はこの決定が恐れていたものでは
+なかった。キャッシュ入力はきれいに分かれており（`cacheReadTokens` は `inputTokens` の内側で、サーバ導出の
+「1 回だけ数えた」`promptTokens` が別にある）、累積を差分にする必要は無く、失敗ターンは何も報告せず、
+中断ターンは使った分だけを報告し、`session/resume` は使用量イベントを **1 つも**再生しない——二重計上は
+どこにも無い。
+
+🔴 **足りないのは帰属である。** subagent とオブザーバのモデル呼び出しは `session/tokenUsage` に
+**決して**畳み込まれない——スキーマが 1 行でそう書いており、門 B1 がそれを実測した: subagent 1 つを
+含むターンはワイヤ上 88,077 プロンプトトークンを報告したが、耐久ログには 6 回の呼び出しで 116,816 が
+記録され、うち 2 回の持ち主は `subagent-1`（`owner_type: "native_child"`）だった。通知だけを畳むと
+このターンを **24 % 過少**に数える。よって exact には代価が要る: 通知ではなく耐久ログの
+`goal_usage_attribution`（持ち主を持っている）を畳むか、決定 6 の締め付け（subagent とオブザーバを OFF）
+に頼るか。**締め付けた状態ならワイヤの数字は完全である**ので、安い v1 は「switch は `MeasuredPartial`・
+締め付けは ON・exact への扉は開けたまま」である。
+
+**チップは 1 つが出所なし、もう 1 つは ADR が形を取り違えていた。** 費用推計は種別→models.dev プロバイダの表
+（`workspace/agent/usage_catalog.go:45-55`）を読むが、そこに Meta の行は無く、認証後の目録も 4 モデル
+すべて **`cost: null`** なので、トークン単価は依然としてどこにも無い——v1 はトークン台帳を出し、費用
+チップは出さない。残量の方は**ワイヤに乗っている**: `usage/read` と、こちらが聞かずに飛んでくる
+`usage/changed` が `{tier, weekly{resetsAtMs, usedPercent}, window{resetsAtMs, usedPercent,
+windowDurationMins: 300}}` を運ぶ——`get_agent_usage`（claude / codex / agy）が既に話す形であって、この
+決定が仮定した「TUI の `/upgrade` にしか無い」ではなかった。⚠️ ただしそれは問い合わせではなく**その
+ホストが最後に観測した値**である: 実測で、完了を 1 度も見ていない `usage/read` は `{}` を返す。決定 3 の
+「セッションごとに 1 ホスト」では、**起動直後のセッションは最初のターンが終わるまで残量チップを持たない**。
 
 `model/list` がピッカーを支えるので、`agentModels.ts:34-35` の `isDynamic` に `muse` を足すこと。この 1 行は
 新種別のたびに漏れてきた（copilot・cursor）もので、症状は「モデル選択肢が既定だけ」である。
 
-### 決定 11 — MCP: 共有設定ファイルに書き込む新方言
+### 決定 11 — MCP はワイヤに乗せる（`session/start.config.mcpServers`）。共有設定ファイルは利用者のものとして残す
+
+**門 B1 がこの決定の保留を、安い方に倒して決着させた。** stdio サーバ 1 本を
+`session/start.config.mcpServers` だけで渡し（`capabilities.requestedCapabilities: ["sessionMcp"]`＝
+許諾された。`MUSE_ENABLE_SESSION_MCP` は**立てていない**）、実接続が成立した: サーバ側のログに muse の
+ハンドシェイク（`clientInfo {"name":"tbh","version":"0.1.0"}`・MCP `2025-06-18`）と `MUSE_SESSION_ID`・
+config の `env` 追加が残り、そのツールは `mcp__<server>.<tool>` の名前でモデルに届いた。`mode: "optional"`
+もワイヤで受け付けられる。
+
+よって **AF は MCP をセッションごとにワイヤで渡し、`mcp_servers` ブロックを一切書かない。** 帰結は 3 つ:
+決定 6 の設定書き手は締め付けだけを運び、lost update の面もそれだけに縮み、そして利用者横断のファイルでは
+表現できない**セッションごとのサーバ集合**が可能になる。
+⚠️ **サーバが起動するのは `session/start` ではなく最初のターンである**（実測: セッションを作るだけの
+実行 3 本ではプロセスすら生まれなかった）ので、セッション作成時に MCP の疎通を見る実装は永遠に
+「未接続」を読む。
+
+ファイル経路は **書かないが文書化する**: 利用者自身の `mcp_servers` ブロックは、AF が所有しない他の鍵と
+同様にそのまま保たれる。だからその形はやはり重要である:
 
 `mcp_servers` は同じ `settings.json` の中のブロックで、`transport: stdio | streamable_http`、
 `command`/`args`/`env` か `url`/`headers`、`enabled`、そして **`mode`（既定 `required`）——required の
@@ -345,15 +436,10 @@ TUI の `/upgrade`＝`serve` に無い面である。v1 はトークン台帳だ
 利用者に選ばせない。壊れたテナントのサーバのせいでエージェントが起動を拒むのは筋が悪く、しかも登録簿に
 その選択を置く場所が無い——`secrets.MCPServer`（`workspace/agent/internal/secrets/secrets.go:302-324`）は
 `enabled`・`targets`・`kinds`・`timeoutMs` は持つが `mode` を持たないので、選ばせるなら欄の新設＋ワイヤ＋
-Console＋保存済み定義の移行が要る。段 2 で発見するのではなく、ここで対象外と名指ししておく。
+Console＋保存済み定義の移行が要る。段 2 で発見するのではなく、ここで対象外と名指ししておく。AF 自身の
+サーバをワイヤで渡すときも同じ理由で `mode: optional` にする。
 
-**第 2 の経路があり得るので、段 1 で選ぶ。** `session/start` と `session/resume` は `config` を取り、
-今そこに許されている唯一のメンバーが `mcpServers` である（`SessionConfig`、スキーマで実測）。セッション
-ごとのサーバ一覧がワイヤで効くなら、MCP は共有設定ファイルに入る必要が無くなる——締め付けは依然として
-入るが、書き手は独立した 2 ブロックのマージでなくなり、「設定の書き手＋MCP 方言」の作業パッケージが縮む。
-門 B1 でサーバ 1 本を両方の経路で送り、実際に接続された方を採る。
-
-`${VAR}` 展開があり、stdio サーバには `MUSE_SESSION_ID` が渡る。`muse` は `knownKinds`
+`${VAR}` 展開があり、stdio サーバには `MUSE_SESSION_ID` が渡る（実測）。`muse` は `knownKinds`
 （`mcpreg/def.go:57-61`）と `MaterializedKinds`（`materialize.go:47`）に入る。プロジェクトスコープは
 `mcpproj` の `kindInfos`（`mcpproj/inspect.go:50-58`）に **`HasProjectScope: false`** で入る——agy と同じ形
 ——Muse のプロジェクトスコープ綴りが文献に無いからである。`fileSpecs`（`inspect.go:36-44`）には行を足さない
@@ -362,7 +448,7 @@ Console＋保存済み定義の移行が要る。段 2 で発見するのでは�
 `Notification` を含む 15 のライフサイクルイベント）は**使わない**。フックが報せることはプロトコルが既に
 報せており、リポジトリ内のフックファイルは共有状態だからである。
 
-### 決定 12 — プロジェクト層はホスト単位の決定 1 つ（`--trust-workspace`）を要求する。利用者層とフリート層は実測の穴であり、`instrSupportedKinds` はそれを待つ
+### 決定 12 — プロジェクト層はホスト単位の決定 1 つ（`--trust-workspace`）を要求する。利用者層はルールファイル 1 本で、AF の 2 経路がそれを分け合う
 
 プロジェクトスコープは**タダではない**——初稿と第 2 稿はここを間違えていた。Muse がリポジトリ自身の
 `AGENTS.md` / `CLAUDE.md` を読むのは workspace を信頼した後だけで、信頼していないセッションは実測のとおり
@@ -388,11 +474,30 @@ Muse が `~/.claude` と `~/.codex` を読むのを止めるだけで、どち�
 `/etc` 配下のファイルとして届く、さらに別経路）、利用者自身の文章は種別ごとの `ApplyUserInstructions`。
 それぞれ書込先も成果物も違う。`instrSupportedKinds:83` は「両方を持つ種別」の一覧である。
 
-**Muse の書込先は 2 つとも確定していない**——echo provider の実行を信頼あり／なしの両方で追跡しても、開いた
-経路はプロジェクト直下の `.agents` の探索だけだった（その provider ではルールの組み立てが走らないため）。
-よって `muse` が `instrSupportedKinds` に入るのは**両方の書込先を別々に実測した後**（段 1 門 B1 が会計
-マトリクスと同じ実行で測る）。段 2 には両方の apply 経路と Console の種別別配布状態を含める。それまでは
-プロジェクト指示だけで出荷し、ガイドにそう書く——利用者に「フリート方針も届いているはず」と誤解させない。
+**門 B1 が両方の書込先を実測し、答えは「muse にはルールファイル 1 本とスキル根 1 つしかない」だった。**
+候補の場所にマーカーを置き、モデル自身の答えから読み返し、syscall 追跡を第 2 の証人にした:
+
+- **利用者層のルール: `~/.config/muse/AGENTS.md`**（`$XDG_CONFIG_HOME/muse/AGENTS.md`）。そこへ置いた
+  文章が答えに出た。`~/.config/muse/CLAUDE.md` も探索されるので、プロジェクト層と同じ「AGENTS.md 優先」が
+  ここでも効くと見られるが未測である。`$museHome` 配下は読まれない。
+- **フリート topic の経路は新しい仕組みを要さない**: `~/.config/muse/skills/<名前>/SKILL.md` を手で置く
+  だけで `muse skills list --source user` が拾う（install 手順も lock ファイルの登録も不要）。よって
+  `fleetskills.Apply`（`agent_instructions.go:135-141`。今は claude / codex / opencode）は muse でも
+  そのまま使える。
+- 🔴 **ただし `ApplyFleetNotes` と `ApplyUserInstructions` はその 1 本の `AGENTS.md` を分け合うしかない。**
+  他の種別は steering のディレクトリ（kiro の `agent-fleet-guide.md` と `agent-fleet-user.md`）か、別々の
+  成果物を持つ。muse はファイルが 1 本なので、段 2 が明示的に決める必要がある——区切り付きの節に分けて
+  AF が `~/.config/muse/AGENTS.md` を所有し（順序は `applyInstructionsLocked` と同じくフリート方針が先）
+  ガイドにそう書くか、マーカーで利用者の文章にマージするか。muse の指示層が kiro より*やりにくい*唯一の
+  場所である。
+
+よって `muse` は段 2 で両方の apply 経路とともに `instrSupportedKinds`（`agent_instructions.go:83`）に
+入り、Console の種別別配布状態も一緒に来る。
+
+⚠️ ガイド向けの範囲注記: `foreign_personal_*` が統制するのは**個人**層だけである。両方の締め付けを ON に
+して workspace を信頼しても、muse は*リポジトリ側*の `.claude/CLAUDE.md`・`.claude/skills/`・
+`.codex/skills/`・`.claude-plugin/plugin.json` を探索する（実測）。このリポジトリではそれらは実在し、
+プロジェクト文脈として読まれる。
 
 ### 決定 13 — 能力宣言と、本当に新しい唯一の能力 `Permissions`
 
@@ -424,6 +529,22 @@ managed 専用の門と同じく、先に着地した方が払う。
 `Questions` は別に true で、しかも**承認とは別チャネル**である: `userInput/requested` →
 `userInput/answer`、締めが `userInput/settled`。承認は「これを実行してよいか」、user-input は利用者への
 質問である。質問の種別は AF に既にある。作るのは承認の方である。
+
+**門 B1 は両方の往復を実際に回した。実測の細部 2 つは、驚きとしてではなくドライバの仕様として書く。**
+第 1 に、**ホストはどちらも通知で届ける**——スキーマが併記する server-initiated な `approval/request` /
+`userInput/request` ではない。要求形だけに答えるクライアントは、ターンを
+`attention: ["approvalPending"]` のまま永久に放置する（実際にそうなった）。第 2 に、**どちらも再送
+される**。2 度目に答えると `-32056 userInputAlreadySettled` が
+`settlement.outcome: "answered"` を添えて返るので、ハンドラは冪等にし、このエラーを失敗でなく成功として
+読まねばならない。
+
+形そのものは扱いやすい。承認は `toolName`・`rawArgs`・`judgeEscalated`・`protectedWrite`・`subject`
+（`kind: "shell"`・`command`・段ごとに解析済み `argv` を持つ `stages[]`）を運び、`onRequest` モードでの
+`availableChoices` はちょうど **2 つ**——`allow_once`（`decision: "approved"`・`scope: "once"`）と
+`abort`（`acceptsFeedback: true`）だけである。つまり最初の許可カードにスコープ選択は要らず、未解決 5 も
+答えが出た: 描くのは `subject.command` と段の argv で足りる。`requirementId` はそのまま返すこと——多段の
+競合を防ぐ番人である。そして `userInput` の質問は AF の既存の interaction に欄ごと対応する:
+`{id, header, question, selection: {mode: "single"}, options: [{label, description}]}`。
 
 ## 段 2 が触る面
 
@@ -457,10 +578,11 @@ managed 専用の門と同じく、先に着地した方が払う。
 - **Muse のピアメッセージングを AF のそれに繋ぐ。** 1 つの名前空間に 2 つの経路、片方はミラーに映らない。
 - **コミュニティの ACP アダプタ**（`muse-code-acp`）を managed の継ぎ目にする。版と指紋を持つ一次
   プロトコルの前に、第三者の翻訳層を挟んでも損しかしない。
-- **kiro 形の利用者ごとオンデマンド導入。** 違いは置き場所ではない——出荷 variant も `~/.local` に置く
-  （決定 8）。違いは**ピン**である: kiro のそれは自己更新し利用者の要求で入るが、boot-install は起動の
-  たびに `versions.json` のピンへ戻す。ここで却下しているのは「ピンの無い自己更新バイナリ」であって、
-  home ディレクトリではない。
+- **ピンの無い、自己更新する利用者ごと導入。** オンデマンド導入そのものではない——段 2 は意図して
+  kiro の形を取る。ほとんどの利用者が使わない種別のために新しいコンテナ全部が 299 MiB を払うのが、
+  kiro を boot-install から外した勘定だからである。置き場所も違いではない（出荷 variant も `~/.local`
+  に置く。決定 8）。却下しているのは**ピンを落とすこと**で、導入は `versions.json` のピンへ戻し、
+  接続カードは `muse --version` の括弧内ビルド id をそれと突き合わせる。
 - **プロトコルの良さだけで今すぐ採用する。** 下の 3 門は安く、どれも「いくら読んでも分からないこと」を
   見に行くものである。
 
@@ -519,26 +641,32 @@ managed 専用の門と同じく、先に着地した方が払う。
 | 段 | 内容 | 次への門 |
 |---|---|---|
 | 0 | この ADR のプローブ（2026-09-20 完了）: 導入・MSP 疎通・ピンとチェックサム・worktree と他 CLI 文脈の挙動・常駐費 | — |
-| 1 | **門 A — ✅ 完了 2026-09-20**（門 A の節を見よ）: `bwrap` を焼いて走らせ、免除は恒久と確定、拒否している主体を名指しした（AppArmor `docker-default`）。加えて前提を 2 つ訂正（muse は自前の bwrap を埋め込む／Debian のものは `--ro-bind-symlink` を持たない）。決定 8 の出荷経路も一度通った——sha256 検証・`muse --version` とピンの一致・影の repin 両方向——そしてその過程で実在の欠陥が出た: sha256 検証が boot-install 5 か所すべてで飾りだった。**門 B1**（2〜2.5 日）: API キー 1 本と、決定 10 の会計マトリクス（キャッシュ・subagent・失敗／中断ターン・resume 後・累積か毎ターンか）、加えて `model/list`、`approval/requested` の往復 1 回、`userInput/requested` の往復 1 回、subagent 1 つ、**負荷時のホスト RSS**（決定 3 は待機 73 MiB に乗っており、その再評価条件は自分で「負荷時の実測」を求めている）、**締め付け 7 つそれぞれの効き目**（鍵の綴りだけでなく。書けるが効かない鍵は締め付け無しより悪い——決定 6 はその前に fail-close を置いているからである）、決定 12 のフリート層と利用者層の書込先（別々に）、決定 6 の締め付け 7 つの設定鍵（綴りはフラグ名から推測できない）、設定ファイルのロック規約を syscall で、`session/start.config.mcpServers` が効くか（決定 11 の第 2 経路）、そして **`-w` を渡さない通常実行**が作業コピーに何を書くか（決定 7 は今 `-w` の実測だけに乗っている）。**門 B2**（0.5 日）: この箱で走らせられないブラウザオンボーディングを前提に、**サブスク**の資格情報を別の場所で取得してここに入れられるか。⚠️ B1 は 9 項目を抱えており、ロック規約の追跡だけで半日級である。溢れた場合に段 2 へ回してよいのは MCP の第 2 経路と締め付けの鍵の綴りで、会計マトリクスは決して回さない | A と B1 に答えが出て、利用者が決定 6 の締め付けと出費を受け入れる。B2 は「不可」でもよい——その場合 v1 は従量のみとガイドに書いて段 2 へ進む |
-| 2 | 実装: 種別配線、MSP クライアントと生成型、ドライバ、転写、使用量、設定＋MCP 方言、接続カード、配備、ガイド、この ADR を *adopted* へ | — |
+| 1 | **門 A — ✅ 完了 2026-09-20**（門 A の節）: 免除は恒久と確定し、拒否している主体を名指しした（AppArmor `docker-default`）。前提も 2 つ訂正した（muse は自前の bwrap を埋め込む／Debian のものは `--ro-bind-symlink` を持たない）。決定 8 の出荷経路も一度通り、その過程で実在の欠陥が出た: sha256 検証が boot-install 5 か所すべてで飾りだった。配備側の成果物はその後この版で抜いた——「門 A 成果物の要否」節を見よ。 **門 B1 — ✅ 完了 2026-09-20**（門 B1 の節）: サブスクのプロンプト 10 本で、会計マトリクス（キャッシュ・subagent とオブザーバの帰属・失敗ターンと中断ターン・resume 後・累積か毎ターンか）、`model/list`、`approval` の往復、`userInput` の往復、subagent 1 つ、負荷時 RSS、締め付け 5 つの効き目と 6 つの綴り、ロック規約の syscall、指示層の書込先、MCP のワイヤ経路、`-w` 無しの実行が作業コピーに書くもの——を買った。 **門 B2 — ✅「可」**: `muse login` はデバイスコードなので、サブスクは対象である | **3 門とも回答済み。** 残るのは計測でなく利用者の判断: 決定 6 の締め付け（製品改善データについての方針判断である締め付け 8 を含む）と出費を受け入れるか |
+| 2 | 実装: 種別配線、MSP クライアントと生成型、ドライバ、転写、使用量、設定の締め付け書き手、接続カード、配備、ガイド、この ADR を *adopted* へ | — |
 
-## 未解決（段 1 で答える）
+## 未解決
 
-1. 決定 10 の会計マトリクスを丸ごと——ターン 1 本ではない。`MeasuredExact` か `MeasuredPartial` かが
-   決まり、ここを間違えると台帳が黙って倍になる。
-2. Muse が**利用者スコープ**のルールをどこから読むか。決定 12 が `muse` を `instrSupportedKinds` に
-   入れられるようになる。プローブでは決着しなかった（echo provider ではルールが組み立てられない）。
-3. サブスクと従量（門 B2）: この箱で走らせられないブラウザオンボーディング抜きに、サブスクの資格情報は
-   作れるか。作れないなら v1 は従量のみで、ガイドにそう書く。
-4. 認証後の `model/list` は目録を返すか。返すとして、copilot や cursor のようにプラン依存か
-   （「Free では named model 不可」型の失敗）。
-5. 承認の描き方: `approval/requested` は段階的なシェル審査の情報を運ぶ。そのどこまでを、新しいカード種別を
-   増やさずにミラーの許可カードで出せるか。
+7 つのうち 5 つは答えが出た。残りは別の門ではなく段 2 で答える。
+
+1. ✅ 決定 10 の会計マトリクス——**`MeasuredPartial`**。理由は subagent とオブザーバの使用量がワイヤに
+   出ないことであって（門 B1-1）、キャッシュでも累積の畳み方でもない。その 2 つはきれいだった。
+2. ✅ Muse が**利用者スコープ**のルールを読む場所——`~/.config/muse/AGENTS.md` 1 本で、AF の 2 つの apply
+   経路がそれを分け合う。フリート topic は `~/.config/muse/skills` へ（門 B1-5）。
+3. ✅ サブスクと従量（門 B2）——**デバイスコードなのでサブスクは対象**。
+4. ✅ 認証後の `model/list` は 4 モデルを返す（`source: providerCatalog`・`contextLimit 1007997`・
+   `outputLimit 128000`・`cost: null`）。プラン依存は見られなかったが、🔴 **既定が
+   `muse-spark-1.3-contributor`** である——締め付け 8 はそのために在る。
+5. ✅ 承認の描き方——`subject.command` と `subject.stages[].argv`、選択肢 2 つ、スコープ選択は不要
+   （門 B1-2）。
 6. セッションごとのホストの `session/list` が、他の AF セッションの Muse セッションまで見えてしまうか
-   （ストアも利用者も 1 つ）。見えるなら、Console が決してそれらを差し出さないこと。
+   （ストアも利用者も 1 つ）。見えるなら、Console が決してそれらを差し出さないこと。**未解決。** ホストは
+   分かれてもストアは共有であることに注意。
 7. `Meta.Subdir` を持つセッションで `session/start.workspaceRoot` に何を送るか（作業コピーか、その下位
    ディレクトリか）。`--trust-workspace` が何に掛かるかがそれで決まる。`--allow-workspace-switch` が
-   あるので誤っても回復はできるが、紛らわしい。
+   あるので誤っても回復はできるが、紛らわしい。**未解決。**
+8. 門 B1 で新たに出たもの: **muse 自身の `cron_*` ツールは測った全ての締め付けを生き延びる。** 自分の
+   将来の実行を予約できるエージェントが Agent Fleet のスケジューラの隣に居て、止める鍵は見つかっていない
+   ——段 2 で鍵を見つけるか、「その実行は AF から見えない」とガイドに書くかのどちらかである。
 
 ## プローブの再現（2026-09-20・Muse Code 1.3.0-R3401.1）
 
@@ -573,6 +701,37 @@ unshare --user --map-root-user --mount --propagation unchanged \
 ./root/usr/bin/bwrap --ro-bind-symlink /etc /etc true            # Unknown option（muse は必須とする）
 ~/muse-probe/muse sandbox --help                                 # windows check|setup 専用
 ```
+
+門 B1 で足した分（2026-09-20）。駆動役は `~/msp2.py`（ホストの通知に答える 150 行の MSP クライアント）と
+シナリオごとのスクリプトだが、肝心なところはそれ無しで再現できる:
+
+```bash
+~/muse-probe/muse login                                          # デバイスコード。TTY もコールバックも不要
+# 無料の神託 2 つ。前者は綴り違いを名指しし、後者はサブスクのプロンプトを 1 本も使わずに
+# 締め付けの「効き目」を見せる（echo 実行が組み上げた toolset を耐久ログに書くので）。
+echo '{"schema_version":1,"settings":{"agents":{"zzz":1}}}' > d.json
+~/muse-probe/muse config validate --plane defaults --file d.json # unknown_member location=…
+HOME=/tmp/fh XDG_CONFIG_HOME=/tmp/fh/cfg XDG_DATA_HOME=/tmp/fh/data \
+  ~/muse-probe/muse exec --provider echo "hi"                    # 書かれた session.jsonl の
+                                                                 # toolset.active_tools を見る
+# 効く締め付けと、失敗の仕方が 2 通りあること
+printf '%s' '{"schema_version":1,"agents":{"zzz":1}}' > $XDG_CONFIG_HOME/muse/settings.json
+~/muse-probe/muse serve --disable-sandbox </dev/null; echo $?    # 3・"malformed settings file"
+printf '%s' '{"schema_version":1,"contxt":{"foreign_personal_skills":false}}' > …/settings.json
+~/muse-probe/muse skills list --source user                      # 無言。締め付けだけが効いていない
+# 設定のロックと、それが本当に効いている陰性対照
+strace -f -e trace=%file,%desc ~/muse-probe/muse skills disable bundled:resume-claude \
+  --scope built-in                                               # .lock に flock(LOCK_EX) → rename
+python3 -c 'import fcntl;f=open(".settings.json.lock","r+");fcntl.flock(f,fcntl.LOCK_EX);input()' &
+~/muse-probe/muse skills enable bundled:resume-claude --scope built-in  # 解放まで止まる
+# ルールがどこから来るか: マーカーを置き、モデルに「見えているもの」を答えさせる
+echo AFPROBE-USER > ~/.config/muse/AGENTS.md                     # 利用者層。届く
+echo AFPROBE-PROJECT > <ws>/AGENTS.md                            # プロジェクト層。--trust-workspace が要る
+```
+
+⚠️ 実ターンは **使い捨ての `HOME`** に偽の `~/.claude` / `~/.codex` マーカーを置いて回すこと。他 CLI の
+個人文脈を切らないまま実ターンを回すと `~/.claude/CLAUDE.md` の中身が Meta へ行く——それがこの計測の
+中身であり、利用者本人のファイルでやってはならない。
 
 ## 参照した出所（2026-09-20・`06ea94d3`）
 
@@ -874,3 +1033,346 @@ security プールに残っているが、Debian の*索引*はいま `153.0.801
 
 ログインなし・実ターンなし・サブスクリプションなし・`-w` なし・`kind` の配線なし——すべて段 2 か
 門 B1 の仕事。muse は使い捨てリポジトリに対し `--provider echo` でしか動かしていない。
+
+## 段 1 門 B1 / B2 の実測（2026-09-20）
+
+門 B1 は `11099efd` 上で、**Muse Code 1.3.0-R3401.1** と実際の Muse Code サブスク（tier `27681…`・
+Everyday Usage）を **`muse login` のデバイスコード**でサインインして実施した（B1-0）。以下はすべて
+stdio 上の `muse serve` で、`session/start` には毎回 `modelId: muse-spark-1.3` を明示した。`-w` は渡さず、
+`muse auth set` は実行せず、`META_API_KEY` も置いていない（どちらもアカウントログインに優先して、サブスクを
+従量課金へ落とす）。
+
+**実行の隔離のしかた。これが数字の意味を決めるので書いておく。** `HOME` は使い捨てディレクトリにして
+*偽の* `~/.claude/CLAUDE.md` と `~/.codex/AGENTS.md` のマーカーだけを置いた——他 CLI 個人文脈の計測が
+利用者本人のファイルを Meta へ送ることが構造上あり得ないようにするためである。`XDG_DATA_HOME` も
+使い捨てにして、プローブのセッションが利用者のストアに入らないようにした。`XDG_CONFIG_HOME` だけは本物を
+使った。アカウントログインはそこに在り、`auth.json` を複製したり symlink 越しに触らせたりすると
+リフレッシュトークンが回って利用者のログインを壊しかねないからである。ワークスペースも使い捨ての git
+リポジトリで、このリポジトリでは一度も走らせていない。
+
+**費用: サブスクのプロンプト 10 本**（ほかに無料の実行 2 本——echo provider と、モデル呼び出しの前に落ちた
+失敗ターン）。5 時間窓は **0 % → 6 %**、週次ブロックは 0 % → 2 % 動いた。この tier では文献の
+「5 時間あたり 10〜50 プロンプト」よりずっと余裕がある計算になるが、百分率は整数で単位も明示されていない
+ので、これは下限であって換算ではない。
+
+### B1-0: 資格情報はデバイスコードで、ブラウザの受け渡しではない——門 B2 は「可」
+
+`muse login` は URL と 8 文字のコード（`https://auth.meta.com/oauth/device/?code=XXXX-XXXX`）を表示して
+ポーリングする。TTY もローカルコールバックも要らず、この箱にブラウザは要らない。**cursor と kiro の接続
+カードが既に実装している start → poll と同じ形**であり、実際にサブスクのセッションが動いた: managed 経路で
+`turn/completed` が `terminal: "completed"` を返した。
+
+よって **門 B2 は「可」で閉じ**、決定 9 は注記でなく本文を訂正する。資格情報はデバイスコードによる
+アカウントログインで、API キーは*代替*である。この ADR がこれまで書いていた「サブスクにはこの箱に無い
+ブラウザオンボーディングが要る」は誤りだった。拒否リストと接続カードは変わらない——ただし入力は「AF に
+貼る秘密」ではなく「利用者が手元のブラウザに貼るコード」になる。
+
+### B1-1: 会計マトリクス——`MeasuredPartial`。理由はキャッシュではない
+
+`session/tokenUsage` は**ターンごとではなくモデル完了ごと**に 1 回飛び、生のプロバイダ計数とサーバ導出の
+「1 回だけ数えた」値の両方を運ぶ:
+
+| 性質 | 実測 |
+|---|---|
+| キャッシュ | **分離されており、しかも `inputTokens` の内側**: 2 回目の呼び出しは `inputTokens 21857`・`cachedTokens`/`cacheReadTokens` `20721`・`cacheWriteTokens 0`・`promptTokens 21857` だった。このプロバイダでは `promptTokens == inputTokens` でキャッシュはその*部分集合*＝足すと二重に数える |
+| 毎ターンか累積か | 1 イベントに両方。2 呼び出しのターンが `promptTokens` 20776 → 21857 を出し、2 つ目の `cumulative.promptTokens` が **42633 = 20776 + 21857** だった。毎イベントを畳む**か**最後の `cumulative` を取るかの**どちらか**で、両方はしない |
+| 文脈占有と出費 | 同じイベントで `session/contextUsage.usedTokens` は **22252**、`cumulative.totalTokens` は **44007**。占有は最後の呼び出しであって累計ではない。文脈チップを累積から作ると 2 倍に読む |
+| 失敗ターン | `turn/completed` が `terminal: "failed"`・`error{kind: "modelError", message, retryable: false}` で返り、`session/tokenUsage` は **1 本も出ない**。`usage/read` も `{}` のまま＝**失敗ターンは台帳に何も足さない** |
+| 中断ターン | `turn/interrupt` → `turn/completed` が `terminal: "cancelled"`・`reason: "cancelled after tool result reconciliation"`。既に走ったモデル呼び出しの `session/tokenUsage` がちょうど 1 本。**二重計上も取りこぼしも無い**——ただしプロンプト枠は消費される |
+| `session/resume` の後 | **別プロセスのホスト**で resume した: 履歴の項目は再生されるが `session/tokenUsage` は **0 本**（飛んだ通知は `session/branchChanged` だけ）。次のターンの `cumulative.promptTokens` は 41236 = 20764（再起動前）+ 20472。**累積はプロセスを跨いで生き、数え直さない** |
+| subagent | 🔴 **ワイヤの数字から除外される。** 下記 |
+| 背景オブザーバ | 🔴 **ワイヤの数字から除外される。** 下記 |
+
+🔴 **罠は「累積か差分か」ではなく「持ち主」である。** subagent を 1 つ生んだ（`muse.subagent_spawn`）
+ターンは `session/tokenUsage` を **4 本**出し、合計は `cumulative.promptTokens 88,077` だった。一方、同じ
+ターンの耐久ログにはモデル呼び出しが **6 回**記録されている——4 回の持ち主が `main-root`、2 回が
+`subagent-1`（`owner_type: "native_child"`・`input_tokens` 14,294 と 14,445）。子の **28,739 プロンプト
+トークンはワイヤに一度も現れない**ので、通知だけを畳むとこのターンを **24 %** 過少に数える（116,816 のうち
+88,077）。スキーマは 1 行でそう書いており——「Subagent/workflow-child usage is never folded in — it rides
+the owning items」——実測がそれを行動に移せる形にした。背景オブザーバも同じで、オブザーバを有効にした
+ターンは `session/tokenUsage` を **1 本**しか出さず、`reminderChild` の項目 3 つが行ったモデル呼び出しは
+そのどこにも入っていない。
+
+耐久ログの方は帰属を持っている: モデル完了のたびに
+`owner{owner_id, owner_type: main_root | native_child, requester_kind}` と `quantity` を持つ
+`goal_usage_attribution` レコードが先行する（⚠️ 各 2 回出て、片方は `reported: false` のゼロ——素朴に
+畳むとそれを飛ばし損ねる）。
+
+**よって決定 10 は `MeasuredPartial` に着地し、それは注意書きではなく実測の判定である。** exact への道は
+2 つあり、どちらも段 2 の決定である: 通知でなくセッション JSONL の `goal_usage_attribution` を畳むか、
+決定 6 の締め付け（subagent とオブザーバを OFF）に頼るか。後者では「exact」は「締め付けたホストでの
+exact」を意味し、締め付け自体は効くものの、後から `agents.execution_capacity` を上げられる利用者が居れば
+台帳は黙って partial に戻る。正直な v1 は「締め付け ON の `MeasuredPartial`」である。
+
+決定 10 が要る数字がもう 2 つ。認証後の目録は 4 モデルすべて **`cost: null`** なので、ベンダ由来の
+トークン単価は依然として無い。そして `usage/read` は、**そのホストが完了を観測するまで `{}`** を返す——
+サブスクの窓は Meta への問い合わせではなく、このプロセスが最後に見たフレームである。決定 3 の
+「セッションごとに `muse serve` 1 本」では、**起動直後のセッションは最初のターンが完了するまで残量チップを
+持たない**。完了後は `usage/changed` が
+`{tier, weekly{resetsAtMs, usedPercent}, window{resetsAtMs, usedPercent, windowDurationMins: 300}}` を
+こちらが聞かずに押してくる。
+
+### B1-2: 承認は「スキーマが併記する要求」ではなく通知で来る
+
+往復自体は動き、配線も安いが、ドライバの初稿はここで必ず固まる。MSP は `approval/request` を
+*server-initiated request* として宣言しているのに、ホストが実際に送ってきたのは **`approval/requested`
+通知**だった。要求形だけに答えるクライアントはターンを永久に止める（実測: ホストを殺すまで
+`attention: ["approvalPending"]` のままだった）。
+
+```
+session/statusChanged  {"status":"running","attention":["approvalPending"]}
+approval/requested     {approvalId, currentRequirementId{approvalId,sourceIndex}, toolName:"bash",
+                        judgeEscalated:false, protectedWrite:false, rawArgs:"{\"command\":…}",
+                        subject:{kind:"shell", command:"…", stages:[{argv:["echo","…"],
+                                 argvComplete:false, position:1, totalStages:1,
+                                 resolution:{kind:"unresolved"}}]},
+                        availableChoices:[{choiceId:"allow_once",decision:"approved",scope:"once"},
+                                          {choiceId:"abort",decision:"abort",scope:"once",
+                                           acceptsFeedback:true}]}
+approval/decide        → {status:"accepted", terminal:true}   その後 approval/updated・approval/resolved
+```
+
+決定 13 に効くことが 3 つ。`attention: ["approvalPending"]` は**一級の状態信号**なので、AF の「許可待ち」
+状態は推定で作らなくてよい。`onRequest` モードの `availableChoices` はちょうど **2 つ**——1 回だけ許可、
+または（任意でフィードバック付きの）中止——なので最初の許可カードにスコープ選択は要らず、この ADR の
+未解決 5 も答えが出る: カードが描くのは `subject.command` と `stages[]` の argv で足りる。そして
+`requirementId` はそのまま返すこと——多段の競合を防ぐ番人である。
+
+`userInput` は本当に別チャネルで、AF の既存の質問 interaction に欄ごと対応する:
+
+```
+userInput/requested  {userInputId, toolName, questions:[{id:"color_pref", header:"Color",
+                      question:"Which colour do you prefer?", selection:{mode:"single"},
+                      options:[{label:"Red (Recommended)",description:"…"},{label:"Blue",…}]}]}
+userInput/answer     {userInputId, answers:[{questionId, selectedLabel}], commandId, sessionId}
+                     → accepted、その後 userInput/settled
+```
+
+⚠️ どちらのチャネルも**再送する**: 同じ `userInput/requested` が 2 回届き、2 度目に答えると
+`-32056 userInputAlreadySettled` が `settlement.outcome: "answered"` を添えて返った。AF のハンドラは
+冪等にし、このエラーを「報告すべき失敗」ではなく成功として読むこと。
+
+### B1-3: 締め付け——綴り 5 つ確定・効き目 4 つ実測・黙って失敗する形が 2 つ
+
+鍵は `~/.config/muse/settings.json` にあり、綴りはもう推測ではない:
+
+| 締め付け | 実測した鍵 | 実測した効き目 |
+|---|---|---|
+| subagent の上限 | `agents.execution_capacity`（1 以上の整数。`0` は拒否される） | 綴りは、`agents` の*他の*メンバーがあると `muse serve` が起動を拒むことで確定。同時に走る子への効き目は**未測** |
+| subagent を丸ごと OFF | `run.subagent_delegation_mode: "off"` | ◎ **`muse.subagent_*` 6 本が丸ごと**モデルのツール一覧から消える（28 → 21。同じプロンプト・同じ形のセッションで） |
+| workflow OFF | `run.workflow_trigger_mode: "off"` | ◎ `toolset.active_tools` から `muse.workflow` が消える（23 → 22）。**`--provider echo` で無料で**測れる——echo 実行は組み上げた toolset を耐久ログに書く |
+| 他 CLI 個人文脈 OFF | **1 本でなく 2 本**: `context.foreign_personal_rules: false` **と** `context.foreign_personal_skills: false` | ◎ 両方向。設定しないと実ターンの答えに偽の `~/.claude/CLAUDE.md` の中身が出た——**利用者の Claude Code のルールが Meta に届く**。`foreign_personal_rules: false` を入れると同じプロンプトがプロジェクトのファイルだけを答え、syscall 追跡でも `$HOME/.claude` と `$HOME/.codex` は開かれなくなる。`foreign_personal_skills: false` 単独では `muse skills list` から他 CLI のスキル 2 本が消え、ルールは残る |
+| 同梱の「他 CLI 読み」スキル OFF | `skills.activation.bundled["bundled://muse-core/skills/<id>/SKILL.md"]: "off"` | ◎（段 0）`muse skills list` が `off` と出す。鍵は依然としてパック名込みのパスなので、ドリフト検査の項目のままである |
+| 背景オブザーバ OFF | ⚠️ **設定鍵は見つからなかった**: `run.reminder_observers` はランタイムの `RunConfigurationSettings` に実在する欄だが enterprise の検証器は拒否し、settings.json のどの綴りも効かなかった。効いたのは env 経路——`MUSE_EXPERIMENTAL_{SKILL,GOAL,VERIFY,TODO,MEMORY,SCOPE}_REMINDER=0` | ◎ しかも出費より価値がある: オブザーバ ON だと一行の答えのターンが **17.9 秒**——6.3 秒で答えが出た後、`eot_gate_ms: 11518` の終端の門が `skill-reminder` / `goal-reminder` / `verify-reminder` の 3 本のモデル呼び出しを待つ。OFF にすると同じプロンプトが **4.5 秒**で終わる。見えない枠消費だけでなくターン時間の問題である |
+| 承認ジャッジ OFF | ⚠️ 未測。`--approval-judge` は `muse` と `muse exec` にあるが **`muse serve` には無い**（締め付け 5 と同型）。バイナリには `MUSE_DISABLE_APPROVAL_JUDGE` がある。取った承認 1 件では `judgeEscalated` は `false` だった | — |
+| **8 つ目——contributor でないモデルのピン** | セッションごとの `session/start.modelId`（設定鍵は無い） | ◎ すべてのモデル呼び出しで honour され、`modelId` を渡さない resume 後も同じ（`session/tokenUsage.modelId: "muse-spark-1.3"`、耐久の `run_model` は `source: "startup"`）。🔴 **ただしセッションの保存メタデータと `session` 射影は `muse-spark-1.3-contributor`**——ホスト既定——を返す。`session/listChanged` でも `session/resume` の `session.modelId` でも、測った 5 セッション全部で。射影からモデルチップを作ると「あなたのコードは製品改善に使われている」と嘘を表示することになり、逆向きの間違いの方が危ない |
+
+🔴 **黙って失敗する形が 2 つあり、向きが正反対である。** muse が厳密に解釈する節の中で綴りを間違えると
+ホストが死ぬ: `{"agents":{"zzz":1}}` で `muse serve` は `initialize` の前に **rc=3** と
+``load settings for serve composition: malformed settings file … unknown field `zzz`, expected
+`execution_capacity``` を出して終了する——つまり AF のドライバは「設定の書き込みは子の起動を拒ませ得る」
+ものとして扱い、ハングではなく接続エラーとして見せねばならない。一方それ以外の場所での綴り間違いは
+**完全に無言**である: 未知のトップレベル節や `context.foreign_personal_skil` は、締め付けが効かないまま
+ホストを機嫌よく起動させる（実測。同じ表の中に正しい綴りという陽性対照がある）。この 2 つの間に診断は
+無い。決定 6 が書き込みの前に fail-close を置く理由がこれであり、鍵ごとに**振る舞いの**試験（無料の
+`--provider echo` toolset 神託が 2 つを賄う）が要る理由でもある。「JSON は書いた」は試験にならない。
+
+**設定ファイルのロック規約、syscall で**（muse 自身のログ行によれば `config/src/settings.rs:140`）:
+
+```
+open(".settings.json.lock", O_RDWR|O_CREAT, 0666)   ← 本体ではなく横の錠ファイル
+flock(fd, LOCK_EX)                                  ← BSD の advisory flock・ブロッキング・LOCK_NB 無し
+lstat("settings.json"); open(".settings.json.tmp-<pid>-0", O_WRONLY|O_CREAT|O_EXCL)
+write; fchmod 0644; fsync; rename(tmp, "settings.json"); fsync(dirfd)
+flock(fd, LOCK_UN)
+```
+
+AF は同じ規約を取る: `.settings.json.lock` に `flock(LOCK_EX)`、同じディレクトリに一時ファイル、
+`rename`、ディレクトリを `fsync`。実装が落としてはいけない細部が 2 つ。**muse はロックを取る*前*に
+`settings.json` を読む**（実測: 読みは `flock` の 11 syscall 前）ので、muse 自身の更新は保護されていない
+読みの read-merge-write であり、両者がロックを使っていてもファイルは同時更新に対して安全ではない。AF は
+書いた後に読み直して確認する必要がある。そして **muse は握られたロックを無期限に待つ**（陰性対照: 別
+プロセスから `LOCK_EX` を握ったまま `muse skills enable` を起動すると 8 秒止まり、解放した瞬間に進んだ）
+ので、AF が遅い処理を挟んでロックを持つと利用者の `muse` コマンドが全部止まる。
+
+**段 2 が費用を見積もるべき、形のよい第 2 の経路がある——enterprise 設定プレーンである。**
+`muse config status` はシステムファイル 2 本を解決する（syscall で実測:
+`/etc/muse/enterprise-defaults.json` と `/etc/muse/enterprise-policy.json` を
+`openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)` で開く）。そして
+`muse config validate --plane defaults|policy` は**無料・オフラインの綴り神託**で、落ちたメンバーを正確に
+名指しする（`unknown_member location=settings.agents.execution_capacity`・`semantic_invalid`・
+`wrong_type`）。8 つの締め付けのうち 5 つが defaults プレーンで通り
+（`agents.execution_capacity`・`run.workflow_trigger_mode`・`run.subagent_delegation_mode`・
+`context.foreign_personal_rules`・`context.foreign_personal_skills`・`skills.activation.bundled.<id>`）、
+いずれも `binds=defaults user_overridable=true` と報告された。Workspace の中から `/etc` は書けないので、
+これは実行時ではなく**イメージ**の決定である: 締め付けをイメージに焼けば、決定 6 の利用者ごとの設定
+書き手もロックも lost update の窓も fail-close も丸ごと不要になる——見積もりの数日分である。この ADR の
+決定にしないのは 3 つの留保があるからである: プレーンは `MUSE_EXPERIMENTAL_ENTERPRISE_CONFIG` の裏に
+あること、`policy`（上書き不可の方）プレーンが受け取るのは
+`{settings.capability_ceilings, privacy, model_egress}` だけで、その `privacy.foreign_personal_rules` の
+値の語彙は外から発見できないこと（bool と妥当そうな文字列 15 個が全部拒否された）、そして `defaults`
+プレーンの値は利用者が自分の settings で上書きできること。
+
+### B1-4: `session/start.config.mcpServers` は効く——決定 11 はこちらを採る
+
+自分の argv・環境・ハンドシェイクを記録する偽の stdio MCP サーバで実測した。ワイヤだけで渡し
+（`capabilities.requestedCapabilities: ["sessionMcp"]`＝許諾された。`MUSE_ENABLE_SESSION_MCP` は
+**立てていない**）、モデルのツール一覧に **`mcp__afprobe.af_probe_ping`** が現れ、サーバ側のログには
+muse が `clientInfo {"name":"tbh","version":"0.1.0"}`・MCP プロトコル `2025-06-18` で接続し、
+`MUSE_SESSION_ID` と config の `env` 追加を渡したことが残った。`mode: "optional"` もワイヤで通る。
+
+⚠️ **サーバが起動するのは最初のターンであって `session/start` ではない**——セッションを作るだけの実行を
+3 本走らせてもプロセスは 1 つも生まれず、最初これが「未対応」に見えた原因である。セッション作成時に
+MCP を疎通確認する実装は永遠に「未接続」を読む。
+
+よって決定 11 は安い方に決まる: **AF は MCP をセッションごとにワイヤで渡し、共有設定ファイルに
+`mcp_servers` を書かない。** 設定の書き手は締め付けだけを運び、lost update の面もそれだけに縮み、
+ファイル経路では表現できないセッションごとのサーバ集合が可能になる。ファイル経路は「利用者自身の設定に
+在り得るもの」として文書に残し、AF はそれを保つ。
+
+### B1-5: 指示層——利用者層のルールファイルは 1 本、フリートの経路は既にある
+
+マーカーを置いてモデルに「見えているもの」を答えさせ、syscall 追跡を第 2 の証人にして測った:
+
+- **利用者層: `~/.config/muse/AGENTS.md`**（＝`$XDG_CONFIG_HOME/muse/AGENTS.md`）。そこへ置いた内容が
+  モデルの答えに出た。`~/.config/muse/CLAUDE.md` も探索されるので、プロジェクト層と同じ
+  「AGENTS.md 優先」が効くと見られるが未測。`$museHome`（`~/.local/share/muse/AGENTS.md`）は読まれない。
+- **プロジェクト層**は端から端まで再確認した: `--trust-workspace` 付きでリポジトリの `AGENTS.md` が
+  モデルに届き、`CLAUDE.md` は届かない。
+- **フリートの経路は新しい仕組みを要さない。** `~/.config/muse/skills/<名前>/SKILL.md` を手で置くだけで
+  `muse skills list --source user` が拾う（install も lock ファイルの登録も不要）ので、AF の既存の
+  `fleetskills.Apply(dir, topics)`（`agent_instructions.go:135-141`。今は claude / codex / opencode）が
+  muse でもそのまま効く。
+- 🔴 **ただし muse の利用者層のルールファイルは 1 本しかなく、AF の apply 経路は 2 つある。** 他の種別は
+  ディレクトリ（kiro の `~/.kiro/steering/agent-fleet-{guide,user}.md`）か別々のファイルを持つ。muse では
+  `ApplyFleetNotes` と `ApplyUserInstructions` が **`AGENTS.md` を分け合う**——つまり AF がそのファイルを
+  所有し（区切り付きの節・フリート方針が先）、利用者が自分で書いた内容は危険にさらされる。段 2 が
+  明示的に決めること（マーカーでマージするか、所有してガイドにそう書くか）。muse の指示層が kiro より
+  *やりにくい*唯一の場所である。
+- ⚠️ ガイド向けの範囲注記: `foreign_personal_*` が統制するのは**個人**層だけである。締め付けを入れて
+  workspace を信頼した状態でも、muse は*リポジトリの*`.claude/CLAUDE.md`・`.claude/skills/`・
+  `.codex/skills/`・`.claude-plugin/plugin.json` を探索する。このリポジトリではそれらは実在し、
+  プロジェクト文脈として読まれる。
+
+### B1-6: 負荷時の常駐費と、`-w` 無しの実行が書くもの
+
+**決定 3 の再評価条件は満たされ、答えは「セッションごとに子を持つままでよい」である。** 各ターンの間
+0.5 秒ごとに測ったホスト＋子の RSS の最大値は **137〜147 MiB**（最大の 147,372 KiB は subagent を生んだ
+ターン）で、待機時の **73 MiB** に対する値である。この形のセッション 10 本で約 1.4 GiB——登録簿の
+claude 230 MiB のペイン 5 枚と同じ桁で、共有デーモンが節約する分の 3 分の 1 でしかない。
+
+**決定 7 はもう `-w` の実測だけに乗っていない。** `-w` を渡さない実ターン 6 本を 5 セッションで
+——シェルのツール呼び出し、ファイルを書いた subagent、中断、resume——回して、作業コピーに増えたのは
+エージェントに作らせたファイルだけだった: `.muse/` も `.muse/worktrees/` も
+`.muse/.session-worktree-reservations/` も無く、`.git/info/exclude` は git 既定とバイト一致、
+`git worktree list` も 1 件のまま。共有状態の危険は `-w` 固有で、渡さないことで足りる。
+
+### B1-7: サンドボックスを ON にしたまま（門 A が送ってきた項目）
+
+`--disable-sandbox` **を付けない**ホストでターンを 1 本。この箱には system の `bwrap` がそもそも無い
+（＝これは門 A がバイナリ内に見つけた muse の*埋め込み* bubblewrap である）:
+
+```
+item/completed  {kind:"toolCall", tool:"bash", status:"failed",
+                 failureReason:"process exited with status 1",
+                 visibleOutput:"bwrap: Failed to make / slave: Permission denied"}
+turn/completed  {terminal:"completed"}          ← ターンの方は成功する
+```
+
+ベンダの文言は「サンドボックス下のシェルコマンドは全て environment failure で中断する」だが、実際は
+もっと狭く、そして AF にとってはもっと悪い: **ツール呼び出しが失敗し、ターンは正常に完了する。**
+エージェントは失敗を文章で説明して終わった。つまり `--disable-sandbox` 無しで起動した Muse セッションは
+Console 上で健康に見え——ターンは回り、答えも出る——シェルを触る仕事だけが `Failed to make / slave` で
+全部落ちる。これは門 A が追った最初の `mount(NULL, "/", …, MS_REC|MS_SLAVE)` の EACCES に、逆側から、
+system の `bwrap` を一切介さずに到達したもので、A-1 の「埋め込み bwrap」の結論を独立に裏づける。決定 5 は
+変わらない。足されたのは「失敗がターンの層では無言である」ことで、だから**ドライバは spawn 時に
+フラグを検査する**。
+
+### 門 B1 が測らなかったこと
+
+`agents.execution_capacity` の同時実行数への効き目。承認ジャッジ自身のモデル呼び出し（設定経路も `serve`
+のフラグも見つからず、取った承認 1 件では `judgeEscalated` は false）。ワイヤ MCP 経路に `sessionMcp` が
+*必須*かどうか（毎回要求し、毎回許諾された）。`session/fork`・`turn/steer`・`session/setModel`・
+`session/setReasoningEffort` と `session/list` のセッション横断の見え方。`~/.config/muse/CLAUDE.md` の
+優先順位。従量アカウントでの `usage/read`。そして muse 自身の `cron_*` ツール——測った全ての締め付けの
+下でもツール一覧に残る。**自分の将来の実行を予約できるエージェント**が Agent Fleet のスケジューラの隣に
+居るという話で、鍵が見つかっていない **9 つ目の締め付け候補**である。
+
+## 門 A 成果物の要否——トランクに残す価値があるもの、抜くもの
+
+門 A は、存在しない種別のために `develop` へ 5 つの変更を入れた。1 つずつ、何がそれを決めるのかと一緒に
+検め直す:
+
+1. 🔴 **`workspace/Dockerfile` の `bubblewrap`——抜く。** 理由は「ホストが許すものが変わった日に再計測を
+   1 コマンドで」だった。これは門 A 自身の実測に触れると保たない: 阻害要因は *3 つ*あり、うち 2 つは muse
+   の内側（自前の bubblewrap を埋め込む／Debian の 0.12.0 は muse 必須の `--ro-bind-symlink` を持たない）
+   なので、**system の `bwrap` は再計測の対象ですらない**。しかも再計測は無くても 1 コマンドである——門 A
+   自身が root 無しの `dpkg-deb -x` でやった——うえ、B1-7 は system の `bwrap` が 1 つも無い状態、つまり
+   フリートが実際に出荷している構成で、**muse の埋め込み版を通して**同じ拒否を再現した。対して費用は、
+   全 Workspace イメージがパッケージを 1 つ恒久的に運ぶことである。加えて muse 自身の探索は「PATH 上の
+   capability-valid な `bwrap`」を先に見るので、焼くと muse が返す拒否の種類が変わる。そして
+   `deploy/local/e2e-smoke.sh` は `--cap-add=SYS_ADMIN` かつ AppArmor 非適用で走るので、そこではその
+   `bwrap` が**緑になり得**、決定 5 が覆ったように読める。フリートに対する唯一の効果が「CI を 1 つ
+   誤解させること」のパッケージに、イメージの席を与える価値は無い。知識はこの ADR に残る——次の読み手が
+   実際に見つけるのはそちらである。
+2. 🔴 **`ARG MUSE_VERSION` ＋両 arch の sha256 ＋ `versions.json` の `muse` / `muse_sha256`——抜く。**
+   それらが存在する理由だった entrypoint の `AF_MUSE_BOOT_INSTALL` ブロック（項目 3）も一緒に。持ち主の
+   居ないピンは両方の悪いところ取りである: `deploy/local/cli-drift-check.sh` は `muse` を知らないので、
+   1.4 が出ても誰も気づかず**ピンは構造的に古びる**。一方、門 A 自身が勧める「kiro の利用者ごとオンデマンド
+   導入」を段 2 が取るなら、この形は使われない。コードが知っていて ADR が書いていなかったことは、代わりに
+   文章として残した: 成果物の URL は
+   `https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=<版>&file=<asset>`
+   （`<asset>` は `muse-x86-linux` / `muse-aarch64-linux`）、sha256 は版別 release manifest の
+   `artifacts.{x86_linux,aarch64_linux}.checksum`、導入するのはバイナリ実体で名前は `muse`。
+3. **`e2e-smoke.sh` の muse 行——一緒に抜く。そして引き継ぎが心配していたことは事実誤認だった。**
+   あのアサーションは Dockerfile の `ARG` と焼かれた `versions.json` を突き合わせる＝自分のツリーの中の
+   2 箇所の比較で、ネットワークに出ない。上流の manifest が動いても赤くなりようがない。危険だったのでは
+   なく、単に「出ていくピンの試験」である。
+4. **`ENV MUSE_NO_AUTO_UPDATE=1`——残す。** 1 行で、費用は無く、効き目は現在形で種別と独立である: 利用者が
+   今日ベンダの一行インストーラを走らせれば `~/.local/bin/muse` に bash ランチャが載り、既定で毎時
+   自分を書き換える（`MUSE_UPDATE_INTERVAL_SECONDS=3600`・実測）。それを封じるのは、`kind=muse` が
+   実現するかどうかと関係なく価値がある。
+5. **`entrypoint.sh` の `set -e` 修正——残す。この検討の対象外。** muse とは無関係の実在の欠陥修正である:
+   `( set -e … ) && ok || WARN` のサブシェルは AND-OR リストの左辺で、POSIX はそこで `-e` を無視すると
+   定めているため、boot-install 5 か所の sha256 検証は未検証の成果物を入れて「成功」と報告していた。
+
+**門そのものの形について。** 親セッションの自己評価——当たったのは*実際に出荷するものを一度走らせる*
+項目で、外したのは*既に測ったことを再確認する*項目——は正しく、門 B1 は同じ型を両方向で繰り返した。
+ここで「高くて無価値」になりかけたのはサンドボックスの再現（B1-7）で、もし ADR の予測どおりの答えが出て
+いたら何も買えていなかった——期待される答えは ADR 自身が先に書いていたからである。それが 1 プロンプトの
+価値を持ったのは、答えが**予測どおりではなかった**からだ: ターンは完了する、つまり失敗は AF が報告する
+層では見えない。抽出すべき規則はそこにあり、「再計測するな」ではない——**どちらの結果でも何かが変わる
+とき、その検査は席に値する**。締め付けの計測がきれいな例である:「鍵は書けるが効かない」と「鍵はホストを
+殺す」はどちらも実在し、どちらも見つかり、どちらも予測されていなかった。`bubblewrap` を焼くのは逆の例で、
+あのビルドのどの結果も決定を変えなかった。
+
+## 段 2 へ進む判断材料は揃ったか
+
+**価格以外は揃った。** 門 A がサンドボックスを恒久的に答え、門 B1 が会計・承認・user input・指示層の
+書込先・締め付け・MCP 経路・負荷時の常駐費・`-w` 無しの書き込み面を答え、門 B2 は「可」で閉じた。測った
+ものの中に結論を覆すものは無い: managed 専用の MSP、`per-session-child`、`settings.json` の締め付け、
+`--disable-sandbox`、`--trust-workspace`。
+
+見積もりの動きは差引ほぼゼロで、危険の置き場所が変わった:
+
+| 変化 | 日 |
+|---|---|
+| MCP 方言が設定の書き手から消える（ワイヤ経路が実測で動いた。B1-4） | −0.5 |
+| 設定の書き手は小さくなるが、ロックが仕様として確定し、鍵ごとの振る舞い試験が増える（B1-3） | +0.5 |
+| 承認と userInput のワイヤ形が判明（通知での配送と `-32056` の冪等性を含む）。AF の質問 interaction は欄ごと対応 | −0.5 |
+| 使用量: `MeasuredPartial` の v1 は `MeasuredExact` より安いが、モデル id の射影の罠と「最初のターンまで残量チップが無い」は新しい Console の仕事 | +0.5 |
+| 指示層: fleetskills の経路はそのまま使え、`AGENTS.md` の所有をどうするかの決定が増える | ±0 |
+| 配備: 段 2 が作るものは（門 A の opt-in を抜いたので）また未着手に戻った | +0.5 |
+
+よって表は **22〜33 セッション日**、managed 専用の門が未払いの今日の期待値は **23〜35 日**、
+**ADR 0093 が先に着地すれば 19〜28 日**——この推奨は変わらず、むしろ裏づけが増えた。0093 と共有する項目
+（managed 専用の門、承認 interaction）はどちらも、muse が実際に必要とする仕事そのものだと確認できたからである。
+
+**段 2 に入る前に、計測ではなく人が決めることが 2 つある。** 締め付けはプライバシーに触れる方針判断で
+ある: 既定モデルは `muse-spark-1.3-contributor` で、その説明文自身が「あなたの内容（セッション間
+メッセージを含む）は製品改善に使われ得る」と書いている。AF が contributor でないモデルをピンするのは、
+利用者のコードについて利用者に代わって決めることであり——我々の見立てでは正しい既定だが——それは利用者の
+ものであって、締め付け表の奥ではなくガイドに見えるところへ書かねばならない。もう 1 つは出費である:
+サブスクでは見えない枠の正体はオブザーバと subagent で、締め付けがそれを閉じる。従量アカウントでは
+**ベンダがトークン単価を出していない**（`cost: null`）ので、費用チップは v1 に載せられず、ガイドがその
+理由を書く必要がある。
