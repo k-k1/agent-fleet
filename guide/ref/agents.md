@@ -8,36 +8,37 @@ updated: "2026-08"
 
 English | [日本語](agents.ja.md)
 
-Nine session kinds exist. Seven drive a coding agent; `shell` and `ssm` are terminals
-with no agent behind them, and they are in the table because "does this apply to a
-plain shell session?" is a real question.
+Ten session kinds exist. Eight drive (or are meant to drive) a coding agent — lcpp is
+registered but not usable yet, see the footnote on its first two rows; `shell` and
+`ssm` are terminals with no agent behind them, and they are in the table because "does
+this apply to a plain shell session?" is a real question.
 
 ✓ = supported, — = not supported or not applicable.
 
-| Capability | claude | codex | opencode | copilot | cursor | kiro | agy | shell | ssm |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Managed execution (no terminal) | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | — |
-| Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | — |
-| Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
-| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — |
-| Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | — |
-| Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | — | — |
-| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | — | — |
-| Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | — | — |
-| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | — | — |
-| Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | — |
-| Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | — |
-| Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | — | — |
-| Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — |
+| Capability | claude | codex | opencode | copilot | cursor | kiro | agy | lcpp | shell | ssm |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Managed execution (no terminal) | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | —⁹ | — | — |
+| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | ✓ | ✓ |
+| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | — | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | — | — |
+| Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | — | — |
+| Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — | — | — |
+| Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — | — |
+| Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | — | — |
+| Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | — | — | — |
+| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | — | — | — |
+| Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | — | — | — |
+| Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | — | — |
+| Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | — | — |
+| Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | — | — | — |
+| Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — |
 
 ¹ copilot's model list depends on the plan: Free offers only "Auto (Copilot picks)".
 
@@ -62,6 +63,11 @@ and agy have no verified mechanism for that. Skills written to another conventio
 ⁸ Cursor keeps User Rules in your Cursor account and has no local per-user place for
 instructions, so it is the one kind that cannot receive them. It still appears in the
 settings list, with that reason shown.
+
+⁹ lcpp (ADR 0093's own llama.cpp harness) is registered as a kind but not usable yet:
+creating a session with it fails today, because it has no managed driver. Once
+finished it will be the first kind with no Terminal (CLI) route at all — Managed
+execution only.
 
 ## How to sign in
 
