@@ -14,6 +14,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/filemeta"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/pathguard"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
@@ -164,21 +165,12 @@ func safeBrowsePath(p string) (full, rel string, ok bool) {
 	if filepath.IsAbs(p) {
 		return resolveAbs(filepath.Clean(p), root)
 	}
-	clean := filepath.Clean(p)
-	if clean == "." {
-		clean = ""
-	}
-	if clean == ".." || strings.HasPrefix(clean, "../") {
+	var pok bool
+	full, rel, pok = pathguard.Resolve(root, p)
+	if !pok {
 		return "", "", false
 	}
-	full = filepath.Join(root, clean)
-	rel, err := filepath.Rel(root, full)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", "", false
-	}
-	if rel == "." {
-		rel = ""
-	}
+	rel = filepath.ToSlash(rel)
 	if isDenied(rel) {
 		return "", "", false
 	}
@@ -218,35 +210,11 @@ func fsQueryResolvedOK(q, full string) bool {
 }
 
 func fsResolvedOKUnder(full, root string, applyDeny bool) bool {
-	rroot, err := filepath.EvalSymlinks(root)
-	if err != nil {
+	rel, ok := pathguard.ResolveUnder(full, root)
+	if !ok {
 		return false
 	}
-	p := filepath.Clean(full)
-	suffix := ""
-	for {
-		r, err := filepath.EvalSymlinks(p)
-		if err == nil {
-			resolved := filepath.Join(r, suffix)
-			rel, rerr := filepath.Rel(rroot, resolved)
-			if rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return false
-			}
-			return rel == "." || !applyDeny || !isDenied(filepath.ToSlash(rel))
-		}
-		if !os.IsNotExist(err) {
-			return false
-		}
-		if _, lerr := os.Lstat(p); lerr == nil {
-			return false // exists but unresolvable: a dangling or looping symlink
-		}
-		parent := filepath.Dir(p)
-		if parent == p {
-			return false
-		}
-		suffix = filepath.Join(filepath.Base(p), suffix)
-		p = parent
-	}
+	return rel == "." || !applyDeny || !isDenied(filepath.ToSlash(rel))
 }
 
 // safeWritableBrowsePath deliberately keeps mutations inside the user's home.
