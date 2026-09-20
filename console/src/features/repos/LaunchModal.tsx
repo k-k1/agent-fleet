@@ -775,8 +775,12 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
         >
           {/* Driver (docs/log/27 P2/P3): shown only for kinds that support managed. The default
               is managed (shared runtime, paneless, low memory). CLI (TUI) is an explicit memory
-              trade-off (one TUI process per session) for people who need terminal access. */}
-          {agentOf(kind).managedDriver && (
+              trade-off (one TUI process per session) for people who need terminal access.
+              terminalDriver === false (lcpp, ADR 0093 決定 2) additionally means there is no
+              Terminal (CLI) choice to offer at all — driver stays "managed" unconditionally,
+              set once at mount/kind-change (see setDriver above), so skipping the toggle here
+              cannot leave a stale "" driver behind. */}
+          {agentOf(kind).managedDriver && agentOf(kind).terminalDriver !== false && (
             <div className="ui-field">
               <span className="ui-field-label">{tr("launch.field.driver")}</span>
               <div className="ui-seg">
