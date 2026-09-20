@@ -373,6 +373,23 @@ func TestHandleSessionSkills(t *testing.T) {
 		}
 	}
 
+	// lcpp has no native skills either (ADR 0093 decision 5: "スキルは foreign のみ") — same
+	// shape as kiro, not the default (no-skills) bucket.
+	session.WriteMeta(session.Meta{Name: "sk_lcpp", Dir: dir, Kind: session.KindLcpp})
+	rec = get("sk_lcpp")
+	resp.Skills = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Skills) != 2 { // .claude/scout + .codex/probe, both foreign
+		t.Fatalf("lcpp skills = %#v", resp.Skills)
+	}
+	for _, sk := range resp.Skills {
+		if sk.Invoke != "" || sk.Path == "" {
+			t.Errorf("lcpp entry should be foreign: %#v", sk)
+		}
+	}
+
 	// an unsupported kind (shell) yields empty rather than an error: a forward-compatible contract
 	session.WriteMeta(session.Meta{Name: "sk_shell", Dir: dir, Kind: session.KindShell})
 	rec = get("sk_shell")

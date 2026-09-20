@@ -143,7 +143,15 @@ type ThreadHandle interface {
 // `kind == "codex"` branch; it derives the affordances from here, the same discipline that
 // folded 50 kind branches in agents.go into Caps.
 type Capabilities struct {
-	ProcessModel    string // "shared-daemon" | "per-session-child" | "tui"
+	// ProcessModel names where the turn actually runs. "shared-daemon" and "per-session-child"
+	// cover a real OS process (a daemon this Agent talks to over RPC, or a child it owns
+	// outright); "tui" is the classic pane route. "in-process" (ADR 0093 decision 4, lcpp) is
+	// the fourth value: no child process and no daemon at all — Resume returns a goroutine +
+	// channels living inside this very Agent process. ProcessModel does not reach the wire
+	// (confirmed in the ADR's Review: no Console reader exists for it today) — a managed
+	// driver fills it purely for whoever reads Capabilities in-process; adding this value does
+	// not change that.
+	ProcessModel    string // "shared-daemon" | "per-session-child" | "tui" | "in-process"
 	Steer           bool
 	Fork            bool
 	DynamicModel    bool

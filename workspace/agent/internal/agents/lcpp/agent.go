@@ -1,8 +1,8 @@
 // Package lcpp is the vertical package for the lcpp kind (ADR 0093): a harness that talks
-// directly to llama-server instead of driving a vendor CLI. This file wires only the
-// read-layer agents.Agent contract into the kind registry, as the first step of ADR 0093
-// stage 2 — the harness core (internal/harness), the managed driver (agents.Driver) and the
-// transcript writer are separate, later work and are not connected here.
+// directly to llama-server instead of driving a vendor CLI. This file wires the read-layer
+// agents.Agent contract into the kind registry, on top of the managed driver (driver.go) and
+// the transcript store (store.go) — the store is this kind's OWN transcript source, so
+// Transcript() reads it directly rather than the generic managed/tui branch other kinds use.
 //
 // lcpp is the first kind with no Terminal(CLI) route at all (ADR 0093 decision 2): there is no
 // program to put in a tmux pane, so BuildLaunch always fails and the kind is managed-only
@@ -11,9 +11,14 @@ package lcpp
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // ErrNoTerminalRoute is BuildLaunch's unconditional refusal: lcpp has no tmux pane program, so
@@ -23,18 +28,26 @@ var ErrNoTerminalRoute = errors.New("llama.cpp セッションには Terminal(CL
 // New returns the lcpp Agent implementation for the kind registry.
 func New() agents.Agent { return agentImpl{} }
 
-// agentImpl embeds NoGenericTranscript: the harness's own transcript store (JSONL,
-// AgentDataDir()/lcpp/sessions/<sid>.jsonl per ADR 0093 decision 3) doesn't exist yet, so
-// Transcript() correctly answers ok=false until a later stage wires it up.
-type agentImpl struct{ agents.NoGenericTranscript }
+type agentImpl struct{}
 
 func (agentImpl) Kind() string { return session.KindLcpp }
 
-// Caps: only ManagedOnly is true at this stage. The other flags name capabilities the harness
-// doesn't have yet (own transcript store, approval loop) — leaving them false is correct until
-// the work that makes them real lands, per docs/log/76's "never claim an unverified cap".
+// Caps: ManagedOnly (decision 2, no terminal route at all). CanTranscript/CanFork/CanForkAt/
+// PermissionChoice are true because the store (store.go) and the driver (driver.go) actually
+// back them now — Transcript() below reads the store unconditionally (no DriverManaged
+// branch needed: the store is on disk regardless of whether a handle is live), ForkSource/
+// ResolveForkAt below use the store's own ForkAt, and PermissionChoice is true because
+// driver.go's approve() really does block the tool loop on a Console-answerable question-kind
+// Interaction (docs/log/76's condition). UsesLabel is left false (no display-label
+// convention for this kind, unlike claude).
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{ManagedOnly: true}
+	return agents.Caps{
+		ManagedOnly:      true,
+		CanTranscript:    true,
+		CanFork:          true,
+		CanForkAt:        true,
+		PermissionChoice: true,
+	}
 }
 
 // BuildLaunch always fails: lcpp has no tmux pane program (ADR 0093 decision 2).
@@ -42,11 +55,132 @@ func (agentImpl) BuildLaunch(session.Meta, agents.LaunchOpts) (agents.LaunchPlan
 	return agents.LaunchPlan{}, ErrNoTerminalRoute
 }
 
-// WireLive has nothing to report yet — the managed driver that would supply live state
-// (status, context fill, last-say) is a later stage of ADR 0093.
-func (agentImpl) WireLive(session.Meta, bool) agents.LiveInfo {
-	return agents.LiveInfo{}
+// WireLive reads the SAME generic status-store route claude's hook-driven state uses (ADR
+// 0093 §4.2: "claude が使う generic の DriveState 経路に乗る") — driver.go's runTurn writes
+// status.Persist itself (via agents.MarkTurnStart/MarkTurnEnd), so no per-kind polling is
+// needed here, only the same EffectiveModal/LiveState read every other hook-driven kind's
+// WireLive makes. LastSay carries the v1 cold-start line (decision 4) while a turn is running
+// past wakingLastSayThreshold; "" once it settles or before any turn ever ran.
+func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
+	li := agents.LiveInfo{Resumable: true}
+	if !alive {
+		return li
+	}
+	sid := sidFor(m)
+	li.State = status.EffectiveModal(sid, status.LiveState(sid))
+	if h := handleFor(m.Name); h != nil {
+		li.LastSay = h.lastSay()
+	}
+	return li
 }
 
-// ClearResume is a no-op: the resume-id store this would clear doesn't exist yet.
+// ClearResume is a no-op: sidFor(m) is a pure function of (dir, name), so there is no cached
+// resume id to forget (driver.go's own sidFor doc comment).
 func (agentImpl) ClearResume(string) {}
+
+// Transcript reads the store directly, live handle or not — decision 3's whole point is that
+// the store IS the persisted conversation, so there is no separate "stopped" fallback path the
+// way cursor/kiro need (kiro's own transcript.go, DriverManaged-vs-file branch, does not apply
+// here). Pending/Queued are folded in from the live handle when there is one; a stopped
+// session simply shows neither.
+func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
+	st := Open(sidFor(m))
+	turns, err := st.Transcript()
+	if err != nil {
+		return agents.TranscriptData{}, false
+	}
+	td := agents.TranscriptData{Turns: turns, Path: st.Path()}
+	h := handleFor(m.Name)
+	if h == nil {
+		return td, true
+	}
+	h.mu.Lock()
+	inter := h.inter
+	mode := h.settings.Mode
+	todos := h.todos
+	var queued []string
+	for _, in := range h.queue {
+		queued = append(queued, in.Prompt)
+	}
+	h.mu.Unlock()
+	if inter != nil {
+		td.Pending = inter.Questions
+	}
+	td.Queued = queued
+	if mode != "" {
+		td.Mode = mode
+	} else {
+		td.Mode = "normal"
+	}
+	for i, t := range todos {
+		td.Tasks = append(td.Tasks, taskFromTodo(i, t))
+	}
+	return td, true
+}
+
+// taskFromTodo converts harness's own TodoItem (tools_todo.go) into the mirror's
+// transcript.Task shape. Todos carry no stable id of their own (harness.Runtime.Todos is
+// replaced wholesale on every todo_write call), so the item's position in the list is used —
+// stable enough for one render, which is all Tasks is for.
+func taskFromTodo(i int, t harness.TodoItem) transcript.Task {
+	return transcript.Task{ID: strconv.Itoa(i), Subject: t.Content, Status: t.Status}
+}
+
+// --- Forker / ForkAtResolver (decision 3: fork/fork-at, claude-style — a single route so
+// agents.ErrForkAtRoute never applies) --------------------------------------------------
+
+// ForkSource returns the sid HandleForkSession will carry as the new session's ForkFrom.
+// Since the store IS keyed by sid (unlike claude/opencode's own native conversation ids),
+// this is simply sidFor(m) — driver.go's ensureForked reads it back as the SOURCE store to
+// copy from.
+func (agentImpl) ForkSource(m session.Meta) (string, error) {
+	recs, _, err := Open(sidFor(m)).Records()
+	if err != nil {
+		return "", err
+	}
+	if len(recs) == 0 {
+		return "", errors.New("まだ会話がないためフォークできません")
+	}
+	return sidFor(m), nil
+}
+
+// ResolveForkAt validates the clicked anchor against this session's own store and returns the
+// record id driver.go's ensureForked should cut at — decision 3's "経路が1つなので「この経路
+// では fork できない」場合は無い": every lcpp session is managed, so ErrForkAtRoute never
+// applies here.
+//
+// store.ForkAt is INCLUSIVE of the id it is given (copies recs[:idx+1]), so the default
+// exclusive meaning ("keep up to, not including, the clicked user turn") resolves to the
+// PRECEDING record's id. Include=true keeps that turn and the reply it got: this walks
+// forward to the next top-level boundary (the next real user turn, or a compaction note) and
+// resolves to the record just before it; on the LAST exchange there is no next boundary, so
+// it returns "" — the same "whole conversation" value driver.go's ensureForked already gives
+// that meaning for a plain (non-point) fork.
+func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
+	recs, _, err := Open(sidFor(m)).Records()
+	if err != nil {
+		return "", err
+	}
+	idx := -1
+	for i, r := range recs {
+		if r.ID == at.Anchor {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return "", fmt.Errorf("フォーク元のターンが見つかりません: %s", at.Anchor)
+	}
+	if !at.Include {
+		if idx == 0 {
+			return "", errors.New("この会話の先頭より前ではフォークできません")
+		}
+		return recs[idx-1].ID, nil
+	}
+	for j := idx + 1; j < len(recs); j++ {
+		if recs[j].Kind == KindUser || (recs[j].Kind == KindSystemNote && recs[j].Note == NoteCompaction) {
+			return recs[j-1].ID, nil
+		}
+	}
+	return "", nil // the last exchange: keep the whole conversation
+}

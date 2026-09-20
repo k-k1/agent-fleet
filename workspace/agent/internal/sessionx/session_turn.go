@@ -19,6 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -34,6 +35,7 @@ var managedDrivers = map[string]agents.Driver{
 	session.KindCopilot:  copilot.NewDriver(),
 	session.KindCursor:   cursor.NewDriver(),
 	session.KindKiro:     kiro.NewDriver(),
+	session.KindLcpp:     lcpp.NewDriver(),
 }
 
 // driverOf resolves the managed driver for a session's kind.
