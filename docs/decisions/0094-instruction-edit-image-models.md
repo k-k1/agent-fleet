@@ -83,7 +83,9 @@ for an edit and nothing happened" the default behaviour**.
 - Make `Caps.Strength` a per-family answer (it is `true` for everything today, `comfy.go:138`) and
   answer **false** here.
 - A caller that sends `strength` anyway is **refused with 400** (the shape `bad_strength` already
-  uses), not warned. Run C was "a wrong picture with no warning", so a path that accepts the number
+  uses), not warned. 🔴 **Refuse only when the RESOLVED model is of this family** — a request that
+  names no provider may not land on comfy at all, so "a `strength` present means 400" would be wrong.
+  Resolve model → family at the edge (`comfyFamilyFor` is in the same package). Run C was "a wrong picture with no warning", so a path that accepts the number
   and quietly drops it leaves the failure looking the same from outside. ADR 0081 decision 4's
   "report, do not swallow" is a rule about values the CATALOGUE declared (the operator's, written
   long before this request); **a value the caller just typed is better refused**.
@@ -362,9 +364,14 @@ would always be true and `ops` always three, so the pane would keep showing a sl
   (`comfy_workflows.go:134`'s `Image string`), call `uploadImage` more than once (`comfy.go:710`
   takes `req.Inputs[0]` alone), wire `image2`, and fix the singular wording of `comfyCheckInputs`'
   refusal (`comfy.go:786`).
-- **Wire**: `ops` on `modelStatus`, `strength` in `Knobs` (decision 12). 🔴 **`providerStatus.Strength`'s
-  doc comment (`http.go:108-110`) says "No union is needed: it is per provider, not per model." —
-  decisions 2 and 11 make that false**, so the same change rewrites it.
+- **Wire**: `ops` on `modelStatus`, `strength` in `Knobs` (decision 12), and the Console's mirror of
+  both: `wire.ts:35`'s `Knob` is a **closed union**
+  (`"steps" | "cfg" | "sampler" | "scheduler" | "negative"`), so it will not compile until the type
+  changes, and `ImagegenModel` (`wire.ts:86`, `knobs?: Knob[]`) has no `ops`. 🔴 **Three comments
+  spell that vocabulary out** — `providerStatus.Strength` (`http.go:108-110`, "No union is needed:
+  it is per provider, not per model", which decisions 2 and 11 make false), `comfyFamilyKnobs`
+  (`comfy.go:146-154`) and `modelStatus.Knobs` (`http.go:156-159`). All three say "a subset of those
+  five words", so **the same change rewrites all three**.
 - **CP**: `engine_catalog.go` (two words, required flags), `engine_family_parts.go` (the table), and
   `engine_class.go` is **left alone** (decision 8).
 - **Console**: two family cards in `families.ts` (dialect `sentences`, no quality chips, steps 20 for
@@ -372,7 +379,12 @@ would always be true and `ops` always three, so the pane would keep showing a sl
   `families.test.ts`'s family list, **`jobs.ts:203`'s unconditional `strength`** (it is sent whenever
   `op !== "generate"`, so decision 2 would refuse every edit), the `op` choices (`draft.ts`'s constant `OPS`, walked at `GenerateForm.tsx:417`, never the
   status's `ops`), and `GenerateForm.dom.test.tsx` (the test that greys fields out on `knobs` —
-  extend it for `strength` and `ops`).
+  extend it for `strength` and `ops`, without breaking its other claim: an ABSENT `knobs` leaves the
+  whole form usable)
+- **The refusal has two homes** (decision 2): the blocking `/imagegen/generate` (`http.go:450`) and
+  the queue route the pane uses (`jobs_http.go:115`). Both check the RANGE (0 < s ≤ 1) today, so
+  **adding it to only one leaves the pane with a failed job instead of a 400** — and P0's second
+  criterion would hold on one route and not the other..
 - **Guide**: `guide/operate/07-image-engine.{md,ja.md}` (the page that lists per-family behaviour).
 - **Deployment**: 20 GB more per checkpoint. The box keeps models on NVMe so the space is there, but
   **the cold-start sync grows** (measured: 348.9 s for 30 GB, purchase included).
@@ -383,7 +395,7 @@ would always be true and `ops` always three, so the pane would keep showing a sl
 
 - **P0** — the `qwen-image-edit-2509` family and the per-family properties of decisions 2-5, 11 and
   12, with goldens and docs. Three completion criteria: (1) **run A reproduced** on real hardware
-  (it edits), (2) **run C refused with 400** (no `strength` here), and (3) 🔴 **with a qwen row warm,
+  (it edits), (2) **run C, naming qwen, refused with 400 on both routes** (no `strength` here), and (3) 🔴 **with a qwen row warm,
   `op=generate` still lists comfy** (decision 11's union holds, so nothing falls through to a paid
   provider).
 - **P1** — 2511 (decision 6), the parts table (decision 7), the operator-entered `vram_mib`
@@ -530,3 +542,23 @@ unnamed model (`http.go:206`, `imagegen.go:806`, `:821`, `:856` and **`jobs.go:4
 this ADR had never named). The last two feed `requestWarnings`, and comfy emits its per-row warnings
 itself (`comfy.go:755`, `:758`), so no warning is lost. `comfy.go:654` passes the resolved model, so
 judging stays strict, and `http.go:243` already asks `Caps(m.ID)`. **Nothing else breaks.**
+
+### Fifth round (against `a1583944`)
+
+**No 🔴 left.** The three 🟡 were all about the granularity of the consequences, and all three are
+fixed.
+
+- 🟡 **Adding a wire field touches three more places**: `wire.ts:35`'s `Knob` is a closed union (it
+  will not compile until the type changes) and `ImagegenModel` has no `ops`; and two more comments
+  spell the same vocabulary out (`comfy.go:146-154`, `http.go:156-159`) where the consequences named
+  only `http.go:108-110`.
+- 🟡 **Decision 2's 400 has two homes** (`http.go:450`, `jobs_http.go:115`). With only one, the pane
+  gets a failed job instead of a refusal and P0's second criterion holds on one route only. Decision
+  2 also now says the refusal applies **only when the resolved model is of this family** — a request
+  naming no provider may not land on comfy at all.
+- 🟡 One EN/JA mismatch (the Japanese consequences line was missing `GenerateForm.dom.test.tsx`).
+
+🟢 The review's sweep of "what else does the pane want per model" came back with **`ops` and
+`strength` and nothing else** (size is already `modelStatus.Sizes`, negative rides `Knobs`, LoRA has
+`loraStatus.baseModel`, seed / aspect ratios / samplers are family-independent, and `MaxInputs` is
+already deferred to P3 by decision 5's ⚠️).

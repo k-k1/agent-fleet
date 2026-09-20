@@ -73,7 +73,10 @@ Qwen2.5-VL-7B（`--clip_l` を「唯一のエンコーダ」に使う既存の�
 載せると、利用者から見て「編集を頼んだのに何も起きない」が既定の挙動になる**。
 
 - `Caps.Strength` をファミリーごとにし（今は `comfy.go:138` で全ファミリー true）、このファミリーでは **false**。
-- 呼び出し側が `strength` を渡したら **400 で断る**（`bad_strength` と同じ形）。警告に留めない:
+- 呼び出し側が `strength` を渡したら **400 で断る**（`bad_strength` と同じ形）。🔴 **断るのは
+  「解決後のモデルがこのファミリーのとき」** ——provider 未指定の要求は comfy に来るとは限らないので、
+  「`strength` が付いていたら常に 400」は誤りになる。受付時に model → ファミリーを解く
+  （`comfyFamilyFor` は同じ package にある）。警告に留めない:
   実測 C が「無警告で誤った絵」だったのだから、同じ値を受け取って黙って捨てる経路を残すと、
   利用者から見た失敗の形は変わらない。ADR 0081 決定 4 の「黙らせず報告する」はカタログ側が
   宣言した値（運用者の宣言）に対する規則で、**呼び出し側が今まさに打った値は断るほうが早い**。
@@ -324,16 +327,26 @@ qwen を選んでいてもペインは滑り台を出し `generate` を候補に
   **P3 の 2 枚目**はここに乗る: `comfyParams` の複数形化（`comfy_workflows.go:134` の `Image string`）・
   `uploadImage`（`comfy.go:710` は `req.Inputs[0]` の 1 回だけ）の複数回呼び出し・`image2` への配線・
   `comfyCheckInputs`（`comfy.go:786`）の拒否文の単数形。
-- **ワイヤ**: `modelStatus` に `ops`、`Knobs` に `strength`（決定 12）。🔴 **`providerStatus.Strength`
-  のドキュメントコメント（`http.go:108-110`）は「No union is needed: it is per provider, not per
-  model.」と書いてあり、決定 2 と 11 はこれを嘘にする**——同じ変更で書き替える。
+- **ワイヤ**: `modelStatus` に `ops`、`Knobs` に `strength`（決定 12）。Console 側の写しも同時に:
+  `wire.ts:35` の `Knob` は**閉じた union**（`"steps" | "cfg" | "sampler" | "scheduler" | "negative"`）
+  なので型ごと直さないとコンパイルが通らず、`ImagegenModel`（`wire.ts:86` が `knobs?: Knob[]`）には
+  `ops` が無い。🔴 **語彙を書いたコメントが 3 か所ある**——`providerStatus.Strength`
+  （`http.go:108-110`「No union is needed: it is per provider, not per model.」＝決定 2 と 11 が
+  これを嘘にする）・`comfyFamilyKnobs`（`comfy.go:146-154`）・`modelStatus.Knobs`
+  （`http.go:156-159`）。どれも「5 語の部分集合」と書いてあるので、**同じ変更で 3 つとも書き替える**。
 - **CP**: `engine_catalog.go`（語彙 2 語・必須フラグ）、`engine_family_parts.go`（部品表）、
   `engine_class.go` は**触らない**（決定 8）。
 - **Console**: `families.ts` にファミリーカード 2 枚（dialect は `sentences`・quality チップ無し・
   steps は 2509 が 20 / 2511 が 40・`sizes: []` ＋ **size 欄そのものを出さない**）、
   `wire.ts:39` の `Family` 型、`families.test.ts` のファミリー一覧、
   **`jobs.ts:203` の `strength` 無条件送信**（`op !== "generate"` なら必ず送る＝決定 2 が効くと
-  編集が毎回 400 になる）、`op` 候補（`draft.ts` の定数 `OPS` を `GenerateForm.tsx:417` が回すだけで status の `ops` を見ていない）。
+  編集が毎回 400 になる）、`op` 候補（`draft.ts` の定数 `OPS` を `GenerateForm.tsx:417` が回すだけで
+  status の `ops` を見ていない）、`GenerateForm.dom.test.tsx`（`knobs` で欄を落とす試験——`strength`
+  と `ops` の分を足す。`knobs` を送らない古い Agent では全部使えるまま、という既存の主張は壊さない）。
+- **拒否の置き場所は 2 か所**（決定 2）: ブロッキングの `/imagegen/generate`（`http.go:450`）と
+  ペインが使うキュー経路（`jobs_http.go:115`）。どちらも今は値域（0 < s ≤ 1）しか見ていないので、
+  **両方に足さないとペインからは 400 ではなく「失敗したジョブ」になる**＝P0 完了条件 (2) が経路に
+  よって成立しない。
 - **ガイド**: `guide/operate/07-image-engine.{md,ja.md}`（ファミリーごとの挙動を列挙している面）。
 - **配備**: 本体 1 つで 20 GB 増える。箱のモデル置き場は NVMe なので容量は足りるが、
   **コールドスタートの同期時間が増える**（実測: 30 GB で 348.9 秒。これは箱の購入込み）。
@@ -343,8 +356,8 @@ qwen を選んでいてもペインは滑り台を出し `generate` を候補に
 ## フェーズ
 
 - **P0** — ファミリー `qwen-image-edit-2509` と決定 2・3・4・5・11・12 のファミリー属性化。golden とドキュメント。
-  完了の定義は 3 つ: (1) **実機で A を再現**（編集される）、(2) **C が 400 で断られる**
-  （`strength` を受け取らない）、(3) 🔴 **qwen の行を warm にしたまま `op=generate` が comfy に残る**
+  完了の定義は 3 つ: (1) **実機で A を再現**（編集される）、(2) **qwen を名指しした C が 400 で断られる**
+  （ブロッキングとキューの両経路で。`strength` を受け取らない）、(3) 🔴 **qwen の行を warm にしたまま `op=generate` が comfy に残る**
   （決定 11 の union が効いている＝課金 provider に落ちない）。
 - **P1** — 2511（決定 6）・部品表（決定 7）・`vram_mib` の既定（決定 8）。
   完了の定義: 1 押しの取り込みで 3 部品が正しいディレクトリに入り、**取り込み直後の画面が測定値
@@ -478,3 +491,22 @@ not per model.」と書いており、決定 2 と 11 がそれを嘘にする�
 `requestWarnings` に渡るが、comfy は行ごとの警告を自前で出す（`comfy.go:755` / `:758`）ので落ちる
 警告は無い。`comfy.go:654` は解決後の model を渡すので厳密なまま、`http.go:243` は `Caps(m.ID)` で
 per-model のまま。**壊れる読み手は上の 1 件だけ**だった。
+
+### 5 巡目（`a1583944` に対して）
+
+**🔴 は無くなった。** 残った 🟡 3 件はどれも「影響の粒度」で、3 件とも直した。
+
+- 🟡 **ワイヤを足すと直る場所がもう 3 つあった**: `wire.ts:35` の `Knob` は閉じた union なので型ごと
+  直さないとコンパイルが通らず、`ImagegenModel` に `ops` が無い。語彙を書いたコメントも
+  `comfy.go:146-154` と `http.go:156-159` の 2 つが残っていた（影響に書いていたのは
+  `http.go:108-110` だけ）。
+- 🟡 **決定 2 の 400 は置き場所が 2 か所**（`http.go:450` と `jobs_http.go:115`）。片方だけだと
+  ペインからは「失敗したジョブ」になり、P0 完了条件 (2) が経路によって成立しない。あわせて
+  **「解決後のモデルがこのファミリーのときだけ 400」**（provider 未指定の要求は comfy に来るとは
+  限らない）も決定 2 に明記した。
+- 🟡 日英不一致が 1 か所（ja の Console 行に `GenerateForm.dom.test.tsx` が無かった）。
+
+🟢 レビュー側が「ペインが per-model にしたい面」を全部当たった結果、**`ops` と `strength` の 2 つで
+尽きている**ことも確認された（size は `modelStatus.Sizes`、negative は `Knobs`、LoRA は
+`loraStatus.baseModel`、seed / aspect ratios / samplers はファミリー非依存、`MaxInputs` は決定 5 の
+⚠️ で既に P3 送り）。
