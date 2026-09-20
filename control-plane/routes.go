@@ -800,6 +800,11 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	// Per-user UI preferences (Console display settings) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/ui-prefs", rest)
 	mux.HandleFunc("PUT /api/env/ui-prefs", rest)
+	// AI assist per-feature resolution (docs/log/103 §103.6) — proxied to the Agent. Owner-only
+	// on purpose, no twin in registerSessionShareRoutes: it answers with THIS workspace's own
+	// backend/pin state, which a share recipient has no business reading (the same reasoning as
+	// /api/sessions/{name}/translate above).
+	mux.HandleFunc("GET /api/ai-assist/resolution", rest)
 }
 
 // Connections ops — proxied to the Workspace Agent (/api stripped), except the
