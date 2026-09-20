@@ -26,6 +26,7 @@ export const KIND_JA: Partial<Record<PaneKind, MsgKey>> = {
   engineAdd: "pane.kind.engine_add",
   gallery: "pane.kind.gallery",
   imagegen: "pane.kind.imagegen",
+  fleetgraph: "pane.kind.fleetgraph",
 };
 
 // Resolve a non-session pane kind to its localized label (falls back to the raw kind).
@@ -96,6 +97,8 @@ export function paneTitle(pane: Pane, session: Session | null, meta: PaneTitleMe
       return sharedSessionLabel(meta.shared);
     case "sessions":
       return jaKind("sessions");
+    case "fleetgraph":
+      return jaKind("fleetgraph");
     case "engineAdd":
       return jaKind("engineAdd");
     case "imagegen":

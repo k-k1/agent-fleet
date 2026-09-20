@@ -17,6 +17,7 @@ import { chat } from "./ja/chat.ts";
 import { common } from "./ja/common.ts";
 import { engines } from "./ja/engines.ts";
 import { errors } from "./ja/errors.ts";
+import { fleetgraph } from "./ja/fleetgraph.ts";
 import { gallery } from "./ja/gallery.ts";
 import { imggen } from "./ja/imggen.ts";
 import { memo } from "./ja/memo.ts";
@@ -56,4 +57,5 @@ export const ja = {
   ...gallery,
   ...imggen,
   ...engines,
+  ...fleetgraph,
 };

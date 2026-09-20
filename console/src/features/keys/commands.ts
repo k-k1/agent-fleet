@@ -24,6 +24,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionsOverview } from "../overview/open.ts";
 import { openImagegen } from "../imagegen/open.ts";
 import { openGeneratedGallery } from "../gallery/open.ts";
+import { openFleetGraph } from "../fleetgraph/open.ts";
 import { useMemoStore } from "../memo/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { getSettings, setSetting, defaultSetting } from "../../lib/settings.ts";
@@ -376,6 +377,9 @@ export const ALL_COMMANDS: Command[] = [
   // A gallery normally needs a folder, which is why the kind has no command of its own
   // (ADR 0080 decision 1). This one has a fixed target — where generate_image writes.
   { id: "open.generated", title: "keys.cmd.openGenerated", seq: "g g", run: () => openGeneratedGallery() },
+  // The fleet session graph (ADR 0096 decision 10) — like the overview, it takes no
+  // argument, so it gets a fixed leader path here too.
+  { id: "open.fleetgraph", title: "keys.cmd.openFleetGraph", seq: "g f", run: () => openFleetGraph() },
 
   // ---- Notifications (leader n) — mute the voice read-aloud, toggle the per-session voice
   // notification / limit-reset notification, or toggle a chat-bridge service's notification

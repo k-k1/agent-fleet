@@ -7,6 +7,7 @@
 import { signalAuthExpired } from "../auth/authExpired.ts";
 import { signalProviderRequired } from "../auth/providerRequired.ts";
 import { t, tMaybe } from "../../lib/i18n/index.ts";
+import type { FleetGraphPage } from "../../types/fleetgraph.ts";
 
 // Resolve URLs relative to where the Console is mounted, so it works both at the
 // host root (http://localhost:8099/) and behind a path-stripping proxy (Tailscale
@@ -933,6 +934,13 @@ export const askAssistant = (
   assistant?: string,
 ): Promise<{ assistant?: string; reply?: string; error?: ApiError }> =>
   apiJSON("api/chat/ask", "POST", { prompt, assistant });
+
+// Fleet session graph (ADR 0096 decision 7): the one Agent read, CP-allowlisted. `since`/
+// `until` are unix millis (the DTO's own units — never the ledger's RFC3339, which never
+// reaches the browser). Errors resolve as { error } like every other api() call rather than
+// throwing, so the view's retry loop (useRetryLoad) sees a normal transient/terminal result.
+export const fetchFleetGraph = (since: number, until: number): Promise<FleetGraphPage | { error: ApiError }> =>
+  api(`api/fleet-graph?since=${since}&until=${until}`);
 
 // Build the terminal WebSocket URL for a session under the current mount, with
 // the tenant carried as a query param (headers aren't available on WS).

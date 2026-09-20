@@ -44,6 +44,7 @@ import { EngineAddView } from "../settings/admin/adminEngineAdd.tsx";
 import { SessionsOverview } from "../overview/SessionsOverview.tsx";
 import { GalleryView } from "../gallery/GalleryView.tsx";
 import { ImagegenView } from "../imagegen/ImagegenView.tsx";
+import { FleetGraphView } from "../fleetgraph/FleetGraphView.tsx";
 import { SharedSessionView } from "../sharing/SharedSessionView.tsx";
 import { useSharedSessionsStore } from "../sharing/store.ts";
 import { canPopout, openPanePopout } from "./popout.ts";
@@ -767,6 +768,9 @@ function PopulatedPane({
         />
       )}
       {pane.content.kind === "imagegen" && <ImagegenView headerActions={tabHeaderActions} />}
+      {pane.content.kind === "fleetgraph" && (
+        <FleetGraphView paneId={pane.id} showArchived={pane.content.showArchived} headerActions={tabHeaderActions} />
+      )}
     </div>
   );
 }
