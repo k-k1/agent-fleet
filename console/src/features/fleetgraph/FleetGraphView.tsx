@@ -8,7 +8,7 @@
 // deriving anything itself. Geometry (xOf/laneY) comes from there too: a second copy
 // here once drifted by half a row and neither tsc nor the tests could see it, because a
 // module importing its own stub looks unrelated to the real one.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, WheelEvent as RWheelEvent } from "react";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -193,21 +193,32 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
   // next to it stayed at a literal 34px, so the two drifted apart by row (measured: ~17px
   // per row at 1700px wide, ~160px by row 6).
   const sessions = useSessionsStore((s) => s.sessions);
-  const canvasRef = useRef<HTMLDivElement>(null);
+  // Measure the SCROLL BOX, not the canvas: `.fgraph-body` scrolls (overflow:auto), so the
+  // canvas inside it is sized by its own content — the SVG — and observing that is a loop
+  // that latches at whatever width the first render used (measured: 920px at every viewport,
+  // so the figure never widened on a 1700px pane and overflowed a 480px one). The body's
+  // client width minus the label column is the width actually available; below MIN_CANVAS_W
+  // the body scrolls horizontally instead of squeezing the time axis flat.
+  //
+  // A ref CALLBACK rather than useEffect + useRef: the body does not exist on the first
+  // render (an empty figure renders EmptyState instead), so a mount-time effect would run
+  // with a null ref and never observe anything — measured as a figure stuck at 920px wide
+  // no matter the pane. The callback re-runs on every mount and unmount of the node itself.
   const [canvasW, setCanvasW] = useState(CANVAS_W);
-  useEffect(() => {
-    const el = canvasRef.current;
+  const roRef = useRef<ResizeObserver | null>(null);
+  const bodyRef = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    roRef.current = null;
     if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width;
-      if (w && w > 0) setCanvasW(Math.round(w));
-    });
+    const measure = () => setCanvasW(Math.max(MIN_CANVAS_W, Math.round(el.clientWidth - LABEL_W)));
+    measure();
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    roRef.current = ro;
   }, []);
 
   const scale: GraphScale = useMemo(
-    () => ({ from: win.from, to: win.to, width: Math.max(MIN_CANVAS_W, canvasW), laneH: ROW_H }),
+    () => ({ from: win.from, to: win.to, width: canvasW, laneH: ROW_H }),
     [win.from, win.to, canvasW],
   );
   const sessionMap = useMemo(() => new Map(sessions.map((x) => [x.name, x] as const)), [sessions]);
@@ -295,7 +306,7 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
       {model.lanes.length === 0 ? (
         <EmptyState icon="graph" title={tr("fgraph.empty")} />
       ) : (
-        <div className="fgraph-body" onWheel={onWheel}>
+        <div className="fgraph-body" ref={bodyRef} onWheel={onWheel}>
           <div className="fgraph-labels" style={{ width: LABEL_W, paddingTop: TOP_PAD }}>
             {model.lanes.map((lane) => {
               // "欠けた親は左端の印で示す" (decision 9): a lane can sit at depth > 0 while its
@@ -319,7 +330,7 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
               );
             })}
           </div>
-          <div className="fgraph-canvas" ref={canvasRef}>
+          <div className="fgraph-canvas">
             <svg
               width={scale.width}
               height={totalH}
