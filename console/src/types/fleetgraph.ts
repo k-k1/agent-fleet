@@ -354,6 +354,13 @@ export type SegmentKindByState = Record<LedgerState, SegmentKind>;
 // suites read the same fixture: console/src/lib/fleetgraph.states.json.
 export type GraphNormalizeState = (raw: string | undefined) => LedgerState;
 
+// Answers "is this end of an arrow one of the spellings that never has a lane?"
+// (decision 8-2's vocabulary). Exported by S-LOGIC and used by the view too: the same
+// question decides whether a null row means "no lane at all" or decision 9's "the lane
+// exists, just not drawn here", so a second copy of the list would silently mis-sort
+// arrows the moment the vocabulary grows.
+export type GraphIsExternalActor = (id: ActorId) => boolean;
+
 export interface GraphSegment {
   laneId: LaneId; // a lane's id, NOT its row index
   t0: number;
@@ -374,9 +381,12 @@ export interface GraphSegment {
 //     the builder DROPS that arrow, because rendering it here would attribute a
 //     session's message to the outside (decision 6).
 //   lineage (spawn/fork/handoff) → the parent is a real lane with no row in this
-//     window (off the left edge, or its lineage was deleted). The arrow stays and
-//     the view draws decision 9's mark for a missing parent — never the external
-//     glyph. Branches must not vanish as the window narrows.
+//     window (off the left edge, or its lineage was deleted). The builder KEEPS the
+//     arrow (dropping it is how branches silently vanish as the window narrows), and
+//     the view answers it with decision 9's mark for a missing parent on the child's
+//     label — never the external glyph, which would read as "a person or a
+//     conversation launched this". In practice the view therefore draws no line for
+//     such an arrow: one meaning, one mark.
 export type ArrowVariant = "spawn" | "fork" | "handoff" | "instruct" | "report" | "peer";
 
 export interface GraphArrow {

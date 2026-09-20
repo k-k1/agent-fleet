@@ -2,8 +2,9 @@
 
 [English](0096-fleet-session-graph.md) | 日本語
 
-- 状態: **採用・着工中**（P0 契約凍結を実装・2026-09-20。`console/src/types/fleetgraph.ts`）。
-  設計と実測は [docs/101](../log/101-fleet-session-graph.md)。
+- 状態: **採用・実装済み**（P0〜P2・2026-09-20）。P1 は S-BE／S-LOGIC／S-VIEW の 3 並列、
+  P2 で合流。残るのは P3（会話 id の絞り込み・テナント横断の俯瞰・spawn の本文の畳み込み）と
+  活動台帳の書き込みバッファリングの実測。設計と実測は [docs/101](../log/101-fleet-session-graph.md)。
 - これが置き換えるもの: [0027](0027-operator-interaction-graph.ja.md)（オペレーター↔セッションの縦シーケンス図。
   P0 の契約凍結だけが入っていた）を **superseded** にする。
 - 関連: [0041](0041-cross-session-messaging.ja.md) 決定 9（peer は conv に帰属できない＝俯瞰図の必要性を確定）/
@@ -404,7 +405,7 @@ SCM のコミットグラフ（`lib/gitgraph.ts` / `features/scm/CommitGraph.tsx
 - **P0 契約凍結（済）**: REST DTO ＋ `console/src/types/fleetgraph.ts`（import 専用）＋ 台帳の行形式
   ＋ 本 ADR ＋ docs/101。`types/opgraph.ts` はここで退役。
 - **P1 3 並列**（ホストのメモリ制約により同時ビルド禁止・並列 ≤3）: S-BE（Go: 台帳 2 本・書き込み
-  6 箇所・API・CP 許可リスト）／S-LOGIC（`lib/fleetgraph.ts` ＋ vitest）／S-VIEW（ビュー・ペイン
+  8 箇所・API・CP 許可リスト）／S-LOGIC（`lib/fleetgraph.ts` ＋ vitest）／S-VIEW（ビュー・ペイン
   配線・i18n・fixture で描画）。共有グルー（pane union / `Pane.tsx` / `paneTitle` / i18n）は
   S-VIEW 専有にして衝突をマージ 1 点へ閉じる。
 - **P2 統合**: マージ順 BE → LOGIC → VIEW。fixture を本物のレイアウト関数に差し替え、全ゲート

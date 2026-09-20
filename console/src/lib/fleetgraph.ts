@@ -19,6 +19,7 @@ import type {
   GraphLaneKnown,
   GraphLaneY,
   GraphModel,
+  GraphIsExternalActor,
   GraphNormalizeState,
   GraphOrigin,
   GraphScale,
@@ -95,10 +96,16 @@ export const laneY: GraphLaneY = (scale, row) => row * scale.laneH;
 
 // ── External actors (decision 8-2) ──────────────────────────────────────────
 // Only a LaneId becomes a lane. These spellings never do, however they arrive.
-function isExternalActor(id: string): boolean {
+//
+// Exported because the view needs the same answer to tell decision 8-2's "no lane at
+// all" from decision 9's "lane exists, not drawn here", and a second copy of the list
+// is a defect the moment the vocabulary grows: the view would stop recognising the new
+// spelling, read a family arrow's missing parent as an external sender, and drop it
+// without a sound. The contract types it as GraphIsExternalActor.
+export const isExternalActor: GraphIsExternalActor = (id) => {
   if (id === "user" || id === "schedule" || id === "agent") return true;
   return id.startsWith("conv:") || id.startsWith("bridge:");
-}
+};
 
 // stampMs: MMDD-HHMM from a millis instant (lib/sessionview.ts's `stamp`, ported
 // to the millis-everywhere contract this file speaks instead of an ISO string) —

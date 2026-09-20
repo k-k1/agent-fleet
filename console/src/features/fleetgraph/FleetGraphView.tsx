@@ -39,7 +39,7 @@ import type {
   LedgerState,
 } from "../../types/fleetgraph.ts";
 import type { SessionKind } from "../../types/session.ts";
-import { buildFleetGraph, laneY, xOf } from "../../lib/fleetgraph.ts";
+import { buildFleetGraph, isExternalActor, laneY, xOf } from "../../lib/fleetgraph.ts";
 import "./fleetgraph.css";
 
 const ROW_H = 34;
@@ -111,14 +111,6 @@ const ARROW_KEY: Record<ArrowVariant, MsgKey> = {
 // conversation-shaped round trips. Kept apart visually so a dense figure still reads at
 // a glance which kind of line is which (docs/log/101 §101.4).
 const isFamilyArrow = (v: ArrowVariant): boolean => v === "spawn" || v === "fork" || v === "handoff";
-
-// The actor spellings decision 8-2 says never become a lane. A family arrow's `from` is
-// contractually always a session (a lane id), so `fromRow == null` on one of THESE means
-// something different from `fromRow == null` on a round trip: not "this end has no lane at
-// all", but "this lane exists, just not drawn here" (decision 9's missing-parent case,
-// off-window or deleted lineage) — see the arrows.map() below.
-const isNonLaneActor = (actor: ActorId): boolean =>
-  actor.startsWith("conv:") || actor === "user" || actor === "schedule" || actor === "agent" || actor.startsWith("bridge:");
 
 interface FleetGraphViewProps {
   paneId: string;
@@ -384,7 +376,7 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
                 // one the label already shows, so this arrow draws nothing at all.
                 const missingParent =
                   isFamilyArrow(a.variant) &&
-                  ((fromRow == null && !isNonLaneActor(a.from)) || (toRow == null && !isNonLaneActor(a.to)));
+                  ((fromRow == null && !isExternalActor(a.from)) || (toRow == null && !isExternalActor(a.to)));
                 if (missingParent) return null;
                 return (
                   <ArrowGlyph
