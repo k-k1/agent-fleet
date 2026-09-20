@@ -3,6 +3,8 @@ package opencode
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -206,5 +208,65 @@ func TestFirstLine(t *testing.T) {
 		if got := firstLine(tc.in); got != tc.want {
 			t.Fatalf("firstLine(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// The price table belongs to the daemon read it came from. When the daemon goes away and the
+// list comes from the CLI instead, keeping it lets the free-route verdict be made from a
+// PREVIOUS catalog: a model opencode offers for free today is judged "paid" because an older
+// snapshot did not price it at zero. What the user sees is the free menu losing models — and
+// when that empties it, Catalog's rescue replacing the whole menu with the metered route.
+func TestCLIListDropsThePreviousDaemonsPriceTable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // no stored keys, so env() is stable across both reads
+	prev := UsagePref
+	t.Cleanup(func() { UsagePref = prev })
+	UsagePref = func() string { return UsageFree }
+
+	// 1. A daemon read prices one catalog…
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"location":{},"data":[
+			{"id":"nemotron-3-ultra-free","providerID":"opencode","status":"active","cost":[{"input":0}]}]}`))
+	}))
+	defer srv.Close()
+	probe := oauthProbe
+	oauthProbe = func() (string, bool) { return srv.URL, true }
+	InvalidateModels()
+	if got := Models(); len(got) != 1 {
+		t.Fatalf("daemon read = %v, want one id", got)
+	}
+	modelsMu.Lock()
+	seeded := len(freeIDs)
+	modelsMu.Unlock()
+	if seeded == 0 {
+		t.Fatal("the daemon read left no price table — the rest of this test would pass vacuously")
+	}
+
+	// 2. …then the daemon is gone and the CLI answers with a model that snapshot never saw.
+	oauthProbe = func() (string, bool) { return "", false }
+	t.Cleanup(func() { oauthProbe = probe })
+	dir := t.TempDir()
+	script := "#!/bin/sh\necho opencode/muse-spark-1.3-contributor-free\n"
+	if err := os.WriteFile(filepath.Join(dir, "opencode"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	InvalidateModels()
+
+	ids := Models()
+	if !reflect.DeepEqual(ids, []string{"opencode/muse-spark-1.3-contributor-free"}) {
+		t.Fatalf("CLI read = %v", ids)
+	}
+	modelsMu.Lock()
+	left := len(freeIDs)
+	modelsMu.Unlock()
+	if left != 0 {
+		t.Errorf("the previous daemon's price table survived a CLI read (%d entries)", left)
+	}
+	// The observable half: the free route keeps the model and stays the free route. With the
+	// stale table in place the id counts as paid, the menu empties, and the rescue hands back
+	// the metered route instead.
+	list, route := CatalogWithRoute(ids, UsageFree)
+	if len(list) != 1 || route != UsageFree {
+		t.Errorf("free route = %v (route=%s), want the CLI's id on the free route", idsOf(list), route)
 	}
 }

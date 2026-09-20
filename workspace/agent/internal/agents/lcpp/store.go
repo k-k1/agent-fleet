@@ -83,20 +83,37 @@ type Record struct {
 }
 
 // Store is one lcpp session's JSONL log at
-// <paths.AgentDataDir()>/lcpp/sessions/<sid>.jsonl. The zero value is not usable; build one
-// with Open. Safe for concurrent use: mu serializes every write so two goroutines appending
-// at once (harness's own runToolCalls dispatches a turn's tool calls concurrently) can never
-// interleave two partial JSON lines in the file.
+// <paths.AgentStateDir()>/lcpp/sessions/<sid>.jsonl — AgentStateDir, not AgentDataDir, because
+// the file is keyed by sid: paths.AgentStateDir's own doc comment states the line-drawing rule
+// ("anything keyed by session name or sid belongs on this side") and ADR 0087 decision 4's
+// implementation section repeats it near-verbatim for exactly this reason (docs/log/99's own
+// re-examination of ADR 0093 decision 3 works through why this store started on the wrong side
+// of that line — it predates neither rule, it was just never checked against it). The choice
+// carries no durability difference: both roots resolve under the same home/EBS volume on
+// ecs-ec2 (unlike claude's own transcript, which sits on the EFS-backed CLAUDE_CONFIG_DIR
+// mount) — moving between them is a correctness/consistency fix, not a durability one. It also
+// closes a real gap for free: AgentStateDir is already in the Console file browser's denylist
+// (fs.go's fsDeny), where AgentDataDir is not, so a raw conversation transcript was previously
+// servable through the file browser.
+//
+// The zero value is not usable; build one with Open. Safe for concurrent use: mu serializes
+// every write so two goroutines appending at once (harness's own runToolCalls dispatches a
+// turn's tool calls concurrently) can never interleave two partial JSON lines in the file, and
+// guards the lazily-opened handle f (see append).
 type Store struct {
 	dir string
 	sid string
 	mu  sync.Mutex
+	// f is the cached write handle append() opens on its first call and reuses for the rest of
+	// the store's life, instead of paying MkdirAll+OpenFile+Close on every single record (see
+	// append's own doc comment for why that reuse is safe). nil until the first append.
+	f *os.File
 }
 
-// sessionsDir is paths.AgentDataDir()'s lcpp subtree, resolved fresh on every Open (never
+// sessionsDir is paths.AgentStateDir()'s lcpp subtree, resolved fresh on every Open (never
 // cached) — paths.HomeDir reads $HOME per call, and tests redirect it with t.Setenv.
 func sessionsDir() string {
-	return filepath.Join(paths.AgentDataDir(), "lcpp", "sessions")
+	return filepath.Join(paths.AgentStateDir(), "lcpp", "sessions")
 }
 
 // Open returns the store for sid. It touches nothing on disk — the file, and its parent
@@ -126,11 +143,30 @@ func newRecordID() string {
 	return fmt.Sprintf("%d.%d", time.Now().UnixNano(), atomic.AddUint64(&recordIDSeq, 1))
 }
 
-// append is every Append* method's shared tail: stamp ID/TS, marshal, and write ONE line in
-// a single os.File.Write call while holding mu — never a read-modify-write of the whole file
+// append is every Append* method's shared tail: stamp ID/TS, marshal, and write ONE line in a
+// single os.File.Write call while holding mu — never a read-modify-write of the whole file
 // ([[fstore-no-read-modify-write]] is exactly the trap this avoids), and never open with
 // O_TRUNC, so a concurrent reader (the mirror poll, or Records below) never observes a
 // truncated file, only a prefix of complete lines.
+//
+// The write handle (s.f) is opened once, on the first call, and kept open for the rest of the
+// store's life instead of being reopened per record — docs/log/99's re-examination of ADR 0093
+// decision 3 measured the difference directly (internal/agents/lcpp/store_probe_test.go): the
+// old open-write-close-per-record shape cost ~4 file syscalls per record (an fstatat inside
+// MkdirAll, an openat, the write, a close); reusing the handle drops that to the write alone
+// after the first record. Kept even though this store does not currently sit on EFS (unlike
+// claude's own transcript) — ADR 0087 decision 1 flags per-turn transcript writes as the one
+// unmeasured cost of scaling sessions per box, and this shape is strictly cheaper with no
+// downside, so there is no reason to keep paying for opens and closes.
+//
+// 🔴 This does NOT change the crash-safety contract Records' own doc comment relies on. Closing
+// f after every write was never what made "only the last line can be torn" true — os.File.Close
+// does not fsync, so a completed Write's bytes are exactly as durable (sitting in the page
+// cache, not yet on disk) whether or not the fd is closed afterward. What actually makes it
+// true is that every earlier Write already returned successfully — and so was fully accepted by
+// the kernel — before this Write began; that is unrelated to whether the fd got closed in
+// between. A process death still can only ever tear the Write that was in flight at the moment
+// it died, same as before.
 func (s *Store) append(rec Record) (Record, error) {
 	rec.ID = newRecordID()
 	rec.TS = time.Now().UTC().Format(time.RFC3339Nano)
@@ -142,18 +178,38 @@ func (s *Store) append(rec Record) (Record, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return Record{}, err
+	if s.f == nil {
+		if err := os.MkdirAll(s.dir, 0o700); err != nil {
+			return Record{}, err
+		}
+		f, err := os.OpenFile(s.Path(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return Record{}, err
+		}
+		s.f = f
 	}
-	f, err := os.OpenFile(s.Path(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return Record{}, err
-	}
-	defer f.Close()
-	if _, err := f.Write(line); err != nil {
+	if _, err := s.f.Write(line); err != nil {
 		return Record{}, err
 	}
 	return rec, nil
+}
+
+// Close releases the store's cached write handle, if append ever opened one. It is not yet
+// called by anything — no driver wires this kind into a session lifecycle yet (agent.go's own
+// doc comment) — but exists so the eventual session-shutdown path has something to call instead
+// of leaking one file descriptor per session for the rest of the process's life. Calling it is
+// optional, not required for correctness: a Store whose process exits without calling Close
+// loses nothing Close itself would have added (Close does not fsync — see append's own doc
+// comment), and a later append on the same Store reopens on demand.
+func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.f == nil {
+		return nil
+	}
+	err := s.f.Close()
+	s.f = nil
+	return err
 }
 
 // AppendUser appends a genuine, top-level user turn — the operator's or the console user's

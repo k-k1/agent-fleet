@@ -30,6 +30,7 @@ vi.mock("../core/api/client.ts", async (orig) => {
 
 const { ModelPicker } = await import("./ModelPicker.tsx");
 const { t } = await import("../lib/i18n/index.ts");
+const { MODELS_RETRY_MS } = await import("../lib/agentModels.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -94,6 +95,78 @@ describe("dynamic model picker's default-only note", () => {
     await openList();
     expect(rowLabels()).toContain("Sonnet X");
     expect(hints().join()).not.toContain(t("ui.model_default_only"));
+  });
+
+  // The catalog arrives a moment after the modal opens (the Agent asks the CLI or its
+  // daemon). Until now that moment was silent and looked exactly like "this account has no
+  // model", so the picker read as broken to anyone who opened and glanced.
+  // opencode deliberately, and not one of the kinds above: fetchModels holds a per-kind
+  // promise for the life of the module, so a kind an earlier test left mid-flight would be
+  // handed that pending promise instead of making the call this test resolves. opencode is
+  // the one kind it never caches (its connections change while the Console is open).
+  it("says it is loading while the fetch is in flight, and stops once it lands", async () => {
+    await mount("opencode");
+    expect(hints().join()).toContain(t("ui.model_loading"));
+    await settle({ models: [{ id: "opencode-go/glm-5.2", label: "opencode-go/glm-5.2" }] });
+    await openList(); // one more flush: `settled` lands a turn after the options do
+    expect(hints().join()).not.toContain(t("ui.model_loading"));
+  });
+
+  // "Nothing to pick" has three causes that used to print the same sentence. Two of them are
+  // this workspace's own settings, and telling someone to check the connection and the plan
+  // sent them to look at something that was never wrong.
+  it("names the cause the Agent reported: everything excluded in settings", async () => {
+    await mount("copilot");
+    await settle({ models: [], reason: "hidden" });
+    expect(hints().join()).toContain(t("ui.model_none_hidden"));
+    expect(hints().join()).not.toContain(t("ui.model_default_only"));
+  });
+
+  it("names the cause the Agent reported: the billing choice left nothing", async () => {
+    await mount("opencode");
+    await settle({ models: [], reason: "route" });
+    expect(hints().join()).toContain(t("ui.model_none_route"));
+    expect(hints().join()).not.toContain(t("ui.model_default_only"));
+  });
+
+  // An Agent older than this Console sends no reason, and an enumeration that came back
+  // empty for an unknowable reason sends "catalog_empty". Both keep the cause-free wording.
+  // A kind of its own: fetchModels caches a non-empty answer per kind for the life of the
+  // module, so reusing one that an earlier test filled would assert against that cache.
+  it("falls back to the cause-free note when the Agent does not say", async () => {
+    await mount("codex");
+    await settle({ models: [], reason: "catalog_empty" });
+    expect(hints().join()).toContain(t("ui.model_default_only"));
+  });
+
+  // The first seconds after a workspace starts: the Agent is not listening yet and the CP
+  // answers 502 (the same window connsRetry exists for). That is not an empty catalog, and
+  // saying "check this agent's connection and plan" sends the user to look at two things that
+  // are both fine — they only had to wait.
+  it("retries a 502 instead of calling it an empty catalog, and says so when it gives up", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount("kiro");
+      // Every attempt fails the way a booting workspace does.
+      for (let i = 0; i <= MODELS_RETRY_MS.length; i++) {
+        await act(async () => {
+          respond({ error: { code: "http_502", status: 502 } });
+          await Promise.resolve();
+        });
+        // Still loading, never "only the default model is available".
+        expect(hints().join()).not.toContain(t("ui.model_default_only"));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(MODELS_RETRY_MS[i] ?? 0);
+        });
+      }
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(hints().join()).toContain(t("ui.model_unreachable"));
+      expect(hints().join()).not.toContain(t("ui.model_default_only"));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // Read both catalogues themselves: t() only ever returns the current display language, so

@@ -113,6 +113,25 @@
   --kind-kiro: #a371f7; /* purple — inherits copilot's former hue (docs/log/43 §4-1). Kiro brand purple */
   --kind-copilot: #7d8590; /* neutral/charcoal grey — moved off purple (docs/log/43). darker than opencode */
   --kind-opencode: #aab4be; /* light slate grey — lighter than copilot's charcoal for clear separation */
+  /* 10th kind color (ADR 0093 決定 1). A first pass picked red (#f85149) reasoning only against
+     the other 9 --kind-* hues — but that value collides byte-for-byte with the Console's de
+     facto error/danger color: --err is declared nowhere (grep --kind-*: 0 hits for `--err:`),
+     so `var(--err, #f85149)` in imagegen.css always falls through to the literal, and the same
+     literal is hardcoded for the diff/codegrid "removed" mark and the admin/tenant error text
+     (features/{viewer/parts/diff.css,viewer/parts/codegrid.css,imagegen/imagegen.css,
+     settings/admin/admin.css,settings/tenant/tenant.css}). A kind badge in that exact red would
+     read as an error state next to those, in the same screens.
+     Comparison set widened to cover that: the 9 --kind-* hues PLUS the semantic colors sharing
+     these screens (--warn, --ok, --accent, the diff-add/codegrid-modify/codegrid-add literals,
+     and the --err fallback literal above), both themes. Landed on an olive/mustard yellow — the
+     one hue family none of the above (kind OR semantic) sits in: claude/warn sit at ~30-40°,
+     ok/diff-add/codex at ~100-142°, this sits at ~55-58°, clearing every neighbor by min dE 17.1
+     dark / 14.4 light (both vs. --warn, its closest neighbor of either kind) — comfortably past
+     rovo's own precedent (docs/log/74 §8.2: min dE 7.5 dark / 6.3 light). Contrast against
+     --bg/--panel/--bar/--active-bg: 8.04 dark, 6.10 light (existing 9 kinds' worst case is agy
+     3.81 dark / 4.86 light, so this clears both floors). Confirmed by rendering all 10 kind
+     chips NEXT TO the real diff.css/--err/--warn/--ok swatches headless, both themes. */
+  --kind-lcpp: #d9c952;
   --kind-shell: #46c9d0;
   --kind-ssm: #6d8bf5;
   /* Spawn-lineage spines (ADR 0073) — the 2px rule the left rail draws down the side
@@ -263,6 +282,11 @@
   --kind-kiro: #6b3ac9; /* purple (light) — inherits copilot's former hue (docs/log/43 §4-1) */
   --kind-copilot: #30363d; /* near-black/charcoal (light) — moved off purple (docs/log/43) */
   --kind-opencode: #575e68; /* mid slate grey (light) — lighter than copilot's near-black */
+  /* 10th kind color, light theme (ADR 0093 決定 1) — see the dark block's comment for the
+     method and why red was rejected (collides with the --err fallback literal #f85149).
+     Min dE 14.4 (vs. --warn, the closest neighbor of either kind), min contrast against
+     --bg/--panel/--bar/--active-bg: 6.10. */
+  --kind-lcpp: #5c5400;
   --kind-shell: #0f676d;
   --kind-ssm: #2c39a3;
   /* Lineage spines, dark steps of the same six hues — a 2px rule on a near-white rail

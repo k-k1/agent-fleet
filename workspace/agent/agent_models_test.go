@@ -69,3 +69,55 @@ func TestAgentModelsClaudeIncludesRegisteredModels(t *testing.T) {
 		}
 	}
 }
+
+// An empty menu is the same picture whatever emptied it — "only the default model is
+// available" — and until now the Console had to guess a cause out loud ("check the connection
+// and the plan") even when the truth was "you excluded them all in settings". emptyReason
+// names the outermost step that was already empty, because that is the one to act on.
+func TestEmptyReasonNamesTheStepThatEmptiedTheMenu(t *testing.T) {
+	for _, c := range []struct {
+		name                     string
+		enumerated, offered, fin int
+		want                     string
+	}{
+		{"a menu that works says nothing", 8, 8, 8, ""},
+		{"…even when the route dropped most of it", 61, 8, 8, ""},
+		{"the kind answered with nothing", 0, 0, 0, "catalog_empty"},
+		{"a kind that does no shaping answered with nothing", -1, 0, 0, "catalog_empty"},
+		{"the billing route dropped every id", 61, 0, 0, "route"},
+		{"settings exclude every id that was left", 61, 8, 0, "hidden"},
+		{"…and for a kind that does no shaping too", -1, 4, 0, "hidden"},
+	} {
+		if got := emptyReason(c.enumerated, c.offered, c.fin); got != c.want {
+			t.Errorf("%s: emptyReason(%d,%d,%d) = %q, want %q", c.name, c.enumerated, c.offered, c.fin, got, c.want)
+		}
+	}
+}
+
+// A menu that works carries no reason. Worth pinning on the wire rather than only in
+// emptyReason: the picker shows the reason instead of the model list, so a reason attached to
+// a healthy catalog would replace a working picker with an explanation of a problem nobody
+// has. claude is the kind whose catalog cannot be empty for environmental reasons (four fixed
+// aliases, no CLI to fail), which is what makes this deterministic in CI.
+//
+// The empty cases are decided by emptyReason above and exercised there: every kind that can
+// reach one needs a CLI this test cannot count on, and claude's own all-hidden fail-safe
+// (model_deny.go) deliberately refuses to empty itself.
+func TestAgentModelsSaysNothingWhenTheMenuWorks(t *testing.T) {
+	writeUIPrefs(t, `{"hiddenModels":{"claude":["fable"]}}`)
+	req := httptest.NewRequest(http.MethodGet, "/agents/claude/models", nil)
+	req.SetPathValue("kind", "claude")
+	rec := httptest.NewRecorder()
+	handleAgentModels(rec, req)
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if models, _ := got["models"].([]any); len(models) != 3 {
+		t.Fatalf("models = %v, want the three tiers left after the exclusion", got["models"])
+	}
+	if _, ok := got["reason"]; ok {
+		t.Errorf("reason = %v on a working menu; the picker would show it instead of the models", got["reason"])
+	}
+}

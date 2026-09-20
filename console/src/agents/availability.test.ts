@@ -78,6 +78,30 @@ describe("repo launch menu", () => {
   });
 });
 
+describe("lcpp — registered (ADR 0093) but not launchable yet", () => {
+  it("is never in repoLaunchKinds, so no launch picker (grid / modal / quick launch) offers it", () => {
+    expect(repoLaunchKinds).not.toContain("lcpp");
+  });
+
+  it("available() is false unconditionally — no connection state ever admits it", () => {
+    expect(AGENTS.lcpp.available({})).toBe(false);
+    expect(AGENTS.lcpp.available({ conns: {} })).toBe(false);
+    expect(AGENTS.lcpp.available({ conns: { lcpp: { connected: true } } })).toBe(false);
+  });
+
+  it("declares the managed-only shape decision 2 describes: managedDriver true, terminalDriver false", () => {
+    // managedDriver stays true (the kind's eventual shape is managed-only), but
+    // terminalDriver:false says there is no Terminal (CLI) route to fall back to, ever —
+    // the two together are what LaunchModal / SessionMenu read to skip offering a choice.
+    expect(AGENTS.lcpp.managedDriver).toBe(true);
+    expect(AGENTS.lcpp.terminalDriver).toBe(false);
+  });
+
+  it("every other registered kind still defaults to having a terminal route", () => {
+    for (const k of repoLaunchKinds) expect(AGENTS[k].terminalDriver).not.toBe(false);
+  });
+});
+
 describe("display names", () => {
   it("uses the full product name in the launch pickers where it differs from the label", () => {
     expect(kindDisplayName("claude")).toBe("Claude Code");

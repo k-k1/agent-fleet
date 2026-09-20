@@ -98,6 +98,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		name:     m.Name,
 		sid:      sid,
 		cwd:      m.CWD(),
+		store:    Open(sid),
 		events:   make(chan agents.Event, 64),
 		state:    agents.TurnCompleted,
 		settings: agents.ThreadSettings{Model: m.Model, Effort: m.Effort, Mode: m.Mode},
@@ -186,8 +187,37 @@ func DropHandle(name string) {
 	h := handles[name]
 	delete(handles, name)
 	handlesMu.Unlock()
-	if h != nil {
-		_ = h.Interrupt()
+	if h == nil {
+		return
+	}
+	_ = h.Interrupt()
+	// Close the store's cached write handle (Store.Close's own doc comment: optional, but
+	// this IS the "eventual session-shutdown path" it names) only once any turn Interrupt just
+	// cancelled has actually finished appending — closing synchronously here would race
+	// runTurn's own post-Run persistence still in flight on another goroutine and could drop
+	// that turn's final records (a write to an already-closed *os.File fails). Bounded and
+	// off the caller's own goroutine, so DropHandle itself stays the fast, synchronous call
+	// every existing caller (stop/halt/archive/recreate) already expects.
+	go h.closeStoreOnceIdle()
+}
+
+// closeStoreIdleWait bounds closeStoreOnceIdle's poll — generous next to an ordinary tool
+// round trip, short next to leaving the fd open indefinitely.
+const closeStoreIdleWait = 10 * time.Second
+
+func (h *threadHandle) closeStoreOnceIdle() {
+	deadline := time.Now().Add(closeStoreIdleWait)
+	for time.Now().Before(deadline) {
+		h.mu.Lock()
+		running := h.running
+		h.mu.Unlock()
+		if !running {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := h.store.Close(); err != nil {
+		log.Printf("lcpp: closing store for %s: %v", h.name, err)
 	}
 }
 
@@ -245,6 +275,17 @@ type threadHandle struct {
 	sid  string
 	cwd  string
 
+	// store is opened once, in Resume, and reused for the handle's whole life — never a fresh
+	// Open(h.sid) per call. store.go's own append() now caches ITS write handle across calls
+	// on the SAME *Store (docs/log/99's re-examination of decision 3: reopening per record cost
+	// ~4 syscalls each), and that caching only pays off if this driver stops discarding the
+	// *Store (and, with it, the fd append() had just opened) at the end of every runTurn — a
+	// fresh Open(h.sid) per turn would reopen every turn and leave the previous turn's fd
+	// reachable only through the finalizer, not close()'d, exactly the non-determinism #821 set
+	// out to avoid. DropHandle below closes it (Store.Close's own doc comment: optional, but
+	// this is precisely the "eventual session-shutdown path" it was written for).
+	store *Store
+
 	// skipPerm is the resolved "skip permission confirmation" choice (docs/log/76), captured
 	// once at Resume from session.Meta/ui-prefs — the same resolution every other driver makes
 	// at spawn time, combined with the CURRENT settings.Mode at each runTurn (a plan launch
@@ -284,7 +325,7 @@ func (h *threadHandle) bypassNow(mode string) bool {
 // a clean completed tail was already reported before the crash, and reporting it again would
 // duplicate the operator's completion report.
 func (h *threadHandle) settle() {
-	recs, _, err := Open(h.sid).Records()
+	recs, _, err := h.store.Records()
 	if err != nil || len(recs) == 0 {
 		h.state = agents.TurnCompleted
 		return
@@ -387,7 +428,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 		h.mu.Unlock()
 	}()
 
-	st := Open(h.sid)
+	st := h.store
 	if _, err := st.AppendUser(in.Prompt); err != nil {
 		log.Printf("lcpp: persisting user turn: %v", err)
 		h.setState(agents.TurnFailed)
@@ -525,7 +566,7 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	cur := h.settings
 	h.mu.Unlock()
 	if changed {
-		if _, err := Open(h.sid).AppendModelChangeNote(model); err != nil {
+		if _, err := h.store.AppendModelChangeNote(model); err != nil {
 			log.Printf("lcpp: recording model change: %v", err)
 		}
 	}
