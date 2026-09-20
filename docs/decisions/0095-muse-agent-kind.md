@@ -143,8 +143,13 @@ the trap kiro hit with cwd+mtime, ADR 0026 decision 6).
 **The session id is stored, not derived.** AF's usual trick — a deterministic UUIDv5 of
 (dir, slot name), as kiro's `slotSid` does — cannot be used here: the schema states that a retained
 or reserved id is rejected with `commandRejected` / `session_id_conflict`, so an id is good exactly
-once. AF mints one per session, keeps it on `Meta` beside the path, and `ClearResume` discards both
-so a recreate starts a genuinely new session. Whether Muse accepts a v5 at all is unmeasured — the
+once. AF mints one per session and keeps it on `Meta` beside the path. What discards it is **not**
+`ClearResume` — that method is never called outside its own interface declaration and one agy test —
+but the fact that recreate and fork build a fresh `session.Meta` from an explicit whitelist of
+fields (`sessionx/session_handlers.go:1381-1390` and `:1083-1098`), so a field nobody lists is
+structurally not inherited. The inverse is the thing to guard: a future path that copies `Meta`
+wholesale would carry a single-use id forward and make the next `session/start` fail with
+`session_id_conflict`. Whether Muse accepts a v5 at all is unmeasured — the
 probe passed a v7, which the schema names as the server's own default. Subagent transcripts live under
 `subagent/<id>/session.jsonl`; v1 renders subagent activity as tool-shaped items on the parent turn
 and does not open a pane per child.
@@ -178,14 +183,14 @@ The file requires `"schema_version": 1` or **every command fails at startup**, s
 merged blindly. **There is exactly one writer, and it is the MCP materialiser's.** The clamps below
 and the `mcp_servers` block of Decision 11 are two blocks of the same file, and Muse writes it too
 (measured: a first run created `settings.json` **and** its own `~/.config/muse/.settings.json.lock`).
-Three writers on one file with two locks is a lost update, so the settings writer is a single
-serialised read-merge-rename owner under the existing `materializeMu`
+Three writers on one file with two locks is a lost update, so **one owner writes this file**: a
+muse-specific settings writer, serialised read-merge-rename under the existing `materializeMu`
 (`mcpreg/materialize.go:94-109`) rather than a second mutex beside it, and it **preserves every key
 it does not own** — a member's own `tui`, model defaults and telemetry keys survive an AF write.
 
 Two things follow that the first draft got wrong, and both are design work, not wording:
 
-- **It is a settings writer, not the JSON MCP materialiser with a second block.** That materialiser
+- **It is its own writer, not the JSON MCP materialiser with a second block.** That materialiser
   returns early when the server set did not change (`mcpreg/materialize_json.go:110-112`) and
   removes its key entirely when the set is empty — correct for MCP, fatal for clamps, which must be
   written on a kind with zero MCP servers. Muse therefore gets its own writer inside `mcpreg` that
@@ -228,11 +233,16 @@ AF sets:
 6. The approval judge off (`--approval-judge off`, or `MUSE_DISABLE_APPROVAL_JUDGE`). It is **on by
    default** and makes its own model call for every Prompt-bound approval — on a metered account
    that is spend the member never asked for, and Decision 5 keeps approvals on, so it fires often.
-7. The bundled skills that read other agents. `muse skills list` ships `resume-claude`,
-   `resume-codex`, `import` and `migrate`, whose stated job is to read Claude Code's or Codex's
-   transcripts, memory notes and MCP servers. Clamp 5 governs *discovery* of foreign rules and
-   skills; these are foreign readers invoked on demand, and they reach exactly the directories
-   workspace policy puts off-limits.
+7. The bundled skills that reach outside this session. `muse skills list` ships `resume-claude`,
+   `resume-codex`, `import`, `migrate` and `read-session`, whose stated job is to read Claude Code's
+   or Codex's transcripts, memory notes and MCP servers — clamp 5 governs *discovery* of foreign
+   rules, while these are foreign readers invoked on demand into exactly the directories workspace
+   policy puts off-limits. It also ships `daemon` and `host-manager`, which stand up long-running
+   processes outside AF's session bookkeeping, and `slack-connector`, which is an egress path.
+   ⚠️ **The disable key is version-fragile** (measured): `muse skills disable bundled:resume-claude`
+   writes `skills.activation.bundled["bundled://muse-core/skills/resume-claude/SKILL.md"] = "off"` —
+   keyed by a pack-qualified *path*, not by skill id, so a rename or move in 1.4 silently
+   re-enables it. This belongs in the drift check, not only in gate B1.
 
 Muse's own peer messaging and session-name authority (`~/.local/share/muse/session-name-authority/`,
 user-wide) are **not** wired to AF's cross-session messaging in v1: two peer channels with one
@@ -254,15 +264,29 @@ AF's own worktrees, which is what they are for.
 
 ### Decision 8 — deployment: bake the pinned binary, guard the shadow in `~/.local/bin`
 
-The release manifest publishes url + sha256 + size per platform, so the established pattern applies
-unchanged: `ARG MUSE_VERSION` + sha256 per arch, verified at build, the runtime laid out as the
-launcher expects (`muse-bin-<version>` plus `.muse-version` beside the launcher) under
-`/usr/local/share/muse`, `MUSE_NO_AUTO_UPDATE=1` exported by the entrypoint, and
-`env_tool_versions.go` gaining a row. Measured, that layout survives a read-only directory.
+**Muse Code is proprietary, so the distributed image does not contain it — the same rule Claude
+Code, Copilot CLI and Antigravity already live under.** `ARG BAKE_AGENT_CLIS=0` is the Dockerfile's
+default and its comment says why ("so an accidental redistribution cannot go wrong"),
+`deploy/compose/release.sh:53-55` makes lean the distribution default, and `NOTICE:57-62` states the
+consequence to the reader: proprietary agent CLIs are not bundled and deployments fetch them at
+first start. So there are **two variants and this ADR decides both**, rather than deciding the one
+that happens to be convenient:
 
-Two costs are named rather than discovered later. **Image size**: ≈ 299 MiB (x86_64) / ≈ 269 MiB
-(aarch64) per image — well under the 855 MiB that pushed kiro to on-demand installation, but not
-free. **The shadow**: the vendor installer's default target is `~/.local/bin/muse`, which wins on
+- **The shipped one (`BAKE_AGENT_CLIS=0`)**: the entrypoint boot-installs at container start,
+  pinning the same version and verifying the same sha256 from the release manifest, into a path AF
+  owns. Being able to do this anonymously (measured) is what makes it viable at all.
+- **`BAKE_AGENT_CLIS=1`** (self-hosted deployments that want a fast first start): `ARG MUSE_VERSION`
+  + sha256 per arch verified at build, the runtime laid out as the launcher expects
+  (`muse-bin-<version>` plus `.muse-version` beside the launcher) under `/usr/local/share/muse`.
+  Measured, that layout works from a read-only directory.
+
+Both share `MUSE_NO_AUTO_UPDATE=1` from the entrypoint, a row in `env_tool_versions.go`, and a
+`NOTICE` entry — which is not paperwork here but the file that tells a reader which proprietary
+CLIs a deployment fetches.
+
+Two costs are named rather than discovered later. **Size**: ≈ 299 MiB (x86_64) / ≈ 269 MiB
+(aarch64) — a boot-install download on every fresh container in the shipped variant, and image
+growth in the baked one. **The shadow**: the vendor installer's default target is `~/.local/bin/muse`, which wins on
 PATH and survives a recreate — the same trap a stale `~/.local/bin/workspace-agent` set for the
 Agent. A member who runs the one-line installer once pins themselves to an unmanaged, self-updating
 build for good, so the connection card reports the shadow when it sees one.
@@ -301,7 +325,7 @@ cumulative or per-turn — folding a cumulative counter as a delta is how a ledg
 Anything short of that lands `MeasuredPartial`, which is honest, rather than `MeasuredExact`, which
 would not be.
 **Two chips have no source yet, and the ADR should not pretend otherwise.** The cost estimate reads
-a kind → models.dev provider table (`workspace/agent/usage_catalog.go:48-55`) that has no Meta row,
+a kind → models.dev provider table (`workspace/agent/usage_catalog.go:45-55`) that has no Meta row,
 so a price per token has to come from somewhere before a spend figure can be shown. And the
 subscription's quota is counted in prompts per five hours, which is the shape of `get_agent_usage`
 (claude / codex / agy), not of a token ledger — and Muse exposes it through `/upgrade` in the TUI,
@@ -348,7 +372,10 @@ untrusted, so it is skipped for this session; restart with --trust-workspace`. T
 wire** — the string `trust` does not occur anywhere in the MSP schema (measured, 0 occurrences) —
 so the only way to have project rules is `muse serve --trust-workspace`, which is host-wide and
 therefore, under Decision 3's one-host-per-session shape, a per-session decision AF makes when it
-spawns the child.
+spawns the child. (`muse exec` does take it per run — measured, `workspace trust: trusted
+source=run-flag` — so this is a property of `serve`, not of the product.) It also **raises the price
+of the shared daemon** Decision 3 leaves open for re-evaluation: one host would then have to trust
+every repository, or serve none of them their own rules.
 
 Two consequences follow. **AF passes `--trust-workspace`** for a working copy the member launched a
 session in — refusing it would silently drop the repository's own `AGENTS.md`, which is where this
@@ -377,22 +404,32 @@ matrix), and Phase 2 carries both apply paths and the Console's per-kind distrib
 until then the kind ships with project instructions only, and the guide says so rather than leaving
 a member to assume the fleet policy reached it.
 
-### Decision 13 — the capability declaration: the first kind with every dynamic axis true, and a question channel that is not the approval channel
+### Decision 13 — the capability declaration, and the one capability that is genuinely new: `Permissions`
 
 `Capabilities` is not just `ProcessModel`, and the earlier drafts decided only that. MSP carries
-`session/setModel`, `session/setReasoningEffort` and `session/setApprovalMode` with matching
-`*Changed` notifications (measured in the schema), and `muse --help` exposes
-`--reasoning-effort none|minimal|low|medium|high|xhigh|max|ultra`. So `DynamicModel`,
-`DynamicEffort` and `DynamicMode` are all true, alongside `Steer` (`turn/steer`), `Fork`
-(`session/fork`) and `Permissions` (`approval/*`) — **the first kind for which every one of them
-holds**. `Meta.Effort` and the Console's effort and mode controls therefore light up on day one
-rather than being dark fields.
+`turn/steer`, `session/fork`, `session/setModel` and `session/setReasoningEffort`, so `Steer`,
+`Fork`, `DynamicModel` and `DynamicEffort` are true, and `muse --help` exposes
+`--reasoning-effort none|minimal|low|medium|high|xhigh|max|ultra`. **None of that is new**: opencode
+already declares all of them (`agents/opencode/driver.go:73-84`), and codex all but one.
 
-`Questions` is separately true and is a *different channel from approvals*:
-`userInput/requested` → `userInput/answer`, with `userInput/settled` closing it. An approval asks
-"may I run this"; a user-input request asks the member a question. Mapping both onto the mirror's
-permission card would lose that distinction, so the driver declares both `Permissions` and
-`Questions` and routes them to the two interaction kinds AF already has.
+**`DynamicMode` is false.** `ThreadSettings.Mode` is AF's plan mode — the comment says
+`"plan" | "normal"` (`agents/driver.go:37`) — and MSP has no method that sets it; `session/setApprovalMode`
+changes the approval posture, which Decision 5 already maps to the launch-time permission choice.
+Reading one wire method as two different AF axes is how a capability table starts lying.
+
+**`Permissions: true` is the new thing, and it is not a wiring job.** Every managed kind today
+declares it false, and `Interaction.Kind` is documented as `"question" (future: "approval" |
+"plan")` with the note that "all three kinds run with approvals bypassed"
+(`agents/driver.go:45-53`). So declaring it means **building AF's first approval interaction** —
+wire type, Console card, and the answer path back through `approval/decide`. ADR 0093 is already
+paying part of that bill: `workspace/agent/internal/harness/approval.go:18` names decision 5's
+`Permissions: true` as the property that kind sells, and that package is on develop. Whichever lands
+first pays, as with the managed-only gate.
+
+`Questions` is separately true and is a *different channel from approvals*: `userInput/requested` →
+`userInput/answer`, with `userInput/settled` closing it. An approval asks "may I run this"; a
+user-input request asks the member a question. AF has the question kind already; the approval kind
+is the one being built.
 
 ## What Phase 2 touches
 
@@ -406,11 +443,11 @@ none of it is optional.
 | Managed-only gate | `sessionx/session_handlers.go:650-668` (create default), `session_driver.go:62-105`, five Console launch / driver-switch sites, `control-plane/scheduler_wake.go:277-285` |
 | Connection + login | connection status, login routes on **both** `routes.go` files (Agent and CP — kiro's precedent is start, poll *and* delete, `control-plane/routes.go:869-875`), and the CP REST proxy allow-list, whose omission is how a usage chip silently never appears |
 | Model + vendor | `console/src/lib/agentModels.ts:34-35` (`isDynamic`), `workspace/agent/model_provider.go:122` (`modelKindVendor`), and the models REST switch `workspace/agent/agent_models.go:40-83` |
-| Usage | `usage_fold.go:204-212`, the cost table `usage_catalog.go:48-55`, the usage stack colour `console/src/features/usage/colors.ts:81` |
+| Usage | `usage_fold.go:204-212`, the cost table `usage_catalog.go:45-55`, the usage stack colour `console/src/features/usage/colors.ts:81` |
 | Instructions | both apply paths in `agent_instructions.go:119-146` and the list at `:83`, once Decision 12's targets are measured |
 | MCP — **four** separate lists | the registry (`mcpreg/def.go:57-61`, `mcpreg/materialize.go:47,74-87`, `mcpproj/inspect.go:36-44,50-58`); the **local** `af` server (`mcpx/mcp_stdio.go:1853`, kind validation `:2575-2576`, managed-driver list `:2759-2762`); the **CP** MCP tools (`control-plane/internal/mcpsrv/mcp.go:295,473,487,518-550` — description, schema and runtime validation are three edits, not one); and `mcpsrv/mcp_server.go:70-74`'s `mcpKnownKinds`, a fourth copy of the same list. Tool descriptions are a fixed per-session token cost, so they are edited, not grown |
 | Console surface | `console/src/types/session.ts:9-12` (`SessionKind` and the display order — nothing renders without it), `console/src/agents/registry.ts` descriptor, `console/src/lib/settings.ts:958-966` launch defaults, the `LaunchDefaults` kind union `console/src/features/settings/agents/AgentCardParts.tsx:76`, a new `MuseCard.tsx` wired from `features/settings/agents/AgentsTab.tsx:250`, `features/settings/workspace/EnvTab.tsx`, `console/src/features/settings/mcp/mcpWire.ts:9` (`MCP_KINDS`, mirrors the Go list), `ScheduleDetailModal.tsx`'s `AGENT_KINDS`, `features/mirror/{turnTime.ts:10,FileChangeStrip.tsx:69}`, `features/repos/ProjectActionPanels.tsx:34`, `console/src/lib/brandicons.ts:36` plus the icon asset itself, `console/src/lib/termcolor.ts:19`, and the colour twins across `tokens.css` and the five feature stylesheets (docs/log/74 §9.3) |
-| Deployment + CI | `workspace/Dockerfile` (ARG, sha256 per arch, runtime layout), the entrypoint's `MUSE_NO_AUTO_UPDATE` and shadow check, `env_tool_versions.go`, and the release / drift workflows and setup action that carry every other pinned CLI |
+| Deployment + CI | both variants of Decision 8: the entrypoint's boot-install (pin + sha256 + `MUSE_NO_AUTO_UPDATE` + shadow check) and `workspace/Dockerfile`'s `BAKE_AGENT_CLIS=1` path, `env_tool_versions.go`, **`NOTICE`** (proprietary CLIs are listed there, not bundled), and the release / drift workflows and setup action that carry every other pinned CLI |
 | Text | `bridge/format.go`'s `kindLabel`, the Console i18n catalogues (en + ja), the user guide, and `guide/ref`'s capability tables — which `scripts/docs-check.py` checks against `Caps()` in both languages |
 | Tests | the MSP schema-fingerprint drift test, route and contract tests, and the e2e smoke that pins the baked version string |
 
@@ -430,17 +467,21 @@ none of it is optional.
   mirror.
 - **The community ACP adapter** (`muse-code-acp`) as the managed seam. A third-party translation layer
   in front of a first-party protocol that is versioned and fingerprinted; it can only lose.
-- **On-demand per-user installation (the kiro shape).** Justified at 855 MiB, not at 299, and it would
-  put a self-updating binary in the member's home — the very shadow Decision 8 guards against.
+- **Per-user on-demand installation into the member's home (the kiro shape).** Not the same thing as
+  Decision 8's boot-install: kiro's 855 MiB bundle lands in `~/.local` per member and self-updates
+  there, which is the very shadow Decision 8 guards against. At 299 MiB a container-level install at
+  start, pinned and checksummed, is both smaller and under AF's control.
 - **Adopting now on the strength of the protocol.** The three gates below are cheap and every one of
   them is about something no amount of reading settles.
 
 ## Consequences
 
 - **What the kind gets for free that others paid for**: no TUI string-contract tests, no hook file, no
-  polling state detection, no session-id discovery, no transcript reverse-engineering, and — because
-  `--provider echo` exists — a harness that can be built and regression-tested **without a credential
-  or a token budget**. Of the nine existing kinds, none had all six.
+  polling state detection, no session-id discovery, no transcript reverse-engineering, and —
+  because `--provider echo` exists — a credential-free harness for **transport, transcript, status
+  and steering**. That last one has a boundary worth stating: echo runs no tools and assembles no
+  rules, so approvals, `userInput`, dynamic model and effort, the accounting matrix and the
+  instruction layers all need a key. "$0 to build" is true of the plumbing, not of the whole kind.
 - **What it owes**: the sandbox waiver (Decision 5), a settings file it must not corrupt (Decision 6),
   a vendor whose feature set overlaps ours (Decision 6, and a guide section explaining what AF does
   not see), and a beta that moved 1.2 → 1.3 in one month.
@@ -448,11 +489,12 @@ none of it is optional.
   `msp_schema_fingerprint`. A test asserting the baked binary's fingerprint equals the one the
   generated types were built from turns a silent protocol change into a red build. No other kind has
   this.
-- **Estimate**: managed-only, no TUI assets, **20–31 session-days** — the sum of the table, with no
-  rounding applied to make a tidier headline. It has moved twice, and both moves are the point: the
-  first draft said 14–20 while its own rows added to 15–23, and the rows themselves were then short
-  of the work the reviews found (the fail-close wiring, the seven clamps, the question channel, the
-  dynamic axes, the instruction layers, the CI). The anchor
+- **Estimate**: managed-only, no TUI assets, **22–33 session-days** — the sum of the table, with no
+  rounding applied to make a tidier headline. It has moved every round, and that is the honest
+  signal: 14–20 (arithmetic wrong, rows short) → 15–23 → 20–31 → 22–33, as each review found work the
+  table did not have. The last move is mostly one line — building AF's first approval interaction —
+  and one correction downward, since the dynamic axes turned out to be `UpdateSettings`, already
+  charged in the driver row. The anchor
   for the scale is the kind-wide inventory — 90 Go files and 41 Console files mention `kiro` today,
   and existing kinds are 2,100–5,950 non-test lines each — but the split below is what the number
   is made of, and it is the part to argue with:
@@ -463,16 +505,18 @@ none of it is optional.
   | Driver + `ThreadHandle` (7 methods), status, steering, interrupt, resume reconciliation | 3–4 |
   | Transcript: live items + the at-rest JSONL, subagent items | 2–3 |
   | Settings single writer + 7 clamps + the fail-close wiring in `Resume` + the MCP dialect | 3–4 |
-  | Approval round trip, the separate `userInput` question channel, the permission-choice mapping | 2–3 |
-  | The dynamic axes of Decision 13 (model / effort / mode) and their Console controls | 1–2 |
+  | **AF's first approval `Interaction` kind** (wire, Console card, answer path) + the `userInput` question channel + the permission-choice mapping | 3–5 |
+  | `Meta.Effort` wiring and the Console model / effort controls (`UpdateSettings` itself is in the driver row) | 1 |
   | Connection card, both `routes.go`, the REST allow-list, deny-list | 1–2 |
   | Usage + model list + the accounting tests | 1–2 |
   | Instruction layers: both apply paths and the distribution status (Decision 12) | 1–2 |
-  | Deployment (bake, pin, sha256, shadow guard, `env_tool_versions`, release / drift CI) | 1–2 |
+  | Deployment **both variants** (boot-install + bake), pin, sha256, shadow guard, `env_tool_versions`, `NOTICE`, release / drift CI | 2–3 |
   | Console surface, i18n, guide, `guide/ref` capability tables | 2–3 |
 
-  **21–33 days if ADR 0093 has not landed** when this starts, because the managed-only gate
-  (Decision 2) is then unpaid. The direction of the error is still upward: the largest single
+  **ADR 0093's state changes this, and it is half-landed**: `workspace/agent/internal/harness/` is
+  on develop (its approval work names the same `Permissions: true`), while `session.KindLcpp` does
+  not exist yet — so the managed-only gate of Decision 2 is still unpaid (**+1–2 days**) but part of
+  the approval interaction may not be. The direction of the error is still upward: the largest single
   unknown is how much of MSP's 47 methods and 31 notifications the driver actually has to implement
   to be correct rather than merely working, and three review rounds have each moved the number the
   same way.
@@ -483,7 +527,7 @@ none of it is optional.
 | Phase | Content | Gate to the next |
 |---|---|---|
 | 0 | The probe in this ADR (done 2026-09-20): install, MSP drive, pin/checksum, worktree and foreign-context behaviour, footprint | — |
-| 1 | **Gate A** (½ day): bake `bwrap` and run it on a real Workspace image. Both mount APIs are already denied here, so this confirms rather than explores; the expected answer is that Decision 5's waiver is permanent and recorded. **Gate B1** (2–2½ days): one API key, and the accounting matrix of Decision 10 — cache, subagents, a failed and an interrupted turn, post-resume, cumulative vs per-turn — plus `model/list`, one `approval/requested` round trip, one `userInput/requested` round trip, one subagent, the fleet and user instruction targets of Decision 12 (separately), the settings keys for the seven clamps of Decision 6 (their spelling is not guessable from the flag names), the settings-file lock protocol by syscall, whether `session/start.config.mcpServers` is honoured (Decision 11's second route), and what a **normal** run — no `-w` — writes into a working copy, since Decision 7 currently rests on the `-w` measurement alone. **Gate B2** (½ day): can a *subscription* credential be obtained elsewhere and entered here, given the browser onboarding this container cannot run | A and B1 answered; the user accepts the Decision 6 clamps and the spend. B2 may answer "no" — then v1 is pay-as-you-go only, stated in the guide, and Phase 2 proceeds |
+| 1 | **Gate A** (½ day): bake `bwrap` and run it on a real Workspace image. Both mount APIs are already denied here, so this confirms rather than explores; the expected answer is that Decision 5's waiver is permanent and recorded. **Gate B1** (2–2½ days): one API key, and the accounting matrix of Decision 10 — cache, subagents, a failed and an interrupted turn, post-resume, cumulative vs per-turn — plus `model/list`, one `approval/requested` round trip, one `userInput/requested` round trip, one subagent, the fleet and user instruction targets of Decision 12 (separately), the settings keys for the seven clamps of Decision 6 (their spelling is not guessable from the flag names), the settings-file lock protocol by syscall, whether `session/start.config.mcpServers` is honoured (Decision 11's second route), and what a **normal** run — no `-w` — writes into a working copy, since Decision 7 currently rests on the `-w` measurement alone. **Gate B2** (½ day): can a *subscription* credential be obtained elsewhere and entered here, given the browser onboarding this container cannot run. ⚠️ B1 carries nine items and the lock-protocol trace alone is half a day; if it overruns, the items that may move to Phase 2 are the MCP second route and the clamp key spellings, never the accounting matrix | A and B1 answered; the user accepts the Decision 6 clamps and the spend. B2 may answer "no" — then v1 is pay-as-you-go only, stated in the guide, and Phase 2 proceeds |
 | 2 | Implementation: kind wiring, MSP client and generated types, driver, transcript, usage, settings + MCP dialect, connection card, deployment, guide, this ADR to *adopted* | — |
 
 ## Open questions (answer in Phase 1)
@@ -500,6 +544,9 @@ none of it is optional.
    mirror's permission card can show without a new card type.
 6. Whether `session/list` on a per-session host can see other AF sessions' Muse sessions (one store,
    one user) — and if so, that the Console never offers them.
+7. Which path `session/start.workspaceRoot` gets when the session has a `Meta.Subdir`: the working
+   copy or the subdirectory. It decides what `--trust-workspace` covers, and `--allow-workspace-switch`
+   exists, so the wrong answer is recoverable but confusing.
 
 ## Reproducing the probe (2026-09-20, Muse Code 1.3.0-R3401.1)
 
@@ -597,8 +644,8 @@ nobody had questioned. Fifteen findings, fourteen of them right. Three changed a
   `sync.Once`-and-swallow as the anti-pattern.
 
 The rest added what the ADR had not decided at all: the whole `Capabilities` declaration
-(Decision 13 — muse is the first kind with every dynamic axis true, and `userInput/*` is a question
-channel distinct from approvals), the approval judge's per-approval model call and the bundled
+(Decision 13 — as written then, "the first kind with every dynamic axis true"; round 4 overturned
+that framing and left `Permissions` as the only new capability), the approval judge's per-approval model call and the bundled
 `resume-claude` / `resume-codex` / `import` / `migrate` skills as clamps 6 and 7, the single-use
 session id (Decision 4 — AF's deterministic UUIDv5 cannot be reused), the missing cost and quota
 sources (Decision 10), `session/start.config.mcpServers` as a possible second MCP route
@@ -612,3 +659,36 @@ Both were checked; the text now says which command it quotes.
 
 Not re-verified by this round: login, a real turn, token accounting, a subscription credential, a
 real `bwrap`, an end-to-end MSP drive, and the release manifest — the same boundary as before.
+
+## Review round 4 (2026-09-20, the same opus session)
+
+Fifteen findings, and the three that matter most are all cases of this ADR reading the tree
+optimistically.
+
+- **The distributed image does not bake proprietary CLIs, and Decision 8 assumed it did.**
+  `BAKE_AGENT_CLIS=0` is the Dockerfile default, `release.sh` makes lean the distribution default,
+  and `NOTICE` tells the reader that proprietary agent CLIs are fetched at first start. Muse Code is
+  proprietary, so the shipped shape is boot-install; Decision 8 now decides both variants, and
+  `NOTICE` is a checklist row.
+- **`DynamicMode` was wrong.** `ThreadSettings.Mode` is AF's plan mode (`"plan" | "normal"`,
+  `agents/driver.go:37`), not the approval posture that `session/setApprovalMode` changes. One wire
+  method had been read as two AF axes.
+- **`Permissions: true` is not a wiring job.** `Interaction.Kind` is `"question"` today, with
+  approval and plan marked future, and every managed kind declares `Permissions: false`. Declaring
+  it builds AF's first approval interaction — which is also why the estimate moved.
+
+The rest was mostly the ADR claiming firsts it had not earned: opencode already declares
+`Steer` / `Fork` / `DynamicModel` / `DynamicEffort` / `DynamicMode` / `Questions`, so the only new
+capability is `Permissions`; ADR 0093 is **half** landed (`internal/harness/` is on develop,
+`session.KindLcpp` is not), which changes who pays for the approval work; `ClearResume` is dead
+code and what actually drops a field on recreate is the whitelist rebuild of `session.Meta`; the
+bundled-skill clamp was short by `daemon`, `host-manager`, `slack-connector`, `create-plugin`,
+`read-session` and `doctor`, and its disable key is a pack-qualified path, so it belongs in the
+drift check; and the "$0 harness" line needed the boundary that echo runs no tools and assembles no
+rules.
+
+One finding went the other way and is recorded because the reviewer volunteered it: round 3's
+`muse auth set` complaint was withdrawn after re-measuring — the ADR's quotation was right.
+
+Not re-verified: the same boundary as rounds 2 and 3, plus this round's capability claims are a
+schema-to-type comparison rather than a running driver.
