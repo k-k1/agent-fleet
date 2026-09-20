@@ -1024,7 +1024,15 @@ func comfyGraphQwenImageEdit(f comfyFiles, p comfyParams, family comfyFamily) (c
 	if p.Op == OpEdit && p.Image == "" {
 		return nil, fmt.Errorf("%s needs an input image, and none reached the graph", p.Op)
 	}
-	w := comfyQwenEditWirings[family]
+	// Refused rather than defaulted: the zero value is shift 0 and no reference-method node, which
+	// is not a topology anybody has run — it would build, sample, and hand back a degraded picture
+	// with nothing to say why. A third instruction-edit family arriving without a row here is the
+	// case this exists for (decision 6 expects more of them), and every other unknown family in
+	// this file fails the same way.
+	w, ok := comfyQwenEditWirings[family]
+	if !ok {
+		return nil, errUnknownComfyFamily(family)
+	}
 	g := comfyGraph{
 		"unet": {ClassType: "UNETLoader", Inputs: map[string]any{"unet_name": f.DiffusionModel, "weight_dtype": "default"}},
 		"clip": {ClassType: "CLIPLoader", Inputs: map[string]any{"clip_name": f.ClipL, "type": "qwen_image", "device": "default"}},
