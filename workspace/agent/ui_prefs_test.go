@@ -195,6 +195,43 @@ func TestAiAssistOrderPref(t *testing.T) {
 	}
 }
 
+// docs/log/103 decision 1/4: a feature can be pinned to one agent, and a model chosen for it
+// is stored under that agent's kind — never leaking into another feature or another kind's
+// slot (the same kind-scoped shape aiShortModels/aiProseModels already use).
+func TestAiFeatureAgentPref(t *testing.T) {
+	writeUIPrefs(t, `{"aiFeatureAgents":{"title.session":"codex"}}`)
+	if got := aiFeatureAgentPref("title.session"); got != "codex" {
+		t.Fatalf("pin = %q, want codex", got)
+	}
+	if got := aiFeatureAgentPref("branch.suggest"); got != "" {
+		t.Fatalf("an unpinned feature must read as \"\" (auto/priority order): %q", got)
+	}
+}
+
+func TestAiFeatureModelPref(t *testing.T) {
+	writeUIPrefs(t, `{"aiFeatureModels":{"title.session":{"codex":"gpt-5.4-mini"}}}`)
+	if got, ok := aiFeatureModelPref("title.session", "codex"); !ok || got != "gpt-5.4-mini" {
+		t.Fatalf("model = %q, %v", got, ok)
+	}
+	if _, ok := aiFeatureModelPref("title.session", "claude"); ok {
+		t.Fatal("a different kind under the same feature must stay unset — kind-scoped storage " +
+			"is what lets switching the pin back and forth recover each CLI's own value")
+	}
+	if _, ok := aiFeatureModelPref("branch.suggest", "codex"); ok {
+		t.Fatal("a different feature must stay unset")
+	}
+}
+
+// A model excluded by "models not to use" must fall back to unset even if the per-feature
+// setting still names it — the same rule assistantModelPref enforces for the chat/tier
+// settings (docs/log/103 §103.8-4).
+func TestAiFeatureModelPrefHiddenModelFallsBackToUnset(t *testing.T) {
+	writeUIPrefs(t, `{"aiFeatureModels":{"title.session":{"claude":"opus"}},"hiddenModels":{"claude":["opus"]}}`)
+	if _, ok := aiFeatureModelPref("title.session", "claude"); ok {
+		t.Fatal("a hidden model must not be adopted even if it is still in aiFeatureModels")
+	}
+}
+
 func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
 	writeUIPrefs(t, `{"quickReplies":{"ok":{"text":"OK","count":9,"at":1}},"iconSet":"seti"}`)
 

@@ -150,6 +150,26 @@ func MirrorTranslate() bool {
 	return !ok || v
 }
 
+// PlanUpdate is the ON/OFF for the chat plan's explicit "refresh" button (Settings > AI
+// assistance, docs/log/103 §103.3-2). Missing/invalid ⇒ true: before this key existed the
+// feature had no gate at all — HandleChatPlanRefresh ran unconditionally — so a missing key
+// means "the historical behaviour", the same reasoning as EditSuggest.
+func PlanUpdate() bool {
+	v, ok := Read()["planUpdateEnabled"].(bool)
+	return !ok || v
+}
+
+// ChatReplySuggest is the ON/OFF for the CHAT's own ✨ reply suggestion (Settings > AI
+// assistance, docs/log/103 §103.3-3/§103.9). Before docs/log/103 the chat read
+// `sessionx.ReplySuggestEnabled` — the MIRROR's gate — through a ui-prefs key
+// (`replySuggest`) nothing ever wrote (docs/log/103-review §0.2), so the chat toggle silently
+// did nothing since the feature shipped. `assistantReplySuggestEnabled` is a real, own key now;
+// missing/invalid ⇒ true to match the pre-fix behaviour (which was, in effect, always on).
+func ChatReplySuggest() bool {
+	v, ok := Read()["assistantReplySuggestEnabled"].(bool)
+	return !ok || v
+}
+
 // OpencodeCatalog is how the opencode launch-model list is shaped (Settings >
 // Agents > opencode, ui-prefs opencodeCatalog). One key serves both opencode.ai
 // billing routes, so the same model can appear as opencode/… (Zen, metered) and

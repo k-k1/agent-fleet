@@ -104,11 +104,16 @@ const replySuggestPersonaEN = "You read a chat conversation log and write short 
 // deployment.
 func ReplySuggestModel() string { return envOr("AF_SUGGEST_MODEL", "haiku") }
 
-// ReplySuggestEnabled reads the ui-prefs replySuggest switch (shows the Console's sparkle
-// button; default ON). A missing or malformed key reads as true, matching the front end's
-// DEFAULTS.ReplySuggestEnabled.
+// ReplySuggestEnabled reads the ui-prefs replySuggestEnabled switch (shows the mirror's
+// sparkle button; default ON). A missing or malformed key reads as true, matching the front
+// end's DEFAULTS.replySuggestEnabled.
+//
+// This read `replySuggest` (no "Enabled") from the feature's first day until docs/log/103 —
+// a key nothing in the repository ever wrote (docs/log/103-review §0.2, `git log -S`
+// confirms the write side used `replySuggestEnabled` from commit one), so the mirror's gate
+// always evaluated to its own missing-key default (true) regardless of the Console toggle.
 func ReplySuggestEnabled() bool {
-	v, ok := uiprefs.Read()["replySuggest"].(bool)
+	v, ok := uiprefs.Read()["replySuggestEnabled"].(bool)
 	return !ok || v
 }
 
@@ -290,7 +295,7 @@ func CleanSuggestedReplies(s string) []string {
 
 func runReplySuggestLLM(ctx context.Context, turns []transcript.Turn) ([]string, error) {
 	lang := uiprefs.Locale() // instruction language only (candidates follow the conversation; see ReplySuggestPersona)
-	reply, err := chatx.OneShotHeadless(ctx, chatx.OneShotShort, ReplySuggestPersona(lang), ReplySuggestPrompt(turns, lang), ReplySuggestModel())
+	reply, err := chatx.OneShotHeadless(ctx, usagex.FeatureSuggestSession, chatx.OneShotShort, ReplySuggestPersona(lang), ReplySuggestPrompt(turns, lang), ReplySuggestModel())
 	if err != nil {
 		return nil, fmt.Errorf("reply suggestion failed: %w", err)
 	}

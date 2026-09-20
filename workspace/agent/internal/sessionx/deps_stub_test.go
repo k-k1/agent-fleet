@@ -155,7 +155,7 @@ func chatxStubDeps() chatx.Deps {
 	d.TitleSuggestTimeout = TitleSuggestTimeout
 	d.CleanSuggestedReplies = CleanSuggestedReplies
 	d.ReplyCounterpartChat = ReplyCounterpartChat
-	d.ReplySuggestEnabled = ReplySuggestEnabled
+	d.ChatReplySuggestEnabled = uiprefs.ChatReplySuggest
 	d.ReplySuggestInstructions = ReplySuggestInstructions
 	d.ReplySuggestLogHeader = ReplySuggestLogHeader
 	d.ReplySuggestModel = ReplySuggestModel

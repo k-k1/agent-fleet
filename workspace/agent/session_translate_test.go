@@ -62,13 +62,17 @@ func decodeTranslate(t *testing.T, w *httptest.ResponseRecorder) translateResp {
 
 // stubTranslate replaces the generation seam and counts the runs, which is the only way to tell
 // "served from the cache" from "ran a model again" — the two produce the same JSON otherwise.
+// The stub always reports "claude" as the backend that ran: that is also what
+// translateCachePin predicts in this test binary (nothing is authenticated, so
+// PreferredAssistAgent falls back to DefaultHeadlessOrder[0]), which is what makes a second
+// press actually hit the cache instead of missing on a kind mismatch.
 func stubTranslate(t *testing.T, reply func(text, lang string) string) *int {
 	t.Helper()
 	calls := 0
 	prev := translateOneShot
-	translateOneShot = func(_ context.Context, text, lang string) (string, error) {
+	translateOneShot = func(_ context.Context, text, lang string) (string, string, string, error) {
 		calls++
-		return reply(text, lang), nil
+		return reply(text, lang), "claude", "stub-model", nil
 	}
 	t.Cleanup(func() { translateOneShot = prev })
 	return &calls
@@ -145,12 +149,16 @@ func TestTranslateCachesBySourceHash(t *testing.T) {
 	}
 }
 
-// The reply must not name a model. Which backend and model actually ran is chosen inside
-// OneShotHeadless and never returned, so anything this handler could put here is the REQUEST,
-// not the outcome — ADR 0029 §1's rule for `kind`, one level up in the display.
+// The WIRE reply must not name a model: anything this handler could put there is the REQUEST,
+// not the outcome — ADR 0029 §1's rule for `kind`, one level up in the display. The STORE is the
+// opposite since docs/log/103 decision 8: it must carry the backend/model that actually
+// translated the text, because a feature can now be pinned to one, and pinning a different one
+// must not silently serve up a translation the new pin never produced (session_translate.go's
+// lookupTranslation comment).
 //
-// Measured on a live host (2026-09-13): the reply claimed "sonnet" while the ledger recorded the
-// run as agy, because that workspace lists agy first in Settings > AI assistance.
+// Measured on a live host (2026-09-13, pre-103): the wire reply claimed "sonnet" while the
+// ledger recorded the run as agy, because that workspace lists agy first in Settings > AI
+// assistance — the reason the wire reply still says nothing about the model.
 func TestTranslateReplyClaimsNoModel(t *testing.T) {
 	const name = "tr8"
 	seedTranslateSession(t, name)
@@ -164,8 +172,8 @@ func TestTranslateReplyClaimsNoModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(stored), "model") || strings.Contains(string(stored), "kind") {
-		t.Fatalf("the store keeps a model/kind it cannot know: %s", stored)
+	if !strings.Contains(string(stored), `"kind":"claude"`) || !strings.Contains(string(stored), `"model":"stub-model"`) {
+		t.Fatalf("the store must keep the backend/model that actually ran: %s", stored)
 	}
 }
 
@@ -177,10 +185,10 @@ func TestTranslateRecordsWhichPressAsked(t *testing.T) {
 	seedTranslateSession(t, name)
 	var seen []string
 	prev := translateOneShot
-	translateOneShot = func(ctx context.Context, text, lang string) (string, error) {
+	translateOneShot = func(ctx context.Context, text, lang string) (string, string, string, error) {
 		tag, _ := usagex.TagOf(ctx)
 		seen = append(seen, tag.Feature+"/"+tag.Trigger)
-		return "訳:" + text, nil
+		return "訳:" + text, "claude", "stub-model", nil
 	}
 	t.Cleanup(func() { translateOneShot = prev })
 
@@ -212,13 +220,13 @@ func TestTranslateRunsOnceForSimultaneousAsks(t *testing.T) {
 	var mu sync.Mutex
 	calls := 0
 	prev := translateOneShot
-	translateOneShot = func(_ context.Context, text, lang string) (string, error) {
+	translateOneShot = func(_ context.Context, text, lang string) (string, string, string, error) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
 		entered <- struct{}{}
 		<-release
-		return "訳:" + text, nil
+		return "訳:" + text, "claude", "stub-model", nil
 	}
 	t.Cleanup(func() { translateOneShot = prev })
 
@@ -443,5 +451,81 @@ func TestTranslationsRemovedWithTheSession(t *testing.T) {
 
 	if _, err := os.Stat(sessionTranslationsPath(name)); !os.IsNotExist(err) {
 		t.Fatalf("translation store survived deletion, stat err=%v", err)
+	}
+}
+
+// A pre-docs/log/103 entry has no Kind/Model at all — that dimension did not exist when it was
+// written. It must still answer a press today (docs/log/103 §103.9 migration 1); otherwise an
+// upgrade alone empties every existing translation and "same text again is free"
+// (aiassist.note_mirror_translate) breaks for every reader, not just the ones who touch the new
+// per-feature setting.
+func TestTranslateReadsLegacyKeyEntries(t *testing.T) {
+	const name = "tr11"
+	seedTranslateSession(t, name)
+	calls := stubTranslate(t, func(text, lang string) string { return "新訳:" + text })
+
+	hash := translateHash("legacy text")
+	if err := writeSessionTranslations(name, []*sessionTranslation{
+		{Hash: hash, Lang: "ja", Text: "旧訳", CreatedAt: time.Now().UnixMilli()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"legacy text"}]}`))
+	if !resp.Parts[0].Cached || resp.Parts[0].Text != "旧訳" {
+		t.Fatalf("the pre-103 entry was not served as a hit: %+v", resp)
+	}
+	if *calls != 0 {
+		t.Fatalf("a legacy hit must not run the model (%d calls)", *calls)
+	}
+}
+
+// Pinning a feature to a different concrete model is decision 8's one case where a cached
+// translation must go stale: "what translated it" is now part of its identity. Leaving the
+// feature UNPINNED (the default) must not behave this way — that path is covered by every
+// other cache test in this file re-using the same "claude" prediction across presses.
+func TestTranslateModelPinChangeMissesCache(t *testing.T) {
+	const name = "tr12"
+	seedTranslateSession(t, name)
+
+	var stubModel string
+	calls := 0
+	prev := translateOneShot
+	translateOneShot = func(_ context.Context, text, lang string) (string, string, string, error) {
+		calls++
+		return "訳:" + text, "claude", stubModel, nil
+	}
+	t.Cleanup(func() { translateOneShot = prev })
+
+	prefsDir := filepath.Join(os.Getenv("HOME"), ".config", "agent-fleet")
+	if err := os.MkdirAll(prefsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pin := func(model string) {
+		body := `{"aiFeatureAgents":{"translate.mirror":"claude"},` +
+			`"aiFeatureModels":{"translate.mirror":{"claude":"` + model + `"}}}`
+		if err := os.WriteFile(filepath.Join(prefsDir, "ui-prefs.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stubModel = "model-a"
+	pin("model-a")
+	decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"pin test"}]}`))
+	if calls != 1 {
+		t.Fatalf("first press: calls=%d, want 1", calls)
+	}
+
+	same := decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"pin test"}]}`))
+	if !same.Parts[0].Cached || calls != 1 {
+		t.Fatalf("re-pressing under the same pin must hit the cache: cached=%v calls=%d", same.Parts[0].Cached, calls)
+	}
+
+	stubModel = "model-b"
+	pin("model-b")
+	changed := decodeTranslate(t, translateCall(t, name, `{"to":"ja","parts":[{"text":"pin test"}]}`))
+	if changed.Parts[0].Cached || calls != 2 {
+		t.Fatalf("changing the pin must not reuse the old pin's translation: cached=%v calls=%d",
+			changed.Parts[0].Cached, calls)
 	}
 }

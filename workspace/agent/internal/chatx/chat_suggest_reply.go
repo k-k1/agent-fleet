@@ -41,7 +41,7 @@ func ChatReplySuggestPrompt(msgs []ChatMessage, lang string) string {
 
 func runChatReplySuggestLLM(ctx context.Context, msgs []ChatMessage) ([]string, error) {
 	lang := uiprefs.Locale()
-	reply, err := OneShotHeadless(ctx, OneShotShort, replySuggestPersona(lang), ChatReplySuggestPrompt(msgs, lang), replySuggestModel())
+	reply, err := OneShotHeadless(ctx, usagex.FeatureSuggestChat, OneShotShort, replySuggestPersona(lang), ChatReplySuggestPrompt(msgs, lang), replySuggestModel())
 	if err != nil {
 		return nil, fmt.Errorf("chat reply suggestion failed: %w", err)
 	}
@@ -56,7 +56,7 @@ func HandleChatSuggestReplies(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatConversationNotFnd, "invalid conversation id")
 		return
 	}
-	if !replySuggestEnabled() {
+	if !chatReplySuggestEnabled() {
 		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "reply suggestion is turned off")
 		return
 	}

@@ -152,16 +152,26 @@ func fnv1a32(s string, seed uint32) uint32 {
 // sessionTranslation is one cached translation. Source text is NOT stored: the hash is what the
 // lookup needs, and keeping a second copy of every answer on disk buys nothing.
 //
-// No "translated by" field, and that is deliberate. Which backend and model actually ran is
-// decided inside OneShotHeadless (the first AVAILABLE agent in Settings > AI assistance order,
-// with that backend's prose model), and it is not returned — it is written straight into the
-// usage ledger. Storing what we REQUESTED would repeat, one level up in the display, the exact
-// mistake ADR 0029 §1 forbids for `kind`: measured live on this host, the reply claimed sonnet
-// while the ledger recorded the run as agy, because agy is first in this workspace's order.
+// The reply sent to the CLIENT never names a model (still true — anything this handler could
+// put ON THE WIRE would be the REQUEST, not the outcome, the exact mistake ADR 0029 §1 forbids
+// for `kind`; the outcome goes straight into the usage ledger). Kind/Model here are a different
+// thing: docs/log/103 decision 8 — since a feature can now be pinned to a specific
+// agent/model, WHAT translated a piece of text is part of its identity, so a cached answer from
+// a different resolved backend/model must not silently stand in when that pin changes.
+//
+// Kind/Model are the values chatx.OneShotHeadlessRun actually reported (never a prediction —
+// docs/log/103 §103.8-2: the 1-minute availability cache can flip between an earlier guess and
+// the moment the call actually runs). Empty (both fields) marks a pre-103 entry: no model
+// dimension existed yet when it was written, and it is read as a hit regardless of the
+// feature's current pin (docs/log/103 §103.9 migration 1) — otherwise every existing
+// translation goes stale, and "same text again is free" (aiassist.note_mirror_translate) breaks
+// for everyone on the very next release, not just the few who touch the new per-feature setting.
 type sessionTranslation struct {
-	Hash      string `json:"hash"` // translateHash of the source text
-	Lang      string `json:"lang"` // target language ("ja" | "en")
-	Text      string `json:"text"` // the translation
+	Hash      string `json:"hash"`            // translateHash of the source text
+	Lang      string `json:"lang"`            // target language ("ja" | "en")
+	Kind      string `json:"kind,omitempty"`  // the backend that actually ran ("" = pre-103 entry)
+	Model     string `json:"model,omitempty"` // the model that actually ran ("" = pre-103 entry)
+	Text      string `json:"text"`            // the translation
 	CreatedAt int64  `json:"created_at"`
 }
 
@@ -281,25 +291,52 @@ func translateShared(ctx context.Context, key string, gen func() (string, error)
 	return f.text, f.err
 }
 
-// lookupTranslation returns the stored translation of that source hash into that language.
-func lookupTranslation(name, hash, lang string) *sessionTranslation {
+// lookupTranslation returns the stored translation of that source hash into that language,
+// still valid for the feature's CURRENT resolution (docs/log/103 decision 8):
+//
+//   - a pre-103 entry (Kind and Model both empty) always hits — there is nothing to compare
+//     against, and refusing it would make an upgrade discard every existing translation
+//     (§103.9 migration 1).
+//   - otherwise the entry must be from the same backend KIND. Kind never drifts under an
+//     unpinned feature the way a model id can (chatx.OneShotHeadlessRun's per-backend ③
+//     fallback only ever refines the model within the resolved kind), so this alone is enough
+//     to catch "the feature now resolves to a different agent".
+//   - pinnedModel/pinnedOK add the model dimension ONLY when the feature is explicitly pinned
+//     to one concrete model (never when left to "recommended"/"default" — that path already
+//     varies run to run under ③ the same way it always has, untracked, and matching it here
+//     would make an unpinned feature's cache miss on nearly every press).
+func lookupTranslation(name, hash, lang, kind, pinnedModel string, pinnedOK bool) *sessionTranslation {
 	for _, e := range readSessionTranslations(name) {
-		if e.Hash == hash && e.Lang == lang {
+		if e.Hash != hash || e.Lang != lang {
+			continue
+		}
+		if e.Kind == "" && e.Model == "" {
 			return e
 		}
+		if e.Kind != kind {
+			continue
+		}
+		if pinnedOK && e.Model != pinnedModel {
+			continue
+		}
+		return e
 	}
 	return nil
 }
 
 // putTranslation stores one entry, replacing any earlier translation of the same source into
-// the same language (a retry after an unusable result must not leave the old one to win).
+// the same language FROM THE SAME BACKEND/MODEL (a retry after an unusable result must not
+// leave the old one to win). A different Kind/Model is a different entry, not a replacement —
+// switching a feature's pin back and forth must not throw away the translation that pin
+// produced last time (docs/log/103 decision 8, the same "kind-scoped, never erase the other
+// CLI's value" shape as aiFeatureModels itself).
 func putTranslation(name string, e *sessionTranslation) {
 	translateStoreMu.Lock()
 	defer translateStoreMu.Unlock()
 	list := readSessionTranslations(name)
 	out := list[:0]
 	for _, x := range list {
-		if x.Hash == e.Hash && x.Lang == e.Lang {
+		if x.Hash == e.Hash && x.Lang == e.Lang && x.Kind == e.Kind && x.Model == e.Model {
 			continue
 		}
 		out = append(out, x)
@@ -313,9 +350,23 @@ func removeSessionTranslations(name string) {
 	_ = os.Remove(sessionTranslationsPath(name))
 }
 
-// translateOneShot is the generation seam tests replace.
-var translateOneShot = func(ctx context.Context, text, lang string) (string, error) {
-	return chatx.OneShotHeadless(ctx, chatx.OneShotProse, translatePersona, translatePrompt(text, lang), translateModel())
+// translateOneShot is the generation seam tests replace. It returns the backend/model that
+// ACTUALLY ran (chatx.OneShotHeadlessRun, not a prediction) — putTranslation keys on that.
+var translateOneShot = func(ctx context.Context, text, lang string) (reply, kind, model string, err error) {
+	return chatx.OneShotHeadlessRun(ctx, usagex.FeatureTranslate, chatx.OneShotProse, translatePersona, translatePrompt(text, lang), translateModel())
+}
+
+// translateCachePin resolves what the cache lookup needs to know about the CURRENT resolution
+// without starting a CLI: the backend kind (always cheap — resolveOneShot never shells out),
+// and whether the feature is pinned to one concrete model right now (as opposed to "default"/
+// "recommended", which ③ still resolves at call time the same way it always has — see
+// lookupTranslation's comment for why that path is deliberately not part of the key).
+func translateCachePin() (kind, pinnedModel string, pinnedOK bool) {
+	kind, model, configured, _ := chatx.ResolveOneShot(usagex.FeatureTranslate, chatx.OneShotProse)
+	if configured && model != "" && model != chatx.AssistantRecommendedModel {
+		return kind, model, true
+	}
+	return kind, "", false
 }
 
 // cleanTranslation undoes the one thing the model does despite the persona: wrapping the whole
@@ -441,10 +492,15 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := translateTargetLang(req.To)
 	trigger := translateTrigger(req.Trigger)
+	// Cheap (no CLI started) — the feature's currently resolved backend, and whether it is
+	// pinned to a concrete model (docs/log/103 decision 8). Read once per press: reading it
+	// again per part would let the ANSWER for the same press disagree with itself if a
+	// preference changed mid-request.
+	pinKind, pinnedModel, pinnedOK := translateCachePin()
 	out := make([]translatePart, 0, len(texts))
 	for _, text := range texts {
 		hash := translateHash(text)
-		if hit := lookupTranslation(name, hash, lang); hit != nil {
+		if hit := lookupTranslation(name, hash, lang, pinKind, pinnedModel, pinnedOK); hit != nil {
 			out = append(out, translatePart{Hash: hash, Text: hit.Text, Cached: true})
 			continue
 		}
@@ -452,14 +508,14 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 		clean, err := translateShared(r.Context(), name+"\x00"+lang+"\x00"+hash, func() (string, error) {
 			// Asked again inside the flight: a run that finished between the lookup above and
 			// this moment has already paid for this text.
-			if hit := lookupTranslation(name, hash, lang); hit != nil {
+			if hit := lookupTranslation(name, hash, lang, pinKind, pinnedModel, pinnedOK); hit != nil {
 				return hit.Text, nil
 			}
 			ran = true
 			ctx, cancel := context.WithTimeout(r.Context(), translatePartTimeout)
 			// The tag is the LEADER's: one run, one row, filed under the press that started it.
 			ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureTranslate, Trigger: trigger, Ref: name})
-			reply, gerr := translateOneShot(ctx, text, lang)
+			reply, ranKind, ranModel, gerr := translateOneShot(ctx, text, lang)
 			cancel()
 			if gerr != nil {
 				return "", gerr
@@ -470,7 +526,10 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 				// failures happened, and a waiter on this flight gets the same wording.
 				return "", fmt.Errorf("%w: %v", errTranslateUnusable, gerr)
 			}
-			putTranslation(name, &sessionTranslation{Hash: hash, Lang: lang, Text: got, CreatedAt: time.Now().UnixMilli()})
+			putTranslation(name, &sessionTranslation{
+				Hash: hash, Lang: lang, Kind: ranKind, Model: ranModel,
+				Text: got, CreatedAt: time.Now().UnixMilli(),
+			})
 			return got, nil
 		})
 		if err != nil {

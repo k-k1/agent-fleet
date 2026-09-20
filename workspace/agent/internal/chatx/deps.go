@@ -57,8 +57,14 @@ type Deps struct {
 	AiAssistOrderPref func() []string
 	AiShortModelPref  func(kind string) (string, bool)
 	AiProseModelPref  func(kind string) (string, bool)
-	ChatAutoTurnLimit func() int
-	ChatAutoTurnModel func() string
+	// AiFeatureAgentPref / AiFeatureModelPref are the per-feature overrides on top of the two
+	// above (docs/log/103 §103.5, decision 1/4): "" from AiFeatureAgentPref means "no pin, use
+	// the default order"; AiFeatureModelPref's ok mirrors AiShortModelPref/AiProseModelPref's
+	// own (value, ok) contract.
+	AiFeatureAgentPref func(feature string) string
+	AiFeatureModelPref func(feature, kind string) (string, bool)
+	ChatAutoTurnLimit  func() int
+	ChatAutoTurnModel  func() string
 
 	// --- model_deny.go ---
 	FilterVisibleModels func(kind string, list []agents.ModelChoice) []agents.ModelChoice
@@ -78,9 +84,15 @@ type Deps struct {
 	TitleSuggestTimeout      time.Duration
 
 	// --- session_suggest_reply.go (reply suggestion; shared with the session side) ---
-	CleanSuggestedReplies    func(s string) []string
-	ReplyCounterpartChat     int
-	ReplySuggestEnabled      func() bool
+	CleanSuggestedReplies func(s string) []string
+	ReplyCounterpartChat  int
+	// ChatReplySuggestEnabled is the CHAT's own ✨ gate (uiprefs.ChatReplySuggest,
+	// assistantReplySuggestEnabled). Until docs/log/103 this pointed at the mirror's
+	// sessionx.ReplySuggestEnabled instead — which itself read a ui-prefs key
+	// (`replySuggest`) nothing ever wrote (docs/log/103-review §0.2), so the chat ✨ toggle
+	// silently did nothing. chatx cannot call uiprefs directly (the chatx -> main reverse
+	// dependency is this struct alone), so this field is the seam.
+	ChatReplySuggestEnabled  func() bool
 	ReplySuggestInstructions func(lang string, counterpart int) string
 	ReplySuggestLogHeader    func(lang string) string
 	ReplySuggestModel        func() string

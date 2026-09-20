@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -344,5 +346,34 @@ func TestHandleChatPlanSetNoticeOnlyWhenAsked(t *testing.T) {
 		if has != tc.notice {
 			t.Fatalf("%s: plan notice = %v, want %v", name, has, tc.notice)
 		}
+	}
+}
+
+// HandleChatPlanRefresh had no server-side gate at all before docs/log/103 (§103.3-2):
+// turning the button off in the Console left the REST route reachable by anything holding
+// AGENT_TOKEN (docs/log/103-review 重大2 — the same failure shape as §103.3-3's reply-suggest
+// key bug). This hits the route directly, the same way the peer's verification plan asks for.
+func TestHandleChatPlanRefreshGatedByPlanUpdate(t *testing.T) {
+	home := withTempHome(t)
+	prefsDir := filepath.Join(home, ".config", "agent-fleet")
+	if err := os.MkdirAll(prefsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prefsDir, "ui-prefs.json"),
+		[]byte(`{"planUpdateEnabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{
+		{Role: "user", Content: "Wave 2 を先に回して"},
+	}}
+	if err := SaveConv(c); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/chat/conversations/"+c.ID+"/plan/refresh", nil)
+	req.SetPathValue("id", c.ID)
+	rr := httptest.NewRecorder()
+	HandleChatPlanRefresh(rr, req)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), errCodeTitleFeatureDisabled) {
+		t.Fatalf("code = %d body = %s", rr.Code, rr.Body.String())
 	}
 }

@@ -58,6 +58,26 @@ func testDeps() Deps {
 		AiProseModelPref: func(kind string) (string, bool) {
 			return modelPrefForTest("aiProseModels", kind)
 		},
+		AiFeatureAgentPref: func(feature string) string {
+			raw, ok := uiprefs.Read()["aiFeatureAgents"].(map[string]any)
+			if !ok {
+				return ""
+			}
+			v, _ := raw[feature].(string)
+			return v
+		},
+		AiFeatureModelPref: func(feature, kind string) (string, bool) {
+			raw, ok := uiprefs.Read()["aiFeatureModels"].(map[string]any)
+			if !ok {
+				return "", false
+			}
+			byKind, ok := raw[feature].(map[string]any)
+			if !ok {
+				return "", false
+			}
+			v, ok := byKind[kind].(string)
+			return v, ok
+		},
 		// Same clamping as main's chatAutoTurnLimit: the default when unset, always
 		// within [1, the maximum].
 		ChatAutoTurnLimit: func() int {
@@ -102,9 +122,15 @@ func testDeps() Deps {
 		TitleSuggestPersona:      func(string) string { return "persona" },
 		TitleSuggestTimeout:      60 * time.Second,
 
-		CleanSuggestedReplies:    func(s string) []string { return strings.Split(s, "\n") },
-		ReplyCounterpartChat:     1,
-		ReplySuggestEnabled:      func() bool { return true },
+		CleanSuggestedReplies: func(s string) []string { return strings.Split(s, "\n") },
+		ReplyCounterpartChat:  1,
+		// Reads the preference exactly the way uiprefs.ChatReplySuggest does, for the same
+		// reason as AssistantChatModelPref above: TestHandleChatSuggestRepliesGatedByItsOwnKey
+		// writes ui-prefs.json and needs this to actually consult it, not a fixed "true".
+		ChatReplySuggestEnabled: func() bool {
+			v, ok := uiprefs.Read()["assistantReplySuggestEnabled"].(bool)
+			return !ok || v
+		},
 		ReplySuggestInstructions: func(string, int) string { return "reply-instructions" },
 		ReplySuggestLogHeader:    func(string) string { return "log" },
 		ReplySuggestModel:        func() string { return "haiku" },

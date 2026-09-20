@@ -1420,6 +1420,106 @@ func oneShotModelPref(kind string, tier OneShotTier) (string, bool) {
 	return aiShortModelPref(kind)
 }
 
+// OneShotSource says which layer of the precedence chain (docs/log/103 §103.5) answered a
+// feature's backend kind: ① a feature-level agent pin, or ② the shared priority order
+// (aiAssistOrder) falling back to it. /ai-assist/resolution surfaces this so the Settings
+// screen can explain "why this backend" without recomputing the chain itself.
+const (
+	OneShotSourcePin     = "pin"
+	OneShotSourceDefault = "default"
+)
+
+// oneShotKind resolves ① and, failing that, ②'s priority order — the kind half of
+// resolveOneShot. The pin is checked FIRST: PreferredAssistAgent walks the whole priority
+// order, which is wasted work whenever the pin is live (docs/log/103-review 軽12).
+//
+// This CAN shell out: headlessAgentAvailable's own cache is 1 minute, and a cold entry falls
+// through to an actual `claude auth status` / `codex login status` / … call. That cost is
+// acceptable for OneShotHeadlessRun (a real generation is about to run regardless) and for
+// resolveOneShot's other caller, the mirror translation cache's pin check (session_translate.go
+// — already mid-request, about to translate on a miss). It is NOT acceptable for
+// /ai-assist/resolution, which must answer every poll without ever starting a CLI (docs/log/103
+// §103.8-3) — that path uses oneShotKindCached below instead, never this one.
+func oneShotKind(feature string) (kind, source string) {
+	if pin := aiFeatureAgentPref(feature); pin != "" && headlessAgentAvailable(pin) {
+		return pin, OneShotSourcePin
+	}
+	return PreferredAssistAgent(), OneShotSourceDefault
+}
+
+// resolveOneShot answers steps ① and ② of docs/log/103's precedence chain for one feature:
+// the backend kind that would run, and the user's per-backend model choice for THAT kind
+// (never the pin's kind when the pin fell through to ② — decision 4's model-follows-kind
+// rule). configured mirrors oneShotModelPref's own (value, ok): ok distinguishes "nothing
+// set, fall through further" from "explicitly cleared to the CLI default".
+//
+// OneShotHeadlessRun calls this, which is what keeps its answer identical to
+// oneShotKindCached's whenever the availability cache happens to already be warm. What it does
+// NOT cover is ③ (the per-backend fallback inside each OneShotHeadlessRun case), because that
+// step already differs by CLI in ways only the actual call site can apply.
+func resolveOneShot(feature string, tier OneShotTier) (kind, model string, configured bool, source string) {
+	kind, source = oneShotKind(feature)
+	if v, ok := aiFeatureModelPref(feature, kind); ok {
+		return kind, v, true, source
+	}
+	v, ok := oneShotModelPref(kind, tier)
+	return kind, v, ok, source
+}
+
+// headlessAvailableCached peeks the 1-minute availability cache WITHOUT ever falling through
+// to an actual CLI call — the one difference from headlessAgentAvailable, and the reason this
+// exists at all. known is false on a cold entry; only then may a caller honestly say "unknown"
+// (docs/log/103 §103.8-3) instead of either guessing or paying to find out.
+func headlessAvailableCached(kind string) (available, known bool) {
+	headlessAvailMu.Lock()
+	defer headlessAvailMu.Unlock()
+	t, ok := headlessAvailAt[kind]
+	if !ok || time.Since(t) >= time.Minute {
+		return false, false
+	}
+	return headlessAvail[kind], true
+}
+
+// oneShotKindCached is oneShotKind's read-only twin for GET /ai-assist/resolution: same
+// precedence (pin first, then the priority order), but every availability check is a cache
+// peek, never a CLI call. ok is false when the cache cannot answer yet (a pin whose own state
+// is unknown, or an unpinned feature where nothing in the order is confirmed reachable) — the
+// caller reports that feature as source "unknown" rather than showing a value that might not
+// be what actually runs.
+func oneShotKindCached(feature string) (kind, source string, ok bool) {
+	if pin := aiFeatureAgentPref(feature); pin != "" {
+		avail, known := headlessAvailableCached(pin)
+		if !known {
+			return "", "", false
+		}
+		if avail {
+			return pin, OneShotSourcePin, true
+		}
+		// Confirmed unreachable: fall through to the order below, same as oneShotKind.
+	}
+	for _, k := range aiAssistOrderPref() {
+		if avail, known := headlessAvailableCached(k); known && avail {
+			return k, OneShotSourceDefault, true
+		}
+	}
+	return "", "", false
+}
+
+// ResolveOneShot exposes resolveOneShot to the mirror translation cache's pin check
+// (session_translate.go — whether THIS feature is pinned to a concrete model right now).
+// GET /ai-assist/resolution does NOT use this — see ResolveOneShotCached.
+func ResolveOneShot(feature string, tier OneShotTier) (kind, model string, configured bool, source string) {
+	return resolveOneShot(feature, tier)
+}
+
+// ResolveOneShotCached exposes oneShotKindCached to GET /ai-assist/resolution. It answers kind
+// + source only: the model NAME is drawn by the Console from the catalog it already fetches
+// (useModelOptions(kind)), not from here — docs/log/103 §103.8-3's fix for the 15/10/15-second
+// catalog calls the original design would have paid on every poll.
+func ResolveOneShotCached(feature string) (kind, source string, ok bool) {
+	return oneShotKindCached(feature)
+}
+
 // recommendedUtilityModel picks the cheap model shown as "recommended (currently: …)" for
 // the short tier. The OpenCode Go route is pinned only when the live account catalog
 // proves it is available; otherwise an empty result deliberately delegates to the
@@ -1532,13 +1632,27 @@ func CodexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, 
 	return reply, tok, modelReq, err
 }
 
-// OneShotHeadless runs one prompt through the preferred available backend and returns
-// the reply text — the backend-agnostic core of the title/branch suggestions. persona
-// is passed natively where possible (claude --system-prompt) and as a prompt preamble
-// otherwise. claudeModel applies to the claude backend only (codex/opencode run their
-// own configured defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE — docs/log/46 §2-b
-// flags that an unset override means the CLI's own default, usually the flagship).
-func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, claudeModel string) (string, error) {
+// OneShotHeadless runs one prompt through the resolved backend and returns the reply text —
+// the backend-agnostic core of the title/branch suggestions. feature picks the precedence
+// chain (docs/log/103 §103.5 — a feature-level agent pin, then the shared priority order);
+// it MUST be one of the usagex.Feature* constants and MUST be passed by the caller rather
+// than read back off ctx's usage tag: the tag is an observation axis (usagex/call.go),
+// and reading it here would let a legitimate re-tag (chat_compact.go's mid-turn rewrite)
+// silently change which agent/model runs (docs/log/103-review 重大1). persona is passed
+// natively where possible (claude --system-prompt) and as a prompt preamble otherwise.
+// claudeModel applies to the claude backend only (codex/opencode run their own configured
+// defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE — docs/log/46 §2-b flags that an
+// unset override means the CLI's own default, usually the flagship).
+func OneShotHeadless(ctx context.Context, feature string, tier OneShotTier, persona, prompt, claudeModel string) (string, error) {
+	reply, _, _, err := OneShotHeadlessRun(ctx, feature, tier, persona, prompt, claudeModel)
+	return reply, err
+}
+
+// OneShotHeadlessRun is OneShotHeadless plus the backend kind and model that ACTUALLY ran.
+// The mirror translation cache key needs that (docs/log/103 decision 8): resolveOneShot's
+// answer is a prediction (raced by the same 1-minute availability cache this call itself
+// refreshes), so the only trustworthy value for a cache key is what this call really did.
+func OneShotHeadlessRun(ctx context.Context, feature string, tier OneShotTier, persona, prompt, claudeModel string) (reply, kind, model string, err error) {
 	// Usage ledger (ADR 0029 §3). This function takes the first usable backend out of
 	// claude → codex → opencode → cursor → agy, so kind is filled in inside the branch, as a
 	// result of what ran: writing the requested value instead would turn all consumption of a
@@ -1547,8 +1661,8 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 	// is in here anyway.
 	call := usagex.Call{}
 	defer usagex.RecordCall(ctx, &call, time.Now())
-	kind := PreferredAssistAgent()
-	selected, configured := oneShotModelPref(kind, tier)
+	defer func() { kind, model = call.Kind, call.ModelReq }()
+	kind, selected, configured, _ := resolveOneShot(feature, tier)
 	selected = strings.TrimSpace(selected)
 	autoRecommended := selected == AssistantRecommendedModel
 	if selected == AssistantRecommendedModel {
@@ -1567,7 +1681,7 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 		autoPicked = autoPicked || autoRecommended
 		reply, tok, modelReq, err := CodexOneShotWithRetry(ctx, args, autoPicked, full, runCodexOneShot)
 		call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
-		return reply, err
+		return reply, "", "", err
 	case session.KindOpencode:
 		call.Kind = session.KindOpencode
 		args := []string{"run", "--format", "json", "--dir", chatWorkdir()}
@@ -1602,16 +1716,16 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 		cmd.Dir = chatWorkdir()
 		cmd.Env = envWith(env...)
 		out, err := cmd.Output()
-		reply, sesID, model, turnErr, usage := parseOpencodeRunEvents(out)
+		reply, sesID, reportedModel, turnErr, usage := parseOpencodeRunEvents(out)
 		if err != nil {
 			if turnErr != "" {
-				return "", fmt.Errorf("opencode turn failed: %s", turnErr)
+				return "", "", "", fmt.Errorf("opencode turn failed: %s", turnErr)
 			}
-			return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
+			return "", "", "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
 		}
 		call.Totals, call.OK = usage.LedgerTokens(), true
-		if model != "" {
-			call.Models = []usagex.ModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
+		if reportedModel != "" {
+			call.Models = []usagex.ModelRow{{Model: reportedModel, ModelRaw: reportedModel, Tokens: call.Totals}}
 		}
 		// opencode has no ephemeral mode — delete the throwaway session so one-shots
 		// don't pile "New session…" rows into the shared store. Best-effort, detached
@@ -1624,7 +1738,7 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 				_ = cl.Run()
 			}()
 		}
-		return reply, nil
+		return reply, "", "", nil
 	case session.KindCursor:
 		// cursor has no ephemeral mode; without --resume each one-shot mints a fresh
 		// chat, leaving a throwaway in ~/.cursor (same trade-off as agy/opencode
@@ -1648,18 +1762,18 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 		cmd.Stdin = strings.NewReader(headlessPrompt(persona, nil, prompt))
 		out, err := cmd.Output()
 		if err != nil {
-			return "", fmt.Errorf("cursor execution failed: %s", cliErr(err))
+			return "", "", "", fmt.Errorf("cursor execution failed: %s", cliErr(err))
 		}
 		r, perr := parseCursorResult(out)
 		if perr != nil {
-			return "", perr
+			return "", "", "", perr
 		}
 		call.SetTotals(r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens)
 		if r.IsError {
-			return "", errors.New(strings.TrimSpace(r.Result))
+			return "", "", "", errors.New(strings.TrimSpace(r.Result))
 		}
 		call.OK = true
-		return strings.TrimRight(strings.TrimSpace(r.Result), "\n"), nil
+		return strings.TrimRight(strings.TrimSpace(r.Result), "\n"), "", "", nil
 	case session.KindAgy:
 		// agy has no ephemeral mode, so each one-shot leaves a throwaway conversation
 		// behind — contained in the shared "oneshot" isolated home rather than the
@@ -1670,7 +1784,7 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 		call.Kind, call.Measured = session.KindAgy, usagex.MeasuredNone
 		home, wdir, err := chatAgyHome(&ChatConversation{ID: "oneshot"})
 		if err != nil {
-			return "", fmt.Errorf("agy chat home: %v", err)
+			return "", "", "", fmt.Errorf("agy chat home: %v", err)
 		}
 		var args []string
 		m := selected
@@ -1688,10 +1802,10 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 		defer reconcileChatCreds(agy.TokenPath(), filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
 		out, err := cmd.Output()
 		if err != nil {
-			return "", fmt.Errorf("agy execution failed: %s", cliErr(err))
+			return "", "", "", fmt.Errorf("agy execution failed: %s", cliErr(err))
 		}
 		call.OK = true
-		return strings.TrimRight(strings.TrimSpace(string(out)), "\n"), nil
+		return strings.TrimRight(strings.TrimSpace(string(out)), "\n"), "", "", nil
 	}
 	// claude (default): the historical path, kept native. --no-session-persistence is
 	// claude's --ephemeral analog (print-mode only, no transcript written, no resume):
@@ -1714,13 +1828,13 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 	call.Models, call.CostUSD = UsageModelRows(r.ModelUsage), r.TotalCostUSD
 	call.FallbackTotals(r.Usage.LedgerTokens(), "") // degrade for a response with no modelUsage
 	if err != nil {
-		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
+		return "", "", "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
 	if perr != nil || r.IsError {
-		return "", errors.New("claude returned an invalid response/error")
+		return "", "", "", errors.New("claude returned an invalid response/error")
 	}
 	call.OK = true
-	return strings.TrimRight(r.Result, "\n"), nil
+	return strings.TrimRight(r.Result, "\n"), "", "", nil
 }
 
 // argValue returns the value following a flag in argv ("" when not found). It puts "which
