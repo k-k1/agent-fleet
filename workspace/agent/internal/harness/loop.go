@@ -19,6 +19,25 @@ package harness
 // gap. See Runtime.Window's own doc comment (tools.go) for the fallback this uses when a
 // caller never wires Window up at all, and maybeCompact below for where the boundary is placed
 // so it can never split a tool_calls/tool round trip in two.
+//
+// 🔴🔴 A live A/B (gemma-4-12b-it-q4_k_m, same window=3500, same task list, ONLY the code
+// differing — old task-boundary-only compaction vs. this file's own in-loop check) found a
+// SECOND, worse failure this same fix introduced: 59 assistant turns total (old code, full
+// 5-task session) became 355+ turns without even reaching the 4th task (new code) — 86
+// compactions inside a single task alone. The read: compacting mid-loop had been folding the
+// model's own MOST RECENT work into prose and discarding the raw detail, so the model kept
+// forgetting what it had just verified and re-doing it — the two simple tasks that never
+// needed to compact (a few turns each) stayed fine; the two substantial ones, which compacted
+// repeatedly, ballooned. Two things fixed this, both required, neither alone sufficient:
+//   - maybeCompact's boundary now stops BEFORE the most recent complete tool round trip
+//     (compactPreservingLastRoundTrip below) — that round trip rides through RAW, never folded
+//     into the summary, so "what did I just do" survives every compaction.
+//   - Run now refuses to keep thrashing silently: if compacting fails to buy even one
+//     genuinely uncompacted round trip before the budget is exceeded again — the state that
+//     produced 86 compactions in one Run call — Run stops with ErrCompactionThrashing instead
+//     of continuing to spend Send calls on a task that provably does not fit this window. The
+//     threshold is Runtime.MaxConsecutiveCompactions (tools.go); its own <=0 fallback follows
+//     the same "zero value stays a real, protective number" posture as Window's own fallback.
 
 import (
 	"context"
@@ -56,6 +75,24 @@ const defaultWindowFallback = 8192
 // message with the same wording is vanishingly unlikely but not impossible to rule out by
 // role/position alone.
 const continuationPrompt = "Continue with the task."
+
+// defaultMaxConsecutiveCompactions is Runtime.MaxConsecutiveCompactions's <=0 fallback: the
+// live A/B this file's header comment describes hit 86 compactions in a single Run call
+// before anything noticed. 3 is chosen the same way defaultRepeatWarnAfter was (repeat.go) —
+// well below anything resembling the incident, comfortably above the occasional back-to-back
+// pair a real, once-off large tool result can legitimately cause without the task actually
+// being unworkable.
+const defaultMaxConsecutiveCompactions = 3
+
+// ErrCompactionThrashing is the sentinel behind the error Run returns once
+// Runtime.MaxConsecutiveCompactions consecutive iterations have each needed maybeCompact to
+// fire, with no intervening iteration that made it under budget without compacting — i.e.
+// compacting is no longer buying the loop even one genuinely-uncompacted round trip before the
+// budget is exceeded again. Continuing to spin here only spends more Send calls (each one a
+// real, billed completion, not a cheap check) on a task that has demonstrated it does not fit
+// this window; a caller distinguishes this from any other Run failure via errors.Is, the same
+// shape ErrRepeatedToolCall already uses.
+var ErrCompactionThrashing = errors.New("harness: context window keeps needing compaction faster than the loop can make progress")
 
 // Result is what Run returns once a turn with no ToolCalls comes back, or once ctx
 // is cancelled mid-loop.
@@ -100,7 +137,11 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 	full := append([]Message(nil), messages...)
 	gate := newRepeatGate(rt)
 	var tracker repeatTracker
-	var repeatWarnings, compactions int
+	var repeatWarnings, compactions, consecutiveCompactions int
+	maxConsecutiveCompactions := defaultMaxConsecutiveCompactions
+	if rt != nil && rt.MaxConsecutiveCompactions > 0 {
+		maxConsecutiveCompactions = rt.MaxConsecutiveCompactions
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return Result{Messages: full, RepeatWarnings: repeatWarnings, Compactions: compactions}, err
@@ -113,6 +154,17 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 		full = compacted
 		if fired {
 			compactions++
+			consecutiveCompactions++
+			if consecutiveCompactions >= maxConsecutiveCompactions {
+				// Stop BEFORE spending another Send on this — see ErrCompactionThrashing's
+				// own doc comment: this state is exactly the live incident that spent 86
+				// Send calls (each a real completion) finding out the window would never be
+				// enough, one iteration at a time.
+				return Result{Messages: full, RepeatWarnings: repeatWarnings, Compactions: compactions},
+					compactionThrashingErr(consecutiveCompactions)
+			}
+		} else {
+			consecutiveCompactions = 0
 		}
 		turn, err := client.Send(ctx, send, tools)
 		if err != nil {
@@ -221,30 +273,73 @@ func maybeCompact(ctx context.Context, client Client, rt *Runtime, tools []ToolD
 		return send, full, false, nil
 	}
 
-	// full's last entry is almost always a tool result at this point (the loop's own
-	// call sites above never reach here mid-turn), not the real, caller-supplied user
-	// turn Compact's own "pending user turn" preservation was written to recognise
-	// (compact.go's doc comment). Borrow that same preservation path with a synthetic
-	// stand-in instead of teaching Compact a second, tool-result-shaped notion of
-	// "pending" — without SOMETHING surviving after the new boundary, BuildSendMessages'
-	// next slice would end in nothing but the one leading system message, the same "no
-	// user query found in messages" rejection compact.go already found live once.
-	// 🔴 The synthetic turn this appends survives into full/Result.Messages permanently —
-	// see continuationPrompt's own doc comment for why a future transcript writer must
-	// never render it as something the human/caller actually said.
-	toCompact := full
-	if n := len(full); n == 0 || full[n-1].Role != RoleUser {
-		toCompact = append(append([]Message(nil), full...), Message{Role: RoleUser, Content: continuationPrompt})
-	}
-	compacted, err := Compact(ctx, client, sysPrompt, toCompact)
+	compacted, err := compactPreservingLastRoundTrip(ctx, client, sysPrompt, full)
 	if err != nil {
-		// Compact's own contract: a failed summarization Send returns toCompact
-		// UNCHANGED. Propagate the error rather than silently sending the
-		// over-budget request anyway — decision 7/8's own stance (compact.go)
-		// is that a real failure must surface, not be swallowed.
+		// Same contract as Compact's own: a failed summarization Send returns full
+		// UNCHANGED. Propagate the error rather than silently sending the over-budget
+		// request anyway — decision 7/8's own stance (compact.go) is that a real
+		// failure must surface, not be swallowed.
 		return nil, full, false, err
 	}
 	return BuildSendMessages(sysPrompt, compacted), compacted, true, nil
+}
+
+// compactPreservingLastRoundTrip is maybeCompact's own boundary placement — the live A/B this
+// file's header comment describes (86 compactions in one Run call) traced back to Compact
+// folding EVERYTHING, including the round trip that just finished, into the summary: the model
+// lost track of its own most recent action and re-did it, repeatedly. Compact itself
+// (compact.go) is unmodified; this only decides WHERE its boundary sits.
+//
+// The last complete round trip — the most recent RoleAssistant message and every RoleTool
+// message answering it — is carved off BEFORE calling Compact and reattached, VERBATIM, after
+// the new boundary: Compact only ever sees full[:lastAssistant], never the round trip itself,
+// so there is nothing for it to fold that content into. This can never split a tool_calls
+// message from its own results (the driving constraint this whole file is built around): the
+// carve point is the start of that last round trip, never somewhere inside it.
+//
+// full's last entry not already being a real user turn is what tells the caller (maybeCompact)
+// this is the mid-loop shape rather than a caller-supplied top-level turn boundary; when it
+// IS already a user turn, Compact's own pending-user-turn preservation (compact.go's doc
+// comment) already does the right thing on its own, so this defers to it unchanged.
+func compactPreservingLastRoundTrip(ctx context.Context, client Client, sysPrompt string, full []Message) ([]Message, error) {
+	if n := len(full); n == 0 || full[n-1].Role == RoleUser {
+		return Compact(ctx, client, sysPrompt, full)
+	}
+
+	lastAssistant := -1
+	for i := len(full) - 1; i >= 0; i-- {
+		if full[i].Role == RoleAssistant {
+			lastAssistant = i
+			break
+		}
+	}
+	if lastAssistant < 0 {
+		// No assistant turn at all yet to preserve (full is ONLY tool-shaped messages,
+		// which Run's own call sites never actually produce, but nothing here depends on
+		// that) — fall back to the plain synthetic-nudge shape with nothing held back.
+		toCompact := append(append([]Message(nil), full...), Message{Role: RoleUser, Content: continuationPrompt})
+		return Compact(ctx, client, sysPrompt, toCompact)
+	}
+
+	compactedPrefix, err := Compact(ctx, client, sysPrompt, full[:lastAssistant])
+	if err != nil {
+		return full, err
+	}
+	preserved := full[lastAssistant:] // the last complete round trip, unmodified
+	// 🔴 The synthetic continuationPrompt turn appended here survives into
+	// full/Result.Messages permanently — see its own doc comment for why a future
+	// transcript writer must never render it as something the human/caller actually said.
+	out := make([]Message, 0, len(compactedPrefix)+len(preserved)+1)
+	out = append(out, compactedPrefix...)
+	out = append(out, preserved...)
+	out = append(out, Message{Role: RoleUser, Content: continuationPrompt})
+	return out, nil
+}
+
+// compactionThrashingErr is the error Run returns once ErrCompactionThrashing's threshold
+// trips, worded with the actual streak length so a caller sees a real count, not just a name.
+func compactionThrashingErr(consecutive int) error {
+	return fmt.Errorf("compaction fired %d times in a row with no round trip fitting under budget in between: %w", consecutive, ErrCompactionThrashing)
 }
 
 // runToolCalls executes every call in calls concurrently (parallel tool_calls,

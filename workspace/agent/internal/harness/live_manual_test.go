@@ -40,6 +40,15 @@ import (
 // for an awake GPU box the whole time and, worse, preventing the box from ever going idle and
 // cycling to a fresh process that WOULD know about the new model. Retryable() alone avoids that:
 // only EngineWaking is retried, everything else fails fast.
+//
+// 🔴 One exception, added after a live run (log-gemma4-newloop.txt) hit `HTTP 502` and failed
+// fast: EngineError.Kind classifies that as EngineOtherError (client.go's readHTTPError has no
+// specific case for it), so Retryable() alone says no — but a bare 502 with the SAME box's own
+// CloudWatch stream continuing uninterrupted before and after (confirmed live: no restart, no
+// reload, the model was never told anything went wrong) is a transient gateway/proxy hiccup,
+// the same shape as EngineWaking, not a real refusal. Retried here by matching the message
+// text rather than widening EngineOtherError's own Retryable() (that would also retry a plain
+// "model not found", exactly the failure mode this helper's own history above says not to).
 func retryOnWake(t *testing.T, ctx context.Context, label string, fn func() error) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Minute)
@@ -49,8 +58,10 @@ func retryOnWake(t *testing.T, ctx context.Context, label string, fn func() erro
 			return
 		}
 		var ee *EngineError
-		if errors.As(err, &ee) && ee.Retryable() && time.Now().Before(deadline) {
-			t.Logf("engine waking during %s, retrying in 15s: %v", label, err)
+		retryable := errors.As(err, &ee) && ee.Retryable()
+		retryable = retryable || strings.Contains(err.Error(), "HTTP 502")
+		if retryable && time.Now().Before(deadline) {
+			t.Logf("engine waking (or a transient HTTP 502) during %s, retrying in 15s: %v", label, err)
 			select {
 			case <-time.After(15 * time.Second):
 				continue

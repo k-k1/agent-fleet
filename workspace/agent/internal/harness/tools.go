@@ -154,6 +154,19 @@ type Runtime struct {
 	// value or defaultWindowFallback — see Window's own doc comment for why that default
 	// was chosen deliberately rather than left to mean "no ceiling".
 	WindowDisabled bool
+	// MaxConsecutiveCompactions caps how many loop.go Run iterations in a row are allowed
+	// to each need maybeCompact to fire, with no intervening iteration that got under
+	// budget without compacting, before Run gives up with ErrCompactionThrashing instead of
+	// continuing to spend Send calls. A live A/B (loop.go's own header comment) hit 86
+	// compactions in a single Run call once mid-loop compaction started actually running —
+	// each one folding away the model's own most recent work, which made it re-do that work
+	// rather than converge. <=0 (including a zero Runtime{}) uses defaultMaxConsecutiveCompactions
+	// (loop.go) — the same "zero value stays a real, protective number, never off" posture
+	// as Window's own fallback and RepeatWarnAfter/RepeatAbortAfter's (repeat.go). There is
+	// no "disabled" escape hatch for this one (unlike WindowDisabled/RepeatGateDisabled):
+	// unbounded thrashing is exactly the failure mode this field exists to make loud instead
+	// of silent, so there is no legitimate reason to want it off.
+	MaxConsecutiveCompactions int
 	// fileLocks serializes a single file's read-modify-write (runWrite/runEdit in
 	// tools_fs.go) across the concurrent goroutines runToolCalls (loop.go) fans a
 	// single turn's parallel tool_calls out into — see lockPath. Zero value is

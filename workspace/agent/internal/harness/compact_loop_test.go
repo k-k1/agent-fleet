@@ -164,6 +164,24 @@ func TestRunCompactsMidLoopWhenHistoryGrowsPastWindow(t *testing.T) {
 		t.Fatalf("post-compaction request has %d system-role messages, want exactly 1 (Qwen's chat template rejects a second one, per compact.go's own doc comment)", sysCount)
 	}
 
+	// The last complete round trip before compaction fired must ride through RAW — a
+	// RoleTool message whose Content is the literal blob, not folded into the (distinct,
+	// fixed) canned summary text — the fix for the live A/B regression (loop.go's own header
+	// comment: 86 compactions in one Run call once the model lost track of its own most
+	// recent action and kept re-doing it).
+	sawRawBlob := false
+	for _, m := range shrunk {
+		if m.Role == RoleTool && m.Content == blob {
+			sawRawBlob = true
+		}
+		if m.Role == RoleSystem && strings.Contains(m.Content, blob) {
+			t.Fatalf("the last round trip's own blob content ended up folded into the summary/system message instead of surviving raw: %+v", m)
+		}
+	}
+	if !sawRawBlob {
+		t.Fatalf("post-compaction request has no raw tool-result message matching the last round trip's own blob content: %+v", shrunk)
+	}
+
 	requireNoOrphanToolCalls(t, "Result.Messages", res.Messages)
 	for i, sent := range client.gotSends {
 		if client.gotTools[i] == nil {
@@ -216,6 +234,66 @@ func TestRunWindowDisabledSkipsInputTokensEntirely(t *testing.T) {
 	}
 	if client.calls != 0 {
 		t.Fatalf("InputTokens was called %d times, want 0 (WindowDisabled must skip the check entirely)", client.calls)
+	}
+}
+
+// TestRunStopsCompactionThrashingWithSentinelError is the live A/B regression's own positive
+// control (loop.go's header comment: 86 compactions in a single Run call, gemma-4-12b-it-q4_k_m,
+// window=3500, real deployment): a single tool result too big to ever fit under a small Window,
+// even alone and even preserved as the one thing a compaction keeps raw, forces every
+// subsequent iteration to compact again immediately — Run must notice this and stop loudly
+// (ErrCompactionThrashing) well before anything like 86 Send calls, rather than spending an
+// unbounded number of real completions finding out the window will never be enough.
+func TestRunStopsCompactionThrashingWithSentinelError(t *testing.T) {
+	blob := strings.Repeat("y", 2000) // bigger than the window on its own, even alone post-compaction
+	var turns []Turn
+	for i := 0; i < 20; i++ {
+		turns = append(turns, Turn{ToolCalls: []ToolCall{{ID: string(rune('a' + i)), Name: "blob", Arguments: fmt.Sprintf(`{"n":%d}`, i)}}})
+	}
+	client := &growingClient{turns: turns, summary: "summary of the blob-fetching so far"}
+	reg := NewRegistry(blobTool("blob", blob))
+	rt := &Runtime{Cwd: t.TempDir(), Window: 500} // one blob alone already exceeds 500*0.9
+
+	res, err := Run(context.Background(), client, reg, rt, nil)
+	if !errors.Is(err, ErrCompactionThrashing) {
+		t.Fatalf("err = %v, want an error wrapping ErrCompactionThrashing", err)
+	}
+	if res.Compactions > 2*defaultMaxConsecutiveCompactions {
+		t.Fatalf("Compactions = %d, want at most roughly %d — the live incident this pins spent 86 finding this out one iteration at a time", res.Compactions, defaultMaxConsecutiveCompactions)
+	}
+	if client.i >= len(turns) {
+		t.Fatalf("consumed all %d scripted turns before stopping — Run kept spinning instead of stopping early", len(turns))
+	}
+	requireNoOrphanToolCalls(t, "Result.Messages", res.Messages)
+}
+
+// TestRunConsecutiveCompactionsResetsAfterARealRoundTrip pins the "consecutive" half of
+// MaxConsecutiveCompactions's own contract: a compaction that DOES buy the loop a real,
+// under-budget round trip before the next one fires must not count toward the same streak as
+// an immediately-repeating one — otherwise a long conversation that legitimately compacts many
+// times over its life (never back-to-back) would eventually trip ErrCompactionThrashing for no
+// reason, exactly the false-positive TestRunCompactsMidLoopWhenHistoryGrowsPastWindow's own
+// window/blob sizing was chosen to avoid triggering.
+func TestRunConsecutiveCompactionsResetsAfterARealRoundTrip(t *testing.T) {
+	blob := strings.Repeat("x", 300)
+	var turns []Turn
+	for i := 0; i < 20; i++ {
+		turns = append(turns, Turn{ToolCalls: []ToolCall{{ID: string(rune('a' + i)), Name: "blob", Arguments: fmt.Sprintf(`{"n":%d}`, i)}}})
+	}
+	turns = append(turns, Turn{Content: "done"})
+	client := &growingClient{turns: turns, summary: "summary of the blob-fetching so far"}
+	reg := NewRegistry(blobTool("blob", blob))
+	rt := &Runtime{Cwd: t.TempDir(), Window: 1000, MaxConsecutiveCompactions: 2}
+
+	res, err := Run(context.Background(), client, reg, rt, nil)
+	if err != nil {
+		t.Fatalf("Run: %v, want no error — each compaction here is followed by several real round trips before the next one, never back-to-back", err)
+	}
+	if res.Final.Content != "done" {
+		t.Fatalf("Final.Content = %q, want %q", res.Final.Content, "done")
+	}
+	if res.Compactions < 2 {
+		t.Fatalf("Compactions = %d, want at least 2 (this Window is small enough to need several over 20 rounds)", res.Compactions)
 	}
 }
 
