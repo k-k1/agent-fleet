@@ -397,13 +397,33 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
     [ -n "$LLM_ENGINE_DIGEST" ] && llm_src="$LLM_ENGINE_FROM@$LLM_ENGINE_DIGEST"
     echo "    · crane copy $llm_src (about 2.5 GB)"
     af_run crane copy "$llm_src" "$ECR_HOST/af-llamacpp:$llm_tag"
-    # Record what actually landed, pinned or not: a floating tag resolves to "whatever GHCR
-    # serves right now", so this is the only place that says, after the fact, which content a
-    # given stand-up baked. Best-effort - a read that fails here must not fail a copy that
-    # already succeeded.
-    if [ "$AF_DRY" != 1 ]; then
-      llm_landed_digest="$(crane digest "$ECR_HOST/af-llamacpp:$llm_tag" 2>/dev/null)" || llm_landed_digest="(could not read back)"
-      echo "    · af-llamacpp:$llm_tag digest: $llm_landed_digest"
+  fi
+  # Record what is ACTUALLY in af-llamacpp:$llm_tag now, whichever branch above ran - a floating
+  # tag resolves to "whatever GHCR serves right now", so this is the only place that says, after
+  # the fact, which content a given stand-up is about to deploy. This has to run on the "already
+  # in ECR" branch too: a repeat stand-up (the common case, once the repository is no longer
+  # empty) never reaches the crane copy above at all, so a check placed only in that branch would
+  # verify nothing on every run after the first. Best-effort read - a failure here must not fail
+  # a copy that already succeeded.
+  if [ "$AF_DRY" != 1 ]; then
+    llm_landed_digest="$(crane digest "$ECR_HOST/af-llamacpp:$llm_tag" 2>/dev/null)" || llm_landed_digest="(could not read back)"
+    echo "    · af-llamacpp:$llm_tag digest: $llm_landed_digest"
+    # A requested pin that does not match what is actually there is worse than no pin at all -
+    # it looks like it worked. This is exactly the case above: the tag was already in ECR (from
+    # an earlier, unpinned or differently-pinned copy) and this run's --llm-digest never touched
+    # it. Choosing to FAIL here (rather than silently accept it, or silently re-copy over
+    # somebody's possibly-running engine's image without being asked to) is deliberate: it is
+    # the only option that cannot deploy something other than what was asked for without saying
+    # so, and it leaves the fix to a human who can see whether retagging is safe right now.
+    if [ -n "$LLM_ENGINE_DIGEST" ] && [ "$llm_landed_digest" != "$LLM_ENGINE_DIGEST" ]; then
+      echo "ERROR: --llm-digest $LLM_ENGINE_DIGEST was requested, but af-llamacpp:$llm_tag in ECR" >&2
+      echo "       is $llm_landed_digest — most likely copied before this pin was chosen (a" >&2
+      echo "       repeat stand-up does not re-copy an image already in ECR). A pin that" >&2
+      echo "       silently does nothing is worse than none." >&2
+      echo "       Fix: drop --llm-digest to accept what's already there, or delete/retag" >&2
+      echo "       af-llamacpp:$llm_tag in ECR so the copy above actually runs against the" >&2
+      echo "       requested digest." >&2
+      exit 1
     fi
   fi
   # The ComfyUI image, for the `image` role (ADR 0072 decision 4, phase P2; the earlier

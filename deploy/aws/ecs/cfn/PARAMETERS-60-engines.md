@@ -363,9 +363,16 @@ default) and the copy is exactly what it always was. Pinning is a deliberate, on
 operation, not something a default can safely guess at — hence no default digest is shipped
 here.
 
-Whether or not a digest was chosen, every llm copy reads the digest back out of ECR afterwards
-and prints it (`af-llamacpp:<tag> digest: sha256:...`), so a stand-up's own output always says
-what it actually baked — the tag name alone no longer does.
+Whether or not a digest was chosen, and whether or not `af-llamacpp:<tag>` was already in ECR
+(the common case: `crane copy` only runs the first time), `standup.sh` reads the digest back out
+of ECR every run and prints it (`af-llamacpp:<tag> digest: sha256:...`), so a stand-up's own
+output always says what it actually baked — the tag name alone no longer does. If `--llm-digest`
+was given and it does not match what is actually there — typically because the tag was already
+in ECR from an earlier, unpinned or differently-pinned run — `standup.sh` **fails loudly before
+deploying `60-engines`**, rather than proceeding on an unpinned image while claiming otherwise:
+a pin that silently does nothing is worse than no pin. Fix it by dropping `--llm-digest` (accept
+what is already there) or by deleting/retagging `af-llamacpp:<tag>` so the next run's `crane
+copy` actually fetches the requested digest.
 
 To choose a digest to pin: resolve the upstream tag at the moment you mean to pin it —
 `crane digest ghcr.io/ggml-org/llama.cpp:server-cuda` — rather than trusting a value recorded
