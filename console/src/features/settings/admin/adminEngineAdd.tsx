@@ -1316,6 +1316,10 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
   const [idEdited, setIdEdited] = useState(false);
   const [description, setDescription] = useState("");
   const [baseModel, setBaseModel] = useState("");
+  // The family the OPERATOR picked, as opposed to the one the CP named. Separate state rather
+  // than a comparison against the last answer: comparing makes the trigger flip back the moment
+  // the CP echoes the pick, which re-plans a third time instead of stopping.
+  const [operatorFamily, setOperatorFamily] = useState("");
   const [familyChoices, setFamilyChoices] = useState<string[]>([]);
   const [context, setContext] = useState("");
   const [output, setOutput] = useState("");
@@ -1408,6 +1412,13 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
   // parts table and the main file's role are keyed by. An LLM LoRA's "base" is a registered
   // model's id, which is not a family and would be planned as an unknown one.
   const plannedFamily = image && !isLora ? baseModel : "";
+  // What re-planning is triggered BY, which is not the same as what is sent. `baseModel` also
+  // holds the family the CP named itself, and asking again with that changes nothing: the plan
+  // that carried it was already built from it (enginePlanFor falls back to its own guess when the
+  // body names none), so the second answer is identical. Measured on this screen: a row whose
+  // family the CP can name resolved TWICE on open, blanking the plan card in between, and a
+  // family it cannot name resolved once. Only an operator's pick belongs here.
+  const chosenFamily = image && !isLora ? operatorFamily : "";
   // 🔴 The family is SENT, and a change to it re-plans (ADR 0094 decision 7). The parts a split
   // family needs are planned from it (engine_family_parts.go), so a card drawn while it is still
   // unknown prices the main file alone — and the press, which does send it, re-plans into three
@@ -1466,12 +1477,12 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
     return () => { live = false; };
     // Existing typed settings deliberately outrank metadata suggestions.
     //
-    // ⚠️ `baseModel` is a dependency and the effect also SETS it, which is a loop unless the CP
-    // echoes what it was sent — it does (enginePlanFor prefers the body's `base_model` over its
-    // own guess), so the second pass sets the same string and React stops there. An answer that
-    // named a different family would spin, and that is the invariant to keep if either side moves.
+    // ⚠️ The effect SETS `baseModel` and must therefore not depend on it: `chosenFamily` is the
+    // operator's pick alone, so the CP naming a family here does not re-enter. What is SENT stays
+    // `plannedFamily` (the whole of `baseModel`), because the press sends it too and a plan built
+    // without it would go stale against one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, image, isLora, row.key, sourceBody, plannedFamily]);
+  }, [file, image, isLora, row.key, sourceBody, chosenFamily]);
 
   // The family is asked ONLY when the CP could not read one, and only from the candidates it
   // knows. An LLM LoRA is pinned to a registered model rather than to a family name.
@@ -1571,7 +1582,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         <label><span>{tr(plainURL ? "admin.catalog_checksum" as never : "admin.catalog_file" as never)}</span>{files.length
           ? <select value={file} onChange={(event) => setFile(event.currentTarget.value)}><option value="">{tr("admin.catalog_pick_file" as never)}</option>{files.map((candidate) => <option key={candidate.ref || candidate.name} value={candidate.name}>{candidate.name}</option>)}</select>
           : <input value={file} onChange={(event) => setFile(event.currentTarget.value)} placeholder={plainURL ? "sha256" : "model.safetensors"} />}</label>
-        {asksFamily && <label><span>{tr(isLora && !image ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)}>
+        {asksFamily && <label><span>{tr(isLora && !image ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => { setBaseModel(event.currentTarget.value); setOperatorFamily(event.currentTarget.value); }}>
           <option value="">{tr(isLora && !image ? "admin.engines_model_add_lora_base_pick" : "admin.engines_model_add_family_pick")}</option>{familyOptions.map((base) => <option key={base} value={base}>{base}</option>)}</select></label>}
       </div>
       {file && !plan && !err && <p className="muted engine-plan-building"><Icon name="loading" spin /> {tr("admin.catalog_plan_building" as never)}</p>}

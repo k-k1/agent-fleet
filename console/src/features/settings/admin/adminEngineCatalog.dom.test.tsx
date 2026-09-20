@@ -354,6 +354,42 @@ describe("model catalogue pane", () => {
     expect(document.querySelector(".engine-operation-footer")?.textContent).toContain("ファミリーを選んでください");
   });
 
+  // 🔴 The other half of the family trigger, and the one that costs without buying anything: a
+  // family the CP names ITSELF must not re-plan. The plan that carried it was already built from
+  // it (enginePlanFor falls back to its own guess when the body names none), so asking again
+  // returns the identical plan — a second upstream read of the main file AND of every part, and a
+  // card that blanks and redraws because the effect opens with setPlan(null)/setAccepted(false).
+  // Measured before this was fixed: 2 on open for a family the CP can name, 1 for one it cannot.
+  it("resolves once when the CP names the family itself, and the plan card is not redrawn", async () => {
+    mockEngines([{ ...imageRow, base_models: ["sdxl"] }]);
+    const resolveBodies: (Record<string, unknown> | undefined)[] = [];
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "org/model", model_ref: "org/model", name: "Example" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) {
+        resolveBodies.push(body);
+        return Promise.resolve({
+          bytes: 1_000_000_000, can_ingest: true,
+          plan: {
+            plan_token: "p1", id: "model-v1", base_model: "sdxl",
+            files: [{ name: "model.safetensors", action: "download", bytes: 1_000_000_000 }],
+            bytes_to_download: 1_000_000_000,
+          },
+        });
+      }
+      return Promise.resolve({});
+    });
+    await mount();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3, 4, 5]) await act(async () => { await Promise.resolve(); });
+
+    expect(resolveBodies).toHaveLength(1);
+    // And the one call did NOT name a family: the CP's own guess is what filled the field.
+    expect(resolveBodies[0]?.base_model).toBeUndefined();
+    expect(document.querySelectorAll(".engine-plan-files li")).toHaveLength(1);
+  });
+
   // 🔴 The family the operator picks has to reach the PLAN, not only the press (ADR 0094 decision
   // 7 — "one press" only holds if the card shows what the press will do). The parts a split family
   // needs are planned from its family (engine_family_parts.go), so a card drawn before anybody
