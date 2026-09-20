@@ -34,12 +34,26 @@ FROM node:22-trixie-slim
 LABEL org.opencontainers.image.source="https://github.com/k-k1/agent-fleet" \
       org.opencontainers.image.description="Agent Fleet per-user workspace — isolated container running the agent CLIs" \
       org.opencontainers.image.licenses="Apache-2.0"
+# bubblewrap: **この箱の中では動かないことが確定している**（ADR 0095 段 1 門 A の実測）。
+# 焼いてあるのは、ホストが許すものが変わった日に再計測を即座にやり直せるようにするため
+# であって、エージェントのサンドボックスを有効にするためではない。実測 2026-09-20:
+# user namespace の中で全 41 能力（CAP_SYS_ADMIN 含む）を持っていても
+# `mount(2)` と `move_mount(2)` が **EACCES** を返す——能力非依存なので拒否しているのは
+# 能力でも seccomp でもなく **AppArmor プロファイル `docker-default (enforce)`**。
+# `bwrap --ro-bind / / --dev /dev true` は最初の
+# `mount(NULL,"/",NULL,MS_REC|MS_SLAVE,NULL)` で落ちる（"Failed to make / slave"）。
+# ⚠️ muse のサンドボックスはこれでは直らない: muse は `--ro-bind-symlink` を必須と
+# するが Debian trixie の bwrap 0.12.0 は持たない（`Unknown option`）ため muse 側が
+# この bwrap を拒否し、かつ muse は自前の埋め込み bwrap を同梱している。
+# ⚠️ CI の `deploy/local/e2e-smoke.sh` は `--cap-add=SYS_ADMIN` かつ AppArmor
+# 非適用で回るので、そこで bwrap が通っても **Workspace の答えにはならない**。
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git git-lfs git-delta subversion tmux vim openssh-client ca-certificates gnupg curl wget less procps htop strace tzdata \
       ripgrep fd-find bat jq unzip zip \
       build-essential pkg-config \
       python3 python3-pip python3-venv python3-dev python-is-python3 \
       libaio1t64 libnuma1 libncurses6 \
+      bubblewrap \
  && ln -sf "$(command -v fdfind)" /usr/local/bin/fd \
  && ln -sf "$(command -v batcat)" /usr/local/bin/bat \
  && rm -rf /var/lib/apt/lists/* \
@@ -464,6 +478,23 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       kiro-cli --version; \
     fi
 
+# Muse Code（Meta・ADR 0095 段 1 門 A で計測。kind="muse" の配線は段 2）。
+# 公開チャンネル manifest（api.meta.ai/muse-code/channels/muse-stable が版と
+# lookaside の版別 manifest.json を返す）が **匿名で** アーキ別の URL・sha256・サイズを
+# 掲載しており、agy / kiro と同じ「版付き URL ＋ sha256 ピン」で取得・検証できる
+# （実測 2026-09-20: どちらも HTTP 200・資格情報不要）。sha は版別 manifest の
+# artifacts.{x86_linux,aarch64_linux}.checksum をそのまま写す（bump は MUSE_VERSION と
+# 両 arch の sha を揃えて書き換える — KIRO_VERSION と同じ流儀）。
+#
+# ⚠️ プロプライエタリなので既定（BAKE_AGENT_CLIS=0）では焼かない。lean 配布では
+# entrypoint の boot-install がこのピンから ~/.local へ導入する（ADR 0095 決定 8）。
+# 配布物は**単一の静的リンクバイナリ**（x86_64 313,800,920 B / aarch64 281,942,104 B）で、
+# ベンダの install.sh が置く bash ランチャ（既定でチャンネルを毎時見て自己更新する）は
+# 使わない——実体をそのまま `muse` として置くので、自己更新の経路がそもそも無い。
+ARG MUSE_VERSION=1.3.0-R3401.1
+ARG MUSE_SHA256_X64=71b089d055dfe6e4562092bc484896b61bd96fd6ef9fef9da54a14aa174e2a33
+ARG MUSE_SHA256_ARM64=5e5ea2a3de3a3fabdff8982aec9423d20eaa7dad05df37efb4264356d0d2e223
+
 # ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
 # 設定 UI「ツールのバージョン」の「ピン vs 実体」表示・スモークの検証材料に加え、
 # lean variant（BAKE_AGENT_CLIS=0 / BAKE_OPTIONAL_TOOLS=0）では entrypoint の
@@ -507,12 +538,12 @@ RUN mkdir -p /scratch && chown 1000:1000 /scratch
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
-      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}"; pg_sha="${POSTGRES_SHA256_X64}"; mysql_sha="${MYSQL_SHA256_X64}" ;; \
-      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}" ;; \
-      *) agy_sha=""; cursor_sha=""; kiro_sha=""; pg_sha=""; mysql_sha="" ;; \
+      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}"; muse_sha="${MUSE_SHA256_X64}"; pg_sha="${POSTGRES_SHA256_X64}"; mysql_sha="${MYSQL_SHA256_X64}" ;; \
+      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; muse_sha="${MUSE_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}" ;; \
+      *) agy_sha=""; cursor_sha=""; kiro_sha=""; muse_sha=""; pg_sha=""; mysql_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$MUSE_VERSION" "$muse_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWS_MCP_PROXY_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
@@ -533,6 +564,15 @@ ENV DISABLE_AUTOUPDATER=1
 # startup by default and self-writes only on explicit `codex update` / opt-in
 # autoUpdate, so it needs no analogous flag.)
 ENV OPENCODE_DISABLE_AUTOUPDATE=true
+
+# Muse Code（ADR 0095 決定 8）。AF が置くのは**ランチャではなく実体**なので、AF 自身の
+# 導入分にはそもそも自己更新経路が無い——この ENV が効くのは **影**の方だ: 利用者が
+# ベンダの install.sh を一度走らせると `~/.local/bin/muse` に bash ランチャが載り、
+# それは既定でチャンネルを毎時見て自分を書き換える（MUSE_UPDATE_INTERVAL_SECONDS=3600・
+# 実測 2026-09-20）。PATH は home が先勝ちなので、封殺しないと「AF が入れたピン版」では
+# ない自己更新ビルドが黙って使われ続ける。影そのものの検知は**パスでなく版一致**
+# （entrypoint の repin）で、これはその前段の被害軽減。
+ENV MUSE_NO_AUTO_UPDATE=1
 
 # NEVER let git fall back to an interactive /dev/tty credential prompt. This fixes a
 # real "the claude session accepts NO keyboard input" bug (gate k, docs/log/35 §35.9-10):

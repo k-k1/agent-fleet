@@ -296,6 +296,20 @@ fi
 # よる再配布に当たらない（各社が各配布元の規約を自ら受諾する）。焼き込み
 # （/usr/local/bin）か home（~/.local/bin）に既に居る CLI は触らない。ネット不通は
 # WARN で続行（Agent 起動は止めない — 端末は使える。次回起動時に再試行）。
+#
+# 🔴 **この節の `( set -e … ) && ok || WARN` の中では `set -e` が効かない。**
+# POSIX（と bash・dash 実測 5.2.37 / trixie の dash）は「AND-OR リストの最後以外の
+# コマンド」で -e を無視すると定めており、サブシェル全体がその左辺なので、**中で
+# 明示的に `set -e` と書いても無視される**。実測（ADR 0095 段 1 門 A、2026-09-20）:
+#
+#   ( set -e; echo "0000  f" | sha256sum -c - >/dev/null; echo INSTALLED ) && echo OK
+#   → "WARNING: 1 computed checksum did NOT match" を出したうえで INSTALLED と OK
+#
+# ＝ **sha256 検証は飾りで、検証に落ちた成果物がそのまま ~/.local へ入り「成功」と
+# 記録される**。boot-install は 5 か所すべてこの形だったので、検証と「その先へ
+# 進ませない」を errexit に頼らず **`|| exit 1` で明示**する（`exit` は errexit と
+# 無関係に効く）。⚠️ `if ( set -e; … ); then` へ書き換えるのは**直らない** —— if の
+# 条件もまた -e が無視される文脈だから。
 VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
@@ -414,7 +428,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       # until the next start (observed on the WSL2 gate — docs/log/35 §35.9-9).
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/${asset}" -o "${asset}"
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/checksums.txt" -o checksums.txt
-      grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null
+      grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
       tar xzf "${asset}"
       install -D -m 0755 rtk "$HOME/.local/bin/rtk"
       # ⚠️ 実行して確かめてから残す。arm64 の配布は gnu ビルドだけで GLIBC_2.39 を要求し、
@@ -456,7 +470,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
       cd "$tmp"
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://storage.googleapis.com/antigravity-public/antigravity-cli/${aver}-${abuild}/${asset}" -o agy.tgz
-      echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null
+      echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null || exit 1
       tar -xzf agy.tgz antigravity
       install -D -m 0755 antigravity "$HOME/.local/bin/agy"
       printf '%s\n' "$aver" > "$HOME/.local/bin/.agy.version"
@@ -498,7 +512,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
         tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
         curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
           "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
-        echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null
+        echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null || exit 1
         rm -rf "$dir"; mkdir -p "$dir"
         tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$dir"
       fi
@@ -510,6 +524,54 @@ if [ "$LEAN_CLIS" = 1 ]; then
       || echo "[entrypoint] WARN: cursor boot-install failed (retrying next start)"
   elif cli_present cursor-agent; then
     echo "[entrypoint] boot-install: cursor already present (skip)"
+  fi
+  # muse（Muse Code / Meta・ADR 0095 決定 8）。版別 manifest の sha256 ピンで
+  # ~/.local/bin/muse へ実体を置く（agy と同じ「版付き URL ＋ sha256」経路）。
+  #
+  # ⚠️ **既定では走らない**（AF_MUSE_BOOT_INSTALL=1 の明示 opt-in）。配布物は 299 MiB
+  # 級で、kind="muse" は段 2 まで存在しない——無条件にすると全コンテナが初回起動で
+  # 「誰も使えない CLI」の 299 MiB を払う。kiro（855 MiB）を無条件 boot-install から
+  # 利用者限定のオンデマンド導入へ移したのと同じ理由なので、段 2 では
+  # `workspace-agent install-kiro` 型のオンデマンドへ寄せる（ADR 0095 段 1 門 A の所見）。
+  #
+  # ⚠️ 置くのは**ベンダの bash ランチャではなく実体**。ランチャは既定で毎時チャンネルを
+  # 見て自分を書き換えるので、実体を直接置けば自己更新経路そのものが無くなる。
+  # ⚠️ だから**影の検知はパスではなく版一致**でやる: ベンダの install.sh も同じ
+  # `~/.local/bin/muse` を使うため、パスで見ると AF 自身のバイナリを影と報告してしまう。
+  # `muse --version` は `Muse Code 1.3.0 (1.3.0-R3401.1)` の形なので、
+  # 括弧内のビルド id をピンと突き合わせる（`tr -dc '0-9.'` ではピンの `-R3401.1` が
+  # 落ちて常に不一致になる — agy の marker の罠と同型）。
+  MUSE_NEED=0
+  if [ "${AF_MUSE_BOOT_INSTALL:-0}" = "1" ] \
+     && [ -n "$(vj_pin muse)" ] && [ -n "$(vj_pin muse_sha256)" ]; then
+    if ! cli_present muse; then
+      MUSE_NEED=1
+    elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/muse" ]; then
+      mver="$(MUSE_NO_AUTO_UPDATE=1 MUSE_LOGIN=0 timeout 60 "$HOME/.local/bin/muse" --version 2>/dev/null \
+                | sed -n 's/.*(\(.*\)).*/\1/p' | head -1)"
+      if [ -n "$mver" ] && [ "$mver" != "$(vj_pin muse)" ]; then MUSE_NEED=1; fi
+    fi
+  fi
+  if [ "$MUSE_NEED" = 1 ]; then
+    (
+      set -e
+      mver="$(vj_pin muse)"; msha="$(vj_pin muse_sha256)"
+      arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+      case "$arch" in
+        amd64 | x86_64) masset="muse-x86-linux" ;;
+        arm64 | aarch64) masset="muse-aarch64-linux" ;;
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;;
+      esac
+      tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+        "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${mver}&file=${masset}" \
+        -o "$tmp/muse"
+      echo "${msha}  $tmp/muse" | sha256sum -c - >/dev/null || exit 1
+      install -D -m 0755 "$tmp/muse" "$HOME/.local/bin/muse"
+    ) && echo "[entrypoint] boot-install muse $(vj_pin muse)" \
+      || echo "[entrypoint] WARN: muse boot-install failed (retrying next start)"
+  elif [ "${AF_MUSE_BOOT_INSTALL:-0}" = "1" ] && cli_present muse; then
+    echo "[entrypoint] boot-install: muse already present (skip)"
   fi
 fi
 
@@ -673,7 +735,7 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
     cd "$tmp"
     curl -fsSL "${base}/${asset}" -o "${asset}"
     curl -fsSL "${base}/checksums.txt" -o checksums.txt
-    grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null
+    grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
     tar xzf "${asset}"
     install -D -m 0755 rtk "$HOME/.local/bin/rtk"
   ) && echo "[entrypoint] rtk updated: $("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1)" \
