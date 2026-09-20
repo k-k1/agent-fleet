@@ -1,4 +1,4 @@
-# 0095. Meta の Muse Code をセッション種別（`muse`）にする — TUI 契約ではなくベンダのプロトコルに乗る、実機 2 門の先で
+# 0095. Meta の Muse Code をセッション種別（`muse`）にする — TUI 契約ではなくベンダのプロトコルに乗る、実機 3 門の先で
 
 [English](0095-muse-agent-kind.md) | 日本語
 
@@ -109,11 +109,16 @@ REST と MCP の create、そして自前の kind 一覧で paneless を決め�
 MSP は 1 プロセスで複数セッションを抱えられる（`session/list`・接続ごとの自動購読）ので共有デーモンも
 可能だが、v1 では採らない。理由は「固定の値があるから」ではなく **どの摘みがホスト単位か** である——
 承認モードはワイヤ上でセッション単位なので、それだけでは決め手にならない。`muse serve --help` で実測した
-ホスト寿命固定の摘みは、サンドボックス姿勢・`--sandbox-network`・**`--disable-write`**・
-**`--disable-shell`**・**`--trust-workspace`**・セッションの耐久性である。Agent Fleet はまさにそこを
-セッションごとに変える（起動時の許可選択、read-only や plan の姿勢はセッション単位の決定である）。共有
-ホストにすると、先に始まったセッションの姿勢が後続すべての姿勢になる。副次的な理由が 2 つ——ホストが落ちれば
-載っている全セッションが落ち、1 セッションを止めるのに他が載ったプロセスを畳む必要が出る。待機
+ホスト寿命固定の摘みは、サンドボックス姿勢・`--sandbox-network`・`--disable-write`・
+`--disable-shell`・**`--trust-workspace`**・セッションの耐久性である。**このうち 1 つは既にここで
+セッション単位であり、それ以外になりようがない**——trust は*作業コピー*についての決定で、Agent Fleet の
+セッションはそれぞれ自分の作業コピーを持つ。共有ホストにすると、最初のセッションのリポジトリを信頼した
+ことが、以後に載る全リポジトリの信頼になってしまう。残りは現在の制約ではなく先々の制約なので、ADR として
+言い過ぎない: AF が今セッション単位で持つ軸は `Meta.Mode` と `Meta.SkipPermissions`
+（`session.go:377-390`）で、ワイヤに対応があるのは承認だけである。read-only 姿勢を
+`--disable-write` / `--disable-shell` に写すならセッション単位が要るが、共有ホストではそれが持てない。
+副次的な理由が 2 つ——ホストが落ちれば載っている全セッションが落ち、1 セッションを止めるのに他が載った
+プロセスを畳む必要が出る。待機
 **73 MiB**（実測）ならセッションごとの子は買える——claude のペインの 3 分の 1 である。
 `Capabilities.ProcessModel = "per-session-child"` は cursor / kiro / copilot が既に使う値なので、enum の
 追加は要らない。
@@ -143,7 +148,9 @@ MSP は 1 プロセスで複数セッションを抱えられる（`session/list
 これは免除であり、ADR として免除と明記する。Workspace の中では箱そのものが境界であり、それは他の 9 種別
 ——どれも自分をサンドボックスしない——でも既に同じである。
 
-**この免除は恒久になる見込みで、その根拠は実測にある。** 拒否はバイナリの不在でも、片方のマウント API
+**この免除は現行の Workspace ホスト契約の下では恒久になる見込みで、その根拠は実測にある**——恒久というのは
+「こちらが出荷できるもので覆せない」という意味であって、変化があり得ないという意味ではない。拒否は
+バイナリの不在でも、片方のマウント API
 だけの事情でもない。ユーザー名前空間の中でこの箱は、`move_mount`（util-linux が優先する新 API）も、
 bubblewrap 自身が呼ぶ**旧来の `mount(2)`** も、どちらも EACCES で拒む——`LIBMOUNT_FORCE_MOUNT2=always`
 で旧経路を強制して測った。したがって `bwrap` を焼く作業は既に出た答えの確認でしかない。段 1 の門 A は
@@ -156,10 +163,28 @@ bubblewrap 自身が呼ぶ**旧来の `mount(2)`** も、どちらも EACCES で
 **書き手はただ 1 つ、MCP materialize のそれである。** 下の締め付けと決定 11 の `mcp_servers` は同じ
 ファイルの別ブロックであり、しかも Muse 自身も書く（実測: 初回実行が `settings.json` と自前の
 `~/.config/muse/.settings.json.lock` を作った）。1 ファイルに 3 人の書き手と 2 つの錠は lost update に
-なる。よって設定の書き手は直列化された read-merge-rename の単一所有者とし、既存の `materializeMu`
-（`mcpreg/materialize.go:94-109`）を拡張する（隣に 2 つ目の mutex を置かない）。書く間は Muse 自身の
-ロックファイルも取り、**自分が所有しない鍵は全部保つ**——利用者の `tui`・モデル既定・テレメトリの鍵は
-AF の書き込みを生き延びる。
+なる。よって設定の書き手は既存の `materializeMu`（`mcpreg/materialize.go:94-109`）の下で直列化された
+read-merge-rename の単一所有者とし（隣に 2 つ目の mutex を置かない）、**自分が所有しない鍵は全部保つ**
+——利用者の `tui`・モデル既定・テレメトリの鍵は AF の書き込みを生き延びる。
+
+ここから 2 つ、初稿が誤っていたことが出てくる。どちらも文言でなく設計の話である:
+
+- **これは「JSON の MCP materializer にブロックを 1 つ足したもの」ではなく、設定の書き手である。** あの
+  materializer はサーバ集合が変わらなければ早期 return し（`mcpreg/materialize_json.go:110-112`）、集合が
+  空なら鍵ごと消す。MCP としては正しいが、**MCP サーバが 0 件の種別でも書かねばならない締め付けには致命的**
+  である。よって muse は `mcpreg` の中に自前の書き手を持ち、締め付けと `mcp_servers` を 1 パスでマージする。
+- **締め付けは fail-close、MCP の materialize は best-effort のまま。** 今の `Materialize` は設計として
+  失敗をログに落として飲み込み（「MCP 設定が更新できなくてもセッションは起動しなければならない」）、
+  `StartManagedSession` は結果を見ずに `Resume` する（`mcpx/mcp_materialize.go:30-41`）。MCP にはそれが
+  正しい取引だが、この締め付けには正しくない——締め付けは安全装置であり、書き込み失敗は subagent 8 本・
+  オブザーバ 4 本・workflow・他 CLI 個人文脈を**全部有効のまま**セッションを起動させる。したがって muse の
+  設定書き込みはエラーを返してセッション起動を拒み、起動時の `MaterializeAll` は全種別（この種別を含む）で
+  best-effort の契約を保つ。
+
+ロックについての主張は意図的に弱くしてある。`.settings.json.lock` が現れたことが示すのは「Muse がロック
+規約を**持つ**」ことであって、どの規約かではない。段 1 門 B1 で設定更新と意図的な競合の syscall を追跡し、
+AF は同じ規約を取る——他の `.lock` が `flock` だから `flock` だろうと推測するのは、2 人の書き手が礼儀正しく
+互いを無視する道である。
 
 AF が設定するのは:
 
@@ -181,8 +206,10 @@ Muse 自身のピアメッセージングとセッション名の権威
 ### 決定 7 — 触ってよいのは自分の作業コピーのファイルだけ。ブランチも worktree もリポジトリ全体のメタデータも作らない
 
 自分の作業コピーの管理下ファイルを編集するのは仕事そのものであり、この決定が縛る対象ではない。縛るのは
-ファイルの**周り**——リポジトリ全体のメタデータ、ブランチ、worktree、そしてこのセッションの作業コピーの外に
-ある全経路である。実測のとおり Muse の worktree 実行は `.git/info/exclude` を書き換え、それはリンク
+そのファイルを取り巻く**プロジェクトとバージョン管理の面**——リポジトリ全体のメタデータ、ブランチ、
+worktree である。「作業コピーの外の全経路」を禁じる規則では**ない**: 決定 4・6・9 は Muse が
+`~/.config/muse` と `~/.local/share/muse` に書くことを要求しており、そこは種別自身の状態で、拒否リストの
+方で統制する。実測のとおり Muse の worktree 実行は `.git/info/exclude` を書き換え、それはリンク
 worktree では親クローンの、全セッション共有のファイルである。よって `-w` は渡さず、worktree 隔離は OFF
 （決定 6）、この種別は「ブランチも worktree も作らない種別」として宣言する。並行して書きたい利用者には AF 自身の worktree がある。それが worktree の
 用途である。
@@ -218,7 +245,7 @@ release マニフェストがプラットフォーム別に url・sha256・サ�
 切断は `muse logout`。
 
 未決: Muse Code の**サブスク**利用者（従量ではない）は CLI のオンボーディング中にブラウザでサインインする
-が、この箱にその導線は無い。段 1 の門 B で、サブスクの資格情報を別の場所で作って貼れるのか、それとも v1 は
+が、この箱にその導線は無い。段 1 の門 **B2** で、サブスクの資格情報を別の場所で作って貼れるのか、それとも v1 は
 サブスク対象外なのかを決める。
 
 ### 決定 10 — 使用量とモデル一覧はプロトコルに乗る
@@ -258,14 +285,17 @@ Console＋保存済み定義の移行が要る。段 2 で発見するのでは�
 探索順は `AGENTS.md`・`CLAUDE.md`・`.agents/AGENTS.md`・`.claude/CLAUDE.md`、workspace を信頼した後）。
 このリポジトリには既にある。
 
-残る 2 層は決定 6 のスイッチでは解けない。他 CLI の個人文脈を切るのは Muse が `~/.claude` と `~/.codex` を
-読むのを止めるだけで、Agent Fleet のフリート方針や利用者自身の指示を**届けはしない**。
-`instrSupportedKinds`（`workspace/agent/agent_instructions.go:83`）の 6 種別では、それは種別ごとの
-利用者スコープのファイルに書き込まれている。**Muse のそれがどこかは確定していない**——echo provider の
-実行を信頼あり／なしの両方で追跡しても、開いた経路はプロジェクト直下の `.agents` の探索だけだった（その
-provider ではルールの組み立てが走らないため）。よって `muse` が `instrSupportedKinds` に入るのは
-**利用者スコープの書込先を実測した後**（段 1 門 B1 が会計マトリクスと同じ実行で測る）。それまではプロジェクト
-指示だけで出荷し、ガイドにそう書く——利用者に「フリート方針も届いているはず」と誤解させない。
+残る 2 層は決定 6 のスイッチでは解けず、しかも**仕組みは 1 つでなく 2 つ**である。他 CLI の個人文脈を切るのは
+Muse が `~/.claude` と `~/.codex` を読むのを止めるだけで、どちらも届けはしない。
+`agent_instructions.go:119-146` は別々に適用する——フリート方針は種別ごとの `ApplyFleetNotes`（claude だけは
+`/etc` 配下のファイルとして届く、さらに別経路）、利用者自身の文章は種別ごとの `ApplyUserInstructions`。
+それぞれ書込先も成果物も違う。`instrSupportedKinds:83` は「両方を持つ種別」の一覧である。
+
+**Muse の書込先は 2 つとも確定していない**——echo provider の実行を信頼あり／なしの両方で追跡しても、開いた
+経路はプロジェクト直下の `.agents` の探索だけだった（その provider ではルールの組み立てが走らないため）。
+よって `muse` が `instrSupportedKinds` に入るのは**両方の書込先を別々に実測した後**（段 1 門 B1 が会計
+マトリクスと同じ実行で測る）。段 2 には両方の apply 経路と Console の種別別配布状態を含める。それまでは
+プロジェクト指示だけで出荷し、ガイドにそう書く——利用者に「フリート方針も届いているはず」と誤解させない。
 
 ## 段 2 が触る面
 
@@ -276,11 +306,12 @@ provider ではルールの組み立てが走らないため）。よって `mus
 |---|---|
 | 種別の同一性 | `session.go:20-28`、`sessionx/agent.go:28-38`、`sessionx/session_turn.go:31-37`（managed ドライバ表） |
 | managed 専用の門 | `sessionx/session_handlers.go:650-668`（作成既定）、`session_driver.go:62-105`、Console の起動／driver 切替 5 箇所、`control-plane/scheduler_wake.go:277-285` |
-| 接続とログイン | 接続状態、**両方**の `routes.go`（Agent と CP。`control-plane/routes.go:869-873` が kiro の前例）、そして CP の REST プロキシ許可リスト——これの漏れが「使用量チップが出ない」の真因になる |
-| モデルとベンダ | `console/src/lib/agentModels.ts:34-35`（`isDynamic`）、`workspace/agent/model_provider.go:122`（`modelKindVendor`） |
+| 接続とログイン | 接続状態、**両方**の `routes.go`（Agent と CP。kiro の前例は start・poll・delete の 3 本で `control-plane/routes.go:869-875`）、そして CP の REST プロキシ許可リスト——これの漏れが「使用量チップが出ない」の真因になる |
+| モデルとベンダ | `console/src/lib/agentModels.ts:34-35`（`isDynamic`）、`workspace/agent/model_provider.go:122`（`modelKindVendor`）、モデル REST の分岐 `workspace/agent/agent_models.go:40-83` |
 | 使用量 | `usage_fold.go:204-212`、積み上げ色 `console/src/features/usage/colors.ts:81` |
-| MCP | `mcpreg/def.go:57-61`、`mcpreg/materialize.go:47,74-87`、`mcpproj/inspect.go:50-58`、および `af` MCP ツール説明文の中の kind 列挙（`control-plane/internal/mcpsrv/mcp.go:295,473,487,518`）——説明文は全セッションの固定トークン費なので、増やすのではなく書き換える |
-| Console の面 | `console/src/agents/registry.ts` の記述子、`console/src/lib/settings.ts:963` の起動既定、`console/src/lib/brandicons.ts:36`、`console/src/lib/termcolor.ts:19`、`console/src/styles/tokens.css`（dark と light の対） |
+| MCP——独立に 3 箇所 | 登録簿（`mcpreg/def.go:57-61`、`mcpreg/materialize.go:47,74-87`、`mcpproj/inspect.go:50-58`）、**ローカル**の `af` サーバ（`mcpx/mcp_stdio.go:1853`、kind 検証 `:2575-2576`、managed ドライバ一覧 `:2759-2762`）、**CP** のサーバ（`control-plane/internal/mcpsrv/mcp.go:295,473,487,518-550`——説明文・スキーマ・実行時検証で 3 箇所、1 箇所ではない）。説明文は全セッションの固定トークン費なので、増やすのではなく書き換える |
+| Console の面 | `console/src/types/session.ts:9-12`（`SessionKind` と表示順。これが無いと何も描かれない）、`console/src/agents/registry.ts` の記述子、`console/src/lib/settings.ts:963` の起動既定、`LaunchDefaults` の kind union `console/src/features/settings/agents/AgentCardParts.tsx:76`、`console/src/features/settings/mcp/mcpWire.ts:9`（`MCP_KINDS`・Go 側の写し）、`ScheduleDetailModal.tsx` の `AGENT_KINDS`、`console/src/lib/brandicons.ts:36` とアイコン資産そのもの、`console/src/lib/termcolor.ts:19`、そして `tokens.css` と機能別 5 スタイルシートにまたがる色の対（docs/log/74 §9.3） |
+| 配備と CI | `workspace/Dockerfile`（ARG・アーキ別 sha256・実行時レイアウト）、entrypoint の `MUSE_NO_AUTO_UPDATE` と影の検知、`env_tool_versions.go`、他のピン済み CLI を運んでいる release / drift ワークフローと setup action |
 | 文言 | `bridge/format.go` の `kindLabel`、Console の i18n 目録（en＋ja）、利用ガイド、`guide/ref` の能力表——`scripts/docs-check.py` が `Caps()` と両言語を突き合わせる |
 | テスト | MSP スキーマ指紋のドリフト検査、routes・contract テスト、焼いた版文字列を突合する e2e smoke |
 
@@ -299,7 +330,7 @@ provider ではルールの組み立てが走らないため）。よって `mus
   プロトコルの前に、第三者の翻訳層を挟んでも損しかしない。
 - **利用者ごとのオンデマンド導入（kiro の形）。** 855 MiB では正当化できても 299 MiB では過剰で、しかも
   自己更新バイナリを利用者の home に置く＝決定 8 が見張っている影そのものになる。
-- **プロトコルの良さだけで今すぐ採用する。** 下の 2 門は安く、どちらも「いくら読んでも分からないこと」を
+- **プロトコルの良さだけで今すぐ採用する。** 下の 3 門は安く、どれも「いくら読んでも分からないこと」を
   見に行くものである。
 
 ## 影響
@@ -314,7 +345,8 @@ provider ではルールの組み立てが走らないため）。よって `mus
 - **ドリフトには鍵がある**: `muse schema` はオフラインで、release マニフェストには
   `msp_schema_fingerprint` がある。焼いたバイナリの指紋と、生成した型が拠った指紋の一致をテストにすれば、
   黙ったプロトコル変更が赤いビルドになる。他のどの種別にも無い仕掛けである。
-- **見積り**: managed 専用・TUI 資産なしで ≈ **14〜20 セッション日**、内訳は下表。規模の錨は種別横断の
+- **見積り**: managed 専用・TUI 資産なしで **15〜23 セッション日**——下表の単純合計で、見出しを綺麗にする
+  ための丸めはしない（初稿は同じ行が 15〜23 になるのに 14〜20 と書いていた）。規模の錨は種別横断の
   棚卸し（今 `kiro` に言及する Go は 90 ファイル・Console は 41 ファイル、既存種別は 1 つあたり非テスト
   2,100〜5,950 行）だが、議論すべきはこの分解の方である:
 
@@ -330,7 +362,7 @@ provider ではルールの組み立てが走らないため）。よって `mus
   | 配備（焼き込み・ピン・sha256・影の検知・`env_tool_versions`） | 1 |
   | Console の面・i18n・ガイド・`guide/ref` の能力表 | 1〜2 |
 
-  着手時に **ADR 0093 が未着地なら＋1〜2 日**（決定 2 の managed 専用の門が未払いになる）。誤差の向きは
+  着手時に **ADR 0093 が未着地なら 16〜25 日**（決定 2 の managed 専用の門が未払いになる）。誤差の向きは
   上振れで、最大の未知は「MSP の 47 メソッド・31 通知のうち、"動く" ではなく "正しい" ドライバに何本要るか」
   である。
 - 段 1 の門が落ちたときの埋没費用は、この ADR とプローブだけ。コードは無い。
@@ -405,3 +437,25 @@ Meta の文献 `dev.meta.ai/docs/muse-code/{,auth,subscriptions,permissions,inte
 exact / partial の使用量集合、MCP の 7 種別、指示配布の 6 種別、登録簿の RSS 値、モデル接頭辞、色トークン。
 英日で主張と数値が対応していること。`scripts/docs-check.py` が緑であること。やっていないこと: ログイン、
 実ターン、サブスク、実 `bwrap`、ベンダ文献の再検証——それはまさに段 1 が越えるための境界である。
+
+## レビュー 第 2 巡（2026-09-20・同じセッション・修正後の本文に対して）
+
+指摘 12 件。上の修正がその全部への答えであり、うち 3 件は**第 1 巡の修正自身が持ち込んだ誤り**だった。
+**決定 7 の書き直しは行き過ぎていた**——「このセッションの作業コピーの外の全経路」を禁じると、Muse 自身の
+状態ディレクトリへの書き込みを要求する決定 4・6・9 と矛盾する。**決定 6 は fail-open だった**: `Materialize`
+は設計として失敗をログに落として飲み込み、`StartManagedSession` は結果を見ない
+（`mcpx/mcp_materialize.go:30-41`）ので、書き込み失敗は締め付けが全部外れたセッションを起動させる。さらに
+JSON materializer に締め付けを重ねる形では、MCP サーバが 0 件の種別で締め付けが**書かれない**
+（`materialize_json.go:110-112`）。**見積り表は合計が合っていなかった**: 同じ 9 行が 15〜23 になるのに
+見出しは 14〜20 だったので、行ではなく見出しを動かした。
+
+決定 3 の根拠はまだ強すぎた——AF に今あるセッション単位の姿勢は `Meta.Mode` と `Meta.SkipPermissions`
+（`session.go:377-390`）だけで、write / shell / trust の姿勢は無い——ので、本当に共有できない 1 つ
+（作業コピーごとに違う workspace trust）から論じる形に直した。決定 12 は配布の仕組みを 1 つとして書いて
+いたが、ツリーには 2 つある（`agent_instructions.go:119-146`）。決定 5 の「恒久」には、それが依存している
+ホスト契約の限定を付けた。段 2 の点検表には、2 つの MCP サーバの kind 列挙、モデル REST の分岐、漏れていた
+Console 5 箇所、決定 8 が含意していたのに表に無かった配備と CI の行を足した。`routes.go` の kiro の前例は
+start だけでなく start・poll・delete（`:869-875`）である。
+
+変更なしで確認できたもの: 決定 2 の作成経路とスケジューラのアンカー、決定 11 の `MCPServer` と `mcpproj` の
+指摘、英日の対応、`docs-check` が緑であること。
