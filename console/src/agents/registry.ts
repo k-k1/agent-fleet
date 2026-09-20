@@ -121,6 +121,17 @@ export interface AgentDescriptor {
   // driven by the shared runtime. Kinds with it true show the driver choice in the launch UI and
   // default to managed (§9.2 — Terminal (CLI) is the user's explicit memory trade-off).
   managedDriver: boolean;
+  // Whether this kind can ever run in a Terminal (CLI) pane. Optional; absent/true means yes —
+  // only lcpp sets it false (ADR 0093 決定 2: it owns its own tool loop and transcript, so there
+  // is no CLI program to put in a pane, ever — BuildLaunch always errors). Read by the driver
+  // toggle in LaunchModal and the driver-switch menu item in SessionMenu, so a kind that is
+  // managedDriver-only never offers a choice that can only fail.
+  //
+  // Declared statically here, like managedDriver, rather than read off the wire: the server has
+  // an equivalent (agents.Caps.ManagedOnly), but it is not serialized into the session/agent API
+  // yet, and wiring it is a Go change (out of scope for this Console-only change — see
+  // docs/log/99-lcpp-agent-kind.md §3.7).
+  terminalDriver?: boolean;
   // Approximate extra RSS of one Terminal (CLI) session over a managed one. The launch and
   // switch UI carry no per-kind branch and just show this measured value (docs/log/27 §12.2-9,
   // appendix B).
@@ -501,6 +512,38 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       ((c.conns?.opencode?.envs?.length ?? 0) > 0 ||
         !!c.conns?.opencode?.connected ||
         c.conns?.opencode?.usage === "free"),
+  },
+  lcpp: {
+    id: "lcpp",
+    // No brand icon: the harness driving llama-server is ours, not a vendor CLI (ADR 0093
+    // 決定 1), so it gets a plain codicon like shell/ssm. "chip" over "server-process": the
+    // latter is already the driver-choice icon for "managed" in LaunchModal/SessionMenu, and
+    // reusing it here would put the same glyph on both the kind badge and the driver toggle in
+    // the same modal — confirmed by rendering both candidates headless (docs/log/99 §2).
+    icon: "chip",
+    label: "llama.cpp",
+    assistantName: "llama.cpp",
+    short: "lc",
+    cssClass: "lcpp",
+    launchHintKey: "agent.launch_hint.lcpp",
+    launchSuffix: "-lc",
+    planCycleKey: "",
+    planEnterCmd: "",
+    defaultModeLabel: "",
+    skillTrigger: "",
+    // Registered (ADR 0093) but not launchable yet: BuildLaunch always errors because no
+    // managed driver has landed. managedDriver stays true because the *shape* is managed-only
+    // (決定 2) — the actual gate keeping it out of every launch picker is available() below and
+    // its absence from repoLaunchKinds (guide/ref/agents.md footnote 9).
+    managedDriver: true,
+    // No Terminal (CLI) route exists, or ever will — see the field's doc comment above.
+    terminalDriver: false,
+    tuiMemoryCost: "",
+    caps: caps({
+      runsInDir: true,
+    }),
+    // Never offered yet, regardless of connections — see the managedDriver comment above.
+    available: () => false,
   },
   shell: {
     id: "shell",

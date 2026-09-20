@@ -113,6 +113,12 @@
   --kind-kiro: #a371f7; /* purple — inherits copilot's former hue (docs/log/43 §4-1). Kiro brand purple */
   --kind-copilot: #7d8590; /* neutral/charcoal grey — moved off purple (docs/log/43). darker than opencode */
   --kind-opencode: #aab4be; /* light slate grey — lighter than copilot's charcoal for clear separation */
+  /* 10th kind color (ADR 0093 決定 1). Red is the only hue family none of the other 9 use
+     (claude=amber, codex=green, cursor=rose, agy/ssm=blue, kiro=purple, shell=cyan,
+     copilot/opencode=grey) — confirmed by CIEDE2000 against all 9 (min dE 23.0 here vs.
+     cursor, the nearest) and by rendering all 10 as chips/blocks in both themes headless
+     (docs/log/74 §8.2's method). Min contrast against --panel/--bar/--active-bg: 4.05. */
+  --kind-lcpp: #f85149;
   --kind-shell: #46c9d0;
   --kind-ssm: #6d8bf5;
   /* Spawn-lineage spines (ADR 0073) — the 2px rule the left rail draws down the side
@@ -263,6 +269,9 @@
   --kind-kiro: #6b3ac9; /* purple (light) — inherits copilot's former hue (docs/log/43 §4-1) */
   --kind-copilot: #30363d; /* near-black/charcoal (light) — moved off purple (docs/log/43) */
   --kind-opencode: #575e68; /* mid slate grey (light) — lighter than copilot's near-black */
+  /* 10th kind color, light theme (ADR 0093 決定 1) — see the dark block's comment for the
+     method. Min dE 18.7 (vs. claude), min contrast against --bg/--panel/--bar/--active-bg: 5.11. */
+  --kind-lcpp: #b91c1c;
   --kind-shell: #0f676d;
   --kind-ssm: #2c39a3;
   /* Lineage spines, dark steps of the same six hues — a 2px rule on a near-white rail

@@ -176,7 +176,9 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 <Icon name="debug-stop" /> {tr("srow.stop")}
               </button>
             )}
-            {!dead && running && agentOf(s.kind).managedDriver && (
+            {/* terminalDriver === false (lcpp, ADR 0093 決定 2): no Terminal (CLI) route exists
+                to switch to, ever — never offer the toggle (the server would 400 it anyway). */}
+            {!dead && running && agentOf(s.kind).managedDriver && agentOf(s.kind).terminalDriver !== false && (
               <button
                 type="button"
                 className="ui-menu-item"

@@ -20,6 +20,9 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "agent.launch_hint.opencode": "Launch OpenCode",
   "agent.launch_hint.agy": "Launch Antigravity (experimental)",
   "agent.launch_hint.copilot": "Launch GitHub Copilot",
+  // lcpp (ADR 0093): registered but not launchable yet — kept out of every launch picker
+  // (registry.ts repoLaunchKinds), so this string renders nowhere today.
+  "agent.launch_hint.lcpp": "Launch llama.cpp",
   "agent.launch_hint.shell": "Plain shell (bash)",
   "agent.launch_hint.ssm": "SSM login to an AWS EC2 host",
 

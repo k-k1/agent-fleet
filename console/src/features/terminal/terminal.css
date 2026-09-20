@@ -78,6 +78,7 @@
 .kind-tag.kind-agy { color: var(--kind-agy); background: color-mix(in srgb, var(--kind-agy) 14%, transparent); border-color: color-mix(in srgb, var(--kind-agy) 45%, transparent); }
 .kind-tag.kind-copilot { color: var(--kind-copilot); background: color-mix(in srgb, var(--kind-copilot) 14%, transparent); border-color: color-mix(in srgb, var(--kind-copilot) 45%, transparent); }
 .kind-tag.kind-kiro { color: var(--kind-kiro); background: color-mix(in srgb, var(--kind-kiro) 14%, transparent); border-color: color-mix(in srgb, var(--kind-kiro) 45%, transparent); }
+.kind-tag.kind-lcpp { color: var(--kind-lcpp); background: color-mix(in srgb, var(--kind-lcpp) 14%, transparent); border-color: color-mix(in srgb, var(--kind-lcpp) 45%, transparent); }
 .kind-tag.kind-shell { color: var(--kind-shell); background: color-mix(in srgb, var(--kind-shell) 14%, transparent); border-color: color-mix(in srgb, var(--kind-shell) 45%, transparent); }
 .kind-tag.kind-ssm { color: var(--kind-ssm); background: color-mix(in srgb, var(--kind-ssm) 14%, transparent); border-color: color-mix(in srgb, var(--kind-ssm) 45%, transparent); }
 /* Light theme: stronger fill for legibility (color comes from the light --kind-* var). */
@@ -88,6 +89,7 @@
 [data-theme="light"] .kind-tag.kind-agy { background: color-mix(in srgb, var(--kind-agy) 20%, transparent); border-color: color-mix(in srgb, var(--kind-agy) 55%, transparent); }
 [data-theme="light"] .kind-tag.kind-copilot { background: color-mix(in srgb, var(--kind-copilot) 20%, transparent); border-color: color-mix(in srgb, var(--kind-copilot) 55%, transparent); }
 [data-theme="light"] .kind-tag.kind-kiro { background: color-mix(in srgb, var(--kind-kiro) 20%, transparent); border-color: color-mix(in srgb, var(--kind-kiro) 55%, transparent); }
+[data-theme="light"] .kind-tag.kind-lcpp { background: color-mix(in srgb, var(--kind-lcpp) 20%, transparent); border-color: color-mix(in srgb, var(--kind-lcpp) 55%, transparent); }
 [data-theme="light"] .kind-tag.kind-shell { background: color-mix(in srgb, var(--kind-shell) 20%, transparent); border-color: color-mix(in srgb, var(--kind-shell) 55%, transparent); }
 [data-theme="light"] .kind-tag.kind-ssm { background: color-mix(in srgb, var(--kind-ssm) 20%, transparent); border-color: color-mix(in srgb, var(--kind-ssm) 55%, transparent); }
 

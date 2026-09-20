@@ -6,10 +6,12 @@
 // NOTE: this session `kind` is a DIFFERENT axis from a *pane's* kind (which VIEW
 // renders — terminal/file/scm/doc/diff, see layout/types PaneContent). Keep distinct.
 
-export type SessionKind = "claude" | "codex" | "cursor" | "copilot" | "kiro" | "opencode" | "agy" | "shell" | "ssm";
+export type SessionKind = "claude" | "codex" | "cursor" | "copilot" | "kiro" | "opencode" | "agy" | "lcpp" | "shell" | "ssm";
 
-// The canonical session kinds in display order (New Session buttons, etc.).
-export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "shell", "ssm"];
+// The canonical session kinds in display order (New Session buttons, etc.). lcpp sits with
+// shell/ssm at the end: it is registered (ADR 0093) but not yet launchable — see registry.ts's
+// lcpp descriptor and guide/ref/agents.md footnote 9.
+export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "shell", "ssm"];
 
 // Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. claude
 // emits question/plan/permission; codex/opencode emit working/idle; agy emits
