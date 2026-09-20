@@ -2576,6 +2576,16 @@ func engineIngestDestinationUnused(ctx context.Context, models store.EngineModel
 	if err != nil {
 		return &apiRefusal{apiError: internalErr(err)}
 	}
+	return enginePartDestinationCheck(ctx, rows, jobs, storage, role, s3key)
+}
+
+// enginePartDestinationCheck is the row-and-job guard with a pre-fetched row list, so the parts
+// loop (enginePlanFor) can check each download key without re-listing the whole catalogue per key.
+// The row list must have been fetched with an empty role filter (all roles), for the same reason
+// engineIngestDestinationUnused uses one: an old malformed row pointing across role prefixes must
+// still be protected.
+func enginePartDestinationCheck(ctx context.Context, rows []store.EngineModel, jobs store.EngineIngestStore,
+	storage *engineStorage, role, s3key string) *apiRefusal {
 	for _, model := range rows {
 		for _, file := range model.Files {
 			if strings.TrimSpace(file.S3Key) == s3key {
@@ -2584,6 +2594,9 @@ func engineIngestDestinationUnused(ctx context.Context, models store.EngineModel
 					&apiNext{Act: "complete", Target: model.ID})
 			}
 		}
+	}
+	if jobs == nil {
+		return nil
 	}
 	job, recorded, err := jobs.EngineIngestJobForS3Key(ctx, role, s3key)
 	if err != nil {

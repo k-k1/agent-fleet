@@ -623,6 +623,13 @@ func TestPlanWarnsWhenPartDestinationIsHeldByARow(t *testing.T) {
 	if !strings.Contains(joined, "other-encoder") {
 		t.Errorf("the warning does not name the holding row: %q", joined)
 	}
+	// Row holder: the operator completes or reroutes — "complete" must appear, "dismiss" must not.
+	if !strings.Contains(joined, "complete") {
+		t.Errorf("the row-held warning does not name the next act (complete): %q", joined)
+	}
+	if strings.Contains(joined, "dismiss") {
+		t.Errorf("the row-held warning mentions 'dismiss', which belongs to a job holder: %q", joined)
+	}
 	// The conflict warning must move the token: a stale press catches what just changed.
 	if plan.PlanToken == clean.PlanToken {
 		t.Error("a conflict warning did not move the token — stale detection will not catch it")
@@ -684,8 +691,16 @@ func TestPlanWarnsWhenPartDestinationIsHeldByAJob(t *testing.T) {
 	if len(plan.Warnings) == 0 {
 		t.Fatal("plan has no warning for a key held by a live ingest job")
 	}
-	if !strings.Contains(strings.Join(plan.Warnings, " | "), "--clip_l") {
-		t.Errorf("the warning does not name the flag: %v", plan.Warnings)
+	joined := strings.Join(plan.Warnings, " | ")
+	if !strings.Contains(joined, "--clip_l") {
+		t.Errorf("the warning does not name the flag: %q", joined)
+	}
+	// Job holder: the operator dismisses the job — "dismiss" must appear, "complete" must not.
+	if !strings.Contains(joined, "dismiss") {
+		t.Errorf("the job-held warning does not name the next act (dismiss): %q", joined)
+	}
+	if strings.Contains(joined, "complete") {
+		t.Errorf("the job-held warning mentions 'complete', which belongs to a row holder: %q", joined)
 	}
 }
 
