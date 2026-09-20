@@ -3655,10 +3655,10 @@ func SessionOutputTail() int {
 // It reads GET /sessions rather than the metas, for three reasons that all come from the
 // listing already doing the work. The live state (working / idle / stopped) is computed there
 // per kind and cannot be derived from a meta at all. The archived rows and the stopped children
-// whose StoppedTTL has expired are filtered — and the expiry is not merely filtered but PRUNED
-// by that handler, so the slot count this returns matches what the next create_session will
-// reserve against instead of being one poll behind it. And `origin` / `originSession` are on the
-// wire for exactly this question.
+// whose StoppedTTL has expired are filtered — and the expiry is not merely filtered: that
+// handler archives them (ADR 0097), which is what releases the slot, so the count this returns
+// matches what the next create_session will reserve against instead of being one poll behind it.
+// And `origin` / `originSession` are on the wire for exactly this question.
 //
 // The predicate is countChildren's and sessionDriveAllowed's: origin=session AND the lineage is
 // the caller. Deliberately not the wider one the recursion limit uses — a fork of a child keeps

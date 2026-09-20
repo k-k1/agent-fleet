@@ -23,6 +23,7 @@ import {
 } from "./catalogMemory.ts";
 import { groupIsRepo, groupRegistered, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
 import { modelFit, windowThatFits, windowWhenUnsized } from "./engineFit.ts";
+import { familyVramMeasurement } from "./engineFamilyVram.ts";
 import { CivitaiVersionLadder, FitTag, RepoQuantLadder } from "./adminEngineRepo.tsx";
 import {
   engineIsImage,
@@ -1315,6 +1316,11 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
   const [idEdited, setIdEdited] = useState(false);
   const [description, setDescription] = useState("");
   const [baseModel, setBaseModel] = useState("");
+  // The family the OPERATOR picked, as opposed to the one the CP named. Separate state rather
+  // than a comparison against the last answer: comparing makes the trigger flip back the moment
+  // the CP echoes the pick, which re-plans a third time instead of stopping.
+  const [operatorFamily, setOperatorFamily] = useState("");
+  const [familyChoices, setFamilyChoices] = useState<string[]>([]);
   const [context, setContext] = useState("");
   const [output, setOutput] = useState("");
   const [accepted, setAccepted] = useState(false);
@@ -1402,12 +1408,33 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
   // (ADR 0089) — inspects itself. Opened empty, it waits for somebody to paste and press 調べる.
   useEffect(() => { if (hit || initialRef) void inspect(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
+  // The family the CP is asked to plan FOR: an image checkpoint's only, because that is what the
+  // parts table and the main file's role are keyed by. An LLM LoRA's "base" is a registered
+  // model's id, which is not a family and would be planned as an unknown one.
+  const plannedFamily = image && !isLora ? baseModel : "";
+  // What re-planning is triggered BY, which is not the same as what is sent. `baseModel` also
+  // holds the family the CP named itself, and asking again with that changes nothing: the plan
+  // that carried it was already built from it (enginePlanFor falls back to its own guess when the
+  // body names none), so the second answer is identical. Measured on this screen: a row whose
+  // family the CP can name resolved TWICE on open, blanking the plan card in between, and a
+  // family it cannot name resolved once. Only an operator's pick belongs here.
+  const chosenFamily = image && !isLora ? operatorFamily : "";
+  // 🔴 The family is SENT, and a change to it re-plans (ADR 0094 decision 7). The parts a split
+  // family needs are planned from it (engine_family_parts.go), so a card drawn while it is still
+  // unknown prices the main file alone — and the press, which does send it, re-plans into three
+  // and answers 409 `engine_plan_stale`. The person then accepts the licence again and presses
+  // again, which is the "one press" this deployment's ingest is built around, spent twice.
+  //
+  // Reachable because a family the CP cannot guess is now a real case: the qwen-image-edit
+  // families deliberately have no guess rule (a wrong family here silences the row's only mark —
+  // engine_family_guess.go), so the selector is the ONLY place their family ever comes from.
   useEffect(() => {
     if (!file) return;
     let live = true;
     setResolved(null); setPlan(null); setAccepted(false); setReplanned(false);
     apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/resolve`, "POST", {
       source: sourceBody(file), kind: isLora ? "lora" : image ? "checkpoint" : "gguf",
+      ...(plannedFamily ? { base_model: plannedFamily } : {}),
     }).then((answer) => {
       if (!live) return;
       if (answer?.error) { setErr(answer.error as EngineApiError); return; }
@@ -1417,6 +1444,10 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         setPlan(found.plan);
         if (!idEdited) setId(found.plan.id || "");
         if (found.plan.base_model) setBaseModel(found.plan.base_model);
+        // Remembered, because the CP offers candidates only while it cannot name the family
+        // itself: the re-plan our own choice causes answers with none, and the selector would
+        // disappear under the person who just used it.
+        if (found.plan.base_model_candidates?.length) setFamilyChoices(found.plan.base_model_candidates);
       }
       if (found.context_length && !context) {
         // 🔴 The ceiling is not the setting (ADR 0089). The CP sends `context_length` labelled as
@@ -1445,15 +1476,24 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
     });
     return () => { live = false; };
     // Existing typed settings deliberately outrank metadata suggestions.
+    //
+    // ⚠️ The effect SETS `baseModel` and must therefore not depend on it: `chosenFamily` is the
+    // operator's pick alone, so the CP naming a family here does not re-enter. What is SENT stays
+    // `plannedFamily` (the whole of `baseModel`), because the press sends it too and a plan built
+    // without it would go stale against one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, image, isLora, row.key, sourceBody]);
+  }, [file, image, isLora, row.key, sourceBody, chosenFamily]);
 
   // The family is asked ONLY when the CP could not read one, and only from the candidates it
   // knows. An LLM LoRA is pinned to a registered model rather than to a family name.
   const familyOptions = isLora && !image
     ? (row.model_rows || []).filter((model) => model.kind !== "lora").map((model) => model.id)
-    : plan?.base_model_candidates || [];
+    : plan?.base_model_candidates?.length ? plan.base_model_candidates : familyChoices;
   const needsFamily = !plan?.base_model && familyOptions.length > 0;
+  // Drawn while the answer is still ours to change, which outlasts `needsFamily`: once the choice
+  // has been sent the plan names a family and the press is no longer blocked, but the person is
+  // still looking at a card they may want to re-aim.
+  const asksFamily = familyOptions.length > 0 && (needsFamily || !!baseModel);
   const bytes = plan?.bytes_to_download ?? resolved?.bytes ?? 0;
   const contextTokens = Number(context.trim().replace(/[_,]/g, "")) || 0;
   const weightsMiB = bytes ? Math.round(bytes / 1048576) : 0;
@@ -1464,6 +1504,13 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
     contextTokens, isLora ? 0 : cardMiB, row.classes || []);
   const kvMiB = fit.kvMiB;
   const needMiB = fit.needMiB;
+  // The family this press would take in is the plan's when the CP read one, and the operator's
+  // answer when it had to ask (ADR 0094 decision 8 — the measurement is shown for the family, so
+  // it must follow the selector rather than the plan alone), narrowed to the build the plan would
+  // actually stage.
+  const ingestMeasured = image && !isLora
+    ? familyVramMeasurement(plan?.base_model || baseModel, (plan?.files || []).map((f) => f.name))
+    : null;
   const missing = (() => {
     if (!repo) return tr("admin.catalog_need_source" as never) as string;
     if (!plainURL && !versionRef) return tr("admin.catalog_need_version" as never) as string;
@@ -1535,7 +1582,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         <label><span>{tr(plainURL ? "admin.catalog_checksum" as never : "admin.catalog_file" as never)}</span>{files.length
           ? <select value={file} onChange={(event) => setFile(event.currentTarget.value)}><option value="">{tr("admin.catalog_pick_file" as never)}</option>{files.map((candidate) => <option key={candidate.ref || candidate.name} value={candidate.name}>{candidate.name}</option>)}</select>
           : <input value={file} onChange={(event) => setFile(event.currentTarget.value)} placeholder={plainURL ? "sha256" : "model.safetensors"} />}</label>
-        {needsFamily && <label><span>{tr(isLora && !image ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)}>
+        {asksFamily && <label><span>{tr(isLora && !image ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => { setBaseModel(event.currentTarget.value); setOperatorFamily(event.currentTarget.value); }}>
           <option value="">{tr(isLora && !image ? "admin.engines_model_add_lora_base_pick" : "admin.engines_model_add_family_pick")}</option>{familyOptions.map((base) => <option key={base} value={base}>{base}</option>)}</select></label>}
       </div>
       {file && !plan && !err && <p className="muted engine-plan-building"><Icon name="loading" spin /> {tr("admin.catalog_plan_building" as never)}</p>}
@@ -1591,6 +1638,17 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         {!image && !isLora ? ` · ${kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(kvMiB)).replace("{c}", String(contextTokens)) : tr("admin.engines_ingest_fit_kv_unread")}` : ""}
         {cardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(needMiB)).replace("{c}", String(cardMiB))} ` : " "}
         <FitTag fit={fit} />
+      </p>}
+      {/* Directly under the verdict the files' sum produced, because that sum is what this
+          corrects (ADR 0094 decision 8). The press itself is NOT here: nothing the ingest sends
+          may write `vram_mib`, or the column stops meaning "the operator measured it" — so this
+          says the number and where to put it, and the row's Edit is where it goes in. */}
+      {ingestMeasured && <p className="muted engine-operation-vram-measured">
+        {(tr("admin.engines_vram_measured" as never) as string)
+          .replace("{n}", ingestMeasured.mib.toLocaleString()).replace("{s}", ingestMeasured.size)
+          .replace("{b}", String(ingestMeasured.batch)).replace("{i}", String(ingestMeasured.inputs))
+        .replace("{f}", ingestMeasured.file)}
+        {" "}{tr("admin.engines_vram_measured_after" as never)}
       </p>}
       <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
       <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">
@@ -1784,6 +1842,12 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   const editBestWindow = !image && !lora
     ? windowThatFits(editWeightsMiB, editKvPer1k, editCardMiB, model.context_length || 0)
     : 0;
+  // What somebody measured this family at, when anybody has, and only for the BUILD they measured
+  // (ADR 0094 decision 8). Read off the family being EDITED rather than the row's stored one, so
+  // correcting the family and taking the measurement are the same visit.
+  const editMeasured = image && !lora
+    ? familyVramMeasurement(baseModel, (model.file_rows || []).map((f) => f.s3Key))
+    : null;
   const invalidVram = vramNumber === null;
   const invalidBase = !image && lora ? !baseChoices.includes(baseModel) : image && baseChoices.length > 0 && !baseChoices.includes(baseModel);
   const validation = invalidWindow ? tr("admin.catalog_edit_window_invalid" as never) : invalidVram ? tr("admin.catalog_edit_vram_invalid" as never) : invalidBase ? tr("admin.engines_wizard_need_family") : "";
@@ -1815,6 +1879,20 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
       {image && !lora && <label><span>{tr("admin.engines_model_negative")}</span><input value={negative} onChange={(event) => setNegative(event.currentTarget.value)} /></label>}
       {image && lora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
     </div>
+    {/* The measurement is OFFERED, never applied (ADR 0094 decision 8). `vram_mib` means "the
+        operator measured it", so the press is what makes the number a declaration — and it sits
+        beside the field rather than in the grid, next to the window's own one-press fit below. */}
+    {editMeasured && <p className="muted engine-operation-vram-measured">
+      {(tr("admin.engines_vram_measured" as never) as string)
+        .replace("{n}", editMeasured.mib.toLocaleString()).replace("{s}", editMeasured.size)
+        .replace("{b}", String(editMeasured.batch)).replace("{i}", String(editMeasured.inputs))
+        .replace("{f}", editMeasured.file)}
+      {" "}
+      <Button variant="ghost" disabled={busy || vramNumber === editMeasured.mib}
+        onClick={() => setVram(String(editMeasured.mib))}>
+        {(tr("admin.engines_vram_measured_use" as never) as string).replace("{n}", editMeasured.mib.toLocaleString())}
+      </Button>
+    </p>}
     {!image && !lora && <p className="engine-operation-window-hint muted">
       {!!model.context_length && <>{(tr("admin.engines_ingest_ctx_ceiling" as never) as string).replace("{n}", model.context_length.toLocaleString())} </>}
       {!!editBestWindow && <Button variant="ghost" disabled={busy || editBestWindow === contextNumber} onClick={() => {

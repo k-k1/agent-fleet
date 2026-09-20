@@ -21,6 +21,7 @@ import (
 func lockMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sessions", sessionx.HandleListSessions)
+	mux.HandleFunc("GET /sessions/archived", sessionx.HandleListArchived)
 	mux.HandleFunc("POST /sessions/{name}/lock", sessionx.HandleSessionLock)
 	mux.HandleFunc("POST /sessions/{name}/stop", sessionx.HandleStopSession)
 	mux.HandleFunc("POST /sessions/{name}/archive", sessionx.HandleArchiveSession)
@@ -106,10 +107,11 @@ func TestListMetaWriteKeepsNewerSessionLock(t *testing.T) {
 	}
 }
 
-// TestSessionLockSurvivesTTLPrune: the 7-day auto-prune of stopped sessions is a
-// deletion too — a locked row must stay listed past its TTL while its unlocked twin
-// is pruned away.
-func TestSessionLockSurvivesTTLPrune(t *testing.T) {
+// TestSessionLockSurvivesTTLSweep: the TTL sweep archives rather than deletes (ADR 0097),
+// so this asserts both halves of that — the unlocked twin leaves the active list with its
+// meta and transcript intact, and the locked row is exempt from the sweep entirely because
+// a pinned session is one the user wants to keep seeing.
+func TestSessionLockSurvivesTTLSweep(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
@@ -137,13 +139,29 @@ func TestSessionLockSurvivesTTLPrune(t *testing.T) {
 		}
 	}
 	if !seen["keepme"] {
-		t.Error("locked session was pruned by the TTL sweep")
+		t.Error("locked session was swept out of the active list")
 	}
 	if seen["dropme"] {
-		t.Error("unlocked stale session should have been pruned")
+		t.Error("unlocked stale session should have left the active list")
 	}
-	if _, ok := session.ReadMeta("keepme"); !ok {
-		t.Error("locked meta was deleted from disk by the TTL sweep")
+	if m, ok := session.ReadMeta("keepme"); !ok || m.Archived {
+		t.Errorf("locked meta was archived or deleted by the TTL sweep: %+v ok=%v", m, ok)
+	}
+	// The sweep MOVES it: the meta survives, marked archived, so the conversation is still
+	// restorable. Deleting here would be the only unrecoverable removal nobody asked for.
+	m, ok := session.ReadMeta("dropme")
+	if !ok {
+		t.Fatal("swept meta was deleted from disk instead of archived")
+	}
+	if !m.Archived {
+		t.Error("swept meta is on disk but not marked archived")
+	}
+	var shelf struct {
+		Sessions []session.Session `json:"sessions"`
+	}
+	do(t, srv, "GET", "/sessions/archived", nil, http.StatusOK, &shelf)
+	if len(shelf.Sessions) != 1 || shelf.Sessions[0].Name != "dropme" {
+		t.Errorf("shelf = %+v, want the swept session listed for restore", shelf.Sessions)
 	}
 }
 

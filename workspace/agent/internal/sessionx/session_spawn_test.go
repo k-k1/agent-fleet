@@ -170,8 +170,8 @@ func TestSpawnRefusesSharedWorkingCopy(t *testing.T) {
 // goes — but not an ARCHIVED one.
 //
 // Archived used to count, so that "fold up, spawn a replacement, restore" could not walk past
-// the limit. The cost of that was permanent: StoppedTTL's prune skips archived metas, so an
-// archived child held its slot for ever and a parent that tidied three of them could never
+// the limit. The cost of that was permanent: the shelf is where automation stops (ADR 0097), so
+// an archived child held its slot for ever and a parent that tidied three of them could never
 // spawn again. Archiving is a Console-only action a session cannot perform, which is the same
 // ground on which a fork and a recreate are kept out of this count.
 func TestSpawnBudgetCountsStoppedButNotArchivedChildren(t *testing.T) {

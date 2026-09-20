@@ -341,6 +341,59 @@ Tag inside the `af-llamacpp` ECR repository. The upstream image
 rather than pulled at task start: measured, GHCR through this NAT runs at 12-14 MB/s, which put
 178 of a 527-second cold start into the pull alone.
 
+#### 🔴 `server-cuda` is a floating tag, not a version — pin it with `--llm-digest`
+
+`docs/log/99-lcpp-agent-kind.md` §12.3/§12.4 measured that tool-call parsing for chat models
+runs **entirely inside `llama-server`** — this codebase only relays the `tool_calls` it is
+handed back — and that measurement's 5 models split 3-pass/2-fail on the parser's behaviour. So
+the engine's own build IS the version axis for that behaviour, and `server-cuda` never stops
+moving: every `standup.sh` that finds `af-llamacpp` empty in ECR runs
+`crane copy ghcr.io/ggml-org/llama.cpp:server-cuda …`, which re-resolves "whatever GHCR is
+serving right now". A rebuild months apart can silently shift which models parse correctly,
+with no diff anywhere in this repository.
+
+`standup.sh --llm-digest sha256:<64 hex>` copies that exact upstream digest instead:
+
+    standup.sh --profile <p> --region <r> --yes --llm-digest sha256:<...>
+
+This changes only **which bytes `crane copy` fetches** — the destination is still
+`af-llamacpp:<LlmImageTag>`, so `LlmImageTag` itself, `60-engines.yaml`'s `!Ref LlmImageTag`, and
+everything downstream of it are byte-for-byte unaffected. Leave `--llm-digest` unset (the
+default) and the copy is exactly what it always was. Pinning is a deliberate, one-at-a-time
+operation, not something a default can safely guess at — hence no default digest is shipped
+here.
+
+Whether or not a digest was chosen, and whether or not `af-llamacpp:<tag>` was already in ECR
+(the common case: `crane copy` only runs the first time), `standup.sh` reads the digest back out
+of ECR every run and prints it (`af-llamacpp:<tag> digest: sha256:...`), so a stand-up's own
+output always says what it actually baked — the tag name alone no longer does. If `--llm-digest`
+was given and it does not match what is actually there — typically because the tag was already
+in ECR from an earlier, unpinned or differently-pinned run — `standup.sh` **fails loudly before
+deploying `60-engines`**, rather than proceeding on an unpinned image while claiming otherwise:
+a pin that silently does nothing is worse than no pin. Fix it by dropping `--llm-digest` (accept
+what is already there) or by deleting/retagging `af-llamacpp:<tag>` so the next run's `crane
+copy` actually fetches the requested digest.
+
+That fix is the wrong one, though, if the digest could not be **read** at all (ECR auth lapsed,
+a transient read failure) rather than read-and-mismatched — deleting/retagging a perfectly good
+image over a read that never happened is worse than the original problem. `standup.sh` still
+refuses to proceed in that case (an unverifiable pin is not a verified one), but the message says
+"could not be read back" and points at ECR auth / running `crane digest` by hand, not at the
+image itself.
+
+To choose a digest to pin: resolve the upstream tag at the moment you mean to pin it —
+`crane digest ghcr.io/ggml-org/llama.cpp:server-cuda` — rather than trusting a value recorded
+here, which would go stale the moment `server-cuda` next moves. What is worth recording here is
+the **build the engine was measured against**, since that is what the docs/log findings are
+actually about:
+
+| Measured (JST) | `build_info` (from `GET /engine/<key>/props`) | upstream commit |
+|---|---|---|
+| 2026-09-20 | `b10830-465e49b9c` | `465e49b9c` (2026-09-06T16:47:05Z) |
+
+`/props` does not start a stopped engine (docs/log/99 §12.3), so this is safe to check on a live
+deployment at any time; it is the only way to learn the running build without a redeploy.
+
 ### Where the model and its window come from (not from here)
 
 A model reaches the bucket through the ingest task — the engine never talks to Hugging Face

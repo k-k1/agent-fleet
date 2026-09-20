@@ -153,7 +153,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # スイートと main スイートは別の版を指すので、片方を security・片方を main で読むと
 # **存在しない版差が出る**。実際それで「trixie にすると chromium が下がる」という誤った
 # 代償が 1 度記録され、ベース更新の判断を狂わせた。ここに書くのは常に security の版。
-ARG CHROMIUM_VERSION=153.0.8010.47-2~deb13u1
+ARG CHROMIUM_VERSION=153.0.8010.52-1~deb13u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
@@ -533,6 +533,14 @@ ENV DISABLE_AUTOUPDATER=1
 # startup by default and self-writes only on explicit `codex update` / opt-in
 # autoUpdate, so it needs no analogous flag.)
 ENV OPENCODE_DISABLE_AUTOUPDATE=true
+
+# Muse Code（ADR 0095）。**この箱は muse を配らない**（種別 `muse` は未実装で、ピンも
+# boot-install も ADR 0095「門 A 成果物の要否」で抜いた）。それでも封殺するのは、利用者が
+# ベンダの install.sh を自分で一度走らせた場合に `~/.local/bin/muse` に載る bash ランチャが
+# 既定でチャンネルを毎時見て自分を書き換えるからである（MUSE_UPDATE_INTERVAL_SECONDS=3600・
+# 実測 2026-09-20）。管理外の自己更新バイナリが黙って育つのを止める 1 行で、
+# 種別を採用するかどうかとは独立に効く。
+ENV MUSE_NO_AUTO_UPDATE=1
 
 # NEVER let git fall back to an interactive /dev/tty credential prompt. This fixes a
 # real "the claude session accepts NO keyboard input" bug (gate k, docs/log/35 §35.9-10):

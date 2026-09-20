@@ -457,6 +457,13 @@ export const admin = {
   "admin.engines_ingest_fit_kv": "KV キャッシュ {n} MiB（{c} トークン・f16 と仮定）",
   "admin.engines_ingest_fit_kv_unread": "KV キャッシュは読めませんでした（この数字は重みだけです）",
   "admin.engines_ingest_fit_card": "合計 {n} MiB / このカード {c} MiB",
+  // 🔴 上の「合計」はファイルの足し算で、分割ファミリーでは実際の使用量より大きく出る
+  // （テキストエンコーダは encode のあと退避される）。誰かがエンジンの /system_stats を
+  // 読んだ族はその数字を出し、運用者が入れる——機械は書かない（ADR 0094 決定 8）。
+  // 入れないと梯子は合計で段を選ぶ＝一段高い箱を買う。
+  "admin.engines_vram_measured": "この族の実測は {n} MiB（{s}・batch {b}・参照 {i} 枚／{f} で測定）",
+  "admin.engines_vram_measured_use": "実測値 {n} を入れる",
+  "admin.engines_vram_measured_after": "取り込んだあと、行の「編集」で実測 VRAM に入れてください。",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
   "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。下の「Hugging Face のトークン」で運用者のトークンを登録してください（読むのは取り込みタスクだけです）。",
   // 🔴 Hugging Face の gated とは別物で、こちらには鍵が無い。CivitAI のメタデータは誰にでも
@@ -1192,8 +1199,8 @@ export const admin = {
   "clean.purge_do": "完全に削除",
   // 掃除候補の「理由」（Agent は clean.reason.* のキーだけを返す・ADR 0033）。
   "clean.reason.locked": "ロック中（削除保護。解除するまで掃除対象外）",
-  "clean.reason.archived": "アーカイブ済み（自動prune対象外。削除で回収可・復元可）",
-  "clean.reason.stopped": "停止中（再開可能）。完了していればアーカイブで一覧から整理",
+  "clean.reason.archived": "アーカイブ済み（自動では消えない。削除で回収可・復元可）",
+  "clean.reason.stopped": "停止中（再開可能）。完了していればアーカイブで一覧から整理（放置でも期限が来ればアーカイブへ移る）",
   "clean.reason.ephemeral": "停止中の shell/ssm（残す会話なし）。削除で片付きます",
   "clean.reason.orphan_pane": "orphan（メタ無しの実行中ペイン）。Console でアタッチ/整理",
   "clean.reason.wt_live": "稼働中のセッションがある（先に停止が必要）",
@@ -1206,7 +1213,7 @@ export const admin = {
   "clean.reason_badge.locked": "ロック中",
   "clean.reason_hint.locked": "削除保護。解除するまで掃除対象外",
   "clean.reason_badge.archived": "アーカイブ済み",
-  "clean.reason_hint.archived": "自動prune対象外。削除で回収可・復元可",
+  "clean.reason_hint.archived": "自動では消えない。削除で回収可・復元可",
   "clean.reason_badge.stopped": "停止中（再開可能）",
   "clean.reason_hint.stopped": "完了していればアーカイブで一覧から整理",
   "clean.reason_badge.ephemeral": "shell/ssm",

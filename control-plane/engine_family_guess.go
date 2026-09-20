@@ -111,13 +111,14 @@ var engineFamilyRules = []engineFamilyRule{
 	// would be a trap waiting for the day that order changes. The digit is what separates the
 	// two products, so it is part of the needle.
 	{family: "krea2", any: []string{"krea2"}},
-	// 🔴 No rule for qwen-image-edit-2509 here, on purpose. Measured 2026-09-20, Civitai
+	// 🔴 No rule for either qwen-image-edit family here, on purpose. Measured 2026-09-20, Civitai
 	// publishes the bare `Qwen` as baseModel for every Qwen-Image-Edit row found — the SAME
 	// string Qwen-Image itself (text-to-image, ADR 0094's rejected "却下した案") would publish,
-	// and this deployment has no template for that one. A rule here would suggest this EDIT-ONLY
+	// and this deployment has no template for that one. A rule here would suggest an EDIT-ONLY
 	// family for a plain text-to-image row, which is worse than suggesting nothing (this file's
 	// own opening rule: a wrong family silences `base_model_missing` on a row that cannot
-	// generate). engineFamilyUpstreams below carries hf only for the same reason.
+	// generate). It would also have to pick BETWEEN 2509 and 2511 from a string that names
+	// neither. engineFamilyUpstreams below carries hf only for the same reason.
 }
 
 // engineFamilyFromUpstream is the table above applied to one string, before the vocabulary is
@@ -207,6 +208,12 @@ var engineFamilyUpstreams = map[string]engineFamilyUpstream{
 	// identically — filtering by family on that string would list models that cannot generate
 	// at all. hf is the canonical publisher repo.
 	"qwen-image-edit-2509": {hf: "Qwen/Qwen-Image-Edit-2509"},
+	// 🔴 Same reasoning for the missing Civitai entry, and the hf repository is this version's own
+	// (measured 2026-09-20: `base_model:Qwen/Qwen-Image-Edit-2511` answers derivatives — LoRAs and
+	// GGUF conversions). The two versions are NOT interchangeable here even though the guess above
+	// suggests neither: a row browsed as 2511 is loaded by the 2511 template, and a 2509 LoRA
+	// listed under it would be offered for a graph it was not trained against.
+	"qwen-image-edit-2511": {hf: "Qwen/Qwen-Image-Edit-2511"},
 }
 
 // engineFamilyValidFor answers whether `family` is a member of the vocabulary this request could

@@ -296,6 +296,20 @@ fi
 # よる再配布に当たらない（各社が各配布元の規約を自ら受諾する）。焼き込み
 # （/usr/local/bin）か home（~/.local/bin）に既に居る CLI は触らない。ネット不通は
 # WARN で続行（Agent 起動は止めない — 端末は使える。次回起動時に再試行）。
+#
+# 🔴 **この節の `( set -e … ) && ok || WARN` の中では `set -e` が効かない。**
+# POSIX（と bash・dash 実測 5.2.37 / trixie の dash）は「AND-OR リストの最後以外の
+# コマンド」で -e を無視すると定めており、サブシェル全体がその左辺なので、**中で
+# 明示的に `set -e` と書いても無視される**。実測（ADR 0095 段 1 門 A、2026-09-20）:
+#
+#   ( set -e; echo "0000  f" | sha256sum -c - >/dev/null; echo INSTALLED ) && echo OK
+#   → "WARNING: 1 computed checksum did NOT match" を出したうえで INSTALLED と OK
+#
+# ＝ **sha256 検証は飾りで、検証に落ちた成果物がそのまま ~/.local へ入り「成功」と
+# 記録される**。boot-install は 5 か所すべてこの形だったので、検証と「その先へ
+# 進ませない」を errexit に頼らず **`|| exit 1` で明示**する（`exit` は errexit と
+# 無関係に効く）。⚠️ `if ( set -e; … ); then` へ書き換えるのは**直らない** —— if の
+# 条件もまた -e が無視される文脈だから。
 VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
@@ -414,7 +428,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       # until the next start (observed on the WSL2 gate — docs/log/35 §35.9-9).
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/${asset}" -o "${asset}"
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/checksums.txt" -o checksums.txt
-      grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null
+      grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
       tar xzf "${asset}"
       install -D -m 0755 rtk "$HOME/.local/bin/rtk"
       # ⚠️ 実行して確かめてから残す。arm64 の配布は gnu ビルドだけで GLIBC_2.39 を要求し、
@@ -456,7 +470,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
       cd "$tmp"
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://storage.googleapis.com/antigravity-public/antigravity-cli/${aver}-${abuild}/${asset}" -o agy.tgz
-      echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null
+      echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null || exit 1
       tar -xzf agy.tgz antigravity
       install -D -m 0755 antigravity "$HOME/.local/bin/agy"
       printf '%s\n' "$aver" > "$HOME/.local/bin/.agy.version"
@@ -498,7 +512,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
         tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
         curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
           "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
-        echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null
+        echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null || exit 1
         rm -rf "$dir"; mkdir -p "$dir"
         tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$dir"
       fi
@@ -673,7 +687,7 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
     cd "$tmp"
     curl -fsSL "${base}/${asset}" -o "${asset}"
     curl -fsSL "${base}/checksums.txt" -o checksums.txt
-    grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null
+    grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
     tar xzf "${asset}"
     install -D -m 0755 rtk "$HOME/.local/bin/rtk"
   ) && echo "[entrypoint] rtk updated: $("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1)" \

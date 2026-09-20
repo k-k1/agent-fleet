@@ -527,10 +527,11 @@ func (m Meta) DriverKind() string {
 	return m.Driver
 }
 
-// StoppedTTL is how long a stopped (exited) session stays listed/resumable before
-// it is pruned. Configurable; default 7d (metas now persist across Stop→Start, so
-// the window spans restarts). A session running at shutdown is marked stopped on
-// the next list after restart, starting its TTL then.
+// StoppedTTL is how long a stopped (exited) session stays in the ACTIVE list before it
+// is auto-archived (ADR 0097 — archived, never deleted, so the conversation is still
+// restorable from the shelf afterwards). Configurable; default 7d (metas now persist
+// across Stop→Start, so the window spans restarts). A session running at shutdown is
+// marked stopped on the next list after restart, starting its TTL then.
 func StoppedTTL() time.Duration {
 	if v := os.Getenv("AF_SESSION_STOPPED_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {

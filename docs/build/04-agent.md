@@ -27,8 +27,8 @@ id is derived from the directory and name; **the agent's own conversation id is 
 separately.**
 
 - **Metadata is persisted** outside the browsable area, on the home volume, so **the
-  list and resumability survive stop and start**. Stopped sessions are pruned after a
-  TTL.
+  list and resumability survive stop and start**. A stopped session is auto-archived —
+  never deleted — once its TTL is up (ADR 0097).
 - **The list is metadata-driven, merged with per-driver liveness.** Orphaned tmux
   sessions with no metadata are listed too, sniffing the kind from the pane's command —
   this deliberately closes the "it is running but not in the list" dead end.

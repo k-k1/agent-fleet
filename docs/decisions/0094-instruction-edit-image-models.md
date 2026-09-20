@@ -246,6 +246,46 @@ one press, with the conditions attached (1024², batch 1, one reference), beats 
   bought** (45,458 MiB, 33.2 GB of host RAM — measured). With 20,862 declared, the L4 rung is a
   candidate again. This field is a COST field as much as a fit field.
 
+🔴 **A third correction — the measurement depends on the CARD, and this procedure is circular**
+(2026-09-20, P1 acceptance):
+
+Running 2511 on real hardware and reading `/system_stats` measured **28,358 MiB in use on an L40S
+48GB** (`vram_total` 47,665,709,056 B = 45,458 MiB, `vram_free` 17,930,132,506 B = 17,100 MiB).
+That is within a rounding error of the 28,774 MiB file sum — **all three parts stayed resident at
+once and nothing was ever evicted**.
+
+2509's 20,862 MiB was measured on an **L4 24GB**, and decision 8 above says why: the text encoder
+is **evicted** after encoding — and eviction happens BECAUSE the card is tight. The two numbers
+therefore answer **different questions** and must not be compared. Leaving the card out of the
+measurement conditions in `engineFamilyVram.ts` is an omission of this ADR.
+
+🔴 **And the procedure itself is circular**: the file-sum estimate (28,774) drops the 22,000 rungs
+from the candidate set → an L40S is bought → the measurement is taken on that L40S → it reads
+28,358 → declaring that keeps buying L40S. **In this order, "does 2511 also fit an L4?" can never
+be discovered.** Measuring it needs the REVERSE order: declare a `vram_mib` as a hypothesis first,
+so the rung you want to measure on is a candidate again.
+
+⇒ **28,358 is NOT entered into `engineFamilyVram.ts`** (the maintainer's call). That table is where
+the number the operator enters into `vram_mib` in one press comes from, and this one would pin 2511
+to the 44,000-and-above rungs for good. The existing policy — a family stays absent from the table
+until it has been measured — is the right one here too.
+
+🟢 **Re-measured in the reverse order, the same day (this answers open question 6).** Declaring
+`vram_mib: 20862` (2509's number) as a hypothesis first put the 22,000 rungs back in the candidate
+set, and **the box bought was an NVIDIA L4 24GB** (`vram_total` 23,659,151,360 B = 22,563 MiB,
+16.1 GB of host RAM). The same request (seed 42) answered **200 in 676.6 s** and produced the same
+picture as the L40S run — only the sign changed. **2511 does fit an L4.**
+
+**On the L4 it measured 20,974 MiB in use** (peak of a 40-second sampling; it moved between 20,580
+and 20,974 during the run, with as little as 1,589 MiB free). The **7,384 MiB difference from the
+L40S reading is what gets evicted** — the measured size of the very behaviour decision 8 described
+("the text encoder is evicted after encoding"). It sits beside 2509's 20,862 (also L4), which is
+what a diffusion model 0.1 GB larger should look like.
+
+⇒ **20,974 is now in `engineFamilyVram.ts`.** Both values in that table were read **on an L4 24GB**,
+and that is what gives them their meaning (open question 7 — the field still has no column for the
+card — is not yet closed).
+
 ### Decision 9 — "Custom workflows" stay out of this ADR; the trigger is duplication, not the family count
 
 ADR 0081's rejected "let the Console post a raw ComfyUI graph" **stands**, for the reason it gave
@@ -461,11 +501,33 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   `op=generate` still lists comfy** (decision 11's union holds, so nothing falls through to a paid
   provider), and (4) **naming qwen as the `model` while asking for `op=generate` is refused with the
   model's name in it** (decision 13 — a named request is not dropped).
-- **P1** — 2511 (decision 6), the parts table (decision 7), the operator-entered `vram_mib`
-  (decision 8). Done when one press stages all three parts in the right directories, **the screen offers
-  the measured number (20,862 MiB at 1024², batch 1, one reference) right after the ingest, and
-  `confirm_vram` stops appearing once the operator has entered it** (until then it appears, which is
-  the correct behaviour — decision 8).
+- **P1** — 2511 (decision 6), the parts table (decision 7), the road to an operator-entered
+  `vram_mib` (decision 8). Four completion criteria: (1) **one press stages all three parts in the
+  right directories**, (2) **2511 edits on real hardware** (run E reproduced), (3) **the ingest
+  screen and the row's edit both publish the measured number with the conditions it was measured
+  under** (size, batch, reference count, and the weights file it was read from), for the operator to
+  enter in one press, and (4) 🔴 **the entered number reaches the ladder** — the rung is chosen from
+  the measurement (20,862 MiB) and not from the file-sum estimate (28,676 MiB for 2509).
+  🔴 **It is NOT "`confirm_vram` stops appearing once it is entered".** The guard
+  (`engineVramGuardRow`) compares against the selected class, which on a deployment with an unpinned
+  ladder is its first rung — a T4 at 14,500 MiB — so an honest 20,862 still prompts (measured during
+  P0's acceptance). Decision 8's 🔴 says the same thing; it is repeated here because this is the
+  section an implementer reads first.
+
+  **Result of the live acceptance (2026-09-20)**: 🟢 **all four met** — (3) and (4) only after the
+  re-measurement described in decision 8's third 🔴.
+  - (1) One press — the three parts did land in the right directories, but **it took a second
+    press**: the row's 揃える was needed because the part follow-up failed silently (that seam is
+    closed on the ADR 0085 side — PRs #802/#804/#806).
+  - (2) 2511 edits — `POST /imagegen/generate` (the blocking route) answered 200 in 823.8 s and only
+    the sign changed to CLOSED, everything else intact: **run E reproduced**.
+  - (3) The published measurement — the first reading (L40S, 28,358 MiB) was one that **cannot go in
+    the table**. Re-measured in the reverse order, the **L4's 20,974 MiB** is now in
+    `engineFamilyVram.ts`.
+  - (4) The entered value reaches the ladder — **confirmed end to end on real hardware**. At the
+    28,774 floor an L40S was bought; declaring 20,862 put the 22,000 rungs back and **the box
+    actually bought became an L4 24GB**. The guard's wording moves with it, from
+    `wants at least 28774` to `wants 20862` (source `declared`).
 - **P2** — props (decision 10). Done when a picture made from the pane shows its prompt, its
   negative and its size under "what this was made from".
 - **P3** — the reference-image path end to end (pane and the MCP `inputs` argument) and `MaxInputs`
@@ -475,15 +537,42 @@ counts only providers that were tried and failed, so **nothing is said**. Before
 ## Open
 
 1. **2511's 40 steps are expensive** (measured 393.8 s). The Lightning LoRA (4 steps) as a row has
-   not been measured for quality. Measure one in P1.
+   not been measured for quality. **Not measured in P1** (the maintainer's call), so this stays open.
 2. **Whether `inpaint` can be claimed** (deferred in decision 3). `SetLatentNoiseMask` on top of a
    denoise-1 instruction edit is unmeasured.
 3. **16.1 GB of host RAM is thin** (2.2 GB free). A box with both families enabled, switching
    repeatedly, has not been measured — the run only switched once.
 4. **Decision 9's trigger** (a third topology / past 15 declarations) is drawn from the measured 12,
    but "15" is not itself a measured number. Count the declarations again when the next family lands.
+   🔵 **Counted, while 2511 was being added: 17 places.**
+
+   | where | count | the places |
+   |---|---|---|
+   | Agent | 9 | the `comfyFamily` constant / `comfyFamilies` / `comfyBuildGraph`'s switch / the template entry point / `comfyQwenEditWirings` / `comfyFamilyRecipes` / `comfyFamilyInstructionEdit` / `comfyFamilyKnobs` / `comfyTrialSteps` |
+   | CP | 4 | `engineComfyFamilies` / `engineComfyRequiredFlags` / `engineFamilyUpstreams` / `engineFamilyParts` |
+   | Console | 3 | `wire.ts`'s `Family` / `FAMILY_CARDS` / the list in `families.test.ts` |
+   | golden | 1 | `testdata/comfy_<family>.golden.json` |
+
+   The drafted 12 missed five: the constant itself, the template entry point,
+   `engineFamilyUpstreams` (**without it `TestFamilyUpstreamsCoverTheVocabulary` is red**),
+   `families.test.ts`, and the wiring table P1 added. P1's implementation held it to **20 → 17** by
+   introducing `comfyFamilyInstructionEdit`, which folds four declarations (ops, strength, sizes,
+   negative) into one. That is a reprieve for as long as the families that follow share this
+   capability; it does nothing for the next topology with a *different* one.
+
+   🔴 **Decision 9's second trigger ("past 15 of the 12 places") is therefore drawn.** Whether to
+   raise decision 9's 🟡 intermediate step (a family as a data row) as its own ADR is the
+   maintainer's call, and it **has not been raised**.
 5. **The operator entering `vram_mib` once** (decision 8) is forgettable unless the screen asks for it
    right after the ingest. Where the measured number appears in the ingest UI is a P1 question.
+6. 🟢 **Closed the same day: 2511 measured on an L4 24GB = 20,974 MiB** (decision 8's third 🔴).
+   The reverse order — declare a `vram_mib` as a hypothesis first so the 22,000 rung is a candidate
+   again — worked as intended. **That reverse order is itself the procedure the next person adding
+   a family needs**, and it is written into decision 8.
+7. 🔴 **Put the CARD into the measurement conditions.** `FamilyVramMeasurement` carries size, batch,
+   reference count and the weights file, but not the card. 2509's 20,862 (L4) beside 2511's 28,358
+   (L40S) would read as two values of one field while **answering different questions**. Either the
+   field gains a column, or the table's contract is rewritten as "what this family needs at MINIMUM".
 
 ## Measured (2026-09-20, dev deployment, g6.xlarge / L4 24GB)
 

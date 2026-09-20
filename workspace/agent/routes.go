@@ -82,8 +82,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
 	// Deletion lock (docs/log/45): pin a session to delete-protected, or release it. It bites
-	// on deletion only (/stop forgetting the metadata, DELETE, the TTL auto-prune, collateral
-	// from deleting a working copy); halt / archive still go through.
+	// on deletion (/stop forgetting the metadata, DELETE, collateral from deleting a working
+	// copy) and, though the stopped-TTL sweep only archives, on that too — a pinned row is one
+	// the user wants to keep seeing (ADR 0097). Manual halt / archive still go through.
 	mux.HandleFunc("POST /sessions/{name}/lock", sessionx.HandleSessionLock)
 	// Keep-awake pin (docs/log/75): shields the session and the Workspace from idle auto-stop
 	// for a bounded time. The answer to af being unable to tell whether a shell / ssm job is

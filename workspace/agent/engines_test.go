@@ -732,9 +732,11 @@ func TestSyncEngineProvidersOverridesWindowWhenWarm(t *testing.T) {
 
 // ADR 0093 段0 追补: a ROUTER-mode llama-server's /props describes the router, not the loaded
 // model, so default_generation_settings.n_ctx there is 0 — and the Control Plane's props()
-// (control-plane/engine_gateway.go's enginePropsAugmentRouterWindow) adds the real window under
-// router_selected_model instead. enginePropsWindow has to fall back to that field when the first
-// one is 0, or a router deployment would never correct its catalogue-declared window at all.
+// (control-plane/engine_gateway.go's enginePropsAugmentRouterWindow) used to add the real window
+// under router_selected_model. That field has since been replaced by router_models (see the two
+// tests below), but a BORROWED row whose lending deployment's Control Plane predates the
+// replacement still answers with only this older field — enginePropsWindow has to keep falling
+// back to it, or such a deployment would never correct its catalogue-declared window at all.
 func TestSyncEngineProvidersOverridesWindowFromRouterSelectedModel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -756,6 +758,80 @@ func TestSyncEngineProvidersOverridesWindowFromRouterSelectedModel(t *testing.T)
 	}
 	if output != 4096 {
 		t.Errorf("output = %d, want the declared 4096 left alone", output)
+	}
+	if len(res.propsRequested) != 1 || res.propsRequested[0] != "llm" {
+		t.Fatalf("props requested = %v, want exactly one for llm", res.propsRequested)
+	}
+}
+
+// The current shape: control-plane/engine_gateway.go's enginePropsAugmentRouterWindow reports
+// router_models, an array of every id /v1/models actually listed, rather than a single guessed
+// "selected" one. This is the same-id case (the loaded model happens to match the catalogue's
+// declared default) — TestSyncEngineProvidersFilesWindowUnderTheLiveModelNotTheGuess below is the
+// case where it does not.
+func TestSyncEngineProvidersOverridesWindowFromRouterModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	res := engineCatalogPropsStub(t,
+		`{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1",`+
+			`"models":["qwen3.8-27b-uncensored-q4_k_m"],"context_tokens":32768,"max_output_tokens":4096,`+
+			`"model_rows":[{"id":"qwen3.8-27b-uncensored-q4_k_m","context_tokens":32768,"max_output_tokens":4096,"default":true}]}`,
+		map[string]int{"llm": http.StatusOK},
+		map[string]string{"llm": `{"default_generation_settings":{"n_ctx":0},"model_path":"none","role":"router",` +
+			`"router_models":[{"id":"qwen3.8-27b-uncensored-q4_k_m","n_ctx":262144}]}`},
+	)
+
+	syncEngineProviders()
+
+	ctxTokens, output := readOpencodeLimit(t, home, "llamacpp", "qwen3.8-27b-uncensored-q4_k_m")
+	if ctxTokens != 262144 {
+		t.Errorf("context = %d, want the router's real 262144 read from router_models, not the catalogue's declared 32768", ctxTokens)
+	}
+	if output != 4096 {
+		t.Errorf("output = %d, want the declared 4096 left alone", output)
+	}
+	if len(res.propsRequested) != 1 || res.propsRequested[0] != "llm" {
+		t.Fatalf("props requested = %v, want exactly one for llm", res.propsRequested)
+	}
+}
+
+// The bug this test pins down (2026-09-20, a real sandbox deployment): a router's own
+// max_instances: 1 means the model actually loaded does not have to be the catalogue's declared
+// default. Before this was fixed on BOTH sides, the Control Plane's answer described whichever
+// model /v1/models actually listed — but this side still filed that window under its OWN guessed
+// id (the catalogue's default), mislabeling one model's live window as another's. This pins the
+// fix: the id router_models actually names is what gets the measured window, and the catalogue's
+// guessed default — which was never actually running — keeps ITS own declared window untouched.
+func TestSyncEngineProvidersFilesWindowUnderTheLiveModelNotTheGuess(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	res := engineCatalogPropsStub(t,
+		`{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1",`+
+			`"models":["qwen3.8-27b-uncensored-q4_k_m","llama-3.1-8b-instruct-q4_k_m"],`+
+			`"context_tokens":9999,"max_output_tokens":1024,"model_rows":[`+
+			`{"id":"qwen3.8-27b-uncensored-q4_k_m","context_tokens":32768,"max_output_tokens":4096,"default":true},`+
+			`{"id":"llama-3.1-8b-instruct-q4_k_m","context_tokens":16384,"max_output_tokens":2048}]}`,
+		map[string]int{"llm": http.StatusOK},
+		map[string]string{"llm": `{"default_generation_settings":{"n_ctx":0},"model_path":"none","role":"router",` +
+			// Deliberately NOT the catalogue's default above — the model actually loaded.
+			`"router_models":[{"id":"llama-3.1-8b-instruct-q4_k_m","n_ctx":65536}]}`},
+	)
+
+	syncEngineProviders()
+
+	liveCtx, liveOut := readOpencodeLimit(t, home, "llamacpp", "llama-3.1-8b-instruct-q4_k_m")
+	if liveCtx != 65536 {
+		t.Errorf("live model context = %d, want the measured 65536 filed under the model /props actually named", liveCtx)
+	}
+	if liveOut != 2048 {
+		t.Errorf("live model output = %d, want its own declared 2048 left alone", liveOut)
+	}
+	guessedCtx, guessedOut := readOpencodeLimit(t, home, "llamacpp", "qwen3.8-27b-uncensored-q4_k_m")
+	if guessedCtx != 32768 || guessedOut != 4096 {
+		t.Errorf("guessed-default model limit = %d/%d, want its own declared 32768/4096 untouched — /props never said anything about it this time",
+			guessedCtx, guessedOut)
 	}
 	if len(res.propsRequested) != 1 || res.propsRequested[0] != "llm" {
 		t.Fatalf("props requested = %v, want exactly one for llm", res.propsRequested)

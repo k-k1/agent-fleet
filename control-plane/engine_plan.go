@@ -60,6 +60,10 @@ type enginePlanFile struct {
 	// there is one. Both are what the press needs and neither is a fact the operator decides on.
 	resolved engineResolved
 	known    *engineKnownArtifact
+	// conflict is non-empty when the destination key is already recorded by something this plan
+	// cannot prove is the same file. Set only on download parts; carried into the follow-up spec
+	// so followUpFile skips the download rather than racing a refused RunTask in the reconciler.
+	conflict string
 }
 
 // enginePlan is the whole answer for one press.
@@ -88,9 +92,14 @@ type enginePlan struct {
 // Hashed rather than echoed back (ADR 0085 open question 2): the Console re-sends 16 bytes it
 // cannot forge, and the CP compares them against a plan it made itself a moment ago. The field
 // itself is cleared before hashing, so the value never depends on what it is about to become.
+//
+// ID is excluded from the hash because it names what the row will be called — a decision the
+// operator makes at the press (details form), not part of what the plan priced. The postIngest
+// route has its own duplicate-id check; hashing the id here would make every edit to it a 409.
 func (p enginePlan) token() string {
 	bare := p
 	bare.PlanToken = ""
+	bare.ID = ""
 	raw, err := json.Marshal(bare)
 	if err != nil {
 		return ""
@@ -155,6 +164,18 @@ func (a engineAdminAPI) enginePlanFor(ctx context.Context, g engineIngestGrant, 
 	// Every one of them is planned the same way the main file is, so a part this deployment
 	// already holds is a declaration rather than a second download — the Qwen-Image VAE is shared
 	// by two families and the second row of either must not pay for it twice.
+	//
+	// Row listing is deferred until the first download part: all-reuse plans (the normal state
+	// once a shared part is in the bucket) never list the catalogue at all.
+	// On error the check is skipped and a warning is emitted (warn-and-skip design, not hard fail:
+	// the plan is readable but the destination-overlap guarantee is suspended for this resolve).
+	// Cost: at most 1 ListEngineModels(all roles) + 1 EngineIngestJobForS3Key + 1 HeadObject per
+	// download part whose destination is already recorded.
+	var (
+		allRows     []store.EngineModel
+		rowsFetched bool
+		rowsFetchOK bool
+	)
 	for _, p := range engineFamilyPartsFor(base) {
 		pres, aerr := engineIngestResolve(ctx, engineIngestSource{HF: &engineIngestHF{Repo: p.Repo, File: p.File}})
 		if aerr != nil {
@@ -166,8 +187,29 @@ func (a engineAdminAPI) enginePlanFor(ctx context.Context, g engineIngestGrant, 
 			continue
 		}
 		pname := engineBaseName(p.File)
-		plan.Files = append(plan.Files, enginePlanLine(ctx, held, p.Flag, pname,
-			engineIngestKeyFor(role, images, p.Flag, pname, false), pres))
+		pkey := engineIngestKeyFor(role, images, p.Flag, pname, false)
+		pf := enginePlanLine(ctx, held, p.Flag, pname, pkey, pres)
+		if pf.Action == enginePlanDownload && a.mgr != nil && a.mgr.store != nil {
+			if !rowsFetched {
+				rowsFetched = true
+				var err error
+				allRows, err = a.mgr.store.ListEngineModels(ctx, "")
+				if err != nil {
+					plan.Warnings = append(plan.Warnings,
+						"part destination check could not list the catalogue; existing rows were not verified")
+				} else {
+					rowsFetchOK = true
+				}
+			}
+			if rowsFetchOK {
+				if ref := enginePartDestinationCheck(ctx, allRows, a.mgr.store,
+					a.engineStorageBytes(), role, pkey); ref != nil {
+					pf.conflict = ref.message
+					plan.Warnings = append(plan.Warnings, partDestinationWarning(p.Flag, pkey, ref))
+				}
+			}
+		}
+		plan.Files = append(plan.Files, pf)
 	}
 
 	// And the one header read that decides whether this row could decode a picture at all: does
@@ -423,4 +465,28 @@ func enginePlanID(asked, file string, rows []store.EngineModel) string {
 		}
 	}
 	return base + "-" + strconv.Itoa(enginePlanIDMax)
+}
+
+// partDestinationWarning builds the one-line warning for a part whose destination key is already
+// held, using the holder and next-step carried in ref. The key appears once (in "lands at"),
+// and the action the operator needs differs by holder kind: a row is completed or rerouted,
+// a job is dismissed (bytes present) or awaited (bucket unverifiable).
+func partDestinationWarning(flag, s3key string, ref *apiRefusal) string {
+	if ref == nil || ref.Holder == nil || ref.Next == nil {
+		return flag + " lands at " + s3key + ", which is already recorded; free that slot before pressing"
+	}
+	switch ref.Holder.Kind {
+	case "row":
+		return flag + " lands at " + s3key + ", which the row " + ref.Holder.ID +
+			" already declares; complete that row or choose another destination"
+	case "job":
+		if ref.Next.Act == "dismiss_job" {
+			return flag + " lands at " + s3key + ", which an earlier ingest job (" +
+				ref.Holder.ID + ") recorded; dismiss that job first"
+		}
+		return flag + " lands at " + s3key + ", which an ingest job (" + ref.Holder.ID +
+			") recorded; the bucket could not confirm whether bytes are still there — press again once the bucket answers"
+	default:
+		return flag + " lands at " + s3key + ", which is already recorded; free that slot before pressing"
+	}
 }

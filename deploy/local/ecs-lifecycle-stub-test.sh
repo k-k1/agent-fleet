@@ -213,6 +213,10 @@ case "$args" in
   # is "the release tag IS in ECR and this one is not", which is exactly what happened on the
   # deployment (nothing had ever copied it there).
   *"ecr describe-images"*af-engine-tools*) [ "${STUB_ET_IN_ECR:-0}" = 1 ] || exit 1 ;;
+  # af-llamacpp also has its own knob: the case that matters for --llm-digest is "the tag is
+  # ALREADY in ECR" (a repeat stand-up — the common case once the repository is no longer
+  # empty), which never reaches the crane copy branch at all.
+  *"ecr describe-images"*af-llamacpp*) [ "${STUB_LLM_IN_ECR:-0}" = 1 ] || exit 1 ;;
   *"ecr describe-images"*)
     # After a teardown the ECR is empty. Forces standup down the crane copy path.
     [ "${STUB_ECR_HAS:-0}" = 1 ] || exit 1 ;;
@@ -247,6 +251,10 @@ case "$1" in
     esac
     echo '{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}},{"platform":{"architecture":"arm64","os":"linux"}}]}' ;;
   auth) cat >/dev/null ;;
+  # standup.sh reads this back after every llm copy to record what actually landed in ECR.
+  digest)
+    [ "${STUB_CRANE_DIGEST_FAILS:-0}" = 1 ] && exit 1
+    echo "sha256:${STUB_CRANE_DIGEST:-fake000000000000000000000000000000000000000000000000000000000}" ;;
 esac
 FAKE
 cat > "$STUB/curl" <<'FAKE'
@@ -443,6 +451,79 @@ printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\n' > "$STATE4/param
 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
 hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
 has "crane copy ghcr.io/ggml-org/llama.cpp:server-cuda"
+# Every llm copy reads the digest back from ECR afterwards, so what actually landed is in the
+# stand-up's own output even when nobody pinned one on purpose (the tag is a moving target
+# otherwise — docs/log/99 §12.3).
+has "crane digest 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/af-llamacpp:server-cuda"
+
+echo "== case 3g-2: --llm-digest pins the crane copy source, not the destination tag =="
+# LlmImageTag (and so 60-engines' `!Ref LlmImageTag`) must not move — only WHICH content that
+# ECR tag holds. Passing the check and then standing up on the floating tag anyway is exactly
+# the failure mode this flag exists to close.
+: > "$LOG"
+PIN="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+PIN_HEX="${PIN#sha256:}"
+# The fake crane digest echoes back what THIS copy actually put in ECR, matching the requested
+# pin — this run's copy really did fetch it, so the read-back must agree.
+STUB_CRANE_DIGEST="$PIN_HEX" "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --llm-digest "$PIN" \
+  > "$WORK/out3g2" 2>&1 </dev/null || { cat "$WORK/out3g2"; fail "standup with --llm-digest failed"; }
+has "crane copy ghcr.io/ggml-org/llama.cpp@$PIN 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/af-llamacpp:server-cuda"
+hasnt "crane copy ghcr.io/ggml-org/llama.cpp:server-cuda"
+has "crane digest 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/af-llamacpp:server-cuda"
+# A malformed digest is refused before anything is built, not handed to crane to fail on.
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --llm-digest not-a-digest \
+  >/dev/null 2>"$WORK/out3g2.err" </dev/null && fail "a malformed --llm-digest was accepted"
+grep -q -- "--llm-digest" "$WORK/out3g2.err" || fail "the malformed --llm-digest was not explained"
+
+echo "== case 3g-3: a repeat stand-up (image already in ECR) still records the digest =="
+# The common case once af-llamacpp is no longer empty: the crane copy above never runs, so the
+# digest read-back has to happen on THIS branch too, not just after a fresh copy.
+: > "$LOG"
+STUB_LLM_IN_ECR=1 STUB_CRANE_DIGEST="$PIN_HEX" \
+  "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes \
+  > "$WORK/out3g3" 2>&1 </dev/null || { cat "$WORK/out3g3"; fail "standup failed with the image already in ECR"; }
+hasnt "crane copy ghcr.io/ggml-org/llama.cpp"
+has "crane digest 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/af-llamacpp:server-cuda"
+has "cloudformation deploy --stack-name af-ecs-engines"
+
+echo "== case 3g-4: --llm-digest matching what is already in ECR passes silently =="
+: > "$LOG"
+STUB_LLM_IN_ECR=1 STUB_CRANE_DIGEST="$PIN_HEX" \
+  "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --llm-digest "$PIN" \
+  > "$WORK/out3g4" 2>&1 </dev/null || { cat "$WORK/out3g4"; fail "standup refused a --llm-digest that matched what was already in ECR"; }
+hasnt "crane copy ghcr.io/ggml-org/llama.cpp"
+has "cloudformation deploy --stack-name af-ecs-engines"
+
+echo "== case 3g-5: 🔴 --llm-digest that does not match an image already in ECR must fail loudly, not silently no-op =="
+# This is the case the flag exists for, and the one a check placed only in the crane-copy branch
+# cannot see: a repeat stand-up whose af-llamacpp:server-cuda was copied before this pin was ever
+# chosen. The copy above never runs (STUB_LLM_IN_ECR=1), so if verification only lived inside
+# that branch, --llm-digest would silently do nothing here and 60-engines would deploy believing
+# an image is pinned when it is not — worse than not pinning at all.
+: > "$LOG"
+OTHER_DIGEST="sha256:2222222222222222222222222222222222222222222222222222222222222222"
+STUB_LLM_IN_ECR=1 STUB_CRANE_DIGEST="${OTHER_DIGEST#sha256:}" \
+  "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --llm-digest "$PIN" \
+  >"$WORK/out3g5.out" 2>"$WORK/out3g5.err" </dev/null \
+  && fail "a --llm-digest mismatch against what is already in ECR was silently accepted"
+grep -q -- "--llm-digest" "$WORK/out3g5.err" || fail "the digest mismatch was not explained"
+hasnt "cloudformation deploy --stack-name af-ecs-engines"
+
+echo "== case 3g-6: a failed digest read-back is explained differently from a real mismatch =="
+# "Could not read the digest" (ECR auth lapsed, a transient read failure) is not evidence the pin
+# is wrong, and must not tell an operator to delete/retag ECR over a read that never happened —
+# that is the wrong fix for this failure and could throw away a perfectly good pin.
+: > "$LOG"
+STUB_LLM_IN_ECR=1 STUB_CRANE_DIGEST_FAILS=1 \
+  "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --llm-digest "$PIN" \
+  >"$WORK/out3g6.out" 2>"$WORK/out3g6.err" </dev/null \
+  && fail "a failed digest read-back with --llm-digest set was silently accepted"
+hasnt "cloudformation deploy --stack-name af-ecs-engines"
+grep -q "could not be read back" "$WORK/out3g6.err" || fail "an unreadable digest was not explained as unreadable"
+grep -q -- "most likely copied before this pin was chosen" "$WORK/out3g6.err" \
+  && fail "an unreadable digest was explained with the real-mismatch wording (misdirects to delete/retag ECR)"
+diff <(sort -u "$WORK/out3g5.err") <(sort -u "$WORK/out3g6.err") >/dev/null \
+  && fail "an unreadable digest produced the exact same message as a real mismatch"
 
 # A capture taken before ADR 0072 phase P6 names a model key and says nothing about Enabled,
 # because until P6 the key ALSO decided whether the role's service existed. Two things have to

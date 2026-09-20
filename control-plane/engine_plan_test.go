@@ -514,6 +514,37 @@ func TestIngestKeyFollowsTheRole(t *testing.T) {
 	}
 }
 
+// 🔴 The bug that produced "what taking … in would do has changed" on a press that changed
+// nothing but the row's name: the id is what the operator calls the row, not a priced decision.
+// A token that moved with the id would refuse every press where the person accepted the proposal
+// and pressed immediately — which is the case that must never stale.
+func TestPlanTokenDoesNotMoveWithTheID(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, e, _, _ := enginePlanAPI(t)
+	body := `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`
+
+	proposed := enginePlanOf(t, a, e, body)
+	// A request with a different id but the same source and bucket state must produce the same
+	// token, because the operator's choice of name does not change what files cost.
+	edited := enginePlanOf(t, a, e, `{"id":"my-custom-name","kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)
+	if edited.PlanToken != proposed.PlanToken {
+		t.Errorf("token with id %q = %q, token with id %q = %q — id alone must not change the token",
+			proposed.ID, proposed.PlanToken, edited.ID, edited.PlanToken)
+	}
+	// Regression: a DIFFERENT action still moves the token.  Without this half, a token() that
+	// returned a constant would satisfy the equality above and nobody would notice.
+	engineHFRepoStub(t, map[string][]string{"other/Repo": {"other.safetensors"}})
+	different := enginePlanOf(t, a, e, `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"other/Repo","file":"other.safetensors"}}}`)
+	if different.PlanToken == proposed.PlanToken {
+		t.Error("a plan for a different file produced the same token — the token is not covering the action")
+	}
+}
+
 // engineLedgerLookup is the seam decision 2's ledger replaces, and both of its proofs are
 // load-bearing: a record with no object is a key whose bytes were purged, an object with no
 // matching identity is bytes nobody can vouch for.
@@ -553,4 +584,264 @@ func engineJobsOf(t *testing.T, st store.Store, role string) []store.EngineInges
 		t.Fatal(err)
 	}
 	return jobs
+}
+
+// 🔴 The actual production incident: a split family's part destination was already declared by
+// another row (the clip_l key belonged to a text encoder taken in earlier). The plan must warn
+// the operator on the resolve screen, before any licence is accepted. Positive control: the
+// warning appears and names the flag and the holder.
+func TestPlanWarnsWhenPartDestinationIsHeldByARow(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, e, st, head := enginePlanAPI(t)
+	body := `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`
+
+	// The clean plan's token is the baseline: adding a conflict must move it.
+	clean := enginePlanOf(t, a, e, body)
+	if len(clean.Warnings) != 0 {
+		t.Fatalf("clean plan already carries warnings: %v", clean.Warnings)
+	}
+
+	clipKey := "image/text_encoders/qwen_3_06b_base.safetensors"
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "other-encoder",
+		Files: []store.EngineModelFile{{Flag: "--clip_l", S3Key: clipKey}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	head.states[clipKey] = engineStoragePresent
+
+	plan := enginePlanOf(t, a, e, body)
+	if len(plan.Warnings) == 0 {
+		t.Fatal("plan has no warnings; expected one for the taken --clip_l destination")
+	}
+	joined := strings.Join(plan.Warnings, " | ")
+	if !strings.Contains(joined, "--clip_l") {
+		t.Errorf("the warning does not name the flag: %q", joined)
+	}
+	if !strings.Contains(joined, "other-encoder") {
+		t.Errorf("the warning does not name the holding row: %q", joined)
+	}
+	// Row holder: the operator completes or reroutes — "complete" must appear, "dismiss" must not.
+	if !strings.Contains(joined, "complete") {
+		t.Errorf("the row-held warning does not name the next act (complete): %q", joined)
+	}
+	if strings.Contains(joined, "dismiss") {
+		t.Errorf("the row-held warning mentions 'dismiss', which belongs to a job holder: %q", joined)
+	}
+	// The conflict warning must move the token: a stale press catches what just changed.
+	if plan.PlanToken == clean.PlanToken {
+		t.Error("a conflict warning did not move the token — stale detection will not catch it")
+	}
+	// The follow-up for --clip_l must carry the conflict so followUpFile skips RunTask.
+	followUps, _ := enginePlanFollowUps(plan)
+	for _, fu := range followUps {
+		if fu.Flag == "--clip_l" {
+			if fu.Conflict == "" {
+				t.Error("the --clip_l follow-up has no Conflict; followUpFile will attempt a download and be refused in the reconciler")
+			}
+			return
+		}
+	}
+	t.Error("no follow-up for --clip_l found")
+}
+
+// Negative control: when no row or job claims the part's destination, the plan must have no
+// warning for it. A plan that always warned would make this test green; this one fails it.
+func TestPlanNoWarningWhenPartDestinationIsFree(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, e, _, _ := enginePlanAPI(t)
+
+	plan := enginePlanOf(t, a, e, `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)
+
+	// No warnings: a clean deployment has no claimed destinations.
+	if len(plan.Warnings) != 0 {
+		t.Errorf("clean deployment produced warnings: %v", plan.Warnings)
+	}
+	// No follow-up should carry a Conflict.
+	followUps, _ := enginePlanFollowUps(plan)
+	for _, fu := range followUps {
+		if fu.Conflict != "" {
+			t.Errorf("follow-up for %s carries a Conflict on a clean deployment: %q", fu.Flag, fu.Conflict)
+		}
+	}
+}
+
+// A done ingest job holds the key and bytes are still present: same outcome as a row.
+func TestPlanWarnsWhenPartDestinationIsHeldByAJob(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, e, st, head := enginePlanAPI(t)
+	clipKey := "image/text_encoders/qwen_3_06b_base.safetensors"
+	if err := st.PutEngineIngestJob(t.Context(), store.EngineIngestJob{
+		ID: "j1", Role: "image", ModelID: "other-row", S3Key: clipKey,
+		State: store.EngineIngestDone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	head.states[clipKey] = engineStoragePresent
+
+	plan := enginePlanOf(t, a, e, `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)
+
+	if len(plan.Warnings) == 0 {
+		t.Fatal("plan has no warning for a key held by a live ingest job")
+	}
+	joined := strings.Join(plan.Warnings, " | ")
+	if !strings.Contains(joined, "--clip_l") {
+		t.Errorf("the warning does not name the flag: %q", joined)
+	}
+	// Job holder: the operator dismisses the job — "dismiss" must appear, "complete" must not.
+	if !strings.Contains(joined, "dismiss") {
+		t.Errorf("the job-held warning does not name the next act (dismiss): %q", joined)
+	}
+	if strings.Contains(joined, "complete") {
+		t.Errorf("the job-held warning mentions 'complete', which belongs to a row holder: %q", joined)
+	}
+}
+
+// An orphaned done-job record — bytes confirmed missing by the bucket — must NOT trigger a
+// warning. Without this, the plan would block every re-ingest of a slot whose previous bytes
+// were deleted, requiring the operator to dismiss the old job before pressing again.
+func TestPlanNoWarningWhenPartDestinationIsOrphanedRecord(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, e, st, head := enginePlanAPI(t)
+	clipKey := "image/text_encoders/qwen_3_06b_base.safetensors"
+	if err := st.PutEngineIngestJob(t.Context(), store.EngineIngestJob{
+		ID: "j1", Role: "image", ModelID: "old-row", S3Key: clipKey,
+		State: store.EngineIngestDone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	// Explicitly mark the key as missing (bytes purged). Without this, the fake storage returns
+	// engineStorageUnknown (the default for an absent map entry), which engineIngestDestinationUnused
+	// treats as "cannot verify → refuse conservatively" — that is correct behaviour, not a test bug.
+	head.states[clipKey] = engineStorageMissing
+
+	plan := enginePlanOf(t, a, e, `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)
+
+	if len(plan.Warnings) != 0 {
+		t.Errorf("orphaned job record triggered a false warning: %v", plan.Warnings)
+	}
+}
+
+// When the plan carries a conflict for a part, pressing must store the Conflict in the job
+// spec so the reconciler's followUpFile skips RunTask rather than racing a refusal.
+func TestIngestStoresConflictInPartFollowUpSpec(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, _, st, head := enginePlanAPI(t)
+	clipKey := "image/text_encoders/qwen_3_06b_base.safetensors"
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "other-encoder",
+		Files: []store.EngineModelFile{{Flag: "--clip_l", S3Key: clipKey}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	head.states[clipKey] = engineStoragePresent
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
+		enginePressBody(t, a, "image", `{"kind":"checkpoint","license_accepted":true,
+		  "source":{"hf":{"repo":"circlestone-labs/Anima",
+		  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the press = %d (%s)", rec.Code, rec.Body.String())
+	}
+	jobs, err := st.ListEngineIngestJobs(t.Context(), "image", 10)
+	if err != nil || len(jobs) == 0 {
+		t.Fatalf("jobs = %d (%v)", len(jobs), err)
+	}
+	var spec engineIngestRequest
+	if err := json.Unmarshal([]byte(jobs[0].Spec), &spec); err != nil {
+		t.Fatal(err)
+	}
+	// The job spec must carry the Conflict so the reconciler skips the --clip_l download.
+	var clipFU *engineVaeFollowUp
+	for i := range spec.PartsFollowUp {
+		if spec.PartsFollowUp[i].Flag == "--clip_l" {
+			clipFU = &spec.PartsFollowUp[i]
+			break
+		}
+	}
+	if clipFU == nil {
+		t.Fatal("no follow-up for --clip_l in the job spec")
+	}
+	if clipFU.Conflict == "" {
+		t.Error("the --clip_l follow-up has no Conflict in the stored spec; the reconciler will attempt a download")
+	}
+}
+
+// listCountStore wraps store.Store and records every ListEngineModels call so tests can assert the
+// lazy-fetch path without an external counter.
+type listCountStore struct {
+	store.Store
+	calls int
+}
+
+func (s *listCountStore) ListEngineModels(ctx context.Context, role string) ([]store.EngineModel, error) {
+	if role == "" {
+		// Count only the all-roles scan (role == "") used by the destination-conflict check.
+		// The role-scoped scan (role != "") is the reuse/move lookup in enginePartsHeld and
+		// is unavoidable; counting it here would make the fixture fragile to that path.
+		s.calls++
+	}
+	return s.Store.ListEngineModels(ctx, role)
+}
+
+// When all parts are already in the bucket (reuse), no ListEngineModels call must happen.
+// The destination-conflict check is only needed for download parts, and a plan that costs
+// nothing to download should never pay a full-catalogue scan either.
+func TestPlanAllReusePartsSkipListEngineModels(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, e, st, head := enginePlanAPI(t)
+
+	clipKey := "image/text_encoders/qwen_3_06b_base.safetensors"
+	vaeKey := "image/vae/qwen_image_vae.safetensors"
+	// Declare both part files as existing rows with the correct identity so enginePlanLine
+	// returns reuse for each. The stub always answers commit-a and a per-file sha.
+	for _, row := range []struct {
+		id, flag, key, file string
+	}{
+		{"enc", "--clip_l", clipKey, "split_files/text_encoders/qwen_3_06b_base.safetensors"},
+		{"vae", "--vae", vaeKey, "split_files/vae/qwen_image_vae.safetensors"},
+	} {
+		if err := st.PutEngineModel(t.Context(), store.EngineModel{
+			Role: "image", ID: row.id, Kind: "checkpoint",
+			Files: []store.EngineModelFile{{
+				Flag: row.flag, S3Key: row.key,
+				Source:           "hf:circlestone-labs/Anima/" + row.file,
+				ArtifactIdentity: engineHFArtifactIdentity("circlestone-labs/Anima", row.file, "commit-a", engineStubSHA(engineBaseName(row.file))),
+			}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		head.states[row.key] = engineStoragePresent
+	}
+	e.catalog.invalidate()
+
+	cs := &listCountStore{Store: st}
+	a.mgr.store = cs
+
+	plan := enginePlanOf(t, a, e, `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`)
+
+	// Both parts are reuse — no download parts — so ListEngineModels must not have been called.
+	for _, f := range plan.Files {
+		if (f.Flag == "--clip_l" || f.Flag == "--vae") && f.Action != enginePlanReuse {
+			t.Errorf("expected reuse for %s, got %s — fixture is wrong", f.Flag, f.Action)
+		}
+	}
+	if cs.calls != 0 {
+		t.Errorf("ListEngineModels called %d time(s) for an all-reuse plan, want 0", cs.calls)
+	}
 }

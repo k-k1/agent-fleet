@@ -2405,3 +2405,43 @@ func TestEngineAdminGeometryHealWillNotStapleAnOldShapeToANewFile(t *testing.T) 
 		t.Errorf("files = %+v, want the replacement kept", rows[0].Files)
 	}
 }
+
+// 🔴 An operator who edits the proposed id in 詳細 before pressing 取り込む sends the
+// resolve-time plan_token alongside a body whose id differs from what the plan proposed.
+// That should start the ingest, not refuse with 409 engine_plan_stale: the id names the
+// row, it does not price the act, so it must not move the token.
+func TestIngestAcceptsTokenWhenOnlyIDChanges(t *testing.T) {
+	engineHFRepoStub(t, engineAnimaRepos())
+	a, _, _, _ := enginePlanAPI(t)
+
+	// Step 1: resolve — CP proposes an id and issues a token.
+	resolveSource := `{"kind":"checkpoint","license_accepted":true,
+	  "source":{"hf":{"repo":"circlestone-labs/Anima",
+	  "file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`
+	resolvedPlan := enginePlanOf(t, a, a.reg.get("image"), resolveSource)
+	resolveToken := resolvedPlan.PlanToken
+	proposedID := resolvedPlan.ID // "anima-aesthetic-v1.1"
+
+	// Step 2: operator edits the id before pressing.
+	customID := "my-custom-name"
+	if customID == proposedID {
+		t.Fatal("test setup: custom id equals proposed id — the test would not cover the scenario")
+	}
+
+	// Step 3: press arrives with the resolve-time token but the edited id.
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
+		`{"id":"`+customID+`","kind":"checkpoint","license_accepted":true,"plan_token":"`+resolveToken+`",`+
+			`"source":{"hf":{"repo":"circlestone-labs/Anima",`+
+			`"file":"split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"}}}`))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}, super: true})
+
+	// Must NOT be 409 engine_plan_stale.
+	if rec.Code == http.StatusConflict && strings.Contains(rec.Body.String(), errCodeEnginePlanStale) {
+		t.Fatalf("id-only change = 409 engine_plan_stale (%s) — token must not depend on id", rec.Body.String())
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("press with edited id = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+}

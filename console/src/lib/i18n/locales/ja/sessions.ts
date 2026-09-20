@@ -280,7 +280,7 @@ export const sessions = {
   "srow.stop_after_turn_badge": "今のターンが終わったら停止します（再開できます）",
   "srow.stop_after_turn_hint": "今動いているターンが終わった時点でこのセッションを停止します（再開できる停止で、会話は残ります）。質問待ちや作業が続いている間は停止しません。新しい指示を送ると予約は解除されます。",
   "srow.unlock": "削除ロックを解除する",
-  "srow.locked_badge": "削除ロック中（削除・自動整理の対象外）",
+  "srow.locked_badge": "削除ロック中（削除・自動整理の対象外。この一覧に残ります）",
   "srow.locked_hint": "削除ロック中です。先にロックを解除してください。",
   "srow.archive": "アーカイブする（一覧から消す）",
   "srow.recreate": "作り直す（今の会話はアーカイブへ）",

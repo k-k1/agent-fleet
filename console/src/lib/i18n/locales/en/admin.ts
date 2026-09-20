@@ -470,6 +470,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_fit_kv": "KV cache {n} MiB (at {c} tokens, assuming f16)",
   "admin.engines_ingest_fit_kv_unread": "the KV cache could not be read — this is the weights alone",
   "admin.engines_ingest_fit_card": "{n} MiB in total, against a {c} MiB card",
+  // 🔴 The total above is the files added up, which overstates a split family — its text encoder
+  // is evicted once it has encoded. A family somebody read /system_stats for shows that number
+  // instead, and the OPERATOR enters it; the machine never writes it (ADR 0094 decision 8).
+  // Left blank, the ladder picks a rung from the total, which buys a larger box than the run needs.
+  "admin.engines_vram_measured": "measured for this family: {n} MiB ({s}, batch {b}, {i} reference picture(s), with {f})",
+  "admin.engines_vram_measured_use": "Use the measured {n}",
+  "admin.engines_vram_measured_after": "Enter it under Measured VRAM from the row's Edit once the ingest finishes.",
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
   "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Register the operator's token under \u201cHugging Face token\u201d below — it is read by the ingest task only.",
   // 🔴 A different wall from Hugging Face's gating, and there is no key to it: Civitai answers
@@ -1201,8 +1208,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.purge_do": "Delete permanently",
   // Candidate reasons — the Agent sends only the clean.reason.* key (ADR 0033).
   "clean.reason.locked": "Locked (delete-protected; not a cleanup target until unlocked)",
-  "clean.reason.archived": "Archived (exempt from auto-prune; delete to reclaim, recoverable)",
-  "clean.reason.stopped": "Stopped (resumable). Archive it to clear the list once it's finished",
+  "clean.reason.archived": "Archived (never deleted automatically; delete to reclaim, recoverable)",
+  "clean.reason.stopped": "Stopped (resumable). Archive it to clear the list once it's finished (left alone, it moves to the archive when the window is up)",
   "clean.reason.ephemeral": "Stopped shell/ssm (no conversation to keep). Deleting tidies it up",
   "clean.reason.orphan_pane": "Orphan (running pane with no metadata). Attach or tidy it in the Console",
   "clean.reason.wt_live": "A session is still running here (stop it first)",
@@ -1215,7 +1222,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.reason_badge.locked": "Locked",
   "clean.reason_hint.locked": "Delete-protected; not a cleanup target until unlocked",
   "clean.reason_badge.archived": "Archived",
-  "clean.reason_hint.archived": "Exempt from auto-prune; delete to reclaim, recoverable",
+  "clean.reason_hint.archived": "Never deleted automatically; delete to reclaim, recoverable",
   "clean.reason_badge.stopped": "Stopped (resumable)",
   "clean.reason_hint.stopped": "Archive it to clear the list once it's finished",
   "clean.reason_badge.ephemeral": "shell/ssm",

@@ -120,6 +120,11 @@ var comfyTrialSteps = map[comfyFamily]int{
 	// ADR 0094 実測 B: the same 2509 graph at 8 steps still followed the instruction (63.2 s vs
 	// 実測 A's 226.2 s at the family's own 20) — measured, not guessed like the others above.
 	ComfyFamilyQwenImageEdit2509: 8,
+	// Carried over from 2509's measurement rather than scaled with the recipe (2511 samples at 40
+	// where 2509 samples at 20). The two graphs differ in where the reference latents enter, not
+	// in how the sampler descends, and a fifth of 40 is the same kind of guess as every entry
+	// above — except that this one has a sibling that was measured.
+	ComfyFamilyQwenImageEdit2511: 8,
 }
 
 // --- the records --------------------------------------------------------------------------
