@@ -354,6 +354,88 @@ describe("model catalogue pane", () => {
     expect(document.querySelector(".engine-operation-footer")?.textContent).toContain("ファミリーを選んでください");
   });
 
+  // 🔴 The family the operator picks has to reach the PLAN, not only the press (ADR 0094 decision
+  // 7 — "one press" only holds if the card shows what the press will do). The parts a split family
+  // needs are planned from its family (engine_family_parts.go), so a card drawn before anybody
+  // chose one lists the main file alone: the operator accepts a licence and a size for one file,
+  // presses, and the CP re-plans into three — 409 `engine_plan_stale`, licence reset, press again.
+  //
+  // It is the qwen-image-edit families that made this reachable: they are the first with parts and
+  // deliberately no guess rule (a wrong family here is worse than none — engine_family_guess.go).
+  it("re-plans when the operator picks the family, so the card shows the parts the press will fetch", async () => {
+    mockEngines([{ ...imageRow, base_models: ["sdxl", "qwen-image-edit-2511"] }]);
+    const resolveBodies: (Record<string, unknown> | undefined)[] = [];
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "Comfy-Org/Qwen-Image-Edit_ComfyUI", model_ref: "Comfy-Org/Qwen-Image-Edit_ComfyUI", name: "Qwen-Image-Edit" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "split_files/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) {
+        resolveBodies.push(body);
+        const family = String(body?.base_model || "");
+        if (!family) {
+          return Promise.resolve({
+            bytes: 20_533_762_817, can_ingest: true,
+            plan: {
+              plan_token: "no-family", id: "qwen-image-edit-2511",
+              base_model_candidates: ["sdxl", "qwen-image-edit-2511"],
+              files: [{ name: "qwen_image_edit_2511_fp8mixed.safetensors", action: "download", bytes: 20_533_762_817 }],
+              bytes_to_download: 20_533_762_817,
+            },
+          });
+        }
+        return Promise.resolve({
+          bytes: 20_533_762_817, can_ingest: true,
+          plan: {
+            plan_token: "with-family", id: "qwen-image-edit-2511", base_model: family, main_flag: "--diffusion-model",
+            files: [
+              { flag: "--diffusion-model", name: "qwen_image_edit_2511_fp8mixed.safetensors", action: "download", bytes: 20_533_762_817 },
+              { flag: "--clip_l", name: "qwen_2.5_vl_7b_fp8_scaled.safetensors", action: "reuse" },
+              { flag: "--vae", name: "qwen_image_vae.safetensors", action: "reuse" },
+            ],
+            bytes_to_download: 20_533_762_817,
+          },
+        });
+      }
+      if (path.endsWith("/ingest")) return Promise.resolve({ id: "job1", model_id: "qwen-image-edit-2511", state: "pending", action: "download" });
+      return Promise.resolve({});
+    });
+    await mount();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+
+    // Before anybody picks: one file, and the selector asking for a family.
+    expect(document.querySelectorAll(".engine-plan-files li")).toHaveLength(1);
+    const family = Array.from(document.querySelectorAll<HTMLSelectElement>(".engine-catalog-plan select"))
+      .find((select) => Array.from(select.options).some((option) => option.value === "qwen-image-edit-2511"))!;
+    expect(family).toBeTruthy();
+
+    await act(async () => {
+      family.value = "qwen-image-edit-2511";
+      family.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+
+    // The choice reached the CP, and the card now prices the three files the press will act on.
+    expect(resolveBodies.some((sent) => sent?.base_model === "qwen-image-edit-2511")).toBe(true);
+    const lines = Array.from(document.querySelectorAll(".engine-plan-files li")).map((li) => li.textContent);
+    expect(lines).toHaveLength(3);
+    expect(lines.join(" ")).toContain("--clip_l");
+    expect(lines.join(" ")).toContain("--vae");
+    // 🔴 And the licence is asked again: what is being accepted changed under it.
+    expect((button("取り込む") as HTMLButtonElement).disabled).toBe(true);
+    // 🔴 The selector is still there. The CP offers candidates only while it cannot name the
+    // family, so the re-plan answers with none — and drawing the selector from that answer alone
+    // would take it away from the person the moment they used it.
+    const stillThere = Array.from(document.querySelectorAll<HTMLSelectElement>(".engine-catalog-plan select"))
+      .find((select) => Array.from(select.options).some((option) => option.value === "qwen-image-edit-2511"));
+    expect(stillThere?.value).toBe("qwen-image-edit-2511");
+
+    await acceptLicence();
+    await click(button("取り込む"));
+    const press = apiJSON.mock.calls.find((call) => String(call[0]).endsWith("/ingest") && call[1] === "POST");
+    expect((press![2] as { plan_token: string }).plan_token).toBe("with-family");
+  });
+
   it("includes the LLM KV cache in the plan's VRAM fit line", async () => {
     mockEngines([{ ...llmRow, class: { vram_mib: 21000 } }]);
     apiJSON.mockImplementation((path: string) => {

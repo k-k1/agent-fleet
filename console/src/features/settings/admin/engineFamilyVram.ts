@@ -9,22 +9,32 @@
 //
 // Why it is worth a press: without a declaration the Control Plane falls back to the sum of the
 // row's files (engineModelVramNeed's floor), and for a split family that sum is far above what the
-// run actually uses — the text encoder is evicted after it encodes. Measured on the development
+// run actually uses — the text encoder is evicted once it has encoded. Measured on the development
 // deployment 2026-09-20: qwen-image-edit-2509's files total 28,676 MiB, the run used 20,862, and
 // the difference decides which RUNG of the class ladder the deployment buys (22,000 MiB L4 against
 // a 45,458 MiB L40S). The column is a cost control as much as a safety one.
+//
+// 🔴 And it is the WEIGHTS FILE that was measured, not the family. `vram_mib` overrides the
+// file-sum floor outright (engine_class.go: `m.VramMiB > 0` short-circuits it), so a number
+// carried across builds is a number that sizes a GPU for weights it was never taken with: the
+// bf16 build of this same family is 40.86 GB and does not fit an L4 at all, and a Q4 conversion
+// would over-declare and buy a bigger rung than it needs — the two failures this feature exists
+// between. So a measurement names its file, and it is offered only to a row that holds that file.
 //
 // ⚠️ A family with no entry here is the normal case, not a gap — nobody has measured it on this
 // deployment. Nothing is drawn for those, because an estimate presented as a measurement is the
 // failure this whole table exists to avoid.
 
 /** One family's measurement, with the conditions it holds for. The conditions are not decoration:
- *  VRAM scales with the picture and the batch, so the same family at a larger size is a different
- *  number this deployment has not taken. */
+ *  VRAM scales with the picture, the batch and the build, so the same family at a larger size —
+ *  or in another quantisation — is a different number this deployment has not taken. */
 export interface FamilyVramMeasurement {
   /** MiB in use at the peak of a run, read from the engine's own `/system_stats`
    *  (`vram_total` − `vram_free`). */
   mib: number;
+  /** The weights file it was measured with, as the upstream publishes it. The offer is made to a
+   *  row holding THIS file and no other build of the family. */
+  file: string;
   /** The picture size it was measured at, `WxH`. */
   size: string;
   /** Pictures per request. */
@@ -33,18 +43,42 @@ export interface FamilyVramMeasurement {
   inputs: number;
 }
 
-export const FAMILY_VRAM_MEASURED: Record<string, FamilyVramMeasurement> = {
+/** A Map rather than an object literal, and that is not style: a plain object answers
+ *  `["constructor"]` with a function, which `?? null` does not catch — and an image row on an
+ *  engine that lists no families has a free-text family field, so an arbitrary string reaches
+ *  this lookup and would render `.mib` of a Function. `families.ts` uses a Map for the same
+ *  reason. */
+export const FAMILY_VRAM_MEASURED = new Map<string, FamilyVramMeasurement>([
   // ADR 0094 実測: `vram_total` 23,659,151,360 B and `vram_free` 1,783,934,774 B on an L4 24GB,
   // i.e. 20,862 MiB in use, at 1024² with one reference picture.
-  "qwen-image-edit-2509": { mib: 20862, size: "1024x1024", batch: 1, inputs: 1 },
+  ["qwen-image-edit-2509", {
+    mib: 20862, file: "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+    size: "1024x1024", batch: 1, inputs: 1,
+  }],
   // 🔴 qwen-image-edit-2511 is deliberately absent until somebody reads /system_stats during a
   // 2511 run. It loads a diffusion model 0.1 GB larger than 2509's through the same graph, so the
   // number is *probably* within a few hundred MiB — and "probably" is exactly what this column is
   // not allowed to contain.
-};
+]);
 
-/** The measurement for a row's `base_model`, or null when nobody took one. */
-export function familyVramMeasurement(family: string | undefined | null): FamilyVramMeasurement | null {
+/**
+ * The measurement for a row's `base_model`, or null.
+ *
+ * `files` is what the row or the plan actually holds — S3 keys or upstream file names, either
+ * way. Null when nobody measured this family, and null when they measured a DIFFERENT build of
+ * it: silence is the honest answer to "how much does this one need", and the field stays the
+ * operator's to type.
+ */
+export function familyVramMeasurement(
+  family: string | undefined | null,
+  files: (string | undefined)[],
+): FamilyVramMeasurement | null {
   if (!family) return null;
-  return FAMILY_VRAM_MEASURED[family.trim().toLowerCase()] ?? null;
+  const measured = FAMILY_VRAM_MEASURED.get(family.trim().toLowerCase());
+  if (!measured) return null;
+  const holdsIt = files.some((name) => {
+    const clean = (name || "").trim();
+    return clean === measured.file || clean.endsWith(`/${measured.file}`);
+  });
+  return holdsIt ? measured : null;
 }

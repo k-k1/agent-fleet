@@ -1316,6 +1316,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
   const [idEdited, setIdEdited] = useState(false);
   const [description, setDescription] = useState("");
   const [baseModel, setBaseModel] = useState("");
+  const [familyChoices, setFamilyChoices] = useState<string[]>([]);
   const [context, setContext] = useState("");
   const [output, setOutput] = useState("");
   const [accepted, setAccepted] = useState(false);
@@ -1403,12 +1404,26 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
   // (ADR 0089) — inspects itself. Opened empty, it waits for somebody to paste and press 調べる.
   useEffect(() => { if (hit || initialRef) void inspect(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
+  // The family the CP is asked to plan FOR: an image checkpoint's only, because that is what the
+  // parts table and the main file's role are keyed by. An LLM LoRA's "base" is a registered
+  // model's id, which is not a family and would be planned as an unknown one.
+  const plannedFamily = image && !isLora ? baseModel : "";
+  // 🔴 The family is SENT, and a change to it re-plans (ADR 0094 decision 7). The parts a split
+  // family needs are planned from it (engine_family_parts.go), so a card drawn while it is still
+  // unknown prices the main file alone — and the press, which does send it, re-plans into three
+  // and answers 409 `engine_plan_stale`. The person then accepts the licence again and presses
+  // again, which is the "one press" this deployment's ingest is built around, spent twice.
+  //
+  // Reachable because a family the CP cannot guess is now a real case: the qwen-image-edit
+  // families deliberately have no guess rule (a wrong family here silences the row's only mark —
+  // engine_family_guess.go), so the selector is the ONLY place their family ever comes from.
   useEffect(() => {
     if (!file) return;
     let live = true;
     setResolved(null); setPlan(null); setAccepted(false); setReplanned(false);
     apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/resolve`, "POST", {
       source: sourceBody(file), kind: isLora ? "lora" : image ? "checkpoint" : "gguf",
+      ...(plannedFamily ? { base_model: plannedFamily } : {}),
     }).then((answer) => {
       if (!live) return;
       if (answer?.error) { setErr(answer.error as EngineApiError); return; }
@@ -1418,6 +1433,10 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         setPlan(found.plan);
         if (!idEdited) setId(found.plan.id || "");
         if (found.plan.base_model) setBaseModel(found.plan.base_model);
+        // Remembered, because the CP offers candidates only while it cannot name the family
+        // itself: the re-plan our own choice causes answers with none, and the selector would
+        // disappear under the person who just used it.
+        if (found.plan.base_model_candidates?.length) setFamilyChoices(found.plan.base_model_candidates);
       }
       if (found.context_length && !context) {
         // 🔴 The ceiling is not the setting (ADR 0089). The CP sends `context_length` labelled as
@@ -1446,15 +1465,24 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
     });
     return () => { live = false; };
     // Existing typed settings deliberately outrank metadata suggestions.
+    //
+    // ⚠️ `baseModel` is a dependency and the effect also SETS it, which is a loop unless the CP
+    // echoes what it was sent — it does (enginePlanFor prefers the body's `base_model` over its
+    // own guess), so the second pass sets the same string and React stops there. An answer that
+    // named a different family would spin, and that is the invariant to keep if either side moves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, image, isLora, row.key, sourceBody]);
+  }, [file, image, isLora, row.key, sourceBody, plannedFamily]);
 
   // The family is asked ONLY when the CP could not read one, and only from the candidates it
   // knows. An LLM LoRA is pinned to a registered model rather than to a family name.
   const familyOptions = isLora && !image
     ? (row.model_rows || []).filter((model) => model.kind !== "lora").map((model) => model.id)
-    : plan?.base_model_candidates || [];
+    : plan?.base_model_candidates?.length ? plan.base_model_candidates : familyChoices;
   const needsFamily = !plan?.base_model && familyOptions.length > 0;
+  // Drawn while the answer is still ours to change, which outlasts `needsFamily`: once the choice
+  // has been sent the plan names a family and the press is no longer blocked, but the person is
+  // still looking at a card they may want to re-aim.
+  const asksFamily = familyOptions.length > 0 && (needsFamily || !!baseModel);
   const bytes = plan?.bytes_to_download ?? resolved?.bytes ?? 0;
   const contextTokens = Number(context.trim().replace(/[_,]/g, "")) || 0;
   const weightsMiB = bytes ? Math.round(bytes / 1048576) : 0;
@@ -1467,8 +1495,11 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
   const needMiB = fit.needMiB;
   // The family this press would take in is the plan's when the CP read one, and the operator's
   // answer when it had to ask (ADR 0094 decision 8 — the measurement is shown for the family, so
-  // it must follow the selector rather than the plan alone).
-  const ingestMeasured = image && !isLora ? familyVramMeasurement(plan?.base_model || baseModel) : null;
+  // it must follow the selector rather than the plan alone), narrowed to the build the plan would
+  // actually stage.
+  const ingestMeasured = image && !isLora
+    ? familyVramMeasurement(plan?.base_model || baseModel, (plan?.files || []).map((f) => f.name))
+    : null;
   const missing = (() => {
     if (!repo) return tr("admin.catalog_need_source" as never) as string;
     if (!plainURL && !versionRef) return tr("admin.catalog_need_version" as never) as string;
@@ -1540,7 +1571,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         <label><span>{tr(plainURL ? "admin.catalog_checksum" as never : "admin.catalog_file" as never)}</span>{files.length
           ? <select value={file} onChange={(event) => setFile(event.currentTarget.value)}><option value="">{tr("admin.catalog_pick_file" as never)}</option>{files.map((candidate) => <option key={candidate.ref || candidate.name} value={candidate.name}>{candidate.name}</option>)}</select>
           : <input value={file} onChange={(event) => setFile(event.currentTarget.value)} placeholder={plainURL ? "sha256" : "model.safetensors"} />}</label>
-        {needsFamily && <label><span>{tr(isLora && !image ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)}>
+        {asksFamily && <label><span>{tr(isLora && !image ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)}>
           <option value="">{tr(isLora && !image ? "admin.engines_model_add_lora_base_pick" : "admin.engines_model_add_family_pick")}</option>{familyOptions.map((base) => <option key={base} value={base}>{base}</option>)}</select></label>}
       </div>
       {file && !plan && !err && <p className="muted engine-plan-building"><Icon name="loading" spin /> {tr("admin.catalog_plan_building" as never)}</p>}
@@ -1604,7 +1635,8 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
       {ingestMeasured && <p className="muted engine-operation-vram-measured">
         {(tr("admin.engines_vram_measured" as never) as string)
           .replace("{n}", ingestMeasured.mib.toLocaleString()).replace("{s}", ingestMeasured.size)
-          .replace("{b}", String(ingestMeasured.batch)).replace("{i}", String(ingestMeasured.inputs))}
+          .replace("{b}", String(ingestMeasured.batch)).replace("{i}", String(ingestMeasured.inputs))
+        .replace("{f}", ingestMeasured.file)}
         {" "}{tr("admin.engines_vram_measured_after" as never)}
       </p>}
       <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
@@ -1799,10 +1831,12 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   const editBestWindow = !image && !lora
     ? windowThatFits(editWeightsMiB, editKvPer1k, editCardMiB, model.context_length || 0)
     : 0;
-  // What somebody measured this family at, when anybody has (ADR 0094 decision 8). Read off the
-  // family being EDITED rather than the row's stored one, so correcting the family and taking the
-  // measurement are the same visit.
-  const editMeasured = image && !lora ? familyVramMeasurement(baseModel) : null;
+  // What somebody measured this family at, when anybody has, and only for the BUILD they measured
+  // (ADR 0094 decision 8). Read off the family being EDITED rather than the row's stored one, so
+  // correcting the family and taking the measurement are the same visit.
+  const editMeasured = image && !lora
+    ? familyVramMeasurement(baseModel, (model.file_rows || []).map((f) => f.s3Key))
+    : null;
   const invalidVram = vramNumber === null;
   const invalidBase = !image && lora ? !baseChoices.includes(baseModel) : image && baseChoices.length > 0 && !baseChoices.includes(baseModel);
   const validation = invalidWindow ? tr("admin.catalog_edit_window_invalid" as never) : invalidVram ? tr("admin.catalog_edit_vram_invalid" as never) : invalidBase ? tr("admin.engines_wizard_need_family") : "";
@@ -1840,7 +1874,8 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
     {editMeasured && <p className="muted engine-operation-vram-measured">
       {(tr("admin.engines_vram_measured" as never) as string)
         .replace("{n}", editMeasured.mib.toLocaleString()).replace("{s}", editMeasured.size)
-        .replace("{b}", String(editMeasured.batch)).replace("{i}", String(editMeasured.inputs))}
+        .replace("{b}", String(editMeasured.batch)).replace("{i}", String(editMeasured.inputs))
+        .replace("{f}", editMeasured.file)}
       {" "}
       <Button variant="ghost" disabled={busy || vramNumber === editMeasured.mib}
         onClick={() => setVram(String(editMeasured.mib))}>

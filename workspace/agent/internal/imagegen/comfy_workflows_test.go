@@ -1012,3 +1012,21 @@ func TestComfyWorkflowQwenImageEditChainsLoras(t *testing.T) {
 		}
 	}
 }
+
+// A family wired to the shared instruction-edit builder without a comfyQwenEditWirings row is
+// refused, not silently sampled at shift 0 with no reference-method node — the zero value is a
+// topology nobody has run, and it would come back as a worse picture rather than as an error.
+func TestComfyWorkflowQwenImageEditRefusesAnUnwiredFamily(t *testing.T) {
+	p := comfyGoldenParams
+	p.Op, p.Image = OpEdit, "af-photo.png"
+	_, err := comfyGraphQwenImageEdit(comfyQwenEditFiles, p, comfyFamily("qwen-image-edit-2599"))
+	if err == nil {
+		t.Fatal("a family with no wiring built a graph")
+	}
+	// The control: the two that ARE wired still build.
+	for _, c := range comfyQwenEditFamilies {
+		if _, err := comfyGraphQwenImageEdit(c.files, p, c.family); err != nil {
+			t.Errorf("%s: %v", c.family, err)
+		}
+	}
+}
