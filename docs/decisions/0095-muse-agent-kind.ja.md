@@ -62,8 +62,9 @@ workflow・セッション間メッセージング・スキル・メモリを持
   `console/src/lib/agentModels.ts:34-35`、色トークン `console/src/styles/tokens.css:109-117`（dark）と
   `:259-`（light）、使用量の積み順 `console/src/features/usage/colors.ts:81`。
 - `"muse": "meta"` は **既に** モデル族の接頭辞として `workspace/agent/model_provider.go:69` にある。
-- 版は Dockerfile の `ARG` でピンし（npm 3 種は `workspace/Dockerfile:318-320`、cursor の版付き tarball は
-  `:404-411`）、`workspace/agent/env_tool_versions.go` が表に出す。
+- 版は Dockerfile の `ARG` でピンし（npm 4 種＝claude / opencode / codex / copilot は
+  `workspace/Dockerfile:318-321`、cursor の版付き tarball は `:404-411`）、
+  `workspace/agent/env_tool_versions.go` が表に出す。
 
 ## 決定
 
@@ -80,27 +81,45 @@ workflow・セッション間メッセージング・スキル・メモリを持
 **「ブランド色にする」決定と「どの値か」は別問題である。** Meta ブルーは `--kind-agy: #4285f4` と
 `--kind-ssm: #6d8bf5`（`tokens.css:112,117`）に続く 3 本目の青になる。ブランド値をそのまま使えるかは、
 着手前に両テーマを実描画して既存 9 種別との ΔE2000 を測って決める（docs/log/74 §8.2 が 3 本目の青で
-やった手順）。`KIND_STACK_ORDER`（`colors.ts:81`）で青を 3 つ隣接させないこと。
+やった手順）。積み上げグラフはそれより狭い問題である——`KIND_STACK_ORDER`（`colors.ts:81`）はチャット 7
+種別だけを持ち shell / ssm を**含まない**ので、そこで隣接させてはいけないのは agy と muse の 2 青であって
+3 青ではない。
 
 ### 決定 2 — `muse` は managed 専用。Terminal（CLI）経路は作らない
 
 MSP はペインが与えるもの（状態・承認・ステアリング・fork・使用量・スキル・モデル一覧）を既に全部運ぶので、
-tmux ペインを足しても得られるのは「二つ目の UI」と「維持すべき文字列契約」だけである。これは ADR 0093
-決定 2 が `lcpp` について提案している形と同じで、費用も同じ——「Terminal 経路を持たない」門は Console の
-5 箇所＋サーバ側の managed→TUI 遷移
+tmux ペインを足しても得られるのは「二つ目の UI」と「維持すべき文字列契約」だけである。
+
+**作成経路もこの門の一部で、今は逆向きに既定化されている。** `POST /sessions` は driver が空でも明示の
+`tui` でも `""` に正規化する（`sessionx/session_handlers.go:650-668`）。この種別では `""` を `managed` に
+解決し、明示の `tui` は 400 で拒否しなければならない。driver を送らない呼び手——ハンドオフ、spawn、
+REST と MCP の create、そして自前の kind 一覧で paneless を決める Control Plane のスケジューラ
+（`control-plane/scheduler_wake.go:277-285`）——が、存在し得ないペインを要求してしまう。
+
+これは ADR 0093 決定 2 が `lcpp` について提案している形と同じで、費用も同じ——「Terminal 経路を持たない」
+門は Console の 5 箇所＋サーバ側の managed→TUI 遷移
 （`console/src/features/repos/{LaunchModal.tsx,StartModal.tsx,RepoRowConnected.tsx}`、
 `console/src/features/sessions/{SessionMenu.tsx,useSessionActions.tsx}`、
-`workspace/agent/internal/sessionx/session_driver.go:62-105`）。**0093 と 0095 のうち先に着地した方が
-払い、後の方は無料で貰う。** 着手時点でどちらも未着地なら、この費用は本種別の見積りに入る。
+`workspace/agent/internal/sessionx/session_driver.go:62-105`）＋上の作成経路の既定化である。
+**0093 と 0095 のうち先に着地した方が払い、後の方は無料で貰う。** 着手時点でどちらも未着地なら、この費用は
+本種別の見積りに入る。
 
 ### 決定 3 — `per-session-child`。セッションごとに `muse serve` を 1 本
 
 MSP は 1 プロセスで複数セッションを抱えられる（`session/list`・接続ごとの自動購読）ので共有デーモンも
-可能だが、v1 では採らない。理由はプロトコル自身の言葉にある——ホストの **サンドボックス姿勢とセッションの
-耐久性はホストの寿命の間固定で、ワイヤ上で交渉できない**（`muse serve --help`）。ある AF セッションの
-作業根・拒否リスト・承認姿勢を、別のセッションが決めてよい道理は無い。待機 **73 MiB**（実測）なら
-セッションごとの子は買える——claude のペインの 3 分の 1 である。`Capabilities.ProcessModel =
-"per-session-child"` は cursor / kiro / copilot が既に使う値なので、enum の追加は要らない。
+可能だが、v1 では採らない。理由は「固定の値があるから」ではなく **どの摘みがホスト単位か** である——
+承認モードはワイヤ上でセッション単位なので、それだけでは決め手にならない。`muse serve --help` で実測した
+ホスト寿命固定の摘みは、サンドボックス姿勢・`--sandbox-network`・**`--disable-write`**・
+**`--disable-shell`**・**`--trust-workspace`**・セッションの耐久性である。Agent Fleet はまさにそこを
+セッションごとに変える（起動時の許可選択、read-only や plan の姿勢はセッション単位の決定である）。共有
+ホストにすると、先に始まったセッションの姿勢が後続すべての姿勢になる。副次的な理由が 2 つ——ホストが落ちれば
+載っている全セッションが落ち、1 セッションを止めるのに他が載ったプロセスを畳む必要が出る。待機
+**73 MiB**（実測）ならセッションごとの子は買える——claude のペインの 3 分の 1 である。
+`Capabilities.ProcessModel = "per-session-child"` は cursor / kiro / copilot が既に使う値なので、enum の
+追加は要らない。
+
+共有デーモンは永久却下ではなく再評価する。条件は、待機ではなく**負荷時**のセッションあたり常駐費が問題に
+なる水準だと測れること、そして write / shell / trust の姿勢をワイヤ上でセッションごとに表現できることの 2 つ。
 
 ### 決定 4 — 転写は「動いている間は MSP、止まっていれば JSONL」
 
@@ -122,13 +141,27 @@ MSP は 1 プロセスで複数セッションを抱えられる（`session/list
 写す。
 
 これは免除であり、ADR として免除と明記する。Workspace の中では箱そのものが境界であり、それは他の 9 種別
-——どれも自分をサンドボックスしない——でも既に同じである。`bwrap` を焼いてホストが許す日が来たら見直す
-（段 1 の門 A）。
+——どれも自分をサンドボックスしない——でも既に同じである。
+
+**この免除は恒久になる見込みで、その根拠は実測にある。** 拒否はバイナリの不在でも、片方のマウント API
+だけの事情でもない。ユーザー名前空間の中でこの箱は、`move_mount`（util-linux が優先する新 API）も、
+bubblewrap 自身が呼ぶ**旧来の `mount(2)`** も、どちらも EACCES で拒む——`LIBMOUNT_FORCE_MOUNT2=always`
+で旧経路を強制して測った。したがって `bwrap` を焼く作業は既に出た答えの確認でしかない。段 1 の門 A は
+そのための門であり、期待される結果は「決定 5 の免除は恒久」と記録することである。覆るのは**ホスト側**が
+許す範囲（LSM ポリシー・seccomp・ケーパビリティ）が変わったときだけである。
 
 ### 決定 6 — `~/.config/muse/settings.json` は AF が持ち、5 つの挙動を締める
 
-このファイルは `"schema_version": 1` が無いと **全コマンドが起動時に落ちる**ので、盲目的にマージせず
-書く。読み書きはストアの作法を通す（素の `os.WriteFile` は同居セッションの鍵を落とす）。AF が設定するのは:
+このファイルは `"schema_version": 1` が無いと **全コマンドが起動時に落ちる**ので、盲目的にマージせず書く。
+**書き手はただ 1 つ、MCP materialize のそれである。** 下の締め付けと決定 11 の `mcp_servers` は同じ
+ファイルの別ブロックであり、しかも Muse 自身も書く（実測: 初回実行が `settings.json` と自前の
+`~/.config/muse/.settings.json.lock` を作った）。1 ファイルに 3 人の書き手と 2 つの錠は lost update に
+なる。よって設定の書き手は直列化された read-merge-rename の単一所有者とし、既存の `materializeMu`
+（`mcpreg/materialize.go:94-109`）を拡張する（隣に 2 つ目の mutex を置かない）。書く間は Muse 自身の
+ロックファイルも取り、**自分が所有しない鍵は全部保つ**——利用者の `tui`・モデル既定・テレメトリの鍵は
+AF の書き込みを生き延びる。
+
+AF が設定するのは:
 
 1. `agents.execution_capacity` を小さく。放っておくと 1 セッションが、メモリ制約のある共有ホストで
    8 エージェントを走らせる。
@@ -145,11 +178,13 @@ Muse 自身のピアメッセージングとセッション名の権威
 **繋がない**。1 つの名前空間に 2 つの経路があり、片方がミラーに映らない——それが
 `native-peer-channel-invisible-in-mirror` の起き方だった。ガイドには「在るが AF からは見えない」と書く。
 
-### 決定 7 — この種別はリポジトリにも他セッションの机にも触れない
+### 決定 7 — 触ってよいのは自分の作業コピーのファイルだけ。ブランチも worktree もリポジトリ全体のメタデータも作らない
 
-実測のとおり Muse の worktree 実行は `.git/info/exclude` を書き換え、それはリンク worktree では親クローンの
-ファイルである。よって `-w` は渡さず、worktree 隔離は OFF（決定 6）、この種別は「ブランチも worktree も
-作らない種別」として宣言する。並行して書きたい利用者には AF 自身の worktree がある。それが worktree の
+自分の作業コピーの管理下ファイルを編集するのは仕事そのものであり、この決定が縛る対象ではない。縛るのは
+ファイルの**周り**——リポジトリ全体のメタデータ、ブランチ、worktree、そしてこのセッションの作業コピーの外に
+ある全経路である。実測のとおり Muse の worktree 実行は `.git/info/exclude` を書き換え、それはリンク
+worktree では親クローンの、全セッション共有のファイルである。よって `-w` は渡さず、worktree 隔離は OFF
+（決定 6）、この種別は「ブランチも worktree も作らない種別」として宣言する。並行して書きたい利用者には AF 自身の worktree がある。それが worktree の
 用途である。
 
 ### 決定 8 — 配備はピン版の焼き込み。`~/.local/bin` の影を見張る
@@ -168,8 +203,16 @@ release マニフェストがプラットフォーム別に url・sha256・サ�
 
 ### 決定 9 — 資格情報は保存型 API キー、入力は 1 回
 
-`muse auth set`（キーは stdin）で `~/.config/muse/auth.json` に保存し、`~/.config/muse` をファイル拒否
-リストに足す。子プロセスの環境変数に `META_API_KEY` を撒く形は採らない。cursor が env 注入を断った理由
+**`muse auth set --api-key-stdin`**——このフラグは省略できない。バイナリ自身の usage が
+`muse auth set [--provider <PROVIDER>] --api-key-stdin` で、キーは「コマンドラインに一切載らない」と
+書いてある（1.3.0 で実測）。保存先は `~/.config/muse/auth.json`。
+
+**ファイル拒否リストに入れるのは 1 つでなく 2 つ**: `~/.config/muse`（資格情報）と
+`~/.local/share/muse`（全セッションの会話全文と、利用者横断のセッション名権威）。前例はそのままある——
+`fs.go:131-137` は同じ理由（資格情報**と**セッションストア）で `.local/share/opencode`・`.codex`・`.kiro`
+を既に拒否している。
+
+子プロセスの環境変数に `META_API_KEY` を撒く形は採らない。cursor が env 注入を断った理由
 （ADR 0023）がそのまま効き、さらに **API キーは常に保存済みサインインに優先する**ので、env のキーは後から
 サインインした利用者を黙って無効化する。よって接続カードは **入力 1 つ**——既存のどの種別より簡単である。
 切断は `muse logout`。
@@ -181,8 +224,12 @@ release マニフェストがプラットフォーム別に url・sha256・サ�
 ### 決定 10 — 使用量とモデル一覧はプロトコルに乗る
 
 `usage/read`・`session/tokenUsage`・`session/contextUsage` がワイヤにあるので、`muse` は
-`usageMeasuredForKind` の **exact** 集合（`usage_fold.go:206`）に入る見込みである。ただし実ターンを 1 回
-測った後に限る——測っていない「exact」こそ、あの switch が防ぐために存在する嘘そのものである。
+`usageMeasuredForKind` の **exact** 集合（`usage_fold.go:206`）に入る見込みである。ただし測っていない
+「exact」こそあの switch が防ぐために存在する嘘そのものであり、**成功ターン 1 本はその証拠にならない**。
+門は段 1 門 B1 の会計マトリクスである: キャッシュ入力が別に数えられるか、subagent とオブザーバの呼び出しが
+帰属する（か、除外されると示せる）か、失敗ターンと中断ターン、`session/resume` 後の数字（二重計上が無い
+こと）、そして値が累積か毎ターンか——累積カウンタを差分として畳むのが、台帳が黙って倍になる手口である。
+これに満たなければ `MeasuredPartial` に落とす。そちらが正直で、`MeasuredExact` はそうではない。
 `model/list` がピッカーを支えるので、`agentModels.ts:34-35` の `isDynamic` に `muse` を足すこと。この 1 行は
 新種別のたびに漏れてきた（copilot・cursor）もので、症状は「モデル選択肢が既定だけ」である。
 
@@ -190,13 +237,52 @@ release マニフェストがプラットフォーム別に url・sha256・サ�
 
 `mcp_servers` は同じ `settings.json` の中のブロックで、`transport: stdio | streamable_http`、
 `command`/`args`/`env` か `url`/`headers`、`enabled`、そして **`mode`（既定 `required`）——required の
-サーバが起動に失敗すると実行全体が中断する**。AF は利用者が明示しない限り `mode: optional` で materialize
-する。壊れたテナントのサーバのせいでエージェントが起動を拒むのは筋が悪い。`${VAR}` 展開があり、stdio
-サーバには `MUSE_SESSION_ID` が渡る。`muse` は `knownKinds`（`mcpreg/def.go:57`）と `MaterializedKinds`
-（`materialize.go:47`）の両方に入る。プロジェクトスコープの Muse 綴りは文献に無いので、`mcpproj` は
-muse に対して他種別のファイルを読むだけとし、複製先にはしない。フック（`.muse/hooks.json`、`Stop` や
+サーバが起動に失敗すると実行全体が中断する**。AF は **全サーバを `mode: optional`** で materialize し、
+利用者に選ばせない。壊れたテナントのサーバのせいでエージェントが起動を拒むのは筋が悪く、しかも登録簿に
+その選択を置く場所が無い——`secrets.MCPServer`（`workspace/agent/internal/secrets/secrets.go:302-324`）は
+`enabled`・`targets`・`kinds`・`timeoutMs` は持つが `mode` を持たないので、選ばせるなら欄の新設＋ワイヤ＋
+Console＋保存済み定義の移行が要る。段 2 で発見するのではなく、ここで対象外と名指ししておく。
+
+`${VAR}` 展開があり、stdio サーバには `MUSE_SESSION_ID` が渡る。`muse` は `knownKinds`
+（`mcpreg/def.go:57-61`）と `MaterializedKinds`（`materialize.go:47`）に入る。プロジェクトスコープは
+`mcpproj` の `kindInfos`（`mcpproj/inspect.go:50-58`）に **`HasProjectScope: false`** で入る——agy と同じ形
+——Muse のプロジェクトスコープ綴りが文献に無いからである。`fileSpecs`（`inspect.go:35-43`）には行を足さない
+ので、muse は点検対象でも複製先でもない。これは種別についての静的な事実であって、実行時に他種別のファイルへ
+落ちる仕掛けではない。フック（`.muse/hooks.json`、`Stop` や
 `Notification` を含む 15 のライフサイクルイベント）は**使わない**。フックが報せることはプロトコルが既に
 報せており、リポジトリ内のフックファイルは共有状態だからである。
+
+### 決定 12 — プロジェクト指示層はタダで通る。利用者層とフリート層は実測の穴であり、`instrSupportedKinds` はそれを待つ
+
+プロジェクトスコープには何も要らない。Muse はリポジトリ自身の `AGENTS.md` / `CLAUDE.md` を読む（文献上の
+探索順は `AGENTS.md`・`CLAUDE.md`・`.agents/AGENTS.md`・`.claude/CLAUDE.md`、workspace を信頼した後）。
+このリポジトリには既にある。
+
+残る 2 層は決定 6 のスイッチでは解けない。他 CLI の個人文脈を切るのは Muse が `~/.claude` と `~/.codex` を
+読むのを止めるだけで、Agent Fleet のフリート方針や利用者自身の指示を**届けはしない**。
+`instrSupportedKinds`（`workspace/agent/agent_instructions.go:83`）の 6 種別では、それは種別ごとの
+利用者スコープのファイルに書き込まれている。**Muse のそれがどこかは確定していない**——echo provider の
+実行を信頼あり／なしの両方で追跡しても、開いた経路はプロジェクト直下の `.agents` の探索だけだった（その
+provider ではルールの組み立てが走らないため）。よって `muse` が `instrSupportedKinds` に入るのは
+**利用者スコープの書込先を実測した後**（段 1 門 B1 が会計マトリクスと同じ実行で測る）。それまではプロジェクト
+指示だけで出荷し、ガイドにそう書く——利用者に「フリート方針も届いているはず」と誤解させない。
+
+## 段 2 が触る面
+
+下の点検表は、2 つの種別が抜けを抱えたまま出荷したあとに docs/log/43 §4 と docs/log/74 §8 が規則にした
+ものである。アンカーは全て `06ea94d3` で読み直した。これが見積りの土台であり、省ける項目は無い。
+
+| 面 | 箇所 |
+|---|---|
+| 種別の同一性 | `session.go:20-28`、`sessionx/agent.go:28-38`、`sessionx/session_turn.go:31-37`（managed ドライバ表） |
+| managed 専用の門 | `sessionx/session_handlers.go:650-668`（作成既定）、`session_driver.go:62-105`、Console の起動／driver 切替 5 箇所、`control-plane/scheduler_wake.go:277-285` |
+| 接続とログイン | 接続状態、**両方**の `routes.go`（Agent と CP。`control-plane/routes.go:869-873` が kiro の前例）、そして CP の REST プロキシ許可リスト——これの漏れが「使用量チップが出ない」の真因になる |
+| モデルとベンダ | `console/src/lib/agentModels.ts:34-35`（`isDynamic`）、`workspace/agent/model_provider.go:122`（`modelKindVendor`） |
+| 使用量 | `usage_fold.go:204-212`、積み上げ色 `console/src/features/usage/colors.ts:81` |
+| MCP | `mcpreg/def.go:57-61`、`mcpreg/materialize.go:47,74-87`、`mcpproj/inspect.go:50-58`、および `af` MCP ツール説明文の中の kind 列挙（`control-plane/internal/mcpsrv/mcp.go:295,473,487,518`）——説明文は全セッションの固定トークン費なので、増やすのではなく書き換える |
+| Console の面 | `console/src/agents/registry.ts` の記述子、`console/src/lib/settings.ts:963` の起動既定、`console/src/lib/brandicons.ts:36`、`console/src/lib/termcolor.ts:19`、`console/src/styles/tokens.css`（dark と light の対） |
+| 文言 | `bridge/format.go` の `kindLabel`、Console の i18n 目録（en＋ja）、利用ガイド、`guide/ref` の能力表——`scripts/docs-check.py` が `Caps()` と両言語を突き合わせる |
+| テスト | MSP スキーマ指紋のドリフト検査、routes・contract テスト、焼いた版文字列を突合する e2e smoke |
 
 ## 却下した案
 
@@ -228,10 +314,25 @@ muse に対して他種別のファイルを読むだけとし、複製先には
 - **ドリフトには鍵がある**: `muse schema` はオフラインで、release マニフェストには
   `msp_schema_fingerprint` がある。焼いたバイナリの指紋と、生成した型が拠った指紋の一致をテストにすれば、
   黙ったプロトコル変更が赤いビルドになる。他のどの種別にも無い仕掛けである。
-- **見積り**: managed 専用・TUI 資産なしで ≈ **12〜18 セッション日**。kiro より小さくならないのは、
-  節約分（ペイン無し・スクレイプ無し）を設定方言・MSP クライアントと型・承認の往復・subagent の描画・
-  配備に使い切るからである。規模の錨: 今 `kiro` に言及する Go は 90 ファイル・Console は 41 ファイル、
-  既存種別は 1 つあたり非テスト 2,100〜5,950 行。
+- **見積り**: managed 専用・TUI 資産なしで ≈ **14〜20 セッション日**、内訳は下表。規模の錨は種別横断の
+  棚卸し（今 `kiro` に言及する Go は 90 ファイル・Console は 41 ファイル、既存種別は 1 つあたり非テスト
+  2,100〜5,950 行）だが、議論すべきはこの分解の方である:
+
+  | 作業パッケージ | 日数 |
+  |---|---|
+  | MSP クライアント・生成型・指紋のドリフト検査 | 3〜4 |
+  | ドライバ＋`ThreadHandle`（7 メソッド）・状態・ステアリング・中断・resume 突合 | 3〜4 |
+  | 転写: ライブの項目と静止時の JSONL、subagent の項目 | 2〜3 |
+  | 設定の単一書き手＋締め付け＋MCP 方言 | 2〜3 |
+  | 承認の往復と許可選択の写像 | 1〜2 |
+  | 接続カード・両 `routes.go`・REST 許可リスト・拒否リスト | 1〜2 |
+  | 使用量＋モデル一覧＋会計テスト | 1〜2 |
+  | 配備（焼き込み・ピン・sha256・影の検知・`env_tool_versions`） | 1 |
+  | Console の面・i18n・ガイド・`guide/ref` の能力表 | 1〜2 |
+
+  着手時に **ADR 0093 が未着地なら＋1〜2 日**（決定 2 の managed 専用の門が未払いになる）。誤差の向きは
+  上振れで、最大の未知は「MSP の 47 メソッド・31 通知のうち、"動く" ではなく "正しい" ドライバに何本要るか」
+  である。
 - 段 1 の門が落ちたときの埋没費用は、この ADR とプローブだけ。コードは無い。
 
 ## 段階
@@ -239,20 +340,22 @@ muse に対して他種別のファイルを読むだけとし、複製先には
 | 段 | 内容 | 次への門 |
 |---|---|---|
 | 0 | この ADR のプローブ（2026-09-20 完了）: 導入・MSP 疎通・ピンとチェックサム・worktree と他 CLI 文脈の挙動・常駐費 | — |
-| 1 | **門 A**: `bwrap` を焼いて実 Workspace イメージでサンドボックスを再測——決定 5 が立つか撤回か。**門 B**: API キー 1 本で実ターン 1 回——`usage/read` の数字、`model/list`、`approval/requested` の往復、subagent 1 つ、そしてサブスクの資格情報をそもそも入力できるか。1〜2 セッション日 | 両門に答えが出て、利用者が決定 6 の締め付けと出費を受け入れる |
+| 1 | **門 A**（0.5 日）: `bwrap` を焼いて実 Workspace イメージで走らせる。両方のマウント API が既に拒否されているので、これは探索でなく確認であり、期待される答えは「決定 5 の免除は恒久」と記録すること。**門 B1**（1〜1.5 日）: API キー 1 本と、決定 10 の会計マトリクス（キャッシュ・subagent・失敗／中断ターン・resume 後・累積か毎ターンか）、加えて `model/list`、`approval/requested` の往復 1 回、subagent 1 つ、決定 12 の利用者スコープ書込先。**門 B2**（0.5 日）: この箱で走らせられないブラウザオンボーディングを前提に、**サブスク**の資格情報を別の場所で取得してここに入れられるか | A と B1 に答えが出て、利用者が決定 6 の締め付けと出費を受け入れる。B2 は「不可」でもよい——その場合 v1 は従量のみとガイドに書いて段 2 へ進む |
 | 2 | 実装: 種別配線、MSP クライアントと生成型、ドライバ、転写、使用量、設定＋MCP 方言、接続カード、配備、ガイド、この ADR を *adopted* へ | — |
 
 ## 未解決（段 1 で答える）
 
-1. 実ターンのトークン会計: `usage/read` は input / output / キャッシュを分けて返すか。subagent と
-   オブザーバの呼び出しを含むか。（`MeasuredExact` が正直かどうかが決まる。）
-2. サブスクと従量: この箱で走らせられないブラウザオンボーディング抜きに、サブスクの資格情報は作れるか。
-   作れないなら v1 は従量のみで、ガイドにそう書く。
-3. 認証後の `model/list` は目録を返すか。返すとして、copilot や cursor のようにプラン依存か
+1. 決定 10 の会計マトリクスを丸ごと——ターン 1 本ではない。`MeasuredExact` か `MeasuredPartial` かが
+   決まり、ここを間違えると台帳が黙って倍になる。
+2. Muse が**利用者スコープ**のルールをどこから読むか。決定 12 が `muse` を `instrSupportedKinds` に
+   入れられるようになる。プローブでは決着しなかった（echo provider ではルールが組み立てられない）。
+3. サブスクと従量（門 B2）: この箱で走らせられないブラウザオンボーディング抜きに、サブスクの資格情報は
+   作れるか。作れないなら v1 は従量のみで、ガイドにそう書く。
+4. 認証後の `model/list` は目録を返すか。返すとして、copilot や cursor のようにプラン依存か
    （「Free では named model 不可」型の失敗）。
-4. 承認の描き方: `approval/requested` は段階的なシェル審査の情報を運ぶ。そのどこまでを、新しいカード種別を
+5. 承認の描き方: `approval/requested` は段階的なシェル審査の情報を運ぶ。そのどこまでを、新しいカード種別を
    増やさずにミラーの許可カードで出せるか。
-5. セッションごとのホストの `session/list` が、他の AF セッションの Muse セッションまで見えてしまうか
+6. セッションごとのホストの `session/list` が、他の AF セッションの Muse セッションまで見えてしまうか
    （ストアも利用者も 1 つ）。見えるなら、Console が決してそれらを差し出さないこと。
 
 ## プローブの再現（2026-09-20・Muse Code 1.3.0-R3401.1）
@@ -266,15 +369,39 @@ curl -s https://api.meta.ai/muse-code/channels/muse-stable       # 版と manife
 ~/muse-probe/muse exec --provider echo --json "say hi"           # 資格情報なしで 1 セッション完走
 ~/muse-probe/muse serve --disable-sandbox                        # stdin/stdout に JSON-RPC 行
 unshare --user --map-root-user --mount --propagation unchanged \
-  strace -e trace=move_mount mount -t tmpfs none /tmp/x          # move_mount → EACCES
+  strace -e trace=move_mount mount -t tmpfs none /tmp/x          # 新 API: move_mount → EACCES
+LIBMOUNT_FORCE_MOUNT2=always unshare --user --map-root-user --mount \
+  --propagation unchanged strace -e trace=mount \
+  mount -t tmpfs none /tmp/x                                     # bwrap の API: mount(2) → EACCES
+~/muse-probe/muse auth set --help                                # フラグは必須
 ```
 
 ## 参照した出所（2026-09-20・`06ea94d3`）
 
-`workspace/agent/internal/session/session.go` · `workspace/agent/internal/sessionx/{agent.go,session_turn.go,session_driver.go}` ·
+`workspace/agent/internal/session/session.go` · `workspace/agent/internal/sessionx/{agent.go,session_turn.go,session_driver.go,session_handlers.go}` ·
 `workspace/agent/internal/agents/{agents.go,driver.go}` · `workspace/agent/internal/mcpreg/{def.go,materialize.go}` ·
-`workspace/agent/{usage_fold.go,agent_instructions.go,model_provider.go,env_tool_versions.go}` ·
-`workspace/Dockerfile` · `console/src/agents/registry.ts` · `console/src/lib/agentModels.ts` ·
+`workspace/agent/internal/mcpproj/inspect.go` · `workspace/agent/internal/secrets/secrets.go` ·
+`workspace/agent/internal/bridge/format.go` ·
+`workspace/agent/{usage_fold.go,agent_instructions.go,model_provider.go,env_tool_versions.go,fs.go}` ·
+`control-plane/{routes.go,scheduler_wake.go}` · `control-plane/internal/mcpsrv/mcp.go` ·
+`workspace/Dockerfile` · `console/src/agents/registry.ts` · `console/src/lib/{agentModels.ts,settings.ts,brandicons.ts,termcolor.ts}` ·
 `console/src/styles/tokens.css` · `console/src/features/usage/colors.ts` ·
 `docs/log/{36,40,43,74}-*-agent-kind.md` · `docs/decisions/0093-lcpp-agent-kind.ja.md` ·
 Meta の文献 `dev.meta.ai/docs/muse-code/{,auth,subscriptions,permissions,interactive,workflows,session-messaging,rewind,configuration,extending,changelog}`。
+
+## レビュー 第 1 巡（2026-09-20・別セッションの codex / gpt-5.6-sol）
+
+指摘 15 件。着手前に全アンカーをツリーで読み直した。構造に関わる 4 件はここに注記せず上の決定本文を
+直した——作成経路が空 driver を TUI に既定化する（決定 2）、`muse auth set` は `--api-key-stdin` が要る
+（決定 9）、拒否リストは `~/.local/share/muse` も要る（決定 9）、`mcpproj` は他種別のファイルへ落ちる
+仕掛けではない（決定 11）。決定 3 の根拠は内部的に弱かったので、本当にホスト単位である摘みを軸に書き直した。
+決定 6・10・11・12、段 2 の点検表、段階の門、見積り表はいずれもこの巡の産物である。
+
+逆向きの訂正も 2 件あり、それもレビューが見つけた。本 ADR は「積み上げで青 3 本を隣接させるな」と書いて
+いたが `KIND_STACK_ORDER` は shell も ssm も持たないので 2 本であり、`workspace/Dockerfile:318-320` を
+「npm 3 種」と引いていたが実際は `:318-321` の 4 種である。
+
+レビューが読み直して一致を確認したもの: 9 種別、`Agent` の 6 メソッド、`ThreadHandle` の 7 メソッド、
+exact / partial の使用量集合、MCP の 7 種別、指示配布の 6 種別、登録簿の RSS 値、モデル接頭辞、色トークン。
+英日で主張と数値が対応していること。`scripts/docs-check.py` が緑であること。やっていないこと: ログイン、
+実ターン、サブスク、実 `bwrap`、ベンダ文献の再検証——それはまさに段 1 が越えるための境界である。
