@@ -157,12 +157,19 @@ reaper（1 分）は同じ一覧ハンドラを同時に叩きうる。書き手
 ## 101.5 2026-09-20 に利用者と決めたこと（起票時の未決 5 件のうち 4 件）
 
 1. ✅ **`ForkFrom` の逆引き** → 系譜台帳の `birth` 行に**そのセッション自身の会話 id を焼く**
-   （ADR 0096 決定 13）。🔥 焼くのは **AF が割り当てた id であって観測値ではない**——fork 直後の
-   claude は自分の jsonl が実体化するまで元セッションの転写を読むので
-   （`internal/sessionx/session_transcript.go`）、観測して焼くと**子の行に親の id が入り、エッジが
-   自分自身を指す**。会話 id のドリフト（claude が自分を再起動すると argv から `--session-id` が
-   落ち、新しいランダム id で書き始める。実測 2.1.239・`internal/agents/claude/sid.go`）は
-   `convid` 行で追う。
+   （ADR 0096 決定 13）。~~🔥 焼くのは **AF が割り当てた id であって観測値ではない**~~
+   会話 id のドリフト（claude が自分を再起動すると argv から `--session-id` が落ち、新しい
+   ランダム id で書き始める。実測 2.1.239・`internal/agents/claude/sid.go`）は `convid` 行で追う。
+
+   🔴 **訂正（P0 レビュー 1 巡目・§101.6）**: 取り消し線の規則は**誤り**で、claude にしか
+   当てはまらなかった。`ForkFrom` の実値を作る `Forker.ForkSource` は**どの kind も観測ストアから
+   解く**——claude=`LiveSID()`（`claude.go:42`）、codex=hook が記録した slot 別 id
+   （`codex.go:78`）、opencode=会話ストアの現行セッション（`opencode.go:47`）。
+   規則どおりに実装すると **codex と opencode の fork エッジは永久に一致しない**。正しくは
+   「**その kind の `ForkSource` と同じ経路で解決した id を焼く**」。
+   **なぜ間違えたか**: claude の sid が決定的（セッション名由来）であることを一般則だと思い込み、
+   `ForkSource` の実装を 3 kind ぶん読まずに claude の転写先読みの罠だけを見ていた。
+   **一般化**: kind をまたぐ値の規則は、**kind ごとの実装を全部読んでから**書く。
 2. ✅ **遡及は有界でよい**（利用者の言葉で「遡りたいがある程度制限があってもよい」）。左へパンすると
    3 段で減衰する: 活動 30 日 → 系譜と生没だけの骨格 → 導入以前は `Meta` から書き起こした 7 日ぶん。
    **どこで何が減ったかは図に明示する**（境界線を引く。無言で薄くしない）。
@@ -223,7 +230,7 @@ reaper（1 分）は同じ一覧ハンドラを同時に叩きうる。書き手
 
 | レーン | 触ってよいもの |
 |---|---|
-| S-BE | `workspace/agent/internal/…`（台帳 2 本・書き込み 6 箇所・`GET /api/fleet-graph`）、`workspace/agent/routes.go`、`control-plane/routes.go` の許可リスト |
+| S-BE | `workspace/agent/internal/…`（台帳 2 本・**書き込み 8 箇所**〔create／stop・exit／**resume**（`StoppedAt` をクリアする 3 経路）／**archive・restore**／状態観測／peer／指示投入／報告配送〕・`GET /api/fleet-graph`）、`workspace/agent/routes.go`、`control-plane/routes.go` の許可リスト |
 | S-LOGIC | `console/src/lib/fleetgraph.ts` ＋ `fleetgraph.test.ts` のみ |
 | S-VIEW | `console/src/features/fleetgraph/*`、**共有グルー（`layout/types.ts` の union・`migrate.ts`・`Pane.tsx`・`paneTitle.ts`・`features/keys/commands.ts`・i18n の ja/en）は S-VIEW 専有**、🔥 **`console/src/core/api/client.ts`（API 呼び出しを全部持つ 1 ファイル）も S-VIEW 専有**——3 レーンが同じファイルを触りうる最後の 1 箇所がここだった |
 | （誰も） | `console/src/types/fleetgraph.ts` は**凍結**。P1 のレーンは編集しない。直す必要が出たら**統合役へ差し戻す**（契約を片側だけ書き換えると、他の 2 レーンは気づかないまま食い違う） |
@@ -247,3 +254,31 @@ P0 では共有グルーに**一切触っていない**（`types/fleetgraph.ts` 
 わざと `GraphModel["nope"]` を書いて `TS2339` が出ることを確かめてから戻した（型ファイルを足しただけの
 コミットで「緑」を報告するときは、tsc がそのファイルを見ていることを確かめる。メモ
 `scm-commit-graph-edges` の「テストの存在≠実行」と同じ罠）。
+
+## 101.7 P0 レビュー 2 巡目（同じ子セッション・opus）で出た穴
+
+1 巡目の修正で**新しく 2 つ開いた**。どちらも「型は正しいが、それを書く者が居ない／語彙が足りない」形。
+
+- 🔥 **`revive` と `archived` の書き手が居なかった。** 型に `runs[]` と `presence:"archived"` を
+  足したのに、帰結と §101.6 の S-BE 欄は**「書き込み 6 箇所」のまま**だった（create・stop/exit・
+  状態観測・peer・指示・報告）。resume と archive/restore が無いので、S-BE は 6 箇所を実装して
+  「完了」とし、`ReviveEvent` は 1 行も書かれず `runs` は常に 1 本——**直したはずの「死んで再開した
+  区間が点線に化ける」がそのまま再発する**。→ **8 箇所**に直し、resume＝`StoppedAt` をクリアする
+  3 経路（一覧ハンドラ・`session_tmux.go`・`session_driver.go`）と archive/restore＝
+  `HandleArchiveSession` / `HandleRestoreSession` を名指しした。
+  **一般化: 型を足したら「それを書く行がどの関数に増えるか」まで同じ変更で書く。**
+- 🔥 **`compacting` が語彙から漏れ、「語彙外→idle」がそれを消すところだった。** `compacting` は
+  codex が立てる実在のワイヤ状態（`codex.go:219`）で、Console は working として描く
+  （`sessionview.ts:160`）。閉じた union にした副作用で、**自動圧縮中＝明確に稼働中の区間が帯から
+  消える**ことになっていた。→ 語彙に足し、さらに**「語彙外→`idle`」という倒し方自体をやめた**
+  （`unknown` にして生の綴りを `raw` に残す）。**一般化: 未知を既定値に倒すときは、倒す先が
+  「安全側」かを確かめる。ここでは idle が危険側だった**（無観測を idle にしないという
+  この図の主旨とも矛盾していた）。
+
+ほかに直したもの: 正規化がライブ `Session.state` 経路（S-LOGIC）に割り当てられていなかった件
+（→ `GraphNormalizeState` を契約に置き、同一 fixture を Go と vitest の両方に置く）、窓外の親を
+持つ子の `parent`/`depth` が未定義で**兄弟が窓の取り方次第で離れる**件（→ `rootId` を並びの鍵に）、
+削除で系譜だけ消えて活動行が残ると**セッション間の peer が「図の外から来た矢印」に化ける**件
+（→ `erased` レーンとして描く規則を契約に）、`gone` なのに run が開いたままの終端規則（→ `cut`）、
+`LaneRun` が `exitSignal` を落としていた件、時刻精度の根拠の一文（`Meta`/`instr-ledger` は**秒**精度
+なので「揃える」は不正確・「同じ形式で精度だけ上げる」が正しい）。

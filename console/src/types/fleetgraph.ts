@@ -45,13 +45,18 @@ export type GraphOrigin = "user" | "operator" | "schedule" | "handoff" | "sessio
 
 // The state vocabulary the ledger records. It is deliberately NOT SessionState:
 // that union is the Console's live-row axis ("" = idle) and is missing the states
-// the agents emit around a stopped turn (agents/notify.go). A `string` here would
-// type-check anything and let the writer and the reader disagree in silence.
+// the agents emit around a stopped turn (agents/notify.go) and during a compaction
+// (agents/codex). A `string` here would type-check anything and let the writer and
+// the reader disagree in silence.
 //
-// The writer NORMALISES: SessionState's "" is written as "idle", and a spelling
-// outside this union is written as "idle" too — the reader never guesses.
+// Normalisation, applied on BOTH paths that produce one (see GraphNormalizeState):
+// "" becomes "idle", and a spelling this union does not know becomes "unknown" —
+// never "idle". Folding an unrecognised state into idle is the dangerous direction:
+// a kind that starts reporting a new busy state would have its working stretches
+// silently recorded as doing nothing.
 export type LedgerState =
   | "working"
+  | "compacting" // auto-compaction: working, and it says so (codex sets it, the row draws it as working)
   | "idle"
   | "question"
   | "plan"
@@ -61,7 +66,8 @@ export type LedgerState =
   | "limited" // waiting for a usage limit to lift (may auto-resume)
   | "spend_limit" // a cap that waiting never clears
   | "failed"
-  | "aborted";
+  | "aborted"
+  | "unknown"; // observed, but not a spelling this contract knows (the raw value rides along)
 
 // ── Ledger events (the REST DTO's payload) ───────────────────────────────────
 // Lineage lines (fleet-graph/lineage.jsonl) are permanent: they survive the
@@ -155,6 +161,7 @@ export interface StateEvent {
   name: LaneId;
   from?: LedgerState;
   to: LedgerState;
+  raw?: string; // the observed spelling, kept only when `to` normalised to "unknown"
 }
 
 // Every session's current state, written once right after an Agent restart (it
@@ -166,6 +173,7 @@ export interface ResyncEvent {
   ts: number;
   name: LaneId;
   to: LedgerState;
+  raw?: string;
 }
 
 // An instruction that arrived from outside the lane. `source` uses the spellings
@@ -250,22 +258,39 @@ export type LanePresence = "live" | "stopped" | "archived" | "gone";
 // of these as it has been resumed.
 export interface LaneRun {
   t0: number;
-  t1: number | null; // null = no death observed for this run
+  t1: number | null; // null = still open (see `presence` — an open run on a gone lane is cut, below)
   exitReason?: string;
   exitCode?: number;
+  exitSignal?: number;
+  // A run whose lane is `gone` while its newest run never got a death (the Agent
+  // died before writing one, or the session was deleted) is cut at the last
+  // moment anything was observed for that lane, and `cut` says so: the × is drawn
+  // hollow and the stretch after it is unknown, not stopped.
+  cut?: boolean;
 }
 
 export interface GraphLane {
   id: LaneId;
   row: number; // 0-based row index, in family order (a parent, then its children)
-  depth: number; // 0 = a root; children nest under their parent
-  parent?: LaneId; // originSession, when that lane is present in this window
-  label: string; // display name
-  kind: SessionKind;
-  origin: GraphOrigin;
-  runs: LaneRun[]; // chronological, never empty
+  // Lineage, filled in even when the ancestor itself has no lane in this window:
+  // dropping it there would make a child a root, and siblings whose parent is off
+  // the window's left edge would drift apart as the window moves (decision 9).
+  parent?: LaneId;
+  rootId: LaneId; // topmost known ancestor (itself when there is none) — the family ordering key
+  depth: number; // known ancestors above it, drawn or not; 0 = a root
+  label: string; // display name; for an erased lane, its id — there is nothing else left
+  // Absent ONLY on an erased lane (its birth line is what carried them). Every
+  // other lane has both, which is what decision 7's un-clipped lineage guarantees.
+  kind?: SessionKind;
+  origin?: GraphOrigin;
+  // Chronological. EMPTY only for an erased lane: an explicit delete removes the
+  // lineage lines while activity lines naming that id live on until they rotate,
+  // so the id still has to hold a row for its arrows to point at. Such a lane is
+  // drawn as a labelled row with no line (presence "gone").
+  runs: LaneRun[];
   presence: LanePresence;
   state?: LedgerState; // live state right now (live lanes)
+  erased?: boolean; // true = lineage deleted, only activity residue remains
 }
 
 // A stretch of one lane. "unknown" is the honest default: nobody observed the
@@ -275,13 +300,22 @@ export type SegmentKind = "active" | "idle" | "waiting" | "unknown" | "stopped" 
 
 // The coarse band a recorded state paints. S-LOGIC owns the table; the shape is
 // frozen here so the view cannot invent a second one:
-//   working                                   → active
+//   working | compacting                      → active
 //   idle | failed | aborted                   → idle
 //   question | plan | permission | blocked
 //     | auth | limited | spend_limit          → waiting
+//   unknown                                   → unknown
 // The exact word survives on GraphSegment.state — the band is for colour, the
 // state is for the tooltip, and that is why "limited" need not be its own band.
 export type SegmentKindByState = Record<LedgerState, SegmentKind>;
+
+// Turns a raw live-state string into the recorded vocabulary ("" → idle, an
+// unrecognised spelling → unknown). Exported by S-LOGIC and used on BOTH paths:
+// the ledger (the Agent normalises in Go before writing) and the live map (the
+// builder normalises Session.state, which is `SessionState | string` and carries
+// the same "" and the same open-ended spellings). One rule, two languages — so
+// the same table is pinned by the same fixture in the Go and the vitest suites.
+export type GraphNormalizeState = (raw: string | undefined) => LedgerState;
 
 export interface GraphSegment {
   laneId: LaneId; // a lane's id, NOT its row index

@@ -90,8 +90,10 @@ ADR's P0 contract.
   (EFS metadata IO is what made the whole production deployment slow), **nothing here multiplies file
   count**: no per-session file, no file per event.
 - **Time is spelled differently in the ledger and on the wire, and the server always converts.** Ledger
-  lines carry **RFC3339 (milliseconds)** — these are jsonl files people grep, and the repository's other
-  ledgers (`Meta`, `instr-ledger`) spell time that way. The DTO (`FleetGraphPage`) carries **unix millis as
+  lines carry **RFC3339 (milliseconds)** — these are jsonl files people grep, in the **same format** the
+  repository's other ledgers (`Meta`, `instr-ledger`) use. Only the precision goes up, because a design
+  that writes solely on change can produce **two transitions inside one second**, and at second precision
+  (which `instr-ledger` deliberately chose, for its own reasons) their order is lost. The DTO (`FleetGraphPage`) carries **unix millis as
   numbers**, so the browser never parses a date. Without fixing the direction here, the type file says
   millis while the documented ledger lines say RFC3339, and **which one S-BE writes is decided by whichever
   document it read**.
@@ -122,13 +124,23 @@ The session list (`GET /sessions`) **already derives live state for every sessio
   across the restart correctly stays unknown.
 - **The state vocabulary is frozen as a ledger-specific `LedgerState`.** Reusing `SessionState`
   (`types/session.ts`) fails twice over: it carries the Console row's convention that **`""` means idle**,
-  and it lacks the states the agents emit around a stopped turn — `limited`, `blocked`, `auth`,
-  `spend_limit`, `failed`, `aborted` (`agents/notify.go`). In TypeScript `SessionState | string` collapses
-  to `string` and **constrains nothing**, so it is written out as a literal union. **The writer (S-BE)
-  normalises**: `""` is written as `idle`, and so is anything outside the union. The reader never guesses.
+  and it lacks both the states the agents emit around a stopped turn — `limited`, `blocked`, `auth`,
+  `spend_limit`, `failed`, `aborted` (`agents/notify.go`) — and `compacting` (`agents/codex`: an
+  auto-compaction, which is unambiguously working). In TypeScript `SessionState | string` collapses to
+  `string` and **constrains nothing**, so it is written out as a literal union.
+- 🔥 **An unrecognised spelling becomes `unknown`, never `idle`.** `""` → `idle` is right, but folding an
+  *unknown* state into idle falls the dangerous way: the moment a kind starts reporting a new busy state,
+  those stretches are recorded as having done nothing (`compacting` is real, and this nearly lost it). The
+  raw spelling is kept in `raw`.
+- **One rule, two implementations.** Normalisation runs on the writer's side (the Agent, in Go) *and* on
+  the reader's (S-LOGIC, in TS), because the live `Session.state` that feeds the current band is
+  `SessionState | string` and carries the same `""` and the same open-ended spellings. Since the table
+  exists in two languages, **the same fixture pins it in the Go suite and in vitest** — let them drift and
+  the band's colour disagrees with the row's chip in a way that looks like a rendering bug.
 - **The state → band (`SegmentKind`) mapping is part of the contract too** (`SegmentKindByState`):
-  `working` → `active`; `idle` / `failed` / `aborted` → `idle`; `question` / `plan` / `permission` /
-  `blocked` / `auth` / `limited` / `spend_limit` → `waiting`. The exact word survives on
+  `working` / `compacting` → `active`; `idle` / `failed` / `aborted` → `idle`; `question` / `plan` /
+  `permission` / `blocked` / `auth` / `limited` / `spend_limit` → `waiting`; `unknown` → `unknown`. The
+  exact word survives on
   `GraphSegment.state` — **the band is for colour, the state is for the tooltip** — which is why `limited`
   needs no band of its own.
 - **Preventing duplicate lines is the writer's job.** The observation is driven by the list handler (a GET),
@@ -183,6 +195,13 @@ its children's branch goes with it.
   should be a deletion; "I deleted it and it is still in the figure" is not what a user expects.
 - A line carries `{ts, ev, name, kind, repo, origin, originSession, display}` and **no prompt text and no
   report text**. What ought to disappear on deletion is never stored in the first place.
+- 🔥 **Deleting leaves the activity lines** (up to 30 days, until they rotate). With the lineage gone, the
+  `peer` / `report` lines naming that id survive alone, and the naive reading turns **a message between two
+  sessions into an arrow from outside the figure** (no lane can be built, so it falls through to an
+  external actor). Rewriting 30 append-only files to chase it is the opposite of ADR 0087, so instead **an
+  id with no lineage is drawn as an *erased lane*: a labelled row with no line** (`erased`). What
+  disappears is the **content** — display name, repository, lineage — while the bare id lingers for the
+  activity retention. That asymmetry is deliberate, and the label says so rather than hiding it.
 
 ### Decision 7 — scope is one workspace; one read endpoint on the Agent, one line on the CP allow-list
 
@@ -241,6 +260,10 @@ Session D              ○----------+--------×
 ### Decision 9 — lanes are ordered by family; the click rules are borrowed from 0078 unchanged
 
 Children directly under their parent, siblings oldest first, roots newest first (ADR 0078 decision 6's rule).
+**A child keeps its parent's id and its `rootId` even when the parent has no lane in this window**
+(`GraphLane.parent` / `rootId` / `depth`): tie them to "the parent is drawn" and a child is promoted to a
+root the moment its parent slides off the left edge, so **siblings drift apart as the window moves**. The
+ordering key is `rootId`, not whether an ancestor happens to be visible.
 Clicking opens **beside if there is room, in the same pane on a phone, in a separate pane with a modifier or
 middle click** (0078 decision 3 as revised). Do not build a second way to do the same gesture.
 
@@ -278,6 +301,9 @@ that holds a single death cannot say which stretch a second × ends, and **a str
 resumed renders as the dashed "stopped" tail**.
 - Limit (intended): the back-fill from `Meta` **cannot reconstruct past stop/resume cycles** (only the
   latest `StoppedAt` survives there). Lanes older than the feature are drawn as a single run.
+- **A newest run still open on a lane that is gone** (the Agent died before writing a death, or the session
+  was deleted) is **cut at the last moment anything was observed** for it (`LaneRun.cut`): a hollow ×, and
+  unknown after it. Defining `gone` as "ends at its last ×" alone leaves this case with no end at all.
 
 - Stopped sessions are **drawn by default**. ADR 0078's list defaults to running-only, but that is a
   cross-section of *now*; this figure is the *elapsed* — hiding stopped sessions from the past empties it.
@@ -329,10 +355,16 @@ time**.
 
 ## Consequences
 
-- **Six write points and one read endpoint.** Create (`session_handlers.go`), stop/exit, the state
-  observation (the list handler), peer send (`session_peer.go`), instruction delivery (`session_io.go`) and
-  report delivery (the sink in `chat_report_reconcile.go`) each get a colocated one-line append;
-  `GET /api/fleet-graph` reads them. The existing report, notification and arm paths are **untouched**.
+- **Eight write points and one read endpoint.** A one-line append is colocated at: (1) create
+  (`session_handlers.go`); (2) stop/exit; (3) **resume** — the three paths that clear `StoppedAt` (the list
+  handler, `session_tmux.go`, `session_driver.go`), counted as one; (4) **archive / restore**
+  (`HandleArchiveSession` / `HandleRestoreSession`); (5) the state observation (the list handler); (6) peer
+  send (`session_peer.go`); (7) instruction delivery (`session_io.go`); (8) report delivery (the sink in
+  `chat_report_reconcile.go`). `GET /api/fleet-graph` reads them. The existing report, notification and arm
+  paths are **untouched**.
+  - 🔥 Miss (3) and (4) and **`revive` and `archived` have no writer while the implementation looks
+    finished**. `runs[]` and `presence:"archived"` exist in the type, but unwritten they never occur:
+    `runs` stays a single entry and decision 12's resumed stretch renders as the dashed tail again.
 - **No added polling** (decision 3). The ledgers are on the order of a few hundred KB a day (docs/101 §3).
 - **Limit (intended)**: panning left decays in three steps (decision 8) — activity for 30 days, then a
   skeleton of lineage and birth/death, then the 7 days back-filled from `Meta`. That back-fill runs once at

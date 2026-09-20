@@ -85,7 +85,8 @@ P0 が新しい契約で置き換える。
   取らない**（セッションごとのファイルにはしない・1 イベント 1 ファイルにはしない）。
 - **時刻の表現は台帳と DTO で違い、変換は必ずサーバが行う。** 台帳の行は **RFC3339（ミリ秒）**
   ——jsonl を人が grep する前提のファイルで、リポジトリの他の台帳（`Meta` / `instr-ledger`）と
-  綴りを揃える。DTO（`FleetGraphPage`）は **unix ミリ秒の数値**——ブラウザ側で日時を解釈させない。
+  **同じ形式**を使う。精度だけ上げるのは、変化したときだけ書く設計では**同じ 1 秒の中に 2 つの
+  遷移がありうる**からで、秒精度（`instr-ledger` はそちらを意図的に選んでいる）では順序が壊れる。DTO（`FleetGraphPage`）は **unix ミリ秒の数値**——ブラウザ側で日時を解釈させない。
   型ファイルが millis 一本なのに台帳の例が RFC3339 だと、**S-BE がどちらで書くかは読んだ文書で
   決まってしまう**ので、ここで方向を固定する。
 - **日次ファイルの日付は UTC** とする。窓（millis）からファイルを選ぶ側とワークスペースのローカル
@@ -115,13 +116,22 @@ P0 が新しい契約で置き換える。
   区間が「不明」として正しく残る。
 - **状態の語彙は台帳専用の `LedgerState` として凍結する。** `SessionState`（`types/session.ts`）を
   そのまま使わない理由は 2 つ: あれは **`""` が idle** という Console の行の都合を持ち、
-  `limited` / `blocked` / `auth` / `spend_limit` / `failed` / `aborted`（`agents/notify.go`）を
-  含まない。TS では `SessionState | string` は `string` に潰れて**何も縛らない**ので、
-  リテラル union で書き下す。**正規化は書き手（S-BE）**——`""` は `idle` として書き、語彙外も
-  `idle` に倒す。読み手に推測させない。
+  `limited` / `blocked` / `auth` / `spend_limit` / `failed` / `aborted`（`agents/notify.go`）や
+  `compacting`（`agents/codex`・自動圧縮中＝明確に稼働中）を含まない。TS では
+  `SessionState | string` は `string` に潰れて**何も縛らない**ので、リテラル union で書き下す。
+- 🔥 **語彙外は `idle` に倒さず `unknown` にする。** `""`→`idle` は正しいが、**知らない綴りを
+  `idle` にするのは危険な側への転び方**である——ある kind が新しい稼働中の状態を報告し始めた瞬間、
+  その区間は「何もしていなかった」として記録されてしまう（`compacting` が実在し、これを
+  取りこぼしかけた）。生の綴りは `raw` に残す。
+- **正規化は 1 つの規則・2 か所の実装。** 書き手（Agent・Go）と、**ライブの `Session.state` から
+  現在の帯を作る読み手（S-LOGIC・TS）**の両方が通る——`Session.state` は
+  `SessionState | string` で、同じ `""` と同じ未知の綴りを運んでくるからである。同じ表を 2 言語で
+  持つことになるので、**同一の fixture を Go と vitest の両方の試験に置く**（食い違うと「帯の色と
+  行のチップが合わない」ともっともらしく壊れる）。
 - **状態 → 帯（`SegmentKind`）の写像も契約に入れる**（`SegmentKindByState`）。
-  `working`→`active`／`idle`・`failed`・`aborted`→`idle`／`question`・`plan`・`permission`・
-  `blocked`・`auth`・`limited`・`spend_limit`→`waiting`。**帯は色のため、正確な語は tooltip のため**
+  `working`・`compacting`→`active`／`idle`・`failed`・`aborted`→`idle`／`question`・`plan`・
+  `permission`・`blocked`・`auth`・`limited`・`spend_limit`→`waiting`／`unknown`→`unknown`。
+  **帯は色のため、正確な語は tooltip のため**
   に `GraphSegment.state` が別に残るので、`limited` に専用の帯は要らない。
 - **重複行の防止は書き手が担う。** 観測を駆動するのは一覧ハンドラ（GET）で、**Console（4 秒）と
   reaper（1 分）が同時に叩きうる**。書き手はセッションごとの直前状態をプロセス内に持ち、
@@ -173,6 +183,13 @@ ADR 0073 は「系譜を永続させたいなら別の置き場（台帳）が�
   削除は削除であるべきで、「消したのに図には残っている」は利用者の期待に反する。
 - 行が持つのは `{ts, ev, name, kind, repo, origin, originSession, display}` だけで、
   **プロンプト本文も報告本文も持たない**。消えるべき中身を最初から置かない。
+- 🔥 **削除しても活動行は残る**（回転するまで最大 30 日）。系譜を消すと、その id を名指す
+  `peer` / `report` の行だけが残り、**素朴に実装するとセッション間の peer が「図の外から来た矢印」に
+  化ける**（レーンが作れないので外部アクターに落ちる）。活動行まで遡って消す案は取らない——
+  追記専用のファイル 30 本を書き換えることになり、ADR 0087 の逆を行く。代わりに
+  **「系譜の無いレーン id は *削除済みレーン* として、線を引かない 1 行で描く」**（`erased`）。
+  消えるのは**中身**（表示名・リポジトリ・系譜）であって、id の痕跡は活動の保持期間だけ残る——
+  この非対称は意図であり、利用者に見える形（「削除済み」のラベル）で示す。
 
 ### 決定 7 — 範囲は 1 ワークスペース。読み出しは Agent の 1 本、CP は許可リストに 1 行
 
@@ -226,7 +243,11 @@ Session D              ○----------+--------×
 
 ### 決定 9 — レーンの並びは家系。クリックの規則は 0078 からそのまま借りる
 
-親の直下に子、兄弟は古い順、根は新しい順（ADR 0078 決定 6 と同じ規則）。クリックは
+親の直下に子、兄弟は古い順、根は新しい順（ADR 0078 決定 6 と同じ規則）。**親が窓の外でレーンを
+持たなくても、子は親の id と `rootId` を持つ**（`GraphLane.parent` / `rootId` / `depth`）——
+ここを「描かれる親が居るときだけ」にすると、親が窓の左端から外れた瞬間に子が根に昇格し、
+**兄弟が窓の取り方次第で離れる**。並びの鍵は `rootId` であって、描かれているかどうかではない。
+クリックは
 **隣に余地があれば隣のペイン・スマホは同じペイン・修飾キーと中クリックは別ペイン**
 （0078 決定 3 の改訂版）。同じ操作感を 2 通り作らない。
 
@@ -265,6 +286,10 @@ SCM のコミットグラフ（`lib/gitgraph.ts` / `features/scm/CommitGraph.tsx
 化ける**。
 - 限界（意図）: `Meta` からの遡及書き起こしでは、**過去の停止・再開の周期は復元できない**
   （`Meta` に残っているのは最後の `StoppedAt` だけ）。導入以前のレーンは run を 1 本として描く。
+- **最後の run が開いたまま「もう居ない」場合**（death を書く前に Agent 自身が落ちた・削除された）
+  は、その run を**最後に何かを観測した時刻で切り**（`LaneRun.cut`）、× を中抜きで描いて
+  **その先は「不明」**にする。`gone` を「最後の × で終端」とだけ定義すると、× が存在しないこの
+  場合に終端が決まらない。
 
 - 停止中のセッションは**既定で描く**。ADR 0078 の一覧は「既定は稼働中のみ」だが、あれは*いま*の
   断面であり、この図は*経過*である——過去から停止中を隠すと、図は空になる。
@@ -313,10 +338,16 @@ SCM のコミットグラフ（`lib/gitgraph.ts` / `features/scm/CommitGraph.tsx
 
 ## 帰結
 
-- **追加は書き込み 6 箇所と読み出し 1 本。** create（`session_handlers.go`）・stop/exit・状態観測
-  （一覧のハンドラ）・peer 送信（`session_peer.go`）・指示投入（`session_io.go`）・報告配送
-  （`chat_report_reconcile.go` のシンク）に 1 行追記を併置し、`GET /api/fleet-graph` で読む。
-  既存の報告・通知・arm の経路は**無改造**。
+- **追加は書き込み 8 箇所と読み出し 1 本。** 1 行追記を併置する先は: ①create
+  （`session_handlers.go`）②stop/exit ③**resume**（`StoppedAt` をクリアする 3 経路——一覧の
+  ハンドラ・`session_tmux.go`・`session_driver.go`——をまとめて 1 箇所と数える）
+  ④**archive / restore**（`HandleArchiveSession` / `HandleRestoreSession`）⑤状態観測（一覧の
+  ハンドラ）⑥peer 送信（`session_peer.go`）⑦指示投入（`session_io.go`）⑧報告配送
+  （`chat_report_reconcile.go` のシンク）。読みは `GET /api/fleet-graph`。既存の報告・通知・arm の
+  経路は**無改造**。
+  - 🔥 ③④を数え落とすと、**`revive` と `archived` の書き手が居ないまま実装が「完了」する**。
+    型に `runs[]` と `presence:"archived"` があっても、書かれなければ `runs` は常に 1 本で、
+    決定 12 の「死んで再開した区間」はまた点線に化ける。
 - **追加のポーリングはゼロ**（決定 3）。台帳は 1 日あたり数百 KB 級（docs/101 §3 の見積もり）。
 - **限界（意図）**: 左へ遡ると 3 段で減衰する（決定 8）——活動 30 日 → 系譜と生没だけの骨格 →
   導入以前は `Meta` から書き起こした 7 日ぶん。系譜と生没は初回起動時に 1 回書き起こすので、
