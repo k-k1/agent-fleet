@@ -322,6 +322,18 @@ describe("quote controls", () => {
     expect(quote?.classList.contains("md-quote-copy")).toBe(true);
     expect(button?.getAttribute("aria-label")).toBeTruthy();
   });
+
+  it("copies semantic line breaks without trailing whitespace", async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    useChatStore.getState().setConvs([]);
+    await render("> 第一段落の一行目  \n> 改行後   \n>\n> 第二段落末尾   ");
+
+    const button = host.querySelector<HTMLButtonElement>(".md-quote-copy-button")!;
+    await act(async () => button.click());
+
+    expect(writeText).toHaveBeenCalledWith("第一段落の一行目\n改行後\n\n第二段落末尾");
+  });
 });
 
 // A front matter block YAML rejects (here: a value opening with a backtick, which
