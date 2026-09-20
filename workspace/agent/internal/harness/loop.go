@@ -68,13 +68,26 @@ const defaultWindowFallback = 8192
 // 🔴 This message ends up sitting in Result.Messages/full itself (decision 3's append-only
 // record), as an ordinary Role==RoleUser entry indistinguishable, BY ROLE ALONE, from
 // something the actual human/caller said — it is NOT stripped back out once its one job
-// (keeping the post-compaction request template-valid) is done. A transcript writer or
-// mirror reading full later MUST NOT render this as something the user said. It IS reliably
-// identifiable: match on Content == continuationPrompt (this exact constant, exported by
-// neither name nor value elsewhere) rather than on position or role, since a real user
-// message with the same wording is vanishingly unlikely but not impossible to rule out by
-// role/position alone.
+// (keeping the post-compaction request template-valid) is done. A transcript writer or mirror
+// reading full later MUST NOT render this as something the user said; use IsContinuationPrompt
+// below rather than comparing against this constant directly — it is unexported so that rule
+// stays in one place.
 const continuationPrompt = "Continue with the task."
+
+// IsContinuationPrompt reports whether m is the synthetic turn continuationPrompt describes,
+// so a caller outside this package (a transcript writer persisting Result.Messages, e.g. the
+// lcpp session kind's own store — ADR 0093 decision 3) can filter it out of what it shows as
+// the user's own words without this package publishing the literal wording it matches on: a
+// future reword of continuationPrompt then only has one call site to keep in sync, not every
+// consumer's own copy of the string. Matches on Content, the same identity check the rest of
+// this file uses — role or position alone cannot tell this turn apart from a real one (see
+// continuationPrompt's own doc comment for why that residual ambiguity is accepted here). A
+// caller that can instead track PROVENANCE — e.g. distinguishing "a message this call itself
+// supplied as the turn's input" from "a message this package appended" — gets an exact answer
+// for free from that distinction and does not need this predicate at all.
+func IsContinuationPrompt(m Message) bool {
+	return m.Role == RoleUser && m.Content == continuationPrompt
+}
 
 // defaultMaxConsecutiveCompactions is Runtime.MaxConsecutiveCompactions's <=0 fallback: the
 // live A/B this file's header comment describes hit 86 compactions in a single Run call
@@ -327,8 +340,9 @@ func compactPreservingLastRoundTrip(ctx context.Context, client Client, sysPromp
 	}
 	preserved := full[lastAssistant:] // the last complete round trip, unmodified
 	// 🔴 The synthetic continuationPrompt turn appended here survives into
-	// full/Result.Messages permanently — see its own doc comment for why a future
-	// transcript writer must never render it as something the human/caller actually said.
+	// full/Result.Messages permanently — see IsContinuationPrompt for the identity check a
+	// future transcript writer uses so it never renders this as something the human/caller
+	// actually said.
 	out := make([]Message, 0, len(compactedPrefix)+len(preserved)+1)
 	out = append(out, compactedPrefix...)
 	out = append(out, preserved...)
