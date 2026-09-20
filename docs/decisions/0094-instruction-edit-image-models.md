@@ -2,8 +2,8 @@
 
 English | [日本語](0094-instruction-edit-image-models.ja.md)
 
-- Status: **P0 built** (2026-09-20, develop `f57e82dd` — PRs #773 and #775). **Not verified on real
-  hardware yet.**
+- Status: **P0 built and accepted on real hardware** (2026-09-20). All four completion criteria
+  passed on the dev deployment — the record is "P0's live acceptance" at the end.
   🔴 The `file:line` references below have been **re-pointed at the tree as built**; they were taken
   on `ae069aaf` while drafting. Whoever moves those lines in P1 re-points them.
   🟢 **Reviewed before implementation** (2026-09-20, in a separate session). The nine findings are
@@ -231,9 +231,20 @@ means "the measurement is withdrawn"). Letting a machine fill in a family defaul
 field means** — from "somebody measured this" to "somebody wrote this" — which is the exact hole ADR
 0074 warns about ("a default nobody measured makes decision 1's premise a lie").
 
-Instead **this ADR and the ingest UI publish the measured number, and the operator enters it once**.
-Once entered, the `m.VramMiB > 0` branch wins over the sum and `confirm_vram` stops appearing. One
-press, with the conditions attached (1024², batch 1, one reference), beats a silent pass.
+Instead **this ADR and the ingest UI publish the measured number, and the operator enters it once** —
+one press, with the conditions attached (1024², batch 1, one reference), beats a silent pass.
+
+🔴 **The live run corrected two things** (2026-09-20, during acceptance):
+
+- **Declaring the number does NOT clear `confirm_vram`.** The guard (`engineVramGuardRow`) compares
+  against the **selected class**, which on a deployment with an unpinned ladder is its first rung — a
+  T4 at 14,500 MiB. Entering an honest 20,862 still answered `engine_vram_confirm` (measured). **Only
+  pinning a class as well clears it**, so P1's criterion is not "the prompt stops appearing" but
+  "the declared number reaches the ladder".
+- **The file-sum estimate does not merely nag — it buys a bigger box.** At acceptance the row was
+  enabled at the 28,676 MiB sum, so **the 22,000 rung (L4) dropped out of the ladder and an L40S was
+  bought** (45,458 MiB, 33.2 GB of host RAM — measured). With 20,862 declared, the L4 rung is a
+  candidate again. This field is a COST field as much as a fit field.
 
 ### Decision 9 — "Custom workflows" stay out of this ADR; the trigger is duplication, not the family count
 
@@ -640,3 +651,30 @@ The implementation review (opus, read-only) ran twice: 🔴3 / 🟡5, then 🔴0
 handed straight to the implementer). **Two holes the ADR was silent about came out of that review**,
 and both became decisions: 13 (a named model falling through to a paid provider) and decision 2's
 "one route that cannot be refused".
+
+## P0's live acceptance (2026-09-20, dev deployment)
+
+All four completion criteria passed **through the deployed Agent's own path** (its HTTP API). The
+engine was ComfyUI 0.35.2 on an **L40S** (45,458 MiB, 33.2 GB of host RAM).
+
+| Criterion | Result |
+|---|---|
+| (1) run A reproduced | ✅ the sign reads `CLOSED`, mug / table / typography untouched. `provider=image`, `model=zz-exp-qwen-image-edit-2509`, 1024², seed 42, **474 s wall** (box purchase + 30 GB sync + first load included) |
+| (2) `strength` refused | ✅ **400 `bad_strength_family` on both routes** (`/imagegen/generate` and `/imagegen/jobs`), reading "the qwen-image-edit-2509 family fixes its denoise at 1 by construction" |
+| (3) generate stays on comfy while qwen is warm | ✅ `provider=image`, re-read onto `abyssorangemix2_hard_8832`, **no fall-through to agy**, and the switch warning fired |
+| (4) named model, op it cannot do | ✅ `imagegen_no_provider` — "model … cannot do generate (it can: edit)", **no fall-through to agy** |
+
+The per-model wire fields of decision 12 were checked too: the qwen row answers `ops=["edit"]`, no
+`strength`, no `sizes`, while the existing rows (SDXL, krea2) answer three ops, `strength` and a size
+list — **a control taken before trusting the reading**.
+
+🔴 **Two things went wrong during acceptance** (neither is about the spec):
+
+- **The positive control queued a REAL job and bought a box.** Checking "an SDXL row is not refused"
+  through `/imagegen/jobs` was the wrong choice: being accepted there means being queued, which is
+  recorded demand. **To watch an acceptance, pick a route that stops before execution.**
+  `DELETE /imagegen/jobs/{id}` answered 200 but the job stayed `waking` until the box came up, and
+  only then became `cancelled`.
+- **Decision 8's two corrections** (folded into decision 8): declaring the number does not clear the
+  prompt, and the file-sum estimate buys a bigger box.
+
