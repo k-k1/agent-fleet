@@ -31,14 +31,15 @@ import (
 	"time"
 )
 
-// retryOnWake calls fn, retrying while it fails with an *EngineError that is not a clear,
-// permanent refusal (ADR 0093 decision 4: a true cold start is 4-5 minutes, and a model swap
-// on this shared router can also surface as a transient "did not come up in time" from the
-// gateway's own internal wait, not only the EngineWaking kind Retryable() checks for) rather
-// than failing the whole session over a wake that just has not finished yet. EngineUnavailable
-// (no model enabled) and EngineOff (an administrator switched the engine off) are real,
-// permanent refusals and are never retried. Any other error, or a wake that has not resolved
-// by deadline, fails the test.
+// retryOnWake calls fn, retrying only while it fails with an *EngineError whose own
+// Retryable() says asking again can plausibly help (ADR 0093 decision 4: a true cold start is
+// 4-5 minutes) — deferring to that judgement rather than this file inventing a broader one.
+// A prior version of this helper retried every kind except EngineUnavailable/EngineOff, which
+// silently spent 10 minutes retrying a plain "model 'x' not found" (a running llama-server that
+// was never told about a model added after it started, not a wake in progress at all) — paying
+// for an awake GPU box the whole time and, worse, preventing the box from ever going idle and
+// cycling to a fresh process that WOULD know about the new model. Retryable() alone avoids that:
+// only EngineWaking is retried, everything else fails fast.
 func retryOnWake(t *testing.T, ctx context.Context, label string, fn func() error) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Minute)
@@ -48,8 +49,7 @@ func retryOnWake(t *testing.T, ctx context.Context, label string, fn func() erro
 			return
 		}
 		var ee *EngineError
-		retryable := errors.As(err, &ee) && ee.Kind != EngineUnavailable && ee.Kind != EngineOff
-		if retryable && time.Now().Before(deadline) {
+		if errors.As(err, &ee) && ee.Retryable() && time.Now().Before(deadline) {
 			t.Logf("engine waking during %s, retrying in 15s: %v", label, err)
 			select {
 			case <-time.After(15 * time.Second):
