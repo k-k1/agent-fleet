@@ -238,6 +238,7 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 		return
 	}
 	recordInjection(m.Name, prompt, TurnSourceAutoResume)
+	recordFleetGraphInstruct(m.Name, TurnSourceAutoResume, "", "", prompt)
 	log.Printf("abort-resume: automatically resumed %s (attempt %d/%d)", m.Name, st.Attempts, chatx.MaxAutoResumeAttempts)
 }
 

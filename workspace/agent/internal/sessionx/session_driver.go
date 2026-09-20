@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -131,9 +132,13 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	wasStopped := m.StoppedAt != ""
 	m.StoppedAt = ""
 	// The stop/relaunch above takes seconds — re-merge the on-disk lock so this
 	// write-back can't roll back a lock the user flipped meanwhile (lost update).
 	m = WriteSessionMetaKeepingLock(m)
+	if wasStopped {
+		fleetgraph.RecordRevive(name) // write site ③: only when the slot really was stopped
+	}
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, true))
 }

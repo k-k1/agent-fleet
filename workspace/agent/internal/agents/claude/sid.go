@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -53,7 +54,7 @@ func LiveSID(slot string) string {
 // outside AF's control (one the user started themselves) has no AF_SESSION_NAME, so its
 // hooks pass straight through.
 func NormalizeHookSID(live string) string {
-	slot := hookSlotSID()
+	slot, name := hookSlotSID()
 	if live == "" || slot == "" {
 		return live
 	}
@@ -66,18 +67,25 @@ func NormalizeHookSID(live string) string {
 		return live
 	}
 	sids.Write(slot, live)
+	// This IS the drift ADR 0096 decision 13 names: claude relaunched itself, --session-id
+	// dropped out of argv, and it is now writing under a fresh random id. `live` is exactly
+	// what LiveSID() will resolve from here on, so it is also exactly what a birth row's
+	// own `conv` field is supposed to carry — the fleet graph's fork edges need the same
+	// event to know the lane's id changed mid-life.
+	fleetgraph.RecordConvID(name, live)
 	return slot
 }
 
-// hookSlotSID resolves the slot sid of the session this hook process belongs to.
-func hookSlotSID() string {
-	name := os.Getenv("AF_SESSION_NAME")
+// hookSlotSID resolves the slot sid (session.UUID) and session NAME of the session this
+// hook process belongs to. Both empty ("", "") when it cannot be resolved.
+func hookSlotSID() (slot, name string) {
+	name = os.Getenv("AF_SESSION_NAME")
 	if name == "" {
-		return ""
+		return "", ""
 	}
 	m, ok := session.ReadMeta(name)
 	if !ok || m.Kind != session.KindClaude {
-		return ""
+		return "", ""
 	}
-	return session.UUID(m.Dir, m.Name)
+	return session.UUID(m.Dir, m.Name), name
 }

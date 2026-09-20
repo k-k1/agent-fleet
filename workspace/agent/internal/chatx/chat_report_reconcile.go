@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -542,8 +543,14 @@ type reportSink func(name, convID, kind, reason string, rows []instrRow) reportS
 // goroutine, so a provider call taking minutes does not block the reconciler's single goroutine.
 func deliverReportCard(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
 	res := recordSessionReport(name, convID, kind, reason, rows)
-	if res == reportSinkOK && uiprefs.ChatAutoTurn() && !quietReport(kind, reason) {
-		reportAutoTurns.schedule(convID)
+	if res == reportSinkOK {
+		// Fleet graph write site ⑧ (ADR 0096): a report actually left the session for the
+		// conversation that is owed one. Recorded on success only — a sink failure means
+		// nothing was delivered, and the next tick retries (see the package doc above).
+		fleetgraph.RecordReport(name, "conv:"+convID, kind, reason)
+		if uiprefs.ChatAutoTurn() && !quietReport(kind, reason) {
+			reportAutoTurns.schedule(convID)
+		}
 	}
 	return res
 }

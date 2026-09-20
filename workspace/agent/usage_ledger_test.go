@@ -819,7 +819,10 @@ func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 				}
 				switch fn := call.Fun.(type) {
 				case *ast.SelectorExpr:
-					if x, ok := fn.X.(*ast.Ident); ok && x.Name == "session" && fn.Sel.Name == "RemoveMeta" {
+					// RemoveMetaAndLineage (ADR 0096 decision 6) is RemoveMeta plus a
+					// fleet-graph erasure; this invariant applies to both equally.
+					if x, ok := fn.X.(*ast.Ident); ok && x.Name == "session" &&
+						(fn.Sel.Name == "RemoveMeta" || fn.Sel.Name == "RemoveMetaAndLineage") {
 						removes = true
 					}
 				case *ast.Ident:
@@ -834,7 +837,7 @@ func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 			}
 			checked++
 			if !finalizes {
-				t.Errorf("%s: %s calls session.RemoveMeta but not finalizeSessionUsage"+
+				t.Errorf("%s: %s calls session.RemoveMeta/RemoveMetaAndLineage but not finalizeSessionUsage"+
 					" (docs/log/46 §3-b: settle the trailing turn before forgetting the meta)", name, fd.Name.Name)
 			}
 		}

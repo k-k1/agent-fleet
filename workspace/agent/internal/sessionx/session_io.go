@@ -22,6 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -327,6 +328,10 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			writePeerErr(w, err)
 			return
 		}
+		// Fleet graph write site ⑥ (ADR 0041 / 0096 decision 4): recorded on the RAW message,
+		// before the envelope wraps it — the excerpt is for a human reading the graph, not
+		// the delivery machinery.
+		fleetgraph.RecordPeer(body.PeerFrom, name, strings.TrimSpace(body.PeerIntent), body.Prompt)
 		// The server builds the envelope; the caller never does, so it can neither be
 		// forgotten nor forged.
 		body.Prompt = peerEnvelope(body.PeerFrom, strings.TrimSpace(body.PeerIntent), reply, body.Prompt)
@@ -535,6 +540,9 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// makes this the only correct position.
 	if src := badgeOriginOf(body.PeerFrom, body.ReportTo, body.Source); src != "" {
 		recordInjection(name, body.Prompt, src)
+		if body.PeerFrom == "" { // peer was already recorded above, before the envelope wrap
+			recordFleetGraphInstruct(name, src, body.ReportTo, "", body.Prompt)
+		}
 	}
 	if !submitPromptTUI(w, name, pane, body.Prompt) {
 		return
@@ -579,6 +587,12 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// the session's Discord thread so the thread reflects both directions (docs/log/37
 		// Fix ②). Best-effort + async — never blocks or fails the input.
 		mirrorUserInputAsync(name, body.Prompt)
+		// The fleet graph's own arrow for the same fact: a person, not a badge-carrying
+		// injection, steered this session (ActorId "user", ADR 0096 decision 4). Skipped
+		// for a keys/seq-only request, which carries no prompt text to show.
+		if p := strings.TrimSpace(body.Prompt); p != "" {
+			fleetgraph.RecordInstruct("user", name, "", p)
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 }
@@ -654,6 +668,9 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	// afterwards opens the same gap as the tmux path — merely a shorter one.
 	if src := badgeOriginOf(peerFrom, reportTo, source); src != "" {
 		recordInjection(meta.Name, prompt, src)
+		if peerFrom == "" { // peer was already recorded in the {prompt} handler above
+			recordFleetGraphInstruct(meta.Name, src, reportTo, "", prompt)
+		}
 	}
 	if err := h.Send(agents.TurnInput{Prompt: prompt}); err != nil {
 		if errors.Is(err, agents.ErrQuestionPending) {
@@ -681,6 +698,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		// no Discord mirror.
 	default:
 		mirrorUserInputAsync(meta.Name, prompt) // docs/log/37 Fix ②: Console-input mirror
+		fleetgraph.RecordInstruct("user", meta.Name, "", prompt)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name})
 }

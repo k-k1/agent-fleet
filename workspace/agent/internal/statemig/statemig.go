@@ -112,6 +112,10 @@ var Entries = []string{
 	"chat-wd",
 	"chat-codex",
 	"chat-claude",
+	// The fleet session graph's ledgers (ADR 0096). Never existed under .config —
+	// introduced after the move — but every AgentStateDir-resolving name is required to be
+	// listed here (statemig_drift_test.go): run() no-ops on a source that was never there.
+	"fleet-graph",
 }
 
 // markerName records which entries are finished, so an entry whose source could not be
