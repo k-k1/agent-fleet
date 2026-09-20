@@ -279,6 +279,10 @@ the same shape:
   not enough**: `capsOf` would still see the warm row, `op=generate` would drop comfy at the
   candidate filter, and the third bullet below (the resolution inside `Generate`) would never be
   reached.
+  ⚠️ **A union is right for one surface and wrong for the other.** The MCP tool definition
+  (`mcp_stdio.go:1132`'s `op` enum) is a **connect-time snapshot** and cannot be per model at all, so
+  a union is correct there and a model-specific refusal can only be decision 2's 400. **The pane
+  needs per-model** (decision 12).
 - **Judging** (at generation) is `Caps(model)` — `imagegen.go:806`'s `capsOf` already asks
   `p.Caps(req.Model)`, so a request that names a model is already right.
 - 🔴 **With no model named, comfy's own model resolution has to read `req.Op`.** The union only
@@ -307,6 +311,22 @@ family there means:
 So the per-family set is **six**, not four: `Ops`, `MaxInputs`, `Strength`, `Sizes`, plus `knobs`
 (steps, cfg, sampler, scheduler) and `negative`. This family is guided at cfg 4, so `negative` is
 **true** (its graph puts the same `TextEncodeQwenImageEditPlus` on the negative branch).
+
+🔴 **Two per-model fields go on the wire; decision 11's union only works paired with them.** With the
+union inside `Caps("")`, `st.Ops` (`http.go:215`) and `st.Strength` (`http.go:223`) become
+provider-level "some row here can do this" — **true of no particular model**. But `modelStatus`
+(`http.go:137-165`) carries neither `ops` nor `strength`; its only per-model line is `Knobs`, defined
+as a subset of `steps cfg sampler scheduler negative`. So the two things the Console line below
+requires — stop `jobs.ts:203` sending `strength` unconditionally, take the `op` choices from the
+status — **have no signal to condition on**. On a deployment holding SDXL next to qwen, `strength`
+would always be true and `ops` always three, so the pane would keep showing a slider and offering
+`generate` while qwen is selected, and decision 2's 400 would land in front of the member every time.
+
+- **Add `strength` to `Knobs`** (the pane already hides a field with
+  `model.knobs.includes("negative")`, so the form side is the same shape).
+- **Add `ops` to `modelStatus`.**
+- ⚠️ **Keep the existing rule that an ABSENT `knobs` (an older Agent) leaves the whole form usable** —
+  `GenerateForm.dom.test.tsx` states it.
 
 ## Rejected
 
@@ -342,13 +362,17 @@ So the per-family set is **six**, not four: `Ops`, `MaxInputs`, `Strength`, `Siz
   (`comfy_workflows.go:134`'s `Image string`), call `uploadImage` more than once (`comfy.go:710`
   takes `req.Inputs[0]` alone), wire `image2`, and fix the singular wording of `comfyCheckInputs`'
   refusal (`comfy.go:786`).
+- **Wire**: `ops` on `modelStatus`, `strength` in `Knobs` (decision 12). 🔴 **`providerStatus.Strength`'s
+  doc comment (`http.go:108-110`) says "No union is needed: it is per provider, not per model." —
+  decisions 2 and 11 make that false**, so the same change rewrites it.
 - **CP**: `engine_catalog.go` (two words, required flags), `engine_family_parts.go` (the table), and
   `engine_class.go` is **left alone** (decision 8).
 - **Console**: two family cards in `families.ts` (dialect `sentences`, no quality chips, steps 20 for
   2509 and 40 for 2511, `sizes: []` and **no size field at all**), `wire.ts:39`'s `Family` type,
   `families.test.ts`'s family list, **`jobs.ts:203`'s unconditional `strength`** (it is sent whenever
-  `op !== "generate"`, so decision 2 would refuse every edit), and the `op` choices (`draft.ts`'s constant `OPS`, walked at `GenerateForm.tsx:417`, never the
-  status's `ops`).
+  `op !== "generate"`, so decision 2 would refuse every edit), the `op` choices (`draft.ts`'s constant `OPS`, walked at `GenerateForm.tsx:417`, never the
+  status's `ops`), and `GenerateForm.dom.test.tsx` (the test that greys fields out on `knobs` —
+  extend it for `strength` and `ops`).
 - **Guide**: `guide/operate/07-image-engine.{md,ja.md}` (the page that lists per-family behaviour).
 - **Deployment**: 20 GB more per checkpoint. The box keeps models on NVMe so the space is there, but
   **the cold-start sync grows** (measured: 348.9 s for 30 GB, purchase included).
@@ -491,3 +515,18 @@ One 🔴 left, and it was **where the union goes**.
   consequences' Agent line was missing the second image's plumbing (plural `comfyParams`, repeated
   `uploadImage`, the `image2` wire, the singular refusal). Both fixed, and `comfySwitchWarning`'s
   line corrected from 632 to 633.
+
+### Fourth round (against `f0c4a79a`)
+
+One 🔴, and it was **the union's price**. With `Caps("")` unioned, `st.Ops` and `st.Strength` become
+provider-level "some row can do this" — **true of no particular model** — while `modelStatus` carries
+neither, so the pane cannot write "hide the slider only while qwen is selected". **Two per-model
+fields were added to decision 12** (`strength` in `Knobs`, `ops` on `modelStatus`), together with the
+comment rewrite: `providerStatus.Strength` (`http.go:108-110`) still claims "No union is needed: it is
+per provider, not per model", which decisions 2 and 11 make false.
+
+🟢 The review's sweep of "what else reads `Caps("")`" is worth recording: five call sites take an
+unnamed model (`http.go:206`, `imagegen.go:806`, `:821`, `:856` and **`jobs.go:477`** — the last one
+this ADR had never named). The last two feed `requestWarnings`, and comfy emits its per-row warnings
+itself (`comfy.go:755`, `:758`), so no warning is lost. `comfy.go:654` passes the resolved model, so
+judging stays strict, and `http.go:243` already asks `Caps(m.ID)`. **Nothing else breaks.**

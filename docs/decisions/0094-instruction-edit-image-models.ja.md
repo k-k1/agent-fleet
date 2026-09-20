@@ -250,6 +250,9 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
   ⚠️ **手本にした negative の先例（`http.go:242-247`）はルート側の union なので、同じ形を真似るだけでは
   足りない。** そちらだけ直すと `capsOf` は warm な行のままで、`op=generate` は候補選びの時点で
   comfy を落とし、下の 3 つ目の箇条（`Generate` 内の解決）には**到達しない**。
+  ⚠️ **union で正しい面と、per-model が要る面は違う。** MCP のツール定義（`mcp_stdio.go:1132` の
+  `op` enum）は**接続時のスナップショット**なので原理的に per-model にできない＝union が正しく、
+  モデル固有の拒否は決定 2 の 400 で返すしかない。**ペインは per-model が要る**（決定 12）。
 - **判定（生成時）は `Caps(model)`**——`imagegen.go:806` の `capsOf` は既に `p.Caps(req.Model)` なので、
   モデルを名指しした要求はそのまま正しい。
 - 🔴 **モデル未指定のときは、comfy のモデル解決が `req.Op` を見る。** union は「候補に残す」までしか
@@ -274,6 +277,22 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
 したがってファミリー属性化の対象は 4 つではなく **6 つ**（`Ops` / `MaxInputs` / `Strength` / `Sizes` ＋
 `knobs`（steps・cfg・sampler・scheduler）／ `negative`）。このファミリーは **cfg 4 で回る guided なファミリー**なので
 `negative` は **true**（グラフは負側にも同じ `TextEncodeQwenImageEditPlus` を置く）。
+
+🔴 **per-model の信号を 2 つワイヤに足す。決定 11 の union はこれと対で初めて成立する。** union を
+`Caps("")` に置くと `st.Ops`（`http.go:215`）と `st.Strength`（`http.go:223`）は provider 単位の
+「どれか 1 行ができること」になり、**どのモデルにも当てはまらない値**になる。ところが `modelStatus`
+（`http.go:137-165`）には `ops` も `strength` も無く、per-model の線は `Knobs` だけ（定義は
+「`steps cfg sampler scheduler negative` の部分集合」）。このままでは影響の Console 行が命じている
+2 つ——`jobs.ts:203` の `strength` 無条件送信を止める・`op` 候補を status から引く——が**条件にできる
+信号を持てない**。SDXL と qwen が同居する配備では `strength` は常に true・`ops` は常に 3 種になり、
+qwen を選んでいてもペインは滑り台を出し `generate` を候補に出す＝決定 2 の 400 が会員の目の前で毎回
+出る。
+
+- **`Knobs` に `strength` を足す**（ペインは既に `model.knobs.includes("negative")` で欄を落として
+  いるので、フォーム側は同じ形で書ける）。
+- **`modelStatus` に `ops` を足す**。
+- ⚠️ **`knobs` が無い＝古い Agent のときは全部使えるままにする**、という既存の規則を壊さないこと
+  （`GenerateForm.dom.test.tsx` が明文で守っている）。
 
 ## 却下した案
 
@@ -305,6 +324,9 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
   **P3 の 2 枚目**はここに乗る: `comfyParams` の複数形化（`comfy_workflows.go:134` の `Image string`）・
   `uploadImage`（`comfy.go:710` は `req.Inputs[0]` の 1 回だけ）の複数回呼び出し・`image2` への配線・
   `comfyCheckInputs`（`comfy.go:786`）の拒否文の単数形。
+- **ワイヤ**: `modelStatus` に `ops`、`Knobs` に `strength`（決定 12）。🔴 **`providerStatus.Strength`
+  のドキュメントコメント（`http.go:108-110`）は「No union is needed: it is per provider, not per
+  model.」と書いてあり、決定 2 と 11 はこれを嘘にする**——同じ変更で書き替える。
 - **CP**: `engine_catalog.go`（語彙 2 語・必須フラグ）、`engine_family_parts.go`（部品表）、
   `engine_class.go` は**触らない**（決定 8）。
 - **Console**: `families.ts` にファミリーカード 2 枚（dialect は `sentences`・quality チップ無し・
@@ -440,3 +462,19 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
 - 🟡 決定 8 の本文が決定 5 の後退（P0 は 1 枚）に追随していなかった／影響の Agent 行に 2 枚目の経路
   （`comfyParams` の複数形化・`uploadImage` の複数回・`image2` の配線・拒否文の単数形）が無かった。
   どちらも直した。`comfySwitchWarning` の行番号も 632 → 633 に。
+
+### 4 巡目（`f0c4a79a` に対して）
+
+🔴 は 1 件で、**union の代償**だった。`Caps("")` を union にすると `st.Ops` / `st.Strength` は
+provider 単位の「どれか 1 行ができること」になり、**どのモデルにも当てはまらない値**になる。ところが
+`modelStatus` には `ops` も `strength` も無いので、ペインは「qwen を選んでいるときだけ滑り台を隠す」を
+書けない。**per-model の信号 2 つ（`Knobs` に `strength`・`modelStatus` に `ops`）を決定 12 に足した**。
+`providerStatus.Strength` のコメント（`http.go:108-110`）が「No union is needed: it is per provider,
+not per model.」と書いており、決定 2 と 11 がそれを嘘にすることも影響に入れた。
+
+🟢 レビュー側が「`Caps("")` を union にして壊れる読み手」を全部当たった結果も記録しておく:
+モデル未指定で `Caps` に来るのは 5 か所（`http.go:206` / `imagegen.go:806` / `:821` / `:856` /
+**`jobs.go:477`**——最後の 1 つはこの ADR が名前を挙げていなかった読み手）。後ろ 2 つは
+`requestWarnings` に渡るが、comfy は行ごとの警告を自前で出す（`comfy.go:755` / `:758`）ので落ちる
+警告は無い。`comfy.go:654` は解決後の model を渡すので厳密なまま、`http.go:243` は `Caps(m.ID)` で
+per-model のまま。**壊れる読み手は上の 1 件だけ**だった。
