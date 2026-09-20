@@ -28,8 +28,18 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-func TestSystemPromptOrdersFleetUserProjectSkills(t *testing.T) {
+// stubRTKAvailable pins rtkAvailable() for the duration of the test, so results do not depend
+// on whether this container's own PATH happens to have the rtk binary.
+func stubRTKAvailable(t *testing.T, available bool) {
+	t.Helper()
+	orig := rtkAvailable
+	rtkAvailable = func() bool { return available }
+	t.Cleanup(func() { rtkAvailable = orig })
+}
+
+func TestSystemPromptOrdersFleetUserProjectSkillsRTK(t *testing.T) {
 	home := isolateHome(t)
+	stubRTKAvailable(t, true)
 
 	fleetPath := filepath.Join(home, "fleet-notes.md")
 	writeFile(t, fleetPath, "FLEET POLICY TEXT")
@@ -50,16 +60,35 @@ func TestSystemPromptOrdersFleetUserProjectSkills(t *testing.T) {
 	userAt := strings.Index(got, "USER NOTES TEXT")
 	projAt := strings.Index(got, "PROJECT AGENTS TEXT")
 	skillAt := strings.Index(got, "myskill")
-	if fleetAt < 0 || userAt < 0 || projAt < 0 || skillAt < 0 {
+	rtkAt := strings.Index(got, "# rtk")
+	if fleetAt < 0 || userAt < 0 || projAt < 0 || skillAt < 0 || rtkAt < 0 {
 		t.Fatalf("missing a section, got:\n%s", got)
 	}
-	if !(fleetAt < userAt && userAt < projAt && projAt < skillAt) {
-		t.Fatalf("wrong order (fleet=%d user=%d proj=%d skill=%d):\n%s", fleetAt, userAt, projAt, skillAt, got)
+	if !(fleetAt < userAt && userAt < projAt && projAt < skillAt && skillAt < rtkAt) {
+		t.Fatalf("wrong order (fleet=%d user=%d proj=%d skill=%d rtk=%d):\n%s",
+			fleetAt, userAt, projAt, skillAt, rtkAt, got)
+	}
+}
+
+func TestSystemPromptIncludesRTKPromptOnlyWhenAvailable(t *testing.T) {
+	isolateHome(t)
+	t.Setenv("AF_WORKSPACE_NOTES", filepath.Join(t.TempDir(), "missing.md"))
+	repo := t.TempDir()
+
+	stubRTKAvailable(t, true)
+	if got := SystemPrompt(repo, "lcpp"); !strings.Contains(got, "rtk recall") {
+		t.Fatalf("rtk available but no rtk note in prompt: %q", got)
+	}
+
+	stubRTKAvailable(t, false)
+	if got := SystemPrompt(repo, "lcpp"); strings.Contains(got, "rtk") {
+		t.Fatalf("rtk unavailable but the prompt still mentions it: %q", got)
 	}
 }
 
 func TestSystemPromptOmitsEmptySections(t *testing.T) {
 	isolateHome(t)
+	stubRTKAvailable(t, false)
 	t.Setenv("AF_WORKSPACE_NOTES", filepath.Join(t.TempDir(), "missing.md"))
 	repo := t.TempDir()
 	got := SystemPrompt(repo, "lcpp")
@@ -70,6 +99,7 @@ func TestSystemPromptOmitsEmptySections(t *testing.T) {
 
 func TestSystemPromptHandlesEmptyCwd(t *testing.T) {
 	isolateHome(t)
+	stubRTKAvailable(t, false)
 	t.Setenv("AF_WORKSPACE_NOTES", filepath.Join(t.TempDir(), "missing.md"))
 	if got := SystemPrompt("", "lcpp"); got != "" {
 		t.Fatalf("want empty prompt, got %q", got)

@@ -3,19 +3,24 @@ package harness
 // systemprompt.go is segment G's system-prompt half (ADR 0093 decision 5 / docs/log/99 §4.9):
 // a CLI-driven kind gets the instruction-file layer for free because the vendor CLI reads
 // AGENTS.md/CLAUDE.md and its own config itself. lcpp drives no CLI, so this package reads
-// them and folds them into one system message, in the SAME fleet -> user -> project order
-// agent_instructions.go's own composition already applies (see that file's ":21" comment,
-// "Order matters: the order within the file IS the order it is applied in") — reused here via
-// internal/userinstr rather than re-derived, so the order is written down in exactly one place.
+// them and folds them into one system message, in the SAME fleet -> user -> project -> rtk
+// order agent_instructions.go's own composition already applies (see that file's ":21" comment,
+// "Order matters: the order within the file IS the order it is applied in", and ":47/:148" for
+// rtk's own place as prose folded into the same instruction file, always last) — reused here
+// via internal/userinstr rather than re-derived, so the order is written down in exactly one
+// place.
 //
-// rtk plays no part in this file. Decision 5's own last sentence limits rtk, for this kind, to
-// the bash-exec-time rewrite tools_bash.go's caller already applies (agent_rtk.go's shape for
-// every other kind) — there is no rtk-owned FILE for lcpp to fold into a prompt, so "fleet ->
-// user -> project -> rtk" (the general order other kinds compose a single file in) has nothing
-// for this function to add at the rtk position.
+// rtk here is NOT the other kinds' rtkBlock (internal/agents/codex/rtk.go's `## rtk (token
+// saver) … Prefix …`): that text tells the MODEL to prefix its own shell commands with `rtk`,
+// which would be teaching lcpp's model a lie — E's bash tool already runs every command
+// through rtk itself, before exec (tools_bash.go), so the model must never do that again. What
+// actually needs saying is the one thing that genuinely differs for the model here: bash
+// output can come back folded, and recovering the rest takes the model actually running the
+// recall command itself (rtkPrompt below).
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -25,9 +30,10 @@ import (
 
 // SystemPrompt composes decision 5's system prompt for one turn: the baked fleet policy, the
 // workspace owner's own instructions, the working copy's own AGENTS.md/CLAUDE.md chain (cwd
-// upward to the nearest git root), and a listing of the foreign SKILL.md trees this kind has no
-// native way to invoke (decision 5: "スキルは foreign のみ"). Sections that have nothing to say
-// are omitted rather than emitted empty.
+// upward to the nearest git root), a listing of the foreign SKILL.md trees this kind has no
+// native way to invoke (decision 5: "スキルは foreign のみ"), and — last, per decision 5's own
+// fleet -> user -> project -> rtk order — the rtk note (only when rtk is actually available;
+// see rtkPrompt). Sections that have nothing to say are omitted rather than emitted empty.
 //
 // kind is the userinstr per-target name (userinstr.State.Body's map key / its Targets map).
 // "lcpp" is not one of userinstr's known kinds — it writes no file, so agent_instructions.go
@@ -47,6 +53,9 @@ func SystemPrompt(cwd, kind string) string {
 	}
 	if skills := foreignSkillsPrompt(cwd); skills != "" {
 		parts = append(parts, skills)
+	}
+	if rtkAvailable() {
+		parts = append(parts, rtkPrompt)
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -258,3 +267,31 @@ func isDisabledSkill(v string) bool {
 	}
 	return false
 }
+
+// rtkAvailable reports whether the rtk binary is in this image — the same test
+// claude.RTKAvailable() (internal/agents/claude/settings.go) makes, duplicated here rather
+// than imported: that package pulls in internal/session and internal/transcript, both of
+// which P2's kind wiring is expected to need to import internal/harness from (session.go's
+// kind switch, the managed driver) — importing the other direction now, for one
+// exec.LookPath call, is not worth risking that cycle later.
+//
+// A var, not a func, so a test can stand in for it instead of depending on whatever this
+// container's own PATH happens to have.
+var rtkAvailable = func() bool {
+	_, err := exec.LookPath("rtk")
+	return err == nil
+}
+
+// rtkPrompt is decision 5's rtk element of the system prompt — emitted only when
+// rtkAvailable(), since describing a marker that can never appear would be teaching the model
+// to look for a tool that is not there. Deliberately NOT the other kinds' rtkBlock text
+// (see this file's header comment): the one thing that genuinely differs for lcpp's own model
+// is that a bash result can come back folded, and getting the rest back takes the model
+// actually running the recall command itself — nothing else does that for it.
+const rtkPrompt = "# rtk\n\n" +
+	"Your bash tool's commands are automatically rewritten to run through rtk before they " +
+	"execute. You do not need to, and must not, prefix a command with `rtk` yourself — that " +
+	"already happens for you.\n\n" +
+	"Some bash results come back with part of their output folded to save space, ending in a " +
+	"marker that names a recall command, such as `rtk recall <id>`. When you see one and need " +
+	"the rest, run that exact command with the bash tool to read the full output."
