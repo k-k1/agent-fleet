@@ -9,7 +9,13 @@
 // here once drifted by half a row and neither tsc nor the tests could see it, because a
 // module importing its own stub looks unrelated to the real one.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode, WheelEvent as RWheelEvent } from "react";
+import type {
+  CSSProperties,
+  MouseEvent as RMouseEvent,
+  PointerEvent as RPointerEvent,
+  ReactNode,
+  WheelEvent as RWheelEvent,
+} from "react";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -18,7 +24,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import { useIsMobile } from "../../lib/device.ts";
 import { fmtDateTime, TIME_HM } from "../../lib/intl.ts";
-import { exitLabel } from "../../lib/sessionview.ts";
+import { exitLabel, stateInfo } from "../../lib/sessionview.ts";
 import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -38,7 +44,7 @@ import type {
   GraphSegment,
   LedgerState,
 } from "../../types/fleetgraph.ts";
-import type { SessionKind } from "../../types/session.ts";
+import type { Session, SessionKind } from "../../types/session.ts";
 import { buildFleetGraph, isExternalActor, laneY, xOf } from "../../lib/fleetgraph.ts";
 import "./fleetgraph.css";
 
@@ -47,15 +53,38 @@ const SEG_H = 12;
 const NODE_R = 4;
 const DEATH_R = 5;
 const TOP_PAD = 26;
-const BOTTOM_PAD = 22;
-const LABEL_W = 176;
-// Fallback only, used until the canvas's ResizeObserver reports a real width (and in the
+// Only the arrows that leave the figure and the coverage captions live above/below the
+// rows now: the time axis is its own sticky strip on top (see AXIS_H), not the foot of
+// the canvas — with more lanes than fit, a scale drawn at the bottom is scrolled out of
+// sight exactly when the figure is big enough to need it.
+const BOTTOM_PAD = 10;
+const AXIS_H = 20;
+// Wide enough for the name AND the state chip: at 248 the chip (67px measured) left 120px
+// for the name and clipped 4 of the fixture's 9 lanes; at 288 none of them clip.
+// (console/scripts/fleetgraph/check.mjs prints both numbers.)
+const LABEL_W = 288;
+// Narrow panes give the width back to the name: the state chip folds to its icon (CSS)
+// and the column shrinks with it. A container query cannot do this half — the SVG's
+// width is a number in the model, not a style.
+const LABEL_W_NARROW = 168;
+const LABEL_W_BREAK = 560;
+// Fallback only, used until the body's ResizeObserver reports a real width (and in the
 // dom test project, whose ResizeObserver stub never calls back at all — see domSetup.ts).
 const CANVAS_W = 920;
 const MIN_CANVAS_W = 240;
 const DAY_MS = 86_400_000;
 const MIN_SPAN_MS = 30 * 60_000; // 30 minutes — zooming past this stops being readable
 const MAX_SPAN_MS = 30 * DAY_MS; // matches decision 8's activity-retention tier
+// A pan/zoom gesture moves the window on every wheel notch and every pointer move; the
+// page it needs is re-fetched only once the gesture settles. Without this a single
+// trackpad flick fired one request per frame (and each one re-rendered the figure under
+// the finger). The FIRST load is not delayed: `fetchWin` starts equal to `win`, and the
+// debounce below returns the SAME object when nothing moved, so React bails out.
+const FETCH_SETTLE_MS = 250;
+// How far a press may travel and still count as a click on what is underneath (a lane,
+// an arrow). Beyond it the gesture was a pan, and the click it would synthesize is
+// swallowed — otherwise dragging the canvas opens whatever the finger came down on.
+const DRAG_SLOP_PX = 4;
 
 const STATE_KEY: Record<LedgerState, MsgKey> = {
   working: "fgraph.state.working",
@@ -78,6 +107,16 @@ const PRESENCE_KEY: Record<GraphLaneKnown["presence"], MsgKey> = {
   stopped: "fgraph.presence_stopped",
   archived: "fgraph.presence_archived",
   gone: "fgraph.presence_gone",
+};
+
+// The same four words as PRESENCE_KEY, cut to chip length. Only reachable for a lane the
+// live list does not carry — an archived one (the Agent's list skips `m.Archived`) or a
+// deleted one — so it never competes with stateInfo's wording for a session that exists.
+const PRESENCE_SHORT_KEY: Record<GraphLaneKnown["presence"], MsgKey> = {
+  live: "fgraph.presence_short_live",
+  stopped: "fgraph.presence_short_stopped",
+  archived: "fgraph.presence_short_archived",
+  gone: "fgraph.presence_short_gone",
 };
 
 const MARK_KEY: Record<CoverageMark["kind"], MsgKey> = {
@@ -115,10 +154,11 @@ const isFamilyArrow = (v: ArrowVariant): boolean => v === "spawn" || v === "fork
 interface FleetGraphViewProps {
   paneId: string;
   showArchived: boolean;
+  collapsed: string[];
   headerActions?: ReactNode;
 }
 
-export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGraphViewProps) {
+export function FleetGraphView({ paneId, showArchived, collapsed, headerActions }: FleetGraphViewProps) {
   const tr = useT();
   const beside = !useIsMobile();
   const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);
@@ -127,56 +167,22 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
     const to = Date.now();
     return { from: to - DAY_MS, to };
   });
-
-  const zoom = (factor: number) => {
-    setWin((w) => {
-      const cur = w.to - w.from;
-      const next = Math.min(MAX_SPAN_MS, Math.max(MIN_SPAN_MS, cur * factor));
-      return { from: w.to - next, to: w.to };
-    });
-  };
-  const pan = (fraction: number) => {
-    setWin((w) => {
-      const shift = (w.to - w.from) * fraction;
-      const to = Math.min(Date.now(), w.to + shift);
-      return { from: to - (w.to - w.from), to };
-    });
-  };
+  // Both gestures keep the same two invariants: the span stays inside
+  // [MIN_SPAN_MS, MAX_SPAN_MS], and the right edge never passes now — panning into the
+  // future scrolls into a blank the figure can never fill.
+  const zoom = (factor: number) => setWin((w) => {
+    const span = Math.min(MAX_SPAN_MS, Math.max(MIN_SPAN_MS, (w.to - w.from) * factor));
+    return { from: w.to - span, to: w.to };
+  });
+  const pan = (fraction: number) => setWin((w) => {
+    const span = w.to - w.from;
+    const to = Math.min(Date.now(), w.to + span * fraction);
+    return { from: to - span, to };
+  });
   const resetWindow = () => {
     const to = Date.now();
     setWin({ from: to - DAY_MS, to });
   };
-  const onWheel = (e: RWheelEvent<HTMLDivElement>) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      zoom(e.deltaY > 0 ? 1.2 : 1 / 1.2);
-      return;
-    }
-    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-    if (!delta) return;
-    e.preventDefault();
-    pan(delta > 0 ? 0.12 : -0.12);
-  };
-
-  // One fetch per window change (and on tab refocus), never on a timer: the figure rides
-  // the session list's existing polling for "now" and re-reads history only when the window
-  // moves. A failed load keeps the previous page on screen rather than blanking the figure.
-  const [loadError, setLoadError] = useState(false);
-  const [page, setPage] = useState<FleetGraphPage | null>(null);
-  useEffect(() => {
-    const ac = new AbortController();
-    fetchFleetGraph(win.from, win.to)
-      .then((res) => {
-        if (ac.signal.aborted) return;
-        const failed = !!(res && "error" in res);
-        setLoadError(failed);
-        if (!failed) setPage(res as FleetGraphPage);
-      })
-      .catch(() => {
-        if (!ac.signal.aborted) setLoadError(true);
-      });
-    return () => ac.abort();
-  }, [win.from, win.to]);
 
   // The canvas's real width, not a constant: `.fgraph-svg` now carries explicit width/
   // height attributes matching `scale` 1:1 (px-for-px with the label column's fixed
@@ -196,24 +202,126 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
   // render (an empty figure renders EmptyState instead), so a mount-time effect would run
   // with a null ref and never observe anything — measured as a figure stuck at 920px wide
   // no matter the pane. The callback re-runs on every mount and unmount of the node itself.
-  const [canvasW, setCanvasW] = useState(CANVAS_W);
+  const [bodyW, setBodyW] = useState(CANVAS_W + LABEL_W);
   const roRef = useRef<ResizeObserver | null>(null);
   const bodyRef = useCallback((el: HTMLDivElement | null) => {
     roRef.current?.disconnect();
     roRef.current = null;
     if (!el) return;
-    const measure = () => setCanvasW(Math.max(MIN_CANVAS_W, Math.round(el.clientWidth - LABEL_W)));
+    const measure = () => setBodyW(el.clientWidth);
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     roRef.current = ro;
   }, []);
+  const labelW = bodyW < LABEL_W_BREAK ? LABEL_W_NARROW : LABEL_W;
+  const canvasW = Math.max(MIN_CANVAS_W, Math.round(bodyW - labelW));
 
   const scale: GraphScale = useMemo(
     () => ({ from: win.from, to: win.to, width: canvasW, laneH: ROW_H }),
     [win.from, win.to, canvasW],
   );
+
+  // A gesture's px become a window shift through the scale itself: a wheel notch and a
+  // drag both move the figure by exactly the distance the input travelled. The first
+  // version panned a fixed 12% of the window per wheel EVENT, and one trackpad flick
+  // (dozens of events) threw the window days away.
+  const panPx = (px: number) => setWin((w) => {
+    const span = w.to - w.from;
+    const to = Math.min(Date.now(), w.to + px * (span / Math.max(1, canvasW)));
+    return { from: to - span, to };
+  });
+  const onWheel = (e: RWheelEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      zoom(e.deltaY > 0 ? 1.2 : 1 / 1.2);
+      return;
+    }
+    // A plain vertical wheel belongs to the LANE LIST, which is what actually overflows
+    // this pane: swallowing it to pan time (what the first version did for every wheel
+    // event, deltaY included) left no way at all to reach the rows below the fold.
+    // Shift+wheel is the horizontal gesture a mouse without a tilt wheel can produce.
+    const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+    if (!dx) return;
+    e.preventDefault();
+    // A wheel scrolls the VIEWPORT: deltaX > 0 means "further right", i.e. later. The
+    // opposite of a drag, which moves the CONTENT under the finger — measured with the
+    // sign the wrong way round, where a leftward flick only pressed the window against
+    // "now" and looked like the gesture did nothing at all.
+    panPx(dx);
+  };
+
+  // Drag to pan, the gesture a timeline is expected to have. `moved` is what tells a pan
+  // from a click on a lane: past DRAG_SLOP_PX the click that the browser synthesizes at
+  // the end is swallowed in the capture phase, before any lane/arrow handler sees it.
+  const dragRef = useRef<{ id: number; x: number; moved: boolean } | null>(null);
+  const swallowClickRef = useRef(false);
+  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    dragRef.current = { id: e.pointerId, x: e.clientX, moved: false };
+  };
+  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d || d.id !== e.pointerId) return;
+    const dx = e.clientX - d.x;
+    if (!d.moved && Math.abs(dx) < DRAG_SLOP_PX) return;
+    if (!d.moved) {
+      d.moved = true;
+      // Captured only once the press IS a drag: capturing on pointerdown would steal the
+      // pointer from every plain click on a lane.
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
+    d.x = e.clientX;
+    panPx(-dx);
+  };
+  const endDrag = (e: RPointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d || d.id !== e.pointerId) return;
+    dragRef.current = null;
+    if (!d.moved) return;
+    swallowClickRef.current = true;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+  const onClickCapture = (e: RMouseEvent<HTMLDivElement>) => {
+    if (!swallowClickRef.current) return;
+    swallowClickRef.current = false;
+    e.stopPropagation();
+    e.preventDefault();
+  };
+
+  // One fetch per settled window (and on tab refocus), never on a timer: the figure rides
+  // the session list's existing polling for "now" and re-reads history only when the window
+  // moves. A failed load keeps the previous page on screen rather than blanking the figure.
+  const [loadError, setLoadError] = useState(false);
+  const [page, setPage] = useState<FleetGraphPage | null>(null);
+  const [fetchWin, setFetchWin] = useState(win);
+  useEffect(() => {
+    const id = setTimeout(
+      () => setFetchWin((w) => (w.from === win.from && w.to === win.to ? w : { from: win.from, to: win.to })),
+      FETCH_SETTLE_MS,
+    );
+    return () => clearTimeout(id);
+  }, [win.from, win.to]);
+  useEffect(() => {
+    const ac = new AbortController();
+    fetchFleetGraph(fetchWin.from, fetchWin.to)
+      .then((res) => {
+        if (ac.signal.aborted) return;
+        const failed = !!(res && "error" in res);
+        setLoadError(failed);
+        if (!failed) setPage(res as FleetGraphPage);
+      })
+      .catch(() => {
+        if (!ac.signal.aborted) setLoadError(true);
+      });
+    return () => ac.abort();
+  }, [fetchWin.from, fetchWin.to]);
+
   const sessionMap = useMemo(() => new Map(sessions.map((x) => [x.name, x] as const)), [sessions]);
+  // The fold list is an array on PaneContent (JSON in the layout), so it is a NEW array on
+  // every render of the pane: keying the memo on its contents instead of its identity is
+  // what keeps a rebuild of the whole model off every unrelated re-render.
+  const collapsedKey = collapsed.join("\u0000");
   const model: GraphModel = useMemo(
     () => buildFleetGraph(page, sessionMap, {
       from: scale.from,
@@ -221,12 +329,33 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
       width: scale.width,
       laneH: scale.laneH,
       showArchived,
+      collapsed: collapsedKey ? collapsedKey.split("\u0000") : [],
     }),
-    [page, sessionMap, scale, showArchived],
+    [page, sessionMap, scale, showArchived, collapsedKey],
   );
 
   const laneById = useMemo(() => new Map(model.lanes.map((l) => [l.id, l] as const)), [model.lanes]);
-  const toggleArchived = () => setPaneTarget(paneId, { content: { kind: "fleetgraph", showArchived: !showArchived } });
+  const setContent = (next: { showArchived?: boolean; collapsed?: string[] }) =>
+    setPaneTarget(paneId, {
+      content: {
+        kind: "fleetgraph",
+        showArchived: next.showArchived ?? showArchived,
+        collapsed: next.collapsed ?? collapsed,
+      },
+    });
+  const toggleArchived = () => setContent({ showArchived: !showArchived });
+  const toggleFold = (laneId: string) =>
+    setContent({
+      collapsed: collapsed.includes(laneId) ? collapsed.filter((x) => x !== laneId) : [...collapsed, laneId],
+    });
+  // The sessions overview and this figure are two views of one surface (ADR 0096
+  // decision 10), so the default is a swap in place — Ctrl/⌘/middle still means "a new
+  // pane", the same modifier rule every other open in this view follows.
+  const openSessionsList = (newPane: boolean) => {
+    const target = { content: { kind: "sessions" as const, showStopped: false, collapsed } };
+    if (newPane) useLayoutStore.getState().openTargetInNew(target);
+    else setPaneTarget(paneId, target);
+  };
 
   const running = useWorkspaceStore((s) => s.state === "running");
   const openLane = (laneId: string, newPane: boolean) => {
@@ -285,6 +414,19 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
             >
               <Icon name={showArchived ? "eye" : "eye-closed"} /> <span className="lbl">{tr("fgraph.show_archived")}</span>
             </button>
+            {/* The way back to the sessions overview (ADR 0096 decision 10). The two panes
+                carry each other's button rather than only the leader key and the palette,
+                which is all this figure had: the rail's layout map hides itself while there
+                is a single pane — which is exactly when someone reaches for either view. */}
+            <button
+              type="button"
+              className="ui-btn ui-btn-ghost fgraph-switch"
+              title={tr("fgraph.switch_to_sessions_hint")}
+              onClick={(e) => activate(e, openSessionsList)}
+              onAuxClick={(e) => activate(e, openSessionsList)}
+            >
+              <Icon name="dashboard" /> <span className="lbl">{tr("fgraph.switch_to_sessions")}</span>
+            </button>
             {headerActions}
           </>
         }
@@ -295,11 +437,29 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
         <span className="fgraph-count">{tr("fgraph.count", { n: model.lanes.length })}</span>
         {loadError && <span className="fgraph-err" title={tr("err.network")}>{tr("fgraph.load_failed")}</span>}
       </ViewHead>
-      {model.lanes.length === 0 ? (
-        <EmptyState icon="graph" title={tr("fgraph.empty")} />
-      ) : (
-        <div className="fgraph-body" ref={bodyRef} onWheel={onWheel}>
-          <div className="fgraph-labels" style={{ width: LABEL_W, paddingTop: TOP_PAD }}>
+      {/* The body is rendered even with no lanes in it. An empty window is a PLACE — you
+          reach it by panning into a stretch where nothing ran — and replacing the whole
+          figure with a bare EmptyState took the time axis away (so you could not tell where
+          you were) along with the wheel and drag handlers (so the only way back was the
+          header's reset button). Measured: one flick into the past left a pane whose only
+          working control was "reset". */}
+      <div className="fgraph-body" ref={bodyRef} onWheel={onWheel}>
+        {/* The time axis, in its own strip pinned to the TOP of the scroll box. It used to
+            be the last thing inside the canvas, which put it below every lane: past a
+            screenful of sessions the scale was only readable after scrolling to the
+            bottom, and it moved away again the moment you looked at a row. */}
+        <div className="fgraph-axis" style={{ height: AXIS_H }}>
+          <div className="fgraph-axis-gutter" style={{ width: labelW }} />
+          <svg width={scale.width} height={AXIS_H} viewBox={`0 0 ${scale.width} ${AXIS_H}`} aria-hidden="true">
+            {ticks.map((tk) => (
+              <text key={tk.ts} className="fgraph-axis-label" x={tickX(tk, scale)} y={AXIS_H - 6} textAnchor={tk.anchor}>
+                {tk.label}
+              </text>
+            ))}
+          </svg>
+        </div>
+        <div className="fgraph-rows">
+          <div className="fgraph-labels" style={{ width: labelW, paddingTop: TOP_PAD }}>
             {model.lanes.map((lane) => {
               // "欠けた親は左端の印で示す" (decision 9): a lane can sit at depth > 0 while its
               // immediate parent has no row of its own in this model — off-window, or the
@@ -317,12 +477,21 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
                   h={ROW_H}
                   clickable={!lane.erased && clickable(lane.id)}
                   missingParent={missingParent}
+                  session={sessionMap.get(lane.id)}
                   onOpen={(e) => activate(e, (np) => openActor(lane.id, np))}
+                  onFold={lane.hasChildren ? () => toggleFold(lane.id) : undefined}
                 />
               );
             })}
-          </div>
-          <div className="fgraph-canvas">
+            </div>
+            <div
+            className="fgraph-canvas"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            onClickCapture={onClickCapture}
+            >
             <svg
               width={scale.width}
               height={totalH}
@@ -390,16 +559,16 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
                 );
               })}
 
+              {/* The guide lines stay with the rows they measure; only their captions moved
+                  to the sticky strip above. */}
               {ticks.map((tk) => (
-                <g key={tk.ts} className="fgraph-tick">
-                  <line x1={xOf(scale, tk.ts)} x2={xOf(scale, tk.ts)} y1={TOP_PAD - 4} y2={totalH - BOTTOM_PAD + 4} />
-                  <text x={xOf(scale, tk.ts)} y={totalH - 6}>{tk.label}</text>
-                </g>
+                <line key={tk.ts} className="fgraph-tick" x1={xOf(scale, tk.ts)} x2={xOf(scale, tk.ts)} y1={2} y2={totalH - 2} />
               ))}
             </svg>
           </div>
         </div>
-      )}
+        {model.lanes.length === 0 && <EmptyState icon="graph" title={tr("fgraph.empty")} />}
+      </div>
     </div>
   );
 }
@@ -411,15 +580,68 @@ function activate(e: ClickMods, run: (newPane: boolean) => void): void {
   run(e.ctrlKey || e.metaKey || e.button === 1);
 }
 
-function axisTicks(from: number, to: number): { ts: number; label: string }[] {
+interface AxisTick {
+  ts: number;
+  label: string;
+  // The two end captions sit ON the edges of the drawable width, where a centred label is
+  // half outside the strip and gets clipped — the left one rendered as ":59" of "08:59".
+  // They anchor inward instead; everything between stays centred on its line.
+  anchor: "start" | "middle" | "end";
+}
+
+function axisTicks(from: number, to: number): AxisTick[] {
   const span = to - from;
   const steps = 5;
-  const out: { ts: number; label: string }[] = [];
+  const out: AxisTick[] = [];
   for (let i = 0; i <= steps; i++) {
     const ts = from + (span * i) / steps;
-    out.push({ ts, label: fmtDateTime(ts, span > 3 * DAY_MS ? undefined : TIME_HM) });
+    const anchor = i === 0 ? "start" : i === steps ? "end" : "middle";
+    out.push({ ts, label: fmtDateTime(ts, span > 3 * DAY_MS ? undefined : TIME_HM), anchor });
   }
   return out;
+}
+
+// A tick's caption x: on the line, nudged off the very edge so the first and last glyphs
+// are not flush against the strip's border.
+const tickX = (tk: AxisTick, scale: GraphScale): number => {
+  const x = xOf(scale, tk.ts);
+  return tk.anchor === "start" ? x + 2 : tk.anchor === "end" ? x - 2 : x;
+};
+
+// The fold control and the hidden-count badge, shared by the erased and the known label so
+// an erased row that still holds a family can be folded like any other (decision 6 keeps
+// its row for the arrows; nothing there says its children must stay on screen).
+function FoldToggle({ lane, onFold }: { lane: GraphLane; onFold: (() => void) | undefined }) {
+  const tr = useT();
+  if (!onFold) return <span className="fgraph-fold-gap" />;
+  const hidden = lane.hiddenDescendants ?? 0;
+  return (
+    <button
+      type="button"
+      className="fgraph-fold"
+      aria-expanded={!hidden}
+      title={hidden ? tr("fgraph.expand") : tr("fgraph.collapse")}
+      onClick={(e) => {
+        // The row itself opens the session; this button must not do both.
+        e.preventDefault();
+        e.stopPropagation();
+        onFold();
+      }}
+    >
+      <Icon name={hidden ? "chevron-right" : "chevron-down"} />
+    </button>
+  );
+}
+
+function HiddenCount({ lane }: { lane: GraphLane }) {
+  const tr = useT();
+  const hidden = lane.hiddenDescendants ?? 0;
+  if (!hidden) return null;
+  return (
+    <span className="fgraph-hidden" title={tr("fgraph.hidden_children_hint", { n: hidden })}>
+      {tr("fgraph.hidden_children", { n: hidden })}
+    </span>
+  );
 }
 
 function LaneLabel({
@@ -427,31 +649,47 @@ function LaneLabel({
   h,
   clickable,
   missingParent,
+  session,
   onOpen,
+  onFold,
 }: {
   lane: GraphLane;
   h: number;
   clickable: boolean;
   missingParent: string | null;
+  /** The live row behind this lane, when it still has one. Its STATE is not re-derived
+   *  here: `stateInfo` (lib/sessionview.ts) is the one place that maps a session to a
+   *  chip, and the rail row, the pane head and the overview card are its other three
+   *  readers (ADR 0078 decision 5). A fourth derivation would drift from them, and this
+   *  figure would say "idle" about a session the rest of the Console calls limited. */
+  session: Session | undefined;
   onOpen: (e: ClickMods) => void;
+  onFold: (() => void) | undefined;
 }) {
   const tr = useT();
   if (lane.erased) {
     return (
       <div className="fgraph-label erased" style={{ height: h }} title={tr("fgraph.erased_label", { id: lane.label })}>
+        <FoldToggle lane={lane} onFold={onFold} />
         <Icon name="trash" />
         <span className="fgraph-label-text">{tr("fgraph.erased_label", { id: lane.label })}</span>
+        <HiddenCount lane={lane} />
       </div>
     );
   }
   const cls = kindClass(lane.kind);
+  // A lane the live list no longer carries (pruned, deleted, or from another workspace)
+  // has no session to ask, so the presence word the line style already encodes is what
+  // the chip says instead — never a guess at a state nobody reported.
+  const st = session ? stateInfo(session) : null;
+  const presence = tr(PRESENCE_KEY[lane.presence]);
   return (
     <div
       className={cx("fgraph-label", clickable && "clickable", lane.depth > 0 && "child")}
       style={{ height: h, paddingLeft: 6 + Math.min(lane.depth, 4) * 10 }}
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
-      title={`${lane.label}\n${kindLabel(lane.kind)} · ${tr(PRESENCE_KEY[lane.presence])}`}
+      title={`${lane.label}\n${kindLabel(lane.kind)} · ${st ? st.text : presence}`}
       onClick={clickable ? onOpen : undefined}
       onAuxClick={clickable ? onOpen : undefined}
       onKeyDown={
@@ -465,13 +703,26 @@ function LaneLabel({
           : undefined
       }
     >
-            {missingParent && (
-              <Icon name="warning" className="fgraph-parent-gap" title={tr("fgraph.parent_missing", { id: missingParent })} />
-            )}
+      <FoldToggle lane={lane} onFold={onFold} />
+      {missingParent && (
+        <Icon name="warning" className="fgraph-parent-gap" title={tr("fgraph.parent_missing", { id: missingParent })} />
+      )}
       <span className={"sess-kic kind-" + cls}>
         <Icon name={kindIcon(lane.kind)} />
       </span>
       <span className="fgraph-label-text">{lane.label}</span>
+      <HiddenCount lane={lane} />
+      {st ? (
+        <span className={"session-state " + st.cls} title={st.text}>
+          <Icon name={st.icon} spin={st.spin} />
+          {" "}
+          <span className="lbl">{st.short || st.text}</span>
+        </span>
+      ) : (
+        <span className="session-state off" title={presence}>
+          <span className="lbl">{tr(PRESENCE_SHORT_KEY[lane.presence])}</span>
+        </span>
+      )}
     </div>
   );
 }

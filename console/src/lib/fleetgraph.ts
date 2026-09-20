@@ -626,8 +626,49 @@ export const buildFleetGraph: BuildFleetGraph = (
     if (touchedIds && !touchedIds.has(id)) return false;
     return true;
   };
-  const finalOrder = orderedAll.filter(included);
+  // 6-2. Family fold: a lane under a collapsed parent loses its row, and `row` is
+  // renumbered over what survives — the rule showArchived set (filtering a second
+  // time in the view would hide a builder bug behind the view's own filter).
+  //
+  // The fold hangs off the DRAWN parent only. An ancestor with no row this render
+  // (off-window, or itself filtered out) folds nothing: its "+" is not on screen, so
+  // hiding its descendants would leave rows missing with no press that brings them
+  // back. That is also why `hasChildren` is counted over the ancestors that have a
+  // row rather than over `childrenOf` — a parent whose every child is outside the
+  // window would otherwise offer a "+" that does nothing.
+  const openOrder = orderedAll.filter(included);
+  const drawable = new Set<LaneId>(openOrder);
+  const collapsedSet = new Set<LaneId>((opts.collapsed ?? []).filter((id) => drawable.has(id)));
+  const hasChildren = new Set<LaneId>();
+  const hiddenUnder = new Map<LaneId, number>();
+  const folded = new Set<LaneId>();
+  for (const id of openOrder) {
+    // `guard` is the same hazard resolveRoots colours for: a corrupted originSession
+    // cycle would otherwise walk this chain forever.
+    const guard = new Set<LaneId>([id]);
+    let hidden = false;
+    for (let p = parentOf.get(id); p !== undefined && !guard.has(p); p = parentOf.get(p)) {
+      guard.add(p);
+      if (!drawable.has(p)) continue;
+      hasChildren.add(p);
+      if (collapsedSet.has(p)) {
+        // Every collapsed ancestor counts it, not just the nearest: the outermost
+        // one is swallowing that row too, and its "+3" has to say so.
+        hiddenUnder.set(p, (hiddenUnder.get(p) ?? 0) + 1);
+        hidden = true;
+      }
+    }
+    if (hidden) folded.add(id);
+  }
+  const finalOrder = folded.size ? openOrder.filter((id) => !folded.has(id)) : openOrder;
   const rowOf = new Map<LaneId, number>(finalOrder.map((id, i) => [id, i]));
+  const foldFields = (id: LaneId) => {
+    const hidden = hiddenUnder.get(id) ?? 0;
+    return {
+      ...(hasChildren.has(id) ? { hasChildren: true as const } : {}),
+      ...(hidden ? { hiddenDescendants: hidden } : {}),
+    };
+  };
 
   // 7. Lanes.
   const lanes: GraphLane[] = finalOrder.map((id) => {
@@ -642,6 +683,7 @@ export const buildFleetGraph: BuildFleetGraph = (
         erased: true,
         label: id,
         runs: [],
+        ...foldFields(id),
       };
       return lane;
     }
@@ -656,6 +698,7 @@ export const buildFleetGraph: BuildFleetGraph = (
       kind: f.kind,
       origin: f.origin,
       runs: f.runs as [LaneRun, ...LaneRun[]],
+      ...foldFields(id),
     };
     if (f.parent) lane.parent = f.parent;
     if (f.state !== undefined) lane.state = f.state;

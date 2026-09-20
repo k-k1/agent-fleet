@@ -31,7 +31,8 @@
   color: var(--accent);
 }
 @container paneview (max-width: 460px) {
-  .fgraph-toggle .lbl {
+  .fgraph-toggle .lbl,
+  .fgraph-switch .lbl {
     display: none;
   }
   /* The nav cluster (5 buttons) + toggle + count + err is a lot more header than the
@@ -59,12 +60,43 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+/* The time axis, pinned to the top of the scroll box (it used to be the last thing in the
+   canvas, i.e. below every lane). `top: 0` is what keeps it readable while the lane list
+   scrolls — the figure is worth scrolling exactly when it is too tall to show its own
+   scale. z-index above the labels column so the gutter covers them, not the reverse. */
+.fgraph-axis {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.fgraph-axis-gutter {
+  flex: none;
+  position: sticky;
+  left: 0;
+  align-self: stretch;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+.fgraph-axis-label {
+  fill: var(--muted);
+  font-size: 9px;
+}
+.fgraph-rows {
+  flex: none;
+  display: flex;
   /* Without this the row-flex default (stretch) grows the labels/canvas children to the
      pane's full height, and their own content (fixed-height rows, an SVG sized to its own
      aspect ratio) sits at the top of that tall box — a harmless but confusing dead area
      below the diagram. Natural height, same as the SCM commit graph's <ul> of fixed rows. */
   align-items: flex-start;
-  overflow: auto;
 }
 .fgraph-labels {
   flex: none;
@@ -104,6 +136,59 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The family fold. A lane with no children of its own keeps the same indent by rendering
+   an empty box of the same width — without it, folding a parent would shift every sibling
+   name sideways as the "+" appeared and vanished. */
+.fgraph-fold,
+.fgraph-fold-gap {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.fgraph-fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.fgraph-fold:hover,
+.fgraph-fold:focus-visible {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+/* "+3" on a folded parent: the only thing on screen that says rows were taken away. */
+.fgraph-hidden {
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+  padding: 0 4px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+/* The live-state chip (lib/sessionview.ts's stateInfo, the same component the rail row and
+   the overview card render). `margin-left: auto` comes from .session-state itself, which is
+   what pins it to the right edge of the column. */
+.fgraph-label .session-state {
+  font-size: 9px;
+  padding: 0 5px;
+}
+/* Keep this number equal to LABEL_W_BREAK in FleetGraphView.tsx: below it the column
+   shrinks to LABEL_W_NARROW, and the name needs the width more than the state's word does
+   (the icon and its colour still carry the state). The two measure almost the same box —
+   this one the pane, the constant the scroll box inside it — so they can disagree by a
+   scrollbar's width right at the boundary, which costs a chip label and nothing else. */
+@container paneview (max-width: 560px) {
+  .fgraph-label .session-state .lbl {
+    display: none;
+  }
+}
 /* Left-edge marker for a lane whose immediate parent has no row of its own (decision 9)
    — off-window, or the parent's own lineage was deleted. Warn, not danger: this is a
    normal, expected shape of the tree, not an error. */
@@ -116,6 +201,13 @@
 .fgraph-canvas {
   flex: 1;
   min-width: 0;
+  /* Drag-to-pan lives here (pointer handlers in the view). The cursor is the only thing
+     that says the gesture exists, so it is not decoration. */
+  cursor: grab;
+  touch-action: pan-y;
+}
+.fgraph-canvas:active {
+  cursor: grabbing;
 }
 /* Sized by explicit width/height attributes in the markup (React), NOT a percentage +
    viewBox combination: `width:100%; height:auto` let the browser scale the SVG's internal
@@ -141,15 +233,11 @@
   stroke: var(--muted2);
 }
 
-.fgraph-tick line {
+/* Guide lines only — the captions live in the sticky axis strip above. */
+.fgraph-tick {
   stroke: var(--border);
   stroke-width: 1;
   opacity: 0.5;
-}
-.fgraph-tick text {
-  fill: var(--muted);
-  font-size: 9px;
-  text-anchor: middle;
 }
 
 /* A wide, invisible hit target under the drawn line (easier to click than the 2px line

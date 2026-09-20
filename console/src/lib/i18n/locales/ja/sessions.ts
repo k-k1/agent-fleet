@@ -109,6 +109,8 @@ export const sessions = {
   "wsbar.close_all_title": "全ペインを閉じる",
   "wsbar.overview": "セッション一覧",
   "wsbar.overview_title": "稼働中のセッションをカードで一望する",
+  "wsbar.fleetgraph": "俯瞰図",
+  "wsbar.fleetgraph_title": "レーン＝セッション・横軸＝時間でフリート全体を眺める",
   "wsbar.imagegen": "画像生成",
   "wsbar.imagegen_title": "エージェントを介さずに ComfyUI で絵を作る",
   // オーバーフロー／プレビュー／リソース
@@ -553,6 +555,12 @@ export const sessions = {
   "ovw.waiting_hint": "この状態（質問・プラン・権限）になってからの経過時間。通知台帳とこの端末の観測から求めるため、どちらにも記録が無いときは表示しません",
   "ovw.since_wait": "応答から {d}",
   "ovw.since_wait_hint": "最後に入力待ちになってからの経過時間（＝あなたが答えてから動いている時間）",
+  "ovw.switch_to_fleetgraph": "俯瞰図",
+  "ovw.switch_to_fleetgraph_hint": "フリート俯瞰図に切り替え（Ctrl/⌘ で別ペイン）",
+  "ovw.collapse": "子セッションを畳む",
+  "ovw.expand": "子セッションを開く",
+  "ovw.hidden_children": "＋{n}",
+  "ovw.hidden_children_hint": "子セッション {n} 本を隠しています",
   "ovw.started": "開始 {ago}",
   "ovw.last_say_hint": "エージェントが最後に言ったことの冒頭（claude のみ・表示専用）",
 };

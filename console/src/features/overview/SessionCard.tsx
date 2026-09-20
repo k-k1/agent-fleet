@@ -32,6 +32,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { isWaiting } from "../sessions/waiting.ts";
 import { openSessionFromList } from "../sessions/open.ts";
 import { elapsedShort } from "./overview.ts";
+import type { FoldInfo } from "./overview.ts";
 import { SessionMenu } from "../sessions/SessionMenu.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
 import { ContextBar } from "../mirror/ContextBar.tsx";
@@ -49,12 +50,18 @@ interface SessionCardProps {
    *  Composed by the view from the notification ledger and this tab's observations. */
   waitingAt?: number;
   actions: SessionActions;
+  /** What this card's family fold says (overview.ts owns the arithmetic and the filtering;
+   *  this card only draws it). Absent = no fold information, i.e. no control. */
+  fold?: FoldInfo;
+  /** Present only when the control does something — a card with no children in this group
+   *  gets none, rather than a "+" that folds nothing. */
+  onFold?: () => void;
 }
 
 // Where the menu was asked for: at the pointer (right-click / Menu key) or under the ⋯.
 type MenuAt = { x: number; y: number } | "button" | null;
 
-export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions }: SessionCardProps) {
+export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions, fold, onFold }: SessionCardProps) {
   const tr = useT();
   const { hover, setHover } = usePaneHover();
   const [menuAt, setMenuAt] = useState<MenuAt>(null);
@@ -156,10 +163,31 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions 
       onMouseLeave={open ? () => setHover(null) : undefined}
     >
       <header className="ovw-head">
+        {onFold && (
+          <button
+            type="button"
+            className="ovw-fold"
+            aria-expanded={!fold?.hidden}
+            title={fold?.hidden ? tr("ovw.expand") : tr("ovw.collapse")}
+            onClick={(e) => {
+              // The card itself opens the session; the fold must not do both.
+              e.preventDefault();
+              e.stopPropagation();
+              onFold();
+            }}
+          >
+            <Icon name={fold?.hidden ? "chevron-right" : "chevron-down"} />
+          </button>
+        )}
         <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
           <Icon name={kindIcon(s.kind)} />
         </span>
         <span className="ovw-title">{displayName(s)}</span>
+        {!!fold?.hidden && (
+          <span className="ovw-hidden" title={tr("ovw.hidden_children_hint", { n: fold.hidden })}>
+            {tr("ovw.hidden_children", { n: fold.hidden })}
+          </span>
+        )}
         {/* The state reads from the top-right corner, where the eye lands first on a grid of
             cards, and the row below is left for what only some cards carry. The label is its
             own element so a narrow card can fold the CALM states back to their icon and give

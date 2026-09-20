@@ -336,6 +336,85 @@ describe("buildFleetGraph — family order (decision 9)", () => {
   });
 });
 
+describe("buildFleetGraph — family fold (decision 14)", () => {
+  // pP ─ cA ─ gB, plus an unrelated root pQ.
+  const foldPage = () =>
+    mkPage(
+      [
+        birth("pP", 1000),
+        birth("cA", 2000, { origin: "session", originSession: "pP" }),
+        birth("gB", 3000, { origin: "session", originSession: "cA" }),
+        birth("pQ", 500),
+      ],
+      [peerEv("gB", "pQ", 4000)],
+    );
+  const foldSessions = () => sessMap(mkSession("pP"), mkSession("cA"), mkSession("gB"), mkSession("pQ"));
+  const rows = (model: ReturnType<typeof buildFleetGraph>) =>
+    model.lanes
+      .slice()
+      .sort((a, b) => a.row - b.row)
+      .map((l) => l.id);
+
+  it("marks a parent that HAS drawn descendants, and only those", () => {
+    const model = buildFleetGraph(foldPage(), foldSessions(), { from: 0, to: 10000 });
+    expect(laneOf(model, "pP")?.hasChildren).toBe(true);
+    expect(laneOf(model, "cA")?.hasChildren).toBe(true);
+    expect(laneOf(model, "gB")?.hasChildren).toBeUndefined(); // a leaf offers no "+"
+    expect(laneOf(model, "pQ")?.hasChildren).toBeUndefined(); // an unrelated root, no children
+  });
+
+  it("collapsing a parent removes every descendant row and renumbers the rest", () => {
+    const model = buildFleetGraph(foldPage(), foldSessions(), { from: 0, to: 10000, collapsed: ["pP"] });
+    expect(rows(model)).toEqual(["pP", "pQ"]);
+    // All depths, not just the direct child: "+2" is what the parent's row has to say.
+    expect(laneOf(model, "pP")?.hiddenDescendants).toBe(2);
+    // Rows are 0..n-1 over what survived — a gap here is what would misplace every band.
+    expect(model.lanes.map((l) => l.row).sort((a, b) => a - b)).toEqual([0, 1]);
+    // A round trip whose other end lost its row is DROPPED, never redrawn as if it came
+    // from outside the figure (decision 8-2's rule, reached through the fold this time).
+    expect(model.arrows.filter((a) => a.variant === "peer")).toHaveLength(0);
+    // No band belongs to a lane with no row.
+    expect(model.segments.some((sg) => sg.laneId === "cA" || sg.laneId === "gB")).toBe(false);
+  });
+
+  it("an inner fold nests: the outer count includes what the inner one already hid", () => {
+    const model = buildFleetGraph(foldPage(), foldSessions(), { from: 0, to: 10000, collapsed: ["pP", "cA"] });
+    expect(rows(model)).toEqual(["pP", "pQ"]);
+    expect(laneOf(model, "pP")?.hiddenDescendants).toBe(2);
+  });
+
+  it("collapsing only the middle keeps the parent drawn and hides one row", () => {
+    const model = buildFleetGraph(foldPage(), foldSessions(), { from: 0, to: 10000, collapsed: ["cA"] });
+    expect(rows(model)).toEqual(["pP", "cA", "pQ"]);
+    expect(laneOf(model, "cA")?.hiddenDescendants).toBe(1);
+    expect(laneOf(model, "pP")?.hiddenDescendants).toBeUndefined();
+  });
+
+  it("a collapsed id with no row of its own folds nothing — there would be no press to undo it", () => {
+    // mid1 died long before the window, so it has no row; grand1 is its child.
+    const page = mkPage([
+      birth("mid1", -8000),
+      death("mid1", -7000),
+      birth("grand1", 1000, { origin: "session", originSession: "mid1" }),
+    ]);
+    const model = buildFleetGraph(page, sessMap(mkSession("grand1")), { from: 0, to: 5000, collapsed: ["mid1"] });
+    expect(rows(model)).toEqual(["grand1"]);
+  });
+
+  it("a corrupted originSession cycle does not hang the fold", () => {
+    const page = mkPage([
+      birth("a", 1000, { origin: "session", originSession: "b" }),
+      birth("b", 2000, { origin: "session", originSession: "a" }),
+    ]);
+    const model = buildFleetGraph(page, sessMap(mkSession("a"), mkSession("b")), {
+      from: 0,
+      to: 5000,
+      collapsed: ["a"],
+    });
+    expect(model.lanes.length).toBeGreaterThan(0);
+  });
+});
+
 describe("buildFleetGraph — erased lanes (decision 6)", () => {
   it("a lane with no lineage, kept alive by a surviving peer line, draws no runs/segments but still anchors the arrow", () => {
     const page = mkPage([birth("sY", 500)], [peerEv("sX", "sY", 2000)]);

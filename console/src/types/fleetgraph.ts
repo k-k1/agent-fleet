@@ -292,6 +292,18 @@ interface GraphLaneBase {
   // and mark the missing parent at the left edge rather than promoting the child.
   depth: number;
   presence: LanePresence;
+  // Family fold (the "+" on a parent's row). BOTH are decided by the builder, never
+  // by the view: the fold removes rows and renumbers `row`, exactly like showArchived,
+  // and a view that filtered a second time would hide a builder bug behind its own
+  // filter (that is the rule `showArchived` was written to).
+  //   hasChildren       at least one descendant would have a row if this lane were
+  //                     open — i.e. pressing "+" here changes something. A lane whose
+  //                     only children fall outside the window does NOT get one: an
+  //                     affordance that does nothing reads as a broken figure.
+  //   hiddenDescendants how many rows the fold is currently swallowing, all depths,
+  //                     so the parent's row can say "+3". Absent/0 = expanded.
+  hasChildren?: boolean;
+  hiddenDescendants?: number;
 }
 
 export interface GraphLaneKnown extends GraphLaneBase {
@@ -440,6 +452,12 @@ export interface BuildFleetGraphOptions {
   width?: number; // drawable width in px
   laneH?: number; // vertical px per lane
   showArchived?: boolean; // default true; the toggle lives in PaneContent, not React state
+  // Lanes whose descendants are folded away. Filtering happens HERE, with `row`
+  // renumbered over what survives, for the same reason showArchived does — see
+  // GraphLaneBase.hasChildren. A collapsed id that has no row itself (off-window,
+  // or expanded away by a filter) folds nothing: the fold hangs off the drawn
+  // parent, so a lane whose parent is not on screen is never hidden by it.
+  collapsed?: readonly LaneId[];
   // Keep only the lanes this conversation touched — how ADR 0027's "one operator
   // conversation's round trips" is absorbed into this figure.
   conversationId?: string;

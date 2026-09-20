@@ -46,8 +46,10 @@ export type PaneContent =
   | { kind: "sharedSession"; sharedSessionId: string }
   /** The sessions overview: every running session as a card (ADR 0078). `showStopped`
    *  is the pane's own toggle — part of the content so it survives a reload and a tab
-   *  switch, which unmount the view. */
-  | { kind: "sessions"; showStopped: boolean }
+   *  switch, which unmount the view. `collapsed` is the same thing for the family folds:
+   *  the NAMES of the parents whose descendants are folded away. Optional so a layout
+   *  written before the fold existed stays valid. */
+  | { kind: "sessions"; showStopped: boolean; collapsed?: string[] }
   /** Taking a model in for an inference engine (ADR 0072 follow-up). A PANE and not a dialog:
    *  the download it starts runs for minutes, and the question this screen exists to answer is
    *  "can somebody use the model now" — which is one enable press AFTER that download. A modal
@@ -88,9 +90,10 @@ export type PaneContent =
    * The fleet session graph (ADR 0096): every session as a lane, time on the horizontal
    * axis. `showArchived` is the pane's own toggle, same reasoning as `sessions.showStopped`
    * above — React state would snap back to the default on every tab switch, which unmounts
-   * the view (memo `sessions-overview-pane`).
+   * the view (memo `sessions-overview-pane`). `collapsed` holds the lane ids (session names)
+   * whose descendants are folded away, for the same reason and with the same lifetime.
    */
-  | { kind: "fleetgraph"; showArchived: boolean };
+  | { kind: "fleetgraph"; showArchived: boolean; collapsed?: string[] };
 
 export type PaneKind = PaneContent["kind"];
 

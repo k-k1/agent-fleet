@@ -19,6 +19,22 @@ const str = (v: unknown): string | null => (typeof v === "string" && v ? v : nul
  *  ever reaches a title — anything else is a stored value pretending to be a name. */
 const SESSION_NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;
 
+/** Folded-away family parents (ADR 0096 / ADR 0078), stored as session names. Held to the
+ *  name alphabet like every other stored id here, and capped: the fold list is written back
+ *  on every press, so an unbounded one would grow the layout blob without limit. Dropping a
+ *  bad entry rather than the whole list is right for this field — a lost fold re-opens a
+ *  family, which is visible and harmless, while dropping the list silently un-folds them all. */
+const MAX_COLLAPSED = 200;
+function collapsedNames(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const x of v) {
+    if (typeof x === "string" && SESSION_NAME_RE.test(x) && !out.includes(x)) out.push(x);
+    if (out.length >= MAX_COLLAPSED) break;
+  }
+  return out;
+}
+
 /** Upper bound on a stored gallery path. Deep enough for anything under the browse root
  *  (`.cache/agent-fleet/generated/<uuid>` is 45 characters), short enough that a corrupted
  *  entry cannot become a multi-kilobyte query string. */
@@ -135,10 +151,14 @@ function contentFromFlat(p: any): PaneContent {
         ? { kind: "sharedSession", sharedSessionId }
         : { kind: "terminal", chat: false };
     }
-    case "sessions":
-      return { kind: "sessions", showStopped: p.showStopped === true };
-    case "fleetgraph":
-      return { kind: "fleetgraph", showArchived: p.showArchived !== false };
+    case "sessions": {
+      const collapsed = collapsedNames(p.collapsed);
+      return { kind: "sessions", showStopped: p.showStopped === true, ...(collapsed.length ? { collapsed } : {}) };
+    }
+    case "fleetgraph": {
+      const collapsed = collapsedNames(p.collapsed);
+      return { kind: "fleetgraph", showArchived: p.showArchived !== false, ...(collapsed.length ? { collapsed } : {}) };
+    }
     case "engineAdd": {
       // The engine key reaches API paths, so it is validated like the other opaque ids here:
       // a corrupted layout must not become a path the pane then asks the CP about.
