@@ -180,7 +180,7 @@ would reopen it.
 ### Decision 6 — AF owns `~/.config/muse/settings.json`, and clamps seven behaviours in it
 
 The file requires `"schema_version": 1` or **every command fails at startup**, so it is written, not
-merged blindly. **There is exactly one writer, and it is the MCP materialiser's.** The clamps below
+merged blindly. **There is exactly one writer, and it is muse's own.** The clamps below
 and the `mcp_servers` block of Decision 11 are two blocks of the same file, and Muse writes it too
 (measured: a first run created `settings.json` **and** its own `~/.config/muse/.settings.json.lock`).
 Three writers on one file with two locks is a lost update, so **one owner writes this file**: a
@@ -266,15 +266,18 @@ AF's own worktrees, which is what they are for.
 
 **Muse Code is proprietary, so the distributed image does not contain it — the same rule Claude
 Code, Copilot CLI and Antigravity already live under.** `ARG BAKE_AGENT_CLIS=0` is the Dockerfile's
-default and its comment says why ("so an accidental redistribution cannot go wrong"),
+default and its comment gives the licence reason (`Dockerfile:69-77`: proprietary CLIs are treated
+as not redistributable, so a stray `docker build` cannot ship one),
 `deploy/compose/release.sh:53-55` makes lean the distribution default, and `NOTICE:57-62` states the
 consequence to the reader: proprietary agent CLIs are not bundled and deployments fetch them at
 first start. So there are **two variants and this ADR decides both**, rather than deciding the one
 that happens to be convenient:
 
-- **The shipped one (`BAKE_AGENT_CLIS=0`)**: the entrypoint boot-installs at container start,
-  pinning the same version and verifying the same sha256 from the release manifest, into a path AF
-  owns. Being able to do this anonymously (measured) is what makes it viable at all.
+- **The shipped one (`BAKE_AGENT_CLIS=0`)**: the entrypoint boot-installs at container start from
+  the pin in `/usr/local/share/agent-fleet/versions.json`, verifying the release manifest's sha256.
+  Being able to fetch it anonymously (measured) is what makes this viable at all. **It installs into
+  `~/.local`, the same place the vendor's own installer uses** (`workspace/Dockerfile:71`,
+  `entrypoint.sh:299-349`), which has one consequence this ADR got backwards below.
 - **`BAKE_AGENT_CLIS=1`** (self-hosted deployments that want a fast first start): `ARG MUSE_VERSION`
   + sha256 per arch verified at build, the runtime laid out as the launcher expects
   (`muse-bin-<version>` plus `.muse-version` beside the launcher) under `/usr/local/share/muse`.
@@ -286,10 +289,14 @@ CLIs a deployment fetches.
 
 Two costs are named rather than discovered later. **Size**: ≈ 299 MiB (x86_64) / ≈ 269 MiB
 (aarch64) — a boot-install download on every fresh container in the shipped variant, and image
-growth in the baked one. **The shadow**: the vendor installer's default target is `~/.local/bin/muse`, which wins on
-PATH and survives a recreate — the same trap a stale `~/.local/bin/workspace-agent` set for the
-Agent. A member who runs the one-line installer once pins themselves to an unmanaged, self-updating
-build for good, so the connection card reports the shadow when it sees one.
+growth in the baked one. **The shadow, and how not to detect it wrongly**: the vendor installer's default target is
+`~/.local/bin/muse` — and in the shipped variant that is *also where AF puts it*, so **a check for
+the path would report AF's own binary**. The hazard is not the location but the provenance: a
+member who runs the one-line installer once ends up on an unmanaged, self-updating build that
+survives a recreate. So the check is **version identity** — does `muse --version` match the pin in
+`versions.json`? — and the repair already exists: the entrypoint re-pins `~/.local` back to the
+pinned version on a start where self-update is off (`entrypoint.sh:336-352`, the same hole kiro's
+launch guard closed). The connection card reports a version mismatch, not a path.
 
 ### Decision 9 — the credential is a stored API key, entered once
 
@@ -358,7 +365,7 @@ shrinks. Gate B1 sends one server both ways and keeps whichever the runtime actu
 `knownKinds` (`mcpreg/def.go:57-61`) and `MaterializedKinds` (`materialize.go:47`). For project
 scope it joins `mcpproj`'s `kindInfos` (`mcpproj/inspect.go:50-58`) with
 **`HasProjectScope: false`** — the shape agy already has — because no Muse project-scope spelling is
-documented. `fileSpecs` (`inspect.go:35-43`) gains no row, so muse is neither inspected nor a copy
+documented. `fileSpecs` (`inspect.go:36-44`) gains no row, so muse is neither inspected nor a copy
 target; that is a static fact about the kind, not a runtime fallback to another kind's file.
 Hooks (`.muse/hooks.json`, 15 lifecycle events including `Stop` and `Notification`) are **not** used:
 the protocol already reports what a hook would, and a hook file in the repo is shared state.
@@ -420,11 +427,18 @@ Reading one wire method as two different AF axes is how a capability table start
 **`Permissions: true` is the new thing, and it is not a wiring job.** Every managed kind today
 declares it false, and `Interaction.Kind` is documented as `"question" (future: "approval" |
 "plan")` with the note that "all three kinds run with approvals bypassed"
-(`agents/driver.go:45-53`). So declaring it means **building AF's first approval interaction** —
+(`agents/driver.go:42-52`, the sentence itself at `:43`). So declaring it means **building AF's first approval interaction** —
 wire type, Console card, and the answer path back through `approval/decide`. ADR 0093 is already
 paying part of that bill: `workspace/agent/internal/harness/approval.go:18` names decision 5's
 `Permissions: true` as the property that kind sells, and that package is on develop. Whichever lands
 first pays, as with the managed-only gate.
+
+**`Caps.PermissionChoice` is the other half, and it is a different struct.** The read layer's
+`Caps` gates the create request: `POST /sessions` refuses `skip_permissions=false` for any kind
+whose `Caps().PermissionChoice` is false (`sessionx/session_handlers.go:643-647`,
+`agents/agents.go:86-92`). Decision 5 keeps approvals on, so without that flag the launch flow
+cannot even ask for them. It is also what `guide/ref`'s capability tables are checked against, so
+it lands in the documentation in the same change.
 
 `Questions` is separately true and is a *different channel from approvals*: `userInput/requested` →
 `userInput/answer`, with `userInput/settled` closing it. An approval asks "may I run this"; a
@@ -445,9 +459,9 @@ none of it is optional.
 | Model + vendor | `console/src/lib/agentModels.ts:34-35` (`isDynamic`), `workspace/agent/model_provider.go:122` (`modelKindVendor`), and the models REST switch `workspace/agent/agent_models.go:40-83` |
 | Usage | `usage_fold.go:204-212`, the cost table `usage_catalog.go:45-55`, the usage stack colour `console/src/features/usage/colors.ts:81` |
 | Instructions | both apply paths in `agent_instructions.go:119-146` and the list at `:83`, once Decision 12's targets are measured |
-| MCP — **four** separate lists | the registry (`mcpreg/def.go:57-61`, `mcpreg/materialize.go:47,74-87`, `mcpproj/inspect.go:36-44,50-58`); the **local** `af` server (`mcpx/mcp_stdio.go:1853`, kind validation `:2575-2576`, managed-driver list `:2759-2762`); the **CP** MCP tools (`control-plane/internal/mcpsrv/mcp.go:295,473,487,518-550` — description, schema and runtime validation are three edits, not one); and `mcpsrv/mcp_server.go:70-74`'s `mcpKnownKinds`, a fourth copy of the same list. Tool descriptions are a fixed per-session token cost, so they are edited, not grown |
+| MCP — **four** separate lists | the registry (`mcpreg/def.go:57-61`, `mcpreg/materialize.go:47,74-87`, `mcpproj/inspect.go:36-44,50-58`); the **local** `af` server (`mcpx/mcp_stdio.go`: the `list_models` descriptor, the `a.Kind != …` validation, and the `driver = "managed"` list — cited by symbol because these three moved by six lines between `06ea94d3` and `73ac5cdc`); the **CP** MCP tools (`control-plane/internal/mcpsrv/mcp.go:295,473,487,518-550` — description, schema and runtime validation are three edits, not one); and `mcpsrv/mcp_server.go:70-74`'s `mcpKnownKinds`, a fourth copy of the same list. Tool descriptions are a fixed per-session token cost, so they are edited, not grown |
 | Console surface | `console/src/types/session.ts:9-12` (`SessionKind` and the display order — nothing renders without it), `console/src/agents/registry.ts` descriptor, `console/src/lib/settings.ts:958-966` launch defaults, the `LaunchDefaults` kind union `console/src/features/settings/agents/AgentCardParts.tsx:76`, a new `MuseCard.tsx` wired from `features/settings/agents/AgentsTab.tsx:250`, `features/settings/workspace/EnvTab.tsx`, `console/src/features/settings/mcp/mcpWire.ts:9` (`MCP_KINDS`, mirrors the Go list), `ScheduleDetailModal.tsx`'s `AGENT_KINDS`, `features/mirror/{turnTime.ts:10,FileChangeStrip.tsx:69}`, `features/repos/ProjectActionPanels.tsx:34`, `console/src/lib/brandicons.ts:36` plus the icon asset itself, `console/src/lib/termcolor.ts:19`, and the colour twins across `tokens.css` and the five feature stylesheets (docs/log/74 §9.3) |
-| Deployment + CI | both variants of Decision 8: the entrypoint's boot-install (pin + sha256 + `MUSE_NO_AUTO_UPDATE` + shadow check) and `workspace/Dockerfile`'s `BAKE_AGENT_CLIS=1` path, `env_tool_versions.go`, **`NOTICE`** (proprietary CLIs are listed there, not bundled), and the release / drift workflows and setup action that carry every other pinned CLI |
+| Deployment + CI | both variants of Decision 8: **`/usr/local/share/agent-fleet/versions.json`** (the only place the lean pin lives), the entrypoint's boot-install and re-pin (`entrypoint.sh:299-352`, plus `MUSE_NO_AUTO_UPDATE` and the version-identity check) and `workspace/Dockerfile`'s `BAKE_AGENT_CLIS=1` path, `env_tool_versions.go`, **`NOTICE`** (proprietary CLIs are listed there, not bundled), and the release / drift workflows and setup action that carry every other pinned CLI |
 | Text | `bridge/format.go`'s `kindLabel`, the Console i18n catalogues (en + ja), the user guide, and `guide/ref`'s capability tables — which `scripts/docs-check.py` checks against `Caps()` in both languages |
 | Tests | the MSP schema-fingerprint drift test, route and contract tests, and the e2e smoke that pins the baked version string |
 
@@ -467,10 +481,11 @@ none of it is optional.
   mirror.
 - **The community ACP adapter** (`muse-code-acp`) as the managed seam. A third-party translation layer
   in front of a first-party protocol that is versioned and fingerprinted; it can only lose.
-- **Per-user on-demand installation into the member's home (the kiro shape).** Not the same thing as
-  Decision 8's boot-install: kiro's 855 MiB bundle lands in `~/.local` per member and self-updates
-  there, which is the very shadow Decision 8 guards against. At 299 MiB a container-level install at
-  start, pinned and checksummed, is both smaller and under AF's control.
+- **Per-user on-demand installation of the kiro shape.** The location is not the difference — the
+  shipped variant also installs under `~/.local` (Decision 8). The difference is **pinning**: kiro's
+  bundle self-updates and is installed on the member's demand, while the boot-install re-pins to
+  `versions.json` on every start. An unpinned, self-updating agent binary is what is rejected here,
+  not a home directory.
 - **Adopting now on the strength of the protocol.** The three gates below are cheap and every one of
   them is about something no amount of reading settles.
 
@@ -489,7 +504,8 @@ none of it is optional.
   `msp_schema_fingerprint`. A test asserting the baked binary's fingerprint equals the one the
   generated types were built from turns a silent protocol change into a red build. No other kind has
   this.
-- **Estimate**: managed-only, no TUI assets, **22–33 session-days** — the sum of the table, with no
+- **Estimate**: managed-only, no TUI assets, **22–33 session-days in the table, 23–35 expected today**
+  (the managed-only gate is still unpaid — see below) — the sum of the table, with no
   rounding applied to make a tidier headline. It has moved every round, and that is the honest
   signal: 14–20 (arithmetic wrong, rows short) → 15–23 → 20–31 → 22–33, as each review found work the
   table did not have. The last move is mostly one line — building AF's first approval interaction —
@@ -515,8 +531,15 @@ none of it is optional.
 
   **ADR 0093's state changes this, and it is half-landed**: `workspace/agent/internal/harness/` is
   on develop (its approval work names the same `Permissions: true`), while `session.KindLcpp` does
-  not exist yet — so the managed-only gate of Decision 2 is still unpaid (**+1–2 days**) but part of
-  the approval interaction may not be. The direction of the error is still upward: the largest single
+  not exist yet. So today the managed-only gate of Decision 2 is unpaid and the expected figure is
+  **23–35 days**, the table plus that gate.
+
+  **That asymmetry is a recommendation, not a symmetry.** The ADR says "whichever lands first pays"
+  twice, but only one of the two is actually moving. If 0093 lands first, muse's marginal cost drops
+  by the managed-only gate and by as much of the approval interaction as 0093's harness turns out to
+  cover — **19–28 days** with the gate free and the approval row still ours, and lower still if that
+  row is genuinely shared. Sequencing 0093 ahead of muse is therefore worth roughly a working week,
+  and it is the order this ADR recommends. The direction of the error is still upward: the largest single
   unknown is how much of MSP's 47 methods and 31 notifications the driver actually has to implement
   to be correct rather than merely working, and three review rounds have each moved the number the
   same way.
@@ -527,7 +550,7 @@ none of it is optional.
 | Phase | Content | Gate to the next |
 |---|---|---|
 | 0 | The probe in this ADR (done 2026-09-20): install, MSP drive, pin/checksum, worktree and foreign-context behaviour, footprint | — |
-| 1 | **Gate A** (½ day): bake `bwrap` and run it on a real Workspace image. Both mount APIs are already denied here, so this confirms rather than explores; the expected answer is that Decision 5's waiver is permanent and recorded. **Gate B1** (2–2½ days): one API key, and the accounting matrix of Decision 10 — cache, subagents, a failed and an interrupted turn, post-resume, cumulative vs per-turn — plus `model/list`, one `approval/requested` round trip, one `userInput/requested` round trip, one subagent, the fleet and user instruction targets of Decision 12 (separately), the settings keys for the seven clamps of Decision 6 (their spelling is not guessable from the flag names), the settings-file lock protocol by syscall, whether `session/start.config.mcpServers` is honoured (Decision 11's second route), and what a **normal** run — no `-w` — writes into a working copy, since Decision 7 currently rests on the `-w` measurement alone. **Gate B2** (½ day): can a *subscription* credential be obtained elsewhere and entered here, given the browser onboarding this container cannot run. ⚠️ B1 carries nine items and the lock-protocol trace alone is half a day; if it overruns, the items that may move to Phase 2 are the MCP second route and the clamp key spellings, never the accounting matrix | A and B1 answered; the user accepts the Decision 6 clamps and the spend. B2 may answer "no" — then v1 is pay-as-you-go only, stated in the guide, and Phase 2 proceeds |
+| 1 | **Gate A** (½ day): bake `bwrap` and run it on a real Workspace image. Both mount APIs are already denied here, so this confirms rather than explores; the expected answer is that Decision 5's waiver is permanent and recorded. The same image build carries **Decision 8's shipped path** for free: boot-install from `versions.json`, sha256 verified, `muse --version` matching the pin — otherwise the variant we actually distribute is never run before Phase 2. **Gate B1** (2–2½ days): one API key, and the accounting matrix of Decision 10 — cache, subagents, a failed and an interrupted turn, post-resume, cumulative vs per-turn — plus `model/list`, one `approval/requested` round trip, one `userInput/requested` round trip, one subagent, **the RSS of a host under load** (Decision 3 currently rests on an idle 73 MiB and its own re-evaluation clause asks for the loaded figure), **the observed effect of each of the seven clamps** rather than only the spelling of their keys — a key that writes but does not bite is worse than no clamp, because Decision 6 puts a fail-close in front of it — the fleet and user instruction targets of Decision 12 (separately), the settings keys for the seven clamps of Decision 6 (their spelling is not guessable from the flag names), the settings-file lock protocol by syscall, whether `session/start.config.mcpServers` is honoured (Decision 11's second route), and what a **normal** run — no `-w` — writes into a working copy, since Decision 7 currently rests on the `-w` measurement alone. **Gate B2** (½ day): can a *subscription* credential be obtained elsewhere and entered here, given the browser onboarding this container cannot run. ⚠️ B1 carries nine items and the lock-protocol trace alone is half a day; if it overruns, the items that may move to Phase 2 are the MCP second route and the clamp key spellings, never the accounting matrix | A and B1 answered; the user accepts the Decision 6 clamps and the spend. B2 may answer "no" — then v1 is pay-as-you-go only, stated in the guide, and Phase 2 proceeds |
 | 2 | Implementation: kind wiring, MSP client and generated types, driver, transcript, usage, settings + MCP dialect, connection card, deployment, guide, this ADR to *adopted* | — |
 
 ## Open questions (answer in Phase 1)
@@ -659,6 +682,40 @@ Both were checked; the text now says which command it quotes.
 
 Not re-verified by this round: login, a real turn, token accounting, a subscription credential, a
 real `bwrap`, an end-to-end MSP drive, and the release manifest — the same boundary as before.
+
+## Review round 5 (2026-09-20, the same opus session) — the conclusion holds
+
+Asked specifically whether anything overturns the conclusion, the answer was **no**: managed-only,
+and deciding adoption on the three Phase 1 gates, both survived re-examination, and the residual
+risk sits in gate B1 where a failure costs only this ADR and the probe. Round 4's fifteen findings
+were confirmed closed. Twelve findings remain, one of them structural.
+
+- **Decision 8 had the shipped variant's install path wrong, and the error broke its own shadow
+  guard.** The lean boot-install puts the CLI in `~/.local` — the same directory the vendor's
+  installer uses — so "the connection card reports a `~/.local/bin/muse` it finds" would have
+  reported AF's own binary. The check is now version identity against `versions.json`, and the
+  entrypoint's existing re-pin (`entrypoint.sh:336-352`) is the repair. The rejected kiro-shape
+  alternative was re-argued from pinning rather than from location, since the location is now the
+  same.
+- **`Caps.PermissionChoice` was missing entirely** (zero occurrences before this round). Without it
+  `POST /sessions` refuses `skip_permissions=false`, so Decision 5's "approvals stay on" could not
+  even be requested at launch. It is `Caps`, not `Capabilities` — two structs, and Decision 13 had
+  only decided one of them.
+- Three gate holes, all cheap to close where they are: the **loaded** RSS Decision 3's own
+  re-evaluation clause asks for; the **shipped** deployment path, which gate A's image build can
+  exercise for free; and the **effect** of each clamp rather than only its key spelling.
+
+Also corrected: the estimate now states both the table (22–33) and today's expectation (23–35), and
+says plainly that sequencing ADR 0093 first is worth about a working week rather than repeating a
+symmetry that does not exist. Three anchor slips (`fileSpecs`, `driver.go`, and the three
+`mcp_stdio.go` lines that moved between `06ea94d3` and `73ac5cdc`), a stale sentence in Decision 6
+that round 4 had only half-fixed, and an English paraphrase presented as a quotation of a Japanese
+comment.
+
+Independently re-measured this round and matching the text: the release manifest (anonymous, sha256
+for all seven artefacts, 299.3 / 268.9 MiB) and — the one worth naming — **the drift lock actually
+works**: the manifest's `msp_schema_fingerprint` equals the fingerprint `muse schema` writes
+locally. Of every file this ADR cites, exactly one changed between `06ea94d3` and `73ac5cdc`.
 
 ## Review round 4 (2026-09-20, the same opus session)
 
