@@ -223,11 +223,13 @@ describe("normalizeAgentLaunchDefaults / skipPermissions", () => {
 
 // --- Migration for the AI-assist split (docs/log/84) ---------------------------
 //
-// The rule is "an upgrade never changes behaviour". aiProseModels is the deliberate
-// exception and is not carried over: despite its name, the old key also replaced the prose
-// generation default. That load() (localStorage) and hydrateUIPrefs() (server prefs) go
-// through the same function is pinned here rather than in settingsSync — the original
-// failure was the rule being copied into two places.
+// The rule is "an upgrade never changes behaviour": BOTH aiShortModels and aiProseModels
+// inherit the old assistantUtilityModels value (docs/log/103 §103.3-5 — this comment used to
+// claim the opposite, that prose was a deliberate exception left uninherited; that was wrong,
+// and the "inherits the legacy utility models into BOTH tiers" test below is what pins the
+// actual behaviour). That load() (localStorage) and hydrateUIPrefs() (server prefs) go through
+// the same function is pinned here rather than in settingsSync — the original failure was the
+// rule being copied into two places.
 describe("migrateAiAssistPrefs", () => {
   it("splits the old title toggle into session / chat / branch", () => {
     const o: Record<string, unknown> = { autoTitleSuggest: false };
@@ -279,5 +281,26 @@ describe("migrateAiAssistPrefs", () => {
     const o: Record<string, unknown> = {};
     migrateAiAssistPrefs(o);
     expect(o).toEqual({});
+  });
+
+  // docs/log/103 §103.3-3/§103.9: the chat's own ✨ gets its own key. An explicit legacy OFF
+  // on the mirror's key carries over once, so nobody who had turned suggestions off finds the
+  // chat's ✨ switched back on the moment the two keys separate.
+  it("carries an explicit reply-suggest OFF to the chat's own key", () => {
+    const o: Record<string, unknown> = { replySuggestEnabled: false };
+    migrateAiAssistPrefs(o);
+    expect(o.assistantReplySuggestEnabled).toBe(false);
+  });
+
+  it("does not invent the chat's key when reply suggestions were left on", () => {
+    const o: Record<string, unknown> = { replySuggestEnabled: true };
+    migrateAiAssistPrefs(o);
+    expect(o.assistantReplySuggestEnabled).toBeUndefined();
+  });
+
+  it("does not overwrite an already-split chat reply-suggest key", () => {
+    const o: Record<string, unknown> = { replySuggestEnabled: false, assistantReplySuggestEnabled: true };
+    migrateAiAssistPrefs(o);
+    expect(o.assistantReplySuggestEnabled).toBe(true);
   });
 });

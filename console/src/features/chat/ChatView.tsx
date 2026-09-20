@@ -1173,8 +1173,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         ) : (
         <>
         <ChatSuggestRow
-          show={(!!conv || isDraft) && !showStreaming && (suggestChips.length > 0 || (!!settings.replySuggestEnabled && !!conversationId))}
-          showAiButton={!!settings.replySuggestEnabled && !!conversationId}
+          show={(!!conv || isDraft) && !showStreaming && (suggestChips.length > 0 || (!!settings.assistantReplySuggestEnabled && !!conversationId))}
+          showAiButton={!!settings.assistantReplySuggestEnabled && !!conversationId}
           attachSuggestRow={attachSuggestRow}
           suggesting={suggesting}
           onFetchLlmSuggestions={fetchLlmSuggestions}

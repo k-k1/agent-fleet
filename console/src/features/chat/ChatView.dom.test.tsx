@@ -106,7 +106,9 @@ describe("ChatView DOM", () => {
     useWorkspaceStore.setState({ state: "running" });
     setSetting("locale", "ja"); // do not depend on the default locale
     setSetting("quickRepliesEnabled", true);
-    setSetting("replySuggestEnabled", true);
+    // The chat's own ✨ (docs/log/103 §103.3-3) — a separate key from the mirror's
+    // replySuggestEnabled, which chatView no longer reads at all.
+    setSetting("assistantReplySuggestEnabled", true);
     setSetting("quickReplies", {
       a: { text: "ありがとう", count: 5, at: 5 },
       b: { text: "続けて", count: 3, at: 3 },

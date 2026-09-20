@@ -1,7 +1,7 @@
 ---
 audience: "everyone, but written for whoever is looking for a knob and cannot find it"
 source_of_truth: "the Console for personal and tenant settings; `deploy/compose/.env.example` for deployment variables"
-updated: "2026-08"
+updated: "2026-09"
 ---
 
 # Settings — where things are configured
@@ -31,7 +31,7 @@ value you set is not the value in force, look one layer out.
 | Agent instructions | text added to every agent you start in this workspace |
 | Agent memory | version management, rollback, import / export of an agent's memory |
 | Assistant | the assistant chat's agent and model |
-| AI assistance | agent and models for titles, branch names, reply and edit suggestions; per-feature on/off |
+| AI assistance | default agent/models for titles, branch names, reply/edit suggestions, plan updates and translation; per-feature on/off plus per-feature agent/model override |
 | Agent usage | your token spend, by feature, agent and model |
 | Cloud cost | your share of the deployment's cloud spend |
 | Running time | when your workspace was running (a 24-hour x date heatmap) |

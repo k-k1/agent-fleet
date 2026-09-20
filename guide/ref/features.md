@@ -92,6 +92,7 @@ explains them.
 | Issue-tracker connections | member | Issue tracker |
 | Usage | member | Agent usage |
 | Cloud cost | member | Cloud cost |
+| AI assistance (per-feature on/off, agent, model) | member | AI assistance |
 | Display, language and keys | member | Display / Keyboard |
 | Export / import settings | member | Export / import |
 | Toolchains | member | Toolchains |
