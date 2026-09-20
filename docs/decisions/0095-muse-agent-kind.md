@@ -1,4 +1,4 @@
-# 0095. Meta's Muse Code as a session kind (`muse`) — a vendor protocol instead of a TUI contract, behind two live gates
+# 0095. Meta's Muse Code as a session kind (`muse`) — a vendor protocol instead of a TUI contract, behind three live gates
 
 English | [日本語](0095-muse-agent-kind.ja.md)
 
@@ -114,12 +114,16 @@ MSP hosts several sessions per process (`session/list`, per-connection auto-subs
 daemon is possible. v1 does not take it, and the reason is **which knobs are host-wide, not that
 any knob is** — approval mode is per session on the wire, so it alone would not decide this.
 Measured from `muse serve --help`, the host fixes for its whole lifetime: the sandbox posture,
-`--sandbox-network`, **`--disable-write`**, **`--disable-shell`**, **`--trust-workspace`** and
-session durability. Agent Fleet varies exactly those per session — the launch flow's permission
-choice and read-only/plan postures are session-level decisions — so a shared host would make one
-session's posture the posture of every session started after it. Two lesser reasons follow: a host
-crash would take every session on it, and stopping one session would mean draining a process that
-others are loaded in. At **73 MiB idle** (measured) a child per session is affordable — a third of
+`--sandbox-network`, `--disable-write`, `--disable-shell`, **`--trust-workspace`** and session
+durability. **One of those is already per session here and cannot be anything else**: trust is a
+decision about a *working copy*, and every Agent Fleet session has its own — a shared host would
+trust the first session's repository on behalf of every repository loaded after it. The rest is a
+forward constraint rather than a present one, and the ADR should not overstate it: Agent Fleet's
+session-level axes today are `Meta.Mode` and `Meta.SkipPermissions`
+(`session.go:377-390`), of which only approval has a wire equivalent; a read-only posture mapped
+onto `--disable-write` / `--disable-shell` would need them per session, and on a shared host it
+could not have them. Two lesser reasons follow: a host crash would take every session on it, and
+stopping one session would mean draining a process that others are loaded in. At **73 MiB idle** (measured) a child per session is affordable — a third of
 claude's pane. `Capabilities.ProcessModel = "per-session-child"`, the same value cursor, kiro and
 copilot already use, so no enum change is needed.
 
@@ -150,7 +154,9 @@ orthogonal and stay on: approval mode is selected per session on the wire, and A
 This is a waiver, and the ADR states it as one: inside a Workspace the container **is** the
 boundary, and the same is already true of every other kind, none of which sandboxes itself.
 
-**The waiver is expected to be permanent, and the measurement says why.** The denial is not a
+**The waiver is expected to be permanent under the current Workspace host contract, and the
+measurement says why** — permanent because nothing *we* ship can change it, not because no change
+is conceivable. The denial is not a
 missing binary and not an artefact of one mount API: inside a user namespace this container refuses
 `move_mount` (the new API, which util-linux prefers) **and** the classic `mount(2)` that bubblewrap
 itself calls, both with EACCES — measured by forcing the old path with
@@ -166,10 +172,30 @@ merged blindly. **There is exactly one writer, and it is the MCP materialiser's.
 and the `mcp_servers` block of Decision 11 are two blocks of the same file, and Muse writes it too
 (measured: a first run created `settings.json` **and** its own `~/.config/muse/.settings.json.lock`).
 Three writers on one file with two locks is a lost update, so the settings writer is a single
-serialised read-merge-rename owner: it extends the existing `materializeMu`
-(`mcpreg/materialize.go:94-109`) rather than adding a second mutex beside it, takes Muse's own lock
-file while it writes, and **preserves every key it does not own** — a member's own `tui`, model
-defaults and telemetry keys survive an AF write.
+serialised read-merge-rename owner under the existing `materializeMu`
+(`mcpreg/materialize.go:94-109`) rather than a second mutex beside it, and it **preserves every key
+it does not own** — a member's own `tui`, model defaults and telemetry keys survive an AF write.
+
+Two things follow that the first draft got wrong, and both are design work, not wording:
+
+- **It is a settings writer, not the JSON MCP materialiser with a second block.** That materialiser
+  returns early when the server set did not change (`mcpreg/materialize_json.go:110-112`) and
+  removes its key entirely when the set is empty — correct for MCP, fatal for clamps, which must be
+  written on a kind with zero MCP servers. Muse therefore gets its own writer inside `mcpreg` that
+  merges clamps and `mcp_servers` in one pass.
+- **The clamps are fail-close; MCP materialisation stays best-effort.** Today `Materialize` logs and
+  swallows every failure by design — "a session must still launch when its MCP config could not be
+  updated" — and `StartManagedSession` calls it without looking at the result before `Resume`
+  (`mcpx/mcp_materialize.go:30-41`). For MCP that is the right trade; for these clamps it is not,
+  because they are the safety mechanism: a failed write would start a Muse session with eight
+  subagents, four observers, workflows and foreign context all enabled. So the muse settings write
+  returns an error that refuses the session start, while boot-time `MaterializeAll` keeps its
+  best-effort contract for every kind including this one.
+
+The lock claim is deliberately weak: a `.settings.json.lock` file appearing proves Muse *has* a lock
+protocol, not which one. Gate B1 traces the syscalls of a settings update and a deliberate
+contention, and AF takes the same protocol — guessing `flock` because other `.lock` files use it is
+how two writers end up politely ignoring each other.
 
 AF sets:
 
@@ -191,8 +217,11 @@ happened. The guide says they exist and that AF does not see them.
 ### Decision 7 — the kind edits working-copy files and nothing else: no branches, no worktrees, no repository-wide metadata
 
 Editing tracked files in its own working copy is the job, and is not what this decision restrains.
-What it forbids is everything *around* the files: repository-global metadata, branches, worktrees
-and any path outside this session's working copy. Measured, a Muse worktree run rewrites
+What it forbids is the **project and version-control surface around** those files: repository-global
+metadata, branches and worktrees. It is explicitly **not** a rule about every path outside the
+working copy — Decisions 4, 6 and 9 require Muse to write `~/.config/muse` and
+`~/.local/share/muse`, which are the kind's own state and are governed by the deny-list instead.
+Measured, a Muse worktree run rewrites
 `.git/info/exclude`, which in a linked worktree is the parent clone's file, shared with every other
 session. So: `-w` is never passed, worktree isolation is off (Decision 6), and the kind is declared
 as one that creates no branches and no worktrees. A member who wants parallel writers gets
@@ -230,9 +259,9 @@ env-level key would silently defeat a member who later signs in. The connection 
 **one input** — simpler than every kind except none — with `muse logout` behind the disconnect.
 
 Open: a member on a Muse Code *subscription* (as opposed to pay-as-you-go) signs in through the
-browser during CLI onboarding, which is a flow this container does not have. Phase 1 gate B decides
-whether a subscription credential can be produced elsewhere and pasted, or whether subscriptions are
-out of scope for v1.
+browser during CLI onboarding, which is a flow this container does not have. Phase 1 gate **B2**
+decides whether a subscription credential can be produced elsewhere and pasted, or whether
+subscriptions are out of scope for v1.
 
 ### Decision 10 — usage and the model list ride the protocol
 
@@ -275,14 +304,18 @@ Project scope needs nothing: Muse reads the repository's own `AGENTS.md` / `CLAU
 documented discovery order is `AGENTS.md`, `CLAUDE.md`, `.agents/AGENTS.md`, `.claude/CLAUDE.md`,
 after the workspace is trusted), which this repository already has.
 
-The other two layers are not solved by Decision 6's switch. Turning off foreign personal context
-stops Muse reading `~/.claude` and `~/.codex`; it does **not** deliver Agent Fleet's fleet policy or
-the member's own instructions, which for the six kinds in `instrSupportedKinds`
-(`workspace/agent/agent_instructions.go:83`) are written into a per-kind user-scope file. **Where
-that file is for Muse is not established**: probing an echo-provider run, trusted and untrusted, for
-the paths it opens produced only a probe for a project-local `.agents` directory, because rule
-assembly does not run on that provider. So `muse` joins `instrSupportedKinds` **only once the
-user-scope target is measured** (Phase 1 gate B1 does it in the same run as the accounting matrix);
+The other two layers are not solved by Decision 6's switch, and they are **two mechanisms, not
+one**. Turning off foreign personal context stops Muse reading `~/.claude` and `~/.codex`; it
+delivers neither. `agent_instructions.go:119-146` applies them separately — `ApplyFleetNotes` per
+kind for the fleet policy (claude's arrives as a file under `/etc` instead, a different route
+again), and `ApplyUserInstructions` per kind for the member's own text, each with its own target
+and its own artefact. `instrSupportedKinds:83` is the list of kinds that have both.
+
+**Where Muse's targets are is not established.** Probing an echo-provider run, trusted and
+untrusted, for the paths it opens produced only a probe for a project-local `.agents` directory,
+because rule assembly does not run on that provider. So `muse` joins `instrSupportedKinds` **only
+once both targets are measured, separately** (Phase 1 gate B1, in the same run as the accounting
+matrix), and Phase 2 carries both apply paths and the Console's per-kind distribution status;
 until then the kind ships with project instructions only, and the guide says so rather than leaving
 a member to assume the fleet policy reached it.
 
@@ -296,11 +329,12 @@ none of it is optional.
 |---|---|
 | Kind identity | `session.go:20-28`, `sessionx/agent.go:28-38`, `sessionx/session_turn.go:31-37` (managed driver map) |
 | Managed-only gate | `sessionx/session_handlers.go:650-668` (create default), `session_driver.go:62-105`, five Console launch / driver-switch sites, `control-plane/scheduler_wake.go:277-285` |
-| Connection + login | connection status, login routes on **both** `routes.go` files (Agent and CP — `control-plane/routes.go:869-873` is kiro's precedent), and the CP REST proxy allow-list, whose omission is how a usage chip silently never appears |
-| Model + vendor | `console/src/lib/agentModels.ts:34-35` (`isDynamic`), `workspace/agent/model_provider.go:122` (`modelKindVendor`) |
+| Connection + login | connection status, login routes on **both** `routes.go` files (Agent and CP — kiro's precedent is start, poll *and* delete, `control-plane/routes.go:869-875`), and the CP REST proxy allow-list, whose omission is how a usage chip silently never appears |
+| Model + vendor | `console/src/lib/agentModels.ts:34-35` (`isDynamic`), `workspace/agent/model_provider.go:122` (`modelKindVendor`), and the models REST switch `workspace/agent/agent_models.go:40-83` |
 | Usage | `usage_fold.go:204-212`, the usage stack colour `console/src/features/usage/colors.ts:81` |
-| MCP | `mcpreg/def.go:57-61`, `mcpreg/materialize.go:47,74-87`, `mcpproj/inspect.go:50-58`, and the kind enums inside the `af` MCP tool descriptions (`control-plane/internal/mcpsrv/mcp.go:295,473,487,518`) — which are a fixed per-session token cost, so they are edited, not grown |
-| Console surface | `console/src/agents/registry.ts` descriptor, `console/src/lib/settings.ts:963` launch defaults, `console/src/lib/brandicons.ts:36`, `console/src/lib/termcolor.ts:19`, `console/src/styles/tokens.css` (dark + light twins) |
+| MCP — three separate places | the registry (`mcpreg/def.go:57-61`, `mcpreg/materialize.go:47,74-87`, `mcpproj/inspect.go:50-58`); the **local** `af` server (`mcpx/mcp_stdio.go:1853`, the kind validation at `:2575-2576` and the managed-driver list at `:2759-2762`); and the **CP** server (`control-plane/internal/mcpsrv/mcp.go:295,473,487,518-550` — description, schema and runtime validation are three edits, not one). Tool descriptions are a fixed per-session token cost, so they are edited, not grown |
+| Console surface | `console/src/types/session.ts:9-12` (`SessionKind` and the display order — nothing renders without it), `console/src/agents/registry.ts` descriptor, `console/src/lib/settings.ts:963` launch defaults, the `LaunchDefaults` kind union `console/src/features/settings/agents/AgentCardParts.tsx:76`, `console/src/features/settings/mcp/mcpWire.ts:9` (`MCP_KINDS`, mirrors the Go list), `ScheduleDetailModal.tsx`'s `AGENT_KINDS`, `console/src/lib/brandicons.ts:36` plus the icon asset itself, `console/src/lib/termcolor.ts:19`, and the colour twins across `tokens.css` and the five feature stylesheets (docs/log/74 §9.3) |
+| Deployment + CI | `workspace/Dockerfile` (ARG, sha256 per arch, runtime layout), the entrypoint's `MUSE_NO_AUTO_UPDATE` and shadow check, `env_tool_versions.go`, and the release / drift workflows and setup action that carry every other pinned CLI |
 | Text | `bridge/format.go`'s `kindLabel`, the Console i18n catalogues (en + ja), the user guide, and `guide/ref`'s capability tables — which `scripts/docs-check.py` checks against `Caps()` in both languages |
 | Tests | the MSP schema-fingerprint drift test, route and contract tests, and the e2e smoke that pins the baked version string |
 
@@ -322,8 +356,8 @@ none of it is optional.
   in front of a first-party protocol that is versioned and fingerprinted; it can only lose.
 - **On-demand per-user installation (the kiro shape).** Justified at 855 MiB, not at 299, and it would
   put a self-updating binary in the member's home — the very shadow Decision 8 guards against.
-- **Adopting now on the strength of the protocol.** The two gates below are cheap and both are about
-  things no amount of reading settles.
+- **Adopting now on the strength of the protocol.** The three gates below are cheap and every one of
+  them is about something no amount of reading settles.
 
 ## Consequences
 
@@ -338,7 +372,9 @@ none of it is optional.
   `msp_schema_fingerprint`. A test asserting the baked binary's fingerprint equals the one the
   generated types were built from turns a silent protocol change into a red build. No other kind has
   this.
-- **Estimate**: managed-only, no TUI assets, ≈ **14–20 session-days**, by work package. The anchor
+- **Estimate**: managed-only, no TUI assets, **15–23 session-days** — the sum of the table, with no
+  rounding applied to make a tidier headline (the first draft said 14–20 while the same rows added
+  to 15–23). The anchor
   for the scale is the kind-wide inventory — 90 Go files and 41 Console files mention `kiro` today,
   and existing kinds are 2,100–5,950 non-test lines each — but the split below is what the number
   is made of, and it is the part to argue with:
@@ -355,7 +391,7 @@ none of it is optional.
   | Deployment (bake, pin, sha256, shadow guard, `env_tool_versions`) | 1 |
   | Console surface, i18n, guide, `guide/ref` capability tables | 1–2 |
 
-  **Add 1–2 days if ADR 0093 has not landed** when this starts, because the managed-only gate
+  **16–25 days if ADR 0093 has not landed** when this starts, because the managed-only gate
   (Decision 2) is then unpaid. The direction of the error is upward: the largest single unknown is
   how much of MSP's 47 methods and 31 notifications the driver actually has to implement to be
   correct rather than merely working.
@@ -435,3 +471,28 @@ figures, the model prefix and the colour tokens; that the English and Japanese t
 claims and numbers; and that `scripts/docs-check.py` is green. It did not log in, run a real turn,
 test a subscription, run a real `bwrap`, or re-verify the vendor documentation — which is exactly
 the boundary Phase 1 exists to cross.
+
+## Review round 2 (2026-09-20, the same session, against the corrected text)
+
+Twelve findings; the corrections above are the answer to all of them, and three were errors the
+first round's own fixes introduced. **Decision 7's rewrite had over-reached** — forbidding "any path
+outside this session's working copy" contradicted Decisions 4, 6 and 9, which require writing Muse's
+own state directories. **Decision 6 was fail-open**: `Materialize` logs and swallows failures by
+design and `StartManagedSession` never looks at the result (`mcpx/mcp_materialize.go:30-41`), so a
+failed write would have started a session with every clamp off; and layering the clamps onto the
+JSON materialiser would not have written them at all on a kind with no MCP servers
+(`materialize_json.go:110-112`). **The estimate table did not add up**: the same nine rows summed to
+15–23 while the headline said 14–20, so the headline moved rather than the rows.
+
+Decision 3's rationale was still too strong — Agent Fleet has no per-session write / shell / trust
+posture today, only `Meta.Mode` and `Meta.SkipPermissions` (`session.go:377-390`) — and is now
+argued from the one knob that genuinely cannot be shared (workspace trust, because every session is
+a different working copy). Decision 12 described one distribution mechanism where the tree has two
+(`agent_instructions.go:119-146`). Decision 5's "permanent" is now qualified by the host contract it
+depends on. The Phase 2 checklist gained the MCP kind enums in both MCP servers, the models REST
+switch, five Console sites it had missed, and the deployment and CI rows that Decision 8 implied but
+the table omitted; `routes.go`'s kiro precedent is start, poll and delete (`:869-875`), not start
+alone.
+
+Confirmed unchanged: Decision 2's create-path anchors and the scheduler's, Decision 11's
+`MCPServer` and `mcpproj` findings, the English/Japanese correspondence, and `docs-check` green.
