@@ -4,6 +4,8 @@ English | [日本語](0094-instruction-edit-image-models.ja.md)
 
 - Status: **drafted** (2026-09-20). Not built. Every "exists" / "does not exist" claim below was
   checked by grep on `ae069aaf`.
+  🟢 **Reviewed before implementation** (2026-09-20, in a separate session). The nine findings are
+  folded into the text; what came off is recorded in "What the review took off" at the end.
   🟢 **The graph and the capabilities were MEASURED before this was written** (dev deployment,
   g6.xlarge / L4 24GB, ComfyUI 0.35.2, five runs on 2026-09-20). The "Measured" section is that
   record, and **decisions 2, 3, 4 and 5 each rest on it**.
@@ -53,18 +55,19 @@ they are not told apart was measured: **a picture comes back with nothing edited
 | E | **2511**, steps 40, shift 3.1, reference-method node | 393.8 s | edited |
 
 A includes the first load of the 20.43 GB model, E the switch to 2511 (20.53 GB). Buying the box
-and syncing 30 GB onto it cost a further 348.9 s. The card was an **L4 24GB** (`vram_total`
-23.7 GB, 1.8 GB free after a generation), the host had 16.1 GB of RAM.
+and syncing 30 GB onto it cost a further 348.9 s. The card was an **L4 24GB** (22,563 MiB total,
+1,701 MiB free after a generation), the host had 16.1 GB of RAM.
 
 ## Decisions
 
 ### Decision 1 — Add two families. Add no file-role words
 
-`base_model` gains `qwen-image-edit` (2509) and `qwen-image-edit-2511`. Both declare three roles —
-`--diffusion-model`, `--clip_l`, `--vae` — so **`EngineFile`'s flag vocabulary does not grow at
-all** (two lines in `engineComfyRequiredFlags`, `control-plane/engine_catalog.go:196`). The text
-encoder is Qwen2.5-VL-7B (declared as `--clip_l` by the existing convention for a family with one
-encoder), and the VAE is the Qwen-Image one — **the same key anima and krea2 already hold**.
+`base_model` gains `qwen-image-edit-2509` and `qwen-image-edit-2511` (see decision 6 for the
+spelling). Both declare three roles — `--diffusion-model`, `--clip_l`, `--vae` — so **`EngineFile`'s
+flag vocabulary does not grow at all** (two lines in `engineComfyRequiredFlags`,
+`control-plane/engine_catalog.go:196`). The text encoder is Qwen2.5-VL-7B (declared as `--clip_l` by
+the existing convention for a family with one encoder), and the VAE is the Qwen-Image one — **the
+same key anima and krea2 already hold**.
 
 The vocabulary is declared twice, in the CP (`engine_catalog.go:170`) and in the Agent
 (`comfy_workflows.go:443`), and `engine_catalog_test.go` reads the Agent's source to keep them
@@ -79,8 +82,13 @@ for an edit and nothing happened" the default behaviour**.
 
 - Make `Caps.Strength` a per-family answer (it is `true` for everything today, `comfy.go:138`) and
   answer **false** here.
-- When a caller sends `strength` anyway, refuse it **out loud**, the way
-  `comfyIgnoredParamWarnings` already does (ADR 0081 decision 4).
+- A caller that sends `strength` anyway is **refused with 400** (the shape `bad_strength` already
+  uses), not warned. 🔴 **Refuse only when the RESOLVED model is of this family** — a request that
+  names no provider may not land on comfy at all, so "a `strength` present means 400" would be wrong.
+  Resolve model → family at the edge (`comfyFamilyFor` is in the same package). Run C was "a wrong picture with no warning", so a path that accepts the number
+  and quietly drops it leaves the failure looking the same from outside. ADR 0081 decision 4's
+  "report, do not swallow" is a rule about values the CATALOGUE declared (the operator's, written
+  long before this request); **a value the caller just typed is better refused**.
 - ADR 0069's rule for adding a word ("is there no way around it for the caller") **points the other
   way here**: it is not that the caller has no workaround, it is that the knob has no meaning.
 
@@ -94,89 +102,243 @@ It does **not** claim `inpaint`. A mask could be added with `SetLatentNoiseMask`
 would validate, but nobody here has run it — **a capability this deployment has not measured is
 not one it declares** (the lesson SD3.5 charged us in ADR 0072).
 
-### Decision 4 — `size` offers no choices for this family
+### Decision 4 — `size` offers no choices for this family, and the row cannot override it
 
-The output size is decided by `FluxKontextImageScale` from the **input's aspect ratio** (measured:
-1024² in, 1024² out, all five runs). `comfySizesFor` (`comfy.go:429`) answers **empty** for this
-family, and a `size` that arrives anyway is reported the way decision 2 reports `strength`.
+The output size is `FluxKontextImageScale` picking the nearest entry of
+`PREFERRED_KONTEXT_RESOLUTIONS` by the **input's aspect ratio** (read off the node's v0.35.2 source;
+the five runs went 1024² in → 1024² out, which — being all square — does **not** evidence the ratio
+table). `comfySizesFor` (`comfy.go:429`) answers **empty** for this family, and a `size` that
+arrives anyway is refused the way decision 2 refuses `strength`.
+
+🔴 **The row's own `sizes` are not honoured either.** `comfySizesFor` returns `conn.Sizes[model]`
+ahead of the family's list (`comfy.go:430`), so an empty family answer alone would still let an
+operator's declared presets through. This family is the one case where **the family wins over the
+row** — the point is not to offer a value that cannot take effect, and that reason belongs in this
+line of the ADR.
+- The Console has the same hole: `sizeOptions` (`families.ts:145`) falls back to
+  `familyCard(f)?.sizes ?? DEFAULT_SIZES`, so **a card that omits `sizes` shows the megapixel
+  list**. The card states `sizes: []`, and the field itself is not drawn when the list is empty.
 
 🔴 **Dropping `FluxKontextImageScale` to honour `size` is rejected** — see below.
 
-### Decision 5 — Up to three reference images; `MaxInputs` becomes per family
+### Decision 5 — `MaxInputs` becomes per family. P0 stays at one; the second image opens with its path in P3
 
 `TextEncodeQwenImageEditPlus` takes `image1..image3`, and **run D proved the second one works** (the
 potted plant from the second picture entered the first scene with its colour and shape intact).
-Make `Caps.MaxInputs` (fixed at 1, `comfy.go:125`) per family and answer 3 here. The third image
-rides the same mechanism, so it opens at the same time — while the description says plainly that
-**quality per image count has not been measured**.
+Make `Caps.MaxInputs` (fixed at 1, `comfy.go:125`) per family.
 
-### Decision 6 — 2509 and 2511 are **separate families**
+🔴 **Declaring 2 does not carry a second image.** Today `p.uploadImage(…, req.Inputs[0])`
+(`comfy.go:710`) uploads **one**, and `comfyParams.Image` is a single string
+(`comfy_workflows.go:134`). `comfyCheckInputs` (`comfy.go:786`) only tests
+`len(req.Inputs) > caps.MaxInputs`, so raising the number alone lets a second image **pass the check
+and go unused** — run C's failure mode exactly: a wrong picture with no warning. Therefore:
 
-2511's template is **a different topology**, not different numbers:
-`FluxKontextMultiReferenceLatentMethod(index_timestep_zero)` sits on both conditionings,
-`ModelSamplingAuraFlow`'s shift moves 3.0 → 3.1, and the recipe is 40 steps. **Rewiring nodes cannot
-be expressed by a row's `params`** (four words: steps, cfg, sampler, scheduler). So each version
-adds a family.
+- **P0 keeps `MaxInputs` at 1**, and the second image opens **with its path, in P3** (make
+  `comfyParams` plural, wire `image2`, and fix the refusal's singular wording).
+- 🔴 **The third opens after it is measured.** "The node takes `image3`, so the mechanism is the
+  same" is exactly the inference decision 3 forbids for inpaint. Measure three once in P3.
 
-⚠️ **This is not a comfortable answer.** Upstream shipped 2509, 2511 and 2512 within months, and this
-rule grows "one family per graph" once per version. Decision 9's trigger comes from here.
+⚠️ **`MaxInputs` is not on the wire** (`providerStatus` has no field for it; the only place it
+reaches the outside is the refusal at `comfy.go:786`). For the pane to state the limit, P3 has to
+add the field.
+
+### Decision 6 — The unit of a family is the **topology, not the version**. 2509 and 2511 are wired differently, so they are two
+
+2511's template is **a different topology**: `FluxKontextMultiReferenceLatentMethod(index_timestep_zero)`
+sits on both conditionings and `ModelSamplingAuraFlow`'s shift moves 3.0 → 3.1 (steps and cfg come
+from the switch's false branch: 40 and 4). **Rewiring nodes cannot be expressed by a row's `params`**
+(four words: steps, cfg, sampler, scheduler).
+
+🔴 **The rule is "one family per topology", not "one per version".** The difference will matter:
+if 2512 ships with 2511's wiring, **no family is added and the row's `params` suffice**. What adds a
+family is upstream inserting or removing nodes, not a version number going up.
+
+The strongest support for the rule is in props: `comfyFamilyFromPrefix` (`props.go:485`) recovers the
+family from `SaveImage`'s `af-<family>`, so **two topologies inside one family make it impossible to
+say afterwards which graph drew a picture** (ADR 0081 decision 3's "what this was made from" becomes
+a lie).
+
+- **Both spellings carry the version**: `qwen-image-edit-2509` and `qwen-image-edit-2511`.
+  `base_model` is a string that lives in `engine_models`, so changing it later is a migration of
+  deployed catalogues — **decide it now**. The asymmetric pair (`qwen-image-edit` / `…-2511`) becomes
+  meaningless the day 2512 arrives with 2509's wiring. **A family name points at the version that
+  first shipped that topology; it is not an alias for a version** — that sentence goes into the
+  ingest UI's family selector.
+- ⚠️ **The cost: one LoRA row per family.** `comfyResolveLoras` (`comfy.go:524`) matches `base_model`
+  exactly, so the Lightning LoRA has to be registered twice. "Leave Lightning to the row" (rejected,
+  below) stops being one row the moment the family splits.
+- The number: one family is about **12 declarations** (`engineComfyFamilies`,
+  `engineComfyRequiredFlags`, `engineFamilyParts`, `comfyFamilies`, the template switch,
+  `comfyFamilyKnobs`, `comfyFamilyTakesNegative`, `comfyFamilyRecipes`, `comfyTrialSteps`,
+  `wire.ts`'s `Family`, `FAMILY_CARDS`, the goldens). Decision 9's trigger is drawn from that number.
 
 ### Decision 7 — Ingest stays one press: add one family to the parts table
 
-Add `qwen-image-edit`'s two parts to `engine_family_parts.go:48` — `--clip_l` is
-`Comfy-Org/Qwen-Image_ComfyUI`'s `split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors`,
-and `--vae` is the shared key `image/vae/qwen_image_vae.safetensors`. 2511 names the same two.
-**Both were actually taken in on 2026-09-20**, which is the standard ADR 0085 sets for that table.
+Add two parts to `engine_family_parts.go:48`. `engineFamilyPart` has **four fields — Flag, Repo,
+File, S3Key** — and the S3 key alone is not enough:
+
+| Flag | Repo | File | S3Key |
+|---|---|---|---|
+| `--clip_l` | `Comfy-Org/Qwen-Image_ComfyUI` | `split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors` | `image/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors` |
+| `--vae` | `circlestone-labs/Anima` | `split_files/vae/qwen_image_vae.safetensors` | `image/vae/qwen_image_vae.safetensors` |
+
+🔴 **The VAE is declared from `circlestone-labs/Anima`, the same repository anima and krea2 use.**
+The 🔴 above that table says why: reuse is decided on artifact identity
+(`hf:<repo>@<rev>/<path>#sha256:…`), not on the hash — **the same bytes declared from another
+repository are a second download and a second key**. 2511 names the same two parts.
 
 - The **scaled** fp8 encoder is the right one. krea2's note ("the fp8 conversion breaks the vision
   tower") does not apply here: the shipped template names this exact file, and runs A and D read
   reference images with it.
 - The weights are fp8 (2509: 20.43 GB, 2511: 20.53 GB). bf16 (40.86 GB) does not fit an L4.
 
-### Decision 8 — Leave the VRAM guard's estimate alone; silence it with a declared `vram_mib`
+### Decision 8 — Leave the VRAM guard's estimate alone, and let the OPERATOR declare the measured number
 
 `engineModelVramNeed` (`control-plane/engine_class.go:253`) floors the demand at the **sum of the
-row's files**. This family sums to 20.43 + 9.38 + 0.25 GB = **28,676 MiB**, so on an L4 (22,000 MiB
-declared) it always asks for `confirm_vram`. **It fits in practice** (measured: the weights resident
-on a 23.7 GB card, 1.8 GB free).
+row's files**. This family sums to 20.43 + 9.38 + 0.25 GB = **28,676 MiB**, so on the L4 rung
+(22,000 MiB, declared by this deployment's `ImageOffers`; a rung is declared BELOW the card's
+physical size, and `engine_class.go:41` says why) it always asks for `confirm_vram`.
 
-Do **not** change the formula — subtracting a text encoder would be a lie for other families.
-Instead let the ingest write the family's **measured `vram_mib`** onto the row, using the existing
-branch where `m.VramMiB > 0` wins over the sum. Declaring a measured number rather than weakening a
-guard is the shape ADR 0074 decision 6 already uses.
+**Measured** (`/system_stats`, raw): `vram_total` 23,659,151,360 B = **22,563 MiB**, `vram_free`
+1,783,934,774 B = 1,701 MiB, so **20,862 MiB in use** — inside the rung. The conditions were
+**1024², batch 1, one reference image**. `comfyMaxBatch` is 4 (`comfy.go:482`) and **that range was
+not measured** — re-measure in P3, where the second reference opens (decision 5).
 
-### Decision 9 — "Custom workflows" stay out of this ADR; only the trigger is decided
+Do **not** change the formula — subtracting a text encoder would be a lie for other families. Who
+writes `vram_mib`, then:
+
+🔴 **Not the ingest.** `vram_mib` is defined at `engine_class.go:236` as the operator's OWN
+measurement, and only the admin PATCH writes it (`engine_admin.go:1140`, `SetEngineModelVram`; 0
+means "the measurement is withdrawn"). Letting a machine fill in a family default **changes what the
+field means** — from "somebody measured this" to "somebody wrote this" — which is the exact hole ADR
+0074 warns about ("a default nobody measured makes decision 1's premise a lie").
+
+Instead **this ADR and the ingest UI publish the measured number, and the operator enters it once**.
+Once entered, the `m.VramMiB > 0` branch wins over the sum and `confirm_vram` stops appearing. One
+press, with the conditions attached (1024², batch 1, one reference), beats a silent pass.
+
+### Decision 9 — "Custom workflows" stay out of this ADR; the trigger is duplication, not the family count
 
 ADR 0081's rejected "let the Console post a raw ComfyUI graph" **stands**, for the reason it gave
 (the template is the contract that gives `base_model`, `params`, a row's negative and the LoRA
 family check their meaning; a raw graph walks past all of them). Measuring added two concrete
 dangers:
 
-- **The step ceiling disappears.** `validateRequestParams` guards the knob route only; a raw graph
-  can hand a shared GPU an hour-long job.
+- **The step ceiling disappears.** `validateRequestParams` (`jobs_http.go:177`) guards the knob route
+  only; a raw graph can hand a shared GPU an hour-long job.
 - **Pinning stops meaning anything.** The graph in this ADR was written against v0.35.2's node
-  definitions, and the node API promises nothing across versions (ADR 0072 decision 4). JSON pasted
-  onto a row breaks **silently** on the day the engine is upgraded.
+  definitions (`deploy/aws/ecs/comfyui/Dockerfile:33`), and the node API promises nothing across
+  versions (ADR 0072 decision 4). JSON pasted onto a row breaks **silently** on the day the engine is
+  upgraded.
 
-**Trigger**: when a **third version** of the same capability demands its own topology (say a 2512-era
-edit model differing from 2511), or when the family list passes **12**, open the custom-workflow
-ADR. Until then, pay decision 6's price.
+**The trigger is the amount of duplication, not the number of families.** A family count moves when
+families unrelated to editing are added (8 + 2 = 10 today, so two unrelated ones would fire it).
+Use decision 6's number — **one family ≈ 12 declarations** — and open the ADR when either:
 
-### Decision 10 — Teach the props reader two more nodes
+- **a third differently-wired family** of the same capability is wanted (three wirings of one
+  capability alive at once), or
+- **the per-family declaration count grows** (12 → past 15, i.e. adding a family has itself become
+  the expensive part).
 
-`textBehind` (`props.go:446`) returns a prompt only when it lands on `CLIPTextEncode`, and reads the
-size off `Empty*LatentImage`. This family's graph has **neither**, so shipping it as-is records
-**an empty prompt and an empty size** — the gallery's "what this picture was made from" would lie.
-Add `TextEncodeQwenImageEdit` / `…Plus` as a prompt source and take the size from the image that
+🟡 **There is a step before raw graphs.** Making a family a DATA ROW (the nodes to insert, the
+recipe, the knobs, the sizes, the ops) and having one template read it would turn those 12
+declarations into one line whenever two families differ only by inserted nodes. Decision 9's two
+dangers (the step ceiling, the pin) **both survive that step**, which is why it should be examined
+before custom workflows are.
+
+### Decision 10 — Teach the props reader this family's nodes
+
+`textBehind` (`props.go:446`) returns the **prompt and the negative** only when it lands on
+`CLIPTextEncode`, and the size is read by its caller (`props.go:411`) off `Empty*LatentImage`. This
+family's graph has **neither**, so shipping it as-is records **an empty prompt, an empty negative and
+an empty size** — the gallery's "what this picture was made from" would lie. Add
+`TextEncodeQwenImageEdit` / `…Plus` as a source for both texts, and take the size from the image that
 reached `SaveImage`.
+
+🟢 Recovering the family itself already follows: `comfyFamilyFromPrefix` (`props.go:485`) walks
+`comfyFamilies`, so decision 1 makes it readable with no further change.
+
+### Decision 11 — Family properties decide GENERATION; what is ADVERTISED is a union across the models
+
+🔴 **Without this, decisions 2-5 produce "editing once makes generation fall through to a paid
+provider".** Capabilities leave through `http.go:206`'s `caps := p.Caps("")` — **the warm default
+model, one row** — and from there into `st.Ops` (`http.go:215`), `st.Strength` (`http.go:223`), the
+MCP tool definition (`mcp_stdio.go:1132`'s `op` enum) and the pane's fields. Worse,
+`chooseImageProviders` (`imagegen.go:741`) drops a **whole provider** on
+`caps(id).Supports(req.Op)`, so while a qwen row is warm, `op=generate` takes comfy out of the
+candidates and lands on a provider that spends a member's plan.
+
+The same trap was already hit with `negative_prompt` and fixed with a **union across the models**
+(`http.go:237-247`, with the reason in its comment). `Ops`, `Strength`, `Sizes` and `MaxInputs` take
+the same shape:
+
+- 🔴 **The union goes inside `comfyProvider.Caps("")` itself**, not in the route. `Caps` resolves an
+  empty model to `DefaultModel()` — the warm row — at `comfy.go:114-116`, so **making that one answer
+  a union over the enabled rows fixes both the advertising (`http.go:206`) and the candidate filter
+  (`imagegen.go:806`'s `capsOf` → `imagegen.go:741`) at once**. `Caps(model)` for a named model stays
+  exactly the family's answer, so judging stays strict.
+  ⚠️ **The negative precedent (`http.go:242-247`) unions in the ROUTE, and copying that shape alone is
+  not enough**: `capsOf` would still see the warm row, `op=generate` would drop comfy at the
+  candidate filter, and the third bullet below (the resolution inside `Generate`) would never be
+  reached.
+  ⚠️ **A union is right for one surface and wrong for the other.** The MCP tool definition
+  (`mcp_stdio.go:1132`'s `op` enum) is a **connect-time snapshot** and cannot be per model at all, so
+  a union is correct there and a model-specific refusal can only be decision 2's 400. **The pane
+  needs per-model** (decision 12).
+- **Judging** (at generation) is `Caps(model)` — `imagegen.go:806`'s `capsOf` already asks
+  `p.Caps(req.Model)`, so a request that names a model is already right.
+- 🔴 **With no model named, comfy's own model resolution has to read `req.Op`.** The union only
+  keeps the provider in the candidates: `comfy.go:647-656` resolves an empty `req.Model` to
+  `DefaultModel()` — the warm row — and answers `the self-hosted image engine cannot do generate`
+  on `!caps.Supports(req.Op)`. `Run` files that under attempts and **`continue`s**
+  (`imagegen.go:838-841`), i.e. **falls through to the next provider, which spends a member's
+  plan**, and `recordUsage` (`imagegen.go:834`) writes a failed row on the way. So when the warm
+  row's family does not claim the op, resolve to **the first enabled row that does** and say so
+  with `comfySwitchWarning` (`comfy.go:633`). A checkpoint switch costs 1-2.5 minutes (measured),
+  which is explainable; silently billing another plan is not. **P0's third criterion is only
+  testable once this exists.**
+
+### Decision 12 — There are SIX per-family properties. Dropping `cfg` and `negative` produces a false warning
+
+`comfyFamilyKnobs` (`comfy.go:155`) and `comfyFamilyTakesNegative` (`comfy.go:255`) enumerate
+families in a hard-coded switch, and **an unregistered family falls to the default**. Forgetting a new
+family there means:
+
+- `comfyFamilyKnobs` answers `["steps"]`, so `comfyIgnoredParamWarnings` (`comfy.go:212`) returns
+  "cfg=4 was not applied: the qwen-image-edit family folds its guidance into the conditioning" —
+  **the opposite of run A**, which edited at cfg 4;
+- `comfyFamilyTakesNegative` answers false, so `Caps.Negative` and the pane's negative field
+  disappear.
+
+So the per-family set is **six**, not four: `Ops`, `MaxInputs`, `Strength`, `Sizes`, plus `knobs`
+(steps, cfg, sampler, scheduler) and `negative`. This family is guided at cfg 4, so `negative` is
+**true** (its graph puts the same `TextEncodeQwenImageEditPlus` on the negative branch).
+
+🔴 **Two per-model fields go on the wire; decision 11's union only works paired with them.** With the
+union inside `Caps("")`, `st.Ops` (`http.go:215`) and `st.Strength` (`http.go:223`) become
+provider-level "some row here can do this" — **true of no particular model**. But `modelStatus`
+(`http.go:137-165`) carries neither `ops` nor `strength`; its only per-model line is `Knobs`, defined
+as a subset of `steps cfg sampler scheduler negative`. So the two things the Console line below
+requires — stop `jobs.ts:203` sending `strength` unconditionally, take the `op` choices from the
+status — **have no signal to condition on**. On a deployment holding SDXL next to qwen, `strength`
+would always be true and `ops` always three, so the pane would keep showing a slider and offering
+`generate` while qwen is selected, and decision 2's 400 would land in front of the member every time.
+
+- **Add `strength` to `Knobs`** (the pane already hides a field with
+  `model.knobs.includes("negative")`, so the form side is the same shape).
+- **Add `ops` to `modelStatus`.**
+- ⚠️ **Keep the existing rule that an ABSENT `knobs` (an older Agent) leaves the whole form usable** —
+  `GenerateForm.dom.test.tsx` states it.
 
 ## Rejected
 
 - **Dropping it into the existing edit path.** Run C: at the 0.6 default it quietly returns an
   **unedited** picture.
-- **One family for both versions, switched by the row's `params`.** The difference is topology
-  (reference-method node, shift), which four words cannot express; and a template that branches on
-  a declaration destroys the current property that reading a family's graph answers the question.
+- **One family holding two topologies, switched by a declaration.** The difference (reference-method
+  node, shift) cannot be expressed by four words of `params`, and `comfyFamilyFromPrefix`
+  (`props.go:485`) recovers the family from `af-<family>`, so **which wiring drew a picture becomes
+  unanswerable**. Templates that branch on a declaration do exist (`comfyModelTakesNegative` and
+  `comfyFamilyRecipes` change with a row's `params`) — but those branch on NUMBERS, not on wiring.
 - **Removing `FluxKontextImageScale` to honour `size`.** The output size becomes free, but leaves
   the ratio table upstream says it trained on. That trades quality for a knob — and **the result of
   removing it was not measured**. Decision 4 prefers saying "it does not apply".
@@ -191,14 +353,39 @@ reached `SaveImage`.
 
 ## Consequences
 
-- **Agent**: `comfy_workflows.go` (two families, one template plus 2511's delta, per-family
-  denoise), `comfy.go` (`Ops` / `MaxInputs` / `Strength` / `Sizes` become per-family),
-  `props.go` (decision 10), `mcp_imagegen.go` (the `op` enum and its description — the first case
-  where which ops exist depends on the model).
-- **CP**: `engine_catalog.go` (two words, required flags), `engine_family_parts.go` (the table),
-  and `engine_class.go` is **left alone** (decision 8).
-- **Console**: two family cards in `families.ts` (dialect `sentences`, no quality chips, steps 20
-  for 2509 and 40 for 2511, **no size field**).
+- **Agent**: `comfy_workflows.go` (two families, one template plus 2511's delta, per-family denoise,
+  two `comfyFamilyRecipes` rows — **2511's shift 3.1 has no field in `comfyRecipe`**, so it is either
+  a literal in the template or a fifth field; decide when implementing), `comfy.go` (the six
+  properties of decisions 11 and 12), `props.go` (decision 10), `jobs.go:105`'s `comfyTrialSteps`
+  (**omitting it fails `TestEveryFamilyHasTrialSteps`**, `comfy_test.go:1585`; run B's 8 steps /
+  63.2 s is the citation), `mcpx/mcp_stdio.go:1132` (the `op` enum and its description — the first
+  case where which ops exist depends on the model; the reference-image argument is **`inputs`**, not
+  `images`, `maxItems` 5). **P3's second image lands here too**: make `comfyParams` plural
+  (`comfy_workflows.go:134`'s `Image string`), call `uploadImage` more than once (`comfy.go:710`
+  takes `req.Inputs[0]` alone), wire `image2`, and fix the singular wording of `comfyCheckInputs`'
+  refusal (`comfy.go:786`).
+- **Wire**: `ops` on `modelStatus`, `strength` in `Knobs` (decision 12), and the Console's mirror of
+  both: `wire.ts:35`'s `Knob` is a **closed union**
+  (`"steps" | "cfg" | "sampler" | "scheduler" | "negative"`), so it will not compile until the type
+  changes, and `ImagegenModel` (`wire.ts:86`, `knobs?: Knob[]`) has no `ops`. 🔴 **Three comments
+  spell that vocabulary out** — `providerStatus.Strength` (`http.go:108-110`, "No union is needed:
+  it is per provider, not per model", which decisions 2 and 11 make false), `comfyFamilyKnobs`
+  (`comfy.go:146-154`) and `modelStatus.Knobs` (`http.go:156-159`). All three say "a subset of those
+  five words", so **the same change rewrites all three**.
+- **CP**: `engine_catalog.go` (two words, required flags), `engine_family_parts.go` (the table), and
+  `engine_class.go` is **left alone** (decision 8).
+- **Console**: two family cards in `families.ts` (dialect `sentences`, no quality chips, steps 20 for
+  2509 and 40 for 2511, `sizes: []` and **no size field at all**), `wire.ts:39`'s `Family` type,
+  `families.test.ts`'s family list, **`jobs.ts:203`'s unconditional `strength`** (it is sent whenever
+  `op !== "generate"`, so decision 2 would refuse every edit), the `op` choices (`draft.ts`'s constant `OPS`, walked at `GenerateForm.tsx:417`, never the
+  status's `ops`), and `GenerateForm.dom.test.tsx` (the test that greys fields out on `knobs` —
+  extend it for `strength` and `ops`, without breaking its other claim: an ABSENT `knobs` leaves the
+  whole form usable).
+- **The refusal has two homes** (decision 2): the blocking `/imagegen/generate` (`http.go:450`) and
+  the queue route the pane uses (`jobs_http.go:115`). Both check the RANGE (0 < s ≤ 1) today, so
+  **adding it to only one leaves the pane with a failed job instead of a 400** — and P0's second
+  criterion would hold on one route and not the other.
+- **Guide**: `guide/operate/07-image-engine.{md,ja.md}` (the page that lists per-family behaviour).
 - **Deployment**: 20 GB more per checkpoint. The box keeps models on NVMe so the space is there, but
   **the cold-start sync grows** (measured: 348.9 s for 30 GB, purchase included).
 - **Tests**: two goldens in `comfy_workflows_test.go`, the `engine_catalog_test.go` equality check,
@@ -206,16 +393,21 @@ reached `SaveImage`.
 
 ## Phases
 
-- **P0** — the `qwen-image-edit` (2509) family and the per-family properties of decisions 2-5, with
-  goldens and docs. Done when **A and C are reproduced on real hardware**: A edits, and C is
-  refused with "this family does not read strength".
-- **P1** — 2511 (decision 6), the parts table (decision 7), the default `vram_mib` (decision 8).
-  Done when one press stages all three parts in the right directories and enabling needs no
-  `confirm_vram`.
+- **P0** — the `qwen-image-edit-2509` family and the per-family properties of decisions 2-5, 11 and
+  12, with goldens and docs. Three completion criteria: (1) **run A reproduced** on real hardware
+  (it edits), (2) **run C, naming qwen, refused with 400 on both routes** (no `strength` here), and (3) 🔴 **with a qwen row warm,
+  `op=generate` still lists comfy** (decision 11's union holds, so nothing falls through to a paid
+  provider).
+- **P1** — 2511 (decision 6), the parts table (decision 7), the operator-entered `vram_mib`
+  (decision 8). Done when one press stages all three parts in the right directories, **the screen offers
+  the measured number (20,862 MiB at 1024², batch 1, one reference) right after the ingest, and
+  `confirm_vram` stops appearing once the operator has entered it** (until then it appears, which is
+  the correct behaviour — decision 8).
 - **P2** — props (decision 10) and the Console cards. Done when a picture made from the pane shows
-  its prompt and size under "what this was made from".
-- **P3** — the second and third reference images end to end (pane and the MCP `images` argument).
-  Done when run D can be reproduced from the pane.
+  its prompt, its negative and its size under "what this was made from".
+- **P3** — the reference-image path end to end (pane and the MCP `inputs` argument) and `MaxInputs`
+  on the wire. Done when run D (two images) can be reproduced from the pane, and **three images are
+  measured once** before `MaxInputs` goes to 3 (until then it stays 2).
 
 ## Open
 
@@ -223,10 +415,12 @@ reached `SaveImage`.
    not been measured for quality. Measure one in P1.
 2. **Whether `inpaint` can be claimed** (deferred in decision 3). `SetLatentNoiseMask` on top of a
    denoise-1 instruction edit is unmeasured.
-3. **16.1 GB of host RAM is thin** (2.2 GB free). A box with both 2509 and 2511 enabled, switching
+3. **16.1 GB of host RAM is thin** (2.2 GB free). A box with both families enabled, switching
    repeatedly, has not been measured — the run only switched once.
-4. **The family-count trigger (12, decision 9) is not a measured number.** Re-derive it when the
-   next version arrives.
+4. **Decision 9's trigger** (a third topology / past 15 declarations) is drawn from the measured 12,
+   but "15" is not itself a measured number. Count the declarations again when the next family lands.
+5. **The operator entering `vram_mib` once** (decision 8) is forgettable unless the screen asks for it
+   right after the ingest. Where the measured number appears in the ingest UI is a P1 question.
 
 ## Measured (2026-09-20, dev deployment, g6.xlarge / L4 24GB)
 
@@ -236,8 +430,17 @@ the **running** engine's `/object_info` (`CLIPLoader`'s `type` **does offer `qwe
 28; `TextEncodeQwenImageEditPlus`, `FluxKontextImageScale` and `CFGNorm` are there too). The engine
 reported **ComfyUI 0.35.2**, which is the pinned ref.
 
-- **It fits an L4 24GB.** `vram_free` 1.8 GB of 23.7 GB after a generation. The guard's 28,676 MiB
-  demand notwithstanding, the text encoder is evicted after encoding (decision 8).
+- **It fits an L4 24GB.** Raw `/system_stats`: 22,563 MiB total, 1,701 MiB free, so **20,862 MiB in
+  use** (1024², batch 1, one reference image). The guard's 28,676 MiB demand notwithstanding, the
+  text encoder is evicted after encoding (decision 8).
+  ⚠️ `comfyMaxBatch` is 4 — **that range was not measured**.
+- **The output-size rule comes from the node's source, not from these runs**: every run was 1024² in
+  and out, so `PREFERRED_KONTEXT_RESOLUTIONS` was never exercised off-square.
+- **`comfyFamilyRecipes`' four fields come from the shipped template's KSampler widgets**: both
+  families are `sampler=euler` / `scheduler=simple`, and steps/cfg come from the switch's **false
+  branch** (the no-LoRA side) — **20 / 4** for 2509 and **40 / 4** for 2511. Runs A and E used
+  those. ⚠️ 2509's template ships that switch set to **true**, i.e. the 4-step / cfg 1 Lightning
+  path; the family default takes the **no-LoRA** side, for the reason in the rejected list.
 - **Buying the box and syncing cost 348.9 s** (503 `engine_waking`, retried every 15 s). A request
   carrying `X-AF-Model` was held with "1 file(s) to go" — `pendingGuard` behaved as designed on real
   hardware.
@@ -253,3 +456,109 @@ reported **ComfyUI 0.35.2**, which is the pinned ref.
 - 🟡 **`replace` can fall through to `Append` in complete.** Pointing `choices` + `replace` at a slot
   the row already fills answers 500 (`engine model file slot is already taken`). The way around is
   to empty the slot first. Not chased down here, but the reproduction is recorded.
+
+## What the review took off (2026-09-20, pre-implementation review, separate session)
+
+**Every citation held** (the `file:line` references and the "exists / does not exist" claims). What
+came off was the REACH of the decisions, and three names in the code.
+
+- 🔴 **Decisions 2-5 had not looked at the ADVERTISING path.** Capabilities leave through one warm
+  row's `Caps`, so per-family `Ops` produces "the moment somebody edits with qwen, `op=generate`
+  falls through to a paid provider". Decision 11 was added. The same trap had already been hit with
+  `negative_prompt` and fixed with a union (`http.go:237-247`) — that fix was there to be read.
+- 🔴 **There are six per-family properties, not four** (decision 12). Dropping `cfg` and `negative`
+  emits a warning that says the opposite of run A.
+- 🔴 **Decision 8's "22,000" was the rung's number, not a measurement.** Recomputed from the stored
+  raw bytes: **20,862 MiB in use**. And `vram_mib` is defined as the operator's own measurement, so
+  having the ingest write it would change what the field means — it now says **the ingest does not
+  write it**.
+  🟡 The review's own "the measured 22,426 MiB exceeds the rung" was a **GiB / GB mix-up**;
+  recomputing from the stored raw values (23,659,151,360 / 1,783,934,774) puts it inside the rung.
+  **A finding about a number goes back to the raw number.**
+- 🔴 **Decision 7 had no Repo / File for the VAE.** Reuse is decided on artifact identity, so an S3
+  key alone downloads the same bytes twice from a second repository.
+- 🔴 **Decision 6's rule should read "per topology", not "per version"**, and the asymmetric spelling
+  (one with a version, one without) breaks the day 2512 arrives with 2509's wiring. Its cost (one
+  LoRA row per family) is now stated.
+- 🟡 **Decision 4 was losing to the row's `sizes` and to the Console's default list**
+  (`comfy.go:430`, `families.ts:145`).
+- 🟡 **Decision 9's "past 12 families" trigger measured the wrong thing** (families unrelated to
+  editing would fire it). It now counts duplication, and names the table-driven middle step.
+- 🟡 **Three names were wrong**: the `op` enum is in `mcp_stdio.go:1132`, not `mcp_imagegen.go`; the
+  reference-image argument is `inputs`, not `images`; the size is read at `props.go:411`, not in
+  `textBehind`.
+- 🟡 **Five consequences were missing**: `comfyTrialSteps` (omitting it fails a test),
+  `comfyFamilyRecipes`, `wire.ts`'s `Family` type, `families.test.ts`, and
+  `guide/operate/07-image-engine`.
+- 🟡 **Decision 5 contradicted decision 3**: "the third image is the same mechanism, so open it" is
+  the inference forbidden for inpaint. It now stops at **two, with the third measured in P3**.
+
+### Second round (same session, against `a2ba1b22`)
+
+Eight of the nine landed as intended. All three remaining 🔴 had the same shape: **the decision was
+right, but one path was missing**.
+
+- 🔴 **Decision 11's union alone does not make P0's third criterion green.** A request that names no
+  model is resolved to the warm row FIRST and then fails on the op, so keeping the provider in the
+  candidates still **falls through to the next one**. Decision 11 now says the model resolution must
+  read `req.Op`.
+- 🔴 **Decision 1 still carried the old spelling** (in the Japanese file). It is the first place an
+  implementer reads, so it is fixed.
+- 🔴 **Decision 5's `MaxInputs=2` does not carry a second image on its own** (one upload, a singular
+  `comfyParams.Image`). **P0 stays at 1** and the second image moves to P3 with its plumbing:
+  *declare a capability in the same phase as the path that serves it.*
+- 🟡 Three more: P3 still said `images`, `comfyFamilyRecipes`' sampler/scheduler had no source, and
+  P1's criterion contradicted decision 8. All corrected.
+- 🟢 **The reviewer withdrew the VRAM figure; 20,862 MiB stands.** A second witness turned up in the
+  tree: `PARAMETERS-60-engines.md:659` says "`Total VRAM 22563 MB`, so **22000 is the number**" — the
+  rung and the measurement come from the same place.
+
+### Third round (against `8d37d827`)
+
+One 🔴 left, and it was **where the union goes**.
+
+- 🔴 **Calling decision 11's union "advertising" defined it by its consumers.** The negative
+  precedent it cited unions in the ROUTE (`http.go:242-247`), so copying that shape leaves `capsOf`
+  (`imagegen.go:806`) looking at the warm row: `op=generate` drops comfy **at the candidate filter**
+  and never reaches the third bullet (the op-aware resolution inside `Generate`). It now names the
+  function — the union lives in **`comfyProvider.Caps("")`** — which fixes advertising and candidate
+  selection in one place while `Caps(model)` stays strict.
+- 🟡 Decision 8's text had not followed decision 5's retreat (P0 stays at one image), and the
+  consequences' Agent line was missing the second image's plumbing (plural `comfyParams`, repeated
+  `uploadImage`, the `image2` wire, the singular refusal). Both fixed, and `comfySwitchWarning`'s
+  line corrected from 632 to 633.
+
+### Fourth round (against `f0c4a79a`)
+
+One 🔴, and it was **the union's price**. With `Caps("")` unioned, `st.Ops` and `st.Strength` become
+provider-level "some row can do this" — **true of no particular model** — while `modelStatus` carries
+neither, so the pane cannot write "hide the slider only while qwen is selected". **Two per-model
+fields were added to decision 12** (`strength` in `Knobs`, `ops` on `modelStatus`), together with the
+comment rewrite: `providerStatus.Strength` (`http.go:108-110`) still claims "No union is needed: it is
+per provider, not per model", which decisions 2 and 11 make false.
+
+🟢 The review's sweep of "what else reads `Caps("")`" is worth recording: five call sites take an
+unnamed model (`http.go:206`, `imagegen.go:806`, `:821`, `:856` and **`jobs.go:477`** — the last one
+this ADR had never named). The last two feed `requestWarnings`, and comfy emits its per-row warnings
+itself (`comfy.go:755`, `:758`), so no warning is lost. `comfy.go:654` passes the resolved model, so
+judging stays strict, and `http.go:243` already asks `Caps(m.ID)`. **Nothing else breaks.**
+
+### Fifth round (against `a1583944`)
+
+**No 🔴 left.** The three 🟡 were all about the granularity of the consequences, and all three are
+fixed.
+
+- 🟡 **Adding a wire field touches three more places**: `wire.ts:35`'s `Knob` is a closed union (it
+  will not compile until the type changes) and `ImagegenModel` has no `ops`; and two more comments
+  spell the same vocabulary out (`comfy.go:146-154`, `http.go:156-159`) where the consequences named
+  only `http.go:108-110`.
+- 🟡 **Decision 2's 400 has two homes** (`http.go:450`, `jobs_http.go:115`). With only one, the pane
+  gets a failed job instead of a refusal and P0's second criterion holds on one route only. Decision
+  2 also now says the refusal applies **only when the resolved model is of this family** — a request
+  naming no provider may not land on comfy at all.
+- 🟡 One EN/JA mismatch (the Japanese consequences line was missing `GenerateForm.dom.test.tsx`).
+
+🟢 The review's sweep of "what else does the pane want per model" came back with **`ops` and
+`strength` and nothing else** (size is already `modelStatus.Sizes`, negative rides `Knobs`, LoRA has
+`loraStatus.baseModel`, seed / aspect ratios / samplers are family-independent, and `MaxInputs` is
+already deferred to P3 by decision 5's ⚠️).
