@@ -32,10 +32,26 @@ export interface OverviewGroup {
   label: string;
   /** Tooltip: the remote identity this group was formed on, or the folder it fell back to. */
   hint: string;
-  /** Cards, in grid order. */
+  /** Cards, in grid order — after the family fold has taken its rows out. */
   sessions: Session[];
-  /** How many of them are running (the heading's count). */
+  /** How many of the group's sessions are running. Counted BEFORE the fold: the heading
+   *  describes the project, and a number that dropped every time somebody folded a family
+   *  away would make the fold look like sessions had ended. The per-parent "+N" is what
+   *  accounts for the difference between this and the cards on screen. */
   alive: number;
+  /** How many the group holds in total, also counted before the fold — the other half of
+   *  the heading's "{alive} running / {n} total". */
+  total: number;
+  /** Per session name, what the fold control on its card has to say. Only names that are
+   *  still in `sessions` have an entry. */
+  fold: Map<string, FoldInfo>;
+}
+
+/** What one card's fold control shows: whether it has one at all, and how many rows it is
+ *  currently swallowing (0 = expanded). */
+export interface FoldInfo {
+  hasChildren: boolean;
+  hidden: number;
 }
 
 /** The bucket for a session that runs in no working copy (a shell in home). Sorts last. */
@@ -121,12 +137,59 @@ export function orderByFamily(sessions: Session[]): Session[] {
   return families.flatMap((f) => f.members);
 }
 
+/** Apply the family fold to one group's already-ordered cards: every descendant of a
+ *  collapsed parent leaves the grid, and each parent learns what its control says.
+ *
+ *  Pure, and the ONLY place the fold filters — the same rule the fleet graph's builder
+ *  follows (ADR 0096): a view that filtered a second time would hide a bug in here behind
+ *  its own filter. A collapsed name that is not in `ordered` folds nothing: its card is not
+ *  on screen, so there would be no press to bring the rows back.
+ *
+ *  `guard` is the corrupted-originSession cycle again (the hazard `family` colours for). */
+export function foldFamilies(
+  ordered: Session[],
+  collapsed: ReadonlySet<string>,
+): { sessions: Session[]; fold: Map<string, FoldInfo> } {
+  const present = new Map(ordered.map((s) => [s.name, s] as const));
+  const parentOf = (name: string): string | undefined => {
+    const p = present.get(name)?.originSession;
+    return p && p !== name && present.has(p) ? p : undefined;
+  };
+  const fold = new Map<string, FoldInfo>();
+  const info = (name: string): FoldInfo => {
+    const cur = fold.get(name) ?? { hasChildren: false, hidden: 0 };
+    fold.set(name, cur);
+    return cur;
+  };
+  const hiddenNames = new Set<string>();
+  for (const s of ordered) {
+    info(s.name);
+    const guard = new Set<string>([s.name]);
+    let hidden = false;
+    for (let p = parentOf(s.name); p !== undefined && !guard.has(p); p = parentOf(p)) {
+      guard.add(p);
+      info(p).hasChildren = true;
+      // Every collapsed ancestor counts it, not only the nearest: the outermost one is
+      // swallowing that card too, and its "+N" has to say so.
+      if (collapsed.has(p)) {
+        info(p).hidden++;
+        hidden = true;
+      }
+    }
+    if (hidden) hiddenNames.add(s.name);
+  }
+  const visible = hiddenNames.size ? ordered.filter((s) => !hiddenNames.has(s.name)) : ordered;
+  for (const name of hiddenNames) fold.delete(name);
+  return { sessions: visible, fold };
+}
+
 /** The grid, grouped by repository. set=null means every session (no filter). */
 export function overviewGroups(
   sessions: Session[],
   repos: Repo[],
   set: WorkingSet | null,
   showStopped: boolean,
+  collapsed: ReadonlySet<string> = new Set(),
 ): OverviewGroup[] {
   const byFolder = new Map(repos.map((r) => [r.name, r]));
   const scoped = sessions.filter((s) => (showStopped || !!s.alive) && (!set || sessionInSet(set, s)));
@@ -134,14 +197,18 @@ export function overviewGroups(
   for (const s of scoped) {
     const folder = sessionFolder(s);
     const id: GroupId = folder ? repoGroupId(folder, byFolder) : { key: NO_REPO_GROUP, label: "", hint: "" };
-    const g = groups.get(id.key) || { ...id, sessions: [], alive: 0 };
+    const g = groups.get(id.key) || { ...id, sessions: [], alive: 0, total: 0, fold: new Map<string, FoldInfo>() };
     g.sessions.push(s);
     groups.set(id.key, g);
   }
   const out = [...groups.values()];
   for (const g of out) {
-    g.sessions = orderByFamily(g.sessions);
-    g.alive = aliveCount(g.sessions);
+    const ordered = orderByFamily(g.sessions);
+    g.alive = aliveCount(ordered);
+    g.total = ordered.length;
+    const folded = foldFamilies(ordered, collapsed);
+    g.sessions = folded.sessions;
+    g.fold = folded.fold;
   }
   // Headings in name order, stable while sessions come and go: a grid that is watched must
   // not renumber its sections every time something starts. The "no working copy" bucket

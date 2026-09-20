@@ -16,6 +16,17 @@ export const fleetgraph = {
   "fgraph.empty": "レーンがありません",
   "fgraph.load_failed": "フリート俯瞰図の読み込みに失敗しました",
 
+  // 一覧ペインとの往復（ADR 0096 決定 10 の「入口」）。同じ面の 2 つの見え方なので、
+  // 既定は同じペインでの差し替え。
+  "fgraph.switch_to_sessions": "一覧",
+  "fgraph.switch_to_sessions_hint": "セッション一覧に切り替え（Ctrl/⌘ で別ペイン）",
+
+  // 家系の折り畳み。件数は「隠れている子孫の本数」で、畳んだことが分かるように親の行に出す。
+  "fgraph.collapse": "子セッションを畳む",
+  "fgraph.expand": "子セッションを開く",
+  "fgraph.hidden_children": "＋{n}",
+  "fgraph.hidden_children_hint": "子セッション {n} 本を隠しています",
+
   // 削除済みレーン（ADR 0096 決定 6）。契約が渡すのは素のスラグだけなので、単独で見せずに
   // ここで「削除済み」の語を添える。
   "fgraph.erased_label": "削除済み · {id}",
@@ -49,6 +60,12 @@ export const fleetgraph = {
   "fgraph.presence_stopped": "停止中 — 再開できます",
   "fgraph.presence_archived": "アーカイブ済み — 復元できます",
   "fgraph.presence_gone": "もう居ません",
+  // 同じ 4 語のチップ版。ラベル列に入る長さにする（稼働中のセッションは stateInfo() の語が出る
+  // ので、ここに来るのは一覧に載らないレーン＝アーカイブ済みと削除済みだけ）。
+  "fgraph.presence_short_live": "稼働中",
+  "fgraph.presence_short_stopped": "停止中",
+  "fgraph.presence_short_archived": "アーカイブ",
+  "fgraph.presence_short_gone": "居ません",
 
   // ×（run の終端）の tooltip。「終わった時刻」ではなく「初めて観測された時刻」。
   "fgraph.death_at": "停止が確認された時刻: {time}（実際に止まった時刻より遅れることがあります）",

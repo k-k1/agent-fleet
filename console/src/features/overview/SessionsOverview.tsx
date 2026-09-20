@@ -8,6 +8,7 @@
 // The only state the view owns is the stopped-rows toggle, and that lives in the pane's
 // CONTENT, not in React state: a tab switch unmounts this component, and a toggle that
 // snapped back on every switch would read as broken.
+import { useMemo } from "react";
 import type { ReactNode } from "react";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -32,10 +33,13 @@ import "./overview.css";
 interface SessionsOverviewProps {
   paneId: string;
   showStopped: boolean;
+  /** The family folds, by parent session name. On the pane's CONTENT for the same reason
+   *  `showStopped` is: a tab switch unmounts this view. */
+  collapsed: string[];
   headerActions?: ReactNode;
 }
 
-export function SessionsOverview({ paneId, showStopped, headerActions }: SessionsOverviewProps) {
+export function SessionsOverview({ paneId, showStopped, collapsed, headerActions }: SessionsOverviewProps) {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const running = useWorkspaceStore((s) => s.state) === "running";
@@ -71,12 +75,35 @@ export function SessionsOverview({ paneId, showStopped, headerActions }: Session
   const fromNotifications = waitingAtFromNotifications(notifications);
   const waitingAt = (name: string) => Math.max(fromNotifications[name] || 0, observedWaitingAt(name));
 
-  const groups = overviewGroups(sessions, repos, wset, showStopped);
+  const collapsedKey = collapsed.join("\u0000");
+  const collapsedSet = useMemo(
+    () => new Set(collapsedKey ? collapsedKey.split("\u0000") : []),
+    [collapsedKey],
+  );
+  const groups = overviewGroups(sessions, repos, wset, showStopped, collapsedSet);
   const alive = groups.reduce((n, g) => n + g.alive, 0);
   const empty = groups.length === 0;
   const sPanes = sessionPanes(layout);
 
-  const toggleStopped = () => setPaneTarget(paneId, { content: { kind: "sessions", showStopped: !showStopped } });
+  const setContent = (next: { showStopped?: boolean; collapsed?: string[] }) =>
+    setPaneTarget(paneId, {
+      content: {
+        kind: "sessions",
+        showStopped: next.showStopped ?? showStopped,
+        collapsed: next.collapsed ?? collapsed,
+      },
+    });
+  const toggleStopped = () => setContent({ showStopped: !showStopped });
+  const toggleFold = (name: string) =>
+    setContent({ collapsed: collapsed.includes(name) ? collapsed.filter((x) => x !== name) : [...collapsed, name] });
+  // The fleet graph is the other view of this same surface (ADR 0096 decision 10): a swap
+  // in place by default, a new pane on Ctrl/⌘/middle — the modifier rule the cards follow.
+  const openGraph = (e: { preventDefault(): void; ctrlKey: boolean; metaKey: boolean; button?: number }) => {
+    e.preventDefault();
+    const target = { content: { kind: "fleetgraph" as const, showArchived: true, collapsed } };
+    if (e.ctrlKey || e.metaKey || e.button === 1) useLayoutStore.getState().openTargetInNew(target);
+    else setPaneTarget(paneId, target);
+  };
 
   return (
     <div className="ovw">
@@ -91,6 +118,18 @@ export function SessionsOverview({ paneId, showStopped, headerActions }: Session
               onClick={toggleStopped}
             >
               <Icon name={showStopped ? "eye" : "eye-closed"} /> <span className="lbl">{tr("ovw.show_stopped")}</span>
+            </button>
+            {/* The way over to the fleet graph. Both panes carry each other's button because
+                the rail's layout map — the only other place either one is offered — hides
+                itself while there is a single pane. */}
+            <button
+              type="button"
+              className="ui-btn ui-btn-ghost ovw-switch"
+              title={tr("ovw.switch_to_fleetgraph_hint")}
+              onClick={openGraph}
+              onAuxClick={openGraph}
+            >
+              <Icon name="graph" /> <span className="lbl">{tr("ovw.switch_to_fleetgraph")}</span>
             </button>
             {headerActions}
           </>
@@ -119,7 +158,7 @@ export function SessionsOverview({ paneId, showStopped, headerActions }: Session
               <h3 className="ovw-gtitle" title={g.hint || undefined}>
                 <Icon name="repo" />
                 <span className="ovw-gname">{g.key === NO_REPO_GROUP ? tr("pj.other_sessions") : g.label}</span>
-                <span className="ovw-gcount">{tr("ovw.group_count", { alive: g.alive, n: g.sessions.length })}</span>
+                <span className="ovw-gcount">{tr("ovw.group_count", { alive: g.alive, n: g.total })}</span>
               </h3>
               <div className="ovw-grid" role="list">
                 {g.sessions.map((s) => (
@@ -131,6 +170,8 @@ export function SessionsOverview({ paneId, showStopped, headerActions }: Session
                     running={running}
                     waitingAt={waitingAt(s.name)}
                     actions={actions}
+                    fold={g.fold.get(s.name)}
+                    onFold={g.fold.get(s.name)?.hasChildren ? () => toggleFold(s.name) : undefined}
                   />
                 ))}
               </div>

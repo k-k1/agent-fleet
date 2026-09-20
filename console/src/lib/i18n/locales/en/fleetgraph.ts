@@ -18,6 +18,18 @@ export const fleetgraph: Record<keyof typeof jaFleetgraph, string> = {
   "fgraph.empty": "No lanes",
   "fgraph.load_failed": "Failed to load the fleet graph",
 
+  // The round trip to the sessions overview (ADR 0096 decision 10's "way in"). Two views
+  // of one surface, so the default is a swap inside the same pane.
+  "fgraph.switch_to_sessions": "List",
+  "fgraph.switch_to_sessions_hint": "Switch to the sessions overview (Ctrl/⌘ for a new pane)",
+
+  // Family collapse. The count is how many descendants are hidden, shown on the parent's
+  // row so that folding them away is visible.
+  "fgraph.collapse": "Collapse child sessions",
+  "fgraph.expand": "Expand child sessions",
+  "fgraph.hidden_children": "+{n}",
+  "fgraph.hidden_children_hint": "{n} child sessions hidden",
+
   // A deleted lane (ADR 0096 decision 6). The contract hands out only the bare slug, so
   // the "deleted" wording is composed here rather than showing the slug alone.
   "fgraph.erased_label": "Deleted · {id}",
@@ -53,6 +65,12 @@ export const fleetgraph: Record<keyof typeof jaFleetgraph, string> = {
   "fgraph.presence_stopped": "Stopped — resumable",
   "fgraph.presence_archived": "Archived — restorable",
   "fgraph.presence_gone": "Gone",
+  // The same four words at chip length. Only a lane the live list does not carry reaches
+  // these (archived or deleted) — a live one shows stateInfo's own wording instead.
+  "fgraph.presence_short_live": "Running",
+  "fgraph.presence_short_stopped": "Stopped",
+  "fgraph.presence_short_archived": "Archived",
+  "fgraph.presence_short_gone": "Gone",
 
   // The × (a run's end). Not "when it stopped" — "when the end was first observed".
   "fgraph.death_at": "Observed stopped at {time} (may be later than when it actually stopped)",

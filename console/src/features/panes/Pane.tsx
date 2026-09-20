@@ -56,6 +56,11 @@ import { stateInfo } from "../../lib/sessionview.ts";
 import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { OnboardingCard } from "../terminal/OnboardingCard.tsx";
 
+// The family fold is optional on PaneContent (a layout written before it existed has no
+// such field), and one shared empty array keeps "nothing folded" from being a new prop
+// identity on every render of every pane.
+const EMPTY_COLLAPSED: string[] = [];
+
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
 const TAB_DND = "application/x-af-pane-tab";
@@ -746,7 +751,12 @@ function PopulatedPane({
         <SharedSessionView sharedSessionId={pane.content.sharedSessionId} headerActions={tabHeaderActions} />
       )}
       {pane.content.kind === "sessions" && (
-        <SessionsOverview paneId={pane.id} showStopped={pane.content.showStopped} headerActions={tabHeaderActions} />
+        <SessionsOverview
+          paneId={pane.id}
+          showStopped={pane.content.showStopped}
+          collapsed={pane.content.collapsed ?? EMPTY_COLLAPSED}
+          headerActions={tabHeaderActions}
+        />
       )}
       {pane.content.kind === "engineAdd" && (
         <EngineAddView
@@ -769,7 +779,12 @@ function PopulatedPane({
       )}
       {pane.content.kind === "imagegen" && <ImagegenView headerActions={tabHeaderActions} />}
       {pane.content.kind === "fleetgraph" && (
-        <FleetGraphView paneId={pane.id} showArchived={pane.content.showArchived} headerActions={tabHeaderActions} />
+        <FleetGraphView
+          paneId={pane.id}
+          showArchived={pane.content.showArchived}
+          collapsed={pane.content.collapsed ?? EMPTY_COLLAPSED}
+          headerActions={tabHeaderActions}
+        />
       )}
     </div>
   );

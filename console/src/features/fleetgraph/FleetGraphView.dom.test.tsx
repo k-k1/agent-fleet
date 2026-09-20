@@ -75,9 +75,9 @@ const page = (): FleetGraphPage => ({
   coverage: { activitySince: at(24 * 60), lineageSince: at(24 * 60) },
 });
 
-const render = async (showArchived = true): Promise<void> => {
+const render = async (showArchived = true, collapsed: string[] = []): Promise<void> => {
   await act(async () => {
-    root!.render(<FleetGraphView paneId="p1" showArchived={showArchived} />);
+    root!.render(<FleetGraphView paneId="p1" showArchived={showArchived} collapsed={collapsed} />);
   });
   // Flush the fetchFleetGraph microtask the mount effect kicks off.
   await act(async () => {
@@ -187,7 +187,9 @@ describe("FleetGraphView", () => {
     await act(async () => {
       toggle.click();
     });
-    expect(spy).toHaveBeenCalledWith(expect.anything(), "p1", { content: { kind: "fleetgraph", showArchived: false } });
+    expect(spy).toHaveBeenCalledWith(expect.anything(), "p1", {
+      content: { kind: "fleetgraph", showArchived: false, collapsed: [] },
+    });
     spy.mockRestore();
   });
 
@@ -204,11 +206,79 @@ describe("FleetGraphView", () => {
     await act(async () => {
       zoomIn!.click();
     });
+    // The refetch is debounced (FETCH_SETTLE_MS): a pan/zoom gesture moves the window on
+    // every wheel notch and every pointer move, and the first version asked the server for
+    // a page on each one. Nothing is requested until the gesture settles — which is also
+    // why this test has to let the timer run.
+    expect(fetchFleetGraph).toHaveBeenCalledTimes(1);
     await act(async () => {
-      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 300));
     });
     expect(fetchFleetGraph).toHaveBeenCalledTimes(2); // the window moved, so it really refetched
     expect(host.querySelector(".fgraph-err")).toBeTruthy();
     expect(labelTexts()).toContain("fleet-graph kickoff");
+  });
+
+  it("the fold takes the family's rows away, says how many, and writes PaneContent", async () => {
+    await render();
+    expect(labelTexts()).toContain("S-VIEW lane"); // fx-child1, under fx-root1
+    const spy = vi.spyOn(layoutOps, "setPaneTarget");
+    // The first label is fx-root1's row (family order puts a parent above its children).
+    const fold = host.querySelector<HTMLButtonElement>(".fgraph-label .fgraph-fold")!;
+    await act(async () => {
+      fold.click();
+    });
+    expect(spy).toHaveBeenCalledWith(expect.anything(), "p1", {
+      content: { kind: "fleetgraph", showArchived: true, collapsed: ["fx-root1"] },
+    });
+    spy.mockRestore();
+
+    // The fold lives on PaneContent, so the pane re-renders with it — which is what the
+    // figure actually draws from (React state would snap back on a tab switch).
+    await render(true, ["fx-root1"]);
+    const labels = labelTexts();
+    expect(labels).toContain("fleet-graph kickoff"); // the parent stays
+    expect(labels).not.toContain("S-VIEW lane"); // the child is gone
+    expect(labels).not.toContain("S-LOGIC lane"); // and so is the grandchild
+    expect(host.querySelector(".fgraph-hidden")?.textContent).toBe(t("fgraph.hidden_children", { n: 2 }));
+  });
+
+  it("the label column shows the live state through stateInfo, not a second derivation", async () => {
+    await render();
+    // fx-root1 is alive and working in the sessions store; the chip is the SAME component
+    // the rail row and the overview card render (ADR 0078 decision 5 / 0096 decision 15).
+    const chips = [...host.querySelectorAll(".fgraph-label .session-state")];
+    expect(chips.length).toBeGreaterThan(0);
+    expect(chips.some((c) => c.textContent?.includes(t("state.working")))).toBe(true);
+    // A lane the live list does not carry (archived / deleted) says what the line style
+    // already says, rather than guessing at a state nobody reported.
+    expect(chips.some((c) => c.textContent?.includes(t("fgraph.presence_short_gone")))).toBe(true);
+  });
+
+  it("switching to the sessions overview swaps this pane, and Ctrl opens a new one", async () => {
+    await render();
+    const spy = vi.spyOn(layoutOps, "setPaneTarget");
+    const btn = host.querySelector<HTMLButtonElement>(".fgraph-switch")!;
+    await act(async () => {
+      btn.click();
+    });
+    expect(spy).toHaveBeenCalledWith(expect.anything(), "p1", {
+      content: { kind: "sessions", showStopped: false, collapsed: [] },
+    });
+    spy.mockRestore();
+  });
+
+  it("the time axis is a sticky strip above the rows, not the foot of the canvas", async () => {
+    await render();
+    const axis = host.querySelector(".fgraph-axis");
+    expect(axis).toBeTruthy();
+    expect(axis!.querySelectorAll("text.fgraph-axis-label").length).toBeGreaterThan(0);
+    // The captions are NOT inside the scrolling canvas any more — that is the whole point:
+    // past a screenful of lanes, a scale drawn at the bottom is only readable after
+    // scrolling to it.
+    expect(host.querySelectorAll("svg.fgraph-svg text.fgraph-axis-label")).toHaveLength(0);
+    // The body is the scroll box and the strip is its first child, so `position: sticky`
+    // has something to stick to.
+    expect(host.querySelector(".fgraph-body")!.firstElementChild).toBe(axis);
   });
 });

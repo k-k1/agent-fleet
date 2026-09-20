@@ -350,3 +350,37 @@
   height: 18px;
   font-size: 12px;
 }
+
+/* Family fold on a card (ADR 0078's families, folded the way the fleet graph folds its
+   lanes). It sits inside the card's own click target, so its handler stops the event —
+   pressing it must not also open the session. */
+.ovw-fold {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ovw-fold:hover,
+.ovw-fold:focus-visible {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+/* "+3": the only thing on the grid that says cards were taken away. */
+.ovw-hidden {
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+  padding: 0 4px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  white-space: nowrap;
+}

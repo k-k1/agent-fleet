@@ -3,9 +3,11 @@
 English | [日本語](0096-fleet-session-graph.ja.md)
 
 - Status: **adopted, implemented** (P0–P2, 2026-09-20). P1 ran as three parallel lanes (S-BE,
-  S-LOGIC, S-VIEW) and P2 merged them. What is left is P3 (filter by conversation id, the
-  cross-tenant overview, collapsing a spawn's excerpt onto its arrow) and measuring whether the
-  activity ledger needs write buffering. The design and the measurements are
+  S-LOGIC, S-VIEW) and P2 merged them. Five post-ship UI adjustments **added the ways in to
+  decision 10 and decisions 14–16** (2026-09-20; measurements in
+  [docs/101](../log/101-fleet-session-graph.md) §101.11). What is left is P3 (filter by
+  conversation id, the cross-tenant overview, collapsing a spawn's excerpt onto its arrow) and
+  measuring whether the activity ledger needs write buffering. The design and the measurements are
   [docs/101](../log/101-fleet-session-graph.md).
 - What it replaces: [0027](0027-operator-interaction-graph.md) (the vertical operator↔session sequence
   diagram, of which only the P0 contract freeze landed) becomes **superseded**.
@@ -307,10 +309,29 @@ missing parent is marked at the left edge, never repaired by promoting the child
 Clicking opens **beside if there is room, in the same pane on a phone, in a separate pane with a modifier or
 middle click** (0078 decision 3 as revised). Do not build a second way to do the same gesture.
 
-### Decision 10 — add one pane kind, `fleetgraph`
+### Decision 10 — add one pane kind, `fleetgraph`; three ways in, and a round trip with the overview
 
 It meets ADR 0049 decision 4's exception (do not mint a PaneKind lightly) the same way 0078 did: it is a
 surface you keep watching, it cannot live in a modal, it belongs in the layout and the URL, and it pops out.
+
+🔥 **Deciding where the way in is belongs to this decision** (added 2026-09-20). The first version said only
+"add a pane kind", and it shipped reachable from **the leader key `g f` and the command palette alone** —
+with **no button anywhere**. Its benchmark, 0078 decision 8, has three ways in: a button on the workspace
+bar, the layout map at the top of the rail, and `g s`. This figure gets the same three.
+
+| Way in | Where |
+|---|---|
+| Workspace-bar button | `WsBar.tsx`, next to "Sessions" and "Images" |
+| The rail's layout map | `LayoutMap` — which only appears with two or more panes |
+| Leader key / command palette | `g f` |
+
+🔥 **The layout map alone is not enough**: it hides itself while there is a single pane, which is exactly
+when someone reaches for the overview (memo `sessions-overview-pane`). That is why the bar button exists.
+
+**The sessions overview (`sessions`) and this figure switch to each other.** They are two views of one
+"look at the fleet" surface, so the default is a **swap inside the same pane** (`setPaneTarget`), with
+Ctrl/⌘ and the middle button opening a new one — decision 3 of 0078's modifier rule, borrowed. Both panes
+carry the other's button: one direction only would leave the way back out of the figure missing again.
 
 ### Decision 11 — hand-written SVG, laid out by a pure function
 
@@ -380,6 +401,69 @@ time**.
   drift.
 - A pruned parent still has its lineage line (decision 6), so **a fork older than 7 days still draws a
   line**. That only holds because decision 6 is in.
+
+### Decision 14 — families fold from the parent's row; everything with a parent folds
+
+**The fold does not sort by origin** (user's call, 2026-09-20). `session` (spawn), `handoff` (fork) and
+`user` + `originSession` (a session a person launched from a handoff proposal, ADR 0073) — **every lane
+that carries an `originSession`** folds under its parent. The figure's order is already decided by the
+`originSession` chain alone (decision 9), so picking origins for the fold alone would make **part of a row
+of siblings disappear** while the rest stayed.
+
+- **The filtering is in the pure function** (`buildFleetGraph`'s `collapsed`), dropping rows and
+  renumbering `row`, exactly as `showArchived` does. 🔥 A second filter in the view would hide a bug in
+  the builder behind the client's own filter.
+- **The fold state lives on `PaneContent`** (`fleetgraph.collapsed` / `sessions.collapsed`). React state
+  snaps back on a tab switch, which unmounts the view (memo `sessions-overview-pane`).
+- **A folded parent's row says "+3"** (`GraphLane.hiddenDescendants`). With no mark, the figure reads as
+  "this session had no children". The count covers **every depth**, and an outer parent counts what an
+  inner fold already hid — the outer one is what is swallowing them.
+- **The "+" appears only when pressing it does something** (`GraphLane.hasChildren`). A parent whose only
+  children are outside the window would otherwise offer a control that does nothing.
+- **A fold hangs off a DRAWN parent only.** If the parent has no row in this window (off the left edge,
+  lineage deleted), its children are not hidden: there would be no press on screen to bring them back.
+- **The sessions overview (0078) gets the same control** (user's call). `overview.ts`'s `foldFamilies` is
+  the same rule as a pure function. The heading's "{alive} running / {n} total" stays **pre-fold** — a
+  number that dropped on every fold would read as sessions ending.
+
+### Decision 15 — the label column's state comes from `stateInfo()`, as its fourth consumer
+
+The figure says state in the colour of its activity bands, but the label column carried only a kind icon
+and a name. It gets **a chip for the state right now** (user's request, 2026-09-20).
+
+🔥 **Do not derive state a second time.** `console/src/lib/sessionview.ts`'s `stateInfo()` is the
+authority, and the rail row, the pane head and the overview card all read it (ADR 0078 decision 5). This
+figure becomes the **fourth consumer**, of the same function and the same `.session-state` markup. A
+derivation of its own would end with this figure saying "idle" about a session the rest of the Console
+calls rate-limited.
+
+- **`GraphLaneKnown.state` (`LedgerState`) is not enough.** That is the ledger's vocabulary: it exists
+  only for live lanes and carries none of what `stateInfo` picks up — **a reserved resume instant, an
+  expired login, a pending handoff, the reason an agent died**. The ledger's words stay where they are,
+  on the bands and their tooltips.
+- **A lane the live list does not carry** (archived — the list handler skips it — or deleted) has nobody
+  to ask, so the chip says **the presence word the line style already encodes**. Never a guess at a state
+  nobody reported.
+
+### Decision 16 — the time axis is pinned to the top; sideways movement moves by the distance travelled
+
+The first version drew the scale at the **bottom of the canvas** and turned **every** wheel event,
+vertical included, into a time pan (user's report, 2026-09-20). Both break when the figure gets big.
+
+- **The scale is a strip pinned to the top** (`position: sticky; top: 0`). At the bottom it is only
+  readable after scrolling — that is, **only when the lanes do not fit**, which is exactly when a scale
+  is wanted.
+- **A vertical wheel goes back to the lane list.** The list is what actually overflows, and spending that
+  gesture on time left **no way at all to reach the rows below the fold**.
+- **Sideways movement maps px onto time** (`deltaX`, and a drag's travel, times `span / width`). A fixed
+  12% of the window per wheel EVENT threw the window days away on one trackpad flick (dozens of events).
+- **The canvas drags to pan** (`grab` / `grabbing`). Past `DRAG_SLOP_PX` the click the browser synthesizes
+  at the end is **swallowed in the capture phase** — otherwise ending a drag opens the lane it began on.
+- **The page is re-fetched once the gesture settles** (`FETCH_SETTLE_MS`). One flick used to ask
+  `/api/fleet-graph` for a page on every frame. The first load is not delayed.
+- 🔥 **An empty window is a place, not an error state.** Replacing the whole figure with an empty-state
+  card took the axis (where am I?) and the gesture handlers (how do I get back?) with it — one flick left
+  a pane whose only working control was "reset". The body is always drawn; the card sits under the axis.
 
 ## Options rejected
 

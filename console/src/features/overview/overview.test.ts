@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aliveCount, elapsedShort, orderByFamily, overviewGroups } from "./overview.ts";
+import { aliveCount, elapsedShort, foldFamilies, orderByFamily, overviewGroups } from "./overview.ts";
 import type { Repo } from "../repos/store.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 import type { Session } from "../../types/session.ts";
@@ -100,6 +100,51 @@ describe("orderByFamily", () => {
     const list = [s("a", { createdAt: at(2) }), s("b", { createdAt: at(2) })];
     const first = orderByFamily(list).map((x) => x.name);
     expect(orderByFamily([...list].reverse()).map((x) => x.name)).toEqual(first);
+  });
+});
+
+describe("foldFamilies (ADR 0096 decision 14, borrowed by the overview)", () => {
+  // p ─ c ─ g, plus an unrelated root q.
+  const fam = () => [
+    s("p"),
+    s("c", { originSession: "p" }),
+    s("g", { originSession: "c" }),
+    s("q"),
+  ];
+
+  it("marks only the cards that actually have descendants here", () => {
+    const { sessions, fold } = foldFamilies(fam(), new Set());
+    expect(sessions.map((x) => x.name)).toEqual(["p", "c", "g", "q"]);
+    expect(fold.get("p")).toEqual({ hasChildren: true, hidden: 0 });
+    expect(fold.get("c")).toEqual({ hasChildren: true, hidden: 0 });
+    expect(fold.get("g")).toEqual({ hasChildren: false, hidden: 0 });
+    expect(fold.get("q")).toEqual({ hasChildren: false, hidden: 0 });
+  });
+
+  it("collapsing a parent removes every descendant card, at every depth", () => {
+    const { sessions, fold } = foldFamilies(fam(), new Set(["p"]));
+    expect(sessions.map((x) => x.name)).toEqual(["p", "q"]);
+    expect(fold.get("p")?.hidden).toBe(2);
+    expect(fold.has("c")).toBe(false); // no entry for a card that is not on screen
+  });
+
+  it("a collapsed name that is not in this group folds nothing", () => {
+    // The parent's card is in another repository's group, so there is no press here to
+    // bring the rows back with.
+    const { sessions } = foldFamilies([s("c", { originSession: "elsewhere" })], new Set(["elsewhere"]));
+    expect(sessions.map((x) => x.name)).toEqual(["c"]);
+  });
+
+  it("a corrupted originSession cycle terminates", () => {
+    const { sessions } = foldFamilies([s("a", { originSession: "b" }), s("b", { originSession: "a" })], new Set(["a"]));
+    expect(sessions.length).toBeGreaterThan(0);
+  });
+
+  it("the heading's counts are taken BEFORE the fold — a fold is not sessions ending", () => {
+    const groups = overviewGroups(fam(), [], null, true, new Set(["p"]));
+    expect(groups[0].total).toBe(4);
+    expect(groups[0].alive).toBe(4);
+    expect(groups[0].sessions.map((x) => x.name)).toEqual(["p", "q"]);
   });
 });
 
