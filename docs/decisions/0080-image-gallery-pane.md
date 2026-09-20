@@ -270,6 +270,13 @@ decision 3).
   `.codex`, which is deliberately unbrowsable (`fsDeny` — the very reason ADR 0069 moved ours),
   so it does not appear here. Pasted images are out of scope too: a different axis, with its own
   entry if one is ever wanted.
+  - 🔴 **That entry landed (2026-09-20).** Both the chat composer's pre-send chips and a sent
+    turn's pasted-image thumbnails now open the shared `ImageLightbox` too
+    (`features/chat/parts/ChatAttachStrip.tsx`, `ChatPastedThumb.tsx`) — a fourth caller of
+    decision 5's shared component, wired through `ChatView`'s own lightbox state and
+    `useBackClose`, same pattern as `MirrorView`. No wire field, no pane and no endpoint: a sent
+    thumbnail used to `window.open` a new tab, and the composer's chips had no click handler at
+    all.
 
 ### Decision 9 — one level only; recursion is P1 and arrives as its own endpoint
 

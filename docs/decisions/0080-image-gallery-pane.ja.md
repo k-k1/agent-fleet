@@ -239,6 +239,13 @@ Console の `lib/filemeta.ts` の `IMAGE_EXT` が唯一の判定（Agent 側の 
 - **数えるのは af の `generate_image` の出力だけ。** codex 自前の `generated_images` は `.codex` の
   下＝意図的に閲覧禁止（`fsDeny`・ADR 0069 がわざわざ移した理由）なので、ここには出ない。
   貼り付け画像（`pasted`）も対象外——別の軸であり、必要なら別の導線を足す。
+  - 🔴 **その導線は着地した（2026-09-20）。** チャットのコンポーザー（送信前のチップ）と
+    送信済みターンの貼り付け画像サムネイル、両方が同じ共有 `ImageLightbox` を開くように
+    なった（`features/chat/parts/ChatAttachStrip.tsx`、`ChatPastedThumb.tsx`）。決定 5 の
+    共有コンポーネントの 4 つ目の呼び出し元が増えただけで、`ChatView` 自身のライトボックス
+    state と `useBackClose` で配線——`MirrorView` と同じ形。wire もペインもエンドポイントも
+    増えていない。送信済みサムネイルは以前は別タブに `window.open` していて、コンポーザーの
+    チップにはクリックハンドラすら無かった。
 
 ### 決定 9 — 1 階層だけを見る。再帰は P1 で、別の口として足す
 
