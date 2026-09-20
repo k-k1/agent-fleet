@@ -77,6 +77,7 @@
 | 5 | **「いまこの機能が使うのは X / Y」は Agent が答える**。画面側で計算しない | 97 の実機で踏んだ通り（応答は `model: sonnet`、台帳は `kind=agy`）。Console の `conns` と Agent の `headlessAgentAvailable`（CLI ログイン実測）は別物で、画面側の再計算は必ずいつか嘘になる |
 | 6 | 穴 4 つ（§103.3 の 2・3・4）を同じ回で塞ぐ | 「1 機能 1 行」の画面を作る以上、1 キーが 2 機能を止め、1 機能にキーが無く、同じ機能が 2 つの名前で出る状態は、その画面の上で目に見える |
 | 7 | 自前エンジン（lcpp）は**今回の指定先に入れない** | `OneShotHeadless` に lcpp 分岐が無く、いま指定すると claude 経路に落ちる。ADR 0093 phase 1 は「明示ピンでのみ到達可」なので機能別ピンとは相性が良い——が、それは 1 本の実装であって整理ではない。別建て |
+| 8 | **翻訳のキャッシュ鍵に、解決済みの kind とモデルを足す** | 鍵は原文ハッシュ＋言語だけ（97 §97.2）。機能ごとにモデルを変えられるようにした瞬間、「前のモデルの訳」が出続ける。**何で訳したかは訳文の同一性の一部**である。詳細と注意は §103.8-2 |
 
 ## 103.5 解決順とデータモデル
 
@@ -122,6 +123,9 @@ selected, configured := aiFeatureModelPref(feature, kind) // ← 無ければ従
   設定が効かないだけで壊れない。
 - `chatx.Deps` に seam を 2 本足す（`AiFeatureAgentPref` / `AiFeatureModelPref`）。
   `Configure` の反射チェックが未配線を弾くので、足した時点で `deps_test.go` の網に入る。
+- **署名は変えない。**翻訳だけは「実際に走った kind / model」を要る（決定 8・§103.8-2）ので、
+  それを返す `OneShotHeadlessRun` を足し、`OneShotHeadless` はその薄いラッパにする。
+  **要るようになった 1 箇所だけが新しい方を呼ぶ**——残り 7 箇所は本当に 1 行も動かない。
 
 ## 103.6 配線
 
@@ -131,6 +135,7 @@ selected, configured := aiFeatureModelPref(feature, kind) // ← 無ければ従
 | Agent | `ui_prefs.go`: `aiFeatureAgentPref` / `aiFeatureModelPref`（`assistantModelPref` の hidden-models 除外を通す）。`chat_wiring.go` に 2 行 |
 | Agent | `uiprefs/prefs.go`: `PlanUpdate()` 新設、`ChatReplySuggest()` 新設、`ReplySuggestEnabled()` を `replySuggestEnabled` へ（旧 `replySuggest` は読み側のフォールバックに残す）。§103.3-3 |
 | Agent | `GET /ai-assist/resolution` — 8 機能ぶんの `{feature, enabled, kind, model, source}`。**解決は本番と同じ関数を通す**（決定 5） |
+| Agent | `session_translate.go`: キャッシュ鍵に解決済みの kind とモデルを足す（決定 8）。鍵の実装は Go / TS の 2 本なので `console/src/features/mirror/translate.ts` と対で動かす |
 | CP | `routes.go` の所有者側 `rest` に 1 行（`GET /api/ai-assist/resolution`）。共有側には置かない——他人のワークスペースの設定である |
 | Console | `lib/aiAssistFeatures.ts`（新）＝ 8 機能のカタログ（id・面・ティア・トグルのキー・ラベルのキー）。**タブと使用量ビューが同じラベルを引く**（§103.3-4） |
 | Console | `AiAssistTab` を 2 段構成へ（§103.7）。`settings.ts` に 2 キー＋トグル 2 キー、`migrateAiAssistPrefs` のコメント訂正 |
@@ -170,8 +175,23 @@ selected, configured := aiFeatureModelPref(feature, kind) // ← 無ければ従
    （`CodexOneShotWithRetry`）は**利用者の明示指定には効かせない**——明示した選択を黙って
    別のモデルに差し替えるのは、84 の 1 番目の食い違いと同じ種類の裏切りである。注記で明示する。
 2. **翻訳のキャッシュ鍵にモデルが入っていない**（97 §97.2——鍵は原文ハッシュ＋言語）。機能ごとに
-   モデルを変えられるようにすると「前のモデルの訳」が出続ける。**鍵に解決済みモデルを足すか**、
-   設定変更で落とすか。足す方を推す（鍵が増えるだけで、既存の訳は次の押下で作り直される）。
+   モデルを変えられるようにすると「前のモデルの訳」が出続ける。**鍵に解決済みの kind とモデルを
+   足す**（決定 8）。設定変更でキャッシュを落とす案は採らない——捨てると、モデルを戻した人の
+   訳まで消える。鍵を増やせば既存の訳はその鍵のまま残り、次に押したときだけ作り直される。
+   97 の判断（鍵は「押した本文」＋言語という*安定しているもの*だけで作る）をそのまま延長した形で、
+   **何で訳したかは訳文の同一性の一部**である。⚠️ 鍵は Go と TS の 2 実装で固定されている
+   （`session_translate_test.go` / `translate.test.ts` のベクタ）ので、**両方を同時に動かす**こと。
+
+   ここで 97 の罠に正面から当たる——**`OneShotHeadless` は実際に走った backend / model を返さない**
+   （内側で台帳に書くだけ。だから 97 は応答から `model` を消した）。鍵に載せるのが*予測*では、
+   可用性キャッシュが 1 分で切れた瞬間に「走ったのと違う鍵」で保存される。よって:
+
+   - 解決を `resolveOneShot(feature, tier) (kind, model, source)` として**関数に切り出す**。
+     これを `OneShotHeadless`・`/ai-assist/resolution`・翻訳の 3 つが共有する（同じ答えが
+     3 箇所に出る唯一の作り方）。
+   - **`OneShotHeadless` は実際に走った kind / model を返すようにする**。翻訳の鍵はその戻り値で
+     作る（＝保存する直前に確定する）。台帳に書くのと同じ値なので、**画面と台帳が食い違わない**。
+     97 が消したのは*クライアントに返す* `model` であって、呼び出し元に真実を渡すことではない。
 3. **`/ai-assist/resolution` は冷えていると CLI を最大 5 本叩く**（`headlessAgentAvailable` の
    キャッシュは 1 分）。タブを開いた瞬間に 5 プロセスなので、**1 リクエストで 8 機能ぶんを返す**
    （機能ごとに叩かせない）。タイムアウトしたら行を出さない（踏みどころ上の「未取得」）。
