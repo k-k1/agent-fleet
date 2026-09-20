@@ -31,8 +31,10 @@ export type GroupState = "running" | "paused" | "done" | "cancelled";
 export type SeedPolicy = "random" | "fixed" | "sequence";
 
 /** The knobs a family actually reads. The Agent computes this from the same table the graph
- *  templates use; the Console must never keep a second copy (decision 4). */
-export type Knob = "steps" | "cfg" | "sampler" | "scheduler" | "negative";
+ *  templates use; the Console must never keep a second copy (decision 4). `strength` is ADR
+ *  0094 decision 12's addition — the first knob a family can answer false for (Qwen-Image-Edit
+ *  fixes its denoise at 1). */
+export type Knob = "steps" | "cfg" | "sampler" | "scheduler" | "negative" | "strength";
 
 /** The ComfyUI families the Agent has templates for. A row whose `base_model` is
  *  something else still renders — the family card is the only thing that goes missing. */
@@ -44,7 +46,8 @@ export type Family =
   | "flux2-klein"
   | "zimage"
   | "anima"
-  | "krea2";
+  | "krea2"
+  | "qwen-image-edit-2509";
 
 /** The `params` overlay of decision 4, in the shape the catalogue row already uses.
  *  `clip_skip` and `weight` ride along on the catalogue's side; the form sends neither. */
@@ -84,6 +87,11 @@ export interface ImagegenModel {
   /** The administrator's negative for this row. Shown as a chip the member cannot remove. */
   negative?: string;
   knobs?: Knob[];
+  /** This MODEL's own op list (ADR 0094 decision 12) — unlike ImagegenProvider.ops, which is a
+   *  UNION over every model on the route (decision 11). Absent on an Agent that predates the
+   *  ADR, in which case the form falls back to the full OPS list — the same "no signal, assume
+   *  the old permissive shape" rule `knobs` already follows. */
+  ops?: string[];
   license_name?: string;
   license_url?: string;
   source_url?: string;

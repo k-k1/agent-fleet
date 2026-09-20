@@ -17,6 +17,7 @@ describe("族カードの選択", () => {
       "zimage",
       "anima",
       "krea2",
+      "qwen-image-edit-2509",
     ]);
   });
 
@@ -50,6 +51,14 @@ describe("族カードの選択", () => {
     expect(familyCard("flux2-klein")?.cfg).toBeUndefined();
     expect(familyCard("sdxl")?.cfg).toEqual([5, 9]);
   });
+
+  // ADR 0094: 指示編集は文章の方言で、sizes は空（出力寸法は入力画像のアスペクト比が決める）。
+  it("qwen-image-edit-2509 は sentences 方言で sizes が空", () => {
+    const card = familyCard("qwen-image-edit-2509");
+    expect(card?.dialect).toBe("sentences");
+    expect(card?.sizes).toEqual([]);
+    expect(card?.trialSteps).toBe(8);
+  });
 });
 
 describe("大きさの選択肢", () => {
@@ -77,6 +86,13 @@ describe("大きさの選択肢", () => {
 
   it("族も分からなければ Agent の既定 5 つ", () => {
     expect(sizeOptions(undefined, undefined)).toHaveLength(5);
+  });
+
+  // 🔴 ADR 0094 決定 4: sizes が空だと宣言している族は、行が候補を持っていても勝つ唯一の例外
+  // ——出力寸法は入力画像のアスペクト比で決まり、候補を出しても効かない。
+  it("qwen-image-edit-2509 は行の宣言があっても空のまま", () => {
+    expect(sizeOptions(["1024x1024"], "qwen-image-edit-2509")).toEqual([]);
+    expect(sizeOptions(undefined, "qwen-image-edit-2509")).toEqual([]);
   });
 });
 

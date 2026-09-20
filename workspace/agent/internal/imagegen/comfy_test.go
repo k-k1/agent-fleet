@@ -554,6 +554,177 @@ func TestComfyCapsOffersImageToImage(t *testing.T) {
 	}
 }
 
+// --- ADR 0094: Qwen-Image-Edit-2509's family attributes and the union in Caps("") ------------
+
+// qwenEditConn holds one ordinary guided checkpoint (sdxl, warm) alongside one row of the new
+// edit-only family, so the two can be told apart by Caps(model) and compared against the union
+// Caps("") answers with.
+func qwenEditConn() EngineConn {
+	c := sdxlConn()
+	c.Warm = "sdxl-base-1.0"
+	c.Models = append(c.Models, "qwen-edit-row")
+	c.BaseModel["qwen-edit-row"] = "qwen-image-edit-2509"
+	c.Files["qwen-edit-row"] = []EngineFile{
+		{Flag: "--diffusion-model", Name: "qwen_image_edit_2509.safetensors"},
+		{Flag: "--clip_l", Name: "qwen_2.5_vl_7b.safetensors"},
+		{Flag: "--vae", Name: "qwen_image_vae.safetensors"},
+	}
+	return c
+}
+
+// Named, Caps is STRICT per family: the new family offers edit only, takes no strength and no
+// size candidates — the opposite answer from the sdxl row on the same engine.
+func TestComfyCapsQwenImageEditIsEditOnlyAndTakesNoStrengthOrSizes(t *testing.T) {
+	p, _ := comfyStub(t, qwenEditConn(), nil)
+	caps := p.Caps("qwen-edit-row")
+	if caps.Supports(OpGenerate) || caps.Supports(OpInpaint) {
+		t.Errorf("ops = %v, want edit only", caps.Ops)
+	}
+	if !caps.Supports(OpEdit) {
+		t.Errorf("ops = %v, want edit among them", caps.Ops)
+	}
+	if caps.Strength {
+		t.Error("qwen-image-edit-2509 must not advertise strength — its denoise is fixed at 1")
+	}
+	if len(caps.Sizes) != 0 {
+		t.Errorf("sizes = %v, want none — the family decides the size from the input picture", caps.Sizes)
+	}
+	if caps.MaxInputs != 1 {
+		t.Errorf("max inputs = %d, want 1 (P0 scope)", caps.MaxInputs)
+	}
+	// The positive control: the OTHER row on the same engine still answers the old way, so the
+	// difference above is the family's and not some engine-wide change.
+	sdxl := p.Caps("sdxl-base-1.0")
+	if !sdxl.Supports(OpGenerate) || !sdxl.Strength || len(sdxl.Sizes) == 0 {
+		t.Errorf("sdxl caps = %+v, want the ordinary shape unaffected", sdxl)
+	}
+}
+
+// 🔴 ADR 0094 decision 11: Caps("") is a UNION, not the warm row's own answer. With the edit-only
+// family warm, the union still has to offer generate — otherwise HandleStatus stops advertising
+// it and chooseImageProviders drops this engine from `op=generate`'s candidates, sending the next
+// call to a provider that spends a member's own plan quota.
+func TestComfyCapsEmptyModelIsAUnionAcrossEveryRow(t *testing.T) {
+	conn := qwenEditConn()
+	conn.Warm = "qwen-edit-row" // the edit-only family is what happens to be warm
+	p, _ := comfyStub(t, conn, nil)
+	union := p.Caps("")
+	if !union.Supports(OpGenerate) {
+		t.Errorf("ops = %v, want generate offered — sdxl on the same engine can do it", union.Ops)
+	}
+	if !union.Supports(OpEdit) {
+		t.Errorf("ops = %v, want edit offered too", union.Ops)
+	}
+	if !union.Strength {
+		t.Error("strength = false, want true — sdxl on the same engine takes it")
+	}
+	// The negative control for the union itself: an engine with ONLY the edit-only family must
+	// not claim an op nothing on it can do.
+	editOnly, _ := comfyStub(t, EngineConn{
+		Models: []string{"qwen-edit-row"}, BaseModel: map[string]string{"qwen-edit-row": "qwen-image-edit-2509"},
+		Files: map[string][]EngineFile{"qwen-edit-row": conn.Files["qwen-edit-row"]},
+	}, nil)
+	only := editOnly.Caps("")
+	if only.Supports(OpGenerate) || only.Supports(OpInpaint) {
+		t.Errorf("ops = %v, want edit only when that is the only family on the engine", only.Ops)
+	}
+	if only.Strength {
+		t.Error("strength = true, want false — nothing on this engine takes it")
+	}
+}
+
+// The op-resolution half of decision 11: a request naming no model lands on the warm row, and
+// when that row's family cannot do the requested op, Generate looks for the first row (in
+// catalogue order) that can — rather than fail the op and let Run() fall through to a provider
+// that spends a member's own plan (ADR 0071 P1's measured accident, imagegen.go's
+// fallbackWarnings).
+func TestComfyGenerateRemapsToAnotherRowWhenTheWarmFamilyCannotDoTheOp(t *testing.T) {
+	conn := qwenEditConn()
+	conn.Warm = "qwen-edit-row"
+	var gotModel string
+	p, _ := comfyStub(t, conn, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		gotModel = r.Header.Get("X-AF-Model")
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+	})
+	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if gotModel != "sdxl-base-1.0" {
+		t.Errorf("model sent to the engine = %q, want the row that can generate", gotModel)
+	}
+	if res.Model != "sdxl-base-1.0" {
+		t.Errorf("result model = %q, want sdxl-base-1.0", res.Model)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "switching") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %v, want a switch warning explaining the checkpoint change", res.Warnings)
+	}
+
+	// An EXPLICIT model is honoured and refused as asked, never remapped: the caller named it on
+	// purpose (the same rule Run() itself follows for an explicit provider).
+	_, err = p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", Model: "qwen-edit-row"})
+	if err == nil || !strings.Contains(err.Error(), "cannot do") {
+		t.Errorf("err = %v, want an explicit model's own refusal, not a silent remap", err)
+	}
+}
+
+// The last gap decision 2 names: a request naming neither a provider nor a model cannot be
+// refused at the edge (nothing to resolve a family from), so it reaches Generate and denoise is
+// fixed at 1 regardless — but the caller still typed a value, and comfyStrengthIgnoredWarning is
+// what says so instead of leaving 実測 C's "no error, no warning" failure in place for this one
+// path.
+func TestComfyGenerateWarnsWhenStrengthReachesAFamilyThatIgnoresIt(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "photo.png")
+	if err := os.WriteFile(in, tinyPNG(t, 64, 64), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := comfyEditStub(t, qwenEditConn(),
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseMultipartForm(8 << 20)
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "up.png", "type": "input"})
+		},
+		func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+		})
+	strength := 0.3
+	res, err := p.Generate(context.Background(), Request{
+		Op: OpEdit, Prompt: "make it snow", Model: "qwen-edit-row", Inputs: []string{in}, Strength: &strength,
+	})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "strength") && strings.Contains(w, "qwen-image-edit-2509") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %v, want one naming strength and the family that ignored it", res.Warnings)
+	}
+
+	// The negative control: the same request against the row that DOES read strength must stay
+	// silent about it.
+	ok, err := p.Generate(context.Background(), Request{
+		Op: OpEdit, Prompt: "make it snow", Model: "sdxl-base-1.0", Inputs: []string{in}, Strength: &strength,
+	})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	for _, w := range ok.Warnings {
+		if strings.Contains(w, "strength") && strings.Contains(w, "nothing was varied") {
+			t.Errorf("warnings = %v, want no such warning on a family that reads strength", ok.Warnings)
+		}
+	}
+}
+
 // The three refusals that must land before anything is uploaded and before a GPU is woken.
 func TestComfyGenerateRefusesMismatchedAttachments(t *testing.T) {
 	for _, c := range []struct {

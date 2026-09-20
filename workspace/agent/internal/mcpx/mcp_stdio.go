@@ -1218,7 +1218,13 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 	// must ignore is the kind of argument this schema exists to keep out.
 	if offer.Strength && slices.Contains(offer.Ops, "edit") {
 		props["strength"] = map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 1,
-			"description": "How much of the input picture an edit changes, 0-1 (0.6 when omitted). Small values keep the composition and correct it; 1 redraws from the prompt alone. **Only with op=edit** — inpaint always repaints its masked area fully, and says so in warnings"}
+			// offer.Strength is a UNION across models (ADR 0094 decision 11: comfyProvider's
+			// Caps("") advertises "yes, some checkpoint on this route reads it"), not a promise
+			// that whichever one answers a given call does. Since decision 2 a checkpoint can
+			// answer false (Qwen-Image-Edit fixes its denoise at 1) and be refused with 400 — so
+			// "0.6 when omitted" alone would have an agent hit that refusal on every call against
+			// such a row, with nothing here explaining why.
+			"description": "How much of the input picture an edit changes, 0-1 (0.6 when omitted). Small values keep the composition and correct it; 1 redraws from the prompt alone. **Only with op=edit** — inpaint always repaints its masked area fully, and says so in warnings. Some checkpoints on this route do not take it at all (an instruction-editing model fixes its denoise by construction) and answer 400 if it is sent"}
 	}
 	// params — the sampler overlay, and the fourth word ADR 0069 let into the vocabulary. Offered
 	// only where a route BUILDS the sampler graph, which is what having names to send means: the

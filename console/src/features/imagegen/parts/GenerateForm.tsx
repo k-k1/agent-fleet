@@ -294,26 +294,31 @@ export function GenerateForm({
             ))}
           </select>
         </Knobbed>
-        <label className="igen-field">
-          <span className="igen-label">{tr("imggen.size")}</span>
-          <select
-            className="ds-select"
-            value={draft.size}
-            // On an edit the input's dimensions win (decision 9). Shown disabled with the
-            // reason, so the rule is read before the run rather than in a warning after it.
-            disabled={isEdit}
-            title={isEdit ? tr("imggen.size_from_input") : undefined}
-            onChange={(e) => patch({ size: e.target.value })}
-          >
-            <option value="">{tr("imggen.model_default")}</option>
-            {sizes.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          {isEdit && <span className="igen-hint">{tr("imggen.size_from_input")}</span>}
-        </label>
+        {/* ADR 0094 decision 4: a family whose size is decided from the input picture's own
+            aspect ratio (sizes: []) does not draw the field at all, rather than a disabled one
+            offering candidates that would silently do nothing. */}
+        {sizes.length > 0 && (
+          <label className="igen-field">
+            <span className="igen-label">{tr("imggen.size")}</span>
+            <select
+              className="ds-select"
+              value={draft.size}
+              // On an edit the input's dimensions win (decision 9). Shown disabled with the
+              // reason, so the rule is read before the run rather than in a warning after it.
+              disabled={isEdit}
+              title={isEdit ? tr("imggen.size_from_input") : undefined}
+              onChange={(e) => patch({ size: e.target.value })}
+            >
+              <option value="">{tr("imggen.model_default")}</option>
+              {sizes.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            {isEdit && <span className="igen-hint">{tr("imggen.size_from_input")}</span>}
+          </label>
+        )}
         <label className="igen-field">
           <span className="igen-label">{tr("imggen.seed_policy")}</span>
           <select
@@ -413,8 +418,12 @@ export function GenerateForm({
           </label>
           <label className="igen-field">
             <span className="igen-label">{tr("imggen.op")}</span>
+            {/* This MODEL's own ops (ADR 0094 decision 12), not the fixed OPS list — an Agent
+                that predates the ADR sends no `ops` at all, and the fallback keeps every op
+                selectable exactly as before (the same "no signal, assume the old shape" rule
+                `knobs` already follows). */}
             <select className="ds-select" value={draft.op} onChange={(e) => patch({ op: e.target.value })}>
-              {OPS.map((o) => (
+              {(model?.ops?.length ? model.ops : OPS).map((o) => (
                 <option key={o} value={o}>
                   {tr(`imggen.op_${o}` as "imggen.op_generate")}
                 </option>
@@ -443,10 +452,15 @@ export function GenerateForm({
         {isEdit && (
           <>
             <InputPicker paths={draft.inputs} onChange={(inputs) => patch({ inputs })} />
-            <label className="igen-field">
-              <span className="igen-label">{tr("imggen.strength")}</span>
-              <Slider value={draft.strength} min={0} max={1} step={0.05} onChange={(v) => patch({ strength: v })} />
-            </label>
+            {/* ADR 0094 decision 2: a family that does not read strength at all (its denoise is
+                fixed by construction) does not draw the slider — the same "no candidate, don't
+                offer a control that does nothing" rule the size field above follows. */}
+            {reads("strength") && (
+              <label className="igen-field">
+                <span className="igen-label">{tr("imggen.strength")}</span>
+                <Slider value={draft.strength} min={0} max={1} step={0.05} onChange={(v) => patch({ strength: v })} />
+              </label>
+            )}
           </>
         )}
       </details>

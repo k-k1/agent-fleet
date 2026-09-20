@@ -116,6 +116,16 @@ func (b jobRequest) spec() (JobSpec, string, string) {
 			"strength must be greater than 0 and at most 1 (got %g): 1 redraws the picture from the prompt alone,"+
 				" and small values keep more of the input", *s)
 	}
+	// ADR 0094 decision 2/4, same shape as HandleGenerate's: refused BY VALUE when the resolved
+	// family does not read strength or size at all, not left to a family that quietly ignores it.
+	if b.Strength != nil {
+		if msg := comfyStrengthRefusal(b.Provider, b.Model); msg != "" {
+			return JobSpec{}, "bad_strength", msg
+		}
+	}
+	if msg := comfySizeRefusal(b.Provider, b.Model, b.Size); msg != "" {
+		return JobSpec{}, "bad_size", msg
+	}
 	if b.Count < 0 || b.Count > comfyMaxBatch {
 		return JobSpec{}, "bad_count", fmt.Sprintf(
 			"count is the ComfyUI batch size and this route allows at most %d (got %d) — to make more pictures,"+

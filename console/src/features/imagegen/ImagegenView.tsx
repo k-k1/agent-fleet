@@ -183,6 +183,26 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
   const trialFull = caps.trialMax > 0 && caps.trialPending >= caps.trialMax;
   const queueFull = caps.queueMax > 0 && caps.queued + draft.jobs > caps.queueMax;
 
+  // ADR 0094 decision 12: a model whose family does not offer the draft's current op (most
+  // commonly switching TO an edit-only checkpoint while "generate" was still selected) is
+  // remapped to that model's OWN first op rather than left pointed at a choice not on offer —
+  // pressing enqueue would hit decision 2's 400 and then fall through to a provider that spends
+  // a member's own plan (decision 11). Absent `model.ops` (an Agent old enough to predate the
+  // ADR) leaves the draft untouched, the same "no signal, no change" rule `knobs` follows.
+  const modelId = model?.id;
+  useEffect(() => {
+    const ops = model?.ops;
+    if (!ops || !ops.length || ops.includes(draft.op)) return;
+    const next = ops[0];
+    patch({ op: next });
+    toast(tr("imggen.op_remapped", { family: model?.family || "", op: tr(`imggen.op_${next}` as "imggen.op_generate") }), {
+      kind: "info",
+    });
+    // Only when the MODEL changes: re-running this on every draft.op edit would fight a member's
+    // own manual choice the instant they picked something the current model happens to offer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelId]);
+
   const rows = useMemo(() => foldGroups(jobs, groups), [jobs, groups]);
   const results = useMemo(() => resultsOf(jobs.filter((j) => !j.trial)), [jobs]);
   const latestTrial = useMemo(() => resultsOf(jobs.filter((j) => j.trial))[0] ?? null, [jobs]);
@@ -195,7 +215,7 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
       }
       setBusy(true);
       try {
-        const r = await imagegenEnqueue(buildRequest(draft, { trial, provider: provider?.id }));
+        const r = await imagegenEnqueue(buildRequest(draft, { trial, provider: provider?.id, model }));
         if (r?.error) {
           toast(errText(r.error) || tr("imggen.enqueue_failed"), { kind: "error" });
           return;
@@ -208,7 +228,7 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
         setBusy(false);
       }
     },
-    [draft, provider, readJobs, toast, tr],
+    [draft, provider, model, readJobs, toast, tr],
   );
 
   const groupOp = useCallback(

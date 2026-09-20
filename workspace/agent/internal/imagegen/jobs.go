@@ -117,6 +117,9 @@ var comfyTrialSteps = map[comfyFamily]int{
 	// batch (the klein case above). It is left here for the Raw rows, where it is the family's
 	// published 52 cut to a sixth.
 	ComfyFamilyKrea2: 8,
+	// ADR 0094 実測 B: the same 2509 graph at 8 steps still followed the instruction (63.2 s vs
+	// 実測 A's 226.2 s at the family's own 20) — measured, not guessed like the others above.
+	ComfyFamilyQwenImageEdit2509: 8,
 }
 
 // --- the records --------------------------------------------------------------------------
