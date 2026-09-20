@@ -83,12 +83,13 @@ for an edit and nothing happened" the default behaviour**.
 - Make `Caps.Strength` a per-family answer (it is `true` for everything today, `comfy.go:138`) and
   answer **false** here.
 - A caller that sends `strength` anyway is **refused with 400** (the shape `bad_strength` already
-  uses), not warned. 🔴 **Refuse only when the RESOLVED model is of this family** — a request that
-  names no provider may not land on comfy at all, so "a `strength` present means 400" would be wrong.
-  Resolve model → family at the edge (`comfyFamilyFor` is in the same package). Run C was "a wrong picture with no warning", so a path that accepts the number
+  uses), not warned. Run C was "a wrong picture with no warning", so a path that accepts the number
   and quietly drops it leaves the failure looking the same from outside. ADR 0081 decision 4's
   "report, do not swallow" is a rule about values the CATALOGUE declared (the operator's, written
   long before this request); **a value the caller just typed is better refused**.
+  🔴 **Refuse only when the RESOLVED model is of this family** — a request that names no provider
+  may not land on comfy at all, so "a `strength` present means 400" would be wrong. Resolve
+  model → family at the edge (`comfyFamilyFor` is in the same package).
 - ADR 0069's rule for adding a word ("is there no way around it for the caller") **points the other
   way here**: it is not that the caller has no workaround, it is that the knob has no meaning.
 
