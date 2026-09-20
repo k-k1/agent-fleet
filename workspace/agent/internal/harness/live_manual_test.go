@@ -281,6 +281,13 @@ func TestManualLiveAgenticSession(t *testing.T) {
 			result, err = Run(ctx, client, reg, rt, full)
 			return err
 		})
+		// Per-task Compactions count, logged every call (not just the first one overall):
+		// the aggregate-only "compaction fired" log below only ever fires once across the
+		// WHOLE test (compactedAtTurn's own guard), which stopped being enough the moment
+		// compaction could fire more than once, or fire again in a LATER task, once loop.go
+		// started re-checking the budget on every tool-loop iteration instead of only once
+		// per task boundary.
+		t.Logf("compactions during %s: %d (turnCount entering this call: %d)", label, result.Compactions, turnCount)
 		// Run's own Compactions count (loop.go) is decision 3/7's judgement firing anywhere
 		// during this call — the loop-internal check this test exists to exercise, not just
 		// the old top-level PrepareTurn-before-Run boundary.
