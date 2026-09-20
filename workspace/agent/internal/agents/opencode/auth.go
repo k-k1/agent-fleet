@@ -35,9 +35,10 @@ var UsagePref = func() string { return UsageOff }
 // env loads the stored provider keys as "NAME=value" entries for the
 // session launcher to pass via `docker`/tmux `-e`. Order is stable (sorted).
 //
-// On the free tier (UsageFree) OPENCODE_API_KEY is dropped, so that a workspace which
-// chose "use the free tier" cannot end up on a billed route merely because a key is still
-// stored. Other providers' keys (ANTHROPIC_API_KEY and the like) are the user's own
+// On the two routes that declare opencode.ai is not being used — UsageFree (the zero-auth
+// route) and UsageOwn (direct providers only) — OPENCODE_API_KEY is dropped, so that such a
+// workspace cannot end up on a billed route merely because a key is still stored. Other
+// providers' keys (ANTHROPIC_API_KEY and the like) are the user's own
 // billing and are left alone. UsageOff drops every key — defense in depth: Connected()
 // should already have stopped the caller, but if env() is reached on its own it must
 // leave no billing or outbound path behind.
@@ -53,10 +54,10 @@ func env() []string {
 	// entitled to the engine. Same for an unreadable store: that is a reason to lose the keys,
 	// not a reason to lose the engine.
 	if s, err := secrets.Load(); err == nil {
-		free := UsagePref() == UsageFree
+		noOpencodeAI := UsagePref() == UsageFree || UsagePref() == UsageOwn
 		names := make([]string, 0, len(s.Opencode))
 		for k := range s.Opencode {
-			if free && k == opencodeKeyEnv {
+			if noOpencodeAI && k == opencodeKeyEnv {
 				continue
 			}
 			names = append(names, k)
@@ -104,10 +105,30 @@ func Available() bool {
 // setting) is a hard lock a security policy can rely on even if a key gets pasted in
 // later without anyone flipping the route back.
 func connected(s *secrets.Data, oa oauthState) bool {
-	if UsagePref() == UsageOff {
+	switch UsagePref() {
+	case UsageOff:
 		return false
+	case UsageOwn:
+		// opencode.ai is not used on this route, so neither an account login nor a stored
+		// OPENCODE_API_KEY makes opencode usable here — what does is a provider the user
+		// connected directly, or one of the fleet's own engines (ADR 0071). Being strict is
+		// the safe direction: reporting connected with nothing behind it would let a launch
+		// fall through to opencode's own default model, which is a zero-auth opencode.ai one
+		// — exactly the unasked-for outside call this setting exists to prevent.
+		return hasDirectProviderKey(s) || HasEngineProviders()
 	}
 	return UsagePref() == UsageFree || len(s.Opencode) > 0 || oa.connected
+}
+
+// hasDirectProviderKey reports whether any stored key belongs to a provider other than
+// opencode.ai itself (ANTHROPIC_API_KEY and the like — the user's own bill).
+func hasDirectProviderKey(s *secrets.Data) bool {
+	for k := range s.Opencode {
+		if k != opencodeKeyEnv {
+			return true
+		}
+	}
+	return false
 }
 
 // Connected reports whether opencode is actually usable — see connected() above. This

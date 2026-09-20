@@ -848,3 +848,27 @@
 .warn-text {
   color: var(--warn);
 }
+
+/* p-opts as a RADIO LIST rather than side-by-side actions (opencode's billing route): the
+   options are alternatives to compare, not buttons to press, so they stack full width and the
+   selected one is marked. `aria-checked` carries the state for assistive tech; `.is-on` draws
+   it. Contrast is taken from --accent through color-mix so the fill holds up in both themes. */
+.p-opts-col {
+  flex-direction: column;
+}
+
+.p-opts-col .p-opt {
+  flex: none;
+  width: 100%;
+}
+
+.p-opt.is-on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel2, var(--panel)));
+}
+
+.p-opt.is-on .p-opt-t::after {
+  content: "✓";
+  color: var(--accent);
+  font-weight: 700;
+}
