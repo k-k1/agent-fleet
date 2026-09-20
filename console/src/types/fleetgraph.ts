@@ -364,8 +364,19 @@ export interface GraphSegment {
 }
 
 // spawn / fork / handoff connect two lanes at the child's birth; instruct /
-// report / peer are the round trips. A `fromRow` / `toRow` of null means that end
-// is an external actor, so the arrow leaves the figure (decision 8-2).
+// report / peer are the round trips.
+//
+// 🔥 A null `fromRow` / `toRow` means two different things, and `variant` is what
+// tells them apart:
+//   round trip (instruct/report/peer) → that end is an EXTERNAL actor with no lane
+//     at all, so the arrow leaves the figure (decision 8-2). A counterpart that is
+//     a real lane merely excluded by the window or a filter is not drawn this way —
+//     the builder DROPS that arrow, because rendering it here would attribute a
+//     session's message to the outside (decision 6).
+//   lineage (spawn/fork/handoff) → the parent is a real lane with no row in this
+//     window (off the left edge, or its lineage was deleted). The arrow stays and
+//     the view draws decision 9's mark for a missing parent — never the external
+//     glyph. Branches must not vanish as the window narrows.
 export type ArrowVariant = "spawn" | "fork" | "handoff" | "instruct" | "report" | "peer";
 
 export interface GraphArrow {
