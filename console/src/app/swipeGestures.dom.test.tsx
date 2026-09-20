@@ -44,10 +44,21 @@ function setup(over: Partial<Harness["state"]> = {}): Harness {
 }
 
 /** Move from (x,y) to (x+dx, y+dy) in a single step. */
-function swipe(from: [number, number], dx: number, dy = 0): void {
-  touchEvent("touchstart", from[0], from[1], h.target);
-  touchEvent("touchmove", from[0] + dx, from[1] + dy, h.target);
-  touchEvent("touchend", from[0] + dx, from[1] + dy, h.target);
+function swipe(from: [number, number], dx: number, dy = 0, target: Element = h.target): void {
+  touchEvent("touchstart", from[0], from[1], target);
+  touchEvent("touchmove", from[0] + dx, from[1] + dy, target);
+  touchEvent("touchend", from[0] + dx, from[1] + dy, target);
+}
+
+/** A cell of a Markdown table — the table itself is the horizontal scroller
+ * (`.markdown table { display: block; overflow: auto }`). jsdom computes no layout, so
+ * the overflowing state has to be planted (widths measured on a 390px-wide phone). */
+function tableCell(): Element {
+  h.target.innerHTML = "<table id='tbl' style='overflow-x: auto'><tr><td id='cell'>x</td></tr></table>";
+  const table = h.target.querySelector("#tbl") as HTMLElement;
+  Object.defineProperty(table, "scrollWidth", { value: 820, configurable: true });
+  Object.defineProperty(table, "clientWidth", { value: 366, configurable: true });
+  return h.target.querySelector("#cell") as Element;
 }
 
 /** Pinch-zoom the page by `factor`: jsdom has no visualViewport, and zoom() reads it as
@@ -93,6 +104,31 @@ describe("left pane show/hide", () => {
     h = setup();
     swipe([10, 300], 120);
     expect(h.calls).toEqual(["drawer:open"]);
+  });
+
+  // Regression guard: a Markdown table on a phone spans the full width, so scrolling it
+  // sideways starts inside the edge zone and used to pull the left pane out mid-read.
+  it("phone: scrolling a table sideways from the edge zone does not open the drawer", () => {
+    h = setup();
+    const cell = tableCell();
+    swipe([10, 300], 80, 0, cell);
+    swipe([10, 300], -80, 0, cell);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("tablet: the same table is left alone by the rail's edge swipe", () => {
+    h = setup({ phone: false, coarse: true });
+    Object.defineProperty(window, "innerWidth", { value: 1024, configurable: true });
+    swipe([20, 300], 80, 0, tableCell());
+    expect(h.calls).toEqual([]);
+  });
+
+  // The open drawer's backdrop covers the content, so a gesture there cannot start on a
+  // table — closing stays unguarded, and must keep working.
+  it("phone: closing is not guarded", () => {
+    h = setup({ drawer: true });
+    swipe([200, 300], -120, 0, tableCell());
+    expect(h.calls).toEqual(["drawer:close"]);
   });
 
   it("tablet (touch device wider than a phone) shows and hides the rail as an overlay", () => {
