@@ -3,6 +3,7 @@ package lcpp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -46,8 +47,8 @@ func TestOpenPathLayoutAndLazyCreation(t *testing.T) {
 	if _, err := os.Stat(s.Path()); !os.IsNotExist(err) {
 		t.Fatalf("Open must not touch disk before the first Append; stat err = %v", err)
 	}
-	if recs, err := s.Records(); err != nil || recs != nil {
-		t.Fatalf("Records() on a never-written session = %v, %v; want nil, nil", recs, err)
+	if recs, truncated, err := s.Records(); err != nil || recs != nil || truncated {
+		t.Fatalf("Records() on a never-written session = %v, %v, %v; want nil, false, nil", recs, truncated, err)
 	}
 }
 
@@ -74,7 +75,7 @@ func TestAppendAndRecordsRoundTrip(t *testing.T) {
 		t.Fatalf("AppendUsage: %v", err)
 	}
 
-	recs, err := s.Records()
+	recs, _, err := s.Records()
 	if err != nil {
 		t.Fatalf("Records: %v", err)
 	}
@@ -123,7 +124,7 @@ func TestAppendIsMonotonic(t *testing.T) {
 			t.Fatalf("AppendUser %d: %v", i, err)
 		}
 	}
-	before, err := s.Records()
+	before, _, err := s.Records()
 	if err != nil {
 		t.Fatalf("Records: %v", err)
 	}
@@ -135,7 +136,7 @@ func TestAppendIsMonotonic(t *testing.T) {
 		t.Fatalf("AppendMessage(compaction note): %v", err)
 	}
 
-	after, err := s.Records()
+	after, _, err := s.Records()
 	if err != nil {
 		t.Fatalf("Records: %v", err)
 	}
@@ -412,7 +413,7 @@ func TestForkAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForkAt: %v", err)
 	}
-	dstRecs, err := dst.Records()
+	dstRecs, _, err := dst.Records()
 	if err != nil {
 		t.Fatalf("dst.Records: %v", err)
 	}
@@ -424,7 +425,7 @@ func TestForkAt(t *testing.T) {
 	}
 
 	// The source is untouched.
-	srcRecs, err := s.Records()
+	srcRecs, _, err := s.Records()
 	if err != nil {
 		t.Fatalf("s.Records: %v", err)
 	}
@@ -475,6 +476,88 @@ func TestAppendConcurrentNoTornLines(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatalf("line %d does not decode (torn write?): %v\nline: %s", i, err, line)
 		}
+	}
+}
+
+// TestRecordsTruncatedFinalLineIsTolerated is Records' own positive control: a torn LAST
+// line (what a process death mid-write, per append's own doc comment, can leave behind) must
+// not cost the whole session's history — only that one incomplete line is dropped.
+func TestRecordsTruncatedFinalLineIsTolerated(t *testing.T) {
+	testHome(t)
+	s := Open("sid-trunc")
+	var ids []string
+	for i := 0; i < 3; i++ {
+		r, err := s.AppendUser(fmt.Sprintf("turn-%d", i))
+		if err != nil {
+			t.Fatalf("AppendUser %d: %v", i, err)
+		}
+		ids = append(ids, r.ID)
+	}
+
+	// Append a partial line directly — no closing quote/brace, no trailing newline — the
+	// shape a single interrupted os.File.Write call leaves behind.
+	f, err := os.OpenFile(s.Path(), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	if _, err := f.WriteString(`{"id":"torn","ts":"2026-01-01T00:00:00Z","kind":"user","content":"cut off mid-str`); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	recs, truncated, err := s.Records()
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	if !truncated {
+		t.Fatal("truncated = false, want true — a torn last line must be reported, not silently indistinguishable from a clean file")
+	}
+	if len(recs) != 3 {
+		t.Fatalf("recs = %+v, want exactly the 3 complete records before the torn line", recs)
+	}
+	for i, r := range recs {
+		if r.ID != ids[i] {
+			t.Fatalf("recs[%d].ID = %q, want %q", i, r.ID, ids[i])
+		}
+	}
+}
+
+// TestRecordsMidStreamCorruptionStillErrors is the same fix's negative control: corruption
+// anywhere but the last line means the append-only invariant itself broke (not a tolerated
+// in-flight write), and Records must keep erroring on that rather than silently swallowing it
+// too.
+func TestRecordsMidStreamCorruptionStillErrors(t *testing.T) {
+	testHome(t)
+	s := Open("sid-corrupt")
+	for i := 0; i < 3; i++ {
+		if _, err := s.AppendUser(fmt.Sprintf("turn-%d", i)); err != nil {
+			t.Fatalf("AppendUser %d: %v", i, err)
+		}
+	}
+	raw, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("setup: got %d lines, want 3", len(lines))
+	}
+	lines[1] = "{not valid json" // the middle line — never what a torn LAST write could produce
+	if err := os.WriteFile(s.Path(), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	recs, truncated, err := s.Records()
+	if err == nil {
+		t.Fatal("Records: want an error for mid-stream corruption, got nil")
+	}
+	if truncated {
+		t.Fatal("truncated = true, want false — this is a mid-stream corruption, not a tolerated last-line tear")
+	}
+	if len(recs) != 1 {
+		t.Fatalf("recs = %+v, want exactly the 1 record before the corrupted line", recs)
 	}
 }
 

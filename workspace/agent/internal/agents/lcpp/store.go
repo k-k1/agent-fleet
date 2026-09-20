@@ -166,18 +166,41 @@ func (s *Store) AppendUser(content string) (Record, error) {
 	return s.append(Record{Kind: KindUser, Content: content})
 }
 
-// AppendMessage persists one harness.Message out of a harness.Run call's Result.Messages —
-// the shape a driver replays record-by-record once a Run call returns. It is never the right
-// call for the turn's own new input (use AppendUser for that): Run never invents a genuine
-// user message on its own, so every RoleUser entry a driver sees appearing THROUGH a Run
-// result is, by construction, the synthetic turn harness.IsContinuationPrompt identifies
-// (loop.go's continuationPrompt) — never a second real user turn, because Run has no
-// mechanism to add one. That is the "レコード側に印" decision 3's acceptance criteria ask
-// for: the mark is which method the driver called, decided from where the message came from
-// (Run's own output vs. the driver's own new input), not from sniffing the text at read time
-// — content alone cannot tell the two apart (a real user can, if vanishingly unlikely, type
-// the identical sentence), and store_test.go's negative control exercises exactly that case
-// through AppendUser to show it is unaffected.
+// AppendMessage persists ONE harness.Message that harness.Run's Result.Messages did not
+// already have persisted — i.e. exactly the DELTA a Run call produced, one call per new
+// message, each call passing the message that Run appended in that message's own position.
+// It is never the right call for the turn's own new input (use AppendUser for that): Run
+// never invents a genuine user message on its own, so every RoleUser entry a driver sees
+// appearing THROUGH a Run result is, by construction, the synthetic turn
+// harness.IsContinuationPrompt identifies (loop.go's continuationPrompt) — never a second
+// real user turn, because Run has no mechanism to add one. That is the "レコード側に印"
+// decision 3's acceptance criteria ask for: the mark is which method the driver called,
+// decided from where the message came from (Run's own output vs. the driver's own new
+// input), not from sniffing the text at read time — content alone cannot tell the two apart
+// (a real user can, if vanishingly unlikely, type the identical sentence), and
+// store_test.go's negative control exercises exactly that case through AppendUser to show it
+// is unaffected.
+//
+// 🔴 It is WRONG to call this for the whole of Result.Messages on every turn: everything
+// before the delta was already persisted by an earlier call (this store's own append-only
+// contract — repersisting it duplicates that history), and after a mid-loop compaction the
+// duplication is easy to miss, because SendMessages only ever looks at what comes after the
+// LAST compaction boundary, so the request the engine sees still stays correct; only
+// Transcript (the mirror) then shows every pre-compaction round trip twice. This method
+// itself does not — and structurally cannot — detect that misuse: it has no way to tell an
+// already-persisted message from a new one, so getting the delta right is entirely the
+// caller's job.
+//
+// The ORDER these calls must be made in is the logical order the harness call that produced
+// them returned, not the real-world order the underlying events happened in. Concretely,
+// harness.Compact places a new compaction-boundary message BEFORE a pending user turn that
+// was already appended to `full` when Compact ran (compact.go: toSummarize excludes the
+// pending turn, the boundary is appended after toSummarize, the pending turn after that) —
+// so when a compaction fires on the turn that just received new user input, the correct call
+// order is AppendMessage(the new boundary) THEN AppendUser(the new question), even though
+// the question was typed first. This store enforces no ordering of its own (Append is a
+// plain, unconditional append) and cannot verify a caller got it right; store_test.go's own
+// TestSendMessagesAcrossCompactionBoundary is the worked example of doing it correctly.
 //
 // A RoleSystem message is folded in as a compaction system-note (Note==NoteCompaction): the
 // only RoleSystem message harness.Compact ever adds to a message slice IS the compaction
@@ -225,35 +248,58 @@ func (s *Store) AppendUsage(u harness.Usage) (Record, error) {
 const maxRecordLine = 32 * 1024 * 1024
 
 // Records reads back every line of the session's log, in append order. A session with no
-// file yet (Open was called but nothing was ever appended) returns (nil, nil), not an error.
-func (s *Store) Records() ([]Record, error) {
+// file yet (Open was called but nothing was ever appended) returns (nil, false, nil).
+//
+// truncated reports whether the LAST line failed to decode and was dropped instead of
+// treated as a hard error — every record before it is still returned, complete and
+// unaffected. Only the last line ever gets this treatment: append (above) always performs
+// exactly one os.File.Write per record and never opens with O_TRUNC, so the only way a line
+// can come out malformed at all is a process death mid-write (this kind's own design
+// includes shutdown.go cancelling an in-flight turn), and that can only ever leave the
+// CURRENTLY LAST line incomplete — every earlier line was already a complete, flushed Write
+// before the next Append call's Write began. A malformed line anywhere else means something
+// besides an in-flight write broke the append-only invariant (a bug, or a hand edit outside
+// this package) and must not be silently absorbed the same way, so Records still errors on
+// that exactly as before. A caller that drops the returned records entirely on the FIRST
+// sign of trouble (mid-loop, before this distinction existed) would lose a whole session's
+// mirror history over one crash during its very last write — a cost this store's whole
+// reason to exist (decision 3: never lose the record) is meant to avoid paying.
+func (s *Store) Records() (recs []Record, truncated bool, err error) {
 	f, err := os.Open(s.Path())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, false, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
 	defer f.Close()
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), maxRecordLine)
-	var out []Record
+	var lines [][]byte
 	for sc.Scan() {
 		line := bytes.TrimSpace(sc.Bytes())
 		if len(line) == 0 {
 			continue
 		}
+		lines = append(lines, append([]byte(nil), line...)) // sc.Bytes' backing array is reused by the next Scan
+	}
+	if err := sc.Err(); err != nil {
+		return nil, false, err
+	}
+
+	out := make([]Record, 0, len(lines))
+	for i, line := range lines {
 		var rec Record
 		if err := json.Unmarshal(line, &rec); err != nil {
-			return out, fmt.Errorf("lcpp: %s: %w", s.Path(), err)
+			if i == len(lines)-1 {
+				return out, true, nil
+			}
+			return out, false, fmt.Errorf("lcpp: %s: line %d: %w", s.Path(), i, err)
 		}
 		out = append(out, rec)
 	}
-	if err := sc.Err(); err != nil {
-		return out, err
-	}
-	return out, nil
+	return out, false, nil
 }
 
 // Full reconstructs decision 3's append-only "full" history as harness's own []Message
@@ -270,7 +316,10 @@ func (s *Store) Records() ([]Record, error) {
 // engine is sent (docs/log/99 §4.5: a model switch is driver state, not conversation
 // content). KindUsage never contributes a message at all.
 func (s *Store) Full() ([]harness.Message, error) {
-	recs, err := s.Records()
+	// truncated is intentionally ignored: Records' own doc comment establishes that the only
+	// line it can ever apply to is a write that never finished, so treating it as "not sent
+	// yet" here is exactly right — there is nothing to send that was ever actually recorded.
+	recs, _, err := s.Records()
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +374,10 @@ func (s *Store) SendMessages(systemPrompt string) ([]harness.Message, error) {
 // treatment), and inventing one is wiring work for the kind itself, out of this package's
 // scope.
 func (s *Store) Transcript() ([]transcript.Turn, error) {
-	recs, err := s.Records()
+	// truncated ignored — see Full's own call site: a torn last write never became a
+	// complete turn in the first place, so there is nothing the mirror should have shown for
+	// it either.
+	recs, _, err := s.Records()
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +456,10 @@ func transcriptFromRecords(recs []Record) []transcript.Turn {
 // history would be exactly the kind of surprise decision 3's append-only rule exists to rule
 // out for the ORIGINAL session — ForkAt must not become a backdoor around it for a second one.
 func (s *Store) ForkAt(newSID, anchorID string) (*Store, error) {
-	recs, err := s.Records()
+	// truncated ignored — a dropped, never-completed last write has no ID a caller could
+	// have been given as an anchor in the first place, so it can never be anchorID below;
+	// the lookup just behaves as if that line had never been written at all.
+	recs, _, err := s.Records()
 	if err != nil {
 		return nil, err
 	}
