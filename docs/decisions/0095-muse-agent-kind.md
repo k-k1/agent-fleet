@@ -40,7 +40,7 @@ memory.
 | Host footprint | ◎ | An idle `muse serve` host is **≈ 73 MiB RSS** (74,924 KB). Compare the registry's `tuiMemoryCost`: claude 230 MiB, opencode 300 MiB (`console/src/agents/registry.ts:227,469`) |
 | **OS sandbox** | **🔴 ◎ cannot run here** | Linux sandboxing is bubblewrap (38 `bwrap` / 50 `seccomp` strings in the binary; the docs say "needs a working bubblewrap and a non-musl build. Without it, every sandboxed shell command aborts as an environment failure"). `bwrap` is absent from the image, and in this container a user namespace is creatable but **`move_mount` returns EACCES** — bubblewrap cannot attach its mounts |
 | **Shared repository state** | **🔴 ◎ it writes there** | `muse exec -w create` chose `<repo>/.muse/worktrees/<date>-<hash>` as the workspace root, created `.muse/.session-worktree-reservations/`, and **appended `/.muse/worktrees/` to `.git/info/exclude`**. In a linked worktree that file is the parent clone's, shared with every other session |
-| **Foreign personal context** | **⚠️ ◎ on by default** | First run printed `Including your Codex personal rules and 5 skills`. It discovers `~/.claude` and `~/.codex` skills and rules unless `--no-foreign-personal-context` is passed |
+| **Foreign personal context** | **⚠️ ◎ on by default** | First run printed `Including your Codex personal rules and 5 skills`. It discovers `~/.claude` and `~/.codex` skills and rules unless foreign context is turned off — and the flag that does it, `--no-foreign-personal-context`, exists on `muse exec` but **not on `muse serve`** (measured: `unknown option`) |
 | Feature overlap | ⚠️ △ | Subagents (8 per tree by default, `agents.execution_capacity` 1–64), four background observer agents that each make their own model calls, workflows (1,000 children lifetime), a **user-wide session-name namespace** and peer messaging — all invisible to Agent Fleet's registry, mirror and usage ledger |
 | Auth | △ | Browser sign-in or an API key; `META_API_KEY`, or `muse auth set`, stored at `~/.config/muse/auth.json`. An API key always wins over a browser session. Managed (MMA) accounts must use a key |
 | Billing | △ | Pay-as-you-go per token, or a flat subscription in three tiers whose quota is counted in **prompts per 5 hours**, valid only through the CLI while signed in with a Meta Model API account |
@@ -52,7 +52,7 @@ memory.
 - Nine kinds (`workspace/agent/internal/session/session.go:20-28`), registered twice:
   `sessionx/agent.go:28-38` for the read layer and `sessionx/session_turn.go:31-37` for the five
   managed drivers. **An unregistered kind is silently normalised to claude**, not rejected
-  (`sessionx/agent.go:41-53`).
+  (`AgentOf` at `sessionx/agent.go:40-45`, `NormalizeKind` at `:49-54`).
 - The contract a kind implements: `Agent` — six methods (`agents/agents.go:141-161`) — and
   `Driver` + `ThreadHandle` — seven methods (`agents/driver.go:132-165`).
   `Capabilities.ProcessModel` is `shared-daemon` | `per-session-child` | `tui` (`driver.go:146`).
@@ -138,7 +138,14 @@ when it is not, the read layer parses
 `~/.local/share/muse/sessions/YYYY/MM/DD/<sid>/session.jsonl`, which is append-only and holds the
 same records. **AF does not compute that path**: `session/start`'s result returns it, so it is
 stored on `session.Meta` at creation (the date partition otherwise makes discovery a dated guess —
-the trap kiro hit with cwd+mtime, ADR 0026 decision 6). Subagent transcripts live under
+the trap kiro hit with cwd+mtime, ADR 0026 decision 6).
+
+**The session id is stored, not derived.** AF's usual trick — a deterministic UUIDv5 of
+(dir, slot name), as kiro's `slotSid` does — cannot be used here: the schema states that a retained
+or reserved id is rejected with `commandRejected` / `session_id_conflict`, so an id is good exactly
+once. AF mints one per session, keeps it on `Meta` beside the path, and `ClearResume` discards both
+so a recreate starts a genuinely new session. Whether Muse accepts a v5 at all is unmeasured — the
+probe passed a v7, which the schema names as the server's own default. Subagent transcripts live under
 `subagent/<id>/session.jsonl`; v1 renders subagent activity as tool-shaped items on the parent turn
 and does not open a pane per child.
 
@@ -165,7 +172,7 @@ is what Phase 1 gate A is for, and the expected outcome is that Decision 5 becom
 recorded as such. Only a change in what the *host* permits (LSM policy, seccomp, capabilities)
 would reopen it.
 
-### Decision 6 — AF owns `~/.config/muse/settings.json`, and clamps five behaviours in it
+### Decision 6 — AF owns `~/.config/muse/settings.json`, and clamps seven behaviours in it
 
 The file requires `"schema_version": 1` or **every command fails at startup**, so it is written, not
 merged blindly. **There is exactly one writer, and it is the MCP materialiser's.** The clamps below
@@ -183,14 +190,20 @@ Two things follow that the first draft got wrong, and both are design work, not 
   removes its key entirely when the set is empty — correct for MCP, fatal for clamps, which must be
   written on a kind with zero MCP servers. Muse therefore gets its own writer inside `mcpreg` that
   merges clamps and `mcp_servers` in one pass.
-- **The clamps are fail-close; MCP materialisation stays best-effort.** Today `Materialize` logs and
+- **The clamps are fail-close, and the gate belongs inside `Resume`.** Today `Materialize` logs and
   swallows every failure by design — "a session must still launch when its MCP config could not be
   updated" — and `StartManagedSession` calls it without looking at the result before `Resume`
   (`mcpx/mcp_materialize.go:30-41`). For MCP that is the right trade; for these clamps it is not,
   because they are the safety mechanism: a failed write would start a Muse session with eight
-  subagents, four observers, workflows and foreign context all enabled. So the muse settings write
-  returns an error that refuses the session start, while boot-time `MaterializeAll` keeps its
-  best-effort contract for every kind including this one.
+  subagents, four observers, workflows, the approval judge and foreign context all enabled.
+  **`StartManagedSession` is the wrong place to enforce it**, because it is not the only way a child
+  is spawned: `Resume` is also reached directly from the turn, answer, carried-session and bridge
+  paths, and from each kind's `ReconcileManaged` at Agent start (`workspace/agent/main.go:189-193`,
+  which runs after the best-effort `MaterializeAll`). A restart or a dead child would then start an
+  unclamped Muse. So the write happens inside the muse driver's `Resume`, before the child is
+  spawned, and returns an error that refuses the start. The precedent is kiro's `ensureSettings`
+  (`agents/kiro/program.go:196-208`) with its two defects fixed: not a `sync.Once`, and not
+  swallowing the error. Boot-time `MaterializeAll` keeps its best-effort contract for every kind.
 
 The lock claim is deliberately weak: a `.settings.json.lock` file appearing proves Muse *has* a lock
 protocol, not which one. Gate B1 traces the syscalls of a settings update and a deliberate
@@ -205,9 +218,21 @@ AF sets:
    are invisible spend, and on a prompt-quota subscription they are invisible quota.
 3. Workflows off (`auto` would let a session spawn up to 1,000 children).
 4. Worktree isolation off, and `-w` never passed. Decision 7.
-5. Foreign personal context off (`--no-foreign-personal-context`, or its settings equivalent).
-   Reading `~/.claude` and `~/.codex` silently mixes another kind's instruction layer into this one,
-   and those directories are off-limits by workspace policy.
+5. Foreign personal context off. Reading `~/.claude` and `~/.codex` silently mixes another kind's
+   instruction layer into this one, and those directories are off-limits by workspace policy.
+   **The settings file is the only route**: `--no-foreign-personal-context` exists on `muse exec`
+   but **not on `muse serve`** (measured — `muse serve … --no-foreign-personal-context` answers
+   `unknown option`), and Decision 2 makes `serve` the only process AF runs. The key's spelling is a
+   gate B1 item; the binary carries both `allow_foreign_configuration` and
+   `foreign_personal_fallback`, so it is not guessable from the flag name.
+6. The approval judge off (`--approval-judge off`, or `MUSE_DISABLE_APPROVAL_JUDGE`). It is **on by
+   default** and makes its own model call for every Prompt-bound approval — on a metered account
+   that is spend the member never asked for, and Decision 5 keeps approvals on, so it fires often.
+7. The bundled skills that read other agents. `muse skills list` ships `resume-claude`,
+   `resume-codex`, `import` and `migrate`, whose stated job is to read Claude Code's or Codex's
+   transcripts, memory notes and MCP servers. Clamp 5 governs *discovery* of foreign rules and
+   skills; these are foreign readers invoked on demand, and they reach exactly the directories
+   workspace policy puts off-limits.
 
 Muse's own peer messaging and session-name authority (`~/.local/share/muse/session-name-authority/`,
 user-wide) are **not** wired to AF's cross-session messaging in v1: two peer channels with one
@@ -244,9 +269,10 @@ build for good, so the connection card reports the shadow when it sees one.
 
 ### Decision 9 — the credential is a stored API key, entered once
 
-**`muse auth set --api-key-stdin`** — the flag is not optional, the binary's own usage is
-`muse auth set [--provider <PROVIDER>] --api-key-stdin` and the key "is never passed on the command
-line" (measured on 1.3.0). It writes `~/.config/muse/auth.json`.
+**`muse auth set --api-key-stdin`** — the flag is not optional. `muse auth --help` prints the usage
+as `muse auth set [--provider <PROVIDER>] --api-key-stdin`, and `muse auth set --help` lists it as
+the one accepted way to pass a secret, "never taken as a command-line argument, so it never lands
+in shell history" (both measured on 1.3.0). It writes `~/.config/muse/auth.json`.
 
 **Two paths join the file deny-list, not one**: `~/.config/muse` (the credential) *and*
 `~/.local/share/muse` — which holds every session's full transcript and the user-wide session-name
@@ -274,6 +300,14 @@ interrupted turn, the numbers after `session/resume` (no double count), and whet
 cumulative or per-turn — folding a cumulative counter as a delta is how a ledger silently doubles.
 Anything short of that lands `MeasuredPartial`, which is honest, rather than `MeasuredExact`, which
 would not be.
+**Two chips have no source yet, and the ADR should not pretend otherwise.** The cost estimate reads
+a kind → models.dev provider table (`workspace/agent/usage_catalog.go:48-55`) that has no Meta row,
+so a price per token has to come from somewhere before a spend figure can be shown. And the
+subscription's quota is counted in prompts per five hours, which is the shape of `get_agent_usage`
+(claude / codex / agy), not of a token ledger — and Muse exposes it through `/upgrade` in the TUI,
+a surface `serve` does not have. v1 may well ship with a token ledger and no cost or quota chip;
+that is a decision for Phase 2, named here so it is not discovered as a missing feature.
+
 `model/list` backs the picker, which means `agentModels.ts:34-35`'s `isDynamic` must list `muse`.
 That one line is the recurring miss of every new kind (copilot, cursor), and it presents as "the
 model picker only shows the default".
@@ -289,6 +323,13 @@ refuse to start, and the registry has nowhere to put the choice — `secrets.MCP
 `timeoutMs` but no `mode`, so offering it means a new field plus wire, Console and stored-definition
 migration. That is named as out of scope here rather than discovered in Phase 2.
 
+**There may be a second route, and Phase 1 decides between them.** `session/start` and
+`session/resume` take a `config` object whose only admitted member today is `mcpServers`
+(`SessionConfig`, measured in the schema). If a per-session server list on the wire is honoured,
+MCP never has to enter the shared settings file at all — the clamps still do, but the writer stops
+being a merge of two independent blocks, and the "settings writer + MCP dialect" work package
+shrinks. Gate B1 sends one server both ways and keeps whichever the runtime actually connects.
+
 `${VAR}` interpolation exists and `MUSE_SESSION_ID` is passed to stdio servers. `muse` joins
 `knownKinds` (`mcpreg/def.go:57-61`) and `MaterializedKinds` (`materialize.go:47`). For project
 scope it joins `mcpproj`'s `kindInfos` (`mcpproj/inspect.go:50-58`) with
@@ -298,11 +339,28 @@ target; that is a static fact about the kind, not a runtime fallback to another 
 Hooks (`.muse/hooks.json`, 15 lifecycle events including `Stop` and `Notification`) are **not** used:
 the protocol already reports what a hook would, and a hook file in the repo is shared state.
 
-### Decision 12 — the project instruction layer is free; the user and fleet layers are a measured gap, and `instrSupportedKinds` waits for it
+### Decision 12 — the project layer costs one host-wide decision (`--trust-workspace`); the user and fleet layers are a measured gap, and `instrSupportedKinds` waits for them
 
-Project scope needs nothing: Muse reads the repository's own `AGENTS.md` / `CLAUDE.md` (its
-documented discovery order is `AGENTS.md`, `CLAUDE.md`, `.agents/AGENTS.md`, `.claude/CLAUDE.md`,
-after the workspace is trusted), which this repository already has.
+Project scope is **not** free, which the first two drafts had wrong. Muse reads the repository's own
+`AGENTS.md` / `CLAUDE.md` only after the workspace is trusted, and measured, an untrusted session
+says so and carries on without them: `rules file at …/AGENTS.md exists, but the workspace is
+untrusted, so it is skipped for this session; restart with --trust-workspace`. Trust is **not on the
+wire** — the string `trust` does not occur anywhere in the MSP schema (measured, 0 occurrences) —
+so the only way to have project rules is `muse serve --trust-workspace`, which is host-wide and
+therefore, under Decision 3's one-host-per-session shape, a per-session decision AF makes when it
+spawns the child.
+
+Two consequences follow. **AF passes `--trust-workspace`** for a working copy the member launched a
+session in — refusing it would silently drop the repository's own `AGENTS.md`, which is where this
+project keeps its conventions. And the same flag loads **the repository's skills**, so a clone can
+contribute behaviour: that is the documented `.agents/skills/` mechanism, it is the same trust
+decision Console already makes when it launches any kind in that working copy, and the guide says
+it plainly rather than leaving it implicit.
+
+Note for the guide: the discovery order is a **precedence**, not a union. Measured, with both files
+present, `CLAUDE.md is ignored this session because AGENTS.md takes precedence` — harmless here,
+but a member whose repository keeps the real text in `CLAUDE.md` and a stub in `AGENTS.md` loses it
+without an error.
 
 The other two layers are not solved by Decision 6's switch, and they are **two mechanisms, not
 one**. Turning off foreign personal context stops Muse reading `~/.claude` and `~/.codex`; it
@@ -319,6 +377,23 @@ matrix), and Phase 2 carries both apply paths and the Console's per-kind distrib
 until then the kind ships with project instructions only, and the guide says so rather than leaving
 a member to assume the fleet policy reached it.
 
+### Decision 13 — the capability declaration: the first kind with every dynamic axis true, and a question channel that is not the approval channel
+
+`Capabilities` is not just `ProcessModel`, and the earlier drafts decided only that. MSP carries
+`session/setModel`, `session/setReasoningEffort` and `session/setApprovalMode` with matching
+`*Changed` notifications (measured in the schema), and `muse --help` exposes
+`--reasoning-effort none|minimal|low|medium|high|xhigh|max|ultra`. So `DynamicModel`,
+`DynamicEffort` and `DynamicMode` are all true, alongside `Steer` (`turn/steer`), `Fork`
+(`session/fork`) and `Permissions` (`approval/*`) — **the first kind for which every one of them
+holds**. `Meta.Effort` and the Console's effort and mode controls therefore light up on day one
+rather than being dark fields.
+
+`Questions` is separately true and is a *different channel from approvals*:
+`userInput/requested` → `userInput/answer`, with `userInput/settled` closing it. An approval asks
+"may I run this"; a user-input request asks the member a question. Mapping both onto the mirror's
+permission card would lose that distinction, so the driver declares both `Permissions` and
+`Questions` and routes them to the two interaction kinds AF already has.
+
 ## What Phase 2 touches
 
 The checklist below is the one docs/log/43 §4 and docs/log/74 §8 turned into a rule after two kinds
@@ -327,13 +402,14 @@ none of it is optional.
 
 | Area | Sites |
 |---|---|
-| Kind identity | `session.go:20-28`, `sessionx/agent.go:28-38`, `sessionx/session_turn.go:31-37` (managed driver map) |
+| Kind identity | `session.go:20-28`, `sessionx/agent.go:28-38` (registry; the silent claude fallback is `AgentOf:40-45` and `NormalizeKind:49-54`), `sessionx/session_turn.go:31-37` (managed driver map), `workspace/agent/main.go:189-193` (the per-kind `ReconcileManaged` goroutine — mandatory for a per-session-child kind), `sessionx/turn_end_poll.go:62-66`, `connections.go:54-60`, `sessionx/session_skills.go:80-91` (muse has skills), `control-plane/enkana_dict.go:199-205` |
 | Managed-only gate | `sessionx/session_handlers.go:650-668` (create default), `session_driver.go:62-105`, five Console launch / driver-switch sites, `control-plane/scheduler_wake.go:277-285` |
 | Connection + login | connection status, login routes on **both** `routes.go` files (Agent and CP — kiro's precedent is start, poll *and* delete, `control-plane/routes.go:869-875`), and the CP REST proxy allow-list, whose omission is how a usage chip silently never appears |
 | Model + vendor | `console/src/lib/agentModels.ts:34-35` (`isDynamic`), `workspace/agent/model_provider.go:122` (`modelKindVendor`), and the models REST switch `workspace/agent/agent_models.go:40-83` |
-| Usage | `usage_fold.go:204-212`, the usage stack colour `console/src/features/usage/colors.ts:81` |
-| MCP — three separate places | the registry (`mcpreg/def.go:57-61`, `mcpreg/materialize.go:47,74-87`, `mcpproj/inspect.go:50-58`); the **local** `af` server (`mcpx/mcp_stdio.go:1853`, the kind validation at `:2575-2576` and the managed-driver list at `:2759-2762`); and the **CP** server (`control-plane/internal/mcpsrv/mcp.go:295,473,487,518-550` — description, schema and runtime validation are three edits, not one). Tool descriptions are a fixed per-session token cost, so they are edited, not grown |
-| Console surface | `console/src/types/session.ts:9-12` (`SessionKind` and the display order — nothing renders without it), `console/src/agents/registry.ts` descriptor, `console/src/lib/settings.ts:963` launch defaults, the `LaunchDefaults` kind union `console/src/features/settings/agents/AgentCardParts.tsx:76`, `console/src/features/settings/mcp/mcpWire.ts:9` (`MCP_KINDS`, mirrors the Go list), `ScheduleDetailModal.tsx`'s `AGENT_KINDS`, `console/src/lib/brandicons.ts:36` plus the icon asset itself, `console/src/lib/termcolor.ts:19`, and the colour twins across `tokens.css` and the five feature stylesheets (docs/log/74 §9.3) |
+| Usage | `usage_fold.go:204-212`, the cost table `usage_catalog.go:48-55`, the usage stack colour `console/src/features/usage/colors.ts:81` |
+| Instructions | both apply paths in `agent_instructions.go:119-146` and the list at `:83`, once Decision 12's targets are measured |
+| MCP — **four** separate lists | the registry (`mcpreg/def.go:57-61`, `mcpreg/materialize.go:47,74-87`, `mcpproj/inspect.go:36-44,50-58`); the **local** `af` server (`mcpx/mcp_stdio.go:1853`, kind validation `:2575-2576`, managed-driver list `:2759-2762`); the **CP** MCP tools (`control-plane/internal/mcpsrv/mcp.go:295,473,487,518-550` — description, schema and runtime validation are three edits, not one); and `mcpsrv/mcp_server.go:70-74`'s `mcpKnownKinds`, a fourth copy of the same list. Tool descriptions are a fixed per-session token cost, so they are edited, not grown |
+| Console surface | `console/src/types/session.ts:9-12` (`SessionKind` and the display order — nothing renders without it), `console/src/agents/registry.ts` descriptor, `console/src/lib/settings.ts:958-966` launch defaults, the `LaunchDefaults` kind union `console/src/features/settings/agents/AgentCardParts.tsx:76`, a new `MuseCard.tsx` wired from `features/settings/agents/AgentsTab.tsx:250`, `features/settings/workspace/EnvTab.tsx`, `console/src/features/settings/mcp/mcpWire.ts:9` (`MCP_KINDS`, mirrors the Go list), `ScheduleDetailModal.tsx`'s `AGENT_KINDS`, `features/mirror/{turnTime.ts:10,FileChangeStrip.tsx:69}`, `features/repos/ProjectActionPanels.tsx:34`, `console/src/lib/brandicons.ts:36` plus the icon asset itself, `console/src/lib/termcolor.ts:19`, and the colour twins across `tokens.css` and the five feature stylesheets (docs/log/74 §9.3) |
 | Deployment + CI | `workspace/Dockerfile` (ARG, sha256 per arch, runtime layout), the entrypoint's `MUSE_NO_AUTO_UPDATE` and shadow check, `env_tool_versions.go`, and the release / drift workflows and setup action that carry every other pinned CLI |
 | Text | `bridge/format.go`'s `kindLabel`, the Console i18n catalogues (en + ja), the user guide, and `guide/ref`'s capability tables — which `scripts/docs-check.py` checks against `Caps()` in both languages |
 | Tests | the MSP schema-fingerprint drift test, route and contract tests, and the e2e smoke that pins the baked version string |
@@ -372,9 +448,11 @@ none of it is optional.
   `msp_schema_fingerprint`. A test asserting the baked binary's fingerprint equals the one the
   generated types were built from turns a silent protocol change into a red build. No other kind has
   this.
-- **Estimate**: managed-only, no TUI assets, **15–23 session-days** — the sum of the table, with no
-  rounding applied to make a tidier headline (the first draft said 14–20 while the same rows added
-  to 15–23). The anchor
+- **Estimate**: managed-only, no TUI assets, **20–31 session-days** — the sum of the table, with no
+  rounding applied to make a tidier headline. It has moved twice, and both moves are the point: the
+  first draft said 14–20 while its own rows added to 15–23, and the rows themselves were then short
+  of the work the reviews found (the fail-close wiring, the seven clamps, the question channel, the
+  dynamic axes, the instruction layers, the CI). The anchor
   for the scale is the kind-wide inventory — 90 Go files and 41 Console files mention `kiro` today,
   and existing kinds are 2,100–5,950 non-test lines each — but the split below is what the number
   is made of, and it is the part to argue with:
@@ -384,17 +462,20 @@ none of it is optional.
   | MSP client, generated types, the fingerprint drift test | 3–4 |
   | Driver + `ThreadHandle` (7 methods), status, steering, interrupt, resume reconciliation | 3–4 |
   | Transcript: live items + the at-rest JSONL, subagent items | 2–3 |
-  | Settings single writer + clamps + the MCP dialect | 2–3 |
-  | Approval round trip and the permission-choice mapping | 1–2 |
+  | Settings single writer + 7 clamps + the fail-close wiring in `Resume` + the MCP dialect | 3–4 |
+  | Approval round trip, the separate `userInput` question channel, the permission-choice mapping | 2–3 |
+  | The dynamic axes of Decision 13 (model / effort / mode) and their Console controls | 1–2 |
   | Connection card, both `routes.go`, the REST allow-list, deny-list | 1–2 |
   | Usage + model list + the accounting tests | 1–2 |
-  | Deployment (bake, pin, sha256, shadow guard, `env_tool_versions`) | 1 |
-  | Console surface, i18n, guide, `guide/ref` capability tables | 1–2 |
+  | Instruction layers: both apply paths and the distribution status (Decision 12) | 1–2 |
+  | Deployment (bake, pin, sha256, shadow guard, `env_tool_versions`, release / drift CI) | 1–2 |
+  | Console surface, i18n, guide, `guide/ref` capability tables | 2–3 |
 
-  **16–25 days if ADR 0093 has not landed** when this starts, because the managed-only gate
-  (Decision 2) is then unpaid. The direction of the error is upward: the largest single unknown is
-  how much of MSP's 47 methods and 31 notifications the driver actually has to implement to be
-  correct rather than merely working.
+  **21–33 days if ADR 0093 has not landed** when this starts, because the managed-only gate
+  (Decision 2) is then unpaid. The direction of the error is still upward: the largest single
+  unknown is how much of MSP's 47 methods and 31 notifications the driver actually has to implement
+  to be correct rather than merely working, and three review rounds have each moved the number the
+  same way.
 - If Phase 1's gates fail, the sunk cost is this ADR and the probe — no code.
 
 ## Phases
@@ -402,7 +483,7 @@ none of it is optional.
 | Phase | Content | Gate to the next |
 |---|---|---|
 | 0 | The probe in this ADR (done 2026-09-20): install, MSP drive, pin/checksum, worktree and foreign-context behaviour, footprint | — |
-| 1 | **Gate A** (½ day): bake `bwrap` and run it on a real Workspace image. Both mount APIs are already denied here, so this confirms rather than explores; the expected answer is that Decision 5's waiver is permanent and recorded. **Gate B1** (1–1½ days): one API key, and the accounting matrix of Decision 10 — cache, subagents, a failed and an interrupted turn, post-resume, cumulative vs per-turn — plus `model/list`, one `approval/requested` round trip, one subagent, and the user-scope instruction target of Decision 12. **Gate B2** (½ day): can a *subscription* credential be obtained elsewhere and entered here, given the browser onboarding this container cannot run | A and B1 answered; the user accepts the Decision 6 clamps and the spend. B2 may answer "no" — then v1 is pay-as-you-go only, stated in the guide, and Phase 2 proceeds |
+| 1 | **Gate A** (½ day): bake `bwrap` and run it on a real Workspace image. Both mount APIs are already denied here, so this confirms rather than explores; the expected answer is that Decision 5's waiver is permanent and recorded. **Gate B1** (2–2½ days): one API key, and the accounting matrix of Decision 10 — cache, subagents, a failed and an interrupted turn, post-resume, cumulative vs per-turn — plus `model/list`, one `approval/requested` round trip, one `userInput/requested` round trip, one subagent, the fleet and user instruction targets of Decision 12 (separately), the settings keys for the seven clamps of Decision 6 (their spelling is not guessable from the flag names), the settings-file lock protocol by syscall, whether `session/start.config.mcpServers` is honoured (Decision 11's second route), and what a **normal** run — no `-w` — writes into a working copy, since Decision 7 currently rests on the `-w` measurement alone. **Gate B2** (½ day): can a *subscription* credential be obtained elsewhere and entered here, given the browser onboarding this container cannot run | A and B1 answered; the user accepts the Decision 6 clamps and the spend. B2 may answer "no" — then v1 is pay-as-you-go only, stated in the guide, and Phase 2 proceeds |
 | 2 | Implementation: kind wiring, MSP client and generated types, driver, transcript, usage, settings + MCP dialect, connection card, deployment, guide, this ADR to *adopted* | — |
 
 ## Open questions (answer in Phase 1)
@@ -496,3 +577,38 @@ alone.
 
 Confirmed unchanged: Decision 2's create-path anchors and the scheduler's, Decision 11's
 `MCPServer` and `mcpproj` findings, the English/Japanese correspondence, and `docs-check` green.
+
+## Review round 3 (2026-09-20, a fresh claude / opus session)
+
+A third reader, told which findings were already closed and asked to spend its effort on premises
+nobody had questioned. Fifteen findings, fourteen of them right. Three changed a decision outright:
+
+- **The clamp switch AF needs does not exist on the process AF runs.**
+  `--no-foreign-personal-context` is a `muse exec` flag; `muse serve` answers `unknown option`
+  (reproduced). Decision 6's "or its settings equivalent" was not an alternative — it is the only
+  route, and the key's spelling is now a gate item rather than an assumption.
+- **The project instruction layer was never free** (Decision 12). An untrusted workspace skips
+  `AGENTS.md` and says so, and `trust` does not appear in the MSP schema at all, so it can only be a
+  host flag. That turns "nothing to do" into a decision to pass `--trust-workspace`, and into an
+  admission that doing so also loads the repository's skills.
+- **Fail-close in `StartManagedSession` would not have held.** `Resume` is reached from the turn,
+  answer, carried-session and bridge paths and from `ReconcileManaged` at Agent start, so the gate
+  moved inside the driver's `Resume`, with kiro's `ensureSettings` as the precedent and its
+  `sync.Once`-and-swallow as the anti-pattern.
+
+The rest added what the ADR had not decided at all: the whole `Capabilities` declaration
+(Decision 13 — muse is the first kind with every dynamic axis true, and `userInput/*` is a question
+channel distinct from approvals), the approval judge's per-approval model call and the bundled
+`resume-claude` / `resume-codex` / `import` / `migrate` skills as clamps 6 and 7, the single-use
+session id (Decision 4 — AF's deterministic UUIDv5 cannot be reused), the missing cost and quota
+sources (Decision 10), `session/start.config.mcpServers` as a possible second MCP route
+(Decision 11), a fourth copy of the MCP kind list (`mcpsrv/mcp_server.go:70-74`) and a dozen more
+sites for the checklist. The estimate rose again, to 20–31 days, because the table was still short
+of the work.
+
+One finding was declined: the `muse auth set` usage quoted in Decision 9 is verbatim from
+`muse auth --help` (the reviewer read `muse auth set --help`, which prints a different usage line).
+Both were checked; the text now says which command it quotes.
+
+Not re-verified by this round: login, a real turn, token accounting, a subscription credential, a
+real `bwrap`, an end-to-end MSP drive, and the release manifest — the same boundary as before.
