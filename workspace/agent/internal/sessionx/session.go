@@ -24,17 +24,32 @@ import (
 // resolvable yet (a fresh claude has not written its jsonl); that is expected and left
 // empty rather than guessed — a later conv-id observation fills it in.
 func recordFleetGraphBirth(m session.Meta) {
-	conv := ""
-	if forker, ok := AgentOf(m.Kind).(agents.Forker); ok {
-		if c, err := forker.ForkSource(m); err == nil {
-			conv = c
-		}
-	}
+	conv := fleetGraphResolveConv(m)
 	fleetgraph.RecordBirth(fleetgraph.Birth{
 		Name: m.Name, Kind: m.Kind, Repo: m.Repo,
 		Origin: fleetgraph.NormalizeOrigin(session.OriginOf(m)), OriginSession: m.OriginSession,
 		Conv: conv, ForkFrom: m.ForkFrom, Display: session.Display(m),
 	})
+	if conv != "" {
+		// The birth row above already carries it — seed the dedup map so the very next
+		// list poll's ObserveConv does not write a redundant convid line for it.
+		fleetgraph.SeedConv(m.Name, conv)
+	}
+}
+
+// fleetGraphResolveConv resolves m's own conversation id the same way its kind's
+// Forker.ForkSource does (ADR 0096 decision 13) — "" for a kind without CanFork, or one
+// that cannot resolve one yet (right after launch, before any conversation exists).
+func fleetGraphResolveConv(m session.Meta) string {
+	forker, ok := AgentOf(m.Kind).(agents.Forker)
+	if !ok {
+		return ""
+	}
+	conv, err := forker.ForkSource(m)
+	if err != nil {
+		return ""
+	}
+	return conv
 }
 
 // Wire conversion for sessions, plus title/label derivation. The model, meta persistence

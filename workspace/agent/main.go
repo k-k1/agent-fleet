@@ -171,7 +171,7 @@ func serve() {
 	// writes lineage for sessions that predate the ledger.
 	sessionx.FleetGraphResync()
 	sessionx.FleetGraphBackfillFromMeta()
-	go fleetgraph.PruneActivity()
+	go fleetgraph.StartActivityPruner()
 	// Delivery ledger for browser attach handoffs (docs/log/53, completion-notice section):
 	// pick up the ones where resolveBrowserHandoff finished last boot but
 	// deliverBrowserHandoff did not. It has no busy/idle settle decision, so unlike the

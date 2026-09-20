@@ -180,6 +180,20 @@ func TestNormalizeState_UnknownNeverFoldsToIdle(t *testing.T) {
 	}
 }
 
+// TestNormalizeState_LiteralUnknownIsAMatchNotAFallback is B6 from the S-BE review: the
+// raw input string "unknown" is itself a valid LedgerState member, so normalising it is a
+// genuine match — `raw` must stay empty, or Go disagrees with the TypeScript side's own
+// closed-set check on the identical fixture case.
+func TestNormalizeState_LiteralUnknownIsAMatchNotAFallback(t *testing.T) {
+	state, raw := NormalizeState("unknown")
+	if state != StateUnknown {
+		t.Fatalf("NormalizeState(%q) state = %q, want unknown", "unknown", state)
+	}
+	if raw != "" {
+		t.Fatalf(`NormalizeState("unknown") raw = %q, want "" (a literal match is not a fallback)`, raw)
+	}
+}
+
 // TestEraseLineage_RemovesOnlyNamedLane (ADR 0096 decision 6).
 func TestEraseLineage_RemovesOnlyNamedLane(t *testing.T) {
 	withTempState(t)
@@ -299,4 +313,49 @@ func resetLastStateForTest() {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	lastState = map[string]LedgerState{}
+}
+
+// TestForgetSession_ClearsBothDedupMaps (B4 from the S-BE review): a deleted session's
+// process-local state must not linger forever. This does not touch disk — it is pure
+// in-process bookkeeping, checked by re-observing the same values and confirming they are
+// treated as NEW again (had ForgetSession not run, they would be silently deduped away).
+func TestForgetSession_ClearsBothDedupMaps(t *testing.T) {
+	withTempState(t)
+	const name = "forget-me"
+	ForgetSession(name) // start from a clean slate: the in-process maps outlive one test run
+	ObserveState(name, "working")
+	ObserveConv(name, "conv-1")
+
+	ForgetSession(name)
+
+	ObserveState(name, "working") // same value as before ForgetSession
+	ObserveConv(name, "conv-1")   // same value as before ForgetSession
+
+	page, err := BuildPage(0, clockNow().Add(time.Hour).UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stateCount, convCount int
+	for _, raw := range page.Activity {
+		b, _ := json.Marshal(raw)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		if m["name"] == name && m["ev"] == "state" {
+			stateCount++
+		}
+	}
+	for _, raw := range page.Lineage {
+		b, _ := json.Marshal(raw)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		if m["name"] == name && m["ev"] == "convid" {
+			convCount++
+		}
+	}
+	if stateCount != 2 {
+		t.Fatalf("state events for %s = %d, want 2 (ForgetSession must make the repeat value NEW again)", name, stateCount)
+	}
+	if convCount != 2 {
+		t.Fatalf("convid events for %s = %d, want 2 (ForgetSession must make the repeat value NEW again)", name, convCount)
+	}
 }

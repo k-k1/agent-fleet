@@ -587,6 +587,12 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// the session's Discord thread so the thread reflects both directions (docs/log/37
 		// Fix ②). Best-effort + async — never blocks or fails the input.
 		mirrorUserInputAsync(name, body.Prompt)
+		// The fleet graph's own arrow for the same fact: a person, not a badge-carrying
+		// injection, steered this session (ActorId "user", ADR 0096 decision 4). Skipped
+		// for a keys/seq-only request, which carries no prompt text to show.
+		if p := strings.TrimSpace(body.Prompt); p != "" {
+			fleetgraph.RecordInstruct("user", name, "", p)
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 }
@@ -692,6 +698,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		// no Discord mirror.
 	default:
 		mirrorUserInputAsync(meta.Name, prompt) // docs/log/37 Fix ②: Console-input mirror
+		fleetgraph.RecordInstruct("user", meta.Name, "", prompt)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name})
 }

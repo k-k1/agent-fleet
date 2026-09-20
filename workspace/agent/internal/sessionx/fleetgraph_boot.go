@@ -35,6 +35,14 @@ func FleetGraphResync() {
 			continue
 		}
 		states[name] = wireSession(m, live[name]).State
+		// Seed (never write): a resolvable conv predates this process, so it is not a
+		// change ObserveConv should announce — without seeding, the first post-boot list
+		// poll would treat an unchanged id as newly discovered and write a redundant line.
+		if live[name] {
+			if conv := fleetGraphResolveConv(m); conv != "" {
+				fleetgraph.SeedConv(name, conv)
+			}
+		}
 	}
 	fleetgraph.ResyncAll(states)
 }
@@ -52,11 +60,15 @@ func FleetGraphBackfillFromMeta() {
 	}
 	for _, m := range session.ListMetas() {
 		createdAt, _ := time.Parse(time.RFC3339, m.CreatedAt)
+		conv := fleetGraphResolveConv(m)
 		fleetgraph.RecordBirth(fleetgraph.Birth{
 			Name: m.Name, Kind: NormalizeKind(m.Kind), Repo: m.Repo,
 			Origin: fleetgraph.NormalizeOrigin(session.OriginOf(m)), OriginSession: m.OriginSession,
-			ForkFrom: m.ForkFrom, Display: session.Display(m), At: createdAt,
+			Conv: conv, ForkFrom: m.ForkFrom, Display: session.Display(m), At: createdAt,
 		})
+		if conv != "" {
+			fleetgraph.SeedConv(m.Name, conv)
+		}
 		if m.StoppedAt != "" {
 			if stoppedAt, err := time.Parse(time.RFC3339, m.StoppedAt); err == nil {
 				fleetgraph.RecordDeathAt(m.Name, "", 0, 0, stoppedAt)

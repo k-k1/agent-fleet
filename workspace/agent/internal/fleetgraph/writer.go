@@ -186,3 +186,63 @@ func ResyncAll(rawStates map[string]string) {
 		})
 	}
 }
+
+// --- Conv-id observation (ADR 0096 decision 13) -----------------------------------------
+
+// convMu guards lastConv the same way stateMu guards lastState — the same two observers
+// (Console 4s / CP reaper 1m) drive GET /sessions, which is also where ObserveConv is
+// piggybacked (write site ⑤).
+var convMu sync.Mutex
+var lastConv = map[string]string{}
+
+// ObserveConv writes a convid line only when conv differs from the last one this process
+// recorded for name. The caller (internal/sessionx, which owns Forker.ForkSource) has
+// already done the resolution — this only decides whether it is NEW.
+//
+// This is what makes decision 13's fork-edge resolution work for EVERY kind, not just
+// claude's relaunch-drift case (internal/agents/claude/sid.go's own RecordConvID call):
+// a birth row's `conv` is usually empty (codex/opencode have no conversation yet at the
+// instant they are created — recordFleetGraphBirth's own ForkSource attempt fails), and
+// without an observation loop like this one, decision 13's "became resolvable for the
+// first time" case has no writer at all for those two kinds.
+func ObserveConv(name, conv string) {
+	if name == "" || conv == "" {
+		return
+	}
+	convMu.Lock()
+	defer convMu.Unlock()
+	if lastConv[name] == conv {
+		return
+	}
+	lastConv[name] = conv
+	RecordConvID(name, conv)
+}
+
+// SeedConv records conv as already-known WITHOUT writing a line — used right after a
+// birth row's own `conv` field already carried it (recordFleetGraphBirth), and at boot
+// resync (the value predates this process, so it is not a change worth a convid line).
+// Without this, the very next list poll would see "no entry yet" and write a redundant
+// convid line for a value the ledger already has.
+func SeedConv(name, conv string) {
+	if name == "" || conv == "" {
+		return
+	}
+	convMu.Lock()
+	defer convMu.Unlock()
+	lastConv[name] = conv
+}
+
+// ForgetSession drops name from every process-local dedup map (currently: the live-state
+// writer's and the conv-id writer's). Session names are immutable random slugs that are
+// never reused (session-slug-immutable-managed-no-env), so this is pure memory hygiene,
+// not a correctness requirement — without it, a deleted session's entry would simply sit
+// unused for the rest of the process's life. Called from
+// internal/session.RemoveMetaAndLineage (a person's delete, ADR 0096 decision 6).
+func ForgetSession(name string) {
+	stateMu.Lock()
+	delete(lastState, name)
+	stateMu.Unlock()
+	convMu.Lock()
+	delete(lastConv, name)
+	convMu.Unlock()
+}

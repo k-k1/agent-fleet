@@ -48,8 +48,11 @@ func TestNormalizeStateMatchesFixture(t *testing.T) {
 		if string(state) != c.State {
 			t.Errorf("NormalizeState(%q) state = %q, fixture wants %q", raw, state, c.State)
 		}
+		// raw is populated only when normalisation actually fell back — i.e. the input
+		// spelling itself is not already the literal state string (the input "unknown"
+		// matching output "unknown" is a genuine match, not a fallback: B6).
 		wantRaw := ""
-		if c.State == "unknown" {
+		if c.State == "unknown" && raw != c.State {
 			wantRaw = raw
 		}
 		if gotRaw != wantRaw {

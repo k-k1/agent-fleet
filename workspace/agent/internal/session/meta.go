@@ -79,6 +79,10 @@ func RemoveMetaAndLineage(name string) {
 	if err := fleetgraph.EraseLineage(name); err != nil {
 		log.Printf("fleet-graph: erase lineage for %s: %v", name, err)
 	}
+	// Drop the in-process dedup state (last-observed live state / conv id) too — a deleted
+	// name is never reused (session-slug-immutable-managed-no-env), so without this it
+	// would just sit unused in the map for the rest of the process's life.
+	fleetgraph.ForgetSession(name)
 }
 
 func ListMetas() []Meta {

@@ -147,6 +147,14 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 			}
 			s := wireSession(m, true)
 			fleetgraph.ObserveState(name, s.State) // write site ⑤: the list already computed it
+			// decision 13's "became resolvable for the first time" case: a birth row's own
+			// conv is usually empty (no conversation exists yet at create time), and for
+			// codex/opencode this list poll — not a relaunch drift — is the only place that
+			// ever learns it. Piggybacked on the same observation as ObserveState above, so
+			// no new polling.
+			if conv := fleetGraphResolveConv(m); conv != "" {
+				fleetgraph.ObserveConv(name, conv)
+			}
 			sessions = append(sessions, s)
 			continue
 		}
@@ -923,7 +931,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		slot.publish(meta)
 		recordFleetGraphBirth(meta)
-		noteCreateOrigin(name, &req, spawnParent)
+		noteCreateOrigin(name, &req, spawnParent, origin)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
 			if err := h.Send(agents.TurnInput{Prompt: p}); err != nil {
 				log.Printf("managed initial prompt %s: %v", name, err)
@@ -943,7 +951,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	// BEFORE the delivery below, not after: the record is what the mirror matches the turn
 	// against, and the turn can appear first (see noteCreateOrigin).
-	noteCreateOrigin(name, &req, spawnParent)
+	noteCreateOrigin(name, &req, spawnParent, origin)
 	// Optional launch task: deliver it once the CLI has booted (async — the create
 	// response returns the session immediately so the caller can start polling).
 	if strings.TrimSpace(req.InitialPrompt) != "" {
@@ -970,7 +978,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 // only way to observe it from a test is to be the delivery.
 var deliverInitialPromptFn = deliverInitialPrompt
 
-func noteCreateOrigin(name string, req *CreateReq, spawnParent string) {
+func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 	hasPrompt := strings.TrimSpace(req.InitialPrompt) != ""
 	switch {
 	case req.ReportTo != "":
@@ -995,6 +1003,16 @@ func noteCreateOrigin(name string, req *CreateReq, spawnParent string) {
 		// view draws it as a "spawn" arrow (ArrowVariant). An InstructEvent alongside it
 		// would draw the same handoff twice.
 		recordInjection(name, req.InitialPrompt, TurnSourceSpawn)
+	default:
+		// The ordinary Console launch (or one seeded from a handoff proposal): no
+		// report_to, no schedule tag, not a spawn. No mirror badge either — it genuinely
+		// is the user's own instruction — but the fleet graph still needs the arrow, or
+		// the session's very first turn has no visible cause (ActorId "user", decision 4).
+		// Restricted to origin=user/handoff: an operator/MCP call that simply chose not
+		// to set report_to is NOT a person, and must not be drawn as one.
+		if hasPrompt && (origin == session.OriginUser || origin == session.OriginHandoff) {
+			fleetgraph.RecordInstruct("user", name, "", req.InitialPrompt)
+		}
 	}
 }
 

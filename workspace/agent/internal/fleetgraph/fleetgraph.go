@@ -37,13 +37,17 @@ const (
 	StateUnknown    LedgerState = "unknown"
 )
 
-// knownStates is the closed set NormalizeState folds into. Keep in lockstep with
-// console/src/lib/fleetgraph.states.json — states_parity_test.go fails the suite (not
-// skips it) when that fixture cannot be found, per docs/log/101 §101.8.
+// knownStates is the closed set NormalizeState folds into WITHOUT setting `raw` — every
+// literal LedgerState spelling, "unknown" included: a live process reporting the literal
+// string "unknown" is a genuine match, not a fallback, so there is no "original spelling"
+// to preserve. Keep in lockstep with console/src/lib/fleetgraph.states.json —
+// states_parity_test.go fails the suite (not skips it) when that fixture cannot be found,
+// per docs/log/101 §101.8.
 var knownStates = map[LedgerState]bool{
 	StateWorking: true, StateCompacting: true, StateIdle: true, StateQuestion: true,
 	StatePlan: true, StatePermission: true, StateBlocked: true, StateAuth: true,
 	StateLimited: true, StateSpendLimit: true, StateFailed: true, StateAborted: true,
+	StateUnknown: true,
 }
 
 // NormalizeState turns a raw live-state spelling into the ledger's closed vocabulary.
@@ -52,6 +56,12 @@ var knownStates = map[LedgerState]bool{
 // StateUnknown, with the original spelling returned as raw so the tooltip can show it —
 // folding an unrecognised spelling into idle would silently record a busy stretch as
 // nothing happening (ADR 0096 decision 3, the `compacting` near-miss in docs/log/101 §101.7).
+//
+// raw is set ONLY when normalisation actually fell back to guessing — never when the raw
+// spelling already IS a literal member of the union (including the literal string
+// "unknown" itself): that is a genuine match, and carrying `raw:"unknown"` alongside
+// `state:"unknown"` would claim a fallback that never happened, disagreeing with the
+// TypeScript side's own closed-set check on the same fixture.
 func NormalizeState(rawSpelling string) (state LedgerState, raw string) {
 	if rawSpelling == "" {
 		return StateIdle, ""

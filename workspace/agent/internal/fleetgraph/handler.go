@@ -1,9 +1,10 @@
 package fleetgraph
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // HandleFleetGraph serves GET /api/fleet-graph?since=<ms>&until=<ms> (ADR 0096 decision 7).
@@ -15,9 +16,11 @@ func HandleFleetGraph(w http.ResponseWriter, r *http.Request) {
 	until, _ := strconv.ParseInt(r.URL.Query().Get("until"), 10, 64)
 	page, err := BuildPage(since, until)
 	if err != nil {
-		http.Error(w, "fleet graph unavailable", http.StatusInternalServerError)
+		// Every other Agent handler answers an error as {code,message} (httpx.WriteErr) —
+		// the Console's api() helper is built around that shape, so a plain http.Error
+		// body here would surface as a reason-less failure.
+		httpx.WriteErr(w, http.StatusInternalServerError, "fleet_graph_unavailable", err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(page)
+	httpx.WriteJSON(w, http.StatusOK, page)
 }

@@ -26,10 +26,16 @@ func parseMillis(ts string) int64 {
 }
 
 // rawLineage is one decoded lineage.jsonl row plus its millis, kept together so the
-// window/overlap arithmetic below never re-parses a timestamp.
+// window/overlap arithmetic below never re-parses a timestamp. seq is the row's position
+// in the file (append order) — the identity BuildPage's dedup uses, because two DISTINCT
+// rows can otherwise share every visible field: append-only guarantees order, not that
+// (name, ev, ts) is collision-free at millisecond resolution (two genuine transitions for
+// two different sessions, or two ObserveConv calls back to back after a ForgetSession,
+// can land in the same millisecond under real load or a fast test).
 type rawLineage struct {
 	line lineageLine
 	ms   int64
+	seq  int
 }
 
 // readLineageFile loads the whole permanent ledger (ADR 0096 decision 7: lineage is never
@@ -56,7 +62,7 @@ func readLineageFile() ([]rawLineage, error) {
 		if err := json.Unmarshal(raw, &l); err != nil {
 			continue // one bad line must not sink the page
 		}
-		out = append(out, rawLineage{line: l, ms: parseMillis(l.Ts)})
+		out = append(out, rawLineage{line: l, ms: parseMillis(l.Ts), seq: len(out)})
 	}
 	return out, nil
 }
@@ -120,6 +126,19 @@ func PruneActivity() {
 		if day < cutoff {
 			_ = os.Remove(filepath.Join(dir(), n))
 		}
+	}
+}
+
+// StartActivityPruner runs PruneActivity once immediately and then once every 24h for as
+// long as the process lives. A one-shot call at boot alone (the P1 implementation) only
+// rotates activity on a restart — an Agent that stays up for weeks would never trim it, the
+// exact case the 30-day retention exists for. Call once from main; it never returns.
+func StartActivityPruner() {
+	PruneActivity()
+	t := time.NewTicker(24 * time.Hour)
+	defer t.Stop()
+	for range t.C {
+		PruneActivity()
 	}
 }
 
@@ -206,29 +225,42 @@ func BuildPage(sinceMs, untilMs int64) (FleetGraphPage, error) {
 	byLane := map[string][]rawLineage{}
 	births := map[string]rawLineage{} // name -> its birth row, for the ancestor walk
 	var oldestLineageMs int64
+	haveOldest := false // NOT "oldestLineageMs == 0": a single unparsable ts (parseMillis
+	// returns 0 on error) would otherwise freeze the running minimum at 0 forever, and
+	// coverage.lineageSince would read "none kept" even though real lineage exists.
 	for _, r := range all {
 		byLane[r.line.Name] = append(byLane[r.line.Name], r)
 		if r.line.Ev == "birth" {
 			births[r.line.Name] = r
 		}
-		if oldestLineageMs == 0 || r.ms < oldestLineageMs {
+		if r.ms <= 0 {
+			continue // an unparsable timestamp must not corrupt the running minimum
+		}
+		if !haveOldest || r.ms < oldestLineageMs {
 			oldestLineageMs = r.ms
+			haveOldest = true
 		}
 	}
 	for name := range byLane {
 		rows := byLane[name]
-		sort.Slice(rows, func(i, j int) bool { return rows[i].ms < rows[j].ms })
+		// Tie-break on seq (file/append order): two rows at the same millisecond must
+		// still sort deterministically, or which one "comes first" changes between calls.
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].ms != rows[j].ms {
+				return rows[i].ms < rows[j].ms
+			}
+			return rows[i].seq < rows[j].seq
+		})
 		byLane[name] = rows
 	}
 
-	seen := map[string]bool{} // key: name + "\x00" + ev + "\x00" + ts (append-only ⇒ unique)
+	seen := map[int]bool{} // key: r.seq (file order) — content CAN collide at 1ms resolution, position cannot
 	var result []any
 	addRow := func(r rawLineage) {
-		key := r.line.Name + "\x00" + r.line.Ev + "\x00" + r.line.Ts
-		if seen[key] {
+		if seen[r.seq] {
 			return
 		}
-		seen[key] = true
+		seen[r.seq] = true
 		if dto := toDTOLineage(r.line, r.ms); dto != nil {
 			result = append(result, dto)
 		}
@@ -280,7 +312,7 @@ func BuildPage(sinceMs, untilMs int64) (FleetGraphPage, error) {
 	}
 
 	cov := GraphCoverage{}
-	if oldestLineageMs != 0 {
+	if haveOldest {
 		v := oldestLineageMs
 		cov.LineageSince = &v
 	}
@@ -339,7 +371,9 @@ func oldestActivityMs() (int64, bool) {
 		if json.Unmarshal(raw, &a) != nil {
 			continue
 		}
-		return parseMillis(a.Ts), true
+		if ms := parseMillis(a.Ts); ms > 0 {
+			return ms, true // same reasoning as oldestLineageMs: skip past an unparsable ts
+		}
 	}
 	return 0, false
 }
