@@ -427,15 +427,15 @@ func TestGenerateRefusesStrengthAndSizeAgainstQwenImageEdit(t *testing.T) {
 	body := `{"session":"slot01","op":"edit","model":"qwen-edit-row","prompt":"x","strength":0.3}`
 	rec := httptest.NewRecorder()
 	HandleGenerate(rec, httptest.NewRequest(http.MethodPost, "/imagegen/generate", strings.NewReader(body)))
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "bad_strength") {
-		t.Fatalf("status = %d, body = %s, want 400 bad_strength", rec.Code, rec.Body)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "bad_strength_family") {
+		t.Fatalf("status = %d, body = %s, want 400 bad_strength_family", rec.Code, rec.Body)
 	}
 
 	body = `{"session":"slot01","op":"edit","model":"qwen-edit-row","prompt":"x","size":"1024x1024"}`
 	rec = httptest.NewRecorder()
 	HandleGenerate(rec, httptest.NewRequest(http.MethodPost, "/imagegen/generate", strings.NewReader(body)))
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "bad_size") {
-		t.Fatalf("status = %d, body = %s, want 400 bad_size", rec.Code, rec.Body)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "bad_size_family") {
+		t.Fatalf("status = %d, body = %s, want 400 bad_size_family", rec.Code, rec.Body)
 	}
 }
 

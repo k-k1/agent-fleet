@@ -974,8 +974,13 @@ func comfyGraphQwenImageEdit2509(f comfyFiles, p comfyParams) (comfyGraph, error
 	g["scale"] = comfyNode{ClassType: "FluxKontextImageScale", Inputs: map[string]any{"image": comfyLink("img", 0)}}
 	g["pos"] = comfyNode{ClassType: "TextEncodeQwenImageEditPlus", Inputs: map[string]any{
 		"clip": clip, "vae": comfyLink("vae", 0), "prompt": p.Prompt, "image1": comfyLink("scale", 0)}}
+	// p.Negative directly, NOT comfyNegativeText(p): that fallback ("blurry, lowres, deformed,
+	// watermark, text") was measured for the megapixel families sharing SDXL's era (ADR 0072),
+	// and the official 2509 template's own negative widget ships empty. Falling back to it here
+	// would fight the instruction itself on the one edit 実測 A made — replacing the sign's own
+	// TEXT — and nobody has measured this family against that default at all.
 	g["neg"] = comfyNode{ClassType: "TextEncodeQwenImageEditPlus", Inputs: map[string]any{
-		"clip": clip, "vae": comfyLink("vae", 0), "prompt": comfyNegativeText(p), "image1": comfyLink("scale", 0)}}
+		"clip": clip, "vae": comfyLink("vae", 0), "prompt": p.Negative, "image1": comfyLink("scale", 0)}}
 	g["ms"] = comfyNode{ClassType: "ModelSamplingAuraFlow", Inputs: map[string]any{"shift": 3, "model": model}}
 	g["norm"] = comfyNode{ClassType: "CFGNorm", Inputs: map[string]any{"model": comfyLink("ms", 0), "strength": 1}}
 	g["enc"] = comfyNode{ClassType: "VAEEncode", Inputs: map[string]any{

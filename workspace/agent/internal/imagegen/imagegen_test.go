@@ -601,6 +601,67 @@ func TestRunDoesNotFallThroughOnAnExplicitChoice(t *testing.T) {
 	}
 }
 
+// ADR 0094 decision 13: a NAMED model, on an otherwise-auto request, has to pin routing to the
+// provider that actually knows it (ModelLister.Models() lists the id) — a provider whose Caps
+// ignores the model argument entirely (codex, agy) would otherwise keep answering
+// Supports(req.Op)=true after the provider that DOES look at the model already refused it, and
+// auto would fall through to it: a picture generated on a member's own plan for a model name
+// that provider never heard of.
+func TestRunPinsAutoToTheProviderThatKnowsTheNamedModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+
+	t.Run("the named model cannot do the op: refused by name, never falls through", func(t *testing.T) {
+		var calls []string
+		comfy, _ := comfyStub(t, qwenEditConn(), nil)
+		withStubProvider(t, comfy, stubProvider{id: ProviderCodex, calls: &calls,
+			res: Result{Provider: ProviderCodex, Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png"}}}})
+
+		_, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1",
+			Request: Request{Op: OpGenerate, Prompt: "a cat", Model: "qwen-edit-row"}})
+		if err == nil {
+			t.Fatal("a named model that cannot generate was served anyway")
+		}
+		if !strings.Contains(err.Error(), "qwen-edit-row") || !strings.Contains(err.Error(), "edit") {
+			t.Errorf("err = %v, want it to name the model and what it CAN do", err)
+		}
+		if len(calls) != 0 {
+			t.Fatalf("calls = %v, want codex never reached — the named model belongs to comfy", calls)
+		}
+	})
+
+	// The positive control: the same setup, naming a model that CAN do the op, must be pinned
+	// to comfy and produce a picture there — this is not just a refusal path.
+	t.Run("the named model CAN do the op: pinned to its own provider", func(t *testing.T) {
+		var calls []string
+		comfy, _ := comfyStub(t, qwenEditConn(), nil)
+		withStubProvider(t, comfy, stubProvider{id: ProviderCodex, calls: &calls,
+			res: Result{Provider: ProviderCodex, Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png"}}}})
+
+		res, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1",
+			Request: Request{Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0"}})
+		if err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+		if res.Provider != ProviderComfy || len(calls) != 0 {
+			t.Fatalf("provider = %q, calls = %v, want comfy alone", res.Provider, calls)
+		}
+	})
+
+	// An explicit `pref` is untouched by this decision — chooseImageProviders already pins to it.
+	t.Run("pref still wins outright, model or not", func(t *testing.T) {
+		var calls []string
+		withStubProvider(t, stubProvider{id: ProviderCodex, calls: &calls,
+			res: Result{Provider: ProviderCodex, Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png"}}}})
+		res, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1", Pref: ProviderCodex,
+			Request: Request{Op: OpGenerate, Prompt: "a fox", Model: "whatever"}})
+		if err != nil || res.Provider != ProviderCodex {
+			t.Fatalf("res = %+v, err = %v, want codex named outright", res, err)
+		}
+	})
+}
+
 // When everything fails the caller gets EVERY reason: "codex is out of quota, and the local
 // engine is not running" is actionable in a way that either half alone is not.
 func TestRunReportsEveryFailedAttempt(t *testing.T) {
