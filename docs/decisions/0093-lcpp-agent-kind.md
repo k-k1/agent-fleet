@@ -495,18 +495,24 @@ runs the total is 15.
 - **(b) Do members accept the wake and re-prefill fixed costs? — Accepted, better than expected.**
   🔴 Measurement showed **swapping models does not require swapping boxes** (`engine_waking` fired 0
   times across #7–#13). Only the first purchase is expensive; true cold start stays within 3.5–5
-  minutes. In the past there was one 302-second timeout and one case exceeding the 900-second hold
-  (#5's cold start; Decision 4's wake timeout).
+  minutes. §12.5's measurements include one case, #5' (the no-parallel-instruction run)'s cold start,
+  hitting **302.33 seconds** and `context deadline exceeded`. The wake-wait cap is **900 seconds** (`docs/log/99` §4.2's
+  `errEngineWaking` — a wake-timeout constant, not something Decision 4 states). ⚠️ Whether a hold
+  actually exceeded that 900-second cap is a claim from the handoff, not something confirmed against
+  the raw logs under `$HOME/lcpp-live/` — not asserted here.
 - **(c) Are fewer incidents than the opencode route plausible? — Judged passed, but 8 defects surfaced
-  across Phase 1 that only a live engine found.** Three are already recorded under "What only a live
-  engine found" below (Phase 1's early half — see "Implementation record for phases 0 and 1" above).
-  The remaining five are recorded elsewhere in this ADR's "Debt carried into Phase 2" section and
-  across `docs/log/99` (§12.1's repeat-detection miss, §13.4/§13.8's KV-geometry 409, etc.) and are
-  not re-enumerated here. **The eighth (#811, appended below) was of a kind no test can find in
-  principle: every scripted-client unit test stayed green, the original symptom is genuinely fixed on
-  the real engine, and it is still six times slower in practice.** It is recorded as a worked example
-  of Decision 5's consequence (the executor is us, so we own this class of problem), continuing the
-  section below.
+  across Phase 1 that only a live engine found** (a tally from the user's handoff). **This ADR
+  explicitly documents only 4 of them** — the three already recorded under "What only a live engine
+  found" below (Phase 1's early half — see "Implementation record for phases 0 and 1" above), plus
+  the one appended here from #811. 🔴 **Which defects make up the remaining 4 is not identified
+  anywhere in this ADR or in `docs/log/99`, and cannot be enumerated within this document's scope**
+  (an earlier draft claimed they were "recorded across §12.1's repeat-detection miss, §13.4/§13.8's
+  KV-geometry 409, etc." — that claim was wrong; no such record exists in either document, and this
+  corrects it). **The one defect that is identified (#811, appended below) was of a kind no test can
+  find in principle: every scripted-client unit test stayed green, the original symptom is genuinely
+  fixed on the real engine, and it is still six times slower in practice.** It is recorded as a worked
+  example of Decision 5's consequence (the executor is us, so we own this class of problem),
+  continuing the section below.
 
 ### What only a live engine found (continued, added 2026-09-20)
 
