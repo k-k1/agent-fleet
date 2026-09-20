@@ -15,6 +15,11 @@
 //   rail is pulled out from). In the ordering below it settles on the 50px drawer branch
 //   first and never reaches the 70px rotate threshold, so going back with a rightward
 //   swipe only works when the gesture starts away from the edge.
+// - Opening is subject to the same guard as rotating (swipeGuard.ts): a surface that pans
+//   sideways owns the gesture. A Markdown table on a phone spans the full width, so its
+//   left end sits inside the edge zone and scrolling it back to column 1 used to pull the
+//   left pane out. Closing is not guarded: the open drawer's backdrop covers the content,
+//   so the gesture can no longer start on a scroller behind it.
 // - Tablet (>760px and touch): the same edge swipe shows/hides the desktop rail as an
 //   overlay. Mouse machines emit no TouchEvent, so this is inert there.
 // - Vertical wins (|dx| <= |dy| is ignored) so scrolling is never stolen. Passing the
@@ -98,9 +103,15 @@ export function installSwipeGestures(win: Window, s: SwipeSurfaces): () => void 
     drawer = phone;
     if (touch && (phone || tablet) && !s.modal()) {
       const isOpen = phone ? s.drawerOpen() : s.railOpen();
-      if (isOpen) mode = "close";
-      else if (touch.clientX < Math.min(win.innerWidth * 0.33, 160)) mode = "open";
-      rotate = phone && !isOpen && s.rotatable() && !swipeBlocked(e.target);
+      if (isOpen) {
+        mode = "close";
+      } else {
+        // Settled once, and shared by both branches: what the finger started on decides
+        // whether this screen gesture may exist at all.
+        const blocked = swipeBlocked(e.target);
+        if (!blocked && touch.clientX < Math.min(win.innerWidth * 0.33, 160)) mode = "open";
+        rotate = phone && s.rotatable() && !blocked;
+      }
     }
     if (touch) {
       sx = touch.clientX;
