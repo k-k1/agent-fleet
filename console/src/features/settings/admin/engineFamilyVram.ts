@@ -55,10 +55,13 @@ export const FAMILY_VRAM_MEASURED = new Map<string, FamilyVramMeasurement>([
     mib: 20862, file: "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
     size: "1024x1024", batch: 1, inputs: 1,
   }],
-  // 🔴 qwen-image-edit-2511 is deliberately absent until somebody reads /system_stats during a
-  // 2511 run. It loads a diffusion model 0.1 GB larger than 2509's through the same graph, so the
-  // number is *probably* within a few hundred MiB — and "probably" is exactly what this column is
-  // not allowed to contain.
+  // 🔴 qwen-image-edit-2511 stays absent, and NOT for want of a reading: a 2511 run was measured
+  // on 2026-09-20 and answered 28,358 MiB — on an L40S 48GB, where nothing was ever evicted (the
+  // three files sum to 28,774). 2509's 20,862 above is an L4 24GB number, and it is small only
+  // BECAUSE the card is tight enough to evict the text encoder after encoding. The two answer
+  // different questions, and this column feeds `vram_mib`, so entering the L40S number would pin
+  // 2511 to the 44,000-and-above rungs for good. It waits for an L4 measurement
+  // (ADR 0094 decision 8's third 🔴, open questions 6 and 7).
 ]);
 
 /**

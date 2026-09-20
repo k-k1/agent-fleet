@@ -246,6 +246,30 @@ one press, with the conditions attached (1024², batch 1, one reference), beats 
   bought** (45,458 MiB, 33.2 GB of host RAM — measured). With 20,862 declared, the L4 rung is a
   candidate again. This field is a COST field as much as a fit field.
 
+🔴 **A third correction — the measurement depends on the CARD, and this procedure is circular**
+(2026-09-20, P1 acceptance):
+
+Running 2511 on real hardware and reading `/system_stats` measured **28,358 MiB in use on an L40S
+48GB** (`vram_total` 47,665,709,056 B = 45,458 MiB, `vram_free` 17,930,132,506 B = 17,100 MiB).
+That is within a rounding error of the 28,774 MiB file sum — **all three parts stayed resident at
+once and nothing was ever evicted**.
+
+2509's 20,862 MiB was measured on an **L4 24GB**, and decision 8 above says why: the text encoder
+is **evicted** after encoding — and eviction happens BECAUSE the card is tight. The two numbers
+therefore answer **different questions** and must not be compared. Leaving the card out of the
+measurement conditions in `engineFamilyVram.ts` is an omission of this ADR.
+
+🔴 **And the procedure itself is circular**: the file-sum estimate (28,774) drops the 22,000 rungs
+from the candidate set → an L40S is bought → the measurement is taken on that L40S → it reads
+28,358 → declaring that keeps buying L40S. **In this order, "does 2511 also fit an L4?" can never
+be discovered.** Measuring it needs the REVERSE order: declare a `vram_mib` as a hypothesis first,
+so the rung you want to measure on is a candidate again.
+
+⇒ **28,358 is NOT entered into `engineFamilyVram.ts`** (the maintainer's call). That table is where
+the number the operator enters into `vram_mib` in one press comes from, and this one would pin 2511
+to the 44,000-and-above rungs for good. The existing policy — a family stays absent from the table
+until it has been measured — is the right one here too.
+
 ### Decision 9 — "Custom workflows" stay out of this ADR; the trigger is duplication, not the family count
 
 ADR 0081's rejected "let the Console post a raw ComfyUI graph" **stands**, for the reason it gave
@@ -473,6 +497,16 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   ladder is its first rung — a T4 at 14,500 MiB — so an honest 20,862 still prompts (measured during
   P0's acceptance). Decision 8's 🔴 says the same thing; it is repeated here because this is the
   section an implementer reads first.
+
+  **Result of the live acceptance (2026-09-20)**: 🟢 (1) and (2) met, 🔴 (3) and (4) **not met**.
+  - (1) One press — the three parts did land in the right directories, but **it took a second
+    press**: the row's 揃える was needed because the part follow-up failed silently (that seam is
+    closed on the ADR 0085 side — PRs #802/#804/#806).
+  - (2) 2511 edits — `POST /imagegen/generate` (the blocking route) answered 200 in 823.8 s and only
+    the sign changed to CLOSED, everything else intact: **run E reproduced**.
+  - (3) and (4) **did not hold**, for the reason in decision 8's third 🔴: the 28,358 MiB that could
+    be measured is an L40S number and cannot go in the table, and with nothing in the table there is
+    no declared value to move the ladder with. **P1 does not close until 2511 is measured on an L4.**
 - **P2** — props (decision 10). Done when a picture made from the pane shows its prompt, its
   negative and its size under "what this was made from".
 - **P3** — the reference-image path end to end (pane and the MCP `inputs` argument) and `MaxInputs`
@@ -510,6 +544,14 @@ counts only providers that were tried and failed, so **nothing is said**. Before
    maintainer's call, and it **has not been raised**.
 5. **The operator entering `vram_mib` once** (decision 8) is forgettable unless the screen asks for it
    right after the ingest. Where the measured number appears in the ingest UI is a P1 question.
+6. 🔴 **Measure 2511 on an L4 24GB** (left over from P1). The 28,358 MiB read on an L40S is a
+   no-eviction number and cannot be used (decision 8's third 🔴). Taking it needs the REVERSE
+   order — declare a `vram_mib` as a hypothesis first so the 22,000 rung is a candidate again — and
+   an OOM there is the answer that the hypothesis was wrong.
+7. 🔴 **Put the CARD into the measurement conditions.** `FamilyVramMeasurement` carries size, batch,
+   reference count and the weights file, but not the card. 2509's 20,862 (L4) beside 2511's 28,358
+   (L40S) would read as two values of one field while **answering different questions**. Either the
+   field gains a column, or the table's contract is rewritten as "what this family needs at MINIMUM".
 
 ## Measured (2026-09-20, dev deployment, g6.xlarge / L4 24GB)
 
