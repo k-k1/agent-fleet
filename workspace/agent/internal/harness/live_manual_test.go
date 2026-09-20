@@ -183,10 +183,19 @@ func TestManualLiveAgenticSession(t *testing.T) {
 	}
 	client := NewClient(EngineConn{BaseURL: base, Token: token}, model)
 	reg := NewRegistry(BuiltinTools()...)
-	rt := &Runtime{Cwd: cwd, Approve: AutoApprove, MaxOutputBytes: 8000}
-
+	reservedOutput := 512
 	parallel := liveParallelEnabled()
 	sys := liveAgenticSystemPrompt(cwd, parallel)
+	// SystemPrompt/Window/ReservedOutput are Run's own inputs now (loop.go's maybeCompact
+	// re-runs decision 7's judgement every iteration of the tool loop, not just once per
+	// task the way the old PrepareTurn-then-Run calling shape below used to) — this is
+	// exactly the gap the live incident exposed: window=3500 here is deliberately forced
+	// far below the real window (see AF_LCPP_LIVE_WINDOW's own doc comment above) so this
+	// test still exercises the loop-internal check within its own turn budget.
+	rt := &Runtime{
+		Cwd: cwd, Approve: AutoApprove, MaxOutputBytes: 8000,
+		SystemPrompt: sys, Window: window, ReservedOutput: reservedOutput,
+	}
 
 	tasks := []string{
 		liveAgenticTaskZero(parallel),
@@ -212,7 +221,6 @@ func TestManualLiveAgenticSession(t *testing.T) {
 		"function? Be specific."
 
 	var full []Message
-	reservedOutput := 512
 	compactedAtTurn := -1
 	invalidToolCallJSON := 0
 	unknownToolCalls := 0
@@ -258,38 +266,33 @@ func TestManualLiveAgenticSession(t *testing.T) {
 
 	runTurn := func(label, userMsg string) {
 		full = append(full, Message{Role: RoleUser, Content: userMsg})
-		var newFull, send []Message
-		retryOnWake(t, ctx, "PrepareTurn at "+label, func() error {
+		before := full
+		var result Result
+		retryOnWake(t, ctx, "Run at "+label, func() error {
 			var err error
-			newFull, send, err = PrepareTurn(ctx, client, reg.Defs(false), sys, full, reservedOutput, window)
+			result, err = Run(ctx, client, reg, rt, full)
 			return err
 		})
-		if len(newFull) > len(full) && compactedAtTurn < 0 {
+		// Run's own Compactions count (loop.go) is decision 3/7's judgement firing anywhere
+		// during this call — the loop-internal check this test exists to exercise, not just
+		// the old top-level PrepareTurn-before-Run boundary.
+		if result.Compactions > 0 && compactedAtTurn < 0 {
 			compactedAtTurn = turnCount
 			summary := ""
 			// lastSummaryIndex (compact.go) is the same lookup BuildSendMessages itself uses —
 			// reused rather than re-derived so this log line cannot disagree with what the
 			// engine actually got sent.
-			if idx := lastSummaryIndex(newFull); idx >= 0 {
-				summary = strings.TrimPrefix(newFull[idx].Content, summaryPrefix)
+			if idx := lastSummaryIndex(result.Messages); idx >= 0 {
+				summary = strings.TrimPrefix(result.Messages[idx].Content, summaryPrefix)
 			}
-			t.Logf("🔴 compaction fired before %s, after %d assistant turns so far; summary=%q",
+			t.Logf("🔴 compaction fired during %s, after %d assistant turns so far; summary=%q",
 				label, turnCount, truncateForLog(summary))
 		}
-		full = newFull
-		before := full
-		var result Result
-		retryOnWake(t, ctx, "Run at "+label, func() error {
-			var err error
-			result, err = Run(ctx, client, reg, rt, send)
-			return err
-		})
-		// Run's Messages starts with `send` (systemPrompt/summary + trimmed history, decision
-		// 7), not `full` (decision 3's untrimmed record) — reconstitute full by appending only
-		// what Run actually added past send, matching PrepareTurn's own doc comment on the two
-		// slices' relationship.
-		added := result.Messages[len(send):]
-		full = append(full, added...)
+		// Run's Messages is decision 3's own "full" shape now (loop.go's own doc comment: it
+		// folds systemPrompt/compaction itself, every iteration, rather than expecting a
+		// caller to have pre-built a `send` slice) — no more reconstituting full from a
+		// `send`-relative offset.
+		full = result.Messages
 		logAdded(label, before, full)
 	}
 
