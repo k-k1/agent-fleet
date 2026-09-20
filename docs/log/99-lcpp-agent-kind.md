@@ -970,8 +970,9 @@ llama.cpp のコンバータがこの 3 族の GGUF にどんなキー名でこ�
 
 ### 13.7 取り込みの実務 — `store.EngineModel` への写像（提案。実測ではない）
 
-🔴 **2026-09-20 訂正**: この節の初稿は `Args` を 1 本の文字列で書いていた。**誤り**——駆動役の指摘で直した。
-以下は訂正後。
+🔴 **2026-09-20 再訂正**: 前回の訂正（「既存行に合わせて `Args` に `jinja`/`mmap`/`n-gpu-layers` を書け」）は
+**誤りだった**——駆動役が実機の管理 API（`GET /api/admin/engines` の `model_rows`）で確認した事実により
+再度直す。以下は再訂正後。
 
 `store.EngineModel`（`control-plane/internal/store/store.go:224` 以降）の関連欄: `Role`（`"llm"`）・
 `ID`（目録の鍵、ロール内で一意——`engine_admin.go:1376` の POST ボディで管理者が自由入力、文法を定めた
@@ -980,40 +981,31 @@ ADR は無い）・`Kind`（既存 5 行は `"checkpoint"` または `"gguf"`。
 `provider=="comfy"` のときしか語彙を返さないので、lcpp の `BaseModel` は自由記入。妥当な値の**提案**であって
 強制される文法ではない）・`Source`（store.go のコメントが定める形式 `hf:<repo>/<file>`）。
 
-**`Args []string` は「フラグと値を交互に並べた文字列配列」**（JSON の配列。1 本の文字列ではない）。
-実例: `Args: []string{"--type", "q8_0"}`（`control-plane/engine_catalog_test.go:92`）。永続化は
-`json.Unmarshal([]byte(argsJSON), &m.Args)`（`control-plane/internal/store/store_engine_models.go:69`）と
-`jsonList(m.Args)`（同 93・155 行）——DB 列は JSON 文字列だが Go 側の型は最初から `[]string`。wire key は
-アクティブセットで `"a"`・admin PUT/読み出しで `"args"`。`deploy/aws/ecs/engine-tools/fetch-models.sh:123`
-の jq が配列を走査し、**`-` で始まる要素をフラグとみなして次の要素を見る**——次の要素があり、かつそれが
-`-` で始まらなければ `flag = 次の要素` を書き、そうでなければ `flag = true` を書く。したがって
-`jinja = 1` という preset 行が出るには `Args` に `"--jinja","1"` が**この順で隣接して**入っている必要がある
-（`"--jinja"` だけを置いて次を省くと `jinja = true` になる）。
+🔴 **`Args` は空でよい（というより、ingest 経由では設定できない）。**
 
-🔴 **`--ctx-size` は `Args` に入れない。** 実測（`$HOME/lcpp-live/models-response.json`、`k1.kami@gmail.com`
-のセッションから `GET /engine/{key}/v1/models`・2026-09-20）で全 4 ロード済み行の `status.preset` を見ると:
+- 実機（`GET /api/admin/engines` の `model_rows`、2026-09-20・駆動役の確認）: **既存 5 行すべて
+  `args: null`**（`llama-3.1-8b-instruct-q4_k_m`・`qwen3.6-35b-a3b-ud-iq3_s`・
+  `qwen3.8-27b-uncensored-q4_k_m`・`qwen3-coder-30b-a3b`・`qwen2.5-1.5b-abliterated-lora` 全部）。
+  §13.7 初稿・第一次訂正はどちらも `models-response.json`（`GET /engine/{key}/v1/models` の preset 表示）の
+  `jinja = 1`/`mmap = 0`/`n-gpu-layers = 99` を**行の `Args` 由来と読み違えていた**。
+- 実際の出どころは**役全体の `LlmExtraArgs`**（`deploy/aws/ecs/cfn/60-engines.yaml:49-52`、既定値
+  `-ngl,99,--jinja,--no-mmap`）——ルーター起動引数として**全モデルの preset に後掛けされる**
+  overlay（`tools/server/server-models.cpp:548-551`、§12.4 で確定済み）。行ごとに `--jinja`/`--mmap`/
+  `-ngl` を書く必要は無い（書いても role 側で上書きされる、と §12.4-B 既述）。
+- 🔴 **そもそも ingest API では `Args` を渡す欄が無い。** `POST …/ingest`（このセクションの取り込み経路）が
+  受ける body `engineIngestBody`（`engine_admin.go:1711-1737`）は `id`/`kind`/`plan_token`/`source`/
+  `description`/`base_model`/`context_tokens`/`max_output_tokens`/`sizes`/`params`/`license_accepted`
+  のみで、**`args` フィールドが存在しない**（実物のフィールド一覧を確認済み）。`args []string json:"args"`
+  が出てくるのは `POST …/models`（`postModel`、`engine_admin.go:1402`——**箱に既にあるファイルを手で
+  登録する別経路**）だけ。**ingest でこの 5 本の行を作る限り、`Args` は設定しようがない**（欄そのものが無い）。
 
-```
-[llama-3.1-8b-instruct-q4_k_m]
-jinja = 1
-mmap = 0
-ctx-size = 65536
-model = /models/llm/Llama-3.1-8B-Instruct-Q4_K_M.gguf
-n-gpu-layers = 99
-```
-
-`ctx-size` は `Args` 由来の行と書式こそ同じだが、`fetch-models.sh:123` の jq では**別の分岐**
-（`(if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end)`）から出ている。`$m.c` は
-`store.EngineModel.ContextTokens`（`context_tokens` として PUT する——`engine_admin.go:991`）が
+🔴 **`--ctx-size` は（そもそも `Args` に入れる欄自体が無いが、念のため）`context_tokens` という別欄から来る。**
+`store.EngineModel.ContextTokens`（`context_tokens` として ingest body に渡す——`engine_admin.go:1723`）が
 `engineActiveModel.Ctx`（wire key `"c,omitempty"`・`engine_catalog.go:388`、ドキュメントコメント
 「the window this model is started with (llama-server's -c). Per MODEL」）へ写る欄で、
-`engine_catalog.go:433` の `Ctx: m.ContextTokens` がその変換点。**`Args` に `"--ctx-size","65536"` を
-入れてはいけない**——別欄と衝突する二重指定になる。
-
-**既存 4 行はすべて `jinja = 1`・`mmap = 0`・`n-gpu-layers = 99` を持つ**（`models-response.json` 実測、
-`qwen3-coder-30b-a3b`・`qwen3.6-35b-a3b-ud-iq3_s`・`qwen3.8-27b-uncensored-q4_k_m`・
-`llama-3.1-8b-instruct-q4_k_m` の 4 行全部）。したがって `Args` は**既存行と同じ形を既定として提案する**
-（外す理由がある候補は無かった）: `["--jinja","1","--mmap","0","--n-gpu-layers","99"]`。
+`engine_catalog.go:433` の `Ctx: m.ContextTokens` がその変換点。`fetch-models.sh:123` の jq では
+`(if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end)` という**独立した分岐**から `presets.ini` の
+`ctx-size = …` 行になる。
 
 既存行がどう入っているかは、目録行を作る静的な JSON/シードファイルとしてこのリポジトリには存在しない
 （テストの中のリテラル `store.EngineModel{Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled:
@@ -1021,22 +1013,21 @@ true, Default: true}`（`engine_gateway_test.go:1035`）程度で、実物は管
 したがって以下は「この形で POST すればこの表と同じ意味の行になる」という**提案**であり、実際に POST・
 ingest したものではない（指示どおり、取り込み・有効化はしていない）:
 
-| # | 提案する `ID`（鍵） | `Source` | 提案する `BaseModel` | 提案する `Args` | 推奨 `c`（ctx-size） |
+| # | 提案する `ID`（鍵） | `Source` | 提案する `BaseModel` | `Args` | 推奨 `c`（ctx-size） |
 |---|---|---|---|---|---|
-| 1 | `gpt-oss-20b-mxfp4` | `hf:ggml-org/gpt-oss-20b-GGUF/gpt-oss-20b-MXFP4.gguf` | `gpt-oss` | `["--jinja","1","--mmap","0","--n-gpu-layers","99"]` | **131072**（学習上限そのもの。§13.8） |
-| 2 | `gemma-4-12b-it-q4_k_m` | `hf:unsloth/gemma-4-12b-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf` | `gemma-4` | `["--jinja","1","--mmap","0","--n-gpu-layers","99"]` | **262144**（学習上限そのもの。§13.8） |
-| 3 | `lfm2.5-8b-a1b-q4_k_m` | `hf:LiquidAI/LFM2.5-8B-A1B-GGUF/LFM2.5-8B-A1B-Q4_K_M.gguf` | `lfm2-moe` | `["--jinja","1","--mmap","0","--n-gpu-layers","99"]` | **128000**（学習上限そのもの。§13.8） |
-| 4 | `ministral-3-8b-instruct-2512-q4_k_m` | `hf:unsloth/Ministral-3-8B-Instruct-2512-GGUF/Ministral-3-8B-Instruct-2512-Q4_K_M.gguf` | `ministral-3` | `["--jinja","1","--mmap","0","--n-gpu-layers","99"]` | **65536**（学習上限 262144 は L4 に載らない。§13.8） |
-| 5 | `functionary-small-v3.2-q4_k_m` | `hf:bartowski/functionary-small-v3.2-GGUF/functionary-small-v3.2-Q4_K_M.gguf` | `llama-3.1` | `["--jinja","1","--mmap","0","--n-gpu-layers","99"]` | **65536**（既存 `llama-3.1-8b-instruct-q4_k_m` 行と同じ値・同じ理由。§13.8） |
+| 1 | `gpt-oss-20b-mxfp4` | `hf:ggml-org/gpt-oss-20b-GGUF/gpt-oss-20b-MXFP4.gguf` | `gpt-oss` | 設定不要（ingest に欄が無い。既存行同様 null になる） | **131072**（学習上限そのもの。§13.8） |
+| 2 | `gemma-4-12b-it-q4_k_m` | `hf:unsloth/gemma-4-12b-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf` | `gemma-4` | 設定不要 | **262144**（学習上限そのもの。§13.8） |
+| 3 | `lfm2.5-8b-a1b-q4_k_m` | `hf:LiquidAI/LFM2.5-8B-A1B-GGUF/LFM2.5-8B-A1B-Q4_K_M.gguf` | `lfm2-moe` | 設定不要 | **128000**（学習上限そのもの。§13.8） |
+| 4 | `ministral-3-8b-instruct-2512-q4_k_m` | `hf:unsloth/Ministral-3-8B-Instruct-2512-GGUF/Ministral-3-8B-Instruct-2512-Q4_K_M.gguf` | `ministral-3` | 設定不要 | **65536**（学習上限 262144 は L4 に載らない。§13.8） |
+| 5 | `functionary-small-v3.2-q4_k_m` | `hf:bartowski/functionary-small-v3.2-GGUF/functionary-small-v3.2-Q4_K_M.gguf` | `llama-3.1` | 設定不要 | **65536**（既存 `llama-3.1-8b-instruct-q4_k_m` 行と同じ値・同じ理由。§13.8） |
 
 `mmproj-*.gguf`（gemma-4・LFM2.5-VL 系ではなく gemma-4 のみ同梱）はテキストのみで使うなら `Files` に
 含めない。ライセンス欄（`License`/`LicenseName`/`LicenseURL`）は #3 に LFM Open License v1.0（13.3 参照）を
-明記すべき。#5 は 🔴 13.5 の懸念どおり、この GGUF のままでは専用パーサに届かない見込み。
-`--chat-template-file` で llama.cpp 同梱の正しいテンプレートへ差し替える手が理論上あるが、**そのファイルを
-箱へ置く経路がこのリポジトリの ingest にあるかは確認できなかった**（`Args` は CLI フラグの文字列を運ぶだけで、
-任意ファイルの中身を運ぶ仕組みは見当たらない——`fetch-models.sh` はモデル本体と `presets.ini` しか書かない）。
-#4 の `ID` は既存キーの慣例（`llama-3.1-8b-instruct-q4_k_m` のように長いファイル名をそのまま）に倣うと長い。
-短縮するかは利用者判断——本書はどちらかを断定しない。
+明記すべき。#5 は 🔴 13.5 の懸念どおり、この GGUF のままでは専用パーサに届かない見込み。`--chat-template-file`
+で llama.cpp 同梱の正しいテンプレートへ差し替える手が理論上あるが、**`Args` が ingest では設定できない以上
+（上記）、行単位でこの手を打つ経路はそもそも無い**——役全体の `LlmExtraArgs` を変えるしかなく、それは
+lcpp 役全体に影響する管理操作で今回の範囲外。#4 の `ID` は既存キーの慣例（`llama-3.1-8b-instruct-q4_k_m`
+のように長いファイル名をそのまま）に倣うと長い。短縮するかは利用者判断——本書はどちらかを断定しない。
 
 ### 13.8 推奨 `c`（ctx-size）の根拠 — 族ごとに上限を決めているものが違う
 
@@ -1064,6 +1055,15 @@ MoE・ハイブリッド構造）で計算バッファの実際の必要量が�
 7 分の 1 以下（65536）でしか安全に動かせず、functionary-v3.2 は既存の `llama-3.1-8b-instruct-q4_k_m` 行
 （同じアーキテクチャ・同じ 65536）と同じ値に落ち着いた。これは推測ではなく、**同じアーキテクチャの
 既存行が既にその値で稼働している**という直接の先例がある（`models-response.json` 実測）。
+
+**追記（2026-09-20・駆動役より）**: 実際の取り込みでは GPT-OSS-20B・gemma-4-12b-it とも
+`context_tokens=32768` で登録した——本書の推奨（学習上限、#1=131072・#2=262144）より低い。理由は
+費用: 取り込み時の VRAM 自動見積りが非均一な `layer_types`（§13.4 末尾で本書が指摘した、この
+リポジトリの `engine_gguf.go` がまだ扱えないパターン）を扱えず過大に出るため、窓を大きく取ると
+インスタンスクラスが上の段（`g6e-od`・$2.70/h）へ動きうる。実測に必要な窓は harness の圧縮窓と同じ
+3,500 で足り、後から上げられる。**本書の見積り（学習上限まで載る、という計算そのもの）を否定する
+事実ではない**——実際に選んだ運用値が別の制約（自動見積りの精度・費用）で低く決まった、という
+別軸の話として両方を記録する。
 
 ## 受け入れ条件チェック（このセクションのみ）
 
