@@ -148,6 +148,19 @@ describe("buildFleetGraph — presence (the merge only both sources can decide)"
     expect(isKnown(lane) && lane.runs[0]).toMatchObject({ t0: 1000, t1: 3000, cut: true });
   });
 
+  it("archiving a still-running session (no death ever recorded) closes the run at the archived ts — a real ×, not a cut", () => {
+    const page = mkPage([birth("sE", 0), archivedEv("sE", 1500, true)]); // no death event at all
+    const model = buildFleetGraph(page, sessMap(), { from: 0, to: 5000 });
+    const lane = laneOf(model, "sE");
+    expect(isKnown(lane) && lane.presence).toBe("archived");
+    expect(isKnown(lane) && lane.runs[0]).toEqual({ t0: 0, t1: 1500 }); // no cut, no exitReason — this end WAS observed
+    const segs = model.segments.filter((s) => s.laneId === "sE").sort((a, b) => a.t0 - b.t0);
+    expect(segs).toEqual([
+      { laneId: "sE", t0: 0, t1: 1500, kind: "unknown" },
+      { laneId: "sE", t0: 1500, t1: 5000, kind: "archived" },
+    ]);
+  });
+
   it("archived is always 'archived', unconditionally — the Agent's own list excludes archived sessions outright, so `live` is NEVER defined for one and a guard gated on the base presence would never fire", () => {
     const page = mkPage([birth("sD", 0), death("sD", 1000), archivedEv("sD", 1500, true)]);
     // The realistic shape: an archived session is never in the live map.
@@ -387,6 +400,20 @@ describe("buildFleetGraph — birth arrows (spawn / handoff / fork, decision 13)
     expect(arrow).toMatchObject({ from: "pB", to: "cB" });
   });
 
+  it("a spawn arrow survives even when the parent has no row this render — fromRow: null marks 'the parent exists but is not drawn', not 'left the figure'", () => {
+    const page = mkPage([
+      birth("pC", -10000), // born long before the window, dead long before it too: no row
+      death("pC", -9000),
+      birth("cC", 1000, { origin: "session", originSession: "pC" }), // spawned in-window
+    ]);
+    const model = buildFleetGraph(page, sessMap(mkSession("cC")), { from: 0, to: 5000 });
+    expect(laneOf(model, "pC")).toBeUndefined(); // confirms the parent really has no row
+    const arrow = model.arrows.find((a) => a.variant === "spawn");
+    expect(arrow).toMatchObject({ from: "pC", to: "cC" });
+    expect(arrow?.fromRow).toBeNull();
+    expect(arrow?.toRow).toBe(laneOf(model, "cC")?.row);
+  });
+
   it("fork resolves forkFrom against the conv id IN FORCE at the child's birth, drifting through convid", () => {
     const page = mkPage([
       birth("sG", 1000, { conv: "conv-old" }),
@@ -426,7 +453,7 @@ describe("buildFleetGraph — options", () => {
     expect(hidden.lanes.map((l) => l.id)).toEqual([]);
   });
 
-  it("jitter never pushes an arrow's x outside [0, width]", () => {
+  it("jitter shifts an edge-clustered group inward AS A WHOLE — never outside [0, width], and never collapsed back onto each other", () => {
     const names = ["s1", "s2", "s3", "s4", "s5"];
     const page = mkPage(
       names.map((n) => birth(n, 1000)),
@@ -435,10 +462,12 @@ describe("buildFleetGraph — options", () => {
     const sessions = sessMap(...names.map((n) => mkSession(n)));
     const model = buildFleetGraph(page, sessions, { from: 0, to: 5000, width: 1200 });
     expect(model.arrows.length).toBe(5);
-    for (const a of model.arrows) {
-      expect(a.x).toBeGreaterThanOrEqual(0);
-      expect(a.x).toBeLessThanOrEqual(1200);
+    const xs = model.arrows.map((a) => a.x).sort((a, b) => a - b);
+    for (const x of xs) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(1200);
     }
+    expect(new Set(xs).size).toBe(5); // a per-point clamp would collapse the outer members back onto 0
   });
 });
 

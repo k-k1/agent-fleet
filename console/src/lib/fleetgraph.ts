@@ -380,9 +380,11 @@ function segmentsForLane(
 // The bucket is wider than 1px (not `Math.round(x)`) so two arrows a
 // fraction of a pixel apart still count as "the same spot" and get spread —
 // otherwise a near-miss rounds into different buckets and draws un-jittered,
-// which looks identical to the problem this exists to fix. The spread itself
-// is clamped into [0, width]: an edge-of-window cluster must not jitter its
-// outer members off the drawable canvas.
+// which looks identical to the problem this exists to fix. A cluster that
+// would spread past [0, width] is shifted INWARD AS A WHOLE, not clamped
+// point by point: clamping each point individually collapses the outer
+// members back onto the edge — the exact overlap this function exists to
+// remove — while a uniform shift keeps every member's spacing intact.
 function jitterX(rawX: number[], width: number): number[] {
   const BUCKET_PX = 2;
   const buckets = new Map<number, number[]>();
@@ -396,9 +398,13 @@ function jitterX(rawX: number[], width: number): number[] {
   const SPREAD = 3;
   for (const idxs of buckets.values()) {
     if (idxs.length <= 1) continue;
+    const n = idxs.length;
+    const spread = idxs.map((i, k) => rawX[i] + (k - (n - 1) / 2) * SPREAD);
+    const lo = Math.min(...spread);
+    const hi = Math.max(...spread);
+    const shift = lo < 0 ? -lo : hi > width ? width - hi : 0;
     idxs.forEach((i, k) => {
-      const x = rawX[i] + (k - (idxs.length - 1) / 2) * SPREAD;
-      out[i] = Math.min(Math.max(x, 0), width);
+      out[i] = spread[k] + shift;
     });
   }
   return out;
@@ -492,6 +498,14 @@ export const buildFleetGraph: BuildFleetGraph = (
   // backfilled a birth for it yet, a defensive backstop, not the normal path),
   // erased (no birth, not live, kept alive only by a surviving arrow line —
   // decision 6's "arrows-only" row).
+  //
+  // knownIds is every id with a birth ANYWHERE in page.lineage — this
+  // includes ancestor-only ids the server sent purely for family-ordering
+  // context (FleetGraphPage's rule 3: an ancestor whose own life does not
+  // overlap the window is context, never a row). Those never get a row —
+  // `overlapsWindow` below filters them out — and `allLaneIds` (§9) inherits
+  // the same mix on purpose: an ancestor with no overlapping run legitimately
+  // has no row either way.
   const knownIds = new Set<LaneId>(birthOf.keys());
   const synthesizedIds = new Set<LaneId>();
   for (const id of sessions.keys()) if (!knownIds.has(id)) synthesizedIds.add(id);
@@ -512,7 +526,17 @@ export const buildFleetGraph: BuildFleetGraph = (
     const live = sessions.get(id);
     const presence = presenceFor(runs, live, archivedEv?.archived === true);
     const last = runs[runs.length - 1];
-    if (presence === "gone" && last && last.t1 === null) {
+    if (presence === "archived" && last && last.t1 === null) {
+      // Archiving can fold away a still-RUNNING session with no death ever
+      // recorded: HandleArchiveSession kills the pane directly, and the one
+      // place that would notice the death (the list handler) skips archived
+      // sessions outright, so it never gets the chance. The archived ts IS
+      // the observed end here — a normal ×, not `cut` (cut means nobody ever
+      // recorded an end at all; this end was explicitly observed). This also
+      // defends a back-filled/legacy ledger where an old archive genuinely
+      // preceded its death event.
+      last.t1 = archivedEv!.ts;
+    } else if (presence === "gone" && last && last.t1 === null) {
       const observed = Math.max(last.t0, events[events.length - 1]?.ts ?? last.t0, activityRef.get(id)?.max ?? -Infinity);
       last.t1 = observed;
       last.cut = true;
@@ -690,14 +714,24 @@ export const buildFleetGraph: BuildFleetGraph = (
       candidates.push(c);
     }
   }
-  // An endpoint that names a real lane (known/synthesized/erased) but has no
-  // row THIS render — filtered out by showArchived/conversationId, not
-  // deleted — must not draw as if it left the figure: that is the exact
+  // A ROUND-TRIP endpoint (instruct/report/peer) that names a real lane but
+  // has no row THIS render — filtered out by showArchived/conversationId,
+  // not deleted — must not draw as if it left the figure: that is the exact
   // misattribution decision 6 exists to prevent, just via a different filter
-  // than deletion. Drop the arrow instead of lying about where it came from.
+  // than deletion. Drop the round trip instead of lying about where it came
+  // from. A LINEAGE arrow (spawn/fork/handoff) is the opposite case on
+  // purpose: this graph's whole point is "who was born from whom", so a
+  // parent with no row (window-excluded, not deleted) must still show the
+  // edge — `fromRow: null` here is exactly decision 9's "欠けた親は左端の印
+  // で示す", not decision 8-2's "left the figure". The variant tells the two
+  // apart mechanically; `allLaneIds` also includes ancestor-only ids the
+  // server sent purely for family-ordering context (never a row on their
+  // own — see knownIds above), which is correct here too: such an ancestor
+  // legitimately has no row this render either way.
   const allLaneIds = new Set<LaneId>([...knownIds, ...synthesizedIds, ...erasedIds]);
   const isFilteredOut = (id: string): boolean => allLaneIds.has(id) && !rowOf.has(id);
-  const kept = candidates.filter((c) => !isFilteredOut(c.from) && !isFilteredOut(c.to));
+  const isRoundTrip = (v: ArrowVariant): boolean => v === "instruct" || v === "report" || v === "peer";
+  const kept = candidates.filter((c) => !isRoundTrip(c.variant) || (!isFilteredOut(c.from) && !isFilteredOut(c.to)));
   const xs = jitterX(
     kept.map((c) => xOf(scale, c.ts)),
     width,
