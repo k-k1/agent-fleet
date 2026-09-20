@@ -324,6 +324,11 @@ an empty size** — the gallery's "what this picture was made from" would lie. A
 `TextEncodeQwenImageEdit` / `…Plus` as a source for both texts, and take the size from the image that
 reached `SaveImage`.
 
+⚠️ **This is only one of the two sources**: the PNG chunk (`source: "png"` — the blocking route and
+MCP, plus every picture made before sidecars existed). The queue route, which is what the pane uses,
+writes a sidecar and so fills all three fields for this family already. Which route to verify on is
+in the phases section under P2.
+
 🟢 Recovering the family itself already follows: `comfyFamilyFromPrefix` (`props.go:489`) walks
 `comfyFamilies`, so decision 1 makes it readable with no further change.
 
@@ -528,8 +533,33 @@ counts only providers that were tried and failed, so **nothing is said**. Before
     28,774 floor an L40S was bought; declaring 20,862 put the 22,000 rungs back and **the box
     actually bought became an L4 24GB**. The guard's wording moves with it, from
     `wants at least 28774` to `wants 20862` (source `declared`).
-- **P2** — props (decision 10). Done when a picture made from the pane shows its prompt, its
-  negative and its size under "what this was made from".
+- **P2** — props (decision 10). 🔴 **Which ROUTE made the picture decides what "done" means.**
+  There are two sources (`readImageProps`: ① the sidecar `<file>.png.json` next to the picture,
+  ② the PNG's own `prompt` chunk), and `textBehind` and `Empty*LatentImage` — the two decision 10
+  names — belong to **② alone**. **The pane goes through the job queue, which writes ①**
+  (`jobs.go`'s `propsFor` records the resolved request and `store.go` overwrites `Size` with the
+  saved picture's real dimensions), so on the pane all three fields are filled for this family
+  too and the defect is invisible. ② is what the **blocking route `/imagegen/generate` and MCP**
+  read, neither of which writes a sidecar, along with every picture made before sidecars existed.
+  Done when a picture made **through the blocking route** shows its prompt, its negative and its
+  size under "what this was made from".
+
+  **Live acceptance (2026-09-21)**: 🟢 **met** (PR #819). One `op=edit` with a negative prompt
+  through the blocking route (seed 42, 1024², only the sign became CLOSED). No sidecar was
+  written, so the answer is `source: "png"` — and **the full prompt, the negative exactly as
+  sent and `1024x1024` all come out**. As a positive control, reverting the reader to its
+  pre-fix shape answers **all three empty on the same picture**.
+  - 🔵 **By-product**: with the row's `vram_mib: 20974` (declared), the box the ladder bought was
+    the **22,000 rung (`g22-spot` — g6/g5/g6e.xlarge, $1.35/h)**, and 40 steps ran on it. That is
+    P1's "2511 fits a 24GB card" confirmed through an actual purchase rather than a measurement.
+  - 🔴 **The blocking route's 960-second wait is shorter than this family's cold start.** The
+    first attempt answered **HTTP 502 `imagegen_failed: waiting for the image engine timed out`
+    after 960.0 s**: buying the box, syncing ~30 GB and running 40 steps did not fit (P1's 823.8 s
+    was on an L40S). **The engine finished anyway** — the identical request 22 seconds later came
+    back **HTTP 200 in 1.07 s** from ComfyUI's own cache with the same picture. So the first edit
+    on this family reads as a failure to the caller while the GPU keeps working and billing.
+    Outside decision 10, so whether it becomes an open question of its own is the maintainer's
+    call.
 - **P3** — the reference-image path end to end (pane and the MCP `inputs` argument) and `MaxInputs`
   on the wire. Done when run D (two images) can be reproduced from the pane, and **three images are
   measured once** before `MaxInputs` goes to 3 (until then it stays 2).
