@@ -680,8 +680,14 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Driver validation up-front, before any side effect (clone / worktree). The default
-	// tui is normalized to "" when persisted, keeping metas byte-identical to existing ones.
+	// tui is normalized to "" when persisted, keeping metas byte-identical to existing ones —
+	// except for a kind with no Terminal(CLI) route at all (ADR 0093 decision 2), where an
+	// unspecified driver has to default to managed instead: leaving it "" would silently try
+	// to launch a tui session with no pane program.
 	driver := strings.TrimSpace(req.Driver)
+	if driver == "" && AgentOf(NormalizeKind(req.Kind)).Caps().ManagedOnly {
+		driver = session.DriverManaged
+	}
 	switch driver {
 	case "", session.DriverTUI:
 		driver = ""

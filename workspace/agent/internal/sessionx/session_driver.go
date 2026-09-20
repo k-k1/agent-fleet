@@ -70,6 +70,13 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 				"managed ドライバはこの kind ではまだ利用できません")
 			return
 		}
+	} else if AgentOf(m.Kind).Caps().ManagedOnly {
+		// The symmetric refusal (ADR 0093 decision 2): a kind with no Terminal(CLI) route at
+		// all can never be switched TO tui, unlike the managed-unsupported case above where
+		// the kind might grow a driver later.
+		httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",
+			"この kind には Terminal(CLI) 実行方式がありません（managed 専用です）")
+		return
 	}
 
 	// Drain condition: never take a running (or queued) turn with us. For tui that is the

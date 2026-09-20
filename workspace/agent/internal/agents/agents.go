@@ -94,6 +94,15 @@ type Caps struct {
 	// of copying the whole conversation (docs/log/55). Implies the kind also implements
 	// ForkAtResolver and fills transcript.Turn.AnchorID. Never true without CanFork.
 	CanForkAt bool
+	// ManagedOnly marks a kind that has NO Terminal(CLI) route at all (ADR 0093 decision 2 —
+	// lcpp is the first: there is no tmux pane program to launch, only a managed runtime this
+	// process owns in-process). Setting it changes three things: BuildLaunch is expected to
+	// always error, POST /sessions/{name}/driver refuses a "tui" target with 400
+	// (driver_unsupported) instead of switching, and POST /sessions (create) defaults an
+	// unspecified driver to "managed" instead of "tui". The zero value (false) is "has a
+	// terminal route like every other kind today" — leave it unset unless a kind truly has no
+	// pane program, or these three places start behaving differently for it.
+	ManagedOnly bool
 }
 
 // LaunchOpts carries the per-launch inputs that aren't in session.Meta.
