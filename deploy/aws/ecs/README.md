@@ -933,6 +933,10 @@ by the Control Plane rather than delegated (ADR 0077 decisions 1 and 5).
    which put 178 seconds of a 527-second cold start into the pull alone. (`standup.sh` copies
    the image-role image only when `ImageEnabled=true` — an LLM-only deployment does not pay for
    an image it will never start.)
+   🔴 `server-cuda` is a floating upstream tag, and llama.cpp's own build decides how tool calls
+   parse (`PARAMETERS-60-engines.md` "LlmImageTag" has the measurement). `standup.sh --llm-digest
+   sha256:<...>` pins the exact content that copy fetches without touching `LlmImageTag`; leave
+   it unset and the copy is exactly what it always was.
 
 ### Turning it on
 

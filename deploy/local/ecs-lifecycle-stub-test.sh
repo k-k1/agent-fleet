@@ -247,6 +247,8 @@ case "$1" in
     esac
     echo '{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}},{"platform":{"architecture":"arm64","os":"linux"}}]}' ;;
   auth) cat >/dev/null ;;
+  # standup.sh reads this back after every llm copy to record what actually landed in ECR.
+  digest) echo "sha256:${STUB_CRANE_DIGEST:-fake000000000000000000000000000000000000000000000000000000000}" ;;
 esac
 FAKE
 cat > "$STUB/curl" <<'FAKE'
@@ -443,6 +445,26 @@ printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\n' > "$STATE4/param
 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
 hasnt "crane copy ghcr.io/k-k1/agent-fleet/comfyui"
 has "crane copy ghcr.io/ggml-org/llama.cpp:server-cuda"
+# Every llm copy reads the digest back from ECR afterwards, so what actually landed is in the
+# stand-up's own output even when nobody pinned one on purpose (the tag is a moving target
+# otherwise — docs/log/99 §12.3).
+has "crane digest 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/af-llamacpp:server-cuda"
+
+echo "== case 3g-2: --llm-digest pins the crane copy source, not the destination tag =="
+# LlmImageTag (and so 60-engines' `!Ref LlmImageTag`) must not move — only WHICH content that
+# ECR tag holds. Passing the check and then standing up on the floating tag anyway is exactly
+# the failure mode this flag exists to close.
+: > "$LOG"
+PIN="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --llm-digest "$PIN" \
+  > "$WORK/out3g2" 2>&1 </dev/null || { cat "$WORK/out3g2"; fail "standup with --llm-digest failed"; }
+has "crane copy ghcr.io/ggml-org/llama.cpp@$PIN 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/af-llamacpp:server-cuda"
+hasnt "crane copy ghcr.io/ggml-org/llama.cpp:server-cuda"
+has "crane digest 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/af-llamacpp:server-cuda"
+# A malformed digest is refused before anything is built, not handed to crane to fail on.
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --llm-digest not-a-digest \
+  >/dev/null 2>"$WORK/out3g2.err" </dev/null && fail "a malformed --llm-digest was accepted"
+grep -q -- "--llm-digest" "$WORK/out3g2.err" || fail "the malformed --llm-digest was not explained"
 
 # A capture taken before ADR 0072 phase P6 names a model key and says nothing about Enabled,
 # because until P6 the key ALSO decided whether the role's service existed. Two things have to

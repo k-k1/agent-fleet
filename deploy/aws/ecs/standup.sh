@@ -53,6 +53,10 @@ usage: standup.sh --profile <p> --region <r> [--yes] [--image-tag <tag>] [--cp-a
                (default docker.io/voicevox/voicevox_engine; only used when 50-tts is deployed)
   --llm-from   registry to copy the llama.cpp server image from
                (default ghcr.io/ggml-org/llama.cpp; only used when 60-engines is deployed)
+  --llm-digest pin the llama.cpp copy to this upstream digest (sha256:<64 hex>) instead of
+               whatever --llm-from:LlmImageTag resolves to right now. Optional; leave unset
+               and the copy is byte-for-byte what it always was — see PARAMETERS-60-engines.md
+               "LlmImageTag" for why this exists and how to choose one.
   --dry-run    print every write instead of making it
 EOF
 }
@@ -61,6 +65,7 @@ PROFILE=""; REGION=""; STACK="af-ecs-ingress"; AF_YES=0; AF_DRY=0; TAG=""; CP_AR
 FROM="ghcr.io/k-k1/agent-fleet"
 TTS_ENGINE_FROM="docker.io/voicevox/voicevox_engine"
 LLM_ENGINE_FROM="ghcr.io/ggml-org/llama.cpp"
+LLM_ENGINE_DIGEST=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)   PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -72,6 +77,7 @@ while [ $# -gt 0 ]; do
     --from)      FROM="${2:?--from needs a value}"; shift ;;
     --tts-from)  TTS_ENGINE_FROM="${2:?--tts-from needs a value}"; shift ;;
     --llm-from)  LLM_ENGINE_FROM="${2:?--llm-from needs a value}"; shift ;;
+    --llm-digest) LLM_ENGINE_DIGEST="${2:?--llm-digest needs a sha256:<64 hex> value}"; shift ;;
     --dry-run)   AF_DRY=1 ;;
     -h|--help)   usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
@@ -79,6 +85,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
+if [ -n "$LLM_ENGINE_DIGEST" ] && ! [[ "$LLM_ENGINE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "--llm-digest wants sha256:<64 lowercase hex characters> (got '$LLM_ENGINE_DIGEST')" >&2
+  exit 2
+fi
 export AF_YES AF_DRY
 af_env_init "$PROFILE" "$REGION" "$STACK"
 if [ ! -r "$AF_ENV_DIR/params/30-ingress" ]; then
@@ -375,8 +385,26 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
       --image-ids "imageTag=$llm_tag" >/dev/null 2>&1; then
     echo "    · af-llamacpp:$llm_tag is already in ECR"
   else
-    echo "    · crane copy $LLM_ENGINE_FROM:$llm_tag (about 2.5 GB)"
-    af_run crane copy "$LLM_ENGINE_FROM:$llm_tag" "$ECR_HOST/af-llamacpp:$llm_tag"
+    # $LLM_ENGINE_FROM:$llm_tag (server-cuda) is a FLOATING upstream tag, and tool-call
+    # parsing for chat models runs entirely inside llama-server (docs/log/99 §12.3 measured
+    # this from the outside: this repo only relays `tool_calls`) - so a re-copy months apart
+    # can silently change which models parse, with zero diff on this side. --llm-digest pins
+    # WHAT gets copied without touching LlmImageTag or the destination tag: 60-engines' `!Ref
+    # LlmImageTag` is unaffected either way, only which bytes that ECR tag names. Leave it
+    # unset and this line is byte-for-byte what it always was.
+    # PARAMETERS-60-engines.md "LlmImageTag" has the how-to and the last measured build_info.
+    llm_src="$LLM_ENGINE_FROM:$llm_tag"
+    [ -n "$LLM_ENGINE_DIGEST" ] && llm_src="$LLM_ENGINE_FROM@$LLM_ENGINE_DIGEST"
+    echo "    · crane copy $llm_src (about 2.5 GB)"
+    af_run crane copy "$llm_src" "$ECR_HOST/af-llamacpp:$llm_tag"
+    # Record what actually landed, pinned or not: a floating tag resolves to "whatever GHCR
+    # serves right now", so this is the only place that says, after the fact, which content a
+    # given stand-up baked. Best-effort - a read that fails here must not fail a copy that
+    # already succeeded.
+    if [ "$AF_DRY" != 1 ]; then
+      llm_landed_digest="$(crane digest "$ECR_HOST/af-llamacpp:$llm_tag" 2>/dev/null)" || llm_landed_digest="(could not read back)"
+      echo "    · af-llamacpp:$llm_tag digest: $llm_landed_digest"
+    fi
   fi
   # The ComfyUI image, for the `image` role (ADR 0072 decision 4, phase P2; the earlier
   # stable-diffusion.cpp engine was retired by ADR 0083 decision 1 — nothing runs `sdcpp`
