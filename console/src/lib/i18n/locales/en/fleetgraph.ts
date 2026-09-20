@@ -46,7 +46,7 @@ export const fleetgraph: Record<keyof typeof jaFleetgraph, string> = {
   // Missing parent (decision 9). No id shown — unlike an erased lane, the contract does
   // not license a bare slug here, and this is often just "off this window" rather than
   // deleted.
-  "fgraph.parent_missing": "The parent lane isn't drawn in this figure",
+  "fgraph.parent_missing": "Parent lane {id} isn't drawn in this figure",
 
   // Lane line style (ADR 0096 decision 12).
   "fgraph.presence_live": "Live",

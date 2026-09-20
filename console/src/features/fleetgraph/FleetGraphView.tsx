@@ -303,14 +303,17 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
               // parent's OWN lineage was deleted (docs/log/101 §101.8). Either way, indenting
               // silently would read as "this session has no history", which is the one thing
               // depth is there to deny.
-              const parentMissing = !lane.erased && lane.depth > 0 && !!lane.parent && !laneById.has(lane.parent);
+              // Name the absent parent rather than only flagging it: the whole point of
+              // keeping `parent`/`rootId` for an off-window ancestor (decision 9) is that a
+              // family stays readable, and "some parent exists" does not carry that.
+              const missingParent = !lane.erased && lane.depth > 0 && lane.parent && !laneById.has(lane.parent) ? lane.parent : null;
               return (
                 <LaneLabel
                   key={lane.id}
                   lane={lane}
                   h={ROW_H}
                   clickable={!lane.erased && clickable(lane.id)}
-                  parentMissing={parentMissing}
+                  missingParent={missingParent}
                   onOpen={(e) => activate(e, (np) => openActor(lane.id, np))}
                 />
               );
@@ -420,13 +423,13 @@ function LaneLabel({
   lane,
   h,
   clickable,
-  parentMissing,
+  missingParent,
   onOpen,
 }: {
   lane: GraphLane;
   h: number;
   clickable: boolean;
-  parentMissing: boolean;
+  missingParent: string | null;
   onOpen: (e: ClickMods) => void;
 }) {
   const tr = useT();
@@ -459,7 +462,9 @@ function LaneLabel({
           : undefined
       }
     >
-            {parentMissing && <Icon name="warning" className="fgraph-parent-gap" title={tr("fgraph.parent_missing")} />}
+            {missingParent && (
+              <Icon name="warning" className="fgraph-parent-gap" title={tr("fgraph.parent_missing", { id: missingParent })} />
+            )}
       <span className={"sess-kic kind-" + cls}>
         <Icon name={kindIcon(lane.kind)} />
       </span>

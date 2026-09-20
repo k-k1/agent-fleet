@@ -42,7 +42,7 @@ export const fleetgraph = {
 
   // 欠けた親（決定 9）。id は出さない——契約がここで生の綴りを出す許可を与えていない
   // （削除済みレーンとは違い、これは単に「この窓に描かれていない」だけのことも多い）。
-  "fgraph.parent_missing": "親レーンはこの図に描かれていません",
+  "fgraph.parent_missing": "親レーン {id} はこの図に描かれていません",
 
   // レーンの線種（ADR 0096 決定 12）。
   "fgraph.presence_live": "稼働中",
