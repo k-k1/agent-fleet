@@ -12,10 +12,11 @@ package main
 // another repository, sometimes on another SOURCE (a Civitai merge whose encoder is on Hugging
 // Face), so finding them meant knowing a repository name and searching for it by hand.
 //
-// 🔴 Every entry here was measured against the live APIs on 2026-09-15: the repository, the path
-// inside it, and that it is ungated. A wrong path here is a second download that 404s minutes
-// after somebody pressed a button, which is exactly the shape of failure the ingest form exists
-// to move earlier.
+// 🔴 Every entry here was measured against the live APIs before it was written — anima and krea2
+// on 2026-09-15, the two qwen-image-edit families on 2026-09-20: the repository, the path inside
+// it, and that it is ungated. A wrong path here is a second download that 404s minutes after
+// somebody pressed a button, which is exactly the shape of failure the ingest form exists to move
+// earlier.
 //
 // ⚠️ The table is deliberately NOT complete. flux1, flux2-klein, sd35 and zimage are split too and
 // have no entry yet, because nobody has measured their parts the way these were — and an entry
@@ -62,6 +63,31 @@ var engineFamilyParts = map[string][]engineFamilyPart{
 		{Flag: "--clip_l", Repo: "Comfy-Org/Krea-2",
 			File:  "text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
 			S3Key: "image/text_encoders/qwen3vl_4b_fp8_scaled.safetensors"},
+		{Flag: "--vae", Repo: "circlestone-labs/Anima",
+			File:  "split_files/vae/qwen_image_vae.safetensors",
+			S3Key: "image/vae/qwen_image_vae.safetensors"},
+	},
+	// The two instruction-edit families (ADR 0094 decision 7). They declare the SAME two parts as
+	// each other — the topology that makes them separate families is in the graph, not in the
+	// files — and the VAE is the same file anima and krea2 already point at, from the same
+	// repository as those two for the identity reason above.
+	//
+	// 🔴 The fp8 SCALED text encoder, and krea2's note next door does not apply: "the fp8
+	// conversion breaks the vision tower" was written about a family whose reference-image path
+	// nobody had run. Here the official template names this exact file, and 実測 A and D (ADR
+	// 0094) both read a reference picture through it.
+	"qwen-image-edit-2509": {
+		{Flag: "--clip_l", Repo: "Comfy-Org/Qwen-Image_ComfyUI",
+			File:  "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+			S3Key: "image/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"},
+		{Flag: "--vae", Repo: "circlestone-labs/Anima",
+			File:  "split_files/vae/qwen_image_vae.safetensors",
+			S3Key: "image/vae/qwen_image_vae.safetensors"},
+	},
+	"qwen-image-edit-2511": {
+		{Flag: "--clip_l", Repo: "Comfy-Org/Qwen-Image_ComfyUI",
+			File:  "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+			S3Key: "image/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"},
 		{Flag: "--vae", Repo: "circlestone-labs/Anima",
 			File:  "split_files/vae/qwen_image_vae.safetensors",
 			S3Key: "image/vae/qwen_image_vae.safetensors"},

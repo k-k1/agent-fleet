@@ -167,7 +167,8 @@ func engineModelIsLora(m store.EngineModel) bool {
 // contract machinery in contract_wire_test.go). engine_catalog_test.go reads that file and fails
 // when the two drift, which is the only thing standing between "a sixth family was added" and
 // "the Console never offers it".
-var engineComfyFamilies = []string{"sd15", "sdxl", "sd35", "flux1", "flux2-klein", "zimage", "anima", "krea2", "qwen-image-edit-2509"}
+var engineComfyFamilies = []string{"sd15", "sdxl", "sd35", "flux1", "flux2-klein", "zimage", "anima", "krea2",
+	"qwen-image-edit-2509", "qwen-image-edit-2511"}
 
 // engineComfyFileFlags is the per-file Flag vocabulary a comfy row may declare: "" for a
 // single-file checkpoint, and one flag per part of a split model. Without these a catalogue row
@@ -209,12 +210,17 @@ var engineComfyRequiredFlags = map[string][]string{
 	// Qwen-Image one). Two rows pointing at one S3 key is a shape this catalogue already
 	// carries — `text_encoders/` has been shared between SD3.5 and FLUX.1 since P2.
 	"krea2": {"--diffusion-model", "--clip_l", "--vae"},
-	// qwen-image-edit-2509 (ADR 0094 decision 1, P0) is the same three-part shape as anima and
+	// qwen-image-edit-2509 (ADR 0094 decision 1) is the same three-part shape as anima and
 	// krea2: a diffusion model, a text encoder (Qwen2.5-VL-7B, declared as --clip_l by the same
 	// "one encoder, one flag" convention those two follow), and the Qwen-Image VAE — the same
-	// VAE file anima and krea2 already declare. The part-table entry that lets 1-press ingest
-	// find these files (ADR 0072 decision 5's engine_family_parts.go) is decision 7, P1.
+	// VAE file anima and krea2 already declare. engine_family_parts.go is what lets 1-press
+	// ingest find the other two.
 	"qwen-image-edit-2509": {"--diffusion-model", "--clip_l", "--vae"},
+	// 2511 declares the same three roles and the same two non-main FILES: it is a separate family
+	// because the graph is wired differently (ADR 0094 decision 6), not because it reads anything
+	// else. Two rows pointing at one text encoder and one VAE is what the shared S3 keys in
+	// engine_family_parts.go are for.
+	"qwen-image-edit-2511": {"--diffusion-model", "--clip_l", "--vae"},
 }
 
 // engineMissingFileFlags answers "what would this row still be refused for", as the list of

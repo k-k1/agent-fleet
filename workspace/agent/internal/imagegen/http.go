@@ -468,8 +468,9 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 	// ADR 0094 decision 2: a value in range is still refused when the RESOLVED model's family
 	// does not read it at all — comfyStrengthRefusal only fires when the request names a model
-	// or a comfy provider it can resolve a family from (a bare "auto" request is not refused
-	// here; comfyStrengthIgnoredWarning is that gap's answer instead).
+	// or a comfy provider it can resolve a family from. A bare "auto" request is not refused
+	// here, because which family will answer it is not known yet; that gap is closed after the
+	// fact by requestWarnings, which is given the Caps of the row that actually RAN.
 	//
 	// 🔴 A DIFFERENT code from the value-range refusal above: the Console's errText prefers its
 	// own `err.<code>` catalogue text over the server's message, and `err.bad_strength` ("out of

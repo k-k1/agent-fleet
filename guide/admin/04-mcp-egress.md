@@ -249,7 +249,17 @@ the ceiling reported every large model as impossible.
 A row can be kept in order after the fact. Its **Files** list records where each file came from,
 linked as **Source page**. **Edit** on the row changes the description, the family, the measured
 VRAM, a chat model's context window and max output, a LoRA's **trigger words** and the generation
-**Parameters**. When a press is refused because something already holds its destination, the
+**Parameters**.
+
+For the image families somebody on this deployment has actually measured, both screens — the plan
+card and **Edit** — print that measurement beside the field, with the conditions it was taken
+under (the picture size, the batch, how many reference pictures). **Edit** offers it as one press;
+the ingest never writes it. That is deliberate: this column means "the operator measured it", and
+the deployment sizes the GPU it buys from it. Left blank, the ladder falls back to the sum of the
+row's files, which for a split family is well above what the run uses — 28,676 MiB against a
+measured 20,862 for Qwen-Image-Edit — and buys a larger instance than the model needs.
+
+When a press is refused because something already holds its destination, the
 card names it — **held by** the registered row, the ingest job, the bucket object or the running
 task — and offers the one next step: **Register it**, **Complete it**, **Replace it**, **Forget the
 row**, or **Dismiss the job**, which removes a finished line from the ingest history.

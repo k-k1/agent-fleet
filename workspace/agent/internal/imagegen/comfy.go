@@ -230,20 +230,28 @@ var comfyDefaultOps = []Op{OpGenerate, OpEdit, OpInpaint}
 // could be wired with SetLatentNoiseMask, but nobody on this deployment has run it, and ADR 0072
 // already paid the tuition for advertising an untested op as SD3.5 (decision 3).
 func comfyFamilyOps(family comfyFamily) []Op {
-	if family == ComfyFamilyQwenImageEdit2509 {
+	if comfyFamilyInstructionEdit(family) {
 		return []Op{OpEdit}
 	}
 	return comfyDefaultOps
 }
 
+// comfyFamilyInstructionEdit is "this family edits by instruction", which is the axis decisions
+// 2, 3 and 4 all turn on — not the family name, and not the version. Both Qwen-Image-Edit
+// topologies answer true and every future one will; they are separate families because their
+// GRAPHS differ (ADR 0094 decision 6), while everything a caller can ask about them is the same.
+func comfyFamilyInstructionEdit(family comfyFamily) bool {
+	return family == ComfyFamilyQwenImageEdit2509 || family == ComfyFamilyQwenImageEdit2511
+}
+
 // comfyFamilyStrength is ADR 0094 decision 2: whether Request.Strength reaches this family's
 // sampler at all. Qwen-Image-Edit's denoise is fixed at 1 by construction
-// (comfyGraphQwenImageEdit2509) — instruction editing conditions the sampler through the picture
+// (comfyGraphQwenImageEdit) — instruction editing conditions the sampler through the picture
 // itself, not through how far a partial denoise is allowed to travel — so a caller's strength has
 // nowhere to go. 実測 C is the same failure this exists to prevent: the same request at denoise
 // 0.6 came back unedited, with no error and no warning.
 func comfyFamilyStrength(family comfyFamily) bool {
-	return family != ComfyFamilyQwenImageEdit2509
+	return !comfyFamilyInstructionEdit(family)
 }
 
 // comfyFamilyMaxInputs is ADR 0094 decision 5: every family, Qwen-Image-Edit included, takes at
@@ -261,7 +269,7 @@ func comfyFamilyMaxInputs(comfyFamily) int { return 1 }
 // row's own declared list — the one family where the family's answer wins over the row's, because
 // the row's list would otherwise offer a control that silently does nothing.
 func comfyFamilyHasNoSizes(family comfyFamily) bool {
-	return family == ComfyFamilyQwenImageEdit2509
+	return comfyFamilyInstructionEdit(family)
 }
 
 // comfyFamilyKnobs is the subset of `steps cfg sampler scheduler negative strength` a family's
@@ -277,7 +285,8 @@ func comfyFamilyHasNoSizes(family comfyFamily) bool {
 func comfyFamilyKnobs(family comfyFamily) []string {
 	knobs := []string{"steps"}
 	switch family {
-	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyAnima, ComfyFamilyKrea2, ComfyFamilyQwenImageEdit2509:
+	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyAnima, ComfyFamilyKrea2,
+		ComfyFamilyQwenImageEdit2509, ComfyFamilyQwenImageEdit2511:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
 	case ComfyFamilyZImage:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
@@ -378,15 +387,15 @@ func comfyModelTakesNegative(conn EngineConn, model string) bool {
 // Krea 2 Turbo) declare cfg 1 and cancel it anyway. comfyModelTakesNegative is what puts the
 // two facts together, and it is the one every caller asks.
 //
-// Qwen-Image-Edit-2509 is here too (ADR 0094 decision 12): it is a GUIDED family — 実測 A ran cfg
-// 4 and the edit was followed — and its template gives the negative branch its own
-// TextEncodeQwenImageEditPlus encode rather than ConditioningZeroOut, so the negative genuinely
-// moves the picture. Leaving it off this list would make comfyIgnoredParamWarnings answer with
-// the DISTILLED wording ("folds its guidance into the conditioning"), which is the opposite of
-// what 実測 A measured.
+// Both Qwen-Image-Edit families are here too (ADR 0094 decision 12): they are GUIDED — 実測 A ran
+// cfg 4 and the edit was followed, 実測 E the same on 2511 — and their template gives the negative
+// branch its own TextEncodeQwenImageEditPlus encode rather than ConditioningZeroOut, so the
+// negative genuinely moves the picture. Leaving one off this list would make
+// comfyIgnoredParamWarnings answer with the DISTILLED wording ("folds its guidance into the
+// conditioning"), which is the opposite of what those two runs measured.
 func comfyFamilyTakesNegative(family comfyFamily) bool {
 	return family == ComfyFamilySD15 || family == ComfyFamilySDXL || family == ComfyFamilySD35 ||
-		family == ComfyFamilyAnima || family == ComfyFamilyKrea2 || family == ComfyFamilyQwenImageEdit2509
+		family == ComfyFamilyAnima || family == ComfyFamilyKrea2 || comfyFamilyInstructionEdit(family)
 }
 
 // comfyNegativeFor composes the negative prompt one request samples against, out of the three

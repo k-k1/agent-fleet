@@ -18,6 +18,7 @@ describe("族カードの選択", () => {
       "anima",
       "krea2",
       "qwen-image-edit-2509",
+      "qwen-image-edit-2511",
     ]);
   });
 
@@ -53,11 +54,19 @@ describe("族カードの選択", () => {
   });
 
   // ADR 0094: 指示編集は文章の方言で、sizes は空（出力寸法は入力画像のアスペクト比が決める）。
-  it("qwen-image-edit-2509 は sentences 方言で sizes が空", () => {
-    const card = familyCard("qwen-image-edit-2509");
+  // 2 つの族で同じなのは、別族である理由がグラフの配線（決定 6）であって手引きではないから。
+  it.each(["qwen-image-edit-2509", "qwen-image-edit-2511"])("%s は sentences 方言で sizes が空", (id) => {
+    const card = familyCard(id);
     expect(card?.dialect).toBe("sentences");
     expect(card?.sizes).toEqual([]);
     expect(card?.trialSteps).toBe(8);
+  });
+
+  // 🔴 上流が 2511 で steps を倍にした（実測 E は 40 steps で 393.8 秒）。両族で同じ数字を
+  // 出すと、族を分けた意味がカードから消える。
+  it("2509 と 2511 は steps が違う（上流のテンプレートがそうなっている）", () => {
+    expect(familyCard("qwen-image-edit-2509")?.steps).toEqual([20, 20]);
+    expect(familyCard("qwen-image-edit-2511")?.steps).toEqual([40, 40]);
   });
 });
 
@@ -90,9 +99,9 @@ describe("大きさの選択肢", () => {
 
   // 🔴 ADR 0094 決定 4: sizes が空だと宣言している族は、行が候補を持っていても勝つ唯一の例外
   // ——出力寸法は入力画像のアスペクト比で決まり、候補を出しても効かない。
-  it("qwen-image-edit-2509 は行の宣言があっても空のまま", () => {
-    expect(sizeOptions(["1024x1024"], "qwen-image-edit-2509")).toEqual([]);
-    expect(sizeOptions(undefined, "qwen-image-edit-2509")).toEqual([]);
+  it.each(["qwen-image-edit-2509", "qwen-image-edit-2511"])("%s は行の宣言があっても空のまま", (id) => {
+    expect(sizeOptions(["1024x1024"], id)).toEqual([]);
+    expect(sizeOptions(undefined, id)).toEqual([]);
   });
 });
 

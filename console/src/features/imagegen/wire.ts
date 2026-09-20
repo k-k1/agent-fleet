@@ -47,7 +47,8 @@ export type Family =
   | "zimage"
   | "anima"
   | "krea2"
-  | "qwen-image-edit-2509";
+  | "qwen-image-edit-2509"
+  | "qwen-image-edit-2511";
 
 /** The `params` overlay of decision 4, in the shape the catalogue row already uses.
  *  `clip_skip` and `weight` ride along on the catalogue's side; the form sends neither. */
