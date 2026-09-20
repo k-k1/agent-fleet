@@ -128,6 +128,9 @@ func runWrite(_ context.Context, rt *Runtime, argsJSON string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	mu := rt.lockPath(full)
+	mu.Lock()
+	defer mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return "", err
 	}
@@ -179,6 +182,9 @@ func runEdit(_ context.Context, rt *Runtime, argsJSON string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	mu := rt.lockPath(full)
+	mu.Lock()
+	defer mu.Unlock()
 	data, err := os.ReadFile(full)
 	if err != nil {
 		return "", err
