@@ -23,7 +23,8 @@ export interface SessionActions {
   /** Delete outright (shell/ssm — no conversation worth keeping). Irreversible. */
   deleteSession(s: Session): Promise<void>;
   /** Toggle the deletion lock (docs/log/45). While on, this row cannot be removed by any
-   *  deletion path: Console, cleanup, the 7-day auto-prune, or the operator. */
+   *  deletion path — Console, cleanup, the operator — and the stopped-TTL sweep leaves it in
+   *  this list instead of moving it to the archive (ADR 0097). */
   setLocked(s: Session, locked: boolean): Promise<void>;
   setKeepAwake(s: Session, hours: number): Promise<void>;
   /** Arm / release the stop-after-turn arm (docs/log/85): the session folds itself away once

@@ -37,15 +37,15 @@ var spawnInflight = struct {
 //
 // ARCHIVED children are NOT counted (ADR 0073 decision 6, amended 2026-09-09). They were, on
 // the reasoning that archiving is reversible and freeing its slot would allow "fold up, spawn a
-// replacement, restore". What that missed is that nothing ever takes the slot back: the stopped
-// TTL prune skips archived metas outright (HandleListSessions), so an archived child holds a
-// slot FOREVER and a parent that tidied three of them can never spawn again — the user who
-// cleans up is punished hardest. Archiving is a Console-only action a session cannot perform
-// (decision 13), which is the same basis on which forks and recreates are kept out of this
-// count: a person's action must not spend a session's budget.
+// replacement, restore". What that missed is that nothing ever takes the slot back: the shelf is
+// where automation stops (ADR 0097), so an archived child would hold a slot FOREVER and a parent
+// that tidied three of them could never spawn again — the user who cleans up is punished
+// hardest. Archiving is a Console-only action a session cannot perform (decision 13), which is
+// the same basis on which forks and recreates are kept out of this count: a person's action must
+// not spend a session's budget.
 //
-// What still frees a slot: deleting the meta, archiving it, and — for a child left stopped —
-// session.StoppedTTL expiring, which prunes the meta on the next listing.
+// This is also what keeps the budget self-healing without anyone deleting anything: a child left
+// stopped is auto-archived once session.StoppedTTL expires, and stops counting there.
 func countChildren(parent string) int {
 	n := 0
 	for _, m := range session.ListMetas() {
