@@ -148,13 +148,12 @@ describe("buildFleetGraph — presence (the merge only both sources can decide)"
     expect(isKnown(lane) && lane.runs[0]).toMatchObject({ t0: 1000, t1: 3000, cut: true });
   });
 
-  it("archived overrides stopped, but never a run left dangling on a gone lane", () => {
+  it("archived is always 'archived', unconditionally — the Agent's own list excludes archived sessions outright, so `live` is NEVER defined for one and a guard gated on the base presence would never fire", () => {
     const page = mkPage([birth("sD", 0), death("sD", 1000), archivedEv("sD", 1500, true)]);
-    const listed = buildFleetGraph(page, sessMap(mkSession("sD")), { from: 0, to: 5000 });
-    expect(isKnown(laneOf(listed, "sD")) && (laneOf(listed, "sD") as GraphLaneKnown).presence).toBe("archived");
-
-    const unlisted = buildFleetGraph(page, sessMap(), { from: 0, to: 5000 });
-    expect(isKnown(laneOf(unlisted, "sD")) && (laneOf(unlisted, "sD") as GraphLaneKnown).presence).toBe("gone");
+    // The realistic shape: an archived session is never in the live map.
+    const model = buildFleetGraph(page, sessMap(), { from: 0, to: 5000 });
+    const lane = laneOf(model, "sD");
+    expect(isKnown(lane) && lane.presence).toBe("archived");
   });
 });
 
@@ -168,6 +167,45 @@ describe("buildFleetGraph — runs (decision 12, a lane's life is a sequence of 
       { t0: 1000, t1: 2000 },
       { t0: 3000, t1: null },
     ]);
+  });
+});
+
+describe("buildFleetGraph — synthesized lanes (a live session S-BE hasn't backfilled a birth for yet)", () => {
+  it("builds a lane straight from the Session, origin 'unknown', label from displayName()", () => {
+    const page = mkPage([]); // no lineage anywhere
+    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+    const sessions = sessMap(mkSession("sX", { title: "My Session", createdAt: "2026-01-01T00:00:00.000Z" }));
+    const model = buildFleetGraph(page, sessions, { from: t0 - 1000, to: t0 + 5000 });
+    const lane = laneOf(model, "sX");
+    expect(isKnown(lane) && lane.origin).toBe("unknown");
+    expect(isKnown(lane) && lane.label).toBe("My Session");
+    expect(isKnown(lane) && lane.presence).toBe("live");
+    expect(isKnown(lane) && lane.runs).toEqual([{ t0, t1: null }]);
+  });
+
+  it("with no createdAt either, the synthesized birth is pinned to the window's left edge — not a real instant", () => {
+    const page = mkPage([]);
+    const model = buildFleetGraph(page, sessMap(mkSession("sX")), { from: 2000, to: 5000 });
+    const lane = laneOf(model, "sX");
+    expect(isKnown(lane) && lane.runs).toEqual([{ t0: 2000, t1: null }]);
+  });
+});
+
+describe("buildFleetGraph — live lane state/raw (the only place the builder normalizes a LIVE Session.state)", () => {
+  it("no live state reported yet normalizes to idle, with no raw", () => {
+    const page = mkPage([birth("sK", 1000)]);
+    const model = buildFleetGraph(page, sessMap(mkSession("sK")), { from: 0, to: 5000 });
+    const lane = laneOf(model, "sK");
+    expect(isKnown(lane) && lane.state).toBe("idle");
+    expect(isKnown(lane) && lane.raw).toBeUndefined();
+  });
+
+  it("an unrecognised live state normalizes to unknown, keeping raw for the tooltip", () => {
+    const page = mkPage([birth("sK", 1000)]);
+    const model = buildFleetGraph(page, sessMap(mkSession("sK", { state: "thinking" })), { from: 0, to: 5000 });
+    const lane = laneOf(model, "sK");
+    expect(isKnown(lane) && lane.state).toBe("unknown");
+    expect(isKnown(lane) && lane.raw).toBe("thinking");
   });
 });
 
@@ -198,9 +236,9 @@ describe("buildFleetGraph — segments", () => {
     ]);
   });
 
-  it("an archived lane's trailing stretch bands 'archived', not 'stopped' or 'unknown'", () => {
+  it("an archived lane's trailing stretch bands 'archived', not 'stopped' or 'unknown' — even though it is never in the live map", () => {
     const page = mkPage([birth("sD", 0), death("sD", 1000), archivedEv("sD", 1500, true)]);
-    const model = buildFleetGraph(page, sessMap(mkSession("sD")), { from: 0, to: 5000 });
+    const model = buildFleetGraph(page, sessMap(), { from: 0, to: 5000 });
     const segs = model.segments.filter((s) => s.laneId === "sD").sort((a, b) => a.t0 - b.t0);
     expect(segs).toEqual([
       { laneId: "sD", t0: 0, t1: 1000, kind: "unknown" },
@@ -251,6 +289,24 @@ describe("buildFleetGraph — family order (decision 9)", () => {
     expect(isKnown(lane) && lane.depth).toBe(1);
     expect(laneOf(model, "ghost")).toBeUndefined(); // no lineage for it at all: no row
   });
+
+  it("a family anchored on an unreachable root still sorts by its own members' oldest KNOWN birth, not swallowed to -Infinity", () => {
+    const page = mkPage([
+      birth("orphan", 5000, { origin: "session", originSession: "ghost" }), // recent, root's own birth is unknown
+      birth("plain", 1000), // older, ordinary root with its own birth
+    ]);
+    const sessions = sessMap(mkSession("orphan"), mkSession("plain"));
+    const model = buildFleetGraph(page, sessions, { from: 0, to: 10000 });
+    const order = model.lanes
+      .slice()
+      .sort((a, b) => a.row - b.row)
+      .map((l) => l.id);
+    // orphan's family (age 5000, from orphan itself) is newer than plain's (age 1000):
+    // it must sort first. Under the bug, the unreachable "ghost" root's missing birth
+    // sank the whole family to -Infinity regardless of orphan's real age, and "plain"
+    // sorted first instead.
+    expect(order).toEqual(["orphan", "plain"]);
+  });
 });
 
 describe("buildFleetGraph — erased lanes (decision 6)", () => {
@@ -266,6 +322,22 @@ describe("buildFleetGraph — erased lanes (decision 6)", () => {
     const arrow = model.arrows.find((a) => a.variant === "peer");
     expect(arrow?.fromRow).toBe(erased?.row);
     expect(arrow?.toRow).toBe(laneOf(model, "sY")?.row);
+  });
+
+  it("a state/resync-only reference to an unknown id draws no phantom row — only instruct/report/peer name an arrow endpoint", () => {
+    const page = mkPage([], [stateEv("sPhantom", 1000, "working")]);
+    const model = buildFleetGraph(page, new Map(), { from: 0, to: 5000 });
+    expect(laneOf(model, "sPhantom")).toBeUndefined();
+  });
+});
+
+describe("buildFleetGraph — label never puts the bare slug on screen alone (decision 5)", () => {
+  it("a birth with neither display nor repo falls back to the kind, not the id", () => {
+    const page = mkPage([birth("sZ", 1000, { kind: "codex" })]);
+    const model = buildFleetGraph(page, sessMap(mkSession("sZ")), { from: 0, to: 5000 });
+    const lane = laneOf(model, "sZ");
+    expect(isKnown(lane) && lane.label).not.toContain("sZ");
+    expect(isKnown(lane) && lane.label.startsWith("codex@")).toBe(true);
   });
 });
 
@@ -284,6 +356,17 @@ describe("buildFleetGraph — arrows to a non-lane actor leave the figure (decis
     const arrow = model.arrows.find((a) => a.variant === "report");
     expect(arrow?.danger).toBe(true);
     expect(arrow?.toRow).toBeNull();
+  });
+
+  it("an arrow whose endpoint is a REAL lane that got filtered out of THIS render is dropped, never shown as if it came from outside the figure", () => {
+    const page = mkPage(
+      [birth("sM", 1000), birth("sN", 1000)],
+      [instructEv("conv:XYZ", "sM", 1500), peerEv("sM", "sN", 1600)],
+    );
+    const sessions = sessMap(mkSession("sM"), mkSession("sN"));
+    const model = buildFleetGraph(page, sessions, { from: 0, to: 5000, conversationId: "XYZ" });
+    expect(model.lanes.map((l) => l.id)).toEqual(["sM"]); // sN was not touched by conv:XYZ, so it has no row
+    expect(model.arrows.some((a) => a.variant === "peer")).toBe(false); // dropped, not misattributed to an external actor
   });
 });
 
@@ -318,7 +401,7 @@ describe("buildFleetGraph — birth arrows (spawn / handoff / fork, decision 13)
     expect(forkFor("early")?.from).toBe("sG");
     expect(forkFor("late")?.from).toBe("sG");
     const unresolved = forkFor("nomatch");
-    expect(unresolved?.from).toBe("conv-nobody"); // never silently dropped (ActorId's "unknown spelling" rule)
+    expect(unresolved?.from).toBe("conv:conv-nobody"); // ActorId's conversation vocabulary, never a bare id
     expect(unresolved?.fromRow).toBeNull();
   });
 });
@@ -336,11 +419,26 @@ describe("buildFleetGraph — options", () => {
 
   it("showArchived:false drops archived lanes", () => {
     const page = mkPage([birth("sJ", 0), death("sJ", 1000), archivedEv("sJ", 1500, true)]);
-    const sessions = sessMap(mkSession("sJ"));
+    const sessions = sessMap(); // archived sessions never appear in the live map
     const shown = buildFleetGraph(page, sessions, { from: 0, to: 5000, showArchived: true });
     expect(shown.lanes.map((l) => l.id)).toEqual(["sJ"]);
     const hidden = buildFleetGraph(page, sessions, { from: 0, to: 5000, showArchived: false });
     expect(hidden.lanes.map((l) => l.id)).toEqual([]);
+  });
+
+  it("jitter never pushes an arrow's x outside [0, width]", () => {
+    const names = ["s1", "s2", "s3", "s4", "s5"];
+    const page = mkPage(
+      names.map((n) => birth(n, 1000)),
+      names.map((n, i) => instructEv(`conv:${i}`, n, 0)), // all at the window's very left edge
+    );
+    const sessions = sessMap(...names.map((n) => mkSession(n)));
+    const model = buildFleetGraph(page, sessions, { from: 0, to: 5000, width: 1200 });
+    expect(model.arrows.length).toBe(5);
+    for (const a of model.arrows) {
+      expect(a.x).toBeGreaterThanOrEqual(0);
+      expect(a.x).toBeLessThanOrEqual(1200);
+    }
   });
 });
 

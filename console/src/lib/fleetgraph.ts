@@ -144,14 +144,21 @@ function buildRuns(events: LineageEvent[]): LaneRun[] {
 // once it drops off the list with no death ever recorded, that run is cut
 // (below) and the lane is "gone". A run the ledger closed (death, no revive
 // after) is "stopped" while still listed, "gone" once it is not. `archived`
-// overrides either, except over "gone" — a deleted lane's archived flag is
-// stale information, not a live state to show.
+// ALWAYS wins, unconditionally: the Agent's own session list excludes
+// archived sessions outright (sessionx/session_handlers.go's list handler
+// skips them), so `live` is never defined for an archived lane — a guard
+// that only applied the flag while some OTHER presence held would never
+// fire in practice, and every archived lane would render as "gone" instead
+// (an "id の痕跡だけ残る" lane, when it is really "畳んであるが復元できる").
+// A known lane (this function's caller) always still has its lineage — a
+// deletion removes it entirely and turns the lane erased, never leaves a
+// known lane with a stale `archived` flag — so there is no case here where
+// honouring `archived` misrepresents a truly gone lane.
 function presenceFor(runs: LaneRun[], live: Session | undefined, archived: boolean): LanePresence {
+  if (archived) return "archived";
   const last = runs[runs.length - 1];
   const open = last !== undefined && last.t1 === null;
-  const base = open ? (live ? "live" : "gone") : live ? "stopped" : "gone";
-  if (archived && base !== "gone") return "archived";
-  return base;
+  return open ? (live ? "live" : "gone") : live ? "stopped" : "gone";
 }
 
 // ── Fork resolution (decision 13) ───────────────────────────────────────────
@@ -240,16 +247,24 @@ function familyOrder(
     const kids = (childrenOf.get(id) ?? []).slice().sort((a, b) => ageKey(a) - ageKey(b) || (a < b ? -1 : a > b ? 1 : 0));
     for (const k of kids) dfs(k);
   }
-  function familyMinBirth(id: LaneId, guard: Set<LaneId>): number {
-    if (guard.has(id)) return Number.NEGATIVE_INFINITY;
+  // A member with no known birth (a virtual/deleted ancestor, an erased lane)
+  // must NOT drag the whole family down to "oldest": it contributes nothing
+  // to the minimum rather than a sentinel, so a family anchored on an
+  // unreachable root still sorts by its actual descendants' ages. Only a
+  // family where NOBODY has a known birth falls back to -Infinity.
+  function familyMinBirth(id: LaneId, guard: Set<LaneId>): number | undefined {
+    if (guard.has(id)) return undefined;
     guard.add(id);
-    let min = ageKey(id);
-    for (const k of childrenOf.get(id) ?? []) min = Math.min(min, familyMinBirth(k, guard));
+    let min = birthTs(id);
+    for (const k of childrenOf.get(id) ?? []) {
+      const childMin = familyMinBirth(k, guard);
+      if (childMin !== undefined) min = min === undefined ? childMin : Math.min(min, childMin);
+    }
     return min;
   }
   const roots = [...new Set(rootIds)].sort((a, b) => {
-    const ka = familyMinBirth(a, new Set());
-    const kb = familyMinBirth(b, new Set());
+    const ka = familyMinBirth(a, new Set()) ?? Number.NEGATIVE_INFINITY;
+    const kb = familyMinBirth(b, new Set()) ?? Number.NEGATIVE_INFINITY;
     return ka !== kb ? kb - ka : a < b ? -1 : a > b ? 1 : 0;
   });
   for (const r of roots) dfs(r);
@@ -362,10 +377,17 @@ function segmentsForLane(
 // ── Arrow x-jitter (docs/log/101 §101.4, "same problem as the commit graph's
 // crossing edges, same fix") — simultaneous arrows at the same instant would
 // stack exactly on top of each other; spread them a few px apart, centred.
-function jitterX(rawX: number[]): number[] {
+// The bucket is wider than 1px (not `Math.round(x)`) so two arrows a
+// fraction of a pixel apart still count as "the same spot" and get spread —
+// otherwise a near-miss rounds into different buckets and draws un-jittered,
+// which looks identical to the problem this exists to fix. The spread itself
+// is clamped into [0, width]: an edge-of-window cluster must not jitter its
+// outer members off the drawable canvas.
+function jitterX(rawX: number[], width: number): number[] {
+  const BUCKET_PX = 2;
   const buckets = new Map<number, number[]>();
   rawX.forEach((x, i) => {
-    const key = Math.round(x);
+    const key = Math.round(x / BUCKET_PX);
     const arr = buckets.get(key) ?? [];
     arr.push(i);
     buckets.set(key, arr);
@@ -375,7 +397,8 @@ function jitterX(rawX: number[]): number[] {
   for (const idxs of buckets.values()) {
     if (idxs.length <= 1) continue;
     idxs.forEach((i, k) => {
-      out[i] = rawX[i] + (k - (idxs.length - 1) / 2) * SPREAD;
+      const x = rawX[i] + (k - (idxs.length - 1) / 2) * SPREAD;
+      out[i] = Math.min(Math.max(x, 0), width);
     });
   }
   return out;
@@ -429,16 +452,26 @@ export const buildFleetGraph: BuildFleetGraph = (
     if (b) birthOf.set(id, b);
   }
 
-  // 2. Activity: per-lane state/resync markers, plus a reference index (touched
-  // ids, in-window or not) that both feeds erased-lane detection and `cut`.
+  // 2. Activity: per-lane state/resync markers, a reference index (touched
+  // ids, in-window or not — feeds `cut` and the overlap test), and a
+  // NARROWER index of ids an ARROW actually names in-window (instruct /
+  // report / peer only). Only the latter can turn into an erased row: decision
+  // 6 exists to keep an arrow from misattributing to "outside the figure",
+  // and a state/resync line alone never draws an arrow, so an id known only
+  // through one is not a session that ever needs a row — just noise.
   const markersByLane = new Map<LaneId, StateMarker[]>();
   const activityRef = new Map<LaneId, { max: number; inWindow: boolean }>();
+  const arrowNamed = new Set<LaneId>();
   const touch = (id: string, ts: number) => {
     if (isExternalActor(id)) return;
     const rec = activityRef.get(id) ?? { max: -Infinity, inWindow: false };
     rec.max = Math.max(rec.max, ts);
     if (ts >= from && ts <= to) rec.inWindow = true;
     activityRef.set(id, rec);
+  };
+  const touchArrow = (id: string, ts: number) => {
+    if (isExternalActor(id)) return;
+    if (ts >= from && ts <= to) arrowNamed.add(id);
   };
   for (const ev of page.activity) {
     if (ev.ev === "state" || ev.ev === "resync") {
@@ -449,21 +482,23 @@ export const buildFleetGraph: BuildFleetGraph = (
     } else if (ev.ev === "instruct" || ev.ev === "report" || ev.ev === "peer") {
       touch(ev.from, ev.ts);
       touch(ev.to, ev.ts);
+      touchArrow(ev.from, ev.ts);
+      touchArrow(ev.to, ev.ts);
     }
   }
   for (const arr of markersByLane.values()) arr.sort((a, b) => a.ts - b.ts);
 
   // 3. Classify: known (has a birth), synthesized (live only — S-BE hasn't
   // backfilled a birth for it yet, a defensive backstop, not the normal path),
-  // erased (no birth, not live, kept alive only by surviving activity lines —
+  // erased (no birth, not live, kept alive only by a surviving arrow line —
   // decision 6's "arrows-only" row).
   const knownIds = new Set<LaneId>(birthOf.keys());
   const synthesizedIds = new Set<LaneId>();
   for (const id of sessions.keys()) if (!knownIds.has(id)) synthesizedIds.add(id);
   const erasedIds = new Set<LaneId>();
-  for (const [id, rec] of activityRef) {
+  for (const id of arrowNamed) {
     if (knownIds.has(id) || synthesizedIds.has(id)) continue;
-    if (rec.inWindow) erasedIds.add(id);
+    erasedIds.add(id);
   }
 
   // 4. Facts per known/synthesized lane: runs, presence, cut, and the fields a
@@ -482,7 +517,9 @@ export const buildFleetGraph: BuildFleetGraph = (
       last.t1 = observed;
       last.cut = true;
     }
-    const label = birth.display ?? `${birth.repo ?? id}@${stampMs(birth.ts)}`;
+    // repo, never `id` — a bare slug must never stand alone in a label
+    // (decision 5), and the kind name is the only other thing on hand.
+    const label = birth.display ?? `${birth.repo ?? birth.kind}@${stampMs(birth.ts)}`;
     const f: LaneFacts = { runs, presence, kind: birth.kind, origin: birth.origin, label, parent: birth.originSession };
     if (presence === "live") {
       f.state = normalizeState(live?.state);
@@ -631,7 +668,10 @@ export const buildFleetGraph: BuildFleetGraph = (
     }
     if (birth.forkFrom) {
       const source = resolveFork(id, birth.forkFrom, birth.ts);
-      candidates.push({ ts: birth.ts, variant: "fork", from: source ?? birth.forkFrom, to: id });
+      // Unresolved: forkFrom is a bare conversation id, and ActorId's external
+      // vocabulary for one is "conv:<id>" — an unprefixed slug would read as
+      // an (unknown) LANE id instead of the conversation it actually is.
+      candidates.push({ ts: birth.ts, variant: "fork", from: source ?? `conv:${birth.forkFrom}`, to: id });
     }
   }
   for (const ev of page.activity) {
@@ -650,9 +690,20 @@ export const buildFleetGraph: BuildFleetGraph = (
       candidates.push(c);
     }
   }
-  const xs = jitterX(candidates.map((c) => xOf(scale, c.ts)));
+  // An endpoint that names a real lane (known/synthesized/erased) but has no
+  // row THIS render — filtered out by showArchived/conversationId, not
+  // deleted — must not draw as if it left the figure: that is the exact
+  // misattribution decision 6 exists to prevent, just via a different filter
+  // than deletion. Drop the arrow instead of lying about where it came from.
+  const allLaneIds = new Set<LaneId>([...knownIds, ...synthesizedIds, ...erasedIds]);
+  const isFilteredOut = (id: string): boolean => allLaneIds.has(id) && !rowOf.has(id);
+  const kept = candidates.filter((c) => !isFilteredOut(c.from) && !isFilteredOut(c.to));
+  const xs = jitterX(
+    kept.map((c) => xOf(scale, c.ts)),
+    width,
+  );
   const rowFor = (id: string): number | null => (isExternalActor(id) ? null : (rowOf.get(id) ?? null));
-  const arrows: GraphArrow[] = candidates.map((c, i) => {
+  const arrows: GraphArrow[] = kept.map((c, i) => {
     const arrow: GraphArrow = {
       ts: c.ts,
       variant: c.variant,
