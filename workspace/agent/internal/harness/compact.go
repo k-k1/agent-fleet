@@ -54,28 +54,48 @@ func NeedsCompaction(inputTokens, reservedOutput, window int) bool {
 // every future request) — the RECORD a higher layer keeps for display is a separate copy of
 // full that this function never touches, so the reasoning is dropped from the wire, not lost.
 //
+// 🔴 Confirmed live against the dev deployment: the compaction summary is FOLDED into the one
+// leading system message rather than sent as its own separate system-role entry later in the
+// list. Qwen's own chat template rejects the latter outright — "System message must be at the
+// beginning" — the moment a summary boundary sits anywhere past index 0 alongside the
+// system-prompt message BuildSendMessages already puts there. full itself still carries the
+// summary as its own Message (decision 3's record), this function just never re-emits it as a
+// second system-role wire entry.
+//
 // full is read only; the returned slice is a fresh one, so a caller may safely keep sending
 // full itself to a transcript writer unmodified.
 func BuildSendMessages(systemPrompt string, full []Message) []Message {
-	start := lastSummaryIndex(full)
-	out := make([]Message, 0, len(full)-start+1)
-	out = append(out, Message{Role: RoleSystem, Content: systemPrompt})
-	for _, m := range full[start:] {
+	sys := systemPrompt
+	rest := full
+	if idx := lastSummaryIndex(full); idx >= 0 {
+		summary := strings.TrimPrefix(full[idx].Content, summaryPrefix)
+		switch {
+		case sys != "" && summary != "":
+			sys = sys + "\n\n" + summary
+		case summary != "":
+			sys = summary
+		}
+		rest = full[idx+1:]
+	}
+	out := make([]Message, 0, len(rest)+1)
+	out = append(out, Message{Role: RoleSystem, Content: sys})
+	for _, m := range rest {
 		m.Reasoning = ""
 		out = append(out, m)
 	}
 	return out
 }
 
-// lastSummaryIndex returns the index of the most recent compaction-boundary message, or 0
-// (the start of full) when there has never been one.
+// lastSummaryIndex returns the index of the most recent compaction-boundary message, or -1
+// when there has never been one — distinct from 0, which is a real position a summary can sit
+// at (a compaction that runs before any other history has been added).
 func lastSummaryIndex(full []Message) int {
 	for i := len(full) - 1; i >= 0; i-- {
 		if full[i].Role == RoleSystem && strings.HasPrefix(full[i].Content, summaryPrefix) {
 			return i
 		}
 	}
-	return 0
+	return -1
 }
 
 // compactionRequest is the one-shot instruction Compact appends before asking the model to
@@ -89,21 +109,41 @@ const compactionRequest = "Summarize this conversation so far for your own futur
 // summarize everything currently in the active window, then appends the answer to full as a
 // new compaction-boundary system message.
 //
+// 🔴 Confirmed live against the dev deployment (ADR 0093 segment G's own acceptance test): when
+// full's last message is the pending user turn that triggered NeedsCompaction in the first
+// place (PrepareTurn's usual calling shape — the new question is appended before the budget
+// check, matching decision 7's "the messages about to be SENT" wording), it must not be
+// swallowed into the summary. Folding it in left the boundary system message as the last
+// entry BuildSendMessages' next slice would carry, which llama-server's own chat template
+// (Qwen's Jinja template, at least) rejects outright — "No user query found in messages": a
+// template that expects the LAST message to be a user turn, not two system messages back to
+// back. So the pending user message (if any) is excluded from what gets summarized and
+// re-appended AFTER the new boundary, keeping it exactly what it always was: the next thing to
+// answer, not a claim inside the summary's own prose.
+//
 // full is never mutated in place, and the returned slice's backing array is always a fresh
 // allocation, never full's own — decision 3's append-only compaction means a caller that
 // stores full as (or alongside) a growing transcript must not see an in-place append silently
 // alias and then reallocate out from under it later.
 func Compact(ctx context.Context, client Client, systemPrompt string, full []Message) ([]Message, error) {
-	send := BuildSendMessages(systemPrompt, full)
+	pending := 0
+	if n := len(full); n > 0 && full[n-1].Role == RoleUser {
+		pending = 1
+	}
+	toSummarize := full[:len(full)-pending]
+
+	send := BuildSendMessages(systemPrompt, toSummarize)
 	send = append(send, Message{Role: RoleUser, Content: compactionRequest})
 	turn, err := client.Send(ctx, send, nil)
 	if err != nil {
 		return full, err
 	}
 	summary := strings.TrimSpace(turn.Content)
-	out := make([]Message, len(full), len(full)+1)
-	copy(out, full)
+
+	out := make([]Message, len(toSummarize), len(full)+1)
+	copy(out, toSummarize)
 	out = append(out, Message{Role: RoleSystem, Content: summaryPrefix + summary})
+	out = append(out, full[len(toSummarize):]...) // the pending turn, unchanged, after the boundary
 	return out, nil
 }
 

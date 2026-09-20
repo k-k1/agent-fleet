@@ -78,8 +78,11 @@ func TestBuildSendMessagesSendsFromLastSummaryOnwardButKeepsFullHistory(t *testi
 		}
 	}
 
-	// the SEND slice starts at the summary boundary, not turn 1.
-	wantContents := []string{"sys", summaryPrefix + "everything up to turn 1 happened", "turn 2", "reply 2"}
+	// the SEND slice starts at the summary boundary, not turn 1 — and the summary is FOLDED
+	// into the one leading system message (Qwen's chat template rejects a second, later
+	// system-role entry outright: "System message must be at the beginning", confirmed live),
+	// not sent as its own separate entry.
+	wantContents := []string{"sys\n\neverything up to turn 1 happened", "turn 2", "reply 2"}
 	if len(send) != len(wantContents) {
 		t.Fatalf("send = %+v, want %d entries", send, len(wantContents))
 	}
@@ -88,7 +91,15 @@ func TestBuildSendMessagesSendsFromLastSummaryOnwardButKeepsFullHistory(t *testi
 			t.Fatalf("send[%d].Content = %q, want %q", i, send[i].Content, want)
 		}
 	}
-	if strings.Contains(send[3].Content, "turn 1") {
+	if send[0].Role != RoleSystem {
+		t.Fatalf("send[0].Role = %q, want %q", send[0].Role, RoleSystem)
+	}
+	for _, m := range send[1:] {
+		if m.Role == RoleSystem {
+			t.Fatalf("a second system-role message rode along: %+v", send)
+		}
+	}
+	if strings.Contains(send[1].Content, "turn 1") {
 		t.Fatal("send slice leaked pre-summary content")
 	}
 }
@@ -178,6 +189,65 @@ func TestCompactAppendsSummaryWithoutMutatingInput(t *testing.T) {
 	}
 }
 
+// TestCompactKeepsPendingUserTurnAfterTheBoundary pins a bug found live against the dev
+// deployment (ADR 0093 segment G's own acceptance run): PrepareTurn's usual calling shape
+// appends the NEW user question to full before checking the budget, so full's last message is
+// often that still-unanswered turn when NeedsCompaction fires. Folding it into the summary
+// left the boundary system message last, and BuildSendMessages' next slice then ended in TWO
+// system-role messages with no trailing user turn at all — which llama-server's own chat
+// template (Qwen's Jinja template) rejected outright: "No user query found in messages". The
+// pending user message must survive, unsummarized, immediately after the new boundary.
+func TestCompactKeepsPendingUserTurnAfterTheBoundary(t *testing.T) {
+	full := []Message{
+		{Role: RoleUser, Content: "turn 1"},
+		{Role: RoleAssistant, Content: "reply 1"},
+		{Role: RoleUser, Content: "turn 2 — still unanswered"},
+	}
+	client := &budgetClient{sendTurn: Turn{Content: "summary of turn 1"}}
+
+	got, err := Compact(context.Background(), client, "sys", full)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	// full's own two rows (turn 1 + reply 1), plus the new summary, plus the pending turn.
+	if len(got) != 4 {
+		t.Fatalf("got %+v, want 4 entries (turn 1 + reply 1 + summary + the pending turn)", got)
+	}
+	if got[2].Role != RoleSystem || got[2].Content != summaryPrefix+"summary of turn 1" {
+		t.Fatalf("got[2] = %+v, want the summary boundary", got[2])
+	}
+	if got[3].Role != RoleUser || got[3].Content != "turn 2 — still unanswered" {
+		t.Fatalf("got[3] = %+v, want the pending user turn preserved", got[3])
+	}
+
+	// The summarization Send itself must NOT have included the pending turn — it has not
+	// happened yet as far as "what to summarize" is concerned.
+	if len(client.gotSends) != 1 {
+		t.Fatalf("Send called %d times, want 1", len(client.gotSends))
+	}
+	for _, m := range client.gotSends[0] {
+		if m.Content == "turn 2 — still unanswered" {
+			t.Fatal("the pending turn leaked into the summarization request")
+		}
+	}
+
+	// What BuildSendMessages hands the NEXT real Send must end in a user message (one of the
+	// two live template errors this pins) and must carry exactly one system-role message,
+	// with the summary folded into it rather than riding as its own later entry (the other).
+	send := BuildSendMessages("sys", got)
+	if last := send[len(send)-1]; last.Role != RoleUser {
+		t.Fatalf("post-compaction send ends in role %q, want %q: %+v", last.Role, RoleUser, send)
+	}
+	if send[0].Role != RoleSystem || send[0].Content != "sys\n\nsummary of turn 1" {
+		t.Fatalf("send[0] = %+v, want the fleet+summary folded system message", send[0])
+	}
+	for _, m := range send[1:] {
+		if m.Role == RoleSystem {
+			t.Fatalf("a second system-role message rode along: %+v", send)
+		}
+	}
+}
+
 func TestCompactFailureLeavesFullUnchanged(t *testing.T) {
 	full := []Message{{Role: RoleUser, Content: "turn 1"}}
 	client := &budgetClient{sendErr: errors.New("engine asleep")}
@@ -209,9 +279,13 @@ func TestPrepareTurnSkipsCompactionUnderBudget(t *testing.T) {
 }
 
 func TestPrepareTurnCompactsOverBudgetThenSendsTrimmed(t *testing.T) {
+	// The realistic shape (and the one that broke live): the newest, still-unanswered user
+	// turn is already appended to full by the time PrepareTurn measures the budget — decision
+	// 7's "the messages about to be SENT" includes it.
 	full := []Message{
 		{Role: RoleUser, Content: "turn 1"},
 		{Role: RoleAssistant, Content: "reply 1"},
+		{Role: RoleUser, Content: "turn 2"},
 	}
 	client := &budgetClient{inputTokens: 950, sendTurn: Turn{Content: "summary text"}}
 	newFull, send, err := PrepareTurn(context.Background(), client, nil, "sys", full, 0, 1000)
@@ -219,14 +293,26 @@ func TestPrepareTurnCompactsOverBudgetThenSendsTrimmed(t *testing.T) {
 		t.Fatalf("PrepareTurn: %v", err)
 	}
 	if len(newFull) != len(full)+1 {
-		t.Fatalf("newFull = %+v, want one appended summary", newFull)
+		t.Fatalf("newFull = %+v, want one inserted summary", newFull)
 	}
 	if len(client.gotSends) != 1 {
 		t.Fatalf("Send called %d times, want exactly 1 (the compaction turn)", len(client.gotSends))
 	}
-	// the ready-to-send slice must already reflect the new boundary: system + the summary.
-	if len(send) != 2 || send[1].Content != summaryPrefix+"summary text" {
-		t.Fatalf("send = %+v", send)
+	// the ready-to-send slice must already reflect the new boundary (folded into the one
+	// leading system message — Qwen's chat template rejects a later, second system-role
+	// entry) AND still end in the pending user turn (the other live template error this
+	// pins).
+	wantContents := []string{"sys\n\nsummary text", "turn 2"}
+	if len(send) != len(wantContents) {
+		t.Fatalf("send = %+v, want %d entries", send, len(wantContents))
+	}
+	for i, want := range wantContents {
+		if send[i].Content != want {
+			t.Fatalf("send[%d].Content = %q, want %q", i, send[i].Content, want)
+		}
+	}
+	if send[len(send)-1].Role != RoleUser {
+		t.Fatalf("send ends in role %q, want %q: %+v", send[len(send)-1].Role, RoleUser, send)
 	}
 }
 
