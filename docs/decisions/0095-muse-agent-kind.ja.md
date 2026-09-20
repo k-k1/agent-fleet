@@ -175,7 +175,7 @@ bubblewrap 自身が呼ぶ**旧来の `mount(2)`** も、どちらも EACCES で
 **書き手はただ 1 つ、MCP materialize のそれである。** 下の締め付けと決定 11 の `mcp_servers` は同じ
 ファイルの別ブロックであり、しかも Muse 自身も書く（実測: 初回実行が `settings.json` と自前の
 `~/.config/muse/.settings.json.lock` を作った）。1 ファイルに 3 人の書き手と 2 つの錠は lost update に
-なる。よって **このファイルを書く主体は 1 つ**——muse 専用の設定書き手を、既存の `materializeMu`
+なる。よって **このファイルを書く主体は 1 つ、muse 自身のもの**——muse 専用の設定書き手を、既存の `materializeMu`
 （`mcpreg/materialize.go:94-109`）の下で直列化した read-merge-rename の単一所有者とし（隣に 2 つ目の
 mutex を置かない）、**自分が所有しない鍵は全部保つ**
 ——利用者の `tui`・モデル既定・テレメトリの鍵は AF の書き込みを生き延びる。
@@ -252,14 +252,17 @@ worktree では親クローンの、全セッション共有のファイルで�
 ### 決定 8 — 配備はピン版の焼き込み。`~/.local/bin` の影を見張る
 
 **Muse Code はプロプライエタリなので、配布されるイメージには入らない**——Claude Code・Copilot CLI・
-Antigravity が既に置かれているのと同じ規則である。Dockerfile の既定は `ARG BAKE_AGENT_CLIS=0` で、註が
-理由を「うっかり配布しても事故らないため」と書いており、`deploy/compose/release.sh:53-55` は配布既定を
+Antigravity が既に置かれているのと同じ規則である。Dockerfile の既定は `ARG BAKE_AGENT_CLIS=0` で、註（`Dockerfile:69-77`）が
+ライセンス上の理由——プロプライエタリ CLI は再配布不可扱いなので、素の `docker build` でも混入しない——を
+書いており、`deploy/compose/release.sh:53-55` は配布既定を
 lean とし、`NOTICE:57-62` が読み手向けに「プロプライエタリな CLI は同梱せず、配備が初回起動時に取得する」と
 明言している。よって **variant は 2 つあり、この ADR は両方を決める**（都合のよい方だけを決めない）:
 
-- **出荷される方（`BAKE_AGENT_CLIS=0`）**: entrypoint がコンテナ起動時に boot-install し、release
-  マニフェストの同じ版と同じ sha256 で検証して AF が持つ場所に置く。これが匿名でできること（実測）が、
-  そもそもこの案を成立させている。
+- **出荷される方（`BAKE_AGENT_CLIS=0`）**: entrypoint がコンテナ起動時に
+  `/usr/local/share/agent-fleet/versions.json` のピンから boot-install し、release マニフェストの
+  sha256 で検証する。匿名で取得できること（実測）がそもそもこの案を成立させている。**導入先は
+  `~/.local`＝ベンダ自身のインストーラと同じ場所**であり（`workspace/Dockerfile:71`、
+  `entrypoint.sh:299-349`）、この ADR が下で取り違えていた点がそこにある。
 - **`BAKE_AGENT_CLIS=1`**（初回起動を速くしたい自社配備）: `ARG MUSE_VERSION` ＋アーキ別 sha256 を
   ビルド時検証し、ランチャーが期待する配置（ランチャーの隣に `muse-bin-<版>` と `.muse-version`）で
   `/usr/local/share/muse` に置く。この配置が読み取り専用でも動くことは実測した。
@@ -270,9 +273,13 @@ lean とし、`NOTICE:57-62` が読み手向けに「プロプライエタリな
 
 費用は 2 つ、後から発見せずここで名指しする。**容量**: ≈ 299 MiB（x86_64）/ ≈ 269 MiB（aarch64）。
 出荷 variant では新しいコンテナごとの boot-install ダウンロード、焼く variant ではイメージの肥大になる。
-**影**: ベンダ導入スクリプトの既定の置き場は `~/.local/bin/muse` で、PATH で先勝ちし、recreate でも消えない
-——古い `~/.local/bin/workspace-agent` が Agent を乗っ取ったのと同じ罠である。利用者が一行インストーラを
-一度走らせると、管理外の自己更新ビルドに恒久的に固定される。だから接続カードは影を見つけたら報告する。
+**影と、その誤った検知の仕方**: ベンダ導入スクリプトの既定の置き場は `~/.local/bin/muse`——そして出荷
+variant では **AF 自身も同じ場所に置く**ので、**パスで検知すると AF 自身のバイナリを影として報告する**。
+危ないのは場所ではなく素性である: 利用者が一行インストーラを一度走らせると、管理外の自己更新ビルドに
+乗り、それは recreate でも消えない。よって検査は**版の一致**——`muse --version` が `versions.json` の
+ピンと合うか——であり、直し方は既にある: self-update が OFF の起動では entrypoint が `~/.local` をピン版へ
+戻す（`entrypoint.sh:336-352`、kiro の起動ガードが塞いだのと同型の穴）。接続カードが報告するのは版の
+不一致であって、パスの有無ではない。
 
 ### 決定 9 — 資格情報は保存型 API キー、入力は 1 回
 
@@ -333,7 +340,7 @@ Console＋保存済み定義の移行が要る。段 2 で発見するのでは�
 `${VAR}` 展開があり、stdio サーバには `MUSE_SESSION_ID` が渡る。`muse` は `knownKinds`
 （`mcpreg/def.go:57-61`）と `MaterializedKinds`（`materialize.go:47`）に入る。プロジェクトスコープは
 `mcpproj` の `kindInfos`（`mcpproj/inspect.go:50-58`）に **`HasProjectScope: false`** で入る——agy と同じ形
-——Muse のプロジェクトスコープ綴りが文献に無いからである。`fileSpecs`（`inspect.go:35-43`）には行を足さない
+——Muse のプロジェクトスコープ綴りが文献に無いからである。`fileSpecs`（`inspect.go:36-44`）には行を足さない
 ので、muse は点検対象でも複製先でもない。これは種別についての静的な事実であって、実行時に他種別のファイルへ
 落ちる仕掛けではない。フック（`.muse/hooks.json`、`Stop` や
 `Notification` を含む 15 のライフサイクルイベント）は**使わない**。フックが報せることはプロトコルが既に
@@ -386,11 +393,17 @@ Muse が `~/.claude` と `~/.codex` を読むのを止めるだけで、どち�
 
 **新しいのは `Permissions: true` で、これは配線作業ではない。** 今の managed 種別はすべて false を宣言して
 おり、`Interaction.Kind` は `"question"（future: "approval" | "plan"）` と書かれ、註は「3 種別とも承認を
-バイパスして動く」と言う（`agents/driver.go:45-53`）。つまり宣言するということは、**AF 初の承認
+バイパスして動く」と言う（`agents/driver.go:42-52`、引用した一文は `:43`）。つまり宣言するということは、**AF 初の承認
 interaction を作る**ということである——ワイヤ型・Console のカード・`approval/decide` への返答経路。
 ADR 0093 は既にその一部を払っている: `workspace/agent/internal/harness/approval.go:18` が決定 5 の
 `Permissions: true` を「その種別が売る性質」として名指しており、そのパッケージは develop に入っている。
 managed 専用の門と同じく、先に着地した方が払う。
+
+**`Caps.PermissionChoice` がもう半分で、しかも別の構造体である。** 読み層の `Caps` は作成要求を門で
+止める: `POST /sessions` は `Caps().PermissionChoice` が false の種別の `skip_permissions=false` を拒む
+（`sessionx/session_handlers.go:643-647`、`agents/agents.go:86-92`）。決定 5 は承認を残すので、この欄が
+無いと起動導線がそもそも承認を要求できない。これは `guide/ref` の能力表が突き合わせる対象でもあるので、
+同じ変更で文書にも入る。
 
 `Questions` は別に true で、しかも**承認とは別チャネル**である: `userInput/requested` →
 `userInput/answer`、締めが `userInput/settled`。承認は「これを実行してよいか」、user-input は利用者への
@@ -409,9 +422,9 @@ managed 専用の門と同じく、先に着地した方が払う。
 | モデルとベンダ | `console/src/lib/agentModels.ts:34-35`（`isDynamic`）、`workspace/agent/model_provider.go:122`（`modelKindVendor`）、モデル REST の分岐 `workspace/agent/agent_models.go:40-83` |
 | 使用量 | `usage_fold.go:204-212`、費用表 `usage_catalog.go:45-55`、積み上げ色 `console/src/features/usage/colors.ts:81` |
 | 指示層 | `agent_instructions.go:119-146` の両 apply 経路と `:83` の一覧（決定 12 の書込先を測った後） |
-| MCP——独立に **4** 本の一覧 | 登録簿（`mcpreg/def.go:57-61`、`mcpreg/materialize.go:47,74-87`、`mcpproj/inspect.go:36-44,50-58`）、**ローカル**の `af` サーバ（`mcpx/mcp_stdio.go:1853`、kind 検証 `:2575-2576`、managed ドライバ一覧 `:2759-2762`）、**CP** の MCP ツール（`control-plane/internal/mcpsrv/mcp.go:295,473,487,518-550`——説明文・スキーマ・実行時検証で 3 箇所、1 箇所ではない）、そして `mcpsrv/mcp_server.go:70-74` の `mcpKnownKinds`＝同じ一覧の 4 本目。説明文は全セッションの固定トークン費なので、増やすのではなく書き換える |
+| MCP——独立に **4** 本の一覧 | 登録簿（`mcpreg/def.go:57-61`、`mcpreg/materialize.go:47,74-87`、`mcpproj/inspect.go:36-44,50-58`）、**ローカル**の `af` サーバ（`mcpx/mcp_stdio.go` の `list_models` 記述子・`a.Kind != …` の検証・`driver = "managed"` の一覧——この 3 箇所は `06ea94d3` と `73ac5cdc` の間で 6 行ずれたので、行番号でなく記号で指す）、**CP** の MCP ツール（`control-plane/internal/mcpsrv/mcp.go:295,473,487,518-550`——説明文・スキーマ・実行時検証で 3 箇所、1 箇所ではない）、そして `mcpsrv/mcp_server.go:70-74` の `mcpKnownKinds`＝同じ一覧の 4 本目。説明文は全セッションの固定トークン費なので、増やすのではなく書き換える |
 | Console の面 | `console/src/types/session.ts:9-12`（`SessionKind` と表示順。これが無いと何も描かれない）、`console/src/agents/registry.ts` の記述子、`console/src/lib/settings.ts:958-966` の起動既定、`LaunchDefaults` の kind union `console/src/features/settings/agents/AgentCardParts.tsx:76`、新しい `MuseCard.tsx` とその配線元 `features/settings/agents/AgentsTab.tsx:250`、`features/settings/workspace/EnvTab.tsx`、`console/src/features/settings/mcp/mcpWire.ts:9`（`MCP_KINDS`・Go 側の写し）、`ScheduleDetailModal.tsx` の `AGENT_KINDS`、`features/mirror/{turnTime.ts:10,FileChangeStrip.tsx:69}`、`features/repos/ProjectActionPanels.tsx:34`、`console/src/lib/brandicons.ts:36` とアイコン資産そのもの、`console/src/lib/termcolor.ts:19`、そして `tokens.css` と機能別 5 スタイルシートにまたがる色の対（docs/log/74 §9.3） |
-| 配備と CI | 決定 8 の 2 variant——entrypoint の boot-install（ピン＋sha256＋`MUSE_NO_AUTO_UPDATE`＋影の検知）と `workspace/Dockerfile` の `BAKE_AGENT_CLIS=1` 経路——、`env_tool_versions.go`、**`NOTICE`**（プロプライエタリ CLI は同梱せずそこに載る）、他のピン済み CLI を運んでいる release / drift ワークフローと setup action |
+| 配備と CI | 決定 8 の 2 variant——**`/usr/local/share/agent-fleet/versions.json`**（lean のピンが載る唯一の場所）、entrypoint の boot-install と repin（`entrypoint.sh:299-352`。`MUSE_NO_AUTO_UPDATE` と版一致の検査を含む）と `workspace/Dockerfile` の `BAKE_AGENT_CLIS=1` 経路——、`env_tool_versions.go`、**`NOTICE`**（プロプライエタリ CLI は同梱せずそこに載る）、他のピン済み CLI を運んでいる release / drift ワークフローと setup action |
 | 文言 | `bridge/format.go` の `kindLabel`、Console の i18n 目録（en＋ja）、利用ガイド、`guide/ref` の能力表——`scripts/docs-check.py` が `Caps()` と両言語を突き合わせる |
 | テスト | MSP スキーマ指紋のドリフト検査、routes・contract テスト、焼いた版文字列を突合する e2e smoke |
 
@@ -428,9 +441,10 @@ managed 専用の門と同じく、先に着地した方が払う。
 - **Muse のピアメッセージングを AF のそれに繋ぐ。** 1 つの名前空間に 2 つの経路、片方はミラーに映らない。
 - **コミュニティの ACP アダプタ**（`muse-code-acp`）を managed の継ぎ目にする。版と指紋を持つ一次
   プロトコルの前に、第三者の翻訳層を挟んでも損しかしない。
-- **利用者の home への利用者ごとオンデマンド導入（kiro の形）。** 決定 8 の boot-install とは別物である:
-  kiro の 855 MiB は利用者ごとに `~/.local` に落ちてそこで自己更新する＝決定 8 が見張っている影そのもの。
-  299 MiB なら、ピンとチェックサム付きでコンテナ単位に起動時導入する方が小さく、しかも AF の統制下にある。
+- **kiro 形の利用者ごとオンデマンド導入。** 違いは置き場所ではない——出荷 variant も `~/.local` に置く
+  （決定 8）。違いは**ピン**である: kiro のそれは自己更新し利用者の要求で入るが、boot-install は起動の
+  たびに `versions.json` のピンへ戻す。ここで却下しているのは「ピンの無い自己更新バイナリ」であって、
+  home ディレクトリではない。
 - **プロトコルの良さだけで今すぐ採用する。** 下の 3 門は安く、どれも「いくら読んでも分からないこと」を
   見に行くものである。
 
@@ -448,7 +462,8 @@ managed 専用の門と同じく、先に着地した方が払う。
 - **ドリフトには鍵がある**: `muse schema` はオフラインで、release マニフェストには
   `msp_schema_fingerprint` がある。焼いたバイナリの指紋と、生成した型が拠った指紋の一致をテストにすれば、
   黙ったプロトコル変更が赤いビルドになる。他のどの種別にも無い仕掛けである。
-- **見積り**: managed 専用・TUI 資産なしで **22〜33 セッション日**——下表の単純合計で、見出しを綺麗にする
+- **見積り**: managed 専用・TUI 資産なしで **表の合計 22〜33 セッション日、今日の期待値は 23〜35**
+  （managed 専用の門が未払いのため。下記）——下表の単純合計で、見出しを綺麗にする
   ための丸めはしない。数字は毎巡動いており、それ自体が正直な信号である: 14〜20（算数が誤り・行が不足）→
   15〜23 → 20〜31 → 22〜33。最後の移動はほぼ 1 行——AF 初の承認 interaction を作ること——と、下向きの訂正
   1 つ（動的な軸の正体は `UpdateSettings` で、ドライバ行に既に計上されていた）である。規模の錨は種別横断の
@@ -470,8 +485,14 @@ managed 専用の門と同じく、先に着地した方が払う。
   | Console の面・i18n・ガイド・`guide/ref` の能力表 | 2〜3 |
 
   **ADR 0093 の状態がここに効き、しかも半分着地している**: `workspace/agent/internal/harness/` は develop に
-  あり（その承認まわりは同じ `Permissions: true` を名指す）、`session.KindLcpp` はまだ無い。つまり決定 2 の
-  managed 専用の門は未払いのまま（**＋1〜2 日**）だが、承認 interaction の一部はそうでないかもしれない。
+  あり（その承認まわりは同じ `Permissions: true` を名指す）、`session.KindLcpp` はまだ無い。よって今日の
+  期待値は表＋その門で **23〜35 日**である。
+
+  **この非対称は対称な言い回しでなく推奨である。** ADR は「先に着地した方が払う」と 2 度書いているが、
+  実際に動いているのは片方だけである。0093 が先に着地すれば、muse の限界費用は managed 専用の門の分と、
+  0093 の harness が実際に賄う範囲の承認 interaction の分だけ下がる——門が無料で承認行がこちら持ちなら
+  **19〜28 日**、その行が本当に共有なら更に下。0093 を muse より前に置くことはおよそ 1 週間分の価値があり、
+  この ADR はその順序を推奨する。
   誤差の向きは
   依然として上振れで、最大の未知は「MSP の 47 メソッド・31 通知のうち、"動く" ではなく "正しい" ドライバに
   何本要るか」であり、3 巡のレビューはいずれも数字を同じ向きに動かした。
@@ -482,7 +503,7 @@ managed 専用の門と同じく、先に着地した方が払う。
 | 段 | 内容 | 次への門 |
 |---|---|---|
 | 0 | この ADR のプローブ（2026-09-20 完了）: 導入・MSP 疎通・ピンとチェックサム・worktree と他 CLI 文脈の挙動・常駐費 | — |
-| 1 | **門 A**（0.5 日）: `bwrap` を焼いて実 Workspace イメージで走らせる。両方のマウント API が既に拒否されているので、これは探索でなく確認であり、期待される答えは「決定 5 の免除は恒久」と記録すること。**門 B1**（2〜2.5 日）: API キー 1 本と、決定 10 の会計マトリクス（キャッシュ・subagent・失敗／中断ターン・resume 後・累積か毎ターンか）、加えて `model/list`、`approval/requested` の往復 1 回、`userInput/requested` の往復 1 回、subagent 1 つ、決定 12 のフリート層と利用者層の書込先（別々に）、決定 6 の締め付け 7 つの設定鍵（綴りはフラグ名から推測できない）、設定ファイルのロック規約を syscall で、`session/start.config.mcpServers` が効くか（決定 11 の第 2 経路）、そして **`-w` を渡さない通常実行**が作業コピーに何を書くか（決定 7 は今 `-w` の実測だけに乗っている）。**門 B2**（0.5 日）: この箱で走らせられないブラウザオンボーディングを前提に、**サブスク**の資格情報を別の場所で取得してここに入れられるか。⚠️ B1 は 9 項目を抱えており、ロック規約の追跡だけで半日級である。溢れた場合に段 2 へ回してよいのは MCP の第 2 経路と締め付けの鍵の綴りで、会計マトリクスは決して回さない | A と B1 に答えが出て、利用者が決定 6 の締め付けと出費を受け入れる。B2 は「不可」でもよい——その場合 v1 は従量のみとガイドに書いて段 2 へ進む |
+| 1 | **門 A**（0.5 日）: `bwrap` を焼いて実 Workspace イメージで走らせる。両方のマウント API が既に拒否されているので、これは探索でなく確認であり、期待される答えは「決定 5 の免除は恒久」と記録すること。同じイメージビルドに**決定 8 の出荷経路**をタダで相乗りさせる: `versions.json` からの boot-install・sha256 検証・`muse --version` がピンと一致すること——さもないと実際に配る variant を段 2 まで一度も通さないことになる。**門 B1**（2〜2.5 日）: API キー 1 本と、決定 10 の会計マトリクス（キャッシュ・subagent・失敗／中断ターン・resume 後・累積か毎ターンか）、加えて `model/list`、`approval/requested` の往復 1 回、`userInput/requested` の往復 1 回、subagent 1 つ、**負荷時のホスト RSS**（決定 3 は待機 73 MiB に乗っており、その再評価条件は自分で「負荷時の実測」を求めている）、**締め付け 7 つそれぞれの効き目**（鍵の綴りだけでなく。書けるが効かない鍵は締め付け無しより悪い——決定 6 はその前に fail-close を置いているからである）、決定 12 のフリート層と利用者層の書込先（別々に）、決定 6 の締め付け 7 つの設定鍵（綴りはフラグ名から推測できない）、設定ファイルのロック規約を syscall で、`session/start.config.mcpServers` が効くか（決定 11 の第 2 経路）、そして **`-w` を渡さない通常実行**が作業コピーに何を書くか（決定 7 は今 `-w` の実測だけに乗っている）。**門 B2**（0.5 日）: この箱で走らせられないブラウザオンボーディングを前提に、**サブスク**の資格情報を別の場所で取得してここに入れられるか。⚠️ B1 は 9 項目を抱えており、ロック規約の追跡だけで半日級である。溢れた場合に段 2 へ回してよいのは MCP の第 2 経路と締め付けの鍵の綴りで、会計マトリクスは決して回さない | A と B1 に答えが出て、利用者が決定 6 の締め付けと出費を受け入れる。B2 は「不可」でもよい——その場合 v1 は従量のみとガイドに書いて段 2 へ進む |
 | 2 | 実装: 種別配線、MSP クライアントと生成型、ドライバ、転写、使用量、設定＋MCP 方言、接続カード、配備、ガイド、この ADR を *adopted* へ | — |
 
 ## 未解決（段 1 で答える）
@@ -604,6 +625,33 @@ start だけでなく start・poll・delete（`:869-875`）である。
 
 この巡で再検証していないこと: ログイン、実ターン、トークン会計、サブスクの資格情報、実 `bwrap`、MSP の
 端から端までの駆動、release マニフェスト——前巡と同じ境界である。
+
+## レビュー 第 5 巡（2026-09-20・同じ opus セッション）——結論は保つ
+
+「結論を覆すものがあるか」を主題に置いて訊いた答えは **無し**: managed 専用であること、採否を段 1 の
+3 門で決める構えは、どちらも再検討に耐えた。残存リスクは門 B1 に集中しており、そこで落ちても費用は
+この ADR とプローブだけである。第 4 巡の 15 件は全件解消を確認。指摘は 12 件、うち 1 件が構造的だった。
+
+- **決定 8 は出荷 variant の導入先を取り違えており、その誤りが自分の影の見張りを壊していた。** lean の
+  boot-install は CLI を `~/.local` に置く——ベンダのインストーラと同じ場所——ので、「接続カードが
+  `~/.local/bin/muse` を見つけたら報告する」は **AF 自身のバイナリを報告する**ことになっていた。検査は
+  `versions.json` との版一致に直し、直し方は entrypoint の既存の repin（`entrypoint.sh:336-352`）である。
+  却下していた kiro 形も、場所が同じになった以上、ピンの有無で論じ直した。
+- **`Caps.PermissionChoice` が丸ごと抜けていた**（この巡の前は出現 0 件）。これが無いと
+  `POST /sessions` が `skip_permissions=false` を拒むので、決定 5 の「承認は残す」を起動時に要求すら
+  できない。`Capabilities` ではなく `Caps`——構造体が 2 つあり、決定 13 は片方しか決めていなかった。
+- 門の穴が 3 つ、いずれも今いる場所で安く塞げる: 決定 3 自身の再評価条件が求める**負荷時**の RSS、
+  門 A のイメージビルドでタダで通せる**出荷側**の配備経路、そして鍵の綴りではなく締め付けの**効き目**。
+
+ほかに、見積りを表（22〜33）と今日の期待値（23〜35）の両方で書き、存在しない対称を繰り返す代わりに
+「ADR 0093 を先に置くことがおよそ 1 週間分の価値がある」と明記した。アンカーのずれ 3 件
+（`fileSpecs`・`driver.go`・`06ea94d3` と `73ac5cdc` の間で動いた `mcp_stdio.go` の 3 行）、第 4 巡で
+半分しか直っていなかった決定 6 の 1 文、そして日本語コメントを英語の言い換えで引用符に入れていた箇所も直した。
+
+この巡で独立に再実測され、本文と一致したもの: release マニフェスト（匿名・7 成果物すべてに sha256・
+299.3 / 268.9 MiB）と、名指しに値する 1 つ——**ドリフトの鍵が実際に効く**こと（マニフェストの
+`msp_schema_fingerprint` が手元の `muse schema` が書く指紋と一致）。この ADR が引くファイルのうち
+`06ea94d3` から `73ac5cdc` の間に変わったのは 1 本だけだった。
 
 ## レビュー 第 4 巡（2026-09-20・同じ opus セッション）
 
