@@ -127,6 +127,14 @@ const ARROW_KEY: Record<ArrowVariant, MsgKey> = {
 // a glance which kind of line is which (docs/log/101 §101.4).
 const isFamilyArrow = (v: ArrowVariant): boolean => v === "spawn" || v === "fork" || v === "handoff";
 
+// The actor spellings decision 8-2 says never become a lane. A family arrow's `from` is
+// contractually always a session (a lane id), so `fromRow == null` on one of THESE means
+// something different from `fromRow == null` on a round trip: not "this end has no lane at
+// all", but "this lane exists, just not drawn here" (decision 9's missing-parent case,
+// off-window or deleted lineage) — see the arrows.map() below.
+const isNonLaneActor = (actor: ActorId): boolean =>
+  actor.startsWith("conv:") || actor === "user" || actor === "schedule" || actor === "agent" || actor.startsWith("bridge:");
+
 interface FleetGraphViewProps {
   paneId: string;
   showArchived: boolean;
@@ -386,6 +394,18 @@ export function FleetGraphView({ paneId, showArchived, headerActions }: FleetGra
                 // translation the lane lines just got. null (an off-figure end) passes through.
                 const fromRow = a.fromRow == null ? null : (visualRow.get(a.from) ?? null);
                 const toRow = a.toRow == null ? null : (visualRow.get(a.to) ?? null);
+                // decision 8-2's "leaves the figure" glyph is for actors that never have a
+                // lane at all (conv:/user/schedule/bridge:*/agent) — a family edge's ends are
+                // ALWAYS sessions, so a null row there means decision 9's "missing parent"
+                // instead: the lane exists, just isn't drawn in this window. That case already
+                // gets its own mark next to the child's label (LaneLabel's .fgraph-parent-gap,
+                // driven independently off `lane.parent`) — drawing a SECOND, different-looking
+                // mark here would misattribute the birth to an outside actor AND duplicate the
+                // one the label already shows, so this arrow draws nothing at all.
+                const missingParent =
+                  isFamilyArrow(a.variant) &&
+                  ((fromRow == null && !isNonLaneActor(a.from)) || (toRow == null && !isNonLaneActor(a.to)));
+                if (missingParent) return null;
                 return (
                   <ArrowGlyph
                     key={`${a.ts}-${a.variant}-${a.from}-${a.to}`}

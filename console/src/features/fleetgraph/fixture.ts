@@ -163,8 +163,14 @@ export function buildFixtureGraph(scale: GraphScale): GraphModel {
     { ts: t(19), variant: "spawn", from: "fx-root1", to: "fx-child1", fromRow: 0, toRow: 1, x: xOf(scale, t(19)) },
     // fork: fx-child1 -> fx-child2.
     { ts: t(15), variant: "fork", from: "fx-child1", to: "fx-child2", fromRow: 1, toRow: 2, x: xOf(scale, t(15)) },
-    // handoff: a person launched fx-cut1 from a proposal fx-child2 made.
-    { ts: t(9), variant: "handoff", from: "fx-child2", to: "fx-cut1", fromRow: 2, toRow: 6, x: xOf(scale, t(9)) },
+    // handoff: fx-cut1 was launched from fx-ghost-parent's proposal — the SAME id as
+    // fx-cut1.parent above, and just as absent from this model. fromRow: null here is
+    // decision 9's missing-parent case, NOT decision 8-2's external actor (fx-ghost-parent
+    // is a session, it simply has no row in this window) — the view must tell the two
+    // apart by variant + whether `from` is a lane id, never draw this as if a conversation
+    // or a person triggered it, and never draw a second marker beside the one the child's
+    // label already carries (FleetGraphView.tsx's `missingParent`).
+    { ts: t(9), variant: "handoff", from: "fx-ghost-parent", to: "fx-cut1", fromRow: null, toRow: 6, x: xOf(scale, t(9)) },
     // scheduled execution starts fx-sib1 — another top-edge arrow, different actor.
     { ts: t(14), variant: "instruct", from: "schedule", to: "fx-sib1", fromRow: null, toRow: 4, x: xOf(scale, t(14)) },
     // fx-probe1's death is reported back to the conversation, red (an exit with a reason).

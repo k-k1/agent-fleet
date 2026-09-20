@@ -101,6 +101,18 @@ describe("FleetGraphView", () => {
     expect(host.querySelectorAll("svg.fgraph-svg .fgraph-cut-unknown").length).toBe(1);
   });
 
+  it("never draws a family arrow's missing-parent end as an external-actor edge glyph", async () => {
+    // fx-cut1's handoff arrow comes from "fx-ghost-parent" (fromRow: null) — a SESSION with
+    // no row here (decision 9), not an actor that never has a lane (decision 8-2). Drawing
+    // it with the top-edge glyph would misattribute the launch to a conversation/person, and
+    // would duplicate the mark the child's own label already carries.
+    await render();
+    expect(host.querySelectorAll("svg.fgraph-svg .fgraph-arrow.family .fgraph-edge-pt").length).toBe(0);
+    // The round-trip arrows (instruct/report/peer) still use the edge glyph normally —
+    // this isn't "no arrow ever draws it", only family arrows are exempted.
+    expect(host.querySelectorAll("svg.fgraph-svg .fgraph-edge-pt").length).toBeGreaterThan(0);
+  });
+
   it("clicking a known lane opens the session it names", async () => {
     await render();
     const row = [...host.querySelectorAll<HTMLElement>(".fgraph-label")].find((el) => el.textContent?.includes("fleet-graph kickoff"));
