@@ -24,8 +24,9 @@ var ErrNoTerminalRoute = errors.New("llama.cpp セッションには Terminal(CL
 func New() agents.Agent { return agentImpl{} }
 
 // agentImpl embeds NoGenericTranscript: the harness's own transcript store (JSONL,
-// AgentDataDir()/lcpp/sessions/<sid>.jsonl per ADR 0093 decision 3) doesn't exist yet, so
-// Transcript() correctly answers ok=false until a later stage wires it up.
+// AgentStateDir()/lcpp/sessions/<sid>.jsonl per ADR 0093 decision 3, docs/log/99) doesn't wire
+// into anything here yet, so Transcript() correctly answers ok=false until a later stage wires
+// it up.
 type agentImpl struct{ agents.NoGenericTranscript }
 
 func (agentImpl) Kind() string { return session.KindLcpp }

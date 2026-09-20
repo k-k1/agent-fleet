@@ -1146,3 +1146,191 @@ MoE・ハイブリッド構造）で計算バッファの実際の必要量が�
   セッションが実際に生ログで確認した cold start／起床まわりの失敗は、#5' の 302.33 秒 `context deadline
   exceeded`（§12.5・§14 表）と、この HTTP 502 の 2 件のみ。
 
+## 15. 転写の保存方式の再検討（2026-09-21・親セッション from=so2ydq6 の依頼・利用者の明示的な問題意識）
+
+利用者の問題意識（原文の趣旨）: 「転写の jsonl 形式がベストな方法か再検討したい。ecs-ec2 構成では
+`/var/lib/af` は EFS でマウントされており、負荷に弱い。claude の方式に寄せず、他のエージェントでベストな
+方法があればそちらの方法でも良い」。ADR 0087 が名指しした「未測定の項」（決定 1: 「10 セッション化で本当に
+伸びるのは走行中の転写書き込み」）を、`lcpp` の store（`workspace/agent/internal/agents/lcpp/store.go`、
+PR #818 でレビュー済み・develop マージ済み）に対して先取りで検証した。
+
+結論を先に書く: **(1) 置き場所は `AgentDataDir` → `AgentStateDir` に直した（実装済み）。durability の差は
+無い——両方とも EBS の同じボリュームで、正しさ／一貫性の修正であって耐障害性の変更ではない。(2) 書き込みの
+形は「1 レコードごとに開閉」から「ハンドルを使い回す」に直した（実装済み）——レコードあたり約 4.09
+→ 約 1.10（定常状態では書き込み 1 回のみ）に実測で減った。(3) claude の方式（EFS 上の jsonl）に寄せる
+のは誤りで、他 kind の実例（SQLite・codex の rollout jsonl）を見ても、いま `lcpp` が使っている「追記専用
+jsonl・自前で書いて自前で読む」という形自体は変える理由がない。** 詳細は以下。
+
+### 15.1 問い1: 置き場所は `AgentStateDir()` にすべきか
+
+**結論: すべき。直した。** `paths.go` の 2 つの doc コメントを読み比べると判定基準は明確だった:
+
+- `AgentStateDir()`（`internal/paths/paths.go:33-58`）の doc コメントは 3 段の線引きを書いており、その 3
+  番目が「Anything keyed by session name or sid belongs on this side」。ADR 0087 決定 4 の実装節
+  （`docs/decisions/0087-efs-metadata-io.ja.md:786-787`）も「残りは AgentStateDir。セッション名や sid で
+  引くものは全部こちら」とほぼ同じ言葉で繰り返している。`lcpp` の store は `<sid>.jsonl` そのもの——
+  sid で引く典型例で、この規則に照らして最初から `AgentStateDir` 側だった。
+- 対して `AgentDataDir()`（`paths.go:135-141`）の doc コメントが挙げる用途は「削除したセッションの
+  cleanup archive」であり、実際の呼び出し元（`cleanup_archive.go:34` の `cleanup/`、`internal/afdb/afdb.go:214,223`
+  の postgres/mysql データディレクトリ、`internal/usagex/ledger.go:139` の使用量台帳、
+  `internal/agents/opencode/workspaceid.go:70` の単一ファイル）はどれも sid 単位ではない——`lcpp` の store
+  だけがこの中で唯一 sid キーだった。ズレの原因は悪意でも設計判断でもなく、単に「両方の doc コメントを
+  突き合わせて確認する」というチェックが無かったこと（`lcpp` はまだ配線されていない段階のコードで、
+  レビューの俎上にも上っていなかった——PR #818 のレビューでもこの点は指摘されていない）。
+
+**副産物として denylist の穴が閉じた。** Console のファイルブラウザの denylist（`workspace/agent/fs.go`
+の `fsDeny`）は `.local/state/agent-fleet`（=`AgentStateDir`）を持つが `.local/share/agent-fleet`
+（=`AgentDataDir`）は持たない。つまり**移す前は、生の会話内容（ツール結果・reasoning を含む）がファイル
+ブラウザ経由で見えていた**——ADR 0087 決定 4 の「移行先にも今と同等の保護が要る」という警告が、ここでは
+逆向き（今の場所に保護が無かった）に効いていた。`AgentStateDir` へ移すことでこの保護を新規実装無しで
+獲得した。
+
+**トレードオフは「無い」——ただし理由が本質的**: 依頼文は `AgentStateDir` を EBS 単一 AZ・
+`AgentDataDir` を暗に比較対象として挙げていたが、実際には**両方とも同じ home ボリューム（EBS・単一 AZ）
+に載っている**（`0087-efs-metadata-io.ja.md` の背景節の表: `home → /home/dev` は「インスタンスの EBS」の
+1 行のみで、`~/.local/share` と `~/.local/state` はどちらもその配下）。EFS が載っているのは `claude`
+（`CLAUDE_CONFIG_DIR`）と `keep`（`AF_WS_KEEP_DIRS`）の 2 マウントだけで、どちらも `AgentDataDir` /
+`AgentStateDir` とは無関係。**したがって『どちらの状態ディレクトリに置くか』は耐久性の論点ではなく、
+一貫性と denylist の論点でしかない。** 耐久性の本当の論点は次の「claude に寄せるべきか」（EBS vs EFS）
+であり、そちらは §15.1.1 で扱う。
+
+#### 15.1.1 claude に寄せて EFS に置くべきか（利用者の問題意識への直接の回答）
+
+**結論: 寄せるべきではない。** claude の転写が `CLAUDE_CONFIG_DIR`（EFS）に載っているのは偶然ではなく、
+ADR 0045 決定 3-6 と ADR 0087 の背景節が明言する設計判断そのものである: 「単一 AZ・単一ボリュームの EBS
+が失われたとき、ログイン情報まで一緒に失わないため」（`0045-ec2-persistent-workspace.ja.md:85-86`）。
+ADR 0087 決定 4 のトレードオフ節も同じ非対称性を認めている——**home（EBS）を失うとセッション台帳は失うが
+「転写そのものは `CLAUDE_CONFIG_DIR` 側なので残る」**（`0087-efs-metadata-io.ja.md:764-768`）。つまり
+claude にとって EFS は「会話内容という取り返しのつかないものを、取り返しのつく台帳より長生きさせる」ため
+の意図的な置き場所であり、**EFS のメタデータ I/O コストはその耐久性と引き換えに払っている代償**である。
+
+`lcpp` にこの非対称性は無い。`lcpp` の store は claude のような二重構造（消えても構わない台帳 + 消えては
+困る転写）を持たない——**store そのものが会話の正本**（ADR 0093 決定 3）であり、失えばセッション台帳と
+同じ運命どころか、会話内容そのものが消える。だからといって claude と同じ場所（EFS）に置くべきだ、とは
+ならない。理由は 2 つ:
+
+1. **EFS に置くことは、ADR 0087 が全力で塞ぎにいった問題をこの store 1 つのために再導入すること**になる。
+   ADR 0087 決定 1 が名指しした「未測定の項」（走行中の転写書き込み）は、まさにこの store が EFS 上に
+   あったときにだけ意味を持つ懸念であり、§15.2 の実測はその懸念が**現状は的外れである**ことを示す
+   （store は EBS 上にあり、EFS のメタデータ課金にもバーストクレジットにも一切乗らない）。ここを EFS へ
+   動かせば、その実測がそのまま「本当に効いてくる数字」に変わる——利用者が最初に持っていた懸念そのものを
+   自分で作り出すことになる。
+2. **EBS 喪失時に失うものの重さが claude と違う。** claude はセッション一覧が空になるだけ（転写は残る）。
+   `lcpp` は EBS を失うと会話そのものを失う——これは重い。しかし「EFS に置けば防げる」も過大な期待で、
+   ecs-ec2 では GPU エンジンを載せた ECS タスクと Workspace の home が同じ AZ 障害に巻き込まれる場面では、
+   会話を再開する先（動いている llama-server、Workspace 自体）もろとも失われる可能性が高く、
+   **転写だけを生き残らせても対話は再開できない**。EBS 喪失というまれな事象に備えて、日常的な
+   メタデータ I/O コストを毎回払うのは割に合わない。
+
+**したがって `lcpp` の store は EBS（`AgentStateDir`）に留め、claude の方式には寄せない。** これは
+「たぶん速いから」ではなく、ADR 0045/0087 が明文化した EFS 選択の理由（資格情報・claude 転写の耐久性）が
+`lcpp` には当てはまらないという、一次資料に基づく判断である。将来 EBS 喪失時の転写保全が重要な要件になる
+場合は、EFS への丸ごと移設ではなく、非同期バックアップ／レプリケーションのような別の手段を検討すべき
+（本調査のスコープ外）。
+
+### 15.2 問い2: 書き込みの形は妥当か（実測）
+
+**実測方法**: `internal/session/meta_probe_test.go` と同じ手法——実コードをテストバイナリに固めて子
+プロセスとして起こし、`strace -f -c`（`-e trace=file` は使わない。`fstat`/`close`/`write` はファイル名を
+取らないので `trace=file` だと取りこぼす——`meta_probe_test.go` 自身が既に踏んだ罠と同じ）。プローブは
+`internal/agents/lcpp/store_probe_test.go`（`TestProbeAppend`、`AF_PROBE=1` でのみ動く）として追加した:
+
+```
+go test -c -o /tmp/lcpp-probe ./internal/agents/lcpp/
+AF_PROBE=1 strace -f -c /tmp/lcpp-probe -test.run '^TestProbeAppend$'
+```
+
+500 回の `AppendUser` を、修正前と修正後のコードでそれぞれ計測した。
+
+| 実装 | openat | newfstatat | write | close | mkdirat | 合計（append 起因） | 1 レコードあたり |
+|---|---|---|---|---|---|---|---|
+| 修正前（毎回 MkdirAll→OpenFile→Write→Close） | 516 | 505 | 504 | 515 | 7 | 2,047 | **約 4.09** |
+| 修正後（ハンドルを使い回す） | 17 | 6 | 504 | 15 | 7 | 549 | **約 1.10**（定常状態は write 1 回のみ） |
+
+内訳の意味: 修正前は `os.MkdirAll` が実装上まず `Stat`（`newfstatat`）を打ってから既存なら何もしない、と
+いう形なので、ディレクトリが既にあってもレコードごとに 1 回の `stat` が乗る。それに `OpenFile`（`openat`）
+と `Close` を毎回挟むので、**メタデータ操作だけで 1 レコードあたり 3 回**（stat + openat + close）＋
+データ操作 1 回（write）＝ **4 回**——利用者への報告文が挙げていた「3〜4 回」という見立てが、この store
+では実測でも正確だった。修正後は最初の 1 回だけが MkdirAll/OpenFile を払い、以降は保持したハンドルへの
+`Write` だけが増える。
+
+**なぜこれを直す価値があったか（EFS に無いのに）**: 現状 `lcpp` の store は EBS 上にあり、この差は
+本番の請求にもレイテンシにも今日時点では効かない（EBS のローカルシステムコールは EFS の NFS ラウンドトリップ
+と桁が違う）。しかし直す理由は 3 つある: (a) タダで直せる——決定 3 の不変条件（追記単調・最終行だけが
+破損しうる）を一切変えずに済む改善であることを下で確認した、(b) `harness` の `runToolCalls` は 1 ターンの
+複数ツール結果を並行に append するため、この mutex の臨界区間が短くなること自体が同時実行の観点で意味を
+持つ、(c) §15.1.1 で「EFS には寄せない」と決めたが、将来 lcpp の要件が変わって別のネットワークファイル
+システムに載る可能性がゼロとは言えない——そのときに効いてくる直しを今のうちに入れておくのは ADR 0087 の
+教訓そのものである。
+
+**クラッシュ耐性は変わらない。** `os.File.Close` は `fsync` を呼ばない——閉じても閉じなくても、書き込み
+済みの bytes の耐久性（ページキャッシュに乗っているだけで、まだディスクに無いかもしれない）は同じである。
+「最終行だけが壊れうる」という Records の契約を支えているのは「それより前の Write は既に成功して返って
+いた」という事実であって、その後ハンドルを閉じたかどうかとは無関係——ハンドルを使い回しても、プロセスが
+死んで良いのは *まさにいま書き込み中だった 1 行* だけ、という性質は変わらない（`store.go` の `append` の
+doc コメントに明記した）。
+
+**実装**: `Store` に `f *os.File` を追加し、`append()` が最初の呼び出しでのみ `MkdirAll`+`OpenFile` を行い、
+以降は保持したハンドルへ `Write` するだけにした。まだ誰もこの kind を配線していない（`agent.go` 自身の
+doc コメント）ため呼び出す側は無いが、将来のセッション終了時に呼べるよう `Close()` を追加した——呼ばなくて
+も正しい（プロセス終了時に OS が fd を閉じるだけで、`Close` 自体が足すものは無い）が、fd を無限に持ち続け
+ないための片付け先を用意した。
+
+**陽性対照（実施済み）**:
+- `statemig.Entries` から `"lcpp"` を一時的に外し、`TestEveryStateStoreIsInEntries` が赤くなることを確認
+（`"lcpp" (internal/agents/lcpp/store.go) resolves under the state dir but is not in statemig.Entries`）→
+Edit で戻し緑を確認。
+- `Close()` の `s.f = nil` を一時的に外し、新設した `TestCloseThenAppendReopens`（2 回目の `Close` で
+`file already closed`）が赤くなることを確認 → Edit で戻し緑を確認。
+
+**陰性対照**: 既存の `store_test.go` 全 15 本（`TestAppendIsMonotonic`・`TestAppendConcurrentNoTornLines`・
+`TestRecordsTruncatedFinalLineIsTolerated`・`TestRecordsMidStreamCorruptionStillErrors` を含む）が
+`-count=1` で緑のまま——追記単調・最終行のみ破損許容・合成ターン除外のどの不変条件も壊していない。
+
+### 15.3 問い3: 他 kind の実例に学ぶものはあるか
+
+4 kind の実際の格納形式を一次コードから確認した（読み取り専用調査。詳細は各 `internal/agents/<kind>/` 配下）:
+
+| kind | 実際の形式 | 追記専用か | 備考 |
+|---|---|---|---|
+| opencode | SQLite（`~/.local/share/opencode/opencode.db`、WAL、`message`/`part` テーブル） | **否**——可変なリレーショナルストアで、約 38 回の適用済みマイグレーションを持つ未バージョン管理のスキーマ | `internal/agents/opencode/transcript.go:20-38,120-123` |
+| codex | JSONL rollout（`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`） | **是**——`transcript.go:27-31` に明記 | `rolloutcache.go` が末尾だけを増分パースし、途中で壊れた・縮んだファイルは破棄して読み直す |
+| copilot | JSONL（`events.jsonl`、ライブ追記） | **是**——`stop.go:3` に明記 | SQLite の索引（`session-store.db`）も別途持つが、うちのコードは**あえて読まない**（`forkat.go:4-21`）——jsonl の方が正本という判断 |
+| kiro | JSONL v2 session store（`~/.kiro/sessions/cli/<sid>.jsonl`） | **是**——`kiro.go:16` に明記 | 旧 SQLite（`~/.local/share/kiro-cli/data.sqlite3`）は**意図的に見ない**——`kiro.go:18-20` のコメントは「opencode のストア契約変更が引き起こした false-idle の教訓」と明記しており、他社スキーマへの依存が実際に事故を起こした前例そのもの |
+
+🔴 **決定的な非対称性**: 上の 4 kind はどれも「CLI 自身が書き手で、うちは読むだけ」。フォーマットを選べる
+のは `lcpp` だけであり、「他がこうしているから」は理由にならない——**うちの要件（追記単調・ミラーが末尾を
+読む・fork が anchor で切る・クラッシュ耐性・EBS 上）に対して良いかどうか**で評価する。
+
+**SQLite（opencode の実例）を採らない理由**: (a) 依存が増える（pure-Go ドライバでも新規の外部依存）、
+(b) WAL モードは副ファイル（`-wal`/`-shm`）を伴い、`lcpp` が今 mutex 1 本で済ませている「1 プロセス内の
+書き手が 1 つ」という単純な排他モデルに対して過剰、(c) 決定 3 の「追記専用・最終行だけが壊れうる」という
+契約は、リレーショナルストアの一般的なクラッシュ耐性モデル（トランザクションのロールバック）とは前提が
+違い、素直に対応しない、(d) kiro のコメントが第一者の実例として警告している通り、可変スキーマへの依存は
+静かな事故（false-idle）を起こした実績がある——**今回は自分でスキーマを書く側になるので他社の破壊的変更
+という同じ事故は起きないが、「読み手（ミラー・fork）が持つ前提とスキーマが少しずつずれていく」という
+構造的なリスクは残り、append-only な行指向フォーマットにはそもそも無い種類の問題を増やすだけで、得るもの
+が無い**。
+
+**codex の rollout（jsonl）は、実質すでに `lcpp` と同じ設計**——追記専用・1 行 1 イベント・最終行の破損
+だけを許容、という組み合わせは `lcpp/store.go` が独自に選んだのではなく、うちが既に信頼して読んでいる
+別 kind の実例と一致する。**変える理由は無い、むしろこの一致は今の設計を裏付ける一次資料である。**
+
+**§15.2 の外への波及として 1 点だけ記録する（今回は実装しない）**: codex の `rolloutcache.go` は
+ミラー側の再読み込みを「新しく増えたバイト分だけ」に抑える増分パースを持つ（`rolloutcache.go:34-51`）。
+`lcpp` の `Records()`/`Transcript()`/`Full()` は今のところ毎回全文を読み直す——書き込み側（本節で直した
+所）とは別の軸だが、ミラーの poll 頻度が上がった場合に効いてくる可能性がある改善候補として、ADR 0093
+決定 3 の P2 相当の残作業に記録しておく（本調査のスコープ外・実装なし）。
+
+### 15.4 ADR 0093 決定 3 に対する提案（決定文そのものの書き換えは範囲外）
+
+ADR 0093 決定 3 の記述のうち、以下の 2 点は本節の結論を踏まえて直すことを提案する（**この文書の役割は
+提案までで、決定文自体の書き換えは駆動役・利用者の判断**）:
+
+1. 保存先を `AgentDataDir()` ではなく `AgentStateDir()` と明記する（§15.1）。
+2. 書き込み方式について「1 レコード 1 write（ハンドルは使い回す）」という実装上の性質を明記し、
+   §15.2 の実測値（4.09 → 1.10 syscalls/レコード）を根拠として添える。EFS には置かない、という
+   §15.1.1 の判断も、決定 3 の「保存先」節に一次資料（ADR 0045 決定 3-6・ADR 0087 決定 4）への参照とともに
+   残すことを推奨する——次にこの store を触る人が同じ疑問（claude に寄せるべきでは）を再び一から
+   調べ直さずに済むように。
+

@@ -116,6 +116,10 @@ var Entries = []string{
 	// introduced after the move — but every AgentStateDir-resolving name is required to be
 	// listed here (statemig_drift_test.go): run() no-ops on a source that was never there.
 	"fleet-graph",
+	// The lcpp kind's own transcript store (docs/log/99's re-examination of ADR 0093 decision
+	// 3), keyed by sid like the rest of this list. Also never existed under .config — it was
+	// introduced under AgentDataDir and only just moved onto this side.
+	"lcpp",
 }
 
 // markerName records which entries are finished, so an entry whose source could not be

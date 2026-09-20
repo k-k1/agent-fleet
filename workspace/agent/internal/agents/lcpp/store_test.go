@@ -16,7 +16,7 @@ import (
 
 // testHome redirects paths.HomeDir (and so sessionsDir) at a scratch directory for the
 // duration of one test — the same idiom the rest of this module's tests use for paths.* seams
-// (e.g. internal/userinstr/userinstr_test.go), since paths.AgentDataDir offers no injectable
+// (e.g. internal/userinstr/userinstr_test.go), since paths.AgentStateDir offers no injectable
 // base function of its own.
 func testHome(t *testing.T) string {
 	t.Helper()
@@ -40,7 +40,7 @@ func (c fakeClient) InputTokens(context.Context, []harness.Message, []harness.To
 func TestOpenPathLayoutAndLazyCreation(t *testing.T) {
 	home := testHome(t)
 	s := Open("sid-1")
-	want := filepath.Join(home, ".local", "share", "agent-fleet", "lcpp", "sessions", "sid-1.jsonl")
+	want := filepath.Join(home, ".local", "state", "agent-fleet", "lcpp", "sessions", "sid-1.jsonl")
 	if s.Path() != want {
 		t.Fatalf("Path() = %q, want %q", s.Path(), want)
 	}
@@ -558,6 +558,33 @@ func TestRecordsMidStreamCorruptionStillErrors(t *testing.T) {
 	}
 	if len(recs) != 1 {
 		t.Fatalf("recs = %+v, want exactly the 1 record before the corrupted line", recs)
+	}
+}
+
+// TestCloseThenAppendReopens pins Close's own contract: it is optional cleanup, not a
+// one-way valve — a Store that keeps being used after Close must transparently reopen its
+// cached write handle rather than erroring or silently going nowhere.
+func TestCloseThenAppendReopens(t *testing.T) {
+	testHome(t)
+	s := Open("sid-close")
+	if _, err := s.AppendUser("one"); err != nil {
+		t.Fatalf("AppendUser: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := s.Close(); err != nil { // idempotent: a second Close on an already-closed store
+		t.Fatalf("second Close: %v", err)
+	}
+	if _, err := s.AppendUser("two"); err != nil {
+		t.Fatalf("AppendUser after Close: %v", err)
+	}
+	recs, _, err := s.Records()
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	if len(recs) != 2 || recs[0].Content != "one" || recs[1].Content != "two" {
+		t.Fatalf("recs = %+v, want two records surviving Close+reopen", recs)
 	}
 }
 
