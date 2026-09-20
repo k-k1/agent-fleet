@@ -413,6 +413,53 @@ func groupStateOf(q *jobQueue, id string) string {
 	return ""
 }
 
+// ADR 0094 decision 2, root-fixed per sfiowgj review (2026-09-20): the queue's own finish() has
+// to ask Caps about res.Model (what actually ran), not j.model (resolveModelFamily's ENQUEUE-time
+// guess) — j.model is always resolved to a concrete id even for a request naming none, so asking
+// it here was ALREADY per-model before decision 11 ever existed, and would keep being per-model
+// even where it guessed the wrong row (a family that does not offer the requested op, remapped
+// away from inside Generate itself).
+// The queue's own version of sfiowgj's 🟡A finding: `resolveModelFamily` always resolves
+// `req.Model` to a concrete id before `Generate` ever runs (jobs.go's Enqueue), so this route's
+// Caps lookup was ALREADY per-model even before ADR 0094 decision 11 existed — which is exactly
+// why decision 2's caller-negative branch, once it lived in comfyNegativeIgnoredWarning too,
+// fired ALONGSIDE this one on every request through the pane: two warnings for the one dropped
+// negative_prompt. Removing that branch (and asking Caps about res.Model, the row that actually
+// ran, rather than j.model, the enqueue-time guess) leaves exactly one.
+func TestQueueWarnsExactlyOnceAboutADroppedNegativePrompt(t *testing.T) {
+	q := withJobQueue(t)
+	// negConn() minus its catalogue-level negatives, so the ONLY possible warning is about the
+	// CALLER's own negative_prompt — isolating exactly the duplicate this test guards against.
+	conn := negConn()
+	conn.Negatives, conn.NegativeAlways = nil, ""
+	p, _ := comfyStub(t, conn, nil)
+	withStubProvider(t, p)
+
+	out := enqueue(t, q, JobSpec{Request: Request{
+		Op: OpGenerate, Prompt: "a fox", Model: "klein-4b", NegativePrompt: "watermark",
+	}})
+	id := out.Jobs[0].ID
+	waitFor(t, "the job to finish", func() bool { return stateOf(q, id) == "done" || stateOf(q, id) == "failed" })
+	if got := stateOf(q, id); got != "done" {
+		t.Fatalf("state = %s, want done", got)
+	}
+	var warnings []string
+	for _, j := range q.List().Jobs {
+		if j.ID == id {
+			warnings = j.Warnings
+		}
+	}
+	count := 0
+	for _, w := range warnings {
+		if strings.Contains(w, "negative") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("warnings = %v, want exactly ONE warning about the dropped negative prompt, got %d", warnings, count)
+	}
+}
+
 // The sidecar is the resolved request, and it is what makes a picture reproducible after the
 // form that made it is gone.
 func TestSidecarRecordsTheResolvedRequest(t *testing.T) {

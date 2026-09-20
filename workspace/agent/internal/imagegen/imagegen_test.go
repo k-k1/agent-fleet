@@ -660,6 +660,165 @@ func TestRunPinsAutoToTheProviderThatKnowsTheNamedModel(t *testing.T) {
 			t.Fatalf("res = %+v, err = %v, want codex named outright", res, err)
 		}
 	})
+
+	// 🟡 sfiowgj review: auto + a model name that belongs to NEITHER provider's list (codex/agy
+	// implement no ModelLister at all) must leave routing untouched — modelOwner finds no owner
+	// and Run() falls back to its ordinary op-based candidate selection, which is exactly the
+	// existing "model rides in the prompt" path codex/agy already use.
+	t.Run("auto + a model no provider lists: routing is untouched", func(t *testing.T) {
+		var calls []string
+		withStubProvider(t, stubProvider{id: ProviderCodex, calls: &calls,
+			res: Result{Provider: ProviderCodex, Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png"}}}})
+		res, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1",
+			Request: Request{Op: OpGenerate, Prompt: "a fox", Model: "gpt-image-1"}})
+		if err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+		if res.Provider != ProviderCodex || len(calls) != 1 {
+			t.Fatalf("res = %+v, calls = %v, want codex reached exactly once, as before decision 13", res, calls)
+		}
+	})
+}
+
+// ADR 0094 decision 2, root-fixed per sfiowgj review (2026-09-20): requestWarnings has to ask
+// Caps about the RESOLVED model (Result.Model), not the request's own — Caps("") is a union
+// (decision 11) and would silently answer "yes" for a capability only some OTHER model on the
+// engine has, and a pre-resolution model reference (jobs.go's enqueue-time guess) can also
+// disagree with what actually ran once comfy's own remap (comfyFirstModelForOp) has moved.
+func TestRunWarnsWhenStrengthLandsOnTheResolvedModelThatIgnoresIt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+	dir := t.TempDir()
+	in := filepath.Join(dir, "photo.png")
+	if err := os.WriteFile(in, tinyPNG(t, 64, 64), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	upload := func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(8 << 20)
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "up.png", "type": "input"})
+	}
+	prompt := func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+	}
+	strength := 0.3
+
+	t.Run("the resolved model ignores strength: warned", func(t *testing.T) {
+		p := comfyEditStub(t, qwenEditConn(), upload, prompt)
+		withStubProvider(t, p)
+		out, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1", Request: Request{
+			Op: OpEdit, Prompt: "make it snow", Model: "qwen-edit-row", Inputs: []string{in}, Strength: &strength,
+		}})
+		if err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+		found := false
+		for _, w := range out.Warnings {
+			if strings.Contains(w, "strength=0.3") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("warnings = %v, want the core's own strength warning", out.Warnings)
+		}
+	})
+
+	// 🔴 The actual regression: a request naming NO model at all, resolved via the WARM default
+	// to the family that ignores strength. Here req.Model is "" throughout, so p.Caps(req.Model)
+	// would read the UNION (Strength: true, since sdxl on the same engine takes it) — only
+	// p.Caps(res.Model), asking about the row that ACTUALLY ran, answers correctly.
+	t.Run("no model named, warm default ignores strength: still warned", func(t *testing.T) {
+		conn := qwenEditConn()
+		conn.Warm = "qwen-edit-row"
+		p := comfyEditStub(t, conn, upload, prompt)
+		withStubProvider(t, p)
+		out, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1", Request: Request{
+			Op: OpEdit, Prompt: "make it snow", Inputs: []string{in}, Strength: &strength,
+		}})
+		if err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+		found := false
+		for _, w := range out.Warnings {
+			if strings.Contains(w, "strength=0.3") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("warnings = %v, want the core's own strength warning even with no model named", out.Warnings)
+		}
+	})
+
+	// The positive control: the row that DOES read strength must stay silent about it.
+	t.Run("the resolved model reads strength: silent", func(t *testing.T) {
+		p := comfyEditStub(t, qwenEditConn(), upload, prompt)
+		withStubProvider(t, p)
+		out, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1", Request: Request{
+			Op: OpEdit, Prompt: "make it snow", Model: "sdxl-base-1.0", Inputs: []string{in}, Strength: &strength,
+		}})
+		if err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+		for _, w := range out.Warnings {
+			if strings.Contains(w, "strength=0.3") {
+				t.Errorf("warnings = %v, want silence for a model that reads strength", out.Warnings)
+			}
+		}
+	})
+}
+
+// The negative-prompt twin of the test above.
+func TestRunWarnsWhenNegativePromptLandsOnTheResolvedModelThatIgnoresIt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+
+	t.Run("the resolved (warm) model ignores negative: warned", func(t *testing.T) {
+		// negConn() minus its catalogue-level negatives, so the ONLY thing that could produce a
+		// warning is the caller's own negative_prompt.
+		conn := negConn()
+		conn.Negatives, conn.NegativeAlways = nil, ""
+		conn.Warm = "klein-4b" // flux2-klein never takes a negative, at any cfg
+		p, _ := comfyStub(t, conn, nil)
+		withStubProvider(t, p)
+
+		out, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1", Request: Request{
+			Op: OpGenerate, Prompt: "a fox", NegativePrompt: "watermark",
+		}})
+		if err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+		found := false
+		for _, w := range out.Warnings {
+			if strings.Contains(w, "negative_prompt=") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("warnings = %v, want the core's own negative_prompt warning", out.Warnings)
+		}
+	})
+
+	// The positive control: naming the negative-capable row must stay silent.
+	t.Run("the resolved model reads negative: silent", func(t *testing.T) {
+		conn := negConn()
+		conn.Negatives, conn.NegativeAlways = nil, ""
+		conn.Warm = "klein-4b"
+		p, _ := comfyStub(t, conn, nil)
+		withStubProvider(t, p)
+
+		out, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1", Request: Request{
+			Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0", NegativePrompt: "watermark",
+		}})
+		if err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+		for _, w := range out.Warnings {
+			if strings.Contains(w, "negative_prompt=") {
+				t.Errorf("warnings = %v, want silence for a model that reads it", out.Warnings)
+			}
+		}
+	})
 }
 
 // When everything fails the caller gets EVERY reason: "codex is out of quota, and the local

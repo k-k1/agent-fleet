@@ -411,32 +411,31 @@ func comfyNegativeFor(conn EngineConn, model string, req Request) string {
 }
 
 // comfyNegativeIgnoredWarning is said when a family with no negative branch was asked to exclude
-// something: the catalogue's default for this model, the deployment's own exclusion list, and —
-// since ADR 0094 decision 11 — the CALLER's own negative_prompt too.
+// something that the CALLER did not type: the catalogue's default for this model, and the
+// deployment's own exclusion list. The caller's own negative_prompt is reported by the core
+// against Caps.Negative (requestWarnings), and saying the same thing twice in one result teaches
+// the reader to skim warnings.
 //
-// 🔴 That last one moved here. Before decision 11, requestWarnings' own `!caps.Negative` branch
-// (imagegen.go) caught the caller's negative_prompt on its own: `Caps("")` answered with the
-// WARM row's own comfyModelTakesNegative, so a cfg-1 row (Krea 2 Turbo, Anima-Turbo — the ADR's
-// own "2 families' NORMAL row") being warm made that branch fire. Decision 11 makes `Caps("")` a
-// UNION across every model, which is correct for what it exists to fix (an op or a strength
-// disappearing from what this route advertises) but means requestWarnings now reads
-// Negative=true whenever ANY model on the engine can take one — so a request naming no model,
-// landing on a cfg-1 warm row, would have its negative_prompt dropped with NO warning from
-// anywhere. That is exactly the "most expensive kind of lie" Caps.Negative's own doc comment
-// warns about, so the per-model answer moved to the one function that already reads the model:
-// this one.
+// 🔴 That split only holds because requestWarnings asks Caps about the RESOLVED model
+// (imagegen.go's Run, jobs.go's finish — both read res.Model, not the request's own, since ADR
+// 0094 decision 11 made Caps("") a union and the request may have named no model at all). Ask it
+// with an empty or pre-resolution model instead and the caller's own negative_prompt on a cfg-1
+// warm row would be dropped with NO warning from anywhere — the "most expensive kind of lie"
+// Caps.Negative's own doc comment warns about. That gap lived here once (a comfy-only, half of
+// the picture fix); putting it in requestWarnings instead means EVERY provider gets the same
+// guarantee, not only this one.
+//
+// It is said even though nobody is at fault, because the administrator's list silently not
+// applying is precisely the failure this whole path exists to prevent.
 //
 // It reads the MODEL and not just the family for the reason comfyModelTakesNegative does: a row
 // of a guided family declared at cfg 1 drops the administrator's list exactly as silently as a
 // distilled family does, and it is the same warning either way — only the reason differs.
-func comfyNegativeIgnoredWarning(conn EngineConn, model string, family comfyFamily, req Request) string {
+func comfyNegativeIgnoredWarning(conn EngineConn, model string, family comfyFamily) string {
 	if comfyModelTakesNegative(conn, model) {
 		return ""
 	}
 	var what []string
-	if strings.TrimSpace(req.NegativePrompt) != "" {
-		what = append(what, "the negative prompt you gave")
-	}
 	if strings.TrimSpace(conn.Negatives[model]) != "" {
 		what = append(what, "this model's own negative prompt")
 	}
@@ -813,24 +812,6 @@ func comfyFirstModelForOp(conn EngineConn, op Op) (string, bool) {
 	return "", false
 }
 
-// comfyStrengthIgnoredWarning is comfyNegativeIgnoredWarning's twin for ADR 0094 decision 2's
-// remaining gap: a request naming neither a provider nor a model cannot be refused at the edge
-// (HandleGenerate / jobs_http.go's spec() have nothing to resolve a family from yet), so it
-// reaches here, denoise is fixed at 1 by the template, and Request.Strength is silently unread.
-//
-// requestWarnings' own `!caps.Strength` branch (imagegen.go) cannot catch this either: decision
-// 11 makes Caps("") a union across every model on the engine, so a request naming no model reads
-// Strength=true from it even when the WARM row it lands on cannot use it. This is the per-model
-// answer requestWarnings needed and could not have.
-func comfyStrengthIgnoredWarning(family comfyFamily, req Request) string {
-	if req.Strength == nil || req.Op != OpEdit || comfyFamilyStrength(family) {
-		return ""
-	}
-	return fmt.Sprintf(
-		"strength=%g requested, but the %s family fixes its denoise at 1 by construction (instruction editing) — nothing was varied",
-		*req.Strength, family)
-}
-
 // comfyResolveFamily is the "受付時に model → family を解く" step ADR 0094 decisions 2 and 4 ask
 // for, shared by the two edge refusals below. It is deliberately conservative: a request naming
 // NEITHER a provider nor a model cannot be resolved to a family here — the auto router has not
@@ -866,7 +847,6 @@ func comfyResolveFamily(pref, model, op string) (family comfyFamily, named strin
 		if !ready {
 			continue
 		}
-		explicitModel := model != ""
 		m := model
 		if m == "" {
 			if pref == "" || pref == "auto" {
@@ -880,9 +860,13 @@ func comfyResolveFamily(pref, model, op string) (family comfyFamily, named strin
 		if !familyOk {
 			continue
 		}
-		if !explicitModel && op != "" && !comfyFamilySupportsOp(f, Op(op)) {
-			// This is the warm default, and Generate() would remap AWAY from it for this op —
-			// so it is not the row the request will actually run against.
+		// 🔴 Applies to an EXPLICIT model too (sfiowgj review): when the op itself is wrong for
+		// this model, THAT is the reason the request fails — decision 13 refuses it by name with
+		// the ops it can do, and an explicit model's own op mismatch is refused inside Generate()
+		// ("cannot do %s"). Skipping the edge check here never lets a mismatched request through
+		// silently; it just leaves the refusal to the more specific one downstream instead of
+		// this function reporting size/strength for an op the model was never going to run under.
+		if op != "" && !comfyFamilySupportsOp(f, Op(op)) {
 			continue
 		}
 		return f, m, true
@@ -903,8 +887,10 @@ func comfyFamilySupportsOp(family comfyFamily, op Op) bool {
 // comfyStrengthRefusal is ADR 0094 decision 2's edge check, shared by HandleGenerate and
 // jobs_http.go's spec(): a resolved family that does not read Strength is refused BY VALUE before
 // any GPU is woken, the same way an out-of-range strength already is. Empty when the family
-// cannot be resolved from what the request named (comfyResolveFamily) — that gap is
-// comfyStrengthIgnoredWarning's, not this one's.
+// cannot be resolved from what the request named (comfyResolveFamily) — a request naming neither
+// a provider nor a model reaches Generate() instead, and requestWarnings' own `!caps.Strength`
+// branch (imagegen.go) catches it there, asking Caps about the RESOLVED model rather than the
+// request's own (the same fix that closes comfyNegativeIgnoredWarning's twin gap).
 func comfyStrengthRefusal(pref, model, op string) string {
 	family, named, ok := comfyResolveFamily(pref, model, op)
 	if !ok || comfyFamilyStrength(family) {
@@ -1056,10 +1042,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	}
 
 	warnings := comfyWarnings(req)
-	if ignored := comfyNegativeIgnoredWarning(conn, model, family, req); ignored != "" {
-		warnings = append(warnings, ignored)
-	}
-	if ignored := comfyStrengthIgnoredWarning(family, req); ignored != "" {
+	if ignored := comfyNegativeIgnoredWarning(conn, model, family); ignored != "" {
 		warnings = append(warnings, ignored)
 	}
 	warnings = append(warnings, comfyIgnoredParamWarnings(family, req.Params)...)

@@ -477,7 +477,13 @@ func (q *jobQueue) run(j *jobRec) {
 		q.finish(j, nil, res.Warnings, storeErr)
 		return
 	}
-	warnings := append(append([]string{}, res.Warnings...), requestWarnings(req, res, prov.Caps(j.model))...)
+	// res.Model, not j.model: j.model is resolveModelFamily's ENQUEUE-time guess (the warm/first
+	// row, with no idea what op was asked for), and comfy's own Generate can remap to a different
+	// row than that guess for an op the guessed row does not offer (ADR 0094 decision 11). Caps
+	// has to be asked about the row that actually ran, or a warning here can name the wrong
+	// capability entirely — and, since decision 11 made Caps("") a union, asking with an EMPTY
+	// model would silently answer for "some row on this engine" instead of the one in front of us.
+	warnings := append(append([]string{}, res.Warnings...), requestWarnings(req, res, prov.Caps(res.Model))...)
 	q.finish(j, files, warnings, nil)
 }
 
