@@ -65,6 +65,17 @@ function decorateLabel(kind: string, label: string, all: ModelDescriptor[]): str
 // warning drawn from nothing is worse than none.
 let opencodeRoute = "";
 
+// Why the last fetch for this kind came back with no model, as the Agent named it
+// ("catalog_empty" | "route" | "hidden" — agent_models.go's emptyReason). The picker used to
+// have to guess out loud ("check the connection and the plan"), which is wrong advice for two
+// of the three causes. Cleared as soon as a list arrives, and on a failed fetch: a fetch that
+// did not land knows nothing, and the picker says "loading" for that.
+const emptyReasons = new Map<string, string>();
+
+export function modelCatalogReason(kind: string): string {
+  return emptyReasons.get(kind) || "";
+}
+
 function fetchModels(kind: string): Promise<ModelOption[]> {
   const cacheable = kind !== "opencode";
   const hit = cacheable ? cache.get(kind) : undefined;
@@ -91,16 +102,26 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
           }));
         if (kind === "opencode") opencodeRoute = typeof d?.route === "string" ? d.route : "";
         const opts = desc.map((m): ModelOption => [m.id, decorateLabel(kind, m.label, desc)]);
-        if (!opts.length) throw new Error("empty"); // workspace stopped / CLI absent — retry next open
+        if (!opts.length) {
+          // The Agent answered, and the answer was "none" — a different fact from a fetch
+          // that never landed, and the only path on which it says why.
+          emptyReasons.set(kind, typeof d?.reason === "string" ? d.reason : "catalog_empty");
+          throw new Error("empty"); // workspace stopped / CLI absent — retry next open
+        }
+        emptyReasons.delete(kind);
         const full = [...defaultOnly(), ...opts];
         descriptors.set(kind, desc);
         if (cacheable) cache.set(kind, full);
         else inflight.delete(kind);
         return full;
       })
-      .catch(() => {
+      .catch((e) => {
         inflight.delete(kind);
         if (kind === "opencode") opencodeRoute = "";
+        // A fetch that did not land tells us nothing about why the menu is empty, so the
+        // previous answer must not be left standing as an explanation of this one. The
+        // "empty" throw above is not that case — it IS the answer, reason and all.
+        if (!(e instanceof Error && e.message === "empty")) emptyReasons.delete(kind);
         return defaultOnly();
       });
     inflight.set(kind, p);

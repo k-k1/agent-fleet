@@ -318,12 +318,19 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "ui.kind_model": "{kind} model",
   "ui.claude_registered_model": "Select a registered model",
   "ui.no_matching_models": "No matching models",
-  // Shown when a dynamic kind's catalog resolved to no selectable model. It must stay
-  // true for EVERY reason that produces it — not signed in, signed in but unable to
-  // reach the provider, a plan that only offers the default (Copilot Free is Auto-only,
-  // where empty is correct), or everything excluded in settings. The Agent does not say
-  // which, so this must not name a cause.
+  // While the catalog is being fetched. A dynamic kind's list comes from the Agent asking
+  // the CLI or its daemon, so it arrives a moment late — and until it does the picker offers
+  // "default" alone, which is the same picture as the empty note below.
+  "ui.model_loading": "Loading models…",
+  // Shown when a dynamic kind's catalog resolved to no selectable model AND the Agent could
+  // not say why. It must stay true for EVERY reason that produces it — not signed in, signed
+  // in but unable to reach the provider, a plan that only offers the default (Copilot Free is
+  // Auto-only, where empty is correct). It must not name a cause.
   "ui.model_default_only": "Only the default model is available (check this agent's connection and plan).",
+  // The two the Agent can name. Both are this workspace's own settings, so sending the user
+  // to check the connection or the plan would point at something that was never wrong.
+  "ui.model_none_hidden": "Every model is excluded in settings (Settings → Agents → models you don't use).",
+  "ui.model_none_route": "The current billing choice leaves no model to pick (Settings → Agents → opencode).",
   "ui.cancel": "Cancel",
   "ui.run": "Run",
   "ui.running": "Running…",

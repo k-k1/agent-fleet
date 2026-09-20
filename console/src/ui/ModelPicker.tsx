@@ -6,7 +6,8 @@
 // changes (resolveModel), so this only renders and reports picks.
 import { useEffect, useMemo } from "react";
 import { useT } from "../lib/i18n/index.ts";
-import { useModelOptions, useHiddenModel, useModelCatalogSettled } from "../lib/agentModels.ts";
+import { Icon } from "./Icon.tsx";
+import { useModelOptions, useHiddenModel, useModelCatalogSettled, modelCatalogReason } from "../lib/agentModels.ts";
 import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
 import { ModelCombo } from "./ModelCombo.tsx";
@@ -44,16 +45,29 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
 
   if (!options) return null;
   if (kind !== "claude") {
-    // The fetch has settled and only "default" is left = this account/plan/settings offers no
-    // selectable model. Silently showing just "default" is indistinguishable from still
-    // loading. Do not state a cause: the Console cannot tell not-signed-in, provider
-    // unreachable, a plan that only has the default (Copilot Free) and everything excluded in
-    // settings apart. dynamicOptions is post-exclusion, so this is true for the last case too.
+    // A live catalog takes a moment to arrive (the Agent asks the CLI or its daemon), and
+    // until it does the picker can only offer "default" — which is exactly what it shows when
+    // the account really has nothing. Saying "loading" for that moment is the difference
+    // between a picker worth waiting for and one that looks broken; it is also what keeps the
+    // note below from flashing on every open (useModelCatalogSettled).
     const onlyDefault = settled && (dynamicOptions?.length ?? 0) <= 1;
+    // What emptied it, when the Agent said so (agent_models.go's emptyReason). "catalog_empty"
+    // keeps the old wording: there the Console really cannot tell not-signed-in from provider
+    // unreachable from a plan with only the default (Copilot Free), so it names no cause. The
+    // other two are facts about this workspace's own settings, and pointing at the connection
+    // for either sent people to check something that was never wrong.
+    const reason = onlyDefault ? modelCatalogReason(kind) : "";
+    const note =
+      reason === "hidden" ? "ui.model_none_hidden" : reason === "route" ? "ui.model_none_route" : "ui.model_default_only";
     return (
       <div className="model-picker-dynamic">
         <ModelCombo kind={kind} options={dynamicOptions ?? []} value={model} onChange={onChange} />
-        {onlyDefault && <span className="ui-field-hint">{tr("ui.model_default_only")}</span>}
+        {!settled && (
+          <span className="ui-field-hint model-picker-loading">
+            <Icon name="loading" spin /> {tr("ui.model_loading")}
+          </span>
+        )}
+        {onlyDefault && <span className="ui-field-hint">{tr(note)}</span>}
       </div>
     );
   }
