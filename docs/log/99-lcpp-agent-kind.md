@@ -480,3 +480,124 @@ kind を作る理由は文脈量ではなく、**「opencode を経由しない�
 - llama.cpp server README（`tools/server/README.md`）: `/props`・`/slots`・`/v1/messages`・`input_tokens`・`/control`・`-fit`
 - 本リポジトリ: `workspace/agent/internal/agents/{agents.go,driver.go}`・`internal/sessionx/{agent.go,session_turn.go,session_driver.go}`・
   `internal/mcpx/mcp_stdio.go`・`internal/mcpreg/probe.go`・`control-plane/engine_gateway.go`・`console/src/agents/registry.ts`
+
+## 12. 不調モデル 2 件の原因調査（2026-09-20・上流ソースのみ）
+
+`TestManualLiveAgenticSession`（`live_manual_test.go:157`）の 5 モデル実測（別セッションで実施済み）で不調だった
+うち 2 件を、**エンジンに触らず**上流ソース（HF・ggml-org/llama.cpp・関連フォーク）と CloudWatch ログの読み取りだけで
+切り分けた。生ログはセッションローカル（`log-coder.txt` 63KB・162 ターン全部／`log-bonsai.txt`）を一次資料として読んだ。
+
+### 12.1 `qwen3-coder-30b-a3b` — 並列 0/162 は形式の限界ではない（結論: iii）
+
+| 論点 | 結論 |
+|---|---|
+| 1. パーサ/文法は複数呼び出しを表現できるか | **できる**。`common/parsers/qwen3-coder.cpp:166-167`（llama.cpp `b23efaa`）: `auto calls = inputs.parallel_tool_calls ? tool_call_first + p.zero_or_more(tool_call) : tool_call_first;` — `parallel_tool_calls` が真なら `<tool_call>` ブロックの `zero_or_more` 繰り返しを文法に含める |
+| 2. HF chat_template はループするか | **する**。`Qwen/Qwen3-Coder-30B-A3B-Instruct` の `tokenizer_config.json` の `chat_template`（2026-09-20 取得）78 行目 `{%- for tool_call in message.tool_calls %}` |
+| 3. 判定 | **(iii) 純粋にモデルの癖**（下記根拠） |
+| 4. 並列 0 は欠格事由か | **欠格事由にしない**。ADR 0093 自身の合格基準（`docs/decisions/0093-lcpp-agent-kind.ja.md:360`・本書 §10-1〜3・§11-1）は「`tool_calls` が全ターン有効な JSON・名前化けなし」であって並列は要求していない。coder は 162 ターン中 `invalid_tool_call_json=0`・`unknown_tool_calls=0`・`bad_arg_shape=0`（`log-coder.txt:171`）で**この基準を完全に満たした** |
+
+根拠（一次資料）:
+
+- **どちらのモデルも同一のパーサ経路を通る。** `common/chat.cpp:1211-1218`（コメントそのまま引用）:
+  ```
+  // Qwen3-Coder XML tool calls, also used by Nemotron Nano 3, Qwen3.5 and StepFun-3.5-Flash
+  if (src.find("<tool_call>") != std::string::npos &&
+      src.find("<function=") != std::string::npos &&
+      src.find("<parameter=") != std::string::npos) {
+      return common_chat_params_init_qwen3_coder(tmpl, params);
+  }
+  ```
+  分岐はモデル名でなくテンプレ文字列の部分一致（`tmpl.source()`＝実行時にサーバへ渡されたテンプレ本体）で行われる。
+  `qwen3.8-27b-uncensored-q4_k_m`（ベースは `Qwen/Qwen3.8-27B`、HF `config.json` の `model_type` は
+  `qwen3_5`）と `qwen3-coder-30b-a3b` の chat_template は、`<think>` の有無（後者は無し。
+  `qwen3-coder.cpp:13,21` の `is_qwen3_coder = !supports_reasoning` はここだけに効く）を除き
+  `<tool_call>\n<function=name>\n<parameter=...>` という同じ XML 形式で、**同じ
+  `common_chat_params_init_qwen3_coder` を通る**。162 ターン全部が有効な JSON として解けたこと
+  （`invalid_tool_call_json=0`）自体が、実際にこの経路（`COMMON_CHAT_FORMAT_PEG_NATIVE`）が選ばれたことの
+  実測での裏付け（選ばれなければ汎用フォールバックになり結果はもっと荒れる）。
+- **`parallel_tool_calls` の既定値はテンプレ由来で、うちのハーネスは明示していない。**
+  `tools/server/server-common.cpp:1295`: `inputs.parallel_tool_calls = json_value(body, "parallel_tool_calls",
+  caps["supports_parallel_tool_calls"]);`。うちの `chatRequest`（`workspace/agent/internal/harness/client.go:124-129`）
+  に `parallel_tool_calls` フィールドは無い（送っていない）ので、既定は `caps["supports_parallel_tool_calls"]`
+  （`common/jinja/caps.h:14` の既定値 `true`）まかせ。`caps.cpp:398-491`「parallel tool support」の実装は、
+  2 件の `tool_calls` を持つダミーの assistant 履歴をテンプレへ実際に描画させ、2 件目
+  （`tool_calls->at(1)`）が出力で「使われたか」を見て false に倒す（`caps.cpp:479,490`）。coder の
+  テンプレは 2 件をそのままループするので、このチェックで false になる理由が無い。
+  ⚠️ **確認できていないこと**: この判定は GGUF に焼かれたテンプレ本体に対して行われる。今回 HF から取った
+  `tokenizer_config.json` の `chat_template` と、GGUF 変換時に埋め込まれたテンプレが一致する保証はエンジンに
+  触らない限り無い。ただし上の分岐一致（`<tool_call>`/`<function=`/`<parameter=` の 3 リテラルが GGUF 側にも
+  存在しないと `common_chat_params_init_qwen3_coder` 自体に入れない）と実測の JSON 健全性から、**構造は同じと
+  見てよい**。
+- **結論**: 文法・テンプレ・ディスパッチのどれも複数呼び出しを禁じていない。同じコードパスを通る
+  `qwen3.8-27b-uncensored-q4_k_m` は実際に 9/29・11/30 ターンで並列した（既知の実測）。したがって coder の
+  0/162 は **llama.cpp 側にもテンプレ側にも起因しない、生成（サンプリング）側の癖**——(i) でも (ii) でもない。
+
+⚠️ 範囲外の観察（原因未調査・本タスクの問いではない）: task-2（turn 52-130、log-coder.txt:60-130）で
+`todo_write` にほぼ同一の要約文を 71 回連投しており、これは並列 0 とは別の症状（ターン数が 162 まで膨らんだ
+主因はこちらで、こちらは繰り返し検出やサンプラ設定の話になるため上流ソースだけでは切り分けられない。**分からなかった**、
+と明記して止める）。
+
+### 12.2 `ternary-bonsai-2-27b-pq2_0` — ggml type 142 の正体と出口（結論: 実質 (iii)）
+
+| 論点 | 結論 |
+|---|---|
+| 1. 型 142 の正体 | **`GGML_TYPE_PQ2_0 = 142`**。`PrismML-Eng/llama.cpp`（このモデル専用フォーク）の `ggml/include/ggml.h:47` に直接定義がある |
+| 上流 ggml-org は読めるか | **どの版でも読めない**。上流 `ggml/include/ggml.h:389-433`（`b23efaa`）の `enum ggml_type` は `GGML_TYPE_COUNT = 43`（0..42 のみ有効）。142 は上流に存在したことがない番号 |
+| 2. 標準量子化版の有無 | **無い**（断定）。公式配布元 `prism-ml/Ternary-Bonsai-2-27B-gguf`（HF、2026-09-16 作成）の全ファイル: `Ternary-Bonsai-2-27B-F16.gguf`(53.8GB)・`-PQ2_0.gguf`(7.2GB)・`-PTQ1_0.gguf`(5.9GB)・mmproj 2 種のみ。`Q4_K_M`/`Q5_K_M`/`Q8_0` 等の素の llama.cpp 向け量子化は存在しない |
+| 3. 出口 | **(iii) 諦める**（下記理由） |
+
+根拠（一次資料）:
+
+- 142 の系譜: `ikawrakow/ik_llama.cpp`（別の著名フォーク）の `ggml/include/ggml.h` には
+  `// depricated: GGML_TYPE_IQ2_TN  = 142,`（コメントアウト済み＝現行では未定義）という同じ番号の痕跡があり、
+  同ファイルの `GGML_TYPE_Q1_0_G128 = 41` には `// Bonsai 1-bit quants` という注記もある。番号 142 の再利用が
+  意図的な継承かただの空き番号の再利用かは**分からなかった**（両リポジトリの履歴を跨いで確認する手段が無い）が、
+  少なくとも「142 は ik_llama.cpp 系フォークの独自量子化の番号帯」であることは実物のヘッダで確認できた。
+- **PrismML-Eng/llama.cpp の README（配布元 `prism-ml/Ternary-Bonsai-2-27B-gguf` の `README.md:134-140`）が
+  そのものずばりを書いている**（原文）:
+  > ### These files need our llama.cpp build
+  > The ternary hybrid-attention kernels live in the [PrismML-Eng/llama.cpp] fork. **Stock llama.cpp will not
+  > run these files.** It rejects `PQ2_0` and `PTQ1_0` as unknown types, and it loads `Q2_0` without any
+  > warning and produces garbage, because it has no Hadamard activation runtime. Use a binary from the fork.
+
+  実測で出たエラー文言（`gguf_init_from_reader: tensor 'output.weight' has invalid ggml type 142. should be
+  in [0, 43)`）は配布元が**予告どおりに再現しているだけ**で、うちの配備側の不具合ではない。
+- **うちのエンジンは正真正銘の上流イメージ**: `ghcr.io/ggml-org/llama.cpp:server-cuda`（ADR 0071 の表・
+  `decisions/0071-self-hosted-inference-engines.md:120`）、フォークではない。`deploy/aws/ecs/cfn/20-platform.yaml:91`
+  のコメントと `deploy/aws/ecs/standup.sh:63,373`・`deploy/aws/ecs/cfn/60-engines.yaml:47` が同じタグを裏付ける。
+  「上流のビルドを上げれば読める」(ii) は成立しない——**上流に一度もマージされたことがない型**なので、
+  `server-cuda` タグをどれだけ新しくしても変わらない。
+- **VRAM 見積り**（指示どおり明記）: `PQ2_0.gguf` は 7.2GB、`PTQ1_0.gguf` は 5.9GB——うちの `g6.xlarge`
+  （L4 24GB、`decisions/0071-self-hosted-inference-engines.md` の instance class 表）には**フォークさえ動けば
+  サイズ自体は無理なく載る**。`F16.gguf`（53.8GB）は明確に載らない。したがってこの模型の「出口」を塞いでいるのは
+  VRAM ではなく**エンジンの実行バイナリがフォーク限定**という一点。
+- **(i)/(ii) が実質不成立な理由の言い換え**: (i)「標準量子化版を取り込み直せば測れる」も、配布元に標準量子化が
+  存在しない以上成立しない。仮に (ii) 相当を追求するなら、それは「上流のバージョンを上げる」ではなく
+  **「この 1 モデルのためだけに配備のコンテナイメージを非公式サードパーティフォーク（PrismML-Eng/llama.cpp）へ
+  差し替える」という別の意思決定**になる——これは本タスクの範囲外の管理操作なので実行していない。判断は利用者へ。
+
+### 12.3 エンジンに焼かれている llama.cpp の版（結論: 特定不能・下限のみ判明）
+
+**`build: NNNN (sha)` 形式の版バナーは、CloudWatch（`/af/af-ecs-engines/engines`）のどのログにも一度も現れない。**
+Logs Insights で `/af/af-ecs-engines/engines` 全体・過去 7 日を `@message like /(?i)build:/ or
+/(?i)system_info/ or /(?i)CUDA devices/` で検索して **0 件**。個別に確認した 6 本の `llm/llama/*` ストリーム
+（起動ごとに別ストリーム）は全て一言一句同じ先頭行 `warn: LLAMA_ARG_HOST environment variable is set, but will be
+overwritten by command line argument --host` で始まり、その手前にあるはずのビルド行は無い。読み取り専用の
+CloudWatch 以外の手段（`/props` などエンジンへの実アクセス）はこのタスクの範囲外なので、**正確な版は分からなかった**。
+
+判明した下限（実際にログへ出た文字列から）:
+
+- 起動ログに `NOTICE: server default port will be changed to :9931 in a future release / ref:
+  https://github.com/ggml-org/llama.cpp/pull/26508` が出る。PR #26508 の `merged_at` は
+  **2026-08-03T10:45:24Z**（`gh api repos/ggml-org/llama.cpp/pulls/26508`）。つまり配備バイナリはこれ以降のコミット。
+- `qwen3-coder-30b-a3b` の実行と同じログ（`llm/llama/8539013b820242479cafdf5eb3c3f295`、`log-coder.txt` と同一
+  セッション）に `common_chat_peg_parse: unparsed peg-native output` という警告文字列そのものが出ており
+  （別モデル `llama-3.1-8b-instruct-q4_k_m` の応答で発生。この不調自体は別セッションの担当範囲）、§12.1 で
+  使った PEG ネイティブパーサ基盤（`common/chat-peg-parser.cpp`）が実際に配備バイナリへ入っていることを裏付ける。
+  同ファイルは上流で 2025-12-03 導入（PR #17136）・2026-09-12 まで手が入り続けている——2026-08-03 の下限より緩いが
+  独立に確認できた事実として記録する。
+- 配備イメージは `ghcr.io/ggml-org/llama.cpp:server-cuda` という**動くタグ**で、インフラのスタンドアップ毎に
+  再取得される（`EcrLlamacpp` の周辺コメント、`cfn/20-platform.yaml`）。固定ダイジェストでの pin はしていないため、
+  実行中の正確なコミットは配備時点に依存し、ログからは再構築できない。
+
+
