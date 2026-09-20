@@ -591,6 +591,32 @@ func TestValidationAdmitsAKnownSampler(t *testing.T) {
 	}
 }
 
+// ADR 0094 decision 2/4's edge refusal, on the queue's own route — the P0 completion condition
+// (2) requires this on BOTH routes, not only the blocking one (HandleGenerate's TestGenerate*
+// tests cover that side).
+func TestSpecRefusesStrengthAndSizeAgainstQwenImageEdit(t *testing.T) {
+	p, _ := comfyStub(t, qwenEditConn(), nil)
+	withStubProvider(t, p)
+
+	s := 0.3
+	if _, code, msg := (jobRequest{Prompt: "x", Op: "edit", Model: "qwen-edit-row", Strength: &s}).spec(); code != "bad_strength" {
+		t.Fatalf("code = %q (%s), want bad_strength", code, msg)
+	}
+	if _, code, msg := (jobRequest{Prompt: "x", Op: "edit", Model: "qwen-edit-row", Size: "1024x1024"}).spec(); code != "bad_size" {
+		t.Fatalf("code = %q (%s), want bad_size", code, msg)
+	}
+	// The positive control: the same two fields against the OTHER row on the same engine must
+	// not be refused for this reason.
+	if _, code, msg := (jobRequest{Prompt: "x", Op: "edit", Model: "sdxl-base-1.0", Strength: &s}).spec(); code != "" {
+		t.Fatalf("sdxl was refused: %s %s", code, msg)
+	}
+	// No model and no provider named: nothing here can be resolved to a family, so neither
+	// refusal fires — that gap is comfyStrengthIgnoredWarning's, not this one's.
+	if _, code, msg := (jobRequest{Prompt: "x", Op: "edit", Strength: &s}).spec(); code != "" {
+		t.Fatalf("an unresolved request was refused: %s %s", code, msg)
+	}
+}
+
 // 🔴 The same state has to produce the same bytes, or the Control Plane's ETag never matches and
 // the pane's two-second poll costs a full response a second for the life of a batch.
 func TestJobsAnswerIsByteStableForTheSameState(t *testing.T) {
@@ -778,8 +804,8 @@ func TestStatusReportsTheMemberFacingCatalogue(t *testing.T) {
 	if m.Negative != "watermark" || st.NegativeAlways != "gore" {
 		t.Errorf("negatives = %q / %q", m.Negative, st.NegativeAlways)
 	}
-	if strings.Join(m.Knobs, ",") != "steps,cfg,sampler,scheduler,negative" {
-		t.Errorf("knobs = %v, want what the sdxl template reads", m.Knobs)
+	if strings.Join(m.Knobs, ",") != "steps,cfg,sampler,scheduler,negative,strength" {
+		t.Errorf("knobs = %v, want what the sdxl template reads (ADR 0094 decision 12 adds strength)", m.Knobs)
 	}
 	if m.LicenseName != "CreativeML" || m.LicenseURL != "https://x/l" || m.SourceURL != "https://x/s" {
 		t.Errorf("licence = %+v", m)
@@ -801,12 +827,16 @@ func TestStatusReportsTheMemberFacingCatalogue(t *testing.T) {
 // The knob table is the graphs'. A family that reads no cfg must not report one, or the form
 // greys the wrong field out.
 func TestFamilyKnobsMatchTheTemplates(t *testing.T) {
+	// `strength` (ADR 0094 decision 12) is on every family here — all of them read
+	// Request.Strength on an edit — and absent only from qwen-image-edit-2509, which fixes its
+	// denoise at 1 by construction (comfyFamilyStrength).
 	want := map[comfyFamily]string{
-		ComfyFamilySDXL:       "steps,cfg,sampler,scheduler,negative",
-		ComfyFamilySD35:       "steps,cfg,sampler,scheduler,negative",
-		ComfyFamilyFlux1:      "steps,sampler,scheduler",
-		ComfyFamilyFlux2Klein: "steps,sampler",
-		ComfyFamilyZImage:     "steps,cfg,sampler,scheduler",
+		ComfyFamilySDXL:              "steps,cfg,sampler,scheduler,negative,strength",
+		ComfyFamilySD35:              "steps,cfg,sampler,scheduler,negative,strength",
+		ComfyFamilyFlux1:             "steps,sampler,scheduler,strength",
+		ComfyFamilyFlux2Klein:        "steps,sampler,strength",
+		ComfyFamilyZImage:            "steps,cfg,sampler,scheduler,strength",
+		ComfyFamilyQwenImageEdit2509: "steps,cfg,sampler,scheduler,negative",
 	}
 	for family, expect := range want {
 		if got := strings.Join(comfyFamilyKnobs(family), ","); got != expect {

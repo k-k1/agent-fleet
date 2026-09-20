@@ -748,3 +748,139 @@ func TestComfyRecipeLeavesGuidanceAloneWhereCfgMeansSomethingElse(t *testing.T) 
 		})
 	}
 }
+
+// --- Qwen-Image-Edit-2509 (ADR 0094) ---------------------------------------------------------
+//
+// NOT a member of comfyFamilyFixtures: every generic test above assumes a family that offers
+// generate AND inpaint, expresses an edit as a PARTIAL denoise, and lets strength move it — none
+// of which holds here (ADR 0094 background, decisions 2/3). This family gets its own golden
+// fixture and its own tests for exactly the ways it differs.
+
+var comfyQwenEditFiles = comfyFiles{
+	DiffusionModel: "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+	ClipL:          "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+	Vae:            "qwen_image_vae.safetensors",
+}
+
+func TestComfyWorkflowQwenImageEdit2509MatchesGoldenFixture(t *testing.T) {
+	p := comfyGoldenParams
+	p.Op, p.Image = OpEdit, "af-photo.png"
+	g, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2509, comfyQwenEditFiles, p)
+	if err != nil {
+		t.Fatalf("comfyBuildGraph(qwen-image-edit-2509) = %v", err)
+	}
+	got, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = append(got, '\n')
+	path := filepath.Join("testdata", "comfy_qwen-image-edit-2509.golden.json")
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("qwen-image-edit-2509's graph no longer matches %s.\nGot:\n%s\nIf this change is intended, "+
+			"overwrite the fixture and explain why in the commit.", path, got)
+	}
+}
+
+// The op that reaches this family is always edit (Caps.Ops), but the builder itself is asked
+// directly here — the same defence the missing-file tests below exercise.
+func TestComfyWorkflowQwenImageEdit2509RefusesWithoutAnImage(t *testing.T) {
+	p := comfyGoldenParams
+	p.Op = OpEdit
+	_, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2509, comfyQwenEditFiles, p)
+	if err == nil {
+		t.Fatal("an edit with no input image built a graph")
+	}
+	if !strings.Contains(err.Error(), "needs an input image") {
+		t.Errorf("err = %v, want it to say what is missing", err)
+	}
+}
+
+// Studio()'s sanity probe (comfyParams{Prompt: "x"}, Op == "") must keep succeeding on a row
+// whose three files are all declared — the same check every other family passes without an
+// image, because none of them requires one outside op=edit/inpaint either. Without this the
+// family would silently never appear in the member-facing catalogue.
+func TestComfyWorkflowQwenImageEdit2509BuildsForTheStudioProbe(t *testing.T) {
+	if _, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2509, comfyQwenEditFiles, comfyParams{Prompt: "x"}); err != nil {
+		t.Errorf("comfyBuildGraph(qwen-image-edit-2509) with the Studio probe's params = %v, want success", err)
+	}
+}
+
+func TestComfyWorkflowQwenImageEdit2509RefusesMissingFiles(t *testing.T) {
+	cases := []struct {
+		name  string
+		files comfyFiles
+	}{
+		{"needs a diffusion model", comfyFiles{ClipL: "x", Vae: "y"}},
+		{"needs a text encoder", comfyFiles{DiffusionModel: "x", Vae: "y"}},
+		{"needs a vae", comfyFiles{DiffusionModel: "x", ClipL: "y"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2509, c.files, comfyGoldenParams); err == nil {
+				t.Error("expected an error, got none")
+			}
+		})
+	}
+}
+
+// Decision 2's whole reason: at denoise 1 the family follows the instruction (実測 A), and at
+// 0.6 — the CURRENT op=edit default every other family uses — it comes back unedited (実測 C).
+// So unlike every family in comfyFamilyFixtures, a caller's strength must never move this
+// family's denoise off 1 at all.
+func TestComfyWorkflowQwenImageEdit2509DenoiseIsAlwaysOne(t *testing.T) {
+	for _, s := range []float64{0.1, 0.6, 1} {
+		strength := s
+		p := comfyGoldenParams
+		p.Op, p.Image, p.Strength = OpEdit, "af-photo.png", &strength
+		g, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2509, comfyQwenEditFiles, p)
+		if err != nil {
+			t.Fatalf("strength=%v: %v", s, err)
+		}
+		if got := g["ks"].Inputs["denoise"]; got != 1 {
+			t.Errorf("strength=%v: ks.denoise = %v, want 1 regardless", s, got)
+		}
+	}
+}
+
+// The negative branch is a real encode (not ConditioningZeroOut), because the family samples at
+// cfg 4 — a guided recipe (実測 A) — where a zeroed conditioning would not cancel the way it does
+// on the distilled families' cfg 1.
+func TestComfyWorkflowQwenImageEdit2509EncodesARealNegative(t *testing.T) {
+	p := comfyGoldenParams
+	p.Op, p.Image, p.Negative = OpEdit, "af-photo.png", "blurry"
+	g, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2509, comfyQwenEditFiles, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	neg, ok := g["neg"]
+	if !ok || neg.ClassType != "TextEncodeQwenImageEditPlus" {
+		t.Fatalf("no TextEncodeQwenImageEditPlus negative node: %+v", g["neg"])
+	}
+	if neg.Inputs["prompt"] != "blurry" {
+		t.Errorf("neg.prompt = %v, want the composed negative", neg.Inputs["prompt"])
+	}
+}
+
+// LoRAs chain the same way every other split family's do: patched before ModelSamplingAuraFlow,
+// and read by CFGNorm and both TextEncodeQwenImageEditPlus encodes downstream of it.
+func TestComfyWorkflowQwenImageEdit2509ChainsLoras(t *testing.T) {
+	p := comfyGoldenParams
+	p.Op, p.Image = OpEdit, "af-photo.png"
+	p.Loras = []comfyLora{{Name: "watercolor-v2.safetensors", Weight: 0.8}}
+	g, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2509, comfyQwenEditFiles, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := comfyLinkAt(t, g, "ms.model"); got[0] != "lora1" || got[1] != 0 {
+		t.Errorf("ms.model reads %v, want the patched MODEL [lora1 0]", got)
+	}
+	for _, ref := range []string{"pos.clip", "neg.clip"} {
+		if got := comfyLinkAt(t, g, ref); got[0] != "lora1" || got[1] != 1 {
+			t.Errorf("%s reads %v, want the patched CLIP [lora1 1]", ref, got)
+		}
+	}
+}

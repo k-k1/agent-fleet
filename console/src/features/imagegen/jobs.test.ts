@@ -213,6 +213,32 @@ describe("投入する本文", () => {
     const e = buildRequest({ ...d, op: "edit", inputs: ["a.png"], strength: 0.3 });
     expect(e).toMatchObject({ op: "edit", inputs: ["a.png"], strength: 0.3 });
   });
+
+  // ADR 0094 決定 2: strength を読まない族には送らない——読む・読まないの答えは Agent の
+  // knobs だけが持つ。knobs が無い（古い Agent）ときは今までどおり送る。
+  it("モデルの knobs に strength が無ければ送らない", () => {
+    const withKnob = buildRequest(
+      { ...d, op: "edit", inputs: ["a.png"], strength: 0.3 },
+      { model: { id: "sdxl-base", knobs: ["steps", "cfg", "sampler", "scheduler", "negative", "strength"] } },
+    );
+    expect(withKnob.strength).toBe(0.3);
+
+    const withoutKnob = buildRequest(
+      { ...d, op: "edit", inputs: ["a.png"], strength: 0.3 },
+      { model: { id: "qwen-edit-row", knobs: ["steps", "cfg", "sampler", "scheduler", "negative"] } },
+    );
+    expect(withoutKnob.strength).toBeUndefined();
+
+    // No model at all (or one with no `knobs`, an Agent old enough to predate the ADR): the
+    // old, permissive behaviour — send it, and let the Agent's own warning or refusal answer.
+    const noModel = buildRequest({ ...d, op: "edit", inputs: ["a.png"], strength: 0.3 }, { model: null });
+    expect(noModel.strength).toBe(0.3);
+    const oldAgent = buildRequest(
+      { ...d, op: "edit", inputs: ["a.png"], strength: 0.3 },
+      { model: { id: "legacy" } },
+    );
+    expect(oldAgent.strength).toBe(0.3);
+  });
 });
 
 describe("走っているものがあるか（ポーリングの唯一の条件）", () => {

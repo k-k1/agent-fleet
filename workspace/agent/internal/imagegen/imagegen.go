@@ -401,6 +401,13 @@ type StudioModel struct {
 	// Family is the workflow template (`sdxl`, `flux1`, …). It decides everything below it.
 	Family string
 	Sizes  []string
+	// Ops is this MODEL's own answer, unlike the route's advertised Caps("").Ops (ADR 0094
+	// decision 12): a provider's union has to include every op some model can do, or a
+	// generate-only checkpoint would vanish from what "auto" can be offered at all (decision 11),
+	// but a form that is currently pointed at one specific model needs its own, narrower answer —
+	// offering "generate" on an edit-only row is decision 2's 400, in front of the member, every
+	// time they press it.
+	Ops []Op
 	// Params are the EFFECTIVE defaults — the family recipe with the catalogue row laid over it
 	// — so the form's placeholders are what will actually run if the member types nothing.
 	Params EngineParams

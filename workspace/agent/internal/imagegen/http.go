@@ -106,7 +106,12 @@ type providerStatus struct {
 	// is per model (see HandleStatus).
 	Negative bool `json:"negative,omitempty"`
 	// Strength is whether this route lets the caller say how much of the input picture an edit
-	// changes. No union is needed: it is per provider, not per model.
+	// changes — a UNION over every model since ADR 0094 decision 11 (comfyProvider.Caps("")),
+	// for the same reason Negative above is: comfy is the first provider where a checkpoint can
+	// answer false (Qwen-Image-Edit fixes its denoise at 1). The per-MODEL answer a form needs
+	// once one checkpoint is chosen rides on modelStatus.Knobs's `strength` entry instead
+	// (decision 12) — this field only ever says whether the ARGUMENT reaches something on this
+	// route at all.
 	Strength bool `json:"strength,omitempty"`
 	// The rest is the MEMBER-facing catalogue (ADR 0081 decision 5), present only for a provider
 	// that builds the graph — the vendor routes have no sampler list and no per-model recipe, so
@@ -153,10 +158,16 @@ type modelStatus struct {
 	// Negative is the row's own recommended negative prompt, shown as the administrator's, not
 	// merged into the member's text.
 	Negative string `json:"negative,omitempty"`
-	// Knobs is the subset of `steps cfg sampler scheduler negative` this family reads. The form
-	// disables the rest on THIS word; a second table in the Console could disagree with the
-	// graphs, and the two must not be able to.
-	Knobs       []string `json:"knobs,omitempty"`
+	// Knobs is the subset of `steps cfg sampler scheduler negative strength` this family reads
+	// (`strength` added by ADR 0094 decision 12). The form disables the rest on THIS word; a
+	// second table in the Console could disagree with the graphs, and the two must not be able to.
+	Knobs []string `json:"knobs,omitempty"`
+	// Ops is THIS MODEL's own answer (ADR 0094 decision 12), unlike providerStatus.Ops /
+	// providerStatus.Strength above, which are unions across every model on the route
+	// (decision 11). A form pointed at one specific checkpoint needs the narrow answer: offering
+	// "generate" on a row whose family cannot build that graph is decision 2's 400 in front of
+	// the member every time they press it.
+	Ops         []string `json:"ops,omitempty"`
 	LicenseName string   `json:"license_name,omitempty"`
 	LicenseURL  string   `json:"license_url,omitempty"`
 	SourceURL   string   `json:"source_url,omitempty"`
@@ -281,10 +292,14 @@ func applyStudio(ctx context.Context, p Provider, st *providerStatus) {
 	st.Models = make([]modelStatus, 0, len(s.Models))
 	for _, m := range s.Models {
 		params := m.Params
+		ops := make([]string, 0, len(m.Ops))
+		for _, op := range m.Ops {
+			ops = append(ops, string(op))
+		}
 		st.Models = append(st.Models, modelStatus{
 			ID: m.ID, Label: m.Label, Description: m.Description, Warm: m.Warm,
 			Family: m.Family, Sizes: m.Sizes, Params: &params, Negative: m.Negative,
-			Knobs: m.Knobs, LicenseName: m.LicenseName, LicenseURL: m.LicenseURL,
+			Knobs: m.Knobs, Ops: ops, LicenseName: m.LicenseName, LicenseURL: m.LicenseURL,
 			SourceURL: m.SourceURL, TypicalMS: jobs.typicalFor(p.ID(), m.ID),
 		})
 	}
@@ -449,6 +464,22 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 	if s := body.Strength; s != nil && (*s <= 0 || *s > 1) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_strength",
 			fmt.Sprintf("strength must be greater than 0 and at most 1 (got %g): 1 redraws the picture from the prompt alone, and small values keep more of the input", *s))
+		return
+	}
+	// ADR 0094 decision 2: a value in range is still refused when the RESOLVED model's family
+	// does not read it at all — comfyStrengthRefusal only fires when the request names a model
+	// or a comfy provider it can resolve a family from (a bare "auto" request is not refused
+	// here; comfyStrengthIgnoredWarning is that gap's answer instead).
+	if body.Strength != nil {
+		if msg := comfyStrengthRefusal(body.Provider, body.Model); msg != "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_strength", msg)
+			return
+		}
+	}
+	// ADR 0094 decision 4: the same refusal for `size` against a family whose output size is
+	// decided from the input picture rather than from a candidate list.
+	if msg := comfySizeRefusal(body.Provider, body.Model, body.Size); msg != "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_size", msg)
 		return
 	}
 	// The sampler overlay is refused by VALUE here exactly as it is on the queue's route, and

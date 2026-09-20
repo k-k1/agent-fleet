@@ -249,6 +249,10 @@ var comfyFamilyRecipes = map[comfyFamily]comfyRecipe{
 	// is the row's `params` to declare. Guessing Raw's cfg to make the default "the base model"
 	// would be taste dressed up as a default.
 	ComfyFamilyKrea2: {Steps: 8, CFG: 1, Sampler: "euler", Scheduler: "simple"},
+	// The official 2509 template's KSampler, LoRA-switch false branch (ADR 0094 実測): steps 20,
+	// cfg 4, euler, simple. 実測 A ran these exact numbers and the edit was followed; 実測 B is
+	// the same graph at 8 steps (comfyTrialSteps), which is still recognisably edited.
+	ComfyFamilyQwenImageEdit2509: {Steps: 20, CFG: 4, Sampler: "euler", Scheduler: "simple"},
 }
 
 // recipe is the family default with this request's model declaration merged over it.
@@ -432,6 +436,12 @@ const (
 	ComfyFamilyZImage     comfyFamily = "zimage"
 	ComfyFamilyAnima      comfyFamily = "anima"
 	ComfyFamilyKrea2      comfyFamily = "krea2"
+	// ComfyFamilyQwenImageEdit2509 is ADR 0094's instruction-edit family: unlike every family
+	// above, `op=edit` here is not the shared LoadImage+VAEEncode img2img path at a partial
+	// denoise (comfyRequestLatent) — the input picture conditions the sampler through
+	// TextEncodeQwenImageEditPlus at a FULL denoise, so it gets its own template rather than a
+	// recipe entry in the shared one (comfyGraphQwenImageEdit2509).
+	ComfyFamilyQwenImageEdit2509 comfyFamily = "qwen-image-edit-2509"
 )
 
 // comfyFamilies is every family comfyBuildGraph dispatches on. One list, so the acceptance
@@ -443,7 +453,7 @@ const (
 var comfyFamilies = []comfyFamily{
 	ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35,
 	ComfyFamilyFlux1, ComfyFamilyFlux2Klein, ComfyFamilyZImage,
-	ComfyFamilyAnima, ComfyFamilyKrea2,
+	ComfyFamilyAnima, ComfyFamilyKrea2, ComfyFamilyQwenImageEdit2509,
 }
 
 // comfyFileFlags is the Flag vocabulary resolveComfyFiles understands, in the order a panel
@@ -483,6 +493,8 @@ func comfyBuildGraph(family comfyFamily, files comfyFiles, p comfyParams) (comfy
 		return comfyGraphAnima(files, p)
 	case ComfyFamilyKrea2:
 		return comfyGraphKrea2(files, p)
+	case ComfyFamilyQwenImageEdit2509:
+		return comfyGraphQwenImageEdit2509(files, p)
 	default:
 		return nil, errUnknownComfyFamily(family)
 	}
@@ -906,5 +918,78 @@ func comfyGraphKrea2(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
 		"filename_prefix": "af-krea2", "images": comfyLink("dec", 0)}}
+	return g, nil
+}
+
+// --- Qwen-Image-Edit-2509 — instruction editing, NOT YET RUN BY THIS AGENT (ADR 0094 P0) ------
+//
+// This family is not a member of comfyFamilyFixtures and does not go through comfyRequestLatent /
+// comfyParams.denoise the way the other eight do — it genuinely is not the same shape (ADR 0094
+// background). `op=edit` on every other family is img2img: LoadImage + VAEEncode feeding a
+// PARTIAL denoise, so the picture the sampler starts from still carries the composition. Here the
+// input picture conditions the sampler through TextEncodeQwenImageEditPlus (vision tokens plus a
+// ~1MP reference latent, ADR 0094's background) while the sampler itself runs a FULL denoise —
+// the VAEEncode below only fixes the output canvas's size, the same "denoise 1 ignores the
+// latent's content, only its shape" fact anima and krea2 already rely on for their own
+// EmptyLatentImage. Generate and inpaint are refused before this function is ever called
+// (Caps.Ops via comfyFamilyOps — decision 3), so denoise is a literal 1 rather than a call to
+// comfyParams.denoise(): there is no op this family reaches that ever wants anything else, and a
+// caller's Strength is refused at the edge before a request reaches here (decision 2).
+//
+// Node graph (background / 実測, matched against the running engine's /object_info on
+// 2026-09-20 — CLIPLoader's `qwen_image` type and TextEncodeQwenImageEditPlus/
+// FluxKontextImageScale/CFGNorm are confirmed to exist, but this exact wiring has not been run):
+// UNETLoader + CLIPLoader(type=qwen_image) + VAELoader load the three declared files; LoadImage's
+// output is rescaled by FluxKontextImageScale to the nearest of the model's trained aspect ratios
+// (decision 4 — this is also why no `size` reaches this family) and that SAME scaled picture
+// feeds both TextEncodeQwenImageEditPlus (positive and negative — the negative is a real encode,
+// not ConditioningZeroOut, because 実測 A ran at cfg 4, a guided recipe) and a VAEEncode that
+// gives KSampler its starting latent's shape. ModelSamplingAuraFlow(shift 3) + CFGNorm patch the
+// model the way zimage's ModelSamplingAuraFlow does, one step further per the official template.
+func comfyGraphQwenImageEdit2509(f comfyFiles, p comfyParams) (comfyGraph, error) {
+	if f.DiffusionModel == "" {
+		return nil, errComfyMissingFile("qwen-image-edit-2509", "diffusion model")
+	}
+	if f.ClipL == "" {
+		return nil, errComfyMissingFile("qwen-image-edit-2509", "text encoder (Qwen2.5-VL-7B, declared as --clip_l)")
+	}
+	if f.Vae == "" {
+		return nil, errComfyMissingFile("qwen-image-edit-2509", "vae")
+	}
+	// The image is required only when Op says this IS an edit. Generate() never reaches this
+	// builder with anything else (Caps.Ops refuses generate/inpaint before comfyBuildGraph is
+	// called at all), but Studio()'s own sanity probe (comfyParams{Prompt: "x"}, Op == "") has to
+	// keep succeeding on a row whose files are all declared — the same reason none of the other
+	// families' generate path demands one either.
+	if p.Op == OpEdit && p.Image == "" {
+		return nil, fmt.Errorf("%s needs an input image, and none reached the graph", p.Op)
+	}
+	g := comfyGraph{
+		"unet": {ClassType: "UNETLoader", Inputs: map[string]any{"unet_name": f.DiffusionModel, "weight_dtype": "default"}},
+		"clip": {ClassType: "CLIPLoader", Inputs: map[string]any{"clip_name": f.ClipL, "type": "qwen_image", "device": "default"}},
+		"vae":  {ClassType: "VAELoader", Inputs: map[string]any{"vae_name": f.Vae}},
+		"img":  {ClassType: "LoadImage", Inputs: map[string]any{"image": p.Image}},
+	}
+	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
+	g["scale"] = comfyNode{ClassType: "FluxKontextImageScale", Inputs: map[string]any{"image": comfyLink("img", 0)}}
+	g["pos"] = comfyNode{ClassType: "TextEncodeQwenImageEditPlus", Inputs: map[string]any{
+		"clip": clip, "vae": comfyLink("vae", 0), "prompt": p.Prompt, "image1": comfyLink("scale", 0)}}
+	g["neg"] = comfyNode{ClassType: "TextEncodeQwenImageEditPlus", Inputs: map[string]any{
+		"clip": clip, "vae": comfyLink("vae", 0), "prompt": comfyNegativeText(p), "image1": comfyLink("scale", 0)}}
+	g["ms"] = comfyNode{ClassType: "ModelSamplingAuraFlow", Inputs: map[string]any{"shift": 3, "model": model}}
+	g["norm"] = comfyNode{ClassType: "CFGNorm", Inputs: map[string]any{"model": comfyLink("ms", 0), "strength": 1}}
+	g["enc"] = comfyNode{ClassType: "VAEEncode", Inputs: map[string]any{
+		"pixels": comfyLink("scale", 0), "vae": comfyLink("vae", 0)}}
+	r := p.recipe(comfyFamilyRecipes[ComfyFamilyQwenImageEdit2509])
+	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
+		"seed": p.Seed, "steps": r.Steps, "cfg": r.CFG, "sampler_name": r.Sampler, "scheduler": r.Scheduler,
+		// Fixed at 1, not p.denoise(): 実測 C is decision 2's whole reason — the same graph at
+		// denoise 0.6 comes back unedited, with no error and no warning.
+		"denoise": 1,
+		"model":   comfyLink("norm", 0), "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
+		"latent_image": comfyLink("enc", 0)}}
+	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}}
+	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
+		"filename_prefix": "af-qwen-image-edit-2509", "images": comfyLink("dec", 0)}}
 	return g, nil
 }

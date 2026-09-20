@@ -1,0 +1,157 @@
+{
+  "clip": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "device": "default",
+      "type": "qwen_image"
+    }
+  },
+  "dec": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "ks",
+        0
+      ],
+      "vae": [
+        "vae",
+        0
+      ]
+    }
+  },
+  "enc": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "scale",
+        0
+      ],
+      "vae": [
+        "vae",
+        0
+      ]
+    }
+  },
+  "img": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "af-photo.png"
+    }
+  },
+  "ks": {
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 4,
+      "denoise": 1,
+      "latent_image": [
+        "enc",
+        0
+      ],
+      "model": [
+        "norm",
+        0
+      ],
+      "negative": [
+        "neg",
+        0
+      ],
+      "positive": [
+        "pos",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 1234,
+      "steps": 20
+    }
+  },
+  "ms": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": [
+        "unet",
+        0
+      ],
+      "shift": 3
+    }
+  },
+  "neg": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": [
+        "clip",
+        0
+      ],
+      "image1": [
+        "scale",
+        0
+      ],
+      "prompt": "blurry, lowres, deformed, watermark, text",
+      "vae": [
+        "vae",
+        0
+      ]
+    }
+  },
+  "norm": {
+    "class_type": "CFGNorm",
+    "inputs": {
+      "model": [
+        "ms",
+        0
+      ],
+      "strength": 1
+    }
+  },
+  "pos": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": [
+        "clip",
+        0
+      ],
+      "image1": [
+        "scale",
+        0
+      ],
+      "prompt": "a red fox sitting on a mossy rock in a misty forest at dawn, detailed fur, soft light",
+      "vae": [
+        "vae",
+        0
+      ]
+    }
+  },
+  "save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "af-qwen-image-edit-2509",
+      "images": [
+        "dec",
+        0
+      ]
+    }
+  },
+  "scale": {
+    "class_type": "FluxKontextImageScale",
+    "inputs": {
+      "image": [
+        "img",
+        0
+      ]
+    }
+  },
+  "unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  }
+}

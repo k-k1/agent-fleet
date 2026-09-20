@@ -107,22 +107,31 @@ func (p *comfyProvider) DefaultModel() string {
 // package for which Caps genuinely differs across MULTIPLE models on the same running engine,
 // because switching which one answers is exactly what decision 4 buys.
 //
-// Ops is all three. The per-family image-to-image graph P2 left out is comfyRequestLatent, and
-// like the LoRA chains it is pinned by shape and not yet proven on a GPU.
+// Ops, MaxInputs and Strength are FAMILY attributes (ADR 0094 decisions 2/3/5) — every family
+// through krea2 answers the same way they always did (all three ops, one input, strength on an
+// edit); Qwen-Image-Edit is the first to differ (edit only, denoise fixed at 1, decision 2's実測
+// C). A model with no declared family gets the old, permissive shape: the request is refused
+// later by errComfyFamilyNotDeclared with a better message than a capability flag ever could.
+//
+// model == "" answers with capsUnion instead of resolving DefaultModel() itself — ADR 0094
+// decision 11: this is the value both HandleStatus's advertised set (http.go's `p.Caps("")`) and
+// chooseImageProviders' candidate filter read for a request naming no model, and the warm
+// default's own answer would make an op only SOME rows offer disappear the moment an edit-only
+// checkpoint happens to be warm.
 func (p *comfyProvider) Caps(model string) Caps {
 	conn, _ := p.conn(context.Background())
 	if strings.TrimSpace(model) == "" {
-		model = p.DefaultModel()
+		return p.capsUnion(conn)
+	}
+	family, ok := comfyFamilyFor(conn, model)
+	ops, strength, maxInputs := comfyDefaultOps, true, 1
+	if ok {
+		ops, strength, maxInputs = comfyFamilyOps(family), comfyFamilyStrength(family), comfyFamilyMaxInputs(family)
 	}
 	return Caps{
-		// edit and inpaint since ADR 0072 P2's remaining work: each family now has an
-		// image-to-image path (LoadImage + VAEEncode, plus SetLatentNoiseMask for a mask), which
-		// is what the P2 note said was missing rather than out of reach.
-		Ops:   []Op{OpGenerate, OpEdit, OpInpaint},
-		Sizes: comfySizesFor(conn, model),
-		// One, like sdcpp, and for the same reason: a second reference image would need a graph
-		// that stitches or conditions on both, and no such graph has been run here.
-		MaxInputs: 1,
+		Ops:       ops,
+		Sizes:     comfySizesFor(conn, model),
+		MaxInputs: maxInputs,
 		MaxCount:  comfyMaxBatch,
 		Loras:     comfyLoraInfos(conn),
 		// The one route where a seed reaches the sampler: it is this package that builds the
@@ -132,10 +141,7 @@ func (p *comfyProvider) Caps(model string) Caps {
 		// Per MODEL, because the answer really does differ between two checkpoints on the same
 		// running engine — which is the case Caps was made per (provider, model) for.
 		Negative: comfyModelTakesNegative(conn, model),
-		// True for every family, unlike Negative: an edit starts from the caller's picture on all
-		// five, and the amount is a number in the graph this package writes rather than a field a
-		// vendor API has to expose (ADR 0069 follow-up, strength).
-		Strength: true,
+		Strength: strength,
 		// The one route that builds the sampler graph, so the one route where steps, cfg, sampler
 		// and scheduler are real (ADR 0081 decision 4). WHICH of the four a given family reads is
 		// a per-request warning, not a capability flag — see comfyIgnoredParamWarnings.
@@ -143,10 +149,126 @@ func (p *comfyProvider) Caps(model string) Caps {
 	}
 }
 
-// comfyFamilyKnobs is the subset of `steps cfg sampler scheduler negative` a family's template
-// actually reads. It is the single declaration of ADR 0081 decision 4's table, and the status
-// route serves it to the Console (decision 5) so the form greys a field out on the AGENT's word
-// rather than on a second copy of this table that can disagree with the graphs.
+// capsUnion is Caps("") — ADR 0094 decision 11: the union of every enabled model's own answer,
+// not the warm default's alone. It is the value both the advertised set (http.go's HandleStatus,
+// `caps := p.Caps("")`) and the candidate filter (imagegen.go's chooseImageProviders, through
+// Run()'s capsOf) read for a request naming no model, and both break the same way without it: an
+// edit-only checkpoint happening to be warm would make `op=generate` disappear from what this
+// provider advertises AND from what it is offered candidacy for, sending a member's next
+// text-to-image call to a provider that spends their own plan quota (measured once already for a
+// DIFFERENT capability, ADR 0071 P1 — see imagegen.go's fallbackWarnings).
+//
+// A model named explicitly still goes through Caps(model) above and gets the strict, per-family
+// answer — this union only ever widens what is ADVERTISED and CANDIDATE, never what one specific
+// request may do (comfyStrengthRefusal and comfySizeRefusal resolve the family, not this union,
+// before refusing).
+func (p *comfyProvider) capsUnion(conn EngineConn) Caps {
+	out := Caps{MaxCount: comfyMaxBatch, Loras: comfyLoraInfos(conn), Seed: true, Params: true}
+	if len(conn.Models) == 0 {
+		// No catalogue at all: the old, permissive defaults, so an engine with no rows yet still
+		// advertises something rather than nothing.
+		out.Ops, out.Strength, out.MaxInputs = comfyDefaultOps, true, 1
+		return out
+	}
+	seenOp := map[Op]bool{}
+	for _, id := range conn.Models {
+		family, ok := comfyFamilyFor(conn, id)
+		ops, strength, maxInputs := comfyDefaultOps, true, 1
+		if ok {
+			ops, strength, maxInputs = comfyFamilyOps(family), comfyFamilyStrength(family), comfyFamilyMaxInputs(family)
+		}
+		for _, op := range ops {
+			if !seenOp[op] {
+				seenOp[op] = true
+				out.Ops = append(out.Ops, op)
+			}
+		}
+		if strength {
+			out.Strength = true
+		}
+		if maxInputs > out.MaxInputs {
+			out.MaxInputs = maxInputs
+		}
+		if comfyModelTakesNegative(conn, id) {
+			out.Negative = true
+		}
+		if s := comfySizesFor(conn, id); len(s) > 0 {
+			out.Sizes = appendMissing(out.Sizes, s)
+		}
+	}
+	return out
+}
+
+// appendMissing appends every element of add not already in have, preserving have's order and
+// add's order within the appended tail — used to union several models' own size lists without
+// naming any one of them twice.
+func appendMissing(have, add []string) []string {
+	seen := make(map[string]bool, len(have))
+	for _, s := range have {
+		seen[s] = true
+	}
+	for _, s := range add {
+		if !seen[s] {
+			seen[s] = true
+			have = append(have, s)
+		}
+	}
+	return have
+}
+
+// comfyDefaultOps is every op the fleet's ComfyUI provider offered before ADR 0094 made Ops a
+// family attribute, and stays the answer for a model with no declared family (or none at all,
+// p.Caps("") on an engine with no catalogue) — a request against one is refused before a graph
+// exists anyway, so there is no capability to narrow.
+var comfyDefaultOps = []Op{OpGenerate, OpEdit, OpInpaint}
+
+// comfyFamilyOps is ADR 0094 decision 3: which ops a family's template can build at all. Every
+// family through krea2 has an image-to-image path (LoadImage + VAEEncode, plus
+// SetLatentNoiseMask for a mask) alongside its plain generate — Qwen-Image-Edit is EDIT ONLY.
+// It has no path that starts from an empty latent (TextEncodeQwenImageEditPlus with no image
+// input is not a documented use of the node), and inpaint is left unclaimed on purpose: a mask
+// could be wired with SetLatentNoiseMask, but nobody on this deployment has run it, and ADR 0072
+// already paid the tuition for advertising an untested op as SD3.5 (decision 3).
+func comfyFamilyOps(family comfyFamily) []Op {
+	if family == ComfyFamilyQwenImageEdit2509 {
+		return []Op{OpEdit}
+	}
+	return comfyDefaultOps
+}
+
+// comfyFamilyStrength is ADR 0094 decision 2: whether Request.Strength reaches this family's
+// sampler at all. Qwen-Image-Edit's denoise is fixed at 1 by construction
+// (comfyGraphQwenImageEdit2509) — instruction editing conditions the sampler through the picture
+// itself, not through how far a partial denoise is allowed to travel — so a caller's strength has
+// nowhere to go. 実測 C is the same failure this exists to prevent: the same request at denoise
+// 0.6 came back unedited, with no error and no warning.
+func comfyFamilyStrength(family comfyFamily) bool {
+	return family != ComfyFamilyQwenImageEdit2509
+}
+
+// comfyFamilyMaxInputs is ADR 0094 decision 5: every family, Qwen-Image-Edit included, takes at
+// most ONE reference image in P0 — TextEncodeQwenImageEditPlus's image2/image3 inputs are real
+// (実測 D measured a second reference reaching the picture), but the upload path only sends
+// req.Inputs[0] and comfyParams.Image is a single string (comfy.go's uploadImage,
+// comfy_workflows.go's comfyParams), so declaring 2 here without widening the code path would
+// pass comfyCheckInputs and then silently use only the first — decision 5's own "宣言と経路は同じ
+// フェーズに入れる". The second reference is P3.
+func comfyFamilyMaxInputs(comfyFamily) int { return 1 }
+
+// comfyFamilyHasNoSizes is ADR 0094 decision 4: Qwen-Image-Edit's output size is decided by
+// FluxKontextImageScale from the INPUT PICTURE's own aspect ratio, so no size a request or a
+// catalogue row could name would reach the sampler at all. comfySizesFor checks this BEFORE the
+// row's own declared list — the one family where the family's answer wins over the row's, because
+// the row's list would otherwise offer a control that silently does nothing.
+func comfyFamilyHasNoSizes(family comfyFamily) bool {
+	return family == ComfyFamilyQwenImageEdit2509
+}
+
+// comfyFamilyKnobs is the subset of `steps cfg sampler scheduler negative strength` a family's
+// template actually reads. It is the single declaration of ADR 0081 decision 4's table (widened
+// by ADR 0094 decision 12 to include `strength`), and the status route serves it to the Console
+// (decision 5) so the form greys a field out on the AGENT's word rather than on a second copy of
+// this table that can disagree with the graphs.
 //
 // It is derived from the templates and must be read next to them: flux1 and klein fold guidance
 // into the conditioning, so the number a model card calls "CFG" is a different knob there;
@@ -155,7 +277,7 @@ func (p *comfyProvider) Caps(model string) Caps {
 func comfyFamilyKnobs(family comfyFamily) []string {
 	knobs := []string{"steps"}
 	switch family {
-	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyAnima, ComfyFamilyKrea2:
+	case ComfyFamilySD15, ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyAnima, ComfyFamilyKrea2, ComfyFamilyQwenImageEdit2509:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
 	case ComfyFamilyZImage:
 		knobs = append(knobs, "cfg", "sampler", "scheduler")
@@ -166,6 +288,9 @@ func comfyFamilyKnobs(family comfyFamily) []string {
 	}
 	if comfyFamilyTakesNegative(family) {
 		knobs = append(knobs, "negative")
+	}
+	if comfyFamilyStrength(family) {
+		knobs = append(knobs, "strength")
 	}
 	return knobs
 }
@@ -252,9 +377,16 @@ func comfyModelTakesNegative(conn EngineConn, model string) bool {
 // because their graphs encode a real negative, while their distilled variants (Anima-Turbo,
 // Krea 2 Turbo) declare cfg 1 and cancel it anyway. comfyModelTakesNegative is what puts the
 // two facts together, and it is the one every caller asks.
+//
+// Qwen-Image-Edit-2509 is here too (ADR 0094 decision 12): it is a GUIDED family — 実測 A ran cfg
+// 4 and the edit was followed — and its template gives the negative branch its own
+// TextEncodeQwenImageEditPlus encode rather than ConditioningZeroOut, so the negative genuinely
+// moves the picture. Leaving it off this list would make comfyIgnoredParamWarnings answer with
+// the DISTILLED wording ("folds its guidance into the conditioning"), which is the opposite of
+// what 実測 A measured.
 func comfyFamilyTakesNegative(family comfyFamily) bool {
 	return family == ComfyFamilySD15 || family == ComfyFamilySDXL || family == ComfyFamilySD35 ||
-		family == ComfyFamilyAnima || family == ComfyFamilyKrea2
+		family == ComfyFamilyAnima || family == ComfyFamilyKrea2 || family == ComfyFamilyQwenImageEdit2509
 }
 
 // comfyNegativeFor composes the negative prompt one request samples against, out of the three
@@ -383,7 +515,7 @@ func (p *comfyProvider) Studio(ctx context.Context) (Studio, bool) {
 		out.Models = append(out.Models, StudioModel{
 			ID: id, Label: conn.Labels[id], Description: conn.Descriptions[id], Family: string(family),
 			Sizes: comfySizesFor(conn, id), Params: comfyEffectiveDefaults(conn, family, id),
-			Negative: conn.Negatives[id], Knobs: comfyModelKnobs(conn, family, id),
+			Negative: conn.Negatives[id], Knobs: comfyModelKnobs(conn, family, id), Ops: comfyFamilyOps(family),
 			Warm:        id != "" && id == conn.Warm,
 			LicenseName: lic.Name, LicenseURL: lic.URL, SourceURL: lic.Source,
 		})
@@ -426,11 +558,19 @@ func comfySortedNames(set map[string]bool) []string {
 // all until somebody declares one, so the list served for it decides nothing — and answering
 // with SD1.5's 512 presets there would be a guess about an undeclared row, which is the thing
 // decision 2 exists to prevent.
+//
+// 🔴 One family wins even over the row's OWN declaration (ADR 0094 decision 4,
+// comfyFamilyHasNoSizes): Qwen-Image-Edit's output size is decided by FluxKontextImageScale from
+// the input picture's aspect ratio, so a row's `sizes` there would offer a control that silently
+// does nothing. That check runs BEFORE conn.Sizes[model] for exactly that reason.
 func comfySizesFor(conn EngineConn, model string) []string {
+	family, ok := comfyFamilyFor(conn, model)
+	if ok && comfyFamilyHasNoSizes(family) {
+		return nil
+	}
 	if s := conn.Sizes[model]; len(s) > 0 {
 		return s
 	}
-	family, ok := comfyFamilyFor(conn, model)
 	if !ok {
 		return comfyMegapixelSizes
 	}
@@ -639,11 +779,117 @@ func comfySwitchWarning(conn EngineConn, model string) string {
 		conn.Warm, model)
 }
 
+// comfyFirstModelForOp is ADR 0094 decision 11's remaining half: when a request names no model
+// and the warm one's family does not offer the op asked for, this looks for the first catalogue
+// row (in EngineConn.Models' own order) that does, rather than fail the op outright and let Run()
+// fall through to a provider that spends a member's own plan quota. False when nothing on this
+// engine offers it at all.
+func comfyFirstModelForOp(conn EngineConn, op Op) (string, bool) {
+	for _, id := range conn.Models {
+		family, ok := comfyFamilyFor(conn, id)
+		if !ok {
+			continue
+		}
+		for _, o := range comfyFamilyOps(family) {
+			if o == op {
+				return id, true
+			}
+		}
+	}
+	return "", false
+}
+
+// comfyStrengthIgnoredWarning is comfyNegativeIgnoredWarning's twin for ADR 0094 decision 2's
+// remaining gap: a request naming neither a provider nor a model cannot be refused at the edge
+// (HandleGenerate / jobs_http.go's spec() have nothing to resolve a family from yet), so it
+// reaches here, denoise is fixed at 1 by the template, and Request.Strength is silently unread.
+//
+// requestWarnings' own `!caps.Strength` branch (imagegen.go) cannot catch this either: decision
+// 11 makes Caps("") a union across every model on the engine, so a request naming no model reads
+// Strength=true from it even when the WARM row it lands on cannot use it. This is the per-model
+// answer requestWarnings needed and could not have.
+func comfyStrengthIgnoredWarning(family comfyFamily, req Request) string {
+	if req.Strength == nil || req.Op != OpEdit || comfyFamilyStrength(family) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"strength=%g requested, but the %s family fixes its denoise at 1 by construction (instruction editing) — nothing was varied",
+		*req.Strength, family)
+}
+
+// comfyResolveFamily is the "受付時に model → family を解く" step ADR 0094 decisions 2 and 4 ask
+// for, shared by the two edge refusals below. It is deliberately conservative: a request naming
+// NEITHER a provider nor a model cannot be resolved to a family here — the auto router has not
+// run yet, and a request that might not even reach this engine must not be refused for it. named
+// is the model actually resolved against (the caller's own, or the provider's warm default),
+// which the caller uses to name it in the refusal.
+func comfyResolveFamily(pref, model string) (family comfyFamily, named string, ok bool) {
+	pref = strings.TrimSpace(pref)
+	model = strings.TrimSpace(model)
+	if pref == "" && model == "" {
+		return "", "", false
+	}
+	for _, p := range Providers() {
+		cp, isComfy := p.(*comfyProvider)
+		if !isComfy {
+			continue
+		}
+		if pref != "" && pref != "auto" && cp.ID() != pref {
+			continue
+		}
+		conn, ready := cp.conn(context.Background())
+		if !ready {
+			continue
+		}
+		m := model
+		if m == "" {
+			if pref == "" || pref == "auto" {
+				// No model named either: this row is not necessarily the one auto-routing lands
+				// on, so nothing here is resolved for it.
+				continue
+			}
+			m = cp.DefaultModel()
+		}
+		if f, ok := comfyFamilyFor(conn, m); ok {
+			return f, m, true
+		}
+	}
+	return "", "", false
+}
+
+// comfyStrengthRefusal is ADR 0094 decision 2's edge check, shared by HandleGenerate and
+// jobs_http.go's spec(): a resolved family that does not read Strength is refused BY VALUE before
+// any GPU is woken, the same way an out-of-range strength already is. Empty when the family
+// cannot be resolved from what the request named (comfyResolveFamily) — that gap is
+// comfyStrengthIgnoredWarning's, not this one's.
+func comfyStrengthRefusal(pref, model string) string {
+	family, named, ok := comfyResolveFamily(pref, model)
+	if !ok || comfyFamilyStrength(family) {
+		return ""
+	}
+	return fmt.Sprintf("model %s does not take strength: the %s family fixes its denoise at 1 by"+
+		" construction (instruction editing), so the amount has nowhere to go", named, family)
+}
+
+// comfySizeRefusal is decision 4's edge check, in the same shape as comfyStrengthRefusal above.
+func comfySizeRefusal(pref, model, size string) string {
+	if s := strings.TrimSpace(size); s == "" || s == "auto" {
+		return ""
+	}
+	family, named, ok := comfyResolveFamily(pref, model)
+	if !ok || !comfyFamilyHasNoSizes(family) {
+		return ""
+	}
+	return fmt.Sprintf("model %s does not take size: the %s family's output size is decided from"+
+		" the input picture's own aspect ratio, so no candidate has anywhere to go", named, family)
+}
+
 func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, error) {
 	conn, ok := p.conn(ctx)
 	if !ok {
 		return Result{}, errors.New("this deployment runs no self-hosted image engine")
 	}
+	explicitModel := strings.TrimSpace(req.Model) != ""
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
 		model = p.DefaultModel()
@@ -653,7 +899,22 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	}
 	caps := p.Caps(model)
 	if !caps.Supports(req.Op) {
-		return Result{}, fmt.Errorf("the self-hosted image engine cannot do %s", req.Op)
+		// ADR 0094 decision 11's third bullet: a request naming no model resolved to the WARM
+		// row, and its family does not offer this op — falling through to the caller's own error
+		// would make Run() try the next provider in the effective order, which is a member's own
+		// plan quota (imagegen.go's fallbackWarnings measured exactly this accident once already,
+		// ADR 0071 P1). An explicit model is honoured as asked and refused as asked: the caller
+		// named it on purpose.
+		if explicitModel {
+			return Result{}, fmt.Errorf("the self-hosted image engine cannot do %s", req.Op)
+		}
+		alt, found := comfyFirstModelForOp(conn, req.Op)
+		if !found {
+			return Result{}, fmt.Errorf("the self-hosted image engine cannot do %s", req.Op)
+		}
+		// comfySwitchWarning below reads conn.Warm against the model actually used, so switching
+		// to alt here is what makes it fire and explain the checkpoint change.
+		model, caps = alt, p.Caps(alt)
 	}
 	if req.Prompt == "" {
 		return Result{}, errors.New("a prompt is required")
@@ -753,6 +1014,9 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 
 	warnings := comfyWarnings(req)
 	if ignored := comfyNegativeIgnoredWarning(conn, model, family); ignored != "" {
+		warnings = append(warnings, ignored)
+	}
+	if ignored := comfyStrengthIgnoredWarning(family, req); ignored != "" {
 		warnings = append(warnings, ignored)
 	}
 	warnings = append(warnings, comfyIgnoredParamWarnings(family, req.Params)...)
