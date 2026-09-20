@@ -126,6 +126,10 @@ describe("行の編集で実測 VRAM を勧める", () => {
     expect(hint()?.textContent).toContain("20,862 MiB");
     expect(hint()?.textContent).toContain("1024x1024");
     expect(hint()?.textContent).toContain("batch 1");
+    // 🔴 そして「どのカードで測ったか」。ComfyUI は苦しいときしか退避しないので、同じ走行でも
+    // 広いカードでは桁が変わる（2511 は L4 で 20,974・L40S で 28,358＝退避無し）。カードを
+    // 伏せた測定値は、運用者が vram_mib に入れたときに一段大きい箱を買わせる。
+    expect(hint()?.textContent).toContain("L4 24GB");
 
     // 押すまでは 0 のまま（機械は書かない）。
     expect(vramField()?.value).toBe("0");
@@ -213,6 +217,7 @@ describe("取り込みの画面で実測 VRAM を先に言う", () => {
     // 合計（この族では 29,882 MiB 前後）と実測（20,862 MiB）の両方が、この順で出る。
     expect(document.querySelector(".engine-operation-fit")?.textContent).toContain("MiB");
     expect(hint()?.textContent).toContain("20,862 MiB");
+    expect(hint()?.textContent).toContain("L4 24GB");
     expect(hint()?.textContent).toContain("編集");
   });
 

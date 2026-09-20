@@ -16,6 +16,7 @@ describe("族の実測 VRAM", () => {
     expect(m?.batch).toBe(1);
     expect(m?.inputs).toBe(1);
     expect(m?.file).toBe("qwen_image_edit_2509_fp8_e4m3fn.safetensors");
+    expect(m?.card).toBe("L4 24GB");
   });
 
   it("鍵でも素のファイル名でも合う（取り込みの画面は名前、行は S3 の鍵）", () => {
@@ -36,6 +37,7 @@ describe("族の実測 VRAM", () => {
     expect(m?.size).toBe("1024x1024");
     expect(m?.batch).toBe(1);
     expect(m?.inputs).toBe(1);
+    expect(m?.card).toBe("L4 24GB");
   });
 
   // 🔴 これが表の主張そのもの。測っていない族に「たぶんこれくらい」を返した時点で、
@@ -73,6 +75,11 @@ describe("族の実測 VRAM", () => {
 
   // 表に足すときは測定条件も一緒に、という約束を機械側でも保つ（条件の無い数字は
   // 比べようがない——寸法・batch・ビルドで VRAM は動く）。
+  //
+  // 🔴 カードもその 1 つで、しかも注記ではない。ComfyUI は苦しいときしか退避しないので、
+  // 広いカードで測ると同じ走行が別の数になる（2511 は L4 で 20,974・L40S で 28,358＝ファイル
+  // 合計そのまま）。この欄は vram_mib に入る値なので、カードを伏せた測定値は一段大きい箱を
+  // 買い続けさせる。
   it("すべての行が測定条件を持つ", () => {
     for (const [family, m] of FAMILY_VRAM_MEASURED) {
       expect(m.mib, family).toBeGreaterThan(0);
@@ -80,6 +87,7 @@ describe("族の実測 VRAM", () => {
       expect(m.batch, family).toBeGreaterThan(0);
       expect(m.inputs, family).toBeGreaterThanOrEqual(0);
       expect(m.file, family).not.toBe("");
+      expect(m.card, family).not.toBe("");
     }
   });
 });

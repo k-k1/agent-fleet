@@ -41,6 +41,16 @@ export interface FamilyVramMeasurement {
   batch: number;
   /** Reference pictures fed to the graph — 0 for a family that generates from a prompt alone. */
   inputs: number;
+  /** The card it was read on, as an operator names one ("L4 24GB").
+   *
+   * 🔴 Load-bearing, not provenance trivia. ComfyUI evicts only when it has to, so the SAME run
+   * measures differently on different cards: qwen-image-edit-2511 read 20,974 MiB on an L4 24GB
+   * and 28,358 MiB on an L40S 48GB — the whole 28,774 MiB file set resident, because a card with
+   * room to spare never evicted the text encoder. This number feeds `vram_mib`, which picks the
+   * rung, so a reading taken where nothing had to be evicted would buy the bigger box forever and
+   * call it a measurement. **A value here is only a value of this field when the card was tight
+   * enough to force eviction** (ADR 0094 decision 8). */
+  card: string;
 }
 
 /** A Map rather than an object literal, and that is not style: a plain object answers
@@ -53,17 +63,14 @@ export const FAMILY_VRAM_MEASURED = new Map<string, FamilyVramMeasurement>([
   // i.e. 20,862 MiB in use, at 1024² with one reference picture.
   ["qwen-image-edit-2509", {
     mib: 20862, file: "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
-    size: "1024x1024", batch: 1, inputs: 1,
+    size: "1024x1024", batch: 1, inputs: 1, card: "L4 24GB",
   }],
-  // 🔴 Both numbers here were read on an **L4 24GB**, and that is load-bearing rather than
-  // incidental: the same 2511 run on an L40S 48GB answered 28,358 MiB — the whole 28,774 MiB file
-  // set resident, because a card with room to spare evicts nothing. These figures are small only
-  // BECAUSE the card is tight enough to evict the text encoder after encoding. A reading taken on
-  // a bigger card is not a value of this field (ADR 0094 decision 8's third 🔴; the field has no
-  // column for the card yet — open question 7).
+  // Peak of a 40-second sampling; it moved between 20,580 and 20,974 during the run with as
+  // little as 1,589 MiB free. The same run on an L40S 48GB read 28,358 — see `card` above for
+  // why that one is not a value of this field.
   ["qwen-image-edit-2511", {
     mib: 20974, file: "qwen_image_edit_2511_fp8mixed.safetensors",
-    size: "1024x1024", batch: 1, inputs: 1,
+    size: "1024x1024", batch: 1, inputs: 1, card: "L4 24GB",
   }],
 ]);
 

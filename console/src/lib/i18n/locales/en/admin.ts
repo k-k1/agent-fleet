@@ -474,7 +474,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // is evicted once it has encoded. A family somebody read /system_stats for shows that number
   // instead, and the OPERATOR enters it; the machine never writes it (ADR 0094 decision 8).
   // Left blank, the ladder picks a rung from the total, which buys a larger box than the run needs.
-  "admin.engines_vram_measured": "measured for this family: {n} MiB ({s}, batch {b}, {i} reference picture(s), with {f})",
+  "admin.engines_vram_measured": "measured for this family: {n} MiB on a {c} ({s}, batch {b}, {i} reference picture(s), with {f})",
   "admin.engines_vram_measured_use": "Use the measured {n}",
   "admin.engines_vram_measured_after": "Enter it under Measured VRAM from the row's Edit once the ingest finishes.",
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
