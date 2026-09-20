@@ -199,8 +199,8 @@ physical size, and `engine_class.go:41` says why) it always asks for `confirm_vr
 
 **Measured** (`/system_stats`, raw): `vram_total` 23,659,151,360 B = **22,563 MiB**, `vram_free`
 1,783,934,774 B = 1,701 MiB, so **20,862 MiB in use** — inside the rung. The conditions were
-**1024², batch 1, one reference image**; `comfyMaxBatch` is 4 (`comfy.go:482`) and decision 5 opens
-two references, and **neither was measured**.
+**1024², batch 1, one reference image**. `comfyMaxBatch` is 4 (`comfy.go:482`) and **that range was
+not measured** — re-measure in P3, where the second reference opens (decision 5).
 
 Do **not** change the formula — subtracting a text encoder would be a lie for other families. Who
 writes `vram_mib`, then:
@@ -270,8 +270,15 @@ The same trap was already hit with `negative_prompt` and fixed with a **union ac
 (`http.go:237-247`, with the reason in its comment). `Ops`, `Strength`, `Sizes` and `MaxInputs` take
 the same shape:
 
-- **Advertising** (`/imagegen/status`, the tool definition, the pane's fields) is the **union** — what
-  any one row on this engine can do is offered.
+- 🔴 **The union goes inside `comfyProvider.Caps("")` itself**, not in the route. `Caps` resolves an
+  empty model to `DefaultModel()` — the warm row — at `comfy.go:114-116`, so **making that one answer
+  a union over the enabled rows fixes both the advertising (`http.go:206`) and the candidate filter
+  (`imagegen.go:806`'s `capsOf` → `imagegen.go:741`) at once**. `Caps(model)` for a named model stays
+  exactly the family's answer, so judging stays strict.
+  ⚠️ **The negative precedent (`http.go:242-247`) unions in the ROUTE, and copying that shape alone is
+  not enough**: `capsOf` would still see the warm row, `op=generate` would drop comfy at the
+  candidate filter, and the third bullet below (the resolution inside `Generate`) would never be
+  reached.
 - **Judging** (at generation) is `Caps(model)` — `imagegen.go:806`'s `capsOf` already asks
   `p.Caps(req.Model)`, so a request that names a model is already right.
 - 🔴 **With no model named, comfy's own model resolution has to read `req.Op`.** The union only
@@ -281,7 +288,7 @@ the same shape:
   (`imagegen.go:838-841`), i.e. **falls through to the next provider, which spends a member's
   plan**, and `recordUsage` (`imagegen.go:834`) writes a failed row on the way. So when the warm
   row's family does not claim the op, resolve to **the first enabled row that does** and say so
-  with `comfySwitchWarning` (`comfy.go:632`). A checkpoint switch costs 1-2.5 minutes (measured),
+  with `comfySwitchWarning` (`comfy.go:633`). A checkpoint switch costs 1-2.5 minutes (measured),
   which is explainable; silently billing another plan is not. **P0's third criterion is only
   testable once this exists.**
 
@@ -331,7 +338,10 @@ So the per-family set is **six**, not four: `Ops`, `MaxInputs`, `Strength`, `Siz
   (**omitting it fails `TestEveryFamilyHasTrialSteps`**, `comfy_test.go:1585`; run B's 8 steps /
   63.2 s is the citation), `mcpx/mcp_stdio.go:1132` (the `op` enum and its description — the first
   case where which ops exist depends on the model; the reference-image argument is **`inputs`**, not
-  `images`, `maxItems` 5).
+  `images`, `maxItems` 5). **P3's second image lands here too**: make `comfyParams` plural
+  (`comfy_workflows.go:134`'s `Image string`), call `uploadImage` more than once (`comfy.go:710`
+  takes `req.Inputs[0]` alone), wire `image2`, and fix the singular wording of `comfyCheckInputs`'
+  refusal (`comfy.go:786`).
 - **CP**: `engine_catalog.go` (two words, required flags), `engine_family_parts.go` (the table), and
   `engine_class.go` is **left alone** (decision 8).
 - **Console**: two family cards in `families.ts` (dialect `sentences`, no quality chips, steps 20 for
@@ -466,3 +476,18 @@ right, but one path was missing**.
 - 🟢 **The reviewer withdrew the VRAM figure; 20,862 MiB stands.** A second witness turned up in the
   tree: `PARAMETERS-60-engines.md:659` says "`Total VRAM 22563 MB`, so **22000 is the number**" — the
   rung and the measurement come from the same place.
+
+### Third round (against `8d37d827`)
+
+One 🔴 left, and it was **where the union goes**.
+
+- 🔴 **Calling decision 11's union "advertising" defined it by its consumers.** The negative
+  precedent it cited unions in the ROUTE (`http.go:242-247`), so copying that shape leaves `capsOf`
+  (`imagegen.go:806`) looking at the warm row: `op=generate` drops comfy **at the candidate filter**
+  and never reaches the third bullet (the op-aware resolution inside `Generate`). It now names the
+  function — the union lives in **`comfyProvider.Caps("")`** — which fixes advertising and candidate
+  selection in one place while `Caps(model)` stays strict.
+- 🟡 Decision 8's text had not followed decision 5's retreat (P0 stays at one image), and the
+  consequences' Agent line was missing the second image's plumbing (plural `comfyParams`, repeated
+  `uploadImage`, the `image2` wire, the singular refusal). Both fixed, and `comfySwitchWarning`'s
+  line corrected from 632 to 633.

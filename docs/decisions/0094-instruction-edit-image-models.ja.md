@@ -182,8 +182,8 @@ shift が 3.0 → 3.1 になる（steps / cfg は switch の false 枝＝40 / 4�
 
 **実測（`/system_stats` の生値）**: `vram_total` 23,659,151,360 B ＝ **22,563 MiB**、
 `vram_free` 1,783,934,774 B ＝ 1,701 MiB、したがって **使用 20,862 MiB**。段の 22,000 に収まっている。
-測定条件は **1024²・batch 1・参照画像 1 枚**で、`comfyMaxBatch` は 4（`comfy.go:482`）、決定 5 は 2 枚まで
-開ける——**その範囲は測っていない**。
+測定条件は **1024²・batch 1・参照画像 1 枚**。`comfyMaxBatch` は 4（`comfy.go:482`）で、**その範囲は
+測っていない**——参照 2 枚を開ける P3 で測り直す（決定 5）。
 
 見積りの式は**変えない**（テキストエンコーダを引く式は他のファミリーで嘘になる）。では誰が `vram_mib` を書くか:
 
@@ -242,8 +242,14 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
 同じ罠は `negative_prompt` で既に踏んであり、`http.go:237-247` が**モデル横断の union** で直して
 理由までコメントに書いてある。`Ops` / `Strength` / `Sizes` / `MaxInputs` も同じ形にする:
 
-- **広告（`/imagegen/status`・ツール定義・ペインの欄）は union**——このエンジンのどれか 1 つの行が
-  できることは、全部載せる。
+- 🔴 **union を置くのは `comfyProvider.Caps("")` そのもの**——ルート側ではない。`Caps` は
+  `comfy.go:114-116` で空のモデルを `DefaultModel()`＝warm な 1 行に解決するので、**この 1 か所を
+  有効行にわたる union にすると、広告（`http.go:206`）と候補選び（`imagegen.go:806` の `capsOf` →
+  `imagegen.go:741`）の両方が同時に直る**。モデルを名指しした `Caps(model)` はファミリーどおりのまま
+  ＝判定は厳密なまま。
+  ⚠️ **手本にした negative の先例（`http.go:242-247`）はルート側の union なので、同じ形を真似るだけでは
+  足りない。** そちらだけ直すと `capsOf` は warm な行のままで、`op=generate` は候補選びの時点で
+  comfy を落とし、下の 3 つ目の箇条（`Generate` 内の解決）には**到達しない**。
 - **判定（生成時）は `Caps(model)`**——`imagegen.go:806` の `capsOf` は既に `p.Caps(req.Model)` なので、
   モデルを名指しした要求はそのまま正しい。
 - 🔴 **モデル未指定のときは、comfy のモデル解決が `req.Op` を見る。** union は「候補に残す」までしか
@@ -252,7 +258,7 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
   それを attempts に積んで **`continue`**（`imagegen.go:838-841`）＝**次の provider（会員の課金プラン）へ
   落ちる**。おまけに `recordUsage`（`imagegen.go:834`）が失敗の行を 1 本刻む。
   したがって warm な行のファミリーがその op を名乗らないときは、**名乗る最初の有効な行に落として
-  `comfySwitchWarning`（`comfy.go:632`）を出す**。チェックポイントの切り替えは実測 1〜2.5 分かかるが、
+  `comfySwitchWarning`（`comfy.go:633`）を出す**。チェックポイントの切り替えは実測 1〜2.5 分かかるが、
   黙って別プランに課金するより説明できる。**P0 完了条件 (3) はこれが入って初めて検証できる。**
 
 ### 決定 12 — ファミリーの属性は 6 つ。`cfg` と `negative` を落とすと**嘘の警告**が出る
@@ -296,6 +302,9 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
   `TestEveryFamilyHasTrialSteps`（`comfy_test.go:1585`）が赤**。実測 B の 8 steps／63.2 秒がそのまま
   根拠になる）、`mcpx/mcp_stdio.go:1132`（`op` の enum と説明文——ファミリーで使える op が変わる最初の例。
   参照画像の引数は `images` ではなく **`inputs`**・`maxItems` 5 固定）。
+  **P3 の 2 枚目**はここに乗る: `comfyParams` の複数形化（`comfy_workflows.go:134` の `Image string`）・
+  `uploadImage`（`comfy.go:710` は `req.Inputs[0]` の 1 回だけ）の複数回呼び出し・`image2` への配線・
+  `comfyCheckInputs`（`comfy.go:786`）の拒否文の単数形。
 - **CP**: `engine_catalog.go`（語彙 2 語・必須フラグ）、`engine_family_parts.go`（部品表）、
   `engine_class.go` は**触らない**（決定 8）。
 - **Console**: `families.ts` にファミリーカード 2 枚（dialect は `sentences`・quality チップ無し・
@@ -417,3 +426,17 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
 - 🟢 **VRAM の数字はレビュー側が撤回し、こちらの 20,862 MiB が正しいと確認された。** 裏取りも増えた:
   `PARAMETERS-60-engines.md:659` が「`Total VRAM 22563 MB`, so **22000 is the number**」と書いており、
   段の 22,000 は実測と同じ出所から来ている。
+
+### 3 巡目（`8d37d827` に対して）
+
+残った 🔴 は 1 件で、**union を置く場所**だった。
+
+- 🔴 **決定 11 の union を「広告」として書いたのは、置き場所を消費者側で定義していた。** 手本にした
+  negative の先例はルート側（`http.go:242-247`）の union なので、文字どおり真似ると `capsOf`
+  （`imagegen.go:806`）は warm な行のままで、`op=generate` は**候補選びの時点で** comfy を落とし、
+  3 つ目の箇条（`Generate` 内の op を見た解決）に到達しない。union は
+  **`comfyProvider.Caps("")` そのもの**に置く、と関数名で書き直した。1 か所で広告と候補選びの両方が
+  直り、名指しの `Caps(model)` は厳密なまま。
+- 🟡 決定 8 の本文が決定 5 の後退（P0 は 1 枚）に追随していなかった／影響の Agent 行に 2 枚目の経路
+  （`comfyParams` の複数形化・`uploadImage` の複数回・`image2` の配線・拒否文の単数形）が無かった。
+  どちらも直した。`comfySwitchWarning` の行番号も 632 → 633 に。
