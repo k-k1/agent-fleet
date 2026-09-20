@@ -60,6 +60,10 @@ type enginePlanFile struct {
 	// there is one. Both are what the press needs and neither is a fact the operator decides on.
 	resolved engineResolved
 	known    *engineKnownArtifact
+	// conflict is non-empty when the destination key is already recorded by something this plan
+	// cannot prove is the same file. Set only on download parts; carried into the follow-up spec
+	// so followUpFile skips the download rather than racing a refused RunTask in the reconciler.
+	conflict string
 }
 
 // enginePlan is the whole answer for one press.
@@ -171,8 +175,22 @@ func (a engineAdminAPI) enginePlanFor(ctx context.Context, g engineIngestGrant, 
 			continue
 		}
 		pname := engineBaseName(p.File)
-		plan.Files = append(plan.Files, enginePlanLine(ctx, held, p.Flag, pname,
-			engineIngestKeyFor(role, images, p.Flag, pname, false), pres))
+		pkey := engineIngestKeyFor(role, images, p.Flag, pname, false)
+		pf := enginePlanLine(ctx, held, p.Flag, pname, pkey, pres)
+		// When this part needs a download, check that its destination is not already recorded by
+		// something this press cannot prove is the same file. If it is, the download would be
+		// refused minutes later in the reconciler with nobody watching — warn now so the operator
+		// can free the slot before pressing. Cost: one ListEngineModels(all roles) + at most one
+		// HeadObject per download part that has a recorded destination.
+		if pf.Action == enginePlanDownload && a.mgr != nil && a.mgr.store != nil {
+			if ref := engineIngestDestinationUnused(ctx, a.mgr.store, a.mgr.store,
+				a.engineStorageBytes(), role, pkey); ref != nil {
+				pf.conflict = ref.message
+				plan.Warnings = append(plan.Warnings, p.Flag+" lands at "+pkey+
+					" which is already recorded ("+ref.message+"); free that slot before pressing")
+			}
+		}
+		plan.Files = append(plan.Files, pf)
 	}
 
 	// And the one header read that decides whether this row could decode a picture at all: does

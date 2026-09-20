@@ -2229,6 +2229,10 @@ func enginePlanFollowUps(plan enginePlan) ([]engineVaeFollowUp, map[string]strin
 			}
 		case enginePlanMove:
 			moves[f.Flag] = f.Source
+		default:
+			// download: carry the conflict reason so followUpFile skips the RunTask rather
+			// than racing a refusal in the reconciler where nobody can see it.
+			fu.Conflict = f.conflict
 		}
 		out = append(out, fu)
 	}
