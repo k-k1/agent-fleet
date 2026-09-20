@@ -970,16 +970,50 @@ llama.cpp のコンバータがこの 3 族の GGUF にどんなキー名でこ�
 
 ### 13.7 取り込みの実務 — `store.EngineModel` への写像（提案。実測ではない）
 
+🔴 **2026-09-20 訂正**: この節の初稿は `Args` を 1 本の文字列で書いていた。**誤り**——駆動役の指摘で直した。
+以下は訂正後。
+
 `store.EngineModel`（`control-plane/internal/store/store.go:224` 以降）の関連欄: `Role`（`"llm"`）・
 `ID`（目録の鍵、ロール内で一意——`engine_admin.go:1376` の POST ボディで管理者が自由入力、文法を定めた
 ADR は無い）・`Kind`（既存 5 行は `"checkpoint"` または `"gguf"`。既存行の実例から `"checkpoint"` を踏襲）・
-`Args []string`（wire key はアクティブセットで `"a"`・admin PUT/読み出しで `"args"`。フラグと値を交互に
-並べたリスト——`deploy/aws/ecs/engine-tools/fetch-models.sh:123` の jq が `["--flag","value",...]` を
-`presets.ini` の `flag = value` 行へ展開する。既存の `llama-3.1-8b-instruct-q4_k_m` 行には
-`--jinja 1`・`--mmap 0`・`--n-gpu-layers 99` 相当が入っている、と本書 757 行が既に記録済み）・`BaseModel`
-（llm プロバイダには語彙検証が無い——`engineBaseModelsFor`（`engine_catalog.go:323-328`）は `provider=="comfy"`
-のときしか語彙を返さないので、lcpp の `BaseModel` は自由記入。妥当な値の**提案**であって強制される文法ではない）・
-`Source`（store.go のコメントが定める形式 `hf:<repo>/<file>`）。
+`BaseModel`（llm プロバイダには語彙検証が無い——`engineBaseModelsFor`（`engine_catalog.go:323-328`）は
+`provider=="comfy"` のときしか語彙を返さないので、lcpp の `BaseModel` は自由記入。妥当な値の**提案**であって
+強制される文法ではない）・`Source`（store.go のコメントが定める形式 `hf:<repo>/<file>`）。
+
+**`Args []string` は「フラグと値を交互に並べた文字列配列」**（JSON の配列。1 本の文字列ではない）。
+実例: `Args: []string{"--type", "q8_0"}`（`control-plane/engine_catalog_test.go:92`）。永続化は
+`json.Unmarshal([]byte(argsJSON), &m.Args)`（`control-plane/internal/store/store_engine_models.go:69`）と
+`jsonList(m.Args)`（同 93・155 行）——DB 列は JSON 文字列だが Go 側の型は最初から `[]string`。wire key は
+アクティブセットで `"a"`・admin PUT/読み出しで `"args"`。`deploy/aws/ecs/engine-tools/fetch-models.sh:123`
+の jq が配列を走査し、**`-` で始まる要素をフラグとみなして次の要素を見る**——次の要素があり、かつそれが
+`-` で始まらなければ `flag = 次の要素` を書き、そうでなければ `flag = true` を書く。したがって
+`jinja = 1` という preset 行が出るには `Args` に `"--jinja","1"` が**この順で隣接して**入っている必要がある
+（`"--jinja"` だけを置いて次を省くと `jinja = true` になる）。
+
+🔴 **`--ctx-size` は `Args` に入れない。** 実測（`$HOME/lcpp-live/models-response.json`、`k1.kami@gmail.com`
+のセッションから `GET /engine/{key}/v1/models`・2026-09-20）で全 4 ロード済み行の `status.preset` を見ると:
+
+```
+[llama-3.1-8b-instruct-q4_k_m]
+jinja = 1
+mmap = 0
+ctx-size = 65536
+model = /models/llm/Llama-3.1-8B-Instruct-Q4_K_M.gguf
+n-gpu-layers = 99
+```
+
+`ctx-size` は `Args` 由来の行と書式こそ同じだが、`fetch-models.sh:123` の jq では**別の分岐**
+（`(if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end)`）から出ている。`$m.c` は
+`store.EngineModel.ContextTokens`（`context_tokens` として PUT する——`engine_admin.go:991`）が
+`engineActiveModel.Ctx`（wire key `"c,omitempty"`・`engine_catalog.go:388`、ドキュメントコメント
+「the window this model is started with (llama-server's -c). Per MODEL」）へ写る欄で、
+`engine_catalog.go:433` の `Ctx: m.ContextTokens` がその変換点。**`Args` に `"--ctx-size","65536"` を
+入れてはいけない**——別欄と衝突する二重指定になる。
+
+**既存 4 行はすべて `jinja = 1`・`mmap = 0`・`n-gpu-layers = 99` を持つ**（`models-response.json` 実測、
+`qwen3-coder-30b-a3b`・`qwen3.6-35b-a3b-ud-iq3_s`・`qwen3.8-27b-uncensored-q4_k_m`・
+`llama-3.1-8b-instruct-q4_k_m` の 4 行全部）。したがって `Args` は**既存行と同じ形を既定として提案する**
+（外す理由がある候補は無かった）: `["--jinja","1","--mmap","0","--n-gpu-layers","99"]`。
 
 既存行がどう入っているかは、目録行を作る静的な JSON/シードファイルとしてこのリポジトリには存在しない
 （テストの中のリテラル `store.EngineModel{Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled:
@@ -987,19 +1021,49 @@ true, Default: true}`（`engine_gateway_test.go:1035`）程度で、実物は管
 したがって以下は「この形で POST すればこの表と同じ意味の行になる」という**提案**であり、実際に POST・
 ingest したものではない（指示どおり、取り込み・有効化はしていない）:
 
-| # | 提案する `ID`（鍵） | `Source` | 提案する `BaseModel` | 提案する `Args` | 備考 |
+| # | 提案する `ID`（鍵） | `Source` | 提案する `BaseModel` | 提案する `Args` | 推奨 `c`（ctx-size） |
 |---|---|---|---|---|---|
-| 1 | `gpt-oss-20b-mxfp4` | `hf:ggml-org/gpt-oss-20b-GGUF/gpt-oss-20b-MXFP4.gguf` | `gpt-oss` | `--jinja 1 --n-gpu-layers 99` | ファイル名を素直に小文字化しただけ。他の慣例（`--mmap 0` 等）を足すかは利用者判断 |
-| 2 | `gemma-4-12b-it-q4_k_m` | `hf:unsloth/gemma-4-12b-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf` | `gemma-4` | `--jinja 1 --n-gpu-layers 99` | `mmproj-*.gguf` は同梱だがテキストのみで使うなら不要（`Files` に含めない） |
-| 3 | `lfm2.5-8b-a1b-q4_k_m` | `hf:LiquidAI/LFM2.5-8B-A1B-GGUF/LFM2.5-8B-A1B-Q4_K_M.gguf` | `lfm2-moe` | `--jinja 1 --n-gpu-layers 99` | ライセンス欄（`License`/`LicenseName`/`LicenseURL`）に LFM Open License v1.0 を明記すべき（13.3 参照） |
-| 4 | `ministral-3-8b-instruct-2512-q4_k_m` | `hf:unsloth/Ministral-3-8B-Instruct-2512-GGUF/Ministral-3-8B-Instruct-2512-Q4_K_M.gguf` | `ministral-3` | `--jinja 1 --n-gpu-layers 99` | 既存キーの慣例（`llama-3.1-8b-instruct-q4_k_m` のように長いファイル名をそのまま）に倣うと鍵が長い。短縮するかは利用者判断——本書はどちらかを断定しない |
-| 5 | `functionary-small-v3.2-q4_k_m` | `hf:bartowski/functionary-small-v3.2-GGUF/functionary-small-v3.2-Q4_K_M.gguf` | `llama-3.1` | `--jinja 1 --n-gpu-layers 99` | 🔴 13.5 の懸念どおり、この GGUF のままでは専用パーサに届かない見込み。`--chat-template-file` で
-  llama.cpp 同梱の正しいテンプレートへ差し替える手が理論上あるが、**そのファイルを箱へ置く経路がこの
-  リポジトリの ingest にあるかは確認できなかった**（`Args` は CLI フラグの文字列を運ぶだけで、任意ファイルの
-  中身を運ぶ仕組みは見当たらない——`fetch-models.sh` はモデル本体と `presets.ini` しか書かない） |
+| 1 | `gpt-oss-20b-mxfp4` | `hf:ggml-org/gpt-oss-20b-GGUF/gpt-oss-20b-MXFP4.gguf` | `gpt-oss` | `["--jinja","1","--mmap","0","--n-gpu-layers","99"]` | **131072**（学習上限そのもの。§13.8） |
+| 2 | `gemma-4-12b-it-q4_k_m` | `hf:unsloth/gemma-4-12b-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf` | `gemma-4` | `["--jinja","1","--mmap","0","--n-gpu-layers","99"]` | **262144**（学習上限そのもの。§13.8） |
+| 3 | `lfm2.5-8b-a1b-q4_k_m` | `hf:LiquidAI/LFM2.5-8B-A1B-GGUF/LFM2.5-8B-A1B-Q4_K_M.gguf` | `lfm2-moe` | `["--jinja","1","--mmap","0","--n-gpu-layers","99"]` | **128000**（学習上限そのもの。§13.8） |
+| 4 | `ministral-3-8b-instruct-2512-q4_k_m` | `hf:unsloth/Ministral-3-8B-Instruct-2512-GGUF/Ministral-3-8B-Instruct-2512-Q4_K_M.gguf` | `ministral-3` | `["--jinja","1","--mmap","0","--n-gpu-layers","99"]` | **65536**（学習上限 262144 は L4 に載らない。§13.8） |
+| 5 | `functionary-small-v3.2-q4_k_m` | `hf:bartowski/functionary-small-v3.2-GGUF/functionary-small-v3.2-Q4_K_M.gguf` | `llama-3.1` | `["--jinja","1","--mmap","0","--n-gpu-layers","99"]` | **65536**（既存 `llama-3.1-8b-instruct-q4_k_m` 行と同じ値・同じ理由。§13.8） |
 
-`Args` の `--jinja 1 --n-gpu-layers 99` は既存行が使っている慣例を踏襲した提案であり、5 本それぞれで
-実際にこの値が適切かは**測っていない**（特に `--mmap 0` を足すかどうかは既存の 1 行だけからは一般化できない）。
+`mmproj-*.gguf`（gemma-4・LFM2.5-VL 系ではなく gemma-4 のみ同梱）はテキストのみで使うなら `Files` に
+含めない。ライセンス欄（`License`/`LicenseName`/`LicenseURL`）は #3 に LFM Open License v1.0（13.3 参照）を
+明記すべき。#5 は 🔴 13.5 の懸念どおり、この GGUF のままでは専用パーサに届かない見込み。
+`--chat-template-file` で llama.cpp 同梱の正しいテンプレートへ差し替える手が理論上あるが、**そのファイルを
+箱へ置く経路がこのリポジトリの ingest にあるかは確認できなかった**（`Args` は CLI フラグの文字列を運ぶだけで、
+任意ファイルの中身を運ぶ仕組みは見当たらない——`fetch-models.sh` はモデル本体と `presets.ini` しか書かない）。
+#4 の `ID` は既存キーの慣例（`llama-3.1-8b-instruct-q4_k_m` のように長いファイル名をそのまま）に倣うと長い。
+短縮するかは利用者判断——本書はどちらかを断定しない。
+
+### 13.8 推奨 `c`（ctx-size）の根拠 — 族ごとに上限を決めているものが違う
+
+🔴 `context_length`（GGUF 側の学習上限。既存行の `meta.n_ctx_train` に相当）は**上限であって、
+そのまま設定してよい値ではない**（[[gguf-kv-cache-and-ceiling]] の「窓に公開上限を入れる罠」）。
+13.4 の層別の式で、候補ごとに「学習上限まで使ったら重み+KV がいくつになるか」を計算し、**L4 24GB に
+実際に載るか**で上限採用の可否を判定した。**計算バッファ・CUDA コンテキスト分の余白**は本書に実測が
+1 件しかない（[[gguf-kv-cache-and-ceiling]]: `qwen3.8-27b-uncensored`、重み 16.69GiB+KV(窓 65536 訂正後)
+4.00GiB=20.69GiB で起動**成功**——24GiB との差 3.31GiB が実際に足りた実測値）。ここでは**その 1 件だけを
+根拠に、保守的に 3GiB を余白として引いた 21GiB を「安全に載る」判定の予算**にした——他の 4 族（特に
+MoE・ハイブリッド構造）で計算バッファの実際の必要量が同じとは**確認できていない**。
+
+| # | 学習上限（GGUF `context_length`） | 学習上限での 重み+KV | 判定 | 推奨 `c` | 推奨 `c` での 重み+KV |
+|---|---|---|---|---|---|
+| 1 gpt-oss-20b | 131072 | 11.28+3.00=**14.28GiB** | 21GiB 予算に対し 6.72GiB 余白——**載る** | **131072**（学習上限を推奨） | 14.28GiB |
+| 2 gemma-4-12b | 262144 | 6.63+4.31=**10.95GiB** | 10.05GiB 余白——**載る** | **262144**（学習上限を推奨） | 10.95GiB |
+| 3 LFM2.5-8B-A1B | 128000 | 4.80+1.46=**6.27GiB** | 14.73GiB 余白——**載る（余裕が最大）** | **128000**（学習上限を推奨） | 6.27GiB |
+| 4 Ministral-3-8B | 262144 | 4.84+34.00=**38.84GiB** | 🔴 **L4 の物理容量 24GiB を大きく超える（載らない）** | **65536**（重み+KV 13.34GiB・7.66GiB 余白） | 13.34GiB（参考: 131072 なら 21.84GiB で 21GiB 予算を超え非推奨） |
+| 5 functionary-v3.2 | 131072 | 4.58+16.00=**20.58GiB** | 21GiB 予算に対し 0.42GiB しか余らない——**きつすぎるので非推奨** | **65536**（重み+KV 12.58GiB・8.42GiB 余白。既存 `llama-3.1-8b-instruct-q4_k_m` 行と同じ値） | 12.58GiB |
+
+**族ごとに「何が上限を決めているか」が違う**: #1〜#3（GPT-OSS・gemma-4・LFM2.5）はハイブリッド構造
+（sliding/conv 層が大半）のおかげで KV が軽く、**学習上限そのものが L4 に楽に載る**——推奨値は学習上限に
+一致させた。#4・#5（Ministral-3・functionary-v3.2）は**全層が full attention** で KV が ctx に比例して
+素直に伸びるため、**VRAM が学習上限よりずっと手前で先に効く**——Ministral-3 は学習上限（262144）の
+7 分の 1 以下（65536）でしか安全に動かせず、functionary-v3.2 は既存の `llama-3.1-8b-instruct-q4_k_m` 行
+（同じアーキテクチャ・同じ 65536）と同じ値に落ち着いた。これは推測ではなく、**同じアーキテクチャの
+既存行が既にその値で稼働している**という直接の先例がある（`models-response.json` 実測）。
 
 ## 受け入れ条件チェック（このセクションのみ）
 
