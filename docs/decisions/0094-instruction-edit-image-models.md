@@ -461,11 +461,18 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   `op=generate` still lists comfy** (decision 11's union holds, so nothing falls through to a paid
   provider), and (4) **naming qwen as the `model` while asking for `op=generate` is refused with the
   model's name in it** (decision 13 — a named request is not dropped).
-- **P1** — 2511 (decision 6), the parts table (decision 7), the operator-entered `vram_mib`
-  (decision 8). Done when one press stages all three parts in the right directories, **the screen offers
-  the measured number (20,862 MiB at 1024², batch 1, one reference) right after the ingest, and
-  `confirm_vram` stops appearing once the operator has entered it** (until then it appears, which is
-  the correct behaviour — decision 8).
+- **P1** — 2511 (decision 6), the parts table (decision 7), the road to an operator-entered
+  `vram_mib` (decision 8). Four completion criteria: (1) **one press stages all three parts in the
+  right directories**, (2) **2511 edits on real hardware** (run E reproduced), (3) **the ingest
+  screen and the row's edit both publish the measured number with the conditions it was measured
+  under** (size, batch, reference count, and the weights file it was read from), for the operator to
+  enter in one press, and (4) 🔴 **the entered number reaches the ladder** — the rung is chosen from
+  the measurement (20,862 MiB) and not from the file-sum estimate (28,676 MiB for 2509).
+  🔴 **It is NOT "`confirm_vram` stops appearing once it is entered".** The guard
+  (`engineVramGuardRow`) compares against the selected class, which on a deployment with an unpinned
+  ladder is its first rung — a T4 at 14,500 MiB — so an honest 20,862 still prompts (measured during
+  P0's acceptance). Decision 8's 🔴 says the same thing; it is repeated here because this is the
+  section an implementer reads first.
 - **P2** — props (decision 10). Done when a picture made from the pane shows its prompt, its
   negative and its size under "what this was made from".
 - **P3** — the reference-image path end to end (pane and the MCP `inputs` argument) and `MaxInputs`
@@ -475,13 +482,32 @@ counts only providers that were tried and failed, so **nothing is said**. Before
 ## Open
 
 1. **2511's 40 steps are expensive** (measured 393.8 s). The Lightning LoRA (4 steps) as a row has
-   not been measured for quality. Measure one in P1.
+   not been measured for quality. **Not measured in P1** (the maintainer's call), so this stays open.
 2. **Whether `inpaint` can be claimed** (deferred in decision 3). `SetLatentNoiseMask` on top of a
    denoise-1 instruction edit is unmeasured.
 3. **16.1 GB of host RAM is thin** (2.2 GB free). A box with both families enabled, switching
    repeatedly, has not been measured — the run only switched once.
 4. **Decision 9's trigger** (a third topology / past 15 declarations) is drawn from the measured 12,
    but "15" is not itself a measured number. Count the declarations again when the next family lands.
+   🔵 **Counted, while 2511 was being added: 17 places.**
+
+   | where | count | the places |
+   |---|---|---|
+   | Agent | 9 | the `comfyFamily` constant / `comfyFamilies` / `comfyBuildGraph`'s switch / the template entry point / `comfyQwenEditWirings` / `comfyFamilyRecipes` / `comfyFamilyInstructionEdit` / `comfyFamilyKnobs` / `comfyTrialSteps` |
+   | CP | 4 | `engineComfyFamilies` / `engineComfyRequiredFlags` / `engineFamilyUpstreams` / `engineFamilyParts` |
+   | Console | 3 | `wire.ts`'s `Family` / `FAMILY_CARDS` / the list in `families.test.ts` |
+   | golden | 1 | `testdata/comfy_<family>.golden.json` |
+
+   The drafted 12 missed five: the constant itself, the template entry point,
+   `engineFamilyUpstreams` (**without it `TestFamilyUpstreamsCoverTheVocabulary` is red**),
+   `families.test.ts`, and the wiring table P1 added. P1's implementation held it to **20 → 17** by
+   introducing `comfyFamilyInstructionEdit`, which folds four declarations (ops, strength, sizes,
+   negative) into one. That is a reprieve for as long as the families that follow share this
+   capability; it does nothing for the next topology with a *different* one.
+
+   🔴 **Decision 9's second trigger ("past 15 of the 12 places") is therefore drawn.** Whether to
+   raise decision 9's 🟡 intermediate step (a family as a data row) as its own ADR is the
+   maintainer's call, and it **has not been raised**.
 5. **The operator entering `vram_mib` once** (decision 8) is forgettable unless the screen asks for it
    right after the ingest. Where the measured number appears in the ingest UI is a P1 question.
 

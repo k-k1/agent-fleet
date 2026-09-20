@@ -419,10 +419,16 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
   （ブロッキングとキューの両経路で。`strength` を受け取らない）、(3) 🔴 **qwen の行を warm にしたまま `op=generate` が comfy に残る**
   （決定 11 の union が効いている＝課金 provider に落ちない）、(4) **`model` に qwen を名指しして
   `op=generate` を頼むと、モデル名入りで断られる**（決定 13＝名指しは落とさない）。
-- **P1** — 2511（決定 6）・部品表（決定 7）・`vram_mib` の既定（決定 8）。
-  完了の定義: 1 押しの取り込みで 3 部品が正しいディレクトリに入り、**取り込み直後の画面が測定値
-  （20,862 MiB・1024²/batch 1/参照 1 枚）を出し、運用者がそれを入れたあとは `confirm_vram` が出ない**
-  （入れるまでは出るのが正しい挙動——決定 8）。
+- **P1** — 2511（決定 6）・部品表（決定 7）・`vram_mib` の導線（決定 8）。
+  完了の定義は 4 つ: (1) **1 押しの取り込みで 3 部品が正しいディレクトリに入る**、
+  (2) **2511 が実機で編集を成す**（実測 E の再現）、(3) **取り込みの画面と行の「編集」が
+  測定値を測定条件つき（寸法・batch・参照枚数・測ったファイル）で出し、運用者が 1 押しで
+  入れられる**、(4) 🔴 **入れた値が梯子に効く**——合計の見積り（2509 で 28,676 MiB）ではなく
+  実測（20,862 MiB）で段が選ばれる。
+  🔴 **「入れれば `confirm_vram` が出なくなる」ではない。** 門（`engineVramGuardRow`）が
+  比べるのは選択中のクラスで、梯子が未固定の配備ではその先頭＝T4（14,500 MiB）だから、
+  正直な 20,862 を入れても確認は出る（P0 の受け入れで実測）。決定 8 の 🔴 と同じことを、
+  フェーズ節にも書く——実装者が最初に読むのはここなので。
 - **P2** — props（決定 10）。完了の定義: 生成ペインからの 1 枚で「この絵の設定」にプロンプト・
   negative・寸法が出る。
 - **P3** — 参照画像 2 枚目・3 枚目の導線（ペインと MCP の `inputs`）。
@@ -431,13 +437,31 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
 ## 未解決
 
 1. **2511 の 40 steps は高い**（実測 393.8 s）。Lightning LoRA（4 steps）を行として入れたときの
-   品質は測っていない。P1 で 1 枚測る。
+   品質は測っていない。**P1 では測らない**（利用者の裁定）ので、未解決のまま残す。
 2. **inpaint を名乗れるか**（決定 3 で見送り）。`SetLatentNoiseMask` を denoise 1 の指示編集に足した
    ときの挙動は未測定。
 3. **ホスト RAM 16.1 GB は薄い**（空き 2.2 GB）。2509 と 2511 を両方有効にした箱で、載せ替えが
    続いたときの挙動は測っていない（実測では E が 1 回だけ載せ替えた）。
 4. **決定 9 の引き金**（トポロジ 3 つ目／宣言 15 か所）は、12 か所という実数からは引いたが、
    「15」そのものは測った数字ではない。次にファミリーを足すときに宣言箇所を数え直す。
+   🔵 **数え直した（2511 を足しながら実測）＝17 か所。**
+
+   | どこ | 数 | 宣言箇所 |
+   |---|---|---|
+   | Agent | 9 | `comfyFamily` の定数 / `comfyFamilies` / `comfyBuildGraph` の switch / テンプレートの入口 / `comfyQwenEditWirings` / `comfyFamilyRecipes` / `comfyFamilyInstructionEdit` / `comfyFamilyKnobs` / `comfyTrialSteps` |
+   | CP | 4 | `engineComfyFamilies` / `engineComfyRequiredFlags` / `engineFamilyUpstreams` / `engineFamilyParts` |
+   | Console | 3 | `wire.ts` の `Family` / `FAMILY_CARDS` / `families.test.ts` の一覧 |
+   | golden | 1 | `testdata/comfy_<family>.golden.json` |
+
+   起草時の 12 が数え落としていたのは 5 つ: 定数そのもの・テンプレートの入口・
+   `engineFamilyUpstreams`（**無いと `TestFamilyUpstreamsCoverTheVocabulary` が赤**）・
+   `families.test.ts`・（P1 で増えた）配線の表。P1 の実装では `comfyFamilyInstructionEdit`
+   （ops・strength・sizes・negative の 4 か所を 1 つに畳む）を入れて **20 → 17** に抑えた。
+   これは同じ能力の族が続く限りの延命で、次の**別能力の**トポロジには効かない。
+
+   🔴 **決定 9 の 2 つ目の引き金（「12 か所が 15 を超える」）は、これで引かれている。**
+   決定 9 の 🟡 が挙げた中間段（ファミリー＝データ行）を別 ADR で起こすかどうかは利用者の判断で、
+   **まだ起こしていない**。
 5. **`vram_mib` を運用者が 1 回入れる**（決定 8）のは、取り込みの直後に画面が要求しない限り
    忘れられる。取り込み UI のどこに測定値を出すかは P1 で決める。
 
