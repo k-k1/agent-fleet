@@ -723,12 +723,38 @@ A-2 の分析どおり、GGUF に実際に焼かれたテンプレートが Meta
 `;` を生成しているか、のどちらかになる。**この 2 つを切り分ける手段が、エンジンに触れない範囲には無かった。
 分からなかった、とだけ言える。**
 
+#### A-5.（2026-09-20 追記）HF の GGUF メタデータ API で確認——分布元の候補 1 つは公式テンプレートと一致
+
+A-4 の限界（ファイル本体はダウンロード禁止）は保ったまま、**HF がファイルをダウンロードせずに GGUF ヘッダを
+返す API**（`GET https://huggingface.co/api/models/{repo}?expand[]=gguf`）で 1 つの候補を検証した。
+
+配布元の候補は `docs/decisions/0071-self-hosted-inference-engines.md:131`（ADR 0071 の推奨表）が名指す
+`bartowski/Meta-Llama-3.1-8B-Instruct-GGUF`（`…-Q4_K_M.gguf`）。この API の応答は:
+
+```json
+"gguf": { "total": 8030261312, "architecture": "llama", "context_length": 131072,
+          "chat_template": "{{- bos_token }}\n...{{- raise_exception(\"This model only supports single tool-calls at once!\") }}...", ... }
+```
+
+`chat_template` 本文は**改行・文字列まで含めて A-1 で引用した Meta 公式テンプレートと一致**（同じ
+`raise_exception` 行・`;` は本文中に一切無し）。傍証として、この GGUF の `total`（総パラメータ数 8,030,261,312）と
+`context_length`（131,072）は、実測の `models-response.json` の `meta.n_params`（8030261312）・
+`meta.n_ctx_train`（131072）と**完全一致**する（llama-3.1-8b という base model なら他の量子化元でも同じ値になり
+得るので、これだけで配布元を一意には確定できない——ファイルの sha256 は取得していない）。
+
+**このタスクの範囲で言えること**: ADR 0071 が推奨する配布元のテンプレートは公式版と一致していた。もし
+実際の ingest がこの配布元をそのまま使ったなら、A-2 の分析（公式どおりのテンプレートに対してはオートパーサの
+複数呼び出し検出ロジックが `;` を注入する経路は無い）と合わせて、**先頭の `;` はテンプレート差し替えでは
+説明しにくくなる**——モデル自身の生成側に寄る仮説の相対的な確からしさが上がった、という以上のことは言えない。
+🔴 sha256 一致という決定的な証拠は無いので、A-4 の「分からなかった」という結論そのものは**変えない**
+（別の配布元・別のリビジョンが使われていた可能性は残る）。
+
 #### B. 出口候補 4 つ（実行可能性のみ判定。実行しない）
 
 | # | 候補 | 実行可能性（このリポジトリで読んだ事実） | 誰の作業 | 費用 | 副作用 |
 |---|---|---|---|---|---|
 | 1 | 上流の版を上げる | **可能だが受動的**。`LlmImageTag` 既定 `server-cuda` は動くタグで、スタンドアップの度に `crane copy $LLM_ENGINE_FROM:$llm_tag`（`standup.sh:63,374-379`）で再取得される——固定 pin ではない。A-3 で修正コミットが見つからなかった以上、「次の配備で直る」保証は無い。**逆に「次の配備でオートパーサや Qwen3-Coder の専用分岐が変わり、今 PASS している qwen3.8/qwen3-coder/qwen3.6 が壊れる」リスクも同じ経路にある**（同じ動くタグが全モデル共通） | 配備役（standup 再実行） | インフラのスタンドアップ 1 回分（GPU 課金は箱を買った時のみ） | 全モデル同時に版が変わる。回帰確認が要る |
-| 2 | このモデルだけ引数を変える | **欄はある**。`store.EngineModel.Args []string`（wire key `"a"`、`engine_admin.go:1402`・`engine_catalog.go:385,433,907-908`）が行単位の追加フラグ欄で、`fetch-models.sh:123,128` の jq が `key = value` 形式で `presets.ini` に書く。したがって `Args: ["--chat-template", "llama3"]` のような**モデル別上書きは技術的に可能**。⚠️ ただし `--jinja` は role 全体の `LlmExtraArgs`（既定 `-ngl,99,--jinja,--no-mmap`・`60-engines.yaml:51`）としてコンテナ起動コマンドに前置される（`$(cat /models/cmdline)` の前に `${Extra}` が付く・`60-engines.yaml:718-722`）ので、**`--jinja`（role 全体）と `--chat-template`（モデル別）が同時に llama-server へ渡る**。どちらが勝つか、あるいは衝突してエラーになるかは llama-server の引数解析の実装次第で、**エンジンに触れない範囲では確認できなかった** | 利用者の管理操作（目録の該当行を編集して再取り込み） | 再取り込み 1 回（軽い） | 他モデルには影響しない（行単位）。ただし効果自体が未確認 |
+| 2 | このモデルだけ引数を変える | **欄はある。ただし `--jinja` を外す狙いは源流で握りつぶされる（確定・§12.4-B 追記参照）**。`store.EngineModel.Args []string`（wire key `"a"`、`engine_admin.go:1402`・`engine_catalog.go:385,433,907-908`）は行単位の追加フラグ欄で実在し、`fetch-models.sh:123,128` の jq が `key = value` 形式で `presets.ini` に書く——実際、既存の `llama-3.1-8b-instruct-q4_k_m` 行の preset にも `jinja = 1`/`mmap = 0`/`n-gpu-layers = 99` が入っている（`models-response.json`）ので、この欄自体は生きている。だが `tools/server/server-models.cpp:548-551`「overlay router's own CLI args on top of every model preset」＋`preset.merge(base_preset)`（`common/preset.cpp:136-139`「overwrite existing options」）により、**role 全体の `LlmExtraArgs`（既定に `--jinja` を含む）が最後に上書きする**——モデル別に `jinja = false`（`--no-jinja` 相当）を書いても、この overlay で `true` に戻される。つまり **jinja を無効化して legacy（非 jinja）の per-family C++ 実装へ逃がす道は、この設計では塞がっている**。`--chat-template-file` でモデル別に別の jinja 本文を差し込むことは（role 側に競合する `--chat-template` が無いので）overlay で潰されず**実行はできる**が、jinja が有効な限り経路は同じ `common_chat_try_specialized_template`→（Llama 分岐無し）→差分オートパーサのままで、**Llama 専用の手書きパーサへは絶対に到達しない**（`arg.cpp:3768-3776` の `--chat-template` の説明文どおり、jinja 有効時は値が「既知の名前」でなく「生の jinja 本文」として扱われるため、`"llama3"` のような legacy 名を渡しても legacy 実装は選ばれない）。**評価を下げる**: 別テンプレートを試す余地はあるが「症状が直るかは差分オートパーサの挙動次第で未確認」、jinja を切ることによる回避は**不可能と確定** | 利用者の管理操作（目録の該当行を編集して再取り込み） | 再取り込み 1 回（軽い） | 他モデルには影響しない（行単位）。ただし効果は限定的（上記） |
 | 3 | ハーネス側で吸収する | **不可（吸収先が無い）**。`workspace/agent/internal/harness/client.go:125-129` の `chatRequest` は `model`/`messages`/`stream`/`tools` のみで、`parallel_tool_calls` や `chat_template_kwargs` に相当するフィールドは無い（§12.1 で既に確認済みの事実の再確認）。応答側もハーネスは `deltaToolCall`（`tool_calls` 配列）を**そのまま受け取るだけ**で、テキストから tool_calls へのパース（PEG）は完全にエンジン側で完結し、失敗時はエンジンが 4xx/5xx か整形失敗を返した時点でハーネスに届く。つまり**うちのコードがパースをやり直す余地が無い**——今回のエラーはハーネスへ届く前（エンジン内）で起きている | （該当作業者なし） | ー | ー |
 | 4 | 諦める（この族を候補から外す） | 常に可能。ADR 0093 の合格基準（`tool_calls` が全ターン有効な JSON・名前化けなし）を llama-3.1-8b-instruct-q4_k_m は満たしていない（実行 5/5′、後述 §12.5）ので、他候補が無ければこれが既定 | 利用者の管理操作（目録から外す／既定から外す） | ー | この 1 族が使えなくなるだけ |
 
