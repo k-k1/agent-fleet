@@ -115,11 +115,16 @@ The session list (`GET /sessions`) **already derives live state for every sessio
 ### Decision 4 — all three round-trip arrows (instruction, report, peer) are written in one line format; `instr-ledger` is not read
 
 ```jsonc
-{"ts":"…","ev":"instruct","from":"operator:<conv>","to":"<session>","source":"operator","excerpt":"…"}
-{"ts":"…","ev":"report","from":"<session>","to":"operator:<conv>","kind":"answer-ready"}
+{"ts":"…","ev":"instruct","from":"conv:<id>","to":"<session>","source":"operator","excerpt":"…"}
+{"ts":"…","ev":"report","from":"<session>","to":"conv:<id>","kind":"answer-ready"}
 {"ts":"…","ev":"peer","from":"<session>","to":"<session>","intent":"request"}
 ```
 
+**The `from` / `to` vocabulary splits into what becomes a lane and what does not.** Only a session name
+becomes a lane; `conv:<id>` (a chat conversation, i.e. the operator), `user` (the Console composer or the
+terminal's keyboard), `schedule` (scheduled execution, ADR 0021) and `bridge:discord` / `bridge:slack`
+**have no lane**. Exchanges with those are drawn as arrows leaving the top and bottom edges of the figure
+(decision 8-2).
 - **`instr-ledger` is not the figure's source because it is a work list, not a history.** Closed rows are
   kept only for the newest 20 (`instrClosedKeep`), and `cancelled` / `reopened` rewrite state in place. As a
   source for a figure that means **old instructions quietly disappear and past times move on a reopen**.
@@ -158,16 +163,46 @@ Add `GET /api/fleet-graph?since=…&until=…` to the Agent and register it on t
 allow-list** (memory `cp-rest-proxy-allowlist`: the CP does not pass requests through by default).
 Cross-tenant overview is the administrators' table (`GET /api/admin/sessions`), a different reader's job.
 
-### Decision 8 — the time axis is linear; the default window is the last 24 hours, with "now" at the right edge
+### Decision 8 — the time axis is linear; the default window is the last 24 hours, with "now" at the right edge; looking back may be bounded
 
 - Zoom and pan move the window. Live lanes pulse at the right edge (carrying over 0027 decision 1's reason
   for hand-written SVG: live state, the running animation and click-to-open are not available in a static
   figure).
+- **How far back you can look may be bounded** (agreed with the user, 2026-09-20). Panning left decays in
+  three steps: **activity (arrows, bands) for 30 days → a skeleton of lineage and birth/death only → before
+  installation, the 7 days back-filled from `Meta`**. Where each step drops is **drawn explicitly** (a
+  boundary line saying "skeleton only from here"), never a silent fade.
 - **Rejected: collapsing empty stretches** (squeezing intervals where every lane is idle). In a figure whose
   point is the activity band, collapsing the gaps deletes the single most readable fact — **that it was
   stopped there**.
 - **Rejected: an evenly spaced commit-order axis** (what GitHub's network graph actually uses). It deletes
   the intervals — "that instruction took 40 minutes to come back" — and a time axis is the request itself.
+
+### Decision 8-2 — a sender that is not a session gets no lane; it is an arrow leaving the figure
+
+Exchanges with a conversation (`conv:<id>`), a person (`user`), scheduled execution (`schedule`) and the
+bridges (`bridge:*`) are drawn as **arrows descending from the top edge (instructions) and leaving through
+it (reports)**. Which conversation it was is carried by the arrow's colour and its tooltip, and clicking it
+opens that conversation.
+
+```
+        ↓instruction(conv)  ↑report   ↓schedule
+
+Session A   ○--*-------+--------+------+--×
+Session A-c1     +------⤴
+Session A-c2     +--------------+
+Session D              ○----------+--------×
+```
+
+- **Why not a lane.** A lane in this figure is the band of something that is **born and dies**, and the x
+  axis means its lifetime. A conversation, a person and the scheduler have no birth or death (they are
+  always there), so giving them lanes would make **the same horizontal line carry two meanings**. Keep the
+  axis meaning one thing.
+- Rejected: pinning conversations as lanes at the top (closest to ADR 0027's sequence diagram). Round trips
+  would close as lane-to-lane lines, but the axis splits in meaning as above.
+- Rejected: dropping the arrows and marking the lane instead. Density goes down, but **whether a report came
+  back** stops being legible at a glance — the same reason 0041 decision 10 refused to defer visualising a
+  peer arrival ("invisible exactly where a human most wants to see it").
 
 ### Decision 9 — lanes are ordered by family; the click rules are borrowed from 0078 unchanged
 
@@ -186,6 +221,44 @@ surface you keep watching, it cannot live in a modal, it belongs in the layout a
 graph (`lib/gitgraph.ts` / `features/scm/CommitGraph.tsx`) is the structural template — pure-function layout
 plus inline SVG — the same choice as 0027 decision 1. Colours come from the kind palette, with every twin
 grep-checked (memory `kind-color-css-checklist`).
+
+### Decision 12 — the line style says whether it is still there: stopped is dashed, archived is faintly dashed, gone ends at the ×
+
+A lane's horizontal line is drawn four ways (the user's instruction, 2026-09-20).
+
+| State | Line | Meaning |
+|---|---|---|
+| Running | solid, with the activity band | running now (pulses at the right edge) |
+| Stopped (resumable) | **dashed** from the × to the right edge | still listed. **It can be resumed** |
+| Archived | faintly dashed | folded away, restorable |
+| Pruned / deleted | **ends** at the × (the line does not continue) | gone; only the lineage line remains |
+
+**One rule: dashed = still there (resumable); ending = gone.** In every case the × is not "when it ended"
+but "**when its end was first observed**" (`Meta.StoppedAt` is filled lazily — the same property as the
+observation story in decision 3), and the figure says so in the ×'s tooltip.
+
+- Stopped sessions are **drawn by default**. ADR 0078's list defaults to running-only, but that is a
+  cross-section of *now*; this figure is the *elapsed* — hiding stopped sessions from the past empties it.
+- Archived ones are drawn by default too, with a toggle to hide them. The toggle lives in `PaneContent`
+  (memory `sessions-overview-pane`: per-pane settings held in React state are lost when a tab switches).
+
+### Decision 13 — `ForkFrom`'s reverse lookup is solved by burning the session's own conversation id into the lineage `birth` line
+
+`Meta.ForkFrom` is a **conversation id** (claude = sid, opencode = `ses_…`, codex = uuid), not a session
+name, so it cannot be tied to a lane as is (docs/101 §101.1). The lineage ledger's `birth` line carries that
+session's own conversation id alongside, and matching is done against **the id that was in force at that
+time**.
+
+- 🔥 **What is burned in is the id AF assigned, never an observed one.** Right after a fork, claude reads
+  the *source* session's transcript until its own jsonl materialises
+  (`internal/sessionx/session_transcript.go`). Burning in an observed value puts the parent's id on the
+  child's line, and **the edge points at itself**.
+- The conversation id can change mid-life: when claude relaunches itself, `--session-id` structurally drops
+  out of the argv and it **starts writing under a new random id** (measured on 2.1.239; the `claude-sid`
+  ledger in `internal/agents/claude/sid.go` exists to track exactly this). A `convid` line records the
+  drift.
+- A pruned parent still has its lineage line (decision 6), so **a fork older than 7 days still draws a
+  line**. That only holds because decision 6 is in.
 
 ## Options rejected
 
@@ -213,11 +286,15 @@ grep-checked (memory `kind-color-css-checklist`).
   report delivery (the sink in `chat_report_reconcile.go`) each get a colocated one-line append;
   `GET /api/fleet-graph` reads them. The existing report, notification and arm paths are **untouched**.
 - **No added polling** (decision 3). The ledgers are on the order of a few hundred KB a day (docs/101 §3).
-- **Limit (intended)**: activity (arrows, bands) exists **only from installation forward**. Lineage and
-  birth/death can be back-filled once at first start from the existing `Meta`, so **the skeleton covers the
-  past 7 days immediately**.
+- **Limit (intended)**: panning left decays in three steps (decision 8) — activity for 30 days, then a
+  skeleton of lineage and birth/death, then the 7 days back-filled from `Meta`. That back-fill runs once at
+  first start, so **the skeleton covers the past 7 days immediately**.
 - **Limit (intended)**: observation resolution depends on the deployment (4 s / 1 min / none). The figure
   does not hide that — it hatches it.
+- **Stopped and archived sessions are drawn too** (decision 12), so there are **more lanes** than the list
+  shows (0078 defaults to running-only). Family ordering (decision 9) and the dashed styles are what is
+  meant to carry that density; measure after implementation to decide whether lanes need folding or
+  virtualisation.
 - 0027 becomes superseded, `types/opgraph.ts` is retired at P0, and docs/44 gets a 🔴 amendment.
 
 ## Phases
