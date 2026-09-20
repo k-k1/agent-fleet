@@ -1,18 +1,26 @@
-// Render test for the fleet session graph (ADR 0096). Scope: the fixture renders every
-// lane presence the contract distinguishes, a known lane opens the session it names, and
-// the archived toggle writes back through PaneContent (never React state — a tab switch
-// would otherwise snap it back to the default, memo `sessions-overview-pane`).
+// Render test for the fleet session graph (ADR 0096). It drives the real pipeline —
+// a served ledger page plus the live sessions map, through buildFleetGraph, into the DOM —
+// because the two halves disagreeing is exactly the class of bug this feature kept hitting
+// (a lane's presence needs both, and the ledger alone or the map alone each look fine).
+//
+// Scope: every lane presence the contract distinguishes renders, a known lane opens the
+// session it names, and the archived toggle writes back through PaneContent (never React
+// state — a tab switch would otherwise snap it back to the default, memo
+// `sessions-overview-pane`).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 type Session = import("../../types/session.ts").Session;
+type FleetGraphPage = import("../../types/fleetgraph.ts").FleetGraphPage;
+
 const openSessionFromList = vi.fn((_s: Session, _split: boolean, _running: boolean) => true);
 vi.mock("../sessions/open.ts", () => ({
   openSessionFromList: (s: Session, split: boolean, running: boolean) => openSessionFromList(s, split, running),
 }));
 
-const fetchFleetGraph = vi.fn((_since: number, _until: number) => Promise.resolve({ error: { code: "test" } }));
+let served: FleetGraphPage | { error: { code: string } } = { error: { code: "test" } };
+const fetchFleetGraph = vi.fn((_since: number, _until: number) => Promise.resolve(served));
 vi.mock("../../core/api/client.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../core/api/client.ts")>();
   return { ...actual, fetchFleetGraph: (...args: [number, number]) => fetchFleetGraph(...args) };
@@ -27,7 +35,45 @@ const { t } = await import("../../lib/i18n/index.ts");
 let root: Root | null = null;
 let host: HTMLDivElement;
 
-const fxRoot1: Session = { name: "fx-root1", kind: "claude", alive: true, state: "working" } as Session;
+const MIN = 60_000;
+// Anchored inside the view's default window (now − 24h .. now) so the figure is not empty.
+const NOW = Date.now();
+const at = (minutesAgo: number): number => NOW - minutesAgo * MIN;
+
+// fx-root1 is live and fx-child1 is stopped-but-listed: presence needs the live map, so
+// both have to be in the sessions store, and the archived lane deliberately is NOT —
+// the Agent's list skips archived rows (`if m.Archived { continue }`), which is what made
+// the first implementation render every archived lane as "gone".
+const sessRoot: Session = { name: "fx-root1", kind: "claude", alive: true, state: "working" } as Session;
+const sessChild1: Session = { name: "fx-child1", kind: "codex", alive: false } as Session;
+
+const page = (): FleetGraphPage => ({
+  since: at(24 * 60),
+  until: NOW,
+  now: NOW,
+  lineage: [
+    { ev: "birth", ts: at(600), name: "fx-root1", kind: "claude", origin: "user", display: "fleet-graph kickoff" },
+    { ev: "birth", ts: at(540), name: "fx-child1", kind: "codex", origin: "session", originSession: "fx-root1", display: "S-VIEW lane" },
+    { ev: "death", ts: at(300), name: "fx-child1" },
+    { ev: "birth", ts: at(520), name: "fx-child2", kind: "opencode", origin: "session", originSession: "fx-child1", display: "S-LOGIC lane" },
+    { ev: "death", ts: at(280), name: "fx-child2" },
+    { ev: "archived", ts: at(270), name: "fx-child2", archived: true },
+    { ev: "birth", ts: at(200), name: "fx-gone1", kind: "claude", origin: "user", display: "throwaway GPU probe" },
+    { ev: "death", ts: at(120), name: "fx-gone1", reason: "oom", code: 137 },
+    // No birth for fx-ghost-parent anywhere: its child keeps the lineage (decision 9's
+    // "the chain stops at the unreachable parent"), and its run never got a death.
+    { ev: "birth", ts: at(180), name: "fx-cut1", kind: "claude", origin: "session", originSession: "fx-ghost-parent", display: "unwatched probe" },
+  ],
+  activity: [
+    { ev: "state", ts: at(590), name: "fx-root1", to: "working" },
+    { ev: "instruct", ts: at(595), from: "user", to: "fx-root1", source: "", excerpt: "kick it off" },
+    { ev: "report", ts: at(305), from: "fx-child1", to: "conv:c1", kind: "answer-ready" },
+    // The only trace left of a session someone deleted: its lineage is gone, the activity
+    // line naming it is not (decision 6), so it must still hold a row for this arrow.
+    { ev: "peer", ts: at(240), from: "fx-child1", to: "fx-erased1", intent: "request" },
+  ],
+  coverage: { activitySince: at(24 * 60), lineageSince: at(24 * 60) },
+});
 
 const render = async (showArchived = true): Promise<void> => {
   await act(async () => {
@@ -39,10 +85,13 @@ const render = async (showArchived = true): Promise<void> => {
   });
 };
 
+const labelTexts = (): (string | null)[] => [...host.querySelectorAll(".fgraph-label-text")].map((el) => el.textContent);
+
 beforeEach(() => {
   openSessionFromList.mockClear();
   fetchFleetGraph.mockClear();
-  useSessionsStore.setState({ sessions: [fxRoot1] });
+  served = page();
+  useSessionsStore.setState({ sessions: [sessRoot, sessChild1] });
   useWorkspaceStore.setState({ state: "running" });
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -56,14 +105,14 @@ afterEach(() => {
 });
 
 describe("FleetGraphView", () => {
-  it("draws every lane presence the fixture carries", async () => {
+  it("draws every lane presence the contract distinguishes", async () => {
     await render();
-    const labels = [...host.querySelectorAll(".fgraph-label-text")].map((el) => el.textContent);
-    expect(labels).toContain("fleet-graph kickoff"); // live
-    expect(labels).toContain("S-VIEW lane"); // stopped
-    expect(labels).toContain("S-LOGIC lane"); // archived
-    expect(labels).toContain("throwaway GPU probe"); // gone (clean death)
-    expect(labels).toContain("unwatched probe"); // gone (cut, hollow ×)
+    const labels = labelTexts();
+    expect(labels).toContain("fleet-graph kickoff"); // live (in the sessions map, alive)
+    expect(labels).toContain("S-VIEW lane"); // stopped (died, still listed)
+    expect(labels).toContain("S-LOGIC lane"); // archived (died, NOT listed — the list skips archived)
+    expect(labels).toContain("throwaway GPU probe"); // gone (clean death, not listed)
+    expect(labels).toContain("unwatched probe"); // gone (run never closed → cut, hollow ×)
     // Erased lane: the bare slug is never shown alone — composed with the "deleted" wording.
     expect(labels).toContain(t("fgraph.erased_label", { id: "fx-erased1" }));
     expect(host.querySelectorAll("svg.fgraph-svg .fgraph-death").length).toBeGreaterThan(0);
@@ -90,7 +139,7 @@ describe("FleetGraphView", () => {
     await render();
     const labelFor = (text: string) =>
       [...host.querySelectorAll<HTMLElement>(".fgraph-label")].find((el) => el.textContent?.includes(text));
-    // fx-cut1's parent ("fx-ghost-parent") never gets a lane in the fixture.
+    // fx-cut1's parent ("fx-ghost-parent") has no birth anywhere, so it never gets a lane.
     expect(labelFor("unwatched probe")?.querySelector(".fgraph-parent-gap")).toBeTruthy();
     // fx-child2's parent (fx-child1, "S-VIEW lane") IS drawn — no marker.
     expect(labelFor("S-LOGIC lane")?.querySelector(".fgraph-parent-gap")).toBeFalsy();
@@ -102,14 +151,13 @@ describe("FleetGraphView", () => {
   });
 
   it("never draws a family arrow's missing-parent end as an external-actor edge glyph", async () => {
-    // fx-cut1's handoff arrow comes from "fx-ghost-parent" (fromRow: null) — a SESSION with
-    // no row here (decision 9), not an actor that never has a lane (decision 8-2). Drawing
-    // it with the top-edge glyph would misattribute the launch to a conversation/person, and
-    // would duplicate the mark the child's own label already carries.
+    // A family edge's ends are ALWAYS sessions, so a null row there means decision 9's
+    // "missing parent" — drawing the top-edge glyph would misattribute the launch to a
+    // conversation or a person, and would duplicate the mark the child's label carries.
     await render();
     expect(host.querySelectorAll("svg.fgraph-svg .fgraph-arrow.family .fgraph-edge-pt").length).toBe(0);
-    // The round-trip arrows (instruct/report/peer) still use the edge glyph normally —
-    // this isn't "no arrow ever draws it", only family arrows are exempted.
+    // Round-trip arrows (instruct/report/peer) still use the edge glyph: the instruct comes
+    // from `user` and the report goes to `conv:c1`, neither of which ever has a lane.
     expect(host.querySelectorAll("svg.fgraph-svg .fgraph-edge-pt").length).toBeGreaterThan(0);
   });
 
@@ -119,12 +167,12 @@ describe("FleetGraphView", () => {
     expect(row).toBeTruthy();
     await act(async () => row!.click());
     expect(openSessionFromList).toHaveBeenCalledTimes(1);
-    expect(openSessionFromList.mock.calls[0][0]).toEqual(fxRoot1);
+    expect(openSessionFromList.mock.calls[0][0]).toEqual(sessRoot);
   });
 
   it("hides archived lanes when the toggle turns them off, without touching React state", async () => {
     await render(false);
-    const labels = [...host.querySelectorAll(".fgraph-label-text")].map((el) => el.textContent);
+    const labels = labelTexts();
     expect(labels).not.toContain("S-LOGIC lane"); // archived, hidden
     expect(labels).toContain("fleet-graph kickoff"); // everything else stays
   });
@@ -141,5 +189,26 @@ describe("FleetGraphView", () => {
     });
     expect(spy).toHaveBeenCalledWith(expect.anything(), "p1", { content: { kind: "fleetgraph", showArchived: false } });
     spy.mockRestore();
+  });
+
+  it("keeps the figure on screen when a refresh fails", async () => {
+    // A failed load must not blank a figure that is already drawn: the window did not move,
+    // so the history it showed is still the history.
+    await render();
+    expect(labelTexts()).toContain("fleet-graph kickoff");
+    served = { error: { code: "boom" } };
+    const zoomIn = [...host.querySelectorAll<HTMLButtonElement>(".fgraph-nav button")].find(
+      (b) => b.title === t("fgraph.zoom_in"),
+    );
+    expect(zoomIn).toBeTruthy(); // the click below is the whole point of the test
+    await act(async () => {
+      zoomIn!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchFleetGraph).toHaveBeenCalledTimes(2); // the window moved, so it really refetched
+    expect(host.querySelector(".fgraph-err")).toBeTruthy();
+    expect(labelTexts()).toContain("fleet-graph kickoff");
   });
 });
