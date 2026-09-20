@@ -299,7 +299,11 @@ export const settings = {
     "サインインすると、その組織で使えるモデルが起動時の一覧に反映されます（稼働中のセッションは次のターンから／ターミナル（CLI）のセッションは再起動後）。",
   "agents.oc_account_disabled": "この Workspace ではマネージドの opencode が無効なため、アカウントのサインインは使えません。",
   "agents.oc_desc": "複数プロバイダの API キーを保存し、opencode 起動時に env として注入します。",
-  "agents.oc_hint": " でサインイン → 課金設定 → API キーを発行して貼り付け（同じキーで Zen も利用可）。",
+  "agents.oc_desc_own":
+    "使いたい LLM プロバイダの API キーを保存し、opencode 起動時に env として注入します。この枠では opencode.ai のキー（OPENCODE_API_KEY）は使いません。",
+  "agents.oc_preset_opencode": "opencode.ai（Go / Zen 共通キー）",
+  "agents.oc_key_not_injected": "この枠では注入しません",
+  "agents.oc_hint": " でサインイン → 課金設定 → API キーを発行して貼り付け（Go と Zen で同じキーです）。",
   "agents.oc_ws_open": "Go の利用状況を開く ↗",
   "agents.oc_ws_desc":
     "利用枠ページの URL（または wrk_… の ID）を貼ると、このカードから利用状況を開けます。利用率の数値は opencode.ai 側に API が無いため取り込めません（ページはブラウザのログインが必要です）。上限に当たったときは、その内容をここに表示します。",
@@ -314,23 +318,38 @@ export const settings = {
   "agents.oc_restart_failed": "再起動できませんでした: {msg}",
   "agents.oc_ws_limit": "直近の上限: {name}（{at} にリセット）",
   "agents.oc_ws_limit_unknown": "枠不明",
-  "agents.oc_usage": "使う枠",
+  // 2 つのコントロールに割った（docs/log/103）。「使う」は種別ぜんぶの電源で、
+  // 「opencode.ai への課金」は opencode.ai の側だけを決める——1 本の 4 択だったころは
+  // 後者が前者と同じ広さに見え、しかも直結プロバイダの鍵にはどの値も効かないことが
+  // 隠れていた。
+  "agents.oc_enabled": "opencode を使う",
+  "agents.oc_enabled_off": "オフ",
+  "agents.oc_enabled_on": "オン",
+  "agents.oc_enabled_note_off":
+    "opencode を一切使いません。API キーを保存済みでも、アカウントにサインイン済みでも起動されません（セキュリティポリシーで無断の外部送信を禁じているワークスペース向け）。新しいワークスペースはこの状態から始まります。鍵を後から追加しても動かない、明示的で崩れない錠です。",
+  "agents.oc_enabled_note_on":
+    "どこに課金するかを下で選びます。どの選択でも、直接つないだプロバイダ（anthropic/… など）と自前エンジンのモデルは一覧に残ります——ここで選ぶのは opencode.ai の使い方だけです。",
+  "agents.oc_usage": "opencode.ai への課金",
   "agents.oc_usage_off": "オフ",
-  "agents.oc_usage_free": "無料枠",
-  "agents.oc_usage_go": "Go",
-  "agents.oc_usage_zen": "Zen",
-  "agents.oc_usage_note_off":
-    "opencode を一切使いません。API キーを保存済みでも、アカウントにサインイン済みでも起動されません（セキュリティポリシーで無断の外部送信を禁じているワークスペース向け）。既定（Zen）も未接続なら実質同じ挙動ですが、こちらは鍵を後から追加しても動かない、明示的で崩れない設定です。",
+  "agents.oc_usage_own": "使わない（自分の鍵だけ）",
+  "agents.oc_usage_free": "無料モデルのみ",
+  "agents.oc_usage_go": "Go（定額）",
+  "agents.oc_usage_zen": "Zen（従量）",
+  "agents.oc_usage_note_own":
+    "opencode.ai には一切つなぎません。一覧に出るのは、下で登録した直結プロバイダのモデルと、フリートの自前エンジンだけです。OPENCODE_API_KEY は保存されていても注入しません。",
   "agents.oc_usage_note_free":
-    "認証なしで使える無料モデルだけを一覧に出します（API キーは注入しません）。接続が無くても opencode を起動できますが、混雑や無料枠の上限に左右されます。",
+    "opencode.ai 側は、認証なしで使える無料モデルだけにします（OPENCODE_API_KEY は注入しません）。接続が無くても opencode を起動できますが、混雑や無料枠の上限に左右されます。",
   "agents.oc_usage_note_go":
-    "サブスクの opencode-go/… だけを一覧に出します。Go のモデルは API キーに紐づくため、キーの登録が必要です（アカウントのサインインは任意）。",
+    "opencode.ai 側は、サブスクの opencode-go/… だけにします。Go のモデルは API キーに紐づくため、キーの登録が必要です（アカウントのサインインは任意）。",
   "agents.oc_usage_note_zen":
-    "従量課金の opencode/… を一覧に出します（Go 契約もあれば両方）。アカウントのサインインか API キーのどちらかが必要です。",
-  "agents.oc_off_desc":
-    "opencode は無効です。保存済みのキーやサインインがあっても使われません。使うには上の「使う枠」を切り替えてください。",
-  "agents.oc_free_desc":
-    "無料枠で使います。認証は不要です。有料のモデルを使うときは枠を切り替えて、アカウントか API キーを登録してください。",
+    "opencode.ai 側は、従量課金の opencode/… を出します（Go 契約もあれば両方）。アカウントのサインインか API キーのどちらかが必要です。",
+  "agents.oc_route_fallback":
+    "「{chosen}」のモデルが 1 つも無かったため、起動一覧は「{applied}」で出しています。意図した枠で課金したい場合は、認証か契約を確認してください。",
+  // 状態チップ用の短い言い方（一覧の見出しは説明として読ませる長さなので、緑の点の横には合わない）
+  "agents.oc_pill_own": "自分の鍵",
+  "agents.oc_pill_free": "無料",
+  "agents.oc_pill_go": "Go",
+  "agents.oc_pill_zen": "Zen",
   "agents.oc_model_go": "{model}（Go）",
   "agents.oc_model_zen": "{model}（Zen 従量）",
   "agents.oc_env_placeholder": "ENV 名 (例 GROQ_API_KEY)",

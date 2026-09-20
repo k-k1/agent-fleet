@@ -174,6 +174,41 @@ func WriteEngineProviders(engines []EngineProvider) (changed, removed bool, err 
 	return true, removed, nil
 }
 
+// HasEngineProviders reports whether this deployment offers at least one of the fleet's own
+// engines to opencode — i.e. whether af has written a provider of its own into the config.
+//
+// It answers one question the usability gate could not otherwise answer: on UsageOwn
+// (opencode.ai unused) a workspace whose only inference is a self-hosted engine has no
+// provider key at all, and judging it by keys alone would hide the kind from exactly the
+// deployment that runs its own models. Only entries carrying af's marker count — a
+// hand-written provider is the user's business, not evidence of an engine.
+//
+// Deliberately a FILE read and not EngineEnv: this is on the connections path, and minting a
+// token there would put a Control Plane round trip behind a panel the Console polls.
+func HasEngineProviders() bool {
+	b, err := os.ReadFile(engineConfigPath())
+	if err != nil {
+		return false
+	}
+	var root struct {
+		Providers map[string]map[string]any `json:"provider"`
+	}
+	if err := json.Unmarshal(b, &root); err != nil {
+		return false // an unparseable config says nothing; WriteEngineProviders refuses it too
+	}
+	for _, p := range root.Providers {
+		if p[engineProviderMarker] != true {
+			continue
+		}
+		// A provider with no models is not one anybody can launch — the same bar
+		// engineProviderEntry's caller applies when it writes them.
+		if m, ok := p["models"].(map[string]any); ok && len(m) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // ErrNoDaemon: there is no running serve to hand a change to, so the file is the whole job
 // — the next start reads it.
 var ErrNoDaemon = errors.New("opencode serve is not running")

@@ -143,13 +143,34 @@ paste it → wait for approval).
 
 ## OpenCode
 
-**opencode** saves the **API key of the LLM provider you want to use as an env**.
-Picking a preset fills in the env name automatically.
+The card has two controls, and they decide different things.
 
-- **OpenCode Go** (default · `OPENCODE_API_KEY`) / **Anthropic** / **OpenAI** / **OpenRouter** / **Google Gemini** / **Sakana AI** (`SAKANA_API_KEY` · Fugu / Fugu Ultra) / **Custom…** (specify the env name yourself)
+**"Use opencode"** is the switch for the whole agent. While it is **Off**, opencode never
+launches — not with a stored API key, not with a signed-in account, not if a key is added
+later. A fresh workspace starts here, so nothing reaches opencode.ai until you say so.
+
+**"opencode.ai billing"** appears once it is On, and decides **only how opencode.ai is used**.
+Whichever you pick, the providers you connect yourself (Anthropic, OpenRouter, …) and the
+fleet's own engines stay in the launch list.
+
+| Choice | What the launch list holds | What it needs |
+|---|---|---|
+| **None (my own keys)** | Your own providers and the fleet's engines only. `OPENCODE_API_KEY` is not injected even if stored. | One provider key of your own (or a fleet engine) |
+| **Free models only** | opencode.ai's models that work with no credentials. Subject to congestion and caps. | Nothing |
+| **Go (subscription)** | The subscription ids (`opencode-go/…`). | An API key (signing in is optional) |
+| **Zen (metered)** | The pay-per-request ids (`opencode/…`), plus Go's when you have both. | An account sign-in or an API key |
+
+If the route you picked has no model at all — Go without a Go contract, say — the launch list
+falls back to Zen, and the card tells you it did. Check the sign-in or the plan if you meant
+to be billed the other way.
+
+**API keys.** Picking a preset fills in the env name automatically.
+
+- **opencode.ai** (`OPENCODE_API_KEY` — the same key pays for both Go and Zen) / **Anthropic** / **OpenAI** / **OpenRouter** / **Google Gemini** / **Sakana AI** (`SAKANA_API_KEY` · Fugu / Fugu Ultra) / **Custom…** (specify the env name yourself)
 
 Paste the key and press **"Connect"** to save it; it's injected when opencode launches. You
-can register multiple keys, and choose from the connected providers' models at launch.
+can register multiple keys, and choose from the connected providers' models at launch. A key
+the current route does not inject is kept but marked as such rather than deleted.
 
 Changing a key or the billing route does **not** reach a running opencode serve on its own —
 serve keeps the configuration it started with. When a change needs applying, the card says so

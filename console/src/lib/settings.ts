@@ -381,9 +381,12 @@ export interface Settings {
   //   "off"  — hard-disables opencode: overrides any stored key or OAuth login, even
   //            ones added later without switching the route back. For tenants whose
   //            security policy forbids opencode reaching a third party without an
-  //            explicit, durable opt-in — the default ("zen", below) already behaves
-  //            like this with nothing configured, but "off" is the deliberate,
-  //            tamper-resistant version of that.
+  //            explicit, durable opt-in. It is also the DEFAULT, so a fresh workspace
+  //            launches nothing until someone chooses one of the routes below.
+  //   "own"  — opencode without opencode.ai: only the providers connected directly
+  //            (anthropic/…) and the fleet's own engines, and OPENCODE_API_KEY is not
+  //            injected. The card shows it as a route because that is how it reads to a
+  //            user ("do not bill opencode.ai"), even though it is the absence of one.
   //   "free" — the zero-auth free models only. Also makes opencode launchable with no
   //            credential at all, and the Agent stops injecting OPENCODE_API_KEY.
   //   "go"   — the subscription route (opencode-go/…). Needs an API key (measured: an
@@ -391,7 +394,13 @@ export interface Settings {
   //   "zen"  — pay-per-request (opencode/…), plus the Go ids when the account has both.
   // The Agent reads this from ui-prefs, so it shapes the MCP list_models an assistant
   // picks from as well as this picker. Legacy values migrate in normalizeSettings.
-  opencodeCatalog: "off" | "free" | "go" | "zen";
+  //
+  // The card presents this as TWO controls — an on/off switch and a route list — because
+  // "off" is a different kind of decision from the rest: it governs the whole kind, while
+  // the others only pick which side of opencode.ai is listed. One 4-way control made the
+  // three routes look like they had the same reach as off, and hid that none of them can
+  // take another vendor's key away. The stored value stays one string.
+  opencodeCatalog: "off" | "own" | "free" | "go" | "zen";
   // Show the mirror's thinking block expanded from the start (kind-scoped; Settings > Agents >
   // each card > behaviour settings). Default off for every kind, i.e. collapsed as before and
   // opened by a click. How much thinking a backend emits varies enormously by kind and model, so
@@ -1640,8 +1649,8 @@ function serverPrefs(s: Settings): Partial<Settings> {
 // migrateOpencodeCatalog maps the legacy menu-shaping values onto the billing-route
 // choice. Kept exported for the load() path and the tests — the Agent applies the same
 // rule server-side (opencode.CatalogPref), so the two never disagree.
-export function migrateOpencodeCatalog(v: unknown): "off" | "free" | "go" | "zen" {
-  if (v === "off" || v === "free" || v === "go" || v === "zen") return v;
+export function migrateOpencodeCatalog(v: unknown): "off" | "own" | "free" | "go" | "zen" {
+  if (v === "off" || v === "own" || v === "free" || v === "go" || v === "zen") return v;
   if (v === "hide-zen") return "go"; // hiding Zen means intending to use Go only
   if (v === "go-first" || v === "all") return "zen"; // both mean wanting to see both
   return "off"; // unset/unknown = disabled until explicitly chosen

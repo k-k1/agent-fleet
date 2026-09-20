@@ -76,3 +76,14 @@
   gap: 8px;
   font-size: 12px;
 }
+
+/* A stored key the selected route does not inject (opencode's free / own routes drop
+   OPENCODE_API_KEY). Not an error — the key is kept, it is simply not in use — so it reads as
+   a quiet aside rather than a warning. */
+.oc-key-idle {
+  font-size: 10.5px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+}

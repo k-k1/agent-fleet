@@ -300,7 +300,11 @@ export const settings: Record<keyof typeof jaSettings, string> = {
     "After signing in, the models available to that organization show up in the launch list (running sessions pick them up on their next turn; Terminal (CLI) sessions after a restart).",
   "agents.oc_account_disabled": "Managed opencode is off in this workspace, so account sign-in isn't available.",
   "agents.oc_desc": "Save API keys for multiple providers and inject them as env when opencode launches.",
-  "agents.oc_hint": " to sign in → billing → issue an API key and paste it (the same key works for Zen too).",
+  "agents.oc_desc_own":
+    "Save the API key of each LLM provider you want and inject it as env when opencode launches. On this route the opencode.ai key (OPENCODE_API_KEY) is not used.",
+  "agents.oc_preset_opencode": "opencode.ai (one key for Go and Zen)",
+  "agents.oc_key_not_injected": "not injected on this route",
+  "agents.oc_hint": " to sign in → billing → issue an API key and paste it (Go and Zen share the one key).",
   "agents.oc_ws_open": "Open Go usage ↗",
   "agents.oc_ws_desc":
     "Paste the usage page URL (or just the wrk_… id) to open it straight from this card. The usage percentages can't be pulled in — opencode.ai has no API for them and the page needs a browser login. When a limit is hit, what it reported shows up here.",
@@ -315,22 +319,38 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.oc_restart_failed": "Could not restart: {msg}",
   "agents.oc_ws_limit": "Last limit: {name} (resets {at})",
   "agents.oc_ws_limit_unknown": "unknown window",
-  "agents.oc_usage": "Route",
+  // Split into two controls (docs/log/103): the switch governs the whole kind, the
+  // route governs the opencode.ai side only. As one 4-way control the latter looked as
+  // far-reaching as the former, and hid that no value of it can take another vendor's key away.
+  "agents.oc_enabled": "Use opencode",
+  "agents.oc_enabled_off": "Off",
+  "agents.oc_enabled_on": "On",
+  "agents.oc_enabled_note_off":
+    "opencode is never used. It won't launch even with a stored API key or a signed-in account (for workspaces whose security policy forbids reaching an outside service without permission). A fresh workspace starts here. It is an explicit, tamper-resistant lock — adding a key later still won't turn it on.",
+  "agents.oc_enabled_note_on":
+    "Choose below what opencode.ai may be billed for. On every choice the directly connected providers (anthropic/… and the like) and the fleet's own engines stay in the list — this picks how opencode.ai is used, nothing else.",
+  "agents.oc_usage": "opencode.ai billing",
   "agents.oc_usage_off": "Off",
-  "agents.oc_usage_free": "Free tier",
-  "agents.oc_usage_go": "Go",
-  "agents.oc_usage_zen": "Zen",
-  "agents.oc_usage_note_off":
-    "opencode is never used. It won't launch even with a stored API key or a signed-in account (for workspaces whose security policy forbids reaching an outside service without permission). The default (Zen) behaves the same when nothing is connected, but this is the explicit, tamper-resistant version — adding a key later still won't turn it on.",
+  "agents.oc_usage_own": "None (my own keys)",
+  "agents.oc_usage_free": "Free models only",
+  "agents.oc_usage_go": "Go (subscription)",
+  "agents.oc_usage_zen": "Zen (metered)",
+  "agents.oc_usage_note_own":
+    "opencode.ai is not reached at all. The list holds the directly connected providers you add below and the fleet's own engines. OPENCODE_API_KEY is not injected, even when one is stored.",
   "agents.oc_usage_note_free":
-    "Lists only the models that work with no credentials (the API key isn't injected). opencode can be launched without any connection, but the free tier is subject to congestion and usage caps.",
+    "On the opencode.ai side, only the models that work with no credentials (OPENCODE_API_KEY isn't injected). opencode can be launched without any connection, but the free tier is subject to congestion and usage caps.",
   "agents.oc_usage_note_go":
-    "Lists only the subscription ids (opencode-go/…). Go models are tied to an API key, so one must be stored; signing in to the account is optional.",
+    "On the opencode.ai side, only the subscription ids (opencode-go/…). Go models are tied to an API key, so one must be stored; signing in to the account is optional.",
   "agents.oc_usage_note_zen":
-    "Lists the pay-per-request ids (opencode/…), plus the Go ids when the account has both. Needs either an account sign-in or an API key.",
-  "agents.oc_off_desc": "opencode is disabled. Any stored key or sign-in is ignored. Switch the Route above to use it.",
-  "agents.oc_free_desc":
-    "Using the free tier — no credentials needed. To use paid models, switch the route and connect an account or an API key.",
+    "On the opencode.ai side, the pay-per-request ids (opencode/…), plus the Go ids when the account has both. Needs either an account sign-in or an API key.",
+  "agents.oc_route_fallback":
+    "No “{chosen}” model was available, so the launch list is being shaped by “{applied}”. Check the sign-in or the plan if you meant to be billed the other way.",
+  // Short forms for the status chip — the list's headings are written to be read as
+  // descriptions, which is the wrong length next to a green dot.
+  "agents.oc_pill_own": "Own keys",
+  "agents.oc_pill_free": "Free",
+  "agents.oc_pill_go": "Go",
+  "agents.oc_pill_zen": "Zen",
   "agents.oc_model_go": "{model} (Go)",
   "agents.oc_model_zen": "{model} (Zen metered)",
   "agents.oc_env_placeholder": "ENV name (e.g. GROQ_API_KEY)",

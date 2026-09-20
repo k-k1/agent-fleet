@@ -39,6 +39,9 @@ import (
 // is explained in agents/modelsort.go.
 func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	var list []agents.ModelChoice
+	// route is the opencode billing route the list was actually shaped by — the selected one
+	// unless Catalog's empty-menu rescue had to ignore it. Empty for every other kind.
+	route := ""
 	switch r.PathValue("kind") {
 	case "claude":
 		list = claude.Models()
@@ -70,7 +73,11 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		// (the upstream order differs between the daemon and the CLI path). An
 		// explicit model is never swallowed here: handleCreateSession validates it
 		// against the full, unshaped catalog.
-		list = opencode.Catalog(opencode.Models(), uiprefs.OpencodeCatalog())
+		//
+		// The shaping is reported alongside the list: when the selected route yields
+		// nothing the rescue quietly re-shapes with Zen, and the Console has to be able to
+		// say so rather than keep claiming the route the user chose (docs/log/103).
+		list, route = opencode.CatalogWithRoute(opencode.Models(), uiprefs.OpencodeCatalog())
 	case "agy":
 		list = agy.Models()
 	case "copilot":
@@ -97,5 +104,9 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	for i := range list {
 		list[i].Provider = resolveModelProvider(r.PathValue("kind"), list[i].ID)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"models": list})
+	out := map[string]any{"models": list}
+	if route != "" {
+		out["route"] = route
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }

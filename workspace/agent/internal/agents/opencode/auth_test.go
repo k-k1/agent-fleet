@@ -74,6 +74,62 @@ func TestEnvDropsOpencodeKeyOnlyForFreeUsage(t *testing.T) {
 	}
 }
 
+// "own" (opencode.ai unused, direct providers only) drops the opencode.ai key for the same
+// reason the free tier does: a workspace that declared it does not bill opencode.ai must not
+// be put on a billed route by a key nobody deleted.
+func TestEnvDropsOpencodeKeyOnOwnUsage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Opencode = map[string]string{"OPENCODE_API_KEY": "sk-oc", "ANTHROPIC_API_KEY": "sk-an"}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	orig := UsagePref
+	defer func() { UsagePref = orig }()
+
+	UsagePref = func() string { return UsageOwn }
+	got := env()
+	if len(got) != 1 || !strings.HasPrefix(got[0], "ANTHROPIC_API_KEY=") {
+		t.Errorf("own = %v, want ANTHROPIC_API_KEY only", redactEnv(got))
+	}
+}
+
+// On "own" the credentials that make opencode usable are the direct providers' — an
+// opencode.ai key alone is not one of them, because it is the very thing this route declines
+// to use. Reporting connected with nothing usable behind it would let a launch fall through
+// to opencode's own default (a zero-auth opencode.ai model), i.e. the unasked-for outside
+// call the route exists to avoid.
+func TestConnectedOnOwnIgnoresOpencodeAICredentials(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_ = newFakeDaemon(t) // isolate from a developer's real Console login, like the test above
+	orig := UsagePref
+	defer func() { UsagePref = orig }()
+	UsagePref = func() string { return UsageOwn }
+
+	s, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Opencode = map[string]string{"OPENCODE_API_KEY": "sk-oc"}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if Connected() {
+		t.Fatal("connected=true on own with nothing but an opencode.ai key — that key is not injected on this route")
+	}
+
+	s.Opencode["ANTHROPIC_API_KEY"] = "sk-an"
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if !Connected() {
+		t.Fatal("connected=false on own although a direct provider key is stored")
+	}
+}
+
 // TestUsagePrefDefaultsToOff pins the package-level default of UsagePref itself
 // (before internal/agents/opencode.UsagePref is wired to ui_prefs.go's reader) — a
 // fresh workspace, or a test that never overrides UsagePref, must see UsageOff.

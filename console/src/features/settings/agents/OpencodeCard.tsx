@@ -3,6 +3,7 @@ import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettings, setSettings } from "../../../lib/settings.ts";
+import { useOpencodeAppliedRoute } from "../../../lib/agentModels.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { Choice } from "../parts/controls.tsx";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, IssueLink } from "../parts/providerCard.tsx";
@@ -18,8 +19,12 @@ import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkR
 // "Connected" = either path is set up. Plus the RTK and Web UI toggles.
 // [presetId, label, envVar, issueUrl]. issueUrl is the provider's fixed API-key page
 // (empty = none / handled elsewhere — "go" keeps its own opencode.ai/auth hint below).
+// The first entry's label is resolved via i18n (agents.oc_preset_opencode) at render: ONE
+// key pays for both opencode.ai routes, and calling it "OpenCode Go" put the word Go in two
+// meanings on one card — a route above, a key here — while hiding that the same key is what
+// Zen bills against.
 const OC_PRESETS = [
-  ["go", "OpenCode Go", "OPENCODE_API_KEY", ""],
+  ["go", "", "OPENCODE_API_KEY", ""],
   ["anthropic", "Anthropic", "ANTHROPIC_API_KEY", "https://console.anthropic.com/settings/keys"],
   ["openai", "OpenAI", "OPENAI_API_KEY", "https://platform.openai.com/api-keys"],
   ["openrouter", "OpenRouter", "OPENROUTER_API_KEY", "https://openrouter.ai/keys"],
@@ -35,27 +40,109 @@ const OC_PRESETS = [
 // same preference from ui-prefs, which is what makes it apply to the MCP list_models an
 // assistant picks from — the path that actually caused a launch on the wrong route.
 // It only shapes the MENU: an explicitly requested model id is still honored verbatim.
-function OpencodeUsageRow() {
+//
+// ⚠️ TWO controls over ONE stored value (settings.opencodeCatalog), because they are two
+// different decisions and the single 4-way control said otherwise:
+//
+//   - the switch is about the KIND. "off" ignores every stored key and the account login,
+//     for good, which is a workspace-policy decision;
+//   - the route list is about opencode.ai ONLY. None of its values can take another vendor's
+//     key away (`keepForUsage` passes anthropic/… through on all of them), yet sitting at the
+//     top of the card as "which allowance to use" they read as if they governed everything.
+//
+// The routes are a vertical list rather than a segmented control so all four are readable at
+// once: this is a choice about money, and the old shape showed the note for the selected one
+// only — you had to click a route to find out what it meant.
+const OC_ROUTES = ["own", "free", "go", "zen"] as const;
+
+function OpencodeUsageRows() {
   const s = useSettings();
   const tr = useT();
+  const selected = s.opencodeCatalog;
+  const off = selected === "off";
+  // The route to return to when the switch goes back on. Kept in the component rather than
+  // persisted: turning opencode off is not a reason to forget the route, and "own" is the
+  // right landing place for a workspace switching it on for the first time — it is the only
+  // value that reaches no opencode.ai service until the user asks for one.
+  const [lastRoute, setLastRoute] = useState<string>(off ? "own" : selected);
+
   return (
     <>
-      <SettingRow label={tr("agents.oc_usage")}>
+      <SettingRow label={tr("agents.oc_enabled")}>
         <Choice
-          value={s.opencodeCatalog}
+          value={off ? "off" : "on"}
           options={[
-            ["off", tr("agents.oc_usage_off")],
-            ["free", tr("agents.oc_usage_free")],
-            ["go", tr("agents.oc_usage_go")],
-            ["zen", tr("agents.oc_usage_zen")],
+            ["off", tr("agents.oc_enabled_off")],
+            ["on", tr("agents.oc_enabled_on")],
           ]}
-          onChange={(v) =>
-            setSettings({ opencodeCatalog: v === "off" || v === "free" || v === "go" ? v : "zen" })
-          }
+          onChange={(v) => setSettings({ opencodeCatalog: v === "off" ? "off" : (lastRoute as any) })}
         />
       </SettingRow>
-      <p className="ps-note">{tr(`agents.oc_usage_note_${s.opencodeCatalog}`)}</p>
+      <p className="ps-note">{tr(off ? "agents.oc_enabled_note_off" : "agents.oc_enabled_note_on")}</p>
+      {!off && (
+        <>
+          <SettingRow label={tr("agents.oc_usage")} />
+          <div className="p-opts p-opts-col" role="radiogroup" aria-label={tr("agents.oc_usage")}>
+            {OC_ROUTES.map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="radio"
+                data-route={v}
+                aria-checked={v === selected}
+                className={"p-opt" + (v === selected ? " is-on" : "")}
+                onClick={() => {
+                  setLastRoute(v);
+                  setSettings({ opencodeCatalog: v });
+                }}
+              >
+                <span className="p-opt-t">{tr(`agents.oc_usage_${v}`)}</span>
+                <span className="p-opt-s">{tr(`agents.oc_usage_note_${v}`)}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </>
+  );
+}
+
+// The empty-menu rescue, said out loud. `Catalog` re-shapes with Zen when the selected route
+// would leave the picker empty — an account with no Go contract that selects Go is shown the
+// METERED twins — and until now the card went on claiming the selected route while the launch
+// list disagreed with it. The Agent reports what it applied (GET /agents/opencode/models
+// `route`); anything else is not a mismatch worth a warning.
+// A lookup rather than a template literal: `applied` comes off the wire, and an Agent newer
+// than this Console could name a route whose label does not exist here.
+const ROUTE_LABEL = {
+  off: "agents.oc_usage_off",
+  own: "agents.oc_usage_own",
+  free: "agents.oc_usage_free",
+  go: "agents.oc_usage_go",
+  zen: "agents.oc_usage_zen",
+} as const;
+
+// The same routes as a status chip. Separate strings because the chip has room for a word,
+// not a sentence: the list's "None (my own keys)" reads as a description where it belongs and
+// as a riddle next to a green dot.
+const PILL_LABEL = {
+  off: "agents.oc_usage_off",
+  own: "agents.oc_pill_own",
+  free: "agents.oc_pill_free",
+  go: "agents.oc_pill_go",
+  zen: "agents.oc_pill_zen",
+} as const;
+
+function OpencodeRouteFallback() {
+  const tr = useT();
+  const selected = useSettings().opencodeCatalog;
+  const applied = useOpencodeAppliedRoute();
+  const label = ROUTE_LABEL[applied as keyof typeof ROUTE_LABEL];
+  if (!label || applied === selected || selected === "off") return null;
+  return (
+    <p className="ps-note ps-note-warn">
+      {tr("agents.oc_route_fallback", { chosen: tr(ROUTE_LABEL[selected]), applied: tr(label) })}
+    </p>
   );
 }
 
@@ -194,9 +281,17 @@ export function OpencodeCard({
   const envs = st?.envs || [];
   const account = !!st?.oauth;
   const accountOff = !!st?.oauth_disabled;
+  const usage = s.opencodeCatalog; // off | own | free | go | zen — see OpencodeUsageRows
+  const off = usage === "off";
+  const usesOpencodeAI = !off && usage !== "own";
+  // On "own" the opencode.ai key is not injected at all (auth.go's env()), so offering to
+  // store one here would be a form whose result does nothing. The preset falls back to the
+  // first remaining entry rather than sticking on a hidden one.
+  const presets = usesOpencodeAI ? OC_PRESETS : OC_PRESETS.filter((p) => p[0] !== "go");
+  const active = presets.some((p) => p[0] === preset) ? preset : String(presets[0][0]);
   const envName =
-    preset === "custom" ? customEnv.trim().toUpperCase() : OC_PRESETS.find((p) => p[0] === preset)?.[2] || "";
-  const issueUrl = OC_PRESETS.find((p) => p[0] === preset)?.[3] || "";
+    active === "custom" ? customEnv.trim().toUpperCase() : presets.find((p) => p[0] === active)?.[2] || "";
+  const issueUrl = presets.find((p) => p[0] === active)?.[3] || "";
 
   const add = async () => {
     if (!envName || !key.trim()) return;
@@ -274,27 +369,31 @@ export function OpencodeCard({
     reload();
   };
 
-  const usage = s.opencodeCatalog; // off | free | go | zen — choice of billing route (docs/log/54)
-  const off = usage === "off";
+  // The route is ALWAYS named, not just on the two values that used to name themselves: with
+  // Go and Zen reduced to "2 keys" the card could not say which of the two bills for the next
+  // turn, which is the question this card exists to answer.
   const pill = [
-    off ? tr("agents.oc_usage_off") : usage === "free" ? tr("agents.oc_usage_free") : "",
+    tr(PILL_LABEL[usage]),
     !off && envs.length > 0 ? tr("agents.oc_key_count", { count: envs.length }) : "",
-    !off && account ? tr("agents.oc_account_only") : "",
+    usesOpencodeAI && account ? tr("agents.oc_account_only") : "",
   ]
     .filter(Boolean)
     .join(" / ");
+  // Mirrors the Agent's usability rule (auth.go's connected): free needs nothing, "own" needs
+  // a key that is NOT the opencode.ai one, anything else takes a key or the account. The one
+  // input the Console cannot see is a self-hosted engine, which also makes "own" usable — so
+  // this pill can read disconnected on a deployment where a launch works. It summarises;
+  // registry.ts asks the Agent.
+  const directKeys = envs.filter((e: string) => e !== "OPENCODE_API_KEY");
+  const live =
+    !off &&
+    (usage === "free" ? true : usage === "own" ? directKeys.length > 0 : envs.length > 0 || account);
 
   return (
     <ProviderCard
       id="opencode"
       name={kindDisplayName("opencode")}
-      status={
-        running ? (
-          <StatusPill on={!off && (usage === "free" || envs.length > 0 || account)}>
-            {pill || tr("conn.disconnected")}
-          </StatusPill>
-        ) : undefined
-      }
+      status={running ? <StatusPill on={live}>{pill || tr("conn.disconnected")}</StatusPill> : undefined}
     >
       {!running ? (
         <ConnPaused />
@@ -302,15 +401,22 @@ export function OpencodeCard({
         <>
           <OpencodeRestartRow st={st} reload={reload} />
           <div className="p-body">
-            <OpencodeUsageRow />
+            <OpencodeUsageRows />
+            <OpencodeRouteFallback />
           </div>
-          {off ? (
-            <div className="p-desc">{tr("agents.oc_off_desc")}</div>
-          ) : usage === "free" ? (
-            <div className="p-desc">{tr("agents.oc_free_desc")}</div>
-          ) : (
-            <div className="p-desc">{tr("agents.oc_account_desc")}</div>
-          )}
+          {/* Off hides the credentials entirely rather than greying them: everything below
+              is ignored while it is selected, and a form that still invites a key is the
+              clearest way to suggest otherwise. The switch's own note carries the
+              explanation, so there is nothing else to draw here. */}
+          {!off && (
+          <>
+          {/* Only the sign-in needs an introduction of its own. own / free used to carry one
+              too, which repeated what the route they had just selected already said. */}
+          {usesOpencodeAI && <div className="p-desc">{tr("agents.oc_account_desc")}</div>}
+          {/* The account sign-in is opencode.ai's, so it is not offered on the route that
+              declines opencode.ai — showing a connect button whose result would be ignored is
+              how the old card made the route look like it governed less than it does. */}
+          {usesOpencodeAI && (
           <div className="p-body">
             {accountOff ? (
               <div className="p-desc">{tr("agents.oc_account_disabled")}</div>
@@ -346,10 +452,13 @@ export function OpencodeCard({
             )}
             <p className="ps-note">{tr("agents.oc_account_note")}</p>
           </div>
-          {usage !== "free" && !off && <OpencodeWorkspaceRow st={st} reload={reload} />}
-          <div className="p-desc">{tr("agents.oc_desc")}</div>
+          )}
+          {/* The usage page is opencode.ai's Go allowance, so it belongs to the routes that
+              can spend it. */}
+          {usesOpencodeAI && usage !== "free" && <OpencodeWorkspaceRow st={st} reload={reload} />}
+          <div className="p-desc">{tr(usesOpencodeAI ? "agents.oc_desc" : "agents.oc_desc_own")}</div>
           <div className="p-body">
-            {preset === "go" && (
+            {active === "go" && (
               <Hint>
                 <a href="https://opencode.ai/auth" target="_blank" rel="noopener" className="flow-link">
                   opencode.ai/auth
@@ -363,6 +472,12 @@ export function OpencodeCard({
                 {envs.map((e: string) => (
                   <li key={e}>
                     <code>{e}</code>
+                    {/* Stored but not injected on free / own (auth.go's env()). Saying so
+                        here is the difference between "my key is set up" and "my key is set
+                        up and being used", which the list could not tell apart. */}
+                    {!usesOpencodeAI && e === "OPENCODE_API_KEY" && (
+                      <span className="oc-key-idle">{tr("agents.oc_key_not_injected")}</span>
+                    )}
                     <button className="icon danger" title={tr("common.delete")} onClick={() => remove(e)}>
                       ✕
                     </button>
@@ -371,14 +486,14 @@ export function OpencodeCard({
               </ul>
             )}
             <div className="flow">
-              <select className="cinput" value={preset} onChange={(e) => setPreset(e.target.value)}>
-                {OC_PRESETS.map(([v, label]) => (
+              <select className="cinput" value={active} onChange={(e) => setPreset(e.target.value)}>
+                {presets.map(([v, label]) => (
                   <option key={v} value={v}>
-                    {v === "custom" ? tr("agents.oc_custom") : label}
+                    {v === "custom" ? tr("agents.oc_custom") : v === "go" ? tr("agents.oc_preset_opencode") : label}
                   </option>
                 ))}
               </select>
-              {preset === "custom" && (
+              {active === "custom" && (
                 <input
                   className="cinput"
                   placeholder={tr("agents.oc_env_placeholder")}
@@ -398,6 +513,8 @@ export function OpencodeCard({
               </button>
             </div>
           </div>
+          </>
+          )}
         </>
       )}
       <CardSettings>

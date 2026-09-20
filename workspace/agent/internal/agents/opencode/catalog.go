@@ -42,6 +42,14 @@ const (
 	// bill". Not the same thing as UsageFree (wanting the free route) — off declares "do not use
 	// it at all" and is free's opposite.
 	UsageOff = "off"
+	// UsageOwn runs opencode WITHOUT opencode.ai: only the providers the user connected
+	// directly (anthropic/…, openrouter/…) and the fleet's own engines stay in the menu, and
+	// OPENCODE_API_KEY is not injected (auth.go's env()). It is the state a workspace was
+	// unable to declare before — "use opencode, but bill nothing to opencode.ai" could only
+	// be approximated by choosing Go and never storing the key, which is an accident rather
+	// than a declaration. Like UsageOff it is exempt from the empty-menu rescue below: an
+	// empty opencode.ai side is the intended result, not a preference that failed.
+	UsageOwn = "own"
 	// UsageFree keeps only the zero-auth free models — the route that runs with no credential at
 	// all (measured: 8 of them, cost.input 0), at the mercy of congestion (503) and the free
 	// route's own limit.
@@ -66,6 +74,29 @@ const (
 // Usage* constants. The label stays the id: the Console localizes the Go/Zen marker itself
 // (agentModels.ts) and the MCP list_models an assistant reads wants the raw id anyway.
 func Catalog(ids []string, pref string) []agents.ModelChoice {
+	list, _ := catalogFor(ids, pref)
+	return list
+}
+
+// CatalogWithRoute is Catalog plus the route the menu ACTUALLY shows — the selected one,
+// except where the empty-menu rescue below had to fire, which reports UsageZen.
+//
+// It exists because that rescue used to be invisible: an account with no Go contract that
+// selected Go was shown the METERED ids while the card kept saying "Go", which is the one
+// thing a billing-route setting must never do quietly (two comparison sessions were launched
+// on Zen ids that way — docs/log/54 §54.4). handleAgentModels returns it alongside the list so
+// the Console can say what it did.
+func CatalogWithRoute(ids []string, pref string) ([]agents.ModelChoice, string) {
+	return catalogFor(ids, pref)
+}
+
+// catalogFor is Catalog's body, reporting the route it ended up applying so the two exported
+// entry points cannot drift on when the rescue fires.
+func catalogFor(ids []string, pref string) ([]agents.ModelChoice, string) {
+	// A stored value the Agent never normalized (an older Console, a hand-edited ui-prefs)
+	// used to land in the default branch below, i.e. "keep every billable id" — the most
+	// expensive reading of a value nobody chose. CatalogPref makes unknown mean off.
+	pref = CatalogPref(pref)
 	// Unusable ids come out FIRST, before any of the billing-route shaping. The rescue
 	// below re-enters this function with UsageZen and relies on "UsageZen keeps everything",
 	// so an id dropped inside the loop for a reason UsageZen cannot undo would recurse for
@@ -86,10 +117,11 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 	// Emptying the picker would be worse than ignoring the preference: an account
 	// without the Go plan that picks Go-only must still be able to launch. Guard on the
 	// INPUT being non-empty — an already-empty catalog (CLI absent / offline) is not a
-	// preference problem and must not bounce back into this function. UsageOff is
-	// exempt from this rescue: an empty picker IS the intended result of "off".
-	if pref != UsageOff && len(out) == 0 && len(usable) > 0 {
-		return Catalog(usable, UsageZen)
+	// preference problem and must not bounce back into this function. UsageOff and UsageOwn
+	// are exempt: an empty opencode.ai side IS the intended result of both, and rescuing
+	// "do not bill opencode.ai" into Zen would be the opposite of what was asked.
+	if pref != UsageOff && pref != UsageOwn && len(out) == 0 && len(usable) > 0 {
+		return Catalog(usable, UsageZen), UsageZen
 	}
 	// Go first everywhere: whichever route is selected, a subscription-covered id is
 	// the one to reach for first. Inside a group the order is normalized by id
@@ -105,7 +137,7 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 			return 0
 		}
 		return 1
-	})
+	}), pref
 }
 
 // bedrockPrefix is opencode's own `amazon-bedrock` provider — nothing to do with af.
@@ -150,6 +182,8 @@ func keepForUsage(id, pref string) bool {
 		return true // anthropic/…, openrouter/… — a separate bill, so the route choice is moot
 	}
 	switch pref {
+	case UsageOwn:
+		return false // opencode.ai is not used on this route — neither of its two sides
 	case UsageFree:
 		return isFreeModel(id)
 	case UsageGo:
@@ -164,7 +198,7 @@ func keepForUsage(id, pref string) bool {
 // wanting both, so UsageZen). Unset or unknown is UsageOff = disabled until explicitly chosen.
 func CatalogPref(v string) string {
 	switch v {
-	case UsageOff, UsageFree, UsageGo, UsageZen:
+	case UsageOff, UsageOwn, UsageFree, UsageGo, UsageZen:
 		return v
 	case "hide-zen":
 		return UsageGo

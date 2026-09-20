@@ -149,6 +149,58 @@ func TestCatalogFallsBackWhenItWouldEmptyThePicker(t *testing.T) {
 	}
 }
 
+// "own" is the route for "use opencode, bill nothing to opencode.ai": both of opencode.ai's
+// sides go, and what the user connected directly stays. Before it existed this state could
+// only be approximated by selecting Go and never storing the key.
+func TestCatalogOwnDropsBothOpencodeAIRoutes(t *testing.T) {
+	got := ids(t, UsageOwn)
+	want := []string{"anthropic/claude-opus-5"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("own = %v, want the directly connected providers only", got)
+	}
+}
+
+// …and unlike Go, "own" must NOT be rescued into Zen when that leaves nothing: an empty
+// opencode.ai side is what was asked for, so quietly filling the menu with metered ids would
+// invert the declaration. (Same exemption as off — see TestCatalogOffStaysEmpty.)
+func TestCatalogOwnIsExemptFromTheEmptyMenuRescue(t *testing.T) {
+	opencodeAIOnly := []string{"opencode/deepseek-v4-pro", "opencode-go/glm-5.2"}
+	if got := Catalog(opencodeAIOnly, UsageOwn); len(got) != 0 {
+		t.Errorf("own = %v, want an empty menu rather than a fallback to the metered route", idsOf(got))
+	}
+}
+
+// The rescue used to be invisible: an account with no Go contract that selected Go was shown
+// the METERED ids while the card kept saying "Go". CatalogWithRoute reports the route it
+// actually applied, so the Console can say what happened instead of claiming the chosen one.
+func TestCatalogWithRouteReportsTheRescue(t *testing.T) {
+	zenOnly := []string{"opencode/deepseek-v4-pro", "opencode/glm-5.2"}
+	if list, route := CatalogWithRoute(zenOnly, UsageGo); route != UsageZen || len(list) != 2 {
+		t.Errorf("go without a Go contract: route=%q list=%v, want the rescue reported as zen", route, idsOf(list))
+	}
+	// Honoured preferences report themselves, so the Console only warns when it must.
+	for _, pref := range []string{UsageZen, UsageGo, UsageOff, UsageOwn} {
+		if _, route := CatalogWithRoute(live, pref); route != pref {
+			t.Errorf("pref=%s reported route %q although it was honoured", pref, route)
+		}
+	}
+}
+
+// A stored value the Agent never normalized (an older Console, a hand-edited ui-prefs) used
+// to fall into the "keep everything" branch — the most expensive reading of a value nobody
+// chose. Unknown means off, the same answer CatalogPref gives.
+func TestCatalogTreatsAnUnknownPrefAsOff(t *testing.T) {
+	for _, pref := range []string{"", "nonsense"} {
+		if got := Catalog(live, pref); len(got) != 0 {
+			t.Errorf("pref=%q = %v, want an empty menu", pref, idsOf(got))
+		}
+	}
+	// The legacy values still mean what they meant.
+	if got := ids(t, "hide-zen"); !slices.Contains(got, "opencode-go/glm-5.2") || slices.Contains(got, "opencode/glm-5.2") {
+		t.Errorf("hide-zen = %v, want the Go-only shaping", got)
+	}
+}
+
 // Migration from the legacy values: "hide zen" expressed wanting to see only Go, while "go
 // first" and "show all" expressed wanting both. Unset or unknown falls back to Off until
 // something is chosen explicitly.
@@ -164,6 +216,7 @@ func TestCatalogPrefMigratesLegacyValues(t *testing.T) {
 		UsageGo:    UsageGo,
 		UsageZen:   UsageZen,
 		UsageOff:   UsageOff,
+		UsageOwn:   UsageOwn,
 	} {
 		if got := CatalogPref(v); got != want {
 			t.Errorf("CatalogPref(%q) = %q, want %q", v, got, want)

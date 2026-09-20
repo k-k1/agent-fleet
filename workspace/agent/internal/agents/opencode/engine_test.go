@@ -430,3 +430,45 @@ func TestPushEngineProvidersSaysSoWithNoDaemon(t *testing.T) {
 		t.Errorf("err = %v, want ErrNoDaemon", err)
 	}
 }
+
+// HasEngineProviders answers the one question "own" (opencode.ai unused) cannot answer from
+// stored keys: a deployment whose only inference is a self-hosted engine has no provider key
+// at all, and judging that workspace by keys alone would hide opencode from exactly the
+// deployment that runs its own models. Only af's own entries count — a provider the user
+// hand-wrote is their business and says nothing about the fleet's engines.
+func TestHasEngineProvidersCountsOnlyAfsOwn(t *testing.T) {
+	engineTestHome(t)
+	if HasEngineProviders() {
+		t.Fatal("true with no config file at all")
+	}
+
+	path := filepath.Join(mustConfigDir(t), configNames[0])
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed := `{"provider":{"mine":{"npm":"@ai-sdk/openai-compatible","models":{"m":{}}}}}`
+	if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if HasEngineProviders() {
+		t.Error("the user's own hand-written provider was counted as a fleet engine")
+	}
+
+	if _, _, err := WriteEngineProviders([]EngineProvider{{
+		Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1",
+		Models: []string{"qwen3-coder-30b-a3b"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if !HasEngineProviders() {
+		t.Error("false right after af wrote an engine provider")
+	}
+
+	// The stack came down: the entry goes, and so does the answer.
+	if _, _, err := WriteEngineProviders(nil); err != nil {
+		t.Fatal(err)
+	}
+	if HasEngineProviders() {
+		t.Error("true after af's provider was removed")
+	}
+}

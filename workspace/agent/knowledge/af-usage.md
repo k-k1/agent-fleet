@@ -148,9 +148,11 @@ AWS Builder ID（や Kiro プラン）なら kiro。
 - **claude** — 「OAuth 接続」→ 別タブで承認 →**コードを貼り付けて「完了」**。接続済みになるとメールとプランが出ます。
 - **codex** — ①ChatGPT サブスクで接続（推奨・追加課金なし。事前に ChatGPT の「設定 > セキュリティ」で
   「Codex に対してデバイスコード認証を有効にする」をオンにする必要があります）②OpenAI API キー（`sk-…`）。
-- **opencode** — プロバイダの API キーを env として保存（OpenCode Go / Anthropic / OpenAI / OpenRouter /
+- **opencode** — プロバイダの API キーを env として保存（opencode.ai / Anthropic / OpenAI / OpenRouter /
   Google Gemini / Sakana AI / カスタム）。opencode アカウントのサインインも併用できます。
-  カードの**「使う枠」**で オフ / 無料枠 / Go / Zen を選びます（オフ＝保存済みの鍵があっても起動しない）。
+  カードは 2 段構えで、**「opencode を使う」**（既定オフ＝保存済みの鍵やサインインがあっても起動しない）と、
+  **「opencode.ai への課金」**（使わない（自分の鍵だけ）/ 無料モデルのみ / Go（定額）/ Zen（従量））。
+  後者は opencode.ai の使い方だけを決め、自分でつないだプロバイダのモデルはどれを選んでも一覧に残ります。
 - **copilot** — 個別ログインなし。**「Gitホスティング」タブで GitHub を連携すると自動的に接続済み**に
   なります（切断も連動）。GitHub アカウント側に Copilot サブスクリプション（Free 可）が必要です。
 - **cursor** — 「Cursor にサインイン」→ ブラウザで承認するだけ（**貼り付けるコードはありません**）。

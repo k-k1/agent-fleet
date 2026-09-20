@@ -57,6 +57,14 @@ function decorateLabel(kind: string, label: string, all: ModelDescriptor[]): str
   return label;
 }
 
+// The opencode billing route the Agent ACTUALLY shaped the last list with (the `route` member
+// of GET /agents/opencode/models). It equals the selected route except where Catalog's
+// empty-menu rescue had to ignore it — selecting Go on an account with no Go contract lists
+// the METERED ids instead, which is the one thing a billing setting must not do quietly. ""
+// while no list has been fetched, and after a failed fetch: nothing is known then, and a
+// warning drawn from nothing is worse than none.
+let opencodeRoute = "";
+
 function fetchModels(kind: string): Promise<ModelOption[]> {
   const cacheable = kind !== "opencode";
   const hit = cacheable ? cache.get(kind) : undefined;
@@ -81,6 +89,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
             efforts: Array.isArray(m.efforts) ? m.efforts.filter((x): x is string => typeof x === "string" && !!x) : [],
             defaultEffort: typeof m.defaultEffort === "string" ? m.defaultEffort : "",
           }));
+        if (kind === "opencode") opencodeRoute = typeof d?.route === "string" ? d.route : "";
         const opts = desc.map((m): ModelOption => [m.id, decorateLabel(kind, m.label, desc)]);
         if (!opts.length) throw new Error("empty"); // workspace stopped / CLI absent — retry next open
         const full = [...defaultOnly(), ...opts];
@@ -91,6 +100,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
       })
       .catch(() => {
         inflight.delete(kind);
+        if (kind === "opencode") opencodeRoute = "";
         return defaultOnly();
       });
     inflight.set(kind, p);
@@ -193,6 +203,26 @@ export function useModelOptions(kind: string): ModelOption[] | null {
   }
   if (isDynamic(kind)) return visibleModelOptions(s.hiddenModels, kind, opts);
   return null;
+}
+
+// useOpencodeAppliedRoute returns the billing route the Agent actually shaped the launch list
+// with, for the settings card to compare against the selected one. "" until a list has been
+// fetched (and after a failure), which reads as "nothing to say".
+//
+// It goes through the same fetchModels as the picker, so opening Settings costs no extra
+// request while a launch modal is open — opencode's entry is deliberately uncached but folds
+// through `inflight`.
+export function useOpencodeAppliedRoute(): string {
+  const selected = useSettings().opencodeCatalog;
+  const [route, setRoute] = useState(opencodeRoute);
+  useEffect(() => {
+    let alive = true;
+    void fetchModels("opencode").then(() => alive && setRoute(opencodeRoute));
+    return () => {
+      alive = false;
+    };
+  }, [selected]); // a route change reshapes the list server-side, so the answer can change
+  return route;
 }
 
 // useModelCatalogSettled answers whether this kind's catalog fetch has settled once. Static kinds
