@@ -1314,6 +1314,10 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
   const [replanned, setReplanned] = useState(false);
   const [id, setId] = useState("");
   const [idEdited, setIdEdited] = useState(false);
+  // Tracks the id as it was last confirmed (blur or Enter), not the current keystroke.
+  // Only this committed value is sent to ingest/resolve, so the plan token stays stable
+  // while the operator is mid-typing. See the symmetric base_model fix for context.
+  const [committedId, setCommittedId] = useState("");
   const [description, setDescription] = useState("");
   const [baseModel, setBaseModel] = useState("");
   const [familyChoices, setFamilyChoices] = useState<string[]>([]);
@@ -1424,6 +1428,12 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
     apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/resolve`, "POST", {
       source: sourceBody(file), kind: isLora ? "lora" : image ? "checkpoint" : "gguf",
       ...(plannedFamily ? { base_model: plannedFamily } : {}),
+      // Send the committed id so the plan token the CP hashes already includes it.
+      // Without this the token is computed without the id, and the press (which does
+      // send id) causes a re-plan that answers 409 `engine_plan_stale` every time
+      // the operator edits the id field. Symmetric to the base_model fix (PR #788).
+      // Only send when non-empty: "" is treated as "let the CP name it" (same as absent).
+      ...(committedId ? { id: committedId } : {}),
     }).then((answer) => {
       if (!live) return;
       if (answer?.error) { setErr(answer.error as EngineApiError); return; }
@@ -1431,7 +1441,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
       setResolved(found);
       if (found.plan) {
         setPlan(found.plan);
-        if (!idEdited) setId(found.plan.id || "");
+        if (!idEdited) { setId(found.plan.id || ""); setCommittedId(found.plan.id || ""); }
         if (found.plan.base_model) setBaseModel(found.plan.base_model);
         // Remembered, because the CP offers candidates only while it cannot name the family
         // itself: the re-plan our own choice causes answers with none, and the selector would
@@ -1471,7 +1481,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
     // own guess), so the second pass sets the same string and React stops there. An answer that
     // named a different family would spin, and that is the invariant to keep if either side moves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, image, isLora, row.key, sourceBody, plannedFamily]);
+  }, [file, image, isLora, row.key, sourceBody, plannedFamily, committedId]);
 
   // The family is asked ONLY when the CP could not read one, and only from the candidates it
   // knows. An LLM LoRA is pinned to a registered model rather than to a family name.
@@ -1544,7 +1554,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         // because what was accepted is not what would now be taken in.
         if (error.code === "engine_plan_stale" && error.plan) {
           setPlan(error.plan); setReplanned(true); setAccepted(false);
-          if (!idEdited) setId(error.plan.id || "");
+          if (!idEdited) { setId(error.plan.id || ""); setCommittedId(error.plan.id || ""); }
           return;
         }
         setErr(error);
@@ -1641,7 +1651,10 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
       </p>}
       <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
       <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">
-        <label><span>{tr("admin.engines_model_add_id")}</span><input value={id} onChange={(event) => { setIdEdited(true); setId(event.currentTarget.value); }} /></label>
+        <label><span>{tr("admin.engines_model_add_id")}</span><input value={id}
+          onChange={(event) => { setIdEdited(true); setId(event.currentTarget.value); }}
+          onBlur={() => setCommittedId(id)}
+          onKeyDown={(e) => e.key === "Enter" && setCommittedId(id)} /></label>
         <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
         {!image && !isLora && <label><span>{tr("admin.engines_model_add_out")}</span><input value={output} onChange={(event) => setOutput(event.currentTarget.value)} inputMode="numeric" /></label>}
         {isLora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}

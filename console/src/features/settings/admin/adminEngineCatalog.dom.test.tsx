@@ -516,6 +516,117 @@ describe("model catalogue pane", () => {
     expect(document.body.textContent).toContain("取り込み元が想定外の応答を返しました: civitai.com answered 503 Service Unavailable");
     expect(document.querySelector(".engine-catalog-loading")).toBeNull();
   });
+
+  // 🔴 The `id` field is inside the advanced fold. When the operator edits it, the press sends
+  // the new id to the CP — but the plan token was computed without it in the earlier resolve,
+  // so the CP re-plans and answers 409 `engine_plan_stale`. The fix: send `id` to resolve too,
+  // committed on blur/Enter so the plan token already includes it before the press.
+  it("re-plans with the operator's id when they commit it by leaving the field", async () => {
+    mockEngines([{ ...imageRow, base_models: ["sdxl"] }]);
+    const resolveBodies: (Record<string, unknown> | undefined)[] = [];
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "org/model", model_ref: "org/model", name: "Example" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) {
+        resolveBodies.push(body);
+        const sentId = body?.id as string | undefined;
+        return Promise.resolve({
+          bytes: 1_000_000_000, can_ingest: true,
+          plan: {
+            plan_token: sentId ? `token-with-${sentId}` : "token-default",
+            id: sentId || "model-v1",
+            base_model: "sdxl",
+            files: [{ name: "model.safetensors", action: "download", bytes: 1_000_000_000 }],
+            bytes_to_download: 1_000_000_000,
+          },
+        });
+      }
+      if (path.endsWith("/ingest")) return Promise.resolve({ id: "job1", model_id: "my-custom-id", state: "pending", action: "download" });
+      return Promise.resolve({});
+    });
+    await mount();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+
+    // The plan card is showing; open advanced and change the id.
+    const idInput = Array.from(document.querySelectorAll<HTMLInputElement>(".engine-operation-advanced input"))
+      .find((input) => input.closest("label")?.textContent?.includes("id"))!;
+    expect(idInput).toBeTruthy();
+    const resolveCountBefore = resolveBodies.length;
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(idInput, "my-custom-id");
+      idInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    for (const _ of [0, 1]) await act(async () => { await Promise.resolve(); });
+
+    // Typing alone must not trigger a re-plan.
+    expect(resolveBodies.length).toBe(resolveCountBefore);
+
+    // Enter commits the id and triggers a re-plan (same as blur in the component handler).
+    await act(async () => { idInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+
+    expect(resolveBodies.some((sent) => sent?.id === "my-custom-id")).toBe(true);
+    // The fresh plan token includes the id; the press carries it.
+    await acceptLicence();
+    await click(button("取り込む"));
+    const press = apiJSON.mock.calls.find((call) => String(call[0]).endsWith("/ingest") && call[1] === "POST");
+    expect((press![2] as { plan_token: string }).plan_token).toBe("token-with-my-custom-id");
+  });
+
+  // 🔴 The dangerous side of the id fix: id is typed character by character, so a naive
+  // dependency on `id` would re-plan on every keystroke, resetting the licence checkbox each
+  // time — 20 characters typed = 20 resets. Only a committed value (blur/Enter) may trigger
+  // re-planning.
+  it("does not re-plan while the operator is still typing the id", async () => {
+    mockEngines([{ ...imageRow, base_models: ["sdxl"] }]);
+    const resolveBodies: (Record<string, unknown> | undefined)[] = [];
+    apiJSON.mockImplementation((path: string, _method?: string, body?: Record<string, unknown>) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "org/model", model_ref: "org/model", name: "Example" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.safetensors" }] });
+      if (path.endsWith("/ingest/resolve")) {
+        resolveBodies.push(body);
+        return Promise.resolve({
+          bytes: 1_000_000_000, can_ingest: true,
+          plan: {
+            plan_token: "p1", id: "model-v1", base_model: "sdxl",
+            files: [{ name: "model.safetensors", action: "download", bytes: 1_000_000_000 }],
+            bytes_to_download: 1_000_000_000,
+          },
+        });
+      }
+      return Promise.resolve({});
+    });
+    await mount();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3]) await act(async () => { await Promise.resolve(); });
+
+    await acceptLicence();
+    const resolveCountAfterPlan = resolveBodies.length;
+
+    // Open advanced and type three characters, one at a time, without blurring.
+    const idInput = Array.from(document.querySelectorAll<HTMLInputElement>(".engine-operation-advanced input"))
+      .find((input) => input.closest("label")?.textContent?.includes("id"))!;
+    expect(idInput).toBeTruthy();
+
+    for (const char of ["a", "ab", "abc"]) {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(idInput, char);
+        idInput.dispatchEvent(new Event("input", { bubbles: true }));
+        idInput.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      for (const _ of [0, 1]) await act(async () => { await Promise.resolve(); });
+    }
+
+    // No extra resolve calls fired while typing — the licence checkbox stays intact.
+    expect(resolveBodies.length).toBe(resolveCountAfterPlan);
+    const licence = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+      .find((input) => input.parentElement?.textContent?.includes("ライセンス"))!;
+    expect(licence.checked).toBe(true);
+  });
 });
 
 describe("registered rows and the bucket", () => {
