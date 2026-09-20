@@ -90,6 +90,14 @@ for an edit and nothing happened" the default behaviour**.
   🔴 **Refuse only when the RESOLVED model is of this family** — a request that names no provider
   may not land on comfy at all, so "a `strength` present means 400" would be wrong. Resolve
   model → family at the edge (`comfyFamilyFor` is in the same package).
+- 🔴 **One route cannot be refused, so the generation side warns there.** A request that names
+  neither `model` nor `provider` cannot have its family resolved at the edge, so it reaches comfy
+  and `strength` is dropped by the denoise-1 graph. `requestWarnings` (`imagegen.go:995-1005`) has a
+  `!caps.Strength` branch, but **decision 11's union silences it** (`imagegen.go:856` and
+  `jobs.go:477` both ask `Caps(req.Model)`, which is the union when the model is empty). So put a
+  strength-shaped twin of `comfyNegativeIgnoredWarning` (`comfy.go:293`) on the PROVIDER side, which
+  emits into `res.Warnings` when the resolved family does not read it. Without it, run C's "dropped
+  with no warning" survives on exactly one route.
 - ADR 0069's rule for adding a word ("is there no way around it for the caller") **points the other
   way here**: it is not that the caller has no workaround, it is that the knob has no meaning.
 
@@ -330,6 +338,11 @@ would always be true and `ops` always three, so the pane would keep showing a sl
 - **Add `ops` to `modelStatus`.**
 - ⚠️ **Keep the existing rule that an ABSENT `knobs` (an older Agent) leaves the whole form usable** —
   `GenerateForm.dom.test.tsx` states it.
+- 🔴 **A draft's `op` is re-read when it leaves the choices.** Switching to an edit-only row leaves
+  `draft.op` at `"generate"` (`draft.ts`'s default), so the form holds a value the selector no longer
+  offers; pressing it earns decision 2's 400 AND a fall-through to another provider. When the current
+  op is gone, **fall back to that model's first op and say that it was changed** — changing it
+  silently and failing silently are the same hole (ADR 0081 decision 4).
 
 ## Rejected
 
@@ -361,7 +374,9 @@ would always be true and `ops` always three, so the pane would keep showing a sl
   (**omitting it fails `TestEveryFamilyHasTrialSteps`**, `comfy_test.go:1585`; run B's 8 steps /
   63.2 s is the citation), `mcpx/mcp_stdio.go:1132` (the `op` enum and its description — the first
   case where which ops exist depends on the model; the reference-image argument is **`inputs`**, not
-  `images`, `maxItems` 5). **P3's second image lands here too**: make `comfyParams` plural
+  `images`, `maxItems` 5). 🔴 **`strength`'s description (`mcp_stdio.go:1219-1221`) is rewritten
+  too**: it is offered on the union, so "0.6 when omitted" alone walks an agent into a 400 every
+  time — it has to say that some checkpoints refuse it, and that the answer is a 400. **P3's second image lands here too**: make `comfyParams` plural
   (`comfy_workflows.go:134`'s `Image string`), call `uploadImage` more than once (`comfy.go:710`
   takes `req.Inputs[0]` alone), wire `image2`, and fix the singular wording of `comfyCheckInputs`'
   refusal (`comfy.go:786`).
@@ -395,7 +410,10 @@ would always be true and `ops` always three, so the pane would keep showing a sl
 ## Phases
 
 - **P0** — the `qwen-image-edit-2509` family and the per-family properties of decisions 2-5, 11 and
-  12, with goldens and docs. Three completion criteria: (1) **run A reproduced** on real hardware
+  12, with goldens and docs. **The Console family card belongs here too**: half of decision 4 (no
+  size field) runs through `sizeOptions` (`families.ts:145`), which reads the card, so without one the
+  megapixel list stays. That it is currently harmless rests on the size field being
+  `disabled={isEdit}` — an accident, and an accident is not a specification. Three completion criteria: (1) **run A reproduced** on real hardware
   (it edits), (2) **run C, naming qwen, refused with 400 on both routes** (no `strength` here), and (3) 🔴 **with a qwen row warm,
   `op=generate` still lists comfy** (decision 11's union holds, so nothing falls through to a paid
   provider).
@@ -404,8 +422,8 @@ would always be true and `ops` always three, so the pane would keep showing a sl
   the measured number (20,862 MiB at 1024², batch 1, one reference) right after the ingest, and
   `confirm_vram` stops appearing once the operator has entered it** (until then it appears, which is
   the correct behaviour — decision 8).
-- **P2** — props (decision 10) and the Console cards. Done when a picture made from the pane shows
-  its prompt, its negative and its size under "what this was made from".
+- **P2** — props (decision 10). Done when a picture made from the pane shows its prompt, its
+  negative and its size under "what this was made from".
 - **P3** — the reference-image path end to end (pane and the MCP `inputs` argument) and `MaxInputs`
   on the wire. Done when run D (two images) can be reproduced from the pane, and **three images are
   measured once** before `MaxInputs` goes to 3 (until then it stays 2).
