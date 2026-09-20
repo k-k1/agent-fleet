@@ -855,6 +855,21 @@ kiro（855 MiB）を無条件 boot-install から利用者ごとのオンデマ�
 **段 2 ではこのフラグを ON にするのではなく、kiro の道を最後まで行く**べきである
 （`workspace-agent install-muse`）。
 
+### 焼いたイメージ
+
+`dev-image.yml` でこのブランチから `workspace`（amd64）を焼き、公開されたイメージに 3 つとも入って
+いることを確認した: `/usr/bin/bwrap`（80,248 B——手元で展開したパッケージと同サイズ）、イメージ
+config の `MUSE_NO_AUTO_UPDATE=1`、そして `versions.json` の `muse=1.3.0-R3401.1` と
+`muse_sha256=71b089d0…`（キー 29 個）。Workspace に Docker は無いので、`docker run` ではなく
+`crane config` / `crane export` で確認した。
+
+⚠️ **途中で無関係の破損を見つけた。次は develop に当たる。** 最初の焼きは
+`CHROMIUM_VERSION=153.0.8010.47-2~deb13u1` で `E: Version … was not found` と落ちた。`.deb` は
+security プールに残っているが、Debian の*索引*はいま `153.0.8010.52-1~deb13u1` しか載せておらず、
+これは develop の直近の緑の焼き（05:38）と今回（06:30）の間に入った。この ADR とは無関係で、上の
+焼きは `bake_optional_tools=false` で迂回したが、**chromium のピン**（と対の `chromium_cft` /
+`chromium_dl`）は別途上げる必要がある。
+
 ### 門 A がやらなかったこと
 
 ログインなし・実ターンなし・サブスクリプションなし・`-w` なし・`kind` の配線なし——すべて段 2 か

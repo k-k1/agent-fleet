@@ -930,6 +930,21 @@ use — which is the same reasoning that already moved kiro (855 MiB) off uncond
 and onto a per-user on-demand install. Phase 2 should take kiro's route
 (`workspace-agent install-muse`) rather than turn this flag on.
 
+### The baked image
+
+`dev-image.yml` baked `workspace` from this branch (amd64) and the published image carries all three
+changes: `/usr/bin/bwrap` (80,248 B, byte-identical in size to the extracted package),
+`MUSE_NO_AUTO_UPDATE=1` in the image config, and `versions.json` with `muse=1.3.0-R3401.1` and
+`muse_sha256=71b089d0…` (29 keys). Verified with `crane config` / `crane export` rather than
+`docker run`, since a Workspace has no Docker.
+
+⚠️ **Unrelated breakage found on the way, and it will bite develop next.** The first bake failed at
+`CHROMIUM_VERSION=153.0.8010.47-2~deb13u1`: `E: Version … was not found`. The `.deb` is still in the
+security pool, but Debian's *index* now lists only `153.0.8010.52-1~deb13u1`, which landed between
+develop's last green bake (05:38) and this one (06:30). Nothing to do with this ADR — the bake above
+used `bake_optional_tools=false` to step around it — but the chromium pin (and its `chromium_cft` /
+`chromium_dl` partners) needs its own bump.
+
 ### What gate A did not do
 
 No login, no real turn, no subscription, no `-w`, and no `kind` wiring — all Phase 2 or gate B1.
