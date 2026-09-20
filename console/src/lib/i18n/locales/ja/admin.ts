@@ -461,7 +461,7 @@ export const admin = {
   // （テキストエンコーダは encode のあと退避される）。誰かがエンジンの /system_stats を
   // 読んだ族はその数字を出し、運用者が入れる——機械は書かない（ADR 0094 決定 8）。
   // 入れないと梯子は合計で段を選ぶ＝一段高い箱を買う。
-  "admin.engines_vram_measured": "この族の実測は {n} MiB（{s}・batch {b}・参照 {i} 枚／{f} で測定）",
+  "admin.engines_vram_measured": "この族の実測は {n} MiB（{c} で、{s}・batch {b}・参照 {i} 枚／{f} を測定）",
   "admin.engines_vram_measured_use": "実測値 {n} を入れる",
   "admin.engines_vram_measured_after": "取り込んだあと、行の「編集」で実測 VRAM に入れてください。",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",

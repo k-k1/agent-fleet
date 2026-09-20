@@ -1647,7 +1647,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         {(tr("admin.engines_vram_measured" as never) as string)
           .replace("{n}", ingestMeasured.mib.toLocaleString()).replace("{s}", ingestMeasured.size)
           .replace("{b}", String(ingestMeasured.batch)).replace("{i}", String(ingestMeasured.inputs))
-        .replace("{f}", ingestMeasured.file)}
+        .replace("{f}", ingestMeasured.file).replace("{c}", ingestMeasured.card)}
         {" "}{tr("admin.engines_vram_measured_after" as never)}
       </p>}
       <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
@@ -1886,7 +1886,7 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
       {(tr("admin.engines_vram_measured" as never) as string)
         .replace("{n}", editMeasured.mib.toLocaleString()).replace("{s}", editMeasured.size)
         .replace("{b}", String(editMeasured.batch)).replace("{i}", String(editMeasured.inputs))
-        .replace("{f}", editMeasured.file)}
+        .replace("{f}", editMeasured.file).replace("{c}", editMeasured.card)}
       {" "}
       <Button variant="ghost" disabled={busy || vramNumber === editMeasured.mib}
         onClick={() => setVram(String(editMeasured.mib))}>

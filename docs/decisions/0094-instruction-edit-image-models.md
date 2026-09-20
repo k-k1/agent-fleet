@@ -569,10 +569,14 @@ counts only providers that were tried and failed, so **nothing is said**. Before
    The reverse order — declare a `vram_mib` as a hypothesis first so the 22,000 rung is a candidate
    again — worked as intended. **That reverse order is itself the procedure the next person adding
    a family needs**, and it is written into decision 8.
-7. 🔴 **Put the CARD into the measurement conditions.** `FamilyVramMeasurement` carries size, batch,
-   reference count and the weights file, but not the card. 2509's 20,862 (L4) beside 2511's 28,358
-   (L40S) would read as two values of one field while **answering different questions**. Either the
-   field gains a column, or the table's contract is rewritten as "what this family needs at MINIMUM".
+7. 🟢 **Closed the same day: `FamilyVramMeasurement` gained `card`** ("L4 24GB"). The column was the
+   branch taken and the table's contract stays "what was measured" — rewriting it as "what this
+   family needs at MINIMUM" would have made this field speak about cards nobody measured on, which
+   is the "a number somebody wrote" it exists to avoid. The card now shows in the measurement
+   conditions on the ingest screen and the row's Edit (`admin.engines_vram_measured`).
+   🔴 The rule about the VALUE is in the type's doc too: **a reading is a value of this field only
+   when the card was tight enough to force eviction.** A reading on a roomier card is not the same
+   measurement under different conditions — it is **the answer to a different question**.
 
 ## Measured (2026-09-20, dev deployment, g6.xlarge / L4 24GB)
 
