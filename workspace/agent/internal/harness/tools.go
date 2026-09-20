@@ -106,6 +106,67 @@ type Runtime struct {
 	// why that default was chosen deliberately rather than left to fall out of
 	// Go's normal zero-value behaviour.
 	RepeatGateDisabled bool
+	// SystemPrompt is folded in front of every Send loop.go's Run makes (via
+	// compact.go's BuildSendMessages, the same folding PrepareTurn already does at a
+	// top-level turn boundary — see loop.go's own doc comment for why Run now does this
+	// on EVERY iteration, not just once). "" is a legitimate value (no system prompt at
+	// all), not "not configured" — SystemPrompt itself never gates whether the in-loop
+	// compaction check below runs; Window does.
+	SystemPrompt string
+	// Window is the engine's real context window in tokens (typically EngineWindow's own
+	// answer, threaded through by whatever caller builds this Runtime) — loop.go's Run
+	// passes it straight to compact.go's NeedsCompaction/Compact on every iteration of its
+	// tool loop, which is the gap ADR 0093's own live trial exposed: PrepareTurn's
+	// compaction judgement previously only ran once per top-level turn, so a single task
+	// whose tool loop ran long enough grew hist past the real window with nothing
+	// checking it (a live qwen3-coder-30b-a3b run: 32772 tokens sent against a 32768
+	// window, mid-task, no compaction ever attempted).
+	//
+	// <=0 (including a zero Runtime{}) is deliberately NOT treated as "no ceiling" here,
+	// even though that is exactly what compact.go's own NeedsCompaction does with a <=0
+	// window (decision 8: never invent a token ESTIMATE to compact against). Window is a
+	// different quantity than the thing decision 8 forbids guessing — the actual input
+	// token count Run's loop compares against it is still read exactly, from
+	// client.InputTokens, every single iteration, never estimated. What Run defaults here
+	// is the CEILING to compare that exact count against, when the caller never told it
+	// one. Passing rt's <=0 straight through to NeedsCompaction would make "forgot to set
+	// Window" silently reproduce the exact incident above — the same failure shape
+	// Approve's nil check (approval.go) and RepeatWarnAfter/RepeatAbortAfter's <=0
+	// fallback (repeat.go) both exist to avoid for their own knobs. So Run instead falls
+	// back to defaultWindowFallback (loop.go), a number chosen deliberately LOW relative
+	// to every real window this fleet has actually run (32768 in the incident above,
+	// 262144 for another model seen live — see live_manual_test.go): a forgotten Window
+	// compacts too EAGERLY rather than not at all, which just costs an extra
+	// summarization turn, not a mid-task engine refusal. Set WindowDisabled to skip the
+	// in-loop check entirely instead (e.g. a caller already certain its own tool loop
+	// cannot run long enough to matter, that would rather not pay one extra
+	// client.InputTokens round trip per tool-loop iteration).
+	Window int
+	// ReservedOutput is the output-token headroom compact.go's threshold formula adds on
+	// top of the measured input tokens (PrepareTurn's own reservedOutput parameter, same
+	// meaning here). Unlike Window, <=0 needs no special fallback: reserving nothing extra
+	// only makes the threshold check LESS conservative, never unbounded — the exact
+	// input-token count alone is still compared against Window's own fallback-protected
+	// ceiling above.
+	ReservedOutput int
+	// WindowDisabled turns loop.go's in-loop compaction check off entirely, independently
+	// of RepeatGateDisabled. The zero value (false) leaves the check on, at Window's own
+	// value or defaultWindowFallback — see Window's own doc comment for why that default
+	// was chosen deliberately rather than left to mean "no ceiling".
+	WindowDisabled bool
+	// MaxConsecutiveCompactions caps how many loop.go Run iterations in a row are allowed
+	// to each need maybeCompact to fire, with no intervening iteration that got under
+	// budget without compacting, before Run gives up with ErrCompactionThrashing instead of
+	// continuing to spend Send calls. A live A/B (loop.go's own header comment) hit 86
+	// compactions in a single Run call once mid-loop compaction started actually running —
+	// each one folding away the model's own most recent work, which made it re-do that work
+	// rather than converge. <=0 (including a zero Runtime{}) uses defaultMaxConsecutiveCompactions
+	// (loop.go) — the same "zero value stays a real, protective number, never off" posture
+	// as Window's own fallback and RepeatWarnAfter/RepeatAbortAfter's (repeat.go). There is
+	// no "disabled" escape hatch for this one (unlike WindowDisabled/RepeatGateDisabled):
+	// unbounded thrashing is exactly the failure mode this field exists to make loud instead
+	// of silent, so there is no legitimate reason to want it off.
+	MaxConsecutiveCompactions int
 	// fileLocks serializes a single file's read-modify-write (runWrite/runEdit in
 	// tools_fs.go) across the concurrent goroutines runToolCalls (loop.go) fans a
 	// single turn's parallel tool_calls out into — see lockPath. Zero value is
