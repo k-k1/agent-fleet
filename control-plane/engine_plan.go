@@ -172,9 +172,9 @@ func (a engineAdminAPI) enginePlanFor(ctx context.Context, g engineIngestGrant, 
 	// Cost: at most 1 ListEngineModels(all roles) + 1 EngineIngestJobForS3Key + 1 HeadObject per
 	// download part whose destination is already recorded.
 	var (
-		allRows         []store.EngineModel
-		rowsFetched     bool
-		rowsFetchOK     bool
+		allRows     []store.EngineModel
+		rowsFetched bool
+		rowsFetchOK bool
 	)
 	for _, p := range engineFamilyPartsFor(base) {
 		pres, aerr := engineIngestResolve(ctx, engineIngestSource{HF: &engineIngestHF{Repo: p.Repo, File: p.File}})
