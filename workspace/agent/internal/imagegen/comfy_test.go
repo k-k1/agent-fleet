@@ -674,6 +674,57 @@ func TestComfyGenerateRemapsToAnotherRowWhenTheWarmFamilyCannotDoTheOp(t *testin
 	}
 }
 
+// 🔴 sfiowgj review (2026-09-20): a request naming a PROVIDER but no model, whose WARM row does
+// not offer the requested op, must not be refused for size or strength on that warm row's own
+// family — Generate() itself remaps AWAY from it (comfyFirstModelForOp, the test above), so
+// refusing at the edge against the row that will never actually run the request would 400 the
+// pane's own default case (no model chosen yet, plain generate) the instant an edit-only
+// checkpoint happens to be warm. comfyResolveFamily has to skip the warm row for this exact
+// reason when it is not an explicit choice.
+func TestComfySizeAndStrengthRefusalDoNotFireWhenTheWarmRowWouldBeRemappedAway(t *testing.T) {
+	conn := qwenEditConn()
+	conn.Warm = "qwen-edit-row"
+	p, _ := comfyStub(t, conn, nil)
+	withStubProvider(t, p)
+
+	if msg := comfySizeRefusal(p.ID(), "", "generate", "1024x1024"); msg != "" {
+		t.Errorf("comfySizeRefusal = %q, want silence — a plain generate remaps away from the warm qwen row", msg)
+	}
+	if msg := comfyStrengthRefusal(p.ID(), "", "generate"); msg != "" {
+		t.Errorf("comfyStrengthRefusal = %q, want silence for the same reason", msg)
+	}
+
+	// The positive control: the SAME warm row, asked for the op it itself will actually run
+	// (edit), still refuses normally — this is not a blanket "provider named, no model" bypass.
+	if msg := comfySizeRefusal(p.ID(), "", "edit", "1024x1024"); msg == "" {
+		t.Error("comfySizeRefusal was silent for an op the warm row itself answers")
+	}
+	if msg := comfyStrengthRefusal(p.ID(), "", "edit"); msg == "" {
+		t.Error("comfyStrengthRefusal was silent for an op the warm row itself answers")
+	}
+	// And an EXPLICIT model is never given this escape hatch — decision 2/4 refuse it outright.
+	if msg := comfySizeRefusal(p.ID(), "qwen-edit-row", "generate", "1024x1024"); msg == "" {
+		t.Error("comfySizeRefusal let an explicit model off because of an op it did not even ask for")
+	}
+}
+
+// 🟡 sfiowgj review: a row whose family offers the op but whose declared files are incomplete
+// must be SKIPPED, not returned — otherwise Generate() would remap to it, fail building its
+// graph, and Run() falls through to a provider that spends a member's own plan anyway, which is
+// the exact outcome decision 11's remap exists to avoid.
+func TestComfyFirstModelForOpSkipsARowWithIncompleteFiles(t *testing.T) {
+	conn := qwenEditConn()
+	// A row ahead of the working sdxl one that claims the sdxl family but declares no files at
+	// all — comfyBuildGraph must refuse it, and comfyFirstModelForOp must move past it rather
+	// than returning a row that cannot actually generate.
+	conn.Models = append([]string{"broken-sdxl"}, conn.Models...)
+	conn.BaseModel["broken-sdxl"] = "sdxl"
+	got, ok := comfyFirstModelForOp(conn, OpGenerate)
+	if !ok || got != "sdxl-base-1.0" {
+		t.Errorf("comfyFirstModelForOp = (%q, %v), want the row AFTER the broken one", got, ok)
+	}
+}
+
 // The last gap decision 2 names: a request naming neither a provider nor a model cannot be
 // refused at the edge (nothing to resolve a family from), so it reaches Generate and denoise is
 // fixed at 1 regardless — but the caller still typed a value, and comfyStrengthIgnoredWarning is
@@ -1512,6 +1563,50 @@ func TestComfyWarnsWhenTheFamilyCannotExclude(t *testing.T) {
 	for _, w := range ok.Warnings {
 		if strings.Contains(w, "excludes") {
 			t.Errorf("warnings = %v, want nothing about exclusions on a guided family", ok.Warnings)
+		}
+	}
+}
+
+// 🔴 sfiowgj review (2026-09-20): before ADR 0094 decision 11, Caps("") answered with the WARM
+// row's own comfyModelTakesNegative, so requestWarnings' `!caps.Negative` branch caught a
+// caller's negative_prompt landing on a cfg-1 (or otherwise negative-less) warm row even with no
+// model named. Decision 11 makes Caps("") a UNION across every model, so that branch now reads
+// Negative=true whenever ANY model on the engine takes one — the caller's own negative_prompt
+// would be dropped with NO warning from anywhere. comfyNegativeIgnoredWarning is the per-model
+// function that already existed for the catalogue's own negatives; this is its twin case for the
+// CALLER's.
+func TestComfyGenerateWarnsWhenTheCallersNegativePromptReachesAWarmRowThatIgnoresIt(t *testing.T) {
+	// negConn() minus its catalogue-level negatives, so the ONLY thing that could produce a
+	// warning is the caller's own negative_prompt — isolating exactly the gap the union opened.
+	conn := negConn()
+	conn.Negatives, conn.NegativeAlways = nil, ""
+	conn.Warm = "klein-4b" // flux2-klein never takes a negative, at any cfg
+	p, _ := comfyStub(t, conn, nil)
+
+	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", NegativePrompt: "watermark"})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "negative prompt you gave") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %v, want one saying the caller's own negative_prompt was dropped", res.Warnings)
+	}
+
+	// The positive control: the SAME request, naming the row that actually reads it, must stay
+	// silent — this is not a blanket warning on every negative_prompt.
+	ok, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0", NegativePrompt: "watermark"})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	for _, w := range ok.Warnings {
+		if strings.Contains(w, "negative prompt you gave") {
+			t.Errorf("warnings = %v, want silence when the model actually reads it", ok.Warnings)
 		}
 	}
 }

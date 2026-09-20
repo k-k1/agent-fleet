@@ -599,11 +599,11 @@ func TestSpecRefusesStrengthAndSizeAgainstQwenImageEdit(t *testing.T) {
 	withStubProvider(t, p)
 
 	s := 0.3
-	if _, code, msg := (jobRequest{Prompt: "x", Op: "edit", Model: "qwen-edit-row", Strength: &s}).spec(); code != "bad_strength" {
-		t.Fatalf("code = %q (%s), want bad_strength", code, msg)
+	if _, code, msg := (jobRequest{Prompt: "x", Op: "edit", Model: "qwen-edit-row", Strength: &s}).spec(); code != "bad_strength_family" {
+		t.Fatalf("code = %q (%s), want bad_strength_family", code, msg)
 	}
-	if _, code, msg := (jobRequest{Prompt: "x", Op: "edit", Model: "qwen-edit-row", Size: "1024x1024"}).spec(); code != "bad_size" {
-		t.Fatalf("code = %q (%s), want bad_size", code, msg)
+	if _, code, msg := (jobRequest{Prompt: "x", Op: "edit", Model: "qwen-edit-row", Size: "1024x1024"}).spec(); code != "bad_size_family" {
+		t.Fatalf("code = %q (%s), want bad_size_family", code, msg)
 	}
 	// The positive control: the same two fields against the OTHER row on the same engine must
 	// not be refused for this reason.

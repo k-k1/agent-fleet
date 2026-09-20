@@ -271,6 +271,10 @@ export const errors = {
   "err.bad_prompt": "プロンプトが空です。",
   "err.bad_op": "その操作はできません。",
   "err.bad_strength": "元画像をどれだけ変えるかの値が範囲外です。",
+  // ADR 0094 決定 2/4: 値の範囲ではなく、選んだモデルの系統がその摘みを読まないという別の理由
+  // ——bad_strength/bad_size の目録文をそのまま出すと「範囲外」という嘘になるため別の符号にした。
+  "err.bad_strength_family": "このモデルの系統は元画像をどれだけ変えるかを扱えません。",
+  "err.bad_size_family": "このモデルの系統では大きさを選べません（出力の大きさは入力画像のアスペクト比で決まります）。",
   "err.bad_count": "1 ジョブで同時に描ける枚数は 4 枚までです。",
   "err.bad_jobs": "枚数が範囲外です。",
   "err.bad_seed_policy": "seed の決め方が不正です。",

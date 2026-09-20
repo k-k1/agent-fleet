@@ -9,6 +9,7 @@
 import type { EnqueueRequest, ImagegenModel, ImagegenStatus, Job, JobGroup, SeedPolicy } from "./wire.ts";
 import { fleetProvider, jobElapsedMs } from "./wire.ts";
 import { draftParams, type ImagegenDraft } from "./draft.ts";
+import { sizeOptions } from "./families.ts";
 
 /** States that are still going to change. The poller runs only while one of these exists. */
 const LIVE: Job["state"][] = ["queued", "waking", "uploading", "running", "fetching"];
@@ -201,12 +202,18 @@ export function buildRequest(
   // behaviour, the same rule every other knobs check in this feature follows.
   const knobs = opts.model?.knobs;
   const sendsStrength = d.op !== "generate" && (!knobs || knobs.includes("strength"));
+  // ADR 0094 decision 4: a family with no size candidates at all (sizeOptions returns []) must
+  // not be sent one either — the stored draft.size survives switching models (draft.ts persists
+  // it across sessions), and the field that would let a member clear it disappears the instant
+  // the model does not offer sizes (GenerateForm.tsx), so without this gate the value is stuck
+  // and every enqueue against that model 400s until a DIFFERENT model is chosen.
+  const sendsSize = d.size && sizeOptions(opts.model?.sizes, opts.model?.family).length > 0;
   const body: EnqueueRequest = {
     prompt: d.prompt,
     ...(opts.provider ? { provider: opts.provider } : {}),
     ...(d.model ? { model: d.model } : {}),
     ...(d.negative.trim() ? { negativePrompt: d.negative } : {}),
-    ...(d.size ? { size: d.size } : {}),
+    ...(sendsSize ? { size: d.size } : {}),
     ...(d.op && d.op !== "generate" ? { op: d.op } : {}),
     ...(d.op !== "generate" && d.inputs.length ? { inputs: d.inputs } : {}),
     ...(sendsStrength ? { strength: d.strength } : {}),
