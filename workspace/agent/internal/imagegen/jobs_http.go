@@ -118,13 +118,14 @@ func (b jobRequest) spec() (JobSpec, string, string) {
 	}
 	// ADR 0094 decision 2/4, same shape as HandleGenerate's: refused BY VALUE when the resolved
 	// family does not read strength or size at all, not left to a family that quietly ignores it.
+	// A different code from the value-range refusal above — see HandleGenerate's own note.
 	if b.Strength != nil {
-		if msg := comfyStrengthRefusal(b.Provider, b.Model); msg != "" {
-			return JobSpec{}, "bad_strength", msg
+		if msg := comfyStrengthRefusal(b.Provider, b.Model, string(op)); msg != "" {
+			return JobSpec{}, "bad_strength_family", msg
 		}
 	}
-	if msg := comfySizeRefusal(b.Provider, b.Model, b.Size); msg != "" {
-		return JobSpec{}, "bad_size", msg
+	if msg := comfySizeRefusal(b.Provider, b.Model, string(op), b.Size); msg != "" {
+		return JobSpec{}, "bad_size_family", msg
 	}
 	if b.Count < 0 || b.Count > comfyMaxBatch {
 		return JobSpec{}, "bad_count", fmt.Sprintf(

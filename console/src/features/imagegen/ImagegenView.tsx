@@ -38,7 +38,7 @@ import {
   type Knob,
 } from "./api.ts";
 import { anyLive, buildRequest, engineState, foldGroups } from "./jobs.ts";
-import { draftKey, loadDraft, saveDraft, type ImagegenDraft } from "./draft.ts";
+import { draftKey, loadDraft, remappedOp, saveDraft, type ImagegenDraft } from "./draft.ts";
 import { noteImagegenStatus } from "./available.ts";
 import { GenerateForm } from "./parts/GenerateForm.tsx";
 import { JobList } from "./parts/JobList.tsx";
@@ -191,9 +191,8 @@ export function ImagegenView({ headerActions }: { headerActions?: ReactNode }) {
   // ADR) leaves the draft untouched, the same "no signal, no change" rule `knobs` follows.
   const modelId = model?.id;
   useEffect(() => {
-    const ops = model?.ops;
-    if (!ops || !ops.length || ops.includes(draft.op)) return;
-    const next = ops[0];
+    const next = remappedOp(draft.op, model?.ops);
+    if (next == null) return;
     patch({ op: next });
     toast(tr("imggen.op_remapped", { family: model?.family || "", op: tr(`imggen.op_${next}` as "imggen.op_generate") }), {
       kind: "info",

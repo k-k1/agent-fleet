@@ -13,6 +13,7 @@ import {
   draftParams,
   emptyDraft,
   parseDraft,
+  remappedOp,
   serializeDraft,
 } from "./draft.ts";
 import type { ImageProperties } from "./wire.ts";
@@ -79,6 +80,23 @@ describe("下書きの往復", () => {
   it("鍵はワークスペースごと、無名でも安定する", () => {
     expect(draftKey("acme")).toBe("af.imagegen-draft.acme");
     expect(draftKey("")).toBe("af.imagegen-draft.default");
+  });
+});
+
+// ADR 0094 決定 12: 編集専用の行へ切り替えても draft.op は残るので、候補に無くなった
+// ときだけ読み替える。
+describe("op の読み替え", () => {
+  it("候補に無ければモデルの先頭の op に読み替える", () => {
+    expect(remappedOp("generate", ["edit"])).toBe("edit");
+  });
+
+  it("候補にあれば読み替えない（null）", () => {
+    expect(remappedOp("edit", ["generate", "edit", "inpaint"])).toBeNull();
+  });
+
+  it("ops が無ければ（古い Agent）読み替えない", () => {
+    expect(remappedOp("generate", undefined)).toBeNull();
+    expect(remappedOp("generate", [])).toBeNull();
   });
 });
 

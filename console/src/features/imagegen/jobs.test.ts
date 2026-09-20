@@ -239,6 +239,24 @@ describe("投入する本文", () => {
     );
     expect(oldAgent.strength).toBe(0.3);
   });
+
+  // 🔴 ADR 0094 決定 4: draft.size は永続化される（別モデルへ切り替えても残る）ので、
+  // モデルが sizes を持たない族に切り替わった後もそのまま送ると毎回 400 になる。
+  // GenerateForm の大きさ欄は sizes が空だと消えるので、値を消す手段は buildRequest 側にしか無い。
+  it("モデルが sizes を持たなければ、残っていた draft.size を送らない", () => {
+    const stuck = buildRequest(
+      { ...d, op: "edit", size: "1024x1024" },
+      { model: { id: "qwen-edit-row", family: "qwen-image-edit-2509", sizes: [] } },
+    );
+    expect(stuck.size).toBeUndefined();
+
+    // 陽性対照: sizes を持つモデルでは今までどおり送る。
+    const ok = buildRequest(
+      { ...d, op: "edit", size: "1024x1024" },
+      { model: { id: "sdxl-base", family: "sdxl" } },
+    );
+    expect(ok.size).toBe("1024x1024");
+  });
 });
 
 describe("走っているものがあるか（ポーリングの唯一の条件）", () => {

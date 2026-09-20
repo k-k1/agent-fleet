@@ -55,6 +55,18 @@ export const MAX_JOBS = 200;
 export const MAX_BATCH = 4;
 export const OPS = ["generate", "edit", "inpaint"];
 
+/**
+ * ADR 0094 decision 12: the op to switch a draft to when the current one is not among a model's
+ * own ops — null when nothing has to change. `ops` absent (an Agent old enough to predate the
+ * ADR) or already offering `current` are both "no change": the first is the same "no signal, no
+ * change" rule `knobs` follows, the second is what keeps a member's own choice untouched the
+ * instant it stops needing a remap.
+ */
+export function remappedOp(current: string, ops: string[] | undefined): string | null {
+  if (!ops || !ops.length || ops.includes(current)) return null;
+  return ops[0];
+}
+
 export const emptyDraft = (): ImagegenDraft => ({
   providerId: "",
   model: "",

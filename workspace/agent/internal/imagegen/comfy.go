@@ -411,22 +411,32 @@ func comfyNegativeFor(conn EngineConn, model string, req Request) string {
 }
 
 // comfyNegativeIgnoredWarning is said when a family with no negative branch was asked to exclude
-// something that the CALLER did not type: the catalogue's default for this model, and the
-// deployment's own exclusion list. The caller's own negative_prompt is reported by the core
-// against Caps.Negative (requestWarnings), and saying the same thing twice in one result teaches
-// the reader to skim warnings.
+// something: the catalogue's default for this model, the deployment's own exclusion list, and —
+// since ADR 0094 decision 11 — the CALLER's own negative_prompt too.
 //
-// It is said even though nobody is at fault, because the administrator's list silently not
-// applying is precisely the failure this whole path exists to prevent.
+// 🔴 That last one moved here. Before decision 11, requestWarnings' own `!caps.Negative` branch
+// (imagegen.go) caught the caller's negative_prompt on its own: `Caps("")` answered with the
+// WARM row's own comfyModelTakesNegative, so a cfg-1 row (Krea 2 Turbo, Anima-Turbo — the ADR's
+// own "2 families' NORMAL row") being warm made that branch fire. Decision 11 makes `Caps("")` a
+// UNION across every model, which is correct for what it exists to fix (an op or a strength
+// disappearing from what this route advertises) but means requestWarnings now reads
+// Negative=true whenever ANY model on the engine can take one — so a request naming no model,
+// landing on a cfg-1 warm row, would have its negative_prompt dropped with NO warning from
+// anywhere. That is exactly the "most expensive kind of lie" Caps.Negative's own doc comment
+// warns about, so the per-model answer moved to the one function that already reads the model:
+// this one.
 //
 // It reads the MODEL and not just the family for the reason comfyModelTakesNegative does: a row
 // of a guided family declared at cfg 1 drops the administrator's list exactly as silently as a
 // distilled family does, and it is the same warning either way — only the reason differs.
-func comfyNegativeIgnoredWarning(conn EngineConn, model string, family comfyFamily) string {
+func comfyNegativeIgnoredWarning(conn EngineConn, model string, family comfyFamily, req Request) string {
 	if comfyModelTakesNegative(conn, model) {
 		return ""
 	}
 	var what []string
+	if strings.TrimSpace(req.NegativePrompt) != "" {
+		what = append(what, "the negative prompt you gave")
+	}
 	if strings.TrimSpace(conn.Negatives[model]) != "" {
 		what = append(what, "this model's own negative prompt")
 	}
@@ -784,17 +794,21 @@ func comfySwitchWarning(conn EngineConn, model string) string {
 // row (in EngineConn.Models' own order) that does, rather than fail the op outright and let Run()
 // fall through to a provider that spends a member's own plan quota. False when nothing on this
 // engine offers it at all.
+// 🔴 A row whose family offers the op but whose declared files are incomplete is skipped, not
+// returned: without this check a row missing a required file would be "found", Generate() would
+// then fail building its graph, and Run() falls through to a provider that spends a member's own
+// plan anyway — exactly the outcome this whole remap exists to avoid. This is the same sanity
+// probe Studio() already uses to withhold an unusable row from the member-facing catalogue.
 func comfyFirstModelForOp(conn EngineConn, op Op) (string, bool) {
 	for _, id := range conn.Models {
 		family, ok := comfyFamilyFor(conn, id)
-		if !ok {
+		if !ok || !comfyFamilySupportsOp(family, op) {
 			continue
 		}
-		for _, o := range comfyFamilyOps(family) {
-			if o == op {
-				return id, true
-			}
+		if _, err := comfyBuildGraph(family, resolveComfyFiles(conn.Files[id]), comfyParams{Prompt: "x"}); err != nil {
+			continue // this row's files are incomplete; the same refusal a real request would get
 		}
+		return id, true
 	}
 	return "", false
 }
@@ -823,7 +837,18 @@ func comfyStrengthIgnoredWarning(family comfyFamily, req Request) string {
 // run yet, and a request that might not even reach this engine must not be refused for it. named
 // is the model actually resolved against (the caller's own, or the provider's warm default),
 // which the caller uses to name it in the refusal.
-func comfyResolveFamily(pref, model string) (family comfyFamily, named string, ok bool) {
+//
+// 🔴 op is what keeps this from refusing a request Generate() would never actually run against
+// the row it resolved here. A request that names a provider but no model, against an engine
+// whose WARM row cannot do the op it asked for, is exactly the case Generate() itself remaps to
+// the first row that can (comfyFirstModelForOp, decision 11's third bullet) — so refusing here on
+// the warm row's own family would 400 a request before it ever reaches the row that will actually
+// answer it (measured: `provider=comfy` with no model, `op=generate`, `size=1024x1024`, against
+// an engine whose warm checkpoint is this family, refused `bad_size` even though the request
+// would have landed on an ordinary row that takes any size). An EXPLICIT model has no such
+// escape — Generate() honours it and refuses it as asked — so the op gate applies only to the
+// implicit, warm-default resolution.
+func comfyResolveFamily(pref, model, op string) (family comfyFamily, named string, ok bool) {
 	pref = strings.TrimSpace(pref)
 	model = strings.TrimSpace(model)
 	if pref == "" && model == "" {
@@ -841,6 +866,7 @@ func comfyResolveFamily(pref, model string) (family comfyFamily, named string, o
 		if !ready {
 			continue
 		}
+		explicitModel := model != ""
 		m := model
 		if m == "" {
 			if pref == "" || pref == "auto" {
@@ -850,11 +876,28 @@ func comfyResolveFamily(pref, model string) (family comfyFamily, named string, o
 			}
 			m = cp.DefaultModel()
 		}
-		if f, ok := comfyFamilyFor(conn, m); ok {
-			return f, m, true
+		f, familyOk := comfyFamilyFor(conn, m)
+		if !familyOk {
+			continue
 		}
+		if !explicitModel && op != "" && !comfyFamilySupportsOp(f, Op(op)) {
+			// This is the warm default, and Generate() would remap AWAY from it for this op —
+			// so it is not the row the request will actually run against.
+			continue
+		}
+		return f, m, true
 	}
 	return "", "", false
+}
+
+// comfyFamilySupportsOp is comfyFamilyOps as a membership test.
+func comfyFamilySupportsOp(family comfyFamily, op Op) bool {
+	for _, o := range comfyFamilyOps(family) {
+		if o == op {
+			return true
+		}
+	}
+	return false
 }
 
 // comfyStrengthRefusal is ADR 0094 decision 2's edge check, shared by HandleGenerate and
@@ -862,8 +905,8 @@ func comfyResolveFamily(pref, model string) (family comfyFamily, named string, o
 // any GPU is woken, the same way an out-of-range strength already is. Empty when the family
 // cannot be resolved from what the request named (comfyResolveFamily) — that gap is
 // comfyStrengthIgnoredWarning's, not this one's.
-func comfyStrengthRefusal(pref, model string) string {
-	family, named, ok := comfyResolveFamily(pref, model)
+func comfyStrengthRefusal(pref, model, op string) string {
+	family, named, ok := comfyResolveFamily(pref, model, op)
 	if !ok || comfyFamilyStrength(family) {
 		return ""
 	}
@@ -872,11 +915,11 @@ func comfyStrengthRefusal(pref, model string) string {
 }
 
 // comfySizeRefusal is decision 4's edge check, in the same shape as comfyStrengthRefusal above.
-func comfySizeRefusal(pref, model, size string) string {
+func comfySizeRefusal(pref, model, op, size string) string {
 	if s := strings.TrimSpace(size); s == "" || s == "auto" {
 		return ""
 	}
-	family, named, ok := comfyResolveFamily(pref, model)
+	family, named, ok := comfyResolveFamily(pref, model, op)
 	if !ok || !comfyFamilyHasNoSizes(family) {
 		return ""
 	}
@@ -1013,7 +1056,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	}
 
 	warnings := comfyWarnings(req)
-	if ignored := comfyNegativeIgnoredWarning(conn, model, family); ignored != "" {
+	if ignored := comfyNegativeIgnoredWarning(conn, model, family, req); ignored != "" {
 		warnings = append(warnings, ignored)
 	}
 	if ignored := comfyStrengthIgnoredWarning(family, req); ignored != "" {

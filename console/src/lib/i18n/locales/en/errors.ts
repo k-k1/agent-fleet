@@ -274,6 +274,11 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.bad_prompt": "The prompt is empty.",
   "err.bad_op": "That operation is not available.",
   "err.bad_strength": "How much of the input to change is out of range.",
+  // ADR 0094 decision 2/4: not a range problem — the chosen model's family does not read the
+  // knob at all. Reusing bad_strength/bad_size's own text here would claim "out of range",
+  // which is not what happened, hence the separate code.
+  "err.bad_strength_family": "This checkpoint's family cannot vary how much of the input changes.",
+  "err.bad_size_family": "This checkpoint's family decides the output size from the input picture — there is no size to choose.",
   "err.bad_count": "One job can sample at most 4 pictures together.",
   "err.bad_jobs": "The number of pictures is out of range.",
   "err.bad_seed_policy": "That is not a seed policy.",

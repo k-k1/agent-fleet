@@ -470,16 +470,20 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 	// does not read it at all — comfyStrengthRefusal only fires when the request names a model
 	// or a comfy provider it can resolve a family from (a bare "auto" request is not refused
 	// here; comfyStrengthIgnoredWarning is that gap's answer instead).
+	//
+	// 🔴 A DIFFERENT code from the value-range refusal above: the Console's errText prefers its
+	// own `err.<code>` catalogue text over the server's message, and `err.bad_strength` ("out of
+	// range") would replace this family-specific reason with a claim that is not what happened.
 	if body.Strength != nil {
-		if msg := comfyStrengthRefusal(body.Provider, body.Model); msg != "" {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_strength", msg)
+		if msg := comfyStrengthRefusal(body.Provider, body.Model, string(op)); msg != "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_strength_family", msg)
 			return
 		}
 	}
 	// ADR 0094 decision 4: the same refusal for `size` against a family whose output size is
 	// decided from the input picture rather than from a candidate list.
-	if msg := comfySizeRefusal(body.Provider, body.Model, body.Size); msg != "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_size", msg)
+	if msg := comfySizeRefusal(body.Provider, body.Model, string(op), body.Size); msg != "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_size_family", msg)
 		return
 	}
 	// The sampler overlay is refused by VALUE here exactly as it is on the queue's route, and

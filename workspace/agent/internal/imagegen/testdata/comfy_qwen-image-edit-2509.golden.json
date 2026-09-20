@@ -87,7 +87,7 @@
         "scale",
         0
       ],
-      "prompt": "blurry, lowres, deformed, watermark, text",
+      "prompt": "",
       "vae": [
         "vae",
         0

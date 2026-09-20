@@ -865,6 +865,22 @@ func TestComfyWorkflowQwenImageEdit2509EncodesARealNegative(t *testing.T) {
 	}
 }
 
+// 🔴 Unlike every other family, this one does NOT fall back to comfyNegativePrompt ("blurry,
+// lowres, deformed, watermark, text") when nobody declares anything — that default was measured
+// for the megapixel/SDXL-era families, the official 2509 template's own negative widget ships
+// empty, and 実測 A's own edit replaced a sign's TEXT, which the default would fight.
+func TestComfyWorkflowQwenImageEdit2509NegativeIsEmptyWhenNobodyDeclaresOne(t *testing.T) {
+	p := comfyGoldenParams
+	p.Op, p.Image = OpEdit, "af-photo.png"
+	g, err := comfyBuildGraph(ComfyFamilyQwenImageEdit2509, comfyQwenEditFiles, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g["neg"].Inputs["prompt"]; got != "" {
+		t.Errorf("neg.prompt = %q, want empty — the fixed SDXL-era default must not apply here", got)
+	}
+}
+
 // LoRAs chain the same way every other split family's do: patched before ModelSamplingAuraFlow,
 // and read by CFGNorm and both TextEncodeQwenImageEditPlus encodes downstream of it.
 func TestComfyWorkflowQwenImageEdit2509ChainsLoras(t *testing.T) {
