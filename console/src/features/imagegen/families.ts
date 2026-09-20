@@ -140,6 +140,20 @@ export const FAMILY_CARDS: FamilyCard[] = [
     // aspect ratio, so no candidate here would reach the sampler (decision 4).
     sizes: [],
   },
+  {
+    id: "qwen-image-edit-2511",
+    // The same instruction-edit card as 2509 in everything a member types; the two are separate
+    // families because the GRAPH differs (decision 6), and a prompt is written the same way for
+    // both. Only the step count moved, and upstream doubled it.
+    dialect: "sentences",
+    quality: [],
+    // The family's own recipe (ADR 0094 実測 E): steps 40, cfg 4. 実測 E took 393.8 s for one
+    // 1024² edit at these, which is what the range not spanning anything is hiding.
+    steps: [40, 40],
+    cfg: [4, 4],
+    trialSteps: 8,
+    sizes: [],
+  },
 ];
 
 const BY_ID = new Map(FAMILY_CARDS.map((c) => [c.id, c] as const));

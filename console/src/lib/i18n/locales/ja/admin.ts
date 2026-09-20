@@ -457,6 +457,13 @@ export const admin = {
   "admin.engines_ingest_fit_kv": "KV キャッシュ {n} MiB（{c} トークン・f16 と仮定）",
   "admin.engines_ingest_fit_kv_unread": "KV キャッシュは読めませんでした（この数字は重みだけです）",
   "admin.engines_ingest_fit_card": "合計 {n} MiB / このカード {c} MiB",
+  // 🔴 上の「合計」はファイルの足し算で、分割ファミリーでは実際の使用量より大きく出る
+  // （テキストエンコーダは encode のあと退避される）。誰かがエンジンの /system_stats を
+  // 読んだ族はその数字を出し、運用者が入れる——機械は書かない（ADR 0094 決定 8）。
+  // 入れないと梯子は合計で段を選ぶ＝一段高い箱を買う。
+  "admin.engines_vram_measured": "この族の実測は {n} MiB（{s}・batch {b}・参照 {i} 枚）",
+  "admin.engines_vram_measured_use": "実測値 {n} を入れる",
+  "admin.engines_vram_measured_after": "取り込んだあと、行の「編集」で実測 VRAM に入れてください。",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
   "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。下の「Hugging Face のトークン」で運用者のトークンを登録してください（読むのは取り込みタスクだけです）。",
   // 🔴 Hugging Face の gated とは別物で、こちらには鍵が無い。CivitAI のメタデータは誰にでも

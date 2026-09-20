@@ -658,7 +658,7 @@ func TestSpecRefusesStrengthAndSizeAgainstQwenImageEdit(t *testing.T) {
 		t.Fatalf("sdxl was refused: %s %s", code, msg)
 	}
 	// No model and no provider named: nothing here can be resolved to a family, so neither
-	// refusal fires — that gap is comfyStrengthIgnoredWarning's, not this one's.
+	// refusal fires — that gap is requestWarnings', on the Caps of the row that actually ran.
 	if _, code, msg := (jobRequest{Prompt: "x", Op: "edit", Strength: &s}).spec(); code != "" {
 		t.Fatalf("an unresolved request was refused: %s %s", code, msg)
 	}

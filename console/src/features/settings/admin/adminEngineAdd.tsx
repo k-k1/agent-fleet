@@ -23,6 +23,7 @@ import {
 } from "./catalogMemory.ts";
 import { groupIsRepo, groupRegistered, registeredNeedsMeta, registeredTitle } from "./registeredGroups.ts";
 import { modelFit, windowThatFits, windowWhenUnsized } from "./engineFit.ts";
+import { familyVramMeasurement } from "./engineFamilyVram.ts";
 import { CivitaiVersionLadder, FitTag, RepoQuantLadder } from "./adminEngineRepo.tsx";
 import {
   engineIsImage,
@@ -1464,6 +1465,10 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
     contextTokens, isLora ? 0 : cardMiB, row.classes || []);
   const kvMiB = fit.kvMiB;
   const needMiB = fit.needMiB;
+  // The family this press would take in is the plan's when the CP read one, and the operator's
+  // answer when it had to ask (ADR 0094 decision 8 — the measurement is shown for the family, so
+  // it must follow the selector rather than the plan alone).
+  const ingestMeasured = image && !isLora ? familyVramMeasurement(plan?.base_model || baseModel) : null;
   const missing = (() => {
     if (!repo) return tr("admin.catalog_need_source" as never) as string;
     if (!plainURL && !versionRef) return tr("admin.catalog_need_version" as never) as string;
@@ -1591,6 +1596,16 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         {!image && !isLora ? ` · ${kvMiB ? (tr("admin.engines_ingest_fit_kv") as string).replace("{n}", String(kvMiB)).replace("{c}", String(contextTokens)) : tr("admin.engines_ingest_fit_kv_unread")}` : ""}
         {cardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(needMiB)).replace("{c}", String(cardMiB))} ` : " "}
         <FitTag fit={fit} />
+      </p>}
+      {/* Directly under the verdict the files' sum produced, because that sum is what this
+          corrects (ADR 0094 decision 8). The press itself is NOT here: nothing the ingest sends
+          may write `vram_mib`, or the column stops meaning "the operator measured it" — so this
+          says the number and where to put it, and the row's Edit is where it goes in. */}
+      {ingestMeasured && <p className="muted engine-operation-vram-measured">
+        {(tr("admin.engines_vram_measured" as never) as string)
+          .replace("{n}", ingestMeasured.mib.toLocaleString()).replace("{s}", ingestMeasured.size)
+          .replace("{b}", String(ingestMeasured.batch)).replace("{i}", String(ingestMeasured.inputs))}
+        {" "}{tr("admin.engines_vram_measured_after" as never)}
       </p>}
       <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
       <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">
@@ -1784,6 +1799,10 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   const editBestWindow = !image && !lora
     ? windowThatFits(editWeightsMiB, editKvPer1k, editCardMiB, model.context_length || 0)
     : 0;
+  // What somebody measured this family at, when anybody has (ADR 0094 decision 8). Read off the
+  // family being EDITED rather than the row's stored one, so correcting the family and taking the
+  // measurement are the same visit.
+  const editMeasured = image && !lora ? familyVramMeasurement(baseModel) : null;
   const invalidVram = vramNumber === null;
   const invalidBase = !image && lora ? !baseChoices.includes(baseModel) : image && baseChoices.length > 0 && !baseChoices.includes(baseModel);
   const validation = invalidWindow ? tr("admin.catalog_edit_window_invalid" as never) : invalidVram ? tr("admin.catalog_edit_vram_invalid" as never) : invalidBase ? tr("admin.engines_wizard_need_family") : "";
@@ -1815,6 +1834,19 @@ function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
       {image && !lora && <label><span>{tr("admin.engines_model_negative")}</span><input value={negative} onChange={(event) => setNegative(event.currentTarget.value)} /></label>}
       {image && lora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
     </div>
+    {/* The measurement is OFFERED, never applied (ADR 0094 decision 8). `vram_mib` means "the
+        operator measured it", so the press is what makes the number a declaration — and it sits
+        beside the field rather than in the grid, next to the window's own one-press fit below. */}
+    {editMeasured && <p className="muted engine-operation-vram-measured">
+      {(tr("admin.engines_vram_measured" as never) as string)
+        .replace("{n}", editMeasured.mib.toLocaleString()).replace("{s}", editMeasured.size)
+        .replace("{b}", String(editMeasured.batch)).replace("{i}", String(editMeasured.inputs))}
+      {" "}
+      <Button variant="ghost" disabled={busy || vramNumber === editMeasured.mib}
+        onClick={() => setVram(String(editMeasured.mib))}>
+        {(tr("admin.engines_vram_measured_use" as never) as string).replace("{n}", editMeasured.mib.toLocaleString())}
+      </Button>
+    </p>}
     {!image && !lora && <p className="engine-operation-window-hint muted">
       {!!model.context_length && <>{(tr("admin.engines_ingest_ctx_ceiling" as never) as string).replace("{n}", model.context_length.toLocaleString())} </>}
       {!!editBestWindow && <Button variant="ghost" disabled={busy || editBestWindow === contextNumber} onClick={() => {
