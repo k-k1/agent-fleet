@@ -428,10 +428,17 @@ type engineWindowKey struct{ key, id string }
 // which model that answer describes — falling back to the last value actually measured for that
 // (key, model) pair when the box is not answering right now (engineMeasuredWindows).
 //
-// The model is picked the same way the Control Plane's own engineStartWindow picks it —
-// selected, else default, else the first row — because that is the one /props is describing:
-// whichever model is actually running. Nothing here mutates the catalogue row; the caller
-// decides what to do with the number.
+// The id defaults to the catalogue's own guess — selected, else default, else the first row,
+// mirroring the Control Plane's engineStartWindow — but a LIVE probe overrides that guess with
+// whatever id /props actually said the window belongs to (enginePropsProbe.id). That override is
+// the fix for a real bug (2026-09-20, sandbox deployment): a router's own max_instances: 1 means
+// only one model is ever loaded at a time, and it does not have to be the catalogue's declared
+// default — the guess is exactly that, a guess, and the live answer is the one caller loaded.
+// Without the override, a window measured for a non-default model would still get filed under
+// the WRONG (guessed) id, mislabeling one model's window as another's. probe.id is "" for a
+// single-model /props (default_generation_settings.n_ctx alone, no router fields at all), where
+// there is no ambiguity to correct in the first place — the catalogue's guess is the only model
+// there is.
 //
 // nctx is 0 only when there is NOTHING to correct: a provider other than llamacpp (the only one
 // with a /props to read — comfy and sdcpp have none), or an engine that has never once answered
@@ -443,26 +450,35 @@ type engineWindowKey struct{ key, id string }
 // chaining this off it would starve a later engine's read the moment an earlier one is slow —
 // which reads here exactly like "asleep", and is not. enginePropsWindow and the token mint
 // inside it carry their own bounds (10 s and 15 s), so this still never waits without limit.
+//
+// engineMeasuredWindows is still keyed by the id ACTUALLY reported (not the guess) so a later
+// read of that same model's window (while it stays loaded) hits the right entry. A sleeping box,
+// or a Control Plane too old to report an id, falls back to the catalogue's guess instead — this
+// process has no other way to know which model a silent box last had loaded, and reverting to
+// the declared value for that case is the same trade decision 7 already made, not a new one.
 func engineWarmWindow(e engineCatalogRow) (id string, nctx int) {
 	if e.Provider != "llamacpp" {
 		return "", 0
 	}
-	id = engineSelectedModelID(e.ModelRows)
-	wk := engineWindowKey{key: e.Key, id: id}
-	if n := enginePropsWindow(context.Background(), e.Key); n > 0 {
-		engineMeasuredWindows.Store(wk, n)
-		return id, n
+	guessed := engineSelectedModelID(e.ModelRows)
+	if probe := enginePropsWindow(context.Background(), e.Key); probe.nctx > 0 {
+		id = guessed
+		if probe.id != "" {
+			id = probe.id
+		}
+		engineMeasuredWindows.Store(engineWindowKey{key: e.Key, id: id}, probe.nctx)
+		return id, probe.nctx
 	}
-	if v, ok := engineMeasuredWindows.Load(wk); ok {
-		return id, v.(int)
+	if v, ok := engineMeasuredWindows.Load(engineWindowKey{key: e.Key, id: guessed}); ok {
+		return guessed, v.(int)
 	}
-	return id, 0
+	return guessed, 0
 }
 
 // engineSelectedModelID mirrors control-plane/engine_gateway.go's engineStartWindow: the
-// selected or default row, falling back to the first one. Both sides have to agree on which
-// model "the one the engine is running" means, or this bounce would correct the wrong id's
-// window on a router that offers several.
+// selected or default row, falling back to the first one. Used as engineWarmWindow's starting
+// guess, and its only source of truth for a single-model engine or a sleeping/old-CP fallback —
+// a LIVE router reading overrides it (see engineWarmWindow's own doc comment).
 func engineSelectedModelID(rows []engineCatalogModel) string {
 	first := ""
 	for _, m := range rows {
@@ -479,61 +495,85 @@ func engineSelectedModelID(rows []engineCatalogModel) string {
 	return first
 }
 
-// enginePropsWindow is the one HTTP call behind engineWarmWindow. 0 on anything that is not a
-// clean 200 with a readable body — a stopped engine's 503, a tenant this membership was denied,
-// no Control Plane to ask (AF_CP_BASE_URL unset, same as engineCPCall) — all read the same here:
-// nothing to correct.
+// enginePropsProbe is what enginePropsWindow actually read from one /props call: the window, and
+// — for a router deployment — the id it describes. id is "" for a single-model /props (or a
+// clean 0, meaning nothing was read at all), because a single declared model needs no name: it
+// is the one that was running by definition.
+type enginePropsProbe struct {
+	id   string
+	nctx int
+}
+
+// enginePropsWindow is the one HTTP call behind engineWarmWindow. A zero-value probe on anything
+// that is not a clean 200 with a readable body — a stopped engine's 503, a tenant this
+// membership was denied, no Control Plane to ask (AF_CP_BASE_URL unset, same as engineCPCall) —
+// all read the same here: nothing to correct.
 //
 // Not routed through engineCPCall: that helper's bearer is the workspace's ISSUING token, and
 // `/engine/{key}/props` is session-token gated like every other `/engine/{key}/...` route
 // (control-plane/engine_gateway.go's props(), same claims.Key check serve() makes). The token is
 // WORKSPACE-scoped (the same trade engineImageConn makes, and for the same reason): this runs
 // once at boot and again on every catalogue push, never per session.
-func enginePropsWindow(ctx context.Context, key string) int {
+func enginePropsWindow(ctx context.Context, key string) enginePropsProbe {
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
 	if base == "" {
-		return 0
+		return enginePropsProbe{}
 	}
 	tok := engineToken(ctx, key, "")
 	if tok == "" {
-		return 0
+		return enginePropsProbe{}
 	}
 	c, cancel := context.WithTimeout(ctx, enginePropsTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(c, http.MethodGet, base+"/engine/"+key+"/props", nil)
 	if err != nil {
-		return 0
+		return enginePropsProbe{}
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	resp, err := engineHTTP.Do(req)
 	if err != nil {
-		return 0
+		return enginePropsProbe{}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return 0 // asleep (engine_unavailable/engine_off), forbidden, or a CP with no /props route
+		return enginePropsProbe{} // asleep (engine_unavailable/engine_off), forbidden, or an old CP
 	}
 	var out struct {
 		DefaultGenerationSettings struct {
 			NCtx int `json:"n_ctx"`
 		} `json:"default_generation_settings"`
-		// RouterSelectedModel is the ADR 0093 段0 追补's addition (control-plane/engine_gateway.go's
-		// enginePropsAugmentRouterWindow): a router-mode llama-server's own default_generation_settings
-		// describes the router, not the loaded model, and n_ctx above is 0 for it. A CP old enough to
-		// predate that patch (the version-skew case a borrowed row can hit) never sends this key, and
-		// this struct then simply decodes it as zero — the read below falls through to the 0 it
-		// already returned before this field existed.
+		// RouterModels is the current shape (control-plane/engine_gateway.go's
+		// enginePropsAugmentRouterWindow): every id GET {base}/v1/models actually lists, with the
+		// window it reported for each — never a guess at which one is "selected". A router's own
+		// max_instances: 1 means this is normally exactly one entry; the first (and, in practice,
+		// only) one is what this call was actually able to measure.
+		RouterModels []struct {
+			ID   string `json:"id"`
+			NCtx int    `json:"n_ctx"`
+		} `json:"router_models"`
+		// RouterSelectedModel is the OLDER shape (ADR 0093 段0 追补's original addition), read as a
+		// fallback for a BORROWED row whose lending deployment's Control Plane predates the
+		// router_models fix above (the version-skew case this side cannot itself close). Its id is
+		// only ever the catalogue's own guess, not a live one, but that guess is also the only thing
+		// an old CP was ever capable of reporting successfully in the first place.
 		RouterSelectedModel struct {
-			NCtx int `json:"n_ctx"`
+			ID   string `json:"id"`
+			NCtx int    `json:"n_ctx"`
 		} `json:"router_selected_model"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out) != nil {
-		return 0
+		return enginePropsProbe{}
 	}
 	if out.DefaultGenerationSettings.NCtx > 0 {
-		return out.DefaultGenerationSettings.NCtx
+		return enginePropsProbe{nctx: out.DefaultGenerationSettings.NCtx}
 	}
-	return out.RouterSelectedModel.NCtx
+	if len(out.RouterModels) > 0 {
+		return enginePropsProbe{id: out.RouterModels[0].ID, nctx: out.RouterModels[0].NCtx}
+	}
+	if out.RouterSelectedModel.NCtx > 0 {
+		return enginePropsProbe{id: out.RouterSelectedModel.ID, nctx: out.RouterSelectedModel.NCtx}
+	}
+	return enginePropsProbe{}
 }
 
 // handleEngineCatalogChanged (POST /engine/catalog-changed) is the Control Plane telling this

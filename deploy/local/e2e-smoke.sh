@@ -101,7 +101,7 @@ if [ "${1:-}" = "--inner" ]; then
   VJ=/usr/local/share/agent-fleet/versions.json
   if [ -f "$VJ" ]; then
     for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
-                "cursor=$EXPECT_CURSOR" "kiro=$EXPECT_KIRO" \
+                "cursor=$EXPECT_CURSOR" "kiro=$EXPECT_KIRO" "muse=$EXPECT_MUSE" \
                 "agy=$EXPECT_AGY" "agy_build=$EXPECT_AGY_BUILD" "rtk=$EXPECT_RTK_VER" \
                 "go=$EXPECT_GO" "gh=$EXPECT_GH" "chromium=$EXPECT_CHROMIUM" \
                 "chromium_cft=$EXPECT_CHROMIUM_CFT" \
@@ -152,6 +152,19 @@ if [ "${1:-}" = "--inner" ]; then
       echo "ok  versions.json kiro_sha256=$got"
     else
       echo "NG  versions.json kiro_sha256: ${got:-?} != ${kiro_sha_want:-?}"; fail=1
+    fi
+    # muse_sha256 も arch 依存の焼き込み値（ADR 0095 決定 8 の boot-install 検証材料）。
+    # 版別 manifest の artifacts.{x86_linux,aarch64_linux}.checksum と対。
+    case "$(dpkg --print-architecture)" in
+      amd64) muse_sha_want="$EXPECT_MUSE_SHA_X64" ;;
+      arm64) muse_sha_want="$EXPECT_MUSE_SHA_ARM64" ;;
+      *)     muse_sha_want="" ;;
+    esac
+    got="$(jq -r .muse_sha256 "$VJ" 2>/dev/null)"
+    if [ -n "$muse_sha_want" ] && [ "$got" = "$muse_sha_want" ]; then
+      echo "ok  versions.json muse_sha256=$got"
+    else
+      echo "NG  versions.json muse_sha256: ${got:-?} != ${muse_sha_want:-?}"; fail=1
     fi
   else
     echo "NG  $VJ missing"; fail=1
@@ -291,6 +304,9 @@ EXPECT_CURSOR_SHA_ARM64="$(arg_pin CURSOR_SHA256_ARM64)"
 EXPECT_KIRO="$(arg_pin KIRO_VERSION)"
 EXPECT_KIRO_SHA_X64="$(arg_pin KIRO_SHA256_X64)"
 EXPECT_KIRO_SHA_ARM64="$(arg_pin KIRO_SHA256_ARM64)"
+EXPECT_MUSE="$(arg_pin MUSE_VERSION)"
+EXPECT_MUSE_SHA_X64="$(arg_pin MUSE_SHA256_X64)"
+EXPECT_MUSE_SHA_ARM64="$(arg_pin MUSE_SHA256_ARM64)"
 EXPECT_AGY="$(arg_pin AGY_VERSION)"
 EXPECT_AGY_BUILD="$(arg_pin AGY_RELEASE_BUILD)"
 EXPECT_AGY_SHA_X64="$(arg_pin AGY_SHA256_X64)"
