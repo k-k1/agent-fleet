@@ -309,6 +309,25 @@ qwen を選んでいてもペインは滑り台を出し `generate` を候補に
   **そのモデルの先頭の op に読み替え、読み替えたことを一言出す**（黙って変えるのも黙って落ちるのも
   同じ穴——ADR 0081 決定 4 の「黙らせず報告する」）。
 
+### 決定 13 — モデルを名指しした要求は、そのモデルを持つ provider に**固定する**。op が無ければ落とさずに断る
+
+🔴 **決定 3 が開けた扉で、ADR はここを見ていなかった。** `chooseImageProviders`（`imagegen.go:741`）は
+`caps(id).Supports(req.Op)` で候補を絞り、`capsOf` は名指しのとき `p.Caps(req.Model)`＝**厳密**。
+したがって `model=qwen-image-edit-2509` ＋ `op=generate`（provider 未指定）では **comfy が候補選びの
+時点で落ち**、`codexProvider.Caps(string)` / `agyProvider.Caps(string)` は**モデルを見ない**ので
+generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プランで描かれる**。`fallbackWarnings` は
+「試して失敗した provider」しか数えないので**警告も出ない**。決定 3 の前は comfy の `Caps` が常に
+3 op を名乗っていたので、この扉は無かった。
+
+- **名指しされたモデルを列挙する provider があれば、候補はその 1 つに固定する**（`ModelLister` の
+  `Models()` に一致する id があるか。codex / agy は `ModelLister` ではないので、**その 2 つのために
+  モデル名を書く今の経路は壊れない**）。
+- 固定した provider がその op を名乗らないなら、**落とさずに断る**——`ErrNoProvider` の形で、
+  **モデル名と、そのモデルができる op** を添えて。「名指しは落とさない」は決定 11 の精神そのもので、
+  黙って別のプランに課金するより、できない op を名前付きで言うほうが短い。
+- ⚠️ `pref`（provider 名指し）がある要求は今も `chooseImageProviders` の先頭で 1 つに絞られる
+  （`imagegen.go:736-738`）ので、この決定は **auto のときだけ**の話である。
+
 ## 却下した案
 
 - **既存の edit 経路にそのまま載せる。** 実測 C——既定 0.6 で**無編集の絵**が静かに返る。
@@ -376,7 +395,8 @@ qwen を選んでいてもペインは滑り台を出し `generate` を候補に
   一部にしない。golden とドキュメント。
   完了の定義は 3 つ: (1) **実機で A を再現**（編集される）、(2) **qwen を名指しした C が 400 で断られる**
   （ブロッキングとキューの両経路で。`strength` を受け取らない）、(3) 🔴 **qwen の行を warm にしたまま `op=generate` が comfy に残る**
-  （決定 11 の union が効いている＝課金 provider に落ちない）。
+  （決定 11 の union が効いている＝課金 provider に落ちない）、(4) **`model` に qwen を名指しして
+  `op=generate` を頼むと、モデル名入りで断られる**（決定 13＝名指しは落とさない）。
 - **P1** — 2511（決定 6）・部品表（決定 7）・`vram_mib` の既定（決定 8）。
   完了の定義: 1 押しの取り込みで 3 部品が正しいディレクトリに入り、**取り込み直後の画面が測定値
   （20,862 MiB・1024²/batch 1/参照 1 枚）を出し、運用者がそれを入れたあとは `confirm_vram` が出ない**

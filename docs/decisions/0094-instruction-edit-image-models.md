@@ -344,6 +344,27 @@ would always be true and `ops` always three, so the pane would keep showing a sl
   op is gone, **fall back to that model's first op and say that it was changed** — changing it
   silently and failing silently are the same hole (ADR 0081 decision 4).
 
+### Decision 13 — A named model PINS the provider that lists it; if it has no such op, refuse instead of falling through
+
+🔴 **Decision 3 opened this door and the ADR had not looked at it.** `chooseImageProviders`
+(`imagegen.go:741`) filters candidates on `caps(id).Supports(req.Op)`, and `capsOf` asks
+`p.Caps(req.Model)` — strict when a model is named. So `model=qwen-image-edit-2509` with
+`op=generate` and no provider named **drops comfy at the candidate filter**, while
+`codexProvider.Caps(string)` and `agyProvider.Caps(string)` **ignore the model** and go on claiming
+generate — so the picture is drawn on **the member's ChatGPT / Antigravity plan**. `fallbackWarnings`
+counts only providers that were tried and failed, so **nothing is said**. Before decision 3, comfy's
+`Caps` always claimed all three ops and this door did not exist.
+
+- **If any provider LISTS the named model, the candidates collapse to that one** (a `Models()` id
+  match on `ModelLister`; codex and agy are not `ModelLister`, so **naming a model for those two
+  still behaves exactly as today**).
+- If the pinned provider does not claim the op, **refuse rather than fall through** — an
+  `ErrNoProvider`-shaped answer carrying **the model's name and the ops it does have**. "A named
+  request is not dropped" is decision 11's own spirit, and saying which ops exist is shorter than
+  silently billing another plan.
+- ⚠️ A request that names a `pref` is already collapsed to one provider at the top of
+  `chooseImageProviders` (`imagegen.go:736-738`), so this decision is about **auto only**.
+
 ## Rejected
 
 - **Dropping it into the existing edit path.** Run C: at the 0.6 default it quietly returns an
@@ -416,7 +437,8 @@ would always be true and `ops` always three, so the pane would keep showing a sl
   `disabled={isEdit}` — an accident, and an accident is not a specification. Three completion criteria: (1) **run A reproduced** on real hardware
   (it edits), (2) **run C, naming qwen, refused with 400 on both routes** (no `strength` here), and (3) 🔴 **with a qwen row warm,
   `op=generate` still lists comfy** (decision 11's union holds, so nothing falls through to a paid
-  provider).
+  provider), and (4) **naming qwen as the `model` while asking for `op=generate` is refused with the
+  model's name in it** (decision 13 — a named request is not dropped).
 - **P1** — 2511 (decision 6), the parts table (decision 7), the operator-entered `vram_mib`
   (decision 8). Done when one press stages all three parts in the right directories, **the screen offers
   the measured number (20,862 MiB at 1024², batch 1, one reference) right after the ingest, and
