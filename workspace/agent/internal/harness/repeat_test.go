@@ -119,6 +119,55 @@ func TestRepeatGateAbortStageStopsRunWithSentinelError(t *testing.T) {
 	if res.RepeatWarnings != 2 {
 		t.Fatalf("RepeatWarnings = %d, want 2 (streaks 2 and 3 warned before streak 4 aborted)", res.RepeatWarnings)
 	}
+	// hist must not end on an unanswered tool_calls turn (design point 3): the
+	// aborting call gets its own RoleTool message instead of being left hanging,
+	// so Result.Messages stays a sendable history.
+	last := res.Messages[len(res.Messages)-1]
+	if last.Role != RoleTool || last.ToolCallID != "4" {
+		t.Fatalf("last message = %+v, want a RoleTool message answering call 4 (the one that tripped the abort)", last)
+	}
+	if last.Content == "" || last.Content[:6] != "error:" {
+		t.Fatalf("aborted call's message = %q, want it to start with \"error:\"", last.Content)
+	}
+}
+
+// TestRepeatGateAbortAnswersEveryCallInTheAbortingTurn covers the rest of design
+// point 3: when several calls sit in the SAME turn and one of them trips the abort
+// stage, EVERY call in that turn gets a RoleTool message — not just the one whose own
+// streak crossed the threshold — so a turn never ends up partly-answered.
+func TestRepeatGateAbortAnswersEveryCallInTheAbortingTurn(t *testing.T) {
+	var executed atomic.Int32
+	reg := NewRegistry(countingTool("echo", &executed))
+	sameArgs := func(id string) ToolCall { return ToolCall{ID: id, Name: "echo", Arguments: `{"x":1}`} }
+	client := &scriptedClient{turns: []Turn{
+		{ToolCalls: []ToolCall{sameArgs("0")}},                             // streak 1: runs
+		{ToolCalls: []ToolCall{sameArgs("a"), sameArgs("b")}},              // streak 2 (a), 3 (b): abort trips at "a"
+	}}
+	rt := &Runtime{Cwd: t.TempDir(), RepeatWarnAfter: 100, RepeatAbortAfter: 2}
+	res, err := Run(context.Background(), client, reg, rt, nil)
+	if !errors.Is(err, ErrRepeatedToolCall) {
+		t.Fatalf("err = %v, want an error wrapping ErrRepeatedToolCall", err)
+	}
+	if got := executed.Load(); got != 1 {
+		t.Fatalf("tool actually ran %d times, want 1 (only call 0, from before the aborting turn)", got)
+	}
+	byID := map[string]Message{}
+	for _, m := range res.Messages {
+		if m.Role == RoleTool {
+			byID[m.ToolCallID] = m
+		}
+	}
+	a, okA := byID["a"]
+	b, okB := byID["b"]
+	if !okA || !okB {
+		t.Fatalf("missing a RoleTool message for one of the aborting turn's calls: a=%v b=%v", okA, okB)
+	}
+	if a.Content == "" || a.Content[:6] != "error:" {
+		t.Fatalf("call a's message = %q, want it to start with \"error:\"", a.Content)
+	}
+	if b.Content == "" || b.Content[:6] != "error:" {
+		t.Fatalf("call b's message = %q, want it to start with \"error:\" (it must be answered even though it wasn't the call whose streak tripped the abort)", b.Content)
+	}
 }
 
 // TestRepeatGateDisabledNeverIntervenes covers the opt-out: RepeatGateDisabled must
@@ -166,18 +215,22 @@ func TestRepeatGateZeroValueRuntimeKeepsDefaultOn(t *testing.T) {
 	}
 }
 
-// TestRepeatGateWouldHaveCaughtTheLiveColderIncident replays the shape of the actual
+// TestRepeatGateWouldHaveCaughtTheLiveCoderIncident replays the shape of the actual
 // failure this gate was built for (ADR 0093 lcpp harness trial,
-// /home/dev/lcpp-live/log-coder.txt, qwen3-coder-30b-a3b: todo_write called with the
-// same arguments in an unbroken row from turn 58 through turn 122 — 65 turns, no
-// other tool call in between, session ballooning to 162 assistant turns total). This
-// test does not have that run's actual argument JSON (the log only records tool
-// NAMES and the assistant's own prose, not the raw tool_call arguments), so it
-// stands in a plausible, constant todo_write payload repeated verbatim — the
-// incident's own defining property, regardless of the exact JSON. With the package
-// DEFAULTS (a bare Runtime{}, nothing configured), Run must abort long before
-// anything like 65 repeats.
-func TestRepeatGateWouldHaveCaughtTheLiveColderIncident(t *testing.T) {
+// /home/dev/lcpp-live/log-coder.txt, qwen3-coder-30b-a3b: todo_write's tool NAME
+// repeated in an unbroken row from turn 50 through turn 121 — 72 turns straight,
+// verified by counting the log's own `names=[...]` column — no other tool call in
+// between, session ballooning to 162 assistant turns total). This test does not have
+// that run's actual argument JSON (the log only records tool NAMES and the
+// assistant's own prose, not the raw tool_call arguments — whether the arguments
+// were themselves identical each time is UNVERIFIED), so it stands in a constant
+// todo_write payload repeated verbatim as a stand-in for "the arguments genuinely
+// never changed", which is the one reading of the log this gate can actually catch
+// (see repeat.go's own top comment for the risk that if the real arguments varied,
+// this gate would NOT have caught the real incident). With the package DEFAULTS (a
+// bare Runtime{}, nothing configured), Run must abort long before anything like 72
+// repeats.
+func TestRepeatGateWouldHaveCaughtTheLiveCoderIncident(t *testing.T) {
 	const sameTodoList = `{"todos":[{"content":"Fix all bugs","status":"completed"},{"content":"Add Max and Min","status":"completed"}]}`
 	var turns []Turn
 	for i := 1; i <= 20; i++ {
@@ -197,7 +250,7 @@ func TestRepeatGateWouldHaveCaughtTheLiveColderIncident(t *testing.T) {
 		t.Fatalf("err = %v, want ErrRepeatedToolCall well before all 20 scripted repeats", err)
 	}
 	if client.i > defaultRepeatAbortAfter {
-		t.Fatalf("Send was called %d times before Run aborted, want at most %d (defaultRepeatAbortAfter) — the real incident ran to 65 straight repeats before anything noticed", client.i, defaultRepeatAbortAfter)
+		t.Fatalf("Send was called %d times before Run aborted, want at most %d (defaultRepeatAbortAfter) — the real incident ran to 72 straight repeats before anything noticed", client.i, defaultRepeatAbortAfter)
 	}
 }
 

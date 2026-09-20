@@ -89,12 +89,16 @@ type Runtime struct {
 	// canonicalCall) has come back this many times in an unbroken row, the gate
 	// intervenes instead of letting the loop run it again — a real failure mode
 	// measured live (ADR 0093 lcpp harness trial against qwen3-coder-30b-a3b:
-	// todo_write repeated with the same arguments 65 assistant turns straight,
-	// nothing else in between, never self-correcting). Each <= 0 (including a
-	// zero Runtime{}) uses the package default (defaultRepeatWarnAfter /
-	// defaultRepeatAbortAfter) for THAT field — the zero value keeps the gate ON,
-	// the same fail-closed-by-default posture as Approve's nil check above, not
-	// silently off. Set RepeatGateDisabled to turn the whole gate off instead.
+	// todo_write's tool NAME repeated 72 assistant turns straight — turns 50
+	// through 121 of 162, verified by counting the log — with nothing else run
+	// in between, never self-correcting; whether the ARGUMENTS were themselves
+	// identical each time is unverified, since the log records tool names and
+	// prose, not raw argument JSON — see repeat.go's own top comment for the
+	// risk that leaves open). Each <= 0 (including a zero Runtime{}) uses the
+	// package default (defaultRepeatWarnAfter / defaultRepeatAbortAfter) for
+	// THAT field — the zero value keeps the gate ON, the same
+	// fail-closed-by-default posture as Approve's nil check above, not silently
+	// off. Set RepeatGateDisabled to turn the whole gate off instead.
 	RepeatWarnAfter  int
 	RepeatAbortAfter int
 	// RepeatGateDisabled turns the repeated-tool-call gate off entirely. The

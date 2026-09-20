@@ -61,15 +61,41 @@ func Run(ctx context.Context, client Client, reg *Registry, rt *Runtime, message
 
 		// Decide once per call, in order, BEFORE dispatching any of this turn's
 		// calls: the tracker's streak has to be updated in call order for
-		// "unbroken row" to mean anything, and an abort must stop the loop
-		// without running anything else this turn — including calls after the
-		// one that tripped it.
+		// "unbroken row" to mean anything. abortIdx is the first call (if any)
+		// whose streak crossed RepeatAbortAfter; the loop keeps deciding the
+		// rest anyway (harmless — Run returns right after) rather than bailing
+		// out of this inner loop early, so every call in the turn gets a real
+		// decision to hand to repeatAbortToolMessage below.
 		decisions := make([]repeatDecision, len(turn.ToolCalls))
+		abortIdx := -1
 		for i, call := range turn.ToolCalls {
 			decisions[i] = gate.decide(tracker.note(call))
-			if decisions[i].action == repeatAbort {
-				return Result{Messages: hist, RepeatWarnings: repeatWarnings}, repeatAbortErr(call, decisions[i].streak)
+			if decisions[i].action == repeatAbort && abortIdx == -1 {
+				abortIdx = i
 			}
+		}
+		if abortIdx != -1 {
+			// Every call in this turn is answered with a gate error and NONE of
+			// them actually runs — not just the one whose streak tripped the
+			// threshold — so hist ends up with no unanswered ToolCalls and stays
+			// a sendable history (see ErrRepeatedToolCall's doc comment) rather
+			// than the same "assistant asked for tools, nothing answered them"
+			// shape the ctx/Send error paths above leave behind (which is fine
+			// there — those really cannot continue — but this path is meant to
+			// be recoverable).
+			aborted := turn.ToolCalls[abortIdx]
+			streak := decisions[abortIdx].streak
+			abortResults := make([]Message, len(turn.ToolCalls))
+			for i, call := range turn.ToolCalls {
+				abortResults[i] = toolResult(call, repeatAbortToolMessage(call, aborted, streak))
+			}
+			hist = append(hist, abortResults...)
+			for _, d := range decisions[:abortIdx] {
+				if d.action == repeatWarn {
+					repeatWarnings++
+				}
+			}
+			return Result{Messages: hist, RepeatWarnings: repeatWarnings}, repeatAbortErr(aborted, streak)
 		}
 		for _, d := range decisions {
 			if d.action == repeatWarn {
