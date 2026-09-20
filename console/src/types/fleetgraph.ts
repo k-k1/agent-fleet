@@ -314,8 +314,14 @@ export interface GraphLaneErased extends GraphLaneBase {
   // else is gone. The view must not print it alone — it composes the localized
   // "deleted" wording around it (the rule that a slug is never shown by itself).
   label: LaneId;
-  runs: []; // nothing is known about when it ran; the row is drawn without a line
+  runs: []; // its lineage is gone, so when it ran is unknown: the row carries no line
 }
+
+// An erased lane gets NO segments either, even though its state lines survive in
+// the activity ledger until they rotate. Drawing bands for a session a person
+// deleted rebuilds the picture they asked to be rid of; the arrows stay only
+// because dropping them would misattribute the OTHER lane's message as coming
+// from outside the figure. So: an erased lane is a row of arrows, nothing else.
 
 export type GraphLane = GraphLaneKnown | GraphLaneErased;
 

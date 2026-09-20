@@ -199,8 +199,10 @@ its children's branch goes with it.
   `peer` / `report` lines naming that id survive alone, and the naive reading turns **a message between two
   sessions into an arrow from outside the figure** (no lane can be built, so it falls through to an
   external actor). Rewriting 30 append-only files to chase it is the opposite of ADR 0087, so instead **an
-  id with no lineage is drawn as an *erased lane*: a labelled row with no line** (`erased`). All that is
-  left to label it with is the slug, so **the localized "deleted" wording is S-VIEW's to add** — the
+  id with no lineage is drawn as an *erased lane*: a labelled row with no line** (`erased`). It gets **no activity bands**: its state
+  lines survive until they rotate, but painting them rebuilds the picture the person asked to be rid of.
+  The arrows stay for a different reason — dropping them would make the OTHER lane's message look like it
+  came from outside the figure. All that is left to label it with is the slug, so **the localized "deleted" wording is S-VIEW's to add** — the
   existing rule that a slug is never shown to a human on its own (`session.Display`) holds here too. What
   disappears is the **content** — display name, repository, lineage — while the bare id lingers for the
   activity retention. That asymmetry is deliberate, and the label says so rather than hiding it.

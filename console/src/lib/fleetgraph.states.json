@@ -10,9 +10,16 @@
     "check and a passing one look identical.",
     "",
     "Matching is exact. No case folding, no trimming: these strings are produced by",
-    "code, and folding would quietly accept a spelling nobody writes."
+    "code, and folding would quietly accept a spelling nobody writes.",
+    "",
+    "`raw: null` is the one input the two sides do NOT share: Session.state is",
+    "optional, so the TypeScript side receives undefined for a live session whose",
+    "hooks have not reported yet, while Go only ever sees \"\". It means the same as",
+    "\"\" — idle. Falling it through to `unknown` would hatch every running session",
+    "that has not spoken yet."
   ],
   "cases": [
+    { "raw": null, "state": "idle", "band": "idle" },
     { "raw": "", "state": "idle", "band": "idle" },
     { "raw": "idle", "state": "idle", "band": "idle" },
     { "raw": "working", "state": "working", "band": "active" },
