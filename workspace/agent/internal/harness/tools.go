@@ -13,6 +13,7 @@ package harness
 import (
 	"context"
 	"sort"
+	"sync"
 )
 
 // Tool is one function this package knows how to execute, plus the model-facing
@@ -83,6 +84,24 @@ type Runtime struct {
 	// MaxOutputBytes caps one tool result's size (truncateOutput). <= 0 uses
 	// defaultMaxToolOutput.
 	MaxOutputBytes int
+	// fileLocks serializes a single file's read-modify-write (runWrite/runEdit in
+	// tools_fs.go) across the concurrent goroutines runToolCalls (loop.go) fans a
+	// single turn's parallel tool_calls out into — see lockPath. Zero value is
+	// ready to use (sync.Map needs no init), so every existing &Runtime{...}
+	// literal in this package's tests keeps working unchanged.
+	fileLocks sync.Map // map[string]*sync.Mutex, keyed by resolved absolute path
+}
+
+// lockPath returns the mutex that guards full (an already pathguard-resolved
+// absolute path — see cwd.go's resolvePath) against a concurrent read-modify-write
+// on the same file, creating one on first use. Keying by the RESOLVED path (not the
+// tool call's raw argument) is what makes "a/../b.go" and "b.go" share a lock; two
+// different files always get two different mutexes, so parallel tool_calls that
+// touch different files still run concurrently (the point of ADR 0093 decision 5's
+// parallel tool_calls — a single global lock would defeat it).
+func (rt *Runtime) lockPath(full string) *sync.Mutex {
+	v, _ := rt.fileLocks.LoadOrStore(full, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 func (rt *Runtime) outputLimit() int {
