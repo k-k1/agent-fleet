@@ -500,19 +500,49 @@ runs the total is 15.
   `errEngineWaking` — a wake-timeout constant, not something Decision 4 states). ⚠️ Whether a hold
   actually exceeded that 900-second cap is a claim from the handoff, not something confirmed against
   the raw logs under `$HOME/lcpp-live/` — not asserted here.
-- **(c) Are fewer incidents than the opencode route plausible? — Judged passed, but 8 defects surfaced
-  across Phase 1 that only a live engine found** (a tally from the user's handoff). **This ADR
-  explicitly documents only 4 of them** — the three already recorded under "What only a live engine
-  found" below (Phase 1's early half — see "Implementation record for phases 0 and 1" above), plus
-  the one appended here from #811. 🔴 **Which defects make up the remaining 4 is not identified
-  anywhere in this ADR or in `docs/log/99`, and cannot be enumerated within this document's scope**
-  (an earlier draft claimed they were "recorded across §12.1's repeat-detection miss, §13.4/§13.8's
-  KV-geometry 409, etc." — that claim was wrong; no such record exists in either document, and this
-  corrects it). **The one defect that is identified (#811, appended below) was of a kind no test can
-  find in principle: every scripted-client unit test stayed green, the original symptom is genuinely
-  fixed on the real engine, and it is still six times slower in practice.** It is recorded as a worked
-  example of Decision 5's consequence (the executor is us, so we own this class of problem),
-  continuing the section below.
+- **(c) Are fewer incidents than the opencode route plausible? — Judged passed. There are 8 defects
+  only a live engine found.** (Added 2026-09-21: the breakdown surfaced from prior session `sfbkvkc`'s
+  first-hand account. An earlier draft here said "the remaining 4 cannot be identified" — that was not
+  wrong, just unconfirmed at the time; the breakdown below is what was missing.) 🔴 **This "8" is not a
+  count grounded in this ADR alone — it comes from three separate layers.** Flattening it into a plain
+  list loses which layer each item came from, so it is written layer by layer.
+
+  **Group A (the 3 this ADR already names under "What only a live engine found", Phase 1's early
+  half)**: (1) the send right after compaction was rejected by Qwen's chat template
+  (`No user query found in messages`) / (2) same (`System message must be at the beginning`) / (3)
+  chatx's P0 provider dropped the last stored history entry unconditionally (only 2 of `prov.Send`'s 6
+  call sites satisfy the premise it assumed).
+
+  **Group B (2 items the handoff from an earlier session, `srx5cky`, added to A when it counted "5".
+  The PRs are real, but neither item is in this ADR's "What only a live engine found" list)**: (4) a
+  parallel-edit read-modify-write race (PR #774, commit `2d8eedcf`) / (5) `/props` describes the
+  router itself and reports no window (`role: "router"` / `model_path: "none"` / `n_ctx = 0`; closed
+  by PR #767). 🔴 **(5) is written under this ADR's existing "Two premises that turned out to be
+  wrong" section, not under "What only a live engine found"** — a positional fact worth stating
+  plainly.
+
+  **Group C (3 items measured by prior session `sfbkvkc`)**: (6) the tool loop had no repeat
+  detection, so §14 #3's `todo_write` ran 72 turns in a row (turns 50–121) and nothing stopped it (→
+  PR #794) / (7) `Run` had no context management at all, so §14 #9 hit real-window overflow (`request
+  (32772 tokens) exceeds the available context size (32768 tokens)`) — `loop.go` had zero windowing
+  and zero compaction (→ PR #811's motivation) / (8) PR #811's first draft's compaction thrashing (the
+  same model at the same window went from 59 turns to past 353, with 86 compactions in task-1 alone;
+  §14 #10). This (8) is the #811 item recorded under "What only a live engine found (continued)"
+  below.
+
+  **What does not count toward the 8** (recorded so the next person who recounts this does not repeat
+  the question): the mismatch between `manuallive`'s retry logic and `EngineError.Retryable()`
+  (`113a894e`) was a **test-scaffolding fix**, not counted as a product defect. The approval gate
+  defaulting to fail-open (`aeb924f0`) is likewise not counted. 🔴 **Repeat detection firing zero times
+  on hardware (debt item 2) is not among the 8** — that is not "a defect discovered" but "(6)'s fix
+  failing to catch the actual failure", counted separately as an **insufficient fix**. **A case could
+  be made for counting it as a ninth, but the prior session did not count it that way** (recorded with
+  that session's explicit permission to state both views).
+
+  All of the above are worked examples of Decision 5's consequence (the executor is us, so we own this
+  class of problem). **The last of the 8 ((8), #811) was of a kind no test can find in principle:
+  every scripted-client unit test stayed green, the original symptom is genuinely fixed on the real
+  engine, and it is still six times slower in practice.** It is recorded continuing the section below.
 
 ### What only a live engine found (continued, added 2026-09-20)
 
@@ -564,7 +594,11 @@ certain to be hit by Phase 2's own work.
    and LFM2.5 all have this shape, and **enabling them is rejected with 409** ("cannot be sized (no
    attention geometry)"). The prior session got past it by declaring the per-layer-computed real
    number as `vram_mib` (GPT-OSS 14500 / gemma-4 9800). **This is worth fixing on its own** (not part
-   of Phase 2's body of work).
+   of Phase 2's body of work). 🔴 **Primary source** (from prior session `sfbkvkc`'s hands-on work on
+   the sandbox; recorded nowhere else): the real error comes from sandbox's `PUT
+   /api/admin/engines/llm/models/{id}`, error code `engine_vram_confirm`, body "wants a KV cache that
+   cannot be sized (no attention geometry) on top of 11548 MiB of weights". The workaround is to put
+   the per-layer-computed real number as `vram_mib` in that same PUT's body.
 6. **`chat_template` appears in neither `/props` nor `/v1/models`** (measured). There is no way to
    confirm the template baked into a GGUF from the deployment side. Already noted in
    `docs/log/99` §12.5; the debt table just restates it as "unresolved going into Phase 2".
