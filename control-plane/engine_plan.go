@@ -164,6 +164,16 @@ func (a engineAdminAPI) enginePlanFor(ctx context.Context, g engineIngestGrant, 
 	// Every one of them is planned the same way the main file is, so a part this deployment
 	// already holds is a declaration rather than a second download — the Qwen-Image VAE is shared
 	// by two families and the second row of either must not pay for it twice.
+	//
+	// Rows are fetched once here (all roles, same scope as engineIngestDestinationUnused) so the
+	// per-part check reuses them without a second full-catalogue scan per key.
+	// Cost: 1 ListEngineModels(all roles) + at most 1 EngineIngestJobForS3Key + 1 HeadObject per
+	// download part whose destination is already recorded.
+	var allRows []store.EngineModel
+	haveStore := a.mgr != nil && a.mgr.store != nil
+	if haveStore {
+		allRows, _ = a.mgr.store.ListEngineModels(ctx, "")
+	}
 	for _, p := range engineFamilyPartsFor(base) {
 		pres, aerr := engineIngestResolve(ctx, engineIngestSource{HF: &engineIngestHF{Repo: p.Repo, File: p.File}})
 		if aerr != nil {
@@ -177,17 +187,11 @@ func (a engineAdminAPI) enginePlanFor(ctx context.Context, g engineIngestGrant, 
 		pname := engineBaseName(p.File)
 		pkey := engineIngestKeyFor(role, images, p.Flag, pname, false)
 		pf := enginePlanLine(ctx, held, p.Flag, pname, pkey, pres)
-		// When this part needs a download, check that its destination is not already recorded by
-		// something this press cannot prove is the same file. If it is, the download would be
-		// refused minutes later in the reconciler with nobody watching — warn now so the operator
-		// can free the slot before pressing. Cost: one ListEngineModels(all roles) + at most one
-		// HeadObject per download part that has a recorded destination.
-		if pf.Action == enginePlanDownload && a.mgr != nil && a.mgr.store != nil {
-			if ref := engineIngestDestinationUnused(ctx, a.mgr.store, a.mgr.store,
+		if pf.Action == enginePlanDownload && haveStore {
+			if ref := enginePartDestinationCheck(ctx, allRows, a.mgr.store,
 				a.engineStorageBytes(), role, pkey); ref != nil {
 				pf.conflict = ref.message
-				plan.Warnings = append(plan.Warnings, p.Flag+" lands at "+pkey+
-					" which is already recorded ("+ref.message+"); free that slot before pressing")
+				plan.Warnings = append(plan.Warnings, partDestinationWarning(p.Flag, pkey, ref))
 			}
 		}
 		plan.Files = append(plan.Files, pf)
@@ -446,4 +450,28 @@ func enginePlanID(asked, file string, rows []store.EngineModel) string {
 		}
 	}
 	return base + "-" + strconv.Itoa(enginePlanIDMax)
+}
+
+// partDestinationWarning builds the one-line warning for a part whose destination key is already
+// held, using the holder and next-step carried in ref. The key appears once (in "lands at"),
+// and the action the operator needs differs by holder kind: a row is completed or rerouted,
+// a job is dismissed (bytes present) or awaited (bucket unverifiable).
+func partDestinationWarning(flag, s3key string, ref *apiRefusal) string {
+	if ref == nil || ref.Holder == nil || ref.Next == nil {
+		return flag + " lands at " + s3key + " which is already recorded; free that slot before pressing"
+	}
+	switch ref.Holder.Kind {
+	case "row":
+		return flag + " lands at " + s3key + ", which the row " + ref.Holder.ID +
+			" already declares; complete that row or choose another destination"
+	case "job":
+		if ref.Next.Act == "dismiss_job" {
+			return flag + " lands at " + s3key + ", which an earlier ingest job (" +
+				ref.Holder.ID + ") recorded; dismiss that job first"
+		}
+		return flag + " lands at " + s3key + ", which an ingest job (" + ref.Holder.ID +
+			") recorded; the bucket could not confirm whether bytes are still there — press again once the bucket answers"
+	default:
+		return flag + " lands at " + s3key + " which is already recorded; free that slot before pressing"
+	}
 }
