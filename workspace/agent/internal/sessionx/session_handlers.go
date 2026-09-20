@@ -142,7 +142,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 			sessions = append(sessions, wireSession(m, true))
 			continue
 		}
-		// Stopped (exited): stamp when first noticed, prune once older than the TTL,
+		// Stopped (exited): stamp when first noticed, auto-archive once older than the TTL,
 		// otherwise keep it listed as resumable.
 		if m.StoppedAt == "" {
 			// This is the ONLY point where af first notices the pane is gone, and it covers
@@ -154,12 +154,22 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 			m.StoppedAt = now.Format(time.RFC3339)
 			m = WriteSessionMetaKeepingLock(m)
 		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl && !m.Locked {
-			// The deletion lock (docs/log/45) applies to automatic deletion too: a locked
-			// row is never pruned past the TTL and stays listed as stopped.
-			finalizeSessionUsage(m) // fold into the usage ledger before forgetting it (docs/log/46 §3-b)
-			status.RemoveCarried(session.UUID(m.Dir, name))
-			session.RemoveMeta(name)
-			gitx.MaybePruneWorktree(m.Dir) // last reference expired → clean up its worktree if clean
+			// The TTL MOVES the row to the shelf; it never deletes (ADR 0097). Deleting here
+			// reclaimed nothing — the transcript jsonl and the per-session side files are keyed
+			// off the meta and outlive it — so all it bought was an unrecoverable removal no
+			// person asked for, the only one in the product that skipped the gz safety net.
+			// Reclaiming is deliberate: delete_session, which bundles before it removes.
+			//
+			// The deletion lock (docs/log/45) exempts a row from this sweep as well. Archiving
+			// is reversible, so the lock does not have to refuse it; it stays here because a
+			// pinned row is one the user wants to keep SEEING, and the shelf is out of sight.
+			//
+			// No MaybePruneWorktree: the session is still restorable, and restoring one whose
+			// working copy was deleted underneath it is worse than a worktree left standing.
+			// The cleanup survey (session_cleanup.go) proposes those, with a person deciding.
+			finalizeSessionUsage(m) // fold into the usage ledger at the same moment as before (docs/log/46 §3-b)
+			m.Archived = true
+			WriteSessionMetaKeepingLock(m)
 			continue
 		}
 		sessions = append(sessions, wireSession(m, false))

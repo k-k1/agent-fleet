@@ -3,9 +3,10 @@ package sessionx
 // GET /sessions/cleanup — an on-demand survey of what can be tidied up: finished
 // sessions still listed, and worktrees whose work is done. It only READS and
 // classifies; acting is the caller's job (archive_session / delete_worktree, guarded).
-// The passive 7-day auto-prune (HandleListSessions) is unchanged — this is the
-// "what's cleanable now" view it can't give, surfaced to both the Console and the
-// assistant so a fleet that has drifted into chaos can be swept deliberately.
+// The passive TTL sweep (HandleListSessions) only ever ARCHIVES (ADR 0097), so this is
+// the only route by which a session or a worktree is actually removed — surfaced to both
+// the Console and the assistant so a fleet that has drifted into chaos can be swept
+// deliberately, by a person.
 
 import (
 	"net/http"
@@ -75,8 +76,8 @@ const (
 
 var cleanupReasonJA = map[string]string{
 	cleanReasonLocked:       "ロック中（削除保護。解除するまで掃除対象外）",
-	cleanReasonArchived:     "アーカイブ済み（自動prune対象外。delete_session で回収可・復元可）",
-	cleanReasonStopped:      "停止中（再開可能）。完了していれば archive で一覧から整理",
+	cleanReasonArchived:     "アーカイブ済み（自動では消えない。delete_session で回収可・復元可）",
+	cleanReasonStopped:      "停止中（再開可能）。完了していれば archive で一覧から整理（放置でも期限が来ればアーカイブへ移る）",
 	cleanReasonEphemeral:    "停止中の shell/ssm（残す会話なし）。削除で片付く",
 	cleanReasonOrphanPane:   "orphan（メタ無しの実行中ペイン）。Console でアタッチ/整理",
 	cleanReasonWtLive:       "稼働中のセッションがある（先に停止が必要）",
@@ -109,9 +110,10 @@ func classifySessionCleanup(locked, archived, live, ephemeral bool) (action, saf
 		// silently hidden, so both the user and the operator can see why it stays.
 		return "", "keep", cleanReasonLocked, true
 	case archived:
-		// Archived rows are TTL-exempt (HandleListSessions skips them before the prune),
-		// so they accumulate. delete_session reclaims them (meta + jsonl), bundled to a
-		// recoverable archive first — review before acting (archived ≠ throwaway).
+		// The shelf is where the TTL sweep parks stopped sessions and where automation
+		// stops (ADR 0097), so it only ever grows: delete_session is the one thing that
+		// reclaims it (meta + jsonl), bundled to a recoverable archive first. Review before
+		// acting — a row here may have been shelved by hand precisely to keep it.
 		return "delete_session", "review", cleanReasonArchived, true
 	case ephemeral:
 		// A stopped shell/ssm holds nothing restorable — delete_session still bundles
@@ -126,8 +128,9 @@ func classifySessionCleanup(locked, archived, live, ephemeral bool) (action, saf
 
 // classifyWorktreeCleanup grades a linked worktree from its live-session count and git
 // state. Pure — the handler supplies the git facts. Mirrors maybePruneWorktree's
-// conservatism (never touch dirty/ahead) but also proposes merged worktrees the passive
-// prune leaves for 7 days.
+// conservatism (never touch dirty/ahead). Since the stopped-TTL sweep stopped taking
+// worktrees down with it (ADR 0097), this is the only thing that proposes the worktree of
+// a session that is merely shelved.
 func classifyWorktreeCleanup(locked bool, lockedSessions, liveCount, ahead int, dirty bool, relation string) (action, safety, reasonKey string) {
 	switch {
 	case locked:

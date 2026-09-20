@@ -238,6 +238,14 @@ Which operations appear depends on the session's kind and state. For example, AI
 "Archive", while throwaway shell / SSM show "Delete". Log files may remain after deletion, but
 the session cannot be brought back to the list.
 
+**A session left stopped moves to the archive on its own after 7 days**, so the everyday list
+does not fill up with work that is over. It is a move, not a deletion: the conversation is intact
+and you restore it from the archive list exactly as if you had archived it yourself. **Nothing
+leaves the archive on its own** — a session is only ever removed for good when someone deletes it
+from the cleanup modal, and even then it goes to the bin first. So, to keep something, archive it
+(or lock it, which also keeps the row in the everyday list); to be rid of it, delete it. Leaving
+it alone never destroys it.
+
 **Tabs of an archived (or deleted) session close on their own.** That holds when you tidied up
 from another tab, from another device or in bulk from cleanup, and a notice then says the tab was
 closed (tidying up in this window closes it right there, with no notice). Only that session's own
