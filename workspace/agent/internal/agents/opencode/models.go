@@ -67,6 +67,13 @@ func Models() []string {
 		return modelsList // stale-if-error: an expired cache still beats an empty picker
 	}
 	modelsList = parseModels(string(out))
+	// The price and retirement tables belong to the daemon snapshot they were read from, and
+	// this list did not come from it. Keeping them would let the free-route verdict be made
+	// from a PREVIOUS catalog: a model the CLI offers now would be judged "paid" because an
+	// older daemon read did not price it at zero, which is the opposite of what isFreeModel
+	// documents ("price unknown ⇒ free"). Dropping current free models from the free menu is
+	// the visible half; the other half is Catalog's rescue then replacing the whole menu.
+	freeIDs, retiredIDs = nil, nil
 	modelsAt = time.Now()
 	modelsEnvKey = envKey
 	return modelsList

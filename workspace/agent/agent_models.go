@@ -37,11 +37,47 @@ import (
 // "newest first, grouped by family"). Only opencode is normalized in the package itself
 // (catalog.go), because it has two fetch paths and no single upstream order. The policy
 // is explained in agents/modelsort.go.
+// emptyReason names the step that emptied the menu, "" when there is one to show.
+//
+// Three causes render identically in the picker ("only the default model is available —
+// check the connection and the plan"), and telling them apart took reading the Agent's log,
+// which a member cannot do. The answer is the OUTERMOST step that was already empty, because
+// that is the one to act on: nothing hid the models if there were none to begin with.
+//
+//	catalog_empty — the CLI/daemon answered with nothing. Not always a fault: an account with
+//	                no plan, a kind whose enumeration is legitimately empty (Copilot Free
+//	                offers Auto alone), a provider that cannot be reached, and an enumeration
+//	                killed by its own timeout all land here. It is still worth saying,
+//	                because it rules the other two out.
+//	route         — opencode only: the catalog had ids and the selected billing route dropped
+//	                every one (off, or own with no provider of the user's own).
+//	hidden        — what survived is excluded in settings (hiddenModels).
+//
+// enumerated is -1 for the kinds that do no shaping of their own, so for them the first case
+// reads "the kind itself offered nothing".
+func emptyReason(enumerated, offered, final int) string {
+	if final > 0 {
+		return "" // a reason for a menu that works is noise
+	}
+	switch {
+	case enumerated == 0 || (enumerated < 0 && offered == 0):
+		return "catalog_empty"
+	case offered == 0:
+		return "route"
+	default:
+		return "hidden"
+	}
+}
+
 func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	var list []agents.ModelChoice
 	// route is the opencode billing route the list was actually shaped by — the selected one
 	// unless Catalog's empty-menu rescue had to ignore it. Empty for every other kind.
 	route := ""
+	// enumerated is what the CLI/daemon answered before opencode's billing-route shaping,
+	// so "the route hid everything" can be told from "there was nothing to hide". -1 for
+	// every other kind, which does no shaping of its own.
+	enumerated := -1
 	switch r.PathValue("kind") {
 	case "claude":
 		list = claude.Models()
@@ -77,7 +113,9 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		// The shaping is reported alongside the list: when the selected route yields
 		// nothing the rescue quietly re-shapes with Zen, and the Console has to be able to
 		// say so rather than keep claiming the route the user chose (docs/log/103).
-		list, route = opencode.CatalogWithRoute(opencode.Models(), uiprefs.OpencodeCatalog())
+		ids := opencode.Models()
+		enumerated = len(ids)
+		list, route = opencode.CatalogWithRoute(ids, uiprefs.OpencodeCatalog())
 	case "agy":
 		list = agy.Models()
 	case "copilot":
@@ -89,6 +127,12 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "unknown_kind", "no model catalog for this kind")
 		return
 	}
+	// How many the kind itself offered, before this handler narrows it. An empty menu has
+	// several causes that look identical on screen, and the Console has never been able to
+	// tell them apart ("only the default model is available — check the connection and the
+	// plan" is a guess it prints for all of them). Counting the two narrowing steps is
+	// enough to name which one emptied it; see `reason` below.
+	offered := len(list)
 	// Drop the models the user hides (ui-prefs hiddenModels) last. This is where the
 	// Console picker and the MCP list_models meet, so one place covers both (the same
 	// shape as opencodeCatalog). An explicitly named hidden model is refused separately
@@ -107,6 +151,9 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"models": list}
 	if route != "" {
 		out["route"] = route
+	}
+	if reason := emptyReason(enumerated, offered, len(list)); reason != "" {
+		out["reason"] = reason
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

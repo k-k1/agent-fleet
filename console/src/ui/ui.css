@@ -1098,3 +1098,11 @@
   padding: 9px 14px;
   font-size: 13px;
 }
+
+/* "Loading models…" under a live-catalog picker. Inline with its spinner, and muted like the
+   other .ui-field-hint lines: it replaces nothing, it fills the moment before the list lands. */
+.model-picker-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}

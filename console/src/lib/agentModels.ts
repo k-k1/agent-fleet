@@ -9,7 +9,7 @@
 // call). Until the fetch lands (or when it fails) the picker offers only Default,
 // which launches the CLI on its own default model.
 import { useEffect, useState } from "react";
-import { api } from "../core/api/client.ts";
+import { api, isTransientErr } from "../core/api/client.ts";
 import { CLAUDE_MODELS, useSettings } from "./settings.ts";
 import { hiddenModelsFor, isModelHidden, modelMatchesHidden } from "./modelDeny.ts";
 import { t } from "./i18n/index.ts";
@@ -65,14 +65,56 @@ function decorateLabel(kind: string, label: string, all: ModelDescriptor[]): str
 // warning drawn from nothing is worse than none.
 let opencodeRoute = "";
 
+// Why the last fetch for this kind came back with no model: either as the Agent named it
+// ("catalog_empty" | "route" | "hidden" — agent_models.go's emptyReason) or "unreachable",
+// which is this side's own answer for "the Agent never got to say". The picker used to have
+// to guess out loud ("check the connection and the plan"), which is wrong advice for three of
+// the four. Cleared as soon as a list arrives.
+const emptyReasons = new Map<string, string>();
+
+export function modelCatalogReason(kind: string): string {
+  return emptyReasons.get(kind) || "";
+}
+
+/** Retry intervals (ms) for a catalog fetch that could not reach the Agent — the same policy
+ *  and the same reason as connsRetry's: right after a workspace starts, the Agent is not
+ *  listening yet and the CP answers 502. Taking that as "this account has no model" is how the
+ *  picker came to advise checking a connection and a plan that were never the problem. ~22s in
+ *  total; a boot slower than that is picked up when the modal is opened again (a failure
+ *  caches nothing). */
+export const MODELS_RETRY_MS = [1500, 3000, 6000, 12000];
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** One request. Resolves to the parsed body, or null when it did not land — a thrown fetch, or
+ *  a transient backend error (`http_502` while the workspace boots, any 5xx body). An empty
+ *  `models` array is NOT this case: that is an answer, and it carries its own reason. */
+async function requestModels(kind: string): Promise<Record<string, unknown> | null> {
+  const d = await api(`api/agents/${kind}/models`).catch(() => null);
+  if (!d || isTransientErr(d) || !Array.isArray(d.models)) return null;
+  return d;
+}
+
 function fetchModels(kind: string): Promise<ModelOption[]> {
   const cacheable = kind !== "opencode";
   const hit = cacheable ? cache.get(kind) : undefined;
   if (hit) return Promise.resolve(hit);
   let p = inflight.get(kind);
   if (!p) {
-    p = api(`api/agents/${kind}/models`)
-      .then((d) => {
+    p = (async () => {
+      for (let attempt = 0; ; attempt++) {
+        const d = await requestModels(kind);
+        if (d) return d;
+        if (attempt >= MODELS_RETRY_MS.length) {
+          // Out of attempts. "Could not reach the Agent" is its own answer — the picker
+          // must not fall back to naming the account's plan for it.
+          emptyReasons.set(kind, "unreachable");
+          throw new Error("empty");
+        }
+        await sleep(MODELS_RETRY_MS[attempt]);
+      }
+    })()
+      .then((d: any) => {
         const items: {
           id?: string;
           label?: string;
@@ -91,16 +133,26 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
           }));
         if (kind === "opencode") opencodeRoute = typeof d?.route === "string" ? d.route : "";
         const opts = desc.map((m): ModelOption => [m.id, decorateLabel(kind, m.label, desc)]);
-        if (!opts.length) throw new Error("empty"); // workspace stopped / CLI absent — retry next open
+        if (!opts.length) {
+          // The Agent answered, and the answer was "none" — a different fact from a fetch
+          // that never landed, and the only path on which it says why.
+          emptyReasons.set(kind, typeof d?.reason === "string" ? d.reason : "catalog_empty");
+          throw new Error("empty"); // workspace stopped / CLI absent — retry next open
+        }
+        emptyReasons.delete(kind);
         const full = [...defaultOnly(), ...opts];
         descriptors.set(kind, desc);
         if (cacheable) cache.set(kind, full);
         else inflight.delete(kind);
         return full;
       })
-      .catch(() => {
+      .catch((e) => {
         inflight.delete(kind);
         if (kind === "opencode") opencodeRoute = "";
+        // A fetch that did not land tells us nothing about why the menu is empty, so the
+        // previous answer must not be left standing as an explanation of this one. The
+        // "empty" throw above is not that case — it IS the answer, reason and all.
+        if (!(e instanceof Error && e.message === "empty")) emptyReasons.delete(kind);
         return defaultOnly();
       });
     inflight.set(kind, p);
