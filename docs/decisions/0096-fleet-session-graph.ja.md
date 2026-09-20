@@ -2,7 +2,8 @@
 
 [English](0096-fleet-session-graph.md) | 日本語
 
-- 状態: **提案（起票）**。設計と実測は [docs/101](../log/101-fleet-session-graph.md)。
+- 状態: **採用・着工中**（P0 契約凍結を実装・2026-09-20。`console/src/types/fleetgraph.ts`）。
+  設計と実測は [docs/101](../log/101-fleet-session-graph.md)。
 - これが置き換えるもの: [0027](0027-operator-interaction-graph.ja.md)（オペレーター↔セッションの縦シーケンス図。
   P0 の契約凍結だけが入っていた）を **superseded** にする。
 - 関連: [0041](0041-cross-session-messaging.ja.md) 決定 9（peer は conv に帰属できない＝俯瞰図の必要性を確定）/
@@ -118,6 +119,7 @@ P0 が新しい契約で置き換える。
 セッション名だけで、`conv:<id>`（チャット会話＝オペレーター）・`user`（Console のコンポーザや端末の
 打鍵）・`schedule`（定時実行・ADR 0021）・`bridge:discord` / `bridge:slack` は**レーンを持たない**。
 これらとの往復は**図の上端／下端へ抜ける矢印**として描く（決定 8-2）。
+
 - **`instr-ledger` を図の根拠にしない理由は、それが履歴ではなく作業リストだからである。**
   閉じた行は新しい 20 件だけを残して捨てられ（`instrClosedKeep`）、`cancelled` / `reopened` で
   状態が書き換わる。図の根拠にすると**古い指示が黙って消え、reopen で過去の時刻が動く**。
@@ -283,7 +285,7 @@ SCM のコミットグラフ（`lib/gitgraph.ts` / `features/scm/CommitGraph.tsx
 
 ## フェーズ
 
-- **P0 契約凍結**: REST DTO ＋ `console/src/types/fleetgraph.ts`（import 専用）＋ 台帳の行形式
+- **P0 契約凍結（済）**: REST DTO ＋ `console/src/types/fleetgraph.ts`（import 専用）＋ 台帳の行形式
   ＋ 本 ADR ＋ docs/101。`types/opgraph.ts` はここで退役。
 - **P1 3 並列**（ホストのメモリ制約により同時ビルド禁止・並列 ≤3）: S-BE（Go: 台帳 2 本・書き込み
   6 箇所・API・CP 許可リスト）／S-LOGIC（`lib/fleetgraph.ts` ＋ vitest）／S-VIEW（ビュー・ペイン

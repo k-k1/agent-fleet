@@ -2,7 +2,8 @@
 
 English | [日本語](0096-fleet-session-graph.ja.md)
 
-- Status: **proposed**. The design and the measurements are [docs/101](../log/101-fleet-session-graph.md).
+- Status: **adopted, work started** (P0, the contract frozen, 2026-09-20: `console/src/types/fleetgraph.ts`).
+  The design and the measurements are [docs/101](../log/101-fleet-session-graph.md).
 - What it replaces: [0027](0027-operator-interaction-graph.md) (the vertical operator↔session sequence
   diagram, of which only the P0 contract freeze landed) becomes **superseded**.
 - See also: [0041](0041-cross-session-messaging.md) decision 9 (a peer message cannot be attributed to a
@@ -125,6 +126,7 @@ becomes a lane; `conv:<id>` (a chat conversation, i.e. the operator), `user` (th
 terminal's keyboard), `schedule` (scheduled execution, ADR 0021) and `bridge:discord` / `bridge:slack`
 **have no lane**. Exchanges with those are drawn as arrows leaving the top and bottom edges of the figure
 (decision 8-2).
+
 - **`instr-ledger` is not the figure's source because it is a work list, not a history.** Closed rows are
   kept only for the newest 20 (`instrClosedKeep`), and `cancelled` / `reopened` rewrite state in place. As a
   source for a figure that means **old instructions quietly disappear and past times move on a reopen**.
@@ -299,7 +301,7 @@ time**.
 
 ## Phases
 
-- **P0, contract freeze**: the REST DTO, `console/src/types/fleetgraph.ts` (import-only), the ledger line
+- **P0, contract freeze (done)**: the REST DTO, `console/src/types/fleetgraph.ts` (import-only), the ledger line
   formats, this ADR and docs/101. `types/opgraph.ts` retires here.
 - **P1, three in parallel** (no concurrent builds on this memory-constrained host; parallelism ≤3): S-BE (Go:
   the two ledgers, the six write points, the API, the CP allow-list) / S-LOGIC (`lib/fleetgraph.ts` plus

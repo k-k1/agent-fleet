@@ -1,6 +1,7 @@
 # 101. フリートのセッション・グラフ（レーン＝セッション × 横軸＝時間）
 
-> 状態: **設計・起票**（2026-09-20）。決定記録は [ADR 0096](../decisions/0096-fleet-session-graph.ja.md)。
+> 状態: **P0（契約凍結）実装**（2026-09-20・§101.6）。以降 P1（3 並列）→ P2（統合）。
+> 決定記録は [ADR 0096](../decisions/0096-fleet-session-graph.ja.md)。
 > これは [44-operator-interaction-graph.md](44-operator-interaction-graph.md)（ADR 0027）が
 > 「別図・別タスク」として送り出し、ADR 0041 決定 9 が必要性を確定させ、ADR 0078 が却下欄で
 > 「別物」と線を引いた図の、3 か月後の再開である。0027 は本 ADR が superseded にする。
@@ -159,3 +160,47 @@ reaper を切った配備では、観測は**ゼロ**になる。
    **点線＝まだ居る（再開できる）／終端＝もう居ない**。停止中は既定で描く——0078 の一覧は
    「既定は稼働中のみ」だが、あれは*いま*の断面で、この図は*経過*である（過去から停止中を隠すと
    図が空になる）。アーカイブのトグルは `PaneContent` に持つ（React state はタブ切替で消える）。
+
+## 101.6 P0 = 契約凍結（2026-09-20 実装）
+
+凍結したのは 3 点で、すべて `console/src/types/fleetgraph.ts` に入っている（型のみ・import 専用・
+実行コードなし）。ADR 0027 の `types/opgraph.ts` は同じコミットで退役させた（どこからも import
+されていなかった。ADR 0041 決定 9 の「型の正」の指し先も 0041 に 🔴 追記して引き直した）。
+
+1. **REST DTO** — `FleetGraphPage`（`GET /api/fleet-graph?since=&until=`）。`now` は **Agent の時計**
+   を載せる（ブラウザの時計で「いま」を決めない）。`coverage` は遡及の 3 段減衰がどこで切れるかを
+   運ぶ——**「矢印が無い」と「何も起きていない」は図の上で区別がつかない**ので、境界は描くために
+   データとして持つ。
+2. **台帳の行形式** — `LineageEvent`（`birth` / `convid` / `death` / `archived`）と
+   `ActivityEvent`（`state` / `resync` / `instruct` / `report` / `peer`）。
+3. **描画モデルと組み立て関数の型** — `GraphModel` / `GraphLane` / `GraphSegment` / `GraphArrow` /
+   `CoverageMark` と `BuildFleetGraph`。
+
+### 型に埋めた「消えると事故になる」区別
+
+- `LanePresence` = `live` / `stopped` / `archived` / `gone`。**線種の規則（点線＝まだ居る／終端＝
+  もう居ない）はここで決まる**。`presence` は台帳だけでは出ない——`death` 行があっても一覧に
+  まだ居れば `stopped`、居なければ `gone` なので、`BuildFleetGraph` は**台帳とライブの
+  `sessions` の両方**を取る。
+- `SegmentKind` に `unknown` を入れた。**既定値にしない**（`idle` に倒さない）ことがこの図の
+  正直さの全部で、型に無ければ実装は必ず `idle` を書く。
+- `ActorId` は「レーンになるもの（セッション名）」と「ならないもの（`conv:` / `user` /
+  `schedule` / `bridge:`）」を 1 つの型に混ぜてある。`GraphArrow.fromLane` / `toLane` が `null` を
+  取れるのが**図の外へ抜ける矢印**（決定 8-2）で、これを型で表しておかないと外部発信元が
+  無言で捨てられる。
+- `BirthEvent.conv` のコメントに「**AF が割り当てた id であって観測値ではない**」を書いた
+  （101.5 ①の罠。ここを読まずに実装すると fork のエッジが自分自身を指す）。
+
+### P1 の担当境界（衝突をマージ 1 点に閉じる）
+
+| レーン | 触ってよいもの |
+|---|---|
+| S-BE | `workspace/agent/internal/…`（台帳 2 本・書き込み 6 箇所・`GET /api/fleet-graph`）、`workspace/agent/routes.go`、`control-plane/routes.go` の許可リスト |
+| S-LOGIC | `console/src/lib/fleetgraph.ts` ＋ `fleetgraph.test.ts` のみ |
+| S-VIEW | `console/src/features/fleetgraph/*`、**共有グルー（`layout/types.ts` の union・`migrate.ts`・`Pane.tsx`・`paneTitle.ts`・`features/keys/commands.ts`・i18n の ja/en）は S-VIEW 専有** |
+
+P0 では共有グルーに**一切触っていない**（`types/fleetgraph.ts` の追加と `types/opgraph.ts` の削除だけ）。
+`npm run typecheck` は緑——ただし**この型はまだ誰も import していない**ので、陽性対照として
+わざと `GraphModel["nope"]` を書いて `TS2339` が出ることを確かめてから戻した（型ファイルを足しただけの
+コミットで「緑」を報告するときは、tsc がそのファイルを見ていることを確かめる。メモ
+`scm-commit-graph-edges` の「テストの存在≠実行」と同じ罠）。
