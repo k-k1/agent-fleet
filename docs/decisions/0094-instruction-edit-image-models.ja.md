@@ -2,7 +2,9 @@
 
 [English](0094-instruction-edit-image-models.md) | 日本語
 
-- 状態: **起草**（2026-09-20）。実装前。以下の「ある」「無い」は `ae069aaf` で grep して裏取りした。
+- 状態: **P0 実装済み**（2026-09-20・develop `f57e82dd`＝PR #773 と #775）。**実機未検証**。
+  🔴 本文の `file:line` は **P0 が入った後の住所に引き直してある**（起草時は `ae069aaf` で取った）。
+  P1 以降で行が動いたら、引いた人が直す。
   🟢 **着工前レビュー済み**（2026-09-20・別セッション）。剥がれた 9 件は本文に反映し、
   何が剥がれたかは末尾の「レビューで剥がれた点」に残した。
   🟢 **グラフと能力は実機で測ってから書いた**（開発配備・g6.xlarge / L4 24GB・ComfyUI 0.35.2・
@@ -82,9 +84,9 @@ Qwen2.5-VL-7B（`--clip_l` を「唯一のエンコーダ」に使う既存の�
   宣言した値（運用者の宣言）に対する規則で、**呼び出し側が今まさに打った値は断るほうが早い**。
 - 🔴 **400 にできない経路が 1 本ある。そこは生成側が警告を出す。** `model` も `provider` も名指し
   しない要求は受付時にファミリーを解決できないので 400 にできず、comfy に届いて denoise 1 で
-  `strength` は捨てられる。`requestWarnings`（`imagegen.go:995-1005`）には `!caps.Strength` の枝が
-  あるが、**決定 11 の union のせいでそこは鳴らない**（`imagegen.go:856` も `jobs.go:477` も
-  `Caps(req.Model)`＝空なら union＝true）。したがって `comfyNegativeIgnoredWarning`（`comfy.go:293`）と
+  `strength` は捨てられる。`requestWarnings`（`imagegen.go:1012`）には `!caps.Strength` の枝が
+  あるが、**決定 11 の union のせいでそこは鳴らない**（`imagegen.go:915` も `jobs.go:480` も
+  `Caps(req.Model)`＝空なら union＝true）。したがって `comfyNegativeIgnoredWarning`（`comfy.go:432`）と
   **同型の strength 版を provider 側に置く**——解決後のファミリーが読まないときに `res.Warnings` へ
   出す。これが無いと、実測 C と同じ「無警告で捨てる」が 1 経路だけ残る。
 - ADR 0069 の語彙追加の規則（「利用者側に回避手段が無いか」）は、このファミリーでは**逆向きに効く**:
@@ -103,11 +105,11 @@ Qwen2.5-VL-7B（`--clip_l` を「唯一のエンコーダ」に使う既存の�
 
 出力寸法は `FluxKontextImageScale` が**入力画像のアスペクト比**から `PREFERRED_KONTEXT_RESOLUTIONS`
 の最近傍を選ぶ（ノード定義を v0.35.2 のソースで読んだ結果。実測は 1024² → 1024² が 5 本で、
-**正方形しか試していないので比率表の裏取りにはなっていない**）。`comfySizesFor`（`comfy.go:429`）が
+**正方形しか試していないので比率表の裏取りにはなっていない**）。`comfySizesFor`（`comfy.go:576`）が
 このファミリーに返す候補は**空**にし、呼び出し側が `size` を渡したら決定 2 と同じ形で断る。
 
 🔴 **行の `sizes` も受け付けない。** `comfySizesFor` は `conn.Sizes[model]` があればファミリーより先に返すので
-（`comfy.go:430`）、ファミリーが空を返すだけでは運用者が行に書いた候補がそのまま出てしまう。このファミリーは
+（`comfy.go:577`）、ファミリーが空を返すだけでは運用者が行に書いた候補がそのまま出てしまう。このファミリーは
 **行の宣言よりファミリーが勝つ**唯一の例にする——効かない値を選ばせないためであり、理由は本文のこの行に書く。
 - Console 側も同じ穴を持つ: `sizeOptions`（`families.ts:145`）は `familyCard(f)?.sizes ?? DEFAULT_SIZES`
   なので、**ファミリーカードで `sizes` を省くとメガピクセル表が出る**。カードは `sizes: []` を明示し、
@@ -122,8 +124,8 @@ Qwen2.5-VL-7B（`--clip_l` を「唯一のエンコーダ」に使う既存の�
 固定 1）をファミリーごとにする。
 
 🔴 **2 枚目は「宣言」だけでは動かない。経路ごと同じフェーズに入れる。** いまの実装は
-`p.uploadImage(…, req.Inputs[0])`（`comfy.go:710`）で **1 枚しか上げず**、`comfyParams.Image` は
-単数の文字列（`comfy_workflows.go:134`）。`comfyCheckInputs`（`comfy.go:786`）は
+`p.uploadImage(…, req.Inputs[0])`（`comfy.go:1014`）で **1 枚しか上げず**、`comfyParams.Image` は
+単数の文字列（`comfy_workflows.go:134`）。`comfyCheckInputs`（`comfy.go:1092`）は
 `len(req.Inputs) > caps.MaxInputs` しか見ないので、**宣言だけ 2 にすると 2 枚目は検査を通って使われない**
 ——実測 C と同じ「無警告で誤った絵」である。したがって:
 
@@ -133,7 +135,7 @@ Qwen2.5-VL-7B（`--clip_l` を「唯一のエンコーダ」に使う既存の�
   決定 3 が inpaint に対して禁じた推論そのもの（測っていない能力は宣言しない）。P3 で 3 枚を 1 回測る。
 
 ⚠️ **`MaxInputs` はワイヤに載っていない**（`providerStatus` に欄が無く、外に出るのは
-`comfy.go:786` の拒否文だけ）。ペインが枚数の上限を出すには status に欄を足す決定が要る（P3）。
+`comfy.go:1092` の拒否文だけ）。ペインが枚数の上限を出すには status に欄を足す決定が要る（P3）。
 
 ### 決定 6 — ファミリーの単位は**版ではなくトポロジ**。2509 と 2511 は配線が違うので 2 つになる
 
@@ -146,7 +148,7 @@ shift が 3.0 → 3.1 になる（steps / cfg は switch の false 枝＝40 / 4�
 2512 が 2511 と同じ配線で出れば**ファミリーは増えず、行の `params` だけ**で足りる。ファミリーを増やす条件は
 「上流のテンプレートがノードを挿抜している」ことであって、版番号が上がったことではない。
 
-この規則を支える一番強い根拠は props にある: `comfyFamilyFromPrefix`（`props.go:485`）は
+この規則を支える一番強い根拠は props にある: `comfyFamilyFromPrefix`（`props.go:489`）は
 `SaveImage` の `af-<family>` からファミリーを復元するので、**1 ファミリーに 2 トポロジを同居させると、絵がどちらの
 グラフで描かれたか後から言えなくなる**（ADR 0081 決定 3 の「この絵の設定」が嘘になる）。
 
@@ -155,7 +157,7 @@ shift が 3.0 → 3.1 になる（steps / cfg は switch の false 枝＝40 / 4�
   片方だけ版を持つ非対称（`qwen-image-edit` / `…-2511`）は、2512 が 2509 の配線で来た日に意味不明に
   なる。**ファミリー名は「そのトポロジを最初に出した版」を指し、版の別名ではない**——この一文を取り込み UI の
   ファミリーセレクタの説明に出す。
-- ⚠️ **代償: LoRA がファミリーごとに 1 行要る。** `comfyResolveLoras`（`comfy.go:524`）は
+- ⚠️ **代償: LoRA がファミリーごとに 1 行要る。** `comfyResolveLoras`（`comfy.go:647`）は
   `base_model` の完全一致で適合を見るので、Lightning LoRA は 2 ファミリーぶん 2 行の登録になる。
   「Lightning は行に任せる」（却下した案）は、ファミリーが割れた瞬間 1 行では成立しない。
 - 実数: ファミリー 1 つを足すと宣言が **約 12 か所**（`engineComfyFamilies` / `engineComfyRequiredFlags` /
@@ -192,7 +194,7 @@ shift が 3.0 → 3.1 になる（steps / cfg は switch の false 枝＝40 / 4�
 
 **実測（`/system_stats` の生値）**: `vram_total` 23,659,151,360 B ＝ **22,563 MiB**、
 `vram_free` 1,783,934,774 B ＝ 1,701 MiB、したがって **使用 20,862 MiB**。段の 22,000 に収まっている。
-測定条件は **1024²・batch 1・参照画像 1 枚**。`comfyMaxBatch` は 4（`comfy.go:482`）で、**その範囲は
+測定条件は **1024²・batch 1・参照画像 1 枚**。`comfyMaxBatch` は 4（`comfy.go:632`）で、**その範囲は
 測っていない**——参照 2 枚を開ける P3 で測り直す（決定 5）。
 
 見積りの式は**変えない**（テキストエンコーダを引く式は他のファミリーで嘘になる）。では誰が `vram_mib` を書くか:
@@ -237,15 +239,15 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
 嘘になる）。`TextEncodeQwenImageEdit` / `…Plus` を prompt と negative の出所に足し、寸法は
 `SaveImage` に届いた画像から取る。
 
-🟢 ファミリーの復元そのものは追随する: `comfyFamilyFromPrefix`（`props.go:485`）は `comfyFamilies` を回すので、
+🟢 ファミリーの復元そのものは追随する: `comfyFamilyFromPrefix`（`props.go:489`）は `comfyFamilies` を回すので、
 決定 1 でファミリーを足せば自動で読めるようになる。
 
 ### 決定 11 — ファミリーの属性は**判定**に使う。**広告はモデル横断の union** にする
 
 🔴 **これを書かないと決定 2〜5 は「編集した直後から生成が別プロバイダに落ちる」を生む。** 能力を外に
-出す経路は `http.go:206` の `caps := p.Caps("")`＝**warm な既定モデル 1 つ**で、そこから
-`st.Ops`（`http.go:215`）と `st.Strength`（`http.go:223`）が出て、MCP のツール定義（`mcp_stdio.go:1132`
-の `op` enum）とペインの欄になる。さらに `chooseImageProviders`（`imagegen.go:741`）は
+出す経路は `http.go:217` の `caps := p.Caps("")`＝**warm な既定モデル 1 つ**で、そこから
+`st.Ops`（`http.go:227`）と `st.Strength`（`http.go:234`）が出て、MCP のツール定義（`mcp_stdio.go:1132`
+の `op` enum）とペインの欄になる。さらに `chooseImageProviders`（`imagegen.go:775`）は
 `caps(id).Supports(req.Op)` で **provider ごと候補から落とす**ので、qwen の行が warm の間、
 `op=generate` は comfy を候補から外し、**会員の課金プランを持つ provider に落ちる**。
 
@@ -253,9 +255,9 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
 理由までコメントに書いてある。`Ops` / `Strength` / `Sizes` / `MaxInputs` も同じ形にする:
 
 - 🔴 **union を置くのは `comfyProvider.Caps("")` そのもの**——ルート側ではない。`Caps` は
-  `comfy.go:114-116` で空のモデルを `DefaultModel()`＝warm な 1 行に解決するので、**この 1 か所を
-  有効行にわたる union にすると、広告（`http.go:206`）と候補選び（`imagegen.go:806` の `capsOf` →
-  `imagegen.go:741`）の両方が同時に直る**。モデルを名指しした `Caps(model)` はファミリーどおりのまま
+  `comfy.go:121-125` で空のモデルを `DefaultModel()`＝warm な 1 行に解決するので、**この 1 か所を
+  有効行にわたる union にすると、広告（`http.go:217`）と候補選び（`imagegen.go:841` の `capsOf` →
+  `imagegen.go:775`）の両方が同時に直る**。モデルを名指しした `Caps(model)` はファミリーどおりのまま
   ＝判定は厳密なまま。
   ⚠️ **手本にした negative の先例（`http.go:242-247`）はルート側の union なので、同じ形を真似るだけでは
   足りない。** そちらだけ直すと `capsOf` は warm な行のままで、`op=generate` は候補選びの時点で
@@ -263,20 +265,20 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
   ⚠️ **union で正しい面と、per-model が要る面は違う。** MCP のツール定義（`mcp_stdio.go:1132` の
   `op` enum）は**接続時のスナップショット**なので原理的に per-model にできない＝union が正しく、
   モデル固有の拒否は決定 2 の 400 で返すしかない。**ペインは per-model が要る**（決定 12）。
-- **判定（生成時）は `Caps(model)`**——`imagegen.go:806` の `capsOf` は既に `p.Caps(req.Model)` なので、
+- **判定（生成時）は `Caps(model)`**——`imagegen.go:841` の `capsOf` は既に `p.Caps(req.Model)` なので、
   モデルを名指しした要求はそのまま正しい。
 - 🔴 **モデル未指定のときは、comfy のモデル解決が `req.Op` を見る。** union は「候補に残す」までしか
   効かない: `comfy.go:647-656` は `req.Model` が空なら `DefaultModel()`＝warm な 1 行に解決し、
   `!caps.Supports(req.Op)` で `the self-hosted image engine cannot do generate` を返す。`Run` は
-  それを attempts に積んで **`continue`**（`imagegen.go:838-841`）＝**次の provider（会員の課金プラン）へ
-  落ちる**。おまけに `recordUsage`（`imagegen.go:834`）が失敗の行を 1 本刻む。
+  それを attempts に積んで **`continue`**（`imagegen.go:897-899`）＝**次の provider（会員の課金プラン）へ
+  落ちる**。おまけに `recordUsage`（`imagegen.go:893`）が失敗の行を 1 本刻む。
   したがって warm な行のファミリーがその op を名乗らないときは、**名乗る最初の有効な行に落として
-  `comfySwitchWarning`（`comfy.go:633`）を出す**。チェックポイントの切り替えは実測 1〜2.5 分かかるが、
+  `comfySwitchWarning`（`comfy.go:783`）を出す**。チェックポイントの切り替えは実測 1〜2.5 分かかるが、
   黙って別プランに課金するより説明できる。**P0 完了条件 (3) はこれが入って初めて検証できる。**
 
 ### 決定 12 — ファミリーの属性は 6 つ。`cfg` と `negative` を落とすと**嘘の警告**が出る
 
-`comfyFamilyKnobs`（`comfy.go:155`）と `comfyFamilyTakesNegative`（`comfy.go:255`）はファミリーをハードコードで
+`comfyFamilyKnobs`（`comfy.go:277`）と `comfyFamilyTakesNegative`（`comfy.go:387`）はファミリーをハードコードで
 列挙し、**未登録のファミリーは既定に落ちる**。新しいファミリーをここに書き忘れると:
 
 - `comfyFamilyKnobs` は `["steps"]` だけを返し、`comfyIgnoredParamWarnings`（`comfy.go:212`）が
@@ -289,9 +291,9 @@ ADR 0081 の却下一覧「Console から生の ComfyUI グラフを投げさせ
 `negative` は **true**（グラフは負側にも同じ `TextEncodeQwenImageEditPlus` を置く）。
 
 🔴 **per-model の信号を 2 つワイヤに足す。決定 11 の union はこれと対で初めて成立する。** union を
-`Caps("")` に置くと `st.Ops`（`http.go:215`）と `st.Strength`（`http.go:223`）は provider 単位の
+`Caps("")` に置くと `st.Ops`（`http.go:227`）と `st.Strength`（`http.go:234`）は provider 単位の
 「どれか 1 行ができること」になり、**どのモデルにも当てはまらない値**になる。ところが `modelStatus`
-（`http.go:137-165`）には `ops` も `strength` も無く、per-model の線は `Knobs` だけ（定義は
+（`http.go:142-176`）には `ops` も `strength` も無く、per-model の線は `Knobs` だけ（定義は
 「`steps cfg sampler scheduler negative` の部分集合」）。このままでは影響の Console 行が命じている
 2 つ——`jobs.ts:203` の `strength` 無条件送信を止める・`op` 候補を status から引く——が**条件にできる
 信号を持てない**。SDXL と qwen が同居する配備では `strength` は常に true・`ops` は常に 3 種になり、
@@ -311,7 +313,7 @@ qwen を選んでいてもペインは滑り台を出し `generate` を候補に
 
 ### 決定 13 — モデルを名指しした要求は、そのモデルを持つ provider に**固定する**。op が無ければ落とさずに断る
 
-🔴 **決定 3 が開けた扉で、ADR はここを見ていなかった。** `chooseImageProviders`（`imagegen.go:741`）は
+🔴 **決定 3 が開けた扉で、ADR はここを見ていなかった。** `chooseImageProviders`（`imagegen.go:775`）は
 `caps(id).Supports(req.Op)` で候補を絞り、`capsOf` は名指しのとき `p.Caps(req.Model)`＝**厳密**。
 したがって `model=qwen-image-edit-2509` ＋ `op=generate`（provider 未指定）では **comfy が候補選びの
 時点で落ち**、`codexProvider.Caps(string)` / `agyProvider.Caps(string)` は**モデルを見ない**ので
@@ -326,13 +328,15 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
   **モデル名と、そのモデルができる op** を添えて。「名指しは落とさない」は決定 11 の精神そのもので、
   黙って別のプランに課金するより、できない op を名前付きで言うほうが短い。
 - ⚠️ `pref`（provider 名指し）がある要求は今も `chooseImageProviders` の先頭で 1 つに絞られる
-  （`imagegen.go:736-738`）ので、この決定は **auto のときだけ**の話である。
+  （`imagegen.go:776-778`）ので、この決定は **auto のときだけ**の話である。
+  実装後の住所: 固定そのものは `modelOwner`（`imagegen.go:748`）と、それを呼ぶ `Run` の
+  `pref == "" || pref == "auto"` の門（`imagegen.go:858`）。
 
 ## 却下した案
 
 - **既存の edit 経路にそのまま載せる。** 実測 C——既定 0.6 で**無編集の絵**が静かに返る。
 - **1 つのファミリーに 2 トポロジを入れ、行の宣言で切り替える。** 差（参照法ノード・shift）は 4 語の `params`
-  では表現できないうえ、`comfyFamilyFromPrefix`（`props.go:485`）が `af-<family>` からファミリーを復元する
+  では表現できないうえ、`comfyFamilyFromPrefix`（`props.go:489`）が `af-<family>` からファミリーを復元する
   ので、**絵がどちらの配線で描かれたか後から言えなくなる**。宣言で分岐するテンプレートという形自体は
   既に一部ある（`comfyModelTakesNegative` と `comfyFamilyRecipes` は行の `params` で答えが変わる）が、
   それは**数値**の分岐であって配線の分岐ではない。
@@ -358,15 +362,15 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
   （`mcp_stdio.go:1219-1221`）も直す**——union で offer される以上、「0.6 when omitted」だけでは
   エージェントが毎回 400 を踏む。「取らないチェックポイントがあり、そのときは 400 で返る」を書く。
   **P3 の 2 枚目**はここに乗る: `comfyParams` の複数形化（`comfy_workflows.go:134` の `Image string`）・
-  `uploadImage`（`comfy.go:710` は `req.Inputs[0]` の 1 回だけ）の複数回呼び出し・`image2` への配線・
-  `comfyCheckInputs`（`comfy.go:786`）の拒否文の単数形。
+  `uploadImage`（`comfy.go:1014` は `req.Inputs[0]` の 1 回だけ）の複数回呼び出し・`image2` への配線・
+  `comfyCheckInputs`（`comfy.go:1092`）の拒否文の単数形。
 - **ワイヤ**: `modelStatus` に `ops`、`Knobs` に `strength`（決定 12）。Console 側の写しも同時に:
   `wire.ts:35` の `Knob` は**閉じた union**（`"steps" | "cfg" | "sampler" | "scheduler" | "negative"`）
   なので型ごと直さないとコンパイルが通らず、`ImagegenModel`（`wire.ts:86` が `knobs?: Knob[]`）には
   `ops` が無い。🔴 **語彙を書いたコメントが 3 か所ある**——`providerStatus.Strength`
-  （`http.go:108-110`「No union is needed: it is per provider, not per model.」＝決定 2 と 11 が
-  これを嘘にする）・`comfyFamilyKnobs`（`comfy.go:146-154`）・`modelStatus.Knobs`
-  （`http.go:156-159`）。どれも「5 語の部分集合」と書いてあるので、**同じ変更で 3 つとも書き替える**。
+  （`http.go:108-112`「No union is needed: it is per provider, not per model.」＝決定 2 と 11 が
+  これを嘘にする）・`comfyFamilyKnobs`（`comfy.go:267-276`）・`modelStatus.Knobs`
+  （`http.go:161-164`）。どれも「5 語の部分集合」と書いてあるので、**同じ変更で 3 つとも書き替える**。
 - **CP**: `engine_catalog.go`（語彙 2 語・必須フラグ）、`engine_family_parts.go`（部品表）、
   `engine_class.go` は**触らない**（決定 8）。
 - **Console**: `families.ts` にファミリーカード 2 枚（dialect は `sentences`・quality チップ無し・
@@ -376,7 +380,7 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
   編集が毎回 400 になる）、`op` 候補（`draft.ts` の定数 `OPS` を `GenerateForm.tsx:417` が回すだけで
   status の `ops` を見ていない）、`GenerateForm.dom.test.tsx`（`knobs` で欄を落とす試験——`strength`
   と `ops` の分を足す。`knobs` を送らない古い Agent では全部使えるまま、という既存の主張は壊さない）。
-- **拒否の置き場所は 2 か所**（決定 2）: ブロッキングの `/imagegen/generate`（`http.go:450`）と
+- **拒否の置き場所は 2 か所**（決定 2）: ブロッキングの `/imagegen/generate`（`http.go:465`）と
   ペインが使うキュー経路（`jobs_http.go:115`）。どちらも今は値域（0 < s ≤ 1）しか見ていないので、
   **両方に足さないとペインからは 400 ではなく「失敗したジョブ」になる**＝P0 完了条件 (2) が経路に
   よって成立しない。
@@ -474,7 +478,7 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
 - 🔴 **決定 6 の規則は「版ごと」ではなく「トポロジごと」**と書くべきだった。綴りの非対称
   （片方だけ版付き）も、2512 が 2509 の配線で来た日に破綻する。代償（LoRA がファミリーごとに 1 行）も
   書き足した。
-- 🟡 **決定 4 は行の `sizes` と Console の既定表に負けていた**（`comfy.go:430` / `families.ts:145`）。
+- 🟡 **決定 4 は行の `sizes` と Console の既定表に負けていた**（`comfy.go:577` / `families.ts:145`）。
 - 🟡 **決定 9 の引き金「ファミリー 12」は軸が合っていなかった**（編集と無関係なファミリーで発火する）。宣言の
   重複量に変え、中間段（テーブル駆動テンプレート）を候補として書いた。
 - 🟡 **コードの名前 3 つが違った**: `op` の enum は `mcp_imagegen.go` ではなく `mcp_stdio.go:1132`、
@@ -506,7 +510,7 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
 
 - 🔴 **決定 11 の union を「広告」として書いたのは、置き場所を消費者側で定義していた。** 手本にした
   negative の先例はルート側（`http.go:242-247`）の union なので、文字どおり真似ると `capsOf`
-  （`imagegen.go:806`）は warm な行のままで、`op=generate` は**候補選びの時点で** comfy を落とし、
+  （`imagegen.go:841`）は warm な行のままで、`op=generate` は**候補選びの時点で** comfy を落とし、
   3 つ目の箇条（`Generate` 内の op を見た解決）に到達しない。union は
   **`comfyProvider.Caps("")` そのもの**に置く、と関数名で書き直した。1 か所で広告と候補選びの両方が
   直り、名指しの `Caps(model)` は厳密なまま。
@@ -520,12 +524,12 @@ generate を名乗ったまま残る——**会員の ChatGPT / Antigravity プ�
 provider 単位の「どれか 1 行ができること」になり、**どのモデルにも当てはまらない値**になる。ところが
 `modelStatus` には `ops` も `strength` も無いので、ペインは「qwen を選んでいるときだけ滑り台を隠す」を
 書けない。**per-model の信号 2 つ（`Knobs` に `strength`・`modelStatus` に `ops`）を決定 12 に足した**。
-`providerStatus.Strength` のコメント（`http.go:108-110`）が「No union is needed: it is per provider,
+`providerStatus.Strength` のコメント（`http.go:108-112`）が「No union is needed: it is per provider,
 not per model.」と書いており、決定 2 と 11 がそれを嘘にすることも影響に入れた。
 
 🟢 レビュー側が「`Caps("")` を union にして壊れる読み手」を全部当たった結果も記録しておく:
-モデル未指定で `Caps` に来るのは 5 か所（`http.go:206` / `imagegen.go:806` / `:821` / `:856` /
-**`jobs.go:477`**——最後の 1 つはこの ADR が名前を挙げていなかった読み手）。後ろ 2 つは
+モデル未指定で `Caps` に来るのは 5 か所（`http.go:217` / `imagegen.go:841` / `:821` / `:856` /
+**`jobs.go:480`**——最後の 1 つはこの ADR が名前を挙げていなかった読み手）。後ろ 2 つは
 `requestWarnings` に渡るが、comfy は行ごとの警告を自前で出す（`comfy.go:755` / `:758`）ので落ちる
 警告は無い。`comfy.go:654` は解決後の model を渡すので厳密なまま、`http.go:243` は `Caps(m.ID)` で
 per-model のまま。**壊れる読み手は上の 1 件だけ**だった。
@@ -536,9 +540,9 @@ per-model のまま。**壊れる読み手は上の 1 件だけ**だった。
 
 - 🟡 **ワイヤを足すと直る場所がもう 3 つあった**: `wire.ts:35` の `Knob` は閉じた union なので型ごと
   直さないとコンパイルが通らず、`ImagegenModel` に `ops` が無い。語彙を書いたコメントも
-  `comfy.go:146-154` と `http.go:156-159` の 2 つが残っていた（影響に書いていたのは
-  `http.go:108-110` だけ）。
-- 🟡 **決定 2 の 400 は置き場所が 2 か所**（`http.go:450` と `jobs_http.go:115`）。片方だけだと
+  `comfy.go:267-276` と `http.go:161-164` の 2 つが残っていた（影響に書いていたのは
+  `http.go:108-112` だけ）。
+- 🟡 **決定 2 の 400 は置き場所が 2 か所**（`http.go:465` と `jobs_http.go:115`）。片方だけだと
   ペインからは「失敗したジョブ」になり、P0 完了条件 (2) が経路によって成立しない。あわせて
   **「解決後のモデルがこのファミリーのときだけ 400」**（provider 未指定の要求は comfy に来るとは
   限らない）も決定 2 に明記した。
@@ -548,3 +552,20 @@ per-model のまま。**壊れる読み手は上の 1 件だけ**だった。
 尽きている**ことも確認された（size は `modelStatus.Sizes`、negative は `Knobs`、LoRA は
 `loraStatus.baseModel`、seed / aspect ratios / samplers はファミリー非依存、`MaxInputs` は決定 5 の
 ⚠️ で既に P3 送り）。
+
+## P0 の実装（2026-09-20・develop `f57e82dd`）
+
+決定 1〜5・11・12・13 が入った（#773 と #775）。**実機未検証**——完了条件 (1)〜(4) は配備待ち。
+主な継ぎ目の住所だけ残す（P1 以降が最初に読む所）:
+
+- 決定 11 の union は `comfyProvider.capsUnion`（`comfy.go:152`）で、`Caps("")` がそれを返す
+  （`comfy.go:121-125`）。
+- 決定 13 の固定は `modelOwner`（`imagegen.go:748`）と、それを呼ぶ `Run` の門（`imagegen.go:858`）。
+- 決定 2 の断りは `bad_strength_family`（`http.go:479` / `jobs_http.go:124`）＝範囲外の
+  `bad_strength` とは**別の符号**にした。決定 4 の `size` も同じ形（`bad_size_family`）。
+- 400 にできない経路の警告は `comfyStrengthIgnoredWarning`（`comfy.go:825`）。
+- 決定 12 の op 読み替えは Console の純関数 `remappedOp`（`draft.ts:65`）。
+
+実装レビュー（opus・読み取り専用）は 2 巡: 1 巡目 🔴3・🟡5、2 巡目 🔴 0・🟡 4（すべてコード水準で
+実装側に直接渡した）。**ADR が黙っていた穴を 2 件見つけたのはこのレビュー**で、どちらも決定に
+なった——決定 13（名指しモデルが課金 provider に落ちる）と、決定 2 の「400 にできない 1 経路」。

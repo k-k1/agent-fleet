@@ -2,8 +2,10 @@
 
 English | [日本語](0094-instruction-edit-image-models.ja.md)
 
-- Status: **drafted** (2026-09-20). Not built. Every "exists" / "does not exist" claim below was
-  checked by grep on `ae069aaf`.
+- Status: **P0 built** (2026-09-20, develop `f57e82dd` — PRs #773 and #775). **Not verified on real
+  hardware yet.**
+  🔴 The `file:line` references below have been **re-pointed at the tree as built**; they were taken
+  on `ae069aaf` while drafting. Whoever moves those lines in P1 re-points them.
   🟢 **Reviewed before implementation** (2026-09-20, in a separate session). The nine findings are
   folded into the text; what came off is recorded in "What the review took off" at the end.
   🟢 **The graph and the capabilities were MEASURED before this was written** (dev deployment,
@@ -92,10 +94,10 @@ for an edit and nothing happened" the default behaviour**.
   model → family at the edge (`comfyFamilyFor` is in the same package).
 - 🔴 **One route cannot be refused, so the generation side warns there.** A request that names
   neither `model` nor `provider` cannot have its family resolved at the edge, so it reaches comfy
-  and `strength` is dropped by the denoise-1 graph. `requestWarnings` (`imagegen.go:995-1005`) has a
-  `!caps.Strength` branch, but **decision 11's union silences it** (`imagegen.go:856` and
-  `jobs.go:477` both ask `Caps(req.Model)`, which is the union when the model is empty). So put a
-  strength-shaped twin of `comfyNegativeIgnoredWarning` (`comfy.go:293`) on the PROVIDER side, which
+  and `strength` is dropped by the denoise-1 graph. `requestWarnings` (`imagegen.go:1012`) has a
+  `!caps.Strength` branch, but **decision 11's union silences it** (`imagegen.go:915` and
+  `jobs.go:480` both ask `Caps(req.Model)`, which is the union when the model is empty). So put a
+  strength-shaped twin of `comfyNegativeIgnoredWarning` (`comfy.go:432`) on the PROVIDER side, which
   emits into `res.Warnings` when the resolved family does not read it. Without it, run C's "dropped
   with no warning" survives on exactly one route.
 - ADR 0069's rule for adding a word ("is there no way around it for the caller") **points the other
@@ -116,11 +118,11 @@ not one it declares** (the lesson SD3.5 charged us in ADR 0072).
 The output size is `FluxKontextImageScale` picking the nearest entry of
 `PREFERRED_KONTEXT_RESOLUTIONS` by the **input's aspect ratio** (read off the node's v0.35.2 source;
 the five runs went 1024² in → 1024² out, which — being all square — does **not** evidence the ratio
-table). `comfySizesFor` (`comfy.go:429`) answers **empty** for this family, and a `size` that
+table). `comfySizesFor` (`comfy.go:576`) answers **empty** for this family, and a `size` that
 arrives anyway is refused the way decision 2 refuses `strength`.
 
 🔴 **The row's own `sizes` are not honoured either.** `comfySizesFor` returns `conn.Sizes[model]`
-ahead of the family's list (`comfy.go:430`), so an empty family answer alone would still let an
+ahead of the family's list (`comfy.go:577`), so an empty family answer alone would still let an
 operator's declared presets through. This family is the one case where **the family wins over the
 row** — the point is not to offer a value that cannot take effect, and that reason belongs in this
 line of the ADR.
@@ -137,8 +139,8 @@ potted plant from the second picture entered the first scene with its colour and
 Make `Caps.MaxInputs` (fixed at 1, `comfy.go:125`) per family.
 
 🔴 **Declaring 2 does not carry a second image.** Today `p.uploadImage(…, req.Inputs[0])`
-(`comfy.go:710`) uploads **one**, and `comfyParams.Image` is a single string
-(`comfy_workflows.go:134`). `comfyCheckInputs` (`comfy.go:786`) only tests
+(`comfy.go:1014`) uploads **one**, and `comfyParams.Image` is a single string
+(`comfy_workflows.go:134`). `comfyCheckInputs` (`comfy.go:1092`) only tests
 `len(req.Inputs) > caps.MaxInputs`, so raising the number alone lets a second image **pass the check
 and go unused** — run C's failure mode exactly: a wrong picture with no warning. Therefore:
 
@@ -148,7 +150,7 @@ and go unused** — run C's failure mode exactly: a wrong picture with no warnin
   same" is exactly the inference decision 3 forbids for inpaint. Measure three once in P3.
 
 ⚠️ **`MaxInputs` is not on the wire** (`providerStatus` has no field for it; the only place it
-reaches the outside is the refusal at `comfy.go:786`). For the pane to state the limit, P3 has to
+reaches the outside is the refusal at `comfy.go:1092`). For the pane to state the limit, P3 has to
 add the field.
 
 ### Decision 6 — The unit of a family is the **topology, not the version**. 2509 and 2511 are wired differently, so they are two
@@ -162,7 +164,7 @@ from the switch's false branch: 40 and 4). **Rewiring nodes cannot be expressed 
 if 2512 ships with 2511's wiring, **no family is added and the row's `params` suffice**. What adds a
 family is upstream inserting or removing nodes, not a version number going up.
 
-The strongest support for the rule is in props: `comfyFamilyFromPrefix` (`props.go:485`) recovers the
+The strongest support for the rule is in props: `comfyFamilyFromPrefix` (`props.go:489`) recovers the
 family from `SaveImage`'s `af-<family>`, so **two topologies inside one family make it impossible to
 say afterwards which graph drew a picture** (ADR 0081 decision 3's "what this was made from" becomes
 a lie).
@@ -173,7 +175,7 @@ a lie).
   meaningless the day 2512 arrives with 2509's wiring. **A family name points at the version that
   first shipped that topology; it is not an alias for a version** — that sentence goes into the
   ingest UI's family selector.
-- ⚠️ **The cost: one LoRA row per family.** `comfyResolveLoras` (`comfy.go:524`) matches `base_model`
+- ⚠️ **The cost: one LoRA row per family.** `comfyResolveLoras` (`comfy.go:647`) matches `base_model`
   exactly, so the Lightning LoRA has to be registered twice. "Leave Lightning to the row" (rejected,
   below) stops being one row the moment the family splits.
 - The number: one family is about **12 declarations** (`engineComfyFamilies`,
@@ -210,7 +212,7 @@ physical size, and `engine_class.go:41` says why) it always asks for `confirm_vr
 
 **Measured** (`/system_stats`, raw): `vram_total` 23,659,151,360 B = **22,563 MiB**, `vram_free`
 1,783,934,774 B = 1,701 MiB, so **20,862 MiB in use** — inside the rung. The conditions were
-**1024², batch 1, one reference image**. `comfyMaxBatch` is 4 (`comfy.go:482`) and **that range was
+**1024², batch 1, one reference image**. `comfyMaxBatch` is 4 (`comfy.go:632`) and **that range was
 not measured** — re-measure in P3, where the second reference opens (decision 5).
 
 Do **not** change the formula — subtracting a text encoder would be a lie for other families. Who
@@ -264,16 +266,16 @@ an empty size** — the gallery's "what this picture was made from" would lie. A
 `TextEncodeQwenImageEdit` / `…Plus` as a source for both texts, and take the size from the image that
 reached `SaveImage`.
 
-🟢 Recovering the family itself already follows: `comfyFamilyFromPrefix` (`props.go:485`) walks
+🟢 Recovering the family itself already follows: `comfyFamilyFromPrefix` (`props.go:489`) walks
 `comfyFamilies`, so decision 1 makes it readable with no further change.
 
 ### Decision 11 — Family properties decide GENERATION; what is ADVERTISED is a union across the models
 
 🔴 **Without this, decisions 2-5 produce "editing once makes generation fall through to a paid
-provider".** Capabilities leave through `http.go:206`'s `caps := p.Caps("")` — **the warm default
-model, one row** — and from there into `st.Ops` (`http.go:215`), `st.Strength` (`http.go:223`), the
+provider".** Capabilities leave through `http.go:217`'s `caps := p.Caps("")` — **the warm default
+model, one row** — and from there into `st.Ops` (`http.go:227`), `st.Strength` (`http.go:234`), the
 MCP tool definition (`mcp_stdio.go:1132`'s `op` enum) and the pane's fields. Worse,
-`chooseImageProviders` (`imagegen.go:741`) drops a **whole provider** on
+`chooseImageProviders` (`imagegen.go:775`) drops a **whole provider** on
 `caps(id).Supports(req.Op)`, so while a qwen row is warm, `op=generate` takes comfy out of the
 candidates and lands on a provider that spends a member's plan.
 
@@ -282,9 +284,9 @@ The same trap was already hit with `negative_prompt` and fixed with a **union ac
 the same shape:
 
 - 🔴 **The union goes inside `comfyProvider.Caps("")` itself**, not in the route. `Caps` resolves an
-  empty model to `DefaultModel()` — the warm row — at `comfy.go:114-116`, so **making that one answer
-  a union over the enabled rows fixes both the advertising (`http.go:206`) and the candidate filter
-  (`imagegen.go:806`'s `capsOf` → `imagegen.go:741`) at once**. `Caps(model)` for a named model stays
+  empty model to `DefaultModel()` — the warm row — at `comfy.go:121-125`, so **making that one answer
+  a union over the enabled rows fixes both the advertising (`http.go:217`) and the candidate filter
+  (`imagegen.go:841`'s `capsOf` → `imagegen.go:775`) at once**. `Caps(model)` for a named model stays
   exactly the family's answer, so judging stays strict.
   ⚠️ **The negative precedent (`http.go:242-247`) unions in the ROUTE, and copying that shape alone is
   not enough**: `capsOf` would still see the warm row, `op=generate` would drop comfy at the
@@ -294,22 +296,22 @@ the same shape:
   (`mcp_stdio.go:1132`'s `op` enum) is a **connect-time snapshot** and cannot be per model at all, so
   a union is correct there and a model-specific refusal can only be decision 2's 400. **The pane
   needs per-model** (decision 12).
-- **Judging** (at generation) is `Caps(model)` — `imagegen.go:806`'s `capsOf` already asks
+- **Judging** (at generation) is `Caps(model)` — `imagegen.go:841`'s `capsOf` already asks
   `p.Caps(req.Model)`, so a request that names a model is already right.
 - 🔴 **With no model named, comfy's own model resolution has to read `req.Op`.** The union only
   keeps the provider in the candidates: `comfy.go:647-656` resolves an empty `req.Model` to
   `DefaultModel()` — the warm row — and answers `the self-hosted image engine cannot do generate`
   on `!caps.Supports(req.Op)`. `Run` files that under attempts and **`continue`s**
-  (`imagegen.go:838-841`), i.e. **falls through to the next provider, which spends a member's
-  plan**, and `recordUsage` (`imagegen.go:834`) writes a failed row on the way. So when the warm
+  (`imagegen.go:897-899`), i.e. **falls through to the next provider, which spends a member's
+  plan**, and `recordUsage` (`imagegen.go:893`) writes a failed row on the way. So when the warm
   row's family does not claim the op, resolve to **the first enabled row that does** and say so
-  with `comfySwitchWarning` (`comfy.go:633`). A checkpoint switch costs 1-2.5 minutes (measured),
+  with `comfySwitchWarning` (`comfy.go:783`). A checkpoint switch costs 1-2.5 minutes (measured),
   which is explainable; silently billing another plan is not. **P0's third criterion is only
   testable once this exists.**
 
 ### Decision 12 — There are SIX per-family properties. Dropping `cfg` and `negative` produces a false warning
 
-`comfyFamilyKnobs` (`comfy.go:155`) and `comfyFamilyTakesNegative` (`comfy.go:255`) enumerate
+`comfyFamilyKnobs` (`comfy.go:277`) and `comfyFamilyTakesNegative` (`comfy.go:387`) enumerate
 families in a hard-coded switch, and **an unregistered family falls to the default**. Forgetting a new
 family there means:
 
@@ -324,9 +326,9 @@ So the per-family set is **six**, not four: `Ops`, `MaxInputs`, `Strength`, `Siz
 **true** (its graph puts the same `TextEncodeQwenImageEditPlus` on the negative branch).
 
 🔴 **Two per-model fields go on the wire; decision 11's union only works paired with them.** With the
-union inside `Caps("")`, `st.Ops` (`http.go:215`) and `st.Strength` (`http.go:223`) become
+union inside `Caps("")`, `st.Ops` (`http.go:227`) and `st.Strength` (`http.go:234`) become
 provider-level "some row here can do this" — **true of no particular model**. But `modelStatus`
-(`http.go:137-165`) carries neither `ops` nor `strength`; its only per-model line is `Knobs`, defined
+(`http.go:142-176`) carries neither `ops` nor `strength`; its only per-model line is `Knobs`, defined
 as a subset of `steps cfg sampler scheduler negative`. So the two things the Console line below
 requires — stop `jobs.ts:203` sending `strength` unconditionally, take the `op` choices from the
 status — **have no signal to condition on**. On a deployment holding SDXL next to qwen, `strength`
@@ -347,7 +349,7 @@ would always be true and `ops` always three, so the pane would keep showing a sl
 ### Decision 13 — A named model PINS the provider that lists it; if it has no such op, refuse instead of falling through
 
 🔴 **Decision 3 opened this door and the ADR had not looked at it.** `chooseImageProviders`
-(`imagegen.go:741`) filters candidates on `caps(id).Supports(req.Op)`, and `capsOf` asks
+(`imagegen.go:775`) filters candidates on `caps(id).Supports(req.Op)`, and `capsOf` asks
 `p.Caps(req.Model)` — strict when a model is named. So `model=qwen-image-edit-2509` with
 `op=generate` and no provider named **drops comfy at the candidate filter**, while
 `codexProvider.Caps(string)` and `agyProvider.Caps(string)` **ignore the model** and go on claiming
@@ -363,7 +365,9 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   request is not dropped" is decision 11's own spirit, and saying which ops exist is shorter than
   silently billing another plan.
 - ⚠️ A request that names a `pref` is already collapsed to one provider at the top of
-  `chooseImageProviders` (`imagegen.go:736-738`), so this decision is about **auto only**.
+  `chooseImageProviders` (`imagegen.go:776-778`), so this decision is about **auto only**. As built,
+  the pin itself is `modelOwner` (`imagegen.go:748`) and the gate that calls it is `Run`'s
+  `pref == "" || pref == "auto"` (`imagegen.go:858`).
 
 ## Rejected
 
@@ -371,7 +375,7 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   **unedited** picture.
 - **One family holding two topologies, switched by a declaration.** The difference (reference-method
   node, shift) cannot be expressed by four words of `params`, and `comfyFamilyFromPrefix`
-  (`props.go:485`) recovers the family from `af-<family>`, so **which wiring drew a picture becomes
+  (`props.go:489`) recovers the family from `af-<family>`, so **which wiring drew a picture becomes
   unanswerable**. Templates that branch on a declaration do exist (`comfyModelTakesNegative` and
   `comfyFamilyRecipes` change with a row's `params`) — but those branch on NUMBERS, not on wiring.
 - **Removing `FluxKontextImageScale` to honour `size`.** The output size becomes free, but leaves
@@ -398,16 +402,16 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   `images`, `maxItems` 5). 🔴 **`strength`'s description (`mcp_stdio.go:1219-1221`) is rewritten
   too**: it is offered on the union, so "0.6 when omitted" alone walks an agent into a 400 every
   time — it has to say that some checkpoints refuse it, and that the answer is a 400. **P3's second image lands here too**: make `comfyParams` plural
-  (`comfy_workflows.go:134`'s `Image string`), call `uploadImage` more than once (`comfy.go:710`
+  (`comfy_workflows.go:134`'s `Image string`), call `uploadImage` more than once (`comfy.go:1014`
   takes `req.Inputs[0]` alone), wire `image2`, and fix the singular wording of `comfyCheckInputs`'
-  refusal (`comfy.go:786`).
+  refusal (`comfy.go:1092`).
 - **Wire**: `ops` on `modelStatus`, `strength` in `Knobs` (decision 12), and the Console's mirror of
   both: `wire.ts:35`'s `Knob` is a **closed union**
   (`"steps" | "cfg" | "sampler" | "scheduler" | "negative"`), so it will not compile until the type
   changes, and `ImagegenModel` (`wire.ts:86`, `knobs?: Knob[]`) has no `ops`. 🔴 **Three comments
-  spell that vocabulary out** — `providerStatus.Strength` (`http.go:108-110`, "No union is needed:
+  spell that vocabulary out** — `providerStatus.Strength` (`http.go:108-112`, "No union is needed:
   it is per provider, not per model", which decisions 2 and 11 make false), `comfyFamilyKnobs`
-  (`comfy.go:146-154`) and `modelStatus.Knobs` (`http.go:156-159`). All three say "a subset of those
+  (`comfy.go:267-276`) and `modelStatus.Knobs` (`http.go:161-164`). All three say "a subset of those
   five words", so **the same change rewrites all three**.
 - **CP**: `engine_catalog.go` (two words, required flags), `engine_family_parts.go` (the table), and
   `engine_class.go` is **left alone** (decision 8).
@@ -418,7 +422,7 @@ counts only providers that were tried and failed, so **nothing is said**. Before
   status's `ops`), and `GenerateForm.dom.test.tsx` (the test that greys fields out on `knobs` —
   extend it for `strength` and `ops`, without breaking its other claim: an ABSENT `knobs` leaves the
   whole form usable).
-- **The refusal has two homes** (decision 2): the blocking `/imagegen/generate` (`http.go:450`) and
+- **The refusal has two homes** (decision 2): the blocking `/imagegen/generate` (`http.go:465`) and
   the queue route the pane uses (`jobs_http.go:115`). Both check the RANGE (0 < s ≤ 1) today, so
   **adding it to only one leaves the pane with a failed job instead of a 400** — and P0's second
   criterion would hold on one route and not the other.
@@ -522,7 +526,7 @@ came off was the REACH of the decisions, and three names in the code.
   (one with a version, one without) breaks the day 2512 arrives with 2509's wiring. Its cost (one
   LoRA row per family) is now stated.
 - 🟡 **Decision 4 was losing to the row's `sizes` and to the Console's default list**
-  (`comfy.go:430`, `families.ts:145`).
+  (`comfy.go:577`, `families.ts:145`).
 - 🟡 **Decision 9's "past 12 families" trigger measured the wrong thing** (families unrelated to
   editing would fire it). It now counts duplication, and names the table-driven middle step.
 - 🟡 **Three names were wrong**: the `op` enum is in `mcp_stdio.go:1132`, not `mcp_imagegen.go`; the
@@ -560,7 +564,7 @@ One 🔴 left, and it was **where the union goes**.
 
 - 🔴 **Calling decision 11's union "advertising" defined it by its consumers.** The negative
   precedent it cited unions in the ROUTE (`http.go:242-247`), so copying that shape leaves `capsOf`
-  (`imagegen.go:806`) looking at the warm row: `op=generate` drops comfy **at the candidate filter**
+  (`imagegen.go:841`) looking at the warm row: `op=generate` drops comfy **at the candidate filter**
   and never reaches the third bullet (the op-aware resolution inside `Generate`). It now names the
   function — the union lives in **`comfyProvider.Caps("")`** — which fixes advertising and candidate
   selection in one place while `Caps(model)` stays strict.
@@ -575,11 +579,11 @@ One 🔴, and it was **the union's price**. With `Caps("")` unioned, `st.Ops` an
 provider-level "some row can do this" — **true of no particular model** — while `modelStatus` carries
 neither, so the pane cannot write "hide the slider only while qwen is selected". **Two per-model
 fields were added to decision 12** (`strength` in `Knobs`, `ops` on `modelStatus`), together with the
-comment rewrite: `providerStatus.Strength` (`http.go:108-110`) still claims "No union is needed: it is
+comment rewrite: `providerStatus.Strength` (`http.go:108-112`) still claims "No union is needed: it is
 per provider, not per model", which decisions 2 and 11 make false.
 
 🟢 The review's sweep of "what else reads `Caps("")`" is worth recording: five call sites take an
-unnamed model (`http.go:206`, `imagegen.go:806`, `:821`, `:856` and **`jobs.go:477`** — the last one
+unnamed model (`http.go:217`, `imagegen.go:841`, `:821`, `:856` and **`jobs.go:480`** — the last one
 this ADR had never named). The last two feed `requestWarnings`, and comfy emits its per-row warnings
 itself (`comfy.go:755`, `:758`), so no warning is lost. `comfy.go:654` passes the resolved model, so
 judging stays strict, and `http.go:243` already asks `Caps(m.ID)`. **Nothing else breaks.**
@@ -591,9 +595,9 @@ fixed.
 
 - 🟡 **Adding a wire field touches three more places**: `wire.ts:35`'s `Knob` is a closed union (it
   will not compile until the type changes) and `ImagegenModel` has no `ops`; and two more comments
-  spell the same vocabulary out (`comfy.go:146-154`, `http.go:156-159`) where the consequences named
-  only `http.go:108-110`.
-- 🟡 **Decision 2's 400 has two homes** (`http.go:450`, `jobs_http.go:115`). With only one, the pane
+  spell the same vocabulary out (`comfy.go:267-276`, `http.go:161-164`) where the consequences named
+  only `http.go:108-112`.
+- 🟡 **Decision 2's 400 has two homes** (`http.go:465`, `jobs_http.go:115`). With only one, the pane
   gets a failed job instead of a refusal and P0's second criterion holds on one route only. Decision
   2 also now says the refusal applies **only when the resolved model is of this family** — a request
   naming no provider may not land on comfy at all.
@@ -603,3 +607,24 @@ fixed.
 `strength` and nothing else** (size is already `modelStatus.Sizes`, negative rides `Knobs`, LoRA has
 `loraStatus.baseModel`, seed / aspect ratios / samplers are family-independent, and `MaxInputs` is
 already deferred to P3 by decision 5's ⚠️).
+
+## What P0 built (2026-09-20, develop `f57e82dd`)
+
+Decisions 1-5, 11, 12 and 13 landed (#773 and #775). **Not verified on hardware** — completion
+criteria (1)-(4) wait for a deployment. The seams worth knowing, for whoever picks up P1:
+
+- Decision 11's union is `comfyProvider.capsUnion` (`comfy.go:152`), returned by `Caps("")`
+  (`comfy.go:121-125`).
+- Decision 13's pin is `modelOwner` (`imagegen.go:748`) and the gate in `Run` that calls it
+  (`imagegen.go:858`).
+- Decision 2's refusal is `bad_strength_family` (`http.go:479`, `jobs_http.go:124`) — a **separate
+  code** from the out-of-range `bad_strength`, and decision 4's size refusal has the same shape
+  (`bad_size_family`).
+- The warning for the route that cannot be refused is `comfyStrengthIgnoredWarning`
+  (`comfy.go:825`).
+- Decision 12's op re-read is the Console's pure `remappedOp` (`draft.ts:65`).
+
+The implementation review (opus, read-only) ran twice: 🔴3 / 🟡5, then 🔴0 / 🟡4 (all code-level and
+handed straight to the implementer). **Two holes the ADR was silent about came out of that review**,
+and both became decisions: 13 (a named model falling through to a paid provider) and decision 2's
+"one route that cannot be refused".
