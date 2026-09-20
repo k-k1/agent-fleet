@@ -1064,7 +1064,13 @@ func (g engineGateway) streamed(w http.ResponseWriter, r *http.Request, eng *eng
 	flusher.Flush()
 
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(r.Context(), engineWakeTimeout())
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if f := engineMakeWakeContext; f != nil {
+		ctx, cancel = f()
+	} else {
+		ctx, cancel = context.WithTimeout(r.Context(), engineWakeTimeout())
+	}
 	defer cancel()
 	ch := make(chan upstreamStart, 1)
 	go func() { ch <- g.dialThroughWaking(ctx, eng, r, body, claims) }()
@@ -1267,6 +1273,18 @@ var (
 	engineStreamWakingCap   = 30 * time.Second
 )
 
+// onEngineWakingSaved is nil at runtime. When set by a test, it is called in
+// dialThroughWaking right after the far refusal body is captured and before the retry
+// wait begins — the exact moment to cancel the budget context and guarantee that
+// ctx.Done() carries the far sentence. Never written outside tests.
+var onEngineWakingSaved func()
+
+// engineMakeWakeContext is nil at runtime. When set by a test, streamed calls it to build
+// the wake budget context instead of context.WithTimeout(r.Context(), ...). This keeps the
+// budget context separate from r.Context(), so cancelling the budget does not also trip
+// the "client hung up" case in the select loop. Never written outside tests.
+var engineMakeWakeContext func() (context.Context, context.CancelFunc)
+
 // dialThroughWaking is dial, plus the one retry this path can afford: an upstream answering
 // `engine_waking` is not a failure, it is the word "again".
 //
@@ -1301,6 +1319,9 @@ func (g engineGateway) dialThroughWaking(ctx context.Context, eng *engineRuntime
 		said := strings.TrimSpace(string(start.first))
 		start.resp.Body.Close()
 		wait := engineUpstreamRetryAfter(start.resp)
+		if f := onEngineWakingSaved; f != nil {
+			f()
+		}
 		if attempt == 1 {
 			// Once per held request, not once per attempt: this repeats every few seconds for
 			// as long as the far sync takes, and the far side logs its own side of it already.

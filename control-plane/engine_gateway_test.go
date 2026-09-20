@@ -310,7 +310,24 @@ func TestEngineStreamCarriesTheFarRefusalWhenTheBudgetRunsOut(t *testing.T) {
 
 	defer setEngineHeartbeat(t, 20*time.Millisecond)()
 	defer setEngineStreamWakingBounds(t, 10*time.Millisecond)()
-	t.Setenv("AF_ENGINE_WAKE_TIMEOUT", "1")
+
+	// Decouple the budget context from r.Context() so that cancelling the budget does not
+	// also trip streamed's "client hung up" path before the error is written to the response.
+	wakeCtx, wakeCancel := context.WithCancel(context.Background())
+	defer wakeCancel()
+	engineMakeWakeContext = func() (context.Context, context.CancelFunc) { return wakeCtx, wakeCancel }
+	defer func() { engineMakeWakeContext = nil }()
+
+	// Cancel the budget after two waking responses have been fully read, at the exact moment
+	// said is in scope so ctx.Done() carries the far sentence into the error.
+	var attempts int
+	onEngineWakingSaved = func() {
+		attempts++
+		if attempts >= 2 {
+			wakeCancel()
+		}
+	}
+	defer func() { onEngineWakingSaved = nil }()
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/engine/llm/v1/chat/completions", strings.NewReader("{}"))
