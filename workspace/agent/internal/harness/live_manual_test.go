@@ -150,10 +150,20 @@ func TestManualLiveCompaction(t *testing.T) {
 //
 // Env: AF_LCPP_LIVE_BASE / AF_LCPP_LIVE_TOKEN (same as TestManualLiveCompaction),
 // AF_LCPP_LIVE_MODEL (catalogue id), AF_LCPP_LIVE_CWD (a pre-seeded scratch Go project — this
-// test does not create one, so a family/model comparison can each get an untouched copy), and
-// optionally AF_LCPP_LIVE_WINDOW (default 3500 — deliberately far below the real window so
-// decision 7's compaction judgement actually fires within the turn budget below, matching
-// TestManualLiveCompaction's own reasoning for using a small forced window).
+// test does not create one, so a family/model comparison can each get an untouched copy; a
+// ready-to-copy seed lives at testdata/liveproject — see its own doc comment below for how to
+// get a fresh, per-run copy into AF_LCPP_LIVE_CWD), optionally AF_LCPP_LIVE_WINDOW (default
+// 3500 — deliberately far below the real window so decision 7's compaction judgement actually
+// fires within the turn budget below, matching TestManualLiveCompaction's own reasoning for
+// using a small forced window), and optionally AF_LCPP_LIVE_PARALLEL (default unset, meaning
+// parallel tool calls ARE requested — set to "0" to drop the same-turn/parallel wording from
+// the system prompt and task-0, for families whose tool-call format has no syntax for more
+// than one call per turn; see liveAgenticSystemPrompt/liveAgenticTaskZero in live_prompt.go).
+//
+// testdata/liveproject is a fresh copy for each run, never the one this test itself creates:
+//
+//	cp -r internal/harness/testdata/liveproject "$HOME/lcpp-live/run-<name>"
+//	export AF_LCPP_LIVE_CWD="$HOME/lcpp-live/run-<name>"
 func TestManualLiveAgenticSession(t *testing.T) {
 	base := os.Getenv("AF_LCPP_LIVE_BASE")
 	token := os.Getenv("AF_LCPP_LIVE_TOKEN")
@@ -175,21 +185,11 @@ func TestManualLiveAgenticSession(t *testing.T) {
 	reg := NewRegistry(BuiltinTools()...)
 	rt := &Runtime{Cwd: cwd, Approve: AutoApprove, MaxOutputBytes: 8000}
 
-	sys := "You are a careful coding agent working in a real Go project at " + cwd + ". " +
-		"You have read/write/edit/glob/grep/ls/bash tools and a todo_write tool. " +
-		"Use todo_write to track multi-step work. When a step lets you look at several " +
-		"independent things at once (e.g. reading multiple files), issue those tool calls " +
-		"in the SAME turn rather than one at a time. Always verify your work by actually " +
-		"running `go build ./...` and `go test ./...` with the bash tool before declaring " +
-		"something fixed — do not just claim success without having run it."
+	parallel := liveParallelEnabled()
+	sys := liveAgenticSystemPrompt(cwd, parallel)
 
 	tasks := []string{
-		"This Go project currently fails `go build ./...` and, once it builds, has failing " +
-			"tests under `go test ./...` because of real bugs. Start by reading every .go file " +
-			"under this directory (in parallel — one tool call per file, all in the same turn) " +
-			"to see the whole project before changing anything. Then find and fix every bug so " +
-			"that both `go build ./...` and `go test ./...` succeed. Use todo_write to track " +
-			"each bug as you find and fix it.",
+		liveAgenticTaskZero(parallel),
 		"Now add two new exported functions to the mathutil package: `Max(nums []int) (int, " +
 			"error)` and `Min(nums []int) (int, error)`, each returning an error for an empty " +
 			"slice. Add table-driven tests for both, including the empty-slice case. Run `go " +
