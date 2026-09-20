@@ -788,3 +788,288 @@ A-4 の限界（ファイル本体はダウンロード禁止）は保ったま�
   切り分け不能もこれと同じ限界に由来する。
 - 実測の生ログは `$HOME/lcpp-live/`（セッション外からは見えない）にある。
 
+## 13. Qwen3 以外の族の候補（2026-09-20・取り込み前）
+
+門 (a) の実測が Qwen3 系 1 族（`qwen3.8-27b-uncensored`・`qwen3.6-35b-a3b`・`qwen3-coder-30b-a3b`）に
+偏っている弱点を埋めるため、**Qwen3 系以外**で測る価値のある候補を選ぶ。**エンジンには 1 回も触っていない**
+（GPU 課金なし）。読んだのは (1) GitHub の `ggml-org/llama.cpp`（§12.3 で確定した配備中の版 `465e49b9c`
+そのもの）と (2) HF の 2 つの**メタデータ API**——`GET /api/models/{repo}?expand[]=gguf`（GGUF ヘッダから
+`architecture`・`context_length`・GGUF に**実際に焼かれた** `chat_template`・`total`（総パラメータ数）・
+`totalFileSize` を返す。ファイル本体は返さない）と `GET /api/models/{repo}/tree/main`（ファイル一覧とバイト数。
+同じくファイル本体には触れない）——と (3) 配布元モデルの `config.json`（safetensors 版の設定ファイル、数 KB。
+GGUF ではない）だけ。**GGUF ファイル本体は 1 バイトも取得していない**（レンジ GET も含め、しなかった）。
+
+### 13.1 母集団 — `common_chat_try_specialized_template` の全分岐（`common/chat.cpp:3482-3605`、465e49b9c）
+
+`gh api repos/ggml-org/llama.cpp/contents/common/chat.cpp?ref=465e49b9c` で取得した実物を読んだ。分岐は
+**モデル名ではなく、GGUF に焼かれたテンプレ本体（`src`）の部分一致**で行われる。全 15 分岐（Qwen3 系含む）:
+
+| # | 族 | `chat.cpp` 行 | 一致に使う文字列 | 初期化関数 |
+|---|---|---|---|---|
+| 1 | Ministral / Magistral Large 3 | 3488-3491 | `[SYSTEM_PROMPT]` ∧ `[TOOL_CALLS]` ∧ `[ARGS]` ∧ ¬`[CALL_ID]` | `common_chat_params_init_ministral_3` |
+| 2 | GPT-OSS | 3495-3497 | `<\|channel\|>` | `common_chat_params_init_gpt_oss` |
+| 3 | Muse Glimmer | 3501-3503 | `<atem:function_calls>` ∧ `<\|eom\|>` | `common_chat_params_init_muse_glimmer` |
+| 4 | Functionary v3.2 | 3508-3510 | `>>>all` ∧ `` >>>${recipient} `` | `common_chat_params_init_functionary_v3_2` |
+| 5 | Kimi K2 Thinking | 3515-3518 | `<\|tool_calls_section_begin\|>` ∧ `<\|tool_call_begin\|>` | `common_chat_params_init_kimi_k2` |
+| 6 | Kimi K3 | 3522-3525 | `<\|open\|>` ∧ `<\|close\|>` ∧ `<\|end_of_msg\|>` | `common_chat_params_init_kimi_k3` |
+| 7 | Cohere2 MoE / North Code | 3531-3534 | `<\|START_TEXT\|>` ∧ `<\|START_ACTION\|>` | `common_chat_params_init_cohere2moe` |
+| 8 | LFM2 | 3537-3539（判定は `is_lfm2_template`, 722-725） | `<\|tool_list_start\|>` ∧ `<\|tool_list_end\|>` | `common_chat_params_init_lfm2(…,true)` |
+| 9 | LFM2.5 | 3543-3546 | `List of tools: [` ∧ ¬`<\|tool_list_start\|>` | `common_chat_params_init_lfm2(…,false)` |
+| 10 | GigaChat V3 | 3550-3554 | `<\|role_sep\|>` ∧ `<\|message_sep\|>` ∧ ¬`<\|function_call\|>` | `common_chat_params_init_gigachat_v3` |
+| 11 | MiniMax-M3 | 3559-3563 | `]<]minimax[>[` ∧ `<tool_call>` ∧ `<invoke name=` | `common_chat_params_init_minimax_m3` |
+| 12 | DeepSeek V3.2/V4 | 3569-3574 | `dsml_token` ∧ `DSML` ∧ (`function_calls` ∨ `tool_calls`) | `common_chat_params_init_deepseek_v3_2` |
+| 13 | Gemma4 | 3578-3585 | `` '<\|tool_call>call:' `` | `common_chat_params_init_gemma4` |
+| 14 | MiniCPM5 | 3589-3593 | `Tool usage guidelines:` ∧ `<function name="` ∧ `<param name="` | `common_chat_params_init_minicpm5` |
+| 15 | Qwen3-Coder（Nemotron Nano 3・Qwen3.5・StepFun-3.5-Flash も同じ経路、§12.1 既知） | 3597-3601 | `<tool_call>` ∧ `<function=` ∧ `<parameter=` | `common_chat_params_init_qwen3_coder` |
+
+⚠️ **§12.4 A-2 の一覧との差分**: 前回セッションの要約（本書 672-674 行）は「Ministral/Magistral・GPT-OSS・Muse
+Glimmer・Functionary v3.2・Kimi K2/K3・Cohere2 MoE・LFM2/LFM2.5・GigaChat V3・MiniMax-M3・DeepSeek
+V3.2/V4・MiniCPM5・Qwen3-Coder」と書いており、**Gemma4（#13、3578-3585 行）が抜けている**。実物の再列挙で見つけた
+だけで、§12 の記述は書き換えていない（指示どおり）。
+
+いずれの関数も呼び出し直後に `inputs.tools` の有無で `has_tools`/`include_grammar` を分岐させている
+（実装を確認した 5 関数のみ記載: `gemma4` 1553,1555 行・`functionary_v3_2` 1683,1684,1706,1713 行・
+`lfm2` 1942,1947 行・`ministral_3` 1071 行・`gpt_oss` は 1351 行で `tool_calls` を明示的に扱う）——
+「テンプレに `tools` ループがある」だけでなく「パーサ自身が tools を分岐条件にしている」ところまで確認できた。
+
+全 15 族が llama.cpp 本体に実装として存在することも確認済み（`src/llama-arch.cpp:465e49b9c`、
+`gh api repos/ggml-org/llama.cpp/contents/src/llama-arch.cpp?ref=465e49b9c`）: `LLM_ARCH_LLAMA`("llama", 10行)・
+`LLM_ARCH_GEMMA4`("gemma4", 59行)・`LLM_ARCH_OPENAI_MOE`("gpt-oss", 126行)・`LLM_ARCH_LFM2MOE`("lfm2moe", 128行)・
+`LLM_ARCH_MISTRAL3`("mistral3", 142行) ——テンプレ分岐だけでなく実行本体も配備版に入っている。
+
+### 13.2 絞り込み — 除外した族とその理由
+
+- **VRAM で除外**（L4 24GB に載らない・重み ≲18GB の目安を大きく超える巨大 MoE）: Kimi K2/K3（1T 級）・
+  DeepSeek V3.2/V4（671B〜）・MiniMax-M3・GigaChat V3・Cohere2 MoE（Command A 系は 100B 超）。ファイルサイズは
+  個別に確認していない（サイズを見るまでもなく総パラメータ数の桁が違う——HF の `total` を見ればどれも
+  100B〜1T パラメータ級であることはモデルカードの記載から明らか。**分からなかった**、ではなく「見るまでも
+  ない」という判断であることを明記する）。
+- **同じパーサ経路を通るので後回し**: Nemotron Nano 3・Qwen3.5・StepFun-3.5-Flash は #15 の
+  `common_chat_params_init_qwen3_coder` を Qwen3-Coder と共有する（§12.1 既知）。パーサは同じでも
+  **モデルの癖は別**（§12.1 の結論どおり）なので理論上は候補になり得るが、既に qwen3-coder で
+  「形式は合格・運用は 162 ターンに膨張」という実測が 1 件あるので、**同じ経路の別モデルを測る優先度は
+  低いと判断し、今回の 5 本には含めない**（測ることを禁じる理由ではない）。
+- **Muse Glimmer**: 分岐名こそ紛らわしいが `agent-fleet` 独自の `muse` kind（[[muse-agent-kind-adr0095]]）とは
+  無関係の、llama.cpp 上流が命名した別のモデル族。配布元・GGUF の所在を確認する時間を割かず見送った
+  （**分からなかった**、のうち「時間の都合で調べていない」に該当。断定はしない）。
+- **MiniCPM5**: OpenBMB の小型モデル（HF 検索で 1B/2B 級が見つかる）。個体としては魅力的だが、既存候補が
+  性格の異なる 5 本（後述）で揃ったため、今回は候補表に含めなかった（除外の理由は「サイズが合わない」
+  ではなく単に手が回らなかったこと）。
+
+残った中から、**tool call 対応・L4 24GB 適合（重み ≲18GB）・GGUF 公開・性格の分散**を満たす 5 本を選んだ。
+
+### 13.3 候補表（測る価値の順）
+
+| # | 族・モデル名 | `chat.cpp` の根拠 | HF リポジトリ | ファイル | サイズ・量子化 | VRAM 見積り | tool call の根拠 | 懸念 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | **GPT-OSS-20B**（MoE, OpenAI, 2025 公開） | #2・`<\|channel\|>` | `ggml-org/gpt-oss-20b-GGUF`（llama.cpp 公式変換） | `gpt-oss-20b-MXFP4.gguf`（単一ファイル） | 12,109,566,624 B（**11.28 GiB**）・ネイティブ MXFP4（OpenAI 自身の量子化、下位量子化版なし） | 重み 11.28 + KV(ctx=3500) 0.08 ≈ **11.36 GiB**（§13.4） | GGUF 埋め込みテンプレに `tool_calls` ループ実在（`render_tool_namespace`）。`gpt_oss` パーサは `tool_calls` を明示処理（1351 行） | ライセンス Apache-2.0・非 gated（実測）。24 層中 12 層だけが `full_attention`（残りは `sliding_attention`、窓 128）——本リポジトリの VRAM 見積り機構（後述）がこの型を認識するかは未確認 |
+| 2 | **gemma-4-12b-it**（Google, dense） | #13・`'<\|tool_call>call:'` | `unsloth/gemma-4-12b-it-GGUF`（公式 `google/gemma-4-12B-it` 系列） | `gemma-4-12b-it-Q4_K_M.gguf`（単一ファイル） | 7,121,861,440 B（**6.63 GiB**） | 重み 6.63 + KV(3500) 0.37 ≈ **7.00 GiB** | テンプレが `message.get('tool_calls')` をループし `<\|tool_call>call:name{...}` を生成（実物引用済み・§13.4） | ライセンス: 公式 `google/gemma-4-12B-it` の HF タグは `apache-2.0`・非 gated（実測、2026-09-20）——旧世代 Gemma の Google 独自利用規約とは違う値なので、モデルカード本文で再確認を勧める（タグだけで断定しない）。48 層中 8 層のみ `full_attention`（残り `sliding_attention`、窓 1024）で、しかも global/local で **KV ヘッド数・head_dim が違う**（後述） |
+| 3 | **LFM2.5-8B-A1B**（Liquid AI, MoE, 総 8.47B/アクティブ ~1B） | #9・`List of tools: [` ∧ ¬`<\|tool_list_start\|>` | `LiquidAI/LFM2.5-8B-A1B-GGUF`（公式） | `LFM2.5-8B-A1B-Q4_K_M.gguf`（単一ファイル） | 5,155,564,768 B（**4.80 GiB**） | 重み 4.80 + KV(3500) 0.04 ≈ **4.84 GiB** | テンプレに `List of tools:` ブロックとツールループが実在（マーカー実測。関数本体までは未確認） | ライセンス **LFM Open License v1.0**（`license:other`、実測でライセンス全文取得）——商用利用は年商 **$10,000,000 未満**の法人/個人のみ無償（§5(a)(b)）。24 層中 6 層のみ `full_attention`（残り 18 層は `conv`、コンテキスト長に依存しない固定状態） |
+| 4 | **Ministral-3-8B-Instruct-2512**（Mistral, dense） | #1・`[SYSTEM_PROMPT]`∧`[TOOL_CALLS]`∧`[ARGS]`∧¬`[CALL_ID]` | `unsloth/Ministral-3-8B-Instruct-2512-GGUF`（`ggml-org` の公式変換で分岐一致を確認、量子化違いは unsloth） | `Ministral-3-8B-Instruct-2512-Q4_K_M.gguf`（単一ファイル） | 5,198,386,720 B（**4.84 GiB**） | 重み 4.84 + KV(3500) 0.45 ≈ **5.29 GiB** | `common_chat_params_init_ministral_3` は `has_tools` で文法を分岐（1071 行） | ライセンス Apache-2.0・非 gated（実測）。34 層**全層が `full_attention`**（`sliding_window: null`）——分散候補の中で唯一「均一・素の式で正しい」族。ビジョン塔（`mmproj`）同梱だが今回はテキストのみで無視してよい |
+| 5 | ⚠️ **functionary-small-v3.2**（meetkai, Llama-3.1-8B ファインチューン） | #4・`>>>all`∧`` >>>${recipient} `` | `bartowski/functionary-small-v3.2-GGUF`（`meetkai` 公式変換も同一症状） | `functionary-small-v3.2-Q4_K_M.gguf`（単一ファイル） | 4,920,735,360 B（**4.58 GiB**） | 重み 4.58 + KV(3500) 0.43 ≈ **5.01 GiB** | 🔴 **配布中の GGUF は分岐条件を満たさない（実測・下記 13.5）** | 🔴 **最大の懸念そのものが「専用パーサへ届かない」こと**。ライセンス表記は MIT だが土台は `meta-llama/Meta-Llama-3.1-8B-Instruct`（`config.json` の `_name_or_path`）——Meta の Llama 3.1 Community License が重みに及ぶかは**分からなかった**（MIT タグは配布者側の主張） |
+
+🔴 **表全体の限界**: どの行も「専用分岐に載っている」ことは確認したが、ADR 0093 の合格基準
+（20 ターン級の実作業で `tool_calls` が全ターン有効な JSON・未知ツール名 0）を満たすかは**実機でしか分からない**
+——qwen3-coder が専用パーサを持ちながら運用上の癖（72 ターン連投）を出したのと同じで、この表は
+「測る価値の順に並べた候補」であって合格の予言ではない。
+
+### 13.4 VRAM 見積りの式と根拠
+
+🔴 **素の式（`n_layer × n_head_kv × (k_len+v_len) × ctx × 2byte` を全層に一様適用）は使わない。**
+[[gguf-kv-cache-and-ceiling]] が Qwen3.8-27B で実測した通り、この式は full-attention でない層まで
+ctx 分カウントするために **最大 4 倍過大**になる（実測: 素の式 16,640 MiB に対し実際 4,096 MiB、
+window 65,536）。今回の 5 候補は Qwen3.5 の「4 層に 1 層だけ full attention」とはまた違う 2 パターンの
+ハイブリッド構造を持つので、層ごとに以下の式を適用する:
+
+```
+KV(ctx) = Σ[full_attention 層]  n_head_kv(layer) × head_dim(layer) × 2(K,V) × 2byte(f16) × ctx
+        + Σ[sliding_attention 層] n_head_kv(layer) × head_dim(layer) × 2(K,V) × 2byte(f16) × min(ctx, window)
+        + Σ[conv/recurrent 層] ≈ 0（固定長の状態。ctx に依存しない）
+```
+
+🔴 **この式は GGUF ヘッダではなく、配布元（safetensors 版）の `config.json` から作った**——GGUF ファイル本体
+（ヘッダも含め）を一切取得していない今回の制約の直接の帰結。`config.json` は数 KB の設定ファイルで GGUF
+バイナリではないため「メタデータ API だけ」の制約には触れない（GGUF の `?expand[]=gguf` API 自体は層別の
+attention 種別までは返さない——`architecture`/`context_length`/`chat_template`/`total`/`totalFileSize` のみ）。
+**layer_types などのアーキテクチャがコンバート後の GGUF でも 1:1 保たれる前提**を置いている——ここは
+検証していない（GGUF ヘッダを読めば確認できるが、今回はしていない）。
+
+層別の内訳（`config.json` 実測値。architecture は llama.cpp の内部名、HF の `model_type` とは呼び名が違う
+ことがある——13.1 末尾で実装の存在は別途確認済み）:
+
+| # | HF `model_type` | 総層数 | full attention 層 | sliding/conv 層 | full 層の `n_kv_head`×`head_dim` | sliding/conv 層の `n_kv_head`×`head_dim`（窓） |
+|---|---|---|---|---|---|---|
+| 1 gpt-oss-20b | `gpt_oss` | 24 | 12（`layer_types` 偶数番） | 12 sliding（窓 128） | 8×64 | 8×64（窓 128） |
+| 2 gemma-4-12b | `gemma4_unified_text` | 48 | 8（6 層に 1 層） | 40 sliding（窓 1024） | `num_global_key_value_heads`=**1**×`global_head_dim`=**512** | `num_key_value_heads`=8×`head_dim`=256（窓 1024） |
+| 3 LFM2.5-8B-A1B | `lfm2_moe` | 24 | 6 | 18 conv（`conv_L_cache`=3、ctx 非依存） | 8×64（`hidden_size`÷`num_attention_heads`=2048÷32） | — |
+| 4 Ministral-3-8B | `ministral3`（`text_config`） | 34 | 34（全層） | 0（`sliding_window: null`） | 8×128（`head_dim` 明記） | — |
+| 5 functionary-small-v3.2 | `llama`（Llama-3.1-8B 土台） | 32 | 32（全層。Llama 3.1 の `sliding_window` フィールドは実装上未使用） | 0 | 8×128 | — |
+
+🔴 **gemma-4 は global 層と local 層で KV ヘッド構成そのものが違う**（`num_global_key_value_heads=1`・
+`global_head_dim=512` vs `num_key_value_heads=8`・`head_dim=256`）——同じモデル内で 2 通りの式を使い分けて
+いて、見落とすと計算が丸ごと間違う。
+
+`window=3500`（§12.5 の実機テストと同じ、ハーネスの圧縮窓）での計算結果（KiB→GiB は 1024^3 で換算）:
+
+| # | full 層 KV/token | sliding/conv 層 KV | KV(3500) | 重み | 重み+KV(3500) | 参考: KV(32768) | 重み+KV(32768) |
+|---|---|---|---|---|---|---|---|
+| 1 gpt-oss-20b | 12層×2KiB=24KiB | 12層×2KiB×128(窓上限)=3,072KiB（固定） | 87,072KiB≈**0.083GiB** | 11.28GiB | **11.36GiB** | 0.75GiB(可変分のみ増加) | **12.03GiB** |
+| 2 gemma-4-12b | 8層×2KiB=16KiB | 40層×8KiB×1024(窓上限)=327,680KiB（固定） | 383,680KiB≈**0.366GiB** | 6.63GiB | **7.00GiB** | 0.81GiB | **7.45GiB** |
+| 3 LFM2.5-8B-A1B | 6層×2KiB=12KiB | ≈0（conv） | 42,000KiB≈**0.040GiB** | 4.80GiB | **4.84GiB** | 0.375GiB | **5.18GiB** |
+| 4 Ministral-3-8B | 34層×8×128×2×2byte=136KiB | — | 476,000KiB≈**0.454GiB** | 4.84GiB | **5.29GiB** | 4.25GiB | **9.09GiB** |
+| 5 functionary-v3.2 | 32層×8×128×2×2byte=128KiB | — | 448,000KiB≈**0.427GiB** | 4.58GiB | **5.01GiB** | 4.00GiB | **8.58GiB** |
+
+**全 5 本が「重み ≲18GB」の目安を大きく下回り、L4 24GB に KV・計算バッファ込みでも余裕で載る**——既存で
+実測済みの `qwen3.8-27b-uncensored`（重み 17,092 MiB=16.7 GiB、[[gguf-kv-cache-and-ceiling]]）よりはるかに軽い。
+候補を「小さすぎて能力が心配」側に振っているのはこの余裕を承知の選択で、能力面のリスクは実機でしか測れない
+（13.3 の限界の節と同じ）。
+
+🔴 **この見積りと、本リポジトリ自身の VRAM 見積り機構（`control-plane/engine_gguf.go`）の関係**: 現在の
+`engineKVGeometry.cacheLayers()`（`engine_gguf.go:166-175` 付近）は `<arch>.full_attention_interval`
+（均一な間隔のハイブリッド、Qwen3.5 型）と `<arch>.nextn_predict_layers`（MTP ヘッド）だけを読んで補正する
+実装になっている（コメントに根拠あり、[[gguf-kv-cache-and-ceiling]] が指摘した「4 倍過大」バグはここで
+**修正済み**——メモリは 2026-09-18 時点で「未修正」と書いていたが、今回読んだ現在のコードでは直っていた。
+**メモリの該当行はもう古い**）。しかし `grep -rln "sliding" control-plane/` は **0 件**——今回の候補のうち
+#1 GPT-OSS・#2 gemma-4・#3 LFM2.5 が使う「層ごとに `sliding_attention`/`conv` を個別指定する」パターン
+（HF の `layer_types` 配列に相当する GGUF 側のキー）を読む経路が見当たらない。**確認できなかったこと**:
+llama.cpp のコンバータがこの 3 族の GGUF にどんなキー名でこの情報を書くか（`<arch>.attention.sliding_window`
+系と推測しているが実物のヘッダは読んでいない）、そして本リポジトリの取り込みパスがそれを読むか。読まない
+場合、`cacheLayers()` は `block_count` をそのまま使う（Qwen3.5 と同じ「全層 full-attention 扱い」）方向に
+**倒れるはずで、それは過大方向の間違い**（実際より高い VRAM クラスを要求する）——安全側だが、無駄に高い
+クラスを選ぶ・窓を過度に狭めて警告する可能性がある。Ministral-3・functionary-v3.2 は全層 full-attention
+なので、この不確実性の影響を受けない。
+
+### 13.5 🔴 functionary-small-v3.2 は「専用パーサに届かない」ことが実測できた
+
+候補選定の途中で、**族に専用パーサがあることは、配布されている GGUF がそのパーサに実際に届くことを
+保証しない**という具体例が出た（指示の警告どおり）。
+
+- `bartowski/functionary-small-v3.2-GGUF` と `meetkai/functionary-small-v3.2-GGUF`（両方とも 2024-08 変換、
+  他に公開されている変換は見つからなかった）の GGUF 埋め込み `chat_template`（`?expand[]=gguf` で実測、
+  2026-09-20）は**どちらも同一の 873 文字**で、`>>>all` は含むが `` >>>${recipient} `` は**含まない**。
+- 一方 llama.cpp 自身のテストが束ねている参照テンプレート
+  `models/templates/meetkai-functionary-medium-v3.2.jinja`（`gh api
+  repos/ggml-org/llama.cpp/contents/models/templates/meetkai-functionary-medium-v3.2.jinja?ref=465e49b9c`）
+  の 265 行目には `` Respond in this format:\n>>>${recipient}\n${content}\n `` という、ツールのスキーマを
+  システムプロンプトへレンダリングするブロックの中に、まさにこの分岐条件の文字列が実在する。
+- つまり公開されている `functionary-small-v3.2` の GGUF は、**ツールのスキーマをシステムプロンプトへ
+  レンダリングする一段（`generate_schema_from_functions(tools)` 相当）を欠いた簡略版テンプレート**で、
+  `common_chat_params_init_functionary_v3_2` の分岐条件に当たらない——**取り込んでも Llama 3.1（§12.4）と
+  同じ「差分オートパーサ」経路に落ちる**可能性が高い（実機で確認していないので「可能性が高い」までしか
+  言えない）。
+- **分からなかったこと**: この GGUF がなぜ簡略版テンプレートを埋め込んでいるのか（変換ミスか、meetkai が
+  2024-08 以降にベースリポジトリの `tokenizer_config.json` だけ更新して GGUF を再変換していないのか）。
+  再変換すれば直る見込みはあるが、それは利用者の管理操作（GGUF の作り直し・別配布元探し）の範囲。
+- この 1 件のために **表 13.3 の #5 は最下位**に置いた。優先して測るなら #1〜#4 から。
+
+### 13.6 分割 GGUF の有無
+
+**5 本とも単一ファイル**（分割 GGUF ではない）。`tree/main` の実測一覧（13.3 の各行のファイル欄）に
+`-of-000` を含むものは無い。[[engine-split-family-parts]] の注意（分割族は 1 回で取り込む必要がある）は
+今回**適用対象がない**。
+
+### 13.7 取り込みの実務 — `store.EngineModel` への写像（提案。実測ではない）
+
+🔴 **2026-09-20 再訂正**: 前回の訂正（「既存行に合わせて `Args` に `jinja`/`mmap`/`n-gpu-layers` を書け」）は
+**誤りだった**——駆動役が実機の管理 API（`GET /api/admin/engines` の `model_rows`）で確認した事実により
+再度直す。以下は再訂正後。
+
+`store.EngineModel`（`control-plane/internal/store/store.go:224` 以降）の関連欄: `Role`（`"llm"`）・
+`ID`（目録の鍵、ロール内で一意——`engine_admin.go:1376` の POST ボディで管理者が自由入力、文法を定めた
+ADR は無い）・`Kind`（既存 5 行は `"checkpoint"` または `"gguf"`。既存行の実例から `"checkpoint"` を踏襲）・
+`BaseModel`（llm プロバイダには語彙検証が無い——`engineBaseModelsFor`（`engine_catalog.go:323-328`）は
+`provider=="comfy"` のときしか語彙を返さないので、lcpp の `BaseModel` は自由記入。妥当な値の**提案**であって
+強制される文法ではない）・`Source`（store.go のコメントが定める形式 `hf:<repo>/<file>`）。
+
+🔴 **`Args` は空でよい（というより、ingest 経由では設定できない）。**
+
+- 実機（`GET /api/admin/engines` の `model_rows`、2026-09-20・駆動役の確認）: **既存 5 行すべて
+  `args: null`**（`llama-3.1-8b-instruct-q4_k_m`・`qwen3.6-35b-a3b-ud-iq3_s`・
+  `qwen3.8-27b-uncensored-q4_k_m`・`qwen3-coder-30b-a3b`・`qwen2.5-1.5b-abliterated-lora` 全部）。
+  §13.7 初稿・第一次訂正はどちらも `models-response.json`（`GET /engine/{key}/v1/models` の preset 表示）の
+  `jinja = 1`/`mmap = 0`/`n-gpu-layers = 99` を**行の `Args` 由来と読み違えていた**。
+- 実際の出どころは**役全体の `LlmExtraArgs`**（`deploy/aws/ecs/cfn/60-engines.yaml:49-52`、既定値
+  `-ngl,99,--jinja,--no-mmap`）——ルーター起動引数として**全モデルの preset に後掛けされる**
+  overlay（`tools/server/server-models.cpp:548-551`、§12.4 で確定済み）。行ごとに `--jinja`/`--mmap`/
+  `-ngl` を書く必要は無い（書いても role 側で上書きされる、と §12.4-B 既述）。
+- 🔴 **そもそも ingest API では `Args` を渡す欄が無い。** `POST …/ingest`（このセクションの取り込み経路）が
+  受ける body `engineIngestBody`（`engine_admin.go:1711-1737`）は `id`/`kind`/`plan_token`/`source`/
+  `description`/`base_model`/`context_tokens`/`max_output_tokens`/`sizes`/`params`/`license_accepted`
+  のみで、**`args` フィールドが存在しない**（実物のフィールド一覧を確認済み）。`args []string json:"args"`
+  が出てくるのは `POST …/models`（`postModel`、`engine_admin.go:1402`——**箱に既にあるファイルを手で
+  登録する別経路**）だけ。**ingest でこの 5 本の行を作る限り、`Args` は設定しようがない**（欄そのものが無い）。
+
+🔴 **`--ctx-size` は（そもそも `Args` に入れる欄自体が無いが、念のため）`context_tokens` という別欄から来る。**
+`store.EngineModel.ContextTokens`（`context_tokens` として ingest body に渡す——`engine_admin.go:1723`）が
+`engineActiveModel.Ctx`（wire key `"c,omitempty"`・`engine_catalog.go:388`、ドキュメントコメント
+「the window this model is started with (llama-server's -c). Per MODEL」）へ写る欄で、
+`engine_catalog.go:433` の `Ctx: m.ContextTokens` がその変換点。`fetch-models.sh:123` の jq では
+`(if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end)` という**独立した分岐**から `presets.ini` の
+`ctx-size = …` 行になる。
+
+既存行がどう入っているかは、目録行を作る静的な JSON/シードファイルとしてこのリポジトリには存在しない
+（テストの中のリテラル `store.EngineModel{Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled:
+true, Default: true}`（`engine_gateway_test.go:1035`）程度で、実物は管理者の ingest 操作でしか作られない）。
+したがって以下は「この形で POST すればこの表と同じ意味の行になる」という**提案**であり、実際に POST・
+ingest したものではない（指示どおり、取り込み・有効化はしていない）:
+
+| # | 提案する `ID`（鍵） | `Source` | 提案する `BaseModel` | `Args` | 推奨 `c`（ctx-size） |
+|---|---|---|---|---|---|
+| 1 | `gpt-oss-20b-mxfp4` | `hf:ggml-org/gpt-oss-20b-GGUF/gpt-oss-20b-MXFP4.gguf` | `gpt-oss` | 設定不要（ingest に欄が無い。既存行同様 null になる） | **131072**（学習上限そのもの。§13.8） |
+| 2 | `gemma-4-12b-it-q4_k_m` | `hf:unsloth/gemma-4-12b-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf` | `gemma-4` | 設定不要 | **262144**（学習上限そのもの。§13.8） |
+| 3 | `lfm2.5-8b-a1b-q4_k_m` | `hf:LiquidAI/LFM2.5-8B-A1B-GGUF/LFM2.5-8B-A1B-Q4_K_M.gguf` | `lfm2-moe` | 設定不要 | **128000**（学習上限そのもの。§13.8） |
+| 4 | `ministral-3-8b-instruct-2512-q4_k_m` | `hf:unsloth/Ministral-3-8B-Instruct-2512-GGUF/Ministral-3-8B-Instruct-2512-Q4_K_M.gguf` | `ministral-3` | 設定不要 | **65536**（学習上限 262144 は L4 に載らない。§13.8） |
+| 5 | `functionary-small-v3.2-q4_k_m` | `hf:bartowski/functionary-small-v3.2-GGUF/functionary-small-v3.2-Q4_K_M.gguf` | `llama-3.1` | 設定不要 | **65536**（既存 `llama-3.1-8b-instruct-q4_k_m` 行と同じ値・同じ理由。§13.8） |
+
+`mmproj-*.gguf`（gemma-4・LFM2.5-VL 系ではなく gemma-4 のみ同梱）はテキストのみで使うなら `Files` に
+含めない。ライセンス欄（`License`/`LicenseName`/`LicenseURL`）は #3 に LFM Open License v1.0（13.3 参照）を
+明記すべき。#5 は 🔴 13.5 の懸念どおり、この GGUF のままでは専用パーサに届かない見込み。`--chat-template-file`
+で llama.cpp 同梱の正しいテンプレートへ差し替える手が理論上あるが、**`Args` が ingest では設定できない以上
+（上記）、行単位でこの手を打つ経路はそもそも無い**——役全体の `LlmExtraArgs` を変えるしかなく、それは
+lcpp 役全体に影響する管理操作で今回の範囲外。#4 の `ID` は既存キーの慣例（`llama-3.1-8b-instruct-q4_k_m`
+のように長いファイル名をそのまま）に倣うと長い。短縮するかは利用者判断——本書はどちらかを断定しない。
+
+### 13.8 推奨 `c`（ctx-size）の根拠 — 族ごとに上限を決めているものが違う
+
+🔴 `context_length`（GGUF 側の学習上限。既存行の `meta.n_ctx_train` に相当）は**上限であって、
+そのまま設定してよい値ではない**（[[gguf-kv-cache-and-ceiling]] の「窓に公開上限を入れる罠」）。
+13.4 の層別の式で、候補ごとに「学習上限まで使ったら重み+KV がいくつになるか」を計算し、**L4 24GB に
+実際に載るか**で上限採用の可否を判定した。**計算バッファ・CUDA コンテキスト分の余白**は本書に実測が
+1 件しかない（[[gguf-kv-cache-and-ceiling]]: `qwen3.8-27b-uncensored`、重み 16.69GiB+KV(窓 65536 訂正後)
+4.00GiB=20.69GiB で起動**成功**——24GiB との差 3.31GiB が実際に足りた実測値）。ここでは**その 1 件だけを
+根拠に、保守的に 3GiB を余白として引いた 21GiB を「安全に載る」判定の予算**にした——他の 4 族（特に
+MoE・ハイブリッド構造）で計算バッファの実際の必要量が同じとは**確認できていない**。
+
+| # | 学習上限（GGUF `context_length`） | 学習上限での 重み+KV | 判定 | 推奨 `c` | 推奨 `c` での 重み+KV |
+|---|---|---|---|---|---|
+| 1 gpt-oss-20b | 131072 | 11.28+3.00=**14.28GiB** | 21GiB 予算に対し 6.72GiB 余白——**載る** | **131072**（学習上限を推奨） | 14.28GiB |
+| 2 gemma-4-12b | 262144 | 6.63+4.31=**10.95GiB** | 10.05GiB 余白——**載る** | **262144**（学習上限を推奨） | 10.95GiB |
+| 3 LFM2.5-8B-A1B | 128000 | 4.80+1.46=**6.27GiB** | 14.73GiB 余白——**載る（余裕が最大）** | **128000**（学習上限を推奨） | 6.27GiB |
+| 4 Ministral-3-8B | 262144 | 4.84+34.00=**38.84GiB** | 🔴 **L4 の物理容量 24GiB を大きく超える（載らない）** | **65536**（重み+KV 13.34GiB・7.66GiB 余白） | 13.34GiB（参考: 131072 なら 21.84GiB で 21GiB 予算を超え非推奨） |
+| 5 functionary-v3.2 | 131072 | 4.58+16.00=**20.58GiB** | 21GiB 予算に対し 0.42GiB しか余らない——**きつすぎるので非推奨** | **65536**（重み+KV 12.58GiB・8.42GiB 余白。既存 `llama-3.1-8b-instruct-q4_k_m` 行と同じ値） | 12.58GiB |
+
+**族ごとに「何が上限を決めているか」が違う**: #1〜#3（GPT-OSS・gemma-4・LFM2.5）はハイブリッド構造
+（sliding/conv 層が大半）のおかげで KV が軽く、**学習上限そのものが L4 に楽に載る**——推奨値は学習上限に
+一致させた。#4・#5（Ministral-3・functionary-v3.2）は**全層が full attention** で KV が ctx に比例して
+素直に伸びるため、**VRAM が学習上限よりずっと手前で先に効く**——Ministral-3 は学習上限（262144）の
+7 分の 1 以下（65536）でしか安全に動かせず、functionary-v3.2 は既存の `llama-3.1-8b-instruct-q4_k_m` 行
+（同じアーキテクチャ・同じ 65536）と同じ値に落ち着いた。これは推測ではなく、**同じアーキテクチャの
+既存行が既にその値で稼働している**という直接の先例がある（`models-response.json` 実測）。
+
+**追記（2026-09-20・駆動役より）**: 実際の取り込みでは GPT-OSS-20B・gemma-4-12b-it とも
+`context_tokens=32768` で登録した——本書の推奨（学習上限、#1=131072・#2=262144）より低い。理由は
+費用: 取り込み時の VRAM 自動見積りが非均一な `layer_types`（§13.4 末尾で本書が指摘した、この
+リポジトリの `engine_gguf.go` がまだ扱えないパターン）を扱えず過大に出るため、窓を大きく取ると
+インスタンスクラスが上の段（`g6e-od`・$2.70/h）へ動きうる。実測に必要な窓は harness の圧縮窓と同じ
+3,500 で足り、後から上げられる。**本書の見積り（学習上限まで載る、という計算そのもの）を否定する
+事実ではない**——実際に選んだ運用値が別の制約（自動見積りの精度・費用）で低く決まった、という
+別軸の話として両方を記録する。
+
+## 受け入れ条件チェック（このセクションのみ）
+
+- 全項目に一次資料（URL/ファイル/行番号）を付けた。推測は「提案」「分からなかった」と明記した。
+- 「この族なら通る」という断定はしていない——13.3 冒頭と各行の懸念欄で明記。
+- Go のコードは読んだだけで 1 行も変えていない。
+- ブランチは切っていない（`temp/sj477m4` のまま）。`git stash` は使っていない。GGUF ファイル本体は
+  一切取得していない（レンジ GET も含め、しなかった——`config.json` と HF のメタデータ API のみ）。
+
