@@ -212,6 +212,7 @@ it before concluding anything. What the picker says once it settles is the answe
 | **Every model is excluded in settings** | ⚙ Settings → Agents → that card → "Models you don't use" |
 | **The current billing choice leaves no model to pick** | ⚙ Settings → Agents → opencode → "opencode.ai billing" ([06](06-agents.md)) |
 | **Only the default model is available (check this agent's connection and plan)** | The agent answered with an empty catalog. Check the sign-in and the plan on that card. On a Copilot Free plan an empty list is normal — that plan offers Auto alone. |
+| **Couldn't fetch the model list — the workspace may have only just started** | The request never landed. The Agent isn't listening yet in the first seconds after a start: **wait half a minute and reopen the dialog** (each open tries again). |
 
 ### An MCP server I registered isn't available in sessions or assistants
 

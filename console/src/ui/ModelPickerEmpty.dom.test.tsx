@@ -30,6 +30,7 @@ vi.mock("../core/api/client.ts", async (orig) => {
 
 const { ModelPicker } = await import("./ModelPicker.tsx");
 const { t } = await import("../lib/i18n/index.ts");
+const { MODELS_RETRY_MS } = await import("../lib/agentModels.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -136,6 +137,36 @@ describe("dynamic model picker's default-only note", () => {
     await mount("codex");
     await settle({ models: [], reason: "catalog_empty" });
     expect(hints().join()).toContain(t("ui.model_default_only"));
+  });
+
+  // The first seconds after a workspace starts: the Agent is not listening yet and the CP
+  // answers 502 (the same window connsRetry exists for). That is not an empty catalog, and
+  // saying "check this agent's connection and plan" sends the user to look at two things that
+  // are both fine — they only had to wait.
+  it("retries a 502 instead of calling it an empty catalog, and says so when it gives up", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount("kiro");
+      // Every attempt fails the way a booting workspace does.
+      for (let i = 0; i <= MODELS_RETRY_MS.length; i++) {
+        await act(async () => {
+          respond({ error: { code: "http_502", status: 502 } });
+          await Promise.resolve();
+        });
+        // Still loading, never "only the default model is available".
+        expect(hints().join()).not.toContain(t("ui.model_default_only"));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(MODELS_RETRY_MS[i] ?? 0);
+        });
+      }
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(hints().join()).toContain(t("ui.model_unreachable"));
+      expect(hints().join()).not.toContain(t("ui.model_default_only"));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // Read both catalogues themselves: t() only ever returns the current display language, so

@@ -51,14 +51,22 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
     // between a picker worth waiting for and one that looks broken; it is also what keeps the
     // note below from flashing on every open (useModelCatalogSettled).
     const onlyDefault = settled && (dynamicOptions?.length ?? 0) <= 1;
-    // What emptied it, when the Agent said so (agent_models.go's emptyReason). "catalog_empty"
-    // keeps the old wording: there the Console really cannot tell not-signed-in from provider
-    // unreachable from a plan with only the default (Copilot Free), so it names no cause. The
-    // other two are facts about this workspace's own settings, and pointing at the connection
-    // for either sent people to check something that was never wrong.
+    // What emptied it. "hidden" / "route" are what the Agent reported (agent_models.go's
+    // emptyReason) and are facts about this workspace's own settings; "unreachable" is this
+    // side's own — the request never landed, which is the ordinary state for the first
+    // seconds after a workspace starts. Only "catalog_empty" keeps the old wording, because
+    // only there can the Console not tell not-signed-in from provider-unreachable from a plan
+    // with the default alone (Copilot Free). Pointing at the connection and the plan for any
+    // of the other three sent people to check something that was never wrong.
     const reason = onlyDefault ? modelCatalogReason(kind) : "";
     const note =
-      reason === "hidden" ? "ui.model_none_hidden" : reason === "route" ? "ui.model_none_route" : "ui.model_default_only";
+      reason === "hidden"
+        ? "ui.model_none_hidden"
+        : reason === "route"
+          ? "ui.model_none_route"
+          : reason === "unreachable"
+            ? "ui.model_unreachable"
+            : "ui.model_default_only";
     return (
       <div className="model-picker-dynamic">
         <ModelCombo kind={kind} options={dynamicOptions ?? []} value={model} onChange={onChange} />

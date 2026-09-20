@@ -331,6 +331,10 @@ export const common: Record<keyof typeof jaCommon, string> = {
   // to check the connection or the plan would point at something that was never wrong.
   "ui.model_none_hidden": "Every model is excluded in settings (Settings → Agents → models you don't use).",
   "ui.model_none_route": "The current billing choice leaves no model to pick (Settings → Agents → opencode).",
+  // The request itself never landed. Right after a workspace starts the Agent is not
+  // listening yet and the CP answers 502 — NOT a connection or plan problem, so this must not
+  // send anyone to look at either. Shown only once the retries are used up.
+  "ui.model_unreachable": "Couldn't fetch the model list — the workspace may have only just started (reopen to try again).",
   "ui.cancel": "Cancel",
   "ui.run": "Run",
   "ui.running": "Running…",
