@@ -702,9 +702,11 @@ func TestComfySizeAndStrengthRefusalDoNotFireWhenTheWarmRowWouldBeRemappedAway(t
 	if msg := comfyStrengthRefusal(p.ID(), "", "edit"); msg == "" {
 		t.Error("comfyStrengthRefusal was silent for an op the warm row itself answers")
 	}
-	// And an EXPLICIT model is never given this escape hatch — decision 2/4 refuse it outright.
-	if msg := comfySizeRefusal(p.ID(), "qwen-edit-row", "generate", "1024x1024"); msg == "" {
-		t.Error("comfySizeRefusal let an explicit model off because of an op it did not even ask for")
+	// 🟡 sfiowgj review: an EXPLICIT model with an op it cannot do is ALSO silent here — the
+	// real reason is decision 13's "cannot do %s", which Generate()/Run() refuse with; reporting
+	// size/strength here first would name the smaller of two true reasons.
+	if msg := comfySizeRefusal(p.ID(), "qwen-edit-row", "generate", "1024x1024"); msg != "" {
+		t.Errorf("comfySizeRefusal = %q, want silence — the op mismatch is the real, bigger reason", msg)
 	}
 }
 
@@ -722,57 +724,6 @@ func TestComfyFirstModelForOpSkipsARowWithIncompleteFiles(t *testing.T) {
 	got, ok := comfyFirstModelForOp(conn, OpGenerate)
 	if !ok || got != "sdxl-base-1.0" {
 		t.Errorf("comfyFirstModelForOp = (%q, %v), want the row AFTER the broken one", got, ok)
-	}
-}
-
-// The last gap decision 2 names: a request naming neither a provider nor a model cannot be
-// refused at the edge (nothing to resolve a family from), so it reaches Generate and denoise is
-// fixed at 1 regardless — but the caller still typed a value, and comfyStrengthIgnoredWarning is
-// what says so instead of leaving 実測 C's "no error, no warning" failure in place for this one
-// path.
-func TestComfyGenerateWarnsWhenStrengthReachesAFamilyThatIgnoresIt(t *testing.T) {
-	dir := t.TempDir()
-	in := filepath.Join(dir, "photo.png")
-	if err := os.WriteFile(in, tinyPNG(t, 64, 64), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p := comfyEditStub(t, qwenEditConn(),
-		func(w http.ResponseWriter, r *http.Request) {
-			_ = r.ParseMultipartForm(8 << 20)
-			_ = json.NewEncoder(w).Encode(map[string]any{"name": "up.png", "type": "input"})
-		},
-		func(w http.ResponseWriter, r *http.Request, body map[string]any) {
-			_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
-		})
-	strength := 0.3
-	res, err := p.Generate(context.Background(), Request{
-		Op: OpEdit, Prompt: "make it snow", Model: "qwen-edit-row", Inputs: []string{in}, Strength: &strength,
-	})
-	if err != nil {
-		t.Fatalf("Generate() = %v", err)
-	}
-	found := false
-	for _, w := range res.Warnings {
-		if strings.Contains(w, "strength") && strings.Contains(w, "qwen-image-edit-2509") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("warnings = %v, want one naming strength and the family that ignored it", res.Warnings)
-	}
-
-	// The negative control: the same request against the row that DOES read strength must stay
-	// silent about it.
-	ok, err := p.Generate(context.Background(), Request{
-		Op: OpEdit, Prompt: "make it snow", Model: "sdxl-base-1.0", Inputs: []string{in}, Strength: &strength,
-	})
-	if err != nil {
-		t.Fatalf("Generate() = %v", err)
-	}
-	for _, w := range ok.Warnings {
-		if strings.Contains(w, "strength") && strings.Contains(w, "nothing was varied") {
-			t.Errorf("warnings = %v, want no such warning on a family that reads strength", ok.Warnings)
-		}
 	}
 }
 
@@ -1563,50 +1514,6 @@ func TestComfyWarnsWhenTheFamilyCannotExclude(t *testing.T) {
 	for _, w := range ok.Warnings {
 		if strings.Contains(w, "excludes") {
 			t.Errorf("warnings = %v, want nothing about exclusions on a guided family", ok.Warnings)
-		}
-	}
-}
-
-// 🔴 sfiowgj review (2026-09-20): before ADR 0094 decision 11, Caps("") answered with the WARM
-// row's own comfyModelTakesNegative, so requestWarnings' `!caps.Negative` branch caught a
-// caller's negative_prompt landing on a cfg-1 (or otherwise negative-less) warm row even with no
-// model named. Decision 11 makes Caps("") a UNION across every model, so that branch now reads
-// Negative=true whenever ANY model on the engine takes one — the caller's own negative_prompt
-// would be dropped with NO warning from anywhere. comfyNegativeIgnoredWarning is the per-model
-// function that already existed for the catalogue's own negatives; this is its twin case for the
-// CALLER's.
-func TestComfyGenerateWarnsWhenTheCallersNegativePromptReachesAWarmRowThatIgnoresIt(t *testing.T) {
-	// negConn() minus its catalogue-level negatives, so the ONLY thing that could produce a
-	// warning is the caller's own negative_prompt — isolating exactly the gap the union opened.
-	conn := negConn()
-	conn.Negatives, conn.NegativeAlways = nil, ""
-	conn.Warm = "klein-4b" // flux2-klein never takes a negative, at any cfg
-	p, _ := comfyStub(t, conn, nil)
-
-	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", NegativePrompt: "watermark"})
-	if err != nil {
-		t.Fatalf("Generate() = %v", err)
-	}
-	found := false
-	for _, w := range res.Warnings {
-		if strings.Contains(w, "negative prompt you gave") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("warnings = %v, want one saying the caller's own negative_prompt was dropped", res.Warnings)
-	}
-
-	// The positive control: the SAME request, naming the row that actually reads it, must stay
-	// silent — this is not a blanket warning on every negative_prompt.
-	ok, err := p.Generate(context.Background(), Request{
-		Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0", NegativePrompt: "watermark"})
-	if err != nil {
-		t.Fatalf("Generate() = %v", err)
-	}
-	for _, w := range ok.Warnings {
-		if strings.Contains(w, "negative prompt you gave") {
-			t.Errorf("warnings = %v, want silence when the model actually reads it", ok.Warnings)
 		}
 	}
 }

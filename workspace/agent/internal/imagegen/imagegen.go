@@ -739,6 +739,19 @@ var Providers = func() []Provider {
 // to another: the caller named a provider, and that provider's own error ("codex is not logged
 // in") is a better answer than silently producing an image on a different service, billed to a
 // different account. Only auto walks the list. Empty means nothing can serve the request.
+func chooseImageProviders(pref string, req Request, order []string, ready map[string]bool, caps func(id string) Caps) []string {
+	if pref != "" && pref != "auto" {
+		return []string{pref}
+	}
+	var out []string
+	for _, id := range order {
+		if ready[id] && caps(id).Supports(req.Op) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // modelOwner is ADR 0094 decision 13's answer to "who actually knows this model": the first
 // provider in order whose ModelLister.Models() lists it BY ID. false when no provider claims it
 // (an unknown id, or a name typed for a provider that has no model list at all — codex and agy
@@ -764,25 +777,13 @@ func modelOwner(ctx context.Context, provs map[string]Provider, order []string, 
 	return "", false
 }
 
+// joinOps spells a Caps.Ops list for a refusal message.
 func joinOps(ops []Op) string {
 	out := make([]string, 0, len(ops))
 	for _, o := range ops {
 		out = append(out, string(o))
 	}
 	return strings.Join(out, ", ")
-}
-
-func chooseImageProviders(pref string, req Request, order []string, ready map[string]bool, caps func(id string) Caps) []string {
-	if pref != "" && pref != "auto" {
-		return []string{pref}
-	}
-	var out []string
-	for _, id := range order {
-		if ready[id] && caps(id).Supports(req.Op) {
-			out = append(out, id)
-		}
-	}
-	return out
 }
 
 // Job is one core-side generation: which session asked, what it asked for, and which provider
@@ -906,13 +907,19 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 			return Stored{}, err
 		}
 		warnings := append(fallbackWarnings(name, attempts), res.Warnings...)
+		// res.Model, not req.Model: a provider may resolve a request naming no model to a
+		// DIFFERENT row than its own warm default (ADR 0094 decision 11's comfyFirstModelForOp,
+		// when the warm row does not offer the requested op), so Caps has to answer for the row
+		// that actually ran. Asking with req.Model's empty string would hit decision 11's own
+		// union instead — the right answer for deciding what to ADVERTISE, and the wrong one for
+		// reporting what THIS request's warnings actually are.
 		return Stored{
 			Files:       files,
 			Provider:    res.Provider,
 			Model:       res.Model,
 			Region:      res.Region,
 			Destination: res.Destination,
-			Warnings:    append(warnings, requestWarnings(req, res, p.Caps(req.Model))...),
+			Warnings:    append(warnings, requestWarnings(req, res, p.Caps(res.Model))...),
 			CostUSD:     res.CostUSD,
 		}, nil
 	}
