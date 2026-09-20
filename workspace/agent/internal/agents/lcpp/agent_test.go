@@ -8,17 +8,25 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// TestAgentKindAndManagedOnlyCap pins the two facts the server-side gates (sessionx's create
-// default and the /driver switch) rely on: the kind string, and Caps().ManagedOnly being the
-// ONLY true flag at this stage (ADR 0093 stage 2 step 1 — no transcript store, no approval
-// loop, no fork behind the others yet).
-func TestAgentKindAndManagedOnlyCap(t *testing.T) {
+// TestAgentKindAndCaps pins the facts the server-side gates (sessionx's create default, the
+// /driver switch, and scripts/docs-check.py's exact-match check against ref/agents.md) rely
+// on: the kind string, and exactly which Caps flags are true now that the store (store.go)
+// and the managed driver (driver.go) actually back them. Never flip one of these on without
+// the guide table and docs-check agreeing (see this package's driver.go/agent.go doc
+// comments for what each flag is actually backed by).
+func TestAgentKindAndCaps(t *testing.T) {
 	a := New()
 	if got := a.Kind(); got != session.KindLcpp {
 		t.Fatalf("Kind() = %q, want %q", got, session.KindLcpp)
 	}
 	got := a.Caps()
-	want := agents.Caps{ManagedOnly: true}
+	want := agents.Caps{
+		ManagedOnly:      true,
+		CanTranscript:    true,
+		CanFork:          true,
+		CanForkAt:        true,
+		PermissionChoice: true,
+	}
 	if got != want {
 		t.Fatalf("Caps() = %+v, want %+v", got, want)
 	}
@@ -34,17 +42,30 @@ func TestBuildLaunchAlwaysErrors(t *testing.T) {
 	}
 }
 
-// TestWireLiveAndTranscriptAreStillStubs guards against silently flipping a cap on before the
-// work that would make it true (the managed driver / transcript store) actually lands — an
-// easy mistake since Caps().ManagedOnly alone doesn't gate these.
-func TestWireLiveAndTranscriptAreStillStubs(t *testing.T) {
+// TestWireLiveNotAliveIsZeroValue pins WireLive's alive=false shape: no live handle to read
+// LastSay from, and Resumable defaults true (there is no "working dir gone" concept for a
+// managed-only kind the way claude/opencode's tui route has).
+func TestWireLiveNotAliveIsZeroValue(t *testing.T) {
 	a := New()
-	li := a.WireLive(session.Meta{}, true)
-	if li.State != "" || li.Resumable || li.Context != nil || li.TokenSpends != nil {
-		t.Fatalf("WireLive = %+v, want zero value", li)
-	}
-	if _, ok := a.Transcript(session.Meta{}); ok {
-		t.Fatalf("Transcript ok = true, want false (no transcript store yet)")
+	li := a.WireLive(session.Meta{Name: "unknown-session"}, false)
+	if li.State != "" || !li.Resumable || li.LastSay != "" {
+		t.Fatalf("WireLive(alive=false) = %+v, want an empty/resumable zero value", li)
 	}
 	a.ClearResume("anything") // must not panic
+}
+
+// TestTranscriptEmptyStoreIsOkTrue pins Transcript()'s "no conversation yet" shape: unlike the
+// old stub (Caps().CanTranscript was false, ok was always false), an lcpp session with no
+// turns sent yet reads back ok=true with an empty turn list — the store is genuinely there,
+// it is just empty, and CanTranscript is true (TestAgentKindAndCaps).
+func TestTranscriptEmptyStoreIsOkTrue(t *testing.T) {
+	testHome(t)
+	a := New()
+	td, ok := a.Transcript(session.Meta{Name: "never-sent", Dir: t.TempDir()})
+	if !ok {
+		t.Fatal("Transcript ok = false, want true (CanTranscript is now true)")
+	}
+	if len(td.Turns) != 0 || td.Pending != nil || td.Queued != nil {
+		t.Fatalf("Transcript = %+v, want an empty conversation", td)
+	}
 }

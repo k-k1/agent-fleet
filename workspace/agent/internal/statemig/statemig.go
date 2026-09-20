@@ -88,6 +88,11 @@ var Entries = []string{
 	"copilot-msgledger",
 	"cursor-msgledger",
 	"kiro-msgledger",
+	// lcpp's own ClientMessageID ledger (agents.NewMsgLedger, driver.go) — a different store
+	// from "lcpp" above (that one is the transcript, keyed by sid; this one is the resend/
+	// idempotency ledger, keyed by session name, same shape as the other *-msgledger entries).
+	// Never existed under .config — introduced directly under AgentStateDir.
+	"lcpp-msgledger",
 	// Chat bridge: the outbound queue and the per-provider binding ledgers.
 	"bridge-queue",
 	"bridge-approvals",

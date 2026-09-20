@@ -18,10 +18,11 @@ import (
 )
 
 // TestCreateSessionDefaultsManagedOnlyKindToManaged pins the create-time default: an lcpp
-// create with no driver field must be treated as "managed" (and then fail with
-// driver_unsupported, since no managed driver is wired up yet — that failure mode is itself
-// the proof the default flipped, since leaving it defaulted to tui would instead fail deeper,
-// as tmux_failed, when BuildLaunch refuses).
+// create with no driver field must be treated as "managed". Now that the managed driver is
+// wired up (internal/agents/lcpp/driver.go), the create actually succeeds — Resume needs no
+// engine at all for a brand new, empty conversation (its own settle() reads back zero
+// records and lands on TurnCompleted with no network call), so this is a true positive
+// control for the default flipping, not just the absence of a "fell through to tui" failure.
 //
 // Real tmux (isolateAgentState), not fakeTmux's stub: this create reaches allocSessionName,
 // whose collision-retry loop never terminates against fakeTmux's has-session stub (it always
@@ -38,12 +39,14 @@ func TestCreateSessionDefaultsManagedOnlyKindToManaged(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	code, body := roundtrip(t, srv, "POST", "/sessions", map[string]any{"dir": dir, "kind": "lcpp"})
-	if code != http.StatusBadRequest || !strings.Contains(string(body), "driver_unsupported") {
-		t.Fatalf("status=%d body=%s, want 400 driver_unsupported", code, body)
+	var created session.Session
+	do(t, srv, "POST", "/sessions", map[string]any{"dir": dir, "kind": "lcpp"}, http.StatusCreated, &created)
+	m, ok := session.ReadMeta(created.Name)
+	if !ok {
+		t.Fatal("meta not persisted")
 	}
-	if strings.Contains(string(body), "tmux_failed") {
-		t.Fatalf("body=%s: fell through to the tui launch path — driver did not default to managed", body)
+	if m.DriverKind() != session.DriverManaged {
+		t.Fatalf("driver = %q, want managed (the ManagedOnly default)", m.Driver)
 	}
 }
 
@@ -85,8 +88,9 @@ func TestCreateSessionLeavesTerminalRouteKindDefaultingToTUI(t *testing.T) {
 func TestHandleSessionDriverRejectsTUITargetForManagedOnlyKind(t *testing.T) {
 	logPath := fakeTmux(t)
 	const name = "driver_lcpp"
-	// Driver: managed is not really live (lcpp has no managed driver yet) — this only needs to
-	// differ from the "tui" target so the handler doesn't short-circuit on "already there".
+	// Driver: managed only needs to differ from the "tui" target so the handler doesn't
+	// short-circuit on "already there" — the refusal this test pins fires on Caps.ManagedOnly
+	// alone, before the handler ever touches a runtime.
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindLcpp, Driver: session.DriverManaged})
 
 	rec := postDriver(t, name, `{"driver":"tui"}`)

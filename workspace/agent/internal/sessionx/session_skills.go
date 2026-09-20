@@ -85,8 +85,12 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 		skills = opencodeSkills(meta.Dir)
 	case session.KindCursor:
 		skills = cursorSkills(meta)
-	case session.KindKiro, session.KindCopilot, session.KindAgy:
+	case session.KindKiro, session.KindCopilot, session.KindAgy, session.KindLcpp:
 		// No native enumeration: no user-invocable mechanism confirmed yet (§7). Foreign only.
+		// lcpp drives no CLI at all (ADR 0093 decision 5: "スキルは foreign のみ"), so it
+		// belongs in this same bucket rather than the default (no-skills) case below — the
+		// Console's picker and harness.SystemPrompt's own foreignSkillsPrompt (both read the
+		// same SKILL.md trees) must agree on what this kind can offer.
 	default:
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
 		return

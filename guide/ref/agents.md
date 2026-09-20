@@ -9,34 +9,34 @@ updated: "2026-08"
 English | [日本語](agents.ja.md)
 
 Ten session kinds exist. Eight drive (or are meant to drive) a coding agent — lcpp is
-registered but not usable yet, see the footnote on its first two rows; `shell` and
-`ssm` are terminals with no agent behind them, and they are in the table because "does
-this apply to a plain shell session?" is a real question.
+managed-only and has no Terminal (CLI) route at all, see the footnote on that row;
+`shell` and `ssm` are terminals with no agent behind them, and they are in the table
+because "does this apply to a plain shell session?" is a real question.
 
 ✓ = supported, — = not supported or not applicable.
 
 | Capability | claude | codex | opencode | copilot | cursor | kiro | agy | lcpp | shell | ssm |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Managed execution (no terminal) | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | —⁹ | — | — |
+| Managed execution (no terminal) | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | —⁹ | ✓ | ✓ |
-| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | — | — | — |
+| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Read-only history while stopped | ✓ | ✓ | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | — | — |
 | Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | — | — |
 | Reasoning effort | ✓ | ✓ | ✓ | ✓ | —² | —⁵ | —² | — | — | — |
-| Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — | — | — |
+| Plan mode | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — |
 | Context usage gauge | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — | — |
 | Image paste | ✓ | ✓ | ✓⁶ | — | — | — | ✓ | — | — | — |
-| Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | — | — | — |
-| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | — | — | — |
-| Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | — | — | — |
+| Copy the conversation into a new session | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | — | — |
+| Fork from a past message | ✓ | ✓ | ✓ | ✓ | — | — | — | ✓ | — | — |
+| Choosing to skip permission prompts | ✓ | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Skill / command picker | ✓ | ✓ | ✓ | —⁴ | ✓ | —⁴ | —⁴ | —⁴ | — | — |
 | Handoff to another session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
 | Start in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
 | Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓⁷ | — | ✓ | — | — | — |
 | Usage / remaining-quota chip | ✓ | ✓ | — | ✓ | — | — | ✓ | — | — | — |
-| Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | — | — | — |
+| Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | — | — |
 | Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
 | Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — |
 
@@ -50,9 +50,10 @@ session has nothing to show. The live mirror works while it runs, and running cu
 as Terminal (CLI) does persist a readable history. kiro, by contrast, keeps a readable
 transcript even under Managed.
 
-⁴ The picker lists what the CLI can discover and launch by itself, and copilot, kiro
-and agy have no verified mechanism for that. Skills written to another convention's
-`SKILL.md` tree in the repository are still offered to them by injection.
+⁴ The picker lists what the CLI can discover and launch by itself, and copilot, kiro,
+agy and lcpp have no verified mechanism for that (lcpp drives no CLI at all, so there
+is nothing of its own to discover). Skills written to another convention's `SKILL.md`
+tree in the repository are still offered to them by injection.
 
 ⁵ kiro accepts an effort flag but exposes no per-model picker.
 
@@ -64,10 +65,15 @@ and agy have no verified mechanism for that. Skills written to another conventio
 instructions, so it is the one kind that cannot receive them. It still appears in the
 settings list, with that reason shown.
 
-⁹ lcpp (ADR 0093's own llama.cpp harness) is registered as a kind but not usable yet:
-creating a session with it fails today, because it has no managed driver. Once
-finished it will be the first kind with no Terminal (CLI) route at all — Managed
-execution only.
+⁹ lcpp (ADR 0093's own llama.cpp harness) is the first kind with no Terminal (CLI)
+route at all, by design — there is no vendor CLI to put in a pane, only a managed
+runtime this process runs in-process. Creating an lcpp session with no driver
+specified defaults it to Managed rather than trying (and failing) to launch a
+terminal.
+
+¹⁰ lcpp drives no CLI to write your instructions into. Instead, the harness reads the
+same fleet/your-own/project instruction layers itself and folds them into the system
+prompt on every turn.
 
 ## How to sign in
 
