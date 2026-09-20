@@ -252,7 +252,9 @@ case "$1" in
     echo '{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}},{"platform":{"architecture":"arm64","os":"linux"}}]}' ;;
   auth) cat >/dev/null ;;
   # standup.sh reads this back after every llm copy to record what actually landed in ECR.
-  digest) echo "sha256:${STUB_CRANE_DIGEST:-fake000000000000000000000000000000000000000000000000000000000}" ;;
+  digest)
+    [ "${STUB_CRANE_DIGEST_FAILS:-0}" = 1 ] && exit 1
+    echo "sha256:${STUB_CRANE_DIGEST:-fake000000000000000000000000000000000000000000000000000000000}" ;;
 esac
 FAKE
 cat > "$STUB/curl" <<'FAKE'
@@ -506,6 +508,22 @@ STUB_LLM_IN_ECR=1 STUB_CRANE_DIGEST="${OTHER_DIGEST#sha256:}" \
   && fail "a --llm-digest mismatch against what is already in ECR was silently accepted"
 grep -q -- "--llm-digest" "$WORK/out3g5.err" || fail "the digest mismatch was not explained"
 hasnt "cloudformation deploy --stack-name af-ecs-engines"
+
+echo "== case 3g-6: a failed digest read-back is explained differently from a real mismatch =="
+# "Could not read the digest" (ECR auth lapsed, a transient read failure) is not evidence the pin
+# is wrong, and must not tell an operator to delete/retag ECR over a read that never happened —
+# that is the wrong fix for this failure and could throw away a perfectly good pin.
+: > "$LOG"
+STUB_LLM_IN_ECR=1 STUB_CRANE_DIGEST_FAILS=1 \
+  "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes --llm-digest "$PIN" \
+  >"$WORK/out3g6.out" 2>"$WORK/out3g6.err" </dev/null \
+  && fail "a failed digest read-back with --llm-digest set was silently accepted"
+hasnt "cloudformation deploy --stack-name af-ecs-engines"
+grep -q "could not be read back" "$WORK/out3g6.err" || fail "an unreadable digest was not explained as unreadable"
+grep -q -- "most likely copied before this pin was chosen" "$WORK/out3g6.err" \
+  && fail "an unreadable digest was explained with the real-mismatch wording (misdirects to delete/retag ECR)"
+diff <(sort -u "$WORK/out3g5.err") <(sort -u "$WORK/out3g6.err") >/dev/null \
+  && fail "an unreadable digest produced the exact same message as a real mismatch"
 
 # A capture taken before ADR 0072 phase P6 names a model key and says nothing about Enabled,
 # because until P6 the key ALSO decided whether the role's service existed. Two things have to

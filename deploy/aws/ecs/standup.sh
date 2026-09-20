@@ -406,8 +406,14 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
   # verify nothing on every run after the first. Best-effort read - a failure here must not fail
   # a copy that already succeeded.
   if [ "$AF_DRY" != 1 ]; then
-    llm_landed_digest="$(crane digest "$ECR_HOST/af-llamacpp:$llm_tag" 2>/dev/null)" || llm_landed_digest="(could not read back)"
-    echo "    · af-llamacpp:$llm_tag digest: $llm_landed_digest"
+    # Exit status, not string-matching the placeholder text, decides "could this be read at
+    # all" - a real digest could otherwise coincide with the placeholder by construction error.
+    if llm_landed_digest="$(crane digest "$ECR_HOST/af-llamacpp:$llm_tag" 2>/dev/null)"; then
+      echo "    · af-llamacpp:$llm_tag digest: $llm_landed_digest"
+    else
+      llm_landed_digest=""
+      echo "    · af-llamacpp:$llm_tag digest: (could not read back)"
+    fi
     # A requested pin that does not match what is actually there is worse than no pin at all -
     # it looks like it worked. This is exactly the case above: the tag was already in ECR (from
     # an earlier, unpinned or differently-pinned copy) and this run's --llm-digest never touched
@@ -415,14 +421,28 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
     # somebody's possibly-running engine's image without being asked to) is deliberate: it is
     # the only option that cannot deploy something other than what was asked for without saying
     # so, and it leaves the fix to a human who can see whether retagging is safe right now.
+    #
+    # "Could not read the digest back" and "read it, and it does not match" are different
+    # failures and must say different things: the first is not evidence the pin is wrong (ECR
+    # auth can lapse, a read can time out), and telling someone to delete/retag ECR over a read
+    # that never happened sends them the wrong way.
     if [ -n "$LLM_ENGINE_DIGEST" ] && [ "$llm_landed_digest" != "$LLM_ENGINE_DIGEST" ]; then
-      echo "ERROR: --llm-digest $LLM_ENGINE_DIGEST was requested, but af-llamacpp:$llm_tag in ECR" >&2
-      echo "       is $llm_landed_digest — most likely copied before this pin was chosen (a" >&2
-      echo "       repeat stand-up does not re-copy an image already in ECR). A pin that" >&2
-      echo "       silently does nothing is worse than none." >&2
-      echo "       Fix: drop --llm-digest to accept what's already there, or delete/retag" >&2
-      echo "       af-llamacpp:$llm_tag in ECR so the copy above actually runs against the" >&2
-      echo "       requested digest." >&2
+      if [ -z "$llm_landed_digest" ]; then
+        echo "ERROR: --llm-digest $LLM_ENGINE_DIGEST was requested, but the digest of" >&2
+        echo "       af-llamacpp:$llm_tag in ECR could not be read back, so the pin cannot be" >&2
+        echo "       verified. This is NOT evidence the pin is wrong - check ECR auth (the" >&2
+        echo "       'crane auth login' above) and whether 'crane digest" >&2
+        echo "       $ECR_HOST/af-llamacpp:$llm_tag' works by hand before assuming the image" >&2
+        echo "       itself is the problem." >&2
+      else
+        echo "ERROR: --llm-digest $LLM_ENGINE_DIGEST was requested, but af-llamacpp:$llm_tag in ECR" >&2
+        echo "       is $llm_landed_digest — most likely copied before this pin was chosen (a" >&2
+        echo "       repeat stand-up does not re-copy an image already in ECR). A pin that" >&2
+        echo "       silently does nothing is worse than none." >&2
+        echo "       Fix: drop --llm-digest to accept what's already there, or delete/retag" >&2
+        echo "       af-llamacpp:$llm_tag in ECR so the copy above actually runs against the" >&2
+        echo "       requested digest." >&2
+      fi
       exit 1
     fi
   fi

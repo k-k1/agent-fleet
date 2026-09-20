@@ -374,6 +374,13 @@ a pin that silently does nothing is worse than no pin. Fix it by dropping `--llm
 what is already there) or by deleting/retagging `af-llamacpp:<tag>` so the next run's `crane
 copy` actually fetches the requested digest.
 
+That fix is the wrong one, though, if the digest could not be **read** at all (ECR auth lapsed,
+a transient read failure) rather than read-and-mismatched — deleting/retagging a perfectly good
+image over a read that never happened is worse than the original problem. `standup.sh` still
+refuses to proceed in that case (an unverifiable pin is not a verified one), but the message says
+"could not be read back" and points at ECR auth / running `crane digest` by hand, not at the
+image itself.
+
 To choose a digest to pin: resolve the upstream tag at the moment you mean to pin it —
 `crane digest ghcr.io/ggml-org/llama.cpp:server-cuda` — rather than trusting a value recorded
 here, which would go stale the moment `server-cuda` next moves. What is worth recording here is
