@@ -1441,7 +1441,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
       setResolved(found);
       if (found.plan) {
         setPlan(found.plan);
-        if (!idEdited) { setId(found.plan.id || ""); setCommittedId(found.plan.id || ""); }
+        if (!idEdited) setId(found.plan.id || "");
         if (found.plan.base_model) setBaseModel(found.plan.base_model);
         // Remembered, because the CP offers candidates only while it cannot name the family
         // itself: the re-plan our own choice causes answers with none, and the selector would
@@ -1554,7 +1554,7 @@ function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, onClose, 
         // because what was accepted is not what would now be taken in.
         if (error.code === "engine_plan_stale" && error.plan) {
           setPlan(error.plan); setReplanned(true); setAccepted(false);
-          if (!idEdited) { setId(error.plan.id || ""); setCommittedId(error.plan.id || ""); }
+          if (!idEdited) setId(error.plan.id || "");
           return;
         }
         setErr(error);

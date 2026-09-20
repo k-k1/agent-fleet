@@ -627,6 +627,34 @@ describe("model catalogue pane", () => {
       .find((input) => input.parentElement?.textContent?.includes("ライセンス"))!;
     expect(licence.checked).toBe(true);
   });
+
+  // 🔴 Opening the plan dialog must call ingest/resolve exactly once. The bug: syncing
+  // committedId from plan.id in the resolve callback changes a dep and re-runs the effect,
+  // which clears the card (setResolved/setPlan null) and hits the upstream a second time.
+  // Image engines have a separate pre-existing second call via plannedFamily/setBaseModel,
+  // so this test uses an LLM engine where plannedFamily is always "" and isolates the issue.
+  it("calls ingest/resolve exactly once for an LLM when the dialog opens without any operator input", async () => {
+    mockEngines([llmRow]);
+    let resolveCount = 0;
+    apiJSON.mockImplementation((path: string) => {
+      if (path.endsWith("/ingest/search")) return Promise.resolve({ hits: [{ source: "hf", ref: "org/model", model_ref: "org/model", name: "Example LLM" }] });
+      if (path.endsWith("/ingest/versions")) return Promise.resolve({ versions: [{ ref: "main", name: "main" }] });
+      if (path.endsWith("/ingest/files")) return Promise.resolve({ files: [{ name: "model.gguf" }] });
+      if (path.endsWith("/ingest/resolve")) {
+        resolveCount++;
+        return Promise.resolve({
+          bytes: 4_000_000_000, can_ingest: true,
+          plan: { plan_token: "p1", id: "example-llm", files: [{ name: "model.gguf", action: "download", bytes: 4_000_000_000 }], bytes_to_download: 4_000_000_000 },
+        });
+      }
+      return Promise.resolve({});
+    });
+    await mount();
+    await click(button("追加"));
+    for (const _ of [0, 1, 2, 3, 4, 5]) await act(async () => { await Promise.resolve(); });
+
+    expect(resolveCount).toBe(1);
+  });
 });
 
 describe("registered rows and the bucket", () => {
