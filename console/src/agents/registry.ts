@@ -556,9 +556,13 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       launchableFromRepo: true,
     }),
     // No sign-in exists for this kind (決定 10: no login route, no connection card auth), so
-    // unlike opencode/kiro/cursor availability never reads `conns` — same unconditional basis
-    // as shell/ssm.
-    available: () => true,
+    // unlike opencode/kiro/cursor there is no credential to check — but unlike shell/ssm,
+    // lcpp DOES have an on/off switch: the user's own display setting (docs/log/105 §106.2,
+    // ui-prefs lcppEnabled), mirrored into GET /connections as conns.lcpp.enabled. This is only
+    // the signpost that hides the launch menus; HandleCreateSession (session_handlers.go) is
+    // the actual gate, so a stale/cached conns snapshot can under-refuse here but never
+    // over-admit past the server. Missing ⇒ true, matching the server's opt-out default.
+    available: (c) => c.conns?.lcpp?.enabled !== false,
   },
   shell: {
     id: "shell",

@@ -202,6 +202,10 @@ export interface ProviderConn {
   mechanism?: "oauth" | "api_key" | string;
   metered?: boolean;
   env_key?: boolean;
+  // lcpp (docs/log/105 §106.2): the user's own display setting (ui-prefs lcppEnabled). No
+  // sign-in exists for this kind (ADR 0093 決定 10), so this is the only field its connection
+  // status carries. Missing/absent counts as ON, same as the server's opt-out default.
+  enabled?: boolean;
   // opencode: the selected billing route (docs/log/54). "free" is a tier that launches with
   // no authentication at all, so the launch gate reads this and allows opencode even when
   // not connected. "off" is the opposite: an explicit disable that closes the launch gate

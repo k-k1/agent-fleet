@@ -75,6 +75,8 @@
 
 .p-badge.pb-agy { background: var(--kind-agy); }
 
+.p-badge.pb-lcpp { background: var(--kind-lcpp); }
+
 .p-badge.pb-github { background: #c9d1d9; }
 
 .p-badge.pb-bitbucket { background: #4a90e2; }
@@ -114,7 +116,8 @@
 [data-theme="light"] .p-badge.pb-copilot,
 [data-theme="light"] .p-badge.pb-kiro,
 [data-theme="light"] .p-badge.pb-opencode,
-[data-theme="light"] .p-badge.pb-agy {
+[data-theme="light"] .p-badge.pb-agy,
+[data-theme="light"] .p-badge.pb-lcpp {
   --pb-fg: #fff;
 }
 

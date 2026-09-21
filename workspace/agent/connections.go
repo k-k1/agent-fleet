@@ -21,6 +21,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // Connections hold the per-user provider credentials the Workspace consumes:
@@ -60,6 +61,10 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		// muse (ADR 0095): supported=false until the on-demand install lands the proprietary
 		// binary; connected reads ~/.config/muse/auth.json, so it needs no subprocess.
 		"muse": muse.Status(),
+		// lcpp (docs/log/105 §106.2): no sign-in of its own (ADR 0093 決定 10), so the only
+		// thing to report is the user's own display setting — the signpost registry.ts's
+		// available() hides the launch menus behind. HandleCreateSession holds the real gate.
+		"lcpp": map[string]any{"enabled": uiprefs.LcppEnabled()},
 		// copilot rides on the GitHub connection (docs/log/36 contract): no flow of its own.
 		"copilot":    copilot.Status(ghConnected),
 		"jira":       jiraStatus(s), // where work items are fetched from (docs/log/80 P1)
