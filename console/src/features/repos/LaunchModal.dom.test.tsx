@@ -369,9 +369,9 @@ describe("LaunchModal branch mode", () => {
 
 // terminalDriver === false (lcpp, ADR 0093 決定 2): no Terminal (CLI) route exists, ever, so the
 // managed/terminal choice in Advanced must not be offered — the kind never gets a fake choice
-// that can only fail. lcpp cannot reach this modal in practice today (excluded from
-// repoLaunchKinds), but the guard is a registry-driven `kinds` prop passed here directly, so it
-// is worth pinning on its own regardless of that exclusion.
+// that can only fail. lcpp is now in repoLaunchKinds (stage 2's driver landed), so this modal
+// really does render for it in practice, not just through the registry-driven `kinds` prop
+// passed here directly.
 describe("LaunchModal driver choice — terminalDriver gate", () => {
   it("offers Managed / Terminal for a kind with no terminalDriver override — negative control", async () => {
     await render(["codex"]);

@@ -346,6 +346,14 @@ type ContextUsage struct {
 	Create int    `json:"create"` // cache_creation_input_tokens (newly cached)
 	Fresh  int    `json:"fresh"`  // input_tokens (uncached)
 	Model  string `json:"model"`
+	// Window and WindowSource mirror usagex.ContextUsage's own fields (session.ts's
+	// SessionContextUsage has carried them since before any kind populated them here): the
+	// context-window size the fill was measured against, and whether the agent knows it
+	// exactly ("recorded", e.g. lcpp's own engine catalog window) or the Console has to guess
+	// it from the model name (absent, ContextBar's own contextWindow() fallback). Zero/absent
+	// means "let the Console guess" — never a fabricated window.
+	Window       int    `json:"window,omitempty"`
+	WindowSource string `json:"windowSource,omitempty"`
 }
 
 func TmuxName(name string) string { return TmuxPrefix + name }

@@ -71,7 +71,7 @@ func TestAppendAndRecordsRoundTrip(t *testing.T) {
 	if _, err := s.AppendModelChangeNote("qwen3-30b"); err != nil {
 		t.Fatalf("AppendModelChangeNote: %v", err)
 	}
-	if _, err := s.AppendUsage(harness.Usage{PromptTokens: 42, CompletionTokens: 7}); err != nil {
+	if _, err := s.AppendUsage(harness.Usage{PromptTokens: 42, CompletionTokens: 7}, 0); err != nil {
 		t.Fatalf("AppendUsage: %v", err)
 	}
 
@@ -368,7 +368,7 @@ func TestTranscriptMergesToolResultIntoTheCallingTurn(t *testing.T) {
 	if _, err := s.AppendMessage(harness.Message{Role: harness.RoleTool, Content: "a.go\nb.go\n", ToolCallID: "call-9"}); err != nil {
 		t.Fatalf("AppendMessage(tool): %v", err)
 	}
-	if _, err := s.AppendUsage(harness.Usage{PromptTokens: 10, CompletionTokens: 3}); err != nil {
+	if _, err := s.AppendUsage(harness.Usage{PromptTokens: 10, CompletionTokens: 3}, 0); err != nil {
 		t.Fatalf("AppendUsage: %v", err)
 	}
 
@@ -394,6 +394,61 @@ func TestTranscriptMergesToolResultIntoTheCallingTurn(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no tool part found in %+v", turn.Parts)
+	}
+}
+
+// TestTranscriptCarriesRecordedWindow pins ADR 0093 decision 8: this kind's own resolved
+// context window (driver.go's harness.EngineWindow call, threaded through AppendUsage) must
+// reach transcript.Turn.CtxWindow, because that is exactly the field session_usage.go's
+// AggregateUsage and usage_fold.go's foldTurnRows key off to report WindowSource="recorded"
+// instead of falling back to usagex.WindowGuess.
+func TestTranscriptCarriesRecordedWindow(t *testing.T) {
+	testHome(t)
+	s := Open("sid-window")
+	if _, err := s.AppendMessage(harness.Message{Role: harness.RoleAssistant, Content: "hi"}); err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+	if _, err := s.AppendUsage(harness.Usage{PromptTokens: 100, CompletionTokens: 20}, 8192); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	turns, err := s.Transcript()
+	if err != nil {
+		t.Fatalf("Transcript: %v", err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("turns = %+v, want exactly 1", turns)
+	}
+	if turns[0].CtxWindow != 8192 {
+		t.Fatalf("CtxWindow = %d, want 8192 (the window AppendUsage was given)", turns[0].CtxWindow)
+	}
+	u, window, ok := s.LastUsage()
+	if !ok {
+		t.Fatal("LastUsage: ok = false after a completed turn")
+	}
+	if u.PromptTokens != 100 || u.CompletionTokens != 20 || window != 8192 {
+		t.Fatalf("LastUsage = %+v, window %d, want {100 20}, 8192", u, window)
+	}
+}
+
+// TestTranscriptOmitsUnresolvedWindow is the negative control: a turn whose window could not
+// be resolved (driver.go passes 0 when harness.EngineWindow answers nothing) must leave
+// CtxWindow at 0, not a fabricated value — that is what lets the generic reader fall back to
+// WindowSource="estimated" instead of wrongly claiming "recorded".
+func TestTranscriptOmitsUnresolvedWindow(t *testing.T) {
+	testHome(t)
+	s := Open("sid-window-unresolved")
+	if _, err := s.AppendMessage(harness.Message{Role: harness.RoleAssistant, Content: "hi"}); err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+	if _, err := s.AppendUsage(harness.Usage{PromptTokens: 100, CompletionTokens: 20}, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	turns, err := s.Transcript()
+	if err != nil {
+		t.Fatalf("Transcript: %v", err)
+	}
+	if turns[0].CtxWindow != 0 {
+		t.Fatalf("CtxWindow = %d, want 0 (unresolved window must not be fabricated)", turns[0].CtxWindow)
 	}
 }
 

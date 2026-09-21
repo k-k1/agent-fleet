@@ -396,6 +396,7 @@ func TestUsageMeasuredForKind(t *testing.T) {
 	for kind, want := range map[string]string{
 		session.KindClaude:  usagex.MeasuredExact,
 		session.KindCodex:   usagex.MeasuredExact,
+		session.KindLcpp:    usagex.MeasuredExact,   // ADR 0093 decision 8: own engine, own exact usage
 		session.KindCopilot: usagex.MeasuredPartial, // only outTok in the transcript
 		session.KindCursor:  usagex.MeasuredNone,    // no tokens in the transcript
 		session.KindKiro:    usagex.MeasuredNone,
