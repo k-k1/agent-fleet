@@ -62,6 +62,14 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if !Installed() {
 		return nil, errors.New("Muse Code がインストールされていません（workspace-agent install-muse）")
 	}
+	// Fail-close, and here rather than in StartManagedSession: Resume is reached directly from
+	// the turn, answer, carried-session and bridge paths and from the boot-time
+	// ReconcileManaged, so a restart or a dead child would otherwise start an unclamped host —
+	// eight subagents, workflows and the bundled foreign readers all enabled. Unlike MCP
+	// materialisation, which logs and launches anyway by design, this refuses the start.
+	if err := EnsureClamps(); err != nil {
+		return nil, err
+	}
 
 	handlesMu.Lock()
 	h := handles[m.Name]
