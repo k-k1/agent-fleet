@@ -112,6 +112,8 @@ func kindLabel(kind string) string {
 		return "Kiro"
 	case "agy":
 		return "Antigravity"
+	case "muse":
+		return "Muse Code"
 	}
 	return kind
 }

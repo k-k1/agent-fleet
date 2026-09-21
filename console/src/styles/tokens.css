@@ -132,6 +132,31 @@
      3.81 dark / 4.86 light, so this clears both floors). Confirmed by rendering all 10 kind
      chips NEXT TO the real diff.css/--err/--warn/--ok swatches headless, both themes. */
   --kind-lcpp: #d9c952;
+  /* 11th kind color (ADR 0095 kind="muse"). Same method as lcpp above, and this time the
+     candidate set was swept rather than hand-picked: console/scripts/kindcolor/muse.mjs scans Lab
+     hue x chroma x lightness, scores each point against the 10 --kind-* hues PLUS the semantic
+     colors sharing these screens (--warn, --ok, --accent and the --err fallback literal), in both
+     themes, and rejects anything outside the chroma band the shipped kinds actually occupy — the
+     first unconstrained run answered with dusty C-20 pinks, which score well and would be a third
+     muted badge next to copilot and opencode. Hues within 18 deg of a semantic color are excluded
+     outright, because the objection to red was categorical (a badge in the error hue reads as an
+     error state) rather than a number to beat.
+     The answer is a PALE orchid at hue 320 deg: it wins by lightness, not saturation, which is
+     what puts distance between it and kiro's saturated purple in the one gap the palette has left
+     (kiro 308 deg -> cursor 350 deg). Dark: min dE 17.9 (vs. cursor), contrast 7.11.
+     Light: min dE 12.9 (vs. kiro), contrast 7.21.
+     The light value is deliberately NOT the sweep's own answer, and that is the part worth
+     reading. The sweep chose #5f376b, which scores better (dE 15.9) and, rendered, is a grey
+     plum: beside kiro's vivid violet and cursor's magenta it reads as a THIRD grey rather than as
+     a coloured peer, which is the same mistake the chroma band exists to prevent, one step
+     further in. Raising the chroma to #6b2d7e costs 3 points of dE and buys a colour, and the
+     remaining margin is still twice the precedent floor. dE ranked the candidates; the picture
+     decided between the ones it could not tell apart — console/scripts/kindcolor/chips.mjs.
+     Not Meta's brand blue, deliberately: agy and ssm hold that region, and this palette has always
+     chosen distinguishability over brand fidelity (copilot was moved OFF purple so kiro could
+     take it, docs/log/43 §4-1). Confirmed by rendering all 11 chips next to the real
+     diff.css/--err/--warn/--ok swatches headless, both themes. */
+  --kind-muse: #dbabe6;
   --kind-shell: #46c9d0;
   --kind-ssm: #6d8bf5;
   /* Spawn-lineage spines (ADR 0073) — the 2px rule the left rail draws down the side
@@ -287,6 +312,10 @@
      Min dE 14.4 (vs. --warn, the closest neighbor of either kind), min contrast against
      --bg/--panel/--bar/--active-bg: 6.10. */
   --kind-lcpp: #5c5400;
+  /* 11th kind color, light theme (ADR 0095) — see the dark block's comment for the method, the
+     sweep, and why this value is one step MORE saturated than the sweep's own answer.
+     Min dE 12.9 (vs. kiro), min contrast against --bg/--panel/--bar/--active-bg: 7.21. */
+  --kind-muse: #6b2d7e;
   --kind-shell: #0f676d;
   --kind-ssm: #2c39a3;
   /* Lineage spines, dark steps of the same six hues — a 2px rule on a near-white rail

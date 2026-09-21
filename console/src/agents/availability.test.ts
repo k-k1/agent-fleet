@@ -99,8 +99,13 @@ describe("lcpp — launchable now (ADR 0093 stage 2: driver.go + store.go landed
     expect(AGENTS.lcpp.terminalDriver).toBe(false);
   });
 
-  it("is the only repo-launchable kind with no Terminal (CLI) route", () => {
-    expect(repoLaunchKinds.filter((k) => AGENTS[k].terminalDriver === false)).toEqual(["lcpp"]);
+  // The managed-only set is small and deliberate, so it is pinned as a SET rather than as a
+  // count: terminalDriver:false says a kind has no Terminal (CLI) route at all, ever, and a kind
+  // that acquired it by accident would silently stop offering the driver choice. lcpp (ADR 0093)
+  // and muse (ADR 0095) are both there because their BuildLaunch always errors — there is no CLI
+  // program to put in a pane.
+  it("pins the repo-launchable kinds that have no Terminal (CLI) route", () => {
+    expect(repoLaunchKinds.filter((k) => AGENTS[k].terminalDriver === false)).toEqual(["lcpp", "muse"]);
   });
 });
 
@@ -142,5 +147,35 @@ describe("display names", () => {
     for (const k of ["codex", "opencode", "shell"]) {
       expect(kindDisplayName(k)).toBe(kindLabel(k));
     }
+  });
+});
+
+// muse (ADR 0095) — the gate with TWO preconditions, which is what makes it worth its own block.
+// Every other agent kind is gated on one thing; muse needs the proprietary binary installed
+// (supported) AND a stored credential (connected), and either one missing means a launch could
+// only fail: an unauthenticated host accepts session/start and then ends every turn authRequired
+// (ADR 0095 P2-1). The server-side gates are HandleCreateSession and the driver's Resume; this
+// is only the signpost that keeps the menu honest.
+describe("muse — installed AND signed in", () => {
+  it("is offered only when both preconditions hold", () => {
+    expect(ready("muse", { muse: { supported: true, connected: true } })).toBe(true);
+  });
+
+  it("is hidden when the binary is not installed, however good the credential looks", () => {
+    expect(ready("muse", { muse: { supported: false, connected: true } })).toBe(false);
+  });
+
+  it("is hidden when nobody is signed in, however present the binary is", () => {
+    // The one that a `supported !== false` check alone would get wrong — and it is the common
+    // state right after the install finishes.
+    expect(ready("muse", { muse: { supported: true, connected: false } })).toBe(false);
+    expect(ready("muse", { muse: { supported: true } })).toBe(false);
+  });
+
+  it("is hidden when the Agent reports nothing about it at all", () => {
+    // An older Agent, or a workspace whose /connections has no muse key: absent must read as
+    // "cannot launch", not as "no objection". `supported !== false` is true for an absent key,
+    // so the connected half is what refuses here.
+    expect(ready("muse", {})).toBe(false);
   });
 });

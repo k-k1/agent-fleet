@@ -21,6 +21,7 @@ export const sessions = {
   // lcpp (ADR 0093): registered but not launchable yet — kept out of every launch picker
   // (registry.ts repoLaunchKinds), so this string renders nowhere today.
   "agent.launch_hint.lcpp": "llama.cpp を起動",
+  "agent.launch_hint.muse": "Muse Code を起動",
   "agent.launch_hint.shell": "通常のシェル（bash）",
   "agent.launch_hint.ssm": "AWS EC2 に SSM ログイン",
 

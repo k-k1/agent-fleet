@@ -5,8 +5,9 @@
 // How transcript rows map onto a turn differs per agent:
 //   - claude / codex ... one turn = many rows (thinking, each tool call, the final text). Each
 //     row carries its own ts, so the ts of the last folded row is the end of the turn.
-//   - opencode / copilot ... one turn = one row (a span). Its ts is only the start, so the Agent
-//     attaches endTs (opencode's time.completed / copilot's turn_end).
+//   - opencode / copilot / muse ... one turn = one row (a span). Its ts is only the start, so the
+//     Agent attaches endTs (opencode's time.completed, copilot's turn_end; for muse the read layer
+//     folds many wire items into one row and advances endTs as it goes — ADR 0095).
 //   - cursor / kiro / agy ... the assistant side carries no time at all (nothing is shown).
 // Either shape folds into "end of a row = endTs if present, else ts".
 
